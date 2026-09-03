@@ -30,14 +30,26 @@ interface Call {
 }
 
 /** A fetch that answers from a scripted table and records every call. */
-function fakeFetch(routes: Array<{ match: RegExp; method?: string; status: number; body?: unknown }>) {
+function fakeFetch(
+  routes: Array<{ match: RegExp; method?: string; status: number; body?: unknown }>,
+) {
   const calls: Call[] = [];
   // `init` is optional here because the module's seam declares it optional —
   // a two-required-parameter double is not assignable to it, which is how the
   // tests/ type-check catches a fake that has drifted from the real contract.
-  const fetchFn = async (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => {
-    calls.push({ url, method: init?.method ?? "GET", headers: init?.headers ?? {}, body: init?.body });
-    const hit = routes.find((r) => r.match.test(url) && (r.method === undefined || r.method === (init?.method ?? "GET")));
+  const fetchFn = async (
+    url: string,
+    init?: { method?: string; headers?: Record<string, string>; body?: string },
+  ) => {
+    calls.push({
+      url,
+      method: init?.method ?? "GET",
+      headers: init?.headers ?? {},
+      body: init?.body,
+    });
+    const hit = routes.find(
+      (r) => r.match.test(url) && (r.method === undefined || r.method === (init?.method ?? "GET")),
+    );
     if (!hit) return { ok: false, status: 404, json: async () => ({}) };
     return { ok: hit.status < 300, status: hit.status, json: async () => hit.body ?? {} };
   };
@@ -74,13 +86,18 @@ describe("planProvision — the idempotence core", () => {
   });
 
   it("dedupes and trims the wanted list", () => {
-    expect(prov.planProvision([], [" reviewer ", "reviewer", "", "companion"]).create).toEqual(["reviewer", "companion"]);
+    expect(prov.planProvision([], [" reviewer ", "reviewer", "", "companion"]).create).toEqual([
+      "reviewer",
+      "companion",
+    ]);
   });
 });
 
 describe("usersFromListing — tolerant of envelope shape, honest about garbage", () => {
   it("reads the shapes the server might use", () => {
-    expect(prov.usersFromListing({ data: { users: [{ user_id: "reviewer" }, { id: "companion" }] } })).toEqual(["reviewer", "companion"]);
+    expect(
+      prov.usersFromListing({ data: { users: [{ user_id: "reviewer" }, { id: "companion" }] } }),
+    ).toEqual(["reviewer", "companion"]);
     expect(prov.usersFromListing({ users: ["reviewer"] })).toEqual(["reviewer"]);
     expect(prov.usersFromListing([{ name: "companion" }])).toEqual(["companion"]);
   });
@@ -100,8 +117,18 @@ describe("parseUserList", () => {
 });
 
 describe("provision — one pass against a live-shaped server", () => {
-  const listing = (users: string[]) => ({ match: /\/admin\/accounts\/[^/]+\/users$/, method: "GET", status: 200, body: { users } });
-  const reviewerReach = { match: /\/api\/v1\/fs\/ls/, method: "GET", status: 200, body: { entries: [] } };
+  const listing = (users: string[]) => ({
+    match: /\/admin\/accounts\/[^/]+\/users$/,
+    method: "GET",
+    status: 200,
+    body: { users },
+  });
+  const reviewerReach = {
+    match: /\/api\/v1\/fs\/ls/,
+    method: "GET",
+    status: 200,
+    body: { entries: [] },
+  };
 
   it("creates the missing user, keeps the present one, and confirms the reviewer key", async () => {
     const { fetchFn, calls } = fakeFetch([
@@ -119,7 +146,13 @@ describe("provision — one pass against a live-shaped server", () => {
       fetchFn,
       log: (l: string) => lines.push(l),
     });
-    expect(report).toMatchObject({ created: ["companion"], kept: ["reviewer"], failed: [], reviewer: "reach", ok: true });
+    expect(report).toMatchObject({
+      created: ["companion"],
+      kept: ["reviewer"],
+      failed: [],
+      reviewer: "reach",
+      ok: true,
+    });
     // The root key authenticates the ADMIN calls and nothing else; the probe
     // carries the reviewer key.
     const post = calls.find((c) => c.method === "POST")!;
@@ -153,18 +186,39 @@ describe("provision — one pass against a live-shaped server", () => {
       { match: /\/users$/, method: "POST", status: 409, body: {} },
       reviewerReach,
     ]);
-    const report = await prov.provision({ base: BASE, account: "default", users: ["reviewer"], rootKey: "r", reviewerKey: "k", fetchFn, log: () => {} });
+    const report = await prov.provision({
+      base: BASE,
+      account: "default",
+      users: ["reviewer"],
+      rootKey: "r",
+      reviewerKey: "k",
+      fetchFn,
+      log: () => {},
+    });
     expect(report.kept).toEqual(["reviewer"]);
     expect(report.failed).toEqual([]);
   });
 
   it("an unreadable listing provisions nothing and says so", async () => {
     const { fetchFn, calls } = fakeFetch([
-      { match: /\/users$/, method: "GET", status: 200, body: { status: "error", error: { message: "nope" } } },
+      {
+        match: /\/users$/,
+        method: "GET",
+        status: 200,
+        body: { status: "error", error: { message: "nope" } },
+      },
       reviewerReach,
     ]);
     const lines: string[] = [];
-    const report = await prov.provision({ base: BASE, account: "default", users: ["reviewer"], rootKey: "r", reviewerKey: "k", fetchFn, log: (l: string) => lines.push(l) });
+    const report = await prov.provision({
+      base: BASE,
+      account: "default",
+      users: ["reviewer"],
+      rootKey: "r",
+      reviewerKey: "k",
+      fetchFn,
+      log: (l: string) => lines.push(l),
+    });
     expect(report.created).toEqual([]);
     expect(report.ok).toBe(false);
     expect(calls.some((c) => c.method === "POST")).toBe(false);
@@ -177,7 +231,15 @@ describe("provision — one pass against a live-shaped server", () => {
       { match: /fs\/ls/, method: "GET", status: 403, body: {} },
     ]);
     const lines: string[] = [];
-    const report = await prov.provision({ base: BASE, account: "default", users: ["reviewer"], rootKey: "r", reviewerKey: "k", fetchFn, log: (l: string) => lines.push(l) });
+    const report = await prov.provision({
+      base: BASE,
+      account: "default",
+      users: ["reviewer"],
+      rootKey: "r",
+      reviewerKey: "k",
+      fetchFn,
+      log: (l: string) => lines.push(l),
+    });
     expect(report.reviewer).toBe("refused");
     expect(report.ok).toBe(false);
     expect(lines.join("\n")).toContain("NOT rotating");
@@ -190,7 +252,15 @@ describe("provision — one pass against a live-shaped server", () => {
       listing(["reviewer"]),
       { match: /fs\/ls/, method: "GET", status: 500, body: {} },
     ]);
-    const report = await prov.provision({ base: BASE, account: "default", users: ["reviewer"], rootKey: "r", reviewerKey: "k", fetchFn, log: () => {} });
+    const report = await prov.provision({
+      base: BASE,
+      account: "default",
+      users: ["reviewer"],
+      rootKey: "r",
+      reviewerKey: "k",
+      fetchFn,
+      log: () => {},
+    });
     expect(report.reviewer).toBe("inconclusive");
     expect(report.ok).toBe(false);
   });
@@ -198,7 +268,15 @@ describe("provision — one pass against a live-shaped server", () => {
   it("no root key ⇒ nothing is attempted, and the boot is still fine", async () => {
     const { fetchFn, calls } = fakeFetch([listing([])]);
     const lines: string[] = [];
-    const report = await prov.provision({ base: BASE, account: "default", users: ["reviewer"], rootKey: "", reviewerKey: "k", fetchFn, log: (l: string) => lines.push(l) });
+    const report = await prov.provision({
+      base: BASE,
+      account: "default",
+      users: ["reviewer"],
+      rootKey: "",
+      reviewerKey: "k",
+      fetchFn,
+      log: (l: string) => lines.push(l),
+    });
     expect(calls).toEqual([]);
     expect(report.ok).toBe(false);
     expect(lines.join("\n")).toContain("no root key in the secrets mount");

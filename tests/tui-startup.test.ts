@@ -34,7 +34,8 @@ interface ExternalLog {
  * body has run. */
 function startupLog(): ExternalLog {
   const g = globalThis as Record<string, unknown>;
-  if (!g.__qcrStartupLog) g.__qcrStartupLog = { entries: [], paintedAt: undefined } satisfies ExternalLog;
+  if (!g.__qcrStartupLog)
+    g.__qcrStartupLog = { entries: [], paintedAt: undefined } satisfies ExternalLog;
   return g.__qcrStartupLog as ExternalLog;
 }
 
@@ -72,7 +73,8 @@ vi.mock("node:child_process", async (importOriginal) => {
     if (!g.__qcrStartupLog) g.__qcrStartupLog = { entries: [], paintedAt: undefined };
     (g.__qcrStartupLog as { entries: string[] }).entries.push(entry);
   };
-  const argsOf = (rest: unknown[]): string => (Array.isArray(rest[0]) ? (rest[0] as string[]).join(" ") : "");
+  const argsOf = (rest: unknown[]): string =>
+    Array.isArray(rest[0]) ? (rest[0] as string[]).join(" ") : "";
   const fakeChild = (): EventEmitter & Record<string, unknown> => {
     const child = new EventEmitter() as EventEmitter & Record<string, unknown>;
     child.stdout = new PassThrough();
@@ -99,11 +101,20 @@ vi.mock("node:child_process", async (importOriginal) => {
     },
     spawnSync: (bin: string, ...rest: unknown[]) => {
       record(`spawnSync ${bin} ${argsOf(rest)}`.trim());
-      return { status: 1, stdout: "", stderr: "", signal: null, pid: 0, output: [], error: undefined };
+      return {
+        status: 1,
+        stdout: "",
+        stderr: "",
+        signal: null,
+        pid: 0,
+        output: [],
+        error: undefined,
+      };
     },
     execFile: (bin: string, ...rest: unknown[]) => {
       record(`execFile ${bin} ${argsOf(rest)}`.trim());
-      const cb = rest.find((r) => typeof r === "function") as ((e: Error | null, o: string, s: string) => void) | undefined;
+      const cb = rest.find((r) => typeof r === "function") as
+        ((e: Error | null, o: string, s: string) => void) | undefined;
       const child = fakeChild();
       if (cb) setTimeout(() => cb(new Error("mocked"), "", ""), 0);
       return child;
@@ -138,7 +149,12 @@ vi.mock("node:fs", async (importOriginal) => {
 
 // ---- the fake terminal -------------------------------------------------------
 
-function fakeTerminal(): { out: NodeJS.WriteStream; input: NodeJS.ReadStream; written: string[]; painted: Promise<void> } {
+function fakeTerminal(): {
+  out: NodeJS.WriteStream;
+  input: NodeJS.ReadStream;
+  written: string[];
+  painted: Promise<void>;
+} {
   const written: string[] = [];
   // An EVENT, not a poll budget. Waiting a fixed number of 10ms ticks made the
   // centerpiece assertion depend on how loaded the machine is: on a busy box
@@ -147,7 +163,9 @@ function fakeTerminal(): { out: NodeJS.WriteStream; input: NodeJS.ReadStream; wr
   // only bound now is vitest's own test timeout.
   let resolvePainted: () => void;
   const painted = new Promise<void>((r) => (resolvePainted = r));
-  const out = new EventEmitter() as unknown as NodeJS.WriteStream & { write: (s: string) => boolean };
+  const out = new EventEmitter() as unknown as NodeJS.WriteStream & {
+    write: (s: string) => boolean;
+  };
   Object.assign(out, {
     isTTY: true,
     columns: 160,
@@ -166,7 +184,12 @@ function fakeTerminal(): { out: NodeJS.WriteStream; input: NodeJS.ReadStream; wr
     },
   });
   const input = new EventEmitter() as unknown as NodeJS.ReadStream;
-  Object.assign(input, { isTTY: true, setRawMode: () => input, resume: () => input, pause: () => input });
+  Object.assign(input, {
+    isTTY: true,
+    setRawMode: () => input,
+    resume: () => input,
+    pause: () => input,
+  });
   return { out: out as NodeJS.WriteStream, input, written, painted };
 }
 
@@ -184,7 +207,11 @@ interface Harness {
   stop: () => Promise<void>;
 }
 
-async function startTui(tmp: string, argv: string[] = ["--no-reload"], companionEnabled = true): Promise<Harness> {
+async function startTui(
+  tmp: string,
+  argv: string[] = ["--no-reload"],
+  companionEnabled = true,
+): Promise<Harness> {
   const { loadConfig } = await import("../src/config.js");
   const base = loadConfig(join(process.cwd(), "tests/fixtures/config.toml"));
   // A REAL ticket projection, so `readEffortTickets` actually walks a
@@ -199,7 +226,13 @@ async function startTui(tmp: string, argv: string[] = ["--no-reload"], companion
   );
   const config = {
     ...base,
-    sink: { ...base.sink, kind: "wayfinder" as const, root: trackerRoot, effort: "probe", tickets_effort: "probe" },
+    sink: {
+      ...base.sink,
+      kind: "wayfinder" as const,
+      root: trackerRoot,
+      effort: "probe",
+      tickets_effort: "probe",
+    },
     companion: {
       ...base.companion,
       enabled: companionEnabled,
@@ -250,7 +283,10 @@ async function startTui(tmp: string, argv: string[] = ["--no-reload"], companion
     stop: async () => {
       input.emit("data", Buffer.from([0x03]));
       input.emit("data", Buffer.from([0x03]));
-      const quit = await Promise.race([running.then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), 30_000))]);
+      const quit = await Promise.race([
+        running.then(() => true),
+        new Promise<boolean>((r) => setTimeout(() => r(false), 30_000)),
+      ]);
       // Quit is bounded in `runTui` (a short grace for the in-flight bring-up),
       // so not finishing inside 30s is a defect, not slowness — and asserting
       // quiescence below without it would be asserting over a live TUI.
@@ -311,7 +347,9 @@ describe("the first frame (ruling 6 — structural, not timed)", () => {
     // The soft budget: a WARNING beside the structural assertion, never a
     // failure (vitest's own transform cost dwarfs the startup under test).
     if (h.paintMs > 2_000) {
-      console.warn(`first frame took ${h.paintMs}ms under vitest — over the 2000ms soft budget`);
+      console.warn(
+        `first frame took ${h.paintMs}ms under vitest — over the 2000ms soft budget`,
+      );
     }
 
     // …and it really is a frame: the REAL layout, with the unknowns marked.
@@ -392,7 +430,9 @@ describe("the first frame (ruling 6 — structural, not timed)", () => {
     // unreachable from `pending`. Only a `begin` produces a ✓/✗/⚠ here.
     // A duration is printed only when the step actually STARTED, so this
     // distinguishes "ran, then failed" from "was failed from `pending`".
-    expect(stripAnsi(h.frame()), "the ssh step never entered running on the startup path").toMatch(/[✗✓⚠] VM ssh · \d+m?s/);
+    expect(stripAnsi(h.frame()), "the ssh step never entered running on the startup path").toMatch(
+      /[✗✓⚠] VM ssh · \d+m?s/,
+    );
 
     // `s` re-runs it and reports the new outcome — no restart, and nothing
     // self-healing: the TUI ran the CHECK again, never the remedy.
@@ -401,15 +441,23 @@ describe("the first frame (ruling 6 — structural, not timed)", () => {
     h.written.length = 0;
     await h.press("s");
     for (let i = 0; i < 100; i++) {
-      if (h.log.entries.filter((e) => e.startsWith("execFile ssh")).length > probesBefore && h.frame().includes("ssh-add")) break;
+      if (
+        h.log.entries.filter((e) => e.startsWith("execFile ssh")).length > probesBefore &&
+        h.frame().includes("ssh-add")
+      )
+        break;
       await new Promise((r) => setTimeout(r, 20));
     }
-    expect(h.log.entries.filter((e) => e.startsWith("execFile ssh")).length).toBeGreaterThan(probesBefore);
+    expect(h.log.entries.filter((e) => e.startsWith("execFile ssh")).length).toBeGreaterThan(
+      probesBefore,
+    );
     expect(h.frame()).toContain("ssh-add");
     // The remedy is never RUN for the operator: ruling 4 declined self-healing
     // explicitly. `ssh-add -l` is a read-only probe; `ssh-add <key>` and
     // `ssh -O exit` are the operator's to type.
-    const ran = h.log.entries.filter((e) => /ssh-add\s+(?!-l\b)/.test(e) || /ssh\s+-O\s+exit/.test(e));
+    const ran = h.log.entries.filter(
+      (e) => /ssh-add\s+(?!-l\b)/.test(e) || /ssh\s+-O\s+exit/.test(e),
+    );
     expect(ran, `the TUI ran a remedy itself: ${ran.join(", ")}`).toEqual([]);
     await h.stop();
   }, 40_000);
@@ -432,7 +480,11 @@ describe("connection triage", () => {
     const d = classifyConnection({
       ...base,
       agent: { reachable: true, identities: [] },
-      connect: { ok: false, stderr: "example-vm: Permission denied (publickey).", timedOut: false },
+      connect: {
+        ok: false,
+        stderr: "example-vm: Permission denied (publickey).",
+        timedOut: false,
+      },
     });
     expect(d.kind).toBe("no-agent-key");
     expect(d.cause).toContain("google_compute_engine");
@@ -470,7 +522,11 @@ describe("connection triage", () => {
     const { classifyConnection } = await import("../src/tui/sshtriage.js");
     const d = classifyConnection({
       ...base,
-      connect: { ok: false, stderr: "ssh: Could not resolve hostname example-vm: Name or service not known", timedOut: false },
+      connect: {
+        ok: false,
+        stderr: "ssh: Could not resolve hostname example-vm: Name or service not known",
+        timedOut: false,
+      },
     });
     expect(d.kind).toBe("host-unreachable");
     expect(d.cause).toContain("did not answer");
@@ -479,7 +535,11 @@ describe("connection triage", () => {
 
   it("reads an empty agent as the key case even when ssh says nothing useful", async () => {
     const { classifyConnection } = await import("../src/tui/sshtriage.js");
-    const d = classifyConnection({ ...base, agent: { reachable: true, identities: [] }, connect: { ok: false, stderr: "", timedOut: false } });
+    const d = classifyConnection({
+      ...base,
+      agent: { reachable: true, identities: [] },
+      connect: { ok: false, stderr: "", timedOut: false },
+    });
     expect(d.kind).toBe("no-agent-key");
   });
 
@@ -489,7 +549,11 @@ describe("connection triage", () => {
     // method list is the only thing that says a key was never the issue.
     const d = classifyConnection({
       ...base,
-      connect: { ok: false, stderr: "example-vm: Permission denied (keyboard-interactive).", timedOut: false },
+      connect: {
+        ok: false,
+        stderr: "example-vm: Permission denied (keyboard-interactive).",
+        timedOut: false,
+      },
     });
     expect(d.kind).not.toBe("no-agent-key");
     expect(d.remedy).not.toContain("ssh-add");
@@ -499,7 +563,11 @@ describe("connection triage", () => {
     const withKey = classifyConnection({
       ...base,
       agent: { reachable: true, identities: [] },
-      connect: { ok: false, stderr: "Permission denied (publickey,keyboard-interactive,password).", timedOut: false },
+      connect: {
+        ok: false,
+        stderr: "Permission denied (publickey,keyboard-interactive,password).",
+        timedOut: false,
+      },
     });
     expect(withKey.kind).toBe("no-agent-key");
     expect(withKey.remedy).toContain("ssh-add");
@@ -539,7 +607,9 @@ describe("connection triage", () => {
     });
     const probe = seen.find((a) => a.includes("true"))!;
     const opt = (name: string): string | undefined =>
-      probe.map((t) => (t.startsWith(`${name}=`) ? t.slice(name.length + 1) : undefined)).find((v) => v !== undefined);
+      probe
+        .map((t) => (t.startsWith(`${name}=`) ? t.slice(name.length + 1) : undefined))
+        .find((v) => v !== undefined);
     // WRITE: only these two values ever persist a host key. Neither may appear.
     expect(["accept-new", "no"]).not.toContain(opt("StrictHostKeyChecking"));
     // VERIFY: and it must not be pointed at a throwaway file either, which
@@ -567,7 +637,8 @@ describe("connection triage", () => {
       ...base,
       connect: {
         ok: false,
-        stderr: "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\nWARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!\n@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n",
+        stderr:
+          "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\nWARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!\n@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n",
         timedOut: false,
       },
     });
@@ -577,7 +648,8 @@ describe("connection triage", () => {
   });
 
   it("still classifies a wedged master when ControlPath carries a %C it cannot expand", async () => {
-    const { classifyConnection, controlSocketPresent, expandControlPath } = await import("../src/tui/sshtriage.js");
+    const { classifyConnection, controlSocketPresent, expandControlPath } =
+      await import("../src/tui/sshtriage.js");
     const raw = "~/.ssh/cm-%C";
     const path = expandControlPath(raw, {}, "/home/x");
     expect(path).toBe("/home/x/.ssh/cm-%C");
@@ -589,7 +661,11 @@ describe("connection triage", () => {
       ...base,
       controlPath: path,
       controlSocketExists: true,
-      connect: { ok: false, stderr: "mux_client_hello_exchange: read from master failed", timedOut: false },
+      connect: {
+        ok: false,
+        stderr: "mux_client_hello_exchange: read from master failed",
+        timedOut: false,
+      },
     });
     expect(d.kind).toBe("wedged-master");
     expect(d.remedy).toBe("ssh -O exit example-vm");
@@ -608,7 +684,11 @@ describe("connection triage", () => {
         return { status: 0, stdout: "", stderr: "", timedOut: false };
       },
     });
-    expect(seen.some((a) => a[0] === "ssh" && a.slice(1).join(" ") === masterCheckArgv(TUI_DEFAULTS).join(" "))).toBe(true);
+    expect(
+      seen.some(
+        (a) => a[0] === "ssh" && a.slice(1).join(" ") === masterCheckArgv(TUI_DEFAULTS).join(" "),
+      ),
+    ).toBe(true);
   });
 
   // The `.mjs` forward cannot import this module (it is dependency-free ESM
@@ -618,9 +698,18 @@ describe("connection triage", () => {
   it("agrees with the memory forward's classifier on the same stderr", async () => {
     const { classifyConnection } = await import("../src/tui/sshtriage.js");
     const forward = (await import("../scripts/companion-memory-forward.mjs")) as unknown as {
-      relayFailureCause(cfg: Record<string, unknown>, text: string, deps?: Record<string, unknown>): { key: string; remedy: string };
+      relayFailureCause(
+        cfg: Record<string, unknown>,
+        text: string,
+        deps?: Record<string, unknown>,
+      ): { key: string; remedy: string };
     };
-    const cfg = { sshHost: "example-vm", container: "c", sudo: true, identity: "/home/x/.ssh/k" };
+    const cfg = {
+      sshHost: "example-vm",
+      container: "c",
+      sudo: true,
+      identity: "/home/x/.ssh/k",
+    };
     const corpus: Array<[string, string]> = [
       ["Permission denied (publickey).", "auth"],
       ["ssh: Could not resolve hostname example-vm: Name or service not known", "host"],
@@ -644,21 +733,31 @@ describe("connection triage", () => {
         controlSocketExists: true,
         connect: { ok: false, stderr, timedOut: false },
       });
-      expect(toForwardKey[tui.kind], `TUI classed ${JSON.stringify(stderr)} as ${tui.kind}`).toBe(expected);
+      expect(toForwardKey[tui.kind], `TUI classed ${JSON.stringify(stderr)} as ${tui.kind}`).toBe(
+        expected,
+      );
     }
   });
 
   it("sends a REMOTE docker refusal to the remote docker, and derives the key from ssh -G", async () => {
     const forward = (await import("../scripts/companion-memory-forward.mjs")) as unknown as {
-      relayFailureCause(cfg: Record<string, unknown>, text: string, deps?: Record<string, unknown>): { key: string; remedy: string; cause: string };
+      relayFailureCause(
+        cfg: Record<string, unknown>,
+        text: string,
+        deps?: Record<string, unknown>,
+      ): { key: string; remedy: string; cause: string };
       sshIdentityFor(cfg: Record<string, unknown>, deps?: Record<string, unknown>): string;
     };
     const cfg = { sshHost: "example-vm", container: "qc", sudo: true, local: false };
     // The relay is `ssh <host> sudo docker exec …`, so a docker refusal is the
     // VM's. `systemctl status docker` pointed the operator at their laptop.
-    const d = forward.relayFailureCause(cfg, "permission denied while trying to connect to the Docker daemon socket", {
-      run: () => ({ stdout: "" }),
-    });
+    const d = forward.relayFailureCause(
+      cfg,
+      "permission denied while trying to connect to the Docker daemon socket",
+      {
+        run: () => ({ stdout: "" }),
+      },
+    );
     expect(d.key).toBe("docker");
     expect(d.cause).toContain("example-vm");
     expect(d.remedy).toBe("ssh example-vm sudo docker ps");
@@ -670,11 +769,15 @@ describe("connection triage", () => {
       run: () => ({ stdout: "identityfile ~/.ssh/other\nidentityfile ~/.ssh/derived_key\n" }),
     });
     expect(key).toBe("/home/x/.ssh/derived_key");
-    const auth = forward.relayFailureCause({ ...cfg, identity: undefined }, "Permission denied (publickey).", {
-      home: "/home/x",
-      exists: (p: string) => p === "/home/x/.ssh/derived_key",
-      run: () => ({ stdout: "identityfile ~/.ssh/derived_key\n" }),
-    });
+    const auth = forward.relayFailureCause(
+      { ...cfg, identity: undefined },
+      "Permission denied (publickey).",
+      {
+        home: "/home/x",
+        exists: (p: string) => p === "/home/x/.ssh/derived_key",
+        run: () => ({ stdout: "identityfile ~/.ssh/derived_key\n" }),
+      },
+    );
     expect(auth.remedy).toBe("ssh-add /home/x/.ssh/derived_key");
   });
 
@@ -708,14 +811,27 @@ describe("connection triage", () => {
         if (cmd === "ssh" && argv[0] === "-G") {
           return {
             status: 0,
-            stdout: "hostname 10.0.0.5\nuser alice\nport 22\nidentityfile ~/.ssh/google_compute_engine\ncontrolpath /home/x/.ssh/cm-%r@%h:%p\n",
+            stdout:
+              "hostname 10.0.0.5\nuser alice\nport 22\nidentityfile ~/.ssh/google_compute_engine\ncontrolpath /home/x/.ssh/cm-%r@%h:%p\n",
             stderr: "",
             timedOut: false,
           };
         }
-        if (cmd === "ssh" && argv[0] === "-O") return { status: 255, stdout: "", stderr: "no such file", timedOut: false };
-        if (cmd === "ssh-add") return { status: 1, stdout: "The agent has no identities.\n", stderr: "", timedOut: false };
-        return { status: 255, stdout: "", stderr: "Permission denied (publickey).", timedOut: false };
+        if (cmd === "ssh" && argv[0] === "-O")
+          return { status: 255, stdout: "", stderr: "no such file", timedOut: false };
+        if (cmd === "ssh-add")
+          return {
+            status: 1,
+            stdout: "The agent has no identities.\n",
+            stderr: "",
+            timedOut: false,
+          };
+        return {
+          status: 255,
+          stdout: "",
+          stderr: "Permission denied (publickey).",
+          timedOut: false,
+        };
       },
     });
     expect(seen[0]).toEqual(["ssh", "-G", TUI_DEFAULTS.ssh_host]);
@@ -737,8 +853,18 @@ describe("startup progress", () => {
     const { renderTicketsTab } = await import("../src/tui/ticketstab.js");
     const { renderFeedbackTab } = await import("../src/tui/feedbacktab.js");
     const { TUI_DEFAULTS } = await import("../src/config.js");
-    const changes = { register: undefined, refresh: async () => undefined, revert: async () => ({ ok: false, message: "no" }) };
-    const app = { cfg: TUI_DEFAULTS, hooks: { tabs: {} }, view: {}, notice: () => {}, repaint: () => {} } as never;
+    const changes = {
+      register: undefined,
+      refresh: async () => undefined,
+      revert: async () => ({ ok: false, message: "no" }),
+    };
+    const app = {
+      cfg: TUI_DEFAULTS,
+      hooks: { tabs: {} },
+      view: {},
+      notice: () => {},
+      repaint: () => {},
+    } as never;
     const tabs = installLearningTabs(app, {
       memory: { read: async () => [], apply: async () => ({ ok: true }) } as never,
       digestFetcher: { list: async () => [], read: async () => "" },
@@ -750,10 +876,25 @@ describe("startup progress", () => {
     // The scan is a filesystem walk and now runs BEHIND the first frame, so
     // there is a window in which an empty list is "not read", not "none".
     expect(st.tickets).toEqual({ kind: "unread" });
-    const before = stripAnsi(renderTicketsTab(st, tabs.tickets, undefined, 160, 30).lines.join("\n"));
+    const before = stripAnsi(
+      renderTicketsTab(st, tabs.tickets, undefined, 160, 30).lines.join("\n"),
+    );
     expect(before).toContain("TICKETS (—)");
     expect(before).not.toContain("TICKETS (0");
-    expect(stripAnsi(renderFeedbackTab(st, tabs.feedback, changes, undefined, 160, 40, undefined, now).lines.join("\n"))).toContain("FILED (—)");
+    expect(
+      stripAnsi(
+        renderFeedbackTab(
+          st,
+          tabs.feedback,
+          changes,
+          undefined,
+          160,
+          40,
+          undefined,
+          now,
+        ).lines.join("\n"),
+      ),
+    ).toContain("FILED (—)");
     // A THROWING read is not an empty tracker: it must not latch, so the pane
     // keeps saying unknown and a later `r` can still succeed.
     const broken = installLearningTabs(app, {
@@ -765,34 +906,74 @@ describe("startup progress", () => {
       changes,
     });
     broken.store.reloadTickets();
-    expect(broken.store.tickets, "a failed tracker read latched as 'read'").toMatchObject({ kind: "unreadable" });
-    expect(stripAnsi(renderTicketsTab(broken.store, broken.tickets, undefined, 160, 30).lines.join("\n"))).toContain("TICKETS (—)");
+    expect(broken.store.tickets, "a failed tracker read latched as 'read'").toMatchObject({
+      kind: "unreadable",
+    });
+    expect(
+      stripAnsi(
+        renderTicketsTab(broken.store, broken.tickets, undefined, 160, 30).lines.join("\n"),
+      ),
+    ).toContain("TICKETS (—)");
 
     st.reloadTickets();
     expect(st.tickets).toEqual({ kind: "read", tickets: [] });
-    const after = stripAnsi(renderTicketsTab(st, tabs.tickets, undefined, 160, 30).lines.join("\n"));
+    const after = stripAnsi(
+      renderTicketsTab(st, tabs.tickets, undefined, 160, 30).lines.join("\n"),
+    );
     expect(after).toContain("TICKETS (0 actionable / 0 total)");
     // A gh read that was skipped for want of a repo is not "no bot PRs".
     expect(st.improvements).toBeUndefined();
-    expect(stripAnsi(renderFeedbackTab(st, tabs.feedback, changes, undefined, 160, 40, undefined, now).lines.join("\n"))).toContain("BOT PRs / ISSUES (—)");
+    expect(
+      stripAnsi(
+        renderFeedbackTab(
+          st,
+          tabs.feedback,
+          changes,
+          undefined,
+          160,
+          40,
+          undefined,
+          now,
+        ).lines.join("\n"),
+      ),
+    ).toContain("BOT PRs / ISSUES (—)");
   });
 
   it("re-attempts the bot-PR read once the repo arrives with the first snapshot", async () => {
     const { installLearningTabs } = await import("../src/tui/learning.js");
     const { TUI_DEFAULTS } = await import("../src/config.js");
     let calls = 0;
-    const app = { cfg: TUI_DEFAULTS, hooks: { tabs: {} } as Record<string, unknown>, view: {} as { repo?: string }, notice: () => {}, repaint: () => {} } as never;
+    const app = {
+      cfg: TUI_DEFAULTS,
+      hooks: { tabs: {} } as Record<string, unknown>,
+      view: {} as { repo?: string },
+      notice: () => {},
+      repaint: () => {},
+    } as never;
     const { store: st } = installLearningTabs(app, {
       memory: { read: async () => [], apply: async () => ({ ok: true }) } as never,
       digestFetcher: { list: async () => [], read: async () => "" },
       fetchProposals: async () => {
         calls += 1;
         const repo = (app as unknown as { view: { repo?: string } }).view.repo;
-        return { proposals: [], improvements: repo ? [{ kind: "pr" as const, number: 1, title: "t", state: "open" }] : undefined };
+        return {
+          proposals: [],
+          improvements: repo
+            ? [{ kind: "pr" as const, number: 1, title: "t", state: "open" }]
+            : undefined,
+        };
       },
-      changes: { register: undefined, refresh: async () => undefined, revert: async () => ({ ok: false, message: "no" }) },
+      changes: {
+        register: undefined,
+        refresh: async () => undefined,
+        revert: async () => ({ ok: false, message: "no" }),
+      },
     });
-    const feedback = (app as unknown as { hooks: { tabs: { feedback: { screen: (a: unknown, c: number, r: number) => unknown } } } }).hooks.tabs.feedback;
+    const feedback = (
+      app as unknown as {
+        hooks: { tabs: { feedback: { screen: (a: unknown, c: number, r: number) => unknown } } };
+      }
+    ).hooks.tabs.feedback;
     const screen = (a: unknown, c: number, r: number): unknown => feedback.screen(a, c, r);
     // First visit with no snapshot yet — the instant first frame makes this the
     // NORMAL case now, and it used to park the pane for the whole session.
@@ -894,7 +1075,8 @@ describe("startup progress", () => {
   it("re-renders a hung step on its own, so the overdue warning reaches the screen", async () => {
     vi.useFakeTimers();
     try {
-      const { DEFAULT_TICK_MS, STALL_AFTER_MS, StartupProgress } = await import("../src/tui/startup.js");
+      const { DEFAULT_TICK_MS, STALL_AFTER_MS, StartupProgress } =
+        await import("../src/tui/startup.js");
       const { paintSidebar } = await import("../src/tui/sidebar.js");
       let now = 0;
       const frames: string[] = [];
@@ -924,7 +1106,9 @@ describe("startup progress", () => {
       // docker never answers: from here there is NO further state change.
       now = STALL_AFTER_MS + 25_000;
       vi.advanceTimersByTime(DEFAULT_TICK_MS * 2);
-      expect(frames.length, "nothing re-rendered — the warning can never appear").toBeGreaterThan(afterBegin);
+      expect(frames.length, "nothing re-rendered — the warning can never appear").toBeGreaterThan(
+        afterBegin,
+      );
       const painted = frames[frames.length - 1]!.replace(/\x1b\[[0-9;]*m/g, "");
       expect(painted).toContain("⚠");
       expect(painted).toContain("still running, no result yet");
@@ -960,7 +1144,9 @@ describe("the companion column during startup", () => {
     expect(starting).toContain("memory forward");
     expect(starting).toContain("starting");
     expect(starting).toContain("starting up — progress above");
-    const mirroring = paintSidebar(view({ lines: ["pi> hello"], available: true }), 40, 14).join("\n");
+    const mirroring = paintSidebar(view({ lines: ["pi> hello"], available: true }), 40, 14).join(
+      "\n",
+    );
     expect(mirroring).toContain("pi> hello");
     expect(mirroring).not.toContain("memory forward");
   });
@@ -998,7 +1184,10 @@ describe("the companion column during startup", () => {
     const sb = new CompanionSidebar(COMPANION_DEFAULTS, docker, { available: () => false });
     expect(sb.available()).toBe(false);
     await sb.refresh();
-    expect(docker, "the column must not ask docker anything to know its width").not.toHaveBeenCalled();
+    expect(
+      docker,
+      "the column must not ask docker anything to know its width",
+    ).not.toHaveBeenCalled();
     expect(sidebarWidth(160)).toBeGreaterThan(20);
     // 2026-09-02: there is no config-driven "no column" any more. The class
     // has no `shown()` and takes no `enabled` — `--no-companion` changes what
@@ -1019,10 +1208,17 @@ describe("honest unknowns on the other surfaces", () => {
   it("a failed `git status` is UNKNOWN on the deploy tab, never a green clean tree", async () => {
     const { RealDeployFetcher, deployLines } = await import("../src/tui/deploytab.js");
     const { TUI_DEFAULTS } = await import("../src/config.js");
-    const fail = async () => ({ ok: false, stdout: "", stderr: "fatal: not a git repository", code: 128 });
+    const fail = async () => ({
+      ok: false,
+      stdout: "",
+      stderr: "fatal: not a git repository",
+      code: 128,
+    });
     const st = await new RealDeployFetcher(TUI_DEFAULTS, fail, fail).load();
     expect(st.dirty, "an unreadable working tree must not read as clean").toBeUndefined();
-    const text = stripAnsi(deployLines({ ...st, loaded: true, loading: false, scroll: 0 }, 120).join("\n"));
+    const text = stripAnsi(
+      deployLines({ ...st, loaded: true, loading: false, scroll: 0 }, 120).join("\n"),
+    );
     expect(text).toContain("unknown — git status could not be read");
     expect(text).not.toContain("clean");
     // …and "up to date, nothing to deploy" is a claim that needs all three
@@ -1037,7 +1233,9 @@ describe("honest unknowns on the other surfaces", () => {
     expect(unknown).toContain("VM APP STATE UNKNOWN");
     expect(unknown).toContain("VM: state unknown");
     expect(unknown).not.toContain("STOP VM APP");
-    const up = stripAnsi(renderDeployTab({ ...base, containerStatus: "Up 3 hours" }, false, 120, 20).lines.join("\n"));
+    const up = stripAnsi(
+      renderDeployTab({ ...base, containerStatus: "Up 3 hours" }, false, 120, 20).lines.join("\n"),
+    );
     expect(up).toContain("STOP VM APP");
   });
 
@@ -1059,10 +1257,20 @@ describe("honest unknowns on the other surfaces", () => {
   it("metrics say a field an older daemon omits is UNKNOWN, not zero", async () => {
     const { cancellationLines, statStrip } = await import("../src/tui/metricstab.js");
     const win = {
-      header: { prs_triggered: 1, prs_reviewed: 1, approvals: 1, request_changes: 0, rounds: 1, spend_usd: 1, overruns: 0 },
+      header: {
+        prs_triggered: 1,
+        prs_reviewed: 1,
+        approvals: 1,
+        request_changes: 0,
+        rounds: 1,
+        spend_usd: 1,
+        overruns: 0,
+      },
     } as never;
     expect(stripAnsi(statStrip(win, 200))).toContain("stopped ?");
-    expect(stripAnsi(cancellationLines(win, 60).join("\n"))).toContain("not reported by the daemon build");
+    expect(stripAnsi(cancellationLines(win, 60).join("\n"))).toContain(
+      "not reported by the daemon build",
+    );
   });
 });
 
@@ -1108,13 +1316,21 @@ describe("actions are never taken on unfetched values", () => {
     // Paint first: the button must claim NO click zone while the state is
     // unknown, so a click cannot even reach the arming path.
     renderDeployTab(st, false, 120, 20);
-    expect(st.powerZone, "an unknown state must not offer a clickable power button").toBeUndefined();
+    expect(
+      st.powerZone,
+      "an unknown state must not offer a clickable power button",
+    ).toBeUndefined();
 
     // …and the key does not arm it either. Two presses is the full ceremony:
     // if it armed, the second would fire. (`S` is not even a
     // registered key while the state is unread — the tab hands it back.)
     const key = { kind: "char", ch: "S" } as never;
-    const deployKey = (a: unknown, k: unknown): boolean => (app as unknown as { hooks: { tabs: { deploy: { key: (a: unknown, k: unknown) => boolean } } } }).hooks.tabs.deploy.key(a, k);
+    const deployKey = (a: unknown, k: unknown): boolean =>
+      (
+        app as unknown as {
+          hooks: { tabs: { deploy: { key: (a: unknown, k: unknown) => boolean } } };
+        }
+      ).hooks.tabs.deploy.key(a, k);
     expect(deployKey(app, key), "S must be refused, not consumed, on an unread state").toBe(false);
     deployKey(app, key);
     deployKey(app, key);
@@ -1136,7 +1352,13 @@ describe("actions are never taken on unfetched values", () => {
     const { TUI_DEFAULTS } = await import("../src/config.js");
     const { App } = await import("../src/tui/app.js");
     const app = new App(TUI_DEFAULTS, async () => ({ ok: false, stdout: "", stderr: "", code: 1 }));
-    const deployState = { loaded: true, loading: false, dirty: undefined, plan: [], scroll: 0 } as never;
+    const deployState = {
+      loaded: true,
+      loading: false,
+      dirty: undefined,
+      plan: [],
+      scroll: 0,
+    } as never;
     const driver = buildTuiDriver(app, {} as never, {} as never, deployState);
     // The same fold — unknown ⇒ "stop" — lived here too, so a companion asking
     // for a stop could stop a live reviewer on data nobody fetched.

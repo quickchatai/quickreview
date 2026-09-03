@@ -32,7 +32,14 @@ import { PASS_ADDENDA, buildAgents, identityVars } from "./include.js";
 import { ecosystemFor } from "./ecosystem.js";
 import { loadProfileAddenda, loadProfileEcosystem, loadProfileHeuristics } from "./profiles.js";
 import { fileImprovementPr, fileIssue, gitRunner } from "./improvements.js";
-import { OpenVikingClient, OpenVikingSupervisor, ReembedDriver, keyFromFile, openVikingContextAssembler, openVikingStore } from "./openviking/index.js";
+import {
+  OpenVikingClient,
+  OpenVikingSupervisor,
+  ReembedDriver,
+  keyFromFile,
+  openVikingContextAssembler,
+  openVikingStore,
+} from "./openviking/index.js";
 import { OV_REVIEWER_KEY_SECRET, openVikingSessionLifecycle } from "./memory/ovsession.js";
 import type { ContextAssembler, RoundMemory } from "./memory/context.js";
 import { recoverPrForOperator } from "./operator-recovery.js";
@@ -50,7 +57,12 @@ import { SlackSocketClient } from "./slack/socket.js";
 import type { SlackTransport } from "./slack/types.js";
 import type { StateStore } from "./state.js";
 import type { RecheckOrder } from "./recheck.js";
-import { RECHECK_TEMPLATE_FILE, renderRecheckPrompt, renderRoundPrompt, roundTemplateFile } from "./templates.js";
+import {
+  RECHECK_TEMPLATE_FILE,
+  renderRecheckPrompt,
+  renderRoundPrompt,
+  roundTemplateFile,
+} from "./templates.js";
 import { nodeExec } from "./tmux.js";
 import type { RoundOrder, SessionHooks } from "./types.js";
 import { WebhookHealer } from "./webhookheal.js";
@@ -66,8 +78,10 @@ export interface ProductionParts {
 
 export function buildParts(root = sandboxRoot(), cfg = loadConfig()): ProductionParts {
   const minter = new TokenMinter(cfg.github.secrets_dir);
-  const gate: MutationGate = new MutationGate(cfg.dry_run, join(root, "state", "dryrun"), (intent: MutationIntent) =>
-    adapter.executeMutation(intent),
+  const gate: MutationGate = new MutationGate(
+    cfg.dry_run,
+    join(root, "state", "dryrun"),
+    (intent: MutationIntent) => adapter.executeMutation(intent),
   );
   const adapter: GitHubAdapter = new GitHubAdapter(cfg, minter, gate);
   // The PR's raw memory tier: the daemon owns create/delete of the
@@ -95,7 +109,9 @@ const gitRun = gitRunner(nodeExec);
 /** package.json version for the `daemon.up` line; never worth failing a boot. */
 function packageVersion(root: string): string | undefined {
   try {
-    const raw = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version?: unknown };
+    const raw = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
+      version?: unknown;
+    };
     return typeof raw.version === "string" ? raw.version : undefined;
   } catch {
     return undefined;
@@ -165,7 +181,11 @@ export interface SlackRuntime {
 }
 
 /** The real transport: Web API out, Socket Mode in, composed into one object. */
-function defaultTransport(opts: { cfg: Config; botToken: string; appToken: string }): SlackTransport {
+function defaultTransport(opts: {
+  cfg: Config;
+  botToken: string;
+  appToken: string;
+}): SlackTransport {
   const { cfg } = opts;
   const api = new SlackApiClient({
     botToken: opts.botToken,
@@ -205,7 +225,8 @@ export async function startSlack(opts: SlackWiringOptions): Promise<SlackRuntime
   validateSlackConfig(cfg, { readSecret });
   const botToken = readSecret(slackTokenPath(cfg, "bot"));
   const appToken = readSecret(slackTokenPath(cfg, "app"));
-  if (!botToken || !appToken) throw new Error("slack: token files vanished between validation and read");
+  if (!botToken || !appToken)
+    throw new Error("slack: token files vanished between validation and read");
 
   const transport = (opts.makeTransport ?? defaultTransport)({ cfg, botToken, appToken });
 
@@ -214,7 +235,9 @@ export async function startSlack(opts: SlackWiringOptions): Promise<SlackRuntime
   // answer itself forever.
   const identity = await transport.authTest();
   if (!identity) {
-    throw new Error("slack: auth.test failed — refusing to start (a bot that cannot identify itself will answer its own echoes)");
+    throw new Error(
+      "slack: auth.test failed — refusing to start (a bot that cannot identify itself will answer its own echoes)",
+    );
   }
   log(`slack: connected as ${identity.user_id} in ${cfg.slack.channel}`);
 
@@ -243,7 +266,10 @@ export async function startSlack(opts: SlackWiringOptions): Promise<SlackRuntime
     users: transport,
     identity,
     onCapReached: async (decision) => {
-      const cap = decision.cap === "per_user_daily_turns" ? cfg.slack.policy.per_user_daily_turns : cfg.slack.policy.daily_turns;
+      const cap =
+        decision.cap === "per_user_daily_turns"
+          ? cfg.slack.policy.per_user_daily_turns
+          : cfg.slack.policy.daily_turns;
       await announcer.capReached(cap);
     },
     now,
@@ -272,7 +298,9 @@ export async function startSlack(opts: SlackWiringOptions): Promise<SlackRuntime
   };
   // Half the grace window, so a PR is noticed roughly when it goes overdue.
   every(Math.max(1, Math.round(cfg.slack.policy.pickup_grace_min / 2)) * 60_000, () => {
-    void announcer.announceNotPickedUp().catch((err) => log("slack: not-picked-up sweep failed", err));
+    void announcer
+      .announceNotPickedUp()
+      .catch((err) => log("slack: not-picked-up sweep failed", err));
   });
   // Every timer body is its own try/catch: a throw inside setInterval is an
   // uncaught exception, and a duplicate-consumer probe must never kill the daemon.
@@ -331,7 +359,9 @@ export function buildLocalCommandWatcher(opts: {
   const { slack } = opts;
   return new CommandWatcher({
     dir: join(opts.root, "commands"),
-    ...(slack ? { tier: { dir: "local" as const, currentOrigin: () => slack.origins.latestAny() } } : {}),
+    ...(slack
+      ? { tier: { dir: "local" as const, currentOrigin: () => slack.origins.latestAny() } }
+      : {}),
     deps: slack ? { ...opts.deps, slackReply: slack.slackReply } : opts.deps,
     store: opts.store,
     log: opts.log,
@@ -346,7 +376,12 @@ export function buildLocalCommandWatcher(opts: {
  * belt exists to stop the overseer mis-filing, and the overseer cannot write
  * here. The daemon never creates the directory — see `CommandWatcherOptions`.
  */
-export function buildOperatorCommandWatcher(opts: { root: string; deps: CommandDeps; store: StateStore; log: (line: string) => void }): CommandWatcher {
+export function buildOperatorCommandWatcher(opts: {
+  root: string;
+  deps: CommandDeps;
+  store: StateStore;
+  log: (line: string) => void;
+}): CommandWatcher {
   return new CommandWatcher({
     dir: join(opts.root, "commands", "operator"),
     operator: processOperatorSeal(),
@@ -393,28 +428,41 @@ export function daemonOriginWakes(opts: {
       dispatchRound: (order, prompt) => hooks.dispatchRound(order, prompt),
       inject: (pr, message) => hooks.inject(pr, message),
       archiveAndClose: (pr) => hooks.archiveAndClose(pr),
-      ...(hooks.compactSession ? { compactSession: (pr: number) => hooks.compactSession!(pr) } : {}),
+      ...(hooks.compactSession
+        ? { compactSession: (pr: number) => hooks.compactSession!(pr) }
+        : {}),
       // Liveness + kill must survive the wrap: dropping sessionAlive here left
       // the stuck-round detector blind in production (liveness always
       // unknown ⇒ every stuck round parked). Found 2026-08-19.
       ...(hooks.sessionAlive ? { sessionAlive: (pr: number) => hooks.sessionAlive!(pr) } : {}),
       ...(hooks.killSession ? { killSession: (pr: number) => hooks.killSession!(pr) } : {}),
-      ...(hooks.sessionActivityAt ? { sessionActivityAt: (pr: number) => hooks.sessionActivityAt!(pr) } : {}),
+      ...(hooks.sessionActivityAt
+        ? { sessionActivityAt: (pr: number) => hooks.sessionActivityAt!(pr) }
+        : {}),
       ...(hooks.injectPending ? { injectPending: (pr: number) => hooks.injectPending!(pr) } : {}),
       // Receipt/replay hooks are the command supervisor's positive evidence
       // and safe recovery path. Dropping them here made production exhaust a
       // failed ordinary wake at 0/N without attempting same-command replay.
       ...(hooks.roundPromptAccepted
-        ? { roundPromptAccepted: (pr: number, roundNo: number, startedAtMs: number) => hooks.roundPromptAccepted!(pr, roundNo, startedAtMs) }
+        ? {
+            roundPromptAccepted: (pr: number, roundNo: number, startedAtMs: number) =>
+              hooks.roundPromptAccepted!(pr, roundNo, startedAtMs),
+          }
         : {}),
       ...(hooks.wakeReceiptPresent
-        ? { wakeReceiptPresent: (pr: number, marker: string, sinceMs: number) => hooks.wakeReceiptPresent!(pr, marker, sinceMs) }
+        ? {
+            wakeReceiptPresent: (pr: number, marker: string, sinceMs: number) =>
+              hooks.wakeReceiptPresent!(pr, marker, sinceMs),
+          }
         : {}),
       ...(hooks.redeliverRound
         ? { redeliverRound: (pr: number, roundNo: number) => hooks.redeliverRound!(pr, roundNo) }
         : {}),
       ...(hooks.retrySessionCommand
-        ? { retrySessionCommand: (commandId: string, reason: string) => hooks.retrySessionCommand!(commandId, reason) }
+        ? {
+            retrySessionCommand: (commandId: string, reason: string) =>
+              hooks.retrySessionCommand!(commandId, reason),
+          }
         : {}),
       injectOverseer: (message) => wake("overseer-wake", message),
     },
@@ -431,10 +479,15 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // exists, and both degrade to "no memory" rather than to an error.
   let memoryStore: MemoryStore | null = null;
   let memoryAssembler: ContextAssembler | null = null;
-  const notBuiltYet = { status: "unreadable", reason: "memory store not built yet (daemon still starting)" } as const;
+  const notBuiltYet = {
+    status: "unreadable",
+    reason: "memory store not built yet (daemon still starting)",
+  } as const;
   const lateAssembler: ContextAssembler = {
-    pinnedHead: () => (memoryAssembler ? memoryAssembler.pinnedHead() : Promise.resolve(notBuiltYet)),
-    contextBlock: (q, o) => (memoryAssembler ? memoryAssembler.contextBlock(q, o) : Promise.resolve(notBuiltYet)),
+    pinnedHead: () =>
+      memoryAssembler ? memoryAssembler.pinnedHead() : Promise.resolve(notBuiltYet),
+    contextBlock: (q, o) =>
+      memoryAssembler ? memoryAssembler.contextBlock(q, o) : Promise.resolve(notBuiltYet),
   };
 
   // the profile-selected ecosystem seam, loaded ONCE at assembly (a
@@ -458,7 +511,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     );
   // The recheck's own template — a nudge, not a round order.
   const renderRecheck = (order: RecheckOrder): string =>
-    renderRecheckPrompt(readFileSync(join(root, "prompts", RECHECK_TEMPLATE_FILE), "utf8"), order, identity);
+    renderRecheckPrompt(
+      readFileSync(join(root, "prompts", RECHECK_TEMPLATE_FILE), "utf8"),
+      order,
+      identity,
+    );
 
   let eod: EodTimer | null = null;
   let pinWatch: ReturnType<typeof startEodPinWatch> | null = null;
@@ -541,7 +598,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     // touched first-party directive files at the round's merge base, read from
     // the base clone; the daemon's own bot identity never qualifies.
     directiveAuthor: (sha, paths) =>
-      sessions.worktrees.lastHumanAuthor(sha, paths, { botLogins: [cfg.github.bot_login, cfg.github.app_slug] }),
+      sessions.worktrees.lastHumanAuthor(sha, paths, {
+        botLogins: [cfg.github.bot_login, cfg.github.app_slug],
+      }),
     log,
     // Lazy on purpose: the Slack subsystem is built in onStart, after the
     // store exists. Off ⇒ this resolves undefined forever and dispatch/verdicts
@@ -584,7 +643,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           const store = memoryStore;
           if (!store?.ensureWritable) return;
           void store.ensureWritable().then(
-            (res) => log(`openviking ready: memory root ${res.ok ? "ready" : "NOT ready"} — ${res.message}`),
+            (res) =>
+              log(
+                `openviking ready: memory root ${res.ok ? "ready" : "NOT ready"} — ${res.message}`,
+              ),
             (err) => log("openviking ready: memory root check failed", err),
           );
         },
@@ -638,7 +700,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           vars: identity,
           addenda: [...PASS_ADDENDA, ...profileAddenda, ...(fb ? [fb] : [])],
         });
-        log(`built ${built.length} pass agents into state/agents${fb ? " (+ same-day feedback addendum)" : ""}`);
+        log(
+          `built ${built.length} pass agents into state/agents${fb ? " (+ same-day feedback addendum)" : ""}`,
+        );
       };
       rebuildAgents();
       // Reviewer memory: the ONE daemon-side `MemoryStore`, over the
@@ -661,7 +725,13 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         cacheTtlMs: cfg.openviking.read_cache_ttl_ms,
         log,
       });
-      feedback = new FeedbackEngine({ store: d.store, timezone: cfg.ops.timezone, rebuildAgents, memory, log });
+      feedback = new FeedbackEngine({
+        store: d.store,
+        timezone: cfg.ops.timezone,
+        rebuildAgents,
+        memory,
+        log,
+      });
       memoryStore = memory;
       memoryAssembler = openVikingContextAssembler({
         client: memoryClient,
@@ -676,15 +746,25 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       });
 
       // Adopt live sessions + sweep stale worktrees (never kills a live session).
-      const active = d.store.allPrs().filter((p) => p.state !== "closed").map((p) => p.number);
+      const active = d.store
+        .allPrs()
+        .filter((p) => p.state !== "closed")
+        .map((p) => p.number);
       const pre = await sessions.preflight(active);
-      log(`preflight: adopted=${pre.adoption.adopted.join(",") || "none"} swept-worktrees=${pre.sweptWorktrees.join(",") || "none"}`);
+      log(
+        `preflight: adopted=${pre.adoption.adopted.join(",") || "none"} swept-worktrees=${pre.sweptWorktrees.join(",") || "none"}`,
+      );
 
       // Rounds still marked running whose session did not survive the restart
       // are phantoms: cancel them, requeue the ones whose work was truly lost.
-      const orphans = reconcileOrphanedRounds(d.store, pre.adoption.prs, { botLogin: cfg.github.bot_login, log });
+      const orphans = reconcileOrphanedRounds(d.store, pre.adoption.prs, {
+        botLogin: cfg.github.bot_login,
+        log,
+      });
       if (orphans.cancelled.length) {
-        log(`startup: cancelled orphaned rounds on #${orphans.cancelled.join(", #")}; requeued ${orphans.requeued.length}`);
+        log(
+          `startup: cancelled orphaned rounds on #${orphans.cancelled.join(", #")}; requeued ${orphans.requeued.length}`,
+        );
       }
 
       // The overseer must exist from boot — lazily spawning it on the first
@@ -697,7 +777,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       }
 
       // Overseer command files → validated execution (whitelist + caps).
-      const leverDeps: LeverDeps = { store: d.store, levers: cfg.levers, timezone: cfg.ops.timezone };
+      const leverDeps: LeverDeps = {
+        store: d.store,
+        levers: cfg.levers,
+        timezone: cfg.ops.timezone,
+      };
       const commandDeps: CommandDeps = {
         async rerunRound(pr) {
           return recoverPrForOperator({ store: d.store, pump: () => d.pump() }, pr, "rerun-round");
@@ -707,23 +791,32 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             const name = await sessions.rotateOverseer();
             return { ok: true, respawned: name };
           }
-          return recoverPrForOperator({
-            store: d.store,
-            pump: () => d.pump(),
-            killSession: async (pr) => {
-              const name = `pr-${pr}`;
-              if (await sessions.tmux.hasSession(name)) await sessions.tmux.killSession(name);
-              if (await sessions.tmux.hasSession(name)) {
-                throw new Error(`session ${name} survived operator restart; refusing ownership reset`);
-              }
+          return recoverPrForOperator(
+            {
+              store: d.store,
+              pump: () => d.pump(),
+              killSession: async (pr) => {
+                const name = `pr-${pr}`;
+                if (await sessions.tmux.hasSession(name)) await sessions.tmux.killSession(name);
+                if (await sessions.tmux.hasSession(name)) {
+                  throw new Error(
+                    `session ${name} survived operator restart; refusing ownership reset`,
+                  );
+                }
+              },
             },
-          }, target, "restart-session");
+            target,
+            "restart-session",
+          );
         },
         resolveTerminalFailure(payload) {
-          return resolveTerminalFailure({
-            store: d.store,
-            getPrDisposition: (pr) => adapter.getPrDisposition(pr),
-          }, payload);
+          return resolveTerminalFailure(
+            {
+              store: d.store,
+              getPrDisposition: (pr) => adapter.getPrDisposition(pr),
+            },
+            payload,
+          );
         },
         // The two bounded levers: who is asking comes from the
         // watcher's channel, and a session's hold is capped, budgeted and
@@ -777,22 +870,34 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // tier-checked command dir, the socket, and every unprompted post. It is
       // started BEFORE the legacy watcher because that watcher borrows two
       // things from it: the reply handler and the origin lookup.
-      slack = (await startSlack({
-        cfg,
-        root,
-        store: d.store,
-        commandDeps,
-        injectOverseerFile: (m) => sessions.injectOverseerFile(m),
-        injectOverseer: (m) => wakeOverseerAsDaemon("slack-anomaly", m),
-        origins,
-        log,
-        version: packageVersion(root),
-      })) ?? null;
+      slack =
+        (await startSlack({
+          cfg,
+          root,
+          store: d.store,
+          commandDeps,
+          injectOverseerFile: (m) => sessions.injectOverseerFile(m),
+          injectOverseer: (m) => wakeOverseerAsDaemon("slack-anomaly", m),
+          origins,
+          log,
+          version: packageVersion(root),
+        })) ?? null;
       if (slack) log("slack: concierge live (socket mode; commands/slack tier-checked)");
 
-      commands = buildLocalCommandWatcher({ root, deps: commandDeps, store: d.store, slack, log: (l) => log(l) });
+      commands = buildLocalCommandWatcher({
+        root,
+        deps: commandDeps,
+        store: d.store,
+        slack,
+        log: (l) => log(l),
+      });
       await commands.start();
-      operatorCommands = buildOperatorCommandWatcher({ root, deps: commandDeps, store: d.store, log: (l) => log(l) });
+      operatorCommands = buildOperatorCommandWatcher({
+        root,
+        deps: commandDeps,
+        store: d.store,
+        log: (l) => log(l),
+      });
       await operatorCommands.start();
 
       // Webhook-URL self-heal: only under the tunnel-file ingress
@@ -819,16 +924,18 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // anomaly on any change. It WRAPS the inject rather than hooking inside
       // the timer, so a broken watchdog can never skip the sweep.
       const store = memoryStore;
-      pinWatch = cfg.eod.pinned_watchdog && store
-        ? startEodPinWatch({
-            readPinned: async () => (await store.read()).filter((e) => e.pinned),
-            logAnomaly: (kind, pr, reason, detail, injectMessage) => d.store.logAnomaly(kind, pr, reason, detail, injectMessage),
-            timeZone: cfg.eod.timezone,
-            digestReady: (date) => existsSync(join(root, "state", "digest", `${date}.md`)),
-            windowMin: cfg.eod.pinned_watchdog_window_min,
-            log,
-          })
-        : null;
+      pinWatch =
+        cfg.eod.pinned_watchdog && store
+          ? startEodPinWatch({
+              readPinned: async () => (await store.read()).filter((e) => e.pinned),
+              logAnomaly: (kind, pr, reason, detail, injectMessage) =>
+                d.store.logAnomaly(kind, pr, reason, detail, injectMessage),
+              timeZone: cfg.eod.timezone,
+              digestReady: (date) => existsSync(join(root, "state", "digest", `${date}.md`)),
+              windowMin: cfg.eod.pinned_watchdog_window_min,
+              log,
+            })
+          : null;
       const injectEod = async (m: string): Promise<void> => {
         await wakeOverseerAsDaemon("eod-sweep", m);
       };
@@ -870,9 +977,12 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
 
       // Weekly overseer rotation, checked hourly.
       const rotation = setInterval(() => {
-        void sessions.rotateOverseerIfDue().then((rotated) => {
-          if (rotated) log("overseer rotated (weekly)");
-        }).catch((err) => log("overseer rotation failed", err));
+        void sessions
+          .rotateOverseerIfDue()
+          .then((rotated) => {
+            if (rotated) log("overseer rotated (weekly)");
+          })
+          .catch((err) => log("overseer rotation failed", err));
       }, 3600_000);
       rotation.unref?.();
 

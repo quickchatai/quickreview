@@ -13,7 +13,11 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { OnboardingEngine, type OnboardAdapters, type ProcessResult } from "../src/onboard/engine.js";
+import {
+  OnboardingEngine,
+  type OnboardAdapters,
+  type ProcessResult,
+} from "../src/onboard/engine.js";
 import {
   SSH_BATCH_OPTS,
   SSH_PREFLIGHT_STEP_ID,
@@ -55,7 +59,13 @@ interface Harness {
 
 const OK = (stdout = ""): ProcessResult => ({ code: 0, stdout, stderr: "" });
 
-function harness(f: Fakes = {}, choices: Record<string, unknown> = { [TOPOLOGY_CHOICE_KEY]: "vm", [SSH_ALIAS_CHOICE_KEY]: "review-box" }): Harness {
+function harness(
+  f: Fakes = {},
+  choices: Record<string, unknown> = {
+    [TOPOLOGY_CHOICE_KEY]: "vm",
+    [SSH_ALIAS_CHOICE_KEY]: "review-box",
+  },
+): Harness {
   const calls: string[][] = [];
   const runner = {
     run: async (cmd: string, args: string[]): Promise<ProcessResult> => {
@@ -64,7 +74,8 @@ function harness(f: Fakes = {}, choices: Record<string, unknown> = { [TOPOLOGY_C
       if (cmd === "ssh-add") return f.agent ?? OK("256 SHA256:abc you@laptop (ED25519)");
       if (cmd !== "ssh") return { code: 127, stdout: "", stderr: `unexpected ${cmd}` };
       if (f.sshMissing) return { code: 127, stdout: "", stderr: "ssh: command not found" };
-      if (args[0] === "-V") return f.config === undefined ? OK("OpenSSH_9.6p1") : OK("OpenSSH_9.6p1");
+      if (args[0] === "-V")
+        return f.config === undefined ? OK("OpenSSH_9.6p1") : OK("OpenSSH_9.6p1");
       if (args[0] === "-G") return f.config ?? OK("hostname 10.0.0.5\nuser deploy\nport 22\n");
       if (args.join(" ").endsWith("sudo -n true")) return f.sudo ?? OK();
       return f.connect ?? OK();
@@ -80,19 +91,27 @@ function harness(f: Fakes = {}, choices: Record<string, unknown> = { [TOPOLOGY_C
     paths: { stateDir: join(root, "state") },
   };
   const engine = new OnboardingEngine([sshPreflightStep()], adapters);
-  (engine as unknown as { checklist: { choices: Record<string, unknown> } }).checklist.choices = choices;
+  (engine as unknown as { checklist: { choices: Record<string, unknown> } }).checklist.choices =
+    choices;
   return { engine, calls };
 }
 
 describe("BatchMode is structural, not a promise", () => {
   it("the one ssh builder always carries BatchMode and a connect timeout", () => {
     expect(SSH_BATCH_OPTS).toContain("BatchMode=yes");
-    expect(sshArgv("review-box", ["true"])).toEqual(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "review-box", "true"]);
+    expect(sshArgv("review-box", ["true"])).toEqual([
+      "-o",
+      "BatchMode=yes",
+      "-o",
+      "ConnectTimeout=10",
+      "review-box",
+      "true",
+    ]);
     // Remote argv is quoted into one command string, because ssh hands it to a
     // remote shell rather than execing it.
-    expect(sshArgv("review-box", ["sudo", "docker", "ps", "--format", "{{.Names}} {{.State}}"]).at(-1)).toBe(
-      "sudo docker ps --format '{{.Names}} {{.State}}'",
-    );
+    expect(
+      sshArgv("review-box", ["sudo", "docker", "ps", "--format", "{{.Names}} {{.State}}"]).at(-1),
+    ).toBe("sudo docker ps --format '{{.Names}} {{.State}}'");
   });
 
   it("every ssh the step runs has it — the probe, and the sudo check", async () => {
@@ -109,17 +128,28 @@ describe("the happy path", () => {
     const h = harness();
     const result = await h.engine.runStep(SSH_PREFLIGHT_STEP_ID);
     expect(result.ok).toBe(true);
-    expect(result.checks.map((c) => c.name)).toEqual(["ssh-binary", "alias", "ssh-agent", "connection", "remote-sudo", "ansible"]);
+    expect(result.checks.map((c) => c.name)).toEqual([
+      "ssh-binary",
+      "alias",
+      "ssh-agent",
+      "connection",
+      "remote-sudo",
+      "ansible",
+    ]);
     expect(result.checks.find((c) => c.name === "alias")!.detail).toMatch(/deploy@10\.0\.0\.5:22/);
     expect(h.engine.choices()[SSH_USER_CHOICE_KEY]).toBe("deploy");
-    expect(result.checks.find((c) => c.name === "connection")!.detail).toMatch(/without prompting for anything/);
+    expect(result.checks.find((c) => c.name === "connection")!.detail).toMatch(
+      /without prompting for anything/,
+    );
   });
 
   it("a key with no passphrase and no agent is fine — the connection decides, not the agent", async () => {
     const h = harness({ agent: { code: 1, stdout: "", stderr: "The agent has no identities." } });
     const result = await h.engine.runStep(SSH_PREFLIGHT_STEP_ID);
     expect(result.ok).toBe(true);
-    expect(result.checks.find((c) => c.name === "ssh-agent")!.detail).toMatch(/no passphrase and needs no agent/);
+    expect(result.checks.find((c) => c.name === "ssh-agent")!.detail).toMatch(
+      /no passphrase and needs no agent/,
+    );
   });
 });
 
@@ -143,7 +173,11 @@ describe("a missing key: the passphrase trap, in the open", () => {
 
   it("no agent at all also gets the ssh-agent line", async () => {
     const h = harness({
-      agent: { code: 2, stdout: "", stderr: "Could not open a connection to your authentication agent." },
+      agent: {
+        code: 2,
+        stdout: "",
+        stderr: "Could not open a connection to your authentication agent.",
+      },
       connect: { code: 255, stdout: "", stderr: "Permission denied (publickey)." },
     });
     const result = await h.engine.runStep(SSH_PREFLIGHT_STEP_ID);
@@ -151,7 +185,9 @@ describe("a missing key: the passphrase trap, in the open", () => {
   });
 
   it("a LOADED key that the server rejects gets a different remedy — the public half is not there", async () => {
-    const h = harness({ connect: { code: 255, stdout: "", stderr: "Permission denied (publickey)." } });
+    const h = harness({
+      connect: { code: 255, stdout: "", stderr: "Permission denied (publickey)." },
+    });
     const said = (await h.engine.runStep(SSH_PREFLIGHT_STEP_ID)).failures.join(" ");
     expect(said).toMatch(/authorized_keys/);
     expect(said).toMatch(/ssh-copy-id review-box/);
@@ -161,7 +197,13 @@ describe("a missing key: the passphrase trap, in the open", () => {
 
 describe("a dead alias", () => {
   it("an unresolvable name says so and points at ssh -G", async () => {
-    const h = harness({ connect: { code: 255, stdout: "", stderr: "ssh: Could not resolve hostname review-box: Name or service not known" } });
+    const h = harness({
+      connect: {
+        code: 255,
+        stdout: "",
+        stderr: "ssh: Could not resolve hostname review-box: Name or service not known",
+      },
+    });
     const result = await h.engine.runStep(SSH_PREFLIGHT_STEP_ID);
     expect(result.ok).toBe(false);
     expect(result.failures.join(" ")).toMatch(/cannot resolve "review-box" at all/);
@@ -169,7 +211,13 @@ describe("a dead alias", () => {
   });
 
   it("a broken ~/.ssh/config stops at the alias check, before anything connects", async () => {
-    const h = harness({ config: { code: 255, stdout: "", stderr: "/home/you/.ssh/config: line 3: Bad configuration option" } });
+    const h = harness({
+      config: {
+        code: 255,
+        stdout: "",
+        stderr: "/home/you/.ssh/config: line 3: Bad configuration option",
+      },
+    });
     const result = await h.engine.runStep(SSH_PREFLIGHT_STEP_ID);
     expect(result.ok).toBe(false);
     expect(result.checks.map((c) => c.name)).toEqual(["ssh-binary", "alias"]);
@@ -177,12 +225,22 @@ describe("a dead alias", () => {
   });
 
   it("an unreachable box is a timeout, not an auth problem", async () => {
-    const h = harness({ connect: { code: 255, stdout: "", stderr: "ssh: connect to host review-box port 22: Connection timed out" } });
-    expect((await h.engine.runStep(SSH_PREFLIGHT_STEP_ID)).failures.join(" ")).toMatch(/timed out.*is the machine up/s);
+    const h = harness({
+      connect: {
+        code: 255,
+        stdout: "",
+        stderr: "ssh: connect to host review-box port 22: Connection timed out",
+      },
+    });
+    expect((await h.engine.runStep(SSH_PREFLIGHT_STEP_ID)).failures.join(" ")).toMatch(
+      /timed out.*is the machine up/s,
+    );
   });
 
   it("an unaccepted host key is refused deliberately, with the one-time fix", async () => {
-    const h = harness({ connect: { code: 255, stdout: "", stderr: "Host key verification failed." } });
+    const h = harness({
+      connect: { code: 255, stdout: "", stderr: "Host key verification failed." },
+    });
     const said = (await h.engine.runStep(SSH_PREFLIGHT_STEP_ID)).failures.join(" ");
     expect(said).toMatch(/refused on the host key/);
     expect(said).toMatch(/ssh review-box true/);
@@ -229,9 +287,13 @@ describe("the rest of the route's prerequisites", () => {
 
 describe("the pure helpers", () => {
   it("parseSshAddList reads all three of ssh-add's answers", () => {
-    expect(parseSshAddList(0, "256 SHA256:a you@x (ED25519)\n256 SHA256:b you@y (RSA)\n", "")).toMatchObject({ kind: "keys", count: 2 });
+    expect(
+      parseSshAddList(0, "256 SHA256:a you@x (ED25519)\n256 SHA256:b you@y (RSA)\n", ""),
+    ).toMatchObject({ kind: "keys", count: 2 });
     expect(parseSshAddList(1, "", "The agent has no identities.").kind).toBe("empty");
-    expect(parseSshAddList(2, "", "Could not open a connection to your authentication agent.").kind).toBe("no-agent");
+    expect(
+      parseSshAddList(2, "", "Could not open a connection to your authentication agent.").kind,
+    ).toBe("no-agent");
     expect(parseSshAddList(9, "", "something else").kind).toBe("unknown");
   });
 
@@ -245,16 +307,22 @@ describe("the pure helpers", () => {
   });
 
   it("connectionAdvice never tells the operator the wizard will type their passphrase", () => {
-    const advice = connectionAdvice("auth", { kind: "empty", count: 0, detail: "the agent is running but holds no keys" }, "review-box");
+    const advice = connectionAdvice(
+      "auth",
+      { kind: "empty", count: 0, detail: "the agent is running but holds no keys" },
+      "review-box",
+    );
     expect(advice).toMatch(/must never try to type into it/);
   });
 
   it("parseSshConfig takes the FIRST value of each key, the way ssh does", () => {
-    expect(parseSshConfig("hostname 10.0.0.5\nhostname ignored\nuser deploy\nport 2222\n")).toEqual({
-      hostname: "10.0.0.5",
-      user: "deploy",
-      port: "2222",
-    });
+    expect(parseSshConfig("hostname 10.0.0.5\nhostname ignored\nuser deploy\nport 2222\n")).toEqual(
+      {
+        hostname: "10.0.0.5",
+        user: "deploy",
+        port: "2222",
+      },
+    );
     expect(parseSshConfig("")).toEqual({ hostname: "", user: "", port: "" });
   });
 });

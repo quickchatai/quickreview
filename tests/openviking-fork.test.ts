@@ -108,7 +108,14 @@ describe("provenance and licence", () => {
 
 describe("PATCH 1 — ledger-pin is the sole owner of compaction", () => {
   it("registers no session_before_compact handler anywhere in the fork", () => {
-    for (const file of ["index.ts", "config.ts", "client.ts", "sync.ts", "tools.ts", "takeover.ts"]) {
+    for (const file of [
+      "index.ts",
+      "config.ts",
+      "client.ts",
+      "sync.ts",
+      "tools.ts",
+      "takeover.ts",
+    ]) {
       // The identifier still appears in index.ts's tombstone comment; a
       // REGISTRATION is what must not.
       expect(code(file)).not.toMatch(/pi\.on\(\s*["'`]session_before_compact/);
@@ -133,27 +140,47 @@ describe("PATCH 2 — no ambient work in a subagent leaf", () => {
   // The retired third-party extension's child argv (kept: an older container
   // may still run it, and the detector must keep reading it as a leaf).
   const LEGACY_SUBAGENT_ARGV = [
-    "/usr/bin/node", "/opt/pi/index.js",
-    "--mode", "json", "-p", "--no-session", "--no-skills", "--no-extensions",
+    "/usr/bin/node",
+    "/opt/pi/index.js",
+    "--mode",
+    "json",
+    "-p",
+    "--no-session",
+    "--no-skills",
+    "--no-extensions",
   ];
   // pi's NATIVE subagent extension's child argv (read statically
   // from the pinned 0.84.4 tarball's examples/extensions/subagent/index.ts:
   // no --no-skills, no --no-extensions — but -p / --no-session / --mode json
   // are all present, and any one of them is enough).
   const NATIVE_SUBAGENT_ARGV = [
-    "/usr/bin/node", "/opt/pi/index.js",
-    "--mode", "json", "-p", "--no-session",
-    "--model", "openai-codex/gpt-5.6-sol:high",
-    "--tools", "read,grep,find,ls,viking_search,viking_read",
+    "/usr/bin/node",
+    "/opt/pi/index.js",
+    "--mode",
+    "json",
+    "-p",
+    "--no-session",
+    "--model",
+    "openai-codex/gpt-5.6-sol:high",
+    "--tools",
+    "read,grep,find,ls,viking_search,viking_read",
   ];
   const SHEPHERD_ARGV = [
-    "/usr/bin/node", "/opt/pi/index.js",
-    "--approve", "--model", "openai-codex/gpt-5.6-sol",
-    "--session-dir", "/opt/quickreview/state/pi-sessions/pr-42",
-    "--system-prompt", "/opt/quickreview/state/session-prompts/pr-42.md",
-    "--theme", "/opt/quickreview/extensions/muted-theme.json",
-    "--extension", "/opt/quickreview/extensions/ledger-pin.ts",
-    "--name", "pr-42",
+    "/usr/bin/node",
+    "/opt/pi/index.js",
+    "--approve",
+    "--model",
+    "openai-codex/gpt-5.6-sol",
+    "--session-dir",
+    "/opt/quickreview/state/pi-sessions/pr-42",
+    "--system-prompt",
+    "/opt/quickreview/state/session-prompts/pr-42.md",
+    "--theme",
+    "/opt/quickreview/extensions/muted-theme.json",
+    "--extension",
+    "/opt/quickreview/extensions/ledger-pin.ts",
+    "--name",
+    "pr-42",
   ];
 
   it("reads a subagent child argv as a leaf — native and legacy shapes both", () => {
@@ -170,11 +197,13 @@ describe("PATCH 2 — no ambient work in a subagent leaf", () => {
     expect(isLeafProcess(SHEPHERD_ARGV, {})).toBe(false);
     // ...even with the OpenViking env a leaf would have inherited. This is
     // the whole reason detection is argv-based.
-    expect(isLeafProcess(SHEPHERD_ARGV, {
-      OPENVIKING_SESSION_ID: "pr-42",
-      OPENVIKING_PEER_ID: "pr-42",
-      OPENVIKING_API_KEY: "k",
-    })).toBe(false);
+    expect(
+      isLeafProcess(SHEPHERD_ARGV, {
+        OPENVIKING_SESSION_ID: "pr-42",
+        OPENVIKING_PEER_ID: "pr-42",
+        OPENVIKING_API_KEY: "k",
+      }),
+    ).toBe(false);
   });
 
   it("can be forced to leaf by env, but never forced to main", () => {
@@ -293,7 +322,12 @@ describe("PATCH 4 — viking_write is the one durable write", () => {
   it("sends replace_if_hash when given one, in the sha256: form the server wants", () => {
     const hex = "a".repeat(64);
     for (const given of [hex, `sha256:${hex}`, `SHA256:${hex.toUpperCase()}`]) {
-      const built = buildWriteRequest({ uri: URI, content: "x", mode: "replace", expect_hash: given });
+      const built = buildWriteRequest({
+        uri: URI,
+        content: "x",
+        mode: "replace",
+        expect_hash: given,
+      });
       expect(built.ok).toBe(true);
       if (!built.ok) return;
       expect(built.request.operations[0]!.precondition).toEqual({
@@ -305,7 +339,11 @@ describe("PATCH 4 — viking_write is the one durable write", () => {
   });
 
   it("renders tags into the body and normalizes them", () => {
-    const built = buildWriteRequest({ uri: URI, content: "A lesson.", tags: ["#Pinned", "review-ops", "pinned"] });
+    const built = buildWriteRequest({
+      uri: URI,
+      content: "A lesson.",
+      tags: ["#Pinned", "review-ops", "pinned"],
+    });
     expect(built.ok).toBe(true);
     if (!built.ok) return;
     expect(built.tags).toEqual(["pinned", "review-ops"]);
@@ -350,13 +388,28 @@ describe("PATCH 4 — viking_write is the one durable write", () => {
         status: 409,
         json: async () => ({
           status: "error",
-          error: { code: "CONFLICT", message: "Batch write replace precondition failed; content hash changed." },
+          error: {
+            code: "CONFLICT",
+            message: "Batch write replace precondition failed; content hash changed.",
+          },
         }),
       } as any;
     }) as any;
     try {
-      const client = new OVClient({ endpoint: "http://127.0.0.1:1933", apiKey: "", account: "", user: "", peerId: "", userAgent: "" } as any);
-      const built = buildWriteRequest({ uri: URI, content: "x", mode: "replace", expect_hash: "b".repeat(64) });
+      const client = new OVClient({
+        endpoint: "http://127.0.0.1:1933",
+        apiKey: "",
+        account: "",
+        user: "",
+        peerId: "",
+        userAgent: "",
+      } as any);
+      const built = buildWriteRequest({
+        uri: URI,
+        content: "x",
+        mode: "replace",
+        expect_hash: "b".repeat(64),
+      });
       expect(built.ok).toBe(true);
       if (!built.ok) return;
       const res = await client.batchWrite(built.request);
@@ -392,19 +445,26 @@ describe("PATCH 5 — a second memory namespace, and only where it belongs", () 
       ]);
       // The user name is a deployment fact, so it is overridable.
       expect(
-        resolveExtraNamespaces(COMPANION, { [REVIEWER_KEY_ENV]: "rk", [REVIEWER_USER_ENV]: "Reviewer2" })[0]!.user,
+        resolveExtraNamespaces(COMPANION, {
+          [REVIEWER_KEY_ENV]: "rk",
+          [REVIEWER_USER_ENV]: "Reviewer2",
+        })[0]!.user,
       ).toBe("reviewer2");
     });
 
     it("gives a LEAF nothing — PATCH 2/4 are not routed around", () => {
-      expect(resolveExtraNamespaces(COMPANION, { [REVIEWER_KEY_ENV]: "rk" }, { leaf: true })).toEqual([]);
+      expect(
+        resolveExtraNamespaces(COMPANION, { [REVIEWER_KEY_ENV]: "rk" }, { leaf: true }),
+      ).toEqual([]);
     });
 
     it("gives a REVIEW SESSION nothing — its own identity already is reviewer", () => {
       // src/sessions.ts launches every pi with OPENVIKING_USER=reviewer and
       // never puts OPENVIKING_REVIEWER_KEY in the env; even if it did, a
       // namespace equal to our own is not a second namespace.
-      expect(resolveExtraNamespaces({ user: "reviewer" }, { [REVIEWER_KEY_ENV]: "rk" })).toEqual([]);
+      expect(resolveExtraNamespaces({ user: "reviewer" }, { [REVIEWER_KEY_ENV]: "rk" })).toEqual(
+        [],
+      );
     });
 
     it("puts the SECOND key through the same root-key guard as the first", () => {
@@ -413,12 +473,17 @@ describe("PATCH 5 — a second memory namespace, and only where it belongs", () 
       // The whole reason withoutRootKey exists: the container's ~/.openviking
       // is a symlink onto the state volume holding the SERVER's ov.conf.
       expect(resolveExtraNamespaces(COMPANION, env)).toEqual([]);
-      expect(resolveExtraNamespaces(COMPANION, { ...env, [REVIEWER_KEY_ENV]: "user-key" })).toHaveLength(1);
+      expect(
+        resolveExtraNamespaces(COMPANION, { ...env, [REVIEWER_KEY_ENV]: "user-key" }),
+      ).toHaveLength(1);
       // …and directly, since a caller could hold a credential of any shape.
-      expect(withoutRootKey({ apiKey: "ROOT-KEY", hasApiKey: true }, { OPENVIKING_CONFIG_FILE: path }))
-        .toEqual({ apiKey: "", hasApiKey: false });
-      expect(withoutRootKey({ apiKey: "user-key", hasApiKey: true }, { OPENVIKING_CONFIG_FILE: path }).apiKey)
-        .toBe("user-key");
+      expect(
+        withoutRootKey({ apiKey: "ROOT-KEY", hasApiKey: true }, { OPENVIKING_CONFIG_FILE: path }),
+      ).toEqual({ apiKey: "", hasApiKey: false });
+      expect(
+        withoutRootKey({ apiKey: "user-key", hasApiKey: true }, { OPENVIKING_CONFIG_FILE: path })
+          .apiKey,
+      ).toBe("user-key");
     });
 
     it("resolves the guard through config.ts rather than re-implementing it", () => {
@@ -432,7 +497,7 @@ describe("PATCH 5 — a second memory namespace, and only where it belongs", () 
     it("is a constant with one namespace — every review session is unchanged", () => {
       for (const params of [
         {},
-        { uri: "viking://user/memories/notes.md" },       // reserved-word form
+        { uri: "viking://user/memories/notes.md" }, // reserved-word form
         { uri: "viking://user/companion/memories/x.md" }, // a tree we cannot reach
         { namespace: "nonsense" },
       ]) {
@@ -443,14 +508,26 @@ describe("PATCH 5 — a second memory namespace, and only where it belongs", () 
 
     it("defaults to our own namespace, which is names[0]", () => {
       expect(routeNamespace({}, TWO)).toEqual({ ok: true, namespace: "companion" });
-      expect(routeNamespace({ uri: "viking://user/memories/x.md" }, TWO)).toEqual({ ok: true, namespace: "companion" });
+      expect(routeNamespace({ uri: "viking://user/memories/x.md" }, TWO)).toEqual({
+        ok: true,
+        namespace: "companion",
+      });
     });
 
     it("takes the namespace from the parameter or from the URI", () => {
-      expect(routeNamespace({ namespace: "reviewer" }, TWO)).toEqual({ ok: true, namespace: "reviewer" });
-      expect(routeNamespace({ uri: "viking://user/reviewer/memories/x.md" }, TWO)).toEqual({ ok: true, namespace: "reviewer" });
+      expect(routeNamespace({ namespace: "reviewer" }, TWO)).toEqual({
+        ok: true,
+        namespace: "reviewer",
+      });
+      expect(routeNamespace({ uri: "viking://user/reviewer/memories/x.md" }, TWO)).toEqual({
+        ok: true,
+        namespace: "reviewer",
+      });
       // viking_search carries its URI in `scope`.
-      expect(routeNamespace({ scope: "viking://user/reviewer/memories/" }, TWO)).toEqual({ ok: true, namespace: "reviewer" });
+      expect(routeNamespace({ scope: "viking://user/reviewer/memories/" }, TWO)).toEqual({
+        ok: true,
+        namespace: "reviewer",
+      });
       expect(namespaceOfUri("viking://user/Reviewer/memories/x.md")).toBe("reviewer");
       expect(namespaceOfUri("viking://session/pr-42")).toBeNull();
     });
@@ -479,7 +556,9 @@ describe("PATCH 5 — a second memory namespace, and only where it belongs", () 
       // The prefix and the parameter are both keyed off `multi`, so a
       // single-namespace pi (every review session) sees neither.
       expect(tools).toContain("multi ? `[${ns.name}] ${text}` : text");
-      expect(tools).toContain("multi\n    ? { namespace: Type.Optional(StringEnum(names)) }\n    : {}");
+      expect(tools).toContain(
+        "multi\n    ? { namespace: Type.Optional(StringEnum(names)) }\n    : {}",
+      );
       // Every namespace-aware tool takes it, and every one appends the note.
       expect(tools.match(/\.\.\.nsParam,/g)?.length ?? 0).toBe(4);
       expect(tools.match(/\+ nsNote,/g)?.length ?? 0).toBe(4);

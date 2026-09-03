@@ -67,7 +67,9 @@ function parseScope(raw: string, file: string): PassAddendumScope {
   if (names.length === 0) throw new Error(`profile addendum ${file}: empty scope`);
   for (const n of names) {
     if (!PASS_NAME_RE.test(n)) {
-      throw new Error(`profile addendum ${file}: unknown scope "${raw}" — use "all", "lenses", or a comma-separated list of pass names (pass-…)`);
+      throw new Error(
+        `profile addendum ${file}: unknown scope "${raw}" — use "all", "lenses", or a comma-separated list of pass names (pass-…)`,
+      );
     }
   }
   return names;
@@ -84,17 +86,23 @@ export function parseProfileAddendum(file: string, raw: string): PassAddendum {
   for (const line of doc.frontmatter.split("\n")) {
     if (line.trim() === "") continue;
     const m = /^(id|scope):[ \t]*(.+?)[ \t]*$/.exec(line);
-    if (!m) throw new Error(`profile addendum ${file}: unrecognized frontmatter line "${line}" — only "id:" and "scope:" are allowed`);
+    if (!m)
+      throw new Error(
+        `profile addendum ${file}: unrecognized frontmatter line "${line}" — only "id:" and "scope:" are allowed`,
+      );
     const key = m[1] as string;
     const value = m[2] as string;
-    if (fields.has(key)) throw new Error(`profile addendum ${file}: duplicate frontmatter key "${key}"`);
+    if (fields.has(key))
+      throw new Error(`profile addendum ${file}: duplicate frontmatter key "${key}"`);
     fields.set(key, value);
   }
   const id = fields.get("id");
   if (id === undefined) throw new Error(`profile addendum ${file}: missing "id:" in frontmatter`);
-  if (!ID_RE.test(id)) throw new Error(`profile addendum ${file}: id "${id}" must be kebab-case ([a-z0-9-])`);
+  if (!ID_RE.test(id))
+    throw new Error(`profile addendum ${file}: id "${id}" must be kebab-case ([a-z0-9-])`);
   const rawScope = fields.get("scope");
-  if (rawScope === undefined) throw new Error(`profile addendum ${file}: missing "scope:" in frontmatter`);
+  if (rawScope === undefined)
+    throw new Error(`profile addendum ${file}: missing "scope:" in frontmatter`);
   const scope = parseScope(rawScope, file);
   if (doc.body.trim() === "") throw new Error(`profile addendum ${file}: empty body`);
   // "\n" + verbatim body: byte-compatible with the compiled-in constants,
@@ -137,9 +145,12 @@ export function loadProfileAddenda(root: string, profile: string): PassAddendum[
     const path = join(addendaDir, f);
     const entry = parseProfileAddendum(path, readFileSync(path, "utf8"));
     if (reserved.has(entry.id)) {
-      throw new Error(`profile addendum ${path}: id "${entry.id}" collides with a built-in registry entry`);
+      throw new Error(
+        `profile addendum ${path}: id "${entry.id}" collides with a built-in registry entry`,
+      );
     }
-    if (seen.has(entry.id)) throw new Error(`profile addendum ${path}: duplicate id "${entry.id}" within the pack`);
+    if (seen.has(entry.id))
+      throw new Error(`profile addendum ${path}: duplicate id "${entry.id}" within the pack`);
     seen.add(entry.id);
     loaded.push(entry);
   }
@@ -172,13 +183,17 @@ export function loadProfileEcosystem(root: string, profile: string): EcosystemNa
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === "ENOENT" || code === "ENOTDIR") return "none";
-    throw new Error(`[review] profile "${profile}": cannot read ${path}: ${String(err)}`);
+    throw new Error(`[review] profile "${profile}": cannot read ${path}: ${String(err)}`, {
+      cause: err,
+    });
   }
   let doc: Record<string, unknown>;
   try {
-    doc = parseToml(raw) as Record<string, unknown>;
+    doc = parseToml(raw);
   } catch (err) {
-    throw new Error(`[review] profile "${profile}": ${path} is not valid TOML: ${String(err)}`);
+    throw new Error(`[review] profile "${profile}": ${path} is not valid TOML: ${String(err)}`, {
+      cause: err,
+    });
   }
   const eco = doc["ecosystem"];
   if (eco === undefined) return "none";
@@ -222,23 +237,33 @@ export function loadProfileEcosystem(root: string, profile: string): EcosystemNa
 export function parseProfileHeuristics(file: string, raw: string): HeuristicsExtension {
   let doc: Record<string, unknown>;
   try {
-    doc = parseToml(raw) as Record<string, unknown>;
+    doc = parseToml(raw);
   } catch (err) {
-    throw new Error(`profile heuristics ${file}: not valid TOML — ${String(err instanceof Error ? err.message : err)}`);
+    throw new Error(
+      `profile heuristics ${file}: not valid TOML — ${String(err instanceof Error ? err.message : err)}`,
+      { cause: err },
+    );
   }
   const paths: Record<string, RegExp[]> = {};
   const addedLines: Record<string, RegExp[]> = {};
-  const compile = (lens: string, key: string, value: unknown, wrap: (src: string) => RegExp): RegExp[] => {
+  const compile = (
+    lens: string,
+    key: string,
+    value: unknown,
+    wrap: (src: string) => RegExp,
+  ): RegExp[] => {
     if (!Array.isArray(value) || value.some((v) => typeof v !== "string")) {
       throw new Error(`profile heuristics ${file}: [${lens}] ${key} must be an array of strings`);
     }
     return (value as string[]).map((src) => {
-      if (src.trim() === "") throw new Error(`profile heuristics ${file}: [${lens}] ${key} contains an empty pattern`);
+      if (src.trim() === "")
+        throw new Error(`profile heuristics ${file}: [${lens}] ${key} contains an empty pattern`);
       try {
         return wrap(src);
       } catch (err) {
         throw new Error(
           `profile heuristics ${file}: [${lens}] ${key} pattern ${JSON.stringify(src)} is not a valid RegExp — ${String(err instanceof Error ? err.message : err)}`,
+          { cause: err },
         );
       }
     });
@@ -252,7 +277,9 @@ export function parseProfileHeuristics(file: string, raw: string): HeuristicsExt
       );
     }
     if (typeof table !== "object" || table === null || Array.isArray(table)) {
-      throw new Error(`profile heuristics ${file}: [${lens}] must be a table with "paths" and/or "added_lines" arrays`);
+      throw new Error(
+        `profile heuristics ${file}: [${lens}] must be a table with "paths" and/or "added_lines" arrays`,
+      );
     }
     for (const [key, value] of Object.entries(table as Record<string, unknown>)) {
       if (key === "paths") {
@@ -267,7 +294,9 @@ export function parseProfileHeuristics(file: string, raw: string): HeuristicsExt
           return new RegExp(`^\\+.*(?:${src})`, "im");
         });
       } else {
-        throw new Error(`profile heuristics ${file}: [${lens}] unknown key "${key}" — only "paths" and "added_lines" are allowed`);
+        throw new Error(
+          `profile heuristics ${file}: [${lens}] unknown key "${key}" — only "paths" and "added_lines" are allowed`,
+        );
       }
     }
   }

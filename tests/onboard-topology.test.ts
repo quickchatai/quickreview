@@ -52,7 +52,11 @@ function engine(): OnboardingEngine {
 }
 
 function recordedChoices(): Record<string, unknown> {
-  return (JSON.parse(readFileSync(checklistPath(join(root, "state")), "utf8")) as { choices: Record<string, unknown> }).choices;
+  return (
+    JSON.parse(readFileSync(checklistPath(join(root, "state")), "utf8")) as {
+      choices: Record<string, unknown>;
+    }
+  ).choices;
 }
 
 describe("the offer", () => {
@@ -95,7 +99,10 @@ describe("recording the choice", () => {
   });
 
   it('"vm" with an alias records both, in the one place later steps read', async () => {
-    const result = await engine().runStep(TOPOLOGY_STEP_ID, { choice: "vm", ssh_host: "review-box" });
+    const result = await engine().runStep(TOPOLOGY_STEP_ID, {
+      choice: "vm",
+      ssh_host: "review-box",
+    });
     expect(result.ok).toBe(true);
     const choices = recordedChoices();
     expect(choices[TOPOLOGY_CHOICE_KEY]).toBe("vm");
@@ -138,9 +145,15 @@ describe("switching topology is explicit, never silent", () => {
   it("the confirmation phrase switches it, and says so", async () => {
     const e = engine();
     await e.runStep(TOPOLOGY_STEP_ID, { choice: "local" });
-    const result = await e.runStep(TOPOLOGY_STEP_ID, { choice: "vm", ssh_host: "review-box", confirm: TOPOLOGY_SWITCH_CONFIRMATION });
+    const result = await e.runStep(TOPOLOGY_STEP_ID, {
+      choice: "vm",
+      ssh_host: "review-box",
+      confirm: TOPOLOGY_SWITCH_CONFIRMATION,
+    });
     expect(result.ok).toBe(true);
-    expect(result.checks.find((c) => c.name === "switch")!.detail).toMatch(/switched from "local" to "vm"/);
+    expect(result.checks.find((c) => c.name === "switch")!.detail).toMatch(
+      /switched from "local" to "vm"/,
+    );
     expect(recordedChoices()[TOPOLOGY_CHOICE_KEY]).toBe("vm");
   });
 
@@ -162,12 +175,16 @@ describe("the recorded topology steers the whole checklist", () => {
       paths: { stateDir: join(root, "state") },
     });
     // Seed choices the way a completed topology step would have.
-    (e as unknown as { checklist: { choices: Record<string, unknown> } }).checklist.choices = choices;
+    (e as unknown as { checklist: { choices: Record<string, unknown> } }).checklist.choices =
+      choices;
     return Object.fromEntries(e.list().map((l) => [l.id, l.status]));
   };
 
   it("the compose bring-up is skipped on the server route, and the ssh route's steps on the laptop", () => {
-    const onVm = idsWithStatus({ [TOPOLOGY_CHOICE_KEY]: "vm", [SSH_ALIAS_CHOICE_KEY]: "review-box" });
+    const onVm = idsWithStatus({
+      [TOPOLOGY_CHOICE_KEY]: "vm",
+      [SSH_ALIAS_CHOICE_KEY]: "review-box",
+    });
     expect(onVm.bringup).toBe("disabled");
     expect(onVm[SSH_PREFLIGHT_STEP_ID]).toBe("pending");
     expect(onVm.vm_inventory).toBe("pending");
@@ -182,8 +199,18 @@ describe("the recorded topology steers the whole checklist", () => {
 
   it("verification, the proof round and the flip belong to BOTH routes — one implementation, not a copy", () => {
     for (const topology of ["local", "vm"]) {
-      const statuses = idsWithStatus({ [TOPOLOGY_CHOICE_KEY]: topology, [SSH_ALIAS_CHOICE_KEY]: "review-box" });
-      for (const id of ["memory", "memory_user_keys", "app_slug_reconcile", "verify_stack", "proof_round", "go_live"]) {
+      const statuses = idsWithStatus({
+        [TOPOLOGY_CHOICE_KEY]: topology,
+        [SSH_ALIAS_CHOICE_KEY]: "review-box",
+      });
+      for (const id of [
+        "memory",
+        "memory_user_keys",
+        "app_slug_reconcile",
+        "verify_stack",
+        "proof_round",
+        "go_live",
+      ]) {
         expect(statuses[id], `${id} on ${topology}`).not.toBe("disabled");
       }
     }

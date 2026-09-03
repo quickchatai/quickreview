@@ -18,7 +18,14 @@ import { TUI_DEFAULTS } from "../src/config.js";
 import type { StatusSnapshot } from "../src/state.js";
 import { App } from "../src/tui/app.js";
 import { CompanionLifecycle } from "../src/tui/companion.js";
-import { FeedWriter, SCREEN_MAX_CHARS, VIEW_MIN_INTERVAL_MS, buildTuiView, clampScreen, type TuiView } from "../src/tui/feed.js";
+import {
+  FeedWriter,
+  SCREEN_MAX_CHARS,
+  VIEW_MIN_INTERVAL_MS,
+  buildTuiView,
+  clampScreen,
+  type TuiView,
+} from "../src/tui/feed.js";
 import {
   STALE_AFTER_MS,
   TOOL_NAMES,
@@ -46,9 +53,33 @@ function snap(overrides: Partial<StatusSnapshot> = {}): StatusSnapshot {
     written_at: "2026-08-25T10:00:00Z",
     dry_run: false,
     prs: [
-      { number: 5012, state: "reviewing", title: "add a thing", head_sha: "abc1234", stale_recheck: false, rounds: 2, last_verdict: null },
-      { number: 5013, state: "queued", title: "another", head_sha: "def5678", stale_recheck: true, rounds: 0, last_verdict: null },
-      { number: 5014, state: "closed", title: "gone", head_sha: "0000000", stale_recheck: false, rounds: 1, last_verdict: "APPROVE" },
+      {
+        number: 5012,
+        state: "reviewing",
+        title: "add a thing",
+        head_sha: "abc1234",
+        stale_recheck: false,
+        rounds: 2,
+        last_verdict: null,
+      },
+      {
+        number: 5013,
+        state: "queued",
+        title: "another",
+        head_sha: "def5678",
+        stale_recheck: true,
+        rounds: 0,
+        last_verdict: null,
+      },
+      {
+        number: 5014,
+        state: "closed",
+        title: "gone",
+        head_sha: "0000000",
+        stale_recheck: false,
+        rounds: 1,
+        last_verdict: "APPROVE",
+      },
     ],
     running_rounds: 1,
     max_concurrent_rounds: 3,
@@ -96,7 +127,12 @@ describe("buildTuiView — the derived state behind the frame", () => {
   });
 
   it("summarises the board without copying it: counts by state, closed PRs excluded", () => {
-    const v = buildTuiView({ now: NOW, tab: "board", snapshot: snap(), health: { kind: "ok", heartbeatAgeS: 4 } });
+    const v = buildTuiView({
+      now: NOW,
+      tab: "board",
+      snapshot: snap(),
+      health: { kind: "ok", heartbeatAgeS: 4 },
+    });
     expect(v.board.total).toBe(2);
     expect(v.board.by_state).toEqual({ reviewing: 1, queued: 1, closed: 1 });
     expect(v.board.health).toBe("ok");
@@ -110,24 +146,61 @@ describe("buildTuiView — the derived state behind the frame", () => {
     const pipeline: NonNullable<StatusSnapshot["pipeline"]> = {
       healthy: false,
       failed_loud: 1,
-      causes: [{ key: "review-failure:cmd-1", pr: 5408, since: "2026-08-25T09:55:00Z", stage: "command_start", detail: "no start", next_action: "operator_unwedge" }],
-      recoveries: [{ key: "review-failure:cmd-0", pr: 5407, recovered_at: "2026-08-25T09:59:00Z", recovery: "operator-rerun" }],
+      causes: [
+        {
+          key: "review-failure:cmd-1",
+          pr: 5408,
+          since: "2026-08-25T09:55:00Z",
+          stage: "command_start",
+          detail: "no start",
+          next_action: "operator_unwedge",
+        },
+      ],
+      recoveries: [
+        {
+          key: "review-failure:cmd-0",
+          pr: 5407,
+          recovered_at: "2026-08-25T09:59:00Z",
+          recovery: "operator-rerun",
+        },
+      ],
     };
-    const v = buildTuiView({ now: NOW, tab: "board", snapshot: snap({ pipeline }), health: { kind: "pipeline_unhealthy", heartbeatAgeS: 4 } });
+    const v = buildTuiView({
+      now: NOW,
+      tab: "board",
+      snapshot: snap({ pipeline }),
+      health: { kind: "pipeline_unhealthy", heartbeatAgeS: 4 },
+    });
     expect(v.board.pipeline_healthy).toBe(false);
     expect(v.board.pipeline_causes).toEqual([{ key: "review-failure:cmd-1", pr: 5408 }]);
     expect(v.board.pipeline_recoveries).toEqual([{ key: "review-failure:cmd-0", pr: 5407 }]);
   });
 
   it("an unreachable daemon reports its kind and no bogus age", () => {
-    const v = buildTuiView({ now: NOW, tab: "board", health: { kind: "unreachable", sinceS: Number.POSITIVE_INFINITY } });
+    const v = buildTuiView({
+      now: NOW,
+      tab: "board",
+      health: { kind: "unreachable", sinceS: Number.POSITIVE_INFINITY },
+    });
     expect(v.board.health).toBe("unreachable");
     expect(v.board.health_stale_s).toBeUndefined();
   });
 
   it("carries the selected row — the shared referent when he says 'this one'", () => {
-    const v = buildTuiView({ now: NOW, tab: "board", snapshot: snap(), selectedPr: 5013, panePr: 5013, paneFocused: true });
-    expect(v.selected).toMatchObject({ number: 5013, title: "another", state: "queued", stale_recheck: true });
+    const v = buildTuiView({
+      now: NOW,
+      tab: "board",
+      snapshot: snap(),
+      selectedPr: 5013,
+      panePr: 5013,
+      paneFocused: true,
+    });
+    expect(v.selected).toMatchObject({
+      number: 5013,
+      title: "another",
+      state: "queued",
+      stale_recheck: true,
+    });
     expect(v.pane).toEqual({ pr: 5013, focused: true });
   });
 
@@ -146,7 +219,13 @@ describe("buildTuiView — the derived state behind the frame", () => {
 describe("a failed read reaches the companion as UNKNOWN, never as an absent line", () => {
   // The deploy tab loaded, but the VM never answered and local git failed:
   // every one of these is a fact the TUI tried to fetch and could not.
-  const UNREAD = { loaded: true, deployed: undefined, head: undefined, dirty: undefined, containerStatus: undefined };
+  const UNREAD = {
+    loaded: true,
+    deployed: undefined,
+    head: undefined,
+    dirty: undefined,
+    containerStatus: undefined,
+  };
 
   it("publishes null for each unread field — never a dropped key", () => {
     const v = buildTuiView({ now: NOW, tab: "deploy", deploy: UNREAD });
@@ -154,11 +233,16 @@ describe("a failed read reaches the companion as UNKNOWN, never as an absent lin
     expect(v.deploy.head).toBeNull();
     expect(v.deploy.container_status).toBeNull();
     // Serialised, the keys survive — `undefined` would have vanished here.
-    expect(Object.keys(JSON.parse(JSON.stringify(v.deploy)) as object)).toEqual(expect.arrayContaining(["deployed", "head", "container_status"]));
+    expect(Object.keys(JSON.parse(JSON.stringify(v.deploy)) as object)).toEqual(
+      expect.arrayContaining(["deployed", "head", "container_status"]),
+    );
   });
 
   it("…and tui_deploy RENDERS each as an explicit UNKNOWN — the line the companion actually reads", () => {
-    const answer = deployAnswer(publish(buildTuiView({ now: NOW, tab: "deploy", deploy: UNREAD })), NOW);
+    const answer = deployAnswer(
+      publish(buildTuiView({ now: NOW, tab: "deploy", deploy: UNREAD })),
+      NOW,
+    );
     expect(answer).toContain("VM is running: UNKNOWN");
     expect(answer).toContain("local HEAD: UNKNOWN");
     expect(answer).toContain("container: UNKNOWN");
@@ -166,7 +250,11 @@ describe("a failed read reaches the companion as UNKNOWN, never as an absent lin
   });
 
   it("genuine absence is its own sentence: a VM with no marker, a container docker does not list", () => {
-    const v = buildTuiView({ now: NOW, tab: "deploy", deploy: { loaded: true, deployed: "absent", head: "bbb2222", dirty: [], containerStatus: "" } });
+    const v = buildTuiView({
+      now: NOW,
+      tab: "deploy",
+      deploy: { loaded: true, deployed: "absent", head: "bbb2222", dirty: [], containerStatus: "" },
+    });
     expect(v.deploy.deployed).toBe("absent");
     expect(v.deploy.container_status).toBe("");
     const answer = deployAnswer(publish(v), NOW);
@@ -178,7 +266,17 @@ describe("a failed read reaches the companion as UNKNOWN, never as an absent lin
   });
 
   it("a marker the TUI read but could not parse is its own sentence — not 'never deployed', not 'could not read'", () => {
-    const v = buildTuiView({ now: NOW, tab: "deploy", deploy: { loaded: true, deployed: "unparseable", head: "bbb2222", dirty: [], containerStatus: "Up 2 hours" } });
+    const v = buildTuiView({
+      now: NOW,
+      tab: "deploy",
+      deploy: {
+        loaded: true,
+        deployed: "unparseable",
+        head: "bbb2222",
+        dirty: [],
+        containerStatus: "Up 2 hours",
+      },
+    });
     expect(v.deploy.deployed).toBe("unparseable");
     const answer = deployAnswer(publish(v), NOW);
     expect(answer).toContain("VM is running: UNKNOWN");
@@ -191,7 +289,10 @@ describe("a failed read reaches the companion as UNKNOWN, never as an absent lin
   it("the renderer holds the line on its own: a loaded view.json missing the keys entirely still says UNKNOWN", () => {
     writeFileSync(
       join(dir, "view.json"),
-      JSON.stringify({ written_at: NOW.toISOString(), deploy: { loaded: true, dirty_files: 0, pending_commits: [], pending_commit_count: 0 } }),
+      JSON.stringify({
+        written_at: NOW.toISOString(),
+        deploy: { loaded: true, dirty_files: 0, pending_commits: [], pending_commit_count: 0 },
+      }),
     );
     const answer = deployAnswer(dir, NOW);
     expect(answer).toContain("VM is running: UNKNOWN");
@@ -220,10 +321,18 @@ describe("clampScreen — plain text, never escape sequences", () => {
 describe("FeedWriter.writeView", () => {
   it("writes screen.txt + view.json atomically, leaving no .tmp behind", () => {
     const w = new FeedWriter(dir);
-    const v = buildTuiView({ now: NOW, tab: "board", snapshot: snap(), deploy: DEPLOY, screen: "[1mBOARD[0m\nrow" });
+    const v = buildTuiView({
+      now: NOW,
+      tab: "board",
+      snapshot: snap(),
+      deploy: DEPLOY,
+      screen: "[1mBOARD[0m\nrow",
+    });
     expect(w.writeView(v, "[1mBOARD[0m\nrow", 1_000)).toBe(true);
     expect(readFileSync(w.screenPath, "utf8")).toBe("BOARD\nrow");
-    expect((JSON.parse(readFileSync(w.viewPath, "utf8")) as TuiView).deploy.deployed).toMatchObject({ sha: "aaa1111" });
+    expect((JSON.parse(readFileSync(w.viewPath, "utf8")) as TuiView).deploy.deployed).toMatchObject(
+      { sha: "aaa1111" },
+    );
     expect(readdirSync(dir).filter((f) => f.endsWith(".tmp"))).toEqual([]);
   });
 
@@ -263,7 +372,12 @@ describe("App.screenText / afterRepaint", () => {
     (input as unknown as { isTTY: boolean }).isTTY = false;
     input.resume = (() => input) as never;
     input.pause = (() => input) as never;
-    const app = new App(TUI_DEFAULTS, async () => ({ ok: true, stdout: "", stderr: "", code: 0 }), out, input);
+    const app = new App(
+      TUI_DEFAULTS,
+      async () => ({ ok: true, stdout: "", stderr: "", code: 0 }),
+      out,
+      input,
+    );
     return { app, running: app.run() };
   }
 
@@ -325,7 +439,10 @@ describe("tui_* tools — the read surface", () => {
   });
 
   it("tui_deploy answers the question the whole ticket started from", () => {
-    const answer = deployAnswer(publish(buildTuiView({ now: NOW, tab: "deploy", deploy: DEPLOY })), NOW);
+    const answer = deployAnswer(
+      publish(buildTuiView({ now: NOW, tab: "deploy", deploy: DEPLOY })),
+      NOW,
+    );
     expect(answer).toContain("VM is running: aaa1111");
     expect(answer).toContain("local HEAD: bbb2222");
     expect(answer).toContain("commits waiting to ship: 2");
@@ -333,7 +450,13 @@ describe("tui_* tools — the read surface", () => {
   });
 
   it("tui_board summarises without dumping the board", () => {
-    const v = buildTuiView({ now: NOW, tab: "board", snapshot: snap(), selectedPr: 5012, health: { kind: "ok", heartbeatAgeS: 2 } });
+    const v = buildTuiView({
+      now: NOW,
+      tab: "board",
+      snapshot: snap(),
+      selectedPr: 5012,
+      health: { kind: "ok", heartbeatAgeS: 2 },
+    });
     const answer = boardAnswer(publish(v), NOW);
     expect(answer).toContain("daemon health: ok");
     expect(answer).toContain("open PRs: 2");
@@ -373,16 +496,27 @@ describe("tui_* tools — the read surface", () => {
 
   it("resolves the feed dir from QCR_FEED_DIR, the var the companion is spawned with", () => {
     expect(resolveFeedDir({ QCR_FEED_DIR: "/feed" } as NodeJS.ProcessEnv)).toBe("/feed");
-    expect(resolveFeedDir({ QCR_ROOT: "/workspace" } as NodeJS.ProcessEnv)).toBe("/workspace/state/companion/feed");
+    expect(resolveFeedDir({ QCR_ROOT: "/workspace" } as NodeJS.ProcessEnv)).toBe(
+      "/workspace/state/companion/feed",
+    );
   });
 
   it("registers through pi, and degrades to registering nothing when registerTool is absent", () => {
     const registered: PiToolDefinition[] = [];
-    const pi = { on: () => {}, sendUserMessage: () => {}, registerTool: (d: PiToolDefinition) => registered.push(d) } as unknown as Pi;
+    const pi = {
+      on: () => {},
+      sendUserMessage: () => {},
+      registerTool: (d: PiToolDefinition) => registered.push(d),
+    } as unknown as Pi;
     activate(pi, { QCR_FEED_DIR: dir } as NodeJS.ProcessEnv);
     expect(registered.map((d) => d.name)).toEqual([...TOOL_NAMES]);
     // A pi without the API must leave the companion starting, not wedged.
-    expect(() => activate({ on: () => {}, sendUserMessage: () => {} } as unknown as Pi, {} as NodeJS.ProcessEnv)).not.toThrow();
+    expect(() =>
+      activate(
+        { on: () => {}, sendUserMessage: () => {} } as unknown as Pi,
+        {} as NodeJS.ProcessEnv,
+      ),
+    ).not.toThrow();
   });
 });
 
@@ -402,10 +536,26 @@ describe("the tools read already-fetched state and can NEVER become a fetcher", 
     // The TUI's own reach is real (ssh to the VM, deploy.sh sync). The
     // companion holds no VM credential, so a `tui_*` tool that could trigger a
     // fetch would launder the operator's access through a read verb.
-    for (const forbidden of ["node:child_process", "node:net", "node:http", "node:https", "node:dgram", "node:worker_threads"]) {
+    for (const forbidden of [
+      "node:child_process",
+      "node:net",
+      "node:http",
+      "node:https",
+      "node:dgram",
+      "node:worker_threads",
+    ]) {
       expect(code).not.toContain(forbidden);
     }
-    for (const forbidden of ["remote.js", "../src/", "ssh", "execFile", "spawn(", "fetch(", "createConnection", "require("]) {
+    for (const forbidden of [
+      "remote.js",
+      "../src/",
+      "ssh",
+      "execFile",
+      "spawn(",
+      "fetch(",
+      "createConnection",
+      "require(",
+    ]) {
       expect(code).not.toContain(forbidden);
     }
     const imports = [...code.matchAll(/from "([^"]+)"/g)].map((m) => m[1]);
@@ -413,12 +563,21 @@ describe("the tools read already-fetched state and can NEVER become a fetcher", 
   });
 
   it("touches the filesystem only to READ two fixed filenames — it never writes", () => {
-    for (const forbidden of ["writeFileSync", "appendFileSync", "mkdirSync", "rmSync", "renameSync", "unlinkSync", "createWriteStream"]) {
+    for (const forbidden of [
+      "writeFileSync",
+      "appendFileSync",
+      "mkdirSync",
+      "rmSync",
+      "renameSync",
+      "unlinkSync",
+      "createWriteStream",
+    ]) {
       expect(code).not.toContain(forbidden);
     }
     // No traversal: the filenames are constants, never assembled from input.
     const defs = toolDefinitions(dir, () => NOW);
-    for (const d of defs) expect(Object.keys((d.parameters as { properties: object }).properties)).toEqual([]);
+    for (const d of defs)
+      expect(Object.keys((d.parameters as { properties: object }).properties)).toEqual([]);
   });
 
   it("answers a missing/stale file rather than refreshing it — staleness is information, a refresh would be reach", () => {
@@ -433,7 +592,12 @@ describe("the tools read already-fetched state and can NEVER become a fetcher", 
 
   it("the companion is spawned with the extension, pointed at the feed dir it can read", () => {
     const pi = new CompanionLifecycle(
-      { container_name: "qcr-companion", session: "companion", model: "openai-codex/gpt-5.6-sol", repo_dir: "/repo" } as never,
+      {
+        container_name: "qcr-companion",
+        session: "companion",
+        model: "openai-codex/gpt-5.6-sol",
+        repo_dir: "/repo",
+      } as never,
       async () => ({ ok: true, stdout: "", stderr: "", code: 0 }),
       {},
       // 4th parameter is `ensureDirs`, NOT the fs seam. Passing the seam here

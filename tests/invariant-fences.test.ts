@@ -49,80 +49,276 @@ interface PinnedFence {
  */
 const PINNED: Record<string, PinnedFence[]> = {
   "prompts/round-first.md": [
-    { slug: "no-exec", ft: "", sha256: "ff6d7f5f6d0ef188ad08c546d51918439e64bba8c3e2fe41a77136d176664ffd" },
-    { slug: "ci-gate", ft: "", sha256: "78d80cde2230988f430d241d93ed26042f88ab42651b256e033875da42dc601d" },
-    { slug: "verdicts", ft: "", sha256: "4fbbe3c1dcc086b4bc9320d157078b04d43a9cbfea196ff812ae5a0002808886" },
-    { slug: "posting-map", ft: "", sha256: "cc384c1650e45820f80db8f90a2f5a74e383baafad5ff29c5c3f518ac27bf66c" },
-    { slug: "reachability", ft: "", sha256: "94f36825f50099ee2e3f39b14091e15e694548bb61a6c29e5c7daab30d04683f" },
-    { slug: "injection-bright-line", ft: "", sha256: "f4eb23e218fa504c143eba9c43e1bbca25b96fa0494a291e2ceaf0a2d186639e" },
-    { slug: "merge-call", ft: "", sha256: "6e1aca282eaf630271b56b04a6b6674ff4faaf7c25dbb2473bfceae50b150dc7" },
+    {
+      slug: "no-exec",
+      ft: "",
+      sha256: "ff6d7f5f6d0ef188ad08c546d51918439e64bba8c3e2fe41a77136d176664ffd",
+    },
+    {
+      slug: "ci-gate",
+      ft: "",
+      sha256: "78d80cde2230988f430d241d93ed26042f88ab42651b256e033875da42dc601d",
+    },
+    {
+      slug: "verdicts",
+      ft: "",
+      sha256: "4fbbe3c1dcc086b4bc9320d157078b04d43a9cbfea196ff812ae5a0002808886",
+    },
+    {
+      slug: "posting-map",
+      ft: "",
+      sha256: "cc384c1650e45820f80db8f90a2f5a74e383baafad5ff29c5c3f518ac27bf66c",
+    },
+    {
+      slug: "reachability",
+      ft: "",
+      sha256: "94f36825f50099ee2e3f39b14091e15e694548bb61a6c29e5c7daab30d04683f",
+    },
+    {
+      slug: "injection-bright-line",
+      ft: "",
+      sha256: "f4eb23e218fa504c143eba9c43e1bbca25b96fa0494a291e2ceaf0a2d186639e",
+    },
+    {
+      slug: "merge-call",
+      ft: "",
+      sha256: "6e1aca282eaf630271b56b04a6b6674ff4faaf7c25dbb2473bfceae50b150dc7",
+    },
   ],
   "prompts/round-re-review.md": [
-    { slug: "no-exec", ft: "", sha256: "ff6d7f5f6d0ef188ad08c546d51918439e64bba8c3e2fe41a77136d176664ffd" },
-    { slug: "ci-gate", ft: "", sha256: "78d80cde2230988f430d241d93ed26042f88ab42651b256e033875da42dc601d" },
-    { slug: "verdicts", ft: "", sha256: "14d301a1d0f7410dc82448dff4e5f4937b921d036b10df708156d0f14d7906d2" },
-    { slug: "posting-map", ft: "", sha256: "cc384c1650e45820f80db8f90a2f5a74e383baafad5ff29c5c3f518ac27bf66c" },
-    { slug: "never-dismiss", ft: "RULE-2", sha256: "c619376602fc5e032cbf648a135945dd0105cdd8282d1eec122483f8e5ecd84a" },
-    { slug: "nit-scope", ft: "", sha256: "6e36bba0ad59c6d927d1e120826e814ba66c0dd25db2b63b14bdfb45356ed16c" },
-    { slug: "reachability", ft: "", sha256: "94f36825f50099ee2e3f39b14091e15e694548bb61a6c29e5c7daab30d04683f" },
-    { slug: "injection-bright-line", ft: "", sha256: "f4eb23e218fa504c143eba9c43e1bbca25b96fa0494a291e2ceaf0a2d186639e" },
-    { slug: "merge-call", ft: "", sha256: "88078147c56a4b7950f17536696f9e236af9eb70bc4cf76c4b7c4450d101542e" },
+    {
+      slug: "no-exec",
+      ft: "",
+      sha256: "ff6d7f5f6d0ef188ad08c546d51918439e64bba8c3e2fe41a77136d176664ffd",
+    },
+    {
+      slug: "ci-gate",
+      ft: "",
+      sha256: "78d80cde2230988f430d241d93ed26042f88ab42651b256e033875da42dc601d",
+    },
+    {
+      slug: "verdicts",
+      ft: "",
+      sha256: "14d301a1d0f7410dc82448dff4e5f4937b921d036b10df708156d0f14d7906d2",
+    },
+    {
+      slug: "posting-map",
+      ft: "",
+      sha256: "cc384c1650e45820f80db8f90a2f5a74e383baafad5ff29c5c3f518ac27bf66c",
+    },
+    {
+      slug: "never-dismiss",
+      ft: "RULE-2",
+      sha256: "c619376602fc5e032cbf648a135945dd0105cdd8282d1eec122483f8e5ecd84a",
+    },
+    {
+      slug: "nit-scope",
+      ft: "",
+      sha256: "6e36bba0ad59c6d927d1e120826e814ba66c0dd25db2b63b14bdfb45356ed16c",
+    },
+    {
+      slug: "reachability",
+      ft: "",
+      sha256: "94f36825f50099ee2e3f39b14091e15e694548bb61a6c29e5c7daab30d04683f",
+    },
+    {
+      slug: "injection-bright-line",
+      ft: "",
+      sha256: "f4eb23e218fa504c143eba9c43e1bbca25b96fa0494a291e2ceaf0a2d186639e",
+    },
+    {
+      slug: "merge-call",
+      ft: "",
+      sha256: "88078147c56a4b7950f17536696f9e236af9eb70bc4cf76c4b7c4450d101542e",
+    },
   ],
   "prompts/round-staleness.md": [
-    { slug: "no-exec", ft: "", sha256: "ff6d7f5f6d0ef188ad08c546d51918439e64bba8c3e2fe41a77136d176664ffd" },
-    { slug: "ci-gate", ft: "", sha256: "5929c47d5c1e2588d285d5f73f87735f2fb8aaa3ec28f9675a4bf9fbcf9afe8c" },
-    { slug: "verdicts", ft: "", sha256: "2927960e81a870b62a9a3edaabee99153961f85d6e1fcbdf15157140c5c5fa27" },
-    { slug: "posting-map", ft: "", sha256: "cc384c1650e45820f80db8f90a2f5a74e383baafad5ff29c5c3f518ac27bf66c" },
-    { slug: "reachability", ft: "", sha256: "94f36825f50099ee2e3f39b14091e15e694548bb61a6c29e5c7daab30d04683f" },
-    { slug: "injection-bright-line", ft: "", sha256: "f4eb23e218fa504c143eba9c43e1bbca25b96fa0494a291e2ceaf0a2d186639e" },
-    { slug: "merge-call", ft: "", sha256: "f1011bad8ff7755fd45b9b12a15b4650a6b5d25df1f5b4d6a054b646dbd39fa5" },
+    {
+      slug: "no-exec",
+      ft: "",
+      sha256: "ff6d7f5f6d0ef188ad08c546d51918439e64bba8c3e2fe41a77136d176664ffd",
+    },
+    {
+      slug: "ci-gate",
+      ft: "",
+      sha256: "5929c47d5c1e2588d285d5f73f87735f2fb8aaa3ec28f9675a4bf9fbcf9afe8c",
+    },
+    {
+      slug: "verdicts",
+      ft: "",
+      sha256: "2927960e81a870b62a9a3edaabee99153961f85d6e1fcbdf15157140c5c5fa27",
+    },
+    {
+      slug: "posting-map",
+      ft: "",
+      sha256: "cc384c1650e45820f80db8f90a2f5a74e383baafad5ff29c5c3f518ac27bf66c",
+    },
+    {
+      slug: "reachability",
+      ft: "",
+      sha256: "94f36825f50099ee2e3f39b14091e15e694548bb61a6c29e5c7daab30d04683f",
+    },
+    {
+      slug: "injection-bright-line",
+      ft: "",
+      sha256: "f4eb23e218fa504c143eba9c43e1bbca25b96fa0494a291e2ceaf0a2d186639e",
+    },
+    {
+      slug: "merge-call",
+      ft: "",
+      sha256: "f1011bad8ff7755fd45b9b12a15b4650a6b5d25df1f5b4d6a054b646dbd39fa5",
+    },
   ],
   "prompts/round-recheck.md": [
-    { slug: "uphold-one-way", ft: "", sha256: "d6a6ce50ccae1b5ef6e37c6cac607a15222d875a485a1b1c8269c53ebd189c51" },
-    { slug: "regression-only", ft: "", sha256: "5877ea115f6d0861cb121d88e5132ebfc1e2642554974666ae0b6d33c5df151a" },
-    { slug: "nit-scope", ft: "", sha256: "3796cb45a48ef24a197b247b7e976db3eb66fe4e9f44a5f776f82aa211fc1918" },
-    { slug: "no-exec", ft: "", sha256: "efba0b28e5a0652b33c805f9cb680590c16b465c2216d378872dfd87b4e4ecda" },
+    {
+      slug: "uphold-one-way",
+      ft: "",
+      sha256: "d6a6ce50ccae1b5ef6e37c6cac607a15222d875a485a1b1c8269c53ebd189c51",
+    },
+    {
+      slug: "regression-only",
+      ft: "",
+      sha256: "5877ea115f6d0861cb121d88e5132ebfc1e2642554974666ae0b6d33c5df151a",
+    },
+    {
+      slug: "nit-scope",
+      ft: "",
+      sha256: "3796cb45a48ef24a197b247b7e976db3eb66fe4e9f44a5f776f82aa211fc1918",
+    },
+    {
+      slug: "no-exec",
+      ft: "",
+      sha256: "efba0b28e5a0652b33c805f9cb680590c16b465c2216d378872dfd87b4e4ecda",
+    },
   ],
   // The four FROZEN seeds. Fencing them is itself a reseed under root rule 6,
   // ratified by the owner on 2026-08-24 and recorded in
   // tests/fixtures/ratified-divergence.json.
   "prompts/pass-common.md": [
-    { slug: "passes-post-nothing", ft: "RULE-9", sha256: "419335dd2ec6ebcc3c8e30eb05112176fb1a28611ae293ed31982f2e69876699" },
-    { slug: "severity-scale", ft: "", sha256: "b1545b8a69b95f7ffa2f87489120e6ff78549865ed73eaa046baf7aa3649873a" },
+    {
+      slug: "passes-post-nothing",
+      ft: "RULE-9",
+      sha256: "419335dd2ec6ebcc3c8e30eb05112176fb1a28611ae293ed31982f2e69876699",
+    },
+    {
+      slug: "severity-scale",
+      ft: "",
+      sha256: "b1545b8a69b95f7ffa2f87489120e6ff78549865ed73eaa046baf7aa3649873a",
+    },
   ],
   "prompts/conversation-system.md": [
-    { slug: "credential", ft: "RULE-3", sha256: "7ae180d03c9e4b4ace8857a490e6e138416232705c2d02c0a2ca93f44d9242b0" },
-    { slug: "decide-step", ft: "", sha256: "2ad213719d3238076c63da08ec131dfc70b64ee02c671cbfd6a917bdd3a0ab47" },
-    { slug: "no-human-handoff", ft: "", sha256: "7dab3094e9076bf75925db665126faabe1ad668b8c0cf02e6576043e4de2a28d" },
-    { slug: "ping-pong-discipline", ft: "", sha256: "818d6465aa7a0181efae103f3167d264feadc5ef0eb3c552c9e4fbab2e0779dc" },
-    { slug: "invariants-absolute", ft: "RULE-2", sha256: "d5976bf31c68d797ed0924c18215fca3d6d6bbcdee9e8f09b4120d0a0ae8d9c8" },
+    {
+      slug: "credential",
+      ft: "RULE-3",
+      sha256: "7ae180d03c9e4b4ace8857a490e6e138416232705c2d02c0a2ca93f44d9242b0",
+    },
+    {
+      slug: "decide-step",
+      ft: "",
+      sha256: "2ad213719d3238076c63da08ec131dfc70b64ee02c671cbfd6a917bdd3a0ab47",
+    },
+    {
+      slug: "no-human-handoff",
+      ft: "",
+      sha256: "7dab3094e9076bf75925db665126faabe1ad668b8c0cf02e6576043e4de2a28d",
+    },
+    {
+      slug: "ping-pong-discipline",
+      ft: "",
+      sha256: "818d6465aa7a0181efae103f3167d264feadc5ef0eb3c552c9e4fbab2e0779dc",
+    },
+    {
+      slug: "invariants-absolute",
+      ft: "RULE-2",
+      sha256: "d5976bf31c68d797ed0924c18215fca3d6d6bbcdee9e8f09b4120d0a0ae8d9c8",
+    },
   ],
   "prompts/overseer-system.md": [
-    { slug: "action-space", ft: "", sha256: "d14993b3b8014d98118af331325e77d27e4f554f962438367961dff2e2d2744d" },
-    { slug: "action-space-never", ft: "RULE-2", sha256: "136820d54aed82fcb5d9579c452791ab233f93b9b9034ee6dd86e0e43bf248ec" },
-    { slug: "memory-discipline", ft: "", sha256: "08a56035ebf0f5254c7710bd5d33ee40984ac6a53940c373f76aeb441f852c51" },
+    {
+      slug: "action-space",
+      ft: "",
+      sha256: "d14993b3b8014d98118af331325e77d27e4f554f962438367961dff2e2d2744d",
+    },
+    {
+      slug: "action-space-never",
+      ft: "RULE-2",
+      sha256: "136820d54aed82fcb5d9579c452791ab233f93b9b9034ee6dd86e0e43bf248ec",
+    },
+    {
+      slug: "memory-discipline",
+      ft: "",
+      sha256: "08a56035ebf0f5254c7710bd5d33ee40984ac6a53940c373f76aeb441f852c51",
+    },
   ],
   "prompts/eod-sweep.md": [
-    { slug: "memory-discipline", ft: "", sha256: "43a0ca453a88208a086414a4f5a744eff00ad023aed17dfbb6888deb49bf8ff5" },
-    { slug: "improvement-caps", ft: "", sha256: "5c0c653b1ef9c1773f18c55c09c415d72b9988df22cc9fcd19d9fb34cef6bf6f" },
+    {
+      slug: "memory-discipline",
+      ft: "",
+      sha256: "43a0ca453a88208a086414a4f5a744eff00ad023aed17dfbb6888deb49bf8ff5",
+    },
+    {
+      slug: "improvement-caps",
+      ft: "",
+      sha256: "5c0c653b1ef9c1773f18c55c09c415d72b9988df22cc9fcd19d9fb34cef6bf6f",
+    },
   ],
   "agents/pass-intent.md": [
-    { slug: "intent-artifact", ft: "", sha256: "95973aaf17e36d33961432b8440ecd8780760ebd756b7060bf6d2fcfd095f85e" },
-    { slug: "thin-bodies-none", ft: "", sha256: "3e8b9f47a39edf5f95d95758edbd03c64b254a19e0d10e80dd2d05e79a22fa19" },
-    { slug: "severity-cap", ft: "", sha256: "67f090951ce2f9d5862b73baa15cfedd1715b718870324dc7f227b9b4e0e0541" },
+    {
+      slug: "intent-artifact",
+      ft: "",
+      sha256: "95973aaf17e36d33961432b8440ecd8780760ebd756b7060bf6d2fcfd095f85e",
+    },
+    {
+      slug: "thin-bodies-none",
+      ft: "",
+      sha256: "3e8b9f47a39edf5f95d95758edbd03c64b254a19e0d10e80dd2d05e79a22fa19",
+    },
+    {
+      slug: "severity-cap",
+      ft: "",
+      sha256: "67f090951ce2f9d5862b73baa15cfedd1715b718870324dc7f227b9b4e0e0541",
+    },
   ],
   "agents/pass-placement.md": [
-    { slug: "repo-anchor", ft: "", sha256: "d8e7a1dcfb6de7ba81893950dcb072a9a416031d16efcb94c8cd31aa76732ec4" },
-    { slug: "p2-cap", ft: "", sha256: "d133405681219eba3c40643b125a8cc9fd8f3d56c5338612f32d5c9e9e6a4d44" },
+    {
+      slug: "repo-anchor",
+      ft: "",
+      sha256: "d8e7a1dcfb6de7ba81893950dcb072a9a416031d16efcb94c8cd31aa76732ec4",
+    },
+    {
+      slug: "p2-cap",
+      ft: "",
+      sha256: "d133405681219eba3c40643b125a8cc9fd8f3d56c5338612f32d5c9e9e6a4d44",
+    },
   ],
   "agents/pass-simplicity.md": [
-    { slug: "beyond-the-diff", ft: "", sha256: "9b6c390e29d4c6b9ce639c2ba046e725939353398c9b788830c9296eff0be65e" },
-    { slug: "never-counter-finding", ft: "", sha256: "a6105800effd9c2fefa696543427d9f2561e2057b463bc62225bb7e545867fa4" },
-    { slug: "p2-cap", ft: "", sha256: "53feba72604cae68c009680e6aea7b4e507d4999e192e002814bb78f6ede77bd" },
+    {
+      slug: "beyond-the-diff",
+      ft: "",
+      sha256: "9b6c390e29d4c6b9ce639c2ba046e725939353398c9b788830c9296eff0be65e",
+    },
+    {
+      slug: "never-counter-finding",
+      ft: "",
+      sha256: "a6105800effd9c2fefa696543427d9f2561e2057b463bc62225bb7e545867fa4",
+    },
+    {
+      slug: "p2-cap",
+      ft: "",
+      sha256: "53feba72604cae68c009680e6aea7b4e507d4999e192e002814bb78f6ede77bd",
+    },
   ],
   "agents/pass-backcompat.md": [
-    { slug: "lens-boundaries", ft: "", sha256: "eb0637f3aa52ae27802b03f2bb4f29b2f2dbf85c07cd0728a9bc2b55fb2cdb5b" },
-    { slug: "full-severity", ft: "", sha256: "cdb65345b6db3eecf9f89211ac5f2153d7328a622815198670f6ec171728cdea" },
+    {
+      slug: "lens-boundaries",
+      ft: "",
+      sha256: "eb0637f3aa52ae27802b03f2bb4f29b2f2dbf85c07cd0728a9bc2b55fb2cdb5b",
+    },
+    {
+      slug: "full-severity",
+      ft: "",
+      sha256: "cdb65345b6db3eecf9f89211ac5f2153d7328a622815198670f6ec171728cdea",
+    },
   ],
   // the concurrency lens's two ratified burdens. Both are RAISE-side
   // bars, and both exist because a confidently-wrong race story costs more than
@@ -131,8 +327,16 @@ const PINNED: Record<string, PinnedFence[]> = {
   // a lens must try to kill its own candidate before the validator sees it.
   // Loosening either is the owner's call, not a prose trim.
   "agents/pass-concurrency.md": [
-    { slug: "four-part-finding", ft: "", sha256: "1fdbdec097aaa3bb4b826c22cf304b43d1dd2ec21b906507eab2544ea4b89ec8" },
-    { slug: "self-falsification", ft: "", sha256: "914fab18800b9ba3008da2270ef1ecd32491e3f3d38671342dd6e066e30b33b5" },
+    {
+      slug: "four-part-finding",
+      ft: "",
+      sha256: "1fdbdec097aaa3bb4b826c22cf304b43d1dd2ec21b906507eab2544ea4b89ec8",
+    },
+    {
+      slug: "self-falsification",
+      ft: "",
+      sha256: "914fab18800b9ba3008da2270ef1ecd32491e3f3d38671342dd6e066e30b33b5",
+    },
   ],
   // the ask-your-human lens's named-defect bar (the owner's words on
   // "it can only block if it says what is wrong under the bad answer.
@@ -142,7 +346,11 @@ const PINNED: Record<string, PinnedFence[]> = {
   // blocker. `ask-human-named-defect-validate` enforces the same line from the
   // validator's side.
   "agents/pass-ask-human.md": [
-    { slug: "named-defect-bar", ft: "", sha256: "1b97b394d8387ba7b000cea7404df7cd29baf5809a6dd955cb117931fc3b0788" },
+    {
+      slug: "named-defect-bar",
+      ft: "",
+      sha256: "1b97b394d8387ba7b000cea7404df7cd29baf5809a6dd955cb117931fc3b0788",
+    },
   ],
 };
 
@@ -173,7 +381,9 @@ const CITATION = String.raw`FT-\d{4}|RULE-\d{1,2}`;
  * their ratified bytes (rewriting a fence marker just to rename it would
  * itself be a fence edit — rule 6 territory), so both spellings parse.
  */
-const OPEN = new RegExp(String.raw`^<!-- RATIFIED (${CITATION}) ([a-z0-9-]+) — do not edit; (?:the owner|owner) only -->$`);
+const OPEN = new RegExp(
+  String.raw`^<!-- RATIFIED (${CITATION}) ([a-z0-9-]+) — do not edit; (?:the owner|owner) only -->$`,
+);
 const CLOSE = /^<!-- \/RATIFIED ([a-z0-9-]+) -->$/;
 
 interface ParsedFence {
@@ -191,7 +401,10 @@ export function parseFences(text: string, rel: string): ParsedFence[] {
     const o = OPEN.exec(line);
     const c = CLOSE.exec(line);
     if (o) {
-      if (open) throw new Error(`${rel}:${i + 1}: fence '${o[2]}' opens inside unclosed fence '${open.slug}'`);
+      if (open)
+        throw new Error(
+          `${rel}:${i + 1}: fence '${o[2]}' opens inside unclosed fence '${open.slug}'`,
+        );
       open = { ft: o[1] as string, slug: o[2] as string, from: i };
       return;
     }
@@ -251,9 +464,10 @@ describe("ratified invariant fences", () => {
     for (const pin of PINNED[rel] as PinnedFence[]) {
       const fence = bySlug.get(pin.slug);
       if (!fence) continue;
-      expect(fence.ft, `${rel.split("/").pop()}#${pin.slug}: fence says ${fence.ft}, the pin says ${pin.ft}`).toBe(
-        pin.ft,
-      );
+      expect(
+        fence.ft,
+        `${rel.split("/").pop()}#${pin.slug}: fence says ${fence.ft}, the pin says ${pin.ft}`,
+      ).toBe(pin.ft);
     }
   });
 
@@ -291,17 +505,27 @@ describe("ratified invariant fences", () => {
   it("a rule citation is accepted, and only in the sanctioned spelling", () => {
     // widened the grammar. Keep it narrow: RULE-N, nothing else — a
     // free-text citation would let anyone mint their own authority.
-    expect(OPEN.exec("<!-- RATIFIED RULE-2 invariants-absolute — do not edit; owner only -->")?.[1]).toBe("RULE-2");
-    expect(OPEN.exec("<!-- RATIFIED severity-scale — do not edit; owner only -->")?.[1]).toBe("");
+    expect(
+      OPEN.exec("<!-- RATIFIED RULE-2 invariants-absolute — do not edit; owner only -->")?.[1],
+    ).toBe("RULE-2");
+    expect(
+      OPEN.exec("<!-- RATIFIED severity-scale — do not edit; owner only -->")?.[1],
+    ).toBe("");
     expect(OPEN.exec("<!-- RATIFIED rule 2 x — do not edit; owner only -->")).toBe(null);
     expect(OPEN.exec("<!-- RATIFIED the owner x — do not edit; owner only -->")).toBe(null);
   });
 
   it("the role half accepts both spellings — 'owner only' for new fences, 'the owner only' grandfathered", () => {
-    expect(OPEN.exec("<!-- RATIFIED role-worded — do not edit; owner only -->")?.[2]).toBe("role-worded");
-    expect(OPEN.exec("<!-- RATIFIED RULE-2 invariants-absolute — do not edit; owner only -->")?.[1]).toBe("RULE-2");
+    expect(OPEN.exec("<!-- RATIFIED role-worded — do not edit; owner only -->")?.[2]).toBe(
+      "role-worded",
+    );
+    expect(
+      OPEN.exec("<!-- RATIFIED RULE-2 invariants-absolute — do not edit; owner only -->")?.[1],
+    ).toBe("RULE-2");
     // Existing fences keep their ratified bytes — the personal spelling parses.
-    expect(OPEN.exec("<!-- RATIFIED ci-gate — do not edit; owner only -->")?.[2]).toBe("ci-gate");
+    expect(OPEN.exec("<!-- RATIFIED ci-gate — do not edit; owner only -->")?.[2]).toBe(
+      "ci-gate",
+    );
     // But only those two: a free-text role would dilute the marker.
     expect(OPEN.exec("<!-- RATIFIED x — do not edit; the owner only -->")).toBe(null);
     expect(OPEN.exec("<!-- RATIFIED x — do not edit; anyone only -->")).toBe(null);

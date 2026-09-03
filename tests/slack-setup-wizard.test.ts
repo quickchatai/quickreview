@@ -191,7 +191,12 @@ describe("renderSlackValues", () => {
   });
 
   it("shows an empty channel as such", () => {
-    const text = wiz.renderSlackValues({ channel: "", channel_kind: "public", legacy_owner_slack_id: "", users: {} });
+    const text = wiz.renderSlackValues({
+      channel: "",
+      channel_kind: "public",
+      legacy_owner_slack_id: "",
+      users: {},
+    });
     expect(text).toContain("(empty)");
     expect(text).toContain("0 entries");
   });
@@ -200,7 +205,12 @@ describe("renderSlackValues", () => {
 describe("readSlackValues", () => {
   it("reads the shipped config's [slack] block", () => {
     const v = wiz.readSlackValues(shipped);
-    expect(v).toMatchObject({ enabled: false, channel: "", channel_kind: "public", legacy_owner_slack_id: "" });
+    expect(v).toMatchObject({
+      enabled: false,
+      channel: "",
+      channel_kind: "public",
+      legacy_owner_slack_id: "",
+    });
     expect(v.users).toEqual({});
   });
 });
@@ -211,7 +221,7 @@ describe("readSecretsDir", () => {
   });
 
   it("falls back when the key is absent", () => {
-    expect(wiz.readSecretsDir("[github]\nrepo = \"x\"\n")).toBe("~/.config/quickreview-bot");
+    expect(wiz.readSecretsDir('[github]\nrepo = "x"\n')).toBe("~/.config/quickreview-bot");
   });
 });
 
@@ -301,7 +311,9 @@ describe("patchConfigToml", () => {
 
   it("leaves [slack.policy] and [slack.policy.causes] byte-identical", () => {
     expect(section(patched, "[slack.policy]")).toBe(section(shipped, "[slack.policy]"));
-    expect(section(patched, "[slack.policy.causes]")).toBe(section(shipped, "[slack.policy.causes]"));
+    expect(section(patched, "[slack.policy.causes]")).toBe(
+      section(shipped, "[slack.policy.causes]"),
+    );
   });
 
   it("does not touch `enabled`", () => {
@@ -354,7 +366,9 @@ describe("patchConfigToml", () => {
   });
 
   it("throws when there is no [slack] section to patch", () => {
-    expect(() => wiz.patchConfigToml("[github]\nrepo = \"x\"\n", PATCH)).toThrow(/no \[slack\] section/);
+    expect(() => wiz.patchConfigToml('[github]\nrepo = "x"\n', PATCH)).toThrow(
+      /no \[slack\] section/,
+    );
   });
 
   // The loop-closing assertion: the daemon's own parser reads the wizard's output.

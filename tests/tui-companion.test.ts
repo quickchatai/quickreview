@@ -2,7 +2,12 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { COMPANION_DEFAULTS, parseConfig, resolveCompanionPaths, type CompanionConfig } from "../src/config.js";
+import {
+  COMPANION_DEFAULTS,
+  parseConfig,
+  resolveCompanionPaths,
+  type CompanionConfig,
+} from "../src/config.js";
 import {
   CompanionLifecycle,
   CONTAINER,
@@ -32,7 +37,12 @@ const CFG: CompanionConfig = resolveCompanionPaths(
 );
 
 const OK: DockerResult = { ok: true, stdout: "", stderr: "", code: 0 };
-const FAIL: DockerResult = { ok: false, stdout: "", stderr: "No such object: qcr-companion", code: 1 };
+const FAIL: DockerResult = {
+  ok: false,
+  stdout: "",
+  stderr: "No such object: qcr-companion",
+  code: 1,
+};
 
 /** Records every docker call and answers from a scripted table. */
 function fakeDocker(answers: Array<(argv: string[]) => DockerResult | undefined>): {
@@ -85,7 +95,9 @@ const containerCalls = (calls: string[][]): string[][] => calls.filter((c) => c[
 
 describe("companion config", () => {
   it("defaults the whole [companion] section when config.toml omits the keys", () => {
-    const cfg = parseConfig(readFileSync(resolve(root, "tests/fixtures/config.toml"), "utf8")).companion;
+    const cfg = parseConfig(
+      readFileSync(resolve(root, "tests/fixtures/config.toml"), "utf8"),
+    ).companion;
     expect(cfg.enabled).toBe(true);
     expect(cfg.container_name).toBe("qcr-companion");
     expect(cfg.image).toBe("qcr-companion");
@@ -110,7 +122,10 @@ describe("companion config", () => {
     const base = readFileSync(resolve(root, "tests/fixtures/config.toml"), "utf8");
     // Inject into the [companion] table itself — appended bare keys would join
     // whatever table happens to be last in config.toml ([backfill]).
-    const withOverrides = base.replace("[companion]", `[companion]\ncontainer_name = "other"\nenabled = false\ncooldown_min = 5`);
+    const withOverrides = base.replace(
+      "[companion]",
+      `[companion]\ncontainer_name = "other"\nenabled = false\ncooldown_min = 5`,
+    );
     const cfg = parseConfig(withOverrides).companion;
     expect(cfg.container_name).toBe("other");
     expect(cfg.enabled).toBe(false);
@@ -217,7 +232,15 @@ describe("CompanionLifecycle argv", () => {
   });
 
   it("attaches locally through docker exec — no ssh in the argv", () => {
-    expect(lc.attachArgv()).toEqual(["exec", "-it", "qcr-companion", "tmux", "attach", "-t", "companion"]);
+    expect(lc.attachArgv()).toEqual([
+      "exec",
+      "-it",
+      "qcr-companion",
+      "tmux",
+      "attach",
+      "-t",
+      "companion",
+    ]);
     expect(lc.attachArgv()).not.toContain("ssh");
   });
 });
@@ -226,12 +249,21 @@ describe("the reviewed repo, read-only", () => {
   /** `docker inspect` — answers BOTH inspects ensureUp may issue, told apart
    * by the format argument: status() (running flag + mount lines) and
    * createdDns() (one server per line). */
-  const inspectWith = (running: boolean, mounts: Record<string, string>, dns: string[] = PUBLIC_DNS) => (argv: string[]) =>
-    argv[0] !== "inspect"
-      ? undefined
-      : String(argv[2]).includes("HostConfig.Dns")
-        ? { ...OK, stdout: dns.map((d) => `${d}\n`).join("") }
-        : { ...OK, stdout: [String(running), ...Object.entries(mounts).map(([d, s]) => `${d}=${s}`), ""].join("\n") };
+  const inspectWith =
+    (running: boolean, mounts: Record<string, string>, dns: string[] = PUBLIC_DNS) =>
+    (argv: string[]) =>
+      argv[0] !== "inspect"
+        ? undefined
+        : String(argv[2]).includes("HostConfig.Dns")
+          ? { ...OK, stdout: dns.map((d) => `${d}\n`).join("") }
+          : {
+              ...OK,
+              stdout: [
+                String(running),
+                ...Object.entries(mounts).map(([d, s]) => `${d}=${s}`),
+                "",
+              ].join("\n"),
+            };
 
   const BASE: Record<string, string> = {
     [CONTAINER.piHome]: "companion-pihome",
@@ -251,7 +283,9 @@ describe("the reviewed repo, read-only", () => {
     expect(mounts).toContain(`/host/example-app:${CONTAINER.reviewedRepo}:ro`);
     // `:ro` is the entire guarantee that reading the reviewed code can never
     // become writing it — rule 8's boundary is structural, not prompted.
-    expect(mounts.some((m) => m.startsWith("/host/example-app:") && m.endsWith(":rw"))).toBe(false);
+    expect(mounts.some((m) => m.startsWith("/host/example-app:") && m.endsWith(":rw"))).toBe(
+      false,
+    );
     expect(argv[argv.length - 1]).toBe("qcr-companion"); // image still last
   });
 
@@ -279,13 +313,20 @@ describe("the reviewed repo, read-only", () => {
     // Bind mounts freeze at creation, so the container the owner is already
     // running carries the old set; `docker start` would silently resurrect a
     // companion that cannot read the reviewed code at all.
-    const { lc, calls } = withRepo([inspectWith(true, BASE), okFor("rm"), okFor("image"), okFor("run")]);
+    const { lc, calls } = withRepo([
+      inspectWith(true, BASE),
+      okFor("rm"),
+      okFor("image"),
+      okFor("run"),
+    ]);
     const progress: string[] = [];
     expect(await lc.ensureUp((l) => progress.push(l))).toBe("recreated");
     expect(containerCalls(calls).map((c) => c[0])).toEqual(["inspect", "rm", "image", "run"]);
     expect(progress.some((l) => l.includes(`missing ${CONTAINER.reviewedRepo}`))).toBe(true);
     // The recreate must actually carry the mount, or it recreates forever.
-    expect(calls.find((c) => c[0] === "run")!).toContain(`/host/example-app:${CONTAINER.reviewedRepo}:ro`);
+    expect(calls.find((c) => c[0] === "run")!).toContain(
+      `/host/example-app:${CONTAINER.reviewedRepo}:ro`,
+    );
   });
 
   it("adopts a container that already carries it — no recreate loop", async () => {
@@ -324,13 +365,18 @@ describe("the reviewed repo, read-only", () => {
 
   it("defaults the config key to the usual local checkout and expands ~", () => {
     expect(COMPANION_DEFAULTS.reviewed_repo_dir).toBe("~/src/example-app");
-    const cfg = resolveCompanionPaths({ ...COMPANION_DEFAULTS, reviewed_repo_dir: "~/qc" }, "/root");
+    const cfg = resolveCompanionPaths(
+      { ...COMPANION_DEFAULTS, reviewed_repo_dir: "~/qc" },
+      "/root",
+    );
     expect(cfg.reviewed_repo_dir.startsWith("/")).toBe(true);
     expect(cfg.reviewed_repo_dir.endsWith("/qc")).toBe(true);
     // The config documents it as a commented default, like every other knob
     // (asserted on the fixture, which mirrors the shipped config's shape —
     // keeps operator edits to the live file out of the suite).
-    expect(readFileSync(resolve(root, "tests/fixtures/config.toml"), "utf8")).toContain("# reviewed_repo_dir =");
+    expect(readFileSync(resolve(root, "tests/fixtures/config.toml"), "utf8")).toContain(
+      "# reviewed_repo_dir =",
+    );
   });
 
   it("the entrypoint reports the mount either way, and never fabricates it", () => {
@@ -399,7 +445,12 @@ describe("mount drift", () => {
 
   it("recreates a RUNNING container that is missing a mount", async () => {
     const { [CONTAINER.trackerDocs]: _gone, ...stale } = CURRENT;
-    const { lc, calls } = lifecycle([inspectWith(true, stale), okFor("rm"), okFor("image"), okFor("run")]);
+    const { lc, calls } = lifecycle([
+      inspectWith(true, stale),
+      okFor("rm"),
+      okFor("image"),
+      okFor("run"),
+    ]);
     const progress: string[] = [];
     expect(await lc.ensureUp((l) => progress.push(l))).toBe("recreated");
     expect(containerCalls(calls).map((c) => c[0])).toEqual(["inspect", "rm", "image", "run"]);
@@ -411,7 +462,11 @@ describe("mount drift", () => {
     // ~/.ssh + an agent socket bound in. `docker start` would resurrect that
     // boundary breach silently; rule 8 is meant to be structural.
     const { lc, calls } = lifecycle([
-      inspectWith(false, { ...CURRENT, "/home/companion/.ssh": "/home/user/.ssh", "/ssh-agent": "/tmp/a.sock" }),
+      inspectWith(false, {
+        ...CURRENT,
+        "/home/companion/.ssh": "/home/user/.ssh",
+        "/ssh-agent": "/tmp/a.sock",
+      }),
       okFor("rm"),
       okFor("image"),
       okFor("run"),
@@ -448,21 +503,21 @@ describe("mount drift", () => {
         : String(argv[2]).includes("HostConfig.Dns")
           ? { ...OK, stdout: PUBLIC_DNS.map((d) => `${d}\n`).join("") }
           : {
-            ...OK,
-            // The format string asks for `.Name` on volumes, so a correct
-            // implementation sees the NAME here.
-            stdout: [
-              String(running),
-              `${CONTAINER.piHome}=companion-pihome`,
-              `${CONTAINER.workspace}=/host/review-sandbox`,
-              `${CONTAINER.tracker}=/host/tracker`,
-              `${CONTAINER.trackerDocs}=${CFG.tracker_docs_dir}`,
-              `${CONTAINER.evidence}=${CFG.evidence_dir}`,
-              `${CONTAINER.feed}=/host/feed`,
-              `${CONTAINER.alerts}=/host/alerts`,
-              "",
-            ].join("\n"),
-          };
+              ...OK,
+              // The format string asks for `.Name` on volumes, so a correct
+              // implementation sees the NAME here.
+              stdout: [
+                String(running),
+                `${CONTAINER.piHome}=companion-pihome`,
+                `${CONTAINER.workspace}=/host/review-sandbox`,
+                `${CONTAINER.tracker}=/host/tracker`,
+                `${CONTAINER.trackerDocs}=${CFG.tracker_docs_dir}`,
+                `${CONTAINER.evidence}=${CFG.evidence_dir}`,
+                `${CONTAINER.feed}=/host/feed`,
+                `${CONTAINER.alerts}=/host/alerts`,
+                "",
+              ].join("\n"),
+            };
     const { lc, calls } = lifecycle([asDockerReports(true)]);
     expect(await lc.ensureUp()).toBe("adopted"); // NOT "recreated"
     expect(containerCalls(calls).map((c) => c[0])).toEqual(["inspect", "inspect"]); // status + createdDns
@@ -511,10 +566,21 @@ describe("mount drift", () => {
     it("recreates a container created BEFORE the pin — DNS-less, mounts fine", async () => {
       // The live pre-pin container: mounts all current, HostConfig.Dns empty.
       // `docker start` would resurrect the wifi-change failure silently.
-      const { lc, calls } = lifecycle([inspectWith(true, CURRENT, []), okFor("rm"), okFor("image"), okFor("run")]);
+      const { lc, calls } = lifecycle([
+        inspectWith(true, CURRENT, []),
+        okFor("rm"),
+        okFor("image"),
+        okFor("run"),
+      ]);
       const progress: string[] = [];
       expect(await lc.ensureUp((l) => progress.push(l))).toBe("recreated");
-      expect(containerCalls(calls).map((c) => c[0])).toEqual(["inspect", "inspect", "rm", "image", "run"]);
+      expect(containerCalls(calls).map((c) => c[0])).toEqual([
+        "inspect",
+        "inspect",
+        "rm",
+        "image",
+        "run",
+      ]);
       expect(progress.some((l) => l.includes(`expected [${PUBLIC_DNS.join(", ")}]`))).toBe(true);
       // The recreate must actually carry the pin, or it recreates forever.
       const run = calls.find((c) => c[0] === "run")!;
@@ -562,7 +628,12 @@ describe("CompanionLifecycle state machine", () => {
       inspect(false),
       (argv) =>
         argv[0] === "start"
-          ? { ok: false, stdout: "", stderr: "error mounting /home/user/.ssh/agent/s.dead to rootfs: not a directory", code: 1 }
+          ? {
+              ok: false,
+              stdout: "",
+              stderr: "error mounting /home/user/.ssh/agent/s.dead to rootfs: not a directory",
+              code: 1,
+            }
           : undefined,
       okFor("rm"),
       okFor("image"),
@@ -570,7 +641,13 @@ describe("CompanionLifecycle state machine", () => {
     ]);
     const progress: string[] = [];
     expect(await lc.ensureUp((l) => progress.push(l))).toBe("recreated");
-    expect(containerCalls(calls).map((c) => c[0])).toEqual(["inspect", "start", "rm", "image", "run"]);
+    expect(containerCalls(calls).map((c) => c[0])).toEqual([
+      "inspect",
+      "start",
+      "rm",
+      "image",
+      "run",
+    ]);
     expect(calls.find((c) => c[0] === "rm")).toEqual(["rm", "-f", "qcr-companion"]);
     expect(progress.some((l) => l.includes("recreating"))).toBe(true);
   });
@@ -584,7 +661,10 @@ describe("CompanionLifecycle state machine", () => {
   it("self-heals a missing image: builds it, then runs — never fails on first launch", async () => {
     const { lc, calls } = lifecycle([
       inspect("absent"),
-      (argv) => (argv[0] === "image" ? { ok: false, stdout: "", stderr: "No such image", code: 1 } : undefined),
+      (argv) =>
+        argv[0] === "image"
+          ? { ok: false, stdout: "", stderr: "No such image", code: 1 }
+          : undefined,
       okFor("build"),
       okFor("run"),
     ]);
@@ -621,7 +701,9 @@ describe("CompanionLifecycle state machine", () => {
   });
 
   it("leaves a live pi session strictly alone", async () => {
-    const { lc, calls } = lifecycle([(argv) => (argv[1] === "qcr-companion" && argv[2] === "tmux" ? OK : undefined)]);
+    const { lc, calls } = lifecycle([
+      (argv) => (argv[1] === "qcr-companion" && argv[2] === "tmux" ? OK : undefined),
+    ]);
     expect(await lc.spawnPi()).toBe(false);
     expect(calls).toHaveLength(1); // has-session only
   });
@@ -650,9 +732,21 @@ describe("CompanionLifecycle state machine", () => {
 
   it("status distinguishes absent / stopped / running", async () => {
     const none = new Map<string, string>();
-    expect(await lifecycle([inspect("absent")]).lc.status()).toEqual({ exists: false, running: false, mounts: none });
-    expect(await lifecycle([inspect(false)]).lc.status()).toEqual({ exists: true, running: false, mounts: none });
-    expect(await lifecycle([inspect(true)]).lc.status()).toEqual({ exists: true, running: true, mounts: none });
+    expect(await lifecycle([inspect("absent")]).lc.status()).toEqual({
+      exists: false,
+      running: false,
+      mounts: none,
+    });
+    expect(await lifecycle([inspect(false)]).lc.status()).toEqual({
+      exists: true,
+      running: false,
+      mounts: none,
+    });
+    expect(await lifecycle([inspect(true)]).lc.status()).toEqual({
+      exists: true,
+      running: true,
+      mounts: none,
+    });
   });
 });
 
@@ -670,9 +764,19 @@ describe("qcr tui args", () => {
 
   it("separates flags from the deep-link target", async () => {
     const { parseTuiArgs } = await import("../src/tui/index.js");
-    expect(parseTuiArgs(["5012", "--no-companion"])).toMatchObject({ target: "5012", companion: false, reload: true });
-    expect(parseTuiArgs(["--no-reload", "overseer"])).toMatchObject({ target: "overseer", reload: false });
-    expect(parseTuiArgs(["--resume-state", "/s.json"])).toMatchObject({ target: undefined, resumeState: "/s.json" });
+    expect(parseTuiArgs(["5012", "--no-companion"])).toMatchObject({
+      target: "5012",
+      companion: false,
+      reload: true,
+    });
+    expect(parseTuiArgs(["--no-reload", "overseer"])).toMatchObject({
+      target: "overseer",
+      reload: false,
+    });
+    expect(parseTuiArgs(["--resume-state", "/s.json"])).toMatchObject({
+      target: undefined,
+      resumeState: "/s.json",
+    });
     expect(parseTuiArgs(["-h"]).help).toBe(true);
   });
 });
@@ -718,7 +822,13 @@ describe("companion image", () => {
     expect(entrypoint).toContain('trust["/workspace"] = true');
     expect(entrypoint).not.toContain('trust["/opt/quickreview"]');
     // ① the spawn flag
-    expect(new CompanionLifecycle(CFG, async () => OK, {}, noDirs, { exists: () => false, read: () => undefined, mode: () => undefined }).piArgv()).toContain("--approve");
+    expect(
+      new CompanionLifecycle(CFG, async () => OK, {}, noDirs, {
+        exists: () => false,
+        read: () => undefined,
+        mode: () => undefined,
+      }).piArgv(),
+    ).toContain("--approve");
   });
 
   // the image's HOME and the code's mount destination are ONE fact
@@ -736,7 +846,11 @@ describe("companion image", () => {
     expect(dockerfile).toContain(`VOLUME ["${CONTAINER.piHome}"]`);
     // The session dir the spawn names must be on the volume too — that is the
     // only reason the conversation survived when the token did not.
-    const pi = new CompanionLifecycle(CFG, async () => OK, {}, noDirs, { exists: () => false, read: () => undefined, mode: () => undefined }).piArgv();
+    const pi = new CompanionLifecycle(CFG, async () => OK, {}, noDirs, {
+      exists: () => false,
+      read: () => undefined,
+      mode: () => undefined,
+    }).piArgv();
     const sessionDir = pi[pi.indexOf("--session-dir") + 1]!;
     expect(sessionDir.startsWith(`${CONTAINER.piHome}/`)).toBe(true);
     // And the entrypoint says so out loud when it is not a mount point.
@@ -776,7 +890,9 @@ describe("companion image", () => {
     expect(skills.length).toBeGreaterThan(20);
     expect(skills.map((e) => e.name)).toContain("wayfinder");
     // The two wayfinder leans on, named in prompts/companion.md.
-    expect(skills.map((e) => e.name)).toEqual(expect.arrayContaining(["grilling", "domain-modeling"]));
+    expect(skills.map((e) => e.name)).toEqual(
+      expect.arrayContaining(["grilling", "domain-modeling"]),
+    );
   });
 
   // our OWN skills are a SECOND registered directory. `.claude/skills`
@@ -827,7 +943,10 @@ describe("companion image", () => {
   // reviewer session should be able to reach for mid-round, so the VM image
   // deliberately does NOT get this registration.
   it("keeps the skill set off the VM image — reviewer passes are leaves", () => {
-    const vmEntrypoint = readFileSync(resolve(root, "deploy/ansible/templates/entrypoint.sh.j2"), "utf8");
+    const vmEntrypoint = readFileSync(
+      resolve(root, "deploy/ansible/templates/entrypoint.sh.j2"),
+      "utf8",
+    );
     expect(vmEntrypoint).not.toMatch(/settings\.skills/);
     expect(vmEntrypoint).not.toMatch(/enableSkillCommands/);
     expect(vmEntrypoint).not.toMatch(/\.claude\/skills/);
@@ -837,9 +956,15 @@ describe("companion image", () => {
     expect(entrypoint).not.toMatch(/require\.resolve\("pi-memory"/);
     expect(entrypoint).not.toMatch(/extensions\.push/);
     // The VM image dropped the same registration in the same slice.
-    const vmEntrypoint = readFileSync(resolve(root, "deploy/ansible/templates/entrypoint.sh.j2"), "utf8");
+    const vmEntrypoint = readFileSync(
+      resolve(root, "deploy/ansible/templates/entrypoint.sh.j2"),
+      "utf8",
+    );
     expect(vmEntrypoint).not.toMatch(/require\.resolve\("pi-memory"/);
-    const vmDockerfile = readFileSync(resolve(root, "deploy/ansible/templates/Dockerfile.j2"), "utf8");
+    const vmDockerfile = readFileSync(
+      resolve(root, "deploy/ansible/templates/Dockerfile.j2"),
+      "utf8",
+    );
     expect(vmDockerfile).not.toMatch(/npm install -g \{\{ pi_memory_package \}\}/);
     expect(vmDockerfile).not.toMatch(/npm install -g \{\{ qmd_npm_package \}\}/);
     const gv = readFileSync(resolve(root, "deploy/ansible/group_vars/all.yml"), "utf8");
@@ -897,7 +1022,11 @@ describe("native subagents (companion)", () => {
   const agentsDir = resolve(root, "docker/companion/agents");
 
   it("the glue rides piArgv from /workspace — first-party, unconditional", () => {
-    const argv = new CompanionLifecycle(CFG, async () => OK, {}, noDirs, { exists: () => false, read: () => undefined, mode: () => undefined }).piArgv();
+    const argv = new CompanionLifecycle(CFG, async () => OK, {}, noDirs, {
+      exists: () => false,
+      read: () => undefined,
+      mode: () => undefined,
+    }).piArgv();
     const at = argv.indexOf(SUBAGENTS.extension);
     expect(at).toBeGreaterThan(0);
     expect(argv[at - 1]).toBe("--extension");
@@ -911,7 +1040,9 @@ describe("native subagents (companion)", () => {
     expect(/^pi_subagents_commit:/m.test(groupVars)).toBe(false);
     expect(/^pi_subagents_repo:/m.test(groupVars)).toBe(false);
     // And the build no longer needs the legacy-scope exclusion.
-    expect(readFileSync(resolve(root, "tsconfig.json"), "utf8")).not.toContain("extensions/vendor/pi-subagents");
+    expect(readFileSync(resolve(root, "tsconfig.json"), "utf8")).not.toContain(
+      "extensions/vendor/pi-subagents",
+    );
   });
 
   it("carries the companion agent set in its first-party home", () => {
@@ -948,7 +1079,11 @@ describe("native subagents (companion)", () => {
   it("keeps the desktop cap at 4 — the glue's default, no env override in piArgv", () => {
     // The VM's 6 rides QCR_SUBAGENT_MAX_CONCURRENCY (sessions.ts buildEnv);
     // the companion deliberately sets nothing and inherits the default 4.
-    const argv = new CompanionLifecycle(CFG, async () => OK, {}, noDirs, { exists: () => false, read: () => undefined, mode: () => undefined }).piArgv();
+    const argv = new CompanionLifecycle(CFG, async () => OK, {}, noDirs, {
+      exists: () => false,
+      read: () => undefined,
+      mode: () => undefined,
+    }).piArgv();
     expect(argv.join(" ")).not.toContain("QCR_SUBAGENT_MAX_CONCURRENCY");
   });
 });

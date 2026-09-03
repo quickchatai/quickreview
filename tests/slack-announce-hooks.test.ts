@@ -21,7 +21,11 @@ class FakeSlack implements SlackWebApi {
   posts: Array<{ text: string; thread_ts?: string }> = [];
   throwAlways = false;
   private seq = 0;
-  async postMessage(args: { channel: string; text: string; thread_ts?: string }): Promise<SlackPostResult> {
+  async postMessage(args: {
+    channel: string;
+    text: string;
+    thread_ts?: string;
+  }): Promise<SlackPostResult> {
     if (this.throwAlways) throw new Error("slack is down");
     this.posts.push({ text: args.text, thread_ts: args.thread_ts });
     return { ok: true, ts: `17000000${++this.seq}.0001` };
@@ -41,7 +45,9 @@ class FakeSlack implements SlackWebApi {
 }
 
 class FakeDispatchAdapter implements DispatchAdapter {
-  files: PrFileEntry[] = [{ filename: "src/app.ts", status: "modified", additions: 120, deletions: 34 }];
+  files: PrFileEntry[] = [
+    { filename: "src/app.ts", status: "modified", additions: 120, deletions: 34 },
+  ];
   async listPrFiles(): Promise<PrFileEntry[]> {
     return this.files;
   }
@@ -128,19 +134,34 @@ afterEach(() => {
 describe("dispatch hook", () => {
   it("posts the pickup root for a dispatched round", async () => {
     queuedPr(5263);
-    const orders = await dispatchOnce({ cfg, store, adapter: new FakeDispatchAdapter(), hooks, announce: announcer(), now });
+    const orders = await dispatchOnce({
+      cfg,
+      store,
+      adapter: new FakeDispatchAdapter(),
+      hooks,
+      announce: announcer(),
+      now,
+    });
     expect(orders).toHaveLength(1);
     expect(slack.posts).toHaveLength(1);
     expect(slack.posts[0]!.text.split("\n")[0]).toBe(
       "👀 *<https://github.com/exampleorg/example-app/pull/5263|#5263 Add rate limiting>* — review started for <@U_ALICE>",
     );
-    expect(slack.posts[0]!.text.split("\n")[1]).toContain("_round 1 · first review · 1 files, +120/−34 · lenses: ");
+    expect(slack.posts[0]!.text.split("\n")[1]).toContain(
+      "_round 1 · first review · 1 files, +120/−34 · lenses: ",
+    );
     expect(store.slackThreadForPr(5263)).toBeDefined();
   });
 
   it("dispatches exactly as before when no announcer is wired", async () => {
     queuedPr(5263);
-    const orders = await dispatchOnce({ cfg, store, adapter: new FakeDispatchAdapter(), hooks, now });
+    const orders = await dispatchOnce({
+      cfg,
+      store,
+      adapter: new FakeDispatchAdapter(),
+      hooks,
+      now,
+    });
     expect(orders).toHaveLength(1);
     expect(store.allSlackThreads()).toEqual([]);
   });
@@ -148,7 +169,14 @@ describe("dispatch hook", () => {
   it("a Slack outage never stalls the pump — the round still dispatches", async () => {
     slack.throwAlways = true;
     queuedPr(5263);
-    const orders = await dispatchOnce({ cfg, store, adapter: new FakeDispatchAdapter(), hooks, announce: announcer(), now });
+    const orders = await dispatchOnce({
+      cfg,
+      store,
+      adapter: new FakeDispatchAdapter(),
+      hooks,
+      announce: announcer(),
+      now,
+    });
     expect(orders).toHaveLength(1);
     expect(store.runningRounds()).toHaveLength(1);
     expect(store.slackPost("pickup:5263")).toMatchObject({ ok: 0 });
@@ -257,7 +285,9 @@ describe("verdict hooks", () => {
     store.startRound(5263, "re-review", ["pass-baseline"], cfg.daemon.round_deadline_min);
     clock = new Date("2026-08-17T23:00:00.000Z");
     await watcher(announcer()).checkDeadlines();
-    expect(slack.posts[0]!.text).toBe("♻️ the round-1 review is superseded by round 2 (`abcdef1`) — read the newest one");
+    expect(slack.posts[0]!.text).toBe(
+      "♻️ the round-1 review is superseded by round 2 (`abcdef1`) — read the newest one",
+    );
     expect(slack.posts[0]!.text).not.toContain("dismiss");
   });
 

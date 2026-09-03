@@ -16,7 +16,17 @@ const fail = (): RemoteResult => ({ ok: false, stdout: "", stderr: "no such sess
 describe("captureArgv", () => {
   it("captures the pane inside the container, colors kept, wrapped lines joined", () => {
     expect(captureArgv(TUI_DEFAULTS, "pr-5012")).toEqual([
-      "sudo", "docker", "exec", "quickreview-sandbox", "tmux", "capture-pane", "-e", "-p", "-J", "-t", "pr-5012",
+      "sudo",
+      "docker",
+      "exec",
+      "quickreview-sandbox",
+      "tmux",
+      "capture-pane",
+      "-e",
+      "-p",
+      "-J",
+      "-t",
+      "pr-5012",
     ]);
   });
 
@@ -29,11 +39,25 @@ describe("captureArgv", () => {
 
   it("asks for scrollback with tmux's negative line numbers (-S above the visible top)", () => {
     expect(captureArgv(TUI_DEFAULTS, "pr-5012", { startBack: 212 })).toEqual([
-      "sudo", "docker", "exec", "quickreview-sandbox", "tmux", "capture-pane", "-e", "-p", "-J", "-S", "-212", "-t", "pr-5012",
+      "sudo",
+      "docker",
+      "exec",
+      "quickreview-sandbox",
+      "tmux",
+      "capture-pane",
+      "-e",
+      "-p",
+      "-J",
+      "-S",
+      "-212",
+      "-t",
+      "pr-5012",
     ]);
     // Both edges when a caller knows them; `-E` is omitted by the mirror so the
     // capture always runs through the bottom of the visible pane.
-    expect(captureArgv(TUI_DEFAULTS, "pr-5012", { startBack: 30, endBack: 10 }).join(" ")).toContain("-S -30 -E -10");
+    expect(
+      captureArgv(TUI_DEFAULTS, "pr-5012", { startBack: 30, endBack: 10 }).join(" "),
+    ).toContain("-S -30 -E -10");
     expect(captureArgv(TUI_DEFAULTS, "pr-5012", { startBack: 0 })).not.toContain("-S");
   });
 });
@@ -41,13 +65,29 @@ describe("captureArgv", () => {
 describe("sendKeysArgv", () => {
   it("writes into the session's tmux pane inside the container", () => {
     expect(sendKeysArgv(TUI_DEFAULTS, "pr-5012", ["-l", "hi"])).toEqual([
-      "sudo", "docker", "exec", "quickreview-sandbox", "tmux", "send-keys", "-t", "pr-5012", "-l", "hi",
+      "sudo",
+      "docker",
+      "exec",
+      "quickreview-sandbox",
+      "tmux",
+      "send-keys",
+      "-t",
+      "pr-5012",
+      "-l",
+      "hi",
     ]);
   });
 
   it("drops sudo when configured off and passes key names through", () => {
     expect(sendKeysArgv({ ...TUI_DEFAULTS, sudo_docker: false }, "overseer", ["Enter"])).toEqual([
-      "docker", "exec", "quickreview-sandbox", "tmux", "send-keys", "-t", "overseer", "Enter",
+      "docker",
+      "exec",
+      "quickreview-sandbox",
+      "tmux",
+      "send-keys",
+      "-t",
+      "overseer",
+      "Enter",
     ]);
   });
 });
@@ -88,19 +128,12 @@ describe("keysToTmux", () => {
   });
 
   it("splits literal runs from named keys (send-keys -l is per invocation)", () => {
-    expect(t("hi\r")).toEqual([
-      ["-l", "hi"],
-      ["Enter"],
-    ]);
+    expect(t("hi\r")).toEqual([["-l", "hi"], ["Enter"]]);
     expect(t("\x1b[Aabc\rz")).toEqual([["Up"], ["-l", "abc"], ["Enter"], ["-l", "z"]]);
   });
 
   it("keeps a pasted multi-line block to one invocation per run", () => {
-    expect(t("line one\nline two")).toEqual([
-      ["-l", "line one"],
-      ["Enter"],
-      ["-l", "line two"],
-    ]);
+    expect(t("line one\nline two")).toEqual([["-l", "line one"], ["Enter"], ["-l", "line two"]]);
   });
 });
 
@@ -137,7 +170,9 @@ describe("keepSgrOnly", () => {
   it("closes a row that ends mid-style, so nothing paints past the mirror", () => {
     // The real shape: a background set, then `39` — foreground-only, which
     // looks like a reset and closes nothing of the background.
-    expect(keepSgrOnly("\x1b[48;5;236mstatus bar\x1b[39m   ")).toBe("\x1b[48;5;236mstatus bar\x1b[39m   \x1b[0m");
+    expect(keepSgrOnly("\x1b[48;5;236mstatus bar\x1b[39m   ")).toBe(
+      "\x1b[48;5;236mstatus bar\x1b[39m   \x1b[0m",
+    );
     expect(keepSgrOnly("\x1b[7mreverse")).toBe("\x1b[7mreverse\x1b[0m");
   });
 
@@ -181,9 +216,21 @@ describe("PiMirror", () => {
 
   it("caches a successful capture per PR and serves it instantly", async () => {
     const { mirror, calls, repaints } = mirrorWith({ 5012: ok("hello\nworld\n") });
-    expect(mirror.view(5012)).toEqual({ pr: 5012, lines: [], missing: false, stale: false, offset: 0 });
+    expect(mirror.view(5012)).toEqual({
+      pr: 5012,
+      lines: [],
+      missing: false,
+      stale: false,
+      offset: 0,
+    });
     await mirror.refresh(5012);
-    expect(mirror.view(5012)).toEqual({ pr: 5012, lines: ["hello", "world"], missing: false, stale: false, offset: 0 });
+    expect(mirror.view(5012)).toEqual({
+      pr: 5012,
+      lines: ["hello", "world"],
+      missing: false,
+      stale: false,
+      offset: 0,
+    });
     expect(calls).toHaveLength(1);
     expect(repaints()).toBe(1);
   });
@@ -195,7 +242,13 @@ describe("PiMirror", () => {
     await mirror.refresh(7);
     live = false;
     await mirror.refresh(7);
-    expect(mirror.view(7)).toEqual({ pr: 7, lines: ["output"], missing: true, stale: true, offset: 0 });
+    expect(mirror.view(7)).toEqual({
+      pr: 7,
+      lines: ["output"],
+      missing: true,
+      stale: true,
+      offset: 0,
+    });
   });
 
   it("reports a never-seen session as missing without a stale marker", async () => {
@@ -290,7 +343,12 @@ function fakeStreams() {
   input.resume = () => {};
   input.pause = () => {};
   input.setRawMode = () => {};
-  return { out, input, written: () => buf, type: (s: string | Buffer) => input.emit("data", Buffer.from(s)) };
+  return {
+    out,
+    input,
+    written: () => buf,
+    type: (s: string | Buffer) => input.emit("data", Buffer.from(s)),
+  };
 }
 
 function appWith(opts: { liveSessions?: number[] } = {}) {
@@ -298,7 +356,6 @@ function appWith(opts: { liveSessions?: number[] } = {}) {
   const captureArgvs: string[][] = [];
   const sendKeys: string[][] = [];
   const ssh: SshRunner = async (_h, argv) => {
-
     if (argv.includes("capture-pane")) {
       const pr = Number(/pr-(\d+)/.exec(argv.join(" "))?.[1]);
       captures.push(pr);
@@ -407,7 +464,20 @@ describe("focused pi pane — keys go to the session", () => {
     const { app, streams, sendKeys, captureArgvs, running } = await focused();
     streams.type("hello");
     await settle();
-    expect(sendKeys).toEqual([["sudo", "docker", "exec", "quickreview-sandbox", "tmux", "send-keys", "-t", "pr-5012", "-l", "hello"]]);
+    expect(sendKeys).toEqual([
+      [
+        "sudo",
+        "docker",
+        "exec",
+        "quickreview-sandbox",
+        "tmux",
+        "send-keys",
+        "-t",
+        "pr-5012",
+        "-l",
+        "hello",
+      ],
+    ]);
     expect(captureArgvs.length).toBeGreaterThan(0); // echo lands now, not next tick
     app.quit();
     await running;
@@ -517,9 +587,27 @@ describe("pi pane scrollback (wheel)", () => {
     // rows); without it pi would wrap at tmux's detached 80-column
     // default and the capture would crowd into the left of the pane.
     expect(captureArgvs.at(-1)).toEqual([
-      "sudo", "docker", "exec", "quickreview-sandbox", "tmux",
-      "resize-window", "-t", "pr-5012", "-x", "96", "-y", "7", ";",
-      "capture-pane", "-e", "-p", "-J", "-S", "-203", "-t", "pr-5012",
+      "sudo",
+      "docker",
+      "exec",
+      "quickreview-sandbox",
+      "tmux",
+      "resize-window",
+      "-t",
+      "pr-5012",
+      "-x",
+      "96",
+      "-y",
+      "7",
+      ";",
+      "capture-pane",
+      "-e",
+      "-p",
+      "-J",
+      "-S",
+      "-203",
+      "-t",
+      "pr-5012",
     ]);
     expect(stripAnsi(piHeader(5012, app.view.pi, true))).toContain("↑ 3 lines back · End live");
 

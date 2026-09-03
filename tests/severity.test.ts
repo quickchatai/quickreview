@@ -84,12 +84,18 @@ describe("reachability gate", () => {
     // three are `routine`: the triggering state arises in normal operation.
     const knownGood = [
       { name: "cross-tenant IDOR", severity: "P0" as Severity, confidence: 0.9 },
-      { name: "database alias break under rolling deploy", severity: "P0" as Severity, confidence: 0.85 },
+      {
+        name: "database alias break under rolling deploy",
+        severity: "P0" as Severity,
+        confidence: 0.85,
+      },
       { name: "PII exposure", severity: "P1" as Severity, confidence: 0.8 },
     ];
     for (const c of knownGood) {
       expect(postTag(c.severity, c.confidence, "routine"), c.name).toBe("blocker");
-      expect(deriveVerdict({ hasBlockers: true, needsHuman: false }), c.name).toBe("REQUEST_CHANGES");
+      expect(deriveVerdict({ hasBlockers: true, needsHuman: false }), c.name).toBe(
+        "REQUEST_CHANGES",
+      );
     }
     // And a high-confidence routine P2 still blocks exactly as before.
     expect(postTag("P2", 0.9, "routine")).toBe("blocker");
@@ -187,8 +193,12 @@ describe("first-party directive gate", () => {
 
   it("keeps the P1 bright line for third-party/vendored and non-directive paths", () => {
     expect(postTag("P1", 1, "routine", { kind: "injection", path: "src/app.py" })).toBe("blocker");
-    expect(postTag("P1", 1, "routine", { kind: "injection", path: "node_modules/pkg/CLAUDE.md" })).toBe("blocker");
-    expect(postTag("P1", 1, "routine", { kind: "injection", path: "vendor/x/.claude/y.md" })).toBe("blocker");
+    expect(
+      postTag("P1", 1, "routine", { kind: "injection", path: "node_modules/pkg/CLAUDE.md" }),
+    ).toBe("blocker");
+    expect(postTag("P1", 1, "routine", { kind: "injection", path: "vendor/x/.claude/y.md" })).toBe(
+      "blocker",
+    );
   });
 
   it("leaves every non-injection finding on a directive path untouched", () => {
@@ -198,9 +208,15 @@ describe("first-party directive gate", () => {
   });
 
   it("does not let directive location change the merits verdict", () => {
-    expect(deriveVerdict({ hasBlockers: false, needsHuman: false, firstPartyDirectiveInjection: true })).toBe("APPROVE");
-    expect(deriveVerdict({ hasBlockers: false, needsHuman: true, firstPartyDirectiveInjection: true })).toBe("NEEDS_HUMAN");
-    expect(deriveVerdict({ hasBlockers: true, needsHuman: false, firstPartyDirectiveInjection: true })).toBe("REQUEST_CHANGES");
+    expect(
+      deriveVerdict({ hasBlockers: false, needsHuman: false, firstPartyDirectiveInjection: true }),
+    ).toBe("APPROVE");
+    expect(
+      deriveVerdict({ hasBlockers: false, needsHuman: true, firstPartyDirectiveInjection: true }),
+    ).toBe("NEEDS_HUMAN");
+    expect(
+      deriveVerdict({ hasBlockers: true, needsHuman: false, firstPartyDirectiveInjection: true }),
+    ).toBe("REQUEST_CHANGES");
     // Absent flag: ordinary behaviour exactly.
     expect(deriveVerdict({ hasBlockers: false, needsHuman: false })).toBe("APPROVE");
   });
@@ -297,7 +313,14 @@ describe("the closed tag grammar", () => {
   });
 
   it("rejects every tag the corpus invented", () => {
-    for (const t of ["[start here 3/5]", "[verified]", "[blocker — now fixed]", "[fyi]", "[praise]", "blocker, now fixed"]) {
+    for (const t of [
+      "[start here 3/5]",
+      "[verified]",
+      "[blocker — now fixed]",
+      "[fyi]",
+      "[praise]",
+      "blocker, now fixed",
+    ]) {
       expect(isSanctionedTag(t), t).toBe(false);
     }
     expect(isSanctionedTag("")).toBe(false);
@@ -312,7 +335,10 @@ describe("the closed tag grammar", () => {
   });
 
   it("strips a duplicated posting tag silently — the real one is minted downstream", () => {
-    expect(stripUngrammaticalTag("[nit] rename this")).toEqual({ title: "rename this", stripped: null });
+    expect(stripUngrammaticalTag("[nit] rename this")).toEqual({
+      title: "rename this",
+      stripped: null,
+    });
   });
 
   it("leaves a sanctioned MARKER prefix in place — it carries meaning", () => {
@@ -359,7 +385,10 @@ describe("the [deferred] tag", () => {
     for (const [i, a] of MARKERS.entries()) {
       for (const [j, b] of MARKERS.entries()) {
         if (i === j) continue;
-        expect([...words(a)].some((w) => words(b).has(w)), `${a} vs ${b}`).toBe(false);
+        expect(
+          [...words(a)].some((w) => words(b).has(w)),
+          `${a} vs ${b}`,
+        ).toBe(false);
         // …and neither is a substring of the other, in either direction.
         expect(a.includes(b), `${a} contains ${b}`).toBe(false);
       }

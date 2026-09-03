@@ -31,7 +31,11 @@ export function deployScriptPath(root: string): string {
 }
 
 /** `bash <root>/scripts/deploy.sh [--dry-run] <mode>`. */
-export function deployArgv(root: string, mode: DeployMode, opts: { dryRun?: boolean } = {}): string[] {
+export function deployArgv(
+  root: string,
+  mode: DeployMode,
+  opts: { dryRun?: boolean } = {},
+): string[] {
   return [deployScriptPath(root), ...(opts.dryRun ? ["--dry-run"] : []), mode];
 }
 

@@ -13,7 +13,13 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { GUARDS_DEFAULTS, parseConfig, parseEscalation, type Config, type EscalationConfig } from "../src/config.js";
+import {
+  GUARDS_DEFAULTS,
+  parseConfig,
+  parseEscalation,
+  type Config,
+  type EscalationConfig,
+} from "../src/config.js";
 import {
   ESCALATION_TAG,
   asksForWholeReview,
@@ -54,7 +60,14 @@ function on(over: Record<string, unknown> = {}): EscalationConfig {
   return parseEscalation({
     enabled: true,
     targets: ["teammate-one", "teammate-two"],
-    rules: [{ name: "migrations", to: "teammate-one", why: "you own the migration policy", paths: ["**/migrations/*.py"] }],
+    rules: [
+      {
+        name: "migrations",
+        to: "teammate-one",
+        why: "you own the migration policy",
+        paths: ["**/migrations/*.py"],
+      },
+    ],
     ...over,
   });
 }
@@ -70,7 +83,14 @@ const SCOPE = { kind: "code" as const, path: "billing/charge.py", start_line: 12
 /** The PR's changed files, as every delivery call must now supply them: a
  * `code`/`migration` scope naming anything else is refused (review,
  * blocker 2). */
-const CHANGED = ["billing/charge.py", "app/migrations/0042.py", "app/migrations/0042_x.py", "a/x.py", "b/y.py", "a.py"];
+const CHANGED = [
+  "billing/charge.py",
+  "app/migrations/0042.py",
+  "app/migrations/0042_x.py",
+  "a/x.py",
+  "b/y.py",
+  "a.py",
+];
 
 function request(over: Partial<EscalationRequest> = {}): EscalationRequest {
   return {
@@ -92,7 +112,11 @@ function fakeAdapter(over: { blocked?: string; throws?: boolean; dryRun?: boolea
     reviews,
     requests,
     order,
-    async createReview(pr: number, payload: { commit_id: string; event: "COMMENT"; body: string }, options?: { purpose?: string }): Promise<GateResult> {
+    async createReview(
+      pr: number,
+      payload: { commit_id: string; event: "COMMENT"; body: string },
+      options?: { purpose?: string },
+    ): Promise<GateResult> {
       if (over.throws) throw new Error("POST /reviews → 502");
       order.push("comment");
       reviews.push({ pr, payload, ...(options?.purpose ? { purpose: options.purpose } : {}) });
@@ -105,7 +129,9 @@ function fakeAdapter(over: { blocked?: string; throws?: boolean; dryRun?: boolea
     async requestEscalationReview(pr: number, logins: string[]): Promise<GateResult> {
       order.push("request");
       requests.push({ pr, logins });
-      return over.dryRun ? { executed: false, dryRunFile: `/tmp/dryrun/${pr}-req.json` } : { executed: true };
+      return over.dryRun
+        ? { executed: false, dryRunFile: `/tmp/dryrun/${pr}-req.json` }
+        : { executed: true };
     },
   };
 }
@@ -134,10 +160,17 @@ describe("INVARIANT 1 — the reviewer still decides; escalation rides beside th
     expect(imports).not.toContain("./types.js");
     // …and no exported signature mentions a Verdict type either (the verdict
     // the note QUOTES is a plain string carried in for rendering).
-    const exported = [...src.matchAll(/^export (?:async )?function ([A-Za-z]+)\(([\s\S]*?)\)(?::\s*([^{]+))?\s*\{/gm)];
+    const exported = [
+      ...src.matchAll(
+        /^export (?:async )?function ([A-Za-z]+)\(([\s\S]*?)\)(?::\s*([^{]+))?\s*\{/gm,
+      ),
+    ];
     expect(exported.length).toBeGreaterThan(8);
     for (const [, name, params, ret] of exported) {
-      expect(`${params ?? ""} ${ret ?? ""}`, `escalation.ts ${name} must not traffic in verdicts`).not.toMatch(/\bVerdict\b/);
+      expect(
+        `${params ?? ""} ${ret ?? ""}`,
+        `escalation.ts ${name} must not traffic in verdicts`,
+      ).not.toMatch(/\bVerdict\b/);
     }
   });
 
@@ -145,12 +178,25 @@ describe("INVARIANT 1 — the reviewer still decides; escalation rides beside th
     const adapter = fakeAdapter();
     const outcomes = await deliverEscalations(
       { cfg: on(), store, adapter },
-      { pr: 7, verdict: "APPROVE", head_sha: HEAD, round_no: 1, changed_paths: CHANGED, ruleRequests: [request({ rule: "migrations" })] },
+      {
+        pr: 7,
+        verdict: "APPROVE",
+        head_sha: HEAD,
+        round_no: 1,
+        changed_paths: CHANGED,
+        ruleRequests: [request({ rule: "migrations" })],
+      },
     );
     expect(outcomes).toHaveLength(1);
     // Every key on the outcome, enumerated: nothing here could be read as
     // "hold the review", "change the verdict" or "wait for a human".
-    expect(Object.keys(outcomes[0]!).sort()).toEqual(["comment_executed", "origin", "refused", "scope_key", "target"]);
+    expect(Object.keys(outcomes[0]!).sort()).toEqual([
+      "comment_executed",
+      "origin",
+      "refused",
+      "scope_key",
+      "target",
+    ]);
   });
 
   it("BEHAVIOURAL: the verdict a round lands is IDENTICAL with escalation on and off", async () => {
@@ -159,30 +205,77 @@ describe("INVARIANT 1 — the reviewer still decides; escalation rides beside th
     // and actually firing. If escalation could touch the verdict, these two
     // snapshots would diverge.
     const snapshots: Array<Record<string, unknown>> = [];
-    for (const escalation of [OFF, on({ targets: ["teammate-one"], rules: [{ name: "all", to: "teammate-one", why: "w", paths: ["**"] }] })]) {
+    for (const escalation of [
+      OFF,
+      on({
+        targets: ["teammate-one"],
+        rules: [{ name: "all", to: "teammate-one", why: "w", paths: ["**"] }],
+      }),
+    ]) {
       const s = new StateStore(":memory:");
       const dir = mkdtempSync(join(tmpdir(), "qcr-esc-verdict-"));
       const labelCalls: string[] = [];
       const adapter: VerdictAdapter = {
-        async addLabel(n, l) { labelCalls.push(`add:${n}:${l}`); return { executed: true }; },
-        async removeLabel(n, l) { labelCalls.push(`rm:${n}:${l}`); return { executed: true }; },
-        async listPrFiles() { return [{ filename: "billing/charge.py" }]; },
-        async getPr() { return { labels: [] }; },
-        async createReview() { return { executed: true }; },
-        async requestEscalationReview() { return { executed: true }; },
+        async addLabel(n, l) {
+          labelCalls.push(`add:${n}:${l}`);
+          return { executed: true };
+        },
+        async removeLabel(n, l) {
+          labelCalls.push(`rm:${n}:${l}`);
+          return { executed: true };
+        },
+        async listPrFiles() {
+          return [{ filename: "billing/charge.py" }];
+        },
+        async getPr() {
+          return { labels: [] };
+        },
+        async createReview() {
+          return { executed: true };
+        },
+        async requestEscalationReview() {
+          return { executed: true };
+        },
       };
       const hooks: SessionHooks = {
-        async dispatchRound() {}, async inject() {}, async injectOverseer() {}, async archiveAndClose() {},
+        async dispatchRound() {},
+        async inject() {},
+        async injectOverseer() {},
+        async archiveAndClose() {},
       };
-      s.setAnomalySink((sig) => new AnomalyWakePolicy({ injectOverseer: (m) => hooks.injectOverseer(m) }).onAnomaly(sig));
-      s.upsertPr({ number: 42, state: "reviewing", head_sha: HEAD, title: "T", author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+      s.setAnomalySink((sig) =>
+        new AnomalyWakePolicy({ injectOverseer: (m) => hooks.injectOverseer(m) }).onAnomaly(sig),
+      );
+      s.upsertPr({
+        number: 42,
+        state: "reviewing",
+        head_sha: HEAD,
+        title: "T",
+        author: "alice",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
       s.startRound(42, "first", ["pass-baseline"], cfg.daemon.round_deadline_min);
-      const v: VerdictFile = { pr: 42, round_no: 1, verdict: "REQUEST_CHANGES", head_sha: HEAD, finished_at: "2026-08-31T12:00:00Z" };
+      const v: VerdictFile = {
+        pr: 42,
+        round_no: 1,
+        verdict: "REQUEST_CHANGES",
+        head_sha: HEAD,
+        finished_at: "2026-08-31T12:00:00Z",
+      };
       writeFileSync(join(dir, "pr-42-round-1.json"), JSON.stringify(v));
       const w = new VerdictWatcher({
         cfg: { ...cfg, escalation },
-        store: s, adapter, hooks, verdictDir: dir, root: dir,
-        usage: { globalStoreDir: null }, parseRetries: 0, retryDelayMs: 1, ledgerCheckDelayMs: 0,
+        store: s,
+        adapter,
+        hooks,
+        verdictDir: dir,
+        root: dir,
+        usage: { globalStoreDir: null },
+        parseRetries: 0,
+        retryDelayMs: 1,
+        ledgerCheckDelayMs: 0,
       });
       await w.sweep();
       const row = s.getPr(42)!;
@@ -196,7 +289,10 @@ describe("INVARIANT 1 — the reviewer still decides; escalation rides beside th
         round: s.roundsFor(42).map((r) => `${r.round_no}:${r.status}:${r.verdict ?? ""}`),
         // Timestamps are wall-clock, so only the SHAPE and content are
         // compared — everything else about the mark must be identical.
-        reviewedHead: JSON.stringify(s.reviewedHead(42) ?? null).replace(/"reviewed_at":"[^"]*"/, '"reviewed_at":"<ts>"'),
+        reviewedHead: JSON.stringify(s.reviewedHead(42) ?? null).replace(
+          /"reviewed_at":"[^"]*"/,
+          '"reviewed_at":"<ts>"',
+        ),
         labels: labelCalls,
       });
       s.close();
@@ -209,24 +305,67 @@ describe("INVARIANT 1 — the reviewer still decides; escalation rides beside th
     const s = new StateStore(":memory:");
     const dir = mkdtempSync(join(tmpdir(), "qcr-esc-throw-"));
     const adapter: VerdictAdapter = {
-      async addLabel() { return { executed: true }; },
-      async removeLabel() { return { executed: true }; },
-      async listPrFiles() { return [{ filename: "a.py" }]; },
-      async getPr() { return { labels: [] }; },
-      async createReview() { throw new Error("POST /reviews → 502"); },
+      async addLabel() {
+        return { executed: true };
+      },
+      async removeLabel() {
+        return { executed: true };
+      },
+      async listPrFiles() {
+        return [{ filename: "a.py" }];
+      },
+      async getPr() {
+        return { labels: [] };
+      },
+      async createReview() {
+        throw new Error("POST /reviews → 502");
+      },
     };
-    const hooks: SessionHooks = { async dispatchRound() {}, async inject() {}, async injectOverseer() {}, async archiveAndClose() {} };
+    const hooks: SessionHooks = {
+      async dispatchRound() {},
+      async inject() {},
+      async injectOverseer() {},
+      async archiveAndClose() {},
+    };
     s.setAnomalySink(() => {});
-    s.upsertPr({ number: 43, state: "reviewing", head_sha: HEAD, title: "T", author: "a", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+    s.upsertPr({
+      number: 43,
+      state: "reviewing",
+      head_sha: HEAD,
+      title: "T",
+      author: "a",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
     s.startRound(43, "first", ["pass-baseline"], cfg.daemon.round_deadline_min);
     writeFileSync(
       join(dir, "pr-43-round-1.json"),
-      JSON.stringify({ pr: 43, round_no: 1, verdict: "APPROVE", head_sha: HEAD, finished_at: "2026-08-31T12:00:00Z" }),
+      JSON.stringify({
+        pr: 43,
+        round_no: 1,
+        verdict: "APPROVE",
+        head_sha: HEAD,
+        finished_at: "2026-08-31T12:00:00Z",
+      }),
     );
     const w = new VerdictWatcher({
-      cfg: { ...cfg, escalation: on({ targets: ["teammate-one"], rules: [{ name: "all", to: "teammate-one", why: "w", paths: ["**"] }] }) },
-      store: s, adapter, hooks, verdictDir: dir, root: dir,
-      usage: { globalStoreDir: null }, parseRetries: 0, retryDelayMs: 1, ledgerCheckDelayMs: 0,
+      cfg: {
+        ...cfg,
+        escalation: on({
+          targets: ["teammate-one"],
+          rules: [{ name: "all", to: "teammate-one", why: "w", paths: ["**"] }],
+        }),
+      },
+      store: s,
+      adapter,
+      hooks,
+      verdictDir: dir,
+      root: dir,
+      usage: { globalStoreDir: null },
+      parseRetries: 0,
+      retryDelayMs: 1,
+      ledgerCheckDelayMs: 0,
     });
     const handled = await w.sweep();
     expect(s.roundsFor(43)[0]!.verdict).toBe("APPROVE");
@@ -258,8 +397,21 @@ describe("INVARIANT 1 — the reviewer still decides; escalation rides beside th
 describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
   it("refuses an escalation that names nothing to look at", () => {
     const c = on();
-    for (const scope of [undefined, null, {}, { kind: "code" }, { kind: "code", path: "" }, { kind: "decision" }, { kind: "decision", decision: "  " }, { kind: "migration", path: "" }]) {
-      const v = validateEscalationRequest({ target: "teammate-one", scope, question: "look at this bit" }, c, "rule");
+    for (const scope of [
+      undefined,
+      null,
+      {},
+      { kind: "code" },
+      { kind: "code", path: "" },
+      { kind: "decision" },
+      { kind: "decision", decision: "  " },
+      { kind: "migration", path: "" },
+    ]) {
+      const v = validateEscalationRequest(
+        { target: "teammate-one", scope, question: "look at this bit" },
+        c,
+        "rule",
+      );
       expect(v.ok, `scope ${JSON.stringify(scope)} must be refused`).toBe(false);
       if (!v.ok) expect(v.refusal).toBe("no-scope");
     }
@@ -272,7 +424,12 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
     expect(normalizeScope({ kind: "pull_request", pr: 42 })).toBeNull();
     expect(normalizeScope({ kind: "whole_pr", path: "" })).toBeNull();
     // …and every scope that IS expressible renders as something concrete.
-    for (const raw of [{ path: "a/b.py" }, { kind: "code", path: "a/b.py", start_line: "3", end_line: "9" }, { kind: "migration", path: "m/0042.py", migration: "0042" }, { kind: "decision", decision: "the retry budget" }]) {
+    for (const raw of [
+      { path: "a/b.py" },
+      { kind: "code", path: "a/b.py", start_line: "3", end_line: "9" },
+      { kind: "migration", path: "m/0042.py", migration: "0042" },
+      { kind: "decision", decision: "the retry budget" },
+    ]) {
       const scope = normalizeScope(raw)!;
       expect(scope).not.toBeNull();
       expect(renderScope(scope).trim().length).toBeGreaterThan(3);
@@ -294,7 +451,12 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
       // Session origin: this is the text a MODEL wrote, and it is the text the
       // belt guards. (A rule's question is our own template over the
       // operator's config and is exempt — see the test below.)
-      const v = validateEscalationRequest({ ...request(), question: q }, on({ session_judgement: true }), "session", CHANGED);
+      const v = validateEscalationRequest(
+        { ...request(), question: q },
+        on({ session_judgement: true }),
+        "session",
+        CHANGED,
+      );
       expect(v.ok, q).toBe(false);
       if (!v.ok) expect(v.refusal).toBe("asks-for-whole-review");
     }
@@ -308,7 +470,13 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
       "We reviewed the code and think this decision is yours: keep the flag or drop it?",
     ]) {
       expect(asksForWholeReview(q), q).toBe(false);
-      expect(validateEscalationRequest({ ...request(), question: q }, on({ session_judgement: true }), "session").ok).toBe(true);
+      expect(
+        validateEscalationRequest(
+          { ...request(), question: q },
+          on({ session_judgement: true }),
+          "session",
+        ).ok,
+      ).toBe(true);
     }
   });
 
@@ -343,7 +511,9 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
       expect(body).not.toContain("already decided and posted");
       expect(body).toContain("not confirmed on this pull request yet");
     }
-    expect(renderEscalationComment(request(), { verdict: "APPROVE", review_posted: true })).toContain("already decided and posted");
+    expect(
+      renderEscalationComment(request(), { verdict: "APPROVE", review_posted: true }),
+    ).toContain("already decided and posted");
   });
 
   it("the review-request shape says out loud what GitHub's queue entry does NOT mean", () => {
@@ -357,7 +527,10 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
       [{ paths: ["**/migrations/*.py"] }, facts({ changed_paths: ["app/migrations/0042_x.py"] })],
       [{ labels: ["needs-security"] }, facts({ labels: ["needs-security"] })],
       [{ failing_checks: ["e2e"] }, facts({ failing_checks: ["e2e"] })],
-      [{ min_severity: "P1" }, facts({ changed_paths: ["a/b.py"], findings: [{ severity: "P0", path: "a/b.py" }] })],
+      [
+        { min_severity: "P1" },
+        facts({ changed_paths: ["a/b.py"], findings: [{ severity: "P0", path: "a/b.py" }] }),
+      ],
     ];
     for (const [cond, f] of cases) {
       const c = on({ rules: [{ name: "r", to: "teammate-one", why: "why you", ...cond }] });
@@ -375,17 +548,51 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
     const c = on({ session_judgement: true });
     const diff = ["billing/charge.py", "app/migrations/0042.py"];
     // The exploit: any non-empty string passed as a path.
-    for (const path of ["the entire diff", "**", "*", "the whole pull request", "src/", "billing/charge.pyc", "Billing/charge.py"]) {
-      const v = validateEscalationRequest({ ...request(), scope: { kind: "code", path } }, c, "session", diff);
+    for (const path of [
+      "the entire diff",
+      "**",
+      "*",
+      "the whole pull request",
+      "src/",
+      "billing/charge.pyc",
+      "Billing/charge.py",
+    ]) {
+      const v = validateEscalationRequest(
+        { ...request(), scope: { kind: "code", path } },
+        c,
+        "session",
+        diff,
+      );
       expect(v.ok, path).toBe(false);
       if (!v.ok) expect(v.refusal).toBe("path-not-in-diff");
     }
     // A migration scope is held to the same rule.
-    expect(validateEscalationRequest({ ...request(), scope: { kind: "migration", path: "nope/0001.py" } }, c, "session", diff).ok).toBe(false);
+    expect(
+      validateEscalationRequest(
+        { ...request(), scope: { kind: "migration", path: "nope/0001.py" } },
+        c,
+        "session",
+        diff,
+      ).ok,
+    ).toBe(false);
     // A real file in the diff passes — and surrounding whitespace is trimmed
     // rather than being treated as a different file.
-    expect(validateEscalationRequest({ ...request(), scope: { kind: "code", path: "billing/charge.py" } }, c, "session", diff).ok).toBe(true);
-    expect(validateEscalationRequest({ ...request(), scope: { kind: "code", path: " billing/charge.py " } }, c, "session", diff).ok).toBe(true);
+    expect(
+      validateEscalationRequest(
+        { ...request(), scope: { kind: "code", path: "billing/charge.py" } },
+        c,
+        "session",
+        diff,
+      ).ok,
+    ).toBe(true);
+    expect(
+      validateEscalationRequest(
+        { ...request(), scope: { kind: "code", path: " billing/charge.py " } },
+        c,
+        "session",
+        diff,
+      ).ok,
+    ).toBe(true);
   });
 
   it("an unreadable diff refuses every path-bearing scope rather than waving it through", async () => {
@@ -395,7 +602,13 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
     const adapter = fakeAdapter();
     const out = await deliverEscalations(
       { cfg: on({ session_judgement: true }), store, adapter },
-      { pr: 20, verdict: "APPROVE", head_sha: HEAD, changed_paths: [], sessionCandidates: [request()] },
+      {
+        pr: 20,
+        verdict: "APPROVE",
+        head_sha: HEAD,
+        changed_paths: [],
+        sessionCandidates: [request()],
+      },
     );
     expect(out[0]!.refused).toBe("path-not-in-diff");
     expect(adapter.reviews).toHaveLength(0);
@@ -523,11 +736,22 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
       [{ labels: ["review the whole thing"] }, facts({ labels: ["review the whole thing"] })],
       [{ failing_checks: ["e2e"] }, facts({ failing_checks: ["e2e"] })],
       [{ failing_checks: ["review-everything"] }, facts({ failing_checks: ["review-everything"] })],
-      [{ min_severity: "P1" }, facts({ changed_paths: ["a/b.py"], findings: [{ severity: "P0", path: "a/b.py" }] })],
-      [{ min_severity: "P1" }, facts({ findings: [{ severity: "P0", title: "the retry budget is unbounded" }] })],
+      [
+        { min_severity: "P1" },
+        facts({ changed_paths: ["a/b.py"], findings: [{ severity: "P0", path: "a/b.py" }] }),
+      ],
+      [
+        { min_severity: "P1" },
+        facts({ findings: [{ severity: "P0", title: "the retry budget is unbounded" }] }),
+      ],
     ];
     for (const [cond, f] of cases) {
-      const rule = { name: "r", to: "teammate-one", why: "please just review the whole PR and sign off", ...cond };
+      const rule = {
+        name: "r",
+        to: "teammate-one",
+        why: "please just review the whole PR and sign off",
+        ...cond,
+      };
       const c = on({ rules: [rule] });
       const refusals: string[] = [];
       const out = evaluateEscalationRules(c, f, (_r, refusal) => refusals.push(refusal));
@@ -547,13 +771,20 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
     const refusals: string[] = [];
     const out = evaluateEscalationRules(
       c,
-      facts({ findings: [{ severity: "P0", title: "please review the whole pull request before merging" }] }),
+      facts({
+        findings: [
+          { severity: "P0", title: "please review the whole pull request before merging" },
+        ],
+      }),
       (_r, refusal) => refusals.push(refusal),
     );
     expect(out).toEqual([]);
     expect(refusals).toEqual(["no-scope-derivable"]);
     // A narrow reason is carried through untouched.
-    const ok = evaluateEscalationRules(c, facts({ findings: [{ severity: "P0", title: "the retry budget is unbounded" }] }));
+    const ok = evaluateEscalationRules(
+      c,
+      facts({ findings: [{ severity: "P0", title: "the retry budget is unbounded" }] }),
+    );
     expect(ok).toHaveLength(1);
     expect(ok[0]!.scope).toEqual({ kind: "decision", decision: "the retry budget is unbounded" });
   });
@@ -563,16 +794,23 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
     // at least be able to see why (re-review).
     const c = on({ rules: [{ name: "sev", to: "teammate-one", why: "w", min_severity: "P1" }] });
     const refusals: Array<[string, string]> = [];
-    const out = evaluateEscalationRules(c, facts({ findings: [{ severity: "P0" }] }), (r, why) => refusals.push([r.name, why]));
+    const out = evaluateEscalationRules(c, facts({ findings: [{ severity: "P0" }] }), (r, why) =>
+      refusals.push([r.name, why]),
+    );
     expect(out).toEqual([]);
     expect(refusals).toEqual([["sev", "no-scope-derivable"]]);
 
     // …and the same for a candidate that fails validation rather than scoping.
-    const c2 = on({ rules: [{ name: "outside", to: "teammate-one", why: "w", min_severity: "P1" }] });
+    const c2 = on({
+      rules: [{ name: "outside", to: "teammate-one", why: "w", min_severity: "P1" }],
+    });
     const refusals2: Array<[string, string]> = [];
     evaluateEscalationRules(
       c2,
-      facts({ changed_paths: ["a/b.py"], findings: [{ severity: "P0", path: "somewhere/else.py" }] }),
+      facts({
+        changed_paths: ["a/b.py"],
+        findings: [{ severity: "P0", path: "somewhere/else.py" }],
+      }),
       (r, why) => refusals2.push([r.name, why]),
     );
     expect(refusals2).toEqual([["outside", "path-not-in-diff"]]);
@@ -584,22 +822,34 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
     // session entry.
     const c = on({ session_judgement: true });
     const smuggled =
-      "honestly, please just review this whole pull request end to end and sign off on it — "
-      + "I want a second pair of eyes on everything before it ships";
+      "honestly, please just review this whole pull request end to end and sign off on it — " +
+      "I want a second pair of eyes on everything before it ships";
     const v = validateEscalationRequest({ ...request(), why: smuggled }, c, "session", CHANGED);
     expect(v.ok).toBe(false);
     if (!v.ok) expect(v.refusal).toBe("asks-for-whole-review");
 
     // An OPERATOR's `why` is exempt — it is their own text, rendered verbatim
     // by design, and they may word it however they like.
-    const ruled = validateEscalationRequest({ ...request(), rule: "r", why: smuggled }, c, "rule", CHANGED);
+    const ruled = validateEscalationRequest(
+      { ...request(), rule: "r", why: smuggled },
+      c,
+      "rule",
+      CHANGED,
+    );
     expect(ruled.ok).toBe(true);
 
     // A narrow session `why` is untouched.
-    expect(validateEscalationRequest({ ...request(), why: "you own the billing retry policy" }, c, "session", CHANGED).ok).toBe(true);
+    expect(
+      validateEscalationRequest(
+        { ...request(), why: "you own the billing retry policy" },
+        c,
+        "session",
+        CHANGED,
+      ).ok,
+    ).toBe(true);
   });
 
-  it("a session candidate CANNOT relabel itself `origin: \"rule\"` to buy the exemption", async () => {
+  it('a session candidate CANNOT relabel itself `origin: "rule"` to buy the exemption', async () => {
     // re-review, the blocker. `origin` used to be read off the
     // candidate — and for a session candidate the candidate IS the verdict
     // file's `escalations` entry, which the model writes. So the model marked
@@ -627,11 +877,24 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
     const adapter = fakeAdapter();
     const out = await deliverEscalations(
       { cfg: c, store, adapter },
-      { pr: 40, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, sessionCandidates: [forged] },
+      {
+        pr: 40,
+        verdict: "APPROVE",
+        head_sha: HEAD,
+        changed_paths: CHANGED,
+        sessionCandidates: [forged],
+      },
     );
     expect(out[0]).toMatchObject({ refused: "asks-for-whole-review", origin: "session" });
     expect(adapter.reviews).toHaveLength(0);
-    expect(store.recentEvents(10).some((e) => e.kind === "escalation_refused" && String(e.payload).includes('"origin":"session"'))).toBe(true);
+    expect(
+      store
+        .recentEvents(10)
+        .some(
+          (e) =>
+            e.kind === "escalation_refused" && String(e.payload).includes('"origin":"session"'),
+        ),
+    ).toBe(true);
   });
 
   it("…and a session escalation that IS fine is still recorded as origin session, with no rule name", async () => {
@@ -657,7 +920,9 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
     expect(rows[0]!.rule).toBeNull();
     // …and the comment does not claim a rule escalated it.
     expect(adapter.reviews[0]!.payload).toMatchObject({ event: "COMMENT" });
-    expect((adapter.reviews[0]!.payload as { body: string }).body).not.toContain("Escalated by the configured rule");
+    expect((adapter.reviews[0]!.payload as { body: string }).body).not.toContain(
+      "Escalated by the configured rule",
+    );
   });
 
   it("a decision scope's OPTIONAL path is checked against the diff too", () => {
@@ -666,7 +931,10 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
     // its own dedup key.
     const c = on({ session_judgement: true });
     const bad = validateEscalationRequest(
-      { ...request(), scope: { kind: "decision", decision: "the retry budget", path: "the entire diff" } },
+      {
+        ...request(),
+        scope: { kind: "decision", decision: "the retry budget", path: "the entire diff" },
+      },
       c,
       "session",
       CHANGED,
@@ -676,9 +944,24 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
 
     // A real file is fine, and a decision with NO path is fine.
     expect(
-      validateEscalationRequest({ ...request(), scope: { kind: "decision", decision: "the retry budget", path: "billing/charge.py" } }, c, "session", CHANGED).ok,
+      validateEscalationRequest(
+        {
+          ...request(),
+          scope: { kind: "decision", decision: "the retry budget", path: "billing/charge.py" },
+        },
+        c,
+        "session",
+        CHANGED,
+      ).ok,
     ).toBe(true);
-    expect(validateEscalationRequest({ ...request(), scope: { kind: "decision", decision: "the retry budget" } }, c, "session", CHANGED).ok).toBe(true);
+    expect(
+      validateEscalationRequest(
+        { ...request(), scope: { kind: "decision", decision: "the retry budget" } },
+        c,
+        "session",
+        CHANGED,
+      ).ok,
+    ).toBe(true);
   });
 
   it("a rule whose matched fact yields nothing concrete escalates NOTHING", () => {
@@ -704,15 +987,32 @@ describe("off by default — a stock install is unchanged", () => {
   });
 
   it("nothing evaluates, nothing renders and nothing is delivered when off", async () => {
-    expect(evaluateEscalationRules(OFF, facts({ changed_paths: ["app/migrations/0042.py"] }))).toEqual([]);
+    expect(
+      evaluateEscalationRules(OFF, facts({ changed_paths: ["app/migrations/0042.py"] })),
+    ).toEqual([]);
     // Even a config with rules and targets written down: `enabled = false`
     // makes the whole table a draft.
-    const draft = parseEscalation({ enabled: false, targets: ["teammate-one"], rules: [{ name: "r", to: "teammate-one", why: "w", paths: ["**"] }] });
+    const draft = parseEscalation({
+      enabled: false,
+      targets: ["teammate-one"],
+      rules: [{ name: "r", to: "teammate-one", why: "w", paths: ["**"] }],
+    });
     expect(evaluateEscalationRules(draft, facts({ changed_paths: ["a.py"] }))).toEqual([]);
     expect(promptTargetsFor(draft)).toBeUndefined();
     expect(renderEscalationPromptNote(promptTargetsFor(draft))).toBe("");
     const adapter = fakeAdapter();
-    expect(await deliverEscalations({ cfg: draft, store, adapter }, { pr: 1, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, sessionCandidates: [request()] })).toEqual([]);
+    expect(
+      await deliverEscalations(
+        { cfg: draft, store, adapter },
+        {
+          pr: 1,
+          verdict: "APPROVE",
+          head_sha: HEAD,
+          changed_paths: CHANGED,
+          sessionCandidates: [request()],
+        },
+      ),
+    ).toEqual([]);
     expect(adapter.reviews).toHaveLength(0);
     expect(adapter.requests).toHaveLength(0);
   });
@@ -720,12 +1020,19 @@ describe("off by default — a stock install is unchanged", () => {
   it("the dedup key is the PLACE, not the line offsets", () => {
     // review, F5. Keying on lines made 12–30 and 14–32 two distinct
     // asks rendering near-identical notes — the nag the ledger exists to stop.
-    expect(scopeKey({ kind: "code", path: "a/b.py", start_line: 12, end_line: 30 }))
-      .toBe(scopeKey({ kind: "code", path: "a/b.py", start_line: 14, end_line: 32 }));
-    expect(scopeKey({ kind: "code", path: "a/b.py" })).toBe(scopeKey({ kind: "code", path: "a/b.py", start_line: 3 }));
+    expect(scopeKey({ kind: "code", path: "a/b.py", start_line: 12, end_line: 30 })).toBe(
+      scopeKey({ kind: "code", path: "a/b.py", start_line: 14, end_line: 32 }),
+    );
+    expect(scopeKey({ kind: "code", path: "a/b.py" })).toBe(
+      scopeKey({ kind: "code", path: "a/b.py", start_line: 3 }),
+    );
     // Different files stay different, and a decision keeps its own identity.
-    expect(scopeKey({ kind: "code", path: "a/b.py" })).not.toBe(scopeKey({ kind: "code", path: "a/c.py" }));
-    expect(scopeKey({ kind: "decision", decision: "the retry budget" })).not.toBe(scopeKey({ kind: "decision", decision: "the cache key" }));
+    expect(scopeKey({ kind: "code", path: "a/b.py" })).not.toBe(
+      scopeKey({ kind: "code", path: "a/c.py" }),
+    );
+    expect(scopeKey({ kind: "decision", decision: "the retry budget" })).not.toBe(
+      scopeKey({ kind: "decision", decision: "the cache key" }),
+    );
   });
 
   it("an end_line without a start_line is dropped, not carried", () => {
@@ -735,14 +1042,34 @@ describe("off by default — a stock install is unchanged", () => {
     const scope = normalizeScope({ kind: "code", path: "a/b.py", end_line: 40 })!;
     expect(scope).toEqual({ kind: "code", path: "a/b.py" });
     // A reversed range is clamped rather than rendering backwards.
-    expect(normalizeScope({ kind: "code", path: "a/b.py", start_line: 30, end_line: 12 }))
-      .toEqual({ kind: "code", path: "a/b.py", start_line: 30, end_line: 30 });
+    expect(normalizeScope({ kind: "code", path: "a/b.py", start_line: 30, end_line: 12 })).toEqual({
+      kind: "code",
+      path: "a/b.py",
+      start_line: 30,
+      end_line: 30,
+    });
   });
 
   it("the round order carries no escalation field, and the prompt no escalation text", () => {
     const order = buildRoundOrder({
-      cfg, row: { number: 5, title: "T", head_sha: HEAD, author: "a", state: "reviewing", trigger_ts: null, stale_recheck: 0, migration_gate: 0 } as never,
-      files: [], roundId: 1, roundNo: 1, roundType: "first", worktree: "/w", settledDigest: "", issuedAt: "2026-08-31T12:00:00Z",
+      cfg,
+      row: {
+        number: 5,
+        title: "T",
+        head_sha: HEAD,
+        author: "a",
+        state: "reviewing",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      } as never,
+      files: [],
+      roundId: 1,
+      roundNo: 1,
+      roundType: "first",
+      worktree: "/w",
+      settledDigest: "",
+      issuedAt: "2026-08-31T12:00:00Z",
     });
     expect(order.escalation_targets).toBeUndefined();
     expect(roundVars(order).escalation_note).toBe("");
@@ -769,7 +1096,10 @@ describe("off by default — a stock install is unchanged", () => {
     // The deterministic half needs no prompt at all: the daemon evaluates and
     // delivers it. Only session judgement puts words in front of a model.
     expect(promptTargetsFor(on())).toBeUndefined();
-    expect(promptTargetsFor(on({ session_judgement: true }))).toEqual(["teammate-one", "teammate-two"]);
+    expect(promptTargetsFor(on({ session_judgement: true }))).toEqual([
+      "teammate-one",
+      "teammate-two",
+    ]);
     const note = renderEscalationPromptNote(promptTargetsFor(on({ session_judgement: true })));
     expect(note).toContain("@teammate-one");
     expect(note).toContain("never instead of it");
@@ -804,21 +1134,53 @@ describe("deterministic triggers", () => {
   });
 
   it("conditions AND together — a rule with two conditions needs both", () => {
-    const rule = { name: "r", to: "teammate-one", why: "w", paths: ["billing/**"], labels: ["release"], min_severity: "" as const, failing_checks: [] };
-    expect(ruleFires(rule, facts({ changed_paths: ["billing/a.py"], labels: ["release"] }))).toBe(true);
+    const rule = {
+      name: "r",
+      to: "teammate-one",
+      why: "w",
+      paths: ["billing/**"],
+      labels: ["release"],
+      min_severity: "" as const,
+      failing_checks: [],
+    };
+    expect(ruleFires(rule, facts({ changed_paths: ["billing/a.py"], labels: ["release"] }))).toBe(
+      true,
+    );
     expect(ruleFires(rule, facts({ changed_paths: ["billing/a.py"] }))).toBe(false);
     expect(ruleFires(rule, facts({ labels: ["release"] }))).toBe(false);
   });
 
   it("labels and check names match case-insensitively; paths do not", () => {
-    const base = { name: "r", to: "teammate-one", why: "w", paths: [], labels: [], min_severity: "" as const, failing_checks: [] };
-    expect(ruleFires({ ...base, labels: ["Needs-Security"] }, facts({ labels: ["needs-security"] }))).toBe(true);
-    expect(ruleFires({ ...base, failing_checks: ["E2E"] }, facts({ failing_checks: ["e2e"] }))).toBe(true);
-    expect(ruleFires({ ...base, paths: ["Billing/**"] }, facts({ changed_paths: ["billing/a.py"] }))).toBe(false);
+    const base = {
+      name: "r",
+      to: "teammate-one",
+      why: "w",
+      paths: [],
+      labels: [],
+      min_severity: "" as const,
+      failing_checks: [],
+    };
+    expect(
+      ruleFires({ ...base, labels: ["Needs-Security"] }, facts({ labels: ["needs-security"] })),
+    ).toBe(true);
+    expect(
+      ruleFires({ ...base, failing_checks: ["E2E"] }, facts({ failing_checks: ["e2e"] })),
+    ).toBe(true);
+    expect(
+      ruleFires({ ...base, paths: ["Billing/**"] }, facts({ changed_paths: ["billing/a.py"] })),
+    ).toBe(false);
   });
 
   it("a rule that declares no condition never fires", () => {
-    const bare = { name: "r", to: "teammate-one", why: "w", paths: [], labels: [], min_severity: "" as const, failing_checks: [] };
+    const bare = {
+      name: "r",
+      to: "teammate-one",
+      why: "w",
+      paths: [],
+      labels: [],
+      min_severity: "" as const,
+      failing_checks: [],
+    };
     expect(ruleFires(bare, facts({ changed_paths: ["anything"] }))).toBe(false);
   });
 
@@ -848,7 +1210,13 @@ describe("session-judgement escalation is bounded, daemon-side", () => {
     const adapter = fakeAdapter();
     const outcomes = await deliverEscalations(
       { cfg: c, store, adapter },
-      { pr: 9, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, sessionCandidates: [{ ...request(), target: "someone-else" }] },
+      {
+        pr: 9,
+        verdict: "APPROVE",
+        head_sha: HEAD,
+        changed_paths: CHANGED,
+        sessionCandidates: [{ ...request(), target: "someone-else" }],
+      },
     );
     expect(adapter.reviews).toHaveLength(0);
     expect(adapter.requests).toHaveLength(0);
@@ -860,7 +1228,13 @@ describe("session-judgement escalation is bounded, daemon-side", () => {
     const adapter = fakeAdapter();
     const outcomes = await deliverEscalations(
       { cfg: on(), store, adapter },
-      { pr: 9, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, sessionCandidates: [request()] },
+      {
+        pr: 9,
+        verdict: "APPROVE",
+        head_sha: HEAD,
+        changed_paths: CHANGED,
+        sessionCandidates: [request()],
+      },
     );
     expect(outcomes[0]!.refused).toBe("session-judgement-off");
     expect(adapter.reviews).toHaveLength(0);
@@ -877,7 +1251,16 @@ describe("session-judgement escalation is bounded, daemon-side", () => {
     const adapter = fakeAdapter();
     await deliverEscalations(
       { cfg: on(), store, adapter },
-      { pr: 9, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, ruleRequests: evaluateEscalationRules(on(), facts({ changed_paths: ["app/migrations/0042.py"] })) },
+      {
+        pr: 9,
+        verdict: "APPROVE",
+        head_sha: HEAD,
+        changed_paths: CHANGED,
+        ruleRequests: evaluateEscalationRules(
+          on(),
+          facts({ changed_paths: ["app/migrations/0042.py"] }),
+        ),
+      },
     );
     expect(adapter.reviews).toHaveLength(1);
   });
@@ -892,11 +1275,26 @@ describe("delivery", () => {
     const adapter = fakeAdapter();
     await deliverEscalations(
       { cfg: on(), store, adapter },
-      { pr: 11, verdict: "APPROVE", head_sha: HEAD, round_no: 2, changed_paths: CHANGED, review_posted: true, ruleRequests: evaluateEscalationRules(on(), facts({ changed_paths: ["app/migrations/0042.py"] })) },
+      {
+        pr: 11,
+        verdict: "APPROVE",
+        head_sha: HEAD,
+        round_no: 2,
+        changed_paths: CHANGED,
+        review_posted: true,
+        ruleRequests: evaluateEscalationRules(
+          on(),
+          facts({ changed_paths: ["app/migrations/0042.py"] }),
+        ),
+      },
     );
     expect(adapter.reviews).toHaveLength(1);
     expect(adapter.reviews[0]!.purpose).toBe("escalation");
-    const payload = adapter.reviews[0]!.payload as { commit_id: string; event: string; body: string };
+    const payload = adapter.reviews[0]!.payload as {
+      commit_id: string;
+      event: string;
+      body: string;
+    };
     expect(payload.event).toBe("COMMENT");
     expect(payload.commit_id).toBe(HEAD);
     expect(payload.body).toContain(ESCALATION_TAG);
@@ -909,7 +1307,16 @@ describe("delivery", () => {
     const c = on({ shape: "review_request" });
     await deliverEscalations(
       { cfg: c, store, adapter },
-      { pr: 12, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, ruleRequests: evaluateEscalationRules(c, facts({ changed_paths: ["app/migrations/0042.py"] })) },
+      {
+        pr: 12,
+        verdict: "APPROVE",
+        head_sha: HEAD,
+        changed_paths: CHANGED,
+        ruleRequests: evaluateEscalationRules(
+          c,
+          facts({ changed_paths: ["app/migrations/0042.py"] }),
+        ),
+      },
     );
     // The order is the invariant: GitHub's queue entry says "review this pull
     // request", so the narrow ask must already be on the PR when it lands.
@@ -920,24 +1327,66 @@ describe("delivery", () => {
   it("a guard refusal stops the review request too — and records nothing, so a later round retries", async () => {
     const adapter = fakeAdapter({ blocked: "pr-merged" });
     const c = on({ shape: "review_request" });
-    const candidates = evaluateEscalationRules(c, facts({ changed_paths: ["app/migrations/0042.py"] }));
-    await deliverEscalations({ cfg: c, store, adapter }, { pr: 13, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, ruleRequests: candidates });
+    const candidates = evaluateEscalationRules(
+      c,
+      facts({ changed_paths: ["app/migrations/0042.py"] }),
+    );
+    await deliverEscalations(
+      { cfg: c, store, adapter },
+      {
+        pr: 13,
+        verdict: "APPROVE",
+        head_sha: HEAD,
+        changed_paths: CHANGED,
+        ruleRequests: candidates,
+      },
+    );
     expect(adapter.requests).toHaveLength(0);
     expect(store.escalationCount(13)).toBe(0);
     // Second attempt is not suppressed by the dedup ledger.
     const again = fakeAdapter();
-    await deliverEscalations({ cfg: c, store, adapter: again }, { pr: 13, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, ruleRequests: candidates });
+    await deliverEscalations(
+      { cfg: c, store, adapter: again },
+      {
+        pr: 13,
+        verdict: "APPROVE",
+        head_sha: HEAD,
+        changed_paths: CHANGED,
+        ruleRequests: candidates,
+      },
+    );
     expect(again.reviews).toHaveLength(1);
   });
 
   it("the same person is never pointed at the same thing twice on one PR", async () => {
     const c = on();
-    const candidates = evaluateEscalationRules(c, facts({ changed_paths: ["app/migrations/0042.py"] }));
+    const candidates = evaluateEscalationRules(
+      c,
+      facts({ changed_paths: ["app/migrations/0042.py"] }),
+    );
     const first = fakeAdapter();
-    await deliverEscalations({ cfg: c, store, adapter: first }, { pr: 14, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, ruleRequests: candidates });
+    await deliverEscalations(
+      { cfg: c, store, adapter: first },
+      {
+        pr: 14,
+        verdict: "APPROVE",
+        head_sha: HEAD,
+        changed_paths: CHANGED,
+        ruleRequests: candidates,
+      },
+    );
     expect(first.reviews).toHaveLength(1);
     const second = fakeAdapter();
-    const out = await deliverEscalations({ cfg: c, store, adapter: second }, { pr: 14, verdict: "REQUEST_CHANGES", head_sha: "deadbeef", changed_paths: CHANGED, ruleRequests: candidates });
+    const out = await deliverEscalations(
+      { cfg: c, store, adapter: second },
+      {
+        pr: 14,
+        verdict: "REQUEST_CHANGES",
+        head_sha: "deadbeef",
+        changed_paths: CHANGED,
+        ruleRequests: candidates,
+      },
+    );
     expect(second.reviews).toHaveLength(0);
     expect(out[0]!.refused).toBe("already-delivered");
   });
@@ -954,7 +1403,13 @@ describe("delivery", () => {
     const adapter = fakeAdapter();
     const out = await deliverEscalations(
       { cfg: c, store, adapter },
-      { pr: 15, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, ruleRequests: evaluateEscalationRules(c, facts({ changed_paths: ["a/x.py", "b/y.py"] })) },
+      {
+        pr: 15,
+        verdict: "APPROVE",
+        head_sha: HEAD,
+        changed_paths: CHANGED,
+        ruleRequests: evaluateEscalationRules(c, facts({ changed_paths: ["a/x.py", "b/y.py"] })),
+      },
     );
     expect(adapter.reviews).toHaveLength(1);
     expect(out.filter((o) => o.refused === "capped")).toHaveLength(1);
@@ -965,11 +1420,27 @@ describe("delivery", () => {
     const c = on();
     await deliverEscalations(
       { cfg: c, store, adapter: fakeAdapter() },
-      { pr: 16, verdict: "APPROVE", head_sha: HEAD, round_no: 4, changed_paths: CHANGED, ruleRequests: evaluateEscalationRules(c, facts({ changed_paths: ["app/migrations/0042.py"] })) },
+      {
+        pr: 16,
+        verdict: "APPROVE",
+        head_sha: HEAD,
+        round_no: 4,
+        changed_paths: CHANGED,
+        ruleRequests: evaluateEscalationRules(
+          c,
+          facts({ changed_paths: ["app/migrations/0042.py"] }),
+        ),
+      },
     );
     const rows = store.escalationsFor(16);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ target: "teammate-one", shape: "comment", origin: "rule", rule: "migrations", round_no: 4 });
+    expect(rows[0]).toMatchObject({
+      target: "teammate-one",
+      shape: "comment",
+      origin: "rule",
+      rule: "migrations",
+      round_no: 4,
+    });
     expect(store.recentEvents(10).map((e) => e.kind)).toContain("escalation_delivered");
   });
 
@@ -983,9 +1454,21 @@ describe("delivery", () => {
     // scope_key) pair FOREVER. Going live, the real escalation came back
     // `already-delivered`, silently, fixable only by editing SQLite by hand.
     const c = on();
-    const candidates = evaluateEscalationRules(c, facts({ changed_paths: ["app/migrations/0042.py"] }));
+    const candidates = evaluateEscalationRules(
+      c,
+      facts({ changed_paths: ["app/migrations/0042.py"] }),
+    );
     const dry = fakeAdapter({ dryRun: true });
-    const out = await deliverEscalations({ cfg: c, store, adapter: dry }, { pr: 30, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, ruleRequests: candidates });
+    const out = await deliverEscalations(
+      { cfg: c, store, adapter: dry },
+      {
+        pr: 30,
+        verdict: "APPROVE",
+        head_sha: HEAD,
+        changed_paths: CHANGED,
+        ruleRequests: candidates,
+      },
+    );
 
     // The intent was built and handed to the gate — that is what dry-run is for…
     expect(dry.reviews).toHaveLength(1);
@@ -999,12 +1482,30 @@ describe("delivery", () => {
 
     // A second dry-run round is not suppressed either.
     const dry2 = fakeAdapter({ dryRun: true });
-    await deliverEscalations({ cfg: c, store, adapter: dry2 }, { pr: 30, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, ruleRequests: candidates });
+    await deliverEscalations(
+      { cfg: c, store, adapter: dry2 },
+      {
+        pr: 30,
+        verdict: "APPROVE",
+        head_sha: HEAD,
+        changed_paths: CHANGED,
+        ruleRequests: candidates,
+      },
+    );
     expect(dry2.reviews).toHaveLength(1);
 
     // …and going LIVE still delivers, because nothing was ever claimed.
     const live = fakeAdapter();
-    const liveOut = await deliverEscalations({ cfg: c, store, adapter: live }, { pr: 30, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, ruleRequests: candidates });
+    const liveOut = await deliverEscalations(
+      { cfg: c, store, adapter: live },
+      {
+        pr: 30,
+        verdict: "APPROVE",
+        head_sha: HEAD,
+        changed_paths: CHANGED,
+        ruleRequests: candidates,
+      },
+    );
     expect(live.reviews).toHaveLength(1);
     expect(liveOut[0]!.refused).toBeNull();
     expect(liveOut[0]!.comment_executed).toBe(true);
@@ -1013,10 +1514,22 @@ describe("delivery", () => {
 
   it("many dry-run rounds never exhaust max_per_pr", async () => {
     const c = on({ max_per_pr: 1 });
-    const candidates = evaluateEscalationRules(c, facts({ changed_paths: ["app/migrations/0042.py"] }));
+    const candidates = evaluateEscalationRules(
+      c,
+      facts({ changed_paths: ["app/migrations/0042.py"] }),
+    );
     for (let i = 0; i < 5; i++) {
       const dry = fakeAdapter({ dryRun: true });
-      await deliverEscalations({ cfg: c, store, adapter: dry }, { pr: 31, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, ruleRequests: candidates });
+      await deliverEscalations(
+        { cfg: c, store, adapter: dry },
+        {
+          pr: 31,
+          verdict: "APPROVE",
+          head_sha: HEAD,
+          changed_paths: CHANGED,
+          ruleRequests: candidates,
+        },
+      );
       expect(dry.reviews, `round ${i}`).toHaveLength(1);
     }
     expect(store.escalationCount(31)).toBe(0);
@@ -1024,7 +1537,10 @@ describe("delivery", () => {
 
   it("a round with nothing to escalate makes no call at all", async () => {
     const adapter = fakeAdapter();
-    await deliverEscalations({ cfg: on(), store, adapter }, { pr: 17, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, ruleRequests: [] });
+    await deliverEscalations(
+      { cfg: on(), store, adapter },
+      { pr: 17, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, ruleRequests: [] },
+    );
     expect(adapter.reviews).toHaveLength(0);
   });
 });
@@ -1036,16 +1552,26 @@ describe("delivery", () => {
 describe("the escalation note obeys the posting guards", () => {
   class Fake implements GuardAdapter {
     pr = { state: "open" as "open" | "closed", merged: false, head_sha: HEAD, author: "alice" };
-    async getPr() { return this.pr; }
-    async listReviews() { return []; }
+    async getPr() {
+      return this.pr;
+    }
+    async listReviews() {
+      return [];
+    }
   }
 
   function harness(dryRun = false) {
     const adapter = new Fake();
     const executor = vi.fn(async () => ({ id: 1 }));
     const dryrunDir = mkdtempSync(join(tmpdir(), "qcr-esc-gate-"));
-    const gate = new MutationGate(dryRun, dryrunDir, executor as unknown as (i: MutationIntent) => Promise<unknown>);
-    gate.setGuard(makePostingGuard({ store, adapter, botLogin: cfg.github.bot_login, guards: GUARDS_DEFAULTS }));
+    const gate = new MutationGate(
+      dryRun,
+      dryrunDir,
+      executor as unknown as (i: MutationIntent) => Promise<unknown>,
+    );
+    gate.setGuard(
+      makePostingGuard({ store, adapter, botLogin: cfg.github.bot_login, guards: GUARDS_DEFAULTS }),
+    );
     return { gate, adapter, executor, dryrunDir };
   }
 
@@ -1069,7 +1595,10 @@ describe("the escalation note obeys the posting guards", () => {
     // did not widen into "guard 2 is optional".
     const substantive = { ...note() };
     delete (substantive as { reviewPurpose?: unknown }).reviewPurpose;
-    expect(await gate.execute(substantive)).toMatchObject({ executed: false, blocked: "no-new-evidence" });
+    expect(await gate.execute(substantive)).toMatchObject({
+      executed: false,
+      blocked: "no-new-evidence",
+    });
     expect(executor).toHaveBeenCalledTimes(1);
   });
 
@@ -1082,12 +1611,21 @@ describe("the escalation note obeys the posting guards", () => {
   it("is still refused on a merged PR (guard 3) and on head drift (guard 5)", async () => {
     const merged = harness();
     merged.adapter.pr = { ...merged.adapter.pr, merged: true };
-    expect(await merged.gate.execute(note())).toMatchObject({ executed: false, blocked: "pr-merged" });
+    expect(await merged.gate.execute(note())).toMatchObject({
+      executed: false,
+      blocked: "pr-merged",
+    });
     expect(merged.executor).not.toHaveBeenCalled();
 
     const drifted = harness();
-    drifted.adapter.pr = { ...drifted.adapter.pr, head_sha: "0000000000000000000000000000000000000000" };
-    expect(await drifted.gate.execute(note())).toMatchObject({ executed: false, blocked: "head-drift" });
+    drifted.adapter.pr = {
+      ...drifted.adapter.pr,
+      head_sha: "0000000000000000000000000000000000000000",
+    };
+    expect(await drifted.gate.execute(note())).toMatchObject({
+      executed: false,
+      blocked: "head-drift",
+    });
     expect(drifted.executor).not.toHaveBeenCalled();
   });
 
@@ -1099,7 +1637,9 @@ describe("the escalation note obeys the posting guards", () => {
     const { gate, executor } = harness();
     for (const event of ["APPROVE", "REQUEST_CHANGES", ""]) {
       const bad = { ...note(), body: { commit_id: HEAD, event, body: "x" } };
-      await expect(gate.execute(bad), event).rejects.toThrow(/reviewPurpose .* only allowed on a create_review with event COMMENT/);
+      await expect(gate.execute(bad), event).rejects.toThrow(
+        /reviewPurpose .* only allowed on a create_review with event COMMENT/,
+      );
     }
     // Nor on another kind.
     await expect(
@@ -1116,7 +1656,11 @@ describe("the escalation note obeys the posting guards", () => {
     // defence-in-depth belt being silently deletable is the defect.
     const executor = vi.fn(async () => ({ id: 1 }));
     const dryrunDir = mkdtempSync(join(tmpdir(), "qcr-esc-noguard-"));
-    const bare = new MutationGate(false, dryrunDir, executor as unknown as (i: MutationIntent) => Promise<unknown>);
+    const bare = new MutationGate(
+      false,
+      dryrunDir,
+      executor as unknown as (i: MutationIntent) => Promise<unknown>,
+    );
     await expect(
       bare.execute({ ...note(), body: { commit_id: HEAD, event: "APPROVE", body: "x" } }),
     ).rejects.toThrow(/reviewPurpose/);
@@ -1128,7 +1672,11 @@ describe("the escalation note obeys the posting guards", () => {
     // The entry check runs before the guards, and guard 1 really does rewrite
     // the event — so the check runs again on what the guards hand back.
     const { gate, executor } = harness();
-    gate.setGuard({ before: async (i) => ({ intent: { ...i, body: { commit_id: HEAD, event: "APPROVE", body: "x" } } }) });
+    gate.setGuard({
+      before: async (i) => ({
+        intent: { ...i, body: { commit_id: HEAD, event: "APPROVE", body: "x" } },
+      }),
+    });
     await expect(gate.execute(note())).rejects.toThrow(/reviewPurpose/);
     expect(executor).not.toHaveBeenCalled();
   });
@@ -1137,8 +1685,12 @@ describe("the escalation note obeys the posting guards", () => {
     const { gate, executor, dryrunDir } = harness(true);
     expect((await gate.execute(note())).executed).toBe(false);
     const req: MutationIntent = {
-      kind: "request_reviewer", method: "POST", path: "/repos/o/r/pulls/7/requested_reviewers",
-      body: { reviewers: ["teammate-one"] }, note: "escalation request on #7", pr: 7,
+      kind: "request_reviewer",
+      method: "POST",
+      path: "/repos/o/r/pulls/7/requested_reviewers",
+      body: { reviewers: ["teammate-one"] },
+      note: "escalation request on #7",
+      pr: 7,
     };
     expect((await gate.execute(req)).executed).toBe(false);
     expect(executor).not.toHaveBeenCalled();
@@ -1152,37 +1704,75 @@ describe("the escalation note obeys the posting guards", () => {
 
 describe("configuration refuses a half-configured feature", () => {
   it("on with no targets does not load", () => {
-    expect(() => parseEscalation({ enabled: true, targets: [], rules: [{ name: "r", to: "x", why: "w", paths: ["**"] }] })).toThrow(/no `targets`/);
+    expect(() =>
+      parseEscalation({
+        enabled: true,
+        targets: [],
+        rules: [{ name: "r", to: "x", why: "w", paths: ["**"] }],
+      }),
+    ).toThrow(/no `targets`/);
   });
 
   it("on with nothing that can fire does not load", () => {
-    expect(() => parseEscalation({ enabled: true, targets: ["teammate-one"] })).toThrow(/nothing could ever escalate/);
+    expect(() => parseEscalation({ enabled: true, targets: ["teammate-one"] })).toThrow(
+      /nothing could ever escalate/,
+    );
     // …unless session judgement is the trigger, which is a real answer.
-    expect(parseEscalation({ enabled: true, targets: ["teammate-one"], session_judgement: true }).enabled).toBe(true);
+    expect(
+      parseEscalation({ enabled: true, targets: ["teammate-one"], session_judgement: true })
+        .enabled,
+    ).toBe(true);
   });
 
   it("a rule pointing outside the target list does not load", () => {
     expect(() =>
-      parseEscalation({ enabled: true, targets: ["teammate-one"], rules: [{ name: "r", to: "stranger", why: "w", paths: ["**"] }] }),
+      parseEscalation({
+        enabled: true,
+        targets: ["teammate-one"],
+        rules: [{ name: "r", to: "stranger", why: "w", paths: ["**"] }],
+      }),
     ).toThrow(/not in \[escalation\] targets/);
   });
 
   it("a rule with no condition, no why, no name, or a duplicate name does not load", () => {
     const base = { enabled: true, targets: ["t"] };
-    expect(() => parseEscalation({ ...base, rules: [{ name: "r", to: "t", why: "w" }] })).toThrow(/declares no condition/);
-    expect(() => parseEscalation({ ...base, rules: [{ name: "r", to: "t", paths: ["**"] }] })).toThrow(/needs a `why`/);
-    expect(() => parseEscalation({ ...base, rules: [{ to: "t", why: "w", paths: ["**"] }] })).toThrow(/needs a `name`/);
+    expect(() => parseEscalation({ ...base, rules: [{ name: "r", to: "t", why: "w" }] })).toThrow(
+      /declares no condition/,
+    );
     expect(() =>
-      parseEscalation({ ...base, rules: [{ name: "r", to: "t", why: "w", paths: ["**"] }, { name: "r", to: "t", why: "w", labels: ["x"] }] }),
+      parseEscalation({ ...base, rules: [{ name: "r", to: "t", paths: ["**"] }] }),
+    ).toThrow(/needs a `why`/);
+    expect(() =>
+      parseEscalation({ ...base, rules: [{ to: "t", why: "w", paths: ["**"] }] }),
+    ).toThrow(/needs a `name`/);
+    expect(() =>
+      parseEscalation({
+        ...base,
+        rules: [
+          { name: "r", to: "t", why: "w", paths: ["**"] },
+          { name: "r", to: "t", why: "w", labels: ["x"] },
+        ],
+      }),
     ).toThrow(/duplicate rule name/);
   });
 
   it("rejects a bad shape, a bad severity floor, a bad cap and a non-login target", () => {
-    const base = { enabled: true, targets: ["t"], rules: [{ name: "ok", to: "t", why: "w", paths: ["**"] }] };
+    const base = {
+      enabled: true,
+      targets: ["t"],
+      rules: [{ name: "ok", to: "t", why: "w", paths: ["**"] }],
+    };
     expect(() => parseEscalation({ ...base, shape: "email" })).toThrow(/shape must be/);
-    expect(() => parseEscalation({ ...base, rules: [{ name: "r", to: "t", why: "w", min_severity: "URGENT" }] })).toThrow(/min_severity must be/);
+    expect(() =>
+      parseEscalation({
+        ...base,
+        rules: [{ name: "r", to: "t", why: "w", min_severity: "URGENT" }],
+      }),
+    ).toThrow(/min_severity must be/);
     expect(() => parseEscalation({ ...base, max_per_pr: 0 })).toThrow(/max_per_pr/);
-    expect(() => parseEscalation({ ...base, targets: ["not a login!"] })).toThrow(/is not a GitHub login/);
+    expect(() => parseEscalation({ ...base, targets: ["not a login!"] })).toThrow(
+      /is not a GitHub login/,
+    );
   });
 
   it("a switched-off table is a DRAFT — a half-written rule cannot wedge startup", () => {
@@ -1197,7 +1787,11 @@ describe("configuration refuses a half-configured feature", () => {
       { enabled: false, shape: "email" },
       { enabled: false, max_per_pr: 0 },
       { enabled: false, targets: ["not a login!"] },
-      { enabled: false, targets: ["someone"], rules: [{ name: "r", to: "nobody-listed", why: "w", paths: ["**"] }] },
+      {
+        enabled: false,
+        targets: ["someone"],
+        rules: [{ name: "r", to: "nobody-listed", why: "w", paths: ["**"] }],
+      },
     ];
     for (const draft of drafts) {
       expect(() => parseEscalation(draft), JSON.stringify(draft)).not.toThrow();
@@ -1232,31 +1826,91 @@ describe("the verdict path delivers what the rules found", () => {
         round_no: 1,
         head_sha: HEAD,
         findings: [
-          { key: "f1", lens: "pass-security", path: "billing/charge.py", line: 20, severity: "P1", disposition: "posted", reason: "unbounded retry" },
+          {
+            key: "f1",
+            lens: "pass-security",
+            path: "billing/charge.py",
+            line: 20,
+            severity: "P1",
+            disposition: "posted",
+            reason: "unbounded retry",
+          },
           { key: "f2", lens: "pass-style", path: "x.py", severity: "nit", disposition: "killed" },
         ],
       }),
     );
     const reviews: Array<{ pr: number; payload: { body: string } }> = [];
     const adapter: VerdictAdapter = {
-      async addLabel() { return { executed: true }; },
-      async removeLabel() { return { executed: true }; },
-      async listPrFiles() { return [{ filename: "billing/charge.py" }]; },
-      async getPr() { return { labels: [] }; },
-      async createReview(pr, payload) { reviews.push({ pr, payload }); return { executed: true }; },
+      async addLabel() {
+        return { executed: true };
+      },
+      async removeLabel() {
+        return { executed: true };
+      },
+      async listPrFiles() {
+        return [{ filename: "billing/charge.py" }];
+      },
+      async getPr() {
+        return { labels: [] };
+      },
+      async createReview(pr, payload) {
+        reviews.push({ pr, payload });
+        return { executed: true };
+      },
     };
-    const hooks: SessionHooks = { async dispatchRound() {}, async inject() {}, async injectOverseer() {}, async archiveAndClose() {} };
+    const hooks: SessionHooks = {
+      async dispatchRound() {},
+      async inject() {},
+      async injectOverseer() {},
+      async archiveAndClose() {},
+    };
     s.setAnomalySink(() => {});
-    s.upsertPr({ number: 50, state: "reviewing", head_sha: HEAD, title: "T", author: "a", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+    s.upsertPr({
+      number: 50,
+      state: "reviewing",
+      head_sha: HEAD,
+      title: "T",
+      author: "a",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
     s.startRound(50, "first", ["pass-security"], cfg.daemon.round_deadline_min);
     writeFileSync(
       join(dir, "pr-50-round-1.json"),
-      JSON.stringify({ pr: 50, round_no: 1, verdict: "REQUEST_CHANGES", head_sha: HEAD, finished_at: "2026-08-31T12:00:00Z" }),
+      JSON.stringify({
+        pr: 50,
+        round_no: 1,
+        verdict: "REQUEST_CHANGES",
+        head_sha: HEAD,
+        finished_at: "2026-08-31T12:00:00Z",
+      }),
     );
     const w = new VerdictWatcher({
-      cfg: { ...cfg, escalation: on({ targets: ["teammate-two"], rules: [{ name: "blockers", to: "teammate-two", why: "you triage severe findings", min_severity: "P1" }] }) },
-      store: s, adapter, hooks, verdictDir: dir, root: dir, findingsDir,
-      usage: { globalStoreDir: null }, parseRetries: 0, retryDelayMs: 1, ledgerCheckDelayMs: 0,
+      cfg: {
+        ...cfg,
+        escalation: on({
+          targets: ["teammate-two"],
+          rules: [
+            {
+              name: "blockers",
+              to: "teammate-two",
+              why: "you triage severe findings",
+              min_severity: "P1",
+            },
+          ],
+        }),
+      },
+      store: s,
+      adapter,
+      hooks,
+      verdictDir: dir,
+      root: dir,
+      findingsDir,
+      usage: { globalStoreDir: null },
+      parseRetries: 0,
+      retryDelayMs: 1,
+      ledgerCheckDelayMs: 0,
     });
     await w.sweep();
     expect(reviews).toHaveLength(1);
@@ -1281,15 +1935,40 @@ describe("the verdict path delivers what the rules found", () => {
       const dir = mkdtempSync(join(tmpdir(), "qcr-esc-receipt-"));
       const reviews: Array<{ body: string }> = [];
       const adapter: VerdictAdapter = {
-        async addLabel() { return { executed: true }; },
-        async removeLabel() { return { executed: true }; },
-        async listPrFiles() { return [{ filename: "billing/charge.py" }]; },
-        async getPr() { return { labels: [] }; },
-        async createReview(_pr, payload) { reviews.push({ body: payload.body }); return { executed: true }; },
+        async addLabel() {
+          return { executed: true };
+        },
+        async removeLabel() {
+          return { executed: true };
+        },
+        async listPrFiles() {
+          return [{ filename: "billing/charge.py" }];
+        },
+        async getPr() {
+          return { labels: [] };
+        },
+        async createReview(_pr, payload) {
+          reviews.push({ body: payload.body });
+          return { executed: true };
+        },
       };
-      const hooks: SessionHooks = { async dispatchRound() {}, async inject() {}, async injectOverseer() {}, async archiveAndClose() {} };
+      const hooks: SessionHooks = {
+        async dispatchRound() {},
+        async inject() {},
+        async injectOverseer() {},
+        async archiveAndClose() {},
+      };
       s.setAnomalySink(() => {});
-      s.upsertPr({ number: 60, state: "reviewing", head_sha: HEAD, title: "T", author: "a", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+      s.upsertPr({
+        number: 60,
+        state: "reviewing",
+        head_sha: HEAD,
+        title: "T",
+        author: "a",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
       s.startRound(60, "first", ["pass-baseline"], cfg.daemon.round_deadline_min);
       if (receipt) {
         const rdir = join(dir, "state", "posting-receipts");
@@ -1298,12 +1977,31 @@ describe("the verdict path delivers what the rules found", () => {
       }
       writeFileSync(
         join(dir, "pr-60-round-1.json"),
-        JSON.stringify({ pr: 60, round_no: 1, verdict: "REQUEST_CHANGES", head_sha: HEAD, finished_at: "2026-08-31T12:00:00Z" }),
+        JSON.stringify({
+          pr: 60,
+          round_no: 1,
+          verdict: "REQUEST_CHANGES",
+          head_sha: HEAD,
+          finished_at: "2026-08-31T12:00:00Z",
+        }),
       );
       const w = new VerdictWatcher({
-        cfg: { ...cfg, escalation: on({ targets: ["teammate-one"], rules: [{ name: "all", to: "teammate-one", why: "w", paths: ["**"] }] }) },
-        store: s, adapter, hooks, verdictDir: dir, root: dir,
-        usage: { globalStoreDir: null }, parseRetries: 0, retryDelayMs: 1, ledgerCheckDelayMs: 0,
+        cfg: {
+          ...cfg,
+          escalation: on({
+            targets: ["teammate-one"],
+            rules: [{ name: "all", to: "teammate-one", why: "w", paths: ["**"] }],
+          }),
+        },
+        store: s,
+        adapter,
+        hooks,
+        verdictDir: dir,
+        root: dir,
+        usage: { globalStoreDir: null },
+        parseRetries: 0,
+        retryDelayMs: 1,
+        ledgerCheckDelayMs: 0,
       });
       await w.sweep();
       s.close();
@@ -1347,7 +2045,14 @@ describe("the verdict path delivers what the rules found", () => {
       // this round's proof.
       [
         "other head",
-        { ...base, ...confirmed, head_sha: "0".repeat(40), gh_commit_id: "0".repeat(40), posting_key: roundPostingKey(60, 1, "0".repeat(40)), marker: postingMarker(roundPostingKey(60, 1, "0".repeat(40))) },
+        {
+          ...base,
+          ...confirmed,
+          head_sha: "0".repeat(40),
+          gh_commit_id: "0".repeat(40),
+          posting_key: roundPostingKey(60, 1, "0".repeat(40)),
+          marker: postingMarker(roundPostingKey(60, 1, "0".repeat(40))),
+        },
       ],
       ["other round", { ...base, ...confirmed, round_no: 9 }],
     ] as Array<[string, Record<string, unknown> | null]>) {

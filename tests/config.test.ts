@@ -58,7 +58,10 @@ describe("parseConfig", () => {
     expect(cfg.daemon.expire_overdue_after_h).toBe(24);
     const older = readFileSync(configPath, "utf8").replace(/^expire_overdue_after_h.*$/m, "");
     expect(parseConfig(older).daemon.expire_overdue_after_h).toBe(24);
-    const off = readFileSync(configPath, "utf8").replace(/^expire_overdue_after_h.*$/m, "expire_overdue_after_h = 0");
+    const off = readFileSync(configPath, "utf8").replace(
+      /^expire_overdue_after_h.*$/m,
+      "expire_overdue_after_h = 0",
+    );
     expect(parseConfig(off).daemon.expire_overdue_after_h).toBe(0);
   });
 
@@ -67,7 +70,10 @@ describe("parseConfig", () => {
     expect(cfg.daemon.round_passes_max_min).toBe(35);
     expect(cfg.daemon.round_finalize_grace_min).toBe(5);
     expect(cfg.daemon.posting_receipt_grace_s).toBe(120);
-    const invalid = readFileSync(configPath, "utf8").replace("round_passes_max_min = 35", "round_passes_max_min = 45");
+    const invalid = readFileSync(configPath, "utf8").replace(
+      "round_passes_max_min = 35",
+      "round_passes_max_min = 45",
+    );
     expect(() => parseConfig(invalid)).toThrow(/round_first_pass_max_min/);
   });
 
@@ -86,7 +92,9 @@ describe("parseConfig", () => {
   });
 
   it("coerces dry_run to a boolean", () => {
-    const cfg2 = parseConfig(readFileSync(configPath, "utf8").replace("dry_run = true", "dry_run = false"));
+    const cfg2 = parseConfig(
+      readFileSync(configPath, "utf8").replace("dry_run = true", "dry_run = false"),
+    );
     expect(cfg2.dry_run).toBe(false);
   });
 });
@@ -127,7 +135,9 @@ describe("[ops] timezone", () => {
 
   it("rejects a zone Intl does not know — same check the EOD formatter would hit at 18:00", () => {
     const bad = shipped.replace(OPS_WARSAW, '[ops]\ntimezone = "Mars/Olympus_Mons"');
-    expect(() => parseConfig(bad)).toThrowError(/\[ops\] timezone 'Mars\/Olympus_Mons' is not a valid IANA timezone/);
+    expect(() => parseConfig(bad)).toThrowError(
+      /\[ops\] timezone 'Mars\/Olympus_Mons' is not a valid IANA timezone/,
+    );
   });
 });
 
@@ -138,7 +148,10 @@ describe("[review]", () => {
   });
 
   it("defaults to an empty mention when [review] is absent — older configs keep parsing", () => {
-    const without = readFileSync(configPath, "utf8").replace(/\[review\][\s\S]*?(?=\n\[slack\])/, "");
+    const without = readFileSync(configPath, "utf8").replace(
+      /\[review\][\s\S]*?(?=\n\[slack\])/,
+      "",
+    );
     const cfg = parseConfig(without);
     expect(cfg.review.escalation_mention_default).toBe("");
   });
@@ -194,7 +207,12 @@ describe("[caps] improvement_pr_deny_prefixes", () => {
   it("defaults to the shipped denylist when absent (the fixture omits it)", () => {
     const cfg = parseConfig(readFileSync(configPath, "utf8"));
     expect(cfg.caps.improvement_pr_deny_prefixes).toEqual([...IMPROVEMENT_DENY_PREFIXES_DEFAULT]);
-    expect(cfg.caps.improvement_pr_deny_prefixes).toEqual(["migrations/", "infra/", "ansible/", ".github/workflows/"]);
+    expect(cfg.caps.improvement_pr_deny_prefixes).toEqual([
+      "migrations/",
+      "infra/",
+      "ansible/",
+      ".github/workflows/",
+    ]);
   });
 
   it("a configured value replaces the list", () => {
@@ -210,25 +228,45 @@ describe("[caps] improvement_pr_deny_prefixes", () => {
 // or garbage cap parsed fine and reached `checkDiffstat` as undefined.
 describe("[caps] every numeric cap is checked at parse time", () => {
   const base = readFileSync(configPath, "utf8");
-  const ok = { improvement_pr_max_lines: 50, improvement_pr_max_files: 3, improvement_pr_per_day: 1, improvement_pr_per_week: 3, issues_per_day: 3 };
+  const ok = {
+    improvement_pr_max_lines: 50,
+    improvement_pr_max_files: 3,
+    improvement_pr_per_day: 1,
+    improvement_pr_per_week: 3,
+    issues_per_day: 3,
+  };
 
   it("parses the fixture's caps as numbers", () => {
-    expect(parseConfig(base).caps).toEqual({ ...ok, improvement_pr_deny_prefixes: [...IMPROVEMENT_DENY_PREFIXES_DEFAULT] });
+    expect(parseConfig(base).caps).toEqual({
+      ...ok,
+      improvement_pr_deny_prefixes: [...IMPROVEMENT_DENY_PREFIXES_DEFAULT],
+    });
   });
 
   it.each(Object.keys(ok))("refuses to load a config whose [caps] omits %s", (key) => {
     const without = base.replace(new RegExp(`^${key} = .*$`, "m"), "");
     expect(without).not.toContain(`${key} =`);
-    expect(() => parseConfig(without)).toThrow(`[caps]: ${key} must be a non-negative number (got undefined)`);
+    expect(() => parseConfig(without)).toThrow(
+      `[caps]: ${key} must be a non-negative number (got undefined)`,
+    );
   });
 
   it("refuses a cap that is not a non-negative finite number", () => {
     for (const bad of ['"3"', "-1", "true", "nan", "inf"]) {
-      const toml = base.replace(/^improvement_pr_max_files = 3$/m, `improvement_pr_max_files = ${bad}`);
-      expect(() => parseConfig(toml), bad).toThrow("[caps]: improvement_pr_max_files must be a non-negative number");
+      const toml = base.replace(
+        /^improvement_pr_max_files = 3$/m,
+        `improvement_pr_max_files = ${bad}`,
+      );
+      expect(() => parseConfig(toml), bad).toThrow(
+        "[caps]: improvement_pr_max_files must be a non-negative number",
+      );
     }
-    expect(() => parseCaps({ ...ok, improvement_pr_deny_prefixes: "db/" })).toThrow("improvement_pr_deny_prefixes must be an array of strings");
-    expect(() => parseCaps({ ...ok, improvement_pr_deny_prefixes: [1] })).toThrow("improvement_pr_deny_prefixes must be an array of strings");
+    expect(() => parseCaps({ ...ok, improvement_pr_deny_prefixes: "db/" })).toThrow(
+      "improvement_pr_deny_prefixes must be an array of strings",
+    );
+    expect(() => parseCaps({ ...ok, improvement_pr_deny_prefixes: [1] })).toThrow(
+      "improvement_pr_deny_prefixes must be an array of strings",
+    );
     expect(parseCaps(ok).improvement_pr_max_files).toBe(3);
   });
 });
@@ -236,11 +274,18 @@ describe("[caps] every numeric cap is checked at parse time", () => {
 describe("[owner]", () => {
   it("reads the fixture's owner identity", () => {
     const cfg = parseConfig(readFileSync(configPath, "utf8"));
-    expect(cfg.owner).toEqual({ name: "Example Owner", slack_id: "", github_login: "example-owner" });
+    expect(cfg.owner).toEqual({
+      name: "Example Owner",
+      slack_id: "",
+      github_login: "example-owner",
+    });
   });
 
   it("defaults every field when [owner] is absent — older configs keep parsing", () => {
-    const without = readFileSync(configPath, "utf8").replace(/\[owner\][\s\S]*?(?=\n\[server\])/, "");
+    const without = readFileSync(configPath, "utf8").replace(
+      /\[owner\][\s\S]*?(?=\n\[server\])/,
+      "",
+    );
     const cfg = parseConfig(without);
     expect(cfg.owner).toEqual({ name: "", slack_id: "", github_login: "" });
   });
@@ -281,7 +326,10 @@ describe("[models] tiered pass scheme", () => {
       '[models.pricing]\n"gpt-5.6-sol" = { input_per_mtok = 1.25, output_per_mtok = 10.0 }',
     );
     const cfg2 = parseConfig(withPricing);
-    expect(cfg2.models.pricing["gpt-5.6-sol"]).toEqual({ input_per_mtok: 1.25, output_per_mtok: 10.0 });
+    expect(cfg2.models.pricing["gpt-5.6-sol"]).toEqual({
+      input_per_mtok: 1.25,
+      output_per_mtok: 10.0,
+    });
   });
 
   it("tierModel resolves the full spec for a tier", () => {
@@ -295,22 +343,38 @@ describe("[ingress] (webhook-URL self-heal)", () => {
 
   it("defaults to shape 'none' when absent — no watcher ever starts", () => {
     const cfg = parseConfig(shipped);
-    expect(cfg.ingress).toEqual({ shape: "none", hostname_file: "", debounce_ms: 3000, sweep_interval_s: 300 });
+    expect(cfg.ingress).toEqual({
+      shape: "none",
+      hostname_file: "",
+      debounce_ms: 3000,
+      sweep_interval_s: 300,
+    });
   });
 
   it("parses the tunnel-file shape with its knobs", () => {
-    const cfg = parseConfig(`${shipped}\n[ingress]\nshape = "tunnel-file"\nhostname_file = "/shared/hostname"\ndebounce_ms = 500\nsweep_interval_s = 60\n`);
-    expect(cfg.ingress).toEqual({ shape: "tunnel-file", hostname_file: "/shared/hostname", debounce_ms: 500, sweep_interval_s: 60 });
+    const cfg = parseConfig(
+      `${shipped}\n[ingress]\nshape = "tunnel-file"\nhostname_file = "/shared/hostname"\ndebounce_ms = 500\nsweep_interval_s = 60\n`,
+    );
+    expect(cfg.ingress).toEqual({
+      shape: "tunnel-file",
+      hostname_file: "/shared/hostname",
+      debounce_ms: 500,
+      sweep_interval_s: 60,
+    });
     expect(ingressHostnameFile(cfg, "/root")).toBe("/shared/hostname");
   });
 
   it("defaults the hostname file under state/ when unset", () => {
     const cfg = parseConfig(`${shipped}\n[ingress]\nshape = "tunnel-file"\n`);
-    expect(ingressHostnameFile(cfg, "/opt/quickreview/sandbox")).toBe("/opt/quickreview/sandbox/state/ingress/hostname");
+    expect(ingressHostnameFile(cfg, "/opt/quickreview/sandbox")).toBe(
+      "/opt/quickreview/sandbox/state/ingress/hostname",
+    );
   });
 
   it("rejects an unknown shape loudly at parse time", () => {
-    expect(() => parseConfig(`${shipped}\n[ingress]\nshape = "carrier-pigeon"\n`)).toThrowError(/\[ingress\]: shape must be/);
+    expect(() => parseConfig(`${shipped}\n[ingress]\nshape = "carrier-pigeon"\n`)).toThrowError(
+      /\[ingress\]: shape must be/,
+    );
   });
 });
 

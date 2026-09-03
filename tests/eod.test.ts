@@ -191,7 +191,9 @@ describe("startEodTimer", () => {
   });
 
   it("renderEodPrompt substitutes every {{date}}", () => {
-    expect(renderEodPrompt("a {{date}} b {{date}}", "2026-08-13")).toBe("a 2026-08-13 b 2026-08-13");
+    expect(renderEodPrompt("a {{date}} b {{date}}", "2026-08-13")).toBe(
+      "a 2026-08-13 b 2026-08-13",
+    );
   });
 
   it("renderEodPrompt resolves the identity variables and fails loudly on an unknown one", () => {

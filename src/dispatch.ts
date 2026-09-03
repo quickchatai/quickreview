@@ -35,7 +35,13 @@ import {
   type RoundMemory,
   type RoundMemorySeed,
 } from "./memory/context.js";
-import { carryWithheldMark, classifyDelta, recheckFingerprint, type DeltaClass, type DeltaFile } from "./recheck.js";
+import {
+  carryWithheldMark,
+  classifyDelta,
+  recheckFingerprint,
+  type DeltaClass,
+  type DeltaFile,
+} from "./recheck.js";
 import { roundPostingKey } from "./posting-receipt.js";
 import { directiveVocabulary, isFirstPartyDirectivePath } from "./severity.js";
 import type { DispatchAnnouncer } from "./slack/announce.js";
@@ -43,7 +49,14 @@ import { applyEvent, restoreStandingLifecycle, setPrGates } from "./statemachine
 import type { PrStateRow, ReviewedHeadRow, StateStore } from "./state.js";
 import { snapshotMark, standingReview } from "./standing-review.js";
 import { higherTier, PASS_TIER_ORDER, roundPromptMarker } from "./types.js";
-import type { PassPlanEntry, PassTier, RoundOrder, RoundRecoveryContext, RoundType, SessionHooks } from "./types.js";
+import type {
+  PassPlanEntry,
+  PassTier,
+  RoundOrder,
+  RoundRecoveryContext,
+  RoundType,
+  SessionHooks,
+} from "./types.js";
 
 /** The slice of GitHubAdapter dispatch needs — all mutations are gated inside
  * the adapter, so this module never touches GitHub directly. */
@@ -61,7 +74,12 @@ export interface DispatchAdapter {
    * same gated `POST /pulls/<n>/reviews` the session's review uses. */
   createReview(
     n: number,
-    payload: { commit_id: string; event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"; body: string; comments?: unknown[] },
+    payload: {
+      commit_id: string;
+      event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
+      body: string;
+      comments?: unknown[];
+    },
     options?: { purpose?: "migration_precheck" },
   ): Promise<GateResult>;
   /** `GET /compare/<base>...<head>` — read-only, the short-circuit's
@@ -124,12 +142,19 @@ export interface DispatchDeps {
    * the escalation mention falls back to config
    * `[review] escalation_mention_default`.
    */
-  directiveAuthor?: (sha: string, paths: string[]) => Promise<{ login: string | null; name: string; email: string } | null>;
+  directiveAuthor?: (
+    sha: string,
+    paths: string[],
+  ) => Promise<{ login: string | null; name: string; email: string } | null>;
   /** Hand-resolved merge files between two shas (the owner, 2026-08-19 —
    * conflict resolutions are never trivial), for the short-circuit's
    * classification. Same seam RecheckDeps carries. Absent ⇒ merges classify by
    * the ownership rule alone. */
-  resolvedFilesInMerges?: (from: string, to: string, pr?: number) => Promise<{ files: string[]; degraded: boolean }>;
+  resolvedFilesInMerges?: (
+    from: string,
+    to: string,
+    pr?: number,
+  ) => Promise<{ files: string[]; degraded: boolean }>;
   /** Slack announcer (S4). Optional: absent ⇒ no Slack at all, which
    * is what the stub-wired daemon core and every non-Slack test see. */
   announce?: DispatchAnnouncer;
@@ -147,7 +172,11 @@ export function defaultWorktree(pr: number): string {
 }
 
 /** PR size at the reviewed head, summed over the files API response. */
-export function diffstatOf(files: PrFileEntry[]): { additions: number; deletions: number; changed_files: number } {
+export function diffstatOf(files: PrFileEntry[]): {
+  additions: number;
+  deletions: number;
+  changed_files: number;
+} {
   return {
     additions: files.reduce((n, f) => n + (f.additions ?? 0), 0),
     deletions: files.reduce((n, f) => n + (f.deletions ?? 0), 0),
@@ -225,12 +254,20 @@ function alreadyConsumed(err: unknown): boolean {
 async function ecosystemPreCheck(
   deps: DispatchDeps,
   eco: Ecosystem,
-  args: { round_id: number; pr: number; files: PrFileEntry[]; head_sha: string; base_ref: string; base_sha: string },
+  args: {
+    round_id: number;
+    pr: number;
+    files: PrFileEntry[];
+    head_sha: string;
+    base_ref: string;
+    base_sha: string;
+  },
 ): Promise<{ collisions: MigrationCollision[]; degraded: boolean; commentWithheld: boolean }> {
   const outcome = await eco.preCheck(
     {
       logEvent: (kind, pr, payload) => deps.store.logEvent(kind, pr, payload),
-      migrationCollisionCommented: (pr, fingerprint) => deps.store.migrationCollisionCommented(pr, fingerprint),
+      migrationCollisionCommented: (pr, fingerprint) =>
+        deps.store.migrationCollisionCommented(pr, fingerprint),
       createReview: async (pr, payload, options) => {
         // A throw after transport begins is ambiguous. Persist that BEFORE the
         // gated call, then narrow it only from the gate's returned fact. The
@@ -272,7 +309,9 @@ async function directiveEscalationFor(
   // the vocabulary is the compiled-in default EXTENDED by
   // [review.directives] — extension only, so default behaviour is unchanged.
   const vocab = directiveVocabulary(deps.cfg.review.directives);
-  const directiveFiles = args.files.filter((f) => isFirstPartyDirectivePath(f.filename, vocab)).map((f) => f.filename);
+  const directiveFiles = args.files
+    .filter((f) => isFirstPartyDirectivePath(f.filename, vocab))
+    .map((f) => f.filename);
   if (directiveFiles.length === 0) return undefined;
   // an unset [review] escalation_mention_default falls back to the
   // owner's GitHub login — the config default itself stays "".
@@ -457,7 +496,9 @@ async function classifySystemRetrigger(
     const delta = await deps.adapter.compareFiles(mark.head_sha, row.head_sha);
     const own = await deps.adapter.listPrFiles(row.number);
     const prFiles = new Set(
-      own.flatMap((f: DeltaFile) => (f.previous_filename ? [f.filename, f.previous_filename] : [f.filename])),
+      own.flatMap((f: DeltaFile) =>
+        f.previous_filename ? [f.filename, f.previous_filename] : [f.filename],
+      ),
     );
     let resolvedFiles: Set<string> | undefined;
     if (deps.resolvedFilesInMerges) {
@@ -527,7 +568,10 @@ async function consumeTriggers(
       deps.store.logEvent("trigger_already_consumed", pr, { which: "team_request" });
     } else {
       log(`dispatch: team-request DELETE failed on #${pr}`, err);
-      deps.store.logEvent("trigger_consume_failed", pr, { which: "team_request", error: String(err) });
+      deps.store.logEvent("trigger_consume_failed", pr, {
+        which: "team_request",
+        error: String(err),
+      });
     }
   }
   if (opts.markInProgress !== false) {
@@ -631,10 +675,17 @@ export function buildPassPlan(
   const pass_plan = lenses.map((lens): PassPlanEntry => {
     const pinned = lens === VALIDATE_PASS || risk.has(lens);
     const tier: PassTier = lens === VALIDATE_PASS ? validate : tierOf(lens);
-    return { lens, agent: `${lens}--${tier}`, tier, raisable_to: pinned ? [] : raisableFrom(lens, tier) };
+    return {
+      lens,
+      agent: `${lens}--${tier}`,
+      tier,
+      raisable_to: pinned ? [] : raisableFrom(lens, tier),
+    };
   });
   const selected = new Set(lenses);
-  const addable_lenses = [...new Set([...ALL_PASSES, ...cfg.models.risk_passes])].filter((l) => !selected.has(l));
+  const addable_lenses = [...new Set([...ALL_PASSES, ...cfg.models.risk_passes])].filter(
+    (l) => !selected.has(l),
+  );
   return { pass_plan, addable_lenses };
 }
 
@@ -675,7 +726,13 @@ export function buildRoundOrder(args: {
   heuristics?: HeuristicsExtension;
 }): RoundOrder {
   const eco = args.ecosystem ?? DJANGO_ECOSYSTEM;
-  const { pass_plan, addable_lenses } = buildPassPlan(args.cfg, args.files, { body: args.prBody }, eco, args.heuristics);
+  const { pass_plan, addable_lenses } = buildPassPlan(
+    args.cfg,
+    args.files,
+    { body: args.prBody },
+    eco,
+    args.heuristics,
+  );
   const headSha = args.tree?.head_sha || args.row.head_sha;
   return {
     pr: args.row.number,
@@ -693,7 +750,9 @@ export function buildRoundOrder(args: {
     migration_gate: eco.migrationGate(args.files),
     migration_collisions: args.migrationCollisions ?? [],
     migration_precheck_degraded: args.migrationPrecheckDegraded ?? false,
-    ...(args.firstPartyDirectives !== undefined ? { first_party_directives: args.firstPartyDirectives } : {}),
+    ...(args.firstPartyDirectives !== undefined
+      ? { first_party_directives: args.firstPartyDirectives }
+      : {}),
     // absent unless escalation is enabled AND session judgement is
     // on, so the default install's order (and prompt) is unchanged.
     ...((): { escalation_targets?: string[] } => {
@@ -738,7 +797,8 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
   const { store, cfg } = deps;
   const eco = deps.ecosystem ?? DJANGO_ECOSYSTEM;
   const now = deps.now ?? (() => new Date());
-  const render = deps.renderPrompt ?? ((o: RoundOrder, _m: RoundMemory) => JSON.stringify(o, null, 2));
+  const render =
+    deps.renderPrompt ?? ((o: RoundOrder, _m: RoundMemory) => JSON.stringify(o, null, 2));
   const worktreeFor = deps.worktreeFor ?? defaultWorktree;
   const settledDigest = deps.settledDigest ?? (() => "");
   const log = deps.log ?? (() => {});
@@ -758,9 +818,10 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
   const commandEligible = queuedInOrder(store).filter((row) => {
     const failure = store.openReviewFailure(row.number);
     if (failure) {
-      const action = failure.next_action === "retry_wait" && failure.next_retry_at
-        ? `automatic retry at ${failure.next_retry_at}`
-        : "operator u required";
+      const action =
+        failure.next_action === "retry_wait" && failure.next_retry_at
+          ? `automatic retry at ${failure.next_retry_at}`
+          : "operator u required";
       log(`dispatch: #${row.number} held FAILED_LOUD (${failure.incident_id}); ${action}`);
       return false;
     }
@@ -850,7 +911,9 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           now,
           reason: standing ? "no-new-evidence" : "no-new-evidence:standing-unknown",
         });
-        log(`dispatch: #${row.number} skipped — no new evidence at ${row.head_sha.slice(0, 7)}; standing ${standing ?? "review (verdict unknown)"} stands, PR ${restored}`);
+        log(
+          `dispatch: #${row.number} skipped — no new evidence at ${row.head_sha.slice(0, 7)}; standing ${standing ?? "review (verdict unknown)"} stands, PR ${restored}`,
+        );
         continue;
       }
 
@@ -875,20 +938,32 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           if (row.head_sha !== mark.head_sha) {
             // The uphold semantics of amendment ③, daemon-side: a
             // never-posted approval follows the head on a trivial/empty delta.
-            carryWithheldMark(store, row.number, row.head_sha, `dispatch-short-circuit:${sc.reason}`, (m) => log(m));
+            carryWithheldMark(
+              store,
+              row.number,
+              row.head_sha,
+              `dispatch-short-circuit:${sc.reason}`,
+              (m) => log(m),
+            );
             if (standing === "APPROVE") {
               // This head's push question is answered (trivially). Claim the
               // same fingerprint the reconcile push-backstop checks so it is
               // not re-asked every sweep; INSERT OR IGNORE means a claim a
               // real recheck already holds is left untouched.
-              store.claimRecheck(row.number, recheckFingerprint({ trigger: "push" }, row.head_sha), {
-                head_sha: row.head_sha,
-                trigger: "push",
-                reason: `dispatch-short-circuit:${sc.reason}`,
-              });
+              store.claimRecheck(
+                row.number,
+                recheckFingerprint({ trigger: "push" }, row.head_sha),
+                {
+                  head_sha: row.head_sha,
+                  trigger: "push",
+                  reason: `dispatch-short-circuit:${sc.reason}`,
+                },
+              );
             }
           }
-          log(`dispatch: #${row.number} short-circuited (${sc.reason}) — system re-trigger, standing ${standing}`);
+          log(
+            `dispatch: #${row.number} short-circuited (${sc.reason}) — system re-trigger, standing ${standing}`,
+          );
           store.logEvent("dispatch_short_circuit", row.number, {
             reason: sc.reason,
             delta_class: sc.class,
@@ -897,11 +972,17 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
             standing_verdict: standing,
             files: sc.files,
           });
-          applyEvent(store, row.number, { type: "verdict", verdict: standing }, {}, {
-            botLogin: cfg.github.bot_login,
-            now,
-            reason: `dispatch-short-circuit:${sc.reason}`,
-          });
+          applyEvent(
+            store,
+            row.number,
+            { type: "verdict", verdict: standing },
+            {},
+            {
+              botLogin: cfg.github.bot_login,
+              now,
+              reason: `dispatch-short-circuit:${sc.reason}`,
+            },
+          );
           continue;
         }
       }
@@ -913,7 +994,8 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // this round's approval is withheld again (guards.ts guard 4).
       if (withheld) {
         store.clearApprovalWithheld(row.number);
-        if (withheldHere) store.logEvent("approval_retry_dispatched", row.number, { head_sha: row.head_sha });
+        if (withheldHere)
+          store.logEvent("approval_retry_dispatched", row.number, { head_sha: row.head_sha });
       }
 
       // The branch this PR targets (base freshness) and its body (:
@@ -944,7 +1026,8 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         lens,
         tier: riskPasses.has(lens) ? "sol-high" : "sol-med",
       }));
-      const validateTier = plannedPasses.find((p) => p.lens === VALIDATE_PASS)?.tier ?? cfg.models.validate_tier;
+      const validateTier =
+        plannedPasses.find((p) => p.lens === VALIDATE_PASS)?.tier ?? cfg.models.validate_tier;
 
       // Diffstat comes free off the files list dispatch already fetched — no
       // extra GitHub call in the hot path. trigger_ts is copied off pr_state
@@ -952,16 +1035,25 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // validate_tier is recorded so a later audit can tell which tier killed
       // which finding.
       const diffstat = diffstatOf(files);
-      const roundId = store.startRound(row.number, roundType, lenses, cfg.daemon.round_deadline_min, {
-        ...diffstat,
-        trigger_ts: row.trigger_ts,
-        validate_tier: validateTier,
-        pass_plan: plannedPasses,
-        addable_passes: addablePasses,
-      });
+      const roundId = store.startRound(
+        row.number,
+        roundType,
+        lenses,
+        cfg.daemon.round_deadline_min,
+        {
+          ...diffstat,
+          trigger_ts: row.trigger_ts,
+          validate_tier: validateTier,
+          pass_plan: plannedPasses,
+          addable_passes: addablePasses,
+        },
+      );
       provisionalRoundId = roundId;
-      const roundNo = (store.db.prepare("SELECT round_no FROM rounds WHERE id = ?").get(roundId) as { round_no: number })
-        .round_no;
+      const roundNo = (
+        store.db.prepare("SELECT round_no FROM rounds WHERE id = ?").get(roundId) as {
+          round_no: number;
+        }
+      ).round_no;
 
       // Prepare the tree BEFORE building the order, so the prompt cites the sha
       // the passes will actually read. The old sequence built the order from
@@ -969,7 +1061,9 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // a push landing in between made the prompt quietly wrong — passes cited
       // one sha while reading another tree, and their anchors were computed
       // against a diff the review was not about.
-      const tree = deps.prepareWorktree ? await deps.prepareWorktree(row.number, baseRef) : undefined;
+      const tree = deps.prepareWorktree
+        ? await deps.prepareWorktree(row.number, baseRef)
+        : undefined;
       if (tree && row.head_sha && tree.head_sha !== row.head_sha) {
         log(`dispatch: #${row.number} head drift ${row.head_sha} → ${tree.head_sha}`);
         store.logEvent("head_drift", row.number, {
@@ -1042,7 +1136,10 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // still hears the collisions through the gate note, but every later
       // collision comment on this PR stays withheld until the torn ledger row
       // is repaired — a human has to know that, once.
-      if (precheck.commentWithheld && !store.anomalyRaised("migration_collision_comment_withheld", row.number)) {
+      if (
+        precheck.commentWithheld &&
+        !store.anomalyRaised("migration_collision_comment_withheld", row.number)
+      ) {
         store.logAnomaly(
           "migration_collision_comment_withheld",
           row.number,
@@ -1072,7 +1169,11 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
 
       const preparedHead = tree?.head_sha || row.head_sha;
       const rawRecoveryInstruction = store.roundRecoveryInstruction(row.number, roundNo);
-      const recoveryInstruction = store.roundRecoveryInstructionForDispatch(row.number, roundNo, preparedHead);
+      const recoveryInstruction = store.roundRecoveryInstructionForDispatch(
+        row.number,
+        roundNo,
+        preparedHead,
+      );
       if (rawRecoveryInstruction && !recoveryInstruction) {
         store.logEvent("round_recovery_instruction_not_applied", row.number, {
           target_round_no: roundNo,
@@ -1136,7 +1237,13 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       store.stampPromptMarker(roundId, roundPromptMarker(row.number, roundNo));
 
       setPrGates(store, row.number, gate);
-      applyEvent(store, row.number, { type: "dispatched" }, {}, { botLogin: cfg.github.bot_login, now });
+      applyEvent(
+        store,
+        row.number,
+        { type: "dispatched" },
+        {},
+        { botLogin: cfg.github.bot_login, now },
+      );
       store.logEvent("round_dispatched", row.number, {
         round_id: roundId,
         round_no: roundNo,
@@ -1192,13 +1299,24 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       let retainedCommand = false;
       if (provisionalRoundId !== undefined) {
         const provisional = store.runningRounds().find((round) => round.id === provisionalRoundId);
-        const command = provisional ? store.sessionCommandForRound(row.number, provisional.round_no) : undefined;
+        const command = provisional
+          ? store.sessionCommandForRound(row.number, provisional.round_no)
+          : undefined;
         if (command) {
           retainedCommand = true;
           try {
-            applyEvent(store, row.number, { type: "dispatched" }, {}, { botLogin: cfg.github.bot_login, now });
+            applyEvent(
+              store,
+              row.number,
+              { type: "dispatched" },
+              {},
+              { botLogin: cfg.github.bot_login, now },
+            );
           } catch (publishError) {
-            log(`dispatch: #${row.number} retained command but could not publish reviewing state`, publishError);
+            log(
+              `dispatch: #${row.number} retained command but could not publish reviewing state`,
+              publishError,
+            );
           }
           try {
             store.logAnomaly(
@@ -1214,7 +1332,10 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           store.discardRunningRound(provisionalRoundId);
         }
       }
-      log(`dispatch: #${row.number} failed${retainedCommand ? " after durable handoff — round retained" : ""}`, err);
+      log(
+        `dispatch: #${row.number} failed${retainedCommand ? " after durable handoff — round retained" : ""}`,
+        err,
+      );
       try {
         store.logEvent("dispatch_failed", row.number, {
           round_id: provisionalRoundId ?? null,

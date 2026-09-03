@@ -193,10 +193,20 @@ function hashPath(path: string, fs: FingerprintFs, depth: number): string {
 /** Hash every watched path. Total: a missing or unreadable path is a RECORDED
  * value, never a throw — a fingerprint that fails to compute would silently
  * disable the check, which is the failure mode this whole ticket is about. */
-export function integrityFingerprint(paths: readonly string[], fs: FingerprintFs): IntegrityFingerprint {
+export function integrityFingerprint(
+  paths: readonly string[],
+  fs: FingerprintFs,
+): IntegrityFingerprint {
   const files: Record<string, string> = {};
   for (const path of [...paths].sort()) files[path] = hashPath(path, fs, MAX_HASH_DEPTH);
-  return { digest: fs.sha256(Object.entries(files).map(([p, h]) => `${p}=${h}`).join("\n")), files };
+  return {
+    digest: fs.sha256(
+      Object.entries(files)
+        .map(([p, h]) => `${p}=${h}`)
+        .join("\n"),
+    ),
+    files,
+  };
 }
 
 /** The production fs seam. Injected everywhere so the logic is testable with no
@@ -221,9 +231,13 @@ export interface RoundIntegrityOpts {
  * `verdicts.ts` (end) cannot compute it over DIFFERENT path sets — which would
  * turn every round into a false alarm and get the check switched off.
  */
-export function fingerprintRoundIntegrity(opts: RoundIntegrityOpts, fs: FingerprintFs = defaultFingerprintFs): IntegrityFingerprint {
+export function fingerprintRoundIntegrity(
+  opts: RoundIntegrityOpts,
+  fs: FingerprintFs = defaultFingerprintFs,
+): IntegrityFingerprint {
   const paths = gitConfigWatchPaths(opts);
-  if (opts.sandboxRoot !== undefined && opts.sandboxRoot.length > 0) paths.push(...policySurfaceWatchPaths(opts.sandboxRoot));
+  if (opts.sandboxRoot !== undefined && opts.sandboxRoot.length > 0)
+    paths.push(...policySurfaceWatchPaths(opts.sandboxRoot));
   return integrityFingerprint(paths, fs);
 }
 
@@ -234,7 +248,10 @@ export interface IntegrityChange {
 }
 
 /** Which watched paths changed between the two fingerprints. Empty ⇒ clean. */
-export function integrityChanges(before: IntegrityFingerprint, after: IntegrityFingerprint): IntegrityChange[] {
+export function integrityChanges(
+  before: IntegrityFingerprint,
+  after: IntegrityFingerprint,
+): IntegrityChange[] {
   if (before.digest === after.digest) return [];
   // Total over a malformed fingerprint rather than throwing on one. That is not
   // defensiveness for its own sake: it makes the caller's "no baseline ⇒ never
@@ -288,7 +305,10 @@ export function gitConfigChangeMessage(pr: number, changes: readonly IntegrityCh
  * runs — so the message says which root moved and what to do; the round's
  * output AND every later round in this container are suspect until the tree
  * is restored from the deployed revision. */
-export function policySurfaceChangeMessage(pr: number, changes: readonly IntegrityChange[]): string {
+export function policySurfaceChangeMessage(
+  pr: number,
+  changes: readonly IntegrityChange[],
+): string {
   return [
     `EXEC BOUNDARY — PR #${pr}: this system's OWN policy surface changed DURING a round: ${changes.map((c) => c.path).join(", ")}.`,
     "Nothing the daemon does rewrites these mid-round, so this is a session write that got past the write veto",
@@ -359,7 +379,10 @@ const POSTING_MARKER_RE = /<!--\s*qcr-post:/;
 function isBotAuthored(review: AuditedReview, botLogin: string, appSlug?: string): boolean {
   if (review.user_type === "Bot") return true;
   const login = review.user.toLowerCase();
-  return login === botLogin.toLowerCase() || (appSlug !== undefined && login === `${appSlug.toLowerCase()}[bot]`);
+  return (
+    login === botLogin.toLowerCase() ||
+    (appSlug !== undefined && login === `${appSlug.toLowerCase()}[bot]`)
+  );
 }
 
 /**
@@ -421,7 +444,9 @@ export function hasUngatedApproval(found: readonly UngatedReview[]): boolean {
  * write and a failed local stamp are different faults with the same shape here,
  * and asserting the wrong one would send the reader down the wrong path. */
 export function ungatedReviewMessage(pr: number, found: readonly UngatedReview[]): string {
-  const list = found.map((r) => `${r.state} review ${r.review_id} at ${r.commit_id.slice(0, 7)}`).join("; ");
+  const list = found
+    .map((r) => `${r.state} review ${r.review_id} at ${r.commit_id.slice(0, 7)}`)
+    .join("; ");
   return [
     `EXEC BOUNDARY — PR #${pr}: ${found.length} bot-authored review(s) at the current head with no local posting record: ${list}.`,
     "Two readings, both faults: (a) something posted to GitHub outside the mutation gate and the posting guards —",

@@ -71,7 +71,14 @@ beforeEach(async () => {
     }
     if (req.url?.endsWith("/pulls/5180")) {
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ state: "open", merged: false, head: { sha: HEAD }, user: { login: "pr-author" } }));
+      res.end(
+        JSON.stringify({
+          state: "open",
+          merged: false,
+          head: { sha: HEAD },
+          user: { login: "pr-author" },
+        }),
+      );
       return;
     }
     res.writeHead(404, { "content-type": "application/json" });
@@ -139,7 +146,9 @@ describe("scripts/pr-self.sh — reviews", () => {
     ];
     const res = await run(["5180", "reviews"]);
     expect(res.ok).toBe(true);
-    expect(res.out).toContain(`[2] CHANGES_REQUESTED @ ${HEAD} (2026-08-19T10:00:00Z) Two blockers found.`);
+    expect(res.out).toContain(
+      `[2] CHANGES_REQUESTED @ ${HEAD} (2026-08-19T10:00:00Z) Two blockers found.`,
+    );
     expect(res.out).not.toContain("mhale");
     expect(res.out).not.toContain("[1]");
     expect(res.out).not.toContain("[3]");

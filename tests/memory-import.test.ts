@@ -48,24 +48,35 @@ const rig = (opts: { seed?: MemoryEntry[] } = {}) => {
   return { source, dest };
 };
 
-const run = async (over: Partial<Parameters<typeof importMemory>[0]> = {}): Promise<{ report: ImportReport; dest: ReturnType<typeof recordingMemoryStore> }> => {
+const run = async (
+  over: Partial<Parameters<typeof importMemory>[0]> = {},
+): Promise<{ report: ImportReport; dest: ReturnType<typeof recordingMemoryStore> }> => {
   const { source, dest } = rig();
   const report = await importMemory({ source, dest, ...over });
   return { report, dest };
 };
 
-const byExcerpt = (report: ImportReport, needle: string) => report.imported.find((r) => r.excerpt.includes(needle));
-const skipFor = (report: ImportReport, needle: string) => report.skipped.find((s) => s.excerpt.includes(needle));
+const byExcerpt = (report: ImportReport, needle: string) =>
+  report.imported.find((r) => r.excerpt.includes(needle));
+const skipFor = (report: ImportReport, needle: string) =>
+  report.skipped.find((s) => s.excerpt.includes(needle));
 
 describe("classify", () => {
-  const of = (text: string): MemoryEntry => parseMemory(`<!-- 2026-08-20 10:00:00 [t] -->\n${text}\n`)[0]!;
+  const of = (text: string): MemoryEntry =>
+    parseMemory(`<!-- 2026-08-20 10:00:00 [t] -->\n${text}\n`)[0]!;
 
   it("pinned standing instructions land in the pinned category", () => {
-    expect(classify(of("#pinned #manual always cite the sha"))).toEqual({ keep: true, category: "pinned" });
+    expect(classify(of("#pinned #manual always cite the sha"))).toEqual({
+      keep: true,
+      category: "pinned",
+    });
   });
 
   it("#manual without a pin is a standing instruction", () => {
-    expect(classify(of("#manual never dismiss an approval"))).toEqual({ keep: true, category: "standing" });
+    expect(classify(of("#manual never dismiss an approval"))).toEqual({
+      keep: true,
+      category: "standing",
+    });
   });
 
   it.each([
@@ -81,29 +92,53 @@ describe("classify", () => {
   });
 
   it("open bug and feedback threads keep their own categories", () => {
-    expect(classify(of("#bug #operations guard 2 suppressed a review"))).toEqual({ keep: true, category: "bug" });
-    expect(classify(of('#feedback human [feedback] on PR 5320: "too picky"'))).toEqual({ keep: true, category: "feedback" });
+    expect(classify(of("#bug #operations guard 2 suppressed a review"))).toEqual({
+      keep: true,
+      category: "bug",
+    });
+    expect(classify(of('#feedback human [feedback] on PR 5320: "too picky"'))).toEqual({
+      keep: true,
+      category: "feedback",
+    });
   });
 
   it("a closed thread stays behind", () => {
-    expect(classify(of("#bug #resolved head_drift — fixed"))).toEqual({ keep: false, reason: "closed-thread" });
-    expect(classify(of("#feedback #superseded old shape note"))).toEqual({ keep: false, reason: "closed-thread" });
+    expect(classify(of("#bug #resolved head_drift — fixed"))).toEqual({
+      keep: false,
+      reason: "closed-thread",
+    });
+    expect(classify(of("#feedback #superseded old shape note"))).toEqual({
+      keep: false,
+      reason: "closed-thread",
+    });
   });
 
   it("#wontfix-pattern is a learning, not a closed thread", () => {
     // The closing-tag set is matched exactly — a substring rule would read
     // `wontfix-pattern` as `wontfix` and drop a whole class of lessons.
-    expect(classify(of("#bug #wontfix-pattern authors always refuse this"))).toEqual({ keep: true, category: "bug" });
+    expect(classify(of("#bug #wontfix-pattern authors always refuse this"))).toEqual({
+      keep: true,
+      category: "bug",
+    });
   });
 
   it("raw daily working notes — no curated tag — do not cross", () => {
-    expect(classify(of("ran qcr today; dispatched pr-5312 round 2"))).toEqual({ keep: false, reason: "raw-daily-note" });
+    expect(classify(of("ran qcr today; dispatched pr-5312 round 2"))).toEqual({
+      keep: false,
+      reason: "raw-daily-note",
+    });
     // A bare PR reference parses as a tag token but is not a curated one.
-    expect(classify(of("looked at PR #5312 and the ledger"))).toEqual({ keep: false, reason: "raw-daily-note" });
+    expect(classify(of("looked at PR #5312 and the ledger"))).toEqual({
+      keep: false,
+      reason: "raw-daily-note",
+    });
   });
 
   it("a compaction handoff block is not a lesson", () => {
-    expect(classify(of("HANDOFF compacted session state: 3 PRs in flight"))).toEqual({ keep: false, reason: "session-handoff" });
+    expect(classify(of("HANDOFF compacted session state: 3 PRs in flight"))).toEqual({
+      keep: false,
+      reason: "session-handoff",
+    });
   });
 });
 
@@ -111,16 +146,30 @@ describe("importMemory — what crosses", () => {
   it("imports exactly the curated set and skips the rest", async () => {
     const { report } = await run();
     expect(report.sourceEntries).toBe(8);
-    expect(report.imported.map((r) => r.category).sort()).toEqual(["bug", "feedback", "learning", "pinned", "standing"]);
+    expect(report.imported.map((r) => r.category).sort()).toEqual([
+      "bug",
+      "feedback",
+      "learning",
+      "pinned",
+      "standing",
+    ]);
     expect(report.failed).toEqual([]);
-    expect(report.skipped.map((s) => s.reason).sort()).toEqual(["closed-thread", "raw-daily-note", "session-handoff"]);
+    expect(report.skipped.map((s) => s.reason).sort()).toEqual([
+      "closed-thread",
+      "raw-daily-note",
+      "session-handoff",
+    ]);
   });
 
   it("writes each entry verbatim under a provenance header, tags preserved", async () => {
     const { dest } = await run();
     const learning = dest.entries.find((e) => e.text.includes("merge base"))!;
-    expect(learning.text).toContain("#false-positive #eod-learning [[pr-5308]] compare transforms with the merge base first.");
-    expect(learning.tags).toEqual(expect.arrayContaining(["imported", "learning", "false-positive", "eod-learning"]));
+    expect(learning.text).toContain(
+      "#false-positive #eod-learning [[pr-5308]] compare transforms with the merge base first.",
+    );
+    expect(learning.tags).toEqual(
+      expect.arrayContaining(["imported", "learning", "false-positive", "eod-learning"]),
+    );
     expect(learning.links).toContain("pr-5308");
     expect(learning.text).toContain("from pi-memory 2026-08-19 18:13:54 [01a01ab3#2]");
   });
@@ -169,14 +218,21 @@ describe("importMemory — idempotency", () => {
     await importMemory({ source, dest });
 
     // Same words, new address and a pin — the shapes a tidy-up produces.
-    const moved = sourceEntries().map((e, i) => ({ ...e, id: "later-batch", ts: "2026-08-21 09:00:00", block: i + 10 }));
+    const moved = sourceEntries().map((e, i) => ({
+      ...e,
+      id: "later-batch",
+      ts: "2026-08-21 09:00:00",
+      block: i + 10,
+    }));
     const again = await importMemory({ source: recordingMemoryStore(moved), dest });
     expect(again.imported).toEqual([]);
     expect(again.skipped.filter((s) => s.reason === "already-imported")).toHaveLength(5);
   });
 
   it("an entry the destination already holds by another route is not duplicated", async () => {
-    const already = parseMemory(`<!-- 2026-08-20 08:00:00 [pre] -->\n#manual never dismiss an approval — ever.\n`);
+    const already = parseMemory(
+      `<!-- 2026-08-20 08:00:00 [pre] -->\n#manual never dismiss an approval — ever.\n`,
+    );
     const { source, dest } = rig({ seed: already });
     const report = await importMemory({ source, dest });
     expect(report.imported).toHaveLength(4);
@@ -185,7 +241,10 @@ describe("importMemory — idempotency", () => {
 
   it("the same words twice in the source cross once", async () => {
     const dup = [...sourceEntries(), { ...sourceEntries()[1]!, id: "other", block: 0 }];
-    const report = await importMemory({ source: recordingMemoryStore(dup), dest: recordingMemoryStore() });
+    const report = await importMemory({
+      source: recordingMemoryStore(dup),
+      dest: recordingMemoryStore(),
+    });
     expect(report.imported).toHaveLength(5);
     expect(report.skipped.filter((s) => s.reason === "duplicate-in-source")).toHaveLength(1);
   });
@@ -198,7 +257,11 @@ describe("importMemory — idempotency", () => {
     const key = importKey(pinnedSource.text);
     const text = importedText(pinnedSource, "pinned", key).replace(/(^|\s)#pinned(?=\s|$)/g, "$1");
     await dest.apply({ op: "note", text });
-    dest.entries[0] = { ...dest.entries[0]!, pinned: false, tags: dest.entries[0]!.tags.filter((t) => t !== "pinned") };
+    dest.entries[0] = {
+      ...dest.entries[0]!,
+      pinned: false,
+      tags: dest.entries[0]!.tags.filter((t) => t !== "pinned"),
+    };
 
     const report = await importMemory({ source, dest });
     expect(report.pins.filter((p) => p.repaired && p.ok)).toHaveLength(1);
@@ -234,7 +297,10 @@ describe("importMemory — batching", () => {
         if (batch === 2) {
           // Between batches, someone else writes the entry we planned next.
           const pending = sourceEntries()[2]!;
-          await dest.apply({ op: "note", text: importedText(pending, "learning", importKey(pending.text)) });
+          await dest.apply({
+            op: "note",
+            text: importedText(pending, "learning", importKey(pending.text)),
+          });
         }
         return dest.read();
       },
@@ -244,12 +310,19 @@ describe("importMemory — batching", () => {
     const report = await importMemory({ source, dest: racing, batchSize: 2 });
     const learningWrites = dest.entries.filter((e) => e.text.includes("merge base"));
     expect(learningWrites).toHaveLength(1);
-    expect(report.skipped.some((s) => s.reason === "already-imported" && s.excerpt.includes("merge base"))).toBe(true);
+    expect(
+      report.skipped.some(
+        (s) => s.reason === "already-imported" && s.excerpt.includes("merge base"),
+      ),
+    ).toBe(true);
   });
 });
 
 describe("importMemory — best effort, no gate", () => {
-  const failingDest = (fail: (op: MemoryOp) => boolean, mode: "refuse" | "throw" = "refuse"): MemoryStore & { entries: MemoryEntry[] } => {
+  const failingDest = (
+    fail: (op: MemoryOp) => boolean,
+    mode: "refuse" | "throw" = "refuse",
+  ): MemoryStore & { entries: MemoryEntry[] } => {
     const inner = recordingMemoryStore();
     return {
       entries: inner.entries,
@@ -312,7 +385,9 @@ describe("the log", () => {
     expect(text).toContain("source holds 8 entries, destination holds 0");
     expect(text).toContain("pinned 1, standing 1, learning 1, bug 1, feedback 1");
     expect(text).toContain("batch 1/1: 5 write(s), 5 ok, 0 failed");
-    expect(text).toContain("done: 5 imported, 0 failed, 3 skipped — best-effort import, no gate");
+    expect(text).toContain(
+      "done: 5 imported, 0 failed, 3 skipped — best-effort import, no gate",
+    );
   });
 
   it("names failed writes with the store's own refusal", async () => {
@@ -321,7 +396,10 @@ describe("the log", () => {
     const dest: MemoryStore = {
       read: () => inner.read(),
       search: (q, o) => inner.search(q, o),
-      apply: (op) => (op.op === "note" && op.text.includes("pmercier") ? Promise.resolve({ ok: false, message: "refused: too long" }) : inner.apply(op)),
+      apply: (op) =>
+        op.op === "note" && op.text.includes("pmercier")
+          ? Promise.resolve({ ok: false, message: "refused: too long" })
+          : inner.apply(op),
     };
     const report = await importMemory({ source, dest });
     const text = report.lines.join("\n");
@@ -332,7 +410,9 @@ describe("the log", () => {
 });
 
 describe("archiveReadOnly", () => {
-  const fakeFs = (mode: number): ArchiveFs & { chmodded: Array<{ path: string; mode: number }> } => {
+  const fakeFs = (
+    mode: number,
+  ): ArchiveFs & { chmodded: Array<{ path: string; mode: number }> } => {
     const chmodded: Array<{ path: string; mode: number }> = [];
     return {
       chmodded,
@@ -360,21 +440,32 @@ describe("archiveReadOnly", () => {
   });
 
   it("a failure is reported, never thrown", async () => {
-    const res = await archiveReadOnly("/nope.md", { stat: () => Promise.reject(new Error("ENOENT")), chmod: () => Promise.resolve() });
+    const res = await archiveReadOnly("/nope.md", {
+      stat: () => Promise.reject(new Error("ENOENT")),
+      chmod: () => Promise.resolve(),
+    });
     expect(res.ok).toBe(false);
     expect(res.message).toContain("NOT archived");
   });
 
   it("the archive result rides the report and the log", async () => {
     const { source, dest } = rig();
-    const report = await importMemory({ source, dest, archive: () => archiveReadOnly("/m.md", fakeFs(0o100644)) });
+    const report = await importMemory({
+      source,
+      dest,
+      archive: () => archiveReadOnly("/m.md", fakeFs(0o100644)),
+    });
     expect(report.archive?.ok).toBe(true);
     expect(report.lines.join("\n")).toContain("archive: /m.md left in place");
   });
 
   it("a throwing archive seam does not fail the import", async () => {
     const { source, dest } = rig();
-    const report = await importMemory({ source, dest, archive: () => Promise.reject(new Error("read-only fs")) });
+    const report = await importMemory({
+      source,
+      dest,
+      archive: () => Promise.reject(new Error("read-only fs")),
+    });
     expect(report.imported).toHaveLength(5);
     expect(report.archive?.ok).toBe(false);
   });

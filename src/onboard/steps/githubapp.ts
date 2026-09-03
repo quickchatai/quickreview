@@ -85,7 +85,11 @@ export const INSTALLATION_ID_CHOICE_KEY = CHOICE_KEYS.installationId;
 export const APP_HTML_URL_CHOICE_KEY = CHOICE_KEYS.appHtmlUrl;
 
 /** Secrets-dir file names — the SAME three deploy/collect-secrets.sh writes. */
-export const SECRET_FILES = { appId: "app_id", pem: "app.pem", webhookSecret: "webhook_secret" } as const;
+export const SECRET_FILES = {
+  appId: "app_id",
+  pem: "app.pem",
+  webhookSecret: "webhook_secret",
+} as const;
 
 /** config.example.toml's label defaults; a recorded choice overrides them. */
 export const DEFAULT_LABELS = {
@@ -94,11 +98,24 @@ export const DEFAULT_LABELS = {
   reviewed: "Automatic Review",
 } as const;
 
-const LABEL_META: Array<{ key: keyof typeof DEFAULT_LABELS; color: string; description: string }> = [
-  { key: "trigger", color: "1d76db", description: "Ask the automated reviewer for a review of this PR" },
-  { key: "in_progress", color: "fbca04", description: "The automated reviewer is running a round on this PR" },
-  { key: "reviewed", color: "0e8a16", description: "This PR has been reviewed by the automated reviewer" },
-];
+const LABEL_META: Array<{ key: keyof typeof DEFAULT_LABELS; color: string; description: string }> =
+  [
+    {
+      key: "trigger",
+      color: "1d76db",
+      description: "Ask the automated reviewer for a review of this PR",
+    },
+    {
+      key: "in_progress",
+      color: "fbca04",
+      description: "The automated reviewer is running a round on this PR",
+    },
+    {
+      key: "reviewed",
+      color: "0e8a16",
+      description: "This PR has been reviewed by the automated reviewer",
+    },
+  ];
 
 export const DEFAULT_CALLBACK_PORT = 8788;
 export const CALLBACK_PATH = "/manifest-callback";
@@ -132,10 +149,18 @@ export function manifestPath(root: string): string {
 
 /** Read the pinned manifest. Throws with the path on a missing/broken file —
  * the step turns that into one red check. */
-export function loadManifest(root: string, readFile: (p: string) => string = (p) => readFileSync(p, "utf8")): AppManifest {
+export function loadManifest(
+  root: string,
+  readFile: (p: string) => string = (p) => readFileSync(p, "utf8"),
+): AppManifest {
   const path = manifestPath(root);
   const parsed = JSON.parse(readFile(path)) as AppManifest;
-  if (!parsed || typeof parsed !== "object" || typeof parsed.name !== "string" || typeof parsed.default_permissions !== "object") {
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    typeof parsed.name !== "string" ||
+    typeof parsed.default_permissions !== "object"
+  ) {
     throw new Error(`${path} is not a GitHub App manifest`);
   }
   return parsed;
@@ -166,7 +191,10 @@ export function renderManifest(manifest: AppManifest, o: ManifestOverrides): App
   for (const key of Object.keys(rendered)) if (key.startsWith("$")) delete rendered[key];
   rendered.name = o.name;
   rendered.redirect_url = o.redirectUrl;
-  rendered.hook_attributes = { ...manifest.hook_attributes, url: o.webhookUrl ?? manifest.hook_attributes.url };
+  rendered.hook_attributes = {
+    ...manifest.hook_attributes,
+    url: o.webhookUrl ?? manifest.hook_attributes.url,
+  };
   return rendered;
 }
 
@@ -221,7 +249,11 @@ export interface CredentialState {
 /** The same rules deploy/collect-secrets.sh validates with: a numeric app_id,
  * a PEM that actually parses as a private key (openssl pkey there, node's
  * createPrivateKey here — no subprocess), a non-trivial webhook secret. */
-export function validateCredentialValues(v: { appId: string; pem: string; webhookSecret: string }): string[] {
+export function validateCredentialValues(v: {
+  appId: string;
+  pem: string;
+  webhookSecret: string;
+}): string[] {
   const problems: string[] = [];
   if (!/^[0-9]{1,12}$/.test(v.appId.trim())) problems.push("app_id is not a number");
   try {
@@ -229,7 +261,8 @@ export function validateCredentialValues(v: { appId: string; pem: string; webhoo
   } catch {
     problems.push("app.pem does not parse as a private key");
   }
-  if (v.webhookSecret.trim().length < 8) problems.push("webhook_secret is suspiciously short (<8 chars)");
+  if (v.webhookSecret.trim().length < 8)
+    problems.push("webhook_secret is suspiciously short (<8 chars)");
   return problems;
 }
 
@@ -257,13 +290,22 @@ export function readCredentials(secretsDir: string): CredentialState {
   if (appId !== null && pem !== null && webhookSecret !== null) {
     problems.push(...validateCredentialValues({ appId, pem, webhookSecret }));
   }
-  return { appId: appId?.trim() ?? null, pem, webhookSecret: webhookSecret?.trim() ?? null, problems, complete: problems.length === 0 };
+  return {
+    appId: appId?.trim() ?? null,
+    pem,
+    webhookSecret: webhookSecret?.trim() ?? null,
+    problems,
+    complete: problems.length === 0,
+  };
 }
 
 /** Land the conversion response: 0600 files under a 0700 dir, validated
  * BEFORE anything is written (a half-written credential set is worse than
  * none). Returns the problems that stopped it; empty means written. */
-export function writeCredentials(secretsDir: string, v: { appId: string; pem: string; webhookSecret: string }): string[] {
+export function writeCredentials(
+  secretsDir: string,
+  v: { appId: string; pem: string; webhookSecret: string },
+): string[] {
   const problems = validateCredentialValues(v);
   if (problems.length > 0) return problems;
   mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
@@ -282,7 +324,11 @@ export function writeCredentials(secretsDir: string, v: { appId: string; pem: st
 // ---- the localhost page -----------------------------------------------------
 
 function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 export interface PageInputs {
@@ -303,7 +349,10 @@ export function manifestPageHtml(i: PageInputs): string {
   const perms = Object.entries(i.manifest.default_permissions)
     .map(([k, v]) => `<li><code>${escapeHtml(k)}</code>: ${escapeHtml(v)}</li>`)
     .join("");
-  const where = i.target.kind === "org" ? `the <strong>${escapeHtml(i.target.login)}</strong> organization` : "your personal account";
+  const where =
+    i.target.kind === "org"
+      ? `the <strong>${escapeHtml(i.target.login)}</strong> organization`
+      : "your personal account";
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Create your QuickReview GitHub App</title>
 <style>body{font:16px/1.5 system-ui,sans-serif;max-width:44rem;margin:3rem auto;padding:0 1rem}
@@ -391,16 +440,28 @@ export const nodeCallbackServer: CallbackServerFactory = async (o) => {
       const state = url.searchParams.get("state");
       if (state !== o.state) {
         res.writeHead(400, { "content-type": "text/html; charset=utf-8" });
-        res.end(resultPageHtml("Ignored", "That callback did not carry this wizard's state token, so it was ignored."));
+        res.end(
+          resultPageHtml(
+            "Ignored",
+            "That callback did not carry this wizard's state token, so it was ignored.",
+          ),
+        );
         return;
       }
       res.writeHead(code ? 200 : 400, { "content-type": "text/html; charset=utf-8" });
       res.end(
         code
           ? resultPageHtml("App created", "You can close this tab and go back to the wizard.")
-          : resultPageHtml("No code", "GitHub redirected back without a code. Run the step again to restart."),
+          : resultPageHtml(
+              "No code",
+              "GitHub redirected back without a code. Run the step again to restart.",
+            ),
       );
-      deliver(code ? { code, detail: "code received on the loopback callback" } : { code: null, detail: "callback carried no code" });
+      deliver(
+        code
+          ? { code, detail: "code received on the loopback callback" }
+          : { code: null, detail: "callback carried no code" },
+      );
       return;
     }
     if (url.pathname === "/") {
@@ -440,7 +501,10 @@ export const nodeCallbackServer: CallbackServerFactory = async (o) => {
   const redirectUrl = `http://127.0.0.1:${port}${CALLBACK_PATH}`;
   html = o.page({ url, redirectUrl });
 
-  const timer = setTimeout(() => deliver({ code: null, detail: `no callback within ${Math.round(o.timeoutMs / 1000)}s` }), o.timeoutMs);
+  const timer = setTimeout(
+    () => deliver({ code: null, detail: `no callback within ${Math.round(o.timeoutMs / 1000)}s` }),
+    o.timeoutMs,
+  );
   timer.unref?.();
 
   return {
@@ -469,7 +533,11 @@ async function api(fetchFn: typeof fetch, url: string, init?: RequestInit): Prom
   try {
     const res = await fetchFn(url, {
       ...init,
-      headers: { accept: "application/vnd.github+json", "user-agent": "quickreview-onboarding", ...(init?.headers ?? {}) },
+      headers: {
+        accept: "application/vnd.github+json",
+        "user-agent": "quickreview-onboarding",
+        ...(init?.headers ?? {}),
+      },
     });
     const text = await res.text();
     let body: unknown = null;
@@ -498,7 +566,8 @@ export interface ConvertedApp {
   owner?: { login?: string };
 }
 
-export type ConversionOutcome = { ok: true; app: ConvertedApp } | { ok: false; detail: string; restart: boolean };
+export type ConversionOutcome =
+  { ok: true; app: ConvertedApp } | { ok: false; detail: string; restart: boolean };
 
 /**
  * The UNAUTHENTICATED conversion: POST /app-manifests/{code}/conversions.
@@ -510,14 +579,33 @@ export type ConversionOutcome = { ok: true; app: ConvertedApp } | { ok: false; d
  * unverifiable offline — the named `github-app` onboarding smoke step
  * (throwaway App on a scratch account) is where they are confirmed live.
  */
-export async function convertManifestCode(fetchFn: typeof fetch, apiBase: string, code: string): Promise<ConversionOutcome> {
-  const r = await api(fetchFn, `${apiBase}/app-manifests/${encodeURIComponent(code)}/conversions`, { method: "POST" });
+export async function convertManifestCode(
+  fetchFn: typeof fetch,
+  apiBase: string,
+  code: string,
+): Promise<ConversionOutcome> {
+  const r = await api(fetchFn, `${apiBase}/app-manifests/${encodeURIComponent(code)}/conversions`, {
+    method: "POST",
+  });
   if (r.status === 201) {
     const app = r.body as Partial<ConvertedApp> | null;
-    if (!app || typeof app.id !== "number" || typeof app.pem !== "string" || typeof app.webhook_secret !== "string") {
-      return { ok: false, detail: "GitHub accepted the code but the conversion response was missing id/pem/webhook_secret", restart: true };
+    if (
+      !app ||
+      typeof app.id !== "number" ||
+      typeof app.pem !== "string" ||
+      typeof app.webhook_secret !== "string"
+    ) {
+      return {
+        ok: false,
+        detail:
+          "GitHub accepted the code but the conversion response was missing id/pem/webhook_secret",
+        restart: true,
+      };
     }
-    return { ok: true, app: { ...app, slug: typeof app.slug === "string" ? app.slug : "" } as ConvertedApp };
+    return {
+      ok: true,
+      app: { ...app, slug: typeof app.slug === "string" ? app.slug : "" } as ConvertedApp,
+    };
   }
   if (r.status === 404 || r.status === 422) {
     return {
@@ -528,40 +616,70 @@ export async function convertManifestCode(fetchFn: typeof fetch, apiBase: string
         "Run this step again: it serves a fresh page and a fresh code. Nothing was written.",
     };
   }
-  return { ok: false, restart: false, detail: `conversion failed (${apiError(r)}) — this looks transient; run the step again` };
+  return {
+    ok: false,
+    restart: false,
+    detail: `conversion failed (${apiError(r)}) — this looks transient; run the step again`,
+  };
 }
 
 export type InstallationLookup =
-  | { status: "found"; id: number }
-  | { status: "none" }
-  | { status: "error"; detail: string };
+  { status: "found"; id: number } | { status: "none" } | { status: "error"; detail: string };
 
 /** The App's own installation listing (App JWT, never a user token). */
-export async function findInstallation(fetchFn: typeof fetch, apiBase: string, jwt: string, owner: string): Promise<InstallationLookup> {
-  const r = await api(fetchFn, `${apiBase}/app/installations?per_page=100`, { headers: { authorization: `Bearer ${jwt}` } });
-  if (r.status !== 200) return { status: "error", detail: `GET /app/installations failed (${apiError(r)})` };
-  const list = Array.isArray(r.body) ? (r.body as Array<{ id?: number; account?: { login?: string } }>) : [];
+export async function findInstallation(
+  fetchFn: typeof fetch,
+  apiBase: string,
+  jwt: string,
+  owner: string,
+): Promise<InstallationLookup> {
+  const r = await api(fetchFn, `${apiBase}/app/installations?per_page=100`, {
+    headers: { authorization: `Bearer ${jwt}` },
+  });
+  if (r.status !== 200)
+    return { status: "error", detail: `GET /app/installations failed (${apiError(r)})` };
+  const list = Array.isArray(r.body)
+    ? (r.body as Array<{ id?: number; account?: { login?: string } }>)
+    : [];
   const match = list.find((i) => (i.account?.login ?? "").toLowerCase() === owner.toLowerCase());
   if (match && typeof match.id === "number") return { status: "found", id: match.id };
   return { status: "none" };
 }
 
-async function installationToken(fetchFn: typeof fetch, apiBase: string, jwt: string, id: number): Promise<{ token: string } | { error: string }> {
+async function installationToken(
+  fetchFn: typeof fetch,
+  apiBase: string,
+  jwt: string,
+  id: number,
+): Promise<{ token: string } | { error: string }> {
   const r = await api(fetchFn, `${apiBase}/app/installations/${id}/access_tokens`, {
     method: "POST",
     headers: { authorization: `Bearer ${jwt}` },
   });
   const token = (r.body as { token?: string } | null)?.token;
-  if (r.status !== 201 || typeof token !== "string") return { error: `installation token mint failed (${apiError(r)})` };
+  if (r.status !== 201 || typeof token !== "string")
+    return { error: `installation token mint failed (${apiError(r)})` };
   return { token };
 }
 
 /** Does the installation actually cover the reviewed repo? A 404 through the
  * installation token means the App is installed on the account but this repo
  * was not selected — a distinct, fixable thing, said plainly. */
-async function repoCovered(fetchFn: typeof fetch, apiBase: string, token: string, repo: RepoSlug): Promise<CheckResult> {
-  const r = await api(fetchFn, `${apiBase}/repos/${repo.owner}/${repo.name}`, { headers: { authorization: `Bearer ${token}` } });
-  if (r.status === 200) return { name: "repo access", ok: true, detail: `the installation can read ${repo.owner}/${repo.name}` };
+async function repoCovered(
+  fetchFn: typeof fetch,
+  apiBase: string,
+  token: string,
+  repo: RepoSlug,
+): Promise<CheckResult> {
+  const r = await api(fetchFn, `${apiBase}/repos/${repo.owner}/${repo.name}`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (r.status === 200)
+    return {
+      name: "repo access",
+      ok: true,
+      detail: `the installation can read ${repo.owner}/${repo.name}`,
+    };
   if (r.status === 404) {
     return {
       name: "repo access",
@@ -571,7 +689,11 @@ async function repoCovered(fetchFn: typeof fetch, apiBase: string, token: string
         "open the App's Install/Configure page, add the repo, then run this step again",
     };
   }
-  return { name: "repo access", ok: false, detail: `could not read ${repo.owner}/${repo.name} through the installation (${apiError(r)})` };
+  return {
+    name: "repo access",
+    ok: false,
+    detail: `could not read ${repo.owner}/${repo.name} through the installation (${apiError(r)})`,
+  };
 }
 
 /** Idempotent by construction: an existing label is a SUCCESS. */
@@ -585,12 +707,28 @@ export async function ensureLabel(
 ): Promise<CheckResult> {
   const base = `${apiBase}/repos/${repo.owner}/${repo.name}/labels`;
   const auth = { authorization: `Bearer ${token}` };
-  const existing = await api(fetchFn, `${base}/${encodeURIComponent(label.name)}`, { headers: auth });
-  if (existing.status === 200) return { name: `label "${label.name}"`, ok: true, detail: "already present — left exactly as it is" };
+  const existing = await api(fetchFn, `${base}/${encodeURIComponent(label.name)}`, {
+    headers: auth,
+  });
+  if (existing.status === 200)
+    return {
+      name: `label "${label.name}"`,
+      ok: true,
+      detail: "already present — left exactly as it is",
+    };
   if (existing.status !== 404) {
-    return { name: `label "${label.name}"`, ok: false, detail: `could not read the label (${apiError(existing)})` };
+    return {
+      name: `label "${label.name}"`,
+      ok: false,
+      detail: `could not read the label (${apiError(existing)})`,
+    };
   }
-  if (!create) return { name: `label "${label.name}"`, ok: false, detail: "missing from the repo — run the GitHub App step to create it" };
+  if (!create)
+    return {
+      name: `label "${label.name}"`,
+      ok: false,
+      detail: "missing from the repo — run the GitHub App step to create it",
+    };
   const created = await api(fetchFn, base, {
     method: "POST",
     headers: { ...auth, "content-type": "application/json" },
@@ -598,8 +736,17 @@ export async function ensureLabel(
   });
   if (created.status === 201) return { name: `label "${label.name}"`, ok: true, detail: "created" };
   // 422 = "already_exists": someone (or a parallel run) got there first.
-  if (created.status === 422) return { name: `label "${label.name}"`, ok: true, detail: "already existed at creation time — treated as success" };
-  return { name: `label "${label.name}"`, ok: false, detail: `could not create the label (${apiError(created)})` };
+  if (created.status === 422)
+    return {
+      name: `label "${label.name}"`,
+      ok: true,
+      detail: "already existed at creation time — treated as success",
+    };
+  return {
+    name: `label "${label.name}"`,
+    ok: false,
+    detail: `could not create the label (${apiError(created)})`,
+  };
 }
 
 // ---- step options -----------------------------------------------------------
@@ -639,11 +786,16 @@ interface Resolved {
 }
 
 function resolveLabels(choices: Readonly<Record<string, unknown>>): Resolved["labels"] {
-  const recorded = (choices[CHOICE_KEYS.labels] ?? {}) as Partial<Record<keyof typeof DEFAULT_LABELS, unknown>>;
+  const recorded = (choices[CHOICE_KEYS.labels] ?? {}) as Partial<
+    Record<keyof typeof DEFAULT_LABELS, unknown>
+  >;
   return LABEL_META.map((meta) => {
     const override = recorded[meta.key];
     return {
-      name: typeof override === "string" && override.trim() ? override.trim() : DEFAULT_LABELS[meta.key],
+      name:
+        typeof override === "string" && override.trim()
+          ? override.trim()
+          : DEFAULT_LABELS[meta.key],
       color: meta.color,
       description: meta.description,
     };
@@ -676,14 +828,24 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
         "and records it for this step."
       );
     }
-    const choiceDir = typeof ctx.choices[CHOICE_KEYS.secretsDir] === "string" ? (ctx.choices[CHOICE_KEYS.secretsDir] as string).trim() : "";
+    const choiceDir =
+      typeof ctx.choices[CHOICE_KEYS.secretsDir] === "string"
+        ? (ctx.choices[CHOICE_KEYS.secretsDir] as string).trim()
+        : "";
     const secretsDir = opts.secretsDir
       ? opts.secretsDir
       : choiceDir
         ? expandHome(choiceDir)
         : expandHome(process.env.QC_SECRETS_DIR ?? "~/.config/quickreview-bot");
     const root = opts.repoRoot ?? dirname(ctx.adapters.paths.stateDir);
-    return { root, secretsDir: isAbsolute(secretsDir) ? secretsDir : join(root, secretsDir), apiBase, githubBase, repo, labels: resolveLabels(ctx.choices) };
+    return {
+      root,
+      secretsDir: isAbsolute(secretsDir) ? secretsDir : join(root, secretsDir),
+      apiBase,
+      githubBase,
+      repo,
+      labels: resolveLabels(ctx.choices),
+    };
   }
 
   /** The App name the operator supplied — this call's input first, then what an
@@ -705,7 +867,11 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
    * organization owner's approval. */
   function orgCaveat(target: AppTarget | null): CheckResult {
     if (target?.kind !== "org") {
-      return { name: "org approval", ok: true, detail: "personal-account App — no organization approval is involved" };
+      return {
+        name: "org approval",
+        ok: true,
+        detail: "personal-account App — no organization approval is involved",
+      };
     }
     return {
       name: "org approval",
@@ -720,7 +886,11 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
   /** Everything that can be checked against reality, with no creation. Shared
    * by run() (called first, so a configured install verifies instead of
    * re-creating) and verify(). */
-  async function verifyCore(ctx: StepContext, r: Resolved, createLabels: boolean): Promise<CheckResult[]> {
+  async function verifyCore(
+    ctx: StepContext,
+    r: Resolved,
+    createLabels: boolean,
+  ): Promise<CheckResult[]> {
     const checks: CheckResult[] = [];
     const creds = readCredentials(r.secretsDir);
     if (!creds.complete) {
@@ -734,7 +904,9 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
     });
 
     const jwt = mintAppJwt(creds.appId!, creds.pem!, () => ctx.adapters.clock().getTime());
-    const app = await api(ctx.adapters.fetch, `${r.apiBase}/app`, { headers: { authorization: `Bearer ${jwt}` } });
+    const app = await api(ctx.adapters.fetch, `${r.apiBase}/app`, {
+      headers: { authorization: `Bearer ${jwt}` },
+    });
     if (app.status !== 200) {
       checks.push({
         name: "app reachable",
@@ -743,12 +915,24 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
       });
       return checks;
     }
-    const meta = app.body as { id?: number; slug?: string; owner?: { login?: string; type?: string } };
+    const meta = app.body as {
+      id?: number;
+      slug?: string;
+      owner?: { login?: string; type?: string };
+    };
     if (String(meta.id) !== creds.appId) {
-      checks.push({ name: "app reachable", ok: false, detail: `the private key belongs to App ${meta.id}, but app_id says ${creds.appId}` });
+      checks.push({
+        name: "app reachable",
+        ok: false,
+        detail: `the private key belongs to App ${meta.id}, but app_id says ${creds.appId}`,
+      });
       return checks;
     }
-    checks.push({ name: "app reachable", ok: true, detail: `App "${meta.slug ?? creds.appId}" (id ${meta.id}) answers to its own JWT` });
+    checks.push({
+      name: "app reachable",
+      ok: true,
+      detail: `App "${meta.slug ?? creds.appId}" (id ${meta.id}) answers to its own JWT`,
+    });
     if (typeof meta.slug === "string" && meta.slug) {
       ctx.recordChoice(CHOICE_KEYS.appSlug, meta.slug);
       ctx.recordChoice(CHOICE_KEYS.botLogin, `${meta.slug}[bot]`);
@@ -770,7 +954,11 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
       });
       return checks;
     }
-    checks.push({ name: "installation", ok: true, detail: `installation ${found.id} on ${r.repo.owner}` });
+    checks.push({
+      name: "installation",
+      ok: true,
+      detail: `installation ${found.id} on ${r.repo.owner}`,
+    });
     ctx.recordChoice(CHOICE_KEYS.installationId, found.id);
 
     const minted = await installationToken(ctx.adapters.fetch, r.apiBase, jwt, found.id);
@@ -778,14 +966,20 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
       checks.push({ name: "installation token", ok: false, detail: minted.error });
       return checks;
     }
-    checks.push({ name: "installation token", ok: true, detail: "the App JWT exchanges for an installation token" });
+    checks.push({
+      name: "installation token",
+      ok: true,
+      detail: "the App JWT exchanges for an installation token",
+    });
 
     const covered = await repoCovered(ctx.adapters.fetch, r.apiBase, minted.token, r.repo);
     checks.push(covered);
     if (!covered.ok) return checks;
 
     for (const label of r.labels) {
-      checks.push(await ensureLabel(ctx.adapters.fetch, r.apiBase, minted.token, r.repo, label, createLabels));
+      checks.push(
+        await ensureLabel(ctx.adapters.fetch, r.apiBase, minted.token, r.repo, label, createLabels),
+      );
     }
     return checks;
   }
@@ -803,7 +997,9 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
           `Answer "personal", or the organization login (e.g. "${r.repo.owner}").`,
       );
       const trimmed = answer.trim();
-      const parsed = parseTargetChoice(trimmed) ?? (trimmed && trimmed !== "personal" ? ({ kind: "org", login: trimmed } as AppTarget) : null);
+      const parsed =
+        parseTargetChoice(trimmed) ??
+        (trimmed && trimmed !== "personal" ? { kind: "org", login: trimmed } : null);
       if (parsed) {
         ctx.recordChoice(CHOICE_KEYS.appTarget, formatTarget(parsed));
         return parsed;
@@ -812,7 +1008,8 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
 
     const probe = await api(ctx.adapters.fetch, `${r.apiBase}/users/${r.repo.owner}`);
     const type = (probe.body as { type?: string } | null)?.type;
-    const derived: AppTarget = type === "Organization" ? { kind: "org", login: r.repo.owner } : { kind: "personal" };
+    const derived: AppTarget =
+      type === "Organization" ? { kind: "org", login: r.repo.owner } : { kind: "personal" };
     if (probe.status !== 200) {
       log(
         ctx,
@@ -825,12 +1022,22 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
   }
 
   /** Serve the page, wait for the code, exchange it, land the credentials. */
-  async function createApp(ctx: StepContext, r: Resolved, target: AppTarget): Promise<CheckResult[]> {
+  async function createApp(
+    ctx: StepContext,
+    r: Resolved,
+    target: AppTarget,
+  ): Promise<CheckResult[]> {
     let manifest: AppManifest;
     try {
       manifest = loadManifest(r.root);
     } catch (err) {
-      return [{ name: "manifest", ok: false, detail: `could not read the pinned manifest: ${String(err)}` }];
+      return [
+        {
+          name: "manifest",
+          ok: false,
+          detail: `could not read the pinned manifest: ${String(err)}`,
+        },
+      ];
     }
 
     // The operator's own App name: this step's `app_name` INPUT (its tool
@@ -839,7 +1046,10 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
     const chosenName = chosenAppName(ctx);
     if (chosenName) ctx.recordChoice(CHOICE_KEYS.appName, chosenName);
     const name = chosenName || suggestAppName(manifest.name, token(3));
-    const webhookUrl = typeof ctx.choices[CHOICE_KEYS.webhookUrl] === "string" ? (ctx.choices[CHOICE_KEYS.webhookUrl] as string).trim() : "";
+    const webhookUrl =
+      typeof ctx.choices[CHOICE_KEYS.webhookUrl] === "string"
+        ? (ctx.choices[CHOICE_KEYS.webhookUrl] as string).trim()
+        : "";
     const state = token(16);
 
     // The page can only be rendered once the port is known (the manifest's
@@ -856,17 +1066,34 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
             postUrl: appCreationUrl(target, r.githubBase),
             state,
             target,
-            manifest: renderManifest(manifest, { name, redirectUrl: bound.redirectUrl, webhookUrl: webhookUrl || undefined }),
+            manifest: renderManifest(manifest, {
+              name,
+              redirectUrl: bound.redirectUrl,
+              webhookUrl: webhookUrl || undefined,
+            }),
           }),
       });
     } catch (err) {
-      return [{ name: "callback listener", ok: false, detail: `could not listen on loopback for the GitHub callback: ${String(err)}` }];
+      return [
+        {
+          name: "callback listener",
+          ok: false,
+          detail: `could not listen on loopback for the GitHub callback: ${String(err)}`,
+        },
+      ];
     }
 
     try {
       log(ctx, `open ${listener.url} in your browser and click "Create the App on GitHub".`);
-      log(ctx, `it creates "${name}" under ${formatTarget(target)}; you can rename it on GitHub's own page.`);
-      if (!webhookUrl) log(ctx, `the webhook URL is still the manifest placeholder (${manifest.hook_attributes.url}) — the tunnel step points it at your real endpoint.`);
+      log(
+        ctx,
+        `it creates "${name}" under ${formatTarget(target)}; you can rename it on GitHub's own page.`,
+      );
+      if (!webhookUrl)
+        log(
+          ctx,
+          `the webhook URL is still the manifest placeholder (${manifest.hook_attributes.url}) — the tunnel step points it at your real endpoint.`,
+        );
       if (opts.openBrowser) {
         const opener = process.platform === "darwin" ? "open" : "xdg-open";
         await ctx.adapters.runner.run(opener, [listener.url]).catch(() => undefined);
@@ -896,7 +1123,13 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
         webhookSecret: converted.app.webhook_secret,
       });
       if (problems.length > 0) {
-        return [{ name: "credentials", ok: false, detail: `GitHub's conversion response did not validate: ${problems.join("; ")}` }];
+        return [
+          {
+            name: "credentials",
+            ok: false,
+            detail: `GitHub's conversion response did not validate: ${problems.join("; ")}`,
+          },
+        ];
       }
       ctx.recordChoice(CHOICE_KEYS.appId, String(converted.app.id));
       if (converted.app.slug) {
@@ -904,7 +1137,10 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
         ctx.recordChoice(CHOICE_KEYS.botLogin, `${converted.app.slug}[bot]`);
       }
       if (converted.app.html_url) ctx.recordChoice(CHOICE_KEYS.appHtmlUrl, converted.app.html_url);
-      log(ctx, `App ${converted.app.id} created; id, private key and webhook secret written to ${r.secretsDir} (0600). Nothing was pasted by hand.`);
+      log(
+        ctx,
+        `App ${converted.app.id} created; id, private key and webhook secret written to ${r.secretsDir} (0600). Nothing was pasted by hand.`,
+      );
       return [
         {
           name: "manifest exchange",
@@ -925,8 +1161,15 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
    * plain guidance rather than burning the budget. Labels are created on the
    * way through, idempotently, by verifyCore's create pass.
    */
-  async function pollInstallAndLabels(ctx: StepContext, r: Resolved, initial?: CheckResult[]): Promise<CheckResult[]> {
-    const appHtmlUrl = typeof ctx.choices[CHOICE_KEYS.appHtmlUrl] === "string" ? (ctx.choices[CHOICE_KEYS.appHtmlUrl] as string) : null;
+  async function pollInstallAndLabels(
+    ctx: StepContext,
+    r: Resolved,
+    initial?: CheckResult[],
+  ): Promise<CheckResult[]> {
+    const appHtmlUrl =
+      typeof ctx.choices[CHOICE_KEYS.appHtmlUrl] === "string"
+        ? (ctx.choices[CHOICE_KEYS.appHtmlUrl] as string)
+        : null;
     let announced = false;
     let checks: CheckResult[] = [];
     for (let attempt = 1; attempt <= pollAttempts; attempt += 1) {
@@ -943,9 +1186,15 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
           `now install the App on ${r.repo.owner}/${r.repo.name}: ${appHtmlUrl ? `${appHtmlUrl} → ` : ""}Install App → ${r.repo.owner} → ` +
             `"Only select repositories" → ${r.repo.name}.`,
         );
-        log(ctx, `checking for it up to ${pollAttempts} times, ${Math.round(pollIntervalMs / 1000)}s apart — this never waits forever.`);
+        log(
+          ctx,
+          `checking for it up to ${pollAttempts} times, ${Math.round(pollIntervalMs / 1000)}s apart — this never waits forever.`,
+        );
       }
-      log(ctx, `installation not visible yet (attempt ${attempt}/${pollAttempts}) — still waiting for the Install click.`);
+      log(
+        ctx,
+        `installation not visible yet (attempt ${attempt}/${pollAttempts}) — still waiting for the Install click.`,
+      );
       if (attempt < pollAttempts) await sleep(pollIntervalMs);
     }
     return [
@@ -990,13 +1239,17 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
 
     async run(ctx): Promise<StepReport> {
       const resolved = resolveInputs(ctx);
-      if (typeof resolved === "string") return { ok: false, checks: [{ name: "inputs", ok: false, detail: resolved }] };
+      if (typeof resolved === "string")
+        return { ok: false, checks: [{ name: "inputs", ok: false, detail: resolved }] };
       const r = resolved;
 
       // Resume/verify-only: everything already in place ⇒ never re-create.
       const existing = readCredentials(r.secretsDir);
       if (existing.complete) {
-        log(ctx, `credentials already present in ${r.secretsDir} — verifying the existing App instead of creating another one.`);
+        log(
+          ctx,
+          `credentials already present in ${r.secretsDir} — verifying the existing App instead of creating another one.`,
+        );
         const checks = await verifyCore(ctx, r, true);
         if (checks.every((c) => c.ok)) {
           checks.push(orgCaveat(parseTargetChoice(ctx.choices[CHOICE_KEYS.appTarget])));
@@ -1025,12 +1278,17 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
 
       const polled = await pollInstallAndLabels(ctx, r);
       const checks = [...created, ...polled, orgCaveat(target)];
-      return { ok: checks.every((c) => c.ok), checks, data: { created: true, app_id: ctx.choices[CHOICE_KEYS.appId] ?? null } };
+      return {
+        ok: checks.every((c) => c.ok),
+        checks,
+        data: { created: true, app_id: ctx.choices[CHOICE_KEYS.appId] ?? null },
+      };
     },
 
     async verify(ctx): Promise<StepReport> {
       const resolved = resolveInputs(ctx);
-      if (typeof resolved === "string") return { ok: false, checks: [{ name: "inputs", ok: false, detail: resolved }] };
+      if (typeof resolved === "string")
+        return { ok: false, checks: [{ name: "inputs", ok: false, detail: resolved }] };
       // verify NEVER creates: a missing label is red here and fixed by a run.
       const checks = await verifyCore(ctx, resolved, false);
       checks.push(orgCaveat(parseTargetChoice(ctx.choices[CHOICE_KEYS.appTarget])));

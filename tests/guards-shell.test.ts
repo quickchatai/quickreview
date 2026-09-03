@@ -13,7 +13,15 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createServer, type Server } from "node:http";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -47,7 +55,12 @@ let reviews: ReviewStub[];
 let dbPath: string;
 /** Check-runs at HEAD (guard 4). Green by default: every pre-existing
  * case here is about another guard and must not trip this one. */
-let checkRuns: Array<{ name: string; status: string; conclusion: string | null; started_at?: string | null }>;
+let checkRuns: Array<{
+  name: string;
+  status: string;
+  conclusion: string | null;
+  started_at?: string | null;
+}>;
 /** Commit statuses at HEAD (the combined status endpoint). Empty by default
  * for the same reason. */
 let statuses: Array<{ context: string; state: string }>;
@@ -85,7 +98,11 @@ beforeEach(async () => {
       res.end(JSON.stringify({ state: "success", statuses }));
       return;
     }
-    if (req.method === "GET" && req.url?.startsWith("/repos/") && req.url.includes("/pulls/5180/reviews")) {
+    if (
+      req.method === "GET" &&
+      req.url?.startsWith("/repos/") &&
+      req.url.includes("/pulls/5180/reviews")
+    ) {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(reviews));
       return;
@@ -140,7 +157,11 @@ async function run(
     return { ok: true, out: `${stdout}${stderr}`, code: 0 };
   } catch (err) {
     const e = err as { stdout?: string; stderr?: string; code?: number };
-    return { ok: false, out: `${e.stdout ?? ""}${e.stderr ?? ""}`, code: typeof e.code === "number" ? e.code : -1 };
+    return {
+      ok: false,
+      out: `${e.stdout ?? ""}${e.stderr ?? ""}`,
+      code: typeof e.code === "number" ? e.code : -1,
+    };
   }
 }
 
@@ -186,7 +207,11 @@ describe("scripts/approve-pr.sh — guard 3", () => {
     const res = await run("approve-pr.sh", ["5180", bodyFile()]);
     expect(res.ok).toBe(true);
     const kinds = dryrunRecords().map((f) => f.replace(/^.*-(?=[a-z])/, ""));
-    expect(kinds.sort()).toEqual(["create_review.json", "delete_team_review_request.json", "remove_label.json"]);
+    expect(kinds.sort()).toEqual([
+      "create_review.json",
+      "delete_team_review_request.json",
+      "remove_label.json",
+    ]);
   });
 });
 
@@ -226,9 +251,24 @@ describe("scripts/approve-pr.sh — guard 4 (red CI hard-gates APPROVE)", () => 
   // Parity with classifyCi's latest-run-per-name rule (the owner, 2026-08-19).
   it("ignores a cancelled husk when a newer run of the same name succeeded", async () => {
     checkRuns = [
-      { name: "sync", status: "completed", conclusion: "cancelled", started_at: "2026-08-19T08:00:00Z" },
-      { name: "sync", status: "completed", conclusion: "cancelled", started_at: "2026-08-19T08:05:00Z" },
-      { name: "sync", status: "completed", conclusion: "success", started_at: "2026-08-19T08:10:00Z" },
+      {
+        name: "sync",
+        status: "completed",
+        conclusion: "cancelled",
+        started_at: "2026-08-19T08:00:00Z",
+      },
+      {
+        name: "sync",
+        status: "completed",
+        conclusion: "cancelled",
+        started_at: "2026-08-19T08:05:00Z",
+      },
+      {
+        name: "sync",
+        status: "completed",
+        conclusion: "success",
+        started_at: "2026-08-19T08:10:00Z",
+      },
     ];
     const res = await run("approve-pr.sh", ["5180", bodyFile()]);
     expect(res.ok).toBe(true);
@@ -236,8 +276,18 @@ describe("scripts/approve-pr.sh — guard 4 (red CI hard-gates APPROVE)", () => 
 
   it("still refuses when the LATEST run of a name was cancelled", async () => {
     checkRuns = [
-      { name: "sync", status: "completed", conclusion: "success", started_at: "2026-08-19T08:00:00Z" },
-      { name: "sync", status: "completed", conclusion: "cancelled", started_at: "2026-08-19T08:10:00Z" },
+      {
+        name: "sync",
+        status: "completed",
+        conclusion: "success",
+        started_at: "2026-08-19T08:00:00Z",
+      },
+      {
+        name: "sync",
+        status: "completed",
+        conclusion: "cancelled",
+        started_at: "2026-08-19T08:10:00Z",
+      },
     ];
     const res = await run("approve-pr.sh", ["5180", bodyFile()]);
     expect(res.ok).toBe(false);
@@ -253,18 +303,33 @@ describe("scripts/approve-pr.sh — guard 4 (red CI hard-gates APPROVE)", () => 
     ["failure", "CI is red"],
     ["error", "CI is red"],
     ["pending", "CI is pending"],
-  ])("refuses over a %s commit status that shares a passing check-run's name", async (state, message) => {
-    checkRuns = [{ name: "ci", status: "completed", conclusion: "success", started_at: "2026-09-01T10:00:00Z" }];
-    statuses = [{ context: "ci", state }];
-    const res = await run("approve-pr.sh", ["5180", bodyFile()]);
-    expect(res.ok).toBe(false);
-    expect(res.out).toContain(message);
-    expect(dryrunRecords()).toEqual([]);
-  });
+  ])(
+    "refuses over a %s commit status that shares a passing check-run's name",
+    async (state, message) => {
+      checkRuns = [
+        {
+          name: "ci",
+          status: "completed",
+          conclusion: "success",
+          started_at: "2026-09-01T10:00:00Z",
+        },
+      ];
+      statuses = [{ context: "ci", state }];
+      const res = await run("approve-pr.sh", ["5180", bodyFile()]);
+      expect(res.ok).toBe(false);
+      expect(res.out).toContain(message);
+      expect(dryrunRecords()).toEqual([]);
+    },
+  );
 
   it("a queued run with a null started_at is pending, not green off the older completed run of its name", async () => {
     checkRuns = [
-      { name: "ci", status: "completed", conclusion: "success", started_at: "2026-09-01T10:00:00Z" },
+      {
+        name: "ci",
+        status: "completed",
+        conclusion: "success",
+        started_at: "2026-09-01T10:00:00Z",
+      },
       { name: "ci", status: "queued", conclusion: null, started_at: null },
     ];
     const res = await run("approve-pr.sh", ["5180", bodyFile()]);
@@ -275,20 +340,30 @@ describe("scripts/approve-pr.sh — guard 4 (red CI hard-gates APPROVE)", () => 
   it.each([
     ["queued", null, "CI is pending"],
     ["completed", "failure", "CI is red"],
-  ] as const)("a %s/%s check-run with a null started_at is never masked by a passing status of its name", async (status, conclusion, message) => {
-    // Review round 1: the gate route collapsed this untimestamped
-    // run with the same-named status and read green; the shell never grouped
-    // them and was right. Pinned so the shell can never regress to match.
-    checkRuns = [{ name: "ci", status, conclusion, started_at: null }];
-    statuses = [{ context: "ci", state: "success" }];
-    const res = await run("approve-pr.sh", ["5180", bodyFile()]);
-    expect(res.ok).toBe(false);
-    expect(res.out).toContain(message);
-    expect(dryrunRecords()).toEqual([]);
-  });
+  ] as const)(
+    "a %s/%s check-run with a null started_at is never masked by a passing status of its name",
+    async (status, conclusion, message) => {
+      // Review round 1: the gate route collapsed this untimestamped
+      // run with the same-named status and read green; the shell never grouped
+      // them and was right. Pinned so the shell can never regress to match.
+      checkRuns = [{ name: "ci", status, conclusion, started_at: null }];
+      statuses = [{ context: "ci", state: "success" }];
+      const res = await run("approve-pr.sh", ["5180", bodyFile()]);
+      expect(res.ok).toBe(false);
+      expect(res.out).toContain(message);
+      expect(dryrunRecords()).toEqual([]);
+    },
+  );
 
   it("a passing status beside a passing run of its name still approves", async () => {
-    checkRuns = [{ name: "ci", status: "completed", conclusion: "success", started_at: "2026-09-01T10:00:00Z" }];
+    checkRuns = [
+      {
+        name: "ci",
+        status: "completed",
+        conclusion: "success",
+        started_at: "2026-09-01T10:00:00Z",
+      },
+    ];
     statuses = [{ context: "ci", state: "success" }];
     const res = await run("approve-pr.sh", ["5180", bodyFile()]);
     expect(res.ok).toBe(true);
@@ -316,7 +391,8 @@ describe("scripts/approve-pr.sh — guard 4 (red CI hard-gates APPROVE)", () => 
 });
 
 describe("posting receipts", () => {
-  const receipt = (round: number) => JSON.parse(readFileSync(join(dir, "receipts", `pr-5180-round-${round}.json`), "utf8"));
+  const receipt = (round: number) =>
+    JSON.parse(readFileSync(join(dir, "receipts", `pr-5180-round-${round}.json`), "utf8"));
 
   it("post-review embeds the deterministic marker and atomically records dry-run intent", async () => {
     const key = `v1:5180:7:${HEAD}`;
@@ -328,7 +404,14 @@ describe("posting receipts", () => {
     });
     expect(res.ok).toBe(true);
     expect(record().body.body).toContain(`<!-- qcr-post:${key} -->`);
-    expect(receipt(7)).toMatchObject({ status: "dryrun", posting_key: key, pr: 5180, round_no: 7, head_sha: HEAD, actual_event: "COMMENT" });
+    expect(receipt(7)).toMatchObject({
+      status: "dryrun",
+      posting_key: key,
+      pr: 5180,
+      round_no: 7,
+      head_sha: HEAD,
+      actual_event: "COMMENT",
+    });
 
     const repeated = await run("post-review.sh", ["5180", "COMMENT", bodyFile()], {
       QCR_EXPECTED_HEAD: HEAD,
@@ -347,9 +430,17 @@ describe("posting receipts", () => {
     const args = [path, key, "5180", "11", HEAD, "COMMENT", "COMMENT", '{"event":"COMMENT"}'];
     await exec("python3", [join(root, "scripts", "posting-receipt.py"), "prepare", ...args]);
     await exec("python3", [join(root, "scripts", "posting-receipt.py"), "confirm", ...args], {
-      env: { ...process.env, QCR_POST_RESPONSE: JSON.stringify({ id: 446, commit_id: HEAD, state: "COMMENTED" }) },
+      env: {
+        ...process.env,
+        QCR_POST_RESPONSE: JSON.stringify({ id: 446, commit_id: HEAD, state: "COMMENTED" }),
+      },
     });
-    pr = { state: "closed", merged: false, head: { sha: "different" }, user: { login: "pr-author" } };
+    pr = {
+      state: "closed",
+      merged: false,
+      head: { sha: "different" },
+      user: { login: "pr-author" },
+    };
     const res = await run("post-review.sh", ["5180", "COMMENT", join(dir, "missing-body.md")], {
       QCR_EXPECTED_HEAD: HEAD,
       QCR_ROUND_NO: "11",
@@ -364,7 +455,10 @@ describe("posting receipts", () => {
   it("refuses a prepared/unknown receipt rather than risking a second POST", async () => {
     const key = `v1:5180:9:${HEAD}`;
     mkdirSync(join(dir, "receipts"), { recursive: true });
-    writeFileSync(join(dir, "receipts", "pr-5180-round-9.json"), JSON.stringify({ posting_key: key, status: "prepared" }));
+    writeFileSync(
+      join(dir, "receipts", "pr-5180-round-9.json"),
+      JSON.stringify({ posting_key: key, status: "prepared" }),
+    );
     const res = await run("post-review.sh", ["5180", "COMMENT", bodyFile()], {
       QCR_EXPECTED_HEAD: HEAD,
       QCR_ROUND_NO: "9",
@@ -382,12 +476,25 @@ describe("posting receipts", () => {
     const args = [path, key, "5180", "10", HEAD, "COMMENT", "COMMENT", '{"event":"COMMENT"}'];
     await exec("python3", [join(root, "scripts", "posting-receipt.py"), "prepare", ...args]);
     await exec("python3", [join(root, "scripts", "posting-receipt.py"), "confirm", ...args], {
-      env: { ...process.env, QCR_POST_RESPONSE: JSON.stringify({ id: 444, commit_id: HEAD, state: "COMMENTED" }) },
+      env: {
+        ...process.env,
+        QCR_POST_RESPONSE: JSON.stringify({ id: 444, commit_id: HEAD, state: "COMMENTED" }),
+      },
     });
-    expect(receipt(10)).toMatchObject({ status: "confirmed", gh_review_id: 444, gh_commit_id: HEAD, gh_state: "COMMENTED" });
-    await expect(exec("python3", [join(root, "scripts", "posting-receipt.py"), "confirm", ...args], {
-      env: { ...process.env, QCR_POST_RESPONSE: JSON.stringify({ id: 445, commit_id: "wrong", state: "COMMENTED" }) },
-    })).rejects.toThrow();
+    expect(receipt(10)).toMatchObject({
+      status: "confirmed",
+      gh_review_id: 444,
+      gh_commit_id: HEAD,
+      gh_state: "COMMENTED",
+    });
+    await expect(
+      exec("python3", [join(root, "scripts", "posting-receipt.py"), "confirm", ...args], {
+        env: {
+          ...process.env,
+          QCR_POST_RESPONSE: JSON.stringify({ id: 445, commit_id: "wrong", state: "COMMENTED" }),
+        },
+      }),
+    ).rejects.toThrow();
   });
 
   it("confirmed approval retry bypasses changed posting guards and resumes cleanup only", async () => {
@@ -396,9 +503,17 @@ describe("posting receipts", () => {
     const args = [path, key, "5180", "12", HEAD, "APPROVE", "APPROVE", '{"event":"APPROVE"}'];
     await exec("python3", [join(root, "scripts", "posting-receipt.py"), "prepare", ...args]);
     await exec("python3", [join(root, "scripts", "posting-receipt.py"), "confirm", ...args], {
-      env: { ...process.env, QCR_POST_RESPONSE: JSON.stringify({ id: 447, commit_id: HEAD, state: "APPROVED" }) },
+      env: {
+        ...process.env,
+        QCR_POST_RESPONSE: JSON.stringify({ id: 447, commit_id: HEAD, state: "APPROVED" }),
+      },
     });
-    pr = { state: "closed", merged: false, head: { sha: "different" }, user: { login: "pr-author" } };
+    pr = {
+      state: "closed",
+      merged: false,
+      head: { sha: "different" },
+      user: { login: "pr-author" },
+    };
     checkRuns = [{ name: "unit", status: "completed", conclusion: "failure" }];
     const res = await run("approve-pr.sh", ["5180", join(dir, "missing-body.md")], {
       QCR_EXPECTED_HEAD: HEAD,
@@ -421,10 +536,19 @@ describe("posting receipts", () => {
       QCR_POSTING_RECEIPT_DIR: join(dir, "receipts"),
     });
     expect(res.ok).toBe(true);
-    expect(receipt(8)).toMatchObject({ status: "dryrun", posting_key: key, pr: 5180, round_no: 8, head_sha: HEAD, actual_event: "APPROVE" });
+    expect(receipt(8)).toMatchObject({
+      status: "dryrun",
+      posting_key: key,
+      pr: 5180,
+      round_no: 8,
+      head_sha: HEAD,
+      actual_event: "APPROVE",
+    });
     const create = dryrunRecords().find((name) => name.includes("create_review"));
     expect(create).toBeDefined();
-    expect(JSON.parse(readFileSync(join(dir, "dryrun", create!), "utf8")).body.commit_id).toBe(HEAD);
+    expect(JSON.parse(readFileSync(join(dir, "dryrun", create!), "utf8")).body.commit_id).toBe(
+      HEAD,
+    );
   });
 });
 
@@ -557,17 +681,49 @@ describe("guard 2 parity — src/guards.ts and scripts/guards.sh answer identica
   }
 
   const cases: Case[] = [
-    { what: "same head, decided, no author reply", mark: { head_sha: HEAD, verdict: "REQUEST_CHANGES" }, newEvidence: false },
-    { what: "same head, APPROVE, no author reply", mark: { head_sha: HEAD, verdict: "APPROVE" }, newEvidence: false },
+    {
+      what: "same head, decided, no author reply",
+      mark: { head_sha: HEAD, verdict: "REQUEST_CHANGES" },
+      newEvidence: false,
+    },
+    {
+      what: "same head, APPROVE, no author reply",
+      mark: { head_sha: HEAD, verdict: "APPROVE" },
+      newEvidence: false,
+    },
     // The carve-out. Undecided is not reviewed-and-decided.
-    { what: "same head, NEEDS_HUMAN — undecided is not reviewed", mark: { head_sha: HEAD, verdict: "NEEDS_HUMAN" }, newEvidence: true },
+    {
+      what: "same head, NEEDS_HUMAN — undecided is not reviewed",
+      mark: { head_sha: HEAD, verdict: "NEEDS_HUMAN" },
+      newEvidence: true,
+    },
     // The retired spelling still on disk in older rows; normalizeVerdict folds
     // it, so the shell must fold it too.
-    { what: "same head, legacy ESCALATE spelling", mark: { head_sha: HEAD, verdict: "ESCALATE" }, newEvidence: true },
-    { what: "same head, undecided in lower case", mark: { head_sha: HEAD, verdict: "needs_human" }, newEvidence: true },
-    { what: "a different head", mark: { head_sha: "an0therhead", verdict: "REQUEST_CHANGES" }, newEvidence: true },
-    { what: "same head with an author reply since", mark: { head_sha: HEAD, verdict: "REQUEST_CHANGES", reply_at: "2099-01-01T00:00:00.000Z" }, newEvidence: true },
-    { what: "same head, verdict column null (a legacy row)", mark: { head_sha: HEAD, verdict: null }, newEvidence: false },
+    {
+      what: "same head, legacy ESCALATE spelling",
+      mark: { head_sha: HEAD, verdict: "ESCALATE" },
+      newEvidence: true,
+    },
+    {
+      what: "same head, undecided in lower case",
+      mark: { head_sha: HEAD, verdict: "needs_human" },
+      newEvidence: true,
+    },
+    {
+      what: "a different head",
+      mark: { head_sha: "an0therhead", verdict: "REQUEST_CHANGES" },
+      newEvidence: true,
+    },
+    {
+      what: "same head with an author reply since",
+      mark: { head_sha: HEAD, verdict: "REQUEST_CHANGES", reply_at: "2099-01-01T00:00:00.000Z" },
+      newEvidence: true,
+    },
+    {
+      what: "same head, verdict column null (a legacy row)",
+      mark: { head_sha: HEAD, verdict: null },
+      newEvidence: false,
+    },
     { what: "no mark at all", mark: null, newEvidence: true },
   ];
 
@@ -635,12 +791,20 @@ describe("scripts/guards.sh — the reviewed-head stamp", () => {
 
   it("replaces the row wholesale on a new head", async () => {
     const store = new StateStore(dbPath);
-    store.recordReviewedHead(5180, { head_sha: "0ldhead", verdict: "REQUEST_CHANGES", round_no: 1 });
+    store.recordReviewedHead(5180, {
+      head_sha: "0ldhead",
+      verdict: "REQUEST_CHANGES",
+      round_no: 1,
+    });
     store.close();
 
     await stamp(HEAD, "REQUEST_CHANGES");
     const after = new StateStore(dbPath);
-    expect(after.reviewedHead(5180)).toMatchObject({ head_sha: HEAD, verdict: null, round_no: null });
+    expect(after.reviewedHead(5180)).toMatchObject({
+      head_sha: HEAD,
+      verdict: null,
+      round_no: null,
+    });
     after.close();
   });
 });
@@ -665,14 +829,18 @@ describe("guard 5 — QCR_EXPECTED_HEAD (posting-head drift)", () => {
   const MOVED = "5b71a80ffee0987654321fedcba09876543210ab";
 
   it("post-review.sh posts when the expectation matches the live head", async () => {
-    const res = await run("post-review.sh", ["5180", "COMMENT", bodyFile()], { QCR_EXPECTED_HEAD: HEAD });
+    const res = await run("post-review.sh", ["5180", "COMMENT", bodyFile()], {
+      QCR_EXPECTED_HEAD: HEAD,
+    });
     expect(res.ok).toBe(true);
     expect(record().body.commit_id).toBe(HEAD);
   });
 
   it("post-review.sh refuses when the PR advanced past the reviewed head, exit 1, nothing recorded", async () => {
     pr = { state: "open", merged: false, head: { sha: MOVED }, user: { login: "pr-author" } };
-    const res = await run("post-review.sh", ["5180", "REQUEST_CHANGES", bodyFile()], { QCR_EXPECTED_HEAD: HEAD });
+    const res = await run("post-review.sh", ["5180", "REQUEST_CHANGES", bodyFile()], {
+      QCR_EXPECTED_HEAD: HEAD,
+    });
     expect(res.ok).toBe(false);
     expect(res.code).toBe(1);
     expect(res.out).toContain("head moved");
@@ -715,7 +883,9 @@ describe("guard 5 — QCR_EXPECTED_HEAD (posting-head drift)", () => {
   });
 
   it("a case-only sha difference is not drift", async () => {
-    const res = await run("post-review.sh", ["5180", "COMMENT", bodyFile()], { QCR_EXPECTED_HEAD: HEAD.toUpperCase() });
+    const res = await run("post-review.sh", ["5180", "COMMENT", bodyFile()], {
+      QCR_EXPECTED_HEAD: HEAD.toUpperCase(),
+    });
     expect(res.ok).toBe(true);
   });
 
@@ -723,7 +893,9 @@ describe("guard 5 — QCR_EXPECTED_HEAD (posting-head drift)", () => {
     pr = { state: "open", merged: false, head: { sha: MOVED }, user: { login: "pr-author" } };
     const base = readFileSync(join(dir, "config.toml"), "utf8");
     writeFileSync(join(dir, "config.toml"), `${base}\n[guards]\nrefuse_on_head_drift = false\n`);
-    const res = await run("post-review.sh", ["5180", "COMMENT", bodyFile()], { QCR_EXPECTED_HEAD: HEAD });
+    const res = await run("post-review.sh", ["5180", "COMMENT", bodyFile()], {
+      QCR_EXPECTED_HEAD: HEAD,
+    });
     expect(res.ok).toBe(true);
   });
 });
@@ -755,7 +927,11 @@ describe("scripts/post-review.sh — guard 2 records a guarded no-op", () => {
     const mark = seedPartialMark();
     const key = `v1:5180:18:${HEAD}`;
 
-    const res = await run("post-review.sh", ["5180", "REQUEST_CHANGES", bodyFile()], keyed(18, key));
+    const res = await run(
+      "post-review.sh",
+      ["5180", "REQUEST_CHANGES", bodyFile()],
+      keyed(18, key),
+    );
 
     expect(res.ok).toBe(false);
     expect(res.out).toContain("guard 2");
@@ -773,14 +949,25 @@ describe("scripts/post-review.sh — guard 2 records a guarded no-op", () => {
       skip_reason: "no-new-evidence",
       intended_event: "REQUEST_CHANGES",
       mode: "dryrun",
-      standing_mark: { head_sha: HEAD, reviewed_at: mark.reviewed_at, verdict: null, posted_event: "REQUEST_CHANGES", round_no: null, last_author_reply_at: null },
+      standing_mark: {
+        head_sha: HEAD,
+        reviewed_at: mark.reviewed_at,
+        verdict: null,
+        posted_event: "REQUEST_CHANGES",
+        round_no: null,
+        last_author_reply_at: null,
+      },
     });
     expect(JSON.parse(raw)).not.toHaveProperty("actual_event");
     // The daemon-side parser accepts exactly what the shell wrote.
     expect(parsePostingReceipt(raw)?.status).toBe("skipped");
     // The mark was read, not re-stamped, and the receipt lock was released.
     const after = new StateStore(dbPath);
-    expect(after.reviewedHead(5180)).toMatchObject({ reviewed_at: mark.reviewed_at, verdict: null, posted_event: "REQUEST_CHANGES" });
+    expect(after.reviewedHead(5180)).toMatchObject({
+      reviewed_at: mark.reviewed_at,
+      verdict: null,
+      posted_event: "REQUEST_CHANGES",
+    });
     after.close();
     expect(existsSync(`${receiptPath(18)}.lock`)).toBe(false);
   });
@@ -788,7 +975,9 @@ describe("scripts/post-review.sh — guard 2 records a guarded no-op", () => {
   it("a replay against the recorded refusal is terminal: refuses again, posts nothing, leaves the record byte-identical", async () => {
     seedPartialMark();
     const key = `v1:5180:19:${HEAD}`;
-    expect((await run("post-review.sh", ["5180", "COMMENT", bodyFile()], keyed(19, key))).ok).toBe(false);
+    expect((await run("post-review.sh", ["5180", "COMMENT", bodyFile()], keyed(19, key))).ok).toBe(
+      false,
+    );
     const first = readFileSync(receiptPath(19), "utf8");
 
     const again = await run("post-review.sh", ["5180", "COMMENT", bodyFile()], keyed(19, key));
@@ -820,34 +1009,132 @@ describe("scripts/post-review.sh — guard 2 records a guarded no-op", () => {
 
     expect(res.ok).toBe(true);
     expect(dryrunRecords()).toHaveLength(1);
-    expect(JSON.parse(readFileSync(receiptPath(20), "utf8"))).toMatchObject({ status: "dryrun", posting_key: key });
+    expect(JSON.parse(readFileSync(receiptPath(20), "utf8"))).toMatchObject({
+      status: "dryrun",
+      posting_key: key,
+    });
   });
 
   it("posting-receipt.py: a skip never lands over an attempted post, an attempt never lands over a skip, and a same-identity skip replays inertly", async () => {
     const script = join(root, "scripts", "posting-receipt.py");
-    const mark = JSON.stringify({ head_sha: HEAD, reviewed_at: "2026-09-01T10:41:34.773Z", last_author_reply_at: null, verdict: null, posted_event: "REQUEST_CHANGES", round_no: null });
+    const mark = JSON.stringify({
+      head_sha: HEAD,
+      reviewed_at: "2026-09-01T10:41:34.773Z",
+      last_author_reply_at: null,
+      verdict: null,
+      posted_event: "REQUEST_CHANGES",
+      round_no: null,
+    });
     mkdirSync(join(dir, "receipts"), { recursive: true });
 
     // prepared ⇒ skip refused (the ambiguous window outranks a later "never sent").
     const k21 = `v1:5180:21:${HEAD}`;
-    await exec("python3", [script, "prepare", receiptPath(21), k21, "5180", "21", HEAD, "COMMENT", "COMMENT", '{"event":"COMMENT"}']);
-    await expect(exec("python3", [script, "skip", receiptPath(21), k21, "5180", "21", HEAD, "COMMENT", "dryrun", mark])).rejects.toThrow(/attempted post/);
+    await exec("python3", [
+      script,
+      "prepare",
+      receiptPath(21),
+      k21,
+      "5180",
+      "21",
+      HEAD,
+      "COMMENT",
+      "COMMENT",
+      '{"event":"COMMENT"}',
+    ]);
+    await expect(
+      exec("python3", [
+        script,
+        "skip",
+        receiptPath(21),
+        k21,
+        "5180",
+        "21",
+        HEAD,
+        "COMMENT",
+        "dryrun",
+        mark,
+      ]),
+    ).rejects.toThrow(/attempted post/);
     expect(JSON.parse(readFileSync(receiptPath(21), "utf8")).status).toBe("prepared");
 
     // skipped ⇒ prepare refused (the refusal is terminal for the key).
     const k22 = `v1:5180:22:${HEAD}`;
-    await exec("python3", [script, "skip", receiptPath(22), k22, "5180", "22", HEAD, "COMMENT", "dryrun", mark]);
-    await expect(exec("python3", [script, "prepare", receiptPath(22), k22, "5180", "22", HEAD, "COMMENT", "COMMENT", '{"event":"COMMENT"}'])).rejects.toThrow(/refused/);
+    await exec("python3", [
+      script,
+      "skip",
+      receiptPath(22),
+      k22,
+      "5180",
+      "22",
+      HEAD,
+      "COMMENT",
+      "dryrun",
+      mark,
+    ]);
+    await expect(
+      exec("python3", [
+        script,
+        "prepare",
+        receiptPath(22),
+        k22,
+        "5180",
+        "22",
+        HEAD,
+        "COMMENT",
+        "COMMENT",
+        '{"event":"COMMENT"}',
+      ]),
+    ).rejects.toThrow(/refused/);
     const before = readFileSync(receiptPath(22), "utf8");
-    await exec("python3", [script, "skip", receiptPath(22), k22, "5180", "22", HEAD, "COMMENT", "dryrun", mark]);
+    await exec("python3", [
+      script,
+      "skip",
+      receiptPath(22),
+      k22,
+      "5180",
+      "22",
+      HEAD,
+      "COMMENT",
+      "dryrun",
+      mark,
+    ]);
     expect(readFileSync(receiptPath(22), "utf8")).toBe(before);
 
     // A mark that would NOT satisfy guard 2 cannot be written as a skip at all.
     const k23 = `v1:5180:23:${HEAD}`;
-    const replied = JSON.stringify({ ...JSON.parse(mark), last_author_reply_at: "2026-09-01T11:00:00.000Z" });
-    await expect(exec("python3", [script, "skip", receiptPath(23), k23, "5180", "23", HEAD, "COMMENT", "dryrun", replied])).rejects.toThrow(/author reply/);
+    const replied = JSON.stringify({
+      ...JSON.parse(mark),
+      last_author_reply_at: "2026-09-01T11:00:00.000Z",
+    });
+    await expect(
+      exec("python3", [
+        script,
+        "skip",
+        receiptPath(23),
+        k23,
+        "5180",
+        "23",
+        HEAD,
+        "COMMENT",
+        "dryrun",
+        replied,
+      ]),
+    ).rejects.toThrow(/author reply/);
     const otherHead = JSON.stringify({ ...JSON.parse(mark), head_sha: "0000000" });
-    await expect(exec("python3", [script, "skip", receiptPath(23), k23, "5180", "23", HEAD, "COMMENT", "dryrun", otherHead])).rejects.toThrow(/head/);
+    await expect(
+      exec("python3", [
+        script,
+        "skip",
+        receiptPath(23),
+        k23,
+        "5180",
+        "23",
+        HEAD,
+        "COMMENT",
+        "dryrun",
+        otherHead,
+      ]),
+    ).rejects.toThrow(/head/);
     expect(existsSync(receiptPath(23))).toBe(false);
   });
 });

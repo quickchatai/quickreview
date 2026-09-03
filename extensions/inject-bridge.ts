@@ -22,7 +22,15 @@
 //      own JSONL (`SessionHooks.roundPromptAccepted`).
 //
 // pi is not installed here — everything touching the pi API is VERIFY-ON-PIN.
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, watch } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  watch,
+} from "node:fs";
 import { basename, join } from "node:path";
 import type { Pi } from "@earendil-works/pi-coding-agent";
 import { sessionCommandMarker } from "../src/session-command.js";
@@ -116,7 +124,8 @@ export const activate: (pi: Pi) => void = (pi) => {
   const prSession = /^pr-\d+$/.test(session);
   // Managed daemon PR sessions explicitly require the SQLite ledger. The
   // default is fail-closed; only isolated smoke/replay managers pass "0".
-  const ledgerRequired = prSession && process.env.QCR_SESSION_BRIDGE_LEDGER_REQUIRED?.trim() !== "0";
+  const ledgerRequired =
+    prSession && process.env.QCR_SESSION_BRIDGE_LEDGER_REQUIRED?.trim() !== "0";
   const bridgeGeneration = process.env.QCR_SESSION_BRIDGE_GENERATION?.trim();
   const bridgeStateFile = process.env.QCR_SESSION_BRIDGE_STATE_FILE?.trim();
   let bridgeFailed = false;
@@ -136,7 +145,9 @@ export const activate: (pi: Pi) => void = (pi) => {
         ...(failure ? { failed_stage: failure.failedStage, detail: failure.detail } : {}),
       });
     } catch (error) {
-      console.error(`[inject-bridge] FAILED_LOUD could not publish ${stage} receipt: ${String(error)}`);
+      console.error(
+        `[inject-bridge] FAILED_LOUD could not publish ${stage} receipt: ${String(error)}`,
+      );
     }
   };
 
@@ -147,7 +158,10 @@ export const activate: (pi: Pi) => void = (pi) => {
   };
 
   if (ledgerRequired && (!bridgeGeneration || !bridgeStateFile)) {
-    failBridge("startup_fence", "missing QCR_SESSION_BRIDGE_GENERATION or QCR_SESSION_BRIDGE_STATE_FILE");
+    failBridge(
+      "startup_fence",
+      "missing QCR_SESSION_BRIDGE_GENERATION or QCR_SESSION_BRIDGE_STATE_FILE",
+    );
   }
   if (ledgerRequired && !stateDb) {
     failBridge("state_db", "missing QCR_STATE_DB for a ledger-required PR bridge");
@@ -202,18 +216,21 @@ export const activate: (pi: Pi) => void = (pi) => {
 
   const armStartAckTimeout = (wake: SubmittedWake): void => {
     clearStartAckTimer();
-    startAckTimer = setTimeout(() => {
-      startAckTimer = undefined;
-      if (closed || submitted?.full !== wake.full) return;
-      const failure = `${wake.file} was submitted ${Date.now() - wake.submittedAt}ms ago without its correlated run message`;
-      // Do NOT terminalize the durable reservation here. A stale busy reading
-      // can make Pi queue `followUp`; that queued command cannot be withdrawn.
-      // Leaving the short running lease expired lets reconcile JSONL/
-      // liveness and kill the old session before any safe retry.
-      console.error(
-        `[inject-bridge] FAILED_LOUD ${failure}; preserving the pending file and refusing successor delivery`,
-      );
-    }, positiveEnvMs("QCR_SESSION_COMMAND_START_LEASE_MS") ?? START_ACK_TIMEOUT_MS);
+    startAckTimer = setTimeout(
+      () => {
+        startAckTimer = undefined;
+        if (closed || submitted?.full !== wake.full) return;
+        const failure = `${wake.file} was submitted ${Date.now() - wake.submittedAt}ms ago without its correlated run message`;
+        // Do NOT terminalize the durable reservation here. A stale busy reading
+        // can make Pi queue `followUp`; that queued command cannot be withdrawn.
+        // Leaving the short running lease expired lets reconcile JSONL/
+        // liveness and kill the old session before any safe retry.
+        console.error(
+          `[inject-bridge] FAILED_LOUD ${failure}; preserving the pending file and refusing successor delivery`,
+        );
+      },
+      positiveEnvMs("QCR_SESSION_COMMAND_START_LEASE_MS") ?? START_ACK_TIMEOUT_MS,
+    );
   };
 
   const archive = (wake: SubmittedWake): boolean => {
@@ -222,7 +239,9 @@ export const activate: (pi: Pi) => void = (pi) => {
       renameSync(wake.full, join(doneDir, basename(wake.full)));
       return true;
     } catch (err) {
-      console.error(`[inject-bridge] FAILED_LOUD could not acknowledge ${wake.file}: ${String(err)}`);
+      console.error(
+        `[inject-bridge] FAILED_LOUD could not acknowledge ${wake.file}: ${String(err)}`,
+      );
       return false;
     }
   };
@@ -236,19 +255,26 @@ export const activate: (pi: Pi) => void = (pi) => {
     // inject_path copy is only transport residue: acked is a delivery receipt;
     // failed/cancelled use a distinct non-delivery quarantine.
     const targetDir = terminal.status === "acked" ? doneDir : terminalDir;
-    const targetName = terminal.status === "acked" ? basename(full) : `${basename(full)}.${terminal.status}`;
+    const targetName =
+      terminal.status === "acked" ? basename(full) : `${basename(full)}.${terminal.status}`;
     try {
       mkdirSync(targetDir, { recursive: true });
       renameSync(full, join(targetDir, targetName));
     } catch (error) {
-      failBridge("terminal_transport", `${file}: could not move stale ${terminal.status} transport: ${String(error)}`);
+      failBridge(
+        "terminal_transport",
+        `${file}: could not move stale ${terminal.status} transport: ${String(error)}`,
+      );
       return false;
     }
     console.error(
       `[inject-bridge] moved stale ${terminal.status} transport ${file} for command ${terminal.id}`,
     );
     if (terminal.blocksSuccessors) {
-      failBridge("command_link", `failed command ${terminal.id} still owns the serialized session lane`);
+      failBridge(
+        "command_link",
+        `failed command ${terminal.id} still owns the serialized session lane`,
+      );
       return false;
     }
     return true;
@@ -257,7 +283,8 @@ export const activate: (pi: Pi) => void = (pi) => {
   /** Returns true only when drain may immediately inspect another file. */
   const deliver = (file: string): boolean => {
     const full = join(dir, file);
-    if (closed || bridgeFailed || busy || submitted || activeWake || !existsSync(full)) return false;
+    if (closed || bridgeFailed || busy || submitted || activeWake || !existsSync(full))
+      return false;
     if (ledgerRequired && !ledger) {
       failBridge("ledger_open", "durable command ledger is unavailable");
       return false;
@@ -274,7 +301,10 @@ export const activate: (pi: Pi) => void = (pi) => {
       if (content.trim().length === 0) {
         if (link?.ok && ledger) {
           ledger.failPending(link.command.id, "empty command payload");
-          failBridge("payload_validate", `refusing empty command ${link.command.id}; preserving its file`);
+          failBridge(
+            "payload_validate",
+            `refusing empty command ${link.command.id}; preserving its file`,
+          );
           return false;
         }
         mkdirSync(doneDir, { recursive: true });
@@ -312,14 +342,18 @@ export const activate: (pi: Pi) => void = (pi) => {
         // the post-ack throw into a duplicate submission.
         if (submitted?.full === full) {
           if (submitted.commandId && ledger && !ledger.releasePending(submitted.commandId)) {
-            console.error(`[inject-bridge] FAILED_LOUD could not release command ${submitted.commandId} after synchronous throw`);
+            console.error(
+              `[inject-bridge] FAILED_LOUD could not release command ${submitted.commandId} after synchronous throw`,
+            );
           }
           submitted = undefined;
           clearStartAckTimer();
           console.error(`[inject-bridge] failed to submit ${file}: ${String(err)}`);
           scheduleRetry();
         } else {
-          console.error(`[inject-bridge] submission for acknowledged ${file} threw: ${String(err)}`);
+          console.error(
+            `[inject-bridge] submission for acknowledged ${file} threw: ${String(err)}`,
+          );
         }
       }
       return false;
@@ -379,7 +413,10 @@ export const activate: (pi: Pi) => void = (pi) => {
       if (bridgeFailed) return;
       const blockingFailure = ledger?.blockingFailedCommand();
       if (blockingFailure) {
-        failBridge("command_link", `failed command ${blockingFailure.id} still owns the serialized session lane`);
+        failBridge(
+          "command_link",
+          `failed command ${blockingFailure.id} still owns the serialized session lane`,
+        );
         return;
       }
       // Recovery writes its immutable command file before Pi birth. Since the
@@ -441,14 +478,17 @@ export const activate: (pi: Pi) => void = (pi) => {
   pi.on("message_start", (event) => {
     const wake = submitted;
     if (!wake) return;
-    const message = event && typeof event === "object" ? (event as { message?: unknown }).message : undefined;
+    const message =
+      event && typeof event === "object" ? (event as { message?: unknown }).message : undefined;
     if (!message || typeof message !== "object") return;
     const record = message as { role?: unknown; content?: unknown };
     if (record.role !== "user" || !Array.isArray(record.content)) return;
     const matched = record.content.some((part) => {
       if (!part || typeof part !== "object") return false;
-      const text = (part as { type?: unknown; text?: unknown });
-      return text.type === "text" && typeof text.text === "string" && text.text.includes(wake.marker);
+      const text = part as { type?: unknown; text?: unknown };
+      return (
+        text.type === "text" && typeof text.text === "string" && text.text.includes(wake.marker)
+      );
     });
     if (!matched) return;
     if (!busy) {
@@ -459,7 +499,9 @@ export const activate: (pi: Pi) => void = (pi) => {
     }
     if (wake.commandId && ledger && !ledger.markAccepted(wake.commandId)) {
       clearStartAckTimer();
-      console.error(`[inject-bridge] FAILED_LOUD command ${wake.commandId} reached Pi but a stale owner cannot mark it accepted`);
+      console.error(
+        `[inject-bridge] FAILED_LOUD command ${wake.commandId} reached Pi but a stale owner cannot mark it accepted`,
+      );
       return;
     }
     wake.accepted = true;
@@ -502,7 +544,9 @@ export const activate: (pi: Pi) => void = (pi) => {
       }
       const completed = activeWake;
       if (completed?.commandId && ledger && !ledger.ack(completed.commandId)) {
-        console.error(`[inject-bridge] FAILED_LOUD stale owner cannot ack command ${completed.commandId}`);
+        console.error(
+          `[inject-bridge] FAILED_LOUD stale owner cannot ack command ${completed.commandId}`,
+        );
         return;
       }
       activeWake = undefined;

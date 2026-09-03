@@ -23,7 +23,16 @@
 // the safer failure. Results are written to `<name>.result.json` beside the
 // request; malformed/unknown requests produce a refused result, never a
 // crash.
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import type { BoardFilter } from "./filters.js";
 import { STATE_GLYPHS } from "./model.js";
@@ -98,7 +107,9 @@ function tagText(v: unknown): string | undefined {
 
 /** Strict parse of one request file's text. Unknown verbs, malformed params,
  * oversized text → a refusal (recorded in the result file), never a throw. */
-export function parseTuiAction(text: string): { ok: true; action: TuiAction } | { ok: false; error: string } {
+export function parseTuiAction(
+  text: string,
+): { ok: true; action: TuiAction } | { ok: false; error: string } {
   let raw: unknown;
   try {
     raw = JSON.parse(text);
@@ -110,7 +121,8 @@ export function parseTuiAction(text: string): { ok: true; action: TuiAction } | 
   const verb = r["verb"];
   if (typeof verb !== "string") return { ok: false, error: "missing verb" };
   const pRaw = r["params"] ?? {};
-  if (typeof pRaw !== "object" || pRaw === null || Array.isArray(pRaw)) return { ok: false, error: "params must be an object" };
+  if (typeof pRaw !== "object" || pRaw === null || Array.isArray(pRaw))
+    return { ok: false, error: "params must be an object" };
   const p = pRaw as Record<string, unknown>;
 
   switch (verb) {
@@ -128,10 +140,12 @@ export function parseTuiAction(text: string): { ok: true; action: TuiAction } | 
     case "metrics": {
       const hasWindow = p["window"] !== undefined;
       const hasPr = p["pr"] !== undefined;
-      if (hasWindow === hasPr) return { ok: false, error: "metrics needs exactly one of window|pr" };
+      if (hasWindow === hasPr)
+        return { ok: false, error: "metrics needs exactly one of window|pr" };
       if (hasWindow) {
         const w = p["window"];
-        if (typeof w !== "string" || !WINDOWS.has(w)) return { ok: false, error: "metrics window must be 7d|30d|all" };
+        if (typeof w !== "string" || !WINDOWS.has(w))
+          return { ok: false, error: "metrics window must be 7d|30d|all" };
         return { ok: true, action: { verb, window: w as "7d" | "30d" | "all" } };
       }
       const pr = prNumber(p["pr"]);
@@ -140,18 +154,21 @@ export function parseTuiAction(text: string): { ok: true; action: TuiAction } | 
     }
     case "digest_day": {
       const date = p["date"];
-      if (typeof date !== "string" || !DATE_RE.test(date)) return { ok: false, error: "digest_day needs date: YYYY-MM-DD" };
+      if (typeof date !== "string" || !DATE_RE.test(date))
+        return { ok: false, error: "digest_day needs date: YYYY-MM-DD" };
       return { ok: true, action: { verb, date } };
     }
     case "memory_view": {
       const out: { verb: "memory_view"; day?: string; tag?: string } = { verb };
       if (p["day"] !== undefined) {
-        if (typeof p["day"] !== "string" || !DATE_RE.test(p["day"])) return { ok: false, error: "memory_view day must be YYYY-MM-DD" };
+        if (typeof p["day"] !== "string" || !DATE_RE.test(p["day"]))
+          return { ok: false, error: "memory_view day must be YYYY-MM-DD" };
         out.day = p["day"];
       }
       if (p["tag"] !== undefined) {
         const tag = tagText(p["tag"]);
-        if (tag === undefined) return { ok: false, error: "memory_view tag must be a short non-empty string" };
+        if (tag === undefined)
+          return { ok: false, error: "memory_view tag must be a short non-empty string" };
         out.tag = tag;
       }
       return { ok: true, action: out };
@@ -160,7 +177,11 @@ export function parseTuiAction(text: string): { ok: true; action: TuiAction } | 
       if (p["clear"] === true) return { ok: true, action: { verb, filter: null } };
       const filter: BoardFilter = {};
       if (p["author"] !== undefined) {
-        if (typeof p["author"] !== "string" || p["author"].trim().length === 0 || p["author"].length > 100)
+        if (
+          typeof p["author"] !== "string" ||
+          p["author"].trim().length === 0 ||
+          p["author"].length > 100
+        )
           return { ok: false, error: "board_filter author must be a short non-empty string" };
         filter.author = p["author"].trim();
       }
@@ -176,7 +197,8 @@ export function parseTuiAction(text: string): { ok: true; action: TuiAction } | 
     case "memory_filter": {
       if (p["clear"] === true) return { ok: true, action: { verb, tag: null } };
       const tag = tagText(p["tag"]);
-      if (tag === undefined) return { ok: false, error: "memory_filter needs tag (or clear: true)" };
+      if (tag === undefined)
+        return { ok: false, error: "memory_filter needs tag (or clear: true)" };
       return { ok: true, action: { verb, tag } };
     }
     case "msg_session": {
@@ -184,19 +206,24 @@ export function parseTuiAction(text: string): { ok: true; action: TuiAction } | 
       if (typeof session !== "string" || !isValidSessionName(session))
         return { ok: false, error: "msg_session session must be pr-<n>, overseer, or main" };
       const text = boundedText(p["text"]);
-      if (text === undefined) return { ok: false, error: `msg_session text must be 1..${ACTION_TEXT_MAX} chars` };
+      if (text === undefined)
+        return { ok: false, error: `msg_session text must be 1..${ACTION_TEXT_MAX} chars` };
       return { ok: true, action: { verb, session, text } };
     }
     case "overseer_inject": {
       const text = boundedText(p["text"]);
-      if (text === undefined) return { ok: false, error: `overseer_inject text must be 1..${ACTION_TEXT_MAX} chars` };
+      if (text === undefined)
+        return { ok: false, error: `overseer_inject text must be 1..${ACTION_TEXT_MAX} chars` };
       return { ok: true, action: { verb, text } };
     }
     case "deploy_tab": {
       const action = p["action"];
       if (typeof action !== "string" || !DEPLOY_ACTIONS.has(action))
         return { ok: false, error: "deploy_tab needs action: deploy|stop|start|abort" };
-      return { ok: true, action: { verb, action: action as "deploy" | "stop" | "start" | "abort" } };
+      return {
+        ok: true,
+        action: { verb, action: action as "deploy" | "stop" | "start" | "abort" },
+      };
     }
     default:
       return { ok: false, error: `unknown verb '${verb}'` };
@@ -240,7 +267,9 @@ export function executeTuiAction(a: TuiAction, driver: TuiDriver): string {
         : `companion ▸ board filter → ${[a.filter.author ? `author:${a.filter.author}` : undefined, a.filter.state ? `state:${a.filter.state}` : undefined].filter(Boolean).join(" · ")}`;
     case "memory_filter":
       driver.setMemoryFilter(a.tag);
-      return a.tag === null ? "companion ▸ memory filter cleared" : `companion ▸ memory filter → #${a.tag}`;
+      return a.tag === null
+        ? "companion ▸ memory filter cleared"
+        : `companion ▸ memory filter → #${a.tag}`;
     case "msg_session":
       driver.msgSession(a.session, a.text);
       return `companion ▸ msg ${a.session} (${a.text.length} chars)`;
@@ -273,7 +302,10 @@ const DONE_KEEP = 200;
  * cadence (busy flag at the wiring site — see docs/tui-actions-wiring.md).
  * Archive-BEFORE-execute per the module header; a driver throw records a
  * failed result and the sweep moves on. */
-export async function processTuiActions(dir: string, driver: TuiDriver): Promise<ProcessedAction[]> {
+export async function processTuiActions(
+  dir: string,
+  driver: TuiDriver,
+): Promise<ProcessedAction[]> {
   const out: ProcessedAction[] = [];
   if (!existsSync(dir)) return out;
   const files = readdirSync(dir)
@@ -305,7 +337,10 @@ export async function processTuiActions(dir: string, driver: TuiDriver): Promise
       }
     }
     try {
-      writeFileSync(join(dir, `${file.replace(/\.json$/, "")}.result.json`), JSON.stringify({ ok, message, file }, null, 2) + "\n");
+      writeFileSync(
+        join(dir, `${file.replace(/\.json$/, "")}.result.json`),
+        JSON.stringify({ ok, message, file }, null, 2) + "\n",
+      );
     } catch {
       /* a result we cannot write must not kill the sweep */
     }
@@ -321,11 +356,13 @@ function cleanup(dir: string, doneDir: string): void {
     const now = Date.now();
     for (const f of readdirSync(dir)) {
       if (!f.endsWith(".result.json")) continue;
-      if (now - statSync(join(dir, f)).mtimeMs > RESULT_TTL_MS) rmSync(join(dir, f), { force: true });
+      if (now - statSync(join(dir, f)).mtimeMs > RESULT_TTL_MS)
+        rmSync(join(dir, f), { force: true });
     }
     if (!existsSync(doneDir)) return;
     const done = readdirSync(doneDir).sort(); // iso-ts names: oldest first
-    for (const f of done.slice(0, Math.max(0, done.length - DONE_KEEP))) rmSync(join(doneDir, f), { force: true });
+    for (const f of done.slice(0, Math.max(0, done.length - DONE_KEEP)))
+      rmSync(join(doneDir, f), { force: true });
   } catch {
     /* housekeeping is best-effort */
   }

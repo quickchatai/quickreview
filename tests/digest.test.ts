@@ -11,7 +11,8 @@ import {
 
 describe("digestHeadline", () => {
   it("skips headings and blank lines", () => {
-    const content = "# Review sandbox — 2026-08-13\n\n## Reviews\n\nQuiet day: 2 rounds, 1 approve, no blockers.\n";
+    const content =
+      "# Review sandbox — 2026-08-13\n\n## Reviews\n\nQuiet day: 2 rounds, 1 approve, no blockers.\n";
     expect(digestHeadline(content)).toBe("Quiet day: 2 rounds, 1 approve, no blockers.");
   });
 
@@ -66,7 +67,9 @@ describe("dailyUsage / usageSummaryLine", () => {
       const usage = dailyUsage(store, today);
       expect(usage).toMatchObject({ rounds: 2, tokens_in: 100_000, tokens_out: 5_000 });
       expect(usage.est_usd).toBeCloseTo(2.25, 6);
-      expect(usageSummaryLine(usage)).toBe("usage: 2 rounds — 100000 in / 5000 out tokens — est $2.25");
+      expect(usageSummaryLine(usage)).toBe(
+        "usage: 2 rounds — 100000 in / 5000 out tokens — est $2.25",
+      );
     } finally {
       store.close();
     }
@@ -80,7 +83,9 @@ describe("dailyUsage / usageSummaryLine", () => {
       const a = store.startRound(7, "initial", [], 45);
       store.finishRound(a, "APPROVE", 1.0);
       const zombie = store.startRound(8, "initial", [], 45);
-      store.db.prepare("UPDATE rounds SET status = 'expired', est_usd = 3.0 WHERE id = ?").run(zombie);
+      store.db
+        .prepare("UPDATE rounds SET status = 'expired', est_usd = 3.0 WHERE id = ?")
+        .run(zombie);
       const usage = dailyUsage(store, new Date().toISOString().slice(0, 10));
       expect(usage.est_usd).toBeCloseTo(4.0, 6);
     } finally {
@@ -112,7 +117,8 @@ describe("dailyCancellations / cancellationSummaryLine", () => {
     const { dailyCancellations, cancellationSummaryLine } = await import("../src/digest.js");
     const store = await openStore();
     try {
-      for (const pr of [1, 2, 3]) store.markRoundCancelled(store.startRound(pr, "first", [], 45), "x", "orphan_sweep");
+      for (const pr of [1, 2, 3])
+        store.markRoundCancelled(store.startRound(pr, "first", [], 45), "x", "orphan_sweep");
       store.markRoundCancelled(store.startRound(4, "re-review", [], 45), "y", "deadline_overrun");
 
       const c = dailyCancellations(store, new Date().toISOString().slice(0, 10));
@@ -131,7 +137,8 @@ describe("dailyCancellations / cancellationSummaryLine", () => {
     const { dailyCancellations, cancellationSummaryLine } = await import("../src/digest.js");
     const store = await openStore();
     try {
-      for (let pr = 1; pr <= 12; pr++) store.markRoundCancelled(store.startRound(pr, "first", [], 45), "x", "orphan_sweep");
+      for (let pr = 1; pr <= 12; pr++)
+        store.markRoundCancelled(store.startRound(pr, "first", [], 45), "x", "orphan_sweep");
       const c = dailyCancellations(store, new Date().toISOString().slice(0, 10));
       expect(c.loud).toBe(0);
       expect(cancellationSummaryLine(c)).toBe("cancelled: 12 rounds — orphan sweep (redeploy) 12");

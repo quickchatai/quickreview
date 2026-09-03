@@ -43,19 +43,34 @@ describe("sortPrs", () => {
 
 describe("formatEvent", () => {
   it("renders time, kind, pr and payload facts", () => {
-    const line = formatEvent({ ts: "2026-08-13T21:24:11.000Z", kind: "verdict_applied", pr: 5049, payload: JSON.stringify({ verdict: "APPROVE" }) });
+    const line = formatEvent({
+      ts: "2026-08-13T21:24:11.000Z",
+      kind: "verdict_applied",
+      pr: 5049,
+      payload: JSON.stringify({ verdict: "APPROVE" }),
+    });
     expect(line.text).toBe("21:24:11 verdict_applied #5049 (APPROVE)");
     expect(line.anomaly).toBe(false);
   });
 
   it("flags anomalies and uppercases the kind", () => {
-    const line = formatEvent({ ts: "2026-08-13T21:15:02.000Z", kind: "verdict_rejected", pr: 5076, payload: null });
+    const line = formatEvent({
+      ts: "2026-08-13T21:15:02.000Z",
+      kind: "verdict_rejected",
+      pr: 5076,
+      payload: null,
+    });
     expect(line.anomaly).toBe(true);
     expect(line.text).toContain("VERDICT_REJECTED #5076");
   });
 
   it("survives non-JSON payloads", () => {
-    const line = formatEvent({ ts: "2026-08-13T10:00:00.000Z", kind: "note", pr: null, payload: "not json" });
+    const line = formatEvent({
+      ts: "2026-08-13T10:00:00.000Z",
+      kind: "note",
+      pr: null,
+      payload: "not json",
+    });
     expect(line.text).toBe("10:00:00 note");
   });
 });

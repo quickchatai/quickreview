@@ -25,7 +25,12 @@ import type { RemoteResult, SshRunner } from "../src/tui/remote.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-const CFG: TuiConfig = { ...TUI_DEFAULTS, ssh_host: "my-vm", container: "quickreview-sandbox", sudo_docker: true };
+const CFG: TuiConfig = {
+  ...TUI_DEFAULTS,
+  ssh_host: "my-vm",
+  container: "quickreview-sandbox",
+  sudo_docker: true,
+};
 const ROOT = CFG.remote_sandbox_root;
 
 const OK = (stdout: string): RemoteResult => ({ ok: true, stdout, stderr: "", code: 0 });
@@ -59,7 +64,10 @@ const round = (n: number, status = "done"): WhyRound => ({
 });
 
 /** A VM that answers everything: why → rounds, manifest → paths, cat → body. */
-function fakeVm(rounds: WhyRound[], opts: { fail?: (script: string) => boolean } = {}): {
+function fakeVm(
+  rounds: WhyRound[],
+  opts: { fail?: (script: string) => boolean } = {},
+): {
   ssh: SshRunner;
   scripts: string[];
 } {
@@ -68,8 +76,10 @@ function fakeVm(rounds: WhyRound[], opts: { fail?: (script: string) => boolean }
     const script = argv.join(" ");
     scripts.push(script);
     if (opts.fail?.(script)) return FAIL;
-    if (script.includes("cli.js") && script.includes("why")) return OK(JSON.stringify({ pr: 5306, rounds }));
-    if (script.includes("head -c")) return OK(`body of ${/head -c \d+ '([^']+)'/.exec(script)![1]}`);
+    if (script.includes("cli.js") && script.includes("why"))
+      return OK(JSON.stringify({ pr: 5306, rounds }));
+    if (script.includes("head -c"))
+      return OK(`body of ${/head -c \d+ '([^']+)'/.exec(script)![1]}`);
     if (script.includes("state/ledgers")) {
       // The manifest listing: report every artefact as present.
       const pr = /pr-(\d+)\.md/.exec(script)![1];
@@ -128,7 +138,9 @@ describe("evidence argv", () => {
   // `[]` is reserved for a payload that SAID there are no rounds.
   it("readWhyRounds: a payload without a round list is undefined — never []", () => {
     expect(readWhyRounds(JSON.stringify({ rounds: [] }))).toEqual([]);
-    expect(readWhyRounds(JSON.stringify({ rounds: [round(2), round(1, "running")] }))).toEqual([round(2)]);
+    expect(readWhyRounds(JSON.stringify({ rounds: [round(2), round(1, "running")] }))).toEqual([
+      round(2),
+    ]);
     expect(readWhyRounds(JSON.stringify({ pr: 1, known: false }))).toBeUndefined();
     expect(readWhyRounds(JSON.stringify({ rounds: "none" }))).toBeUndefined();
     expect(readWhyRounds("null")).toBeUndefined();
@@ -154,8 +166,17 @@ describe("EvidenceCopier", () => {
   // The default clock sits BEFORE the fixture rounds' finished_at (09:00), so
   // every round in these tests counts as finishing under the copier's watch —
   // the backfill rules get their own tests below.
-  const copier = (ssh: SshRunner, notices: string[] = [], now = () => new Date("2026-08-25T08:00:00Z")): EvidenceCopier =>
-    new EvidenceCopier(CFG, store, ssh, { sessionDir: "state/pi-sessions", timeoutMs: 1000, onNotice: (t) => notices.push(t), now });
+  const copier = (
+    ssh: SshRunner,
+    notices: string[] = [],
+    now = () => new Date("2026-08-25T08:00:00Z"),
+  ): EvidenceCopier =>
+    new EvidenceCopier(CFG, store, ssh, {
+      sessionDir: "state/pi-sessions",
+      timeoutMs: 1000,
+      onNotice: (t) => notices.push(t),
+      now,
+    });
 
   it("copies a finished round's artefacts on the poll that notices it", async () => {
     const { ssh } = fakeVm([round(1)]);
@@ -272,7 +293,9 @@ describe("EvidenceCopier", () => {
     // Adversarial finding (P1): the old sweep broke unconditionally after the
     // first changed PR even when its reconcile FAILED — and a failure does not
     // retire the signature, so that PR was picked first every tick, forever.
-    const { ssh } = fakeVm([round(1)], { fail: (s) => s.includes("head -c") && s.includes("pr-1/") });
+    const { ssh } = fakeVm([round(1)], {
+      fail: (s) => s.includes("head -c") && s.includes("pr-1/"),
+    });
     const c = copier(ssh);
     const snap = snapshot([
       { number: 1, rounds: 1 },
@@ -308,7 +331,8 @@ describe("EvidenceCopier", () => {
 
     const rd = store.roundDir(5306, 1);
     expect(existsSync(join(rd, "verdict.json"))).toBe(true);
-    for (const f of ["session.jsonl", "ledger.md", "prompt.md"]) expect(existsSync(join(rd, f))).toBe(false);
+    for (const f of ["session.jsonl", "ledger.md", "prompt.md"])
+      expect(existsSync(join(rd, f))).toBe(false);
     const manifest = JSON.parse(readFileSync(join(rd, MANIFEST_NAME), "utf8"));
     expect(manifest.skipped_stale.sort()).toEqual(["ledger", "prompt", "transcript"]);
     expect(manifest.missing).toEqual([]); // skipped is deliberate, not absent
@@ -321,8 +345,15 @@ describe("EvidenceCopier", () => {
     const manifest = JSON.parse(readFileSync(join(store.roundDir(5306, 1), MANIFEST_NAME), "utf8"));
     expect(manifest.roles_note).toContain("pr-current");
     expect(manifest.skipped_stale).toEqual([]);
-    const scopes = Object.fromEntries(manifest.files.map((f: { role: string; scope: string }) => [f.role, f.scope]));
-    expect(scopes).toEqual({ transcript: "pr-current", ledger: "pr-current", prompt: "pr-current", verdict: "round" });
+    const scopes = Object.fromEntries(
+      manifest.files.map((f: { role: string; scope: string }) => [f.role, f.scope]),
+    );
+    expect(scopes).toEqual({
+      transcript: "pr-current",
+      ledger: "pr-current",
+      prompt: "pr-current",
+      verdict: "round",
+    });
   });
 
   it("a sweep already in flight makes the next call a no-op", async () => {
@@ -395,7 +426,7 @@ describe("large and awkward payloads", () => {
     const dir = mkdtempSync(join(tmpdir(), "qcr-evidence-"));
     try {
       const store = new EvidenceStore(dir);
-      const body = "├─ pass-intent ✅ 🎉\n{\"a\":1}\n";
+      const body = '├─ pass-intent ✅ 🎉\n{"a":1}\n';
       store.writeArtifact(7, 1, "transcript", body);
       expect(readFileSync(join(store.roundDir(7, 1), "session.jsonl"), "utf8")).toBe(body);
       // No manifest yet ⇒ not copied. A reader must never mistake a partial

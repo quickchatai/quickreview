@@ -109,7 +109,13 @@ export function readDryrunDir(dir: string): DryrunRecord[] {
       const rec = JSON.parse(readFileSync(join(dir, file), "utf8")) as DryrunRecord;
       out.push({ ...rec, file });
     } catch {
-      out.push({ kind: "unparseable", method: "?", path: "?", note: `could not parse ${file}`, file });
+      out.push({
+        kind: "unparseable",
+        method: "?",
+        path: "?",
+        note: `could not parse ${file}`,
+        file,
+      });
     }
   }
   return out;
@@ -117,7 +123,9 @@ export function readDryrunDir(dir: string): DryrunRecord[] {
 
 /** The would-be review for a PR: the last create_review record it produced. */
 export function sandboxReviewFrom(records: DryrunRecord[], pr: number): ReviewSnapshot | null {
-  const reviews = records.filter((r) => r.kind === "create_review" && (r.pr === pr || r.path.includes(`/pulls/${pr}/`)));
+  const reviews = records.filter(
+    (r) => r.kind === "create_review" && (r.pr === pr || r.path.includes(`/pulls/${pr}/`)),
+  );
   const last = reviews[reviews.length - 1];
   if (!last) return null;
   const body = (last.body ?? {}) as {
@@ -143,14 +151,80 @@ export function sandboxReviewFrom(records: DryrunRecord[], pr: number): ReviewSn
 // ---- (a) blocker parity ------------------------------------------------------
 
 const STOPWORDS = new Set([
-  "the", "a", "an", "and", "or", "but", "if", "then", "this", "that", "these", "those", "is", "are", "was", "were",
-  "be", "been", "being", "to", "of", "in", "on", "at", "for", "with", "without", "from", "by", "as", "it", "its",
-  "we", "you", "your", "should", "would", "could", "will", "can", "may", "must", "not", "no", "here", "there",
-  "blocker", "blocking", "issue", "problem", "please", "line", "lines", "code", "file", "when", "which", "what",
-  "add", "adds", "added", "use", "uses", "used", "using", "make", "makes", "need", "needs", "needed",
+  "the",
+  "a",
+  "an",
+  "and",
+  "or",
+  "but",
+  "if",
+  "then",
+  "this",
+  "that",
+  "these",
+  "those",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "being",
+  "to",
+  "of",
+  "in",
+  "on",
+  "at",
+  "for",
+  "with",
+  "without",
+  "from",
+  "by",
+  "as",
+  "it",
+  "its",
+  "we",
+  "you",
+  "your",
+  "should",
+  "would",
+  "could",
+  "will",
+  "can",
+  "may",
+  "must",
+  "not",
+  "no",
+  "here",
+  "there",
+  "blocker",
+  "blocking",
+  "issue",
+  "problem",
+  "please",
+  "line",
+  "lines",
+  "code",
+  "file",
+  "when",
+  "which",
+  "what",
+  "add",
+  "adds",
+  "added",
+  "use",
+  "uses",
+  "used",
+  "using",
+  "make",
+  "makes",
+  "need",
+  "needs",
+  "needed",
 ]);
 
-const BLOCKER_MARKERS = /(^|[^a-z])(blockers?|blocking|must[- ]fix|severity:\s*blocker|critical)([^a-z]|$)/i;
+const BLOCKER_MARKERS =
+  /(^|[^a-z])(blockers?|blocking|must[- ]fix|severity:\s*blocker|critical)([^a-z]|$)/i;
 const PATH_RE = /(?:^|[\s`(])((?:[\w.-]+\/)+[\w.-]+\.[\w]+)(?::(\d+))?/;
 
 export function themeWords(text: string): string[] {
@@ -180,7 +254,13 @@ export function extractBlockers(review: ReviewSnapshot): Finding[] {
   const found: Finding[] = [];
   for (const c of review.comments) {
     if (!BLOCKER_MARKERS.test(c.body)) continue;
-    found.push({ path: c.path, line: c.line, text: c.body.trim().split("\n")[0]!.slice(0, 200), theme: themeWords(c.body), origin: "inline" });
+    found.push({
+      path: c.path,
+      line: c.line,
+      text: c.body.trim().split("\n")[0]!.slice(0, 200),
+      theme: themeWords(c.body),
+      origin: "inline",
+    });
   }
   let underBlockerHeading = false;
   for (const rawLine of review.body.split("\n")) {
@@ -194,7 +274,13 @@ export function extractBlockers(review: ReviewSnapshot): Finding[] {
     if (!underBlockerHeading && !BLOCKER_MARKERS.test(line)) continue;
     const text = line.replace(/^([-*]|\d+\.)\s+/, "");
     const { path, line: ln } = pathFrom(text);
-    found.push({ path, ...(ln !== undefined ? { line: ln } : {}), text: text.slice(0, 200), theme: themeWords(text), origin: "body" });
+    found.push({
+      path,
+      ...(ln !== undefined ? { line: ln } : {}),
+      text: text.slice(0, 200),
+      theme: themeWords(text),
+      origin: "body",
+    });
   }
   return found;
 }
@@ -203,7 +289,7 @@ export function jaccard(a: string[], b: string[]): number {
   if (a.length === 0 || b.length === 0) return 0;
   const setB = new Set(b);
   const inter = a.filter((w) => setB.has(w)).length;
-  return inter / (new Set([...a, ...b]).size);
+  return inter / new Set([...a, ...b]).size;
 }
 
 function samePath(a: string, b: string): boolean {
@@ -221,7 +307,11 @@ export interface ParityRow {
 }
 
 /** Match old-flow blockers to sandbox blockers by path + theme overlap. */
-export function blockerParity(oldFindings: Finding[], sandboxFindings: Finding[], threshold = 0.2): ParityRow[] {
+export function blockerParity(
+  oldFindings: Finding[],
+  sandboxFindings: Finding[],
+  threshold = 0.2,
+): ParityRow[] {
   const rows: ParityRow[] = [];
   const takenSandbox = new Set<number>();
   for (const o of oldFindings) {
@@ -238,7 +328,12 @@ export function blockerParity(oldFindings: Finding[], sandboxFindings: Finding[]
     });
     if (bestIdx >= 0 && bestScore >= threshold) {
       takenSandbox.add(bestIdx);
-      rows.push({ old: o, sandbox: sandboxFindings[bestIdx]!, score: bestScore, status: "matched" });
+      rows.push({
+        old: o,
+        sandbox: sandboxFindings[bestIdx]!,
+        score: bestScore,
+        status: "matched",
+      });
     } else {
       rows.push({ old: o, score: bestScore, status: "missed-by-sandbox" });
     }
@@ -261,10 +356,16 @@ export function invariantScan(records: DryrunRecord[], pr: number): InvariantVio
   const violations: InvariantViolation[] = [];
   for (const r of records) {
     if (!ALLOWED.has(r.kind)) {
-      violations.push({ rule: "mutation-kind allowlist", detail: `record ${r.file ?? "?"} carries kind "${r.kind}" — outside the known set` });
+      violations.push({
+        rule: "mutation-kind allowlist",
+        detail: `record ${r.file ?? "?"} carries kind "${r.kind}" — outside the known set`,
+      });
     }
     if (r.pr !== undefined && r.pr !== pr) {
-      violations.push({ rule: "no unsolicited scope", detail: `record ${r.file ?? "?"} (${r.kind}) targets #${r.pr}, not the PR under comparison (#${pr})` });
+      violations.push({
+        rule: "no unsolicited scope",
+        detail: `record ${r.file ?? "?"} (${r.kind}) targets #${r.pr}, not the PR under comparison (#${pr})`,
+      });
     }
   }
   // There is no "retired mutation kind" rule any more. It existed for exactly
@@ -334,7 +435,10 @@ export interface AnchorCheck {
 /** Provenance line for the report: which module judged the anchors. */
 export const ANCHOR_SOURCE = "src/anchors.ts (changed-run containment, RIGHT side)";
 
-export function checkAnchors(comments: ReviewComment[], patches: ChangedFilePatch[]): AnchorCheck[] {
+export function checkAnchors(
+  comments: ReviewComment[],
+  patches: ChangedFilePatch[],
+): AnchorCheck[] {
   const byPath = new Map(patches.map((p) => [p.path, p.patch]));
   const runs = runsByPath(Object.fromEntries(patches.map((p) => [p.path, p.patch])));
   return comments.map((c) => {
@@ -342,7 +446,8 @@ export function checkAnchors(comments: ReviewComment[], patches: ChangedFilePatc
     if (patch === undefined) return { path: c.path, line: c.line, status: "unknown-file" as const };
     const verdict = checkAnchor(runs, { path: c.path, side: "RIGHT", line: c.line });
     if (verdict.ok) return { path: c.path, line: c.line, status: "on-changed-line" as const };
-    if (hunkLineNumbers(patch).has(c.line)) return { path: c.path, line: c.line, status: "context-only" as const };
+    if (hunkLineNumbers(patch).has(c.line))
+      return { path: c.path, line: c.line, status: "context-only" as const };
     return { path: c.path, line: c.line, status: "outside-diff" as const };
   });
 }
@@ -362,8 +467,15 @@ export function parseSettledThreads(ledgerMd: string): SettledEntry[] {
   for (const raw of ledgerMd.split("\n")) {
     const line = raw.trim();
     if (!/\bSETTLED\b/.test(line)) continue;
-    const text = line.replace(/^[-*|]\s*/, "").replace(/\|/g, " ").trim();
-    out.push({ path: pathFrom(text).path, text: text.slice(0, 200), theme: themeWords(text.replace(/\bSETTLED\b/g, " ")) });
+    const text = line
+      .replace(/^[-*|]\s*/, "")
+      .replace(/\|/g, " ")
+      .trim();
+    out.push({
+      path: pathFrom(text).path,
+      text: text.slice(0, 200),
+      theme: themeWords(text.replace(/\bSETTLED\b/g, " ")),
+    });
   }
   return out;
 }
@@ -375,7 +487,11 @@ export interface SettledViolation {
 }
 
 /** Any sandbox finding that re-raises a SETTLED thread. */
-export function settledThreadViolations(findings: Finding[], settled: SettledEntry[], threshold = 0.25): SettledViolation[] {
+export function settledThreadViolations(
+  findings: Finding[],
+  settled: SettledEntry[],
+  threshold = 0.25,
+): SettledViolation[] {
   const out: SettledViolation[] = [];
   for (const f of findings) {
     for (const s of settled) {
@@ -436,7 +552,8 @@ export function attestDryRun(obs: DryRunObservation, records: DryrunRecord[]): D
     return {
       status: "live-gate",
       substantiated: false,
-      detail: "the gate this run went through reported `dry_run = false` — every mutation it accepted was executed against GitHub for real.",
+      detail:
+        "the gate this run went through reported `dry_run = false` — every mutation it accepted was executed against GitHub for real.",
     };
   }
   if ((obs.executedMutations ?? 0) > 0) {
@@ -521,8 +638,16 @@ export function comparePr(input: ComparePrInput): CompareResult {
 
   const missed = parity.filter((r) => r.status === "missed-by-sandbox");
   const badAnchors = anchors.filter((a) => a.status !== "on-changed-line");
-  const gatesPass = missed.length === 0 && violations.length === 0 && badAnchors.length === 0 && settled.length === 0 && input.sandboxReview !== null;
-  const dryRun = attestDryRun(input.dryRun ?? { gateIsDryRun: null, executedMutations: null }, input.records);
+  const gatesPass =
+    missed.length === 0 &&
+    violations.length === 0 &&
+    badAnchors.length === 0 &&
+    settled.length === 0 &&
+    input.sandboxReview !== null;
+  const dryRun = attestDryRun(
+    input.dryRun ?? { gateIsDryRun: null, executedMutations: null },
+    input.records,
+  );
 
   const L: string[] = [];
   L.push(`# PR #${input.pr} — old flow vs sandbox (dry run)`);
@@ -532,12 +657,18 @@ export function comparePr(input: ComparePrInput): CompareResult {
   L.push("");
   L.push(`| verdict | old flow | sandbox (dry run) |`);
   L.push(`| --- | --- | --- |`);
-  L.push(`| state | ${input.oldReview?.state ?? "—"} | ${input.sandboxReview?.state ?? "— (no create_review record)"} |`);
-  L.push(`| inline comments | ${input.oldReview?.comments.length ?? 0} | ${input.sandboxReview?.comments.length ?? 0} |`);
+  L.push(
+    `| state | ${input.oldReview?.state ?? "—"} | ${input.sandboxReview?.state ?? "— (no create_review record)"} |`,
+  );
+  L.push(
+    `| inline comments | ${input.oldReview?.comments.length ?? 0} | ${input.sandboxReview?.comments.length ?? 0} |`,
+  );
   L.push(`| blockers | ${oldFindings.length} | ${sandboxFindings.length} |`);
   L.push("");
 
-  L.push(`## (a) Blocker parity ${missed.length === 0 ? "— PASS" : `— FAIL (${missed.length} missed)`}`);
+  L.push(
+    `## (a) Blocker parity ${missed.length === 0 ? "— PASS" : `— FAIL (${missed.length} missed)`}`,
+  );
   L.push("");
   if (parity.length === 0) {
     L.push("No blockers on either side.");
@@ -545,7 +676,12 @@ export function comparePr(input: ComparePrInput): CompareResult {
     L.push("| status | old flow | sandbox | score |");
     L.push("| --- | --- | --- | --- |");
     for (const r of parity) {
-      const flag = r.status === "matched" ? "matched" : r.status === "missed-by-sandbox" ? "**MISSED**" : "sandbox-only";
+      const flag =
+        r.status === "matched"
+          ? "matched"
+          : r.status === "missed-by-sandbox"
+            ? "**MISSED**"
+            : "sandbox-only";
       L.push(
         `| ${flag} | ${r.old ? `\`${r.old.path || "—"}\` ${esc(r.old.text)}` : "—"} | ${
           r.sandbox ? `\`${r.sandbox.path || "—"}\` ${esc(r.sandbox.text)}` : "—"
@@ -557,9 +693,13 @@ export function comparePr(input: ComparePrInput): CompareResult {
   }
   L.push("");
 
-  L.push(`## (b) Invariant scan ${violations.length === 0 ? "— PASS" : `— FAIL (${violations.length})`}`);
+  L.push(
+    `## (b) Invariant scan ${violations.length === 0 ? "— PASS" : `— FAIL (${violations.length})`}`,
+  );
   L.push("");
-  L.push(`${input.records.length} dry-run record(s); kinds: ${[...new Set(input.records.map((r) => r.kind))].join(", ") || "none"}.`);
+  L.push(
+    `${input.records.length} dry-run record(s); kinds: ${[...new Set(input.records.map((r) => r.kind))].join(", ") || "none"}.`,
+  );
   L.push(`Allowlist: ${ALLOWED_MUTATION_KINDS.join(", ")}.`);
   if (violations.length) {
     L.push("");
@@ -567,23 +707,33 @@ export function comparePr(input: ComparePrInput): CompareResult {
   }
   L.push("");
 
-  L.push(`## (c) Anchor validity ${badAnchors.length === 0 ? "— PASS" : `— FAIL (${badAnchors.length})`}`);
+  L.push(
+    `## (c) Anchor validity ${badAnchors.length === 0 ? "— PASS" : `— FAIL (${badAnchors.length})`}`,
+  );
   L.push("");
   if (anchors.length === 0) {
     L.push("No inline anchors.");
   } else {
     L.push("| file | line | status |");
     L.push("| --- | --- | --- |");
-    for (const a of anchors) L.push(`| \`${a.path}\` | ${a.line} | ${a.status === "on-changed-line" ? "ok" : `**${a.status}**`} |`);
+    for (const a of anchors)
+      L.push(
+        `| \`${a.path}\` | ${a.line} | ${a.status === "on-changed-line" ? "ok" : `**${a.status}**`} |`,
+      );
   }
   L.push("");
 
-  L.push(`## (d) Settled-thread discipline ${settled.length === 0 ? "— PASS" : `— FAIL (${settled.length})`}`);
+  L.push(
+    `## (d) Settled-thread discipline ${settled.length === 0 ? "— PASS" : `— FAIL (${settled.length})`}`,
+  );
   L.push("");
   if (settled.length === 0) {
     L.push("No sandbox finding re-raises a SETTLED thread.");
   } else {
-    for (const s of settled) L.push(`- re-raised (score ${s.score.toFixed(2)}): sandbox "${esc(s.finding.text)}" vs SETTLED "${esc(s.settled.text)}"`);
+    for (const s of settled)
+      L.push(
+        `- re-raised (score ${s.score.toFixed(2)}): sandbox "${esc(s.finding.text)}" vs SETTLED "${esc(s.settled.text)}"`,
+      );
   }
   L.push("");
 
@@ -608,7 +758,16 @@ export function comparePr(input: ComparePrInput): CompareResult {
   for (const line of renderDryRunAttestation(dryRun)) L.push(line);
   L.push("");
 
-  return { pr: input.pr, parity, violations, anchors, settled, gatesPass, dryRun, markdown: L.join("\n") };
+  return {
+    pr: input.pr,
+    parity,
+    violations,
+    anchors,
+    settled,
+    gatesPass,
+    dryRun,
+    markdown: L.join("\n"),
+  };
 }
 
 // ---- the run -----------------------------------------------------------------
@@ -647,7 +806,9 @@ export function renderIndex(results: CompareResult[]): string {
   L.push("(d) settled-thread discipline are hard gates; (e) tone/format is judgment.");
   L.push("Pass = (a)–(d) clean on all five PRs. The flip itself stays manual.");
   L.push("");
-  L.push("| PR | gates (a)–(d) | missed blockers | invariant violations | bad anchors | re-raised threads | dry run | report |");
+  L.push(
+    "| PR | gates (a)–(d) | missed blockers | invariant violations | bad anchors | re-raised threads | dry run | report |",
+  );
   L.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const r of results) {
     L.push(
@@ -660,13 +821,21 @@ export function renderIndex(results: CompareResult[]): string {
   }
   L.push("");
   const failing = results.filter((r) => !r.gatesPass);
-  L.push(failing.length === 0 ? `All ${results.length} PR(s) clean on the mechanical gates.` : `${failing.length} PR(s) fail a mechanical gate: ${failing.map((r) => `#${r.pr}`).join(", ")}.`);
+  L.push(
+    failing.length === 0
+      ? `All ${results.length} PR(s) clean on the mechanical gates.`
+      : `${failing.length} PR(s) fail a mechanical gate: ${failing.map((r) => `#${r.pr}`).join(", ")}.`,
+  );
   L.push("");
   const unverified = results.filter((r) => !r.dryRun.substantiated);
   if (unverified.length === 0) {
-    L.push(`Dry run VERIFIED on all ${results.length} PR(s): the gate recorded intents and executed none.`);
+    L.push(
+      `Dry run VERIFIED on all ${results.length} PR(s): the gate recorded intents and executed none.`,
+    );
   } else {
-    L.push(`⚠ **Dry run NOT substantiated on ${unverified.length} PR(s):** ${unverified.map((r) => `#${r.pr} (\`${r.dryRun.status}\`)`).join(", ")}.`);
+    L.push(
+      `⚠ **Dry run NOT substantiated on ${unverified.length} PR(s):** ${unverified.map((r) => `#${r.pr} (\`${r.dryRun.status}\`)`).join(", ")}.`,
+    );
     L.push("This report does not claim nothing was posted for those PRs.");
   }
   L.push("");
@@ -674,7 +843,11 @@ export function renderIndex(results: CompareResult[]): string {
 }
 
 /** The `qcr compare <pr...>` entrypoint. */
-export async function runCompare(prs: number[], deps: CompareDeps, print: (s: string) => void = console.log): Promise<CompareRun> {
+export async function runCompare(
+  prs: number[],
+  deps: CompareDeps,
+  print: (s: string) => void = console.log,
+): Promise<CompareRun> {
   const results: CompareResult[] = [];
   const reportPaths: string[] = [];
   mkdirSync(deps.outDir, { recursive: true });
@@ -687,14 +860,28 @@ export async function runCompare(prs: number[], deps: CompareDeps, print: (s: st
       await deps.fetchPatches(pr),
       await deps.readLedger(pr),
     ];
-    const dryRun = (await deps.observeDryRun?.(pr)) ?? { gateIsDryRun: null, executedMutations: null };
-    const result = comparePr({ pr, oldReview, sandboxReview: sandboxReviewFrom(records, pr), records, patches, ledgerMd, dryRun });
+    const dryRun = (await deps.observeDryRun?.(pr)) ?? {
+      gateIsDryRun: null,
+      executedMutations: null,
+    };
+    const result = comparePr({
+      pr,
+      oldReview,
+      sandboxReview: sandboxReviewFrom(records, pr),
+      records,
+      patches,
+      ledgerMd,
+      dryRun,
+    });
     const file = join(deps.outDir, `${pr}-compare.md`);
     writeFileSync(file, result.markdown);
     reportPaths.push(file);
     results.push(result);
     print(`#${pr}: gates ${result.gatesPass ? "PASS" : "FAIL"} -> ${file}`);
-    if (!result.dryRun.substantiated) print(`#${pr}: ⚠ dry run NOT substantiated (${result.dryRun.status}) — ${result.dryRun.detail}`);
+    if (!result.dryRun.substantiated)
+      print(
+        `#${pr}: ⚠ dry run NOT substantiated (${result.dryRun.status}) — ${result.dryRun.detail}`,
+      );
   }
 
   const indexPath = join(deps.outDir, "index.md");
@@ -705,6 +892,16 @@ export async function runCompare(prs: number[], deps: CompareDeps, print: (s: st
   // is void if the "comparison" posted. `unobserved` is loud in the report and
   // in the printed lines, but collect-only is a legitimate way to run this, so
   // it does not on its own decide the exit code.
-  const disproved = results.filter((r) => r.dryRun.status === "live-gate" || r.dryRun.status === "executed" || r.dryRun.status === "force-live");
-  return { results, reportPaths, indexPath, exitCode: results.every((r) => r.gatesPass) && disproved.length === 0 ? 0 : 1 };
+  const disproved = results.filter(
+    (r) =>
+      r.dryRun.status === "live-gate" ||
+      r.dryRun.status === "executed" ||
+      r.dryRun.status === "force-live",
+  );
+  return {
+    results,
+    reportPaths,
+    indexPath,
+    exitCode: results.every((r) => r.gatesPass) && disproved.length === 0 ? 0 : 1,
+  };
 }

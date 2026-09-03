@@ -77,15 +77,29 @@ function insertRound(s: StateStore, r: RoundSeed): void {
     });
 }
 
-function insertEvent(s: StateStore, ts: string, kind: string, pr: number | null, payload: unknown): void {
+function insertEvent(
+  s: StateStore,
+  ts: string,
+  kind: string,
+  pr: number | null,
+  payload: unknown,
+): void {
   s.db
     .prepare("INSERT INTO events (ts, kind, pr, payload) VALUES (?, ?, ?, ?)")
     .run(ts, kind, pr, JSON.stringify(payload));
 }
 
-function insertComment(s: StateStore, id: number, pr: number, roundNo: number, postedAt: string): void {
+function insertComment(
+  s: StateStore,
+  id: number,
+  pr: number,
+  roundNo: number,
+  postedAt: string,
+): void {
   s.db
-    .prepare("INSERT INTO bot_comments (comment_id, pr, kind, posted_at, round_no) VALUES (?, ?, 'review_comment', ?, ?)")
+    .prepare(
+      "INSERT INTO bot_comments (comment_id, pr, kind, posted_at, round_no) VALUES (?, ?, 'review_comment', ?, ?)",
+    )
     .run(id, pr, postedAt, roundNo);
 }
 
@@ -93,45 +107,96 @@ function insertComment(s: StateStore, id: number, pr: number, roundNo: number, p
  * escalated + overdue PR, and one PR that exists only as imported history. */
 function seed(s: StateStore): void {
   s.upsertPr({
-    number: 100, state: "tracked", head_sha: "aaa1", title: "PR 100", author: "alice",
-    trigger_ts: null, stale_recheck: 0, migration_gate: 0,
+    number: 100,
+    state: "tracked",
+    head_sha: "aaa1",
+    title: "PR 100",
+    author: "alice",
+    trigger_ts: null,
+    stale_recheck: 0,
+    migration_gate: 0,
   });
   s.upsertPr({
-    number: 101, state: "tracked", head_sha: "bbb1", title: "PR 101", author: "bob",
-    trigger_ts: null, stale_recheck: 0, migration_gate: 0,
+    number: 101,
+    state: "tracked",
+    head_sha: "bbb1",
+    title: "PR 101",
+    author: "bob",
+    trigger_ts: null,
+    stale_recheck: 0,
+    migration_gate: 0,
   });
 
   // PR 100 — two daemon rounds ending in an approval.
   insertRound(s, {
-    pr: 100, round_no: 1, round_type: "first", verdict: "REQUEST_CHANGES", spend_usd: 1.5, duration_s: 900,
-    started_at: "2026-08-14T09:05:00.000Z", deadline_at: "2026-08-14T09:50:00.000Z",
-    finished_at: "2026-08-14T09:20:00.000Z", additions: 30, deletions: 10, changed_files: 3,
+    pr: 100,
+    round_no: 1,
+    round_type: "first",
+    verdict: "REQUEST_CHANGES",
+    spend_usd: 1.5,
+    duration_s: 900,
+    started_at: "2026-08-14T09:05:00.000Z",
+    deadline_at: "2026-08-14T09:50:00.000Z",
+    finished_at: "2026-08-14T09:20:00.000Z",
+    additions: 30,
+    deletions: 10,
+    changed_files: 3,
     trigger_ts: "2026-08-14T09:00:00.000Z",
   });
   insertRound(s, {
-    pr: 100, round_no: 2, round_type: "re-review", lenses: "pass-baseline,pass-validate",
-    verdict: "APPROVE", spend_usd: 2, duration_s: 1800,
-    started_at: "2026-08-14T10:05:00.000Z", deadline_at: "2026-08-14T10:50:00.000Z",
-    finished_at: "2026-08-14T10:35:00.000Z", additions: 30, deletions: 10, changed_files: 3,
+    pr: 100,
+    round_no: 2,
+    round_type: "re-review",
+    lenses: "pass-baseline,pass-validate",
+    verdict: "APPROVE",
+    spend_usd: 2,
+    duration_s: 1800,
+    started_at: "2026-08-14T10:05:00.000Z",
+    deadline_at: "2026-08-14T10:50:00.000Z",
+    finished_at: "2026-08-14T10:35:00.000Z",
+    additions: 30,
+    deletions: 10,
+    changed_files: 3,
     trigger_ts: "2026-08-14T10:00:00.000Z",
   });
   // PR 101 — one escalated round that blew its deadline (an overrun).
   insertRound(s, {
-    pr: 101, round_no: 1, round_type: "first", lenses: "pass-security,pass-validate",
-    verdict: "ESCALATE", spend_usd: 0.5, duration_s: 2700,
-    started_at: "2026-08-14T11:00:00.000Z", deadline_at: "2026-08-14T11:30:00.000Z",
-    finished_at: "2026-08-14T11:45:00.000Z", additions: 500, deletions: 200, changed_files: 21,
+    pr: 101,
+    round_no: 1,
+    round_type: "first",
+    lenses: "pass-security,pass-validate",
+    verdict: "ESCALATE",
+    spend_usd: 0.5,
+    duration_s: 2700,
+    started_at: "2026-08-14T11:00:00.000Z",
+    deadline_at: "2026-08-14T11:30:00.000Z",
+    finished_at: "2026-08-14T11:45:00.000Z",
+    additions: 500,
+    deletions: 200,
+    changed_files: 21,
     trigger_ts: "2026-08-14T10:50:00.000Z",
   });
   // PR 200 — imported laptop-era history: verdict + timestamps, no spend/duration.
   insertRound(s, {
-    pr: 200, round_no: 0, round_type: "backfill", lenses: "", verdict: "APPROVE",
-    started_at: "2026-08-01T09:00:00.000Z", deadline_at: "2026-08-01T10:00:00.000Z",
-    finished_at: "2026-08-01T10:00:00.000Z", backfilled: 1, trigger_ts: "2026-08-01T09:00:00.000Z",
+    pr: 200,
+    round_no: 0,
+    round_type: "backfill",
+    lenses: "",
+    verdict: "APPROVE",
+    started_at: "2026-08-01T09:00:00.000Z",
+    deadline_at: "2026-08-01T10:00:00.000Z",
+    finished_at: "2026-08-01T10:00:00.000Z",
+    backfilled: 1,
+    trigger_ts: "2026-08-01T09:00:00.000Z",
   });
   s.upsertBackfillPrMeta({
-    pr: 200, title: "old PR", author: "carol", created_at: "2026-07-30T08:00:00.000Z",
-    merged_at: "2026-08-02T08:00:00.000Z", closed_at: "2026-08-02T08:00:00.000Z", merged: 1,
+    pr: 200,
+    title: "old PR",
+    author: "carol",
+    created_at: "2026-07-30T08:00:00.000Z",
+    merged_at: "2026-08-02T08:00:00.000Z",
+    closed_at: "2026-08-02T08:00:00.000Z",
+    merged: 1,
   });
 
   const t = (ts: string, from: string | null, to: string, event: string): void =>
@@ -141,12 +206,29 @@ function seed(s: StateStore): void {
   t("2026-08-14T09:20:00.000Z", "reviewing", "awaiting_author", "verdict");
   t("2026-08-14T10:05:00.000Z", "awaiting_author", "reviewing", "dispatched");
   t("2026-08-14T10:35:00.000Z", "reviewing", "tracked", "verdict");
-  insertEvent(s, "2026-08-14T10:50:00.000Z", "pr_transition", 101, { from: "tracked", to: "queued", event: "trigger" });
-  insertEvent(s, "2026-08-14T11:45:00.000Z", "pr_transition", 101, { from: "reviewing", to: "awaiting_human", event: "verdict" });
+  insertEvent(s, "2026-08-14T10:50:00.000Z", "pr_transition", 101, {
+    from: "tracked",
+    to: "queued",
+    event: "trigger",
+  });
+  insertEvent(s, "2026-08-14T11:45:00.000Z", "pr_transition", 101, {
+    from: "reviewing",
+    to: "awaiting_human",
+    event: "verdict",
+  });
 
-  insertEvent(s, "2026-08-14T09:20:00.000Z", "verdict_applied", 100, { verdict: "REQUEST_CHANGES", head_sha: "aaa0" });
-  insertEvent(s, "2026-08-14T09:50:00.000Z", "head_push", 100, { head_sha: "aaa1", source: "webhook" });
-  insertEvent(s, "2026-08-14T10:35:00.000Z", "verdict_applied", 100, { verdict: "APPROVE", head_sha: "aaa1" });
+  insertEvent(s, "2026-08-14T09:20:00.000Z", "verdict_applied", 100, {
+    verdict: "REQUEST_CHANGES",
+    head_sha: "aaa0",
+  });
+  insertEvent(s, "2026-08-14T09:50:00.000Z", "head_push", 100, {
+    head_sha: "aaa1",
+    source: "webhook",
+  });
+  insertEvent(s, "2026-08-14T10:35:00.000Z", "verdict_applied", 100, {
+    verdict: "APPROVE",
+    head_sha: "aaa1",
+  });
 
   insertComment(s, 9001, 100, 1, "2026-08-14T09:20:00.000Z");
   insertComment(s, 9002, 100, 1, "2026-08-14T09:20:00.000Z");
@@ -171,11 +253,14 @@ describe("statistics", () => {
   });
 
   it("keeps zero-count buckets in histograms", () => {
-    const h = histogram([30, 30, 100_000], [
-      { label: "<1m", max: 60 },
-      { label: "<5m", max: 300 },
-      { label: ">=5m", max: Number.POSITIVE_INFINITY },
-    ]);
+    const h = histogram(
+      [30, 30, 100_000],
+      [
+        { label: "<1m", max: 60 },
+        { label: "<5m", max: 300 },
+        { label: ">=5m", max: Number.POSITIVE_INFINITY },
+      ],
+    );
     expect(h).toEqual([
       { label: "<1m", count: 2 },
       { label: "<5m", count: 0 },
@@ -204,7 +289,12 @@ describe("computeMetrics", () => {
     });
     // The backfilled round joins the 30-day/all windows: one more round, one
     // more APPROVE, no extra dollar.
-    expect(m.windows.d30.header).toMatchObject({ rounds: 4, approvals: 2, spend_usd: 4, overruns: 1 });
+    expect(m.windows.d30.header).toMatchObject({
+      rounds: 4,
+      approvals: 2,
+      spend_usd: 4,
+      overruns: 1,
+    });
     expect(m.windows.all.header).toMatchObject({ rounds: 4, approvals: 2, spend_usd: 4 });
   });
 
@@ -225,7 +315,9 @@ describe("computeMetrics", () => {
   });
 
   it("derives time-in-state dwell from the transition log, running the open state up to now", () => {
-    const byState = new Map(computeMetrics(store, { now }).windows.d7.time_in_state.map((r) => [r.state, r]));
+    const byState = new Map(
+      computeMetrics(store, { now }).windows.d7.time_in_state.map((r) => [r.state, r]),
+    );
     expect(byState.get("queued")!.total_s).toBe(3600); // #100 300s + #101 3300s
     expect(byState.get("queued")!.median_s).toBe(300);
     expect(byState.get("awaiting_author")!.total_s).toBe(2700);
@@ -243,13 +335,23 @@ describe("computeMetrics", () => {
       { verdict: "REQUEST_CHANGES", count: 1 },
     ]);
     expect(w.spend.by_round_type).toEqual({ first: 2, "re-review": 2 });
-    expect(w.spend.by_lens).toEqual({ "pass-baseline": 3.5, "pass-validate": 4, "pass-security": 0.5 });
+    expect(w.spend.by_lens).toEqual({
+      "pass-baseline": 3.5,
+      "pass-validate": 4,
+      "pass-security": 0.5,
+    });
     expect(w.spend.per_pr_median).toBe(0.5);
     expect(w.spend.per_pr_p90).toBe(3.5);
     // #100 approved on its 2nd round; #101 is still open, so it does not count.
     expect(w.rounds_until_resolution.n).toBe(1);
     expect(w.rounds_until_resolution.median).toBe(2);
-    expect(w.rounds_until_resolution.histogram.map((b) => b.label)).toEqual(["1", "2", "3", "4", "5+"]);
+    expect(w.rounds_until_resolution.histogram.map((b) => b.label)).toEqual([
+      "1",
+      "2",
+      "3",
+      "4",
+      "5+",
+    ]);
   });
 
   it("keeps duration, overruns and spend free of backfilled rows", () => {
@@ -284,11 +386,30 @@ describe("computeMetrics", () => {
     expect(m.daily).toHaveLength(30);
     expect(m.daily[0]!.day).toBe("2026-07-16");
     expect(m.daily[29]!.day).toBe("2026-08-14");
-    expect(m.daily[29]).toEqual({ day: "2026-08-14", rounds: 3, prs: 2, spend_usd: 4, approvals: 1, request_changes: 1 });
+    expect(m.daily[29]).toEqual({
+      day: "2026-08-14",
+      rounds: 3,
+      prs: 2,
+      spend_usd: 4,
+      approvals: 1,
+      request_changes: 1,
+    });
     const backfillDay = m.daily.find((d) => d.day === "2026-08-01")!;
-    expect(backfillDay).toEqual({ day: "2026-08-01", rounds: 1, prs: 1, spend_usd: 0, approvals: 1, request_changes: 0 });
+    expect(backfillDay).toEqual({
+      day: "2026-08-01",
+      rounds: 1,
+      prs: 1,
+      spend_usd: 0,
+      approvals: 1,
+      request_changes: 0,
+    });
     expect(m.daily.find((d) => d.day === "2026-08-05")).toEqual({
-      day: "2026-08-05", rounds: 0, prs: 0, spend_usd: 0, approvals: 0, request_changes: 0,
+      day: "2026-08-05",
+      rounds: 0,
+      prs: 0,
+      spend_usd: 0,
+      approvals: 0,
+      request_changes: 0,
     });
   });
 
@@ -303,8 +424,12 @@ describe("computeMetrics", () => {
   it("buckets ops days by the configured zone's local date, not UTC (zone from opts)", () => {
     // 23:30Z on 2026-08-13 is already 2026-08-14 in Warsaw (CEST, UTC+2).
     insertRound(store, {
-      pr: 300, round_no: 1, verdict: "APPROVE", spend_usd: 1,
-      started_at: "2026-08-13T23:30:00.000Z", finished_at: "2026-08-13T23:40:00.000Z",
+      pr: 300,
+      round_no: 1,
+      verdict: "APPROVE",
+      spend_usd: 1,
+      started_at: "2026-08-13T23:30:00.000Z",
+      finished_at: "2026-08-13T23:40:00.000Z",
     });
     const m = computeMetrics(store, { now, timeZone: "Europe/Warsaw" });
     expect(m.daily.find((d) => d.day === "2026-08-14")!.rounds).toBe(4);
@@ -360,7 +485,12 @@ describe("computeTimeline", () => {
     expect(tl.title).toBe("old PR");
     expect(tl.author).toBe("carol");
     expect(tl.backfilled_rounds).toEqual([
-      { round_no: 0, submitted_at: "2026-08-01T10:00:00.000Z", verdict: "APPROVE", trigger_ts: "2026-08-01T09:00:00.000Z" },
+      {
+        round_no: 0,
+        submitted_at: "2026-08-01T10:00:00.000Z",
+        verdict: "APPROVE",
+        trigger_ts: "2026-08-01T09:00:00.000Z",
+      },
     ]);
     expect(tl.items.every((i) => i.kind !== "round_start")).toBe(true);
   });
@@ -386,11 +516,23 @@ describe("schema migrations", () => {
     const path = join(dir, "state.db");
     for (let i = 0; i < 3; i++) {
       const s = new StateStore(path, now);
-      const cols = (s.db.prepare("PRAGMA table_info(rounds)").all() as Array<{ name: string }>).map((c) => c.name);
-      for (const c of ["additions", "deletions", "changed_files", "backfilled", "gh_review_id", "gh_commit_id", "trigger_ts"]) {
+      const cols = (s.db.prepare("PRAGMA table_info(rounds)").all() as Array<{ name: string }>).map(
+        (c) => c.name,
+      );
+      for (const c of [
+        "additions",
+        "deletions",
+        "changed_files",
+        "backfilled",
+        "gh_review_id",
+        "gh_commit_id",
+        "trigger_ts",
+      ]) {
         expect(cols.filter((x) => x === c)).toHaveLength(1);
       }
-      const commentCols = (s.db.prepare("PRAGMA table_info(bot_comments)").all() as Array<{ name: string }>).map((c) => c.name);
+      const commentCols = (
+        s.db.prepare("PRAGMA table_info(bot_comments)").all() as Array<{ name: string }>
+      ).map((c) => c.name);
       expect(commentCols.filter((x) => x === "round_no")).toHaveLength(1);
       expect(s.allBackfillPrMeta()).toEqual([]);
       s.close();
@@ -429,13 +571,21 @@ describe("schema migrations", () => {
 
   it("defaults a registered bot comment to the PR's latest daemon-run round", () => {
     store.registerBotComment(7777, 100);
-    const row = store.db.prepare("SELECT round_no FROM bot_comments WHERE comment_id = 7777").get() as { round_no: number };
+    const row = store.db
+      .prepare("SELECT round_no FROM bot_comments WHERE comment_id = 7777")
+      .get() as { round_no: number };
     expect(row.round_no).toBe(2);
     // An explicit round wins, and an unknown PR simply records no link.
     store.registerBotComment(7778, 100, "review", 1);
     store.registerBotComment(7779, 4242);
-    expect((store.db.prepare("SELECT round_no FROM bot_comments WHERE comment_id = 7778").get() as any).round_no).toBe(1);
-    expect((store.db.prepare("SELECT round_no FROM bot_comments WHERE comment_id = 7779").get() as any).round_no).toBeNull();
+    expect(
+      (store.db.prepare("SELECT round_no FROM bot_comments WHERE comment_id = 7778").get() as any)
+        .round_no,
+    ).toBe(1);
+    expect(
+      (store.db.prepare("SELECT round_no FROM bot_comments WHERE comment_id = 7779").get() as any)
+        .round_no,
+    ).toBeNull();
   });
 });
 
@@ -443,7 +593,9 @@ describe("schema migrations", () => {
 
 describe("events_by_kind", () => {
   it("counts EVERY event kind in the window, busiest first", () => {
-    insertEvent(store, "2026-08-14T11:00:00.000Z", "overseer_anomaly", null, { what: "malformed verdict" });
+    insertEvent(store, "2026-08-14T11:00:00.000Z", "overseer_anomaly", null, {
+      what: "malformed verdict",
+    });
     const w = computeMetrics(store, { now }).windows.d7;
     expect(w.events_by_kind).toEqual([
       { kind: "pr_transition", count: 7 },
@@ -469,7 +621,8 @@ describe("events_by_kind", () => {
 
   it("caps the list at 12 kinds, keeping the busiest", () => {
     for (let i = 0; i < 15; i++) {
-      for (let n = 0; n <= i; n++) insertEvent(store, "2026-08-14T11:30:00.000Z", `k${String(i).padStart(2, "0")}`, null, {});
+      for (let n = 0; n <= i; n++)
+        insertEvent(store, "2026-08-14T11:30:00.000Z", `k${String(i).padStart(2, "0")}`, null, {});
     }
     const w = computeMetrics(store, { now }).windows.d7;
     expect(EVENT_KIND_CAP).toBe(12);
@@ -491,7 +644,13 @@ describe("events_by_kind", () => {
 describe("ops", () => {
   it("computeMetrics fills only what sqlite knows and never invents a build", () => {
     const ops = computeMetrics(store, { now }).ops;
-    expect(ops).toEqual({ heartbeat: null, dry_run: false, running_rounds: 0, max_concurrent_rounds: 0, build: null });
+    expect(ops).toEqual({
+      heartbeat: null,
+      dry_run: false,
+      running_rounds: 0,
+      max_concurrent_rounds: 0,
+      build: null,
+    });
     expect(emptyOps()).toEqual(ops);
   });
 
@@ -524,11 +683,18 @@ describe("ops", () => {
   });
 
   it("degrades to nulls/zeros — a missing or corrupt file is never a throw", () => {
-    const throwing = { readFile: (p: string): string => { throw new Error(`ENOENT: ${p}`); }, parseBuildSha };
+    const throwing = {
+      readFile: (p: string): string => {
+        throw new Error(`ENOENT: ${p}`);
+      },
+      parseBuildSha,
+    };
     expect(readOps({ statusPath: "/nope", buildShaPath: "/nope" }, throwing)).toEqual(emptyOps());
     // ...and the sqlite-derived base survives the missing files
     const base = { ...emptyOps(), running_rounds: 4 };
-    expect(readOps({ statusPath: "/nope", buildShaPath: "/nope" }, throwing, base).running_rounds).toBe(4);
+    expect(
+      readOps({ statusPath: "/nope", buildShaPath: "/nope" }, throwing, base).running_rounds,
+    ).toBe(4);
 
     const junk = { readFile: () => "not json at all", parseBuildSha };
     expect(readOps({ statusPath: "/s", buildShaPath: "/b" }, junk)).toEqual(emptyOps());
@@ -536,7 +702,10 @@ describe("ops", () => {
     // a snapshot without a heartbeat field falls back to written_at; a marker
     // without a timestamp still yields the sha
     const partial = {
-      readFile: (p: string) => (p === "/s" ? JSON.stringify({ written_at: "2026-08-14T11:00:00Z", dry_run: true }) : "abc1234\n"),
+      readFile: (p: string) =>
+        p === "/s"
+          ? JSON.stringify({ written_at: "2026-08-14T11:00:00Z", dry_run: true })
+          : "abc1234\n",
       parseBuildSha,
     };
     expect(readOps({ statusPath: "/s", buildShaPath: "/b" }, partial)).toEqual({
@@ -551,9 +720,22 @@ describe("ops", () => {
   // ---- -------------------------------------------------------------
 
   describe("cancellations by cause", () => {
-    const cancel = (pr: number, roundNo: number, cause: string, startedAt = "2026-08-14T08:00:00.000Z"): void => {
-      insertRound(store, { pr, round_no: roundNo, started_at: startedAt, finished_at: startedAt, status: "cancelled" });
-      store.db.prepare("UPDATE rounds SET cancel_cause = ? WHERE pr = ? AND round_no = ?").run(cause, pr, roundNo);
+    const cancel = (
+      pr: number,
+      roundNo: number,
+      cause: string,
+      startedAt = "2026-08-14T08:00:00.000Z",
+    ): void => {
+      insertRound(store, {
+        pr,
+        round_no: roundNo,
+        started_at: startedAt,
+        finished_at: startedAt,
+        status: "cancelled",
+      });
+      store.db
+        .prepare("UPDATE rounds SET cancel_cause = ? WHERE pr = ? AND round_no = ?")
+        .run(cause, pr, roundNo);
     };
 
     it("an empty window says none, rather than nothing at all", () => {
@@ -585,16 +767,23 @@ describe("ops", () => {
       cancel(300, 1, "orphan_sweep");
       cancel(303, 1, "deadline_overrun");
       const text = renderMetrics(computeMetrics(store, { now }));
-      expect(text).toContain("cancelled (7d): 2 — stopped dead 1 ⚑, orphan sweep (redeploy) 1  (1 needing a look)");
+      expect(text).toContain(
+        "cancelled (7d): 2 — stopped dead 1 ⚑, orphan sweep (redeploy) 1  (1 needing a look)",
+      );
     });
 
     it("an unclassified cancellation is reported as unclassified, not folded in", () => {
       insertRound(store, {
-        pr: 305, round_no: 1, started_at: "2026-08-14T08:00:00.000Z",
-        finished_at: "2026-08-14T08:10:00.000Z", status: "cancelled",
+        pr: 305,
+        round_no: 1,
+        started_at: "2026-08-14T08:00:00.000Z",
+        finished_at: "2026-08-14T08:10:00.000Z",
+        status: "cancelled",
       });
       const c = computeMetrics(store, { now }).windows.d7.cancellations;
-      expect(c.by_cause).toEqual([{ cause: "unknown", label: "unclassified", count: 1, loud: false }]);
+      expect(c.by_cause).toEqual([
+        { cause: "unknown", label: "unclassified", count: 1, loud: false },
+      ]);
     });
   });
 
@@ -604,8 +793,13 @@ describe("ops", () => {
       // the zombie sweep — with a `finished_at` stamped by that sweep, hours
       // after anything really happened.
       insertRound(store, {
-        pr: 400, round_no: 1, spend_usd: 4, started_at: "2026-08-14T08:00:00.000Z",
-        deadline_at: "2026-08-14T08:45:00.000Z", finished_at: "2026-08-14T20:00:00.000Z", status: "expired",
+        pr: 400,
+        round_no: 1,
+        spend_usd: 4,
+        started_at: "2026-08-14T08:00:00.000Z",
+        deadline_at: "2026-08-14T08:45:00.000Z",
+        finished_at: "2026-08-14T20:00:00.000Z",
+        status: "expired",
       });
     });
 
@@ -627,7 +821,13 @@ describe("ops", () => {
 
   it("renderMetrics surfaces the daemon line and the window's event traffic", () => {
     const payload = computeMetrics(store, { now });
-    payload.ops = { heartbeat: "2026-08-14T11:59:30Z", dry_run: false, running_rounds: 1, max_concurrent_rounds: 3, build: { sha: "abc1234", at: "2026-08-13T12:00:00Z", mode: "sync" } };
+    payload.ops = {
+      heartbeat: "2026-08-14T11:59:30Z",
+      dry_run: false,
+      running_rounds: 1,
+      max_concurrent_rounds: 3,
+      build: { sha: "abc1234", at: "2026-08-13T12:00:00Z", mode: "sync" },
+    };
     const text = renderMetrics(payload);
     expect(text).toContain("daemon: LIVE");
     expect(text).toContain("rounds 1/3");

@@ -14,7 +14,11 @@
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Pi, PiEventPayload } from "@earendil-works/pi-coding-agent";
-import type { LiveAgentProgress, LiveAgentStatus, RoundProgressSnapshot } from "../src/round-progress.js";
+import type {
+  LiveAgentProgress,
+  LiveAgentStatus,
+  RoundProgressSnapshot,
+} from "../src/round-progress.js";
 import { parseSessionCommandMarker } from "../src/session-command.js";
 
 /**
@@ -45,7 +49,7 @@ interface SubagentResultLike {
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : undefined;
 }
 
@@ -81,7 +85,10 @@ function subagentNames(args: Record<string, unknown>): string[] {
   const single = text(args.agent);
   if (single) return [single];
   if (!Array.isArray(args.tasks)) return [];
-  return args.tasks.map(record).map((task) => text(task?.agent)).filter((name): name is string => name !== undefined);
+  return args.tasks
+    .map(record)
+    .map((task) => text(task?.agent))
+    .filter((name): name is string => name !== undefined);
 }
 
 function reviewIdentity(body: string): { round_no: number; head_sha: string } | undefined {
@@ -89,7 +96,9 @@ function reviewIdentity(body: string): { round_no: number; head_sha: string } | 
   const head = /\*\*Worktree\*\*:[^\n]* @ `([^`]+)`/.exec(body);
   if (!round || !head) return undefined;
   const roundNo = Number(round[1]);
-  return Number.isInteger(roundNo) && roundNo > 0 ? { round_no: roundNo, head_sha: head[1]! } : undefined;
+  return Number.isInteger(roundNo) && roundNo > 0
+    ? { round_no: roundNo, head_sha: head[1]! }
+    : undefined;
 }
 
 function argPreview(args: Record<string, unknown>): string | undefined {
@@ -105,20 +114,30 @@ function userMessageText(event: PiEventPayload): string | undefined {
   if (message?.role !== "user" || !Array.isArray(message.content)) return undefined;
   return message.content
     .map(record)
-    .filter((part): part is Record<string, unknown> => part !== undefined && part.type === "text" && typeof part.text === "string")
+    .filter(
+      (part): part is Record<string, unknown> =>
+        part !== undefined && part.type === "text" && typeof part.text === "string",
+    )
     .map((part) => part.text as string)
     .join("\n");
 }
 
-function resultsFrom(event: PiEventPayload, carrier: "partialResult" | "result"): SubagentResultLike[] {
+function resultsFrom(
+  event: PiEventPayload,
+  carrier: "partialResult" | "result",
+): SubagentResultLike[] {
   const outer = record(event[carrier]);
   const details = record(outer?.details);
-  return Array.isArray(details?.results) ? details.results.filter((x): x is SubagentResultLike => record(x) !== undefined) : [];
+  return Array.isArray(details?.results)
+    ? details.results.filter((x): x is SubagentResultLike => record(x) !== undefined)
+    : [];
 }
 
 function currentTool(progress: SubagentResultLike["progress"]): string | undefined {
   if (!Array.isArray(progress?.recentTools)) return undefined;
-  const tools = progress.recentTools.map(record).filter((x): x is Record<string, unknown> => x !== undefined);
+  const tools = progress.recentTools
+    .map(record)
+    .filter((x): x is Record<string, unknown> => x !== undefined);
   const picked = [...tools].reverse().find((x) => x.status === "running") ?? tools.at(-1);
   if (!picked) return undefined;
   const name = text(picked.tool) ?? "tool";
@@ -127,7 +146,11 @@ function currentTool(progress: SubagentResultLike["progress"]): string | undefin
 }
 
 /** Tool-call / assistant-text extraction from the native shape's transcript. */
-function nativeMessageParts(result: SubagentResultLike): { toolCount: number; lastText?: string; lastTool?: string } {
+function nativeMessageParts(result: SubagentResultLike): {
+  toolCount: number;
+  lastText?: string;
+  lastTool?: string;
+} {
   if (!Array.isArray(result.messages)) return { toolCount: 0 };
   let toolCount = 0;
   let lastText: string | undefined;
@@ -146,7 +169,11 @@ function nativeMessageParts(result: SubagentResultLike): { toolCount: number; la
   return { toolCount, lastText, lastTool };
 }
 
-function asAgent(result: SubagentResultLike, fallbackAgent?: string, live = false): LiveAgentProgress | undefined {
+function asAgent(
+  result: SubagentResultLike,
+  fallbackAgent?: string,
+  live = false,
+): LiveAgentProgress | undefined {
   const agent = text(result.agent) ?? fallbackAgent;
   if (!agent) return undefined;
   const progress = result.progress;
@@ -158,7 +185,9 @@ function asAgent(result: SubagentResultLike, fallbackAgent?: string, live = fals
     result.stopReason === "error" ||
     result.stopReason === "aborted";
   const st: LiveAgentStatus =
-    progress?.status === "completed" || progress?.status === "failed" || progress?.status === "running"
+    progress?.status === "completed" ||
+    progress?.status === "failed" ||
+    progress?.status === "running"
       ? progress.status
       : nativeFailed
         ? "failed"
@@ -313,7 +342,11 @@ export default function activate(pi: Pi): void {
     let changed = false;
     for (const [index, result] of reported.entries()) {
       const stillLive = mode === "parallel" ? result.exitCode === -1 : true;
-      const agent = asAgent(result, fallbacks[index] ?? (fallbacks.length === 1 ? fallbacks[0] : undefined), stillLive);
+      const agent = asAgent(
+        result,
+        fallbacks[index] ?? (fallbacks.length === 1 ? fallbacks[0] : undefined),
+        stillLive,
+      );
       if (!agent) continue;
       const key = executionKey(toolId(event), agent.agent);
       const previous = agents.get(key);
@@ -338,7 +371,10 @@ export default function activate(pi: Pi): void {
     const reported = resultsFrom(event, "result");
     const finalAgents: LiveAgentProgress[] = [];
     for (const [index, result] of reported.entries()) {
-      const agent = asAgent(result, fallbacks[index] ?? (fallbacks.length === 1 ? fallbacks[0] : undefined));
+      const agent = asAgent(
+        result,
+        fallbacks[index] ?? (fallbacks.length === 1 ? fallbacks[0] : undefined),
+      );
       if (!agent) continue;
       const key = executionKey(id, agent.agent);
       const previous = agents.get(key);
@@ -358,7 +394,13 @@ export default function activate(pi: Pi): void {
         const key = executionKey(id, fallback);
         const previous = agents.get(key);
         const finalAgent: LiveAgentProgress = {
-          ...(previous ?? { execution_id: key, agent: fallback, duration_ms: 0, tool_count: 0, started_at: nowIso() }),
+          ...(previous ?? {
+            execution_id: key,
+            agent: fallback,
+            duration_ms: 0,
+            tool_count: 0,
+            started_at: nowIso(),
+          }),
           status: failed ? "failed" : "completed",
           finished_at: previous?.finished_at ?? nowIso(),
         };
@@ -368,9 +410,11 @@ export default function activate(pi: Pi): void {
     }
     callAgents.delete(id);
     snapshot.active_tool = undefined;
-    activity(finalAgents.length > 0
-      ? `${finalAgents.map((agent) => `${agent.agent} ${agent.status}`).join(", ")}`
-      : `${toolName(event)} completed`);
+    activity(
+      finalAgents.length > 0
+        ? `${finalAgents.map((agent) => `${agent.agent} ${agent.status}`).join(", ")}`
+        : `${toolName(event)} completed`,
+    );
   });
 
   pi.on("agent_settled", () => {

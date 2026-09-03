@@ -38,7 +38,12 @@ function fakeStreams() {
   input.resume = () => {};
   input.pause = () => {};
   input.setRawMode = () => {};
-  return { out, input, written: () => buf, type: (s: string | Buffer) => input.emit("data", Buffer.from(s)) };
+  return {
+    out,
+    input,
+    written: () => buf,
+    type: (s: string | Buffer) => input.emit("data", Buffer.from(s)),
+  };
 }
 
 const emptyState = (over: Partial<DeployState> = {}): DeployState => ({
@@ -66,7 +71,11 @@ describe("deploy tab argv + parsing", () => {
   });
 
   it("parses BUILD_SHA lines and rejects garbage", () => {
-    expect(parseBuildSha("540a9d0 2026-08-14T13:10:00Z sync\n")).toEqual({ sha: "540a9d0", at: "2026-08-14T13:10:00Z", mode: "sync" });
+    expect(parseBuildSha("540a9d0 2026-08-14T13:10:00Z sync\n")).toEqual({
+      sha: "540a9d0",
+      at: "2026-08-14T13:10:00Z",
+      mode: "sync",
+    });
     expect(parseBuildSha("540a9d0\n")).toEqual({ sha: "540a9d0", at: undefined, mode: undefined });
     expect(parseBuildSha("")).toBeUndefined();
     expect(parseBuildSha("not-a-sha here\n")).toBeUndefined();
@@ -133,7 +142,11 @@ describe("RealDeployFetcher", () => {
   // The read SUCCEEDED here — the content is the problem — so it is neither a
   // missing marker nor an ssh failure, and neither of those sentences is true.
   it("a marker that exists but is garbage is unparseable — not absent, not unread", async () => {
-    const { f, localCalls } = fetcherWith(ok("not-a-sha here\n"), { [HEAD_ARGV.join(" ")]: ok("bbb2222\n"), [DIRTY_ARGV.join(" ")]: ok(""), [PLAN_ARGV.join(" ")]: ok("") });
+    const { f, localCalls } = fetcherWith(ok("not-a-sha here\n"), {
+      [HEAD_ARGV.join(" ")]: ok("bbb2222\n"),
+      [DIRTY_ARGV.join(" ")]: ok(""),
+      [PLAN_ARGV.join(" ")]: ok(""),
+    });
     expect((await f.load()).deployed).toBe("unparseable");
     expect(localCalls.some((c) => c.includes("log"))).toBe(false);
   });
@@ -141,7 +154,12 @@ describe("RealDeployFetcher", () => {
 
 describe("deployLines", () => {
   it("says nothing-to-deploy when the VM already runs HEAD and the tree is clean", () => {
-    const text = stripAnsi(deployLines(emptyState({ deployed: { sha: "aaa1111" }, head: "aaa1111", commits: [], diffstat: [] }), 90).join("\n"));
+    const text = stripAnsi(
+      deployLines(
+        emptyState({ deployed: { sha: "aaa1111" }, head: "aaa1111", commits: [], diffstat: [] }),
+        90,
+      ).join("\n"),
+    );
     expect(text).toContain("nothing to deploy");
     expect(text).toContain("./scripts/deploy.sh sync");
     expect(text).toContain("press D twice");
@@ -170,15 +188,21 @@ describe("deployLines", () => {
   });
 
   it("renders 'no marker' and 'could not read' as different sentences, and an unread HEAD as unknown", () => {
-    const absent = stripAnsi(deployLines(emptyState({ deployed: "absent", head: "ccc3333" }), 90).join("\n"));
+    const absent = stripAnsi(
+      deployLines(emptyState({ deployed: "absent", head: "ccc3333" }), 90).join("\n"),
+    );
     expect(absent).toContain("no BUILD_SHA on the VM yet");
     expect(absent).not.toContain("could not be read");
-    const unread = stripAnsi(deployLines(emptyState({ deployed: undefined, head: undefined }), 90).join("\n"));
+    const unread = stripAnsi(
+      deployLines(emptyState({ deployed: undefined, head: undefined }), 90).join("\n"),
+    );
     expect(unread).toContain("could not be read");
     expect(unread).not.toContain("no BUILD_SHA on the VM yet");
     expect(unread).toContain("HEAD unknown");
     // A corrupt marker was READ — blaming ssh/docker for it would be false.
-    const corrupt = stripAnsi(deployLines(emptyState({ deployed: "unparseable", head: "ccc3333" }), 160).join("\n"));
+    const corrupt = stripAnsi(
+      deployLines(emptyState({ deployed: "unparseable", head: "ccc3333" }), 160).join("\n"),
+    );
     expect(corrupt).toContain("corrupt marker");
     expect(corrupt).not.toContain("could not be read");
     expect(corrupt).not.toContain("no BUILD_SHA on the VM yet");
@@ -186,7 +210,9 @@ describe("deployLines", () => {
   });
 
   it("flags a deployed sha unknown to local git instead of pretending 0 pending", () => {
-    const text = stripAnsi(deployLines(emptyState({ deployed: { sha: "deadbee" }, head: "ccc3333" }), 90).join("\n"));
+    const text = stripAnsi(
+      deployLines(emptyState({ deployed: { sha: "deadbee" }, head: "ccc3333" }), 90).join("\n"),
+    );
     expect(text).toContain("unknown to local git");
     expect(text).not.toContain("PENDING");
   });
@@ -214,13 +240,16 @@ function publishStatus(app: App, runningRounds: number, draining = true): void {
   app.hooks.onPoll?.(app);
 }
 
-const settle = async (): Promise<void> => { await new Promise((r) => setTimeout(r, 0)); };
+const settle = async (): Promise<void> => {
+  await new Promise((r) => setTimeout(r, 0));
+};
 
 function quietDrain(rounds = 0): DeployDrainSender {
   return {
-    set: async (on) => on
-      ? { ok: true, draining: true, running_rounds: rounds }
-      : { ok: true, draining: false, dropped_deliveries: 0 },
+    set: async (on) =>
+      on
+        ? { ok: true, draining: true, running_rounds: rounds }
+        : { ok: true, draining: false, dropped_deliveries: 0 },
   };
 }
 
@@ -232,12 +261,26 @@ describe("deploy tab drain orchestration", () => {
     const drain: DeployDrainSender = {
       set: async (on) => {
         drainCalls.push(on);
-        return { ok: true, draining: on, running_rounds: on ? 2 : undefined, dropped_deliveries: on ? undefined : 0 };
+        return {
+          ok: true,
+          draining: on,
+          running_rounds: on ? 2 : undefined,
+          dropped_deliveries: on ? undefined : 0,
+        };
       },
     };
     let deploys = 0;
-    app.hooks.deployRun = (_a, _id, _data, exit) => { deploys++; exit(0); return { kill: () => {} }; };
-    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 1000, drain);
+    app.hooks.deployRun = (_a, _id, _data, exit) => {
+      deploys++;
+      exit(0);
+      return { kill: () => {} };
+    };
+    const st = installDeployHooks(
+      app,
+      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      () => 1000,
+      drain,
+    );
     const run = app.run();
     streams.type("5");
     await settle();
@@ -262,7 +305,8 @@ describe("deploy tab drain orchestration", () => {
     expect(stripAnsi(streams.written())).toContain("healthy boot will auto-lift the drain");
     // With the finished log on screen `D` is not offered (deployKeys) — the
     // bar says `x close log` — so the key is not this tab's and does nothing.
-    streams.type("D"); streams.type("D");
+    streams.type("D");
+    streams.type("D");
     expect(deploys).toBe(1);
     expect(deployKeys(st).bar.map((b) => b.key)).toEqual(["x"]);
     streams.type("x");
@@ -281,38 +325,79 @@ describe("deploy tab drain orchestration", () => {
     const firstStreams = fakeStreams();
     const first = new App(TUI_DEFAULTS, async () => ok(""), firstStreams.out, firstStreams.input);
     const drain = quietDrain(2);
-    installDeployHooks(first, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 1000, drain, store);
+    installDeployHooks(
+      first,
+      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      () => 1000,
+      drain,
+      store,
+    );
     const firstRun = first.run();
-    firstStreams.type("5"); await settle();
-    firstStreams.type("D"); firstStreams.type("D"); await settle();
+    firstStreams.type("5");
+    await settle();
+    firstStreams.type("D");
+    firstStreams.type("D");
+    await settle();
     expect(store.read()?.phase).toBe("waiting-rounds");
-    first.quit(); await firstRun;
+    first.quit();
+    await firstRun;
 
     const secondStreams = fakeStreams();
-    const second = new App(TUI_DEFAULTS, async () => ok(""), secondStreams.out, secondStreams.input);
+    const second = new App(
+      TUI_DEFAULTS,
+      async () => ok(""),
+      secondStreams.out,
+      secondStreams.input,
+    );
     let deploys = 0;
-    second.hooks.deployRun = (_a, _id, _d, exit) => { deploys++; exit(0); return { kill: () => {} }; };
-    const restored = installDeployHooks(second, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 2000, drain, store);
+    second.hooks.deployRun = (_a, _id, _d, exit) => {
+      deploys++;
+      exit(0);
+      return { kill: () => {} };
+    };
+    const restored = installDeployHooks(
+      second,
+      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      () => 2000,
+      drain,
+      store,
+    );
     const secondRun = second.run();
-    secondStreams.type("5"); await settle();
+    secondStreams.type("5");
+    await settle();
     expect(restored.deployPhase).toBe("waiting-rounds");
     publishStatus(second, 1);
     expect(deploys).toBe(0);
     publishStatus(second, 0);
     await settle();
     expect(deploys).toBe(1);
-    second.quit(); await secondRun;
+    second.quit();
+    await secondRun;
   });
 
   it("will not resume a zero-round drain until the restored target HEAD is loaded", async () => {
     const store = new MemoryDeployCeremonyStore();
-    store.write({ version: 1, phase: "waiting-rounds", target_head: "abc1234", updated_at: "2026-08-28T12:00:01Z" });
+    store.write({
+      version: 1,
+      phase: "waiting-rounds",
+      target_head: "abc1234",
+      updated_at: "2026-08-28T12:00:01Z",
+    });
     const finishLoads: Array<(value: any) => void> = [];
-    const fetcher = { load: () => new Promise<any>((resolve) => { finishLoads.push(resolve); }) };
+    const fetcher = {
+      load: () =>
+        new Promise<any>((resolve) => {
+          finishLoads.push(resolve);
+        }),
+    };
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let deploys = 0;
-    app.hooks.deployRun = (_a, _id, _d, exit) => { deploys++; exit(0); return { kill: () => {} }; };
+    app.hooks.deployRun = (_a, _id, _d, exit) => {
+      deploys++;
+      exit(0);
+      return { kill: () => {} };
+    };
     const st = installDeployHooks(app, fetcher, () => 2000, quietDrain(), store);
     const run = app.run();
     publishStatus(app, 0);
@@ -323,7 +408,8 @@ describe("deploy tab drain orchestration", () => {
     for (const finish of finishLoads) finish({ dirty: [], plan: [], head: "abc1234" });
     await settle();
     expect(deploys).toBe(1);
-    app.quit(); await run;
+    app.quit();
+    await run;
   });
 
   it("persists an abort requested during drain acknowledgement across hot reload", async () => {
@@ -332,13 +418,22 @@ describe("deploy tab drain orchestration", () => {
     const first = new App(TUI_DEFAULTS, async () => ok(""), firstStreams.out, firstStreams.input);
     const never = new Promise<any>(() => {});
     const pendingDrain: DeployDrainSender = { set: async () => never };
-    installDeployHooks(first, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 1000, pendingDrain, store);
+    installDeployHooks(
+      first,
+      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      () => 1000,
+      pendingDrain,
+      store,
+    );
     const firstRun = first.run();
-    firstStreams.type("5"); await settle();
-    firstStreams.type("D"); firstStreams.type("D");
+    firstStreams.type("5");
+    await settle();
+    firstStreams.type("D");
+    firstStreams.type("D");
     firstStreams.type("x");
     expect(store.read()?.phase).toBe("abort-requested");
-    first.quit(); await firstRun;
+    first.quit();
+    await firstRun;
 
     const calls: boolean[] = [];
     const resumedDrain: DeployDrainSender = {
@@ -350,17 +445,33 @@ describe("deploy tab drain orchestration", () => {
       },
     };
     const secondStreams = fakeStreams();
-    const second = new App(TUI_DEFAULTS, async () => ok(""), secondStreams.out, secondStreams.input);
+    const second = new App(
+      TUI_DEFAULTS,
+      async () => ok(""),
+      secondStreams.out,
+      secondStreams.input,
+    );
     let deploys = 0;
-    second.hooks.deployRun = () => { deploys++; return { kill: () => {} }; };
-    const restored = installDeployHooks(second, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 2000, resumedDrain, store);
+    second.hooks.deployRun = () => {
+      deploys++;
+      return { kill: () => {} };
+    };
+    const restored = installDeployHooks(
+      second,
+      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      () => 2000,
+      resumedDrain,
+      store,
+    );
     const secondRun = second.run();
-    await settle(); await settle();
+    await settle();
+    await settle();
     expect(calls).toEqual([true, false]);
     expect(restored.deployPhase).toBe("aborted");
     expect(deploys).toBe(0);
     expect(store.read()).toBeUndefined();
-    second.quit(); await secondRun;
+    second.quit();
+    await secondRun;
   });
 
   it("re-attaches to the same durable sync after the mandatory hot reload", async () => {
@@ -382,29 +493,46 @@ describe("deploy tab drain orchestration", () => {
       finish = onExit;
       return { kill: () => {} };
     };
-    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 2000, quietDrain(), store);
+    const st = installDeployHooks(
+      app,
+      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      () => 2000,
+      quietDrain(),
+      store,
+    );
     const run = app.run();
-    streams.type("5"); await settle();
+    streams.type("5");
+    await settle();
     expect(st.deployPhase).toBe("syncing");
     expect(st.run?.running).toBe(true);
     expect(attached).toEqual(["deploy-run-1234"]);
     finish!(0);
     expect(st.deployPhase).toBe("awaiting-lift");
     expect(store.read()?.deploy_run_id).toBe("deploy-run-1234");
-    app.quit(); await run;
+    app.quit();
+    await run;
   });
 
   it("never starts deploy when the daemon refuses the drain", async () => {
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let deploys = 0;
-    app.hooks.deployRun = () => { deploys++; return { kill: () => {} }; };
+    app.hooks.deployRun = () => {
+      deploys++;
+      return { kill: () => {} };
+    };
     const drain: DeployDrainSender = { set: async () => ({ ok: false, reason: "tier refused" }) };
-    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 1000, drain);
+    const st = installDeployHooks(
+      app,
+      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      () => 1000,
+      drain,
+    );
     const run = app.run();
     streams.type("5");
     await settle();
-    streams.type("D"); streams.type("D");
+    streams.type("D");
+    streams.type("D");
     await settle();
     expect(deploys).toBe(0);
     expect(st.deployPhase).toBe("drain-failed");
@@ -422,15 +550,30 @@ describe("deploy tab drain orchestration", () => {
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let deploys = 0;
-    app.hooks.deployRun = () => { deploys++; return { kill: () => {} }; };
-    const drain: DeployDrainSender = {
-      set: async () => ({ ok: true, draining: true, running_rounds: 0, issuer: "session", expires_at: "2026-09-02T10:30:00.000Z" }),
+    app.hooks.deployRun = () => {
+      deploys++;
+      return { kill: () => {} };
     };
-    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 1000, drain);
+    const drain: DeployDrainSender = {
+      set: async () => ({
+        ok: true,
+        draining: true,
+        running_rounds: 0,
+        issuer: "session",
+        expires_at: "2026-09-02T10:30:00.000Z",
+      }),
+    };
+    const st = installDeployHooks(
+      app,
+      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      () => 1000,
+      drain,
+    );
     const run = app.run();
     streams.type("5");
     await settle();
-    streams.type("D"); streams.type("D");
+    streams.type("D");
+    streams.type("D");
     await settle();
     publishStatus(app, 0);
     await settle();
@@ -456,12 +599,21 @@ describe("deploy tab drain orchestration", () => {
       },
     };
     let deploys = 0;
-    app.hooks.deployRun = () => { deploys++; return { kill: () => {} }; };
-    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 1000, drain);
+    app.hooks.deployRun = () => {
+      deploys++;
+      return { kill: () => {} };
+    };
+    const st = installDeployHooks(
+      app,
+      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      () => 1000,
+      drain,
+    );
     const run = app.run();
     streams.type("5");
     await settle();
-    streams.type("D"); streams.type("D");
+    streams.type("D");
+    streams.type("D");
     await settle();
     publishStatus(app, 2);
     streams.type("x");
@@ -479,11 +631,23 @@ describe("deploy tab drain orchestration", () => {
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let deploys = 0;
-    app.hooks.deployRun = () => { deploys++; return { kill: () => {} }; };
-    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 1000, quietDrain(2), store);
+    app.hooks.deployRun = () => {
+      deploys++;
+      return { kill: () => {} };
+    };
+    const st = installDeployHooks(
+      app,
+      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      () => 1000,
+      quietDrain(2),
+      store,
+    );
     const run = app.run();
-    streams.type("5"); await settle();
-    streams.type("D"); streams.type("D"); await settle();
+    streams.type("5");
+    await settle();
+    streams.type("D");
+    streams.type("D");
+    await settle();
     publishStatus(app, 2, true);
     expect(store.read()?.drain_observed).toBe(true);
     publishStatus(app, 0, false);
@@ -491,7 +655,8 @@ describe("deploy tab drain orchestration", () => {
     expect(deploys).toBe(0);
     expect(store.read()).toBeUndefined();
     expect(app.view.noticeLine).toContain("operator lifted the drain");
-    app.quit(); await run;
+    app.quit();
+    await run;
   });
 
   it("recognizes an external drain-off even before the first ON snapshot arrives", async () => {
@@ -499,18 +664,31 @@ describe("deploy tab drain orchestration", () => {
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let deploys = 0;
-    app.hooks.deployRun = () => { deploys++; return { kill: () => {} }; };
-    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 1000, quietDrain(2), store);
+    app.hooks.deployRun = () => {
+      deploys++;
+      return { kill: () => {} };
+    };
+    const st = installDeployHooks(
+      app,
+      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      () => 1000,
+      quietDrain(2),
+      store,
+    );
     const run = app.run();
-    streams.type("5"); await settle();
-    streams.type("D"); streams.type("D"); await settle();
+    streams.type("5");
+    await settle();
+    streams.type("D");
+    streams.type("D");
+    await settle();
     publishStatus(app, 0, false); // may still be the pre-command status generation
     expect(st.deployPhase).toBe("waiting-rounds");
     publishStatus(app, 0, false); // a newer undrained generation proves override
     expect(st.deployPhase).toBe("aborted");
     expect(deploys).toBe(0);
     expect(store.read()).toBeUndefined();
-    app.quit(); await run;
+    app.quit();
+    await run;
   });
 
   it("a failed sync leaves the drain standing until x acknowledges a safe retry", async () => {
@@ -521,15 +699,30 @@ describe("deploy tab drain orchestration", () => {
     const drain: DeployDrainSender = {
       set: async (on) => {
         calls.push(on);
-        return { ok: true, draining: on, running_rounds: on ? 0 : undefined, dropped_deliveries: on ? undefined : 0 };
+        return {
+          ok: true,
+          draining: on,
+          running_rounds: on ? 0 : undefined,
+          dropped_deliveries: on ? undefined : 0,
+        };
       },
     };
-    app.hooks.deployRun = (_a, _id, _data, exit) => { exit(1); return { kill: () => {} }; };
-    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 1000, drain, store);
+    app.hooks.deployRun = (_a, _id, _data, exit) => {
+      exit(1);
+      return { kill: () => {} };
+    };
+    const st = installDeployHooks(
+      app,
+      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      () => 1000,
+      drain,
+      store,
+    );
     const run = app.run();
     streams.type("5");
     await settle();
-    streams.type("D"); streams.type("D");
+    streams.type("D");
+    streams.type("D");
     await settle();
     publishStatus(app, 0);
     await settle();
@@ -553,7 +746,10 @@ describe("deploy tab keys", () => {
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let loads = 0;
     const st = installDeployHooks(app, {
-      load: async () => (loads++, { dirty: [], plan: ["plan — deploy.sh sync"], deployed: "absent" as const, head: "abc1234" }),
+      load: async () => (
+        loads++,
+        { dirty: [], plan: ["plan — deploy.sh sync"], deployed: "absent" as const, head: "abc1234" }
+      ),
     });
     const run = app.run();
     streams.type("5");
@@ -584,7 +780,12 @@ describe("deploy tab keys", () => {
       return { kill: () => {} };
     };
     let clock = 1000;
-    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => clock, quietDrain());
+    const st = installDeployHooks(
+      app,
+      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      () => clock,
+      quietDrain(),
+    );
     const run = app.run();
     streams.type("5");
     await new Promise((r) => setTimeout(r, 0));
@@ -624,7 +825,12 @@ describe("deploy tab keys", () => {
       return { kill: () => {} };
     };
     let clock = 1000;
-    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => clock, quietDrain());
+    const st = installDeployHooks(
+      app,
+      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      () => clock,
+      quietDrain(),
+    );
     const run = app.run();
     streams.type("5");
     await new Promise((r) => setTimeout(r, 0)); // render → buttonZone measured
@@ -660,8 +866,13 @@ describe("deploy tab keys", () => {
       exitFn = onExit;
       return { kill: () => {} };
     };
-    let clock = 1000;
-    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => clock, quietDrain());
+    const clock = 1000;
+    const st = installDeployHooks(
+      app,
+      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      () => clock,
+      quietDrain(),
+    );
     const run = app.run();
     streams.type("5");
     await new Promise((r) => setTimeout(r, 0));
@@ -703,7 +914,12 @@ describe("deploy tab keys", () => {
       exitFn = onExit;
       return { kill: () => killed++ };
     };
-    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 1000, quietDrain());
+    const st = installDeployHooks(
+      app,
+      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+      () => 1000,
+      quietDrain(),
+    );
     const run = app.run();
     streams.type("5");
     await new Promise((r) => setTimeout(r, 0));
@@ -728,7 +944,14 @@ describe("power button (stop/start the VM app)", () => {
   it("builds status + power commands from config", async () => {
     const { containerStatusArgv, powerCommand } = await import("../src/tui/deploytab.js");
     expect(containerStatusArgv(TUI_DEFAULTS)).toEqual([
-      "sudo", "docker", "ps", "-a", "--filter", "name=quickreview-sandbox", "--format", "{{.Status}}",
+      "sudo",
+      "docker",
+      "ps",
+      "-a",
+      "--filter",
+      "name=quickreview-sandbox",
+      "--format",
+      "{{.Status}}",
     ]);
     expect(powerCommand(TUI_DEFAULTS, "stop")).toBe("sudo docker stop quickreview-sandbox");
     expect(powerCommand(TUI_DEFAULTS, "start")).toBe("sudo docker start quickreview-sandbox");
@@ -745,7 +968,11 @@ describe("power button (stop/start the VM app)", () => {
       onExit(0);
       return { kill: () => {} };
     };
-    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234", containerStatus: status }) }, () => 1000);
+    const st = installDeployHooks(
+      app,
+      { load: async () => ({ dirty: [], plan: [], head: "abc1234", containerStatus: status }) },
+      () => 1000,
+    );
     const run = app.run();
     streams.type("5");
     await new Promise((r) => setTimeout(r, 0));
@@ -775,7 +1002,18 @@ describe("power button (stop/start the VM app)", () => {
     let powers = 0;
     app.hooks.powerRun = (_a, _action, _d, onExit) => (powers++, onExit(0), { kill: () => {} });
     app.hooks.deployRun = (_a, _id, _d, onExit) => (onExit(0), { kill: () => {} });
-    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234", containerStatus: "Up 5 minutes" }) }, () => 1000);
+    const st = installDeployHooks(
+      app,
+      {
+        load: async () => ({
+          dirty: [],
+          plan: [],
+          head: "abc1234",
+          containerStatus: "Up 5 minutes",
+        }),
+      },
+      () => 1000,
+    );
     const run = app.run();
     streams.type("5");
     await new Promise((r) => setTimeout(r, 0));

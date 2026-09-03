@@ -19,7 +19,10 @@ const PR = 101;
 function fakeAdapter(recorded: string[], dryrunDir: string): DaemonAdapter {
   const gateResult = (kind: string): GateResult => {
     recorded.push(kind);
-    writeFileSync(join(dryrunDir, `${Date.now()}-${recorded.length}-${kind}.json`), JSON.stringify({ kind }));
+    writeFileSync(
+      join(dryrunDir, `${Date.now()}-${recorded.length}-${kind}.json`),
+      JSON.stringify({ kind }),
+    );
     return { executed: false };
   };
   const pr: PrRef = {
@@ -35,7 +38,15 @@ function fakeAdapter(recorded: string[], dryrunDir: string): DaemonAdapter {
     labels: ["AI review requested"],
   };
   return {
-    searchLabelTriggered: async () => [{ number: PR, title: pr.title, user: { login: pr.author, type: "User" }, updated_at: pr.updated_at, created_at: pr.updated_at }],
+    searchLabelTriggered: async () => [
+      {
+        number: PR,
+        title: pr.title,
+        user: { login: pr.author, type: "User" },
+        updated_at: pr.updated_at,
+        created_at: pr.updated_at,
+      },
+    ],
     searchTeamTriggered: async () => [],
     searchAwaitingEscalationReviewer: async () => [],
     listOpenPrs: async () => [pr],
@@ -43,11 +54,16 @@ function fakeAdapter(recorded: string[], dryrunDir: string): DaemonAdapter {
     stalenessScan: async () => [],
     listBotReviewComments: async () => [],
     getRequestedReviewers: async () => ({ users: [], teams: [] }),
-    listPrFiles: async () => [{ filename: "src/app.ts", additions: 5, deletions: 1, status: "modified" }],
+    listPrFiles: async () => [
+      { filename: "src/app.ts", additions: 5, deletions: 1, status: "modified" },
+    ],
     addLabel: async () => gateResult("add_label"),
     removeLabel: async () => gateResult("remove_label"),
     deleteTeamReviewRequest: async () => gateResult("delete_team_review_request"),
-    requestEscalationReview: async () => ({ skipped: null, result: gateResult("request_reviewer") }),
+    requestEscalationReview: async () => ({
+      skipped: null,
+      result: gateResult("request_reviewer"),
+    }),
     createReview: async () => gateResult("create_review"),
   } as unknown as DaemonAdapter;
 }
@@ -129,30 +145,45 @@ describe("daemon wiring", () => {
       const running = store.roundsFor(PR)[0]!;
       const receiptDir = join(root, "state", "posting-receipts");
       mkdirSync(receiptDir, { recursive: true });
-      writeFileSync(join(receiptDir, `pr-${PR}-round-1.json`), JSON.stringify({
-        version: 1,
-        posting_key: running.posting_key,
-        marker: postingMarker(running.posting_key!),
-        pr: PR,
-        round_no: 1,
-        head_sha: "headsha1",
-        base_ref: "master",
-        intended_event: "APPROVE",
-        actual_event: "APPROVE",
-        status: "dryrun",
-        payload_sha256: "a".repeat(64),
-        prepared_at: new Date().toISOString(),
-        confirmed_at: new Date().toISOString(),
-      }));
+      writeFileSync(
+        join(receiptDir, `pr-${PR}-round-1.json`),
+        JSON.stringify({
+          version: 1,
+          posting_key: running.posting_key,
+          marker: postingMarker(running.posting_key!),
+          pr: PR,
+          round_no: 1,
+          head_sha: "headsha1",
+          base_ref: "master",
+          intended_event: "APPROVE",
+          actual_event: "APPROVE",
+          status: "dryrun",
+          payload_sha256: "a".repeat(64),
+          prepared_at: new Date().toISOString(),
+          confirmed_at: new Date().toISOString(),
+        }),
+      );
 
       // Session finishes: verdict file appears; the watcher applies it.
       writeFileSync(
         join(root, "verdict", `pr-${PR}-round-1.json`),
-        JSON.stringify({ pr: PR, round_no: 1, verdict: "APPROVE", head_sha: "headsha1", spend_usd: 1.25, finished_at: new Date().toISOString() }),
+        JSON.stringify({
+          pr: PR,
+          round_no: 1,
+          verdict: "APPROVE",
+          head_sha: "headsha1",
+          spend_usd: 1.25,
+          finished_at: new Date().toISOString(),
+        }),
       );
-      await vi.waitFor(() => expect(store.getPr(PR)?.state).toBe("tracked"), { timeout: 5000, interval: 50 });
+      await vi.waitFor(() => expect(store.getPr(PR)?.state).toBe("tracked"), {
+        timeout: 5000,
+        interval: 50,
+      });
 
-      const round = store.db.prepare("SELECT verdict, spend_usd, status FROM rounds WHERE pr = ?").get(PR) as any;
+      const round = store.db
+        .prepare("SELECT verdict, spend_usd, status FROM rounds WHERE pr = ?")
+        .get(PR) as any;
       expect(round.verdict).toBe("APPROVE");
       expect(round.spend_usd).toBeNull(); // self-reported spend is fiction — never stored
       expect(round.status).toBe("done");
@@ -170,12 +201,24 @@ describe("daemon wiring", () => {
     store.close();
     store = new StateStore(":memory:", () => clock);
     store.upsertPr({
-      number: PR, state: "queued", head_sha: "headsha1", title: "test PR", author: "someone",
-      trigger_ts: clock.toISOString(), trigger_provenance: "human", stale_recheck: 0, migration_gate: 0,
+      number: PR,
+      state: "queued",
+      head_sha: "headsha1",
+      title: "test PR",
+      author: "someone",
+      trigger_ts: clock.toISOString(),
+      trigger_provenance: "human",
+      stale_recheck: 0,
+      migration_gate: 0,
     });
     mkdirSync(join(root, "state", "round-progress"), { recursive: true });
     const recorded: string[] = [];
-    const orders: Array<{ round_no: number; head_sha: string; lenses: string[]; recovery?: unknown }> = [];
+    const orders: Array<{
+      round_no: number;
+      head_sha: string;
+      lenses: string[];
+      recovery?: unknown;
+    }> = [];
     const killed: number[] = [];
     const loaded = loadConfig(join(process.cwd(), "tests/fixtures/config.toml"));
     const cfg = {
@@ -198,14 +241,23 @@ describe("daemon wiring", () => {
         async dispatchRound(order) {
           orders.push(order);
           store.createSessionCommand({
-            id: `cmd-${order.round_no}`, pr: order.pr, session: `pr-${order.pr}`,
-            kind: "round", round_no: order.round_no, payload_sha256: `${order.round_no}`.repeat(64),
-            payload_path: `/payload/${order.round_no}.md`, inject_path: `/inject/${order.round_no}.md`,
+            id: `cmd-${order.round_no}`,
+            pr: order.pr,
+            session: `pr-${order.pr}`,
+            kind: "round",
+            round_no: order.round_no,
+            payload_sha256: `${order.round_no}`.repeat(64),
+            payload_path: `/payload/${order.round_no}.md`,
+            inject_path: `/inject/${order.round_no}.md`,
             next_check_at: clock.toISOString(),
           });
         },
-        async inject() {}, async injectOverseer() {}, async archiveAndClose() {},
-        async killSession(pr) { killed.push(pr); },
+        async inject() {},
+        async injectOverseer() {},
+        async archiveAndClose() {},
+        async killSession(pr) {
+          killed.push(pr);
+        },
       },
       now: () => clock,
       listen: false,
@@ -216,19 +268,43 @@ describe("daemon wiring", () => {
       const next = new Date(clock.getTime() + 45 * 60_000).toISOString();
       expect(store.claimSessionCommand(id, `owner-${roundNo}`, next)).toBeDefined();
       expect(store.markSessionCommandStarted(id, `owner-${roundNo}`, next)).toBe(true);
-      const discovery = orders.find((order) => order.round_no === roundNo)!.lenses.find((lens) => lens !== "pass-validate")!;
-      writeFileSync(join(root, "state", "round-progress", `pr-${PR}.json`), JSON.stringify({
-        version: 2, pr: PR, session: `pr-${PR}`,
-        run_started_at: clock.toISOString(), updated_at: clock.toISOString(), parent_status: "active",
-        command_id: id, command_sha256: `${roundNo}`.repeat(64), command_accepted_at: clock.toISOString(),
-        preparing_at: clock.toISOString(), round_no: roundNo, head_sha: "headsha1",
-        ...(withFanout ? { first_lens_started_at: clock.toISOString(), fanout_started_at: clock.toISOString() } : {}),
-        last_activity_at: clock.toISOString(), last_activity: withFanout ? `${discovery} running` : "compact context preparation",
-        agents: withFanout ? [{
-          execution_id: `fanout-${roundNo}:${discovery}`, agent: `${discovery}--sol-med`, status: "running",
-          duration_ms: 0, tool_count: 0, started_at: clock.toISOString(),
-        }] : [],
-      }));
+      const discovery = orders
+        .find((order) => order.round_no === roundNo)!
+        .lenses.find((lens) => lens !== "pass-validate")!;
+      writeFileSync(
+        join(root, "state", "round-progress", `pr-${PR}.json`),
+        JSON.stringify({
+          version: 2,
+          pr: PR,
+          session: `pr-${PR}`,
+          run_started_at: clock.toISOString(),
+          updated_at: clock.toISOString(),
+          parent_status: "active",
+          command_id: id,
+          command_sha256: `${roundNo}`.repeat(64),
+          command_accepted_at: clock.toISOString(),
+          preparing_at: clock.toISOString(),
+          round_no: roundNo,
+          head_sha: "headsha1",
+          ...(withFanout
+            ? { first_lens_started_at: clock.toISOString(), fanout_started_at: clock.toISOString() }
+            : {}),
+          last_activity_at: clock.toISOString(),
+          last_activity: withFanout ? `${discovery} running` : "compact context preparation",
+          agents: withFanout
+            ? [
+                {
+                  execution_id: `fanout-${roundNo}:${discovery}`,
+                  agent: `${discovery}--sol-med`,
+                  status: "running",
+                  duration_ms: 0,
+                  tool_count: 0,
+                  started_at: clock.toISOString(),
+                },
+              ]
+            : [],
+        }),
+      );
     };
 
     await daemon.pump();
@@ -241,22 +317,39 @@ describe("daemon wiring", () => {
     }
 
     const debt = store.openReviewFailure(PR)!;
-    expect(debt).toMatchObject({ stage: "first_pass_start", next_action: "retry_wait", attempts: 2 });
+    expect(debt).toMatchObject({
+      stage: "first_pass_start",
+      next_action: "retry_wait",
+      attempts: 2,
+    });
     expect(debt.next_retry_at).toBe(new Date(clock.getTime() + 15 * 60_000).toISOString());
     expect(killed).toEqual([PR, PR, PR]);
     expect(store.runningRounds()).toHaveLength(0);
 
     clock = new Date(debt.next_retry_at!);
     expect(await daemon.retryDueReviewFailures()).toBe(1);
-    expect(orders.at(-1)).toMatchObject({ round_no: 4, head_sha: "headsha1", recovery: expect.any(Object) });
+    expect(orders.at(-1)).toMatchObject({
+      round_no: 4,
+      head_sha: "headsha1",
+      recovery: expect.any(Object),
+    });
     accept(4, true);
     await daemon.scanRoundStages();
 
     expect(store.runningRounds()).toHaveLength(1);
-    expect(store.runningRounds()[0]).toMatchObject({ round_no: 4, fanout_started_at: clock.toISOString() });
+    expect(store.runningRounds()[0]).toMatchObject({
+      round_no: 4,
+      fanout_started_at: clock.toISOString(),
+    });
     expect(store.selfRequeueCount(PR, "headsha1")).toBe(0);
     expect(store.openReviewFailure(PR)).toBeUndefined();
-    expect((store.db.prepare("SELECT COUNT(*) AS c FROM session_commands WHERE pr=?").get(PR) as { c: number }).c).toBe(4);
+    expect(
+      (
+        store.db.prepare("SELECT COUNT(*) AS c FROM session_commands WHERE pr=?").get(PR) as {
+          c: number;
+        }
+      ).c,
+    ).toBe(4);
     expect(recorded).not.toContain("create_review");
     expect(await daemon.retryDueReviewFailures()).toBe(0);
     expect(orders).toHaveLength(4);
@@ -267,21 +360,40 @@ describe("daemon wiring", () => {
     store.close();
     store = new StateStore(":memory:", () => clock);
     store.upsertPr({
-      number: PR, state: "reviewing", head_sha: "headsha1", title: "test PR", author: "someone",
-      trigger_ts: "2026-09-02T14:00:00.000Z", trigger_provenance: "human",
-      stale_recheck: 0, migration_gate: 0,
+      number: PR,
+      state: "reviewing",
+      head_sha: "headsha1",
+      title: "test PR",
+      author: "someone",
+      trigger_ts: "2026-09-02T14:00:00.000Z",
+      trigger_provenance: "human",
+      stale_recheck: 0,
+      migration_gate: 0,
     });
     const sourceRound = store.startRound(PR, "re-review", ["pass-baseline", "pass-validate"], 75);
     store.stampPostingKey(sourceRound, `v1:${PR}:1:headsha1`);
     store.createSessionCommand({
-      id: "cmd-prepass", pr: PR, session: `pr-${PR}`, kind: "round", round_no: 1,
-      payload_sha256: "a".repeat(64), payload_path: "/payload/source.md", inject_path: "/inject/source.md",
+      id: "cmd-prepass",
+      pr: PR,
+      session: `pr-${PR}`,
+      kind: "round",
+      round_no: 1,
+      payload_sha256: "a".repeat(64),
+      payload_path: "/payload/source.md",
+      inject_path: "/inject/source.md",
       next_check_at: clock.toISOString(),
     });
     const failure = store.terminalizeInfrastructureReviewFailure({
-      pr: PR, round_id: sourceRound, round_no: 1, command_id: "cmd-prepass", head_sha: "headsha1",
-      stage: "first_pass_start", detail: "accepted preparation launched no planned discovery lens",
-      attempts: 2, retry_cap: 2, summary: "bounded pre-fanout recovery exhausted",
+      pr: PR,
+      round_id: sourceRound,
+      round_no: 1,
+      command_id: "cmd-prepass",
+      head_sha: "headsha1",
+      stage: "first_pass_start",
+      detail: "accepted preparation launched no planned discovery lens",
+      attempts: 2,
+      retry_cap: 2,
+      summary: "bounded pre-fanout recovery exhausted",
     })!;
     expect(failure.next_retry_at).toBe("2026-09-02T15:15:00.000Z");
 
@@ -296,13 +408,20 @@ describe("daemon wiring", () => {
         async dispatchRound(order) {
           orders.push(order);
           store.createSessionCommand({
-            id: `cmd-target-${order.round_no}`, pr: order.pr, session: `pr-${order.pr}`,
-            kind: "round", round_no: order.round_no, payload_sha256: "b".repeat(64),
-            payload_path: `/payload/${order.round_no}.md`, inject_path: `/inject/${order.round_no}.md`,
+            id: `cmd-target-${order.round_no}`,
+            pr: order.pr,
+            session: `pr-${order.pr}`,
+            kind: "round",
+            round_no: order.round_no,
+            payload_sha256: "b".repeat(64),
+            payload_path: `/payload/${order.round_no}.md`,
+            inject_path: `/inject/${order.round_no}.md`,
             next_check_at: clock.toISOString(),
           });
         },
-        async inject() {}, async injectOverseer() {}, async archiveAndClose() {},
+        async inject() {},
+        async injectOverseer() {},
+        async archiveAndClose() {},
       },
       listen: false,
       log: () => {},
@@ -310,7 +429,9 @@ describe("daemon wiring", () => {
 
     clock = new Date("2026-09-02T15:15:00.000Z");
     expect(await daemon.retryDueReviewFailures()).toBe(1);
-    expect(orders).toEqual([expect.objectContaining({ round_no: 2, head_sha: "headsha1", recovery: expect.any(Object) })]);
+    expect(orders).toEqual([
+      expect.objectContaining({ round_no: 2, head_sha: "headsha1", recovery: expect.any(Object) }),
+    ]);
     expect(store.roundsFor(PR)).toMatchObject([
       { round_no: 1, status: "cancelled" },
       { round_no: 2, status: "running" },
@@ -364,7 +485,15 @@ describe("daemon wiring", () => {
       // branch runs: no GitHub reply, no thread resolve.
       writeFileSync(
         join(root, "verdict", `pr-${PR}-thread-4000-comment-5001.json`),
-        JSON.stringify({ pr: PR, thread_id: 4000, comment_id: 5001, resolution: "keep_open", reply: "", reason: "author asked for a person", human_requested: true }),
+        JSON.stringify({
+          pr: PR,
+          thread_id: 4000,
+          comment_id: 5001,
+          resolution: "keep_open",
+          reply: "",
+          reason: "author asked for a person",
+          human_requested: true,
+        }),
       );
       daemon.wakeThreadDecisions();
 

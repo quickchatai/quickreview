@@ -53,7 +53,12 @@ describe("① tunnel + HMAC probe", () => {
       seen.push(h);
       return fakeReceiver(u, h, b);
     };
-    const r = await probeTunnelHmac({ url: "http://127.0.0.1:8787/webhook", webhookSecret: SECRET, post, hostname: "review.example.dev" });
+    const r = await probeTunnelHmac({
+      url: "http://127.0.0.1:8787/webhook",
+      webhookSecret: SECRET,
+      post,
+      hostname: "review.example.dev",
+    });
     expect(r.pass).toBe(true);
     expect(r.detail).toContain("signed -> 200");
     expect(r.detail).toContain("forged -> 403");
@@ -63,19 +68,31 @@ describe("① tunnel + HMAC probe", () => {
   });
 
   it("fails when a forged signature is accepted", async () => {
-    const r = await probeTunnelHmac({ url: "u", webhookSecret: SECRET, post: async () => ({ status: 200 }) });
+    const r = await probeTunnelHmac({
+      url: "u",
+      webhookSecret: SECRET,
+      post: async () => ({ status: 200 }),
+    });
     expect(r.pass).toBe(false);
     expect(r.detail).toContain("forged -> 200");
   });
 
   it("fails when the signed delivery does not reach the daemon (502 through the tunnel)", async () => {
-    const r = await probeTunnelHmac({ url: "u", webhookSecret: SECRET, post: async (_u, h) => ({ status: h["x-hub-signature-256"]!.endsWith("0".repeat(8)) ? 403 : 502 }) });
+    const r = await probeTunnelHmac({
+      url: "u",
+      webhookSecret: SECRET,
+      post: async (_u, h) => ({
+        status: h["x-hub-signature-256"]!.endsWith("0".repeat(8)) ? 403 : 502,
+      }),
+    });
     expect(r.pass).toBe(false);
     expect(r.detail).toContain("signed -> 502");
   });
 
   it("signBody matches GitHub's sha256= scheme", () => {
-    expect(signBody("k", "body")).toBe(`sha256=${createHmac("sha256", "k").update("body").digest("hex")}`);
+    expect(signBody("k", "body")).toBe(
+      `sha256=${createHmac("sha256", "k").update("body").digest("hex")}`,
+    );
   });
 });
 
@@ -98,7 +115,11 @@ describe("② reconcile queue diff", () => {
   });
 
   it("fails and names the divergence", async () => {
-    const r = await probeQueueDiff({ labelTriggered: async () => [11], teamTriggered: async () => [12], derivedQueue: () => [11, 99] });
+    const r = await probeQueueDiff({
+      labelTriggered: async () => [11],
+      teamTriggered: async () => [12],
+      derivedQueue: () => [11, 99],
+    });
     expect(r.pass).toBe(false);
     expect(r.detail).toContain("missing=[12]");
     expect(r.detail).toContain("extra=[99]");
@@ -114,7 +135,8 @@ describe("④ push does not review", () => {
     const r = await probeStalenessWake({
       fixture,
       injectStalePr: (p) => void injected.push(p),
-      runStalenessReconcile: async () => void orders.push({ pr: fixture.number, round_type: "staleness" }),
+      runStalenessReconcile: async () =>
+        void orders.push({ pr: fixture.number, round_type: "staleness" }),
       issuedOrders: () => orders,
     });
     expect(injected).toHaveLength(1);
@@ -156,19 +178,31 @@ describe("⑤ ping-pong", () => {
 });
 
 describe("⑦ digest presence", () => {
-  function digestFixture(opts: { digest?: string; headline?: string | null }): { digestDir: string; statusPath: string; today: string } {
+  function digestFixture(opts: { digest?: string; headline?: string | null }): {
+    digestDir: string;
+    statusPath: string;
+    today: string;
+  } {
     const dir = scratch();
     const digestDir = join(dir, "digest");
     mkdirSync(digestDir);
     const today = "2026-08-13";
     if (opts.digest !== undefined) writeFileSync(join(digestDir, `${today}.md`), opts.digest);
     const statusPath = join(dir, "status.json");
-    writeFileSync(statusPath, JSON.stringify({ heartbeat: new Date().toISOString(), ...(opts.headline ? { digest_headline: opts.headline } : {}) }));
+    writeFileSync(
+      statusPath,
+      JSON.stringify({
+        heartbeat: new Date().toISOString(),
+        ...(opts.headline ? { digest_headline: opts.headline } : {}),
+      }),
+    );
     return { digestDir, statusPath, today };
   }
 
   it("passes with the file and a headline in status.json", () => {
-    const r = probeDigest(digestFixture({ digest: "# EOD\n\n3 rounds, $1.20", headline: "3 rounds, $1.20" }));
+    const r = probeDigest(
+      digestFixture({ digest: "# EOD\n\n3 rounds, $1.20", headline: "3 rounds, $1.20" }),
+    );
     expect(r.pass).toBe(true);
     expect(r.detail).toContain("3 rounds");
   });
@@ -235,7 +269,11 @@ describe("⑨ restart recovery", () => {
   });
 
   it("fails on a stale heartbeat", async () => {
-    const r = await probeRestartRecovery({ statusPath: statusFixture("2026-08-13T17:00:00Z"), adoptExistingSessions: () => [], now });
+    const r = await probeRestartRecovery({
+      statusPath: statusFixture("2026-08-13T17:00:00Z"),
+      adoptExistingSessions: () => [],
+      now,
+    });
     expect(r.pass).toBe(false);
     expect(r.detail).toContain("3600s old");
   });
@@ -253,7 +291,11 @@ describe("⑨ restart recovery", () => {
   });
 
   it("fails when there is no status.json at all", async () => {
-    const r = await probeRestartRecovery({ statusPath: join(scratch(), "nope.json"), adoptExistingSessions: () => [], now });
+    const r = await probeRestartRecovery({
+      statusPath: join(scratch(), "nope.json"),
+      adoptExistingSessions: () => [],
+      now,
+    });
     expect(r.pass).toBe(false);
     expect(r.detail).toContain("never wrote a heartbeat");
   });
@@ -275,7 +317,11 @@ describe("table + exit code + manual items", () => {
   it("exit code is 0 only when every automated item passes", () => {
     expect(exitCodeFor(results)).toBe(1);
     expect(exitCodeFor([results[0]!])).toBe(0);
-    expect(exitCodeFor([{ item: "③", name: "live test PR", pass: false, detail: "manual", manual: true }])).toBe(0);
+    expect(
+      exitCodeFor([
+        { item: "③", name: "live test PR", pass: false, detail: "manual", manual: true },
+      ]),
+    ).toBe(0);
   });
 
   it("guided-manual items are text only — ③ and ⑥, never automated", () => {
@@ -286,7 +332,9 @@ describe("table + exit code + manual items", () => {
   });
 
   it("renders the configured bot login into the manual prose", () => {
-    expect(renderManualItems("example-review[bot]")).toContain("the review is posted as example-review[bot]");
+    expect(renderManualItems("example-review[bot]")).toContain(
+      "the review is posted as example-review[bot]",
+    );
     // No configured login degrades to the role, never to a personal name.
     expect(renderManualItems()).toContain("the review is posted as the review App bot");
     expect(renderManualItems()).not.toContain("owner_legacy");
@@ -311,20 +359,35 @@ describe("runChecklist", () => {
     const today = "2026-08-13";
     writeFileSync(join(digestDir, `${today}.md`), "# EOD\n2 rounds");
     const statusPath = join(dir, "status.json");
-    writeFileSync(statusPath, JSON.stringify({ heartbeat: "2026-08-13T17:59:00Z", digest_headline: "2 rounds, $0.80" }));
+    writeFileSync(
+      statusPath,
+      JSON.stringify({ heartbeat: "2026-08-13T17:59:00Z", digest_headline: "2 rounds, $0.80" }),
+    );
     return {
       tunnel: { url: "http://127.0.0.1:8787/webhook", webhookSecret: SECRET, post: fakeReceiver },
-      queue: { labelTriggered: async () => [1], teamTriggered: async () => [2], derivedQueue: () => [1, 2] },
+      queue: {
+        labelTriggered: async () => [1],
+        teamTriggered: async () => [2],
+        derivedQueue: () => [1, 2],
+      },
       staleness: {
         fixture: { number: 5, head_sha: "aaa", approved_sha: "bbb" },
         injectStalePr: () => {},
         runStalenessReconcile: async () => {},
         issuedOrders: () => [],
       },
-      pingPong: { injectDir, event: {}, interpret: async () => writeFileSync(join(injectDir, "pr-5.md"), "x") },
+      pingPong: {
+        injectDir,
+        event: {},
+        interpret: async () => writeFileSync(join(injectDir, "pr-5.md"), "x"),
+      },
       digest: { digestDir, statusPath, today },
       tmux: { listSessions: () => ["overseer", "pr-5"] },
-      restart: { statusPath, adoptExistingSessions: () => ["pr-5"], now: () => new Date("2026-08-13T18:00:00Z") },
+      restart: {
+        statusPath,
+        adoptExistingSessions: () => ["pr-5"],
+        now: () => new Date("2026-08-13T18:00:00Z"),
+      },
       ...overrides,
     };
   }

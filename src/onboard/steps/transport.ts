@@ -129,7 +129,8 @@ function composeTransport(ctx: StepContext, opts: TransportOptions): StackTransp
         badStatus:
           "Fix: `docker compose logs --tail 200 daemon`. A daemon that started but cannot serve is nearly always a config.toml " +
           "the loader rejected; the log line says which key",
-        notPayload: "Fix: something else is listening on that port. Change QCR_WEBHOOK_PORT in .env and run the bring-up step again",
+        notPayload:
+          "Fix: something else is listening on that port. Change QCR_WEBHOOK_PORT in .env and run the bring-up step again",
         unreachable:
           "Fix: check the port is published (`docker compose ps`) and that QCR_WEBHOOK_PORT/QCR_WEBHOOK_BIND in .env match what " +
           "you are probing; then `docker compose logs --tail 200 daemon`",
@@ -158,7 +159,10 @@ export interface RemoteFacts {
   port: number;
 }
 
-export function remoteFactsFor(root: string, choices: Readonly<Record<string, unknown>>): RemoteFacts {
+export function remoteFactsFor(
+  root: string,
+  choices: Readonly<Record<string, unknown>>,
+): RemoteFacts {
   const text = readConfigText(root);
   const container = (text ? readTomlKey(text, "tui", "container") : null)?.trim();
   const sudo = (text ? readTomlKey(text, "tui", "sudo_docker") : null)?.trim();
@@ -178,10 +182,17 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
   const facts = remoteFactsFor(root, ctx.choices);
   const stream = opts.stream ?? nodeStreamRunner;
   const dockerPrefix = facts.sudo ? ["sudo", "docker"] : ["docker"];
-  const remote = (argv: readonly string[]): Promise<ProcessResult> => ctx.adapters.runner.run("ssh", sshArgv(facts.alias, argv));
+  const remote = (argv: readonly string[]): Promise<ProcessResult> =>
+    ctx.adapters.runner.run("ssh", sshArgv(facts.alias, argv));
   const healthEndpoint = `http://127.0.0.1:${facts.port}/health`;
   const logsCommand = (tail: number): string =>
-    sshCommandLine(facts.alias || "<vm>", [...dockerPrefix, "logs", "--tail", String(tail), facts.container]);
+    sshCommandLine(facts.alias || "<vm>", [
+      ...dockerPrefix,
+      "logs",
+      "--tail",
+      String(tail),
+      facts.container,
+    ]);
   const execCommand = (rest: string): string =>
     `${sshCommandLine(facts.alias || "<vm>", [...dockerPrefix, "exec", facts.container])} ${rest}`;
   const cliCommand = (rest: string): string => execCommand(`node dist/src/cli.js ${rest}`);
@@ -190,7 +201,8 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
     return {
       name,
       ok: false,
-      detail: 'no ssh alias is recorded for the server route — run the topology step with choice: "vm" and ssh_host: "<alias>"',
+      detail:
+        'no ssh alias is recorded for the server route — run the topology step with choice: "vm" and ssh_host: "<alias>"',
     };
   }
 
@@ -200,7 +212,15 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
 
     async containerChecks(ingress) {
       if (facts.alias === "") return [noAlias("containers")];
-      const ps = await remote([...dockerPrefix, "ps", "--all", "--filter", `name=${facts.container}`, "--format", "{{.Names}} {{.State}}"]);
+      const ps = await remote([
+        ...dockerPrefix,
+        "ps",
+        "--all",
+        "--filter",
+        `name=${facts.container}`,
+        "--format",
+        "{{.Names}} {{.State}}",
+      ]);
       if (ps.code !== 0) {
         return [
           {
@@ -220,7 +240,11 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
       const state = row ? row.slice(facts.container.length).trim() : "";
       const checks: CheckResult[] = [
         state !== "" && /running|up/i.test(state)
-          ? { name: "containers", ok: true, detail: `the ${facts.container} container on ${facts.alias} is ${state}` }
+          ? {
+              name: "containers",
+              ok: true,
+              detail: `the ${facts.container} container on ${facts.alias} is ${state}`,
+            }
           : {
               name: "containers",
               ok: false,
@@ -237,7 +261,11 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
         const status = (unit.stdout || unit.stderr).trim() || `exit ${unit.code}`;
         checks.push(
           unit.code === 0 && status.startsWith("active")
-            ? { name: "ingress-sidecar", ok: true, detail: `the cloudflared service on ${facts.alias} is ${status}` }
+            ? {
+                name: "ingress-sidecar",
+                ok: true,
+                detail: `the cloudflared service on ${facts.alias} is ${status}`,
+              }
             : {
                 name: "ingress-sidecar",
                 ok: false,
@@ -253,12 +281,20 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
 
     async running() {
       if (facts.alias === "") return false;
-      const ps = await remote([...dockerPrefix, "ps", "--filter", `name=${facts.container}`, "--format", "{{.Names}}"]);
+      const ps = await remote([
+        ...dockerPrefix,
+        "ps",
+        "--filter",
+        `name=${facts.container}`,
+        "--format",
+        "{{.Names}}",
+      ]);
       return ps.code === 0 && ps.stdout.includes(facts.container);
     },
 
     async exec(argv) {
-      if (facts.alias === "") return { code: 1, stdout: "", stderr: "no ssh alias recorded for the server route" };
+      if (facts.alias === "")
+        return { code: 1, stdout: "", stderr: "no ssh alias recorded for the server route" };
       return remote([...dockerPrefix, "exec", facts.container, ...argv]);
     },
 
@@ -267,7 +303,17 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
       // curl ON the box: the daemon's port is published to the VM's loopback
       // only (that is the design — cloudflared fronts it), so probing it from
       // here would be probing the wrong machine.
-      const r = await remote(["curl", "-sS", "-m", "10", "-o", "-", "-w", "\\n%{http_code}", healthEndpoint]);
+      const r = await remote([
+        "curl",
+        "-sS",
+        "-m",
+        "10",
+        "-o",
+        "-",
+        "-w",
+        "\\n%{http_code}",
+        healthEndpoint,
+      ]);
       const lines = r.stdout.trim().split("\n");
       const status = Number(lines.at(-1) ?? "0");
       const body = lines.slice(0, -1).join("\n");
@@ -296,7 +342,11 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
         ok = false;
       }
       return ok
-        ? { name: "health", ok: true, detail: `${healthEndpoint} on ${facts.alias} answers {"ok":true} — the daemon is up, has loaded its config and is serving` }
+        ? {
+            name: "health",
+            ok: true,
+            detail: `${healthEndpoint} on ${facts.alias} answers {"ok":true} — the daemon is up, has loaded its config and is serving`,
+          }
         : {
             name: "health",
             ok: false,
@@ -311,10 +361,13 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
         return {
           name: "daemon-restart",
           ok: true,
-          detail: "nothing is deployed on the server yet, so there is nothing to restart — the deploy step ships this config when you run it",
+          detail:
+            "nothing is deployed on the server yet, so there is nothing to restart — the deploy step ships this config when you run it",
         };
       }
-      log(`shipping the changed config to ${facts.alias} with \`${deployCommandLine("sync")}\` — on the server route the deploy IS the restart`);
+      log(
+        `shipping the changed config to ${facts.alias} with \`${deployCommandLine("sync")}\` — on the server route the deploy IS the restart`,
+      );
       const r = await stream.run("bash", deployArgv(root, "sync"), (line) => log(line));
       return r.code === 0
         ? {
@@ -353,7 +406,11 @@ async function probeHealthOverHttp(
     const res = await adapters.fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
     const text = await res.text();
     if (res.status !== 200) {
-      return { name: "health", ok: false, detail: `${url} answered HTTP ${res.status} — ${fixes.badStatus}` };
+      return {
+        name: "health",
+        ok: false,
+        detail: `${url} answered HTTP ${res.status} — ${fixes.badStatus}`,
+      };
     }
     let ok = false;
     try {
@@ -362,10 +419,22 @@ async function probeHealthOverHttp(
       ok = false;
     }
     return ok
-      ? { name: "health", ok: true, detail: `${url} answers {"ok":true} — the daemon is up, has loaded its config and is serving` }
-      : { name: "health", ok: false, detail: `${url} answered 200 but not the health payload (${text.slice(0, 120)}) — ${fixes.notPayload}` };
+      ? {
+          name: "health",
+          ok: true,
+          detail: `${url} answers {"ok":true} — the daemon is up, has loaded its config and is serving`,
+        }
+      : {
+          name: "health",
+          ok: false,
+          detail: `${url} answered 200 but not the health payload (${text.slice(0, 120)}) — ${fixes.notPayload}`,
+        };
   } catch (err) {
-    return { name: "health", ok: false, detail: `nothing answered ${url} (${String(err)}) — ${fixes.unreachable}` };
+    return {
+      name: "health",
+      ok: false,
+      detail: `nothing answered ${url} (${String(err)}) — ${fixes.unreachable}`,
+    };
   }
 }
 

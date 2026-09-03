@@ -93,7 +93,9 @@ describe("pickup (the thread root)", () => {
       lenses: ["pass-baseline"],
     };
     expect(pickupMessage(cfg, { ...base, round_type: "re-review" })).toContain("· re-review ·");
-    expect(pickupMessage(cfg, { ...base, round_type: "staleness" })).toContain("· staleness recheck ·");
+    expect(pickupMessage(cfg, { ...base, round_type: "staleness" })).toContain(
+      "· staleness recheck ·",
+    );
   });
 
   it("escapes the title", () => {
@@ -132,13 +134,27 @@ describe("verdict (in-thread)", () => {
   });
 
   it("renders CHANGES REQUESTED with the 🔧 glyph", () => {
-    const text = verdictMessage(cfg, { pr: 1, author: "alice", round_no: 1, verdict: "REQUEST_CHANGES", summary: "s", duration_min: 3 });
+    const text = verdictMessage(cfg, {
+      pr: 1,
+      author: "alice",
+      round_no: 1,
+      verdict: "REQUEST_CHANGES",
+      summary: "s",
+      duration_min: 3,
+    });
     expect(text.split("\n")[0]).toBe("<@U_ALICE> 🔧 *CHANGES REQUESTED* — round 1, 3 min");
   });
 
   it("DROPS the summary line entirely when there is none — no filler", () => {
     expect(
-      verdictMessage(cfg, { pr: 7, author: "alice", round_no: 1, verdict: "APPROVE", summary: null, duration_min: 2 }),
+      verdictMessage(cfg, {
+        pr: 7,
+        author: "alice",
+        round_no: 1,
+        verdict: "APPROVE",
+        summary: null,
+        duration_min: 2,
+      }),
     ).toBe(
       "<@U_ALICE> ✅ *APPROVED* — round 1, 2 min\n<https://github.com/exampleorg/example-app/pull/7|review on GitHub>",
     );
@@ -189,18 +205,22 @@ describe("verdict (in-thread)", () => {
 
 describe("re-round, pre-flag, superseded", () => {
   it("renders every re-round reason", () => {
-    expect(reRoundMessage({ round_no: 2, reason: { kind: "pushed" }, head_sha: "abcdef1234" })).toBe(
-      "🔄 round 2 started — you pushed new commits (`abcdef1`)",
-    );
-    expect(reRoundMessage({ round_no: 3, reason: { kind: "base_moved" }, head_sha: "0123456789" })).toBe(
-      "🔄 round 3 started — base moved, rechecking (`0123456`)",
-    );
-    expect(reRoundMessage({ round_no: 4, reason: { kind: "re_requested" }, head_sha: "0123456789" })).toBe(
-      "🔄 round 4 started — re-requested review (`0123456`)",
-    );
-    expect(reRoundMessage({ round_no: 5, reason: { kind: "rerun", requested_by: "mhale" }, head_sha: "0123456789" })).toBe(
-      "🔄 round 5 started — re-run by mhale (`0123456`)",
-    );
+    expect(
+      reRoundMessage({ round_no: 2, reason: { kind: "pushed" }, head_sha: "abcdef1234" }),
+    ).toBe("🔄 round 2 started — you pushed new commits (`abcdef1`)");
+    expect(
+      reRoundMessage({ round_no: 3, reason: { kind: "base_moved" }, head_sha: "0123456789" }),
+    ).toBe("🔄 round 3 started — base moved, rechecking (`0123456`)");
+    expect(
+      reRoundMessage({ round_no: 4, reason: { kind: "re_requested" }, head_sha: "0123456789" }),
+    ).toBe("🔄 round 4 started — re-requested review (`0123456`)");
+    expect(
+      reRoundMessage({
+        round_no: 5,
+        reason: { kind: "rerun", requested_by: "mhale" },
+        head_sha: "0123456789",
+      }),
+    ).toBe("🔄 round 5 started — re-run by mhale (`0123456`)");
   });
 
   it("no longer exports the escalation-worthy pre-flag (scrapped 2026-08-18)", async () => {
@@ -212,14 +232,18 @@ describe("re-round, pre-flag, superseded", () => {
 
   it("renders the superseded line without ever claiming a dismissal", () => {
     const text = supersededMessage({ old_round_no: 2, new_round_no: 3, head_sha: "deadbeefcafe" });
-    expect(text).toBe("♻️ the round-2 review is superseded by round 3 (`deadbee`) — read the newest one");
+    expect(text).toBe(
+      "♻️ the round-2 review is superseded by round 3 (`deadbee`) — read the newest one",
+    );
     expect(text.toLowerCase()).not.toContain("dismiss");
   });
 });
 
 describe("unprompted causes", () => {
   it("renders round.overdue", () => {
-    expect(causeMessage(cfg, { cause: "round.overdue", pr: 5263, round_no: 2, deadline_min: 45 })).toBe(
+    expect(
+      causeMessage(cfg, { cause: "round.overdue", pr: 5263, round_no: 2, deadline_min: 45 }),
+    ).toBe(
       "⏱ #5263 round 2 blew its 45-min deadline — no verdict was posted, and no approval was implied. <@U_MAT>",
     );
   });
@@ -232,12 +256,26 @@ describe("unprompted causes", () => {
 
   it("renders pr.not_picked_up", () => {
     expect(
-      causeMessage(cfg, { cause: "pr.not_picked_up", pr: 5263, age_min: 35, queue_depth: 4, running: 2, max_concurrent: 2 }),
+      causeMessage(cfg, {
+        cause: "pr.not_picked_up",
+        pr: 5263,
+        age_min: 35,
+        queue_depth: 4,
+        running: 2,
+        max_concurrent: 2,
+      }),
     ).toBe("🐢 #5263 has been waiting 35 min for a review slot (4 queued, 2/2 running).");
   });
 
   it("renders daemon.up and daemon.stopping", () => {
-    expect(causeMessage(cfg, { cause: "daemon.up", version: "0.1.0", gap: "22 min", last_heartbeat: "2026-08-17T09:00:00Z" })).toBe(
+    expect(
+      causeMessage(cfg, {
+        cause: "daemon.up",
+        version: "0.1.0",
+        gap: "22 min",
+        last_heartbeat: "2026-08-17T09:00:00Z",
+      }),
+    ).toBe(
       "🟢 review daemon up (0.1.0) — was down 22 min (since 2026-08-17T09:00:00Z); events in that window may have been missed, reconcile is catching up.",
     );
     expect(causeMessage(cfg, { cause: "daemon.stopping", reason: "deploy" })).toBe(
@@ -277,20 +315,40 @@ describe("hard rule 2 — nothing the daemon says implies a dismissal", () => {
         lenses: ["pass-baseline"],
       }),
       ...(["APPROVE", "REQUEST_CHANGES", "NEEDS_HUMAN"] as const).map((v) =>
-        verdictMessage(cfg, { pr: 1, author: "alice", round_no: 1, verdict: v, summary: "s", duration_min: 1 }),
+        verdictMessage(cfg, {
+          pr: 1,
+          author: "alice",
+          round_no: 1,
+          verdict: v,
+          summary: "s",
+          duration_min: 1,
+        }),
       ),
       reRoundMessage({ round_no: 2, reason: { kind: "pushed" }, head_sha: "abc1234" }),
       supersededMessage({ old_round_no: 1, new_round_no: 2, head_sha: "abc1234" }),
       causeMessage(cfg, { cause: "round.overdue", pr: 1, round_no: 1, deadline_min: 45 }),
       causeMessage(cfg, { cause: "round.malformed_verdict", pr: 1, round_no: 1 }),
-      causeMessage(cfg, { cause: "pr.not_picked_up", pr: 1, age_min: 1, queue_depth: 1, running: 0, max_concurrent: 2 }),
+      causeMessage(cfg, {
+        cause: "pr.not_picked_up",
+        pr: 1,
+        age_min: 1,
+        queue_depth: 1,
+        running: 0,
+        max_concurrent: 2,
+      }),
       causeMessage(cfg, { cause: "daemon.up", version: "v", gap: "1 min", last_heartbeat: "x" }),
       causeMessage(cfg, { cause: "daemon.stopping", reason: "r" }),
       causeMessage(cfg, { cause: "slack.cap_reached", cap: 80 }),
       causeMessage(cfg, { cause: "reconcile.storm", corrections: 1, window_min: 1 }),
       causeMessage(cfg, { cause: "digest.eod", headline: "h" }),
       causeMessage(cfg, { cause: "pr.awaiting_author_stale", pr: 1, hours: 48 }),
-      messages.heartbeatMessage({ refreshed_at: "2026-08-17T09:00:00.000Z", running: 1, max_concurrent: 2, queued: 0, dry_run: false }),
+      messages.heartbeatMessage({
+        refreshed_at: "2026-08-17T09:00:00.000Z",
+        running: 1,
+        max_concurrent: 2,
+        queued: 0,
+        dry_run: false,
+      }),
     ];
     for (const text of rendered) expect(text.toLowerCase()).not.toContain("dismiss");
   });

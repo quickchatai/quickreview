@@ -31,8 +31,22 @@ const SNAPSHOT: StatusSnapshot = {
   written_at: "2026-08-20T12:00:00Z",
   dry_run: true,
   prs: [
-    { number: 5012, state: "reviewing", title: "fix(crm): retry", head_sha: "aa11", stale_recheck: 0, author: "alice" },
-    { number: 5049, state: "awaiting_author", title: "feat: dispatch", head_sha: "bb22", stale_recheck: 0, author: "bob" },
+    {
+      number: 5012,
+      state: "reviewing",
+      title: "fix(crm): retry",
+      head_sha: "aa11",
+      stale_recheck: 0,
+      author: "alice",
+    },
+    {
+      number: 5049,
+      state: "awaiting_author",
+      title: "feat: dispatch",
+      head_sha: "bb22",
+      stale_recheck: 0,
+      author: "bob",
+    },
   ],
   running_rounds: 0,
   total_spend_usd: 0,
@@ -43,7 +57,10 @@ const PRINTABLE = (k: string): boolean => k.length === 1 && k >= " " && k <= "~"
 
 /** Every printable a tab can ever claim — its bar vocabulary plus its inline keys. */
 function universe(tab: Tab): Set<string> {
-  return new Set([...TAB_VOCABULARY[tab].map((b) => b.key).filter(PRINTABLE), ...TAB_INLINE_KEYS[tab]]);
+  return new Set([
+    ...TAB_VOCABULARY[tab].map((b) => b.key).filter(PRINTABLE),
+    ...TAB_INLINE_KEYS[tab],
+  ]);
 }
 
 // ---------------------------------------------------------------------------
@@ -75,9 +92,15 @@ describe("[T9] HELP_LINES and the key vocabulary agree", () => {
         if (PRINTABLE(tok)) named.add(tok);
       }
     }
-    expect(named.size, "no key was extracted from HELP_LINES — the parse broke and this asserts nothing").toBeGreaterThan(5);
+    expect(
+      named.size,
+      "no key was extracted from HELP_LINES — the parse broke and this asserts nothing",
+    ).toBeGreaterThan(5);
     const unclaimable = [...named].filter((k) => !claimable.has(k)).sort();
-    expect(unclaimable, "the help overlay names a key no surface can claim — the operator is told to press something that goes to the companion column").toEqual([]);
+    expect(
+      unclaimable,
+      "the help overlay names a key no surface can claim — the operator is told to press something that goes to the companion column",
+    ).toEqual([]);
   });
 
   /**
@@ -95,7 +118,10 @@ describe("[T9] HELP_LINES and the key vocabulary agree", () => {
     for (const tab of TABS) {
       for (const b of TAB_VOCABULARY[tab]) {
         if (!PRINTABLE(b.key)) continue;
-        const re = new RegExp(`(^|[\\s/(\\[])${b.key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([\\s/)\\]]|$)`, "m");
+        const re = new RegExp(
+          `(^|[\\s/(\\[])${b.key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([\\s/)\\]]|$)`,
+          "m",
+        );
         if (!re.test(helpText)) missing.push(`${tab}:${b.key}`);
       }
     }
@@ -135,29 +161,107 @@ describe("[T1] every registered key is answerable", () => {
   const rig = () => {
     const fetched: string[] = [];
     const entries: MemoryEntry[] = [
-      { id: "e1", ts: "2026-08-20 09:00:00", day: "2026-08-20", block: 0, text: "#bug a thing broke", tags: ["bug"], links: [], pinned: false, hash: "h1" },
-      { id: "e2", ts: "2026-08-20 10:00:00", day: "2026-08-20", block: 1, text: "#pinned a standing rule", tags: ["pinned"], links: [], pinned: true, hash: "h2" },
-      { id: "e3", ts: "2026-08-19 10:00:00", day: "2026-08-19", block: 0, text: "#feedback pr=1 signal=feedback_comment human [feedback] by a on PR #1 (comment 1): \"one\" — x", tags: ["feedback"], links: [], pinned: false, hash: "h3" },
-      { id: "e4", ts: "2026-08-18 10:00:00", day: "2026-08-18", block: 0, text: "#feedback pr=2 signal=feedback_comment human [feedback] by a on PR #2 (comment 2): \"two\" — x", tags: ["feedback"], links: [], pinned: false, hash: "h4" },
-      { id: "e5", ts: "2026-08-17 10:00:00", day: "2026-08-17", block: 0, text: "#feedback pr=3 signal=feedback_comment human [feedback] by a on PR #3 (comment 3): \"three\" — x", tags: ["feedback"], links: [], pinned: false, hash: "h5" },
+      {
+        id: "e1",
+        ts: "2026-08-20 09:00:00",
+        day: "2026-08-20",
+        block: 0,
+        text: "#bug a thing broke",
+        tags: ["bug"],
+        links: [],
+        pinned: false,
+        hash: "h1",
+      },
+      {
+        id: "e2",
+        ts: "2026-08-20 10:00:00",
+        day: "2026-08-20",
+        block: 1,
+        text: "#pinned a standing rule",
+        tags: ["pinned"],
+        links: [],
+        pinned: true,
+        hash: "h2",
+      },
+      {
+        id: "e3",
+        ts: "2026-08-19 10:00:00",
+        day: "2026-08-19",
+        block: 0,
+        text: '#feedback pr=1 signal=feedback_comment human [feedback] by a on PR #1 (comment 1): "one" — x',
+        tags: ["feedback"],
+        links: [],
+        pinned: false,
+        hash: "h3",
+      },
+      {
+        id: "e4",
+        ts: "2026-08-18 10:00:00",
+        day: "2026-08-18",
+        block: 0,
+        text: '#feedback pr=2 signal=feedback_comment human [feedback] by a on PR #2 (comment 2): "two" — x',
+        tags: ["feedback"],
+        links: [],
+        pinned: false,
+        hash: "h4",
+      },
+      {
+        id: "e5",
+        ts: "2026-08-17 10:00:00",
+        day: "2026-08-17",
+        block: 0,
+        text: '#feedback pr=3 signal=feedback_comment human [feedback] by a on PR #3 (comment 3): "three" — x',
+        tags: ["feedback"],
+        links: [],
+        pinned: false,
+        hash: "h5",
+      },
     ];
     const memory: MemoryStore = {
       read: async () => (fetched.push("memory:read"), entries),
       search: async () => entries,
       apply: async () => ({ ok: true, message: "fence rig" }),
     };
-    const ticket = (id: string) => ({ id, title: `t ${id}`, status: "open", role: "—", category: "—", updated: "2026-08-25T18:00:00Z", path: "/t", body: `# t ${id}\n\nbody` });
-    const changes = new FakeChanges([changeEntry("aaa1111".padEnd(40, "0"), "first"), changeEntry("bbb2222".padEnd(40, "0"), "second"), changeEntry("ccc3333".padEnd(40, "0"), "third")]);
+    const ticket = (id: string) => ({
+      id,
+      title: `t ${id}`,
+      status: "open",
+      role: "—",
+      category: "—",
+      updated: "2026-08-25T18:00:00Z",
+      path: "/t",
+      body: `# t ${id}\n\nbody`,
+    });
+    const changes = new FakeChanges([
+      changeEntry("aaa1111".padEnd(40, "0"), "first"),
+      changeEntry("bbb2222".padEnd(40, "0"), "second"),
+      changeEntry("ccc3333".padEnd(40, "0"), "third"),
+    ]);
     const r = learningRig({
       cols: 140,
       rows: 40,
       memory,
       digestFetcher: {
-        list: async () => (fetched.push("digest:list"), ["2026-08-18.md", "2026-08-19.md", "2026-08-20.md"]),
+        list: async () => (
+          fetched.push("digest:list"),
+          ["2026-08-18.md", "2026-08-19.md", "2026-08-20.md"]
+        ),
         read: async (f: string) => (fetched.push(`digest:read:${f}`), `# digest ${f}\nline\n`),
       },
-      fetchProposals: async () => (fetched.push("proposals"), { proposals: [{ slug: "p1", head: ["h"] }, { slug: "p2", head: ["h"] }], improvements: [] }),
-      readTickets: () => (fetched.push("tickets"), [ticket(""), ticket(""), ticket("")]),
+      fetchProposals: async () => (
+        fetched.push("proposals"),
+        {
+          proposals: [
+            { slug: "p1", head: ["h"] },
+            { slug: "p2", head: ["h"] },
+          ],
+          improvements: [],
+        }
+      ),
+      readTickets: () => (
+        fetched.push("tickets"),
+        [ticket(""), ticket(""), ticket("")]
+      ),
       changes,
     });
     const { app } = r;
@@ -183,14 +287,17 @@ describe("[T1] every registered key is answerable", () => {
       timeline: async () => (fetched.push("metrics:timeline"), { ok: false, error: "fence rig" }),
     } as never);
     const deployState = installDeployHooks(app, {
-      load: async () => (fetched.push("deploy:load"), {
-        dirty: ["src/a.ts", "src/b.ts"],
-        plan: [
-          { step: "preflight", state: "pending" },
-          { step: "sync", state: "pending" },
-          { step: "verify", state: "pending" },
-        ],
-      }),
+      load: async () => (
+        fetched.push("deploy:load"),
+        {
+          dirty: ["src/a.ts", "src/b.ts"],
+          plan: [
+            { step: "preflight", state: "pending" },
+            { step: "sync", state: "pending" },
+            { step: "verify", state: "pending" },
+          ],
+        }
+      ),
     } as never);
     installMessageHooks(app, { send: async () => {} });
 
@@ -216,7 +323,14 @@ describe("[T1] every registered key is answerable", () => {
         memory: r.learning.memory,
         tickets: r.learning.tickets,
         feedback: r.learning.feedback,
-        store: { digest: store.digest, status: store.status, memLoaded: store.memLoaded, propLoaded: store.propLoaded, tickets: store.tickets.kind, entries: store.entries.length },
+        store: {
+          digest: store.digest,
+          status: store.status,
+          memLoaded: store.memLoaded,
+          propLoaded: store.propLoaded,
+          tickets: store.tickets.kind,
+          entries: store.entries.length,
+        },
         metrics: metricsState,
         deploy: deployState,
         changes: changes.refreshes,
@@ -238,11 +352,13 @@ describe("[T1] every registered key is answerable", () => {
    * Checked by SET EQUALITY below, so an entry that stops being needed fails
    * as loudly as a key that stops working.
    */
-  const NO_OP_BY_DESIGN: ReadonlyArray<{ tab: Tab; key: string; why: string }> = TABS.map((tab) => ({
-    tab,
-    key: tabDigit(tab),
-    why: "a tab's own digit while that tab is showing — a genuine self-loop; the key is asserted live on every other tab.",
-  }));
+  const NO_OP_BY_DESIGN: ReadonlyArray<{ tab: Tab; key: string; why: string }> = TABS.map(
+    (tab) => ({
+      tab,
+      key: tabDigit(tab),
+      why: "a tab's own digit while that tab is showing — a genuine self-loop; the key is asserted live on every other tab.",
+    }),
+  );
 
   /** The SCREEN this tab paints, rendered from app state. Hermetic, no timers. */
   const screenOf = (app: App, tab: Tab): string => {
@@ -259,7 +375,9 @@ describe("[T1] every registered key is answerable", () => {
       if (next === last) return;
       last = next;
     }
-    throw new Error(`the '${tab}' screen never settled — every key would look alive against a moving frame`);
+    throw new Error(
+      `the '${tab}' screen never settled — every key would look alive against a moving frame`,
+    );
   };
 
   for (const tab of TABS) {
@@ -273,7 +391,10 @@ describe("[T1] every registered key is answerable", () => {
       probe.app.view.now = new Date("2026-08-20T12:00:00Z");
       await settle(probe.app, tab);
       const registered = [...probe.app.registeredKeys()].filter(PRINTABLE);
-      expect(registered.length, `${tab} registers nothing but globals — the rig is under-wired`).toBeGreaterThan(GLOBAL_KEYS.length - 1);
+      expect(
+        registered.length,
+        `${tab} registers nothing but globals — the rig is under-wired`,
+      ).toBeGreaterThan(GLOBAL_KEYS.length - 1);
       for (const key of registered) {
         const { app, ssh, opened, fetched, tabState } = rig();
         app.tab = tab;
@@ -312,8 +433,8 @@ describe("[T1] every registered key is answerable", () => {
         // other key has loaded it.
         expect(
           screenOf(app, tab),
-          `the '${tab}' screen is not deterministic under no input — this fence would pass every key. `
-            + "Pin whatever moves (a clock, a spinner) before trusting a single result here.",
+          `the '${tab}' screen is not deterministic under no input — this fence would pass every key. ` +
+            "Pin whatever moves (a clock, a spinner) before trusting a single result here.",
         ).toBe(before.screen);
 
         app.pressKey(key);
@@ -325,21 +446,23 @@ describe("[T1] every registered key is answerable", () => {
         // with no body satisfies it. The bar is EFFECT: a different screen, a
         // different tab, changed state, a remote call, or an opened URL.
         const changed =
-          screenOf(app, tab) !== before.screen
-          || app.tab !== before.tab
-          || JSON.stringify(app.view) !== before.view
-          || tabState() !== before.tabState
-          || ssh.length !== before.ssh
-          || opened.length !== before.opened
-          || fetched.length !== before.fetched;
+          screenOf(app, tab) !== before.screen ||
+          app.tab !== before.tab ||
+          JSON.stringify(app.view) !== before.view ||
+          tabState() !== before.tabState ||
+          ssh.length !== before.ssh ||
+          opened.length !== before.opened ||
+          fetched.length !== before.fetched;
         if (!changed) dead.push(key);
       }
-      const allowed = NO_OP_BY_DESIGN.filter((e) => e.tab === tab).map((e) => e.key).sort();
+      const allowed = NO_OP_BY_DESIGN.filter((e) => e.tab === tab)
+        .map((e) => e.key)
+        .sort();
       expect(
         dead.sort(),
-        `keys registered on tab '${tab}' that changed no pixel, no state, and asked the outside world for nothing. `
-          + "A dead registration is not inert — it steals the keystroke from the companion column. "
-          + "Give it an effect, stop offering it in this state, or add it to NO_OP_BY_DESIGN with the reason.",
+        `keys registered on tab '${tab}' that changed no pixel, no state, and asked the outside world for nothing. ` +
+          "A dead registration is not inert — it steals the keystroke from the companion column. " +
+          "Give it an effect, stop offering it in this state, or add it to NO_OP_BY_DESIGN with the reason.",
       ).toEqual(allowed);
     });
   }
@@ -386,7 +509,10 @@ describe("[T2] every click-zone action variant is constructed", () => {
       // — the name-not-reader trap in its purest form.
       const body = text.replace(decl!, "");
       const unbuilt = tags.filter((t) => !body.includes(`t: "${t}"`));
-      expect(unbuilt.sort(), `${u.type} declares a variant nothing constructs — a click target that cannot be clicked. Delete the variant and its handler.`).toEqual([]);
+      expect(
+        unbuilt.sort(),
+        `${u.type} declares a variant nothing constructs — a click target that cannot be clicked. Delete the variant and its handler.`,
+      ).toEqual([]);
     });
   }
 });
@@ -415,8 +541,15 @@ describe("[T7] every repo path a script or doc points at exists", () => {
           // A doc that RECORDS a deletion names the path it deleted, and that
           // is the documentation working, not a broken pointer. Narrow, and
           // per-line so it cannot mute a whole file.
-          if (/\b(deleted|removed|retired|no longer|used to|gone|gitignored|never existed)\b/i.test(line)) continue;
-          for (const m of line.matchAll(/(?<![\w./-])(?:dist|src|extensions|prompts|agents|deploy|docker)\/[A-Za-z0-9._/-]+\.(?:ts|js|mjs|md|sh|json|yml|j2|toml)\b/g)) {
+          if (
+            /\b(deleted|removed|retired|no longer|used to|gone|gitignored|never existed)\b/i.test(
+              line,
+            )
+          )
+            continue;
+          for (const m of line.matchAll(
+            /(?<![\w./-])(?:dist|src|extensions|prompts|agents|deploy|docker)\/[A-Za-z0-9._/-]+\.(?:ts|js|mjs|md|sh|json|yml|j2|toml)\b/g,
+          )) {
             const rel = m[0];
             // dist/ is a build product: absent on a clean checkout, and its
             // presence is `scripts/verify-dist.mjs`'s job, not this fence's.

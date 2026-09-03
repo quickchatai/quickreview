@@ -16,7 +16,18 @@
 // (`src/levers.ts`) bound a session's `drain`/`pause-pr` and never an
 // operator's. A file in the operator directory without the seal is served as
 // a session's, loudly.
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, watch, writeFileSync, type FSWatcher } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  statSync,
+  watch,
+  writeFileSync,
+  type FSWatcher,
+} from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { StateStore } from "./state.js";
 import type { FileOutcome, ImprovementPayload, IssuePayload } from "./improvements.js";
@@ -110,23 +121,36 @@ export interface CommandContext {
 export interface CommandDeps {
   rerunRound(pr: number): Promise<FileOutcome | void> | FileOutcome | void;
   restartSession(target: number | "overseer"): Promise<FileOutcome | void> | FileOutcome | void;
-  resolveTerminalFailure(payload: TerminalFailurePayload): Promise<FileOutcome | void> | FileOutcome | void;
+  resolveTerminalFailure(
+    payload: TerminalFailurePayload,
+  ): Promise<FileOutcome | void> | FileOutcome | void;
   /** The two bounded levers receive the issuer the watcher stamped
    * from the channel, plus the optional asked-for duration. */
-  pausePr(pr: number, reason: string, issuer: CommandIssuer, forMin: number | undefined): Promise<FileOutcome | void> | FileOutcome | void;
+  pausePr(
+    pr: number,
+    reason: string,
+    issuer: CommandIssuer,
+    forMin: number | undefined,
+  ): Promise<FileOutcome | void> | FileOutcome | void;
   resumePr(pr: number, issuer: CommandIssuer): Promise<FileOutcome | void> | FileOutcome | void;
   flagOwner(message: string): Promise<FileOutcome | void> | FileOutcome | void;
   fileImprovementPr(payload: ImprovementPayload): Promise<FileOutcome | void> | FileOutcome | void;
   fileIssue(payload: IssuePayload): Promise<FileOutcome | void> | FileOutcome | void;
   /** Deploy-window drain valve. Optional like `slackReply`: a daemon wired
    * without it rejects the command with a reason instead of pretending. */
-  drain?(on: boolean, issuer: CommandIssuer, forMin: number | undefined): Promise<FileOutcome | void> | FileOutcome | void;
+  drain?(
+    on: boolean,
+    issuer: CommandIssuer,
+    forMin: number | undefined,
+  ): Promise<FileOutcome | void> | FileOutcome | void;
   retryThreadDecision?(commentId: number): Promise<FileOutcome | void> | FileOutcome | void;
   /** Optional: absent when Slack is disabled, in which case `slack_reply` is
    * rejected with a reason instead of silently succeeding. */
-  slackReply?(
-    payload: { thread: string; text: string; file: string },
-  ): Promise<FileOutcome | void> | FileOutcome | void;
+  slackReply?(payload: {
+    thread: string;
+    text: string;
+    file: string;
+  }): Promise<FileOutcome | void> | FileOutcome | void;
 }
 
 export type ValidationResult = { ok: true; command: Command } | { ok: false; reason: string };
@@ -153,11 +177,16 @@ function isNonEmptyString(v: unknown): v is string {
 /** The optional `for_min` of a lever command: absent, or a positive integer.
  * The CAP is not checked here — the validator does not know the channel; the
  * lever handler applies it with the issuer in hand. */
-function forMinField(obj: Record<string, unknown>): { ok: true; value: number | undefined } | { ok: false; reason: string } {
+function forMinField(
+  obj: Record<string, unknown>,
+): { ok: true; value: number | undefined } | { ok: false; reason: string } {
   const v = obj["for_min"];
   if (v === undefined) return { ok: true, value: undefined };
   if (typeof v !== "number" || !Number.isInteger(v) || v < 1) {
-    return { ok: false, reason: "'for_min' must be a positive integer number of minutes when present" };
+    return {
+      ok: false,
+      reason: "'for_min' must be a positive integer number of minutes when present",
+    };
   }
   return { ok: true, value: v };
 }
@@ -189,7 +218,10 @@ export function validateCommand(raw: unknown): ValidationResult {
           "Use pause-pr to hold one, or flag-owner (formerly flag-owner-legacy — the old name is still accepted) to raise it.",
       };
     }
-    return { ok: false, reason: `command '${name}' is not whitelisted (allowed: ${COMMAND_WHITELIST.join(", ")})` };
+    return {
+      ok: false,
+      reason: `command '${name}' is not whitelisted (allowed: ${COMMAND_WHITELIST.join(", ")})`,
+    };
   }
 
   switch (canonical as CommandName) {
@@ -206,30 +238,35 @@ export function validateCommand(raw: unknown): ValidationResult {
       if (!isPrNumber(pr) && pr !== "overseer") {
         return { ok: false, reason: "'pr' must be a positive integer or the string \"overseer\"" };
       }
-      return { ok: true, command: { command: "restart-session", pr: pr as number | "overseer" } };
+      return { ok: true, command: { command: "restart-session", pr: pr } };
     }
     case "resolve-terminal-failure": {
       const err = fieldError(obj, ["pr", "incident_id", "command_id", "head_sha"]);
       if (err) return { ok: false, reason: err };
       if (!isPrNumber(obj["pr"])) return { ok: false, reason: "'pr' must be a positive integer" };
       for (const field of ["incident_id", "command_id"]) {
-        if (!isNonEmptyString(obj[field])) return { ok: false, reason: `'${field}' must be a non-empty string` };
+        if (!isNonEmptyString(obj[field]))
+          return { ok: false, reason: `'${field}' must be a non-empty string` };
       }
       // An authoritative GitHub 404 can legitimately correspond to a legacy
       // synthetic debt whose stored head is the empty string. Closed PRs are
       // still forced to a non-empty exact match by resolveTerminalFailure().
-      if (typeof obj["head_sha"] !== "string") return { ok: false, reason: "'head_sha' must be a string" };
+      if (typeof obj["head_sha"] !== "string")
+        return { ok: false, reason: "'head_sha' must be a string" };
       if (obj["incident_id"] !== `review-failure:${obj["command_id"] as string}`) {
-        return { ok: false, reason: "'incident_id' must exactly equal review-failure:<command_id>" };
+        return {
+          ok: false,
+          reason: "'incident_id' must exactly equal review-failure:<command_id>",
+        };
       }
       return {
         ok: true,
         command: {
           command: "resolve-terminal-failure",
           pr: obj["pr"],
-          incident_id: obj["incident_id"] as string,
+          incident_id: obj["incident_id"],
           command_id: obj["command_id"] as string,
-          head_sha: obj["head_sha"] as string,
+          head_sha: obj["head_sha"],
         },
       };
     }
@@ -237,12 +274,18 @@ export function validateCommand(raw: unknown): ValidationResult {
       const err = fieldError(obj, ["pr", "reason", "for_min"]);
       if (err) return { ok: false, reason: err };
       if (!isPrNumber(obj["pr"])) return { ok: false, reason: "'pr' must be a positive integer" };
-      if (!isNonEmptyString(obj["reason"])) return { ok: false, reason: "'reason' must be a non-empty string" };
+      if (!isNonEmptyString(obj["reason"]))
+        return { ok: false, reason: "'reason' must be a non-empty string" };
       const forMin = forMinField(obj);
       if (!forMin.ok) return forMin;
       return {
         ok: true,
-        command: { command: "pause-pr", pr: obj["pr"], reason: obj["reason"], ...(forMin.value === undefined ? {} : { for_min: forMin.value }) },
+        command: {
+          command: "pause-pr",
+          pr: obj["pr"],
+          reason: obj["reason"],
+          ...(forMin.value === undefined ? {} : { for_min: forMin.value }),
+        },
       };
     }
     case "resume-pr": {
@@ -254,25 +297,33 @@ export function validateCommand(raw: unknown): ValidationResult {
     case "flag-owner": {
       const err = fieldError(obj, ["message"]);
       if (err) return { ok: false, reason: err };
-      if (!isNonEmptyString(obj["message"])) return { ok: false, reason: "'message' must be a non-empty string" };
+      if (!isNonEmptyString(obj["message"]))
+        return { ok: false, reason: "'message' must be a non-empty string" };
       return { ok: true, command: { command: "flag-owner", message: obj["message"] } };
     }
     case "file-improvement-pr": {
       const err = fieldError(obj, ["branch", "title", "body", "slug"]);
       if (err) return { ok: false, reason: err };
       for (const f of ["branch", "title", "body", "slug"]) {
-        if (!isNonEmptyString(obj[f])) return { ok: false, reason: `'${f}' must be a non-empty string` };
+        if (!isNonEmptyString(obj[f]))
+          return { ok: false, reason: `'${f}' must be a non-empty string` };
       }
       const slug = obj["slug"] as string;
       if (!SLUG_RE.test(slug)) {
-        return { ok: false, reason: `'slug' must match ${SLUG_RE.source} (it becomes bot/improve-<slug>)` };
+        return {
+          ok: false,
+          reason: `'slug' must match ${SLUG_RE.source} (it becomes bot/improve-<slug>)`,
+        };
       }
       // The session writes `branch` and the daemon hands it to git: only a
       // plain local branch name passes — never an option (`--quiet`), a force
       // refspec (`+wip/x`), a refspec (`a:b`) or a revision expression (`a..b`).
       const branch = obj["branch"] as string;
       if (!isBranchName(branch)) {
-        return { ok: false, reason: `'branch' must be a plain local branch name matching ${BRANCH_RE.source} (at most ${BRANCH_MAX} chars)` };
+        return {
+          ok: false,
+          reason: `'branch' must be a plain local branch name matching ${BRANCH_RE.source} (at most ${BRANCH_MAX} chars)`,
+        };
       }
       return {
         ok: true,
@@ -295,7 +346,8 @@ export function validateCommand(raw: unknown): ValidationResult {
       const err = fieldError(obj, ["title", "body", "pr"]);
       if (err) return { ok: false, reason: err };
       for (const f of ["title", "body"]) {
-        if (!isNonEmptyString(obj[f])) return { ok: false, reason: `'${f}' must be a non-empty string` };
+        if (!isNonEmptyString(obj[f]))
+          return { ok: false, reason: `'${f}' must be a non-empty string` };
       }
       if (obj["pr"] !== undefined && !isPrNumber(obj["pr"])) {
         return { ok: false, reason: "'pr' must be a positive integer when present" };
@@ -306,7 +358,7 @@ export function validateCommand(raw: unknown): ValidationResult {
           command: "file-issue",
           title: obj["title"] as string,
           body: obj["body"] as string,
-          ...(obj["pr"] === undefined ? {} : { pr: obj["pr"] as number }),
+          ...(obj["pr"] === undefined ? {} : { pr: obj["pr"] }),
         },
       };
     }
@@ -314,18 +366,33 @@ export function validateCommand(raw: unknown): ValidationResult {
       const err = fieldError(obj, ["on", "for_min"]);
       if (err) return { ok: false, reason: err };
       if (typeof obj["on"] !== "boolean") {
-        return { ok: false, reason: "'on' must be a boolean (true = engage the drain, false = lift it)" };
+        return {
+          ok: false,
+          reason: "'on' must be a boolean (true = engage the drain, false = lift it)",
+        };
       }
       const forMin = forMinField(obj);
       if (!forMin.ok) return forMin;
-      if (forMin.value !== undefined && !obj["on"]) return { ok: false, reason: "'for_min' only applies with on = true" };
-      return { ok: true, command: { command: "drain", on: obj["on"], ...(forMin.value === undefined ? {} : { for_min: forMin.value }) } };
+      if (forMin.value !== undefined && !obj["on"])
+        return { ok: false, reason: "'for_min' only applies with on = true" };
+      return {
+        ok: true,
+        command: {
+          command: "drain",
+          on: obj["on"],
+          ...(forMin.value === undefined ? {} : { for_min: forMin.value }),
+        },
+      };
     }
     case "retry-thread-decision": {
       const err = fieldError(obj, ["comment_id"]);
       if (err) return { ok: false, reason: err };
-      if (!isGitHubId(obj["comment_id"])) return { ok: false, reason: "'comment_id' must be a positive safe integer" };
-      return { ok: true, command: { command: "retry-thread-decision", comment_id: obj["comment_id"] } };
+      if (!isGitHubId(obj["comment_id"]))
+        return { ok: false, reason: "'comment_id' must be a positive safe integer" };
+      return {
+        ok: true,
+        command: { command: "retry-thread-decision", comment_id: obj["comment_id"] },
+      };
     }
     case "slack_reply": {
       const err = fieldError(obj, ["thread", "text"]);
@@ -333,10 +400,17 @@ export function validateCommand(raw: unknown): ValidationResult {
       // No `channel` field, by construction: the daemon binds every reply to
       // cfg.slack.channel, so posting in the wrong place is unrepresentable.
       if (!isNonEmptyString(obj["thread"]) || !SLACK_TS_RE.test(obj["thread"])) {
-        return { ok: false, reason: "'thread' must be a Slack message ts like \"1712345678.123456\"" };
+        return {
+          ok: false,
+          reason: "'thread' must be a Slack message ts like \"1712345678.123456\"",
+        };
       }
-      if (!isNonEmptyString(obj["text"])) return { ok: false, reason: "'text' must be a non-empty string" };
-      return { ok: true, command: { command: "slack_reply", thread: obj["thread"], text: obj["text"] as string } };
+      if (!isNonEmptyString(obj["text"]))
+        return { ok: false, reason: "'text' must be a non-empty string" };
+      return {
+        ok: true,
+        command: { command: "slack_reply", thread: obj["thread"], text: obj["text"] },
+      };
     }
   }
 }
@@ -364,7 +438,10 @@ export function validateCommand(raw: unknown): ValidationResult {
  * review-dismissing: those are not commands at all, and this feature adds no
  * GitHub mutation — every write still goes through the MutationGate.
  */
-const TIER_TABLE: Record<CommandName, { anyone: boolean; author: "own" | boolean; owner: boolean; system: boolean }> = {
+const TIER_TABLE: Record<
+  CommandName,
+  { anyone: boolean; author: "own" | boolean; owner: boolean; system: boolean }
+> = {
   "rerun-round": { anyone: false, author: "own", owner: true, system: true },
   "pause-pr": { anyone: false, author: "own", owner: true, system: true },
   "resume-pr": { anyone: false, author: "own", owner: true, system: true },
@@ -396,7 +473,8 @@ const TIER_TABLE: Record<CommandName, { anyone: boolean; author: "own" | boolean
 
 /** Target PR of a command, when it has one. */
 function targetPr(command: Command): number | null {
-  if (command.command === "restart-session") return typeof command.pr === "number" ? command.pr : null;
+  if (command.command === "restart-session")
+    return typeof command.pr === "number" ? command.pr : null;
   return "pr" in command && typeof command.pr === "number" ? command.pr : null;
 }
 
@@ -414,21 +492,35 @@ export type AuthorizationResult = { ok: true } | { ok: false; reason: string };
  * Every rejection reason starts with `tier: ` so the overseer — and the
  * `command_rejected` event stream — can tell a rights refusal from a cap.
  */
-export function authorizeCommand(command: Command, origin: OriginRecord | null): AuthorizationResult {
+export function authorizeCommand(
+  command: Command,
+  origin: OriginRecord | null,
+): AuthorizationResult {
   if (origin === null) return { ok: true };
   const row = TIER_TABLE[command.command];
   const pr = targetPr(command);
   switch (origin.tier) {
     case "owner":
-      return row.owner ? { ok: true } : { ok: false, reason: `tier: '${command.command}' is not available` };
+      return row.owner
+        ? { ok: true }
+        : { ok: false, reason: `tier: '${command.command}' is not available` };
     case "system":
-      return row.system ? { ok: true } : { ok: false, reason: `tier: '${command.command}' is not available` };
+      return row.system
+        ? { ok: true }
+        : { ok: false, reason: `tier: '${command.command}' is not available` };
     case "author": {
       if (row.author === true) return { ok: true };
       if (row.author === false) {
-        return { ok: false, reason: `tier: '${command.command}' requires tier owner (this turn is tier author)` };
+        return {
+          ok: false,
+          reason: `tier: '${command.command}' requires tier owner (this turn is tier author)`,
+        };
       }
-      if (pr === null) return { ok: false, reason: `tier: '${command.command}' needs a PR number to check ownership` };
+      if (pr === null)
+        return {
+          ok: false,
+          reason: `tier: '${command.command}' needs a PR number to check ownership`,
+        };
       if (origin.authorized_prs.includes(pr)) return { ok: true };
       return {
         ok: false,
@@ -441,7 +533,10 @@ export function authorizeCommand(command: Command, origin: OriginRecord | null):
       // `anyone` and `ignored` alike: read-only plus the two ungated commands.
       return row.anyone
         ? { ok: true }
-        : { ok: false, reason: `tier: '${command.command}' is not available at tier ${origin.tier}` };
+        : {
+            ok: false,
+            reason: `tier: '${command.command}' is not available at tier ${origin.tier}`,
+          };
   }
 }
 
@@ -463,12 +558,14 @@ export async function executeCommand(
     case "restart-session":
       return normalize(await deps.restartSession(command.pr));
     case "resolve-terminal-failure":
-      return normalize(await deps.resolveTerminalFailure({
-        pr: command.pr,
-        incident_id: command.incident_id,
-        command_id: command.command_id,
-        head_sha: command.head_sha,
-      }));
+      return normalize(
+        await deps.resolveTerminalFailure({
+          pr: command.pr,
+          incident_id: command.incident_id,
+          command_id: command.command_id,
+          head_sha: command.head_sha,
+        }),
+      );
     case "pause-pr":
       return normalize(await deps.pausePr(command.pr, command.reason, ctx.issuer, command.for_min));
     case "resume-pr":
@@ -493,15 +590,19 @@ export async function executeCommand(
         }),
       );
     case "slack_reply": {
-      if (!deps.slackReply) return { ok: false, reason: "slack_reply is not wired (Slack is disabled)" };
-      return normalize(await deps.slackReply({ thread: command.thread, text: command.text, file: ctx.file }));
+      if (!deps.slackReply)
+        return { ok: false, reason: "slack_reply is not wired (Slack is disabled)" };
+      return normalize(
+        await deps.slackReply({ thread: command.thread, text: command.text, file: ctx.file }),
+      );
     }
     case "drain": {
       if (!deps.drain) return { ok: false, reason: "drain is not wired on this daemon" };
       return normalize(await deps.drain(command.on, ctx.issuer, command.for_min));
     }
     case "retry-thread-decision": {
-      if (!deps.retryThreadDecision) return { ok: false, reason: "retry-thread-decision is not wired on this daemon" };
+      if (!deps.retryThreadDecision)
+        return { ok: false, reason: "retry-thread-decision is not wired on this daemon" };
       return normalize(await deps.retryThreadDecision(command.comment_id));
     }
   }
@@ -574,7 +675,13 @@ export function processOperatorSeal(): OperatorSeal {
         // lstat, not stat: the seal is a claim about the path the operator's
         // tools wrote, and a symlink planted at that path must show as one.
         const s = lstatSync(path);
-        const kind: PathKind = s.isSymbolicLink() ? "symlink" : s.isDirectory() ? "dir" : s.isFile() ? "file" : "other";
+        const kind: PathKind = s.isSymbolicLink()
+          ? "symlink"
+          : s.isDirectory()
+            ? "dir"
+            : s.isFile()
+              ? "file"
+              : "other";
         return { uid: s.uid, gid: s.gid, mode: s.mode & 0o7777, kind };
       } catch {
         return null;
@@ -604,12 +711,22 @@ export type SealVerdict = { sealed: true } | { sealed: false; reason: string };
 export function operatorSealVerdict(seal: OperatorSeal, dir: string, file: string): SealVerdict {
   const d = seal.stat(dir);
   if (!d) return { sealed: false, reason: "operator directory missing" };
-  if (d.kind !== "dir") return { sealed: false, reason: `operator directory is a ${d.kind}, not a directory` };
-  if (writableBy(seal, d)) return { sealed: false, reason: `operator directory is writable by uid ${seal.euid} (owner ${d.uid}, mode ${d.mode.toString(8)})` };
+  if (d.kind !== "dir")
+    return { sealed: false, reason: `operator directory is a ${d.kind}, not a directory` };
+  if (writableBy(seal, d))
+    return {
+      sealed: false,
+      reason: `operator directory is writable by uid ${seal.euid} (owner ${d.uid}, mode ${d.mode.toString(8)})`,
+    };
   const f = seal.stat(file);
   if (!f) return { sealed: false, reason: "command file vanished" };
-  if (f.kind !== "file") return { sealed: false, reason: `command file is a ${f.kind}, not a regular file` };
-  if (writableBy(seal, f)) return { sealed: false, reason: `command file is writable by uid ${seal.euid} (owner ${f.uid}, mode ${f.mode.toString(8)})` };
+  if (f.kind !== "file")
+    return { sealed: false, reason: `command file is a ${f.kind}, not a regular file` };
+  if (writableBy(seal, f))
+    return {
+      sealed: false,
+      reason: `command file is writable by uid ${seal.euid} (owner ${f.uid}, mode ${f.mode.toString(8)})`,
+    };
   return { sealed: true };
 }
 
@@ -788,7 +905,9 @@ export class CommandWatcher {
   }
 
   private enqueueSweep(): Promise<void> {
-    this.queue = this.queue.then(() => this.sweep()).catch((err) => this.log(`[commands] sweep failed: ${String(err)}`));
+    this.queue = this.queue
+      .then(() => this.sweep())
+      .catch((err) => this.log(`[commands] sweep failed: ${String(err)}`));
     return this.queue;
   }
 
@@ -801,7 +920,9 @@ export class CommandWatcher {
     return this.queue;
   }
 
-  private async readCommandFile(path: string): Promise<{ ok: true; value: unknown } | { ok: false; reason: string }> {
+  private async readCommandFile(
+    path: string,
+  ): Promise<{ ok: true; value: unknown } | { ok: false; reason: string }> {
     const attempts = this.opts.parseAttempts ?? 3;
     const delay = this.opts.parseRetryMs ?? 40;
     let lastError = "unreadable";
@@ -835,8 +956,13 @@ export class CommandWatcher {
     if (!seal) return "session";
     const verdict = operatorSealVerdict(seal, this.dir, path);
     if (verdict.sealed) return "operator";
-    this.opts.store.logEvent("operator_channel_unsealed", null, { file: basename(path), reason: verdict.reason });
-    this.log(`[commands] ${basename(path)}: operator channel NOT sealed (${verdict.reason}) — served as a session's command`);
+    this.opts.store.logEvent("operator_channel_unsealed", null, {
+      file: basename(path),
+      reason: verdict.reason,
+    });
+    this.log(
+      `[commands] ${basename(path)}: operator channel NOT sealed (${verdict.reason}) — served as a session's command`,
+    );
     return "session";
   }
 
@@ -861,7 +987,15 @@ export class CommandWatcher {
       const read = await this.readCommandFile(path);
       if (!read.ok) {
         if (read.reason === "file disappeared") return null;
-        return this.finish(path, name, version, null, issuer, { ok: false, reason: read.reason }, true);
+        return this.finish(
+          path,
+          name,
+          version,
+          null,
+          issuer,
+          { ok: false, reason: read.reason },
+          true,
+        );
       }
       const validation = validateCommand(read.value);
       if (!validation.ok) {
@@ -877,14 +1011,31 @@ export class CommandWatcher {
         );
       }
       const denial = this.tierCheck(validation.command);
-      if (denial) return this.finish(path, name, version, validation.command.command, issuer, { ok: false, reason: denial }, true);
+      if (denial)
+        return this.finish(
+          path,
+          name,
+          version,
+          validation.command.command,
+          issuer,
+          { ok: false, reason: denial },
+          true,
+        );
       let outcome: FileOutcome;
       try {
         outcome = await executeCommand(validation.command, this.opts.deps, { file: name, issuer });
       } catch (err) {
         outcome = { ok: false, reason: `handler threw: ${(err as Error).message}` };
       }
-      return this.finish(path, name, version, validation.command.command, issuer, outcome, !outcome.ok);
+      return this.finish(
+        path,
+        name,
+        version,
+        validation.command.command,
+        issuer,
+        outcome,
+        !outcome.ok,
+      );
     } finally {
       this.inFlight.delete(path);
     }
@@ -944,9 +1095,17 @@ export class CommandWatcher {
     if (outcome.ok) {
       this.opts.store.logEvent("command_executed", null, { command, file: result.file, issuer });
     } else {
-      this.opts.store.logEvent("command_rejected", null, { command, file: result.file, issuer, reason: outcome.reason });
+      this.opts.store.logEvent("command_rejected", null, {
+        command,
+        file: result.file,
+        issuer,
+        reason: outcome.reason,
+      });
     }
-    if (loud) this.log(`[commands] REJECTED ${result.file} (${command ?? "?"}): ${outcome.reason ?? "unknown reason"}`);
+    if (loud)
+      this.log(
+        `[commands] REJECTED ${result.file} (${command ?? "?"}): ${outcome.reason ?? "unknown reason"}`,
+      );
     // Make sure a daemon restart cannot re-execute the file: session dirs
     // archive it into processed/; the operator dir is not writable by the
     // daemon, so the store keeps the ledger instead, keyed by this version.

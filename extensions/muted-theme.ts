@@ -12,9 +12,11 @@ export const MUTED_THEME = "muted";
 
 export const activate = (pi: Pi): void => {
   pi.on("session_start", (_event, ctx) => {
-    const ui = ctx?.ui as { setTheme?: (theme: string) => { success: boolean; error?: string } } | undefined;
+    const ui = ctx?.ui as
+      { setTheme?: (theme: string) => { success: boolean; error?: string } } | undefined;
     const result = ui?.setTheme?.(MUTED_THEME);
-    if (result && !result.success) console.error(`[muted-theme] ${result.error ?? "could not select theme"}`);
+    if (result && !result.success)
+      console.error(`[muted-theme] ${result.error ?? "could not select theme"}`);
   });
 };
 

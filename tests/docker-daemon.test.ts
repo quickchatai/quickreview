@@ -155,7 +155,10 @@ describe("plain entrypoint — same invariants as the templated boot", () => {
   });
 
   it("renders ov.conf on loopback with NO vlm section and extraction off", () => {
-    const render = entrypoint.slice(entrypoint.indexOf("OV_CONF_RENDER"), entrypoint.lastIndexOf("OV_CONF_RENDER"));
+    const render = entrypoint.slice(
+      entrypoint.indexOf("OV_CONF_RENDER"),
+      entrypoint.lastIndexOf("OV_CONF_RENDER"),
+    );
     expect(render).toContain('host: "127.0.0.1"');
     expect(render).not.toMatch(/\bvlm\b\s*:/);
     expect(render).toContain("extraction_enabled: false");
@@ -166,7 +169,10 @@ describe("plain entrypoint — same invariants as the templated boot", () => {
   });
 
   it("the root key comes from the SECRETS MOUNT, never a literal, and ov.conf is 0600", () => {
-    const render = entrypoint.slice(entrypoint.indexOf("OV_CONF_RENDER"), entrypoint.lastIndexOf("OV_CONF_RENDER"));
+    const render = entrypoint.slice(
+      entrypoint.indexOf("OV_CONF_RENDER"),
+      entrypoint.lastIndexOf("OV_CONF_RENDER"),
+    );
     expect(render).toMatch(/root_api_key = fs\.readFileSync\(rootFile/);
     expect(render).not.toMatch(/root_api_key\s*[:=]\s*"[A-Za-z0-9_-]{8,}"/);
     expect(render).toContain("0o600");
@@ -182,7 +188,10 @@ describe("plain entrypoint — same invariants as the templated boot", () => {
   });
 
   it("the embedding provider is an env knob, pi's key is never its credential, and the migration check runs before provisioning", () => {
-    const render = entrypoint.slice(entrypoint.indexOf("OV_CONF_RENDER"), entrypoint.lastIndexOf("OV_CONF_RENDER"));
+    const render = entrypoint.slice(
+      entrypoint.indexOf("OV_CONF_RENDER"),
+      entrypoint.lastIndexOf("OV_CONF_RENDER"),
+    );
     expect(render).toContain("provider: process.env.QCR_OV_EMBEDDING_PROVIDER");
     expect(render).not.toContain('provider: "openai"');
     expect(render).not.toContain("openai_api_key");
@@ -238,30 +247,55 @@ describe("the rendered ov.conf (executed)", () => {
   /** The shell's `${QCR_OPENVIKING_X:-default}` defaults, as the render's env. */
   function shellDefaults(): Record<string, string> {
     const env: Record<string, string> = {};
-    for (const m of entrypoint.matchAll(/^OV_(\w+)="\$\{QCR_OPENVIKING_\1:-([^}]*)\}"$/gm)) env[`QCR_OV_${m[1]}`] = m[2]!;
+    for (const m of entrypoint.matchAll(/^OV_(\w+)="\$\{QCR_OPENVIKING_\1:-([^}]*)\}"$/gm))
+      env[`QCR_OV_${m[1]}`] = m[2]!;
     return env;
   }
 
-  function render(overrides: Record<string, string>, secrets: Record<string, string>): Record<string, any> {
+  function render(
+    overrides: Record<string, string>,
+    secrets: Record<string, string>,
+  ): Record<string, any> {
     dir = mkdtempSync(join(tmpdir(), "qcr-ovconf-plain-"));
     const home = join(dir, "openviking");
     const secretsDir = join(dir, "secrets");
     mkdirSync(home, { recursive: true });
     mkdirSync(secretsDir, { recursive: true });
-    for (const [name, value] of Object.entries(secrets)) writeFileSync(join(secretsDir, name), value);
+    for (const [name, value] of Object.entries(secrets))
+      writeFileSync(join(secretsDir, name), value);
     const start = entrypoint.indexOf("<<'OV_CONF_RENDER'");
     const script = join(dir, "render.cjs");
-    writeFileSync(script, entrypoint.slice(entrypoint.indexOf("\n", start) + 1, entrypoint.lastIndexOf("\nOV_CONF_RENDER")));
+    writeFileSync(
+      script,
+      entrypoint.slice(
+        entrypoint.indexOf("\n", start) + 1,
+        entrypoint.lastIndexOf("\nOV_CONF_RENDER"),
+      ),
+    );
     execFileSync(process.execPath, [script], {
-      env: { ...process.env, ...shellDefaults(), ...overrides, OPENVIKING_CONF: join(home, "ov.conf"), QCR_SECRETS: secretsDir },
+      env: {
+        ...process.env,
+        ...shellDefaults(),
+        ...overrides,
+        OPENVIKING_CONF: join(home, "ov.conf"),
+        QCR_SECRETS: secretsDir,
+      },
       stdio: ["ignore", "pipe", "pipe"],
     });
     return JSON.parse(readFileSync(join(home, "ov.conf"), "utf8"));
   }
 
   it("SHIPPED DEFAULT: embeds locally with no key present and no key required — pi's key in the mount changes nothing", () => {
-    const conf = render({}, { openai_api_key: "sk-pi-model-credential", openviking_root_key: "root-key-value" });
-    expect(conf.embedding.dense).toEqual({ provider: "local", model: LOCAL_EMBEDDING.model, dimension: LOCAL_EMBEDDING.dimension, input: "text" });
+    const conf = render(
+      {},
+      { openai_api_key: "sk-pi-model-credential", openviking_root_key: "root-key-value" },
+    );
+    expect(conf.embedding.dense).toEqual({
+      provider: "local",
+      model: LOCAL_EMBEDDING.model,
+      dimension: LOCAL_EMBEDDING.dimension,
+      input: "text",
+    });
     const text = JSON.stringify(conf);
     expect(text).not.toContain("sk-pi-model-credential");
     expect(text).not.toContain("openai");
@@ -269,9 +303,21 @@ describe("the rendered ov.conf (executed)", () => {
   });
 
   it("OPT-IN: the hosted provider reads its OWN key file; without one it renders no key rather than switching embedder", () => {
-    const hosted = { QCR_OV_EMBEDDING_PROVIDER: "openai", QCR_OV_EMBEDDING_MODEL: "text-embedding-3-small", QCR_OV_EMBEDDING_DIMENSION: "1536" };
-    const withKey = render(hosted, { openai_api_key: "sk-pi", openai_embeddings_api_key: "sk-embeddings", openviking_root_key: "r" });
-    expect(withKey.embedding.dense).toMatchObject({ provider: "openai", dimension: 1536, api_key: "sk-embeddings" });
+    const hosted = {
+      QCR_OV_EMBEDDING_PROVIDER: "openai",
+      QCR_OV_EMBEDDING_MODEL: "text-embedding-3-small",
+      QCR_OV_EMBEDDING_DIMENSION: "1536",
+    };
+    const withKey = render(hosted, {
+      openai_api_key: "sk-pi",
+      openai_embeddings_api_key: "sk-embeddings",
+      openviking_root_key: "r",
+    });
+    expect(withKey.embedding.dense).toMatchObject({
+      provider: "openai",
+      dimension: 1536,
+      api_key: "sk-embeddings",
+    });
     const without = render(hosted, { openai_api_key: "sk-pi", openviking_root_key: "r" });
     expect(without.embedding.dense.provider).toBe("openai");
     expect(without.embedding.dense.api_key).toBeUndefined();
@@ -280,9 +326,15 @@ describe("the rendered ov.conf (executed)", () => {
 
 describe("docker-compose topology", () => {
   it("passes the embedder knobs through from the project .env, defaulting to local", () => {
-    expect(compose).toContain("QCR_OPENVIKING_EMBEDDING_PROVIDER: ${QCR_OPENVIKING_EMBEDDING_PROVIDER:-local}");
-    expect(compose).toContain(`QCR_OPENVIKING_EMBEDDING_MODEL: \${QCR_OPENVIKING_EMBEDDING_MODEL:-${OPENVIKING_DEFAULTS.embedding_model}}`);
-    expect(compose).toContain(`QCR_OPENVIKING_EMBEDDING_DIMENSION: \${QCR_OPENVIKING_EMBEDDING_DIMENSION:-${OPENVIKING_DEFAULTS.embedding_dimension}}`);
+    expect(compose).toContain(
+      "QCR_OPENVIKING_EMBEDDING_PROVIDER: ${QCR_OPENVIKING_EMBEDDING_PROVIDER:-local}",
+    );
+    expect(compose).toContain(
+      `QCR_OPENVIKING_EMBEDDING_MODEL: \${QCR_OPENVIKING_EMBEDDING_MODEL:-${OPENVIKING_DEFAULTS.embedding_model}}`,
+    );
+    expect(compose).toContain(
+      `QCR_OPENVIKING_EMBEDDING_DIMENSION: \${QCR_OPENVIKING_EMBEDDING_DIMENSION:-${OPENVIKING_DEFAULTS.embedding_dimension}}`,
+    );
   });
 
   it("publishes ONLY the webhook port, loopback by default", () => {
@@ -320,12 +372,21 @@ describe("docker-compose topology", () => {
   });
 
   it("the entrypoint never rm -rf's the operator's state dir when the volume is already mounted there", () => {
-    expect(entrypoint).toContain('STATE_ID="$(stat -c %d:%i "$SANDBOX/state" 2>/dev/null || echo sandbox)"');
-    expect(entrypoint).toContain('VOLUME_ID="$(stat -c %d:%i /opt/quickreview/state 2>/dev/null || echo volume)"');
+    expect(entrypoint).toContain(
+      'STATE_ID="$(stat -c %d:%i "$SANDBOX/state" 2>/dev/null || echo sandbox)"',
+    );
+    expect(entrypoint).toContain(
+      'VOLUME_ID="$(stat -c %d:%i /opt/quickreview/state 2>/dev/null || echo volume)"',
+    );
     // The destructive legacy branch survives, but only behind the inode guard.
-    const guarded = entrypoint.slice(entrypoint.indexOf("STATE_ID="), entrypoint.indexOf("# The code resolves secrets"));
+    const guarded = entrypoint.slice(
+      entrypoint.indexOf("STATE_ID="),
+      entrypoint.indexOf("# The code resolves secrets"),
+    );
     expect(guarded).toContain('if [[ "$STATE_ID" == "$VOLUME_ID" ]]; then');
-    expect(guarded.indexOf('if [[ "$STATE_ID" == "$VOLUME_ID" ]]; then')).toBeLessThan(guarded.indexOf('rm -rf "$SANDBOX/state"'));
+    expect(guarded.indexOf('if [[ "$STATE_ID" == "$VOLUME_ID" ]]; then')).toBeLessThan(
+      guarded.indexOf('rm -rf "$SANDBOX/state"'),
+    );
   });
 
   it("PID 1 reaps (init: true) — the daemon supervises a second process", () => {
@@ -357,7 +418,14 @@ describe("ansible decoupling", () => {
 
   it("every cloudflared task is behind cloudflared_enabled (default true — the live tunnel stays)", () => {
     expect(gv("cloudflared_enabled")).toBe("true");
-    const tasks = ["Cloudflare package signing key", "Cloudflared apt repository", "Install cloudflared", "Register cloudflared as a systemd service", "Cloudflared service running", "Check for a pre-existing cloudflared service"];
+    const tasks = [
+      "Cloudflare package signing key",
+      "Cloudflared apt repository",
+      "Install cloudflared",
+      "Register cloudflared as a systemd service",
+      "Cloudflared service running",
+      "Check for a pre-existing cloudflared service",
+    ];
     for (const name of tasks) {
       const at = playbook.indexOf(name);
       expect(at, name).toBeGreaterThan(0);

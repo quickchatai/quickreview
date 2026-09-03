@@ -29,14 +29,26 @@ async function toolingChecks(ctx: StepContext): Promise<CheckResult[]> {
   const major = parseNodeMajor(host.nodeVersion);
   checks.push(
     major !== null && major >= MIN_NODE_MAJOR
-      ? { name: "node", ok: true, detail: `Node ${host.nodeVersion} (>= ${MIN_NODE_MAJOR} required)` }
-      : { name: "node", ok: false, detail: `Node >= ${MIN_NODE_MAJOR} is required; this is ${host.nodeVersion}` },
+      ? {
+          name: "node",
+          ok: true,
+          detail: `Node ${host.nodeVersion} (>= ${MIN_NODE_MAJOR} required)`,
+        }
+      : {
+          name: "node",
+          ok: false,
+          detail: `Node >= ${MIN_NODE_MAJOR} is required; this is ${host.nodeVersion}`,
+        },
   );
 
   const docker = await runner.run("docker", ["--version"]);
   checks.push(
     docker.code === 0
-      ? { name: "docker", ok: true, detail: docker.stdout.trim().split("\n")[0] ?? "docker present" }
+      ? {
+          name: "docker",
+          ok: true,
+          detail: docker.stdout.trim().split("\n")[0] ?? "docker present",
+        }
       : {
           name: "docker",
           ok: false,
@@ -47,7 +59,11 @@ async function toolingChecks(ctx: StepContext): Promise<CheckResult[]> {
   const compose = await runner.run("docker", ["compose", "version"]);
   checks.push(
     compose.code === 0
-      ? { name: "compose", ok: true, detail: compose.stdout.trim().split("\n")[0] ?? "docker compose present" }
+      ? {
+          name: "compose",
+          ok: true,
+          detail: compose.stdout.trim().split("\n")[0] ?? "docker compose present",
+        }
       : {
           name: "compose",
           ok: false,
@@ -73,10 +89,15 @@ export function preflightStep(): OnboardingStep {
         checks.push({
           name: "uid",
           ok: false,
-          detail: "could not determine the current user id (no uid on this platform — WSL2 is the supported route on Windows)",
+          detail:
+            "could not determine the current user id (no uid on this platform — WSL2 is the supported route on Windows)",
         });
       } else {
-        checks.push({ name: "uid", ok: true, detail: `uid ${uid} captured — later steps pass it to the image build as QCR_UID` });
+        checks.push({
+          name: "uid",
+          ok: true,
+          detail: `uid ${uid} captured — later steps pass it to the image build as QCR_UID`,
+        });
       }
       const ok = checks.every((c) => c.ok);
       if (ok && uid !== null) {

@@ -502,8 +502,9 @@ export class PiSessionManager implements SessionHooks {
     });
     const generation = randomUUID();
     const bridgeStateFile = this.bridgeStatePath(session, generation);
-    const durablePrBridge = prOfSession(session) !== undefined
-      && Boolean(this.commandStore && this.commandStore.path !== ":memory:");
+    const durablePrBridge =
+      prOfSession(session) !== undefined &&
+      Boolean(this.commandStore && this.commandStore.path !== ":memory:");
     const spawnEnv = {
       ...extraEnv,
       QCR_SESSION_BRIDGE_GENERATION: generation,
@@ -573,14 +574,16 @@ export class PiSessionManager implements SessionHooks {
 
   private currentBridgeReady(session: string): boolean {
     try {
-      const birth = JSON.parse(readFileSync(this.birthFile(session), "utf8")) as { bridge_generation?: string };
+      const birth = JSON.parse(readFileSync(this.birthFile(session), "utf8")) as {
+        bridge_generation?: string;
+      };
       if (!birth.bridge_generation) return false;
       const state = readSessionBridgeState(this.bridgeStatePath(session, birth.bridge_generation));
       return Boolean(
-        birth.bridge_generation
-        && state?.session === session
-        && state.generation === birth.bridge_generation
-        && state.stage === "ready",
+        birth.bridge_generation &&
+        state?.session === session &&
+        state.generation === birth.bridge_generation &&
+        state.stage === "ready",
       );
     } catch {
       return false;
@@ -614,7 +617,10 @@ export class PiSessionManager implements SessionHooks {
     const session = prSessionName(pr);
     if (await this.tmux.hasSession(session)) {
       if (this.currentBridgeReady(session)) return session;
-      this.commandStore?.logEvent("session_bridge_stale", pr, { session, reason: "tmux alive without matching ready generation" });
+      this.commandStore?.logEvent("session_bridge_stale", pr, {
+        session,
+        reason: "tmux alive without matching ready generation",
+      });
       await this.tmux.killSession(session);
       if (await this.tmux.hasSession(session)) {
         throw new Error(`session ${session} survived stale-bridge fence`);
@@ -625,7 +631,11 @@ export class PiSessionManager implements SessionHooks {
     // anyone schedules: the daemon still owns exactly two pi session kinds.
     await this.ensureOvSession(pr);
     const template = readFileSync(join(this.root, "prompts", "conversation-system.md"), "utf8");
-    const body = renderConversationSystemPrompt(template, { pr, title, worktree }, identityVars(this.cfg));
+    const body = renderConversationSystemPrompt(
+      template,
+      { pr, title, worktree },
+      identityVars(this.cfg),
+    );
     try {
       await this.spawnSession(session, body, this.cfg.models.conversation, {
         QCR_PR: String(pr),
@@ -636,7 +646,7 @@ export class PiSessionManager implements SessionHooks {
       // A creator outside this manager instance may win after our first check.
       // Adopt only when both tmux and the matching bridge-generation receipt
       // prove that winner is usable; process existence alone caused #5454.
-      if (await this.tmux.hasSession(session) && this.currentBridgeReady(session)) return session;
+      if ((await this.tmux.hasSession(session)) && this.currentBridgeReady(session)) return session;
       throw err;
     }
     return session;
@@ -660,7 +670,8 @@ export class PiSessionManager implements SessionHooks {
     // The seeded overseer prompt is canonical and unmodifiable (CLAUDE.md rule
     // 6), so the Slack contract rides as a spawn-time appendix — same shape as
     // EXECUTION_POLICY_ADDENDUM in include.ts. Slack off = byte-identical prompt.
-    const body = renderOverseerSystemPrompt(template, identityVars(this.cfg)) + this.slackAppendix();
+    const body =
+      renderOverseerSystemPrompt(template, identityVars(this.cfg)) + this.slackAppendix();
     await this.spawnSession(OVERSEER_SESSION, body, this.cfg.models.overseer);
     return OVERSEER_SESSION;
   }
@@ -699,7 +710,8 @@ export class PiSessionManager implements SessionHooks {
       try {
         const payload = readFileSync(command.payload_path);
         const hash = createHash("sha256").update(payload).digest("hex");
-        if (hash !== command.payload_sha256) throw new Error(`payload hash ${hash} != ${command.payload_sha256}`);
+        if (hash !== command.payload_sha256)
+          throw new Error(`payload hash ${hash} != ${command.payload_sha256}`);
         this.writeAtomic(command.inject_path, payload);
         restored.push(command.id);
       } catch (err) {
@@ -731,11 +743,18 @@ export class PiSessionManager implements SessionHooks {
       return;
     }
     for (const entry of sessions) {
-      if (!entry.isDirectory() || !/^pr-\d+$/.test(entry.name) || store.blockingSessionCommand(entry.name)) continue;
+      if (
+        !entry.isDirectory() ||
+        !/^pr-\d+$/.test(entry.name) ||
+        store.blockingSessionCommand(entry.name)
+      )
+        continue;
       const dir = join(injectRoot, entry.name);
       let files: string[];
       try {
-        files = readdirSync(dir).filter((f) => f.endsWith(".md")).sort();
+        files = readdirSync(dir)
+          .filter((f) => f.endsWith(".md"))
+          .sort();
       } catch {
         continue;
       }
@@ -770,7 +789,9 @@ export class PiSessionManager implements SessionHooks {
             next_check_at: this.commandDeadline(this.sessionCommandStartLeaseMs()),
           });
         } catch (err) {
-          console.error(`[quickreviewd] sessions: FAILED_LOUD could not adopt ${injectPath}: ${String(err)}`);
+          console.error(
+            `[quickreviewd] sessions: FAILED_LOUD could not adopt ${injectPath}: ${String(err)}`,
+          );
         }
         break;
       }
@@ -788,15 +809,24 @@ export class PiSessionManager implements SessionHooks {
   }
 
   private sessionCommandStartLeaseMs(): number {
-    return (this.cfg.daemon.session_command_start_lease_s ?? DEFAULT_SESSION_COMMAND_START_LEASE_S) * 1000;
+    return (
+      (this.cfg.daemon.session_command_start_lease_s ?? DEFAULT_SESSION_COMMAND_START_LEASE_S) *
+      1000
+    );
   }
 
   private sessionBridgeReadyTimeoutMs(): number {
-    return (this.cfg.daemon?.session_bridge_ready_timeout_s ?? DEFAULT_SESSION_BRIDGE_READY_TIMEOUT_S) * 1000;
+    return (
+      (this.cfg.daemon?.session_bridge_ready_timeout_s ?? DEFAULT_SESSION_BRIDGE_READY_TIMEOUT_S) *
+      1000
+    );
   }
 
   private sessionCommandRunningLeaseMs(): number {
-    return (this.cfg.daemon.session_command_running_max_min ?? DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN) * 60_000;
+    return (
+      (this.cfg.daemon.session_command_running_max_min ?? DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN) *
+      60_000
+    );
   }
 
   private queuePrCommand(
@@ -884,7 +914,9 @@ export class PiSessionManager implements SessionHooks {
     } catch (err) {
       // Best-effort by contract: losing the copy costs the cheap recovery for
       // this round, never the dispatch itself.
-      console.log(`[quickreviewd] sessions: could not save the round prompt for #${pr} round ${roundNo}: ${String(err)}`);
+      console.log(
+        `[quickreviewd] sessions: could not save the round prompt for #${pr} round ${roundNo}: ${String(err)}`,
+      );
     }
   }
 
@@ -909,7 +941,11 @@ export class PiSessionManager implements SessionHooks {
    * Only files touched at/after the round started are read — the prompt cannot
    * be in an older one, and that keeps the scan bounded on long conversations.
    */
-  async roundPromptAccepted(pr: number, roundNo: number, startedAtMs: number): Promise<boolean | null> {
+  async roundPromptAccepted(
+    pr: number,
+    roundNo: number,
+    startedAtMs: number,
+  ): Promise<boolean | null> {
     return this.wakeReceiptPresent(pr, roundPromptMarker(pr, roundNo), startedAtMs);
   }
 
@@ -982,7 +1018,11 @@ export class PiSessionManager implements SessionHooks {
       // forever — which silently disables both the redelivery-vs-loss decision
       // here and reconcile's claim-release sweep. Unknown is the correct
       // answer and a durable row is how it stops being a silent one.
-      this.commandStore?.logEvent("receipt_scan_unreadable", pr, { marker, since_ms: sinceMs, root });
+      this.commandStore?.logEvent("receipt_scan_unreadable", pr, {
+        marker,
+        since_ms: sinceMs,
+        root,
+      });
       return null;
     }
     // Nothing to read at all (a session that has not written since the round
@@ -1037,14 +1077,20 @@ export class PiSessionManager implements SessionHooks {
     // let the old evidence be adopted as a new legacy command on restart.
     const injectPath = command.inject_path;
     try {
-      if (!this.commandStore.retrySessionCommand(command.id, {
-        inject_path: injectPath,
-        next_check_at: this.commandDeadline(this.sessionCommandStartLeaseMs()),
-      })) return false;
+      if (
+        !this.commandStore.retrySessionCommand(command.id, {
+          inject_path: injectPath,
+          next_check_at: this.commandDeadline(this.sessionCommandStartLeaseMs()),
+        })
+      )
+        return false;
       this.writeAtomic(injectPath, stamped);
       return true;
     } catch (err) {
-      this.commandStore.failPendingSessionCommand(command.id, `redelivery write failed: ${String(err)}`);
+      this.commandStore.failPendingSessionCommand(
+        command.id,
+        `redelivery write failed: ${String(err)}`,
+      );
       return false;
     }
   }
@@ -1053,18 +1099,25 @@ export class PiSessionManager implements SessionHooks {
    * consumer alive beside its replay. Rounds may only use this before start;
    * an ordinary wake may use it after acceptance because the tmux fence comes
    * first. In both cases the same id, path and exact payload bytes survive. */
-  async retrySessionCommand(commandId: string, _reason: string): Promise<SessionCommandRetryResult> {
+  async retrySessionCommand(
+    commandId: string,
+    _reason: string,
+  ): Promise<SessionCommandRetryResult> {
     const store = this.commandStore;
     const command = store?.getSessionCommand(commandId);
     if (
-      !store || !command || !["pending", "running", "failed"].includes(command.status)
-      || (command.kind === "round" && command.started_at !== null)
-    ) return "retry_failed";
+      !store ||
+      !command ||
+      !["pending", "running", "failed"].includes(command.status) ||
+      (command.kind === "round" && command.started_at !== null)
+    )
+      return "retry_failed";
 
     let payload: Buffer;
     try {
       payload = readFileSync(command.payload_path);
-      if (createHash("sha256").update(payload).digest("hex") !== command.payload_sha256) return "retry_failed";
+      if (createHash("sha256").update(payload).digest("hex") !== command.payload_sha256)
+        return "retry_failed";
     } catch {
       return "retry_failed";
     }
@@ -1082,18 +1135,26 @@ export class PiSessionManager implements SessionHooks {
     // same ownership row to pending. A settlement that won during the kill is
     // success, never grounds for duplicate replay.
     if (command.kind === "round" && command.round_no !== null) {
-      if (existsSync(join(this.root, "verdict", `pr-${command.pr}-round-${command.round_no}.json`))) return "round_finished";
+      if (existsSync(join(this.root, "verdict", `pr-${command.pr}-round-${command.round_no}.json`)))
+        return "round_finished";
       const round = store.roundsFor(command.pr).find((row) => row.round_no === command.round_no);
       if (!round || round.status !== "running") return "round_finished";
     }
-    if (!store.retrySessionCommandAfterFence(
-      command.id,
-      command.attempt,
-      this.commandDeadline(this.sessionCommandStartLeaseMs()),
-    )) {
+    if (
+      !store.retrySessionCommandAfterFence(
+        command.id,
+        command.attempt,
+        this.commandDeadline(this.sessionCommandStartLeaseMs()),
+      )
+    ) {
       const current = store.getSessionCommand(command.id);
       if (current?.status === "acked") return "settled";
-      if (command.kind === "round" && current?.started_at !== null && current?.started_at !== undefined) return "accepted_race";
+      if (
+        command.kind === "round" &&
+        current?.started_at !== null &&
+        current?.started_at !== undefined
+      )
+        return "accepted_race";
       if (command.kind === "round" && command.round_no !== null) {
         const round = store.roundsFor(command.pr).find((row) => row.round_no === command.round_no);
         if (!round || round.status !== "running") return "round_finished";
@@ -1133,7 +1194,9 @@ export class PiSessionManager implements SessionHooks {
         delivery_attempt: store.getSessionCommand(command.id)?.attempt ?? command.attempt,
         detail,
       });
-      console.log(`[quickreviewd] sessions: command ${command.id} recovery rebirth failed: ${detail}`);
+      console.log(
+        `[quickreviewd] sessions: command ${command.id} recovery rebirth failed: ${detail}`,
+      );
       return "retry_failed";
     }
   }
@@ -1167,7 +1230,7 @@ export class PiSessionManager implements SessionHooks {
    * Throws only when the PR was never tracked, so no title is known. */
   private async ensureSessionForWake(pr: number): Promise<void> {
     const session = prSessionName(pr);
-    if (await this.tmux.hasSession(session) && this.currentBridgeReady(session)) return;
+    if ((await this.tmux.hasSession(session)) && this.currentBridgeReady(session)) return;
     const title = this.titleResolver?.(pr);
     if (title === undefined) {
       throw new Error(`no live session ${session} — dispatch a round to birth it first`);
@@ -1298,7 +1361,12 @@ export class PiSessionManager implements SessionHooks {
     this.writeAtomic(
       join(dest, "meta.json"),
       `${JSON.stringify(
-        { session, archived_at: this.now().toISOString(), session_file: jsonl ?? null, files: written },
+        {
+          session,
+          archived_at: this.now().toISOString(),
+          session_file: jsonl ?? null,
+          files: written,
+        },
         null,
         2,
       )}\n`,
@@ -1388,7 +1456,9 @@ export class PiSessionManager implements SessionHooks {
    * Daemon start: adopt live sessions and sweep worktrees whose PR is no
    * longer active (ported preflight). Never touches a live session.
    */
-  async preflight(activePrs: Iterable<number>): Promise<{ adoption: AdoptionReport; sweptWorktrees: number[] }> {
+  async preflight(
+    activePrs: Iterable<number>,
+  ): Promise<{ adoption: AdoptionReport; sweptWorktrees: number[] }> {
     const adoption = await this.adopt();
     const keep = new Set<number>([...activePrs, ...adoption.prs]);
     const sweptWorktrees = await this.worktrees.sweepStale(keep);

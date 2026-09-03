@@ -60,7 +60,9 @@ describe("lifecycle", () => {
   });
 
   it("treats an existing session as created — a respawned pi keeps its notes", async () => {
-    const life = openVikingSessionLifecycle(api({ create: { ok: false, status: 409, conflict: true } }));
+    const life = openVikingSessionLifecycle(
+      api({ create: { ok: false, status: 409, conflict: true } }),
+    );
     expect(await life.create("pr-7")).toBe(true);
   });
 
@@ -87,14 +89,26 @@ describe("lifecycle", () => {
 
 describe("ovcli.conf", () => {
   it("carries url + user + key, and no peer id (the peer is per-session)", () => {
-    const body = renderOvcliConf({ url: "http://127.0.0.1:1933/", apiKey: "k", user: OV_REVIEWER_USER });
-    expect(JSON.parse(body)).toEqual({ url: "http://127.0.0.1:1933", user: "reviewer", api_key: "k" });
+    const body = renderOvcliConf({
+      url: "http://127.0.0.1:1933/",
+      apiKey: "k",
+      user: OV_REVIEWER_USER,
+    });
+    expect(JSON.parse(body)).toEqual({
+      url: "http://127.0.0.1:1933",
+      user: "reviewer",
+      api_key: "k",
+    });
     expect(body).not.toContain("peer");
   });
 
   it("writes 0600 and reports that a key landed", () => {
     const path = ovcliConfPathIn(join(dir, "pihome"));
-    const res = writeOvcliConf(path, { url: "http://x:1933", apiKey: "reviewer-key", user: "reviewer" });
+    const res = writeOvcliConf(path, {
+      url: "http://x:1933",
+      apiKey: "reviewer-key",
+      user: "reviewer",
+    });
     expect(res).toMatchObject({ written: true, keyed: true, reason: "" });
     expect(statSync(path).mode & 0o777).toBe(0o600);
     expect(JSON.parse(readFileSync(path, "utf8")).api_key).toBe("reviewer-key");
@@ -122,7 +136,11 @@ describe("ovcli.conf", () => {
     // No root key readable ⇒ nothing to compare against, so a normal key is
     // written as normal. (The fork's own withoutRootKey() is the second layer.)
     const path = ovcliConfPathIn(join(dir, "pihome"));
-    const res = writeOvcliConf(path, { url: "http://x:1933", apiKey: "k", user: "reviewer" }, { serverConfigPath: join(dir, "missing.conf") });
+    const res = writeOvcliConf(
+      path,
+      { url: "http://x:1933", apiKey: "k", user: "reviewer" },
+      { serverConfigPath: join(dir, "missing.conf") },
+    );
     expect(res.keyed).toBe(true);
   });
 });
@@ -150,7 +168,11 @@ describe("session environment", () => {
   });
 
   it("omits the session id when there is no raw tier (the overseer)", () => {
-    const env = openVikingSessionEnv({ baseUrl: "http://h:1933", peerId: "overseer", cliConfigPath: "/c" });
+    const env = openVikingSessionEnv({
+      baseUrl: "http://h:1933",
+      peerId: "overseer",
+      cliConfigPath: "/c",
+    });
     expect(env.QCR_OV_SESSION_ID).toBeUndefined();
     expect(env.OPENVIKING_PEER_ID).toBe("overseer");
   });
@@ -175,7 +197,11 @@ function fakeServer() {
   const memories = new Map<string, string>();
   const fetchFn = async (url: string, init: { method: string; body?: string }) => {
     const body = init.body ? (JSON.parse(init.body) as Record<string, any>) : {};
-    const ok = (result: unknown) => ({ ok: true, status: 200, text: async () => JSON.stringify({ status: "ok", result }) });
+    const ok = (result: unknown) => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ status: "ok", result }),
+    });
     if (url.endsWith("/api/v1/sessions") && init.method === "POST") {
       sessions.set(body["session_id"], { policy: body["memory_policy"], notes: [] });
       return ok({ session_id: body["session_id"] });
@@ -185,16 +211,41 @@ function fakeServer() {
       const existed = sessions.delete(id);
       return existed
         ? ok({})
-        : { ok: false, status: 404, text: async () => JSON.stringify({ status: "error", error: { code: "NOT_FOUND", message: "no such session" } }) };
+        : {
+            ok: false,
+            status: 404,
+            text: async () =>
+              JSON.stringify({
+                status: "error",
+                error: { code: "NOT_FOUND", message: "no such session" },
+              }),
+          };
     }
     if (url.endsWith("/api/v1/search/search")) {
       const q = String(body["query"] ?? "").toLowerCase();
       const entries = [...memories.entries()]
         .filter(([, text]) => text.toLowerCase().includes(q))
-        .map(([uri, text]) => ({ uri, text, score: 1, category: "experiences", detail: "full", origin: "memories" }));
-      return ok({ entries, rendered: entries.map((e) => e.text).join("\n"), digest: "", stats: {} });
+        .map(([uri, text]) => ({
+          uri,
+          text,
+          score: 1,
+          category: "experiences",
+          detail: "full",
+          origin: "memories",
+        }));
+      return ok({
+        entries,
+        rendered: entries.map((e) => e.text).join("\n"),
+        digest: "",
+        stats: {},
+      });
     }
-    return { ok: false, status: 404, text: async () => JSON.stringify({ status: "error", error: { code: "NOT_FOUND", message: url } }) };
+    return {
+      ok: false,
+      status: 404,
+      text: async () =>
+        JSON.stringify({ status: "error", error: { code: "NOT_FOUND", message: url } }),
+    };
   };
   return { sessions, memories, fetchFn };
 }
@@ -202,7 +253,11 @@ function fakeServer() {
 describe("the raw tier is not the durable tier", () => {
   it("creates the session with extraction fully disabled", async () => {
     const server = fakeServer();
-    const client = new OpenVikingClient({ baseUrl: "http://127.0.0.1:1933", apiKey: "reviewer-key", fetchFn: server.fetchFn });
+    const client = new OpenVikingClient({
+      baseUrl: "http://127.0.0.1:1933",
+      apiKey: "reviewer-key",
+      fetchFn: server.fetchFn,
+    });
     expect(await openVikingSessionLifecycle(client).create(ovSessionIdForPr(42))).toBe(true);
 
     // Self, peer and working memory ALL off: our deployment configures no vlm,
@@ -217,23 +272,36 @@ describe("the raw tier is not the durable tier", () => {
 
   it("round notes in the session are NOT returned by a memory search", async () => {
     const server = fakeServer();
-    const client = new OpenVikingClient({ baseUrl: "http://127.0.0.1:1933", apiKey: "reviewer-key", fetchFn: server.fetchFn });
+    const client = new OpenVikingClient({
+      baseUrl: "http://127.0.0.1:1933",
+      apiKey: "reviewer-key",
+      fetchFn: server.fetchFn,
+    });
     await openVikingSessionLifecycle(client).create("pr-42");
     // What the session's turn sync puts in the raw tier…
     server.sessions.get("pr-42")!.notes.push("round 2 scratch: the retry lives in HTTPAdapter");
     // …versus what the durable tier holds.
-    server.memories.set("viking://user/reviewer/memories/experiences/retry.md", "retry policy is set centrally");
+    server.memories.set(
+      "viking://user/reviewer/memories/experiences/retry.md",
+      "retry policy is set centrally",
+    );
 
     const hit = await client.searchContext("retry");
     expect(hit.ok).toBe(true);
     if (!hit.ok) return;
-    expect(hit.result.entries.map((e) => e.uri)).toEqual(["viking://user/reviewer/memories/experiences/retry.md"]);
+    expect(hit.result.entries.map((e) => e.uri)).toEqual([
+      "viking://user/reviewer/memories/experiences/retry.md",
+    ]);
     expect(hit.result.rendered).not.toContain("round 2 scratch");
   });
 
   it("closing the PR deletes the session and its archives", async () => {
     const server = fakeServer();
-    const client = new OpenVikingClient({ baseUrl: "http://127.0.0.1:1933", apiKey: "reviewer-key", fetchFn: server.fetchFn });
+    const client = new OpenVikingClient({
+      baseUrl: "http://127.0.0.1:1933",
+      apiKey: "reviewer-key",
+      fetchFn: server.fetchFn,
+    });
     const life = openVikingSessionLifecycle(client);
     await life.create("pr-42");
     expect(await life.remove("pr-42")).toBe(true);
@@ -246,9 +314,15 @@ describe("the raw tier is not the durable tier", () => {
     // `commit` exists to PROMOTE session content into durable memories, i.e.
     // exactly the extraction this deployment switched off. Structural check:
     // no daemon-side module has a commit call to make.
-    const client = new OpenVikingClient({ baseUrl: "http://h:1933", apiKey: "k" }) as unknown as Record<string, unknown>;
+    const client = new OpenVikingClient({
+      baseUrl: "http://h:1933",
+      apiKey: "k",
+    }) as unknown as Record<string, unknown>;
     expect(typeof client["commitSession"]).toBe("undefined");
-    const src = readFileSync(join(import.meta.dirname, "..", "src", "memory", "ovsession.ts"), "utf8");
+    const src = readFileSync(
+      join(import.meta.dirname, "..", "src", "memory", "ovsession.ts"),
+      "utf8",
+    );
     expect(src).not.toMatch(/commitSession|\/commit/);
   });
 });
@@ -256,6 +330,8 @@ describe("the raw tier is not the durable tier", () => {
 describe("the pi HOME layout", () => {
   it("puts ovcli.conf where the fork's resolver looks by default", () => {
     mkdirSync(join(dir, "pihome"), { recursive: true });
-    expect(ovcliConfPathIn(join(dir, "pihome"))).toBe(join(dir, "pihome", ".openviking", "ovcli.conf"));
+    expect(ovcliConfPathIn(join(dir, "pihome"))).toBe(
+      join(dir, "pihome", ".openviking", "ovcli.conf"),
+    );
   });
 });

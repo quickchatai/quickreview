@@ -30,7 +30,13 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { authorizeCommand, CommandWatcher, executeCommand, validateCommand, type CommandDeps } from "../src/commands.js";
+import {
+  authorizeCommand,
+  CommandWatcher,
+  executeCommand,
+  validateCommand,
+  type CommandDeps,
+} from "../src/commands.js";
 import { OriginStore, parseOriginRecord } from "../src/slack/origin.js";
 import { foldSlackTier, StateStore } from "../src/state.js";
 
@@ -182,14 +188,26 @@ describe("command fold: 'flag-owner-legacy' → 'flag-owner'", () => {
 
     it("an old-prompt session's flag-owner-legacy file executes, and the result records flag-owner", async () => {
       const cmdDir = join(dir, "commands");
-      writeFileSync(join(cmdDir, "old-session.json"), JSON.stringify({ command: "flag-owner-legacy", message: "hi" }));
+      writeFileSync(
+        join(cmdDir, "old-session.json"),
+        JSON.stringify({ command: "flag-owner-legacy", message: "hi" }),
+      );
       const flagOwner = vi.fn(async () => undefined);
       const deps = { flagOwner } as unknown as CommandDeps;
-      await new CommandWatcher({ dir: cmdDir, deps, store, log: () => {}, parseAttempts: 2, parseRetryMs: 1 }).sweep();
+      await new CommandWatcher({
+        dir: cmdDir,
+        deps,
+        store,
+        log: () => {},
+        parseAttempts: 2,
+        parseRetryMs: 1,
+      }).sweep();
       expect(flagOwner).toHaveBeenCalledWith("hi");
       // Everything we EMIT — the result file and the event ledger — carries
       // the current name; the legacy spelling exists only on the input side.
-      const result = JSON.parse(readFileSync(join(cmdDir, "results", "old-session.result.json"), "utf8"));
+      const result = JSON.parse(
+        readFileSync(join(cmdDir, "results", "old-session.result.json"), "utf8"),
+      );
       expect(result).toMatchObject({ ok: true, command: "flag-owner", file: "old-session.json" });
       const events = store.eventsOn(new Date().toISOString().slice(0, 10));
       const executed = events.find((e) => e.kind === "command_executed");

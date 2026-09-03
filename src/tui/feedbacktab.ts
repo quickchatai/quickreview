@@ -25,16 +25,42 @@
 // lives in `changelog-store.ts`.
 import { parseEventTags } from "../memory/eventtags.js";
 import type { App } from "./app.js";
-import type { ChangeEntry, ChangeLogProblem, ChangeRegister, RevertResult } from "./changelog-store.js";
+import type {
+  ChangeEntry,
+  ChangeLogProblem,
+  ChangeRegister,
+  RevertResult,
+} from "./changelog-store.js";
 import { barHeight, paintCmdBar, type BarButton, type LiveKeys } from "./cmdbar.js";
-import { ACCENT, BAD, HEADING, MUTED, OK, RESET, SEP, STRONG, WARN, button, modeBadge, sectionTitle, selected as selectedLine } from "./design.js";
+import {
+  ACCENT,
+  BAD,
+  HEADING,
+  MUTED,
+  OK,
+  RESET,
+  SEP,
+  STRONG,
+  WARN,
+  button,
+  modeBadge,
+  sectionTitle,
+  selected as selectedLine,
+} from "./design.js";
 import { emptyLine } from "./emptystate.js";
 import { keyChar, type BoardKey } from "./keys.js";
 import type { LearningStore } from "./learning.js";
 import { timelineOrder, type MemoryEntry } from "./memory.js";
 import { hitTest, type Zone } from "./mouse.js";
 import { Frame, fit, rule, sanitizeText, truncate, wrap } from "./paint.js";
-import { paintSplit, splitWidths, windowStart, zonedRow, type RowChunk, type ZonedRow } from "./panes.js";
+import {
+  paintSplit,
+  splitWidths,
+  windowStart,
+  zonedRow,
+  type RowChunk,
+  type ZonedRow,
+} from "./panes.js";
 import { tabDigit } from "./tabs.js";
 import { FG, fmtAge } from "./theme.js";
 import { isActionableTicket } from "./trackertickets.js";
@@ -56,9 +82,11 @@ export interface FeedbackPresentation {
   learning: string;
 }
 
-const hasTag = (e: MemoryEntry, tag: string): boolean => e.tags.some((t) => t.replace(/^#+/, "").toLowerCase() === tag);
+const hasTag = (e: MemoryEntry, tag: string): boolean =>
+  e.tags.some((t) => t.replace(/^#+/, "").toLowerCase() === tag);
 
-const isDisposition = (e: MemoryEntry): boolean => hasTag(e, "adjudication") || hasTag(e, "feedback-review") || hasTag(e, "feedback-action");
+const isDisposition = (e: MemoryEntry): boolean =>
+  hasTag(e, "adjudication") || hasTag(e, "feedback-review") || hasTag(e, "feedback-action");
 
 /**
  * The inbox: every `#feedback` signal, newest first. Disposition records
@@ -106,9 +134,13 @@ function dispositionFor(
   // verdict supersedes an earlier needs-attention marker.
   const action = all.find((candidate) => hasTag(candidate, "feedback-action") && exact(candidate));
   if (action) return { status: "acted-on", entry: action };
-  const adjudication = all.find((candidate) => hasTag(candidate, "adjudication") && exact(candidate));
+  const adjudication = all.find(
+    (candidate) => hasTag(candidate, "adjudication") && exact(candidate),
+  );
   if (adjudication) return { status: "settled", entry: adjudication };
-  const reviewed = all.find((candidate) => hasTag(candidate, "feedback-review") && exact(candidate));
+  const reviewed = all.find(
+    (candidate) => hasTag(candidate, "feedback-review") && exact(candidate),
+  );
   if (reviewed) return { status: "needs-attention", entry: reviewed };
   return undefined;
 }
@@ -117,11 +149,15 @@ function dispositionFor(
  * does not adjudicate: unprocessed cards name a question to investigate, while
  * processed cards quote the attribution and Changed fields from the actual
  * #adjudication entry. */
-export function feedbackPresentation(e: MemoryEntry, all: MemoryEntry[]): FeedbackPresentation | undefined {
+export function feedbackPresentation(
+  e: MemoryEntry,
+  all: MemoryEntry[],
+): FeedbackPresentation | undefined {
   if (!hasTag(e, "feedback") || isDisposition(e)) return undefined;
   const tags = parseEventTags(e.text);
   const pr = tags["pr"] ?? /\bPR\s+#?(\d+)\b/i.exec(e.text)?.[1];
-  const signal = tags["signal"] ?? (e.text.includes("merged while") ? "merged_over_block" : "feedback");
+  const signal =
+    tags["signal"] ?? (e.text.includes("merged while") ? "merged_over_block" : "feedback");
   const raw = feedbackRaw(e.text);
   const lower = raw.toLowerCase();
   const episode = feedbackEpisode(e, signal);
@@ -135,42 +171,56 @@ export function feedbackPresentation(e: MemoryEntry, all: MemoryEntry[]): Feedba
   if (signal === "review_set_aside") {
     title = "Bot review was dismissed";
     summary = `A bot review${pr ? ` on #${pr}` : ""} was set aside; GitHub may also auto-dismiss stale reviews, so this is a strong investigation prompt but not proof of a bad finding.`;
-    learning = "Check whether the dismissed review was stale, superseded, or disposable on its merits before changing reviewer behaviour.";
+    learning =
+      "Check whether the dismissed review was stale, superseded, or disposable on its merits before changing reviewer behaviour.";
   } else if (signal === "merged_over_block") {
     title = "PR merged over a standing bot block";
     summary = `The PR${pr ? ` #${pr}` : ""} merged while REQUEST_CHANGES stood. That is a low-weight disagreement signal because repository policy may allow advisory overrides.`;
-    learning = "Reconstruct the standing blockers and test each against the merged code; the merge alone does not refute them.";
+    learning =
+      "Reconstruct the standing blockers and test each against the merged code; the merge alone does not refute them.";
   } else if (signal === "trigger_withdrawn") {
     title = "Review trigger was withdrawn";
     summary = `The review trigger${pr ? ` on #${pr}` : ""} was removed before completion, which may indicate cost, delay, irrelevance, or an ordinary workflow change.`;
-    learning = "Inspect timing and work already produced before attributing this to review quality.";
+    learning =
+      "Inspect timing and work already produced before attributing this to review quality.";
   } else if (lower.includes("prompt injection")) {
     title = "Prompt-injection blocker disputed";
     summary = `${actor ?? "A human reviewer"} says the prompt-injection finding${pr ? ` on #${pr}` : ""} should be ignored as a false positive.`;
-    learning = "Test the claimed execution boundary against the code and the standing injection bright line; do not infer safety merely from prior testing.";
+    learning =
+      "Test the claimed execution boundary against the code and the standing injection bright line; do not infer safety merely from prior testing.";
   } else if (/\brare\b|\bnarrow\b|\bunlikely\b|\bimprobabl/.test(lower)) {
     title = "Narrow edge case judged non-actionable";
     summary = `${actor ?? "A human reviewer"} says the finding${pr ? ` on #${pr}` : ""} concerns a production path too rare or narrow to belong in this feature PR.`;
-    learning = "Re-derive reachability and impact separately: the bug may be real while its severity or delivery is wrong.";
+    learning =
+      "Re-derive reachability and impact separately: the bug may be real while its severity or delivery is wrong.";
   } else if (lower.includes("small impact")) {
     title = "Low-impact finding judged non-actionable";
     summary = `${actor ?? "A human reviewer"} says the finding${pr ? ` on #${pr}` : ""} has too little impact to justify action.`;
-    learning = "Check whether the evidence supports a present defect, then whether its delivery exceeded the practical maintenance bar.";
+    learning =
+      "Check whether the evidence supports a present defect, then whether its delivery exceeded the practical maintenance bar.";
   } else {
     title = "Human disputes a review finding";
     summary = `${actor ?? "A human reviewer"} challenged a finding${pr ? ` on #${pr}` : ""}; the complaint still needs contact with the review evidence and code.`;
-    learning = "Compare the human claim, the posted finding, and the reviewed code before assigning fault or changing the rubric.";
+    learning =
+      "Compare the human claim, the posted finding, and the reviewed code before assigning fault or changing the rubric.";
   }
 
   if (status === "settled" && disposition) {
-    const attribution = /^Attribution:\s*(.+)$/im.exec(disposition.entry.text)?.[1]?.trim() ?? "recorded in adjudication";
-    const changed = /^Changed:\s*(.+)$/im.exec(disposition.entry.text)?.[1]?.trim() ?? "see adjudication";
+    const attribution =
+      /^Attribution:\s*(.+)$/im.exec(disposition.entry.text)?.[1]?.trim() ??
+      "recorded in adjudication";
+    const changed =
+      /^Changed:\s*(.+)$/im.exec(disposition.entry.text)?.[1]?.trim() ?? "see adjudication";
     learning = `Adjudicated as ${attribution}. Changed: ${changed}.`;
   } else if (status === "needs-attention" && disposition) {
-    const reason = /^Reason:\s*(.+)$/im.exec(disposition.entry.text)?.[1]?.trim() ?? "The review was inconclusive and needs the owner.";
+    const reason =
+      /^Reason:\s*(.+)$/im.exec(disposition.entry.text)?.[1]?.trim() ??
+      "The review was inconclusive and needs the owner.";
     learning = `Reviewed; needs attention. ${reason}`;
   } else if (status === "acted-on" && disposition) {
-    const result = /^Result:\s*(.+)$/im.exec(disposition.entry.text)?.[1]?.trim() ?? "The resulting action is recorded in memory.";
+    const result =
+      /^Result:\s*(.+)$/im.exec(disposition.entry.text)?.[1]?.trim() ??
+      "The resulting action is recorded in memory.";
     learning = `Acted on. ${result}`;
   }
 
@@ -187,10 +237,22 @@ export function feedbackPresentation(e: MemoryEntry, all: MemoryEntry[]): Feedba
   };
 }
 
-const STATUS_MARK: Record<FeedbackStatus, string> = { unprocessed: "○", settled: "✓", "needs-attention": "!", "acted-on": "◆" };
+const STATUS_MARK: Record<FeedbackStatus, string> = {
+  unprocessed: "○",
+  settled: "✓",
+  "needs-attention": "!",
+  "acted-on": "◆",
+};
 
-export function feedbackEntryLine(e: MemoryEntry, presentation: FeedbackPresentation, width: number): string {
-  return truncate(`  ${e.day} ${STATUS_MARK[presentation.status]} ${presentation.listTitle}`, width);
+export function feedbackEntryLine(
+  e: MemoryEntry,
+  presentation: FeedbackPresentation,
+  width: number,
+): string {
+  return truncate(
+    `  ${e.day} ${STATUS_MARK[presentation.status]} ${presentation.listTitle}`,
+    width,
+  );
 }
 
 const STATUS_LINE: Record<FeedbackStatus, string> = {
@@ -219,7 +281,11 @@ export interface ChangeRegisterSource {
 /** `#5270 · · ratified "yes, all three"` — the provenance line. */
 export function provenance(entry: ChangeEntry, width: number): string {
   const bits: string[] = [];
-  bits.push(entry.feedback_pr ? `${FG.dim}feedback${RESET} #${sanitizeText(entry.feedback_pr)}` : `${FG.dim}no episode${RESET}`);
+  bits.push(
+    entry.feedback_pr
+      ? `${FG.dim}feedback${RESET} #${sanitizeText(entry.feedback_pr)}`
+      : `${FG.dim}no episode${RESET}`,
+  );
   if (entry.adjudication) bits.push(`${ACCENT}${sanitizeText(entry.adjudication)}${RESET}`);
   bits.push(`${FG.dim}ratified ${sanitizeText(entry.ratified)}${RESET}`);
   if (entry.reverted) bits.push(`${WARN}reverted by ${entry.reverted.by}${RESET}`);
@@ -229,15 +295,23 @@ export function provenance(entry: ChangeEntry, width: number): string {
 export function headline(entry: ChangeEntry, now: Date, width: number): string {
   const mark = entry.reverted ? `${WARN}⤺${RESET}` : `${OK}●${RESET}`;
   const age = `${FG.dim}${fit(fmtAge(entry.at, now), 4)}${RESET}`;
-  const subject = entry.reverted ? `${MUTED}${sanitizeText(entry.subject)}${RESET}` : `${STRONG}${sanitizeText(entry.subject)}${RESET}`;
+  const subject = entry.reverted
+    ? `${MUTED}${sanitizeText(entry.subject)}${RESET}`
+    : `${STRONG}${sanitizeText(entry.subject)}${RESET}`;
   return truncate(`${mark} ${ACCENT}${entry.short}${RESET} ${age} ${subject}`, width);
 }
 
 /** The armed banner: what will run, in the words git will run it in. */
 export function armedLines(entry: ChangeEntry, width: number): string[] {
   return [
-    truncate(`${WARN}${STRONG}REVERT${RESET} ${ACCENT}${entry.short}${RESET} ${STRONG}${sanitizeText(entry.subject)}${RESET}`, width),
-    truncate(`${FG.dim}runs${RESET} git revert --no-edit ${entry.short} ${FG.dim}in this checkout — no push, no GitHub, nothing near the mutation gate${RESET}`, width),
+    truncate(
+      `${WARN}${STRONG}REVERT${RESET} ${ACCENT}${entry.short}${RESET} ${STRONG}${sanitizeText(entry.subject)}${RESET}`,
+      width,
+    ),
+    truncate(
+      `${FG.dim}runs${RESET} git revert --no-edit ${entry.short} ${FG.dim}in this checkout — no push, no GitHub, nothing near the mutation gate${RESET}`,
+      width,
+    ),
     truncate(`${button("y do it")}  ${button("any other key cancels")}`, width),
   ];
 }
@@ -279,7 +353,11 @@ function entryKey(e: MemoryEntry): string {
 
 /** What the feedback tab answers to on this frame: the verbs of the FOCUSED
  * pane, plus the archive toggle and the focus cycle. */
-export function feedbackKeys(store: LearningStore, st: FeedbackTabState, changes: ChangeRegisterSource): LiveKeys {
+export function feedbackKeys(
+  store: LearningStore,
+  st: FeedbackTabState,
+  changes: ChangeRegisterSource,
+): LiveKeys {
   const bar: BarButton[] = [
     { key: "a", label: st.showArchived ? "a hide archived" : "a show archived" },
     { key: "t", label: "t focus" },
@@ -287,7 +365,8 @@ export function feedbackKeys(store: LearningStore, st: FeedbackTabState, changes
   if (st.focus === "proposed" && store.proposals[st.propSel] !== undefined) {
     bar.push({ key: "A", label: "A accept" }, { key: "x", label: "x reject" });
   }
-  if (st.focus === "changed" && (changes.register?.entries ?? [])[st.changeSel] !== undefined) bar.push({ key: "R", label: "R revert" });
+  if (st.focus === "changed" && (changes.register?.entries ?? [])[st.changeSel] !== undefined)
+    bar.push({ key: "R", label: "R revert" });
   return { bar, inline: st.armed !== undefined ? ["y", "Y"] : [] };
 }
 
@@ -303,7 +382,9 @@ export function renderFeedbackTab(
 ): Frame {
   const frame = new Frame(cols, rows);
   const inbox = feedbackInbox(store.entries, st.showArchived);
-  const unprocessed = inbox.filter((e) => feedbackPresentation(e, store.entries)?.status === "unprocessed").length;
+  const unprocessed = inbox.filter(
+    (e) => feedbackPresentation(e, store.entries)?.status === "unprocessed",
+  ).length;
   frame.set(
     0,
     rule(cols, "┌", "┐", [
@@ -317,7 +398,8 @@ export function renderFeedbackTab(
   const live = feedbackKeys(store, st, changes);
   const bodyRows = rows - 2 - barHeight("feedback", cols, live.bar);
   const { leftW, rightW } = splitWidths(cols);
-  const focusTitle = (title: string, focus: FeedbackFocus): string => (st.focus === focus ? `${sectionTitle(title)} ${ACCENT}◂${RESET}` : sectionTitle(title));
+  const focusTitle = (title: string, focus: FeedbackFocus): string =>
+    st.focus === focus ? `${sectionTitle(title)} ${ACCENT}◂${RESET}` : sectionTitle(title);
 
   // ---- left: the inbox --------------------------------------------------------
   const left: string[] = [];
@@ -331,11 +413,16 @@ export function renderFeedbackTab(
     for (const l of wrap(sanitizeText(store.memError), leftW - 3)) left.push(`${WARN}${l}${RESET}`);
     left.push(`${MUTED}the signals live in memory — r retries.${RESET}`);
   } else {
-    left.push(`${focusTitle(`INBOX (${inbox.length})`, "inbox")} ${MUTED}${unprocessed} unprocessed${RESET}`);
+    left.push(
+      `${focusTitle(`INBOX (${inbox.length})`, "inbox")} ${MUTED}${unprocessed} unprocessed${RESET}`,
+    );
     if (inbox.length === 0) {
       left.push(
         st.showArchived
-          ? emptyLine({ kind: "none", what: "[feedback] comments, dismissed reviews, merges over a block and withdrawn triggers land here" })
+          ? emptyLine({
+              kind: "none",
+              what: "[feedback] comments, dismissed reviews, merges over a block and withdrawn triggers land here",
+            })
           : emptyLine({ kind: "filtered", what: "a shows archived (acted-on) signals" }),
       );
     }
@@ -360,23 +447,56 @@ export function renderFeedbackTab(
   const selected = inbox[sel];
   const card = selected ? feedbackPresentation(selected, store.entries) : undefined;
   if (selected && card) {
-    row([{ text: `${sectionTitle("SIGNAL")} ${selected.ts} ${MUTED}episode=${card.episode}${RESET}` }]);
+    row([
+      { text: `${sectionTitle("SIGNAL")} ${selected.ts} ${MUTED}episode=${card.episode}${RESET}` },
+    ]);
     row([{ text: STATUS_LINE[card.status] }]);
     const cardCap = Math.max(6, bodyRows - 18);
-    const text = [`TITLE\n${card.title}`, "", `SUMMARY\n${card.summary}`, "", `RAW FEEDBACK\n${card.raw}`, "", `WHAT WE CAN LEARN\n${card.learning}`].join("\n");
+    const text = [
+      `TITLE\n${card.title}`,
+      "",
+      `SUMMARY\n${card.summary}`,
+      "",
+      `RAW FEEDBACK\n${card.raw}`,
+      "",
+      `WHAT WE CAN LEARN\n${card.learning}`,
+    ].join("\n");
     const wrapped = wrap(sanitizeText(text), rightW - 3);
     for (const l of wrapped.slice(0, cardCap)) row([{ text: l }]);
-    if (wrapped.length > cardCap) row([{ text: `… ${wrapped.length - cardCap} more lines`, dim: true }]);
+    if (wrapped.length > cardCap)
+      row([{ text: `… ${wrapped.length - cardCap} more lines`, dim: true }]);
     row([{ text: "" }]);
   }
 
-  row([{ text: focusTitle(store.propLoaded ? `PROPOSED (${store.proposals.length})` : "PROPOSED (—)", "proposed") }, { text: "the companion's rubric changes, waiting on you", dim: true }]);
-  if (!store.propLoaded) row([{ text: emptyLine({ kind: "unread", how: "listing state/rubric/" }) }]);
-  else if (store.proposals.length === 0) row([{ text: emptyLine({ kind: "none", what: "the companion authors proposals into state/rubric/" }) }]);
+  row([
+    {
+      text: focusTitle(
+        store.propLoaded ? `PROPOSED (${store.proposals.length})` : "PROPOSED (—)",
+        "proposed",
+      ),
+    },
+    { text: "the companion's rubric changes, waiting on you", dim: true },
+  ]);
+  if (!store.propLoaded)
+    row([{ text: emptyLine({ kind: "unread", how: "listing state/rubric/" }) }]);
+  else if (store.proposals.length === 0)
+    row([
+      {
+        text: emptyLine({
+          kind: "none",
+          what: "the companion authors proposals into state/rubric/",
+        }),
+      },
+    ]);
   store.proposals.forEach((p, i) => {
     const isSel = st.focus === "proposed" && i === st.propSel;
     row([
-      { text: isSel ? selectedLine(`▸ ${truncate(p.slug, rightW - 26)}`) : `▸ ${truncate(p.slug, rightW - 26)}`, action: { t: "prop", i } },
+      {
+        text: isSel
+          ? selectedLine(`▸ ${truncate(p.slug, rightW - 26)}`)
+          : `▸ ${truncate(p.slug, rightW - 26)}`,
+        action: { t: "prop", i },
+      },
       { text: button("A accept"), action: { t: "prop-accept", i } },
       { text: button("x reject"), action: { t: "prop-reject", i } },
     ]);
@@ -403,14 +523,45 @@ export function renderFeedbackTab(
   //. The two ways of not knowing each get their own sentence, and
   // neither hides the rows already in memory.
   if (problem?.kind === "register_unreadable") {
-    row([{ text: emptyLine({ kind: "unreadable", why: `change register unreadable (${sanitizeText(problem.reason)}) — nothing is scanned or saved over it; fix the file, then r` }) }]);
+    row([
+      {
+        text: emptyLine({
+          kind: "unreadable",
+          why: `change register unreadable (${sanitizeText(problem.reason)}) — nothing is scanned or saved over it; fix the file, then r`,
+        }),
+      },
+    ]);
   } else if (problem) {
-    row([{ text: emptyLine({ kind: "unreadable", why: register ? `last git log scan failed (${sanitizeText(problem.reason)}) — list may be behind; r retries` : `git log failed (${sanitizeText(problem.reason)}) — whether there are feedback-derived commits is unknown; r retries` }) }]);
+    row([
+      {
+        text: emptyLine({
+          kind: "unreadable",
+          why: register
+            ? `last git log scan failed (${sanitizeText(problem.reason)}) — list may be behind; r retries`
+            : `git log failed (${sanitizeText(problem.reason)}) — whether there are feedback-derived commits is unknown; r retries`,
+        }),
+      },
+    ]);
   }
   if (!register) {
-    if (!problem) row([{ text: emptyLine({ kind: "unread", how: "the register is scanned from git log · r retries" }) }]);
+    if (!problem)
+      row([
+        {
+          text: emptyLine({
+            kind: "unread",
+            how: "the register is scanned from git log · r retries",
+          }),
+        },
+      ]);
   } else if (entries.length === 0 && !problem) {
-    row([{ text: emptyLine({ kind: "none", what: "a change joins this list when it carries a Ratified-in-session: trailer" }) }]);
+    row([
+      {
+        text: emptyLine({
+          kind: "none",
+          what: "a change joins this list when it carries a Ratified-in-session: trailer",
+        }),
+      },
+    ]);
   }
   const armedEntry = st.armed ? entries.find((e) => e.sha === st.armed) : undefined;
   if (armedEntry) for (const l of armedLines(armedEntry, rightW - 3)) row([{ text: l }]);
@@ -419,7 +570,12 @@ export function renderFeedbackTab(
   entries.slice(changeStart, changeStart + 4).forEach((e, offset) => {
     const i = changeStart + offset;
     const head = headline(e, now, rightW - 3);
-    row([{ text: st.focus === "changed" && i === changeSel ? selectedLine(head) : head, action: { t: "change", i } }]);
+    row([
+      {
+        text: st.focus === "changed" && i === changeSel ? selectedLine(head) : head,
+        action: { t: "change", i },
+      },
+    ]);
     row([{ text: `  ${provenance(e, rightW - 5)}`, action: { t: "change", i } }]);
   });
   if (st.result) row([{ text: truncate(st.result, rightW - 2) }]);
@@ -429,22 +585,72 @@ export function renderFeedbackTab(
   const filed = read.kind === "read" ? read.tickets : undefined;
   const actionable = filed?.filter(isActionableTicket) ?? [];
   row([
-    { text: sectionTitle(filed ? `FILED (${actionable.length} actionable / ${filed.length} total)` : "FILED (—)") },
-    { text: button(`${tabDigit("tickets")} tickets`), action: { t: "key", key: tabDigit("tickets") } },
+    {
+      text: sectionTitle(
+        filed ? `FILED (${actionable.length} actionable / ${filed.length} total)` : "FILED (—)",
+      ),
+    },
+    {
+      text: button(`${tabDigit("tickets")} tickets`),
+      action: { t: "key", key: tabDigit("tickets") },
+    },
   ]);
-  if (read.kind === "unread") row([{ text: emptyLine({ kind: "unread", how: "the tracker is scanned behind the first frame" }) }]);
-  else if (read.kind === "unconfigured") row([{ text: emptyLine({ kind: "unreadable", why: "no tracker configured" }) }]);
-  else if (read.kind === "unreadable") row([{ text: emptyLine({ kind: "unreadable", why: read.reason }) }]);
-  else if (actionable.length === 0) row([{ text: emptyLine({ kind: "none", what: "adjudication files a ticket only when something changes" }) }]);
-  for (const ticket of actionable.slice(0, 3)) row([{ text: truncate(`${ticket.id} [${ticket.status}] ${ticket.title}`, rightW - 3), action: { t: "key", key: tabDigit("tickets") } }]);
+  if (read.kind === "unread")
+    row([
+      { text: emptyLine({ kind: "unread", how: "the tracker is scanned behind the first frame" }) },
+    ]);
+  else if (read.kind === "unconfigured")
+    row([{ text: emptyLine({ kind: "unreadable", why: "no tracker configured" }) }]);
+  else if (read.kind === "unreadable")
+    row([{ text: emptyLine({ kind: "unreadable", why: read.reason }) }]);
+  else if (actionable.length === 0)
+    row([
+      {
+        text: emptyLine({
+          kind: "none",
+          what: "adjudication files a ticket only when something changes",
+        }),
+      },
+    ]);
+  for (const ticket of actionable.slice(0, 3))
+    row([
+      {
+        text: truncate(`${ticket.id} [${ticket.status}] ${ticket.title}`, rightW - 3),
+        action: { t: "key", key: tabDigit("tickets") },
+      },
+    ]);
   row([{ text: "" }]);
 
-  row([{ text: sectionTitle(store.improvements === undefined ? "BOT PRs / ISSUES (—)" : `BOT PRs / ISSUES (${store.improvements.length})`) }]);
-  if (store.improvements === undefined) row([{ text: emptyLine({ kind: "unread", how: "the gh query was skipped or failed · r retries" }) }]);
-  else if (store.improvements.length === 0) row([{ text: emptyLine({ kind: "none", what: "the overseer files them" }) }]);
+  row([
+    {
+      text: sectionTitle(
+        store.improvements === undefined
+          ? "BOT PRs / ISSUES (—)"
+          : `BOT PRs / ISSUES (${store.improvements.length})`,
+      ),
+    },
+  ]);
+  if (store.improvements === undefined)
+    row([
+      {
+        text: emptyLine({ kind: "unread", how: "the gh query was skipped or failed · r retries" }),
+      },
+    ]);
+  else if (store.improvements.length === 0)
+    row([{ text: emptyLine({ kind: "none", what: "the overseer files them" }) }]);
   for (const it of (store.improvements ?? []).slice(0, 4)) {
-    const url = repo ? `https://github.com/${repo}/${it.kind === "pr" ? "pull" : "issues"}/${it.number}` : undefined;
-    row([{ text: truncate(`${it.kind === "pr" ? "PR" : "IS"} #${it.number} [${it.state}] ${it.title}`, rightW - 2), action: url ? { t: "url", url } : undefined }]);
+    const url = repo
+      ? `https://github.com/${repo}/${it.kind === "pr" ? "pull" : "issues"}/${it.number}`
+      : undefined;
+    row([
+      {
+        text: truncate(
+          `${it.kind === "pr" ? "PR" : "IS"} #${it.number} [${it.state}] ${it.title}`,
+          rightW - 2,
+        ),
+        action: url ? { t: "url", url } : undefined,
+      },
+    ]);
   }
   if (store.status) {
     row([{ text: "" }]);
@@ -459,8 +665,19 @@ export function renderFeedbackTab(
 
 /** Install the feedback surface over the shared learning store and the
  * change register. */
-export function installFeedbackTab(app: App, store: LearningStore, changes: ChangeRegisterSource): FeedbackTabState {
-  const st: FeedbackTabState = { focus: "inbox", sel: 0, propSel: 0, changeSel: 0, showArchived: false, changesLoading: false };
+export function installFeedbackTab(
+  app: App,
+  store: LearningStore,
+  changes: ChangeRegisterSource,
+): FeedbackTabState {
+  const st: FeedbackTabState = {
+    focus: "inbox",
+    sel: 0,
+    propSel: 0,
+    changeSel: 0,
+    showArchived: false,
+    changesLoading: false,
+  };
   const inbox = (): MemoryEntry[] => feedbackInbox(store.entries, st.showArchived);
   const selectSignal = (i: number): void => {
     const list = inbox();
@@ -473,7 +690,8 @@ export function installFeedbackTab(app: App, store: LearningStore, changes: Chan
       const rebound = st.selKey ? list.findIndex((e) => entryKey(e) === st.selKey) : -1;
       selectSignal(rebound >= 0 ? rebound : st.sel);
     }
-    if (part === "proposals") st.propSel = Math.min(st.propSel, Math.max(0, store.proposals.length - 1));
+    if (part === "proposals")
+      st.propSel = Math.min(st.propSel, Math.max(0, store.proposals.length - 1));
   });
 
   const reloadChanges = (): void => {
@@ -487,7 +705,10 @@ export function installFeedbackTab(app: App, store: LearningStore, changes: Chan
       })
       .finally(() => {
         st.changesLoading = false;
-        st.changeSel = Math.min(st.changeSel, Math.max(0, (changes.register?.entries.length ?? 1) - 1));
+        st.changeSel = Math.min(
+          st.changeSel,
+          Math.max(0, (changes.register?.entries.length ?? 1) - 1),
+        );
         app.repaint();
       });
   };
@@ -517,7 +738,16 @@ export function installFeedbackTab(app: App, store: LearningStore, changes: Chan
         scannedOnce = true;
         reloadChanges();
       }
-      const frame = renderFeedbackTab(store, st, changes, theApp.view.dryRun, cols, rows, theApp.view.repo, store.now());
+      const frame = renderFeedbackTab(
+        store,
+        st,
+        changes,
+        theApp.view.dryRun,
+        cols,
+        rows,
+        theApp.view.repo,
+        store.now(),
+      );
       lastZones = frame.zones as Zone<FeedbackAction>[];
       return frame;
     },
@@ -576,8 +806,16 @@ export function installFeedbackTab(app: App, store: LearningStore, changes: Chan
         case "up": {
           const delta = key.kind === "down" ? 1 : -1;
           if (st.focus === "inbox") selectSignal(st.sel + delta);
-          else if (st.focus === "proposed") st.propSel = Math.max(0, Math.min(st.propSel + delta, Math.max(0, store.proposals.length - 1)));
-          else st.changeSel = Math.max(0, Math.min(st.changeSel + delta, Math.max(0, entries.length - 1)));
+          else if (st.focus === "proposed")
+            st.propSel = Math.max(
+              0,
+              Math.min(st.propSel + delta, Math.max(0, store.proposals.length - 1)),
+            );
+          else
+            st.changeSel = Math.max(
+              0,
+              Math.min(st.changeSel + delta, Math.max(0, entries.length - 1)),
+            );
           theApp.repaint();
           return true;
         }

@@ -13,7 +13,12 @@ vi.mock("node:child_process", () => ({ spawn: (...args: unknown[]) => spawnMock(
 const { killInFlightSsh, realSshRunner } = await import("../src/tui/remote.js");
 
 /** A child that never exits — exactly the wedged-ControlMaster case. */
-function hangingChild(): EventEmitter & { kill: ReturnType<typeof vi.fn>; stdout: EventEmitter; stderr: EventEmitter; stdin: { end: () => void } } {
+function hangingChild(): EventEmitter & {
+  kill: ReturnType<typeof vi.fn>;
+  stdout: EventEmitter;
+  stderr: EventEmitter;
+  stdin: { end: () => void };
+} {
   const child = new EventEmitter() as ReturnType<typeof hangingChild>;
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();

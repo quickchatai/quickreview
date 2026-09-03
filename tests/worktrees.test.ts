@@ -62,7 +62,9 @@ afterEach(() => {
 
 describe("cloneUrlFor", () => {
   it("derives an https URL from owner/name", () => {
-    expect(cloneUrlFor("exampleorg/example-app")).toBe("https://github.com/exampleorg/example-app.git");
+    expect(cloneUrlFor("exampleorg/example-app")).toBe(
+      "https://github.com/exampleorg/example-app.git",
+    );
   });
 
   it("passes explicit URLs and local paths through", () => {
@@ -84,7 +86,12 @@ describe("WorktreeManager", () => {
     };
     // Same repo slug ⇒ same derived clone dir (the default clone dir
     // derives from the repo's basename instead of a hardcode).
-    const m2 = new WorktreeManager({ root, repo: "exampleorg/example-app", cloneUrl: origin, run: spy });
+    const m2 = new WorktreeManager({
+      root,
+      repo: "exampleorg/example-app",
+      cloneUrl: origin,
+      run: spy,
+    });
     await m2.ensureBaseClone();
     expect(calls).toEqual([]); // already cloned — no second clone
   });
@@ -291,7 +298,10 @@ describe("resolvedFilesInMerges", () => {
   /** Base → `side` branch; master edits shared.txt; merge master into side.
    * Conflicting scenarios resolve by hand with `resolution`. Returns the
    * span (base sha → merge sha). */
-  function mergeScenario(opts: { conflicting: boolean; resolution?: string }): { from: string; to: string } {
+  function mergeScenario(opts: { conflicting: boolean; resolution?: string }): {
+    from: string;
+    to: string;
+  } {
     writeFileSync(join(origin, "shared.txt"), "line1\nline2\nline3\n");
     git(origin, "add", "-A");
     git(origin, "commit", "-q", "-m", "base");
@@ -330,7 +340,10 @@ describe("resolvedFilesInMerges", () => {
   });
 
   it("a hand-resolved conflict names the file — including one that dropped master's change", async () => {
-    const { from, to } = mergeScenario({ conflicting: true, resolution: "line1 SIDE\nline2\nline3\n" });
+    const { from, to } = mergeScenario({
+      conflicting: true,
+      resolution: "line1 SIDE\nline2\nline3\n",
+    });
     const m = mgr();
     await m.ensureBaseClone();
     git(join(root, "example-app"), "fetch", "-q", "origin", "side", "master");
@@ -342,7 +355,10 @@ describe("resolvedFilesInMerges", () => {
   it("fetches missing objects on demand instead of degrading (2026-08-19 recheck storm)", async () => {
     const m = mgr();
     await m.ensureBaseClone(); // clone BEFORE the merge exists — the live recheck timing
-    const { from, to } = mergeScenario({ conflicting: true, resolution: "line1 SIDE\nline2\nline3\n" });
+    const { from, to } = mergeScenario({
+      conflicting: true,
+      resolution: "line1 SIDE\nline2\nline3\n",
+    });
     git(origin, "update-ref", "refs/pull/7/head", to);
     const res = await m.resolvedFilesInMerges(from, to, 7);
     expect(res.degraded).toBe(false);
@@ -352,10 +368,17 @@ describe("resolvedFilesInMerges", () => {
   it("reports degraded on unusable shas instead of guessing", async () => {
     const m = mgr();
     await m.ensureBaseClone();
-    expect(await m.resolvedFilesInMerges("not-a-sha", "also-not")).toEqual({ files: [], degraded: true });
+    expect(await m.resolvedFilesInMerges("not-a-sha", "also-not")).toEqual({
+      files: [],
+      degraded: true,
+    });
     expect(
-      (await m.resolvedFilesInMerges("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"))
-        .degraded,
+      (
+        await m.resolvedFilesInMerges(
+          "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+          "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        )
+      ).degraded,
     ).toBe(true);
   });
 });
@@ -374,7 +397,11 @@ describe("lastHumanAuthor", () => {
     const skill = ".claude/skills/uja/SKILL.md";
     commitAs(skill, "v1\n", "Alex <7+alex@users.noreply.github.com>");
     commitAs("other.txt", "x\n", "Alice <1+alice@users.noreply.github.com>");
-    const tip = commitAs(skill, "v2\n", "example-review[bot] <12+example-review[bot]@users.noreply.github.com>");
+    const tip = commitAs(
+      skill,
+      "v2\n",
+      "example-review[bot] <12+example-review[bot]@users.noreply.github.com>",
+    );
     const m = mgr();
     await m.ensureBaseClone();
     // The bot's later edit is skipped; Alice never touched the path.
@@ -389,7 +416,11 @@ describe("lastHumanAuthor", () => {
     const tip = commitAs("CLAUDE.md", "rules\n", "Bob <bob@example.com>");
     const m = mgr();
     await m.ensureBaseClone();
-    expect(await m.lastHumanAuthor(tip, ["CLAUDE.md"])).toEqual({ login: null, name: "Bob", email: "bob@example.com" });
+    expect(await m.lastHumanAuthor(tip, ["CLAUDE.md"])).toEqual({
+      login: null,
+      name: "Bob",
+      email: "bob@example.com",
+    });
   });
 
   it("returns null for untouched paths, empty path lists, and non-shas", async () => {

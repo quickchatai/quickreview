@@ -108,7 +108,8 @@ export function directiveEscalationFiles(
 ): string[] {
   const files: string[] = [];
   for (const f of findings) {
-    if (isFirstPartyDirectiveInjection(f.kind, f.path, vocab) && !files.includes(f.path)) files.push(f.path);
+    if (isFirstPartyDirectiveInjection(f.kind, f.path, vocab) && !files.includes(f.path))
+      files.push(f.path);
   }
   return files;
 }
@@ -120,10 +121,14 @@ export function directiveEscalationFiles(
  * the gated review — never a GitHub reviewer nomination (`request_reviewer`
  * stays a rejected non-kind; CLAUDE.md rule 10).
  */
-export function renderDirectiveEscalationComment(mention: string, files: readonly string[]): string {
+export function renderDirectiveEscalationComment(
+  mention: string,
+  files: readonly string[],
+): string {
   const at = mention ? `@${mention.replace(/^@/, "")}` : "a maintainer";
   const list = files.map((f) => `\`${f}\``).join(", ");
-  const part = files.length === 1 ? `the agent-directive file ${list}` : `the agent-directive files ${list}`;
+  const part =
+    files.length === 1 ? `the agent-directive file ${list}` : `the agent-directive files ${list}`;
   return (
     `${at} — this PR edits ${part}, which instructs the team's own automated agents, ` +
     "and the review found a concrete malicious or untrusted-source injection path there. " +
@@ -163,7 +168,8 @@ export function eventForVerdict(v: Verdict): ReviewPayload["event"] {
 }
 
 function verdictLine(v: Verdict, counts: Record<PostTag, number>): string {
-  const label = v === "APPROVE" ? "Approved" : v === "REQUEST_CHANGES" ? "Changes requested" : "Needs a human";
+  const label =
+    v === "APPROVE" ? "Approved" : v === "REQUEST_CHANGES" ? "Changes requested" : "Needs a human";
   const parts: string[] = [];
   const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
   if (counts.blocker) parts.push(plural(counts.blocker, "blocker"));
@@ -199,7 +205,9 @@ function bullet(f: Finding): string {
  * that escapes the machinery keyed on the real one — and reported here so the
  * escape is countable rather than silent.
  */
-export function ungrammaticalTags(findings: readonly Finding[]): Array<{ finding: Finding; tag: string }> {
+export function ungrammaticalTags(
+  findings: readonly Finding[],
+): Array<{ finding: Finding; tag: string }> {
   const out: Array<{ finding: Finding; tag: string }> = [];
   for (const f of findings) {
     const { stripped } = stripUngrammaticalTag(f.title);
@@ -239,13 +247,15 @@ export function inlineBody(f: Finding, tag: PostTag): string {
 /** Assemble the full review POST payload from a round's surviving findings. */
 export function assembleReview(input: ReviewInput): AssembledReview {
   const tags = new Map<Finding, PostTag>();
-  for (const f of input.findings) tags.set(f, postTag(f.severity, f.confidence, f.reachability, { kind: f.kind, path: f.path }));
+  for (const f of input.findings)
+    tags.set(f, postTag(f.severity, f.confidence, f.reachability, { kind: f.kind, path: f.path }));
 
   // 1. anchorable candidates vs. findings with no anchor at all
   const overflow: AssembledReview["overflow"] = [];
   const candidates: Finding[] = [];
   for (const f of input.findings) {
-    if (f.line === undefined || f.side === undefined) overflow.push({ finding: f, reason: "no anchor claimed" });
+    if (f.line === undefined || f.side === undefined)
+      overflow.push({ finding: f, reason: "no anchor claimed" });
     else candidates.push(f);
   }
 
@@ -261,7 +271,8 @@ export function assembleReview(input: ReviewInput): AssembledReview {
     }));
     const { accepted, rejected } = partitionByAnchor(requests, input.patches);
     anchored = accepted.map((r) => r.finding);
-    for (const r of rejected) overflow.push({ finding: r.comment.finding, reason: ANCHOR_REASON_TEXT[r.reason] });
+    for (const r of rejected)
+      overflow.push({ finding: r.comment.finding, reason: ANCHOR_REASON_TEXT[r.reason] });
   }
 
   // 3. the 50-inline cap; the remainder overflows to the body
@@ -299,10 +310,17 @@ export function renderBody(
 ): string {
   const counts: Record<PostTag, number> = { blocker: 0, question: 0, nit: 0 };
   for (const f of input.findings)
-    counts[tags.get(f) ?? postTag(f.severity, f.confidence, f.reachability, { kind: f.kind, path: f.path })] += 1;
+    counts[
+      tags.get(f) ??
+        postTag(f.severity, f.confidence, f.reachability, { kind: f.kind, path: f.path })
+    ] += 1;
 
   const of = (tag: PostTag) => input.findings.filter((f) => tags.get(f) === tag);
-  const out: string[] = [verdictLine(input.verdict, counts), "", `_Lenses applied: ${input.lenses.join(", ")}._`];
+  const out: string[] = [
+    verdictLine(input.verdict, counts),
+    "",
+    `_Lenses applied: ${input.lenses.join(", ")}._`,
+  ];
 
   const section = (title: string, items: string[]) => {
     if (items.length === 0) return;
@@ -320,7 +338,9 @@ export function renderBody(
   if (overflow.length) {
     section(
       "Additional findings (not posted inline)",
-      overflow.map(({ finding, reason }) => `- ${bullet(finding).slice(2)} — _${reason}_\n\n  ${finding.body}`),
+      overflow.map(
+        ({ finding, reason }) => `- ${bullet(finding).slice(2)} — _${reason}_\n\n  ${finding.body}`,
+      ),
     );
   }
 
@@ -338,7 +358,11 @@ export function renderBody(
     const start: string[] = [];
     start.push(
       `The automated review could not decide this one, so it is parked for a person${
-        input.ai_approved === undefined ? "" : input.ai_approved ? " (it found the PR otherwise sound: AI_APPROVED)" : " (it is not confident the PR is sound)"
+        input.ai_approved === undefined
+          ? ""
+          : input.ai_approved
+            ? " (it found the PR otherwise sound: AI_APPROVED)"
+            : " (it is not confident the PR is sound)"
       }.`,
       "",
       "**Why:**",
@@ -426,8 +450,17 @@ export async function submitReview(
       registered.push(c.id);
     }
   }
-  deps.store.logEvent("review_posted", pr, { event: payload.event, inline: payload.comments.length, registered: registered.length });
-  return { result, payload, registered, needs_backfill: registered.length < payload.comments.length };
+  deps.store.logEvent("review_posted", pr, {
+    event: payload.event,
+    inline: payload.comments.length,
+    registered: registered.length,
+  });
+  return {
+    result,
+    payload,
+    registered,
+    needs_backfill: registered.length < payload.comments.length,
+  };
 }
 
 // ---- the APPROVE path (scripts/approve-pr.sh semantics) ------------------
@@ -437,7 +470,9 @@ export type ApprovalStep = "create_review" | "remove_label" | "delete_team_revie
 export interface ApprovalAction {
   step: ApprovalStep;
   describe: string;
-  run: (adapter: Pick<GitHubAdapter, "createReview" | "removeLabel" | "deleteTeamReviewRequest">) => Promise<GateResult>;
+  run: (
+    adapter: Pick<GitHubAdapter, "createReview" | "removeLabel" | "deleteTeamReviewRequest">,
+  ) => Promise<GateResult>;
 }
 
 export interface ApprovalContext {

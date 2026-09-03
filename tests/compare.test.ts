@@ -70,7 +70,14 @@ const oldReview: ReviewSnapshot = {
 };
 
 const sandboxRecords: DryrunRecord[] = [
-  { kind: "add_label", method: "POST", path: "/repos/o/r/issues/501/labels", pr: 501, note: "in progress", file: "a.json" },
+  {
+    kind: "add_label",
+    method: "POST",
+    path: "/repos/o/r/issues/501/labels",
+    pr: 501,
+    note: "in progress",
+    file: "a.json",
+  },
   {
     kind: "create_review",
     method: "POST",
@@ -81,10 +88,22 @@ const sandboxRecords: DryrunRecord[] = [
     body: {
       commit_id: "deadbeef",
       event: "REQUEST_CHANGES",
-      body: ["## Blockers", "", "- `api/handler.py` unauthenticated token validation missing on the request path"].join("\n"),
+      body: [
+        "## Blockers",
+        "",
+        "- `api/handler.py` unauthenticated token validation missing on the request path",
+      ].join("\n"),
       comments: [
-        { path: "api/handler.py", line: 11, body: "BLOCKER: token validation missing — unauthenticated requests reach build_context" },
-        { path: "api/handler.py", line: 44, body: "blocker: commit outside the retry wrapper — transaction can be lost" },
+        {
+          path: "api/handler.py",
+          line: 11,
+          body: "BLOCKER: token validation missing — unauthenticated requests reach build_context",
+        },
+        {
+          path: "api/handler.py",
+          line: 44,
+          body: "blocker: commit outside the retry wrapper — transaction can be lost",
+        },
       ],
     },
   },
@@ -95,7 +114,10 @@ const sandboxRecords: DryrunRecord[] = [
 describe("dry-run collection", () => {
   it("reads a dryrun dir and tolerates junk", () => {
     const dir = scratch();
-    writeFileSync(join(dir, "1-add_label.json"), JSON.stringify({ kind: "add_label", method: "POST", path: "/x", pr: 1 }));
+    writeFileSync(
+      join(dir, "1-add_label.json"),
+      JSON.stringify({ kind: "add_label", method: "POST", path: "/x", pr: 1 }),
+    );
     writeFileSync(join(dir, "2-broken.json"), "{not json");
     writeFileSync(join(dir, "notes.txt"), "ignored");
     const recs = readDryrunDir(dir);
@@ -127,13 +149,21 @@ describe("(a) blocker parity", () => {
   });
 
   it("matches old and sandbox blockers by path + theme", () => {
-    const rows = blockerParity(extractBlockers(oldReview), extractBlockers(sandboxReviewFrom(sandboxRecords, 501)!));
+    const rows = blockerParity(
+      extractBlockers(oldReview),
+      extractBlockers(sandboxReviewFrom(sandboxRecords, 501)!),
+    );
     expect(rows.filter((r) => r.status === "missed-by-sandbox")).toHaveLength(0);
     expect(rows.filter((r) => r.status === "matched")).toHaveLength(2);
   });
 
   it("flags an old-flow blocker the sandbox never raised", () => {
-    const sandbox: ReviewSnapshot = { source: "sandbox", state: "APPROVE", body: "Looks good.", comments: [] };
+    const sandbox: ReviewSnapshot = {
+      source: "sandbox",
+      state: "APPROVE",
+      body: "Looks good.",
+      comments: [],
+    };
     const rows = blockerParity(extractBlockers(oldReview), extractBlockers(sandbox));
     expect(rows.every((r) => r.status === "missed-by-sandbox")).toBe(true);
     expect(rows).toHaveLength(2);
@@ -144,14 +174,24 @@ describe("(a) blocker parity", () => {
       source: "sandbox",
       state: "REQUEST_CHANGES",
       body: "",
-      comments: [{ path: "web/ui.tsx", line: 3, body: "BLOCKER: unbounded render loop in the effect dependency array" }],
+      comments: [
+        {
+          path: "web/ui.tsx",
+          line: 3,
+          body: "BLOCKER: unbounded render loop in the effect dependency array",
+        },
+      ],
     };
     const rows = blockerParity([], extractBlockers(sandbox));
     expect(rows).toEqual([expect.objectContaining({ status: "sandbox-only" })]);
   });
 
   it("theme words drop stopwords and short tokens; jaccard is symmetric", () => {
-    expect(themeWords("The token validation is missing")).toEqual(["token", "validation", "missing"]);
+    expect(themeWords("The token validation is missing")).toEqual([
+      "token",
+      "validation",
+      "missing",
+    ]);
     expect(jaccard(["a", "b"], ["b", "c"])).toBeCloseTo(1 / 3);
     expect(jaccard([], ["b"])).toBe(0);
   });
@@ -163,7 +203,13 @@ describe("(b) invariant scan", () => {
   });
 
   it("detects a mutation kind outside the allowlist", () => {
-    const v = invariantScan([...sandboxRecords, { kind: "retract_review", method: "PUT", path: "/x", pr: 501, file: "z.json" }], 501);
+    const v = invariantScan(
+      [
+        ...sandboxRecords,
+        { kind: "retract_review", method: "PUT", path: "/x", pr: 501, file: "z.json" },
+      ],
+      501,
+    );
     expect(v).toHaveLength(1);
     expect(v[0]!.rule).toBe("mutation-kind allowlist");
     expect(v[0]!.detail).toContain("retract_review");
@@ -177,14 +223,26 @@ describe("(b) invariant scan", () => {
   });
 
   it("does NOT flag a request_reviewer record — it is an ordinary kind again", () => {
-    const req: DryrunRecord = { kind: "request_reviewer", method: "POST", path: "/x", pr: 501, file: "r.json" };
+    const req: DryrunRecord = {
+      kind: "request_reviewer",
+      method: "POST",
+      path: "/x",
+      pr: 501,
+      file: "r.json",
+    };
     const v = invariantScan([...sandboxRecords, req], 501);
     expect(v.map((x) => x.rule)).not.toContain("retired mutation kind");
     expect(v.map((x) => x.rule)).not.toContain("mutation-kind allowlist");
   });
 
   it("detects unsolicited scope (a record aimed at another PR)", () => {
-    const v = invariantScan([...sandboxRecords, { kind: "add_label", method: "POST", path: "/x", pr: 777, file: "s.json" }], 501);
+    const v = invariantScan(
+      [
+        ...sandboxRecords,
+        { kind: "add_label", method: "POST", path: "/x", pr: 777, file: "s.json" },
+      ],
+      501,
+    );
     expect(v.map((x) => x.rule)).toContain("no unsolicited scope");
   });
 });
@@ -208,12 +266,19 @@ describe("(c) anchor validity", () => {
       ],
       patches,
     );
-    expect(checks.map((c) => c.status)).toEqual(["on-changed-line", "context-only", "outside-diff", "unknown-file"]);
+    expect(checks.map((c) => c.status)).toEqual([
+      "on-changed-line",
+      "context-only",
+      "outside-diff",
+      "unknown-file",
+    ]);
   });
 
   it("accepts every anchor of the fixture sandbox review", () => {
     const snap = sandboxReviewFrom(sandboxRecords, 501)!;
-    expect(checkAnchors(snap.comments, patches).every((c) => c.status === "on-changed-line")).toBe(true);
+    expect(checkAnchors(snap.comments, patches).every((c) => c.status === "on-changed-line")).toBe(
+      true,
+    );
   });
 });
 
@@ -238,7 +303,13 @@ describe("(d) settled threads", () => {
       source: "sandbox",
       state: "REQUEST_CHANGES",
       body: "",
-      comments: [{ path: "web/ui.tsx", line: 3, body: "BLOCKER: memoization concern — this component re-renders" }],
+      comments: [
+        {
+          path: "web/ui.tsx",
+          line: 3,
+          body: "BLOCKER: memoization concern — this component re-renders",
+        },
+      ],
     })[0]!;
     const v = settledThreadViolations([finding], parseSettledThreads(ledger));
     expect(v).toHaveLength(1);
@@ -250,7 +321,9 @@ describe("(d) settled threads", () => {
       source: "sandbox",
       state: "REQUEST_CHANGES",
       body: "",
-      comments: [{ path: "api/handler.py", line: 11, body: "BLOCKER: token validation missing entirely" }],
+      comments: [
+        { path: "api/handler.py", line: 11, body: "BLOCKER: token validation missing entirely" },
+      ],
     })[0]!;
     expect(settledThreadViolations([finding], parseSettledThreads(ledger))).toHaveLength(0);
   });
@@ -269,7 +342,13 @@ describe("report rendering", () => {
   it("renders all five rubric sections and reproduces both bodies verbatim", () => {
     const r = comparePr(input);
     expect(r.gatesPass).toBe(true);
-    for (const h of ["(a) Blocker parity", "(b) Invariant scan", "(c) Anchor validity", "(d) Settled-thread discipline", "(e) Tone / format"]) {
+    for (const h of [
+      "(a) Blocker parity",
+      "(b) Invariant scan",
+      "(c) Anchor validity",
+      "(d) Settled-thread discipline",
+      "(e) Tone / format",
+    ]) {
       expect(r.markdown).toContain(h);
     }
     expect(r.markdown).toContain(oldReview.body.split("\n")[2]!);
@@ -304,14 +383,23 @@ describe("report rendering", () => {
   });
 
   it("fails the gates when the sandbox misses a blocker", () => {
-    const r = comparePr({ ...input, sandboxReview: { source: "sandbox", state: "APPROVE", body: "LGTM", comments: [] } });
+    const r = comparePr({
+      ...input,
+      sandboxReview: { source: "sandbox", state: "APPROVE", body: "LGTM", comments: [] },
+    });
     expect(r.gatesPass).toBe(false);
     expect(r.markdown).toContain("**MISSED**");
     expect(r.markdown).toContain("(a) Blocker parity — FAIL");
   });
 
   it("fails the gates on a forbidden mutation kind", () => {
-    const r = comparePr({ ...input, records: [...sandboxRecords, { kind: "revoke_approval", method: "PUT", path: "/x", pr: 501, file: "q.json" }] });
+    const r = comparePr({
+      ...input,
+      records: [
+        ...sandboxRecords,
+        { kind: "revoke_approval", method: "PUT", path: "/x", pr: 501, file: "q.json" },
+      ],
+    });
     expect(r.gatesPass).toBe(false);
     expect(r.markdown).toContain("(b) Invariant scan — FAIL");
     expect(r.markdown).toContain("revoke_approval");
@@ -319,14 +407,31 @@ describe("report rendering", () => {
 
   it("attestDryRun: a disproof beats a claim, and absence of evidence is never a pass", () => {
     const none: DryrunRecord[] = [];
-    expect(attestDryRun({ gateIsDryRun: true, executedMutations: 0 }, none).status).toBe("observed-dry");
-    expect(attestDryRun({ gateIsDryRun: false, executedMutations: 0 }, none).status).toBe("live-gate");
-    expect(attestDryRun({ gateIsDryRun: true, executedMutations: 2 }, none).status).toBe("executed");
-    expect(attestDryRun({ gateIsDryRun: null, executedMutations: null }, none).status).toBe("unobserved");
+    expect(attestDryRun({ gateIsDryRun: true, executedMutations: 0 }, none).status).toBe(
+      "observed-dry",
+    );
+    expect(attestDryRun({ gateIsDryRun: false, executedMutations: 0 }, none).status).toBe(
+      "live-gate",
+    );
+    expect(attestDryRun({ gateIsDryRun: true, executedMutations: 2 }, none).status).toBe(
+      "executed",
+    );
+    expect(attestDryRun({ gateIsDryRun: null, executedMutations: null }, none).status).toBe(
+      "unobserved",
+    );
     // forceLive executes even under dry-run (rule 1's sole exception), so a
     // record carrying it disproves "nothing was posted".
-    const forced = [{ kind: "supersede_own_review", method: "PUT", path: "/x", forceLive: true } as unknown as DryrunRecord];
-    expect(attestDryRun({ gateIsDryRun: true, executedMutations: 0 }, forced).status).toBe("force-live");
+    const forced = [
+      {
+        kind: "supersede_own_review",
+        method: "PUT",
+        path: "/x",
+        forceLive: true,
+      } as unknown as DryrunRecord,
+    ];
+    expect(attestDryRun({ gateIsDryRun: true, executedMutations: 0 }, forced).status).toBe(
+      "force-live",
+    );
     for (const a of [
       attestDryRun({ gateIsDryRun: false, executedMutations: 0 }, none),
       attestDryRun({ gateIsDryRun: null, executedMutations: null }, none),
@@ -337,7 +442,10 @@ describe("report rendering", () => {
   });
 
   it("index summarizes every PR and the gate verdict", () => {
-    const idx = renderIndex([comparePr(input), comparePr({ ...input, pr: 502, records: [], sandboxReview: null })]);
+    const idx = renderIndex([
+      comparePr(input),
+      comparePr({ ...input, pr: 502, records: [], sandboxReview: null }),
+    ]);
     expect(idx).toContain("| #501 | PASS |");
     expect(idx).toContain("| #502 | **FAIL** |");
     expect(idx).toContain("1 PR(s) fail a mechanical gate: #502");

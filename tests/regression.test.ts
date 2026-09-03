@@ -74,20 +74,34 @@ describe("the substance instrument", () => {
     expect(classifySubstance("nit", "nit").rung).toBe(0);
     expect(classifySubstance("ditto", "ditto").rung).toBe(0);
     expect(classifySubstance("rename this to userId", "rename this to userId").rung).toBe(1);
-    const pointed = "Does this handle the empty scenario list at all, or does the caller already filter it out before we get here?";
+    const pointed =
+      "Does this handle the empty scenario list at all, or does the caller already filter it out before we get here?";
     expect(classifySubstance(pointed, pointed).rung).toBe(2);
-    expect(classifySubstance("This will break when the list is empty.", "This will break when the list is empty.").rung).toBe(3);
+    expect(
+      classifySubstance(
+        "This will break when the list is empty.",
+        "This will break when the list is empty.",
+      ).rung,
+    ).toBe(3);
     const argued =
       "This will break for an empty scenario list, because `first()` returns None and the caller dereferences it straight away. We already hit this in the importer. Suggest guarding:\n```py\nif not scenarios: return []\n```";
     expect(classifySubstance(argued, argued.replace(/```[\s\S]*```/, "")).rung).toBe(4);
   });
 
   it("keeps machine-authored, non-English and off-PR findings out", () => {
-    expect(qualifyFinding({ text: "[blocker] this will break because the list is empty" }).reason).toBe("machine-authored (bot grammar)");
-    expect(qualifyFinding({ text: "To nie zadziała, bo lista jest pusta i trzeba to zmienić" }).reason).toBe("not English");
-    expect(qualifyFinding({ text: "As we discussed, this will break because the cache is cold" }).reason).toBe("evidence is not in the PR");
+    expect(
+      qualifyFinding({ text: "[blocker] this will break because the list is empty" }).reason,
+    ).toBe("machine-authored (bot grammar)");
+    expect(
+      qualifyFinding({ text: "To nie zadziała, bo lista jest pusta i trzeba to zmienić" }).reason,
+    ).toBe("not English");
+    expect(
+      qualifyFinding({ text: "As we discussed, this will break because the cache is cold" }).reason,
+    ).toBe("evidence is not in the PR");
     expect(qualifyFinding({ text: "typo" }).reason).toContain("L0");
-    expect(qualifyFinding({ text: "This will break because `first()` returns None here." }).ok).toBe(true);
+    expect(
+      qualifyFinding({ text: "This will break because `first()` returns None here." }).ok,
+    ).toBe(true);
   });
 });
 
@@ -96,7 +110,11 @@ describe("selection is a substance filter, not a verdict filter", () => {
   // habit, so if the verdict were touching selection at all, flipping every
   // verdict would move the set.
   it("selects identically when every GitHub verdict is flipped", () => {
-    const pool = [candidate(), candidate({ pr: 101, reviewer: "bob" }), candidate({ pr: 102, reviewer: "cara" })];
+    const pool = [
+      candidate(),
+      candidate({ pr: 101, reviewer: "bob" }),
+      candidate({ pr: 102, reviewer: "cara" }),
+    ];
     const asBlocked = selectCases(pool.map((c) => ({ ...c, state: "CHANGES_REQUESTED" })));
     const asApproved = selectCases(pool.map((c) => ({ ...c, state: "APPROVED" })));
     const asCommented = selectCases(pool.map((c) => ({ ...c, state: "COMMENTED" })));
@@ -149,7 +167,8 @@ describe("the committed case set", () => {
     expect(set.cases.length).toBeGreaterThanOrEqual(8);
     const reviewers = new Set(set.cases.map((c) => c.reviewer));
     expect(reviewers.size).toBeGreaterThanOrEqual(4);
-    for (const r of reviewers) expect(set.cases.filter((c) => c.reviewer === r).length).toBeLessThanOrEqual(3);
+    for (const r of reviewers)
+      expect(set.cases.filter((c) => c.reviewer === r).length).toBeLessThanOrEqual(3);
     // Direct evidence that the verdict did not select these: the set contains
     // reviews that APPROVED and reviews that merely COMMENTED.
     const states = new Set(set.cases.map((c) => c.state));
@@ -171,14 +190,25 @@ describe("the committed case set", () => {
     const all = set.cases.flatMap((c) => c.findings);
     const kinds = new Set(all.map((f) => f.expectation));
     expect(kinds).toEqual(new Set(["expected-catch", "out-of-remit", "expected-divergence"]));
-    expect(all.filter((f) => f.expectation === "expected-catch").length).toBeLessThan(all.length / 2);
+    expect(all.filter((f) => f.expectation === "expected-catch").length).toBeLessThan(
+      all.length / 2,
+    );
     // Anything not expected-catch is a judgment and must say why.
     for (const f of all) if (f.expectation !== "expected-catch") expect(f.note ?? "").not.toBe("");
   });
 
   it("refuses a malformed or empty set rather than scoring it clean", () => {
     expect(() => parseCaseSet({ cases: [] })).toThrow(/empty/);
-    expect(() => parseCaseSet({ cases: [{ ...set.cases[0]!, findings: [{ ...set.cases[0]!.findings[0]!, expectation: "nice-to-have" }] }] })).toThrow(/unknown expectation/);
+    expect(() =>
+      parseCaseSet({
+        cases: [
+          {
+            ...set.cases[0]!,
+            findings: [{ ...set.cases[0]!.findings[0]!, expectation: "nice-to-have" }],
+          },
+        ],
+      }),
+    ).toThrow(/unknown expectation/);
   });
 });
 
@@ -189,9 +219,13 @@ describe("matching", () => {
 
   it("matches on the same file by theme or by proximity, and misses otherwise", () => {
     const human = set.cases[0]!.findings[0]!;
-    const near: SandboxFinding[] = [{ path: human.path, line: human.line + 2, text: "unrelated wording entirely" }];
+    const near: SandboxFinding[] = [
+      { path: human.path, line: human.line + 2, text: "unrelated wording entirely" },
+    ];
     expect(matchFinding(human, near).matched).toBe(true);
-    const elsewhere: SandboxFinding[] = [{ path: "other/file.py", line: human.line, text: human.text }];
+    const elsewhere: SandboxFinding[] = [
+      { path: "other/file.py", line: human.line, text: human.text },
+    ];
     expect(matchFinding(human, elsewhere).matched).toBe(false);
     expect(matchFinding(human, []).matched).toBe(false);
   });
@@ -209,15 +243,45 @@ describe("scoring reads the expectation label", () => {
     changedFiles: 2,
     churn: 30,
     findings: [
-      { path: "a.py", line: 10, text: "null deref because token may be None", substance: classifySubstance("x", "x"), resolved: true, gotReply: true, expectation: "expected-catch" },
-      { path: "b.py", line: 10, text: "rename this to userId please", substance: classifySubstance("x", "x"), resolved: true, gotReply: false, expectation: "out-of-remit", note: "naming taste" },
-      { path: "c.py", line: 10, text: "extract this helper", substance: classifySubstance("x", "x"), resolved: false, gotReply: true, expectation: "expected-divergence", note: "argued down" },
+      {
+        path: "a.py",
+        line: 10,
+        text: "null deref because token may be None",
+        substance: classifySubstance("x", "x"),
+        resolved: true,
+        gotReply: true,
+        expectation: "expected-catch",
+      },
+      {
+        path: "b.py",
+        line: 10,
+        text: "rename this to userId please",
+        substance: classifySubstance("x", "x"),
+        resolved: true,
+        gotReply: false,
+        expectation: "out-of-remit",
+        note: "naming taste",
+      },
+      {
+        path: "c.py",
+        line: 10,
+        text: "extract this helper",
+        substance: classifySubstance("x", "x"),
+        resolved: false,
+        gotReply: true,
+        expectation: "expected-divergence",
+        note: "argued down",
+      },
     ],
   };
 
   it("scores silence on an out-of-remit finding as CORRECT, not as a miss", () => {
     const s = scoreCase(c, []);
-    expect(s.findings.map((f) => f.outcome)).toEqual(["not-reached", "correctly-silent", "divergence"]);
+    expect(s.findings.map((f) => f.outcome)).toEqual([
+      "not-reached",
+      "correctly-silent",
+      "divergence",
+    ]);
   });
 
   it("never scores an expected-divergence either way as wrong", () => {
@@ -227,7 +291,9 @@ describe("scoring reads the expectation label", () => {
 
   it("flags a case that produced nothing as VACUOUS rather than clean", () => {
     expect(scoreCase(c, []).vacuous).toBe(true);
-    expect(scoreCase(c, [{ path: "a.py", line: 10, text: "token may be None here" }]).vacuous).toBe(false);
+    expect(scoreCase(c, [{ path: "a.py", line: 10, text: "token may be None here" }]).vacuous).toBe(
+      false,
+    );
   });
 
   it("counts sandbox findings nobody matched without calling them failures", () => {
@@ -239,18 +305,28 @@ describe("scoring reads the expectation label", () => {
 
 describe("the run asserts dry-run in its own code", () => {
   it("refuses to start against a live gate", async () => {
-    await expect(runRegression(set.cases, { replay: async () => [], gate: LIVE })).rejects.toBeInstanceOf(ReplayRefused);
-    await expect(runRegression(set.cases, { replay: async () => [], gate: LIVE })).rejects.toThrow(/does not report dry-run/);
+    await expect(
+      runRegression(set.cases, { replay: async () => [], gate: LIVE }),
+    ).rejects.toBeInstanceOf(ReplayRefused);
+    await expect(runRegression(set.cases, { replay: async () => [], gate: LIVE })).rejects.toThrow(
+      /does not report dry-run/,
+    );
   });
 
   it("never replays an open PR or a contaminated case", () => {
-    expect(() => assertReplaySafe([{ ...set.cases[0]!, prState: "OPEN" }], DRY)).toThrow(/still-open/);
-    expect(() => assertReplaySafe([{ ...set.cases[0]!, submittedAt: "2026-06-01T00:00:00Z" }], DRY)).toThrow(/contamination cutoff/);
+    expect(() => assertReplaySafe([{ ...set.cases[0]!, prState: "OPEN" }], DRY)).toThrow(
+      /still-open/,
+    );
+    expect(() =>
+      assertReplaySafe([{ ...set.cases[0]!, submittedAt: "2026-06-01T00:00:00Z" }], DRY),
+    ).toThrow(/contamination cutoff/);
   });
 
   it("does not replay a single case when the gate check fails", async () => {
     const seen: number[] = [];
-    await expect(runRegression(set.cases, { replay: async (c) => (seen.push(c.pr), []), gate: LIVE })).rejects.toThrow();
+    await expect(
+      runRegression(set.cases, { replay: async (c) => (seen.push(c.pr), []), gate: LIVE }),
+    ).rejects.toThrow();
     expect(seen).toEqual([]);
   });
 
@@ -260,7 +336,15 @@ describe("the run asserts dry-run in its own code", () => {
     const src = readFileSync(SRC_PATH, "utf8");
     const imports = [...src.matchAll(/^import[^;]*from\s+"([^"]+)"/gm)].map((m) => m[1]!);
     expect(imports).toEqual([]);
-    for (const forbidden of ["daemon.js", "wire.js", "github.js", "gate.js", "dispatch.js", "loadConfig", "dry_run"]) {
+    for (const forbidden of [
+      "daemon.js",
+      "wire.js",
+      "github.js",
+      "gate.js",
+      "dispatch.js",
+      "loadConfig",
+      "dry_run",
+    ]) {
       expect(src).not.toContain(`from "./${forbidden}"`);
     }
     expect(src).not.toMatch(/loadConfig|config\.gate|process\.env/);
@@ -268,7 +352,11 @@ describe("the run asserts dry-run in its own code", () => {
 });
 
 describe("a failure is an investigation, not a veto", () => {
-  const replayNothing = { replay: async () => [] as SandboxFinding[], gate: DRY, now: () => new Date("2026-08-25T10:00:00Z") };
+  const replayNothing = {
+    replay: async () => [] as SandboxFinding[],
+    gate: DRY,
+    now: () => new Date("2026-08-25T10:00:00Z"),
+  };
 
   it("returns exit code 0 and a recommendation even when everything is missed", async () => {
     const run = await runRegression(set.cases, replayNothing);

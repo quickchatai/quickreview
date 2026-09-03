@@ -5,7 +5,12 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
-import { HEARTBEAT_IDEM_KEY, SlackAnnouncer, makeAnnouncer, scanNotPickedUp } from "../src/slack/announce.js";
+import {
+  HEARTBEAT_IDEM_KEY,
+  SlackAnnouncer,
+  makeAnnouncer,
+  scanNotPickedUp,
+} from "../src/slack/announce.js";
 import type { SlackPostResult, SlackWebApi } from "../src/slack/types.js";
 import { StateStore } from "../src/state.js";
 
@@ -24,7 +29,11 @@ class FakeSlack implements SlackWebApi {
   pinResult: SlackPostResult = { ok: true };
   private seq = 0;
 
-  async postMessage(args: { channel: string; text: string; thread_ts?: string }): Promise<SlackPostResult> {
+  async postMessage(args: {
+    channel: string;
+    text: string;
+    thread_ts?: string;
+  }): Promise<SlackPostResult> {
     if (this.throwNext) {
       this.throwNext = false;
       throw new Error("socket hang up");
@@ -36,7 +45,11 @@ class FakeSlack implements SlackWebApi {
     this.posts.push({ channel: args.channel, text: args.text, thread_ts: args.thread_ts });
     return { ok: true, ts: `170000000${++this.seq}.0001` };
   }
-  async updateMessage(args: { channel: string; ts: string; text: string }): Promise<SlackPostResult> {
+  async updateMessage(args: {
+    channel: string;
+    ts: string;
+    text: string;
+  }): Promise<SlackPostResult> {
     this.updates.push({ ts: args.ts, text: args.text });
     return { ok: true, ts: args.ts };
   }
@@ -65,7 +78,9 @@ let store: StateStore;
 let cfg: Config;
 let slack: FakeSlack;
 
-function announcer(overrides: Partial<ConstructorParameters<typeof SlackAnnouncer>[0]> = {}): SlackAnnouncer {
+function announcer(
+  overrides: Partial<ConstructorParameters<typeof SlackAnnouncer>[0]> = {},
+): SlackAnnouncer {
   return new SlackAnnouncer({ cfg, store, slack, now, version: "0.1.0", ...overrides });
 }
 
@@ -178,7 +193,10 @@ describe("root-on-first-event (DP-2a)", () => {
     // …and the round AFTER that is the first genuine re-round.
     await a.roundStarted({ ...round, round_no: 2, round_type: "re-review" });
     expect(slack.posts).toHaveLength(3);
-    expect(slack.posts[2]).toMatchObject({ thread_ts: root, text: "🔄 round 2 started — you pushed new commits (`abcdef1`)" });
+    expect(slack.posts[2]).toMatchObject({
+      thread_ts: root,
+      text: "🔄 round 2 started — you pushed new commits (`abcdef1`)",
+    });
   });
 
   it("a replayed round 1 says nothing at all — never a 🔄 line for the first round", async () => {
@@ -221,7 +239,13 @@ describe("idempotence", () => {
   it("a repeated verdict for the same round does not double-post", async () => {
     const a = announcer();
     await a.roundStarted(round);
-    const v = { pr: 5263, round_no: 1, verdict: "APPROVE" as const, summary: "ok", duration_s: 120 };
+    const v = {
+      pr: 5263,
+      round_no: 1,
+      verdict: "APPROVE" as const,
+      summary: "ok",
+      duration_s: 120,
+    };
     await a.verdict(v);
     await a.verdict(v);
     expect(slack.posts.filter((p) => p.text.includes("APPROVED"))).toHaveLength(1);
@@ -295,10 +319,18 @@ describe("policy", () => {
   it("a verdict is never folded by a cooldown — two rounds in an hour both speak", async () => {
     const a = announcer();
     await a.roundStarted(round);
-    await a.verdict({ pr: 5263, round_no: 1, verdict: "REQUEST_CHANGES", summary: "a", duration_s: 60 });
+    await a.verdict({
+      pr: 5263,
+      round_no: 1,
+      verdict: "REQUEST_CHANGES",
+      summary: "a",
+      duration_s: 60,
+    });
     at("2026-08-17T09:20:00.000Z");
     await a.verdict({ pr: 5263, round_no: 2, verdict: "APPROVE", summary: "b", duration_s: 60 });
-    expect(slack.posts.filter((p) => p.text.includes("round 1") || p.text.includes("round 2"))).toHaveLength(3);
+    expect(
+      slack.posts.filter((p) => p.text.includes("round 1") || p.text.includes("round 2")),
+    ).toHaveLength(3);
   });
 
   it("verdicts are thread-only — the seam has no broadcast, whatever the config says", async () => {
@@ -332,7 +364,11 @@ describe("scanNotPickedUp", () => {
     store.startRound(4, "first", ["pass-baseline"], 45);
     const hits = scanNotPickedUp(store, cfg, clock);
     expect(hits.map((h) => h.pr)).toEqual([1]);
-    expect(hits[0]).toMatchObject({ age_min: 60, running: 1, max_concurrent: cfg.daemon.max_concurrent_rounds });
+    expect(hits[0]).toMatchObject({
+      age_min: 60,
+      running: 1,
+      max_concurrent: cfg.daemon.max_concurrent_rounds,
+    });
   });
 });
 
@@ -390,28 +426,86 @@ describe("pinned heartbeat", () => {
   });
 
   it("keeps FAILED_LOUD review debt visible in the pinned heartbeat", async () => {
-    store.upsertPr({ number: 5408, state: "reviewing", head_sha: "abc", title: "PR", author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+    store.upsertPr({
+      number: 5408,
+      state: "reviewing",
+      head_sha: "abc",
+      title: "PR",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
     const roundId = store.startRound(5408, "first", ["pass-baseline"], 75);
-    store.openReviewFailure({ pr: 5408, command_id: "cmd-5408", round_id: roundId, round_no: 1, head_sha: "abc", stage: "command_start", detail: "no start", attempts: 2, retry_cap: 2 });
+    store.openReviewFailure({
+      pr: 5408,
+      command_id: "cmd-5408",
+      round_id: roundId,
+      round_no: 1,
+      head_sha: "abc",
+      stage: "command_start",
+      detail: "no start",
+      attempts: 2,
+      retry_cap: 2,
+    });
 
     const a = announcer();
-    await a.anomaly({ pr: 5408, round_no: 1, kind: "failed_loud", deadline_min: 75, incident_id: "review-failure:cmd-5408" });
+    await a.anomaly({
+      pr: 5408,
+      round_no: 1,
+      kind: "failed_loud",
+      deadline_min: 75,
+      incident_id: "review-failure:cmd-5408",
+    });
     const incidentTs = store.slackPost("review-failure:cmd-5408")?.ts;
     await a.heartbeat();
-    expect(slack.posts.some((post) => post.text.includes("PIPELINE FAILED · 1 review needs u"))).toBe(true);
+    expect(
+      slack.posts.some((post) => post.text.includes("PIPELINE FAILED · 1 review needs u")),
+    ).toBe(true);
 
     store.recoverReviewFailure(5408, "operator-rerun");
-    store.upsertPr({ number: 5409, state: "reviewing", head_sha: "def", title: "PR 2", author: "bob", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+    store.upsertPr({
+      number: 5409,
+      state: "reviewing",
+      head_sha: "def",
+      title: "PR 2",
+      author: "bob",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
     const round2 = store.startRound(5409, "first", ["pass-baseline"], 75);
-    store.openReviewFailure({ pr: 5409, command_id: "cmd-5409", round_id: round2, round_no: 1, head_sha: "def", stage: "command_start", detail: "no start", attempts: 2, retry_cap: 2 });
-    await a.anomaly({ pr: 5409, round_no: 1, kind: "failed_loud", deadline_min: 75, incident_id: "review-failure:cmd-5409" });
+    store.openReviewFailure({
+      pr: 5409,
+      command_id: "cmd-5409",
+      round_id: round2,
+      round_no: 1,
+      head_sha: "def",
+      stage: "command_start",
+      detail: "no start",
+      attempts: 2,
+      retry_cap: 2,
+    });
+    await a.anomaly({
+      pr: 5409,
+      round_no: 1,
+      kind: "failed_loud",
+      deadline_min: 75,
+      incident_id: "review-failure:cmd-5409",
+    });
     const incidentTs2 = store.slackPost("review-failure:cmd-5409")?.ts;
     store.recoverReviewFailure(5409, "operator-rerun");
 
     at("2026-08-17T09:01:00.000Z");
     await a.heartbeat();
-    expect(slack.updates).toContainEqual({ ts: incidentTs, text: expect.stringContaining("recovered via operator-rerun") });
-    expect(slack.updates).toContainEqual({ ts: incidentTs2, text: expect.stringContaining("recovered via operator-rerun") });
+    expect(slack.updates).toContainEqual({
+      ts: incidentTs,
+      text: expect.stringContaining("recovered via operator-rerun"),
+    });
+    expect(slack.updates).toContainEqual({
+      ts: incidentTs2,
+      text: expect.stringContaining("recovered via operator-rerun"),
+    });
   });
 
   it("ignores a refused pin (no_permission — the owner may pin by hand)", async () => {

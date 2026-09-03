@@ -40,18 +40,54 @@ const cfg = parseConfig(readFileSync(join(ROOT, "tests", "fixtures", "config.tom
  * states, and the default-to-red fall-through that makes every conclusion
  * GitHub invents next fail closed.
  */
-const CORPUS: ReadonlyArray<{ name: string; runs: CheckSummary[]; statuses?: Array<{ context: string; state: string }> }> = [
+const CORPUS: ReadonlyArray<{
+  name: string;
+  runs: CheckSummary[];
+  statuses?: Array<{ context: string; state: string }>;
+}> = [
   { name: "empty", runs: [] },
-  { name: "one green", runs: [{ name: "unit", source: "check_run", status: "completed", conclusion: "success" }] },
-  { name: "one failure", runs: [{ name: "unit", source: "check_run", status: "completed", conclusion: "failure" }] },
-  { name: "one cancelled", runs: [{ name: "unit", source: "check_run", status: "completed", conclusion: "cancelled" }] },
-  { name: "one timed_out", runs: [{ name: "unit", source: "check_run", status: "completed", conclusion: "timed_out" }] },
-  { name: "one action_required", runs: [{ name: "unit", source: "check_run", status: "completed", conclusion: "action_required" }] },
-  { name: "a conclusion GitHub has not invented yet", runs: [{ name: "unit", source: "check_run", status: "completed", conclusion: "quantum_flux" }] },
-  { name: "queued", runs: [{ name: "unit", source: "check_run", status: "queued", conclusion: null }] },
-  { name: "in_progress", runs: [{ name: "unit", source: "check_run", status: "in_progress", conclusion: null }] },
-  { name: "all skipped", runs: [{ name: "unit", source: "check_run", status: "completed", conclusion: "skipped" }] },
-  { name: "all neutral", runs: [{ name: "unit", source: "check_run", status: "completed", conclusion: "neutral" }] },
+  {
+    name: "one green",
+    runs: [{ name: "unit", source: "check_run", status: "completed", conclusion: "success" }],
+  },
+  {
+    name: "one failure",
+    runs: [{ name: "unit", source: "check_run", status: "completed", conclusion: "failure" }],
+  },
+  {
+    name: "one cancelled",
+    runs: [{ name: "unit", source: "check_run", status: "completed", conclusion: "cancelled" }],
+  },
+  {
+    name: "one timed_out",
+    runs: [{ name: "unit", source: "check_run", status: "completed", conclusion: "timed_out" }],
+  },
+  {
+    name: "one action_required",
+    runs: [
+      { name: "unit", source: "check_run", status: "completed", conclusion: "action_required" },
+    ],
+  },
+  {
+    name: "a conclusion GitHub has not invented yet",
+    runs: [{ name: "unit", source: "check_run", status: "completed", conclusion: "quantum_flux" }],
+  },
+  {
+    name: "queued",
+    runs: [{ name: "unit", source: "check_run", status: "queued", conclusion: null }],
+  },
+  {
+    name: "in_progress",
+    runs: [{ name: "unit", source: "check_run", status: "in_progress", conclusion: null }],
+  },
+  {
+    name: "all skipped",
+    runs: [{ name: "unit", source: "check_run", status: "completed", conclusion: "skipped" }],
+  },
+  {
+    name: "all neutral",
+    runs: [{ name: "unit", source: "check_run", status: "completed", conclusion: "neutral" }],
+  },
   {
     name: "green beside skipped",
     runs: [
@@ -79,15 +115,39 @@ const CORPUS: ReadonlyArray<{ name: string; runs: CheckSummary[]; statuses?: Arr
     // every approval forever — which it did, for a day.
     name: "a cancelled husk superseded by a green rerun",
     runs: [
-      { name: "unit", source: "check_run", status: "completed", conclusion: "cancelled", started_at: "2026-08-19T09:00:00Z" },
-      { name: "unit", source: "check_run", status: "completed", conclusion: "success", started_at: "2026-08-19T10:00:00Z" },
+      {
+        name: "unit",
+        source: "check_run",
+        status: "completed",
+        conclusion: "cancelled",
+        started_at: "2026-08-19T09:00:00Z",
+      },
+      {
+        name: "unit",
+        source: "check_run",
+        status: "completed",
+        conclusion: "success",
+        started_at: "2026-08-19T10:00:00Z",
+      },
     ],
   },
   {
     name: "a green run superseded by a failing rerun",
     runs: [
-      { name: "unit", source: "check_run", status: "completed", conclusion: "success", started_at: "2026-08-19T09:00:00Z" },
-      { name: "unit", source: "check_run", status: "completed", conclusion: "failure", started_at: "2026-08-19T10:00:00Z" },
+      {
+        name: "unit",
+        source: "check_run",
+        status: "completed",
+        conclusion: "success",
+        started_at: "2026-08-19T09:00:00Z",
+      },
+      {
+        name: "unit",
+        source: "check_run",
+        status: "completed",
+        conclusion: "failure",
+        started_at: "2026-08-19T10:00:00Z",
+      },
     ],
   },
   // and its review round 1: a commit status is a second check, never
@@ -95,34 +155,74 @@ const CORPUS: ReadonlyArray<{ name: string; runs: CheckSummary[]; statuses?: Arr
   // first. These are the rows the two copies used to answer differently.
   {
     name: "a failing status under a passing check-run's name",
-    runs: [{ name: "unit", source: "check_run", status: "completed", conclusion: "success", started_at: "2026-08-19T10:00:00Z" }],
+    runs: [
+      {
+        name: "unit",
+        source: "check_run",
+        status: "completed",
+        conclusion: "success",
+        started_at: "2026-08-19T10:00:00Z",
+      },
+    ],
     statuses: [{ context: "unit", state: "failure" }],
   },
   {
     name: "a pending status under a passing check-run's name",
-    runs: [{ name: "unit", source: "check_run", status: "completed", conclusion: "success", started_at: "2026-08-19T10:00:00Z" }],
+    runs: [
+      {
+        name: "unit",
+        source: "check_run",
+        status: "completed",
+        conclusion: "success",
+        started_at: "2026-08-19T10:00:00Z",
+      },
+    ],
     statuses: [{ context: "unit", state: "pending" }],
   },
   {
     name: "a queued null-start check-run under a passing status's name",
-    runs: [{ name: "unit", source: "check_run", status: "queued", conclusion: null, started_at: null }],
+    runs: [
+      { name: "unit", source: "check_run", status: "queued", conclusion: null, started_at: null },
+    ],
     statuses: [{ context: "unit", state: "success" }],
   },
   {
     name: "a failed null-start check-run under a passing status's name",
-    runs: [{ name: "unit", source: "check_run", status: "completed", conclusion: "failure", started_at: null }],
+    runs: [
+      {
+        name: "unit",
+        source: "check_run",
+        status: "completed",
+        conclusion: "failure",
+        started_at: null,
+      },
+    ],
     statuses: [{ context: "unit", state: "success" }],
   },
   {
     name: "a queued null-start check-run beside the older completed run of its name",
     runs: [
-      { name: "unit", source: "check_run", status: "completed", conclusion: "success", started_at: "2026-08-19T10:00:00Z" },
+      {
+        name: "unit",
+        source: "check_run",
+        status: "completed",
+        conclusion: "success",
+        started_at: "2026-08-19T10:00:00Z",
+      },
       { name: "unit", source: "check_run", status: "queued", conclusion: null, started_at: null },
     ],
   },
   {
     name: "a passing status beside a passing check-run of its name",
-    runs: [{ name: "unit", source: "check_run", status: "completed", conclusion: "success", started_at: "2026-08-19T10:00:00Z" }],
+    runs: [
+      {
+        name: "unit",
+        source: "check_run",
+        status: "completed",
+        conclusion: "success",
+        started_at: "2026-08-19T10:00:00Z",
+      },
+    ],
     statuses: [{ context: "unit", state: "success" }],
   },
 ];
@@ -165,9 +265,15 @@ afterEach(async () => {
  * half reads its input through the same two endpoints the shell half does,
  * so the kind stamp (`source`) is the adapter's, never the corpus's. */
 async function adapterClassifyInput(): Promise<CheckSummary[]> {
-  const minter = { appJwt: () => "jwt", installationToken: async () => "tok", invalidate: () => {} } as unknown as TokenMinter;
+  const minter = {
+    appJwt: () => "jwt",
+    installationToken: async () => "tok",
+    invalidate: () => {},
+  } as unknown as TokenMinter;
   const gate = new MutationGate(true, join(tmpdir(), "qcr-fences-cigate-unused"), async () => ({}));
-  return new GitHubAdapter(cfg, minter, gate, fetch as unknown as FetchFn, apiBase).listChecks("deadbeefcafe");
+  return new GitHubAdapter(cfg, minter, gate, fetch as unknown as FetchFn, apiBase).listChecks(
+    "deadbeefcafe",
+  );
 }
 
 /** The REAL `guard_ci_state`, sourced out of the real guards.sh. */
@@ -200,9 +306,9 @@ describe("the shell CI classifier agrees with classifyCi", () => {
       const ts = classifyCi(await adapterClassifyInput());
       expect(
         shell,
-        `guard 4 is the only guard that gates an approval, and its two implementations disagree on "${c.name}": `
-          + `scripts/guards.sh says "${shell}", src/cigate.ts says "${ts}". Change both, or the shell route — which is `
-          + "the LIVE posting route — enforces a different rule from the one the tests pin.",
+        `guard 4 is the only guard that gates an approval, and its two implementations disagree on "${c.name}": ` +
+          `scripts/guards.sh says "${shell}", src/cigate.ts says "${ts}". Change both, or the shell route — which is ` +
+          "the LIVE posting route — enforces a different rule from the one the tests pin.",
       ).toBe(ts);
     });
   }
@@ -231,13 +337,18 @@ describe("the shell CI classifier agrees with classifyCi", () => {
    * be deleted.
    */
   it("records the unreadable-checks asymmetry: guard 4 fails OPEN, guard 3 fails CLOSED (MC-15)", async () => {
-    const guards = (await import("node:fs")).readFileSync(join(ROOT, "scripts", "guards.sh"), "utf8");
+    const guards = (await import("node:fs")).readFileSync(
+      join(ROOT, "scripts", "guards.sh"),
+      "utf8",
+    );
 
     // Guard 4's classifier still swallows its own failure into "unknown"…
     expect(guards).toMatch(/2>\/dev\/null \|\| echo unknown/);
 
     const requireGreen = /guard_require_green_ci\(\)[\s\S]*?\n\}/.exec(guards)?.[0] ?? "";
-    expect(requireGreen, "guard_require_green_ci not found — this record is now vacuous").toContain("case ");
+    expect(requireGreen, "guard_require_green_ci not found — this record is now vacuous").toContain(
+      "case ",
+    );
 
     // …and `unknown` is still NOT among the states that refuse. This is the
     // assertion the record turns on, and the first version did not have it:
@@ -246,17 +357,22 @@ describe("the shell CI classifier agrees with classifyCi", () => {
     // repair left all seventeen tests passing — a self-retiring record that
     // does not retire, still reading "still broken" after the repair.
     const refusing = /case "\$state" in([\s\S]*?)esac/.exec(requireGreen)?.[1] ?? "";
-    expect(refusing, "the `case` over the CI state moved — say what happens on an unreadable check list").toContain("red|pending");
+    expect(
+      refusing,
+      "the `case` over the CI state moved — say what happens on an unreadable check list",
+    ).toContain("red|pending");
     const dieArm = /^\s*(red\|pending[^)]*)\)/m.exec(refusing)?.[1] ?? "";
     if (dieArm.includes("unknown")) {
       throw new Error(
-        "guard 4 now REFUSES on an unreadable check list — the MC-15 fail-open is fixed. Delete this record and "
-          + "assert the closed behaviour directly; `tests/guards-shell.test.ts` is where the live case belongs.",
+        "guard 4 now REFUSES on an unreadable check list — the MC-15 fail-open is fixed. Delete this record and " +
+          "assert the closed behaviour directly; `tests/guards-shell.test.ts` is where the live case belongs.",
       );
     }
 
     // …while guard 3, three functions above, fails closed and says so.
     const requireOpen = /guard_require_open\(\)[\s\S]*?\n\}/.exec(guards)?.[0] ?? "";
-    expect(requireOpen, "guard 3 must still fail CLOSED on an unreadable PR state").toContain("fail closed");
+    expect(requireOpen, "guard 3 must still fail CLOSED on an unreadable PR state").toContain(
+      "fail closed",
+    );
   });
 });

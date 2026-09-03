@@ -35,20 +35,28 @@ const GROUP_VARS = (piVersion: string, withSandboxSrc = true, ov?: OvPins) =>
     "---",
     "sandbox_root: /opt/quickreview",
     "webhook_port: 8787",
-    'image_name: quickreview-sandbox',
-    'image_tag: v1',
+    "image_name: quickreview-sandbox",
+    "image_tag: v1",
     'pi_npm_package: "@earendil-works/pi-coding-agent"',
     `pi_version: "${piVersion}"`,
     ...(ov?.version === undefined ? [] : [`openviking_version: "${ov.version}"`]),
     ...(ov?.llama === undefined ? [] : [`llama_cpp_python_version: "${ov.llama}"`]),
     ...(ov?.auth === undefined ? [] : [`openviking_auth_mode: "${ov.auth}"`]),
     ...(ov?.rootKeyFile === undefined ? [] : [`openviking_root_key_file: "${ov.rootKeyFile}"`]),
-    ...(ov?.reviewerKeyFile === undefined ? [] : [`openviking_reviewer_key_file: "${ov.reviewerKeyFile}"`]),
+    ...(ov?.reviewerKeyFile === undefined
+      ? []
+      : [`openviking_reviewer_key_file: "${ov.reviewerKeyFile}"`]),
     ...(ov?.users === undefined ? [] : [`openviking_provision_users: "${ov.users}"`]),
-    ...(ov?.embedProvider === undefined ? [] : [`openviking_embedding_provider: "${ov.embedProvider}"`]),
+    ...(ov?.embedProvider === undefined
+      ? []
+      : [`openviking_embedding_provider: "${ov.embedProvider}"`]),
     ...(ov?.embedModel === undefined ? [] : [`openviking_embedding_model: "${ov.embedModel}"`]),
-    ...(ov?.embedDimension === undefined ? [] : [`openviking_embedding_dimension: ${ov.embedDimension}`]),
-    ...(ov?.embedKeyFile === undefined ? [] : [`openviking_embedding_key_file: "${ov.embedKeyFile}"`]),
+    ...(ov?.embedDimension === undefined
+      ? []
+      : [`openviking_embedding_dimension: ${ov.embedDimension}`]),
+    ...(ov?.embedKeyFile === undefined
+      ? []
+      : [`openviking_embedding_key_file: "${ov.embedKeyFile}"`]),
     ...(withSandboxSrc ? ['sandbox_src: "/tmp/whatever"'] : ['# sandbox_src: "/tmp/whatever"']),
     "",
   ].join("\n");
@@ -71,13 +79,22 @@ const CONFIG = (piVersion: string, ov?: OvPins) =>
           ...(ov.extension === undefined ? [] : [`extension_commit = "${ov.extension}"`]),
           ...(ov.auth === undefined ? [] : [`auth_mode = "${ov.auth}"`]),
           ...(ov.rootKeyFile === undefined ? [] : [`root_key_file = "${ov.rootKeyFile}"`]),
-          ...(ov.reviewerKeyFile === undefined ? [] : [`reviewer_key_file = "${ov.reviewerKeyFile}"`]),
+          ...(ov.reviewerKeyFile === undefined
+            ? []
+            : [`reviewer_key_file = "${ov.reviewerKeyFile}"`]),
           ...(ov.users === undefined
             ? []
-            : [`provision_users = [${ov.users.split(",").map((u) => `"${u}"`).join(", ")}]`]),
+            : [
+                `provision_users = [${ov.users
+                  .split(",")
+                  .map((u) => `"${u}"`)
+                  .join(", ")}]`,
+              ]),
           ...(ov.embedProvider === undefined ? [] : [`embedding_provider = "${ov.embedProvider}"`]),
           ...(ov.embedModel === undefined ? [] : [`embedding_model = "${ov.embedModel}"`]),
-          ...(ov.embedDimension === undefined ? [] : [`embedding_dimension = ${ov.embedDimension}`]),
+          ...(ov.embedDimension === undefined
+            ? []
+            : [`embedding_dimension = ${ov.embedDimension}`]),
           ...(ov.embedKeyFile === undefined ? [] : [`embedding_key_file = "${ov.embedKeyFile}"`]),
         ]),
     "",
@@ -118,15 +135,31 @@ function makeScratch(opts: {
     mkdirSync(join(sandbox, "extensions", "vendor", "openviking-pi"), { recursive: true });
     writeFileSync(
       join(sandbox, "extensions", "vendor", "openviking-pi", "upstream.json"),
-      JSON.stringify({ repo: "https://github.com/volcengine/OpenViking", commit: opts.upstreamCommit }, null, 2) + "\n",
+      JSON.stringify(
+        { repo: "https://github.com/volcengine/OpenViking", commit: opts.upstreamCommit },
+        null,
+        2,
+      ) + "\n",
     );
   }
-  writeFileSync(join(ansible, "playbook.yml"), "---\n# stub playbook (the real asset is never touched by tests)\n");
-  writeFileSync(join(ansible, "inventory.ini"), opts.inventory ?? "[quickreview]\nquickreview-vm ansible_user=mat\n");
+  writeFileSync(
+    join(ansible, "playbook.yml"),
+    "---\n# stub playbook (the real asset is never touched by tests)\n",
+  );
+  writeFileSync(
+    join(ansible, "inventory.ini"),
+    opts.inventory ?? "[quickreview]\nquickreview-vm ansible_user=mat\n",
+  );
 
   const git = (...args: string[]) =>
     execFileSync("git", ["-C", sandbox, ...args], {
-      env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" },
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "t",
+        GIT_AUTHOR_EMAIL: "t@t",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@t",
+      },
     });
   git("init", "-q");
   git("add", "-A");
@@ -134,7 +167,11 @@ function makeScratch(opts: {
   return { dir, sandbox, ansible };
 }
 
-function run(e: Env, args: string[], extraEnv: Record<string, string> = {}): { code: number; stdout: string; stderr: string } {
+function run(
+  e: Env,
+  args: string[],
+  extraEnv: Record<string, string> = {},
+): { code: number; stdout: string; stderr: string } {
   try {
     const stdout = execFileSync("bash", [deploySh, ...args], {
       encoding: "utf8",
@@ -150,7 +187,11 @@ function run(e: Env, args: string[], extraEnv: Record<string, string> = {}): { c
     return { code: 0, stdout, stderr: "" };
   } catch (err) {
     const e2 = err as { status?: number; stdout?: string; stderr?: string };
-    return { code: e2.status ?? -1, stdout: String(e2.stdout ?? ""), stderr: String(e2.stderr ?? "") };
+    return {
+      code: e2.status ?? -1,
+      stdout: String(e2.stdout ?? ""),
+      stderr: String(e2.stderr ?? ""),
+    };
   }
 }
 
@@ -240,10 +281,19 @@ describe("deploy.sh --dry-run", () => {
 // the Dockerfile venv layer interpolates, so agreeing there means agreeing in
 // the image), and the vendored fork's base commit against upstream.json.
 describe("deploy.sh — OpenViking pin drift", () => {
-  const OV: OvPins = { version: "0.4.15", llama: "0.3.35", extension: "d436baa23c83938b22bb0aab08b0ce48568b5ff4" };
+  const OV: OvPins = {
+    version: "0.4.15",
+    llama: "0.3.35",
+    extension: "d436baa23c83938b22bb0aab08b0ce48568b5ff4",
+  };
 
   it("passes and names the memory pins in the plan when everything agrees", () => {
-    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", configOv: OV, upstreamCommit: OV.extension! });
+    env = makeScratch({
+      configPi: "0.84.1",
+      groupVarsPi: "0.84.1",
+      configOv: OV,
+      upstreamCommit: OV.extension!,
+    });
     const r = run(env, ["--dry-run"]);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain("memory pins  openviking 0.4.15");
@@ -279,14 +329,24 @@ describe("deploy.sh — OpenViking pin drift", () => {
   });
 
   it("refuses when the vendored fork was rebased without recording it", () => {
-    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", configOv: OV, upstreamCommit: "0000000000000000000000000000000000000000" });
+    env = makeScratch({
+      configPi: "0.84.1",
+      groupVarsPi: "0.84.1",
+      configOv: OV,
+      upstreamCommit: "0000000000000000000000000000000000000000",
+    });
     const r = run(env, ["--dry-run"]);
     expect(r.code).toBe(1);
     expect(r.stderr).toContain("openviking pi-extension base commit pin mismatch");
   });
 
   it("a pin present on one side only is fatal, never silently skipped", () => {
-    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", configOv: OV, groupVarsOv: { version: OV.version } });
+    env = makeScratch({
+      configPi: "0.84.1",
+      groupVarsPi: "0.84.1",
+      configOv: OV,
+      groupVarsOv: { version: OV.version },
+    });
     const r = run(env, ["--dry-run"]);
     expect(r.code).toBe(1);
     expect(r.stderr).toContain("has no llama-cpp-python pin");
@@ -296,7 +356,9 @@ describe("deploy.sh — OpenViking pin drift", () => {
     env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", configOv: OV });
     const r = run(env, ["--dry-run"]);
     expect(r.code).toBe(1);
-    expect(r.stderr).toContain('upstream.json "commit" has no openviking pi-extension base commit pin');
+    expect(r.stderr).toContain(
+      'upstream.json "commit" has no openviking pi-extension base commit pin',
+    );
   });
 
   // the auth posture is a mirror too, and for the sharper reason:
@@ -313,7 +375,12 @@ describe("deploy.sh — OpenViking pin drift", () => {
     };
 
     it("names the auth mode in the plan when the mirror holds", () => {
-      env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", configOv: AUTH, upstreamCommit: OV.extension! });
+      env = makeScratch({
+        configPi: "0.84.1",
+        groupVarsPi: "0.84.1",
+        configOv: AUTH,
+        upstreamCommit: OV.extension!,
+      });
       const r = run(env, ["--dry-run"]);
       expect(r.code).toBe(0);
       expect(r.stdout).toContain("memory auth  auth_mode api_key");
@@ -375,19 +442,40 @@ describe("deploy.sh — OpenViking pin drift", () => {
   });
 
   describe("embedder drift", () => {
-    const LOCAL = { embedProvider: "local", embedModel: "bge-small-zh-v1.5-f16", embedDimension: "512", embedKeyFile: "openai_embeddings_api_key" };
-    const HOSTED = { embedProvider: "openai", embedModel: "text-embedding-3-small", embedDimension: "1536", embedKeyFile: "openai_embeddings_api_key" };
+    const LOCAL = {
+      embedProvider: "local",
+      embedModel: "bge-small-zh-v1.5-f16",
+      embedDimension: "512",
+      embedKeyFile: "openai_embeddings_api_key",
+    };
+    const HOSTED = {
+      embedProvider: "openai",
+      embedModel: "text-embedding-3-small",
+      embedDimension: "1536",
+      embedKeyFile: "openai_embeddings_api_key",
+    };
     const base = { version: "0.4.15", llama: "0.3.35" };
 
     it("names the embedder in the plan when config.toml and group_vars agree on local", () => {
-      env = makeScratch({ configPi: "0.84.4", groupVarsPi: "0.84.4", configOv: { ...base, ...LOCAL } });
+      env = makeScratch({
+        configPi: "0.84.4",
+        groupVarsPi: "0.84.4",
+        configOv: { ...base, ...LOCAL },
+      });
       const r = run(env, ["--dry-run"]);
       expect(r.code).toBe(0);
-      expect(r.stdout).toContain("memory embed local (config.toml == ansible effective value; 'local' means no memory text leaves the VM)");
+      expect(r.stdout).toContain(
+        "memory embed local (config.toml == ansible effective value; 'local' means no memory text leaves the VM)",
+      );
     });
 
     it("REFUSES a config.toml opted into a hosted embedder over a boot that would render local — that boot would reset the store", () => {
-      env = makeScratch({ configPi: "0.84.4", groupVarsPi: "0.84.4", configOv: { ...base, ...HOSTED }, groupVarsOv: { ...base, ...LOCAL } });
+      env = makeScratch({
+        configPi: "0.84.4",
+        groupVarsPi: "0.84.4",
+        configOv: { ...base, ...HOSTED },
+        groupVarsOv: { ...base, ...LOCAL },
+      });
       const r = run(env, ["--dry-run"]);
       expect(r.code).toBe(1);
       expect(r.stderr).toContain("openviking embedding provider pin mismatch");
@@ -411,14 +499,24 @@ describe("deploy.sh — OpenViking pin drift", () => {
     });
 
     it("a dimension that drifts alone is refused too — same provider, different vector space", () => {
-      env = makeScratch({ configPi: "0.84.4", groupVarsPi: "0.84.4", configOv: { ...base, ...HOSTED }, groupVarsOv: { ...base, ...HOSTED, embedDimension: "3072" } });
+      env = makeScratch({
+        configPi: "0.84.4",
+        groupVarsPi: "0.84.4",
+        configOv: { ...base, ...HOSTED },
+        groupVarsOv: { ...base, ...HOSTED, embedDimension: "3072" },
+      });
       const r = run(env, ["--dry-run"]);
       expect(r.code).toBe(1);
       expect(r.stderr).toContain("openviking embedding dimension pin mismatch");
     });
 
     it("a config.toml naming the embedder over a group_vars without it is fatal, never skipped", () => {
-      env = makeScratch({ configPi: "0.84.4", groupVarsPi: "0.84.4", configOv: { ...base, ...LOCAL }, groupVarsOv: base });
+      env = makeScratch({
+        configPi: "0.84.4",
+        groupVarsPi: "0.84.4",
+        configOv: { ...base, ...LOCAL },
+        groupVarsOv: base,
+      });
       const r = run(env, ["--dry-run"]);
       expect(r.code).toBe(1);
       expect(r.stderr).toContain("has no openviking embedding provider pin");
@@ -450,7 +548,11 @@ describe("deploy.sh drain advisory", () => {
 
   /** Like run(), but with stderr folded into the captured output — the
    * advisory speaks on stderr and exits 0, which run() throws away. */
-  function runMerged(e: Env, args: string[], extraEnv: Record<string, string>): { code: number; out: string } {
+  function runMerged(
+    e: Env,
+    args: string[],
+    extraEnv: Record<string, string>,
+  ): { code: number; out: string } {
     const r = run(e, ["--dry-run", ...args], extraEnv);
     if (r.code !== 0) return { code: r.code, out: r.stdout + r.stderr };
     const out = execFileSync("bash", ["-c", `bash '${deploySh}' --dry-run 2>&1`], {

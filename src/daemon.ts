@@ -26,7 +26,12 @@ import { TokenMinter } from "./githubAuth.js";
 import { REVIEW_SET_ASIDE_STALE_WINDOW_MS, type FeedbackEvent } from "./feedback.js";
 import { enforceLedgerFreshness } from "./ledgercheck.js";
 import { sweepExpiredLevers } from "./levers.js";
-import { PingPongLedger, ThreadDecisionWatcher, buildWakeMessage, type AuthorReplyEvent } from "./pingpong.js";
+import {
+  PingPongLedger,
+  ThreadDecisionWatcher,
+  buildWakeMessage,
+  type AuthorReplyEvent,
+} from "./pingpong.js";
 import { reconcileOnce, type ReconcileAdapter } from "./reconcile.js";
 import {
   RecheckWatcher,
@@ -51,7 +56,11 @@ import { wakeOrHold } from "./wakes.js";
 // Partial<RecheckAdapter>: the recheck's two extra reads (compare, files) are a
 // seam, not a requirement — a daemon wired without them simply never rechecks,
 // which is exactly how every legacy caller and test behaves.
-export type DaemonAdapter = DispatchAdapter & ReconcileAdapter & VerdictAdapter & Partial<RecheckAdapter> & Partial<CiAdapter>;
+export type DaemonAdapter = DispatchAdapter &
+  ReconcileAdapter &
+  VerdictAdapter &
+  Partial<RecheckAdapter> &
+  Partial<CiAdapter>;
 
 export interface DaemonDeps {
   cfg?: Config;
@@ -63,7 +72,10 @@ export interface DaemonDeps {
   /** B4's prompt renderer; default is the round order as JSON. The second
    * argument is the round's assembled memory seed — MEMORY_LESS
    * when nothing is wired or the store was unreachable. */
-  renderPrompt?: (order: import("./types.js").RoundOrder, memory: import("./memory/context.js").RoundMemory) => string;
+  renderPrompt?: (
+    order: import("./types.js").RoundOrder,
+    memory: import("./memory/context.js").RoundMemory,
+  ) => string;
   /** The pinned head + budgeted context block seeded into each round prompt
    *. Absent ⇒ rounds render memory-less, which is a supported
    * state, not a failure. */
@@ -77,7 +89,11 @@ export interface DaemonDeps {
   /** Hand-resolved merge files between two shas (the owner, 2026-08-19 —
    * conflict resolutions are never trivial). wire.ts passes the
    * WorktreeManager's git-level auto-merge comparison. */
-  resolvedFilesInMerges?: (from: string, to: string, pr?: number) => Promise<{ files: string[]; degraded: boolean }>;
+  resolvedFilesInMerges?: (
+    from: string,
+    to: string,
+    pr?: number,
+  ) => Promise<{ files: string[]; degraded: boolean }>;
   /** Fetch head + base and materialise the worktree before the order is built
    * (wire.ts passes the real WorktreeManager). Absent ⇒ no git: the order
    * falls back to the PR row's sha with no base facts. */
@@ -94,7 +110,10 @@ export interface DaemonDeps {
   ecosystem?: import("./ecosystem.js").Ecosystem;
   /** Most recent human author of paths at a sha (the escalation
    * mention pick). Absent ⇒ no git: the config fallback mention is used. */
-  directiveAuthor?: (sha: string, paths: string[]) => Promise<{ login: string | null; name: string; email: string } | null>;
+  directiveAuthor?: (
+    sha: string,
+    paths: string[],
+  ) => Promise<{ login: string | null; name: string; email: string } | null>;
   log?: (msg: string, extra?: unknown) => void;
   /** Shared deterministic clock for dispatch, verdict and stage supervision. */
   now?: () => Date;
@@ -161,8 +180,10 @@ function readWebhookSecret(cfg: Config): string {
 /** The real adapter: token minter → mutation gate (dry-run aware) → adapter. */
 function buildGitHubAdapter(cfg: Config, stateDir: string): GitHubAdapter {
   const minter = new TokenMinter(cfg.github.secrets_dir);
-  const gate: MutationGate = new MutationGate(cfg.dry_run, join(stateDir, "dryrun"), (intent: MutationIntent): Promise<unknown> =>
-    github.executeMutation(intent),
+  const gate: MutationGate = new MutationGate(
+    cfg.dry_run,
+    join(stateDir, "dryrun"),
+    (intent: MutationIntent): Promise<unknown> => github.executeMutation(intent),
   );
   const github: GitHubAdapter = new GitHubAdapter(cfg, minter, gate);
   return github;
@@ -172,13 +193,15 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
   const cfg = deps.cfg ?? loadConfig();
   const root = deps.root ?? sandboxRoot();
   const stateDir = join(root, "state");
-  const log = deps.log ?? ((msg: string, extra?: unknown) => console.log(`[quickreviewd] ${msg}`, extra ?? ""));
+  const log =
+    deps.log ?? ((msg: string, extra?: unknown) => console.log(`[quickreviewd] ${msg}`, extra ?? ""));
   const store = deps.store ?? new StateStore(join(stateDir, "state.db"));
   const hooks = deps.hooks ?? stubSessionHooks(root, log);
   const roundStageBounds = {
     first_pass_max_min: cfg.daemon.round_first_pass_max_min ?? DEFAULT_ROUND_FIRST_PASS_MAX_MIN,
     passes_max_min: cfg.daemon.round_passes_max_min ?? DEFAULT_ROUND_PASSES_MAX_MIN,
-    running_max_min: cfg.daemon.session_command_running_max_min ?? DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN,
+    running_max_min:
+      cfg.daemon.session_command_running_max_min ?? DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN,
   };
 
   // Overseer wake policy: every logAnomaly flows through the ONE
@@ -223,7 +246,9 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     verdictDir,
     progress: (pr) => {
       try {
-        return parseRoundProgress(readFileSync(join(stateDir, "round-progress", `pr-${pr}.json`), "utf8"));
+        return parseRoundProgress(
+          readFileSync(join(stateDir, "round-progress", `pr-${pr}.json`), "utf8"),
+        );
       } catch {
         return undefined;
       }
@@ -240,7 +265,8 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     verdictDir,
     log,
     isDraining: () => store.drainState().draining,
-    ownerActorAlias: cfg.github.bot_login === `${cfg.github.app_slug}[bot]` ? cfg.github.app_slug : undefined,
+    ownerActorAlias:
+      cfg.github.bot_login === `${cfg.github.app_slug}[bot]` ? cfg.github.app_slug : undefined,
     // The author asked for a person on a review thread.
     //
     // There is no park to put them in: retired it, so the state event
@@ -259,10 +285,16 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     // daily heartbeat, and never injects. An author asking for a person is
     // worth a human's eyes; it is not a review that ran unsoundly NOW.
     onHumanRequested: async (decision) => {
-      applyEvent(store, decision.pr, { type: "human_requested" }, {}, {
-        botLogin: cfg.github.bot_login,
-        reason: "pingpong:human-requested",
-      });
+      applyEvent(
+        store,
+        decision.pr,
+        { type: "human_requested" },
+        {},
+        {
+          botLogin: cfg.github.bot_login,
+          reason: "pingpong:human-requested",
+        },
+      );
       store.logAnomaly(
         "human_requested",
         decision.pr,
@@ -350,10 +382,14 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           const disposition = await wakeOrHold(
             { store, inject: (pr, message) => hooks.inject(pr, message), log },
             reply.pr,
-            buildWakeMessage(event, {
-              head_sha: row?.head_sha,
-              worktree: join(root, "wt", `pr-${reply.pr}`),
-            }, pingpong.discipline(reply.in_reply_to_id)),
+            buildWakeMessage(
+              event,
+              {
+                head_sha: row?.head_sha,
+                worktree: join(root, "wt", `pr-${reply.pr}`),
+              },
+              pingpong.discipline(reply.in_reply_to_id),
+            ),
             "author_reply",
           );
           if (disposition === "held") log(`pingpong: #${reply.pr} reply held — round in flight`);
@@ -371,7 +407,12 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         onCiCompleted: async (ci) => {
           for (const pr of ci.prs) {
             await guard(`recheck #${pr}`, () =>
-              runRecheck(recheckDeps, { pr, trigger: "ci", head_sha: ci.head_sha, ci: { conclusion: ci.conclusion } }),
+              runRecheck(recheckDeps, {
+                pr,
+                trigger: "ci",
+                head_sha: ci.head_sha,
+                ci: { conclusion: ci.conclusion },
+              }),
             );
             // the other side of the same event. A PR whose approval
             // was withheld for red CI is re-queued the moment CI goes green at
@@ -389,7 +430,11 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         },
         onBaseAdvanced: async (advance) => {
           await guard(`recheck base ${advance.branch}`, () =>
-            runBaseAdvance(recheckDeps, { branch: advance.branch, before: advance.before, after: advance.after }),
+            runBaseAdvance(recheckDeps, {
+              branch: advance.branch,
+              before: advance.before,
+              after: advance.after,
+            }),
           );
         },
         // forward tuning-loop signals to the engine. A review set
@@ -400,7 +445,9 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           await guard(`feedback #${e.pr}`, async () => {
             if (e.kind === "review_set_aside") {
               const lastPush = store.lastEventAt("head_push", e.pr);
-              const stale = lastPush !== undefined && Date.now() - Date.parse(lastPush) < REVIEW_SET_ASIDE_STALE_WINDOW_MS;
+              const stale =
+                lastPush !== undefined &&
+                Date.now() - Date.parse(lastPush) < REVIEW_SET_ASIDE_STALE_WINDOW_MS;
               await deps.onFeedback!({ ...e, stale });
             } else {
               await deps.onFeedback!(e);
@@ -444,11 +491,15 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         // onSynchronize calls — a dead/lost webhook no longer means a
         // post-review push goes unexamined (live gap 2026-08-19, #5307).
         onHeadPush: async (pr, head_sha) => {
-          await guard(`recheck #${pr}`, () => runRecheck(recheckDeps, { pr, trigger: "push", head_sha }));
+          await guard(`recheck #${pr}`, () =>
+            runRecheck(recheckDeps, { pr, trigger: "push", head_sha }),
+          );
         },
         // backstop: merged-over-block for closes the webhook missed.
         onMergedOverBlock: async (pr) => {
-          await guard(`feedback #${pr}`, async () => deps.onFeedback?.({ kind: "merged_over_block", pr }));
+          await guard(`feedback #${pr}`, async () =>
+            deps.onFeedback?.({ kind: "merged_over_block", pr }),
+          );
         },
       });
       log(
@@ -461,7 +512,9 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         // it clears whatever hold stands — a session's included.
         const { dropped } = store.liftDrain("operator");
         store.logEvent("drain_lifted", null, { dropped_deliveries: dropped });
-        log(`drain_lifted — first reconcile pass healthy; ${dropped} webhook delivery(ies) were dropped while draining`);
+        log(
+          `drain_lifted — first reconcile pass healthy; ${dropped} webhook delivery(ies) were dropped while draining`,
+        );
         threadDecisions.requestSweep();
       }
       await pump();
@@ -490,7 +543,10 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         log,
         ...(deps.now ? { now: deps.now } : {}),
       });
-      for (const o of orders) log(`dispatched #${o.pr} round ${o.round_no} (${o.round_type}) lenses=${o.lenses.join(",")}`);
+      for (const o of orders)
+        log(
+          `dispatched #${o.pr} round ${o.round_no} (${o.round_type}) lenses=${o.lenses.join(",")}`,
+        );
     });
   };
 
@@ -500,7 +556,9 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     const automaticRetries = store.activateDueReviewFailureRetries(store.currentTimeIso());
     if (automaticRetries.length > 0) {
       for (const retry of automaticRetries) {
-        log(`automatic pre-fanout retry: #${retry.pr} round ${retry.target_round_no} epoch ${retry.retry_epoch} @ ${retry.target_head_sha.slice(0, 7)}`);
+        log(
+          `automatic pre-fanout retry: #${retry.pr} round ${retry.target_round_no} epoch ${retry.retry_epoch} @ ${retry.target_head_sha.slice(0, 7)}`,
+        );
       }
       await pump();
     }
@@ -593,18 +651,19 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           store,
           secret,
           onInterpretation,
-          pipelineHealth: () => buildStatusSnapshot(
-            store,
-            cfg.dry_run,
-            undefined,
-            undefined,
-            cfg.daemon.max_concurrent_rounds,
-            undefined,
-            undefined,
-            undefined,
-            roundStages.health(),
-            roundStageBounds,
-          ).pipeline,
+          pipelineHealth: () =>
+            buildStatusSnapshot(
+              store,
+              cfg.dry_run,
+              undefined,
+              undefined,
+              cfg.daemon.max_concurrent_rounds,
+              undefined,
+              undefined,
+              undefined,
+              roundStages.health(),
+              roundStageBounds,
+            ).pipeline,
           log,
         });
         // Loopback by default; in the container the daemon must bind 0.0.0.0
@@ -638,11 +697,15 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
 
       every(cfg.daemon.poll_interval_s, () => void reconcile());
       every(DISPATCH_TICK_S, () => void pump());
-      every(VERDICT_SWEEP_S, () => void guard("verdict sweep", async () => {
-        await verdicts.sweep();
-        await threadDecisions.sweep();
-        await rechecks.sweep();
-      }));
+      every(
+        VERDICT_SWEEP_S,
+        () =>
+          void guard("verdict sweep", async () => {
+            await verdicts.sweep();
+            await threadDecisions.sweep();
+            await rechecks.sweep();
+          }),
+      );
       every(DEADLINE_TICK_S, () => {
         void guard("round stage supervisor", async () => {
           try {
@@ -652,38 +715,41 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           }
         });
         void guard("deadline check", async () => {
-        await verdicts.checkDeadlines();
-        // a safe pre-fanout exhaustion is a circuit breaker, not an
-        // inert operator park.
-        await retryDueReviewFailures();
-        // Zombie-round expiry: rounds stuck `overdue` past the
-        // horizon whose PR has since verdicted/closed become terminal
-        // `expired`. Rounds a rerun could still service are left standing.
-        if (cfg.daemon.expire_overdue_after_h > 0) {
-          const expired = store.expireOverdueRounds(cfg.daemon.expire_overdue_after_h);
-          if (expired.length > 0) log(`expired ${expired.length} zombie round(s): ids ${expired.join(",")}`);
-        }
-        // Stranded rounds: the ones the sweep above deliberately
-        // leaves — overdue, but the PR is still open and still undecided, so
-        // "a rerun could service it". Nothing ever does; found one
-        // sitting untouched since the cutover, ten days and invisible. Past a
-        // week that is not pending rescue, it is abandoned: terminalize it and
-        // SAY SO. One anomaly per round, once, because the row stops being
-        // overdue the moment it is reported.
-        for (const r of store.expireStrandedRounds()) {
-          store.logAnomaly(
-            "round_stranded",
-            r.pr,
-            r.round_no,
-            `round ${r.round_no} has sat overdue since ${r.deadline_at} with nothing to rescue it — closed as expired`,
-            [
-              `STRANDED ROUND — PR #${r.pr} round ${r.round_no}`,
-              `Overdue since ${r.deadline_at}; its PR was still open and undecided, so the zombie sweep kept skipping it. Nothing reruns an overdue round, so it would have sat there indefinitely.`,
-              "The round row is now closed (expired). Its spend still counts. GitHub was NOT touched and the PR was NOT requeued — decide whether this PR still needs a review, and if so trigger one (commands/rerun-round).",
-            ].join("\n"),
-          );
-          log(`stranded round closed: #${r.pr} round ${r.round_no} (overdue since ${r.deadline_at})`);
-        }
+          await verdicts.checkDeadlines();
+          // a safe pre-fanout exhaustion is a circuit breaker, not an
+          // inert operator park.
+          await retryDueReviewFailures();
+          // Zombie-round expiry: rounds stuck `overdue` past the
+          // horizon whose PR has since verdicted/closed become terminal
+          // `expired`. Rounds a rerun could still service are left standing.
+          if (cfg.daemon.expire_overdue_after_h > 0) {
+            const expired = store.expireOverdueRounds(cfg.daemon.expire_overdue_after_h);
+            if (expired.length > 0)
+              log(`expired ${expired.length} zombie round(s): ids ${expired.join(",")}`);
+          }
+          // Stranded rounds: the ones the sweep above deliberately
+          // leaves — overdue, but the PR is still open and still undecided, so
+          // "a rerun could service it". Nothing ever does; found one
+          // sitting untouched since the cutover, ten days and invisible. Past a
+          // week that is not pending rescue, it is abandoned: terminalize it and
+          // SAY SO. One anomaly per round, once, because the row stops being
+          // overdue the moment it is reported.
+          for (const r of store.expireStrandedRounds()) {
+            store.logAnomaly(
+              "round_stranded",
+              r.pr,
+              r.round_no,
+              `round ${r.round_no} has sat overdue since ${r.deadline_at} with nothing to rescue it — closed as expired`,
+              [
+                `STRANDED ROUND — PR #${r.pr} round ${r.round_no}`,
+                `Overdue since ${r.deadline_at}; its PR was still open and undecided, so the zombie sweep kept skipping it. Nothing reruns an overdue round, so it would have sat there indefinitely.`,
+                "The round row is now closed (expired). Its spend still counts. GitHub was NOT touched and the PR was NOT requeued — decide whether this PR still needs a review, and if so trigger one (commands/rerun-round).",
+              ].join("\n"),
+            );
+            log(
+              `stranded round closed: #${r.pr} round ${r.round_no} (overdue since ${r.deadline_at})`,
+            );
+          }
         });
       });
       every(STATUS_TICK_S, writeStatus);

@@ -13,7 +13,10 @@
 // heartbeat, down with it.
 import type { OpenVikingHealth } from "./types.js";
 
-export type FetchLike = (url: string, init?: { signal?: AbortSignal }) => Promise<{
+export type FetchLike = (
+  url: string,
+  init?: { signal?: AbortSignal },
+) => Promise<{
   ok: boolean;
   status: number;
   json(): Promise<unknown>;
@@ -27,7 +30,8 @@ export interface ProbeOptions {
 }
 
 function message(err: unknown): string {
-  if (err instanceof Error) return err.name === "TimeoutError" || err.name === "AbortError" ? "timeout" : err.message;
+  if (err instanceof Error)
+    return err.name === "TimeoutError" || err.name === "AbortError" ? "timeout" : err.message;
   return String(err);
 }
 
@@ -40,12 +44,14 @@ function message(err: unknown): string {
  */
 export async function probeHealth(opts: ProbeOptions): Promise<OpenVikingHealth> {
   const now = opts.now ?? (() => new Date());
-  const fetchFn: FetchLike = opts.fetchFn ?? ((url, init) => fetch(url, init) as unknown as ReturnType<FetchLike>);
+  const fetchFn: FetchLike = opts.fetchFn ?? ((url, init) => fetch(url, init));
   const at = now().toISOString();
 
   let version: string | undefined;
   try {
-    const res = await fetchFn(`${opts.baseUrl}/health`, { signal: AbortSignal.timeout(opts.timeoutMs) });
+    const res = await fetchFn(`${opts.baseUrl}/health`, {
+      signal: AbortSignal.timeout(opts.timeoutMs),
+    });
     if (!res.ok) return { reachable: false, ready: false, error: `health ${res.status}`, at };
     // A body we cannot parse still proves the process is serving: reachable
     // stays true, the version simply stays unknown (and so does drift).
@@ -60,7 +66,9 @@ export async function probeHealth(opts: ProbeOptions): Promise<OpenVikingHealth>
   }
 
   try {
-    const res = await fetchFn(`${opts.baseUrl}/ready`, { signal: AbortSignal.timeout(opts.timeoutMs) });
+    const res = await fetchFn(`${opts.baseUrl}/ready`, {
+      signal: AbortSignal.timeout(opts.timeoutMs),
+    });
     return {
       reachable: true,
       ready: res.ok,
@@ -69,6 +77,12 @@ export async function probeHealth(opts: ProbeOptions): Promise<OpenVikingHealth>
       at,
     };
   } catch (err) {
-    return { reachable: true, ready: false, ...(version ? { version } : {}), error: message(err), at };
+    return {
+      reachable: true,
+      ready: false,
+      ...(version ? { version } : {}),
+      error: message(err),
+      at,
+    };
   }
 }

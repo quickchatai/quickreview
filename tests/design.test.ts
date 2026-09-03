@@ -29,7 +29,7 @@ import { renderMemoryTab } from "../src/tui/memtab.js";
 import { renderTicketsTab } from "../src/tui/ticketstab.js";
 import { FakeChanges, changeEntry, learningRig } from "./helpers/tui-rig.js";
 import { renderMetrics, type MetricsView } from "../src/tui/metricstab.js";
-import { displayWidth, stripAnsi, Frame } from "../src/tui/paint.js";
+import { displayWidth, stripAnsi, type Frame } from "../src/tui/paint.js";
 import { osc8 } from "../src/tui/theme.js";
 import type { StatusSnapshot } from "../src/state.js";
 
@@ -180,9 +180,36 @@ function learning() {
   const rig = learningRig({ readTickets: () => [] });
   const st = rig.learning.store;
   st.entries = [
-    { ts: "2026-08-19T10:00:00", id: "abc", block: 0, day: "2026-08-19", text: "#pinned always check anchors", pinned: true, tags: ["pinned"], links: [] },
-    { ts: "2026-08-20T09:00:00", id: "def", block: 1, day: "2026-08-20", text: "#bug missed a migration collision", pinned: false, tags: ["bug"], links: [] },
-    { ts: "2026-08-20T09:30:00", id: "ghi", block: 2, day: "2026-08-20", text: "#feedback pr=5265 human [feedback] by alex on PR #5265 (comment 1): \"small impact\" — disputed", pinned: false, tags: ["feedback"], links: [] },
+    {
+      ts: "2026-08-19T10:00:00",
+      id: "abc",
+      block: 0,
+      day: "2026-08-19",
+      text: "#pinned always check anchors",
+      pinned: true,
+      tags: ["pinned"],
+      links: [],
+    },
+    {
+      ts: "2026-08-20T09:00:00",
+      id: "def",
+      block: 1,
+      day: "2026-08-20",
+      text: "#bug missed a migration collision",
+      pinned: false,
+      tags: ["bug"],
+      links: [],
+    },
+    {
+      ts: "2026-08-20T09:30:00",
+      id: "ghi",
+      block: 2,
+      day: "2026-08-20",
+      text: '#feedback pr=5265 human [feedback] by alex on PR #5265 (comment 1): "small impact" — disputed',
+      pinned: false,
+      tags: ["feedback"],
+      links: [],
+    },
   ] as never;
   st.memLoaded = true;
   st.proposals = [{ slug: "tighten-anchor-rule", head: ["Tighten the anchor rule"] }];
@@ -190,9 +217,27 @@ function learning() {
   st.propLoaded = true;
   st.filedTotal = 1;
   st.status = "✓ pinned";
-  st.tickets = { kind: "read", tickets: [{ id: "", title: "Adjudicate one real episode", status: "open", role: "ready-for-human", category: "—", updated: "2026-08-25T18:00:00Z", path: "/t", body: "# Adjudicate\n\nbody" }] };
+  st.tickets = {
+    kind: "read",
+    tickets: [
+      {
+        id: "",
+        title: "Adjudicate one real episode",
+        status: "open",
+        role: "ready-for-human",
+        category: "—",
+        updated: "2026-08-25T18:00:00Z",
+        path: "/t",
+        body: "# Adjudicate\n\nbody",
+      },
+    ],
+  };
   st.digest = { files: ["2026-08-19.md"], back: 0, scroll: 0, content: "# Digest\n- fine" };
-  return { rig, st, changes: new FakeChanges([changeEntry("a".repeat(40), "narrow the injection addendum")]) };
+  return {
+    rig,
+    st,
+    changes: new FakeChanges([changeEntry("a".repeat(40), "narrow the injection addendum")]),
+  };
 }
 
 const deployState: DeployState = {
@@ -219,8 +264,23 @@ function frames(): Array<[string, Frame]> {
     ["board-help", renderBoard({ ...boardView, help: true, eventsFocus: false }, 120, 40)],
     ["memory", renderMemoryTab(l.st, l.rig.learning.memory, false, 120, 40)],
     ["digest", renderDigestTab(l.st.digest, false, "2026-08-20", 120, 40)],
-    ["tickets", renderTicketsTab(l.st, l.rig.learning.tickets, false, 120, 40, "review-feedback-loop")],
-    ["feedback", renderFeedbackTab(l.st, l.rig.learning.feedback, l.changes, false, 120, 40, "exampleorg/example-app", new Date("2026-08-20T12:00:00Z"))],
+    [
+      "tickets",
+      renderTicketsTab(l.st, l.rig.learning.tickets, false, 120, 40, "review-feedback-loop"),
+    ],
+    [
+      "feedback",
+      renderFeedbackTab(
+        l.st,
+        l.rig.learning.feedback,
+        l.changes,
+        false,
+        120,
+        40,
+        "exampleorg/example-app",
+        new Date("2026-08-20T12:00:00Z"),
+      ),
+    ],
     ["deploy", renderDeployTab(deployState, false, 120, 40)],
     ["metrics", renderMetrics(metricsView, 120, 40)],
   ];

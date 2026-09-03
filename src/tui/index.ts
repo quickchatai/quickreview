@@ -27,11 +27,16 @@ export { chainOnPoll } from "./poll-hooks.js";
  * is gone (2026-09-02 — the TUI never attaches to a VM session), so both are
  * refused with the place to go instead.
  */
-export function parseTarget(arg: string | undefined): { kind: "none" } | { kind: "pr"; pr: number } | { kind: "bad"; reason: string } {
+export function parseTarget(
+  arg: string | undefined,
+): { kind: "none" } | { kind: "pr"; pr: number } | { kind: "bad"; reason: string } {
   if (arg === undefined || arg === "") return { kind: "none" };
   if (/^\d+$/.test(arg)) return { kind: "pr", pr: Number(arg) };
   if (arg === "overseer" || arg === "main") {
-    return { kind: "bad", reason: `'${arg}' is no longer a target — the TUI never attaches to the ${arg} session; open the board and ask the companion` };
+    return {
+      kind: "bad",
+      reason: `'${arg}' is no longer a target — the TUI never attaches to the ${arg} session; open the board and ask the companion`,
+    };
   }
   return { kind: "bad", reason: `unknown target '${arg}' — expected a PR number` };
 }
@@ -116,7 +121,12 @@ export function parseTuiArgs(args: string[]): TuiArgs {
  * inside the companionUp block. RATIFIED: actions run instantly — no confirm
  * gate (see src/tui/actions.ts header).
  */
-export function buildTuiDriver(app: App, learning: LearningTabs, metricsView: MetricsView, deployState: DeployState): TuiDriver {
+export function buildTuiDriver(
+  app: App,
+  learning: LearningTabs,
+  metricsView: MetricsView,
+  deployState: DeployState,
+): TuiDriver {
   // One keyboard owner at a time: an action must never type into a focused
   // pi pane or companion column (same rule the mouse/tab handlers follow).
   // A busy App (operator input box open, terminal lent to the `s` passphrase
@@ -190,7 +200,10 @@ export function buildTuiDriver(app: App, learning: LearningTabs, metricsView: Me
         // result, not a silent no-op.
         const ordered = memoryOrder(learning.store.entries, mem.filter);
         const i = ordered.findIndex((e) => e.day === opts.day);
-        if (i < 0) throw new Error(`no memory entries on ${opts.day}${mem.filter ? ` under #${mem.filter}` : ""}`);
+        if (i < 0)
+          throw new Error(
+            `no memory entries on ${opts.day}${mem.filter ? ` under #${mem.filter}` : ""}`,
+          );
         mem.sel = i;
         mem.selKey = `${ordered[i]!.ts}|${ordered[i]!.id}#${ordered[i]!.block}`;
       }
@@ -235,10 +248,15 @@ export function buildTuiDriver(app: App, learning: LearningTabs, metricsView: Me
       // companion asking for a stop could stop a live reviewer on data nobody
       // fetched.
       if (deployState.containerStatus === undefined) {
-        throw new Error(`deploy_tab ${action} refused — the container's state has not been read yet`);
+        throw new Error(
+          `deploy_tab ${action} refused — the container's state has not been read yet`,
+        );
       }
       const kind = !/^Up /.test(deployState.containerStatus) ? "start" : "stop";
-      if (kind !== action) throw new Error(`deploy_tab ${action} refused — container is ${deployState.containerStatus}`);
+      if (kind !== action)
+        throw new Error(
+          `deploy_tab ${action} refused — container is ${deployState.containerStatus}`,
+        );
       app.pressKey("S");
       app.pressKey("S");
     },
@@ -366,6 +384,13 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     try {
       fn();
     } finally {
+      // Deliberate, and NOT safe to "fix": this return also swallows a throw
+      // from fn(), which is what we want on the quit path — the alt screen is
+      // already gone, and restoring it to report an error would repaint over
+      // the shell the operator is back in. Restructuring so the return sits
+      // outside the finally would change that, and error propagation on quit
+      // is behaviour, not style.
+      // eslint-disable-next-line no-unsafe-finally
       if (app.isStopped()) return; // quit happened while fn ran
       if (input.isTTY) input.setRawMode(true);
       out.write(ALT_SCREEN_ON + CLEAR + MOUSE_ON);
@@ -410,7 +435,8 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     available: () => companionUp,
     onUpdate: () => app.repaint(),
   });
-  if (!companionOn) app.sidebar.setOff(args.companion ? "[companion] enabled = false" : "--no-companion");
+  if (!companionOn)
+    app.sidebar.setOff(args.companion ? "[companion] enabled = false" : "--no-companion");
 
   // Bring-up progress goes IN that column (ruling 3): it is empty at this
   // moment and already the right shape, so it costs no new surface — and the
@@ -478,7 +504,8 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   const { buildIssueSink, ticketProjection } = await import("./issuesink.js");
   const { readEffortTickets } = await import("./trackertickets.js");
   const projection = ticketProjection(full);
-  const { RealDeployFetcher, installDeployHooks, powerSpawnArgv, realLocalRunner } = await import("./deploytab.js");
+  const { RealDeployFetcher, installDeployHooks, powerSpawnArgv, realLocalRunner } =
+    await import("./deploytab.js");
   const { FileDeployCeremonyStore } = await import("./deploy-ceremony.js");
   const localRunner = realLocalRunner(sandboxRoot());
   // the change register — every feedback-derived commit (identified by
@@ -494,8 +521,16 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     gitRun,
     repoRoot: sandboxRoot(),
     sink: buildIssueSink(full, app.ssh, memStore),
-    changes: new ChangeLog(new ChangeRegisterStore(join(sandboxRoot(), "state", "changes")), localRunner),
-    ...(projection ? { readTickets: () => readEffortTickets(projection.root, projection.effort), ticketsEffort: projection.effort } : {}),
+    changes: new ChangeLog(
+      new ChangeRegisterStore(join(sandboxRoot(), "state", "changes")),
+      localRunner,
+    ),
+    ...(projection
+      ? {
+          readTickets: () => readEffortTickets(projection.root, projection.effort),
+          ticketsEffort: projection.effort,
+        }
+      : {}),
   });
   app.hooks.powerRun = (_theApp, action, onData, onExit) => {
     // docker stop/start on the VM (or local docker in local mode),
@@ -655,7 +690,9 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       // Awaited, not fired and forgotten: it is part of "re-run the check and
       // report the new outcome", and quit waits for this chain.
       await app.poller.tick();
-    })().catch((err: unknown) => app.notice(`✖ ssh check failed: ${String(err instanceof Error ? err.message : err)}`));
+    })().catch((err: unknown) =>
+      app.notice(`✖ ssh check failed: ${String(err instanceof Error ? err.message : err)}`),
+    );
   };
 
   // ---- the bring-up: everything external, behind the first frame ------------
@@ -677,7 +714,10 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
         progress.begin("memory-namespaces");
         const notes = await memStore.ensureNamespaces();
         for (const note of notes) app.notice(`memory: ${note}`);
-        progress.done("memory-namespaces", notes.length > 0 ? `${notes.length} note${notes.length === 1 ? "" : "s"}` : "ready");
+        progress.done(
+          "memory-namespaces",
+          notes.length > 0 ? `${notes.length} note${notes.length === 1 ? "" : "s"}` : "ready",
+        );
       } else {
         progress.skip("memory-namespaces", "forward down");
       }
@@ -714,14 +754,22 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
         // rollover that silently did not happen reads as one that did.
         app.notice(`companion: day rollover DEFERRED — ${report.deferred}`);
       } else if (report.verdict.kind === "rollover") {
-        app.notice(`companion: new day ${report.verdict.today} — fresh conversation (${report.steps.length} steps)`);
+        app.notice(
+          `companion: new day ${report.verdict.today} — fresh conversation (${report.steps.length} steps)`,
+        );
       }
       if (report.interviewFile) {
-        app.notice("companion: first start on this installation — greeting + calibration interview queued");
+        app.notice(
+          "companion: first start on this installation — greeting + calibration interview queued",
+        );
       }
       progress.done(
         "rollover",
-        report.deferred ? `deferred — ${report.deferred}` : report.verdict.kind === "rollover" ? `new day ${report.verdict.today}` : "same day",
+        report.deferred
+          ? `deferred — ${report.deferred}`
+          : report.verdict.kind === "rollover"
+            ? `new day ${report.verdict.today}`
+            : "same day",
       );
       progress.begin("companion-pi");
       await companion.spawnPi();
@@ -731,7 +779,13 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       app.repaint();
     } catch (err) {
       companionError = String(err instanceof Error ? err.message : err);
-      for (const key of ["memory-forward", "memory-namespaces", "container", "rollover", "companion-pi"] as const) {
+      for (const key of [
+        "memory-forward",
+        "memory-namespaces",
+        "container",
+        "rollover",
+        "companion-pi",
+      ] as const) {
         const step = progress.steps().find((s) => s.key === key);
         if (step?.state === "running") progress.fail(key, companionError);
         else if (step?.state === "pending") progress.skip(key, "companion unavailable");
@@ -794,12 +848,18 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       }
     });
 
-    const { AlertConsumer, AlertPolicy, filePolicyStore, notifySendRunner } = await import("./alerts.js");
+    const { AlertConsumer, AlertPolicy, filePolicyStore, notifySendRunner } =
+      await import("./alerts.js");
     const { InjectSender } = await import("./msg.js");
     const overseer = new InjectSender(cfg, runner);
     // Persisted per-cause memory: "already told you" survives a TUI restart
     // inside the same ops day, and resets with the day.
-    const policy = new AlertPolicy(full.companion.cooldown_min, () => new Date(), filePolicyStore(policyStatePath), full.ops.timezone);
+    const policy = new AlertPolicy(
+      full.companion.cooldown_min,
+      () => new Date(),
+      filePolicyStore(policyStatePath),
+      full.ops.timezone,
+    );
     const consumer = new AlertConsumer(full.companion.alerts_dir, policy, {
       notice: (text) => app.notice(text),
       badge: (badge) => app.setAlertBadge(badge),
@@ -816,7 +876,11 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     const piAuthMem = { lastWritten: "" };
     chainOnPoll(app, (a) => {
       try {
-        maybeWritePiAuthAlert(full.companion.alerts_dir, a.view.snapshot?.pi_auth_expired, piAuthMem);
+        maybeWritePiAuthAlert(
+          full.companion.alerts_dir,
+          a.view.snapshot?.pi_auth_expired,
+          piAuthMem,
+        );
       } catch {
         // alerting is best-effort; never break the poll loop
       }
@@ -843,7 +907,8 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       tuiActBusy = true;
       void processTuiActions(tuiActionsDir, driver)
         .then((done) => {
-          for (const r of done) a.notice(r.trace ?? `companion tui-action ${r.file}: ✖ ${r.message}`);
+          for (const r of done)
+            a.notice(r.trace ?? `companion tui-action ${r.file}: ✖ ${r.message}`);
         })
         .catch(() => {
           /* best-effort — never break the poll loop */
@@ -874,7 +939,9 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     progress.begin("ssh");
     const triaged = triageConnection(cfg)
       .then(applyDiagnosis)
-      .catch((err: unknown) => progress.fail("ssh", `probe failed: ${String(err instanceof Error ? err.message : err)}`));
+      .catch((err: unknown) =>
+        progress.fail("ssh", `probe failed: ${String(err instanceof Error ? err.message : err)}`),
+      );
 
     // the evidence store's dir must exist before the container mounts
     // it (docker would invent it root-owned), and the copier writes into it
@@ -882,7 +949,9 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     try {
       evidence.ensure();
     } catch (err) {
-      app.notice(`✖ evidence store ${evidence.dir}: ${String(err instanceof Error ? err.message : err)}`);
+      app.notice(
+        `✖ evidence store ${evidence.dir}: ${String(err instanceof Error ? err.message : err)}`,
+      );
     }
     if (companionOn) {
       await startCompanion();
@@ -911,7 +980,10 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       return;
     }
     if (step?.state === "running" && a.poller.state.consecutiveFailures >= 2) {
-      progress.fail("poll", app.view.connection ? diagnosisLine(app.view.connection) : "status.json unreadable");
+      progress.fail(
+        "poll",
+        app.view.connection ? diagnosisLine(app.view.connection) : "status.json unreadable",
+      );
     }
   });
 

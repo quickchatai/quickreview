@@ -37,7 +37,8 @@ let capCalls: Array<{ decision: TurnDecision; event: SlackInboundEvent }>;
 let usersInfo: ReturnType<typeof vi.fn>;
 
 /** Slack event_ts for an instant, as Slack formats it. */
-const evTs = (d: Date, seq = 1): string => `${Math.floor(d.getTime() / 1000)}.${String(seq).padStart(6, "0")}`;
+const evTs = (d: Date, seq = 1): string =>
+  `${Math.floor(d.getTime() / 1000)}.${String(seq).padStart(6, "0")}`;
 
 function event(over: Partial<SlackInboundEvent> = {}): SlackInboundEvent {
   const ts = evTs(clock);
@@ -84,7 +85,11 @@ beforeEach(() => {
   origins = new OriginStore(join(dir, "origin"), now);
   injected = [];
   capCalls = [];
-  usersInfo = vi.fn(async (id: string) => ({ id, display_name: id === ALICE ? "Alice Nowak" : id, is_bot: false }));
+  usersInfo = vi.fn(async (id: string) => ({
+    id,
+    display_name: id === ALICE ? "Alice Nowak" : id,
+    is_bot: false,
+  }));
 });
 afterEach(() => {
   store.close();
@@ -113,10 +118,46 @@ describe("computeTier / authorizedPrs", () => {
   });
 
   it("resolves own PRs only for a mapped login, and never for an unmapped id", () => {
-    store.upsertPr({ number: 1234, state: "reviewing", head_sha: "a", title: "t", author: "alice-gh", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
-    store.upsertPr({ number: 1240, state: "tracked", head_sha: "b", title: "t", author: "Alice-GH", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
-    store.upsertPr({ number: 1250, state: "closed", head_sha: "c", title: "t", author: "alice-gh", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
-    store.upsertPr({ number: 1260, state: "reviewing", head_sha: "d", title: "t", author: "bob", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+    store.upsertPr({
+      number: 1234,
+      state: "reviewing",
+      head_sha: "a",
+      title: "t",
+      author: "alice-gh",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    store.upsertPr({
+      number: 1240,
+      state: "tracked",
+      head_sha: "b",
+      title: "t",
+      author: "Alice-GH",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    store.upsertPr({
+      number: 1250,
+      state: "closed",
+      head_sha: "c",
+      title: "t",
+      author: "alice-gh",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    store.upsertPr({
+      number: 1260,
+      state: "reviewing",
+      head_sha: "d",
+      title: "t",
+      author: "bob",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
     expect(authorizedPrs(store, "alice-gh")).toEqual([1234, 1240]);
     expect(authorizedPrs(store, null)).toEqual([]);
   });
@@ -129,7 +170,11 @@ describe("SlackRouter dispositions", () => {
     expect(injected).toHaveLength(1);
     expect(disposition("Ev09ABCDEF")).toBe("injected");
     expect(store.slackEvent("Ev09ABCDEF")?.injected_at).not.toBeNull();
-    expect(origins.latest()).toMatchObject({ event_id: "Ev09ABCDEF", slack_user: ALICE, tier: "author" });
+    expect(origins.latest()).toMatchObject({
+      event_id: "Ev09ABCDEF",
+      slack_user: ALICE,
+      tier: "author",
+    });
   });
 
   it("drops a message from any other channel — a channel id never comes from a message", async () => {
@@ -164,7 +209,13 @@ describe("SlackRouter dispositions", () => {
   });
 
   it("never re-answers an edit, a deletion or any other subtype", async () => {
-    for (const [i, subtype] of ["message_changed", "message_deleted", "thread_broadcast", "message_replied", "channel_join"].entries()) {
+    for (const [i, subtype] of [
+      "message_changed",
+      "message_deleted",
+      "thread_broadcast",
+      "message_replied",
+      "channel_join",
+    ].entries()) {
       await router().handle(event({ event_id: `Ev${i}`, subtype }));
       expect(disposition(`Ev${i}`), subtype).toBe("dropped_subtype");
     }
@@ -191,7 +242,9 @@ describe("SlackRouter dispositions", () => {
 
   it("drops a backlog message older than catchup_max_age_s", async () => {
     const old = new Date(T0.getTime() - (cfg.slack.catchup_max_age_s + 60) * 1000);
-    const r = await router().handle(event({ event_id: "EvOld", event_ts: evTs(old), ts: evTs(old) }));
+    const r = await router().handle(
+      event({ event_id: "EvOld", event_ts: evTs(old), ts: evTs(old) }),
+    );
     expect(r.disposition).toBe("dropped_stale");
     expect(disposition("EvOld")).toBe("dropped_stale");
     expect(injected).toHaveLength(0);
@@ -199,7 +252,14 @@ describe("SlackRouter dispositions", () => {
 
   it("denies over the cap BEFORE the overseer is asked, and reports the cap", async () => {
     for (let i = 0; i < cfg.slack.policy.per_user_daily_turns; i++) {
-      store.recordSlackEvent({ event_id: `seed${i}`, channel: CHANNEL, ts: `1.${i}`, slack_user: ALICE, tier: "author", disposition: "injected" });
+      store.recordSlackEvent({
+        event_id: `seed${i}`,
+        channel: CHANNEL,
+        ts: `1.${i}`,
+        slack_user: ALICE,
+        tier: "author",
+        disposition: "injected",
+      });
     }
     const r = await router().handle(event({ event_id: "EvCap" }));
     expect(r.disposition).toBe("dropped_cap");
@@ -214,7 +274,14 @@ describe("SlackRouter dispositions", () => {
   });
 
   it("a throwing cap announcer never breaks routing", async () => {
-    store.recordSlackEvent({ event_id: "seed", channel: CHANNEL, ts: "1.1", slack_user: null, tier: "anyone", disposition: "injected" });
+    store.recordSlackEvent({
+      event_id: "seed",
+      channel: CHANNEL,
+      ts: "1.1",
+      slack_user: null,
+      tier: "anyone",
+      disposition: "injected",
+    });
     cfg.slack.policy.daily_turns = 1;
     const r = await router({
       onCapReached: () => {
@@ -237,7 +304,11 @@ describe("SlackRouter dispositions", () => {
       },
     }).handle(event());
     expect(r.disposition).toBe("injected");
-    expect(originAtInjectTime).toMatchObject({ event_id: "Ev09ABCDEF", tier: "author", source: "slack" });
+    expect(originAtInjectTime).toMatchObject({
+      event_id: "Ev09ABCDEF",
+      tier: "author",
+      source: "slack",
+    });
     // …and once the file landed, the record carries ITS basename (the audit join).
     expect(r.injectBasename).toBe("2026-08-17T09-12-33-0007.md");
     expect(existsSync(join(dir, "origin", "2026-08-17T09-12-33-0007.json"))).toBe(true);
@@ -259,7 +330,11 @@ describe("SlackRouter dispositions", () => {
 
   it("survives a failing name lookup (the turn is not blocked on cosmetics)", async () => {
     const r = await router({
-      users: { usersInfo: (async () => { throw new Error("rate limited"); }) as never },
+      users: {
+        usersInfo: (async () => {
+          throw new Error("rate limited");
+        }) as never,
+      },
     }).handle(event());
     expect(r.disposition).toBe("injected");
     expect(header(injected[0] ?? "")["display_name"]).toBe(ALICE);
@@ -268,8 +343,26 @@ describe("SlackRouter dispositions", () => {
 
 describe("the inject envelope", () => {
   it("carries the exact annex fields, with the thread root and its PR", async () => {
-    store.upsertPr({ number: 1234, state: "reviewing", head_sha: "a", title: "t", author: "alice-gh", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
-    store.upsertPr({ number: 1240, state: "queued", head_sha: "b", title: "t", author: "alice-gh", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+    store.upsertPr({
+      number: 1234,
+      state: "reviewing",
+      head_sha: "a",
+      title: "t",
+      author: "alice-gh",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    store.upsertPr({
+      number: 1240,
+      state: "queued",
+      head_sha: "b",
+      title: "t",
+      author: "alice-gh",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
     store.upsertSlackThread({ pr: 1234, channel: CHANNEL, root_ts: "1712345678.123456" });
     await router().handle(event({ ts: "1712345999.000100", thread_ts: "1712345678.123456" }));
     const body = injected[0] ?? "";
@@ -302,7 +395,16 @@ describe("the inject envelope", () => {
   });
 
   it("an unmapped Slack id is tier anyone with no login and no own PRs", async () => {
-    store.upsertPr({ number: 1234, state: "reviewing", head_sha: "a", title: "t", author: "alice-gh", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+    store.upsertPr({
+      number: 1234,
+      state: "reviewing",
+      head_sha: "a",
+      title: "t",
+      author: "alice-gh",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
     await router().handle(event({ user: "U0STRANGER" }));
     const h = header(injected[0] ?? "");
     expect(h["tier"]).toBe("anyone");
@@ -343,7 +445,11 @@ describe("header spoofing", () => {
       expect(/^> \|/.test(line)).toBe(false);
     }
     // And the rights actually recorded are the router's, not the message's.
-    expect(origins.latest()).toMatchObject({ tier: "author", slack_user: ALICE, authorized_prs: [] });
+    expect(origins.latest()).toMatchObject({
+      tier: "author",
+      slack_user: ALICE,
+      authorized_prs: [],
+    });
   });
 
   it("quoteUserText blockquotes every line and neutralises pipes and comment markers", () => {

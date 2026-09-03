@@ -28,7 +28,9 @@ export class ExecError extends Error {
     readonly args: string[],
     readonly result: ExecResult,
   ) {
-    super(`${cmd} ${args.join(" ")} exited ${result.code}: ${result.stderr.trim() || result.stdout.trim()}`);
+    super(
+      `${cmd} ${args.join(" ")} exited ${result.code}: ${result.stderr.trim() || result.stdout.trim()}`,
+    );
     this.name = "ExecError";
   }
 }

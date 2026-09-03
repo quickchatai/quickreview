@@ -241,8 +241,14 @@ export function feedbackDayAddendum(items: FeedbackSignalRow[], day: string): Pa
   const omitted = comments.length - kept.length;
   const lines =
     kept
-      .map((i) => `- PR #${i.pr} (${whereLabel(i.scope, i.in_reply_to_id)}): "${sanitizeFeedbackText(i.body ?? "")}"`)
-      .join("\n") + (omitted > 0 ? `\n- (${omitted} earlier item${omitted === 1 ? "" : "s"} today omitted for size)` : "");
+      .map(
+        (i) =>
+          `- PR #${i.pr} (${whereLabel(i.scope, i.in_reply_to_id)}): "${sanitizeFeedbackText(i.body ?? "")}"`,
+      )
+      .join("\n") +
+    (omitted > 0
+      ? `\n- (${omitted} earlier item${omitted === 1 ? "" : "s"} today omitted for size)`
+      : "");
   return {
     id: "feedback-day-validate",
     scope: [VALIDATE_PASS],
@@ -305,13 +311,17 @@ export class FeedbackEngine {
     const day = opsDay(this.deps.timezone, now);
     if (e.kind === "review_set_aside" && e.stale) {
       // GitHub's own stale-on-push dismissal — mechanics, not a human verdict.
-      this.deps.store.logEvent("feedback_signal_stale", e.pr, { kind: e.kind, review_id: e.review_id });
+      this.deps.store.logEvent("feedback_signal_stale", e.pr, {
+        kind: e.kind,
+        review_id: e.review_id,
+      });
       return "skipped_stale";
     }
     const inserted = this.deps.store.recordFeedbackSignal({
       kind: e.kind,
       pr: e.pr,
-      comment_id: e.kind === "feedback_comment" || e.kind === "bot_comment_deleted" ? e.comment_id : null,
+      comment_id:
+        e.kind === "feedback_comment" || e.kind === "bot_comment_deleted" ? e.comment_id : null,
       review_id: e.kind === "review_set_aside" ? e.review_id : null,
       in_reply_to_id: e.kind === "feedback_comment" ? e.in_reply_to_id : null,
       scope: e.kind === "feedback_comment" ? e.scope : null,
@@ -358,14 +368,20 @@ export class FeedbackEngine {
       // race already attaches a handler to `write`, so a rejection arriving
       // after the deadline won is handled, never an unhandled rejection.
       const deadline = new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error(`memory write timed out after ${budget}ms`)), budget);
+        timer = setTimeout(
+          () => reject(new Error(`memory write timed out after ${budget}ms`)),
+          budget,
+        );
         timer.unref?.();
       });
       const res = await Promise.race([write, deadline]);
       if (!res.ok) throw new Error(res.message);
     } catch (err) {
       this.log("feedback: memory write failed", err);
-      this.deps.store.logEvent("feedback_memory_write_failed", e.pr, { kind: e.kind, error: String(err) });
+      this.deps.store.logEvent("feedback_memory_write_failed", e.pr, {
+        kind: e.kind,
+        error: String(err),
+      });
     } finally {
       if (timer !== undefined) clearTimeout(timer);
     }

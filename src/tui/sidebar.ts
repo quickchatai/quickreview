@@ -138,10 +138,26 @@ function bodyRow(content: string, inner: number): string {
 }
 
 function headerRows(h: SidebarHeader, off: string | undefined): [string, string] {
-  const dot = off !== undefined ? `${MUTED}●${RESET}` : !h.up ? `${BAD}●${RESET}` : h.piUp ? `${OK}●${RESET}` : `${WARN}●${RESET}`;
-  const name = off !== undefined ? `${MUTED}companion off${RESET}` : h.up ? "companion" : `${MUTED}down${RESET}`;
+  const dot =
+    off !== undefined
+      ? `${MUTED}●${RESET}`
+      : !h.up
+        ? `${BAD}●${RESET}`
+        : h.piUp
+          ? `${OK}●${RESET}`
+          : `${WARN}●${RESET}`;
+  const name =
+    off !== undefined
+      ? `${MUTED}companion off${RESET}`
+      : h.up
+        ? "companion"
+        : `${MUTED}down${RESET}`;
   const mem =
-    h.memory === "ok" ? `${OK}mem ok${RESET}` : h.memory === "degraded" ? `${WARN}mem degraded${RESET}` : `${MUTED}mem off${RESET}`;
+    h.memory === "ok"
+      ? `${OK}mem ok${RESET}`
+      : h.memory === "degraded"
+        ? `${WARN}mem degraded${RESET}`
+        : `${MUTED}mem off${RESET}`;
   const day = h.day.length > 0 ? `${SEP}${MUTED}${h.day}${RESET}` : "";
   const pi = h.up && !h.piUp ? `${SEP}${BAD}pi down${RESET}` : "";
   return [` ${dot} ${name}${day}${SEP}${mem}`, ` ${MUTED}last wake${RESET} ${h.lastWake}${pi}`];
@@ -223,7 +239,11 @@ function sidebarRowLayout(view: SidebarView, rows: number): SidebarRowLayout {
 /** Exact terminal geometry pi gets inside tmux. The mirror adds one visual
  * leading space inside the two sidebar borders, so that cell is not available
  * to pi itself. */
-export function sidebarPaneSize(view: SidebarView, width: number, rows: number): { cols: number; rows: number } | undefined {
+export function sidebarPaneSize(
+  view: SidebarView,
+  width: number,
+  rows: number,
+): { cols: number; rows: number } | undefined {
   if (!view.available || width <= SIDEBAR_BORDER || rows <= 0) return undefined;
   const layout = sidebarRowLayout(view, rows);
   return {
@@ -359,7 +379,11 @@ export class CompanionSidebar {
   constructor(
     private readonly cfg: Pick<CompanionConfig, "container_name" | "session">,
     private readonly docker: DockerRunner,
-    private readonly opts: { available?: () => boolean; onUpdate?: () => void; now?: () => number } = {},
+    private readonly opts: {
+      available?: () => boolean;
+      onUpdate?: () => void;
+      now?: () => number;
+    } = {},
   ) {}
 
   /** The companion is up and can take keystrokes. */
@@ -528,10 +552,14 @@ export class CompanionSidebar {
   }
 
   private async tmux(args: string[]): Promise<void> {
-    const res = await this.docker(["exec", this.cfg.container_name, "tmux", "send-keys", "-t", this.cfg.session, ...args], {
-      timeoutMs: 5_000,
-    });
-    if (!res.ok) throw new Error(`companion send failed: ${res.stderr.trim() || `exit ${res.code}`}`);
+    const res = await this.docker(
+      ["exec", this.cfg.container_name, "tmux", "send-keys", "-t", this.cfg.session, ...args],
+      {
+        timeoutMs: 5_000,
+      },
+    );
+    if (!res.ok)
+      throw new Error(`companion send failed: ${res.stderr.trim() || `exit ${res.code}`}`);
   }
 
   private afterWrite(): void {

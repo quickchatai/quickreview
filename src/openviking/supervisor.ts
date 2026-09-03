@@ -105,7 +105,7 @@ export class OpenVikingSupervisor {
   constructor(deps: SupervisorDeps) {
     this.cfg = deps.cfg;
     this.log = deps.log;
-    this.spawnFn = deps.spawn ?? ((cmd, args, opts) => nodeSpawn(cmd, args, opts) as unknown as SupervisedChild);
+    this.spawnFn = deps.spawn ?? ((cmd, args, opts) => nodeSpawn(cmd, args, opts));
     this.fetchFn = deps.fetchFn;
     this.now = deps.now ?? (() => new Date());
     this.exists = deps.exists ?? existsSync;
@@ -138,7 +138,14 @@ export class OpenVikingSupervisor {
   private spawnChild(): void {
     if (this.stopping) return;
     this.cancelRestart = null;
-    const args = ["--config", this.cfg.config_file, "--host", this.cfg.host, "--port", String(this.cfg.port)];
+    const args = [
+      "--config",
+      this.cfg.config_file,
+      "--host",
+      this.cfg.host,
+      "--port",
+      String(this.cfg.port),
+    ];
     try {
       const child = this.spawnFn(this.cfg.bin, args, {
         ...(this.exists(this.cfg.home) ? { cwd: this.cfg.home } : {}),
@@ -157,7 +164,9 @@ export class OpenVikingSupervisor {
         this.log("openviking: spawn error", err);
       });
       child.on("exit", (code, signal) => this.onExit(code, signal));
-      this.log(`openviking: server started (pid ${child.pid ?? "?"}) on ${this.cfg.host}:${this.cfg.port}`);
+      this.log(
+        `openviking: server started (pid ${child.pid ?? "?"}) on ${this.cfg.host}:${this.cfg.port}`,
+      );
     } catch (err) {
       this.child = null;
       this.childPid = undefined;
@@ -197,7 +206,9 @@ export class OpenVikingSupervisor {
     // A child that survived the reset window is not crash-looping: start the
     // ladder over, so an unrelated crash months later retries in a second.
     if (upMs >= this.cfg.restart_reset_after_s * 1000) this.attempt = 0;
-    this.log(`openviking: server exited (code=${code ?? "null"} signal=${signal ?? "null"}) after ${Math.round(upMs / 1000)}s`);
+    this.log(
+      `openviking: server exited (code=${code ?? "null"} signal=${signal ?? "null"}) after ${Math.round(upMs / 1000)}s`,
+    );
     this.scheduleRestart();
   }
 
@@ -232,7 +243,12 @@ export class OpenVikingSupervisor {
       });
     } catch (err) {
       // probeHealth is total, but a caller-supplied fetch seam is not.
-      this.health = { reachable: false, ready: false, error: err instanceof Error ? err.message : String(err), at: this.now().toISOString() };
+      this.health = {
+        reachable: false,
+        ready: false,
+        error: err instanceof Error ? err.message : String(err),
+        at: this.now().toISOString(),
+      };
     }
     this.proc = this.childPid !== undefined ? this.sampler.sample(this.childPid) : undefined;
     if (this.health.ready && !wasReady) {
@@ -262,13 +278,22 @@ export class OpenVikingSupervisor {
         ...(version ? { version, version_drift: version !== this.cfg.version } : {}),
         ...(this.startedAt !== null ? { started_at: new Date(this.startedAt).toISOString() } : {}),
         ...(this.lastExit ? { last_exit: this.lastExit } : {}),
-        ...(this.lastError ?? this.health?.error ? { last_error: this.lastError ?? this.health?.error } : {}),
+        ...((this.lastError ?? this.health?.error)
+          ? { last_error: this.lastError ?? this.health?.error }
+          : {}),
         ...(this.proc?.rss_bytes !== undefined ? { rss_bytes: this.proc.rss_bytes } : {}),
         ...(this.proc?.cpu_pct !== undefined ? { cpu_pct: this.proc.cpu_pct } : {}),
         ...(this.health ? { checked_at: this.health.at } : {}),
       };
     } catch {
-      return { enabled: false, running: false, reachable: false, ready: false, pinned_version: this.cfg.version, restarts: this.restarts };
+      return {
+        enabled: false,
+        running: false,
+        reachable: false,
+        ready: false,
+        pinned_version: this.cfg.version,
+        restarts: this.restarts,
+      };
     }
   }
 

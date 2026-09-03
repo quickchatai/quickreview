@@ -161,7 +161,9 @@ export function assertScratchIsolation(scratchRoot: string, sandboxRoot: string)
   const root = resolve(sandboxRoot);
   const wt = join(root, "wt");
   if (scratch === root) {
-    throw new ReplayRefused("regression replay refused: the scratch root is the sandbox root — a replay never writes into the daemon's own tree.");
+    throw new ReplayRefused(
+      "regression replay refused: the scratch root is the sandbox root — a replay never writes into the daemon's own tree.",
+    );
   }
   if (scratch === wt || scratch.startsWith(`${wt}/`)) {
     throw new ReplayRefused(
@@ -193,8 +195,10 @@ function num(v: unknown): number | undefined {
 export function parseReplayFindings(raw: unknown): SandboxFinding[] {
   const rows = Array.isArray(raw)
     ? raw
-    : typeof raw === "object" && raw !== null && Array.isArray((raw as { findings?: unknown }).findings)
-      ? ((raw as { findings: unknown[] }).findings)
+    : typeof raw === "object" &&
+        raw !== null &&
+        Array.isArray((raw as { findings?: unknown }).findings)
+      ? (raw as { findings: unknown[] }).findings
       : [];
   const out: SandboxFinding[] = [];
   for (const row of rows) {
@@ -261,7 +265,9 @@ export function replayOrder(a: ReplayOrderArgs): string {
   const L: string[] = [];
   L.push(`# Regression replay — PR #${a.c.pr} @ ${a.c.headSha}`);
   L.push("");
-  L.push(`Worktree: \`${a.treePath}\` (detached at \`${a.c.headSha}\`, the exact head the human review was made against).`);
+  L.push(
+    `Worktree: \`${a.treePath}\` (detached at \`${a.c.headSha}\`, the exact head the human review was made against).`,
+  );
   L.push(
     a.degradedDiff
       ? "Diff base: **could not be resolved**. Work out the PR's own changes from the history yourself; do NOT assume the change is empty."
@@ -278,13 +284,19 @@ export function replayOrder(a: ReplayOrderArgs): string {
   L.push("");
   L.push("```json");
   L.push('{ "pr": ' + a.c.pr + ', "head_sha": "' + a.c.headSha + '", "findings": [');
-  L.push('  { "path": "app/x.py", "line": 42, "tag": "[blocker]", "text": "the finding, in the words you would have posted" }');
+  L.push(
+    '  { "path": "app/x.py", "line": 42, "tag": "[blocker]", "text": "the finding, in the words you would have posted" }',
+  );
   L.push("] }");
   L.push("```");
   L.push("");
-  L.push("`line` is the line on the head side. An empty `findings` array is a legitimate answer and is recorded as one.");
+  L.push(
+    "`line` is the line on the head side. An empty `findings` array is a legitimate answer and is recorded as one.",
+  );
   L.push("");
-  L.push("Post NOTHING. Write no verdict file. When the JSON file is on disk you are done — stop and wait.");
+  L.push(
+    "Post NOTHING. Write no verdict file. When the JSON file is on disk you are done — stop and wait.",
+  );
   L.push("");
   return L.join("\n");
 }
@@ -348,7 +360,9 @@ export class ScratchReplay {
    * whatever `refs/pull/<n>/head` points at today. Replaying a different tree
    * than the human reviewed would silently turn every score into noise.
    */
-  private async prepareTree(c: RegressionCase): Promise<{ tree: string; baseSha: string; files: PrFileEntry[]; degraded: boolean }> {
+  private async prepareTree(
+    c: RegressionCase,
+  ): Promise<{ tree: string; baseSha: string; files: PrFileEntry[]; degraded: boolean }> {
     const { io, baseClone, baseBranch } = this.o;
     if (!existsSync(join(baseClone, ".git"))) {
       throw new ReplayUnavailable(
@@ -357,7 +371,13 @@ export class ScratchReplay {
     }
     const ref = `refs/qcr/replay-${c.pr}`;
     await this.git(
-      ["fetch", "--force", "origin", `+refs/pull/${c.pr}/head:${ref}`, `+refs/heads/${baseBranch}:refs/remotes/origin/${baseBranch}`],
+      [
+        "fetch",
+        "--force",
+        "origin",
+        `+refs/pull/${c.pr}/head:${ref}`,
+        `+refs/heads/${baseBranch}:refs/remotes/origin/${baseBranch}`,
+      ],
       baseClone,
     );
     const have = await this.git(["cat-file", "-e", `${c.headSha}^{commit}`], baseClone);
@@ -375,7 +395,10 @@ export class ScratchReplay {
     let baseSha = "";
     let degraded = true;
     const files: PrFileEntry[] = [];
-    const mb = await this.git(["merge-base", `refs/remotes/origin/${baseBranch}`, c.headSha], baseClone);
+    const mb = await this.git(
+      ["merge-base", `refs/remotes/origin/${baseBranch}`, c.headSha],
+      baseClone,
+    );
     if (mb.code === 0 && mb.stdout.trim()) {
       baseSha = mb.stdout.trim();
       const diff = await this.git(["diff", "--numstat", baseSha, c.headSha], baseClone);
@@ -389,7 +412,7 @@ export class ScratchReplay {
             additions: Number(add) || 0,
             deletions: Number(del) || 0,
             status: "modified",
-          } as PrFileEntry);
+          });
         }
       }
     }
@@ -458,7 +481,9 @@ export class ScratchReplay {
           // Half-written file: the session is still flushing. Keep polling.
         }
       }
-      log(`replay: ${c.id} produced nothing within ${Math.round(this.o.timeoutMs / 1000)}s — scored VACUOUS`);
+      log(
+        `replay: ${c.id} produced nothing within ${Math.round(this.o.timeoutMs / 1000)}s — scored VACUOUS`,
+      );
       return [];
     } finally {
       await this.teardown(c);
@@ -476,7 +501,11 @@ export class ScratchReplay {
  * one, because that volume is where the ChatGPT OAuth tokens live and a replay
  * must not cost the login.
  */
-export async function nodeReplayIo(opts: { cfg: Config; sandboxRoot: string; scratchRoot: string }): Promise<ReplayIo> {
+export async function nodeReplayIo(opts: {
+  cfg: Config;
+  sandboxRoot: string;
+  scratchRoot: string;
+}): Promise<ReplayIo> {
   const { nodeExec } = await import("./tmux.js");
   const { PiSessionManager } = await import("./sessions.js");
   const mgr = new PiSessionManager({
@@ -545,14 +574,16 @@ export function parseRegressionArgs(rest: string[], json: boolean): RegressionAr
   const limitRaw = flag("--limit");
   const limit = limitRaw === undefined ? undefined : Number(limitRaw);
   if (limit !== undefined && (!Number.isInteger(limit) || limit <= 0)) {
-    throw new Error("usage: qcr regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>] [--json]");
+    throw new Error(
+      "usage: qcr regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>] [--json]",
+    );
   }
   return {
-    ...(flag("--set") !== undefined ? { setPath: flag("--set") as string } : {}),
-    ...(flag("--clone") !== undefined ? { clonePath: flag("--clone") as string } : {}),
+    ...(flag("--set") !== undefined ? { setPath: flag("--set") } : {}),
+    ...(flag("--clone") !== undefined ? { clonePath: flag("--clone") } : {}),
     changeUnderTest: flag("--change") ?? "(unnamed change)",
     ...(limit !== undefined ? { limit } : {}),
-    ...(flag("--out") !== undefined ? { outPath: flag("--out") as string } : {}),
+    ...(flag("--out") !== undefined ? { outPath: flag("--out") } : {}),
     json,
   };
 }
@@ -580,7 +611,10 @@ export interface RegressionCliDeps {
  * door. The only non-zero codes are 2 (refused — a safety assertion failed, and
  * that is loud on purpose) and 3 (unavailable — run it where pi lives).
  */
-export async function runRegressionCli(args: RegressionArgs, deps: RegressionCliDeps): Promise<number> {
+export async function runRegressionCli(
+  args: RegressionArgs,
+  deps: RegressionCliDeps,
+): Promise<number> {
   let run: RegressionRun;
   try {
     const set = deps.loadCaseSet(args.setPath);

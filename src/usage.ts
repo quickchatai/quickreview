@@ -89,7 +89,13 @@ interface JsonlRecord {
     role?: unknown;
     // Live-verified shape (VM): {input, output, cacheRead, cacheWrite,
     // reasoning, totalTokens, cost: {input, output, cacheRead, cacheWrite, total}}.
-    usage?: { input?: unknown; output?: unknown; cacheRead?: unknown; reasoning?: unknown; cost?: { total?: unknown } };
+    usage?: {
+      input?: unknown;
+      output?: unknown;
+      cacheRead?: unknown;
+      reasoning?: unknown;
+      cost?: { total?: unknown };
+    };
   };
   [k: string]: unknown;
 }
@@ -107,7 +113,11 @@ function num(v: unknown): number {
 
 /** Accumulate one file's records. `windowMs` = null means "whole file counts"
  * (global-store files already matched by mtime). */
-function sumFile(text: string, windowMs: { start: number; end: number } | null, acc: RoundUsage): void {
+function sumFile(
+  text: string,
+  windowMs: { start: number; end: number } | null,
+  acc: RoundUsage,
+): void {
   let model = "unknown";
   for (const line of text.split("\n")) {
     const trimmed = line.trim();
@@ -121,7 +131,10 @@ function sumFile(text: string, windowMs: { start: number; end: number } | null, 
     if (typeof rec !== "object" || rec === null) continue;
     // model_change records re-key attribution for everything after them.
     if (typeof rec.modelId === "string" && rec.modelId.length > 0) {
-      model = typeof rec.provider === "string" && rec.provider.length > 0 ? `${rec.provider}/${rec.modelId}` : rec.modelId;
+      model =
+        typeof rec.provider === "string" && rec.provider.length > 0
+          ? `${rec.provider}/${rec.modelId}`
+          : rec.modelId;
     }
     if (rec.type !== "message") continue;
     const msg = rec.message;
@@ -174,7 +187,14 @@ function jsonlFilesUnder(dir: string, fs: Required<UsageFs>, depth = 6): string[
  * the window. Never throws. */
 export function measureRoundUsage(opts: MeasureRoundUsageOpts): RoundUsage {
   const fs = fsOf(opts);
-  const acc: RoundUsage = { tokens_in: 0, tokens_out: 0, tokens_cache_read: 0, cost_usd: null, models: {}, passes_included: false };
+  const acc: RoundUsage = {
+    tokens_in: 0,
+    tokens_out: 0,
+    tokens_cache_read: 0,
+    cost_usd: null,
+    models: {},
+    passes_included: false,
+  };
   const start = parseTs(opts.startedAt);
   const end = parseTs(opts.finishedAt);
   if (start === null || end === null) return acc;
@@ -275,13 +295,18 @@ export interface ModelPricing {
  * play has no price entry — an honest "unknown" beats a silent undercount.
  * Lookup tolerates the provider prefix: "openai-codex/gpt-x" matches either
  * the full key or a bare "gpt-x" pricing entry. */
-export function estimateUsd(models: Record<string, ModelUsage>, pricing: Record<string, ModelPricing>): number | null {
+export function estimateUsd(
+  models: Record<string, ModelUsage>,
+  pricing: Record<string, ModelPricing>,
+): number | null {
   let usd = 0;
   for (const [model, usage] of Object.entries(models)) {
     const bare = model.includes("/") ? model.slice(model.lastIndexOf("/") + 1) : model;
     const price = pricing[model] ?? pricing[bare];
     if (!price) return null;
-    usd += (usage.in / 1_000_000) * price.input_per_mtok + (usage.out / 1_000_000) * price.output_per_mtok;
+    usd +=
+      (usage.in / 1_000_000) * price.input_per_mtok +
+      (usage.out / 1_000_000) * price.output_per_mtok;
   }
   return usd;
 }
@@ -331,7 +356,8 @@ export type ExecViolationKind =
   | "policy_relocation";
 
 /** Interpreters — the original rule, unchanged. */
-const EXEC_VIOLATION_RE = /\b(?:python3?|pytest|uv|npm|npx|node|make|pip3?|poetry|cargo|go (?:run|test)|[gmn]?awk|perl|ruby|php)\b/;
+const EXEC_VIOLATION_RE =
+  /\b(?:python3?|pytest|uv|npm|npx|node|make|pip3?|poetry|cargo|go (?:run|test)|[gmn]?awk|perl|ruby|php)\b/;
 
 /** A `gh api` call that will not be a GET: an explicit mutating method, or any
  * body-carrying flag (gh promotes GET→POST when a body is present — the
@@ -345,7 +371,15 @@ const GH_API_WRITE_RE =
  * someone remembers it. */
 const GH_SUBCOMMAND_RE = /\bgh\s+(?:-\S+\s+)*([a-z-]+)(?:\s+(?:-\S+\s+)*([a-z-]+))?/;
 const GH_AUDIT_READ_NAMESPACES = new Set(["api", "search", "status", "version", "help", "auth"]);
-const GH_AUDIT_READ_VERBS = new Set(["view", "list", "diff", "checks", "status", "get-url", "download"]);
+const GH_AUDIT_READ_VERBS = new Set([
+  "view",
+  "list",
+  "diff",
+  "checks",
+  "status",
+  "get-url",
+  "download",
+]);
 
 /** A write reaching GitHub by some route other than `gh` — the shape a fifth
  * channel would take. `curl`/`wget` are not on the guard's allowlist, so this
@@ -395,13 +429,18 @@ const GIT_CONFIG_SURFACE_WRITE_RE =
  * the guard, kept an independent implementation on purpose. */
 const POLICY_SURFACE_TARGET = String.raw`(?:\S*\/)?(?:config\.toml|(?:scripts|dist|extensions|prompts|agents|seeds)\/\S+)`;
 const POLICY_SURFACE_WRITE_RE = new RegExp(
-  String.raw`(?:>>?\s*` + POLICY_SURFACE_TARGET + String.raw`|\bsed\s+(?:-\S+\s+)*-[a-zA-Z]*i\S*(?:\s+\S+)*?\s+` + POLICY_SURFACE_TARGET + String.raw`)`,
+  String.raw`(?:>>?\s*` +
+    POLICY_SURFACE_TARGET +
+    String.raw`|\bsed\s+(?:-\S+\s+)*-[a-zA-Z]*i\S*(?:\s+\S+)*?\s+` +
+    POLICY_SURFACE_TARGET +
+    String.raw`)`,
 );
 
 /** The same policy surface as a WRITE-TOOL target path: `config.toml`
  * at any depth, or anything under scripts/dist/extensions/prompts/agents/seeds
  * (the built `state/agents/…` included — `agents/` follows a slash). */
-const POLICY_SURFACE_PATH_RE = /(?:^|\/)config\.toml$|(?:^|\/)(?:scripts|dist|extensions|prompts|agents|seeds)\//;
+const POLICY_SURFACE_PATH_RE =
+  /(?:^|\/)config\.toml$|(?:^|\/)(?:scripts|dist|extensions|prompts|agents|seeds)\//;
 
 /** A session env-prefix that relocates this system's own policy inputs — the
  * `QCR_` directories the guard refuses in `POLICY_RELOCATING_ENV`. Matched as
@@ -409,7 +448,8 @@ const POLICY_SURFACE_PATH_RE = /(?:^|\/)config\.toml$|(?:^|\/)(?:scripts|dist|ex
  * laundered `bash -c 'sanctioned ; QCR_CONFIG=… script'` is seen: the string is
  * right there in the segment whether it is quoted or not. Independent of the
  * guard's own list by design. */
-const POLICY_RELOCATION_RE = /(?:^|[\s;&|(])QCR_(?:CONFIG|STATE_DB|DRYRUN_DIR|POSTING_RECEIPT_DIR)=/;
+const POLICY_RELOCATION_RE =
+  /(?:^|[\s;&|(])QCR_(?:CONFIG|STATE_DB|DRYRUN_DIR|POSTING_RECEIPT_DIR)=/;
 
 /**
  * Programs whose ARGUMENTS are search patterns and paths, never commands.
@@ -428,9 +468,35 @@ const POLICY_RELOCATION_RE = /(?:^|[\s;&|(])QCR_(?:CONFIG|STATE_DB|DRYRUN_DIR|PO
  * normally, so `python3 evil.py | grep x` is still caught on its first segment.
  */
 const AUDIT_READERS: ReadonlySet<string> = new Set([
-  "rg", "grep", "egrep", "fgrep", "ag", "ack", "cat", "head", "tail", "nl", "wc",
-  "jq", "cut", "tr", "uniq", "sort", "ls", "echo", "printf", "diff", "comm",
-  "column", "find", "basename", "dirname", "stat", "sed", "xargs", "test",
+  "rg",
+  "grep",
+  "egrep",
+  "fgrep",
+  "ag",
+  "ack",
+  "cat",
+  "head",
+  "tail",
+  "nl",
+  "wc",
+  "jq",
+  "cut",
+  "tr",
+  "uniq",
+  "sort",
+  "ls",
+  "echo",
+  "printf",
+  "diff",
+  "comm",
+  "column",
+  "find",
+  "basename",
+  "dirname",
+  "stat",
+  "sed",
+  "xargs",
+  "test",
   // `awk` was here and is not any more (round 3): it is off the
   // guard's ALLOWED set, so an awk invocation in a transcript is itself a
   // policy violation, and it is classified as the interpreter it is.
@@ -519,7 +585,8 @@ function segmentViolationKind(segment: string): ExecViolationKind | null {
   if (gh) {
     const ns = gh[1]!;
     const verb = gh[2];
-    if (!GH_AUDIT_READ_NAMESPACES.has(ns) && verb !== undefined && !GH_AUDIT_READ_VERBS.has(verb)) return "github_write";
+    if (!GH_AUDIT_READ_NAMESPACES.has(ns) && verb !== undefined && !GH_AUDIT_READ_VERBS.has(verb))
+      return "github_write";
   }
   if (GIT_WRITE_RE.test(segment)) return "git_write";
   if (GIT_CONFIG_INJECTION_RE.test(segment)) return "git_config_injection";
@@ -573,7 +640,16 @@ function bashCommandsIn(value: unknown, out: string[], depth = 8): void {
 
 /** Tool names that write a file, as recorded in the transcript. Mirrors
  * WRITE_TOOLS in extensions/bash-guard.ts — deliberately broad. */
-const WRITE_TOOL_NAMES = new Set(["write", "edit", "multi_edit", "multiedit", "str_replace", "create", "write_file", "apply_patch"]);
+const WRITE_TOOL_NAMES = new Set([
+  "write",
+  "edit",
+  "multi_edit",
+  "multiedit",
+  "str_replace",
+  "create",
+  "write_file",
+  "apply_patch",
+]);
 
 /**
  * Every write-TOOL target in a record. The bash-only collector above is why

@@ -50,7 +50,10 @@ describe("slack_threads", () => {
     at(60_000);
     store.touchSlackThread(7);
     store.touchSlackThread(7);
-    expect(store.slackThreadForPr(7)).toMatchObject({ post_count: 2, last_post_at: clock.toISOString() });
+    expect(store.slackThreadForPr(7)).toMatchObject({
+      post_count: 2,
+      last_post_at: clock.toISOString(),
+    });
   });
 });
 
@@ -77,7 +80,10 @@ describe("slack_events", () => {
     expect(store.slackEvent("Ev2")?.injected_at).toBeNull();
     at(1000);
     store.setSlackEventDisposition("Ev2", "injected");
-    expect(store.slackEvent("Ev2")).toMatchObject({ disposition: "injected", injected_at: clock.toISOString() });
+    expect(store.slackEvent("Ev2")).toMatchObject({
+      disposition: "injected",
+      injected_at: clock.toISOString(),
+    });
     store.setSlackEventDisposition("Ev2", "dropped_cap");
     expect(store.slackEvent("Ev2")?.injected_at).toBeNull();
   });
@@ -97,8 +103,22 @@ describe("slack_events", () => {
 
 describe("slack_posts", () => {
   it("rejects a duplicate idem_key — the idempotence guarantee", () => {
-    expect(store.recordSlackPost({ idem_key: "verdict:5263:2", kind: "verdict", pr: 5263, thread_ts: "1.1" })).toBe(true);
-    expect(store.recordSlackPost({ idem_key: "verdict:5263:2", kind: "verdict", pr: 5263, thread_ts: "1.1" })).toBe(false);
+    expect(
+      store.recordSlackPost({
+        idem_key: "verdict:5263:2",
+        kind: "verdict",
+        pr: 5263,
+        thread_ts: "1.1",
+      }),
+    ).toBe(true);
+    expect(
+      store.recordSlackPost({
+        idem_key: "verdict:5263:2",
+        kind: "verdict",
+        pr: 5263,
+        thread_ts: "1.1",
+      }),
+    ).toBe(false);
     const from = T0.toISOString();
     const to = new Date(T0.getTime() + 3_600_000).toISOString();
     expect(store.slackPostsBetween(from, to)).toBe(1);
@@ -107,7 +127,11 @@ describe("slack_posts", () => {
   it("settles the Slack-assigned ts and an error keeps the row out of the counts", () => {
     store.recordSlackPost({ idem_key: "reply:cmd-1.json", kind: "reply", pr: 1, thread_ts: "1.1" });
     store.settleSlackPost("reply:cmd-1.json", { ts: "1755431299.000300", ok: true });
-    expect(store.slackPost("reply:cmd-1.json")).toMatchObject({ ts: "1755431299.000300", ok: 1, error: null });
+    expect(store.slackPost("reply:cmd-1.json")).toMatchObject({
+      ts: "1755431299.000300",
+      ok: 1,
+      error: null,
+    });
 
     store.recordSlackPost({ idem_key: "reply:cmd-2.json", kind: "reply", pr: 1, thread_ts: "1.1" });
     store.settleSlackPost("reply:cmd-2.json", { ok: false, error: "channel_not_found" });
@@ -144,7 +168,10 @@ describe("slack_cooldowns", () => {
     expect(store.foldSlackCooldown("round.overdue:5263")).toBe(1);
     expect(store.foldSlackCooldown("round.overdue:5263")).toBe(2);
     store.recordSlackCooldownFire("round.overdue:5263", "2026-08-17");
-    expect(store.slackCooldown("round.overdue:5263")).toMatchObject({ fire_count: 2, fold_count: 0 });
+    expect(store.slackCooldown("round.overdue:5263")).toMatchObject({
+      fire_count: 2,
+      fold_count: 0,
+    });
   });
 
   it("keeps the bypass spent within a day and clears it on the next day", () => {
@@ -153,7 +180,11 @@ describe("slack_cooldowns", () => {
     store.recordSlackCooldownFire("k", "2026-08-17");
     expect(store.slackCooldown("k")).toMatchObject({ bypassed: 1, fire_count: 2 });
     store.recordSlackCooldownFire("k", "2026-08-18");
-    expect(store.slackCooldown("k")).toMatchObject({ bypassed: 0, fire_count: 1, day: "2026-08-18" });
+    expect(store.slackCooldown("k")).toMatchObject({
+      bypassed: 0,
+      fire_count: 1,
+      day: "2026-08-18",
+    });
   });
 
   it("keys are independent — one PR's cooldown never touches another's", () => {

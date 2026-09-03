@@ -87,7 +87,11 @@ describe("roundContextQuery", () => {
   it("is built from the PR title and the diff's shape", () => {
     const q = roundContextQuery({
       title: "Rate-limit  the\nwidget API",
-      files: [{ filename: "api/widgets/limiter.py" }, { filename: "api/widgets/views.py" }, { filename: "web/app.tsx" }],
+      files: [
+        { filename: "api/widgets/limiter.py" },
+        { filename: "api/widgets/views.py" },
+        { filename: "web/app.tsx" },
+      ],
     });
     expect(q).toContain("Rate-limit the widget API");
     expect(q).toContain("api/widgets");
@@ -115,7 +119,13 @@ describe("assembleRoundMemory", () => {
     expect(a.head).toBe(1);
     expect(a.context).toBe(1);
     expect(a.queries).toEqual(["q"]);
-    expect(mem).toMatchObject({ asked: true, head: "HEAD TEXT", block: "BLOCK TEXT", degraded: false, max_tokens: 1234 });
+    expect(mem).toMatchObject({
+      asked: true,
+      head: "HEAD TEXT",
+      block: "BLOCK TEXT",
+      degraded: false,
+      max_tokens: 1234,
+    });
   });
 
   // rewrite="auto" would put an LLM in the daemon's hot path and make the
@@ -136,9 +146,17 @@ describe("assembleRoundMemory", () => {
   });
 
   it("degrades on the contract's unavailable answer (`unreadable`, no rejection)", async () => {
-    const mem = await assembleRoundMemory(new CountingAssembler(unreadable("ls viking://user/reviewer/memories: ECONNREFUSED"), unreadable("search transport: ECONNREFUSED")), "q");
+    const mem = await assembleRoundMemory(
+      new CountingAssembler(
+        unreadable("ls viking://user/reviewer/memories: ECONNREFUSED"),
+        unreadable("search transport: ECONNREFUSED"),
+      ),
+      "q",
+    );
     expect(mem).toMatchObject({ asked: true, head: "", block: "", degraded: true });
-    expect(describeGaps(mem)).toContain("head: unreadable: ls viking://user/reviewer/memories: ECONNREFUSED");
+    expect(describeGaps(mem)).toContain(
+      "head: unreadable: ls viking://user/reviewer/memories: ECONNREFUSED",
+    );
     expect(describeGaps(mem)).toContain("context: unreadable: search transport");
   });
 
@@ -149,7 +167,10 @@ describe("assembleRoundMemory", () => {
   });
 
   it("clamps a runaway unreadable reason before it reaches the prompt", async () => {
-    const mem = await assembleRoundMemory(new CountingAssembler(unreadable(`x${"y".repeat(5000)}\n\nz`)), "q");
+    const mem = await assembleRoundMemory(
+      new CountingAssembler(unreadable(`x${"y".repeat(5000)}\n\nz`)),
+      "q",
+    );
     const gap = mem.gaps.find((g) => g.part === "head")!;
     expect(gap.reason.length).toBeLessThanOrEqual("unreadable: ".length + 200);
     expect(gap.reason).not.toContain("\n");
@@ -195,9 +216,16 @@ describe("assembleRoundMemory", () => {
 // here, each under its own name.
 describe("the three states of the pinned head", () => {
   it("healthy-and-populated: the head arrives, nothing is a gap", async () => {
-    const mem = await assembleRoundMemory(new CountingAssembler(read("Standing: approvals are final."), read("")), "q");
+    const mem = await assembleRoundMemory(
+      new CountingAssembler(read("Standing: approvals are final."), read("")),
+      "q",
+    );
     expect(pinnedHeadState(mem)).toBe("populated");
-    expect(mem).toMatchObject({ head: "Standing: approvals are final.", degraded: false, gaps: [] });
+    expect(mem).toMatchObject({
+      head: "Standing: approvals are final.",
+      degraded: false,
+      gaps: [],
+    });
     expect(renderPinnedHeadSection(mem)).toContain("STANDING INSTRUCTIONS");
   });
 
@@ -214,37 +242,67 @@ describe("the three states of the pinned head", () => {
   });
 
   it("unreadable: a store that could not be read is degraded and says why", async () => {
-    const mem = await assembleRoundMemory(new CountingAssembler(unreadable("ls viking://user/reviewer/memories: connect ECONNREFUSED"), read("")), "q");
+    const mem = await assembleRoundMemory(
+      new CountingAssembler(
+        unreadable("ls viking://user/reviewer/memories: connect ECONNREFUSED"),
+        read(""),
+      ),
+      "q",
+    );
     expect(pinnedHeadState(mem)).toBe("unread");
     expect(mem.degraded).toBe(true);
-    expect(mem.gaps).toEqual([{ part: "head", reason: "unreadable: ls viking://user/reviewer/memories: connect ECONNREFUSED" }]);
+    expect(mem.gaps).toEqual([
+      {
+        part: "head",
+        reason: "unreadable: ls viking://user/reviewer/memories: connect ECONNREFUSED",
+      },
+    ]);
     expect(renderContextBlockSection(mem)).toContain("MEMORY UNAVAILABLE THIS ROUND");
     expect(renderContextBlockSection(mem)).toContain("ECONNREFUSED");
   });
 
   it("a timed-out and a throwing head are `unread` too — the state is about arrival, not about text", async () => {
-    const hung = await assembleRoundMemory({ pinnedHead: () => new Promise(() => {}), contextBlock: async () => read("") }, "q", { timeoutMs: 20 });
+    const hung = await assembleRoundMemory(
+      { pinnedHead: () => new Promise(() => {}), contextBlock: async () => read("") },
+      "q",
+      { timeoutMs: 20 },
+    );
     expect(pinnedHeadState(hung)).toBe("unread");
-    const thrown = await assembleRoundMemory({ pinnedHead: () => Promise.reject(new Error("boom")), contextBlock: async () => read("") }, "q");
+    const thrown = await assembleRoundMemory(
+      { pinnedHead: () => Promise.reject(new Error("boom")), contextBlock: async () => read("") },
+      "q",
+    );
     expect(pinnedHeadState(thrown)).toBe("unread");
   });
 
   it("an assembler answering outside the contract (a bare string) is an error gap, never a rejection", async () => {
     // The legacy shape. Unreachable from TypeScript; reachable from a
     // client compiled against the old seam. "Total" has to hold for the value.
-    const legacy = { pinnedHead: async () => "OLD HEAD", contextBlock: async () => "OLD BLOCK" } as unknown as ContextAssembler;
+    const legacy = {
+      pinnedHead: async () => "OLD HEAD",
+      contextBlock: async () => "OLD BLOCK",
+    } as unknown as ContextAssembler;
     const mem = await assembleRoundMemory(legacy, "q");
     expect(pinnedHeadState(mem)).toBe("unread");
     expect(mem).toMatchObject({ head: "", block: "", degraded: true });
     expect(mem.gaps).toEqual([
-      { part: "head", reason: expect.stringMatching(/^error: assembler returned a string \(8 chars\), not a MemoryRead$/) },
+      {
+        part: "head",
+        reason: expect.stringMatching(
+          /^error: assembler returned a string \(8 chars\), not a MemoryRead$/,
+        ),
+      },
       { part: "context", reason: expect.stringMatching(/^error: assembler returned a string/) },
     ]);
   });
 
   it("the whole prompt for a fresh install carries neither the unavailable note nor a dangling head", () => {
     const tpl = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile("first")), "utf8");
-    const fresh = renderRoundPrompt(tpl, { ...order, round_type: "first" }, seeded({ head: "", block: "", gaps: [] }));
+    const fresh = renderRoundPrompt(
+      tpl,
+      { ...order, round_type: "first" },
+      seeded({ head: "", block: "", gaps: [] }),
+    );
     expect(fresh).not.toContain("MEMORY UNAVAILABLE");
     expect(fresh).not.toContain("STANDING INSTRUCTIONS");
     expect(fresh).toContain("had nothing to add");
@@ -274,7 +332,9 @@ describe("memory sections in the round prompt", () => {
   });
 
   it("tells the session plainly that a degraded round is still a normal round", () => {
-    const note = renderContextBlockSection(seeded({ head: "", block: "", degraded: true, gaps: [{ part: "head", reason: "timeout" }] }));
+    const note = renderContextBlockSection(
+      seeded({ head: "", block: "", degraded: true, gaps: [{ part: "head", reason: "timeout" }] }),
+    );
     expect(note).toContain("MEMORY UNAVAILABLE THIS ROUND");
     expect(note).toContain("not blocked");
     expect(note).toMatch(/do not retry\s+it in a loop/i);
@@ -315,7 +375,11 @@ describe("the pinned head is guaranteed", () => {
     expect(renderPinnedHeadSection(mem, "  ")).toContain("These are the owner's own words");
     // Detection keys on the head CONTENT, so the framing name can never make
     // ensurePinnedHead double-prepend.
-    const out = ensurePinnedHead(`${renderPinnedHeadSection(mem, "Someone Else")}\nbody`, mem, "Casey");
+    const out = ensurePinnedHead(
+      `${renderPinnedHeadSection(mem, "Someone Else")}\nbody`,
+      mem,
+      "Casey",
+    );
     expect(out.split(mem.head)).toHaveLength(2);
   });
 });

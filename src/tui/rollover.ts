@@ -20,22 +20,31 @@
 // writing the file BEFORE spawning pi is race-free. The alternative — a pi CLI
 // initial-message flag — is undocumented for 0.84.1; if one turns up it is a
 // drop-in replacement for writeDayOpen().
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import type { CompanionConfig } from "../config.js";
 import { zoneDateString } from "../eod.js";
 import type { StatusSnapshot } from "../state.js";
-import { parseAlert, readPolicyState, type AlertTier } from "./alerts.js";
+import { parseAlert, readPolicyState } from "./alerts.js";
 import { CONTAINER, type DockerResult, type DockerRunner } from "./companion.js";
 
 /** What a lookup of the previous conversation found. `none` (the volume holds
  * no conversation) and `unreadable` (the exec never answered) are separate
  * answers —. */
-export type SessionFileLookup = { state: "found"; file: string } | { state: "none" } | { state: "unreadable"; reason: string };
+export type SessionFileLookup =
+  { state: "found"; file: string } | { state: "none" } | { state: "unreadable"; reason: string };
 
 /** Likewise for the conversation's contents: an empty conversation and one we
  * could not fetch are different facts. */
-export type ConversationRead = { state: "read"; text: string } | { state: "unreadable"; reason: string };
+export type ConversationRead =
+  { state: "read"; text: string } | { state: "unreadable"; reason: string };
 
 /** One-line cause from a failed `docker exec`, for the step log. */
 function execReason(r: DockerResult): string {
@@ -115,7 +124,9 @@ export function readRolloverStateFile(path: string): RolloverStateRead {
       last_open_date: raw.last_open_date,
       updated_at: String(raw.updated_at ?? ""),
       last_archive: raw.last_archive,
-      ...(typeof raw.first_run_interviewed === "string" ? { first_run_interviewed: raw.first_run_interviewed } : {}),
+      ...(typeof raw.first_run_interviewed === "string"
+        ? { first_run_interviewed: raw.first_run_interviewed }
+        : {}),
     },
   };
 }
@@ -141,7 +152,11 @@ export function writeRolloverState(path: string, state: RolloverState): void {
  * only way to exercise a rollover without waiting for midnight (the smoke
  * script uses exactly this).
  */
-export function todayDate(now: Date, env: NodeJS.ProcessEnv = process.env, timeZone: string = "UTC"): string {
+export function todayDate(
+  now: Date,
+  env: NodeJS.ProcessEnv = process.env,
+  timeZone: string = "UTC",
+): string {
   const fake = env.QCR_FAKE_TODAY?.trim();
   if (fake && /^\d{4}-\d{2}-\d{2}$/.test(fake)) return fake;
   return zoneDateString(now, timeZone);
@@ -214,7 +229,7 @@ function unwrap(obj: unknown): { role?: unknown; content?: unknown } | undefined
   for (const inner of [v, v.message, v.entry]) {
     if (typeof inner === "object" && inner !== null && !Array.isArray(inner)) {
       const cand = inner as Record<string, unknown>;
-      if (typeof cand.role === "string") return cand as { role?: unknown; content?: unknown };
+      if (typeof cand.role === "string") return cand;
     }
   }
   return undefined;
@@ -263,13 +278,20 @@ function renderTurns(turns: Turn[], budget: number, ownerName?: string): string 
  * opening of the day tells the companion how yesterday started, how it ended,
  * and how much it is not being shown.
  */
-export function compactConversation(turns: Turn[], budget: number = SUMMARY_MAX_CHARS, ownerName?: string): string {
+export function compactConversation(
+  turns: Turn[],
+  budget: number = SUMMARY_MAX_CHARS,
+  ownerName?: string,
+): string {
   if (turns.length === 0) return "";
   const head = turns.slice(0, HEAD_TURNS);
-  const tail = turns.length > HEAD_TURNS ? turns.slice(Math.max(HEAD_TURNS, turns.length - TAIL_TURNS)) : [];
+  const tail =
+    turns.length > HEAD_TURNS ? turns.slice(Math.max(HEAD_TURNS, turns.length - TAIL_TURNS)) : [];
   const skipped = turns.length - head.length - tail.length;
   const half = Math.floor((budget - 200) / 2);
-  const sections = [`Yesterday: ${turns.length} turns (${turns.filter((t) => t.role === "user").length} from ${ownerLabel(ownerName)}).`];
+  const sections = [
+    `Yesterday: ${turns.length} turns (${turns.filter((t) => t.role === "user").length} from ${ownerLabel(ownerName)}).`,
+  ];
   sections.push(`**How it opened**\n${renderTurns(head, half, ownerName)}`);
   if (skipped > 0) sections.push(`…${skipped} turn${skipped === 1 ? "" : "s"} elided…`);
   if (tail.length > 0) sections.push(`**How it ended**\n${renderTurns(tail, half, ownerName)}`);
@@ -299,7 +321,9 @@ export function snapshotSummary(snap: StatusSnapshot | undefined): string {
   if (!snap) return "";
   const byState = new Map<string, number>();
   for (const p of snap.prs) byState.set(p.state, (byState.get(p.state) ?? 0) + 1);
-  const states = [...byState.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([s, n]) => `${n} ${s}`);
+  const states = [...byState.entries()]
+    .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+    .map(([s, n]) => `${n} ${s}`);
   const lines = [
     `${snap.prs.length} tracked PR${snap.prs.length === 1 ? "" : "s"}${states.length > 0 ? ` (${states.join(", ")})` : ""}; ` +
       `${snap.running_rounds} round${snap.running_rounds === 1 ? "" : "s"} running; mode ${snap.dry_run ? "dry-run" : "LIVE"}; ` +
@@ -309,7 +333,10 @@ export function snapshotSummary(snap: StatusSnapshot | undefined): string {
   const notable = snap.prs
     .filter((p) => p.state !== "closed")
     .slice(0, 8)
-    .map((p) => `- #${p.number} ${p.state}${p.last_verdict ? ` (${p.last_verdict})` : ""}${p.paused ? " [paused]" : ""} — ${oneLine(p.title ?? "", 70)}`);
+    .map(
+      (p) =>
+        `- #${p.number} ${p.state}${p.last_verdict ? ` (${p.last_verdict})` : ""}${p.paused ? " [paused]" : ""} — ${oneLine(p.title ?? "", 70)}`,
+    );
   return [...lines, ...notable].join("\n");
 }
 
@@ -328,22 +355,29 @@ export function digestLine(snap: StatusSnapshot | undefined, localHeadline?: str
 export function openAlerts(alertsDir: string, policyStatePath: string, today: string): string {
   const lines: string[] = [];
   if (existsSync(alertsDir)) {
-    for (const f of readdirSync(alertsDir).filter((n) => n.endsWith(".json") && !n.startsWith(".")).sort()) {
+    for (const f of readdirSync(alertsDir)
+      .filter((n) => n.endsWith(".json") && !n.startsWith("."))
+      .sort()) {
       let parsed;
       try {
         parsed = parseAlert(readFileSync(join(alertsDir, f), "utf8"), f);
       } catch {
         continue;
       }
-      if (parsed.ok) lines.push(`- [${parsed.alert.tier}] ${parsed.alert.title}${parsed.alert.pr !== null ? ` (PR #${parsed.alert.pr})` : ""} — cause \`${parsed.alert.cause}\` (unread)`);
+      if (parsed.ok)
+        lines.push(
+          `- [${parsed.alert.tier}] ${parsed.alert.title}${parsed.alert.pr !== null ? ` (PR #${parsed.alert.pr})` : ""} — cause \`${parsed.alert.cause}\` (unread)`,
+        );
       else lines.push(`- [malformed] ${f}: ${parsed.error}`);
     }
   }
   const policy = readPolicyState(policyStatePath);
   if (policy && policy.day !== today) {
     for (const [cause, mem] of Object.entries(policy.causes)) {
-      if ((mem.lastTier as AlertTier) !== "alert") continue;
-      lines.push(`- [alert] cause \`${cause}\` last raised ${policy.day}${mem.folds > 0 ? ` (+${mem.folds} folded repeats)` : ""} — carried over`);
+      if (mem.lastTier !== "alert") continue;
+      lines.push(
+        `- [alert] cause \`${cause}\` last raised ${policy.day}${mem.folds > 0 ? ` (+${mem.folds} folded repeats)` : ""} — carried over`,
+      );
     }
   }
   return lines.join("\n");
@@ -428,7 +462,10 @@ export function readFirstRunMarker(path: string): FirstRunMarker | undefined {
  *
  * An existing installation (state present, no marker) never gets one.
  */
-export function interviewDue(marker: FirstRunMarker | undefined, state: RolloverState | undefined): boolean {
+export function interviewDue(
+  marker: FirstRunMarker | undefined,
+  state: RolloverState | undefined,
+): boolean {
   if (state?.first_run_interviewed) return false;
   if (state === undefined) return true;
   return marker !== undefined;
@@ -588,13 +625,28 @@ export class CompanionRollover {
    * only one of them is true. */
   async readConversation(file: string): Promise<ConversationRead> {
     if (file === "") return { state: "read", text: "" };
-    const res = await this.docker(["exec", this.cfg.container_name, "sh", "-c", `tail -c 400000 '${file}'`]);
-    return res.ok ? { state: "read", text: res.stdout } : { state: "unreadable", reason: execReason(res) };
+    const res = await this.docker([
+      "exec",
+      this.cfg.container_name,
+      "sh",
+      "-c",
+      `tail -c 400000 '${file}'`,
+    ]);
+    return res.ok
+      ? { state: "read", text: res.stdout }
+      : { state: "unreadable", reason: execReason(res) };
   }
 
   async killSession(): Promise<void> {
     // Never fatal: no session to kill is the state we want anyway.
-    await this.docker(["exec", this.cfg.container_name, "tmux", "kill-session", "-t", this.cfg.session]);
+    await this.docker([
+      "exec",
+      this.cfg.container_name,
+      "tmux",
+      "kill-session",
+      "-t",
+      this.cfg.session,
+    ]);
   }
 
   /** tmp+rename into the inject dir — the bridge must never drain a torn file. */
@@ -631,14 +683,20 @@ export class CompanionRollover {
    *: a second read could come back unreadable, and a collapsed
    * `undefined` here silently drops `first_run_interviewed` — the exact
    * re-arming the comment below exists to prevent. */
-  private record(date: string, archive: string | undefined, prior: RolloverState | undefined): RolloverState {
+  private record(
+    date: string,
+    archive: string | undefined,
+    prior: RolloverState | undefined,
+  ): RolloverState {
     // Preserve the interview mark across rewrites: dropping it on a later
     // rollover would re-arm a marker-keyed interview forever.
     const written: RolloverState = {
       last_open_date: date,
       updated_at: this.now().toISOString(),
       ...(archive ? { last_archive: archive } : {}),
-      ...(prior?.first_run_interviewed ? { first_run_interviewed: prior.first_run_interviewed } : {}),
+      ...(prior?.first_run_interviewed
+        ? { first_run_interviewed: prior.first_run_interviewed }
+        : {}),
     };
     writeRolloverState(this.opts.statePath, written);
     // Returned so `maybeInterview` can add its mark to the row we KNOW we
@@ -672,7 +730,9 @@ export class CompanionRollover {
     steps: string[],
   ): { interviewFile?: string; interview?: string } {
     if (!this.opts.firstRunTemplatePath) return {};
-    const marker = this.opts.firstRunMarkerPath ? readFirstRunMarker(this.opts.firstRunMarkerPath) : undefined;
+    const marker = this.opts.firstRunMarkerPath
+      ? readFirstRunMarker(this.opts.firstRunMarkerPath)
+      : undefined;
     if (!interviewDue(marker, prior)) return {};
     let interview: string;
     try {
@@ -692,7 +752,10 @@ export class CompanionRollover {
     // over a day we could not see and dropped `last_archive`. `current` is
     // undefined ONLY when the state was genuinely absent and this run wrote
     // nothing, in which case today IS the row's true date.
-    const state: RolloverState = current ?? { last_open_date: today, updated_at: this.now().toISOString() };
+    const state: RolloverState = current ?? {
+      last_open_date: today,
+      updated_at: this.now().toISOString(),
+    };
     writeRolloverState(this.opts.statePath, { ...state, first_run_interviewed: today });
     return { interviewFile, interview };
   }
@@ -752,12 +815,19 @@ export class CompanionRollover {
       // so nothing fabricated is published. It is only the dated archive that
       // is missing — and going quiet about that is how it would stay missing.
       if (archivedTo) steps.push(`archived → ${archivedTo}`);
-      else if (file !== "") steps.push(`archive FAILED — ${file} is unarchived (it remains on the volume)`);
+      else if (file !== "")
+        steps.push(`archive FAILED — ${file} is unarchived (it remains on the volume)`);
       const convo = await this.readConversation(file);
       if (convo.state === "unreadable") {
         const deferred = `could not read ${file} (${convo.reason}) — day NOT rolled over; retrying on the next start`;
         steps.push(deferred);
-        return { verdict, steps, archivedTo, deferred, ...this.maybeInterview(today, prior, current, steps) };
+        return {
+          verdict,
+          steps,
+          archivedTo,
+          deferred,
+          ...this.maybeInterview(today, prior, current, steps),
+        };
       }
       const turns = parseConversation(convo.text);
       steps.push(`compacted ${turns.length} turn${turns.length === 1 ? "" : "s"}`);

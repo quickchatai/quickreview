@@ -132,7 +132,11 @@ export function commandPayload(command: UnwedgeCommand, pr: number): string {
 export type UnwedgeState = "pending" | "done" | "failed";
 
 export interface UnwedgeSender {
-  send(command: UnwedgeCommand, pr: number, onState: (state: UnwedgeState, label: string) => void): Promise<void>;
+  send(
+    command: UnwedgeCommand,
+    pr: number,
+    onState: (state: UnwedgeState, label: string) => void,
+  ): Promise<void>;
 }
 
 export class CommandFileSender implements UnwedgeSender {
@@ -142,7 +146,8 @@ export class CommandFileSender implements UnwedgeSender {
     private readonly cfg: TuiConfig,
     private readonly ssh: SshRunner,
     private readonly now: () => Date = () => new Date(),
-    private readonly sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+    private readonly sleep: (ms: number) => Promise<void> = (ms) =>
+      new Promise((r) => setTimeout(r, ms)),
   ) {}
 
   async send(
@@ -181,11 +186,19 @@ export class CommandFileSender implements UnwedgeSender {
         return;
       }
       if (result.ok === true) {
-        const cancelled = Array.isArray(result.cancelled_rounds) ? result.cancelled_rounds.length : 0;
-        onState("done", `✓ ${command} #${pr}${cancelled > 0 ? ` — ${cancelled} round(s) cancelled` : ""}`);
+        const cancelled = Array.isArray(result.cancelled_rounds)
+          ? result.cancelled_rounds.length
+          : 0;
+        onState(
+          "done",
+          `✓ ${command} #${pr}${cancelled > 0 ? ` — ${cancelled} round(s) cancelled` : ""}`,
+        );
         return;
       }
-      onState("failed", `✖ ${command} #${pr} refused (${String(result.reason ?? "no reason given")})`);
+      onState(
+        "failed",
+        `✖ ${command} #${pr} refused (${String(result.reason ?? "no reason given")})`,
+      );
       return;
     }
     onState("failed", `✖ ${command} #${pr} — no result (daemon down?)`);

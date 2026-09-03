@@ -291,8 +291,10 @@ export interface VerdictFile {
 
 /** The daemon↔session boundary. B2 codes against this; B3 implements it; B2
  * ships a disk-logging stub so the daemon runs end-to-end without pi. */
-export type SessionCommandRetryResult = "retried" | "settled" | "round_finished" | "accepted_race" | "retry_failed";
-export type RoundRecoveryDisposition = "requeued" | "exhausted" | "retryable" | "failed_loud" | "settled";
+export type SessionCommandRetryResult =
+  "retried" | "settled" | "round_finished" | "accepted_race" | "retry_failed";
+export type RoundRecoveryDisposition =
+  "requeued" | "exhausted" | "retryable" | "failed_loud" | "settled";
 
 export interface SessionHooks {
   /** Ensure the per-PR session exists (birth on first trigger) and inject the

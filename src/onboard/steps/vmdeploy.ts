@@ -75,7 +75,9 @@ export const DEPLOY_BUILD_WARNING = [
 ].join("\n");
 
 function modeOf(input: Readonly<Record<string, unknown>>): DeployMode | null {
-  const raw = String(input.mode ?? "").trim().toLowerCase();
+  const raw = String(input.mode ?? "")
+    .trim()
+    .toLowerCase();
   return raw === "sync" || raw === "rebuild" ? raw : null;
 }
 
@@ -122,7 +124,12 @@ export function vmDeployStep(opts: VmDeployStepOptions = {}): OnboardingStep {
     return checks;
   }
 
-  async function invoke(ctx: StepContext, root: string, mode: DeployMode, dryRun: boolean): Promise<{ code: number; tail: string }> {
+  async function invoke(
+    ctx: StepContext,
+    root: string,
+    mode: DeployMode,
+    dryRun: boolean,
+  ): Promise<{ code: number; tail: string }> {
     const started = ctx.adapters.clock().getTime();
     let lines = 0;
     const result = await stream.run("bash", deployArgv(root, mode, { dryRun }), (line) => {
@@ -130,7 +137,10 @@ export function vmDeployStep(opts: VmDeployStepOptions = {}): OnboardingStep {
       log(ctx, line);
       if (!dryRun && lines % progressEvery === 0) {
         const mins = Math.round((ctx.adapters.clock().getTime() - started) / 60_000);
-        log(ctx, `… still working — ${lines} lines of deploy output, ${mins} minute${mins === 1 ? "" : "s"} elapsed. This is normal.`);
+        log(
+          ctx,
+          `… still working — ${lines} lines of deploy output, ${mins} minute${mins === 1 ? "" : "s"} elapsed. This is normal.`,
+        );
       }
     });
     const text = `${result.stdout}\n${result.stderr}`.trimEnd();
@@ -196,7 +206,11 @@ export function vmDeployStep(opts: VmDeployStepOptions = {}): OnboardingStep {
         });
         return { ok: false, checks };
       }
-      checks.push({ name: "plan", ok: true, detail: `the plan, and every preflight passed:\n${plan.tail}` });
+      checks.push({
+        name: "plan",
+        ok: true,
+        detail: `the plan, and every preflight passed:\n${plan.tail}`,
+      });
 
       // 2. The warning goes out BEFORE the long wait, never after it.
       for (const line of DEPLOY_BUILD_WARNING.split("\n")) log(ctx, line);
@@ -245,8 +259,16 @@ export function vmDeployStep(opts: VmDeployStepOptions = {}): OnboardingStep {
       const record = parseDeployRecord(ctx.choices[VM_DEPLOY_CHOICE_KEY]);
       checks.push(
         record === null
-          ? { name: "deploy", ok: false, detail: `no deploy recorded yet — run the ${VM_DEPLOY_STEP_ID} step` }
-          : { name: "deploy", ok: true, detail: `last deployed with \`${deployCommandLine(record.mode)}\` at ${record.at}` },
+          ? {
+              name: "deploy",
+              ok: false,
+              detail: `no deploy recorded yet — run the ${VM_DEPLOY_STEP_ID} step`,
+            }
+          : {
+              name: "deploy",
+              ok: true,
+              detail: `last deployed with \`${deployCommandLine(record.mode)}\` at ${record.at}`,
+            },
       );
       checks.push(...(await stackTransportFor(ctx).containerChecks(null)));
       return { ok: checks.every((c) => c.ok), checks };

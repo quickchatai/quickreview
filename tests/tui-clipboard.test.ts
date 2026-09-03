@@ -19,7 +19,10 @@ describe("osc52Text", () => {
 });
 
 describe("ClipboardSink", () => {
-  function fakeRunner(available: Record<string, boolean>): { run: CmdRunner; calls: Array<{ cmd: string; argv: string[]; stdin?: string }> } {
+  function fakeRunner(available: Record<string, boolean>): {
+    run: CmdRunner;
+    calls: Array<{ cmd: string; argv: string[]; stdin?: string }>;
+  } {
     const calls: Array<{ cmd: string; argv: string[]; stdin?: string }> = [];
     const run: CmdRunner = async (cmd, argv, stdin) => {
       calls.push({ cmd, argv, stdin });

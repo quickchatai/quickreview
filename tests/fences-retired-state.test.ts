@@ -37,7 +37,11 @@ const ROOT = join(import.meta.dirname, "..");
 
 function tsFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
-    e.isDirectory() ? tsFiles(join(dir, e.name)) : e.name.endsWith(".ts") ? [join(dir, e.name)] : [],
+    e.isDirectory()
+      ? tsFiles(join(dir, e.name))
+      : e.name.endsWith(".ts")
+        ? [join(dir, e.name)]
+        : [],
   );
 }
 
@@ -72,19 +76,25 @@ describe("[#10] the retired park's readers are counted, not assumed gone", () =>
       const n = (readFileSync(f, "utf8").match(/awaiting_human/g) ?? []).length;
       if (n > 0) found.set(relative(ROOT, f), n);
     }
-    expect(found.size, "no mention found at all — the scan broke and this asserts nothing").toBeGreaterThan(0);
-    for (const r of PARK_READERS) expect(r.what.length, `${r.file} needs a description`).toBeGreaterThan(20);
+    expect(
+      found.size,
+      "no mention found at all — the scan broke and this asserts nothing",
+    ).toBeGreaterThan(0);
+    for (const r of PARK_READERS)
+      expect(r.what.length, `${r.file} needs a description`).toBeGreaterThan(20);
 
-    const actual = [...found.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([f, n]) => `${f}:${n}`);
+    const actual = [...found.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([f, n]) => `${f}:${n}`);
     const recorded = PARK_READERS.slice()
       .sort((a, b) => a.file.localeCompare(b.file))
       .map((r) => `${r.file}:${r.n}`);
 
     expect(
       actual,
-      "the awaiting_human surface changed. GROWN means a new reader of a state nothing can enter — do not add one. "
-        + "SHRUNK means is doing its work: edit the counts down (and delete the entry at zero); when the list "
-        + "is empty, replace it with `expect(actual).toEqual([])` and delete this record.",
+      "the awaiting_human surface changed. GROWN means a new reader of a state nothing can enter — do not add one. " +
+        "SHRUNK means is doing its work: edit the counts down (and delete the entry at zero); when the list " +
+        "is empty, replace it with `expect(actual).toEqual([])` and delete this record.",
     ).toEqual(recorded);
   });
 
@@ -93,6 +103,9 @@ describe("[#10] the retired park's readers are counted, not assumed gone", () =>
       (n, f) => n + (readFileSync(f, "utf8").match(/awaiting_human/g) ?? []).length,
       0,
     );
-    expect(total, "two mentions across two modules, both tombstones — cut 28, took the digest tab's with the old tab").toBe(2);
+    expect(
+      total,
+      "two mentions across two modules, both tombstones — cut 28, took the digest tab's with the old tab",
+    ).toBe(2);
   });
 });

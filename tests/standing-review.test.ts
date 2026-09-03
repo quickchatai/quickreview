@@ -11,7 +11,12 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ReviewedHeadRow } from "../src/state.js";
-import { snapshotMark, standingLifecycleState, standingReview, standingVerdict } from "../src/standing-review.js";
+import {
+  snapshotMark,
+  standingLifecycleState,
+  standingReview,
+  standingVerdict,
+} from "../src/standing-review.js";
 
 const HEAD = "a746573675f8eae0f13e69ad83006190aa8436e4";
 
@@ -34,24 +39,34 @@ describe("standingReview — one interpretation of the reviewed-head mark", () =
 
   it("the #5409 partial mark — posted REQUEST_CHANGES, verdict null — IS a standing REQUEST_CHANGES", () => {
     const m = mark({ posted_event: "REQUEST_CHANGES" });
-    expect(standingReview(m)).toEqual({ kind: "decided", verdict: "REQUEST_CHANGES", source: "posted_event" });
+    expect(standingReview(m)).toEqual({
+      kind: "decided",
+      verdict: "REQUEST_CHANGES",
+      source: "posted_event",
+    });
     expect(standingVerdict(m)).toBe("REQUEST_CHANGES");
     expect(standingLifecycleState(standingVerdict(m))).toBe("awaiting_author");
   });
 
   it("the symmetric partial APPROVE mark is a standing approval", () => {
     const m = mark({ posted_event: "APPROVE" });
-    expect(standingReview(m)).toEqual({ kind: "decided", verdict: "APPROVE", source: "posted_event" });
+    expect(standingReview(m)).toEqual({
+      kind: "decided",
+      verdict: "APPROVE",
+      source: "posted_event",
+    });
     expect(standingLifecycleState(standingVerdict(m))).toBe("tracked");
   });
 
   it("a decided verdict wins over posted_event — the enriched guard-1 downgrade and the withheld approval both read right", () => {
     // REQUEST_CHANGES softened to a COMMENT by guard 1, then enriched.
-    expect(standingReview(mark({ verdict: "REQUEST_CHANGES", posted_event: "COMMENT", round_no: 3 })))
-      .toEqual({ kind: "decided", verdict: "REQUEST_CHANGES", source: "verdict" });
+    expect(
+      standingReview(mark({ verdict: "REQUEST_CHANGES", posted_event: "COMMENT", round_no: 3 })),
+    ).toEqual({ kind: "decided", verdict: "REQUEST_CHANGES", source: "verdict" });
     // APPROVE withheld for red CI (posted as COMMENT), then enriched.
-    expect(standingReview(mark({ verdict: "APPROVE", posted_event: "COMMENT", round_no: 3 })))
-      .toEqual({ kind: "decided", verdict: "APPROVE", source: "verdict" });
+    expect(
+      standingReview(mark({ verdict: "APPROVE", posted_event: "COMMENT", round_no: 3 })),
+    ).toEqual({ kind: "decided", verdict: "APPROVE", source: "verdict" });
     // Verdict casing is normalized like everywhere else.
     expect(standingVerdict(mark({ verdict: " approve " }))).toBe("APPROVE");
   });
@@ -65,17 +80,27 @@ describe("standingReview — one interpretation of the reviewed-head mark", () =
   });
 
   it("COMMENT alone, a bare stamp, or a mis-cased posted event is never guessed into a verdict", () => {
-    expect(standingReview(mark({ posted_event: "COMMENT" }))).toEqual({ kind: "unknown", posted_event: "COMMENT" });
+    expect(standingReview(mark({ posted_event: "COMMENT" }))).toEqual({
+      kind: "unknown",
+      posted_event: "COMMENT",
+    });
     expect(standingReview(mark())).toEqual({ kind: "unknown", posted_event: null });
     // Both writers stamp the upper-case GitHub event; anything else is a
     // lookalike, not proof (tests/operator-recovery.test.ts pins the same).
-    expect(standingReview(mark({ posted_event: "request_changes" }))).toEqual({ kind: "unknown", posted_event: "request_changes" });
+    expect(standingReview(mark({ posted_event: "request_changes" }))).toEqual({
+      kind: "unknown",
+      posted_event: "request_changes",
+    });
     expect(standingVerdict(mark({ verdict: "MAYBE", posted_event: "COMMENT" }))).toBeNull();
     expect(standingLifecycleState(null)).toBe("tracked");
   });
 
   it("snapshotMark records exactly the fields a restore needs and nothing session-written", () => {
-    expect(snapshotMark(mark({ posted_event: "REQUEST_CHANGES", last_author_reply_at: "2026-09-01T09:00:00.000Z" }))).toEqual({
+    expect(
+      snapshotMark(
+        mark({ posted_event: "REQUEST_CHANGES", last_author_reply_at: "2026-09-01T09:00:00.000Z" }),
+      ),
+    ).toEqual({
       head_sha: HEAD,
       reviewed_at: "2026-09-01T10:41:34.773Z",
       verdict: null,
@@ -104,8 +129,10 @@ function tsFiles(dir: string): string[] {
  * an inline `reviewedHead(...)` call, the names the codebase gives the row
  * today, or ANY identifier a file binds from `reviewedHead(` — so
  * `const m = store.reviewedHead(pr); m.verdict` is caught too. */
-const RAW_MARK_VERDICT_BASE = /(?:reviewedHead\([^)]*\)|\b(?:mark|reviewed|prev))\s*!?\??\.\s*verdict\b/g;
-const BOUND_FROM_REVIEWED_HEAD = /(?:const|let|var)\s+(\w+)\s*(?::[^=\n]+)?=\s*[^;\n]*\breviewedHead\(/g;
+const RAW_MARK_VERDICT_BASE =
+  /(?:reviewedHead\([^)]*\)|\b(?:mark|reviewed|prev))\s*!?\??\.\s*verdict\b/g;
+const BOUND_FROM_REVIEWED_HEAD =
+  /(?:const|let|var)\s+(\w+)\s*(?::[^=\n]+)?=\s*[^;\n]*\breviewedHead\(/g;
 
 function rawMarkVerdictReads(text: string): string[] {
   const hits = [...text.matchAll(RAW_MARK_VERDICT_BASE)].map((m) => m[0]);
@@ -140,7 +167,9 @@ describe("every lifecycle consumer reads the mark through standing-review (fence
   it("each named consumer imports the helper", () => {
     for (const { file } of CONSUMERS) {
       const text = readFileSync(join(ROOT, file), "utf8");
-      expect(text, `${file} must import from ./standing-review.js`).toMatch(/from "\.\/standing-review\.js"/);
+      expect(text, `${file} must import from ./standing-review.js`).toMatch(
+        /from "\.\/standing-review\.js"/,
+      );
     }
   });
 
@@ -154,7 +183,9 @@ describe("every lifecycle consumer reads the mark through standing-review (fence
       const hits = rawMarkVerdictReads(text);
       const budget = allowed.get(rel) ?? 0;
       if (hits.length > budget) {
-        offenders.push(`${rel}: ${hits.length} raw mark.verdict read(s), ${budget} allowed — read it through standingReview/standingVerdict`);
+        offenders.push(
+          `${rel}: ${hits.length} raw mark.verdict read(s), ${budget} allowed — read it through standingReview/standingVerdict`,
+        );
       }
     }
     expect(offenders).toEqual([]);
@@ -162,12 +193,20 @@ describe("every lifecycle consumer reads the mark through standing-review (fence
 
   it("the state.ts allowance is exact, so a retired raw read lowers it rather than leaving slack", () => {
     const text = readFileSync(join(ROOT, "src/state.ts"), "utf8");
-    expect(rawMarkVerdictReads(text)).toHaveLength(CONSUMERS.find((c) => c.file === "src/state.ts")!.rawReadsAllowed);
+    expect(rawMarkVerdictReads(text)).toHaveLength(
+      CONSUMERS.find((c) => c.file === "src/state.ts")!.rawReadsAllowed,
+    );
   });
 
   it("the fence catches a mark bound to a fresh name, not only the spellings in use today", () => {
-    expect(rawMarkVerdictReads("const m = store.reviewedHead(pr);\nif (m?.verdict === 'APPROVE') {}")).toHaveLength(1);
-    expect(rawMarkVerdictReads("const row: ReviewedHeadRow | undefined = this.reviewedHead(n);\nreturn row!.verdict;")).toHaveLength(1);
+    expect(
+      rawMarkVerdictReads("const m = store.reviewedHead(pr);\nif (m?.verdict === 'APPROVE') {}"),
+    ).toHaveLength(1);
+    expect(
+      rawMarkVerdictReads(
+        "const row: ReviewedHeadRow | undefined = this.reviewedHead(n);\nreturn row!.verdict;",
+      ),
+    ).toHaveLength(1);
     expect(rawMarkVerdictReads("const v = verdictFile.verdict;")).toHaveLength(0);
   });
 });

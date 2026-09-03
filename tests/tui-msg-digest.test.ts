@@ -40,7 +40,12 @@ function fakeStreams() {
   input.resume = () => {};
   input.pause = () => {};
   input.setRawMode = () => {};
-  return { out, input, written: () => buf, type: (s: string | Buffer) => input.emit("data", Buffer.from(s)) };
+  return {
+    out,
+    input,
+    written: () => buf,
+    type: (s: string | Buffer) => input.emit("data", Buffer.from(s)),
+  };
 }
 
 // ---- inject path construction / escaping -----------------------------------
@@ -59,11 +64,15 @@ describe("quick-message inject writes", () => {
     expect(argv.slice(0, 5)).toEqual(["sudo", "docker", "exec", "-i", "quickreview-sandbox"]);
     const script = argv[argv.length - 1]!;
     expect(script).toContain("cat > '/opt/quickreview/sandbox/inject/pr-5012/.f.md.tmp'");
-    expect(script).toContain("mv '/opt/quickreview/sandbox/inject/pr-5012/.f.md.tmp' '/opt/quickreview/sandbox/inject/pr-5012/f.md'");
+    expect(script).toContain(
+      "mv '/opt/quickreview/sandbox/inject/pr-5012/.f.md.tmp' '/opt/quickreview/sandbox/inject/pr-5012/f.md'",
+    );
   });
 
   it("probes the bridge's .done archive for consumption", () => {
-    const script = injectProbeArgv(TUI_DEFAULTS, "pr-7", "f.md")[injectProbeArgv(TUI_DEFAULTS, "pr-7", "f.md").length - 1]!;
+    const script = injectProbeArgv(TUI_DEFAULTS, "pr-7", "f.md")[
+      injectProbeArgv(TUI_DEFAULTS, "pr-7", "f.md").length - 1
+    ]!;
     expect(script).toContain("/opt/quickreview/sandbox/inject/pr-7/.done/f.md");
     expect(script).toContain("echo consumed");
   });
@@ -114,7 +123,10 @@ describe("InjectSender", () => {
     const probes = Array.from({ length: 20 }, () => ok("pending\n"));
     const { sender, states, record } = senderWith([ok(""), ...probes], 10);
     await sender.send("pr-5012", "x", record);
-    expect(states[states.length - 1]).toEqual(["undelivered", "✖ msg pr-5012 undelivered (session down?)"]);
+    expect(states[states.length - 1]).toEqual([
+      "undelivered",
+      "✖ msg pr-5012 undelivered (session down?)",
+    ]);
   });
 
   it("refuses to build paths from a bad session name", async () => {
@@ -200,11 +212,16 @@ describe("quick-message input box", () => {
 describe("digest tab", () => {
   it("builds read-only ls/cat argv inside the container", () => {
     expect(digestListArgv(TUI_DEFAULTS).join(" ")).toContain("ls '/opt/quickreview/sandbox/digest'");
-    expect(digestCatArgv(TUI_DEFAULTS, "2026-08-13.md").join(" ")).toContain("cat '/opt/quickreview/sandbox/digest/2026-08-13.md'");
+    expect(digestCatArgv(TUI_DEFAULTS, "2026-08-13.md").join(" ")).toContain(
+      "cat '/opt/quickreview/sandbox/digest/2026-08-13.md'",
+    );
   });
 
   it("parses and sorts the digest listing, ignoring foreign files", () => {
-    expect(parseDigestList("2026-08-12.md\njunk.txt\n2026-08-13.md\n")).toEqual(["2026-08-12.md", "2026-08-13.md"]);
+    expect(parseDigestList("2026-08-12.md\njunk.txt\n2026-08-13.md\n")).toEqual([
+      "2026-08-12.md",
+      "2026-08-13.md",
+    ]);
   });
 
   it("a failed listing is UNDEFINED, an empty directory is an empty list — the two are different facts", async () => {
@@ -215,7 +232,11 @@ describe("digest tab", () => {
   });
 
   it("pages older/newer through currentDigestFile", () => {
-    const st: DigestState = { files: ["2026-08-11.md", "2026-08-12.md", "2026-08-13.md"], back: 0, scroll: 0 };
+    const st: DigestState = {
+      files: ["2026-08-11.md", "2026-08-12.md", "2026-08-13.md"],
+      back: 0,
+      scroll: 0,
+    };
     expect(currentDigestFile(st)).toBe("2026-08-13.md");
     st.back = 2;
     expect(currentDigestFile(st)).toBe("2026-08-11.md");
@@ -234,7 +255,12 @@ describe("digest tab", () => {
   // with the park they listed — a document is read, not chosen from.
   it("styles headings and renders one full-width column with the yesterday tag", () => {
     expect(stripAnsi(styleDigestLine("# Reviews"))).toBe("Reviews");
-    const st: DigestState = { files: ["2026-08-12.md"], back: 0, scroll: 0, content: "# Reviews\n6 PRs · 9 rounds" };
+    const st: DigestState = {
+      files: ["2026-08-12.md"],
+      back: 0,
+      scroll: 0,
+      content: "# Reviews\n6 PRs · 9 rounds",
+    };
     const frame = renderDigestTab(st, true, "2026-08-13", 100, 24);
     const text = frame.lines.map(stripAnsi).join("\n");
     expect(text).toContain("digest 2026-08-12 (yesterday)");
@@ -249,13 +275,29 @@ describe("digest tab", () => {
   });
 
   it("says which of the three empties it is: not listed, could not list, none written", () => {
-    const unread = stripAnsi(renderDigestTab({ back: 0, scroll: 0 }, false, "2026-08-13", 100, 24).lines.join("\n"));
+    const unread = stripAnsi(
+      renderDigestTab({ back: 0, scroll: 0 }, false, "2026-08-13", 100, 24).lines.join("\n"),
+    );
     expect(unread).toContain("digest — ── — days");
     expect(unread).toContain("not read yet — listing digest/ on the VM");
-    const failed = stripAnsi(renderDigestTab({ back: 0, scroll: 0, listError: "the digest directory could not be listed over ssh" }, false, "2026-08-13", 100, 24).lines.join("\n"));
-    expect(failed).toContain("could not read — the digest directory could not be listed over ssh · r retries");
+    const failed = stripAnsi(
+      renderDigestTab(
+        { back: 0, scroll: 0, listError: "the digest directory could not be listed over ssh" },
+        false,
+        "2026-08-13",
+        100,
+        24,
+      ).lines.join("\n"),
+    );
+    expect(failed).toContain(
+      "could not read — the digest directory could not be listed over ssh · r retries",
+    );
     expect(failed).not.toContain("none yet");
-    const none = stripAnsi(renderDigestTab({ files: [], back: 0, scroll: 0 }, false, "2026-08-13", 100, 24).lines.join("\n"));
+    const none = stripAnsi(
+      renderDigestTab({ files: [], back: 0, scroll: 0 }, false, "2026-08-13", 100, 24).lines.join(
+        "\n",
+      ),
+    );
     expect(none).toContain("0 days");
     expect(none).toContain("none yet — the EOD sweep writes digest/<date>.md at 18:00");
   });
@@ -285,7 +327,12 @@ describe("digest tab", () => {
 
   it("a failed listing on the installed tab says so and r asks again", async () => {
     let dead = true;
-    const rig = learningRig({ digestFetcher: { list: async () => (dead ? undefined : ["2026-08-20.md"]), read: async () => "# d" } });
+    const rig = learningRig({
+      digestFetcher: {
+        list: async () => (dead ? undefined : ["2026-08-20.md"]),
+        read: async () => "# d",
+      },
+    });
     rig.app.tab = "digest";
     const tab = rig.app.hooks.tabs.digest!;
     tab.screen(rig.app, 100, 24);

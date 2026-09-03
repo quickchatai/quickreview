@@ -17,7 +17,11 @@ const ROOT = join(import.meta.dirname, "..");
 
 function tsFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
-    e.isDirectory() ? tsFiles(join(dir, e.name)) : e.name.endsWith(".ts") ? [join(dir, e.name)] : [],
+    e.isDirectory()
+      ? tsFiles(join(dir, e.name))
+      : e.name.endsWith(".ts")
+        ? [join(dir, e.name)]
+        : [],
   );
 }
 
@@ -88,8 +92,8 @@ describe("no review-dismissing mutation can appear", () => {
     }
     expect(
       callers,
-      "supersede_own_review acquired a caller. It is the ONE review-mutating kind, its endpoint is GitHub's "
-        + "dismissal endpoint, and it is the sole `forceLive` bypass — a caller needs the owner's ratification, not a diff.",
+      "supersede_own_review acquired a caller. It is the ONE review-mutating kind, its endpoint is GitHub's " +
+        "dismissal endpoint, and it is the sole `forceLive` bypass — a caller needs the owner's ratification, not a diff.",
     ).toEqual([]);
   });
 
@@ -111,14 +115,18 @@ describe("no review-dismissing mutation can appear", () => {
       // A POST to that route, in either the adapter's or the shell's spelling.
       for (const line of text.split("\n")) {
         if (!line.includes("requested_reviewers")) continue;
-        if (/POST|-X\s*POST|--method\s+POST/i.test(line)) reviewerPosts.push(`${f.slice(ROOT.length + 1)}: ${line.trim()}`);
+        if (/POST|-X\s*POST|--method\s+POST/i.test(line))
+          reviewerPosts.push(`${f.slice(ROOT.length + 1)}: ${line.trim()}`);
       }
     }
-    expect(dismissals, "a dismissal route appeared — hard rule 2 forbids the code path, not merely the caller").toEqual([]);
+    expect(
+      dismissals,
+      "a dismissal route appeared — hard rule 2 forbids the code path, not merely the caller",
+    ).toEqual([]);
     expect(
       reviewerPosts.length,
-      `reviewer nomination must have ONE builder (GitHubAdapter.requestEscalationReview, gated as request_reviewer, `
-        + `called only from src/escalation.ts). Found:\n${reviewerPosts.join("\n")}`,
+      `reviewer nomination must have ONE builder (GitHubAdapter.requestEscalationReview, gated as request_reviewer, ` +
+        `called only from src/escalation.ts). Found:\n${reviewerPosts.join("\n")}`,
     ).toBeLessThanOrEqual(1);
   });
 });
@@ -157,15 +165,17 @@ describe("every process entrypoint that builds a gate installs its guards", () =
       // throws or returns undefined. Guards on a gate that cannot mutate would
       // be ceremony. A gate built from `cfg.dry_run` is the live one, and that
       // is what this fence is about.
-      const constructions = [...text.matchAll(/new MutationGate\(\s*([^,]+),/g)].map((m) => m[1]!.trim());
+      const constructions = [...text.matchAll(/new MutationGate\(\s*([^,]+),/g)].map((m) =>
+        m[1]!.trim(),
+      );
       if (constructions.every((first) => first === "true")) continue;
 
       offenders.push(f.slice(ROOT.length + 1));
     }
     expect(
       offenders,
-      "a process entrypoint constructs a config-driven MutationGate and never installs a posting guard on it — "
-        + "that is a daemon whose guards 1-5 and CI gate do not exist, one `node dist/src/<it>.js` away",
+      "a process entrypoint constructs a config-driven MutationGate and never installs a posting guard on it — " +
+        "that is a daemon whose guards 1-5 and CI gate do not exist, one `node dist/src/<it>.js` away",
     ).toEqual([]);
   });
 });
@@ -193,13 +203,18 @@ describe("[T6] tests/ type-checks", () => {
    */
   it("npm run typecheck:tests is clean", () => {
     try {
-      execFileSync("npx", ["tsc", "-p", "tsconfig.tests.json"], { cwd: ROOT, encoding: "utf8", stdio: "pipe" });
+      execFileSync("npx", ["tsc", "-p", "tsconfig.tests.json"], {
+        cwd: ROOT,
+        encoding: "utf8",
+        stdio: "pipe",
+      });
     } catch (e) {
       const err = e as { stdout?: string; stderr?: string };
       throw new Error(
-        "tests/ does not type-check. Fix the errors — do not add them to an ignore list; "
-          + "this is the check that finds tests which assert nothing.\n\n"
-          + `${err.stdout ?? ""}${err.stderr ?? ""}`,
+        "tests/ does not type-check. Fix the errors — do not add them to an ignore list; " +
+          "this is the check that finds tests which assert nothing.\n\n" +
+          `${err.stdout ?? ""}${err.stderr ?? ""}`,
+        { cause: e },
       );
     }
   }, 120_000);

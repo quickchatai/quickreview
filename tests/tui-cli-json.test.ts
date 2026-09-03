@@ -106,7 +106,9 @@ describe("recentEvents", () => {
 describe("buildStatusSnapshot enrichment", () => {
   it("carries the running round plan and deadline for live board progress", () => {
     seedPr(5408);
-    store.startRound(5408, "re-review", ["pass-baseline", "pass-validate"], 75, { validate_tier: "sol-high" });
+    store.startRound(5408, "re-review", ["pass-baseline", "pass-validate"], 75, {
+      validate_tier: "sol-high",
+    });
     const pr = buildStatusSnapshot(store, true).prs.find((row) => row.number === 5408)!;
     expect(pr.current_round).toMatchObject({
       round_no: 1,

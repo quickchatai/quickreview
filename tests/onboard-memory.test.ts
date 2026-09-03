@@ -15,7 +15,16 @@
 //
 // The provisioning and matrix modules under test are the REAL scripts — this
 // suite drives them through a fake server rather than reimplementing them.
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, mkdirSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+  mkdirSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -45,13 +54,17 @@ import {
 } from "../src/onboard/steps/memory.js";
 import { defaultSteps } from "../src/onboard/steps/index.js";
 
-const provisionModule = (await import("../scripts/openviking-provision.mjs")) as unknown as ProvisionModule & {
-  userKeysFromListing(body: unknown): Record<string, string>;
-  keyFromCreate(body: unknown): string;
-  mintRootKey(rand?: (n: number) => Buffer): string;
-  listUsers(opts: Record<string, unknown>): Promise<{ users: string[] | null; keys: Record<string, string> }>;
-};
-const matrixModule = (await import("../scripts/companion-memory-forward.mjs")) as unknown as MatrixModule;
+const provisionModule =
+  (await import("../scripts/openviking-provision.mjs")) as unknown as ProvisionModule & {
+    userKeysFromListing(body: unknown): Record<string, string>;
+    keyFromCreate(body: unknown): string;
+    mintRootKey(rand?: (n: number) => Buffer): string;
+    listUsers(
+      opts: Record<string, unknown>,
+    ): Promise<{ users: string[] | null; keys: Record<string, string> }>;
+  };
+const matrixModule =
+  (await import("../scripts/companion-memory-forward.mjs")) as unknown as MatrixModule;
 
 let root: string;
 let stateDir: string;
@@ -115,7 +128,10 @@ function fakeServer(opts: FakeServerOptions = {}) {
       if (users.has(user)) return json(409, { status: "error", error: { message: "exists" } });
       const key = `qcr.${user}.minted-${++minted}`;
       users.set(user, key);
-      return json(200, { status: "ok", result: { account_id: "default", user_id: user, user_key: key } });
+      return json(200, {
+        status: "ok",
+        result: { account_id: "default", user_id: user, user_key: key },
+      });
     }
     if (url.pathname === "/api/v1/fs/ls") {
       const ns = /viking:\/\/user\/([^/]*)\//.exec(url.searchParams.get("uri") ?? "")?.[1] ?? "";
@@ -137,10 +153,15 @@ function fakeServer(opts: FakeServerOptions = {}) {
 
 // ---- harness ----------------------------------------------------------------
 
-function adapters(fetchFn: typeof fetch, prompter?: (q: string) => Promise<string>): OnboardAdapters {
+function adapters(
+  fetchFn: typeof fetch,
+  prompter?: (q: string) => Promise<string>,
+): OnboardAdapters {
   return {
     fetch: fetchFn,
-    runner: { run: async () => ({ code: 127, stdout: "", stderr: "no subprocesses in this suite" }) },
+    runner: {
+      run: async () => ({ code: 127, stdout: "", stderr: "no subprocesses in this suite" }),
+    },
     clock: () => new Date("2026-08-30T12:00:00Z"),
     host: { nodeVersion: "v22.5.1", uid: 1000 },
     paths: { stateDir },
@@ -162,7 +183,11 @@ function stepOptions(over: Partial<MemoryStepOptions> = {}): MemoryStepOptions {
   };
 }
 
-function engineWith(fetchFn: typeof fetch, over: Partial<MemoryStepOptions> = {}, prompter?: (q: string) => Promise<string>) {
+function engineWith(
+  fetchFn: typeof fetch,
+  over: Partial<MemoryStepOptions> = {},
+  prompter?: (q: string) => Promise<string>,
+) {
   return new OnboardingEngine([memoryStep(stepOptions(over))], adapters(fetchFn, prompter));
 }
 
@@ -170,7 +195,10 @@ async function runStep(engine: OnboardingEngine) {
   return engine.runStep(MEMORY_STEP_ID);
 }
 
-function detailOf(result: { checks: Array<{ name: string; detail: string; ok: boolean }> }, name: string) {
+function detailOf(
+  result: { checks: Array<{ name: string; detail: string; ok: boolean }> },
+  name: string,
+) {
   return result.checks.find((c) => c.name === name);
 }
 
@@ -189,12 +217,20 @@ describe("mint helpers on the existing provisioning machinery", () => {
   });
 
   it("reads existing user keys out of the admin listing (that is what makes it no-rotate)", () => {
-    const body = { status: "ok", result: [{ user_id: "reviewer", role: "user", api_key: "K1" }, { user_id: "companion", api_key: "K2" }] };
+    const body = {
+      status: "ok",
+      result: [
+        { user_id: "reviewer", role: "user", api_key: "K1" },
+        { user_id: "companion", api_key: "K2" },
+      ],
+    };
     expect(provisionModule.userKeysFromListing(body)).toEqual({ reviewer: "K1", companion: "K2" });
     // Tolerant of shape; silent about users whose key is not there (never guessed).
     expect(provisionModule.userKeysFromListing({ users: [{ user: "reviewer" }] })).toEqual({});
     expect(provisionModule.userKeysFromListing("nonsense")).toEqual({});
-    expect(provisionModule.keyFromCreate({ status: "ok", result: { user_key: "NEW" } })).toBe("NEW");
+    expect(provisionModule.keyFromCreate({ status: "ok", result: { user_key: "NEW" } })).toBe(
+      "NEW",
+    );
     expect(provisionModule.keyFromCreate({ status: "ok" })).toBe("");
   });
 
@@ -227,7 +263,8 @@ describe("mint helpers on the existing provisioning machinery", () => {
   });
 
   it("creates NOTHING when the listing cannot be read (a wrong guess mints a duplicate identity)", async () => {
-    const dead = (async () => ({ status: 500, json: async () => ({}) }) as unknown as Response) as unknown as typeof fetch;
+    const dead = (async () =>
+      ({ status: 500, json: async () => ({}) }) as unknown as Response) as unknown as typeof fetch;
     const report = await provisionModule.mintUserKeys({
       base: "http://memory.test",
       account: "default",
@@ -276,7 +313,9 @@ describe("fresh install", () => {
     for (const v of COMPANION_VARS) expect(fileKeys[v]).toBe(server.users.get("companion"));
 
     // Every matrix cell is a green check, and the summary says 4/0/0.
-    expect(detailOf(result, "confinement-matrix")?.detail).toContain("4 pass, 0 fail, 0 inconclusive");
+    expect(detailOf(result, "confinement-matrix")?.detail).toContain(
+      "4 pass, 0 fail, 0 inconclusive",
+    );
     expect(result.checks.filter((c) => c.name.startsWith("matrix:"))).toHaveLength(4);
   });
 
@@ -296,7 +335,11 @@ describe("fresh install", () => {
     const rootKey = readFileSync(join(secretsDir, ROOT_KEY_FILE), "utf8").trim();
     expect(readFileSync(keysFile, "utf8")).not.toContain(rootKey);
     // 0600 on everything this step writes.
-    for (const path of [join(secretsDir, ROOT_KEY_FILE), join(secretsDir, REVIEWER_KEY_FILE), keysFile]) {
+    for (const path of [
+      join(secretsDir, ROOT_KEY_FILE),
+      join(secretsDir, REVIEWER_KEY_FILE),
+      keysFile,
+    ]) {
       expect(statSync(path).mode & 0o077).toBe(0);
     }
   });
@@ -335,7 +378,9 @@ describe("re-running the step", () => {
   });
 
   it("reports a local key that disagrees with the server instead of rotating either", async () => {
-    const server = fakeServer({ users: { reviewer: "SERVER-REVIEWER", companion: "SERVER-COMPANION" } });
+    const server = fakeServer({
+      users: { reviewer: "SERVER-REVIEWER", companion: "SERVER-COMPANION" },
+    });
     mkdirSync(secretsDir, { recursive: true });
     writeFileSync(join(secretsDir, REVIEWER_KEY_FILE), "STALE-REVIEWER\n", { mode: 0o600 });
 
@@ -355,7 +400,13 @@ describe("re-running the step", () => {
 describe("placement rules", () => {
   it("refuses to write the key file inside the daemon-side secrets dir", () => {
     const inside = join(secretsDir, "openviking-keys.env");
-    const checks = placeKeys({ secretsDir, keysFile: inside, rootKey: "R", reviewerKey: "REV", companionKey: "COMP" });
+    const checks = placeKeys({
+      secretsDir,
+      keysFile: inside,
+      rootKey: "R",
+      reviewerKey: "REV",
+      companionKey: "COMP",
+    });
     const refusal = checks.find((c) => c.name === "companion-key-confinement");
     expect(refusal?.ok).toBe(false);
     expect(refusal?.detail).toMatch(/refusing to write/);
@@ -381,7 +432,11 @@ describe("placement rules", () => {
 
     // An operator who PINS the key file inside the secrets dir is refused, not
     // silently overridden.
-    const pinned = resolveKeysFile(colliding, { QCR_OPENVIKING_KEYS: join(colliding, "keys.env") }, home);
+    const pinned = resolveKeysFile(
+      colliding,
+      { QCR_OPENVIKING_KEYS: join(colliding, "keys.env") },
+      home,
+    );
     expect(pinned.unsafe).toBe(true);
     expect(pinned.note).toMatch(/outside that directory/);
   });
@@ -398,13 +453,18 @@ describe("placement rules", () => {
       }),
     );
     expect(result.ok).toBe(false);
-    expect(detailOf(result, "key-file-location")?.detail).toMatch(/review session could read the companion key/);
+    expect(detailOf(result, "key-file-location")?.detail).toMatch(
+      /review session could read the companion key/,
+    );
     expect(existsSync(join(secretsDir, "keys.env"))).toBe(false);
     expect(existsSync(join(secretsDir, ROOT_KEY_FILE))).toBe(false);
   });
 
   it("preserves unrelated variables in the key file and never replaces a value", () => {
-    const merged = renderKeysFile({ SOMETHING_ELSE: "keep-me", [REVIEWER_VAR]: "OLD" }, { [REVIEWER_VAR]: "NEW", OPENVIKING_API_KEY: "C" });
+    const merged = renderKeysFile(
+      { SOMETHING_ELSE: "keep-me", [REVIEWER_VAR]: "OLD" },
+      { [REVIEWER_VAR]: "NEW", OPENVIKING_API_KEY: "C" },
+    );
     const parsed = parseKeysFile(merged);
     expect(parsed.SOMETHING_ELSE).toBe("keep-me");
     expect(parsed[REVIEWER_VAR]).toBe("OLD");
@@ -475,8 +535,10 @@ describe("degraded modes stay legal and loud", () => {
   });
 
   it("normalizes the decline answers a human actually types", () => {
-    for (const yes of ["", "y", "yes", "sure", "ok"]) expect(normalizeMemoryChoice(yes)).toBe("configure");
-    for (const no of ["n", "No", "skip", "later", "decline", "without memory"]) expect(normalizeMemoryChoice(no)).toBe("declined");
+    for (const yes of ["", "y", "yes", "sure", "ok"])
+      expect(normalizeMemoryChoice(yes)).toBe("configure");
+    for (const no of ["n", "No", "skip", "later", "decline", "without memory"])
+      expect(normalizeMemoryChoice(no)).toBe("declined");
     expect(normalizeMemoryChoice(undefined)).toBe("configure");
   });
 
@@ -557,11 +619,17 @@ describe("verify()", () => {
     await runStep(engine);
 
     // Someone copies the key file into the secrets dir "for convenience".
-    writeFileSync(join(secretsDir, "openviking_companion_key"), `${server.users.get("companion")}\n`, { mode: 0o600 });
+    writeFileSync(
+      join(secretsDir, "openviking_companion_key"),
+      `${server.users.get("companion")}\n`,
+      { mode: 0o600 },
+    );
     const report = await engine.verifyAll();
     const memory = report.results.find((r) => r.id === MEMORY_STEP_ID);
     expect(memory?.ok).toBe(false);
-    expect(memory?.failures.join(" ")).toMatch(/companion key is reachable from the daemon-side secrets dir/);
+    expect(memory?.failures.join(" ")).toMatch(
+      /companion key is reachable from the daemon-side secrets dir/,
+    );
   });
 
   it("goes red when a placed key is missing entirely", async () => {
@@ -576,6 +644,8 @@ describe("verify()", () => {
     });
     expect(report.ok).toBe(false);
     expect(report.checks.find((c) => c.name === "root-key")?.detail).toMatch(/missing or empty/);
-    expect(report.checks.find((c) => c.name === "confinement-matrix")?.detail).toMatch(/both USER keys are needed/);
+    expect(report.checks.find((c) => c.name === "confinement-matrix")?.detail).toMatch(
+      /both USER keys are needed/,
+    );
   });
 });

@@ -13,7 +13,15 @@
 //   * malformed answers fail AT THE STEP with plain guidance;
 //   * rule 1: however the answers are shaped, this step cannot produce a
 //     config with dry_run false — nor flip an owner's false back to true.
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -92,7 +100,9 @@ function scriptedPrompter(
     const id = asked[i]!;
     const n = counters.get(id) ?? 0;
     const scripted = answers[id];
-    const value = Array.isArray(scripted) ? (scripted[n] ?? scripted.at(-1) ?? "") : (scripted ?? "");
+    const value = Array.isArray(scripted)
+      ? (scripted[n] ?? scripted.at(-1) ?? "")
+      : (scripted ?? "");
     counters.set(id, n + 1);
     // Advance to the next question only once this one has a valid answer; the
     // step re-asks in place, so the prompter must too.
@@ -130,7 +140,9 @@ function askedIds(choices: Record<string, unknown>): AnswerKey[] {
 
 async function runStep(opts: RunOpts = {}) {
   const choices: Record<string, unknown> = { ...(opts.choices ?? {}) };
-  const answers = { ...fullAnswers(), ...(opts.answers ?? {}) } as Partial<Record<AnswerKey, string | string[]>>;
+  const answers = { ...fullAnswers(), ...(opts.answers ?? {}) } as Partial<
+    Record<AnswerKey, string | string[]>
+  >;
   const log: Prompted = { questions: [] };
   const prompter = opts.noPrompter ? undefined : scriptedPrompter(answers, askedIds(choices), log);
   const ctx: StepContext = {
@@ -151,14 +163,19 @@ function producedConfig(): Config {
 }
 
 function failed(report: { checks: Array<{ ok: boolean; name: string; detail: string }> }): string {
-  return report.checks.filter((c) => !c.ok).map((c) => `${c.name}: ${c.detail}`).join(" | ");
+  return report.checks
+    .filter((c) => !c.ok)
+    .map((c) => `${c.name}: ${c.detail}`)
+    .join(" | ");
 }
 
 // ---- the full interview -----------------------------------------------------
 
 describe("the full interview", () => {
   it("produces a config the STRICT LOADER parses on the first try", async () => {
-    const { report } = await runStep({ choices: { [CHOICE_KEYS.topology]: "vm", [CHOICE_KEYS.ingress]: "named" } });
+    const { report } = await runStep({
+      choices: { [CHOICE_KEYS.topology]: "vm", [CHOICE_KEYS.ingress]: "named" },
+    });
     expect(failed(report)).toBe("");
     expect(report.ok).toBe(true);
 
@@ -217,7 +234,9 @@ describe("the full interview", () => {
   });
 
   it("takes an answer a sibling step already recorded instead of asking again", async () => {
-    const { log, report } = await runStep({ choices: { [CHOICE_KEYS.appSlug]: "from-manifest-step" } });
+    const { log, report } = await runStep({
+      choices: { [CHOICE_KEYS.appSlug]: "from-manifest-step" },
+    });
     expect(failed(report)).toBe("");
     expect(log.questions.some((q) => q.includes("GitHub App's slug"))).toBe(false);
     expect(producedConfig().github.app_slug).toBe("from-manifest-step");
@@ -258,7 +277,8 @@ describe("derivables", () => {
     // A derivable is never also an interview question.
     const questionTargets = new Set(QUESTIONS.map((q) => `${q.section}.${q.key}`));
     for (const d of DERIVABLES) {
-      if (["tui_ssh_host", "server_hostname", "escalation_mention_fallback"].includes(d.id)) continue;
+      if (["tui_ssh_host", "server_hostname", "escalation_mention_fallback"].includes(d.id))
+        continue;
       const w = d.write({} as FillFacts, true);
       if (w) expect(questionTargets.has(`${w.section}.${w.key}`)).toBe(false);
     }
@@ -377,7 +397,9 @@ function buildEditsGuard(edits: Array<{ section: string; key: string; value: str
   const built = buildEdits(facts, {}, true);
   return [...built, ...edits].map((e) => {
     if (/(^|[^0-9A-Za-z_])dry_run([^0-9A-Za-z_]|$)/.test(e.key)) {
-      throw new Error("onboarding config fill: refused an edit touching dry_run — rule 1: the flag is the owner's alone");
+      throw new Error(
+        "onboarding config fill: refused an edit touching dry_run — rule 1: the flag is the owner's alone",
+      );
     }
     return e;
   });
@@ -401,7 +423,9 @@ describe("comment-preserving patch", () => {
   });
 
   it("keeps a value's own trailing comment, rewriting only the spent FILL marker", () => {
-    const out = patchToml(TEMPLATE, [{ section: "github", key: "repo", value: tomlString("acme/web-app") }]);
+    const out = patchToml(TEMPLATE, [
+      { section: "github", key: "repo", value: tomlString("acme/web-app") },
+    ]);
     const line = out.split("\n").find((l) => l.startsWith("repo ="))!;
     expect(line).toContain('repo = "acme/web-app"');
     expect(line).toContain("the repo to review");
@@ -412,7 +436,8 @@ describe("comment-preserving patch", () => {
   it("leaves no ← FILL marker on any line it filled", async () => {
     await runStep({ choices: { [CHOICE_KEYS.topology]: "vm", [CHOICE_KEYS.ingress]: "named" } });
     const out = readFileSync(join(root, "config.toml"), "utf8");
-    const valueOf = (text: string, key: string) => text.split("\n").find((l) => new RegExp(`^\\s*${key}\\s*=`).test(l));
+    const valueOf = (text: string, key: string) =>
+      text.split("\n").find((l) => new RegExp(`^\\s*${key}\\s*=`).test(l));
     let checked = 0;
     for (const q of QUESTIONS) {
       const line = valueOf(out, q.key);
@@ -426,13 +451,15 @@ describe("comment-preserving patch", () => {
   });
 
   it("uncomments a commented-out key in place", () => {
-    const out = patchToml(TEMPLATE, [{ section: "companion", key: "reviewed_repo_dir", value: tomlString("/home/dana/web-app") }]);
+    const out = patchToml(TEMPLATE, [
+      { section: "companion", key: "reviewed_repo_dir", value: tomlString("/home/dana/web-app") },
+    ]);
     expect(out).toContain('reviewed_repo_dir = "/home/dana/web-app"');
     expect(out).not.toContain('# reviewed_repo_dir = "~/projects/your-reviewed-repo"');
   });
 
   it("appends a key its section does not carry, and a whole missing section", () => {
-    const out = patchToml("[github]\nrepo = \"a/b\"\n", [
+    const out = patchToml('[github]\nrepo = "a/b"\n', [
       { section: "github", key: "app_slug", value: tomlString("s") },
       { section: "owner", key: "name", value: tomlString("Dana") },
     ]);
@@ -444,7 +471,9 @@ describe("comment-preserving patch", () => {
   it("splits a trailing comment only outside quotes", () => {
     expect(splitTail('"a#b"   # tail')).toEqual({ value: '"a#b"', gap: "   ", comment: "# tail" });
     expect(splitTail('"unterminated')).toBeNull();
-    expect(rewriteFillMarker("# ← FILL (3): your GitHub App slug")).toBe("# filled by qcr onboard: your GitHub App slug");
+    expect(rewriteFillMarker("# ← FILL (3): your GitHub App slug")).toBe(
+      "# filled by qcr onboard: your GitHub App slug",
+    );
     expect(rewriteFillMarker("# nothing to rewrite")).toBe("# nothing to rewrite");
   });
 });
@@ -472,7 +501,9 @@ describe("re-run", () => {
     const second = await configFillStep().run(ctx);
     expect(failed(second)).toBe("");
     expect(readFileSync(join(root, "config.toml"), "utf8")).toBe(afterFirst);
-    expect(second.checks.some((c) => c.name === "config" && /nothing rewritten/.test(c.detail))).toBe(true);
+    expect(
+      second.checks.some((c) => c.name === "config" && /nothing rewritten/.test(c.detail)),
+    ).toBe(true);
   });
 
   it("offers targeted edits — one changed answer touches one key and no other", async () => {
@@ -536,7 +567,13 @@ describe("re-run", () => {
   });
 
   it("verify is red when there is no config, and when a required key is empty", async () => {
-    const bare: StepContext = { adapters: adapters(), input: {}, choices: {}, data: {}, recordChoice: () => {} };
+    const bare: StepContext = {
+      adapters: adapters(),
+      input: {},
+      choices: {},
+      data: {},
+      recordChoice: () => {},
+    };
     const none = await configFillStep().verify(bare);
     expect(none.ok).toBe(false);
     expect(failed(none)).toMatch(/does not exist/);
@@ -552,8 +589,20 @@ describe("re-run", () => {
   it("verify goes red when a derived invariant stopped holding", async () => {
     await runStep();
     const path = join(root, "config.toml");
-    writeFileSync(path, readFileSync(path, "utf8").replace('bot_login = "acme-reviewer[bot]"', 'bot_login = "someone-else[bot]"'));
-    const ctx: StepContext = { adapters: adapters(), input: {}, choices: {}, data: {}, recordChoice: () => {} };
+    writeFileSync(
+      path,
+      readFileSync(path, "utf8").replace(
+        'bot_login = "acme-reviewer[bot]"',
+        'bot_login = "someone-else[bot]"',
+      ),
+    );
+    const ctx: StepContext = {
+      adapters: adapters(),
+      input: {},
+      choices: {},
+      data: {},
+      recordChoice: () => {},
+    };
     const report = await configFillStep().verify(ctx);
     expect(report.ok).toBe(false);
     expect(failed(report)).toMatch(/bot_login/);
@@ -564,7 +613,9 @@ describe("re-run", () => {
 
 describe("malformed answers", () => {
   it("re-asks with plain guidance and accepts the corrected value", async () => {
-    const { report, log } = await runStep({ answers: { repo: ["https://github.com/acme/web-app", "acme/web-app"] } });
+    const { report, log } = await runStep({
+      answers: { repo: ["https://github.com/acme/web-app", "acme/web-app"] },
+    });
     expect(failed(report)).toBe("");
     expect(log.questions.some((q) => q.includes('a repository is "owner/name"'))).toBe(true);
     expect(producedConfig().github.repo).toBe("acme/web-app");
@@ -612,12 +663,17 @@ describe("engine registration", () => {
     const ids = defaultSteps().map((s) => s.id);
     expect(ids).toContain(CONFIG_FILL_STEP_ID);
     const steps = defaultSteps();
-    expect(steps.find((s) => s.id === CONFIG_FILL_STEP_ID)!.order).toBeGreaterThan(steps.find((s) => s.id === "preflight")!.order);
+    expect(steps.find((s) => s.id === CONFIG_FILL_STEP_ID)!.order).toBeGreaterThan(
+      steps.find((s) => s.id === "preflight")!.order,
+    );
     expect(/^[a-z][a-z0-9_]*$/.test(CONFIG_FILL_STEP_ID)).toBe(true);
   });
 
   it("runs through the engine, persists, and resumes as verify-only", async () => {
-    const engine = new OnboardingEngine([configFillStep()], adapters(scriptedPrompter(fullAnswers(), askedIds({}), { questions: [] })));
+    const engine = new OnboardingEngine(
+      [configFillStep()],
+      adapters(scriptedPrompter(fullAnswers(), askedIds({}), { questions: [] })),
+    );
     const first = await engine.runStep(CONFIG_FILL_STEP_ID);
     expect(first.failures).toEqual([]);
     expect(first.ok).toBe(true);
@@ -636,7 +692,7 @@ describe("engine registration", () => {
   });
 
   it("refuses to write a config the loader would reject", async () => {
-    writeFileSync(join(root, "config.example.toml"), "[github]\nrepo = \"\"\n");
+    writeFileSync(join(root, "config.example.toml"), '[github]\nrepo = ""\n');
     const { report } = await runStep();
     expect(report.ok).toBe(false);
     expect(failed(report)).toMatch(/would not load/);

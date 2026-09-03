@@ -32,7 +32,11 @@ const MIN_SHA_PREFIX = 7;
  * means the file was missing/unreadable. Anything but "fresh" is enforced
  * identically (anomaly + capped nudge) — the distinction is for the record.
  */
-export function classifyLedger(content: string | null, pr: number, headSha: string): LedgerFreshness {
+export function classifyLedger(
+  content: string | null,
+  pr: number,
+  headSha: string,
+): LedgerFreshness {
   if (content === null) return "missing";
   const match = LEDGER_HEADER_RE.exec(content);
   if (!match) return "unparseable";
@@ -79,7 +83,10 @@ export type LedgerCheckResult = "fresh" | "nudged" | "already_nudged";
  * recheck path). Read failures are treated as "missing" — enforcement, not
  * crash — and the caller additionally wraps this in its own safe().
  */
-export async function enforceLedgerFreshness(deps: LedgerCheckDeps, target: LedgerCheckTarget): Promise<LedgerCheckResult> {
+export async function enforceLedgerFreshness(
+  deps: LedgerCheckDeps,
+  target: LedgerCheckTarget,
+): Promise<LedgerCheckResult> {
   const { store, log } = deps;
   const { pr, roundNo, headSha } = target;
   const path = deps.ledgerPathFor(pr);
@@ -93,7 +100,10 @@ export async function enforceLedgerFreshness(deps: LedgerCheckDeps, target: Ledg
   if (freshness === "fresh") return "fresh";
 
   const detail = `ledger ${freshness} at ${path}: expected header "LEDGER PR #${pr} @ ${headSha}"`;
-  log?.(`ledger: #${pr}${roundNo !== null ? ` round ${roundNo}` : ""} ${freshness}`, { path, head_sha: headSha });
+  log?.(`ledger: #${pr}${roundNo !== null ? ` round ${roundNo}` : ""} ${freshness}`, {
+    path,
+    head_sha: headSha,
+  });
 
   // Once-per-round cap: the mark is stamped BEFORE the inject, so no failure
   // mode ever nudges twice — the safety direction is "never a loop", and the

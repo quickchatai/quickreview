@@ -80,7 +80,11 @@ export function listRubricProposals(repoRoot: string): string[] {
 
 /** Read one proposal file (capped — PROPOSAL.md is a pitch, not a book).
  * null = missing/unreadable. */
-export function readRubricFile(repoRoot: string, slug: string, file: "PROPOSAL.md" | "changes.patch"): string | null {
+export function readRubricFile(
+  repoRoot: string,
+  slug: string,
+  file: "PROPOSAL.md" | "changes.patch",
+): string | null {
   if (!validSlug(slug)) throw new Error(`bad rubric slug '${slug}'`);
   try {
     return readFileSync(join(rubricDir(repoRoot), slug, file), "utf8").slice(0, 65536);
@@ -99,7 +103,15 @@ export function removeRubricDir(repoRoot: string, slug: string): void {
 // ---- improvement PRs/issues: still a remote gh READ -----------------------
 
 function dockerSh(cfg: TuiConfig, script: string): string[] {
-  return [...(cfg.sudo_docker ? ["sudo"] : []), "docker", "exec", cfg.container, "sh", "-c", script];
+  return [
+    ...(cfg.sudo_docker ? ["sudo"] : []),
+    "docker",
+    "exec",
+    cfg.container,
+    "sh",
+    "-c",
+    script,
+  ];
 }
 
 /** Bot-filed improvement PRs + issues, one in-container gh read. gh's exit
@@ -119,8 +131,17 @@ export function parseImprovements(stdout: string): ImprovementItem[] {
   const [prPart, issuePart] = stdout.split("\n---\n");
   const parse = (raw: string | undefined, kind: "pr" | "issue"): ImprovementItem[] => {
     try {
-      const rows = JSON.parse((raw ?? "[]").trim()) as Array<{ number: number; title: string; state: string }>;
-      return rows.map((r) => ({ kind, number: r.number, title: r.title, state: r.state.toLowerCase() }));
+      const rows = JSON.parse((raw ?? "[]").trim()) as Array<{
+        number: number;
+        title: string;
+        state: string;
+      }>;
+      return rows.map((r) => ({
+        kind,
+        number: r.number,
+        title: r.title,
+        state: r.state.toLowerCase(),
+      }));
     } catch {
       return [];
     }
@@ -152,7 +173,12 @@ export function patchTargets(patch: string): string[] {
 export function targetsAllowed(files: string[]): boolean {
   return (
     files.length > 0 &&
-    files.every((f) => (f.startsWith("agents/") || f.startsWith("prompts/")) && !f.split("/").includes("..") && !f.includes("\\"))
+    files.every(
+      (f) =>
+        (f.startsWith("agents/") || f.startsWith("prompts/")) &&
+        !f.split("/").includes("..") &&
+        !f.includes("\\"),
+    )
   );
 }
 
@@ -235,7 +261,10 @@ export function fenceRanges(content: string): Array<{ start: number; end: number
  * we could not see it) are SEPARATE answers on purpose — see
  * `patchFenceViolation`.
  */
-export type FenceSource = { state: "content"; content: string } | { state: "absent" } | { state: "unreadable"; reason: string };
+export type FenceSource =
+  | { state: "content"; content: string }
+  | { state: "absent" }
+  | { state: "unreadable"; reason: string };
 
 /** The production `FenceSource` reader. ENOENT is the only absence; every
  * other errno is an unreadable file and therefore a refusal. */
@@ -245,7 +274,10 @@ export function fenceSourceFrom(repoRoot: string, rel: string): FenceSource {
   } catch (err) {
     const code = (err as NodeJS.ErrnoException | undefined)?.code;
     if (code === "ENOENT") return { state: "absent" };
-    return { state: "unreadable", reason: code ?? (err instanceof Error ? err.message : String(err)) };
+    return {
+      state: "unreadable",
+      reason: code ?? (err instanceof Error ? err.message : String(err)),
+    };
   }
 }
 
@@ -265,7 +297,10 @@ export function fenceSourceFrom(repoRoot: string, rel: string): FenceSource {
  *
  * Returns the refusal message, or null when clean.
  */
-export function patchFenceViolation(patch: string, readFile: (rel: string) => FenceSource): string | null {
+export function patchFenceViolation(
+  patch: string,
+  readFile: (rel: string) => FenceSource,
+): string | null {
   let file: string | null = null;
   let ranges: Array<{ start: number; end: number }> = [];
   let oldLine = 0;
@@ -325,11 +360,20 @@ export function patchFenceViolation(patch: string, readFile: (rel: string) => Fe
  * departure from the original lineage. The note is role-worded
  * ("owner": the accept click is the owner's ratification); legacy notes
  * say "the owner" and stay valid — history is never rewritten. */
-export function recordRatification(repoRoot: string, files: string[], slug: string, today: string): string[] {
+export function recordRatification(
+  repoRoot: string,
+  files: string[],
+  slug: string,
+  today: string,
+): string[] {
   const manifestPath = join(repoRoot, "tests/fixtures/seed-manifest.json");
   const divergencePath = join(repoRoot, "tests/fixtures/ratified-divergence.json");
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { files: Record<string, string> };
-  const divergence = JSON.parse(readFileSync(divergencePath, "utf8")) as { files: Record<string, string[]> };
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+    files: Record<string, string>;
+  };
+  const divergence = JSON.parse(readFileSync(divergencePath, "utf8")) as {
+    files: Record<string, string[]>;
+  };
   const touched: string[] = [];
   for (const rel of files) {
     if (!(rel in manifest.files)) continue; // non-seeded (e.g. pass-intent.md) needs no exemption
@@ -339,7 +383,9 @@ export function recordRatification(repoRoot: string, files: string[], slug: stri
     mkdirSync(dirname(canonical), { recursive: true });
     writeFileSync(canonical, content);
     const notes = divergence.files[rel] ?? (divergence.files[rel] = []);
-    notes.push(`${today} owner: rubric proposal '${slug}' accepted via TUI (the accept click is the ratification)`);
+    notes.push(
+      `${today} owner: rubric proposal '${slug}' accepted via TUI (the accept click is the ratification)`,
+    );
     touched.push(rel);
   }
   if (touched.length > 0) {
@@ -355,13 +401,21 @@ export interface AcceptDeps {
   today: () => string; // YYYY-MM-DD
 }
 
-export async function acceptProposal(deps: AcceptDeps, slug: string): Promise<{ ok: boolean; message: string }> {
+export async function acceptProposal(
+  deps: AcceptDeps,
+  slug: string,
+): Promise<{ ok: boolean; message: string }> {
   if (!validSlug(slug)) return { ok: false, message: `bad slug '${slug}'` };
   const patch = readRubricFile(deps.repoRoot, slug, "changes.patch");
-  if (patch === null || patch.trim().length === 0) return { ok: false, message: `no changes.patch for '${slug}'` };
+  if (patch === null || patch.trim().length === 0)
+    return { ok: false, message: `no changes.patch for '${slug}'` };
   const files = patchTargets(patch);
   const kind = proposalKind(files);
-  if (kind === null) return { ok: false, message: `refused: patch touches non-proposal paths (${files.join(", ") || "none"})` };
+  if (kind === null)
+    return {
+      ok: false,
+      message: `refused: patch touches non-proposal paths (${files.join(", ") || "none"})`,
+    };
   if (kind === "config") {
     const cfgViolation = configPatchViolation(patch);
     if (cfgViolation !== null) return { ok: false, message: cfgViolation };
@@ -371,18 +425,24 @@ export async function acceptProposal(deps: AcceptDeps, slug: string): Promise<{ 
   try {
     await deps.git.run("git", ["apply", "--check", "-"], patch);
   } catch (err) {
-    return { ok: false, message: `patch does not apply cleanly: ${String(err instanceof Error ? err.message : err).slice(0, 200)}` };
+    return {
+      ok: false,
+      message: `patch does not apply cleanly: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`,
+    };
   }
   try {
     await deps.git.run("git", ["apply", "-"], patch);
     // config.toml is never a seeded file, so ratification bookkeeping is a
     // rubric-only concern (recordRatification would no-op anyway; skipping it
     // keeps the config path from ever reading the seed fixtures).
-    const ratified = kind === "rubric" ? recordRatification(deps.repoRoot, files, slug, deps.today()) : [];
+    const ratified =
+      kind === "rubric" ? recordRatification(deps.repoRoot, files, slug, deps.today()) : [];
     const toAdd = [
       ...files,
       ...ratified.map((rel) => `seeds/${rel}`),
-      ...(ratified.length > 0 ? ["tests/fixtures/seed-manifest.json", "tests/fixtures/ratified-divergence.json"] : []),
+      ...(ratified.length > 0
+        ? ["tests/fixtures/seed-manifest.json", "tests/fixtures/ratified-divergence.json"]
+        : []),
     ];
     await deps.git.run("git", ["add", "--", ...toAdd]);
     const subject =
@@ -391,7 +451,10 @@ export async function acceptProposal(deps: AcceptDeps, slug: string): Promise<{ 
         : `rubric: accept '${slug}' — ratified by the owner via TUI`;
     await deps.git.run("git", ["commit", "-m", subject]);
   } catch (err) {
-    return { ok: false, message: `apply/commit failed — repo may need manual attention: ${String(err instanceof Error ? err.message : err).slice(0, 200)}` };
+    return {
+      ok: false,
+      message: `apply/commit failed — repo may need manual attention: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`,
+    };
   }
   let removed = true;
   try {

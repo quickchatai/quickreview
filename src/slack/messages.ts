@@ -136,14 +136,18 @@ export interface VerdictMessageInput {
 
 export function verdictMessage(cfg: Config, m: VerdictMessageInput): string {
   const { glyph, label } = VERDICT_RENDER[m.verdict];
-  const lines = [`${userRef(cfg, m.author)} ${glyph} *${label}* — round ${m.round_no}, ${m.duration_min} min`];
+  const lines = [
+    `${userRef(cfg, m.author)} ${glyph} *${label}* — round ${m.round_no}, ${m.duration_min} min`,
+  ];
   // A missing summary drops the line entirely: filler ("no summary provided")
   // is noise, and an invented one would be a lie about what the round found.
   if (m.summary !== null && m.summary.trim() !== "") lines.push(escapeMrkdwn(m.summary));
   lines.push(`<${m.review_url ?? prUrl(cfg, m.pr)}|review on GitHub>`);
   if (m.verdict === "NEEDS_HUMAN") {
     // No owner ping: there is no park and no decision waiting on a person.
-    lines.push("legacy undecided verdict — landed as tracked: review posted, no approval, the automated review continues");
+    lines.push(
+      "legacy undecided verdict — landed as tracked: review posted, no approval, the automated review continues",
+    );
   }
   return lines.join("\n");
 }
@@ -169,7 +173,11 @@ export function reRoundReasonText(reason: ReRoundReason): string {
 }
 
 /** A later round, in-thread. No lens/diffstat line — the root carries those. */
-export function reRoundMessage(m: { round_no: number; reason: ReRoundReason; head_sha: string }): string {
+export function reRoundMessage(m: {
+  round_no: number;
+  reason: ReRoundReason;
+  head_sha: string;
+}): string {
   return `🔄 round ${m.round_no} started — ${reRoundReasonText(m.reason)} (\`${shortSha(m.head_sha)}\`)`;
 }
 
@@ -182,7 +190,11 @@ export function reRoundMessage(m: { round_no: number; reason: ReRoundReason; hea
  * no other identity's review is ever dismissed (CLAUDE.md hard rule 2) — the
  * older review stays exactly where it is, this line only points at the newest.
  */
-export function supersededMessage(m: { old_round_no: number; new_round_no: number; head_sha: string }): string {
+export function supersededMessage(m: {
+  old_round_no: number;
+  new_round_no: number;
+  head_sha: string;
+}): string {
   return (
     `♻️ the round-${m.old_round_no} review is superseded by round ${m.new_round_no} ` +
     `(\`${shortSha(m.head_sha)}\`) — read the newest one`
@@ -196,7 +208,14 @@ export function supersededMessage(m: { old_round_no: number; new_round_no: numbe
 export type CauseMessageInput =
   | { cause: "round.overdue"; pr: number; round_no: number; deadline_min: number }
   | { cause: "round.malformed_verdict"; pr: number; round_no: number }
-  | { cause: "pr.not_picked_up"; pr: number; age_min: number; queue_depth: number; running: number; max_concurrent: number }
+  | {
+      cause: "pr.not_picked_up";
+      pr: number;
+      age_min: number;
+      queue_depth: number;
+      running: number;
+      max_concurrent: number;
+    }
   | { cause: "daemon.up"; version: string; gap: string; last_heartbeat: string }
   | { cause: "daemon.stopping"; reason: string }
   | { cause: "slack.cap_reached"; cap: number }

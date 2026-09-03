@@ -34,12 +34,30 @@ describe("validateCommand — whitelist", () => {
       { command: "rerun-round", pr: 12 },
       { command: "restart-session", pr: 12 },
       { command: "restart-session", pr: "overseer" },
-      { command: "resolve-terminal-failure", pr: 5408, incident_id: "review-failure:cmd-5408", command_id: "cmd-5408", head_sha: "abc123" },
-      { command: "resolve-terminal-failure", pr: 999902, incident_id: "review-failure:synthetic", command_id: "synthetic", head_sha: "" },
+      {
+        command: "resolve-terminal-failure",
+        pr: 5408,
+        incident_id: "review-failure:cmd-5408",
+        command_id: "cmd-5408",
+        head_sha: "abc123",
+      },
+      {
+        command: "resolve-terminal-failure",
+        pr: 999902,
+        incident_id: "review-failure:synthetic",
+        command_id: "synthetic",
+        head_sha: "",
+      },
       { command: "pause-pr", pr: 12, reason: "same-head staleness churn" },
       { command: "resume-pr", pr: 12 },
       { command: "flag-owner", message: "webhook signature failures spiking" },
-      { command: "file-improvement-pr", branch: "wip/fix-docs", title: "t", body: "b", slug: "fix-docs" },
+      {
+        command: "file-improvement-pr",
+        branch: "wip/fix-docs",
+        title: "t",
+        body: "b",
+        slug: "fix-docs",
+      },
       { command: "file-issue", title: "t", body: "b" },
       { command: "slack_reply", thread: "1712345678.123456", text: "on it" },
       { command: "drain", on: true },
@@ -55,9 +73,13 @@ describe("validateCommand — whitelist", () => {
 
   it("slack_reply: strict shape, ts format, and no channel field", () => {
     expect(validateCommand({ command: "slack_reply", thread: "1712345678.123456" }).ok).toBe(false);
-    expect(validateCommand({ command: "slack_reply", thread: "1712345678.123456", text: "  " }).ok).toBe(false);
+    expect(
+      validateCommand({ command: "slack_reply", thread: "1712345678.123456", text: "  " }).ok,
+    ).toBe(false);
     expect(validateCommand({ command: "slack_reply", thread: "nope", text: "hi" }).ok).toBe(false);
-    expect(validateCommand({ command: "slack_reply", thread: "1712345678.12345", text: "hi" }).ok).toBe(false);
+    expect(
+      validateCommand({ command: "slack_reply", thread: "1712345678.12345", text: "hi" }).ok,
+    ).toBe(false);
     // A channel can never be named by the overseer — the daemon binds it.
     const withChannel = validateCommand({
       command: "slack_reply",
@@ -90,24 +112,78 @@ describe("validateCommand — whitelist", () => {
     expect(validateCommand({ command: "rerun-round", pr: "12" }).ok).toBe(false);
     expect(validateCommand({ command: "rerun-round", pr: -3 }).ok).toBe(false);
     expect(validateCommand({ command: "restart-session", pr: "everything" }).ok).toBe(false);
-    expect(validateCommand({ command: "resolve-terminal-failure", pr: 1, incident_id: "wrong", command_id: "cmd", head_sha: "abc" }).ok).toBe(false);
-    expect(validateCommand({ command: "resolve-terminal-failure", pr: 1, incident_id: "review-failure:cmd", command_id: "cmd", head_sha: 42 }).ok).toBe(false);
-    expect(validateCommand({ command: "resolve-terminal-failure", pr: 1, incident_id: "review-failure:cmd", command_id: "cmd", head_sha: "abc", force: true }).ok).toBe(false);
-    expect(validateCommand({ command: "mark-escalation-worthy", pr: 1, reason: "x" }).ok).toBe(false); // retired
+    expect(
+      validateCommand({
+        command: "resolve-terminal-failure",
+        pr: 1,
+        incident_id: "wrong",
+        command_id: "cmd",
+        head_sha: "abc",
+      }).ok,
+    ).toBe(false);
+    expect(
+      validateCommand({
+        command: "resolve-terminal-failure",
+        pr: 1,
+        incident_id: "review-failure:cmd",
+        command_id: "cmd",
+        head_sha: 42,
+      }).ok,
+    ).toBe(false);
+    expect(
+      validateCommand({
+        command: "resolve-terminal-failure",
+        pr: 1,
+        incident_id: "review-failure:cmd",
+        command_id: "cmd",
+        head_sha: "abc",
+        force: true,
+      }).ok,
+    ).toBe(false);
+    expect(validateCommand({ command: "mark-escalation-worthy", pr: 1, reason: "x" }).ok).toBe(
+      false,
+    ); // retired
     expect(validateCommand({ command: "pause-pr", pr: 1 }).ok).toBe(false); // reason required
     expect(validateCommand({ command: "resume-pr", pr: 1, reason: "x" }).ok).toBe(false); // unknown field
     expect(validateCommand({ command: "flag-owner", reason: "wrong field name" }).ok).toBe(false);
-    expect(validateCommand({ command: "file-improvement-pr", branch: "b", title: "t", body: "y", slug: "Bad Slug" }).ok).toBe(false);
+    expect(
+      validateCommand({
+        command: "file-improvement-pr",
+        branch: "b",
+        title: "t",
+        body: "y",
+        slug: "Bad Slug",
+      }).ok,
+    ).toBe(false);
     // `branch` is written by the overseer session and handed to git: only a
     // plain local branch name passes — an option, a force refspec, a refspec
     // or a revision expression is refused at the boundary, before git.
-    for (const branch of ["--quiet", "+wip/x", "wip/x:refs/heads/main", "a..b", "wip docs", "a~1", "@{-1}", ".x"]) {
-      const bad = validateCommand({ command: "file-improvement-pr", branch, title: "t", body: "y", slug: "ok" });
+    for (const branch of [
+      "--quiet",
+      "+wip/x",
+      "wip/x:refs/heads/main",
+      "a..b",
+      "wip docs",
+      "a~1",
+      "@{-1}",
+      ".x",
+    ]) {
+      const bad = validateCommand({
+        command: "file-improvement-pr",
+        branch,
+        title: "t",
+        body: "y",
+        slug: "ok",
+      });
       if (bad.ok) throw new Error(`branch ${JSON.stringify(branch)} must be refused`);
       expect(bad.reason, branch).toMatch(/'branch' must be a plain local branch name/);
     }
-    expect(validateCommand({ command: "retry-thread-decision", comment_id: "5001" }).ok).toBe(false);
-    expect(validateCommand({ command: "retry-thread-decision", comment_id: 5001, force: true }).ok).toBe(false);
+    expect(validateCommand({ command: "retry-thread-decision", comment_id: "5001" }).ok).toBe(
+      false,
+    );
+    expect(
+      validateCommand({ command: "retry-thread-decision", comment_id: 5001, force: true }).ok,
+    ).toBe(false);
     expect(validateCommand("nope").ok).toBe(false);
     // A session on an older prompt can still emit the retired command, so
     // the rejection must say WHY, not just "unknown".
@@ -133,7 +209,12 @@ describe("executeCommand", () => {
     expect(deps.rerunRound).toHaveBeenCalledWith(41);
     await executeCommand({ command: "restart-session", pr: "overseer" }, deps);
     expect(deps.restartSession).toHaveBeenCalledWith("overseer");
-    const terminal = { pr: 5408, incident_id: "review-failure:cmd-5408", command_id: "cmd-5408", head_sha: "abc123" };
+    const terminal = {
+      pr: 5408,
+      incident_id: "review-failure:cmd-5408",
+      command_id: "cmd-5408",
+      head_sha: "abc123",
+    };
     await executeCommand({ command: "resolve-terminal-failure", ...terminal }, deps);
     expect(deps.resolveTerminalFailure).toHaveBeenCalledWith(terminal);
     await executeCommand({ command: "pause-pr", pr: 5266, reason: "same-head churn" }, deps);
@@ -146,7 +227,12 @@ describe("executeCommand", () => {
       { command: "file-improvement-pr", branch: "wip/x", title: "t", body: "b", slug: "x" },
       deps,
     );
-    expect(deps.fileImprovementPr).toHaveBeenCalledWith({ branch: "wip/x", title: "t", body: "b", slug: "x" });
+    expect(deps.fileImprovementPr).toHaveBeenCalledWith({
+      branch: "wip/x",
+      title: "t",
+      body: "b",
+      slug: "x",
+    });
     await executeCommand({ command: "file-issue", title: "t", body: "b" }, deps);
     expect(deps.fileIssue).toHaveBeenCalledWith({ title: "t", body: "b" });
     await executeCommand(
@@ -154,21 +240,30 @@ describe("executeCommand", () => {
       deps,
       { file: "c9", issuer: "session" },
     );
-    expect(deps.slackReply).toHaveBeenCalledWith({ thread: "1712345678.123456", text: "on it", file: "c9" });
+    expect(deps.slackReply).toHaveBeenCalledWith({
+      thread: "1712345678.123456",
+      text: "on it",
+      file: "c9",
+    });
     await executeCommand({ command: "retry-thread-decision", comment_id: 5001 }, deps);
     expect(deps.retryThreadDecision).toHaveBeenCalledWith(5001);
   });
 
   it("rejects slack_reply when Slack is not wired", async () => {
     const { slackReply: _drop, ...deps } = makeDeps();
-    const out = await executeCommand({ command: "slack_reply", thread: "1712345678.123456", text: "x" }, deps);
+    const out = await executeCommand(
+      { command: "slack_reply", thread: "1712345678.123456", text: "x" },
+      deps,
+    );
     expect(out).toMatchObject({ ok: false });
     expect(out.reason).toContain("not wired");
   });
 
   it("treats a void return as success", async () => {
     const deps = makeDeps();
-    expect(await executeCommand({ command: "flag-owner", message: "m" }, deps)).toEqual({ ok: true });
+    expect(await executeCommand({ command: "flag-owner", message: "m" }, deps)).toEqual({
+      ok: true,
+    });
   });
 });
 
@@ -188,10 +283,18 @@ describe("CommandWatcher", () => {
 
   const cmdDir = (): string => join(dir, "commands");
   const slackDir = (): string => join(dir, "commands", "slack");
-  const result = (name: string): any => JSON.parse(readFileSync(join(cmdDir(), "results", `${name}.result.json`), "utf8"));
+  const result = (name: string): any =>
+    JSON.parse(readFileSync(join(cmdDir(), "results", `${name}.result.json`), "utf8"));
 
   function watcher(deps: ReturnType<typeof makeDeps>, log: string[] = []): CommandWatcher {
-    return new CommandWatcher({ dir: cmdDir(), deps, store, log: (l) => log.push(l), parseAttempts: 2, parseRetryMs: 1 });
+    return new CommandWatcher({
+      dir: cmdDir(),
+      deps,
+      store,
+      log: (l) => log.push(l),
+      parseAttempts: 2,
+      parseRetryMs: 1,
+    });
   }
 
   it("startup sweep executes a valid command, writes an ok result and archives the file", async () => {
@@ -199,10 +302,19 @@ describe("CommandWatcher", () => {
     const deps = makeDeps();
     await watcher(deps).sweep();
     expect(deps.rerunRound).toHaveBeenCalledWith(5);
-    expect(result("c1")).toMatchObject({ ok: true, redispatched: true, command: "rerun-round", file: "c1.json" });
+    expect(result("c1")).toMatchObject({
+      ok: true,
+      redispatched: true,
+      command: "rerun-round",
+      file: "c1.json",
+    });
     expect(existsSync(join(cmdDir(), "c1.json"))).toBe(false);
     expect(existsSync(join(cmdDir(), "processed", "c1.json"))).toBe(true);
-    expect(store.eventsOn(new Date().toISOString().slice(0, 10)).some((e) => e.kind === "command_executed")).toBe(true);
+    expect(
+      store
+        .eventsOn(new Date().toISOString().slice(0, 10))
+        .some((e) => e.kind === "command_executed"),
+    ).toBe(true);
   });
 
   it("rejects a non-whitelisted command loudly with a result file and event", async () => {
@@ -215,13 +327,18 @@ describe("CommandWatcher", () => {
     expect(r.reason).toContain("not whitelisted");
     expect(r.command).toBe("merge-pr");
     expect(log.join("\n")).toContain("REJECTED");
-    const rejected = store.eventsOn(new Date().toISOString().slice(0, 10)).filter((e) => e.kind === "command_rejected");
+    const rejected = store
+      .eventsOn(new Date().toISOString().slice(0, 10))
+      .filter((e) => e.kind === "command_rejected");
     expect(rejected).toHaveLength(1);
     expect(Object.values(deps).every((fn) => fn.mock.calls.length === 0)).toBe(true);
   });
 
   it("rejects unknown fields", async () => {
-    writeFileSync(join(cmdDir(), "extra.json"), JSON.stringify({ command: "file-issue", title: "t", body: "b", assignee: "x" }));
+    writeFileSync(
+      join(cmdDir(), "extra.json"),
+      JSON.stringify({ command: "file-issue", title: "t", body: "b", assignee: "x" }),
+    );
     const deps = makeDeps();
     await watcher(deps).sweep();
     expect(result("extra")).toMatchObject({ ok: false });
@@ -234,7 +351,14 @@ describe("CommandWatcher", () => {
     writeFileSync(path, '{"command": "rerun-rou');
     const deps = makeDeps();
     const log: string[] = [];
-    const w = new CommandWatcher({ dir: cmdDir(), deps, store, log: (l) => log.push(l), parseAttempts: 3, parseRetryMs: 5 });
+    const w = new CommandWatcher({
+      dir: cmdDir(),
+      deps,
+      store,
+      log: (l) => log.push(l),
+      parseAttempts: 3,
+      parseRetryMs: 5,
+    });
     // Complete the write while the watcher is retrying.
     setTimeout(() => writeFileSync(path, JSON.stringify({ command: "rerun-round", pr: 8 })), 6);
     await w.handleFile(path);
@@ -252,16 +376,32 @@ describe("CommandWatcher", () => {
   it("surfaces a handler rejection reason in the result file", async () => {
     writeFileSync(
       join(cmdDir(), "cap.json"),
-      JSON.stringify({ command: "file-improvement-pr", branch: "wip/x", title: "t", body: "b", slug: "x" }),
+      JSON.stringify({
+        command: "file-improvement-pr",
+        branch: "wip/x",
+        title: "t",
+        body: "b",
+        slug: "x",
+      }),
     );
     const deps = makeDeps();
-    deps.fileImprovementPr = vi.fn(async () => ({ ok: false, reason: "51 changed lines > cap 50" })) as any;
+    deps.fileImprovementPr = vi.fn(async () => ({
+      ok: false,
+      reason: "51 changed lines > cap 50",
+    })) as any;
     await watcher(deps).sweep();
-    expect(result("cap")).toMatchObject({ ok: false, reason: "51 changed lines > cap 50", command: "file-improvement-pr" });
+    expect(result("cap")).toMatchObject({
+      ok: false,
+      reason: "51 changed lines > cap 50",
+      command: "file-improvement-pr",
+    });
   });
 
   it("catches a throwing handler", async () => {
-    writeFileSync(join(cmdDir(), "boom.json"), JSON.stringify({ command: "flag-owner", message: "m" }));
+    writeFileSync(
+      join(cmdDir(), "boom.json"),
+      JSON.stringify({ command: "flag-owner", message: "m" }),
+    );
     const deps = makeDeps();
     deps.flagOwner = vi.fn(async () => {
       throw new Error("tmux gone");
@@ -274,7 +414,10 @@ describe("CommandWatcher", () => {
     const deps = makeDeps();
     const w = watcher(deps);
     await w.start();
-    writeFileSync(join(cmdDir(), "live.json"), JSON.stringify({ command: "flag-owner", message: "hello" }));
+    writeFileSync(
+      join(cmdDir(), "live.json"),
+      JSON.stringify({ command: "flag-owner", message: "hello" }),
+    );
     for (let i = 0; i < 50 && deps.flagOwner.mock.calls.length === 0; i++) {
       await new Promise((r) => setTimeout(r, 20));
     }
@@ -315,7 +458,11 @@ describe("CommandWatcher", () => {
   const slackResult = (name: string): any =>
     JSON.parse(readFileSync(join(slackDir(), "results", `${name}.result.json`), "utf8"));
 
-  async function runSlack(deps: ReturnType<typeof makeDeps>, cmd: unknown, o: OriginRecord | null): Promise<any> {
+  async function runSlack(
+    deps: ReturnType<typeof makeDeps>,
+    cmd: unknown,
+    o: OriginRecord | null,
+  ): Promise<any> {
     mkdirSync(slackDir(), { recursive: true });
     writeFileSync(join(slackDir(), "t.json"), JSON.stringify(cmd));
     await tierWatcher(deps, "slack", () => o).sweep();
@@ -329,7 +476,13 @@ describe("CommandWatcher", () => {
       { command: "pause-pr", pr: 1234, reason: "r" },
       { command: "resume-pr", pr: 1234 },
       { command: "restart-session", pr: "overseer" },
-      { command: "resolve-terminal-failure", pr: 1234, incident_id: "review-failure:cmd", command_id: "cmd", head_sha: "abc" },
+      {
+        command: "resolve-terminal-failure",
+        pr: 1234,
+        incident_id: "review-failure:cmd",
+        command_id: "cmd",
+        head_sha: "abc",
+      },
       { command: "file-improvement-pr", branch: "wip/x", title: "t", body: "b", slug: "x" },
       { command: "file-issue", title: "t", body: "b" },
     ]) {
@@ -346,7 +499,15 @@ describe("CommandWatcher", () => {
     const d1 = makeDeps();
     expect((await runSlack(d1, { command: "flag-owner", message: "help" }, anyone)).ok).toBe(true);
     const d2 = makeDeps();
-    expect((await runSlack(d2, { command: "slack_reply", thread: "1712345678.123456", text: "hi" }, anyone)).ok).toBe(true);
+    expect(
+      (
+        await runSlack(
+          d2,
+          { command: "slack_reply", thread: "1712345678.123456", text: "hi" },
+          anyone,
+        )
+      ).ok,
+    ).toBe(true);
   });
 
   it("tier author acts on an own PR and is refused on someone else's", async () => {
@@ -365,7 +526,13 @@ describe("CommandWatcher", () => {
     const alice = origin({ tier: "author", authorized_prs: [1234] });
     for (const cmd of [
       { command: "restart-session", pr: 1234 },
-      { command: "resolve-terminal-failure", pr: 1234, incident_id: "review-failure:cmd", command_id: "cmd", head_sha: "abc" },
+      {
+        command: "resolve-terminal-failure",
+        pr: 1234,
+        incident_id: "review-failure:cmd",
+        command_id: "cmd",
+        head_sha: "abc",
+      },
       { command: "file-improvement-pr", branch: "wip/x", title: "t", body: "b", slug: "x" },
     ]) {
       const r = await runSlack(makeDeps(), cmd, alice);
@@ -408,7 +575,13 @@ describe("CommandWatcher", () => {
     for (const cmd of [
       { command: "rerun-round", pr: 42 },
       { command: "restart-session", pr: "overseer" },
-      { command: "resolve-terminal-failure", pr: 5408, incident_id: "review-failure:cmd", command_id: "cmd", head_sha: "abc" },
+      {
+        command: "resolve-terminal-failure",
+        pr: 5408,
+        incident_id: "review-failure:cmd",
+        command_id: "cmd",
+        head_sha: "abc",
+      },
       { command: "file-issue", title: "t", body: "b" },
     ]) {
       const r = await runSlack(makeDeps(), cmd, m);
@@ -422,13 +595,18 @@ describe("CommandWatcher", () => {
     expect(r.ok).toBe(false);
     expect(r.reason).toMatch(/^tier: no live Slack origin/);
     expect(deps.rerunRound).not.toHaveBeenCalled();
-    const rejected = store.eventsOn(new Date().toISOString().slice(0, 10)).filter((e) => e.kind === "command_rejected");
+    const rejected = store
+      .eventsOn(new Date().toISOString().slice(0, 10))
+      .filter((e) => e.kind === "command_rejected");
     expect(rejected).toHaveLength(1);
   });
 
   it("legacy commands/ keeps full autonomy when no Slack turn is live", async () => {
     const deps = makeDeps();
-    writeFileSync(join(cmdDir(), "eod.json"), JSON.stringify({ command: "file-issue", title: "t", body: "b" }));
+    writeFileSync(
+      join(cmdDir(), "eod.json"),
+      JSON.stringify({ command: "file-issue", title: "t", body: "b" }),
+    );
     await tierWatcher(deps, "local", () => null).sweep();
     expect(result("eod")).toMatchObject({ ok: true });
     expect(deps.fileIssue).toHaveBeenCalled();
@@ -450,7 +628,10 @@ describe("CommandWatcher", () => {
 
   it("legacy commands/ refuses mid-turn for a non-owner Slack origin (the belt)", async () => {
     const deps = makeDeps();
-    writeFileSync(join(cmdDir(), "sneak.json"), JSON.stringify({ command: "file-issue", title: "t", body: "b" }));
+    writeFileSync(
+      join(cmdDir(), "sneak.json"),
+      JSON.stringify({ command: "file-issue", title: "t", body: "b" }),
+    );
     await tierWatcher(deps, "local", () => origin({ tier: "author" })).sweep();
     const r = result("sneak");
     expect(r.ok).toBe(false);
@@ -464,8 +645,14 @@ describe("CommandWatcher", () => {
     // The gate for the legacy dir reads `latestAny()`: age is irrelevant, cause
     // is everything. A turn that simply ran past the 15-minute TTL (channel text
     // can ask for exactly that) must not gain owner rights.
-    const expired = origin({ tier: "anyone", expires_at: new Date(Date.now() - 60 * 60_000).toISOString() });
-    writeFileSync(join(cmdDir(), "patient.json"), JSON.stringify({ command: "file-issue", title: "t", body: "b" }));
+    const expired = origin({
+      tier: "anyone",
+      expires_at: new Date(Date.now() - 60 * 60_000).toISOString(),
+    });
+    writeFileSync(
+      join(cmdDir(), "patient.json"),
+      JSON.stringify({ command: "file-issue", title: "t", body: "b" }),
+    );
     await tierWatcher(deps, "local", () => expired).sweep();
     const r = result("patient");
     expect(r.ok).toBe(false);
@@ -475,8 +662,16 @@ describe("CommandWatcher", () => {
 
   it("a daemon wake (source: local) clears the belt — the EOD pipeline cannot be DoSed", async () => {
     const deps = makeDeps();
-    const local = origin({ source: "local", event_id: "local:eod-sweep", slack_user: "", tier: "system" });
-    writeFileSync(join(cmdDir(), "eod-issue.json"), JSON.stringify({ command: "file-issue", title: "t", body: "b" }));
+    const local = origin({
+      source: "local",
+      event_id: "local:eod-sweep",
+      slack_user: "",
+      tier: "system",
+    });
+    writeFileSync(
+      join(cmdDir(), "eod-issue.json"),
+      JSON.stringify({ command: "file-issue", title: "t", body: "b" }),
+    );
     await tierWatcher(deps, "local", () => local).sweep();
     expect(result("eod-issue")).toMatchObject({ ok: true });
     expect(deps.fileIssue).toHaveBeenCalled();
@@ -498,7 +693,11 @@ describe("CommandWatcher", () => {
       JSON.stringify({ command: "slack_reply", thread: "1712345678.123456", text: "hi" }),
     );
     await tierWatcher(deps, "slack", () => origin()).sweep();
-    expect(deps.slackReply).toHaveBeenCalledWith({ thread: "1712345678.123456", text: "hi", file: "reply-01" });
+    expect(deps.slackReply).toHaveBeenCalledWith({
+      thread: "1712345678.123456",
+      text: "hi",
+      file: "reply-01",
+    });
   });
 });
 
@@ -515,7 +714,13 @@ describe("authorizeCommand (pure)", () => {
   it("a null origin is a local turn — full (system-grade) autonomy", () => {
     const cmds: Command[] = [
       { command: "restart-session", pr: "overseer" },
-      { command: "resolve-terminal-failure", pr: 999902, incident_id: "review-failure:cmd", command_id: "cmd", head_sha: "" },
+      {
+        command: "resolve-terminal-failure",
+        pr: 999902,
+        incident_id: "review-failure:cmd",
+        command_id: "cmd",
+        head_sha: "",
+      },
       { command: "file-issue", title: "t", body: "b" },
     ];
     for (const c of cmds) expect(authorizeCommand(c, null)).toEqual({ ok: true });
@@ -541,8 +746,11 @@ describe("authorizeCommand (pure)", () => {
 
   it("terminal cleanup accepts only stamped owner/system tiers", () => {
     const command: Command = {
-      command: "resolve-terminal-failure", pr: 5408,
-      incident_id: "review-failure:cmd", command_id: "cmd", head_sha: "abc",
+      command: "resolve-terminal-failure",
+      pr: 5408,
+      incident_id: "review-failure:cmd",
+      command_id: "cmd",
+      head_sha: "abc",
     };
     expect(authorizeCommand(command, rec("owner"))).toEqual({ ok: true });
     expect(authorizeCommand(command, rec("system"))).toEqual({ ok: true });
@@ -551,7 +759,11 @@ describe("authorizeCommand (pure)", () => {
   });
 
   it("restart-session on 'overseer' is owner-only and needs no PR", () => {
-    expect(authorizeCommand({ command: "restart-session", pr: "overseer" }, rec("owner")).ok).toBe(true);
-    expect(authorizeCommand({ command: "restart-session", pr: "overseer" }, rec("author", [1])).ok).toBe(false);
+    expect(authorizeCommand({ command: "restart-session", pr: "overseer" }, rec("owner")).ok).toBe(
+      true,
+    );
+    expect(
+      authorizeCommand({ command: "restart-session", pr: "overseer" }, rec("author", [1])).ok,
+    ).toBe(false);
   });
 });

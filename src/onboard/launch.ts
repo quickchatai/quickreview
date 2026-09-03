@@ -19,9 +19,14 @@ export interface PiPin {
  * public clone, where config.toml does not (the wizard writes it later).
  * config.toml [pi] stays the preferred source when it loads (cmdOnboard tries
  * it first); both mirror the same pinned version by rule 7's discipline. */
-export function piPinFromPackageJson(root: string, readFile: (p: string) => string = (p) => readFileSync(p, "utf8")): PiPin | null {
+export function piPinFromPackageJson(
+  root: string,
+  readFile: (p: string) => string = (p) => readFileSync(p, "utf8"),
+): PiPin | null {
   try {
-    const pkg = JSON.parse(readFile(join(root, "package.json"))) as { pi?: { package?: unknown; version?: unknown } };
+    const pkg = JSON.parse(readFile(join(root, "package.json"))) as {
+      pi?: { package?: unknown; version?: unknown };
+    };
     const pi = pkg.pi;
     if (pi && typeof pi.package === "string" && typeof pi.version === "string") {
       return { package: pi.package, version: pi.version };
@@ -95,12 +100,16 @@ export interface OnboardRunDeps {
  */
 export async function runOnboard(deps: OnboardRunDeps): Promise<number> {
   const argv = onboardingPiArgv(deps.pin, deps.root);
-  deps.log(`onboarding: launching pi ${deps.pin.package}@${deps.pin.version} via npx (first run downloads it — give it a moment)`);
+  deps.log(
+    `onboarding: launching pi ${deps.pin.package}@${deps.pin.version} via npx (first run downloads it — give it a moment)`,
+  );
   const code = await deps.spawn(argv[0]!, argv.slice(1));
   if (deps.isComplete()) {
     deps.log("onboarding: checklist verified complete — opening the TUI.");
     return deps.spawn(deps.nodeBin ?? process.execPath, [deps.cliPath, "tui"]);
   }
-  deps.log("onboarding: not finished yet. Run `qcr onboard` again to resume — completed steps are re-verified, not repeated.");
+  deps.log(
+    "onboarding: not finished yet. Run `qcr onboard` again to resume — completed steps are re-verified, not repeated.",
+  );
   return code;
 }

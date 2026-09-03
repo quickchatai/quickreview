@@ -10,7 +10,9 @@ import type { RoundRecoveryDisposition, SessionHooks } from "../src/types.js";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const baseCfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
+const baseCfg: Config = parseConfig(
+  readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
+);
 
 let root: string;
 let verdictDir: string;
@@ -30,15 +32,17 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-function seedRoundCommand(opts: {
-  id?: string;
-  pr?: number;
-  status?: "pending" | "running" | "acked";
-  started?: boolean;
-  attempt?: number;
-  nextCheckAt?: string;
-  lenses?: string[];
-} = {}) {
+function seedRoundCommand(
+  opts: {
+    id?: string;
+    pr?: number;
+    status?: "pending" | "running" | "acked";
+    started?: boolean;
+    attempt?: number;
+    nextCheckAt?: string;
+    lenses?: string[];
+  } = {},
+) {
   const id = opts.id ?? "cmd-1";
   const pr = opts.pr ?? 5408;
   store.upsertPr({
@@ -51,7 +55,12 @@ function seedRoundCommand(opts: {
     stale_recheck: 0,
     migration_gate: 0,
   });
-  const roundId = store.startRound(pr, "first", opts.lenses ?? ["pass-baseline"], baseCfg.daemon.round_deadline_min);
+  const roundId = store.startRound(
+    pr,
+    "first",
+    opts.lenses ?? ["pass-baseline"],
+    baseCfg.daemon.round_deadline_min,
+  );
   store.stampPostingKey(roundId, `v1:${pr}:1:abc123`);
   const round = store.roundsFor(pr)[0]!;
   store.createSessionCommand({
@@ -68,22 +77,29 @@ function seedRoundCommand(opts: {
   if (opts.status === "running" || opts.status === "acked") {
     store.claimSessionCommand(id, "bridge-1", opts.nextCheckAt ?? "2026-08-27T20:04:00.000Z");
     if (opts.started || opts.status === "acked") {
-      store.markSessionCommandStarted(id, "bridge-1", opts.nextCheckAt ?? "2026-08-27T20:04:00.000Z");
+      store.markSessionCommandStarted(
+        id,
+        "bridge-1",
+        opts.nextCheckAt ?? "2026-08-27T20:04:00.000Z",
+      );
     }
     if (opts.status === "acked") store.finishSessionCommand(id, "bridge-1", "acked");
   }
-  if (opts.attempt !== undefined) store.db.prepare("UPDATE session_commands SET attempt=? WHERE id=?").run(opts.attempt, id);
+  if (opts.attempt !== undefined)
+    store.db.prepare("UPDATE session_commands SET attempt=? WHERE id=?").run(opts.attempt, id);
   return { id, pr, roundId, round };
 }
 
-function seedWakeCommand(opts: {
-  id?: string;
-  pr?: number;
-  status?: "pending" | "running" | "failed";
-  startedAt?: string;
-  attempt?: number;
-  nextCheckAt?: string;
-} = {}) {
+function seedWakeCommand(
+  opts: {
+    id?: string;
+    pr?: number;
+    status?: "pending" | "running" | "failed";
+    startedAt?: string;
+    attempt?: number;
+    nextCheckAt?: string;
+  } = {},
+) {
   const id = opts.id ?? "wake-1";
   const pr = opts.pr ?? 5454;
   store.upsertPr({
@@ -110,12 +126,19 @@ function seedWakeCommand(opts: {
   if (opts.status === "running" || opts.status === "failed") {
     store.claimSessionCommand(id, "bridge-1", opts.nextCheckAt ?? "2026-08-27T19:45:00.000Z");
     if (opts.startedAt) {
-      store.markSessionCommandStarted(id, "bridge-1", opts.nextCheckAt ?? "2026-08-27T19:45:00.000Z");
-      store.db.prepare("UPDATE session_commands SET started_at=? WHERE id=?").run(opts.startedAt, id);
+      store.markSessionCommandStarted(
+        id,
+        "bridge-1",
+        opts.nextCheckAt ?? "2026-08-27T19:45:00.000Z",
+      );
+      store.db
+        .prepare("UPDATE session_commands SET started_at=? WHERE id=?")
+        .run(opts.startedAt, id);
     }
     if (opts.status === "failed") store.failActiveSessionCommand(id, "pre-fix failed wake");
   }
-  if (opts.attempt !== undefined) store.db.prepare("UPDATE session_commands SET attempt=? WHERE id=?").run(opts.attempt, id);
+  if (opts.attempt !== undefined)
+    store.db.prepare("UPDATE session_commands SET attempt=? WHERE id=?").run(opts.attempt, id);
   return { id, pr };
 }
 
@@ -140,7 +163,9 @@ function supervisor(
   h: SessionHooks,
   // Typed by the REAL callback shape and disposition union, not inferred from
   // the default's one literal.
-  onRoundFailure: ReturnType<typeof vi.fn<RoundFailureHandler>> = vi.fn<RoundFailureHandler>(async () => "requeued"),
+  onRoundFailure: ReturnType<typeof vi.fn<RoundFailureHandler>> = vi.fn<RoundFailureHandler>(
+    async () => "requeued",
+  ),
   cfg = baseCfg,
   progress?: () => import("../src/round-progress.js").RoundProgressSnapshot | undefined,
 ) {
@@ -173,10 +198,18 @@ describe("bounded round-stage supervision", () => {
 
     await supervisor(hooks({ retrySessionCommand: retry })).supervisor.scan();
 
-    expect(retry).toHaveBeenCalledWith(id, expect.stringContaining("fixed 45-minute running bound"));
+    expect(retry).toHaveBeenCalledWith(
+      id,
+      expect.stringContaining("fixed 45-minute running bound"),
+    );
     expect(store.getSessionCommand(id)).toMatchObject({ status: "running", attempt: 2 });
-    const recovery = store.recentEvents(20).find((event) => event.kind === "session_command_nonround_recovery");
-    expect(JSON.parse(recovery!.payload!)).toMatchObject({ recovery_attempt: 1, delivery_attempt: 2 });
+    const recovery = store
+      .recentEvents(20)
+      .find((event) => event.kind === "session_command_nonround_recovery");
+    expect(JSON.parse(recovery!.payload!)).toMatchObject({
+      recovery_attempt: 1,
+      delivery_attempt: 2,
+    });
     expect(store.openReviewFailure(pr)).toBeUndefined();
   });
 
@@ -200,7 +233,10 @@ describe("bounded round-stage supervision", () => {
     expect(kill).not.toHaveBeenCalled();
     expect(store.getSessionCommand(id)).toMatchObject({ status: "failed", recovery_attempts: 0 });
     expect(store.openReviewFailure(pr)).toBeUndefined();
-    expect(s.health()).toMatchObject({ healthy: false, last_error: expect.stringContaining("retry hook unavailable") });
+    expect(s.health()).toMatchObject({
+      healthy: false,
+      last_error: expect.stringContaining("retry hook unavailable"),
+    });
   });
 
   it("stops automatic non-round recovery after finite failed process births", async () => {
@@ -215,7 +251,11 @@ describe("bounded round-stage supervision", () => {
       ...baseCfg,
       daemon: { ...baseCfg.daemon, session_command_unknown_max_checks: 0 },
     };
-    const s = supervisor(hooks({ retrySessionCommand: retry, killSession: kill }), undefined, immediateEvidenceCfg).supervisor;
+    const s = supervisor(
+      hooks({ retrySessionCommand: retry, killSession: kill }),
+      undefined,
+      immediateEvidenceCfg,
+    ).supervisor;
 
     await expect(s.scan()).rejects.toThrow(/recovery failed before replay/);
     await expect(s.scan()).rejects.toThrow(/recovery failed before replay/);
@@ -237,10 +277,14 @@ describe("bounded round-stage supervision", () => {
 
   it("reproduces #5454: attempt-zero rebirths fail precisely and keep four wakes plus queued work blocked", async () => {
     const { id, pr } = seedWakeCommand({ status: "failed", attempt: 0 });
-    for (let n = 1; n <= 4; n++) store.holdWake(pr, `# Author reply — PR #${pr}\n\nreply ${n}`, "author_reply");
+    for (let n = 1; n <= 4; n++)
+      store.holdWake(pr, `# Author reply — PR #${pr}\n\nreply ${n}`, "author_reply");
     const retry = vi.fn(async () => {
       store.retrySessionCommandAfterFence(id, 0, clock.toISOString());
-      store.noteSessionCommandRecoveryFailure(id, "timed out waiting for matching bridge readiness before reservation");
+      store.noteSessionCommandRecoveryFailure(
+        id,
+        "timed out waiting for matching bridge readiness before reservation",
+      );
       return "retry_failed" as const;
     });
     const kill = vi.fn(async () => {});
@@ -265,7 +309,11 @@ describe("bounded round-stage supervision", () => {
 
     expect(retry).toHaveBeenCalledTimes(2);
     expect(kill).toHaveBeenCalledWith(pr);
-    expect(store.getSessionCommand(id)).toMatchObject({ status: "failed", attempt: 0, recovery_attempts: 2 });
+    expect(store.getSessionCommand(id)).toMatchObject({
+      status: "failed",
+      attempt: 0,
+      recovery_attempts: 2,
+    });
     expect(store.heldWakes(pr)).toHaveLength(4);
     expect(store.getPr(pr)?.state).toBe("queued");
     expect(store.blockingSessionCommand(`pr-${pr}`)).toBeTruthy();
@@ -291,19 +339,43 @@ describe("bounded round-stage supervision", () => {
   });
 
   it("cancels an obsolete unstarted predecessor through bounded recovery", async () => {
-    const { id, pr, roundId, round } = seedRoundCommand({ status: "pending", nextCheckAt: "2026-08-27T20:45:00.000Z" });
-    store.recordSuccessor({ pr, predecessor_round_id: roundId, head_sha: "fresh-head", provenance: "system", reason: "push" });
+    const { id, pr, roundId, round } = seedRoundCommand({
+      status: "pending",
+      nextCheckAt: "2026-08-27T20:45:00.000Z",
+    });
+    store.recordSuccessor({
+      pr,
+      predecessor_round_id: roundId,
+      head_sha: "fresh-head",
+      provenance: "system",
+      reason: "push",
+    });
     const onRoundFailure = vi.fn(async () => "requeued" as const);
 
     await supervisor(hooks({ killSession: async () => {} }), onRoundFailure).supervisor.scan();
 
-    expect(onRoundFailure).toHaveBeenCalledWith(pr, round.round_no, "command_start", expect.stringContaining("superseded before command start"));
+    expect(onRoundFailure).toHaveBeenCalledWith(
+      pr,
+      round.round_no,
+      "command_start",
+      expect.stringContaining("superseded before command start"),
+    );
     expect(store.getSessionCommand(id)?.status).toBe("failed");
   });
 
   it("lets an already-started predecessor finish while retaining fresh-head work", async () => {
-    const { id, pr, roundId } = seedRoundCommand({ status: "running", started: true, nextCheckAt: "2026-08-27T20:45:00.000Z" });
-    store.recordSuccessor({ pr, predecessor_round_id: roundId, head_sha: "fresh-head", provenance: "system", reason: "push" });
+    const { id, pr, roundId } = seedRoundCommand({
+      status: "running",
+      started: true,
+      nextCheckAt: "2026-08-27T20:45:00.000Z",
+    });
+    store.recordSuccessor({
+      pr,
+      predecessor_round_id: roundId,
+      head_sha: "fresh-head",
+      provenance: "system",
+      reason: "push",
+    });
     const onRoundFailure = vi.fn(async () => "requeued" as const);
 
     await supervisor(hooks(), onRoundFailure).supervisor.scan();
@@ -332,10 +404,12 @@ describe("bounded round-stage supervision", () => {
 
     expect(retried).toEqual([id]);
     expect(store.getSessionCommand(id)?.status).toBe("running"); // the hook owns fail→retry; this fake only records
-    expect(events("session_command_start_recovery")).toMatchObject([{
-      pr,
-      payload: { command_id: id, recovery_attempt: 1, delivery_attempt: 1 },
-    }]);
+    expect(events("session_command_start_recovery")).toMatchObject([
+      {
+        pr,
+        payload: { command_id: id, recovery_attempt: 1, delivery_attempt: 1 },
+      },
+    ]);
   });
 
   it("bounds round rebirths even when no bridge generation ever reserves the command", async () => {
@@ -351,7 +425,11 @@ describe("bounded round-stage supervision", () => {
       daemon: { ...baseCfg.daemon, session_command_unknown_max_checks: 0 },
     };
     const s = supervisor(
-      hooks({ wakeReceiptPresent: async () => false, sessionAlive: async () => true, retrySessionCommand: retry }),
+      hooks({
+        wakeReceiptPresent: async () => false,
+        sessionAlive: async () => true,
+        retrySessionCommand: retry,
+      }),
       onRoundFailure,
       immediateEvidenceCfg,
     ).supervisor;
@@ -401,7 +479,12 @@ describe("bounded round-stage supervision", () => {
     await supervisor(h, onRoundFailure).supervisor.scan();
 
     expect(store.getSessionCommand(id)?.status).toBe("failed");
-    expect(onRoundFailure).toHaveBeenCalledWith(pr, round.round_no, "command_start", expect.stringContaining("accepted marker"));
+    expect(onRoundFailure).toHaveBeenCalledWith(
+      pr,
+      round.round_no,
+      "command_start",
+      expect.stringContaining("accepted marker"),
+    );
   });
 
   it("routes a restart-failed round command through the same bounded recovery", async () => {
@@ -411,7 +494,12 @@ describe("bounded round-stage supervision", () => {
 
     await supervisor(hooks(), onRoundFailure).supervisor.scan();
 
-    expect(onRoundFailure).toHaveBeenCalledWith(pr, round.round_no, "command_start", expect.stringContaining("payload hash mismatch"));
+    expect(onRoundFailure).toHaveBeenCalledWith(
+      pr,
+      round.round_no,
+      "command_start",
+      expect.stringContaining("payload hash mismatch"),
+    );
   });
 
   it("reconciles a correlated marker into a fixed running hard bound", async () => {
@@ -433,8 +521,16 @@ describe("bounded round-stage supervision", () => {
 
     await supervisor(hooks(), onRoundFailure).supervisor.scan();
 
-    expect(store.getSessionCommand(id)).toMatchObject({ status: "failed", failure: expect.stringContaining("settled without verdict") });
-    expect(onRoundFailure).toHaveBeenCalledWith(pr, round.round_no, "settled_without_verdict", expect.stringContaining(id));
+    expect(store.getSessionCommand(id)).toMatchObject({
+      status: "failed",
+      failure: expect.stringContaining("settled without verdict"),
+    });
+    expect(onRoundFailure).toHaveBeenCalledWith(
+      pr,
+      round.round_no,
+      "settled_without_verdict",
+      expect.stringContaining(id),
+    );
   });
 
   it("a 'settled' disposition keeps the delivered command acked and opens no failure", async () => {
@@ -443,14 +539,28 @@ describe("bounded round-stage supervision", () => {
 
     await supervisor(hooks(), onRoundFailure).supervisor.scan();
 
-    expect(onRoundFailure).toHaveBeenCalledWith(pr, round.round_no, "settled_without_verdict", expect.stringContaining(id));
+    expect(onRoundFailure).toHaveBeenCalledWith(
+      pr,
+      round.round_no,
+      "settled_without_verdict",
+      expect.stringContaining(id),
+    );
     // An acked command proved delivery; a guard-2 no-op is not failed work.
     expect(store.getSessionCommand(id)?.status).toBe("acked");
     expect(store.blockingSessionCommand(`pr-${pr}`)).toBeUndefined();
     expect(store.openReviewFailure(pr)).toBeUndefined();
-    const recovery = (store.db.prepare("SELECT payload FROM events WHERE kind = 'round_stage_recovery' AND pr = ?").all(pr) as Array<{ payload: string }>)
-      .map((row) => JSON.parse(row.payload) as Record<string, unknown>);
-    expect(recovery).toEqual([expect.objectContaining({ command_id: id, stage: "settled_without_verdict", disposition: "settled" })]);
+    const recovery = (
+      store.db
+        .prepare("SELECT payload FROM events WHERE kind = 'round_stage_recovery' AND pr = ?")
+        .all(pr) as Array<{ payload: string }>
+    ).map((row) => JSON.parse(row.payload) as Record<string, unknown>);
+    expect(recovery).toEqual([
+      expect.objectContaining({
+        command_id: id,
+        stage: "settled_without_verdict",
+        disposition: "settled",
+      }),
+    ]);
   });
 
   it("uses matching settled telemetry with durable start evidence when the bridge died before ack", async () => {
@@ -471,11 +581,25 @@ describe("bounded round-stage supervision", () => {
     });
 
     const killed: number[] = [];
-    await supervisor(hooks({ killSession: async (n) => { killed.push(n); } }), onRoundFailure, baseCfg, progress).supervisor.scan();
+    await supervisor(
+      hooks({
+        killSession: async (n) => {
+          killed.push(n);
+        },
+      }),
+      onRoundFailure,
+      baseCfg,
+      progress,
+    ).supervisor.scan();
 
     expect(killed).toEqual([pr]);
     expect(store.getSessionCommand(id)?.status).toBe("failed");
-    expect(onRoundFailure).toHaveBeenCalledWith(pr, round.round_no, "settled_without_verdict", expect.stringContaining(id));
+    expect(onRoundFailure).toHaveBeenCalledWith(
+      pr,
+      round.round_no,
+      "settled_without_verdict",
+      expect.stringContaining(id),
+    );
   });
 
   it("leaves a settled command alone while its verdict file is pending", async () => {
@@ -491,7 +615,11 @@ describe("bounded round-stage supervision", () => {
 
   it("recovers a command-correlated round that starts no first pass within its finite lease", async () => {
     clock = new Date("2026-08-27T20:00:00.000Z");
-    const { id, pr, round } = seedRoundCommand({ status: "running", started: true, nextCheckAt: "2026-08-27T20:45:00.000Z" });
+    const { id, pr, round } = seedRoundCommand({
+      status: "running",
+      started: true,
+      nextCheckAt: "2026-08-27T20:45:00.000Z",
+    });
     clock = new Date("2026-08-27T20:05:00.000Z");
     const onRoundFailure = vi.fn(async () => "requeued" as const);
     const progress = () => ({
@@ -509,68 +637,144 @@ describe("bounded round-stage supervision", () => {
       agents: [],
     });
 
-    await supervisor(hooks({ killSession: async () => {} }), onRoundFailure, baseCfg, progress).supervisor.scan();
+    await supervisor(
+      hooks({ killSession: async () => {} }),
+      onRoundFailure,
+      baseCfg,
+      progress,
+    ).supervisor.scan();
 
-    expect(onRoundFailure).toHaveBeenCalledWith(pr, round.round_no, "first_pass_start", expect.stringContaining("no planned pass started"));
+    expect(onRoundFailure).toHaveBeenCalledWith(
+      pr,
+      round.round_no,
+      "first_pass_start",
+      expect.stringContaining("no planned pass started"),
+    );
   });
 
   it("does not reopen exhausted debt when operator u wins while the recovery callback returns", async () => {
     clock = new Date("2026-08-27T20:00:00.000Z");
-    const seeded = seedRoundCommand({ status: "running", started: true, nextCheckAt: "2026-08-27T20:45:00.000Z" });
-    clock = new Date("2026-08-27T20:05:00.000Z");
-    const onRoundFailure = vi.fn(async (_pr: number, _roundNo: number, stage: string, detail: string) => {
-      const failure = store.terminalizeInfrastructureReviewFailure({
-        pr: seeded.pr, round_id: seeded.round.id, round_no: seeded.round.round_no,
-        command_id: seeded.id, head_sha: store.getPr(seeded.pr)!.head_sha,
-        stage, detail, attempts: 2, retry_cap: 2, summary: "pre-fanout recovery exhausted",
-      });
-      expect(failure?.work_owed).toBe(1);
-      expect(store.recoverReviewFailure(seeded.pr, "operator-rerun")?.work_owed).toBe(0);
-      return "exhausted" as const;
+    const seeded = seedRoundCommand({
+      status: "running",
+      started: true,
+      nextCheckAt: "2026-08-27T20:45:00.000Z",
     });
+    clock = new Date("2026-08-27T20:05:00.000Z");
+    const onRoundFailure = vi.fn(
+      async (_pr: number, _roundNo: number, stage: string, detail: string) => {
+        const failure = store.terminalizeInfrastructureReviewFailure({
+          pr: seeded.pr,
+          round_id: seeded.round.id,
+          round_no: seeded.round.round_no,
+          command_id: seeded.id,
+          head_sha: store.getPr(seeded.pr)!.head_sha,
+          stage,
+          detail,
+          attempts: 2,
+          retry_cap: 2,
+          summary: "pre-fanout recovery exhausted",
+        });
+        expect(failure?.work_owed).toBe(1);
+        expect(store.recoverReviewFailure(seeded.pr, "operator-rerun")?.work_owed).toBe(0);
+        return "exhausted" as const;
+      },
+    );
     const progress = () => ({
-      version: 2 as const, pr: seeded.pr, session: `pr-${seeded.pr}`,
-      run_started_at: "2026-08-27T20:00:00.000Z", updated_at: clock.toISOString(), parent_status: "active" as const,
-      command_id: seeded.id, command_sha256: "a".repeat(64), command_accepted_at: "2026-08-27T20:00:01.000Z",
-      last_activity_at: clock.toISOString(), last_activity: "preparing", agents: [],
+      version: 2 as const,
+      pr: seeded.pr,
+      session: `pr-${seeded.pr}`,
+      run_started_at: "2026-08-27T20:00:00.000Z",
+      updated_at: clock.toISOString(),
+      parent_status: "active" as const,
+      command_id: seeded.id,
+      command_sha256: "a".repeat(64),
+      command_accepted_at: "2026-08-27T20:00:01.000Z",
+      last_activity_at: clock.toISOString(),
+      last_activity: "preparing",
+      agents: [],
     });
 
-    await supervisor(hooks({ killSession: async () => {} }), onRoundFailure, baseCfg, progress).supervisor.scan();
+    await supervisor(
+      hooks({ killSession: async () => {} }),
+      onRoundFailure,
+      baseCfg,
+      progress,
+    ).supervisor.scan();
 
     expect(store.openReviewFailure(seeded.pr)).toBeUndefined();
-    expect(store.reviewFailureForCommand(seeded.id)).toMatchObject({ work_owed: 0, recovery: "operator-rerun" });
+    expect(store.reviewFailureForCommand(seeded.id)).toMatchObject({
+      work_owed: 0,
+      recovery: "operator-rerun",
+    });
     expect(store.getPr(seeded.pr)?.state).toBe("queued");
-    expect((store.db.prepare(
-      "SELECT COUNT(*) AS c FROM events WHERE kind='round_stage_recovery_already_resolved' AND pr=?",
-    ).get(seeded.pr) as { c: number }).c).toBe(1);
+    expect(
+      (
+        store.db
+          .prepare(
+            "SELECT COUNT(*) AS c FROM events WHERE kind='round_stage_recovery_already_resolved' AND pr=?",
+          )
+          .get(seeded.pr) as { c: number }
+      ).c,
+    ).toBe(1);
   });
 
   it("does not accept validator-first or foreign subagents as planned discovery fanout", async () => {
     clock = new Date("2026-08-27T20:00:00.000Z");
     const { id, pr, round } = seedRoundCommand({
-      status: "running", started: true, nextCheckAt: "2026-08-27T20:45:00.000Z",
+      status: "running",
+      started: true,
+      nextCheckAt: "2026-08-27T20:45:00.000Z",
       lenses: ["pass-baseline", "pass-security", "pass-validate"],
     });
     clock = new Date("2026-08-27T20:05:00.000Z");
     const onRoundFailure = vi.fn(async () => "requeued" as const);
     const progress = () => ({
-      version: 2 as const, pr, session: `pr-${pr}`,
-      run_started_at: "2026-08-27T20:00:00.000Z", updated_at: clock.toISOString(), parent_status: "active" as const,
-      command_id: id, command_sha256: "a".repeat(64), command_accepted_at: "2026-08-27T20:00:01.000Z",
-      fanout_started_at: "2026-08-27T20:01:00.000Z", last_activity_at: clock.toISOString(),
+      version: 2 as const,
+      pr,
+      session: `pr-${pr}`,
+      run_started_at: "2026-08-27T20:00:00.000Z",
+      updated_at: clock.toISOString(),
+      parent_status: "active" as const,
+      command_id: id,
+      command_sha256: "a".repeat(64),
+      command_accepted_at: "2026-08-27T20:00:01.000Z",
+      fanout_started_at: "2026-08-27T20:01:00.000Z",
+      last_activity_at: clock.toISOString(),
       last_activity: "validator-first",
-      agents: [{ execution_id: "foreign", agent: "pass-validate--sol-high", status: "running" as const,
-        duration_ms: 1, tool_count: 0, started_at: "2026-08-27T20:01:00.000Z" }],
+      agents: [
+        {
+          execution_id: "foreign",
+          agent: "pass-validate--sol-high",
+          status: "running" as const,
+          duration_ms: 1,
+          tool_count: 0,
+          started_at: "2026-08-27T20:01:00.000Z",
+        },
+      ],
     });
 
-    await supervisor(hooks({ killSession: async () => {} }), onRoundFailure, baseCfg, progress).supervisor.scan();
+    await supervisor(
+      hooks({ killSession: async () => {} }),
+      onRoundFailure,
+      baseCfg,
+      progress,
+    ).supervisor.scan();
 
-    expect(onRoundFailure).toHaveBeenCalledWith(pr, round.round_no, "first_pass_start", expect.stringContaining("no planned pass started"));
+    expect(onRoundFailure).toHaveBeenCalledWith(
+      pr,
+      round.round_no,
+      "first_pass_start",
+      expect.stringContaining("no planned pass started"),
+    );
   });
 
   it("does not infer a missing first pass from legacy or uncorrelated telemetry", async () => {
     clock = new Date("2026-08-27T19:59:00.000Z");
-    const { id, pr } = seedRoundCommand({ status: "running", started: true, nextCheckAt: "2026-08-27T20:44:00.000Z" });
+    const { id, pr } = seedRoundCommand({
+      status: "running",
+      started: true,
+      nextCheckAt: "2026-08-27T20:44:00.000Z",
+    });
     clock = new Date("2026-08-27T20:05:00.000Z");
     const onRoundFailure = vi.fn(async () => "requeued" as const);
     const progress = () => ({
@@ -616,26 +820,44 @@ describe("bounded round-stage supervision", () => {
       first_lens_started_at: "2026-08-27T20:01:00.000Z",
       last_activity_at: clock.toISOString(),
       last_activity: "validator never launched",
-      agents: [{
-        execution_id: "lens-1:pass-baseline--sol-med",
-        agent: "pass-baseline--sol-med",
-        status: "completed" as const,
-        duration_ms: 60_000,
-        tool_count: 1,
-        started_at: "2026-08-27T20:01:00.000Z",
-        finished_at: "2026-08-27T20:02:00.000Z",
-      }],
+      agents: [
+        {
+          execution_id: "lens-1:pass-baseline--sol-med",
+          agent: "pass-baseline--sol-med",
+          status: "completed" as const,
+          duration_ms: 60_000,
+          tool_count: 1,
+          started_at: "2026-08-27T20:01:00.000Z",
+          finished_at: "2026-08-27T20:02:00.000Z",
+        },
+      ],
     });
 
-    await supervisor(hooks({ killSession: async () => {} }), onRoundFailure, baseCfg, progress).supervisor.scan();
+    await supervisor(
+      hooks({ killSession: async () => {} }),
+      onRoundFailure,
+      baseCfg,
+      progress,
+    ).supervisor.scan();
 
-    expect(onRoundFailure).toHaveBeenCalledWith(pr, round.round_no, "passes_incomplete", expect.stringContaining("pass-validate"));
-    expect(store.roundsFor(pr).find((item) => item.id === round.id)?.fanout_started_at).toBe("2026-08-27T20:01:00.000Z");
+    expect(onRoundFailure).toHaveBeenCalledWith(
+      pr,
+      round.round_no,
+      "passes_incomplete",
+      expect.stringContaining("pass-validate"),
+    );
+    expect(store.roundsFor(pr).find((item) => item.id === round.id)?.fanout_started_at).toBe(
+      "2026-08-27T20:01:00.000Z",
+    );
   });
 
   it("bounds parent finalization after every planned and added pass is terminal", async () => {
     clock = new Date("2026-08-27T20:00:00.000Z");
-    const { id, pr, round } = seedRoundCommand({ status: "running", started: true, nextCheckAt: "2026-08-27T20:45:00.000Z" });
+    const { id, pr, round } = seedRoundCommand({
+      status: "running",
+      started: true,
+      nextCheckAt: "2026-08-27T20:45:00.000Z",
+    });
     clock = new Date("2026-08-27T20:30:00.000Z");
     const onRoundFailure = vi.fn(async () => "requeued" as const);
     const progress = () => ({
@@ -652,19 +874,46 @@ describe("bounded round-stage supervision", () => {
       last_activity_at: clock.toISOString(),
       last_activity: "all passes done",
       agents: [
-        { execution_id: "lens-1:pass-baseline", agent: "pass-baseline", status: "completed" as const, duration_ms: 1, tool_count: 1, started_at: "2026-08-27T20:20:00.000Z", finished_at: "2026-08-27T20:25:00.000Z" },
-        { execution_id: "lens-2:pass-added", agent: "pass-added", status: "failed" as const, duration_ms: 1, tool_count: 1, started_at: "2026-08-27T20:21:00.000Z", finished_at: "2026-08-27T20:25:00.000Z" },
+        {
+          execution_id: "lens-1:pass-baseline",
+          agent: "pass-baseline",
+          status: "completed" as const,
+          duration_ms: 1,
+          tool_count: 1,
+          started_at: "2026-08-27T20:20:00.000Z",
+          finished_at: "2026-08-27T20:25:00.000Z",
+        },
+        {
+          execution_id: "lens-2:pass-added",
+          agent: "pass-added",
+          status: "failed" as const,
+          duration_ms: 1,
+          tool_count: 1,
+          started_at: "2026-08-27T20:21:00.000Z",
+          finished_at: "2026-08-27T20:25:00.000Z",
+        },
       ],
     });
 
-    await supervisor(hooks({ killSession: async () => {} }), onRoundFailure, baseCfg, progress).supervisor.scan();
+    await supervisor(
+      hooks({ killSession: async () => {} }),
+      onRoundFailure,
+      baseCfg,
+      progress,
+    ).supervisor.scan();
 
-    expect(onRoundFailure).toHaveBeenCalledWith(pr, round.round_no, "parent_finalize", expect.stringContaining("all observed passes terminal"));
+    expect(onRoundFailure).toHaveBeenCalledWith(
+      pr,
+      round.round_no,
+      "parent_finalize",
+      expect.stringContaining("all observed passes terminal"),
+    );
   });
 
   it("enforces the fixed running hard bound even when progress telemetry keeps changing", async () => {
     const { id, pr, round } = seedRoundCommand({ status: "running", started: true });
-    store.db.prepare("UPDATE session_commands SET started_at=?, next_check_at=? WHERE id=?")
+    store.db
+      .prepare("UPDATE session_commands SET started_at=?, next_check_at=? WHERE id=?")
       .run("2026-08-27T19:00:00.000Z", "2026-08-27T19:45:00.000Z", id);
     const onRoundFailure = vi.fn(async () => "requeued" as const);
     const h = hooks({ sessionAlive: async () => true });
@@ -673,15 +922,29 @@ describe("bounded round-stage supervision", () => {
     await supervisor(h, onRoundFailure).supervisor.scan();
 
     expect(store.getSessionCommand(id)?.status).toBe("failed");
-    expect(onRoundFailure).toHaveBeenCalledWith(pr, round.round_no, "running_hard_bound", expect.stringContaining(id));
+    expect(onRoundFailure).toHaveBeenCalledWith(
+      pr,
+      round.round_no,
+      "running_hard_bound",
+      expect.stringContaining(id),
+    );
   });
 
   it("stops a cancelled round's possibly queued unstarted command before releasing its slot", async () => {
-    const { id, pr, roundId } = seedRoundCommand({ status: "running", nextCheckAt: "2026-08-27T20:45:00.000Z" });
+    const { id, pr, roundId } = seedRoundCommand({
+      status: "running",
+      nextCheckAt: "2026-08-27T20:45:00.000Z",
+    });
     store.markRoundCancelled(roundId, "operator rerun", "operator");
     const killed: number[] = [];
 
-    await supervisor(hooks({ killSession: async (n) => { killed.push(n); } })).supervisor.scan();
+    await supervisor(
+      hooks({
+        killSession: async (n) => {
+          killed.push(n);
+        },
+      }),
+    ).supervisor.scan();
 
     expect(killed).toEqual([pr]);
     expect(store.getSessionCommand(id)?.status).toBe("failed");
@@ -689,7 +952,11 @@ describe("bounded round-stage supervision", () => {
   });
 
   it("reconciles bridge death after settlement when the merits round already finished", async () => {
-    const { id, pr, roundId } = seedRoundCommand({ status: "running", started: true, nextCheckAt: "2026-08-27T20:45:00.000Z" });
+    const { id, pr, roundId } = seedRoundCommand({
+      status: "running",
+      started: true,
+      nextCheckAt: "2026-08-27T20:45:00.000Z",
+    });
     store.markRoundCancelled(roundId, "verdict lifecycle won", "unknown");
     const onRoundFailure = vi.fn(async () => "requeued" as const);
     const progress = () => ({
@@ -707,7 +974,16 @@ describe("bounded round-stage supervision", () => {
     });
 
     const killed: number[] = [];
-    await supervisor(hooks({ killSession: async (n) => { killed.push(n); } }), onRoundFailure, baseCfg, progress).supervisor.scan();
+    await supervisor(
+      hooks({
+        killSession: async (n) => {
+          killed.push(n);
+        },
+      }),
+      onRoundFailure,
+      baseCfg,
+      progress,
+    ).supervisor.scan();
 
     expect(killed).toEqual([pr]);
     expect(store.getSessionCommand(id)?.status).toBe("acked");
@@ -720,19 +996,27 @@ describe("bounded round-stage supervision", () => {
 
     await supervisor(hooks(), onRoundFailure).supervisor.scan();
 
-    expect(store.getSessionCommand(id)).toMatchObject({ status: "acked", next_check_at: "2026-08-27T20:06:00.000Z" });
+    expect(store.getSessionCommand(id)).toMatchObject({
+      status: "acked",
+      next_check_at: "2026-08-27T20:06:00.000Z",
+    });
     expect(events("round_stage_recovery_deferred")).toHaveLength(1);
   });
 
   it("leaves command ownership due and marks supervisor health red when recovery throws", async () => {
     const { id } = seedRoundCommand({ status: "acked", started: true });
-    const onRoundFailure = vi.fn(async () => { throw new Error("tmux kill refused"); });
+    const onRoundFailure = vi.fn(async () => {
+      throw new Error("tmux kill refused");
+    });
     const s = supervisor(hooks(), onRoundFailure).supervisor;
 
     await expect(s.scan()).rejects.toThrow(/tmux kill refused/);
 
     expect(store.getSessionCommand(id)?.status).toBe("acked");
-    expect(s.health()).toMatchObject({ healthy: false, last_error: expect.stringContaining("tmux kill refused") });
+    expect(s.health()).toMatchObject({
+      healthy: false,
+      last_error: expect.stringContaining("tmux kill refused"),
+    });
   });
 
   it("rejects stale settled progress without exact command identity", async () => {
@@ -761,14 +1045,22 @@ describe("bounded round-stage supervision", () => {
   it("writes its durable success lease only after the complete scan", async () => {
     seedRoundCommand({ status: "running" });
     let release!: () => void;
-    const receipt = new Promise<boolean | null>((resolve) => { release = () => resolve(null); });
-    const s = supervisor(hooks({ wakeReceiptPresent: async () => receipt, sessionAlive: async () => true })).supervisor;
+    const receipt = new Promise<boolean | null>((resolve) => {
+      release = () => resolve(null);
+    });
+    const s = supervisor(
+      hooks({ wakeReceiptPresent: async () => receipt, sessionAlive: async () => true }),
+    ).supervisor;
     expect(s.health().healthy).toBe(false); // no successful scan is not health evidence
 
     const pending = s.scan();
-    await vi.waitFor(() => expect(store.supervisorLease("round-stage")?.last_attempt_at).toBe(clock.toISOString()));
+    await vi.waitFor(() =>
+      expect(store.supervisorLease("round-stage")?.last_attempt_at).toBe(clock.toISOString()),
+    );
     expect(store.supervisorLease("round-stage")?.last_success_at).toBeNull();
-    clock = new Date(clock.getTime() + ((baseCfg.daemon.round_stage_supervisor_stale_s ?? 180) + 1) * 1000);
+    clock = new Date(
+      clock.getTime() + ((baseCfg.daemon.round_stage_supervisor_stale_s ?? 180) + 1) * 1000,
+    );
     expect(s.health()).toMatchObject({ healthy: false, last_success_at: null });
     release();
     await pending;
@@ -778,7 +1070,10 @@ describe("bounded round-stage supervision", () => {
 });
 
 function events(kind: string): Array<{ pr: number | null; payload: any }> {
-  return (store.db.prepare("SELECT pr, payload FROM events WHERE kind=? ORDER BY id").all(kind) as Array<{ pr: number | null; payload: string }>).map(
-    (row) => ({ pr: row.pr, payload: JSON.parse(row.payload) }),
-  );
+  return (
+    store.db.prepare("SELECT pr, payload FROM events WHERE kind=? ORDER BY id").all(kind) as Array<{
+      pr: number | null;
+      payload: string;
+    }>
+  ).map((row) => ({ pr: row.pr, payload: JSON.parse(row.payload) }));
 }

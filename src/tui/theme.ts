@@ -72,7 +72,9 @@ export function legendLine(): string {
     ["·", "tracked", FG.tracked],
     ["↻", "stale", FG.accent],
   ];
-  return parts.map(([g, label, color]) => `${color}${g}${RESET} ${FG.dim}${label}${RESET}`).join("  ");
+  return parts
+    .map(([g, label, color]) => `${color}${g}${RESET} ${FG.dim}${label}${RESET}`)
+    .join("  ");
 }
 
 /** OSC-8 terminal hyperlink — Ctrl+click works natively in modern terminals. */

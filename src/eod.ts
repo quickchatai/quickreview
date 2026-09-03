@@ -129,7 +129,13 @@ export function localWallClockToInstant(
 
   const matches = candidates.filter((ts) => {
     const p = zonedParts(new Date(ts), timeZone);
-    return p.year === year && p.month === month && p.day === day && p.hour === hour && p.minute === minute;
+    return (
+      p.year === year &&
+      p.month === month &&
+      p.day === day &&
+      p.hour === hour &&
+      p.minute === minute
+    );
   });
   if (matches.length > 0) return new Date(matches[0]!); // ambiguous → first (earlier) occurrence
 
@@ -139,7 +145,7 @@ export function localWallClockToInstant(
     const p = zonedParts(new Date(ts), timeZone);
     return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) > naive;
   });
-  return new Date((shifted.length > 0 ? Math.min(...shifted) : Math.max(...candidates))!);
+  return new Date(shifted.length > 0 ? Math.min(...shifted) : Math.max(...candidates));
 }
 
 /**
@@ -149,7 +155,14 @@ export function localWallClockToInstant(
 export function nextEodFire(now: Date, timeHHMM: string, timeZone: string): Date {
   const { hour, minute } = parseHHMM(timeHHMM);
   const today = zonedParts(now, timeZone);
-  let candidate = localWallClockToInstant(today.year, today.month, today.day, hour, minute, timeZone);
+  let candidate = localWallClockToInstant(
+    today.year,
+    today.month,
+    today.day,
+    hour,
+    minute,
+    timeZone,
+  );
   if (candidate.getTime() > now.getTime()) return candidate;
   // Advance one local calendar day (calendar arithmetic on the wall date, so
   // 23h/25h days do not matter).

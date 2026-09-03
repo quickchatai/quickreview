@@ -33,7 +33,10 @@ export interface ConnectResult {
 
 /** Synchronous ssh — interactive runs inherit the terminal so OpenSSH's own
  * passphrase prompt appears natively. Injectable; tests never spawn. */
-export type SyncSsh = (argv: string[], interactive: boolean) => { status: number | null; stderr: string };
+export type SyncSsh = (
+  argv: string[],
+  interactive: boolean,
+) => { status: number | null; stderr: string };
 
 export const realSyncSsh: SyncSsh = (argv, interactive) => {
   const r = interactive
@@ -42,19 +45,27 @@ export const realSyncSsh: SyncSsh = (argv, interactive) => {
   return { status: r.status, stderr: String(r.stderr ?? "") };
 };
 
-export function ensureSshMaster(cfg: TuiConfig, ssh: SyncSsh = realSyncSsh, say: (line: string) => void = console.log): ConnectResult {
+export function ensureSshMaster(
+  cfg: TuiConfig,
+  ssh: SyncSsh = realSyncSsh,
+  say: (line: string) => void = console.log,
+): ConnectResult {
   // the laptop topology has no ssh anywhere. Guarded HERE (not only
   // at the call sites) so the board's `s` reconnect hook and any future caller
   // inherit the guarantee: in local mode this function spawns nothing.
   if (transportOf(cfg) === "local") return { kind: "local" };
   if (ssh(masterCheckArgv(cfg), false).status === 0) return { kind: "alive" };
-  say(`connecting to ${cfg.ssh_host} — enter the GCP key passphrase if asked (once; the connection is shared for 4h)`);
+  say(
+    `connecting to ${cfg.ssh_host} — enter the GCP key passphrase if asked (once; the connection is shared for 4h)`,
+  );
   const r = ssh(masterConnectArgv(cfg), true);
   if (r.status === 0) {
     say(`connected — ssh master to ${cfg.ssh_host} established`);
     return { kind: "connected" };
   }
   const detail = r.stderr.trim() || `ssh exit ${String(r.status)}`;
-  say(`ssh to ${cfg.ssh_host} failed: ${detail} — the board will show unreachable (press s to retry)`);
+  say(
+    `ssh to ${cfg.ssh_host} failed: ${detail} — the board will show unreachable (press s to retry)`,
+  );
   return { kind: "failed", detail };
 }

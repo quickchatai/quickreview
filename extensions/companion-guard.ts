@@ -50,40 +50,51 @@ export interface BashRule {
 export const BASH_RULES: BashRule[] = [
   {
     pattern: /\bgit\s+push\b/,
-    reason: "rule 8: the companion never mutates GitHub — no push, ever. Commit locally with the [companion] prefix and leave landing to the humans/daemon.",
+    reason:
+      "rule 8: the companion never mutates GitHub — no push, ever. Commit locally with the [companion] prefix and leave landing to the humans/daemon.",
   },
   {
     pattern: /(^|[\s/;&|])gh\s+/,
-    reason: "rule 8: the companion never talks to GitHub — gh is not installed here, and this guard keeps it a boundary rather than an accident of the image.",
+    reason:
+      "rule 8: the companion never talks to GitHub — gh is not installed here, and this guard keeps it a boundary rather than an accident of the image.",
   },
   {
     pattern: /(^|[\s/;&|])deploy\.sh\b/,
-    reason: "rule 8: the companion never runs scripts/deploy.sh. Deploys are the owner's, via the deploying skill.",
+    reason:
+      "rule 8: the companion never runs scripts/deploy.sh. Deploys are the owner's, via the deploying skill.",
   },
   {
     pattern: /\bgit\s+stash\b(?!\s+(list|show)\b)/,
-    reason: "rule 11: never stash in the shared checkout — uncommitted work here may be another actor's (or your own in-flight edit the owner is watching). Commit instead.",
+    reason:
+      "rule 11: never stash in the shared checkout — uncommitted work here may be another actor's (or your own in-flight edit the owner is watching). Commit instead.",
   },
   {
     pattern: /\bgit\s+reset\s+(-\S+\s+)*--hard\b/,
-    reason: "rule 11: git reset --hard destroys uncommitted work in the shared checkout, and it is not recoverable from the reflog.",
+    reason:
+      "rule 11: git reset --hard destroys uncommitted work in the shared checkout, and it is not recoverable from the reflog.",
   },
   {
     pattern: /\bgit\s+checkout\s+(-\S+\s+)*(--(\s|$)|\.(\s|$))/,
-    reason: "rule 11: git checkout -- <path> / git checkout . discards uncommitted changes. Branch switches and -b are fine; discarding is not.",
+    reason:
+      "rule 11: git checkout -- <path> / git checkout . discards uncommitted changes. Branch switches and -b are fine; discarding is not.",
   },
   {
     pattern: /\bgit\s+restore\b(?!.*--staged)/,
-    reason: "rule 11: git restore (worktree form) discards uncommitted changes. --staged alone is allowed — it touches the index, not the files.",
+    reason:
+      "rule 11: git restore (worktree form) discards uncommitted changes. --staged alone is allowed — it touches the index, not the files.",
   },
   {
     pattern: /\bgit\s+clean\b/,
-    reason: "rule 11: git clean deletes untracked files in the shared checkout — someone else's scratch work included.",
+    reason:
+      "rule 11: git clean deletes untracked files in the shared checkout — someone else's scratch work included.",
   },
 ];
 
 /** First matching bash rule's reason, or undefined when the command is fine. */
-export function bashBlockReason(command: string, rules: BashRule[] = BASH_RULES): string | undefined {
+export function bashBlockReason(
+  command: string,
+  rules: BashRule[] = BASH_RULES,
+): string | undefined {
   for (const rule of rules) if (rule.pattern.test(command)) return rule.reason;
   return undefined;
 }
@@ -96,7 +107,8 @@ export const REGISTRY_FIXTURES = [
 
 /** The manifest read, with "could not read it" kept as its own answer so the
  * caller can decline to CACHE a degraded set. */
-export type ManifestRead = { state: "manifest"; files: string[] } | { state: "unreadable"; reason: string };
+export type ManifestRead =
+  { state: "manifest"; files: string[] } | { state: "unreadable"; reason: string };
 
 /**
  * Read the seed manifest, classifying a STRUCTURALLY USELESS payload as
@@ -130,7 +142,7 @@ export function readSeedManifest(root: string): ManifestRead {
   if (typeof files !== "object" || files === null || Array.isArray(files)) {
     return { state: "unreadable", reason: "no files object" };
   }
-  const keys = Object.keys(files as Record<string, unknown>);
+  const keys = Object.keys(files);
   if (keys.length === 0) return { state: "unreadable", reason: "manifest lists no files" };
   return { state: "manifest", files: keys };
 }
@@ -173,7 +185,11 @@ export function frozenPaths(read: ManifestRead): Set<string> {
 
 /** Veto reason for a write/edit target, or undefined when allowed. `path` is
  * whatever the tool got — absolute or cwd-relative. */
-export function writeBlockReason(path: string, root: string, frozen: Set<string>): string | undefined {
+export function writeBlockReason(
+  path: string,
+  root: string,
+  frozen: Set<string>,
+): string | undefined {
   const abs = isAbsolute(path) ? path : resolve(root, path);
   const rel = relative(root, abs);
   if (rel.startsWith("..")) return undefined; // outside the repo — mounts enforce their own modes
@@ -195,7 +211,8 @@ export default function activate(pi: Pi): void {
 
   pi.on("tool_call", (event) => {
     const ev = event as ToolCallEvent;
-    const input = (ev.input ?? ev.arguments) as { command?: unknown; path?: unknown; file_path?: unknown } | undefined;
+    const input = (ev.input ?? ev.arguments) as
+      { command?: unknown; path?: unknown; file_path?: unknown } | undefined;
 
     if (ev.toolName === "bash") {
       const cmd = input?.command;
@@ -223,7 +240,9 @@ export default function activate(pi: Pi): void {
         warnedDegraded = true;
         // Loud, never fatal: the guard must never make pi unable to start.
         // Fail-open here is deliberate — see `frozenPaths` for why.
-        console.error(`companion-guard: DEGRADED — seed manifest unreadable (${read.reason}); only the registry fixtures are vetoed.`);
+        console.error(
+          `companion-guard: DEGRADED — seed manifest unreadable (${read.reason}); only the registry fixtures are vetoed.`,
+        );
       }
     }
     const target = input?.path ?? input?.file_path;

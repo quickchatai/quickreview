@@ -128,7 +128,9 @@ export function renderEntryBody(text: string, addTags: readonly string[] = []): 
   const trimmed = text.trim();
   if (trimmed === "") return "";
   const have = new Set(tagsOf(trimmed).map((t) => t.toLowerCase()));
-  const missing = addTags.map((t) => t.replace(/^#+/, "").toLowerCase()).filter((t) => t !== "" && !have.has(t));
+  const missing = addTags
+    .map((t) => t.replace(/^#+/, "").toLowerCase())
+    .filter((t) => t !== "" && !have.has(t));
   const head = missing.map((t) => `#${t}`).join(" ");
   return `${head === "" ? trimmed : `${head} ${trimmed}`}\n`;
 }
@@ -142,7 +144,10 @@ export function withTag(text: string, tag: string): string {
  * tags — the same spelling `import.ts` uses to unpin. */
 export function withoutTag(text: string, tag: string): string {
   const token = new RegExp(`(^|\\s)#${tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=\\s|$)`, "gi");
-  return `${text.replace(token, "$1").replace(/[ \t]{2,}/g, " ").trim()}\n`;
+  return `${text
+    .replace(token, "$1")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim()}\n`;
 }
 
 /** Parse one stored file into an entry. Total: a file we cannot date still
@@ -332,9 +337,13 @@ export class OpenVikingStore implements MemoryStore {
     // a head built on it could be missing every standing instruction, so it
     // is unread rather than an exact, empty answer.
     if (files.length > 0 && vanished === files.length) {
-      unread.push(`read ${this.root}: all ${files.length} listed files answered NOT_FOUND — the listing and the content disagree`);
+      unread.push(
+        `read ${this.root}: all ${files.length} listed files answered NOT_FOUND — the listing and the content disagree`,
+      );
     }
-    entries.sort((a, b) => (a.ts !== b.ts ? (a.ts < b.ts ? -1 : 1) : a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    entries.sort((a, b) =>
+      a.ts !== b.ts ? (a.ts < b.ts ? -1 : 1) : a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
+    );
     const sweep: MemorySweep = { entries, unread };
     this.cache = { at: this.now().getTime(), sweep };
     return sweep;
@@ -373,7 +382,8 @@ export class OpenVikingStore implements MemoryStore {
         return;
       }
       for (const row of sub.result) {
-        if (!row.isDir && isTextFile(row.name)) out.push({ id: `${dir}/${row.name}`, modTime: row.modTime });
+        if (!row.isDir && isTextFile(row.name))
+          out.push({ id: `${dir}/${row.name}`, modTime: row.modTime });
       }
     });
     return out;
@@ -408,28 +418,50 @@ export class OpenVikingStore implements MemoryStore {
     try {
       if (op.op === "add") return await this.create(renderEntryBody(op.text, [MANUAL_TAG]));
       if (op.op === "note") return await this.create(renderEntryBody(op.text));
-      if (!validEntryId(op.id)) return { ok: false, message: `refused: '${op.id}' is not a memory address this store can spell` };
+      if (!validEntryId(op.id))
+        return {
+          ok: false,
+          message: `refused: '${op.id}' is not a memory address this store can spell`,
+        };
       if (!/^sha256:[0-9a-f]{64}$/.test(op.expect)) {
-        return { ok: false, message: "refused: this entry was listed without a usable concurrency token — re-read it and retry" };
+        return {
+          ok: false,
+          message:
+            "refused: this entry was listed without a usable concurrency token — re-read it and retry",
+        };
       }
       const current = await this.client.readContent(this.uriOf(op.id));
       if (!current.ok) {
-        return { ok: false, message: `memory write failed: could not read ${op.id} (${current.code})` };
+        return {
+          ok: false,
+          message: `memory write failed: could not read ${op.id} (${current.code})`,
+        };
       }
       const entry = entryFrom(op.id, current.result, "");
       if (entry.hash !== op.expect) {
         // Caught before the round trip, but the server's 409 is the real
         // guard — this is only a cheaper, clearer version of the same answer.
-        return { ok: false, message: "refused: the entry changed since you read it — re-read it and retry" };
+        return {
+          ok: false,
+          message: "refused: the entry changed since you read it — re-read it and retry",
+        };
       }
       const next = this.rewrite(op, entry.text);
-      if (next === null) return { ok: false, message: `refused: unknown memory op '${(op as { op: string }).op}'` };
-      if (next.trim() === "") return { ok: false, message: "refused: an edit may not empty an entry — retire it instead" };
+      if (next === null)
+        return { ok: false, message: `refused: unknown memory op '${(op as { op: string }).op}'` };
+      if (next.trim() === "")
+        return {
+          ok: false,
+          message: "refused: an edit may not empty an entry — retire it instead",
+        };
       return await this.replace(op.id, next, op.expect);
     } catch (err) {
       // The client is total, but a caller-supplied seam is not, and a write
       // that throws would break the one promise the whole phase rests on.
-      return { ok: false, message: `memory write failed: ${err instanceof Error ? err.message : String(err)}` };
+      return {
+        ok: false,
+        message: `memory write failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
     }
   }
 
@@ -478,7 +510,11 @@ export class OpenVikingStore implements MemoryStore {
         await this.mirrorTags(uri, body);
         return { ok: true, message: `wrote ${id}` };
       }
-      if (res.ok) return { ok: false, message: `memory write failed: the server accepted the batch without writing ${id}` };
+      if (res.ok)
+        return {
+          ok: false,
+          message: `memory write failed: the server accepted the batch without writing ${id}`,
+        };
       // A fresh server holds only `viking://user/default`: our category root
       // does not exist until something makes it, and batch-write 404s rather
       // than creating it. Make it once, here, and let the loop retry — the
@@ -501,7 +537,9 @@ export class OpenVikingStore implements MemoryStore {
     const uri = this.uriOf(id);
     const res = await this.client.batchWrite({
       root_uri: parentOf(uri),
-      operations: [{ uri, content: body, precondition: { kind: "replace_if_hash", base_hash: expect } }],
+      operations: [
+        { uri, content: body, precondition: { kind: "replace_if_hash", base_hash: expect } },
+      ],
       wait: false,
     });
     if (res.ok && batchWriteLanded(res.result, uri)) {
@@ -509,8 +547,16 @@ export class OpenVikingStore implements MemoryStore {
       await this.mirrorTags(uri, body);
       return { ok: true, message: `updated ${id}` };
     }
-    if (res.ok) return { ok: false, message: `memory write failed: the server accepted the batch without writing ${id}` };
-    if (res.conflict) return { ok: false, message: "refused: the entry changed since you read it — re-read it and retry" };
+    if (res.ok)
+      return {
+        ok: false,
+        message: `memory write failed: the server accepted the batch without writing ${id}`,
+      };
+    if (res.conflict)
+      return {
+        ok: false,
+        message: "refused: the entry changed since you read it — re-read it and retry",
+      };
     return { ok: false, message: `memory write failed: ${res.message}` };
   }
 
@@ -526,10 +572,15 @@ export class OpenVikingStore implements MemoryStore {
    * memory or its tags.
    */
   private async mirrorTags(uri: string, body: string): Promise<void> {
-    const tags = formatEventTags(parseEventTags(body)).split(" ").filter((t) => t !== "");
+    const tags = formatEventTags(parseEventTags(body))
+      .split(" ")
+      .filter((t) => t !== "");
     if (tags.length === 0) return;
     const ok = await this.client.setTags(uri, tags);
-    if (!ok) this.log(`openviking: tags not mirrored for ${uri} — the entry is stored, retrieval by tag may miss it`);
+    if (!ok)
+      this.log(
+        `openviking: tags not mirrored for ${uri} — the entry is stored, retrieval by tag may miss it`,
+      );
   }
 }
 
@@ -548,7 +599,11 @@ function parentOf(uri: string): string {
 /** Run `fn` over `items` with at most `limit` in flight. Rejections are
  * swallowed by the callers above (each `fn` is already total); the pool exists
  * to bound the burst against a 2-core server, not to collect results. */
-async function pool<T>(items: readonly T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+async function pool<T>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
   let next = 0;
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
     for (;;) {
@@ -567,6 +622,9 @@ async function pool<T>(items: readonly T[], limit: number, fn: (item: T) => Prom
 }
 
 /** Convenience for wiring: the store the daemon and the TUI both use. */
-export function openVikingStore(client: OpenVikingClient, opts: Omit<OpenVikingStoreOptions, "client"> = {}): OpenVikingStore {
+export function openVikingStore(
+  client: OpenVikingClient,
+  opts: Omit<OpenVikingStoreOptions, "client"> = {},
+): OpenVikingStore {
   return new OpenVikingStore({ client, ...opts });
 }

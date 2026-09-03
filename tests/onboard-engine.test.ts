@@ -3,7 +3,15 @@
 // resume RE-VERIFIES claimed state instead of trusting the file, persistence
 // is tmp+rename atomic, finish refuses while red, and the first-run
 // marker is written exactly once.
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  mkdirSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -17,7 +25,12 @@ import {
   type OnboardAdapters,
   type OnboardingStep,
 } from "../src/onboard/engine.js";
-import { PREFLIGHT_STEP_ID, UID_CHOICE_KEY, parseNodeMajor, preflightStep } from "../src/onboard/steps/preflight.js";
+import {
+  PREFLIGHT_STEP_ID,
+  UID_CHOICE_KEY,
+  parseNodeMajor,
+  preflightStep,
+} from "../src/onboard/steps/preflight.js";
 
 let stateDir: string;
 
@@ -61,7 +74,10 @@ function fakeAdapters(host: FakeHost = {}, calls: string[] = []): OnboardAdapter
       },
     },
     clock: () => new Date("2026-08-30T12:00:00Z"),
-    host: { nodeVersion: host.nodeVersion ?? "v22.5.1", uid: host.uid === undefined ? 1000 : host.uid },
+    host: {
+      nodeVersion: host.nodeVersion ?? "v22.5.1",
+      uid: host.uid === undefined ? 1000 : host.uid,
+    },
     paths: { stateDir },
   };
 }
@@ -200,7 +216,13 @@ describe("kill / resume re-verification", () => {
       completed_at: null,
       choices: {},
       steps: {
-        [PREFLIGHT_STEP_ID]: { status: "done", completed_at: "2026-08-30T00:00:00Z", verified_at: null, note: null, data: {} },
+        [PREFLIGHT_STEP_ID]: {
+          status: "done",
+          completed_at: "2026-08-30T00:00:00Z",
+          verified_at: null,
+          note: null,
+          data: {},
+        },
       },
     };
     writeFileSync(checklistPath(stateDir), JSON.stringify(forged));

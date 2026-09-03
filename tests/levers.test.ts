@@ -16,7 +16,17 @@
 // Every fence here was verified by mutation (the defect applied, the test
 // red, the defect reverted); the MUTATION notes say which edit.
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -59,9 +69,11 @@ const T0 = new Date("2026-09-02T10:00:00.000Z");
 const OPERATOR = { issuer: "operator", expires_at: null } as const;
 
 function eventsOf(store: StateStore, kind: string): Array<Record<string, unknown>> {
-  return (store.db.prepare("SELECT payload FROM events WHERE kind = ? ORDER BY id").all(kind) as Array<{ payload: string }>).map(
-    (e) => JSON.parse(e.payload) as Record<string, unknown>,
-  );
+  return (
+    store.db.prepare("SELECT payload FROM events WHERE kind = ? ORDER BY id").all(kind) as Array<{
+      payload: string;
+    }>
+  ).map((e) => JSON.parse(e.payload) as Record<string, unknown>);
 }
 
 function queue(store: StateStore, n: number): void {
@@ -82,32 +94,50 @@ function queue(store: StateStore, n: number): void {
 function clocked(): { store: StateStore; tick: (min: number) => void; now: () => Date } {
   let clock = T0;
   const store = new StateStore(":memory:", () => clock);
-  return { store, tick: (min) => (clock = new Date(clock.getTime() + min * 60_000)), now: () => clock };
+  return {
+    store,
+    tick: (min) => (clock = new Date(clock.getTime() + min * 60_000)),
+    now: () => clock,
+  };
 }
 
 // ---- the pure precedence ----------------------------------------------------
 
 describe("mergeHold / mayLift / holdActive", () => {
-  const session = (min: number) => ({ issuer: "session", expires_at: minutesFromNow(T0, min) }) as const;
+  const session = (min: number) =>
+    ({ issuer: "session", expires_at: minutesFromNow(T0, min) }) as const;
 
   it("nothing standing → engaged with the grant, as given", () => {
-    expect(mergeHold(null, OPERATOR)).toEqual({ hold: { issuer: "operator", expires_at: null }, outcome: "engaged" });
-    expect(mergeHold(null, session(10))).toEqual({ hold: { issuer: "session", expires_at: session(10).expires_at }, outcome: "engaged" });
+    expect(mergeHold(null, OPERATOR)).toEqual({
+      hold: { issuer: "operator", expires_at: null },
+      outcome: "engaged",
+    });
+    expect(mergeHold(null, session(10))).toEqual({
+      hold: { issuer: "session", expires_at: session(10).expires_at },
+      outcome: "engaged",
+    });
   });
 
   it("a session never narrows or replaces an operator's hold; an operator's grant upgrades a session's", () => {
     // MUTATION: swap the two issuer branches in mergeHold — both lines fail.
-    expect(mergeHold({ issuer: "operator", expires_at: null }, session(10)).outcome).toBe("unchanged");
+    expect(mergeHold({ issuer: "operator", expires_at: null }, session(10)).outcome).toBe(
+      "unchanged",
+    );
     const up = mergeHold({ issuer: "session", expires_at: session(10).expires_at }, OPERATOR);
     expect(up).toEqual({ hold: { issuer: "operator", expires_at: null }, outcome: "upgraded" });
   });
 
   it("the same issuer only ever WIDENS: a later expiry extends, an earlier one changes nothing", () => {
     const standing = { issuer: "session", expires_at: session(20).expires_at } as const;
-    expect(mergeHold(standing, session(30))).toEqual({ hold: { issuer: "session", expires_at: session(30).expires_at }, outcome: "extended" });
+    expect(mergeHold(standing, session(30))).toEqual({
+      hold: { issuer: "session", expires_at: session(30).expires_at },
+      outcome: "extended",
+    });
     expect(mergeHold(standing, session(5)).outcome).toBe("unchanged");
     // An operator widening to "until lifted" is an extension too.
-    expect(mergeHold({ issuer: "operator", expires_at: session(20).expires_at }, OPERATOR).outcome).toBe("extended");
+    expect(
+      mergeHold({ issuer: "operator", expires_at: session(20).expires_at }, OPERATOR).outcome,
+    ).toBe("extended");
   });
 
   it("mayLift: the operator lifts anything, a session only a session's", () => {
@@ -120,7 +150,9 @@ describe("mergeHold / mayLift / holdActive", () => {
     const at = minutesFromNow(T0, 10);
     expect(holdActive({ issuer: "session", expires_at: at }, minutesFromNow(T0, 9))).toBe(true);
     expect(holdActive({ issuer: "session", expires_at: at }, at)).toBe(false);
-    expect(holdActive({ issuer: "operator", expires_at: null }, "2999-01-01T00:00:00.000Z")).toBe(true);
+    expect(holdActive({ issuer: "operator", expires_at: null }, "2999-01-01T00:00:00.000Z")).toBe(
+      true,
+    );
     expect(holdActive(null, at)).toBe(false);
   });
 });
@@ -129,16 +161,35 @@ describe("boundSessionGrant", () => {
   const base = { kind: "drain" as const, maxMin: 30, budgetMin: 90, now: T0 };
 
   it("an omitted for_min gets the cap, or what is left of the budget, never 'until lifted'", () => {
-    expect(boundSessionGrant({ ...base, requestedMin: undefined, usedMin: 0 })).toEqual({ ok: true, minutes: 30, expires_at: minutesFromNow(T0, 30) });
-    expect(boundSessionGrant({ ...base, requestedMin: undefined, usedMin: 80 })).toMatchObject({ ok: true, minutes: 10 });
+    expect(boundSessionGrant({ ...base, requestedMin: undefined, usedMin: 0 })).toEqual({
+      ok: true,
+      minutes: 30,
+      expires_at: minutesFromNow(T0, 30),
+    });
+    expect(boundSessionGrant({ ...base, requestedMin: undefined, usedMin: 80 })).toMatchObject({
+      ok: true,
+      minutes: 10,
+    });
   });
 
   it("refuses past the cap, past the remaining budget, and on a spent budget — each naming the number", () => {
     // MUTATION: drop the `requestedMin > maxMin` branch — the first line fails.
-    expect(boundSessionGrant({ ...base, requestedMin: 31, usedMin: 0 })).toMatchObject({ ok: false, reason: expect.stringContaining("cap of 30") });
-    expect(boundSessionGrant({ ...base, requestedMin: 20, usedMin: 80 })).toMatchObject({ ok: false, reason: expect.stringContaining("10 minutes left") });
-    expect(boundSessionGrant({ ...base, requestedMin: undefined, usedMin: 90 })).toMatchObject({ ok: false, reason: expect.stringContaining("budget for today is spent") });
-    expect(boundSessionGrant({ ...base, requestedMin: 30, usedMin: 60 })).toMatchObject({ ok: true, minutes: 30 });
+    expect(boundSessionGrant({ ...base, requestedMin: 31, usedMin: 0 })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("cap of 30"),
+    });
+    expect(boundSessionGrant({ ...base, requestedMin: 20, usedMin: 80 })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("10 minutes left"),
+    });
+    expect(boundSessionGrant({ ...base, requestedMin: undefined, usedMin: 90 })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("budget for today is spent"),
+    });
+    expect(boundSessionGrant({ ...base, requestedMin: 30, usedMin: 60 })).toMatchObject({
+      ok: true,
+      minutes: 30,
+    });
   });
 });
 
@@ -148,8 +199,12 @@ describe("[levers] config", () => {
     expect(cfg.levers).toEqual(LEVERS_DEFAULTS);
     expect(() => parseLevers({ session_drain_max_min: 0 })).toThrow(/session_drain_max_min/);
     expect(() => parseLevers({ session_pause_max_min: 1.5 })).toThrow(/session_pause_max_min/);
-    expect(() => parseLevers({ session_drain_budget_min_per_day: 10 })).toThrow(/at least session_drain_max_min/);
-    expect(() => parseLevers({ session_pause_budget_min_per_day: 10 })).toThrow(/at least session_pause_max_min/);
+    expect(() => parseLevers({ session_drain_budget_min_per_day: 10 })).toThrow(
+      /at least session_drain_max_min/,
+    );
+    expect(() => parseLevers({ session_pause_budget_min_per_day: 10 })).toThrow(
+      /at least session_pause_max_min/,
+    );
   });
 });
 
@@ -160,7 +215,11 @@ describe("store — drain holds", () => {
     const { store, tick } = clocked();
     const res = store.engageDrain({ issuer: "session", expires_at: minutesFromNow(T0, 30) });
     expect(res.outcome).toBe("engaged");
-    expect(store.drainState()).toMatchObject({ draining: true, issued_by: "session", expires_at: minutesFromNow(T0, 30) });
+    expect(store.drainState()).toMatchObject({
+      draining: true,
+      issued_by: "session",
+      expires_at: minutesFromNow(T0, 30),
+    });
     tick(29);
     expect(store.drainState().draining).toBe(true);
     tick(1);
@@ -177,11 +236,20 @@ describe("store — drain holds", () => {
     const { store, tick } = clocked();
     expect(store.engageDrain(OPERATOR).outcome).toBe("engaged");
     tick(24 * 60);
-    expect(store.drainState()).toMatchObject({ draining: true, issued_by: "operator", expires_at: null });
-    expect(store.engageDrain({ issuer: "session", expires_at: minutesFromNow(T0, 30) }).outcome).toBe("unchanged");
+    expect(store.drainState()).toMatchObject({
+      draining: true,
+      issued_by: "operator",
+      expires_at: null,
+    });
+    expect(
+      store.engageDrain({ issuer: "session", expires_at: minutesFromNow(T0, 30) }).outcome,
+    ).toBe("unchanged");
     expect(store.drainState()).toMatchObject({ draining: true, expires_at: null });
     // MUTATION: make liftDrain ignore `mayLift` — this fails.
-    expect(store.liftDrain("session")).toMatchObject({ changed: false, refused: "held-by-operator" });
+    expect(store.liftDrain("session")).toMatchObject({
+      changed: false,
+      refused: "held-by-operator",
+    });
     expect(store.drainState().draining).toBe(true);
     expect(store.liftDrain("operator").changed).toBe(true);
     expect(store.drainState().draining).toBe(false);
@@ -194,7 +262,12 @@ describe("store — drain holds", () => {
     store.countDrainedDelivery();
     const up = store.engageDrain(OPERATOR);
     expect(up.outcome).toBe("upgraded");
-    expect(up.state).toMatchObject({ draining: true, issued_by: "operator", expires_at: null, drained_deliveries: 1 });
+    expect(up.state).toMatchObject({
+      draining: true,
+      issued_by: "operator",
+      expires_at: null,
+      drained_deliveries: 1,
+    });
     expect(store.liftDrain("session").refused).toBe("held-by-operator");
     store.close();
   });
@@ -203,13 +276,19 @@ describe("store — drain holds", () => {
     const { store, tick } = clocked();
     store.engageDrain({ issuer: "session", expires_at: minutesFromNow(T0, 20) });
     store.countDrainedDelivery();
-    expect(store.engageDrain({ issuer: "session", expires_at: minutesFromNow(T0, 10) }).outcome).toBe("unchanged");
-    expect(store.engageDrain({ issuer: "session", expires_at: minutesFromNow(T0, 30) })).toMatchObject({
+    expect(
+      store.engageDrain({ issuer: "session", expires_at: minutesFromNow(T0, 10) }).outcome,
+    ).toBe("unchanged");
+    expect(
+      store.engageDrain({ issuer: "session", expires_at: minutesFromNow(T0, 30) }),
+    ).toMatchObject({
       outcome: "extended",
       state: { expires_at: minutesFromNow(T0, 30), drained_deliveries: 1 },
     });
     tick(31);
-    expect(store.engageDrain({ issuer: "session", expires_at: minutesFromNow(T0, 60) })).toMatchObject({
+    expect(
+      store.engageDrain({ issuer: "session", expires_at: minutesFromNow(T0, 60) }),
+    ).toMatchObject({
       outcome: "engaged",
       state: { drained_deliveries: 0 },
     });
@@ -219,19 +298,33 @@ describe("store — drain holds", () => {
   it("a legacy draining row (no issuer recorded) is the OPERATOR's and never lapses", () => {
     const { store, tick } = clocked();
     store.engageDrain({ issuer: "session", expires_at: minutesFromNow(T0, 5) });
-    store.db.prepare("UPDATE drain_state SET issued_by = NULL, expires_at = NULL WHERE id = 1").run();
+    store.db
+      .prepare("UPDATE drain_state SET issued_by = NULL, expires_at = NULL WHERE id = 1")
+      .run();
     tick(24 * 60);
-    expect(store.drainState()).toMatchObject({ draining: true, issued_by: "operator", expires_at: null });
+    expect(store.drainState()).toMatchObject({
+      draining: true,
+      issued_by: "operator",
+      expires_at: null,
+    });
     expect(store.liftDrain("session").refused).toBe("held-by-operator");
     store.close();
   });
 
   it("the boot auto-lift still lifts whatever stands — a session's drain included", async () => {
     const root = mkdtempSync(join(tmpdir(), "qcr-levers-boot-"));
-    for (const d of ["state", "state/dryrun", "verdict", "inject"]) mkdirSync(join(root, d), { recursive: true });
+    for (const d of ["state", "state/dryrun", "verdict", "inject"])
+      mkdirSync(join(root, d), { recursive: true });
     const store = new StateStore(":memory:");
     store.engageDrain({ issuer: "session", expires_at: minutesFromNow(new Date(), 30) });
-    const daemon = createDaemon({ cfg: { ...cfg, dry_run: true }, root, store, adapter: bootAdapter(), listen: false, log: () => {} });
+    const daemon = createDaemon({
+      cfg: { ...cfg, dry_run: true },
+      root,
+      store,
+      adapter: bootAdapter(),
+      listen: false,
+      log: () => {},
+    });
     await daemon.start();
     try {
       expect(store.drainState().draining).toBe(false);
@@ -248,9 +341,21 @@ describe("store — pause holds", () => {
     const { store, tick } = clocked();
     queue(store, 1);
     queue(store, 2);
-    const res = store.pausePr(1, { issuer: "session", expires_at: minutesFromNow(T0, 60) }, "churn");
-    expect(res).toEqual({ outcome: "engaged", hold: { issuer: "session", expires_at: minutesFromNow(T0, 60) } });
-    expect(store.getPr(1)).toMatchObject({ paused: 1, pause_issuer: "session", pause_reason: "churn", pause_since: T0.toISOString() });
+    const res = store.pausePr(
+      1,
+      { issuer: "session", expires_at: minutesFromNow(T0, 60) },
+      "churn",
+    );
+    expect(res).toEqual({
+      outcome: "engaged",
+      hold: { issuer: "session", expires_at: minutesFromNow(T0, 60) },
+    });
+    expect(store.getPr(1)).toMatchObject({
+      paused: 1,
+      pause_issuer: "session",
+      pause_reason: "churn",
+      pause_since: T0.toISOString(),
+    });
     expect(queuedInOrder(store).map((p) => p.number)).toEqual([2]);
     tick(60);
     // MUTATION: make withLivePause return the row unfolded — all three fail.
@@ -258,7 +363,12 @@ describe("store — pause holds", () => {
     expect(store.allPrs().find((p) => p.number === 1)!.paused).toBe(0);
     expect(queuedInOrder(store).map((p) => p.number)).toEqual([1, 2]);
     expect(store.expireLevers()).toEqual({ drain: false, pauses: [1] });
-    expect(store.getPr(1)).toMatchObject({ paused: 0, pause_issuer: null, pause_reason: null, pause_since: null });
+    expect(store.getPr(1)).toMatchObject({
+      paused: 0,
+      pause_issuer: null,
+      pause_reason: null,
+      pause_since: null,
+    });
     store.close();
   });
 
@@ -266,13 +376,18 @@ describe("store — pause holds", () => {
     const { store } = clocked();
     queue(store, 7);
     store.pausePr(7, OPERATOR, "deploy");
-    expect(store.pausePr(7, { issuer: "session", expires_at: minutesFromNow(T0, 10) }, "x").outcome).toBe("unchanged");
+    expect(
+      store.pausePr(7, { issuer: "session", expires_at: minutesFromNow(T0, 10) }, "x").outcome,
+    ).toBe("unchanged");
     // MUTATION: make resumePr ignore `mayLift` — this fails.
     expect(store.resumePr(7, "session")).toEqual({ changed: false, refused: "held-by-operator" });
     expect(store.getPr(7)!.paused).toBe(1);
     expect(store.resumePr(7, "operator")).toEqual({ changed: true });
     store.pausePr(7, { issuer: "session", expires_at: minutesFromNow(T0, 10) }, "x");
-    expect(store.pausePr(7, OPERATOR, "y")).toMatchObject({ outcome: "upgraded", hold: { issuer: "operator", expires_at: null } });
+    expect(store.pausePr(7, OPERATOR, "y")).toMatchObject({
+      outcome: "upgraded",
+      hold: { issuer: "operator", expires_at: null },
+    });
     expect(store.getPr(7)!.pause_reason).toBe("y");
     store.close();
   });
@@ -281,7 +396,9 @@ describe("store — pause holds", () => {
     const { store, tick } = clocked();
     queue(store, 3);
     store.pausePr(3, { issuer: "session", expires_at: minutesFromNow(T0, 5) }, "old");
-    store.db.prepare("UPDATE pr_state SET pause_issuer = NULL, pause_expires_at = NULL WHERE number = 3").run();
+    store.db
+      .prepare("UPDATE pr_state SET pause_issuer = NULL, pause_expires_at = NULL WHERE number = 3")
+      .run();
     tick(24 * 60);
     expect(store.getPr(3)).toMatchObject({ paused: 1, pause_issuer: "operator" });
     expect(store.resumePr(3, "session").refused).toBe("held-by-operator");
@@ -313,8 +430,16 @@ describe("drainLever", () => {
     const { store, tick, now } = clocked();
     const d = deps(store, now);
     const first = await drainLever(d, true, "session", undefined, async () => {});
-    expect(first).toMatchObject({ ok: true, draining: true, issuer: "session", expires_at: minutesFromNow(T0, 30), outcome: "engaged" });
-    expect(eventsOf(store, "drain_on")).toEqual([{ by: "session", outcome: "engaged", expires_at: minutesFromNow(T0, 30) }]);
+    expect(first).toMatchObject({
+      ok: true,
+      draining: true,
+      issuer: "session",
+      expires_at: minutesFromNow(T0, 30),
+      outcome: "engaged",
+    });
+    expect(eventsOf(store, "drain_on")).toEqual([
+      { by: "session", outcome: "engaged", expires_at: minutesFromNow(T0, 30) },
+    ]);
     tick(30);
     expect(store.drainState().draining).toBe(false);
     const second = await drainLever(d, true, "session", undefined, async () => {});
@@ -325,7 +450,10 @@ describe("drainLever", () => {
     tick(30);
     // MUTATION: make grantFor skip `charge()` — this fails (the budget never fills).
     const fourth = await drainLever(d, true, "session", undefined, async () => {});
-    expect(fourth).toMatchObject({ ok: false, reason: expect.stringContaining("budget for today is spent") });
+    expect(fourth).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("budget for today is spent"),
+    });
     expect(store.drainState().draining).toBe(false);
     store.close();
   });
@@ -333,8 +461,14 @@ describe("drainLever", () => {
   it("an explicit for_min past the cap is refused with the cap named; within it, honoured", async () => {
     const { store, now } = clocked();
     const d = deps(store, now);
-    expect(await drainLever(d, true, "session", 31, async () => {})).toMatchObject({ ok: false, reason: expect.stringContaining("cap of 30") });
-    expect(await drainLever(d, true, "session", 12, async () => {})).toMatchObject({ ok: true, expires_at: minutesFromNow(T0, 12) });
+    expect(await drainLever(d, true, "session", 31, async () => {})).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("cap of 30"),
+    });
+    expect(await drainLever(d, true, "session", 12, async () => {})).toMatchObject({
+      ok: true,
+      expires_at: minutesFromNow(T0, 12),
+    });
     store.close();
   });
 
@@ -342,14 +476,34 @@ describe("drainLever", () => {
     const { store, now } = clocked();
     const d = deps(store, now);
     const lifted: string[] = [];
-    expect(await drainLever(d, true, "operator", undefined, async () => {})).toMatchObject({ ok: true, issuer: "operator", expires_at: null, running_rounds: 0 });
+    expect(await drainLever(d, true, "operator", undefined, async () => {})).toMatchObject({
+      ok: true,
+      issuer: "operator",
+      expires_at: null,
+      running_rounds: 0,
+    });
     expect(store.leverMinutesUsed("drain", "2026-09-02", null)).toBe(0);
     // MUTATION: make drainLever's OFF path call liftDrain("operator") regardless of issuer — this fails.
-    const refused = await drainLever(d, false, "session", undefined, async () => void lifted.push("session"));
-    expect(refused).toMatchObject({ ok: false, reason: expect.stringContaining("held by the operator") });
+    const refused = await drainLever(
+      d,
+      false,
+      "session",
+      undefined,
+      async () => void lifted.push("session"),
+    );
+    expect(refused).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("held by the operator"),
+    });
     expect(lifted).toEqual([]);
     expect(store.drainState().draining).toBe(true);
-    const ok = await drainLever(d, false, "operator", undefined, async () => void lifted.push("operator"));
+    const ok = await drainLever(
+      d,
+      false,
+      "operator",
+      undefined,
+      async () => void lifted.push("operator"),
+    );
     expect(ok).toMatchObject({ ok: true, draining: false });
     expect(lifted).toEqual(["operator"]);
     expect(eventsOf(store, "drain_off")).toEqual([{ by: "operator", dropped_deliveries: 0 }]);
@@ -358,7 +512,9 @@ describe("drainLever", () => {
 
   it("the operator's for_min is honoured verbatim (an operator may bound their own drain)", async () => {
     const { store, now } = clocked();
-    expect(await drainLever(deps(store, now), true, "operator", 500, async () => {})).toMatchObject({ ok: true, issuer: "operator", expires_at: minutesFromNow(T0, 500) });
+    expect(await drainLever(deps(store, now), true, "operator", 500, async () => {})).toMatchObject(
+      { ok: true, issuer: "operator", expires_at: minutesFromNow(T0, 500) },
+    );
     store.close();
   });
 });
@@ -369,21 +525,53 @@ describe("pauseLever / resumeLever", () => {
     const d = deps(store, now);
     queue(store, 11);
     queue(store, 12);
-    expect(pauseLever(d, 99, "r", "session", undefined)).toMatchObject({ ok: false, reason: "unknown PR #99" });
-    expect(pauseLever(d, 11, "waiting on CI fix", "session", undefined)).toMatchObject({ ok: true, paused: 11, issuer: "session", expires_at: minutesFromNow(T0, 240) });
-    expect(eventsOf(store, "pr_paused")).toEqual([{ reason: "waiting on CI fix", by: "session", outcome: "engaged", expires_at: minutesFromNow(T0, 240) }]);
+    expect(pauseLever(d, 99, "r", "session", undefined)).toMatchObject({
+      ok: false,
+      reason: "unknown PR #99",
+    });
+    expect(pauseLever(d, 11, "waiting on CI fix", "session", undefined)).toMatchObject({
+      ok: true,
+      paused: 11,
+      issuer: "session",
+      expires_at: minutesFromNow(T0, 240),
+    });
+    expect(eventsOf(store, "pr_paused")).toEqual([
+      {
+        reason: "waiting on CI fix",
+        by: "session",
+        outcome: "engaged",
+        expires_at: minutesFromNow(T0, 240),
+      },
+    ]);
     tick(240);
-    expect(pauseLever(d, 11, "again", "session", undefined)).toMatchObject({ ok: true, expires_at: minutesFromNow(now(), 240) });
+    expect(pauseLever(d, 11, "again", "session", undefined)).toMatchObject({
+      ok: true,
+      expires_at: minutesFromNow(now(), 240),
+    });
     tick(240);
-    expect(pauseLever(d, 11, "third", "session", undefined)).toMatchObject({ ok: false, reason: expect.stringContaining("budget for today is spent") });
+    expect(pauseLever(d, 11, "third", "session", undefined)).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("budget for today is spent"),
+    });
     // Another PR has its own budget.
     expect(pauseLever(d, 12, "own", "session", undefined)).toMatchObject({ ok: true });
     // Operator pause; session resume refused; operator resume works and pumps.
     const pumped: string[] = [];
-    expect(pauseLever(d, 12, "deploy", "operator", undefined)).toMatchObject({ ok: true, issuer: "operator", expires_at: null, outcome: "upgraded" });
-    expect(await resumeLever(d, 12, "session", async () => void pumped.push("s"))).toMatchObject({ ok: false, reason: expect.stringContaining("paused by the operator") });
+    expect(pauseLever(d, 12, "deploy", "operator", undefined)).toMatchObject({
+      ok: true,
+      issuer: "operator",
+      expires_at: null,
+      outcome: "upgraded",
+    });
+    expect(await resumeLever(d, 12, "session", async () => void pumped.push("s"))).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("paused by the operator"),
+    });
     expect(pumped).toEqual([]);
-    expect(await resumeLever(d, 12, "operator", async () => void pumped.push("o"))).toEqual({ ok: true, resumed: 12 });
+    expect(await resumeLever(d, 12, "operator", async () => void pumped.push("o"))).toEqual({
+      ok: true,
+      resumed: 12,
+    });
     expect(pumped).toEqual(["o"]);
     expect(store.getPr(12)!.paused).toBe(0);
     store.close();
@@ -408,10 +596,18 @@ describe("sweepExpiredLevers", () => {
     // Through the daemon: a lapsed session drain leaves its ledger row on the
     // next pump. MUTATION: drop the sweep call from daemon.ts pump — fails.
     const root = mkdtempSync(join(tmpdir(), "qcr-levers-pump-"));
-    for (const d of ["state", "state/dryrun", "verdict", "inject"]) mkdirSync(join(root, d), { recursive: true });
+    for (const d of ["state", "state/dryrun", "verdict", "inject"])
+      mkdirSync(join(root, d), { recursive: true });
     const { store: s2, tick: tick2 } = clocked();
     s2.engageDrain({ issuer: "session", expires_at: minutesFromNow(T0, 10) });
-    const daemon = createDaemon({ cfg: { ...cfg, dry_run: true }, root, store: s2, adapter: bootAdapter(), listen: false, log: () => {} });
+    const daemon = createDaemon({
+      cfg: { ...cfg, dry_run: true },
+      root,
+      store: s2,
+      adapter: bootAdapter(),
+      listen: false,
+      log: () => {},
+    });
     try {
       tick2(10);
       await daemon.pump();
@@ -428,14 +624,31 @@ describe("sweepExpiredLevers", () => {
 
 describe("commands — for_min and the issuer context", () => {
   it("for_min is optional and must be a positive integer; a drain OFF takes none", () => {
-    expect(validateCommand({ command: "drain", on: true, for_min: 15 })).toEqual({ ok: true, command: { command: "drain", on: true, for_min: 15 } });
-    expect(validateCommand({ command: "pause-pr", pr: 3, reason: "r", for_min: 60 })).toEqual({ ok: true, command: { command: "pause-pr", pr: 3, reason: "r", for_min: 60 } });
-    expect(validateCommand({ command: "drain", on: true })).toEqual({ ok: true, command: { command: "drain", on: true } });
+    expect(validateCommand({ command: "drain", on: true, for_min: 15 })).toEqual({
+      ok: true,
+      command: { command: "drain", on: true, for_min: 15 },
+    });
+    expect(validateCommand({ command: "pause-pr", pr: 3, reason: "r", for_min: 60 })).toEqual({
+      ok: true,
+      command: { command: "pause-pr", pr: 3, reason: "r", for_min: 60 },
+    });
+    expect(validateCommand({ command: "drain", on: true })).toEqual({
+      ok: true,
+      command: { command: "drain", on: true },
+    });
     for (const bad of [0, -5, 1.5, "10", null]) {
-      expect(validateCommand({ command: "drain", on: true, for_min: bad }).ok, String(bad)).toBe(false);
-      expect(validateCommand({ command: "pause-pr", pr: 3, reason: "r", for_min: bad }).ok, String(bad)).toBe(false);
+      expect(validateCommand({ command: "drain", on: true, for_min: bad }).ok, String(bad)).toBe(
+        false,
+      );
+      expect(
+        validateCommand({ command: "pause-pr", pr: 3, reason: "r", for_min: bad }).ok,
+        String(bad),
+      ).toBe(false);
     }
-    expect(validateCommand({ command: "drain", on: false, for_min: 5 })).toMatchObject({ ok: false, reason: expect.stringContaining("on = true") });
+    expect(validateCommand({ command: "drain", on: false, for_min: 5 })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("on = true"),
+    });
   });
 
   it("executeCommand passes the CONTEXT's issuer — and a call with no context is a session's", async () => {
@@ -478,34 +691,78 @@ describe("operatorSealVerdict", () => {
   });
 
   it("sealed: a root-owned 0755 directory holding a root-owned 0644 file, seen by uid 1001", () => {
-    expect(operatorSealVerdict(seal({ "/c/operator": root, "/c/operator/a.json": rootFile }), "/c/operator", "/c/operator/a.json")).toEqual({ sealed: true });
+    expect(
+      operatorSealVerdict(
+        seal({ "/c/operator": root, "/c/operator/a.json": rootFile }),
+        "/c/operator",
+        "/c/operator/a.json",
+      ),
+    ).toEqual({ sealed: true });
   });
 
   it("not sealed: anything the daemon's own identity could have written", () => {
     // MUTATION: make writableBy return false — every line below fails.
     const cases: Array<[string, Record<string, Loose>]> = [
-      ["directory owned by our uid", { "/c/operator": { uid: 1001, gid: 1001, mode: 0o755 }, "/c/operator/a.json": rootFile }],
-      ["world-writable directory", { "/c/operator": { uid: 0, gid: 0, mode: 0o777 }, "/c/operator/a.json": rootFile }],
-      ["group-writable directory in our group", { "/c/operator": { uid: 0, gid: 1001, mode: 0o775 }, "/c/operator/a.json": rootFile }],
-      ["file owned by our uid", { "/c/operator": root, "/c/operator/a.json": { uid: 1001, gid: 1001, mode: 0o644 } }],
-      ["world-writable file", { "/c/operator": root, "/c/operator/a.json": { uid: 0, gid: 0, mode: 0o666 } }],
+      [
+        "directory owned by our uid",
+        { "/c/operator": { uid: 1001, gid: 1001, mode: 0o755 }, "/c/operator/a.json": rootFile },
+      ],
+      [
+        "world-writable directory",
+        { "/c/operator": { uid: 0, gid: 0, mode: 0o777 }, "/c/operator/a.json": rootFile },
+      ],
+      [
+        "group-writable directory in our group",
+        { "/c/operator": { uid: 0, gid: 1001, mode: 0o775 }, "/c/operator/a.json": rootFile },
+      ],
+      [
+        "file owned by our uid",
+        { "/c/operator": root, "/c/operator/a.json": { uid: 1001, gid: 1001, mode: 0o644 } },
+      ],
+      [
+        "world-writable file",
+        { "/c/operator": root, "/c/operator/a.json": { uid: 0, gid: 0, mode: 0o666 } },
+      ],
     ];
     for (const [label, paths] of cases) {
       const v = operatorSealVerdict(seal(paths), "/c/operator", "/c/operator/a.json");
       expect(v.sealed, label).toBe(false);
     }
     // A group-writable directory in a group we are NOT in is still sealed.
-    expect(operatorSealVerdict(seal({ "/c/operator": { uid: 0, gid: 5, mode: 0o775 }, "/c/operator/a.json": rootFile }), "/c/operator", "/c/operator/a.json").sealed).toBe(true);
-    expect(operatorSealVerdict(seal({}), "/c/operator", "/c/operator/a.json")).toEqual({ sealed: false, reason: "operator directory missing" });
+    expect(
+      operatorSealVerdict(
+        seal({ "/c/operator": { uid: 0, gid: 5, mode: 0o775 }, "/c/operator/a.json": rootFile }),
+        "/c/operator",
+        "/c/operator/a.json",
+      ).sealed,
+    ).toBe(true);
+    expect(operatorSealVerdict(seal({}), "/c/operator", "/c/operator/a.json")).toEqual({
+      sealed: false,
+      reason: "operator directory missing",
+    });
   });
 
   it("not sealed: a symlink standing in for the directory or the file, whoever owns it", () => {
     // MUTATION: drop the `kind` checks — both lines below fail. `commands/`
     // is the daemon's, so a session can plant a root-owned-looking link there.
-    const asDir = operatorSealVerdict(seal({ "/c/operator": { ...root, kind: "symlink" }, "/c/operator/a.json": rootFile }), "/c/operator", "/c/operator/a.json");
-    expect(asDir).toEqual({ sealed: false, reason: "operator directory is a symlink, not a directory" });
-    const asFile = operatorSealVerdict(seal({ "/c/operator": root, "/c/operator/a.json": { ...rootFile, kind: "symlink" } }), "/c/operator", "/c/operator/a.json");
-    expect(asFile).toEqual({ sealed: false, reason: "command file is a symlink, not a regular file" });
+    const asDir = operatorSealVerdict(
+      seal({ "/c/operator": { ...root, kind: "symlink" }, "/c/operator/a.json": rootFile }),
+      "/c/operator",
+      "/c/operator/a.json",
+    );
+    expect(asDir).toEqual({
+      sealed: false,
+      reason: "operator directory is a symlink, not a directory",
+    });
+    const asFile = operatorSealVerdict(
+      seal({ "/c/operator": root, "/c/operator/a.json": { ...rootFile, kind: "symlink" } }),
+      "/c/operator",
+      "/c/operator/a.json",
+    );
+    expect(asFile).toEqual({
+      sealed: false,
+      reason: "command file is a symlink, not a regular file",
+    });
   });
 
   it("the REAL process seal over a directory this process made is NOT sealed — the honest case a test can produce", () => {
@@ -529,7 +786,10 @@ describe("CommandWatcher over commands/operator/", () => {
   const sealed: OperatorSeal = {
     euid: 1001,
     gids: [1001],
-    stat: (p) => (p.endsWith(".json") ? { uid: 0, gid: 0, mode: 0o644, kind: "file" } : { uid: 0, gid: 0, mode: 0o755, kind: "dir" }),
+    stat: (p) =>
+      p.endsWith(".json")
+        ? { uid: 0, gid: 0, mode: 0o644, kind: "file" }
+        : { uid: 0, gid: 0, mode: 0o755, kind: "dir" },
   };
 
   function watcherDeps(): { deps: CommandDeps; issuers: string[] } {
@@ -554,22 +814,39 @@ describe("CommandWatcher over commands/operator/", () => {
   });
 
   const opDir = () => join(root, "commands", "operator");
-  const result = (name: string) => JSON.parse(readFileSync(join(root, "commands", "results", `${name}.result.json`), "utf8")) as Record<string, unknown>;
+  const result = (name: string) =>
+    JSON.parse(
+      readFileSync(join(root, "commands", "results", `${name}.result.json`), "utf8"),
+    ) as Record<string, unknown>;
 
   it("with the seal: issuer operator, result beside the session dir's, the file stays put, and it never re-executes", async () => {
     mkdirSync(opDir());
     writeFileSync(join(opDir(), "d1.json"), JSON.stringify({ command: "drain", on: true }));
     const { deps: d, issuers } = watcherDeps();
-    const w = new CommandWatcher({ dir: opDir(), operator: sealed, deps: d, store, sweepIntervalMs: 0 });
+    const w = new CommandWatcher({
+      dir: opDir(),
+      operator: sealed,
+      deps: d,
+      store,
+      sweepIntervalMs: 0,
+    });
     await w.sweep();
     expect(issuers).toEqual(["operator"]);
     expect(result("d1")).toMatchObject({ ok: true, command: "drain", issuer: "operator" });
     expect(existsSync(join(opDir(), "d1.json"))).toBe(true);
     expect(existsSync(join(opDir(), "processed"))).toBe(false);
-    expect(eventsOf(store, "command_executed")).toEqual([{ command: "drain", file: "d1.json", issuer: "operator" }]);
+    expect(eventsOf(store, "command_executed")).toEqual([
+      { command: "drain", file: "d1.json", issuer: "operator" },
+    ]);
     // MUTATION: drop the operatorCommandHandled check in handleFile — the next two lines fail.
     await w.sweep();
-    await new CommandWatcher({ dir: opDir(), operator: sealed, deps: d, store, sweepIntervalMs: 0 }).sweep();
+    await new CommandWatcher({
+      dir: opDir(),
+      operator: sealed,
+      deps: d,
+      store,
+      sweepIntervalMs: 0,
+    }).sweep();
     expect(issuers).toEqual(["operator"]);
     w.stop();
   });
@@ -579,19 +856,34 @@ describe("CommandWatcher over commands/operator/", () => {
     writeFileSync(join(opDir(), "d2.json"), JSON.stringify({ command: "drain", on: true }));
     const { deps: d, issuers } = watcherDeps();
     const lines: string[] = [];
-    const w = new CommandWatcher({ dir: opDir(), operator: processOperatorSeal(), deps: d, store, sweepIntervalMs: 0, log: (l) => lines.push(l) });
+    const w = new CommandWatcher({
+      dir: opDir(),
+      operator: processOperatorSeal(),
+      deps: d,
+      store,
+      sweepIntervalMs: 0,
+      log: (l) => lines.push(l),
+    });
     await w.sweep();
     // MUTATION: make issuerFor return "operator" when unsealed — all four fail.
     expect(issuers).toEqual(["session"]);
     expect(result("d2")).toMatchObject({ issuer: "session" });
-    expect(eventsOf(store, "operator_channel_unsealed")).toEqual([{ file: "d2.json", reason: expect.stringContaining("writable by uid") }]);
+    expect(eventsOf(store, "operator_channel_unsealed")).toEqual([
+      { file: "d2.json", reason: expect.stringContaining("writable by uid") },
+    ]);
     expect(lines.join("\n")).toContain("NOT sealed");
     w.stop();
   });
 
   it("never creates the directory itself, and attaches when the operator's first write creates it", async () => {
     const { deps: d, issuers } = watcherDeps();
-    const w = new CommandWatcher({ dir: opDir(), operator: sealed, deps: d, store, sweepIntervalMs: 0 });
+    const w = new CommandWatcher({
+      dir: opDir(),
+      operator: sealed,
+      deps: d,
+      store,
+      sweepIntervalMs: 0,
+    });
     await w.start();
     // MUTATION: let ensureDirs mkdir the operator dir — this fails.
     expect(existsSync(opDir())).toBe(false);
@@ -600,7 +892,8 @@ describe("CommandWatcher over commands/operator/", () => {
     writeFileSync(join(opDir(), ".d3.json.tmp"), JSON.stringify({ command: "drain", on: true }));
     const { renameSync } = await import("node:fs");
     renameSync(join(opDir(), ".d3.json.tmp"), join(opDir(), "d3.json"));
-    for (let i = 0; i < 100 && issuers.length === 0; i++) await new Promise((r) => setTimeout(r, 20));
+    for (let i = 0; i < 100 && issuers.length === 0; i++)
+      await new Promise((r) => setTimeout(r, 20));
     expect(issuers).toEqual(["operator"]);
     w.stop();
   });
@@ -627,31 +920,79 @@ describe("visibility — snapshot, qcr status, the board", () => {
     store.engageDrain({ issuer: "session", expires_at: minutesFromNow(T0, 30) });
     store.pausePr(31, { issuer: "session", expires_at: minutesFromNow(T0, 60) }, "flaky CI");
     const snap = buildStatusSnapshot(store, false, undefined, () => T0);
-    expect(snap).toMatchObject({ draining: true, draining_by: "session", draining_until: minutesFromNow(T0, 30) });
-    expect(snap.prs[0]).toMatchObject({ paused: 1, pause: { issuer: "session", reason: "flaky CI", since: T0.toISOString(), expires_at: minutesFromNow(T0, 60) } });
+    expect(snap).toMatchObject({
+      draining: true,
+      draining_by: "session",
+      draining_until: minutesFromNow(T0, 30),
+    });
+    expect(snap.prs[0]).toMatchObject({
+      paused: 1,
+      pause: {
+        issuer: "session",
+        reason: "flaky CI",
+        since: T0.toISOString(),
+        expires_at: minutesFromNow(T0, 60),
+      },
+    });
     store.liftDrain("session");
     store.engageDrain(OPERATOR);
     const op = buildStatusSnapshot(store, false, undefined, () => T0);
     expect(op.draining_by).toBe("operator");
     expect(op).not.toHaveProperty("draining_until");
     store.resumePr(31, "session");
-    expect(buildStatusSnapshot(store, false, undefined, () => T0).prs[0]).not.toHaveProperty("pause");
+    expect(buildStatusSnapshot(store, false, undefined, () => T0).prs[0]).not.toHaveProperty(
+      "pause",
+    );
     store.close();
   });
 
   it("qcr status says who holds the drain, when it lapses, and which PRs are held by whom", () => {
-    const base = { written_at: "x", dry_run: false, running_rounds: 0, total_spend_usd: 0, heartbeat: "x" } as const;
-    const pr = { number: 31, state: "queued" as const, title: "t", head_sha: "abc", stale_recheck: 0 };
+    const base = {
+      written_at: "x",
+      dry_run: false,
+      running_rounds: 0,
+      total_spend_usd: 0,
+      heartbeat: "x",
+    } as const;
+    const pr = {
+      number: 31,
+      state: "queued" as const,
+      title: "t",
+      head_sha: "abc",
+      stale_recheck: 0,
+    };
     const out = renderStatus({
       ...base,
       draining: true,
       draining_by: "session",
       draining_until: "2026-09-02T10:30:00.000Z",
-      prs: [{ ...pr, paused: 1, pause: { issuer: "session", reason: "flaky CI", since: null, expires_at: "2026-09-02T11:00:00.000Z" } }],
+      prs: [
+        {
+          ...pr,
+          paused: 1,
+          pause: {
+            issuer: "session",
+            reason: "flaky CI",
+            since: null,
+            expires_at: "2026-09-02T11:00:00.000Z",
+          },
+        },
+      ],
     });
     expect(out).toContain("held by a SESSION, lapses 2026-09-02T10:30:00.000Z");
     expect(out).toContain("#31 paused by a session, lapses 2026-09-02T11:00:00.000Z — flaky CI");
-    const op = renderStatus({ ...base, draining: true, draining_by: "operator", prs: [{ ...pr, paused: 1, pause: { issuer: "operator", reason: null, since: null, expires_at: null } }] });
+    const op = renderStatus({
+      ...base,
+      draining: true,
+      draining_by: "operator",
+      prs: [
+        {
+          ...pr,
+          paused: 1,
+          pause: { issuer: "operator", reason: null, since: null, expires_at: null },
+        },
+      ],
+    });
     expect(op).toContain("held by the operator until lifted");
     expect(op).toContain("#31 paused by the operator until resumed");
     const old = renderStatus({ ...base, draining: true, prs: [{ ...pr, paused: 1 }] });
@@ -660,7 +1001,9 @@ describe("visibility — snapshot, qcr status, the board", () => {
   });
 
   it("the board's top bar and the PR detail name the holder and the lapse", () => {
-    expect(leverHolderLabel("session", "2026-09-02T10:30:00.000Z")).toBe("held by a session, lapses 10:30:00Z");
+    expect(leverHolderLabel("session", "2026-09-02T10:30:00.000Z")).toBe(
+      "held by a session, lapses 10:30:00Z",
+    );
     expect(leverHolderLabel("operator", undefined)).toBe("held by the operator until lifted");
     expect(leverHolderLabel(undefined, undefined)).toBe("holder unknown (older daemon)");
     const view: BoardView = {
@@ -683,7 +1026,9 @@ describe("visibility — snapshot, qcr status, the board", () => {
       eventsScroll: 0,
       help: false,
     };
-    expect(stripAnsi(topBar(view, 200))).toContain("DRAINING — 1 round finishing · 0 failed loud · 0 dropped · held by a session, lapses 10:30:00Z");
+    expect(stripAnsi(topBar(view, 200))).toContain(
+      "DRAINING — 1 round finishing · 0 failed loud · 0 dropped · held by a session, lapses 10:30:00Z",
+    );
     const pr = {
       number: 31,
       state: "queued" as const,
@@ -691,10 +1036,22 @@ describe("visibility — snapshot, qcr status, the board", () => {
       head_sha: "abc",
       stale_recheck: 0,
       paused: 1,
-      pause: { issuer: "session" as const, reason: "flaky CI", since: null, expires_at: "2026-09-02T11:00:00.000Z" },
+      pause: {
+        issuer: "session" as const,
+        reason: "flaky CI",
+        since: null,
+        expires_at: "2026-09-02T11:00:00.000Z",
+      },
     };
-    const lines = detailLines({ pr: 31, known: true, spend_usd: 0, rounds: [], threads: { open: 0, total: 0 } }, pr, 120, T0).map(stripAnsi);
-    expect(lines.some((l) => l.includes("PAUSED · held by a session, lapses 11:00:00Z · flaky CI"))).toBe(true);
+    const lines = detailLines(
+      { pr: 31, known: true, spend_usd: 0, rounds: [], threads: { open: 0, total: 0 } },
+      pr,
+      120,
+      T0,
+    ).map(stripAnsi);
+    expect(
+      lines.some((l) => l.includes("PAUSED · held by a session, lapses 11:00:00Z · flaky CI")),
+    ).toBe(true);
   });
 });
 
@@ -705,17 +1062,35 @@ describe("qcr drain — the operator channel", () => {
 
   it("writes into commands/operator/ as root, and the manual fallback does the same", async () => {
     const writes: string[][] = [];
-    const ssh = async (_h: string, argv: string[], opts?: { stdin?: string }): Promise<RemoteResult> => {
+    const ssh = async (
+      _h: string,
+      argv: string[],
+      opts?: { stdin?: string },
+    ): Promise<RemoteResult> => {
       if (opts?.stdin !== undefined) {
         writes.push(argv);
         return ok();
       }
-      return ok(JSON.stringify({ ok: true, draining: true, running_rounds: 0, issuer: "operator" }));
+      return ok(
+        JSON.stringify({ ok: true, draining: true, running_rounds: 0, issuer: "operator" }),
+      );
     };
     const lines: string[] = [];
-    expect(await runDrain(true, { cfg, ssh, log: (l) => lines.push(l), sleep: async () => {} })).toBe(0);
-    expect(writes[0]!.slice(0, 7)).toEqual(["sudo", "docker", "exec", "-i", "-u", "0", cfg.tui.container]);
-    expect(writes[0]![writes[0]!.length - 1]).toContain(`${cfg.tui.remote_sandbox_root}/commands/operator/`);
+    expect(
+      await runDrain(true, { cfg, ssh, log: (l) => lines.push(l), sleep: async () => {} }),
+    ).toBe(0);
+    expect(writes[0]!.slice(0, 7)).toEqual([
+      "sudo",
+      "docker",
+      "exec",
+      "-i",
+      "-u",
+      "0",
+      cfg.tui.container,
+    ]);
+    expect(writes[0]![writes[0]!.length - 1]).toContain(
+      `${cfg.tui.remote_sandbox_root}/commands/operator/`,
+    );
     expect(lines.join("\n")).not.toContain("NOT an operator drain");
     const manual = drainManualSshCommand(cfg.tui, true, new Date("2026-08-31T12:00:00Z"));
     expect(manual).toContain("docker exec -i -u 0");
@@ -724,10 +1099,26 @@ describe("qcr drain — the operator channel", () => {
   });
 
   it("says so, loudly, when the daemon bounded the drain because the channel was unsealed", async () => {
-    const ssh = async (_h: string, _a: string[], opts?: { stdin?: string }): Promise<RemoteResult> =>
-      opts?.stdin !== undefined ? ok() : ok(JSON.stringify({ ok: true, draining: true, running_rounds: 0, issuer: "session", expires_at: "2026-09-02T10:30:00.000Z" }));
+    const ssh = async (
+      _h: string,
+      _a: string[],
+      opts?: { stdin?: string },
+    ): Promise<RemoteResult> =>
+      opts?.stdin !== undefined
+        ? ok()
+        : ok(
+            JSON.stringify({
+              ok: true,
+              draining: true,
+              running_rounds: 0,
+              issuer: "session",
+              expires_at: "2026-09-02T10:30:00.000Z",
+            }),
+          );
     const lines: string[] = [];
-    expect(await runDrain(true, { cfg, ssh, log: (l) => lines.push(l), sleep: async () => {} })).toBe(0);
+    expect(
+      await runDrain(true, { cfg, ssh, log: (l) => lines.push(l), sleep: async () => {} }),
+    ).toBe(0);
     expect(lines.join("\n")).toContain("NOT an operator drain");
     expect(lines.join("\n")).toContain("lapses 2026-09-02T10:30:00.000Z");
   });
@@ -741,12 +1132,22 @@ describe("operatorCommandWriteScript under sh", () => {
   let fakebin: string;
   /** Runs the exact script the TUI ships, with `chown` shimmed on PATH (this
    * test is not root); the shim records what it was asked to own. */
-  function runScript(root: string, name: string, payload: string): { code: number; stderr: string; chown: string[] } {
+  function runScript(
+    root: string,
+    name: string,
+    payload: string,
+  ): { code: number; stderr: string; chown: string[] } {
     const log = join(fakebin, "chown.log");
     rmSync(log, { force: true });
     const script = operatorCommandWriteScript({ ...cfg.tui, remote_sandbox_root: root }, name);
-    const res = spawnSync("sh", ["-c", script], { input: payload, encoding: "utf8", env: { ...process.env, PATH: `${fakebin}:${process.env["PATH"] ?? ""}`, CHOWN_LOG: log } });
-    const chown = existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean) : [];
+    const res = spawnSync("sh", ["-c", script], {
+      input: payload,
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${fakebin}:${process.env["PATH"] ?? ""}`, CHOWN_LOG: log },
+    });
+    const chown = existsSync(log)
+      ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean)
+      : [];
     return { code: res.status ?? -1, stderr: res.stderr, chown };
   }
 
@@ -843,4 +1244,3 @@ function bootAdapter(): DaemonAdapter {
     createReview: gate,
   } as unknown as DaemonAdapter;
 }
-

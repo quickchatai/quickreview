@@ -8,7 +8,12 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { COMPANION_DEFAULTS, type CompanionConfig } from "../src/config.js";
 import type { StatusSnapshot } from "../src/state.js";
-import { AlertPolicy, filePolicyStore, readPolicyState, type AlertRecord } from "../src/tui/alerts.js";
+import {
+  AlertPolicy,
+  filePolicyStore,
+  readPolicyState,
+  type AlertRecord,
+} from "../src/tui/alerts.js";
 import type { DockerResult, DockerRunner } from "../src/tui/companion.js";
 import {
   CompanionRollover,
@@ -62,7 +67,10 @@ function cfg(overrides: Partial<CompanionConfig> = {}): CompanionConfig {
 const OK = (stdout = ""): DockerResult => ({ ok: true, stdout, stderr: "", code: 0 });
 
 /** Records argv, answers `ls`/`tail` from a table, OK for everything else. */
-function fakeDocker(answers: Record<string, string> = {}): { runner: DockerRunner; calls: string[][] } {
+function fakeDocker(answers: Record<string, string> = {}): {
+  runner: DockerRunner;
+  calls: string[][];
+} {
   const calls: string[][] = [];
   const runner: DockerRunner = async (argv) => {
     calls.push(argv);
@@ -94,7 +102,8 @@ function rollover(
     injectDir: join(dir, "repo", "inject", "companion"),
     ...(opts.firstRun || opts.firstRunTemplatePath
       ? {
-          firstRunTemplatePath: opts.firstRunTemplatePath ?? join(repoRoot, "prompts", "companion-first-run.md"),
+          firstRunTemplatePath:
+            opts.firstRunTemplatePath ?? join(repoRoot, "prompts", "companion-first-run.md"),
           firstRunMarkerPath: join(dir, "state", "companion", "first-run.json"),
         }
       : {}),
@@ -133,8 +142,12 @@ describe("ops-day derivation", () => {
   });
 
   it("honours QCR_FAKE_TODAY (the smoke script's only lever) and ignores junk", () => {
-    expect(todayDate(new Date("2026-08-14T09:00:00Z"), { QCR_FAKE_TODAY: "1999-12-31" })).toBe("1999-12-31");
-    expect(todayDate(new Date("2026-08-14T09:00:00Z"), { QCR_FAKE_TODAY: "yesterday" })).toBe("2026-08-14");
+    expect(todayDate(new Date("2026-08-14T09:00:00Z"), { QCR_FAKE_TODAY: "1999-12-31" })).toBe(
+      "1999-12-31",
+    );
+    expect(todayDate(new Date("2026-08-14T09:00:00Z"), { QCR_FAKE_TODAY: "yesterday" })).toBe(
+      "2026-08-14",
+    );
   });
 });
 
@@ -142,16 +155,25 @@ describe("rollover decision", () => {
   const stored = (value: RolloverState): RolloverStateRead => ({ state: "state", value });
 
   it("first run records the day without touching the conversation", () => {
-    expect(decideRollover("2026-08-14", { state: "absent" })).toEqual({ kind: "first-run", today: "2026-08-14" });
+    expect(decideRollover("2026-08-14", { state: "absent" })).toEqual({
+      kind: "first-run",
+      today: "2026-08-14",
+    });
   });
 
   it("same day is a no-op, and a backwards clock never rotates", () => {
-    expect(decideRollover("2026-08-14", stored({ last_open_date: "2026-08-14", updated_at: "" })).kind).toBe("same-day");
-    expect(decideRollover("2026-08-13", stored({ last_open_date: "2026-08-14", updated_at: "" })).kind).toBe("same-day");
+    expect(
+      decideRollover("2026-08-14", stored({ last_open_date: "2026-08-14", updated_at: "" })).kind,
+    ).toBe("same-day");
+    expect(
+      decideRollover("2026-08-13", stored({ last_open_date: "2026-08-14", updated_at: "" })).kind,
+    ).toBe("same-day");
   });
 
   it("an earlier recorded day rolls over and names the previous day", () => {
-    expect(decideRollover("2026-08-14", stored({ last_open_date: "2026-08-13", updated_at: "" }))).toEqual({
+    expect(
+      decideRollover("2026-08-14", stored({ last_open_date: "2026-08-13", updated_at: "" })),
+    ).toEqual({
       kind: "rollover",
       today: "2026-08-14",
       previous: "2026-08-13",
@@ -182,14 +204,20 @@ describe("rollover decision", () => {
 
     // Valid JSON with no usable date is unreadable too, never absent.
     writeFileSync(p, JSON.stringify({ updated_at: "x" }));
-    expect(readRolloverStateFile(p)).toEqual({ state: "unreadable", reason: "no usable last_open_date" });
+    expect(readRolloverStateFile(p)).toEqual({
+      state: "unreadable",
+      reason: "no usable last_open_date",
+    });
   });
 });
 
 describe("conversation parsing and compaction", () => {
   const lines = [
     JSON.stringify({ role: "user", content: "how is the board" }),
-    JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "quiet" }] } }),
+    JSON.stringify({
+      type: "message",
+      message: { role: "assistant", content: [{ type: "text", text: "quiet" }] },
+    }),
     JSON.stringify({ entry: { role: "user", content: [{ type: "text", text: "thanks" }] } }),
     JSON.stringify({ role: "tool", content: "ignored" }),
     "{{ torn line",
@@ -234,7 +262,9 @@ describe("conversation parsing and compaction", () => {
   it("is empty for an empty conversation, and the tail is bounded", () => {
     expect(compactConversation([])).toBe("");
     expect(conversationTail([])).toBe("");
-    const tail = conversationTail(Array.from({ length: 40 }, () => ({ role: "user" as const, text: "y".repeat(500) })));
+    const tail = conversationTail(
+      Array.from({ length: 40 }, () => ({ role: "user" as const, text: "y".repeat(500) })),
+    );
     expect(tail.length).toBeLessThanOrEqual(2000);
     expect(tail.split("\n").length).toBeLessThanOrEqual(6);
   });
@@ -245,8 +275,23 @@ describe("carry items", () => {
     written_at: "2026-08-14T06:00:00Z",
     dry_run: true,
     prs: [
-      { number: 5012, state: "reviewing", title: "add retries", head_sha: "a", stale_recheck: 0, rounds: 2, last_verdict: "changes" },
-      { number: 5013, state: "awaiting_author", title: "docs", head_sha: "b", stale_recheck: 0, paused: 1 },
+      {
+        number: 5012,
+        state: "reviewing",
+        title: "add retries",
+        head_sha: "a",
+        stale_recheck: 0,
+        rounds: 2,
+        last_verdict: "changes",
+      },
+      {
+        number: 5013,
+        state: "awaiting_author",
+        title: "docs",
+        head_sha: "b",
+        stale_recheck: 0,
+        paused: 1,
+      },
     ],
     running_rounds: 1,
     total_spend_usd: 12.5,
@@ -276,7 +321,13 @@ describe("carry items", () => {
     mkdirSync(alertsDir, { recursive: true });
     writeFileSync(
       join(alertsDir, "2026-08-14T05-00-00Z-overdue.json"),
-      JSON.stringify({ tier: "alert", cause: "round-overdue", pr: "5012", title: "round overdue", body: "" }),
+      JSON.stringify({
+        tier: "alert",
+        cause: "round-overdue",
+        pr: "5012",
+        title: "round overdue",
+        body: "",
+      }),
     );
     writeFileSync(join(alertsDir, "2026-08-14T05-01-00Z-bad.json"), "{oops");
     const policyPath = join(dir, "state", "alert-policy.json");
@@ -286,7 +337,13 @@ describe("carry items", () => {
       JSON.stringify({
         day: "2026-08-13",
         causes: {
-          "daemon-stale": { day: "2026-08-13", lastAt: 1, lastTier: "alert", folds: 2, bypassed: false },
+          "daemon-stale": {
+            day: "2026-08-13",
+            lastAt: 1,
+            lastTier: "alert",
+            folds: 2,
+            bypassed: false,
+          },
           chatter: { day: "2026-08-13", lastAt: 1, lastTier: "notice", folds: 0, bypassed: false },
         },
       }),
@@ -300,7 +357,9 @@ describe("carry items", () => {
   });
 
   it("quotes the alert knobs from config", () => {
-    expect(alertKnobs(cfg({ cooldown_min: 20, overdue_grace_min: 30 }))).toContain("per-cause cooldown: 20 min");
+    expect(alertKnobs(cfg({ cooldown_min: 20, overdue_grace_min: 30 }))).toContain(
+      "per-cause cooldown: 20 min",
+    );
   });
 });
 
@@ -316,7 +375,15 @@ describe("day-open rendering", () => {
       alert_knobs: "knobs text",
     });
     expect(out).not.toMatch(/\{\{\w+\}\}/);
-    for (const v of ["2026-08-14", "digest text", "summary text", "tail text", "alerts text", "snapshot text", "knobs text"]) {
+    for (const v of [
+      "2026-08-14",
+      "digest text",
+      "summary text",
+      "tail text",
+      "alerts text",
+      "snapshot text",
+      "knobs text",
+    ]) {
       expect(out).toContain(v);
     }
   });
@@ -342,7 +409,9 @@ describe("the rollover sequence", () => {
     const report = await rollover(runner).run();
     expect(report.verdict.kind).toBe("first-run");
     expect(calls).toEqual([]);
-    expect(readRolloverState(join(dir, "state", "rollover.json"))?.last_open_date).toBe("2026-08-14");
+    expect(readRolloverState(join(dir, "state", "rollover.json"))?.last_open_date).toBe(
+      "2026-08-14",
+    );
   });
 
   it("a second start on the same day does nothing", async () => {
@@ -355,14 +424,25 @@ describe("the rollover sequence", () => {
   });
 
   it("a new day archives, compacts, assembles, kills and queues — in that order", async () => {
-    writeRolloverState(join(dir, "state", "rollover.json"), { last_open_date: "2026-08-13", updated_at: "" });
+    writeRolloverState(join(dir, "state", "rollover.json"), {
+      last_open_date: "2026-08-13",
+      updated_at: "",
+    });
     mkdirSync(join(dir, "feed"), { recursive: true });
     writeFileSync(
       join(dir, "feed", "snapshot.json"),
       JSON.stringify({
         written_at: "2026-08-14T06:00:00Z",
         dry_run: true,
-        prs: [{ number: 5012, state: "reviewing", title: "add retries", head_sha: "a", stale_recheck: false }],
+        prs: [
+          {
+            number: 5012,
+            state: "reviewing",
+            title: "add retries",
+            head_sha: "a",
+            stale_recheck: false,
+          },
+        ],
         running_rounds: 1,
         total_spend_usd: 2,
         digest_headline: "yesterday: 3 PRs",
@@ -373,10 +453,17 @@ describe("the rollover sequence", () => {
       JSON.stringify({ role: "user", content: "morning" }),
       JSON.stringify({ role: "assistant", content: "PR 5012 stalled overnight" }),
     ].join("\n");
-    const { runner, calls } = fakeDocker({ "ls -1t": "/home/companion/.pi/agent/sessions/companion/abc.jsonl\n", "tail -c": convo });
+    const { runner, calls } = fakeDocker({
+      "ls -1t": "/home/companion/.pi/agent/sessions/companion/abc.jsonl\n",
+      "tail -c": convo,
+    });
 
     const report = await rollover(runner).run();
-    expect(report.verdict).toEqual({ kind: "rollover", today: "2026-08-14", previous: "2026-08-13" });
+    expect(report.verdict).toEqual({
+      kind: "rollover",
+      today: "2026-08-14",
+      previous: "2026-08-13",
+    });
 
     // Order: list → archive (stamped with YESTERDAY) → read → kill.
     const scripts = calls.map((c) => c.join(" "));
@@ -385,11 +472,15 @@ describe("the rollover sequence", () => {
     expect(scripts[1]).toContain("cp '/home/companion/.pi/agent/sessions/companion/abc.jsonl'");
     expect(scripts[2]).toContain("tail -c");
     expect(scripts[3]).toContain("tmux kill-session -t companion");
-    expect(report.archivedTo).toBe("/home/companion/.pi/archive/companion/2026-08-13/session.jsonl");
+    expect(report.archivedTo).toBe(
+      "/home/companion/.pi/archive/companion/2026-08-13/session.jsonl",
+    );
 
     // All five carry items landed in the queued message.
     const queued = readFileSync(report.dayOpenFile!, "utf8");
-    expect(report.dayOpenFile).toBe(join(dir, "repo", "inject", "companion", "2026-08-14-day-open.md"));
+    expect(report.dayOpenFile).toBe(
+      join(dir, "repo", "inject", "companion", "2026-08-14-day-open.md"),
+    );
     expect(queued).toContain("2026-08-14");
     expect(queued).toContain("yesterday: 3 PRs"); // digest
     expect(queued).toContain("PR 5012 stalled overnight"); // tail + summary
@@ -398,12 +489,17 @@ describe("the rollover sequence", () => {
     expect(queued).not.toMatch(/\{\{\w+\}\}/);
 
     // And the day is recorded, so the next start is a same-day no-op.
-    expect(readRolloverState(join(dir, "state", "rollover.json"))?.last_open_date).toBe("2026-08-14");
+    expect(readRolloverState(join(dir, "state", "rollover.json"))?.last_open_date).toBe(
+      "2026-08-14",
+    );
     expect((await rollover(runner).run()).verdict.kind).toBe("same-day");
   });
 
   it("rolls over cleanly when there is no previous conversation on the volume", async () => {
-    writeRolloverState(join(dir, "state", "rollover.json"), { last_open_date: "2026-08-13", updated_at: "" });
+    writeRolloverState(join(dir, "state", "rollover.json"), {
+      last_open_date: "2026-08-13",
+      updated_at: "",
+    });
     const { runner } = fakeDocker({ "ls -1t": "" });
     const report = await rollover(runner).run();
     expect(report.steps[0]).toBe("no previous conversation found");
@@ -418,13 +514,18 @@ describe("the rollover sequence", () => {
   describe("a lost docker exec defers the day instead of fabricating one", () => {
     /** Fails every exec whose script contains `failOn`; OK (from the table)
      * otherwise. The container-recreate race companion.ts documents. */
-    function flakyDocker(failOn: string, answers: Record<string, string> = {}): { runner: DockerRunner; calls: string[][] } {
+    function flakyDocker(
+      failOn: string,
+      answers: Record<string, string> = {},
+    ): { runner: DockerRunner; calls: string[][] } {
       const calls: string[][] = [];
       const runner: DockerRunner = async (argv) => {
         calls.push(argv);
         const script = argv[argv.length - 1] ?? "";
-        if (script.includes(failOn)) return { ok: false, stdout: "", stderr: "Error: No such container: companion", code: 1 };
-        for (const [needle, out] of Object.entries(answers)) if (script.includes(needle)) return OK(out);
+        if (script.includes(failOn))
+          return { ok: false, stdout: "", stderr: "Error: No such container: companion", code: 1 };
+        for (const [needle, out] of Object.entries(answers))
+          if (script.includes(needle)) return OK(out);
         return OK();
       };
       return { runner, calls };
@@ -455,7 +556,9 @@ describe("the rollover sequence", () => {
 
     it("a failed conversation read defers too — an unread conversation is not an empty one", async () => {
       writeRolloverState(statePath(), { last_open_date: "2026-08-13", updated_at: "" });
-      const { runner, calls } = flakyDocker("tail -c", { "ls -1t": "/home/companion/.pi/agent/sessions/companion/abc.jsonl\n" });
+      const { runner, calls } = flakyDocker("tail -c", {
+        "ls -1t": "/home/companion/.pi/agent/sessions/companion/abc.jsonl\n",
+      });
       const report = await rollover(runner).run();
 
       expect(report.deferred).toMatch(/could not read .*abc\.jsonl/);
@@ -498,7 +601,11 @@ describe("the rollover sequence", () => {
 
     it("record() keeps the interview mark from the state run() already read, not a second read", async () => {
       const p = statePath();
-      writeRolloverState(p, { last_open_date: "2026-08-13", updated_at: "", first_run_interviewed: "2026-07-01" });
+      writeRolloverState(p, {
+        last_open_date: "2026-08-13",
+        updated_at: "",
+        first_run_interviewed: "2026-07-01",
+      });
       await rollover(fakeDocker({ "ls -1t": "" }).runner).run();
       expect(readRolloverState(p)?.first_run_interviewed).toBe("2026-07-01");
       expect(readRolloverState(p)?.last_open_date).toBe("2026-08-14");
@@ -525,10 +632,17 @@ describe("the rollover sequence", () => {
   });
 
   it("QCR_FAKE_TODAY drives the whole sequence (how the smoke script fakes a day)", async () => {
-    writeRolloverState(join(dir, "state", "rollover.json"), { last_open_date: "2026-08-14", updated_at: "" });
+    writeRolloverState(join(dir, "state", "rollover.json"), {
+      last_open_date: "2026-08-14",
+      updated_at: "",
+    });
     const { runner } = fakeDocker({ "ls -1t": "" });
     const report = await rollover(runner, { env: { QCR_FAKE_TODAY: "2026-08-15" } }).run();
-    expect(report.verdict).toEqual({ kind: "rollover", today: "2026-08-15", previous: "2026-08-14" });
+    expect(report.verdict).toEqual({
+      kind: "rollover",
+      today: "2026-08-15",
+      previous: "2026-08-14",
+    });
   });
 });
 
@@ -547,8 +661,20 @@ describe("first-run interview", () => {
     // The wizard's marker on an installation with no interview on record ⇒ due.
     expect(interviewDue(marker, { last_open_date: "2026-08-14", updated_at: "" })).toBe(true);
     // Delivered once ⇒ never again, marker or not.
-    expect(interviewDue(marker, { last_open_date: "2026-08-14", updated_at: "", first_run_interviewed: "2026-08-14" })).toBe(false);
-    expect(interviewDue(undefined, { last_open_date: "2026-08-14", updated_at: "", first_run_interviewed: "2026-08-14" })).toBe(false);
+    expect(
+      interviewDue(marker, {
+        last_open_date: "2026-08-14",
+        updated_at: "",
+        first_run_interviewed: "2026-08-14",
+      }),
+    ).toBe(false);
+    expect(
+      interviewDue(undefined, {
+        last_open_date: "2026-08-14",
+        updated_at: "",
+        first_run_interviewed: "2026-08-14",
+      }),
+    ).toBe(false);
     // An existing installation (state, no marker) never gets one.
     expect(interviewDue(undefined, { last_open_date: "2026-08-13", updated_at: "" })).toBe(false);
   });
@@ -565,7 +691,11 @@ describe("first-run interview", () => {
 
   it("renderFirstRun fills every placeholder; an empty snapshot renders as an em dash", () => {
     const template = readFileSync(join(repoRoot, "prompts", "companion-first-run.md"), "utf8");
-    const out = renderFirstRun(template, { date: "2026-08-14", owner: "Casey", snapshot_summary: "" });
+    const out = renderFirstRun(template, {
+      date: "2026-08-14",
+      owner: "Casey",
+      snapshot_summary: "",
+    });
     expect(out).not.toMatch(/\{\{\w+\}\}/);
     expect(out).toContain("**2026-08-14**");
     expect(out).toContain("**Casey**");
@@ -577,7 +707,9 @@ describe("first-run interview", () => {
     const report = await rollover(runner, { firstRun: true }).run();
     expect(report.verdict.kind).toBe("first-run");
     expect(calls).toEqual([]); // still no docker call — nothing to archive or kill
-    expect(report.interviewFile).toBe(join(dir, "repo", "inject", "companion", firstRunFileName("2026-08-14")));
+    expect(report.interviewFile).toBe(
+      join(dir, "repo", "inject", "companion", firstRunFileName("2026-08-14")),
+    );
     const queued = readFileSync(report.interviewFile!, "utf8");
     expect(queued).toContain("first-run"); // no leftover placeholders either
     expect(queued).not.toMatch(/\{\{\w+\}\}/);
@@ -595,21 +727,32 @@ describe("first-run interview", () => {
   it("later days run the normal day-open — and the delivered mark survives the rollover rewrite", async () => {
     const { runner } = fakeDocker({ "ls -1t": "" });
     await rollover(runner, { firstRun: true }).run(); // day 1: interview
-    const day2 = await rollover(runner, { firstRun: true, env: { QCR_FAKE_TODAY: "2026-08-15" } }).run();
+    const day2 = await rollover(runner, {
+      firstRun: true,
+      env: { QCR_FAKE_TODAY: "2026-08-15" },
+    }).run();
     expect(day2.verdict.kind).toBe("rollover");
     expect(day2.dayOpenFile).toBeDefined();
     expect(readFileSync(day2.dayOpenFile!, "utf8")).toContain("Good morning");
     expect(day2.interviewFile).toBeUndefined();
     // record() preserved the mark, so a marker landing later still never re-fires.
-    expect(readRolloverState(join(dir, "state", "rollover.json"))?.first_run_interviewed).toBe("2026-08-14");
+    expect(readRolloverState(join(dir, "state", "rollover.json"))?.first_run_interviewed).toBe(
+      "2026-08-14",
+    );
     writeMarker();
-    const day3 = await rollover(runner, { firstRun: true, env: { QCR_FAKE_TODAY: "2026-08-16" } }).run();
+    const day3 = await rollover(runner, {
+      firstRun: true,
+      env: { QCR_FAKE_TODAY: "2026-08-16" },
+    }).run();
     expect(day3.interviewFile).toBeUndefined();
   });
 
   it("wizard marker on an installation with prior state: interview fires once, same-day", async () => {
     // The wizard finished AFTER a first TUI start already recorded the day.
-    writeRolloverState(join(dir, "state", "rollover.json"), { last_open_date: "2026-08-14", updated_at: "" });
+    writeRolloverState(join(dir, "state", "rollover.json"), {
+      last_open_date: "2026-08-14",
+      updated_at: "",
+    });
     writeMarker();
     const { runner, calls } = fakeDocker();
     const report = await rollover(runner, { firstRun: true }).run();
@@ -622,7 +765,10 @@ describe("first-run interview", () => {
   });
 
   it("an existing installation without the marker never gets the interview", async () => {
-    writeRolloverState(join(dir, "state", "rollover.json"), { last_open_date: "2026-08-13", updated_at: "" });
+    writeRolloverState(join(dir, "state", "rollover.json"), {
+      last_open_date: "2026-08-13",
+      updated_at: "",
+    });
     const { runner } = fakeDocker({ "ls -1t": "" });
     const report = await rollover(runner, { firstRun: true }).run();
     expect(report.verdict.kind).toBe("rollover"); // normal day-open, nothing else
@@ -631,12 +777,16 @@ describe("first-run interview", () => {
 
   it("a missing template degrades to a step note — the start is never blocked", async () => {
     const { runner } = fakeDocker();
-    const report = await rollover(runner, { firstRunTemplatePath: join(dir, "no-such-template.md") }).run();
+    const report = await rollover(runner, {
+      firstRunTemplatePath: join(dir, "no-such-template.md"),
+    }).run();
     expect(report.verdict.kind).toBe("first-run");
     expect(report.interviewFile).toBeUndefined();
     expect(report.steps.some((s) => s.includes("template unreadable"))).toBe(true);
     // Not marked delivered: fixing the template lets the next start deliver it.
-    expect(readRolloverState(join(dir, "state", "rollover.json"))?.first_run_interviewed).toBeUndefined();
+    expect(
+      readRolloverState(join(dir, "state", "rollover.json"))?.first_run_interviewed,
+    ).toBeUndefined();
   });
 
   it("without the first-run wiring the rollover behaves exactly as before", async () => {
@@ -693,9 +843,18 @@ describe("alert-policy persistence and the Warsaw day boundary", () => {
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(
       path,
-      JSON.stringify({ day: "2026-08-13", causes: { x: { day: "2026-08-13", lastAt: Date.now(), lastTier: "alert", folds: 9, bypassed: true } } }),
+      JSON.stringify({
+        day: "2026-08-13",
+        causes: {
+          x: { day: "2026-08-13", lastAt: Date.now(), lastTier: "alert", folds: 9, bypassed: true },
+        },
+      }),
     );
-    const policy = new AlertPolicy(20, () => new Date("2026-08-14T09:00:00Z"), filePolicyStore(path));
+    const policy = new AlertPolicy(
+      20,
+      () => new Date("2026-08-14T09:00:00Z"),
+      filePolicyStore(path),
+    );
     expect(policy.folds("x")).toBe(0);
     expect(policy.decide(alert("x")).action).toBe("route");
   });

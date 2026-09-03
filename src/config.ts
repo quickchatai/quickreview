@@ -502,17 +502,29 @@ export function parseEscalation(raw: Record<string, any>): EscalationConfig {
   const cfg: EscalationConfig = {
     ...ESCALATION_DEFAULTS,
     ...(raw as Partial<EscalationConfig>),
-    targets: (Array.isArray(raw.targets) ? raw.targets : []).map((t: unknown) => String(t).trim().replace(/^@/, "")).filter(Boolean),
+    targets: (Array.isArray(raw.targets) ? raw.targets : [])
+      .map((t: unknown) => String(t).trim().replace(/^@/, ""))
+      .filter(Boolean),
     rules: rawRules.map((r) => ({
       ...ESCALATION_RULE_DEFAULTS,
       ...r,
-      to: String(r.to ?? "").trim().replace(/^@/, ""),
+      to: String(r.to ?? "")
+        .trim()
+        .replace(/^@/, ""),
       name: String(r.name ?? "").trim(),
       why: String(r.why ?? "").trim(),
-      paths: (Array.isArray(r.paths) ? r.paths : []).map((p: unknown) => String(p).trim()).filter(Boolean),
-      labels: (Array.isArray(r.labels) ? r.labels : []).map((l: unknown) => String(l).trim()).filter(Boolean),
-      failing_checks: (Array.isArray(r.failing_checks) ? r.failing_checks : []).map((c: unknown) => String(c).trim()).filter(Boolean),
-      min_severity: String(r.min_severity ?? "").trim().toUpperCase() as EscalationRule["min_severity"],
+      paths: (Array.isArray(r.paths) ? r.paths : [])
+        .map((p: unknown) => String(p).trim())
+        .filter(Boolean),
+      labels: (Array.isArray(r.labels) ? r.labels : [])
+        .map((l: unknown) => String(l).trim())
+        .filter(Boolean),
+      failing_checks: (Array.isArray(r.failing_checks) ? r.failing_checks : [])
+        .map((c: unknown) => String(c).trim())
+        .filter(Boolean),
+      min_severity: String(r.min_severity ?? "")
+        .trim()
+        .toUpperCase() as EscalationRule["min_severity"],
     })),
   };
   // SWITCHED OFF IS A DRAFT — and that is checked FIRST, before any shape
@@ -524,34 +536,54 @@ export function parseEscalation(raw: Record<string, any>): EscalationConfig {
   // so a draft is never a way to smuggle a broken live config past validation.
   if (!cfg.enabled) return cfg;
   if (cfg.shape !== "comment" && cfg.shape !== "review_request") {
-    throw new Error(`config.toml [escalation]: shape must be "comment" or "review_request" (got ${JSON.stringify(cfg.shape)})`);
+    throw new Error(
+      `config.toml [escalation]: shape must be "comment" or "review_request" (got ${JSON.stringify(cfg.shape)})`,
+    );
   }
   if (!Number.isFinite(cfg.max_per_pr) || cfg.max_per_pr < 1) {
-    throw new Error(`config.toml [escalation]: max_per_pr must be a positive integer (got ${JSON.stringify(cfg.max_per_pr)})`);
+    throw new Error(
+      `config.toml [escalation]: max_per_pr must be a positive integer (got ${JSON.stringify(cfg.max_per_pr)})`,
+    );
   }
   for (const t of cfg.targets) {
     if (!ESCALATION_LOGIN_RE.test(t)) {
-      throw new Error(`config.toml [escalation]: targets entry ${JSON.stringify(t)} is not a GitHub login`);
+      throw new Error(
+        `config.toml [escalation]: targets entry ${JSON.stringify(t)} is not a GitHub login`,
+      );
     }
   }
   const seenNames = new Set<string>();
   for (const r of cfg.rules) {
     if (!r.name) throw new Error("config.toml [[escalation.rules]]: every rule needs a `name`");
-    if (seenNames.has(r.name)) throw new Error(`config.toml [[escalation.rules]]: duplicate rule name ${JSON.stringify(r.name)}`);
+    if (seenNames.has(r.name))
+      throw new Error(
+        `config.toml [[escalation.rules]]: duplicate rule name ${JSON.stringify(r.name)}`,
+      );
     seenNames.add(r.name);
     if (r.min_severity && !ESCALATION_SEVERITY_FLOORS.includes(r.min_severity)) {
-      throw new Error(`config.toml [[escalation.rules]] ${r.name}: min_severity must be P0, P1, P2 or P3 (got ${JSON.stringify(r.min_severity)})`);
+      throw new Error(
+        `config.toml [[escalation.rules]] ${r.name}: min_severity must be P0, P1, P2 or P3 (got ${JSON.stringify(r.min_severity)})`,
+      );
     }
     if (r.paths.length + r.labels.length + r.failing_checks.length === 0 && !r.min_severity) {
-      throw new Error(`config.toml [[escalation.rules]] ${r.name}: declares no condition — it could never fire`);
+      throw new Error(
+        `config.toml [[escalation.rules]] ${r.name}: declares no condition — it could never fire`,
+      );
     }
-    if (!r.why) throw new Error(`config.toml [[escalation.rules]] ${r.name}: needs a \`why\` saying why this person`);
+    if (!r.why)
+      throw new Error(
+        `config.toml [[escalation.rules]] ${r.name}: needs a \`why\` saying why this person`,
+      );
   }
   if (cfg.targets.length === 0) {
-    throw new Error("config.toml [escalation]: enabled = true with no `targets` — escalation on with nobody to escalate to is not a configuration");
+    throw new Error(
+      "config.toml [escalation]: enabled = true with no `targets` — escalation on with nobody to escalate to is not a configuration",
+    );
   }
   if (cfg.rules.length === 0 && !cfg.session_judgement) {
-    throw new Error("config.toml [escalation]: enabled = true with no rules and session_judgement = false — nothing could ever escalate");
+    throw new Error(
+      "config.toml [escalation]: enabled = true with no rules and session_judgement = false — nothing could ever escalate",
+    );
   }
   for (const r of cfg.rules) {
     if (!cfg.targets.includes(r.to)) {
@@ -829,19 +861,33 @@ export const OPENVIKING_DEFAULTS: OpenVikingConfig = {
 export function parseOpenViking(raw: Record<string, unknown>): OpenVikingConfig {
   const merged = { ...OPENVIKING_DEFAULTS, ...(raw as Partial<OpenVikingConfig>) };
   if (!(EMBEDDING_PROVIDERS as readonly string[]).includes(merged.embedding_provider)) {
-    throw new Error(`config.toml: [openviking] embedding_provider must be one of ${EMBEDDING_PROVIDERS.join(", ")} (got '${String(merged.embedding_provider)}')`);
+    throw new Error(
+      `config.toml: [openviking] embedding_provider must be one of ${EMBEDDING_PROVIDERS.join(", ")} (got '${String(merged.embedding_provider)}')`,
+    );
   }
   if (!Number.isInteger(merged.embedding_dimension) || merged.embedding_dimension <= 0) {
-    throw new Error(`config.toml: [openviking] embedding_dimension must be a positive integer (got '${String(merged.embedding_dimension)}')`);
+    throw new Error(
+      `config.toml: [openviking] embedding_dimension must be a positive integer (got '${String(merged.embedding_dimension)}')`,
+    );
   }
-  if (merged.embedding_provider === "local" && (merged.embedding_model !== LOCAL_EMBEDDING.model || merged.embedding_dimension !== LOCAL_EMBEDDING.dimension)) {
+  if (
+    merged.embedding_provider === "local" &&
+    (merged.embedding_model !== LOCAL_EMBEDDING.model ||
+      merged.embedding_dimension !== LOCAL_EMBEDDING.dimension)
+  ) {
     throw new Error(
       `config.toml: [openviking] embedding_provider = "local" runs the server's built-in ${LOCAL_EMBEDDING.model} at ${LOCAL_EMBEDDING.dimension} dims — ` +
         `it is the only local model OpenViking 0.4.15 ships; set embedding_model/embedding_dimension to it, or opt into a hosted provider`,
     );
   }
-  if (typeof merged.embedding_key_file !== "string" || merged.embedding_key_file.trim() === "" || merged.embedding_key_file.includes("/")) {
-    throw new Error("config.toml: [openviking] embedding_key_file must be a bare file name inside the secrets dir");
+  if (
+    typeof merged.embedding_key_file !== "string" ||
+    merged.embedding_key_file.trim() === "" ||
+    merged.embedding_key_file.includes("/")
+  ) {
+    throw new Error(
+      "config.toml: [openviking] embedding_key_file must be a bare file name inside the secrets dir",
+    );
   }
   return resolveOpenVikingPaths(merged);
 }
@@ -939,7 +985,7 @@ export interface Config {
     max_concurrent_rounds: number;
     round_deadline_min: number;
     overseer_rotation_days: number;
-/**: how many times the daemon may self-requeue a stuck round
+    /**: how many times the daemon may self-requeue a stuck round
      * (overdue + no verdict + session dead) per PR head. Past the cap the
      * round terminalizes through the existing overdue-anomaly park. Optional
      * so hand-rolled test configs keep compiling; readers default to
@@ -1066,14 +1112,20 @@ export function parseLevers(raw: Record<string, any>): LeversConfig {
   for (const key of Object.keys(LEVERS_DEFAULTS) as Array<keyof LeversConfig>) {
     const v = cfg[key];
     if (!Number.isInteger(v) || v < 1) {
-      throw new Error(`config.toml [levers]: ${key} must be a positive integer number of minutes (got ${JSON.stringify(v)})`);
+      throw new Error(
+        `config.toml [levers]: ${key} must be a positive integer number of minutes (got ${JSON.stringify(v)})`,
+      );
     }
   }
   if (cfg.session_drain_budget_min_per_day < cfg.session_drain_max_min) {
-    throw new Error("config.toml [levers]: session_drain_budget_min_per_day must be at least session_drain_max_min");
+    throw new Error(
+      "config.toml [levers]: session_drain_budget_min_per_day must be at least session_drain_max_min",
+    );
   }
   if (cfg.session_pause_budget_min_per_day < cfg.session_pause_max_min) {
-    throw new Error("config.toml [levers]: session_pause_budget_min_per_day must be at least session_pause_max_min");
+    throw new Error(
+      "config.toml [levers]: session_pause_budget_min_per_day must be at least session_pause_max_min",
+    );
   }
   return cfg;
 }
@@ -1178,13 +1230,20 @@ export const SINK_DEFAULTS: SinkConfig = {
 function parseSink(raw: Record<string, any>, companion: CompanionConfig): SinkConfig {
   const sink: SinkConfig = { ...SINK_DEFAULTS, ...(raw as Partial<SinkConfig>) };
   if (!["wayfinder", "github", "none"].includes(sink.kind)) {
-    throw new Error(`config.toml [sink]: kind must be "wayfinder", "github" or "none" (got ${JSON.stringify(sink.kind)})`);
+    throw new Error(
+      `config.toml [sink]: kind must be "wayfinder", "github" or "none" (got ${JSON.stringify(sink.kind)})`,
+    );
   }
   sink.root = sink.root ? expandHome(sink.root) : companion.tracker_dir;
   if (sink.kind === "wayfinder") {
-    if (!sink.root.trim()) throw new Error("config.toml [sink]: kind = \"wayfinder\" requires a `root` (or a [companion] tracker_dir to default from)");
-    if (!sink.effort.trim()) throw new Error("config.toml [sink]: kind = \"wayfinder\" requires a non-empty `effort`");
-    if (!sink.parent.trim()) throw new Error("config.toml [sink]: kind = \"wayfinder\" requires a non-empty `parent`");
+    if (!sink.root.trim())
+      throw new Error(
+        'config.toml [sink]: kind = "wayfinder" requires a `root` (or a [companion] tracker_dir to default from)',
+      );
+    if (!sink.effort.trim())
+      throw new Error('config.toml [sink]: kind = "wayfinder" requires a non-empty `effort`');
+    if (!sink.parent.trim())
+      throw new Error('config.toml [sink]: kind = "wayfinder" requires a non-empty `parent`');
   }
   return sink;
 }
@@ -1240,7 +1299,10 @@ export function expandHome(p: string): string {
 }
 
 /** Absolute host paths for every companion mount; "" means derive from root. */
-export function resolveCompanionPaths(c: CompanionConfig, root: string = sandboxRoot()): CompanionConfig {
+export function resolveCompanionPaths(
+  c: CompanionConfig,
+  root: string = sandboxRoot(),
+): CompanionConfig {
   return {
     ...c,
     repo_dir: c.repo_dir ? expandHome(c.repo_dir) : root,
@@ -1249,9 +1311,13 @@ export function resolveCompanionPaths(c: CompanionConfig, root: string = sandbox
     reviewed_repo_dir: expandHome(c.reviewed_repo_dir),
     evidence_dir: c.evidence_dir ? expandHome(c.evidence_dir) : resolve(root, "evidence"),
     feed_dir: c.feed_dir ? expandHome(c.feed_dir) : resolve(root, "state", "companion", "feed"),
-    alerts_dir: c.alerts_dir ? expandHome(c.alerts_dir) : resolve(root, "state", "companion", "alerts"),
+    alerts_dir: c.alerts_dir
+      ? expandHome(c.alerts_dir)
+      : resolve(root, "state", "companion", "alerts"),
     ssh_dir: expandHome(c.ssh_dir),
-    build_context: c.build_context ? expandHome(c.build_context) : resolve(root, "docker", "companion"),
+    build_context: c.build_context
+      ? expandHome(c.build_context)
+      : resolve(root, "docker", "companion"),
   };
 }
 
@@ -1273,16 +1339,21 @@ export function parseCaps(raw: Record<string, unknown>): Config["caps"] {
   const cap = (key: string): number => {
     const v = raw[key];
     if (typeof v !== "number" || !Number.isFinite(v) || v < 0) {
-      throw new Error(`config.toml [caps]: ${key} must be a non-negative number (got ${JSON.stringify(v)})`);
+      throw new Error(
+        `config.toml [caps]: ${key} must be a non-negative number (got ${JSON.stringify(v)})`,
+      );
     }
     return v;
   };
-  const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
+  const isStrings = (v: unknown): v is string[] =>
+    Array.isArray(v) && v.every((x) => typeof x === "string");
   const denyPrefixes = (): string[] => {
     const prefixes = raw.improvement_pr_deny_prefixes;
     if (prefixes === undefined) return [...IMPROVEMENT_DENY_PREFIXES_DEFAULT];
     if (isStrings(prefixes)) return [...prefixes];
-    throw new Error(`config.toml [caps]: improvement_pr_deny_prefixes must be an array of strings (got ${JSON.stringify(prefixes)})`);
+    throw new Error(
+      `config.toml [caps]: improvement_pr_deny_prefixes must be an array of strings (got ${JSON.stringify(prefixes)})`,
+    );
   };
   return {
     improvement_pr_max_lines: cap("improvement_pr_max_lines"),
@@ -1313,7 +1384,10 @@ export function parseConfig(toml: string): Config {
     clone_dir: "",
     ...(req(raw, "github") as Partial<GithubConfig>),
   } as GithubConfig;
-  const companion = resolveCompanionPaths({ ...COMPANION_DEFAULTS, ...((raw.companion ?? {}) as Partial<CompanionConfig>) });
+  const companion = resolveCompanionPaths({
+    ...COMPANION_DEFAULTS,
+    ...((raw.companion ?? {}) as Partial<CompanionConfig>),
+  });
   // [ops] is optional so older configs keep parsing; [eod] and
   // [slack.policy] timezones default from it below, own-section value wins.
   const ops: OpsConfig = {
@@ -1323,9 +1397,14 @@ export function parseConfig(toml: string): Config {
     ),
   };
   // [ingress] is optional: absent ⇒ shape "none", nothing starts.
-  const ingress: IngressConfig = { ...INGRESS_DEFAULTS, ...((raw.ingress ?? {}) as Partial<IngressConfig>) };
+  const ingress: IngressConfig = {
+    ...INGRESS_DEFAULTS,
+    ...((raw.ingress ?? {}) as Partial<IngressConfig>),
+  };
   if (!["none", "tunnel-file"].includes(ingress.shape)) {
-    throw new Error(`config.toml [ingress]: shape must be "none" or "tunnel-file" (got ${JSON.stringify(ingress.shape)})`);
+    throw new Error(
+      `config.toml [ingress]: shape must be "none" or "tunnel-file" (got ${JSON.stringify(ingress.shape)})`,
+    );
   }
   const cfg: Config = {
     dry_run: Boolean(req(raw, "dry_run")),
@@ -1333,7 +1412,7 @@ export function parseConfig(toml: string): Config {
     ingress,
     github,
     server: { ...(req(raw, "server") as Config["server"]) },
-// Both knobs default so legacy configs keep parsing.
+    // Both knobs default so legacy configs keep parsing.
     daemon: {
       max_self_requeues: DEFAULT_MAX_SELF_REQUEUES,
       expire_overdue_after_h: 24,
@@ -1381,7 +1460,8 @@ export function parseConfig(toml: string): Config {
       ...((raw.review ?? {}) as Partial<ReviewConfig>),
       directives: {
         ...REVIEW_DIRECTIVES_DEFAULTS,
-        ...(((raw.review as Record<string, any> | undefined)?.directives ?? {}) as Partial<ReviewDirectivesConfig>),
+        ...(((raw.review as Record<string, any> | undefined)?.directives ??
+          {}) as Partial<ReviewDirectivesConfig>),
       },
     },
     escalation: parseEscalation((raw.escalation ?? {}) as Record<string, any>),
@@ -1392,7 +1472,9 @@ export function parseConfig(toml: string): Config {
   // Legacy alias: a set `[slack] legacy_owner_slack_id` feeds
   // [owner] slack_id when that is empty; a conflicting pair is an error that
   // names the NEW key. After this fold nothing reads the legacy key.
-  const legacyOwnerSlackId = String((raw.slack as Record<string, any> | undefined)?.legacy_owner_slack_id ?? "").trim();
+  const legacyOwnerSlackId = String(
+    (raw.slack as Record<string, any> | undefined)?.legacy_owner_slack_id ?? "",
+  ).trim();
   if (legacyOwnerSlackId) {
     if (!cfg.owner.slack_id.trim()) {
       cfg.owner.slack_id = legacyOwnerSlackId;
@@ -1403,20 +1485,39 @@ export function parseConfig(toml: string): Config {
     }
   }
   for (const k of [
-    "repo", "app_slug", "bot_login", "review_team",
-    "trigger_label", "in_progress_label", "reviewed_label", "improvement_label",
-    "issue_label", "secrets_dir",
-  ] as const) req(cfg.github as unknown as Record<string, unknown>, k);
+    "repo",
+    "app_slug",
+    "bot_login",
+    "review_team",
+    "trigger_label",
+    "in_progress_label",
+    "reviewed_label",
+    "improvement_label",
+    "issue_label",
+    "secrets_dir",
+  ] as const)
+    req(cfg.github as unknown as Record<string, unknown>, k);
   cfg.github.secrets_dir = expandHome(cfg.github.secrets_dir);
   if (cfg.tui.target !== "ssh" && cfg.tui.target !== "local") {
-    throw new Error(`config.toml [tui]: target must be "ssh" or "local" (got ${JSON.stringify(cfg.tui.target)})`);
+    throw new Error(
+      `config.toml [tui]: target must be "ssh" or "local" (got ${JSON.stringify(cfg.tui.target)})`,
+    );
   }
   const firstPass = cfg.daemon.round_first_pass_max_min ?? DEFAULT_ROUND_FIRST_PASS_MAX_MIN;
   const passes = cfg.daemon.round_passes_max_min ?? DEFAULT_ROUND_PASSES_MAX_MIN;
-  const running = cfg.daemon.session_command_running_max_min ?? DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN;
+  const running =
+    cfg.daemon.session_command_running_max_min ?? DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN;
   const finalize = cfg.daemon.round_finalize_grace_min ?? DEFAULT_ROUND_FINALIZE_GRACE_MIN;
-  if (!(firstPass > 0 && firstPass < passes && passes < running && finalize > 0 && finalize < running)) {
-    throw new Error("config.toml: require 0 < round_first_pass_max_min < round_passes_max_min < session_command_running_max_min and 0 < round_finalize_grace_min < session_command_running_max_min");
+  if (!(
+    firstPass > 0 &&
+    firstPass < passes &&
+    passes < running &&
+    finalize > 0 &&
+    finalize < running
+  )) {
+    throw new Error(
+      "config.toml: require 0 < round_first_pass_max_min < round_passes_max_min < session_command_running_max_min and 0 < round_finalize_grace_min < session_command_running_max_min",
+    );
   }
   // Shape checks are pure, so they fire on every parse (tests included);
   // the token-file check is I/O and lives in validateSlackConfig.
@@ -1427,10 +1528,14 @@ export function parseConfig(toml: string): Config {
 function parseSlack(raw: Record<string, any>, defaultTimezone: string): SlackConfig {
   const rawPolicy = (raw.policy ?? {}) as Record<string, any>;
   const causes: Record<string, SlackCausePolicy> = { ...SLACK_CAUSE_DEFAULTS };
-  for (const [cause, v] of Object.entries((rawPolicy.causes ?? {}) as Record<string, Partial<SlackCausePolicy>>)) {
+  for (const [cause, v] of Object.entries(
+    (rawPolicy.causes ?? {}) as Record<string, Partial<SlackCausePolicy>>,
+  )) {
     causes[cause] = {
       enabled: v.enabled ?? causes[cause]?.enabled ?? true,
-      cooldown_min: Number(v.cooldown_min ?? causes[cause]?.cooldown_min ?? SLACK_POLICY_DEFAULTS.default_cooldown_min),
+      cooldown_min: Number(
+        v.cooldown_min ?? causes[cause]?.cooldown_min ?? SLACK_POLICY_DEFAULTS.default_cooldown_min,
+      ),
     };
   }
   const { causes: _drop, ...policyScalars } = rawPolicy;
@@ -1443,7 +1548,12 @@ function parseSlack(raw: Record<string, any>, defaultTimezone: string): SlackCon
     users: { ...((raw.users ?? {}) as Record<string, string>) },
     // The day boundary defaults from [ops]; an explicit
     // [slack.policy] timezone still wins.
-    policy: { ...SLACK_POLICY_DEFAULTS, timezone: defaultTimezone, ...(policyScalars as Partial<SlackPolicyConfig>), causes },
+    policy: {
+      ...SLACK_POLICY_DEFAULTS,
+      timezone: defaultTimezone,
+      ...(policyScalars as Partial<SlackPolicyConfig>),
+      causes,
+    },
   };
   // Token *files* are names under secrets_dir, but an absolute or ~-rooted
   // override must still work — expand here so every reader sees one shape.
@@ -1474,7 +1584,9 @@ function checkSlackShape(slack: SlackConfig, owner: OwnerConfig): void {
   }
   if (!owner.slack_id.trim()) fail("enabled = true requires a non-empty `[owner] slack_id`");
   if (!(owner.slack_id in slack.users)) {
-    fail(`[owner] slack_id '${owner.slack_id}' must appear as a key in [slack.users] (it is the only source of own-PR rights)`);
+    fail(
+      `[owner] slack_id '${owner.slack_id}' must appear as a key in [slack.users] (it is the only source of own-PR rights)`,
+    );
   }
 }
 
@@ -1503,7 +1615,9 @@ export function validateSlackConfig(cfg: Config, deps: { readSecret?: SecretRead
   for (const which of ["bot", "app"] as const) {
     const path = slackTokenPath(cfg, which);
     if (!read(path)) {
-      throw new Error(`config.toml [slack]: ${which} token file '${path}' is missing or empty — Slack cannot start`);
+      throw new Error(
+        `config.toml [slack]: ${which} token file '${path}' is missing or empty — Slack cannot start`,
+      );
     }
   }
 }
@@ -1524,7 +1638,10 @@ function parseModels(raw: Record<string, any>): ModelsConfig {
     default: String(req(raw, "default")),
     conversation: String(req(raw, "conversation")),
     overseer: String(req(raw, "overseer")),
-    tiers: { ...MODELS_TIER_DEFAULTS.tiers, ...((raw.tiers ?? {}) as Partial<Record<PassTier, string>>) },
+    tiers: {
+      ...MODELS_TIER_DEFAULTS.tiers,
+      ...((raw.tiers ?? {}) as Partial<Record<PassTier, string>>),
+    },
     risk_passes: (raw.risk_passes ?? MODELS_TIER_DEFAULTS.risk_passes) as string[],
     validate_tier: (raw.validate_tier ?? MODELS_TIER_DEFAULTS.validate_tier) as PassTier,
     small_diff_lines: Number(raw.small_diff_lines ?? MODELS_TIER_DEFAULTS.small_diff_lines),

@@ -129,7 +129,8 @@ export function bringUpStep(opts: BringUpStepOptions = {}): OnboardingStep {
         checks.push({
           name: "config",
           ok: false,
-          detail: "config.toml does not exist yet — Fix: run the config_fill step; the daemon reads that file at boot",
+          detail:
+            "config.toml does not exist yet — Fix: run the config_fill step; the daemon reads that file at boot",
         });
         return { ok: false, checks };
       }
@@ -170,7 +171,10 @@ export function bringUpStep(opts: BringUpStepOptions = {}): OnboardingStep {
         log(ctx, line);
         if (lines % progressEvery === 0) {
           const mins = Math.round((ctx.adapters.clock().getTime() - started) / 60_000);
-          log(ctx, `… still working — ${lines} lines of Docker output, ${mins} minute${mins === 1 ? "" : "s"} elapsed. This is normal.`);
+          log(
+            ctx,
+            `… still working — ${lines} lines of Docker output, ${mins} minute${mins === 1 ? "" : "s"} elapsed. This is normal.`,
+          );
         }
       });
       if (result.code !== 0) {
@@ -201,7 +205,10 @@ export function bringUpStep(opts: BringUpStepOptions = {}): OnboardingStep {
     async verify(ctx): Promise<StepReport> {
       // Re-running as verification NEVER builds: it asks what is running.
       const root = rootOf(ctx.adapters);
-      const checks = containerStateCheck(await composePs(ctx.adapters.runner, root), ingressOptionOf(ctx.choices));
+      const checks = containerStateCheck(
+        await composePs(ctx.adapters.runner, root),
+        ingressOptionOf(ctx.choices),
+      );
       return { ok: checks.every((c) => c.ok), checks };
     },
   };

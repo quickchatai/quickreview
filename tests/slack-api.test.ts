@@ -31,7 +31,10 @@ function fakeFetch(replies: (call: Call, n: number) => Reply) {
   return { fetchFn, calls };
 }
 
-function build(fetchFn: SlackFetchFn, over: Partial<ConstructorParameters<typeof SlackApiClient>[0]> = {}) {
+function build(
+  fetchFn: SlackFetchFn,
+  over: Partial<ConstructorParameters<typeof SlackApiClient>[0]> = {},
+) {
   return new SlackApiClient({
     botToken: "xoxb-test",
     fetchFn,
@@ -49,7 +52,11 @@ describe("chat.postMessage", () => {
   it("posts with the bot token and returns the ts as a string", async () => {
     const f = fakeFetch(() => ({ payload: { ok: true, ts: "1712345678.123456" } }));
     const api = build(f.fetchFn);
-    const res = await api.postMessage({ channel: "C1", text: "hi", thread_ts: "1712000000.000001" });
+    const res = await api.postMessage({
+      channel: "C1",
+      text: "hi",
+      thread_ts: "1712000000.000001",
+    });
 
     expect(res).toEqual({ ok: true, ts: "1712345678.123456" });
     expect(typeof res.ts).toBe("string");
@@ -144,7 +151,9 @@ describe("rate limits and retries", () => {
   });
 
   it("a dropped post does not wedge the queue for the next one", async () => {
-    const f = fakeFetch((_c, n) => (n <= 3 ? { status: 500, payload: { ok: false, error: "boom" } } : {}));
+    const f = fakeFetch((_c, n) =>
+      n <= 3 ? { status: 500, payload: { ok: false, error: "boom" } } : {},
+    );
     const api = build(f.fetchFn);
     const first = api.postMessage({ channel: "C1", text: "doomed" });
     const second = api.postMessage({ channel: "C1", text: "next" });
@@ -171,7 +180,10 @@ describe("rate limits and retries", () => {
 describe("users.info cache", () => {
   it("caches by user id — a second lookup makes no second fetch", async () => {
     const f = fakeFetch(() => ({
-      payload: { ok: true, user: { id: "U1", name: "morgan", profile: { display_name: "matt" }, is_bot: false } },
+      payload: {
+        ok: true,
+        user: { id: "U1", name: "morgan", profile: { display_name: "matt" }, is_bot: false },
+      },
     }));
     const api = build(f.fetchFn);
 
@@ -218,7 +230,9 @@ describe("users.info cache", () => {
 
 describe("auth.test and pins.add", () => {
   it("auth.test returns our own user_id and bot_id", async () => {
-    const f = fakeFetch(() => ({ payload: { ok: true, user_id: "U0BOT", bot_id: "B0BOT", team_id: "T1" } }));
+    const f = fakeFetch(() => ({
+      payload: { ok: true, user_id: "U0BOT", bot_id: "B0BOT", team_id: "T1" },
+    }));
     const id = await build(f.fetchFn).authTest();
     expect(id).toEqual({ user_id: "U0BOT", bot_id: "B0BOT", team_id: "T1" });
     expect(f.calls[0]!.method).toBe("auth.test");

@@ -6,15 +6,26 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { captureFromEvent, isBotIdentity, isHumanCapture, capturedFromReviewComment } from "../src/capture.js";
+import {
+  captureFromEvent,
+  isBotIdentity,
+  isHumanCapture,
+  capturedFromReviewComment,
+} from "../src/capture.js";
 import { parseConfig, type Config } from "../src/config.js";
 import type { IssueCommentFull, PrRef, ReviewCommentFull, ReviewFull } from "../src/github.js";
-import { reconcileOnce, type ReconcileAdapter, type ReconcileSearchItem } from "../src/reconcile.js";
+import {
+  reconcileOnce,
+  type ReconcileAdapter,
+  type ReconcileSearchItem,
+} from "../src/reconcile.js";
 import { StateStore } from "../src/state.js";
 import type { SessionHooks } from "../src/types.js";
 import { handleDelivery, signBody } from "../src/webhook.js";
 
-const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
+const cfg: Config = parseConfig(
+  readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
+);
 const BOT = cfg.github.bot_login; // the fixture bot login
 const SECRET = "it's a secret to everybody";
 const PR = 4242;
@@ -102,7 +113,13 @@ function deliver(store: StateStore, payload: unknown, event: string, guid: strin
 describe("capture never changes routing (§1)", () => {
   // One row per existing routing case: what the interpreter decided BEFORE
   // capture existed, and what it must still decide with capture in the path.
-  const cases: Array<{ what: string; event: string; payload: unknown; kind: string; captured: boolean }> = [
+  const cases: Array<{
+    what: string;
+    event: string;
+    payload: unknown;
+    kind: string;
+    captured: boolean;
+  }> = [
     {
       what: "an untagged reply in a bot thread still goes to ping-pong",
       event: "pull_request_review_comment",
@@ -179,7 +196,9 @@ describe("capture never changes routing (§1)", () => {
       expect(store.prComments(PR).length).toBe(c.captured ? 1 : 0);
       // Capture is never a feedback signal by itself: only the tagged path
       // writes those, and it writes them through the engine, not here.
-      expect(store.db.prepare("SELECT COUNT(*) c FROM feedback_signals").get()).toMatchObject({ c: 0 });
+      expect(store.db.prepare("SELECT COUNT(*) c FROM feedback_signals").get()).toMatchObject({
+        c: 0,
+      });
       store.close();
     });
   }
@@ -222,26 +241,68 @@ describe("captureFromEvent", () => {
   });
 
   it("roots a thread at the comment itself when it is not a reply", () => {
-    const out = captureFromEvent("pull_request_review_comment", "created", reviewComment({ in_reply_to_id: null }), deps);
+    const out = captureFromEvent(
+      "pull_request_review_comment",
+      "created",
+      reviewComment({ in_reply_to_id: null }),
+      deps,
+    );
     expect(out).toMatchObject({ captured: { thread_id: 900001, in_reply_to_id: null } });
   });
 
   it("records the [feedback] tag as a fact, without classifying", () => {
-    const out = captureFromEvent("pull_request_review_comment", "created", reviewComment({ body: "[feedback] noisy" }), deps);
+    const out = captureFromEvent(
+      "pull_request_review_comment",
+      "created",
+      reviewComment({ body: "[feedback] noisy" }),
+      deps,
+    );
     expect(out).toMatchObject({ captured: { tagged: true, body: "[feedback] noisy" } });
   });
 
   it("skips bots, empty bodies, non-PR issues, untracked PRs and non-created actions", () => {
-    expect(captureFromEvent("pull_request_review_comment", "created", reviewComment({ user: { login: BOT, type: "Bot" } }), deps)).toMatchObject({ skipped: "bot author" });
-    expect(captureFromEvent("pull_request_review_comment", "created", reviewComment({ body: "   " }), deps)).toMatchObject({ skipped: "empty body" });
-    expect(captureFromEvent("pull_request_review_comment", "deleted", reviewComment(), deps)).toMatchObject({ skipped: "review-comment action: deleted" });
-    expect(captureFromEvent("pull_request_review", "dismissed", reviewSubmitted(), deps)).toMatchObject({ skipped: "review action: dismissed" });
-    expect(captureFromEvent("push", null, {}, deps)).toMatchObject({ skipped: "not a comment event: push" });
     expect(
-      captureFromEvent("issue_comment", "created", { action: "created", issue: { number: 7 }, comment: { id: 1, body: "hi", user: { login: "a", type: "User" } } }, deps),
+      captureFromEvent(
+        "pull_request_review_comment",
+        "created",
+        reviewComment({ user: { login: BOT, type: "Bot" } }),
+        deps,
+      ),
+    ).toMatchObject({ skipped: "bot author" });
+    expect(
+      captureFromEvent(
+        "pull_request_review_comment",
+        "created",
+        reviewComment({ body: "   " }),
+        deps,
+      ),
+    ).toMatchObject({ skipped: "empty body" });
+    expect(
+      captureFromEvent("pull_request_review_comment", "deleted", reviewComment(), deps),
+    ).toMatchObject({ skipped: "review-comment action: deleted" });
+    expect(
+      captureFromEvent("pull_request_review", "dismissed", reviewSubmitted(), deps),
+    ).toMatchObject({ skipped: "review action: dismissed" });
+    expect(captureFromEvent("push", null, {}, deps)).toMatchObject({
+      skipped: "not a comment event: push",
+    });
+    expect(
+      captureFromEvent(
+        "issue_comment",
+        "created",
+        {
+          action: "created",
+          issue: { number: 7 },
+          comment: { id: 1, body: "hi", user: { login: "a", type: "User" } },
+        },
+        deps,
+      ),
     ).toMatchObject({ skipped: "issue comment on a non-PR issue" });
     expect(
-      captureFromEvent("pull_request_review_comment", "created", reviewComment(), { botLogin: BOT, isTrackedPr: () => false }),
+      captureFromEvent("pull_request_review_comment", "created", reviewComment(), {
+        botLogin: BOT,
+        isTrackedPr: () => false,
+      }),
     ).toMatchObject({ skipped: "PR not tracked" });
   });
 
@@ -251,7 +312,9 @@ describe("captureFromEvent", () => {
     expect(isBotIdentity("mergequeue[bot]", "User", BOT)).toBe(true);
     expect(isBotIdentity("alice", "User", BOT)).toBe(false);
     expect(isHumanCapture(capturedFromReviewComment(PR, rc({ user: "alice" })), BOT)).toBe(true);
-    expect(isHumanCapture(capturedFromReviewComment(PR, rc({ user: BOT, user_type: "Bot" })), BOT)).toBe(false);
+    expect(
+      isHumanCapture(capturedFromReviewComment(PR, rc({ user: BOT, user_type: "Bot" })), BOT),
+    ).toBe(false);
   });
 });
 
@@ -269,7 +332,11 @@ describe("pr_comments identity", () => {
     expect(store.prComments(PR)).toHaveLength(2);
     expect(store.hasPrComment("review_comment", 5)).toBe(true);
     expect(store.hasPrComment("issue_comment", 5)).toBe(false);
-    expect(store.prComments(PR)[0]).toMatchObject({ body: "first", captured_via: "webhook", tagged: 0 });
+    expect(store.prComments(PR)[0]).toMatchObject({
+      body: "first",
+      captured_via: "webhook",
+      tagged: 0,
+    });
     store.close();
   });
 });
@@ -358,11 +425,38 @@ describe("the reconcile capture sweep (§6)", () => {
     const store = trackedStore();
     const gh = new SweepGitHub();
     gh.open = [ref(PR)];
-    gh.inline.set(PR, [rc({ id: 501 }), rc({ id: 502, user: BOT, user_type: "Bot", body: "bot nit" })]);
-    gh.top.set(PR, [{ id: 601, user: "alex", user_type: "User", body: "holding for the migration", created_at: null }]);
+    gh.inline.set(PR, [
+      rc({ id: 501 }),
+      rc({ id: 502, user: BOT, user_type: "Bot", body: "bot nit" }),
+    ]);
+    gh.top.set(PR, [
+      {
+        id: 601,
+        user: "alex",
+        user_type: "User",
+        body: "holding for the migration",
+        created_at: null,
+      },
+    ]);
     gh.reviews.set(PR, [
-      { id: 701, user: "pmercier", user_type: "User", state: "commented", body: "[feedback] over-specific", commit_id: "c", submitted_at: null },
-      { id: 702, user: BOT, user_type: "Bot", state: "changes_requested", body: "the bot's own review", commit_id: "c", submitted_at: null },
+      {
+        id: 701,
+        user: "pmercier",
+        user_type: "User",
+        state: "commented",
+        body: "[feedback] over-specific",
+        commit_id: "c",
+        submitted_at: null,
+      },
+      {
+        id: 702,
+        user: BOT,
+        user_type: "Bot",
+        state: "changes_requested",
+        body: "the bot's own review",
+        commit_id: "c",
+        submitted_at: null,
+      },
     ]);
 
     const first = await reconcileOnce({ cfg, store, adapter: gh, hooks: hooks() });
@@ -373,7 +467,9 @@ describe("the reconcile capture sweep (§6)", () => {
     // The tag is recorded, and that is all it does here — the same-day
     // addendum stays on the webhook's tag-gated feedback path.
     expect(rows.find((r) => r.comment_id === 701)?.tagged).toBe(1);
-    expect(store.db.prepare("SELECT COUNT(*) c FROM feedback_signals").get()).toMatchObject({ c: 0 });
+    expect(store.db.prepare("SELECT COUNT(*) c FROM feedback_signals").get()).toMatchObject({
+      c: 0,
+    });
 
     const second = await reconcileOnce({ cfg, store, adapter: gh, hooks: hooks() });
     expect(second.captured_comments).toBe(0);
@@ -403,7 +499,9 @@ describe("the reconcile capture sweep (§6)", () => {
     for (let i = 1; i <= 30; i++) {
       // updated_at descends with i, so #1 is freshest and #30 oldest.
       store.db
-        .prepare("INSERT INTO pr_state (number, state, head_sha, title, author, updated_at) VALUES (?, 'tracked', '', '', 'alice', ?)")
+        .prepare(
+          "INSERT INTO pr_state (number, state, head_sha, title, author, updated_at) VALUES (?, 'tracked', '', '', 'alice', ?)",
+        )
         .run(i, `2026-08-20T${String(Math.min(30 - i, 23)).padStart(2, "0")}:00:00Z`);
     }
     // #1 closed OUTSIDE the recent-close window (its row last moved days ago):
@@ -425,7 +523,15 @@ describe("the reconcile capture sweep (§6)", () => {
     const gh = new SweepGitHub();
     gh.open = []; // GitHub no longer lists it open…
     gh.getPr = async () => ref(PR, { state: "closed", merged: false }); // …because it closed during the downtime
-    gh.top.set(PR, [{ id: 881, user: "alex", user_type: "User", body: "posted while the daemon was down", created_at: null }]);
+    gh.top.set(PR, [
+      {
+        id: 881,
+        user: "alex",
+        user_type: "User",
+        body: "posted while the daemon was down",
+        created_at: null,
+      },
+    ]);
 
     const report = await reconcileOnce({ cfg, store, adapter: gh, hooks: hooks() });
     expect(report.closed).toEqual([PR]);
@@ -504,14 +610,27 @@ describe("the reconcile capture sweep (§6)", () => {
     gh.reviews.set(PR, [
       // Posted by SOMETHING — the audit never asks what. No marker, no ledger
       // row, no reviewed_heads mark, at the PR's current head.
-      { id: 801, user: BOT, user_type: "Bot", state: "APPROVED", body: "LGTM", commit_id: "sha4242", submitted_at: null },
+      {
+        id: 801,
+        user: BOT,
+        user_type: "Bot",
+        state: "APPROVED",
+        body: "LGTM",
+        commit_id: "sha4242",
+        submitted_at: null,
+      },
     ]);
 
     const report = await reconcileOnce({ cfg, store, adapter: gh, hooks: hooks() });
     expect(report.errors.some((e) => e.includes("ungated-review #4242"))).toBe(true);
-    const ev = store.db.prepare("SELECT payload FROM events WHERE kind = 'ungated_review_detected'").get() as { payload: string } | undefined;
+    const ev = store.db
+      .prepare("SELECT payload FROM events WHERE kind = 'ungated_review_detected'")
+      .get() as { payload: string } | undefined;
     expect(ev, "the durable record").toBeTruthy();
-    expect(JSON.parse(ev!.payload)).toMatchObject({ head_sha: "sha4242", reviews: [{ review_id: 801, state: "APPROVED" }] });
+    expect(JSON.parse(ev!.payload)).toMatchObject({
+      head_sha: "sha4242",
+      reviews: [{ review_id: 801, state: "APPROVED" }],
+    });
     // An unaccounted APPROVE is human-attention grade: rule 1, the CI
     // hard-gate and every posting guard are bypassed at once.
     const anomaly = store.db.prepare("SELECT kind FROM events WHERE kind = 'anomaly'").all();
@@ -524,13 +643,25 @@ describe("the reconcile capture sweep (§6)", () => {
     const gh = new SweepGitHub();
     gh.open = [ref(PR)];
     gh.reviews.set(PR, [
-      { id: 802, user: BOT, user_type: "Bot", state: "APPROVED", body: "LGTM", commit_id: "sha4242", submitted_at: null },
+      {
+        id: 802,
+        user: BOT,
+        user_type: "Bot",
+        state: "APPROVED",
+        body: "LGTM",
+        commit_id: "sha4242",
+        submitted_at: null,
+      },
     ]);
     store.recordReviewedHead(PR, { head_sha: "sha4242", posted_event: "APPROVE" });
 
     const report = await reconcileOnce({ cfg, store, adapter: gh, hooks: hooks() });
     expect(report.errors.filter((e) => e.includes("ungated-review"))).toEqual([]);
-    expect(store.db.prepare("SELECT COUNT(*) c FROM events WHERE kind = 'ungated_review_detected'").get()).toMatchObject({ c: 0 });
+    expect(
+      store.db
+        .prepare("SELECT COUNT(*) c FROM events WHERE kind = 'ungated_review_detected'")
+        .get(),
+    ).toMatchObject({ c: 0 });
     store.close();
   });
 
@@ -539,7 +670,13 @@ describe("the reconcile capture sweep (§6)", () => {
     const gh = new SweepGitHub();
     gh.open = [ref(PR)];
     gh.inline.set(PR, [rc({ id: 999 })]);
-    const off = await reconcileOnce({ cfg, store, adapter: gh, hooks: hooks(), captureComments: false });
+    const off = await reconcileOnce({
+      cfg,
+      store,
+      adapter: gh,
+      hooks: hooks(),
+      captureComments: false,
+    });
     expect(off.captured_comments).toBe(0);
     expect(gh.swept).toHaveLength(0);
 
@@ -548,7 +685,12 @@ describe("the reconcile capture sweep (§6)", () => {
     const blind = new SweepGitHub();
     blind.open = gh.open;
     Object.defineProperty(blind, "listReviewCommentsFull", { value: undefined });
-    const none = await reconcileOnce({ cfg, store, adapter: blind as ReconcileAdapter, hooks: hooks() });
+    const none = await reconcileOnce({
+      cfg,
+      store,
+      adapter: blind as ReconcileAdapter,
+      hooks: hooks(),
+    });
     expect(none.captured_comments).toBe(0);
     expect(none.errors).toEqual([]);
     store.close();

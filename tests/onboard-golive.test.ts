@@ -15,7 +15,11 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
-import { OnboardingEngine, type OnboardAdapters, type ProcessResult } from "../src/onboard/engine.js";
+import {
+  OnboardingEngine,
+  type OnboardAdapters,
+  type ProcessResult,
+} from "../src/onboard/engine.js";
 import type { StreamRunner } from "../src/onboard/steps/compose.js";
 import {
   GO_LIVE_CHOICE_KEY,
@@ -33,7 +37,13 @@ import type { ProofRecord } from "../src/onboard/steps/proof.js";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const exampleConfig = readFileSync(join(repoRoot, "config.example.toml"), "utf8");
 
-const PROOF: ProofRecord = { pr: 17, round_no: 1, verdict: "REQUEST_CHANGES", completed_at: "2026-08-30T11:59:00Z", review_shown: true };
+const PROOF: ProofRecord = {
+  pr: 17,
+  round_no: 1,
+  verdict: "REQUEST_CHANGES",
+  completed_at: "2026-08-30T11:59:00Z",
+  review_shown: true,
+};
 
 let root: string;
 
@@ -48,7 +58,14 @@ function seedChoices(choices: Record<string, unknown>): void {
   mkdirSync(join(root, "state", "onboarding"), { recursive: true });
   writeFileSync(
     join(root, "state", "onboarding", "checklist.json"),
-    JSON.stringify({ version: 1, created_at: "2026-08-30T10:00:00Z", updated_at: "2026-08-30T10:00:00Z", completed_at: null, choices, steps: {} }),
+    JSON.stringify({
+      version: 1,
+      created_at: "2026-08-30T10:00:00Z",
+      updated_at: "2026-08-30T10:00:00Z",
+      completed_at: null,
+      choices,
+      steps: {},
+    }),
   );
 }
 
@@ -60,7 +77,13 @@ interface Harness {
   restarts: string[][];
 }
 
-function harness(o: { rounds?: Array<{ round_no: number; status: string; verdict: string | null }>; whyCode?: number; daemonRunning?: boolean } = {}): Harness {
+function harness(
+  o: {
+    rounds?: Array<{ round_no: number; status: string; verdict: string | null }>;
+    whyCode?: number;
+    daemonRunning?: boolean;
+  } = {},
+): Harness {
   const restarts: string[][] = [];
   const runner = {
     run: async (_cmd: string, args: string[]): Promise<ProcessResult> => {
@@ -71,7 +94,11 @@ function harness(o: { rounds?: Array<{ round_no: number; status: string; verdict
       if (args.includes("why")) {
         if (o.whyCode) return { code: o.whyCode, stdout: "", stderr: "Error: no such container" };
         const rounds = o.rounds ?? [{ round_no: 1, status: "done", verdict: "REQUEST_CHANGES" }];
-        return { code: 0, stdout: JSON.stringify({ pr: 17, known: true, state: "awaiting_author", rounds }), stderr: "" };
+        return {
+          code: 0,
+          stdout: JSON.stringify({ pr: 17, known: true, state: "awaiting_author", rounds }),
+          stderr: "",
+        };
       }
       return { code: 1, stdout: "", stderr: "unexpected" };
     },
@@ -99,21 +126,30 @@ function harness(o: { rounds?: Array<{ round_no: number; status: string; verdict
 describe("flipDryRunToFalse — the ONE writer of the flag", () => {
   it("refuses without the explicit confirmation phrase", () => {
     for (const confirmation of [undefined, "", "yes", "y", "ok", "sure", true, 1]) {
-      expect(() => flipDryRunToFalse(exampleConfig, { confirmation, proof: PROOF })).toThrow(GoLiveRefused);
+      expect(() => flipDryRunToFalse(exampleConfig, { confirmation, proof: PROOF })).toThrow(
+        GoLiveRefused,
+      );
     }
   });
 
   it("refuses without a completed proof, however confidently it is confirmed", () => {
-    expect(() => flipDryRunToFalse(exampleConfig, { confirmation: GO_LIVE_CONFIRMATION, proof: null })).toThrow(/completed proof round/);
+    expect(() =>
+      flipDryRunToFalse(exampleConfig, { confirmation: GO_LIVE_CONFIRMATION, proof: null }),
+    ).toThrow(/completed proof round/);
   });
 
   it("refuses to INVENT the flag in a config that has none", () => {
     const stripped = exampleConfig.replace(/^dry_run = true.*$/m, "");
-    expect(() => flipDryRunToFalse(stripped, { confirmation: GO_LIVE_CONFIRMATION, proof: PROOF })).toThrow(/no dry_run key/);
+    expect(() =>
+      flipDryRunToFalse(stripped, { confirmation: GO_LIVE_CONFIRMATION, proof: PROOF }),
+    ).toThrow(/no dry_run key/);
   });
 
   it("flips exactly one key, and leaves the rest of the file alone", () => {
-    const after = flipDryRunToFalse(exampleConfig, { confirmation: GO_LIVE_CONFIRMATION, proof: PROOF });
+    const after = flipDryRunToFalse(exampleConfig, {
+      confirmation: GO_LIVE_CONFIRMATION,
+      proof: PROOF,
+    });
     expect(after).toMatch(/^dry_run = false/m);
     expect(after.split("\n")).toHaveLength(exampleConfig.split("\n").length);
     // Everything else is byte-identical.
@@ -124,7 +160,8 @@ describe("flipDryRunToFalse — the ONE writer of the flag", () => {
   it("takes the phrase, and only the phrase (case and space forgiven)", () => {
     expect(isGoLiveConfirmation("GO LIVE")).toBe(true);
     expect(isGoLiveConfirmation("  go live ")).toBe(true);
-    for (const no of ["yes", "go", "live", "GO-LIVE", "", null, 42]) expect(isGoLiveConfirmation(no)).toBe(false);
+    for (const no of ["yes", "go", "live", "GO-LIVE", "", null, 42])
+      expect(isGoLiveConfirmation(no)).toBe(false);
   });
 });
 
@@ -133,7 +170,10 @@ describe("flipDryRunToFalse — the ONE writer of the flag", () => {
 describe("the flip is impossible without a completed proof", () => {
   it("with no proof recorded the flip is not even OFFERED, and nothing is written", async () => {
     const h = harness();
-    const result = await h.engine.runStep(GO_LIVE_STEP_ID, { decision: "go_live", confirm: GO_LIVE_CONFIRMATION });
+    const result = await h.engine.runStep(GO_LIVE_STEP_ID, {
+      decision: "go_live",
+      confirm: GO_LIVE_CONFIRMATION,
+    });
     expect(result.ok).toBe(false);
     expect(result.failures.join(" ")).toMatch(/no completed proof round/);
     expect(result.failures.join(" ")).toMatch(/proof_round step first/);
@@ -143,7 +183,10 @@ describe("the flip is impossible without a completed proof", () => {
   it("a FORGED checklist entry does not buy a flip — the state store is asked", async () => {
     seedChoices({ [PROOF_CHOICE_KEY]: { ...PROOF, round_no: 99 } });
     const h = harness({ rounds: [{ round_no: 1, status: "done", verdict: "APPROVE" }] });
-    const result = await h.engine.runStep(GO_LIVE_STEP_ID, { decision: "go_live", confirm: GO_LIVE_CONFIRMATION });
+    const result = await h.engine.runStep(GO_LIVE_STEP_ID, {
+      decision: "go_live",
+      confirm: GO_LIVE_CONFIRMATION,
+    });
     expect(result.ok).toBe(false);
     expect(result.failures.join(" ")).toMatch(/does not show #17 round 99 as a finished round/);
     expect(dryRunOnDisk()).toBe(true);
@@ -152,9 +195,14 @@ describe("the flip is impossible without a completed proof", () => {
   it("a proof that cannot be re-checked is refused, not assumed", async () => {
     seedChoices({ [PROOF_CHOICE_KEY]: PROOF });
     const h = harness({ whyCode: 1 });
-    const result = await h.engine.runStep(GO_LIVE_STEP_ID, { decision: "go_live", confirm: GO_LIVE_CONFIRMATION });
+    const result = await h.engine.runStep(GO_LIVE_STEP_ID, {
+      decision: "go_live",
+      confirm: GO_LIVE_CONFIRMATION,
+    });
     expect(result.ok).toBe(false);
-    expect(result.failures.join(" ")).toMatch(/never made on the strength of the checklist file alone/);
+    expect(result.failures.join(" ")).toMatch(
+      /never made on the strength of the checklist file alone/,
+    );
     expect(dryRunOnDisk()).toBe(true);
   });
 });
@@ -183,7 +231,10 @@ describe("the offer", () => {
   it("a decision of go_live WITHOUT the confirmation changes nothing", async () => {
     const h = harness();
     for (const confirm of [undefined, "yes", "ok"]) {
-      const result = await h.engine.runStep(GO_LIVE_STEP_ID, { decision: "go_live", ...(confirm === undefined ? {} : { confirm }) });
+      const result = await h.engine.runStep(GO_LIVE_STEP_ID, {
+        decision: "go_live",
+        ...(confirm === undefined ? {} : { confirm }),
+      });
       expect(result.ok).toBe(false);
       expect(result.failures.join(" ")).toMatch(/needs the operator's own explicit words/);
       expect(dryRunOnDisk()).toBe(true);
@@ -204,15 +255,27 @@ describe("going live", () => {
 
   it("flips the flag, restarts the daemon, and reads it back", async () => {
     const h = harness();
-    const result = await h.engine.runStep(GO_LIVE_STEP_ID, { decision: "go_live", confirm: GO_LIVE_CONFIRMATION });
+    const result = await h.engine.runStep(GO_LIVE_STEP_ID, {
+      decision: "go_live",
+      confirm: GO_LIVE_CONFIRMATION,
+    });
     expect(result.ok).toBe(true);
     expect(dryRunOnDisk()).toBe(false);
     expect(configText()).toMatch(/^dry_run = false/m);
-    expect(h.restarts[0]).toEqual(["docker", "compose", "--project-directory", root, "restart", "daemon"]);
+    expect(h.restarts[0]).toEqual([
+      "docker",
+      "compose",
+      "--project-directory",
+      root,
+      "restart",
+      "daemon",
+    ]);
     expect(h.engine.choices()[GO_LIVE_CHOICE_KEY]).toBe("live");
     expect(result.checks[0]!.detail).toMatch(/you ratified this, on the evidence of #17 round 1/);
     // The scratch probe never survives.
-    expect(readdirSync(join(root, "state", "onboarding")).some((f) => f.includes("golive"))).toBe(false);
+    expect(readdirSync(join(root, "state", "onboarding")).some((f) => f.includes("golive"))).toBe(
+      false,
+    );
   });
 
   it("verify then reports the live posture", async () => {
@@ -259,7 +322,10 @@ describe("declining is a first-class outcome", () => {
     const h = harness();
     await h.engine.runStep(GO_LIVE_STEP_ID, { decision: "stay_dry_run" });
     const second = harness();
-    expect((await second.engine.runStep(GO_LIVE_STEP_ID, { decision: "go_live", confirm: "go live" })).ok).toBe(true);
+    expect(
+      (await second.engine.runStep(GO_LIVE_STEP_ID, { decision: "go_live", confirm: "go live" }))
+        .ok,
+    ).toBe(true);
     expect(dryRunOnDisk()).toBe(false);
   });
 
@@ -267,7 +333,9 @@ describe("declining is a first-class outcome", () => {
     const h = harness();
     const all = await h.engine.verifyAll();
     expect(all.ok).toBe(false);
-    expect(all.results[0]!.failures.join(" ")).toMatch(/staying in dry-run is a complete, finished installation/);
+    expect(all.results[0]!.failures.join(" ")).toMatch(
+      /staying in dry-run is a complete, finished installation/,
+    );
   });
 });
 

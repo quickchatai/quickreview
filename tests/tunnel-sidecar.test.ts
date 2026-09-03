@@ -9,7 +9,15 @@
 // wrote.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,8 +43,15 @@ interface SidecarModule {
   };
   backoffMs(attempt: number, min?: number, max?: number): number;
   sidecarConfig(env: Record<string, string | undefined>): Record<string, unknown>;
-  runClientOnce(cfg: unknown, spec: unknown, opts: Record<string, unknown>): Promise<{ ok: boolean; reason: string }>;
-  runSidecar(cfg: unknown, opts: Record<string, unknown>): Promise<Array<{ ok: boolean; reason: string }>>;
+  runClientOnce(
+    cfg: unknown,
+    spec: unknown,
+    opts: Record<string, unknown>,
+  ): Promise<{ ok: boolean; reason: string }>;
+  runSidecar(
+    cfg: unknown,
+    opts: Record<string, unknown>,
+  ): Promise<Array<{ ok: boolean; reason: string }>>;
 }
 
 const sidecar = (await import("../docker/tunnel/sidecar.mjs")) as unknown as SidecarModule;
@@ -94,20 +109,30 @@ describe("extractHostname — the vendor's own output, nothing else", () => {
     const logfmt =
       't=2026-08-30T10:00:00+0000 lvl=info msg="started tunnel" obj=tunnels name=command_line addr=http://daemon:8787 url=https://review-bot.ngrok-free.app';
     expect(sidecar.extractHostname("ngrok", logfmt)).toBe("review-bot.ngrok-free.app");
-    const json = '{"lvl":"info","msg":"started tunnel","addr":"http://daemon:8787","url":"https://review-bot.ngrok.app"}';
+    const json =
+      '{"lvl":"info","msg":"started tunnel","addr":"http://daemon:8787","url":"https://review-bot.ngrok.app"}';
     expect(sidecar.extractHostname("ngrok", json)).toBe("review-bot.ngrok.app");
     // A reserved domain captures exactly the same way.
-    expect(sidecar.extractHostname("ngrok", "url=https://reviews.example.com")).toBe("reviews.example.com");
+    expect(sidecar.extractHostname("ngrok", "url=https://reviews.example.com")).toBe(
+      "reviews.example.com",
+    );
   });
 
   it("ignores ngrok's account chatter and any non-https url", () => {
-    expect(sidecar.extractHostname("ngrok", 'msg="visit https://dashboard.ngrok.com/status"')).toBeNull();
+    expect(
+      sidecar.extractHostname("ngrok", 'msg="visit https://dashboard.ngrok.com/status"'),
+    ).toBeNull();
     expect(sidecar.extractHostname("ngrok", "url=http://localhost:4040")).toBeNull();
     expect(sidecar.extractHostname("ngrok", "url=https://localhost")).toBeNull();
   });
 
   it("a named tunnel captures nothing — its hostname is the operator's, not the client's", () => {
-    expect(sidecar.extractHostname("named", "INF Registered tunnel connection https://review.example.com")).toBeNull();
+    expect(
+      sidecar.extractHostname(
+        "named",
+        "INF Registered tunnel connection https://review.example.com",
+      ),
+    ).toBeNull();
   });
 });
 
@@ -135,7 +160,13 @@ describe("writeHostname —'s file contract", () => {
   });
 
   it("refuses to write anything that is not a bare hostname", () => {
-    for (const bad of ["https://abc.trycloudflare.com", "abc.trycloudflare.com/webhook", "abc.trycloudflare.com:443", "", "not a host"]) {
+    for (const bad of [
+      "https://abc.trycloudflare.com",
+      "abc.trycloudflare.com/webhook",
+      "abc.trycloudflare.com:443",
+      "",
+      "not a host",
+    ]) {
       expect(() => sidecar.writeHostname(file(), bad)).toThrow(/refusing/);
     }
     expect(existsSync(file())).toBe(false);
@@ -151,7 +182,9 @@ describe("the contract matches the watcher that reads it", () => {
     const inWrapper = literal.exec(wrapper)?.[1];
     expect(inWatcher).toBeTruthy();
     expect(inWrapper).toBe(inWatcher);
-    expect(sidecar.HOSTNAME_RE.source).toBe(new RegExp(inWatcher!.slice(1, inWatcher!.lastIndexOf("/"))).source);
+    expect(sidecar.HOSTNAME_RE.source).toBe(
+      new RegExp(inWatcher!.slice(1, inWatcher!.lastIndexOf("/"))).source,
+    );
   });
 
   it("a file this wrapper wrote heals a real WebhookHealer end to end", async () => {
@@ -195,7 +228,9 @@ describe("tunnelSpec — credentials in the environment, NEVER an argv", () => {
     const token = "2abcDEF_ngrok_authtoken_value";
     mkdirSync(secretsDir, { recursive: true });
     writeFileSync(join(secretsDir, "ngrok_authtoken"), `${token}\n`);
-    const spec = sidecar.tunnelSpec(cfg({ kind: "ngrok", secretsDir, domain: "reviews.example.com" }));
+    const spec = sidecar.tunnelSpec(
+      cfg({ kind: "ngrok", secretsDir, domain: "reviews.example.com" }),
+    );
     expect(spec.cmd).toBe("ngrok");
     expect(spec.env).toEqual({ NGROK_AUTHTOKEN: token });
     expect(spec.args.join(" ")).not.toContain(token);
@@ -240,7 +275,9 @@ describe("the supervised run", () => {
     });
     child.stderr.emit("data", "INF |  https://odd-shape-cl");
     child.stderr.emit("data", "oud-42.trycloudflare.com  |\n");
-    expect(readFileSync(conf.hostnameFile as string, "utf8")).toBe("odd-shape-cloud-42.trycloudflare.com\n");
+    expect(readFileSync(conf.hostnameFile as string, "utf8")).toBe(
+      "odd-shape-cloud-42.trycloudflare.com\n",
+    );
     child.emit("close", 0, null);
     expect((await run).reason).toBe("exit 0");
   });
@@ -292,7 +329,13 @@ describe("the supervised run", () => {
       mkdirSync(secretsDir, { recursive: true });
       writeFileSync(join(secretsDir, "ngrok_authtoken"), "token-arrived-later");
     };
-    const outcomes = await sidecar.runSidecar(conf, { spawn, log: (l: string) => logs.push(l), echo: false, sleep, maxRuns: 2 });
+    const outcomes = await sidecar.runSidecar(conf, {
+      spawn,
+      log: (l: string) => logs.push(l),
+      echo: false,
+      sleep,
+      maxRuns: 2,
+    });
     expect(outcomes[0]).toEqual({ ok: false, reason: "missing-secret" });
     expect(logs.join("\n")).toContain("ngrok_authtoken");
     // Second attempt: the credential is there now, no restart was needed.
@@ -333,7 +376,9 @@ describe("the supervised run", () => {
   });
 
   it("backoff climbs and then caps", () => {
-    expect([0, 1, 2, 3, 4, 5, 99].map((n) => sidecar.backoffMs(n, 2000, 60000))).toEqual([2000, 4000, 8000, 16000, 32000, 60000, 60000]);
+    expect([0, 1, 2, 3, 4, 5, 99].map((n) => sidecar.backoffMs(n, 2000, 60000))).toEqual([
+      2000, 4000, 8000, 16000, 32000, 60000, 60000,
+    ]);
   });
 });
 
@@ -362,8 +407,12 @@ const argOf = (dockerfile: string, name: string): string | undefined =>
 
 describe("tunnel images — official binaries, pinned, verified at build time", () => {
   it("both clients are copied out of the VENDOR's own image, never rebuilt or downloaded", () => {
-    expect(cloudflaredFile).toMatch(/^FROM cloudflare\/cloudflared:\$\{CLOUDFLARED_VERSION\} AS client$/m);
-    expect(cloudflaredFile).toContain("COPY --from=client /usr/local/bin/cloudflared /usr/local/bin/cloudflared");
+    expect(cloudflaredFile).toMatch(
+      /^FROM cloudflare\/cloudflared:\$\{CLOUDFLARED_VERSION\} AS client$/m,
+    );
+    expect(cloudflaredFile).toContain(
+      "COPY --from=client /usr/local/bin/cloudflared /usr/local/bin/cloudflared",
+    );
     expect(ngrokFile).toMatch(/^FROM ngrok\/ngrok:\$\{NGROK_VERSION\}-alpine AS client$/m);
     expect(ngrokFile).toContain("COPY --from=client /bin/ngrok /usr/local/bin/ngrok");
     for (const file of [cloudflaredFile, ngrokFile]) expect(file).not.toMatch(/curl|wget/);
@@ -400,7 +449,7 @@ describe("compose topology — a sidecar only when the operator chose one", () =
   const service = (name: string): string => {
     const at = compose.indexOf(`\n  ${name}:\n`);
     expect(at, `service ${name}`).toBeGreaterThan(0);
-    const next = compose.slice(at + 1).search(/\n  [a-z-]+:\n|\nvolumes:\n/);
+    const next = compose.slice(at + 1).search(/\n {2}[a-z-]+:\n|\nvolumes:\n/);
     return compose
       .slice(at, next === -1 ? undefined : at + 1 + next)
       .split("\n")

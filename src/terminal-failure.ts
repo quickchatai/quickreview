@@ -20,7 +20,10 @@ export async function resolveTerminalFailure(
   try {
     disposition = await deps.getPrDisposition(input.pr);
   } catch (error) {
-    return { ok: false, reason: `could not prove terminal GitHub state for PR #${input.pr}: ${String(error)}` };
+    return {
+      ok: false,
+      reason: `could not prove terminal GitHub state for PR #${input.pr}: ${String(error)}`,
+    };
   }
   if (disposition.kind === "open") {
     return { ok: false, reason: `GitHub says PR #${input.pr} is still open` };

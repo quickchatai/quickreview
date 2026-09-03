@@ -54,7 +54,10 @@ function runWizard(
 /** Pre-seed the always-required trio so a test exercises only its own prompt. */
 function seedRequired(): void {
   writeFileSync(join(dir, "app_id"), "123456");
-  writeFileSync(join(dir, "app.pem"), "-----BEGIN PRIVATE KEY-----\nstub\n-----END PRIVATE KEY-----\n");
+  writeFileSync(
+    join(dir, "app.pem"),
+    "-----BEGIN PRIVATE KEY-----\nstub\n-----END PRIVATE KEY-----\n",
+  );
   writeFileSync(join(dir, "webhook_secret"), "a".repeat(32));
 }
 
@@ -62,11 +65,15 @@ describe("the hosted-embeddings key is its OWN file", () => {
   it("is prompted separately from pi's key, lands 0600, and skipping it leaves memory local with nothing else changed", async () => {
     seedRequired();
     // stdin: skip openai_api_key, paste the embeddings key, skip both openviking keys.
-    const { code, out } = await runWizard("\nsk-embeddings-only-0123456789\n\n\n", { env: { QC_DEPLOY_SHAPE: "docker" } });
+    const { code, out } = await runWizard("\nsk-embeddings-only-0123456789\n\n\n", {
+      env: { QC_DEPLOY_SHAPE: "docker" },
+    });
     expect(code).toBe(0);
     expect(out).toContain("openai_embeddings_api_key saved");
     expect(out).toContain("skipped openai_api_key");
-    expect(readFileSync(join(dir, "openai_embeddings_api_key"), "utf8")).toBe("sk-embeddings-only-0123456789");
+    expect(readFileSync(join(dir, "openai_embeddings_api_key"), "utf8")).toBe(
+      "sk-embeddings-only-0123456789",
+    );
     expect(statSync(join(dir, "openai_embeddings_api_key")).mode & 0o777).toBe(0o600);
     expect(() => readFileSync(join(dir, "openai_api_key"))).toThrow();
     // The overview says what the file is for, and that the default needs none.
@@ -76,10 +83,14 @@ describe("the hosted-embeddings key is its OWN file", () => {
 
   it("rejects a value that is not an OpenAI key and re-prompts", async () => {
     seedRequired();
-    const { code, out } = await runWizard("\nnot-a-key\nsk-embeddings-second-try-0123\n\n\n", { env: { QC_DEPLOY_SHAPE: "docker" } });
+    const { code, out } = await runWizard("\nnot-a-key\nsk-embeddings-second-try-0123\n\n\n", {
+      env: { QC_DEPLOY_SHAPE: "docker" },
+    });
     expect(code).toBe(0);
     expect(out).toContain("OpenAI keys start with sk-");
-    expect(readFileSync(join(dir, "openai_embeddings_api_key"), "utf8")).toBe("sk-embeddings-second-try-0123");
+    expect(readFileSync(join(dir, "openai_embeddings_api_key"), "utf8")).toBe(
+      "sk-embeddings-second-try-0123",
+    );
   });
 });
 
@@ -154,10 +165,15 @@ describe("deployment-shape choice", () => {
 
 describe("wizard UX conventions survive the shape split", () => {
   it("validators still reject junk and re-prompt (app_id must be numeric)", async () => {
-    writeFileSync(join(dir, "app.pem"), "-----BEGIN PRIVATE KEY-----\nstub\n-----END PRIVATE KEY-----\n");
+    writeFileSync(
+      join(dir, "app.pem"),
+      "-----BEGIN PRIVATE KEY-----\nstub\n-----END PRIVATE KEY-----\n",
+    );
     writeFileSync(join(dir, "webhook_secret"), "a".repeat(32));
     // stdin: bad app_id, good app_id, then Enter-skips for the optionals.
-    const { code, out } = await runWizard("abc\n123456\n\n\n\n", { env: { QC_DEPLOY_SHAPE: "docker" } });
+    const { code, out } = await runWizard("abc\n123456\n\n\n\n", {
+      env: { QC_DEPLOY_SHAPE: "docker" },
+    });
     expect(code).toBe(0);
     expect(out).toContain("that doesn't look right");
     expect(out).toContain("app_id saved");
@@ -178,7 +194,9 @@ describe("wizard UX conventions survive the shape split", () => {
     seedRequired();
     const { code, out } = await runWizard("2\n\n\n\n");
     expect(code).toBe(0);
-    expect(out).toContain("server falls back to auth_mode=dev and per-user confinement is NOT enforced");
+    expect(out).toContain(
+      "server falls back to auth_mode=dev and per-user confinement is NOT enforced",
+    );
     expect(out).toContain("NEVER put the COMPANION key here");
   });
 });

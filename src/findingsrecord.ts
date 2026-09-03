@@ -47,14 +47,7 @@ import { wakeOrHold } from "./wakes.js";
  *   (not legitimate). Nothing else in the system records it.
  */
 export type FindingDisposition =
-  | "posted"
-  | "killed"
-  | "downgraded"
-  | "merged"
-  | "folded"
-  | "withheld"
-  | "conceded"
-  | "unknown";
+  "posted" | "killed" | "downgraded" | "merged" | "folded" | "withheld" | "conceded" | "unknown";
 
 const DISPOSITIONS: ReadonlySet<string> = new Set([
   "posted",
@@ -190,11 +183,7 @@ export interface FindingsRecordFile {
 }
 
 export type FindingsRecordStatus =
-  | "ok"
-  | "missing"
-  | "unparseable"
-  | "wrong_round"
-  | "no_findings_array";
+  "ok" | "missing" | "unparseable" | "wrong_round" | "no_findings_array";
 
 /**
  * What the round's POSTED output looked like against the three rules.
@@ -273,8 +262,13 @@ function prose(val: unknown): string | null {
  * round, or no findings array at all — because those are the shapes where
  * there is nothing to record.
  */
-export function parseFindingsRecord(raw: unknown, pr: number, roundNo: number): ParsedFindingsRecord {
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return { status: "unparseable" };
+export function parseFindingsRecord(
+  raw: unknown,
+  pr: number,
+  roundNo: number,
+): ParsedFindingsRecord {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw))
+    return { status: "unparseable" };
   const v = raw as Record<string, unknown>;
   const filePr = num(v.pr);
   const fileRound = num(v.round_no);
@@ -282,7 +276,11 @@ export function parseFindingsRecord(raw: unknown, pr: number, roundNo: number): 
   // round's reasoning to another. Rejected, and the nudge asks for this one.
   if ((filePr !== null && filePr !== pr) || (fileRound !== null && fileRound !== roundNo))
     return { status: "wrong_round" };
-  const rawFindings = Array.isArray(v.findings) ? v.findings : Array.isArray(v.candidates) ? v.candidates : null;
+  const rawFindings = Array.isArray(v.findings)
+    ? v.findings
+    : Array.isArray(v.candidates)
+      ? v.candidates
+      : null;
   if (rawFindings === null) return { status: "no_findings_array" };
 
   const notes: string[] = [];
@@ -290,7 +288,11 @@ export function parseFindingsRecord(raw: unknown, pr: number, roundNo: number): 
   let unknownDisposition = 0;
   let unknownWord = 0;
   const findings: FindingsRecordEntry[] = [];
-  const conformance: RecordConformance = { ungrammatical_tags: [], nits_without_request: [], restated: [] };
+  const conformance: RecordConformance = {
+    ungrammatical_tags: [],
+    nits_without_request: [],
+    restated: [],
+  };
   for (const [i, entry] of rawFindings.entries()) {
     if (typeof entry !== "object" || entry === null) {
       noLens++;
@@ -315,7 +317,11 @@ export function parseFindingsRecord(raw: unknown, pr: number, roundNo: number): 
     if (disposition === "posted") {
       const postedAs = str(e.posted_as);
       if (postedAs !== null && !isSanctionedTag(postedAs)) conformance.ungrammatical_tags.push(key);
-      const bare = (postedAs ?? "").trim().replace(/^\[|\]$/g, "").trim().toLowerCase();
+      const bare = (postedAs ?? "")
+        .trim()
+        .replace(/^\[|\]$/g, "")
+        .trim()
+        .toLowerCase();
       // `request` is the one new field asks a lens for: the concrete
       // change the nit asks for. Its ABSENCE is the defect — a nit that names
       // no change is a remark. Alternate spellings are accepted, as everywhere
@@ -351,7 +357,9 @@ export function parseFindingsRecord(raw: unknown, pr: number, roundNo: number): 
   if (unknownDisposition > 0) notes.push(`${unknownDisposition} unrecognised disposition(s)`);
   if (unknownWord > 0) notes.push(`${unknownWord} word(s) outside the closed vocabulary`);
   if (conformance.ungrammatical_tags.length > 0)
-    notes.push(`${conformance.ungrammatical_tags.length} posted finding(s) tagged outside the grammar`);
+    notes.push(
+      `${conformance.ungrammatical_tags.length} posted finding(s) tagged outside the grammar`,
+    );
   if (conformance.nits_without_request.length > 0)
     notes.push(`${conformance.nits_without_request.length} posted nit(s) asking for nothing`);
 
@@ -373,7 +381,11 @@ export function parseFindingsRecord(raw: unknown, pr: number, roundNo: number): 
 /** Read + parse the record file. A missing/unreadable file is `missing`, an
  * undecodable one `unparseable` — enforcement is identical either way; the
  * distinction is for the record. */
-export function readFindingsRecord(path: string, pr: number, roundNo: number): ParsedFindingsRecord {
+export function readFindingsRecord(
+  path: string,
+  pr: number,
+  roundNo: number,
+): ParsedFindingsRecord {
   let text: string;
   try {
     text = readFileSync(path, "utf8");
@@ -521,7 +533,11 @@ export async function enforceFindingsRecord(
     return "already_nudged";
   }
   store.logAnomaly("findings_record_missing", pr, roundNo, detail);
-  store.recordFindingsNudge(pr, key, { round_no: roundNo, head_sha: headSha, status: parsed.status });
+  store.recordFindingsNudge(pr, key, {
+    round_no: roundNo,
+    head_sha: headSha,
+    status: parsed.status,
+  });
   await wakeOrHold(
     { store, inject: deps.inject, ...(log ? { log } : {}) },
     pr,

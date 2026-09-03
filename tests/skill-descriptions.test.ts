@@ -51,17 +51,186 @@ function parseSkill(dir: string): Skill {
   const front = m[1]!;
   const name = /^name:[ \t]*(.+)$/m.exec(front)?.[1]?.trim();
   const description = /^description:[ \t]*(.+)$/m.exec(front)?.[1]?.trim();
-  if (!name || !description) throw new Error(`${dir}/SKILL.md frontmatter needs both name: and description:`);
+  if (!name || !description)
+    throw new Error(`${dir}/SKILL.md frontmatter needs both name: and description:`);
   return { name, description, body: m[2]! };
 }
 
-const skills = new Map<string, Skill>(readdirSync(SKILLS_DIR, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => [e.name, parseSkill(e.name)]));
+const skills = new Map<string, Skill>(
+  readdirSync(SKILLS_DIR, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => [e.name, parseSkill(e.name)]),
+);
 
 // ---- the stand-in scorer -----------------------------------------------------
 
 /** True function words only. Anything that could carry routing signal stays. */
 const STOPWORDS = new Set([
-  "the","a","an","and","or","of","to","on","in","it","is","are","was","were","be","been","for","with","that","this","these","those","what","when","why","how","do","does","did","done","you","your","we","our","us","me","my","i","at","by","from","as","its","has","have","had","not","no","never","ever","any","all","one","out","up","so","if","then","than","about","into","just","only","very","also","can","could","would","should","must","may","might","still","more","most","some","such","like","they","them","their","there","here","before","after","once","get","got","go","going","gone","right","now","again","today","please","ok","okay","really","much","many","been","am","but","yet","own","per","via","both","each","other","another","same","thing","things","anything","something","give","take","want","need","let","lets","make","made","see","look","looks","looking","tell","say","says","said","think","know","he","she","his","her","him","hers","them","who","which","whose","while","because","since","yes","yeah","hey","well","actually","maybe","kind","sort","bit","up","off","over","under","down","back","out","again",
+  "the",
+  "a",
+  "an",
+  "and",
+  "or",
+  "of",
+  "to",
+  "on",
+  "in",
+  "it",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "for",
+  "with",
+  "that",
+  "this",
+  "these",
+  "those",
+  "what",
+  "when",
+  "why",
+  "how",
+  "do",
+  "does",
+  "did",
+  "done",
+  "you",
+  "your",
+  "we",
+  "our",
+  "us",
+  "me",
+  "my",
+  "i",
+  "at",
+  "by",
+  "from",
+  "as",
+  "its",
+  "has",
+  "have",
+  "had",
+  "not",
+  "no",
+  "never",
+  "ever",
+  "any",
+  "all",
+  "one",
+  "out",
+  "up",
+  "so",
+  "if",
+  "then",
+  "than",
+  "about",
+  "into",
+  "just",
+  "only",
+  "very",
+  "also",
+  "can",
+  "could",
+  "would",
+  "should",
+  "must",
+  "may",
+  "might",
+  "still",
+  "more",
+  "most",
+  "some",
+  "such",
+  "like",
+  "they",
+  "them",
+  "their",
+  "there",
+  "here",
+  "before",
+  "after",
+  "once",
+  "get",
+  "got",
+  "go",
+  "going",
+  "gone",
+  "right",
+  "now",
+  "again",
+  "today",
+  "please",
+  "ok",
+  "okay",
+  "really",
+  "much",
+  "many",
+  "been",
+  "am",
+  "but",
+  "yet",
+  "own",
+  "per",
+  "via",
+  "both",
+  "each",
+  "other",
+  "another",
+  "same",
+  "thing",
+  "things",
+  "anything",
+  "something",
+  "give",
+  "take",
+  "want",
+  "need",
+  "let",
+  "lets",
+  "make",
+  "made",
+  "see",
+  "look",
+  "looks",
+  "looking",
+  "tell",
+  "say",
+  "says",
+  "said",
+  "think",
+  "know",
+  "he",
+  "she",
+  "his",
+  "her",
+  "him",
+  "hers",
+  "them",
+  "who",
+  "which",
+  "whose",
+  "while",
+  "because",
+  "since",
+  "yes",
+  "yeah",
+  "hey",
+  "well",
+  "actually",
+  "maybe",
+  "kind",
+  "sort",
+  "bit",
+  "up",
+  "off",
+  "over",
+  "under",
+  "down",
+  "back",
+  "out",
+  "again",
 ]);
 
 /** Crude, deliberate: less clever than any real matcher, so margin is real. */
@@ -108,7 +277,9 @@ export function fires(s: Score): boolean {
 }
 
 function scoreAll(prompt: string): Array<{ name: string; s: Score }> {
-  return [...skills.values()].map((sk) => ({ name: sk.name, s: score(prompt, sk.description) })).sort((a, b) => b.s.share - a.s.share || b.s.matches - a.s.matches);
+  return [...skills.values()]
+    .map((sk) => ({ name: sk.name, s: score(prompt, sk.description) }))
+    .sort((a, b) => b.s.share - a.s.share || b.s.matches - a.s.matches);
 }
 
 // ---- the cases ---------------------------------------------------------------
@@ -117,12 +288,23 @@ function scoreAll(prompt: string): Array<{ name: string; s: Score }> {
 const ROUTES: Array<{ prompt: string; expect: SkillName; note?: string }> = [
   // evidence — understanding, with no intention of judging.
   { prompt: "what happened on 5249?", expect: "evidence" },
-  { prompt: "walk me through the rounds on 5306 — which lens raised the blocker and what did the verdict say", expect: "evidence" },
-  { prompt: "pull up the transcript and the ledger for that round, I want the record", expect: "evidence" },
+  {
+    prompt:
+      "walk me through the rounds on 5306 — which lens raised the blocker and what did the verdict say",
+    expect: "evidence",
+  },
+  {
+    prompt: "pull up the transcript and the ledger for that round, I want the record",
+    expect: "evidence",
+  },
 
   // adjudicate — judging a complaint about the review.
   { prompt: "work the feedback on 5312", expect: "adjudicate" },
-  { prompt: "Priya says we are too noisy — was the review wrong on that finding or was the complaint unfair?", expect: "adjudicate" },
+  {
+    prompt:
+      "Priya says we are too noisy — was the review wrong on that finding or was the complaint unfair?",
+    expect: "adjudicate",
+  },
 
   // land — a decided change becoming a commit, a ticket, or a proposal.
   {
@@ -130,7 +312,11 @@ const ROUTES: Array<{ prompt: string; expect: SkillName; note?: string }> = [
     expect: "land",
     note: "THE MISFIRE CASE: adjudicate's description ends 'land any change it justifies', so a sloppy land description loses this to the judging skill.",
   },
-  { prompt: "which surface does that belong on — is it a commit here or a tracker ticket for the owner?", expect: "land" },
+  {
+    prompt:
+      "which surface does that belong on — is it a commit here or a tracker ticket for the owner?",
+    expect: "land",
+  },
 
   // survey — the entry point: is there anything worth working at all?
   {
@@ -141,8 +327,15 @@ const ROUTES: Array<{ prompt: string; expect: SkillName; note?: string }> = [
   { prompt: "what is on the backlog — where should I start today?", expect: "survey" },
 
   // replay — trying a change against the past, offline.
-  { prompt: "would that change still catch what the humans caught on the old PRs?", expect: "replay" },
-  { prompt: "run the regression case set against the new severity rule and show me the offline result", expect: "replay" },
+  {
+    prompt: "would that change still catch what the humans caught on the old PRs?",
+    expect: "replay",
+  },
+  {
+    prompt:
+      "run the regression case set against the new severity rule and show me the offline result",
+    expect: "replay",
+  },
 ];
 
 /** Ordinary companion conversation. No skill may fire on these. */
@@ -168,8 +361,13 @@ describe("companion skill descriptions", () => {
       const d = skills.get(name)!.description;
       expect(d).not.toContain("\n");
       expect(d.length, `${name}: description too short to disambiguate`).toBeGreaterThan(120);
-      expect(d.length, `${name}: description too long — pi reads all of these on every turn`).toBeLessThan(520);
-      expect(d.toLowerCase(), `${name}: say when to use it, not only what it is`).toContain("use when");
+      expect(
+        d.length,
+        `${name}: description too long — pi reads all of these on every turn`,
+      ).toBeLessThan(520);
+      expect(d.toLowerCase(), `${name}: say when to use it, not only what it is`).toContain(
+        "use when",
+      );
     }
   });
 
@@ -178,7 +376,10 @@ describe("companion skill descriptions", () => {
       for (const b of EXPECTED_SKILLS) {
         if (a >= b) continue;
         const s = score(skills.get(a)!.description, skills.get(b)!.description);
-        expect(s.share, `${a} and ${b} share ${(s.share * 100).toFixed(0)}% of their vocabulary`).toBeLessThan(0.4);
+        expect(
+          s.share,
+          `${a} and ${b} share ${(s.share * 100).toFixed(0)}% of their vocabulary`,
+        ).toBeLessThan(0.4);
       }
     }
   });
@@ -187,11 +388,16 @@ describe("companion skill descriptions", () => {
     it(`"${prompt}" reaches ${want}${note ? " — misfire case" : ""}`, () => {
       const ranked = scoreAll(prompt);
       const winner = ranked[0]!;
-      expect(fires(winner.s), `nothing fires on "${prompt}" (best: ${winner.name} ${JSON.stringify(winner.s)})`).toBe(true);
+      expect(
+        fires(winner.s),
+        `nothing fires on "${prompt}" (best: ${winner.name} ${JSON.stringify(winner.s)})`,
+      ).toBe(true);
       expect(winner.name, `${note ?? ""}\nranking: ${JSON.stringify(ranked)}`).toBe(want);
       // And it must WIN, not tie: a tie is a coin flip in pi's hands.
       for (const other of ranked.slice(1)) {
-        expect(other.s.share, `${other.name} ties or beats ${want} on "${prompt}"`).toBeLessThan(winner.s.share);
+        expect(other.s.share, `${other.name} ties or beats ${want} on "${prompt}"`).toBeLessThan(
+          winner.s.share,
+        );
       }
     });
   }
@@ -199,7 +405,10 @@ describe("companion skill descriptions", () => {
   it("the misfire prompt does not reach adjudicate at all", () => {
     const misfire = ROUTES.find((r) => r.expect === "land" && r.note)!;
     const adjudicate = score(misfire.prompt, skills.get("adjudicate")!.description);
-    expect(fires(adjudicate), `adjudicate fires on a prompt that is pure landing: ${JSON.stringify(adjudicate)}`).toBe(false);
+    expect(
+      fires(adjudicate),
+      `adjudicate fires on a prompt that is pure landing: ${JSON.stringify(adjudicate)}`,
+    ).toBe(false);
   });
 
   // survey vs adjudicate is the second misfire axis. Both talk about
@@ -209,12 +418,17 @@ describe("companion skill descriptions", () => {
   // he named. Pinned in both directions.
   it("the survey entry prompt does not reach adjudicate", () => {
     const s = score("anything worth looking at?", skills.get("adjudicate")!.description);
-    expect(fires(s), `adjudicate fires on the survey entry prompt: ${JSON.stringify(s)}`).toBe(false);
+    expect(fires(s), `adjudicate fires on the survey entry prompt: ${JSON.stringify(s)}`).toBe(
+      false,
+    );
   });
 
   it("a named-item judging prompt does not reach survey", () => {
     const s = score("work the feedback on 5312", skills.get("survey")!.description);
-    expect(fires(s), `survey fires on a prompt that names one item to judge: ${JSON.stringify(s)}`).toBe(false);
+    expect(
+      fires(s),
+      `survey fires on a prompt that names one item to judge: ${JSON.stringify(s)}`,
+    ).toBe(false);
   });
 
   it("survey says it does not judge, and names the durable list", () => {
@@ -232,7 +446,9 @@ describe("companion skill descriptions", () => {
   for (const prompt of SILENCE) {
     it(`"${prompt}" reaches no skill`, () => {
       for (const { name, s } of scoreAll(prompt)) {
-        expect(fires(s), `${name} fires on ordinary conversation: ${JSON.stringify(s)}`).toBe(false);
+        expect(fires(s), `${name} fires on ordinary conversation: ${JSON.stringify(s)}`).toBe(
+          false,
+        );
       }
     });
   }

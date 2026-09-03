@@ -22,7 +22,12 @@ const SNAP: ReloadState = {
 };
 
 /** fs.watch stand-in: hand back a trigger the test can fire. */
-function fakeWatch(): { watch: WatchFn; fire: () => void; closed: () => boolean; dir: () => string | undefined } {
+function fakeWatch(): {
+  watch: WatchFn;
+  fire: () => void;
+  closed: () => boolean;
+  dir: () => string | undefined;
+} {
   let cb: (() => void) | undefined;
   let closed = false;
   let dir: string | undefined;
@@ -38,14 +43,12 @@ function build(over: Partial<Parameters<typeof makeOpts>[0]> = {}) {
   return makeOpts(over);
 }
 
-function makeOpts(over: {
-  writes?: Array<[string, string]>;
-  reexecs?: string[];
-  watch?: WatchFn;
-}) {
+function makeOpts(over: { writes?: Array<[string, string]>; reexecs?: string[]; watch?: WatchFn }) {
   const writes: Array<[string, string]> = over.writes ?? [];
   const reexecs: string[] = over.reexecs ?? [];
-  const w = over.watch ? { watch: over.watch, fire: () => {}, closed: () => false, dir: () => undefined } : fakeWatch();
+  const w = over.watch
+    ? { watch: over.watch, fire: () => {}, closed: () => false, dir: () => undefined }
+    : fakeWatch();
   const reloader = new HotReloader({
     distDir: "/sandbox/dist",
     stateFile: "/sandbox/state/tui-resume.json",
@@ -157,7 +160,10 @@ describe("resume state", () => {
 
   it("round-trips and consumes the file", () => {
     const p = join(dir, "tui-resume.json");
-    writeFileSync(p, JSON.stringify({ ...SNAP, tab: "digest", saved_at: "2026-08-14T12:00:00.000Z" }));
+    writeFileSync(
+      p,
+      JSON.stringify({ ...SNAP, tab: "digest", saved_at: "2026-08-14T12:00:00.000Z" }),
+    );
     const restored = readResumeState(p);
     expect(restored).toMatchObject({ tab: "digest", pr: 5012, eventsScroll: 3, sidebarWidth: 52 });
     expect(readResumeState(p)).toBeUndefined(); // consumed
@@ -185,7 +191,10 @@ describe("resume state", () => {
 
 describe("argv plumbing", () => {
   it("parses and strips --resume-state", () => {
-    expect(parseResumeArg(["5012", "--resume-state", "/s.json"])).toEqual({ stateFile: "/s.json", rest: ["5012"] });
+    expect(parseResumeArg(["5012", "--resume-state", "/s.json"])).toEqual({
+      stateFile: "/s.json",
+      rest: ["5012"],
+    });
     expect(parseResumeArg(["overseer"])).toEqual({ rest: ["overseer"] });
     expect(parseResumeArg(["--resume-state"])).toEqual({ rest: [] }); // dangling flag
   });
@@ -231,12 +240,15 @@ describe("the compiler settings the unfiltered dist watch depends on", () => {
     // never re-emitted and the compiler still exits 0. `dev-tui.sh` would then
     // start the TUI from an incomplete dist/, and `deploy.sh` would rsync it to
     // the VM. Every path that consumes dist/ must assert the artefacts exist.
-    const build = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")) as { scripts: Record<string, string> };
+    const build = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")) as {
+      scripts: Record<string, string>;
+    };
     expect(build.scripts.build).toContain("verify-dist.mjs");
     for (const script of ["scripts/dev-tui.sh", "scripts/deploy.sh"]) {
-      expect(readFileSync(join(process.cwd(), script), "utf8"), `${script} runs dist/ without checking it is complete`).toContain(
-        "verify-dist.mjs",
-      );
+      expect(
+        readFileSync(join(process.cwd(), script), "utf8"),
+        `${script} runs dist/ without checking it is complete`,
+      ).toContain("verify-dist.mjs");
     }
   });
 
@@ -246,7 +258,14 @@ describe("the compiler settings the unfiltered dist watch depends on", () => {
     };
     const root = mkdtempSync(join(tmpdir(), "qcr-dist-"));
     mkdirSync(join(root, "src", "tui"), { recursive: true });
-    writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: { outDir: "dist" }, include: ["src/**/*.ts"], exclude: ["dist", "tests"] }));
+    writeFileSync(
+      join(root, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: { outDir: "dist" },
+        include: ["src/**/*.ts"],
+        exclude: ["dist", "tests"],
+      }),
+    );
     writeFileSync(join(root, "src", "tui", "startup.ts"), "export const a = 1;");
     writeFileSync(join(root, "src", "types.d.ts"), "export type T = 1;");
     mkdirSync(join(root, "dist", "src", "tui"), { recursive: true });

@@ -1,13 +1,32 @@
 // the companion → TUI action channel: strict schema parse, instant
 // execution against the TuiDriver seam, archive-before-execute idempotency,
 // result files, bounded housekeeping.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { ACTION_TEXT_MAX, executeTuiAction, parseTuiAction, processTuiActions, type TuiAction, type TuiDriver } from "../src/tui/actions.js";
+import {
+  ACTION_TEXT_MAX,
+  executeTuiAction,
+  parseTuiAction,
+  processTuiActions,
+  type TuiAction,
+  type TuiDriver,
+} from "../src/tui/actions.js";
 
-function mockDriver(overrides: Partial<TuiDriver> = {}): { calls: Array<[string, ...unknown[]]>; driver: TuiDriver } {
+function mockDriver(overrides: Partial<TuiDriver> = {}): {
+  calls: Array<[string, ...unknown[]]>;
+  driver: TuiDriver;
+} {
   const calls: Array<[string, ...unknown[]]> = [];
   const driver: TuiDriver = {
     switchTab: (tab) => calls.push(["switchTab", tab]),
@@ -46,8 +65,14 @@ describe("parseTuiAction — valid requests, every verb", () => {
   });
 
   it("select_pr (number and digit-string coercion)", () => {
-    expect(ok({ verb: "select_pr", params: { pr: 5312 } })).toEqual({ verb: "select_pr", pr: 5312 });
-    expect(ok({ verb: "select_pr", params: { pr: "5312" } })).toEqual({ verb: "select_pr", pr: 5312 });
+    expect(ok({ verb: "select_pr", params: { pr: 5312 } })).toEqual({
+      verb: "select_pr",
+      pr: 5312,
+    });
+    expect(ok({ verb: "select_pr", params: { pr: "5312" } })).toEqual({
+      verb: "select_pr",
+      pr: 5312,
+    });
   });
 
   it("metrics — window xor pr", () => {
@@ -58,7 +83,10 @@ describe("parseTuiAction — valid requests, every verb", () => {
   });
 
   it("digest_day", () => {
-    expect(ok({ verb: "digest_day", params: { date: "2026-08-19" } })).toEqual({ verb: "digest_day", date: "2026-08-19" });
+    expect(ok({ verb: "digest_day", params: { date: "2026-08-19" } })).toEqual({
+      verb: "digest_day",
+      date: "2026-08-19",
+    });
   });
 
   it("memory_view — day and tag both optional, '#' stripped from the tag", () => {
@@ -72,41 +100,76 @@ describe("parseTuiAction — valid requests, every verb", () => {
   });
 
   it("board_filter — author/state/both/clear", () => {
-    expect(ok({ verb: "board_filter", params: { author: "jbennett" } })).toEqual({ verb: "board_filter", filter: { author: "jbennett" } });
-    expect(ok({ verb: "board_filter", params: { state: "reviewing" } })).toEqual({ verb: "board_filter", filter: { state: "reviewing" } });
+    expect(ok({ verb: "board_filter", params: { author: "jbennett" } })).toEqual({
+      verb: "board_filter",
+      filter: { author: "jbennett" },
+    });
+    expect(ok({ verb: "board_filter", params: { state: "reviewing" } })).toEqual({
+      verb: "board_filter",
+      filter: { state: "reviewing" },
+    });
     expect(ok({ verb: "board_filter", params: { author: "a", state: "queued" } })).toEqual({
       verb: "board_filter",
       filter: { author: "a", state: "queued" },
     });
-    expect(ok({ verb: "board_filter", params: { clear: true } })).toEqual({ verb: "board_filter", filter: null });
+    expect(ok({ verb: "board_filter", params: { clear: true } })).toEqual({
+      verb: "board_filter",
+      filter: null,
+    });
   });
 
   it("memory_filter — tag ('#' optional) and clear", () => {
-    expect(ok({ verb: "memory_filter", params: { tag: "#bug" } })).toEqual({ verb: "memory_filter", tag: "bug" });
-    expect(ok({ verb: "memory_filter", params: { tag: "bug" } })).toEqual({ verb: "memory_filter", tag: "bug" });
-    expect(ok({ verb: "memory_filter", params: { clear: true } })).toEqual({ verb: "memory_filter", tag: null });
+    expect(ok({ verb: "memory_filter", params: { tag: "#bug" } })).toEqual({
+      verb: "memory_filter",
+      tag: "bug",
+    });
+    expect(ok({ verb: "memory_filter", params: { tag: "bug" } })).toEqual({
+      verb: "memory_filter",
+      tag: "bug",
+    });
+    expect(ok({ verb: "memory_filter", params: { clear: true } })).toEqual({
+      verb: "memory_filter",
+      tag: null,
+    });
   });
 
   it("msg_session — the msg.ts session-name rule", () => {
     for (const session of ["pr-5312", "overseer", "main"]) {
-      expect(ok({ verb: "msg_session", params: { session, text: "hi" } })).toEqual({ verb: "msg_session", session, text: "hi" });
+      expect(ok({ verb: "msg_session", params: { session, text: "hi" } })).toEqual({
+        verb: "msg_session",
+        session,
+        text: "hi",
+      });
     }
   });
 
   it("overseer_inject", () => {
-    expect(ok({ verb: "overseer_inject", params: { text: "check pr 5312" } })).toEqual({ verb: "overseer_inject", text: "check pr 5312" });
+    expect(ok({ verb: "overseer_inject", params: { text: "check pr 5312" } })).toEqual({
+      verb: "overseer_inject",
+      text: "check pr 5312",
+    });
   });
 
   it("deploy_tab", () => {
     for (const action of ["deploy", "stop", "start", "abort"]) {
-      expect(ok({ verb: "deploy_tab", params: { action } })).toEqual({ verb: "deploy_tab", action });
+      expect(ok({ verb: "deploy_tab", params: { action } })).toEqual({
+        verb: "deploy_tab",
+        action,
+      });
     }
   });
 
   it("text at exactly the cap passes; trimming applies before the length check", () => {
     const text = "x".repeat(ACTION_TEXT_MAX);
-    expect(ok({ verb: "overseer_inject", params: { text } })).toEqual({ verb: "overseer_inject", text });
-    expect(ok({ verb: "msg_session", params: { session: "main", text: `  hi  ` } })).toEqual({ verb: "msg_session", session: "main", text: "hi" });
+    expect(ok({ verb: "overseer_inject", params: { text } })).toEqual({
+      verb: "overseer_inject",
+      text,
+    });
+    expect(ok({ verb: "msg_session", params: { session: "main", text: `  hi  ` } })).toEqual({
+      verb: "msg_session",
+      session: "main",
+      text: "hi",
+    });
   });
 });
 
@@ -152,7 +215,9 @@ describe("parseTuiAction — refusals, never a throw", () => {
 
   it("board_filter refuses empty filters and unknown states", () => {
     expect(err({ verb: "board_filter", params: {} })).toContain("author and/or state");
-    expect(err({ verb: "board_filter", params: { clear: false } })).toContain("author and/or state");
+    expect(err({ verb: "board_filter", params: { clear: false } })).toContain(
+      "author and/or state",
+    );
     expect(err({ verb: "board_filter", params: { author: "" } })).toContain("author");
     expect(err({ verb: "board_filter", params: { author: "x".repeat(101) } })).toContain("author");
     expect(err({ verb: "board_filter", params: { state: "Reviewing" } })).toContain("state");
@@ -174,7 +239,9 @@ describe("parseTuiAction — refusals, never a throw", () => {
     const over = "x".repeat(ACTION_TEXT_MAX + 1);
     expect(err({ verb: "msg_session", params: { session: "main", text: over } })).toContain("2000");
     expect(err({ verb: "msg_session", params: { session: "main", text: "" } })).toContain("2000");
-    expect(err({ verb: "msg_session", params: { session: "main", text: "   " } })).toContain("2000");
+    expect(err({ verb: "msg_session", params: { session: "main", text: "   " } })).toContain(
+      "2000",
+    );
     expect(err({ verb: "overseer_inject", params: { text: over } })).toContain("2000");
     expect(err({ verb: "overseer_inject", params: {} })).toContain("2000");
   });
@@ -270,7 +337,14 @@ describe("processTuiActions — the sweep", () => {
     const { calls, driver } = mockDriver();
     const done = await processTuiActions(dir, driver);
     expect(calls).toEqual([["selectPr", 7]]);
-    expect(done).toEqual([{ file: "2026-08-20T12-00-00Z-a.json", ok: true, message: "companion ▸ board → #7", trace: "companion ▸ board → #7" }]);
+    expect(done).toEqual([
+      {
+        file: "2026-08-20T12-00-00Z-a.json",
+        ok: true,
+        message: "companion ▸ board → #7",
+        trace: "companion ▸ board → #7",
+      },
+    ]);
   });
 
   it("archives to .done/ BEFORE executing (crash mid-execute must not re-run)", async () => {
@@ -297,8 +371,12 @@ describe("processTuiActions — the sweep", () => {
       },
     });
     const first = await processTuiActions(dir, boom.driver);
-    expect(first).toEqual([{ file: name, ok: false, message: "execute failed: mid-execute crash" }]);
-    const result = JSON.parse(readFileSync(join(dir, `${name.replace(/\.json$/, "")}.result.json`), "utf8"));
+    expect(first).toEqual([
+      { file: name, ok: false, message: "execute failed: mid-execute crash" },
+    ]);
+    const result = JSON.parse(
+      readFileSync(join(dir, `${name.replace(/\.json$/, "")}.result.json`), "utf8"),
+    );
     expect(result).toEqual({ ok: false, message: "execute failed: mid-execute crash", file: name });
     // Second sweep: archived request is not visible, nothing runs again.
     const second = mockDriver();
@@ -310,7 +388,10 @@ describe("processTuiActions — the sweep", () => {
     mkDir();
     drop("2026-08-20T12-00-00Z-bad1.json", "not json {{");
     drop("2026-08-20T12-00-00Z-bad2.json", { verb: "reboot_vm", params: {} });
-    drop("2026-08-20T12-00-00Z-bad3.json", { verb: "msg_session", params: { session: "pr-9", text: "x".repeat(2001) } });
+    drop("2026-08-20T12-00-00Z-bad3.json", {
+      verb: "msg_session",
+      params: { session: "pr-9", text: "x".repeat(2001) },
+    });
     const { calls, driver } = mockDriver();
     const done = await processTuiActions(dir, driver);
     expect(calls).toEqual([]);
@@ -319,7 +400,9 @@ describe("processTuiActions — the sweep", () => {
     expect(done[1]!.message).toContain("unknown verb");
     expect(done[2]!.message).toContain("2000");
     for (const r of done) {
-      const res = JSON.parse(readFileSync(join(dir, `${r.file.replace(/\.json$/, "")}.result.json`), "utf8"));
+      const res = JSON.parse(
+        readFileSync(join(dir, `${r.file.replace(/\.json$/, "")}.result.json`), "utf8"),
+      );
       expect(res.ok).toBe(false);
       expect(existsSync(join(dir, ".done", r.file))).toBe(true);
     }
@@ -332,7 +415,10 @@ describe("processTuiActions — the sweep", () => {
     writeFileSync(join(dir, "2026-08-20T11-00-00Z-old.result.json"), "{}");
     const { calls, driver } = mockDriver();
     const done = await processTuiActions(dir, driver);
-    expect(done.map((r) => r.file)).toEqual(["2026-08-20T12-00-01Z-earlier.json", "2026-08-20T12-00-02Z-later.json"]);
+    expect(done.map((r) => r.file)).toEqual([
+      "2026-08-20T12-00-01Z-earlier.json",
+      "2026-08-20T12-00-02Z-later.json",
+    ]);
     expect(calls).toEqual([
       ["switchTab", "board"],
       ["switchTab", "deploy"],
@@ -351,7 +437,10 @@ describe("processTuiActions — the sweep", () => {
     // 205 archived requests already in .done/.
     mkdirSync(join(dir, ".done"), { recursive: true });
     for (let i = 0; i < 205; i++) {
-      writeFileSync(join(dir, ".done", `2026-08-19T00-00-00Z-${String(i).padStart(4, "0")}.json`), "{}");
+      writeFileSync(
+        join(dir, ".done", `2026-08-19T00-00-00Z-${String(i).padStart(4, "0")}.json`),
+        "{}",
+      );
     }
     drop("2026-08-20T12-00-00Z-tick.json", { verb: "switch_tab", params: { tab: "board" } });
     const { driver } = mockDriver();

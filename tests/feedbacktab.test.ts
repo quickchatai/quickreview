@@ -6,9 +6,22 @@
 import { describe, expect, it, vi } from "vitest";
 import type { MemoryEntry } from "../src/memory/store.js";
 import { decodeKey } from "../src/tui/keys.js";
-import { FEEDBACK_FOCUS_ORDER, feedbackEntryLine, feedbackInbox, feedbackKeys, feedbackPresentation } from "../src/tui/feedbacktab.js";
+import {
+  FEEDBACK_FOCUS_ORDER,
+  feedbackEntryLine,
+  feedbackInbox,
+  feedbackKeys,
+  feedbackPresentation,
+} from "../src/tui/feedbacktab.js";
 import { displayWidth, stripAnsi } from "../src/tui/paint.js";
-import { FakeChanges, FakeMemory, changeEntry, learningRig, settle, type Rig } from "./helpers/tui-rig.js";
+import {
+  FakeChanges,
+  FakeMemory,
+  changeEntry,
+  learningRig,
+  settle,
+  type Rig,
+} from "./helpers/tui-rig.js";
 
 const memoryEntry = (text: string, ts = "2026-08-25 08:48:09"): MemoryEntry => ({
   id: `entry-${ts}`,
@@ -16,7 +29,10 @@ const memoryEntry = (text: string, ts = "2026-08-25 08:48:09"): MemoryEntry => (
   day: ts.slice(0, 10),
   block: 0,
   text,
-  tags: text.split(/\s+/).filter((token) => token.startsWith("#")).map((token) => token.slice(1)),
+  tags: text
+    .split(/\s+/)
+    .filter((token) => token.startsWith("#"))
+    .map((token) => token.slice(1)),
   links: [],
   pinned: false,
   hash: `hash-${ts}`,
@@ -45,9 +61,14 @@ function memoryOf(entries: MemoryEntry[]): FakeMemory {
   return mem;
 }
 
-const screenOf = (rig: Rig, cols = 140, rows = 44): string => stripAnsi(rig.app.hooks.tabs.feedback!.screen(rig.app, cols, rows).render());
-const key = (rig: Rig, k: Parameters<NonNullable<typeof rig.app.hooks.tabs.feedback>["key"]>[1]): boolean => rig.app.hooks.tabs.feedback!.key(rig.app, k);
-const bar = (rig: Rig): string[] => feedbackKeys(rig.learning.store, rig.learning.feedback, rig.changes).bar.map((b) => b.key);
+const screenOf = (rig: Rig, cols = 140, rows = 44): string =>
+  stripAnsi(rig.app.hooks.tabs.feedback!.screen(rig.app, cols, rows).render());
+const key = (
+  rig: Rig,
+  k: Parameters<NonNullable<typeof rig.app.hooks.tabs.feedback>["key"]>[1],
+): boolean => rig.app.hooks.tabs.feedback!.key(rig.app, k);
+const bar = (rig: Rig): string[] =>
+  feedbackKeys(rig.learning.store, rig.learning.feedback, rig.changes).bar.map((b) => b.key);
 
 async function loaded(over: Parameters<typeof learningRig>[0] = {}): Promise<Rig> {
   const rig = learningRig({ mem: memoryOf([raw, adjudication]), ...over });
@@ -88,26 +109,41 @@ describe("the signal, as a card", () => {
     expect(feedbackPresentation(adjudication, [raw, adjudication])).toBeUndefined();
     expect(feedbackPresentation(needsAttention, [raw, needsAttention])).toBeUndefined();
     expect(feedbackPresentation(actedOn, [raw, actedOn])).toBeUndefined();
-    expect(feedbackPresentation(raw, [raw, adjudication, actedOn])).toMatchObject({ processed: true, status: "acted-on" });
+    expect(feedbackPresentation(raw, [raw, adjudication, actedOn])).toMatchObject({
+      processed: true,
+      status: "acted-on",
+    });
     expect(feedbackInbox([raw, adjudication, actedOn])).toEqual([]);
     expect(feedbackInbox([raw, adjudication, actedOn], true)).toEqual([raw]);
   });
 
   it("the list line carries the day, the status mark and the generated title", () => {
-    expect(feedbackEntryLine(raw, feedbackPresentation(raw, [raw])!, 80)).toBe("  2026-08-25 ○ #5372 · Narrow edge case judged non-actionable");
-    expect(feedbackEntryLine(raw, feedbackPresentation(raw, [raw, needsAttention])!, 80)).toContain("2026-08-25 ! #5372");
+    expect(feedbackEntryLine(raw, feedbackPresentation(raw, [raw])!, 80)).toBe(
+      "  2026-08-25 ○ #5372 · Narrow edge case judged non-actionable",
+    );
+    expect(feedbackEntryLine(raw, feedbackPresentation(raw, [raw, needsAttention])!, 80)).toContain(
+      "2026-08-25 ! #5372",
+    );
   });
 });
 
 describe("the surface", () => {
   it("paints the whole loop: inbox, card, proposed, changed, filed and bot PRs", async () => {
-    const rig = await loaded({ changes: new FakeChanges([changeEntry("a".repeat(40), "newest change"), changeEntry("b".repeat(40), "older change", { by: "ddddddd", at: "x" })]), readTickets: () => [] });
+    const rig = await loaded({
+      changes: new FakeChanges([
+        changeEntry("a".repeat(40), "newest change"),
+        changeEntry("b".repeat(40), "older change", { by: "ddddddd", at: "x" }),
+      ]),
+      readTickets: () => [],
+    });
     rig.learning.store.reloadTickets();
     const screen = screenOf(rig);
     expect(screen).toContain("feedback ── signal ▸ adjudication ▸ proposal ▸ change ▸ revert");
     expect(screen).toContain("INBOX (1)");
     expect(screen).toContain("2026-08-25 ✓ #5372 · Narrow edge case judged n…"); // the 38% list column truncates
-    expect(screenOf(rig, 220)).toContain("2026-08-25 ✓ #5372 · Narrow edge case judged non-actionable");
+    expect(screenOf(rig, 220)).toContain(
+      "2026-08-25 ✓ #5372 · Narrow edge case judged non-actionable",
+    );
     expect(screen).toContain("PROCESSED · SETTLED");
     expect(screen).toContain("WHAT WE CAN LEARN");
     expect(screen).toContain("PROPOSED (1)");
@@ -156,7 +192,11 @@ describe("the surface", () => {
 
   it("an unreachable store says so in the inbox and never renders a count", async () => {
     const dead = memoryOf([]);
-    (dead as unknown as { health: () => unknown }).health = () => ({ ok: false, namespaces: [], error: "no answer from 127.0.0.1:1933" });
+    (dead as unknown as { health: () => unknown }).health = () => ({
+      ok: false,
+      namespaces: [],
+      error: "no answer from 127.0.0.1:1933",
+    });
     const rig = await loaded({ mem: dead });
     const screen = screenOf(rig);
     expect(screen).toContain("MEMORY UNREACHABLE");
@@ -167,7 +207,8 @@ describe("the surface", () => {
   it("renders every line at exactly cols cells", async () => {
     const rig = await loaded({ changes: new FakeChanges([changeEntry("a".repeat(40), "c")]) });
     for (const cols of [100, 141]) {
-      for (const line of rig.app.hooks.tabs.feedback!.screen(rig.app, cols, 40).lines) expect(displayWidth(line)).toBe(cols);
+      for (const line of rig.app.hooks.tabs.feedback!.screen(rig.app, cols, 40).lines)
+        expect(displayWidth(line)).toBe(cols);
     }
   });
 });
@@ -204,7 +245,9 @@ describe("focus and the state-derived bar", () => {
     const screen = screenOf(rig);
     expect(screen).toContain("INBOX (1)");
     expect(screen).toContain("ACTED ON · ARCHIVED");
-    expect(feedbackKeys(rig.learning.store, rig.learning.feedback, rig.changes).bar.map((b) => b.label)).toContain("a hide archived");
+    expect(
+      feedbackKeys(rig.learning.store, rig.learning.feedback, rig.changes).bar.map((b) => b.label),
+    ).toContain("a hide archived");
   });
 });
 
@@ -218,11 +261,16 @@ describe("proposals", () => {
     await settle();
     expect(accept).toHaveBeenCalledWith(rig.app, "baseline-mergebase-2026-08-20");
     key(rig, { kind: "char", ch: "x" });
-    const send = (s: string): void => (rig.app as unknown as { handleInput(b: Buffer): void }).handleInput(Buffer.from(s));
+    const send = (s: string): void =>
+      (rig.app as unknown as { handleInput(b: Buffer): void }).handleInput(Buffer.from(s));
     send("not evidence-backed");
     send("\r");
     await settle();
-    expect(reject).toHaveBeenCalledWith(rig.app, "baseline-mergebase-2026-08-20", "not evidence-backed");
+    expect(reject).toHaveBeenCalledWith(
+      rig.app,
+      "baseline-mergebase-2026-08-20",
+      "not evidence-backed",
+    );
   });
 
   it("the [A accept] button fires accept on the clicked proposal, focusing its pane", async () => {
@@ -282,10 +330,17 @@ describe("the revert, armed and confirmed", () => {
   });
 
   it("clicking a change row focuses the register and disarms", async () => {
-    const changes = new FakeChanges([changeEntry("a".repeat(40), "one"), changeEntry("b".repeat(40), "two")]);
+    const changes = new FakeChanges([
+      changeEntry("a".repeat(40), "one"),
+      changeEntry("b".repeat(40), "two"),
+    ]);
     const rig = await loaded({ changes });
     const frame = rig.app.hooks.tabs.feedback!.screen(rig.app, 140, 44);
-    const row = frame.zones.find((z) => (z.action as { t: string; i: number }).t === "change" && (z.action as { i: number }).i === 1)!;
+    const row = frame.zones.find(
+      (z) =>
+        (z.action as { t: string; i: number }).t === "change" &&
+        (z.action as { i: number }).i === 1,
+    )!;
     rig.app.hooks.tabs.feedback!.click!(rig.app, row.x1, row.y1);
     expect(rig.learning.feedback.focus).toBe("changed");
     expect(rig.learning.feedback.changeSel).toBe(1);
@@ -307,13 +362,24 @@ describe("the revert, armed and confirmed", () => {
   // is the other half: measured at 502 `git log` spawns in 200 ms when it
   // re-armed on "still no register" against an unreadable file.
   it("an unreadable register or a failed scan is SAID, never painted as 'none yet' or 'not read yet'", async () => {
-    const unreadable = screenOf(await loaded({ changes: new FakeChanges(undefined, { kind: "register_unreadable", reason: "EACCES" }) }));
+    const unreadable = screenOf(
+      await loaded({
+        changes: new FakeChanges(undefined, { kind: "register_unreadable", reason: "EACCES" }),
+      }),
+    );
     expect(unreadable).toContain("change register unreadable");
     expect(unreadable).toContain("EACCES");
     expect(unreadable).not.toContain("not read yet — the register");
     expect(unreadable).not.toContain("a change joins this list");
 
-    const failed = screenOf(await loaded({ changes: new FakeChanges(undefined, { kind: "scan_failed", reason: "fatal: not a git repository" }) }));
+    const failed = screenOf(
+      await loaded({
+        changes: new FakeChanges(undefined, {
+          kind: "scan_failed",
+          reason: "fatal: not a git repository",
+        }),
+      }),
+    );
     expect(failed).toContain("git log failed");
     expect(failed).toContain("not a git repository");
     expect(failed).toContain("CHANGED (—)");
@@ -321,10 +387,24 @@ describe("the revert, armed and confirmed", () => {
     expect(failed).not.toContain("a change joins this list");
 
     // Rows already known stay on screen under the caveat.
-    const withRows = screenOf(await loaded({ changes: new FakeChanges([changeEntry("a".repeat(40), "newest change")], { kind: "register_unreadable", reason: "EIO" }) }));
+    const withRows = screenOf(
+      await loaded({
+        changes: new FakeChanges([changeEntry("a".repeat(40), "newest change")], {
+          kind: "register_unreadable",
+          reason: "EIO",
+        }),
+      }),
+    );
     expect(withRows).toContain("change register unreadable");
     expect(withRows).toContain("newest change");
-    const behind = screenOf(await loaded({ changes: new FakeChanges([changeEntry("a".repeat(40), "newest change")], { kind: "scan_failed", reason: "x" }) }));
+    const behind = screenOf(
+      await loaded({
+        changes: new FakeChanges([changeEntry("a".repeat(40), "newest change")], {
+          kind: "scan_failed",
+          reason: "x",
+        }),
+      }),
+    );
     expect(behind).toContain("last git log scan failed");
     expect(behind).toContain("CHANGED (1)");
     expect(behind).toContain("newest change");
@@ -353,7 +433,11 @@ describe("the loop points at the tickets surface", () => {
     rig.learning.store.reloadTickets();
     const running = rig.app.run();
     const frame = rig.app.hooks.tabs.feedback!.screen(rig.app, 140, 44);
-    const zone = frame.zones.find((z) => (z.action as { t: string; key?: string }).t === "key" && (z.action as { key: string }).key === "4")!;
+    const zone = frame.zones.find(
+      (z) =>
+        (z.action as { t: string; key?: string }).t === "key" &&
+        (z.action as { key: string }).key === "4",
+    )!;
     expect(zone).toBeDefined();
     rig.app.hooks.tabs.feedback!.click!(rig.app, zone.x1, zone.y1);
     expect(rig.app.tab).toBe("tickets");

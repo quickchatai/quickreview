@@ -42,7 +42,7 @@ export function changedRuns(patch: string): ChangedRun[] {
   let hunk = -1;
   let oldLine = 0;
   let newLine = 0;
-  let open: Partial<Record<Side, ChangedRun>> = {};
+  const open: Partial<Record<Side, ChangedRun>> = {};
 
   const close = (side?: Side) => {
     for (const s of side ? [side] : (["RIGHT", "LEFT"] as Side[])) {
@@ -94,7 +94,9 @@ export function changedRuns(patch: string): ChangedRun[] {
   close();
   // Deterministic order: by hunk, then start line, then LEFT before RIGHT.
   const sideRank = (s: Side) => (s === "LEFT" ? 0 : 1);
-  return runs.sort((a, b) => a.hunk - b.hunk || a.start - b.start || sideRank(a.side) - sideRank(b.side));
+  return runs.sort(
+    (a, b) => a.hunk - b.hunk || a.start - b.start || sideRank(a.side) - sideRank(b.side),
+  );
 }
 
 /** All changed runs of a PR, keyed by file path. */

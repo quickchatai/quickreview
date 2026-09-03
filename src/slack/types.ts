@@ -70,7 +70,11 @@ export interface SlackIdentity {
 /** Outbound half of the seam — Slack Web API calls. */
 export interface SlackWebApi {
   /** Post a message (optionally into a thread). Serialized + rate-limited. */
-  postMessage(args: { channel: string; text: string; thread_ts?: string }): Promise<SlackPostResult>;
+  postMessage(args: {
+    channel: string;
+    text: string;
+    thread_ts?: string;
+  }): Promise<SlackPostResult>;
   /** Edit a message we posted, addressed by its ts. */
   updateMessage(args: { channel: string; ts: string; text: string }): Promise<SlackPostResult>;
   /** Resolve a user id to a display name (memoized with a TTL). */

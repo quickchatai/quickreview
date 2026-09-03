@@ -16,7 +16,16 @@
 // I am serving?" — and answers it from `latestAny()`, ignoring expiry: waiting
 // out a TTL must never turn a guest's turn into an owner-tier one. Only a
 // daemon wake (`writeLocal`) supersedes a Slack origin there.
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { foldSlackTier, type SlackTier } from "../state.js";
 
@@ -71,11 +80,20 @@ export function parseOriginRecord(raw: unknown): OriginRecord | null {
   if (foldedTier === null) return null;
   if (typeof expires_at !== "string" || Number.isNaN(Date.parse(expires_at))) return null;
   const prs = Array.isArray(authorized_prs)
-    ? authorized_prs.filter((n): n is number => typeof n === "number" && Number.isInteger(n) && n > 0)
+    ? authorized_prs.filter(
+        (n): n is number => typeof n === "number" && Number.isInteger(n) && n > 0,
+      )
     : [];
   // Anything that is not literally "local" — missing, misspelled, non-string —
   // reads as a Slack-caused turn, i.e. the restricting value.
-  return { source: source === "local" ? "local" : "slack", event_id, slack_user, tier: foldedTier, authorized_prs: prs, expires_at };
+  return {
+    source: source === "local" ? "local" : "slack",
+    event_id,
+    slack_user,
+    tier: foldedTier,
+    authorized_prs: prs,
+    expires_at,
+  };
 }
 
 /**
@@ -124,7 +142,11 @@ export class OriginStore {
    * record grants (`authorizeCommand(_, null)` ⇒ ok).
    */
   writeLocal(reason: string): OriginRecord {
-    const slug = (reason || "wake").replace(/[^a-zA-Z0-9._-]+/g, "-").slice(0, 48).replace(/^-+|-+$/g, "") || "wake";
+    const slug =
+      (reason || "wake")
+        .replace(/[^a-zA-Z0-9._-]+/g, "-")
+        .slice(0, 48)
+        .replace(/^-+|-+$/g, "") || "wake";
     const stamp = this.now().toISOString().replace(/[:.]/g, "-");
     return this.put(`local-${stamp}-${this.seq}-${slug}`, {
       source: "local",
@@ -136,7 +158,10 @@ export class OriginStore {
   }
 
   private put(basename: string, rec: Omit<OriginRecord, "expires_at">): OriginRecord {
-    const full: OriginRecord = { ...rec, expires_at: new Date(this.now().getTime() + ORIGIN_TTL_MS).toISOString() };
+    const full: OriginRecord = {
+      ...rec,
+      expires_at: new Date(this.now().getTime() + ORIGIN_TTL_MS).toISOString(),
+    };
     const path = this.path(basename);
     mkdirSync(this.dir, { recursive: true });
     const tmp = `${path}.tmp-${process.pid}-${this.seq++}`;

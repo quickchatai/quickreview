@@ -20,7 +20,10 @@ import type { StateStore, StatusSnapshot } from "./state.js";
  * unequal lengths — we must not let that leak as a 500). */
 export function verifySignature(raw: Buffer, header: string | undefined, secret: string): boolean {
   if (!header || !header.startsWith("sha256=")) return false;
-  const expected = Buffer.from(`sha256=${createHmac("sha256", secret).update(raw).digest("hex")}`, "utf8");
+  const expected = Buffer.from(
+    `sha256=${createHmac("sha256", secret).update(raw).digest("hex")}`,
+    "utf8",
+  );
   const given = Buffer.from(header, "utf8");
   if (given.length !== expected.length) return false;
   return timingSafeEqual(given, expected);
@@ -53,7 +56,12 @@ export type Interpretation =
       via: "thread_reply";
       scope: "review_comment";
     }
-  | { kind: "bot_comment"; pr: number; comment_id: number; scope: "review_comment" | "issue_comment" }
+  | {
+      kind: "bot_comment";
+      pr: number;
+      comment_id: number;
+      scope: "review_comment" | "issue_comment";
+    }
   /** The [feedback] tuning loop — META-signal about the review
    * itself, deliberately diverted BEFORE author_reply so it never reaches
    * ping-pong, never wakes the PR session, and never stamps the new-evidence
@@ -119,7 +127,12 @@ function isBotUser(user: any, botLogin: string): boolean {
 
 /** Pure event interpreter — the whole receiver's decision logic, testable
  * without HTTP. */
-export function interpretEvent(event: string, action: string | null, payload: any, deps: InterpretDeps): Interpretation {
+export function interpretEvent(
+  event: string,
+  action: string | null,
+  payload: any,
+  deps: InterpretDeps,
+): Interpretation {
   switch (event) {
     case "pull_request":
       return interpretPullRequest(action, payload, deps);
@@ -143,18 +156,24 @@ export function interpretEvent(event: string, action: string | null, payload: an
   }
 }
 
-function interpretPullRequest(action: string | null, payload: any, deps: InterpretDeps): Interpretation {
+function interpretPullRequest(
+  action: string | null,
+  payload: any,
+  deps: InterpretDeps,
+): Interpretation {
   const pr = payload?.pull_request;
   if (!pr) return { kind: "ignored", reason: "pull_request payload without pull_request" };
   const meta = prMeta(pr);
   // Bot-authored PRs never enter the queue (spec §3): the app cannot review
   // its own improvement PRs.
-  if (isBotUser(pr.user, deps.botLogin)) return { kind: "ignored", reason: "bot-authored PR", pr: meta.number };
+  if (isBotUser(pr.user, deps.botLogin))
+    return { kind: "ignored", reason: "bot-authored PR", pr: meta.number };
 
   switch (action) {
     case "labeled": {
       const name = payload?.label?.name;
-      if (name !== deps.triggerLabel) return { kind: "ignored", reason: `non-trigger label: ${name}`, pr: meta.number };
+      if (name !== deps.triggerLabel)
+        return { kind: "ignored", reason: `non-trigger label: ${name}`, pr: meta.number };
       return { kind: "trigger", pr: meta.number, source: "label", meta };
     }
     case "review_requested": {
@@ -162,7 +181,8 @@ function interpretPullRequest(action: string | null, payload: any, deps: Interpr
       if (!team) return { kind: "ignored", reason: "individual review request", pr: meta.number };
       const slug: string = team.slug ?? "";
       const wantSlug = deps.reviewTeam.split("/")[1] ?? deps.reviewTeam;
-      if (slug !== wantSlug) return { kind: "ignored", reason: `other team requested: ${slug}`, pr: meta.number };
+      if (slug !== wantSlug)
+        return { kind: "ignored", reason: `other team requested: ${slug}`, pr: meta.number };
       return { kind: "trigger", pr: meta.number, source: "team_request", meta };
     }
     case "synchronize":
@@ -175,27 +195,38 @@ function interpretPullRequest(action: string | null, payload: any, deps: Interpr
     // sender is mechanics, never feedback.
     case "unlabeled": {
       const name = payload?.label?.name;
-      if (name !== deps.triggerLabel) return { kind: "ignored", reason: `non-trigger label removed: ${name}`, pr: meta.number };
+      if (name !== deps.triggerLabel)
+        return { kind: "ignored", reason: `non-trigger label removed: ${name}`, pr: meta.number };
       if (isBotUser(payload?.sender, deps.botLogin))
         return { kind: "ignored", reason: "trigger consumed by the bot", pr: meta.number };
       return { kind: "trigger_withdrawn", pr: meta.number, by: payload?.sender?.login ?? "" };
     }
     case "review_request_removed": {
       const team = payload?.requested_team;
-      if (!team) return { kind: "ignored", reason: "individual review request removed", pr: meta.number };
+      if (!team)
+        return { kind: "ignored", reason: "individual review request removed", pr: meta.number };
       const slug: string = team.slug ?? "";
       const wantSlug = deps.reviewTeam.split("/")[1] ?? deps.reviewTeam;
-      if (slug !== wantSlug) return { kind: "ignored", reason: `other team request removed: ${slug}`, pr: meta.number };
+      if (slug !== wantSlug)
+        return { kind: "ignored", reason: `other team request removed: ${slug}`, pr: meta.number };
       if (isBotUser(payload?.sender, deps.botLogin))
         return { kind: "ignored", reason: "trigger consumed by the bot", pr: meta.number };
       return { kind: "trigger_withdrawn", pr: meta.number, by: payload?.sender?.login ?? "" };
     }
     default:
-      return { kind: "ignored", reason: `unhandled pull_request action: ${action}`, pr: meta.number };
+      return {
+        kind: "ignored",
+        reason: `unhandled pull_request action: ${action}`,
+        pr: meta.number,
+      };
   }
 }
 
-function interpretReviewComment(action: string | null, payload: any, deps: InterpretDeps): Interpretation {
+function interpretReviewComment(
+  action: string | null,
+  payload: any,
+  deps: InterpretDeps,
+): Interpretation {
   const comment = payload?.comment;
   const pr: number = payload?.pull_request?.number ?? 0;
   // a HUMAN deleting one of the bot's comments is a behavioral
@@ -208,7 +239,8 @@ function interpretReviewComment(action: string | null, payload: any, deps: Inter
       return { kind: "bot_comment_deleted", pr, comment_id: comment.id };
     return { kind: "ignored", reason: "non-signal comment deletion", pr };
   }
-  if (action !== "created") return { kind: "ignored", reason: `unhandled review-comment action: ${action}` };
+  if (action !== "created")
+    return { kind: "ignored", reason: `unhandled review-comment action: ${action}` };
   if (!comment) return { kind: "ignored", reason: "review comment payload without comment" };
 
   // The bot's own comments echo back as deliveries: registry backfill, never a
@@ -216,9 +248,11 @@ function interpretReviewComment(action: string | null, payload: any, deps: Inter
   if (comment.user?.login === deps.botLogin)
     return { kind: "bot_comment", pr, comment_id: comment.id, scope: "review_comment" };
   if (comment.user?.type === "Bot") return { kind: "ignored", reason: "other-bot comment", pr };
-  if (payload?.sender?.login === deps.botLogin) return { kind: "ignored", reason: "sender is the bot", pr };
+  if (payload?.sender?.login === deps.botLogin)
+    return { kind: "ignored", reason: "sender is the bot", pr };
 
-  const inReplyTo: number | null = typeof comment.in_reply_to_id === "number" ? comment.in_reply_to_id : null;
+  const inReplyTo: number | null =
+    typeof comment.in_reply_to_id === "number" ? comment.in_reply_to_id : null;
   // [feedback]-prefixed comments divert HERE, before the
   // author_reply interpretation — they are meta-signal about the review
   // itself and must never enter ping-pong or count as new author evidence.
@@ -270,7 +304,8 @@ const ZERO_SHA = "0000000000000000000000000000000000000000";
  * and the daemon decides which PRs — if any — target this branch. */
 function interpretPush(payload: any): Interpretation {
   const ref: string = typeof payload?.ref === "string" ? payload.ref : "";
-  if (!ref.startsWith("refs/heads/")) return { kind: "ignored", reason: `push to a non-branch ref: ${ref}` };
+  if (!ref.startsWith("refs/heads/"))
+    return { kind: "ignored", reason: `push to a non-branch ref: ${ref}` };
   const before: string = typeof payload?.before === "string" ? payload.before : "";
   const after: string = typeof payload?.after === "string" ? payload.after : "";
   if (!before || !after || after === ZERO_SHA || before === ZERO_SHA)
@@ -279,7 +314,11 @@ function interpretPush(payload: any): Interpretation {
   return { kind: "base_advanced", branch: ref.slice("refs/heads/".length), before, after };
 }
 
-function interpretIssueComment(action: string | null, payload: any, deps: InterpretDeps): Interpretation {
+function interpretIssueComment(
+  action: string | null,
+  payload: any,
+  deps: InterpretDeps,
+): Interpretation {
   const issue = payload?.issue;
   // The discriminator: an "issue" is a PR iff it carries `pull_request`.
   if (!issue?.pull_request) return { kind: "ignored", reason: "issue comment on a non-PR issue" };
@@ -293,12 +332,14 @@ function interpretIssueComment(action: string | null, payload: any, deps: Interp
       return { kind: "bot_comment_deleted", pr, comment_id: comment.id };
     return { kind: "ignored", reason: "non-signal comment deletion", pr };
   }
-  if (action !== "created") return { kind: "ignored", reason: `unhandled issue-comment action: ${action}`, pr };
+  if (action !== "created")
+    return { kind: "ignored", reason: `unhandled issue-comment action: ${action}`, pr };
 
   if (comment.user?.login === deps.botLogin)
     return { kind: "bot_comment", pr, comment_id: comment.id, scope: "issue_comment" };
   if (comment.user?.type === "Bot") return { kind: "ignored", reason: "other-bot comment", pr };
-  if (payload?.sender?.login === deps.botLogin) return { kind: "ignored", reason: "sender is the bot", pr };
+  if (payload?.sender?.login === deps.botLogin)
+    return { kind: "ignored", reason: "sender is the bot", pr };
 
   // the one exception to the rule below — a [feedback]-prefixed
   // top-level comment is captured for the tuning loop (and still never
@@ -320,7 +361,6 @@ function interpretIssueComment(action: string | null, payload: any, deps: Interp
   return { kind: "ignored", reason: "top-level PR comment is outside bot review threads", pr };
 }
 
-
 // ---- server --------------------------------------------------------------
 
 export interface WebhookDeps {
@@ -328,7 +368,10 @@ export interface WebhookDeps {
   store: StateStore;
   secret: string;
   /** Called after the 200 is sent. Must never throw into the socket. */
-  onInterpretation: (i: Interpretation, ctx: { event: string; action: string | null; guid: string }) => void | Promise<void>;
+  onInterpretation: (
+    i: Interpretation,
+    ctx: { event: string; action: string | null; guid: string },
+  ) => void | Promise<void>;
   log?: (msg: string, extra?: unknown) => void;
   path?: string;
   /** Process liveness stays HTTP-200; the body separately exposes a failed
@@ -367,7 +410,11 @@ export function handleDelivery(
   const log = deps.log ?? (() => {});
   if (!verifySignature(raw, headers.signature, deps.secret)) {
     log("webhook: signature rejected", { guid: headers.guid, event: headers.event });
-    deps.store.logEvent("webhook_rejected", null, { guid: headers.guid ?? null, event: headers.event ?? null, reason: "bad-signature" });
+    deps.store.logEvent("webhook_rejected", null, {
+      guid: headers.guid ?? null,
+      event: headers.event ?? null,
+      reason: "bad-signature",
+    });
     return { status: 403, reason: "bad-signature" };
   }
   const guid = headers.guid;
@@ -431,7 +478,12 @@ export function handleDelivery(
 /** Capture every human comment on a tracked PR. Returns nothing —
  * no caller may branch on it, which is the point: the record is a copy, not a
  * routing input. */
-function captureComment(deps: WebhookDeps, event: string, action: string | null, payload: any): void {
+function captureComment(
+  deps: WebhookDeps,
+  event: string,
+  action: string | null,
+  payload: any,
+): void {
   const outcome = captureFromEvent(event, action, payload, {
     botLogin: deps.cfg.github.bot_login,
     isTrackedPr: (pr) => deps.store.getPr(pr) !== undefined,
@@ -525,13 +577,24 @@ export async function applyInterpretation(
     /** Post-approval recheck triggers — none touches lifecycle. */
     onSynchronize?: (i: Extract<Interpretation, { kind: "synchronize" }>) => void | Promise<void>;
     onCiCompleted?: (i: Extract<Interpretation, { kind: "ci_completed" }>) => void | Promise<void>;
-    onBaseAdvanced?: (i: Extract<Interpretation, { kind: "base_advanced" }>) => void | Promise<void>;
+    onBaseAdvanced?: (
+      i: Extract<Interpretation, { kind: "base_advanced" }>,
+    ) => void | Promise<void>;
     /** The [feedback] tuning loop — explicit comments and
      * behavioral signals, incl. the merged-over-block signal derived in the
      * `closed` case below. Never touches lifecycle. */
     onFeedbackSignal?: (
       e:
-        | Extract<Interpretation, { kind: "feedback_comment" | "review_set_aside" | "bot_comment_deleted" | "trigger_withdrawn" }>
+        | Extract<
+            Interpretation,
+            {
+              kind:
+                | "feedback_comment"
+                | "review_set_aside"
+                | "bot_comment_deleted"
+                | "trigger_withdrawn";
+            }
+          >
         | { kind: "merged_over_block"; pr: number },
     ) => void | Promise<void>;
   },
@@ -541,7 +604,13 @@ export async function applyInterpretation(
   const opts = { botLogin: cfg.github.bot_login };
   switch (i.kind) {
     case "trigger":
-      applyEventFor(store, i.pr, { type: "trigger", source: i.source === "label" ? "label" : "team_request" }, i.meta, opts);
+      applyEventFor(
+        store,
+        i.pr,
+        { type: "trigger", source: i.source === "label" ? "label" : "team_request" },
+        i.meta,
+        opts,
+      );
       await deps.onPrTouched?.(i.pr);
       return;
     case "synchronize":
@@ -560,7 +629,8 @@ export async function applyInterpretation(
       const priorState = store.getPr(i.pr)?.state;
       applyEventFor(store, i.pr, { type: "closed" }, i.meta, opts);
       store.logEvent("pr_closed", i.pr, { merged: i.merged, source: "webhook" });
-      if (i.merged && priorState === "awaiting_author") await deps.onFeedbackSignal?.({ kind: "merged_over_block", pr: i.pr });
+      if (i.merged && priorState === "awaiting_author")
+        await deps.onFeedbackSignal?.({ kind: "merged_over_block", pr: i.pr });
       await deps.onClosed?.(i.pr);
       return;
     }
@@ -595,7 +665,8 @@ export async function applyInterpretation(
     case "ci_completed":
       // Recorded, never a transition: CI is evidence for the recheck, not a
       // trigger for a round.
-      for (const pr of i.prs) store.logEvent("ci_completed", pr, { head_sha: i.head_sha, conclusion: i.conclusion });
+      for (const pr of i.prs)
+        store.logEvent("ci_completed", pr, { head_sha: i.head_sha, conclusion: i.conclusion });
       await deps.onCiCompleted?.(i);
       return;
     case "base_advanced":

@@ -87,7 +87,11 @@ describe("the good path and its one carve-out", () => {
   it("a block the author ACCEPTED AND FIXED never appears as a candidate", () => {
     // The owner was explicit: this is the review working, not a deviation.
     // Block → fix → approve must produce nothing in ANY family.
-    const f = facts({ pr: 5001, rounds: [round(1, "REQUEST_CHANGES"), round(2, "APPROVE")], rounds_reported: 2 });
+    const f = facts({
+      pr: 5001,
+      rounds: [round(1, "REQUEST_CHANGES"), round(2, "APPROVE")],
+      rounds_reported: 2,
+    });
     expect(isPerfectPath(f)).toBe(false);
     expect(detectCandidates(f)).toEqual([]);
   });
@@ -114,7 +118,11 @@ describe("the good path and its one carve-out", () => {
 
 describe("the seven families", () => {
   it("detects explicit [feedback], and only on tagged comments", () => {
-    const f = facts({ pr: 5312, rounds: [round(1, "APPROVE")], comments: [comment(), comment({ comment_id: 2, tagged: false })] });
+    const f = facts({
+      pr: 5312,
+      rounds: [round(1, "APPROVE")],
+      comments: [comment(), comment({ comment_id: 2, tagged: false })],
+    });
     const d = detectCandidates(f).find((x) => x.family === "feedback-tag");
     expect(d?.severity).toBe(1);
     expect(d?.detail[0]).toContain("pmercier");
@@ -134,20 +142,32 @@ describe("the seven families", () => {
   it("counts rounds that produced no verdict, however they died", () => {
     const f = facts({
       pr: 5180,
-      rounds: [round(1, "REQUEST_CHANGES"), round(2, null, "overdue"), round(3, null, "done"), round(4, null, "cancelled")],
+      rounds: [
+        round(1, "REQUEST_CHANGES"),
+        round(2, null, "overdue"),
+        round(3, null, "done"),
+        round(4, null, "cancelled"),
+      ],
     });
     const d = detectCandidates(f).find((x) => x.family === "no-verdict");
     expect(d?.severity).toBe(3);
   });
 
   it("detects repeat approvals — the family that should shrink to nothing", () => {
-    const f = facts({ pr: 5266, rounds: [round(1, "APPROVE"), round(2, "APPROVE"), round(3, "APPROVE")] });
+    const f = facts({
+      pr: 5266,
+      rounds: [round(1, "APPROVE"), round(2, "APPROVE"), round(3, "APPROVE")],
+    });
     const d = detectCandidates(f).find((x) => x.family === "repeat-approvals");
     expect(d?.severity).toBe(3);
   });
 
   it("detects sheer length from the daemon's count even when the local record is short", () => {
-    const f = facts({ pr: 5306, rounds: [round(1, "REQUEST_CHANGES")], rounds_reported: LONG_REVIEW_ROUNDS + 2 });
+    const f = facts({
+      pr: 5306,
+      rounds: [round(1, "REQUEST_CHANGES")],
+      rounds_reported: LONG_REVIEW_ROUNDS + 2,
+    });
     const d = detectCandidates(f).find((x) => x.family === "long-review");
     expect(d?.severity).toBe(LONG_REVIEW_ROUNDS + 2);
     expect(d?.detail[0]).toContain(`1 of ${LONG_REVIEW_ROUNDS + 2}`);
@@ -218,13 +238,25 @@ describe("durability — the list does not expire", () => {
   });
 
   it("re-detecting updates in place rather than piling up duplicates", () => {
-    const ctx = { now: "2026-08-25T09:00:00Z", facts: new Map([[7, f(7, "sig-b")]]), adjudications: new Map<number, string>() };
-    const first = mergeCandidates([], [{ family: "long-review", pr: 7, severity: 10, headline: "10 rounds", detail: [] }], {
-      ...ctx,
-      now: "2026-08-01T09:00:00Z",
-      facts: new Map([[7, f(7, "sig-a")]]),
-    });
-    const second = mergeCandidates(first, [{ family: "long-review", pr: 7, severity: 12, headline: "12 rounds", detail: [] }], ctx);
+    const ctx = {
+      now: "2026-08-25T09:00:00Z",
+      facts: new Map([[7, f(7, "sig-b")]]),
+      adjudications: new Map<number, string>(),
+    };
+    const first = mergeCandidates(
+      [],
+      [{ family: "long-review", pr: 7, severity: 10, headline: "10 rounds", detail: [] }],
+      {
+        ...ctx,
+        now: "2026-08-01T09:00:00Z",
+        facts: new Map([[7, f(7, "sig-a")]]),
+      },
+    );
+    const second = mergeCandidates(
+      first,
+      [{ family: "long-review", pr: 7, severity: 12, headline: "12 rounds", detail: [] }],
+      ctx,
+    );
     expect(second).toHaveLength(1);
     expect(second[0]!.severity).toBe(12);
     expect(second[0]!.first_seen).toBe("2026-08-01T09:00:00Z");
@@ -234,11 +266,15 @@ describe("durability — the list does not expire", () => {
   it("survives a TUI restart: the store is re-read from disk, not from memory", () => {
     const dir = mkdtempSync(join(tmpdir(), "qcr-cand-"));
     const store = new CandidateStore(dir);
-    const rows = mergeCandidates([], [{ family: "no-verdict", pr: 42, severity: 3, headline: "3 dead rounds", detail: [] }], {
-      now: "2026-08-25T09:00:00Z",
-      facts: new Map([[42, f(42, "sig-42")]]),
-      adjudications: new Map(),
-    });
+    const rows = mergeCandidates(
+      [],
+      [{ family: "no-verdict", pr: 42, severity: 3, headline: "3 dead rounds", detail: [] }],
+      {
+        now: "2026-08-25T09:00:00Z",
+        facts: new Map([[42, f(42, "sig-42")]]),
+        adjudications: new Map(),
+      },
+    );
     store.save({
       version: 1,
       updated_at: "2026-08-25T09:00:00Z",
@@ -270,7 +306,10 @@ describe("durability — the list does not expire", () => {
 
     // Valid JSON that is not a list is unreadable too, not empty.
     writeFileSync(join(dir, "candidates.json"), '{"version":1}');
-    expect(new CandidateStore(dir).read()).toEqual({ state: "unreadable", reason: "no candidates array" });
+    expect(new CandidateStore(dir).read()).toEqual({
+      state: "unreadable",
+      reason: "no candidates array",
+    });
 
     writeFileSync(join(dir, "candidates.json"), JSON.stringify({ version: 1, candidates: [] }));
     expect(new CandidateStore(dir).read().state).toBe("list");
@@ -278,28 +317,47 @@ describe("durability — the list does not expire", () => {
 });
 
 describe("judged items return only if the PR moved", () => {
-  const base = { now: "2026-08-25T09:00:00Z", facts: new Map([[9, facts({ pr: 9, signature: "sig-1" })]]) };
-  const detected = [{ family: "repeat-blocks" as const, pr: 9, severity: 5, headline: "5 blocks", detail: [] }];
+  const base = {
+    now: "2026-08-25T09:00:00Z",
+    facts: new Map([[9, facts({ pr: 9, signature: "sig-1" })]]),
+  };
+  const detected = [
+    { family: "repeat-blocks" as const, pr: 9, severity: 5, headline: "5 blocks", detail: [] },
+  ];
 
   it("an adjudication takes it off the open list", () => {
     const first = mergeCandidates([], detected, { ...base, adjudications: new Map() });
     expect(openCandidates(first)).toHaveLength(1);
-    const judged = mergeCandidates(first, detected, { ...base, adjudications: new Map([[9, "2026-08-25 10:00:00"]]) });
+    const judged = mergeCandidates(first, detected, {
+      ...base,
+      adjudications: new Map([[9, "2026-08-25 10:00:00"]]),
+    });
     expect(judged[0]!.judged?.signature).toBe("sig-1");
     expect(openCandidates(judged)).toHaveLength(0);
   });
 
   it("it stays off while the PR is unchanged, however many sweeps run", () => {
-    let rows = mergeCandidates([], detected, { ...base, adjudications: new Map([[9, "2026-08-25 10:00:00"]]) });
-    for (let i = 0; i < 5; i++) rows = mergeCandidates(rows, detected, { ...base, adjudications: new Map([[9, "2026-08-25 10:00:00"]]) });
+    let rows = mergeCandidates([], detected, {
+      ...base,
+      adjudications: new Map([[9, "2026-08-25 10:00:00"]]),
+    });
+    for (let i = 0; i < 5; i++)
+      rows = mergeCandidates(rows, detected, {
+        ...base,
+        adjudications: new Map([[9, "2026-08-25 10:00:00"]]),
+      });
     expect(openCandidates(rows)).toHaveLength(0);
   });
 
   it("it comes back, marked returned, once the PR moves", () => {
-    const judged = mergeCandidates(mergeCandidates([], detected, { ...base, adjudications: new Map() }), detected, {
-      ...base,
-      adjudications: new Map([[9, "2026-08-25 10:00:00"]]),
-    });
+    const judged = mergeCandidates(
+      mergeCandidates([], detected, { ...base, adjudications: new Map() }),
+      detected,
+      {
+        ...base,
+        adjudications: new Map([[9, "2026-08-25 10:00:00"]]),
+      },
+    );
     const moved = mergeCandidates(judged, detected, {
       now: base.now,
       facts: new Map([[9, facts({ pr: 9, signature: "sig-2" })]]),
@@ -311,8 +369,16 @@ describe("judged items return only if the PR moved", () => {
 
   it("reads #adjudication entries header-only, so quoted prose cannot mint one", () => {
     const map = adjudicationsFrom([
-      { ts: "2026-08-25 10:00:00", text: "#adjudication #feedback pr=5270 attribution=review-defect\nComplaint: pr=9999 he said", tags: ["#adjudication", "#feedback"] },
-      { ts: "2026-08-24 10:00:00", text: "#feedback pr=5271 no adjudication tag", tags: ["#feedback"] },
+      {
+        ts: "2026-08-25 10:00:00",
+        text: "#adjudication #feedback pr=5270 attribution=review-defect\nComplaint: pr=9999 he said",
+        tags: ["#adjudication", "#feedback"],
+      },
+      {
+        ts: "2026-08-24 10:00:00",
+        text: "#feedback pr=5271 no adjudication tag",
+        tags: ["#feedback"],
+      },
       { ts: "2026-08-26 10:00:00", text: "#adjudication pr=5270 later", tags: ["#adjudication"] },
     ]);
     expect(map.get(5270)).toBe("2026-08-26 10:00:00"); // newest wins
@@ -333,10 +399,19 @@ describe("the sweep and the empty answer", () => {
     };
   }
 
-  function writeManifest(dir: string, pr: number, round_no: number, status: string, verdict: string | null): void {
+  function writeManifest(
+    dir: string,
+    pr: number,
+    round_no: number,
+    status: string,
+    verdict: string | null,
+  ): void {
     const d = join(dir, `pr-${pr}`, `round-${round_no}`);
     mkdirSync(d, { recursive: true });
-    writeFileSync(join(d, "manifest.json"), JSON.stringify({ pr, round_no, round: { round_no, status, verdict } }));
+    writeFileSync(
+      join(d, "manifest.json"),
+      JSON.stringify({ pr, round_no, round: { round_no, status, verdict } }),
+    );
   }
 
   it("reads round facts out of's manifests, ignoring half-copies", () => {
@@ -352,8 +427,22 @@ describe("the sweep and the empty answer", () => {
     const dir = mkdtempSync(join(tmpdir(), "qcr-cand-"));
     writeManifest(dir, 5000, 1, "done", "APPROVE");
     const store = new CandidateStore(dir);
-    const sweeper = new CandidateSweeper(store, { evidenceDir: dir, now: () => new Date("2026-08-25T09:00:00Z") });
-    const list = await sweeper.sweep(snapshot([{ number: 5000, state: "closed", title: "t", head_sha: "abc", stale_recheck: 0, rounds: 1 } as never]));
+    const sweeper = new CandidateSweeper(store, {
+      evidenceDir: dir,
+      now: () => new Date("2026-08-25T09:00:00Z"),
+    });
+    const list = await sweeper.sweep(
+      snapshot([
+        {
+          number: 5000,
+          state: "closed",
+          title: "t",
+          head_sha: "abc",
+          stale_recheck: 0,
+          rounds: 1,
+        } as never,
+      ]),
+    );
     expect(list!.candidates).toEqual([]);
     expect(list!.families.map((f) => f.family)).toEqual([...FAMILY_ORDER]);
     for (const f of list!.families) expect(f.scanned).toBe(1);
@@ -368,7 +457,13 @@ describe("the sweep and the empty answer", () => {
     const text = renderSurvey({
       version: 1,
       updated_at: "2026-08-25T09:00:00Z",
-      families: FAMILY_ORDER.map((family) => ({ family, title: `T-${family}`, why: "w", scanned: 14, found: 0 })),
+      families: FAMILY_ORDER.map((family) => ({
+        family,
+        title: `T-${family}`,
+        why: "w",
+        scanned: 14,
+        found: 0,
+      })),
       candidates: [],
       coverage: { prs_scanned: 14, rounds_with_local_record: 30, rounds_reported: 30 },
     });
@@ -383,8 +478,20 @@ describe("the sweep and the empty answer", () => {
     const dir = mkdtempSync(join(tmpdir(), "qcr-cand-"));
     writeManifest(dir, 5249, 1, "done", "REQUEST_CHANGES");
     const store = new CandidateStore(dir);
-    const sweeper = new CandidateSweeper(store, { evidenceDir: dir, now: () => new Date("2026-08-25T09:00:00Z") });
-    const snap = snapshot([{ number: 5249, state: "reviewing", title: "t", head_sha: "abc", stale_recheck: 0, rounds: 1 } as never]);
+    const sweeper = new CandidateSweeper(store, {
+      evidenceDir: dir,
+      now: () => new Date("2026-08-25T09:00:00Z"),
+    });
+    const snap = snapshot([
+      {
+        number: 5249,
+        state: "reviewing",
+        title: "t",
+        head_sha: "abc",
+        stale_recheck: 0,
+        rounds: 1,
+      } as never,
+    ]);
 
     const first = await sweeper.sweep(snap);
     expect(first!.coverage.rounds_with_local_record).toBe(1);
@@ -401,7 +508,16 @@ describe("the sweep and the empty answer", () => {
 
     // A moved PR is re-read (the manifest is gone, so its local record drops)
     // and the changed result IS saved.
-    const moved = snapshot([{ number: 5249, state: "reviewing", title: "t", head_sha: "def", stale_recheck: 0, rounds: 1 } as never]);
+    const moved = snapshot([
+      {
+        number: 5249,
+        state: "reviewing",
+        title: "t",
+        head_sha: "def",
+        stale_recheck: 0,
+        rounds: 1,
+      } as never,
+    ]);
     const third = await sweeper.sweep(moved);
     expect(third!.coverage.rounds_with_local_record).toBe(0);
     expect(existsSync(store.path)).toBe(true);
@@ -413,8 +529,20 @@ describe("the sweep and the empty answer", () => {
     const dir = mkdtempSync(join(tmpdir(), "qcr-cand-"));
     writeManifest(dir, 5180, 1, "done", "REQUEST_CHANGES");
     const store = new CandidateStore(dir);
-    const sweeper = new CandidateSweeper(store, { evidenceDir: dir, now: () => new Date("2026-08-25T09:00:00Z") });
-    const snap = snapshot([{ number: 5180, state: "reviewing", title: "t", head_sha: "abc", stale_recheck: 0, rounds: 3 } as never]);
+    const sweeper = new CandidateSweeper(store, {
+      evidenceDir: dir,
+      now: () => new Date("2026-08-25T09:00:00Z"),
+    });
+    const snap = snapshot([
+      {
+        number: 5180,
+        state: "reviewing",
+        title: "t",
+        head_sha: "abc",
+        stale_recheck: 0,
+        rounds: 3,
+      } as never,
+    ]);
 
     const first = await sweeper.sweep(snap);
     expect(first!.coverage.rounds_with_local_record).toBe(1);
@@ -436,7 +564,8 @@ describe("the sweep and the empty answer", () => {
   // every candidate whose PR has left the snapshot was dropped) and then SAVED
   // the truncation over the history the feature IS.
   describe("an unreadable candidates.json is never read as an empty one", () => {
-    const TORN = '{\n  "version": 1,\n  "updated_at": "2026-08-25T09:00:00Z",\n  "candidates": [\n    { "key": "no-verdict:pr-42"';
+    const TORN =
+      '{\n  "version": 1,\n  "updated_at": "2026-08-25T09:00:00Z",\n  "candidates": [\n    { "key": "no-verdict:pr-42"';
 
     it("the sweep stands down: it neither merges from empty nor writes over the file", async () => {
       const dir = mkdtempSync(join(tmpdir(), "qcr-cand-"));
@@ -450,7 +579,18 @@ describe("the sweep and the empty answer", () => {
         onNotice: (t) => notices.push(t),
       });
 
-      const list = await sweeper.sweep(snapshot([{ number: 5000, state: "closed", title: "t", head_sha: "abc", stale_recheck: 0, rounds: 1 } as never]));
+      const list = await sweeper.sweep(
+        snapshot([
+          {
+            number: 5000,
+            state: "closed",
+            title: "t",
+            head_sha: "abc",
+            stale_recheck: 0,
+            rounds: 1,
+          } as never,
+        ]),
+      );
 
       expect(list).toBeUndefined(); // no list built from an unread baseline
       expect(readFileSync(store.path, "utf8")).toBe(TORN); // and nothing written over it
@@ -465,14 +605,20 @@ describe("the sweep and the empty answer", () => {
       mkdirSync(dir, { recursive: true });
       writeFileSync(store.path, TORN);
       const notices: string[] = [];
-      const sweeper = new CandidateSweeper(store, { evidenceDir: dir, onNotice: (t) => notices.push(t) });
+      const sweeper = new CandidateSweeper(store, {
+        evidenceDir: dir,
+        onNotice: (t) => notices.push(t),
+      });
       const snap = snapshot([]);
       for (let i = 0; i < 5; i++) await sweeper.sweep(snap);
       expect(notices).toHaveLength(1);
       expect(readFileSync(store.path, "utf8")).toBe(TORN);
 
       // Repaired: the sweep resumes and saves normally.
-      writeFileSync(store.path, JSON.stringify({ version: 1, updated_at: "", families: [], candidates: [], coverage: {} }));
+      writeFileSync(
+        store.path,
+        JSON.stringify({ version: 1, updated_at: "", families: [], candidates: [], coverage: {} }),
+      );
       expect(await sweeper.sweep(snap)).toBeDefined();
       expect(listIn(store)?.version).toBe(1);
     });
@@ -481,7 +627,10 @@ describe("the sweep and the empty answer", () => {
       const dir = mkdtempSync(join(tmpdir(), "qcr-cand-"));
       const store = new CandidateStore(dir);
       const notices: string[] = [];
-      const sweeper = new CandidateSweeper(store, { evidenceDir: dir, onNotice: (t) => notices.push(t) });
+      const sweeper = new CandidateSweeper(store, {
+        evidenceDir: dir,
+        onNotice: (t) => notices.push(t),
+      });
       expect(await sweeper.sweep(snapshot([]))).toBeDefined();
       expect(notices).toEqual([]);
       expect(existsSync(store.path)).toBe(true);

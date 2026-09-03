@@ -57,8 +57,9 @@ describe("durable PR-session command slot", () => {
   it("structurally forbids two nonterminal commands for one PR session", () => {
     const store = open();
     store.createSessionCommand(input("cmd-a"));
-    expect(() => store.createSessionCommand({ ...input("cmd-b"), kind: "wake", round_no: null }))
-      .toThrow(/UNIQUE constraint failed/);
+    expect(() =>
+      store.createSessionCommand({ ...input("cmd-b"), kind: "wake", round_no: null }),
+    ).toThrow(/UNIQUE constraint failed/);
 
     store.createSessionCommand(input("cmd-other", 5409));
     expect(store.activeSessionCommand("pr-5409")?.id).toBe("cmd-other");
@@ -70,12 +71,19 @@ describe("durable PR-session command slot", () => {
 
     const running = store.claimSessionCommand("cmd-a", "bridge-new", "2026-08-27T20:30:00.000Z");
     expect(running).toMatchObject({ status: "running", owner_token: "bridge-new", attempt: 1 });
-    expect(store.claimSessionCommand("cmd-a", "bridge-old", "2026-08-27T20:31:00.000Z")).toBeUndefined();
+    expect(
+      store.claimSessionCommand("cmd-a", "bridge-old", "2026-08-27T20:31:00.000Z"),
+    ).toBeUndefined();
     expect(store.finishSessionCommand("cmd-a", "bridge-old", "acked")).toBe(false);
     expect(store.finishSessionCommand("cmd-a", "bridge-new", "acked")).toBe(false); // not accepted yet
-    expect(store.markSessionCommandStarted("cmd-a", "bridge-new", "2026-08-27T20:30:00.000Z")).toBe(true);
+    expect(store.markSessionCommandStarted("cmd-a", "bridge-new", "2026-08-27T20:30:00.000Z")).toBe(
+      true,
+    );
     expect(store.finishSessionCommand("cmd-a", "bridge-new", "acked")).toBe(true);
-    expect(store.getSessionCommand("cmd-a")).toMatchObject({ status: "acked", owner_token: "bridge-new" });
+    expect(store.getSessionCommand("cmd-a")).toMatchObject({
+      status: "acked",
+      owner_token: "bridge-new",
+    });
     expect(store.activeSessionCommand("pr-5408")).toBeUndefined();
   });
 
@@ -83,14 +91,21 @@ describe("durable PR-session command slot", () => {
     const store = open();
     store.createSessionCommand(input("cmd-a"));
     store.claimSessionCommand("cmd-a", "bridge-a", "2026-08-27T20:30:00.000Z");
-    expect(store.finishSessionCommand("cmd-a", "bridge-a", "failed", "no correlated run message")).toBe(true);
+    expect(
+      store.finishSessionCommand("cmd-a", "bridge-a", "failed", "no correlated run message"),
+    ).toBe(true);
     expect(store.activeSessionCommand("pr-5408")).toBeUndefined();
-    expect(store.blockingSessionCommand("pr-5408")).toMatchObject({ id: "cmd-a", status: "failed" });
+    expect(store.blockingSessionCommand("pr-5408")).toMatchObject({
+      id: "cmd-a",
+      status: "failed",
+    });
 
-    expect(store.retrySessionCommand("cmd-a", {
-      inject_path: "/inject/pr-5408/retry--cmd-cmd-a.md",
-      next_check_at: "2026-08-27T20:04:00.000Z",
-    })).toBe(true);
+    expect(
+      store.retrySessionCommand("cmd-a", {
+        inject_path: "/inject/pr-5408/retry--cmd-cmd-a.md",
+        next_check_at: "2026-08-27T20:04:00.000Z",
+      }),
+    ).toBe(true);
     expect(store.getSessionCommand("cmd-a")).toMatchObject({
       id: "cmd-a",
       status: "pending",
@@ -110,7 +125,10 @@ describe("durable PR-session command slot", () => {
 
     expect(store.dueSessionCommands(T0)).toMatchObject([{ id: "cmd-a", unknown_checks: 0 }]);
     expect(store.deferSessionCommandEvidence("cmd-a", "2026-08-27T20:01:00.000Z")).toBe(true);
-    expect(store.getSessionCommand("cmd-a")).toMatchObject({ unknown_checks: 1, next_check_at: "2026-08-27T20:01:00.000Z" });
+    expect(store.getSessionCommand("cmd-a")).toMatchObject({
+      unknown_checks: 1,
+      next_check_at: "2026-08-27T20:01:00.000Z",
+    });
     expect(store.dueSessionCommands(T0)).toEqual([]);
   });
 
@@ -136,7 +154,10 @@ describe("durable PR-session command slot", () => {
       next_check_at: "2026-08-27T20:45:00.000Z",
     });
     expect(store.failActiveSessionCommand("cmd-a", "hard bound exhausted")).toBe(true);
-    expect(store.getSessionCommand("cmd-a")).toMatchObject({ status: "failed", failure: "hard bound exhausted" });
+    expect(store.getSessionCommand("cmd-a")).toMatchObject({
+      status: "failed",
+      failure: "hard bound exhausted",
+    });
   });
 
   it("persists the supervisor attempt and success lease independently", () => {
@@ -193,9 +214,12 @@ describe("durable PR-session command slot", () => {
           started_at TEXT, settled_at TEXT, failed_at TEXT, failure TEXT
         );
       `);
-      old.prepare(`INSERT INTO session_commands
+      old
+        .prepare(
+          `INSERT INTO session_commands
         (id,pr,session,kind,round_no,payload_sha256,payload_path,inject_path,status,owner_token,attempt,created_at,updated_at,next_check_at)
-        VALUES ('cmd-old',5408,'pr-5408','round',20,?,?,?,'pending',NULL,0,?,?,?)`)
+        VALUES ('cmd-old',5408,'pr-5408','round',20,?,?,?,'pending',NULL,0,?,?,?)`,
+        )
         .run("a".repeat(64), "/state/old.md", "/inject/old.md", T0, T0, "2026-08-27T20:02:00.000Z");
       old.close();
 
@@ -216,10 +240,15 @@ describe("durable PR-session command slot", () => {
     store.createSessionCommand(input("cmd-target"));
     store.createSessionCommand(input("cmd-other", 5409));
 
-    const result = store.cancelBlockingSessionCommandsForOperator(5408, [], "restart-session", ["cmd-target"]);
+    const result = store.cancelBlockingSessionCommandsForOperator(5408, [], "restart-session", [
+      "cmd-target",
+    ]);
 
     expect(result).toEqual({ cancelled_command_ids: ["cmd-target"], recovered_wake_ids: [] });
-    expect(store.getSessionCommand("cmd-target")).toMatchObject({ status: "cancelled", failure: "operator restart-session" });
+    expect(store.getSessionCommand("cmd-target")).toMatchObject({
+      status: "cancelled",
+      failure: "operator restart-session",
+    });
     expect(store.blockingSessionCommand("pr-5408")).toBeUndefined();
     expect(store.blockingSessionCommand("pr-5409")?.id).toBe("cmd-other");
   });
@@ -237,7 +266,10 @@ describe("durable PR-session command slot", () => {
     );
 
     expect(result.cancelled_command_ids).toEqual(["cmd-wake"]);
-    expect(store.heldWakes(5408).map((wake) => wake.payload)).toEqual(["original wake\n", "later wake\n"]);
+    expect(store.heldWakes(5408).map((wake) => wake.payload)).toEqual([
+      "original wake\n",
+      "later wake\n",
+    ]);
     expect(store.getSessionCommand("cmd-wake")?.status).toBe("cancelled");
   });
 
@@ -256,16 +288,25 @@ describe("durable PR-session command slot", () => {
 
     const wakes = store.heldWakes(5408);
     expect(wakes).toHaveLength(5);
-    expect(wakes[0]).toMatchObject({ payload: "recovered-first", reason: "operator_recovered:wake:cmd-wake" });
-    expect(wakes.slice(1).map((wake) => wake.payload)).toEqual(["later-2", "later-3", "later-4", "latest"]);
+    expect(wakes[0]).toMatchObject({
+      payload: "recovered-first",
+      reason: "operator_recovered:wake:cmd-wake",
+    });
+    expect(wakes.slice(1).map((wake) => wake.payload)).toEqual([
+      "later-2",
+      "later-3",
+      "later-4",
+      "latest",
+    ]);
   });
 
   it("rolls back when a blocking non-round payload was not recovered", () => {
     const store = open();
     store.createSessionCommand({ ...input("cmd-wake"), kind: "wake", round_no: null });
 
-    expect(() => store.cancelBlockingSessionCommandsForOperator(5408, [], "restart-session", ["cmd-wake"]))
-      .toThrow(/payload set does not match/);
+    expect(() =>
+      store.cancelBlockingSessionCommandsForOperator(5408, [], "restart-session", ["cmd-wake"]),
+    ).toThrow(/payload set does not match/);
     expect(store.blockingSessionCommand("pr-5408")?.id).toBe("cmd-wake");
     expect(store.heldWakes(5408)).toEqual([]);
   });
@@ -291,15 +332,20 @@ describe("durable PR-session command slot", () => {
         CREATE UNIQUE INDEX session_commands_inject_path ON session_commands(inject_path);
         CREATE INDEX session_commands_pr_created ON session_commands(pr, created_at);
       `);
-      old.prepare(`INSERT INTO session_commands
+      old
+        .prepare(
+          `INSERT INTO session_commands
         (id,pr,session,kind,round_no,payload_sha256,payload_path,inject_path,status,owner_token,attempt,created_at,updated_at,next_check_at)
-        VALUES ('cmd-old',5408,'pr-5408','round',20,?,?,?,'pending',NULL,0,?,?,?)`)
+        VALUES ('cmd-old',5408,'pr-5408','round',20,?,?,?,'pending',NULL,0,?,?,?)`,
+        )
         .run("a".repeat(64), "/state/old.md", "/inject/old.md", T0, T0, "2026-08-27T20:02:00.000Z");
       old.close();
 
       const second = open(path);
-      expect(second.cancelBlockingSessionCommandsForOperator(5408, [], "restart-session", ["cmd-old"]).cancelled_command_ids)
-        .toEqual(["cmd-old"]);
+      expect(
+        second.cancelBlockingSessionCommandsForOperator(5408, [], "restart-session", ["cmd-old"])
+          .cancelled_command_ids,
+      ).toEqual(["cmd-old"]);
       expect(second.getSessionCommand("cmd-old")?.status).toBe("cancelled");
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -316,7 +362,10 @@ describe("durable PR-session command slot", () => {
       stores.splice(stores.indexOf(first), 1);
 
       const second = open(path);
-      expect(second.activeSessionCommand("pr-5408")).toMatchObject({ id: "cmd-a", status: "pending" });
+      expect(second.activeSessionCommand("pr-5408")).toMatchObject({
+        id: "cmd-a",
+        status: "pending",
+      });
       expect(second.getSessionCommandByInjectPath(input("cmd-a").inject_path)?.id).toBe("cmd-a");
     } finally {
       rmSync(dir, { recursive: true, force: true });

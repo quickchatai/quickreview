@@ -8,7 +8,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import activate, { renderChecks, toolDefinitions } from "../extensions/onboarding.js";
-import { OnboardingEngine, firstRunMarkerPath, type OnboardAdapters } from "../src/onboard/engine.js";
+import {
+  OnboardingEngine,
+  firstRunMarkerPath,
+  type OnboardAdapters,
+} from "../src/onboard/engine.js";
 import { preflightStep } from "../src/onboard/steps/preflight.js";
 import type { PiToolDefinition, PiToolResult } from "@earendil-works/pi-coding-agent";
 
@@ -32,7 +36,10 @@ function fakeAdapters(opts: { dockerOk?: boolean } = {}): OnboardAdapters {
     runner: {
       run: async (cmd, args) => {
         if (cmd !== "docker") return { code: 127, stdout: "", stderr: "not found" };
-        if (args[0] === "--version") return dockerOk ? { code: 0, stdout: "Docker 27\n", stderr: "" } : { code: 127, stdout: "", stderr: "no docker" };
+        if (args[0] === "--version")
+          return dockerOk
+            ? { code: 0, stdout: "Docker 27\n", stderr: "" }
+            : { code: 127, stdout: "", stderr: "no docker" };
         return { code: 0, stdout: "Compose v2\n", stderr: "" };
       },
     },
@@ -42,7 +49,10 @@ function fakeAdapters(opts: { dockerOk?: boolean } = {}): OnboardAdapters {
   };
 }
 
-function belt(opts: { dockerOk?: boolean } = {}): { defs: PiToolDefinition[]; shutdown: ReturnType<typeof vi.fn> } {
+function belt(opts: { dockerOk?: boolean } = {}): {
+  defs: PiToolDefinition[];
+  shutdown: ReturnType<typeof vi.fn>;
+} {
   const engine = new OnboardingEngine([preflightStep()], fakeAdapters(opts));
   const shutdown = vi.fn();
   return { defs: toolDefinitions(engine, shutdown), shutdown };

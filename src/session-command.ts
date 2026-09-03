@@ -6,7 +6,9 @@ export function sessionCommandMarker(id: string, payloadSha256: string): string 
   return `<!-- qcr-command:${id}:${payloadSha256} -->`;
 }
 
-export function parseSessionCommandMarker(text: string): { id: string; payloadSha256: string } | undefined {
+export function parseSessionCommandMarker(
+  text: string,
+): { id: string; payloadSha256: string } | undefined {
   const match = /<!-- qcr-command:([^:\s>]+):([a-f0-9]{64}) -->/.exec(text);
   return match ? { id: match[1]!, payloadSha256: match[2]! } : undefined;
 }

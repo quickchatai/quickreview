@@ -25,7 +25,8 @@ export interface LiveAgentProgress {
   error?: string;
 }
 
-export type RoundExecutionStage = "unknown" | "accepted" | "preparing" | "fanout-started" | "passes-complete" | "finalized";
+export type RoundExecutionStage =
+  "unknown" | "accepted" | "preparing" | "fanout-started" | "passes-complete" | "finalized";
 
 export interface RoundProgressSnapshot {
   /** v2 adds immutable execution milestones. v1 remains readable for the TUI
@@ -75,11 +76,12 @@ export function roundExecutionStage(
   if (progress.version !== 2 || !progress.command_id || !progress.command_sha256) return "unknown";
   if (progress.parent_status === "settled") return "finalized";
   const discovery = planned.filter((name) => name !== "pass-validate");
-  const plannedFanout = progress.agents.some((agent) =>
-    discovery.includes(lensForAgent(agent.agent)) && agent.started_at !== undefined,
+  const plannedFanout = progress.agents.some(
+    (agent) => discovery.includes(lensForAgent(agent.agent)) && agent.started_at !== undefined,
   );
   if (!plannedFanout) return progress.preparing_at ? "preparing" : "accepted";
-  const terminal = (status: LiveAgentStatus): boolean => status === "completed" || status === "failed";
+  const terminal = (status: LiveAgentStatus): boolean =>
+    status === "completed" || status === "failed";
   const plannedComplete = planned.every((name) => {
     const executions = progress.agents.filter((agent) => lensForAgent(agent.agent) === name);
     return executions.length > 0 && executions.every((agent) => terminal(agent.status));
@@ -107,21 +109,28 @@ export function parseRoundProgress(raw: string): RoundProgressSnapshot | undefin
       instant(value.run_started_at) === undefined ||
       instant(value.updated_at) === undefined ||
       (value.parent_status !== "active" && value.parent_status !== "settled") ||
-      ((value.command_id === undefined) !== (value.command_sha256 === undefined)) ||
+      (value.command_id === undefined) !== (value.command_sha256 === undefined) ||
       (value.command_id !== undefined && typeof value.command_id !== "string") ||
-      (value.command_sha256 !== undefined && (typeof value.command_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(value.command_sha256))) ||
+      (value.command_sha256 !== undefined &&
+        (typeof value.command_sha256 !== "string" ||
+          !/^[a-f0-9]{64}$/.test(value.command_sha256))) ||
       (value.round_no !== undefined && (!Number.isInteger(value.round_no) || value.round_no < 1)) ||
-      (value.head_sha !== undefined && (typeof value.head_sha !== "string" || value.head_sha.length === 0)) ||
+      (value.head_sha !== undefined &&
+        (typeof value.head_sha !== "string" || value.head_sha.length === 0)) ||
       instant(value.last_activity_at) === undefined ||
       typeof value.last_activity !== "string" ||
       !Array.isArray(value.agents)
-    ) return undefined;
+    )
+      return undefined;
 
     const runStarted = instant(value.run_started_at)!;
-    const accepted = value.command_accepted_at === undefined ? undefined : instant(value.command_accepted_at);
+    const accepted =
+      value.command_accepted_at === undefined ? undefined : instant(value.command_accepted_at);
     const preparing = value.preparing_at === undefined ? undefined : instant(value.preparing_at);
-    const firstLens = value.first_lens_started_at === undefined ? undefined : instant(value.first_lens_started_at);
-    const fanout = value.fanout_started_at === undefined ? undefined : instant(value.fanout_started_at);
+    const firstLens =
+      value.first_lens_started_at === undefined ? undefined : instant(value.first_lens_started_at);
+    const fanout =
+      value.fanout_started_at === undefined ? undefined : instant(value.fanout_started_at);
     if (
       (value.command_accepted_at !== undefined && accepted === undefined) ||
       (value.preparing_at !== undefined && preparing === undefined) ||
@@ -132,20 +141,32 @@ export function parseRoundProgress(raw: string): RoundProgressSnapshot | undefin
       (accepted !== undefined && firstLens !== undefined && firstLens < accepted) ||
       (preparing !== undefined && fanout !== undefined && fanout < preparing) ||
       (firstLens !== undefined && fanout !== undefined && firstLens !== fanout)
-    ) return undefined;
-    if (value.version === 2 && value.command_id !== undefined && accepted === undefined) return undefined;
+    )
+      return undefined;
+    if (value.version === 2 && value.command_id !== undefined && accepted === undefined)
+      return undefined;
 
-    if (value.version === 2 && value.agents.length > 0 && firstLens === undefined && fanout === undefined) return undefined;
+    if (
+      value.version === 2 &&
+      value.agents.length > 0 &&
+      firstLens === undefined &&
+      fanout === undefined
+    )
+      return undefined;
     for (const rawAgent of value.agents) {
-      if (rawAgent === null || typeof rawAgent !== "object" || Array.isArray(rawAgent)) return undefined;
+      if (rawAgent === null || typeof rawAgent !== "object" || Array.isArray(rawAgent))
+        return undefined;
       const agent = rawAgent as Partial<LiveAgentProgress>;
       if (
         (value.version === 2 && typeof agent.execution_id !== "string") ||
         typeof agent.agent !== "string" ||
         (agent.status !== "running" && agent.status !== "completed" && agent.status !== "failed") ||
-        typeof agent.duration_ms !== "number" || !Number.isFinite(agent.duration_ms) ||
-        typeof agent.tool_count !== "number" || !Number.isFinite(agent.tool_count)
-      ) return undefined;
+        typeof agent.duration_ms !== "number" ||
+        !Number.isFinite(agent.duration_ms) ||
+        typeof agent.tool_count !== "number" ||
+        !Number.isFinite(agent.tool_count)
+      )
+        return undefined;
       const started = agent.started_at === undefined ? undefined : instant(agent.started_at);
       const finished = agent.finished_at === undefined ? undefined : instant(agent.finished_at);
       if (
@@ -158,10 +179,11 @@ export function parseRoundProgress(raw: string): RoundProgressSnapshot | undefin
         (value.version === 2 && started === undefined) ||
         (value.version === 2 && agent.status === "running" && finished !== undefined) ||
         (value.version === 2 && agent.status !== "running" && finished === undefined)
-      ) return undefined;
+      )
+        return undefined;
     }
     if (value.version === 2) {
-      const ids = value.agents.map((agent) => (agent as LiveAgentProgress).execution_id);
+      const ids = value.agents.map((agent) => agent.execution_id);
       if (new Set(ids).size !== ids.length) return undefined;
     }
     return value as RoundProgressSnapshot;

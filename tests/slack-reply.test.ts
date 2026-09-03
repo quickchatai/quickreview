@@ -4,7 +4,13 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
 import { StateStore } from "../src/state.js";
-import { makeSlackReply, replyIdemKey, threadIsKnown, truncateReply, TRUNCATION_SUFFIX } from "../src/slack/reply.js";
+import {
+  makeSlackReply,
+  replyIdemKey,
+  threadIsKnown,
+  truncateReply,
+  TRUNCATION_SUFFIX,
+} from "../src/slack/reply.js";
 import * as replyModule from "../src/slack/reply.js";
 import type { SlackPostResult } from "../src/slack/types.js";
 
@@ -30,10 +36,18 @@ function api(result: SlackPostResult = { ok: true, ts: "1755431234.001900" }) {
   });
   return {
     postMessage: postMessage as never,
-    updateMessage: () => { throw new Error("updateMessage must not be called"); },
-    usersInfo: () => { throw new Error("usersInfo must not be called"); },
-    authTest: () => { throw new Error("authTest must not be called"); },
-    pinsAdd: () => { throw new Error("pinsAdd must not be called"); },
+    updateMessage: () => {
+      throw new Error("updateMessage must not be called");
+    },
+    usersInfo: () => {
+      throw new Error("usersInfo must not be called");
+    },
+    authTest: () => {
+      throw new Error("authTest must not be called");
+    },
+    pinsAdd: () => {
+      throw new Error("pinsAdd must not be called");
+    },
   };
 }
 
@@ -72,7 +86,11 @@ describe("slack_reply execution", () => {
     const out = await reply()({ thread: THREAD, text: "on it", file: "cmd-1" });
     expect(out).toMatchObject({ ok: true, ts: "1755431234.001900", truncated: false });
     expect(posts).toEqual([{ channel: CHANNEL, text: "on it", thread_ts: THREAD }]);
-    expect(store.slackPost("reply:cmd-1")).toMatchObject({ ok: 1, ts: "1755431234.001900", kind: "reply" });
+    expect(store.slackPost("reply:cmd-1")).toMatchObject({
+      ok: 1,
+      ts: "1755431234.001900",
+      kind: "reply",
+    });
   });
 
   it("refuses a thread it was never spoken to in (no cold starts)", async () => {
@@ -151,7 +169,11 @@ describe("slack_reply execution", () => {
 
   it("records a failed post and never blocks anything", async () => {
     seenInbound();
-    const out = await reply({ ok: false, error: "rate_limited" })({ thread: THREAD, text: "x", file: "cmd-1" });
+    const out = await reply({ ok: false, error: "rate_limited" })({
+      thread: THREAD,
+      text: "x",
+      file: "cmd-1",
+    });
     expect(out.ok).toBe(false);
     expect(out.reason).toContain("rate_limited");
     const row = store.slackPost("reply:cmd-1");
@@ -165,7 +187,11 @@ describe("slack_reply execution", () => {
     const send = makeSlackReply({
       cfg,
       store,
-      api: { postMessage: (async () => { throw new Error("socket closed"); }) as never },
+      api: {
+        postMessage: (async () => {
+          throw new Error("socket closed");
+        }) as never,
+      },
       now,
     });
     const out = await send({ thread: THREAD, text: "x", file: "cmd-1" });

@@ -11,7 +11,13 @@ import {
   submitReview,
   type Finding,
 } from "../src/posting.js";
-import { ASK_HUMAN_RE, ASK_HUMAN_TAG, CHECK_THIS_RE, DEFERRED_RE, postTag } from "../src/severity.js";
+import {
+  ASK_HUMAN_RE,
+  ASK_HUMAN_TAG,
+  CHECK_THIS_RE,
+  DEFERRED_RE,
+  postTag,
+} from "../src/severity.js";
 
 const PATCH = `@@ -1,4 +1,8 @@
  ctx
@@ -70,7 +76,9 @@ describe("severity → tag mapping (spec §5)", () => {
     // Non-routine reachability is shown; it is what explains the softer tag.
     expect(comment).toContain("· contrived ·");
     // A routine finding's tail is unchanged.
-    expect(inlineBody(finding(), "blocker")).toContain("_P1 · confidence 0.90 · lens pass-baseline_");
+    expect(inlineBody(finding(), "blocker")).toContain(
+      "_P1 · confidence 0.90 · lens pass-baseline_",
+    );
   });
 });
 
@@ -79,7 +87,10 @@ describe("severity → tag mapping (spec §5)", () => {
 // via the implementer, and the reviewed repo's directives key on it.
 describe("the [ask your human] marker on an inline comment", () => {
   it("prefixes the tag, keeps the severity tag, and never emits [check this]", () => {
-    const body = inlineBody(finding({ lens: "pass-ask-human", title: "why does this file exist?" }), "question");
+    const body = inlineBody(
+      finding({ lens: "pass-ask-human", title: "why does this file exist?" }),
+      "question",
+    );
     expect(body.split("\n")[0]).toBe("[ask your human] [question] why does this file exist?");
     expect(ASK_HUMAN_RE.test(body)).toBe(true);
     expect(CHECK_THIS_RE.test(body)).toBe(false);
@@ -92,7 +103,9 @@ describe("the [ask your human] marker on an inline comment", () => {
 
   it("leaves every other finding's first line exactly as it was", () => {
     expect(inlineBody(finding(), "blocker").split("\n")[0]).toBe("[blocker] missing await");
-    expect(inlineBody(finding({ lens: "pass-intent" }), "question").split("\n")[0]).toBe("[question] missing await");
+    expect(inlineBody(finding({ lens: "pass-intent" }), "question").split("\n")[0]).toBe(
+      "[question] missing await",
+    );
   });
 
   it("rides assembly end to end", () => {
@@ -102,9 +115,13 @@ describe("the [ask your human] marker on an inline comment", () => {
       verdict: "APPROVE",
       lenses: ["pass-baseline", "pass-ask-human"],
       patches,
-      findings: [finding({ severity: "P3", lens: "pass-ask-human", title: "do we want dev tracing here?" })],
+      findings: [
+        finding({ severity: "P3", lens: "pass-ask-human", title: "do we want dev tracing here?" }),
+      ],
     });
-    expect(review.payload.comments[0]?.body ?? "").toContain("[ask your human] [question] do we want dev tracing here?");
+    expect(review.payload.comments[0]?.body ?? "").toContain(
+      "[ask your human] [question] do we want dev tracing here?",
+    );
   });
 });
 
@@ -127,7 +144,13 @@ describe("assembleReview", () => {
       findings: [
         finding(),
         finding({ severity: "nit", confidence: 0.5, line: 3, title: "naming", lens: "pass-ui" }),
-        finding({ severity: "P2", confidence: 0.5, line: 4, title: "is this intended?", lens: "pass-contracts" }),
+        finding({
+          severity: "P2",
+          confidence: 0.5,
+          line: 4,
+          title: "is this intended?",
+          lens: "pass-contracts",
+        }),
       ],
     });
 
@@ -139,7 +162,9 @@ describe("assembleReview", () => {
     expect(review.payload.comments[2]!.body.startsWith("[question] is this intended?")).toBe(true);
 
     const body = review.payload.body;
-    expect(body.startsWith("**Verdict: Changes requested** — 1 blocker, 1 nit, 1 question.")).toBe(true);
+    expect(body.startsWith("**Verdict: Changes requested** — 1 blocker, 1 nit, 1 question.")).toBe(
+      true,
+    );
     expect(body).toContain("_Lenses applied: pass-baseline, pass-security._");
     expect(body.indexOf("### Blockers")).toBeLessThan(body.indexOf("### Nits"));
     expect(body.indexOf("### Nits")).toBeLessThan(body.indexOf("### Questions"));
@@ -195,7 +220,9 @@ describe("assembleReview", () => {
   });
 
   it("caps inline comments at 50 and overflows the rest to the body", () => {
-    const many = Array.from({ length: 60 }, (_, i) => finding({ title: `f${i}`, line: 2 + (i % 4) }));
+    const many = Array.from({ length: 60 }, (_, i) =>
+      finding({ title: `f${i}`, line: 2 + (i % 4) }),
+    );
     const review = assembleReview({
       pr: 9,
       head_sha: "sha",
@@ -253,7 +280,9 @@ describe("assembleReview", () => {
     });
     const body = review.payload.body;
     expect(body).not.toContain("### Previously deferred, unchanged");
-    expect(body).toContain("2 findings from earlier rounds are still open on their existing threads");
+    expect(body).toContain(
+      "2 findings from earlier rounds are still open on their existing threads",
+    );
     // Not one word of the carried-over findings is repeated into the body.
     expect(body).not.toContain("unbounded retry loop");
     expect(body).not.toContain("magic string");
@@ -277,7 +306,10 @@ describe("assembleReview", () => {
 // ----: the deferral marker ------------------------------------------
 describe("the [deferred] marker", () => {
   it("leads the comment, before the posting tag", () => {
-    const body = inlineBody(finding({ kind: "deferred", severity: "P3", confidence: 0.5 }), "question");
+    const body = inlineBody(
+      finding({ kind: "deferred", severity: "P3", confidence: 0.5 }),
+      "question",
+    );
     expect(body.startsWith("[deferred] [question] missing await")).toBe(true);
   });
 
@@ -297,7 +329,9 @@ describe("the [deferred] marker", () => {
   });
 
   it("does not change the finding's tag — a deferral never blocks or softens", () => {
-    expect(inlineBody(finding({ kind: "deferred" }), "blocker").startsWith("[deferred] [blocker]")).toBe(true);
+    expect(
+      inlineBody(finding({ kind: "deferred" }), "blocker").startsWith("[deferred] [blocker]"),
+    ).toBe(true);
   });
 });
 
@@ -352,7 +386,8 @@ describe("the closed tag grammar", () => {
   });
 
   it("never touches a title that carries no tag — no reasoning is cut", () => {
-    const long = "the retry wrapper duplicates http_client.py:44 and doubles the backoff [see note]";
+    const long =
+      "the retry wrapper duplicates http_client.py:44 and doubles the backoff [see note]";
     const review = assembleReview({
       pr: 9,
       head_sha: "sha",
@@ -377,10 +412,13 @@ describe("the closed tag grammar", () => {
     });
     await submitReview(
       {
-        adapter: { createReview: async () => ({ executed: true, response: { id: 1, comments: [] } }) } as never,
+        adapter: {
+          createReview: async () => ({ executed: true, response: { id: 1, comments: [] } }),
+        } as never,
         store: {
           registerBotComment: () => {},
-          logEvent: (kind: string, _pr: number | null, payload: unknown) => events.push({ kind, payload }),
+          logEvent: (kind: string, _pr: number | null, payload: unknown) =>
+            events.push({ kind, payload }),
         } as never,
       },
       review,
@@ -423,7 +461,10 @@ describe("first-party directive escalation", () => {
       head_sha: "sha",
       verdict: "NEEDS_HUMAN",
       lenses: ["pass-security"],
-      findings: [directive(".claude/skills/a/SKILL.md"), directive(".claude/skills/b/SKILL.md", { line: 3 })],
+      findings: [
+        directive(".claude/skills/a/SKILL.md"),
+        directive(".claude/skills/b/SKILL.md", { line: 3 }),
+      ],
       escalation_mention: "alex",
     });
     const body = review.payload.body;
@@ -435,7 +476,10 @@ describe("first-party directive escalation", () => {
   });
 
   it("the escalation comment stays within three sentences", () => {
-    const text = renderDirectiveEscalationComment("alex", [".claude/skills/a/SKILL.md", "CLAUDE.md"]);
+    const text = renderDirectiveEscalationComment("alex", [
+      ".claude/skills/a/SKILL.md",
+      "CLAUDE.md",
+    ]);
     expect(text.startsWith("@alex")).toBe(true);
     const sentences = text.match(/[.!?](\s|$)/g) ?? [];
     expect(sentences.length).toBeLessThanOrEqual(3);
@@ -492,7 +536,9 @@ describe("submitReview", () => {
   it("registers every posted comment id when the call executed", async () => {
     const store = fakeStore();
     const adapter = {
-      createReview: vi.fn().mockResolvedValue({ executed: true, response: { id: 900, comments: [{ id: 901 }] } }),
+      createReview: vi
+        .fn()
+        .mockResolvedValue({ executed: true, response: { id: 900, comments: [{ id: 901 }] } }),
     };
     const out = await submitReview({ adapter, store }, review());
 
@@ -505,7 +551,9 @@ describe("submitReview", () => {
   it("links registered comments to the round that posted them (review depth)", async () => {
     const store = fakeStore();
     const adapter = {
-      createReview: vi.fn().mockResolvedValue({ executed: true, response: { id: 900, comments: [{ id: 901 }] } }),
+      createReview: vi
+        .fn()
+        .mockResolvedValue({ executed: true, response: { id: 900, comments: [{ id: 901 }] } }),
     };
     await submitReview({ adapter, store }, review(), 3);
 
@@ -515,18 +563,26 @@ describe("submitReview", () => {
 
   it("records the intent only in dry-run and asks for a registry backfill", async () => {
     const store = fakeStore();
-    const adapter = { createReview: vi.fn().mockResolvedValue({ executed: false, dryRunFile: "/tmp/x.json" }) };
+    const adapter = {
+      createReview: vi.fn().mockResolvedValue({ executed: false, dryRunFile: "/tmp/x.json" }),
+    };
     const out = await submitReview({ adapter, store }, review());
 
     expect(out.registered).toEqual([]);
     expect(out.needs_backfill).toBe(true);
     expect(store.registerBotComment).not.toHaveBeenCalled();
-    expect(store.logEvent).toHaveBeenCalledWith("review_post_intent", 11, expect.objectContaining({ inline: 1 }));
+    expect(store.logEvent).toHaveBeenCalledWith(
+      "review_post_intent",
+      11,
+      expect.objectContaining({ inline: 1 }),
+    );
   });
 
   it("flags a backfill when the response carries no comment ids", async () => {
     const store = fakeStore();
-    const adapter = { createReview: vi.fn().mockResolvedValue({ executed: true, response: { id: 5 } }) };
+    const adapter = {
+      createReview: vi.fn().mockResolvedValue({ executed: true, response: { id: 5 } }),
+    };
     expect((await submitReview({ adapter, store }, review())).needs_backfill).toBe(true);
   });
 });
@@ -536,13 +592,21 @@ describe("approvalActions", () => {
 
   it("returns approve → remove label → clear team request, in that order", async () => {
     const actions = approvalActions({ pr: 5, payload, trigger_label: "AI review requested" });
-    expect(actions.map((a) => a.step)).toEqual(["create_review", "remove_label", "delete_team_review_request"]);
+    expect(actions.map((a) => a.step)).toEqual([
+      "create_review",
+      "remove_label",
+      "delete_team_review_request",
+    ]);
 
     const calls: string[] = [];
     const adapter = {
       createReview: vi.fn(async (n: number) => (calls.push("review:" + n), { executed: false })),
-      removeLabel: vi.fn(async (_n: number, l: string) => (calls.push(`label:${l}`), { executed: false })),
-      deleteTeamReviewRequest: vi.fn(async (n: number) => (calls.push(`team:${n}`), { executed: false })),
+      removeLabel: vi.fn(
+        async (_n: number, l: string) => (calls.push(`label:${l}`), { executed: false }),
+      ),
+      deleteTeamReviewRequest: vi.fn(
+        async (n: number) => (calls.push(`team:${n}`), { executed: false }),
+      ),
     };
     for (const a of actions) await a.run(adapter as never);
     expect(calls).toEqual(["review:5", "label:AI review requested", "team:5"]);

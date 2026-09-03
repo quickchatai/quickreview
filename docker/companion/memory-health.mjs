@@ -172,26 +172,32 @@ export async function probe(endpoint, timeoutMs = DEFAULT_TIMEOUT_MS, fetchFn = 
   }
   try {
     const ready = await fetchFn(`${endpoint}/ready`, { signal: AbortSignal.timeout(timeoutMs) });
-    return ready.ok ? { ok: true, reason: "ready" } : { ok: false, reason: `ready ${ready.status}` };
+    return ready.ok
+      ? { ok: true, reason: "ready" }
+      : { ok: false, reason: `ready ${ready.status}` };
   } catch (err) {
     return { ok: false, reason: errText(err) };
   }
 }
 
 function errText(err) {
-  if (err instanceof Error) return err.name === "TimeoutError" || err.name === "AbortError" ? "timeout" : err.message;
+  if (err instanceof Error)
+    return err.name === "TimeoutError" || err.name === "AbortError" ? "timeout" : err.message;
   return String(err);
 }
 
 /** Config from the container env — all of it optional. No endpoint configured
  * means the memory path was never wired, which is silence, not an alert. */
 export function watcherConfig(env) {
-  const endpoint = (env.QCR_MEMORY_ENDPOINT || env.OPENVIKING_URL || env.OPENVIKING_BASE_URL || "").trim().replace(/\/+$/, "");
+  const endpoint = (env.QCR_MEMORY_ENDPOINT || env.OPENVIKING_URL || env.OPENVIKING_BASE_URL || "")
+    .trim()
+    .replace(/\/+$/, "");
   const interval = Number(env.QCR_MEMORY_PROBE_INTERVAL_S || DEFAULT_INTERVAL_S);
   return {
     endpoint,
     alertsDir: (env.QCR_MEMORY_ALERTS_DIR || env.QCR_ALERTS_DIR || "/alerts").trim(),
-    intervalMs: Number.isFinite(interval) && interval > 0 ? interval * 1000 : DEFAULT_INTERVAL_S * 1000,
+    intervalMs:
+      Number.isFinite(interval) && interval > 0 ? interval * 1000 : DEFAULT_INTERVAL_S * 1000,
     timeoutMs: DEFAULT_TIMEOUT_MS,
   };
 }
@@ -211,9 +217,16 @@ export async function runWatcher(cfg, opts = {}) {
     }
     if (next.emit) {
       const at = now().toISOString();
-      const body = alertBody(next.emit, { endpoint: cfg.endpoint, reason: sample.reason, at, fails: state.fails });
+      const body = alertBody(next.emit, {
+        endpoint: cfg.endpoint,
+        reason: sample.reason,
+        at,
+        fails: state.fails,
+      });
       try {
-        log(`${next.emit === "down" ? "unreachable" : "restored"} (${sample.reason}) → ${writeAlertFile(cfg.alertsDir, body)}`);
+        log(
+          `${next.emit === "down" ? "unreachable" : "restored"} (${sample.reason}) → ${writeAlertFile(cfg.alertsDir, body)}`,
+        );
       } catch (err) {
         // An unwritable alerts dir is not worth dying over; the log line is
         // still in `docker logs`.
@@ -235,7 +248,10 @@ export async function runWatcher(cfg, opts = {}) {
 // Importing this file (the tests do) must not start a watcher.
 const invokedDirectly = (() => {
   try {
-    return process.argv[1] !== undefined && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
+    return (
+      process.argv[1] !== undefined &&
+      import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href
+    );
   } catch {
     return false;
   }

@@ -2,10 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  waitForSessionBridgeReady,
-  writeSessionBridgeState,
-} from "../src/session-bridge.js";
+import { waitForSessionBridgeReady, writeSessionBridgeState } from "../src/session-bridge.js";
 
 let dir: string;
 let path: string;
@@ -27,10 +24,12 @@ describe("generation-fenced session bridge readiness", () => {
       updated_at: "2026-09-01T10:00:00.000Z",
     });
 
-    await expect(waitForSessionBridgeReady(path, "pr-42", "current", 20, 1)).resolves.toMatchObject({
-      generation: "current",
-      stage: "ready",
-    });
+    await expect(waitForSessionBridgeReady(path, "pr-42", "current", 20, 1)).resolves.toMatchObject(
+      {
+        generation: "current",
+        stage: "ready",
+      },
+    );
   });
 
   it("ignores a stale generation until the bounded wait expires", async () => {

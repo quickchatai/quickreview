@@ -66,14 +66,21 @@ export const RECHECK_TEMPLATE_FILE = "round-recheck.md";
 export function renderDeltaFiles(files: readonly FileClass[]): string {
   if (files.length === 0) return "(no files changed)";
   return files
-    .map((f) => (f.class === "significant" ? `- \`${f.filename}\` — **review this**` : `- \`${f.filename}\` — trivial (${f.reason}), already ruled out`))
+    .map((f) =>
+      f.class === "significant"
+        ? `- \`${f.filename}\` — **review this**`
+        : `- \`${f.filename}\` — trivial (${f.reason}), already ruled out`,
+    )
     .join("\n");
 }
 
 /** The full variable set the recheck template may reference. `identity` is
  * the variable map (`{{owner_name}}`/`{{repo}}`/`{{bot_login}}`);
  * neutral role wording by default, `identityVars(cfg)` in production. */
-export function recheckVars(order: RecheckOrder, identity: Readonly<TemplateVars> = NEUTRAL_IDENTITY_VARS): TemplateVars {
+export function recheckVars(
+  order: RecheckOrder,
+  identity: Readonly<TemplateVars> = NEUTRAL_IDENTITY_VARS,
+): TemplateVars {
   return {
     ...identity,
     n: String(order.pr),
@@ -161,7 +168,7 @@ export function renderNitScopeNote(roundNo: number): string {
     "Enforce it yourself at merge/validate: a new nit-class candidate anchored",
     "outside the current delta is dropped (log it as `nit-out-of-delta`) — strictly",
     "nits, never a `P0`–`P2`. And at post time, **surviving nits append to ONE",
-    "running non-blocking thread** (\"nits — take or leave; this thread does not",
+    'running non-blocking thread** ("nits — take or leave; this thread does not',
     "need another round to close\"): reply to the PR's existing nits thread via",
     "`scripts/reply-thread.sh` when one exists, otherwise list them under `### Nits`",
     "in the review body only. **Never open a new inline thread for a nit** — every",
@@ -190,7 +197,10 @@ export function renderIntentNote(order: RoundOrder): string {
   const body = order.pr_body ?? "";
   // The body is untrusted markdown and may itself contain ``` runs — fence
   // with one backtick more than its longest run so the block never breaks.
-  const longestRun = Math.max(2, ...[...`${title}\n${body}`.matchAll(/`+/g)].map((m) => m[0].length));
+  const longestRun = Math.max(
+    2,
+    ...[...`${title}\n${body}`.matchAll(/`+/g)].map((m) => m[0].length),
+  );
   const fence = "`".repeat(longestRun + 1);
   return [
     "",
@@ -232,7 +242,9 @@ export function renderIntentNote(order: RoundOrder): string {
 export function renderDirectiveEscalationNote(order: RoundOrder): string {
   const fpd = order.first_party_directives;
   if (!fpd || fpd.files.length === 0) return "";
-  const mention = fpd.mention ? `@${fpd.mention.replace(/^@/, "")}` : "the maintainer of these files (no login was resolvable — name them descriptively)";
+  const mention = fpd.mention
+    ? `@${fpd.mention.replace(/^@/, "")}`
+    : "the maintainer of these files (no login was resolvable — name them descriptively)";
   return [
     "",
     "**FIRST-PARTY DIRECTIVES — concrete evidence decides.** This PR edits",
@@ -266,7 +278,11 @@ export function renderPassPlan(plan: PassPlanEntry[]): string {
         p.raisable_to.length > 0 ? p.raisable_to.map((a) => `\`${a}\``).join(", ") : "— (pinned)"
       } |`,
   );
-  return ["| lens | subagent to call | tier | may raise to |", "| --- | --- | --- | --- |", ...rows].join("\n");
+  return [
+    "| lens | subagent to call | tier | may raise to |",
+    "| --- | --- | --- | --- |",
+    ...rows,
+  ].join("\n");
 }
 
 /** Comma list of lenses the session may additionally run this round. */
@@ -286,7 +302,9 @@ export function renderRoundRecoveryNote(order: RoundOrder): string {
       ? `delayed circuit-breaker retry epoch ${recovery.retry_epoch}`
       : "delayed circuit-breaker retry (new head; backoff reset)"
     : `immediate retry ${recovery.immediate_attempt}`;
-  const discovery = order.pass_plan.filter((pass) => pass.lens !== "pass-validate").map((pass) => pass.agent);
+  const discovery = order.pass_plan
+    .filter((pass) => pass.lens !== "pass-validate")
+    .map((pass) => pass.agent);
   return [
     "",
     "**RECOVERY — PRE-FANOUT STALL.** This fresh parent is the exact successor",
@@ -375,7 +393,11 @@ export function renderRoundPrompt(
   ecosystem: Ecosystem = DJANGO_ECOSYSTEM,
   identity: Readonly<TemplateVars> = NEUTRAL_IDENTITY_VARS,
 ): string {
-  return ensurePinnedHead(render(templateText, roundVars(order, memory, ownerName, ecosystem, identity)), memory, ownerName);
+  return ensurePinnedHead(
+    render(templateText, roundVars(order, memory, ownerName, ecosystem, identity)),
+    memory,
+    ownerName,
+  );
 }
 
 export interface ConversationPromptVars {

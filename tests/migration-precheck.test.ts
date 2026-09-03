@@ -17,7 +17,9 @@ import { StateStore } from "../src/state.js";
 import { renderRoundPrompt } from "../src/templates.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
 
-const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
+const cfg: Config = parseConfig(
+  readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
+);
 
 const BASE_MIGRATIONS = [
   "backend/chat/migrations/0041_add_index.py",
@@ -52,13 +54,31 @@ class GatedAdapter implements DispatchAdapter {
     return this.files;
   }
   addLabel(n: number, label: string): Promise<GateResult> {
-    return this.gate.execute({ kind: "add_label", method: "POST", path: `/l/${n}`, note: label, pr: n });
+    return this.gate.execute({
+      kind: "add_label",
+      method: "POST",
+      path: `/l/${n}`,
+      note: label,
+      pr: n,
+    });
   }
   removeLabel(n: number, label: string): Promise<GateResult> {
-    return this.gate.execute({ kind: "remove_label", method: "DELETE", path: `/l/${n}`, note: label, pr: n });
+    return this.gate.execute({
+      kind: "remove_label",
+      method: "DELETE",
+      path: `/l/${n}`,
+      note: label,
+      pr: n,
+    });
   }
   deleteTeamReviewRequest(n: number): Promise<GateResult> {
-    return this.gate.execute({ kind: "delete_team_review_request", method: "DELETE", path: `/r/${n}`, note: "", pr: n });
+    return this.gate.execute({
+      kind: "delete_team_review_request",
+      method: "DELETE",
+      path: `/r/${n}`,
+      note: "",
+      pr: n,
+    });
   }
   createReview(
     n: number,
@@ -109,7 +129,12 @@ function queue(pr: number, head = "headsha"): void {
   });
 }
 
-const tree = async () => ({ head_sha: "headsha", base_ref: "master", base_sha: "basesha", merge_base: "mb" });
+const tree = async () => ({
+  head_sha: "headsha",
+  base_ref: "master",
+  base_sha: "basesha",
+  merge_base: "mb",
+});
 
 function events(kind: string, pr: number): Array<Record<string, unknown>> {
   return store
@@ -127,7 +152,10 @@ beforeEach(() => {
 describe("migration collision pre-check", () => {
   it("posts a COMMENT naming the target number and dependencies, and consumes no verdict", async () => {
     queue(41);
-    adapter.files = [file("backend/chat/migrations/0042_add_rate_limit.py"), file("backend/chat/views.py", "modified")];
+    adapter.files = [
+      file("backend/chat/migrations/0042_add_rate_limit.py"),
+      file("backend/chat/views.py", "modified"),
+    ];
 
     await dispatchOnce({
       cfg,
@@ -148,7 +176,10 @@ describe("migration collision pre-check", () => {
     // normally with the PR's verdict untouched.
     expect(adapter.reviews.some((r) => r.event === "REQUEST_CHANGES")).toBe(false);
     expect(orders).toHaveLength(1);
-    expect(store.roundsFor(41)[0]).toMatchObject({ verdict: null, preflight_posting_state: "executed" });
+    expect(store.roundsFor(41)[0]).toMatchObject({
+      verdict: null,
+      preflight_posting_state: "executed",
+    });
   });
 
   it("routes the comment through the MutationGate as a create_review intent", async () => {
@@ -262,7 +293,8 @@ describe("migration collision pre-check", () => {
     // Regression guard: the dedupe used to read the newest 10 events only, so
     // a PR with a busier log quietly started reposting the same comment.
     store.logEvent("migration_collision_comment", 51, { fingerprint: "fp-old" });
-    for (let i = 0; i < 40; i++) store.logEvent("migration_collision_comment", 51, { fingerprint: `fp-${i}` });
+    for (let i = 0; i < 40; i++)
+      store.logEvent("migration_collision_comment", 51, { fingerprint: `fp-${i}` });
     expect(store.migrationCollisionCommented(51, "fp-old")).toBe("commented");
     expect(store.migrationCollisionCommented(51, "fp-never")).toBe("not_commented");
     expect(store.migrationCollisionCommented(52, "fp-old")).toBe("not_commented"); // scoped per PR
@@ -272,7 +304,9 @@ describe("migration collision pre-check", () => {
   // read: a comment WAS posted, at a fingerprint nobody can recover, so "never
   // commented" is not a claim the log supports.
   it("an unreadable comment row answers UNKNOWN — neither 'commented' nor 'never commented'", () => {
-    const torn = store.db.prepare("INSERT INTO events (ts, kind, pr, payload) VALUES (?, 'migration_collision_comment', ?, ?)");
+    const torn = store.db.prepare(
+      "INSERT INTO events (ts, kind, pr, payload) VALUES (?, 'migration_collision_comment', ?, ?)",
+    );
     store.logEvent("migration_collision_comment", 53, { fingerprint: "fp-readable" });
     torn.run("2026-08-18T10:00:00Z", 53, "{torn");
     expect(store.migrationCollisionCommented(53, "fp-readable")).toBe("commented"); // a readable match still wins
@@ -288,7 +322,9 @@ describe("migration collision pre-check", () => {
     queue(56);
     adapter.files = [file("backend/chat/migrations/0042_x.py")];
     store.db
-      .prepare("INSERT INTO events (ts, kind, pr, payload) VALUES (?, 'migration_collision_comment', 56, ?)")
+      .prepare(
+        "INSERT INTO events (ts, kind, pr, payload) VALUES (?, 'migration_collision_comment', 56, ?)",
+      )
       .run("2026-08-18T10:00:00Z", "{torn");
 
     await dispatchOnce({
@@ -318,7 +354,9 @@ describe("migration collision pre-check", () => {
     queue(58);
     adapter.files = [file("backend/chat/migrations/0042_x.py")];
     store.db
-      .prepare("INSERT INTO events (ts, kind, pr, payload) VALUES (?, 'migration_collision_comment', 58, ?)")
+      .prepare(
+        "INSERT INTO events (ts, kind, pr, payload) VALUES (?, 'migration_collision_comment', 58, ?)",
+      )
       .run("2026-08-18T10:00:00Z", "{torn");
     const overseer: string[] = [];
     const policy = new AnomalyWakePolicy({
@@ -328,11 +366,22 @@ describe("migration collision pre-check", () => {
     });
     store.setAnomalySink((sig) => policy.onAnomaly(sig));
 
-    await dispatchOnce({ cfg, store, adapter, hooks: hooks(orders), prepareWorktree: tree, listBaseMigrations: async () => BASE_MIGRATIONS });
+    await dispatchOnce({
+      cfg,
+      store,
+      adapter,
+      hooks: hooks(orders),
+      prepareWorktree: tree,
+      listBaseMigrations: async () => BASE_MIGRATIONS,
+    });
 
     expect(orders).toHaveLength(1);
     expect(store.anomalies()).toEqual([
-      expect.objectContaining({ kind: "migration_collision_comment_withheld", pr: 58, round_no: orders[0]!.round_no }),
+      expect.objectContaining({
+        kind: "migration_collision_comment_withheld",
+        pr: 58,
+        round_no: orders[0]!.round_no,
+      }),
     ]);
     const wake = overseer.join("\n");
     expect(wake).toContain("WITHHELD");
@@ -344,7 +393,9 @@ describe("migration collision pre-check", () => {
     queue(59);
     adapter.files = [file("backend/chat/migrations/0042_x.py")];
     store.db
-      .prepare("INSERT INTO events (ts, kind, pr, payload) VALUES (?, 'migration_collision_comment', 59, ?)")
+      .prepare(
+        "INSERT INTO events (ts, kind, pr, payload) VALUES (?, 'migration_collision_comment', 59, ?)",
+      )
       .run("2026-08-18T10:00:00Z", "{torn");
     // An earlier round already raised it (the torn row was there then too).
     store.logAnomaly("migration_collision_comment_withheld", 59, 1, "already told");
@@ -355,12 +406,23 @@ describe("migration collision pre-check", () => {
     expect(store.anomalyRaised("migration_collision_comment_withheld", 61)).toBe(false);
     expect(store.anomalyRaised("migration_precheck_degraded", 60)).toBe(false);
 
-    await dispatchOnce({ cfg, store, adapter, hooks: hooks(orders), prepareWorktree: tree, listBaseMigrations: async () => BASE_MIGRATIONS });
+    await dispatchOnce({
+      cfg,
+      store,
+      adapter,
+      hooks: hooks(orders),
+      prepareWorktree: tree,
+      listBaseMigrations: async () => BASE_MIGRATIONS,
+    });
 
     // The withhold itself is still recorded on every round; only the alert is deduplicated.
     expect(events("migration_collision_comment_withheld", 59)).toHaveLength(1);
     expect(adapter.intents.filter((i) => i.kind === "create_review")).toHaveLength(0);
-    expect(store.anomalies().filter((a) => a.pr === 59 && a.kind === "migration_collision_comment_withheld")).toHaveLength(1);
+    expect(
+      store
+        .anomalies()
+        .filter((a) => a.pr === 59 && a.kind === "migration_collision_comment_withheld"),
+    ).toHaveLength(1);
   });
 
   it("says nothing when the PR's migration number is free", async () => {
@@ -520,7 +582,11 @@ describe("migration collision pre-check", () => {
     // and a durable, queryable anomaly record beside the wake.
     const anomalies = store.anomalies();
     expect(anomalies).toHaveLength(1);
-    expect(anomalies[0]).toMatchObject({ kind: "migration_precheck_degraded", pr: orders[0]!.pr, round_no: orders[0]!.round_no });
+    expect(anomalies[0]).toMatchObject({
+      kind: "migration_precheck_degraded",
+      pr: orders[0]!.pr,
+      round_no: orders[0]!.round_no,
+    });
     // The round itself still dispatched.
     expect(orders).toHaveLength(1);
   });

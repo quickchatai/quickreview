@@ -210,10 +210,15 @@ export function selectLenses(
   /** Profile-extension signal for one lens: extra path regexes ∪ extra
    * added-line probes. */
   const extHit = (lens: string): boolean =>
-    (ext.paths[lens] ?? []).some((re) => any(re)) || (ext.addedLines[lens] ?? []).some((re) => added(re));
+    (ext.paths[lens] ?? []).some((re) => any(re)) ||
+    (ext.addedLines[lens] ?? []).some((re) => added(re));
 
   // UI: frontend files only — extensions or an explicit frontend/ path.
-  if (any(/\.(tsx|jsx|vue|svelte|css|scss|less|html)$/) || any(/(^|\/)frontend\//) || extHit("pass-ui"))
+  if (
+    any(/\.(tsx|jsx|vue|svelte|css|scss|less|html)$/) ||
+    any(/(^|\/)frontend\//) ||
+    extHit("pass-ui")
+  )
     lenses.add("pass-ui");
 
   // External contracts: provider payload surfaces — schema/serializer dirs,
@@ -228,7 +233,12 @@ export function selectLenses(
   // Data safety: migrations DDL, raw SQL, backfills (bulk per-row work) — not
   // every models/ touch. Framework-specific command dirs (Django's
   // management/commands/) come from the profile.
-  if (any(/(^|\/)migrations\//) || any(/\.sql$/) || any(/(^|\/)backfills?\//) || extHit("pass-data-safety"))
+  if (
+    any(/(^|\/)migrations\//) ||
+    any(/\.sql$/) ||
+    any(/(^|\/)backfills?\//) ||
+    extHit("pass-data-safety")
+  )
     lenses.add("pass-data-safety");
 
   // Security & tenancy: auth/permission surfaces, secret/crypto-shaped names,
@@ -254,7 +264,9 @@ export function selectLenses(
   if (
     added(/^\+.*(@lru_cache|functools\.(cache|lru_cache))/m) ||
     added(/^\+.*threading\.(Lock|local)\(/m) ||
-    added(/^\+[A-Za-z_][A-Za-z0-9_]*\s*(?::[^=\n]+)?=\s*(\{\}|\[\]|set\(\)|dict\(\)|defaultdict\()/m) ||
+    added(
+      /^\+[A-Za-z_][A-Za-z0-9_]*\s*(?::[^=\n]+)?=\s*(\{\}|\[\]|set\(\)|dict\(\)|defaultdict\()/m,
+    ) ||
     any(/(^|\/)[^/]*(cache|singleton|registry)[^/]*\.[a-z]+$/i) ||
     extHit("pass-statelessness")
   )
@@ -286,7 +298,10 @@ export function selectLenses(
   // wrong-layer changes hide. Docs/config/asset adds, test-only PRs and
   // small edits-in-place skip it — pure spend otherwise.
   const code = files.filter((f) => !isTestFile(f.filename) && CODE_FILE_RE.test(f.filename));
-  if (code.some((f) => PLACEMENT_STATUSES.has(f.status ?? "")) || code.length >= PLACEMENT_MIN_PROD_FILES)
+  if (
+    code.some((f) => PLACEMENT_STATUSES.has(f.status ?? "")) ||
+    code.length >= PLACEMENT_MIN_PROD_FILES
+  )
     lenses.add(PLACEMENT_PASS);
 
   // Simplicity: complexity signals — a large code diff, deep
@@ -295,7 +310,9 @@ export function selectLenses(
   if (
     codeLines >= SIMPLICITY_MIN_PROD_LINES ||
     code.some((f) => f.patch !== undefined && SIMPLICITY_DEEP_INDENT_RE.test(f.patch)) ||
-    code.some((f) => (f.patch?.match(SIMPLICITY_BRANCH_RE)?.length ?? 0) >= SIMPLICITY_MIN_ADDED_BRANCHES)
+    code.some(
+      (f) => (f.patch?.match(SIMPLICITY_BRANCH_RE)?.length ?? 0) >= SIMPLICITY_MIN_ADDED_BRANCHES,
+    )
   )
     lenses.add(SIMPLICITY_PASS);
 
@@ -309,7 +326,9 @@ export function selectLenses(
   // Unleash services).
   const codeIn = (re: RegExp) => code.some((f) => re.test(f.filename));
   if (
-    codeIn(/(^|\/)(serializers?|schemas?|apis?|views?|endpoints?|routes?|controllers?|handlers?)\//) ||
+    codeIn(
+      /(^|\/)(serializers?|schemas?|apis?|views?|endpoints?|routes?|controllers?|handlers?)\//,
+    ) ||
     any(/\.(proto|graphql)$/) ||
     any(/(^|\/)migrations\//) ||
     codeIn(/(^|\/)(tasks|jobs|workers?|consumers?|queues?)\//) ||

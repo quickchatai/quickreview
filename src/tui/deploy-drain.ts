@@ -45,13 +45,20 @@ export class CommandDrainSender implements DeployDrainSender {
     private readonly cfg: TuiConfig,
     private readonly ssh: SshRunner,
     private readonly now: () => Date = () => new Date(),
-    private readonly sleep: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    private readonly sleep: (ms: number) => Promise<void> = (ms) =>
+      new Promise((resolve) => setTimeout(resolve, ms)),
   ) {}
 
   async set(on: boolean): Promise<DrainCommandOutcome> {
     const name = drainCommandFileName(this.now(), this.clientId, this.seq++);
-    const write = await this.ssh(this.cfg.ssh_host, commandWriteArgv(this.cfg, name), { stdin: drainPayload(on) });
-    if (!write.ok) return { ok: false, reason: `command write failed (${write.stderr.trim() || `exit ${write.code}`})` };
+    const write = await this.ssh(this.cfg.ssh_host, commandWriteArgv(this.cfg, name), {
+      stdin: drainPayload(on),
+    });
+    if (!write.ok)
+      return {
+        ok: false,
+        reason: `command write failed (${write.stderr.trim() || `exit ${write.code}`})`,
+      };
 
     const deadline = this.now().getTime() + this.cfg.msg_timeout_s * 1000;
     while (this.now().getTime() < deadline) {
@@ -74,23 +81,32 @@ export class CommandDrainSender implements DeployDrainSender {
       } catch {
         return { ok: false, reason: "unreadable daemon result" };
       }
-      if (value.ok !== true) return { ok: false, reason: String(value.reason ?? "no reason given") };
-      if (value.draining !== on) return { ok: false, reason: `daemon result did not confirm drain ${on ? "on" : "off"}` };
+      if (value.ok !== true)
+        return { ok: false, reason: String(value.reason ?? "no reason given") };
+      if (value.draining !== on)
+        return { ok: false, reason: `daemon result did not confirm drain ${on ? "on" : "off"}` };
       if (on) {
-        if (typeof value.running_rounds !== "number" || !Number.isInteger(value.running_rounds) || value.running_rounds < 0) {
+        if (
+          typeof value.running_rounds !== "number" ||
+          !Number.isInteger(value.running_rounds) ||
+          value.running_rounds < 0
+        ) {
           return { ok: false, reason: "daemon result omitted running_rounds" };
         }
         return {
           ok: true,
           draining: true,
           running_rounds: value.running_rounds,
-          ...(value.issuer === "operator" || value.issuer === "session" ? { issuer: value.issuer } : {}),
+          ...(value.issuer === "operator" || value.issuer === "session"
+            ? { issuer: value.issuer }
+            : {}),
           ...(typeof value.expires_at === "string" ? { expires_at: value.expires_at } : {}),
         };
       }
-      const dropped = typeof value.dropped_deliveries === "number" && Number.isInteger(value.dropped_deliveries)
-        ? value.dropped_deliveries
-        : 0;
+      const dropped =
+        typeof value.dropped_deliveries === "number" && Number.isInteger(value.dropped_deliveries)
+          ? value.dropped_deliveries
+          : 0;
       return { ok: true, draining: false, dropped_deliveries: dropped };
     }
     return { ok: false, reason: "no result before timeout (daemon down?)" };

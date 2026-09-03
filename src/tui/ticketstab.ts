@@ -12,13 +12,28 @@
 // behind the first frame), no tracker configured, the scan failed, or read.
 import type { App } from "./app.js";
 import { barHeight, paintCmdBar, type BarButton, type LiveKeys } from "./cmdbar.js";
-import { HEADING, MUTED, RESET, STRONG, modeBadge, sectionTitle, selected as selectedLine } from "./design.js";
+import {
+  HEADING,
+  MUTED,
+  RESET,
+  STRONG,
+  modeBadge,
+  sectionTitle,
+  selected as selectedLine,
+} from "./design.js";
 import { emptyLine } from "./emptystate.js";
 import type { BoardKey } from "./keys.js";
 import type { LearningStore, TicketsRead } from "./learning.js";
 import { hitTest, type Zone } from "./mouse.js";
 import { Frame, rule, sanitizeText, truncate, wrap } from "./paint.js";
-import { paintSplit, splitWidths, windowStart, zonedRow, type RowChunk, type ZonedRow } from "./panes.js";
+import {
+  paintSplit,
+  splitWidths,
+  windowStart,
+  zonedRow,
+  type RowChunk,
+  type ZonedRow,
+} from "./panes.js";
 import { isActionableTicket, type TrackerTicket } from "./trackertickets.js";
 
 export interface TicketsTabState {
@@ -59,13 +74,27 @@ export function ticketsKeys(store: LearningStore, st: TicketsTabState): LiveKeys
   return { bar, inline: [] };
 }
 
-export function renderTicketsTab(store: LearningStore, st: TicketsTabState, dryRun: boolean | undefined, cols: number, rows: number, effort?: string): Frame {
+export function renderTicketsTab(
+  store: LearningStore,
+  st: TicketsTabState,
+  dryRun: boolean | undefined,
+  cols: number,
+  rows: number,
+  effort?: string,
+): Frame {
   const frame = new Frame(cols, rows);
   const read = store.tickets;
   const tickets = visibleTickets(read, st.showClosed);
   const sel = Math.min(st.sel, Math.max(0, tickets.length - 1));
   const selected = tickets[sel];
-  frame.set(0, rule(cols, "┌", "┐", [`${HEADING}quickreview${RESET}`, modeBadge(dryRun), `tickets${effort ? ` · ${effort}` : ""}`]));
+  frame.set(
+    0,
+    rule(cols, "┌", "┐", [
+      `${HEADING}quickreview${RESET}`,
+      modeBadge(dryRun),
+      `tickets${effort ? ` · ${effort}` : ""}`,
+    ]),
+  );
   const live = ticketsKeys(store, st);
   const bodyRows = rows - 2 - barHeight("tickets", cols, live.bar);
   const { leftW, rightW } = splitWidths(cols);
@@ -74,21 +103,41 @@ export function renderTicketsTab(store: LearningStore, st: TicketsTabState, dryR
   const leftActions: Array<TicketsAction | undefined> = [];
   const total = read.kind === "read" ? read.tickets : undefined;
   const actionable = total?.filter(isActionableTicket).length;
-  left.push(sectionTitle(total === undefined ? "TICKETS (—)" : `TICKETS (${actionable} actionable / ${total.length} total)`));
+  left.push(
+    sectionTitle(
+      total === undefined
+        ? "TICKETS (—)"
+        : `TICKETS (${actionable} actionable / ${total.length} total)`,
+    ),
+  );
   leftActions.push(undefined);
   switch (read.kind) {
     case "unread":
-      left.push(emptyLine({ kind: "unread", how: "the tracker is scanned behind the first frame · r retries" }));
+      left.push(
+        emptyLine({
+          kind: "unread",
+          how: "the tracker is scanned behind the first frame · r retries",
+        }),
+      );
       break;
     case "unconfigured":
-      left.push(emptyLine({ kind: "unreadable", why: "no tracker configured — [sink] in config.toml" }));
+      left.push(
+        emptyLine({ kind: "unreadable", why: "no tracker configured — [sink] in config.toml" }),
+      );
       break;
     case "unreadable":
       left.push(emptyLine({ kind: "unreadable", why: `${read.reason} · r retries` }));
       break;
     case "read":
-      if (read.tickets.length === 0) left.push(emptyLine({ kind: "none", what: "adjudication files a ticket only when something changes" }));
-      else if (tickets.length === 0) left.push(emptyLine({ kind: "filtered", what: `c shows all ${read.tickets.length}` }));
+      if (read.tickets.length === 0)
+        left.push(
+          emptyLine({
+            kind: "none",
+            what: "adjudication files a ticket only when something changes",
+          }),
+        );
+      else if (tickets.length === 0)
+        left.push(emptyLine({ kind: "filtered", what: `c shows all ${read.tickets.length}` }));
       break;
   }
   leftActions.push(undefined);
@@ -106,18 +155,29 @@ export function renderTicketsTab(store: LearningStore, st: TicketsTabState, dryR
     right.push(zonedRow(chunks));
   };
   if (selected) {
-    row([{ text: `${sectionTitle(selected.id)} ${STRONG}${truncate(selected.title, rightW - selected.id.length - 7)}${RESET}` }]);
-    row([{ text: `${selected.status} · role ${selected.role} · updated ${selected.updated}`, dim: true }]);
+    row([
+      {
+        text: `${sectionTitle(selected.id)} ${STRONG}${truncate(selected.title, rightW - selected.id.length - 7)}${RESET}`,
+      },
+    ]);
+    row([
+      {
+        text: `${selected.status} · role ${selected.role} · updated ${selected.updated}`,
+        dim: true,
+      },
+    ]);
     row([{ text: "" }]);
     const lines = wrap(sanitizeText(selected.body), rightW - 3);
     const cap = Math.max(4, bodyRows - right.length - 1);
     st.scrollMax = Math.max(0, lines.length - cap);
     const from = Math.min(st.scroll, st.scrollMax);
     for (const line of lines.slice(from, from + cap)) row([{ text: line }]);
-    if (from + cap < lines.length) row([{ text: `… ${lines.length - from - cap} more lines`, dim: true }]);
+    if (from + cap < lines.length)
+      row([{ text: `… ${lines.length - from - cap} more lines`, dim: true }]);
   } else {
     st.scrollMax = 0;
-    if (read.kind === "read" && read.tickets.length > 0) row([{ text: `${MUTED}no ticket selected${RESET}` }]);
+    if (read.kind === "read" && read.tickets.length > 0)
+      row([{ text: `${MUTED}no ticket selected${RESET}` }]);
   }
 
   paintSplit(frame, { left, leftActions, right, leftW, rightW, top: 1, bodyRows });
@@ -127,7 +187,11 @@ export function renderTicketsTab(store: LearningStore, st: TicketsTabState, dryR
 }
 
 /** Install the tickets surface over the shared learning store. */
-export function installTicketsTab(app: App, store: LearningStore, effort?: string): TicketsTabState {
+export function installTicketsTab(
+  app: App,
+  store: LearningStore,
+  effort?: string,
+): TicketsTabState {
   const st: TicketsTabState = { sel: 0, scroll: 0, scrollMax: 0, showClosed: false };
   const visible = (): TrackerTicket[] => visibleTickets(store.tickets, st.showClosed);
   const select = (i: number): void => {
@@ -172,7 +236,10 @@ export function installTicketsTab(app: App, store: LearningStore, effort?: strin
         case "older":
         case "newer": {
           if (visible()[st.sel] === undefined) return false;
-          const next = Math.max(0, Math.min(st.scroll + (key.kind === "older" ? -5 : 5), st.scrollMax));
+          const next = Math.max(
+            0,
+            Math.min(st.scroll + (key.kind === "older" ? -5 : 5), st.scrollMax),
+          );
           if (next === st.scroll) return false; // at the edge the key is not this tab's
           st.scroll = next;
           theApp.repaint();
@@ -182,7 +249,8 @@ export function installTicketsTab(app: App, store: LearningStore, effort?: strin
           store.reloadTickets();
           return true;
         case "char":
-          if (key.ch !== "c" || store.tickets.kind !== "read" || store.tickets.tickets.length === 0) return false;
+          if (key.ch !== "c" || store.tickets.kind !== "read" || store.tickets.tickets.length === 0)
+            return false;
           st.showClosed = !st.showClosed;
           select(0);
           theApp.repaint();

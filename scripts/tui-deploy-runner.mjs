@@ -20,7 +20,11 @@ let stopping = false;
 const stop = () => {
   if (stopping) return;
   stopping = true;
-  try { child.kill("SIGTERM"); } catch { /* already gone */ }
+  try {
+    child.kill("SIGTERM");
+  } catch {
+    /* already gone */
+  }
 };
 process.on("SIGTERM", stop);
 process.on("SIGINT", stop);

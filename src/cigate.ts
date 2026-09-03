@@ -136,7 +136,9 @@ export function latestRunPerName(checks: readonly CheckSummary[]): CheckSummary[
     const prev = timedRuns.get(check.name);
     if (!prev || at >= prev.at) timedRuns.set(check.name, { check, idx, at });
   });
-  return [...kept, ...timedRuns.values(), ...untimedRuns.values()].sort((x, y) => x.idx - y.idx).map((e) => e.check);
+  return [...kept, ...timedRuns.values(), ...untimedRuns.values()]
+    .sort((x, y) => x.idx - y.idx)
+    .map((e) => e.check);
 }
 
 /**
@@ -229,7 +231,11 @@ export interface CiReviewBody {
  * Never REQUEST_CHANGES: there is nothing for the author to change on the
  * review's account, and the fault may be the base branch or infra.
  */
-export function withholdApproval(body: CiReviewBody, state: CiState, headSha: string): CiReviewBody {
+export function withholdApproval(
+  body: CiReviewBody,
+  state: CiState,
+  headSha: string,
+): CiReviewBody {
   return {
     ...body,
     event: "COMMENT",
@@ -314,7 +320,10 @@ export async function retryWithheldApproval(
       // Unreadable CI is not evidence of anything. The mark stands and the next
       // completion (or the reconcile poll) tries again.
       log(`cigate: #${req.pr} checks read failed`, err);
-      store.logEvent("approval_retry_ci_unreadable", req.pr, { head_sha: mark.head_sha, error: String(err) });
+      store.logEvent("approval_retry_ci_unreadable", req.pr, {
+        head_sha: mark.head_sha,
+        error: String(err),
+      });
       return noop("ci-unreadable");
     }
   } else {
@@ -333,7 +342,12 @@ export async function retryWithheldApproval(
       reason: "ci-green:withheld-approval-retry",
     },
   );
-  store.logEvent("approval_retry_queued", req.pr, { head_sha: mark.head_sha, withheld_at: mark.created_at });
-  log(`cigate: #${req.pr} CI green at ${mark.head_sha.slice(0, 7)} — re-queued for the withheld approval`);
+  store.logEvent("approval_retry_queued", req.pr, {
+    head_sha: mark.head_sha,
+    withheld_at: mark.created_at,
+  });
+  log(
+    `cigate: #${req.pr} CI green at ${mark.head_sha.slice(0, 7)} — re-queued for the withheld approval`,
+  );
   return { action: "requeued", ci: state, head_sha: mark.head_sha };
 }

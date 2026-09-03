@@ -99,7 +99,12 @@ const text = (body: string): PiToolResult => ({ content: [{ type: "text", text: 
 
 /** No parameters, by design (see the header). VERIFY-ON-PIN: a plain JSON
  * Schema object where the vendored fork passes a TypeBox schema. */
-const NO_PARAMS = { type: "object", properties: {}, additionalProperties: false, required: [] as string[] };
+const NO_PARAMS = {
+  type: "object",
+  properties: {},
+  additionalProperties: false,
+  required: [] as string[],
+};
 
 interface ViewJson {
   written_at?: string;
@@ -117,7 +122,9 @@ function loadView(dir: string): { view?: ViewJson; mtimeMs?: number; error?: str
   try {
     return { view: JSON.parse(raw.body ?? "{}") as ViewJson, mtimeMs: raw.mtimeMs };
   } catch {
-    return { error: `${VIEW_FILE} is unreadable (torn or malformed JSON). Nothing about the TUI's view can be said from here.` };
+    return {
+      error: `${VIEW_FILE} is unreadable (torn or malformed JSON). Nothing about the TUI's view can be said from here.`,
+    };
   }
 }
 
@@ -144,20 +151,29 @@ function fmt(label: string, value: unknown): string | undefined {
  * must not read alike. */
 function deployedLines(value: unknown): Array<string | undefined> {
   if (value === "absent") {
-    return ["VM is running: no BUILD_SHA marker on the VM — this system has never deployed to it (the first deploy writes one)"];
+    return [
+      "VM is running: no BUILD_SHA marker on the VM — this system has never deployed to it (the first deploy writes one)",
+    ];
   }
   if (value === "unparseable") {
-    return ["VM is running: UNKNOWN — the VM's BUILD_SHA marker was read but is not a <sha> <iso> <mode> line (corrupt marker; the next deploy rewrites it)"];
+    return [
+      "VM is running: UNKNOWN — the VM's BUILD_SHA marker was read but is not a <sha> <iso> <mode> line (corrupt marker; the next deploy rewrites it)",
+    ];
   }
   if (typeof value !== "object" || value === null) return [fmt("VM is running", null)];
   const marker = value as { sha?: unknown; at?: unknown; mode?: unknown };
-  return [fmt("VM is running", marker.sha), fmt("deployed at", marker.at), fmt("deploy mode", marker.mode)];
+  return [
+    fmt("VM is running", marker.sha),
+    fmt("deployed at", marker.at),
+    fmt("deploy mode", marker.mode),
+  ];
 }
 
 /** `""` is docker's own answer — it listed no container by that name — and
  * is said as such rather than dropped like a blank field. */
 function containerLine(status: unknown): string | undefined {
-  if (status === "") return "container: docker lists no container by that name (never created, or removed)";
+  if (status === "")
+    return "container: docker lists no container by that name (never created, or removed)";
   return fmt("container", status);
 }
 
@@ -196,7 +212,8 @@ export function deployAnswer(dir: string, now: Date): string {
     containerLine(d.container_status ?? null),
     fmt("run in flight", d.run),
   ].filter((l): l is string => l !== undefined);
-  const tail = commits.length > 0 ? `\n\nPending commits (newest first):\n${commits.join("\n")}` : "";
+  const tail =
+    commits.length > 0 ? `\n\nPending commits (newest first):\n${commits.join("\n")}` : "";
   return `${head}\n${lines.join("\n")}${tail}`;
 }
 
@@ -227,8 +244,12 @@ export function boardAnswer(dir: string, now: Date): string {
 
 // ---- registration -----------------------------------------------------------
 
-export function toolDefinitions(dir: string, now: () => Date = () => new Date()): PiToolDefinition[] {
-  const READ_ONLY = "Read-only: it reads a file the TUI already wrote; it cannot fetch anything, and it changes nothing.";
+export function toolDefinitions(
+  dir: string,
+  now: () => Date = () => new Date(),
+): PiToolDefinition[] {
+  const READ_ONLY =
+    "Read-only: it reads a file the TUI already wrote; it cannot fetch anything, and it changes nothing.";
   return [
     {
       name: "tui_screen",

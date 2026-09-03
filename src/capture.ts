@@ -75,7 +75,11 @@ export interface CaptureDeps {
 /** The bot's own identity is the configured `[github] bot_login`; GitHub types every app
  * account as `Bot`, and other apps (merge queue, housekeeping) are bots too.
  * All three tests are cheap and any one of them is disqualifying. */
-export function isBotIdentity(login: string | null | undefined, type: string | null | undefined, botLogin: string): boolean {
+export function isBotIdentity(
+  login: string | null | undefined,
+  type: string | null | undefined,
+  botLogin: string,
+): boolean {
   const name = login ?? "";
   return type === "Bot" || name === botLogin || /\[bot\]$/i.test(name);
 }
@@ -96,7 +100,12 @@ function str(v: unknown): string {
  * webhook.ts calls both, side by side, and the interpretation is unaffected by
  * whatever this returns.
  */
-export function captureFromEvent(event: string, action: string | null, payload: any, deps: CaptureDeps): CaptureOutcome {
+export function captureFromEvent(
+  event: string,
+  action: string | null,
+  payload: any,
+  deps: CaptureDeps,
+): CaptureOutcome {
   switch (event) {
     case "pull_request_review_comment":
       return captureReviewCommentEvent(action, payload, deps);
@@ -117,7 +126,11 @@ function admit(pr: number, user: any, body: string, deps: CaptureDeps): string |
   return null;
 }
 
-function captureReviewCommentEvent(action: string | null, payload: any, deps: CaptureDeps): CaptureOutcome {
+function captureReviewCommentEvent(
+  action: string | null,
+  payload: any,
+  deps: CaptureDeps,
+): CaptureOutcome {
   if (action !== "created") return { skipped: `review-comment action: ${action}` };
   const c = payload?.comment;
   const pr: number = payload?.pull_request?.number ?? 0;
@@ -145,7 +158,11 @@ function captureReviewCommentEvent(action: string | null, payload: any, deps: Ca
   };
 }
 
-function captureIssueCommentEvent(action: string | null, payload: any, deps: CaptureDeps): CaptureOutcome {
+function captureIssueCommentEvent(
+  action: string | null,
+  payload: any,
+  deps: CaptureDeps,
+): CaptureOutcome {
   if (action !== "created") return { skipped: `issue-comment action: ${action}` };
   const issue = payload?.issue;
   // Same discriminator the interpreter uses: an "issue" is a PR iff it carries
@@ -176,7 +193,11 @@ function captureIssueCommentEvent(action: string | null, payload: any, deps: Cap
   };
 }
 
-function captureReviewEvent(action: string | null, payload: any, deps: CaptureDeps): CaptureOutcome {
+function captureReviewEvent(
+  action: string | null,
+  payload: any,
+  deps: CaptureDeps,
+): CaptureOutcome {
   if (action !== "submitted") return { skipped: `review action: ${action}` };
   const r = payload?.review;
   const pr: number = payload?.pull_request?.number ?? 0;

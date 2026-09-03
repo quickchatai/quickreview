@@ -1,13 +1,31 @@
 import { describe, expect, it } from "vitest";
-import { cancellationsOn, renderStatus, todayCancellationLine, todayJson, whyJson } from "../src/cli.js";
+import {
+  cancellationsOn,
+  renderStatus,
+  todayCancellationLine,
+  todayJson,
+  whyJson,
+} from "../src/cli.js";
 import { StateStore, type StatusSnapshot } from "../src/state.js";
 
 const snapshot: StatusSnapshot = {
   written_at: "2026-08-13T17:04:00.000Z",
   dry_run: true,
   prs: [
-    { number: 1421, state: "reviewing", title: "Add rate limiting to the widget API", head_sha: "0f1e2d3c4b5a6978", stale_recheck: 0 },
-    { number: 88, state: "awaiting_author", title: "Bump ansible role", head_sha: "aaaabbbbccccdddd", stale_recheck: 1 },
+    {
+      number: 1421,
+      state: "reviewing",
+      title: "Add rate limiting to the widget API",
+      head_sha: "0f1e2d3c4b5a6978",
+      stale_recheck: 0,
+    },
+    {
+      number: 88,
+      state: "awaiting_author",
+      title: "Bump ansible role",
+      head_sha: "aaaabbbbccccdddd",
+      stale_recheck: 1,
+    },
   ],
   running_rounds: 2,
   total_spend_usd: 3.5,
@@ -46,7 +64,13 @@ describe("renderStatus", () => {
   });
 
   it("handles an empty fleet of PRs", () => {
-    const out = renderStatus({ ...snapshot, prs: [], running_rounds: 0, total_spend_usd: 0, digest_headline: undefined });
+    const out = renderStatus({
+      ...snapshot,
+      prs: [],
+      running_rounds: 0,
+      total_spend_usd: 0,
+      digest_headline: undefined,
+    });
     expect(out).toContain("no tracked PRs");
     expect(out).toContain("total spend: $0.00");
     expect(out).not.toContain("PR     state");
@@ -77,8 +101,17 @@ describe("usage-aware spend reporting", () => {
       const payload = whyJson(store, 7, "/nonexistent-archive");
       expect(payload.spend_usd).toBeCloseTo(1.25 + 0.31, 6);
       // finishRound's figure lands in est_usd; the retired spend_usd column stays null.
-      expect(payload.rounds[0]).toMatchObject({ est_usd: 1.25, tokens_in: null, tokens_out: null, spend_usd: null });
-      expect(payload.rounds[1]).toMatchObject({ est_usd: 0.31, tokens_in: 120_000, tokens_out: 8_000 });
+      expect(payload.rounds[0]).toMatchObject({
+        est_usd: 1.25,
+        tokens_in: null,
+        tokens_out: null,
+        spend_usd: null,
+      });
+      expect(payload.rounds[1]).toMatchObject({
+        est_usd: 0.31,
+        tokens_in: 120_000,
+        tokens_out: 8_000,
+      });
     } finally {
       store.close();
     }
@@ -87,11 +120,12 @@ describe("usage-aware spend reporting", () => {
   it("whyJson exposes the running round plan, timing and executed-pass telemetry", () => {
     const store = new StateStore(":memory:");
     try {
-      const id = store.startRound(5408, "re-review", ["pass-baseline", "pass-validate"], 75, { validate_tier: "sol-high" });
-      store.db.prepare("UPDATE rounds SET executed_passes = ? WHERE id = ?").run(
-        JSON.stringify([{ name: "pass-baseline", status: "completed" }]),
-        id,
-      );
+      const id = store.startRound(5408, "re-review", ["pass-baseline", "pass-validate"], 75, {
+        validate_tier: "sol-high",
+      });
+      store.db
+        .prepare("UPDATE rounds SET executed_passes = ? WHERE id = ?")
+        .run(JSON.stringify([{ name: "pass-baseline", status: "completed" }]), id);
       const round = whyJson(store, 5408, "/nonexistent-archive").rounds[0]!;
       expect(round.deadline_at).toMatch(/Z$/);
       expect(round.validate_tier).toBe("sol-high");
@@ -118,7 +152,9 @@ describe("usage-aware spend reporting", () => {
     const store = seededStore();
     try {
       const zombie = store.startRound(9, "first", [], 45);
-      store.db.prepare("UPDATE rounds SET status = 'expired', est_usd = 2.0 WHERE id = ?").run(zombie);
+      store.db
+        .prepare("UPDATE rounds SET status = 'expired', est_usd = 2.0 WHERE id = ?")
+        .run(zombie);
       const today = new Date().toISOString().slice(0, 10);
       expect(todayJson(store, today).spend_usd).toBeCloseTo(3.56, 6);
       expect(whyJson(store, 9, "/nonexistent-archive").spend_usd).toBeCloseTo(2.0, 6);
@@ -135,7 +171,8 @@ describe("cancellation reporting", () => {
       const today = new Date().toISOString().slice(0, 10);
       expect(todayCancellationLine(cancellationsOn(store, today))).toBe("cancelled: none");
 
-      for (const pr of [1, 2]) store.markRoundCancelled(store.startRound(pr, "first", [], 45), "x", "orphan_sweep");
+      for (const pr of [1, 2])
+        store.markRoundCancelled(store.startRound(pr, "first", [], 45), "x", "orphan_sweep");
       store.markRoundCancelled(store.startRound(3, "re-review", [], 45), "y", "deadline_overrun");
 
       expect(cancellationsOn(store, today)).toEqual([

@@ -4,7 +4,7 @@
 // action. Pure geometry + zone bookkeeping; the surfaces decide what the rows
 // say. Lifted out of the old memtab so the three cannot drift apart.
 import { MUTED, RESET } from "./design.js";
-import { Frame, displayWidth, stripAnsi } from "./paint.js";
+import { type Frame, displayWidth, stripAnsi } from "./paint.js";
 
 export interface RowChunk<A> {
   text: string;
@@ -67,8 +67,17 @@ export function paintSplit<A>(frame: Frame, pane: SplitPane<A>): void {
       { text: ` ${rr?.text ?? ""}`, width: pane.rightW },
     ]);
     const la = pane.leftActions[r];
-    if (la !== undefined) frame.zones.push({ x1: 2, y1: row + 1, x2: pane.leftW + 1, y2: row + 1, action: la });
-    if (rr) for (const z of rr.zones) frame.zones.push({ x1: rightX0 + z.x1, y1: row + 1, x2: rightX0 + z.x2, y2: row + 1, action: z.action });
+    if (la !== undefined)
+      frame.zones.push({ x1: 2, y1: row + 1, x2: pane.leftW + 1, y2: row + 1, action: la });
+    if (rr)
+      for (const z of rr.zones)
+        frame.zones.push({
+          x1: rightX0 + z.x1,
+          y1: row + 1,
+          x2: rightX0 + z.x2,
+          y2: row + 1,
+          action: z.action,
+        });
   }
 }
 

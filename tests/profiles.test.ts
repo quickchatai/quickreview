@@ -72,7 +72,8 @@ describe("parseProfileAddendum", () => {
   });
 
   it("parses the three scope shapes", () => {
-    const one = (scope: string) => parseProfileAddendum(F, `---\nid: x\nscope: ${scope}\n---\nB\n`).scope;
+    const one = (scope: string) =>
+      parseProfileAddendum(F, `---\nid: x\nscope: ${scope}\n---\nB\n`).scope;
     expect(one("all")).toBe("all");
     expect(one("lenses")).toBe("lenses");
     expect(one("pass-baseline, pass-data-safety")).toEqual(["pass-baseline", "pass-data-safety"]);
@@ -88,7 +89,11 @@ describe("parseProfileAddendum", () => {
   it("fails LOUDLY on every malformed shape, naming the file", () => {
     const bad: Array<[string, string, RegExp]> = [
       ["no frontmatter", "## Just a body\n", /missing frontmatter/],
-      ["unknown key", "---\nid: x\nscope: all\ntitle: nope\n---\nB\n", /unrecognized frontmatter line/],
+      [
+        "unknown key",
+        "---\nid: x\nscope: all\ntitle: nope\n---\nB\n",
+        /unrecognized frontmatter line/,
+      ],
       ["missing id", "---\nscope: all\n---\nB\n", /missing "id:"/],
       ["missing scope", "---\nid: x\n---\nB\n", /missing "scope:"/],
       ["bad id", "---\nid: Not_Kebab\nscope: all\n---\nB\n", /must be kebab-case/],
@@ -189,29 +194,43 @@ describe("the shipped profiles", () => {
       expect(Array.isArray(a.scope), a.id).toBe(true);
       expect((a.scope as readonly string[]).length, a.id).toBe(1);
       // Sanitized: no attributions, dates, or team/product references.
-      for (const leaked of ["the owner", "mhale", "gfrost", "quickchat", "2026-", "corpus", "this team"]) {
+      for (const leaked of [
+        "the owner",
+        "mhale",
+        "gfrost",
+        "quickchat",
+        "2026-",
+        "corpus",
+        "this team",
+      ]) {
         expect(a.text.includes(leaked), `${a.id} leaks "${leaked}"`).toBe(false);
       }
     }
   });
 
-  it.skipIf(!HAS_QC)("quickchat carries the six moved corpus rules under their original ids, in registry order", () => {
-    const pack = loadProfileAddenda(sandbox, "quickchat");
-    expect(pack.map((a) => a.id)).toEqual(LEGACY_PACK.map((a) => a.id));
-    expect(pack.map((a) => a.scope)).toEqual(LEGACY_PACK.map((a) => a.scope));
-  });
+  it.skipIf(!HAS_QC)(
+    "quickchat carries the six moved corpus rules under their original ids, in registry order",
+    () => {
+      const pack = loadProfileAddenda(sandbox, "quickchat");
+      expect(pack.map((a) => a.id)).toEqual(LEGACY_PACK.map((a) => a.id));
+      expect(pack.map((a) => a.scope)).toEqual(LEGACY_PACK.map((a) => a.scope));
+    },
+  );
 });
 
 // ---- the byte-equivalence proof ------------------------------------
 
 describe("quickchat extraction is byte-preserving", () => {
-  it.skipIf(!HAS_QC)("every moved file's composed text is byte-identical to the legacy constant", () => {
-    const pack = loadProfileAddenda(sandbox, "quickchat");
-    expect(pack.length).toBe(LEGACY_PACK.length);
-    for (let i = 0; i < pack.length; i++) {
-      expect(pack[i]!.text, pack[i]!.id).toBe(LEGACY_PACK[i]!.text);
-    }
-  });
+  it.skipIf(!HAS_QC)(
+    "every moved file's composed text is byte-identical to the legacy constant",
+    () => {
+      const pack = loadProfileAddenda(sandbox, "quickchat");
+      expect(pack.length).toBe(LEGACY_PACK.length);
+      for (let i = 0; i < pack.length; i++) {
+        expect(pack[i]!.text, pack[i]!.id).toBe(LEGACY_PACK[i]!.text);
+      }
+    },
+  );
 
   it("the compiled-in registry no longer carries the six (diff-leftovers stays)", () => {
     const ids = PASS_ADDENDA.map((a) => a.id);
@@ -233,14 +252,17 @@ describe("quickchat extraction is byte-preserving", () => {
     }
   }
 
-  it.skipIf(!HAS_QC)("building with the quickchat pack reproduces the compiled-in constants' output byte-for-byte", () => {
-    const expected = build([...PASS_ADDENDA, ...LEGACY_PACK]);
-    const actual = build([...PASS_ADDENDA, ...loadProfileAddenda(sandbox, "quickchat")]);
-    expect([...actual.keys()].sort()).toEqual([...expected.keys()].sort());
-    for (const [name, bytes] of expected) {
-      expect(actual.get(name), name).toBe(bytes);
-    }
-  });
+  it.skipIf(!HAS_QC)(
+    "building with the quickchat pack reproduces the compiled-in constants' output byte-for-byte",
+    () => {
+      const expected = build([...PASS_ADDENDA, ...LEGACY_PACK]);
+      const actual = build([...PASS_ADDENDA, ...loadProfileAddenda(sandbox, "quickchat")]);
+      expect([...actual.keys()].sort()).toEqual([...expected.keys()].sort());
+      for (const [name, bytes] of expected) {
+        expect(actual.get(name), name).toBe(bytes);
+      }
+    },
+  );
 
   it("no profile (and the minimal profile) build exactly the generic addenda set", () => {
     const bare = build(PASS_ADDENDA);
@@ -249,13 +271,19 @@ describe("quickchat extraction is byte-preserving", () => {
     for (const [name, bytes] of bare) expect(minimal.get(name), name).toBe(bytes);
     // …and none of the moved house rules leaks into the generic build.
     for (const [name, bytes] of bare) {
-      expect(bytes.includes("## Migration discipline — the team's four standing rules"), name).toBe(false);
+      expect(bytes.includes("## Migration discipline — the team's four standing rules"), name).toBe(
+        false,
+      );
       expect(bytes.includes("## How this team tests"), name).toBe(false);
     }
   });
 
   it("the dynamic feedback-day addendum still composes LAST, after the pack", () => {
-    const fb: PassAddendum = { id: "feedback-day-validate", scope: ["pass-validate"], text: "\n## FB-LAST\nx\n" };
+    const fb: PassAddendum = {
+      id: "feedback-day-validate",
+      scope: ["pass-validate"],
+      text: "\n## FB-LAST\nx\n",
+    };
     // The shipped pack where present (the private tree); the example pack in
     // the public snapshot — compose-last holds for any pack.
     const pack = loadProfileAddenda(sandbox, HAS_QC ? "quickchat" : "example-django");
@@ -293,19 +321,35 @@ describe("parseProfileHeuristics", () => {
   });
 
   it("rejects a non-extendable lens, naming why", () => {
-    expect(() => parseProfileHeuristics(F, `[pass-intent]\npaths = ['x']\n`)).toThrow(/not an extendable lens/);
-    expect(() => parseProfileHeuristics(F, `[pass-concurrency]\npaths = ['x']\n`)).toThrow(/addable-only/);
+    expect(() => parseProfileHeuristics(F, `[pass-intent]\npaths = ['x']\n`)).toThrow(
+      /not an extendable lens/,
+    );
+    expect(() => parseProfileHeuristics(F, `[pass-concurrency]\npaths = ['x']\n`)).toThrow(
+      /addable-only/,
+    );
     expect(() => parseProfileHeuristics(F, `[pass-nope]\npaths = ['x']\n`)).toThrow(/pass-nope/);
-    expect(() => parseProfileHeuristics(F, `[pass-validate]\npaths = ['x']\n`)).toThrow(/not an extendable lens/);
+    expect(() => parseProfileHeuristics(F, `[pass-validate]\npaths = ['x']\n`)).toThrow(
+      /not an extendable lens/,
+    );
   });
 
   it("rejects unknown keys, non-arrays, non-strings, empty patterns and bad regexes — loudly", () => {
-    expect(() => parseProfileHeuristics(F, `[pass-ui]\nglobs = ['x']\n`)).toThrow(/unknown key "globs"/);
-    expect(() => parseProfileHeuristics(F, `[pass-ui]\npaths = 'x'\n`)).toThrow(/must be an array of strings/);
-    expect(() => parseProfileHeuristics(F, `[pass-ui]\npaths = [1]\n`)).toThrow(/must be an array of strings/);
+    expect(() => parseProfileHeuristics(F, `[pass-ui]\nglobs = ['x']\n`)).toThrow(
+      /unknown key "globs"/,
+    );
+    expect(() => parseProfileHeuristics(F, `[pass-ui]\npaths = 'x'\n`)).toThrow(
+      /must be an array of strings/,
+    );
+    expect(() => parseProfileHeuristics(F, `[pass-ui]\npaths = [1]\n`)).toThrow(
+      /must be an array of strings/,
+    );
     expect(() => parseProfileHeuristics(F, `[pass-ui]\npaths = ['']\n`)).toThrow(/empty pattern/);
-    expect(() => parseProfileHeuristics(F, `[pass-ui]\npaths = ['(unclosed']\n`)).toThrow(/not a valid RegExp/);
-    expect(() => parseProfileHeuristics(F, `[pass-ui]\nadded_lines = ['[']\n`)).toThrow(/not a valid RegExp/);
+    expect(() => parseProfileHeuristics(F, `[pass-ui]\npaths = ['(unclosed']\n`)).toThrow(
+      /not a valid RegExp/,
+    );
+    expect(() => parseProfileHeuristics(F, `[pass-ui]\nadded_lines = ['[']\n`)).toThrow(
+      /not a valid RegExp/,
+    );
     expect(() => parseProfileHeuristics(F, `not toml ===`)).toThrow(/not valid TOML/);
   });
 });
@@ -318,7 +362,10 @@ describe("loadProfileHeuristics", () => {
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
   it('"" (no profile) is the empty extension without touching the filesystem', () => {
-    expect(loadProfileHeuristics(join(root, "does-not-exist"), "")).toEqual({ paths: {}, addedLines: {} });
+    expect(loadProfileHeuristics(join(root, "does-not-exist"), "")).toEqual({
+      paths: {},
+      addedLines: {},
+    });
   });
 
   it("a missing profile directory fails loudly; an ABSENT heuristics.toml does not", () => {
@@ -330,7 +377,9 @@ describe("loadProfileHeuristics", () => {
   it("a malformed heuristics.toml fails the load, naming the file", () => {
     mkdirSync(profileDir(root, "bad"), { recursive: true });
     writeFileSync(join(profileDir(root, "bad"), "heuristics.toml"), "[pass-ui]\npaths = ['(']\n");
-    expect(() => loadProfileHeuristics(root, "bad")).toThrow(/heuristics\.toml.*not a valid RegExp/);
+    expect(() => loadProfileHeuristics(root, "bad")).toThrow(
+      /heuristics\.toml.*not a valid RegExp/,
+    );
   });
 
   it("the shipped quickchat and example-django files load and stay inside the extendable set", () => {

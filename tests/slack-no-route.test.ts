@@ -28,7 +28,14 @@ let pipeline: StatusSnapshot["pipeline"] = { healthy: true, failed_loud: 0, caus
 beforeAll(async () => {
   store = new StateStore(":memory:");
   const cfg = parseConfig(readFileSync(join(root, "tests/fixtures/config.toml"), "utf8"));
-  server = createWebhookServer({ cfg, store, secret: SECRET, onInterpretation: async () => {}, pipelineHealth: () => pipeline, log: () => {} });
+  server = createWebhookServer({
+    cfg,
+    store,
+    secret: SECRET,
+    onInterpretation: async () => {},
+    pipelineHealth: () => pipeline,
+    log: () => {},
+  });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
@@ -81,7 +88,16 @@ describe("no Slack HTTP route exists", () => {
     pipeline = {
       healthy: false,
       failed_loud: 1,
-      causes: [{ key: "review-failure:cmd-1", pr: 5408, since: "2026-08-28T10:00:00Z", stage: "command_start", detail: "no start", next_action: "operator_unwedge" }],
+      causes: [
+        {
+          key: "review-failure:cmd-1",
+          pr: 5408,
+          since: "2026-08-28T10:00:00Z",
+          stage: "command_start",
+          detail: "no start",
+          next_action: "operator_unwedge",
+        },
+      ],
     };
     const health = await fetch(`${base}/health`);
     expect(health.status).toBe(200);
@@ -94,7 +110,9 @@ describe("no Slack HTTP route exists", () => {
       for (const method of ["GET", "POST"] as const) {
         const res = await fetch(`${base}${path}`, {
           method,
-          ...(method === "POST" ? { body: JSON.stringify({ type: "url_verification", challenge: "c" }) } : {}),
+          ...(method === "POST"
+            ? { body: JSON.stringify({ type: "url_verification", challenge: "c" }) }
+            : {}),
         });
         expect(res.status, `${method} ${path} must not be routed`).toBe(404);
       }

@@ -25,7 +25,9 @@ import { StateStore } from "../src/state.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
 import { applyInterpretation, interpretEvent } from "../src/webhook.js";
 
-const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
+const cfg: Config = parseConfig(
+  readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
+);
 const BOT = cfg.github.bot_login;
 const HEAD = "68b8040aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const OLD = "1111111111111111111111111111111111111111";
@@ -41,8 +43,14 @@ afterEach(() => {
   rmSync(dryrunDir, { recursive: true, force: true });
 });
 
-const run = (status: string, conclusion: string | null, name = "test"): CheckSummary => ({ name, source: "check_run", status, conclusion });
-const done = (conclusion: string, name = "test"): CheckSummary => run("completed", conclusion, name);
+const run = (status: string, conclusion: string | null, name = "test"): CheckSummary => ({
+  name,
+  source: "check_run",
+  status,
+  conclusion,
+});
+const done = (conclusion: string, name = "test"): CheckSummary =>
+  run("completed", conclusion, name);
 
 // ---- the classifier --------------------------------------------------------
 
@@ -58,7 +66,13 @@ describe("classifyCi", () => {
 
   it("treats infra shapes exactly like a failing test — no special-casing", () => {
     // The eleven improvised approvals all argued one of these was different.
-    for (const conclusion of ["cancelled", "timed_out", "action_required", "stale", "startup_failure"])
+    for (const conclusion of [
+      "cancelled",
+      "timed_out",
+      "action_required",
+      "stale",
+      "startup_failure",
+    ])
       expect(classifyCi([done("success"), done(conclusion, "ci")])).toBe("red");
   });
 
@@ -103,15 +117,24 @@ describe("latest-run-per-name", () => {
   });
   it("a LATEST run that failed or was cancelled still blocks", () => {
     expect(
-      classifyCi([at(done("success", "sync"), "2026-08-19T08:00:00Z"), at(done("cancelled", "sync"), "2026-08-19T08:10:00Z")]),
+      classifyCi([
+        at(done("success", "sync"), "2026-08-19T08:00:00Z"),
+        at(done("cancelled", "sync"), "2026-08-19T08:10:00Z"),
+      ]),
     ).toBe("red");
     expect(
-      classifyCi([at(done("success", "unit"), "2026-08-19T08:00:00Z"), at(done("failure", "unit"), "2026-08-19T08:10:00Z")]),
+      classifyCi([
+        at(done("success", "unit"), "2026-08-19T08:00:00Z"),
+        at(done("failure", "unit"), "2026-08-19T08:10:00Z"),
+      ]),
     ).toBe("red");
   });
   it("a latest run still in progress is pending, not green off the older success", () => {
     expect(
-      classifyCi([at(done("success", "sync"), "2026-08-19T08:00:00Z"), at(run("in_progress", null, "sync"), "2026-08-19T08:10:00Z")]),
+      classifyCi([
+        at(done("success", "sync"), "2026-08-19T08:00:00Z"),
+        at(run("in_progress", null, "sync"), "2026-08-19T08:10:00Z"),
+      ]),
     ).toBe("pending");
   });
   it("check-runs without started_at resolve by list position — later wins", () => {
@@ -135,7 +158,11 @@ describe("latest-run-per-name", () => {
 // real adapter's own payload shapes.
 describe("— a same-named commit status is a second check, never a superseded run", () => {
   const TS = "2026-09-01T10:00:00Z";
-  const minter = { appJwt: () => "jwt", installationToken: async () => "tok", invalidate: () => {} } as unknown as TokenMinter;
+  const minter = {
+    appJwt: () => "jwt",
+    installationToken: async () => "tok",
+    invalidate: () => {},
+  } as unknown as TokenMinter;
 
   /** The real `listChecks` over the two endpoints it reads, with GitHub's own
    * response shapes: check-runs carry `name`/`status`/`conclusion`/`started_at`,
@@ -143,9 +170,18 @@ describe("— a same-named commit status is a second check, never a superseded r
   async function adapterChecks(checkRuns: unknown[], statuses: unknown[]): Promise<CheckSummary[]> {
     const fetchFn = (async (url: string | URL) => {
       const u = String(url);
-      const payload = u.includes("/check-runs") ? { check_runs: checkRuns } : u.includes("/status") ? { state: "x", statuses } : null;
+      const payload = u.includes("/check-runs")
+        ? { check_runs: checkRuns }
+        : u.includes("/status")
+          ? { state: "x", statuses }
+          : null;
       if (payload === null) throw new Error(`unexpected ${u}`);
-      return { ok: true, status: 200, json: async () => payload, text: async () => JSON.stringify(payload) } as unknown as Response;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => payload,
+        text: async () => JSON.stringify(payload),
+      } as unknown as Response;
     }) as unknown as FetchFn;
     const gate = new MutationGate(true, dryrunDir, async () => ({}));
     return new GitHubAdapter(cfg, minter, gate, fetchFn, "https://api.github.com").listChecks(HEAD);
@@ -157,18 +193,23 @@ describe("— a same-named commit status is a second check, never a superseded r
     ["failure", "red"],
     ["error", "red"],
     ["pending", "pending"],
-  ] as const)("a %s commit status under a passing check-run's name reads %s, in both orders", async (state, expected) => {
-    // The ticket's table, through the adapter: the two of them, the status
-    // alone, and distinct names as the control that nothing else changed.
-    const mixed = await adapterChecks([passingRun], [statusOf(state)]);
-    expect(mixed).toHaveLength(2);
-    expect(classifyCi(mixed)).toBe(expected);
-    // The adapter always lists check-runs first; the classifier must not
-    // depend on that, so the same summaries reversed must agree.
-    expect(classifyCi([...mixed].reverse())).toBe(expected);
-    expect(classifyCi(await adapterChecks([], [statusOf(state)]))).toBe(expected);
-    expect(classifyCi(await adapterChecks([passingRun], [statusOf(state, "other")]))).toBe(expected);
-  });
+  ] as const)(
+    "a %s commit status under a passing check-run's name reads %s, in both orders",
+    async (state, expected) => {
+      // The ticket's table, through the adapter: the two of them, the status
+      // alone, and distinct names as the control that nothing else changed.
+      const mixed = await adapterChecks([passingRun], [statusOf(state)]);
+      expect(mixed).toHaveLength(2);
+      expect(classifyCi(mixed)).toBe(expected);
+      // The adapter always lists check-runs first; the classifier must not
+      // depend on that, so the same summaries reversed must agree.
+      expect(classifyCi([...mixed].reverse())).toBe(expected);
+      expect(classifyCi(await adapterChecks([], [statusOf(state)]))).toBe(expected);
+      expect(classifyCi(await adapterChecks([passingRun], [statusOf(state, "other")]))).toBe(
+        expected,
+      );
+    },
+  );
 
   it("a passing status beside a passing run of its name is still green — the fix admits only what is really there", async () => {
     expect(classifyCi(await adapterChecks([passingRun], [statusOf("success")]))).toBe("green");
@@ -184,8 +225,20 @@ describe("— a same-named commit status is a second check, never a superseded r
   it("a check-run with a null started_at is never read as superseded by an older timestamped run", () => {
     // GitHub's schema makes started_at nullable on check-runs; the adapter
     // passes null through. "Unknown when" is not "older than everything".
-    const queued: CheckSummary = { name: "ci", source: "check_run", status: "queued", conclusion: null, started_at: null };
-    const failed: CheckSummary = { name: "ci", source: "check_run", status: "completed", conclusion: "failure", started_at: null };
+    const queued: CheckSummary = {
+      name: "ci",
+      source: "check_run",
+      status: "queued",
+      conclusion: null,
+      started_at: null,
+    };
+    const failed: CheckSummary = {
+      name: "ci",
+      source: "check_run",
+      status: "completed",
+      conclusion: "failure",
+      started_at: null,
+    };
     const passed: CheckSummary = { source: "check_run", ...passingRun };
     expect(classifyCi([passed, queued])).toBe("pending");
     expect(classifyCi([queued, passed])).toBe("pending");
@@ -196,28 +249,72 @@ describe("— a same-named commit status is a second check, never a superseded r
   it.each([
     ["queued", null, "pending"],
     ["completed", "failure", "red"],
-  ] as const)("a %s/%s check-run with a null started_at is never masked by a passing status of its name, in either order", async (status, conclusion, expected) => {
-    // Review round 1: the timestamp-keyed rule collapsed an
-    // untimestamped check-run with a same-named status by list position, and
-    // the adapter always lists statuses after check-runs — so the status won
-    // and the head read green on the gate route while guards.sh said red.
-    const nullStart = { name: "ci", status, conclusion, started_at: null };
-    const mixed = await adapterChecks([nullStart], [statusOf("success")]);
-    expect(mixed).toHaveLength(2);
-    expect(classifyCi(mixed)).toBe(expected);
-    expect(classifyCi([...mixed].reverse())).toBe(expected);
-    // Control: distinct names answer the same, so nothing but the collapse changed.
-    expect(classifyCi(await adapterChecks([nullStart], [statusOf("success", "other")]))).toBe(expected);
-  });
+  ] as const)(
+    "a %s/%s check-run with a null started_at is never masked by a passing status of its name, in either order",
+    async (status, conclusion, expected) => {
+      // Review round 1: the timestamp-keyed rule collapsed an
+      // untimestamped check-run with a same-named status by list position, and
+      // the adapter always lists statuses after check-runs — so the status won
+      // and the head read green on the gate route while guards.sh said red.
+      const nullStart = { name: "ci", status, conclusion, started_at: null };
+      const mixed = await adapterChecks([nullStart], [statusOf("success")]);
+      expect(mixed).toHaveLength(2);
+      expect(classifyCi(mixed)).toBe(expected);
+      expect(classifyCi([...mixed].reverse())).toBe(expected);
+      // Control: distinct names answer the same, so nothing but the collapse changed.
+      expect(classifyCi(await adapterChecks([nullStart], [statusOf("success", "other")]))).toBe(
+        expected,
+      );
+    },
+  );
 
   it("states the rule: only check-runs collapse (timed: latest start, equal → later; untimed: last per name); a status never does", () => {
-    const a: CheckSummary = { name: "ci", source: "check_run", status: "completed", conclusion: "success", started_at: TS };
-    const b: CheckSummary = { name: "ci", source: "check_run", status: "completed", conclusion: "failure", started_at: TS };
-    const older: CheckSummary = { name: "ci", source: "check_run", status: "completed", conclusion: "cancelled", started_at: "2026-09-01T09:00:00Z" };
-    const u1: CheckSummary = { name: "ci", source: "check_run", status: "completed", conclusion: "failure" };
-    const u2: CheckSummary = { name: "ci", source: "check_run", status: "completed", conclusion: "success", started_at: "" }; // "" carries no time
-    const s1: CheckSummary = { name: "ci", source: "status", status: "completed", conclusion: "failure" };
-    const s2: CheckSummary = { name: "ci", source: "status", status: "completed", conclusion: "success" };
+    const a: CheckSummary = {
+      name: "ci",
+      source: "check_run",
+      status: "completed",
+      conclusion: "success",
+      started_at: TS,
+    };
+    const b: CheckSummary = {
+      name: "ci",
+      source: "check_run",
+      status: "completed",
+      conclusion: "failure",
+      started_at: TS,
+    };
+    const older: CheckSummary = {
+      name: "ci",
+      source: "check_run",
+      status: "completed",
+      conclusion: "cancelled",
+      started_at: "2026-09-01T09:00:00Z",
+    };
+    const u1: CheckSummary = {
+      name: "ci",
+      source: "check_run",
+      status: "completed",
+      conclusion: "failure",
+    };
+    const u2: CheckSummary = {
+      name: "ci",
+      source: "check_run",
+      status: "completed",
+      conclusion: "success",
+      started_at: "",
+    }; // "" carries no time
+    const s1: CheckSummary = {
+      name: "ci",
+      source: "status",
+      status: "completed",
+      conclusion: "failure",
+    };
+    const s2: CheckSummary = {
+      name: "ci",
+      source: "status",
+      status: "completed",
+      conclusion: "success",
+    };
     // Equal start: the later list position wins, in either order.
     expect(latestRunPerName([a, b])).toEqual([b]);
     expect(latestRunPerName([b, a])).toEqual([a]);
@@ -265,7 +362,11 @@ describe("the withheld note", () => {
   });
 
   it("softens to COMMENT and never to REQUEST_CHANGES, keeping the findings", () => {
-    const body = withholdApproval({ event: "APPROVE", body: "Looks good.", comments: [1] }, "red", HEAD);
+    const body = withholdApproval(
+      { event: "APPROVE", body: "Looks good.", comments: [1] },
+      "red",
+      HEAD,
+    );
     expect(body.event).toBe("COMMENT");
     expect(body.event).not.toBe("REQUEST_CHANGES");
     expect(body.body).toContain("Looks good.");
@@ -292,44 +393,56 @@ describe("the round templates carry the gate in their Decide step", () => {
     expect(gate).toBeLessThan(decide.indexOf("`[blocker]`"));
   });
 
-  it.each(templates)("%s prescribes a COMMENT with the approval withheld, and forbids blocking on red CI alone", (name) => {
-    const decide = read(name);
-    expect(decide).toContain("post the full review as a COMMENT with the approval withheld");
-    expect(decide).toContain("no blockers were found");
-    expect(decide).toContain("approval is withheld pending green CI");
-    expect(decide).toContain("never **REQUEST_CHANGES** on red CI alone");
-    // NEEDS_HUMAN retired 2026-08-19: there is no third verdict to forbid.
-    expect(decide).toContain("there is no third verdict");
-  });
+  it.each(templates)(
+    "%s prescribes a COMMENT with the approval withheld, and forbids blocking on red CI alone",
+    (name) => {
+      const decide = read(name);
+      expect(decide).toContain("post the full review as a COMMENT with the approval withheld");
+      expect(decide).toContain("no blockers were found");
+      expect(decide).toContain("approval is withheld pending green CI");
+      expect(decide).toContain("never **REQUEST_CHANGES** on red CI alone");
+      // NEEDS_HUMAN retired 2026-08-19: there is no third verdict to forbid.
+      expect(decide).toContain("there is no third verdict");
+    },
+  );
 
-  it.each(templates)("%s defers to the pr-checks.sh CLASSIFIED verdict and the latest-run rule", (name) => {
-    // The owner, 2026-08-19: sessions re-deriving CI from the raw run list is
-    // exactly the loop that burned rounds on cancelled husks — the CLASSIFIED
-    // line (same table as classifyCi/guards.sh) is the single verdict source.
-    const text = read(name);
-    expect(text).toContain("`CLASSIFIED:` line IS the CI verdict");
-    expect(text).toContain("LATEST run of each check name");
-    expect(text).toContain("[superseded — does not count]");
-  });
+  it.each(templates)(
+    "%s defers to the pr-checks.sh CLASSIFIED verdict and the latest-run rule",
+    (name) => {
+      // The owner, 2026-08-19: sessions re-deriving CI from the raw run list is
+      // exactly the loop that burned rounds on cancelled husks — the CLASSIFIED
+      // line (same table as classifyCi/guards.sh) is the single verdict source.
+      const text = read(name);
+      expect(text).toContain("`CLASSIFIED:` line IS the CI verdict");
+      expect(text).toContain("LATEST run of each check name");
+      expect(text).toContain("[superseded — does not count]");
+    },
+  );
 
-  it.each(templates)("%s withholds on a zero-checks head, matching this repo's no_checks_is_red = true", (name) => {
-    // The owner, 2026-08-19: a conflicted / CI-less head carries no execution
-    // evidence. The code default stays exempt (a no-CI repo must never wedge);
-    // the original deployment's config and templates both gate it.
-    const text = read(name);
-    expect(text).toContain("`CLASSIFIED: none`");
-    expect(text).toContain("also withholds approval in this repo");
-    expect(ciBlocksApproval("none")).toBe(false); // code default unchanged
-    expect(ciBlocksApproval("none", { noChecksIsRed: true })).toBe(true);
-  });
+  it.each(templates)(
+    "%s withholds on a zero-checks head, matching this repo's no_checks_is_red = true",
+    (name) => {
+      // The owner, 2026-08-19: a conflicted / CI-less head carries no execution
+      // evidence. The code default stays exempt (a no-CI repo must never wedge);
+      // the original deployment's config and templates both gate it.
+      const text = read(name);
+      expect(text).toContain("`CLASSIFIED: none`");
+      expect(text).toContain("also withholds approval in this repo");
+      expect(ciBlocksApproval("none")).toBe(false); // code default unchanged
+      expect(ciBlocksApproval("none", { noChecksIsRed: true })).toBe(true);
+    },
+  );
 
-  it.each(templates)("%s treats infra, cancelled and skipped identically, and only ever READS CI", (name) => {
-    const text = read(name);
-    expect(text).toContain("blocks exactly like a failing test");
-    expect(text).toContain("you never trigger, re-run or cancel");
-    // Nothing in the templates asks for CI to be started or re-run.
-    expect(text).not.toMatch(/gh (run|workflow) (rerun|run)/);
-  });
+  it.each(templates)(
+    "%s treats infra, cancelled and skipped identically, and only ever READS CI",
+    (name) => {
+      const text = read(name);
+      expect(text).toContain("blocks exactly like a failing test");
+      expect(text).toContain("you never trigger, re-run or cancel");
+      // Nothing in the templates asks for CI to be started or re-run.
+      expect(text).not.toMatch(/gh (run|workflow) (rerun|run)/);
+    },
+  );
 });
 
 // ---- guard 4 on the real gate ---------------------------------------------
@@ -340,10 +453,17 @@ class FakeGuardAdapter implements GuardAdapter {
   failChecks = false;
   checkCalls = 0;
 
-  async getPr(): Promise<{ state: "open" | "closed"; merged: boolean; head_sha: string; author: string }> {
+  async getPr(): Promise<{
+    state: "open" | "closed";
+    merged: boolean;
+    head_sha: string;
+    author: string;
+  }> {
     return this.pr;
   }
-  async listReviews(): Promise<Array<{ id: number; user: string; state: string; commit_id: string }>> {
+  async listReviews(): Promise<
+    Array<{ id: number; user: string; state: string; commit_id: string }>
+  > {
     return [];
   }
   async listChecks(): Promise<CheckSummary[]> {
@@ -360,8 +480,14 @@ function harness(over: Partial<Config["guards"]> = {}): {
 } {
   const adapter = new FakeGuardAdapter();
   const executor = vi.fn(async () => ({ id: 900 }));
-  const gate = new MutationGate(false, dryrunDir, executor as unknown as (i: MutationIntent) => Promise<unknown>);
-  gate.setGuard(makePostingGuard({ store, adapter, botLogin: BOT, guards: { ...GUARDS_DEFAULTS, ...over } }));
+  const gate = new MutationGate(
+    false,
+    dryrunDir,
+    executor as unknown as (i: MutationIntent) => Promise<unknown>,
+  );
+  gate.setGuard(
+    makePostingGuard({ store, adapter, botLogin: BOT, guards: { ...GUARDS_DEFAULTS, ...over } }),
+  );
   return { gate, adapter, executor };
 }
 
@@ -370,7 +496,12 @@ function approveIntent(commitId = HEAD): MutationIntent {
     kind: "create_review",
     method: "POST",
     path: "/repos/o/r/pulls/5180/reviews",
-    body: { commit_id: commitId, event: "APPROVE", body: "**Verdict: Approve** — nothing blocking.", comments: [] },
+    body: {
+      commit_id: commitId,
+      event: "APPROVE",
+      body: "**Verdict: Approve** — nothing blocking.",
+      comments: [],
+    },
     note: "post APPROVE review on #5180",
     pr: 5180,
   };
@@ -393,7 +524,11 @@ describe("guard 4 — no green CI at this head, no approval", () => {
     expect(body.body).toContain("**Verdict: Approve**");
     expect(body.body).toContain("No blockers were found");
     expect(body.body).toContain("green CI");
-    expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'approval_withheld_red_ci'").get()).toEqual({ c: 1 });
+    expect(
+      store.db
+        .prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'approval_withheld_red_ci'")
+        .get(),
+    ).toEqual({ c: 1 });
   });
 
   it("never produces REQUEST_CHANGES and never parks the PR", async () => {
@@ -407,7 +542,11 @@ describe("guard 4 — no green CI at this head, no approval", () => {
   });
 
   it("withholds identically for an infra cancellation, a skipped suite and a pending run", async () => {
-    for (const checks of [[done("cancelled")], [done("skipped"), done("skipped", "lint")], [run("in_progress", null)]]) {
+    for (const checks of [
+      [done("cancelled")],
+      [done("skipped"), done("skipped", "lint")],
+      [run("in_progress", null)],
+    ]) {
       // guard 2 is off here only so the three cases can share one store: each
       // posts at the same head, which is guard 2's own no-op case.
       const { gate, adapter, executor } = harness({ skip_unchanged_head: false });
@@ -423,7 +562,11 @@ describe("guard 4 — no green CI at this head, no approval", () => {
 
     await gate.execute(approveIntent());
 
-    expect(store.approvalWithheld(5180)).toMatchObject({ head_sha: HEAD, ci_state: "red", reason: "red-ci" });
+    expect(store.approvalWithheld(5180)).toMatchObject({
+      head_sha: HEAD,
+      ci_state: "red",
+      reason: "red-ci",
+    });
   });
 
   it("lets a green suite approve, and clears any older withholding", async () => {
@@ -445,12 +588,19 @@ describe("guard 4 — no green CI at this head, no approval", () => {
 
     expect(sentBody(executor).event).toBe("APPROVE");
     expect(store.approvalWithheld(5180)).toBeUndefined();
-    expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'approval_ci_unreadable'").get()).toEqual({ c: 1 });
+    expect(
+      store.db
+        .prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'approval_ci_unreadable'")
+        .get(),
+    ).toEqual({ c: 1 });
   });
 
   it("does not read CI for a REQUEST_CHANGES or COMMENT review", async () => {
     const { gate, adapter } = harness();
-    await gate.execute({ ...approveIntent(), body: { commit_id: HEAD, event: "REQUEST_CHANGES", body: "x" } });
+    await gate.execute({
+      ...approveIntent(),
+      body: { commit_id: HEAD, event: "REQUEST_CHANGES", body: "x" },
+    });
     expect(adapter.checkCalls).toBe(0);
   });
 
@@ -478,8 +628,14 @@ class CiFake {
 
 function tracked(pr: number, head: string, state: "tracked" | "closed" = "tracked"): void {
   store.upsertPr({
-    number: pr, state, head_sha: head, title: `PR ${pr}`, author: "alice",
-    trigger_ts: null, stale_recheck: 0, migration_gate: 0,
+    number: pr,
+    state,
+    head_sha: head,
+    title: `PR ${pr}`,
+    author: "alice",
+    trigger_ts: null,
+    stale_recheck: 0,
+    migration_gate: 0,
   });
 }
 
@@ -489,11 +645,18 @@ describe("retryWithheldApproval — the promise the withheld note makes", () => 
     store.recordApprovalWithheld(5180, { head_sha: HEAD, ci_state: "red", reason: "red-ci" });
     const adapter = new CiFake();
 
-    const outcome = await retryWithheldApproval({ cfg, store, adapter }, { pr: 5180, head_sha: HEAD, conclusion: "success" });
+    const outcome = await retryWithheldApproval(
+      { cfg, store, adapter },
+      { pr: 5180, head_sha: HEAD, conclusion: "success" },
+    );
 
     expect(outcome).toMatchObject({ action: "requeued", ci: "green" });
     expect(store.getPr(5180)?.state).toBe("queued");
-    expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'approval_retry_queued'").get()).toEqual({ c: 1 });
+    expect(
+      store.db
+        .prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'approval_retry_queued'")
+        .get(),
+    ).toEqual({ c: 1 });
   });
 
   it("does nothing while CI is still red — the mark stands for the next completion", async () => {
@@ -502,7 +665,10 @@ describe("retryWithheldApproval — the promise the withheld note makes", () => 
     const adapter = new CiFake();
     adapter.checks = [done("failure")];
 
-    const outcome = await retryWithheldApproval({ cfg, store, adapter }, { pr: 5180, head_sha: HEAD, conclusion: "failure" });
+    const outcome = await retryWithheldApproval(
+      { cfg, store, adapter },
+      { pr: 5180, head_sha: HEAD, conclusion: "failure" },
+    );
 
     expect(outcome).toMatchObject({ action: "noop", reason: "ci-not-green" });
     expect(store.getPr(5180)?.state).toBe("tracked");
@@ -511,11 +677,21 @@ describe("retryWithheldApproval — the promise the withheld note makes", () => 
 
   it("ignores a PR with no withheld approval, and a completion at another head", async () => {
     tracked(5180, HEAD);
-    expect(await retryWithheldApproval({ cfg, store, adapter: new CiFake() }, { pr: 5180, head_sha: HEAD })).toMatchObject({
+    expect(
+      await retryWithheldApproval(
+        { cfg, store, adapter: new CiFake() },
+        { pr: 5180, head_sha: HEAD },
+      ),
+    ).toMatchObject({
       reason: "no-withheld-approval",
     });
     store.recordApprovalWithheld(5180, { head_sha: OLD, ci_state: "red" });
-    expect(await retryWithheldApproval({ cfg, store, adapter: new CiFake() }, { pr: 5180, head_sha: HEAD })).toMatchObject({
+    expect(
+      await retryWithheldApproval(
+        { cfg, store, adapter: new CiFake() },
+        { pr: 5180, head_sha: HEAD },
+      ),
+    ).toMatchObject({
       reason: "head-moved",
     });
   });
@@ -523,7 +699,12 @@ describe("retryWithheldApproval — the promise the withheld note makes", () => 
   it("never touches a closed PR", async () => {
     tracked(5180, HEAD, "closed");
     store.recordApprovalWithheld(5180, { head_sha: HEAD, ci_state: "red" });
-    expect(await retryWithheldApproval({ cfg, store, adapter: new CiFake() }, { pr: 5180, head_sha: HEAD })).toMatchObject({
+    expect(
+      await retryWithheldApproval(
+        { cfg, store, adapter: new CiFake() },
+        { pr: 5180, head_sha: HEAD },
+      ),
+    ).toMatchObject({
       reason: "pr-not-open",
     });
   });
@@ -534,7 +715,9 @@ describe("retryWithheldApproval — the promise the withheld note makes", () => 
     const adapter = new CiFake();
     adapter.fail = true;
 
-    expect(await retryWithheldApproval({ cfg, store, adapter }, { pr: 5180, head_sha: HEAD })).toMatchObject({
+    expect(
+      await retryWithheldApproval({ cfg, store, adapter }, { pr: 5180, head_sha: HEAD }),
+    ).toMatchObject({
       reason: "ci-unreadable",
     });
     expect(store.getPr(5180)?.state).toBe("tracked");
@@ -544,7 +727,12 @@ describe("retryWithheldApproval — the promise the withheld note makes", () => 
     tracked(5180, HEAD);
     store.recordApprovalWithheld(5180, { head_sha: HEAD, ci_state: "red" });
 
-    expect(await retryWithheldApproval({ cfg, store, adapter: {} }, { pr: 5180, head_sha: HEAD, conclusion: "success" })).toMatchObject({
+    expect(
+      await retryWithheldApproval(
+        { cfg, store, adapter: {} },
+        { pr: 5180, head_sha: HEAD, conclusion: "success" },
+      ),
+    ).toMatchObject({
       action: "requeued",
     });
   });
@@ -574,11 +762,14 @@ describe("the CI-completed trigger reaches the retry", () => {
         // Exactly the daemon's wiring (daemon.ts onCiCompleted).
         onCiCompleted: async (ci) => {
           for (const pr of ci.prs)
-            await retryWithheldApproval({ cfg, store, adapter: new CiFake() }, {
-              pr,
-              head_sha: ci.head_sha,
-              conclusion: ci.conclusion,
-            });
+            await retryWithheldApproval(
+              { cfg, store, adapter: new CiFake() },
+              {
+                pr,
+                head_sha: ci.head_sha,
+                conclusion: ci.conclusion,
+              },
+            );
         },
       },
       i,
@@ -632,7 +823,10 @@ describe("dispatch — a withheld approval is new evidence at the same head", ()
     store.recordApprovalWithheld(5180, { head_sha: HEAD, ci_state: "red" });
     // The last round decided APPROVE at this very head — guard 2's skip case.
     store.recordReviewedHead(5180, { head_sha: HEAD, verdict: "APPROVE", round_no: 1 });
-    await retryWithheldApproval({ cfg, store, adapter: new CiFake() }, { pr: 5180, head_sha: HEAD });
+    await retryWithheldApproval(
+      { cfg, store, adapter: new CiFake() },
+      { pr: 5180, head_sha: HEAD },
+    );
     const h = hooks();
 
     const orders = await dispatchOnce({ cfg, store, adapter: new DispatchFake(), hooks: h.hooks });
@@ -641,18 +835,30 @@ describe("dispatch — a withheld approval is new evidence at the same head", ()
     expect(orders[0]!.head_sha).toBe(HEAD);
     // Spent: the round about to run decides the verdict again from scratch.
     expect(store.approvalWithheld(5180)).toBeUndefined();
-    expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'approval_retry_dispatched'").get()).toEqual({ c: 1 });
+    expect(
+      store.db
+        .prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'approval_retry_dispatched'")
+        .get(),
+    ).toEqual({ c: 1 });
   });
 
   it("still skips an unchanged head with no withholding standing", async () => {
     tracked(5180, HEAD);
     store.recordReviewedHead(5180, { head_sha: HEAD, verdict: "APPROVE", round_no: 1 });
     store.upsertPr({
-      number: 5180, state: "queued", head_sha: HEAD, title: "PR 5180", author: "alice",
-      trigger_ts: "2026-08-18T10:00:00Z", stale_recheck: 0, migration_gate: 0,
+      number: 5180,
+      state: "queued",
+      head_sha: HEAD,
+      title: "PR 5180",
+      author: "alice",
+      trigger_ts: "2026-08-18T10:00:00Z",
+      stale_recheck: 0,
+      migration_gate: 0,
     });
     const h = hooks();
 
-    expect(await dispatchOnce({ cfg, store, adapter: new DispatchFake(), hooks: h.hooks })).toEqual([]);
+    expect(await dispatchOnce({ cfg, store, adapter: new DispatchFake(), hooks: h.hooks })).toEqual(
+      [],
+    );
   });
 });

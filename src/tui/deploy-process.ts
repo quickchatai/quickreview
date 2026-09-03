@@ -3,14 +3,33 @@
 // deploy child is detached and identified by a durable run id; every new TUI
 // generation attaches to the same log/result instead of starting a second
 // deploy or declaring the expected reload a failure.
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 
-export interface DurableDeployHandle { kill(): void }
+export interface DurableDeployHandle {
+  kill(): void;
+}
 
-interface Marker { pid: number; started_at: string; state?: "starting" | "running" }
-interface Result { code: number | null; signal?: string | null; error?: string }
+interface Marker {
+  pid: number;
+  started_at: string;
+  state?: "starting" | "running";
+}
+interface Result {
+  code: number | null;
+  signal?: string | null;
+  error?: string;
+}
 
 export class DurableDeployProcess {
   constructor(
@@ -26,7 +45,10 @@ export class DurableDeployProcess {
     onExit: (code: number | null) => void,
   ): DurableDeployHandle {
     if (!/^[A-Za-z0-9._-]{8,120}$/.test(runId)) {
-      queueMicrotask(() => { onData("invalid durable deploy run id\n"); onExit(1); });
+      queueMicrotask(() => {
+        onData("invalid durable deploy run id\n");
+        onExit(1);
+      });
       return { kill: () => {} };
     }
     mkdirSync(this.stateDir, { recursive: true });
@@ -49,14 +71,21 @@ export class DurableDeployProcess {
         // The marker is valid BEFORE spawn. If this process dies in the tiny
         // startup window, a later attach times out the `starting` lease and
         // fails visibly instead of polling forever or duplicating the run.
-        writeFileSync(markerFd, `${JSON.stringify({ pid: 0, started_at: startedAt, state: "starting" })}\n`);
+        writeFileSync(
+          markerFd,
+          `${JSON.stringify({ pid: 0, started_at: startedAt, state: "starting" })}\n`,
+        );
         closeSync(markerFd);
         closeSync(openSync(logPath, "a", 0o600));
-        const child = spawn(process.execPath, [join(this.root, "scripts", "tui-deploy-runner.mjs"), this.root, logPath, resultPath], {
-          cwd: this.root,
-          detached: true,
-          stdio: "ignore",
-        });
+        const child = spawn(
+          process.execPath,
+          [join(this.root, "scripts", "tui-deploy-runner.mjs"), this.root, logPath, resultPath],
+          {
+            cwd: this.root,
+            detached: true,
+            stdio: "ignore",
+          },
+        );
         if (child.pid) {
           marker = { pid: child.pid, started_at: startedAt, state: "running" };
           const tmp = `${markerPath}.tmp-${process.pid}`;
@@ -94,10 +123,16 @@ export class DurableDeployProcess {
       const current = this.readMarker(markerPath);
       let malformedMarkerStale = false;
       if (!current && existsSync(markerPath)) {
-        try { malformedMarkerStale = Date.now() - statSync(markerPath).mtimeMs > this.startupLeaseMs; }
-        catch { /* raced a writer; the next pump decides */ }
+        try {
+          malformedMarkerStale = Date.now() - statSync(markerPath).mtimeMs > this.startupLeaseMs;
+        } catch {
+          /* raced a writer; the next pump decides */
+        }
       }
-      if ((current?.pid === 0 && Date.now() - Date.parse(current.started_at) > this.startupLeaseMs) || malformedMarkerStale) {
+      if (
+        (current?.pid === 0 && Date.now() - Date.parse(current.started_at) > this.startupLeaseMs) ||
+        malformedMarkerStale
+      ) {
         done = true;
         clearInterval(timer);
         onData("\ndetached deploy runner never started; drain remains on\n");
@@ -112,9 +147,14 @@ export class DurableDeployProcess {
       kill: () => {
         const current = this.readMarker(markerPath) ?? marker;
         if (!current || current.pid <= 0) return;
-        try { process.kill(-current.pid, "SIGTERM"); }
-        catch {
-          try { process.kill(current.pid, "SIGTERM"); } catch { /* already gone */ }
+        try {
+          process.kill(-current.pid, "SIGTERM");
+        } catch {
+          try {
+            process.kill(current.pid, "SIGTERM");
+          } catch {
+            /* already gone */
+          }
         }
       },
     };
@@ -123,17 +163,25 @@ export class DurableDeployProcess {
   private readMarker(path: string): Marker | undefined {
     try {
       const value = JSON.parse(readFileSync(path, "utf8")) as Partial<Marker>;
-      return Number.isInteger(value.pid) && (value.pid ?? -1) >= 0 && typeof value.started_at === "string"
-        ? value as Marker
+      return Number.isInteger(value.pid) &&
+        (value.pid ?? -1) >= 0 &&
+        typeof value.started_at === "string"
+        ? (value as Marker)
         : undefined;
-    } catch { return undefined; }
+    } catch {
+      return undefined;
+    }
   }
 
   private writeFailure(path: string, error: string): void {
     if (existsSync(path)) return;
     const tmp = `${path}.tmp-${process.pid}`;
     try {
-      writeFileSync(tmp, `${JSON.stringify({ code: 1, error, finished_at: new Date().toISOString() })}\n`, { mode: 0o600 });
+      writeFileSync(
+        tmp,
+        `${JSON.stringify({ code: 1, error, finished_at: new Date().toISOString() })}\n`,
+        { mode: 0o600 },
+      );
       renameSync(tmp, path);
     } catch {
       // The startup lease remains the bounded fallback if even the result
@@ -145,8 +193,10 @@ export class DurableDeployProcess {
     try {
       const value = JSON.parse(readFileSync(path, "utf8")) as Partial<Result>;
       return value.code === null || (typeof value.code === "number" && Number.isInteger(value.code))
-        ? value as Result
+        ? (value as Result)
         : undefined;
-    } catch { return undefined; }
+    } catch {
+      return undefined;
+    }
   }
 }

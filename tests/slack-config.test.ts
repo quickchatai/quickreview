@@ -48,10 +48,21 @@ describe("shipped config.toml [slack]", () => {
 
   it("parses every per-cause switch and cooldown", () => {
     expect(cfg.slack.policy.causes["round.overdue"]).toEqual({ enabled: true, cooldown_min: 60 });
-    expect(cfg.slack.policy.causes["pr.not_picked_up"]).toEqual({ enabled: true, cooldown_min: 120 });
-    expect(cfg.slack.policy.causes["reconcile.storm"]).toEqual({ enabled: false, cooldown_min: 180 });
-    expect(cfg.slack.policy.causes["pr.awaiting_author_stale"]).toEqual({ enabled: false, cooldown_min: 1440 });
-    expect(Object.keys(cfg.slack.policy.causes).sort()).toEqual(Object.keys(SLACK_CAUSE_DEFAULTS).sort());
+    expect(cfg.slack.policy.causes["pr.not_picked_up"]).toEqual({
+      enabled: true,
+      cooldown_min: 120,
+    });
+    expect(cfg.slack.policy.causes["reconcile.storm"]).toEqual({
+      enabled: false,
+      cooldown_min: 180,
+    });
+    expect(cfg.slack.policy.causes["pr.awaiting_author_stale"]).toEqual({
+      enabled: false,
+      cooldown_min: 1440,
+    });
+    expect(Object.keys(cfg.slack.policy.causes).sort()).toEqual(
+      Object.keys(SLACK_CAUSE_DEFAULTS).sort(),
+    );
   });
 
   it("holds no token anywhere — only file names", () => {
@@ -79,7 +90,9 @@ describe("defaults merge", () => {
   });
 
   it("a partial cause override merges into the default cause map", () => {
-    const cfg = withSlack(`[slack]\n[slack.policy.causes]\n"digest.eod" = { enabled = true, cooldown_min = 5 }\n"custom.thing" = { enabled = true, cooldown_min = 7 }\n`);
+    const cfg = withSlack(
+      `[slack]\n[slack.policy.causes]\n"digest.eod" = { enabled = true, cooldown_min = 5 }\n"custom.thing" = { enabled = true, cooldown_min = 7 }\n`,
+    );
     expect(cfg.slack.policy.causes["digest.eod"]).toEqual({ enabled: true, cooldown_min: 5 });
     expect(cfg.slack.policy.causes["custom.thing"]).toEqual({ enabled: true, cooldown_min: 7 });
     expect(cfg.slack.policy.causes["round.overdue"]).toEqual({ enabled: true, cooldown_min: 60 });
@@ -96,7 +109,8 @@ describe("defaults merge", () => {
 describe("boot validation", () => {
   const enabled = (extra = "") =>
     `[slack]\nenabled = true\nchannel = "C123"\nlegacy_owner_slack_id = "U0MAT"\n${extra}\n[slack.users]\nU0MAT = "mhale"\n`;
-  const bothTokens = () => (path: string) => (path.endsWith("slack_bot_token") || path.endsWith("slack_app_token") ? "xoxb-x" : undefined);
+  const bothTokens = () => (path: string) =>
+    path.endsWith("slack_bot_token") || path.endsWith("slack_app_token") ? "xoxb-x" : undefined;
 
   it("stays silent when disabled — nothing required, nothing read", () => {
     let reads = 0;
@@ -113,18 +127,24 @@ describe("boot validation", () => {
   });
 
   it("fails loud when enabled with an empty channel", () => {
-    expect(() => withSlack(`[slack]\nenabled = true\nchannel = ""\nlegacy_owner_slack_id = "U0MAT"\n[slack.users]\nU0MAT = "mhale"\n`)).toThrow(
-      /non-empty `channel`/,
-    );
+    expect(() =>
+      withSlack(
+        `[slack]\nenabled = true\nchannel = ""\nlegacy_owner_slack_id = "U0MAT"\n[slack.users]\nU0MAT = "mhale"\n`,
+      ),
+    ).toThrow(/non-empty `channel`/);
   });
 
   it("fails loud when the owner Slack id is empty — the error names the NEW key", () => {
-    expect(() => withSlack(`[slack]\nenabled = true\nchannel = "C1"\nlegacy_owner_slack_id = ""\n`)).toThrow(/non-empty `\[owner\] slack_id`/);
+    expect(() =>
+      withSlack(`[slack]\nenabled = true\nchannel = "C1"\nlegacy_owner_slack_id = ""\n`),
+    ).toThrow(/non-empty `\[owner\] slack_id`/);
   });
 
   it("fails loud when the owner Slack id is absent from [slack.users]", () => {
     expect(() =>
-      withSlack(`[slack]\nenabled = true\nchannel = "C1"\nlegacy_owner_slack_id = "U0MAT"\n[slack.users]\nU0OTHER = "someone"\n`),
+      withSlack(
+        `[slack]\nenabled = true\nchannel = "C1"\nlegacy_owner_slack_id = "U0MAT"\n[slack.users]\nU0OTHER = "someone"\n`,
+      ),
     ).toThrow(/must appear as a key in \[slack.users\]/);
   });
 
@@ -136,13 +156,17 @@ describe("boot validation", () => {
   });
 
   it("prefers [owner] slack_id when both are set and equal", () => {
-    const base = shipped.slice(0, shipped.indexOf("\n[slack]")).replace('slack_id = ""', 'slack_id = "U0MAT"');
+    const base = shipped
+      .slice(0, shipped.indexOf("\n[slack]"))
+      .replace('slack_id = ""', 'slack_id = "U0MAT"');
     const cfg = parseConfig(`${base}\n${enabled()}\n`);
     expect(cfg.owner.slack_id).toBe("U0MAT");
   });
 
   it("rejects a conflicting legacy/new pair, naming the new key", () => {
-    const base = shipped.slice(0, shipped.indexOf("\n[slack]")).replace('slack_id = ""', 'slack_id = "U0OTHER"');
+    const base = shipped
+      .slice(0, shipped.indexOf("\n[slack]"))
+      .replace('slack_id = ""', 'slack_id = "U0OTHER"');
     expect(() => parseConfig(`${base}\n${enabled()}\n`)).toThrow(/set `\[owner\] slack_id` only/);
   });
 
@@ -157,9 +181,13 @@ describe("boot validation", () => {
 
   it("fails loud on a missing or empty token file — never a silent read-only Slack", () => {
     const cfg = withSlack(enabled());
-    expect(() => validateSlackConfig(cfg, { readSecret: () => undefined })).toThrow(/bot token file .* missing or empty/);
+    expect(() => validateSlackConfig(cfg, { readSecret: () => undefined })).toThrow(
+      /bot token file .* missing or empty/,
+    );
     expect(() =>
-      validateSlackConfig(cfg, { readSecret: (p) => (p.endsWith("slack_bot_token") ? "xoxb-x" : undefined) }),
+      validateSlackConfig(cfg, {
+        readSecret: (p) => (p.endsWith("slack_bot_token") ? "xoxb-x" : undefined),
+      }),
     ).toThrow(/app token file .* missing or empty/);
   });
 

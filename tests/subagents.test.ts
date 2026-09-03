@@ -47,7 +47,10 @@ describe("sanitizeParams", () => {
       {},
     );
     expect(out.cwd).toBeUndefined();
-    expect((out.tasks as Record<string, unknown>[]).map((t) => t.cwd)).toEqual([undefined, undefined]);
+    expect((out.tasks as Record<string, unknown>[]).map((t) => t.cwd)).toEqual([
+      undefined,
+      undefined,
+    ]);
     expect((out.chain as Record<string, unknown>[])[0]?.cwd).toBeUndefined();
     // Everything else passes through untouched.
     expect(out.agent).toBe("pass-baseline--sol-high");
@@ -61,9 +64,13 @@ describe("sanitizeParams", () => {
   });
 
   it("honours a valid scope override from the environment only", () => {
-    expect(sanitizeParams({ agentScope: "both" }, { [SCOPE_ENV]: "project" }).agentScope).toBe("project");
+    expect(sanitizeParams({ agentScope: "both" }, { [SCOPE_ENV]: "project" }).agentScope).toBe(
+      "project",
+    );
     // A garbage env value falls back to user, never to what the model asked.
-    expect(sanitizeParams({ agentScope: "both" }, { [SCOPE_ENV]: "everything" }).agentScope).toBe("user");
+    expect(sanitizeParams({ agentScope: "both" }, { [SCOPE_ENV]: "everything" }).agentScope).toBe(
+      "user",
+    );
   });
 });
 
@@ -92,7 +99,9 @@ describe("callWeight", () => {
 
   it("a parallel call weighs its task count, bounded by the native in-call cap", () => {
     expect(callWeight({ tasks: [{}, {}] }, 6)).toBe(2);
-    expect(callWeight({ tasks: [{}, {}, {}, {}, {}, {}, {}, {}] }, 6)).toBe(NATIVE_IN_CALL_CONCURRENCY);
+    expect(callWeight({ tasks: [{}, {}, {}, {}, {}, {}, {}, {}] }, 6)).toBe(
+      NATIVE_IN_CALL_CONCURRENCY,
+    );
     // …and by the permit count, so one oversized call can always start.
     expect(callWeight({ tasks: [{}, {}, {}, {}] }, 2)).toBe(2);
   });
@@ -163,6 +172,11 @@ describe("wrapExecute", () => {
       gates.shift()?.();
       await tick();
     }
+    // These ARE promises — wrapExecute returns an async function. They are
+    // DECLARED through pi's ToolExecute, which is our deliberately-minimal
+    // ambient declaration of someone else's API, and widening that to satisfy
+    // a lint rule is what the VERIFY-ON-PIN discipline exists to prevent.
+    // eslint-disable-next-line @typescript-eslint/await-thenable
     await Promise.all(calls);
     expect(peak).toBe(2);
     expect(sem.held).toBe(0);
@@ -188,8 +202,20 @@ describe("wrapExecute", () => {
       batchSizes.push(tasks.length);
       if (tasks.length > NATIVE_MAX_PARALLEL_TASKS) throw new Error("native task cap exceeded");
       const results = tasks.map((task) => ({
-        ...task, agentSource: "user", exitCode: task.task === "task-3" ? 1 : 0, messages: [{ role: "assistant", content: task.task }],
-        stderr: "", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 2, turns: 1 },
+        ...task,
+        agentSource: "user",
+        exitCode: task.task === "task-3" ? 1 : 0,
+        messages: [{ role: "assistant", content: task.task }],
+        stderr: "",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          cost: 0,
+          contextTokens: 2,
+          turns: 1,
+        },
       }));
       return {
         content: [{ type: "text", text: tasks.map((task) => task.task).join(",") }],
@@ -197,9 +223,13 @@ describe("wrapExecute", () => {
       };
     });
     const wrapped = wrapExecute(execute, new WeightedSemaphore(6), {});
-    const tasks = Array.from({ length: 10 }, (_, i) => ({ agent: `pass-${i}`, task: `task-${i}`, cwd: "/evil" }));
+    const tasks = Array.from({ length: 10 }, (_, i) => ({
+      agent: `pass-${i}`,
+      task: `task-${i}`,
+      cwd: "/evil",
+    }));
 
-    const result = await wrapped("round", { tasks }) as unknown as {
+    const result = (await wrapped("round", { tasks })) as unknown as {
       content: Array<{ text: string }>;
       details: { results: Array<{ task: string }> };
     };
@@ -217,7 +247,9 @@ describe("wrapExecute", () => {
       const tasks = (params as { tasks: Array<{ agent: string; task: string }> }).tasks;
       batchSizes.push(tasks.length);
       return {
-        content: [{ type: "text", text: `Parallel: ${tasks.length}/${tasks.length} succeeded\n\nok` }],
+        content: [
+          { type: "text", text: `Parallel: ${tasks.length}/${tasks.length} succeeded\n\nok` },
+        ],
         details: { mode: "parallel", results: tasks.map((task) => ({ ...task, exitCode: 0 })) },
       };
     });
@@ -231,10 +263,16 @@ describe("wrapExecute", () => {
 
   it("fails explicitly on native final-result contract drift and releases permits", async () => {
     const sem = new WeightedSemaphore(6);
-    const wrapped = wrapExecute(asExecute(async () => ({ content: [] })), sem, {});
+    const wrapped = wrapExecute(
+      asExecute(async () => ({ content: [] })),
+      sem,
+      {},
+    );
     const tasks = Array.from({ length: 9 }, (_, i) => ({ agent: `pass-${i}`, task: `task-${i}` }));
 
-    await expect(wrapped("round", { tasks })).rejects.toThrow("native parallel result contract changed");
+    await expect(wrapped("round", { tasks })).rejects.toThrow(
+      "native parallel result contract changed",
+    );
     expect(sem.held).toBe(0);
   });
 
@@ -253,7 +291,7 @@ describe("wrapExecute", () => {
     const tasks = Array.from({ length: 9 }, (_, i) => ({ agent: `pass-${i}`, task: `task-${i}` }));
 
     await wrapped("round", { tasks }, undefined, (update: unknown) => {
-      counts.push(((update as { details: { results: unknown[] } }).details.results).length);
+      counts.push((update as { details: { results: unknown[] } }).details.results.length);
     });
 
     expect(counts).toEqual([8, 9]);
@@ -264,10 +302,14 @@ describe("wrapExecute", () => {
     await sem.acquire(1);
     const controller = new AbortController();
     let calls = 0;
-    const wrapped = wrapExecute(asExecute(async () => {
-      calls += 1;
-      return { content: [] };
-    }), sem, {});
+    const wrapped = wrapExecute(
+      asExecute(async () => {
+        calls += 1;
+        return { content: [] };
+      }),
+      sem,
+      {},
+    );
     const pending = wrapped("queued", { agent: "a", task: "t" }, controller.signal);
     await tick();
     controller.abort(new Error("cancelled in queue"));
@@ -286,12 +328,17 @@ describe("wrapExecute", () => {
       calls += 1;
       const tasks = (params as { tasks: Array<{ agent: string; task: string }> }).tasks;
       controller.abort(new Error("stop after first batch"));
-      return { content: [], details: { mode: "parallel", results: tasks.map((task) => ({ ...task, exitCode: 0 })) } };
+      return {
+        content: [],
+        details: { mode: "parallel", results: tasks.map((task) => ({ ...task, exitCode: 0 })) },
+      };
     });
     const wrapped = wrapExecute(execute, sem, {});
     const tasks = Array.from({ length: 9 }, (_, i) => ({ agent: `pass-${i}`, task: `task-${i}` }));
 
-    await expect(wrapped("round", { tasks }, controller.signal)).rejects.toThrow("stop after first batch");
+    await expect(wrapped("round", { tasks }, controller.signal)).rejects.toThrow(
+      "stop after first batch",
+    );
     expect(calls).toBe(1);
     expect(sem.held).toBe(0);
   });
@@ -308,14 +355,20 @@ describe("wrapExecute", () => {
     await expect(wrapped("id", { agent: "a", task: "t" })).rejects.toThrow("boom");
     expect(sem.held).toBe(0);
     // A later call still gets through — the permit came back.
-    const ok = wrapExecute(asExecute(async () => ({ content: [] })), sem, {});
+    const ok = wrapExecute(
+      asExecute(async () => ({ content: [] })),
+      sem,
+      {},
+    );
     await expect(ok("id2", { agent: "a", task: "t" })).resolves.toEqual({ content: [] });
   });
 });
 
 describe("nativeExtensionPath", () => {
   it("addresses the shipped example inside the installed package", () => {
-    expect(nativeExtensionPath("/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/examples")).toBe(
+    expect(
+      nativeExtensionPath("/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/examples"),
+    ).toBe(
       "/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/examples/extensions/subagent/index.ts",
     );
   });

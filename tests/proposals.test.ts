@@ -58,7 +58,8 @@ describe("local proposal store (state/rubric/ in THIS repo — the companion wri
 
   const seed = (slug: string, files: Record<string, string>): void => {
     mkdirSync(join(root, "state/rubric", slug), { recursive: true });
-    for (const [name, body] of Object.entries(files)) writeFileSync(join(root, "state/rubric", slug, name), body);
+    for (const [name, body] of Object.entries(files))
+      writeFileSync(join(root, "state/rubric", slug, name), body);
   };
 
   it("lives under <repoRoot>/state/rubric — a local path, never a VM one", () => {
@@ -135,7 +136,8 @@ describe("patch vetting — targets", () => {
   });
 
   it("sees deletions and renames — a +++ /dev/null cannot hide a victim (review fix)", () => {
-    const deletion = PATCH + `--- a/src/gate.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-export const gate = 1;\n`;
+    const deletion =
+      PATCH + `--- a/src/gate.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-export const gate = 1;\n`;
     expect(patchTargets(deletion)).toContain("src/gate.ts");
     expect(targetsAllowed(patchTargets(deletion))).toBe(false);
     const rename = "rename from src/gate.ts\nrename to agents/pass-x.md\n" + PATCH;
@@ -187,10 +189,20 @@ describe("proposal kinds (config beside rubric)", () => {
 });
 
 // A prompt with a RATIFIED fence on lines 3..6 (markers included).
-const FENCED = ["intro line", "", "<!-- RATIFIED ci-gate — do not edit; owner only -->", "ratified line A", "ratified line B", "<!-- /RATIFIED ci-gate -->", "outro line", ""].join("\n");
+const FENCED = [
+  "intro line",
+  "",
+  "<!-- RATIFIED ci-gate — do not edit; owner only -->",
+  "ratified line A",
+  "ratified line B",
+  "<!-- /RATIFIED ci-gate -->",
+  "outro line",
+  "",
+].join("\n");
 
 describe("patch vetting — RATIFIED fences (rule 6, structural)", () => {
-  const read = (rel: string): FenceSource => (rel === "prompts/round-first.md" ? { state: "content", content: FENCED } : { state: "absent" });
+  const read = (rel: string): FenceSource =>
+    rel === "prompts/round-first.md" ? { state: "content", content: FENCED } : { state: "absent" };
 
   it("fenceRanges returns 1-based inclusive ranges, markers included; unterminated protects to EOF", () => {
     expect(fenceRanges(FENCED)).toEqual([{ start: 3, end: 6 }]);
@@ -200,7 +212,9 @@ describe("patch vetting — RATIFIED fences (rule 6, structural)", () => {
 
   it("refuses a deletion/edit of a line inside the fence", () => {
     const patch = `--- a/prompts/round-first.md\n+++ b/prompts/round-first.md\n@@ -3,4 +3,4 @@\n <!-- RATIFIED ci-gate — do not edit; owner only -->\n-ratified line A\n+quietly weakened line A\n ratified line B\n <!-- /RATIFIED ci-gate -->\n`;
-    expect(patchFenceViolation(patch, read)).toMatch(/inside a RATIFIED fence in prompts\/round-first\.md/);
+    expect(patchFenceViolation(patch, read)).toMatch(
+      /inside a RATIFIED fence in prompts\/round-first\.md/,
+    );
   });
 
   it("refuses deleting a fence marker itself", () => {
@@ -217,7 +231,9 @@ describe("patch vetting — RATIFIED fences (rule 6, structural)", () => {
     const patch = `--- a/prompts/round-first.md\n+++ b/prompts/round-first.md\n@@ -7,1 +7,3 @@\n outro line\n+<!-- RATIFIED fake — do not edit; owner only -->\n+ridden-in text\n`;
     expect(patchFenceViolation(patch, read)).toMatch(/adds a RATIFIED fence marker/);
     const close = `--- a/agents/pass-x.md\n+++ b/agents/pass-x.md\n@@ -1,1 +1,2 @@\n body\n+<!-- /RATIFIED sneaky -->\n`;
-    expect(patchFenceViolation(close, () => ({ state: "content", content: "body\n" }))).toMatch(/adds a RATIFIED fence marker/);
+    expect(patchFenceViolation(close, () => ({ state: "content", content: "body\n" }))).toMatch(
+      /adds a RATIFIED fence marker/,
+    );
   });
 
   // the guard fails CLOSED. It refuses at the `--- ` line, before it
@@ -226,8 +242,12 @@ describe("patch vetting — RATIFIED fences (rule 6, structural)", () => {
   it("refuses on an unreadable target, whatever the hunks do", () => {
     const unreadable = (): FenceSource => ({ state: "unreadable", reason: "EACCES" });
     const outside = `--- a/prompts/round-first.md\n+++ b/prompts/round-first.md\n@@ -7,1 +7,2 @@\n outro line\n+one more outro line\n`;
-    expect(patchFenceViolation(outside, unreadable)).toMatch(/cannot read prompts\/round-first\.md to check its RATIFIED fences \(EACCES\)/);
-    expect(patchFenceViolation(outside, unreadable)).toMatch(/an unreadable file is not an unfenced one/);
+    expect(patchFenceViolation(outside, unreadable)).toMatch(
+      /cannot read prompts\/round-first\.md to check its RATIFIED fences \(EACCES\)/,
+    );
+    expect(patchFenceViolation(outside, unreadable)).toMatch(
+      /an unreadable file is not an unfenced one/,
+    );
 
     // fenceSourceFrom is the production reader: ENOENT is the ONLY absence.
     const dir = mkdtempSync(join(tmpdir(), "fence-src-"));
@@ -245,7 +265,9 @@ describe("patch vetting — RATIFIED fences (rule 6, structural)", () => {
     expect(patchFenceViolation(outside, read)).toBeNull();
     const fresh = `--- /dev/null\n+++ b/agents/pass-new.md\n@@ -0,0 +1,1 @@\n+brand new body\n`;
     expect(patchFenceViolation(fresh, () => ({ state: "absent" }))).toBeNull();
-    expect(patchFenceViolation(PATCH, () => ({ state: "content", content: "line one\nline two\n" }))).toBeNull();
+    expect(
+      patchFenceViolation(PATCH, () => ({ state: "content", content: "line one\nline two\n" })),
+    ).toBeNull();
   });
 });
 
@@ -256,24 +278,43 @@ describe("recordRatification", () => {
     mkdirSync(join(root, "tests/fixtures"), { recursive: true });
     mkdirSync(join(root, "agents"), { recursive: true });
     writeFileSync(join(root, "agents/pass-baseline.md"), "patched body\n");
-    writeFileSync(join(root, "tests/fixtures/seed-manifest.json"), JSON.stringify({ files: { "agents/pass-baseline.md": "oldhash" } }));
-    writeFileSync(join(root, "tests/fixtures/ratified-divergence.json"), JSON.stringify({ files: {} }));
+    writeFileSync(
+      join(root, "tests/fixtures/seed-manifest.json"),
+      JSON.stringify({ files: { "agents/pass-baseline.md": "oldhash" } }),
+    );
+    writeFileSync(
+      join(root, "tests/fixtures/ratified-divergence.json"),
+      JSON.stringify({ files: {} }),
+    );
   });
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
   it("re-pins the manifest hash, refreshes the seeds/ copy, and appends a dated owner note", () => {
-    const touched = recordRatification(root, ["agents/pass-baseline.md"], "fix-mergebase", "2026-08-20");
+    const touched = recordRatification(
+      root,
+      ["agents/pass-baseline.md"],
+      "fix-mergebase",
+      "2026-08-20",
+    );
     expect(touched).toEqual(["agents/pass-baseline.md"]);
-    const manifest = JSON.parse(readFileSync(join(root, "tests/fixtures/seed-manifest.json"), "utf8"));
+    const manifest = JSON.parse(
+      readFileSync(join(root, "tests/fixtures/seed-manifest.json"), "utf8"),
+    );
     expect(manifest.files["agents/pass-baseline.md"]).toMatch(/^[0-9a-f]{64}$/);
     expect(manifest.files["agents/pass-baseline.md"]).not.toBe("oldhash");
     // the in-repo canonical copy tracks the ratified content, so the
     // provenance suite stays green after an accept.
-    expect(readFileSync(join(root, "seeds/agents/pass-baseline.md"), "utf8")).toBe("patched body\n");
-    const div = JSON.parse(readFileSync(join(root, "tests/fixtures/ratified-divergence.json"), "utf8"));
+    expect(readFileSync(join(root, "seeds/agents/pass-baseline.md"), "utf8")).toBe(
+      "patched body\n",
+    );
+    const div = JSON.parse(
+      readFileSync(join(root, "tests/fixtures/ratified-divergence.json"), "utf8"),
+    );
     // grandfathering: new notes say "owner", legacy notes say
     // "the owner" — the verifying grammar accepts both, so old history validates.
-    expect(div.files["agents/pass-baseline.md"][0]).toMatch(/^2026-08-20 (?:the owner|owner): rubric proposal 'fix-mergebase'/);
+    expect(div.files["agents/pass-baseline.md"][0]).toMatch(
+      /^2026-08-20 (?:the owner|owner): rubric proposal 'fix-mergebase'/,
+    );
   });
 
   it("skips non-seeded files (no exemption needed)", () => {
@@ -290,8 +331,14 @@ describe("acceptProposal (local dirs, fake git)", () => {
     mkdirSync(join(root, "agents"), { recursive: true });
     mkdirSync(join(root, "prompts"), { recursive: true });
     writeFileSync(join(root, "agents/pass-baseline.md"), "line one\nline two\n");
-    writeFileSync(join(root, "tests/fixtures/seed-manifest.json"), JSON.stringify({ files: { "agents/pass-baseline.md": "old" } }));
-    writeFileSync(join(root, "tests/fixtures/ratified-divergence.json"), JSON.stringify({ files: {} }));
+    writeFileSync(
+      join(root, "tests/fixtures/seed-manifest.json"),
+      JSON.stringify({ files: { "agents/pass-baseline.md": "old" } }),
+    );
+    writeFileSync(
+      join(root, "tests/fixtures/ratified-divergence.json"),
+      JSON.stringify({ files: {} }),
+    );
   });
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
@@ -318,18 +365,28 @@ describe("acceptProposal (local dirs, fake git)", () => {
       "fix-mergebase",
     );
     expect(res.ok).toBe(true);
-    expect(gitCalls.map((c) => c.slice(0, 2).join(" "))).toEqual(["git apply", "git apply", "git add", "git commit"]);
+    expect(gitCalls.map((c) => c.slice(0, 2).join(" "))).toEqual([
+      "git apply",
+      "git apply",
+      "git add",
+      "git commit",
+    ]);
     // The refreshed canonical copy rides the same commit as the reseed.
     expect(gitCalls[2]).toContain("seeds/agents/pass-baseline.md");
     // role wording, old spelling grandfathered (history never rewrites).
     expect(gitCalls[3]!.join(" ")).toMatch(/ratified by (?:the owner|the owner) via TUI/);
-    const div = JSON.parse(readFileSync(join(root, "tests/fixtures/ratified-divergence.json"), "utf8"));
+    const div = JSON.parse(
+      readFileSync(join(root, "tests/fixtures/ratified-divergence.json"), "utf8"),
+    );
     expect(Object.keys(div.files)).toEqual(["agents/pass-baseline.md"]);
     expect(existsSync(join(root, "state/rubric/fix-mergebase"))).toBe(false);
   });
 
   it("refuses when there is no changes.patch", async () => {
-    const res = await acceptProposal({ git: { run: () => Promise.resolve("") }, repoRoot: root, today: () => "2026-08-20" }, "ghost");
+    const res = await acceptProposal(
+      { git: { run: () => Promise.resolve("") }, repoRoot: root, today: () => "2026-08-20" },
+      "ghost",
+    );
     expect(res.ok).toBe(false);
     expect(res.message).toContain("no changes.patch");
   });
@@ -409,13 +466,18 @@ describe("acceptProposal (local dirs, fake git)", () => {
       "fence-ride-unreadable",
     );
     expect(res.ok).toBe(false);
-    expect(res.message).toMatch(/cannot read prompts\/round-first\.md to check its RATIFIED fences/);
+    expect(res.message).toMatch(
+      /cannot read prompts\/round-first\.md to check its RATIFIED fences/,
+    );
     expect(gitCalls).toHaveLength(0); // never applied, never committed
     expect(existsSync(join(root, "state/rubric/fence-ride-unreadable"))).toBe(true);
   });
 
   it("a target the patch CREATES is still fine — absent is not unreadable", async () => {
-    propose("brand-new", `--- /dev/null\n+++ b/agents/pass-new.md\n@@ -0,0 +1,1 @@\n+brand new body\n`);
+    propose(
+      "brand-new",
+      `--- /dev/null\n+++ b/agents/pass-new.md\n@@ -0,0 +1,1 @@\n+brand new body\n`,
+    );
     const res = await acceptProposal(
       { git: { run: () => Promise.resolve("") }, repoRoot: root, today: () => "2026-08-20" },
       "brand-new",
@@ -424,7 +486,10 @@ describe("acceptProposal (local dirs, fake git)", () => {
   });
 
   it("accepts a config proposal: applies + commits, no ratification bookkeeping, dir removed", async () => {
-    writeFileSync(join(root, "config.toml"), "# comment\nescalation_mention_default = \"oldhandle\"\n");
+    writeFileSync(
+      join(root, "config.toml"),
+      '# comment\nescalation_mention_default = "oldhandle"\n',
+    );
     propose("calibrate-mention", CONFIG_PATCH);
     const gitCalls: string[][] = [];
     const res = await acceptProposal(
@@ -441,18 +506,28 @@ describe("acceptProposal (local dirs, fake git)", () => {
       "calibrate-mention",
     );
     expect(res.ok).toBe(true);
-    expect(gitCalls.map((c) => c.slice(0, 2).join(" "))).toEqual(["git apply", "git apply", "git add", "git commit"]);
+    expect(gitCalls.map((c) => c.slice(0, 2).join(" "))).toEqual([
+      "git apply",
+      "git apply",
+      "git add",
+      "git commit",
+    ]);
     expect(gitCalls[2]).toContain("config.toml");
     expect(gitCalls[2]).not.toContain("tests/fixtures/seed-manifest.json");
     expect(gitCalls[3]!.join(" ")).toContain("config: accept 'calibrate-mention'");
     // config.toml is not a seed: the divergence registry is untouched.
-    const div = JSON.parse(readFileSync(join(root, "tests/fixtures/ratified-divergence.json"), "utf8"));
+    const div = JSON.parse(
+      readFileSync(join(root, "tests/fixtures/ratified-divergence.json"), "utf8"),
+    );
     expect(Object.keys(div.files)).toEqual([]);
     expect(existsSync(join(root, "state/rubric/calibrate-mention"))).toBe(false);
   });
 
   it("refuses a config proposal touching dry_run, before touching git — rule 1, structural", async () => {
-    propose("flip-dry-run", `--- a/config.toml\n+++ b/config.toml\n@@ -4,1 +4,1 @@\n-dry_run = false\n+dry_run = true\n`);
+    propose(
+      "flip-dry-run",
+      `--- a/config.toml\n+++ b/config.toml\n@@ -4,1 +4,1 @@\n-dry_run = false\n+dry_run = true\n`,
+    );
     const gitCalls: string[][] = [];
     const res = await acceptProposal(
       {
@@ -475,7 +550,10 @@ describe("acceptProposal (local dirs, fake git)", () => {
 
   it("refuses a patch mixing config.toml with rubric targets — kinds never mix", async () => {
     propose("mixed", CONFIG_PATCH + PATCH);
-    const res = await acceptProposal({ git: { run: () => Promise.resolve("") }, repoRoot: root, today: () => "2026-08-30" }, "mixed");
+    const res = await acceptProposal(
+      { git: { run: () => Promise.resolve("") }, repoRoot: root, today: () => "2026-08-30" },
+      "mixed",
+    );
     expect(res.ok).toBe(false);
     expect(res.message).toContain("non-proposal paths");
   });
@@ -485,7 +563,10 @@ describe("acceptProposal (local dirs, fake git)", () => {
     const res = await acceptProposal(
       {
         git: {
-          run: (_cmd, args) => (args[1] === "--check" ? Promise.reject(new Error("does not apply")) : Promise.resolve("")),
+          run: (_cmd, args) =>
+            args[1] === "--check"
+              ? Promise.reject(new Error("does not apply"))
+              : Promise.resolve(""),
         },
         repoRoot: root,
         today: () => "2026-08-20",

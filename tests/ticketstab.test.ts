@@ -18,8 +18,12 @@ const ticket = (id: string, status = "open", lines = 3): TrackerTicket => ({
   body: `# Ticket ${id}\n\n${Array.from({ length: lines }, (_, i) => `line ${i}`).join("\n")}`,
 });
 
-const screenOf = (rig: Rig, cols = 120, rows = 30): string => stripAnsi(rig.app.hooks.tabs.tickets!.screen(rig.app, cols, rows).render());
-const key = (rig: Rig, k: Parameters<NonNullable<typeof rig.app.hooks.tabs.tickets>["key"]>[1]): boolean => rig.app.hooks.tabs.tickets!.key(rig.app, k);
+const screenOf = (rig: Rig, cols = 120, rows = 30): string =>
+  stripAnsi(rig.app.hooks.tabs.tickets!.screen(rig.app, cols, rows).render());
+const key = (
+  rig: Rig,
+  k: Parameters<NonNullable<typeof rig.app.hooks.tabs.tickets>["key"]>[1],
+): boolean => rig.app.hooks.tabs.tickets!.key(rig.app, k);
 
 describe("the four states of the read", () => {
   it("before the scan the count is unknown and the bar offers nothing to filter", () => {
@@ -54,7 +58,10 @@ describe("the four states of the read", () => {
       },
     });
     rig.learning.store.reloadTickets();
-    expect(rig.learning.store.tickets).toMatchObject({ kind: "unreadable", reason: "ENOENT: tracker dir" });
+    expect(rig.learning.store.tickets).toMatchObject({
+      kind: "unreadable",
+      reason: "ENOENT: tracker dir",
+    });
     expect(screenOf(rig)).toContain("could not read — ENOENT: tracker dir");
     broken = false;
     rig.learning.store.reloadTickets();
@@ -73,7 +80,13 @@ describe("the four states of the read", () => {
 
 describe("the list and the pane", () => {
   function readRig(): Rig {
-    const rig = learningRig({ readTickets: () => [ticket("FT-0300", "resolved"), ticket("FT-0301"), ticket("FT-0302", "claimed", 80)] });
+    const rig = learningRig({
+      readTickets: () => [
+        ticket("FT-0300", "resolved"),
+        ticket("FT-0301"),
+        ticket("FT-0302", "claimed", 80),
+      ],
+    });
     rig.app.tab = "tickets";
     rig.learning.store.reloadTickets();
     return rig;
@@ -87,15 +100,22 @@ describe("the list and the pane", () => {
     expect(screen).toContain("FT-0302 [claimed] Ticket FT-0302");
     expect(screen).not.toContain("FT-0300 [resolved]");
     expect(screen).toContain("line 0"); // the body
-    expect(visibleTickets(rig.learning.store.tickets, false).map((t) => t.id)).toEqual(["FT-0301", "FT-0302"]);
+    expect(visibleTickets(rig.learning.store.tickets, false).map((t) => t.id)).toEqual([
+      "FT-0301",
+      "FT-0302",
+    ]);
   });
 
   it("c shows the closed ones too and is painted as the other half of the toggle", () => {
     const rig = readRig();
-    expect(ticketsKeys(rig.learning.store, rig.learning.tickets).bar.map((b) => b.label)).toContain("c show all");
+    expect(ticketsKeys(rig.learning.store, rig.learning.tickets).bar.map((b) => b.label)).toContain(
+      "c show all",
+    );
     expect(key(rig, { kind: "char", ch: "c" })).toBe(true);
     expect(screenOf(rig)).toContain("FT-0300 [resolved]");
-    expect(ticketsKeys(rig.learning.store, rig.learning.tickets).bar.map((b) => b.label)).toContain("c actionable");
+    expect(ticketsKeys(rig.learning.store, rig.learning.tickets).bar.map((b) => b.label)).toContain(
+      "c actionable",
+    );
   });
 
   it("with every ticket closed the default list is a FILTERED empty, not an empty tracker", () => {
@@ -126,15 +146,24 @@ describe("the list and the pane", () => {
   it("clicking a row selects it", () => {
     const rig = readRig();
     const frame = rig.app.hooks.tabs.tickets!.screen(rig.app, 120, 30);
-    const row = frame.zones.find((z) => (z.action as { t: string; i: number }).t === "ticket" && (z.action as { i: number }).i === 1)!;
+    const row = frame.zones.find(
+      (z) =>
+        (z.action as { t: string; i: number }).t === "ticket" &&
+        (z.action as { i: number }).i === 1,
+    )!;
     expect(rig.app.hooks.tabs.tickets!.click!(rig.app, row.x1, row.y1)).toBe(true);
     expect(rig.learning.tickets.sel).toBe(1);
   });
 
   it("renders every line at exactly cols cells in every state", () => {
-    for (const rig of [readRig(), learningRig({ readTickets: undefined }), learningRig({ readTickets: () => [] })]) {
+    for (const rig of [
+      readRig(),
+      learningRig({ readTickets: undefined }),
+      learningRig({ readTickets: () => [] }),
+    ]) {
       for (const cols of [90, 121]) {
-        for (const line of rig.app.hooks.tabs.tickets!.screen(rig.app, cols, 26).lines) expect(displayWidth(line)).toBe(cols);
+        for (const line of rig.app.hooks.tabs.tickets!.screen(rig.app, cols, 26).lines)
+          expect(displayWidth(line)).toBe(cols);
       }
     }
   });

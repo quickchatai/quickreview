@@ -16,7 +16,11 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { OPENVIKING_DEFAULTS, resolveOpenVikingPaths, type OpenVikingConfig } from "../src/config.js";
+import {
+  OPENVIKING_DEFAULTS,
+  resolveOpenVikingPaths,
+  type OpenVikingConfig,
+} from "../src/config.js";
 import { ReembedDriver, reembedNamespaces, type ReembedModule } from "../src/openviking/reembed.js";
 import { StateStore, buildStatusSnapshot } from "../src/state.js";
 import * as realModule from "../scripts/openviking-reembed.mjs";
@@ -29,7 +33,8 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-const cfg = (over: Partial<OpenVikingConfig> = {}): OpenVikingConfig => resolveOpenVikingPaths({ ...OPENVIKING_DEFAULTS, home, ...over });
+const cfg = (over: Partial<OpenVikingConfig> = {}): OpenVikingConfig =>
+  resolveOpenVikingPaths({ ...OPENVIKING_DEFAULTS, home, ...over });
 
 /** A timer seam that records callbacks instead of running them. */
 class FakeClock {
@@ -84,7 +89,15 @@ function fakeModule(state: FakeState): ReembedModule {
   };
 }
 
-function driver(state: FakeState, over: { ready?: () => boolean; cfg?: Partial<OpenVikingConfig>; log?: string[]; load?: () => Promise<ReembedModule> } = {}) {
+function driver(
+  state: FakeState,
+  over: {
+    ready?: () => boolean;
+    cfg?: Partial<OpenVikingConfig>;
+    log?: string[];
+    load?: () => Promise<ReembedModule>;
+  } = {},
+) {
   const clock = new FakeClock();
   const lines = over.log ?? [];
   writeFileSync(join(home, "openviking_reviewer_key"), "reviewer-secret\n");
@@ -120,7 +133,17 @@ describe("the resume loop", () => {
   });
 
   it("pending ⇒ waits for /ready on the poll interval, then resumes ONCE with the reviewer key from the secrets file", async () => {
-    const state: FakeState = { journal: { state: "pending", embedder: LOCAL, previous: HOSTED, reset_at: "2026-09-02T15:00:00.000Z", namespaces: { reviewer: { state: "pending" } } }, resumes: [], outcomes: [] };
+    const state: FakeState = {
+      journal: {
+        state: "pending",
+        embedder: LOCAL,
+        previous: HOSTED,
+        reset_at: "2026-09-02T15:00:00.000Z",
+        namespaces: { reviewer: { state: "pending" } },
+      },
+      resumes: [],
+      outcomes: [],
+    };
     let ready = false;
     const { d, clock } = await started(state, { ready: () => ready });
     expect(d.status().state).toBe("pending");
@@ -130,21 +153,41 @@ describe("the resume loop", () => {
     expect(clock.live()[0]?.ms).toBe(15_000);
     ready = true;
     await clock.fire();
-    expect(state.resumes).toEqual([{ home, base: "http://127.0.0.1:1933", key: "reviewer-secret", user: "reviewer" }]);
-    expect(d.status()).toMatchObject({ state: "completed", attempts: 1, last_run_at: "2026-09-02T18:00:00.000Z", embedder: LOCAL, previous: HOSTED });
+    expect(state.resumes).toEqual([
+      { home, base: "http://127.0.0.1:1933", key: "reviewer-secret", user: "reviewer" },
+    ]);
+    expect(d.status()).toMatchObject({
+      state: "completed",
+      attempts: 1,
+      last_run_at: "2026-09-02T18:00:00.000Z",
+      embedder: LOCAL,
+      previous: HOSTED,
+    });
     expect(d.status().last_error).toBeUndefined();
     // Completed: nothing further is scheduled.
     expect(clock.live()).toHaveLength(0);
   });
 
   it("a run that did not complete is retried on the retry interval — forever, each attempt on record", async () => {
-    const state: FakeState = { journal: { state: "pending", namespaces: { reviewer: { state: "pending" } } }, resumes: [], outcomes: [{ state: "pending", detail: "busy" }, { state: "failed", detail: "task failed: embedder exploded" }, { state: "completed", detail: "14 records" }] };
+    const state: FakeState = {
+      journal: { state: "pending", namespaces: { reviewer: { state: "pending" } } },
+      resumes: [],
+      outcomes: [
+        { state: "pending", detail: "busy" },
+        { state: "failed", detail: "task failed: embedder exploded" },
+        { state: "completed", detail: "14 records" },
+      ],
+    };
     const { d, clock, lines } = await started(state);
     await clock.fire();
     expect(d.status()).toMatchObject({ state: "pending", attempts: 1, last_error: "busy" });
     expect(clock.live()[0]?.ms).toBe(300_000);
     await clock.fire();
-    expect(d.status()).toMatchObject({ state: "failed", attempts: 2, last_error: "task failed: embedder exploded" });
+    expect(d.status()).toMatchObject({
+      state: "failed",
+      attempts: 2,
+      last_error: "task failed: embedder exploded",
+    });
     expect(clock.live()[0]?.ms).toBe(300_000);
     await clock.fire();
     expect(d.status()).toMatchObject({ state: "completed", attempts: 3 });
@@ -162,7 +205,10 @@ describe("the resume loop", () => {
     expect(clock.live()).toHaveLength(1);
     d.stop();
     expect(clock.live()).toHaveLength(0);
-    const off = await started({ journal: { state: "pending" }, resumes: [], outcomes: [] }, { cfg: { enabled: false } });
+    const off = await started(
+      { journal: { state: "pending" }, resumes: [], outcomes: [] },
+      { cfg: { enabled: false } },
+    );
     expect(off.clock.live()).toHaveLength(0);
     expect(off.d.status()).toEqual({ state: "unknown", attempts: 0 });
   });
@@ -170,12 +216,18 @@ describe("the resume loop", () => {
 
 describe("honest status", () => {
   it("an unloadable script is `unknown` with the reason — never `none`", async () => {
-    const { d, lines } = await started({ journal: { state: "none" }, resumes: [], outcomes: [] }, {
-      load: async () => {
-        throw new Error("ENOENT scripts/openviking-reembed.mjs");
+    const { d, lines } = await started(
+      { journal: { state: "none" }, resumes: [], outcomes: [] },
+      {
+        load: async () => {
+          throw new Error("ENOENT scripts/openviking-reembed.mjs");
+        },
       },
+    );
+    expect(d.status()).toMatchObject({
+      state: "unknown",
+      last_error: expect.stringContaining("could not load"),
     });
-    expect(d.status()).toMatchObject({ state: "unknown", last_error: expect.stringContaining("could not load") });
     expect(lines.join("\n")).toContain("reembed driver off");
   });
 
@@ -192,8 +244,14 @@ describe("honest status", () => {
     mod.journalStatus = () => {
       throw new Error("disk on fire");
     };
-    const { d } = await started({ journal: { state: "none" }, resumes: [], outcomes: [] }, { load: async () => mod });
-    expect(d.status()).toMatchObject({ state: "unknown", last_error: expect.stringContaining("disk on fire") });
+    const { d } = await started(
+      { journal: { state: "none" }, resumes: [], outcomes: [] },
+      { load: async () => mod },
+    );
+    expect(d.status()).toMatchObject({
+      state: "unknown",
+      last_error: expect.stringContaining("disk on fire"),
+    });
   });
 
   it("rides the heartbeat inside the openviking block, operator rows included", () => {
@@ -206,9 +264,17 @@ describe("honest status", () => {
         ready: true,
         pinned_version: "0.4.15",
         restarts: 0,
-        reembed: { state: "completed", attempts: 1, awaiting_operator: ["companion"], namespaces: { reviewer: { state: "completed" }, companion: { state: "operator" } } },
+        reembed: {
+          state: "completed",
+          attempts: 1,
+          awaiting_operator: ["companion"],
+          namespaces: { reviewer: { state: "completed" }, companion: { state: "operator" } },
+        },
       });
-      expect(snapshot.openviking?.reembed).toMatchObject({ state: "completed", awaiting_operator: ["companion"] });
+      expect(snapshot.openviking?.reembed).toMatchObject({
+        state: "completed",
+        awaiting_operator: ["companion"],
+      });
     } finally {
       store.close();
     }
@@ -218,7 +284,10 @@ describe("honest status", () => {
 describe("config.toml against ov.conf", () => {
   function ovConf(dense: unknown): void {
     mkdirSync(home, { recursive: true });
-    writeFileSync(join(home, "ov.conf"), JSON.stringify({ server: { port: 1933 }, embedding: { dense } }));
+    writeFileSync(
+      join(home, "ov.conf"),
+      JSON.stringify({ server: { port: 1933 }, embedding: { dense } }),
+    );
   }
 
   it("agreeing embedders ⇒ no drift reported", async () => {
@@ -252,12 +321,41 @@ describe("the real scripts/openviking-reembed.mjs satisfies the driver's contrac
   it("a journalled pending reviewer namespace is re-embedded through the script with a Bearer reviewer key and no actor-peer header", async () => {
     const mod: ReembedModule = realModule;
     mod.journalStatus(home); // the module's own reader, on an empty home
-    realModule.writeJournal(home, { version: 1, embedder: LOCAL, previous: HOSTED, reset_at: "2026-09-02T15:00:00.000Z", namespaces: { reviewer: { state: "pending" }, companion: { state: "operator" } } });
+    realModule.writeJournal(home, {
+      version: 1,
+      embedder: LOCAL,
+      previous: HOSTED,
+      reset_at: "2026-09-02T15:00:00.000Z",
+      namespaces: { reviewer: { state: "pending" }, companion: { state: "operator" } },
+    });
     const calls: Array<{ url: string; headers: Record<string, string>; body?: string }> = [];
-    const fetchFn = async (url: string, init?: { headers?: Record<string, string>; body?: string }) => {
+    const fetchFn = async (
+      url: string,
+      init?: { headers?: Record<string, string>; body?: string },
+    ) => {
       calls.push({ url, headers: init?.headers ?? {}, body: init?.body });
-      if (REINDEX.test(url)) return { status: 200, json: async () => ({ status: "ok", result: { task_id: "task-9", status: "accepted" } }) };
-      if (TASK.test(url)) return { status: 200, json: async () => ({ status: "ok", result: { task_id: "task-9", status: "completed", result: { scanned_records: 3, rebuilt_records: 4, failed_records: 0, unsupported_records: 0 } } }) };
+      if (REINDEX.test(url))
+        return {
+          status: 200,
+          json: async () => ({ status: "ok", result: { task_id: "task-9", status: "accepted" } }),
+        };
+      if (TASK.test(url))
+        return {
+          status: 200,
+          json: async () => ({
+            status: "ok",
+            result: {
+              task_id: "task-9",
+              status: "completed",
+              result: {
+                scanned_records: 3,
+                rebuilt_records: 4,
+                failed_records: 0,
+                unsupported_records: 0,
+              },
+            },
+          }),
+        };
       return { status: 404, json: async () => ({}) };
     };
     const clock = new FakeClock();
@@ -278,14 +376,27 @@ describe("the real scripts/openviking-reembed.mjs satisfies the driver's contrac
     expect(d.status().state).toBe("pending");
     await clock.fire();
     // The script polls the task on a real 2s sleep; wait for it to settle.
-    for (let i = 0; i < 100 && d.status().state !== "completed"; i++) await new Promise((r) => setTimeout(r, 50));
-    expect(d.status()).toMatchObject({ state: "completed", attempts: 1, awaiting_operator: ["companion"] });
+    for (let i = 0; i < 100 && d.status().state !== "completed"; i++)
+      await new Promise((r) => setTimeout(r, 50));
+    expect(d.status()).toMatchObject({
+      state: "completed",
+      attempts: 1,
+      awaiting_operator: ["companion"],
+    });
     expect(calls[0]!.headers["Authorization"]).toBe("Bearer reviewer-secret");
     expect(calls[0]!.headers["X-OpenViking-User"]).toBe("reviewer");
     expect(calls[0]!.headers["X-OpenViking-Actor-Peer"]).toBeUndefined();
-    expect(JSON.parse(calls[0]!.body!)).toEqual({ uri: "viking://user/reviewer", mode: "vectors_only", wait: false });
+    expect(JSON.parse(calls[0]!.body!)).toEqual({
+      uri: "viking://user/reviewer",
+      mode: "vectors_only",
+      wait: false,
+    });
     const journal = JSON.parse(readFileSync(join(home, "reembed.json"), "utf8"));
-    expect(journal.namespaces.reviewer).toMatchObject({ state: "completed", rebuilt_records: 4, task_id: "task-9" });
+    expect(journal.namespaces.reviewer).toMatchObject({
+      state: "completed",
+      rebuilt_records: 4,
+      task_id: "task-9",
+    });
     expect(journal.namespaces.companion).toEqual({ state: "operator" });
   }, 15_000);
 });
@@ -298,17 +409,48 @@ describe("reembedNamespaces — qcr memory reembed", () => {
     const module: Pick<ReembedModule, "reindexNamespace"> = {
       async reindexNamespace({ base, key, user }) {
         sent.push({ user, key, base });
-        if (user === "companion") return { status: "completed", uri: `viking://user/${user}`, scanned_records: 7, rebuilt_records: 9, failed_records: 0, unsupported_records: 0 };
+        if (user === "companion")
+          return {
+            status: "completed",
+            uri: `viking://user/${user}`,
+            scanned_records: 7,
+            rebuilt_records: 9,
+            failed_records: 0,
+            unsupported_records: 0,
+          };
         return { status: "failed", uri: `viking://user/${user}`, detail: "refused (HTTP 403)" };
       },
     };
     const keys: Record<string, string> = { companion: "companion-key", reviewer: "reviewer-key" };
     const lines: string[] = [];
-    const clean = await reembedNamespaces({ module, base: "http://127.0.0.1:1933", users: ["companion"], keyFor: (u) => keys[u] ?? null, log: (l) => lines.push(l) });
-    expect(clean).toEqual({ ok: true, results: [{ user: "companion", status: "completed", detail: "9 vector records rebuilt from 7 sources" }] });
-    expect(sent).toEqual([{ user: "companion", key: "companion-key", base: "http://127.0.0.1:1933" }]);
+    const clean = await reembedNamespaces({
+      module,
+      base: "http://127.0.0.1:1933",
+      users: ["companion"],
+      keyFor: (u) => keys[u] ?? null,
+      log: (l) => lines.push(l),
+    });
+    expect(clean).toEqual({
+      ok: true,
+      results: [
+        {
+          user: "companion",
+          status: "completed",
+          detail: "9 vector records rebuilt from 7 sources",
+        },
+      ],
+    });
+    expect(sent).toEqual([
+      { user: "companion", key: "companion-key", base: "http://127.0.0.1:1933" },
+    ]);
 
-    const mixed = await reembedNamespaces({ module, base: "http://127.0.0.1:1933", users: ["companion", "reviewer", "ghost"], keyFor: (u) => keys[u] ?? null, log: () => {} });
+    const mixed = await reembedNamespaces({
+      module,
+      base: "http://127.0.0.1:1933",
+      users: ["companion", "reviewer", "ghost"],
+      keyFor: (u) => keys[u] ?? null,
+      log: () => {},
+    });
     expect(mixed.ok).toBe(false);
     expect(mixed.results.map((r) => [r.user, r.status])).toEqual([
       ["companion", "completed"],
@@ -323,10 +465,23 @@ describe("reembedNamespaces — qcr memory reembed", () => {
   it("a completed run with failed records is NOT ok — the operator is told to run it again", async () => {
     const module: Pick<ReembedModule, "reindexNamespace"> = {
       async reindexNamespace() {
-        return { status: "completed", uri: "viking://user/companion", scanned_records: 7, rebuilt_records: 5, failed_records: 2, unsupported_records: 0 };
+        return {
+          status: "completed",
+          uri: "viking://user/companion",
+          scanned_records: 7,
+          rebuilt_records: 5,
+          failed_records: 2,
+          unsupported_records: 0,
+        };
       },
     };
-    const r = await reembedNamespaces({ module, base: "http://x", users: ["companion"], keyFor: () => "k", log: () => {} });
+    const r = await reembedNamespaces({
+      module,
+      base: "http://x",
+      users: ["companion"],
+      keyFor: () => "k",
+      log: () => {},
+    });
     expect(r.ok).toBe(false);
     expect(r.results[0]!.detail).toContain("2 FAILED (run it again)");
   });

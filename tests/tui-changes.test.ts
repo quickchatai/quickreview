@@ -33,37 +33,56 @@ function record(sha: string, at: string, author: string, subject: string, body: 
 }
 
 /** A landed change exactly as `land` tells the companion to write it. */
-function landed(sha: string, at: string, subject: string, opts: { pr?: string; ticket?: string } = {}): string {
+function landed(
+  sha: string,
+  at: string,
+  subject: string,
+  opts: { pr?: string; ticket?: string } = {},
+): string {
   const trailers = [
     ...(opts.pr ? [`Feedback-PR: ${opts.pr}`] : []),
     ...(opts.ticket ? [`Adjudication: ${opts.ticket}`] : []),
     `${TRAILER_RATIFIED}: 2026-08-25 companion — "yes, land it"`,
   ].join("\n");
-  return record(sha, at, "QCR Companion", subject, `${subject}\n\nA sentence of body.\n\n${trailers}\n`);
+  return record(
+    sha,
+    at,
+    "QCR Companion",
+    subject,
+    `${subject}\n\nA sentence of body.\n\n${trailers}\n`,
+  );
 }
 
 describe("the trailer convention", () => {
   it("reads the trailer block, and only the last paragraph of it", () => {
-    const t = messageTrailers('subject\n\nbody line\n\nFeedback-PR: 5270\nAdjudication: FT-0231\nRatified-in-session: he said "yes"\n');
+    const t = messageTrailers(
+      'subject\n\nbody line\n\nFeedback-PR: 5270\nAdjudication: FT-0231\nRatified-in-session: he said "yes"\n',
+    );
     expect(t[TRAILER_RATIFIED]).toBe('he said "yes"');
     expect(t["Feedback-PR"]).toBe("5270");
     expect(t["Adjudication"]).toBe("FT-0231");
   });
 
   it("a prose line inside the last paragraph voids the block — a body sentence can never mint a register entry", () => {
-    const t = messageTrailers("subject\n\nRatified-in-session: yes\nand then some prose about it\n");
+    const t = messageTrailers(
+      "subject\n\nRatified-in-session: yes\nand then some prose about it\n",
+    );
     expect(t).toEqual({});
   });
 
   it("a `Ratified-in-session:` mentioned mid-body is not a trailer", () => {
-    const t = messageTrailers("subject\n\nSomeone wrote Ratified-in-session: nope in the body\n\nthe end.\n");
+    const t = messageTrailers(
+      "subject\n\nSomeone wrote Ratified-in-session: nope in the body\n\nthe end.\n",
+    );
     expect(t[TRAILER_RATIFIED]).toBeUndefined();
   });
 
   it("git's own revert message is how a revert is identified", () => {
-    expect(revertedSha('Revert "thing"\n\nThis reverts commit 1111111111111111111111111111111111111111.\n')).toBe(
-      "1111111111111111111111111111111111111111",
-    );
+    expect(
+      revertedSha(
+        'Revert "thing"\n\nThis reverts commit 1111111111111111111111111111111111111111.\n',
+      ),
+    ).toBe("1111111111111111111111111111111111111111");
     expect(revertedSha("ordinary commit\n")).toBeUndefined();
   });
 
@@ -78,8 +97,17 @@ describe("building the register", () => {
 
   it("lists only commits carrying the never-omitted trailer, newest first", () => {
     const log =
-      landed("a".repeat(40), "2026-08-25T09:00:00Z", "severity: stop blocking on contrived paths", { pr: "5270", ticket: "FT-0231" }) +
-      record("b".repeat(40), "2026-08-25T08:00:00Z", "dev-session", "tests: tidy", "tests: tidy\n") +
+      landed("a".repeat(40), "2026-08-25T09:00:00Z", "severity: stop blocking on contrived paths", {
+        pr: "5270",
+        ticket: "FT-0231",
+      }) +
+      record(
+        "b".repeat(40),
+        "2026-08-25T08:00:00Z",
+        "dev-session",
+        "tests: tidy",
+        "tests: tidy\n",
+      ) +
       landed("c".repeat(40), "2026-08-24T08:00:00Z", "round template: nit scope wording");
     const entries = buildEntries(parseGitLog(log), now);
     expect(entries.map((e) => e.subject)).toEqual([
@@ -95,8 +123,13 @@ describe("building the register", () => {
   it("marks an entry reverted from git's own message — even when the revert is an untrailered commit", () => {
     const target = "a".repeat(40);
     const log =
-      record("d".repeat(40), "2026-08-25T12:00:00Z", "mat", 'Revert "severity"', `Revert "severity"\n\nThis reverts commit ${target}.\n`) +
-      landed(target, "2026-08-25T09:00:00Z", "severity");
+      record(
+        "d".repeat(40),
+        "2026-08-25T12:00:00Z",
+        "mat",
+        'Revert "severity"',
+        `Revert "severity"\n\nThis reverts commit ${target}.\n`,
+      ) + landed(target, "2026-08-25T09:00:00Z", "severity");
     const entries = buildEntries(parseGitLog(log), now);
     expect(entries).toHaveLength(1);
     expect(entries[0]!.reverted?.by).toBe("d".repeat(7));
@@ -105,8 +138,13 @@ describe("building the register", () => {
   it("an abbreviated revert reference still matches", () => {
     const target = "a".repeat(40);
     const log =
-      record("d".repeat(40), "2026-08-25T12:00:00Z", "mat", "Revert", `Revert\n\nThis reverts commit ${target.slice(0, 12)}.\n`) +
-      landed(target, "2026-08-25T09:00:00Z", "severity");
+      record(
+        "d".repeat(40),
+        "2026-08-25T12:00:00Z",
+        "mat",
+        "Revert",
+        `Revert\n\nThis reverts commit ${target.slice(0, 12)}.\n`,
+      ) + landed(target, "2026-08-25T09:00:00Z", "severity");
     expect(buildEntries(parseGitLog(log), now)[0]!.reverted).toBeDefined();
   });
 });
@@ -123,16 +161,18 @@ describe("merging: a record, not a mirror", () => {
   });
 
   it("keeps first_seen from the stored row", () => {
-    const merged = mergeRegister([entry("a".repeat(40), "2026-08-20T00:00:00Z", "2026-08-20T01:00:00Z")], [
-      entry("a".repeat(40), "2026-08-20T00:00:00Z", "2026-08-25T00:00:00Z"),
-    ]);
+    const merged = mergeRegister(
+      [entry("a".repeat(40), "2026-08-20T00:00:00Z", "2026-08-20T01:00:00Z")],
+      [entry("a".repeat(40), "2026-08-20T00:00:00Z", "2026-08-25T00:00:00Z")],
+    );
     expect(merged[0]!.first_seen).toBe("2026-08-20T01:00:00Z");
   });
 
   it("never drops a row the fresh scan no longer reaches", () => {
-    const merged = mergeRegister([entry("a".repeat(40), "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z")], [
-      entry("b".repeat(40), "2026-08-25T00:00:00Z", "2026-08-25T00:00:00Z"),
-    ]);
+    const merged = mergeRegister(
+      [entry("a".repeat(40), "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z")],
+      [entry("b".repeat(40), "2026-08-25T00:00:00Z", "2026-08-25T00:00:00Z")],
+    );
     expect(merged.map((e) => e.short)).toEqual(["bbbbbbb", "aaaaaaa"]); // newest first, nothing lost
   });
 });
@@ -145,13 +185,20 @@ describe("durability across a restart", () => {
   it("the file is written atomically and re-read by a fresh store", async () => {
     const log = landed("a".repeat(40), "2026-08-25T09:00:00Z", "severity change", { pr: "5270" });
     const runner = async (argv: string[]): Promise<RemoteResult> =>
-      argv[1] === "log" ? { ok: true, stdout: log, stderr: "", code: 0 } : { ok: true, stdout: "", stderr: "", code: 0 };
+      argv[1] === "log"
+        ? { ok: true, stdout: log, stderr: "", code: 0 }
+        : { ok: true, stdout: "", stderr: "", code: 0 };
     const first = new ChangeLog(new ChangeRegisterStore(dir), runner);
     await first.refresh();
     expect(readFileSync(join(dir, "change-register.json"), "utf8")).toContain("severity change");
 
     // A new process: nothing in memory, git not asked yet.
-    const second = new ChangeLog(new ChangeRegisterStore(dir), async () => ({ ok: false, stdout: "", stderr: "no git", code: 1 }));
+    const second = new ChangeLog(new ChangeRegisterStore(dir), async () => ({
+      ok: false,
+      stdout: "",
+      stderr: "no git",
+      code: 1,
+    }));
     expect(second.register?.entries[0]!.subject).toBe("severity change");
     await second.refresh(); // a failed scan must not empty the list
     expect(second.register?.entries).toHaveLength(1);
@@ -160,8 +207,14 @@ describe("durability across a restart", () => {
   it("a corrupt register is not a crash and not an empty list — and not the same answer as no register", () => {
     writeFileSync(join(dir, "change-register.json"), "{not json");
     expect(new ChangeRegisterStore(dir).read()).toMatchObject({ state: "unreadable" });
-    writeFileSync(join(dir, "change-register.json"), JSON.stringify({ version: 1, entries: "nope" }));
-    expect(new ChangeRegisterStore(dir).read()).toEqual({ state: "unreadable", reason: "no entries array" });
+    writeFileSync(
+      join(dir, "change-register.json"),
+      JSON.stringify({ version: 1, entries: "nope" }),
+    );
+    expect(new ChangeRegisterStore(dir).read()).toEqual({
+      state: "unreadable",
+      reason: "no entries array",
+    });
     rmSync(join(dir, "change-register.json"));
     expect(new ChangeRegisterStore(dir).read()).toEqual({ state: "absent" });
   });
@@ -201,17 +254,27 @@ describe("the revert, and everything it refuses", () => {
   });
 
   it("REFUSES on a dirty tree — the companion's in-flight work is never touched (rule 11)", async () => {
-    const h = harness((argv) => (argv[1] === "status" ? { ok: true, stdout: " M src/tui/app.ts\n M src/tui/sidebar.ts\n", stderr: "", code: 0 } : undefined));
+    const h = harness((argv) =>
+      argv[1] === "status"
+        ? { ok: true, stdout: " M src/tui/app.ts\n M src/tui/sidebar.ts\n", stderr: "", code: 0 }
+        : undefined,
+    );
     await h.log.refresh();
     const res = await h.log.revert("a".repeat(40));
     expect(res.ok).toBe(false);
     expect(res.message).toContain("companion");
     expect(h.calls.some((a) => a[1] === "revert")).toBe(false);
-    expect(h.calls.some((a) => a.includes("stash") || a.includes("reset") || a.includes("checkout"))).toBe(false);
+    expect(
+      h.calls.some((a) => a.includes("stash") || a.includes("reset") || a.includes("checkout")),
+    ).toBe(false);
   });
 
   it("aborts a conflicted revert rather than leaving the shared tree half-applied", async () => {
-    const h = harness((argv) => (argv[1] === "revert" && argv[3] ? { ok: false, stdout: "", stderr: "error: could not revert\n", code: 1 } : undefined));
+    const h = harness((argv) =>
+      argv[1] === "revert" && argv[3]
+        ? { ok: false, stdout: "", stderr: "error: could not revert\n", code: 1 }
+        : undefined,
+    );
     await h.log.refresh();
     const res = await h.log.revert("a".repeat(40));
     expect(res.ok).toBe(false);
@@ -229,12 +292,19 @@ describe("the revert, and everything it refuses", () => {
   it("refuses a change already reverted", async () => {
     const target = "a".repeat(40);
     const withRevert =
-      record("d".repeat(40), "2026-08-25T12:00:00Z", "mat", "Revert", `Revert\n\nThis reverts commit ${target}.\n`) +
-      landed(target, "2026-08-25T09:00:00Z", "severity change");
+      record(
+        "d".repeat(40),
+        "2026-08-25T12:00:00Z",
+        "mat",
+        "Revert",
+        `Revert\n\nThis reverts commit ${target}.\n`,
+      ) + landed(target, "2026-08-25T09:00:00Z", "severity change");
     const calls: string[][] = [];
     const cl = new ChangeLog(new ChangeRegisterStore(dir), async (argv) => {
       calls.push(argv);
-      return argv[1] === "log" ? { ok: true, stdout: withRevert, stderr: "", code: 0 } : { ok: true, stdout: "", stderr: "", code: 0 };
+      return argv[1] === "log"
+        ? { ok: true, stdout: withRevert, stderr: "", code: 0 }
+        : { ok: true, stdout: "", stderr: "", code: 0 };
     });
     await cl.refresh();
     const res = await cl.revert(target);
@@ -247,7 +317,8 @@ describe("the companion is told to stamp it", () => {
   it("prompts/companion.md documents the trailer block, the never-omitted key, and the surface that reads it", () => {
     const prompt = readFileSync(join(process.cwd(), "prompts/companion.md"), "utf8");
     // The same three trailers the `land` skill promises — no competing set.
-    for (const t of ["Feedback-PR:", "Adjudication:", "Ratified-in-session:"]) expect(prompt).toContain(t);
+    for (const t of ["Feedback-PR:", "Adjudication:", "Ratified-in-session:"])
+      expect(prompt).toContain(t);
     expect(prompt).toMatch(/`Ratified-in-session:` is never omitted/);
     expect(prompt).toMatch(/last paragraph only/);
     // FT-0398: the register is the CHANGED pane of the feedback tab; the old
@@ -283,7 +354,12 @@ describe("an unreadable register is neither saved over nor merged onto", () => {
     const calls: string[][] = [];
     const cl = new ChangeLog(new ChangeRegisterStore(dir), async (argv) => {
       calls.push(argv);
-      return { ok: true, stdout: landed("b".repeat(40), "2026-08-25T10:00:00Z", "a later change"), stderr: "", code: 0 };
+      return {
+        ok: true,
+        stdout: landed("b".repeat(40), "2026-08-25T10:00:00Z", "a later change"),
+        stderr: "",
+        code: 0,
+      };
     });
     expect(cl.register).toBeUndefined();
     expect(cl.problem?.kind).toBe("register_unreadable");
@@ -298,7 +374,12 @@ describe("an unreadable register is neither saved over nor merged onto", () => {
 
   it("a register that tears mid-run keeps the last true list in memory, flags it, and does not overwrite", async () => {
     const good = landed("a".repeat(40), "2026-08-25T09:00:00Z", "severity change");
-    const cl = new ChangeLog(new ChangeRegisterStore(dir), async () => ({ ok: true, stdout: good, stderr: "", code: 0 }));
+    const cl = new ChangeLog(new ChangeRegisterStore(dir), async () => ({
+      ok: true,
+      stdout: good,
+      stderr: "",
+      code: 0,
+    }));
     expect(await cl.refresh()).toBeUndefined();
     expect(cl.register?.entries).toHaveLength(1);
 

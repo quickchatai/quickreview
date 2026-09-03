@@ -42,7 +42,10 @@ describe("parseMigrationPath", () => {
 describe("detectMigrationCollisions", () => {
   it("flags a PR migration on a number the base branch already took", () => {
     const out = detectMigrationCollisions({
-      files: [added("backend/chat/migrations/0042_add_rate_limit.py"), added("backend/chat/views.py")],
+      files: [
+        added("backend/chat/migrations/0042_add_rate_limit.py"),
+        added("backend/chat/views.py"),
+      ],
       baseFiles: BASE,
     });
     expect(out).toHaveLength(1);
@@ -78,7 +81,9 @@ describe("detectMigrationCollisions", () => {
   it("does not flag a migration the PR merely edits in place", () => {
     expect(
       detectMigrationCollisions({
-        files: [{ filename: "backend/chat/migrations/0042_add_widget_flag.py", status: "modified" }],
+        files: [
+          { filename: "backend/chat/migrations/0042_add_widget_flag.py", status: "modified" },
+        ],
         baseFiles: BASE,
       }),
     ).toEqual([]);
@@ -117,7 +122,11 @@ describe("detectMigrationCollisions", () => {
         "backend/chat/migrations/0043_zeroth.py",
         '("chat", "0042_add_widget_flag")',
       ],
-      ["backend/chat/migrations/0042_first.py", "backend/chat/migrations/0044_first.py", '("chat", "0043_zeroth")'],
+      [
+        "backend/chat/migrations/0042_first.py",
+        "backend/chat/migrations/0044_first.py",
+        '("chat", "0043_zeroth")',
+      ],
     ]);
   });
 
@@ -125,7 +134,10 @@ describe("detectMigrationCollisions", () => {
     // The PR adds 0042 (collides) and 0043 (free): the remedy must not land on
     // the PR's own 0043.
     const out = detectMigrationCollisions({
-      files: [added("backend/chat/migrations/0042_first.py"), added("backend/chat/migrations/0043_second.py")],
+      files: [
+        added("backend/chat/migrations/0042_first.py"),
+        added("backend/chat/migrations/0043_second.py"),
+      ],
       baseFiles: BASE,
     });
     expect(out).toHaveLength(1);
@@ -165,7 +177,11 @@ describe("detectMigrationCollisions", () => {
       target_path: "backend/chat/migrations/0045_b.py",
     });
 
-    const body = renderMigrationCollisionComment({ collisions: out, base_ref: "master", base_sha: "cafebabe0000" });
+    const body = renderMigrationCollisionComment({
+      collisions: out,
+      base_ref: "master",
+      base_sha: "cafebabe0000",
+    });
     expect(body).toContain("backend/chat/migrations/0044_a.py");
     expect(body).toContain('reference `"0042_a"`');
     expect(body).toContain('`[("chat", "0044_a")]`');
@@ -176,15 +192,35 @@ describe("detectMigrationCollisions", () => {
     const out = detectMigrationCollisions({
       files: [
         added("backend/chat/migrations/0042_a.py"),
-        { filename: "backend/chat/migrations/0043_b.py", status: "added", patch: '+    dependencies = [("chat", "0042_a")]' },
-        { filename: "backend/chat/migrations/0044_c.py", status: "added", patch: '+    dependencies = [("chat", "0043_b")]' },
+        {
+          filename: "backend/chat/migrations/0043_b.py",
+          status: "added",
+          patch: '+    dependencies = [("chat", "0042_a")]',
+        },
+        {
+          filename: "backend/chat/migrations/0044_c.py",
+          status: "added",
+          patch: '+    dependencies = [("chat", "0043_b")]',
+        },
       ],
       baseFiles: BASE,
     });
     expect(out.map((c) => [c.pr_path, c.target_path, c.dependency])).toEqual([
-      ["backend/chat/migrations/0042_a.py", "backend/chat/migrations/0045_a.py", '("chat", "0042_add_widget_flag")'],
-      ["backend/chat/migrations/0043_b.py", "backend/chat/migrations/0046_b.py", '("chat", "0045_a")'],
-      ["backend/chat/migrations/0044_c.py", "backend/chat/migrations/0047_c.py", '("chat", "0046_b")'],
+      [
+        "backend/chat/migrations/0042_a.py",
+        "backend/chat/migrations/0045_a.py",
+        '("chat", "0042_add_widget_flag")',
+      ],
+      [
+        "backend/chat/migrations/0043_b.py",
+        "backend/chat/migrations/0046_b.py",
+        '("chat", "0045_a")',
+      ],
+      [
+        "backend/chat/migrations/0044_c.py",
+        "backend/chat/migrations/0047_c.py",
+        '("chat", "0046_b")',
+      ],
     ]);
   });
 
@@ -220,7 +256,11 @@ describe("renderMigrationCollisionComment", () => {
   });
 
   it("names the exact target number and dependencies value", () => {
-    const body = renderMigrationCollisionComment({ collisions, base_ref: "master", base_sha: "abcdef1234567890" });
+    const body = renderMigrationCollisionComment({
+      collisions,
+      base_ref: "master",
+      base_sha: "abcdef1234567890",
+    });
     expect(body).toContain("backend/chat/migrations/0043_add_rate_limit.py");
     expect(body).toContain('`[("chat", "0042_add_widget_flag")]`');
     expect(body).toContain("**0043**");
@@ -228,7 +268,11 @@ describe("renderMigrationCollisionComment", () => {
   });
 
   it("says plainly that it is not a blocker and consumes no verdict", () => {
-    const body = renderMigrationCollisionComment({ collisions, base_ref: "master", base_sha: "abc" });
+    const body = renderMigrationCollisionComment({
+      collisions,
+      base_ref: "master",
+      base_sha: "abc",
+    });
     expect(body.toLowerCase()).toContain("not a blocker");
     expect(body.toLowerCase()).toContain("consumes no review verdict");
   });
@@ -241,7 +285,11 @@ describe("collisionFingerprint", () => {
   });
 
   it("is stable per head sha and changes with it", () => {
-    expect(collisionFingerprint("head1", collisions)).toBe(collisionFingerprint("head1", collisions));
-    expect(collisionFingerprint("head2", collisions)).not.toBe(collisionFingerprint("head1", collisions));
+    expect(collisionFingerprint("head1", collisions)).toBe(
+      collisionFingerprint("head1", collisions),
+    );
+    expect(collisionFingerprint("head2", collisions)).not.toBe(
+      collisionFingerprint("head1", collisions),
+    );
   });
 });

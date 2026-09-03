@@ -52,7 +52,8 @@ export function sgrOpenAtEnd(line: string): boolean {
       else if ((n >= 40 && n <= 47) || (n >= 100 && n <= 107)) bg = true;
       else if (n === 49) bg = false;
       else if (n >= 1 && n <= 9) attrs |= 1 << n;
-      else if (n === 22) attrs &= ~((1 << 1) | (1 << 2)); // clears bold AND dim
+      else if (n === 22)
+        attrs &= ~((1 << 1) | (1 << 2)); // clears bold AND dim
       else if (n >= 21 && n <= 29) attrs &= ~(1 << (n - 20));
     }
   }
@@ -268,7 +269,12 @@ export class Frame {
  * exactly as the renderer built it. */
 const SEAM_GLYPHS = new Set(["│", "┐", "┘", "┤"]);
 
-export function composeColumn(inner: Frame, column: string[], width: number, joinSeam = false): Frame {
+export function composeColumn(
+  inner: Frame,
+  column: string[],
+  width: number,
+  joinSeam = false,
+): Frame {
   const w = Math.max(0, Math.floor(width));
   // Both halves draw a border at the seam, so a naive concatenation paints a
   // doubled wall (`││`, and `┐┬` at the corners). Joining drops the inner
@@ -325,7 +331,9 @@ export function sliceDisplay(line: string, from: number, to: number): string {
   for (const ch of stripAnsi(line)) {
     const w = charWidth(ch.codePointAt(0) ?? 0);
     if (col >= to) break;
-    if (col + w > from) out += col < from || col + w > to ? " ".repeat(Math.min(to, col + w) - Math.max(from, col)) : ch;
+    if (col + w > from)
+      out +=
+        col < from || col + w > to ? " ".repeat(Math.min(to, col + w) - Math.max(from, col)) : ch;
     col += w;
   }
   return out;
@@ -403,7 +411,15 @@ const FRAME_GLYPHS = new Set(["┌", "┐", "└", "┘", "│", "─", "━", "
  * keep their own styling; the visible coloured square is focus chrome, not a
  * background wash over what the operator is reading. Coordinates are
  * zero-based display cells, inclusive. */
-export function accentFrameRect(frame: Frame, x1: number, y1: number, x2: number, y2: number, accent: string, reset: string): void {
+export function accentFrameRect(
+  frame: Frame,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  accent: string,
+  reset: string,
+): void {
   const left = Math.max(0, Math.min(x1, frame.cols - 1));
   const right = Math.max(left, Math.min(x2, frame.cols - 1));
   const top = Math.max(0, Math.min(y1, frame.rows - 1));

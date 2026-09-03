@@ -63,7 +63,13 @@ export const KINDS = ["quick", "ngrok", "named"];
 export const HOSTNAME_RE = /^[a-z0-9]([a-z0-9-]{0,62})?(\.[a-z0-9]([a-z0-9-]{0,62})?)+$/i;
 
 /** Hosts that appear in tunnel-client output but are never the public name. */
-const NEVER_PUBLIC = new Set(["localhost", "127.0.0.1", "0.0.0.0", "dashboard.ngrok.com", "ngrok.com"]);
+const NEVER_PUBLIC = new Set([
+  "localhost",
+  "127.0.0.1",
+  "0.0.0.0",
+  "dashboard.ngrok.com",
+  "ngrok.com",
+]);
 
 export const DEFAULT_BACKOFF_MIN_MS = 2_000;
 export const DEFAULT_BACKOFF_MAX_MS = 60_000;
@@ -73,7 +79,9 @@ export const DEFAULT_BACKOFF_MAX_MS = 60_000;
 // ---- pure helpers -----------------------------------------------------------
 
 export function isHostname(value) {
-  const host = String(value ?? "").trim().toLowerCase();
+  const host = String(value ?? "")
+    .trim()
+    .toLowerCase();
   if (host === "" || host.length > 253 || NEVER_PUBLIC.has(host)) return false;
   return HOSTNAME_RE.test(host);
 }
@@ -146,7 +154,8 @@ export function writeHostname(file, hostname, io = {}) {
   const rename = io.renameSync ?? renameSync;
   const mkdir = io.mkdirSync ?? mkdirSync;
   const host = String(hostname).trim().toLowerCase();
-  if (!isHostname(host)) throw new Error(`refusing to write a non-hostname: ${JSON.stringify(hostname)}`);
+  if (!isHostname(host))
+    throw new Error(`refusing to write a non-hostname: ${JSON.stringify(hostname)}`);
   let current = null;
   try {
     current = read(file, "utf8").trim().toLowerCase();
@@ -260,14 +269,16 @@ function lineSplitter(onLine) {
 export function runClientOnce(cfg, spec, opts = {}) {
   const spawnFn = opts.spawn ?? nodeSpawn;
   const log = opts.log ?? ((line) => console.log(`[tunnel] ${line}`));
-  const onHostname = opts.onHostname ?? ((host) => {
-    const outcome = writeHostname(cfg.hostnameFile, host);
-    log(
-      outcome === "written"
-        ? `public hostname ${host} → ${cfg.hostnameFile} (the daemon re-points the App webhook URL from here)`
-        : `public hostname ${host} unchanged`,
-    );
-  });
+  const onHostname =
+    opts.onHostname ??
+    ((host) => {
+      const outcome = writeHostname(cfg.hostnameFile, host);
+      log(
+        outcome === "written"
+          ? `public hostname ${host} → ${cfg.hostnameFile} (the daemon re-points the App webhook URL from here)`
+          : `public hostname ${host} unchanged`,
+      );
+    });
   return new Promise((resolve) => {
     let settled = false;
     const finish = (how) => {
@@ -277,7 +288,10 @@ export function runClientOnce(cfg, spec, opts = {}) {
     };
     let child;
     try {
-      child = spawnFn(spec.cmd, spec.args, { env: { ...(opts.baseEnv ?? process.env), ...spec.env }, stdio: ["ignore", "pipe", "pipe"] });
+      child = spawnFn(spec.cmd, spec.args, {
+        env: { ...(opts.baseEnv ?? process.env), ...spec.env },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
     } catch (err) {
       log(`could not start ${spec.cmd}: ${errText(err)}`);
       return finish({ ok: false, reason: errText(err) });
@@ -327,7 +341,9 @@ export async function runSidecar(cfg, opts = {}) {
       // A misconfigured kind is the one thing a restart cannot fix, but even
       // this stays a loud idle rather than a crash loop: compose restarts a
       // dying container forever and the log would scroll away.
-      log(`FATAL: unknown QCR_TUNNEL_KIND ${JSON.stringify(spec.unknownKind)} — expected one of ${KINDS.join(", ")}; idling`);
+      log(
+        `FATAL: unknown QCR_TUNNEL_KIND ${JSON.stringify(spec.unknownKind)} — expected one of ${KINDS.join(", ")}; idling`,
+      );
       outcomes.push({ ok: false, reason: "unknown-kind" });
       await sleep(cfg.backoffMaxMs);
       continue;
@@ -360,7 +376,10 @@ function errText(err) {
 // Importing this file (the tests do) must never start a tunnel.
 const invokedDirectly = (() => {
   try {
-    return process.argv[1] !== undefined && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
+    return (
+      process.argv[1] !== undefined &&
+      import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href
+    );
   } catch {
     return false;
   }

@@ -18,7 +18,15 @@ import { Frame, rule } from "./paint.js";
 import type { SshRunner } from "./remote.js";
 
 function dockerSh(cfg: TuiConfig, script: string): string[] {
-  return [...(cfg.sudo_docker ? ["sudo"] : []), "docker", "exec", cfg.container, "sh", "-c", script];
+  return [
+    ...(cfg.sudo_docker ? ["sudo"] : []),
+    "docker",
+    "exec",
+    cfg.container,
+    "sh",
+    "-c",
+    script,
+  ];
 }
 
 export function digestListArgv(cfg: TuiConfig): string[] {
@@ -96,22 +104,44 @@ export function digestKeys(st: DigestState): LiveKeys {
   return { bar, inline: [] };
 }
 
-export function renderDigestTab(st: DigestState, dryRun: boolean | undefined, today: string, cols: number, rows: number): Frame {
+export function renderDigestTab(
+  st: DigestState,
+  dryRun: boolean | undefined,
+  today: string,
+  cols: number,
+  rows: number,
+): Frame {
   const frame = new Frame(cols, rows);
   const file = currentDigestFile(st);
   const date = file?.slice(0, 10);
   const tag = date && date < today ? " (yesterday)" : "";
   const files = st.files;
   const count = files === undefined ? "—" : String(files.length);
-  frame.set(0, rule(cols, "┌", "┐", [`${HEADING}quickreview${RESET}`, modeBadge(dryRun), `digest ${date ?? "—"}${tag}`, `${MUTED}${count} days${RESET}`]));
+  frame.set(
+    0,
+    rule(cols, "┌", "┐", [
+      `${HEADING}quickreview${RESET}`,
+      modeBadge(dryRun),
+      `digest ${date ?? "—"}${tag}`,
+      `${MUTED}${count} days${RESET}`,
+    ]),
+  );
 
   const live = digestKeys(st);
   const bodyRows = rows - 2 - barHeight("digest", cols, live.bar); // top bar + command bar + bottom border
 
   const body: string[] = [];
-  if (st.listError !== undefined) body.push(emptyLine({ kind: "unreadable", why: `${st.listError} · r retries` }));
-  else if (files === undefined) body.push(emptyLine({ kind: "unread", how: "listing digest/ on the VM" }));
-  else if (!file) body.push(emptyLine({ kind: "none", what: "the EOD sweep writes digest/<date>.md at 18:00 Europe/Warsaw" }));
+  if (st.listError !== undefined)
+    body.push(emptyLine({ kind: "unreadable", why: `${st.listError} · r retries` }));
+  else if (files === undefined)
+    body.push(emptyLine({ kind: "unread", how: "listing digest/ on the VM" }));
+  else if (!file)
+    body.push(
+      emptyLine({
+        kind: "none",
+        what: "the EOD sweep writes digest/<date>.md at 18:00 Europe/Warsaw",
+      }),
+    );
   else if (st.content === undefined) body.push(`${MUTED}loading ${file}…${RESET}`);
   else for (const line of st.content.split("\n")) body.push(styleDigestLine(line));
 
@@ -129,7 +159,13 @@ export function installDigestTab(app: App, store: LearningStore): void {
     keys: () => digestKeys(store.digest),
     screen: (theApp, cols, rows) => {
       store.ensureDigest();
-      return renderDigestTab(store.digest, theApp.view.dryRun, store.now().toISOString().slice(0, 10), cols, rows);
+      return renderDigestTab(
+        store.digest,
+        theApp.view.dryRun,
+        store.now().toISOString().slice(0, 10),
+        cols,
+        rows,
+      );
     },
     key: (theApp, key: BoardKey): boolean => {
       switch (key.kind) {

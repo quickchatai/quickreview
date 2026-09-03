@@ -25,7 +25,12 @@ export type WakeDisposition = "injected" | "held";
  * Deliver a wake to a PR's main pi, or hold it when that PR's round is in
  * flight. `reason` is a short tag for the event log ("author_reply", …).
  */
-export async function wakeOrHold(deps: WakeDeps, pr: number, message: string, reason: string): Promise<WakeDisposition> {
+export async function wakeOrHold(
+  deps: WakeDeps,
+  pr: number,
+  message: string,
+  reason: string,
+): Promise<WakeDisposition> {
   const { store } = deps;
   const log = deps.log ?? ((): void => {});
   if (!store.hasRunningRound(pr) && !store.blockingSessionCommand(`pr-${pr}`)) {
@@ -38,11 +43,19 @@ export async function wakeOrHold(deps: WakeDeps, pr: number, message: string, re
       // any other injection error still propagates normally.
       const raced = store.blockingSessionCommand(`pr-${pr}`);
       if (!raced) throw err;
-      store.logEvent("wake_slot_raced", pr, { reason, active_command: raced.id, error: String(err) });
+      store.logEvent("wake_slot_raced", pr, {
+        reason,
+        active_command: raced.id,
+        error: String(err),
+      });
     }
   }
   const dropped = store.holdWake(pr, message, reason);
-  store.logEvent("wake_held", pr, { reason, dropped: dropped.length, held: store.heldWakes(pr).length });
+  store.logEvent("wake_held", pr, {
+    reason,
+    dropped: dropped.length,
+    held: store.heldWakes(pr).length,
+  });
   if (dropped.length > 0) {
     log(`wakes: #${pr} dropped ${dropped.length} held wake(s) over the cap`);
     store.logEvent("wake_dropped", pr, { reason, ids: dropped });
@@ -54,7 +67,9 @@ const AUTHOR_REPLY_HEADING = "# Author reply — PR #";
 
 function isAuthorReplyWake(wake: PendingWakeRow): boolean {
   if (wake.reason === "author_reply") return true;
-  return wake.reason.startsWith("operator_recovered:") && wake.payload.startsWith(AUTHOR_REPLY_HEADING);
+  return (
+    wake.reason.startsWith("operator_recovered:") && wake.payload.startsWith(AUTHOR_REPLY_HEADING)
+  );
 }
 
 function leadingDeliveryCount(wakes: PendingWakeRow[]): number {
@@ -107,7 +122,12 @@ export async function flushHeldWakes(deps: WakeDeps, pr: number): Promise<number
     const batchSize = leadingDeliveryCount(queued);
     if (batchSize === 0) break;
     const token = randomUUID();
-    const wakes = store.claimHeldWakeBatch(pr, token, new Date(Date.now() - leaseMs).toISOString(), batchSize);
+    const wakes = store.claimHeldWakeBatch(
+      pr,
+      token,
+      new Date(Date.now() - leaseMs).toISOString(),
+      batchSize,
+    );
     if (!wakes) break;
     const ids = wakes.map((wake) => wake.id);
     attempted += wakes.length;
@@ -115,7 +135,9 @@ export async function flushHeldWakes(deps: WakeDeps, pr: number): Promise<number
       await deps.inject(pr, deliveryPayload(pr, wakes));
       if (!store.ackHeldWakeBatch(ids, token)) {
         const first = wakes[0]!;
-        log(`wakes: #${pr} delivered held wake batch ${ids.join(",")}, but its lease was lost before ack`);
+        log(
+          `wakes: #${pr} delivered held wake batch ${ids.join(",")}, but its lease was lost before ack`,
+        );
         store.logEvent("wake_ack_lost", pr, {
           id: first.id,
           reason: first.reason,
@@ -128,7 +150,11 @@ export async function flushHeldWakes(deps: WakeDeps, pr: number): Promise<number
       }
       delivered += wakes.length;
       if (wakes.length > 1) {
-        store.logEvent("wakes_coalesced", pr, { ids, count: wakes.length, reasons: wakes.map((wake) => wake.reason) });
+        store.logEvent("wakes_coalesced", pr, {
+          ids,
+          count: wakes.length,
+          reasons: wakes.map((wake) => wake.reason),
+        });
       }
       // `inject` transferred ownership into the one durable session-command
       // slot. Stop here: deleting the upstream rows is safe, but a second
@@ -151,6 +177,11 @@ export async function flushHeldWakes(deps: WakeDeps, pr: number): Promise<number
       break;
     }
   }
-  if (attempted > 0) store.logEvent("wakes_flushed", pr, { delivered, attempted, remaining: store.heldWakes(pr).length });
+  if (attempted > 0)
+    store.logEvent("wakes_flushed", pr, {
+      delivered,
+      attempted,
+      remaining: store.heldWakes(pr).length,
+    });
   return delivered;
 }

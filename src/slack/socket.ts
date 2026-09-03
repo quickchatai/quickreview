@@ -4,12 +4,7 @@
 //
 // This file is PURE TRANSPORT. It acks, it reconnects, it normalizes — it does
 // not filter, dedupe or tier. That is the router's job (S3).
-import type {
-  SlackFetchFn,
-  SlackInboundEvent,
-  SlackInboundHandler,
-  SlackSocket,
-} from "./types.js";
+import type { SlackFetchFn, SlackInboundEvent, SlackInboundHandler, SlackSocket } from "./types.js";
 
 /** The slice of the WebSocket API we use — global WebSocket satisfies it. */
 export interface SlackWebSocketLike {
@@ -70,15 +65,17 @@ export class SlackSocketClient implements SlackSocket {
 
   constructor(opts: SlackSocketOptions) {
     this.appToken = opts.appToken;
-    this.fetchFn = opts.fetchFn ?? (fetch as SlackFetchFn);
+    this.fetchFn = opts.fetchFn ?? fetch;
     this.wsFactory =
-      opts.webSocketFactory ?? ((url: string) => new WebSocket(url) as unknown as SlackWebSocketLike);
+      opts.webSocketFactory ??
+      ((url: string) => new WebSocket(url) as unknown as SlackWebSocketLike);
     this.backoff = opts.backoffMs?.length ? [...opts.backoffMs] : [...DEFAULT_BACKOFF_MS];
     this.pingTimeoutMs = opts.serverPingTimeoutMs ?? DEFAULT_SERVER_PING_TIMEOUT_MS;
     this.apiBase = opts.apiBase ?? "https://slack.com/api";
     this.random = opts.random ?? Math.random;
     this.setTimeoutFn = opts.setTimeoutFn ?? ((fn, ms) => setTimeout(fn, ms));
-    this.clearTimeoutFn = opts.clearTimeoutFn ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
+    this.clearTimeoutFn =
+      opts.clearTimeoutFn ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
     this.log = opts.log ?? (() => {});
   }
 
@@ -269,7 +266,10 @@ export class SlackSocketClient implements SlackSocket {
     void Promise.resolve()
       .then(() => handler(normalized))
       .catch((err: unknown) => {
-        this.log("slack.socket.handler_failed", { error: String(err), event_id: normalized.event_id });
+        this.log("slack.socket.handler_failed", {
+          error: String(err),
+          event_id: normalized.event_id,
+        });
       });
   }
 }

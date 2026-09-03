@@ -32,11 +32,24 @@
 // Deterministic by construction: config and secrets are plain files under
 // paths derived from the injected state dir, every docker probe goes through
 // the ProcessRunner seam, and verify() neither prompts nor writes.
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { CHOICE_KEYS, type AuthRoute } from "../choices.js";
-import type { CheckResult, OnboardingStep, ProcessRunner, StepContext, StepReport } from "../engine.js";
+import type {
+  CheckResult,
+  OnboardingStep,
+  ProcessRunner,
+  StepContext,
+  StepReport,
+} from "../engine.js";
 
 export const LLM_AUTH_STEP_ID = "llm_auth";
 /** The choice key later steps read the route from. */
@@ -143,7 +156,12 @@ export function readTomlString(text: string, section: string, key: string): stri
  * follow. */
 export function resolveSecretsDir(configText: string, home: string, envDir?: string): string {
   const configured = readTomlString(configText, "github", "secrets_dir")?.trim();
-  const chosen = configured && configured.length > 0 ? configured : envDir && envDir.trim() ? envDir.trim() : DEFAULT_SECRETS_DIR;
+  const chosen =
+    configured && configured.length > 0
+      ? configured
+      : envDir && envDir.trim()
+        ? envDir.trim()
+        : DEFAULT_SECRETS_DIR;
   return expandHomePath(chosen, home);
 }
 
@@ -300,7 +318,10 @@ export interface LoginProbe {
  * auth.json` proves the token is on the volume, which is the only claim worth
  * making. Never throws, never prompts: an undetectable docker is a note.
  */
-export async function probeContainerLogin(runner: ProcessRunner, container: string): Promise<LoginProbe> {
+export async function probeContainerLogin(
+  runner: ProcessRunner,
+  container: string,
+): Promise<LoginProbe> {
   const mounts = await runner.run("docker", ["inspect", "--format", "{{json .Mounts}}", container]);
   if (mounts.code !== 0) {
     const err = `${mounts.stderr}${mounts.stdout}`;
@@ -315,19 +336,39 @@ export async function probeContainerLogin(runner: ProcessRunner, container: stri
     return { state: "undetectable" };
   }
   const list = Array.isArray(parsed) ? (parsed as Array<Record<string, unknown>>) : [];
-  const piMount = list.find((m) => typeof m.Destination === "string" && /\/\.pi$/.test(m.Destination));
+  const piMount = list.find(
+    (m) => typeof m.Destination === "string" && /\/\.pi$/.test(m.Destination),
+  );
   if (!piMount) return { state: "no-pi-volume" };
   const destination = String(piMount.Destination);
-  const mount = `${String(piMount.Type ?? "mount")} ${String(piMount.Name ?? piMount.Source ?? "")}`.trim();
+  const mount =
+    `${String(piMount.Type ?? "mount")} ${String(piMount.Name ?? piMount.Source ?? "")}`.trim();
 
-  const running = await runner.run("docker", ["inspect", "--format", "{{.State.Running}}", container]);
-  if (running.code !== 0 || running.stdout.trim() !== "true") return { state: "stopped", destination, mount };
+  const running = await runner.run("docker", [
+    "inspect",
+    "--format",
+    "{{.State.Running}}",
+    container,
+  ]);
+  if (running.code !== 0 || running.stdout.trim() !== "true")
+    return { state: "stopped", destination, mount };
 
-  const auth = await runner.run("docker", ["exec", container, "sh", "-c", `test -s '${destination}/agent/auth.json'`]);
+  const auth = await runner.run("docker", [
+    "exec",
+    container,
+    "sh",
+    "-c",
+    `test -s '${destination}/agent/auth.json'`,
+  ]);
   return { state: auth.code === 0 ? "ok" : "no-auth", destination, mount };
 }
 
-function loginCheck(name: string, label: string, container: string, probe: LoginProbe): CheckResult {
+function loginCheck(
+  name: string,
+  label: string,
+  container: string,
+  probe: LoginProbe,
+): CheckResult {
   switch (probe.state) {
     case "ok":
       return {
@@ -353,9 +394,17 @@ function loginCheck(name: string, label: string, container: string, probe: Login
           "and vanish on the next recreate (the hazard). Recreate it with its pihome volume before logging in.",
       };
     case "stopped":
-      return { name, ok: true, detail: `${label}: container exists but is not running — its login is verified when it starts` };
+      return {
+        name,
+        ok: true,
+        detail: `${label}: container exists but is not running — its login is verified when it starts`,
+      };
     case "undetectable":
-      return { name, ok: true, detail: `${label}: could not inspect docker from here — this login is verified where the container runs` };
+      return {
+        name,
+        ok: true,
+        detail: `${label}: could not inspect docker from here — this login is verified where the container runs`,
+      };
     case "absent":
     default:
       return {
@@ -387,8 +436,7 @@ export const ROUTE_QUESTION =
   "     key file as OPENAI_API_KEY), metered per token, and the wizard rewrites all six model strings for you.\n" +
   "Answer 1/oauth or 2/api:";
 
-export const KEY_QUESTION =
-  `paste the OpenAI API key (it is written straight to the ${OPENAI_KEY_FILE} secrets file, 0600, never to a command line):`;
+export const KEY_QUESTION = `paste the OpenAI API key (it is written straight to the ${OPENAI_KEY_FILE} secrets file, 0600, never to a command line):`;
 
 export const EMBEDDINGS_NOTE =
   "memory embeddings need nothing from this step: the memory engine embeds LOCALLY by default, inside the daemon " +
@@ -440,18 +488,28 @@ interface RouteDecision {
  *   4. otherwise the previously recorded route;
  *   5. otherwise: no answer yet — the step goes red with the choice text.
  */
-async function decideRoute(ctx: StepContext, keyFile: KeyFileState, hostLogin: boolean): Promise<RouteDecision> {
+async function decideRoute(
+  ctx: StepContext,
+  keyFile: KeyFileState,
+  hostLogin: boolean,
+): Promise<RouteDecision> {
   const prompter = ctx.adapters.prompter;
   if (prompter) {
     const answer = await prompter(ROUTE_QUESTION);
     const parsed = parseRouteAnswer(answer);
     if (parsed) return { route: parsed, source: "you chose it" };
     const kept = recordedRoute(ctx);
-    if (!answer.trim() && kept) return { route: kept, source: "kept the recorded route (empty answer)" };
+    if (!answer.trim() && kept)
+      return { route: kept, source: "kept the recorded route (empty answer)" };
     return { route: null, source: `did not understand the answer — reply 1/oauth or 2/api` };
   }
-  if (hostLogin) return { route: "oauth", source: "a completed pi login is on this host, and pi prefers auth.json over any env key" };
-  if (keyFile.valid) return { route: "api", source: `a valid ${OPENAI_KEY_FILE} is in the secrets dir` };
+  if (hostLogin)
+    return {
+      route: "oauth",
+      source: "a completed pi login is on this host, and pi prefers auth.json over any env key",
+    };
+  if (keyFile.valid)
+    return { route: "api", source: `a valid ${OPENAI_KEY_FILE} is in the secrets dir` };
   const kept = recordedRoute(ctx);
   if (kept) return { route: kept, source: "the recorded route" };
   return { route: null, source: "nothing on disk says which route this installation uses" };
@@ -477,13 +535,30 @@ function loadConfig(stateDir: string, allowSeed: boolean): ConfigState {
     }
   }
   const example = configExamplePathFor(stateDir);
-  if (!allowSeed) return { path, text: null, seeded: false, error: `${path} does not exist yet — run this step to create it from config.example.toml` };
-  if (!existsSync(example)) return { path, text: null, seeded: false, error: `neither ${path} nor ${example} exists — is this a QuickReview checkout?` };
+  if (!allowSeed)
+    return {
+      path,
+      text: null,
+      seeded: false,
+      error: `${path} does not exist yet — run this step to create it from config.example.toml`,
+    };
+  if (!existsSync(example))
+    return {
+      path,
+      text: null,
+      seeded: false,
+      error: `neither ${path} nor ${example} exists — is this a QuickReview checkout?`,
+    };
   try {
     copyFileSync(example, path);
     return { path, text: readFileSync(path, "utf8"), seeded: true, error: null };
   } catch (err) {
-    return { path, text: null, seeded: false, error: `could not create ${path} from config.example.toml: ${String(err)}` };
+    return {
+      path,
+      text: null,
+      seeded: false,
+      error: `could not create ${path} from config.example.toml: ${String(err)}`,
+    };
   }
 }
 
@@ -494,7 +569,9 @@ function embeddingsCheck(): CheckResult {
 }
 
 function modelsCheck(audit: ModelAudit[], route: AuthRoute, note: string): CheckResult {
-  const wrong = audit.filter((a) => a.kind === "oauth" || a.kind === "api").filter((a) => a.kind !== route);
+  const wrong = audit
+    .filter((a) => a.kind === "oauth" || a.kind === "api")
+    .filter((a) => a.kind !== route);
   const missing = audit.filter((a) => a.kind === "missing");
   const custom = audit.filter((a) => a.kind === "custom");
   const tail = [
@@ -511,10 +588,16 @@ function modelsCheck(audit: ModelAudit[], route: AuthRoute, note: string): Check
     };
   }
   const problems = [
-    wrong.length ? `still on the wrong provider: ${wrong.map((w) => `${w.label}="${w.value}"`).join(", ")}` : "",
+    wrong.length
+      ? `still on the wrong provider: ${wrong.map((w) => `${w.label}="${w.value}"`).join(", ")}`
+      : "",
     missing.length ? `not found in config.toml: ${missing.map((m) => m.label).join(", ")}` : "",
   ].filter(Boolean);
-  return { name: "models", ok: false, detail: `${problems.join("; ")} — expected the ${prefixFor(route)} prefix for the ${route} route${tail ? ` (${tail})` : ""}` };
+  return {
+    name: "models",
+    ok: false,
+    detail: `${problems.join("; ")} — expected the ${prefixFor(route)} prefix for the ${route} route${tail ? ` (${tail})` : ""}`,
+  };
 }
 
 function companionModelNote(configText: string, route: AuthRoute): string {
@@ -525,19 +608,29 @@ function companionModelNote(configText: string, route: AuthRoute): string {
   return `[companion] model is set to "${model}" — the companion is yours to point where you like, but on the ${route} route it usually wants the ${wanted} prefix too`;
 }
 
-async function oauthLoginChecks(ctx: StepContext, configText: string, home: string): Promise<CheckResult[]> {
+async function oauthLoginChecks(
+  ctx: StepContext,
+  configText: string,
+  home: string,
+): Promise<CheckResult[]> {
   const checks: CheckResult[] = [];
   const authPath = hostAuthJsonPath(home);
-  const hostOk = existsSync(authPath) && (() => {
-    try {
-      return readFileSync(authPath, "utf8").trim().length > 0;
-    } catch {
-      return false;
-    }
-  })();
+  const hostOk =
+    existsSync(authPath) &&
+    (() => {
+      try {
+        return readFileSync(authPath, "utf8").trim().length > 0;
+      } catch {
+        return false;
+      }
+    })();
   checks.push(
     hostOk
-      ? { name: "wizard_login", ok: true, detail: `this host's pi is logged in (${authPath}) — login 1 of 3 done` }
+      ? {
+          name: "wizard_login",
+          ok: true,
+          detail: `this host's pi is logged in (${authPath}) — login 1 of 3 done`,
+        }
       : {
           name: "wizard_login",
           ok: false,
@@ -549,8 +642,22 @@ async function oauthLoginChecks(ctx: StepContext, configText: string, home: stri
   const runner = ctx.adapters.runner;
   const daemon = daemonContainerName(configText);
   const companion = companionContainerName(configText);
-  checks.push(loginCheck("daemon_login", "daemon container", daemon, await probeContainerLogin(runner, daemon)));
-  checks.push(loginCheck("companion_login", "companion container", companion, await probeContainerLogin(runner, companion)));
+  checks.push(
+    loginCheck(
+      "daemon_login",
+      "daemon container",
+      daemon,
+      await probeContainerLogin(runner, daemon),
+    ),
+  );
+  checks.push(
+    loginCheck(
+      "companion_login",
+      "companion container",
+      companion,
+      await probeContainerLogin(runner, companion),
+    ),
+  );
   return checks;
 }
 
@@ -569,11 +676,18 @@ export function llmAuthStep(): OnboardingStep {
       const home = hostHome();
       const cfg = loadConfig(ctx.adapters.paths.stateDir, true);
       if (cfg.text === null) {
-        return { ok: false, checks: [{ name: "config", ok: false, detail: cfg.error ?? "config.toml unavailable" }] };
+        return {
+          ok: false,
+          checks: [{ name: "config", ok: false, detail: cfg.error ?? "config.toml unavailable" }],
+        };
       }
       const checks: CheckResult[] = [];
       if (cfg.seeded) {
-        checks.push({ name: "config", ok: true, detail: `created ${cfg.path} from config.example.toml (its FILL values are untouched — later steps fill them)` });
+        checks.push({
+          name: "config",
+          ok: true,
+          detail: `created ${cfg.path} from config.example.toml (its FILL values are untouched — later steps fill them)`,
+        });
       }
 
       const secretsDir = resolveSecretsDir(cfg.text, home, process.env.QC_SECRETS_DIR);
@@ -602,11 +716,20 @@ export function llmAuthStep(): OnboardingStep {
               });
             } else if (!validateOpenAiKey(pasted)) {
               // The value itself is NEVER echoed back.
-              checks.push({ name: "credential", ok: false, detail: "that does not look like an OpenAI API key (they start with sk- and contain no spaces) — nothing was written" });
+              checks.push({
+                name: "credential",
+                ok: false,
+                detail:
+                  "that does not look like an OpenAI API key (they start with sk- and contain no spaces) — nothing was written",
+              });
             } else {
               writeKeyFile(secretsDir, pasted);
               keyFile = readKeyFileState(secretsDir);
-              checks.push({ name: "credential", ok: true, detail: `saved to ${keyFile.path} (0600, dir 0700) — the entrypoints export it as OPENAI_API_KEY, so wizard, daemon and companion are all covered` });
+              checks.push({
+                name: "credential",
+                ok: true,
+                detail: `saved to ${keyFile.path} (0600, dir 0700) — the entrypoints export it as OPENAI_API_KEY, so wizard, daemon and companion are all covered`,
+              });
             }
           } else {
             checks.push({
@@ -619,7 +742,11 @@ export function llmAuthStep(): OnboardingStep {
             });
           }
         } else {
-          checks.push({ name: "credential", ok: true, detail: `${OPENAI_KEY_FILE} present in ${secretsDir} — covers the wizard, the daemon and the companion at once` });
+          checks.push({
+            name: "credential",
+            ok: true,
+            detail: `${OPENAI_KEY_FILE} present in ${secretsDir} — covers the wizard, the daemon and the companion at once`,
+          });
         }
       }
 
@@ -629,14 +756,20 @@ export function llmAuthStep(): OnboardingStep {
         try {
           writeFileSync(cfg.path, rewrite.text);
         } catch (err) {
-          checks.push({ name: "models", ok: false, detail: `could not write ${cfg.path}: ${String(err)}` });
+          checks.push({
+            name: "models",
+            ok: false,
+            detail: `could not write ${cfg.path}: ${String(err)}`,
+          });
           return { ok: false, checks };
         }
       }
       const configText = rewrite.text;
       const audit = auditModelStrings(configText);
       const note = [
-        rewrite.rewritten.length ? `rewrote ${rewrite.rewritten.length}: ${rewrite.rewritten.join(", ")}` : "already on this route",
+        rewrite.rewritten.length
+          ? `rewrote ${rewrite.rewritten.length}: ${rewrite.rewritten.join(", ")}`
+          : "already on this route",
         companionModelNote(configText, route),
       ]
         .filter(Boolean)
@@ -652,7 +785,11 @@ export function llmAuthStep(): OnboardingStep {
       if (ok) {
         ctx.recordChoice(CHOICE_KEYS.authRoute, route);
         ctx.recordChoice(MODEL_PREFIX_CHOICE_KEY, prefixFor(route));
-        return { ok, checks, data: { route, prefix: prefixFor(route), config_path: cfg.path, models: modelLabels() } };
+        return {
+          ok,
+          checks,
+          data: { route, prefix: prefixFor(route), config_path: cfg.path, models: modelLabels() },
+        };
       }
       return { ok, checks };
     },
@@ -662,7 +799,16 @@ export function llmAuthStep(): OnboardingStep {
       const home = hostHome();
       const route = recordedRoute(ctx);
       if (route === null) {
-        return { ok: false, checks: [{ name: "route", ok: false, detail: "no LLM auth route recorded — run this step to choose one" }] };
+        return {
+          ok: false,
+          checks: [
+            {
+              name: "route",
+              ok: false,
+              detail: "no LLM auth route recorded — run this step to choose one",
+            },
+          ],
+        };
       }
       const cfg = loadConfig(ctx.adapters.paths.stateDir, false);
       if (cfg.text === null) {
@@ -674,14 +820,20 @@ export function llmAuthStep(): OnboardingStep {
           ],
         };
       }
-      const checks: CheckResult[] = [{ name: "route", ok: true, detail: `${route} route recorded` }];
+      const checks: CheckResult[] = [
+        { name: "route", ok: true, detail: `${route} route recorded` },
+      ];
       const secretsDir = resolveSecretsDir(cfg.text, home, process.env.QC_SECRETS_DIR);
       const keyFile = readKeyFileState(secretsDir);
 
       if (route === "api") {
         checks.push(
           keyFile.valid
-            ? { name: "credential", ok: true, detail: `${OPENAI_KEY_FILE} present in ${secretsDir}` }
+            ? {
+                name: "credential",
+                ok: true,
+                detail: `${OPENAI_KEY_FILE} present in ${secretsDir}`,
+              }
             : {
                 name: "credential",
                 ok: false,
@@ -692,7 +844,9 @@ export function llmAuthStep(): OnboardingStep {
         );
       }
 
-      checks.push(modelsCheck(auditModelStrings(cfg.text), route, companionModelNote(cfg.text, route)));
+      checks.push(
+        modelsCheck(auditModelStrings(cfg.text), route, companionModelNote(cfg.text, route)),
+      );
       if (route === "oauth") checks.push(...(await oauthLoginChecks(ctx, cfg.text, home)));
       checks.push(embeddingsCheck());
 

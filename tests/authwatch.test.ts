@@ -2,11 +2,24 @@
 // status.json flag, WAKE-grade anomaly, and the TUI alert bridge. Ratified
 // 2026-08-19 (the owner): NO smoke calls — detection is purely observational
 // over the session JSONLs pi already writes.
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AUTH_TAIL_BYTES, PI_AUTH_ERROR_RE, PiAuthWatch, scanPiAuthErrors } from "../src/authwatch.js";
+import {
+  AUTH_TAIL_BYTES,
+  PI_AUTH_ERROR_RE,
+  PiAuthWatch,
+  scanPiAuthErrors,
+} from "../src/authwatch.js";
 import { anomalySeverity } from "../src/anomalies.js";
 import { buildStatusSnapshot, StateStore } from "../src/state.js";
 import { maybeWritePiAuthAlert } from "../src/tui/alerts.js";
@@ -84,7 +97,10 @@ describe("surfaces", () => {
     const store = new StateStore(":memory:");
     const now = () => new Date("2026-08-19T15:00:00Z");
     expect(buildStatusSnapshot(store, false, undefined, now)).not.toHaveProperty("pi_auth_expired");
-    const snap = buildStatusSnapshot(store, false, undefined, now, undefined, { last_at: "2026-08-19T14:59:00Z", hits: 3 });
+    const snap = buildStatusSnapshot(store, false, undefined, now, undefined, {
+      last_at: "2026-08-19T14:59:00Z",
+      hits: 3,
+    });
     expect(snap.pi_auth_expired).toEqual({ last_at: "2026-08-19T14:59:00Z", hits: 3 });
     store.close();
   });
@@ -102,12 +118,24 @@ describe("surfaces", () => {
 
     // Same detection again: no second file. New detection: one more.
     expect(maybeWritePiAuthAlert(alertsDir, flag, mem, now)).toBeUndefined();
-    expect(maybeWritePiAuthAlert(alertsDir, { last_at: "2026-08-19T15:06:00Z", hits: 3 }, mem, () => new Date("2026-08-19T15:07:00Z"))).toBeDefined();
+    expect(
+      maybeWritePiAuthAlert(
+        alertsDir,
+        { last_at: "2026-08-19T15:06:00Z", hits: 3 },
+        mem,
+        () => new Date("2026-08-19T15:07:00Z"),
+      ),
+    ).toBeDefined();
     expect(readdirSync(alertsDir)).toHaveLength(2);
 
     // A stale flag (>30 min old) is history, not an alert.
     expect(
-      maybeWritePiAuthAlert(alertsDir, { last_at: "2026-08-19T14:00:00Z", hits: 9 }, { lastWritten: "" }, () => new Date("2026-08-19T15:07:00Z")),
+      maybeWritePiAuthAlert(
+        alertsDir,
+        { last_at: "2026-08-19T14:00:00Z", hits: 9 },
+        { lastWritten: "" },
+        () => new Date("2026-08-19T15:07:00Z"),
+      ),
     ).toBeUndefined();
     // Absent flag: nothing.
     expect(maybeWritePiAuthAlert(alertsDir, undefined, mem, now)).toBeUndefined();

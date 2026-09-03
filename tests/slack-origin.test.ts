@@ -50,15 +50,34 @@ describe("OriginStore", () => {
   });
 
   it("latest() returns the most recent unexpired record", () => {
-    origins.write("a.md", { event_id: "EvA", slack_user: "U0A", tier: "anyone", authorized_prs: [] });
+    origins.write("a.md", {
+      event_id: "EvA",
+      slack_user: "U0A",
+      tier: "anyone",
+      authorized_prs: [],
+    });
     at(60_000);
-    origins.write("b.md", { event_id: "EvB", slack_user: "U0B", tier: "author", authorized_prs: [7] });
-    expect(origins.latest()).toMatchObject({ event_id: "EvB", tier: "author", authorized_prs: [7] });
+    origins.write("b.md", {
+      event_id: "EvB",
+      slack_user: "U0B",
+      tier: "author",
+      authorized_prs: [7],
+    });
+    expect(origins.latest()).toMatchObject({
+      event_id: "EvB",
+      tier: "author",
+      authorized_prs: [7],
+    });
     expect(origins.all()).toHaveLength(2);
   });
 
   it("an expired record authorises nothing", () => {
-    origins.write("a.md", { event_id: "EvA", slack_user: "U0A", tier: "owner", authorized_prs: [] });
+    origins.write("a.md", {
+      event_id: "EvA",
+      slack_user: "U0A",
+      tier: "owner",
+      authorized_prs: [],
+    });
     at(ORIGIN_TTL_MS - 1);
     expect(origins.latest()?.event_id).toBe("EvA");
     at(ORIGIN_TTL_MS + 1);
@@ -72,9 +91,19 @@ describe("OriginStore", () => {
   });
 
   it("prune keeps only the newest expired record, never a stale pile", () => {
-    origins.write("a.md", { event_id: "EvA", slack_user: "U0A", tier: "anyone", authorized_prs: [] });
+    origins.write("a.md", {
+      event_id: "EvA",
+      slack_user: "U0A",
+      tier: "anyone",
+      authorized_prs: [],
+    });
     at(60_000);
-    origins.write("b.md", { event_id: "EvB", slack_user: "U0B", tier: "author", authorized_prs: [] });
+    origins.write("b.md", {
+      event_id: "EvB",
+      slack_user: "U0B",
+      tier: "author",
+      authorized_prs: [],
+    });
     at(ORIGIN_TTL_MS + 120_000);
     origins.prune();
     expect(readdirSync(dir).filter((n) => n.endsWith(".json"))).toEqual(["b.json"]);
@@ -83,11 +112,21 @@ describe("OriginStore", () => {
   });
 
   it("a router write is a `slack` source; writeLocal stamps a daemon turn", () => {
-    const slack = origins.write("a.md", { event_id: "EvA", slack_user: "U0A", tier: "author", authorized_prs: [9] });
+    const slack = origins.write("a.md", {
+      event_id: "EvA",
+      slack_user: "U0A",
+      tier: "author",
+      authorized_prs: [9],
+    });
     expect(slack.source).toBe("slack");
     at(ORIGIN_TTL_MS * 3); // the Slack turn is long expired
     const local = origins.writeLocal("eod-sweep");
-    expect(local).toMatchObject({ source: "local", tier: "system", slack_user: "", authorized_prs: [] });
+    expect(local).toMatchObject({
+      source: "local",
+      tier: "system",
+      slack_user: "",
+      authorized_prs: [],
+    });
     expect(local.event_id).toBe("local:eod-sweep");
     // The daemon wake supersedes the Slack origin for the belt…
     expect(origins.latestAny()).toMatchObject({ source: "local", tier: "system" });
@@ -107,11 +146,25 @@ describe("OriginStore", () => {
       }),
     );
     expect(origins.latest()?.source).toBe("slack");
-    expect(parseOriginRecord({ source: "nonsense", event_id: "E", slack_user: "U", tier: "anyone", authorized_prs: [], expires_at: T0.toISOString() })?.source).toBe("slack");
+    expect(
+      parseOriginRecord({
+        source: "nonsense",
+        event_id: "E",
+        slack_user: "U",
+        tier: "anyone",
+        authorized_prs: [],
+        expires_at: T0.toISOString(),
+      })?.source,
+    ).toBe("slack");
   });
 
   it("remove() drops a record and rename() moves it to the inject basename", () => {
-    origins.write("event-Ev1", { event_id: "Ev1", slack_user: "U0A", tier: "author", authorized_prs: [] });
+    origins.write("event-Ev1", {
+      event_id: "Ev1",
+      slack_user: "U0A",
+      tier: "author",
+      authorized_prs: [],
+    });
     origins.rename("event-Ev1", "wake-0007.md");
     expect(existsSync(join(dir, "wake-0007.json"))).toBe(true);
     expect(existsSync(join(dir, "event-Ev1.json"))).toBe(false);
@@ -128,7 +181,16 @@ describe("OriginStore", () => {
   it("garbage and wrong-shaped files grant nothing", () => {
     writeFileSync(join(dir, "junk.json"), "{ not json");
     writeFileSync(join(dir, "shape.json"), JSON.stringify({ tier: "owner" }));
-    writeFileSync(join(dir, "badtier.json"), JSON.stringify({ event_id: "E", slack_user: "U", tier: "root", authorized_prs: [], expires_at: new Date(T0.getTime() + 60_000).toISOString() }));
+    writeFileSync(
+      join(dir, "badtier.json"),
+      JSON.stringify({
+        event_id: "E",
+        slack_user: "U",
+        tier: "root",
+        authorized_prs: [],
+        expires_at: new Date(T0.getTime() + 60_000).toISOString(),
+      }),
+    );
     expect(origins.latest()).toBeNull();
   });
 

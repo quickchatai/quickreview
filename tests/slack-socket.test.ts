@@ -103,7 +103,13 @@ describe("Socket Mode envelopes", () => {
     const h = harness();
     const seen: SlackInboundEvent[] = [];
     await h.client.startSocket((ev) => void seen.push(ev));
-    h.sockets[0]!.push(messageEnvelope("env-2", { thread_ts: "1712345600.000100", subtype: "bot_message", bot_id: "B9" }));
+    h.sockets[0]!.push(
+      messageEnvelope("env-2", {
+        thread_ts: "1712345600.000100",
+        subtype: "bot_message",
+        bot_id: "B9",
+      }),
+    );
     await vi.advanceTimersByTimeAsync(1);
 
     expect(seen).toHaveLength(1);
@@ -128,7 +134,11 @@ describe("Socket Mode envelopes", () => {
     const seen: SlackInboundEvent[] = [];
     await h.client.startSocket((ev) => void seen.push(ev));
     const ws = h.sockets[0]!;
-    ws.push({ type: "events_api", envelope_id: "env-a", payload: { event_id: "Eva", event: { type: "reaction_added" } } });
+    ws.push({
+      type: "events_api",
+      envelope_id: "env-a",
+      payload: { event_id: "Eva", event: { type: "reaction_added" } },
+    });
     ws.push({ type: "slash_commands", envelope_id: "env-b", payload: { command: "/qcr" } });
     ws.push({ type: "interactive", envelope_id: "env-c", payload: {} });
     await vi.advanceTimersByTimeAsync(1);
@@ -187,7 +197,11 @@ describe("reconnect", () => {
     const openCalls: string[] = [];
     const fetchFn = (async (url: string | URL) => {
       openCalls.push(String(url));
-      return { ok: true, status: 200, json: async () => ({ ok: false, error: "invalid_auth" }) } as unknown as Response;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: false, error: "invalid_auth" }),
+      } as unknown as Response;
     }) as unknown as SlackFetchFn;
     const client = new SlackSocketClient({
       appToken: "xapp-test",

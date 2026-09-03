@@ -15,7 +15,7 @@ export const STATE_GLYPHS: Record<PrLifecycleState, string> = {
 
 /** `↻` prefixes the state glyph when a stale recheck is pending. */
 export function glyphFor(pr: Pick<SnapshotPr, "state" | "stale_recheck">): string {
-  const base = STATE_GLYPHS[pr.state as PrLifecycleState] ?? "?";
+  const base = STATE_GLYPHS[pr.state] ?? "?";
   return pr.stale_recheck ? `↻${base}` : base;
 }
 
@@ -83,7 +83,12 @@ export interface EventLine {
 
 /** One events-strip line from a daemon event row — newest first is the
  * caller's job; this renders a single row. */
-export function formatEvent(e: { ts: string; kind: string; pr: number | null; payload: string | null }): EventLine {
+export function formatEvent(e: {
+  ts: string;
+  kind: string;
+  pr: number | null;
+  payload: string | null;
+}): EventLine {
   const hhmmss = e.ts.slice(11, 19);
   let detail = "";
   if (e.payload) {
@@ -109,7 +114,11 @@ export function moveSelection(current: number, delta: number, length: number): n
 }
 
 /** Keep the selection on the same PR across snapshot refreshes. */
-export function reselect(sorted: SnapshotPr[], selectedPr: number | undefined, fallbackIndex: number): number {
+export function reselect(
+  sorted: SnapshotPr[],
+  selectedPr: number | undefined,
+  fallbackIndex: number,
+): number {
   if (selectedPr !== undefined) {
     const i = sorted.findIndex((p) => p.number === selectedPr);
     if (i !== -1) return i;

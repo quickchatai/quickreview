@@ -14,7 +14,15 @@
 // Both keys are stable across pin and across the stamp itself — `memoryKey`
 // normalizes exactly those two mutations away.
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync, closeSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+  closeSync,
+} from "node:fs";
 import { join } from "node:path";
 import { parseEventTags } from "../memory/eventtags.js";
 import { refOf, type MemoryEntry, type MemoryStore } from "./memory.js";
@@ -130,7 +138,12 @@ function slugify(text: string): string {
   return words.join("-") || "memory-defect";
 }
 
-export function ticketBody(id: string, e: MemoryEntry, paths: TrackerPaths, nowIso: string): { name: string; content: string } {
+export function ticketBody(
+  id: string,
+  e: MemoryEntry,
+  paths: TrackerPaths,
+  nowIso: string,
+): { name: string; content: string } {
   const firstSentence = e.text.replace(/\s+/g, " ").slice(0, 110);
   const slug = slugify(firstSentence);
   const name = `FT-${id}-${slug}.md`;
@@ -196,7 +209,10 @@ export async function autofileDefects(
       if (filedAs(e) !== undefined) continue;
       const key = memoryKey(e);
       if (seen.has(key)) continue;
-      const id = claimNextId(paths.root, (n) => `efforts/${paths.effort}/tickets/${ticketBody(n, e, paths, nowIso).name}`);
+      const id = claimNextId(
+        paths.root,
+        (n) => `efforts/${paths.effort}/tickets/${ticketBody(n, e, paths, nowIso).name}`,
+      );
       const { name, content } = ticketBody(id, e, paths, nowIso);
       writeFileSync(join(ticketsDir, name), content);
       seen.add(key);
@@ -211,7 +227,11 @@ export async function autofileDefects(
   if (store) {
     for (const { entry, ticketId } of stamps) {
       try {
-        await store.apply({ op: "edit", ...refOf(entry), text: withFiledTag(entry.text, ticketId) });
+        await store.apply({
+          op: "edit",
+          ...refOf(entry),
+          text: withFiledTag(entry.text, ticketId),
+        });
       } catch {
         /* the seam resolves refusals; only a broken transport lands here */
       }

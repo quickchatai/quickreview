@@ -18,11 +18,18 @@ import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { APP_SELF_CONFIG_KINDS, MUTATION_KINDS, type AppSelfConfigKind, type MutationKind } from "../src/gate.js";
+import {
+  APP_SELF_CONFIG_KINDS,
+  MUTATION_KINDS,
+  type AppSelfConfigKind,
+  type MutationKind,
+} from "../src/gate.js";
 import { parseConfig } from "../src/config.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const manifest = JSON.parse(readFileSync(resolve(root, "deploy/github-app-manifest.json"), "utf8")) as {
+const manifest = JSON.parse(
+  readFileSync(resolve(root, "deploy/github-app-manifest.json"), "utf8"),
+) as {
   name: string;
   hook_attributes: { url: string; active: boolean };
   default_permissions: Record<string, string>;
@@ -34,7 +41,10 @@ const webhookSrc = readFileSync(resolve(root, "src/webhook.ts"), "utf8");
 // publishability lint) stands in there.
 const liveConfigPath = resolve(root, "config.toml");
 const cfg = parseConfig(
-  readFileSync(existsSync(liveConfigPath) ? liveConfigPath : resolve(root, "config.example.toml"), "utf8"),
+  readFileSync(
+    existsSync(liveConfigPath) ? liveConfigPath : resolve(root, "config.example.toml"),
+    "utf8",
+  ),
 );
 
 /** The events src/webhook.ts actually accepts: the `case "<event>"` labels of
@@ -91,7 +101,15 @@ describe("github-app-manifest ↔ webhook handler", () => {
     // Sanity on the extraction itself: the seven known events, no duplicates.
     expect(handled.length).toBe(new Set(handled).size);
     expect(new Set(handled)).toEqual(
-      new Set(["pull_request", "pull_request_review_comment", "issue_comment", "pull_request_review", "check_suite", "workflow_run", "push"]),
+      new Set([
+        "pull_request",
+        "pull_request_review_comment",
+        "issue_comment",
+        "pull_request_review",
+        "check_suite",
+        "workflow_run",
+        "push",
+      ]),
     );
     expect(new Set(manifest.default_events)).toEqual(new Set(handled));
   });
@@ -103,8 +121,13 @@ describe("github-app-manifest ↔ webhook handler", () => {
   it("grants the delivery permission every subscribed event requires", () => {
     for (const event of manifest.default_events) {
       const perm = EVENT_PERMISSION[event];
-      expect(perm, `no known permission mapping for event "${event}" — add it to EVENT_PERMISSION`).toBeDefined();
-      expect(["read", "write"], `event "${event}" needs ${perm}: read`).toContain(manifest.default_permissions[perm!]);
+      expect(
+        perm,
+        `no known permission mapping for event "${event}" — add it to EVENT_PERMISSION`,
+      ).toBeDefined();
+      expect(["read", "write"], `event "${event}" needs ${perm}: read`).toContain(
+        manifest.default_permissions[perm!],
+      );
     }
   });
 });
@@ -115,7 +138,10 @@ describe("github-app-manifest ↔ mutation gate", () => {
     for (const kind of MUTATION_KINDS) {
       if (selfConfig.includes(kind)) continue; // JWT-authed; see below
       const perm = KIND_WRITE_PERMISSION[kind as Exclude<MutationKind, AppSelfConfigKind>];
-      expect(manifest.default_permissions[perm], `kind "${kind}" writes through ${perm} and needs write`).toBe("write");
+      expect(
+        manifest.default_permissions[perm],
+        `kind "${kind}" writes through ${perm} and needs write`,
+      ).toBe("write");
     }
   });
 

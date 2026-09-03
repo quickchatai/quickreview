@@ -5,7 +5,16 @@ import Database from "better-sqlite3";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { OpenVikingStatus } from "./openviking/types.js";
-import { holdActive, mayLift, mergeHold, type HoldOutcome, type LeverGrant, type LeverHold, type LeverIssuer, type LeverKind } from "./levers.js";
+import {
+  holdActive,
+  mayLift,
+  mergeHold,
+  type HoldOutcome,
+  type LeverGrant,
+  type LeverHold,
+  type LeverIssuer,
+  type LeverKind,
+} from "./levers.js";
 import type { PassPlanEntry, VerdictPassEntry } from "./types.js";
 import { standingVerdict as standingReviewVerdict } from "./standing-review.js";
 
@@ -294,7 +303,10 @@ export const CANCEL_CAUSES: readonly CancelCause[] = [
  * exact inversion found. `head_moved` and `superseded` are the system
  * working. What is left is a round that stopped dead: that gets an anomaly row.
  */
-export const LOUD_CANCEL_CAUSES: ReadonlySet<CancelCause> = new Set<CancelCause>(["deadline_overrun", "infrastructure_failure"]);
+export const LOUD_CANCEL_CAUSES: ReadonlySet<CancelCause> = new Set<CancelCause>([
+  "deadline_overrun",
+  "infrastructure_failure",
+]);
 
 export function isLoudCancelCause(cause: string | null | undefined): boolean {
   return cause !== null && cause !== undefined && LOUD_CANCEL_CAUSES.has(cause as CancelCause);
@@ -424,7 +436,11 @@ export type SlackTier = "anyone" | "author" | "owner" | "system" | "ignored";
  */
 export function foldSlackTier(raw: unknown): SlackTier | null {
   if (raw === "owner_legacy") return "owner"; // legacy — accepted on input, never emitted
-  return raw === "anyone" || raw === "author" || raw === "owner" || raw === "system" || raw === "ignored"
+  return raw === "anyone" ||
+    raw === "author" ||
+    raw === "owner" ||
+    raw === "system" ||
+    raw === "ignored"
     ? raw
     : null;
 }
@@ -1190,7 +1206,10 @@ export interface RoundStartMeta {
 export class StateStore {
   readonly db: Database.Database;
 
-  constructor(readonly path: string, private readonly now: () => Date = () => new Date()) {
+  constructor(
+    readonly path: string,
+    private readonly now: () => Date = () => new Date(),
+  ) {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     this.db = new Database(path);
     this.db.pragma("journal_mode = WAL");
@@ -1361,7 +1380,9 @@ export class StateStore {
    */
   private runDataMigrations(): void {
     this.db
-      .prepare("UPDATE rounds SET est_usd = spend_usd WHERE est_usd IS NULL AND spend_usd IS NOT NULL")
+      .prepare(
+        "UPDATE rounds SET est_usd = spend_usd WHERE est_usd IS NULL AND spend_usd IS NOT NULL",
+      )
       .run();
     const info = this.db
       .prepare(
@@ -1375,7 +1396,8 @@ export class StateStore {
             )`,
       )
       .run({ now: this.ts() });
-    if (info.changes > 0) this.logEvent("rounds_expired", null, { count: info.changes, one_shot: true });
+    if (info.changes > 0)
+      this.logEvent("rounds_expired", null, { count: info.changes, one_shot: true });
     this.classifyLegacyCancellations();
   }
 
@@ -1418,12 +1440,15 @@ export class StateStore {
   // ---- pr_state ----------------------------------------------------------
 
   getPr(n: number): PrStateRow | undefined {
-    const row = this.db.prepare("SELECT * FROM pr_state WHERE number = ?").get(n) as PrStateRow | undefined;
+    const row = this.db.prepare("SELECT * FROM pr_state WHERE number = ?").get(n) as
+      PrStateRow | undefined;
     return row && this.withLivePause(row);
   }
 
   allPrs(): PrStateRow[] {
-    return (this.db.prepare("SELECT * FROM pr_state ORDER BY number").all() as PrStateRow[]).map((r) => this.withLivePause(r));
+    return (this.db.prepare("SELECT * FROM pr_state ORDER BY number").all() as PrStateRow[]).map(
+      (r) => this.withLivePause(r),
+    );
   }
 
   /**
@@ -1437,12 +1462,17 @@ export class StateStore {
   private withLivePause(row: PrStateRow): PrStateRow {
     if (!row.paused) return row;
     const hold = this.pauseHold(row);
-    return holdActive(hold, this.ts()) ? { ...row, pause_issuer: hold.issuer } : { ...row, paused: 0 };
+    return holdActive(hold, this.ts())
+      ? { ...row, pause_issuer: hold.issuer }
+      : { ...row, paused: 0 };
   }
 
   private pauseHold(row: PrStateRow): LeverHold | null {
     if (!row.paused) return null;
-    return { issuer: row.pause_issuer ?? "operator", expires_at: row.pause_issuer ? row.pause_expires_at : null };
+    return {
+      issuer: row.pause_issuer ?? "operator",
+      expires_at: row.pause_issuer ? row.pause_expires_at : null,
+    };
   }
 
   /**
@@ -1490,7 +1520,16 @@ export class StateStore {
    * `trigger_provenance` is optional for callers that predate it —
    * absent means null, i.e. the full-round default. */
   upsertPr(
-    row: Omit<PrStateRow, "updated_at" | "paused" | "pause_issuer" | "pause_expires_at" | "pause_reason" | "pause_since" | "trigger_provenance"> & {
+    row: Omit<
+      PrStateRow,
+      | "updated_at"
+      | "paused"
+      | "pause_issuer"
+      | "pause_expires_at"
+      | "pause_reason"
+      | "pause_since"
+      | "trigger_provenance"
+    > & {
       paused?: number;
       trigger_provenance?: TriggerProvenance | null;
     },
@@ -1514,16 +1553,22 @@ export class StateStore {
   }
 
   setPrState(n: number, state: PrLifecycleState): void {
-    this.db.prepare("UPDATE pr_state SET state = ?, updated_at = ? WHERE number = ?").run(state, this.ts(), n);
+    this.db
+      .prepare("UPDATE pr_state SET state = ?, updated_at = ? WHERE number = ?")
+      .run(state, this.ts(), n);
   }
 
   /** Publish an operator rerun without writing a pre-fence PR snapshot back
    * over newer reconcile/webhook state. A close that wins the fence is final. */
   queuePrForOperatorRecovery(n: number, triggerTs: string): boolean {
-    return this.db.prepare(
-      `UPDATE pr_state SET state='queued', trigger_ts=?, updated_at=?
+    return (
+      this.db
+        .prepare(
+          `UPDATE pr_state SET state='queued', trigger_ts=?, updated_at=?
         WHERE number=? AND state!='closed'`,
-    ).run(triggerTs, this.ts(), n).changes === 1;
+        )
+        .run(triggerTs, this.ts(), n).changes === 1
+    );
   }
 
   // ---- rounds ------------------------------------------------------------
@@ -1537,7 +1582,12 @@ export class StateStore {
   ): number {
     const started = this.now();
     const deadline = new Date(started.getTime() + deadlineMin * 60_000);
-    const nextNo = ((this.db.prepare("SELECT MAX(round_no) AS m FROM rounds WHERE pr = ?").get(pr) as { m: number | null }).m ?? 0) + 1;
+    const nextNo =
+      ((
+        this.db.prepare("SELECT MAX(round_no) AS m FROM rounds WHERE pr = ?").get(pr) as {
+          m: number | null;
+        }
+      ).m ?? 0) + 1;
     const info = this.db
       .prepare(
         `INSERT INTO rounds (pr, round_no, round_type, lenses, started_at, deadline_at, status,
@@ -1567,10 +1617,16 @@ export class StateStore {
   setRoundMeta(id: number, meta: RoundStartMeta): void {
     const sets: string[] = [];
     const args: Array<number | string | null> = [];
-    for (const key of ["additions", "deletions", "changed_files", "trigger_ts", "validate_tier"] as const) {
+    for (const key of [
+      "additions",
+      "deletions",
+      "changed_files",
+      "trigger_ts",
+      "validate_tier",
+    ] as const) {
       if (meta[key] !== undefined) {
         sets.push(`${key} = ?`);
-        args.push(meta[key] as number | string | null);
+        args.push(meta[key]);
       }
     }
     for (const key of ["pass_plan", "addable_passes"] as const) {
@@ -1584,21 +1640,29 @@ export class StateStore {
   }
 
   stampPostingKey(id: number, postingKey: string): void {
-    this.db.prepare("UPDATE rounds SET posting_key=? WHERE id=? AND posting_key IS NULL").run(postingKey, id);
+    this.db
+      .prepare("UPDATE rounds SET posting_key=? WHERE id=? AND posting_key IS NULL")
+      .run(postingKey, id);
   }
 
   /** Persist successful stage progress once, both for diagnostics and to reset
    * the per-head fast-retry generation after a later unrelated round. */
   recordRoundFanoutStarted(id: number, commandId: string, startedAt: string): boolean {
-    const row = this.db.prepare(
-      `SELECT r.pr, r.round_no, r.posting_key, c.id AS command_id
+    const row = this.db
+      .prepare(
+        `SELECT r.pr, r.round_no, r.posting_key, c.id AS command_id
          FROM rounds r JOIN session_commands c ON c.pr=r.pr AND c.kind='round' AND c.round_no=r.round_no
         WHERE r.id=? AND r.status='running' AND c.id=?`,
-    ).get(id, commandId) as { pr: number; round_no: number; posting_key: string | null; command_id: string } | undefined;
+      )
+      .get(id, commandId) as
+      { pr: number; round_no: number; posting_key: string | null; command_id: string } | undefined;
     if (!row) return false;
-    const changed = this.db.prepare(
-      "UPDATE rounds SET fanout_started_at=? WHERE id=? AND status='running' AND fanout_started_at IS NULL",
-    ).run(startedAt, id).changes === 1;
+    const changed =
+      this.db
+        .prepare(
+          "UPDATE rounds SET fanout_started_at=? WHERE id=? AND status='running' AND fanout_started_at IS NULL",
+        )
+        .run(startedAt, id).changes === 1;
     if (changed) {
       const head = row.posting_key
         ? new RegExp(`^v1:${row.pr}:${row.round_no}:([^:]+)$`).exec(row.posting_key)?.[1]
@@ -1619,17 +1683,25 @@ export class StateStore {
     id: number,
     state: "ambiguous" | "executed" | "dryrun" | "refused",
   ): void {
-    this.db.prepare(
-      `UPDATE rounds SET preflight_posting_state=? WHERE id=? AND status='running'`,
-    ).run(state, id);
+    this.db
+      .prepare(`UPDATE rounds SET preflight_posting_state=? WHERE id=? AND status='running'`)
+      .run(state, id);
   }
 
   confirmRoundPosting(
     id: number,
-    receipt: { posting_key: string; actual_event: string; gh_review_id: number | null; gh_commit_id: string; confirmed_at: string },
+    receipt: {
+      posting_key: string;
+      actual_event: string;
+      gh_review_id: number | null;
+      gh_commit_id: string;
+      confirmed_at: string;
+    },
   ): boolean {
-    return this.db.prepare(
-      `UPDATE rounds
+    return (
+      this.db
+        .prepare(
+          `UPDATE rounds
           SET gh_review_id=COALESCE(gh_review_id, @gh_review_id),
               gh_commit_id=COALESCE(gh_commit_id, @gh_commit_id),
               posted_event=COALESCE(posted_event, @actual_event),
@@ -1638,7 +1710,9 @@ export class StateStore {
           AND (gh_review_id IS NULL OR @gh_review_id IS NULL OR gh_review_id=@gh_review_id)
           AND (gh_commit_id IS NULL OR gh_commit_id=@gh_commit_id)
           AND (posted_event IS NULL OR posted_event=@actual_event)`,
-    ).run({ id, ...receipt }).changes === 1;
+        )
+        .run({ id, ...receipt }).changes === 1
+    );
   }
 
   /** Rounds that actually DELIVERED a verdict for a PR — backfilled history
@@ -1661,13 +1735,17 @@ export class StateStore {
   priorRoundCount(pr: number): number {
     return (
       this.db
-        .prepare("SELECT COUNT(*) AS c FROM rounds WHERE pr = ? AND backfilled = 0 AND verdict IS NOT NULL")
+        .prepare(
+          "SELECT COUNT(*) AS c FROM rounds WHERE pr = ? AND backfilled = 0 AND verdict IS NOT NULL",
+        )
         .get(pr) as { c: number }
     ).c;
   }
 
   roundsFor(pr: number): RoundRow[] {
-    return this.db.prepare("SELECT * FROM rounds WHERE pr = ? ORDER BY round_no").all(pr) as RoundRow[];
+    return this.db
+      .prepare("SELECT * FROM rounds WHERE pr = ? ORDER BY round_no")
+      .all(pr) as RoundRow[];
   }
 
   allRounds(): RoundRow[] {
@@ -1678,8 +1756,14 @@ export class StateStore {
    * ONE spend field) only when no measured figure exists yet —
    * recordRoundUsage's measurement always supersedes it. The retired
    * `spend_usd` column is never written. */
-  finishRound(id: number, verdict: string, estUsd: number | null, summary: string | null = null): void {
-    const row = this.db.prepare("SELECT started_at FROM rounds WHERE id = ?").get(id) as { started_at: string } | undefined;
+  finishRound(
+    id: number,
+    verdict: string,
+    estUsd: number | null,
+    summary: string | null = null,
+  ): void {
+    const row = this.db.prepare("SELECT started_at FROM rounds WHERE id = ?").get(id) as
+      { started_at: string } | undefined;
     const duration = row ? (this.now().getTime() - Date.parse(row.started_at)) / 1000 : null;
     this.db
       .prepare(
@@ -1692,10 +1776,17 @@ export class StateStore {
    * a re-measured round keeps only the latest figures. */
   recordRoundUsage(
     id: number,
-    usage: { tokens_in: number; tokens_out: number; tokens_cache_read?: number | null; est_usd: number | null },
+    usage: {
+      tokens_in: number;
+      tokens_out: number;
+      tokens_cache_read?: number | null;
+      est_usd: number | null;
+    },
   ): void {
     this.db
-      .prepare("UPDATE rounds SET tokens_in = ?, tokens_out = ?, tokens_cache_read = ?, est_usd = ? WHERE id = ?")
+      .prepare(
+        "UPDATE rounds SET tokens_in = ?, tokens_out = ?, tokens_cache_read = ?, est_usd = ? WHERE id = ?",
+      )
       .run(usage.tokens_in, usage.tokens_out, usage.tokens_cache_read ?? null, usage.est_usd, id);
   }
 
@@ -1705,15 +1796,16 @@ export class StateStore {
    * Overwrites: a re-delivered verdict keeps only the latest report.
    */
   recordExecutedPasses(id: number, passes: readonly VerdictPassEntry[]): void {
-    this.db.prepare("UPDATE rounds SET executed_passes = ? WHERE id = ?").run(JSON.stringify(passes), id);
+    this.db
+      .prepare("UPDATE rounds SET executed_passes = ? WHERE id = ?")
+      .run(JSON.stringify(passes), id);
   }
 
   /** Parsed executed-pass telemetry; null = unknown (absent or unparseable —
    * an unparseable stored value reads as unknown, matching the input side). */
   executedPasses(id: number): VerdictPassEntry[] | null {
     const row = this.db.prepare("SELECT executed_passes FROM rounds WHERE id = ?").get(id) as
-      | { executed_passes: string | null }
-      | undefined;
+      { executed_passes: string | null } | undefined;
     if (!row?.executed_passes) return null;
     try {
       const parsed = JSON.parse(row.executed_passes);
@@ -1728,7 +1820,9 @@ export class StateStore {
   /** The per-round comment count: how many inline comments the round posted,
    * as the session reported it. Idempotent overwrite. */
   recordRoundComments(id: number, count: number): void {
-    this.db.prepare("UPDATE rounds SET comments_posted = ? WHERE id = ?").run(Math.max(0, Math.trunc(count)), id);
+    this.db
+      .prepare("UPDATE rounds SET comments_posted = ? WHERE id = ?")
+      .run(Math.max(0, Math.trunc(count)), id);
   }
 
   /**
@@ -1824,7 +1918,9 @@ export class StateStore {
    */
   concededFindings(pr: number): RoundFindingRow[] {
     return this.db
-      .prepare("SELECT * FROM round_findings WHERE pr = ? AND disposition = 'conceded' ORDER BY round_no, id")
+      .prepare(
+        "SELECT * FROM round_findings WHERE pr = ? AND disposition = 'conceded' ORDER BY round_no, id",
+      )
       .all(pr) as RoundFindingRow[];
   }
 
@@ -1870,7 +1966,9 @@ export class StateStore {
     // changed to `expired` here — that would drop the round from spend and
     // every other aggregate, hiding tokens this round really burned.
     this.db
-      .prepare("UPDATE rounds SET status = 'overdue', finished_at = COALESCE(finished_at, ?) WHERE id = ?")
+      .prepare(
+        "UPDATE rounds SET status = 'overdue', finished_at = COALESCE(finished_at, ?) WHERE id = ?",
+      )
       .run(this.ts(), id);
   }
 
@@ -1908,7 +2006,10 @@ export class StateStore {
       .all({ since }) as Array<{ cause: string; c: number }>;
     return rows
       .map((r) => ({ cause: r.cause as CancelCause, count: r.c, loud: isLoudCancelCause(r.cause) }))
-      .sort((a, b) => Number(b.loud) - Number(a.loud) || b.count - a.count || a.cause.localeCompare(b.cause));
+      .sort(
+        (a, b) =>
+          Number(b.loud) - Number(a.loud) || b.count - a.count || a.cause.localeCompare(b.cause),
+      );
   }
 
   /** The cancelled rounds a human should look at — loud causes only. */
@@ -1928,7 +2029,9 @@ export class StateStore {
    * is real elapsed time, never a same-tick double-write. */
   markRoundSilent(id: number): void {
     this.db
-      .prepare("UPDATE rounds SET silent_since = ? WHERE id = ? AND silent_since IS NULL AND status = 'running'")
+      .prepare(
+        "UPDATE rounds SET silent_since = ? WHERE id = ? AND silent_since IS NULL AND status = 'running'",
+      )
       .run(this.ts(), id);
   }
 
@@ -1960,7 +2063,11 @@ export class StateStore {
       .all(pr) as Array<{ id: number; round_no: number }>;
     for (const r of rows) {
       this.markRoundCancelled(r.id, `cancelled by ${reason}`, "operator");
-      this.logEvent("round_cancelled_by_operator", pr, { round_id: r.id, round_no: r.round_no, reason });
+      this.logEvent("round_cancelled_by_operator", pr, {
+        round_id: r.id,
+        round_no: r.round_no,
+        reason,
+      });
     }
     return rows.map((r) => r.id);
   }
@@ -1970,7 +2077,9 @@ export class StateStore {
    * the elapsed time was review time and the full window is owed again. */
   extendRoundDeadline(id: number, minutes: number): void {
     const deadline = new Date(this.now().getTime() + minutes * 60_000).toISOString();
-    this.db.prepare("UPDATE rounds SET deadline_at = ? WHERE id = ? AND status = 'running'").run(deadline, id);
+    this.db
+      .prepare("UPDATE rounds SET deadline_at = ? WHERE id = ? AND status = 'running'")
+      .run(deadline, id);
   }
 
   /** Record the receipt token stamped into this round's wake file (#5362).
@@ -1989,8 +2098,7 @@ export class StateStore {
   countRedelivery(id: number): number {
     this.db.prepare("UPDATE rounds SET redeliveries = redeliveries + 1 WHERE id = ?").run(id);
     const row = this.db.prepare("SELECT redeliveries FROM rounds WHERE id = ?").get(id) as
-      | { redeliveries: number }
-      | undefined;
+      { redeliveries: number } | undefined;
     return row?.redeliveries ?? 0;
   }
 
@@ -2019,12 +2127,16 @@ export class StateStore {
   }
 
   runningRounds(): RoundRow[] {
-    return this.db.prepare("SELECT * FROM rounds WHERE status = 'running' ORDER BY started_at").all() as RoundRow[];
+    return this.db
+      .prepare("SELECT * FROM rounds WHERE status = 'running' ORDER BY started_at")
+      .all() as RoundRow[];
   }
 
   /** True while this PR has a round in flight — the S4 test before any wake. */
   hasRunningRound(pr: number): boolean {
-    const row = this.db.prepare("SELECT COUNT(*) AS c FROM rounds WHERE pr = ? AND status = 'running'").get(pr) as { c: number };
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS c FROM rounds WHERE pr = ? AND status = 'running'")
+      .get(pr) as { c: number };
     return row.c > 0;
   }
 
@@ -2032,49 +2144,59 @@ export class StateStore {
 
   createSessionCommand(input: CreateSessionCommand): SessionCommandRow {
     const ts = this.ts();
-    this.db.prepare(
-      `INSERT INTO session_commands
+    this.db
+      .prepare(
+        `INSERT INTO session_commands
          (id, pr, session, kind, round_no, payload_sha256, payload_path, inject_path,
           status, owner_token, attempt, created_at, updated_at, next_check_at)
        VALUES (@id, @pr, @session, @kind, @round_no, @payload_sha256, @payload_path,
           @inject_path, 'pending', NULL, 0, @ts, @ts, @next_check_at)`,
-    ).run({ ...input, ts });
+      )
+      .run({ ...input, ts });
     return this.getSessionCommand(input.id)!;
   }
 
   getSessionCommand(id: string): SessionCommandRow | undefined {
-    return this.db.prepare("SELECT * FROM session_commands WHERE id = ?").get(id) as SessionCommandRow | undefined;
+    return this.db.prepare("SELECT * FROM session_commands WHERE id = ?").get(id) as
+      SessionCommandRow | undefined;
   }
 
   getSessionCommandByInjectPath(path: string): SessionCommandRow | undefined {
-    return this.db.prepare("SELECT * FROM session_commands WHERE inject_path = ?").get(path) as SessionCommandRow | undefined;
+    return this.db.prepare("SELECT * FROM session_commands WHERE inject_path = ?").get(path) as
+      SessionCommandRow | undefined;
   }
 
   activeSessionCommand(session: string): SessionCommandRow | undefined {
     return this.db
-      .prepare("SELECT * FROM session_commands WHERE session = ? AND status IN ('pending', 'running') LIMIT 1")
+      .prepare(
+        "SELECT * FROM session_commands WHERE session = ? AND status IN ('pending', 'running') LIMIT 1",
+      )
       .get(session) as SessionCommandRow | undefined;
   }
 
   /** Work still owed by the session. `failed` is terminal for one attempt but
    * deliberately blocks successors until recovery retries the same id. */
   blockingSessionCommand(session: string): SessionCommandRow | undefined {
-    return this.db.prepare(
-      `SELECT c.* FROM session_commands c
+    return this.db
+      .prepare(
+        `SELECT c.* FROM session_commands c
         WHERE c.session=@session AND ${BLOCKING_SESSION_COMMAND_SQL}
         ORDER BY c.created_at DESC LIMIT 1`,
-    ).get({ session }) as SessionCommandRow | undefined;
+      )
+      .get({ session }) as SessionCommandRow | undefined;
   }
 
   /** Every durable owner that blocks this PR session, oldest first. Both the
    * PR and canonical session name are required so operator recovery cannot
    * touch a malformed row belonging to another session. */
   blockingSessionCommandsForPr(pr: number): SessionCommandRow[] {
-    return this.db.prepare(
-      `SELECT c.* FROM session_commands c
+    return this.db
+      .prepare(
+        `SELECT c.* FROM session_commands c
         WHERE c.pr=@pr AND c.session=@session AND ${BLOCKING_SESSION_COMMAND_SQL}
         ORDER BY c.created_at, c.id`,
-    ).all({ pr, session: `pr-${pr}` }) as SessionCommandRow[];
+      )
+      .all({ pr, session: `pr-${pr}` }) as SessionCommandRow[];
   }
 
   /**
@@ -2093,13 +2215,21 @@ export class StateStore {
       const rows = this.blockingSessionCommandsForPr(pr);
       const currentIds = rows.map((row) => row.id).sort();
       const capturedIds = [...expectedCommandIds].sort();
-      if (currentIds.length !== capturedIds.length || currentIds.some((id, i) => id !== capturedIds[i])) {
+      if (
+        currentIds.length !== capturedIds.length ||
+        currentIds.some((id, i) => id !== capturedIds[i])
+      ) {
         throw new Error(`operator recovery blocker set changed while fencing #${pr}`);
       }
-      const expected = rows.filter((row) => row.kind !== "round").map((row) => row.id).sort();
+      const expected = rows
+        .filter((row) => row.kind !== "round")
+        .map((row) => row.id)
+        .sort();
       const supplied = recovered.map((row) => row.id).sort();
       if (expected.length !== supplied.length || expected.some((id, i) => id !== supplied[i])) {
-        throw new Error(`operator recovery payload set does not match blocking commands for #${pr}`);
+        throw new Error(
+          `operator recovery payload set does not match blocking commands for #${pr}`,
+        );
       }
       const byId = new Map(recovered.map((row) => [row.id, row.payload]));
       const wakeIds: number[] = [];
@@ -2107,25 +2237,28 @@ export class StateStore {
       for (const row of rows) {
         if (row.kind !== "round") {
           const payload = byId.get(row.id);
-          if (payload === undefined) throw new Error(`operator recovery payload missing for ${row.id}`);
-          const inserted = this.db.prepare(
-            "INSERT INTO pending_wakes (pr, payload, reason, held_at) VALUES (?, ?, ?, ?)",
-          ).run(pr, payload, `operator_recovered:${row.kind}:${row.id}`, row.created_at);
+          if (payload === undefined)
+            throw new Error(`operator recovery payload missing for ${row.id}`);
+          const inserted = this.db
+            .prepare("INSERT INTO pending_wakes (pr, payload, reason, held_at) VALUES (?, ?, ?, ?)")
+            .run(pr, payload, `operator_recovered:${row.kind}:${row.id}`, row.created_at);
           wakeIds.push(Number(inserted.lastInsertRowid));
         }
-        const changed = this.db.prepare(
-          `UPDATE session_commands
+        const changed = this.db
+          .prepare(
+            `UPDATE session_commands
               SET status='cancelled', owner_token=NULL, updated_at=@ts,
                   next_check_at=@ts, failure=@failure
             WHERE id=@id AND pr=@pr AND session=@session
               AND status IN ('pending', 'running', 'failed')`,
-        ).run({
-          id: row.id,
-          pr,
-          session: `pr-${pr}`,
-          ts,
-          failure: `operator ${reason}`,
-        }).changes;
+          )
+          .run({
+            id: row.id,
+            pr,
+            session: `pr-${pr}`,
+            ts,
+            failure: `operator ${reason}`,
+          }).changes;
         if (changed !== 1) throw new Error(`operator recovery lost command ${row.id}`);
       }
       const droppedWakeIds = this.trimHeldWakes(pr);
@@ -2147,7 +2280,9 @@ export class StateStore {
 
   activeSessionCommands(): SessionCommandRow[] {
     return this.db
-      .prepare("SELECT * FROM session_commands WHERE status IN ('pending', 'running') ORDER BY created_at, id")
+      .prepare(
+        "SELECT * FROM session_commands WHERE status IN ('pending', 'running') ORDER BY created_at, id",
+      )
       .all() as SessionCommandRow[];
   }
 
@@ -2157,8 +2292,9 @@ export class StateStore {
    * A failed non-round command remains due until bounded same-command replay
    * succeeds or a durable review_failure records operator-owned exhaustion. */
   dueSessionCommands(at: string): SessionCommandRow[] {
-    return this.db.prepare(
-      `SELECT c.* FROM session_commands c
+    return this.db
+      .prepare(
+        `SELECT c.* FROM session_commands c
         WHERE c.next_check_at <= @at
           AND (
             c.status IN ('pending', 'running')
@@ -2178,36 +2314,49 @@ export class StateStore {
             )
           )
         ORDER BY c.next_check_at, c.created_at, c.id`,
-    ).all({ at }) as SessionCommandRow[];
+      )
+      .all({ at }) as SessionCommandRow[];
   }
 
   /** Persist one bounded allowance for unreadable/contradictory evidence. */
   deferSessionCommandEvidence(id: string, nextCheckAt: string): boolean {
     const ts = this.ts();
-    return this.db.prepare(
-      `UPDATE session_commands
+    return (
+      this.db
+        .prepare(
+          `UPDATE session_commands
           SET unknown_checks=unknown_checks+1, updated_at=@ts, next_check_at=@next
         WHERE id=@id AND status IN ('pending', 'running')`,
-    ).run({ id, ts, next: nextCheckAt }).changes === 1;
+        )
+        .run({ id, ts, next: nextCheckAt }).changes === 1
+    );
   }
 
   /** Reconcile durable positive JSONL evidence the bridge could not stamp. */
   observeSessionCommandStarted(id: string, startedAt: string, nextCheckAt: string): boolean {
     const ts = this.ts();
-    return this.db.prepare(
-      `UPDATE session_commands
+    return (
+      this.db
+        .prepare(
+          `UPDATE session_commands
           SET status='running', started_at=COALESCE(started_at, @started),
               updated_at=@ts, next_check_at=@next
         WHERE id=@id AND status IN ('pending', 'running')`,
-    ).run({ id, started: startedAt, ts, next: nextCheckAt }).changes === 1;
+        )
+        .run({ id, started: startedAt, ts, next: nextCheckAt }).changes === 1
+    );
   }
 
   scheduleSessionCommandCheck(id: string, nextCheckAt: string): boolean {
     const ts = this.ts();
-    return this.db.prepare(
-      `UPDATE session_commands SET updated_at=@ts, next_check_at=@next
+    return (
+      this.db
+        .prepare(
+          `UPDATE session_commands SET updated_at=@ts, next_check_at=@next
         WHERE id=@id AND status IN ('pending', 'running', 'acked', 'failed')`,
-    ).run({ id, ts, next: nextCheckAt }).changes === 1;
+        )
+        .run({ id, ts, next: nextCheckAt }).changes === 1
+    );
   }
 
   /** Preserve a failed rebirth's pre-reserve cause on the one command row.
@@ -2216,10 +2365,14 @@ export class StateStore {
    * this cause instead of collapsing it back to generic UNKNOWN evidence. */
   noteSessionCommandRecoveryFailure(id: string, failure: string): boolean {
     const ts = this.ts();
-    return this.db.prepare(
-      `UPDATE session_commands SET failure=@failure, updated_at=@ts
+    return (
+      this.db
+        .prepare(
+          `UPDATE session_commands SET failure=@failure, updated_at=@ts
         WHERE id=@id AND status IN ('pending', 'running') AND started_at IS NULL`,
-    ).run({ id, failure, ts }).changes === 1;
+        )
+        .run({ id, failure, ts }).changes === 1
+    );
   }
 
   /** Spend one durable automatic replay allowance before crossing the async
@@ -2227,8 +2380,10 @@ export class StateStore {
    * merely because no new bridge lived long enough to increment `attempt`. */
   beginSessionCommandRecovery(id: string, expectedAttempts: number): boolean {
     const ts = this.ts();
-    return this.db.prepare(
-      `UPDATE session_commands
+    return (
+      this.db
+        .prepare(
+          `UPDATE session_commands
           SET recovery_attempts=recovery_attempts+1, updated_at=@ts
         WHERE id=@id AND recovery_attempts=@expected
           AND status IN ('pending', 'running', 'failed')
@@ -2236,7 +2391,9 @@ export class StateStore {
             SELECT 1 FROM review_failures f
              WHERE f.command_id=session_commands.id AND f.work_owed=1
           )`,
-    ).run({ id, expected: expectedAttempts, ts }).changes === 1;
+        )
+        .run({ id, expected: expectedAttempts, ts }).changes === 1
+    );
   }
 
   /** Supervisor terminalization is owner-independent only after external
@@ -2244,58 +2401,82 @@ export class StateStore {
    * concurrent bridge settlement that won first. */
   failActiveSessionCommand(id: string, failure: string): boolean {
     const ts = this.ts();
-    return this.db.prepare(
-      `UPDATE session_commands
+    return (
+      this.db
+        .prepare(
+          `UPDATE session_commands
           SET status='failed', failed_at=@ts, failure=@failure,
               updated_at=@ts, next_check_at=@ts
         WHERE id=@id AND status IN ('pending', 'running')`,
-    ).run({ id, failure, ts }).changes === 1;
+        )
+        .run({ id, failure, ts }).changes === 1
+    );
   }
 
   ackSettledSessionCommand(id: string): boolean {
     const ts = this.ts();
-    return this.db.prepare(
-      `UPDATE session_commands
+    return (
+      this.db
+        .prepare(
+          `UPDATE session_commands
           SET status='acked', settled_at=COALESCE(settled_at, @ts),
               updated_at=@ts, next_check_at=@ts, failure=NULL
         WHERE id=@id AND status='running' AND started_at IS NOT NULL`,
-    ).run({ id, ts }).changes === 1;
+        )
+        .run({ id, ts }).changes === 1
+    );
   }
 
   failSettledSessionCommand(id: string, failure: string): boolean {
     const ts = this.ts();
-    return this.db.prepare(
-      `UPDATE session_commands
+    return (
+      this.db
+        .prepare(
+          `UPDATE session_commands
           SET status='failed', failed_at=@ts, failure=@failure,
               updated_at=@ts, next_check_at=@ts
         WHERE id=@id AND status='acked'`,
-    ).run({ id, failure, ts }).changes === 1;
+        )
+        .run({ id, failure, ts }).changes === 1
+    );
   }
 
   sessionCommandForRound(pr: number, roundNo: number): SessionCommandRow | undefined {
     return this.db
-      .prepare("SELECT * FROM session_commands WHERE pr = ? AND kind = 'round' AND round_no = ? ORDER BY created_at DESC LIMIT 1")
+      .prepare(
+        "SELECT * FROM session_commands WHERE pr = ? AND kind = 'round' AND round_no = ? ORDER BY created_at DESC LIMIT 1",
+      )
       .get(pr, roundNo) as SessionCommandRow | undefined;
   }
 
-  claimSessionCommand(id: string, ownerToken: string, nextCheckAt: string): SessionCommandRow | undefined {
+  claimSessionCommand(
+    id: string,
+    ownerToken: string,
+    nextCheckAt: string,
+  ): SessionCommandRow | undefined {
     const ts = this.ts();
-    const changed = this.db.prepare(
-      `UPDATE session_commands
+    const changed = this.db
+      .prepare(
+        `UPDATE session_commands
           SET status='running', owner_token=@owner, attempt=attempt+1,
               started_at=NULL, updated_at=@ts, next_check_at=@next
         WHERE id=@id AND status='pending'`,
-    ).run({ id, owner: ownerToken, ts, next: nextCheckAt }).changes;
+      )
+      .run({ id, owner: ownerToken, ts, next: nextCheckAt }).changes;
     return changed === 1 ? this.getSessionCommand(id) : undefined;
   }
 
   markSessionCommandStarted(id: string, ownerToken: string, nextCheckAt: string): boolean {
     const ts = this.ts();
-    return this.db.prepare(
-      `UPDATE session_commands
+    return (
+      this.db
+        .prepare(
+          `UPDATE session_commands
           SET started_at=COALESCE(started_at, @ts), updated_at=@ts, next_check_at=@next
         WHERE id=@id AND status='running' AND owner_token=@owner`,
-    ).run({ id, owner: ownerToken, ts, next: nextCheckAt }).changes === 1;
+        )
+        .run({ id, owner: ownerToken, ts, next: nextCheckAt }).changes === 1
+    );
   }
 
   finishSessionCommand(
@@ -2305,25 +2486,31 @@ export class StateStore {
     failure?: string,
   ): boolean {
     const ts = this.ts();
-    const changed = this.db.prepare(
-      `UPDATE session_commands
+    const changed = this.db
+      .prepare(
+        `UPDATE session_commands
           SET status=@status, updated_at=@ts, next_check_at=@ts,
               settled_at=CASE WHEN @status='acked' THEN @ts ELSE settled_at END,
               failed_at=CASE WHEN @status='failed' THEN @ts ELSE failed_at END,
               failure=CASE WHEN @status='failed' THEN @failure ELSE NULL END
         WHERE id=@id AND status='running' AND owner_token=@owner
           AND (@status='failed' OR started_at IS NOT NULL)`,
-    ).run({ id, owner: ownerToken, status, failure: failure ?? null, ts }).changes;
+      )
+      .run({ id, owner: ownerToken, status, failure: failure ?? null, ts }).changes;
     return changed === 1;
   }
 
   failPendingSessionCommand(id: string, failure: string): boolean {
     const ts = this.ts();
-    return this.db.prepare(
-      `UPDATE session_commands
+    return (
+      this.db
+        .prepare(
+          `UPDATE session_commands
           SET status='failed', failed_at=@ts, failure=@failure, updated_at=@ts, next_check_at=@ts
         WHERE id=@id AND status='pending'`,
-    ).run({ id, failure, ts }).changes === 1;
+        )
+        .run({ id, failure, ts }).changes === 1
+    );
   }
 
   /** Kill-before-replay CAS. The caller has already proved the old session is
@@ -2334,19 +2521,23 @@ export class StateStore {
     const retry = this.db.transaction((): boolean => {
       const row = this.getSessionCommand(id);
       if (
-        !row || !["pending", "running", "failed"].includes(row.status)
-        || row.attempt !== expectedAttempt
-        || (row.kind === "round" && row.started_at !== null)
-      ) return false;
+        !row ||
+        !["pending", "running", "failed"].includes(row.status) ||
+        row.attempt !== expectedAttempt ||
+        (row.kind === "round" && row.started_at !== null)
+      )
+        return false;
       if (row.kind === "round") {
-        const round = this.db.prepare(
-          "SELECT status FROM rounds WHERE pr=? AND round_no=?",
-        ).get(row.pr, row.round_no) as { status: string } | undefined;
+        const round = this.db
+          .prepare("SELECT status FROM rounds WHERE pr=? AND round_no=?")
+          .get(row.pr, row.round_no) as { status: string } | undefined;
         if (round?.status !== "running") return false;
       }
       const ts = this.ts();
-      return this.db.prepare(
-        `UPDATE session_commands
+      return (
+        this.db
+          .prepare(
+            `UPDATE session_commands
             SET status='pending', owner_token=NULL, updated_at=@ts,
                 next_check_at=@next, unknown_checks=0,
                 started_at=NULL, settled_at=NULL, failed_at=NULL, failure=NULL
@@ -2358,15 +2549,19 @@ export class StateStore {
                  AND active.id!=session_commands.id
                  AND active.status IN ('pending', 'running')
             )`,
-      ).run({ id, attempt: expectedAttempt, ts, next: nextCheckAt }).changes === 1;
+          )
+          .run({ id, attempt: expectedAttempt, ts, next: nextCheckAt }).changes === 1
+      );
     });
     return retry();
   }
 
   retrySessionCommand(id: string, opts: { inject_path: string; next_check_at: string }): boolean {
     const ts = this.ts();
-    return this.db.prepare(
-      `UPDATE session_commands
+    return (
+      this.db
+        .prepare(
+          `UPDATE session_commands
           SET status='pending', owner_token=NULL, inject_path=@inject_path,
               updated_at=@ts, next_check_at=@next_check_at, unknown_checks=0,
               started_at=NULL, settled_at=NULL, failed_at=NULL, failure=NULL
@@ -2377,39 +2572,48 @@ export class StateStore {
                AND active.id!=session_commands.id
                AND active.status IN ('pending', 'running')
           )`,
-    ).run({ id, ...opts, ts }).changes === 1;
+        )
+        .run({ id, ...opts, ts }).changes === 1
+    );
   }
 
   // ---- supervisor liveness ----------------------------------------------
 
   supervisorLease(name: string): SupervisorLeaseRow | undefined {
-    return this.db.prepare("SELECT * FROM supervisor_leases WHERE name = ?").get(name) as SupervisorLeaseRow | undefined;
+    return this.db.prepare("SELECT * FROM supervisor_leases WHERE name = ?").get(name) as
+      SupervisorLeaseRow | undefined;
   }
 
   markSupervisorAttempt(name: string, at = this.ts()): void {
-    this.db.prepare(
-      `INSERT INTO supervisor_leases (name, last_attempt_at)
+    this.db
+      .prepare(
+        `INSERT INTO supervisor_leases (name, last_attempt_at)
        VALUES (?, ?)
        ON CONFLICT(name) DO UPDATE SET last_attempt_at=excluded.last_attempt_at`,
-    ).run(name, at);
+      )
+      .run(name, at);
   }
 
   markSupervisorSuccess(name: string, at = this.ts()): void {
-    this.db.prepare(
-      `INSERT INTO supervisor_leases (name, last_success_at, last_error_at, last_error)
+    this.db
+      .prepare(
+        `INSERT INTO supervisor_leases (name, last_success_at, last_error_at, last_error)
        VALUES (?, ?, NULL, NULL)
        ON CONFLICT(name) DO UPDATE SET
          last_success_at=excluded.last_success_at, last_error_at=NULL, last_error=NULL`,
-    ).run(name, at);
+      )
+      .run(name, at);
   }
 
   markSupervisorError(name: string, error: string, at = this.ts()): void {
-    this.db.prepare(
-      `INSERT INTO supervisor_leases (name, last_error_at, last_error)
+    this.db
+      .prepare(
+        `INSERT INTO supervisor_leases (name, last_error_at, last_error)
        VALUES (?, ?, ?)
        ON CONFLICT(name) DO UPDATE SET
          last_error_at=excluded.last_error_at, last_error=excluded.last_error`,
-    ).run(name, at, error);
+      )
+      .run(name, at, error);
   }
 
   // ---- held wakes (single-shepherd S4) -----------------------------------
@@ -2419,17 +2623,24 @@ export class StateStore {
    * protected rows consume capacity first; if they alone meet or exceed the
    * cap, all survive and new ordinary wakes are dropped. */
   private trimHeldWakes(pr: number, cap = MAX_HELD_WAKES): number[] {
-    const protectedCount = (this.db.prepare(
-      `SELECT COUNT(*) AS c FROM pending_wakes
+    const protectedCount = (
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM pending_wakes
         WHERE pr=? AND (reason GLOB 'operator_recovered:*' OR claim_token IS NOT NULL)`,
-    ).get(pr) as { c: number }).c;
+        )
+        .get(pr) as { c: number }
+    ).c;
     const ordinaryCap = Math.max(0, cap - protectedCount);
-    const overflow = this.db.prepare(
-      `SELECT id FROM pending_wakes
+    const overflow = this.db
+      .prepare(
+        `SELECT id FROM pending_wakes
         WHERE pr=? AND reason NOT GLOB 'operator_recovered:*' AND claim_token IS NULL
         ORDER BY ${PENDING_WAKE_REVERSE_ORDER_SQL} LIMIT -1 OFFSET ?`,
-    ).all(pr, ordinaryCap) as Array<{ id: number }>;
-    for (const row of overflow) this.db.prepare("DELETE FROM pending_wakes WHERE id = ?").run(row.id);
+      )
+      .all(pr, ordinaryCap) as Array<{ id: number }>;
+    for (const row of overflow)
+      this.db.prepare("DELETE FROM pending_wakes WHERE id = ?").run(row.id);
     return overflow.map((row) => row.id).reverse();
   }
 
@@ -2448,34 +2659,62 @@ export class StateStore {
   }
 
   heldWakes(pr: number): PendingWakeRow[] {
-    return this.db.prepare(`SELECT * FROM pending_wakes WHERE pr = ?
-      ORDER BY ${PENDING_WAKE_ORDER_SQL}`).all(pr) as PendingWakeRow[];
+    return this.db
+      .prepare(
+        `SELECT * FROM pending_wakes WHERE pr = ?
+      ORDER BY ${PENDING_WAKE_ORDER_SQL}`,
+      )
+      .all(pr) as PendingWakeRow[];
   }
 
   hasHeldWakes(pr: number): boolean {
-    return (this.db.prepare("SELECT COUNT(*) AS c FROM pending_wakes WHERE pr=?").get(pr) as { c: number }).c > 0;
+    return (
+      (
+        this.db.prepare("SELECT COUNT(*) AS c FROM pending_wakes WHERE pr=?").get(pr) as {
+          c: number;
+        }
+      ).c > 0
+    );
   }
 
   /** Lease an oldest-first prefix as one delivery unit. A live lease anywhere
    * in that prefix blocks the claim, so concurrent flushers cannot split or
    * reorder an author-message burst. */
-  claimHeldWakeBatch(pr: number, token: string, leaseBefore: string, count: number): PendingWakeRow[] | null {
-    if (!Number.isSafeInteger(count) || count < 1) throw new Error(`invalid held-wake batch size ${count}`);
+  claimHeldWakeBatch(
+    pr: number,
+    token: string,
+    leaseBefore: string,
+    count: number,
+  ): PendingWakeRow[] | null {
+    if (!Number.isSafeInteger(count) || count < 1)
+      throw new Error(`invalid held-wake batch size ${count}`);
     const claim = this.db.transaction((n: number): PendingWakeRow[] | null => {
-      const rows = this.db.prepare(`SELECT * FROM pending_wakes WHERE pr = ?
-        ORDER BY ${PENDING_WAKE_ORDER_SQL} LIMIT ?`).all(n, count) as PendingWakeRow[];
+      const rows = this.db
+        .prepare(
+          `SELECT * FROM pending_wakes WHERE pr = ?
+        ORDER BY ${PENDING_WAKE_ORDER_SQL} LIMIT ?`,
+        )
+        .all(n, count) as PendingWakeRow[];
       if (rows.length !== count) return null;
-      if (rows.some((row) => row.claim_token && row.claimed_at && row.claimed_at > leaseBefore)) return null;
+      if (rows.some((row) => row.claim_token && row.claimed_at && row.claimed_at > leaseBefore))
+        return null;
       const ids = rows.map((row) => row.id);
       const holes = ids.map(() => "?").join(",");
       const now = this.now().toISOString();
-      const changed = this.db.prepare(
-        `UPDATE pending_wakes SET claim_token=?, claimed_at=?, attempts=attempts+1
+      const changed = this.db
+        .prepare(
+          `UPDATE pending_wakes SET claim_token=?, claimed_at=?, attempts=attempts+1
           WHERE id IN (${holes}) AND (claim_token IS NULL OR claimed_at IS NULL OR claimed_at <= ?)`,
-      ).run(token, now, ...ids, leaseBefore).changes;
-      if (changed !== ids.length) throw new Error(`held-wake batch claim lost ${changed}/${ids.length} rows`);
-      return this.db.prepare(`SELECT * FROM pending_wakes WHERE id IN (${holes})
-        ORDER BY ${PENDING_WAKE_ORDER_SQL}`).all(...ids) as PendingWakeRow[];
+        )
+        .run(token, now, ...ids, leaseBefore).changes;
+      if (changed !== ids.length)
+        throw new Error(`held-wake batch claim lost ${changed}/${ids.length} rows`);
+      return this.db
+        .prepare(
+          `SELECT * FROM pending_wakes WHERE id IN (${holes})
+        ORDER BY ${PENDING_WAKE_ORDER_SQL}`,
+        )
+        .all(...ids) as PendingWakeRow[];
     });
     return claim(pr);
   }
@@ -2484,14 +2723,19 @@ export class StateStore {
     if (ids.length === 0) return false;
     const ack = this.db.transaction((): boolean => {
       const holes = ids.map(() => "?").join(",");
-      const owned = (this.db.prepare(
-        `SELECT COUNT(*) AS c FROM pending_wakes WHERE id IN (${holes}) AND claim_token = ?`,
-      ).get(...ids, token) as { c: number }).c;
+      const owned = (
+        this.db
+          .prepare(
+            `SELECT COUNT(*) AS c FROM pending_wakes WHERE id IN (${holes}) AND claim_token = ?`,
+          )
+          .get(...ids, token) as { c: number }
+      ).c;
       if (owned !== ids.length) return false;
-      const deleted = this.db.prepare(
-        `DELETE FROM pending_wakes WHERE id IN (${holes}) AND claim_token = ?`,
-      ).run(...ids, token).changes;
-      if (deleted !== ids.length) throw new Error(`held-wake batch ack lost ${deleted}/${ids.length} rows`);
+      const deleted = this.db
+        .prepare(`DELETE FROM pending_wakes WHERE id IN (${holes}) AND claim_token = ?`)
+        .run(...ids, token).changes;
+      if (deleted !== ids.length)
+        throw new Error(`held-wake batch ack lost ${deleted}/${ids.length} rows`);
       return true;
     });
     return ack();
@@ -2501,15 +2745,22 @@ export class StateStore {
     if (ids.length === 0) return false;
     const release = this.db.transaction((): boolean => {
       const holes = ids.map(() => "?").join(",");
-      const owned = (this.db.prepare(
-        `SELECT COUNT(*) AS c FROM pending_wakes WHERE id IN (${holes}) AND claim_token = ?`,
-      ).get(...ids, token) as { c: number }).c;
+      const owned = (
+        this.db
+          .prepare(
+            `SELECT COUNT(*) AS c FROM pending_wakes WHERE id IN (${holes}) AND claim_token = ?`,
+          )
+          .get(...ids, token) as { c: number }
+      ).c;
       if (owned !== ids.length) return false;
-      const changed = this.db.prepare(
-        `UPDATE pending_wakes SET claim_token=NULL, claimed_at=NULL
+      const changed = this.db
+        .prepare(
+          `UPDATE pending_wakes SET claim_token=NULL, claimed_at=NULL
           WHERE id IN (${holes}) AND claim_token = ?`,
-      ).run(...ids, token).changes;
-      if (changed !== ids.length) throw new Error(`held-wake batch release lost ${changed}/${ids.length} rows`);
+        )
+        .run(...ids, token).changes;
+      if (changed !== ids.length)
+        throw new Error(`held-wake batch release lost ${changed}/${ids.length} rows`);
       return true;
     });
     return release();
@@ -2521,7 +2772,9 @@ export class StateStore {
   }
 
   roundsOn(dateIso: string): RoundRow[] {
-    return this.db.prepare("SELECT * FROM rounds WHERE started_at LIKE ? ORDER BY started_at").all(`${dateIso}%`) as RoundRow[];
+    return this.db
+      .prepare("SELECT * FROM rounds WHERE started_at LIKE ? ORDER BY started_at")
+      .all(`${dateIso}%`) as RoundRow[];
   }
 
   /**
@@ -2538,7 +2791,9 @@ export class StateStore {
    * abandoned row genuinely distorts.
    */
   totalSpend(): number {
-    return (this.db.prepare("SELECT COALESCE(SUM(est_usd), 0) AS s FROM rounds").get() as { s: number }).s;
+    return (
+      this.db.prepare("SELECT COALESCE(SUM(est_usd), 0) AS s FROM rounds").get() as { s: number }
+    ).s;
   }
 
   /**
@@ -2567,7 +2822,10 @@ export class StateStore {
       "UPDATE rounds SET status = 'expired', finished_at = COALESCE(finished_at, ?) WHERE id = ? AND status = 'overdue'",
     );
     for (const r of rows) stamp.run(this.ts(), r.id);
-    this.logEvent("rounds_expired", null, { count: rows.length, rounds: rows.map((r) => ({ id: r.id, pr: r.pr, round_no: r.round_no })) });
+    this.logEvent("rounds_expired", null, {
+      count: rows.length,
+      rounds: rows.map((r) => ({ id: r.id, pr: r.pr, round_no: r.round_no })),
+    });
     return rows.map((r) => r.id);
   }
 
@@ -2589,7 +2847,9 @@ export class StateStore {
   strandedOverdueRounds(horizonHours: number = STRANDED_ROUND_HORIZON_H): RoundRow[] {
     const cutoff = new Date(this.now().getTime() - horizonHours * 3_600_000).toISOString();
     return this.db
-      .prepare("SELECT * FROM rounds WHERE status = 'overdue' AND deadline_at < ? ORDER BY deadline_at")
+      .prepare(
+        "SELECT * FROM rounds WHERE status = 'overdue' AND deadline_at < ? ORDER BY deadline_at",
+      )
       .all(cutoff) as RoundRow[];
   }
 
@@ -2611,7 +2871,12 @@ export class StateStore {
     this.logEvent("rounds_stranded", null, {
       count: rows.length,
       horizon_h: horizonHours,
-      rounds: rows.map((r) => ({ id: r.id, pr: r.pr, round_no: r.round_no, deadline_at: r.deadline_at })),
+      rounds: rows.map((r) => ({
+        id: r.id,
+        pr: r.pr,
+        round_no: r.round_no,
+        deadline_at: r.deadline_at,
+      })),
     });
     return rows;
   }
@@ -2620,7 +2885,9 @@ export class StateStore {
 
   /** Every GitHub review id already imported — the idempotence key set. */
   importedReviewIds(): Set<number> {
-    const rows = this.db.prepare("SELECT gh_review_id AS id FROM rounds WHERE gh_review_id IS NOT NULL").all() as Array<{ id: number }>;
+    const rows = this.db
+      .prepare("SELECT gh_review_id AS id FROM rounds WHERE gh_review_id IS NOT NULL")
+      .all() as Array<{ id: number }>;
     return new Set(rows.map((r) => r.id));
   }
 
@@ -2629,15 +2896,17 @@ export class StateStore {
    * cannot record it yields a round with no check, which is the legacy
    * behaviour, never a failed round. */
   recordRoundGitConfig(roundId: number, fingerprint: unknown): void {
-    this.db.prepare("UPDATE rounds SET git_config_fingerprint = ? WHERE id = ?").run(JSON.stringify(fingerprint), roundId);
+    this.db
+      .prepare("UPDATE rounds SET git_config_fingerprint = ? WHERE id = ?")
+      .run(JSON.stringify(fingerprint), roundId);
   }
 
   /** The stashed fingerprint, or undefined when the round predates the check
    * (or never got one). Absent is never read as "changed". */
   roundGitConfig(roundId: number): unknown | undefined {
-    const row = this.db.prepare("SELECT git_config_fingerprint AS f FROM rounds WHERE id = ?").get(roundId) as
-      | { f: string | null }
-      | undefined;
+    const row = this.db
+      .prepare("SELECT git_config_fingerprint AS f FROM rounds WHERE id = ?")
+      .get(roundId) as { f: string | null } | undefined;
     if (!row?.f) return undefined;
     try {
       return JSON.parse(row.f);
@@ -2660,14 +2929,20 @@ export class StateStore {
   /** Lowest round_no on a PR (null when it has no rounds) — the importer
    * numbers historical rounds *below* it so live numbering is never disturbed. */
   minRoundNo(pr: number): number | null {
-    return (this.db.prepare("SELECT MIN(round_no) AS m FROM rounds WHERE pr = ?").get(pr) as { m: number | null }).m;
+    return (
+      this.db.prepare("SELECT MIN(round_no) AS m FROM rounds WHERE pr = ?").get(pr) as {
+        m: number | null;
+      }
+    ).m;
   }
 
   /** Start of the daemon era: the oldest natively-run round. Reviews submitted
    * at or after it are already recorded, so the importer stops there. */
   daemonEpoch(): string | null {
     return (
-      this.db.prepare("SELECT MIN(started_at) AS m FROM rounds WHERE backfilled = 0").get() as { m: string | null }
+      this.db.prepare("SELECT MIN(started_at) AS m FROM rounds WHERE backfilled = 0").get() as {
+        m: string | null;
+      }
     ).m;
   }
 
@@ -2700,7 +2975,9 @@ export class StateStore {
 
   // ---- backfill PR metadata (M2 writes, metrics reads) -------------------
 
-  upsertBackfillPrMeta(row: Omit<BackfillPrMetaRow, "imported_at"> & { imported_at?: string }): void {
+  upsertBackfillPrMeta(
+    row: Omit<BackfillPrMetaRow, "imported_at"> & { imported_at?: string },
+  ): void {
     this.db
       .prepare(
         `INSERT INTO backfill_pr_meta (pr, title, author, created_at, merged_at, closed_at, merged, imported_at)
@@ -2713,11 +2990,14 @@ export class StateStore {
   }
 
   backfillPrMeta(pr: number): BackfillPrMetaRow | undefined {
-    return this.db.prepare("SELECT * FROM backfill_pr_meta WHERE pr = ?").get(pr) as BackfillPrMetaRow | undefined;
+    return this.db.prepare("SELECT * FROM backfill_pr_meta WHERE pr = ?").get(pr) as
+      BackfillPrMetaRow | undefined;
   }
 
   allBackfillPrMeta(): BackfillPrMetaRow[] {
-    return this.db.prepare("SELECT * FROM backfill_pr_meta ORDER BY pr").all() as BackfillPrMetaRow[];
+    return this.db
+      .prepare("SELECT * FROM backfill_pr_meta ORDER BY pr")
+      .all() as BackfillPrMetaRow[];
   }
 
   // ---- bot-comment registry ---------------------------------------------
@@ -2738,21 +3018,34 @@ export class StateStore {
    * than null. A RUNNING round wins over both — a comment arriving while a
    * round is in flight came out of that round, not the one before it.
    */
-  registerBotComment(commentId: number, pr: number, kind = "review_comment", roundNo?: number | null): void {
+  registerBotComment(
+    commentId: number,
+    pr: number,
+    kind = "review_comment",
+    roundNo?: number | null,
+  ): void {
     const pick = (sql: string): number | null =>
       (this.db.prepare(sql).get(pr) as { round_no: number } | undefined)?.round_no ?? null;
     const linked =
       roundNo ??
-      pick("SELECT round_no FROM rounds WHERE pr = ? AND status = 'running' ORDER BY id DESC LIMIT 1") ??
-      pick("SELECT round_no FROM rounds WHERE pr = ? AND backfilled = 0 ORDER BY id DESC LIMIT 1") ??
+      pick(
+        "SELECT round_no FROM rounds WHERE pr = ? AND status = 'running' ORDER BY id DESC LIMIT 1",
+      ) ??
+      pick(
+        "SELECT round_no FROM rounds WHERE pr = ? AND backfilled = 0 ORDER BY id DESC LIMIT 1",
+      ) ??
       pick("SELECT round_no FROM rounds WHERE pr = ? ORDER BY id DESC LIMIT 1");
     this.db
-      .prepare("INSERT OR IGNORE INTO bot_comments (comment_id, pr, kind, posted_at, round_no) VALUES (?, ?, ?, ?, ?)")
+      .prepare(
+        "INSERT OR IGNORE INTO bot_comments (comment_id, pr, kind, posted_at, round_no) VALUES (?, ?, ?, ?, ?)",
+      )
       .run(commentId, pr, kind, this.ts(), linked);
   }
 
   botCommentPr(commentId: number): number | undefined {
-    const row = this.db.prepare("SELECT pr FROM bot_comments WHERE comment_id = ?").get(commentId) as { pr: number } | undefined;
+    const row = this.db
+      .prepare("SELECT pr FROM bot_comments WHERE comment_id = ?")
+      .get(commentId) as { pr: number } | undefined;
     return row?.pr;
   }
 
@@ -2772,7 +3065,12 @@ export class StateStore {
    */
   recordReviewedHead(
     pr: number,
-    mark: { head_sha: string; verdict?: string | null; posted_event?: string | null; round_no?: number | null },
+    mark: {
+      head_sha: string;
+      verdict?: string | null;
+      posted_event?: string | null;
+      round_no?: number | null;
+    },
   ): void {
     const prev = this.reviewedHead(pr);
     const same = prev?.head_sha === mark.head_sha;
@@ -2788,15 +3086,16 @@ export class StateStore {
         pr,
         head_sha: mark.head_sha,
         reviewed_at: this.ts(),
-        verdict: mark.verdict ?? (same ? prev!.verdict : null),
-        posted_event: mark.posted_event ?? (same ? prev!.posted_event : null),
-        round_no: mark.round_no ?? (same ? prev!.round_no : null),
+        verdict: mark.verdict ?? (same ? prev.verdict : null),
+        posted_event: mark.posted_event ?? (same ? prev.posted_event : null),
+        round_no: mark.round_no ?? (same ? prev.round_no : null),
         last_author_reply_at: null,
       });
   }
 
   reviewedHead(pr: number): ReviewedHeadRow | undefined {
-    return this.db.prepare("SELECT * FROM reviewed_heads WHERE pr = ?").get(pr) as ReviewedHeadRow | undefined;
+    return this.db.prepare("SELECT * FROM reviewed_heads WHERE pr = ?").get(pr) as
+      ReviewedHeadRow | undefined;
   }
 
   /**
@@ -2809,11 +3108,12 @@ export class StateStore {
   repairMigrationPrecheckReviewedHead(pr: number): boolean {
     const mark = this.reviewedHead(pr);
     if (
-      !mark
-      || mark.verdict !== null
-      || mark.round_no !== null
-      || (mark.posted_event ?? "").toUpperCase() !== "COMMENT"
-    ) return false;
+      !mark ||
+      mark.verdict !== null ||
+      mark.round_no !== null ||
+      (mark.posted_event ?? "").toUpperCase() !== "COMMENT"
+    )
+      return false;
     const rows = this.db
       .prepare("SELECT payload FROM events WHERE kind='migration_collision_comment' AND pr=?")
       .all(pr) as Array<{ payload: string | null }>;
@@ -2821,21 +3121,27 @@ export class StateStore {
       if (!row.payload) return false;
       try {
         const payload = JSON.parse(row.payload) as { head_sha?: unknown; executed?: unknown };
-        return payload.executed === true
-          && typeof payload.head_sha === "string"
-          && payload.head_sha.toLowerCase() === mark.head_sha.toLowerCase();
+        return (
+          payload.executed === true &&
+          typeof payload.head_sha === "string" &&
+          payload.head_sha.toLowerCase() === mark.head_sha.toLowerCase()
+        );
       } catch {
         return false;
       }
     });
     if (!proven) return false;
-    const removed = this.db.prepare(
-      `DELETE FROM reviewed_heads
+    const removed =
+      this.db
+        .prepare(
+          `DELETE FROM reviewed_heads
         WHERE pr=? AND lower(head_sha)=lower(?)
           AND verdict IS NULL AND round_no IS NULL
           AND upper(COALESCE(posted_event, ''))='COMMENT'`,
-    ).run(pr, mark.head_sha).changes === 1;
-    if (removed) this.logEvent("migration_precheck_reviewed_head_repaired", pr, { head_sha: mark.head_sha });
+        )
+        .run(pr, mark.head_sha).changes === 1;
+    if (removed)
+      this.logEvent("migration_precheck_reviewed_head_repaired", pr, { head_sha: mark.head_sha });
     return removed;
   }
 
@@ -2858,7 +3164,10 @@ export class StateStore {
    * One row per PR: the mark is a position, not a history (the event log keeps
    * the history), and a later withholding at a newer head replaces it.
    */
-  recordApprovalWithheld(pr: number, mark: { head_sha: string; ci_state?: string | null; reason?: string | null }): void {
+  recordApprovalWithheld(
+    pr: number,
+    mark: { head_sha: string; ci_state?: string | null; reason?: string | null },
+  ): void {
     this.db
       .prepare(
         `INSERT INTO approval_withheld (pr, head_sha, ci_state, reason, created_at)
@@ -2876,7 +3185,8 @@ export class StateStore {
   }
 
   approvalWithheld(pr: number): ApprovalWithheldRow | undefined {
-    return this.db.prepare("SELECT * FROM approval_withheld WHERE pr = ?").get(pr) as ApprovalWithheldRow | undefined;
+    return this.db.prepare("SELECT * FROM approval_withheld WHERE pr = ?").get(pr) as
+      ApprovalWithheldRow | undefined;
   }
 
   /** Drop the mark — the verdict is about to be decided again. */
@@ -2899,20 +3209,26 @@ export class StateStore {
     retry_cap: number;
   }): ReviewFailureRow;
   openReviewFailure(
-    arg: number | {
-      pr: number;
-      command_id?: string | null;
-      round_id?: number | null;
-      round_no?: number | null;
-      head_sha: string;
-      stage: string;
-      detail: string;
-      attempts: number;
-      retry_cap: number;
-    },
+    arg:
+      | number
+      | {
+          pr: number;
+          command_id?: string | null;
+          round_id?: number | null;
+          round_no?: number | null;
+          head_sha: string;
+          stage: string;
+          detail: string;
+          attempts: number;
+          retry_cap: number;
+        },
   ): ReviewFailureRow | undefined {
     if (typeof arg === "number") {
-      return this.db.prepare("SELECT * FROM review_failures WHERE pr=? AND work_owed=1 ORDER BY failed_at LIMIT 1").get(arg) as ReviewFailureRow | undefined;
+      return this.db
+        .prepare(
+          "SELECT * FROM review_failures WHERE pr=? AND work_owed=1 ORDER BY failed_at LIMIT 1",
+        )
+        .get(arg) as ReviewFailureRow | undefined;
     }
     const ts = this.ts();
     const incidentId = arg.command_id
@@ -2924,49 +3240,60 @@ export class StateStore {
     // round, and the supervisor stage must be before the first lens. Every
     // other class — especially posting ambiguity — stays operator-owned.
     const command = arg.command_id ? this.getSessionCommand(arg.command_id) : undefined;
-    const round = arg.round_id === null || arg.round_id === undefined
-      ? undefined
-      : this.db.prepare("SELECT * FROM rounds WHERE id=?").get(arg.round_id) as RoundRow | undefined;
-    const postingHead = round?.posting_key && arg.round_no !== null && arg.round_no !== undefined
-      ? new RegExp(`^v1:${arg.pr}:${arg.round_no}:([^:]+)$`).exec(round.posting_key)?.[1]
-      : undefined;
+    const round =
+      arg.round_id === null || arg.round_id === undefined
+        ? undefined
+        : (this.db.prepare("SELECT * FROM rounds WHERE id=?").get(arg.round_id) as
+            RoundRow | undefined);
+    const postingHead =
+      round?.posting_key && arg.round_no !== null && arg.round_no !== undefined
+        ? new RegExp(`^v1:${arg.pr}:${arg.round_no}:([^:]+)$`).exec(round.posting_key)?.[1]
+        : undefined;
     const exactPreFanout =
-      arg.stage === "first_pass_start"
-      && postingHead !== undefined
-      && arg.round_no !== null && arg.round_no !== undefined
-      && command?.pr === arg.pr
-      && command.session === `pr-${arg.pr}`
-      && command.kind === "round"
-      && command.round_no === arg.round_no
-      && ["failed", "acked", "cancelled"].includes(command.status)
-      && round?.pr === arg.pr
-      && round.round_no === arg.round_no
-      && round.status !== "running"
-      && ["none", "dryrun", "refused"].includes(round.preflight_posting_state);
+      arg.stage === "first_pass_start" &&
+      postingHead !== undefined &&
+      arg.round_no !== null &&
+      arg.round_no !== undefined &&
+      command?.pr === arg.pr &&
+      command.session === `pr-${arg.pr}` &&
+      command.kind === "round" &&
+      command.round_no === arg.round_no &&
+      ["failed", "acked", "cancelled"].includes(command.status) &&
+      round?.pr === arg.pr &&
+      round.round_no === arg.round_no &&
+      round.status !== "running" &&
+      ["none", "dryrun", "refused"].includes(round.preflight_posting_state);
     const priorRecovery = exactPreFanout
       ? this.roundRecoveryInstruction(arg.pr, arg.round_no!)
       : undefined;
-    const exactRecovery = priorRecovery?.target_head_sha === postingHead ? priorRecovery : undefined;
+    const exactRecovery =
+      priorRecovery?.target_head_sha === postingHead ? priorRecovery : undefined;
     const retryEpoch = exactRecovery?.retry_epoch ?? 0;
     // `arg.head_sha` historically meant the newest OWED head (a successor may
     // already have moved pr_state). The safe class preserves the deterministic
     // posting-key head; a newer authoritative successor resets backoff later.
-    const failureHead = exactPreFanout ? postingHead! : arg.head_sha;
-    const retryDelayMin = Math.min(AUTO_REVIEW_RETRY_INITIAL_MIN * 2 ** retryEpoch, AUTO_REVIEW_RETRY_MAX_MIN);
+    const failureHead = exactPreFanout ? postingHead : arg.head_sha;
+    const retryDelayMin = Math.min(
+      AUTO_REVIEW_RETRY_INITIAL_MIN * 2 ** retryEpoch,
+      AUTO_REVIEW_RETRY_MAX_MIN,
+    );
     const nextRetryAt = exactPreFanout
       ? new Date(Date.parse(ts) + retryDelayMin * 60_000).toISOString()
       : null;
     const nextAction = exactPreFanout ? "retry_wait" : "operator_unwedge";
 
     const failure = this.db.transaction((): ReviewFailureRow => {
-      this.db.prepare(
-        `UPDATE review_failures
+      this.db
+        .prepare(
+          `UPDATE review_failures
             SET work_owed=0, recovered_at=@ts, recovery='superseded-by-new-failure',
                 next_action='closed', next_retry_at=NULL, updated_at=@ts
           WHERE pr=@pr AND work_owed=1 AND incident_id!=@incident_id`,
-      ).run({ pr: arg.pr, incident_id: incidentId, ts });
-      this.db.prepare(
-        `INSERT INTO review_failures
+        )
+        .run({ pr: arg.pr, incident_id: incidentId, ts });
+      this.db
+        .prepare(
+          `INSERT INTO review_failures
           (incident_id, pr, command_id, round_id, round_no, head_sha, stage, detail,
            attempts, retry_cap, retry_epoch, next_retry_at, failed_at, updated_at,
            next_action, work_owed)
@@ -2979,32 +3306,43 @@ export class StateStore {
            retry_epoch=excluded.retry_epoch, next_retry_at=excluded.next_retry_at,
            updated_at=excluded.updated_at, recovered_at=NULL, recovery=NULL,
            next_action=excluded.next_action, work_owed=1`,
-      ).run({
-        incident_id: incidentId,
-        pr: arg.pr,
-        command_id: arg.command_id ?? null,
-        round_id: arg.round_id ?? null,
-        round_no: arg.round_no ?? null,
-        head_sha: failureHead,
-        stage: arg.stage,
-        detail: arg.detail,
-        attempts: arg.attempts,
-        retry_cap: arg.retry_cap,
-        retry_epoch: retryEpoch,
-        next_retry_at: nextRetryAt,
-        next_action: nextAction,
-        ts,
-      });
+        )
+        .run({
+          incident_id: incidentId,
+          pr: arg.pr,
+          command_id: arg.command_id ?? null,
+          round_id: arg.round_id ?? null,
+          round_no: arg.round_no ?? null,
+          head_sha: failureHead,
+          stage: arg.stage,
+          detail: arg.detail,
+          attempts: arg.attempts,
+          retry_cap: arg.retry_cap,
+          retry_epoch: retryEpoch,
+          next_retry_at: nextRetryAt,
+          next_action: nextAction,
+          ts,
+        });
       const row = this.getPr(arg.pr);
       const successor = this.successorFor(arg.pr);
       if (row && row.state !== "closed") {
-        this.db.prepare(
-          `UPDATE pr_state
+        this.db
+          .prepare(
+            `UPDATE pr_state
               SET state='queued', head_sha=?, trigger_ts=?, trigger_provenance=?, updated_at=?
             WHERE number=? AND state!='closed'`,
-        ).run(successor?.head_sha ?? arg.head_sha, successor?.requested_at ?? ts, successor?.provenance ?? "system", ts, arg.pr);
+          )
+          .run(
+            successor?.head_sha ?? arg.head_sha,
+            successor?.requested_at ?? ts,
+            successor?.provenance ?? "system",
+            ts,
+            arg.pr,
+          );
       }
-      return this.db.prepare("SELECT * FROM review_failures WHERE incident_id=?").get(incidentId) as ReviewFailureRow;
+      return this.db
+        .prepare("SELECT * FROM review_failures WHERE incident_id=?")
+        .get(incidentId) as ReviewFailureRow;
     })();
     this.logEvent("review_failed_loud", arg.pr, {
       incident_id: failure.incident_id,
@@ -3036,29 +3374,40 @@ export class StateStore {
     summary: string;
   }): ReviewFailureRow | undefined {
     const terminalize = this.db.transaction((): ReviewFailureRow | undefined => {
-      const round = this.db.prepare("SELECT * FROM rounds WHERE id=?").get(input.round_id) as RoundRow | undefined;
+      const round = this.db.prepare("SELECT * FROM rounds WHERE id=?").get(input.round_id) as
+        RoundRow | undefined;
       const command = this.getSessionCommand(input.command_id);
       if (
-        round?.pr !== input.pr || round.round_no !== input.round_no || round.status !== "running"
-        || command?.pr !== input.pr || command.session !== `pr-${input.pr}`
-        || command.kind !== "round" || command.round_no !== input.round_no
-        || !["pending", "running", "acked", "failed"].includes(command.status)
-      ) return undefined;
+        round?.pr !== input.pr ||
+        round.round_no !== input.round_no ||
+        round.status !== "running" ||
+        command?.pr !== input.pr ||
+        command.session !== `pr-${input.pr}` ||
+        command.kind !== "round" ||
+        command.round_no !== input.round_no ||
+        !["pending", "running", "acked", "failed"].includes(command.status)
+      )
+        return undefined;
       const ts = this.ts();
-      const roundChanged = this.db.prepare(
-        `UPDATE rounds SET status='cancelled', summary=@summary,
+      const roundChanged = this.db
+        .prepare(
+          `UPDATE rounds SET status='cancelled', summary=@summary,
             cancel_cause='infrastructure_failure', finished_at=@ts
           WHERE id=@round_id AND pr=@pr AND round_no=@round_no AND status='running'`,
-      ).run({ ...input, ts }).changes;
+        )
+        .run({ ...input, ts }).changes;
       if (roundChanged !== 1) return undefined;
-      const commandChanged = this.db.prepare(
-        `UPDATE session_commands
+      const commandChanged = this.db
+        .prepare(
+          `UPDATE session_commands
             SET status='failed', owner_token=NULL, failed_at=COALESCE(failed_at, @ts),
                 failure=@detail, updated_at=@ts, next_check_at=@ts
           WHERE id=@command_id AND pr=@pr AND session=@session AND kind='round'
             AND round_no=@round_no AND status IN ('pending','running','acked','failed')`,
-      ).run({ ...input, session: `pr-${input.pr}`, ts }).changes;
-      if (commandChanged !== 1) throw new Error(`infrastructure command CAS lost for ${input.command_id}`);
+        )
+        .run({ ...input, session: `pr-${input.pr}`, ts }).changes;
+      if (commandChanged !== 1)
+        throw new Error(`infrastructure command CAS lost for ${input.command_id}`);
       return this.openReviewFailure({
         pr: input.pr,
         command_id: input.command_id,
@@ -3075,25 +3424,32 @@ export class StateStore {
   }
 
   reviewFailureForCommand(commandId: string): ReviewFailureRow | undefined {
-    return this.db.prepare(
-      "SELECT * FROM review_failures WHERE command_id=? ORDER BY failed_at DESC LIMIT 1",
-    ).get(commandId) as ReviewFailureRow | undefined;
+    return this.db
+      .prepare("SELECT * FROM review_failures WHERE command_id=? ORDER BY failed_at DESC LIMIT 1")
+      .get(commandId) as ReviewFailureRow | undefined;
   }
 
   openReviewFailures(): ReviewFailureRow[] {
-    return this.db.prepare("SELECT * FROM review_failures WHERE work_owed=1 ORDER BY failed_at, incident_id").all() as ReviewFailureRow[];
+    return this.db
+      .prepare("SELECT * FROM review_failures WHERE work_owed=1 ORDER BY failed_at, incident_id")
+      .all() as ReviewFailureRow[];
   }
 
   recentReviewRecoveries(since: string): ReviewFailureRow[] {
-    return this.db.prepare(
-      "SELECT * FROM review_failures WHERE work_owed=0 AND recovered_at IS NOT NULL AND recovered_at>=? ORDER BY recovered_at DESC, incident_id",
-    ).all(since) as ReviewFailureRow[];
+    return this.db
+      .prepare(
+        "SELECT * FROM review_failures WHERE work_owed=0 AND recovered_at IS NOT NULL AND recovered_at>=? ORDER BY recovered_at DESC, incident_id",
+      )
+      .all(since) as ReviewFailureRow[];
   }
 
-  roundRecoveryInstruction(pr: number, targetRoundNo: number): RoundRecoveryInstructionRow | undefined {
-    return this.db.prepare(
-      "SELECT * FROM round_recovery_instructions WHERE pr=? AND target_round_no=?",
-    ).get(pr, targetRoundNo) as RoundRecoveryInstructionRow | undefined;
+  roundRecoveryInstruction(
+    pr: number,
+    targetRoundNo: number,
+  ): RoundRecoveryInstructionRow | undefined {
+    return this.db
+      .prepare("SELECT * FROM round_recovery_instructions WHERE pr=? AND target_round_no=?")
+      .get(pr, targetRoundNo) as RoundRecoveryInstructionRow | undefined;
   }
 
   /** Recovery behavior belongs to one exact successor identity. A stale row is
@@ -3105,26 +3461,36 @@ export class StateStore {
   ): RoundRecoveryInstructionRow | undefined {
     const instruction = this.roundRecoveryInstruction(pr, targetRoundNo);
     if (
-      !instruction || instruction.target_head_sha !== targetHeadSha
-      || instruction.source_round_no + 1 !== targetRoundNo
-      || instruction.stage !== "first_pass_start"
-    ) return undefined;
-    const sourceRound = this.roundsFor(pr).find((round) => round.round_no === instruction.source_round_no);
+      !instruction ||
+      instruction.target_head_sha !== targetHeadSha ||
+      instruction.source_round_no + 1 !== targetRoundNo ||
+      instruction.stage !== "first_pass_start"
+    )
+      return undefined;
+    const sourceRound = this.roundsFor(pr).find(
+      (round) => round.round_no === instruction.source_round_no,
+    );
     const sourceCommand = this.getSessionCommand(instruction.source_command_id);
     if (
-      sourceRound?.status !== "cancelled"
-      || sourceCommand?.pr !== pr || sourceCommand.kind !== "round"
-      || sourceCommand.round_no !== instruction.source_round_no
-      || !["failed", "cancelled"].includes(sourceCommand.status)
-    ) return undefined;
+      sourceRound?.status !== "cancelled" ||
+      sourceCommand?.pr !== pr ||
+      sourceCommand.kind !== "round" ||
+      sourceCommand.round_no !== instruction.source_round_no ||
+      !["failed", "cancelled"].includes(sourceCommand.status)
+    )
+      return undefined;
     if (instruction.source_incident_id) {
-      const failure = this.db.prepare("SELECT * FROM review_failures WHERE incident_id=?").get(
-        instruction.source_incident_id,
-      ) as ReviewFailureRow | undefined;
+      const failure = this.db
+        .prepare("SELECT * FROM review_failures WHERE incident_id=?")
+        .get(instruction.source_incident_id) as ReviewFailureRow | undefined;
       if (
-        !failure || failure.pr !== pr || failure.command_id !== instruction.source_command_id
-        || failure.round_id !== sourceRound.id || failure.work_owed !== 0
-      ) return undefined;
+        !failure ||
+        failure.pr !== pr ||
+        failure.command_id !== instruction.source_command_id ||
+        failure.round_id !== sourceRound.id ||
+        failure.work_owed !== 0
+      )
+        return undefined;
     }
     return instruction;
   }
@@ -3149,51 +3515,65 @@ export class StateStore {
     };
   }): { target_round_no: number; target_head_sha: string; queued: boolean } | undefined {
     return this.db.transaction(() => {
-      const source = this.db.prepare("SELECT * FROM rounds WHERE id=?").get(input.round_id) as RoundRow | undefined;
-      if (source?.pr !== input.pr || source.round_no !== input.round_no || source.status !== "running") return undefined;
+      const source = this.db.prepare("SELECT * FROM rounds WHERE id=?").get(input.round_id) as
+        RoundRow | undefined;
+      if (
+        source?.pr !== input.pr ||
+        source.round_no !== input.round_no ||
+        source.status !== "running"
+      )
+        return undefined;
       const row = this.getPr(input.pr);
       if (!row) throw new Error(`cannot publish recovery for missing PR #${input.pr}`);
       const successor = this.successorFor(input.pr);
       const targetHead = successor?.head_sha ?? input.fallback_head_sha;
-      const targetRoundNo = Math.max(0, ...this.roundsFor(input.pr).map((round) => round.round_no)) + 1;
+      const targetRoundNo =
+        Math.max(0, ...this.roundsFor(input.pr).map((round) => round.round_no)) + 1;
       const ts = this.ts();
-      const cancelled = this.db.prepare(
-        `UPDATE rounds SET status='cancelled', summary=@summary, cancel_cause=@cause, finished_at=@ts
+      const cancelled = this.db
+        .prepare(
+          `UPDATE rounds SET status='cancelled', summary=@summary, cancel_cause=@cause, finished_at=@ts
           WHERE id=@round_id AND pr=@pr AND round_no=@round_no AND status='running'`,
-      ).run({ ...input, ts }).changes;
+        )
+        .run({ ...input, ts }).changes;
       if (cancelled !== 1) return undefined;
       if (input.recovery && row.state !== "closed") {
-        this.db.prepare(
-          `INSERT INTO round_recovery_instructions
+        this.db
+          .prepare(
+            `INSERT INTO round_recovery_instructions
              (pr, target_round_no, target_head_sha, stage, source_incident_id,
               source_command_id, source_round_no, immediate_attempt, retry_epoch, created_at)
            VALUES (@pr, @target_round_no, @target_head_sha, @stage, NULL,
               @source_command_id, @source_round_no, @immediate_attempt, @retry_epoch, @created_at)`,
-        ).run({
-          pr: input.pr,
-          target_round_no: targetRoundNo,
-          target_head_sha: targetHead,
-          stage: input.recovery.stage,
-          source_command_id: input.recovery.source_command_id,
-          source_round_no: input.round_no,
-          immediate_attempt: input.recovery.immediate_attempt,
-          retry_epoch: input.recovery.retry_epoch,
-          created_at: ts,
-        });
+          )
+          .run({
+            pr: input.pr,
+            target_round_no: targetRoundNo,
+            target_head_sha: targetHead,
+            stage: input.recovery.stage,
+            source_command_id: input.recovery.source_command_id,
+            source_round_no: input.round_no,
+            immediate_attempt: input.recovery.immediate_attempt,
+            retry_epoch: input.recovery.retry_epoch,
+            created_at: ts,
+          });
       }
-      if (row.state === "closed") return { target_round_no: targetRoundNo, target_head_sha: targetHead, queued: false };
-      this.db.prepare(
-        `UPDATE pr_state
+      if (row.state === "closed")
+        return { target_round_no: targetRoundNo, target_head_sha: targetHead, queued: false };
+      this.db
+        .prepare(
+          `UPDATE pr_state
             SET state='queued', head_sha=@head_sha, trigger_ts=@trigger_ts,
                 trigger_provenance=@provenance, updated_at=@ts
           WHERE number=@pr AND state!='closed'`,
-      ).run({
-        pr: input.pr,
-        head_sha: targetHead,
-        trigger_ts: successor?.requested_at ?? input.trigger_ts,
-        provenance: successor?.provenance ?? row.trigger_provenance,
-        ts,
-      });
+        )
+        .run({
+          pr: input.pr,
+          head_sha: targetHead,
+          trigger_ts: successor?.requested_at ?? input.trigger_ts,
+          provenance: successor?.provenance ?? row.trigger_provenance,
+          ts,
+        });
       return { target_round_no: targetRoundNo, target_head_sha: targetHead, queued: true };
     })();
   }
@@ -3204,13 +3584,15 @@ export class StateStore {
   recordRoundRecoveryInstruction(
     input: Omit<RoundRecoveryInstructionRow, "created_at">,
   ): RoundRecoveryInstructionRow {
-    this.db.prepare(
-      `INSERT INTO round_recovery_instructions
+    this.db
+      .prepare(
+        `INSERT INTO round_recovery_instructions
          (pr, target_round_no, target_head_sha, stage, source_incident_id,
           source_command_id, source_round_no, immediate_attempt, retry_epoch, created_at)
        VALUES (@pr, @target_round_no, @target_head_sha, @stage, @source_incident_id,
           @source_command_id, @source_round_no, @immediate_attempt, @retry_epoch, @created_at)`,
-    ).run({ ...input, created_at: this.ts() });
+      )
+      .run({ ...input, created_at: this.ts() });
     return this.roundRecoveryInstruction(input.pr, input.target_round_no)!;
   }
 
@@ -3228,12 +3610,14 @@ export class StateStore {
    * therefore produce at most one winner.
    */
   activateDueReviewFailureRetries(at: string): AutomaticReviewRetry[] {
-    const due = this.db.prepare(
-      `SELECT incident_id FROM review_failures
+    const due = this.db
+      .prepare(
+        `SELECT incident_id FROM review_failures
         WHERE work_owed=1 AND next_action='retry_wait'
           AND next_retry_at IS NOT NULL AND next_retry_at<=?
         ORDER BY next_retry_at, failed_at, incident_id`,
-    ).all(at) as Array<{ incident_id: string }>;
+      )
+      .all(at) as Array<{ incident_id: string }>;
     const activated: AutomaticReviewRetry[] = [];
 
     for (const candidate of due) {
@@ -3241,7 +3625,9 @@ export class StateStore {
       // Reuse the exact transaction rather than scheduling pointless
       // review work; contradictory ownership/wakes make it refuse and retain
       // the finite retry below.
-      const before = this.db.prepare("SELECT * FROM review_failures WHERE incident_id=?").get(candidate.incident_id) as ReviewFailureRow | undefined;
+      const before = this.db
+        .prepare("SELECT * FROM review_failures WHERE incident_id=?")
+        .get(candidate.incident_id) as ReviewFailureRow | undefined;
       if (before?.command_id && this.getPr(before.pr)?.state === "closed") {
         const terminal = this.resolveTerminalReviewFailure({
           pr: before.pr,
@@ -3253,53 +3639,85 @@ export class StateStore {
         if (terminal.ok) continue;
       }
       const result = this.db.transaction((): AutomaticReviewRetry | undefined => {
-        const failure = this.db.prepare(
-          `SELECT * FROM review_failures
+        const failure = this.db
+          .prepare(
+            `SELECT * FROM review_failures
             WHERE incident_id=? AND work_owed=1 AND next_action='retry_wait'
               AND next_retry_at IS NOT NULL AND next_retry_at<=?`,
-        ).get(candidate.incident_id, at) as ReviewFailureRow | undefined;
-        if (!failure || failure.stage !== "first_pass_start" || !failure.command_id
-          || failure.round_id === null || failure.round_no === null) return undefined;
+          )
+          .get(candidate.incident_id, at) as ReviewFailureRow | undefined;
+        if (
+          !failure ||
+          failure.stage !== "first_pass_start" ||
+          !failure.command_id ||
+          failure.round_id === null ||
+          failure.round_no === null
+        )
+          return undefined;
 
         const pr = this.getPr(failure.pr);
         if (!pr || pr.state === "closed" || pr.paused) {
           // A close is handled by the exact terminal-failure path; a pause is
           // an explicit operator hold. Both retain a finite re-check rather
           // than falling into an actionless state here.
-          const next = new Date(Date.parse(at) + AUTO_REVIEW_RETRY_INITIAL_MIN * 60_000).toISOString();
-          this.db.prepare(
-            `UPDATE review_failures SET next_retry_at=?, updated_at=?
+          const next = new Date(
+            Date.parse(at) + AUTO_REVIEW_RETRY_INITIAL_MIN * 60_000,
+          ).toISOString();
+          this.db
+            .prepare(
+              `UPDATE review_failures SET next_retry_at=?, updated_at=?
               WHERE incident_id=? AND work_owed=1 AND next_action='retry_wait'`,
-          ).run(next, this.ts(), failure.incident_id);
+            )
+            .run(next, this.ts(), failure.incident_id);
           this.logEvent("review_failure_auto_retry_deferred", failure.pr, {
             incident_id: failure.incident_id,
-            reason: !pr ? "pr-state-absent" : pr.state === "closed" ? "terminal-resolution-not-ready" : "operator-paused",
+            reason: !pr
+              ? "pr-state-absent"
+              : pr.state === "closed"
+                ? "terminal-resolution-not-ready"
+                : "operator-paused",
             next_retry_at: next,
           });
           return undefined;
         }
         const command = this.getSessionCommand(failure.command_id);
-        const round = this.db.prepare("SELECT * FROM rounds WHERE id=?").get(failure.round_id) as RoundRow | undefined;
-        const active = this.db.prepare(
-          "SELECT id FROM session_commands WHERE pr=? AND status IN ('pending','running') LIMIT 1",
-        ).get(failure.pr) as { id: string } | undefined;
+        const round = this.db.prepare("SELECT * FROM rounds WHERE id=?").get(failure.round_id) as
+          RoundRow | undefined;
+        const active = this.db
+          .prepare(
+            "SELECT id FROM session_commands WHERE pr=? AND status IN ('pending','running') LIMIT 1",
+          )
+          .get(failure.pr) as { id: string } | undefined;
         if (
-          command?.pr !== failure.pr || command.session !== `pr-${failure.pr}`
-          || command.kind !== "round" || command.round_no !== failure.round_no
-          || !["failed", "acked", "cancelled"].includes(command.status)
-          || round?.pr !== failure.pr || round.round_no !== failure.round_no || round.status === "running"
-          || this.hasRunningRound(failure.pr) || active
+          command?.pr !== failure.pr ||
+          command.session !== `pr-${failure.pr}` ||
+          command.kind !== "round" ||
+          command.round_no !== failure.round_no ||
+          !["failed", "acked", "cancelled"].includes(command.status) ||
+          round?.pr !== failure.pr ||
+          round.round_no !== failure.round_no ||
+          round.status === "running" ||
+          this.hasRunningRound(failure.pr) ||
+          active
         ) {
           // Contradictory/live ownership is never bulldozed. Keep the exact
           // debt visible and schedule another finite inspection.
-          const next = new Date(Date.parse(at) + AUTO_REVIEW_RETRY_INITIAL_MIN * 60_000).toISOString();
-          this.db.prepare(
-            `UPDATE review_failures SET next_retry_at=?, updated_at=?
+          const next = new Date(
+            Date.parse(at) + AUTO_REVIEW_RETRY_INITIAL_MIN * 60_000,
+          ).toISOString();
+          this.db
+            .prepare(
+              `UPDATE review_failures SET next_retry_at=?, updated_at=?
               WHERE incident_id=? AND work_owed=1 AND next_action='retry_wait'`,
-          ).run(next, this.ts(), failure.incident_id);
+            )
+            .run(next, this.ts(), failure.incident_id);
           this.logEvent("review_failure_auto_retry_deferred", failure.pr, {
             incident_id: failure.incident_id,
-            reason: active ? `active-command:${active.id}` : this.hasRunningRound(failure.pr) ? "running-round" : "identity-mismatch",
+            reason: active
+              ? `active-command:${active.id}`
+              : this.hasRunningRound(failure.pr)
+                ? "running-round"
+                : "identity-mismatch",
             next_retry_at: next,
           });
           return undefined;
@@ -3307,79 +3725,94 @@ export class StateStore {
 
         const successor = this.successorFor(failure.pr);
         const targetHead = successor?.head_sha || pr.head_sha || failure.head_sha;
-        const targetRoundNo = ((this.db.prepare(
-          "SELECT MAX(round_no) AS m FROM rounds WHERE pr=?",
-        ).get(failure.pr) as { m: number | null }).m ?? 0) + 1;
+        const targetRoundNo =
+          ((
+            this.db.prepare("SELECT MAX(round_no) AS m FROM rounds WHERE pr=?").get(failure.pr) as {
+              m: number | null;
+            }
+          ).m ?? 0) + 1;
         // A new authoritative head is new work and gets its own fast-retry /
         // backoff generation. The delayed wake still carries the predecessor
         // identity, but old-head failures do not punish the new head's rate.
         const retryEpoch = targetHead === failure.head_sha ? failure.retry_epoch + 1 : 0;
-        const triggerTs = successor?.requested_at
-          ?? (pr.trigger_provenance === "human" && pr.trigger_ts ? pr.trigger_ts : this.ts());
-        const provenance = successor?.provenance
-          ?? (pr.trigger_provenance === "human" ? "human" : "system");
+        const triggerTs =
+          successor?.requested_at ??
+          (pr.trigger_provenance === "human" && pr.trigger_ts ? pr.trigger_ts : this.ts());
+        const provenance =
+          successor?.provenance ?? (pr.trigger_provenance === "human" ? "human" : "system");
 
-        this.db.prepare(
-          `INSERT INTO round_recovery_instructions
+        this.db
+          .prepare(
+            `INSERT INTO round_recovery_instructions
              (pr, target_round_no, target_head_sha, stage, source_incident_id,
               source_command_id, source_round_no, immediate_attempt, retry_epoch, created_at)
            VALUES (?, ?, ?, 'first_pass_start', ?, ?, ?, ?, ?, ?)`,
-        ).run(
-          failure.pr,
-          targetRoundNo,
-          targetHead,
-          failure.incident_id,
-          failure.command_id,
-          failure.round_no,
-          failure.attempts,
-          retryEpoch,
-          this.ts(),
-        );
-        const commandChanged = this.db.prepare(
-          `UPDATE session_commands
+          )
+          .run(
+            failure.pr,
+            targetRoundNo,
+            targetHead,
+            failure.incident_id,
+            failure.command_id,
+            failure.round_no,
+            failure.attempts,
+            retryEpoch,
+            this.ts(),
+          );
+        const commandChanged = this.db
+          .prepare(
+            `UPDATE session_commands
               SET status='cancelled', owner_token=NULL,
                   settled_at=COALESCE(settled_at, @ts), updated_at=@ts,
                   next_check_at=@ts,
                   failure=CASE WHEN failure IS NULL OR failure='' THEN @reason ELSE failure || '; ' || @reason END
             WHERE id=@id AND pr=@pr AND session=@session AND kind='round'
               AND round_no=@round_no AND status IN ('failed','acked','cancelled')`,
-        ).run({
-          id: failure.command_id,
-          pr: failure.pr,
-          session: `pr-${failure.pr}`,
-          round_no: failure.round_no,
-          ts: this.ts(),
-          reason: `automatic pre-fanout retry epoch ${retryEpoch}`,
-        }).changes;
-        if (commandChanged !== 1) throw new Error(`automatic retry command CAS lost for ${failure.command_id}`);
-        const failureChanged = this.db.prepare(
-          `UPDATE review_failures
+          )
+          .run({
+            id: failure.command_id,
+            pr: failure.pr,
+            session: `pr-${failure.pr}`,
+            round_no: failure.round_no,
+            ts: this.ts(),
+            reason: `automatic pre-fanout retry epoch ${retryEpoch}`,
+          }).changes;
+        if (commandChanged !== 1)
+          throw new Error(`automatic retry command CAS lost for ${failure.command_id}`);
+        const failureChanged = this.db
+          .prepare(
+            `UPDATE review_failures
               SET work_owed=0, recovered_at=@ts, recovery=@recovery,
                   next_action='closed', next_retry_at=NULL, updated_at=@ts
             WHERE incident_id=@incident_id AND work_owed=1
               AND next_action='retry_wait' AND retry_epoch=@expected_epoch
               AND next_retry_at IS NOT NULL AND next_retry_at<=@at`,
-        ).run({
-          incident_id: failure.incident_id,
-          expected_epoch: failure.retry_epoch,
-          at,
-          ts: this.ts(),
-          recovery: `automatic-retry:${retryEpoch}`,
-        }).changes;
-        if (failureChanged !== 1) throw new Error(`automatic retry failure CAS lost for ${failure.incident_id}`);
-        const prChanged = this.db.prepare(
-          `UPDATE pr_state
+          )
+          .run({
+            incident_id: failure.incident_id,
+            expected_epoch: failure.retry_epoch,
+            at,
+            ts: this.ts(),
+            recovery: `automatic-retry:${retryEpoch}`,
+          }).changes;
+        if (failureChanged !== 1)
+          throw new Error(`automatic retry failure CAS lost for ${failure.incident_id}`);
+        const prChanged = this.db
+          .prepare(
+            `UPDATE pr_state
               SET state='queued', head_sha=@head, trigger_ts=@trigger,
                   trigger_provenance=@provenance, updated_at=@ts
             WHERE number=@pr AND state!='closed' AND paused=0`,
-        ).run({
-          pr: failure.pr,
-          head: targetHead,
-          trigger: triggerTs,
-          provenance,
-          ts: this.ts(),
-        }).changes;
-        if (prChanged !== 1) throw new Error(`automatic retry PR-state CAS lost for #${failure.pr}`);
+          )
+          .run({
+            pr: failure.pr,
+            head: targetHead,
+            trigger: triggerTs,
+            provenance,
+            ts: this.ts(),
+          }).changes;
+        if (prChanged !== 1)
+          throw new Error(`automatic retry PR-state CAS lost for #${failure.pr}`);
         return {
           pr: failure.pr,
           incident_id: failure.incident_id,
@@ -3418,21 +3851,23 @@ export class StateStore {
     return this.db.transaction((): ExactHeadReviewedFailureResolution => {
       const current = this.openReviewFailure(input.pr);
       if (!current) {
-        const prior = this.db.prepare("SELECT * FROM review_failures WHERE incident_id=?").get(input.incident_id) as ReviewFailureRow | undefined;
+        const prior = this.db
+          .prepare("SELECT * FROM review_failures WHERE incident_id=?")
+          .get(input.incident_id) as ReviewFailureRow | undefined;
         const command = this.getSessionCommand(input.command_id);
         const mark = this.reviewedHead(input.pr);
         const standingVerdict = standingReviewVerdict(mark);
         if (
-          prior?.pr === input.pr
-          && prior.command_id === input.command_id
-          && prior.round_id === input.round_id
-          && prior.round_no === input.round_no
-          && prior.head_sha === input.head_sha
-          && prior.work_owed === 0
-          && prior.recovery === recovery
-          && (command?.status === "cancelled" || command?.status === "acked")
-          && mark?.head_sha === input.head_sha
-          && standingVerdict !== null
+          prior?.pr === input.pr &&
+          prior.command_id === input.command_id &&
+          prior.round_id === input.round_id &&
+          prior.round_no === input.round_no &&
+          prior.head_sha === input.head_sha &&
+          prior.work_owed === 0 &&
+          prior.recovery === recovery &&
+          (command?.status === "cancelled" || command?.status === "acked") &&
+          mark?.head_sha === input.head_sha &&
+          standingVerdict !== null
         ) {
           return {
             kind: "resolved",
@@ -3447,109 +3882,150 @@ export class StateStore {
       }
       if (current.stage !== "posting_receipt") return { kind: "not_applicable" };
       if (
-        current.incident_id !== input.incident_id
-        || current.command_id !== input.command_id
-        || current.round_id !== input.round_id
-        || current.round_no !== input.round_no
-        || current.head_sha !== input.head_sha
-      ) return { kind: "blocked", reason: `open review failure identity changed for PR #${input.pr}` };
+        current.incident_id !== input.incident_id ||
+        current.command_id !== input.command_id ||
+        current.round_id !== input.round_id ||
+        current.round_no !== input.round_no ||
+        current.head_sha !== input.head_sha
+      )
+        return {
+          kind: "blocked",
+          reason: `open review failure identity changed for PR #${input.pr}`,
+        };
 
       const mark = this.reviewedHead(input.pr);
       const standingVerdict = standingReviewVerdict(mark);
       if (
-        !mark
-        || mark.head_sha !== input.head_sha
-        || standingVerdict === null
-        || (mark.last_author_reply_at !== null && mark.last_author_reply_at >= mark.reviewed_at)
-      ) return { kind: "not_applicable" };
+        !mark ||
+        mark.head_sha !== input.head_sha ||
+        standingVerdict === null ||
+        (mark.last_author_reply_at !== null && mark.last_author_reply_at >= mark.reviewed_at)
+      )
+        return { kind: "not_applicable" };
 
       const pr = this.getPr(input.pr);
       if (!pr || pr.state === "closed" || pr.head_sha !== input.head_sha) {
-        return { kind: "blocked", reason: `PR #${input.pr} local head/state changed during exact-head recovery` };
+        return {
+          kind: "blocked",
+          reason: `PR #${input.pr} local head/state changed during exact-head recovery`,
+        };
       }
       // A fresh explicit trigger is new work even on an unchanged head. Fall
       // through to ordinary recovery, which preserves this human-owned queue
       // identity, rather than clearing it as obsolete receipt debt.
       if (pr.trigger_provenance === "human") return { kind: "not_applicable" };
-      if (this.hasRunningRound(input.pr)) return { kind: "blocked", reason: `PR #${input.pr} still has a running round` };
-      const active = this.db.prepare(
-        "SELECT * FROM session_commands WHERE pr=? AND status IN ('pending','running') ORDER BY created_at, id LIMIT 1",
-      ).get(input.pr) as SessionCommandRow | undefined;
-      if (active) return { kind: "blocked", reason: `PR #${input.pr} still has active command ${active.id} (${active.status})` };
+      if (this.hasRunningRound(input.pr))
+        return { kind: "blocked", reason: `PR #${input.pr} still has a running round` };
+      const active = this.db
+        .prepare(
+          "SELECT * FROM session_commands WHERE pr=? AND status IN ('pending','running') ORDER BY created_at, id LIMIT 1",
+        )
+        .get(input.pr) as SessionCommandRow | undefined;
+      if (active)
+        return {
+          kind: "blocked",
+          reason: `PR #${input.pr} still has active command ${active.id} (${active.status})`,
+        };
       // A held wake or successor is genuine new work. Do not consume it here;
       // hand the caller back to ordinary recovery, which preserves/promotes it.
-      if (this.heldWakes(input.pr).length > 0 || this.successorFor(input.pr)) return { kind: "not_applicable" };
+      if (this.heldWakes(input.pr).length > 0 || this.successorFor(input.pr))
+        return { kind: "not_applicable" };
 
       const command = this.getSessionCommand(input.command_id);
-      const round = this.db.prepare("SELECT * FROM rounds WHERE id=?").get(input.round_id) as RoundRow | undefined;
+      const round = this.db.prepare("SELECT * FROM rounds WHERE id=?").get(input.round_id) as
+        RoundRow | undefined;
       if (
-        !command
-        || command.pr !== input.pr
-        || command.session !== `pr-${input.pr}`
-        || command.kind !== "round"
-        || command.round_no !== input.round_no
-        || (command.status !== "acked" && command.status !== "failed")
-        || !round
-        || round.pr !== input.pr
-        || round.round_no !== input.round_no
-        || round.status !== "cancelled"
-        || round.verdict !== null
-      ) return { kind: "blocked", reason: `failed command/round identity changed for ${input.command_id}` };
+        !command ||
+        command.pr !== input.pr ||
+        command.session !== `pr-${input.pr}` ||
+        command.kind !== "round" ||
+        command.round_no !== input.round_no ||
+        (command.status !== "acked" && command.status !== "failed") ||
+        !round ||
+        round.pr !== input.pr ||
+        round.round_no !== input.round_no ||
+        round.status !== "cancelled" ||
+        round.verdict !== null
+      )
+        return {
+          kind: "blocked",
+          reason: `failed command/round identity changed for ${input.command_id}`,
+        };
       // Do not limit this to the canonical session spelling: a malformed or
       // legacy failed row is still durable PR ownership and must not disappear
       // behind cleanup of the named incident.
-      const otherFailed = this.db.prepare(
-        `SELECT c.* FROM session_commands c
+      const otherFailed = this.db
+        .prepare(
+          `SELECT c.* FROM session_commands c
           WHERE c.pr=@pr AND c.id<>@command_id AND ${BLOCKING_SESSION_COMMAND_SQL}
           ORDER BY c.created_at, c.id LIMIT 1`,
-      ).get({ pr: input.pr, command_id: input.command_id }) as SessionCommandRow | undefined;
-      if (otherFailed) return { kind: "blocked", reason: `PR #${input.pr} still has blocking command ${otherFailed.id}` };
+        )
+        .get({ pr: input.pr, command_id: input.command_id }) as SessionCommandRow | undefined;
+      if (otherFailed)
+        return {
+          kind: "blocked",
+          reason: `PR #${input.pr} still has blocking command ${otherFailed.id}`,
+        };
 
       const ts = this.ts();
       const commandStatus = command.status;
-      const commandChanged = commandStatus === "failed"
-        ? this.db.prepare(
-          `UPDATE session_commands
+      const commandChanged =
+        commandStatus === "failed"
+          ? this.db
+              .prepare(
+                `UPDATE session_commands
               SET status='cancelled', owner_token=NULL, settled_at=COALESCE(settled_at, @ts),
                   updated_at=@ts, next_check_at=@ts,
                   failure=CASE WHEN failure IS NULL OR failure='' THEN @reason ELSE failure || '; ' || @reason END
             WHERE id=@command_id AND pr=@pr AND session=@session AND kind='round'
               AND round_no=@round_no AND status='failed'`,
-        ).run({
-          ...input,
-          session: `pr-${input.pr}`,
-          ts,
-          reason: `operator resolved ${recovery} review debt`,
-        }).changes
-        // An acked command proves successful prompt delivery, not failed work.
-        // Keep it acked; a no-op CAS still fences its exact terminal identity
-        // in the transaction which closes only the posting-receipt debt.
-        : this.db.prepare(
-          `UPDATE session_commands SET status='acked'
+              )
+              .run({
+                ...input,
+                session: `pr-${input.pr}`,
+                ts,
+                reason: `operator resolved ${recovery} review debt`,
+              }).changes
+          : // An acked command proves successful prompt delivery, not failed work.
+            // Keep it acked; a no-op CAS still fences its exact terminal identity
+            // in the transaction which closes only the posting-receipt debt.
+            this.db
+              .prepare(
+                `UPDATE session_commands SET status='acked'
             WHERE id=@command_id AND pr=@pr AND session=@session AND kind='round'
               AND round_no=@round_no AND status='acked'`,
-        ).run({ ...input, session: `pr-${input.pr}` }).changes;
-      if (commandChanged !== 1) throw new Error(`exact-head command CAS lost for ${input.command_id}`);
+              )
+              .run({ ...input, session: `pr-${input.pr}` }).changes;
+      if (commandChanged !== 1)
+        throw new Error(`exact-head command CAS lost for ${input.command_id}`);
 
-      const failureChanged = this.db.prepare(
-        `UPDATE review_failures
+      const failureChanged = this.db
+        .prepare(
+          `UPDATE review_failures
             SET work_owed=0, recovered_at=@ts, recovery=@recovery,
                 next_action='closed', next_retry_at=NULL, updated_at=@ts
           WHERE incident_id=@incident_id AND pr=@pr AND command_id=@command_id
             AND round_id=@round_id AND round_no=@round_no AND head_sha=@head_sha
             AND stage='posting_receipt' AND work_owed=1`,
-      ).run({ ...input, recovery, ts }).changes;
-      if (failureChanged !== 1) throw new Error(`exact-head failure CAS lost for ${input.incident_id}`);
+        )
+        .run({ ...input, recovery, ts }).changes;
+      if (failureChanged !== 1)
+        throw new Error(`exact-head failure CAS lost for ${input.incident_id}`);
 
       const restoredState = standingVerdict === "REQUEST_CHANGES" ? "awaiting_author" : "tracked";
-      const prChanged = this.db.prepare(
-        `UPDATE pr_state
+      const prChanged = this.db
+        .prepare(
+          `UPDATE pr_state
             SET state=@state, trigger_ts=NULL, trigger_provenance=NULL, updated_at=@ts
           WHERE number=@pr AND head_sha=@head_sha AND state!='closed'`,
-      ).run({ pr: input.pr, head_sha: input.head_sha, state: restoredState, ts }).changes;
+        )
+        .run({ pr: input.pr, head_sha: input.head_sha, state: restoredState, ts }).changes;
       if (prChanged !== 1) throw new Error(`exact-head PR-state CAS lost for #${input.pr}`);
 
-      this.logEvent("review_failure_recovered", input.pr, { incident_id: input.incident_id, recovery });
+      this.logEvent("review_failure_recovered", input.pr, {
+        incident_id: input.incident_id,
+        recovery,
+      });
       this.logEvent("exact_head_review_failure_retired", input.pr, {
         incident_id: input.incident_id,
         command_id: input.command_id,
@@ -3590,17 +4066,19 @@ export class StateStore {
     const resolved = this.db.transaction((): TerminalReviewFailureResolution => {
       const current = this.openReviewFailure(input.pr);
       if (!current) {
-        const prior = this.db.prepare("SELECT * FROM review_failures WHERE incident_id=?").get(input.incident_id) as ReviewFailureRow | undefined;
+        const prior = this.db
+          .prepare("SELECT * FROM review_failures WHERE incident_id=?")
+          .get(input.incident_id) as ReviewFailureRow | undefined;
         const command = this.getSessionCommand(input.command_id);
         if (
-          prior?.pr === input.pr
-          && prior.command_id === input.command_id
-          && prior.head_sha === input.head_sha
-          && prior.work_owed === 0
-          && prior.recovery === recovery
-          && command?.pr === input.pr
-          && command.session === `pr-${input.pr}`
-          && command.status === "cancelled"
+          prior?.pr === input.pr &&
+          prior.command_id === input.command_id &&
+          prior.head_sha === input.head_sha &&
+          prior.work_owed === 0 &&
+          prior.recovery === recovery &&
+          command?.pr === input.pr &&
+          command.session === `pr-${input.pr}` &&
+          command.status === "cancelled"
         ) {
           return {
             ok: true,
@@ -3614,9 +4092,9 @@ export class StateStore {
         return { ok: false, reason: `no matching open review failure for PR #${input.pr}` };
       }
       if (
-        current.incident_id !== input.incident_id
-        || current.command_id !== input.command_id
-        || current.head_sha !== input.head_sha
+        current.incident_id !== input.incident_id ||
+        current.command_id !== input.command_id ||
+        current.head_sha !== input.head_sha
       ) {
         return { ok: false, reason: `open review failure identity changed for PR #${input.pr}` };
       }
@@ -3628,67 +4106,107 @@ export class StateStore {
       if (input.disposition === "absent" && pr !== undefined) {
         return { ok: false, reason: `absent PR #${input.pr} still has local state ${pr.state}` };
       }
-      if (this.hasRunningRound(input.pr)) return { ok: false, reason: `PR #${input.pr} still has a running round` };
+      if (this.hasRunningRound(input.pr))
+        return { ok: false, reason: `PR #${input.pr} still has a running round` };
       // Query by PR, not only by the canonical session spelling: malformed or
       // legacy rows must not become an invisible concurrent owner.
-      const active = this.db.prepare(
-        "SELECT * FROM session_commands WHERE pr=? AND status IN ('pending','running') ORDER BY created_at, id LIMIT 1",
-      ).get(input.pr) as SessionCommandRow | undefined;
-      if (active) return { ok: false, reason: `PR #${input.pr} still has active command ${active.id} (${active.status})` };
+      const active = this.db
+        .prepare(
+          "SELECT * FROM session_commands WHERE pr=? AND status IN ('pending','running') ORDER BY created_at, id LIMIT 1",
+        )
+        .get(input.pr) as SessionCommandRow | undefined;
+      if (active)
+        return {
+          ok: false,
+          reason: `PR #${input.pr} still has active command ${active.id} (${active.status})`,
+        };
       const wakes = this.heldWakes(input.pr);
-      if (wakes.length > 0) return { ok: false, reason: `PR #${input.pr} still has ${wakes.length} held wake(s)` };
-      if (this.successorFor(input.pr)) return { ok: false, reason: `PR #${input.pr} still has a successor obligation` };
+      if (wakes.length > 0)
+        return { ok: false, reason: `PR #${input.pr} still has ${wakes.length} held wake(s)` };
+      if (this.successorFor(input.pr))
+        return { ok: false, reason: `PR #${input.pr} still has a successor obligation` };
 
       const command = this.getSessionCommand(input.command_id);
       if (
-        !command
-        || command.pr !== input.pr
-        || command.session !== `pr-${input.pr}`
-        || command.status !== "failed"
-        || command.round_no !== current.round_no
+        !command ||
+        command.pr !== input.pr ||
+        command.session !== `pr-${input.pr}` ||
+        command.status !== "failed" ||
+        command.round_no !== current.round_no
       ) {
         return { ok: false, reason: `failed command identity changed for ${input.command_id}` };
       }
       if (command.kind === "round" || current.round_id !== null || current.round_no !== null) {
         if (command.kind !== "round" || current.round_id === null || current.round_no === null) {
-          return { ok: false, reason: `failed command/failure round identity is incomplete for ${input.command_id}` };
+          return {
+            ok: false,
+            reason: `failed command/failure round identity is incomplete for ${input.command_id}`,
+          };
         }
-        const round = this.db.prepare("SELECT * FROM rounds WHERE id=?").get(current.round_id) as RoundRow | undefined;
-        if (!round || round.pr !== input.pr || round.round_no !== current.round_no || round.round_no !== command.round_no) {
-          return { ok: false, reason: `failed command/failure round identity changed for ${input.command_id}` };
+        const round = this.db.prepare("SELECT * FROM rounds WHERE id=?").get(current.round_id) as
+          RoundRow | undefined;
+        if (
+          !round ||
+          round.pr !== input.pr ||
+          round.round_no !== current.round_no ||
+          round.round_no !== command.round_no
+        ) {
+          return {
+            ok: false,
+            reason: `failed command/failure round identity changed for ${input.command_id}`,
+          };
         }
-        if (round.status === "running") return { ok: false, reason: `PR #${input.pr} linked round ${round.round_no} is still running` };
+        if (round.status === "running")
+          return {
+            ok: false,
+            reason: `PR #${input.pr} linked round ${round.round_no} is still running`,
+          };
       }
-      const otherBlocker = this.blockingSessionCommandsForPr(input.pr).find((row) => row.id !== input.command_id);
-      if (otherBlocker) return { ok: false, reason: `PR #${input.pr} still has blocking command ${otherBlocker.id}` };
+      const otherBlocker = this.blockingSessionCommandsForPr(input.pr).find(
+        (row) => row.id !== input.command_id,
+      );
+      if (otherBlocker)
+        return {
+          ok: false,
+          reason: `PR #${input.pr} still has blocking command ${otherBlocker.id}`,
+        };
 
       const ts = this.ts();
-      const commandChanged = this.db.prepare(
-        `UPDATE session_commands
+      const commandChanged = this.db
+        .prepare(
+          `UPDATE session_commands
             SET status='cancelled', owner_token=NULL, settled_at=COALESCE(settled_at, @ts),
                 updated_at=@ts, next_check_at=@ts,
                 failure=CASE WHEN failure IS NULL OR failure='' THEN @reason ELSE failure || '; ' || @reason END
           WHERE id=@command_id AND pr=@pr AND session=@session AND status='failed'`,
-      ).run({
-        command_id: input.command_id,
-        pr: input.pr,
-        session: `pr-${input.pr}`,
-        ts,
-        reason: `operator resolved ${recovery} review debt`,
-      }).changes;
-      if (commandChanged !== 1) throw new Error(`terminal debt command CAS lost for ${input.command_id}`);
+        )
+        .run({
+          command_id: input.command_id,
+          pr: input.pr,
+          session: `pr-${input.pr}`,
+          ts,
+          reason: `operator resolved ${recovery} review debt`,
+        }).changes;
+      if (commandChanged !== 1)
+        throw new Error(`terminal debt command CAS lost for ${input.command_id}`);
 
-      const failureChanged = this.db.prepare(
-        `UPDATE review_failures
+      const failureChanged = this.db
+        .prepare(
+          `UPDATE review_failures
             SET work_owed=0, recovered_at=@ts, recovery=@recovery,
                 next_action='closed', next_retry_at=NULL, updated_at=@ts
           WHERE incident_id=@incident_id AND pr=@pr AND command_id=@command_id
             AND head_sha=@head_sha AND work_owed=1`,
-      ).run({ ...input, recovery, ts }).changes;
-      if (failureChanged !== 1) throw new Error(`terminal debt failure CAS lost for ${input.incident_id}`);
+        )
+        .run({ ...input, recovery, ts }).changes;
+      if (failureChanged !== 1)
+        throw new Error(`terminal debt failure CAS lost for ${input.incident_id}`);
       // Audit and state transition are one SQLite commit. There is no window
       // where debt is gone but its exact terminal proof is unrecorded.
-      this.logEvent("review_failure_recovered", input.pr, { incident_id: input.incident_id, recovery });
+      this.logEvent("review_failure_recovered", input.pr, {
+        incident_id: input.incident_id,
+        recovery,
+      });
       this.logEvent("terminal_review_failure_resolved", input.pr, {
         incident_id: input.incident_id,
         command_id: input.command_id,
@@ -3716,63 +4234,89 @@ export class StateStore {
     const ts = this.ts();
     const current = this.openReviewFailure(pr);
     if (
-      !current
-      || (match?.incident_id !== undefined && current.incident_id !== match.incident_id)
-      || (match?.round_no !== undefined && current.round_no !== match.round_no)
-      || (match?.head_sha !== undefined && current.head_sha !== match.head_sha)
-    ) return undefined;
+      !current ||
+      (match?.incident_id !== undefined && current.incident_id !== match.incident_id) ||
+      (match?.round_no !== undefined && current.round_no !== match.round_no) ||
+      (match?.head_sha !== undefined && current.head_sha !== match.head_sha)
+    )
+      return undefined;
     const recovered = this.db.transaction((): ReviewFailureRow | undefined => {
-      const changed = this.db.prepare(
-        `UPDATE review_failures
+      const changed = this.db
+        .prepare(
+          `UPDATE review_failures
             SET work_owed=0, recovered_at=?, recovery=?, next_action='closed', next_retry_at=NULL, updated_at=?
           WHERE incident_id=? AND work_owed=1`,
-      ).run(ts, recovery, ts, current.incident_id).changes;
+        )
+        .run(ts, recovery, ts, current.incident_id).changes;
       if (changed !== 1) return undefined;
       // Recovery and durable work publication are one commit. A process crash
       // after this point may delay the pump, but cannot forget what u asked for.
       const row = this.getPr(pr);
       const successor = this.successorFor(pr);
       const command = current.command_id ? this.getSessionCommand(current.command_id) : undefined;
-      const round = current.round_id === null
-        ? undefined
-        : this.db.prepare("SELECT * FROM rounds WHERE id=?").get(current.round_id) as RoundRow | undefined;
+      const round =
+        current.round_id === null
+          ? undefined
+          : (this.db.prepare("SELECT * FROM rounds WHERE id=?").get(current.round_id) as
+              RoundRow | undefined);
       if (
-        row && row.state !== "closed"
-        && current.stage === "first_pass_start"
-        && current.command_id && current.round_no !== null
-        && command?.pr === pr && command.kind === "round" && command.round_no === current.round_no
-        && round?.pr === pr && round.round_no === current.round_no && round.status !== "running"
+        row &&
+        row.state !== "closed" &&
+        current.stage === "first_pass_start" &&
+        current.command_id &&
+        current.round_no !== null &&
+        command?.pr === pr &&
+        command.kind === "round" &&
+        command.round_no === current.round_no &&
+        round?.pr === pr &&
+        round.round_no === current.round_no &&
+        round.status !== "running"
       ) {
         const targetHead = successor?.head_sha || row.head_sha || current.head_sha;
-        const targetRoundNo = ((this.db.prepare(
-          "SELECT MAX(round_no) AS m FROM rounds WHERE pr=?",
-        ).get(pr) as { m: number | null }).m ?? 0) + 1;
-        this.db.prepare(
-          `INSERT INTO round_recovery_instructions
+        const targetRoundNo =
+          ((
+            this.db.prepare("SELECT MAX(round_no) AS m FROM rounds WHERE pr=?").get(pr) as {
+              m: number | null;
+            }
+          ).m ?? 0) + 1;
+        this.db
+          .prepare(
+            `INSERT INTO round_recovery_instructions
              (pr, target_round_no, target_head_sha, stage, source_incident_id,
               source_command_id, source_round_no, immediate_attempt, retry_epoch, created_at)
            VALUES (?, ?, ?, 'first_pass_start', ?, ?, ?, ?, ?, ?)`,
-        ).run(
-          pr,
-          targetRoundNo,
-          targetHead,
-          current.incident_id,
-          current.command_id,
-          current.round_no,
-          current.attempts,
-          targetHead === current.head_sha ? current.retry_epoch : 0,
-          ts,
-        );
+          )
+          .run(
+            pr,
+            targetRoundNo,
+            targetHead,
+            current.incident_id,
+            current.command_id,
+            current.round_no,
+            current.attempts,
+            targetHead === current.head_sha ? current.retry_epoch : 0,
+            ts,
+          );
       }
       if (row && row.state !== "closed") {
-        this.db.prepare(
-          `UPDATE pr_state
+        this.db
+          .prepare(
+            `UPDATE pr_state
               SET state='queued', head_sha=?, trigger_ts=COALESCE(trigger_ts, ?),
                   trigger_provenance=COALESCE(trigger_provenance, ?), updated_at=?
             WHERE number=? AND state!='closed'`,
-        ).run(successor?.head_sha ?? current.head_sha, successor?.requested_at ?? ts, successor?.provenance ?? "system", ts, pr);
+          )
+          .run(
+            successor?.head_sha ?? current.head_sha,
+            successor?.requested_at ?? ts,
+            successor?.provenance ?? "system",
+            ts,
+            pr,
+          );
       }
-      return this.db.prepare("SELECT * FROM review_failures WHERE incident_id=?").get(current.incident_id) as ReviewFailureRow;
+      return this.db
+        .prepare("SELECT * FROM review_failures WHERE incident_id=?")
+        .get(current.incident_id) as ReviewFailureRow;
     })();
     if (!recovered) return undefined;
     this.logEvent("review_failure_recovered", pr, { incident_id: current.incident_id, recovery });
@@ -3782,7 +4326,8 @@ export class StateStore {
   // ---- durable fresh-head successor --------------------------
 
   successorFor(pr: number): SuccessorObligationRow | undefined {
-    return this.db.prepare("SELECT * FROM successor_obligations WHERE pr = ?").get(pr) as SuccessorObligationRow | undefined;
+    return this.db.prepare("SELECT * FROM successor_obligations WHERE pr = ?").get(pr) as
+      SuccessorObligationRow | undefined;
   }
 
   recordSuccessor(input: {
@@ -3794,8 +4339,9 @@ export class StateStore {
   }): void {
     if (!input.head_sha) return;
     const ts = this.ts();
-    this.db.prepare(
-      `INSERT INTO successor_obligations
+    this.db
+      .prepare(
+        `INSERT INTO successor_obligations
          (pr, predecessor_round_id, head_sha, requested_at, provenance, reason, updated_at)
        VALUES (@pr, @predecessor_round_id, @head_sha, @ts, @provenance, @reason, @ts)
        ON CONFLICT(pr) DO UPDATE SET
@@ -3812,7 +4358,8 @@ export class StateStore {
          END,
          reason=excluded.reason,
          updated_at=excluded.updated_at`,
-    ).run({ ...input, ts });
+      )
+      .run({ ...input, ts });
     this.logEvent("successor_required", input.pr, {
       predecessor_round_id: input.predecessor_round_id,
       head_sha: input.head_sha,
@@ -3828,16 +4375,22 @@ export class StateStore {
     const promoted = this.db.transaction((): SuccessorObligationRow | undefined => {
       const successor = this.successorFor(pr);
       const row = this.getPr(pr);
-      if (!successor || !row || row.state === "closed" || row.paused || this.hasRunningRound(pr)) return undefined;
+      if (!successor || !row || row.state === "closed" || row.paused || this.hasRunningRound(pr))
+        return undefined;
       if (
-        row.state === "queued" && row.head_sha === successor.head_sha
-        && row.trigger_ts === successor.requested_at && row.trigger_provenance === successor.provenance
-      ) return undefined;
-      this.db.prepare(
-        `UPDATE pr_state
+        row.state === "queued" &&
+        row.head_sha === successor.head_sha &&
+        row.trigger_ts === successor.requested_at &&
+        row.trigger_provenance === successor.provenance
+      )
+        return undefined;
+      this.db
+        .prepare(
+          `UPDATE pr_state
             SET state='queued', head_sha=?, trigger_ts=?, trigger_provenance=?, updated_at=?
           WHERE number=? AND state!='closed'`,
-      ).run(successor.head_sha, successor.requested_at, successor.provenance, this.ts(), pr);
+        )
+        .run(successor.head_sha, successor.requested_at, successor.provenance, this.ts(), pr);
       return successor;
     })();
     if (!promoted) return false;
@@ -3854,7 +4407,10 @@ export class StateStore {
   settleSuccessor(pr: number, reviewedHead: string): boolean {
     const successor = this.successorFor(pr);
     if (!successor || !reviewedHead || successor.head_sha !== reviewedHead) return false;
-    const changed = this.db.prepare("DELETE FROM successor_obligations WHERE pr=? AND head_sha=?").run(pr, reviewedHead).changes === 1;
+    const changed =
+      this.db
+        .prepare("DELETE FROM successor_obligations WHERE pr=? AND head_sha=?")
+        .run(pr, reviewedHead).changes === 1;
     if (changed) this.logEvent("successor_settled", pr, { head_sha: reviewedHead });
     return changed;
   }
@@ -3862,7 +4418,8 @@ export class StateStore {
   clearSuccessor(pr: number, reason: string): boolean {
     const successor = this.successorFor(pr);
     if (!successor) return false;
-    const changed = this.db.prepare("DELETE FROM successor_obligations WHERE pr=?").run(pr).changes === 1;
+    const changed =
+      this.db.prepare("DELETE FROM successor_obligations WHERE pr=?").run(pr).changes === 1;
     if (changed) this.logEvent("successor_cleared", pr, { head_sha: successor.head_sha, reason });
     return changed;
   }
@@ -3870,9 +4427,9 @@ export class StateStore {
   // ---- trigger-level observations ----------------------------
 
   triggerLevel(pr: number, kind: "label" | "team_request"): boolean | undefined {
-    const row = this.db.prepare("SELECT present FROM trigger_levels WHERE pr = ? AND kind = ?").get(pr, kind) as
-      | { present: number }
-      | undefined;
+    const row = this.db
+      .prepare("SELECT present FROM trigger_levels WHERE pr = ? AND kind = ?")
+      .get(pr, kind) as { present: number } | undefined;
     return row === undefined ? undefined : row.present === 1;
   }
 
@@ -3909,7 +4466,11 @@ export class StateStore {
   /** Has this exact recheck question already been claimed? (reconcile
    * backstop pre-check — keeps the sweep from re-classifying per tick). */
   hasRecheck(pr: number, fingerprint: string): boolean {
-    return this.db.prepare("SELECT 1 FROM rechecks WHERE pr = ? AND fingerprint = ?").get(pr, fingerprint) !== undefined;
+    return (
+      this.db
+        .prepare("SELECT 1 FROM rechecks WHERE pr = ? AND fingerprint = ?")
+        .get(pr, fingerprint) !== undefined
+    );
   }
 
   /** Release a claimed recheck whose delivery failed — the claim must not
@@ -3923,15 +4484,38 @@ export class StateStore {
    * undelivered-nudge sweep reads this: a claim whose nudge never landed
    * suppresses the reconcile push-backstop forever, and unlike a round there
    * is no deadline underneath a recheck to catch that. */
-  recheckClaimsBefore(olderThanIso: string): Array<{ pr: number; fingerprint: string; head_sha: string; trigger: string; created_at: string }> {
+  recheckClaimsBefore(olderThanIso: string): Array<{
+    pr: number;
+    fingerprint: string;
+    head_sha: string;
+    trigger: string;
+    created_at: string;
+  }> {
     return this.db
-      .prepare("SELECT pr, fingerprint, head_sha, trigger, created_at FROM rechecks WHERE created_at < ? ORDER BY created_at")
-      .all(olderThanIso) as Array<{ pr: number; fingerprint: string; head_sha: string; trigger: string; created_at: string }>;
+      .prepare(
+        "SELECT pr, fingerprint, head_sha, trigger, created_at FROM rechecks WHERE created_at < ? ORDER BY created_at",
+      )
+      .all(olderThanIso) as Array<{
+      pr: number;
+      fingerprint: string;
+      head_sha: string;
+      trigger: string;
+      created_at: string;
+    }>;
   }
 
   /** Every recheck nudge sent for a PR, oldest first (TUI/audit). */
-  rechecksFor(pr: number): Array<{ pr: number; fingerprint: string; head_sha: string; trigger: string; reason: string | null; created_at: string }> {
-    return this.db.prepare("SELECT * FROM rechecks WHERE pr = ? ORDER BY created_at").all(pr) as Array<{
+  rechecksFor(pr: number): Array<{
+    pr: number;
+    fingerprint: string;
+    head_sha: string;
+    trigger: string;
+    reason: string | null;
+    created_at: string;
+  }> {
+    return this.db
+      .prepare("SELECT * FROM rechecks WHERE pr = ? ORDER BY created_at")
+      .all(pr) as Array<{
       pr: number;
       fingerprint: string;
       head_sha: string;
@@ -3946,7 +4530,9 @@ export class StateStore {
   /** Returns false when the guid was already seen (duplicate delivery). */
   recordDelivery(guid: string, event: string, action: string | null): boolean {
     const info = this.db
-      .prepare("INSERT OR IGNORE INTO deliveries (guid, event, action, received_at) VALUES (?, ?, ?, ?)")
+      .prepare(
+        "INSERT OR IGNORE INTO deliveries (guid, event, action, received_at) VALUES (?, ?, ?, ?)",
+      )
       .run(guid, event, action, this.ts());
     return info.changes === 1;
   }
@@ -3991,7 +4577,9 @@ export class StateStore {
    * addendum's input, oldest first. */
   feedbackCommentsForDay(day: string): FeedbackSignalRow[] {
     return this.db
-      .prepare("SELECT * FROM feedback_signals WHERE day = ? AND kind = 'feedback_comment' ORDER BY id")
+      .prepare(
+        "SELECT * FROM feedback_signals WHERE day = ? AND kind = 'feedback_comment' ORDER BY id",
+      )
       .all(day) as FeedbackSignalRow[];
   }
 
@@ -4047,14 +4635,17 @@ export class StateStore {
   /** A PR's captured comments, oldest first — the companion's local copy of
    * the conversation. */
   prComments(pr: number): PrCommentRow[] {
-    return this.db.prepare("SELECT * FROM pr_comments WHERE pr = ? ORDER BY id").all(pr) as PrCommentRow[];
+    return this.db
+      .prepare("SELECT * FROM pr_comments WHERE pr = ? ORDER BY id")
+      .all(pr) as PrCommentRow[];
   }
 
   /** True when this exact GitHub comment is already captured. */
   hasPrComment(source: string, comment_id: number): boolean {
     return (
-      this.db.prepare("SELECT 1 FROM pr_comments WHERE source = ? AND comment_id = ?").get(source, comment_id) !==
-      undefined
+      this.db
+        .prepare("SELECT 1 FROM pr_comments WHERE source = ? AND comment_id = ?")
+        .get(source, comment_id) !== undefined
     );
   }
 
@@ -4069,7 +4660,9 @@ export class StateStore {
   /** The pr_state `updated_at` this PR was last cleanly swept at, when any. */
   lastCommentSweep(pr: number): string | undefined {
     const row = this.db
-      .prepare("SELECT payload FROM events WHERE kind = 'comment_sweep' AND pr = ? ORDER BY id DESC LIMIT 1")
+      .prepare(
+        "SELECT payload FROM events WHERE kind = 'comment_sweep' AND pr = ? ORDER BY id DESC LIMIT 1",
+      )
       .get(pr) as { payload: string | null } | undefined;
     if (!row?.payload) return undefined;
     try {
@@ -4107,7 +4700,11 @@ export class StateStore {
       )
       .get() as { pr: number | null; ts: string; head_chars: number | null } | undefined;
     if (!row) return null;
-    return { pr: row.pr, ts: row.ts, head_chars: typeof row.head_chars === "number" ? row.head_chars : 0 };
+    return {
+      pr: row.pr,
+      ts: row.ts,
+      head_chars: typeof row.head_chars === "number" ? row.head_chars : 0,
+    };
   }
 
   logEvent(kind: string, pr: number | null, payload?: unknown): void {
@@ -4141,19 +4738,41 @@ export class StateStore {
    */
   drainState(): DrainState {
     const row = this.db
-      .prepare("SELECT draining, drained_deliveries, since, issued_by, expires_at FROM drain_state WHERE id = 1")
+      .prepare(
+        "SELECT draining, drained_deliveries, since, issued_by, expires_at FROM drain_state WHERE id = 1",
+      )
       .get() as
-      | { draining: number; drained_deliveries: number; since: string | null; issued_by: LeverIssuer | null; expires_at: string | null }
+      | {
+          draining: number;
+          drained_deliveries: number;
+          since: string | null;
+          issued_by: LeverIssuer | null;
+          expires_at: string | null;
+        }
       | undefined;
     if (!row) return { draining: false, drained_deliveries: 0 };
     const hold = this.drainHold(row);
-    if (!holdActive(hold, this.ts())) return { draining: false, drained_deliveries: row.drained_deliveries };
-    return { draining: true, drained_deliveries: row.drained_deliveries, since: row.since, issued_by: hold.issuer, expires_at: hold.expires_at };
+    if (!holdActive(hold, this.ts()))
+      return { draining: false, drained_deliveries: row.drained_deliveries };
+    return {
+      draining: true,
+      drained_deliveries: row.drained_deliveries,
+      since: row.since,
+      issued_by: hold.issuer,
+      expires_at: hold.expires_at,
+    };
   }
 
-  private drainHold(row: { draining: number; issued_by: LeverIssuer | null; expires_at: string | null }): LeverHold | null {
+  private drainHold(row: {
+    draining: number;
+    issued_by: LeverIssuer | null;
+    expires_at: string | null;
+  }): LeverHold | null {
     if (row.draining !== 1) return null;
-    return { issuer: row.issued_by ?? "operator", expires_at: row.issued_by ? row.expires_at : null };
+    return {
+      issuer: row.issued_by ?? "operator",
+      expires_at: row.issued_by ? row.expires_at : null,
+    };
   }
 
   /**
@@ -4165,7 +4784,10 @@ export class StateStore {
    */
   engageDrain(grant: LeverGrant): { outcome: HoldOutcome; state: DrainState } {
     const standing = this.drainState();
-    const merged = mergeHold(standing.draining ? { issuer: standing.issued_by, expires_at: standing.expires_at } : null, grant);
+    const merged = mergeHold(
+      standing.draining ? { issuer: standing.issued_by, expires_at: standing.expires_at } : null,
+      grant,
+    );
     if (merged.outcome === "unchanged") return { outcome: merged.outcome, state: standing };
     const ts = this.ts();
     if (merged.outcome === "engaged") {
@@ -4178,7 +4800,9 @@ export class StateStore {
         .run({ ts, issuer: merged.hold.issuer, expires: merged.hold.expires_at });
     } else {
       this.db
-        .prepare("UPDATE drain_state SET issued_by = ?, expires_at = ?, updated_at = ? WHERE id = 1")
+        .prepare(
+          "UPDATE drain_state SET issued_by = ?, expires_at = ?, updated_at = ? WHERE id = 1",
+        )
         .run(merged.hold.issuer, merged.hold.expires_at, ts);
     }
     return { outcome: merged.outcome, state: this.drainState() };
@@ -4197,7 +4821,11 @@ export class StateStore {
     if (!mayLift({ issuer: standing.issued_by, expires_at: standing.expires_at }, by)) {
       return { changed: false, dropped: standing.drained_deliveries, refused: "held-by-operator" };
     }
-    this.db.prepare("UPDATE drain_state SET draining = 0, issued_by = NULL, expires_at = NULL, updated_at = ? WHERE id = 1").run(this.ts());
+    this.db
+      .prepare(
+        "UPDATE drain_state SET draining = 0, issued_by = NULL, expires_at = NULL, updated_at = ? WHERE id = 1",
+      )
+      .run(this.ts());
     return { changed: true, dropped: standing.drained_deliveries };
   }
 
@@ -4208,12 +4836,19 @@ export class StateStore {
    */
   expireLevers(): { drain: boolean; pauses: number[] } {
     const now = this.ts();
-    const drain = this.db
-      .prepare("UPDATE drain_state SET draining = 0, issued_by = NULL, expires_at = NULL, updated_at = ? WHERE id = 1 AND draining = 1 AND expires_at IS NOT NULL AND expires_at <= ?")
-      .run(now, now).changes > 0;
-    const pauses = (this.db
-      .prepare("SELECT number FROM pr_state WHERE paused = 1 AND pause_expires_at IS NOT NULL AND pause_expires_at <= ? ORDER BY number")
-      .all(now) as Array<{ number: number }>).map((r) => r.number);
+    const drain =
+      this.db
+        .prepare(
+          "UPDATE drain_state SET draining = 0, issued_by = NULL, expires_at = NULL, updated_at = ? WHERE id = 1 AND draining = 1 AND expires_at IS NOT NULL AND expires_at <= ?",
+        )
+        .run(now, now).changes > 0;
+    const pauses = (
+      this.db
+        .prepare(
+          "SELECT number FROM pr_state WHERE paused = 1 AND pause_expires_at IS NOT NULL AND pause_expires_at <= ? ORDER BY number",
+        )
+        .all(now) as Array<{ number: number }>
+    ).map((r) => r.number);
     if (pauses.length > 0) {
       this.db
         .prepare(
@@ -4226,16 +4861,26 @@ export class StateStore {
   }
 
   /** Charge a session grant to `day`'s budget. `pr` is null for a drain. */
-  recordLeverGrant(kind: LeverKind, pr: number | null, minutes: number, day: string, expiresAt: string): void {
+  recordLeverGrant(
+    kind: LeverKind,
+    pr: number | null,
+    minutes: number,
+    day: string,
+    expiresAt: string,
+  ): void {
     this.db
-      .prepare("INSERT INTO lever_grants (kind, pr, minutes, day, granted_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .prepare(
+        "INSERT INTO lever_grants (kind, pr, minutes, day, granted_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+      )
       .run(kind, pr, minutes, day, this.ts(), expiresAt);
   }
 
   /** Minutes already granted to sessions for `kind` on `day` — per PR for pauses. */
   leverMinutesUsed(kind: LeverKind, day: string, pr: number | null): number {
     const row = this.db
-      .prepare("SELECT COALESCE(SUM(minutes), 0) AS used FROM lever_grants WHERE kind = ? AND day = ? AND pr IS ?")
+      .prepare(
+        "SELECT COALESCE(SUM(minutes), 0) AS used FROM lever_grants WHERE kind = ? AND day = ? AND pr IS ?",
+      )
       .get(kind, day, pr) as { used: number };
     return row.used;
   }
@@ -4243,22 +4888,37 @@ export class StateStore {
   /** Has this VERSION of an operator command file already been executed
    *? `version` is `operatorCommandVersion`'s key. */
   operatorCommandHandled(version: string): boolean {
-    return this.db.prepare("SELECT 1 FROM operator_commands WHERE version = ?").get(version) !== undefined;
+    return (
+      this.db.prepare("SELECT 1 FROM operator_commands WHERE version = ?").get(version) !==
+      undefined
+    );
   }
 
   markOperatorCommandHandled(version: string, file: string): void {
-    this.db.prepare("INSERT OR IGNORE INTO operator_commands (version, file, handled_at) VALUES (?, ?, ?)").run(version, file, this.ts());
+    this.db
+      .prepare(
+        "INSERT OR IGNORE INTO operator_commands (version, file, handled_at) VALUES (?, ?, ?)",
+      )
+      .run(version, file, this.ts());
   }
 
   /** Count one webhook delivery dropped while draining; returns the new total. */
   countDrainedDelivery(): number {
     this.db
-      .prepare("UPDATE drain_state SET drained_deliveries = drained_deliveries + 1, updated_at = ? WHERE id = 1")
+      .prepare(
+        "UPDATE drain_state SET drained_deliveries = drained_deliveries + 1, updated_at = ? WHERE id = 1",
+      )
       .run(this.ts());
     return this.drainState().drained_deliveries;
   }
 
-  logAnomaly(kind: string, pr: number | null, roundNo: number | null, detail: string, injectMessage?: string): void {
+  logAnomaly(
+    kind: string,
+    pr: number | null,
+    roundNo: number | null,
+    detail: string,
+    injectMessage?: string,
+  ): void {
     this.logEvent("anomaly", pr, { kind, round_no: roundNo, detail });
     if (this.anomalySink) {
       const ts = this.ts();
@@ -4266,11 +4926,14 @@ export class StateStore {
     }
   }
 
-  private anomalySink: ((signal: AnomalyRecord & { injectMessage?: string | undefined }) => void) | null = null;
+  private anomalySink:
+    ((signal: AnomalyRecord & { injectMessage?: string | undefined }) => void) | null = null;
 
   /** Install the overseer wake sink. The sink must never throw —
    * logAnomaly sits inside posting paths and stays sync. */
-  setAnomalySink(sink: (signal: AnomalyRecord & { injectMessage?: string | undefined }) => void): void {
+  setAnomalySink(
+    sink: (signal: AnomalyRecord & { injectMessage?: string | undefined }) => void,
+  ): void {
     this.anomalySink = sink;
   }
 
@@ -4281,7 +4944,9 @@ export class StateStore {
    * anomaly row whose own payload cannot be read never counts as "already
    * raised": that reading would silence the alert on the strength of nothing. */
   anomalyRaised(kind: string, pr: number): boolean {
-    const rows = this.db.prepare("SELECT payload FROM events WHERE kind = 'anomaly' AND pr = ?").all(pr) as Array<{ payload: string | null }>;
+    const rows = this.db
+      .prepare("SELECT payload FROM events WHERE kind = 'anomaly' AND pr = ?")
+      .all(pr) as Array<{ payload: string | null }>;
     return rows.some((r) => readStringField(r.payload, "kind") === kind);
   }
 
@@ -4298,7 +4963,11 @@ export class StateStore {
       let detail = "";
       if (r.payload) {
         try {
-          const p = JSON.parse(r.payload) as { kind?: unknown; round_no?: unknown; detail?: unknown };
+          const p = JSON.parse(r.payload) as {
+            kind?: unknown;
+            round_no?: unknown;
+            detail?: unknown;
+          };
           if (typeof p.kind === "string") kind = p.kind;
           if (typeof p.round_no === "number") roundNo = p.round_no;
           if (typeof p.detail === "string") detail = p.detail;
@@ -4321,7 +4990,9 @@ export class StateStore {
    * it survives restarts — the boot catch-up's at-most-once guard. */
   lastHeartbeatDate(): string | null {
     const row = this.db
-      .prepare("SELECT payload FROM events WHERE kind = 'overseer_heartbeat' ORDER BY id DESC LIMIT 1")
+      .prepare(
+        "SELECT payload FROM events WHERE kind = 'overseer_heartbeat' ORDER BY id DESC LIMIT 1",
+      )
       .get() as { payload: string | null } | undefined;
     if (!row?.payload) return null;
     try {
@@ -4433,7 +5104,9 @@ export class StateStore {
   /** Head sha of the last applied verdict for a PR (from the event log). */
   lastVerdictHead(pr: number): string | undefined {
     const row = this.db
-      .prepare("SELECT payload FROM events WHERE kind = 'verdict_applied' AND pr = ? ORDER BY id DESC LIMIT 1")
+      .prepare(
+        "SELECT payload FROM events WHERE kind = 'verdict_applied' AND pr = ? ORDER BY id DESC LIMIT 1",
+      )
       .get(pr) as { payload: string | null } | undefined;
     if (!row?.payload) return undefined;
     try {
@@ -4444,26 +5117,38 @@ export class StateStore {
     }
   }
 
-  eventsOn(dateIso: string): Array<{ ts: string; kind: string; pr: number | null; payload: string | null }> {
-    return this.db.prepare("SELECT ts, kind, pr, payload FROM events WHERE ts LIKE ? ORDER BY id").all(`${dateIso}%`) as any;
+  eventsOn(
+    dateIso: string,
+  ): Array<{ ts: string; kind: string; pr: number | null; payload: string | null }> {
+    return this.db
+      .prepare("SELECT ts, kind, pr, payload FROM events WHERE ts LIKE ? ORDER BY id")
+      .all(`${dateIso}%`) as any;
   }
 
   /** Newest-last tail of the event log — the TUI events strip. */
-  recentEvents(limit: number): Array<{ ts: string; kind: string; pr: number | null; payload: string | null }> {
+  recentEvents(
+    limit: number,
+  ): Array<{ ts: string; kind: string; pr: number | null; payload: string | null }> {
     return this.db
-      .prepare("SELECT ts, kind, pr, payload FROM (SELECT id, ts, kind, pr, payload FROM events ORDER BY id DESC LIMIT ?) ORDER BY id")
+      .prepare(
+        "SELECT ts, kind, pr, payload FROM (SELECT id, ts, kind, pr, payload FROM events ORDER BY id DESC LIMIT ?) ORDER BY id",
+      )
       .all(limit) as any;
   }
 
   // ---- filed items (improvement PRs / issues, cap accounting) -----------
 
   recordFiledItem(kind: "improvement_pr" | "issue", title: string, ref: string | null): void {
-    this.db.prepare("INSERT INTO filed_items (kind, title, ref, filed_at) VALUES (?, ?, ?, ?)").run(kind, title, ref, this.ts());
+    this.db
+      .prepare("INSERT INTO filed_items (kind, title, ref, filed_at) VALUES (?, ?, ?, ?)")
+      .run(kind, title, ref, this.ts());
   }
 
   filedSince(kind: "improvement_pr" | "issue", sinceIso: string): number {
     return (
-      this.db.prepare("SELECT COUNT(*) AS c FROM filed_items WHERE kind = ? AND filed_at >= ?").get(kind, sinceIso) as { c: number }
+      this.db
+        .prepare("SELECT COUNT(*) AS c FROM filed_items WHERE kind = ? AND filed_at >= ?")
+        .get(kind, sinceIso) as { c: number }
     ).c;
   }
 
@@ -4475,7 +5160,9 @@ export class StateStore {
   escalationDelivered(pr: number, key: string): boolean {
     const [target = "", scopeKey = ""] = key.split("|", 2);
     const row = this.db
-      .prepare("SELECT 1 AS x FROM escalations WHERE pr = ? AND target = ? AND scope_key = ? LIMIT 1")
+      .prepare(
+        "SELECT 1 AS x FROM escalations WHERE pr = ? AND target = ? AND scope_key = ? LIMIT 1",
+      )
       .get(pr, target, scopeKey) as { x: number } | undefined;
     return row !== undefined;
   }
@@ -4483,12 +5170,21 @@ export class StateStore {
   /** How many escalations this PR has taken, across every round — the input
    * to `[escalation] max_per_pr`. */
   escalationCount(pr: number): number {
-    return (this.db.prepare("SELECT COUNT(*) AS c FROM escalations WHERE pr = ?").get(pr) as { c: number }).c;
+    return (
+      this.db.prepare("SELECT COUNT(*) AS c FROM escalations WHERE pr = ?").get(pr) as { c: number }
+    ).c;
   }
 
   recordEscalation(
     pr: number,
-    row: { target: string; scope_key: string; shape: string; origin: string; rule: string | null; round_no: number | null },
+    row: {
+      target: string;
+      scope_key: string;
+      shape: string;
+      origin: string;
+      rule: string | null;
+      round_no: number | null;
+    },
   ): void {
     this.db
       .prepare(
@@ -4498,9 +5194,19 @@ export class StateStore {
   }
 
   /** Every escalation on a PR, oldest first — the operator's audit view. */
-  escalationsFor(pr: number): Array<{ target: string; scope_key: string; shape: string; origin: string; rule: string | null; round_no: number | null; delivered_at: string }> {
+  escalationsFor(pr: number): Array<{
+    target: string;
+    scope_key: string;
+    shape: string;
+    origin: string;
+    rule: string | null;
+    round_no: number | null;
+    delivered_at: string;
+  }> {
     return this.db
-      .prepare("SELECT target, scope_key, shape, origin, rule, round_no, delivered_at FROM escalations WHERE pr = ? ORDER BY id")
+      .prepare(
+        "SELECT target, scope_key, shape, origin, rule, round_no, delivered_at FROM escalations WHERE pr = ? ORDER BY id",
+      )
       .all(pr) as any;
   }
 
@@ -4519,15 +5225,16 @@ export class StateStore {
   }
 
   slackThreadForPr(pr: number): SlackThreadRow | undefined {
-    return this.db.prepare("SELECT * FROM slack_threads WHERE pr = ?").get(pr) as SlackThreadRow | undefined;
+    return this.db.prepare("SELECT * FROM slack_threads WHERE pr = ?").get(pr) as
+      SlackThreadRow | undefined;
   }
 
   /** The reverse lookup the router needs: an inbound reply carries a
    * thread_ts, and that is the only thing tying it to a PR. */
   slackThreadByRoot(channel: string, rootTs: string): SlackThreadRow | undefined {
-    return this.db.prepare("SELECT * FROM slack_threads WHERE channel = ? AND root_ts = ?").get(channel, rootTs) as
-      | SlackThreadRow
-      | undefined;
+    return this.db
+      .prepare("SELECT * FROM slack_threads WHERE channel = ? AND root_ts = ?")
+      .get(channel, rootTs) as SlackThreadRow | undefined;
   }
 
   allSlackThreads(): SlackThreadRow[] {
@@ -4536,7 +5243,11 @@ export class StateStore {
 
   /** Stamp a successful post against the PR's thread (counter + last time). */
   touchSlackThread(pr: number): void {
-    this.db.prepare("UPDATE slack_threads SET post_count = post_count + 1, last_post_at = ? WHERE pr = ?").run(this.ts(), pr);
+    this.db
+      .prepare(
+        "UPDATE slack_threads SET post_count = post_count + 1, last_post_at = ? WHERE pr = ?",
+      )
+      .run(this.ts(), pr);
   }
 
   // ---- Slack: inbound event ledger (dedupe + turn accounting) ------------
@@ -4571,7 +5282,11 @@ export class StateStore {
 
   /** The row is written the moment the event lands; the disposition is settled
    * once the router has decided (and stamps injected_at when it injected). */
-  setSlackEventDisposition(eventId: string, disposition: SlackDisposition, injected = disposition === "injected"): void {
+  setSlackEventDisposition(
+    eventId: string,
+    disposition: SlackDisposition,
+    injected = disposition === "injected",
+  ): void {
     this.db
       .prepare("UPDATE slack_events SET disposition = ?, injected_at = ? WHERE event_id = ?")
       .run(disposition, injected ? this.ts() : null, eventId);
@@ -4579,8 +5294,7 @@ export class StateStore {
 
   slackEvent(eventId: string): SlackEventRow | undefined {
     const row = this.db.prepare("SELECT * FROM slack_events WHERE event_id = ?").get(eventId) as
-      | SlackEventRow
-      | undefined;
+      SlackEventRow | undefined;
     if (!row) return undefined;
     // Rows written before carry the retired "owner_legacy" tier spelling;
     // fold on read (accepted on input, never emitted). An unrecognisable value
@@ -4638,20 +5352,25 @@ export class StateStore {
   }
 
   /** Fill in the Slack-assigned message ts (and outcome) after the API call. */
-  settleSlackPost(idemKey: string, result: { ts?: string | null; ok: boolean; error?: string | null }): void {
+  settleSlackPost(
+    idemKey: string,
+    result: { ts?: string | null; ok: boolean; error?: string | null },
+  ): void {
     this.db
       .prepare("UPDATE slack_posts SET ts = ?, ok = ?, error = ? WHERE idem_key = ?")
       .run(result.ts ?? null, result.ok ? 1 : 0, result.error ?? null, idemKey);
   }
 
   slackPost(idemKey: string): SlackPostRow | undefined {
-    return this.db.prepare("SELECT * FROM slack_posts WHERE idem_key = ?").get(idemKey) as SlackPostRow | undefined;
+    return this.db.prepare("SELECT * FROM slack_posts WHERE idem_key = ?").get(idemKey) as
+      SlackPostRow | undefined;
   }
 
   /** Successful posts in [since, until), optionally of one kind. */
   slackPostsBetween(sinceIso: string, untilIso: string, kind?: SlackPostKind): number {
     const sql =
-      "SELECT COUNT(*) AS c FROM slack_posts WHERE ok = 1 AND posted_at >= ? AND posted_at < ?" + (kind ? " AND kind = ?" : "");
+      "SELECT COUNT(*) AS c FROM slack_posts WHERE ok = 1 AND posted_at >= ? AND posted_at < ?" +
+      (kind ? " AND kind = ?" : "");
     const args: Array<string> = kind ? [sinceIso, untilIso, kind] : [sinceIso, untilIso];
     return (this.db.prepare(sql).get(...args) as { c: number }).c;
   }
@@ -4660,7 +5379,9 @@ export class StateStore {
   slackThreadPostsBetween(threadTs: string, sinceIso: string, untilIso: string): number {
     return (
       this.db
-        .prepare("SELECT COUNT(*) AS c FROM slack_posts WHERE ok = 1 AND thread_ts = ? AND posted_at >= ? AND posted_at < ?")
+        .prepare(
+          "SELECT COUNT(*) AS c FROM slack_posts WHERE ok = 1 AND thread_ts = ? AND posted_at >= ? AND posted_at < ?",
+        )
         .get(threadTs, sinceIso, untilIso) as { c: number }
     ).c;
   }
@@ -4668,7 +5389,9 @@ export class StateStore {
   /** Announcements posted since an instant — the per-hour limiter's window is
    * rolling, not calendar-aligned. */
   slackPostsSince(sinceIso: string, kind?: SlackPostKind): number {
-    const sql = "SELECT COUNT(*) AS c FROM slack_posts WHERE ok = 1 AND posted_at >= ?" + (kind ? " AND kind = ?" : "");
+    const sql =
+      "SELECT COUNT(*) AS c FROM slack_posts WHERE ok = 1 AND posted_at >= ?" +
+      (kind ? " AND kind = ?" : "");
     const args: Array<string> = kind ? [sinceIso, kind] : [sinceIso];
     return (this.db.prepare(sql).get(...args) as { c: number }).c;
   }
@@ -4679,7 +5402,9 @@ export class StateStore {
     // `warsaw_day AS day`: the one place the legacy column name maps onto the
     // neutral row field (see the schema note).
     return this.db
-      .prepare("SELECT key, last_fired_at, warsaw_day AS day, fire_count, fold_count, bypassed FROM slack_cooldowns WHERE key = ?")
+      .prepare(
+        "SELECT key, last_fired_at, warsaw_day AS day, fire_count, fold_count, bypassed FROM slack_cooldowns WHERE key = ?",
+      )
       .get(key) as SlackCooldownRow | undefined;
   }
 
@@ -4699,14 +5424,16 @@ export class StateStore {
         key,
         last_fired_at: this.ts(),
         warsaw_day: day,
-        fire_count: sameDay ? prev!.fire_count + 1 : 1,
-        bypassed: (sameDay && prev!.bypassed === 1) || bypass ? 1 : 0,
+        fire_count: sameDay ? prev.fire_count + 1 : 1,
+        bypassed: (sameDay && prev.bypassed === 1) || bypass ? 1 : 0,
       });
   }
 
   /** A repeat swallowed inside the cooldown window; returns the new fold count. */
   foldSlackCooldown(key: string): number {
-    this.db.prepare("UPDATE slack_cooldowns SET fold_count = fold_count + 1 WHERE key = ?").run(key);
+    this.db
+      .prepare("UPDATE slack_cooldowns SET fold_count = fold_count + 1 WHERE key = ?")
+      .run(key);
     return this.slackCooldown(key)?.fold_count ?? 0;
   }
 }
@@ -4729,7 +5456,16 @@ export interface StatusSnapshot {
         last_verdict?: string | null;
         /** The authoritative running plan/timing. Live lens activity is a
          * separate ephemeral sidecar; neither source impersonates the other. */
-        current_round?: Pick<RoundRow, "round_no" | "round_type" | "status" | "started_at" | "deadline_at" | "lenses" | "validate_tier"> & {
+        current_round?: Pick<
+          RoundRow,
+          | "round_no"
+          | "round_type"
+          | "status"
+          | "started_at"
+          | "deadline_at"
+          | "lenses"
+          | "validate_tier"
+        > & {
           /** Exact durable delivery identity for correlating the ephemeral Pi
            * sidecar. Absent while the round is still being prepared. */
           command_id?: string;
@@ -4746,11 +5482,30 @@ export interface StatusSnapshot {
         /** canonical failure obligation. Presence overrides
          * ordinary lifecycle; `retry_wait` carries its finite automatic exit,
          * while `operator_unwedge` keeps `u` as the required action. */
-        review_failure?: Pick<ReviewFailureRow, "incident_id" | "command_id" | "round_no" | "head_sha" | "stage" | "detail" | "attempts" | "retry_cap" | "retry_epoch" | "next_retry_at" | "failed_at" | "next_action">;
+        review_failure?: Pick<
+          ReviewFailureRow,
+          | "incident_id"
+          | "command_id"
+          | "round_no"
+          | "head_sha"
+          | "stage"
+          | "detail"
+          | "attempts"
+          | "retry_cap"
+          | "retry_epoch"
+          | "next_retry_at"
+          | "failed_at"
+          | "next_action"
+        >;
         /** The `pause-pr` hold: present exactly while `paused` is 1
          * — who holds it, why, since when, and when it lapses (null = until
          * resumed; operator only). */
-        pause?: { issuer: LeverIssuer; reason: string | null; since: string | null; expires_at: string | null };
+        pause?: {
+          issuer: LeverIssuer;
+          reason: string | null;
+          since: string | null;
+          expires_at: string | null;
+        };
       }
   >;
   running_rounds: number;
@@ -4861,46 +5616,66 @@ export function buildStatusSnapshot(
   // Expired zombie rounds stay out of the per-PR round COUNTS —
   // but they DO count in every spend aggregate (below).
   const roundStats = store.db
-    .prepare("SELECT pr, COUNT(*) AS c, (SELECT verdict FROM rounds r2 WHERE r2.pr = rounds.pr AND verdict IS NOT NULL ORDER BY round_no DESC LIMIT 1) AS v FROM rounds WHERE status != 'expired' GROUP BY pr")
+    .prepare(
+      "SELECT pr, COUNT(*) AS c, (SELECT verdict FROM rounds r2 WHERE r2.pr = rounds.pr AND verdict IS NOT NULL ORDER BY round_no DESC LIMIT 1) AS v FROM rounds WHERE status != 'expired' GROUP BY pr",
+    )
     .all() as Array<{ pr: number; c: number; v: string | null }>;
   const byPr = new Map(roundStats.map((r) => [r.pr, r]));
   const runningByPr = new Map(store.runningRounds().map((r) => [r.pr, r]));
   const failures = store.openReviewFailures();
   const failureByPr = new Map(failures.map((failure) => [failure.pr, failure]));
-  const pipelineCauses: NonNullable<StatusSnapshot["pipeline"]>["causes"] = failures.map((failure) => ({
-    key: failure.incident_id,
-    pr: failure.pr,
-    since: failure.failed_at,
-    stage: failure.stage,
-    detail: failure.detail,
-    next_action: failure.next_action,
-    ...(failure.command_id ? { command_id: failure.command_id } : {}),
-    ...(failure.round_no !== null ? { round_no: failure.round_no } : {}),
-    attempts: failure.attempts,
-    retry_cap: failure.retry_cap,
-    retry_epoch: failure.retry_epoch,
-    ...(failure.next_retry_at ? { next_retry_at: failure.next_retry_at } : {}),
-    age_s: Math.max(0, Math.floor((at.getTime() - Date.parse(failure.failed_at)) / 1000)),
-  }));
+  const pipelineCauses: NonNullable<StatusSnapshot["pipeline"]>["causes"] = failures.map(
+    (failure) => ({
+      key: failure.incident_id,
+      pr: failure.pr,
+      since: failure.failed_at,
+      stage: failure.stage,
+      detail: failure.detail,
+      next_action: failure.next_action,
+      ...(failure.command_id ? { command_id: failure.command_id } : {}),
+      ...(failure.round_no !== null ? { round_no: failure.round_no } : {}),
+      attempts: failure.attempts,
+      retry_cap: failure.retry_cap,
+      retry_epoch: failure.retry_epoch,
+      ...(failure.next_retry_at ? { next_retry_at: failure.next_retry_at } : {}),
+      age_s: Math.max(0, Math.floor((at.getTime() - Date.parse(failure.failed_at)) / 1000)),
+    }),
+  );
   if (roundStageSupervisor && !roundStageSupervisor.healthy) {
     pipelineCauses.push({
       key: "round-stage-supervisor",
       pr: null,
-      since: roundStageSupervisor.last_error_at ?? roundStageSupervisor.last_attempt_at ?? at.toISOString(),
+      since:
+        roundStageSupervisor.last_error_at ??
+        roundStageSupervisor.last_attempt_at ??
+        at.toISOString(),
       stage: "supervisor",
       detail: roundStageSupervisor.last_error ?? "round-stage supervisor lease is stale",
       next_action: "inspect-supervisor",
-      age_s: Math.max(0, Math.floor((at.getTime() - Date.parse(roundStageSupervisor.last_error_at ?? roundStageSupervisor.last_attempt_at ?? at.toISOString())) / 1000)),
+      age_s: Math.max(
+        0,
+        Math.floor(
+          (at.getTime() -
+            Date.parse(
+              roundStageSupervisor.last_error_at ??
+                roundStageSupervisor.last_attempt_at ??
+                at.toISOString(),
+            )) /
+            1000,
+        ),
+      ),
     });
   }
   pipelineCauses.sort((a, b) => a.key.localeCompare(b.key));
   const oldest = [...pipelineCauses].sort((a, b) => a.since.localeCompare(b.since))[0];
-  const recoveries = store.recentReviewRecoveries(new Date(at.getTime() - 10 * 60_000).toISOString()).map((failure) => ({
-    key: failure.incident_id,
-    pr: failure.pr,
-    recovered_at: failure.recovered_at!,
-    recovery: failure.recovery,
-  }));
+  const recoveries = store
+    .recentReviewRecoveries(new Date(at.getTime() - 10 * 60_000).toISOString())
+    .map((failure) => ({
+      key: failure.incident_id,
+      pr: failure.pr,
+      recovered_at: failure.recovered_at!,
+      recovery: failure.recovery,
+    }));
   return {
     written_at: at.toISOString(),
     dry_run: dryRun,
@@ -4921,7 +5696,9 @@ export function buildStatusSnapshot(
                 const round = runningByPr.get(p.number)!;
                 const command = store.sessionCommandForRound(p.number, round.round_no);
                 const postingHead = round.posting_key
-                  ? new RegExp(`^v1:${p.number}:${round.round_no}:([^:]+)$`).exec(round.posting_key)?.[1]
+                  ? new RegExp(`^v1:${p.number}:${round.round_no}:([^:]+)$`).exec(
+                      round.posting_key,
+                    )?.[1]
                   : undefined;
                 const identity = command
                   ? {
@@ -4936,9 +5713,15 @@ export function buildStatusSnapshot(
                 return {
                   ...identity,
                   stage_deadlines: {
-                    first_pass_start: new Date(started + roundStageBounds.first_pass_max_min * 60_000).toISOString(),
-                    passes_complete: new Date(started + roundStageBounds.passes_max_min * 60_000).toISOString(),
-                    running_hard_bound: new Date(started + roundStageBounds.running_max_min * 60_000).toISOString(),
+                    first_pass_start: new Date(
+                      started + roundStageBounds.first_pass_max_min * 60_000,
+                    ).toISOString(),
+                    passes_complete: new Date(
+                      started + roundStageBounds.passes_max_min * 60_000,
+                    ).toISOString(),
+                    running_hard_bound: new Date(
+                      started + roundStageBounds.running_max_min * 60_000,
+                    ).toISOString(),
                   },
                 };
               })(),
@@ -4955,7 +5738,14 @@ export function buildStatusSnapshot(
       author: p.author,
       paused: p.paused,
       ...(p.paused
-        ? { pause: { issuer: p.pause_issuer ?? "operator", reason: p.pause_reason, since: p.pause_since, expires_at: p.pause_expires_at } }
+        ? {
+            pause: {
+              issuer: p.pause_issuer ?? "operator",
+              reason: p.pause_reason,
+              since: p.pause_since,
+              expires_at: p.pause_expires_at,
+            },
+          }
         : {}),
       ...(failureByPr.get(p.number)
         ? {
@@ -4983,7 +5773,16 @@ export function buildStatusSnapshot(
     // deadline still burned its tokens — same rule as totalSpend/cli/metrics.
     today_spend_usd: store.roundsOn(today).reduce((n, r) => n + (r.est_usd ?? 0), 0),
     ...(digestHeadline ? { digest_headline: digestHeadline } : {}),
-    ...(piAuth ? { pi_auth_expired: piAuth, provider: { healthy: false, detail: `pi auth expired (${piAuth.hits} hit${piAuth.hits === 1 ? "" : "s"})`, last_at: piAuth.last_at } } : {}),
+    ...(piAuth
+      ? {
+          pi_auth_expired: piAuth,
+          provider: {
+            healthy: false,
+            detail: `pi auth expired (${piAuth.hits} hit${piAuth.hits === 1 ? "" : "s"})`,
+            last_at: piAuth.last_at,
+          },
+        }
+      : {}),
     ...(openviking ? { openviking } : {}),
     ...(threadDecisions ? { thread_decisions: threadDecisions } : {}),
     ...(roundStageSupervisor ? { round_stage_supervisor: roundStageSupervisor } : {}),
@@ -4995,7 +5794,17 @@ export function buildStatusSnapshot(
             causes: pipelineCauses,
             recoveries,
             ...(oldest
-              ? { oldest_expired: { key: oldest.key, pr: oldest.pr, since: oldest.since, stage: oldest.stage, detail: oldest.detail, next_action: oldest.next_action, age_s: oldest.age_s } }
+              ? {
+                  oldest_expired: {
+                    key: oldest.key,
+                    pr: oldest.pr,
+                    since: oldest.since,
+                    stage: oldest.stage,
+                    detail: oldest.detail,
+                    next_action: oldest.next_action,
+                    age_s: oldest.age_s,
+                  },
+                }
               : {}),
           },
         }

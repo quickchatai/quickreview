@@ -47,7 +47,8 @@ export function memoryUserKeysStep(opts: MemoryKeysStepOptions = {}): Onboarding
     if (ctx.choices[MEMORY_CHOICE_KEY] === "declined") {
       return "memory setup was declined earlier — nothing is minted, written or probed here either";
     }
-    const base = "phase B of the memory step: the server is up now, so the two USER keys can be minted and the confinement proved";
+    const base =
+      "phase B of the memory step: the server is up now, so the two USER keys can be minted and the confinement proved";
     // on the server route the memory engine listens on the VM's
     // loopback and is never published, so this machine reaches it through the
     // memory forward — the same loopback address either way, which is exactly
@@ -72,7 +73,10 @@ export function memoryUserKeysStep(opts: MemoryKeysStepOptions = {}): Onboarding
 
     async run(ctx): Promise<StepReport> {
       const report = await target.run(ctx);
-      return { ...report, checks: [{ name: "phase", ok: true, detail: phaseNote(ctx) }, ...report.checks] };
+      return {
+        ...report,
+        checks: [{ name: "phase", ok: true, detail: phaseNote(ctx) }, ...report.checks],
+      };
     },
 
     async verify(ctx): Promise<StepReport> {

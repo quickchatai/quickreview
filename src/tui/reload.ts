@@ -17,7 +17,14 @@
 // neither. If a surface cannot survive a re-exec, fix that surface — do not
 // re-add a condition here.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, watch as fsWatch, writeFileSync, type FSWatcher } from "node:fs";
+import {
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  watch as fsWatch,
+  writeFileSync,
+  type FSWatcher,
+} from "node:fs";
 import { dirname } from "node:path";
 
 export interface ReloadState {
@@ -61,7 +68,7 @@ export class HotReloader {
     this.opts = {
       ...opts,
       debounceMs: opts.debounceMs ?? DEBOUNCE_MS,
-      watch: opts.watch ?? (fsWatch as unknown as WatchFn),
+      watch: opts.watch ?? fsWatch,
       writeState:
         opts.writeState ??
         ((path, body) => {
@@ -112,7 +119,8 @@ export class HotReloader {
 /** `--resume-state <path>` out of an argv, plus the argv with it removed. */
 export function parseResumeArg(argv: string[]): { stateFile?: string; rest: string[] } {
   const i = argv.indexOf("--resume-state");
-  if (i < 0 || argv[i + 1] === undefined) return { rest: argv.filter((a) => a !== "--resume-state") };
+  if (i < 0 || argv[i + 1] === undefined)
+    return { rest: argv.filter((a) => a !== "--resume-state") };
   return { stateFile: argv[i + 1], rest: [...argv.slice(0, i), ...argv.slice(i + 2)] };
 }
 

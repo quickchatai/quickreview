@@ -19,7 +19,18 @@
 //.
 import type { App } from "./app.js";
 import { barHeight, paintCmdBar, type BarButton, type LiveKeys } from "./cmdbar.js";
-import { ACCENT, HEADING, MUTED, RESET, STRONG, WARN, button, modeBadge, sectionTitle, selected as selectedLine } from "./design.js";
+import {
+  ACCENT,
+  HEADING,
+  MUTED,
+  RESET,
+  STRONG,
+  WARN,
+  button,
+  modeBadge,
+  sectionTitle,
+  selected as selectedLine,
+} from "./design.js";
 import { emptyLine } from "./emptystate.js";
 import { applyMemoryFilter, memoryFilterLabel } from "./filters.js";
 import type { BoardKey } from "./keys.js";
@@ -28,7 +39,14 @@ import type { ForwardStatus } from "./memforward.js";
 import { defectEntries, refOf, timelineOrder, type MemoryEntry } from "./memory.js";
 import { hitTest, type Zone } from "./mouse.js";
 import { Frame, rule, sanitizeText, truncate, wrap } from "./paint.js";
-import { paintSplit, splitWidths, windowStart, zonedRow, type RowChunk, type ZonedRow } from "./panes.js";
+import {
+  paintSplit,
+  splitWidths,
+  windowStart,
+  zonedRow,
+  type RowChunk,
+  type ZonedRow,
+} from "./panes.js";
 
 export interface MemoryTabState {
   /** Ordinal into `memoryOrder(...)` — the filtered, day-grouped timeline. */
@@ -49,7 +67,10 @@ export function entryKey(e: MemoryEntry): string {
 
 /** THE timeline ordering — render and every verb share it, so x/p/e can
  * never address an entry the filter hides. */
-export function memoryOrder(entries: MemoryEntry[], filter: string | null | undefined): MemoryEntry[] {
+export function memoryOrder(
+  entries: MemoryEntry[],
+  filter: string | null | undefined,
+): MemoryEntry[] {
   return applyMemoryFilter(timelineOrder(entries), filter);
 }
 
@@ -61,7 +82,8 @@ export function entryLine(e: MemoryEntry, width: number): string {
   return e.pinned ? line.replace("● ", `${ACCENT}●${RESET} `) : line;
 }
 
-export type MemoryRow = { kind: "group"; label: string } | { kind: "entry"; entry: MemoryEntry; index: number };
+export type MemoryRow =
+  { kind: "group"; label: string } | { kind: "entry"; entry: MemoryEntry; index: number };
 
 /**
  * The timeline with its group headers: the floated pinned block first, then
@@ -105,7 +127,8 @@ export function pinnedBudget(entries: MemoryEntry[]): { chars: number; over: boo
 }
 
 /** Every click target on the memory tab. */
-export type MemAction = { t: "key"; key: string } | { t: "mem"; i: number } | { t: "url"; url: string };
+export type MemAction =
+  { t: "key"; key: string } | { t: "mem"; i: number } | { t: "url"; url: string };
 
 /**
  * The two forward rows: state, then the Studio link (clickable) or the reason
@@ -115,16 +138,44 @@ export type MemAction = { t: "key"; key: string } | { t: "mem"; i: number } | { 
  * that cannot connect — and a browser tab that fails — is worse than saying
  * plainly that the forward is down and how to bring it back.
  */
-export function forwardRows(fwd: ForwardStatus | undefined, width: number): Array<Array<RowChunk<MemAction>>> {
-  if (!fwd) return [[{ text: `${sectionTitle("MEMORY STORE")} ${MUTED}forward: starting…${RESET}` }], [{ text: "" }]];
-  const dot = fwd.state === "failed" ? `${WARN}✖${RESET}` : fwd.state === "off" ? `${MUTED}○${RESET}` : `${ACCENT}●${RESET}`;
-  const head: Array<RowChunk<MemAction>> = [{ text: `${sectionTitle("MEMORY STORE")} ${dot} ${fwd.state}` }, { text: truncate(fwd.detail, Math.max(10, width - 26)), dim: true }];
-  const link: Array<RowChunk<MemAction>> = fwd.state === "adopted" || fwd.state === "owned"
-    ? [
-        { text: button("W studio"), action: { t: "url", url: fwd.studioUrl } },
-        { text: truncate(fwd.studioUrl, Math.max(10, width - 16)), action: { t: "url", url: fwd.studioUrl }, dim: true },
-      ]
-    : [{ text: truncate("no web UI while the forward is down — r retries, or install the systemd unit", width - 2), dim: true }];
+export function forwardRows(
+  fwd: ForwardStatus | undefined,
+  width: number,
+): Array<Array<RowChunk<MemAction>>> {
+  if (!fwd)
+    return [
+      [{ text: `${sectionTitle("MEMORY STORE")} ${MUTED}forward: starting…${RESET}` }],
+      [{ text: "" }],
+    ];
+  const dot =
+    fwd.state === "failed"
+      ? `${WARN}✖${RESET}`
+      : fwd.state === "off"
+        ? `${MUTED}○${RESET}`
+        : `${ACCENT}●${RESET}`;
+  const head: Array<RowChunk<MemAction>> = [
+    { text: `${sectionTitle("MEMORY STORE")} ${dot} ${fwd.state}` },
+    { text: truncate(fwd.detail, Math.max(10, width - 26)), dim: true },
+  ];
+  const link: Array<RowChunk<MemAction>> =
+    fwd.state === "adopted" || fwd.state === "owned"
+      ? [
+          { text: button("W studio"), action: { t: "url", url: fwd.studioUrl } },
+          {
+            text: truncate(fwd.studioUrl, Math.max(10, width - 16)),
+            action: { t: "url", url: fwd.studioUrl },
+            dim: true,
+          },
+        ]
+      : [
+          {
+            text: truncate(
+              "no web UI while the forward is down — r retries, or install the systemd unit",
+              width - 2,
+            ),
+            dim: true,
+          },
+        ];
   return [head, link];
 }
 
@@ -143,7 +194,13 @@ export function memoryKeys(store: LearningStore, st: MemoryTabState): LiveKeys {
   return { bar, inline };
 }
 
-export function renderMemoryTab(store: LearningStore, st: MemoryTabState, dryRun: boolean | undefined, cols: number, rows: number): Frame {
+export function renderMemoryTab(
+  store: LearningStore,
+  st: MemoryTabState,
+  dryRun: boolean | undefined,
+  cols: number,
+  rows: number,
+): Frame {
   const frame = new Frame(cols, rows);
   const ordered = memoryOrder(store.entries, st.filter);
   const selected = ordered[st.sel];
@@ -155,7 +212,11 @@ export function renderMemoryTab(store: LearningStore, st: MemoryTabState, dryRun
       `memory${selected ? ` · ${selected.day}` : ""}`,
       // The banner lives in the list, but the title bar must carry it too:
       // the tab is often read at a glance from another pane.
-      ...(store.memError ? [`${WARN}${STRONG}✖ MEMORY UNREACHABLE${RESET}`] : store.memWarn ? [`${WARN}⚠ memory degraded${RESET}`] : []),
+      ...(store.memError
+        ? [`${WARN}${STRONG}✖ MEMORY UNREACHABLE${RESET}`]
+        : store.memWarn
+          ? [`${WARN}⚠ memory degraded${RESET}`]
+          : []),
     ]),
   );
   const live = memoryKeys(store, st);
@@ -180,14 +241,20 @@ export function renderMemoryTab(store: LearningStore, st: MemoryTabState, dryRun
     const budget = pinnedBudget(ordered);
     const budgetNote = budget.over ? ` ${WARN}⚠ pinned ${budget.chars}ch${RESET}` : "";
     const fl = memoryFilterLabel(st.filter);
-    left.push(`${sectionTitle(`MEMORY (${ordered.length})`)}${budgetNote}${fl !== "" ? ` ${fl}` : ""}`);
+    left.push(
+      `${sectionTitle(`MEMORY (${ordered.length})`)}${budgetNote}${fl !== "" ? ` ${fl}` : ""}`,
+    );
     leftActions.push(undefined);
     if (store.memWarn) {
       left.push(`${WARN}⚠ ${truncate(sanitizeText(store.memWarn), leftW - 5)}${RESET}`);
       leftActions.push(undefined);
     }
     if (ordered.length === 0) {
-      left.push(filterOn ? emptyLine({ kind: "filtered", what: `F clears #${st.filter}` }) : emptyLine({ kind: "none", what: "memory holds no entries" }));
+      left.push(
+        filterOn
+          ? emptyLine({ kind: "filtered", what: `F clears #${st.filter}` })
+          : emptyLine({ kind: "none", what: "memory holds no entries" }),
+      );
       leftActions.push(undefined);
     } else {
       const all = memoryRows(ordered);
@@ -197,7 +264,9 @@ export function renderMemoryTab(store: LearningStore, st: MemoryTabState, dryRun
       for (const row of all.slice(start, start + visible)) {
         if (row.kind === "group") {
           const label = ` ${row.label} `;
-          left.push(`${MUTED}──${label}${"─".repeat(Math.max(0, leftW - 5 - label.length))}${RESET}`);
+          left.push(
+            `${MUTED}──${label}${"─".repeat(Math.max(0, leftW - 5 - label.length))}${RESET}`,
+          );
           leftActions.push(undefined);
           continue;
         }
@@ -213,27 +282,51 @@ export function renderMemoryTab(store: LearningStore, st: MemoryTabState, dryRun
     right.push(zonedRow(chunks, gap));
   };
   if (selected) {
-    row([{ text: `${sectionTitle("ENTRY")} ${selected.ts} ${MUTED}[${selected.id}]${RESET}${selected.pinned ? ` ${ACCENT}●${RESET}pinned` : ""}` }]);
+    row([
+      {
+        text: `${sectionTitle("ENTRY")} ${selected.ts} ${MUTED}[${selected.id}]${RESET}${selected.pinned ? ` ${ACCENT}●${RESET}pinned` : ""}`,
+      },
+    ]);
     row([
       { text: button("e edit"), action: { t: "key", key: "e" } },
       { text: button(selected.pinned ? "p unpin" : "p pin"), action: { t: "key", key: "p" } },
-      { text: st.confirmRetire === entryKey(selected) ? `${WARN}${STRONG}[x CONFIRM retire]${RESET}` : button("x retire"), action: { t: "key", key: "x" } },
+      {
+        text:
+          st.confirmRetire === entryKey(selected)
+            ? `${WARN}${STRONG}[x CONFIRM retire]${RESET}`
+            : button("x retire"),
+        action: { t: "key", key: "x" },
+      },
     ]);
     // Leave room for the defect flags and the store rows below; a long entry
     // must not bury the panel that says whether memory is reachable.
     const detailCap = Math.max(5, bodyRows - 14);
     const wrapped = wrap(sanitizeText(selected.text), rightW - 3);
     for (const l of wrapped.slice(0, detailCap)) row([{ text: l }]);
-    if (wrapped.length > detailCap) row([{ text: `… ${wrapped.length - detailCap} more lines`, dim: true }]);
+    if (wrapped.length > detailCap)
+      row([{ text: `… ${wrapped.length - detailCap} more lines`, dim: true }]);
     row([{ text: "" }]);
   }
   const defects = store.memLoaded && !store.memError ? defectEntries(store.entries) : undefined;
-  row([{ text: `${sectionTitle(`DEFECT FLAGS ${defects === undefined ? "(—)" : `(${defects.length})`}`)}${store.filedTotal > 0 ? ` ${MUTED}${store.filedTotal} auto-filed${RESET}` : ""}` }]);
-  if (defects === undefined) row([{ text: emptyLine({ kind: "unread", how: "the store has not answered" }) }]);
-  else if (defects.length === 0) row([{ text: emptyLine({ kind: "none", what: "#bug entries are auto-filed to the tracker" }) }]);
+  row([
+    {
+      text: `${sectionTitle(`DEFECT FLAGS ${defects === undefined ? "(—)" : `(${defects.length})`}`)}${store.filedTotal > 0 ? ` ${MUTED}${store.filedTotal} auto-filed${RESET}` : ""}`,
+    },
+  ]);
+  if (defects === undefined)
+    row([{ text: emptyLine({ kind: "unread", how: "the store has not answered" }) }]);
+  else if (defects.length === 0)
+    row([
+      { text: emptyLine({ kind: "none", what: "#bug entries are auto-filed to the tracker" }) },
+    ]);
   for (const d of (defects ?? []).slice(0, 5)) {
     const i = ordered.findIndex((e) => entryKey(e) === entryKey(d));
-    row([{ text: truncate(`⚑ ${d.ts.slice(5, 10)} ${d.links[0] ?? d.text.slice(0, 30)}`, rightW - 2), action: i >= 0 ? { t: "mem", i } : undefined }]);
+    row([
+      {
+        text: truncate(`⚑ ${d.ts.slice(5, 10)} ${d.links[0] ?? d.text.slice(0, 30)}`, rightW - 2),
+        action: i >= 0 ? { t: "mem", i } : undefined,
+      },
+    ]);
   }
   row([{ text: "" }]);
   for (const chunks of forwardRows(store.forward, rightW)) row(chunks);
@@ -324,9 +417,13 @@ export function installMemoryTab(app: App, store: LearningStore): MemoryTabState
           // `e` = edit here; the board's events overlay has no meaning on this
           // tab, and with no entry selected the key is not this tab's at all.
           if (!selected) return false;
-          theApp.promptInput(`edit memory ${selected.id}@${selected.ts.slice(11)}`, selected.text, (text) => {
-            store.verb(store.memory.apply({ op: "edit", ...refOf(selected), text }));
-          });
+          theApp.promptInput(
+            `edit memory ${selected.id}@${selected.ts.slice(11)}`,
+            selected.text,
+            (text) => {
+              store.verb(store.memory.apply({ op: "edit", ...refOf(selected), text }));
+            },
+          );
           return true;
         }
         case "char":
@@ -343,7 +440,8 @@ export function installMemoryTab(app: App, store: LearningStore): MemoryTabState
               // [W studio] zone clicks, so mouse and key cannot drift.
               const fwd = store.forward;
               if (!fwd || (fwd.state !== "adopted" && fwd.state !== "owned")) {
-                store.status = `no web UI — memory forward is ${fwd?.state ?? "starting"}: ${fwd?.detail ?? ""}`.trim();
+                store.status =
+                  `no web UI — memory forward is ${fwd?.state ?? "starting"}: ${fwd?.detail ?? ""}`.trim();
                 theApp.notice(store.status);
                 theApp.repaint();
                 return true;
@@ -372,7 +470,9 @@ export function installMemoryTab(app: App, store: LearningStore): MemoryTabState
             }
             case "p":
               if (!selected) return false;
-              store.verb(store.memory.apply({ op: selected.pinned ? "unpin" : "pin", ...refOf(selected) }));
+              store.verb(
+                store.memory.apply({ op: selected.pinned ? "unpin" : "pin", ...refOf(selected) }),
+              );
               return true;
             default:
               // A letter this tab does not claim is the operator talking to the

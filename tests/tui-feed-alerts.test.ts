@@ -39,7 +39,17 @@ function snap(overrides: Partial<StatusSnapshot> = {}): StatusSnapshot {
   return {
     written_at: "2026-08-14T10:00:00Z",
     dry_run: true,
-    prs: [{ number: 5012, state: "reviewing", title: "t", head_sha: "abc", stale_recheck: 0, rounds: 1, last_verdict: null }],
+    prs: [
+      {
+        number: 5012,
+        state: "reviewing",
+        title: "t",
+        head_sha: "abc",
+        stale_recheck: 0,
+        rounds: 1,
+        last_verdict: null,
+      },
+    ],
     running_rounds: 1,
     total_spend_usd: 1,
     heartbeat: "2026-08-14T10:00:00Z",
@@ -47,7 +57,12 @@ function snap(overrides: Partial<StatusSnapshot> = {}): StatusSnapshot {
   };
 }
 
-const ev = (ts: string, kind = "dispatch", pr: number | null = 5012): FeedEvent => ({ ts, kind, pr, payload: null });
+const ev = (ts: string, kind = "dispatch", pr: number | null = 5012): FeedEvent => ({
+  ts,
+  kind,
+  pr,
+  payload: null,
+});
 
 // ---- feed writer ------------------------------------------------------------
 
@@ -63,7 +78,15 @@ describe("FeedWriter", () => {
   it("appends only new events, dedup by ts+kind+pr", () => {
     const w = new FeedWriter(dir);
     w.write(snap(), [ev("2026-08-14T10:00:00Z"), ev("2026-08-14T10:00:01Z", "verdict")], "ok");
-    const second = w.write(snap(), [ev("2026-08-14T10:00:01Z", "verdict"), ev("2026-08-14T10:00:00Z"), ev("2026-08-14T10:00:02Z", "verdict")], "ok");
+    const second = w.write(
+      snap(),
+      [
+        ev("2026-08-14T10:00:01Z", "verdict"),
+        ev("2026-08-14T10:00:00Z"),
+        ev("2026-08-14T10:00:02Z", "verdict"),
+      ],
+      "ok",
+    );
     expect(second.appended).toBe(1);
     const lines = readFileSync(w.eventsPath, "utf8").trim().split("\n");
     expect(lines).toHaveLength(3);
@@ -85,7 +108,19 @@ describe("FeedWriter", () => {
     writeFileSync(join(dir, "wake"), "legacy");
     w.write(snap(), [], "ok");
     w.write(
-      snap({ prs: [{ number: 5012, state: "awaiting_author", title: "t", head_sha: "abc", stale_recheck: 0, rounds: 1, last_verdict: "REQUEST_CHANGES" }] }),
+      snap({
+        prs: [
+          {
+            number: 5012,
+            state: "awaiting_author",
+            title: "t",
+            head_sha: "abc",
+            stale_recheck: 0,
+            rounds: 1,
+            last_verdict: "REQUEST_CHANGES",
+          },
+        ],
+      }),
       [ev("2026-08-14T10:01:00Z")],
       "stale",
     );
@@ -94,7 +129,9 @@ describe("FeedWriter", () => {
   });
 
   it("bounds an old event journal as short-term state", () => {
-    const lines = Array.from({ length: EVENT_TAIL_CAP + 1 }, (_, i) => JSON.stringify(ev(`2026-08-14T10:${String(i).padStart(6, "0")}Z`)));
+    const lines = Array.from({ length: EVENT_TAIL_CAP + 1 }, (_, i) =>
+      JSON.stringify(ev(`2026-08-14T10:${String(i).padStart(6, "0")}Z`)),
+    );
     writeFileSync(join(dir, "events.jsonl"), lines.join("\n") + "\n");
     const w = new FeedWriter(dir);
     w.start();
@@ -108,10 +145,25 @@ describe("alert schema", () => {
   const body = (o: Record<string, unknown>): string => JSON.stringify(o);
 
   it("parses the prompt's exact schema", () => {
-    const r = parseAlert(body({ tier: "alert", cause: "round-overdue", pr: 5012, title: "round 3 overdue", body: "40m past deadline", ts: "2026-08-14T12:00:00Z" }), "a.json");
+    const r = parseAlert(
+      body({
+        tier: "alert",
+        cause: "round-overdue",
+        pr: 5012,
+        title: "round 3 overdue",
+        body: "40m past deadline",
+        ts: "2026-08-14T12:00:00Z",
+      }),
+      "a.json",
+    );
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.alert).toMatchObject({ tier: "alert", cause: "round-overdue", pr: 5012, file: "a.json" });
+    expect(r.alert).toMatchObject({
+      tier: "alert",
+      cause: "round-overdue",
+      pr: 5012,
+      file: "a.json",
+    });
   });
 
   it("coerces a digit-string pr and accepts pr: null", () => {
@@ -123,10 +175,21 @@ describe("alert schema", () => {
 
   it("rejects every off-schema shape with a reason", () => {
     expect(parseAlert("{not json", "a.json")).toMatchObject({ ok: false });
-    expect(parseAlert(body({ tier: "URGENT", cause: "c", title: "t" }), "a.json")).toMatchObject({ ok: false, error: expect.stringContaining("tier") });
-    expect(parseAlert(body({ tier: "alert", cause: "", title: "t" }), "a.json")).toMatchObject({ ok: false, error: expect.stringContaining("cause") });
-    expect(parseAlert(body({ tier: "alert", cause: "c" }), "a.json")).toMatchObject({ ok: false, error: expect.stringContaining("title") });
-    expect(parseAlert(body({ tier: "alert", cause: "c", title: "t", pr: "not-a-number" }), "a.json")).toMatchObject({ ok: false, error: expect.stringContaining("pr") });
+    expect(parseAlert(body({ tier: "URGENT", cause: "c", title: "t" }), "a.json")).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("tier"),
+    });
+    expect(parseAlert(body({ tier: "alert", cause: "", title: "t" }), "a.json")).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("cause"),
+    });
+    expect(parseAlert(body({ tier: "alert", cause: "c" }), "a.json")).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("title"),
+    });
+    expect(
+      parseAlert(body({ tier: "alert", cause: "c", title: "t", pr: "not-a-number" }), "a.json"),
+    ).toMatchObject({ ok: false, error: expect.stringContaining("pr") });
   });
 
   it("trims an over-long title rather than dropping the alert", () => {
@@ -138,7 +201,15 @@ describe("alert schema", () => {
 // ---- policy: cooldown, fold, escalation ------------------------------------
 
 describe("AlertPolicy", () => {
-  const rec = (tier: "notice" | "alert", cause = "round-overdue"): AlertRecord => ({ tier, cause, pr: 5012, title: "t", body: "b", ts: "", file: "f.json" });
+  const rec = (tier: "notice" | "alert", cause = "round-overdue"): AlertRecord => ({
+    tier,
+    cause,
+    pr: 5012,
+    title: "t",
+    body: "b",
+    ts: "",
+    file: "f.json",
+  });
 
   it("routes a fresh cause and folds repeats inside the cooldown", () => {
     let t = new Date("2026-08-14T10:00:00Z");
@@ -188,7 +259,13 @@ describe("AlertPolicy", () => {
 
 // ---- consumer: routing per tier + malformed surfacing ----------------------
 
-function fakeSinks(): { sinks: AlertSinks; notices: string[]; notified: string[][]; injected: string[]; badges: AlertBadge[] } {
+function fakeSinks(): {
+  sinks: AlertSinks;
+  notices: string[];
+  notified: string[][];
+  injected: string[];
+  badges: AlertBadge[];
+} {
   const notices: string[] = [];
   const notified: string[][] = [];
   const injected: string[] = [];
@@ -215,7 +292,14 @@ describe("AlertConsumer", () => {
   it("routes a notice to the status line only", () => {
     const f = fakeSinks();
     const c = new AlertConsumer(dir, new AlertPolicy(20), f.sinks);
-    dropAlert(dir, "2026-08-14T10-00-00Z-quiet.json", { tier: "notice", cause: "awaiting-aging", pr: 5012, title: "PR #5012 waiting 2d", body: "b", ts: "2026-08-14T10:00:00Z" });
+    dropAlert(dir, "2026-08-14T10-00-00Z-quiet.json", {
+      tier: "notice",
+      cause: "awaiting-aging",
+      pr: 5012,
+      title: "PR #5012 waiting 2d",
+      body: "b",
+      ts: "2026-08-14T10:00:00Z",
+    });
     c.scanOnce();
     expect(f.notices).toHaveLength(1);
     expect(f.notified).toEqual([]);
@@ -226,7 +310,14 @@ describe("AlertConsumer", () => {
   it("routes an alert to the status line + notify-send + an overseer inject", () => {
     const f = fakeSinks();
     const c = new AlertConsumer(dir, new AlertPolicy(20), f.sinks);
-    dropAlert(dir, "2026-08-14T10-00-00Z-stuck.json", { tier: "alert", cause: "round-overdue", pr: 5012, title: "round 3 overdue", body: "40m past deadline", ts: "2026-08-14T10:00:00Z" });
+    dropAlert(dir, "2026-08-14T10-00-00Z-stuck.json", {
+      tier: "alert",
+      cause: "round-overdue",
+      pr: 5012,
+      title: "round 3 overdue",
+      body: "40m past deadline",
+      ts: "2026-08-14T10:00:00Z",
+    });
     c.scanOnce();
     expect(f.notified).toEqual([["round 3 overdue", "40m past deadline"]]);
     expect(f.injected).toHaveLength(1);
@@ -239,10 +330,24 @@ describe("AlertConsumer", () => {
     const f = fakeSinks();
     let t = new Date("2026-08-14T10:00:00Z");
     const c = new AlertConsumer(dir, new AlertPolicy(60, () => t), f.sinks, () => t);
-    dropAlert(dir, "a1.json", { tier: "alert", cause: "daemon-stale", pr: null, title: "status.json stale", body: "b", ts: "x" });
+    dropAlert(dir, "a1.json", {
+      tier: "alert",
+      cause: "daemon-stale",
+      pr: null,
+      title: "status.json stale",
+      body: "b",
+      ts: "x",
+    });
     c.scanOnce();
     t = new Date("2026-08-14T10:10:00Z");
-    dropAlert(dir, "a2.json", { tier: "alert", cause: "daemon-stale", pr: null, title: "status.json stale", body: "b", ts: "x" });
+    dropAlert(dir, "a2.json", {
+      tier: "alert",
+      cause: "daemon-stale",
+      pr: null,
+      title: "status.json stale",
+      body: "b",
+      ts: "x",
+    });
     c.scanOnce();
     expect(f.notified).toHaveLength(1); // no second KDE popup
     expect(f.injected).toHaveLength(1); // and no second overseer inject
@@ -264,7 +369,14 @@ describe("AlertConsumer", () => {
   it("archives every processed file into .done/, so a rescan is a no-op", () => {
     const f = fakeSinks();
     const c = new AlertConsumer(dir, new AlertPolicy(20), f.sinks);
-    dropAlert(dir, "a1.json", { tier: "notice", cause: "c", pr: null, title: "t", body: "", ts: "x" });
+    dropAlert(dir, "a1.json", {
+      tier: "notice",
+      cause: "c",
+      pr: null,
+      title: "t",
+      body: "",
+      ts: "x",
+    });
     dropAlert(dir, "bad.json", "nope");
     c.scanOnce();
     expect(c.pending()).toEqual([]);
@@ -275,8 +387,18 @@ describe("AlertConsumer", () => {
   });
 
   it("formats the overseer message and the status line", () => {
-    const a: AlertRecord = { tier: "alert", cause: "round-overdue", pr: 5012, title: "round 3 overdue", body: "40m past deadline", ts: "x", file: "f.json" };
-    expect(overseerMessage(a).startsWith("[companion alert] round 3 overdue (PR #5012)")).toBe(true);
+    const a: AlertRecord = {
+      tier: "alert",
+      cause: "round-overdue",
+      pr: 5012,
+      title: "round 3 overdue",
+      body: "40m past deadline",
+      ts: "x",
+      file: "f.json",
+    };
+    expect(overseerMessage(a).startsWith("[companion alert] round 3 overdue (PR #5012)")).toBe(
+      true,
+    );
     expect(overseerMessage(a)).toContain("cause: round-overdue");
     expect(stripAnsi(statusLine(a, 0))).toBe("▲ #5012 round 3 overdue");
     expect(stripAnsi(statusLine(a, 2))).toContain("(×3)");
@@ -300,7 +422,11 @@ function baseView(): BoardView {
 }
 
 describe("alert badge in the top bar", () => {
-  const badge: AlertBadge = { count: 2, folds: 3, latest: { tier: "alert", title: "round 3 overdue", cause: "round-overdue", pr: 5012, ts: "x" } };
+  const badge: AlertBadge = {
+    count: 2,
+    folds: 3,
+    latest: { tier: "alert", title: "round 3 overdue", cause: "round-overdue", pr: 5012, ts: "x" },
+  };
 
   it("renders count, PR, title and the fold counter", () => {
     const view = { ...baseView(), alerts: badge };
@@ -310,7 +436,9 @@ describe("alert badge in the top bar", () => {
 
   it("themes by tier", () => {
     expect(alertSegment(badge, false)).toContain("\x1b[38;2;224;108;117m"); // FG.anomaly
-    expect(alertSegment({ ...badge, latest: { ...badge.latest!, tier: "notice" } }, false)).toContain(FG.accent); // FG.accent
+    expect(
+      alertSegment({ ...badge, latest: { ...badge.latest!, tier: "notice" } }, false),
+    ).toContain(FG.accent); // FG.accent
     expect(alertSegment(badge, false)).toBe(alertSegment(badge, false));
     expect(alertSegment({ count: 0, folds: 0 }, false)).toBe("");
   });
@@ -322,7 +450,11 @@ describe("alert badge in the top bar", () => {
     const seg = stripAnsi(alertSegment(badge, false));
     expect(bar.slice(zone.x1 - 1, zone.x2)).toBe(seg);
     const frame = renderBoard(view, 120, 30);
-    expect(frame.zones.some((z) => z.y1 === 1 && JSON.stringify(z.action) === JSON.stringify({ t: "companion" }))).toBe(true);
+    expect(
+      frame.zones.some(
+        (z) => z.y1 === 1 && JSON.stringify(z.action) === JSON.stringify({ t: "companion" }),
+      ),
+    ).toBe(true);
   });
 
   it("has no zone when there is no alert", () => {
@@ -341,17 +473,35 @@ function fakeStreams() {
   input.resume = () => {};
   input.pause = () => {};
   input.setRawMode = () => {};
-  return { out, input, written: () => buf, type: (s: string) => input.emit("data", Buffer.from(s)) };
+  return {
+    out,
+    input,
+    written: () => buf,
+    type: (s: string) => input.emit("data", Buffer.from(s)),
+  };
 }
 
-const CFG = resolveCompanionPaths({ ...COMPANION_DEFAULTS, repo_dir: "/host/repo", feed_dir: "/host/feed", alerts_dir: "/host/alerts" }, "/host/repo");
+const CFG = resolveCompanionPaths(
+  {
+    ...COMPANION_DEFAULTS,
+    repo_dir: "/host/repo",
+    feed_dir: "/host/feed",
+    alerts_dir: "/host/alerts",
+  },
+  "/host/repo",
+);
 
 describe("companion tab", () => {
   const noDocker: DockerRunner = async () => ({ ok: false, stdout: "", stderr: "", code: 1 });
 
   function harness(available = true) {
     const s = fakeStreams();
-    const app = new App(TUI_DEFAULTS, async () => ({ ok: false, stdout: "", stderr: "", code: 1 }), s.out, s.input);
+    const app = new App(
+      TUI_DEFAULTS,
+      async () => ({ ok: false, stdout: "", stderr: "", code: 1 }),
+      s.out,
+      s.input,
+    );
     const lifecycle = new CompanionLifecycle(CFG, noDocker, {});
     // the companion IS the sidebar column — there is no pty to spawn
     // and no screen to take over, so the harness wires the column instead.
@@ -378,7 +528,6 @@ describe("companion tab", () => {
     await h.close();
   });
 
-
   it("the companion tab keys are retired: 5 is deploy now, c is no tab at all", async () => {
     const h = harness();
     h.s.type("5");
@@ -396,11 +545,19 @@ describe("companion tab", () => {
 
   it("an alert-tier badge gives ⏎ to the companion, Esc gives it back", async () => {
     const h = harness();
-    h.app.setAlertBadge({ count: 1, folds: 0, latest: { tier: "alert", title: "t", cause: "c", pr: 5012, ts: "x" } });
+    h.app.setAlertBadge({
+      count: 1,
+      folds: 0,
+      latest: { tier: "alert", title: "t", cause: "c", pr: 5012, ts: "x" },
+    });
     expect(h.app.view.alertFocus).toBe(true);
     h.s.type("\x1b"); // Esc acknowledges
     expect(h.app.view.alertFocus).toBe(false);
-    h.app.setAlertBadge({ count: 2, folds: 0, latest: { tier: "alert", title: "t", cause: "c", pr: 5012, ts: "x" } });
+    h.app.setAlertBadge({
+      count: 2,
+      folds: 0,
+      latest: { tier: "alert", title: "t", cause: "c", pr: 5012, ts: "x" },
+    });
     h.s.type("\r");
     await Promise.resolve();
     expect(h.app.sidebar?.focused).toBe(true); // ⏎ followed the alert into the companion
@@ -410,7 +567,11 @@ describe("companion tab", () => {
 
   it("a notice-tier badge never steals ⏎", async () => {
     const h = harness();
-    h.app.setAlertBadge({ count: 1, folds: 0, latest: { tier: "notice", title: "t", cause: "c", pr: 5012, ts: "x" } });
+    h.app.setAlertBadge({
+      count: 1,
+      folds: 0,
+      latest: { tier: "notice", title: "t", cause: "c", pr: 5012, ts: "x" },
+    });
     expect(h.app.view.alertFocus).toBeFalsy();
     await h.close();
   });
@@ -427,7 +588,12 @@ describe("companion tab", () => {
 
   it("⏎ on a failed companion runs retry and focuses the column once it heals", async () => {
     const s = fakeStreams();
-    const app = new App(TUI_DEFAULTS, async () => ({ ok: false, stdout: "", stderr: "", code: 1 }), s.out, s.input);
+    const app = new App(
+      TUI_DEFAULTS,
+      async () => ({ ok: false, stdout: "", stderr: "", code: 1 }),
+      s.out,
+      s.input,
+    );
     const lifecycle = new CompanionLifecycle(CFG, noDocker, {});
     let up = false;
     app.sidebar = new CompanionSidebar(CFG, noDocker, { available: () => up });
@@ -441,7 +607,8 @@ describe("companion tab", () => {
     });
     const running = app.run();
     app.openCompanion();
-    for (let i = 0; i < 100 && !app.sidebar.focused; i++) await new Promise((r) => setTimeout(r, 5));
+    for (let i = 0; i < 100 && !app.sidebar.focused; i++)
+      await new Promise((r) => setTimeout(r, 5));
     expect(up).toBe(true);
     expect(app.sidebar.focused).toBe(true); // healed, then focused
     app.quit();

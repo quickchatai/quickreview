@@ -8,10 +8,19 @@ import { TUI_DEFAULTS } from "../../src/config.js";
 import { parseLegacyMemory } from "../../src/memory/legacy-file.js";
 import type { MemoryEntry, MemoryOp, MemoryStore } from "../../src/memory/store.js";
 import { App } from "../../src/tui/app.js";
-import type { ChangeEntry, ChangeLogProblem, ChangeRegister, RevertResult } from "../../src/tui/changelog-store.js";
+import type {
+  ChangeEntry,
+  ChangeLogProblem,
+  ChangeRegister,
+  RevertResult,
+} from "../../src/tui/changelog-store.js";
 import type { DigestFetcher } from "../../src/tui/digesttab.js";
 import type { ChangeRegisterSource } from "../../src/tui/feedbacktab.js";
-import { installLearningTabs, type LearningDeps, type LearningTabs } from "../../src/tui/learning.js";
+import {
+  installLearningTabs,
+  type LearningDeps,
+  type LearningTabs,
+} from "../../src/tui/learning.js";
 import type { RemoteResult } from "../../src/tui/remote.js";
 
 export interface FakeStreams {
@@ -31,10 +40,16 @@ export function fakeStreams(cols = 110, rows = 30): FakeStreams {
   (input as unknown as { isTTY: boolean }).isTTY = false;
   input.resume = (() => input) as never;
   input.pause = (() => input) as never;
-  return { out, input, written: () => buf, type: (s) => void (input as unknown as EventEmitter).emit("data", Buffer.from(s)) };
+  return {
+    out,
+    input,
+    written: () => buf,
+    type: (s) => void (input as unknown as EventEmitter).emit("data", Buffer.from(s)),
+  };
 }
 
-export const okSsh = (_h: string, _argv: string[]): Promise<RemoteResult> => Promise.resolve({ ok: true, stdout: "", stderr: "", code: 0 });
+export const okSsh = (_h: string, _argv: string[]): Promise<RemoteResult> =>
+  Promise.resolve({ ok: true, stdout: "", stderr: "", code: 0 });
 
 /** Three entries over two days: a pinned-free timeline with one `#bug`. */
 export const SAMPLE = `<!-- 2026-08-19 18:13:54 [01a01ab3] -->
@@ -54,7 +69,9 @@ export class FakeMemory implements MemoryStore {
   }
   search(query: string): Promise<MemoryEntry[]> {
     const q = query.toLowerCase();
-    return Promise.resolve(parseLegacyMemory(this.md).filter((e) => e.text.toLowerCase().includes(q)));
+    return Promise.resolve(
+      parseLegacyMemory(this.md).filter((e) => e.text.toLowerCase().includes(q)),
+    );
   }
   apply(op: MemoryOp): Promise<{ ok: boolean; message: string }> {
     this.applied.push(op);
@@ -69,7 +86,11 @@ export const fakeDigest: DigestFetcher = {
   read: (f) => Promise.resolve(`# digest ${f}\n## Reviews\n- #5308 APPROVE`),
 };
 
-export function changeEntry(sha: string, subject: string, reverted?: { by: string; at: string }): ChangeEntry {
+export function changeEntry(
+  sha: string,
+  subject: string,
+  reverted?: { by: string; at: string },
+): ChangeEntry {
   return {
     sha,
     short: sha.slice(0, 7),
@@ -91,7 +112,9 @@ export class FakeChanges implements ChangeRegisterSource {
   reverted: string[] = [];
   refreshes = 0;
   constructor(entries?: ChangeEntry[], problem?: ChangeLogProblem) {
-    this.register = entries ? { version: 1, updated_at: "2026-08-25T10:00:00Z", entries, scanned: 40 } : undefined;
+    this.register = entries
+      ? { version: 1, updated_at: "2026-08-25T10:00:00Z", entries, scanned: 40 }
+      : undefined;
     this.problem = problem;
   }
   refresh(): Promise<ChangeLogProblem | undefined> {
@@ -113,7 +136,14 @@ export interface Rig {
 }
 
 /** An App with the four learning surfaces installed over fakes. */
-export function learningRig(over: Partial<LearningDeps> & { cols?: number; rows?: number; mem?: FakeMemory; changes?: FakeChanges } = {}): Rig {
+export function learningRig(
+  over: Partial<LearningDeps> & {
+    cols?: number;
+    rows?: number;
+    mem?: FakeMemory;
+    changes?: FakeChanges;
+  } = {},
+): Rig {
   const streams = fakeStreams(over.cols ?? 110, over.rows ?? 30);
   const app = new App(TUI_DEFAULTS, okSsh, streams.out, streams.input);
   const mem = over.mem ?? new FakeMemory();
@@ -124,7 +154,9 @@ export function learningRig(over: Partial<LearningDeps> & { cols?: number; rows?
     digestFetcher: fakeDigest,
     fetchProposals: () =>
       Promise.resolve({
-        proposals: [{ slug: "baseline-mergebase-2026-08-20", head: ["## Rationale", "3 refuted blockers"] }],
+        proposals: [
+          { slug: "baseline-mergebase-2026-08-20", head: ["## Rationale", "3 refuted blockers"] },
+        ],
         improvements: [{ kind: "pr" as const, number: 12, title: "docs fix", state: "open" }],
       }),
     readTickets: () => [],

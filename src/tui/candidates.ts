@@ -42,7 +42,14 @@
 // does not come back through a write from the companion: it is read out of the
 // `#adjudication` memory entries `adjudicate` already mandates. One record, one
 // direction.
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import type { CapturedComment } from "../capture.js";
 import type { StatusSnapshot } from "../state.js";
@@ -80,11 +87,13 @@ export const FAMILY_TITLE: Record<CandidateFamily, string> = {
  * companion never has to remember why a family exists. */
 export const FAMILY_WHY: Record<CandidateFamily, string> = {
   "feedback-tag": "a human said so, in words, on the PR — the highest-confidence family",
-  disagreement: "a human approved where the bot blocked, or blocked where the bot approved (the false-negative direction)",
+  disagreement:
+    "a human approved where the bot blocked, or blocked where the bot approved (the false-negative direction)",
   dismissed: "the author threw the bot's review away rather than answering it",
   "no-verdict": "the round died — overdue, malformed, orphaned or cancelled — and nobody was told",
   "repeat-blocks": "the same PR re-blocked round after round; the treadmill, not a fix cycle",
-  "repeat-approvals": "approved, then approved again; the recheck forbids this, so watch it die",
+  "repeat-approvals":
+    "approved, then approved again; the recheck forbids this, so watch it die",
   "long-review": "ten rounds or more, whatever the pattern",
 };
 
@@ -236,14 +245,18 @@ export function detectCandidates(facts: PrFacts): Detected[] {
     });
   }
 
-  const dead = facts.rounds.filter((r) => DEAD_STATUSES.has(r.status) || (r.status === "done" && verdictOf(r) === ""));
+  const dead = facts.rounds.filter(
+    (r) => DEAD_STATUSES.has(r.status) || (r.status === "done" && verdictOf(r) === ""),
+  );
   if (dead.length > 0) {
     out.push({
       family: "no-verdict",
       pr: facts.pr,
       severity: dead.length,
       headline: `${dead.length} round${dead.length === 1 ? "" : "s"} produced no verdict`,
-      detail: dead.map((r) => `round ${r.round_no}: ${r.status}${r.verdict ? ` / ${r.verdict}` : ""}`),
+      detail: dead.map(
+        (r) => `round ${r.round_no}: ${r.status}${r.verdict ? ` / ${r.verdict}` : ""}`,
+      ),
     });
   }
 
@@ -254,7 +267,9 @@ export function detectCandidates(facts: PrFacts): Detected[] {
       pr: facts.pr,
       severity: run,
       headline: `${run} blocking rounds in a row`,
-      detail: [`${facts.rounds.length} rounds with a local record; longest REQUEST_CHANGES run ${run}`],
+      detail: [
+        `${facts.rounds.length} rounds with a local record; longest REQUEST_CHANGES run ${run}`,
+      ],
     });
   }
 
@@ -265,7 +280,12 @@ export function detectCandidates(facts: PrFacts): Detected[] {
       pr: facts.pr,
       severity: approvals,
       headline: `approved ${approvals} times`,
-      detail: [`rounds ${facts.rounds.filter((r) => verdictOf(r) === APPROVE).map((r) => r.round_no).join(", ")}`],
+      detail: [
+        `rounds ${facts.rounds
+          .filter((r) => verdictOf(r) === APPROVE)
+          .map((r) => r.round_no)
+          .join(", ")}`,
+      ],
     });
   }
 
@@ -284,7 +304,12 @@ export function detectCandidates(facts: PrFacts): Detected[] {
 
 /**'s ledger kinds, split by which family they feed. Strings rather than
  * a union so a kind added daemon-side needs no change here. */
-const DISAGREEMENT_KINDS = new Set(["posting_guard_downgraded", "merged_over_block", "human_approved_over_block", "human_blocked_after_approve"]);
+const DISAGREEMENT_KINDS = new Set([
+  "posting_guard_downgraded",
+  "merged_over_block",
+  "human_approved_over_block",
+  "human_blocked_after_approve",
+]);
 const DISMISSAL_KINDS = new Set(["review_dismissed", "bot_comment_deleted", "trigger_withdrawn"]);
 
 function firstLine(body: string): string {
@@ -394,7 +419,8 @@ export class CandidateStore {
     }
     try {
       const parsed = JSON.parse(raw) as CandidateList;
-      if (!Array.isArray(parsed?.candidates)) return { state: "unreadable", reason: "no candidates array" };
+      if (!Array.isArray(parsed?.candidates))
+        return { state: "unreadable", reason: "no candidates array" };
       return { state: "list", list: parsed };
     } catch (err) {
       return { state: "unreadable", reason: errText(err) };
@@ -517,7 +543,13 @@ export function groupCandidates(candidates: Candidate[]): CandidateGroup[] {
     const rows = candidates
       .filter((c) => c.family === family)
       .sort((a, b) => b.severity - a.severity || a.pr - b.pr);
-    if (rows.length > 0) groups.push({ family, title: FAMILY_TITLE[family], why: FAMILY_WHY[family], candidates: rows });
+    if (rows.length > 0)
+      groups.push({
+        family,
+        title: FAMILY_TITLE[family],
+        why: FAMILY_WHY[family],
+        candidates: rows,
+      });
   }
   return groups;
 }
@@ -529,16 +561,21 @@ export function groupCandidates(candidates: Candidate[]): CandidateGroup[] {
 export function renderSurvey(list: CandidateList): string {
   const open = openCandidates(list.candidates);
   const groups = groupCandidates(open);
-  const lines: string[] = [`Candidate survey — ${list.updated_at} (${list.coverage.prs_scanned} PRs scanned)`];
+  const lines: string[] = [
+    `Candidate survey — ${list.updated_at} (${list.coverage.prs_scanned} PRs scanned)`,
+  ];
   if (groups.length === 0) {
     lines.push("", "Nothing worth adjudicating. Families checked:");
-    for (const f of list.families) lines.push(`  · ${f.title} — scanned ${f.scanned}, found 0${f.gap ? ` (${f.gap})` : ""}`);
+    for (const f of list.families)
+      lines.push(`  · ${f.title} — scanned ${f.scanned}, found 0${f.gap ? ` (${f.gap})` : ""}`);
     return lines.join("\n");
   }
   for (const g of groups) {
     lines.push("", `${g.title} — ${g.why}`);
     for (const c of g.candidates) {
-      const marks = [c.returned ? "returned" : "", `since ${c.first_seen.slice(0, 10)}`].filter(Boolean).join(", ");
+      const marks = [c.returned ? "returned" : "", `since ${c.first_seen.slice(0, 10)}`]
+        .filter(Boolean)
+        .join(", ");
       lines.push(`  #${c.pr} ${c.headline} [${marks}]`);
       for (const d of c.detail) lines.push(`      ${d}`);
     }
@@ -588,7 +625,9 @@ export function roundFactsFromEvidence(evidenceDir: string, pr: number): RoundFa
  * `src/memory/eventtags.ts` intends: the `pr=` value is read from the leading
  * `k=v` run, so quoted human text in the body can never mint one.
  */
-export function adjudicationsFrom(entries: Array<{ ts: string; text: string; tags: string[] }>): Map<number, string> {
+export function adjudicationsFrom(
+  entries: Array<{ ts: string; text: string; tags: string[] }>,
+): Map<number, string> {
   const out = new Map<number, string>();
   for (const e of entries) {
     if (!e.tags.some((t) => t.replace(/^#/, "").toLowerCase() === "adjudication")) continue;
@@ -691,7 +730,9 @@ export class CandidateSweeper {
       }
       return this.build(snapshot, this.lastAdjudications);
     } catch (err) {
-      this.deps.onNotice?.(`survey: sweep failed — ${err instanceof Error ? err.message : String(err)}`);
+      this.deps.onNotice?.(
+        `survey: sweep failed — ${err instanceof Error ? err.message : String(err)}`,
+      );
       return undefined;
     } finally {
       this.busy = false;
@@ -727,7 +768,10 @@ export class CandidateSweeper {
     return read.state === "list" ? read.list.candidates : [];
   }
 
-  private build(snapshot: StatusSnapshot, adjudications: Map<number, string>): CandidateList | undefined {
+  private build(
+    snapshot: StatusSnapshot,
+    adjudications: Map<number, string>,
+  ): CandidateList | undefined {
     // Read the baseline FIRST: an unread one means this sweep neither merges
     // nor saves, and there is no point walking the manifests for it.
     const previous = this.baseline();
@@ -747,8 +791,13 @@ export class CandidateSweeper {
       // signature move, so a signature-only key would freeze the shortfall.
       // (A cheap `existsSync` miss for a never-copied PR, a manifest re-read
       // only while genuinely short.)
-      const fresh = cached !== undefined && cached.signature === sig && cached.rounds.length >= (pr.rounds ?? 0);
-      const rounds = fresh ? cached.rounds : roundFactsFromEvidence(this.deps.evidenceDir, pr.number);
+      const fresh =
+        cached !== undefined &&
+        cached.signature === sig &&
+        cached.rounds.length >= (pr.rounds ?? 0);
+      const rounds = fresh
+        ? cached.rounds
+        : roundFactsFromEvidence(this.deps.evidenceDir, pr.number);
       this.roundsCache.set(pr.number, { signature: sig, rounds });
       const f: PrFacts = {
         pr: pr.number,
@@ -781,7 +830,11 @@ export class CandidateSweeper {
         gap: familyGap(family, this.deps),
       })),
       candidates,
-      coverage: { prs_scanned: facts.size, rounds_with_local_record: roundsLocal, rounds_reported: roundsReported },
+      coverage: {
+        prs_scanned: facts.size,
+        rounds_with_local_record: roundsLocal,
+        rounds_reported: roundsReported,
+      },
     };
     // Unchanged content ⇒ no write: rewriting candidates.json every 3-second
     // poll is fs churn for a file whose durability is the point. Timestamps
@@ -809,6 +862,7 @@ function listFingerprint(list: CandidateList): string {
 
 function familyGap(family: CandidateFamily, deps: CandidateSweepDeps): string | undefined {
   if (family === "feedback-tag") return deps.comments ? undefined : COMMENT_TRANSPORT_GAP;
-  if (family === "disagreement" || family === "dismissed") return deps.signals ? undefined : SIGNAL_TRANSPORT_GAP;
+  if (family === "disagreement" || family === "dismissed")
+    return deps.signals ? undefined : SIGNAL_TRANSPORT_GAP;
   return undefined;
 }

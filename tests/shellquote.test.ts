@@ -20,13 +20,17 @@ describe("shellQuote", () => {
   });
 
   it("escapes embedded single quotes so the remote shell rebuilds the exact argv", () => {
-    expect(shellQuote("echo " + SQ + "a b" + SQ)).toBe(SQ + "echo " + ESCAPED_SQ + "a b" + ESCAPED_SQ + SQ);
+    expect(shellQuote("echo " + SQ + "a b" + SQ)).toBe(
+      SQ + "echo " + ESCAPED_SQ + "a b" + ESCAPED_SQ + SQ,
+    );
   });
 
   it("a full dockerSh argv joins into one remote token per element", () => {
     const argv = ["sudo", "docker", "exec", "c", "sh", "-c", "ls " + SQ + "x y" + SQ + " || true"];
     const joined = argv.map(shellQuote).join(" ");
-    expect(joined).toBe("sudo docker exec c sh -c " + SQ + "ls " + ESCAPED_SQ + "x y" + ESCAPED_SQ + " || true" + SQ);
+    expect(joined).toBe(
+      "sudo docker exec c sh -c " + SQ + "ls " + ESCAPED_SQ + "x y" + ESCAPED_SQ + " || true" + SQ,
+    );
   });
 
   it("round-trips through a real local shell: the argv comes back intact", async () => {

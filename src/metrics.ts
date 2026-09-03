@@ -30,7 +30,7 @@ export interface MetricsWindow {
     request_changes: number;
     rounds: number;
     spend_usd: number;
-    overruns: number;      // finished_at > deadline_at
+    overruns: number; // finished_at > deadline_at
   };
   // time-to-first-verdict: trigger_ts -> first round finished_at, seconds
   ttfv: Dist & { queue_median_s: number | null; review_median_s: number | null };
@@ -40,12 +40,12 @@ export interface MetricsWindow {
     per_pr_median: number | null;
     per_pr_p90: number | null;
     by_round_type: Record<string, number>; // usd totals
-    by_lens: Record<string, number>;       // usd totals
+    by_lens: Record<string, number>; // usd totals
   };
   rounds_until_resolution: Dist; // unit = rounds per PR reaching terminal/approved
   duration: Dist & { overrun_rate: number | null }; // round duration seconds
   author_response: Dist; // verdict posted -> next head push, seconds
-  review_depth: Dist;    // bot comments per round (gap metric; fills as recorded)
+  review_depth: Dist; // bot comments per round (gap metric; fills as recorded)
   size: { bucket: string; prs: number; median_ttfv_s: number | null }[]; // XS<10, S<50, M<200, L<600, XL (added+deleted lines)
   pingpong: Dist & { cap_hits: number }; // exchanges per thread; cap = 3
   /** Every event kind the daemon logged in this window, busiest first, cap 12. */
@@ -152,7 +152,10 @@ export function median(values: number[]): number | null {
   return percentile(values, 0.5);
 }
 
-export function histogram(values: number[], buckets: Array<{ label: string; max: number }>): Dist["histogram"] {
+export function histogram(
+  values: number[],
+  buckets: Array<{ label: string; max: number }>,
+): Dist["histogram"] {
   const out = buckets.map((b) => ({ label: b.label, count: 0 }));
   for (const v of values) {
     const idx = buckets.findIndex((b) => v <= b.max);
@@ -162,7 +165,10 @@ export function histogram(values: number[], buckets: Array<{ label: string; max:
   return out;
 }
 
-export function dist(values: number[], buckets: Array<{ label: string; max: number }> = TIME_BUCKETS): Dist {
+export function dist(
+  values: number[],
+  buckets: Array<{ label: string; max: number }> = TIME_BUCKETS,
+): Dist {
   return {
     median: median(values),
     p90: percentile(values, 0.9),
@@ -218,11 +224,18 @@ function readEvents(store: StateStore): ParsedEvent[] {
  * deliberately NOT restricted to METRIC_EVENT_KINDS: an operator wants to see
  * anomalies, injects and command traffic too. */
 function readEventKinds(store: StateStore): Array<{ ts: string; kind: string }> {
-  return store.db.prepare("SELECT ts, kind FROM events ORDER BY id").all() as Array<{ ts: string; kind: string }>;
+  return store.db.prepare("SELECT ts, kind FROM events ORDER BY id").all() as Array<{
+    ts: string;
+    kind: string;
+  }>;
 }
 
 function tableExists(store: StateStore, name: string): boolean {
-  return store.db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !== undefined;
+  return (
+    store.db
+      .prepare("SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .get(name) !== undefined
+  );
 }
 
 interface ThreadRow {
@@ -238,11 +251,15 @@ function readThreads(store: StateStore): ThreadRow[] {
   const hasCapHits =
     (
       store.db
-        .prepare("SELECT COUNT(*) AS c FROM pragma_table_info('pingpong_threads') WHERE name = 'cap_hits'")
+        .prepare(
+          "SELECT COUNT(*) AS c FROM pragma_table_info('pingpong_threads') WHERE name = 'cap_hits'",
+        )
         .get() as { c: number }
     ).c > 0;
   const col = hasCapHits ? "cap_hits" : "0 AS cap_hits";
-  return store.db.prepare(`SELECT thread_id, pr, exchanges, ${col}, updated_at FROM pingpong_threads`).all() as ThreadRow[];
+  return store.db
+    .prepare(`SELECT thread_id, pr, exchanges, ${col}, updated_at FROM pingpong_threads`)
+    .all() as ThreadRow[];
 }
 
 interface CommentRow {
@@ -321,7 +338,8 @@ export function stateIntervals(events: ParsedEvent[], nowIso: string): StateInte
       const endIso = i + 1 < list.length ? list[i + 1]!.ts : cur.to === "closed" ? null : nowIso;
       if (!endIso) continue;
       const secs = seconds(cur.ts, endIso);
-      if (Number.isFinite(secs) && secs >= 0) out.push({ pr, state: cur.to, start: cur.ts, seconds: secs });
+      if (Number.isFinite(secs) && secs >= 0)
+        out.push({ pr, state: cur.to, start: cur.ts, seconds: secs });
     }
   }
   return out;
@@ -398,7 +416,8 @@ export function computeWindow(input: WindowInput): MetricsWindow {
 
   // ---- verdict mix (backfilled included) ----
   const verdicts = new Map<string, number>();
-  for (const r of rounds) if (r.verdict) verdicts.set(r.verdict, (verdicts.get(r.verdict) ?? 0) + 1);
+  for (const r of rounds)
+    if (r.verdict) verdicts.set(r.verdict, (verdicts.get(r.verdict) ?? 0) + 1);
   const verdictMix = [...verdicts.entries()]
     .map(([verdict, count]) => ({ verdict, count }))
     .sort((a, b) => b.count - a.count || a.verdict.localeCompare(b.verdict));
@@ -412,7 +431,10 @@ export function computeWindow(input: WindowInput): MetricsWindow {
     if (spend === 0) continue;
     perPr.set(r.pr, (perPr.get(r.pr) ?? 0) + spend);
     byRoundType[r.round_type] = round2((byRoundType[r.round_type] ?? 0) + spend);
-    for (const lens of r.lenses.split(",").map((l) => l.trim()).filter(Boolean)) {
+    for (const lens of r.lenses
+      .split(",")
+      .map((l) => l.trim())
+      .filter(Boolean)) {
       // A round's cost is not divisible across its lenses — each lens is
       // credited with the full cost of the rounds it took part in.
       byLens[lens] = round2((byLens[lens] ?? 0) + spend);
@@ -468,7 +490,9 @@ export function computeWindow(input: WindowInput): MetricsWindow {
     linesByPr.set(r.pr, Math.max(linesByPr.get(r.pr) ?? 0, lines));
   }
   const size = SIZE_BUCKETS.map(({ bucket }) => {
-    const prs = [...linesByPr.entries()].filter(([, lines]) => sizeBucket(lines) === bucket).map(([pr]) => pr);
+    const prs = [...linesByPr.entries()]
+      .filter(([, lines]) => sizeBucket(lines) === bucket)
+      .map(([pr]) => pr);
     const ttfvs = prs.map((pr) => ttfv.get(pr)).filter((v): v is number => v !== undefined);
     return { bucket, prs: prs.length, median_ttfv_s: median(ttfvs) };
   });
@@ -502,9 +526,17 @@ export function computeWindow(input: WindowInput): MetricsWindow {
     causeCounts.set(cause, (causeCounts.get(cause) ?? 0) + 1);
   }
   const byCause = [...causeCounts.entries()]
-    .map(([cause, count]) => ({ cause, label: cancelCauseLabel(cause), count, loud: isLoudCancelCause(cause) }))
+    .map(([cause, count]) => ({
+      cause,
+      label: cancelCauseLabel(cause),
+      count,
+      loud: isLoudCancelCause(cause),
+    }))
     // Loud first: the surface renders in order and never has to know policy.
-    .sort((a, b) => Number(b.loud) - Number(a.loud) || b.count - a.count || a.cause.localeCompare(b.cause));
+    .sort(
+      (a, b) =>
+        Number(b.loud) - Number(a.loud) || b.count - a.count || a.cause.localeCompare(b.cause),
+    );
   const cancellations = {
     total: byCause.reduce((n, c) => n + c.count, 0),
     loud: byCause.filter((c) => c.loud).reduce((n, c) => n + c.count, 0),
@@ -535,7 +567,10 @@ export function computeWindow(input: WindowInput): MetricsWindow {
       by_lens: byLens,
     },
     rounds_until_resolution: dist(resolution, COUNT_BUCKETS),
-    duration: { ...dist(durations), overrun_rate: finishedLive.length ? overruns / finishedLive.length : null },
+    duration: {
+      ...dist(durations),
+      overrun_rate: finishedLive.length ? overruns / finishedLive.length : null,
+    },
     author_response: dist(responses),
     review_depth: dist(depthValues, DEPTH_BUCKETS),
     size,
@@ -549,10 +584,19 @@ export function computeWindow(input: WindowInput): MetricsWindow {
 
 export function dailyRows(rounds: RoundRow[], now: Date, timeZone: string, days = 30): DailyRow[] {
   const wanted: string[] = [];
-  for (let i = days - 1; i >= 0; i--) wanted.push(zoneDateString(new Date(now.getTime() - i * 86_400_000), timeZone));
+  for (let i = days - 1; i >= 0; i--)
+    wanted.push(zoneDateString(new Date(now.getTime() - i * 86_400_000), timeZone));
   const byDay = new Map<string, DailyRow & { prSet: Set<number> }>();
   for (const day of wanted) {
-    byDay.set(day, { day, rounds: 0, prs: 0, spend_usd: 0, approvals: 0, request_changes: 0, prSet: new Set() });
+    byDay.set(day, {
+      day,
+      rounds: 0,
+      prs: 0,
+      spend_usd: 0,
+      approvals: 0,
+      request_changes: 0,
+      prSet: new Set(),
+    });
   }
   for (const r of rounds) {
     const day = zoneDateString(new Date(roundAnchor(r)), timeZone);
@@ -581,7 +625,11 @@ export function dailyRows(rounds: RoundRow[], now: Date, timeZone: string, days 
 
 /** Rounds spent per PR that reached a resolution: the first APPROVE round
  * (rounds up to and including it), or every round of a PR GitHub closed. */
-export function resolutionByPr(store: StateStore, rounds: RoundRow[], events: ParsedEvent[]): Map<number, number> {
+export function resolutionByPr(
+  store: StateStore,
+  rounds: RoundRow[],
+  events: ParsedEvent[],
+): Map<number, number> {
   const closed = new Set<number>();
   for (const e of events) if (e.kind === "pr_closed" && e.pr !== null) closed.add(e.pr);
   for (const p of store.allPrs()) if (p.state === "closed") closed.add(p.number);
@@ -621,13 +669,16 @@ export function computeMetrics(store: StateStore, opts: MetricsOptions = {}): Me
   const rounds = store.allRounds();
   const events = readEvents(store);
   const allEvents = readEventKinds(store);
-  const comments = store.db.prepare("SELECT pr, round_no, posted_at FROM bot_comments").all() as CommentRow[];
+  const comments = store.db
+    .prepare("SELECT pr, round_no, posted_at FROM bot_comments")
+    .all() as CommentRow[];
   const threads = readThreads(store);
   const intervals = stateIntervals(events, nowIso);
   const resolvedPrs = resolutionByPr(store, rounds, events);
 
   const base = { rounds, events, allEvents, comments, threads, intervals, resolvedPrs, nowIso };
-  const iso = (daysAgo: number): string => new Date(now.getTime() - daysAgo * 86_400_000).toISOString();
+  const iso = (daysAgo: number): string =>
+    new Date(now.getTime() - daysAgo * 86_400_000).toISOString();
 
   const backfilled = rounds.filter(isBackfilled);
   const oldest = [...backfilled].map((r) => r.started_at).sort()[0] ?? null;
@@ -654,7 +705,13 @@ export function computeMetrics(store: StateStore, opts: MetricsOptions = {}): Me
 // ---- ops: the file-derived half -------------------------------------------
 
 export function emptyOps(): OpsInfo {
-  return { heartbeat: null, dry_run: false, running_rounds: 0, max_concurrent_rounds: 0, build: null };
+  return {
+    heartbeat: null,
+    dry_run: false,
+    running_rounds: 0,
+    max_concurrent_rounds: 0,
+    build: null,
+  };
 }
 
 /**
@@ -683,10 +740,16 @@ export function readOps(
       running_rounds: number;
       max_concurrent_rounds: number;
     }>;
-    ops.heartbeat = typeof snap.heartbeat === "string" ? snap.heartbeat : typeof snap.written_at === "string" ? snap.written_at : null;
+    ops.heartbeat =
+      typeof snap.heartbeat === "string"
+        ? snap.heartbeat
+        : typeof snap.written_at === "string"
+          ? snap.written_at
+          : null;
     if (typeof snap.dry_run === "boolean") ops.dry_run = snap.dry_run;
     if (typeof snap.running_rounds === "number") ops.running_rounds = snap.running_rounds;
-    if (typeof snap.max_concurrent_rounds === "number") ops.max_concurrent_rounds = snap.max_concurrent_rounds;
+    if (typeof snap.max_concurrent_rounds === "number")
+      ops.max_concurrent_rounds = snap.max_concurrent_rounds;
   } catch {
     /* no snapshot (or an unreadable one) — the nulls/zeros stand */
   }
@@ -716,12 +779,23 @@ export function computeTimeline(store: StateStore, pr: number): TimelinePayload 
         const from = typeof e.data.from === "string" ? e.data.from : "—";
         const to = typeof e.data.to === "string" ? e.data.to : "?";
         const what = typeof e.data.event === "string" ? e.data.event : "";
-        if (what === "trigger") push(e.ts, "trigger", "triggered", typeof e.data.reason === "string" ? e.data.reason : null);
+        if (what === "trigger")
+          push(
+            e.ts,
+            "trigger",
+            "triggered",
+            typeof e.data.reason === "string" ? e.data.reason : null,
+          );
         if (from !== to) push(e.ts, "transition", `${from} -> ${to}`, what || null);
         break;
       }
       case "head_push":
-        push(e.ts, "head_push", "author pushed", typeof e.data.head_sha === "string" ? e.data.head_sha.slice(0, 10) : null);
+        push(
+          e.ts,
+          "head_push",
+          "author pushed",
+          typeof e.data.head_sha === "string" ? e.data.head_sha.slice(0, 10) : null,
+        );
         break;
       case "pr_closed":
         push(e.ts, "close", e.data.merged ? "merged" : "closed", null);
@@ -733,17 +807,32 @@ export function computeTimeline(store: StateStore, pr: number): TimelinePayload 
 
   for (const r of rounds) {
     if (r.backfilled === 1) {
-      push(r.finished_at ?? r.started_at, "backfilled_round", `round ${r.round_no} (backfill) ${r.verdict ?? "—"}`, null);
+      push(
+        r.finished_at ?? r.started_at,
+        "backfilled_round",
+        `round ${r.round_no} (backfill) ${r.verdict ?? "—"}`,
+        null,
+      );
       continue;
     }
-    push(r.started_at, "round_start", `round ${r.round_no} start (${r.round_type})`, r.lenses || null);
+    push(
+      r.started_at,
+      "round_start",
+      `round ${r.round_no} start (${r.round_type})`,
+      r.lenses || null,
+    );
     if (r.finished_at) {
       const bits = [
         r.verdict ?? r.status,
         r.est_usd !== null ? `$${r.est_usd.toFixed(2)}` : null,
         r.duration_s !== null ? `${Math.round(r.duration_s)}s` : null,
       ].filter(Boolean);
-      push(r.finished_at, "round_finish", `round ${r.round_no} ${r.verdict ?? r.status}`, bits.join(" · "));
+      push(
+        r.finished_at,
+        "round_finish",
+        `round ${r.round_no} ${r.verdict ?? r.status}`,
+        bits.join(" · "),
+      );
     }
   }
 
@@ -772,7 +861,13 @@ export function computeTimeline(store: StateStore, pr: number): TimelinePayload 
 // ---- human-readable rendering (the non-json CLI fallback) -----------------
 
 const fmtSecs = (s: number | null): string =>
-  s === null ? "—" : s >= 3600 ? `${(s / 3600).toFixed(1)}h` : s >= 60 ? `${(s / 60).toFixed(1)}m` : `${Math.round(s)}s`;
+  s === null
+    ? "—"
+    : s >= 3600
+      ? `${(s / 3600).toFixed(1)}h`
+      : s >= 60
+        ? `${(s / 60).toFixed(1)}m`
+        : `${Math.round(s)}s`;
 
 /**
  * One plain-text line for the cancellation split — shared wording
@@ -820,9 +915,15 @@ export function renderMetrics(payload: MetricsPayload): string {
     `duration (7d): median ${fmtSecs(w.duration.median)} p90 ${fmtSecs(w.duration.p90)} ` +
       `overrun-rate ${w.duration.overrun_rate === null ? "—" : `${Math.round(w.duration.overrun_rate * 100)}%`}`,
   );
-  lines.push(`rounds until resolution (7d): median ${w.rounds_until_resolution.median ?? "—"} n=${w.rounds_until_resolution.n}`);
-  lines.push(`verdict mix (7d): ${w.verdict_mix.map((v) => `${v.verdict} ${v.count}`).join("  ") || "—"}`);
-  lines.push(`events (7d): ${w.events_by_kind.map((e) => `${e.kind} ${e.count}`).join("  ") || "—"}`);
+  lines.push(
+    `rounds until resolution (7d): median ${w.rounds_until_resolution.median ?? "—"} n=${w.rounds_until_resolution.n}`,
+  );
+  lines.push(
+    `verdict mix (7d): ${w.verdict_mix.map((v) => `${v.verdict} ${v.count}`).join("  ") || "—"}`,
+  );
+  lines.push(
+    `events (7d): ${w.events_by_kind.map((e) => `${e.kind} ${e.count}`).join("  ") || "—"}`,
+  );
   lines.push(cancellationLine(w));
   lines.push("");
   lines.push("day          rounds  PRs  spend   appr  rc");
@@ -834,7 +935,9 @@ export function renderMetrics(payload: MetricsPayload): string {
   }
   if (payload.backfill.rounds > 0) {
     lines.push("");
-    lines.push(`backfill: ${payload.backfill.rounds} rounds across ${payload.backfill.prs} PRs, oldest ${payload.backfill.oldest}`);
+    lines.push(
+      `backfill: ${payload.backfill.rounds} rounds across ${payload.backfill.prs} PRs, oldest ${payload.backfill.oldest}`,
+    );
   }
   return lines.join("\n");
 }
@@ -846,7 +949,9 @@ export function renderTimeline(payload: TimelinePayload): string {
     "",
   ];
   for (const item of payload.items) {
-    lines.push(`${item.ts}  ${item.kind.padEnd(16)} ${item.label}${item.detail ? ` — ${item.detail}` : ""}`);
+    lines.push(
+      `${item.ts}  ${item.kind.padEnd(16)} ${item.label}${item.detail ? ` — ${item.detail}` : ""}`,
+    );
   }
   return lines.join("\n");
 }

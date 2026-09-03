@@ -2,10 +2,32 @@ import { BAD_BG } from "../src/tui/design.js";
 import { describe, expect, it } from "vitest";
 import type { WhyPayload } from "../src/cli.js";
 import type { StatusSnapshot } from "../src/state.js";
-import { piPaneSize, piRows, renderBoard, topBar, detailLines, type BoardView } from "../src/tui/board.js";
+import {
+  piPaneSize,
+  piRows,
+  renderBoard,
+  topBar,
+  detailLines,
+  type BoardView,
+} from "../src/tui/board.js";
 import { decodeKey, decodeInputKey } from "../src/tui/keys.js";
-import { displayWidth, fit, rule, sanitizeText, stripAnsi, truncate, wrap } from "../src/tui/paint.js";
-import { captureArgv, statusArgv, whyArgv, eventsArgv, progressArgv, type SshRunner } from "../src/tui/remote.js";
+import {
+  displayWidth,
+  fit,
+  rule,
+  sanitizeText,
+  stripAnsi,
+  truncate,
+  wrap,
+} from "../src/tui/paint.js";
+import {
+  captureArgv,
+  statusArgv,
+  whyArgv,
+  eventsArgv,
+  progressArgv,
+  type SshRunner,
+} from "../src/tui/remote.js";
 import { PiMirror, type PiPaneView } from "../src/tui/pipane.js";
 import { TUI_DEFAULTS } from "../src/config.js";
 
@@ -13,8 +35,20 @@ const snapshot: StatusSnapshot = {
   written_at: "2026-08-13T12:00:00Z",
   dry_run: true,
   prs: [
-    { number: 5012, state: "reviewing", title: "fix(crm): retry send_message", head_sha: "a2e380ff11", stale_recheck: 0 },
-    { number: 5049, state: "awaiting_author", title: "feat(remote-api): dispatch", head_sha: "bb11223344", stale_recheck: 0 },
+    {
+      number: 5012,
+      state: "reviewing",
+      title: "fix(crm): retry send_message",
+      head_sha: "a2e380ff11",
+      stale_recheck: 0,
+    },
+    {
+      number: 5049,
+      state: "awaiting_author",
+      title: "feat(remote-api): dispatch",
+      head_sha: "bb11223344",
+      stale_recheck: 0,
+    },
   ],
   running_rounds: 3,
   max_concurrent_rounds: 12,
@@ -65,8 +99,22 @@ describe("topBar", () => {
   });
 
   it("distinguishes a live daemon from a failed review pipeline", () => {
-    const causes = [{ key: "review-failure:cmd-1", pr: 5408, since: "2026-08-13T11:55:00Z", stage: "command_start", detail: "no start", next_action: "operator_unwedge" }] as const;
-    const bar = stripAnsi(topBar(view({ health: { kind: "pipeline_unhealthy", heartbeatAgeS: 2, causes: [...causes] } }), 120));
+    const causes = [
+      {
+        key: "review-failure:cmd-1",
+        pr: 5408,
+        since: "2026-08-13T11:55:00Z",
+        stage: "command_start",
+        detail: "no start",
+        next_action: "operator_unwedge",
+      },
+    ] as const;
+    const bar = stripAnsi(
+      topBar(
+        view({ health: { kind: "pipeline_unhealthy", heartbeatAgeS: 2, causes: [...causes] } }),
+        120,
+      ),
+    );
     expect(bar).toContain("daemon alive");
     expect(bar).toContain("PIPELINE FAILED · 1");
     expect(bar).not.toContain("daemon ok");
@@ -94,8 +142,26 @@ describe("detailLines", () => {
     trigger_ts: "2026-08-13T14:02:00Z",
     spend_usd: 1.3,
     rounds: [
-      { round_no: 1, round_type: "initial", status: "done", verdict: "REQUEST_CHANGES", started_at: "", finished_at: "", spend_usd: 0.5, lenses: "a" },
-      { round_no: 2, round_type: "rework", status: "running", verdict: null, started_at: "", finished_at: null, spend_usd: null, lenses: "b" },
+      {
+        round_no: 1,
+        round_type: "initial",
+        status: "done",
+        verdict: "REQUEST_CHANGES",
+        started_at: "",
+        finished_at: "",
+        spend_usd: 0.5,
+        lenses: "a",
+      },
+      {
+        round_no: 2,
+        round_type: "rework",
+        status: "running",
+        verdict: null,
+        started_at: "",
+        finished_at: null,
+        spend_usd: null,
+        lenses: "b",
+      },
     ],
     threads: { open: 2, total: 2 },
     ledger: "F1 [P1/0.9][delivery] tasks.py:88 open\n",
@@ -130,7 +196,9 @@ describe("detailLines", () => {
       },
     };
     const lines = detailLines(why, failed, 80, new Date("2026-08-13T12:00:00Z")).map(stripAnsi);
-    expect(lines.join("\n")).toContain("FAILED_LOUD · command_start · cmd-1 · round 1 · attempt 2/2 · 5m old");
+    expect(lines.join("\n")).toContain(
+      "FAILED_LOUD · command_start · cmd-1 · round 1 · attempt 2/2 · 5m old",
+    );
     expect(lines.join("\n")).toContain("press u to recover");
   });
 
@@ -165,18 +233,20 @@ describe("detailLines", () => {
   it("shows round timing, parent activity, every planned lens, and verdict progress", () => {
     const live: WhyPayload = {
       ...why,
-      rounds: [{
-        round_no: 14,
-        round_type: "re-review",
-        status: "running",
-        verdict: null,
-        started_at: "2026-08-27T09:34:54Z",
-        deadline_at: "2026-08-27T10:49:54Z",
-        finished_at: null,
-        spend_usd: null,
-        lenses: "pass-baseline,pass-security,pass-validate",
-        validate_tier: "sol-high",
-      }],
+      rounds: [
+        {
+          round_no: 14,
+          round_type: "re-review",
+          status: "running",
+          verdict: null,
+          started_at: "2026-08-27T09:34:54Z",
+          deadline_at: "2026-08-27T10:49:54Z",
+          finished_at: null,
+          spend_usd: null,
+          lenses: "pass-baseline,pass-security,pass-validate",
+          validate_tier: "sol-high",
+        },
+      ],
     };
     const lines = detailLines(
       live,
@@ -214,14 +284,40 @@ describe("detailLines", () => {
         last_activity: "pass-security · grep: bearer",
         active_tool: "subagent: pass-security",
         agents: [
-          { execution_id: "baseline", agent: "pass-baseline", status: "completed", duration_ms: 120_000, tool_count: 7, started_at: "2026-08-27T09:35:00Z", finished_at: "2026-08-27T09:37:00Z" },
-          { execution_id: "security", agent: "pass-security", status: "running", duration_ms: 30_000, tool_count: 2, current_tool: "grep: bearer", started_at: "2026-08-27T10:04:24Z" },
-          { execution_id: "architecture", agent: "pass-architecture", status: "completed", duration_ms: 60_000, tool_count: 5, started_at: "2026-08-27T09:38:00Z", finished_at: "2026-08-27T09:39:00Z" },
+          {
+            execution_id: "baseline",
+            agent: "pass-baseline",
+            status: "completed",
+            duration_ms: 120_000,
+            tool_count: 7,
+            started_at: "2026-08-27T09:35:00Z",
+            finished_at: "2026-08-27T09:37:00Z",
+          },
+          {
+            execution_id: "security",
+            agent: "pass-security",
+            status: "running",
+            duration_ms: 30_000,
+            tool_count: 2,
+            current_tool: "grep: bearer",
+            started_at: "2026-08-27T10:04:24Z",
+          },
+          {
+            execution_id: "architecture",
+            agent: "pass-architecture",
+            status: "completed",
+            duration_ms: 60_000,
+            tool_count: 5,
+            started_at: "2026-08-27T09:38:00Z",
+            finished_at: "2026-08-27T09:39:00Z",
+          },
         ],
       },
     ).map(stripAnsi);
     expect(lines).toContain("▍CURRENT REVIEW round 14 · 30m elapsed · 45m left");
-    expect(lines).toContain("  parent ACTIVE · fanout-started · signal 1s ago · subagent: pass-security");
+    expect(lines).toContain(
+      "  parent ACTIVE · fanout-started · signal 1s ago · subagent: pass-security",
+    );
     expect(lines).toContain("  ✓ pass-baseline · done in 2m · 7 tools");
     expect(lines).toContain("  ⟳ pass-security · running 30s · grep: bearer");
     expect(lines).toContain("  ○ pass-validate · pending · sol-high");
@@ -233,7 +329,9 @@ describe("detailLines", () => {
   it("rejects live progress from a different command even when PR/round timestamps match", () => {
     const live: WhyPayload = {
       ...why,
-      rounds: [{ ...why.rounds[1]!, round_no: 14, status: "running", deadline_at: "2026-08-27T10:49:54Z" }],
+      rounds: [
+        { ...why.rounds[1]!, round_no: 14, status: "running", deadline_at: "2026-08-27T10:49:54Z" },
+      ],
     };
     const pr = {
       ...snapshot.prs[0]!,
@@ -251,11 +349,21 @@ describe("detailLines", () => {
       },
     };
     const lines = detailLines(live, pr, 76, new Date("2026-08-27T10:04:54Z"), {
-      version: 2, pr: 5012, session: "pr-5012", run_started_at: live.rounds[0]!.started_at,
-      updated_at: "2026-08-27T10:04:53Z", parent_status: "active",
-      command_id: "cmd-neighbor", command_sha256: "b".repeat(64), command_accepted_at: live.rounds[0]!.started_at,
-      round_no: 14, head_sha: "head-current", preparing_at: live.rounds[0]!.started_at,
-      last_activity_at: "2026-08-27T10:04:53Z", last_activity: "neighboring wake", agents: [],
+      version: 2,
+      pr: 5012,
+      session: "pr-5012",
+      run_started_at: live.rounds[0]!.started_at,
+      updated_at: "2026-08-27T10:04:53Z",
+      parent_status: "active",
+      command_id: "cmd-neighbor",
+      command_sha256: "b".repeat(64),
+      command_accepted_at: live.rounds[0]!.started_at,
+      round_no: 14,
+      head_sha: "head-current",
+      preparing_at: live.rounds[0]!.started_at,
+      last_activity_at: "2026-08-27T10:04:53Z",
+      last_activity: "neighboring wake",
+      agents: [],
     }).map(stripAnsi);
     expect(lines).toContain("  ? parent · live progress unavailable");
   });
@@ -263,9 +371,17 @@ describe("detailLines", () => {
   it("never invents pending agent state when the progress signal is absent", () => {
     const live: WhyPayload = {
       ...why,
-      rounds: [{ ...why.rounds[1]!, deadline_at: "2026-08-27T10:49:54Z", lenses: "pass-baseline,pass-validate" }],
+      rounds: [
+        {
+          ...why.rounds[1]!,
+          deadline_at: "2026-08-27T10:49:54Z",
+          lenses: "pass-baseline,pass-validate",
+        },
+      ],
     };
-    const lines = detailLines(live, snapshot.prs[0], 76, new Date("2026-08-27T10:04:54Z")).map(stripAnsi);
+    const lines = detailLines(live, snapshot.prs[0], 76, new Date("2026-08-27T10:04:54Z")).map(
+      stripAnsi,
+    );
     expect(lines).toContain("  ? parent · live progress unavailable");
     expect(lines).toContain("  ? pass-baseline · unknown");
     expect(lines).toContain("  ? pass-validate · unknown");
@@ -279,8 +395,28 @@ describe("detailLines", () => {
 
     it("marks the round and spells the cause out underneath", () => {
       const lines = withRounds([
-        { round_no: 1, round_type: "initial", status: "cancelled", verdict: null, started_at: "", finished_at: "", spend_usd: null, lenses: "a", cancel_cause: "orphan_sweep" },
-        { round_no: 2, round_type: "rework", status: "cancelled", verdict: null, started_at: "", finished_at: "", spend_usd: null, lenses: "b", cancel_cause: "deadline_overrun" },
+        {
+          round_no: 1,
+          round_type: "initial",
+          status: "cancelled",
+          verdict: null,
+          started_at: "",
+          finished_at: "",
+          spend_usd: null,
+          lenses: "a",
+          cancel_cause: "orphan_sweep",
+        },
+        {
+          round_no: 2,
+          round_type: "rework",
+          status: "cancelled",
+          verdict: null,
+          started_at: "",
+          finished_at: "",
+          spend_usd: null,
+          lenses: "b",
+          cancel_cause: "deadline_overrun",
+        },
       ]);
       expect(lines.find((l) => l.startsWith("▍ROUNDS"))).toContain("r1 ✕ · r2 ✕");
       expect(lines).toContain("  ✕ r1 cancelled — orphan sweep (redeploy)");
@@ -289,7 +425,16 @@ describe("detailLines", () => {
 
     it("an older daemon's payload (no cause) reads as unclassified, never as benign", () => {
       const lines = withRounds([
-        { round_no: 1, round_type: "initial", status: "cancelled", verdict: null, started_at: "", finished_at: "", spend_usd: null, lenses: "a" },
+        {
+          round_no: 1,
+          round_type: "initial",
+          status: "cancelled",
+          verdict: null,
+          started_at: "",
+          finished_at: "",
+          spend_usd: null,
+          lenses: "a",
+        },
       ]);
       expect(lines).toContain("  ✕ r1 cancelled — unclassified");
     });
@@ -336,7 +481,8 @@ describe("detailLines keeps foreign text inside the pane", () => {
   it("wraps a long CRLF description instead of truncating rightwards", () => {
     const d: WhyPayload = {
       ...whyBase,
-      description: "First sentence of the body.\r\nSecond line that is quite long and would previously vanish off the right edge of the pane entirely.",
+      description:
+        "First sentence of the body.\r\nSecond line that is quite long and would previously vanish off the right edge of the pane entirely.",
     };
     const lines = detailLines(d, snapshot.prs[0], 30);
     const flat = lines.map(stripAnsi);
@@ -348,7 +494,13 @@ describe("detailLines keeps foreign text inside the pane", () => {
   it("comments render as head line + wrapped indented body, never overwide", () => {
     const d: WhyPayload = {
       ...whyBase,
-      comments: [{ author: "alice", created_at: "2026-08-14T00:00:00Z", body: "A very long comment body\r\nwith CRLF endings that keeps going and going well past the pane width to prove wrapping works." }],
+      comments: [
+        {
+          author: "alice",
+          created_at: "2026-08-14T00:00:00Z",
+          body: "A very long comment body\r\nwith CRLF endings that keeps going and going well past the pane width to prove wrapping works.",
+        },
+      ],
     };
     const lines = detailLines(d, snapshot.prs[0], 28, new Date("2026-08-14T01:00:00Z"));
     for (const l of lines) expect(displayWidth(l)).toBeLessThanOrEqual(28);
@@ -384,7 +536,11 @@ describe("adaptive layout", () => {
     // bottom border rows-1. The 7 strip rows the board used to give up are the
     // sidebar's problem now — it is a column, not a band.
     for (const rows of [24, 40]) {
-      const frame = renderBoard(view({ pi: { pr: 5012, lines: ["pi output"], missing: false, stale: false, offset: 0 } }), 120, rows);
+      const frame = renderBoard(
+        view({ pi: { pr: 5012, lines: ["pi output"], missing: false, stale: false, offset: 0 } }),
+        120,
+        rows,
+      );
       expect(frame.meta["bodyRows"]! + frame.meta["piRows"]!).toBe(rows - 4);
       expect(frame.meta["piTop"]! + frame.meta["piRows"]! - 1).toBe(rows - 4); // last body row
       expect(frame.lines[rows - 4]!.startsWith("│")).toBe(true); // still content, not chrome
@@ -402,8 +558,14 @@ describe("adaptive layout", () => {
   });
 
   it("shows full titles and more events on a tall wide terminal", () => {
-    const events = Array.from({ length: 8 }, (_, i) => ({ ts: `t${i}`, text: `10:00:0${i} event_${i}`, anomaly: false }));
-    const text = renderBoard(view({ events, eventsFocus: true }), 140, 48).lines.map(stripAnsi).join("\n");
+    const events = Array.from({ length: 8 }, (_, i) => ({
+      ts: `t${i}`,
+      text: `10:00:0${i} event_${i}`,
+      anomaly: false,
+    }));
+    const text = renderBoard(view({ events, eventsFocus: true }), 140, 48)
+      .lines.map(stripAnsi)
+      .join("\n");
     expect(text).toContain("fix(crm): retry send_message"); // uncropped title
     expect(text).toContain("event_7"); // more than 3 event lines visible
   });
@@ -413,8 +575,16 @@ describe("renderBoard", () => {
   it("renders the full frame with list, detail and the live pi mirror", () => {
     const frame = renderBoard(
       view({
-        events: [{ ts: "21:24:11", text: "21:24:11 verdict_applied #5049 (APPROVE)", anomaly: false }],
-        pi: { pr: 5012, lines: ["> reading tasks.py", "thinking…"], missing: false, stale: false, offset: 0 },
+        events: [
+          { ts: "21:24:11", text: "21:24:11 verdict_applied #5049 (APPROVE)", anomaly: false },
+        ],
+        pi: {
+          pr: 5012,
+          lines: ["> reading tasks.py", "thinking…"],
+          missing: false,
+          stale: false,
+          offset: 0,
+        },
       }),
       100,
       24,
@@ -440,16 +610,28 @@ describe("renderBoard", () => {
   });
 
   it("keeps every row at the terminal width at 30 / 100 / 220 cols, mirror and overlay included", () => {
-    const events = Array.from({ length: 20 }, (_, i) => ({ ts: `t${i}`, text: `10:00:0${i} verdict_applied #504${i % 10}`, anomaly: i % 3 === 0 }));
+    const events = Array.from({ length: 20 }, (_, i) => ({
+      ts: `t${i}`,
+      text: `10:00:0${i} verdict_applied #504${i % 10}`,
+      anomaly: i % 3 === 0,
+    }));
     const pi: PiPaneView = {
       pr: 5012,
-      lines: ["\x1b[32mgreen line that runs on and on and on past any sane pane width\x1b[0m", "plain"],
+      lines: [
+        "\x1b[32mgreen line that runs on and on and on past any sane pane width\x1b[0m",
+        "plain",
+      ],
       missing: false,
       stale: false,
       offset: 0,
     };
     for (const cols of [30, 100, 220]) {
-      for (const over of [{}, { eventsFocus: true }, { piFocus: true, piPr: 5012 }, { piFocus: true, piPr: 5012, pi: { ...pi, offset: 9 } }]) {
+      for (const over of [
+        {},
+        { eventsFocus: true },
+        { piFocus: true, piPr: 5012 },
+        { piFocus: true, piPr: 5012, pi: { ...pi, offset: 9 } },
+      ]) {
         const frame = renderBoard(view({ events, pi, ...over }), cols, 30);
         for (const line of frame.lines) expect(displayWidth(line)).toBe(cols);
       }
@@ -459,7 +641,11 @@ describe("renderBoard", () => {
   it("shows the tail of the capture and passes SGR colors through", () => {
     const lines = Array.from({ length: 40 }, (_, i) => `line_${i}`);
     lines[39] = "\x1b[31mlast line\x1b[0m";
-    const frame = renderBoard(view({ pi: { pr: 5012, lines, missing: false, stale: false, offset: 0 } }), 100, 24);
+    const frame = renderBoard(
+      view({ pi: { pr: 5012, lines, missing: false, stale: false, offset: 0 } }),
+      100,
+      24,
+    );
     const raw = frame.lines.join("\n");
     expect(raw).toContain("\x1b[31mlast line");
     const text = frame.lines.map(stripAnsi).join("\n");
@@ -472,23 +658,45 @@ describe("renderBoard", () => {
   });
 
   it("falls back to a no-session line, keeping the last capture marked (stale)", () => {
-    const gone = renderBoard(view({ pi: { pr: 5012, lines: [], missing: true, stale: false, offset: 0 } }), 100, 24).lines.map(stripAnsi).join("\n");
+    const gone = renderBoard(
+      view({ pi: { pr: 5012, lines: [], missing: true, stale: false, offset: 0 } }),
+      100,
+      24,
+    )
+      .lines.map(stripAnsi)
+      .join("\n");
     expect(gone).toContain("no pi session for #5012");
     expect(gone).not.toContain("(stale)");
 
-    const stale = renderBoard(view({ pi: { pr: 5012, lines: ["old output"], missing: true, stale: true, offset: 0 } }), 100, 24).lines.map(stripAnsi).join("\n");
+    const stale = renderBoard(
+      view({ pi: { pr: 5012, lines: ["old output"], missing: true, stale: true, offset: 0 } }),
+      100,
+      24,
+    )
+      .lines.map(stripAnsi)
+      .join("\n");
     expect(stale).toContain("no pi session for #5012 · (stale)");
     expect(stale).toContain("old output");
   });
 
   it("ignores a mirror belonging to another PR (selection moved, capture in flight)", () => {
-    const text = renderBoard(view({ pi: { pr: 5049, lines: ["other pr"], missing: false, stale: false, offset: 0 } }), 100, 24).lines.map(stripAnsi).join("\n");
+    const text = renderBoard(
+      view({ pi: { pr: 5049, lines: ["other pr"], missing: false, stale: false, offset: 0 } }),
+      100,
+      24,
+    )
+      .lines.map(stripAnsi)
+      .join("\n");
     expect(text).toContain("PI pr-5012 · connecting…");
     expect(text).not.toContain("other pr");
   });
 
   it("declares the whole pane region as one focus zone (never an attach zone)", () => {
-    const frame = renderBoard(view({ pi: { pr: 5012, lines: ["x"], missing: false, stale: false, offset: 0 } }), 100, 24);
+    const frame = renderBoard(
+      view({ pi: { pr: 5012, lines: ["x"], missing: false, stale: false, offset: 0 } }),
+      100,
+      24,
+    );
     const piTop = frame.meta["piTop"]!;
     const zone = frame.zones.find((z) => (z.action as { t: string }).t === "pi-focus");
     expect(zone).toBeDefined();
@@ -508,7 +716,11 @@ describe("renderBoard", () => {
 
   it("shows the scrollback offset and drops that many lines off the tail", () => {
     const lines = Array.from({ length: 40 }, (_, i) => `line_${i}`);
-    const text = renderBoard(view({ pi: { pr: 5012, lines, missing: false, stale: false, offset: 6 } }), 100, 24)
+    const text = renderBoard(
+      view({ pi: { pr: 5012, lines, missing: false, stale: false, offset: 6 } }),
+      100,
+      24,
+    )
       .lines.map(stripAnsi)
       .join("\n");
     expect(text).toContain("↑ 6 lines back · End live");
@@ -526,7 +738,11 @@ describe("renderBoard", () => {
   });
 
   it("toggles the events overlay on e, with its own scroll and jump zones", () => {
-    const events = Array.from({ length: 6 }, (_, i) => ({ ts: `t${i}`, text: `10:00:0${i} verdict_applied #504${i}`, anomaly: false }));
+    const events = Array.from({ length: 6 }, (_, i) => ({
+      ts: `t${i}`,
+      text: `10:00:0${i} verdict_applied #504${i}`,
+      anomaly: false,
+    }));
     const closed = renderBoard(view({ events }), 100, 24).lines.map(stripAnsi).join("\n");
     expect(closed).not.toContain("EVENTS");
 
@@ -535,25 +751,37 @@ describe("renderBoard", () => {
     expect(text).toContain("EVENTS");
     expect(text).toContain("j/k scroll · e/Esc close");
     expect(text).toContain("verdict_applied #5040");
-    expect(frame.zones.some((z) => (z.action as { t: string; pr?: number }).t === "event-jump")).toBe(true);
+    expect(
+      frame.zones.some((z) => (z.action as { t: string; pr?: number }).t === "event-jump"),
+    ).toBe(true);
     // The command bar keeps its constant "e events" button while it is open.
-    const wide = renderBoard(view({ events, eventsFocus: true }), 220, 24).lines.map(stripAnsi).join("\n");
+    const wide = renderBoard(view({ events, eventsFocus: true }), 220, 24)
+      .lines.map(stripAnsi)
+      .join("\n");
     expect(wide).toContain("e events");
 
-    const scrolled = renderBoard(view({ events, eventsFocus: true, eventsScroll: 2 }), 100, 24).lines.map(stripAnsi).join("\n");
+    const scrolled = renderBoard(view({ events, eventsFocus: true, eventsScroll: 2 }), 100, 24)
+      .lines.map(stripAnsi)
+      .join("\n");
     expect(scrolled).not.toContain("verdict_applied #5040");
     expect(scrolled).toContain("verdict_applied #5042");
   });
 
   it("renders the help overlay over the board", () => {
-    const text = renderBoard(view({ help: true }), 100, 30).lines.map(stripAnsi).join("\n");
+    const text = renderBoard(view({ help: true }), 100, 30)
+      .lines.map(stripAnsi)
+      .join("\n");
     expect(text).toContain("KEYS");
     expect(text).toContain("Ctrl-q");
     expect(text).not.toContain("PRS (2)");
   });
 
   it("renders the quick-message input box in place of the events strip", () => {
-    const text = renderBoard(view({ inputBox: { target: "#5012 (pi session pr-5012)", text: "also check" } }), 100, 24)
+    const text = renderBoard(
+      view({ inputBox: { target: "#5012 (pi session pr-5012)", text: "also check" } }),
+      100,
+      24,
+    )
       .lines.map(stripAnsi)
       .join("\n");
     expect(text).toContain("MSG → #5012 (pi session pr-5012)");
@@ -592,9 +820,22 @@ describe("remote argv builders", () => {
   });
 
   it("runs read-only CLI calls inside the container with sudo docker", () => {
-    expect(whyArgv(TUI_DEFAULTS, 5012)).toEqual(["sudo", "docker", "exec", "quickreview-sandbox", "node", "dist/src/cli.js", "why", "5012", "--json"]);
+    expect(whyArgv(TUI_DEFAULTS, 5012)).toEqual([
+      "sudo",
+      "docker",
+      "exec",
+      "quickreview-sandbox",
+      "node",
+      "dist/src/cli.js",
+      "why",
+      "5012",
+      "--json",
+    ]);
     expect(eventsArgv(TUI_DEFAULTS, 20)).toContain("--tail");
-    expect(progressArgv(TUI_DEFAULTS, 5012)).toEqual(["cat", "/opt/quickreview/state/round-progress/pr-5012.json"]);
+    expect(progressArgv(TUI_DEFAULTS, 5012)).toEqual([
+      "cat",
+      "/opt/quickreview/state/round-progress/pr-5012.json",
+    ]);
   });
 
   it("drops sudo when configured off", () => {
@@ -625,8 +866,20 @@ describe("the mirrored pi session gets the board's real geometry", () => {
     const argv = captureArgv(TUI_DEFAULTS, "pr-5012", undefined, { cols: 96, rows: 8 });
     expect(argv.indexOf("resize-window")).toBeLessThan(argv.indexOf("capture-pane"));
     expect(argv.slice(argv.indexOf("resize-window"))).toEqual([
-      "resize-window", "-t", "pr-5012", "-x", "96", "-y", "8", ";",
-      "capture-pane", "-e", "-p", "-J", "-t", "pr-5012",
+      "resize-window",
+      "-t",
+      "pr-5012",
+      "-x",
+      "96",
+      "-y",
+      "8",
+      ";",
+      "capture-pane",
+      "-e",
+      "-p",
+      "-J",
+      "-t",
+      "pr-5012",
     ]);
   });
 
@@ -647,7 +900,12 @@ describe("the mirrored pi session gets the board's real geometry", () => {
     mirror.setViewport({ cols: 0, rows: 8 });
     return mirror.fetch(5012).then(() => {
       expect(seen[0]).toContain("resize-window");
-      expect(seen[0]?.slice(seen[0].indexOf("-x"), seen[0].indexOf("-x") + 4)).toEqual(["-x", "96", "-y", "8"]);
+      expect(seen[0]?.slice(seen[0].indexOf("-x"), seen[0].indexOf("-x") + 4)).toEqual([
+        "-x",
+        "96",
+        "-y",
+        "8",
+      ]);
     });
   });
 });

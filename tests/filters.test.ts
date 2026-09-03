@@ -1,6 +1,12 @@
 // pure filter helpers for the board and the memory timeline.
 import { describe, expect, it } from "vitest";
-import { applyBoardFilter, applyMemoryFilter, filterLabel, isEmptyBoardFilter, memoryFilterLabel } from "../src/tui/filters.js";
+import {
+  applyBoardFilter,
+  applyMemoryFilter,
+  filterLabel,
+  isEmptyBoardFilter,
+  memoryFilterLabel,
+} from "../src/tui/filters.js";
 import type { PrLifecycleState } from "../src/state.js";
 
 // Typed against the real lifecycle union, not `string`: an untyped literal
@@ -31,7 +37,9 @@ describe("applyBoardFilter", () => {
   });
 
   it("author + state AND together", () => {
-    expect(applyBoardFilter(prs, { author: "novak", state: "reviewing" }).map((p) => p.number)).toEqual([3]);
+    expect(
+      applyBoardFilter(prs, { author: "novak", state: "reviewing" }).map((p) => p.number),
+    ).toEqual([3]);
   });
 
   it("null/undefined/empty filters return the SAME array unchanged", () => {
@@ -52,7 +60,9 @@ describe("applyBoardFilter", () => {
 
 describe("filterLabel", () => {
   it("renders both parts and the clear hint", () => {
-    expect(filterLabel({ author: "jbennett", state: "reviewing" })).toBe("⛉ author:jbennett · state:reviewing — F clears");
+    expect(filterLabel({ author: "jbennett", state: "reviewing" })).toBe(
+      "⛉ author:jbennett · state:reviewing — F clears",
+    );
   });
 
   it("renders single-part filters", () => {

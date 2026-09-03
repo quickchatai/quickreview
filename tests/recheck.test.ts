@@ -32,7 +32,9 @@ import {
 import { StateStore } from "../src/state.js";
 import { applyInterpretation, interpretEvent, type Interpretation } from "../src/webhook.js";
 
-const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
+const cfg: Config = parseConfig(
+  readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
+);
 const PR = 5109;
 const OLD = "1111111111111111111111111111111111111111";
 const HEAD = "2222222222222222222222222222222222222222";
@@ -46,7 +48,10 @@ function file(partial: Partial<DeltaFile> & { filename: string }): DeltaFile {
 describe("trivial-delta classifier", () => {
   it("calls a real content change significant", () => {
     const d = classifyDelta([
-      file({ filename: "src/trim.ts", patch: "@@\n-  return s.slice(0, n);\n+  return s.slice(0, n - 1);" }),
+      file({
+        filename: "src/trim.ts",
+        patch: "@@\n-  return s.slice(0, n);\n+  return s.slice(0, n - 1);",
+      }),
     ]);
     expect(d.class).toBe("significant");
     expect(d.significant.map((f) => f.filename)).toEqual(["src/trim.ts"]);
@@ -67,7 +72,10 @@ describe("trivial-delta classifier", () => {
   it("calls a lockfile and a version bump trivial", () => {
     const d = classifyDelta([
       file({ filename: "package-lock.json", additions: 400, deletions: 380 }),
-      file({ filename: "package.json", patch: '@@\n-  "version": "1.2.3",\n+  "version": "1.2.4",' }),
+      file({
+        filename: "package.json",
+        patch: '@@\n-  "version": "1.2.3",\n+  "version": "1.2.4",',
+      }),
     ]);
     expect(d.class).toBe("trivial");
     expect(d.files.map((f) => f.reason)).toEqual(["version-bump", "version-bump"]);
@@ -75,19 +83,25 @@ describe("trivial-delta classifier", () => {
 
   it("calls a package.json dependency edit significant", () => {
     const d = classifyDelta([
-      file({ filename: "package.json", patch: '@@\n-  "better-sqlite3": "^11",\n+  "better-sqlite3": "^12",' }),
+      file({
+        filename: "package.json",
+        patch: '@@\n-  "better-sqlite3": "^11",\n+  "better-sqlite3": "^12",',
+      }),
     ]);
     expect(d.class).toBe("significant");
   });
 
   it("calls a migration renumber trivial — as a rename", () => {
-    expect(isMigrationRenumber("app/migrations/0042_add_col.py", "app/migrations/0043_add_col.py")).toBe(true);
+    expect(
+      isMigrationRenumber("app/migrations/0042_add_col.py", "app/migrations/0043_add_col.py"),
+    ).toBe(true);
     const d = classifyDelta([
       file({
         filename: "app/migrations/0043_add_col.py",
         previous_filename: "app/migrations/0042_add_col.py",
         status: "renamed",
-        patch: '@@\n-    dependencies = [("app", "0041_prev")]\n+    dependencies = [("app", "0042_prev")]',
+        patch:
+          '@@\n-    dependencies = [("app", "0041_prev")]\n+    dependencies = [("app", "0042_prev")]',
       }),
     ]);
     expect(d.class).toBe("trivial");
@@ -104,7 +118,8 @@ describe("trivial-delta classifier", () => {
         filename: "app/migrations/0043_add_col.py",
         previous_filename: "app/migrations/0042_add_col.py",
         status: "renamed",
-        patch: '@@\n-    dependencies = [("app", "0041_prev")]\n+    dependencies = [("app", "0042_prev")]\n@@\n-    BATCH_SIZE = 500\n+    BATCH_SIZE = 1000',
+        patch:
+          '@@\n-    dependencies = [("app", "0041_prev")]\n+    dependencies = [("app", "0042_prev")]\n@@\n-    BATCH_SIZE = 500\n+    BATCH_SIZE = 1000',
       }),
     ]);
     expect(d.class).toBe("significant");
@@ -113,8 +128,18 @@ describe("trivial-delta classifier", () => {
 
   it("calls a migration renumber trivial — as a delete + add pair", () => {
     const d = classifyDelta([
-      file({ filename: "app/migrations/0042_add_col.py", status: "removed", additions: 0, deletions: 30 }),
-      file({ filename: "app/migrations/0043_add_col.py", status: "added", additions: 30, deletions: 0 }),
+      file({
+        filename: "app/migrations/0042_add_col.py",
+        status: "removed",
+        additions: 0,
+        deletions: 30,
+      }),
+      file({
+        filename: "app/migrations/0043_add_col.py",
+        status: "added",
+        additions: 30,
+        deletions: 0,
+      }),
     ]);
     expect(d.class).toBe("trivial");
     expect(d.files.every((f) => f.reason === "migration-renumber")).toBe(true);
@@ -126,7 +151,8 @@ describe("trivial-delta classifier", () => {
         filename: "app/migrations/0043_add_col.py",
         previous_filename: "app/migrations/0042_add_col.py",
         status: "renamed",
-        patch: "@@\n-    AddField(model_name=\"user\", name=\"email\")\n+    RemoveField(model_name=\"user\", name=\"email\")",
+        patch:
+          '@@\n-    AddField(model_name="user", name="email")\n+    RemoveField(model_name="user", name="email")',
       }),
     ]);
     expect(d.class).toBe("significant");
@@ -153,7 +179,9 @@ describe("trivial-delta classifier", () => {
 
 const significant = [file({ filename: "src/app.ts", patch: "@@\n-a()\n+b()" })];
 
-function plan(over: Partial<Parameters<typeof planRecheck>[0]> = {}): ReturnType<typeof planRecheck> {
+function plan(
+  over: Partial<Parameters<typeof planRecheck>[0]> = {},
+): ReturnType<typeof planRecheck> {
   return planRecheck({
     trigger: "push",
     standing: "APPROVE",
@@ -198,7 +226,9 @@ describe("planRecheck", () => {
 
   it("rechecks when CI concludes badly at the approved head", () => {
     expect(ciIsAdverse("failure")).toBe(true);
-    expect(plan({ trigger: "ci", head_sha: OLD, delta: [], ci: { conclusion: "failure" } })).toMatchObject({
+    expect(
+      plan({ trigger: "ci", head_sha: OLD, delta: [], ci: { conclusion: "failure" } }),
+    ).toMatchObject({
       action: "recheck",
     });
   });
@@ -242,7 +272,9 @@ class FakeAdapter implements RecheckAdapter {
   delta: DeltaFile[] = significant;
   own: DeltaFile[] = [file({ filename: "src/app.ts" })];
 
-  async getPr(n: number): Promise<{ base_ref: string; head_sha: string; state: string; merged: boolean }> {
+  async getPr(
+    n: number,
+  ): Promise<{ base_ref: string; head_sha: string; state: string; merged: boolean }> {
     this.calls.push(`getPr:${n}`);
     return { base_ref: this.base_ref, head_sha: HEAD, state: "open", merged: false };
   }
@@ -364,7 +396,9 @@ describe("runRecheck", () => {
   // never trivial — the resolved file escapes the base-merge ownership rule
   // and the session is asked to audit it against both merge parents.
   it("a resolved conflict file turns an otherwise-trivial base merge into a session recheck", async () => {
-    const h = harness({ resolvedFilesInMerges: async () => ({ files: ["src/base_only.py"], degraded: false }) });
+    const h = harness({
+      resolvedFilesInMerges: async () => ({ files: ["src/base_only.py"], degraded: false }),
+    });
     // The delta is entirely outside the PR's own files — trivially base-merge
     // under the old rule.
     h.adapter.delta = [file({ filename: "src/base_only.py", additions: 5, deletions: 5 })];
@@ -389,9 +423,9 @@ describe("runRecheck", () => {
     h.adapter.delta = [file({ filename: "src/base_only.py", additions: 5, deletions: 5 })];
     h.adapter.own = [file({ filename: "src/app.ts" })];
     await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
-    const kinds = (h.store.db.prepare("SELECT kind FROM events WHERE pr = ?").all(PR) as Array<{ kind: string }>).map(
-      (e) => e.kind,
-    );
+    const kinds = (
+      h.store.db.prepare("SELECT kind FROM events WHERE pr = ?").all(PR) as Array<{ kind: string }>
+    ).map((e) => e.kind);
     expect(kinds).toContain("recheck_merge_verify_degraded");
     // degraded is also never unqueryable — a durable anomaly record.
     const anomalies = h.store.anomalies();
@@ -450,12 +484,19 @@ describe("runRecheck", () => {
   it("uses only read calls — no mutation surface is reachable from here", async () => {
     const h = harness();
     await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
-    expect(h.adapter.calls.every((c) => c.startsWith("compare:") || c.startsWith("listPrFiles:") || c.startsWith("getPr:"))).toBe(true);
+    expect(
+      h.adapter.calls.every(
+        (c) => c.startsWith("compare:") || c.startsWith("listPrFiles:") || c.startsWith("getPr:"),
+      ),
+    ).toBe(true);
     // The adapter has no mutating method at all: a write would be a type error,
     // and every real write in this daemon goes through the MutationGate.
-    expect(Object.getOwnPropertyNames(Object.getPrototypeOf(h.adapter)).sort()).toEqual(
-      ["compareFiles", "constructor", "getPr", "listPrFiles"],
-    );
+    expect(Object.getOwnPropertyNames(Object.getPrototypeOf(h.adapter)).sort()).toEqual([
+      "compareFiles",
+      "constructor",
+      "getPr",
+      "listPrFiles",
+    ]);
   });
 });
 
@@ -517,7 +558,9 @@ describe("recheck decisions", () => {
     return name;
   };
   const kinds = (): string[] =>
-    (store.db.prepare("SELECT kind FROM events WHERE pr = ?").all(PR) as Array<{ kind: string }>).map((e) => e.kind);
+    (
+      store.db.prepare("SELECT kind FROM events WHERE pr = ?").all(PR) as Array<{ kind: string }>
+    ).map((e) => e.kind);
 
   // Regression (live, #5315 2026-08-19): fs.watch fires before the session's
   // write completes; an eager single read ate valid upholds as "unparseable".
@@ -525,8 +568,22 @@ describe("recheck decisions", () => {
     const name = recheckDecisionFile(PR, HEAD);
     const path = join(root, "verdict", name);
     writeFileSync(path, "");
-    watcher = new RecheckWatcher({ cfg, store, verdictDir: join(root, "verdict"), log: () => {}, parseRetries: 4, retryDelayMs: 10 });
-    setTimeout(() => writeFileSync(path, JSON.stringify({ pr: PR, head_sha: HEAD, outcome: "uphold", reason: "late write" })), 15);
+    watcher = new RecheckWatcher({
+      cfg,
+      store,
+      verdictDir: join(root, "verdict"),
+      log: () => {},
+      parseRetries: 4,
+      retryDelayMs: 10,
+    });
+    setTimeout(
+      () =>
+        writeFileSync(
+          path,
+          JSON.stringify({ pr: PR, head_sha: HEAD, outcome: "uphold", reason: "late write" }),
+        ),
+      15,
+    );
     await watcher.sweep();
     expect(kinds()).toContain("recheck_upheld");
     expect(kinds()).not.toContain("recheck_decision_malformed");
@@ -536,7 +593,14 @@ describe("recheck decisions", () => {
     const name = recheckDecisionFile(PR, HEAD);
     writeFileSync(join(root, "verdict", name), "{never valid");
     const logs: string[] = [];
-    watcher = new RecheckWatcher({ cfg, store, verdictDir: join(root, "verdict"), log: (m) => logs.push(m), parseRetries: 1, retryDelayMs: 1 });
+    watcher = new RecheckWatcher({
+      cfg,
+      store,
+      verdictDir: join(root, "verdict"),
+      log: (m) => logs.push(m),
+      parseRetries: 1,
+      retryDelayMs: 1,
+    });
     await watcher.sweep();
     expect(kinds()).toContain("recheck_decision_malformed");
     expect(logs.some((l) => l.includes("malformed"))).toBe(true);
@@ -568,7 +632,12 @@ describe("recheck decisions", () => {
   });
 
   it("moves APPROVE → REQUEST_CHANGES when the session found a regression", async () => {
-    write({ pr: PR, head_sha: HEAD, outcome: "request_changes", reason: "the reorder broke _BARE_URL_RE" });
+    write({
+      pr: PR,
+      head_sha: HEAD,
+      outcome: "request_changes",
+      reason: "the reorder broke _BARE_URL_RE",
+    });
     await watcher.sweep();
     expect(store.getPr(PR)?.state).toBe("awaiting_author");
     expect(kinds()).toContain("recheck_request_changes");
@@ -625,21 +694,49 @@ describe("webhook interpretation of the recheck triggers", () => {
       { check_suite: { head_sha: HEAD, conclusion: "failure", pull_requests: [{ number: PR }] } },
       interpretDeps,
     );
-    expect(i).toMatchObject({ kind: "ci_completed", pr: PR, prs: [PR], head_sha: HEAD, conclusion: "failure" });
+    expect(i).toMatchObject({
+      kind: "ci_completed",
+      pr: PR,
+      prs: [PR],
+      head_sha: HEAD,
+      conclusion: "failure",
+    });
   });
 
   it("ignores a check suite that belongs to no PR", () => {
-    const i = interpretEvent("check_suite", "completed", { check_suite: { head_sha: HEAD, pull_requests: [] } }, interpretDeps);
+    const i = interpretEvent(
+      "check_suite",
+      "completed",
+      { check_suite: { head_sha: HEAD, pull_requests: [] } },
+      interpretDeps,
+    );
     expect(i.kind).toBe("ignored");
   });
 
   it("reads a branch push as a base advance, and ignores tags and deletions", () => {
     expect(
-      interpretEvent("push", null, { ref: "refs/heads/master", before: "b0", after: "b1" }, interpretDeps),
+      interpretEvent(
+        "push",
+        null,
+        { ref: "refs/heads/master", before: "b0", after: "b1" },
+        interpretDeps,
+      ),
     ).toMatchObject({ kind: "base_advanced", branch: "master", before: "b0", after: "b1" });
-    expect(interpretEvent("push", null, { ref: "refs/tags/v1", before: "b0", after: "b1" }, interpretDeps).kind).toBe("ignored");
     expect(
-      interpretEvent("push", null, { ref: "refs/heads/gone", before: "b0", after: "0".repeat(40), deleted: true }, interpretDeps).kind,
+      interpretEvent(
+        "push",
+        null,
+        { ref: "refs/tags/v1", before: "b0", after: "b1" },
+        interpretDeps,
+      ).kind,
+    ).toBe("ignored");
+    expect(
+      interpretEvent(
+        "push",
+        null,
+        { ref: "refs/heads/gone", before: "b0", after: "0".repeat(40), deleted: true },
+        interpretDeps,
+      ).kind,
     ).toBe("ignored");
   });
 
@@ -681,7 +778,11 @@ describe("webhook interpretation of the recheck triggers", () => {
         onPrTouched: () => void seen.push("dispatch"),
         onSynchronize: () => void seen.push("recheck:push"),
       },
-      { kind: "synchronize", pr: PR, meta: { number: PR, title: "t", author: "alice", head_sha: HEAD } },
+      {
+        kind: "synchronize",
+        pr: PR,
+        meta: { number: PR, title: "t", author: "alice", head_sha: HEAD },
+      },
     );
     expect(seen).toEqual(["recheck:push"]);
     expect(store.getPr(PR)?.state).toBe("tracked");

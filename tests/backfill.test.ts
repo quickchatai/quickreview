@@ -12,7 +12,14 @@ import { GitHubAdapter } from "../src/github.js";
 import type { FetchFn, TokenMinter } from "../src/githubAuth.js";
 import { StateStore } from "../src/state.js";
 import type { PrTimelineRecord } from "../src/github.js";
-import { enumerationQueries, planPr, runBackfill, triggerCandidates, triggerForReview, verdictForReviewState } from "../src/backfill.js";
+import {
+  enumerationQueries,
+  planPr,
+  runBackfill,
+  triggerCandidates,
+  triggerForReview,
+  verdictForReviewState,
+} from "../src/backfill.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const cfg: Config = parseConfig(readFileSync(join(root, "tests/fixtures/config.toml"), "utf8"));
@@ -102,7 +109,12 @@ function harness(prs: FakePr[], searchByQuery?: Record<string, number[]>) {
     } else {
       payload = {};
     }
-    return { ok: true, status: 200, json: async () => payload, text: async () => JSON.stringify(payload) } as unknown as Response;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => payload,
+      text: async () => JSON.stringify(payload),
+    } as unknown as Response;
   }) as unknown as FetchFn;
 
   let adapter!: GitHubAdapter;
@@ -116,7 +128,9 @@ function store(): StateStore {
 }
 
 function backfilledRows(s: StateStore): any[] {
-  return s.db.prepare("SELECT * FROM rounds WHERE backfilled = 1 ORDER BY pr, round_no").all() as any[];
+  return s.db
+    .prepare("SELECT * FROM rounds WHERE backfilled = 1 ORDER BY pr, round_no")
+    .all() as any[];
 }
 
 // ---- unit: mapping + trigger reconstruction --------------------------------
@@ -140,9 +154,19 @@ describe("trigger reconstruction", () => {
     type: string,
     created_at: string,
     extra: Partial<PrTimelineRecord> = {},
-  ): PrTimelineRecord => ({ type, created_at, label: null, actor: null, requested_team: null, requested_user: null, ...extra });
-  const rLabeled = (ts: string, label: string, actor = "alice"): PrTimelineRecord => rec("LabeledEvent", ts, { label, actor });
-  const rTeam = (ts: string, requested_team = "review"): PrTimelineRecord => rec("ReviewRequestedEvent", ts, { requested_team });
+  ): PrTimelineRecord => ({
+    type,
+    created_at,
+    label: null,
+    actor: null,
+    requested_team: null,
+    requested_user: null,
+    ...extra,
+  });
+  const rLabeled = (ts: string, label: string, actor = "alice"): PrTimelineRecord =>
+    rec("LabeledEvent", ts, { label, actor });
+  const rTeam = (ts: string, requested_team = "review"): PrTimelineRecord =>
+    rec("ReviewRequestedEvent", ts, { requested_team });
   const rForce = (ts: string): PrTimelineRecord => rec("HeadRefForcePushedEvent", ts);
 
   const timeline = [
@@ -160,17 +184,25 @@ describe("trigger reconstruction", () => {
 
   it("treats a team review request as a trigger", () => {
     const c = triggerCandidates(timeline, cfg);
-    expect(triggerForReview(c, "2026-05-02T10:00:00Z", "2026-05-01T11:00:00Z")).toBe("2026-05-02T09:00:00Z");
+    expect(triggerForReview(c, "2026-05-02T10:00:00Z", "2026-05-01T11:00:00Z")).toBe(
+      "2026-05-02T09:00:00Z",
+    );
   });
 
   it("ignores force pushes and unrelated labels entirely", () => {
-    const c = triggerCandidates([rForce("2026-05-01T10:02:00Z"), rLabeled("2026-05-01T10:03:00Z", "needs-qa")], cfg);
+    const c = triggerCandidates(
+      [rForce("2026-05-01T10:02:00Z"), rLabeled("2026-05-01T10:03:00Z", "needs-qa")],
+      cfg,
+    );
     expect(c).toEqual([]);
     expect(triggerForReview(c, "2026-05-01T11:00:00Z", null)).toBeNull();
   });
 
   it("falls back to the bot's own in-progress label when no human ask is in range", () => {
-    const c = triggerCandidates([rLabeled("2026-05-01T10:01:00Z", "AI review in progress", "example-review")], cfg);
+    const c = triggerCandidates(
+      [rLabeled("2026-05-01T10:01:00Z", "AI review in progress", "example-review")],
+      cfg,
+    );
     expect(triggerForReview(c, "2026-05-01T11:00:00Z", null)).toBe("2026-05-01T10:01:00Z");
   });
 
@@ -216,8 +248,20 @@ const PR_5000: FakePr = {
     teamRequested("2026-05-02T09:00:00Z"),
   ],
   reviews: [
-    { databaseId: 111, state: "CHANGES_REQUESTED", submittedAt: "2026-05-01T11:00:00Z", body: "nope", commit: { oid: "aaa" } },
-    { databaseId: 222, state: "APPROVED", submittedAt: "2026-05-02T10:00:00Z", body: "lgtm", commit: { oid: "bbb" } },
+    {
+      databaseId: 111,
+      state: "CHANGES_REQUESTED",
+      submittedAt: "2026-05-01T11:00:00Z",
+      body: "nope",
+      commit: { oid: "aaa" },
+    },
+    {
+      databaseId: 222,
+      state: "APPROVED",
+      submittedAt: "2026-05-02T10:00:00Z",
+      body: "lgtm",
+      commit: { oid: "bbb" },
+    },
   ],
 };
 
@@ -227,7 +271,13 @@ describe("runBackfill", () => {
     const s = store();
     const stats = await runBackfill(s, adapter, cfg, {});
 
-    expect(stats).toMatchObject({ prs_scanned: 1, reviews_imported: 2, skipped_epoch: 0, skipped_existing: 0, meta_rows: 1 });
+    expect(stats).toMatchObject({
+      prs_scanned: 1,
+      reviews_imported: 2,
+      skipped_epoch: 0,
+      skipped_existing: 0,
+      meta_rows: 1,
+    });
     const rows = backfilledRows(s);
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({
@@ -247,7 +297,12 @@ describe("runBackfill", () => {
       spend_usd: null,
       duration_s: null,
     });
-    expect(rows[1]).toMatchObject({ round_no: 2, verdict: "APPROVE", gh_review_id: 222, trigger_ts: "2026-05-02T09:00:00Z" });
+    expect(rows[1]).toMatchObject({
+      round_no: 2,
+      verdict: "APPROVE",
+      gh_review_id: 222,
+      trigger_ts: "2026-05-02T09:00:00Z",
+    });
 
     expect(s.backfillPrMeta(5000)).toMatchObject({
       pr: 5000,
@@ -274,8 +329,18 @@ describe("runBackfill", () => {
     const pr: FakePr = {
       ...PR_5000,
       reviews: [
-        { databaseId: 111, state: "APPROVED", submittedAt: "2026-05-01T11:00:00Z", commit: { oid: "aaa" } },
-        { databaseId: 999, state: "APPROVED", submittedAt: "2026-08-14T09:00:00Z", commit: { oid: "zzz" } },
+        {
+          databaseId: 111,
+          state: "APPROVED",
+          submittedAt: "2026-05-01T11:00:00Z",
+          commit: { oid: "aaa" },
+        },
+        {
+          databaseId: 999,
+          state: "APPROVED",
+          submittedAt: "2026-08-14T09:00:00Z",
+          commit: { oid: "zzz" },
+        },
       ],
     };
     const { adapter } = harness([pr]);
@@ -294,7 +359,10 @@ describe("runBackfill", () => {
     expect(rows.map((r) => r.gh_review_id)).toEqual([111]);
     // Numbered below the live round, so MAX(round_no) is untouched.
     expect(rows[0]!.round_no).toBe(0);
-    expect((s.db.prepare("SELECT MAX(round_no) AS m FROM rounds WHERE pr = 5000").get() as { m: number }).m).toBe(1);
+    expect(
+      (s.db.prepare("SELECT MAX(round_no) AS m FROM rounds WHERE pr = 5000").get() as { m: number })
+        .m,
+    ).toBe(1);
     // The live round is still running (no verdict), so it does not age the PR:
     // priorRoundCount counts VERDICTED rounds only (2026-08-18, #5313).
     expect(s.priorRoundCount(5000)).toBe(0);
@@ -372,7 +440,9 @@ describe("runBackfill", () => {
     expect(graphql).toHaveLength(1);
     expect((graphql[0]!.body as { query: string }).query).toContain("timelineItems");
     expect((graphql[0]!.body as { query: string }).query).not.toContain("mutation");
-    expect((graphql[0]!.body as { variables: { author: string } }).variables.author).toBe("example-review[bot]");
+    expect((graphql[0]!.body as { variables: { author: string } }).variables.author).toBe(
+      "example-review[bot]",
+    );
     expect(readdirSync(dryrunDir)).toEqual([]);
     s.close();
   });
@@ -390,8 +460,20 @@ describe("planPr numbering", () => {
       merged: false,
       timeline: [],
       reviews: [
-        { database_id: 1, state: "APPROVED", submitted_at: "2026-05-01T10:00:00Z", body: "", commit_oid: null },
-        { database_id: 2, state: "APPROVED", submitted_at: "2026-05-02T10:00:00Z", body: "", commit_oid: null },
+        {
+          database_id: 1,
+          state: "APPROVED",
+          submitted_at: "2026-05-01T10:00:00Z",
+          body: "",
+          commit_oid: null,
+        },
+        {
+          database_id: 2,
+          state: "APPROVED",
+          submitted_at: "2026-05-02T10:00:00Z",
+          body: "",
+          commit_oid: null,
+        },
       ],
     };
     const plan = planPr(history, cfg, { epoch: null, imported: new Set(), minRoundNo: 1 });

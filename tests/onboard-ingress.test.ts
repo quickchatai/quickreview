@@ -11,7 +11,12 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { toolDefinitions } from "../extensions/onboarding.js";
-import { OnboardingEngine, readChecklist, type OnboardAdapters, type ProcessResult } from "../src/onboard/engine.js";
+import {
+  OnboardingEngine,
+  readChecklist,
+  type OnboardAdapters,
+  type ProcessResult,
+} from "../src/onboard/engine.js";
 import { defaultSteps } from "../src/onboard/steps/index.js";
 import {
   INGRESS_CHOICE_KEY,
@@ -42,7 +47,10 @@ beforeEach(() => {
   mkdirSync(join(root, "state"), { recursive: true });
   // A realistic config.toml: the shipped example with the secrets dir pointed
   // at this test's temp dir (so no check can ever read the real one).
-  writeFileSync(join(root, "config.toml"), setTomlKey(exampleConfig, "github", "secrets_dir", secretsDir)!);
+  writeFileSync(
+    join(root, "config.toml"),
+    setTomlKey(exampleConfig, "github", "secrets_dir", secretsDir)!,
+  );
 });
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
@@ -53,7 +61,10 @@ interface Fake {
   calls: string[][];
 }
 
-function adapters(runner?: (cmd: string, args: string[]) => ProcessResult, calls: string[][] = []): OnboardAdapters {
+function adapters(
+  runner?: (cmd: string, args: string[]) => ProcessResult,
+  calls: string[][] = [],
+): OnboardAdapters {
   return {
     fetch: (() => {
       throw new Error("no network in tests");
@@ -82,7 +93,11 @@ const envText = (): string => readFileSync(join(root, ".env"), "utf8");
 
 describe("deterministic file surgery", () => {
   it("patchTomlSection inserts [ingress] before [daemon] and leaves the commented template alone", () => {
-    const patched = patchTomlSection(exampleConfig, "ingress", '[ingress]\nshape = "tunnel-file"\n');
+    const patched = patchTomlSection(
+      exampleConfig,
+      "ingress",
+      '[ingress]\nshape = "tunnel-file"\n',
+    );
     expect(readTomlKey(patched, "ingress", "shape")).toBe("tunnel-file");
     expect(patched.indexOf("[ingress]\nshape")).toBeLessThan(patched.indexOf("[daemon]"));
     // The documentation block (#[ingress] …) is untouched, and so is everything else.
@@ -124,8 +139,14 @@ describe("deterministic file surgery", () => {
   });
 
   it("parseComposePs reads both compose output shapes and shrugs at garbage", () => {
-    expect(parseComposePs('[{"Service":"daemon","State":"running"}]')).toEqual([{ service: "daemon", state: "running" }]);
-    expect(parseComposePs('{"Service":"daemon","State":"running"}\n{"Service":"tunnel-quick","State":"exited"}')).toEqual([
+    expect(parseComposePs('[{"Service":"daemon","State":"running"}]')).toEqual([
+      { service: "daemon", state: "running" },
+    ]);
+    expect(
+      parseComposePs(
+        '{"Service":"daemon","State":"running"}\n{"Service":"tunnel-quick","State":"exited"}',
+      ),
+    ).toEqual([
       { service: "daemon", state: "running" },
       { service: "tunnel-quick", state: "exited" },
     ]);
@@ -187,7 +208,10 @@ describe("choosing a shape", () => {
     expect(red.failures.join(" ")).toMatch(/umask 077/);
 
     writeFileSync(join(secretsDir, "ngrok_authtoken"), "2abc_token\n");
-    const green = await f.engine.runStep(INGRESS_STEP_ID, { choice: "ngrok", hostname: "reviews.example.com" });
+    const green = await f.engine.runStep(INGRESS_STEP_ID, {
+      choice: "ngrok",
+      hostname: "reviews.example.com",
+    });
     expect(green.ok).toBe(true);
     expect(readTomlKey(configText(), "ingress", "shape")).toBe("tunnel-file");
     expect(readEnvKey(envText(), "COMPOSE_PROFILES")).toBe("ngrok");
@@ -204,7 +228,10 @@ describe("choosing a shape", () => {
     expect(noHost.failures.join(" ")).toMatch(/needs the public hostname/);
 
     writeFileSync(join(secretsDir, "tunnel_token"), "connector-token\n");
-    const green = await f.engine.runStep(INGRESS_STEP_ID, { choice: "named", hostname: "https://review.example.com/" });
+    const green = await f.engine.runStep(INGRESS_STEP_ID, {
+      choice: "named",
+      hostname: "https://review.example.com/",
+    });
     expect(green.ok).toBe(true);
     expect(readTomlKey(configText(), "ingress", "shape")).toBe("none");
     expect(readTomlKey(configText(), "server", "hostname")).toBe("review.example.com");
@@ -262,7 +289,9 @@ function fakeDocker(rows: Array<[string, string]>, hostname: string | null) {
     if (cmd !== "docker") return { code: 127, stdout: "", stderr: "not found" };
     if (args.includes("ps")) return { code: 0, stdout: psJson(rows), stderr: "" };
     if (args.includes("cat")) {
-      return hostname === null ? { code: 1, stdout: "", stderr: "No such file or directory" } : { code: 0, stdout: `${hostname}\n`, stderr: "" };
+      return hostname === null
+        ? { code: 1, stdout: "", stderr: "No such file or directory" }
+        : { code: 0, stdout: `${hostname}\n`, stderr: "" };
     }
     return { code: 1, stdout: "", stderr: "unexpected docker args" };
   };
@@ -279,10 +308,15 @@ describe("resume and verify", () => {
 
   it("config edited behind the wizard's back DEMOTES the step — the record is never trusted", async () => {
     await fake().engine.runStep(INGRESS_STEP_ID, { choice: "quick" });
-    writeFileSync(join(root, "config.toml"), patchTomlSection(configText(), "ingress", '[ingress]\nshape = "none"\n'));
+    writeFileSync(
+      join(root, "config.toml"),
+      patchTomlSection(configText(), "ingress", '[ingress]\nshape = "none"\n'),
+    );
     const report = await fake().engine.reconcile();
     expect(report.demoted[0]?.id).toBe(INGRESS_STEP_ID);
-    expect(report.demoted[0]?.failures.join(" ")).toMatch(/\[ingress\] shape is "none" but the quick shape needs "tunnel-file"/);
+    expect(report.demoted[0]?.failures.join(" ")).toMatch(
+      /\[ingress\] shape is "none" but the quick shape needs "tunnel-file"/,
+    );
   });
 
   it("a compose profile edited away demotes it too", async () => {
@@ -314,7 +348,15 @@ describe("resume and verify", () => {
   });
 
   it("verify reads the RUNNING shape: daemon up, sidecar up, hostname published", async () => {
-    const f = fake(fakeDocker([["daemon", "running"], ["tunnel-quick", "running"]], "odd-shape.trycloudflare.com"));
+    const f = fake(
+      fakeDocker(
+        [
+          ["daemon", "running"],
+          ["tunnel-quick", "running"],
+        ],
+        "odd-shape.trycloudflare.com",
+      ),
+    );
     await f.engine.runStep(INGRESS_STEP_ID, { choice: "quick" });
     const all = await f.engine.verifyAll();
     expect(all.ok).toBe(true);
@@ -326,7 +368,15 @@ describe("resume and verify", () => {
   });
 
   it("daemon up but the chosen sidecar is not running ⇒ red, with the fix", async () => {
-    const f = fake(fakeDocker([["daemon", "running"], ["tunnel-quick", "exited"]], null));
+    const f = fake(
+      fakeDocker(
+        [
+          ["daemon", "running"],
+          ["tunnel-quick", "exited"],
+        ],
+        null,
+      ),
+    );
     await f.engine.runStep(INGRESS_STEP_ID, { choice: "quick" });
     const all = await f.engine.verifyAll();
     expect(all.ok).toBe(false);
@@ -334,7 +384,15 @@ describe("resume and verify", () => {
   });
 
   it("a running sidecar that has published nothing ⇒ red, pointing at its logs", async () => {
-    const f = fake(fakeDocker([["daemon", "running"], ["tunnel-quick", "running"]], null));
+    const f = fake(
+      fakeDocker(
+        [
+          ["daemon", "running"],
+          ["tunnel-quick", "running"],
+        ],
+        null,
+      ),
+    );
     await f.engine.runStep(INGRESS_STEP_ID, { choice: "quick" });
     const all = await f.engine.verifyAll();
     expect(all.ok).toBe(false);
@@ -343,7 +401,15 @@ describe("resume and verify", () => {
   });
 
   it("polling with a sidecar still running ⇒ red (the shape on the machine is not the shape chosen)", async () => {
-    const f = fake(fakeDocker([["daemon", "running"], ["tunnel-quick", "running"]], "abc.trycloudflare.com"));
+    const f = fake(
+      fakeDocker(
+        [
+          ["daemon", "running"],
+          ["tunnel-quick", "running"],
+        ],
+        "abc.trycloudflare.com",
+      ),
+    );
     await f.engine.runStep(INGRESS_STEP_ID, { choice: "polling" });
     const all = await f.engine.verifyAll();
     expect(all.ok).toBe(false);
@@ -362,7 +428,9 @@ describe("resume and verify", () => {
     writeFileSync(join(secretsDir, "tunnel_token"), "connector-token\n");
     // Re-run so the credential check is green, then flip the topology.
     await f.engine.runStep(INGRESS_STEP_ID, { choice: "named", hostname: "review.example.com" });
-    (f.engine as unknown as { checklist: { choices: Record<string, unknown> } }).checklist.choices.topology = "vm";
+    (
+      f.engine as unknown as { checklist: { choices: Record<string, unknown> } }
+    ).checklist.choices.topology = "vm";
     const all = await f.engine.verifyAll();
     expect(all.ok).toBe(true);
     expect(f.calls.some((c) => c.includes("ps"))).toBe(false);
@@ -394,7 +462,9 @@ describe("registration", () => {
     const engine = new OnboardingEngine([ingressStep()], adapters());
     const def = toolDefinitions(engine, () => {}).find((d) => d.name === "onboard_ingress");
     expect(def).toBeDefined();
-    expect((def!.parameters as { properties: Record<string, unknown> }).properties.choice).toBeDefined();
+    expect(
+      (def!.parameters as { properties: Record<string, unknown> }).properties.choice,
+    ).toBeDefined();
 
     const offered = await def!.execute("call-1", {});
     expect(offered.content.map((c) => c.text).join("\n")).toMatch(/pick one of/);

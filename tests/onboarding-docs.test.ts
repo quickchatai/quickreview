@@ -44,7 +44,10 @@ describe("docs/onboarding.md tracks the registered steps", () => {
     const table = [...onboardingDoc.matchAll(/^\| (\d+) \|/gm)].map((m) => m[1]!);
     expect(table.length, "the checklist table was not found").toBeGreaterThan(0);
     for (const order of table) {
-      expect(registered.has(order), `the doc lists step order ${order}, which nothing registers`).toBe(true);
+      expect(
+        registered.has(order),
+        `the doc lists step order ${order}, which nothing registers`,
+      ).toBe(true);
     }
   });
 
@@ -53,11 +56,17 @@ describe("docs/onboarding.md tracks the registered steps", () => {
     // route in the same row. A step that gains or loses an `enabled` predicate
     // must have its row updated.
     const routed = steps.filter((s) => s.enabled !== undefined).map((s) => s.order);
-    expect(routed.length, "no route-specific steps found — the topology split is gone?").toBeGreaterThan(0);
+    expect(
+      routed.length,
+      "no route-specific steps found — the topology split is gone?",
+    ).toBeGreaterThan(0);
     for (const order of routed) {
       const row = onboardingDoc.match(new RegExp(`^\\| ${order} \\|.*$`, "m"));
       expect(row, `no checklist row for order ${order}`).not.toBeNull();
-      expect(row![0], `order ${order} is route-specific in code but its row says "both"`).not.toContain("| both |");
+      expect(
+        row![0],
+        `order ${order} is route-specific in code but its row says "both"`,
+      ).not.toContain("| both |");
     }
   });
 });
@@ -65,18 +74,21 @@ describe("docs/onboarding.md tracks the registered steps", () => {
 describe("the setup docs name the real ingress shapes", () => {
   it("every ingress option id and compose profile is documented", () => {
     for (const option of INGRESS_OPTIONS) {
-      expect(onboardingDoc, `ingress option "${option.id}" is missing from docs/onboarding.md`).toContain(
-        `\`${option.id}\``,
-      );
+      expect(
+        onboardingDoc,
+        `ingress option "${option.id}" is missing from docs/onboarding.md`,
+      ).toContain(`\`${option.id}\``);
       if (option.profile !== "") {
-        expect(dockerDoc, `compose profile "${option.profile}" is missing from docker/daemon/README.md`).toContain(
-          option.profile,
-        );
+        expect(
+          dockerDoc,
+          `compose profile "${option.profile}" is missing from docker/daemon/README.md`,
+        ).toContain(option.profile);
       }
       if (option.service !== null) {
-        expect(dockerDoc, `sidecar service "${option.service}" is missing from docker/daemon/README.md`).toContain(
-          option.service,
-        );
+        expect(
+          dockerDoc,
+          `sidecar service "${option.service}" is missing from docker/daemon/README.md`,
+        ).toContain(option.service);
       }
     }
   });
@@ -103,9 +115,10 @@ describe("the setup docs name the real ingress shapes", () => {
 describe("the GitHub App doc matches the labels the wizard creates", () => {
   it("names every default label", () => {
     for (const label of Object.values(DEFAULT_LABELS)) {
-      expect(appDoc, `label "${label}" is created by the wizard but absent from docs/github-app-setup.md`).toContain(
-        label,
-      );
+      expect(
+        appDoc,
+        `label "${label}" is created by the wizard but absent from docs/github-app-setup.md`,
+      ).toContain(label);
     }
   });
 
@@ -125,7 +138,9 @@ describe("the entry point is the one the docs promise", () => {
   it("package.json carries an onboard script that runs the wrapper", () => {
     const script = pkg.scripts?.onboard;
     expect(script, "package.json has no `onboard` script").toBeDefined();
-    expect(script, "the onboard script must invoke the same wrapper the docs name").toContain("scripts/qcr");
+    expect(script, "the onboard script must invoke the same wrapper the docs name").toContain(
+      "scripts/qcr",
+    );
     expect(script).toContain("onboard");
   });
 
@@ -143,7 +158,10 @@ describe("the entry point is the one the docs promise", () => {
 
 describe("the quickstart leads with the onboarding command", () => {
   it("README names the entry command and links the walkthrough", () => {
-    const quickstart = readme.slice(readme.indexOf("## Quickstart"), readme.indexOf("### Where the reviewer lives"));
+    const quickstart = readme.slice(
+      readme.indexOf("## Quickstart"),
+      readme.indexOf("### Where the reviewer lives"),
+    );
     expect(quickstart, "the Quickstart section was not found").not.toBe("");
     expect(quickstart).toContain("qcr onboard");
     expect(readme).toContain("docs/onboarding.md");
@@ -152,7 +170,11 @@ describe("the quickstart leads with the onboarding command", () => {
   it("the manual path survives as an appendix rather than being deleted", () => {
     const appendix = readme.slice(readme.indexOf("## Appendix — setting up by hand"));
     expect(appendix, "the manual-path appendix is gone").not.toBe("");
-    for (const tool of ["config.example.toml", "deploy/collect-secrets.sh", "docker compose up -d --build"]) {
+    for (const tool of [
+      "config.example.toml",
+      "deploy/collect-secrets.sh",
+      "docker compose up -d --build",
+    ]) {
       expect(appendix, `the manual path no longer mentions ${tool}`).toContain(tool);
     }
   });
@@ -164,7 +186,9 @@ describe("the quickstart leads with the onboarding command", () => {
       ["deploy/ansible/README.md", ansibleDoc],
       ["docker/daemon/README.md", dockerDoc],
     ] as const) {
-      expect(doc, `${name} must point at the guided path it is the manual half of`).toContain("qcr onboard");
+      expect(doc, `${name} must point at the guided path it is the manual half of`).toContain(
+        "qcr onboard",
+      );
     }
   });
 

@@ -1,7 +1,14 @@
 // qcr — the operator CLI. Read-only against state/ (status.json + state.db);
 // `attach` wraps tmux/docker-exec. Subcommands land across slices: status and
 // spend here (B1); today/why in B5; checklist/compare in B6.
-import { readFileSync, existsSync, mkdirSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import {
+  readFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { loadConfig, sandboxRoot, type Config, type TuiConfig } from "./config.js";
 import {
@@ -12,7 +19,13 @@ import {
   type CancellationTally,
   type StatusSnapshot,
 } from "./state.js";
-import { computeMetrics, computeTimeline, readOps, renderMetrics, renderTimeline } from "./metrics.js";
+import {
+  computeMetrics,
+  computeTimeline,
+  readOps,
+  renderMetrics,
+  renderTimeline,
+} from "./metrics.js";
 import { CommandDrainSender, drainPayload } from "./tui/deploy-drain.js";
 import { operatorCommandWriteScript } from "./tui/unwedge.js";
 
@@ -31,7 +44,9 @@ export function renderStatus(snapshot: StatusSnapshot): string {
   const mode = snapshot.dry_run ? "DRY-RUN" : "LIVE";
   lines.push(`quickreview — ${mode} — snapshot ${snapshot.written_at}`);
   if (snapshot.digest_headline) lines.push(`digest: ${snapshot.digest_headline}`);
-  lines.push(`rounds running: ${snapshot.running_rounds}   total spend: $${snapshot.total_spend_usd.toFixed(2)}`);
+  lines.push(
+    `rounds running: ${snapshot.running_rounds}   total spend: $${snapshot.total_spend_usd.toFixed(2)}`,
+  );
   if (snapshot.draining) {
     lines.push(
       `DRAINING${snapshot.draining_since ? ` since ${snapshot.draining_since}` : ""} — ${drainHolderLine(snapshot)} — ` +
@@ -73,7 +88,9 @@ export function renderStatus(snapshot: StatusSnapshot): string {
 function drainHolderLine(snapshot: StatusSnapshot): string {
   if (snapshot.draining_by === undefined) return "holder unknown (older daemon)";
   if (snapshot.draining_by === "operator") {
-    return snapshot.draining_until ? `held by the operator, lapses ${snapshot.draining_until}` : "held by the operator until lifted";
+    return snapshot.draining_until
+      ? `held by the operator, lapses ${snapshot.draining_until}`
+      : "held by the operator until lifted";
   }
   return `held by a SESSION, lapses ${snapshot.draining_until ?? "(no expiry recorded)"}`;
 }
@@ -98,12 +115,18 @@ function cmdSpend(): void {
     const todayRounds = store.roundsOn(today);
     const todaySpend = todayRounds.reduce((n, r) => n + (r.est_usd ?? 0), 0);
     const totals = store.db
-      .prepare("SELECT COALESCE(SUM(tokens_in), 0) AS tin, COALESCE(SUM(tokens_out), 0) AS tout FROM rounds")
+      .prepare(
+        "SELECT COALESCE(SUM(tokens_in), 0) AS tin, COALESCE(SUM(tokens_out), 0) AS tout FROM rounds",
+      )
       .get() as { tin: number; tout: number };
     const todayIn = todayRounds.reduce((n, r) => n + (r.tokens_in ?? 0), 0);
     const todayOut = todayRounds.reduce((n, r) => n + (r.tokens_out ?? 0), 0);
-    console.log(`total spend: $${total.toFixed(2)} (est) — ${totals.tin} in / ${totals.tout} out tokens`);
-    console.log(`today (${today}): $${todaySpend.toFixed(2)} across ${todayRounds.length} rounds — ${todayIn} in / ${todayOut} out tokens`);
+    console.log(
+      `total spend: $${total.toFixed(2)} (est) — ${totals.tin} in / ${totals.tout} out tokens`,
+    );
+    console.log(
+      `today (${today}): $${todaySpend.toFixed(2)} across ${todayRounds.length} rounds — ${todayIn} in / ${todayOut} out tokens`,
+    );
   } finally {
     store.close();
   }
@@ -116,7 +139,10 @@ function cmdToday(): void {
     const rounds = store.roundsOn(today);
     console.log(`rounds on ${today}: ${rounds.length}`);
     for (const r of rounds) {
-      const tokens = r.tokens_in !== null || r.tokens_out !== null ? ` tok=${r.tokens_in ?? 0}/${r.tokens_out ?? 0}` : "";
+      const tokens =
+        r.tokens_in !== null || r.tokens_out !== null
+          ? ` tok=${r.tokens_in ?? 0}/${r.tokens_out ?? 0}`
+          : "";
       // A cancelled round says WHY inline — its status alone was
       // exactly the thing nobody could read back.
       const why = r.status === "cancelled" ? ` cause=${cancelCauseLabel(r.cancel_cause)}` : "";
@@ -185,8 +211,16 @@ export async function enrichWhy(payload: WhyPayload, secretsDir?: string): Promi
     const { MutationGate } = await import("./gate.js");
     const { GitHubAdapter } = await import("./github.js");
     const cfg = loadConfig();
-    const gate = new MutationGate(true, join(sandboxRoot(), "state", "dryrun"), async () => undefined);
-    const adapter = new GitHubAdapter(cfg, new TokenMinter(secretsDir ?? cfg.github.secrets_dir), gate);
+    const gate = new MutationGate(
+      true,
+      join(sandboxRoot(), "state", "dryrun"),
+      async () => undefined,
+    );
+    const adapter = new GitHubAdapter(
+      cfg,
+      new TokenMinter(secretsDir ?? cfg.github.secrets_dir),
+      gate,
+    );
     const convo = await adapter.prConversation(payload.pr, 3);
     return { ...payload, description: convo.body, labels: convo.labels, comments: convo.comments };
   } catch {
@@ -196,8 +230,12 @@ export async function enrichWhy(payload: WhyPayload, secretsDir?: string): Promi
 
 export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPayload {
   const pr = store.getPr(n);
-  const rounds = store.db.prepare("SELECT * FROM rounds WHERE pr = ? ORDER BY round_no").all(n) as any[];
-  const threadTotal = store.db.prepare("SELECT COUNT(*) AS c FROM bot_comments WHERE pr = ?").get(n) as { c: number };
+  const rounds = store.db
+    .prepare("SELECT * FROM rounds WHERE pr = ? ORDER BY round_no")
+    .all(n) as any[];
+  const threadTotal = store.db
+    .prepare("SELECT COUNT(*) AS c FROM bot_comments WHERE pr = ?")
+    .get(n) as { c: number };
   const payload: WhyPayload = {
     pr: n,
     known: pr !== undefined || rounds.length > 0,
@@ -288,8 +326,15 @@ export function cancellationsOn(store: StateStore, date: string): CancellationTa
     counts.set(cause, (counts.get(cause) ?? 0) + 1);
   }
   return [...counts.entries()]
-    .map(([cause, count]) => ({ cause: cause as CancelCause, count, loud: isLoudCancelCause(cause) }))
-    .sort((a, b) => Number(b.loud) - Number(a.loud) || b.count - a.count || a.cause.localeCompare(b.cause));
+    .map(([cause, count]) => ({
+      cause: cause as CancelCause,
+      count,
+      loud: isLoudCancelCause(cause),
+    }))
+    .sort(
+      (a, b) =>
+        Number(b.loud) - Number(a.loud) || b.count - a.count || a.cause.localeCompare(b.cause),
+    );
 }
 
 /** `qcr today`'s one-line cancellation summary. Never silent: "none" is an
@@ -307,9 +352,17 @@ function cmdWhy(n: number): void {
   const store = openStore();
   try {
     const pr = store.getPr(n);
-    if (pr) console.log(`#${n} state=${pr.state} head=${pr.head_sha.slice(0, 10)} stale=${pr.stale_recheck} "${pr.title}"`);
-    const rounds = store.db.prepare("SELECT * FROM rounds WHERE pr = ? ORDER BY round_no").all(n) as any[];
-    for (const r of rounds) console.log(`round ${r.round_no} (${r.round_type}) [${r.status}] verdict=${r.verdict ?? "—"} started=${r.started_at}`);
+    if (pr)
+      console.log(
+        `#${n} state=${pr.state} head=${pr.head_sha.slice(0, 10)} stale=${pr.stale_recheck} "${pr.title}"`,
+      );
+    const rounds = store.db
+      .prepare("SELECT * FROM rounds WHERE pr = ? ORDER BY round_no")
+      .all(n) as any[];
+    for (const r of rounds)
+      console.log(
+        `round ${r.round_no} (${r.round_type}) [${r.status}] verdict=${r.verdict ?? "—"} started=${r.started_at}`,
+      );
     if (existsSync(archiveDir)) {
       console.log(`archive: ${archiveDir}`);
       for (const f of readdirSync(archiveDir)) console.log(`  ${f}`);
@@ -351,7 +404,10 @@ async function cmdMetrics(pr: number | null, json: boolean): Promise<void> {
     // root. parseBuildSha is deploytab's — the marker format has one parser.
     const { parseBuildSha } = await import("./tui/deploytab.js");
     payload.ops = readOps(
-      { statusPath: join(stateDir(), "status.json"), buildShaPath: join(sandboxRoot(), "BUILD_SHA") },
+      {
+        statusPath: join(stateDir(), "status.json"),
+        buildShaPath: join(sandboxRoot(), "BUILD_SHA"),
+      },
       { readFile: (p) => readFileSync(p, "utf8"), parseBuildSha },
       payload.ops,
     );
@@ -364,7 +420,11 @@ async function cmdMetrics(pr: number | null, json: boolean): Promise<void> {
 /** `qcr backfill [--dry-run] [--limit N]` — the one-shot pre-daemon history
  * import. Read-only against GitHub: it opens the adapter purely for
  * its search/GraphQL reads and never reaches a mutation surface. */
-export async function cmdBackfill(dryRun: boolean, limit: number | undefined, json: boolean): Promise<void> {
+export async function cmdBackfill(
+  dryRun: boolean,
+  limit: number | undefined,
+  json: boolean,
+): Promise<void> {
   const { TokenMinter } = await import("./githubAuth.js");
   const { MutationGate } = await import("./gate.js");
   const { GitHubAdapter } = await import("./github.js");
@@ -402,7 +462,8 @@ export async function cmdBackfill(dryRun: boolean, limit: number | undefined, js
  */
 export async function cmdRegression(rest: string[], json: boolean): Promise<number> {
   const { MutationGate } = await import("./gate.js");
-  const { nodeReplayIo, parseRegressionArgs, readCaseSet, runRegressionCli, ScratchReplay } = await import("./replay.js");
+  const { nodeReplayIo, parseRegressionArgs, readCaseSet, runRegressionCli, ScratchReplay } =
+    await import("./replay.js");
   const cfg = loadConfig();
   const root = sandboxRoot();
   const args = parseRegressionArgs(rest, json);
@@ -481,17 +542,27 @@ export async function runDrain(on: boolean, deps: DrainRunDeps): Promise<number>
   const result = await sender.set(on);
   if (result.ok) {
     if (on) {
-      deps.log(`✓ draining — ${result.running_rounds ?? 0} round(s) still finishing; deploy when \`qcr status\` shows rounds running: 0`);
+      deps.log(
+        `✓ draining — ${result.running_rounds ?? 0} round(s) still finishing; deploy when \`qcr status\` shows rounds running: 0`,
+      );
       if (result.issuer === "session") {
         // The daemon did not see the operator seal on commands/operator/ (the
         // directory was writable by its own uid), so it bounded this drain
         // like a session's. Saying so beats a drain that lifts mid-deploy.
-        deps.log(`  ⚠ NOT an operator drain: the daemon found commands/operator/ unsealed and bounded it — lapses ${result.expires_at ?? "(unknown)"}`);
-        deps.log("    check the directory is root-owned and 0755 in the container before deploying");
+        deps.log(
+          `  ⚠ NOT an operator drain: the daemon found commands/operator/ unsealed and bounded it — lapses ${result.expires_at ?? "(unknown)"}`,
+        );
+        deps.log(
+          "    check the directory is root-owned and 0755 in the container before deploying",
+        );
       }
-      deps.log("  (auto-lifts on the new boot's first healthy reconcile — re-drain before each step of a multi-deploy window)");
+      deps.log(
+        "  (auto-lifts on the new boot's first healthy reconcile — re-drain before each step of a multi-deploy window)",
+      );
     } else {
-      deps.log(`✓ drain lifted — ${result.dropped_deliveries ?? 0} webhook delivery(ies) were dropped; the reconcile poll recovers them`);
+      deps.log(
+        `✓ drain lifted — ${result.dropped_deliveries ?? 0} webhook delivery(ies) were dropped; the reconcile poll recovers them`,
+      );
     }
     return 0;
   }
@@ -510,7 +581,9 @@ function runDrainLocal(on: boolean): number {
   const name = `${new Date().toISOString().replace(/[:.]/g, "-")}-cli-drain.json`;
   writeFileSync(join(dir, `.${name}.tmp`), drainPayload(on));
   renameSync(join(dir, `.${name}.tmp`), join(dir, name));
-  console.log(`drain ${on ? "on" : "off"} command written to ${join(dir, name)} — result lands in commands/results/`);
+  console.log(
+    `drain ${on ? "on" : "off"} command written to ${join(dir, name)} — result lands in commands/results/`,
+  );
   console.log(
     "note: written as THIS user, so unless commands/operator/ is root-owned the daemon sees no operator seal and bounds the drain like a session's",
   );
@@ -561,7 +634,9 @@ export async function cmdCompanion(sub: string | undefined): Promise<void> {
     case "up": {
       const outcome = await lc.ensureUp();
       const born = await lc.spawnPi();
-      console.log(`companion ${cfg.container_name}: ${outcome}; pi session ${born ? "spawned" : "already running"}`);
+      console.log(
+        `companion ${cfg.container_name}: ${outcome}; pi session ${born ? "spawned" : "already running"}`,
+      );
       console.log(`attach: docker ${lc.attachArgv().join(" ")}`);
       return;
     }
@@ -589,7 +664,9 @@ export async function cmdCompanion(sub: string | undefined): Promise<void> {
       await lc.buildImage((line) => console.log(line));
       const outcome = await lc.ensureUp((line) => console.log(line));
       const born = await lc.spawnPi();
-      console.log(`companion ${cfg.container_name}: image rebuilt, ${outcome}; pi session ${born ? "spawned" : "already running"}`);
+      console.log(
+        `companion ${cfg.container_name}: image rebuilt, ${outcome}; pi session ${born ? "spawned" : "already running"}`,
+      );
       return;
     }
     default:
@@ -622,8 +699,15 @@ export async function cmdMemory(rest: string[]): Promise<number> {
           .split(/[,\s]+/)
           .filter(Boolean)
       : cfg.openviking.provision_users.filter((u) => u !== own);
-  if (users.length === 0) throw new Error("usage: qcr memory reembed [--user <name>[,<name>…]] — no namespace to re-embed");
-  const [{ loadReembedModule, reembedNamespaces }, { USER_KEY_ENV, keysFileReader, tuiMemoryBaseUrl }, { keysFilePath }] = await Promise.all([
+  if (users.length === 0)
+    throw new Error(
+      "usage: qcr memory reembed [--user <name>[,<name>…]] — no namespace to re-embed",
+    );
+  const [
+    { loadReembedModule, reembedNamespaces },
+    { USER_KEY_ENV, keysFileReader, tuiMemoryBaseUrl },
+    { keysFilePath },
+  ] = await Promise.all([
     import("./openviking/reembed.js"),
     import("./tui/memory.js"),
     import("./tui/companion.js"),
@@ -631,13 +715,17 @@ export async function cmdMemory(rest: string[]): Promise<number> {
   const keysFile = keysFilePath(process.env);
   const readKey = keysFileReader(keysFile);
   const base = tuiMemoryBaseUrl(process.env);
-  console.log(`re-embedding ${users.join(", ")} through ${base} with the keys in ${keysFile} (this can take minutes per namespace)`);
+  console.log(
+    `re-embedding ${users.join(", ")} through ${base} with the keys in ${keysFile} (this can take minutes per namespace)`,
+  );
   const { ok, results } = await reembedNamespaces({
     module: await loadReembedModule(sandboxRoot()),
     base,
     users,
     keyFor: (user) => {
-      const names = (USER_KEY_ENV as Record<string, readonly string[]>)[user] ?? [`OPENVIKING_${user.toUpperCase()}_KEY`];
+      const names = (USER_KEY_ENV as Record<string, readonly string[]>)[user] ?? [
+        `OPENVIKING_${user.toUpperCase()}_KEY`,
+      ];
       for (const name of names) {
         const v = readKey(name);
         if (v) return v;
@@ -650,7 +738,12 @@ export async function cmdMemory(rest: string[]): Promise<number> {
   if (ok) {
     console.log(
       "done. The daemon's journal still lists these namespaces as awaiting you; receipt them in the container so the heartbeat stops naming them:\n" +
-        users.map((u) => `  docker exec ${cfg.tui.container} node /opt/quickreview/sandbox/scripts/openviking-reembed.mjs settle --home ${cfg.openviking.home} --user ${u}`).join("\n"),
+        users
+          .map(
+            (u) =>
+              `  docker exec ${cfg.tui.container} node /opt/quickreview/sandbox/scripts/openviking-reembed.mjs settle --home ${cfg.openviking.home} --user ${u}`,
+          )
+          .join("\n"),
     );
   }
   return ok ? 0 : 1;
@@ -662,7 +755,8 @@ export async function cmdMemory(rest: string[]): Promise<number> {
  * when the checklist verifies complete. Resumable: run it again after a crash
  * and completed steps are re-verified, not repeated. */
 export async function cmdOnboard(): Promise<number> {
-  const { piPinFromPackageJson, onboardingSessionDir, runOnboard } = await import("./onboard/launch.js");
+  const { piPinFromPackageJson, onboardingSessionDir, runOnboard } =
+    await import("./onboard/launch.js");
   const { checklistComplete } = await import("./onboard/engine.js");
   const { spawn } = await import("node:child_process");
   const root = sandboxRoot();
@@ -676,11 +770,18 @@ export async function cmdOnboard(): Promise<number> {
   } catch {
     pin = piPinFromPackageJson(root);
   }
-  if (!pin) throw new Error('onboard: pi pin not found (need config.toml [pi] or the package.json "pi" block)');
+  if (!pin)
+    throw new Error(
+      'onboard: pi pin not found (need config.toml [pi] or the package.json "pi" block)',
+    );
   mkdirSync(onboardingSessionDir(root), { recursive: true });
   const run = (cmd: string, args: string[]): Promise<number> =>
     new Promise((resolvePromise) => {
-      const child = spawn(cmd, args, { stdio: "inherit", cwd: root, env: { ...process.env, QCR_ROOT: root } });
+      const child = spawn(cmd, args, {
+        stdio: "inherit",
+        cwd: root,
+        env: { ...process.env, QCR_ROOT: root },
+      });
       child.on("error", (err) => {
         console.error(`onboard: ${cmd} failed to start: ${err.message}`);
         resolvePromise(1);
@@ -709,7 +810,8 @@ export async function main(argv: string[]): Promise<void> {
     }
     case "compare": {
       const prs = rest.map(Number);
-      if (prs.length === 0 || prs.some((n) => !Number.isInteger(n))) throw new Error("usage: qcr compare <pr-number...>");
+      if (prs.length === 0 || prs.some((n) => !Number.isInteger(n)))
+        throw new Error("usage: qcr compare <pr-number...>");
       const { cmdCompare } = await import("./cliops.js");
       process.exitCode = await cmdCompare(prs);
       return;
@@ -717,7 +819,8 @@ export async function main(argv: string[]): Promise<void> {
     case "metrics": {
       const prIdx = rest.indexOf("--pr");
       const pr = prIdx >= 0 ? Number(rest[prIdx + 1]) : null;
-      if (pr !== null && !Number.isInteger(pr)) throw new Error("usage: qcr metrics [--pr <pr-number>] [--json]");
+      if (pr !== null && !Number.isInteger(pr))
+        throw new Error("usage: qcr metrics [--pr <pr-number>] [--json]");
       return cmdMetrics(pr, json);
     }
     case "backfill": {
@@ -766,7 +869,8 @@ export async function main(argv: string[]): Promise<void> {
     case "events": {
       const tailIdx = rest.indexOf("--tail");
       const tail = tailIdx >= 0 ? Number(rest[tailIdx + 1]) : 40;
-      if (!Number.isInteger(tail) || tail <= 0) throw new Error("usage: qcr events [--tail <k>] [--json]");
+      if (!Number.isInteger(tail) || tail <= 0)
+        throw new Error("usage: qcr events [--tail <k>] [--json]");
       return cmdEvents(tail, json);
     }
     case "tui": {

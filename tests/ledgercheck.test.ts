@@ -8,13 +8,20 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
 import type { GateResult } from "../src/gate.js";
-import { classifyLedger, enforceLedgerFreshness, ledgerRewriteWake, type LedgerCheckDeps } from "../src/ledgercheck.js";
+import {
+  classifyLedger,
+  enforceLedgerFreshness,
+  ledgerRewriteWake,
+  type LedgerCheckDeps,
+} from "../src/ledgercheck.js";
 import { RecheckWatcher } from "../src/recheck.js";
 import { StateStore } from "../src/state.js";
 import type { SessionHooks } from "../src/types.js";
 import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
 
-const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
+const cfg: Config = parseConfig(
+  readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
+);
 
 const HEAD = "abcdef1234567890abcdef1234567890abcdef12";
 
@@ -57,7 +64,9 @@ describe("classifyLedger", () => {
   it("accepts a full-sha header and an abbreviated (≥7) prefix", () => {
     expect(classifyLedger(`LEDGER PR #7 @ ${HEAD}\n- state`, 7, HEAD)).toBe("fresh");
     expect(classifyLedger(`LEDGER PR #7 @ ${HEAD.slice(0, 12)}\n- state`, 7, HEAD)).toBe("fresh");
-    expect(classifyLedger(`LEDGER PR #7 @ ${HEAD.slice(0, 7).toUpperCase()}`, 7, HEAD)).toBe("fresh");
+    expect(classifyLedger(`LEDGER PR #7 @ ${HEAD.slice(0, 7).toUpperCase()}`, 7, HEAD)).toBe(
+      "fresh",
+    );
   });
 
   it("flags missing / unparseable / wrong PR / stale sha", () => {
@@ -74,7 +83,9 @@ describe("enforceLedgerFreshness", () => {
   it("fresh ledger → no anomaly, no nudge", async () => {
     writeLedger(7, `LEDGER PR #7 @ ${HEAD}\n- reviewed`);
     const injects: string[] = [];
-    expect(await enforceLedgerFreshness(deps(injects), { pr: 7, roundNo: 2, headSha: HEAD })).toBe("fresh");
+    expect(await enforceLedgerFreshness(deps(injects), { pr: 7, roundNo: 2, headSha: HEAD })).toBe(
+      "fresh",
+    );
     expect(injects).toEqual([]);
     expect(anomalyKinds()).toEqual([]);
   });
@@ -89,7 +100,9 @@ describe("enforceLedgerFreshness", () => {
     expect(anomalyKinds()).toEqual(["ledger_stale"]);
 
     // Second stale detection, same round: anomaly recorded again, NO nudge.
-    expect(await enforceLedgerFreshness(d, { pr: 7, roundNo: 2, headSha: HEAD })).toBe("already_nudged");
+    expect(await enforceLedgerFreshness(d, { pr: 7, roundNo: 2, headSha: HEAD })).toBe(
+      "already_nudged",
+    );
     expect(injects).toHaveLength(1);
     expect(anomalyKinds()).toEqual(["ledger_stale", "ledger_stale_unresolved"]);
 
@@ -101,9 +114,13 @@ describe("enforceLedgerFreshness", () => {
   it("stale sha and wrong-PR ledgers are enforced like missing ones", async () => {
     writeLedger(7, "LEDGER PR #7 @ 9999999999999999");
     const injects: string[] = [];
-    expect(await enforceLedgerFreshness(deps(injects), { pr: 7, roundNo: 1, headSha: HEAD })).toBe("nudged");
+    expect(await enforceLedgerFreshness(deps(injects), { pr: 7, roundNo: 1, headSha: HEAD })).toBe(
+      "nudged",
+    );
     writeLedger(8, `LEDGER PR #5288 @ ${HEAD}`);
-    expect(await enforceLedgerFreshness(deps(injects), { pr: 8, roundNo: 1, headSha: HEAD })).toBe("nudged");
+    expect(await enforceLedgerFreshness(deps(injects), { pr: 8, roundNo: 1, headSha: HEAD })).toBe(
+      "nudged",
+    );
     expect(injects).toHaveLength(2);
   });
 
@@ -120,7 +137,9 @@ describe("enforceLedgerFreshness", () => {
     });
     store.startRound(7, "first", ["pass-baseline"], 60);
     const injects: string[] = [];
-    expect(await enforceLedgerFreshness(deps(injects), { pr: 7, roundNo: 1, headSha: HEAD })).toBe("nudged");
+    expect(await enforceLedgerFreshness(deps(injects), { pr: 7, roundNo: 1, headSha: HEAD })).toBe(
+      "nudged",
+    );
     expect(injects).toEqual([]); // held, not delivered mid-round
     const held = store.heldWakes(7);
     expect(held).toHaveLength(1);
@@ -132,8 +151,12 @@ describe("enforceLedgerFreshness", () => {
     const injects: string[] = [];
     const d = deps(injects);
     expect(await enforceLedgerFreshness(d, { pr: 7, roundNo: null, headSha: HEAD })).toBe("nudged");
-    expect(await enforceLedgerFreshness(d, { pr: 7, roundNo: null, headSha: HEAD })).toBe("already_nudged");
-    expect(await enforceLedgerFreshness(d, { pr: 7, roundNo: null, headSha: "f".repeat(40) })).toBe("nudged");
+    expect(await enforceLedgerFreshness(d, { pr: 7, roundNo: null, headSha: HEAD })).toBe(
+      "already_nudged",
+    );
+    expect(await enforceLedgerFreshness(d, { pr: 7, roundNo: null, headSha: "f".repeat(40) })).toBe(
+      "nudged",
+    );
     expect(injects).toHaveLength(2);
   });
 
@@ -212,7 +235,13 @@ describe("VerdictWatcher round-end ledger check", () => {
     mkdirSync(join(dir, "verdict"), { recursive: true });
     writeFileSync(
       join(dir, "verdict", `pr-${pr}-round-1.json`),
-      JSON.stringify({ pr, round_no: 1, verdict: "REQUEST_CHANGES", head_sha: HEAD, finished_at: "2026-08-19T12:00:00Z" }),
+      JSON.stringify({
+        pr,
+        round_no: 1,
+        verdict: "REQUEST_CHANGES",
+        head_sha: HEAD,
+        finished_at: "2026-08-19T12:00:00Z",
+      }),
     );
   }
 
@@ -279,7 +308,10 @@ describe("RecheckWatcher ledger check on uphold", () => {
       },
     });
     const head12 = HEAD.slice(0, 12);
-    writeFileSync(join(verdictDir, `pr-100-recheck-${head12}.json`), JSON.stringify({ pr: 100, head_sha: HEAD, outcome: "uphold" }));
+    writeFileSync(
+      join(verdictDir, `pr-100-recheck-${head12}.json`),
+      JSON.stringify({ pr: 100, head_sha: HEAD, outcome: "uphold" }),
+    );
     expect(await watcher.sweep()).toHaveLength(1);
     expect(calls).toEqual([`100:${HEAD}`]);
 
@@ -293,7 +325,10 @@ describe("RecheckWatcher ledger check on uphold", () => {
       stale_recheck: 0,
       migration_gate: 0,
     });
-    writeFileSync(join(verdictDir, `pr-101-recheck-${head12}.json`), JSON.stringify({ pr: 101, head_sha: HEAD, outcome: "request_changes" }));
+    writeFileSync(
+      join(verdictDir, `pr-101-recheck-${head12}.json`),
+      JSON.stringify({ pr: 101, head_sha: HEAD, outcome: "request_changes" }),
+    );
     await watcher.sweep();
     expect(calls).toHaveLength(1); // request_changes path never checks
   });

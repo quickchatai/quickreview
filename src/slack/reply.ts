@@ -62,7 +62,13 @@ export function truncateReply(text: string, max: number): string {
   }
   // Never cut a surrogate pair in half either — half an emoji is a mojibake
   // box, for the same reason half an entity is a stray `&am`.
-  const cut = lo > 0 && lo < text.length && text.charCodeAt(lo - 1) >= 0xd800 && text.charCodeAt(lo - 1) <= 0xdbff ? lo - 1 : lo;
+  const cut =
+    lo > 0 &&
+    lo < text.length &&
+    text.charCodeAt(lo - 1) >= 0xd800 &&
+    text.charCodeAt(lo - 1) <= 0xdbff
+      ? lo - 1
+      : lo;
   return escapeMrkdwn(text.slice(0, cut)) + suffix;
 }
 
@@ -75,7 +81,9 @@ export function truncateReply(text: string, max: number): string {
 export function threadIsKnown(store: StateStore, channel: string, threadTs: string): boolean {
   if (store.slackThreadByRoot(channel, threadTs)) return true;
   const row = store.db
-    .prepare("SELECT 1 AS hit FROM slack_events WHERE channel = ? AND (ts = ? OR thread_ts = ?) LIMIT 1")
+    .prepare(
+      "SELECT 1 AS hit FROM slack_events WHERE channel = ? AND (ts = ? OR thread_ts = ?) LIMIT 1",
+    )
     .get(channel, threadTs, threadTs) as { hit: number } | undefined;
   return row !== undefined;
 }
@@ -107,7 +115,8 @@ function shortHash(s: string): string {
 
 /** `reply:<command file basename>` — one post per command file, forever. */
 export function replyIdemKey(input: SlackReplyInput): string {
-  const scope = input.file && input.file.length > 0 ? input.file : `${input.thread}:${shortHash(input.text)}`;
+  const scope =
+    input.file && input.file.length > 0 ? input.file : `${input.thread}:${shortHash(input.text)}`;
   return `reply:${scope}`;
 }
 
@@ -116,7 +125,9 @@ export function replyIdemKey(input: SlackReplyInput): string {
  * refusal lands in the command's result file, which is the overseer's only
  * feedback channel.
  */
-export function makeSlackReply(deps: SlackReplyDeps): (input: SlackReplyInput) => Promise<FileOutcome> {
+export function makeSlackReply(
+  deps: SlackReplyDeps,
+): (input: SlackReplyInput) => Promise<FileOutcome> {
   const now = deps.now ?? (() => new Date());
   const log = deps.log ?? (() => {});
   return async (input: SlackReplyInput): Promise<FileOutcome> => {
@@ -127,19 +138,29 @@ export function makeSlackReply(deps: SlackReplyDeps): (input: SlackReplyInput) =
     }
     const channel = cfg.slack.channel; // never from the command: unrepresentable
     const thread = input.thread;
-    if (!SLACK_TS_RE.test(thread)) return { ok: false, reason: `'thread' ${JSON.stringify(thread)} is not a Slack ts` };
+    if (!SLACK_TS_RE.test(thread))
+      return { ok: false, reason: `'thread' ${JSON.stringify(thread)} is not a Slack ts` };
     if (!threadIsKnown(store, channel, thread)) {
-      return { ok: false, reason: `unknown thread ${thread} — the daemon only replies where it was spoken to` };
+      return {
+        ok: false,
+        reason: `unknown thread ${thread} — the daemon only replies where it was spoken to`,
+      };
     }
 
     const idemKey = replyIdemKey(input);
     const decision = decideReply(store, cfg, { threadTs: thread, idemKey }, now());
     if (!decision.allow) {
-      return { ok: false, reason: decision.reason ?? "slack reply refused", cap: decision.cap ?? null };
+      return {
+        ok: false,
+        reason: decision.reason ?? "slack reply refused",
+        cap: decision.cap ?? null,
+      };
     }
 
     const text = truncateReply(input.text, cfg.slack.max_reply_chars);
-    if (!claimPost(store, { idem_key: idemKey, kind: "reply", thread_ts: thread, chars: text.length })) {
+    if (
+      !claimPost(store, { idem_key: idemKey, kind: "reply", thread_ts: thread, chars: text.length })
+    ) {
       return { ok: false, reason: `already replied for this command (idem_key ${idemKey})` };
     }
 
@@ -149,7 +170,11 @@ export function makeSlackReply(deps: SlackReplyDeps): (input: SlackReplyInput) =
     } catch (err) {
       result = { ok: false, error: (err as Error).message };
     }
-    store.settleSlackPost(idemKey, { ts: result.ts ?? null, ok: result.ok, error: result.error ?? null });
+    store.settleSlackPost(idemKey, {
+      ts: result.ts ?? null,
+      ok: result.ok,
+      error: result.error ?? null,
+    });
     if (!result.ok) {
       // A failed post is recorded and never blocks anything else.
       log(`[slack] reply to ${thread} failed: ${result.error ?? "unknown"}`);
@@ -158,6 +183,12 @@ export function makeSlackReply(deps: SlackReplyDeps): (input: SlackReplyInput) =
     const pr = store.slackThreadByRoot(channel, thread)?.pr;
     if (pr !== undefined) store.touchSlackThread(pr);
     store.logEvent("slack_reply_posted", pr ?? null, { thread, ts: result.ts, chars: text.length });
-    return { ok: true, thread, ts: result.ts, chars: text.length, truncated: text.endsWith(TRUNCATION_SUFFIX) };
+    return {
+      ok: true,
+      thread,
+      ts: result.ts,
+      chars: text.length,
+      truncated: text.endsWith(TRUNCATION_SUFFIX),
+    };
   };
 }

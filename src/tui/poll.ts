@@ -7,7 +7,11 @@ import { statusArgv, type SshRunner } from "./remote.js";
 
 export type Health =
   | { kind: "ok"; heartbeatAgeS: number }
-  | { kind: "pipeline_unhealthy"; heartbeatAgeS: number; causes: NonNullable<StatusSnapshot["pipeline"]>["causes"] }
+  | {
+      kind: "pipeline_unhealthy";
+      heartbeatAgeS: number;
+      causes: NonNullable<StatusSnapshot["pipeline"]>["causes"];
+    }
   | { kind: "stale"; dataAgeS: number }
   | { kind: "unreachable"; sinceS: number };
 
@@ -28,12 +32,16 @@ export function classifyHealth(
   lastOkAt: Date | undefined,
 ): Health {
   if (!lastFetchOk || !lastSnapshot || !lastOkAt) {
-    const sinceS = lastOkAt ? Math.floor((now.getTime() - lastOkAt.getTime()) / 1000) : Number.POSITIVE_INFINITY;
+    const sinceS = lastOkAt
+      ? Math.floor((now.getTime() - lastOkAt.getTime()) / 1000)
+      : Number.POSITIVE_INFINITY;
     return { kind: "unreachable", sinceS };
   }
   const dataAgeS = Math.floor((now.getTime() - new Date(lastSnapshot.written_at).getTime()) / 1000);
   if (dataAgeS > staleAfterS) return { kind: "stale", dataAgeS };
-  const heartbeatAgeS = Math.floor((now.getTime() - new Date(lastSnapshot.heartbeat).getTime()) / 1000);
+  const heartbeatAgeS = Math.floor(
+    (now.getTime() - new Date(lastSnapshot.heartbeat).getTime()) / 1000,
+  );
   if (lastSnapshot.pipeline?.healthy === false) {
     return { kind: "pipeline_unhealthy", heartbeatAgeS, causes: lastSnapshot.pipeline.causes };
   }
@@ -71,7 +79,13 @@ export class Poller {
   ) {}
 
   health(): Health {
-    return classifyHealth(this.now(), this.cfg.stale_after_s, this.state.snapshot, this.state.lastFetchOk, this.state.lastOkAt);
+    return classifyHealth(
+      this.now(),
+      this.cfg.stale_after_s,
+      this.state.snapshot,
+      this.state.lastFetchOk,
+      this.state.lastOkAt,
+    );
   }
 
   async tick(): Promise<void> {
@@ -99,7 +113,9 @@ export class Poller {
       if (this.stopped) return;
       await this.tick();
       if (this.stopped) return;
-      this.timer = setTimeout(loop, this.nextDelayMs());
+      // Fire-and-forget, deliberately and explicitly: `loop` awaits its own
+      // tick and swallows nothing, and setTimeout cannot await a callback.
+      this.timer = setTimeout(() => void loop(), this.nextDelayMs());
     };
     void loop();
   }

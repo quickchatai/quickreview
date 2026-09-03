@@ -75,7 +75,9 @@ export function postingReceiptPath(dir: string, pr: number, roundNo: number): st
 }
 
 function event(value: unknown): PostingReceipt["actual_event"] | undefined {
-  return value === "APPROVE" || value === "REQUEST_CHANGES" || value === "COMMENT" ? value : undefined;
+  return value === "APPROVE" || value === "REQUEST_CHANGES" || value === "COMMENT"
+    ? value
+    : undefined;
 }
 
 function isoDate(value: unknown): value is string {
@@ -84,11 +86,17 @@ function isoDate(value: unknown): value is string {
 
 /** The identity fields every outcome shape shares, validated once. */
 function identityOk(value: Partial<PostingReceipt | GuardedNoopReceipt>): boolean {
-  return value.version === 1 && typeof value.posting_key === "string" &&
+  return (
+    value.version === 1 &&
+    typeof value.posting_key === "string" &&
     value.marker === postingMarker(value.posting_key) &&
-    typeof value.pr === "number" && Number.isInteger(value.pr) &&
-    typeof value.round_no === "number" && Number.isInteger(value.round_no) &&
-    typeof value.head_sha === "string" && value.head_sha.length > 0;
+    typeof value.pr === "number" &&
+    Number.isInteger(value.pr) &&
+    typeof value.round_no === "number" &&
+    Number.isInteger(value.round_no) &&
+    typeof value.head_sha === "string" &&
+    value.head_sha.length > 0
+  );
 }
 
 /**
@@ -99,31 +107,45 @@ function identityOk(value: Partial<PostingReceipt | GuardedNoopReceipt>): boolea
  * own evidence says the guard would have let the post through is not a
  * guard-2 refusal, whatever its status field claims.
  */
-function parseGuardedNoop(value: Partial<GuardedNoopReceipt> & { standing_mark?: Partial<StandingMarkSnapshot> }): GuardedNoopReceipt | undefined {
+function parseGuardedNoop(
+  value: Partial<GuardedNoopReceipt> & { standing_mark?: Partial<StandingMarkSnapshot> },
+): GuardedNoopReceipt | undefined {
   if (
-    value.status !== "skipped" || value.skip_reason !== "no-new-evidence" ||
+    value.status !== "skipped" ||
+    value.skip_reason !== "no-new-evidence" ||
     !event(value.intended_event) ||
     (value.mode !== "live" && value.mode !== "dryrun") ||
     !isoDate(value.skipped_at) ||
-    !value.standing_mark || typeof value.standing_mark !== "object"
-  ) return undefined;
+    !value.standing_mark ||
+    typeof value.standing_mark !== "object"
+  )
+    return undefined;
   const recorded = value.standing_mark;
   if (
-    typeof recorded.head_sha !== "string" || recorded.head_sha.toLowerCase() !== value.head_sha!.toLowerCase() ||
+    typeof recorded.head_sha !== "string" ||
+    recorded.head_sha.toLowerCase() !== value.head_sha!.toLowerCase() ||
     !isoDate(recorded.reviewed_at) ||
     !(recorded.verdict === null || typeof recorded.verdict === "string") ||
     !(recorded.posted_event === null || typeof recorded.posted_event === "string") ||
-    !(recorded.round_no === null || (typeof recorded.round_no === "number" && Number.isInteger(recorded.round_no))) ||
+    !(
+      recorded.round_no === null ||
+      (typeof recorded.round_no === "number" && Number.isInteger(recorded.round_no))
+    ) ||
     !(recorded.last_author_reply_at === null || isoDate(recorded.last_author_reply_at))
-  ) return undefined;
+  )
+    return undefined;
   // The guard-2 condition, re-derived from the record's own evidence. `>=`
   // reads an ambiguous same-millisecond reply as new evidence, exactly as
   // guards.ts / guards.sh do.
-  if (recorded.last_author_reply_at !== null && recorded.last_author_reply_at! >= recorded.reviewed_at!) return undefined;
+  if (
+    recorded.last_author_reply_at !== null &&
+    recorded.last_author_reply_at >= recorded.reviewed_at
+  )
+    return undefined;
   const asRow: ReviewedHeadRow = {
     pr: value.pr!,
     head_sha: recorded.head_sha,
-    reviewed_at: recorded.reviewed_at!,
+    reviewed_at: recorded.reviewed_at,
     verdict: recorded.verdict ?? null,
     posted_event: recorded.posted_event ?? null,
     round_no: recorded.round_no ?? null,
@@ -152,25 +174,33 @@ export function parsePostingReceipt(raw: string): PostingOutcome | undefined {
   try {
     const value = JSON.parse(raw) as Partial<PostingReceipt>;
     if (!value || typeof value !== "object" || !identityOk(value)) return undefined;
-    if ((value as { status?: unknown }).status === "skipped") return parseGuardedNoop(value as Partial<GuardedNoopReceipt>);
+    if ((value as { status?: unknown }).status === "skipped")
+      return parseGuardedNoop(value as Partial<GuardedNoopReceipt>);
     if (
-      !event(value.intended_event) || !event(value.actual_event) ||
+      !event(value.intended_event) ||
+      !event(value.actual_event) ||
       (value.status !== "prepared" && value.status !== "confirmed" && value.status !== "dryrun") ||
-      typeof value.payload_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(value.payload_sha256) ||
+      typeof value.payload_sha256 !== "string" ||
+      !/^[a-f0-9]{64}$/.test(value.payload_sha256) ||
       !isoDate(value.prepared_at)
-    ) return undefined;
+    )
+      return undefined;
     if (value.status === "confirmed") {
-      const expectedState = value.actual_event === "APPROVE"
-        ? "APPROVED"
-        : value.actual_event === "REQUEST_CHANGES"
-          ? "CHANGES_REQUESTED"
-          : "COMMENTED";
+      const expectedState =
+        value.actual_event === "APPROVE"
+          ? "APPROVED"
+          : value.actual_event === "REQUEST_CHANGES"
+            ? "CHANGES_REQUESTED"
+            : "COMMENTED";
       if (
-        typeof value.gh_review_id !== "number" || !Number.isInteger(value.gh_review_id) ||
-        typeof value.gh_commit_id !== "string" || value.gh_commit_id.toLowerCase() !== value.head_sha!.toLowerCase() ||
+        typeof value.gh_review_id !== "number" ||
+        !Number.isInteger(value.gh_review_id) ||
+        typeof value.gh_commit_id !== "string" ||
+        value.gh_commit_id.toLowerCase() !== value.head_sha!.toLowerCase() ||
         value.gh_state !== expectedState ||
         !isoDate(value.confirmed_at)
-      ) return undefined;
+      )
+        return undefined;
     }
     return value as PostingReceipt;
   } catch {
@@ -179,9 +209,18 @@ export function parsePostingReceipt(raw: string): PostingOutcome | undefined {
 }
 
 export function receiptMatchesVerdict(receipt: PostingReceipt, verdict: VerdictFile): boolean {
-  if (receipt.pr !== verdict.pr || receipt.round_no !== verdict.round_no || receipt.head_sha.toLowerCase() !== verdict.head_sha.toLowerCase()) return false;
-  if (verdict.verdict === "REQUEST_CHANGES") return receipt.actual_event === "REQUEST_CHANGES" || receipt.actual_event === "COMMENT";
-  if (verdict.verdict === "APPROVE") return verdict.approval_withheld === true ? receipt.actual_event === "COMMENT" : receipt.actual_event === "APPROVE";
+  if (
+    receipt.pr !== verdict.pr ||
+    receipt.round_no !== verdict.round_no ||
+    receipt.head_sha.toLowerCase() !== verdict.head_sha.toLowerCase()
+  )
+    return false;
+  if (verdict.verdict === "REQUEST_CHANGES")
+    return receipt.actual_event === "REQUEST_CHANGES" || receipt.actual_event === "COMMENT";
+  if (verdict.verdict === "APPROVE")
+    return verdict.approval_withheld === true
+      ? receipt.actual_event === "COMMENT"
+      : receipt.actual_event === "APPROVE";
   return receipt.actual_event === "COMMENT";
 }
 
@@ -194,18 +233,22 @@ export function receiptMatchesVerdict(receipt: PostingReceipt, verdict: VerdictF
  * event since the refusal means state changed under the record, and the
  * record is then no authority for restoring anything.
  */
-export function guardedNoopMatchesMark(noop: GuardedNoopReceipt, mark: ReviewedHeadRow | undefined): boolean {
+export function guardedNoopMatchesMark(
+  noop: GuardedNoopReceipt,
+  mark: ReviewedHeadRow | undefined,
+): boolean {
   if (!mark) return false;
   const live = snapshotMark(mark);
   const recorded = noop.standing_mark;
   if (
-    live.head_sha.toLowerCase() !== recorded.head_sha.toLowerCase()
-    || live.head_sha.toLowerCase() !== noop.head_sha.toLowerCase()
-    || live.reviewed_at !== recorded.reviewed_at
-    || live.verdict !== recorded.verdict
-    || live.posted_event !== recorded.posted_event
-    || live.round_no !== recorded.round_no
-  ) return false;
+    live.head_sha.toLowerCase() !== recorded.head_sha.toLowerCase() ||
+    live.head_sha.toLowerCase() !== noop.head_sha.toLowerCase() ||
+    live.reviewed_at !== recorded.reviewed_at ||
+    live.verdict !== recorded.verdict ||
+    live.posted_event !== recorded.posted_event ||
+    live.round_no !== recorded.round_no
+  )
+    return false;
   // The live reply memory is the one field allowed to differ — but only
   // FORWARD. A reply the LIVE mark carries at or after the review and at or
   // before the recorded refusal means guard 2 would have answered "new
@@ -223,7 +266,11 @@ export function guardedNoopMatchesMark(noop: GuardedNoopReceipt, mark: ReviewedH
   return true;
 }
 
-export function readPostingReceipt(dir: string, pr: number, roundNo: number): PostingOutcome | undefined {
+export function readPostingReceipt(
+  dir: string,
+  pr: number,
+  roundNo: number,
+): PostingOutcome | undefined {
   try {
     return parsePostingReceipt(readFileSync(postingReceiptPath(dir, pr, roundNo), "utf8"));
   } catch {

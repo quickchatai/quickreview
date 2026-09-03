@@ -13,8 +13,21 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { OnboardingEngine, type CheckResult, type OnboardAdapters, type OnboardingStep, type ProcessResult, type StepReport } from "../src/onboard/engine.js";
-import { BRINGUP_STEP_ID, BROUGHT_UP_CHOICE_KEY, FIRST_BUILD_WARNING, bringUpArgs, bringUpStep } from "../src/onboard/steps/bringup.js";
+import {
+  OnboardingEngine,
+  type CheckResult,
+  type OnboardAdapters,
+  type OnboardingStep,
+  type ProcessResult,
+  type StepReport,
+} from "../src/onboard/engine.js";
+import {
+  BRINGUP_STEP_ID,
+  BROUGHT_UP_CHOICE_KEY,
+  FIRST_BUILD_WARNING,
+  bringUpArgs,
+  bringUpStep,
+} from "../src/onboard/steps/bringup.js";
 import type { StreamRunner } from "../src/onboard/steps/compose.js";
 import { CHOICE_KEYS } from "../src/onboard/steps/configfill.js";
 import { INGRESS_CHOICE_KEY, readEnvKey, setTomlKey } from "../src/onboard/steps/ingress.js";
@@ -32,7 +45,10 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "qcr-bringup-"));
   mkdirSync(join(root, "state"), { recursive: true });
   writeFileSync(join(root, "docker-compose.yml"), "name: quickreview\n");
-  writeFileSync(join(root, "config.toml"), setTomlKey(exampleConfig, "github", "repo", "acme/web")!);
+  writeFileSync(
+    join(root, "config.toml"),
+    setTomlKey(exampleConfig, "github", "repo", "acme/web")!,
+  );
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
@@ -42,7 +58,14 @@ function seedChoices(choices: Record<string, unknown>): void {
   mkdirSync(join(root, "state", "onboarding"), { recursive: true });
   writeFileSync(
     join(root, "state", "onboarding", "checklist.json"),
-    JSON.stringify({ version: 1, created_at: "2026-08-30T10:00:00Z", updated_at: "2026-08-30T10:00:00Z", completed_at: null, choices, steps: {} }),
+    JSON.stringify({
+      version: 1,
+      created_at: "2026-08-30T10:00:00Z",
+      updated_at: "2026-08-30T10:00:00Z",
+      completed_at: null,
+      choices,
+      steps: {},
+    }),
   );
 }
 
@@ -53,7 +76,16 @@ interface Harness {
   psCalls: number;
 }
 
-function harness(o: { streamCode?: number; lines?: string[]; services?: Array<{ Service: string; State: string }>; psCode?: number; uid?: number | null; step?: OnboardingStep } = {}): Harness {
+function harness(
+  o: {
+    streamCode?: number;
+    lines?: string[];
+    services?: Array<{ Service: string; State: string }>;
+    psCode?: number;
+    uid?: number | null;
+    step?: OnboardingStep;
+  } = {},
+): Harness {
   const streamed: string[][] = [];
   const events: string[] = [];
   const state = { psCalls: 0 };
@@ -62,15 +94,24 @@ function harness(o: { streamCode?: number; lines?: string[]; services?: Array<{ 
       streamed.push([cmd, ...args]);
       events.push(`stream:${args.join(" ")}`);
       for (const line of o.lines ?? []) onLine(line);
-      return { code: o.streamCode ?? 0, stdout: (o.lines ?? []).join("\n"), stderr: o.streamCode ? "build failed: no space left on device" : "" };
+      return {
+        code: o.streamCode ?? 0,
+        stdout: (o.lines ?? []).join("\n"),
+        stderr: o.streamCode ? "build failed: no space left on device" : "",
+      };
     },
   };
   const runner = {
     run: async (_cmd: string, args: string[]): Promise<ProcessResult> => {
       if (args.includes("ps")) {
         state.psCalls += 1;
-        if (o.psCode) return { code: o.psCode, stdout: "", stderr: "cannot connect to the Docker daemon" };
-        return { code: 0, stdout: JSON.stringify(o.services ?? [{ Service: "daemon", State: "running" }]), stderr: "" };
+        if (o.psCode)
+          return { code: o.psCode, stdout: "", stderr: "cannot connect to the Docker daemon" };
+        return {
+          code: 0,
+          stdout: JSON.stringify(o.services ?? [{ Service: "daemon", State: "running" }]),
+          stderr: "",
+        };
       }
       return { code: 1, stdout: "", stderr: "unexpected command" };
     },
@@ -132,7 +173,14 @@ describe("the registered sequence (tail)", () => {
     expect(orders).toEqual([...orders].sort((a, b) => a - b));
     expect(new Set(orders).size).toBe(orders.length);
     const memoryOrder = steps.find((s) => s.id === "memory")!.order;
-    for (const id of ["app_slug_reconcile", "bringup", "memory_user_keys", "verify_stack", "proof_round", "go_live"]) {
+    for (const id of [
+      "app_slug_reconcile",
+      "bringup",
+      "memory_user_keys",
+      "verify_stack",
+      "proof_round",
+      "go_live",
+    ]) {
       expect(steps.find((s) => s.id === id)!.order).toBeGreaterThan(memoryOrder);
     }
     for (const id of ids) expect(`onboard_${id}`).toMatch(/^[a-z][a-z0-9_]*$/);
@@ -155,14 +203,26 @@ describe("bringUpArgs", () => {
       "-d",
       "--build",
     ]);
-    expect(bringUpArgs("/repo", "")).toEqual(["compose", "--project-directory", "/repo", "up", "-d", "--build"]);
+    expect(bringUpArgs("/repo", "")).toEqual([
+      "compose",
+      "--project-directory",
+      "/repo",
+      "up",
+      "-d",
+      "--build",
+    ]);
   });
 });
 
 describe("bring-up, happy path", () => {
   it("writes the captured uid and the chosen profile into .env, and brings the stack up", async () => {
     seedChoices({ [UID_CHOICE_KEY]: 1234, [INGRESS_CHOICE_KEY]: "quick" });
-    const h = harness({ services: [{ Service: "daemon", State: "running" }, { Service: "tunnel-quick", State: "running" }] });
+    const h = harness({
+      services: [
+        { Service: "daemon", State: "running" },
+        { Service: "tunnel-quick", State: "running" },
+      ],
+    });
     const result = await h.engine.runStep(BRINGUP_STEP_ID);
     expect(result.ok).toBe(true);
     expect(readEnvKey(envText(), "QCR_UID")).toBe("1234");
@@ -193,7 +253,9 @@ describe("the honest warning and the progress", () => {
   it("warns about the slow first build BEFORE the build starts, never after", async () => {
     const h = harness({ lines: ["#1 building"] });
     await h.engine.runStep(BRINGUP_STEP_ID);
-    const firstWarning = h.events.findIndex((e) => e.includes("compiles the memory engine's local embedder"));
+    const firstWarning = h.events.findIndex((e) =>
+      e.includes("compiles the memory engine's local embedder"),
+    );
     const firstStream = h.events.findIndex((e) => e.startsWith("stream:"));
     expect(firstWarning).toBeGreaterThanOrEqual(0);
     expect(firstWarning).toBeLessThan(firstStream);
@@ -206,7 +268,14 @@ describe("the honest warning and the progress", () => {
   });
 
   it("streams every build line and marks elapsed time so a long wait looks alive", async () => {
-    const h = harness({ lines: ["#1 [internal] load build definition", "#2 resolve image", "#3 compiling llama", "#4 done"] });
+    const h = harness({
+      lines: [
+        "#1 [internal] load build definition",
+        "#2 resolve image",
+        "#3 compiling llama",
+        "#4 done",
+      ],
+    });
     const result = await h.engine.runStep(BRINGUP_STEP_ID);
     expect(result.ok).toBe(true);
     for (const line of ["#1 [internal] load build definition", "#4 done"]) {
@@ -325,8 +394,12 @@ describe("memory phase B — driven, never duplicated", () => {
 
   it("run() delegates to the memory step itself — no second minting path exists here", async () => {
     const calls: string[] = [];
-    const checks: CheckResult[] = [{ name: "user-keys", ok: true, detail: "minted reviewer, companion" }];
-    const h = harness({ step: memoryUserKeysStep({ inner: spyStep({ ok: true, checks }, calls) }) });
+    const checks: CheckResult[] = [
+      { name: "user-keys", ok: true, detail: "minted reviewer, companion" },
+    ];
+    const h = harness({
+      step: memoryUserKeysStep({ inner: spyStep({ ok: true, checks }, calls) }),
+    });
     const result = await h.engine.runStep(MEMORY_KEYS_STEP_ID);
     expect(calls).toEqual(["run"]);
     expect(result.ok).toBe(true);
@@ -336,7 +409,14 @@ describe("memory phase B — driven, never duplicated", () => {
 
   it("verify() delegates too, so the two checklist rows can never disagree about reality", async () => {
     const calls: string[] = [];
-    const h = harness({ step: memoryUserKeysStep({ inner: spyStep({ ok: false, checks: [{ name: "memory-server", ok: false, detail: "no server" }] }, calls) }) });
+    const h = harness({
+      step: memoryUserKeysStep({
+        inner: spyStep(
+          { ok: false, checks: [{ name: "memory-server", ok: false, detail: "no server" }] },
+          calls,
+        ),
+      }),
+    });
     const all = await h.engine.verifyAll();
     expect(calls).toEqual(["verify"]);
     expect(all.ok).toBe(false);
@@ -345,7 +425,14 @@ describe("memory phase B — driven, never duplicated", () => {
   it("a declined memory setup stays declined here — nothing is asked or minted twice", async () => {
     seedChoices({ [MEMORY_CHOICE_KEY]: "declined" });
     const calls: string[] = [];
-    const h = harness({ step: memoryUserKeysStep({ inner: spyStep({ ok: true, checks: [{ name: "memory", ok: true, detail: "declined" }] }, calls) }) });
+    const h = harness({
+      step: memoryUserKeysStep({
+        inner: spyStep(
+          { ok: true, checks: [{ name: "memory", ok: true, detail: "declined" }] },
+          calls,
+        ),
+      }),
+    });
     const result = await h.engine.runStep(MEMORY_KEYS_STEP_ID);
     expect(result.ok).toBe(true);
     expect(result.checks[0]!.detail).toMatch(/declined earlier/);
@@ -359,7 +446,14 @@ describe("memory phase B — driven, never duplicated", () => {
       base: "http://127.0.0.1:1",
       loadProvision: async () => ({
         mintRootKey: () => "root-key-value",
-        mintUserKeys: async () => ({ keys: {}, created: [], kept: [], missing: ["reviewer"], ok: false, detail: "no server" }),
+        mintUserKeys: async () => ({
+          keys: {},
+          created: [],
+          kept: [],
+          missing: ["reviewer"],
+          ok: false,
+          detail: "no server",
+        }),
       }),
       loadMatrix: async () => ({ runVerify: async () => ({ rows: [], failed: 0, unclear: 0 }) }),
     });

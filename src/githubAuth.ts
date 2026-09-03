@@ -13,7 +13,11 @@ function b64url(input: Buffer | string): string {
   return Buffer.from(input).toString("base64url");
 }
 
-export function mintAppJwt(appId: string, privateKeyPem: string, now: () => number = Date.now): string {
+export function mintAppJwt(
+  appId: string,
+  privateKeyPem: string,
+  now: () => number = Date.now,
+): string {
   const iat = Math.floor(now() / 1000) - 60;
   const header = b64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
   const payload = b64url(JSON.stringify({ iat, exp: iat + 600, iss: appId }));
@@ -46,7 +50,11 @@ export class TokenMinter {
   }
 
   appJwt(): string {
-    return mintAppJwt(this.readSecret("app_id"), readFileSync(join(this.secretsDir, "app.pem"), "utf8"), this.now);
+    return mintAppJwt(
+      this.readSecret("app_id"),
+      readFileSync(join(this.secretsDir, "app.pem"), "utf8"),
+      this.now,
+    );
   }
 
   /** Resolve (and cache) the single installation this app serves. */

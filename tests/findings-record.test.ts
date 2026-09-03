@@ -28,7 +28,9 @@ import { StateStore } from "../src/state.js";
 import type { SessionHooks } from "../src/types.js";
 import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
 
-const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
+const cfg: Config = parseConfig(
+  readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
+);
 const HEAD = "abcdef1234567890abcdef1234567890abcdef12";
 
 let dir: string;
@@ -120,7 +122,11 @@ describe("parseFindingsRecord", () => {
       disposition: "posted",
       posted_as: "blocker",
     });
-    expect(findings[1]).toMatchObject({ lens: "pass-simplicity", disposition: "killed", word: "duplicate" });
+    expect(findings[1]).toMatchObject({
+      lens: "pass-simplicity",
+      disposition: "killed",
+      word: "duplicate",
+    });
     expect(parsed.record?.comments_posted).toBe(3);
   });
 
@@ -158,14 +164,26 @@ describe("parseFindingsRecord", () => {
   it("rejects only structural failures: not an object, wrong round, no findings array", () => {
     expect(parseFindingsRecord("nope", 7, 2).status).toBe("unparseable");
     expect(parseFindingsRecord([1, 2], 7, 2).status).toBe("unparseable");
-    expect(parseFindingsRecord({ pr: 7, round_no: 3, findings: [] }, 7, 2).status).toBe("wrong_round");
-    expect(parseFindingsRecord({ pr: 8, round_no: 2, findings: [] }, 7, 2).status).toBe("wrong_round");
+    expect(parseFindingsRecord({ pr: 7, round_no: 3, findings: [] }, 7, 2).status).toBe(
+      "wrong_round",
+    );
+    expect(parseFindingsRecord({ pr: 8, round_no: 2, findings: [] }, 7, 2).status).toBe(
+      "wrong_round",
+    );
     expect(parseFindingsRecord({ pr: 7, round_no: 2 }, 7, 2).status).toBe("no_findings_array");
   });
 
   it("a word outside the closed vocabulary is noted, kept verbatim, never a rejection", () => {
     // the vocabulary already grew once (feedback-shape) and will again.
-    const parsed = parseFindingsRecord({ pr: 7, round_no: 2, findings: [{ lens: "pass-x", disposition: "killed", word: "brand-new-word" }] }, 7, 2);
+    const parsed = parseFindingsRecord(
+      {
+        pr: 7,
+        round_no: 2,
+        findings: [{ lens: "pass-x", disposition: "killed", word: "brand-new-word" }],
+      },
+      7,
+      2,
+    );
     expect(parsed.status).toBe("ok");
     expect(parsed.record?.findings[0]?.word).toBe("brand-new-word");
     expect(parsed.note).toContain("closed vocabulary");
@@ -185,14 +203,22 @@ describe("parseFindingsRecord", () => {
   it("readFindingsRecord distinguishes missing from unparseable", () => {
     expect(readFindingsRecord(join(findingsDir(), "nope.json"), 7, 2).status).toBe("missing");
     writeRecord("pr-7-round-2.json", "{ not json");
-    expect(readFindingsRecord(join(findingsDir(), "pr-7-round-2.json"), 7, 2).status).toBe("unparseable");
+    expect(readFindingsRecord(join(findingsDir(), "pr-7-round-2.json"), 7, 2).status).toBe(
+      "unparseable",
+    );
   });
 });
 
 // ---- enforcement -----------------------------------------------------------
 
 describe("enforceFindingsRecord", () => {
-  const target = { pr: 7, roundNo: 2, roundId: null, headSha: HEAD, planned: ["pass-security", "pass-simplicity"] };
+  const target = {
+    pr: 7,
+    roundNo: 2,
+    roundId: null,
+    headSha: HEAD,
+    planned: ["pass-security", "pass-simplicity"],
+  };
 
   it("a good record → rows, no anomaly, no nudge", async () => {
     writeRecord("pr-7-round-2.json", RECORD);
@@ -202,8 +228,17 @@ describe("enforceFindingsRecord", () => {
     expect(anomalyKinds()).toEqual([]);
     const rows = store.roundFindings(7);
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toMatchObject({ lens: "pass-security", disposition: "posted", severity: "P1", unplanned: 0 });
-    expect(rows[1]).toMatchObject({ lens: "pass-simplicity", disposition: "killed", word: "duplicate" });
+    expect(rows[0]).toMatchObject({
+      lens: "pass-security",
+      disposition: "posted",
+      severity: "P1",
+      unplanned: 0,
+    });
+    expect(rows[1]).toMatchObject({
+      lens: "pass-simplicity",
+      disposition: "killed",
+      word: "duplicate",
+    });
   });
 
   it("a MISSING record → one anomaly + exactly ONE nudge; a second check never nudges again", async () => {
@@ -264,11 +299,19 @@ describe("enforceFindingsRecord", () => {
       findings: [
         { id: "a", lens: "pass-security", disposition: "posted" },
         // Never in the plan: the main pi added it mid-round under the add protocol.
-        { id: "b", lens: "pass-backcompat", disposition: "killed", word: "below-bar", reason: "true but beneath posting" },
+        {
+          id: "b",
+          lens: "pass-backcompat",
+          disposition: "killed",
+          word: "below-bar",
+          reason: "true but beneath posting",
+        },
       ],
     });
     const injects: string[] = [];
-    expect(await enforceFindingsRecord(deps(injects), { ...target, planned: ["pass-security"] })).toBe("recorded");
+    expect(
+      await enforceFindingsRecord(deps(injects), { ...target, planned: ["pass-security"] }),
+    ).toBe("recorded");
     const rows = store.findingsForRound(7, 2);
     expect(rows.map((r) => [r.lens, r.unplanned])).toEqual([
       ["pass-security", 0],
@@ -280,7 +323,11 @@ describe("enforceFindingsRecord", () => {
   });
 
   it("with no plan on the round nothing is called unplanned (absence of a plan is not evidence)", async () => {
-    writeRecord("pr-7-round-2.json", { pr: 7, round_no: 2, findings: [{ id: "a", lens: "pass-x", disposition: "posted" }] });
+    writeRecord("pr-7-round-2.json", {
+      pr: 7,
+      round_no: 2,
+      findings: [{ id: "a", lens: "pass-x", disposition: "posted" }],
+    });
     await enforceFindingsRecord(deps([]), { ...target, planned: [] });
     expect(store.findingsForRound(7, 2)[0]?.unplanned).toBe(0);
   });
@@ -290,7 +337,14 @@ describe("enforceFindingsRecord", () => {
       pr: 7,
       round_no: 2,
       findings: [
-        { id: "old-1", lens: "pass-tests", disposition: "conceded", raised_in_round: 1, thread_id: 991, reason: "The author showed the fixture already covers it." },
+        {
+          id: "old-1",
+          lens: "pass-tests",
+          disposition: "conceded",
+          raised_in_round: 1,
+          thread_id: 991,
+          reason: "The author showed the fixture already covers it.",
+        },
         { id: "new-1", lens: "pass-security", disposition: "posted", severity: "P1" },
       ],
     });
@@ -396,10 +450,18 @@ describe("VerdictWatcher round-end findings check", () => {
       stale_recheck: 0,
       migration_gate: 0,
     });
-    store.startRound(pr, "first", ["pass-security", "pass-simplicity"], cfg.daemon.round_deadline_min);
+    store.startRound(
+      pr,
+      "first",
+      ["pass-security", "pass-simplicity"],
+      cfg.daemon.round_deadline_min,
+    );
     // The ledger is fresh so only the findings check can speak in these tests.
     mkdirSync(join(dir, "state", "ledgers"), { recursive: true });
-    writeFileSync(join(dir, "state", "ledgers", `pr-${pr}.md`), `LEDGER PR #${pr} @ ${HEAD}\n- settled`);
+    writeFileSync(
+      join(dir, "state", "ledgers", `pr-${pr}.md`),
+      `LEDGER PR #${pr} @ ${HEAD}\n- settled`,
+    );
     mkdirSync(join(dir, "verdict"), { recursive: true });
     writeFileSync(
       join(dir, "verdict", `pr-${pr}-round-1.json`),
@@ -409,7 +471,10 @@ describe("VerdictWatcher round-end findings check", () => {
         verdict: "REQUEST_CHANGES",
         head_sha: HEAD,
         finished_at: "2026-08-25T12:00:00Z",
-        passes: [{ name: "pass-security", tier: "sol-high", findings: 1 }, { name: "pass-simplicity", tier: "sol-med", findings: 1 }],
+        passes: [
+          { name: "pass-security", tier: "sol-high", findings: 1 },
+          { name: "pass-simplicity", tier: "sol-med", findings: 1 },
+        ],
       }),
     );
   }
@@ -492,7 +557,10 @@ describe("RecheckWatcher findings record", () => {
   function decision(pr: number, outcome: "uphold" | "request_changes"): string {
     const name = `pr-${pr}-recheck-${HEAD.slice(0, 12)}.json`;
     mkdirSync(join(dir, "verdict"), { recursive: true });
-    writeFileSync(join(dir, "verdict", name), JSON.stringify({ pr, head_sha: HEAD, outcome, reason: "r" }));
+    writeFileSync(
+      join(dir, "verdict", name),
+      JSON.stringify({ pr, head_sha: HEAD, outcome, reason: "r" }),
+    );
     return name;
   }
 
@@ -522,7 +590,15 @@ describe("RecheckWatcher findings record", () => {
     writeRecord(`pr-55-recheck-${HEAD.slice(0, 12)}.json`, {
       pr: 55,
       head_sha: HEAD,
-      findings: [{ id: "r1", lens: "recheck", severity: "P1", disposition: "posted", reason: "regression the delta introduced" }],
+      findings: [
+        {
+          id: "r1",
+          lens: "recheck",
+          severity: "P1",
+          disposition: "posted",
+          reason: "regression the delta introduced",
+        },
+      ],
     });
     await watcher().handleFile(decision(55, "request_changes"));
     const rows = store.findingsForRound(55, 4);
@@ -567,7 +643,9 @@ describe("per-round comment attribution", () => {
     });
     store.startRound(42, "first", ["pass-baseline"], 60);
     store.registerBotComment(9001, 42);
-    const row = store.db.prepare("SELECT round_no FROM bot_comments WHERE comment_id = 9001").get() as { round_no: number | null };
+    const row = store.db
+      .prepare("SELECT round_no FROM bot_comments WHERE comment_id = 9001")
+      .get() as { round_no: number | null };
     expect(row.round_no).toBe(1);
   });
 
@@ -585,7 +663,9 @@ describe("per-round comment attribution", () => {
       trigger_ts: null,
     });
     store.registerBotComment(9002, 43);
-    const row = store.db.prepare("SELECT round_no FROM bot_comments WHERE comment_id = 9002").get() as { round_no: number | null };
+    const row = store.db
+      .prepare("SELECT round_no FROM bot_comments WHERE comment_id = 9002")
+      .get() as { round_no: number | null };
     expect(row.round_no).toBe(1);
   });
 
@@ -602,7 +682,9 @@ describe("per-round comment attribution", () => {
     });
     store.startRound(44, "first", ["pass-baseline"], 60);
     store.registerBotComment(9003, 44, "review", 7);
-    const row = store.db.prepare("SELECT round_no FROM bot_comments WHERE comment_id = 9003").get() as { round_no: number | null };
+    const row = store.db
+      .prepare("SELECT round_no FROM bot_comments WHERE comment_id = 9003")
+      .get() as { round_no: number | null };
     expect(row.round_no).toBe(7);
   });
 });
@@ -624,7 +706,8 @@ describe("conformance audit", () => {
     ...over,
   });
 
-  const parse = (findings: unknown[]) => parseFindingsRecord({ pr: 7, round_no: 2, findings }, 7, 2).conformance!;
+  const parse = (findings: unknown[]) =>
+    parseFindingsRecord({ pr: 7, round_no: 2, findings }, 7, 2).conformance!;
 
   it("counts a posted finding whose tag is outside the closed grammar", () => {
     const c = parse([
@@ -646,7 +729,10 @@ describe("conformance audit", () => {
   });
 
   it("never asks a blocker or a question for a request", () => {
-    const c = parse([entry({ id: "f1", posted_as: "blocker" }), entry({ id: "f2", posted_as: "question" })]);
+    const c = parse([
+      entry({ id: "f1", posted_as: "blocker" }),
+      entry({ id: "f2", posted_as: "question" }),
+    ]);
     expect(c.nits_without_request).toEqual([]);
     expect(c.ungrammatical_tags).toEqual([]);
   });
@@ -681,7 +767,10 @@ describe("conformance audit", () => {
     writeRecord("pr-7-round-2.json", {
       pr: 7,
       round_no: 2,
-      findings: [entry({ id: "f1", posted_as: "nit" }), entry({ id: "f2", posted_as: "[verified]" })],
+      findings: [
+        entry({ id: "f1", posted_as: "nit" }),
+        entry({ id: "f2", posted_as: "[verified]" }),
+      ],
     });
     const injects: string[] = [];
     expect(

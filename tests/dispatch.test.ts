@@ -2,7 +2,16 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
-import { ALL_PASSES, buildPassPlan, capacity, dispatchOnce, queuedInOrder, roundTypeFor, validatorTier, type DispatchAdapter } from "../src/dispatch.js";
+import {
+  ALL_PASSES,
+  buildPassPlan,
+  capacity,
+  dispatchOnce,
+  queuedInOrder,
+  roundTypeFor,
+  validatorTier,
+  type DispatchAdapter,
+} from "../src/dispatch.js";
 import type { GateResult } from "../src/gate.js";
 import type { PrFileEntry } from "../src/github.js";
 import { recheckFingerprint } from "../src/recheck.js";
@@ -13,7 +22,9 @@ import { renderRoundPrompt, roundTemplateFile } from "../src/templates.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
 import type { ContextAssembler, MemoryRead } from "../src/memory/context.js";
 
-const baseCfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
+const baseCfg: Config = parseConfig(
+  readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
+);
 
 interface Call {
   fn: string;
@@ -56,7 +67,9 @@ class FakeAdapter implements DispatchAdapter {
     this.calls.push({ fn: "removeLabel", pr: n, arg: label });
     if (this.failLabelOn.has(n)) throw new Error("404 label not present");
     if (this.goneLabelOn.has(n))
-      throw new Error(`DELETE /repos/o/r/issues/${n}/labels/AI%20review%20requested → 404: {"message":"Label does not exist","status":"404"}`);
+      throw new Error(
+        `DELETE /repos/o/r/issues/${n}/labels/AI%20review%20requested → 404: {"message":"Label does not exist","status":"404"}`,
+      );
     return { executed: false, dryRunFile: "x" };
   }
   async deleteTeamReviewRequest(n: number): Promise<GateResult> {
@@ -69,7 +82,10 @@ class FakeAdapter implements DispatchAdapter {
   }
 }
 
-function recordingHooks(): { hooks: SessionHooks; orders: Array<{ order: RoundOrder; prompt: string }> } {
+function recordingHooks(): {
+  hooks: SessionHooks;
+  orders: Array<{ order: RoundOrder; prompt: string }>;
+} {
   const orders: Array<{ order: RoundOrder; prompt: string }> = [];
   return {
     orders,
@@ -156,8 +172,14 @@ describe("pre-fanout recovery dispatch", () => {
     store.finishRound(completed, "REQUEST_CHANGES", null);
     const prior = store.startRound(5467, "re-review", ["pass-baseline"], 75);
     store.createSessionCommand({
-      id: "cmd-old", pr: 5467, session: "pr-5467", kind: "round", round_no: 2,
-      payload_sha256: "a".repeat(64), payload_path: "/payload/old.md", inject_path: "/inject/old.md",
+      id: "cmd-old",
+      pr: 5467,
+      session: "pr-5467",
+      kind: "round",
+      round_no: 2,
+      payload_sha256: "a".repeat(64),
+      payload_path: "/payload/old.md",
+      inject_path: "/inject/old.md",
       next_check_at: "2026-09-02T15:00:00Z",
     });
     store.failPendingSessionCommand("cmd-old", "pre-fanout stall");
@@ -206,16 +228,28 @@ describe("pre-fanout recovery dispatch", () => {
     queue(5468, "2026-09-02T15:00:00Z", { head: "old-head" });
     const prior = store.startRound(5468, "first", ["pass-baseline"], 75);
     store.createSessionCommand({
-      id: "cmd-old-head", pr: 5468, session: "pr-5468", kind: "round", round_no: 1,
-      payload_sha256: "b".repeat(64), payload_path: "/payload/old-head.md", inject_path: "/inject/old-head.md",
+      id: "cmd-old-head",
+      pr: 5468,
+      session: "pr-5468",
+      kind: "round",
+      round_no: 1,
+      payload_sha256: "b".repeat(64),
+      payload_path: "/payload/old-head.md",
+      inject_path: "/inject/old-head.md",
       next_check_at: "2026-09-02T15:00:00Z",
     });
     store.failPendingSessionCommand("cmd-old-head", "pre-fanout stall");
     store.markRoundCancelled(prior, "pre-fanout stall", "infrastructure_failure");
     store.recordRoundRecoveryInstruction({
-      pr: 5468, target_round_no: 2, target_head_sha: "old-head", stage: "first_pass_start",
-      source_incident_id: null, source_command_id: "cmd-old-head", source_round_no: 1,
-      immediate_attempt: 2, retry_epoch: 0,
+      pr: 5468,
+      target_round_no: 2,
+      target_head_sha: "old-head",
+      stage: "first_pass_start",
+      source_incident_id: null,
+      source_command_id: "cmd-old-head",
+      source_round_no: 1,
+      immediate_attempt: 2,
+      retry_epoch: 0,
     });
     queue(5468, "2026-09-02T15:01:00Z", { head: "new-head" });
     adapter.files.set(5468, [file("backend/service.py", 20, 3)]);
@@ -226,10 +260,15 @@ describe("pre-fanout recovery dispatch", () => {
     expect(orders).toHaveLength(1);
     expect(orders[0]!.order).toMatchObject({ round_no: 2, head_sha: "new-head" });
     expect(orders[0]!.order.recovery).toBeUndefined();
-    const mismatch = store.db.prepare(
-      "SELECT payload FROM events WHERE kind='round_recovery_instruction_not_applied' AND pr=5468",
-    ).get() as { payload: string };
-    expect(JSON.parse(mismatch.payload)).toMatchObject({ stored_head_sha: "old-head", prepared_head_sha: "new-head" });
+    const mismatch = store.db
+      .prepare(
+        "SELECT payload FROM events WHERE kind='round_recovery_instruction_not_applied' AND pr=5468",
+      )
+      .get() as { payload: string };
+    expect(JSON.parse(mismatch.payload)).toMatchObject({
+      stored_head_sha: "old-head",
+      prepared_head_sha: "new-head",
+    });
   });
 });
 
@@ -263,7 +302,8 @@ describe("recording at round start", () => {
     await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
 
     const round = store.roundsFor(29)[0]!;
-    const fp = store.roundGitConfig(round.id) as { digest?: unknown; files?: Record<string, string> } | undefined;
+    const fp = store.roundGitConfig(round.id) as
+      { digest?: unknown; files?: Record<string, string> } | undefined;
     expect(fp, "dispatch must record a baseline, or verdicts has nothing to compare").toBeTruthy();
     expect(typeof fp!.digest).toBe("string");
     // The clone's own config and the PINNED global file are both in it — the
@@ -294,7 +334,11 @@ describe("recording at round start", () => {
     expect(JSON.parse(round.pass_plan!)).toEqual(orders[0]!.order.pass_plan);
     const addable = JSON.parse(round.addable_passes!) as Array<{ lens: string; tier: string }>;
     expect(addable).toContainEqual({ lens: "pass-concurrency", tier: "sol-med" });
-    expect(addable.filter((p) => baseCfg.models.risk_passes.includes(p.lens as never)).every((p) => p.tier === "sol-high")).toBe(true);
+    expect(
+      addable
+        .filter((p) => baseCfg.models.risk_passes.includes(p.lens as never))
+        .every((p) => p.tier === "sol-high"),
+    ).toBe(true);
     const dispatched = store.recentEvents(50).find((e) => e.kind === "round_dispatched")!;
     expect(JSON.parse(dispatched.payload ?? "{}").validate_tier).toBe("sol-high");
   });
@@ -357,17 +401,24 @@ describe("buildPassPlan", () => {
 
   // Self-skips where the quickchat pack is absent (the assembled
   // public snapshot excludes it).
-  it.skipIf(!existsSync(resolve(import.meta.dirname, "..", "profiles", "quickchat")))("threads the profile heuristics extension into selection", async () => {
-    const { loadProfileHeuristics } = await import("../src/profiles.js");
-    const qc = loadProfileHeuristics(resolve(import.meta.dirname, ".."), "quickchat");
-    const files = [file("project/settings_prod.py", 12, 1)];
-    // Without the extension the settings glob is not in the generic core…
-    expect(buildPassPlan(planCfg, files).pass_plan.map((p) => p.lens)).not.toContain("pass-security");
-    // …with it, the profile predicate selects the lens through the plan.
-    const withExt = buildPassPlan(planCfg, files, undefined, undefined, qc).pass_plan.map((p) => p.lens);
-    expect(withExt).toContain("pass-security");
-    expect(withExt).toContain("pass-backcompat");
-  });
+  it.skipIf(!existsSync(resolve(import.meta.dirname, "..", "profiles", "quickchat")))(
+    "threads the profile heuristics extension into selection",
+    async () => {
+      const { loadProfileHeuristics } = await import("../src/profiles.js");
+      const qc = loadProfileHeuristics(resolve(import.meta.dirname, ".."), "quickchat");
+      const files = [file("project/settings_prod.py", 12, 1)];
+      // Without the extension the settings glob is not in the generic core…
+      expect(buildPassPlan(planCfg, files).pass_plan.map((p) => p.lens)).not.toContain(
+        "pass-security",
+      );
+      // …with it, the profile predicate selects the lens through the plan.
+      const withExt = buildPassPlan(planCfg, files, undefined, undefined, qc).pass_plan.map(
+        (p) => p.lens,
+      );
+      expect(withExt).toContain("pass-security");
+      expect(withExt).toContain("pass-backcompat");
+    },
+  );
 
   it("pins risk passes to sol-high with no raise ladder", () => {
     const { pass_plan } = buildPassPlan(planCfg, [
@@ -377,7 +428,12 @@ describe("buildPassPlan", () => {
     ]);
     for (const lens of ["pass-security", "pass-prod-risk", "pass-data-safety"]) {
       const entry = pass_plan.find((p) => p.lens === lens)!;
-      expect(entry).toEqual({ lens, agent: `${lens}--sol-high`, tier: "sol-high", raisable_to: [] });
+      expect(entry).toEqual({
+        lens,
+        agent: `${lens}--sol-high`,
+        tier: "sol-high",
+        raisable_to: [],
+      });
     }
   });
 
@@ -428,7 +484,9 @@ describe("buildPassPlan", () => {
       const { pass_plan } = buildPassPlan(planCfg, files);
       const validate = pass_plan.find((p) => p.lens === "pass-validate")!;
       for (const p of pass_plan) {
-        expect(PASS_TIER_ORDER.indexOf(validate.tier)).toBeGreaterThanOrEqual(PASS_TIER_ORDER.indexOf(p.tier));
+        expect(PASS_TIER_ORDER.indexOf(validate.tier)).toBeGreaterThanOrEqual(
+          PASS_TIER_ORDER.indexOf(p.tier),
+        );
       }
     }
   });
@@ -470,7 +528,9 @@ describe("buildPassPlan", () => {
   it("addable_lenses = every known pass not already planned", () => {
     const { pass_plan, addable_lenses } = buildPassPlan(planCfg, [file("README.md", 3, 1)]);
     expect(pass_plan.map((p) => p.lens)).toEqual(["pass-baseline", "pass-validate"]);
-    expect(addable_lenses).toEqual(ALL_PASSES.filter((l) => l !== "pass-baseline" && l !== "pass-validate"));
+    expect(addable_lenses).toEqual(
+      ALL_PASSES.filter((l) => l !== "pass-baseline" && l !== "pass-validate"),
+    );
     expect(addable_lenses).not.toContain("pass-validate");
   });
 
@@ -509,7 +569,10 @@ describe("buildPassPlan", () => {
             "the bucket refills once per second per client key.",
         });
         const label = files.map((f) => f.filename).join(",");
-        expect(pass_plan.map((p) => p.lens), label).not.toContain("pass-concurrency");
+        expect(
+          pass_plan.map((p) => p.lens),
+          label,
+        ).not.toContain("pass-concurrency");
         expect(addable_lenses, label).toContain("pass-concurrency");
       }
     });
@@ -548,7 +611,10 @@ describe("buildPassPlan", () => {
         for (const intent of [{ body }, { body: "" }, undefined]) {
           const { pass_plan, addable_lenses } = buildPassPlan(planCfg, files, intent);
           const label = `${files.map((f) => f.filename).join(",")} / body=${intent?.body?.length ?? "none"}`;
-          expect(pass_plan.map((p) => p.lens), label).not.toContain("pass-ask-human");
+          expect(
+            pass_plan.map((p) => p.lens),
+            label,
+          ).not.toContain("pass-ask-human");
           expect(addable_lenses, label).toContain("pass-ask-human");
         }
       }
@@ -585,7 +651,11 @@ describe("buildPassPlan", () => {
 
     it("is skipped (and stays addable) when the body is thin or absent", () => {
       for (const intentArg of [undefined, {}, { body: "fixes the bug" }] as const) {
-        const { pass_plan, addable_lenses } = buildPassPlan(planCfg, [file("app/service.py", 200, 0)], intentArg);
+        const { pass_plan, addable_lenses } = buildPassPlan(
+          planCfg,
+          [file("app/service.py", 200, 0)],
+          intentArg,
+        );
         expect(pass_plan.map((p) => p.lens)).not.toContain("pass-intent");
         expect(addable_lenses).toContain("pass-intent");
       }
@@ -671,7 +741,9 @@ describe("dispatchOnce", () => {
     const dispatched = await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
     expect(dispatched).toHaveLength(1);
     expect(orders).toHaveLength(1);
-    const logged = store.db.prepare("SELECT payload FROM events WHERE kind = 'trigger_consume_failed'").all() as Array<{ payload: string }>;
+    const logged = store.db
+      .prepare("SELECT payload FROM events WHERE kind = 'trigger_consume_failed'")
+      .all() as Array<{ payload: string }>;
     expect(JSON.parse(logged[0]!.payload).which).toBe("label");
   });
 
@@ -682,10 +754,18 @@ describe("dispatchOnce", () => {
     const dispatched = await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
     expect(dispatched).toHaveLength(1);
     expect(orders).toHaveLength(1);
-    expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'trigger_consume_failed'").get()).toEqual({ c: 0 });
-    const already = store.db.prepare("SELECT payload FROM events WHERE kind = 'trigger_already_consumed'").all() as Array<{ payload: string }>;
+    expect(
+      store.db
+        .prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'trigger_consume_failed'")
+        .get(),
+    ).toEqual({ c: 0 });
+    const already = store.db
+      .prepare("SELECT payload FROM events WHERE kind = 'trigger_already_consumed'")
+      .all() as Array<{ payload: string }>;
     expect(JSON.parse(already[0]!.payload).which).toBe("label");
-    const round = store.db.prepare("SELECT payload FROM events WHERE kind = 'round_dispatched'").get() as { payload: string };
+    const round = store.db
+      .prepare("SELECT payload FROM events WHERE kind = 'round_dispatched'")
+      .get() as { payload: string };
     expect(JSON.parse(round.payload).triggers_consumed).toContain("label");
   });
 
@@ -704,8 +784,14 @@ describe("dispatchOnce", () => {
     queue(26, "2026-08-13T09:00:00Z");
     queue(27, "2026-08-13T09:01:00Z");
     store.createSessionCommand({
-      id: "cmd-26", pr: 26, session: "pr-26", kind: "wake", round_no: null,
-      payload_sha256: "a".repeat(64), payload_path: "/state/cmd-26.md", inject_path: "/inject/pr-26/cmd-26.md",
+      id: "cmd-26",
+      pr: 26,
+      session: "pr-26",
+      kind: "wake",
+      round_no: null,
+      payload_sha256: "a".repeat(64),
+      payload_path: "/state/cmd-26.md",
+      inject_path: "/inject/pr-26/cmd-26.md",
       next_check_at: "2026-08-13T09:02:00Z",
     });
     const { hooks, orders } = recordingHooks();
@@ -795,7 +881,12 @@ describe("dispatchOnce", () => {
       hooks,
       prepareWorktree: async (pr, baseRef) => {
         asked.push([pr, baseRef]);
-        return { head_sha: "snapshot-sha", base_ref: baseRef, base_sha: "base-tip", merge_base: "fork-point" };
+        return {
+          head_sha: "snapshot-sha",
+          base_ref: baseRef,
+          base_sha: "base-tip",
+          merge_base: "fork-point",
+        };
       },
     });
     // The PR's OWN base branch is what gets fetched, not a hardcoded master.
@@ -814,12 +905,22 @@ describe("dispatchOnce", () => {
       adapter,
       hooks,
       // A push landed between the reconcile snapshot and the fetch.
-      prepareWorktree: async () => ({ head_sha: "pushed-sha", base_ref: "master", base_sha: "b", merge_base: "m" }),
+      prepareWorktree: async () => ({
+        head_sha: "pushed-sha",
+        base_ref: "master",
+        base_sha: "b",
+        merge_base: "m",
+      }),
     });
     expect(order!.head_sha).toBe("pushed-sha");
-    const drift = store.db.prepare("SELECT payload FROM events WHERE kind = 'head_drift'").all() as Array<{ payload: string }>;
+    const drift = store.db
+      .prepare("SELECT payload FROM events WHERE kind = 'head_drift'")
+      .all() as Array<{ payload: string }>;
     expect(drift).toHaveLength(1);
-    expect(JSON.parse(drift[0]!.payload)).toMatchObject({ expected: "stale-snapshot", actual: "pushed-sha" });
+    expect(JSON.parse(drift[0]!.payload)).toMatchObject({
+      expected: "stale-snapshot",
+      actual: "pushed-sha",
+    });
   });
 
   it("logs no drift when the tree matches the snapshot", async () => {
@@ -830,9 +931,16 @@ describe("dispatchOnce", () => {
       store,
       adapter,
       hooks,
-      prepareWorktree: async () => ({ head_sha: "same-sha", base_ref: "master", base_sha: "b", merge_base: "m" }),
+      prepareWorktree: async () => ({
+        head_sha: "same-sha",
+        base_ref: "master",
+        base_sha: "b",
+        merge_base: "m",
+      }),
     });
-    expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'head_drift'").get()).toMatchObject({ c: 0 });
+    expect(
+      store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'head_drift'").get(),
+    ).toMatchObject({ c: 0 });
   });
 
   it("still dispatches when the base-ref lookup fails — degraded, not blocked", async () => {
@@ -844,7 +952,12 @@ describe("dispatchOnce", () => {
       store,
       adapter,
       hooks,
-      prepareWorktree: async (_pr, baseRef) => ({ head_sha: "abc", base_ref: baseRef, base_sha: "", merge_base: "" }),
+      prepareWorktree: async (_pr, baseRef) => ({
+        head_sha: "abc",
+        base_ref: baseRef,
+        base_sha: "",
+        merge_base: "",
+      }),
     });
     expect(order).toBeDefined();
     expect(order!.base_ref).toBe("");
@@ -949,7 +1062,9 @@ describe("dispatchOnce", () => {
     queue(58, "2026-08-13T09:00:00Z");
     queue(59, "2026-08-13T09:01:00Z");
     let release!: () => void;
-    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     const { hooks, orders } = recordingHooks();
     const original = hooks.dispatchRound;
     hooks.dispatchRound = async (order, prompt) => {
@@ -971,14 +1086,23 @@ describe("dispatchOnce", () => {
   it("discards a provisional round and leaves the PR queued when session dispatch fails", async () => {
     queue(60, "2026-08-13T09:00:00Z");
     const hooks = recordingHooks().hooks;
-    hooks.dispatchRound = async () => { throw new Error("worktree index.lock"); };
+    hooks.dispatchRound = async () => {
+      throw new Error("worktree index.lock");
+    };
 
     expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toEqual([]);
     expect(store.getPr(60)!.state).toBe("queued");
     expect(store.runningRounds()).toEqual([]);
-    expect(store.db.prepare("SELECT COUNT(*) AS c FROM rounds WHERE pr = 60").get()).toMatchObject({ c: 0 });
-    const failure = store.db.prepare("SELECT payload FROM events WHERE kind = 'dispatch_failed' AND pr = 60").get() as { payload: string };
-    expect(JSON.parse(failure.payload)).toMatchObject({ round_id: 1, error: expect.stringContaining("index.lock") });
+    expect(store.db.prepare("SELECT COUNT(*) AS c FROM rounds WHERE pr = 60").get()).toMatchObject({
+      c: 0,
+    });
+    const failure = store.db
+      .prepare("SELECT payload FROM events WHERE kind = 'dispatch_failed' AND pr = 60")
+      .get() as { payload: string };
+    expect(JSON.parse(failure.payload)).toMatchObject({
+      round_id: 1,
+      error: expect.stringContaining("index.lock"),
+    });
   });
 
   it("retains the round when a durable command exists before bookkeeping fails", async () => {
@@ -1003,7 +1127,9 @@ describe("dispatchOnce", () => {
     expect(store.getPr(63)?.state).toBe("reviewing");
     expect(store.runningRounds()).toHaveLength(1);
     expect(store.blockingSessionCommand("pr-63")?.id).toBe("cmd-retained");
-    const failure = store.db.prepare("SELECT payload FROM events WHERE kind='dispatch_failed' AND pr=63").get() as { payload: string };
+    const failure = store.db
+      .prepare("SELECT payload FROM events WHERE kind='dispatch_failed' AND pr=63")
+      .get() as { payload: string };
     expect(JSON.parse(failure.payload)).toMatchObject({ retained_command: true });
   });
 
@@ -1019,12 +1145,19 @@ describe("dispatchOnce", () => {
     const { hooks } = recordingHooks();
     const dispatched = await dispatchOnce({ cfg: baseCfg, store, adapter: bad, hooks });
     expect(dispatched.map((o) => o.pr)).toEqual([62]);
-    expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'dispatch_failed'").get()).toMatchObject({ c: 1 });
+    expect(
+      store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'dispatch_failed'").get(),
+    ).toMatchObject({ c: 1 });
   });
 });
 
 describe("first-party directive escalation pick", () => {
-  const tree = { head_sha: "sha70", base_ref: "master", base_sha: "basetip", merge_base: "forkpoint" };
+  const tree = {
+    head_sha: "sha70",
+    base_ref: "master",
+    base_sha: "basetip",
+    merge_base: "forkpoint",
+  };
 
   it("puts the directive files and the git-picked mention on the order, deterministically and logged", async () => {
     queue(70, "2026-08-13T10:00:00Z", { head: "sha70" });
@@ -1049,8 +1182,14 @@ describe("first-party directive escalation pick", () => {
       files: [".claude/skills/uja/SKILL.md"],
       mention: "alex",
     });
-    const ev = store.db.prepare("SELECT payload FROM events WHERE kind = 'escalation_mention_selected'").get() as { payload: string };
-    expect(JSON.parse(ev.payload)).toMatchObject({ mention: "alex", source: "git-log", sha: "forkpoint" });
+    const ev = store.db
+      .prepare("SELECT payload FROM events WHERE kind = 'escalation_mention_selected'")
+      .get() as { payload: string };
+    expect(JSON.parse(ev.payload)).toMatchObject({
+      mention: "alex",
+      source: "git-log",
+      sha: "forkpoint",
+    });
   });
 
   it("falls back to config [review].escalation_mention_default when git yields no login", async () => {
@@ -1069,7 +1208,9 @@ describe("first-party directive escalation pick", () => {
       files: ["CLAUDE.md"],
       mention: baseCfg.review.escalation_mention_default,
     });
-    const ev = store.db.prepare("SELECT payload FROM events WHERE kind = 'escalation_mention_selected'").get() as { payload: string };
+    const ev = store.db
+      .prepare("SELECT payload FROM events WHERE kind = 'escalation_mention_selected'")
+      .get() as { payload: string };
     expect(JSON.parse(ev.payload)).toMatchObject({ source: "config-default" });
   });
 
@@ -1108,19 +1249,27 @@ describe("first-party directive escalation pick", () => {
       },
     });
     expect(dispatched).toHaveLength(1);
-    expect(orders[0]!.order.first_party_directives!.mention).toBe(baseCfg.review.escalation_mention_default);
+    expect(orders[0]!.order.first_party_directives!.mention).toBe(
+      baseCfg.review.escalation_mention_default,
+    );
 
     // No seam at all (stub-wired core): same fallback.
     queue(73, "2026-08-13T11:00:00Z", { head: "sha70" });
     adapter.files.set(73, [file("AGENTS.md")]);
     const second = recordingHooks();
     await dispatchOnce({ cfg: baseCfg, store, adapter, hooks: second.hooks });
-    expect(second.orders[0]!.order.first_party_directives!.mention).toBe(baseCfg.review.escalation_mention_default);
+    expect(second.orders[0]!.order.first_party_directives!.mention).toBe(
+      baseCfg.review.escalation_mention_default,
+    );
   });
 
   it("a PR touching no directive file carries no field and logs no pick", async () => {
     queue(74, "2026-08-13T10:00:00Z", { head: "sha70" });
-    adapter.files.set(74, [file("src/app.py"), file("backend/prompts/nested.md"), file("node_modules/x/CLAUDE.md")]);
+    adapter.files.set(74, [
+      file("src/app.py"),
+      file("backend/prompts/nested.md"),
+      file("node_modules/x/CLAUDE.md"),
+    ]);
     const { hooks, orders } = recordingHooks();
     await dispatchOnce({
       cfg: baseCfg,
@@ -1131,7 +1280,11 @@ describe("first-party directive escalation pick", () => {
       directiveAuthor: async () => ({ login: "alex", name: "Alex", email: "e" }),
     });
     expect(orders[0]!.order.first_party_directives).toBeUndefined();
-    expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'escalation_mention_selected'").get()).toMatchObject({ c: 0 });
+    expect(
+      store.db
+        .prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'escalation_mention_selected'")
+        .get(),
+    ).toMatchObject({ c: 0 });
   });
 });
 
@@ -1150,9 +1303,16 @@ describe("system re-trigger short-circuit", () => {
    * short-circuit under test. */
   const cfg: Config = { ...baseCfg, guards: { ...baseCfg.guards, skip_unchanged_head: false } };
 
-  function shortCircuitEvents(pr: number): Array<{ reason: string; delta_class: string; standing_verdict: string }> {
-    return (store.db.prepare("SELECT payload FROM events WHERE pr = ? AND kind = 'dispatch_short_circuit'").all(pr) as Array<{ payload: string }>).map(
-      (r) => JSON.parse(r.payload) as { reason: string; delta_class: string; standing_verdict: string },
+  function shortCircuitEvents(
+    pr: number,
+  ): Array<{ reason: string; delta_class: string; standing_verdict: string }> {
+    return (
+      store.db
+        .prepare("SELECT payload FROM events WHERE pr = ? AND kind = 'dispatch_short_circuit'")
+        .all(pr) as Array<{ payload: string }>
+    ).map(
+      (r) =>
+        JSON.parse(r.payload) as { reason: string; delta_class: string; standing_verdict: string },
     );
   }
 
@@ -1166,7 +1326,9 @@ describe("system re-trigger short-circuit", () => {
     expect(orders).toEqual([]);
     expect(store.priorRoundCount(41)).toBe(1); // no new round
     expect(store.getPr(41)!.state).toBe("tracked"); // as the APPROVE uphold leaves it
-    expect(shortCircuitEvents(41)).toMatchObject([{ reason: "unchanged-head", delta_class: "empty", standing_verdict: "APPROVE" }]);
+    expect(shortCircuitEvents(41)).toMatchObject([
+      { reason: "unchanged-head", delta_class: "empty", standing_verdict: "APPROVE" },
+    ]);
     // The trigger is consumed but the PR is never painted "in progress".
     const fns = adapter.calls.map((c) => `${c.fn}:${c.pr}`);
     expect(fns).toContain("removeLabel:41");
@@ -1178,7 +1340,10 @@ describe("system re-trigger short-circuit", () => {
     queue(42, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
     reviewed(42, OLD, "APPROVE");
     adapter.files.set(42, [file("mine.ts")]);
-    adapter.compares.set(`${OLD}..${NEW}`, [file("base/other.py", 30, 4), file("base/second.py", 8, 1)]);
+    adapter.compares.set(`${OLD}..${NEW}`, [
+      file("base/other.py", 30, 4),
+      file("base/second.py", 8, 1),
+    ]);
     const { hooks, orders } = recordingHooks();
 
     expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toEqual([]);
@@ -1187,7 +1352,11 @@ describe("system re-trigger short-circuit", () => {
     expect(store.priorRoundCount(42)).toBe(1);
     expect(store.getPr(42)!.state).toBe("tracked");
     const [ev] = shortCircuitEvents(42);
-    expect(ev).toMatchObject({ reason: "trivial-delta", delta_class: "trivial", standing_verdict: "APPROVE" });
+    expect(ev).toMatchObject({
+      reason: "trivial-delta",
+      delta_class: "trivial",
+      standing_verdict: "APPROVE",
+    });
     // Terminal for this head: the reconcile push-backstop's exact fingerprint
     // is claimed, so the same question is never re-asked every sweep.
     expect(store.hasRecheck(42, recheckFingerprint({ trigger: "push" }, NEW))).toBe(true);
@@ -1252,7 +1421,9 @@ describe("system re-trigger short-circuit", () => {
 
     expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toEqual([]);
     expect(store.getPr(49)!.state).toBe("awaiting_author");
-    expect(shortCircuitEvents(49)).toMatchObject([{ reason: "empty-delta", standing_verdict: "REQUEST_CHANGES" }]);
+    expect(shortCircuitEvents(49)).toMatchObject([
+      { reason: "empty-delta", standing_verdict: "REQUEST_CHANGES" },
+    ]);
     // The rechecks table is the APPROVE path's guard — untouched here.
     expect(store.rechecksFor(49)).toEqual([]);
   });
@@ -1265,7 +1436,13 @@ describe("system re-trigger short-circuit", () => {
 
     expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toEqual([]);
     expect(store.approvalWithheld(50)).toMatchObject({ head_sha: NEW });
-    expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE pr = 50 AND kind = 'approval_withheld_carried'").get()).toEqual({ c: 1 });
+    expect(
+      store.db
+        .prepare(
+          "SELECT COUNT(*) AS c FROM events WHERE pr = 50 AND kind = 'approval_withheld_carried'",
+        )
+        .get(),
+    ).toEqual({ c: 1 });
   });
 
   it("an existing recheck claim is left untouched — no double-claim against", async () => {
@@ -1289,7 +1466,13 @@ describe("system re-trigger short-circuit", () => {
 
     expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toHaveLength(1);
     expect(shortCircuitEvents(52)).toEqual([]);
-    expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE pr = 52 AND kind = 'dispatch_classifier_failed'").get()).toEqual({ c: 1 });
+    expect(
+      store.db
+        .prepare(
+          "SELECT COUNT(*) AS c FROM events WHERE pr = 52 AND kind = 'dispatch_classifier_failed'",
+        )
+        .get(),
+    ).toEqual({ c: 1 });
   });
 
   it("an adapter without the compare seam never short-circuits a moved head", async () => {
@@ -1338,7 +1521,11 @@ describe("system re-trigger short-circuit", () => {
     expect(orders).toEqual([]); // delta-only classification: trivial base-merge
     expect(shortCircuitEvents(55)).toMatchObject([{ reason: "trivial-delta" }]);
     expect(
-      store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE pr = 55 AND kind = 'recheck_merge_verify_degraded'").get(),
+      store.db
+        .prepare(
+          "SELECT COUNT(*) AS c FROM events WHERE pr = 55 AND kind = 'recheck_merge_verify_degraded'",
+        )
+        .get(),
     ).toEqual({ c: 1 });
   });
 });
@@ -1370,14 +1557,18 @@ describe("round-memory seeding", () => {
   }
 
   function anomalies(pr: number): string[] {
-    return (store.db.prepare("SELECT payload FROM events WHERE pr = ? AND kind = 'anomaly'").all(pr) as Array<{ payload: string }>).map(
-      (r) => (JSON.parse(r.payload) as { kind: string }).kind,
-    );
+    return (
+      store.db
+        .prepare("SELECT payload FROM events WHERE pr = ? AND kind = 'anomaly'")
+        .all(pr) as Array<{ payload: string }>
+    ).map((r) => (JSON.parse(r.payload) as { kind: string }).kind);
   }
 
   function memoryEvents(pr: number): Array<Record<string, unknown>> {
     return (
-      store.db.prepare("SELECT payload FROM events WHERE pr = ? AND kind = 'round_memory_seeded'").all(pr) as Array<{
+      store.db
+        .prepare("SELECT payload FROM events WHERE pr = ? AND kind = 'round_memory_seeded'")
+        .all(pr) as Array<{
         payload: string;
       }>
     ).map((r) => JSON.parse(r.payload) as Record<string, unknown>);
@@ -1406,13 +1597,20 @@ describe("round-memory seeding", () => {
     // worktree was prepared to.
     expect(assembler.queries[0]).toContain("Cap the retry budget");
     expect(assembler.queries[0]).toContain("api");
-    expect(memoryEvents(70)).toMatchObject([{ degraded: false, round_no: 1, head_state: "populated" }]);
+    expect(memoryEvents(70)).toMatchObject([
+      { degraded: false, round_no: 1, head_state: "populated" },
+    ]);
   });
 
   it("makes EXACTLY one context call per round — never one per pass, never two per round", async () => {
     queue(71, "2026-08-20T09:00:00Z");
     queue(72, "2026-08-20T09:30:00Z");
-    adapter.files.set(71, [file("a.ts"), file("b.ts"), file("ui/c.tsx"), file("migrations/0001_x.py")]);
+    adapter.files.set(71, [
+      file("a.ts"),
+      file("b.ts"),
+      file("ui/c.tsx"),
+      file("migrations/0001_x.py"),
+    ]);
     adapter.files.set(72, [file("d.ts")]);
     const assembler = new Assembler();
     const { hooks, orders } = recordingHooks();
@@ -1490,13 +1688,22 @@ describe("round-memory seeding", () => {
     const { hooks, orders } = recordingHooks();
     const tpl = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile("first")), "utf8");
 
-    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, memory: { assembler: fresh }, renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem) });
+    await dispatchOnce({
+      cfg: baseCfg,
+      store,
+      adapter,
+      hooks,
+      memory: { assembler: fresh },
+      renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem),
+    });
 
     expect(orders).toHaveLength(1);
     expect(orders[0]!.prompt).not.toContain("MEMORY UNAVAILABLE");
     expect(orders[0]!.prompt).not.toContain("STANDING INSTRUCTIONS");
     expect(orders[0]!.prompt).toContain("had nothing to add");
-    expect(memoryEvents(78)).toMatchObject([{ degraded: false, gaps: [], head_state: "empty", head_chars: 0, block_chars: 0 }]);
+    expect(memoryEvents(78)).toMatchObject([
+      { degraded: false, gaps: [], head_state: "empty", head_chars: 0, block_chars: 0 },
+    ]);
     expect(anomalies(78)).toEqual([]);
   });
 
@@ -1513,7 +1720,14 @@ describe("round-memory seeding", () => {
     const run = async (pr: number, ts: string, assembler: ContextAssembler) => {
       queue(pr, ts);
       adapter.files.set(pr, [file("a.ts")]);
-      await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, memory: { assembler }, renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem) });
+      await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter,
+        hooks,
+        memory: { assembler },
+        renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem),
+      });
     };
 
     await run(80, "2026-08-20T09:00:00Z", new Assembler());
@@ -1544,7 +1758,11 @@ describe("round-memory seeding", () => {
       await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, memory: { assembler } });
     };
     await run(83, "2026-08-20T09:00:00Z", new Assembler());
-    await run(84, "2026-08-20T09:10:00Z", new Assembler(unreadable("connect ECONNREFUSED"), read("")));
+    await run(
+      84,
+      "2026-08-20T09:10:00Z",
+      new Assembler(unreadable("connect ECONNREFUSED"), read("")),
+    );
     expect(anomalies(84)).toEqual(["round_memory_degraded"]);
     await run(85, "2026-08-20T09:20:00Z", new Assembler(read(""), read("")));
     expect(anomalies(85)).toEqual(["pinned_head_emptied"]);
@@ -1553,18 +1771,34 @@ describe("round-memory seeding", () => {
   it("an UNREADABLE store still degrades, still alerts the operator, and names what is missing", async () => {
     queue(79, "2026-08-20T09:00:00Z");
     adapter.files.set(79, [file("a.ts")]);
-    const dead = new Assembler(unreadable("ls viking://user/reviewer/memories: connect ECONNREFUSED 127.0.0.1:1933"), read(""));
+    const dead = new Assembler(
+      unreadable("ls viking://user/reviewer/memories: connect ECONNREFUSED 127.0.0.1:1933"),
+      read(""),
+    );
     const { hooks, orders } = recordingHooks();
     const tpl = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile("first")), "utf8");
     const injected: string[] = [];
     store.setAnomalySink((signal) => injected.push(signal.injectMessage ?? ""));
 
-    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, memory: { assembler: dead }, renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem) });
+    await dispatchOnce({
+      cfg: baseCfg,
+      store,
+      adapter,
+      hooks,
+      memory: { assembler: dead },
+      renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem),
+    });
 
     expect(orders).toHaveLength(1);
     expect(orders[0]!.prompt).toContain("MEMORY UNAVAILABLE THIS ROUND");
     expect(store.getPr(79)!.state).toBe("reviewing");
-    expect(memoryEvents(79)).toMatchObject([{ degraded: true, head_state: "unread", gaps: [{ part: "head", reason: expect.stringContaining("unreadable: ls viking://") }] }]);
+    expect(memoryEvents(79)).toMatchObject([
+      {
+        degraded: true,
+        head_state: "unread",
+        gaps: [{ part: "head", reason: expect.stringContaining("unreadable: ls viking://") }],
+      },
+    ]);
     expect(anomalies(79)).toEqual(["round_memory_degraded"]);
     // The operator's alert says what is actually missing — here the head
     // only; the context search answered (with nothing), so it is not claimed
@@ -1576,14 +1810,26 @@ describe("round-memory seeding", () => {
   });
 
   it("keeps alerting bounded while the store stays down — the per-round record does not thin", async () => {
-    const down = new Assembler(unreadable("connect ECONNREFUSED"), unreadable("connect ECONNREFUSED"));
+    const down = new Assembler(
+      unreadable("connect ECONNREFUSED"),
+      unreadable("connect ECONNREFUSED"),
+    );
     const { hooks } = recordingHooks();
-    for (const [pr, ts] of [[75, "2026-08-20T09:00:00Z"], [76, "2026-08-20T09:10:00Z"]] as const) {
+    for (const [pr, ts] of [
+      [75, "2026-08-20T09:00:00Z"],
+      [76, "2026-08-20T09:10:00Z"],
+    ] as const) {
       queue(pr, ts);
       adapter.files.set(pr, [file("a.ts")]);
     }
 
-    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, memory: { assembler: down, alertCooldownMin: 60 } });
+    await dispatchOnce({
+      cfg: baseCfg,
+      store,
+      adapter,
+      hooks,
+      memory: { assembler: down, alertCooldownMin: 60 },
+    });
 
     expect(memoryEvents(75)).toHaveLength(1);
     expect(memoryEvents(76)).toHaveLength(1);
@@ -1598,7 +1844,13 @@ describe("round-memory seeding", () => {
     const { hooks, orders } = recordingHooks();
     const tpl = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile("first")), "utf8");
 
-    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem) });
+    await dispatchOnce({
+      cfg: baseCfg,
+      store,
+      adapter,
+      hooks,
+      renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem),
+    });
 
     expect(orders).toHaveLength(1);
     expect(orders[0]!.prompt).not.toContain("STANDING INSTRUCTIONS");

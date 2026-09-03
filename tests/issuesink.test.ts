@@ -72,7 +72,10 @@ describe("wayfinder sink", () => {
   it("files an unfiled defect and stamps filed= back through the store", async () => {
     const root = tracker();
     const store = recordingStore();
-    const sink = new WayfinderIssueSink({ root, effort: "review-sandbox", parent: "FT-0026" }, store);
+    const sink = new WayfinderIssueSink(
+      { root, effort: "review-sandbox", parent: "FT-0026" },
+      store,
+    );
     const report = await sink.file([entry()], NOW_ISO);
     expect(report.refused).toBeUndefined();
     expect(report.filed).toHaveLength(1);
@@ -80,18 +83,27 @@ describe("wayfinder sink", () => {
     expect(report.filed[0]!.key).toBe(memoryKey(entry()));
     const tickets = readdirSync(join(root, "efforts/review-sandbox/tickets"));
     expect(tickets).toHaveLength(1);
-    expect(readFileSync(join(root, "efforts/review-sandbox/tickets", tickets[0]!), "utf8")).toContain("by qcr-tui");
+    expect(
+      readFileSync(join(root, "efforts/review-sandbox/tickets", tickets[0]!), "utf8"),
+    ).toContain("by qcr-tui");
     expect(store.ops[0]).toMatchObject({ op: "edit" });
     expect((store.ops[0] as { text: string }).text).toContain(`filed=${report.filed[0]!.id}`);
   });
 
   it("skips entries already stamped, and quiet-skips a broken tracker (refusal-free, throw-free)", async () => {
     const root = tracker();
-    const sink = new WayfinderIssueSink({ root, effort: "review-sandbox", parent: "FT-0026" }, recordingStore());
+    const sink = new WayfinderIssueSink(
+      { root, effort: "review-sandbox", parent: "FT-0026" },
+      recordingStore(),
+    );
     const stamped = entry({ text: "#bug filed=FT-0001 already filed defect." });
     expect(await sink.file([stamped], NOW_ISO)).toEqual({ filed: [] });
 
-    const dead = new WayfinderIssueSink({ root: join(root, "no-such-tracker"), effort: "e", parent: "FT-0001" });
+    const dead = new WayfinderIssueSink({
+      root: join(root, "no-such-tracker"),
+      effort: "e",
+      parent: "FT-0001",
+    });
     await expect(dead.file([entry()], NOW_ISO)).resolves.toEqual({ filed: [] });
   });
 });
@@ -110,7 +122,10 @@ const tuiCfg = {
 const NOW = new Date("2026-08-29T12:00:00.000Z");
 
 /** Records calls; answers each result probe from the queue. */
-function runner(results: string[]): { ssh: SshRunner; calls: Array<{ argv: string[]; stdin?: string }> } {
+function runner(results: string[]): {
+  ssh: SshRunner;
+  calls: Array<{ argv: string[]; stdin?: string }>;
+} {
   const calls: Array<{ argv: string[]; stdin?: string }> = [];
   const ssh: SshRunner = async (_host, argv, opts) => {
     calls.push({ argv, ...(opts?.stdin !== undefined ? { stdin: opts.stdin } : {}) });
@@ -122,7 +137,13 @@ function runner(results: string[]): { ssh: SshRunner; calls: Array<{ argv: strin
 }
 
 function githubSink(ssh: SshRunner, store?: MemoryStore): GithubIssueSink {
-  return new GithubIssueSink(tuiCfg, ssh, store, () => NOW, async () => {});
+  return new GithubIssueSink(
+    tuiCfg,
+    ssh,
+    store,
+    () => NOW,
+    async () => {},
+  );
 }
 
 describe("github sink", () => {
@@ -180,15 +201,24 @@ describe("github sink", () => {
     expect(await githubSink(ssh, recordingStore()).file([stamped], NOW_ISO)).toEqual({ filed: [] });
     expect(calls).toHaveLength(0);
 
-    const deadSsh: SshRunner = async () => ({ ok: false, stdout: "", stderr: "no route", code: 255 });
+    const deadSsh: SshRunner = async () => ({
+      ok: false,
+      stdout: "",
+      stderr: "no route",
+      code: 255,
+    });
     const report = await githubSink(deadSsh, recordingStore()).file([entry()], NOW_ISO);
     expect(report.filed).toEqual([]);
     expect(report.refused).toContain("command write failed");
   });
 
   it("title/body derivation strips the header run and keeps the entry verbatim in the body", () => {
-    const e = entry({ text: "#bug #ops pr=5180 [[some-link]] The verdict watcher drops digit-string rounds." });
-    expect(issueTitleFor(e)).toBe("Auto-filed defect: The verdict watcher drops digit-string rounds.");
+    const e = entry({
+      text: "#bug #ops pr=5180 [[some-link]] The verdict watcher drops digit-string rounds.",
+    });
+    expect(issueTitleFor(e)).toBe(
+      "Auto-filed defect: The verdict watcher drops digit-string rounds.",
+    );
     expect(issueBodyFor(e)).toContain("## Flagged entry");
     expect(issueBodyFor(e)).toContain(e.text);
   });
@@ -202,9 +232,11 @@ describe("none sink", () => {
 
 // ---- config → sink wiring ---------------------------------------------------
 
-const fixture = (): string => readFileSync(join(dirname(fileURLToPath(import.meta.url)), "fixtures/config.toml"), "utf8");
+const fixture = (): string =>
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), "fixtures/config.toml"), "utf8");
 
-const withSink = (toml: string): string => fixture().replace(/\[sink\][\s\S]*?(?=\n\[backfill\])/, `${toml}\n`);
+const withSink = (toml: string): string =>
+  fixture().replace(/\[sink\][\s\S]*?(?=\n\[backfill\])/, `${toml}\n`);
 
 describe("buildIssueSink / ticketProjection", () => {
   const ssh: SshRunner = async () => ({ ok: true, stdout: "", stderr: "", code: 0 });
@@ -224,19 +256,30 @@ describe("buildIssueSink / ticketProjection", () => {
 
   it("wayfinder: root defaults from [companion] tracker_dir, and the projection follows the config", () => {
     const cfg = parseConfig(
-      withSink('[sink]\nkind = "wayfinder"\neffort = "review-sandbox"\nparent = "FT-0026"\ntickets_effort = "review-feedback-loop"'),
+      withSink(
+        '[sink]\nkind = "wayfinder"\neffort = "review-sandbox"\nparent = "FT-0026"\ntickets_effort = "review-feedback-loop"',
+      ),
     );
     expect(cfg.sink.root).toBe(cfg.companion.tracker_dir);
     expect(buildIssueSink(cfg, ssh).kind).toBe("wayfinder");
-    expect(ticketProjection(cfg)).toEqual({ root: cfg.companion.tracker_dir, effort: "review-feedback-loop" });
+    expect(ticketProjection(cfg)).toEqual({
+      root: cfg.companion.tracker_dir,
+      effort: "review-feedback-loop",
+    });
     // tickets_effort empty ⇒ the projection reads the filer's effort.
-    const same = parseConfig(withSink('[sink]\nkind = "wayfinder"\neffort = "review-sandbox"\nparent = "FT-0026"'));
+    const same = parseConfig(
+      withSink('[sink]\nkind = "wayfinder"\neffort = "review-sandbox"\nparent = "FT-0026"'),
+    );
     expect(ticketProjection(same)!.effort).toBe("review-sandbox");
   });
 
   it("a wayfinder sink missing effort/parent is refused at parse — loud at boot, never a silent no-op", () => {
-    expect(() => parseConfig(withSink('[sink]\nkind = "wayfinder"\nparent = "FT-0026"'))).toThrow(/non-empty `effort`/);
-    expect(() => parseConfig(withSink('[sink]\nkind = "wayfinder"\neffort = "e"'))).toThrow(/non-empty `parent`/);
+    expect(() => parseConfig(withSink('[sink]\nkind = "wayfinder"\nparent = "FT-0026"'))).toThrow(
+      /non-empty `effort`/,
+    );
+    expect(() => parseConfig(withSink('[sink]\nkind = "wayfinder"\neffort = "e"'))).toThrow(
+      /non-empty `parent`/,
+    );
     expect(() => parseConfig(withSink('[sink]\nkind = "carrier-pigeon"'))).toThrow(/kind must be/);
   });
 

@@ -62,7 +62,14 @@
 // exit. Zero dependencies and plain JS on purpose: the entrypoint runs it
 // before the TypeScript build, on a container that may have no `dist/` yet.
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -85,7 +92,11 @@ export const META_MARKER = "\n\n[openviking.embedding]\n";
 
 /** The server's built-in local dense embedder — the ONLY local model 0.4.15
  * ships a spec for, and the one this system now runs by default. */
-export const LOCAL_EMBEDDER = Object.freeze({ provider: "local", model: "bge-small-zh-v1.5-f16", dimension: 512 });
+export const LOCAL_EMBEDDER = Object.freeze({
+  provider: "local",
+  model: "bge-small-zh-v1.5-f16",
+  dimension: 512,
+});
 
 export const DEFAULTS = {
   base: "http://127.0.0.1:1933",
@@ -120,7 +131,9 @@ export const DEFAULTS = {
 export function configuredEmbedder(conf) {
   const dense = conf?.embedding?.dense;
   if (!dense || typeof dense !== "object") return { ...LOCAL_EMBEDDER };
-  const provider = String(dense.provider ?? "").trim().toLowerCase();
+  const provider = String(dense.provider ?? "")
+    .trim()
+    .toLowerCase();
   if (provider === "" || provider === "local") {
     return {
       provider: "local",
@@ -160,7 +173,13 @@ export function storedEmbedder(metaText) {
 }
 
 export function sameEmbedder(a, b) {
-  return !!a && !!b && a.provider === b.provider && a.model === b.model && Number(a.dimension) === Number(b.dimension);
+  return (
+    !!a &&
+    !!b &&
+    a.provider === b.provider &&
+    a.model === b.model &&
+    Number(a.dimension) === Number(b.dimension)
+  );
 }
 
 /** `<home>/workspace` unless ov.conf says otherwise (it never does here). */
@@ -171,7 +190,11 @@ export function workspaceOf(home, conf) {
 
 export function collectionDirOf(workspace, conf) {
   const name = conf?.storage?.vectordb?.name;
-  return join(workspace, VECTORDB_DIR, typeof name === "string" && name.trim() !== "" ? name : DEFAULT_COLLECTION);
+  return join(
+    workspace,
+    VECTORDB_DIR,
+    typeof name === "string" && name.trim() !== "" ? name : DEFAULT_COLLECTION,
+  );
 }
 
 // ---- the journal ----------------------------------------------------------------
@@ -187,7 +210,8 @@ export function readJournal(home) {
   if (!existsSync(path)) return { journal: null, unreadable: false };
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8"));
-    if (!parsed || typeof parsed !== "object" || typeof parsed.namespaces !== "object") return { journal: null, unreadable: true };
+    if (!parsed || typeof parsed !== "object" || typeof parsed.namespaces !== "object")
+      return { journal: null, unreadable: true };
     return { journal: parsed, unreadable: false };
   } catch {
     return { journal: null, unreadable: true };
@@ -227,8 +251,14 @@ export function journalStatus(home) {
   if (unreadable) return { state: "unreadable" };
   if (!journal) return { state: "none" };
   const namespaces = journal.namespaces ?? {};
-  const own = Object.values(namespaces).filter((n) => n?.state !== "operator").map((n) => n?.state);
-  const state = own.some((s) => s === "failed") ? "failed" : own.some((s) => s !== "completed") ? "pending" : "completed";
+  const own = Object.values(namespaces)
+    .filter((n) => n?.state !== "operator")
+    .map((n) => n?.state);
+  const state = own.some((s) => s === "failed")
+    ? "failed"
+    : own.some((s) => s !== "completed")
+      ? "pending"
+      : "completed";
   return {
     state,
     embedder: journal.embedder,
@@ -253,8 +283,15 @@ export function settle({ home, user, detail = "", now = () => new Date() }) {
   if (unreadable) return { ok: false, detail: `${journalPath(home)} cannot be parsed` };
   const ns = journal?.namespaces?.[user];
   if (!journal || !ns) return { ok: false, detail: `no re-embed on record for ${user}` };
-  if (ns.state === "completed") return { ok: false, detail: `${user} is already completed (${ns.at ?? "?"})` };
-  const entry = { ...ns, state: "completed", at: now().toISOString(), settled_by: "operator", detail: detail || `settled by the operator (was ${ns.state})` };
+  if (ns.state === "completed")
+    return { ok: false, detail: `${user} is already completed (${ns.at ?? "?"})` };
+  const entry = {
+    ...ns,
+    state: "completed",
+    at: now().toISOString(),
+    settled_by: "operator",
+    detail: detail || `settled by the operator (was ${ns.state})`,
+  };
   writeJournal(home, { ...journal, namespaces: { ...journal.namespaces, [user]: entry } });
   return { ok: true, detail: entry.detail, entry };
 }
@@ -273,16 +310,28 @@ export function settle({ home, user, detail = "", now = () => new Date() }) {
  *           (another server wrote it since) — resetting again would loop
  */
 export function planPrepare({ stored, metaPresent, expected, journal }) {
-  if (!metaPresent) return { action: "none", reason: "no vector collection yet — the server creates one for the configured embedder" };
-  if (stored === null) return { action: "refuse", reason: `${COLLECTION_META} carries no readable embedding metadata — not touching the collection` };
-  if (sameEmbedder(stored, expected)) return { action: "none", reason: `the collection already matches ${describe(expected)}` };
+  if (!metaPresent)
+    return {
+      action: "none",
+      reason: "no vector collection yet — the server creates one for the configured embedder",
+    };
+  if (stored === null)
+    return {
+      action: "refuse",
+      reason: `${COLLECTION_META} carries no readable embedding metadata — not touching the collection`,
+    };
+  if (sameEmbedder(stored, expected))
+    return { action: "none", reason: `the collection already matches ${describe(expected)}` };
   if (journal && sameEmbedder(journal.embedder, expected) && journal.reset_at) {
     return {
       action: "refuse",
       reason: `the collection was already reset for ${describe(expected)} at ${journal.reset_at} and still reports ${describe(stored)} — a server with a different ov.conf wrote it since; not resetting again`,
     };
   }
-  return { action: "reset", reason: `the collection was built under ${describe(stored)}, ov.conf configures ${describe(expected)} — the vectors are incompatible` };
+  return {
+    action: "reset",
+    reason: `the collection was built under ${describe(stored)}, ov.conf configures ${describe(expected)} — the vectors are incompatible`,
+  };
 }
 
 export function describe(e) {
@@ -291,7 +340,10 @@ export function describe(e) {
 
 /** `20260902T153000Z` — the suffix of a moved-aside collection. */
 export function stamp(now = new Date()) {
-  return now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  return now
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\.\d{3}Z$/, "Z");
 }
 
 /**
@@ -301,9 +353,17 @@ export function stamp(now = new Date()) {
  * meaningless after a restart, whereas the port is loopback in the same
  * namespace as whoever runs this script.
  */
-export async function serverIsUp({ base, fetchFn = /** @type {OvFetch} */ (fetch), timeoutMs = 1_500 }) {
+export async function serverIsUp({
+  base,
+  fetchFn = /** @type {OvFetch} */ (fetch),
+  timeoutMs = 1_500,
+}) {
   try {
-    const res = await fetchFn(`${base}/health`, { method: "GET", headers: {}, signal: AbortSignal.timeout(timeoutMs) });
+    const res = await fetchFn(`${base}/health`, {
+      method: "GET",
+      headers: {},
+      signal: AbortSignal.timeout(timeoutMs),
+    });
     return res.status >= 200 && res.status < 500;
   } catch {
     return false;
@@ -315,7 +375,16 @@ export async function serverIsUp({ base, fetchFn = /** @type {OvFetch} */ (fetch
  * ONE rename (the collection directory, aside) and the journal write, and both
  * happen only on `action: "reset"`.
  */
-export async function prepare({ home, conf, users, own = DEFAULTS.user, base, fetchFn = /** @type {OvFetch} */ (fetch), now = () => new Date(), log = /** @type {Log} */ (() => {}) }) {
+export async function prepare({
+  home,
+  conf,
+  users,
+  own = DEFAULTS.user,
+  base,
+  fetchFn = /** @type {OvFetch} */ (fetch),
+  now = () => new Date(),
+  log = /** @type {Log} */ (() => {}),
+}) {
   const expected = configuredEmbedder(conf);
   const workspace = workspaceOf(home, conf);
   const collectionDir = collectionDirOf(workspace, conf);
@@ -358,7 +427,8 @@ export async function prepare({ home, conf, users, own = DEFAULTS.user, base, fe
   // provisioned namespace is journalled for its key holder to rebuild (the
   // server confines a user key to its own tree — a 403 otherwise, verified).
   const namespaces = {};
-  for (const user of new Set([own, ...users])) namespaces[user] = { state: user === own ? "pending" : "operator" };
+  for (const user of new Set([own, ...users]))
+    namespaces[user] = { state: user === own ? "pending" : "operator" };
   const next = {
     version: JOURNAL_VERSION,
     embedder: expected,
@@ -372,9 +442,19 @@ export async function prepare({ home, conf, users, own = DEFAULTS.user, base, fe
   log(
     `openviking: reembed prepare — RESET: ${plan.reason}. The old collection is kept at ${movedTo}; ` +
       `${own} memory is re-embedded by the daemon once the server is ready` +
-      (operators.length ? `; ${operators.join(", ")} by its key's holder (qcr memory reembed, then settle — docs/memory-embeddings.md)` : ""),
+      (operators.length
+        ? `; ${operators.join(", ")} by its key's holder (qcr memory reembed, then settle — docs/memory-embeddings.md)`
+        : ""),
   );
-  return { action: "reset", reason: plan.reason, expected, stored, collectionDir, movedTo, journal: next };
+  return {
+    action: "reset",
+    reason: plan.reason,
+    expected,
+    stored,
+    collectionDir,
+    movedTo,
+    journal: next,
+  };
 }
 
 // ---- resume (HTTP half) --------------------------------------------------------------
@@ -389,7 +469,11 @@ export async function prepare({ home, conf, users, own = DEFAULTS.user, base, fe
  * reindexes its own namespace and is still refused any other.
  */
 export function reindexHeaders(key, user) {
-  return { Authorization: `Bearer ${key}`, "X-OpenViking-User": user, "Content-Type": "application/json" };
+  return {
+    Authorization: `Bearer ${key}`,
+    "X-OpenViking-User": user,
+    "Content-Type": "application/json",
+  };
 }
 
 async function call(fetchFn, url, init, timeoutMs) {
@@ -408,7 +492,12 @@ async function call(fetchFn, url, init, timeoutMs) {
 export function countsOf(result) {
   const r = result && typeof result === "object" ? result : {};
   const n = (k) => (typeof r[k] === "number" ? r[k] : 0);
-  return { scanned_records: n("scanned_records"), rebuilt_records: n("rebuilt_records"), failed_records: n("failed_records"), unsupported_records: n("unsupported_records") };
+  return {
+    scanned_records: n("scanned_records"),
+    rebuilt_records: n("rebuilt_records"),
+    failed_records: n("failed_records"),
+    unsupported_records: n("unsupported_records"),
+  };
 }
 
 function envelopeError(body) {
@@ -435,7 +524,18 @@ function errorMessage(body, fallback) {
  *              running server-side; the next run polls it again via 409
  */
 /** @returns {Promise<ReindexResult>} */
-export async function reindexNamespace({ base, key, user, fetchFn = /** @type {OvFetch} */ (fetch), now = Date.now, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), requestTimeoutMs = DEFAULTS.requestTimeoutMs, pollMs = DEFAULTS.pollMs, deadlineMs = DEFAULTS.deadlineMs, log = /** @type {Log} */ (() => {}) }) {
+export async function reindexNamespace({
+  base,
+  key,
+  user,
+  fetchFn = /** @type {OvFetch} */ (fetch),
+  now = Date.now,
+  sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  requestTimeoutMs = DEFAULTS.requestTimeoutMs,
+  pollMs = DEFAULTS.pollMs,
+  deadlineMs = DEFAULTS.deadlineMs,
+  log = /** @type {Log} */ (() => {}),
+}) {
   const uri = `viking://user/${user}`;
   const headers = reindexHeaders(key, user);
   const started = await call(
@@ -445,30 +545,68 @@ export async function reindexNamespace({ base, key, user, fetchFn = /** @type {O
     requestTimeoutMs,
   );
   if (started.status === 401 || started.status === 403) {
-    return { status: "failed", uri, detail: `refused (HTTP ${started.status}): ${errorMessage(started.body, "this key does not own the namespace")}` };
+    return {
+      status: "failed",
+      uri,
+      detail: `refused (HTTP ${started.status}): ${errorMessage(started.body, "this key does not own the namespace")}`,
+    };
   }
-  if (started.status === 409) return { status: "busy", uri, detail: "a reindex of this namespace is already running — retry later" };
+  if (started.status === 409)
+    return {
+      status: "busy",
+      uri,
+      detail: "a reindex of this namespace is already running — retry later",
+    };
   if (started.status < 200 || started.status >= 300 || envelopeError(started.body)) {
-    return { status: "failed", uri, detail: started.error ?? `HTTP ${started.status}: ${errorMessage(started.body, "reindex request refused")}` };
+    return {
+      status: "failed",
+      uri,
+      detail:
+        started.error ??
+        `HTTP ${started.status}: ${errorMessage(started.body, "reindex request refused")}`,
+    };
   }
-  const result = started.body?.result && typeof started.body.result === "object" ? started.body.result : {};
+  const result =
+    started.body?.result && typeof started.body.result === "object" ? started.body.result : {};
   if (result.status === "completed") return { status: "completed", uri, ...countsOf(result) };
   const taskId = typeof result.task_id === "string" ? result.task_id : "";
-  if (!taskId) return { status: "failed", uri, detail: "the server accepted the reindex but named no task to follow" };
+  if (!taskId)
+    return {
+      status: "failed",
+      uri,
+      detail: "the server accepted the reindex but named no task to follow",
+    };
   log(`openviking: reembed ${uri} — task ${taskId} accepted`);
 
   const deadline = now() + deadlineMs;
   for (;;) {
     await sleep(pollMs);
-    const task = await call(fetchFn, `${base}/api/v1/tasks/${encodeURIComponent(taskId)}`, { method: "GET", headers }, requestTimeoutMs);
+    const task = await call(
+      fetchFn,
+      `${base}/api/v1/tasks/${encodeURIComponent(taskId)}`,
+      { method: "GET", headers },
+      requestTimeoutMs,
+    );
     if (task.status >= 200 && task.status < 300 && !envelopeError(task.body)) {
       const t = task.body?.result && typeof task.body.result === "object" ? task.body.result : {};
-      if (t.status === "completed") return { status: "completed", uri, task_id: taskId, ...countsOf(t.result) };
+      if (t.status === "completed")
+        return { status: "completed", uri, task_id: taskId, ...countsOf(t.result) };
       if (t.status === "failed" || t.status === "cancelled") {
-        return { status: "failed", uri, task_id: taskId, detail: `task ${t.status}: ${typeof t.error === "string" && t.error ? t.error : "no detail"}` };
+        return {
+          status: "failed",
+          uri,
+          task_id: taskId,
+          detail: `task ${t.status}: ${typeof t.error === "string" && t.error ? t.error : "no detail"}`,
+        };
       }
     }
-    if (now() >= deadline) return { status: "timeout", uri, task_id: taskId, detail: `task ${taskId} did not settle within ${Math.round(deadlineMs / 1000)}s` };
+    if (now() >= deadline)
+      return {
+        status: "timeout",
+        uri,
+        task_id: taskId,
+        detail: `task ${taskId} did not settle within ${Math.round(deadlineMs / 1000)}s`,
+      };
   }
 }
 
@@ -481,16 +619,56 @@ export async function reindexNamespace({ base, key, user, fetchFn = /** @type {O
  * the counts in the journal say exactly how far the last attempt got.
  */
 /** @param {{ home: string, base: string, key: string, user: string, fetchFn?: OvFetch, now?: () => Date, sleep?: (ms: number) => Promise<void>, pollMs?: number, deadlineMs?: number, requestTimeoutMs?: number, log?: Log }} opts */
-export async function resume({ home, base, key, user, fetchFn = /** @type {OvFetch} */ (fetch), now = () => new Date(), sleep, pollMs, deadlineMs, requestTimeoutMs, log = /** @type {Log} */ (() => {}) }) {
+export async function resume({
+  home,
+  base,
+  key,
+  user,
+  fetchFn = /** @type {OvFetch} */ (fetch),
+  now = () => new Date(),
+  sleep,
+  pollMs,
+  deadlineMs,
+  requestTimeoutMs,
+  log = /** @type {Log} */ (() => {}),
+}) {
   const { journal, unreadable } = readJournal(home);
-  if (unreadable) return { action: "none", state: "unreadable", detail: `${journalPath(home)} cannot be parsed` };
+  if (unreadable)
+    return { action: "none", state: "unreadable", detail: `${journalPath(home)} cannot be parsed` };
   const ns = journal?.namespaces?.[user];
-  if (!journal || !ns) return { action: "none", state: "none", detail: `no re-embed on record for ${user}` };
-  if (ns.state === "completed") return { action: "none", state: "completed", detail: `${user} already re-embedded at ${ns.at ?? "?"}` };
-  if (ns.state === "operator") return { action: "none", state: "operator", detail: `${user} is another key holder's namespace — this host cannot re-embed it` };
-  if (!key) return { action: "none", state: ns.state, detail: `no ${user} key — cannot re-embed until one is provisioned` };
+  if (!journal || !ns)
+    return { action: "none", state: "none", detail: `no re-embed on record for ${user}` };
+  if (ns.state === "completed")
+    return {
+      action: "none",
+      state: "completed",
+      detail: `${user} already re-embedded at ${ns.at ?? "?"}`,
+    };
+  if (ns.state === "operator")
+    return {
+      action: "none",
+      state: "operator",
+      detail: `${user} is another key holder's namespace — this host cannot re-embed it`,
+    };
+  if (!key)
+    return {
+      action: "none",
+      state: ns.state,
+      detail: `no ${user} key — cannot re-embed until one is provisioned`,
+    };
 
-  const run = await reindexNamespace({ base, key, user, fetchFn, now: () => now().getTime(), sleep, pollMs, deadlineMs, requestTimeoutMs, log });
+  const run = await reindexNamespace({
+    base,
+    key,
+    user,
+    fetchFn,
+    now: () => now().getTime(),
+    sleep,
+    pollMs,
+    deadlineMs,
+    requestTimeoutMs,
+    log,
+  });
   const at = now().toISOString();
   let state;
   if (run.status === "completed" && run.failed_records === 0) state = "completed";
@@ -501,7 +679,14 @@ export async function resume({ home, base, key, user, fetchFn = /** @type {OvFet
     at,
     attempts: (typeof ns.attempts === "number" ? ns.attempts : 0) + 1,
     ...(run.task_id ? { task_id: run.task_id } : {}),
-    ...(run.status === "completed" ? { scanned_records: run.scanned_records, rebuilt_records: run.rebuilt_records, failed_records: run.failed_records, unsupported_records: run.unsupported_records } : {}),
+    ...(run.status === "completed"
+      ? {
+          scanned_records: run.scanned_records,
+          rebuilt_records: run.rebuilt_records,
+          failed_records: run.failed_records,
+          unsupported_records: run.unsupported_records,
+        }
+      : {}),
     detail:
       run.status === "completed"
         ? run.failed_records === 0
@@ -585,21 +770,41 @@ export async function main(argv, { env = process.env, log = (line) => console.lo
     case "prepare": {
       const conf = readConf(cfg.config);
       if (!conf) {
-        log(`openviking: reembed prepare skipped — ${cfg.config} is missing or not JSON (the render did not run?)`);
+        log(
+          `openviking: reembed prepare skipped — ${cfg.config} is missing or not JSON (the render did not run?)`,
+        );
         return cfg.strict ? 1 : 0;
       }
       const base = `http://${cfg.host}:${Number(conf?.server?.port ?? cfg.port)}`;
-      const report = await prepare({ home: cfg.home, conf, users: cfg.users, own: cfg.user, base, log });
+      const report = await prepare({
+        home: cfg.home,
+        conf,
+        users: cfg.users,
+        own: cfg.user,
+        base,
+        log,
+      });
       return report.action === "refuse" && cfg.strict ? 1 : 0;
     }
     case "settle": {
       const r = settle({ home: cfg.home, user: cfg.user, detail: cfg.detail });
-      log(`openviking: reembed settle ${cfg.user} — ${r.ok ? "completed" : "refused"}: ${r.detail}`);
+      log(
+        `openviking: reembed settle ${cfg.user} — ${r.ok ? "completed" : "refused"}: ${r.detail}`,
+      );
       return r.ok ? 0 : 1;
     }
     case "resume": {
-      const report = await resume({ home: cfg.home, base: cfg.base, key: keyFor(cfg, env), user: cfg.user, deadlineMs: cfg.deadlineMs, log });
-      log(`openviking: reembed resume — ${report.action}: ${report.state} (${report.detail ?? report.entry?.detail ?? ""})`);
+      const report = await resume({
+        home: cfg.home,
+        base: cfg.base,
+        key: keyFor(cfg, env),
+        user: cfg.user,
+        deadlineMs: cfg.deadlineMs,
+        log,
+      });
+      log(
+        `openviking: reembed resume — ${report.action}: ${report.state} (${report.detail ?? report.entry?.detail ?? ""})`,
+      );
       return cfg.strict && report.state !== "completed" && report.state !== "none" ? 1 : 0;
     }
     case "rehearse": {
@@ -616,17 +821,37 @@ export async function main(argv, { env = process.env, log = (line) => console.lo
         return 1;
       }
       const base = `http://${cfg.host}:${cfg.port}`;
-      const prepared = await prepare({ home: cfg.home, conf, users: cfg.users, own: cfg.user, base, log });
+      const prepared = await prepare({
+        home: cfg.home,
+        conf,
+        users: cfg.users,
+        own: cfg.user,
+        base,
+        log,
+      });
       if (prepared.action === "refuse") return 1;
-      const child = spawn(cfg.bin, serverArgv({ config: cfg.config, host: cfg.host, port: cfg.port }), { stdio: ["ignore", "inherit", "inherit"] });
-      child.on("error", (err) => log(`openviking-reembed: could not start the server (${err.message})`));
+      const child = spawn(
+        cfg.bin,
+        serverArgv({ config: cfg.config, host: cfg.host, port: cfg.port }),
+        { stdio: ["ignore", "inherit", "inherit"] },
+      );
+      child.on("error", (err) =>
+        log(`openviking-reembed: could not start the server (${err.message})`),
+      );
       child.unref?.();
       try {
         if (!(await waitForReady({ base, timeoutMs: cfg.readyTimeoutMs }))) {
           log("openviking-reembed: the server never became ready — see its log above");
           return 1;
         }
-        const report = await resume({ home: cfg.home, base, key: keyFor(cfg, env), user: cfg.user, deadlineMs: cfg.deadlineMs, log });
+        const report = await resume({
+          home: cfg.home,
+          base,
+          key: keyFor(cfg, env),
+          user: cfg.user,
+          deadlineMs: cfg.deadlineMs,
+          log,
+        });
         log(JSON.stringify(journalStatus(cfg.home), null, 2));
         return report.state === "completed" ? 0 : 1;
       } finally {
@@ -634,14 +859,19 @@ export async function main(argv, { env = process.env, log = (line) => console.lo
       }
     }
     default:
-      log(`openviking-reembed: unknown command '${cfg.command}' (prepare | resume | status | settle | rehearse)`);
+      log(
+        `openviking-reembed: unknown command '${cfg.command}' (prepare | resume | status | settle | rehearse)`,
+      );
       return 2;
   }
 }
 
 const invokedDirectly = (() => {
   try {
-    return process.argv[1] !== undefined && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
+    return (
+      process.argv[1] !== undefined &&
+      import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href
+    );
   } catch {
     return false;
   }
@@ -654,6 +884,8 @@ if (invokedDirectly) {
     .catch((err) => {
       // Never a non-zero exit on an unexpected throw from the boot path:
       // memory must not block the reviewer coming up.
-      console.log(`openviking: reembed failed (${err instanceof Error ? err.message : String(err)}) — the server may refuse to start until an operator looks`);
+      console.log(
+        `openviking: reembed failed (${err instanceof Error ? err.message : String(err)}) — the server may refuse to start until an operator looks`,
+      );
     });
 }

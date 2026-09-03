@@ -41,7 +41,15 @@
 //  5. **No GitHub write lives here.** The module reads (compare, files) and
 //     writes nothing; the session posts its review through the gated scripts.
 //     The MutationGate keeps its monopoly by this module having no mutation.
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, watch, type FSWatcher } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  watch,
+  type FSWatcher,
+} from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.js";
 import { readFindingsRecord } from "./findingsrecord.js";
@@ -102,7 +110,14 @@ const LOCKFILES = new Set([
 ]);
 
 /** Manifests whose version field moves on a release bump. */
-const VERSION_MANIFESTS = new Set(["package.json", "pyproject.toml", "Cargo.toml", "setup.cfg", "VERSION", "version.txt"]);
+const VERSION_MANIFESTS = new Set([
+  "package.json",
+  "pyproject.toml",
+  "Cargo.toml",
+  "setup.cfg",
+  "VERSION",
+  "version.txt",
+]);
 
 function baseName(path: string): string {
   return path.split("/").pop() ?? path;
@@ -201,25 +216,36 @@ export interface ClassifyOpts {
  * not positively recognise is significant. */
 export function classifyFile(file: DeltaFile, opts: ClassifyOpts = {}): FileClass {
   const name = file.filename;
-  const trivial = (reason: TrivialReason): FileClass => ({ filename: name, class: "trivial", reason });
+  const trivial = (reason: TrivialReason): FileClass => ({
+    filename: name,
+    class: "trivial",
+    reason,
+  });
 
   // A hand-resolved merge conflict is never trivial, wherever the file lives.
-  if (opts.resolvedFiles?.has(name)) return { filename: name, class: "significant", reason: "content" };
+  if (opts.resolvedFiles?.has(name))
+    return { filename: name, class: "significant", reason: "content" };
 
-  if (opts.prFiles && !opts.prFiles.has(name) && !(file.previous_filename && opts.prFiles.has(file.previous_filename)))
+  if (
+    opts.prFiles &&
+    !opts.prFiles.has(name) &&
+    !(file.previous_filename && opts.prFiles.has(file.previous_filename))
+  )
     return trivial("base-merge");
 
   const patch = file.patch ?? "";
   const churn = (file.additions ?? 0) + (file.deletions ?? 0);
 
   if (file.previous_filename && isMigrationRenumber(file.previous_filename, name)) {
-    if (churn === 0 || !patch || digitsOnly(patch) || formattingOnly(patch)) return trivial("migration-renumber");
+    if (churn === 0 || !patch || digitsOnly(patch) || formattingOnly(patch))
+      return trivial("migration-renumber");
     return { filename: name, class: "significant", reason: "content" };
   }
   if (file.previous_filename && churn === 0) return trivial("pure-rename");
 
   if (LOCKFILES.has(baseName(name))) return trivial("version-bump");
-  if (VERSION_MANIFESTS.has(baseName(name)) && patch && versionOnly(patch)) return trivial("version-bump");
+  if (VERSION_MANIFESTS.has(baseName(name)) && patch && versionOnly(patch))
+    return trivial("version-bump");
 
   if (patch && formattingOnly(patch)) return trivial("formatting");
   if (!patch && churn === 0) return trivial("no-content-change");
@@ -233,7 +259,10 @@ export function classifyFile(file: DeltaFile, opts: ClassifyOpts = {}): FileClas
  * content edit comes back as a delete + an add, and that pair is the same
  * mechanical renumber.
  */
-export function classifyDelta(files: readonly DeltaFile[], opts: ClassifyOpts = {}): DeltaClassification {
+export function classifyDelta(
+  files: readonly DeltaFile[],
+  opts: ClassifyOpts = {},
+): DeltaClassification {
   const removedMigrations = new Map<string, DeltaFile>();
   for (const f of files) {
     if (f.status !== "removed") continue;
@@ -253,17 +282,23 @@ export function classifyDelta(files: readonly DeltaFile[], opts: ClassifyOpts = 
 
   const classified = files.map((f): FileClass => {
     // A hand-resolved conflict beats every trivial rule, renumber included.
-    if (opts.resolvedFiles?.has(f.filename)) return { filename: f.filename, class: "significant", reason: "content" };
+    if (opts.resolvedFiles?.has(f.filename))
+      return { filename: f.filename, class: "significant", reason: "content" };
     if (renumbered.has(f.filename)) {
       // Ownership still wins: a migration that arrived with the base is a
       // base-merge file whatever its number does.
       const owned = !opts.prFiles || opts.prFiles.has(f.filename);
-      return { filename: f.filename, class: "trivial", reason: owned ? "migration-renumber" : "base-merge" };
+      return {
+        filename: f.filename,
+        class: "trivial",
+        reason: owned ? "migration-renumber" : "base-merge",
+      };
     }
     return classifyFile(f, opts);
   });
   const significant = classified.filter((f) => f.class === "significant");
-  const cls: DeltaClass = classified.length === 0 ? "empty" : significant.length > 0 ? "significant" : "trivial";
+  const cls: DeltaClass =
+    classified.length === 0 ? "empty" : significant.length > 0 ? "significant" : "trivial";
   return { class: cls, files: classified, significant };
 }
 
@@ -280,7 +315,8 @@ export type NoopReason =
   | "empty-delta"
   | "trivial-delta"
   | "already-rechecked"
-  | "no-delta-source" | "delivery-failed"
+  | "no-delta-source"
+  | "delivery-failed"
   /** Deploy-window drain (2026-08-25): no nudge is generated while draining. */
   | "draining";
 
@@ -333,9 +369,15 @@ export function carryWithheldMark(
   // the classifier verdict that caused the withhold rides along with
   // the mark — the carried head has no fresher CI read to offer, and the
   // retry re-classifies at release time anyway.
-  store.recordApprovalWithheld(pr, { head_sha: newHead, ci_state: withheld.ci_state ?? null, reason: withheld.reason ?? "red-ci" });
+  store.recordApprovalWithheld(pr, {
+    head_sha: newHead,
+    ci_state: withheld.ci_state ?? null,
+    reason: withheld.reason ?? "red-ci",
+  });
   store.logEvent("approval_withheld_carried", pr, { from: withheld.head_sha, to: newHead, via });
-  log(`recheck: #${pr} withheld approval carried ${withheld.head_sha.slice(0, 7)} → ${newHead.slice(0, 7)} (${via})`);
+  log(
+    `recheck: #${pr} withheld approval carried ${withheld.head_sha.slice(0, 7)} → ${newHead.slice(0, 7)} (${via})`,
+  );
 }
 
 export function planRecheck(input: RecheckPlanInput): RecheckPlan {
@@ -368,7 +410,12 @@ export function planRecheck(input: RecheckPlanInput): RecheckPlan {
     ...(input.resolvedFiles ? { resolvedFiles: new Set(input.resolvedFiles) } : {}),
   });
   if (adverseCi)
-    return { action: "recheck", class: classification.class, evidence: `CI concluded ${input.ci?.conclusion}`, classification };
+    return {
+      action: "recheck",
+      class: classification.class,
+      evidence: `CI concluded ${input.ci?.conclusion}`,
+      classification,
+    };
   if (classification.class === "empty") return noop("empty-delta", classification);
   if (classification.class === "trivial") return noop("trivial-delta", classification);
   return {
@@ -414,11 +461,18 @@ const recheckSleep = (ms: number): Promise<void> => new Promise((r) => setTimeou
 /** The runaway-guard identity of one recheck question: (trigger, head, ci
  * conclusion, base target). Shared by runRecheck's claim and the reconcile
  * backstop's has-this-been-asked check. */
-export function recheckFingerprint(req: { trigger: RecheckTrigger; head_sha?: string; ci?: { conclusion?: string | null } | null; base?: { after?: string } | null }, headOverride?: string): string {
+export function recheckFingerprint(
+  req: {
+    trigger: RecheckTrigger;
+    head_sha?: string;
+    ci?: { conclusion?: string | null } | null;
+    base?: { after?: string } | null;
+  },
+  headOverride?: string,
+): string {
   const head = headOverride ?? req.head_sha ?? "";
   return [req.trigger, head, req.ci?.conclusion ?? "", req.base?.after ?? ""].join(":");
 }
-
 
 /** Fallback renderer (stub-wired daemon, unit tests): the order as JSON. */
 export function defaultRecheckPrompt(order: RecheckOrder): string {
@@ -430,7 +484,13 @@ export function defaultRecheckPrompt(order: RecheckOrder): string {
 /** Read-only adapter slice. Every call here is a GET; this module never writes
  * to GitHub, so no mutation can escape the gate through it. */
 export interface RecheckAdapter {
-  getPr(n: number): Promise<{ base_ref: string; head_sha: string; state: string; merged: boolean; title?: string }>;
+  getPr(n: number): Promise<{
+    base_ref: string;
+    head_sha: string;
+    state: string;
+    merged: boolean;
+    title?: string;
+  }>;
   listPrFiles(n: number): Promise<DeltaFile[]>;
   /** `GET /compare/<base>...<head>` — the files a range changed. */
   compareFiles(base: string, head: string): Promise<DeltaFile[]>;
@@ -449,7 +509,11 @@ export interface RecheckDeps {
   /** Hand-resolved merge files between two shas (WorktreeManager
    * .resolvedFilesInMerges, wired by the daemon). Absent ⇒ merges classify by
    * the ownership rule alone, as before the 2026-08-19 amendment. */
-  resolvedFilesInMerges?: (from: string, to: string, pr?: number) => Promise<{ files: string[]; degraded: boolean }>;
+  resolvedFilesInMerges?: (
+    from: string,
+    to: string,
+    pr?: number,
+  ) => Promise<{ files: string[]; degraded: boolean }>;
   now?: () => Date;
   log?: (msg: string, extra?: unknown) => void;
 }
@@ -464,7 +528,10 @@ export interface RecheckRequest {
   base?: { branch: string; before: string; after: string };
 }
 
-export type RecheckOutcome = RecheckPlan & { delivered?: "injected" | "held"; order?: RecheckOrder };
+export type RecheckOutcome = RecheckPlan & {
+  delivered?: "injected" | "held";
+  order?: RecheckOrder;
+};
 
 /**
  * One trigger, start to finish. Returns the plan so callers (and tests) can see
@@ -490,17 +557,22 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
   // prefer not creating work over hold-then-flush, because the session the
   // nudge would wake is about to be killed by the deploy. The reconcile
   // push-backstop re-raises the trigger after the lift.
-  if (store.drainState().draining) return done({ action: "noop", reason: "draining", class: "empty" });
+  if (store.drainState().draining)
+    return done({ action: "noop", reason: "draining", class: "empty" });
 
-  if (!cfg.recheck.enabled || !triggerEnabled(cfg, req.trigger)) return done({ action: "noop", reason: "disabled", class: "empty" });
+  if (!cfg.recheck.enabled || !triggerEnabled(cfg, req.trigger))
+    return done({ action: "noop", reason: "disabled", class: "empty" });
   // Cheapest refusal first: ping-pong owns the author reply.
-  if (req.trigger === "author_reply") return done(planRecheck({ ...emptyPlanInput(req), standing: "APPROVE" }));
+  if (req.trigger === "author_reply")
+    return done(planRecheck({ ...emptyPlanInput(req), standing: "APPROVE" }));
 
   const mark = store.reviewedHead(req.pr);
-  if (standingVerdict(mark) !== "APPROVE") return done({ action: "noop", reason: "no-standing-approval", class: "empty" });
+  if (standingVerdict(mark) !== "APPROVE")
+    return done({ action: "noop", reason: "no-standing-approval", class: "empty" });
 
   const row = store.getPr(req.pr);
-  if (!row || row.state === "closed") return done({ action: "noop", reason: "pr-not-open", class: "empty" });
+  if (!row || row.state === "closed")
+    return done({ action: "noop", reason: "pr-not-open", class: "empty" });
 
   const head = req.head_sha || row.head_sha;
   const lastReviewed = mark!.head_sha;
@@ -520,7 +592,9 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
         ? await deps.adapter.compareFiles(req.base.before, req.base.after)
         : await deps.adapter.compareFiles(lastReviewed, head);
     const own = await deps.adapter.listPrFiles(req.pr);
-    prFiles = own.flatMap((f) => (f.previous_filename ? [f.filename, f.previous_filename] : [f.filename]));
+    prFiles = own.flatMap((f) =>
+      f.previous_filename ? [f.filename, f.previous_filename] : [f.filename],
+    );
   } catch (err) {
     // A read failure is not evidence of anything. Uphold and log: the reconcile
     // poll and the next trigger both come round again.
@@ -528,7 +602,12 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     store.logEvent("recheck_delta_failed", req.pr, { trigger: req.trigger, error: String(err) });
     // Durable anomaly row. QUIET class: DB-only, reviewed
     // at the daily heartbeat — the reconcile poll retries this on its own.
-    store.logAnomaly("recheck_delta_failed", req.pr, null, `delta read failed (${req.trigger}): ${String(err)}`);
+    store.logAnomaly(
+      "recheck_delta_failed",
+      req.pr,
+      null,
+      `delta read failed (${req.trigger}): ${String(err)}`,
+    );
     return done({ action: "noop", reason: "no-delta-source", class: "empty" });
   }
 
@@ -571,12 +650,19 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
   // with the head, so green CI at the NEW head releases it. A significant
   // delta carries only after the session's explicit uphold (watcher below).
   if (plan.action === "noop") {
-    if ((plan.reason === "empty-delta" || plan.reason === "trivial-delta") && head !== lastReviewed) {
+    if (
+      (plan.reason === "empty-delta" || plan.reason === "trivial-delta") &&
+      head !== lastReviewed
+    ) {
       carryWithheldMark(store, req.pr, head, `recheck-noop:${plan.reason}`, log);
       // A trivial/empty answer is terminal for this head: claim it, so the
       // reconcile backstop (below in reconcile.ts) never re-classifies the
       // same question every sweep.
-      store.claimRecheck(req.pr, recheckFingerprint(req, head), { head_sha: head, trigger: req.trigger, reason: `noop:${plan.reason}` });
+      store.claimRecheck(req.pr, recheckFingerprint(req, head), {
+        head_sha: head,
+        trigger: req.trigger,
+        reason: `noop:${plan.reason}`,
+      });
     }
     return done(plan);
   }
@@ -585,8 +671,19 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
   // reconcile replay or a redelivered webhook re-asks the same question, which
   // is how the old staleness gate burned 19% of all output.
   const fingerprint = recheckFingerprint(req, head);
-  if (!store.claimRecheck(req.pr, fingerprint, { head_sha: head, trigger: req.trigger, reason: plan.evidence }))
-    return done({ action: "noop", reason: "already-rechecked", class: plan.class, classification: plan.classification });
+  if (
+    !store.claimRecheck(req.pr, fingerprint, {
+      head_sha: head,
+      trigger: req.trigger,
+      reason: plan.evidence,
+    })
+  )
+    return done({
+      action: "noop",
+      reason: "already-rechecked",
+      class: plan.class,
+      classification: plan.classification,
+    });
 
   const order: RecheckOrder = {
     pr: req.pr,
@@ -622,9 +719,18 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     // fingerprint would otherwise dedupe every retry and the delta is never
     // audited (live on #5290: boot-order inject failure).
     store.releaseRecheck(req.pr, fingerprint);
-    store.logEvent("recheck_delivery_failed", req.pr, { trigger: req.trigger, head_sha: head, error: String(err) });
+    store.logEvent("recheck_delivery_failed", req.pr, {
+      trigger: req.trigger,
+      head_sha: head,
+      error: String(err),
+    });
     log(`recheck: #${req.pr} delivery failed — claim released for retry`, err);
-    return done({ action: "noop", reason: "delivery-failed", class: plan.class, classification: plan.classification });
+    return done({
+      action: "noop",
+      reason: "delivery-failed",
+      class: plan.class,
+      classification: plan.classification,
+    });
   }
   store.logEvent("recheck_nudged", req.pr, {
     trigger: req.trigger,
@@ -635,7 +741,9 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     evidence: plan.evidence,
     delivered,
   });
-  log(`recheck: #${req.pr} nudged (${req.trigger}, ${plan.classification.significant.length} file(s)) — ${delivered}`);
+  log(
+    `recheck: #${req.pr} nudged (${req.trigger}, ${plan.classification.significant.length} file(s)) — ${delivered}`,
+  );
   return { ...plan, delivered, order };
 }
 
@@ -653,7 +761,13 @@ function triggerEnabled(cfg: Config, trigger: RecheckTrigger): boolean {
 }
 
 function emptyPlanInput(req: RecheckRequest): RecheckPlanInput {
-  return { trigger: req.trigger, standing: null, last_reviewed_sha: "", head_sha: req.head_sha ?? "", delta: [] };
+  return {
+    trigger: req.trigger,
+    standing: null,
+    last_reviewed_sha: "",
+    head_sha: req.head_sha ?? "",
+    delta: [],
+  };
 }
 
 /**
@@ -684,7 +798,10 @@ export async function runBaseAdvance(
         continue;
       }
     }
-    out.set(row.number, await runRecheck(deps, { pr: row.number, trigger: "base_advance", base: advance }));
+    out.set(
+      row.number,
+      await runRecheck(deps, { pr: row.number, trigger: "base_advance", base: advance }),
+    );
   }
   return out;
 }
@@ -716,14 +833,20 @@ export function validateRecheckDecision(raw: unknown): ParsedRecheckDecision {
   if (typeof raw !== "object" || raw === null) return { ok: false, error: "not an object" };
   const v = raw as Record<string, unknown>;
   if (typeof v.pr === "string" && /^\d+$/.test(v.pr)) v.pr = Number(v.pr);
-  if (typeof v.pr !== "number" || !Number.isInteger(v.pr)) return { ok: false, error: "pr must be an integer" };
-  if (typeof v.head_sha !== "string" || v.head_sha.length === 0) return { ok: false, error: "head_sha must be a non-empty string" };
+  if (typeof v.pr !== "number" || !Number.isInteger(v.pr))
+    return { ok: false, error: "pr must be an integer" };
+  if (typeof v.head_sha !== "string" || v.head_sha.length === 0)
+    return { ok: false, error: "head_sha must be a non-empty string" };
   const raw_outcome = typeof v.outcome === "string" ? v.outcome.trim().toLowerCase() : "";
   // NOT a rejection: an unrecognised outcome (including "approve" and
   // "needs_human", which a session may reach for out of round habit) becomes
   // the default — uphold. The recheck path has no other verdict to give.
-  const coerced = raw_outcome === "uphold" || raw_outcome === "request_changes" ? undefined : String(v.outcome ?? "");
-  const outcome: RecheckDecision["outcome"] = raw_outcome === "request_changes" ? "request_changes" : "uphold";
+  const coerced =
+    raw_outcome === "uphold" || raw_outcome === "request_changes"
+      ? undefined
+      : String(v.outcome ?? "");
+  const outcome: RecheckDecision["outcome"] =
+    raw_outcome === "request_changes" ? "request_changes" : "uphold";
   return {
     ok: true,
     decision: {
@@ -841,13 +964,28 @@ export class RecheckWatcher {
         store.roundsFor(pr).reduce<number>((m, r) => (r.round_no > m ? r.round_no : m), 0);
       const parsed = readFindingsRecord(path, pr, roundNo);
       if (parsed.status !== "ok" || !parsed.record) {
-        store.logEvent("recheck_findings_record_absent", pr, { head_sha: headSha, status: parsed.status });
-        this.deps.log?.(`recheck: #${pr} moved the verdict with no findings record (${parsed.status}) — decision stands`);
+        store.logEvent("recheck_findings_record_absent", pr, {
+          head_sha: headSha,
+          status: parsed.status,
+        });
+        this.deps.log?.(
+          `recheck: #${pr} moved the verdict with no findings record (${parsed.status}) — decision stands`,
+        );
         return;
       }
-      const entries = parsed.record.findings.map((f) => ({ ...f, key: `recheck:${head12}:${f.key}` }));
-      store.recordRoundFindings({ pr, round_id: null, round_no: roundNo, head_sha: headSha }, entries);
-      store.logEvent("recheck_findings_recorded", pr, { head_sha: headSha, round_no: roundNo, entries: entries.length });
+      const entries = parsed.record.findings.map((f) => ({
+        ...f,
+        key: `recheck:${head12}:${f.key}`,
+      }));
+      store.recordRoundFindings(
+        { pr, round_id: null, round_no: roundNo, head_sha: headSha },
+        entries,
+      );
+      store.logEvent("recheck_findings_recorded", pr, {
+        head_sha: headSha,
+        round_no: roundNo,
+        entries: entries.length,
+      });
     } catch (err) {
       this.deps.log?.(`recheck: #${pr} findings record read failed`, err);
     }
@@ -880,19 +1018,34 @@ export class RecheckWatcher {
         // Malformed is the safe direction here — the standing verdict simply
         // stays standing. No park, no anomaly round, nothing posted. But say
         // so out loud: the silent branch hid the partial-read race for hours.
-        this.deps.store.logEvent("recheck_decision_malformed", pr, { file: name, error: parsed.error ?? "unknown" });
-        this.deps.log?.(`recheck: #${pr} decision ${name} malformed after ${retries + 1} reads — standing verdict kept (${parsed.error ?? "unknown"})`);
+        this.deps.store.logEvent("recheck_decision_malformed", pr, {
+          file: name,
+          error: parsed.error ?? "unknown",
+        });
+        this.deps.log?.(
+          `recheck: #${pr} decision ${name} malformed after ${retries + 1} reads — standing verdict kept (${parsed.error ?? "unknown"})`,
+        );
         this.archive(name);
         return true;
       }
       const d = parsed.decision;
-      if (d.pr !== pr || d.head_sha.slice(0, 12).toLowerCase() !== (match[2] as string).toLowerCase()) {
-        this.deps.store.logEvent("recheck_decision_rejected", pr, { file: name, reason: "pr/head do not match the filename" });
+      if (
+        d.pr !== pr ||
+        d.head_sha.slice(0, 12).toLowerCase() !== (match[2] as string).toLowerCase()
+      ) {
+        this.deps.store.logEvent("recheck_decision_rejected", pr, {
+          file: name,
+          reason: "pr/head do not match the filename",
+        });
         this.archive(name);
         return true;
       }
       if (parsed.coerced !== undefined)
-        this.deps.store.logEvent("recheck_outcome_coerced", pr, { file: name, given: parsed.coerced, applied: "uphold" });
+        this.deps.store.logEvent("recheck_outcome_coerced", pr, {
+          file: name,
+          given: parsed.coerced,
+          applied: "uphold",
+        });
 
       if (d.outcome === "request_changes") {
         // The reasoning behind a backed-down approval. Best-effort
@@ -908,13 +1061,19 @@ export class RecheckWatcher {
           pr,
           { type: "verdict", verdict: "REQUEST_CHANGES" },
           { head_sha: d.head_sha },
-          { botLogin: this.deps.cfg.github.bot_login, ...(this.deps.now ? { now: this.deps.now } : {}), reason: "recheck:request-changes" },
+          {
+            botLogin: this.deps.cfg.github.bot_login,
+            ...(this.deps.now ? { now: this.deps.now } : {}),
+            reason: "recheck:request-changes",
+          },
         );
       }
       if (d.outcome === "uphold") {
         // Session-examined significant delta, verdict upheld: the withheld
         // approval (if any) follows the head (the owner, 2026-08-19).
-        carryWithheldMark(this.deps.store, pr, d.head_sha, "recheck-uphold", (m) => this.deps.log?.(m));
+        carryWithheldMark(this.deps.store, pr, d.head_sha, "recheck-uphold", (m) =>
+          this.deps.log?.(m),
+        );
         // Ledger freshness after the uphold (optional wiring).
         if (this.deps.checkLedger) {
           try {
@@ -924,11 +1083,15 @@ export class RecheckWatcher {
           }
         }
       }
-      this.deps.store.logEvent(d.outcome === "request_changes" ? "recheck_request_changes" : "recheck_upheld", pr, {
-        file: name,
-        head_sha: d.head_sha,
-        reason: d.reason ?? null,
-      });
+      this.deps.store.logEvent(
+        d.outcome === "request_changes" ? "recheck_request_changes" : "recheck_upheld",
+        pr,
+        {
+          file: name,
+          head_sha: d.head_sha,
+          reason: d.reason ?? null,
+        },
+      );
       this.deps.log?.(`recheck: #${pr} ${d.outcome} at ${d.head_sha.slice(0, 7)}`);
       this.archive(name);
       return true;

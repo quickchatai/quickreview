@@ -143,7 +143,11 @@ export function relayFailureCause(cfg, text, deps = {}) {
   // "permission denied while trying to connect to the Docker daemon" also
   // matches /permission denied/, and answering it with `ssh-add` would send the
   // operator hunting for a key problem that does not exist.
-  if (/permission denied while trying to connect to the docker daemon|cannot connect to the docker daemon|docker: command not found/i.test(s)) {
+  if (
+    /permission denied while trying to connect to the docker daemon|cannot connect to the docker daemon|docker: command not found/i.test(
+      s,
+    )
+  ) {
     // …and the docker in question is the VM's, not this laptop's: the relay is
     // `ssh <host> sudo docker exec …`. A local `systemctl status docker` was a
     // remedy pointed at the wrong machine (review). With `sudo docker`
@@ -166,11 +170,23 @@ export function relayFailureCause(cfg, text, deps = {}) {
       remedy: `ssh-add ${key}`,
     };
   }
-  if (/could not resolve|name or service not known|no route to host|network is unreachable|connection timed out|operation timed out/i.test(s)) {
-    return { key: "host", cause: `${cfg.sshHost} did not answer`, remedy: `ssh -v ${cfg.sshHost} true` };
+  if (
+    /could not resolve|name or service not known|no route to host|network is unreachable|connection timed out|operation timed out/i.test(
+      s,
+    )
+  ) {
+    return {
+      key: "host",
+      cause: `${cfg.sshHost} did not answer`,
+      remedy: `ssh -v ${cfg.sshHost} true`,
+    };
   }
   if (/control socket|mux_client|multiplexing/i.test(s)) {
-    return { key: "mux", cause: `the shared ssh ControlMaster for ${cfg.sshHost} is wedged`, remedy: `ssh -O exit ${cfg.sshHost}` };
+    return {
+      key: "mux",
+      cause: `the shared ssh ControlMaster for ${cfg.sshHost} is wedged`,
+      remedy: `ssh -O exit ${cfg.sshHost}`,
+    };
   }
   return {
     key: "unknown",
@@ -234,7 +250,11 @@ export const FAILURE_REPEAT_MS = 60_000;
  *   bag from the DEFAULTED keys only and `tsconfig.tests.json` then rejects
  *   every caller that passes it.
  */
-export function createFailureCollapser({ log, now = () => Date.now(), windowMs = FAILURE_REPEAT_MS } = {}) {
+export function createFailureCollapser({
+  log,
+  now = () => Date.now(),
+  windowMs = FAILURE_REPEAT_MS,
+} = {}) {
   let key = null;
   let lastAt = 0;
   // Suppressed since the LAST PRINTED line, and suppressed since the last
@@ -248,7 +268,10 @@ export function createFailureCollapser({ log, now = () => Date.now(), windowMs =
     const hidden = suppressedSincePrint;
     const sameCause = cause.key === key;
     const ago = Math.round((t - lastAt) / 1000);
-    const repeat = hidden > 0 ? ` (${hidden} similar failure${hidden === 1 ? "" : "s"} suppressed${sameCause ? ` in the last ${ago}s` : ""})` : "";
+    const repeat =
+      hidden > 0
+        ? ` (${hidden} similar failure${hidden === 1 ? "" : "s"} suppressed${sameCause ? ` in the last ${ago}s` : ""})`
+        : "";
     key = cause.key;
     lastAt = t;
     suppressedSincePrint = 0;
@@ -273,7 +296,9 @@ export function createFailureCollapser({ log, now = () => Date.now(), windowMs =
       suppressedSincePrint = 0;
       suppressedTotal = 0;
       total = 0;
-      log(`relay recovered — the forward is working again (${seen} failure${seen === 1 ? "" : "s"}, ${hidden} suppressed)`);
+      log(
+        `relay recovered — the forward is working again (${seen} failure${seen === 1 ? "" : "s"}, ${hidden} suppressed)`,
+      );
     },
     /** Test handle: what is currently collapsed. */
     state: () => ({ key, suppressed: suppressedSincePrint, hidden: suppressedTotal, total }),
@@ -289,7 +314,16 @@ export function createFailureCollapser({ log, now = () => Date.now(), windowMs =
  * shell re-parse, so no quote wrapper); `--no-sudo` drops the sudo prefix.
  */
 export function localRelayArgv(cfg) {
-  return [...(cfg.sudo ? ["sudo"] : []), "docker", "exec", "-i", cfg.container, "node", "-e", remoteBridgeJs(cfg.remoteHost, cfg.remotePort)];
+  return [
+    ...(cfg.sudo ? ["sudo"] : []),
+    "docker",
+    "exec",
+    "-i",
+    cfg.container,
+    "node",
+    "-e",
+    remoteBridgeJs(cfg.remoteHost, cfg.remotePort),
+  ];
 }
 
 /** The FULL relay command, binary first — the transport decision in one place.
@@ -316,7 +350,6 @@ export function createForwarder(cfg, opts = {}) {
   const log = opts.log ?? ((line) => console.log(`[memory-forward] ${line}`));
   const spawnRelay = opts.spawnRelay ?? realRelaySpawner(cfg);
   const servers = [];
-  let live = 0;
   // Every in-flight socket↔child pair. Tracked so close() can tear them down:
   // `server.close()` only stops ACCEPTING, and each relay is an ssh + a remote
   // docker exec, so a caller that stops the forwarder and keeps running would
@@ -326,10 +359,10 @@ export function createForwarder(cfg, opts = {}) {
   const pairs = new Set();
 
   // one actionable line per cause, not one symptom line per relay.
-  const collapser = opts.collapser ?? createFailureCollapser({ log, ...(opts.now ? { now: opts.now } : {}) });
+  const collapser =
+    opts.collapser ?? createFailureCollapser({ log, ...(opts.now ? { now: opts.now } : {}) });
 
   const onConnection = (socket) => {
-    live += 1;
     let child;
     try {
       child = spawnRelay();
@@ -394,7 +427,10 @@ export function createForwarder(cfg, opts = {}) {
           log(`cannot bind ${address}:${cfg.port}: ${errText(err)}`);
         });
         const addr = server.address();
-        if (addr) log(`listening on ${addr.address}:${addr.port} → ${cfg.local ? "local docker" : cfg.sshHost} ${cfg.container} ${cfg.remoteHost}:${cfg.remotePort}`);
+        if (addr)
+          log(
+            `listening on ${addr.address}:${addr.port} → ${cfg.local ? "local docker" : cfg.sshHost} ${cfg.container} ${cfg.remoteHost}:${cfg.remotePort}`,
+          );
       }
       return servers.filter((s) => s.address() !== null).length;
     },
@@ -434,7 +470,11 @@ export function unitAuthSock(env = process.env) {
   if (runtime !== "" && sock.startsWith(`${runtime}/`)) {
     return { value: `%t/${sock.slice(runtime.length + 1)}`, stable: true, why: "" };
   }
-  return { value: sock, stable: false, why: "the agent socket path looks per-session; prefer --identity <key> or a keyring agent" };
+  return {
+    value: sock,
+    stable: false,
+    why: "the agent socket path looks per-session; prefer --identity <key> or a keyring agent",
+  };
 }
 
 /** The systemd --user unit. Pure so the test can read it. */
@@ -553,10 +593,30 @@ export function classify(status, body) {
 /** The four (key, namespace) pairs and what each MUST show. */
 export function expectations() {
   return [
-    { who: "companion", ns: "companion", want: "reach", why: "the companion writes and reads its own memory" },
-    { who: "reviewer", ns: "reviewer", want: "reach", why: "the companion holds the reviewer key too — full reach over review memory" },
-    { who: "reviewer", ns: "companion", want: "refused", why: "REVERSE DIRECTION: review sessions hold only this key and must not see companion memory" },
-    { who: "companion", ns: "reviewer", want: "refused", why: "user keys are confined both ways (the companion uses the reviewer key for that namespace)" },
+    {
+      who: "companion",
+      ns: "companion",
+      want: "reach",
+      why: "the companion writes and reads its own memory",
+    },
+    {
+      who: "reviewer",
+      ns: "reviewer",
+      want: "reach",
+      why: "the companion holds the reviewer key too — full reach over review memory",
+    },
+    {
+      who: "reviewer",
+      ns: "companion",
+      want: "refused",
+      why: "REVERSE DIRECTION: review sessions hold only this key and must not see companion memory",
+    },
+    {
+      who: "companion",
+      ns: "reviewer",
+      want: "refused",
+      why: "user keys are confined both ways (the companion uses the reviewer key for that namespace)",
+    },
   ];
 }
 
@@ -609,7 +669,9 @@ async function probePair(base, key, ns, env, fetchFn, doWrite) {
         }),
       }
     : { method: "GET", headers };
-  const url = doWrite ? `${base}${PATHS.write(env)}` : `${base}${PATHS.read(env)}?uri=${encodeURIComponent(PATHS.readUri(env, ns))}`;
+  const url = doWrite
+    ? `${base}${PATHS.write(env)}`
+    : `${base}${PATHS.read(env)}?uri=${encodeURIComponent(PATHS.readUri(env, ns))}`;
   try {
     // 30s: the forward path is ssh + docker exec per request, and the local
     // dense embedder answers slowly from cold — 8s produced false timeouts.
@@ -639,19 +701,38 @@ async function probePair(base, key, ns, env, fetchFn, doWrite) {
  *   log?: (line: string) => void,
  * }} opts
  */
-export async function runVerify({ base, keys, env = process.env, fetchFn = fetch, write = false, log = console.log }) {
+export async function runVerify({
+  base,
+  keys,
+  env = process.env,
+  fetchFn = fetch,
+  write = false,
+  log = console.log,
+}) {
   const rows = [];
   for (const e of expectations()) {
     const key = e.who === "companion" ? keys.companion : keys.reviewer;
     if (!key) {
-      rows.push({ ...e, observed: "inconclusive", verdict: "INCONCLUSIVE", detail: `no ${e.who} key configured` });
+      rows.push({
+        ...e,
+        observed: "inconclusive",
+        verdict: "INCONCLUSIVE",
+        detail: `no ${e.who} key configured`,
+      });
       continue;
     }
     const r = await probePair(base, key, e.ns, env, fetchFn, write);
-    rows.push({ ...e, observed: r.classification, verdict: verdictFor(e.want, r.classification), detail: r.error ?? `HTTP ${r.status}` });
+    rows.push({
+      ...e,
+      observed: r.classification,
+      verdict: verdictFor(e.want, r.classification),
+      detail: r.error ?? `HTTP ${r.status}`,
+    });
   }
   for (const r of rows) {
-    log(`${r.verdict.padEnd(13)} ${r.who} key → user/${r.ns} memory: expected ${r.want}, got ${r.observed} (${r.detail})`);
+    log(
+      `${r.verdict.padEnd(13)} ${r.who} key → user/${r.ns} memory: expected ${r.want}, got ${r.observed} (${r.detail})`,
+    );
     if (r.verdict !== "PASS") log(`              ${r.why}`);
   }
   const failed = rows.filter((r) => r.verdict === "FAIL").length;
@@ -659,7 +740,9 @@ export async function runVerify({ base, keys, env = process.env, fetchFn = fetch
   log(`\n${rows.length - failed - unclear} pass, ${failed} fail, ${unclear} inconclusive`);
   if (unclear > 0) {
     log("Inconclusive rows mean the request shape did not match this server — adjust");
-    log("QCR_OV_READ_PATH / QCR_OV_READ_URI / QCR_OV_WRITE_PATH / QCR_OV_AUTH_HEADER (see docs/companion-memory-access.md).");
+    log(
+      "QCR_OV_READ_PATH / QCR_OV_READ_URI / QCR_OV_WRITE_PATH / QCR_OV_AUTH_HEADER (see docs/companion-memory-access.md).",
+    );
   }
   return { rows, failed, unclear };
 }
@@ -685,7 +768,10 @@ export function parseArgs(argv, env = process.env) {
   // one-machine topology — the relay is a plain local `docker exec`,
   // no ssh hop. `--local` (or QCR_MEMORY_LOCAL=1) selects it; an EXPLICIT
   // empty --ssh-host means the same thing (there is no host to ssh to).
-  const local = flags.has("local") || ["1", "true"].includes((env.QCR_MEMORY_LOCAL ?? "").trim()) || sshHost === "";
+  const local =
+    flags.has("local") ||
+    ["1", "true"].includes((env.QCR_MEMORY_LOCAL ?? "").trim()) ||
+    sshHost === "";
   const cfg = {
     network: flags.get("network") ?? DEFAULTS.network,
     subnet: flags.get("subnet") ?? DEFAULTS.subnet,
@@ -693,7 +779,10 @@ export function parseArgs(argv, env = process.env) {
     port,
     // Loopback too: `verify`, curl and any host-side tool use it, and it is the
     // half that keeps working when docker is down.
-    binds: (flags.get("bind") ?? `${gateway},127.0.0.1`).split(",").map((s) => s.trim()).filter(Boolean),
+    binds: (flags.get("bind") ?? `${gateway},127.0.0.1`)
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
     sshHost,
     local,
     container: flags.get("container") ?? env.QCR_VM_CONTAINER ?? DEFAULTS.container,
@@ -711,7 +800,8 @@ export function parseArgs(argv, env = process.env) {
 }
 
 function errText(err) {
-  if (err instanceof Error) return err.name === "TimeoutError" || err.name === "AbortError" ? "timeout" : err.message;
+  if (err instanceof Error)
+    return err.name === "TimeoutError" || err.name === "AbortError" ? "timeout" : err.message;
   return String(err);
 }
 
@@ -720,14 +810,22 @@ function run(bin, args) {
 }
 
 function ensureNetwork(cfg) {
-  const inspect = run("docker", ["network", "inspect", "--format", "{{range .IPAM.Config}}{{.Gateway}}{{end}}", cfg.network]);
+  const inspect = run("docker", [
+    "network",
+    "inspect",
+    "--format",
+    "{{range .IPAM.Config}}{{.Gateway}}{{end}}",
+    cfg.network,
+  ]);
   if (inspect.status === 0 && inspect.stdout.trim() !== "") {
     console.log(`docker network ${cfg.network} present (gateway ${inspect.stdout.trim()})`);
     return 0;
   }
   const created = run("docker", ["network", "create", "--subnet", cfg.subnet, cfg.network]);
   if (created.status !== 0) {
-    console.error(`could not create docker network ${cfg.network}: ${(created.stderr || "").trim()}`);
+    console.error(
+      `could not create docker network ${cfg.network}: ${(created.stderr || "").trim()}`,
+    );
     return 1;
   }
   console.log(`docker network ${cfg.network} created (${cfg.subnet})`);
@@ -749,7 +847,10 @@ function install(cfg) {
     console.log("  OPENVIKING_COMPANION_KEY=<companion user key>");
     console.log("  OPENVIKING_REVIEWER_KEY=<reviewer user key>");
   }
-  for (const args of [["--user", "daemon-reload"], ["--user", "enable", "--now", `${cfg.unit}.service`]]) {
+  for (const args of [
+    ["--user", "daemon-reload"],
+    ["--user", "enable", "--now", `${cfg.unit}.service`],
+  ]) {
     const r = run("systemctl", args);
     if (r.status !== 0) {
       console.error(`systemctl ${args.join(" ")} failed: ${(r.stderr || "").trim()}`);
@@ -757,7 +858,9 @@ function install(cfg) {
     }
   }
   console.log(`systemd unit ${cfg.unit}.service enabled and started`);
-  console.log(`run once so it survives logout/reboot:  loginctl enable-linger ${process.env.USER ?? ""}`);
+  console.log(
+    `run once so it survives logout/reboot:  loginctl enable-linger ${process.env.USER ?? ""}`,
+  );
   return 0;
 }
 
@@ -769,29 +872,50 @@ function uninstall(cfg) {
 
 async function status(cfg) {
   const unit = run("systemctl", ["--user", "is-active", `${cfg.unit}.service`]);
-  console.log(`unit ${cfg.unit}.service: ${(unit.stdout || unit.stderr || "").trim() || "unknown"}`);
-  const net = run("docker", ["network", "inspect", "--format", "{{range .IPAM.Config}}{{.Gateway}}{{end}}", cfg.network]);
-  console.log(`docker network ${cfg.network}: ${net.status === 0 ? `gateway ${net.stdout.trim()}` : "absent"}`);
+  console.log(
+    `unit ${cfg.unit}.service: ${(unit.stdout || unit.stderr || "").trim() || "unknown"}`,
+  );
+  const net = run("docker", [
+    "network",
+    "inspect",
+    "--format",
+    "{{range .IPAM.Config}}{{.Gateway}}{{end}}",
+    cfg.network,
+  ]);
+  console.log(
+    `docker network ${cfg.network}: ${net.status === 0 ? `gateway ${net.stdout.trim()}` : "absent"}`,
+  );
   console.log(`endpoint for the container: http://${cfg.gateway}:${cfg.port}`);
   for (const probe of ["/health", "/ready"]) {
     try {
-      const res = await fetch(`http://127.0.0.1:${cfg.port}${probe}`, { signal: AbortSignal.timeout(5000) });
+      const res = await fetch(`http://127.0.0.1:${cfg.port}${probe}`, {
+        signal: AbortSignal.timeout(5000),
+      });
       console.log(`  ${probe}: HTTP ${res.status}`);
     } catch (err) {
       console.log(`  ${probe}: ${errText(err)}`);
     }
   }
   const keys = readKeys(cfg.keysFile);
-  const have = ["OPENVIKING_API_KEY", "OPENVIKING_COMPANION_KEY", "OPENVIKING_REVIEWER_KEY"].filter((n) => keys[n]);
-  console.log(`keys file ${cfg.keysFile}: ${have.length > 0 ? `defines ${have.join(", ")}` : "missing or empty"}`);
+  const have = ["OPENVIKING_API_KEY", "OPENVIKING_COMPANION_KEY", "OPENVIKING_REVIEWER_KEY"].filter(
+    (n) => keys[n],
+  );
+  console.log(
+    `keys file ${cfg.keysFile}: ${have.length > 0 ? `defines ${have.join(", ")}` : "missing or empty"}`,
+  );
   return 0;
 }
 
 async function verify(cfg) {
   const raw = readKeys(cfg.keysFile);
-  const keys = { companion: raw.OPENVIKING_COMPANION_KEY ?? raw.OPENVIKING_API_KEY, reviewer: raw.OPENVIKING_REVIEWER_KEY };
+  const keys = {
+    companion: raw.OPENVIKING_COMPANION_KEY ?? raw.OPENVIKING_API_KEY,
+    reviewer: raw.OPENVIKING_REVIEWER_KEY,
+  };
   if (!keys.companion || !keys.reviewer) {
-    console.error(`both keys are required in ${cfg.keysFile} (OPENVIKING_COMPANION_KEY / OPENVIKING_API_KEY and OPENVIKING_REVIEWER_KEY)`);
+    console.error(
+      `both keys are required in ${cfg.keysFile} (OPENVIKING_COMPANION_KEY / OPENVIKING_API_KEY and OPENVIKING_REVIEWER_KEY)`,
+    );
     return 2;
   }
   console.log(`probing ${cfg.base} (${cfg.write ? "read + write" : "read-only"})\n`);
@@ -819,7 +943,9 @@ async function main(argv) {
         // Half a forward is not a forward: the bridge address is the one the
         // container uses. Exit and let systemd retry in RestartSec rather than
         // sit there pretending to serve.
-        console.error(`[memory-forward] bound ${bound}/${cfg.binds.length} addresses (${cfg.binds.join(", ")}) — is the docker network up?`);
+        console.error(
+          `[memory-forward] bound ${bound}/${cfg.binds.length} addresses (${cfg.binds.join(", ")}) — is the docker network up?`,
+        );
         fwd.close();
         return 1;
       }
@@ -833,14 +959,19 @@ async function main(argv) {
     }
     default:
       console.error(`unknown command: ${cmd}`);
-      console.error("usage: companion-memory-forward.mjs [run|install|uninstall|status|ensure-network|verify] [--flags]");
+      console.error(
+        "usage: companion-memory-forward.mjs [run|install|uninstall|status|ensure-network|verify] [--flags]",
+      );
       return 2;
   }
 }
 
 const invokedDirectly = (() => {
   try {
-    return process.argv[1] !== undefined && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
+    return (
+      process.argv[1] !== undefined &&
+      import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href
+    );
   } catch {
     return false;
   }

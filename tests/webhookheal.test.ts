@@ -1,8 +1,15 @@
 // the webhook-URL self-heal — hostname-file watcher + gated re-point.
 // All I/O faked except the temp-dir hostname file itself (the thing under
 // test); the GitHub reads/writes are recorded fakes, never a network.
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync, type FSWatcher } from "node:fs";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+  type FSWatcher,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebhookHealer, type WebhookHealDeps } from "../src/webhookheal.js";
@@ -25,11 +32,14 @@ interface Fake {
   logs: string[];
   remote: { url: string };
   patches: Array<{ newUrl: string; oldUrl: string }>;
-  readConfig: ReturnType<typeof vi.fn>;
+  readConfig: Mock<() => Promise<{ url: string }>>;
   updateUrl: ReturnType<typeof vi.fn>;
 }
 
-function build(overrides: Partial<WebhookHealDeps> = {}, remoteUrl = "https://old.example.com/webhook"): Fake {
+function build(
+  overrides: Partial<WebhookHealDeps> = {},
+  remoteUrl = "https://old.example.com/webhook",
+): Fake {
   const file = join(dir, "hostname");
   const events: Fake["events"] = [];
   const anomalies: string[] = [];
@@ -63,7 +73,10 @@ describe("the heal pass (sweep)", () => {
     writeFileSync(f.file, "abc.trycloudflare.com\n");
     expect(await f.healer.sweep()).toBe("healed");
     expect(f.patches).toEqual([
-      { newUrl: "https://abc.trycloudflare.com/webhook", oldUrl: "https://old.example.com/webhook" },
+      {
+        newUrl: "https://abc.trycloudflare.com/webhook",
+        oldUrl: "https://old.example.com/webhook",
+      },
     ]);
     // The loud record names old and new.
     const event = f.events.find((e) => e.kind === "webhook_url_repointed");
@@ -179,10 +192,14 @@ describe("the watcher (fast path) and its fallbacks", () => {
     const f = build({ debounceMs: 20 });
     writeFileSync(f.file, "abc.trycloudflare.com\n");
     f.healer.start();
-    await vi.waitFor(() => expect(f.remote.url).toBe("https://abc.trycloudflare.com/webhook"), { timeout: 2000 });
+    await vi.waitFor(() => expect(f.remote.url).toBe("https://abc.trycloudflare.com/webhook"), {
+      timeout: 2000,
+    });
     // The quick tunnel restarts and gets a new hostname.
     writeFileSync(f.file, "rotated.trycloudflare.com\n");
-    await vi.waitFor(() => expect(f.remote.url).toBe("https://rotated.trycloudflare.com/webhook"), { timeout: 2000 });
+    await vi.waitFor(() => expect(f.remote.url).toBe("https://rotated.trycloudflare.com/webhook"), {
+      timeout: 2000,
+    });
     f.healer.stop();
   });
 
@@ -233,7 +250,9 @@ describe("the watcher (fast path) and its fallbacks", () => {
     const f = build({ sweepIntervalMs: 25, debounceMs: 60_000 });
     f.healer.start();
     writeFileSync(f.file, "abc.trycloudflare.com\n");
-    await vi.waitFor(() => expect(f.remote.url).toBe("https://abc.trycloudflare.com/webhook"), { timeout: 2000 });
+    await vi.waitFor(() => expect(f.remote.url).toBe("https://abc.trycloudflare.com/webhook"), {
+      timeout: 2000,
+    });
     f.healer.stop();
   });
 
@@ -266,7 +285,9 @@ describe("wiring: a daemon without the tunnel shape never starts a watcher", () 
     expect(wire.match(/new WebhookHealer\(/g) ?? []).toHaveLength(1);
     const guarded = wire.slice(wire.indexOf(`cfg.ingress.shape === "tunnel-file"`));
     expect(guarded.indexOf("new WebhookHealer(")).toBeGreaterThan(-1);
-    expect(wire.indexOf("new WebhookHealer(")).toBeGreaterThan(wire.indexOf(`cfg.ingress.shape === "tunnel-file"`));
+    expect(wire.indexOf("new WebhookHealer(")).toBeGreaterThan(
+      wire.indexOf(`cfg.ingress.shape === "tunnel-file"`),
+    );
   });
 
   it("it is handed the resolved hostname file, the ledger and the anomaly surface", () => {

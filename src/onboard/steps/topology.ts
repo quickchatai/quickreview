@@ -80,7 +80,8 @@ export interface TopologyOption {
 export const TOPOLOGY_OPTIONS: readonly TopologyOption[] = [
   {
     id: "vm",
-    headline: "A VM or server over ssh — RECOMMENDED, because a reviewer that is asleep reviews nothing",
+    headline:
+      "A VM or server over ssh — RECOMMENDED, because a reviewer that is asleep reviews nothing",
     tradeoffs: [
       "it is on 24/7: pull requests opened while you sleep, while your laptop is shut, or while you are on a plane still get reviewed",
       "you bring the box (any ssh-reachable Linux machine — a cheap cloud VM is plenty); the wizard does not create one for you",
@@ -104,7 +105,9 @@ export const TOPOLOGY_OPTIONS: readonly TopologyOption[] = [
 
 /** The offer text — what the guide reads out when nothing is recorded yet. */
 export function renderTopologyOptions(): string {
-  return TOPOLOGY_OPTIONS.map((o) => [`${o.id}: ${o.headline}`, ...o.tradeoffs.map((t) => `    - ${t}`)].join("\n")).join("\n\n");
+  return TOPOLOGY_OPTIONS.map((o) =>
+    [`${o.id}: ${o.headline}`, ...o.tradeoffs.map((t) => `    - ${t}`)].join("\n"),
+  ).join("\n\n");
 }
 
 /** Not "yes": changing where the system lives is worth a sentence. */
@@ -142,13 +145,18 @@ export function switchConsequences(from: Topology, to: Topology): string {
 }
 
 function choiceOf(input: Readonly<Record<string, unknown>>): Topology | null {
-  const raw = String(input.choice ?? "").trim().toLowerCase();
+  const raw = String(input.choice ?? "")
+    .trim()
+    .toLowerCase();
   if (raw === "vm" || raw === "server" || raw === "ssh") return "vm";
   if (raw === "local" || raw === "laptop" || raw === "this_computer") return "local";
   return null;
 }
 
-function aliasOf(input: Readonly<Record<string, unknown>>, choices: Readonly<Record<string, unknown>>): string {
+function aliasOf(
+  input: Readonly<Record<string, unknown>>,
+  choices: Readonly<Record<string, unknown>>,
+): string {
   const raw = input.ssh_host ?? input.alias;
   const typed = typeof raw === "string" ? raw.trim() : "";
   return typed !== "" ? typed : sshAliasOf(choices);
@@ -182,11 +190,13 @@ export function topologyStep(): OnboardingStep {
         choice: {
           type: "string",
           enum: ["vm", "local"],
-          description: 'Where the reviewer will run: "vm" (a VM/server over ssh) or "local" (this computer). Omit to read out both options.',
+          description:
+            'Where the reviewer will run: "vm" (a VM/server over ssh) or "local" (this computer). Omit to read out both options.',
         },
         ssh_host: {
           type: "string",
-          description: 'VM route only: the ssh alias of that machine, exactly as you would type it after `ssh`. Ignored for "local".',
+          description:
+            'VM route only: the ssh alias of that machine, exactly as you would type it after `ssh`. Ignored for "local".',
         },
         confirm: {
           type: "string",
@@ -212,7 +222,10 @@ export function topologyStep(): OnboardingStep {
 
       // Switching: explicit, guided, and never a side effect of a re-run.
       if (recorded !== null && recorded !== choice && !isSwitchConfirmation(ctx.input.confirm)) {
-        return { ok: false, checks: [{ name: "switch", ok: false, detail: switchConsequences(recorded, choice) }] };
+        return {
+          ok: false,
+          checks: [{ name: "switch", ok: false, detail: switchConsequences(recorded, choice) }],
+        };
       }
       const switching = recorded !== null && recorded !== choice;
 
@@ -272,7 +285,11 @@ export function topologyStep(): OnboardingStep {
             "that belong to the other route now show as skipped, and anything that no longer holds here is unfinished again.",
         });
       }
-      return { ok: true, checks, data: { topology: choice, recorded_at: ctx.adapters.clock().toISOString() } };
+      return {
+        ok: true,
+        checks,
+        data: { topology: choice, recorded_at: ctx.adapters.clock().toISOString() },
+      };
     },
 
     async verify(ctx): Promise<StepReport> {
@@ -280,11 +297,22 @@ export function topologyStep(): OnboardingStep {
       if (recorded === null) {
         return {
           ok: false,
-          checks: [{ name: "topology", ok: false, detail: "no topology recorded yet — run this step: it is the question the rest of the wizard is shaped by" }],
+          checks: [
+            {
+              name: "topology",
+              ok: false,
+              detail:
+                "no topology recorded yet — run this step: it is the question the rest of the wizard is shaped by",
+            },
+          ],
         };
       }
       const checks: CheckResult[] = [
-        { name: "topology", ok: true, detail: `${recorded} — ${TOPOLOGY_OPTIONS.find((o) => o.id === recorded)!.headline}` },
+        {
+          name: "topology",
+          ok: true,
+          detail: `${recorded} — ${TOPOLOGY_OPTIONS.find((o) => o.id === recorded)!.headline}`,
+        },
       ];
       if (recorded === "vm") {
         const alias = sshAliasOf(ctx.choices);
@@ -294,7 +322,8 @@ export function topologyStep(): OnboardingStep {
             : {
                 name: "ssh-alias",
                 ok: false,
-                detail: 'the VM route is recorded but no ssh alias is — run this step again with choice: "vm" and ssh_host: "<alias>"',
+                detail:
+                  'the VM route is recorded but no ssh alias is — run this step again with choice: "vm" and ssh_host: "<alias>"',
               },
         );
       }

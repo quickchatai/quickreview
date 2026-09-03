@@ -49,9 +49,16 @@ export function parseProofRecord(value: unknown): ProofRecord | null {
   if (typeof value !== "object" || value === null) return null;
   const r = value as Record<string, unknown>;
   if (typeof r.pr !== "number" || !Number.isInteger(r.pr) || r.pr <= 0) return null;
-  if (typeof r.round_no !== "number" || typeof r.verdict !== "string" || r.verdict === "") return null;
+  if (typeof r.round_no !== "number" || typeof r.verdict !== "string" || r.verdict === "")
+    return null;
   if (typeof r.completed_at !== "string" || r.completed_at === "") return null;
-  return { pr: r.pr, round_no: r.round_no, verdict: r.verdict, completed_at: r.completed_at, review_shown: r.review_shown === true };
+  return {
+    pr: r.pr,
+    round_no: r.round_no,
+    verdict: r.verdict,
+    completed_at: r.completed_at,
+    review_shown: r.review_shown === true,
+  };
 }
 
 // ---- what the state store says ----------------------------------------------
@@ -111,7 +118,9 @@ export function classifyRounds(obs: RoundObservation): RoundOutcome {
   if (!round) {
     return {
       kind: "waiting",
-      detail: obs.known ? "the daemon is tracking the PR but has not started a round yet" : "the daemon has not seen the PR yet",
+      detail: obs.known
+        ? "the daemon is tracking the PR but has not started a round yet"
+        : "the daemon has not seen the PR yet",
     };
   }
   if (round.status === "done" && round.verdict) return { kind: "done", round };
@@ -133,7 +142,10 @@ export interface DryrunRead {
  * daemon's own volume — `docker compose exec` on this machine, `ssh <alias>
  * sudo docker exec` on the server route, and this function never learns which.
  */
-export async function readContainerDryrun(transport: StackTransport, limit = 40): Promise<DryrunRead> {
+export async function readContainerDryrun(
+  transport: StackTransport,
+  limit = 40,
+): Promise<DryrunRead> {
   const list = await transport.exec(["ls", "-1", CONTAINER_DRYRUN_DIR]);
   if (list.code !== 0) {
     return {
@@ -156,7 +168,13 @@ export async function readContainerDryrun(transport: StackTransport, limit = 40)
     try {
       records.push({ ...(JSON.parse(cat.stdout) as DryrunRecord), file: name });
     } catch {
-      records.push({ kind: "unparseable", method: "?", path: "?", note: `could not parse ${name}`, file: name });
+      records.push({
+        kind: "unparseable",
+        method: "?",
+        path: "?",
+        note: `could not parse ${name}`,
+        file: name,
+      });
     }
   }
   return { records, problem: "" };
@@ -174,7 +192,9 @@ export function renderReview(review: ReviewSnapshot, pr: number): string {
     "--- review body ---",
     review.body.trim() === "" ? "(empty body)" : review.body.trim(),
   ];
-  const comments = review.comments.map((c, i) => `--- inline comment ${i + 1}: ${c.path}:${c.line} ---\n${c.body.trim()}`);
+  const comments = review.comments.map(
+    (c, i) => `--- inline comment ${i + 1}: ${c.path}:${c.line} ---\n${c.body.trim()}`,
+  );
   return [...head, ...(comments.length ? ["", ...comments] : [])].join("\n");
 }
 
@@ -205,7 +225,10 @@ function repoOf(choices: Readonly<Record<string, unknown>>, root: string): strin
   return (text ? readTomlKey(text, "github", "repo") : null) ?? "your repository";
 }
 
-function prFrom(input: Readonly<Record<string, unknown>>, choices: Readonly<Record<string, unknown>>): number | null {
+function prFrom(
+  input: Readonly<Record<string, unknown>>,
+  choices: Readonly<Record<string, unknown>>,
+): number | null {
   for (const raw of [input.pr, parseProofRecord(choices[PROOF_CHOICE_KEY])?.pr]) {
     const n = typeof raw === "string" ? Number(raw.trim()) : raw;
     if (typeof n === "number" && Number.isInteger(n) && n > 0) return n;
@@ -223,13 +246,22 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
     ctx.adapters.log?.(`${PROOF_STEP_ID}: ${line}`);
   }
 
-  async function observe(transport: StackTransport, pr: number): Promise<{ obs: RoundObservation | null; detail: string }> {
+  async function observe(
+    transport: StackTransport,
+    pr: number,
+  ): Promise<{ obs: RoundObservation | null; detail: string }> {
     const r = await transport.exec(["node", "dist/src/cli.js", "why", String(pr), "--json"]);
     if (r.code !== 0) {
-      return { obs: null, detail: (r.stderr || r.stdout).trim() || `\`qcr why\` in the daemon container exited ${r.code}` };
+      return {
+        obs: null,
+        detail:
+          (r.stderr || r.stdout).trim() || `\`qcr why\` in the daemon container exited ${r.code}`,
+      };
     }
     const obs = parseWhy(r.stdout);
-    return obs ? { obs, detail: "" } : { obs: null, detail: `\`qcr why\` did not answer JSON: ${r.stdout.slice(0, 200)}` };
+    return obs
+      ? { obs, detail: "" }
+      : { obs: null, detail: `\`qcr why\` did not answer JSON: ${r.stdout.slice(0, 200)}` };
   }
 
   return {
@@ -291,7 +323,10 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
         };
       }
 
-      log(ctx, `following #${pr} — checking the daemon's state every ${Math.round(pollIntervalMs / 1000)}s, up to ${pollAttempts} times`);
+      log(
+        ctx,
+        `following #${pr} — checking the daemon's state every ${Math.round(pollIntervalMs / 1000)}s, up to ${pollAttempts} times`,
+      );
       let last = "";
       for (let attempt = 1; attempt <= pollAttempts; attempt += 1) {
         const { obs, detail } = await observe(transport, pr);
@@ -324,7 +359,10 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
         log(ctx, `${last} — attempt ${attempt}/${pollAttempts}`);
         if (attempt < pollAttempts) await sleep(pollIntervalMs);
       }
-      return { ok: false, checks: [timeoutCheck(pr, repo, label, last, pollAttempts, pollIntervalMs, transport)] };
+      return {
+        ok: false,
+        checks: [timeoutCheck(pr, repo, label, last, pollAttempts, pollIntervalMs, transport)],
+      };
     },
 
     async verify(ctx): Promise<StepReport> {
@@ -336,7 +374,8 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
             {
               name: "proof",
               ok: false,
-              detail: "no proof round yet — run this step: the wizard is not finished until you have watched a real PR reviewed",
+              detail:
+                "no proof round yet — run this step: the wizard is not finished until you have watched a real PR reviewed",
             },
           ],
         };
@@ -345,7 +384,13 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
       if (obs === null) {
         return {
           ok: false,
-          checks: [{ name: "proof", ok: false, detail: `could not re-read the proof round for #${proof.pr} (${detail}) — Fix: is the daemon running?` }],
+          checks: [
+            {
+              name: "proof",
+              ok: false,
+              detail: `could not re-read the proof round for #${proof.pr} (${detail}) — Fix: is the daemon running?`,
+            },
+          ],
         };
       }
       const round = obs.rounds.find((r) => r.round_no === proof.round_no);
@@ -376,7 +421,12 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
   };
 
   /** Round finished: read the dry-run record and SHOW the review. */
-  async function finish(ctx: StepContext, transport: StackTransport, pr: number, round: ObservedRound): Promise<StepReport> {
+  async function finish(
+    ctx: StepContext,
+    transport: StackTransport,
+    pr: number,
+    round: ObservedRound,
+  ): Promise<StepReport> {
     const checks: CheckResult[] = [
       {
         name: "round",
@@ -422,7 +472,11 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
   }
 }
 
-function roundFailedCheck(round: ObservedRound, pr: number, transport: StackTransport): CheckResult {
+function roundFailedCheck(
+  round: ObservedRound,
+  pr: number,
+  transport: StackTransport,
+): CheckResult {
   return {
     name: "round",
     ok: false,

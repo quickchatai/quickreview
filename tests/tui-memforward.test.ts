@@ -7,7 +7,12 @@
 // away from a companion container it never started; get it wrong in the
 // stingy direction and two TUIs fight over port 1933.
 import { describe, expect, it, vi } from "vitest";
-import { MemoryForward, studioUrl, type ForwardModule, type ForwarderHandle } from "../src/tui/memforward.js";
+import {
+  MemoryForward,
+  studioUrl,
+  type ForwardModule,
+  type ForwarderHandle,
+} from "../src/tui/memforward.js";
 
 const BASE = "http://127.0.0.1:1933";
 
@@ -28,7 +33,16 @@ function fakeModule(opts: { bound?: number; throwOnCreate?: boolean } = {}): {
     },
   };
   const mod: ForwardModule = {
-    parseArgs: (argv, env) => ({ cfg: { binds: ["198.51.100.1", "127.0.0.1"], port: 1933, sshHost: "VM", container: "quickreview-sandbox", argv, env } }),
+    parseArgs: (argv, env) => ({
+      cfg: {
+        binds: ["198.51.100.1", "127.0.0.1"],
+        port: 1933,
+        sshHost: "VM",
+        container: "quickreview-sandbox",
+        argv,
+        env,
+      },
+    }),
     createForwarder: (cfg) => {
       created += 1;
       cfgSeen = cfg;
@@ -39,7 +53,10 @@ function fakeModule(opts: { bound?: number; throwOnCreate?: boolean } = {}): {
   return { mod, closed: () => closed, created: () => created, cfgSeen: () => cfgSeen };
 }
 
-const build = (probeAnswers: boolean[], f = fakeModule()): { fwd: MemoryForward; f: typeof f; probes: () => number } => {
+const build = (
+  probeAnswers: boolean[],
+  f = fakeModule(),
+): { fwd: MemoryForward; f: typeof f; probes: () => number } => {
   let i = 0;
   let probes = 0;
   const fwd = new MemoryForward({
@@ -182,7 +199,8 @@ describe("the real forward script satisfies the ForwardModule contract", () => {
   // ESM outside tsconfig's include). Nothing else would notice a rename of
   // `createForwarder`/`parseArgs` until a live TUI failed to start a forward.
   it("exports parseArgs and createForwarder with the shapes memforward.ts assumes", async () => {
-    const mod = (await import("../scripts/companion-memory-forward.mjs")) as unknown as ForwardModule;
+    const mod =
+      (await import("../scripts/companion-memory-forward.mjs")) as unknown as ForwardModule;
     expect(typeof mod.parseArgs).toBe("function");
     expect(typeof mod.createForwarder).toBe("function");
     const { cfg } = mod.parseArgs(["run"], { QCR_MEMORY_PORT: "1933" } as NodeJS.ProcessEnv);

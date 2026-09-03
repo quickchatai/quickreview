@@ -87,7 +87,12 @@ export function offeredAuthMethods(stderr: string): string[] {
 }
 
 /** Refusals that a key in the agent would have fixed, outside a method list. */
-const AUTH_PATTERNS = [/publickey/i, /too many authentication failures/i, /agent refused operation/i, /sign_and_send_pubkey/i];
+const AUTH_PATTERNS = [
+  /publickey/i,
+  /too many authentication failures/i,
+  /agent refused operation/i,
+  /sign_and_send_pubkey/i,
+];
 
 /**
  * Refusals a key CANNOT fix: an interactive second factor, an account
@@ -95,14 +100,23 @@ const AUTH_PATTERNS = [/publickey/i, /too many authentication failures/i, /agent
  * remedy, which is the exact failure mode ruling 4 exists to remove — so this
  * is checked FIRST, and it reports rather than guessing.
  */
-const INTERACTIVE_AUTH_PATTERNS = [/keyboard-interactive/i, /two-factor|2fa|verification code|one-time password/i, /account is locked|account is disabled/i];
+const INTERACTIVE_AUTH_PATTERNS = [
+  /keyboard-interactive/i,
+  /two-factor|2fa|verification code|one-time password/i,
+  /account is locked|account is disabled/i,
+];
 
 const MUX_PATTERNS = [/control socket connect/i, /mux_client/i, /multiplexing/i, /controlpath/i];
 
 /** The host's key is unknown or has changed. Nothing about the AGENT can fix
  * it, and the fallback below would otherwise report "no usable key is loaded"
  * — a confidently wrong remedy for a host-identity problem. */
-const HOST_KEY_PATTERNS = [/host key verification failed/i, /no matching host key/i, /remote host identification has changed/i, /host key for .* has changed/i];
+const HOST_KEY_PATTERNS = [
+  /host key verification failed/i,
+  /no matching host key/i,
+  /remote host identification has changed/i,
+  /host key for .* has changed/i,
+];
 
 const NETWORK_PATTERNS = [
   /could not resolve hostname/i,
@@ -137,7 +151,8 @@ function firstLine(text: string): string {
 /** Does the agent hold the key ssh would offer for this host? */
 export function agentHoldsIdentity(p: ConnectionProbes): "yes" | "no" | "unknown" {
   if (!p.agent.reachable || p.agent.identities.length === 0) return "no";
-  if (p.identityFingerprint) return p.agent.identities.some((l) => l.includes(p.identityFingerprint!)) ? "yes" : "no";
+  if (p.identityFingerprint)
+    return p.agent.identities.some((l) => l.includes(p.identityFingerprint!)) ? "yes" : "no";
   // No fingerprint to match on (no readable `.pub`): ssh-add prints the key's
   // path as the comment for most keys, so a name match is still evidence.
   // Anything else is UNKNOWN, never "yes" — an agent holding somebody else's
@@ -172,7 +187,11 @@ export function classifyConnection(p: ConnectionProbes): ConnectionDiagnosis {
     return { kind: "ok", cause: `the shared ssh master to ${p.host} is up`, remedy: "" };
   }
   if (p.connect?.ok) {
-    return { kind: "ok", cause: `ssh to ${p.host} works (a fresh connection succeeded)`, remedy: "" };
+    return {
+      kind: "ok",
+      cause: `ssh to ${p.host} works (a fresh connection succeeded)`,
+      remedy: "",
+    };
   }
   const stderr = p.connect?.stderr ?? "";
   const evidence = firstLine(stderr);
@@ -182,8 +201,14 @@ export function classifyConnection(p: ConnectionProbes): ConnectionDiagnosis {
   // offered methods means a loaded key really is the missing piece; its absence
   // means nothing in the agent could ever have helped.
   const methods = offeredAuthMethods(stderr);
-  const keyIsRelevant = methods.length > 0 ? methods.includes("publickey") : AUTH_PATTERNS.some((re) => re.test(stderr));
-  const interactiveOnly = methods.length > 0 ? !methods.includes("publickey") : INTERACTIVE_AUTH_PATTERNS.some((re) => re.test(stderr));
+  const keyIsRelevant =
+    methods.length > 0
+      ? methods.includes("publickey")
+      : AUTH_PATTERNS.some((re) => re.test(stderr));
+  const interactiveOnly =
+    methods.length > 0
+      ? !methods.includes("publickey")
+      : INTERACTIVE_AUTH_PATTERNS.some((re) => re.test(stderr));
 
   if (interactiveOnly) {
     // Says exactly what it knows and no more: an `ssh-add` here would be a
@@ -204,7 +229,10 @@ export function classifyConnection(p: ConnectionProbes): ConnectionDiagnosis {
       ...(evidence ? { detail: evidence } : {}),
     };
   }
-  if (MUX_PATTERNS.some((re) => re.test(stderr)) || (p.controlSocketExists && p.connect?.timedOut === true)) {
+  if (
+    MUX_PATTERNS.some((re) => re.test(stderr)) ||
+    (p.controlSocketExists && p.connect?.timedOut === true)
+  ) {
     return {
       kind: "wedged-master",
       cause: `the shared ssh ControlMaster for ${p.host} is wedged — ${p.controlPath ? `${p.controlPath} is there` : "the control socket is there"} and does not answer`,
@@ -247,9 +275,12 @@ export function classifyConnection(p: ConnectionProbes): ConnectionDiagnosis {
 function agentCause(p: ConnectionProbes, holdsKey: "yes" | "no" | "unknown", lead: string): string {
   const key = p.identity ?? p.identityFiles[0];
   const n = p.agent.identities.length;
-  if (!p.agent.reachable) return `${lead}: no ssh agent is reachable (SSH_AUTH_SOCK is unset or the agent is not running)`;
-  if (n === 0) return `${lead}: the agent holds no identities${key ? ` — ${key} is not loaded` : ""}`;
-  if (holdsKey === "no") return `${lead}: the agent holds ${n} identit${n === 1 ? "y" : "ies"}${key ? `, and ${key} is not one of them` : ""}`;
+  if (!p.agent.reachable)
+    return `${lead}: no ssh agent is reachable (SSH_AUTH_SOCK is unset or the agent is not running)`;
+  if (n === 0)
+    return `${lead}: the agent holds no identities${key ? ` — ${key} is not loaded` : ""}`;
+  if (holdsKey === "no")
+    return `${lead}: the agent holds ${n} identit${n === 1 ? "y" : "ies"}${key ? `, and ${key} is not one of them` : ""}`;
   // UNKNOWN: no readable `.pub` to fingerprint against, so we cannot tell one
   // of those keys from another. Say that, rather than asserting either way.
   if (holdsKey === "unknown") {
@@ -274,16 +305,22 @@ export const realProbeRunner: ProbeRunner = (cmd, argv, timeoutMs) =>
   new Promise((resolve) => {
     // stdin is closed immediately and BatchMode rides the argv: nothing here
     // may ever stop on a prompt — this runs behind the alt screen.
-    const child = execFile(cmd, argv, { timeout: timeoutMs, encoding: "utf8" }, (err, stdout, stderr) => {
-      const e = err as (Error & { code?: number | string; killed?: boolean; signal?: string }) | null;
-      const timedOut = Boolean(e?.killed) || e?.signal === "SIGTERM";
-      resolve({
-        status: e ? (typeof e.code === "number" ? e.code : null) : 0,
-        stdout: String(stdout ?? ""),
-        stderr: String(stderr ?? "") || (timedOut ? `timed out after ${timeoutMs}ms` : ""),
-        timedOut,
-      });
-    });
+    const child = execFile(
+      cmd,
+      argv,
+      { timeout: timeoutMs, encoding: "utf8" },
+      (err, stdout, stderr) => {
+        const e = err as
+          (Error & { code?: number | string; killed?: boolean; signal?: string }) | null;
+        const timedOut = Boolean(e?.killed) || e?.signal === "SIGTERM";
+        resolve({
+          status: e ? (typeof e.code === "number" ? e.code : null) : 0,
+          stdout: String(stdout ?? ""),
+          stderr: String(stderr ?? "") || (timedOut ? `timed out after ${timeoutMs}ms` : ""),
+          timedOut,
+        });
+      },
+    );
     child.stdin?.end();
   });
 
@@ -299,7 +336,11 @@ export const realProbeRunner: ProbeRunner = (cmd, argv, timeoutMs) =>
  * know multiplexing is configured, `mux` stderr still classifies, and the
  * remedy (`ssh -O exit <host>`, which needs no path) is unchanged.
  */
-export function expandControlPath(raw: string, tokens: { host?: string; user?: string; port?: string }, home: string): string {
+export function expandControlPath(
+  raw: string,
+  tokens: { host?: string; user?: string; port?: string },
+  home: string,
+): string {
   if (raw === "" || raw.toLowerCase() === "none") return "";
   let out = raw.startsWith("~/") ? `${home}/${raw.slice(2)}` : raw;
   out = out
@@ -321,7 +362,13 @@ export function controlSocketPresent(path: string, exists: (p: string) => boolea
 }
 
 /** `ssh -G <host>` output → the fields the triage uses. */
-export function parseSshConfigDump(text: string): { identityFiles: string[]; controlPath: string; host?: string; user?: string; port?: string } {
+export function parseSshConfigDump(text: string): {
+  identityFiles: string[];
+  controlPath: string;
+  host?: string;
+  user?: string;
+  port?: string;
+} {
   const identityFiles: string[] = [];
   let controlPath = "";
   let host: string | undefined;
@@ -339,12 +386,21 @@ export function parseSshConfigDump(text: string): { identityFiles: string[]; con
     else if (key === "user") user = value;
     else if (key === "port") port = value;
   }
-  return { identityFiles, controlPath, ...(host ? { host } : {}), ...(user ? { user } : {}), ...(port ? { port } : {}) };
+  return {
+    identityFiles,
+    controlPath,
+    ...(host ? { host } : {}),
+    ...(user ? { user } : {}),
+    ...(port ? { port } : {}),
+  };
 }
 
 /** `ssh-add -l` → the agent probe. Exit 1 = no identities, 2 = no agent. */
 export function parseAgentList(res: ProbeResult): AgentProbe {
-  if (res.status === 2 || /error connecting to agent|could not open a connection/i.test(res.stderr)) {
+  if (
+    res.status === 2 ||
+    /error connecting to agent|could not open a connection/i.test(res.stderr)
+  ) {
     return { reachable: false, identities: [] };
   }
   const identities = res.stdout
@@ -382,7 +438,16 @@ const CONNECT_TIMEOUT_MS = 12_000;
  * reachability.
  */
 export function batchProbeArgv(host: string): string[] {
-  return ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "StrictHostKeyChecking=yes", host, "true"];
+  return [
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "ConnectTimeout=8",
+    "-o",
+    "StrictHostKeyChecking=yes",
+    host,
+    "true",
+  ];
 }
 
 /**
@@ -391,9 +456,16 @@ export function batchProbeArgv(host: string): string[] {
  * (is the master alive), `ssh-add -l` (what the agent holds), and, only when
  * the master is down, ONE bounded BatchMode connection.
  */
-export async function triageConnection(cfg: TuiConfig, deps: TriageDeps = {}): Promise<ConnectionDiagnosis> {
+export async function triageConnection(
+  cfg: TuiConfig,
+  deps: TriageDeps = {},
+): Promise<ConnectionDiagnosis> {
   if (transportOf(cfg) === "local") {
-    return { kind: "local", cause: "local transport — the daemon runs on this machine, no ssh involved", remedy: "" };
+    return {
+      kind: "local",
+      cause: "local transport — the daemon runs on this machine, no ssh involved",
+      remedy: "",
+    };
   }
   const run = deps.run ?? realProbeRunner;
   const exists = deps.exists ?? existsSync;
@@ -401,7 +473,9 @@ export async function triageConnection(cfg: TuiConfig, deps: TriageDeps = {}): P
   const host = cfg.ssh_host;
 
   const dump = parseSshConfigDump((await run("ssh", ["-G", host], CONFIG_TIMEOUT_MS)).stdout);
-  const identityFiles = dump.identityFiles.map((p) => (p.startsWith("~/") ? `${home}/${p.slice(2)}` : p));
+  const identityFiles = dump.identityFiles.map((p) =>
+    p.startsWith("~/") ? `${home}/${p.slice(2)}` : p,
+  );
   const identity = identityFiles.find((p) => exists(p)) ?? identityFiles[0];
   const controlPath = expandControlPath(dump.controlPath, dump, home);
 

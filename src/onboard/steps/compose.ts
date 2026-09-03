@@ -26,8 +26,22 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { expandHome } from "../../config.js";
 import { CHOICE_KEYS } from "../choices.js";
-import type { CheckResult, OnboardAdapters, ProcessResult, ProcessRunner, StepContext } from "../engine.js";
-import { INGRESS_CHOICE_KEY, optionFor, parseComposePs, readEnvKey, readTomlKey, type IngressOption, type RunningService } from "./ingress.js";
+import type {
+  CheckResult,
+  OnboardAdapters,
+  ProcessResult,
+  ProcessRunner,
+  StepContext,
+} from "../engine.js";
+import {
+  INGRESS_CHOICE_KEY,
+  optionFor,
+  parseComposePs,
+  readEnvKey,
+  readTomlKey,
+  type IngressOption,
+  type RunningService,
+} from "./ingress.js";
 
 /** The compose service that runs the daemon (docker-compose.yml). */
 export const DAEMON_SERVICE = "daemon";
@@ -76,7 +90,11 @@ export function readEnvText(root: string): string {
  * has run (it is what the daemon itself reads); a recorded choice and the
  * documented default cover the earlier states.
  */
-export function secretsDirFor(root: string, choices: Readonly<Record<string, unknown>>, env: NodeJS.ProcessEnv = process.env): string {
+export function secretsDirFor(
+  root: string,
+  choices: Readonly<Record<string, unknown>>,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
   const configText = readConfigText(root);
   const fromConfig = configText ? readTomlKey(configText, "github", "secrets_dir") : null;
   if (fromConfig && fromConfig.trim()) return absolutize(root, expandHome(fromConfig.trim()));
@@ -109,7 +127,11 @@ export function daemonExecArgs(root: string, argv: readonly string[]): string[] 
   return composeArgs(root, ["exec", "-T", DAEMON_SERVICE, ...argv]);
 }
 
-export async function daemonExec(runner: ProcessRunner, root: string, argv: readonly string[]): Promise<ProcessResult> {
+export async function daemonExec(
+  runner: ProcessRunner,
+  root: string,
+  argv: readonly string[],
+): Promise<ProcessResult> {
   return runner.run("docker", daemonExecArgs(root, argv));
 }
 
@@ -123,7 +145,11 @@ export interface PsReport {
 export async function composePs(runner: ProcessRunner, root: string): Promise<PsReport> {
   const ps = await runner.run("docker", composeArgs(root, ["ps", "--format", "json"]));
   if (ps.code !== 0) {
-    return { ok: false, rows: [], detail: (ps.stderr || ps.stdout).trim() || `docker compose ps exited ${ps.code}` };
+    return {
+      ok: false,
+      rows: [],
+      detail: (ps.stderr || ps.stdout).trim() || `docker compose ps exited ${ps.code}`,
+    };
   }
   return { ok: true, rows: parseComposePs(ps.stdout), detail: "" };
 }
@@ -132,7 +158,10 @@ export function isUp(row: RunningService | undefined): boolean {
   return row !== undefined && /running|up/i.test(row.state);
 }
 
-export function serviceRow(rows: readonly RunningService[], service: string): RunningService | undefined {
+export function serviceRow(
+  rows: readonly RunningService[],
+  service: string,
+): RunningService | undefined {
   return rows.find((r) => r.service === service);
 }
 
@@ -218,13 +247,20 @@ export async function restartDaemon(
     return {
       name: "daemon-restart",
       ok: true,
-      detail: "the daemon is not running, so there is nothing to restart — it reads the new value the next time it starts",
+      detail:
+        "the daemon is not running, so there is nothing to restart — it reads the new value the next time it starts",
     };
   }
   log("restarting the daemon so it re-reads config.toml (the config is read once, at boot)");
-  const r = await stream.run("docker", composeArgs(root, ["restart", DAEMON_SERVICE]), (line) => log(line));
+  const r = await stream.run("docker", composeArgs(root, ["restart", DAEMON_SERVICE]), (line) =>
+    log(line),
+  );
   return r.code === 0
-    ? { name: "daemon-restart", ok: true, detail: "the daemon was restarted and is running with the value on disk" }
+    ? {
+        name: "daemon-restart",
+        ok: true,
+        detail: "the daemon was restarted and is running with the value on disk",
+      }
     : {
         name: "daemon-restart",
         ok: false,
@@ -253,7 +289,11 @@ export function containerStateCheck(ps: PsReport, ingress: IngressOption | null)
   const daemon = serviceRow(ps.rows, DAEMON_SERVICE);
   checks.push(
     isUp(daemon)
-      ? { name: "containers", ok: true, detail: `the ${DAEMON_SERVICE} container is ${daemon!.state}` }
+      ? {
+          name: "containers",
+          ok: true,
+          detail: `the ${DAEMON_SERVICE} container is ${daemon!.state}`,
+        }
       : {
           name: "containers",
           ok: false,
@@ -266,7 +306,11 @@ export function containerStateCheck(ps: PsReport, ingress: IngressOption | null)
     const sidecar = serviceRow(ps.rows, ingress.service);
     checks.push(
       isUp(sidecar)
-        ? { name: "ingress-sidecar", ok: true, detail: `the ${ingress.service} tunnel sidecar is ${sidecar!.state}` }
+        ? {
+            name: "ingress-sidecar",
+            ok: true,
+            detail: `the ${ingress.service} tunnel sidecar is ${sidecar!.state}`,
+          }
         : {
             name: "ingress-sidecar",
             ok: false,

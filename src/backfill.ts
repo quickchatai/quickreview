@@ -108,7 +108,10 @@ export function triggerCandidates(timeline: PrTimelineRecord[], cfg: Config): Tr
       ) {
         out.push({ ts: item.created_at, tier: 2 });
       }
-    } else if (item.type === "ReviewRequestedEvent" && item.requested_team === cfg.backfill.review_team_slug) {
+    } else if (
+      item.type === "ReviewRequestedEvent" &&
+      item.requested_team === cfg.backfill.review_team_slug
+    ) {
       out.push({ ts: item.created_at, tier: 1 });
     }
   }
@@ -125,7 +128,9 @@ export function triggerForReview(
   submittedAt: string,
   previousSubmittedAt: string | null,
 ): string | null {
-  const inRange = candidates.filter((c) => c.ts < submittedAt && (previousSubmittedAt === null || c.ts > previousSubmittedAt));
+  const inRange = candidates.filter(
+    (c) => c.ts < submittedAt && (previousSubmittedAt === null || c.ts > previousSubmittedAt),
+  );
   for (const tier of [1, 2] as const) {
     const hit = inRange.filter((c) => c.tier === tier).pop();
     if (hit) return hit.ts;
@@ -192,7 +197,9 @@ export function planPr(
   const candidates = triggerCandidates(history.timeline, cfg);
   const reviews = history.reviews
     .filter((r) => r.submitted_at !== null && r.database_id > 0)
-    .sort((a, b) => (a.submitted_at! < b.submitted_at! ? -1 : a.submitted_at! > b.submitted_at! ? 1 : 0));
+    .sort((a, b) =>
+      a.submitted_at! < b.submitted_at! ? -1 : a.submitted_at! > b.submitted_at! ? 1 : 0,
+    );
 
   interface Accepted {
     review: (typeof reviews)[number];
@@ -243,7 +250,11 @@ export function planPr(
 }
 
 /** Run `workers` fetches at a time over `items`, preserving input order. */
-async function mapPool<T, R>(items: T[], workers: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+async function mapPool<T, R>(
+  items: T[],
+  workers: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
   const out = new Array<R>(items.length);
   let next = 0;
   const worker = async (): Promise<void> => {
@@ -268,11 +279,15 @@ export async function runBackfill(
   const epoch = store.daemonEpoch();
   const imported = store.importedReviewIds();
 
-  log(`backfill: ${dryRun ? "PLAN (no writes)" : "IMPORT"} · epoch ${epoch ?? "(none — no daemon rounds yet)"}`);
+  log(
+    `backfill: ${dryRun ? "PLAN (no writes)" : "IMPORT"} · epoch ${epoch ?? "(none — no daemon rounds yet)"}`,
+  );
   let prs = await enumeratePrs(source, cfg);
   const enumerated = prs.length;
   if (opts.limit !== undefined && opts.limit >= 0) prs = prs.slice(0, opts.limit);
-  log(`backfill: ${enumerated} PRs enumerated${prs.length !== enumerated ? ` · ${prs.length} after --limit` : ""}`);
+  log(
+    `backfill: ${enumerated} PRs enumerated${prs.length !== enumerated ? ` · ${prs.length} after --limit` : ""}`,
+  );
 
   const stats: BackfillStats = {
     prs_enumerated: enumerated,
@@ -312,7 +327,9 @@ export async function runBackfill(
     if (dryRun) {
       for (const r of plan.rounds) {
         stats.reviews_imported++;
-        log(`  would import #${r.pr} round ${r.round_no} ${r.verdict} @ ${r.finished_at} (trigger ${r.trigger_ts ?? "—"})`);
+        log(
+          `  would import #${r.pr} round ${r.round_no} ${r.verdict} @ ${r.finished_at} (trigger ${r.trigger_ts ?? "—"})`,
+        );
       }
       continue;
     }

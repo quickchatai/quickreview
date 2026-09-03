@@ -17,11 +17,20 @@ describe("classifyHealth", () => {
   const now = new Date("2026-08-13T12:00:00Z");
 
   it("is unreachable before any successful fetch", () => {
-    expect(classifyHealth(now, 3, undefined, false, undefined)).toEqual({ kind: "unreachable", sinceS: Number.POSITIVE_INFINITY });
+    expect(classifyHealth(now, 3, undefined, false, undefined)).toEqual({
+      kind: "unreachable",
+      sinceS: Number.POSITIVE_INFINITY,
+    });
   });
 
   it("is unreachable when the last fetch failed, reporting time since last success", () => {
-    const h = classifyHealth(now, 3, snap("2026-08-13T11:59:00Z"), false, new Date("2026-08-13T11:59:00Z"));
+    const h = classifyHealth(
+      now,
+      3,
+      snap("2026-08-13T11:59:00Z"),
+      false,
+      new Date("2026-08-13T11:59:00Z"),
+    );
     expect(h).toEqual({ kind: "unreachable", sinceS: 60 });
   });
 
@@ -31,7 +40,13 @@ describe("classifyHealth", () => {
   });
 
   it("tolerates the daemon's ~30s write cadence at the default threshold", () => {
-    const h = classifyHealth(now, 90, snap("2026-08-13T11:59:30Z", "2026-08-13T11:59:30Z"), true, now);
+    const h = classifyHealth(
+      now,
+      90,
+      snap("2026-08-13T11:59:30Z", "2026-08-13T11:59:30Z"),
+      true,
+      now,
+    );
     expect(h).toEqual({ kind: "ok", heartbeatAgeS: 30 });
   });
 
@@ -40,7 +55,16 @@ describe("classifyHealth", () => {
     unhealthy.pipeline = {
       healthy: false,
       failed_loud: 1,
-      causes: [{ key: "review-failure:cmd-1", pr: 5408, since: "2026-08-13T11:55:00Z", stage: "command_start", detail: "no start", next_action: "operator_unwedge" }],
+      causes: [
+        {
+          key: "review-failure:cmd-1",
+          pr: 5408,
+          since: "2026-08-13T11:55:00Z",
+          stage: "command_start",
+          detail: "no start",
+          next_action: "operator_unwedge",
+        },
+      ],
     };
     expect(classifyHealth(now, 90, unhealthy, true, now)).toEqual({
       kind: "pipeline_unhealthy",
@@ -50,7 +74,13 @@ describe("classifyHealth", () => {
   });
 
   it("is ok inside the freshness window and reports heartbeat age", () => {
-    const h = classifyHealth(now, 90, snap("2026-08-13T11:59:58Z", "2026-08-13T11:59:56Z"), true, now);
+    const h = classifyHealth(
+      now,
+      90,
+      snap("2026-08-13T11:59:58Z", "2026-08-13T11:59:56Z"),
+      true,
+      now,
+    );
     expect(h).toEqual({ kind: "ok", heartbeatAgeS: 4 });
   });
 });

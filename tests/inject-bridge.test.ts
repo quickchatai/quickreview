@@ -119,7 +119,8 @@ afterEach(() => {
   else process.env.QCR_SESSION_BRIDGE_GENERATION = savedEnv.bridgeGeneration;
   if (savedEnv.bridgeStateFile === undefined) delete process.env.QCR_SESSION_BRIDGE_STATE_FILE;
   else process.env.QCR_SESSION_BRIDGE_STATE_FILE = savedEnv.bridgeStateFile;
-  if (savedEnv.bridgeLedgerRequired === undefined) delete process.env.QCR_SESSION_BRIDGE_LEDGER_REQUIRED;
+  if (savedEnv.bridgeLedgerRequired === undefined)
+    delete process.env.QCR_SESSION_BRIDGE_LEDGER_REQUIRED;
   else process.env.QCR_SESSION_BRIDGE_LEDGER_REQUIRED = savedEnv.bridgeLedgerRequired;
   rmSync(dir, { recursive: true, force: true });
 });
@@ -369,7 +370,9 @@ describe("inject-bridge — start-acknowledged single flight", () => {
   it("handles correlated run events emitted during the submission call", async () => {
     sendImpl = (content) => {
       fire("agent_start");
-      fire("message_start", { message: { role: "user", content: [{ type: "text", text: content }] } });
+      fire("message_start", {
+        message: { role: "user", content: [{ type: "text", text: content }] },
+      });
     };
     writeFileSync(join(dir, "2026-08-20T14-02-00-0000.md"), "prompt");
     activate(fakePi());
@@ -441,7 +444,16 @@ describe("inject-bridge — durable command ownership", () => {
   it("quarantines an obsolete failed-round transport and continues to the next pending command", async () => {
     const store = commandStore();
     try {
-      store.upsertPr({ number: 1, state: "queued", head_sha: "head", title: "PR 1", author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+      store.upsertPr({
+        number: 1,
+        state: "queued",
+        head_sha: "head",
+        title: "PR 1",
+        author: "alice",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
       const staleRoundId = store.startRound(1, "re-review", ["pass-baseline"], 75);
       const staleRoundNo = store.roundsFor(1)[0]!.round_no;
       const staleFile = "2026-08-27T19-00-00-0000--cmd-stale-failed.md";
@@ -452,9 +464,14 @@ describe("inject-bridge — durable command ownership", () => {
       writeFileSync(stalePath, stalePayload);
       writeFileSync(join(payloadDir, "stale.md"), stalePayload);
       store.createSessionCommand({
-        id: "stale-failed", pr: 1, session: "pr-1", kind: "round", round_no: staleRoundNo,
+        id: "stale-failed",
+        pr: 1,
+        session: "pr-1",
+        kind: "round",
+        round_no: staleRoundNo,
         payload_sha256: createHash("sha256").update(stalePayload).digest("hex"),
-        payload_path: join(payloadDir, "stale.md"), inject_path: stalePath,
+        payload_path: join(payloadDir, "stale.md"),
+        inject_path: stalePath,
         next_check_at: "2026-08-27T20:02:00.000Z",
       });
       store.failPendingSessionCommand("stale-failed", "delivery failed");
@@ -466,9 +483,14 @@ describe("inject-bridge — durable command ownership", () => {
       writeFileSync(pendingPath, pendingPayload);
       writeFileSync(join(payloadDir, "current.md"), pendingPayload);
       store.createSessionCommand({
-        id: "current", pr: 1, session: "pr-1", kind: "wake", round_no: null,
+        id: "current",
+        pr: 1,
+        session: "pr-1",
+        kind: "wake",
+        round_no: null,
         payload_sha256: createHash("sha256").update(pendingPayload).digest("hex"),
-        payload_path: join(payloadDir, "current.md"), inject_path: pendingPath,
+        payload_path: join(payloadDir, "current.md"),
+        inject_path: pendingPath,
         next_check_at: "2026-08-27T20:02:00.000Z",
       });
 
@@ -479,9 +501,15 @@ describe("inject-bridge — durable command ownership", () => {
       expect(sentBody(0)).toContain("current batch");
       expect(terminal()).toEqual([`${staleFile}.failed`]);
       expect(done()).toEqual([]);
-      expect(store.getSessionCommand("stale-failed")).toMatchObject({ status: "failed", attempt: 0, failure: "delivery failed" });
+      expect(store.getSessionCommand("stale-failed")).toMatchObject({
+        status: "failed",
+        attempt: 0,
+        failure: "delivery failed",
+      });
       expect(store.getSessionCommand("current")).toMatchObject({ status: "running", attempt: 1 });
-      expect(readSessionBridgeState(process.env.QCR_SESSION_BRIDGE_STATE_FILE!)).toMatchObject({ stage: "ready" });
+      expect(readSessionBridgeState(process.env.QCR_SESSION_BRIDGE_STATE_FILE!)).toMatchObject({
+        stage: "ready",
+      });
     } finally {
       fire("session_shutdown");
       store.close();
@@ -491,7 +519,16 @@ describe("inject-bridge — durable command ownership", () => {
   it("quarantines a blocking failed transport but does not release its successor", () => {
     const store = commandStore();
     try {
-      store.upsertPr({ number: 1, state: "queued", head_sha: "head", title: "PR 1", author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+      store.upsertPr({
+        number: 1,
+        state: "queued",
+        head_sha: "head",
+        title: "PR 1",
+        author: "alice",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
       const payloadDir = join(dir, "payloads");
       mkdirSync(payloadDir, { recursive: true });
       const failedFile = "2026-08-27T19-00-00-0000--cmd-blocking-failed.md";
@@ -500,15 +537,27 @@ describe("inject-bridge — durable command ownership", () => {
       writeFileSync(failedPath, failedPayload);
       writeFileSync(join(payloadDir, "blocking-failed.md"), failedPayload);
       store.createSessionCommand({
-        id: "blocking-failed", pr: 1, session: "pr-1", kind: "wake", round_no: null,
+        id: "blocking-failed",
+        pr: 1,
+        session: "pr-1",
+        kind: "wake",
+        round_no: null,
         payload_sha256: createHash("sha256").update(failedPayload).digest("hex"),
-        payload_path: join(payloadDir, "blocking-failed.md"), inject_path: failedPath,
+        payload_path: join(payloadDir, "blocking-failed.md"),
+        inject_path: failedPath,
         next_check_at: "2026-08-27T20:02:00.000Z",
       });
       store.failPendingSessionCommand("blocking-failed", "delivery failed");
       store.openReviewFailure({
-        pr: 1, command_id: "blocking-failed", round_id: null, round_no: null,
-        head_sha: "head", stage: "session_command", detail: "delivery failed", attempts: 2, retry_cap: 2,
+        pr: 1,
+        command_id: "blocking-failed",
+        round_id: null,
+        round_no: null,
+        head_sha: "head",
+        stage: "session_command",
+        detail: "delivery failed",
+        attempts: 2,
+        retry_cap: 2,
       });
 
       const pendingFile = "2026-08-27T20-00-00-0000--cmd-blocked-current.md";
@@ -517,9 +566,14 @@ describe("inject-bridge — durable command ownership", () => {
       writeFileSync(pendingPath, pendingPayload);
       writeFileSync(join(payloadDir, "blocked-current.md"), pendingPayload);
       store.createSessionCommand({
-        id: "blocked-current", pr: 1, session: "pr-1", kind: "wake", round_no: null,
+        id: "blocked-current",
+        pr: 1,
+        session: "pr-1",
+        kind: "wake",
+        round_no: null,
         payload_sha256: createHash("sha256").update(pendingPayload).digest("hex"),
-        payload_path: join(payloadDir, "blocked-current.md"), inject_path: pendingPath,
+        payload_path: join(payloadDir, "blocked-current.md"),
+        inject_path: pendingPath,
         next_check_at: "2026-08-27T20:02:00.000Z",
       });
 
@@ -529,9 +583,18 @@ describe("inject-bridge — durable command ownership", () => {
       expect(sends).toHaveLength(0);
       expect(terminal()).toEqual([`${failedFile}.failed`]);
       expect(pending()).toEqual([pendingFile]);
-      expect(store.getSessionCommand("blocking-failed")).toMatchObject({ status: "failed", attempt: 0 });
-      expect(store.getSessionCommand("blocked-current")).toMatchObject({ status: "pending", attempt: 0 });
-      expect(store.openReviewFailure(1)).toMatchObject({ command_id: "blocking-failed", work_owed: 1 });
+      expect(store.getSessionCommand("blocking-failed")).toMatchObject({
+        status: "failed",
+        attempt: 0,
+      });
+      expect(store.getSessionCommand("blocked-current")).toMatchObject({
+        status: "pending",
+        attempt: 0,
+      });
+      expect(store.openReviewFailure(1)).toMatchObject({
+        command_id: "blocking-failed",
+        work_owed: 1,
+      });
       expect(readSessionBridgeState(process.env.QCR_SESSION_BRIDGE_STATE_FILE!)).toMatchObject({
         stage: "failed",
         failed_stage: "command_link",
@@ -542,45 +605,61 @@ describe("inject-bridge — durable command ownership", () => {
     }
   });
 
-  it.each(["acked", "cancelled"] as const)("removes a stale %s transport without submitting it", (status) => {
-    const store = commandStore();
-    try {
-      const file = `2026-08-27T19-00-00-0000--cmd-terminal-${status}.md`;
-      const path = join(dir, file);
-      const payloadDir = join(dir, "payloads");
-      mkdirSync(payloadDir, { recursive: true });
-      const payload = `${status} command\n`;
-      writeFileSync(path, payload);
-      writeFileSync(join(payloadDir, `${status}.md`), payload);
-      store.createSessionCommand({
-        id: `terminal-${status}`, pr: 1, session: "pr-1", kind: "wake", round_no: null,
-        payload_sha256: createHash("sha256").update(payload).digest("hex"),
-        payload_path: join(payloadDir, `${status}.md`), inject_path: path,
-        next_check_at: "2026-08-27T20:02:00.000Z",
-      });
-      if (status === "acked") {
-        store.claimSessionCommand(`terminal-${status}`, "bridge-old", "2026-08-27T20:02:00.000Z");
-        store.markSessionCommandStarted(`terminal-${status}`, "bridge-old", "2026-08-27T20:45:00.000Z");
-        store.finishSessionCommand(`terminal-${status}`, "bridge-old", "acked");
-      } else {
-        store.db.prepare("UPDATE session_commands SET status='cancelled' WHERE id=?").run(`terminal-${status}`);
+  it.each(["acked", "cancelled"] as const)(
+    "removes a stale %s transport without submitting it",
+    (status) => {
+      const store = commandStore();
+      try {
+        const file = `2026-08-27T19-00-00-0000--cmd-terminal-${status}.md`;
+        const path = join(dir, file);
+        const payloadDir = join(dir, "payloads");
+        mkdirSync(payloadDir, { recursive: true });
+        const payload = `${status} command\n`;
+        writeFileSync(path, payload);
+        writeFileSync(join(payloadDir, `${status}.md`), payload);
+        store.createSessionCommand({
+          id: `terminal-${status}`,
+          pr: 1,
+          session: "pr-1",
+          kind: "wake",
+          round_no: null,
+          payload_sha256: createHash("sha256").update(payload).digest("hex"),
+          payload_path: join(payloadDir, `${status}.md`),
+          inject_path: path,
+          next_check_at: "2026-08-27T20:02:00.000Z",
+        });
+        if (status === "acked") {
+          store.claimSessionCommand(`terminal-${status}`, "bridge-old", "2026-08-27T20:02:00.000Z");
+          store.markSessionCommandStarted(
+            `terminal-${status}`,
+            "bridge-old",
+            "2026-08-27T20:45:00.000Z",
+          );
+          store.finishSessionCommand(`terminal-${status}`, "bridge-old", "acked");
+        } else {
+          store.db
+            .prepare("UPDATE session_commands SET status='cancelled' WHERE id=?")
+            .run(`terminal-${status}`);
+        }
+
+        activate(fakePi());
+        fire("session_start");
+
+        expect(sends).toHaveLength(0);
+        expect(pending()).toEqual([]);
+        expect(status === "acked" ? done() : terminal()).toEqual([
+          status === "acked" ? file : `${file}.${status}`,
+        ]);
+        expect(store.getSessionCommand(`terminal-${status}`)?.status).toBe(status);
+        expect(readSessionBridgeState(process.env.QCR_SESSION_BRIDGE_STATE_FILE!)).toMatchObject({
+          stage: "ready",
+        });
+      } finally {
+        fire("session_shutdown");
+        store.close();
       }
-
-      activate(fakePi());
-      fire("session_start");
-
-      expect(sends).toHaveLength(0);
-      expect(pending()).toEqual([]);
-      expect(status === "acked" ? done() : terminal()).toEqual([
-        status === "acked" ? file : `${file}.${status}`,
-      ]);
-      expect(store.getSessionCommand(`terminal-${status}`)?.status).toBe(status);
-      expect(readSessionBridgeState(process.env.QCR_SESSION_BRIDGE_STATE_FILE!)).toMatchObject({ stage: "ready" });
-    } finally {
-      fire("session_shutdown");
-      store.close();
-    }
-  });
+    },
+  );
 
   it("fails closed permanently if a terminal transport cannot be moved atomically", async () => {
     const store = commandStore();
@@ -594,9 +673,14 @@ describe("inject-bridge — durable command ownership", () => {
       writeFileSync(path, payload);
       writeFileSync(join(payloadDir, "move-failure.md"), payload);
       store.createSessionCommand({
-        id: "move-failure", pr: 1, session: "pr-1", kind: "wake", round_no: null,
+        id: "move-failure",
+        pr: 1,
+        session: "pr-1",
+        kind: "wake",
+        round_no: null,
         payload_sha256: createHash("sha256").update(payload).digest("hex"),
-        payload_path: join(payloadDir, "move-failure.md"), inject_path: path,
+        payload_path: join(payloadDir, "move-failure.md"),
+        inject_path: path,
         next_check_at: "2026-08-27T20:02:00.000Z",
       });
       store.claimSessionCommand("move-failure", "bridge-old", "2026-08-27T20:02:00.000Z");
@@ -614,7 +698,9 @@ describe("inject-bridge — durable command ownership", () => {
         failed_stage: "terminal_transport",
         detail: expect.stringContaining(file),
       });
-      expect(errors).toHaveBeenCalledWith(expect.stringContaining(`FAILED_LOUD terminal_transport: ${file}`));
+      expect(errors).toHaveBeenCalledWith(
+        expect.stringContaining(`FAILED_LOUD terminal_transport: ${file}`),
+      );
 
       // A durable failed birth is terminal for this generation. Even if the
       // filesystem obstruction disappears and a new watch event arrives, the
@@ -624,7 +710,9 @@ describe("inject-bridge — durable command ownership", () => {
       await sleep(30);
       expect(sends).toHaveLength(0);
       expect(pending()).toContain(file);
-      expect(store.db.prepare("SELECT COUNT(*) AS n FROM session_commands").get()).toEqual({ n: 1 });
+      expect(store.db.prepare("SELECT COUNT(*) AS n FROM session_commands").get()).toEqual({
+        n: 1,
+      });
     } finally {
       fire("session_shutdown");
       store.close();
@@ -640,9 +728,14 @@ describe("inject-bridge — durable command ownership", () => {
       const payloadPath = join(payloadDir, "owed-failure.md");
       writeFileSync(payloadPath, payload);
       store.createSessionCommand({
-        id: "owed-failure", pr: 1, session: "pr-1", kind: "wake", round_no: null,
+        id: "owed-failure",
+        pr: 1,
+        session: "pr-1",
+        kind: "wake",
+        round_no: null,
         payload_sha256: createHash("sha256").update(payload).digest("hex"),
-        payload_path: payloadPath, inject_path: join(dir, "already-quarantined--cmd-owed-failure.md"),
+        payload_path: payloadPath,
+        inject_path: join(dir, "already-quarantined--cmd-owed-failure.md"),
         next_check_at: "2026-08-27T20:02:00.000Z",
       });
       store.failPendingSessionCommand("owed-failure", "still owed");
@@ -675,9 +768,14 @@ describe("inject-bridge — durable command ownership", () => {
       writeFileSync(path, "corrupt transport\n");
       writeFileSync(join(payloadDir, "corrupt.md"), durablePayload);
       store.createSessionCommand({
-        id: "corrupt-failed", pr: 1, session: "pr-1", kind: "wake", round_no: null,
+        id: "corrupt-failed",
+        pr: 1,
+        session: "pr-1",
+        kind: "wake",
+        round_no: null,
         payload_sha256: createHash("sha256").update(durablePayload).digest("hex"),
-        payload_path: join(payloadDir, "corrupt.md"), inject_path: path,
+        payload_path: join(payloadDir, "corrupt.md"),
+        inject_path: path,
         next_check_at: "2026-08-27T20:02:00.000Z",
       });
       store.failPendingSessionCommand("corrupt-failed", "old failure");
@@ -710,9 +808,14 @@ describe("inject-bridge — durable command ownership", () => {
       writeFileSync(path, payload);
       writeFileSync(join(payloadDir, "running.md"), payload);
       store.createSessionCommand({
-        id: "running", pr: 1, session: "pr-1", kind: "wake", round_no: null,
+        id: "running",
+        pr: 1,
+        session: "pr-1",
+        kind: "wake",
+        round_no: null,
         payload_sha256: createHash("sha256").update(payload).digest("hex"),
-        payload_path: join(payloadDir, "running.md"), inject_path: path,
+        payload_path: join(payloadDir, "running.md"),
+        inject_path: path,
         next_check_at: "2026-08-27T20:02:00.000Z",
       });
       store.claimSessionCommand("running", "bridge-old", "2026-08-27T20:02:00.000Z");
@@ -745,7 +848,9 @@ describe("inject-bridge — durable command ownership", () => {
 
       expect(sends).toHaveLength(0);
       expect(pending()).toEqual([file]);
-      expect(store.db.prepare("SELECT COUNT(*) AS n FROM session_commands").get()).toEqual({ n: 0 });
+      expect(store.db.prepare("SELECT COUNT(*) AS n FROM session_commands").get()).toEqual({
+        n: 0,
+      });
       expect(readSessionBridgeState(process.env.QCR_SESSION_BRIDGE_STATE_FILE!)).toMatchObject({
         stage: "failed",
         failed_stage: "command_link",
@@ -764,9 +869,14 @@ describe("inject-bridge — durable command ownership", () => {
       const payload = "durable prompt\n";
       writeFileSync(path, payload);
       store.createSessionCommand({
-        id: "cmd-a", pr: 1, session: "pr-1", kind: "round", round_no: 20,
+        id: "cmd-a",
+        pr: 1,
+        session: "pr-1",
+        kind: "round",
+        round_no: 20,
         payload_sha256: createHash("sha256").update(payload).digest("hex"),
-        payload_path: join(dir, "payload-cmd-a.md"), inject_path: path,
+        payload_path: join(dir, "payload-cmd-a.md"),
+        inject_path: path,
         next_check_at: "2026-08-27T20:02:00.000Z",
       });
       writeFileSync(join(dir, "payload-cmd-a.md"), payload);
@@ -774,7 +884,11 @@ describe("inject-bridge — durable command ownership", () => {
       activate(fakePi());
       fire("session_start");
       await vi.waitFor(() => expect(sends).toHaveLength(1));
-      expect(store.getSessionCommand("cmd-a")).toMatchObject({ status: "running", attempt: 1, started_at: null });
+      expect(store.getSessionCommand("cmd-a")).toMatchObject({
+        status: "running",
+        attempt: 1,
+        started_at: null,
+      });
       expect(readSessionBridgeState(process.env.QCR_SESSION_BRIDGE_STATE_FILE!)).toMatchObject({
         generation: "generation-1",
         stage: "ready",
@@ -802,18 +916,30 @@ describe("inject-bridge — durable command ownership", () => {
       writeFileSync(path, payload);
       writeFileSync(join(dir, "payload-timeout.md"), payload);
       store.createSessionCommand({
-        id: "cmd-timeout", pr: 1, session: "pr-1", kind: "wake", round_no: null,
+        id: "cmd-timeout",
+        pr: 1,
+        session: "pr-1",
+        kind: "wake",
+        round_no: null,
         payload_sha256: createHash("sha256").update(payload).digest("hex"),
-        payload_path: join(dir, "payload-timeout.md"), inject_path: path,
+        payload_path: join(dir, "payload-timeout.md"),
+        inject_path: path,
         next_check_at: "2026-08-27T20:02:00.000Z",
       });
 
       activate(fakePi());
       fire("session_start");
       await vi.advanceTimersByTimeAsync(0);
-      expect(store.getSessionCommand("cmd-timeout")).toMatchObject({ status: "running", started_at: null, attempt: 1 });
+      expect(store.getSessionCommand("cmd-timeout")).toMatchObject({
+        status: "running",
+        started_at: null,
+        attempt: 1,
+      });
       await vi.advanceTimersByTimeAsync(START_ACK_TIMEOUT_MS);
-      expect(store.getSessionCommand("cmd-timeout")).toMatchObject({ status: "running", started_at: null });
+      expect(store.getSessionCommand("cmd-timeout")).toMatchObject({
+        status: "running",
+        started_at: null,
+      });
       expect(pending()).toContain(file);
       expect(sends).toHaveLength(1);
     } finally {
@@ -832,9 +958,14 @@ describe("inject-bridge — durable command ownership", () => {
       writeFileSync(path, payload);
       writeFileSync(join(dir, "payload-cmd-b.md"), payload);
       store.createSessionCommand({
-        id: "cmd-b", pr: 1, session: "pr-1", kind: "wake", round_no: null,
+        id: "cmd-b",
+        pr: 1,
+        session: "pr-1",
+        kind: "wake",
+        round_no: null,
         payload_sha256: createHash("sha256").update(payload).digest("hex"),
-        payload_path: join(dir, "payload-cmd-b.md"), inject_path: path,
+        payload_path: join(dir, "payload-cmd-b.md"),
+        inject_path: path,
         next_check_at: "2026-08-27T20:02:00.000Z",
       });
 
@@ -843,11 +974,19 @@ describe("inject-bridge — durable command ownership", () => {
       await vi.waitFor(() => expect(sends).toHaveLength(1));
       acknowledgeLatest();
       await vi.waitFor(() => expect(store.getSessionCommand("cmd-b")?.status).toBe("running"));
-      store.db.prepare("UPDATE session_commands SET owner_token='recovered-owner', attempt=attempt+1 WHERE id='cmd-b'").run();
+      store.db
+        .prepare(
+          "UPDATE session_commands SET owner_token='recovered-owner', attempt=attempt+1 WHERE id='cmd-b'",
+        )
+        .run();
 
       fire("agent_settled");
       await sleep(20);
-      expect(store.getSessionCommand("cmd-b")).toMatchObject({ status: "running", owner_token: "recovered-owner", attempt: 2 });
+      expect(store.getSessionCommand("cmd-b")).toMatchObject({
+        status: "running",
+        owner_token: "recovered-owner",
+        attempt: 2,
+      });
       expect(errors).toHaveBeenCalledWith(expect.stringContaining("stale owner"));
     } finally {
       fire("session_shutdown");
@@ -863,10 +1002,17 @@ describe("inject-bridge — durable command ownership", () => {
       fire("session_start");
       await vi.waitFor(() => expect(sends).toHaveLength(1));
 
-      const adopted = store.db.prepare("SELECT * FROM session_commands").get() as { id: string; status: string; kind: string; started_at: string | null };
+      const adopted = store.db.prepare("SELECT * FROM session_commands").get() as {
+        id: string;
+        status: string;
+        kind: string;
+        started_at: string | null;
+      };
       expect(adopted).toMatchObject({ status: "running", kind: "legacy", started_at: null });
       acknowledgeLatest();
-      await vi.waitFor(() => expect(store.getSessionCommand(adopted.id)?.started_at).not.toBeNull());
+      await vi.waitFor(() =>
+        expect(store.getSessionCommand(adopted.id)?.started_at).not.toBeNull(),
+      );
       fire("agent_settled");
       await vi.waitFor(() => expect(store.getSessionCommand(adopted.id)?.status).toBe("acked"));
     } finally {
@@ -947,5 +1093,4 @@ describe("inject-bridge — a delivery is QUEUED, never refused (#5362)", () => 
     await vi.waitFor(() => expect(sends).toHaveLength(1));
     expect(sends[0]!.options?.deliverAs).toBe("followUp");
   });
-
 });

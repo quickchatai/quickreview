@@ -22,7 +22,8 @@ vi.mock("node:child_process", () => ({
 const { TUI_DEFAULTS, loadConfig, parseConfig } = await import("../src/config.js");
 type TuiConfig = import("../src/config.js").TuiConfig;
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const { killInFlightSsh, realLocalCommandRunner, realSshRunner, runnerFor, transportOf } = await import("../src/tui/remote.js");
+const { killInFlightSsh, realLocalCommandRunner, realSshRunner, runnerFor, transportOf } =
+  await import("../src/tui/remote.js");
 const { powerCommand, powerSpawnArgv } = await import("../src/tui/deploytab.js");
 const { ensureSshMaster } = await import("../src/tui/connect.js");
 type SyncSsh = import("../src/tui/connect.js").SyncSsh;
@@ -30,7 +31,12 @@ type SyncSsh = import("../src/tui/connect.js").SyncSsh;
 const LOCAL: TuiConfig = { ...TUI_DEFAULTS, target: "local" };
 
 /** A child that never exits on its own (see tui-ssh-inflight.test.ts). */
-function fakeChild(): EventEmitter & { kill: ReturnType<typeof vi.fn>; stdout: EventEmitter; stderr: EventEmitter; stdin: { end: ReturnType<typeof vi.fn> } } {
+function fakeChild(): EventEmitter & {
+  kill: ReturnType<typeof vi.fn>;
+  stdout: EventEmitter;
+  stderr: EventEmitter;
+  stdin: { end: ReturnType<typeof vi.fn> };
+} {
   const child = new EventEmitter() as ReturnType<typeof fakeChild>;
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -55,12 +61,18 @@ describe("[tui] target — the knob itself", () => {
   });
 
   it("reads an explicit local topology", () => {
-    expect(parseConfig(fixture.replace("[tui]", '[tui]\ntarget = "local"')).tui.target).toBe("local");
+    expect(parseConfig(fixture.replace("[tui]", '[tui]\ntarget = "local"')).tui.target).toBe(
+      "local",
+    );
   });
 
   it("refuses anything else rather than silently falling back to a transport", () => {
-    expect(() => parseConfig(fixture.replace("[tui]", '[tui]\ntarget = "Local"'))).toThrow(/target must be "ssh" or "local"/);
-    expect(() => parseConfig(fixture.replace("[tui]", "[tui]\ntarget = 1"))).toThrow(/target must be/);
+    expect(() => parseConfig(fixture.replace("[tui]", '[tui]\ntarget = "Local"'))).toThrow(
+      /target must be "ssh" or "local"/,
+    );
+    expect(() => parseConfig(fixture.replace("[tui]", "[tui]\ntarget = 1"))).toThrow(
+      /target must be/,
+    );
   });
 
   it("config.example.toml documents the knob and ships the ssh default", () => {
@@ -90,7 +102,11 @@ describe("realLocalCommandRunner", () => {
   it("executes argv[0] directly — same argv the builders produce, no ssh, no shell", async () => {
     const child = fakeChild();
     spawnMock.mockReturnValueOnce(child);
-    const done = realLocalCommandRunner("VM-ignored", ["sudo", "docker", "exec", "quickreview-sandbox", "cat", "/x"], { stdin: "hi" });
+    const done = realLocalCommandRunner(
+      "VM-ignored",
+      ["sudo", "docker", "exec", "quickreview-sandbox", "cat", "/x"],
+      { stdin: "hi" },
+    );
     child.stdout.emit("data", Buffer.from("ok"));
     child.emit("close", 0);
     await expect(done).resolves.toMatchObject({ ok: true, stdout: "ok", code: 0 });
@@ -128,12 +144,20 @@ describe("realLocalCommandRunner", () => {
 
 describe("powerSpawnArgv", () => {
   it("ssh mode is the remote shell line, exactly as before", () => {
-    expect(powerSpawnArgv(TUI_DEFAULTS, "stop")).toEqual(["ssh", "VM", powerCommand(TUI_DEFAULTS, "stop")]);
+    expect(powerSpawnArgv(TUI_DEFAULTS, "stop")).toEqual([
+      "ssh",
+      "VM",
+      powerCommand(TUI_DEFAULTS, "stop"),
+    ]);
   });
 
   it("local mode runs the same words directly — no ssh", () => {
     expect(powerSpawnArgv(LOCAL, "stop")).toEqual(["sudo", "docker", "stop", "quickreview-sandbox"]);
-    expect(powerSpawnArgv({ ...LOCAL, sudo_docker: false }, "start")).toEqual(["docker", "start", "quickreview-sandbox"]);
+    expect(powerSpawnArgv({ ...LOCAL, sudo_docker: false }, "start")).toEqual([
+      "docker",
+      "start",
+      "quickreview-sandbox",
+    ]);
     expect(powerSpawnArgv(LOCAL, "stop")).not.toContain("ssh");
   });
 });

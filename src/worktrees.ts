@@ -168,7 +168,8 @@ export class WorktreeManager {
     // make the pre-check silently find nothing — the one failure mode
     // hard constraint forbids ("more reliable, never quieter"). The caller
     // catches it and logs `migration_precheck_failed`.
-    if (!/^[0-9a-f]{7,40}$/i.test(sha)) throw new Error(`listMigrationFiles: not a commit sha: ${sha}`);
+    if (!/^[0-9a-f]{7,40}$/i.test(sha))
+      throw new Error(`listMigrationFiles: not a commit sha: ${sha}`);
     const res = await this.git(["ls-tree", "-r", "--name-only", sha]);
     return res.stdout
       .split("\n")
@@ -191,7 +192,11 @@ export class WorktreeManager {
    * `degraded: true` means the answer is unknown (old git, missing objects) —
    * the caller decides what that costs; this reader never guesses.
    */
-  async resolvedFilesInMerges(from: string, to: string, pr?: number): Promise<{ files: string[]; degraded: boolean }> {
+  async resolvedFilesInMerges(
+    from: string,
+    to: string,
+    pr?: number,
+  ): Promise<{ files: string[]; degraded: boolean }> {
     if (!/^[0-9a-f]{7,40}$/i.test(from) || !/^[0-9a-f]{7,40}$/i.test(to))
       return { files: [], degraded: true };
     try {
@@ -211,7 +216,11 @@ export class WorktreeManager {
         gone = await missing();
       }
       if (gone.length && pr !== undefined) {
-        await this.run("git", ["fetch", "--force", "origin", `+refs/pull/${pr}/head:${this.prRef(pr)}`], { cwd: this.basePath });
+        await this.run(
+          "git",
+          ["fetch", "--force", "origin", `+refs/pull/${pr}/head:${this.prRef(pr)}`],
+          { cwd: this.basePath },
+        );
         gone = await missing();
       }
       if (gone.length) return { files: [], degraded: true };
@@ -221,15 +230,24 @@ export class WorktreeManager {
         .filter(Boolean);
       const files = new Set<string>();
       for (const m of merges) {
-        const parents = (await this.git(["rev-list", "--parents", "-n", "1", m])).stdout.trim().split(/\s+/).slice(1);
+        const parents = (await this.git(["rev-list", "--parents", "-n", "1", m])).stdout
+          .trim()
+          .split(/\s+/)
+          .slice(1);
         if (parents.length !== 2) continue; // octopus/odd merges: skip, stay honest below
         // merge-tree exits 1 on conflicts while still printing the tree oid —
         // run unchecked and read the first line.
-        const mt = await this.run("git", ["merge-tree", "--write-tree", parents[0]!, parents[1]!], { cwd: this.basePath });
+        const mt = await this.run("git", ["merge-tree", "--write-tree", parents[0]!, parents[1]!], {
+          cwd: this.basePath,
+        });
         const tree = (mt.stdout.split("\n")[0] ?? "").trim();
         if (!/^[0-9a-f]{40,64}$/.test(tree)) return { files: [...files], degraded: true };
         const diff = await this.git(["diff", "--name-only", tree, `${m}^{tree}`]);
-        for (const f of diff.stdout.split("\n").map((l) => l.trim()).filter(Boolean)) files.add(f);
+        for (const f of diff.stdout
+          .split("\n")
+          .map((l) => l.trim())
+          .filter(Boolean))
+          files.add(f);
       }
       return { files: [...files], degraded: false };
     } catch {
@@ -261,7 +279,8 @@ export class WorktreeManager {
     for (const line of res.stdout.split("\n")) {
       const [email = "", name = ""] = line.split("\t");
       if (!email && !name) continue;
-      const login = /^(?:\d+\+)?([^@]+)@users\.noreply\.github\.com$/i.exec(email.trim())?.[1] ?? null;
+      const login =
+        /^(?:\d+\+)?([^@]+)@users\.noreply\.github\.com$/i.exec(email.trim())?.[1] ?? null;
       const isBot =
         /\[bot\]/i.test(name) ||
         /\[bot\]/i.test(email) ||
@@ -277,7 +296,9 @@ export class WorktreeManager {
   /** True when `sha` is present in the base clone (no fetch needed). */
   async hasCommit(sha: string): Promise<boolean> {
     if (!/^[0-9a-f]{7,40}$/i.test(sha)) return false;
-    const res = await this.run("git", ["cat-file", "-e", `${sha}^{commit}`], { cwd: this.basePath });
+    const res = await this.run("git", ["cat-file", "-e", `${sha}^{commit}`], {
+      cwd: this.basePath,
+    });
     return res.code === 0;
   }
 

@@ -37,7 +37,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ALLOWED_PROGRAMS, checkBashCommand } from "../extensions/bash-guard.js";
-import { ALLOWED_COMMANDS_CLAUSE, EXECUTION_POLICY_ADDENDUM, PASS_ADDENDA, buildAgents, identityVars } from "../src/include.js";
+import {
+  ALLOWED_COMMANDS_CLAUSE,
+  EXECUTION_POLICY_ADDENDUM,
+  PASS_ADDENDA,
+  buildAgents,
+  identityVars,
+} from "../src/include.js";
 import { postTag } from "../src/severity.js";
 import { renderOverseerSystemPrompt } from "../src/templates.js";
 import { loadProfileAddenda } from "../src/profiles.js";
@@ -49,7 +55,11 @@ const ROOT = join(import.meta.dirname, "..");
 /** Every .ts under a tree, recursively. */
 function tsFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
-    e.isDirectory() ? tsFiles(join(dir, e.name)) : e.name.endsWith(".ts") ? [join(dir, e.name)] : [],
+    e.isDirectory()
+      ? tsFiles(join(dir, e.name))
+      : e.name.endsWith(".ts")
+        ? [join(dir, e.name)]
+        : [],
   );
 }
 
@@ -90,9 +100,11 @@ function unionMembers(relPath: string, typeName: string): string[] {
   // array it was being compared to.
   const text = stripComments(readFileSync(join(ROOT, relPath), "utf8"));
   const m = new RegExp(`export type ${typeName}\\b[^=]*=([\\s\\S]*?);`).exec(text);
-  if (!m?.[1]) throw new Error(`union ${typeName} not found in ${relPath} — the fence over it is now vacuous`);
+  if (!m?.[1])
+    throw new Error(`union ${typeName} not found in ${relPath} — the fence over it is now vacuous`);
   const members = [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]!);
-  if (members.length === 0) throw new Error(`union ${typeName} in ${relPath} parsed to zero members`);
+  if (members.length === 0)
+    throw new Error(`union ${typeName} in ${relPath} parsed to zero members`);
   return members;
 }
 
@@ -186,8 +198,8 @@ describe("[T3] union members have producers", () => {
     for (const e of UNREACHABLE_PENDING_REMOVAL) {
       if (!declared.includes(e.state)) {
         throw new Error(
-          `${e.ticket} has landed — '${e.state}' is gone from PrLifecycleState. Delete its `
-            + "UNREACHABLE_PENDING_REMOVAL entry; the fence below then stands on its own.",
+          `${e.ticket} has landed — '${e.state}' is gone from PrLifecycleState. Delete its ` +
+            "UNREACHABLE_PENDING_REMOVAL entry; the fence below then stands on its own.",
         );
       }
     }
@@ -195,8 +207,8 @@ describe("[T3] union members have producers", () => {
     const unreachable = declared.filter((s) => !reachable.has(s as PrLifecycleState));
     expect(
       unreachable.sort(),
-      "a lifecycle state nothing can transition INTO is dead — delete it from the union and every reader, "
-        + "or add the transition that produces it",
+      "a lifecycle state nothing can transition INTO is dead — delete it from the union and every reader, " +
+        "or add the transition that produces it",
     ).toEqual(UNREACHABLE_PENDING_REMOVAL.map((e) => e.state).sort());
   });
 
@@ -210,7 +222,9 @@ describe("[T3] union members have producers", () => {
    */
   it("every SmEventType is constructed by a module outside statemachine.ts", () => {
     const declared = unionMembers("src/statemachine.ts", "SmEventType");
-    const producers = SRC_FILES.filter((f) => !f.endsWith("/statemachine.ts")).map(codeOf).join("\n");
+    const producers = SRC_FILES.filter((f) => !f.endsWith("/statemachine.ts"))
+      .map(codeOf)
+      .join("\n");
 
     /**
      * ALLOWLIST — event types with no producer, each with the reason it is
@@ -225,15 +239,17 @@ describe("[T3] union members have producers", () => {
       {
         type: "stale_detected",
         why:
-          "[A6]: the staleness round type has no producer and takes the whole round type with it. "
-          + "Classified DELETE by the inventory and cut as its own batch (the inventory's Batch 6), which has "
-          + "not landed — it depends on whether the live VM database holds rows with stale_recheck = 1 "
-          + "([U1], stated there as an unknown rather than guessed). Recorded here so it reads as "
-          + "a ticketed removal, not an oversight.",
+          "[A6]: the staleness round type has no producer and takes the whole round type with it. " +
+          "Classified DELETE by the inventory and cut as its own batch (the inventory's Batch 6), which has " +
+          "not landed — it depends on whether the live VM database holds rows with stale_recheck = 1 " +
+          "([U1], stated there as an unknown rather than guessed). Recorded here so it reads as " +
+          "a ticketed removal, not an oversight.",
       },
     ];
     for (const e of NO_PRODUCER_ALLOWLIST) {
-      expect(declared, `${e.type} is allowlisted but is no longer in SmEventType`).toContain(e.type);
+      expect(declared, `${e.type} is allowlisted but is no longer in SmEventType`).toContain(
+        e.type,
+      );
       expect(e.why).toMatch(/FT-\d{4}/);
     }
 
@@ -293,18 +309,29 @@ describe("[T12] the pi version pin is one fact, spelled the same everywhere", ()
     return {
       "config.toml [pi] version": /version\s*=\s*"([^"]+)"/.exec(cfgPi)?.[1],
       "config.example.toml [pi] version": /version\s*=\s*"([^"]+)"/.exec(examplePi)?.[1],
-      "package.json pi.version": (JSON.parse(read("package.json")) as { pi?: { version?: string } }).pi?.version,
-      "group_vars pi_version": /^pi_version:\s*"([^"]+)"/m.exec(read("deploy/ansible/group_vars/all.yml"))?.[1],
-      "docker/daemon/Dockerfile ARG PI_VERSION": /^ARG PI_VERSION=(\S+)/m.exec(read("docker/daemon/Dockerfile"))?.[1],
+      "package.json pi.version": (JSON.parse(read("package.json")) as { pi?: { version?: string } })
+        .pi?.version,
+      "group_vars pi_version": /^pi_version:\s*"([^"]+)"/m.exec(
+        read("deploy/ansible/group_vars/all.yml"),
+      )?.[1],
+      "docker/daemon/Dockerfile ARG PI_VERSION": /^ARG PI_VERSION=(\S+)/m.exec(
+        read("docker/daemon/Dockerfile"),
+      )?.[1],
     };
   };
 
   it("all five code-side spellings agree, and none is missing", () => {
     const found = pins();
     for (const [where, value] of Object.entries(found)) {
-      expect(value, `${where} — the pin could not be READ; a fence that finds nothing asserts nothing`).toBeTruthy();
+      expect(
+        value,
+        `${where} — the pin could not be READ; a fence that finds nothing asserts nothing`,
+      ).toBeTruthy();
     }
-    expect(new Set(Object.values(found)).size, `pi version drift: ${JSON.stringify(found, null, 2)}`).toBe(1);
+    expect(
+      new Set(Object.values(found)).size,
+      `pi version drift: ${JSON.stringify(found, null, 2)}`,
+    ).toBe(1);
   });
 
   /**
@@ -318,9 +345,16 @@ describe("[T12] the pi version pin is one fact, spelled the same everywhere", ()
    * MUTATION: change the version in rule 7's first sentence — this fails.
    */
   it("CLAUDE.md rule 7 quotes the real pi version", () => {
-    const rule7 = /^7\. pi is pinned \(`([^`]+)`/m.exec(readFileSync(join(ROOT, "CLAUDE.md"), "utf8"))?.[1];
-    expect(rule7, "rule 7 no longer quotes a pi version in the shape this fence reads").toBeTruthy();
-    expect(rule7, "rule 7's pi version drifted from config.toml — reconcile it").toBe(pins()["config.toml [pi] version"]);
+    const rule7 = /^7\. pi is pinned \(`([^`]+)`/m.exec(
+      readFileSync(join(ROOT, "CLAUDE.md"), "utf8"),
+    )?.[1];
+    expect(
+      rule7,
+      "rule 7 no longer quotes a pi version in the shape this fence reads",
+    ).toBeTruthy();
+    expect(rule7, "rule 7's pi version drifted from config.toml — reconcile it").toBe(
+      pins()["config.toml [pi] version"],
+    );
   });
 
   /**
@@ -334,8 +368,13 @@ describe("[T12] the pi version pin is one fact, spelled the same everywhere", ()
   it("the deploying skill's 'currently' pin quotes the real pi version", () => {
     const skill = readFileSync(join(ROOT, ".claude", "skills", "deploying", "SKILL.md"), "utf8");
     const quoted = /\*\*pi pin coherent\*\*[^\n]*\n[^\n]*\(currently `([^`]+)`\)/.exec(skill)?.[1];
-    expect(quoted, "the deploying skill no longer quotes the pin in the shape this fence reads").toBeTruthy();
-    expect(quoted, "the deploying skill's pi version drifted from config.toml — reconcile it").toBe(pins()["config.toml [pi] version"]);
+    expect(
+      quoted,
+      "the deploying skill no longer quotes the pin in the shape this fence reads",
+    ).toBeTruthy();
+    expect(quoted, "the deploying skill's pi version drifted from config.toml — reconcile it").toBe(
+      pins()["config.toml [pi] version"],
+    );
   });
 });
 
@@ -365,12 +404,17 @@ describe("the sanctioned-script set is DERIVED from the prompts, not maintained 
     for (const dir of ["prompts", "agents"]) {
       for (const f of readdirSync(join(ROOT, dir))) {
         if (!f.endsWith(".md")) continue;
-        for (const m of readFileSync(join(ROOT, dir, f), "utf8").matchAll(/scripts\/([a-z0-9._-]+\.sh)/g)) {
+        for (const m of readFileSync(join(ROOT, dir, f), "utf8").matchAll(
+          /scripts\/([a-z0-9._-]+\.sh)/g,
+        )) {
           mandated.add(m[1]!);
         }
       }
     }
-    expect(mandated.size, "no prompt names a script — the derivation found nothing and would pass vacuously").toBeGreaterThan(3);
+    expect(
+      mandated.size,
+      "no prompt names a script — the derivation found nothing and would pass vacuously",
+    ).toBeGreaterThan(3);
 
     // The policy's own view, probed through the real entry point rather than
     // read off the constant: what ships is the function's answer.
@@ -391,7 +435,11 @@ describe("the sanctioned-script set is DERIVED from the prompts, not maintained 
    */
   it("accepts each mandated script through every spelling a session would use", async () => {
     const { checkBashCommand } = await import("../extensions/bash-guard.js");
-    for (const form of ["scripts/pr-self.sh 5 reviews", "./scripts/pr-self.sh 5 head", "bash scripts/pr-self.sh 5 checks"]) {
+    for (const form of [
+      "scripts/pr-self.sh 5 reviews",
+      "./scripts/pr-self.sh 5 head",
+      "bash scripts/pr-self.sh 5 checks",
+    ]) {
       const r = checkBashCommand(form);
       expect(r.allowed, `${form} — ${r.reason ?? ""}`).toBe(true);
     }
@@ -455,16 +503,22 @@ describe("no env prefix can move the posting guards' own configuration", () => {
   it("the COMPILED guard agrees with the source", async () => {
     const dist = join(ROOT, "dist", "extensions", "bash-guard.js");
     if (!existsSync(dist)) {
-      throw new Error("dist/extensions/bash-guard.js is missing — run `npm run build`; the shipped policy is unverified");
+      throw new Error(
+        "dist/extensions/bash-guard.js is missing — run `npm run build`; the shipped policy is unverified",
+      );
     }
-    const compiled = (await import(dist)) as { checkBashCommand: (c: string) => { allowed: boolean } };
+    const compiled = (await import(dist)) as {
+      checkBashCommand: (c: string) => { allowed: boolean };
+    };
     const source = await import("../extensions/bash-guard.js");
     for (const cmd of [
       "QCR_CONFIG=/tmp/x.toml bash scripts/approve-pr.sh 5 b.md",
       "scripts/pr-self.sh 5 reviews",
       "gh pr review 5 --approve",
     ]) {
-      expect(compiled.checkBashCommand(cmd).allowed, `compiled: ${cmd}`).toBe(source.checkBashCommand(cmd).allowed);
+      expect(compiled.checkBashCommand(cmd).allowed, `compiled: ${cmd}`).toBe(
+        source.checkBashCommand(cmd).allowed,
+      );
     }
   });
 });
@@ -490,7 +544,10 @@ describe("what a built pass is told it may run is exactly what the guard lets th
    */
   function advertisedIn(body: string): string[] {
     const m = /Allowed commands: ([^\n]+?)\. CI results are READ/.exec(body);
-    if (!m) throw new Error("no 'Allowed commands: …' clause in the body — the execution policy is missing");
+    if (!m)
+      throw new Error(
+        "no 'Allowed commands: …' clause in the body — the execution policy is missing",
+      );
     return m[1]!.replace(", and read-only gh", ", gh").split(", ");
   }
 
@@ -525,7 +582,12 @@ describe("what a built pass is told it may run is exactly what the guard lets th
     }
     // The ticket's own reproduction, plus awk's kin: advertised nowhere, and
     // refused by the function — not merely absent from a list.
-    for (const cmd of ["awk '{print $1}' file.txt", "gawk '{print}' f", "perl -e 1", "python3 -c 1"]) {
+    for (const cmd of [
+      "awk '{print $1}' file.txt",
+      "gawk '{print}' f",
+      "perl -e 1",
+      "python3 -c 1",
+    ]) {
       expect(checkBashCommand(cmd).allowed, `${cmd} must be refused`).toBe(false);
       expect(advertised).not.toContain(cmd.split(" ")[0]);
     }
@@ -546,16 +608,25 @@ describe("what a built pass is told it may run is exactly what the guard lets th
     const profiles = readdirSync(join(ROOT, "profiles"), { withFileTypes: true })
       .filter((e) => e.isDirectory())
       .map((e) => e.name);
-    expect(profiles.length, "no profile packs found — the profile half of this fence would be vacuous").toBeGreaterThan(0);
+    expect(
+      profiles.length,
+      "no profile packs found — the profile half of this fence would be vacuous",
+    ).toBeGreaterThan(0);
     const compositions: Array<[string, typeof PASS_ADDENDA]> = [
       ["default", PASS_ADDENDA],
-      ...profiles.map((name): [string, typeof PASS_ADDENDA] => [name, [...PASS_ADDENDA, ...loadProfileAddenda(ROOT, name)]]),
+      ...profiles.map((name): [string, typeof PASS_ADDENDA] => [
+        name,
+        [...PASS_ADDENDA, ...loadProfileAddenda(ROOT, name)],
+      ]),
     ];
     for (const [label, addenda] of compositions) {
       const out = mkdtempSync(join(tmpdir(), `qcr-ft0403-${label}-`));
       try {
         const built = buildAgents(join(ROOT, "agents"), out, { root: ROOT, addenda });
-        expect(built.length, `${label}: too few variants built to be the real set`).toBeGreaterThanOrEqual(30);
+        expect(
+          built.length,
+          `${label}: too few variants built to be the real set`,
+        ).toBeGreaterThanOrEqual(30);
         for (const b of built) {
           const body = readFileSync(b.output, "utf8");
           const where = `${label}/${b.name}`;
@@ -610,9 +681,14 @@ describe("what a built pass is told it may run is exactly what the guard lets th
       if (program === "cat") {
         // A prefix is a shape only because what follows it is still vetted:
         // the program after the prefix must be one the sentence advertises.
-        expect(ALLOWED_PROGRAMS, `${cmd}: the prefixed program must be advertised`).toContain(program);
+        expect(ALLOWED_PROGRAMS, `${cmd}: the prefixed program must be advertised`).toContain(
+          program,
+        );
       } else {
-        expect(ALLOWED_PROGRAMS, `${cmd}: '${program}' is a shape, not a program the sentence should list`).not.toContain(program);
+        expect(
+          ALLOWED_PROGRAMS,
+          `${cmd}: '${program}' is a shape, not a program the sentence should list`,
+        ).not.toContain(program);
       }
     }
     // …and the shapes are exactly that narrow: the other `sh` form, a `bash -c`
@@ -621,8 +697,17 @@ describe("what a built pass is told it may run is exactly what the guard lets th
     // program the sentence does NOT advertise, which is what makes the prefix
     // a shape rather than a bypass.
     for (const cmd of [
-      "sh scripts/post-review.sh", "bash -c pwd", "bash -c 'python3 x.py'", "scripts/rogue.sh", "pwd", "command -v git", "type ls", "[ -f README.md ]",
-      "env FOO=1 awk '{print $1}' README.md", "FOO=1 pwd", "env FOO=1 python3 x.py",
+      "sh scripts/post-review.sh",
+      "bash -c pwd",
+      "bash -c 'python3 x.py'",
+      "scripts/rogue.sh",
+      "pwd",
+      "command -v git",
+      "type ls",
+      "[ -f README.md ]",
+      "env FOO=1 awk '{print $1}' README.md",
+      "FOO=1 pwd",
+      "env FOO=1 python3 x.py",
     ]) {
       expect(checkBashCommand(cmd).allowed, `${cmd} must be refused`).toBe(false);
     }
@@ -648,7 +733,10 @@ describe("what a built pass is told it may run is exactly what the guard lets th
     // The appendix says the seed no longer lists the retired command; hold
     // the fact the sentence rests on, not the sentence.
     expect(rendered).not.toContain("mark-escalation-worthy");
-    for (const [label, body] of [["slack off", rendered], ["slack on", `${rendered}\n\n${appendix.trimEnd()}\n`]] as const) {
+    for (const [label, body] of [
+      ["slack off", rendered],
+      ["slack on", `${rendered}\n\n${appendix.trimEnd()}\n`],
+    ] as const) {
       expect(body, `${label}: names NEEDS_HUMAN`).not.toMatch(/NEEDS_HUMAN/);
       expect(body, `${label}: names the park`).not.toMatch(/\bpark(s|ed|ing)?\b/i);
     }
@@ -662,7 +750,9 @@ describe("what a built pass is told it may run is exactly what the guard lets th
   it("the COMPILED execution policy is the source's, and names no awk", async () => {
     const dist = join(ROOT, "dist", "src", "include.js");
     if (!existsSync(dist)) {
-      throw new Error("dist/src/include.js is missing — run `npm run build`; the shipped prompt is unverified");
+      throw new Error(
+        "dist/src/include.js is missing — run `npm run build`; the shipped prompt is unverified",
+      );
     }
     const compiled = (await import(dist)) as { EXECUTION_POLICY_ADDENDUM: string };
     expect(compiled.EXECUTION_POLICY_ADDENDUM).toBe(EXECUTION_POLICY_ADDENDUM);

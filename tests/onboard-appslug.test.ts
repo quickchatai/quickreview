@@ -15,10 +15,23 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { OnboardingEngine, type OnboardAdapters, type ProcessResult } from "../src/onboard/engine.js";
-import { APP_SLUG_STEP_ID, appSlugStep, botLoginFor, slugEdits } from "../src/onboard/steps/appslug.js";
+import {
+  OnboardingEngine,
+  type OnboardAdapters,
+  type ProcessResult,
+} from "../src/onboard/engine.js";
+import {
+  APP_SLUG_STEP_ID,
+  appSlugStep,
+  botLoginFor,
+  slugEdits,
+} from "../src/onboard/steps/appslug.js";
 import type { StreamRunner } from "../src/onboard/steps/compose.js";
-import { APP_SLUG_CHOICE_KEY, BOT_LOGIN_CHOICE_KEY, SECRET_FILES } from "../src/onboard/steps/githubapp.js";
+import {
+  APP_SLUG_CHOICE_KEY,
+  BOT_LOGIN_CHOICE_KEY,
+  SECRET_FILES,
+} from "../src/onboard/steps/githubapp.js";
 import { readTomlKey, setTomlKey } from "../src/onboard/steps/ingress.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -63,7 +76,9 @@ interface Harness {
   logs: string[];
 }
 
-function harness(o: { slug?: string; appStatus?: number; daemonRunning?: boolean; streamCode?: number } = {}): Harness {
+function harness(
+  o: { slug?: string; appStatus?: number; daemonRunning?: boolean; streamCode?: number } = {},
+): Harness {
   const runs: string[][] = [];
   const streamed: string[][] = [];
   const logs: string[] = [];
@@ -71,9 +86,14 @@ function harness(o: { slug?: string; appStatus?: number; daemonRunning?: boolean
     const url = String(input);
     if (url === `${API}/app`) {
       const status = o.appStatus ?? 200;
-      return new Response(status === 200 ? JSON.stringify({ id: 4242, slug: o.slug ?? "quick-review-9f2" }) : JSON.stringify({ message: "nope" }), {
-        status,
-      });
+      return new Response(
+        status === 200
+          ? JSON.stringify({ id: 4242, slug: o.slug ?? "quick-review-9f2" })
+          : JSON.stringify({ message: "nope" }),
+        {
+          status,
+        },
+      );
     }
     throw new Error(`unexpected fetch ${url}`);
   }) as unknown as typeof fetch;
@@ -101,14 +121,22 @@ function harness(o: { slug?: string; appStatus?: number; daemonRunning?: boolean
     paths: { stateDir: join(root, "state") },
     log: (line) => logs.push(line),
   };
-  return { engine: new OnboardingEngine([appSlugStep({ apiBase: API, secretsDir, stream })], adapters), runs, streamed, logs };
+  return {
+    engine: new OnboardingEngine([appSlugStep({ apiBase: API, secretsDir, stream })], adapters),
+    runs,
+    streamed,
+    logs,
+  };
 }
 
 describe("slugEdits — the pure reconciliation", () => {
   it("corrects BOTH keys when the App's real slug differs from the recorded guess", () => {
     writeConfig("quick-review");
     const edits = slugEdits(configText(), "quick-review-9f2");
-    expect(edits.map((e) => `${e.section}.${e.key}`)).toEqual(["github.app_slug", "github.bot_login"]);
+    expect(edits.map((e) => `${e.section}.${e.key}`)).toEqual([
+      "github.app_slug",
+      "github.bot_login",
+    ]);
     expect(edits[1]!.value).toBe('"quick-review-9f2[bot]"');
   });
 
@@ -141,7 +169,9 @@ describe("the step", () => {
     expect(h.engine.choices()[APP_SLUG_CHOICE_KEY]).toBe("quick-review-9f2");
     expect(h.engine.choices()[BOT_LOGIN_CHOICE_KEY]).toBe("quick-review-9f2[bot]");
     // The reason it matters is said out loud, not left implicit.
-    expect(result.checks.find((c) => c.name === "config")!.detail).toMatch(/recognises its OWN reviews/);
+    expect(result.checks.find((c) => c.name === "config")!.detail).toMatch(
+      /recognises its OWN reviews/,
+    );
   });
 
   it("THE DEFECT NOTHING ELSE CATCHES: a wrong bot login is corrected on its own", async () => {
@@ -179,7 +209,14 @@ describe("the step", () => {
     const h = harness({ slug: "quick-review-9f2", daemonRunning: true });
     const result = await h.engine.runStep(APP_SLUG_STEP_ID);
     expect(result.ok).toBe(true);
-    expect(h.streamed[0]).toEqual(["docker", "compose", "--project-directory", root, "restart", "daemon"]);
+    expect(h.streamed[0]).toEqual([
+      "docker",
+      "compose",
+      "--project-directory",
+      root,
+      "restart",
+      "daemon",
+    ]);
     expect(result.checks.find((c) => c.name === "daemon-restart")!.ok).toBe(true);
   });
 
@@ -189,7 +226,9 @@ describe("the step", () => {
     const h = harness({ slug: "quick-review-9f2", daemonRunning: false });
     const result = await h.engine.runStep(APP_SLUG_STEP_ID);
     expect(h.streamed).toEqual([]);
-    expect(result.checks.find((c) => c.name === "daemon-restart")!.detail).toMatch(/nothing to restart/);
+    expect(result.checks.find((c) => c.name === "daemon-restart")!.detail).toMatch(
+      /nothing to restart/,
+    );
   });
 
   it("a failed restart is red and says the file on disk is already correct", async () => {

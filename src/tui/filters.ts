@@ -15,7 +15,9 @@ export interface BoardFilter {
 
 /** True when the filter would pass everything — treated the same as null. */
 export function isEmptyBoardFilter(f: BoardFilter | null | undefined): boolean {
-  return !f || ((f.author === undefined || f.author === "") && (f.state === undefined || f.state === ""));
+  return (
+    !f || ((f.author === undefined || f.author === "") && (f.state === undefined || f.state === ""))
+  );
 }
 
 /**
@@ -33,7 +35,8 @@ export function applyBoardFilter<T extends Pick<SnapshotPr, "state"> & { author?
   const author = f!.author?.toLowerCase();
   const state = f!.state;
   return prs.filter((p) => {
-    if (author !== undefined && author !== "" && !(p.author ?? "").toLowerCase().includes(author)) return false;
+    if (author !== undefined && author !== "" && !(p.author ?? "").toLowerCase().includes(author))
+      return false;
     if (state !== undefined && state !== "" && p.state !== state) return false;
     return true;
   });
@@ -59,7 +62,10 @@ function normTag(tag: string): string {
  * a leading '#' on the query is ignored (`#pinned` ≡ `pinned`). Null/empty
  * tag returns the input unchanged.
  */
-export function applyMemoryFilter<T extends Pick<MemoryEntry, "tags">>(entries: T[], tag: string | null | undefined): T[] {
+export function applyMemoryFilter<T extends Pick<MemoryEntry, "tags">>(
+  entries: T[],
+  tag: string | null | undefined,
+): T[] {
   if (tag === null || tag === undefined || normTag(tag) === "") return entries;
   const want = normTag(tag);
   return entries.filter((e) => e.tags.some((t) => normTag(t) === want));
@@ -68,7 +74,10 @@ export function applyMemoryFilter<T extends Pick<MemoryEntry, "tags">>(entries: 
 /** The board's ONE filtered ordering — render, selection movement and the
  * companion driver all derive rows from here, so a verb can never address a
  * row the filter hid (the wiring invariant). */
-export function visiblePrs(view: { snapshot?: { prs: SnapshotPr[] }; boardFilter?: BoardFilter | null }): SnapshotPr[] {
+export function visiblePrs(view: {
+  snapshot?: { prs: SnapshotPr[] };
+  boardFilter?: BoardFilter | null;
+}): SnapshotPr[] {
   return applyBoardFilter(sortPrs(view.snapshot?.prs ?? []), view.boardFilter);
 }
 

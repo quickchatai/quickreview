@@ -172,18 +172,24 @@ export function applyEvent(
   const existing = store.getPr(pr);
   const author = meta.author ?? existing?.author ?? "";
   if (opts.botLogin && author && isBotAuthor(author, opts.botLogin)) {
-    return { pr, from: existing?.state ?? null, to: existing?.state ?? INITIAL_STATE, changed: false, skipped: "bot-author" };
+    return {
+      pr,
+      from: existing?.state ?? null,
+      to: existing?.state ?? INITIAL_STATE,
+      changed: false,
+      skipped: "bot-author",
+    };
   }
 
   const from = existing?.state ?? null;
   const base = existing?.state ?? INITIAL_STATE;
   const to = transition(base, event);
-  const runningRound = base === "reviewing"
-    ? store.runningRounds().find((round) => round.pr === pr)
-    : undefined;
-  const advancedHead = runningRound && meta.head_sha && existing?.head_sha && meta.head_sha !== existing.head_sha
-    ? meta.head_sha
-    : undefined;
+  const runningRound =
+    base === "reviewing" ? store.runningRounds().find((round) => round.pr === pr) : undefined;
+  const advancedHead =
+    runningRound && meta.head_sha && existing?.head_sha && meta.head_sha !== existing.head_sha
+      ? meta.head_sha
+      : undefined;
 
   let staleRecheck = existing?.stale_recheck ?? 0;
   if (event.type === "stale_detected") staleRecheck = 1;
@@ -198,7 +204,8 @@ export function applyEvent(
   if (event.type === "trigger" || event.type === "stale_detected" || event.type === "synchronize") {
     if (to === "queued" && !triggerTs) triggerTs = now().toISOString();
   }
-  if (event.type === "dispatched" || event.type === "verdict" || event.type === "round_overdue") triggerTs = null;
+  if (event.type === "dispatched" || event.type === "verdict" || event.type === "round_overdue")
+    triggerTs = null;
 
   // Trigger provenance: who asked for the queued round. A fresh
   // label / team re-review request / manual trigger is a HUMAN ask; a
@@ -219,7 +226,8 @@ export function applyEvent(
   // the no-new-evidence skip — which otherwise left a
   // "human" residue on an awaiting_author row for's exact-head
   // retirement to misread as a fresh ask (same rule as trigger_ts).
-  if (event.type === "dispatched" || event.type === "verdict" || event.type === "round_overdue") provenance = null;
+  if (event.type === "dispatched" || event.type === "verdict" || event.type === "round_overdue")
+    provenance = null;
 
   store.upsertPr({
     number: pr,
@@ -233,7 +241,11 @@ export function applyEvent(
     migration_gate: existing?.migration_gate ?? 0,
   });
 
-  if (runningRound && advancedHead && (event.type === "synchronize" || event.type === "track" || event.type === "trigger")) {
+  if (
+    runningRound &&
+    advancedHead &&
+    (event.type === "synchronize" || event.type === "track" || event.type === "trigger")
+  ) {
     store.recordSuccessor({
       pr,
       predecessor_round_id: runningRound.id,
@@ -263,7 +275,12 @@ export function applyEvent(
 
   const changed = from !== to;
   if (changed || event.type === "trigger" || event.type === "stale_detected") {
-    store.logEvent("pr_transition", pr, { from, to, event: event.type, reason: opts.reason ?? null });
+    store.logEvent("pr_transition", pr, {
+      from,
+      to,
+      event: event.type,
+      reason: opts.reason ?? null,
+    });
   }
   return { pr, from, to, changed };
 }

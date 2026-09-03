@@ -36,13 +36,27 @@
 // the content it expects to find).
 import { readFileSync } from "node:fs";
 import { parseEventTags } from "../memory/eventtags.js";
-import { matchesQuery, type MemoryEntry, type MemoryOp, type MemorySearchOptions, type MemoryStore, type MemoryWriteResult } from "../memory/store.js";
+import {
+  matchesQuery,
+  type MemoryEntry,
+  type MemoryOp,
+  type MemorySearchOptions,
+  type MemoryStore,
+  type MemoryWriteResult,
+} from "../memory/store.js";
 import { OpenVikingClient, type HttpFetch, type OvGap } from "../openviking/client.js";
 import { OpenVikingStore } from "../openviking/store.js";
 import { keysFilePath, MEMORY } from "./companion.js";
 
 export { matchesQuery, normalizeTag, refOf } from "../memory/store.js";
-export type { MemoryEntry, MemoryOp, MemoryRef, MemorySearchOptions, MemoryStore, MemoryWriteResult } from "../memory/store.js";
+export type {
+  MemoryEntry,
+  MemoryOp,
+  MemoryRef,
+  MemorySearchOptions,
+  MemoryStore,
+  MemoryWriteResult,
+} from "../memory/store.js";
 
 /** The two OpenViking users the TUI can see. `reviewer` is the review
  * system's own memory; `companion` is the local pi's. */
@@ -166,7 +180,11 @@ export function parseKeysEnv(text: string): Record<string, string> {
     const m = /^\s*(?:export\s+)?([A-Za-z0-9_]+)\s*=\s*(.*)$/.exec(line);
     if (!m) continue;
     let value = m[2]!.trim();
-    if (value.length >= 2 && ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))) {
+    if (
+      value.length >= 2 &&
+      ((value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'")))
+    ) {
       value = value.slice(1, -1);
     }
     if (value !== "") out[m[1]!] = value;
@@ -179,7 +197,11 @@ export function parseKeysEnv(text: string): Record<string, string> {
  * `ttlMs` — a keys file provisioned after the TUI started is picked up without
  * a restart, and a missing one does not stat the disk per request.
  */
-export function keysFileReader(path: string, ttlMs = 60_000, now: () => number = Date.now): (name: string) => string | null {
+export function keysFileReader(
+  path: string,
+  ttlMs = 60_000,
+  now: () => number = Date.now,
+): (name: string) => string | null {
   let cached: Record<string, string> = {};
   let checkedAt = -Infinity;
   return (name) => {
@@ -271,7 +293,9 @@ export class TuiMemoryStore implements HealthyMemoryStore {
     this.keysFile = opts.keysFile ?? keysFilePath(env);
     this.writeUser = opts.writeUser ?? "reviewer";
     const key = opts.key ?? keysFileReader(this.keysFile);
-    const built = opts.namespaces ?? MEMORY_USERS.map((user) => ({ user, store: this.buildStore(user, key, opts) }));
+    const built =
+      opts.namespaces ??
+      MEMORY_USERS.map((user) => ({ user, store: this.buildStore(user, key, opts) }));
     this.ns = built.map(({ user, store }) => ({
       user,
       store,
@@ -281,7 +305,11 @@ export class TuiMemoryStore implements HealthyMemoryStore {
     }));
   }
 
-  private buildStore(user: MemoryUser, key: (name: string) => string | null, opts: TuiMemoryOptions): MemoryStore {
+  private buildStore(
+    user: MemoryUser,
+    key: (name: string) => string | null,
+    opts: TuiMemoryOptions,
+  ): MemoryStore {
     const client = new OpenVikingClient({
       baseUrl: this.baseUrl,
       // Read lazily on every request, so a keys file that lands later works.
@@ -333,7 +361,9 @@ export class TuiMemoryStore implements HealthyMemoryStore {
         for (const e of entries) out.push({ ...e, id: nsId(n.user, e.id) });
       }),
     );
-    out.sort((a, b) => (a.ts !== b.ts ? (a.ts < b.ts ? -1 : 1) : a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    out.sort((a, b) =>
+      a.ts !== b.ts ? (a.ts < b.ts ? -1 : 1) : a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
+    );
     return out;
   }
 
@@ -388,7 +418,10 @@ export class TuiMemoryStore implements HealthyMemoryStore {
     const { user, id } = splitNsId(op.id);
     const target = this.ns.find((n) => n.user === user);
     if (!target) {
-      return { ok: false, message: `refused: '${op.id}' names no memory namespace (expected ${this.ns.map((n) => n.user).join(" or ")}) — refresh and retry` };
+      return {
+        ok: false,
+        message: `refused: '${op.id}' names no memory namespace (expected ${this.ns.map((n) => n.user).join(" or ")}) — refresh and retry`,
+      };
     }
     return this.applyIn(target, op.op === "edit" ? { ...op, id } : { ...op, id });
   }
@@ -413,7 +446,9 @@ export class TuiMemoryStore implements HealthyMemoryStore {
 
   /** Classify this namespace's sweep: down, degraded, or clean. */
   private settle(n: Namespace, listed: number): void {
-    const fatal = n.gaps.find((g) => g.op === "ls" || g.code === "no_key" || g.code === "transport");
+    const fatal = n.gaps.find(
+      (g) => g.op === "ls" || g.code === "no_key" || g.code === "transport",
+    );
     if (fatal) {
       n.health = { user: n.user, ok: false, reason: this.describe(n.user, fatal), unreadable: 0 };
       return;
@@ -423,7 +458,9 @@ export class TuiMemoryStore implements HealthyMemoryStore {
       user: n.user,
       ok: true,
       unreadable,
-      ...(unreadable > 0 ? { reason: `${unreadable} of ${listed + unreadable} ${n.user} entries could not be read` } : {}),
+      ...(unreadable > 0
+        ? { reason: `${unreadable} of ${listed + unreadable} ${n.user} entries could not be read` }
+        : {}),
     };
   }
 
@@ -483,7 +520,11 @@ export class TuiMemoryStore implements HealthyMemoryStore {
       ...down.map((h) => `${h.user} memory unreachable — ${h.reason ?? "no answer"}`),
       ...namespaces.filter((h) => h.ok && h.unreadable > 0).map((h) => h.reason!),
     ];
-    return { ok: down.length === 0, namespaces, ...(notes.length > 0 ? { warning: notes.join(" · ") } : {}) };
+    return {
+      ok: down.length === 0,
+      namespaces,
+      ...(notes.length > 0 ? { warning: notes.join(" · ") } : {}),
+    };
   }
 }
 

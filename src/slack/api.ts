@@ -67,7 +67,7 @@ export class SlackApiClient implements SlackWebApi {
 
   constructor(opts: SlackApiOptions) {
     this.botToken = opts.botToken;
-    this.fetchFn = opts.fetchFn ?? (fetch as SlackFetchFn);
+    this.fetchFn = opts.fetchFn ?? fetch;
     this.postMinIntervalMs = opts.postMinIntervalMs ?? DEFAULT_POST_MIN_INTERVAL_MS;
     this.userCacheTtlMs = (opts.userCacheTtlSec ?? DEFAULT_USER_CACHE_TTL_SEC) * 1000;
     this.apiBase = opts.apiBase ?? "https://slack.com/api";
@@ -76,7 +76,11 @@ export class SlackApiClient implements SlackWebApi {
     this.log = opts.log ?? (() => {});
   }
 
-  postMessage(args: { channel: string; text: string; thread_ts?: string }): Promise<SlackPostResult> {
+  postMessage(args: {
+    channel: string;
+    text: string;
+    thread_ts?: string;
+  }): Promise<SlackPostResult> {
     const body: Record<string, unknown> = { channel: args.channel, text: args.text };
     if (args.thread_ts) body["thread_ts"] = args.thread_ts;
     return this.enqueuePost("chat.postMessage", body);
@@ -113,7 +117,13 @@ export class SlackApiClient implements SlackWebApi {
     const res = await this.callOnce("users.info", { user: userId });
     if (!res.ok || !res.raw) return undefined;
     const user = res.raw["user"] as
-      | { id?: string; name?: string; real_name?: string; is_bot?: boolean; profile?: { display_name?: string; real_name?: string } }
+      | {
+          id?: string;
+          name?: string;
+          real_name?: string;
+          is_bot?: boolean;
+          profile?: { display_name?: string; real_name?: string };
+        }
       | undefined;
     if (!user) return undefined;
     const info: SlackUserInfo = {
@@ -159,14 +169,22 @@ export class SlackApiClient implements SlackWebApi {
   }
 
   /** Initial attempt + 2 retries, then log and drop. Never throws. */
-  private async callWithRetries(method: string, body: Record<string, unknown>): Promise<SlackPostResult> {
+  private async callWithRetries(
+    method: string,
+    body: Record<string, unknown>,
+  ): Promise<SlackPostResult> {
     let last: CallOutcome = { ok: false, error: "unknown" };
     for (let attempt = 0; attempt <= RETRIES; attempt += 1) {
       last = await this.callOnce(method, body);
       if (last.ok) return { ok: true, ...(last.ts ? { ts: last.ts } : {}) };
       if (attempt === RETRIES) break;
       const wait = last.retryAfterMs ?? this.postMinIntervalMs;
-      this.log("slack.api.retry", { method, attempt: attempt + 1, wait_ms: wait, error: last.error });
+      this.log("slack.api.retry", {
+        method,
+        attempt: attempt + 1,
+        wait_ms: wait,
+        error: last.error,
+      });
       await this.sleep(wait);
     }
     // Dropped, deliberately: Slack must never block a verdict, label or round.

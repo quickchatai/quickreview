@@ -19,7 +19,12 @@
 // ctx.shutdown falls back to telling the operator to /exit.
 import { execFile } from "node:child_process";
 import { join } from "node:path";
-import type { Pi, PiToolContext, PiToolDefinition, PiToolResult } from "@earendil-works/pi-coding-agent";
+import type {
+  Pi,
+  PiToolContext,
+  PiToolDefinition,
+  PiToolResult,
+} from "@earendil-works/pi-coding-agent";
 import {
   OnboardingEngine,
   type CheckResult,
@@ -46,7 +51,11 @@ export function realAdapters(root: string): OnboardAdapters {
         new Promise((resolvePromise) => {
           execFile(cmd, args, { timeout: 60_000 }, (err, stdout, stderr) => {
             const code = err === null ? 0 : typeof err.code === "number" ? err.code : 1;
-            resolvePromise({ code, stdout: String(stdout), stderr: err && !stderr ? String(err.message) : String(stderr) });
+            resolvePromise({
+              code,
+              stdout: String(stdout),
+              stderr: err && !stderr ? String(err.message) : String(stderr),
+            });
           });
         }),
     },
@@ -70,12 +79,17 @@ export function renderChecks(checks: readonly CheckResult[]): string {
   return checks.map((c) => `${c.ok ? "✓" : "✗"} ${c.name} — ${c.detail}`).join("\n");
 }
 
-export function renderStatus(lines: readonly StepStatusLine[], reconciled: ReconcileReport): string {
+export function renderStatus(
+  lines: readonly StepStatusLine[],
+  reconciled: ReconcileReport,
+): string {
   const rows = lines.map((l) => {
     const mark = l.status === "done" ? "[done]" : l.status === "disabled" ? "[skipped]" : "[ ]";
     return `${mark} ${l.id} — ${l.title}${l.note ? ` (${l.note})` : ""}`;
   });
-  const demoted = reconciled.demoted.map((d) => `re-verification demoted ${d.id}: ${d.failures.join("; ")}`);
+  const demoted = reconciled.demoted.map(
+    (d) => `re-verification demoted ${d.id}: ${d.failures.join("; ")}`,
+  );
   return [
     "Onboarding checklist (claimed-done steps were just re-verified against reality):",
     ...rows,
@@ -90,7 +104,10 @@ export function renderStatus(lines: readonly StepStatusLine[], reconciled: Recon
  * assert the finish tool's refusal/exit behaviour without a pi; activate wires
  * the real ctx probe.
  */
-export function toolDefinitions(engine: OnboardingEngine, shutdown: (ctx?: PiToolContext) => void): PiToolDefinition[] {
+export function toolDefinitions(
+  engine: OnboardingEngine,
+  shutdown: (ctx?: PiToolContext) => void,
+): PiToolDefinition[] {
   const stepTools: PiToolDefinition[] = engine.stepDefs().map((step) => ({
     name: `onboard_${step.id}`,
     label: step.title,
@@ -104,7 +121,9 @@ export function toolDefinitions(engine: OnboardingEngine, shutdown: (ctx?: PiToo
     parameters: step.parameters ?? NO_PARAMS,
     execute: async (_id, params) => {
       const result = await engine.runStep(step.id, params ?? {});
-      const head = result.ok ? `Step "${step.id}" completed and recorded.` : `Step "${step.id}" FAILED — fix the red checks and run it again.`;
+      const head = result.ok
+        ? `Step "${step.id}" completed and recorded.`
+        : `Step "${step.id}" FAILED — fix the red checks and run it again.`;
       return text(`${head}\n${renderChecks(result.checks)}`);
     },
   }));
@@ -135,7 +154,9 @@ export function toolDefinitions(engine: OnboardingEngine, shutdown: (ctx?: PiToo
     execute: async (_id, _params, _signal, _onUpdate, ctx) => {
       const result = await engine.finish();
       if (!result.ok) {
-        const red = result.results.filter((r) => !r.ok).map((r) => `✗ ${r.id}: ${r.failures.join("; ") || "not verified"}`);
+        const red = result.results
+          .filter((r) => !r.ok)
+          .map((r) => `✗ ${r.id}: ${r.failures.join("; ") || "not verified"}`);
         return text(
           `Not finished — these verifications are red:\n${red.join("\n")}\n` +
             "Fix them (or run the step tools again), then call finish_and_exit once more.",
@@ -162,7 +183,9 @@ export function toolDefinitions(engine: OnboardingEngine, shutdown: (ctx?: PiToo
 const activate = (pi: Pi): void => {
   if (typeof pi.registerTool !== "function") {
     // Degrade loudly, never wedge: pi still starts, the guide can only talk.
-    console.error("onboarding: pi.registerTool unavailable — no wizard tools registered; this pi cannot run onboarding.");
+    console.error(
+      "onboarding: pi.registerTool unavailable — no wizard tools registered; this pi cannot run onboarding.",
+    );
     return;
   }
   const root = process.env.QCR_ROOT ?? process.cwd();
@@ -174,7 +197,9 @@ const activate = (pi: Pi): void => {
       // PiToolContext). Bound to the named onboarding smoke step.
       void fn.call(ctx ?? pi);
     } else {
-      console.error("onboarding: no shutdown API on this pi — type /exit to leave; the wizard will open the TUI.");
+      console.error(
+        "onboarding: no shutdown API on this pi — type /exit to leave; the wizard will open the TUI.",
+      );
     }
   };
   for (const def of toolDefinitions(engine, shutdown)) pi.registerTool(def);

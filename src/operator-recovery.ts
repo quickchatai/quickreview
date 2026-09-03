@@ -62,12 +62,12 @@ export async function recoverPrForOperator(
 
   const failure = deps.store.openReviewFailure(pr);
   if (
-    mode === "rerun-round"
-    && failure?.stage === "posting_receipt"
-    && failure.command_id !== null
-    && failure.round_id !== null
-    && failure.round_no !== null
-    && failure.head_sha !== ""
+    mode === "rerun-round" &&
+    failure?.stage === "posting_receipt" &&
+    failure.command_id !== null &&
+    failure.round_id !== null &&
+    failure.round_no !== null &&
+    failure.head_sha !== ""
   ) {
     const retired = deps.store.resolveExactHeadReviewedFailure({
       pr,
@@ -96,21 +96,31 @@ export async function recoverPrForOperator(
   if (mode === "restart-session") {
     if (!deps.killSession) return { ok: false, reason: "restart-session kill hook unavailable" };
 
-    const payloads: Array<{ command: (typeof blockers)[number]; payload: Buffer; text: string }> = [];
+    const payloads: Array<{ command: (typeof blockers)[number]; payload: Buffer; text: string }> =
+      [];
     for (const command of blockers) {
       let payload: Buffer;
       try {
         payload = readFileSync(command.payload_path);
       } catch (error) {
-        return { ok: false, reason: `session command ${command.id} payload unreadable: ${String(error)}` };
+        return {
+          ok: false,
+          reason: `session command ${command.id} payload unreadable: ${String(error)}`,
+        };
       }
       const actual = createHash("sha256").update(payload).digest("hex");
       if (actual !== command.payload_sha256) {
-        return { ok: false, reason: `session command ${command.id} payload hash ${actual} != ${command.payload_sha256}` };
+        return {
+          ok: false,
+          reason: `session command ${command.id} payload hash ${actual} != ${command.payload_sha256}`,
+        };
       }
       const text = payload.toString("utf8");
       if (!Buffer.from(text, "utf8").equals(payload)) {
-        return { ok: false, reason: `session command ${command.id} payload is not UTF-8; refusing byte-changing recovery` };
+        return {
+          ok: false,
+          reason: `session command ${command.id} payload is not UTF-8; refusing byte-changing recovery`,
+        };
       }
       payloads.push({ command, payload, text });
     }
@@ -122,13 +132,18 @@ export async function recoverPrForOperator(
     // concurrent dispatch can birth a replacement Pi beside stale input. If
     // the exact blocker set changed while kill was in flight, restore the
     // quarantined files and leave the winner untouched.
-    const quarantined: Array<{ commandId: string; injectPath: string; quarantinePath: string }> = [];
+    const quarantined: Array<{ commandId: string; injectPath: string; quarantinePath: string }> =
+      [];
     try {
       for (const { command } of payloads) {
         if (!existsSync(command.inject_path)) continue;
         const quarantinePath = `${command.inject_path}.operator-recovery-${randomUUID()}`;
         renameSync(command.inject_path, quarantinePath);
-        quarantined.push({ commandId: command.id, injectPath: command.inject_path, quarantinePath });
+        quarantined.push({
+          commandId: command.id,
+          injectPath: command.inject_path,
+          quarantinePath,
+        });
       }
       reset = deps.store.cancelBlockingSessionCommandsForOperator(
         pr,
@@ -139,13 +154,16 @@ export async function recoverPrForOperator(
         blockers.map((command) => command.id),
       );
     } catch (error) {
-      const stillBlocking = new Set(deps.store.blockingSessionCommandsForPr(pr).map((command) => command.id));
+      const stillBlocking = new Set(
+        deps.store.blockingSessionCommandsForPr(pr).map((command) => command.id),
+      );
       for (const { commandId, injectPath, quarantinePath } of [...quarantined].reverse()) {
         if (!existsSync(quarantinePath)) continue;
         // Restore only a command that still owns work. If settlement won the
         // fence, putting its old file back into *.md would duplicate delivery
         // beside the successor that caused the blocker-set CAS to refuse.
-        if (stillBlocking.has(commandId) && !existsSync(injectPath)) renameSync(quarantinePath, injectPath);
+        if (stillBlocking.has(commandId) && !existsSync(injectPath))
+          renameSync(quarantinePath, injectPath);
         else rmSync(quarantinePath, { force: true });
       }
       throw error;
@@ -153,9 +171,10 @@ export async function recoverPrForOperator(
     for (const { quarantinePath } of quarantined) rmSync(quarantinePath, { force: true });
   }
 
-  const migrationMarkRepaired = failure?.stage === "posting_receipt"
-    ? deps.store.repairMigrationPrecheckReviewedHead(pr)
-    : false;
+  const migrationMarkRepaired =
+    failure?.stage === "posting_receipt"
+      ? deps.store.repairMigrationPrecheckReviewedHead(pr)
+      : false;
   const cancelled = deps.store.cancelRunningRounds(pr, mode);
   const recoveredFailure = deps.store.recoverReviewFailure(pr, mode);
   const successor = deps.store.successorFor(pr);
@@ -163,11 +182,12 @@ export async function recoverPrForOperator(
   // A human may explicitly retrigger the unchanged head while old receipt debt
   // waits for recovery. It is already queued; replacing its timestamp and
   // provenance with an operator-system trigger would erase that new request.
-  else if (!(row.state === "queued" && row.trigger_ts !== null && row.trigger_provenance === "human")) {
-    deps.store.queuePrForOperatorRecovery(
-      pr,
-      (deps.now ?? (() => new Date()))().toISOString(),
-    );
+  else if (!(
+    row.state === "queued" &&
+    row.trigger_ts !== null &&
+    row.trigger_provenance === "human"
+  )) {
+    deps.store.queuePrForOperatorRecovery(pr, (deps.now ?? (() => new Date()))().toISOString());
   }
 
   await deps.pump();

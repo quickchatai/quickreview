@@ -35,7 +35,13 @@ import { loadConfig } from "../../config.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 import { configPath, readConfigText, rootOf, writeAtomic, type StreamRunner } from "./compose.js";
 import { patchToml } from "./configfill.js";
-import { PROOF_CHOICE_KEY, PROOF_STEP_ID, parseProofRecord, parseWhy, type ProofRecord } from "./proof.js";
+import {
+  PROOF_CHOICE_KEY,
+  PROOF_STEP_ID,
+  parseProofRecord,
+  parseWhy,
+  type ProofRecord,
+} from "./proof.js";
 import { stackTransportFor, type StackTransport, type TransportOptions } from "./transport.js";
 
 export const GO_LIVE_STEP_ID = "go_live";
@@ -80,15 +86,24 @@ export class GoLiveRefused extends Error {}
  * carry a `dry_run` key to change (we never INVENT the flag: a config without
  * it is not a config this step understands).
  */
-export function flipDryRunToFalse(toml: string, guards: { confirmation: unknown; proof: ProofRecord | null }): string {
+export function flipDryRunToFalse(
+  toml: string,
+  guards: { confirmation: unknown; proof: ProofRecord | null },
+): string {
   if (!isGoLiveConfirmation(guards.confirmation)) {
-    throw new GoLiveRefused(`refusing to change dry_run: the flip needs the explicit confirmation "${GO_LIVE_CONFIRMATION}"`);
+    throw new GoLiveRefused(
+      `refusing to change dry_run: the flip needs the explicit confirmation "${GO_LIVE_CONFIRMATION}"`,
+    );
   }
   if (guards.proof === null) {
-    throw new GoLiveRefused("refusing to change dry_run: the flip is only offered after a completed proof round");
+    throw new GoLiveRefused(
+      "refusing to change dry_run: the flip is only offered after a completed proof round",
+    );
   }
   if (!/^\s*dry_run\s*=/m.test(toml)) {
-    throw new GoLiveRefused("refusing to change dry_run: this config.toml has no dry_run key — edit it by hand and re-run");
+    throw new GoLiveRefused(
+      "refusing to change dry_run: this config.toml has no dry_run key — edit it by hand and re-run",
+    );
   }
   return patchToml(toml, [{ section: "", key: "dry_run", value: "false" }]);
 }
@@ -110,7 +125,9 @@ function transportOptionsOf(opts: GoLiveStepOptions): TransportOptions {
 }
 
 function decisionOf(input: Readonly<Record<string, unknown>>): GoLiveDecision | null {
-  const raw = String(input.decision ?? "").trim().toLowerCase();
+  const raw = String(input.decision ?? "")
+    .trim()
+    .toLowerCase();
   if (raw === "go_live" || raw === "live" || raw === "yes") return "go_live";
   if (raw === "stay_dry_run" || raw === "dry_run" || raw === "no") return "stay_dry_run";
   return null;
@@ -132,7 +149,10 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
    * entry alone is NOT enough: it is a file, and this is the one decision in
    * the wizard where a file must not be the evidence.
    */
-  async function provenProof(ctx: StepContext, transport: StackTransport): Promise<{ proof: ProofRecord | null; detail: string }> {
+  async function provenProof(
+    ctx: StepContext,
+    transport: StackTransport,
+  ): Promise<{ proof: ProofRecord | null; detail: string }> {
     const recorded = parseProofRecord(ctx.choices[PROOF_CHOICE_KEY]);
     if (!recorded) {
       return {
@@ -142,7 +162,13 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
           `pull request reviewed end to end and read the result — run the ${PROOF_STEP_ID} step first.`,
       };
     }
-    const r = await transport.exec(["node", "dist/src/cli.js", "why", String(recorded.pr), "--json"]);
+    const r = await transport.exec([
+      "node",
+      "dist/src/cli.js",
+      "why",
+      String(recorded.pr),
+      "--json",
+    ]);
     const obs = r.code === 0 ? parseWhy(r.stdout) : null;
     if (obs === null) {
       return {
@@ -171,7 +197,7 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
     explain:
       "The last decision, and it belongs to the operator. Read out what dry-run is and what going live means, then ask. " +
       "Do not push: declining is a completely normal outcome and leaves a fully working installation. Call this tool with no " +
-      "arguments to get the explanation to read out; then call it again with decision: \"stay_dry_run\", or with " +
+      'arguments to get the explanation to read out; then call it again with decision: "stay_dry_run", or with ' +
       `decision: "go_live" AND confirm: "${GO_LIVE_CONFIRMATION}" if — and only if — they said so explicitly.`,
     order: 78,
     parameters: {
@@ -180,7 +206,8 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
         decision: {
           type: "string",
           enum: ["go_live", "stay_dry_run"],
-          description: "The operator's own answer. Omit to have the step explain dry-run and going live so you can ask them.",
+          description:
+            "The operator's own answer. Omit to have the step explain dry-run and going live so you can ask them.",
         },
         confirm: {
           type: "string",
@@ -256,25 +283,59 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
 
       const configText = readConfigText(root);
       if (configText === null) {
-        return { ok: false, checks: [{ name: "config", ok: false, detail: `${configPath(root)} is not readable — nothing was changed` }] };
+        return {
+          ok: false,
+          checks: [
+            {
+              name: "config",
+              ok: false,
+              detail: `${configPath(root)} is not readable — nothing was changed`,
+            },
+          ],
+        };
       }
       let flipped: string;
       try {
         flipped = flipDryRunToFalse(configText, { confirmation: ctx.input.confirm, proof });
       } catch (err) {
-        return { ok: false, checks: [{ name: "flip", ok: false, detail: `${String((err as Error).message)} — nothing was changed` }] };
+        return {
+          ok: false,
+          checks: [
+            {
+              name: "flip",
+              ok: false,
+              detail: `${String((err as Error).message)} — nothing was changed`,
+            },
+          ],
+        };
       }
       // The real loader decides, before anything reaches config.toml.
       const probe = join(ctx.adapters.paths.stateDir, "onboarding", "config.golive.toml");
       try {
         writeAtomic(probe, flipped);
         if (loadConfig(probe).dry_run !== false) {
-          return { ok: false, checks: [{ name: "flip", ok: false, detail: "the edited config did not read back as dry_run = false — nothing was changed" }] };
+          return {
+            ok: false,
+            checks: [
+              {
+                name: "flip",
+                ok: false,
+                detail:
+                  "the edited config did not read back as dry_run = false — nothing was changed",
+              },
+            ],
+          };
         }
       } catch (err) {
         return {
           ok: false,
-          checks: [{ name: "flip", ok: false, detail: `the edited config would not load (${String((err as Error).message)}) — nothing was changed` }],
+          checks: [
+            {
+              name: "flip",
+              ok: false,
+              detail: `the edited config would not load (${String((err as Error).message)}) — nothing was changed`,
+            },
+          ],
         };
       } finally {
         rmSync(probe, { force: true });
@@ -291,15 +352,32 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
         },
       ];
       const running = await transport.running();
-      checks.push(await transport.restart((line) => ctx.adapters.log?.(`${GO_LIVE_STEP_ID}: ${line}`), running));
+      checks.push(
+        await transport.restart(
+          (line) => ctx.adapters.log?.(`${GO_LIVE_STEP_ID}: ${line}`),
+          running,
+        ),
+      );
       const now = currentDryRun(root);
       checks.push(
         now === false
-          ? { name: "confirmed", ok: true, detail: "the config on disk reads back as dry_run = false" }
-          : { name: "confirmed", ok: false, detail: `the config on disk reads back as dry_run = ${String(now)} — check ${configPath(root)} by hand` },
+          ? {
+              name: "confirmed",
+              ok: true,
+              detail: "the config on disk reads back as dry_run = false",
+            }
+          : {
+              name: "confirmed",
+              ok: false,
+              detail: `the config on disk reads back as dry_run = ${String(now)} — check ${configPath(root)} by hand`,
+            },
       );
       if (checks.every((c) => c.ok)) ctx.recordChoice(GO_LIVE_CHOICE_KEY, "live");
-      return { ok: checks.every((c) => c.ok), checks, data: { decision: "live", flipped_at: ctx.adapters.clock().toISOString() } };
+      return {
+        ok: checks.every((c) => c.ok),
+        checks,
+        data: { decision: "live", flipped_at: ctx.adapters.clock().toISOString() },
+      };
     },
 
     async verify(ctx): Promise<StepReport> {
@@ -333,7 +411,16 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
         };
       }
       return dryRun === false
-        ? { ok: true, checks: [{ name: "decision", ok: true, detail: "live, by the operator's own ratified flip — dry_run = false on disk" }] }
+        ? {
+            ok: true,
+            checks: [
+              {
+                name: "decision",
+                ok: true,
+                detail: "live, by the operator's own ratified flip — dry_run = false on disk",
+              },
+            ],
+          }
         : {
             ok: false,
             checks: [

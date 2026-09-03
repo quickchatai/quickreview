@@ -30,7 +30,11 @@ export interface RemoteResult {
  * `realLocalCommandRunner` (the laptop topology: the same argv runs on THIS
  * machine, `host` ignored, no ssh anywhere). `runnerFor(cfg)` picks; callers
  * keep calling `ssh(cfg.ssh_host, someArgv(cfg))` untouched. */
-export type SshRunner = (host: string, argv: string[], opts?: { stdin?: string; timeoutMs?: number }) => Promise<RemoteResult>;
+export type SshRunner = (
+  host: string,
+  argv: string[],
+  opts?: { stdin?: string; timeoutMs?: number },
+) => Promise<RemoteResult>;
 
 /**: transport of every TUI remote op. Driven by the explicit
  * `[tui] target` knob ONLY — never inferred from ssh_host's value. */
@@ -51,7 +55,15 @@ export function statusArgv(cfg: TuiConfig): string[] {
 
 /** In-container `qcr why <n> --json`. */
 export function whyArgv(cfg: TuiConfig, pr: number): string[] {
-  return [...dockerPrefix(cfg), cfg.container, "node", "dist/src/cli.js", "why", String(pr), "--json"];
+  return [
+    ...dockerPrefix(cfg),
+    cfg.container,
+    "node",
+    "dist/src/cli.js",
+    "why",
+    String(pr),
+    "--json",
+  ];
 }
 
 /**
@@ -65,7 +77,16 @@ export function progressArgv(cfg: TuiConfig, pr: number): string[] {
 
 /** In-container `qcr events --tail <k> --json`. */
 export function eventsArgv(cfg: TuiConfig, tail: number): string[] {
-  return [...dockerPrefix(cfg), cfg.container, "node", "dist/src/cli.js", "events", "--tail", String(tail), "--json"];
+  return [
+    ...dockerPrefix(cfg),
+    cfg.container,
+    "node",
+    "dist/src/cli.js",
+    "events",
+    "--tail",
+    String(tail),
+    "--json",
+  ];
 }
 
 /** In-container `qcr today --json` (digest tab's spend/rounds source). */
@@ -80,7 +101,16 @@ export function metricsArgv(cfg: TuiConfig): string[] {
 
 /** In-container `qcr metrics --pr <n> --json` (the per-PR timeline). */
 export function metricsPrArgv(cfg: TuiConfig, pr: number): string[] {
-  return [...dockerPrefix(cfg), cfg.container, "node", "dist/src/cli.js", "metrics", "--pr", String(pr), "--json"];
+  return [
+    ...dockerPrefix(cfg),
+    cfg.container,
+    "node",
+    "dist/src/cli.js",
+    "metrics",
+    "--pr",
+    String(pr),
+    "--json",
+  ];
 }
 
 /**
@@ -127,14 +157,33 @@ export interface CaptureRange {
  * hand it to a transport that space-joins unquoted: the remote shell would
  * split on the `;` and run the second half as its own command.
  */
-export function captureArgv(cfg: TuiConfig, session: string, range?: CaptureRange, size?: { cols: number; rows: number }): string[] {
+export function captureArgv(
+  cfg: TuiConfig,
+  session: string,
+  range?: CaptureRange,
+  size?: { cols: number; rows: number },
+): string[] {
   const window: string[] = [];
   if (range && range.startBack > 0) {
     window.push("-S", `-${range.startBack}`);
     if (range.endBack !== undefined && range.endBack > 0) window.push("-E", `-${range.endBack}`);
   }
-  const resize: string[] = size ? ["resize-window", "-t", session, "-x", String(size.cols), "-y", String(size.rows), ";"] : [];
-  return [...dockerPrefix(cfg), cfg.container, "tmux", ...resize, "capture-pane", "-e", "-p", "-J", ...window, "-t", session];
+  const resize: string[] = size
+    ? ["resize-window", "-t", session, "-x", String(size.cols), "-y", String(size.rows), ";"]
+    : [];
+  return [
+    ...dockerPrefix(cfg),
+    cfg.container,
+    "tmux",
+    ...resize,
+    "capture-pane",
+    "-e",
+    "-p",
+    "-J",
+    ...window,
+    "-t",
+    session,
+  ];
 }
 
 /**
@@ -218,7 +267,8 @@ export const realSshRunner: SshRunner = (host, argv, opts) =>
  */
 export const realLocalCommandRunner: SshRunner = (_host, argv, opts) => {
   const [bin, ...rest] = argv;
-  if (bin === undefined) return Promise.resolve({ ok: false, stdout: "", stderr: "empty argv", code: null });
+  if (bin === undefined)
+    return Promise.resolve({ ok: false, stdout: "", stderr: "empty argv", code: null });
   return runChild(bin, rest, opts);
 };
 
@@ -228,7 +278,11 @@ export function runnerFor(cfg: TuiConfig): SshRunner {
   return transportOf(cfg) === "local" ? realLocalCommandRunner : realSshRunner;
 }
 
-function runChild(bin: string, args: string[], opts?: { stdin?: string; timeoutMs?: number }): Promise<RemoteResult> {
+function runChild(
+  bin: string,
+  args: string[],
+  opts?: { stdin?: string; timeoutMs?: number },
+): Promise<RemoteResult> {
   return new Promise((resolvePromise) => {
     const child = spawn(bin, args, { stdio: ["pipe", "pipe", "pipe"] });
     inFlightSsh.add(child);

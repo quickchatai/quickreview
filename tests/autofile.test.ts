@@ -8,7 +8,16 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseEventTags } from "../src/memory/eventtags.js";
 import type { MemoryOp, MemoryStore } from "../src/memory/store.js";
-import { autofileDefects, claimNextId, filedAs, filedKeys, memoryKey, ticketBody, withFiledTag, type TrackerPaths } from "../src/tui/autofile.js";
+import {
+  autofileDefects,
+  claimNextId,
+  filedAs,
+  filedKeys,
+  memoryKey,
+  ticketBody,
+  withFiledTag,
+  type TrackerPaths,
+} from "../src/tui/autofile.js";
 import type { MemoryEntry } from "../src/tui/memory.js";
 
 const entry = (over: Partial<MemoryEntry> = {}): MemoryEntry => ({
@@ -33,7 +42,9 @@ function recordingStore(ok = true): MemoryStore & { ops: MemoryOp[] } {
     search: async () => [],
     apply: async (op) => {
       ops.push(op);
-      return ok ? { ok: true, message: "updated" } : { ok: false, message: "refused: the entry changed since you read it" };
+      return ok
+        ? { ok: true, message: "updated" }
+        : { ok: false, message: "refused: the entry changed since you read it" };
     },
   };
 }
@@ -113,14 +124,24 @@ describe("autofile", () => {
   });
 
   it("withFiledTag lands the tag in the header, where parseEventTags reads it", () => {
-    expect(withFiledTag("#bug kind=bug pr=5180 lingering flag.", "FT-0170")).toBe("#bug kind=bug pr=5180 filed=FT-0170 lingering flag.");
-    expect(parseEventTags(withFiledTag("#bug lingering flag.", "FT-0170"))["filed"]).toBe("FT-0170");
+    expect(withFiledTag("#bug kind=bug pr=5180 lingering flag.", "FT-0170")).toBe(
+      "#bug kind=bug pr=5180 filed=FT-0170 lingering flag.",
+    );
+    expect(parseEventTags(withFiledTag("#bug lingering flag.", "FT-0170"))["filed"]).toBe(
+      "FT-0170",
+    );
     // Prose quoting a tag cannot mint one — the header scan stops at the prose.
-    expect(filedAs(entry({ text: "#bug the author wrote filed=FT-9999 in a comment." }))).toBeUndefined();
+    expect(
+      filedAs(entry({ text: "#bug the author wrote filed=FT-9999 in a comment." })),
+    ).toBeUndefined();
   });
 
   it("two distinct defects get two keys and two tickets", async () => {
-    const filed = await autofileDefects(paths, [entry(), entry({ id: "reviewer:experiences/b.md", text: "#bug another defect entirely." })], "2026-08-20T10:00:00Z");
+    const filed = await autofileDefects(
+      paths,
+      [entry(), entry({ id: "reviewer:experiences/b.md", text: "#bug another defect entirely." })],
+      "2026-08-20T10:00:00Z",
+    );
     expect(filed).toHaveLength(2);
     expect(new Set(filed.map((f) => f.key)).size).toBe(2);
   });
@@ -131,7 +152,11 @@ describe("autofile", () => {
   });
 
   it("never throws when the tracker is missing", async () => {
-    const gone: TrackerPaths = { root: join(root, "nope"), effort: "review-sandbox", parent: "FT-0026" };
+    const gone: TrackerPaths = {
+      root: join(root, "nope"),
+      effort: "review-sandbox",
+      parent: "FT-0026",
+    };
     await expect(autofileDefects(gone, [entry()], "2026-08-20T10:00:00Z")).resolves.toEqual([]);
   });
 

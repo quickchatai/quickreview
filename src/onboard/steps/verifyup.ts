@@ -108,11 +108,21 @@ interface ApiAnswer {
   error: string;
 }
 
-async function api(ctx: StepContext, url: string, jwt: string, init?: RequestInit): Promise<ApiAnswer> {
+async function api(
+  ctx: StepContext,
+  url: string,
+  jwt: string,
+  init?: RequestInit,
+): Promise<ApiAnswer> {
   try {
     const res = await ctx.adapters.fetch(url, {
       ...init,
-      headers: { accept: "application/vnd.github+json", authorization: `Bearer ${jwt}`, "user-agent": "quickreview-onboarding", ...(init?.headers ?? {}) },
+      headers: {
+        accept: "application/vnd.github+json",
+        authorization: `Bearer ${jwt}`,
+        "user-agent": "quickreview-onboarding",
+        ...(init?.headers ?? {}),
+      },
     });
     const text = await res.text();
     let body: unknown = null;
@@ -202,7 +212,7 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
         ok: false,
         detail:
           `${rows.length} deliveries in the App's log and none of them a ping — Fix: GitHub sends a ping when the webhook is ` +
-          "(re)configured. Open the App's Advanced tab and use \"Redeliver\" on any delivery, or change and re-save the webhook URL. " +
+          '(re)configured. Open the App\'s Advanced tab and use "Redeliver" on any delivery, or change and re-save the webhook URL. ' +
           "Reviews would still be triggered by the reconcile poll, but author replies and the feedback loop are webhook-only",
       });
       return checks;
@@ -213,8 +223,12 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
       checks.push({ name: "ping-delivery", ok: false, detail: failedPingDetail(failed) });
       return checks;
     }
-    ctx.adapters.log?.(`${VERIFY_STACK_STEP_ID}: the last ping was not delivered (HTTP ${failed.status_code}) — asking GitHub to redeliver it`);
-    const attempt = await api(ctx, `${apiBase}/app/hook/deliveries/${failed.id}/attempts`, jwt, { method: "POST" });
+    ctx.adapters.log?.(
+      `${VERIFY_STACK_STEP_ID}: the last ping was not delivered (HTTP ${failed.status_code}) — asking GitHub to redeliver it`,
+    );
+    const attempt = await api(ctx, `${apiBase}/app/hook/deliveries/${failed.id}/attempts`, jwt, {
+      method: "POST",
+    });
     if (attempt.status !== 202 && attempt.status !== 200) {
       checks.push({
         name: "ping-delivery",
@@ -239,9 +253,15 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
         });
         return checks;
       }
-      ctx.adapters.log?.(`${VERIFY_STACK_STEP_ID}: no accepted ping yet (${i}/${pingPollAttempts}) — still watching GitHub's delivery log`);
+      ctx.adapters.log?.(
+        `${VERIFY_STACK_STEP_ID}: no accepted ping yet (${i}/${pingPollAttempts}) — still watching GitHub's delivery log`,
+      );
     }
-    checks.push({ name: "ping-delivery", ok: false, detail: failedPingDetail(candidates[0] ?? failed) });
+    checks.push({
+      name: "ping-delivery",
+      ok: false,
+      detail: failedPingDetail(candidates[0] ?? failed),
+    });
     return checks;
   }
 
@@ -266,7 +286,8 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
       checks.push({
         name: "layers",
         ok: false,
-        detail: "the health and ping-delivery layers were not run — a container that is not up cannot answer either of them",
+        detail:
+          "the health and ping-delivery layers were not run — a container that is not up cannot answer either of them",
       });
       return { ok: false, checks };
     }
@@ -279,7 +300,8 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
       checks.push({
         name: "layers",
         ok: false,
-        detail: "the ping-delivery layer was not run — GitHub cannot deliver to a daemon that is not answering",
+        detail:
+          "the ping-delivery layer was not run — GitHub cannot deliver to a daemon that is not answering",
       });
       return { ok: false, checks };
     }

@@ -35,8 +35,7 @@ export type LeverKind = "drain" | "pause";
  * that lasts until lifted.
  */
 export type LeverGrant =
-  | { issuer: "operator"; expires_at: string | null }
-  | { issuer: "session"; expires_at: string };
+  { issuer: "operator"; expires_at: string | null } | { issuer: "session"; expires_at: string };
 
 /** A hold as stored: the same shape, read back. */
 export interface LeverHold {
@@ -60,9 +59,14 @@ function widerExpiry(a: string | null, b: string | null): string | null {
  *   session over operator    → unchanged (a session never narrows an operator);
  *   same issuer over itself  → extended when the grant reaches later, else unchanged.
  */
-export function mergeHold(current: LeverHold | null, grant: LeverGrant): { hold: LeverHold; outcome: HoldOutcome } {
-  if (!current) return { hold: { issuer: grant.issuer, expires_at: grant.expires_at }, outcome: "engaged" };
-  if (current.issuer === "operator" && grant.issuer === "session") return { hold: current, outcome: "unchanged" };
+export function mergeHold(
+  current: LeverHold | null,
+  grant: LeverGrant,
+): { hold: LeverHold; outcome: HoldOutcome } {
+  if (!current)
+    return { hold: { issuer: grant.issuer, expires_at: grant.expires_at }, outcome: "engaged" };
+  if (current.issuer === "operator" && grant.issuer === "session")
+    return { hold: current, outcome: "unchanged" };
   if (current.issuer === "session" && grant.issuer === "operator") {
     return { hold: { issuer: "operator", expires_at: grant.expires_at }, outcome: "upgraded" };
   }
@@ -86,8 +90,7 @@ export function minutesFromNow(now: Date, minutes: number): string {
 }
 
 export type SessionGrantVerdict =
-  | { ok: true; minutes: number; expires_at: string }
-  | { ok: false; reason: string };
+  { ok: true; minutes: number; expires_at: string } | { ok: false; reason: string };
 
 /**
  * Bound a session's ask. The bound is applied whether or not the session
@@ -118,7 +121,10 @@ export function boundSessionGrant(input: {
     return { ok: true, minutes, expires_at: minutesFromNow(now, minutes) };
   }
   if (requestedMin > maxMin) {
-    return { ok: false, reason: `${kind}: for_min ${requestedMin} exceeds the session cap of ${maxMin} minutes` };
+    return {
+      ok: false,
+      reason: `${kind}: for_min ${requestedMin} exceeds the session cap of ${maxMin} minutes`,
+    };
   }
   if (requestedMin > remaining) {
     return {
@@ -151,13 +157,20 @@ function grantFor(
   if (issuer === "operator") {
     return {
       ok: true,
-      grant: { issuer: "operator", expires_at: forMin === undefined ? null : minutesFromNow(now, forMin) },
+      grant: {
+        issuer: "operator",
+        expires_at: forMin === undefined ? null : minutesFromNow(now, forMin),
+      },
       charge: () => {},
     };
   }
   const day = opsDay(deps.timezone, now);
-  const maxMin = kind === "drain" ? deps.levers.session_drain_max_min : deps.levers.session_pause_max_min;
-  const budgetMin = kind === "drain" ? deps.levers.session_drain_budget_min_per_day : deps.levers.session_pause_budget_min_per_day;
+  const maxMin =
+    kind === "drain" ? deps.levers.session_drain_max_min : deps.levers.session_pause_max_min;
+  const budgetMin =
+    kind === "drain"
+      ? deps.levers.session_drain_budget_min_per_day
+      : deps.levers.session_pause_budget_min_per_day;
   const verdict = boundSessionGrant({
     kind,
     requestedMin: forMin,
@@ -192,10 +205,12 @@ export async function drainLever(
     if (res.refused) {
       return {
         ok: false,
-        reason: "drain is held by the operator (qcr drain on); only the operator lifts it (qcr drain off) or the next boot's first healthy reconcile",
+        reason:
+          "drain is held by the operator (qcr drain on); only the operator lifts it (qcr drain off) or the next boot's first healthy reconcile",
       };
     }
-    if (res.changed) store.logEvent("drain_off", null, { by: issuer, dropped_deliveries: res.dropped });
+    if (res.changed)
+      store.logEvent("drain_off", null, { by: issuer, dropped_deliveries: res.dropped });
     await afterLift();
     return { ok: true, draining: false, issuer, dropped_deliveries: res.dropped };
   }
@@ -207,11 +222,18 @@ export async function drainLever(
     // Structurally unreachable — a grant that merged has a holder — but the
     // union does not know that, and a lie here ("draining") would be worse
     // than a loud refusal.
-    return { ok: false, reason: "drain did not take: the store reads not draining after the grant" };
+    return {
+      ok: false,
+      reason: "drain did not take: the store reads not draining after the grant",
+    };
   }
   if (res.outcome !== "unchanged") {
     resolved.charge();
-    store.logEvent("drain_on", null, { by: issuer, outcome: res.outcome, expires_at: state.expires_at });
+    store.logEvent("drain_on", null, {
+      by: issuer,
+      outcome: res.outcome,
+      expires_at: state.expires_at,
+    });
   }
   return {
     ok: true,
@@ -238,9 +260,20 @@ export function pauseLever(
   const res = store.pausePr(pr, resolved.grant, reason);
   if (res.outcome !== "unchanged") {
     resolved.charge();
-    store.logEvent("pr_paused", pr, { reason, by: issuer, outcome: res.outcome, expires_at: res.hold.expires_at });
+    store.logEvent("pr_paused", pr, {
+      reason,
+      by: issuer,
+      outcome: res.outcome,
+      expires_at: res.hold.expires_at,
+    });
   }
-  return { ok: true, paused: pr, outcome: res.outcome, issuer: res.hold.issuer, expires_at: res.hold.expires_at };
+  return {
+    ok: true,
+    paused: pr,
+    outcome: res.outcome,
+    issuer: res.hold.issuer,
+    expires_at: res.hold.expires_at,
+  };
 }
 
 /** The `resume-pr` handler: a session cannot lift an operator's pause. */
@@ -254,7 +287,10 @@ export async function resumeLever(
   if (!store.getPr(pr)) return { ok: false, reason: `unknown PR #${pr}` };
   const res = store.resumePr(pr, issuer);
   if (res.refused) {
-    return { ok: false, reason: `PR #${pr} is paused by the operator; only the operator resumes it` };
+    return {
+      ok: false,
+      reason: `PR #${pr} is paused by the operator; only the operator resumes it`,
+    };
   }
   store.promoteSuccessor(pr);
   store.logEvent("pr_resumed", pr, { by: issuer });
@@ -268,7 +304,10 @@ export async function resumeLever(
  * lapsed hold stops binding the moment it lapses — this sweep is the record,
  * not the enforcement. Runs from the dispatch pump.
  */
-export function sweepExpiredLevers(store: StateStore, log: (line: string) => void): { drain: boolean; pauses: number[] } {
+export function sweepExpiredLevers(
+  store: StateStore,
+  log: (line: string) => void,
+): { drain: boolean; pauses: number[] } {
   const expired = store.expireLevers();
   if (expired.drain) {
     store.logEvent("drain_expired", null, {});

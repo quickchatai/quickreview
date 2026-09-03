@@ -124,7 +124,9 @@ export function parseChannelId(input) {
 
 /** Slack member id, as accepted for legacy_owner_slack_id / [slack.users] keys. */
 export function parseUserId(input) {
-  const raw = String(input ?? "").trim().toUpperCase();
+  const raw = String(input ?? "")
+    .trim()
+    .toUpperCase();
   if (/^[UW][A-Z0-9]{5,}$/.test(raw)) return { ok: true, id: raw };
   return {
     ok: false,
@@ -174,7 +176,8 @@ export function renderUsersTable(users) {
 
 /** Human-readable summary of what step 6 is about to write. */
 export function renderSlackValues(values) {
-  const users = values.users instanceof Map ? Object.fromEntries(values.users) : (values.users ?? {});
+  const users =
+    values.users instanceof Map ? Object.fromEntries(values.users) : (values.users ?? {});
   const n = Object.keys(users).length;
   const lines = [
     `  channel           ${values.channel || "(empty)"}${values.channelName ? `  (#${values.channelName})` : ""}`,
@@ -260,14 +263,17 @@ export function patchConfigToml(text, values) {
   const out = lines.slice();
   for (let i = slack.start + 1; i < slack.end; i++) {
     if (values.channel !== undefined) out[i] = replaceScalar(out[i], "channel", values.channel);
-    if (values.channel_kind !== undefined) out[i] = replaceScalar(out[i], "channel_kind", values.channel_kind);
+    if (values.channel_kind !== undefined)
+      out[i] = replaceScalar(out[i], "channel_kind", values.channel_kind);
     if (values.legacy_owner_slack_id !== undefined) {
       out[i] = replaceScalar(out[i], "legacy_owner_slack_id", values.legacy_owner_slack_id);
     }
   }
 
   if (values.users !== undefined) {
-    const entries = renderUsersTable(values.users).split("\n").filter((l) => l !== "");
+    const entries = renderUsersTable(values.users)
+      .split("\n")
+      .filter((l) => l !== "");
     const uStart = out.findIndex((l) => l.trim() === "[slack.users]");
     if (uStart === -1) {
       out.splice(slack.end, 0, "[slack.users]", ...entries, "");
@@ -320,7 +326,8 @@ export function diffLines(beforeText, afterText, context = 2) {
   const keep = new Array(ops.length).fill(false);
   ops.forEach((op, k) => {
     if (op[0] === " ") return;
-    for (let x = Math.max(0, k - context); x <= Math.min(ops.length - 1, k + context); x++) keep[x] = true;
+    for (let x = Math.max(0, k - context); x <= Math.min(ops.length - 1, k + context); x++)
+      keep[x] = true;
   });
   const lines = [];
   let gap = false;
@@ -438,10 +445,13 @@ async function main() {
   };
 
   if (flag("--help") || flag("-h")) {
-    process.stdout.write(readFileSync(fileURLToPath(import.meta.url), "utf8").split("\n")
-      .filter((l) => l.startsWith("//"))
-      .map((l) => l.replace(/^\/\/ ?/, ""))
-      .join("\n") + "\n");
+    process.stdout.write(
+      readFileSync(fileURLToPath(import.meta.url), "utf8")
+        .split("\n")
+        .filter((l) => l.startsWith("//"))
+        .map((l) => l.replace(/^\/\/ ?/, ""))
+        .join("\n") + "\n",
+    );
     process.exit(0);
   }
 
@@ -610,7 +620,8 @@ async function main() {
 
   async function slackCall(method, token, params = {}, httpMethod = "GET") {
     const url = new URL(`https://slack.com/api/${method}`);
-    if (httpMethod === "GET") for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
+    if (httpMethod === "GET")
+      for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
     try {
       const res = await fetch(url, {
         method: httpMethod,
@@ -624,17 +635,23 @@ async function main() {
       const data = await res.json();
       return data;
     } catch (err) {
-      return { ok: false, error: `network_error: ${err instanceof Error ? err.message : String(err)}` };
+      return {
+        ok: false,
+        error: `network_error: ${err instanceof Error ? err.message : String(err)}`,
+      };
     }
   }
 
   const SLACK_ERROR_HELP = {
-    invalid_auth: "Slack rejected the token outright — it is wrong, revoked, or from another workspace. Copy it again from the app page.",
+    invalid_auth:
+      "Slack rejected the token outright — it is wrong, revoked, or from another workspace. Copy it again from the app page.",
     not_authed: "no token reached Slack — the paste was probably truncated.",
     account_inactive: "the token belongs to a deactivated app/user.",
     token_revoked: "this token was revoked (re-installing the app revokes the previous bot token).",
-    missing_scope: "the token is valid but the app lacks a scope — re-check the manifest, then re-install.",
-    channel_not_found: "no channel with that id is visible to this bot. Wrong id, wrong workspace, or a private channel the bot was never invited to.",
+    missing_scope:
+      "the token is valid but the app lacks a scope — re-check the manifest, then re-install.",
+    channel_not_found:
+      "no channel with that id is visible to this bot. Wrong id, wrong workspace, or a private channel the bot was never invited to.",
     not_in_channel: "the bot is not a member of that channel — /invite @quickreview there.",
   };
   const explain = (code) => SLACK_ERROR_HELP[code] ?? `Slack said: ${code}`;
@@ -670,12 +687,22 @@ async function main() {
   para("under the app's “App Manifest” page (a scope change means re-installing, which");
   para("mints a NEW bot token — then re-run this wizard with --force).");
   out();
-  out(manifestYaml("public").split("\n").map((l) => `    ${l}`).join("\n"));
+  out(
+    manifestYaml("public")
+      .split("\n")
+      .map((l) => `    ${l}`)
+      .join("\n"),
+  );
   para("PRIVATE channel variant: add `groups:history` to the bot scopes and");
   para("`message.groups` to the bot events — otherwise Socket Mode delivers nothing");
   para("from a private channel. Step 4 tells you which one you need.");
   out();
-  if (await confirm("write the manifest to a file you can open instead of copying from the terminal?", true)) {
+  if (
+    await confirm(
+      "write the manifest to a file you can open instead of copying from the terminal?",
+      true,
+    )
+  ) {
     const manifestPath = join(REPO, "state", "slack-app-manifest.yaml");
     mkdirSync(dirname(manifestPath), { recursive: true });
     writeFileSync(manifestPath, manifestYaml("public"));
@@ -694,7 +721,9 @@ async function main() {
   let botToken = filePresent(BOT_FILE) ? readFileSync(BOT_FILE, "utf8").trim() : "";
   if (await want(BOT_FILE, "slack_bot_token")) {
     for (;;) {
-      const v = await askHidden("  paste the bot token (input hidden, Enter to submit; empty to skip): ");
+      const v = await askHidden(
+        "  paste the bot token (input hidden, Enter to submit; empty to skip): ",
+      );
       if (v === "") {
         info("skipped slack_bot_token");
         break;
@@ -730,7 +759,9 @@ async function main() {
 
   if (await want(APP_FILE, "slack_app_token")) {
     for (;;) {
-      const v = await askHidden("  paste the app-level token (input hidden, Enter to submit; empty to skip): ");
+      const v = await askHidden(
+        "  paste the app-level token (input hidden, Enter to submit; empty to skip): ",
+      );
       if (v === "") {
         info("skipped slack_app_token");
         break;
@@ -745,7 +776,8 @@ async function main() {
         const res = await slackCall("apps.connections.open", v, {}, "POST");
         if (!res.ok) {
           bad(`apps.connections.open failed — ${explain(res.error)}`);
-          if (res.error === "missing_scope") para("the app-level token needs the connections:write scope");
+          if (res.error === "missing_scope")
+            para("the app-level token needs the connections:write scope");
           if (exhausted()) break;
           continue;
         }
@@ -785,7 +817,9 @@ async function main() {
     }
     channel = parsed.id;
     if (!VERIFY) {
-      channelKind = (await confirm("is that a PRIVATE channel?", channelKind === "private")) ? "private" : "public";
+      channelKind = (await confirm("is that a PRIVATE channel?", channelKind === "private"))
+        ? "private"
+        : "public";
       ok(`channel ${channel} (${channelKind}) — not verified (--no-verify)`);
       break;
     }
@@ -842,7 +876,10 @@ async function main() {
     const members = [];
     let cursor = "";
     for (let page = 0; page < 10; page++) {
-      const res = await slackCall("users.list", botToken, { limit: 200, ...(cursor ? { cursor } : {}) });
+      const res = await slackCall("users.list", botToken, {
+        limit: 200,
+        ...(cursor ? { cursor } : {}),
+      });
       if (!res.ok) {
         bad(`users.list failed — ${explain(res.error)}`);
         return null;
@@ -878,14 +915,18 @@ async function main() {
       }
       const needle = raw.toLowerCase();
       const hits = dir
-        .filter((m) => m.name.toLowerCase().includes(needle) || m.handle.toLowerCase().includes(needle))
+        .filter(
+          (m) => m.name.toLowerCase().includes(needle) || m.handle.toLowerCase().includes(needle),
+        )
         .slice(0, 15);
       if (hits.length === 0) {
         bad(`no member matches “${raw}”`);
         if (exhausted()) return null;
         continue;
       }
-      hits.forEach((m, i) => out(`    ${String(i + 1).padStart(2)}. ${m.id} — ${m.name} (@${m.handle})`));
+      hits.forEach((m, i) =>
+        out(`    ${String(i + 1).padStart(2)}. ${m.id} — ${m.name} (@${m.handle})`),
+      );
       const pick = await ask("  number (Enter to search again): ");
       const idx = Number.parseInt(pick, 10);
       if (Number.isInteger(idx) && idx >= 1 && idx <= hits.length) return hits[idx - 1].id;
@@ -911,7 +952,7 @@ async function main() {
     if (id) legacyOwnerSlackId = id;
     if (legacyOwnerSlackId) {
       const existing = users.get(legacyOwnerSlackId);
-      const login = existing && !FORCE ? existing : (await askLogin(legacyOwnerSlackId)) ?? existing;
+      const login = existing && !FORCE ? existing : ((await askLogin(legacyOwnerSlackId)) ?? existing);
       if (login) {
         users.delete(legacyOwnerSlackId);
         const rest = [...users.entries()];
@@ -937,7 +978,13 @@ async function main() {
   // ---- step 6 — patch config.toml -------------------------------------------
 
   title("Step 6 — write config.toml");
-  const values = { channel, channel_kind: channelKind, legacy_owner_slack_id: legacyOwnerSlackId, users, channelName };
+  const values = {
+    channel,
+    channel_kind: channelKind,
+    legacy_owner_slack_id: legacyOwnerSlackId,
+    users,
+    channelName,
+  };
   out(renderSlackValues(values));
   const patched = patchConfigToml(configText, values);
   out();

@@ -17,7 +17,15 @@
 // command lands a `tier: ` reason and does nothing else, and NOT ONE GitHub
 // fetch happens anywhere in the Slack path — this feature adds no GitHub
 // mutation, so the MutationGate has nothing new to guard.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,7 +47,8 @@ const PR = 4242;
 
 let clock = new Date("2026-08-17T09:00:00.000Z");
 const now = (): Date => new Date(clock);
-const slackTs = (d: Date, seq: number): string => `${Math.floor(d.getTime() / 1000)}.${String(seq).padStart(6, "0")}`;
+const slackTs = (d: Date, seq: number): string =>
+  `${Math.floor(d.getTime() / 1000)}.${String(seq).padStart(6, "0")}`;
 
 let dir: string;
 let store: StateStore;
@@ -134,7 +143,7 @@ function event(over: Partial<SlackInboundEvent> = {}): SlackInboundEvent {
 /** Deliver an event exactly as the socket would, and wait for the routing. */
 async function deliver(ev: SlackInboundEvent): Promise<void> {
   expect(transport.handler).toBeTypeOf("function");
-  transport.handler!(ev);
+  void transport.handler!(ev);
   await vi.waitFor(() => expect(store.slackEvent(ev.event_id)).toBeDefined());
   // the handler is fire-and-forget; let the inject + origin write settle
   await new Promise((r) => setTimeout(r, 0));
@@ -149,11 +158,15 @@ function writeSlackCommand(name: string, body: Record<string, unknown>): string 
 }
 
 function resultFile(name: string): Record<string, unknown> {
-  return JSON.parse(readFileSync(join(dir, "commands", "slack", "results", `${name}.result.json`), "utf8"));
+  return JSON.parse(
+    readFileSync(join(dir, "commands", "slack", "results", `${name}.result.json`), "utf8"),
+  );
 }
 
 function ledger(): Array<Record<string, unknown>> {
-  return store.db.prepare("SELECT idem_key, kind, pr, thread_ts, ok, ts FROM slack_posts ORDER BY rowid").all() as never;
+  return store.db
+    .prepare("SELECT idem_key, kind, pr, thread_ts, ok, ts FROM slack_posts ORDER BY rowid")
+    .all() as never;
 }
 
 beforeEach(async () => {
@@ -232,11 +245,20 @@ describe("the full concierge loop", () => {
     const originPath = join(dir, "state", "slack", "origin", injects[0]!.replace(/\.md$/, ".json"));
     expect(existsSync(originPath)).toBe(true);
     const origin = JSON.parse(readFileSync(originPath, "utf8"));
-    expect(origin).toMatchObject({ event_id: ev.event_id, slack_user: ALICE, tier: "author", authorized_prs: [PR] });
+    expect(origin).toMatchObject({
+      event_id: ev.event_id,
+      slack_user: ALICE,
+      tier: "author",
+      authorized_prs: [PR],
+    });
     expect(runtime.origins.latest()?.event_id).toBe(ev.event_id);
 
     // (4) the overseer answers by writing a command file into commands/slack/
-    writeSlackCommand("reply-1", { command: "slack_reply", thread: ev.ts, text: "Round 2 is running now — verdict in ~10 min." });
+    writeSlackCommand("reply-1", {
+      command: "slack_reply",
+      thread: ev.ts,
+      text: "Round 2 is running now — verdict in ~10 min.",
+    });
     await runtime.commands.sweep();
 
     // (5) exactly one post, right channel, right thread, right text
@@ -247,7 +269,11 @@ describe("the full concierge loop", () => {
       thread_ts: ev.ts,
       text: "Round 2 is running now — verdict in ~10 min.",
     });
-    expect(resultFile("reply-1")).toMatchObject({ ok: true, command: "slack_reply", thread: ev.ts });
+    expect(resultFile("reply-1")).toMatchObject({
+      ok: true,
+      command: "slack_reply",
+      thread: ev.ts,
+    });
 
     // (6) ledgered under the command file's own idem key (one post per file)
     const row = store.slackPost("reply:reply-1");
@@ -269,7 +295,9 @@ describe("the full concierge loop", () => {
 
     expect(transport.posts.filter((p) => p.thread_ts === ev.ts)).toHaveLength(1);
     expect(resultFile("reply-2")).toMatchObject({ ok: false });
-    expect(String(resultFile("reply-2").reason)).toContain("already posted (idem_key reply:reply-2)");
+    expect(String(resultFile("reply-2").reason)).toContain(
+      "already posted (idem_key reply:reply-2)",
+    );
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
@@ -285,7 +313,11 @@ describe("tier enforcement in the production path", () => {
     // itself through the legacy command dir, so `file-issue` stays
     // owner-tier on Slack — an author-tier turn is refused outright, with a
     // `tier: ` reason, no GitHub call and no post.
-    writeSlackCommand("issue-1", { command: "file-issue", title: "please fix CI", body: "it is red" });
+    writeSlackCommand("issue-1", {
+      command: "file-issue",
+      title: "please fix CI",
+      body: "it is red",
+    });
     await runtime.commands.sweep();
 
     const result = resultFile("issue-1");
@@ -342,11 +374,21 @@ describe("announcements own the thread", () => {
     const rootTs = store.slackThreadForPr(PR)?.root_ts;
     expect(rootTs).toBeTypeOf("string");
 
-    await runtime.announcer.verdict({ pr: PR, round_no: 1, verdict: "APPROVE", summary: "no blockers", duration_s: 540 });
+    await runtime.announcer.verdict({
+      pr: PR,
+      round_no: 1,
+      verdict: "APPROVE",
+      summary: "no blockers",
+      duration_s: 540,
+    });
 
     const verdictPost = transport.posts.at(-1)!;
     expect(verdictPost.thread_ts).toBe(rootTs);
-    expect(ledger().filter((r) => r.pr === PR).map((r) => r.idem_key)).toEqual([`pickup:${PR}`, `verdict:${PR}:1`]);
+    expect(
+      ledger()
+        .filter((r) => r.pr === PR)
+        .map((r) => r.idem_key),
+    ).toEqual([`pickup:${PR}`, `verdict:${PR}:1`]);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

@@ -89,7 +89,13 @@ export function parseGitLog(stdout: string): ChangeCommit[] {
     if (rec === "") continue;
     const [sha, at, author, subject, ...rest] = rec.split(FS);
     if (!sha || !/^[0-9a-f]{7,40}$/.test(sha)) continue;
-    out.push({ sha, at: at ?? "", author: author ?? "", subject: subject ?? "", body: rest.join(FS) });
+    out.push({
+      sha,
+      at: at ?? "",
+      author: author ?? "",
+      subject: subject ?? "",
+      body: rest.join(FS),
+    });
   }
   return out;
 }
@@ -185,7 +191,8 @@ export function buildEntries(commits: ChangeCommit[], now: string): ChangeEntry[
     if (t[TRAILER_FEEDBACK]) entry.feedback_pr = t[TRAILER_FEEDBACK];
     if (t[TRAILER_ADJUDICATION]) entry.adjudication = t[TRAILER_ADJUDICATION];
     // A revert can be recorded against the full sha or an abbreviation.
-    const rev = reverts.get(c.sha) ?? [...reverts.entries()].find(([k]) => c.sha.startsWith(k))?.[1];
+    const rev =
+      reverts.get(c.sha) ?? [...reverts.entries()].find(([k]) => c.sha.startsWith(k))?.[1];
     if (rev) entry.reverted = rev;
     entries.push(entry);
   }
@@ -259,7 +266,8 @@ export class ChangeRegisterStore {
     }
     try {
       const parsed = JSON.parse(raw) as ChangeRegister;
-      if (!Array.isArray(parsed?.entries)) return { state: "unreadable", reason: "no entries array" };
+      if (!Array.isArray(parsed?.entries))
+        return { state: "unreadable", reason: "no entries array" };
       return { state: "register", register: parsed };
     } catch (err) {
       return { state: "unreadable", reason: errText(err) };
@@ -283,7 +291,8 @@ export class ChangeRegisterStore {
  * stands, but whether it is current is unknown. The tab renders each as its
  * own sentence — neither is "no changes yet" (FT-0397).
  */
-export type ChangeLogProblem = { kind: "register_unreadable"; reason: string } | { kind: "scan_failed"; reason: string };
+export type ChangeLogProblem =
+  { kind: "register_unreadable"; reason: string } | { kind: "scan_failed"; reason: string };
 
 export interface RevertResult {
   ok: boolean;
@@ -334,7 +343,10 @@ export class ChangeLog {
    * the problem; it never blanks the list. */
   private adopt(read: RegisterRead): void {
     if (read.state === "register") this.register = read.register;
-    this.problem = read.state === "unreadable" ? { kind: "register_unreadable", reason: read.reason } : undefined;
+    this.problem =
+      read.state === "unreadable"
+        ? { kind: "register_unreadable", reason: read.reason }
+        : undefined;
   }
 
   /**
@@ -386,11 +398,20 @@ export class ChangeLog {
 
   async revert(sha: string): Promise<RevertResult> {
     const entry = this.register?.entries.find((e) => e.sha === sha);
-    if (!entry) return { ok: false, message: `✖ ${shortSha(sha)} is not in the register — nothing reverted` };
-    if (entry.reverted) return { ok: false, message: `✖ ${entry.short} was already reverted by ${entry.reverted.by}` };
+    if (!entry)
+      return { ok: false, message: `✖ ${shortSha(sha)} is not in the register — nothing reverted` };
+    if (entry.reverted)
+      return {
+        ok: false,
+        message: `✖ ${entry.short} was already reverted by ${entry.reverted.by}`,
+      };
 
     const dirty = await this.local(DIRTY_ARGV);
-    if (!dirty.ok) return { ok: false, message: `✖ git status failed — nothing reverted (${firstLine(dirty.stderr)})` };
+    if (!dirty.ok)
+      return {
+        ok: false,
+        message: `✖ git status failed — nothing reverted (${firstLine(dirty.stderr)})`,
+      };
     const dirtyFiles = dirty.stdout.split("\n").filter((l) => l.trim() !== "");
     if (dirtyFiles.length > 0) {
       return {
@@ -403,15 +424,26 @@ export class ChangeLog {
     if (!res.ok) {
       // A conflicted revert leaves the shared tree half-applied — abort it.
       await this.local(REVERT_ABORT_ARGV).catch(() => undefined);
-      return { ok: false, message: `✖ revert of ${entry.short} failed (aborted, tree unchanged): ${firstLine(res.stderr || res.stdout)}` };
+      return {
+        ok: false,
+        message: `✖ revert of ${entry.short} failed (aborted, tree unchanged): ${firstLine(res.stderr || res.stdout)}`,
+      };
     }
     await this.refresh();
-    return { ok: true, message: `✓ reverted ${entry.short} "${entry.subject}" — local commit only, nothing pushed` };
+    return {
+      ok: true,
+      message: `✓ reverted ${entry.short} "${entry.subject}" — local commit only, nothing pushed`,
+    };
   }
 }
 
 function firstLine(text: string): string {
-  return text.split("\n").find((l) => l.trim() !== "")?.trim() ?? "no output";
+  return (
+    text
+      .split("\n")
+      .find((l) => l.trim() !== "")
+      ?.trim() ?? "no output"
+  );
 }
 
 function errText(err: unknown): string {

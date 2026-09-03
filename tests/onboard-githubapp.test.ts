@@ -17,12 +17,25 @@
 //   * an existing label is success; re-running with everything in place
 //     verifies instead of re-creating.
 import { generateKeyPairSync } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+  mkdirSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { OnboardingEngine, type CheckResult, type OnboardAdapters, type StepReport } from "../src/onboard/engine.js";
+import {
+  OnboardingEngine,
+  type CheckResult,
+  type OnboardAdapters,
+  type StepReport,
+} from "../src/onboard/engine.js";
 import {
   APP_HTML_URL_CHOICE_KEY,
   APP_ID_CHOICE_KEY,
@@ -97,7 +110,13 @@ function ghState(over: Partial<GhState> = {}): GhState {
   return {
     conversion: {
       status: 201,
-      body: { id: 4242, slug: "quick-review-abc123", pem: PEM, webhook_secret: "s".repeat(40), html_url: "https://github.test/apps/quick-review-abc123" },
+      body: {
+        id: 4242,
+        slug: "quick-review-abc123",
+        pem: PEM,
+        webhook_secret: "s".repeat(40),
+        html_url: "https://github.test/apps/quick-review-abc123",
+      },
     },
     installations: [{ id: 77, account: { login: "acme" } }],
     labels: new Set<string>(),
@@ -111,13 +130,19 @@ function ghState(over: Partial<GhState> = {}): GhState {
 }
 
 function ghFetch(s: GhState): typeof fetch {
-  return (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]): Promise<Response> => {
+  return (async (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1],
+  ): Promise<Response> => {
     const url = String(input);
     const method = (init?.method ?? "GET").toUpperCase();
     const path = url.replace(API, "");
     s.calls.push(`${method} ${path}`);
     const json = (status: number, body: unknown): Response =>
-      new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { "content-type": "application/json" },
+      });
 
     if (method === "POST" && /^\/app-manifests\/.+\/conversions$/.test(path)) {
       return s.conversion.status === 201
@@ -125,9 +150,12 @@ function ghFetch(s: GhState): typeof fetch {
         : json(s.conversion.status, s.conversion.body ?? { message: "Not Found" });
     }
     if (method === "GET" && path === "/app") {
-      return s.appStatus === 200 ? json(200, s.appBody) : json(s.appStatus, { message: "bad credentials" });
+      return s.appStatus === 200
+        ? json(200, s.appBody)
+        : json(s.appStatus, { message: "bad credentials" });
     }
-    if (method === "GET" && path.startsWith("/app/installations?")) return json(200, s.installations);
+    if (method === "GET" && path.startsWith("/app/installations?"))
+      return json(200, s.installations);
     if (method === "POST" && /^\/app\/installations\/\d+\/access_tokens$/.test(path)) {
       return json(201, { token: "ghs_installation", expires_at: "2026-08-30T13:00:00Z" });
     }
@@ -139,14 +167,18 @@ function ghFetch(s: GhState): typeof fetch {
     const labelPost = /^\/repos\/([^/]+)\/([^/]+)\/labels$/.exec(path);
     if (method === "POST" && labelPost) {
       const body = JSON.parse(String(init?.body ?? "{}")) as { name: string };
-      if (s.labelCreateStatus && s.labelCreateStatus !== 201) return json(s.labelCreateStatus, { message: "already_exists" });
+      if (s.labelCreateStatus && s.labelCreateStatus !== 201)
+        return json(s.labelCreateStatus, { message: "already_exists" });
       s.labels.add(body.name);
       return json(201, { name: body.name });
     }
     if (method === "GET" && /^\/repos\/[^/]+\/[^/]+$/.test(path)) {
-      return s.repoStatus === 200 ? json(200, { full_name: path.slice(7) }) : json(s.repoStatus, { message: "Not Found" });
+      return s.repoStatus === 200
+        ? json(200, { full_name: path.slice(7) })
+        : json(s.repoStatus, { message: "Not Found" });
     }
-    if (method === "GET" && path.startsWith("/users/")) return json(200, { login: path.slice(7), type: s.ownerType });
+    if (method === "GET" && path.startsWith("/users/"))
+      return json(200, { login: path.slice(7), type: s.ownerType });
     return json(500, { message: `unrouted ${method} ${path}` });
   }) as unknown as typeof fetch;
 }
@@ -173,7 +205,12 @@ interface FakeServer {
 }
 
 function fakeServer(arrival: { code: string | null; detail?: string }): FakeServer {
-  const out: FakeServer = { pages: [], started: 0, closed: 0, factory: null as unknown as CallbackServerFactory };
+  const out: FakeServer = {
+    pages: [],
+    started: 0,
+    closed: 0,
+    factory: null as unknown as CallbackServerFactory,
+  };
   out.factory = async (o) => {
     out.started += 1;
     const url = "http://127.0.0.1:8788/";
@@ -182,7 +219,10 @@ function fakeServer(arrival: { code: string | null; detail?: string }): FakeServ
     const listener: CallbackListener = {
       url,
       redirectUrl,
-      waitForCode: async () => ({ code: arrival.code, detail: arrival.detail ?? "code received on the loopback callback" }),
+      waitForCode: async () => ({
+        code: arrival.code,
+        detail: arrival.detail ?? "code received on the loopback callback",
+      }),
       close: async () => {
         out.closed += 1;
       },
@@ -197,7 +237,11 @@ const refusingServer: CallbackServerFactory = async () => {
   throw new Error("the callback server must not be started when credentials already exist");
 };
 
-function step(_s: GhState, server: CallbackServerFactory, over: Parameters<typeof githubAppStep>[0] = {}) {
+function step(
+  _s: GhState,
+  server: CallbackServerFactory,
+  over: Parameters<typeof githubAppStep>[0] = {},
+) {
   return githubAppStep({
     repoRoot,
     secretsDir,
@@ -223,10 +267,16 @@ async function runStep(
   choices: Record<string, unknown> = {},
   over: Parameters<typeof githubAppStep>[0] = {},
   ad: Partial<OnboardAdapters> = {},
-): Promise<{ engine: OnboardingEngine; report: { ok: boolean; checks: CheckResult[]; failures: string[] } }> {
+): Promise<{
+  engine: OnboardingEngine;
+  report: { ok: boolean; checks: CheckResult[]; failures: string[] };
+}> {
   const engine = new OnboardingEngine([step(s, server, over)], adapters(s, ad));
   // Seed the choices the earlier steps (config/topology) would have recorded.
-  Object.assign((engine as unknown as { checklist: { choices: Record<string, unknown> } }).checklist.choices, ctxChoices(choices));
+  Object.assign(
+    (engine as unknown as { checklist: { choices: Record<string, unknown> } }).checklist.choices,
+    ctxChoices(choices),
+  );
   const report = await engine.runStep(GITHUB_APP_STEP_ID);
   return { engine, report };
 }
@@ -254,7 +304,9 @@ function detail(checks: readonly CheckResult[], name: string): string {
 }
 
 function landCredentials(appId = "4242"): void {
-  expect(writeCredentials(secretsDir, { appId, pem: PEM, webhookSecret: "s".repeat(40) })).toEqual([]);
+  expect(writeCredentials(secretsDir, { appId, pem: PEM, webhookSecret: "s".repeat(40) })).toEqual(
+    [],
+  );
 }
 
 // ---- the manifest artifact ----------------------------------------------------
@@ -275,12 +327,17 @@ describe("the pinned manifest is consumed, never copied", () => {
     });
     expect(rendered.name).toBe("quick-review-abc");
     expect(rendered.redirect_url).toBe("http://127.0.0.1:8788/manifest-callback");
-    expect(rendered.hook_attributes).toEqual({ url: "https://tunnel.example/webhook", active: true });
+    expect(rendered.hook_attributes).toEqual({
+      url: "https://tunnel.example/webhook",
+      active: true,
+    });
     expect(rendered.default_permissions).toEqual(pinnedManifest.default_permissions);
     expect(rendered.default_events).toEqual(pinnedManifest.default_events);
     expect(Object.keys(rendered).some((k) => k.startsWith("$"))).toBe(false);
     // No webhook URL yet ⇒ the artifact's placeholder rides through untouched.
-    expect(renderManifest(pinnedManifest, { name: "n", redirectUrl: "r" }).hook_attributes.url).toBe(pinnedManifest.hook_attributes.url);
+    expect(
+      renderManifest(pinnedManifest, { name: "n", redirectUrl: "r" }).hook_attributes.url,
+    ).toBe(pinnedManifest.hook_attributes.url);
   });
 
   it("the served page posts the pinned permissions and events verbatim", async () => {
@@ -317,7 +374,9 @@ describe("the pinned manifest is consumed, never copied", () => {
 describe("personal vs organization targeting", () => {
   it("the org URL differs from the personal one only in path", () => {
     expect(appCreationUrl({ kind: "personal" }, GH)).toBe(`${GH}/settings/apps/new`);
-    expect(appCreationUrl({ kind: "org", login: "acme" }, GH)).toBe(`${GH}/organizations/acme/settings/apps/new`);
+    expect(appCreationUrl({ kind: "org", login: "acme" }, GH)).toBe(
+      `${GH}/organizations/acme/settings/apps/new`,
+    );
     expect(parseTargetChoice("personal")).toEqual({ kind: "personal" });
     expect(parseTargetChoice("org:acme")).toEqual({ kind: "org", login: "acme" });
     expect(parseTargetChoice("nonsense")).toBeNull();
@@ -369,12 +428,18 @@ describe("personal vs organization targeting", () => {
     const s = ghState({ ownerType: "User" });
     const server = fakeServer({ code: "code-1" });
     const asked: string[] = [];
-    const { engine } = await runStep(s, server.factory, {}, {}, {
-      prompter: async (q) => {
-        asked.push(q);
-        return "acme";
+    const { engine } = await runStep(
+      s,
+      server.factory,
+      {},
+      {},
+      {
+        prompter: async (q) => {
+          asked.push(q);
+          return "acme";
+        },
       },
-    });
+    );
     expect(asked[0]).toMatch(/personal account, or under an organization/);
     expect(engine.choices()[APP_TARGET_CHOICE_KEY]).toBe("org:acme");
     expect(s.calls.some((c) => c.startsWith("GET /users/"))).toBe(false);
@@ -387,7 +452,9 @@ describe("happy path: one click to a credentialed, installed, labelled App", () 
   it("exchanges the code, lands the credentials 0600, verifies the install and creates the labels", async () => {
     const s = ghState();
     const server = fakeServer({ code: "one-time-code" });
-    const { engine, report } = await runStep(s, server.factory, { [APP_TARGET_CHOICE_KEY]: "org:acme" });
+    const { engine, report } = await runStep(s, server.factory, {
+      [APP_TARGET_CHOICE_KEY]: "org:acme",
+    });
 
     expect(report.ok).toBe(true);
     expect(report.checks.filter((c) => !c.ok)).toEqual([]);
@@ -397,7 +464,8 @@ describe("happy path: one click to a credentialed, installed, labelled App", () 
     expect(readFileSync(join(secretsDir, SECRET_FILES.appId), "utf8").trim()).toBe("4242");
     expect(readFileSync(join(secretsDir, SECRET_FILES.pem), "utf8")).toContain("BEGIN PRIVATE KEY");
     expect(readFileSync(join(secretsDir, SECRET_FILES.webhookSecret), "utf8")).toBe("s".repeat(40));
-    for (const f of Object.values(SECRET_FILES)) expect(statSync(join(secretsDir, f)).mode & 0o777).toBe(0o600);
+    for (const f of Object.values(SECRET_FILES))
+      expect(statSync(join(secretsDir, f)).mode & 0o777).toBe(0o600);
     expect(statSync(secretsDir).mode & 0o777).toBe(0o700);
 
     // The install was verified through the App's OWN listing (JWT), not guessed.
@@ -405,7 +473,9 @@ describe("happy path: one click to a credentialed, installed, labelled App", () 
     expect(detail(report.checks, "installation")).toMatch(/installation 77 on acme/);
 
     // Labels created through the INSTALLATION token, all three of them.
-    expect([...s.labels].sort()).toEqual([DEFAULT_LABELS.in_progress, DEFAULT_LABELS.reviewed, DEFAULT_LABELS.trigger].sort());
+    expect([...s.labels].sort()).toEqual(
+      [DEFAULT_LABELS.in_progress, DEFAULT_LABELS.reviewed, DEFAULT_LABELS.trigger].sort(),
+    );
     expect(s.calls.filter((c) => c === "POST /repos/acme/widgets/labels")).toHaveLength(3);
 
     // Identity handed on to the config step.
@@ -413,7 +483,9 @@ describe("happy path: one click to a credentialed, installed, labelled App", () 
     expect(engine.choices()[APP_SLUG_CHOICE_KEY]).toBe("quick-review-abc123");
     expect(engine.choices()[BOT_LOGIN_CHOICE_KEY]).toBe("quick-review-abc123[bot]");
     expect(engine.choices()[INSTALLATION_ID_CHOICE_KEY]).toBe(77);
-    expect(engine.choices()[APP_HTML_URL_CHOICE_KEY]).toBe("https://github.test/apps/quick-review-abc123");
+    expect(engine.choices()[APP_HTML_URL_CHOICE_KEY]).toBe(
+      "https://github.test/apps/quick-review-abc123",
+    );
 
     // Persisted as done, and the listener always closed.
     expect(engine.list().find((l) => l.id === GITHUB_APP_STEP_ID)?.status).toBe("done");
@@ -425,13 +497,19 @@ describe("happy path: one click to a credentialed, installed, labelled App", () 
     const server = fakeServer({ code: "one-time-code" });
     const lines: string[] = [];
     const asked: string[] = [];
-    await runStep(s, server.factory, { [APP_TARGET_CHOICE_KEY]: "personal" }, {}, {
-      log: (l) => lines.push(l),
-      prompter: async (q) => {
-        asked.push(q);
-        return "personal";
+    await runStep(
+      s,
+      server.factory,
+      { [APP_TARGET_CHOICE_KEY]: "personal" },
+      {},
+      {
+        log: (l) => lines.push(l),
+        prompter: async (q) => {
+          asked.push(q);
+          return "personal";
+        },
       },
-    });
+    );
     // The target question is the only thing asked, and no log line carries a secret.
     expect(asked).toHaveLength(0); // the recorded choice pre-empts even that one
     expect(lines.join("\n")).toMatch(/open http:\/\/127\.0\.0\.1:8788\//);
@@ -479,7 +557,9 @@ describe("expired / stale / single-use codes", () => {
     expect(expired.ok).toBe(false);
     if (!expired.ok) expect(expired.restart).toBe(true);
 
-    const flaky = ghState({ conversion: { status: 503, body: { message: "Service Unavailable" } } });
+    const flaky = ghState({
+      conversion: { status: 503, body: { message: "Service Unavailable" } },
+    });
     const transient = await convertManifestCode(ghFetch(flaky), API, "c");
     expect(transient.ok).toBe(false);
     if (!transient.ok) {
@@ -541,7 +621,9 @@ describe("declined or missing installation", () => {
     landCredentials();
     const report = await verifyOnly(s);
     expect(report.ok).toBe(false);
-    expect(detail(report.checks, "app reachable")).toMatch(/GET \/app with the App JWT failed \(HTTP 401/);
+    expect(detail(report.checks, "app reachable")).toMatch(
+      /GET \/app with the App JWT failed \(HTTP 401/,
+    );
   });
 });
 
@@ -551,7 +633,9 @@ describe("labels are idempotent", () => {
     const server = fakeServer({ code: "c" });
     const { report } = await runStep(s, server.factory);
     expect(report.ok).toBe(true);
-    expect(detail(report.checks, `label "${DEFAULT_LABELS.trigger}"`)).toMatch(/already present — left exactly as it is/);
+    expect(detail(report.checks, `label "${DEFAULT_LABELS.trigger}"`)).toMatch(
+      /already present — left exactly as it is/,
+    );
     expect(s.calls.filter((c) => c === "POST /repos/acme/widgets/labels")).toHaveLength(2);
   });
 
@@ -560,13 +644,17 @@ describe("labels are idempotent", () => {
     const server = fakeServer({ code: "c" });
     const { report } = await runStep(s, server.factory);
     expect(report.ok).toBe(true);
-    expect(detail(report.checks, `label "${DEFAULT_LABELS.reviewed}"`)).toMatch(/already existed at creation time/);
+    expect(detail(report.checks, `label "${DEFAULT_LABELS.reviewed}"`)).toMatch(
+      /already existed at creation time/,
+    );
   });
 
   it("recorded non-default label names are used verbatim", async () => {
     const s = ghState();
     const server = fakeServer({ code: "c" });
-    const { report } = await runStep(s, server.factory, { [LABELS_CHOICE_KEY]: { trigger: "please-review" } });
+    const { report } = await runStep(s, server.factory, {
+      [LABELS_CHOICE_KEY]: { trigger: "please-review" },
+    });
     expect(report.ok).toBe(true);
     expect(s.labels.has("please-review")).toBe(true);
     expect(s.labels.has(DEFAULT_LABELS.trigger)).toBe(false);
@@ -578,7 +666,9 @@ describe("labels are idempotent", () => {
     landCredentials();
     const report = await verifyOnly(s);
     expect(report.ok).toBe(false);
-    expect(detail(report.checks, `label "${DEFAULT_LABELS.reviewed}"`)).toMatch(/missing from the repo/);
+    expect(detail(report.checks, `label "${DEFAULT_LABELS.reviewed}"`)).toMatch(
+      /missing from the repo/,
+    );
     expect(s.calls.some((c) => c.startsWith("POST /repos/acme/widgets/labels"))).toBe(false);
   });
 });
@@ -628,7 +718,9 @@ describe("resume: re-running with everything in place verifies instead of re-cre
     landCredentials("4242");
     const report = await verifyOnly(s);
     expect(report.ok).toBe(false);
-    expect(detail(report.checks, "app reachable")).toMatch(/belongs to App 9999, but app_id says 4242/);
+    expect(detail(report.checks, "app reachable")).toMatch(
+      /belongs to App 9999, but app_id says 4242/,
+    );
   });
 
   it("the engine's resume demotes the step when the installation disappears", async () => {
@@ -639,7 +731,10 @@ describe("resume: re-running with everything in place verifies instead of re-cre
 
     const gone = ghState({ installations: [], labels: new Set(Object.values(DEFAULT_LABELS)) });
     const engine = new OnboardingEngine([step(gone, refusingServer)], adapters(gone));
-    Object.assign((engine as unknown as { checklist: { choices: Record<string, unknown> } }).checklist.choices, ctxChoices());
+    Object.assign(
+      (engine as unknown as { checklist: { choices: Record<string, unknown> } }).checklist.choices,
+      ctxChoices(),
+    );
     const reconciled = await engine.reconcile();
     expect(reconciled.demoted.map((d) => d.id)).toEqual([GITHUB_APP_STEP_ID]);
     expect(reconciled.demoted[0]!.failures.join(" ")).toMatch(/not installed on "acme"/);
@@ -652,7 +747,13 @@ describe("inputs and credential validation", () => {
   it("no recorded repo is a refusal-as-answer naming the choice", async () => {
     const s = ghState();
     const st = step(s, refusingServer);
-    const report = await st.run({ adapters: adapters(s), input: {}, choices: {}, data: {}, recordChoice: () => undefined });
+    const report = await st.run({
+      adapters: adapters(s),
+      input: {},
+      choices: {},
+      data: {},
+      recordChoice: () => undefined,
+    });
     expect(report.ok).toBe(false);
     expect(report.checks[0]!.detail).toMatch(/reviewed_repo/);
   });
@@ -664,17 +765,29 @@ describe("inputs and credential validation", () => {
   });
 
   it("the same validation the secrets wizard uses gates every write", () => {
-    expect(validateCredentialValues({ appId: "4242", pem: PEM, webhookSecret: "s".repeat(40) })).toEqual([]);
-    expect(validateCredentialValues({ appId: "not-a-number", pem: PEM, webhookSecret: "s".repeat(40) })).toContain("app_id is not a number");
-    expect(validateCredentialValues({ appId: "1", pem: "-----BEGIN PRIVATE KEY-----\nnope\n-----END PRIVATE KEY-----", webhookSecret: "s".repeat(40) })).toContain(
-      "app.pem does not parse as a private key",
+    expect(
+      validateCredentialValues({ appId: "4242", pem: PEM, webhookSecret: "s".repeat(40) }),
+    ).toEqual([]);
+    expect(
+      validateCredentialValues({ appId: "not-a-number", pem: PEM, webhookSecret: "s".repeat(40) }),
+    ).toContain("app_id is not a number");
+    expect(
+      validateCredentialValues({
+        appId: "1",
+        pem: "-----BEGIN PRIVATE KEY-----\nnope\n-----END PRIVATE KEY-----",
+        webhookSecret: "s".repeat(40),
+      }),
+    ).toContain("app.pem does not parse as a private key");
+    expect(validateCredentialValues({ appId: "1", pem: PEM, webhookSecret: "tiny" })).toContain(
+      "webhook_secret is suspiciously short (<8 chars)",
     );
-    expect(validateCredentialValues({ appId: "1", pem: PEM, webhookSecret: "tiny" })).toContain("webhook_secret is suspiciously short (<8 chars)");
   });
 
   it("a malformed conversion response writes NOTHING at all", () => {
     const dir = join(secretsDir, "nested");
-    expect(writeCredentials(dir, { appId: "x", pem: PEM, webhookSecret: "s".repeat(40) })).toHaveLength(1);
+    expect(
+      writeCredentials(dir, { appId: "x", pem: PEM, webhookSecret: "s".repeat(40) }),
+    ).toHaveLength(1);
     expect(existsSync(join(dir, SECRET_FILES.appId))).toBe(false);
   });
 
@@ -694,7 +807,13 @@ describe("the loopback callback listener (real, on an ephemeral port)", () => {
       state: "state-token",
       port: 0,
       timeoutMs: 5_000,
-      page: (bound) => manifestPageHtml({ postUrl: `${GH}/settings/apps/new`, state: "state-token", target: { kind: "personal" }, manifest: pinnedManifest }) + `<!--${bound.redirectUrl}-->`,
+      page: (bound) =>
+        manifestPageHtml({
+          postUrl: `${GH}/settings/apps/new`,
+          state: "state-token",
+          target: { kind: "personal" },
+          manifest: pinnedManifest,
+        }) + `<!--${bound.redirectUrl}-->`,
     });
     try {
       expect(listener.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/);
@@ -705,12 +824,19 @@ describe("the loopback callback listener (real, on an ephemeral port)", () => {
       expect(await page.text()).toContain('name="manifest"');
 
       // A callback carrying someone else's state is refused and never resolves.
-      const forged = await fetch(`${listener.url.replace(/\/$/, "")}${CALLBACK_PATH}?code=evil&state=wrong`);
+      const forged = await fetch(
+        `${listener.url.replace(/\/$/, "")}${CALLBACK_PATH}?code=evil&state=wrong`,
+      );
       expect(forged.status).toBe(400);
 
-      const good = await fetch(`${listener.url.replace(/\/$/, "")}${CALLBACK_PATH}?code=real-code&state=state-token`);
+      const good = await fetch(
+        `${listener.url.replace(/\/$/, "")}${CALLBACK_PATH}?code=real-code&state=state-token`,
+      );
       expect(good.status).toBe(200);
-      await expect(listener.waitForCode()).resolves.toEqual({ code: "real-code", detail: "code received on the loopback callback" });
+      await expect(listener.waitForCode()).resolves.toEqual({
+        code: "real-code",
+        detail: "code received on the loopback callback",
+      });
     } finally {
       await listener.close();
     }

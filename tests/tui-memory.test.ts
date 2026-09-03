@@ -23,7 +23,7 @@ import { sha256Prefixed } from "../src/openviking/store.js";
 import { refOf } from "../src/memory/store.js";
 import {
   MEMORY_USERS,
-  TuiMemoryStore,
+  type TuiMemoryStore,
   defectEntries,
   keysFileReader,
   nsId,
@@ -52,7 +52,11 @@ interface HttpResponseLike {
 
 function json(status: number, body: unknown): Promise<HttpResponseLike> {
   const raw = JSON.stringify(body);
-  return Promise.resolve({ ok: status >= 200 && status < 300, status, text: () => Promise.resolve(raw) });
+  return Promise.resolve({
+    ok: status >= 200 && status < 300,
+    status,
+    text: () => Promise.resolve(raw),
+  });
 }
 
 function err(status: number, code: string, message: string): Promise<HttpResponseLike> {
@@ -85,13 +89,19 @@ class FakeOpenViking {
 
     // USER-key confinement, exactly as the real server enforces it: a key may
     // only touch its own user tree, whatever the identity headers claim.
-    const uri = typeof body === "object" && body !== null && "root_uri" in body ? String((body as { root_uri: unknown }).root_uri) : (u.searchParams.get("uri") ?? "");
-    if (uri !== "" && !uri.startsWith(rootOf(owner))) return err(403, "PERMISSION_DENIED", `${owner} may not touch ${uri}`);
+    const uri =
+      typeof body === "object" && body !== null && "root_uri" in body
+        ? String((body as { root_uri: unknown }).root_uri)
+        : (u.searchParams.get("uri") ?? "");
+    if (uri !== "" && !uri.startsWith(rootOf(owner)))
+      return err(403, "PERMISSION_DENIED", `${owner} may not touch ${uri}`);
 
     if (path === "/api/v1/fs/ls") return this.ls(u.searchParams.get("uri") ?? "");
     if (path === "/api/v1/content/read") {
       const content = this.files.get(u.searchParams.get("uri") ?? "");
-      return content === undefined ? err(404, "NOT_FOUND", "no such file") : json(200, { status: "ok", result: content });
+      return content === undefined
+        ? err(404, "NOT_FOUND", "no such file")
+        : json(200, { status: "ok", result: content });
     }
     if (path === "/api/v1/content/batch-write") return this.batchWrite(body as BatchBody);
     if (path === "/api/v1/fs/mkdir") {
@@ -117,20 +127,36 @@ class FakeOpenViking {
       if (!key.startsWith(prefix)) continue;
       const rest = key.slice(prefix.length);
       const cut = rest.indexOf("/");
-      if (cut < 0) rows.push({ uri: key, name: rest, isDir: false, size: 1, modTime: "2026-08-20T15:30:00.000Z" });
+      if (cut < 0)
+        rows.push({
+          uri: key,
+          name: rest,
+          isDir: false,
+          size: 1,
+          modTime: "2026-08-20T15:30:00.000Z",
+        });
       else dirs.add(rest.slice(0, cut));
     }
-    for (const dir of dirs) rows.push({ uri: `${prefix}${dir}`, name: dir, isDir: true, size: 0, modTime: "2026-08-20T15:30:00.000Z" });
+    for (const dir of dirs)
+      rows.push({
+        uri: `${prefix}${dir}`,
+        name: dir,
+        isDir: true,
+        size: 0,
+        modTime: "2026-08-20T15:30:00.000Z",
+      });
     return json(200, { status: "ok", result: rows });
   }
 
   private batchWrite(req: BatchBody): Promise<HttpResponseLike> {
     for (const op of req.operations) {
       const existing = this.files.get(op.uri);
-      if (op.precondition.kind === "create_if_absent" && existing !== undefined) return err(409, "CONFLICT", "target already exists");
+      if (op.precondition.kind === "create_if_absent" && existing !== undefined)
+        return err(409, "CONFLICT", "target already exists");
       if (op.precondition.kind === "replace_if_hash") {
         if (existing === undefined) return err(404, "NOT_FOUND", "no such file");
-        if (sha256Prefixed(existing) !== op.precondition.base_hash) return err(409, "CONFLICT", "content hash changed");
+        if (sha256Prefixed(existing) !== op.precondition.base_hash)
+          return err(409, "CONFLICT", "content hash changed");
       }
     }
     const created: string[] = [];
@@ -139,19 +165,32 @@ class FakeOpenViking {
       (this.files.has(op.uri) ? updated : created).push(op.uri);
       this.files.set(op.uri, op.content);
     }
-    return json(200, { status: "ok", result: { root_uri: req.root_uri, created, updated, unchanged: [] } });
+    return json(200, {
+      status: "ok",
+      result: { root_uri: req.root_uri, created, updated, unchanged: [] },
+    });
   }
 }
 
 interface BatchBody {
   root_uri: string;
-  operations: Array<{ uri: string; content: string; precondition: { kind: string; base_hash?: string } }>;
+  operations: Array<{
+    uri: string;
+    content: string;
+    precondition: { kind: string; base_hash?: string };
+  }>;
   wait: boolean;
 }
 
 const NOW = new Date("2026-08-20T15:30:00.000Z");
 
-function wire(server: FakeOpenViking, keys: Partial<Record<string, string>> = { OPENVIKING_REVIEWER_KEY: KEYS.reviewer, OPENVIKING_COMPANION_KEY: KEYS.companion }): TuiMemoryStore {
+function wire(
+  server: FakeOpenViking,
+  keys: Partial<Record<string, string>> = {
+    OPENVIKING_REVIEWER_KEY: KEYS.reviewer,
+    OPENVIKING_COMPANION_KEY: KEYS.companion,
+  },
+): TuiMemoryStore {
   return tuiMemoryStore({
     baseUrl: "http://127.0.0.1:1933",
     fetchFn: server.fetch,
@@ -168,9 +207,21 @@ describe("TuiMemoryStore — both user trees", () => {
 
   beforeEach(() => {
     server = new FakeOpenViking();
-    server.seed("reviewer", "20260819T181354-aaaa1111.md", "#false-positive [[pr-5308]] compare transforms with the merge base first.");
-    server.seed("reviewer", "20260820T090142-bbbb2222.md", "#bug #operations guard 2 suppressed a same-head substantive review.");
-    server.seed("companion", "20260820T101500-cccc3333.md", "#manual remind me the deploy is still pending.");
+    server.seed(
+      "reviewer",
+      "20260819T181354-aaaa1111.md",
+      "#false-positive [[pr-5308]] compare transforms with the merge base first.",
+    );
+    server.seed(
+      "reviewer",
+      "20260820T090142-bbbb2222.md",
+      "#bug #operations guard 2 suppressed a same-head substantive review.",
+    );
+    server.seed(
+      "companion",
+      "20260820T101500-cccc3333.md",
+      "#manual remind me the deploy is still pending.",
+    );
   });
 
   it("lists every entry from BOTH trees, ids namespaced by user", async () => {
@@ -183,7 +234,10 @@ describe("TuiMemoryStore — both user trees", () => {
     ]);
     expect(store.health().ok).toBe(true);
     expect(store.health().error).toBeUndefined();
-    expect(splitNsId(entries[2]!.id)).toEqual({ user: "companion", id: "experiences/20260820T101500-cccc3333.md" });
+    expect(splitNsId(entries[2]!.id)).toEqual({
+      user: "companion",
+      id: "experiences/20260820T101500-cccc3333.md",
+    });
     expect(nsId("companion", "a/b.md")).toBe("companion:a/b.md");
     expect(MEMORY_USERS).toEqual(["reviewer", "companion"]);
   });
@@ -192,7 +246,11 @@ describe("TuiMemoryStore — both user trees", () => {
     const store = wire(server);
     const before = await store.read();
     const target = before.find((e) => e.id.startsWith("companion:"))!;
-    const res = await store.apply({ op: "edit", ...refOf(target), text: "#manual the deploy shipped." });
+    const res = await store.apply({
+      op: "edit",
+      ...refOf(target),
+      text: "#manual the deploy shipped.",
+    });
     expect(res.ok).toBe(true);
     const after = await store.read();
     expect(after.find((e) => e.id === target.id)!.text).toBe("#manual the deploy shipped.");
@@ -202,7 +260,10 @@ describe("TuiMemoryStore — both user trees", () => {
 
   it("add creates a NEW entry in the reviewer tree (memory the review system reads)", async () => {
     const store = wire(server);
-    const res = await store.apply({ op: "add", text: "always check the migration number at the merge base." });
+    const res = await store.apply({
+      op: "add",
+      text: "always check the migration number at the merge base.",
+    });
     expect(res.ok).toBe(true);
     const entries = await store.read();
     const fresh = entries.find((e) => e.text.includes("migration number"))!;
@@ -215,12 +276,18 @@ describe("TuiMemoryStore — both user trees", () => {
     const [entry] = await store.read();
     const stale = refOf(entry!);
     // Someone else writes first (a live session's own memory write holds no lock).
-    await store.apply({ op: "edit", ...stale, text: "#false-positive rewritten by another writer." });
+    await store.apply({
+      op: "edit",
+      ...stale,
+      text: "#false-positive rewritten by another writer.",
+    });
     const res = await store.apply({ op: "edit", ...stale, text: "my edit, based on what I read." });
     expect(res.ok).toBe(false);
     expect(res.message).toMatch(/changed since you read it/);
     const after = await store.read();
-    expect(after.find((e) => e.id === entry!.id)!.text).toBe("#false-positive rewritten by another writer.");
+    expect(after.find((e) => e.id === entry!.id)!.text).toBe(
+      "#false-positive rewritten by another writer.",
+    );
   });
 
   it("retire removes the entry from the timeline; pin places it in the pinned area with its tag", async () => {
@@ -239,31 +306,53 @@ describe("TuiMemoryStore — both user trees", () => {
     entries = await store.read();
     expect(entries.some((e) => e.id === other.id)).toBe(false);
 
-    expect((await store.apply({ op: "unpin", ...refOf(entries.find((e) => e.id === bug.id)!) })).ok).toBe(true);
+    expect(
+      (await store.apply({ op: "unpin", ...refOf(entries.find((e) => e.id === bug.id)!) })).ok,
+    ).toBe(true);
     expect((await store.read()).find((e) => e.id === bug.id)!.pinned).toBe(false);
   });
 
   it("a verb addressed at no known namespace is refused, not misrouted", async () => {
     const store = wire(server);
-    const res = await store.apply({ op: "retire", id: "experiences/orphan.md", ts: "2026-08-20 09:00:00", block: 0, expect: `sha256:${"0".repeat(64)}` });
+    const res = await store.apply({
+      op: "retire",
+      id: "experiences/orphan.md",
+      ts: "2026-08-20 09:00:00",
+      block: 0,
+      expect: `sha256:${"0".repeat(64)}`,
+    });
     expect(res.ok).toBe(false);
     expect(res.message).toMatch(/names no memory namespace/);
   });
 
   it("search filters the merged timeline by tag and text", async () => {
     const store = wire(server);
-    expect((await store.search("", { tag: "bug" })).map((e) => e.id)).toEqual(["reviewer:experiences/20260820T090142-bbbb2222.md"]);
-    expect((await store.search("deploy")).map((e) => e.id)).toEqual(["companion:experiences/20260820T101500-cccc3333.md"]);
-    expect(defectEntries(await store.read()).map((e) => e.text)).toEqual(["#bug #operations guard 2 suppressed a same-head substantive review."]);
+    expect((await store.search("", { tag: "bug" })).map((e) => e.id)).toEqual([
+      "reviewer:experiences/20260820T090142-bbbb2222.md",
+    ]);
+    expect((await store.search("deploy")).map((e) => e.id)).toEqual([
+      "companion:experiences/20260820T101500-cccc3333.md",
+    ]);
+    expect(defectEntries(await store.read()).map((e) => e.text)).toEqual([
+      "#bug #operations guard 2 suppressed a same-head substantive review.",
+    ]);
   });
 
   it("finds `kind=bug` event-tagged defects too — the auto-filer's query is by TAG", async () => {
-    server.seed("reviewer", "20260820T120000-dddd4444.md", "#feedback kind=bug pr=5312 signal=review_dismissed the recheck misfired.");
+    server.seed(
+      "reviewer",
+      "20260820T120000-dddd4444.md",
+      "#feedback kind=bug pr=5312 signal=review_dismissed the recheck misfired.",
+    );
     const store = wire(server);
     const defects = defectEntries(await store.read());
     expect(defects).toHaveLength(2);
     // Prose that merely mentions a bug is not a defect flag.
-    server.seed("reviewer", "20260820T130000-eeee5555.md", "the author says this is a bug in their own code.");
+    server.seed(
+      "reviewer",
+      "20260820T130000-eeee5555.md",
+      "the author says this is a bug in their own code.",
+    );
     expect(defectEntries(await store.read())).toHaveLength(2);
   });
 });
@@ -386,8 +475,20 @@ describe("TuiMemoryStore — materializing both namespaces", () => {
 
 describe("keys and endpoint", () => {
   it("parses the docker env-file the forward and the companion share", () => {
-    const parsed = parseKeysEnv(['OPENVIKING_API_KEY=abc', 'export OPENVIKING_COMPANION_KEY="abc"', "OPENVIKING_REVIEWER_KEY='def'", "# a comment", "EMPTY="].join("\n"));
-    expect(parsed).toEqual({ OPENVIKING_API_KEY: "abc", OPENVIKING_COMPANION_KEY: "abc", OPENVIKING_REVIEWER_KEY: "def" });
+    const parsed = parseKeysEnv(
+      [
+        "OPENVIKING_API_KEY=abc",
+        'export OPENVIKING_COMPANION_KEY="abc"',
+        "OPENVIKING_REVIEWER_KEY='def'",
+        "# a comment",
+        "EMPTY=",
+      ].join("\n"),
+    );
+    expect(parsed).toEqual({
+      OPENVIKING_API_KEY: "abc",
+      OPENVIKING_COMPANION_KEY: "abc",
+      OPENVIKING_REVIEWER_KEY: "def",
+    });
   });
 
   it("re-reads the keys file when it appears later — no TUI restart to provision a key", () => {
@@ -406,6 +507,8 @@ describe("keys and endpoint", () => {
   it("defaults to the memory forward's loopback listener, overridable by env", () => {
     expect(tuiMemoryBaseUrl({})).toBe("http://127.0.0.1:1933");
     expect(tuiMemoryBaseUrl({ QCR_MEMORY_PORT: "2933" })).toBe("http://127.0.0.1:2933");
-    expect(tuiMemoryBaseUrl({ QCR_MEMORY_URL: "http://198.51.100.1:1933/" })).toBe("http://198.51.100.1:1933");
+    expect(tuiMemoryBaseUrl({ QCR_MEMORY_URL: "http://198.51.100.1:1933/" })).toBe(
+      "http://198.51.100.1:1933",
+    );
   });
 });

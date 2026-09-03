@@ -105,7 +105,15 @@ export interface RoundManifest {
 export const MANIFEST_NAME = "manifest.json";
 
 function dockerSh(cfg: TuiConfig, script: string): string[] {
-  return [...(cfg.sudo_docker ? ["sudo"] : []), "docker", "exec", cfg.container, "sh", "-c", script];
+  return [
+    ...(cfg.sudo_docker ? ["sudo"] : []),
+    "docker",
+    "exec",
+    cfg.container,
+    "sh",
+    "-c",
+    script,
+  ];
 }
 
 /**
@@ -120,7 +128,12 @@ function dockerSh(cfg: TuiConfig, script: string): string[] {
  * Ends `exit 0`: a trailing `[ -f … ] && echo` that finds nothing would
  * otherwise exit non-zero and make an entirely successful listing look failed.
  */
-export function manifestArgv(cfg: TuiConfig, sessionDir: string, pr: number, round: number): string[] {
+export function manifestArgv(
+  cfg: TuiConfig,
+  sessionDir: string,
+  pr: number,
+  round: number,
+): string[] {
   const root = cfg.remote_sandbox_root;
   const script = [
     `r="${root}"`,
@@ -180,7 +193,9 @@ export interface WhyRound {
  * reproduce the gap this ticket exists to close.
  */
 export function finishedRounds(rounds: WhyRound[]): WhyRound[] {
-  return rounds.filter((r) => r.status !== "running" && Number.isInteger(r.round_no)).sort((a, b) => a.round_no - b.round_no);
+  return rounds
+    .filter((r) => r.status !== "running" && Number.isInteger(r.round_no))
+    .sort((a, b) => a.round_no - b.round_no);
 }
 
 /** The finished rounds out of one `qcr why --json` answer, or `undefined`
@@ -317,7 +332,8 @@ export class EvidenceCopier {
     try {
       this.store.ensure();
       const nowMs = (this.deps.now?.() ?? new Date()).getTime();
-      for (const pr of snapshot.prs) if (!this.firstSeen.has(pr.number)) this.firstSeen.set(pr.number, nowMs);
+      for (const pr of snapshot.prs)
+        if (!this.firstSeen.has(pr.number)) this.firstSeen.set(pr.number, nowMs);
       for (const pr of [...snapshot.prs].sort((a, b) => a.number - b.number)) {
         const sig = prSignature(pr);
         if (this.reconciled.get(pr.number) === sig) continue;
@@ -350,15 +366,19 @@ export class EvidenceCopier {
   }
 
   private async reconcilePr(pr: number, report: SweepReport): Promise<boolean> {
-    const res = await this.ssh(this.cfg.ssh_host, whyArgv(this.cfg, pr), { timeoutMs: this.deps.timeoutMs });
-    if (!res.ok) return this.fail(report, `pr-${pr}`, `evidence: #${pr} — could not read round list (ssh)`);
+    const res = await this.ssh(this.cfg.ssh_host, whyArgv(this.cfg, pr), {
+      timeoutMs: this.deps.timeoutMs,
+    });
+    if (!res.ok)
+      return this.fail(report, `pr-${pr}`, `evidence: #${pr} — could not read round list (ssh)`);
     // The round list is what `qcr why --json` PROVES; anything else that came
     // back — a wrapper's own JSON, an older build's shape, a torn write — is an
     // unreadable list, not an empty one. Reading it as empty would retire this
     // PR's signature with nothing copied, and nothing would ever retry it
     //.
     const rounds = readWhyRounds(res.stdout);
-    if (rounds === undefined) return this.fail(report, `pr-${pr}`, `evidence: #${pr} — unreadable round list`);
+    if (rounds === undefined)
+      return this.fail(report, `pr-${pr}`, `evidence: #${pr} — unreadable round list`);
     const pending = rounds.filter((r) => !this.store.has(pr, r.round_no));
     if (pending.length === 0) return true;
     let complete = true;
@@ -374,10 +394,15 @@ export class EvidenceCopier {
 
   private async copyRound(pr: number, round: WhyRound, report: SweepReport): Promise<boolean> {
     const key = `pr-${pr} round ${round.round_no}`;
-    const listed = await this.ssh(this.cfg.ssh_host, manifestArgv(this.cfg, this.deps.sessionDir, pr, round.round_no), {
-      timeoutMs: this.deps.timeoutMs,
-    });
-    if (!listed.ok) return this.fail(report, key, `evidence: ${key} — could not list artefacts (ssh)`);
+    const listed = await this.ssh(
+      this.cfg.ssh_host,
+      manifestArgv(this.cfg, this.deps.sessionDir, pr, round.round_no),
+      {
+        timeoutMs: this.deps.timeoutMs,
+      },
+    );
+    if (!listed.ok)
+      return this.fail(report, key, `evidence: ${key} — could not list artefacts (ssh)`);
     const files = parseManifest(listed.stdout, this.cfg.remote_sandbox_root);
     // A round that finished before this copier first saw the PR is a BACKFILL:
     // the pr-current roles on the VM are the PR's files as of TODAY, not that
@@ -391,7 +416,9 @@ export class EvidenceCopier {
     const toCopy = backfill ? files.filter((f) => f.role === "verdict") : files;
     const written: RoundManifest["files"] = [];
     for (const f of toCopy) {
-      const got = await this.ssh(this.cfg.ssh_host, fetchArgv(this.cfg, f.remotePath), { timeoutMs: this.deps.timeoutMs });
+      const got = await this.ssh(this.cfg.ssh_host, fetchArgv(this.cfg, f.remotePath), {
+        timeoutMs: this.deps.timeoutMs,
+      });
       // An ssh that failed is a transport fault, not an absent artefact: leaving
       // the manifest unwritten is what makes the round come back next poll.
       if (!got.ok) return this.fail(report, key, `evidence: ${key} — ${f.role} fetch failed`);
@@ -411,11 +438,15 @@ export class EvidenceCopier {
       round,
       roles_note: ROLES_NOTE,
       files: written,
-      missing: EVIDENCE_ROLES.filter((r) => !written.some((w) => w.role === r) && !skipped.includes(r)),
+      missing: EVIDENCE_ROLES.filter(
+        (r) => !written.some((w) => w.role === r) && !skipped.includes(r),
+      ),
       skipped_stale: skipped,
     });
     this.announced.delete(key);
-    report.copied.push(`evidence: ${key} copied (${written.length} file${written.length === 1 ? "" : "s"})`);
+    report.copied.push(
+      `evidence: ${key} copied (${written.length} file${written.length === 1 ? "" : "s"})`,
+    );
     return true;
   }
 

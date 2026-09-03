@@ -10,22 +10,53 @@
 import type { WhyPayload } from "../cli.js";
 import type { TuiConfig } from "../config.js";
 import type { AlertBadge } from "./alerts.js";
-import { boardBarHeight, boardKeys, piPaneSize, renderBoard, type BoardAction, type BoardView } from "./board.js";
+import {
+  boardBarHeight,
+  boardKeys,
+  piPaneSize,
+  renderBoard,
+  type BoardAction,
+  type BoardView,
+} from "./board.js";
 import { barHitKey, NO_LIVE_KEYS, registeredKeys, type LiveKeys } from "./cmdbar.js";
 import { decodeInputKey, decodeKey, type BoardKey } from "./keys.js";
 import type { Tab } from "./tabs.js";
 import { visiblePrs } from "./filters.js";
 import { formatEvent, moveSelection, reselect, type EventLine } from "./model.js";
 import { TripleCtrlC } from "./chord.js";
-import { MOUSE_OFF, MOUSE_ON, extractMouseEvents, hitTest, type MouseEvent, type Zone } from "./mouse.js";
-import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR, Frame, accentFrameRect, composeColumn, fit, sliceDisplay, spliceDisplay, stripAnsi } from "./paint.js";
+import {
+  MOUSE_OFF,
+  MOUSE_ON,
+  extractMouseEvents,
+  hitTest,
+  type MouseEvent,
+  type Zone,
+} from "./mouse.js";
+import {
+  ALT_SCREEN_OFF,
+  ALT_SCREEN_ON,
+  CLEAR,
+  Frame,
+  accentFrameRect,
+  composeColumn,
+  fit,
+  sliceDisplay,
+  spliceDisplay,
+  stripAnsi,
+} from "./paint.js";
 import { ACCENT, RESET, SELECTION } from "./design.js";
 import { ClipboardSink } from "./clipboard.js";
 import { PANE_ESCAPE, PiMirror, keysToTmux } from "./pipane.js";
 import { Poller } from "./poll.js";
 import { parseRoundProgress } from "../round-progress.js";
 import { prUrl } from "./theme.js";
-import { CompanionSidebar, paintSidebar, sidebarHit, sidebarResizeHit, sidebarWidth } from "./sidebar.js";
+import {
+  type CompanionSidebar,
+  paintSidebar,
+  sidebarHit,
+  sidebarResizeHit,
+  sidebarWidth,
+} from "./sidebar.js";
 import { eventsArgv, progressArgv, sendKeysArgv, whyArgv, type SshRunner } from "./remote.js";
 
 export type { Tab } from "./tabs.js";
@@ -122,7 +153,14 @@ const END_KEYS = new Set(["\x1b[F", "\x1bOF", "\x1b[4~", "\x1b[8~"]);
  * (`overseer`/`main-session` left with the full-screen attach, 2026-09-02;
  * `detail` with the full-screen detail page,.)
  */
-const BOARD_ONLY_VERBS: ReadonlySet<string> = new Set(["attach", "enter", "message", "github", "events", "unwedge"]);
+const BOARD_ONLY_VERBS: ReadonlySet<string> = new Set([
+  "attach",
+  "enter",
+  "message",
+  "github",
+  "events",
+  "unwedge",
+]);
 
 /** The frame an UNWIRED tab paints: its notice on the first body row, at the
  * inner width, so the companion column still composes beside it. */
@@ -182,7 +220,8 @@ export class App {
       this.syncPiPane();
       // The session we were typing into went away — say so and hand the
       // keyboard back rather than swallowing keystrokes into nothing.
-      if (this.view.piFocus && this.view.pi?.missing) this.blurPiPane(`pi session pr-${this.piFocusPr} is gone — keyboard back on the board`);
+      if (this.view.piFocus && this.view.pi?.missing)
+        this.blurPiPane(`pi session pr-${this.piFocusPr} is gone — keyboard back on the board`);
       this.repaint();
     });
   }
@@ -249,7 +288,9 @@ export class App {
     }
     void (async () => {
       for (const parts of groups) {
-        await this.ssh(this.cfg.ssh_host, sendKeysArgv(this.cfg, `pr-${pr}`, parts), { timeoutMs: 5_000 });
+        await this.ssh(this.cfg.ssh_host, sendKeysArgv(this.cfg, `pr-${pr}`, parts), {
+          timeoutMs: 5_000,
+        });
       }
       await this.pi.refresh(pr);
     })();
@@ -447,7 +488,12 @@ export class App {
    * it never fights the operator for the keyboard. The hot reload deliberately
    * does NOT consult it — every build reloads (see reload.ts). */
   isBusy(): boolean {
-    return this.suspended || this.view.inputBox !== undefined || this.view.piFocus === true || this.sidebar?.focused === true;
+    return (
+      this.suspended ||
+      this.view.inputBox !== undefined ||
+      this.view.piFocus === true ||
+      this.sidebar?.focused === true
+    );
   }
 
   /** The PR the board is pointing at (survives a hot-reload). */
@@ -470,7 +516,8 @@ export class App {
       // Invalidate cached details the snapshot proves stale (state/head moved).
       for (const pr of snap.prs) {
         const c = this.detailCache.get(pr.number);
-        if (c && (c.payload.head_sha !== pr.head_sha || c.payload.state !== pr.state)) this.detailCache.delete(pr.number);
+        if (c && (c.payload.head_sha !== pr.head_sha || c.payload.state !== pr.state))
+          this.detailCache.delete(pr.number);
       }
       this.view.snapshot = snap;
       this.view.dryRun = snap.dry_run;
@@ -499,7 +546,9 @@ export class App {
     const res = await this.ssh(this.cfg.ssh_host, eventsArgv(this.cfg, 50));
     if (!res.ok) return;
     try {
-      const parsed = JSON.parse(res.stdout) as { events: Array<{ ts: string; kind: string; pr: number | null; payload: string | null }> };
+      const parsed = JSON.parse(res.stdout) as {
+        events: Array<{ ts: string; kind: string; pr: number | null; payload: string | null }>;
+      };
       this.rawEvents = parsed.events;
       const lines = parsed.events.map(formatEvent).reverse(); // newest first
       this.view.events = this.mergeNotices(lines);
@@ -611,7 +660,10 @@ export class App {
     this.msgSession = session;
     this.inputSubmit = undefined;
     const pr = /^pr-(\d+)$/.exec(session)?.[1];
-    this.view.inputBox = { target: pr ? `#${pr} (pi session ${session})` : session, text: this.msgDraft };
+    this.view.inputBox = {
+      target: pr ? `#${pr} (pi session ${session})` : session,
+      text: this.msgDraft,
+    };
     this.repaint();
   }
 
@@ -636,7 +688,8 @@ export class App {
         box.text += "\n";
         break;
       case "escape":
-        if (this.inputSubmit) this.inputSubmit = undefined; // tab prompts keep no draft
+        if (this.inputSubmit)
+          this.inputSubmit = undefined; // tab prompts keep no draft
         else this.msgDraft = box.text; // preserved until board navigation
         this.view.inputBox = undefined;
         break;
@@ -854,7 +907,10 @@ export class App {
       // The events overlay owns the wheel while it is up; otherwise the wheel
       // moves the selection (and the mirror follows it).
       if (this.view.eventsFocus) {
-        this.view.eventsScroll = Math.max(0, Math.min(this.view.eventsScroll + delta, Math.max(0, this.view.events.length - 1)));
+        this.view.eventsScroll = Math.max(
+          0,
+          Math.min(this.view.eventsScroll + delta, Math.max(0, this.view.events.length - 1)),
+        );
       } else {
         const sorted = visiblePrs(this.view);
         this.view.selected = moveSelection(this.view.selected, delta, sorted.length);
@@ -1010,7 +1066,12 @@ export class App {
     // printable spellings are unregistered off the board, so they reach the
     // companion column instead of dying here. The one exception is a live
     // alert, which owns ⏎ from wherever you are.
-    if (this.tab !== "board" && BOARD_ONLY_VERBS.has(key.kind) && !(key.kind === "enter" && this.view.alertFocus)) return;
+    if (
+      this.tab !== "board" &&
+      BOARD_ONLY_VERBS.has(key.kind) &&
+      !(key.kind === "enter" && this.view.alertFocus)
+    )
+      return;
 
     switch (key.kind) {
       case "quit":
@@ -1026,11 +1087,18 @@ export class App {
       case "down": {
         if (this.view.eventsFocus) {
           const delta = key.kind === "down" ? 1 : -1;
-          this.view.eventsScroll = Math.max(0, Math.min(this.view.eventsScroll + delta, Math.max(0, this.view.events.length - 1)));
+          this.view.eventsScroll = Math.max(
+            0,
+            Math.min(this.view.eventsScroll + delta, Math.max(0, this.view.events.length - 1)),
+          );
           break;
         }
         const sorted = visiblePrs(this.view);
-        this.view.selected = moveSelection(this.view.selected, key.kind === "down" ? 1 : -1, sorted.length);
+        this.view.selected = moveSelection(
+          this.view.selected,
+          key.kind === "down" ? 1 : -1,
+          sorted.length,
+        );
         this.selectedPr = sorted[this.view.selected]?.number;
         this.msgDraft = ""; // board navigation drops a cancelled draft
         void this.refreshDetail();
@@ -1177,7 +1245,11 @@ export class App {
       this.repaint();
       return;
     }
-    void sidebar.sendKeys(buf).catch((err: unknown) => this.notice(`✖ ${String(err instanceof Error ? err.message : err)}`));
+    void sidebar
+      .sendKeys(buf)
+      .catch((err: unknown) =>
+        this.notice(`✖ ${String(err instanceof Error ? err.message : err)}`),
+      );
   }
 
   /** Alert consumer → top bar. `alert` tier also grabs ⏎ (see handleInput). */
@@ -1341,7 +1413,11 @@ export class App {
       .write(text)
       .then((ok) => {
         const lines = text.split("\n").length;
-        this.notice(ok ? `✓ copied ${text.length} chars${lines > 1 ? ` · ${lines} lines` : ""}` : "✖ no clipboard tool (wl-copy / xclip / klipper)");
+        this.notice(
+          ok
+            ? `✓ copied ${text.length} chars${lines > 1 ? ` · ${lines} lines` : ""}`
+            : "✖ no clipboard tool (wl-copy / xclip / klipper)",
+        );
       })
       .catch(() => this.notice("✖ clipboard write failed"));
     // The highlight stays until the next click, so it is visible at the moment
@@ -1401,7 +1477,7 @@ export class App {
       if (sw > 0 && this.sidebar?.focused) {
         accentFrameRect(frame, inner - 1, 0, frame.cols - 1, rows - 1, ACCENT, RESET);
       } else if (this.tab === "board" && this.view.piFocus && frame.meta["piTop"] !== undefined) {
-        accentFrameRect(frame, 0, frame.meta["piTop"]!, mainRight, rows - 1, ACCENT, RESET);
+        accentFrameRect(frame, 0, frame.meta["piTop"], mainRight, rows - 1, ACCENT, RESET);
       } else {
         accentFrameRect(frame, 0, 0, mainRight, rows - 1, ACCENT, RESET);
       }
@@ -1414,7 +1490,10 @@ export class App {
       this.notifyRepaint();
     };
     if (this.tab !== "board") {
-      paint(this.tabHooks()?.screen(this, inner, rows), `${this.tab} tab not wired — [1] back to board`);
+      paint(
+        this.tabHooks()?.screen(this, inner, rows),
+        `${this.tab} tab not wired — [1] back to board`,
+      );
       return;
     }
     this.view.now = this.now();

@@ -58,7 +58,12 @@ function fakeGitHub(opts: { expiresAt: () => string; installationId?: number }) 
     }
     throw new Error(`unexpected fetch ${u}`);
   }) as unknown as FetchFn;
-  return { fetchFn, calls, mints: () => minted, installCalls: () => calls.filter((c) => c.url.endsWith("/app/installations")).length };
+  return {
+    fetchFn,
+    calls,
+    mints: () => minted,
+    installCalls: () => calls.filter((c) => c.url.endsWith("/app/installations")).length,
+  };
 }
 
 describe("mintAppJwt", () => {
@@ -155,7 +160,10 @@ describe("TokenMinter", () => {
       if (u.endsWith("/app/installations")) return jsonResponse([{ id: 42 }]);
       minted += 1;
       await gate;
-      return jsonResponse({ token: `ghs_token_${minted}`, expires_at: new Date(T0 + 3600_000).toISOString() }, 201);
+      return jsonResponse(
+        { token: `ghs_token_${minted}`, expires_at: new Date(T0 + 3600_000).toISOString() },
+        201,
+      );
     }) as unknown as FetchFn;
 
     const minter = new TokenMinter(secretsDir, fetchFn, "https://api.github.com", () => T0);
@@ -194,16 +202,29 @@ describe("TokenMinter", () => {
       if (u.endsWith("/app/installations")) return jsonResponse([{ id: 42 }]);
       return jsonResponse({ message: "Bad credentials" }, 401);
     }) as unknown as FetchFn;
-    await expect(new TokenMinter(secretsDir, failing, "https://api.github.com", () => T0).installationToken())
-      .rejects.toThrow(/token mint failed for installation 42: 401/);
+    await expect(
+      new TokenMinter(secretsDir, failing, "https://api.github.com", () => T0).installationToken(),
+    ).rejects.toThrow(/token mint failed for installation 42: 401/);
 
     const empty = (async () => jsonResponse([])) as unknown as FetchFn;
-    await expect(new TokenMinter(secretsDir, empty, "https://api.github.com", () => T0).resolveInstallationId())
-      .rejects.toThrow(/no installations/);
+    await expect(
+      new TokenMinter(
+        secretsDir,
+        empty,
+        "https://api.github.com",
+        () => T0,
+      ).resolveInstallationId(),
+    ).rejects.toThrow(/no installations/);
 
     const broken = (async () => jsonResponse({ message: "nope" }, 500)) as unknown as FetchFn;
-    await expect(new TokenMinter(secretsDir, broken, "https://api.github.com", () => T0).resolveInstallationId())
-      .rejects.toThrow(/GET \/app\/installations failed: 500/);
+    await expect(
+      new TokenMinter(
+        secretsDir,
+        broken,
+        "https://api.github.com",
+        () => T0,
+      ).resolveInstallationId(),
+    ).rejects.toThrow(/GET \/app\/installations failed: 500/);
   });
 
   it("uses only the app PEM — no environment token is ever consulted", async () => {

@@ -6,12 +6,19 @@ import { parseConfig, type Config } from "../src/config.js";
 import type { PrRef, StalePr } from "../src/github.js";
 import { roundTypeFor } from "../src/dispatch.js";
 import { recheckPromptMarker } from "../src/types.js";
-import { reconcileOnce, reconcileOrphanedRounds, type ReconcileAdapter, type ReconcileSearchItem } from "../src/reconcile.js";
+import {
+  reconcileOnce,
+  reconcileOrphanedRounds,
+  type ReconcileAdapter,
+  type ReconcileSearchItem,
+} from "../src/reconcile.js";
 import { applyEvent } from "../src/statemachine.js";
 import { StateStore, type PrLifecycleState } from "../src/state.js";
 import type { SessionHooks } from "../src/types.js";
 
-const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
+const cfg: Config = parseConfig(
+  readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
+);
 
 function ref(number: number, over: Partial<PrRef> = {}): PrRef {
   return {
@@ -110,7 +117,11 @@ beforeEach(() => {
   gh = new FakeGitHub();
 });
 
-function seed(number: number, state: PrLifecycleState, over: Partial<{ head: string; stale: number; trigger: string | null }> = {}): void {
+function seed(
+  number: number,
+  state: PrLifecycleState,
+  over: Partial<{ head: string; stale: number; trigger: string | null }> = {},
+): void {
   store.upsertPr({
     number,
     state,
@@ -124,9 +135,11 @@ function seed(number: number, state: PrLifecycleState, over: Partial<{ head: str
 }
 
 const corrections = (s: StateStore) =>
-  (s.db.prepare("SELECT pr, payload FROM events WHERE kind = 'reconcile_correction'").all() as Array<{ pr: number; payload: string }>).map(
-    (r) => ({ pr: r.pr, ...JSON.parse(r.payload) }),
-  );
+  (
+    s.db
+      .prepare("SELECT pr, payload FROM events WHERE kind = 'reconcile_correction'")
+      .all() as Array<{ pr: number; payload: string }>
+  ).map((r) => ({ pr: r.pr, ...JSON.parse(r.payload) }));
 
 describe("reconcileOnce", () => {
   it("adopts a hand-edited divergent pr_state from GitHub truth", async () => {
@@ -136,7 +149,9 @@ describe("reconcileOnce", () => {
     gh.open = [ref(1), ref(2), ref(3)];
     gh.labelTriggered = [item(1)];
     gh.teamTriggered = [item(2)];
-    gh.stale = [{ number: 3, head_sha: "sha3", approved_sha: "old3", approved_at: "2026-08-12T10:00:00Z" }];
+    gh.stale = [
+      { number: 3, head_sha: "sha3", approved_sha: "old3", approved_at: "2026-08-12T10:00:00Z" },
+    ];
     gh.closedPrs.set(4, ref(4, { state: "closed", merged: true }));
     seed(1, "tracked");
     seed(2, "queued", { trigger: "2026-08-13T08:00:00Z" });
@@ -246,7 +261,13 @@ describe("reconcileOnce", () => {
     await reconcileOnce({ cfg, store, adapter: gh, hooks });
 
     expect(store.getPr(37)!.state).toBe("tracked");
-    expect(store.db.prepare("SELECT COUNT(*) AS n FROM events WHERE pr = 37 AND kind = 'standing_trigger_suppressed'").get()).toEqual({ n: 1 });
+    expect(
+      store.db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM events WHERE pr = 37 AND kind = 'standing_trigger_suppressed'",
+        )
+        .get(),
+    ).toEqual({ n: 1 });
   });
 
   it("suppresses standing trigger residue across the additive-table bootstrap", async () => {
@@ -264,7 +285,13 @@ describe("reconcileOnce", () => {
     await reconcileOnce({ cfg, store, adapter: gh, hooks });
 
     expect(store.getPr(39)!.state).toBe("tracked");
-    expect(store.db.prepare("SELECT COUNT(*) AS n FROM events WHERE pr = 39 AND kind = 'standing_trigger_suppressed'").get()).toEqual({ n: 1 });
+    expect(
+      store.db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM events WHERE pr = 39 AND kind = 'standing_trigger_suppressed'",
+        )
+        .get(),
+    ).toEqual({ n: 1 });
   });
 
   it("still treats a newly appearing trigger as a human full-review request", async () => {
@@ -292,7 +319,10 @@ describe("reconcileOnce", () => {
     const { hooks } = recordingHooks();
     const pushes: Array<{ pr: number; head: string; rowHeadAtCall: string }> = [];
     await reconcileOnce({
-      cfg, store, adapter: gh, hooks,
+      cfg,
+      store,
+      adapter: gh,
+      hooks,
       onHeadPush: async (pr, head_sha) => {
         pushes.push({ pr, head: head_sha, rowHeadAtCall: store.getPr(pr)!.head_sha });
       },
@@ -310,13 +340,29 @@ describe("reconcileOnce", () => {
     gh.open = [ref(35, { head_sha: "cur-sha" })]; // head unchanged — no push detection
     const { hooks } = recordingHooks();
     const pushes: number[] = [];
-    await reconcileOnce({ cfg, store, adapter: gh, hooks, onHeadPush: async (pr) => { pushes.push(pr); } });
+    await reconcileOnce({
+      cfg,
+      store,
+      adapter: gh,
+      hooks,
+      onHeadPush: async (pr) => {
+        pushes.push(pr);
+      },
+    });
     expect(pushes).toEqual([35]);
 
     // Claimed (a nudge or a terminal noop answered it) → silent.
     store.claimRecheck(35, "push:cur-sha::", { head_sha: "cur-sha", trigger: "push" });
     const again: number[] = [];
-    await reconcileOnce({ cfg, store, adapter: gh, hooks, onHeadPush: async (pr) => { again.push(pr); } });
+    await reconcileOnce({
+      cfg,
+      store,
+      adapter: gh,
+      hooks,
+      onHeadPush: async (pr) => {
+        again.push(pr);
+      },
+    });
     expect(again).toEqual([]);
   });
 
@@ -326,7 +372,15 @@ describe("reconcileOnce", () => {
     gh.open = [ref(36, { head_sha: "cur-sha" })];
     const { hooks } = recordingHooks();
     const pushes: number[] = [];
-    await reconcileOnce({ cfg, store, adapter: gh, hooks, onHeadPush: async (pr) => { pushes.push(pr); } });
+    await reconcileOnce({
+      cfg,
+      store,
+      adapter: gh,
+      hooks,
+      onHeadPush: async (pr) => {
+        pushes.push(pr);
+      },
+    });
     expect(pushes).toEqual([]);
   });
 
@@ -335,7 +389,15 @@ describe("reconcileOnce", () => {
     gh.open = [ref(31, { title: "renamed title" })];
     const { hooks } = recordingHooks();
     const pushes: number[] = [];
-    await reconcileOnce({ cfg, store, adapter: gh, hooks, onHeadPush: async (pr) => { pushes.push(pr); } });
+    await reconcileOnce({
+      cfg,
+      store,
+      adapter: gh,
+      hooks,
+      onHeadPush: async (pr) => {
+        pushes.push(pr);
+      },
+    });
     expect(pushes).toEqual([]);
   });
 
@@ -344,8 +406,13 @@ describe("reconcileOnce", () => {
     gh.open = [ref(32, { head_sha: "new-sha" })];
     const { hooks } = recordingHooks();
     const report = await reconcileOnce({
-      cfg, store, adapter: gh, hooks,
-      onHeadPush: async () => { throw new Error("recheck exploded"); },
+      cfg,
+      store,
+      adapter: gh,
+      hooks,
+      onHeadPush: async () => {
+        throw new Error("recheck exploded");
+      },
     });
     expect(report.errors.some((e) => e.includes("onHeadPush #32"))).toBe(true);
     expect(store.getPr(32)!.head_sha).toBe("new-sha"); // track still applied
@@ -362,7 +429,9 @@ describe("reconcileOnce", () => {
   it("does not disturb a round in flight", async () => {
     gh.open = [ref(12), ref(13)];
     gh.labelTriggered = [item(12)];
-    gh.stale = [{ number: 13, head_sha: "sha13", approved_sha: "old", approved_at: "2026-08-12T00:00:00Z" }];
+    gh.stale = [
+      { number: 13, head_sha: "sha13", approved_sha: "old", approved_at: "2026-08-12T00:00:00Z" },
+    ];
     seed(12, "reviewing");
     seed(13, "reviewing");
     const { hooks } = recordingHooks();
@@ -435,7 +504,9 @@ describe("reconcileOnce", () => {
     gh.searchLabelTriggered = async () => {
       throw new Error("search 503");
     };
-    gh.stale = [{ number: 20, head_sha: "sha20", approved_sha: "old", approved_at: "2026-08-12T00:00:00Z" }];
+    gh.stale = [
+      { number: 20, head_sha: "sha20", approved_sha: "old", approved_at: "2026-08-12T00:00:00Z" },
+    ];
     const { hooks } = recordingHooks();
     const report = await reconcileOnce({ cfg, store, adapter: gh, hooks });
     expect(report.errors.join(" ")).toContain("search 503");
@@ -445,15 +516,21 @@ describe("reconcileOnce", () => {
   it("logs a reconcile_pass summary every time", async () => {
     const { hooks } = recordingHooks();
     await reconcileOnce({ cfg, store, adapter: gh, hooks });
-    expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'reconcile_pass'").get()).toMatchObject({ c: 1 });
+    expect(
+      store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'reconcile_pass'").get(),
+    ).toMatchObject({ c: 1 });
   });
 });
 
 describe("withheld-approval backstop", () => {
   // The webhook `ci_completed` is the fast path; this is the reconcile sweep
   // cigate.ts promises for a lost delivery.
-  const green: CheckSummary[] = [{ name: "ci", source: "check_run", status: "completed", conclusion: "success" }];
-  const red: CheckSummary[] = [{ name: "ci", source: "check_run", status: "completed", conclusion: "failure" }];
+  const green: CheckSummary[] = [
+    { name: "ci", source: "check_run", status: "completed", conclusion: "success" },
+  ];
+  const red: CheckSummary[] = [
+    { name: "ci", source: "check_run", status: "completed", conclusion: "failure" },
+  ];
 
   it("requeues a withheld PR when CI is green at the recorded head (webhook lost)", async () => {
     seed(70, "tracked");
@@ -466,7 +543,11 @@ describe("withheld-approval backstop", () => {
     expect(store.getPr(70)?.state).toBe("queued");
     // The retry is retryWithheldApproval itself — its own event fires, plus the
     // reconcile correction that says the poll (not the webhook) caught it.
-    expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'approval_retry_queued'").get()).toEqual({ c: 1 });
+    expect(
+      store.db
+        .prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'approval_retry_queued'")
+        .get(),
+    ).toEqual({ c: 1 });
     expect(corrections(store).some((c) => c.what === "withheld-approval-requeued")).toBe(true);
   });
 
@@ -480,7 +561,11 @@ describe("withheld-approval backstop", () => {
 
     expect(store.getPr(71)?.state).toBe("tracked");
     expect(store.approvalWithheld(71)).toBeDefined();
-    expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'approval_retry_queued'").get()).toEqual({ c: 0 });
+    expect(
+      store.db
+        .prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'approval_retry_queued'")
+        .get(),
+    ).toEqual({ c: 0 });
     expect(corrections(store).some((c) => c.what === "withheld-approval-requeued")).toBe(false);
   });
 
@@ -503,7 +588,12 @@ describe("withheld-approval backstop", () => {
     // Simulate a stub wiring with no listChecks at all.
     (bare as { listChecks?: unknown }).listChecks = undefined;
 
-    const report = await reconcileOnce({ cfg, store, adapter: bare, hooks: recordingHooks().hooks });
+    const report = await reconcileOnce({
+      cfg,
+      store,
+      adapter: bare,
+      hooks: recordingHooks().hooks,
+    });
 
     expect(report.errors).toEqual([]);
     expect(store.getPr(73)?.state).toBe("tracked");
@@ -529,7 +619,16 @@ describe("dry-run re-trigger suppression", () => {
   it("suppresses re-queue when the last applied verdict matches the head (dry-run)", async () => {
     gh.open = [ref(9, { head_sha: "sha9" })];
     gh.labelTriggered = [item(9)];
-    store.upsertPr({ number: 9, state: "tracked", head_sha: "sha9", title: "PR 9", author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+    store.upsertPr({
+      number: 9,
+      state: "tracked",
+      head_sha: "sha9",
+      title: "PR 9",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
     store.logEvent("verdict_applied", 9, { head_sha: "sha9", verdict: "APPROVE" });
 
     await reconcileOnce({ cfg: { ...cfg, dry_run: true }, store, adapter: gh, hooks });
@@ -544,28 +643,71 @@ describe("dry-run re-trigger suppression", () => {
   it("does not suppress when dry_run is off", async () => {
     gh.open = [ref(9, { head_sha: "sha9" })];
     gh.labelTriggered = [item(9)];
-    store.upsertPr({ number: 9, state: "tracked", head_sha: "sha9", title: "PR 9", author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+    store.upsertPr({
+      number: 9,
+      state: "tracked",
+      head_sha: "sha9",
+      title: "PR 9",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
     store.logEvent("verdict_applied", 9, { head_sha: "sha9", verdict: "APPROVE" });
 
     await reconcileOnce({ cfg: { ...cfg, dry_run: false }, store, adapter: gh, hooks });
     expect(store.getPr(9)!.state).toBe("queued");
   });
 
-  it.each([true, false])("never queues an outdated approval merely because the head moved (dry_run=%s)", async (dryRun) => {
-    gh.open = [ref(11, { head_sha: "sha11-new" })];
-    gh.stale = [{ number: 11, head_sha: "sha11-new", approved_sha: "old-sha", approved_at: "2026-08-10T00:00:00Z" }];
-    store.upsertPr({ number: 11, state: "tracked", head_sha: "sha11", title: "PR 11", author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+  it.each([true, false])(
+    "never queues an outdated approval merely because the head moved (dry_run=%s)",
+    async (dryRun) => {
+      gh.open = [ref(11, { head_sha: "sha11-new" })];
+      gh.stale = [
+        {
+          number: 11,
+          head_sha: "sha11-new",
+          approved_sha: "old-sha",
+          approved_at: "2026-08-10T00:00:00Z",
+        },
+      ];
+      store.upsertPr({
+        number: 11,
+        state: "tracked",
+        head_sha: "sha11",
+        title: "PR 11",
+        author: "alice",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
 
-    await reconcileOnce({ cfg: { ...cfg, dry_run: dryRun }, store, adapter: gh, hooks });
-    expect(store.getPr(11)).toMatchObject({ state: "tracked", head_sha: "sha11-new", stale_recheck: 0 });
-    expect(gh.calls).not.toContain("stalenessScan");
-  });
+      await reconcileOnce({ cfg: { ...cfg, dry_run: dryRun }, store, adapter: gh, hooks });
+      expect(store.getPr(11)).toMatchObject({
+        state: "tracked",
+        head_sha: "sha11-new",
+        stale_recheck: 0,
+      });
+      expect(gh.calls).not.toContain("stalenessScan");
+    },
+  );
 
   it("paused PRs are never re-triggered or staleness-rechecked", async () => {
     gh.open = [ref(13, { head_sha: "sha13" })];
     gh.labelTriggered = [item(13)];
-    gh.stale = [{ number: 13, head_sha: "sha13", approved_sha: "old", approved_at: "2026-08-10T00:00:00Z" }];
-    store.upsertPr({ number: 13, state: "tracked", head_sha: "sha13", title: "PR 13", author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+    gh.stale = [
+      { number: 13, head_sha: "sha13", approved_sha: "old", approved_at: "2026-08-10T00:00:00Z" },
+    ];
+    store.upsertPr({
+      number: 13,
+      state: "tracked",
+      head_sha: "sha13",
+      title: "PR 13",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
     store.pausePr(13, { issuer: "operator", expires_at: null }, "test");
 
     await reconcileOnce({ cfg: { ...cfg, dry_run: false }, store, adapter: gh, hooks });
@@ -606,8 +748,12 @@ describe("reconcileOrphanedRounds", () => {
     expect(res.cancelled.sort()).toEqual([11, 12]);
     expect(res.requeued).toEqual([11]);
     expect(store.runningRounds().map((r) => r.pr)).toEqual([10]); // capacity restored
-    expect((store.db.prepare("SELECT status FROM rounds WHERE id = ?").get(lostId) as any).status).toBe("cancelled");
-    expect((store.db.prepare("SELECT status FROM rounds WHERE id = ?").get(phantomId) as any).status).toBe("cancelled");
+    expect(
+      (store.db.prepare("SELECT status FROM rounds WHERE id = ?").get(lostId) as any).status,
+    ).toBe("cancelled");
+    expect(
+      (store.db.prepare("SELECT status FROM rounds WHERE id = ?").get(phantomId) as any).status,
+    ).toBe("cancelled");
     expect(store.getPr(11)!.state).toBe("queued");
     expect(store.getPr(12)!.state).toBe("tracked"); // never disturbed
     store.close();
@@ -617,12 +763,22 @@ describe("reconcileOrphanedRounds", () => {
     const store = new StateStore(":memory:");
     upsert(store, 13, "reviewing");
     const oldId = store.startRound(13, "first", ["pass-baseline"], 75);
-    store.recordSuccessor({ pr: 13, predecessor_round_id: oldId, head_sha: "fresh13", provenance: "human", reason: "push+trigger" });
+    store.recordSuccessor({
+      pr: 13,
+      predecessor_round_id: oldId,
+      head_sha: "fresh13",
+      provenance: "human",
+      reason: "push+trigger",
+    });
 
     const res = reconcileOrphanedRounds(store, [], { botLogin: cfg.github.bot_login });
 
     expect(res.requeued).toEqual([13]);
-    expect(store.getPr(13)).toMatchObject({ state: "queued", head_sha: "fresh13", trigger_provenance: "human" });
+    expect(store.getPr(13)).toMatchObject({
+      state: "queued",
+      head_sha: "fresh13",
+      trigger_provenance: "human",
+    });
     expect(store.successorFor(13)?.head_sha).toBe("fresh13");
     store.close();
   });
@@ -637,7 +793,9 @@ describe("reconcileOrphanedRounds", () => {
     const res = reconcileOrphanedRounds(store, [], { botLogin: cfg.github.bot_login });
     expect(res.cancelled).toEqual([20]);
     expect(res.requeued).toEqual([]); // the phantom was superseded — no new round
-    expect((store.db.prepare("SELECT status FROM rounds WHERE id = ?").get(oldId) as any).status).toBe("cancelled");
+    expect(
+      (store.db.prepare("SELECT status FROM rounds WHERE id = ?").get(oldId) as any).status,
+    ).toBe("cancelled");
     store.close();
   });
 });
@@ -660,7 +818,11 @@ describe("stale-trigger residue sweep", () => {
     expect(row.trigger_ts).toBeNull();
     const what = corrections(store).filter((c) => c.what === "stale-trigger-residue-cleared");
     expect(what).toHaveLength(1);
-    expect(what[0]).toMatchObject({ pr: 5180, stale_recheck: 1, trigger_ts: "2026-08-14T14:01:56.715Z" });
+    expect(what[0]).toMatchObject({
+      pr: 5180,
+      stale_recheck: 1,
+      trigger_ts: "2026-08-14T14:01:56.715Z",
+    });
   });
 
   it("a subsequent explicit re-review is NOT classified as a staleness round", async () => {
@@ -670,7 +832,13 @@ describe("stale-trigger residue sweep", () => {
     await reconcileOnce({ cfg, store, adapter: gh, hooks });
 
     // The owner re-labels the PR: an explicit human trigger, days later.
-    applyEvent(store, 5180, { type: "trigger", source: "label" }, { author: "alice" }, { now: () => new Date("2026-08-20T09:00:00Z") });
+    applyEvent(
+      store,
+      5180,
+      { type: "trigger", source: "label" },
+      { author: "alice" },
+      { now: () => new Date("2026-08-20T09:00:00Z") },
+    );
     const row = store.getPr(5180)!;
     expect(row.state).toBe("queued");
     expect(row.stale_recheck).toBe(0);
@@ -692,7 +860,9 @@ describe("stale-trigger residue sweep", () => {
     expect(store.getPr(21)!.stale_recheck).toBe(1); // queued: the trigger is live
     expect(store.getPr(22)!.stale_recheck).toBe(1); // reviewing: dispatch clears it
     expect(store.getPr(23)!.stale_recheck).toBe(1); // running round owns the state
-    expect(corrections(store).filter((c) => c.what === "stale-trigger-residue-cleared")).toHaveLength(0);
+    expect(
+      corrections(store).filter((c) => c.what === "stale-trigger-residue-cleared"),
+    ).toHaveLength(0);
   });
 
   it("runs after the triggered-set step: a still-triggered PR re-queues instead of being wiped", async () => {
@@ -706,7 +876,9 @@ describe("stale-trigger residue sweep", () => {
     const row = store.getPr(31)!;
     expect(row.state).toBe("queued"); // the trigger was real — honored, not swept
     expect(row.trigger_ts).toBe("2026-08-14T10:00:00Z");
-    expect(corrections(store).filter((c) => c.what === "stale-trigger-residue-cleared")).toHaveLength(0);
+    expect(
+      corrections(store).filter((c) => c.what === "stale-trigger-residue-cleared"),
+    ).toHaveLength(0);
   });
 });
 
@@ -745,12 +917,20 @@ describe("undelivered recheck-claim sweep (#5362 W2)", () => {
     staleClaim(600);
     const hooks = hooksWithReceipt(false);
 
-    await reconcileOnce({ cfg, store, adapter: gh, hooks, now: () => new Date("2026-08-14T12:00:00Z") });
+    await reconcileOnce({
+      cfg,
+      store,
+      adapter: gh,
+      hooks,
+      now: () => new Date("2026-08-14T12:00:00Z"),
+    });
 
     expect(hooks.asked).toEqual([`600:${recheckPromptMarker(600, fp)}`]);
     // Released, so the reconcile push-backstop can ask the question again.
     expect(store.hasRecheck(600, fp)).toBe(false);
-    expect(corrections(store).filter((c) => c.what === "recheck-claim-released-undelivered")).toHaveLength(1);
+    expect(
+      corrections(store).filter((c) => c.what === "recheck-claim-released-undelivered"),
+    ).toHaveLength(1);
   });
 
   it("keeps a claim whose nudge DID land, and one with no evidence either way", async () => {
@@ -777,7 +957,9 @@ describe("undelivered recheck-claim sweep (#5362 W2)", () => {
       now: () => new Date("2026-08-14T12:00:00Z"),
     });
     expect(store.hasRecheck(602, fp)).toBe(true);
-    expect(corrections(store).filter((c) => c.what === "recheck-claim-released-undelivered")).toHaveLength(0);
+    expect(
+      corrections(store).filter((c) => c.what === "recheck-claim-released-undelivered"),
+    ).toHaveLength(0);
   });
 
   it("never releases a claim that is merely HELD — a round in flight, or a wake still queued", async () => {

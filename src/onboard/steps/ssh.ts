@@ -26,7 +26,13 @@
 // it), and remote sudo must be passwordless (the playbook runs `become: true`,
 // and a sudo password prompt is the same hang wearing a different hat).
 import { CHOICE_KEYS } from "../choices.js";
-import type { CheckResult, OnboardingStep, ProcessRunner, StepContext, StepReport } from "../engine.js";
+import type {
+  CheckResult,
+  OnboardingStep,
+  ProcessRunner,
+  StepContext,
+  StepReport,
+} from "../engine.js";
 import { shellQuote } from "../../tui/remote.js";
 import { SSH_ALIAS_RE, TOPOLOGY_STEP_ID, sshAliasOf, topologyOf } from "./topology.js";
 
@@ -78,13 +84,25 @@ export function parseSshAddList(code: number, stdout: string, stderr: string): A
       .split("\n")
       .map((l) => l.trim())
       .filter((l) => l !== "" && !/has no identities/i.test(l));
-    return { kind: "keys", count: lines.length, detail: lines.length === 1 ? "1 key" : `${lines.length} keys` };
+    return {
+      kind: "keys",
+      count: lines.length,
+      detail: lines.length === 1 ? "1 key" : `${lines.length} keys`,
+    };
   }
-  if (/no identities/i.test(text)) return { kind: "empty", count: 0, detail: "the agent is running but holds no keys" };
-  if (code === 2 || /could not open a connection|error connecting to agent|agent refused/i.test(text)) {
+  if (/no identities/i.test(text))
+    return { kind: "empty", count: 0, detail: "the agent is running but holds no keys" };
+  if (
+    code === 2 ||
+    /could not open a connection|error connecting to agent|agent refused/i.test(text)
+  ) {
     return { kind: "no-agent", count: 0, detail: "no ssh agent is reachable from this shell" };
   }
-  return { kind: "unknown", count: 0, detail: (stderr || stdout).trim().slice(0, 200) || `ssh-add -l exited ${code}` };
+  return {
+    kind: "unknown",
+    count: 0,
+    detail: (stderr || stdout).trim().slice(0, 200) || `ssh-add -l exited ${code}`,
+  };
 }
 
 // ---- why a connection failed -------------------------------------------------
@@ -95,9 +113,16 @@ export type SshFailure = "no-such-host" | "auth" | "host-key" | "timeout" | "ref
  * advice, and the tests drive every branch without an ssh anywhere. */
 export function classifySshFailure(stderr: string): SshFailure {
   const t = stderr.toLowerCase();
-  if (/could not resolve hostname|name or service not known|nodename nor servname/.test(t)) return "no-such-host";
-  if (/host key verification failed|remote host identification has changed/.test(t)) return "host-key";
-  if (/permission denied|no supported authentication|too many authentication failures|publickey/.test(t)) return "auth";
+  if (/could not resolve hostname|name or service not known|nodename nor servname/.test(t))
+    return "no-such-host";
+  if (/host key verification failed|remote host identification has changed/.test(t))
+    return "host-key";
+  if (
+    /permission denied|no supported authentication|too many authentication failures|publickey/.test(
+      t,
+    )
+  )
+    return "auth";
   if (/timed out|timeout/.test(t)) return "timeout";
   if (/connection refused|no route to host|network is unreachable/.test(t)) return "refused";
   return "unknown";
@@ -110,7 +135,8 @@ export function classifySshFailure(stderr: string): SshFailure {
  * loaded — the passphrase case) or full (the server does not have your key).
  */
 export function connectionAdvice(failure: SshFailure, agent: AgentState, alias: string): string {
-  const batch = "Every ssh this wizard runs carries -o BatchMode=yes, so it fails in the open instead of hanging on a prompt you cannot see.";
+  const batch =
+    "Every ssh this wizard runs carries -o BatchMode=yes, so it fails in the open instead of hanging on a prompt you cannot see.";
   switch (failure) {
     case "no-such-host":
       return (
@@ -120,8 +146,8 @@ export function connectionAdvice(failure: SshFailure, agent: AgentState, alias: 
       );
     case "host-key":
       return (
-        "ssh refused on the host key. That is deliberate: BatchMode never answers the \"are you sure you want to continue " +
-        `connecting?\" question for you. Fix, in your own shell:\n    ssh ${alias} true\naccept the fingerprint once (or fix a ` +
+        'ssh refused on the host key. That is deliberate: BatchMode never answers the "are you sure you want to continue ' +
+        `connecting?" question for you. Fix, in your own shell:\n    ssh ${alias} true\naccept the fingerprint once (or fix a ` +
         `changed key with \`ssh-keygen -R ${alias}\`), then run this step again. ${batch}`
       );
     case "auth":
@@ -141,7 +167,10 @@ export function connectionAdvice(failure: SshFailure, agent: AgentState, alias: 
     case "refused":
       return `${alias} refused the connection. Fix: sshd must be running and reachable on the port your config uses. ${batch}`;
     default:
-      return `ssh failed and did not say anything this step recognises. Fix: run \`ssh ${alias} true\` in your own shell — its ` + `message is the one to act on. ${batch}`;
+      return (
+        `ssh failed and did not say anything this step recognises. Fix: run \`ssh ${alias} true\` in your own shell — its ` +
+        `message is the one to act on. ${batch}`
+      );
   }
 }
 
@@ -187,7 +216,11 @@ export function sshPreflightStep(opts: SshPreflightOptions = {}): OnboardingStep
       });
       return { ok: false, checks };
     }
-    checks.push({ name: "ssh-binary", ok: true, detail: (version.stderr || version.stdout).trim().split("\n")[0] ?? "ssh present" });
+    checks.push({
+      name: "ssh-binary",
+      ok: true,
+      detail: (version.stderr || version.stdout).trim().split("\n")[0] ?? "ssh present",
+    });
 
     // 2. does ssh know this alias, and as what?
     const resolved = await run(runner, "ssh", ["-G", alias]);
@@ -208,7 +241,9 @@ export function sshPreflightStep(opts: SshPreflightOptions = {}): OnboardingStep
       ok: true,
       detail:
         `${alias} → ${facts.user ? `${facts.user}@` : ""}${facts.hostname || alias}:${facts.port || "22"}` +
-        (facts.hostname === alias ? " (no ~/.ssh/config Host entry matched, so ssh treats the alias as the hostname itself)" : ""),
+        (facts.hostname === alias
+          ? " (no ~/.ssh/config Host entry matched, so ssh treats the alias as the hostname itself)"
+          : ""),
     });
 
     // 3+4. What the agent holds, and then the authority: a real,
@@ -229,7 +264,9 @@ export function sshPreflightStep(opts: SshPreflightOptions = {}): OnboardingStep
             ? `${agent.detail}, and the connection below still succeeded — so your key has no passphrase and needs no agent`
             : `${agent.detail}. If your key has a passphrase this fails the connection below rather than prompting, which is ` +
               "deliberate. Load it in your own shell:\n" +
-              (agent.kind === "no-agent" ? '    eval "$(ssh-agent -s)"\n    ssh-add ~/.ssh/id_ed25519' : "    ssh-add ~/.ssh/id_ed25519"),
+              (agent.kind === "no-agent"
+                ? '    eval "$(ssh-agent -s)"\n    ssh-add ~/.ssh/id_ed25519'
+                : "    ssh-add ~/.ssh/id_ed25519"),
     });
     if (!connected) {
       const failure = classifySshFailure(connect.stderr || connect.stdout);
@@ -255,7 +292,11 @@ export function sshPreflightStep(opts: SshPreflightOptions = {}): OnboardingStep
       const sudo = await run(runner, "ssh", sshArgv(alias, ["sudo", "-n", "true"]));
       checks.push(
         sudo.code === 0
-          ? { name: "remote-sudo", ok: true, detail: `sudo on ${alias} works without a password — the Ansible deploy can install packages and run Docker` }
+          ? {
+              name: "remote-sudo",
+              ok: true,
+              detail: `sudo on ${alias} works without a password — the Ansible deploy can install packages and run Docker`,
+            }
           : {
               name: "remote-sudo",
               ok: false,
@@ -273,7 +314,13 @@ export function sshPreflightStep(opts: SshPreflightOptions = {}): OnboardingStep
     const ansible = await run(runner, "ansible-playbook", ["--version"]);
     checks.push(
       ansible.code === 0
-        ? { name: "ansible", ok: true, detail: (ansible.stdout || ansible.stderr).trim().split("\n")[0] ?? "ansible-playbook present" }
+        ? {
+            name: "ansible",
+            ok: true,
+            detail:
+              (ansible.stdout || ansible.stderr).trim().split("\n")[0] ??
+              "ansible-playbook present",
+          }
         : {
             name: "ansible",
             ok: false,
@@ -284,7 +331,11 @@ export function sshPreflightStep(opts: SshPreflightOptions = {}): OnboardingStep
           },
     );
 
-    return { ok: checks.every((c) => c.ok), checks, data: { alias, user: facts.user, hostname: facts.hostname } };
+    return {
+      ok: checks.every((c) => c.ok),
+      checks,
+      data: { alias, user: facts.user, hostname: facts.hostname },
+    };
   }
 
   return {

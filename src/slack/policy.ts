@@ -48,7 +48,11 @@ export function dayWindow(now: Date, timeZone: string): DayWindow {
     0,
     timeZone,
   );
-  return { day: zoneDateString(now, timeZone), startIso: start.toISOString(), endIso: end.toISOString() };
+  return {
+    day: zoneDateString(now, timeZone),
+    startIso: start.toISOString(),
+    endIso: end.toISOString(),
+  };
 }
 
 /** The policy-timezone day window in force for this config. */
@@ -90,7 +94,12 @@ export function decideTurn(
   const userUsed = user ? store.slackTurnsBetween(w.startIso, w.endIso, user) : 0;
   const base = { day: w.day, used, userUsed };
   if (used >= daily_turns) {
-    return { ...base, allow: false, cap: "daily_turns", reason: `Slack daily turn cap reached (${used}/${daily_turns})` };
+    return {
+      ...base,
+      allow: false,
+      cap: "daily_turns",
+      reason: `Slack daily turn cap reached (${used}/${daily_turns})`,
+    };
   }
   if (user && userUsed >= per_user_daily_turns) {
     return {
@@ -120,7 +129,12 @@ export type ReplyCap = "daily_posts" | "thread_replies_per_day" | "idempotent";
  * src/state.ts is owned elsewhere), so this reads the same table directly, the
  * way slack/reply.ts's `threadIsKnown` already does. It stays a pure read.
  */
-export function threadReplyCount(store: StateStore, threadTs: string, sinceIso: string, untilIso: string): number {
+export function threadReplyCount(
+  store: StateStore,
+  threadTs: string,
+  sinceIso: string,
+  untilIso: string,
+): number {
   return (
     store.db
       .prepare(
@@ -163,13 +177,25 @@ export function decideReply(
   const { daily_turns, thread_replies_per_day } = cfg.slack.policy;
   const w = policyWindow(cfg, now);
   const used = store.slackPostsBetween(w.startIso, w.endIso, "reply");
-  const threadUsed = input.threadTs ? threadReplyCount(store, input.threadTs, w.startIso, w.endIso) : 0;
+  const threadUsed = input.threadTs
+    ? threadReplyCount(store, input.threadTs, w.startIso, w.endIso)
+    : 0;
   const base = { day: w.day, used, threadUsed };
   if (input.idemKey && store.slackPost(input.idemKey)) {
-    return { ...base, allow: false, cap: "idempotent", reason: `already posted (idem_key ${input.idemKey})` };
+    return {
+      ...base,
+      allow: false,
+      cap: "idempotent",
+      reason: `already posted (idem_key ${input.idemKey})`,
+    };
   }
   if (used >= daily_turns) {
-    return { ...base, allow: false, cap: "daily_posts", reason: `Slack daily post cap reached (${used}/${daily_turns})` };
+    return {
+      ...base,
+      allow: false,
+      cap: "daily_posts",
+      reason: `Slack daily post cap reached (${used}/${daily_turns})`,
+    };
   }
   if (input.threadTs && threadUsed >= thread_replies_per_day) {
     return {
@@ -191,7 +217,12 @@ export function announcementKey(cause: string, pr?: number | null): string {
 
 /** The cause's own switch + cooldown; unlisted causes take the default. */
 export function causePolicy(cfg: Config, cause: string): SlackCausePolicy {
-  return cfg.slack.policy.causes[cause] ?? { enabled: true, cooldown_min: cfg.slack.policy.default_cooldown_min };
+  return (
+    cfg.slack.policy.causes[cause] ?? {
+      enabled: true,
+      cooldown_min: cfg.slack.policy.default_cooldown_min,
+    }
+  );
 }
 
 export type AnnouncementBlock = "disabled" | "per_hour" | "cooldown";
@@ -224,7 +255,13 @@ export function decideAnnouncement(
   const key = announcementKey(input.cause, input.pr);
   const policy = causePolicy(cfg, input.cause);
   if (!policy.enabled) {
-    return { allow: false, key, bypass: false, block: "disabled", reason: `cause '${input.cause}' is disabled` };
+    return {
+      allow: false,
+      key,
+      bypass: false,
+      block: "disabled",
+      reason: `cause '${input.cause}' is disabled`,
+    };
   }
 
   const perHour = cfg.slack.policy.announcements_per_hour;
@@ -254,12 +291,12 @@ export function decideAnnouncement(
     store.recordSlackCooldownFire(key, w.day);
     return { allow: true, key, bypass: false, folds: 0 };
   }
-  const elapsedMin = (now.getTime() - Date.parse(prev!.last_fired_at)) / 60_000;
+  const elapsedMin = (now.getTime() - Date.parse(prev.last_fired_at)) / 60_000;
   if (elapsedMin >= policy.cooldown_min) {
     store.recordSlackCooldownFire(key, w.day);
     return { allow: true, key, bypass: false, folds: 0 };
   }
-  if (input.escalated && prev!.bypassed === 0) {
+  if (input.escalated && prev.bypassed === 0) {
     store.recordSlackCooldownFire(key, w.day, true);
     return { allow: true, key, bypass: true, folds: 0 };
   }
@@ -283,7 +320,13 @@ export function decideAnnouncement(
  */
 export function claimPost(
   store: StateStore,
-  claim: { idem_key: string; kind: SlackPostKind; pr?: number | null; thread_ts?: string | null; chars?: number },
+  claim: {
+    idem_key: string;
+    kind: SlackPostKind;
+    pr?: number | null;
+    thread_ts?: string | null;
+    chars?: number;
+  },
 ): boolean {
   return store.recordSlackPost(claim);
 }

@@ -18,7 +18,10 @@ import { buildTuiDriver, chainOnPoll } from "../src/tui/index.js";
 import type { CompanionSidebar } from "../src/tui/sidebar.js";
 import { decodeKey } from "../src/tui/keys.js";
 import { timelineOrder } from "../src/tui/memory.js";
-import { legacyBlockHash as blockHash, parseLegacyMemory as parseMemory } from "../src/memory/legacy-file.js";
+import {
+  legacyBlockHash as blockHash,
+  parseLegacyMemory as parseMemory,
+} from "../src/memory/legacy-file.js";
 import type { MemoryOp } from "../src/memory/store.js";
 import { installMetricsHooks, type MetricsFetcher } from "../src/tui/metricstab.js";
 import { stripAnsi } from "../src/tui/paint.js";
@@ -43,9 +46,30 @@ const snapshot: StatusSnapshot = {
   written_at: "2026-08-20T12:00:00Z",
   dry_run: true,
   prs: [
-    { number: 5012, state: "reviewing", title: "fix(crm): retry", head_sha: "aa11", stale_recheck: 0, author: "alice" },
-    { number: 5049, state: "awaiting_author", title: "feat(remote-api): dispatch", head_sha: "bb22", stale_recheck: 0, author: "bob" },
-    { number: 5100, state: "tracked", title: "chore: bump deps", head_sha: "cc33", stale_recheck: 0, author: "alice" },
+    {
+      number: 5012,
+      state: "reviewing",
+      title: "fix(crm): retry",
+      head_sha: "aa11",
+      stale_recheck: 0,
+      author: "alice",
+    },
+    {
+      number: 5049,
+      state: "awaiting_author",
+      title: "feat(remote-api): dispatch",
+      head_sha: "bb22",
+      stale_recheck: 0,
+      author: "bob",
+    },
+    {
+      number: 5100,
+      state: "tracked",
+      title: "chore: bump deps",
+      head_sha: "cc33",
+      stale_recheck: 0,
+      author: "alice",
+    },
   ],
   running_rounds: 0,
   total_spend_usd: 0,
@@ -60,7 +84,9 @@ interface WiredRig extends Rig {
 }
 
 function makeRig(): WiredRig {
-  const rig = learningRig({ fetchProposals: () => Promise.resolve({ proposals: [], improvements: [] }) });
+  const rig = learningRig({
+    fetchProposals: () => Promise.resolve({ proposals: [], improvements: [] }),
+  });
   rig.app.view.snapshot = snapshot;
   const metrics = new FakeMetrics();
   const metricsView = installMetricsHooks(rig.app, metrics);
@@ -69,8 +95,10 @@ function makeRig(): WiredRig {
   return { ...rig, metricsView, deployState, metrics, driver };
 }
 
-const memoryScreen = (rig: Rig): string => stripAnsi(rig.app.hooks.tabs.memory!.screen(rig.app, 110, 30).render());
-const memoryKey = (rig: Rig, k: string): boolean => rig.app.hooks.tabs.memory!.key(rig.app, decodeKey(Buffer.from(k)));
+const memoryScreen = (rig: Rig): string =>
+  stripAnsi(rig.app.hooks.tabs.memory!.screen(rig.app, 110, 30).render());
+const memoryKey = (rig: Rig, k: string): boolean =>
+  rig.app.hooks.tabs.memory!.key(rig.app, decodeKey(Buffer.from(k)));
 
 const tmps: string[] = [];
 afterEach(() => {
@@ -327,7 +355,9 @@ describe("actions wiring: the watcher on a real App", () => {
   it("runTui's onPoll composition: installing the FeedWriter wrapper must not kill the sidebar-refresh wrapper", () => {
     const { app } = makeRig();
     let refreshes = 0;
-    app.sidebar = { refresh: () => ((refreshes += 1), Promise.resolve()) } as unknown as CompanionSidebar;
+    app.sidebar = {
+      refresh: () => ((refreshes += 1), Promise.resolve()),
+    } as unknown as CompanionSidebar;
     // The exact chain runTui builds, in order: sidebar refresh first, feed next.
     chainOnPoll(app, (a) => void a.sidebar?.refresh());
     const root = mkdtempSync(join(tmpdir(), "qcr-feed-"));

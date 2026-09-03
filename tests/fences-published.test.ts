@@ -32,7 +32,8 @@ function stripComments(text: string): string {
 function arrayMembers(relPath: string, name: string): string[] {
   const text = stripComments(readFileSync(join(ROOT, relPath), "utf8"));
   const m = new RegExp(`export const ${name}\\b[^=]*=\\s*\\[([\\s\\S]*?)\\]`).exec(text);
-  if (!m?.[1]) throw new Error(`array ${name} not found in ${relPath} — the fence over it is now vacuous`);
+  if (!m?.[1])
+    throw new Error(`array ${name} not found in ${relPath} — the fence over it is now vacuous`);
   const members = [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]!);
   if (members.length === 0) throw new Error(`array ${name} in ${relPath} parsed to zero members`);
   return members;
@@ -90,9 +91,12 @@ describe("[T11] the shipped configs describe the system that exists", () => {
         // retired, and a line that NEGATES it ("is never handed to a human")
         // says the pattern out loud in order to deny it.
         if (/\b(retired|never|no park|was |removed|no longer)\b/i.test(line)) continue;
-        if (RETIRED_PRESENT_TENSE.some((re) => re.test(line))) offenders.push(`${file}:${i + 1}  ${line.trim()}`);
+        if (RETIRED_PRESENT_TENSE.some((re) => re.test(line)))
+          offenders.push(`${file}:${i + 1}  ${line.trim()}`);
       }
-      expect(offenders, "a shipped config describes the retired park as current behaviour").toEqual([]);
+      expect(offenders, "a shipped config describes the retired park as current behaviour").toEqual(
+        [],
+      );
     });
   }
 
@@ -107,9 +111,9 @@ describe("[T11] the shipped configs describe the system that exists", () => {
     }
     expect(
       [...found].sort(),
-      "the shipped configs' awaiting_human references no longer match the record, which is now EMPTY. Any hit at "
-        + "all means a reference to the retired park reappeared in a config we ship — delete it, or record it in "
-        + "RETIRED_KNOBS_PENDING_REMOVAL with the ticket that removes it.",
+      "the shipped configs' awaiting_human references no longer match the record, which is now EMPTY. Any hit at " +
+        "all means a reference to the retired park reappeared in a config we ship — delete it, or record it in " +
+        "RETIRED_KNOBS_PENDING_REMOVAL with the ticket that removes it.",
     ).toEqual([...RETIRED_KNOBS_PENDING_REMOVAL].sort());
   });
 });
@@ -178,19 +182,40 @@ describe("MANIFESTO.md is pinned by something", () => {
    */
   it("no hostname reaches src/ or the deploy templates without a recorded reason", () => {
     const EGRESS: ReadonlyArray<{ host: string; why: string }> = [
-      { host: "api.github.com", why: "GitHub's REST API — every read, and every gated write. Where the reviewed code already lives." },
-      { host: "github.com", why: "GitHub web + the git remote: PR URLs the operator opens, and the clone/fetch of the reviewed repo." },
-      { host: "cli.github.com", why: "the `gh` CLI apt keyring, in the daemon image BUILD. Build-time only, never during a review." },
-      { host: "deb.nodesource.com", why: "the Node apt repository, same image build. Build-time only, never during a review." },
-      { host: "slack.com", why: "the Slack concierge, DEFAULT OFF — carries verdicts and reply text once an operator enables it." },
+      {
+        host: "api.github.com",
+        why: "GitHub's REST API — every read, and every gated write. Where the reviewed code already lives.",
+      },
+      {
+        host: "github.com",
+        why: "GitHub web + the git remote: PR URLs the operator opens, and the clone/fetch of the reviewed repo.",
+      },
+      {
+        host: "cli.github.com",
+        why: "the `gh` CLI apt keyring, in the daemon image BUILD. Build-time only, never during a review.",
+      },
+      {
+        host: "deb.nodesource.com",
+        why: "the Node apt repository, same image build. Build-time only, never during a review.",
+      },
+      {
+        host: "slack.com",
+        why: "the Slack concierge, DEFAULT OFF — carries verdicts and reply text once an operator enables it.",
+      },
       {
         host: "api.slack.com",
         why:
-          "the same Slack leg, named separately by the setup wizard (deploy/collect-slack-secrets.mjs). Worth its own "
-          + "entry: the compliance audit's egress inventory said 'Slack' once, and this fence found the second spelling.",
+          "the same Slack leg, named separately by the setup wizard (deploy/collect-slack-secrets.mjs). Worth its own " +
+          "entry: the compliance audit's egress inventory said 'Slack' once, and this fence found the second spelling.",
       },
-      { host: "pkg.cloudflare.com", why: "the cloudflared apt repository, in the ansible provision play. Build/provision time only." },
-      { host: "localhost", why: "a loopback URL in deploy/ansible/README.md's operator instructions — the same leg as 127.0.0.1." },
+      {
+        host: "pkg.cloudflare.com",
+        why: "the cloudflared apt repository, in the ansible provision play. Build/provision time only.",
+      },
+      {
+        host: "localhost",
+        why: "a loopback URL in deploy/ansible/README.md's operator instructions — the same leg as 127.0.0.1.",
+      },
       {
         host: "example.com",
         why: "the RFC-2606 reserved example domain, used as a placeholder in deploy/github-app-manifest.json. Reserved never to resolve.",
@@ -198,26 +223,41 @@ describe("MANIFESTO.md is pinned by something", () => {
       {
         host: "REPLACE-WITH-YOUR-WEBHOOK-HOST",
         why:
-          "not a host at all — a FILL marker in the GitHub App manifest template, and it is meant to be conspicuous. "
-          + "It is listed rather than pattern-excluded so a reader sees that the scan saw it.",
+          "not a host at all — a FILL marker in the GitHub App manifest template, and it is meant to be conspicuous. " +
+          "It is listed rather than pattern-excluded so a reader sees that the scan saw it.",
       },
-      { host: "127.0.0.1", why: "loopback: the webhook listener and the OpenViking memory server. Nothing here leaves the host." },
-      { host: "daemon", why: "a docker-compose SERVICE name, not a public host — it resolves only on the compose network." },
-      { host: "host", why: "docker's `host.docker.internal` family in a compose template — the container's own host, not the internet." },
+      {
+        host: "127.0.0.1",
+        why: "loopback: the webhook listener and the OpenViking memory server. Nothing here leaves the host.",
+      },
+      {
+        host: "daemon",
+        why: "a docker-compose SERVICE name, not a public host — it resolves only on the compose network.",
+      },
+      {
+        host: "host",
+        why: "docker's `host.docker.internal` family in a compose template — the container's own host, not the internet.",
+      },
       {
         host: "foo-bar-baz.trycloudflare.com",
         why: "a PLACEHOLDER in the tunnel template, showing an operator what a quick-tunnel URL looks like. Nothing resolves it.",
       },
-      { host: "x.ngrok-free.app", why: "the same placeholder role for the ngrok ingress shape, in operator-facing text." },
+      {
+        host: "x.ngrok-free.app",
+        why: "the same placeholder role for the ngrok ingress shape, in operator-facing text.",
+      },
       {
         host: "mcp.example.com",
         why:
-          "a QUOTED EXAMPLE inside a PASS_ADDENDA regression boundary (src/include.ts) — a URL from a past finding, "
-          + "reproduced verbatim so the rule keeps its worked example. Prose in a string; nothing fetches it. This entry is "
-          + "why the fence lists hosts with reasons rather than asserting an empty set: a naive hostname grep flags it, and "
-          + "an unexplained exclusion would be indistinguishable from hiding a real egress.",
+          "a QUOTED EXAMPLE inside a PASS_ADDENDA regression boundary (src/include.ts) — a URL from a past finding, " +
+          "reproduced verbatim so the rule keeps its worked example. Prose in a string; nothing fetches it. This entry is " +
+          "why the fence lists hosts with reasons rather than asserting an empty set: a naive hostname grep flags it, and " +
+          "an unexplained exclusion would be indistinguishable from hiding a real egress.",
       },
-      { host: "support.example.com", why: "the same: the #5386 injection-adjudication example, quoted in an addendum. Prose in a string." },
+      {
+        host: "support.example.com",
+        why: "the same: the #5386 injection-adjudication example, quoted in an addendum. Prose in a string.",
+      },
     ];
 
     const seen = new Map<string, string>();
@@ -229,20 +269,29 @@ describe("MANIFESTO.md is pinned by something", () => {
         }
       }
     }
-    expect(seen.size, "no hostname was found at all — the scan broke and this asserts nothing").toBeGreaterThan(3);
-    for (const e of EGRESS) expect(e.why.length, `${e.host} needs a reason a stranger can check`).toBeGreaterThan(30);
+    expect(
+      seen.size,
+      "no hostname was found at all — the scan broke and this asserts nothing",
+    ).toBeGreaterThan(3);
+    for (const e of EGRESS)
+      expect(e.why.length, `${e.host} needs a reason a stranger can check`).toBeGreaterThan(30);
 
     const allowed = new Set(EGRESS.map((e) => e.host));
-    const unlisted = [...seen.entries()].filter(([h]) => !allowed.has(h)).map(([h, f]) => `${h} (${f})`);
+    const unlisted = [...seen.entries()]
+      .filter(([h]) => !allowed.has(h))
+      .map(([h, f]) => `${h} (${f})`);
     expect(
       unlisted.sort(),
-      "a hostname appears in src/ or a deploy template that the egress allowlist does not name. The manifesto "
-        + "claims your code and your reviewer's memory stay on your infrastructure — add the host WITH its reason, or remove it.",
+      "a hostname appears in src/ or a deploy template that the egress allowlist does not name. The manifesto " +
+        "claims your code and your reviewer's memory stay on your infrastructure — add the host WITH its reason, or remove it.",
     ).toEqual([]);
 
     // …and the list must not rot in the other direction either.
     const stale = [...allowed].filter((h) => !seen.has(h));
-    expect(stale.sort(), "the egress allowlist names a host that no longer appears anywhere — delete the entry").toEqual([]);
+    expect(
+      stale.sort(),
+      "the egress allowlist names a host that no longer appears anywhere — delete the entry",
+    ).toEqual([]);
   });
 
   /**
@@ -258,14 +307,16 @@ describe("MANIFESTO.md is pinned by something", () => {
     const hits: string[] = [];
     for (const root of ["src", "scripts"]) {
       for (const f of allFiles(join(ROOT, root))) {
-        if (readFileSync(f, "utf8").includes("feedback-mining")) hits.push(f.slice(ROOT.length + 1));
+        if (readFileSync(f, "utf8").includes("feedback-mining"))
+          hits.push(f.slice(ROOT.length + 1));
       }
     }
-    if (readFileSync(join(ROOT, "package.json"), "utf8").includes("feedback-mining")) hits.push("package.json");
+    if (readFileSync(join(ROOT, "package.json"), "utf8").includes("feedback-mining"))
+      hits.push("package.json");
     expect(
       hits,
-      "feedback-mining is now invoked by code — the loop is automated, and the README/MANIFESTO wording that calls it "
-        + "a documented human-run loop has to change with it",
+      "feedback-mining is now invoked by code — the loop is automated, and the README/MANIFESTO wording that calls it " +
+        "a documented human-run loop has to change with it",
     ).toEqual([]);
   });
 });

@@ -23,7 +23,9 @@ import { applyEvent } from "../src/statemachine.js";
 import { applyInterpretation } from "../src/webhook.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
 
-const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
+const cfg: Config = parseConfig(
+  readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
+);
 const BOT = cfg.github.bot_login;
 const HEAD = "68b8040aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const OLD = "1111111111111111111111111111111111111111";
@@ -47,12 +49,19 @@ class FakeGuardAdapter implements GuardAdapter {
   failGetPr = false;
   getPrCalls = 0;
 
-  async getPr(): Promise<{ state: "open" | "closed"; merged: boolean; head_sha: string; author: string }> {
+  async getPr(): Promise<{
+    state: "open" | "closed";
+    merged: boolean;
+    head_sha: string;
+    author: string;
+  }> {
     this.getPrCalls++;
     if (this.failGetPr) throw new Error("GET /pulls/5180 → 502");
     return this.pr;
   }
-  async listReviews(): Promise<Array<{ id: number; user: string; state: string; commit_id: string }>> {
+  async listReviews(): Promise<
+    Array<{ id: number; user: string; state: string; commit_id: string }>
+  > {
     return this.reviews;
   }
 }
@@ -66,7 +75,11 @@ interface Harness {
 function harness(over: Partial<Config["guards"]> = {}, dryRun = false): Harness {
   const adapter = new FakeGuardAdapter();
   const executor = vi.fn(async () => ({ id: 900, comments: [] }));
-  const gate = new MutationGate(dryRun, dryrunDir, executor as unknown as (i: MutationIntent) => Promise<unknown>);
+  const gate = new MutationGate(
+    dryRun,
+    dryrunDir,
+    executor as unknown as (i: MutationIntent) => Promise<unknown>,
+  );
   gate.setGuard(
     makePostingGuard({ store, adapter, botLogin: BOT, guards: { ...GUARDS_DEFAULTS, ...over } }),
   );
@@ -82,7 +95,12 @@ function reviewIntent(
     kind: "create_review",
     method: "POST",
     path: "/repos/o/r/pulls/5180/reviews",
-    body: { commit_id: commitId, event, body, comments: [{ path: "a.py", line: 3, side: "RIGHT", body: "[blocker] x" }] },
+    body: {
+      commit_id: commitId,
+      event,
+      body,
+      comments: [{ path: "a.py", line: 3, side: "RIGHT", body: "[blocker] x" }],
+    },
     note: `post ${event} review on #5180`,
     pr: 5180,
   };
@@ -94,30 +112,54 @@ describe("humanApprovalAtHead", () => {
   const at = (user: string, state: string, commit_id = HEAD) => ({ user, state, commit_id });
 
   it("finds a non-author human APPROVED at the head", () => {
-    expect(humanApprovalAtHead([at("mhale", "APPROVED")], { head_sha: HEAD, author: "alice", botLogin: BOT })).toBe("mhale");
+    expect(
+      humanApprovalAtHead([at("mhale", "APPROVED")], {
+        head_sha: HEAD,
+        author: "alice",
+        botLogin: BOT,
+      }),
+    ).toBe("mhale");
   });
 
   it("ignores an approval of an older head", () => {
-    expect(humanApprovalAtHead([at("mhale", "APPROVED", OLD)], { head_sha: HEAD, author: "alice", botLogin: BOT })).toBeNull();
+    expect(
+      humanApprovalAtHead([at("mhale", "APPROVED", OLD)], {
+        head_sha: HEAD,
+        author: "alice",
+        botLogin: BOT,
+      }),
+    ).toBeNull();
   });
 
   it("ignores the bot's own approval and any [bot] identity", () => {
     const reviews = [at(BOT, "APPROVED"), at("dependabot[bot]", "APPROVED")];
-    expect(humanApprovalAtHead(reviews, { head_sha: HEAD, author: "alice", botLogin: BOT })).toBeNull();
+    expect(
+      humanApprovalAtHead(reviews, { head_sha: HEAD, author: "alice", botLogin: BOT }),
+    ).toBeNull();
   });
 
   it("ignores the PR author", () => {
-    expect(humanApprovalAtHead([at("alice", "APPROVED")], { head_sha: HEAD, author: "alice", botLogin: BOT })).toBeNull();
+    expect(
+      humanApprovalAtHead([at("alice", "APPROVED")], {
+        head_sha: HEAD,
+        author: "alice",
+        botLogin: BOT,
+      }),
+    ).toBeNull();
   });
 
   it("treats a later CHANGES_REQUESTED by the same person as retiring the approval", () => {
     const reviews = [at("mhale", "APPROVED"), at("mhale", "CHANGES_REQUESTED")];
-    expect(humanApprovalAtHead(reviews, { head_sha: HEAD, author: "alice", botLogin: BOT })).toBeNull();
+    expect(
+      humanApprovalAtHead(reviews, { head_sha: HEAD, author: "alice", botLogin: BOT }),
+    ).toBeNull();
   });
 
   it("ignores COMMENTED reviews when deciding who still stands approved", () => {
     const reviews = [at("mhale", "APPROVED"), at("mhale", "COMMENTED")];
-    expect(humanApprovalAtHead(reviews, { head_sha: HEAD, author: "alice", botLogin: BOT })).toBe("mhale");
+    expect(humanApprovalAtHead(reviews, { head_sha: HEAD, author: "alice", botLogin: BOT })).toBe(
+      "mhale",
+    );
   });
 });
 
@@ -136,7 +178,11 @@ describe("guard 1 — a human approval at the head downgrades the bot to COMMENT
     expect(body.body).toContain("**Verdict: Changes requested**"); // findings survive
     expect(body.body).toContain("@mhale");
     expect(body.comments).toHaveLength(1); // inline findings survive
-    expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'posting_guard_downgraded'").get()).toEqual({ c: 1 });
+    expect(
+      store.db
+        .prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'posting_guard_downgraded'")
+        .get(),
+    ).toEqual({ c: 1 });
   });
 
   it("leaves REQUEST_CHANGES alone when the approval is on an older head", async () => {
@@ -145,7 +191,9 @@ describe("guard 1 — a human approval at the head downgrades the bot to COMMENT
 
     await gate.execute(reviewIntent("REQUEST_CHANGES"));
 
-    expect((executor.mock.calls[0]![0] as MutationIntent).body).toMatchObject({ event: "REQUEST_CHANGES" });
+    expect((executor.mock.calls[0]![0] as MutationIntent).body).toMatchObject({
+      event: "REQUEST_CHANGES",
+    });
   });
 
   it("never touches an APPROVE or a COMMENT payload", async () => {
@@ -158,7 +206,11 @@ describe("guard 1 — a human approval at the head downgrades the bot to COMMENT
   });
 
   it("downgradeForHumanApproval is pure: event swapped, body appended", () => {
-    const out = downgradeForHumanApproval({ event: "REQUEST_CHANGES", body: "findings", commit_id: HEAD }, "mhale", HEAD);
+    const out = downgradeForHumanApproval(
+      { event: "REQUEST_CHANGES", body: "findings", commit_id: HEAD },
+      "mhale",
+      HEAD,
+    );
     expect(out.event).toBe("COMMENT");
     expect(out.body?.startsWith("findings")).toBe(true);
     expect(out.body).toContain(HEAD.slice(0, 7));
@@ -190,8 +242,12 @@ describe("hasNewEvidence", () => {
   });
 
   it("is true again once an author reply lands after the review", () => {
-    expect(hasNewEvidence(mark({ last_author_reply_at: "2026-08-18T11:00:00.000Z" }), HEAD)).toBe(true);
-    expect(hasNewEvidence(mark({ last_author_reply_at: "2026-08-18T09:00:00.000Z" }), HEAD)).toBe(false);
+    expect(hasNewEvidence(mark({ last_author_reply_at: "2026-08-18T11:00:00.000Z" }), HEAD)).toBe(
+      true,
+    );
+    expect(hasNewEvidence(mark({ last_author_reply_at: "2026-08-18T09:00:00.000Z" }), HEAD)).toBe(
+      false,
+    );
   });
 
   it("is true when the head is unknown — never guess a skip", () => {
@@ -203,7 +259,10 @@ describe("guard 2 — the same head is never reviewed twice", () => {
   it("records the reviewed head after a review really posts", async () => {
     const { gate } = harness();
     await gate.execute(reviewIntent("REQUEST_CHANGES"));
-    expect(store.reviewedHead(5180)).toMatchObject({ head_sha: HEAD, posted_event: "REQUEST_CHANGES" });
+    expect(store.reviewedHead(5180)).toMatchObject({
+      head_sha: HEAD,
+      posted_event: "REQUEST_CHANGES",
+    });
   });
 
   it("blocks the second review of the same head and calls no executor", async () => {
@@ -245,7 +304,10 @@ describe("guard 2 — the same head is never reviewed twice", () => {
 
   it("does not let a mechanical migration pre-check COMMENT mark the head reviewed", async () => {
     const { gate, executor } = harness();
-    const intent: MutationIntent = { ...reviewIntent("COMMENT"), reviewPurpose: "migration_precheck" };
+    const intent: MutationIntent = {
+      ...reviewIntent("COMMENT"),
+      reviewPurpose: "migration_precheck",
+    };
 
     expect((await gate.execute(intent)).executed).toBe(true);
     expect(executor).toHaveBeenCalledTimes(1); // still gated and posted
@@ -271,13 +333,21 @@ describe("the reviewed-head mark (state)", () => {
     store.recordReviewedHead(7, { head_sha: OLD, verdict: "REQUEST_CHANGES" });
     store.noteAuthorReply(7, "2099-01-01T00:00:00.000Z");
     store.recordReviewedHead(7, { head_sha: HEAD, verdict: "APPROVE" });
-    expect(store.reviewedHead(7)).toMatchObject({ head_sha: HEAD, verdict: "APPROVE", last_author_reply_at: null });
+    expect(store.reviewedHead(7)).toMatchObject({
+      head_sha: HEAD,
+      verdict: "APPROVE",
+      last_author_reply_at: null,
+    });
   });
 
   it("re-stamping the same head keeps fields it was not given", () => {
     store.recordReviewedHead(7, { head_sha: HEAD, verdict: "APPROVE", round_no: 2 });
     store.recordReviewedHead(7, { head_sha: HEAD, posted_event: "COMMENT" });
-    expect(store.reviewedHead(7)).toMatchObject({ verdict: "APPROVE", round_no: 2, posted_event: "COMMENT" });
+    expect(store.reviewedHead(7)).toMatchObject({
+      verdict: "APPROVE",
+      round_no: 2,
+      posted_event: "COMMENT",
+    });
   });
 
   it("noteAuthorReply only ever moves the stamp forward", () => {
@@ -289,21 +359,38 @@ describe("the reviewed-head mark (state)", () => {
 
   it("repairs an existing migration-only mark but never a substantive mark", () => {
     store.recordReviewedHead(7, { head_sha: HEAD, posted_event: "COMMENT" });
-    store.logEvent("migration_collision_comment", 7, { head_sha: HEAD, fingerprint: "fp", executed: true });
+    store.logEvent("migration_collision_comment", 7, {
+      head_sha: HEAD,
+      fingerprint: "fp",
+      executed: true,
+    });
 
     expect(store.repairMigrationPrecheckReviewedHead(7)).toBe(true);
     expect(store.reviewedHead(7)).toBeUndefined();
     expect(store.repairMigrationPrecheckReviewedHead(7)).toBe(false); // idempotent
 
-    store.recordReviewedHead(8, { head_sha: HEAD, posted_event: "COMMENT", verdict: "REQUEST_CHANGES", round_no: 2 });
-    store.logEvent("migration_collision_comment", 8, { head_sha: HEAD, fingerprint: "fp", executed: true });
+    store.recordReviewedHead(8, {
+      head_sha: HEAD,
+      posted_event: "COMMENT",
+      verdict: "REQUEST_CHANGES",
+      round_no: 2,
+    });
+    store.logEvent("migration_collision_comment", 8, {
+      head_sha: HEAD,
+      fingerprint: "fp",
+      executed: true,
+    });
     expect(store.repairMigrationPrecheckReviewedHead(8)).toBe(false);
     expect(store.reviewedHead(8)).toMatchObject({ verdict: "REQUEST_CHANGES", round_no: 2 });
   });
 
   it("does not repair an unproven COMMENT mark", () => {
     store.recordReviewedHead(7, { head_sha: HEAD, posted_event: "COMMENT" });
-    store.logEvent("migration_collision_comment", 7, { head_sha: HEAD, fingerprint: "fp", executed: false });
+    store.logEvent("migration_collision_comment", 7, {
+      head_sha: HEAD,
+      fingerprint: "fp",
+      executed: false,
+    });
 
     expect(store.repairMigrationPrecheckReviewedHead(7)).toBe(false);
     expect(store.reviewedHead(7)).toBeDefined();
@@ -311,21 +398,30 @@ describe("the reviewed-head mark (state)", () => {
 
   it("an author reply on a webhook is recorded against the mark", async () => {
     store.upsertPr({
-      number: 5180, state: "awaiting_author", head_sha: HEAD, title: "t", author: "alice",
-      trigger_ts: null, stale_recheck: 0, migration_gate: 0,
+      number: 5180,
+      state: "awaiting_author",
+      head_sha: HEAD,
+      title: "t",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
     });
     store.recordReviewedHead(5180, { head_sha: HEAD, verdict: "REQUEST_CHANGES" });
 
-    await applyInterpretation({ cfg, store }, {
-      kind: "author_reply",
-      pr: 5180,
-      comment_id: 11,
-      in_reply_to_id: 10,
-      author: "alice",
-      body: "fixed",
-      via: "thread_reply",
-      scope: "review_comment",
-    });
+    await applyInterpretation(
+      { cfg, store },
+      {
+        kind: "author_reply",
+        pr: 5180,
+        comment_id: 11,
+        in_reply_to_id: 10,
+        author: "alice",
+        body: "fixed",
+        via: "thread_reply",
+        scope: "review_comment",
+      },
+    );
 
     expect(store.reviewedHead(5180)?.last_author_reply_at).toBeTruthy();
     expect(hasNewEvidence(store.reviewedHead(5180), HEAD)).toBe(true);
@@ -343,7 +439,11 @@ describe("guard 3 — merged or closed state is re-checked immediately before po
 
     expect(result).toMatchObject({ executed: false, blocked: "pr-merged" });
     expect(executor).not.toHaveBeenCalled();
-    expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'posting_guard_blocked'").get()).toEqual({ c: 1 });
+    expect(
+      store.db
+        .prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'posting_guard_blocked'")
+        .get(),
+    ).toEqual({ c: 1 });
   });
 
   it("refuses to post onto a closed-unmerged PR", async () => {
@@ -433,8 +533,14 @@ class DispatchFake implements DispatchAdapter {
 
 function queued(pr: number, head: string): void {
   store.upsertPr({
-    number: pr, state: "queued", head_sha: head, title: `PR ${pr}`, author: "alice",
-    trigger_ts: "2026-08-18T10:00:00Z", stale_recheck: 0, migration_gate: 0,
+    number: pr,
+    state: "queued",
+    head_sha: head,
+    title: `PR ${pr}`,
+    author: "alice",
+    trigger_ts: "2026-08-18T10:00:00Z",
+    stale_recheck: 0,
+    migration_gate: 0,
   });
 }
 
@@ -472,7 +578,9 @@ describe("dispatch — a tick with no new evidence starts no round", () => {
     // the PR is not painted "in progress" — no round is in progress
     expect(fns).not.toContain(`addLabel:${cfg.github.in_progress_label}`);
     expect(
-      store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'round_skipped_no_new_evidence'").get(),
+      store.db
+        .prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'round_skipped_no_new_evidence'")
+        .get(),
     ).toEqual({ c: 1 });
   });
 
@@ -489,7 +597,9 @@ describe("dispatch — a tick with no new evidence starts no round", () => {
   // ----: the mark is read through the ONE standing-review interpretation
 
   const skipEvent = (pr: number): Record<string, unknown> => {
-    const rows = store.db.prepare("SELECT payload FROM events WHERE kind = 'round_skipped_no_new_evidence' AND pr = ?").all(pr) as Array<{ payload: string }>;
+    const rows = store.db
+      .prepare("SELECT payload FROM events WHERE kind = 'round_skipped_no_new_evidence' AND pr = ?")
+      .all(pr) as Array<{ payload: string }>;
     expect(rows).toHaveLength(1);
     return JSON.parse(rows[0]!.payload) as Record<string, unknown>;
   };
@@ -498,7 +608,11 @@ describe("dispatch — a tick with no new evidence starts no round", () => {
     queued(5409, HEAD);
     // Exactly the row the shell route leaves before the watcher enriches it.
     store.recordReviewedHead(5409, { head_sha: HEAD, posted_event: "REQUEST_CHANGES" });
-    expect(store.reviewedHead(5409)).toMatchObject({ verdict: null, posted_event: "REQUEST_CHANGES", round_no: null });
+    expect(store.reviewedHead(5409)).toMatchObject({
+      verdict: null,
+      posted_event: "REQUEST_CHANGES",
+      round_no: null,
+    });
     const adapter = new DispatchFake();
     const h = hooks();
 
@@ -520,20 +634,40 @@ describe("dispatch — a tick with no new evidence starts no round", () => {
       mark: { head_sha: HEAD, verdict: null, posted_event: "REQUEST_CHANGES", round_no: null },
     });
     // The mark itself is untouched: nothing was reviewed, nothing is re-stamped.
-    expect(store.reviewedHead(5409)).toMatchObject({ verdict: null, posted_event: "REQUEST_CHANGES", round_no: null });
+    expect(store.reviewedHead(5409)).toMatchObject({
+      verdict: null,
+      posted_event: "REQUEST_CHANGES",
+      round_no: null,
+    });
   });
 
   it("the exact #5409 reproduction — a fresh human review_requested on the partial mark — consumes the trigger and runs nothing", async () => {
     // The PR sits awaiting_author on a review posted by round 12; the mark
     // never got its verdict. Then GitHub delivers pull_request.review_requested.
     store.upsertPr({
-      number: 5409, state: "awaiting_author", head_sha: HEAD, title: "PR 5409", author: "alice",
-      trigger_ts: null, stale_recheck: 0, migration_gate: 0,
+      number: 5409,
+      state: "awaiting_author",
+      head_sha: HEAD,
+      title: "PR 5409",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
     });
     store.recordReviewedHead(5409, { head_sha: HEAD, posted_event: "REQUEST_CHANGES" });
     const requestedAt = new Date("2026-09-01T19:05:12.664Z");
-    applyEvent(store, 5409, { type: "trigger", source: "team_request" }, { head_sha: HEAD }, { botLogin: cfg.github.bot_login, now: () => requestedAt });
-    expect(store.getPr(5409)).toMatchObject({ state: "queued", trigger_provenance: "human", trigger_ts: requestedAt.toISOString() });
+    applyEvent(
+      store,
+      5409,
+      { type: "trigger", source: "team_request" },
+      { head_sha: HEAD },
+      { botLogin: cfg.github.bot_login, now: () => requestedAt },
+    );
+    expect(store.getPr(5409)).toMatchObject({
+      state: "queued",
+      trigger_provenance: "human",
+      trigger_ts: requestedAt.toISOString(),
+    });
     const adapter = new DispatchFake();
     const h = hooks();
 
@@ -548,7 +682,11 @@ describe("dispatch — a tick with no new evidence starts no round", () => {
     expect(fns).toContain("deleteTeamReviewRequest:");
     // Human provenance is a scheduling signal, not evidence: guard 2's rule
     // decides, and the PR goes back to the state its standing review put it in.
-    expect(store.getPr(5409)).toMatchObject({ state: "awaiting_author", trigger_ts: null, trigger_provenance: null });
+    expect(store.getPr(5409)).toMatchObject({
+      state: "awaiting_author",
+      trigger_ts: null,
+      trigger_provenance: null,
+    });
     // The decision event captured the provenance BEFORE the transition cleared it.
     expect(skipEvent(5409)).toMatchObject({
       stage: "dispatch",
@@ -564,11 +702,16 @@ describe("dispatch — a tick with no new evidence starts no round", () => {
     store.recordReviewedHead(5180, { head_sha: HEAD, posted_event: "APPROVE" });
     const h = hooks();
 
-    expect(await dispatchOnce({ cfg, store, adapter: new DispatchFake(), hooks: h.hooks })).toEqual([]);
+    expect(await dispatchOnce({ cfg, store, adapter: new DispatchFake(), hooks: h.hooks })).toEqual(
+      [],
+    );
 
     expect(h.orders).toEqual([]);
     expect(store.getPr(5180)?.state).toBe("tracked");
-    expect(skipEvent(5180)).toMatchObject({ standing_verdict: "APPROVE", standing_source: "posted_event" });
+    expect(skipEvent(5180)).toMatchObject({
+      standing_verdict: "APPROVE",
+      standing_source: "posted_event",
+    });
   });
 
   it("a null-verdict COMMENT mark is never guessed — no round (guard 2 would refuse it), no verdict, tracked with an anomaly", async () => {
@@ -582,8 +725,14 @@ describe("dispatch — a tick with no new evidence starts no round", () => {
     expect(h.orders).toEqual([]);
     expect(store.roundsFor(5180)).toEqual([]);
     expect(store.getPr(5180)?.state).toBe("tracked");
-    expect(adapter.calls.map((c) => `${c.fn}:${c.arg ?? ""}`)).not.toContain(`addLabel:${cfg.github.in_progress_label}`);
-    expect(skipEvent(5180)).toMatchObject({ standing_verdict: null, standing_source: null, mark: { posted_event: "COMMENT", verdict: null } });
+    expect(adapter.calls.map((c) => `${c.fn}:${c.arg ?? ""}`)).not.toContain(
+      `addLabel:${cfg.github.in_progress_label}`,
+    );
+    expect(skipEvent(5180)).toMatchObject({
+      standing_verdict: null,
+      standing_source: null,
+      mark: { posted_event: "COMMENT", verdict: null },
+    });
     expect(store.anomalies().map((a) => a.kind)).toContain("standing_review_unknown");
     expect(store.reviewedHead(5180)).toMatchObject({ verdict: null, posted_event: "COMMENT" });
   });
@@ -594,16 +743,25 @@ describe("dispatch — a tick with no new evidence starts no round", () => {
     store.recordApprovalWithheld(5180, { head_sha: HEAD, ci_state: "red", reason: "red-ci" });
     const h = hooks();
 
-    expect(await dispatchOnce({ cfg, store, adapter: new DispatchFake(), hooks: h.hooks })).toHaveLength(1);
+    expect(
+      await dispatchOnce({ cfg, store, adapter: new DispatchFake(), hooks: h.hooks }),
+    ).toHaveLength(1);
     expect(h.orders).toHaveLength(1);
   });
 
   it("an undecided legacy NEEDS_HUMAN mark beside a posted REQUEST_CHANGES still gets its round", async () => {
     queued(5180, HEAD);
-    store.recordReviewedHead(5180, { head_sha: HEAD, verdict: "NEEDS_HUMAN", posted_event: "REQUEST_CHANGES", round_no: 1 });
+    store.recordReviewedHead(5180, {
+      head_sha: HEAD,
+      verdict: "NEEDS_HUMAN",
+      posted_event: "REQUEST_CHANGES",
+      round_no: 1,
+    });
     const h = hooks();
 
-    expect(await dispatchOnce({ cfg, store, adapter: new DispatchFake(), hooks: h.hooks })).toHaveLength(1);
+    expect(
+      await dispatchOnce({ cfg, store, adapter: new DispatchFake(), hooks: h.hooks }),
+    ).toHaveLength(1);
   });
 
   it("dispatches after an author reply on the same head", async () => {
@@ -612,7 +770,9 @@ describe("dispatch — a tick with no new evidence starts no round", () => {
     store.noteAuthorReply(5180, "2099-01-01T00:00:00.000Z");
     const h = hooks();
 
-    expect(await dispatchOnce({ cfg, store, adapter: new DispatchFake(), hooks: h.hooks })).toHaveLength(1);
+    expect(
+      await dispatchOnce({ cfg, store, adapter: new DispatchFake(), hooks: h.hooks }),
+    ).toHaveLength(1);
   });
 });
 
@@ -640,7 +800,11 @@ describe("guard 5 — the head the review is about must still be the live head",
       .prepare("SELECT payload FROM events WHERE kind = 'posting_guard_blocked'")
       .all() as Array<{ payload: string }>;
     expect(rows).toHaveLength(1);
-    expect(JSON.parse(rows[0]!.payload)).toMatchObject({ reason: "head-drift", expected_head: HEAD, live_head: "cafebabe" });
+    expect(JSON.parse(rows[0]!.payload)).toMatchObject({
+      reason: "head-drift",
+      expected_head: HEAD,
+      live_head: "cafebabe",
+    });
   });
 
   it("posts when the heads match", async () => {

@@ -161,7 +161,8 @@ export function readChecklist(stateDir: string): ChecklistFile | null {
     const raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
     if (typeof raw !== "object" || raw === null) return null;
     const file = raw as ChecklistFile;
-    if (typeof file.version !== "number" || typeof file.steps !== "object" || file.steps === null) return null;
+    if (typeof file.version !== "number" || typeof file.steps !== "object" || file.steps === null)
+      return null;
     return file;
   } catch {
     return null;
@@ -221,29 +222,50 @@ export class OnboardingEngine {
   private readonly registry: OnboardingStep[];
   private checklist: ChecklistFile;
 
-  constructor(steps: OnboardingStep[], private readonly adapters: OnboardAdapters) {
+  constructor(
+    steps: OnboardingStep[],
+    private readonly adapters: OnboardAdapters,
+  ) {
     this.registry = [...steps].sort((a, b) => a.order - b.order);
     const loaded = readChecklist(adapters.paths.stateDir);
     if (loaded === null && existsSync(checklistPath(adapters.paths.stateDir))) {
-      adapters.log?.("onboarding: checklist file unreadable — starting fresh (resume re-verifies against reality anyway)");
+      adapters.log?.(
+        "onboarding: checklist file unreadable — starting fresh (resume re-verifies against reality anyway)",
+      );
     }
     this.checklist = loaded ?? this.fresh();
   }
 
   private fresh(): ChecklistFile {
     const now = this.adapters.clock().toISOString();
-    return { version: CHECKLIST_VERSION, created_at: now, updated_at: now, completed_at: null, choices: {}, steps: {} };
+    return {
+      version: CHECKLIST_VERSION,
+      created_at: now,
+      updated_at: now,
+      completed_at: null,
+      choices: {},
+      steps: {},
+    };
   }
 
   private save(): void {
     this.checklist.updated_at = this.adapters.clock().toISOString();
-    writeAtomic(checklistPath(this.adapters.paths.stateDir), `${JSON.stringify(this.checklist, null, 2)}\n`);
+    writeAtomic(
+      checklistPath(this.adapters.paths.stateDir),
+      `${JSON.stringify(this.checklist, null, 2)}\n`,
+    );
   }
 
   private record(id: string): StepRecord {
     const existing = this.checklist.steps[id];
     if (existing) return existing;
-    const created: StepRecord = { status: "pending", completed_at: null, verified_at: null, note: null, data: {} };
+    const created: StepRecord = {
+      status: "pending",
+      completed_at: null,
+      verified_at: null,
+      note: null,
+      data: {},
+    };
     this.checklist.steps[id] = created;
     return created;
   }
@@ -323,16 +345,29 @@ export class OnboardingEngine {
   async runStep(id: string, input: Record<string, unknown> = {}): Promise<StepRunResult> {
     const step = this.registry.find((s) => s.id === id);
     if (!step) {
-      return { id, ok: false, checks: [], failures: [`unknown step "${id}" — known: ${this.registry.map((s) => s.id).join(", ")}`] };
+      return {
+        id,
+        ok: false,
+        checks: [],
+        failures: [`unknown step "${id}" — known: ${this.registry.map((s) => s.id).join(", ")}`],
+      };
     }
     if (!this.enabled(step)) {
-      return { id, ok: false, checks: [], failures: [`step "${id}" is disabled by the recorded choices`] };
+      return {
+        id,
+        ok: false,
+        checks: [],
+        failures: [`step "${id}" is disabled by the recorded choices`],
+      };
     }
     let report: StepReport;
     try {
       report = await step.run(this.ctxFor(id, input));
     } catch (err) {
-      report = { ok: false, checks: [{ name: id, ok: false, detail: `step threw: ${String(err)}` }] };
+      report = {
+        ok: false,
+        checks: [{ name: id, ok: false, detail: `step threw: ${String(err)}` }],
+      };
     }
     const rec = this.record(id);
     if (report.data) rec.data = { ...rec.data, ...report.data };
@@ -353,7 +388,10 @@ export class OnboardingEngine {
     try {
       return await step.verify(this.ctxFor(step.id));
     } catch (err) {
-      return { ok: false, checks: [{ name: step.id, ok: false, detail: `verify threw: ${String(err)}` }] };
+      return {
+        ok: false,
+        checks: [{ name: step.id, ok: false, detail: `verify threw: ${String(err)}` }],
+      };
     }
   }
 

@@ -11,7 +11,13 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { OnboardingEngine, type OnboardAdapters, type ProcessResult, type ProcessRunner, type StepContext } from "../src/onboard/engine.js";
+import {
+  OnboardingEngine,
+  type OnboardAdapters,
+  type ProcessResult,
+  type ProcessRunner,
+  type StepContext,
+} from "../src/onboard/engine.js";
 import { CHOICE_KEYS } from "../src/onboard/steps/configfill.js";
 import { setTomlKey } from "../src/onboard/steps/ingress.js";
 import { stackTransportFor, type StackTransport } from "../src/onboard/steps/transport.js";
@@ -34,7 +40,10 @@ let root: string;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "qcr-proof-"));
   mkdirSync(join(root, "state"), { recursive: true });
-  writeFileSync(join(root, "config.toml"), setTomlKey(exampleConfig, "github", "repo", "acme/web")!);
+  writeFileSync(
+    join(root, "config.toml"),
+    setTomlKey(exampleConfig, "github", "repo", "acme/web")!,
+  );
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
@@ -63,7 +72,14 @@ function seedChoices(choices: Record<string, unknown>): void {
   mkdirSync(join(root, "state", "onboarding"), { recursive: true });
   writeFileSync(
     join(root, "state", "onboarding", "checklist.json"),
-    JSON.stringify({ version: 1, created_at: "2026-08-30T10:00:00Z", updated_at: "2026-08-30T10:00:00Z", completed_at: null, choices, steps: {} }),
+    JSON.stringify({
+      version: 1,
+      created_at: "2026-08-30T10:00:00Z",
+      updated_at: "2026-08-30T10:00:00Z",
+      completed_at: null,
+      choices,
+      steps: {},
+    }),
   );
 }
 
@@ -130,14 +146,23 @@ function harness(
       if (args.includes("why")) {
         if (o.whyCode) return { code: o.whyCode, stdout: "", stderr: "Error: no such container" };
         if (o.whyStdout !== undefined) return { code: 0, stdout: o.whyStdout, stderr: "" };
-        const sequence = o.whyRounds ?? [[{ round_no: 1, status: "done", verdict: "REQUEST_CHANGES", summary: "two blockers" }]];
+        const sequence = o.whyRounds ?? [
+          [{ round_no: 1, status: "done", verdict: "REQUEST_CHANGES", summary: "two blockers" }],
+        ];
         const rounds = sequence[Math.min(poll, sequence.length - 1)] ?? [];
         poll += 1;
-        return { code: 0, stdout: JSON.stringify({ pr: 17, known: o.whyKnown ?? true, state: "reviewing", rounds }), stderr: "" };
+        return {
+          code: 0,
+          stdout: JSON.stringify({ pr: 17, known: o.whyKnown ?? true, state: "reviewing", rounds }),
+          stderr: "",
+        };
       }
       if (args.includes("ls")) {
-        if (o.dryrunListCode) return { code: o.dryrunListCode, stdout: "", stderr: "ls: no such directory" };
-        const names = (o.dryrun ?? [LABEL_RECORD, REVIEW_RECORD]).map((_, i) => `2026-08-30T11-5${i}-00-000Z-000${i}-rec.json`);
+        if (o.dryrunListCode)
+          return { code: o.dryrunListCode, stdout: "", stderr: "ls: no such directory" };
+        const names = (o.dryrun ?? [LABEL_RECORD, REVIEW_RECORD]).map(
+          (_, i) => `2026-08-30T11-5${i}-00-000Z-000${i}-rec.json`,
+        );
         return { code: 0, stdout: `${names.join("\n")}\n`, stderr: "" };
       }
       if (args.includes("cat")) {
@@ -145,7 +170,9 @@ function harness(
         const index = Number(/-000(\d)-rec\.json$/.exec(path)?.[1] ?? -1);
         const records = o.dryrun ?? [LABEL_RECORD, REVIEW_RECORD];
         const rec = records[index];
-        return rec ? { code: 0, stdout: JSON.stringify(rec), stderr: "" } : { code: 1, stdout: "", stderr: "no such file" };
+        return rec
+          ? { code: 0, stdout: JSON.stringify(rec), stderr: "" }
+          : { code: 1, stdout: "", stderr: "no such file" };
       }
       return { code: 1, stdout: "", stderr: `unexpected command: ${args.join(" ")}` };
     },
@@ -160,7 +187,11 @@ function harness(
     paths: { stateDir: join(root, "state") },
     log: (line) => logs.push(line),
   };
-  const step = proofRoundStep({ pollAttempts: o.pollAttempts ?? 3, pollIntervalMs: 1, sleep: async () => undefined });
+  const step = proofRoundStep({
+    pollAttempts: o.pollAttempts ?? 3,
+    pollIntervalMs: 1,
+    sleep: async () => undefined,
+  });
   return { engine: new OnboardingEngine([step], adapters), calls, logs };
 }
 
@@ -168,16 +199,51 @@ describe("reading the daemon's own state", () => {
   it("parseWhy is total and orders rounds", () => {
     expect(parseWhy("not json")).toBeNull();
     expect(parseWhy("null")).toBeNull();
-    const obs = parseWhy(JSON.stringify({ known: true, state: "reviewing", rounds: [{ round_no: 2, status: "running" }, { round_no: 1, status: "done", verdict: "APPROVE" }, "junk"] }))!;
+    const obs = parseWhy(
+      JSON.stringify({
+        known: true,
+        state: "reviewing",
+        rounds: [
+          { round_no: 2, status: "running" },
+          { round_no: 1, status: "done", verdict: "APPROVE" },
+          "junk",
+        ],
+      }),
+    )!;
     expect(obs.rounds.map((r) => r.round_no)).toEqual([1, 2]);
   });
 
   it("classifyRounds follows the LAST round", () => {
     expect(classifyRounds({ known: false, state: null, rounds: [] }).kind).toBe("waiting");
-    expect(classifyRounds({ known: true, state: "queued", rounds: [] })).toMatchObject({ kind: "waiting", detail: expect.stringContaining("not started a round") });
-    expect(classifyRounds({ known: true, state: "reviewing", rounds: [{ round_no: 1, status: "running", verdict: null, summary: null, started_at: "" }] }).kind).toBe("running");
-    expect(classifyRounds({ known: true, state: "x", rounds: [{ round_no: 1, status: "done", verdict: "APPROVE", summary: null, started_at: "" }] }).kind).toBe("done");
-    expect(classifyRounds({ known: true, state: "x", rounds: [{ round_no: 1, status: "cancelled", verdict: null, summary: null, started_at: "" }] }).kind).toBe("failed");
+    expect(classifyRounds({ known: true, state: "queued", rounds: [] })).toMatchObject({
+      kind: "waiting",
+      detail: expect.stringContaining("not started a round"),
+    });
+    expect(
+      classifyRounds({
+        known: true,
+        state: "reviewing",
+        rounds: [{ round_no: 1, status: "running", verdict: null, summary: null, started_at: "" }],
+      }).kind,
+    ).toBe("running");
+    expect(
+      classifyRounds({
+        known: true,
+        state: "x",
+        rounds: [
+          { round_no: 1, status: "done", verdict: "APPROVE", summary: null, started_at: "" },
+        ],
+      }).kind,
+    ).toBe("done");
+    expect(
+      classifyRounds({
+        known: true,
+        state: "x",
+        rounds: [
+          { round_no: 1, status: "cancelled", verdict: null, summary: null, started_at: "" },
+        ],
+      }).kind,
+    ).toBe("failed");
   });
 
   it("readContainerDryrun lists then reads, through docker compose exec, ignoring non-JSON files", async () => {
@@ -185,15 +251,34 @@ describe("reading the daemon's own state", () => {
     const runner = {
       run: async (_cmd: string, args: string[]): Promise<ProcessResult> => {
         seen.push(args);
-        if (args.includes("ls")) return { code: 0, stdout: "a-0000-rec.json\nb-0001-rec.json\nnot-json.txt\n", stderr: "" };
+        if (args.includes("ls"))
+          return {
+            code: 0,
+            stdout: "a-0000-rec.json\nb-0001-rec.json\nnot-json.txt\n",
+            stderr: "",
+          };
         const path = args[args.length - 1]!;
-        return { code: 0, stdout: JSON.stringify(path.includes("0000") ? LABEL_RECORD : REVIEW_RECORD), stderr: "" };
+        return {
+          code: 0,
+          stdout: JSON.stringify(path.includes("0000") ? LABEL_RECORD : REVIEW_RECORD),
+          stderr: "",
+        };
       },
     };
     const read = await readContainerDryrun(transportFor(runner, {}));
     expect(read.problem).toBe("");
     expect(read.records.map((r) => r.kind)).toEqual(["add_label", "create_review"]);
-    expect(seen[0]).toEqual(["compose", "--project-directory", root, "exec", "-T", "daemon", "ls", "-1", "/opt/quickreview/state/dryrun"]);
+    expect(seen[0]).toEqual([
+      "compose",
+      "--project-directory",
+      root,
+      "exec",
+      "-T",
+      "daemon",
+      "ls",
+      "-1",
+      "/opt/quickreview/state/dryrun",
+    ]);
     // not-json.txt was never read.
     expect(seen).toHaveLength(3);
   });
@@ -223,7 +308,11 @@ describe("asking for the PR", () => {
 describe("following the round to completion", () => {
   it("polls until the verdict lands, then SHOWS the review from the dry-run record", async () => {
     const h = harness({
-      whyRounds: [[], [{ round_no: 1, status: "running", verdict: null, started_at: "2026-08-30T11:55:00Z" }], [{ round_no: 1, status: "done", verdict: "REQUEST_CHANGES", summary: "two blockers" }]],
+      whyRounds: [
+        [],
+        [{ round_no: 1, status: "running", verdict: null, started_at: "2026-08-30T11:55:00Z" }],
+        [{ round_no: 1, status: "done", verdict: "REQUEST_CHANGES", summary: "two blockers" }],
+      ],
     });
     const result = await h.engine.runStep(PROOF_STEP_ID, { pr: 17 });
     expect(result.ok).toBe(true);
@@ -242,7 +331,12 @@ describe("following the round to completion", () => {
     const h = harness();
     await h.engine.runStep(PROOF_STEP_ID, { pr: 17 });
     const record = parseProofRecord(h.engine.choices()[PROOF_CHOICE_KEY])!;
-    expect(record).toMatchObject({ pr: 17, round_no: 1, verdict: "REQUEST_CHANGES", review_shown: true });
+    expect(record).toMatchObject({
+      pr: 17,
+      round_no: 1,
+      verdict: "REQUEST_CHANGES",
+      review_shown: true,
+    });
   });
 
   it("says out loud that every intent was recorded and none executed", async () => {
@@ -268,7 +362,11 @@ describe("the two paths that actually happen", () => {
   });
 
   it("ROUND FAILURE: a cancelled round is explained with the daemon's own diagnostics", async () => {
-    const h = harness({ whyRounds: [[{ round_no: 1, status: "cancelled", verdict: null, summary: "orphaned by a restart" }]] });
+    const h = harness({
+      whyRounds: [
+        [{ round_no: 1, status: "cancelled", verdict: null, summary: "orphaned by a restart" }],
+      ],
+    });
     const result = await h.engine.runStep(PROOF_STEP_ID, { pr: 17 });
     expect(result.ok).toBe(false);
     const detail = result.failures.join(" ");
@@ -312,11 +410,27 @@ describe("verify and resumability", () => {
   });
 
   it("re-verifies the recorded proof against the state store rather than trusting the file", async () => {
-    seedChoices({ [PROOF_CHOICE_KEY]: { pr: 17, round_no: 1, verdict: "APPROVE", completed_at: "2026-08-30T11:59:00Z", review_shown: true } });
+    seedChoices({
+      [PROOF_CHOICE_KEY]: {
+        pr: 17,
+        round_no: 1,
+        verdict: "APPROVE",
+        completed_at: "2026-08-30T11:59:00Z",
+        review_shown: true,
+      },
+    });
     const good = harness({ whyRounds: [[{ round_no: 1, status: "done", verdict: "APPROVE" }]] });
     expect((await good.engine.verifyAll()).ok).toBe(true);
 
-    seedChoices({ [PROOF_CHOICE_KEY]: { pr: 17, round_no: 9, verdict: "APPROVE", completed_at: "2026-08-30T11:59:00Z", review_shown: true } });
+    seedChoices({
+      [PROOF_CHOICE_KEY]: {
+        pr: 17,
+        round_no: 9,
+        verdict: "APPROVE",
+        completed_at: "2026-08-30T11:59:00Z",
+        review_shown: true,
+      },
+    });
     const stale = harness({ whyRounds: [[{ round_no: 1, status: "done", verdict: "APPROVE" }]] });
     const all = await stale.engine.verifyAll();
     expect(all.ok).toBe(false);
@@ -324,7 +438,15 @@ describe("verify and resumability", () => {
   });
 
   it("does not ask twice: a re-run follows the PR it already recorded", async () => {
-    seedChoices({ [PROOF_CHOICE_KEY]: { pr: 17, round_no: 1, verdict: "APPROVE", completed_at: "2026-08-30T11:59:00Z", review_shown: true } });
+    seedChoices({
+      [PROOF_CHOICE_KEY]: {
+        pr: 17,
+        round_no: 1,
+        verdict: "APPROVE",
+        completed_at: "2026-08-30T11:59:00Z",
+        review_shown: true,
+      },
+    });
     const h = harness();
     const result = await h.engine.runStep(PROOF_STEP_ID);
     expect(result.ok).toBe(true);
@@ -334,9 +456,13 @@ describe("verify and resumability", () => {
   it("parseProofRecord refuses anything that is not a complete proof", () => {
     expect(parseProofRecord(null)).toBeNull();
     expect(parseProofRecord({ pr: 17 })).toBeNull();
-    expect(parseProofRecord({ pr: 0, round_no: 1, verdict: "APPROVE", completed_at: "x" })).toBeNull();
+    expect(
+      parseProofRecord({ pr: 0, round_no: 1, verdict: "APPROVE", completed_at: "x" }),
+    ).toBeNull();
     expect(parseProofRecord({ pr: 17, round_no: 1, verdict: "", completed_at: "x" })).toBeNull();
-    expect(parseProofRecord({ pr: 17, round_no: 1, verdict: "APPROVE", completed_at: "x" })).toMatchObject({ review_shown: false });
+    expect(
+      parseProofRecord({ pr: 17, round_no: 1, verdict: "APPROVE", completed_at: "x" }),
+    ).toMatchObject({ review_shown: false });
   });
 
   // the proof round is NOT a laptop-only step any more. It is one
@@ -347,11 +473,14 @@ describe("verify and resumability", () => {
     const runner = {
       run: async (cmd: string, args: string[]): Promise<ProcessResult> => {
         seen.push([cmd, ...args]);
-        if (args.join(" ").includes("ls -1")) return { code: 0, stdout: "a-0000-rec.json\n", stderr: "" };
+        if (args.join(" ").includes("ls -1"))
+          return { code: 0, stdout: "a-0000-rec.json\n", stderr: "" };
         return { code: 0, stdout: JSON.stringify(LABEL_RECORD), stderr: "" };
       },
     };
-    const read = await readContainerDryrun(transportFor(runner, { [CHOICE_KEYS.topology]: "vm", vm_ssh_alias: "review-box" }));
+    const read = await readContainerDryrun(
+      transportFor(runner, { [CHOICE_KEYS.topology]: "vm", vm_ssh_alias: "review-box" }),
+    );
     expect(read.problem).toBe("");
     expect(read.records.map((r) => r.kind)).toEqual(["add_label"]);
     expect(seen[0]![0]).toBe("ssh");
@@ -364,7 +493,12 @@ describe("verify and resumability", () => {
 describe("rendering the review", () => {
   it("leads with the fact that it was not posted, then the verdict, body and every comment", () => {
     const text = renderReview(
-      { source: "sandbox", state: "APPROVE", body: "Looks good.", comments: [{ path: "a.ts", line: 1, body: "[nit] spacing" }] },
+      {
+        source: "sandbox",
+        state: "APPROVE",
+        body: "Looks good.",
+        comments: [{ path: "a.ts", line: 1, body: "[nit] spacing" }],
+      },
       17,
     );
     expect(text.split("\n")[0]).toMatch(/review your reviewer produced for #17/);
@@ -374,6 +508,8 @@ describe("rendering the review", () => {
   });
 
   it("an empty body says so rather than rendering blank", () => {
-    expect(renderReview({ source: "sandbox", state: "COMMENT", body: "  ", comments: [] }, 3)).toMatch(/\(empty body\)/);
+    expect(
+      renderReview({ source: "sandbox", state: "COMMENT", body: "  ", comments: [] }, 3),
+    ).toMatch(/\(empty body\)/);
   });
 });

@@ -19,28 +19,49 @@ describe("parseArgs — the local transport is explicit, both entrypoints share 
   });
 
   it("selects local via --local, keeping sudo by default and dropping it on --no-sudo", () => {
-    expect(forward.parseArgs(["run", "--local"], {} as NodeJS.ProcessEnv).cfg).toMatchObject({ local: true, sudo: true });
-    expect(forward.parseArgs(["run", "--local", "--no-sudo"], {} as NodeJS.ProcessEnv).cfg).toMatchObject({ local: true, sudo: false });
+    expect(forward.parseArgs(["run", "--local"], {} as NodeJS.ProcessEnv).cfg).toMatchObject({
+      local: true,
+      sudo: true,
+    });
+    expect(
+      forward.parseArgs(["run", "--local", "--no-sudo"], {} as NodeJS.ProcessEnv).cfg,
+    ).toMatchObject({ local: true, sudo: false });
   });
 
   it("selects local via QCR_MEMORY_LOCAL and via an EXPLICIT empty --ssh-host", () => {
-    expect(forward.parseArgs(["run"], { QCR_MEMORY_LOCAL: "1" } as NodeJS.ProcessEnv).cfg.local).toBe(true);
+    expect(
+      forward.parseArgs(["run"], { QCR_MEMORY_LOCAL: "1" } as NodeJS.ProcessEnv).cfg.local,
+    ).toBe(true);
     expect(forward.parseArgs(["run", "--ssh-host="], {} as NodeJS.ProcessEnv).cfg.local).toBe(true);
     // A named host is never local — the mode does not flip by accident.
-    expect(forward.parseArgs(["run", "--ssh-host", forward.DEFAULTS.sshHost], {} as NodeJS.ProcessEnv).cfg.local).toBe(false);
+    expect(
+      forward.parseArgs(["run", "--ssh-host", forward.DEFAULTS.sshHost], {} as NodeJS.ProcessEnv)
+        .cfg.local,
+    ).toBe(false);
   });
 });
 
 describe("relaySpawnCommand — the transport decision in one place", () => {
   it("ssh mode wraps the unchanged relayArgv behind the ssh binary", () => {
     const { cfg } = forward.parseArgs(["run"], {} as NodeJS.ProcessEnv);
-    expect(forward.relaySpawnCommand(cfg)).toEqual(["ssh", ...(forward.relayArgv(cfg) as string[])]);
+    expect(forward.relaySpawnCommand(cfg)).toEqual([
+      "ssh",
+      ...(forward.relayArgv(cfg) as string[]),
+    ]);
   });
 
   it("local mode is a plain docker exec into the same container netns — no ssh anywhere", () => {
     const { cfg } = forward.parseArgs(["run", "--local"], {} as NodeJS.ProcessEnv);
     const cmd = forward.relaySpawnCommand(cfg) as string[];
-    expect(cmd.slice(0, 7)).toEqual(["sudo", "docker", "exec", "-i", "quickreview-sandbox", "node", "-e"]);
+    expect(cmd.slice(0, 7)).toEqual([
+      "sudo",
+      "docker",
+      "exec",
+      "-i",
+      "quickreview-sandbox",
+      "node",
+      "-e",
+    ]);
     // The same bridge program, as a real argv element (no shell re-parse).
     expect(cmd[cmd.length - 1]).toBe(forward.remoteBridgeJs("127.0.0.1", 1933));
     expect(cmd).not.toContain("ssh");
@@ -55,7 +76,10 @@ describe("relaySpawnCommand — the transport decision in one place", () => {
 
 describe("the systemd unit carries the transport", () => {
   it("writes --local (and no --ssh-host) for a local install, --ssh-host otherwise", () => {
-    const base = { ...forward.parseArgs(["run"], {} as NodeJS.ProcessEnv).cfg, unit: "qcr-memory-forward" };
+    const base = {
+      ...forward.parseArgs(["run"], {} as NodeJS.ProcessEnv).cfg,
+      unit: "qcr-memory-forward",
+    };
     const sshUnit = forward.unitText(base, {}) as string;
     expect(sshUnit).toContain(`--ssh-host ${forward.DEFAULTS.sshHost}`);
     expect(sshUnit).not.toContain("--local");
@@ -65,8 +89,13 @@ describe("the systemd unit carries the transport", () => {
   });
 
   it("names the transport truthfully in the Description an operator reads", () => {
-    const base = { ...forward.parseArgs(["run"], {} as NodeJS.ProcessEnv).cfg, unit: "qcr-memory-forward" };
-    expect(forward.unitText(base, {}) as string).toContain(`OpenViking on ${forward.DEFAULTS.sshHost} ->`);
+    const base = {
+      ...forward.parseArgs(["run"], {} as NodeJS.ProcessEnv).cfg,
+      unit: "qcr-memory-forward",
+    };
+    expect(forward.unitText(base, {}) as string).toContain(
+      `OpenViking on ${forward.DEFAULTS.sshHost} ->`,
+    );
     const local = forward.unitText({ ...base, local: true }, {}) as string;
     expect(local).toContain("OpenViking on local docker ->");
     expect(local).not.toContain(forward.DEFAULTS.sshHost);
@@ -79,17 +108,33 @@ describe("the listener contract is transport-independent", () => {
     // only the relay spawner differs, and it is injected here — nothing is
     // ever spawned. Same binds, same adopt-or-bind surface above it.
     const { cfg } = forward.parseArgs(["run", "--local"], {} as NodeJS.ProcessEnv);
-    const relay = { stdin: new PassThrough(), stdout: new PassThrough(), killed: false, kill(): void { this.killed = true; }, on(): void {}, stderr: undefined };
-    const fwd = forward.createForwarder({ ...cfg, binds: ["127.0.0.1"], port: 0 }, { spawnRelay: () => relay, log: () => {} });
+    const relay = {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      killed: false,
+      kill(): void {
+        this.killed = true;
+      },
+      on(): void {},
+      stderr: undefined,
+    };
+    const fwd = forward.createForwarder(
+      { ...cfg, binds: ["127.0.0.1"], port: 0 },
+      { spawnRelay: () => relay, log: () => {} },
+    );
     await fwd.listen();
     const port = (fwd.addresses() as Array<{ port: number }>)[0]!.port;
     const client: Socket = connect(port, "127.0.0.1");
     await new Promise((r) => client.once("connect", r));
     client.write("GET /health\n");
-    const upstream = await new Promise<string>((r) => relay.stdin.once("data", (d: Buffer) => r(d.toString())));
+    const upstream = await new Promise<string>((r) =>
+      relay.stdin.once("data", (d: Buffer) => r(d.toString())),
+    );
     expect(upstream).toBe("GET /health\n");
     relay.stdout.write("HTTP/1.1 200 OK\n");
-    const back = await new Promise<string>((r) => client.once("data", (d: Buffer) => r(d.toString())));
+    const back = await new Promise<string>((r) =>
+      client.once("data", (d: Buffer) => r(d.toString())),
+    );
     expect(back).toBe("HTTP/1.1 200 OK\n");
     client.destroy();
     await new Promise((r) => setTimeout(r, 20));
@@ -105,14 +150,25 @@ describe("the listener contract is transport-independent", () => {
 });
 
 describe("MemoryForward hands the transport to the ONE script (argv-level)", () => {
-  function fakeModule(): { mod: ForwardModule; argvSeen: () => string[] | undefined; created: () => number } {
+  function fakeModule(): {
+    mod: ForwardModule;
+    argvSeen: () => string[] | undefined;
+    created: () => number;
+  } {
     let argvSeen: string[] | undefined;
     let created = 0;
     const handle: ForwarderHandle = { listen: () => Promise.resolve(2), close: () => {} };
     const mod: ForwardModule = {
       parseArgs: (argv) => {
         argvSeen = argv;
-        return { cfg: { binds: ["127.0.0.1"], port: 1933, sshHost: "VM", container: "quickreview-sandbox" } };
+        return {
+          cfg: {
+            binds: ["127.0.0.1"],
+            port: 1933,
+            sshHost: "VM",
+            container: "quickreview-sandbox",
+          },
+        };
       },
       createForwarder: () => {
         created += 1;
@@ -122,7 +178,10 @@ describe("MemoryForward hands the transport to the ONE script (argv-level)", () 
     return { mod, argvSeen: () => argvSeen, created: () => created };
   }
 
-  const build = (deps: { local?: boolean; sudoDocker?: boolean }, probe = false): { fwd: MemoryForward; f: ReturnType<typeof fakeModule> } => {
+  const build = (
+    deps: { local?: boolean; sudoDocker?: boolean },
+    probe = false,
+  ): { fwd: MemoryForward; f: ReturnType<typeof fakeModule> } => {
     const f = fakeModule();
     const fwd = new MemoryForward({
       baseUrl: "http://127.0.0.1:1933",

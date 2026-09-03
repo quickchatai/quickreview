@@ -83,7 +83,9 @@ export const MUTATION_KINDS: readonly MutationKind[] = [
  * `forceLive` semantics are untouched — the gate still throws on forceLive
  * for anything but `supersede_own_review`, this kind included.
  */
-export const APP_SELF_CONFIG_KINDS = ["update_own_webhook_url"] as const satisfies readonly MutationKind[];
+export const APP_SELF_CONFIG_KINDS = [
+  "update_own_webhook_url",
+] as const satisfies readonly MutationKind[];
 
 /** The class as a TYPE, so a `Record<MutationKind, …>` elsewhere can exclude
  * it deliberately (the App-manifest permission map: these are JWT-authed and
@@ -234,7 +236,10 @@ export interface GuardDecision {
  * re-admits the copy that will execute — unconditionally, whether or not the
  * guard returned an intent.
  */
-export const GUARD_REWRITABLE_FIELDS = ["body", "note"] as const satisfies readonly (keyof MutationIntent)[];
+export const GUARD_REWRITABLE_FIELDS = [
+  "body",
+  "note",
+] as const satisfies readonly (keyof MutationIntent)[];
 
 /** See GUARD_REWRITABLE_FIELDS: every field outside that list must be the
  * same value (`Object.is`, so a `NaN` the guard never touched is not blamed on
@@ -250,11 +255,12 @@ function guardRewriteCheck(before: MutationIntent, after: MutationIntent): void 
   const b = before as unknown as Record<string | symbol, unknown>;
   const a = after as unknown as Record<string | symbol, unknown>;
   for (const field of new Set([...Reflect.ownKeys(b), ...Reflect.ownKeys(a)])) {
-    if (typeof field === "string" && (GUARD_REWRITABLE_FIELDS as readonly string[]).includes(field)) continue;
+    if (typeof field === "string" && (GUARD_REWRITABLE_FIELDS as readonly string[]).includes(field))
+      continue;
     if (!Object.is(b[field], a[field])) {
       throw new Error(
-        `gate: a guard may rewrite only ${GUARD_REWRITABLE_FIELDS.join(" and ")}; it changed "${String(field)}" on ${before.kind} `
-          + `(${JSON.stringify(b[field])} → ${JSON.stringify(a[field])}) — refusing to execute or record it`,
+        `gate: a guard may rewrite only ${GUARD_REWRITABLE_FIELDS.join(" and ")}; it changed "${String(field)}" on ${before.kind} ` +
+          `(${JSON.stringify(b[field])} → ${JSON.stringify(a[field])}) — refusing to execute or record it`,
       );
     }
   }
@@ -329,21 +335,27 @@ function admit(intent: MutationIntent, perform: GitPerformer | undefined): void 
   // state/dryrun/ either, so a retired kind cannot even leave evidence
   // suggesting the daemon still performs it.
   if (!(MUTATION_KINDS as readonly string[]).includes(intent.kind)) {
-    throw new Error(`gate: unknown mutation kind "${intent.kind}" — refusing to execute or record it`);
+    throw new Error(
+      `gate: unknown mutation kind "${intent.kind}" — refusing to execute or record it`,
+    );
   }
   // The git performer exists for `method: "git"` and nothing else:
   // otherwise it would be a second executor, i.e. a way to run an arbitrary
   // mutation the REST executor never saw. Refused regardless of what any guard
   // says — admission is not a guard's to soften.
   if (perform && intent.method !== "git") {
-    throw new Error(`gate: a git performer is only allowed for method "git", not ${intent.method} (${intent.kind})`);
+    throw new Error(
+      `gate: a git performer is only allowed for method "git", not ${intent.method} (${intent.kind})`,
+    );
   }
   // `method` is a free field with no relation to `kind`, so the method check
   // alone would let any kind ride the performer. `push_branch` is the only
   // kind this system ever performs with git — and rule 4 already says the
   // only branches it pushes are `bot/improve-*`.
   if (perform && intent.kind !== "push_branch") {
-    throw new Error(`gate: a git performer is only allowed for kind "push_branch", not ${intent.kind}`);
+    throw new Error(
+      `gate: a git performer is only allowed for kind "push_branch", not ${intent.kind}`,
+    );
   }
   if (intent.forceLive && intent.kind !== "supersede_own_review") {
     throw new Error(`forceLive is not allowed for kind ${intent.kind}`);
@@ -442,8 +454,14 @@ export class MutationGate {
     if (this.dryRun && !intent.forceLive) {
       mkdirSync(this.dryrunDir, { recursive: true });
       const ts = this.now().toISOString().replace(/[:.]/g, "-");
-      const file = join(this.dryrunDir, `${ts}-${String(seq++).padStart(4, "0")}-${intent.kind}.json`);
-      writeFileSync(file, JSON.stringify({ recorded_at: this.now().toISOString(), ...intent }, null, 2));
+      const file = join(
+        this.dryrunDir,
+        `${ts}-${String(seq++).padStart(4, "0")}-${intent.kind}.json`,
+      );
+      writeFileSync(
+        file,
+        JSON.stringify({ recorded_at: this.now().toISOString(), ...intent }, null, 2),
+      );
       const recorded: GateResult = { executed: false, dryRunFile: file };
       await this.guard?.after?.(intent, recorded);
       return recorded;

@@ -2,7 +2,18 @@
 // that records commands — no tmux, no pi, no git is ever spawned. Filesystem
 // work happens inside a temp sandbox root.
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -10,7 +21,14 @@ import type { Pi } from "@earendil-works/pi-coding-agent";
 import activateInjectBridge from "../extensions/inject-bridge.js";
 import type { Config } from "../src/config.js";
 import { dispatchOnce } from "../src/dispatch.js";
-import { PiSessionManager, OVERSEER_SESSION, buildPiCommand, isSandboxSession, prOfSession, prSessionName } from "../src/sessions.js";
+import {
+  PiSessionManager,
+  OVERSEER_SESSION,
+  buildPiCommand,
+  isSandboxSession,
+  prOfSession,
+  prSessionName,
+} from "../src/sessions.js";
 import { Tmux } from "../src/tmux.js";
 import type { ExecFn } from "../src/tmux.js";
 import { writeSessionBridgeState } from "../src/session-bridge.js";
@@ -48,7 +66,12 @@ const cfg = (): Config =>
       secrets_dir: secrets,
     },
     server: { hostname: "h", port: 8787 },
-    daemon: { poll_interval_s: 300, max_concurrent_rounds: 6, round_deadline_min: 45, overseer_rotation_days: 7 },
+    daemon: {
+      poll_interval_s: 300,
+      max_concurrent_rounds: 6,
+      round_deadline_min: 45,
+      overseer_rotation_days: 7,
+    },
     eod: { time: "18:00", timezone: "Europe/Warsaw" },
     caps: {
       improvement_pr_max_lines: 50,
@@ -57,8 +80,18 @@ const cfg = (): Config =>
       improvement_pr_per_week: 3,
       issues_per_day: 3,
     },
-    models: { default: "openai/gpt-5.6-sol", conversation: "openai/conv", overseer: "openai/over", passes: {} },
-    pi: { package: "@earendil-works/pi-coding-agent", version: "0.84.4", session_dir: "state/pi-sessions", subagent_max_concurrency: 6 },
+    models: {
+      default: "openai/gpt-5.6-sol",
+      conversation: "openai/conv",
+      overseer: "openai/over",
+      passes: {},
+    },
+    pi: {
+      package: "@earendil-works/pi-coding-agent",
+      version: "0.84.4",
+      session_dir: "state/pi-sessions",
+      subagent_max_concurrency: 6,
+    },
     // Only the fields sessions.ts reads: the loopback endpoint the
     // sessions authenticate against, and the SERVER's ov.conf — passed so the
     // fork's root-key guard reads the real file instead of guessing from HOME.
@@ -69,7 +102,8 @@ const cfg = (): Config =>
 const fakeExec: ExecFn = async (cmd, args, opts) => {
   calls.push({ cmd, args, env: opts?.env });
   if (cmd === "tmux") {
-    if (args[0] === "list-sessions") return { code: 0, stdout: [...liveSessions].join("\n"), stderr: "" };
+    if (args[0] === "list-sessions")
+      return { code: 0, stdout: [...liveSessions].join("\n"), stderr: "" };
     if (args[0] === "has-session") {
       const name = String(args[2]).replace(/^=/, "");
       return { code: liveSessions.has(name) ? 0 : 1, stdout: "", stderr: "" };
@@ -79,8 +113,12 @@ const fakeExec: ExecFn = async (cmd, args, opts) => {
       liveSessions.add(session);
       onNewSession?.(session, args);
       if (autoBridgeReady && session.startsWith("pr-")) {
-        const generation = args.find((value) => value.startsWith("QCR_SESSION_BRIDGE_GENERATION="))?.split("=", 2)[1];
-        const stateFile = args.find((value) => value.startsWith("QCR_SESSION_BRIDGE_STATE_FILE="))?.slice("QCR_SESSION_BRIDGE_STATE_FILE=".length);
+        const generation = args
+          .find((value) => value.startsWith("QCR_SESSION_BRIDGE_GENERATION="))
+          ?.split("=", 2)[1];
+        const stateFile = args
+          .find((value) => value.startsWith("QCR_SESSION_BRIDGE_STATE_FILE="))
+          ?.slice("QCR_SESSION_BRIDGE_STATE_FILE=".length);
         if (generation && stateFile) {
           writeSessionBridgeState(stateFile, {
             version: 1,
@@ -123,7 +161,13 @@ function manager(
     cfg: config,
     root,
     tmux: new Tmux({ exec: fakeExec }),
-    worktrees: new WorktreeManager({ root, repo: "o/n", cloneDir: "example-app", cloneUrl: "/dev/null", run: fakeExec }),
+    worktrees: new WorktreeManager({
+      root,
+      repo: "o/n",
+      cloneDir: "example-app",
+      cloneUrl: "/dev/null",
+      run: fakeExec,
+    }),
     piHome: join(root, "pihome"),
     ovSessions,
     now,
@@ -187,7 +231,10 @@ beforeEach(() => {
   keepKilledSession = false;
   mkdirSync(join(root, "prompts"), { recursive: true });
   mkdirSync(secrets, { recursive: true });
-  writeFileSync(join(root, "prompts", "conversation-system.md"), "Shepherd of PR #{{n}} ({{title}}) at {{worktree}}.\n");
+  writeFileSync(
+    join(root, "prompts", "conversation-system.md"),
+    "Shepherd of PR #{{n}} ({{title}}) at {{worktree}}.\n",
+  );
   writeFileSync(join(root, "prompts", "overseer-system.md"), "You are the overseer.\n");
   writeFileSync(join(secrets, "openai_api_key"), "sk-app-key\n");
 });
@@ -220,18 +267,29 @@ describe("buildPiCommand", () => {
     expect(argv).toEqual([
       "pi",
       "--approve",
-      "--model", "openai/conv",
-      "--session-dir", "/s/state/pi-sessions/pr-1",
-      "--system-prompt", "/s/state/session-prompts/pr-1.md",
-      "--extension", "/s/extensions/inject-bridge.ts",
-      "--extension", "/s/extensions/ledger-pin.ts",
-      "--name", "pr-1",
+      "--model",
+      "openai/conv",
+      "--session-dir",
+      "/s/state/pi-sessions/pr-1",
+      "--system-prompt",
+      "/s/state/session-prompts/pr-1.md",
+      "--extension",
+      "/s/extensions/inject-bridge.ts",
+      "--extension",
+      "/s/extensions/ledger-pin.ts",
+      "--name",
+      "pr-1",
     ]);
   });
 
   it("carries no update/auto-update flag (version is pinned by config)", () => {
     const argv = buildPiCommand({
-      piBin: "pi", model: "m", sessionDir: "d", systemPromptPath: "p", extensionPaths: [], sessionName: "s",
+      piBin: "pi",
+      model: "m",
+      sessionDir: "d",
+      systemPromptPath: "p",
+      extensionPaths: [],
+      sessionName: "s",
     });
     expect(argv.join(" ")).not.toMatch(/update/i);
   });
@@ -264,20 +322,31 @@ describe("buildPiCommand", () => {
     // session_before_compact and must be registered first; the fork's own
     // compaction handler is deleted (PATCH 1), but the ordering is the
     // belt-and-braces half of that invariant.
-    expect(paths.indexOf(join(root, "extensions", "ledger-pin.ts"))).toBeLessThan(paths.indexOf(ov));
+    expect(paths.indexOf(join(root, "extensions", "ledger-pin.ts"))).toBeLessThan(
+      paths.indexOf(ov),
+    );
     // It rides argv, not a settings.json discovery dir: subagent children
     // load only the global settings extensions, so leaves get no memory
     // surface (the native children spawn without argv extensions).
     const argv = buildPiCommand({
-      piBin: "pi", model: "m", sessionDir: "d", systemPromptPath: "p",
-      extensionPaths: paths, sessionName: "pr-1",
+      piBin: "pi",
+      model: "m",
+      sessionDir: "d",
+      systemPromptPath: "p",
+      extensionPaths: paths,
+      sessionName: "pr-1",
     });
     expect(argv).toContain(ov);
   });
 
   it("always pre-trusts the project (--approve) — the reviewer never blocks on pi's trust modal", () => {
     const argv = buildPiCommand({
-      piBin: "pi", model: "m", sessionDir: "d", systemPromptPath: "p", extensionPaths: [], sessionName: "s",
+      piBin: "pi",
+      model: "m",
+      sessionDir: "d",
+      systemPromptPath: "p",
+      extensionPaths: [],
+      sessionName: "s",
     });
     expect(argv).toContain("--approve");
   });
@@ -295,15 +364,23 @@ describe("birth", () => {
     expect(newSession).toContain(join(root, "extensions", "inject-bridge.ts"));
     expect(newSession).toContain(join(root, "extensions", "ledger-pin.ts"));
     expect(newSession).toContain(join(root, "state", "pi-sessions", "pr-42"));
-    expect(newSession.some((value) => value.startsWith("QCR_SESSION_BRIDGE_GENERATION="))).toBe(true);
-    expect(newSession.some((value) => value.startsWith(
-      `QCR_SESSION_BRIDGE_STATE_FILE=${join(root, "state", "sessions", "pr-42.bridge-")}`,
-    ))).toBe(true);
+    expect(newSession.some((value) => value.startsWith("QCR_SESSION_BRIDGE_GENERATION="))).toBe(
+      true,
+    );
+    expect(
+      newSession.some((value) =>
+        value.startsWith(
+          `QCR_SESSION_BRIDGE_STATE_FILE=${join(root, "state", "sessions", "pr-42.bridge-")}`,
+        ),
+      ),
+    ).toBe(true);
     expect(newSession).toContain("QCR_SESSION_BRIDGE_LEDGER_REQUIRED=0");
 
     const promptPath = m.promptPath("pr-42");
     expect(newSession).toContain(promptPath);
-    expect(readFileSync(promptPath, "utf8")).toBe("Shepherd of PR #42 (Add rate limiting) at wt/pr-42.\n");
+    expect(readFileSync(promptPath, "utf8")).toBe(
+      "Shepherd of PR #42 (Add rate limiting) at wt/pr-42.\n",
+    );
     expect(existsSync(join(m.injectDir("pr-42"), ".done"))).toBe(true);
   });
 
@@ -330,7 +407,11 @@ describe("birth", () => {
     const envIdx = newSession.indexOf("env");
     const piIdx = newSession.indexOf("pi");
     expect(envIdx).toBeGreaterThan(-1);
-    for (const pin of [`GIT_CONFIG_GLOBAL=${join(root, "pihome", ".gitconfig")}`, "GIT_CONFIG_SYSTEM=/dev/null", "GIT_CONFIG_NOSYSTEM=1"]) {
+    for (const pin of [
+      `GIT_CONFIG_GLOBAL=${join(root, "pihome", ".gitconfig")}`,
+      "GIT_CONFIG_SYSTEM=/dev/null",
+      "GIT_CONFIG_NOSYSTEM=1",
+    ]) {
       const at = newSession.indexOf(pin);
       expect(at, `${pin} must ride the argv`).toBeGreaterThan(envIdx);
       expect(at, `${pin} must precede the pi binary`).toBeLessThan(piIdx);
@@ -373,7 +454,9 @@ describe("birth", () => {
     await m.ensurePrSession(42, "T", "wt/pr-42");
 
     const kill = tmuxArgs().findIndex((a) => a[0] === "kill-session" && a.includes("=pr-42"));
-    const birth = tmuxArgs().findIndex((a, index) => index > kill && a[0] === "new-session" && a.includes("pr-42"));
+    const birth = tmuxArgs().findIndex(
+      (a, index) => index > kill && a[0] === "new-session" && a.includes("pr-42"),
+    );
     expect(kill).toBeGreaterThanOrEqual(0);
     expect(birth).toBeGreaterThan(kill);
   });
@@ -392,16 +475,32 @@ describe("birth", () => {
       expect(env.QCR_TEST_PERSONAL_TOKEN).toBeUndefined();
       expect(Object.keys(env).sort()).toEqual([
         // config-scope pin — paths and a flag, no credential.
-        "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_SYSTEM",
-        "HOME", "LANG", "OPENAI_API_KEY",
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_NOSYSTEM",
+        "GIT_CONFIG_SYSTEM",
+        "HOME",
+        "LANG",
+        "OPENAI_API_KEY",
         // identity — non-secret every one of them (the reviewer key
         // rides ovcli.conf at 0600, never argv and never the environment).
-        "OPENVIKING_BASE_URL", "OPENVIKING_CLI_CONFIG_FILE", "OPENVIKING_CONFIG_FILE",
-        "OPENVIKING_PEER_ID", "OPENVIKING_URL", "OPENVIKING_USER",
-        "PATH", "QCR_INJECT_DIR", "QCR_LEDGER_FILE", "QCR_OV_SESSION_ID",
-        "QCR_PI_VERSION", "QCR_PR", "QCR_SANDBOX_ROOT", "QCR_SECRETS_DIR", "QCR_SESSION_NAME",
+        "OPENVIKING_BASE_URL",
+        "OPENVIKING_CLI_CONFIG_FILE",
+        "OPENVIKING_CONFIG_FILE",
+        "OPENVIKING_PEER_ID",
+        "OPENVIKING_URL",
+        "OPENVIKING_USER",
+        "PATH",
+        "QCR_INJECT_DIR",
+        "QCR_LEDGER_FILE",
+        "QCR_OV_SESSION_ID",
+        "QCR_PI_VERSION",
+        "QCR_PR",
+        "QCR_SANDBOX_ROOT",
+        "QCR_SECRETS_DIR",
+        "QCR_SESSION_NAME",
         // the process-wide subagent fan-out cap for the glue.
-        "QCR_SUBAGENT_MAX_CONCURRENCY", "TERM",
+        "QCR_SUBAGENT_MAX_CONCURRENCY",
+        "TERM",
       ]);
       expect(env.QCR_SUBAGENT_MAX_CONCURRENCY).toBe("6");
       // No credential of any kind reached the environment.
@@ -458,13 +557,20 @@ describe("OpenViking identity and the PR's raw-notes session", () => {
     const path = m.ovcliConfPath();
     expect(path).toBe(join(root, "pihome", ".openviking", "ovcli.conf"));
     const conf = JSON.parse(readFileSync(path, "utf8"));
-    expect(conf).toEqual({ url: "http://127.0.0.1:1933", user: "reviewer", api_key: "ov-reviewer-key" });
+    expect(conf).toEqual({
+      url: "http://127.0.0.1:1933",
+      user: "reviewer",
+      api_key: "ov-reviewer-key",
+    });
     expect(statSync(path).mode & 0o777).toBe(0o600);
   });
 
   it("REFUSES to hand a session the server's root key — 401 beats omnipotent", async () => {
     mkdirSync(join(root, "ovhome"), { recursive: true });
-    writeFileSync(join(root, "ovhome", "ov.conf"), JSON.stringify({ server: { root_api_key: "ROOT-KEY" } }));
+    writeFileSync(
+      join(root, "ovhome", "ov.conf"),
+      JSON.stringify({ server: { root_api_key: "ROOT-KEY" } }),
+    );
     writeFileSync(join(secrets, "openviking_reviewer_key"), "ROOT-KEY\n");
 
     const m = manager();
@@ -496,7 +602,13 @@ describe("OpenViking identity and the PR's raw-notes session", () => {
       cfg: cfg(),
       root,
       tmux: new Tmux({ exec: fakeExec }),
-      worktrees: new WorktreeManager({ root, repo: "o/n", cloneDir: "example-app", cloneUrl: "/dev/null", run: fakeExec }),
+      worktrees: new WorktreeManager({
+        root,
+        repo: "o/n",
+        cloneDir: "example-app",
+        cloneUrl: "/dev/null",
+        run: fakeExec,
+      }),
       piHome: join(root, "pihome"),
       ovSessions: {
         create: async () => {
@@ -565,7 +677,10 @@ describe("injection", () => {
     writeFileSync(
       jsonl,
       `${JSON.stringify({
-        message: { role: "user", content: [{ type: "text", text: `ROUND PROMPT BODY\n\n${roundPromptMarker(42, 1)}\n` }] },
+        message: {
+          role: "user",
+          content: [{ type: "text", text: `ROUND PROMPT BODY\n\n${roundPromptMarker(42, 1)}\n` }],
+        },
       })}\n`,
     );
     expect(await m.roundPromptAccepted(42, 1, started)).toBe(true);
@@ -641,7 +756,10 @@ describe("injection", () => {
       const started = Date.parse("2026-08-13T10:00:00Z");
       const jsonlDir = m.sessionDir("pr-42");
       mkdirSync(jsonlDir, { recursive: true });
-      writeFileSync(join(jsonlDir, "readable.jsonl"), `${JSON.stringify({ text: "no marker here" })}\n`);
+      writeFileSync(
+        join(jsonlDir, "readable.jsonl"),
+        `${JSON.stringify({ text: "no marker here" })}\n`,
+      );
       expect(await m.roundPromptAccepted(42, 1, started)).toBe(false);
     });
   });
@@ -726,8 +844,12 @@ describe("injection", () => {
 
     await m.inject(42, "author reply");
 
-    const kill = tmuxArgs().findIndex((args) => args[0] === "kill-session" && args.includes("=pr-42"));
-    const birth = tmuxArgs().findIndex((args, index) => index > kill && args[0] === "new-session" && args.includes("pr-42"));
+    const kill = tmuxArgs().findIndex(
+      (args) => args[0] === "kill-session" && args.includes("=pr-42"),
+    );
+    const birth = tmuxArgs().findIndex(
+      (args, index) => index > kill && args[0] === "new-session" && args.includes("pr-42"),
+    );
     expect(kill).toBeGreaterThanOrEqual(0);
     expect(birth).toBeGreaterThan(kill);
   });
@@ -738,7 +860,9 @@ describe("injection", () => {
     const newSession = tmuxArgs().find((a) => a[0] === "new-session")!;
     expect(newSession[3]).toBe(OVERSEER_SESSION);
     expect(newSession).toContain("openai/over");
-    expect(readdirSync(m.injectDir(OVERSEER_SESSION)).filter((f) => f.endsWith(".md"))).toHaveLength(1);
+    expect(
+      readdirSync(m.injectDir(OVERSEER_SESSION)).filter((f) => f.endsWith(".md")),
+    ).toHaveLength(1);
   });
 
   it("gives concurrent injections distinct filenames", async () => {
@@ -759,10 +883,19 @@ describe("durable command ownership", () => {
       const m = manager(undefined, store);
       await m.dispatchRound(order, "ROUND PROMPT BODY");
 
-      expect(tmuxArgs().find((args) => args[0] === "new-session")).toContain("QCR_SESSION_BRIDGE_LEDGER_REQUIRED=1");
+      expect(tmuxArgs().find((args) => args[0] === "new-session")).toContain(
+        "QCR_SESSION_BRIDGE_LEDGER_REQUIRED=1",
+      );
       const row = store.activeSessionCommand("pr-42")!;
       const bytes = readFileSync(row.inject_path);
-      expect(row).toMatchObject({ pr: 42, session: "pr-42", kind: "round", round_no: 1, status: "pending", attempt: 0 });
+      expect(row).toMatchObject({
+        pr: 42,
+        session: "pr-42",
+        kind: "round",
+        round_no: 1,
+        status: "pending",
+        attempt: 0,
+      });
       expect(row.payload_sha256).toBe(createHash("sha256").update(bytes).digest("hex"));
       expect(readFileSync(row.payload_path)).toEqual(bytes);
       expect(row.inject_path).toContain(`--cmd-${row.id}.md`);
@@ -780,7 +913,10 @@ describe("durable command ownership", () => {
   });
 
   it("redelivery reuses the same command id and byte-identical durable payload", async () => {
-    const store = new StateStore(join(root, "state", "state.db"), () => new Date("2026-08-13T10:00:00Z"));
+    const store = new StateStore(
+      join(root, "state", "state.db"),
+      () => new Date("2026-08-13T10:00:00Z"),
+    );
     try {
       const m = manager(undefined, store);
       await m.dispatchRound(order, "ROUND PROMPT BODY");
@@ -802,11 +938,23 @@ describe("durable command ownership", () => {
   });
 
   it("kills the old session before retrying the same unstarted command id and bytes", async () => {
-    const store = new StateStore(join(root, "state", "state.db"), () => new Date("2026-08-13T10:00:00Z"));
+    const store = new StateStore(
+      join(root, "state", "state.db"),
+      () => new Date("2026-08-13T10:00:00Z"),
+    );
     try {
       const m = manager(undefined, store);
       m.setTitleResolver((pr) => (pr === 42 ? order.title : undefined));
-      store.upsertPr({ number: 42, state: "reviewing", head_sha: "abc123", title: order.title, author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+      store.upsertPr({
+        number: 42,
+        state: "reviewing",
+        head_sha: "abc123",
+        title: order.title,
+        author: "alice",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
       store.startRound(42, "first", ["pass-baseline"], 45);
       await m.dispatchRound(order, "ROUND PROMPT BODY");
       const original = store.activeSessionCommand("pr-42")!;
@@ -819,10 +967,17 @@ describe("durable command ownership", () => {
       expect(await m.retrySessionCommand(original.id, "start lease expired")).toBe("retried");
 
       const retried = store.activeSessionCommand("pr-42")!;
-      expect(retried).toMatchObject({ id: original.id, status: "running", attempt: 2, owner_token: "bridge-new" });
+      expect(retried).toMatchObject({
+        id: original.id,
+        status: "running",
+        attempt: 2,
+        owner_token: "bridge-new",
+      });
       expect(readFileSync(retried.inject_path)).toEqual(bytes);
       const kill = tmuxArgs().findIndex((a) => a[0] === "kill-session" && a.includes("=pr-42"));
-      const birth = tmuxArgs().findIndex((a, index) => index > kill && a[0] === "new-session" && a.includes("pr-42"));
+      const birth = tmuxArgs().findIndex(
+        (a, index) => index > kill && a[0] === "new-session" && a.includes("pr-42"),
+      );
       expect(kill).toBeGreaterThanOrEqual(0);
       expect(birth).toBeGreaterThan(kill);
     } finally {
@@ -831,20 +986,34 @@ describe("durable command ownership", () => {
   });
 
   it("does not report replay when the reborn tmux never publishes matching bridge readiness", async () => {
-    const store = new StateStore(join(root, "state", "state.db"), () => new Date("2026-08-13T10:00:00Z"));
+    const store = new StateStore(
+      join(root, "state", "state.db"),
+      () => new Date("2026-08-13T10:00:00Z"),
+    );
     try {
       const config = cfg();
       config.daemon.session_bridge_ready_timeout_s = 0.005;
       const m = manager(undefined, store, config);
       m.setTitleResolver(() => order.title);
-      store.upsertPr({ number: 42, state: "queued", head_sha: "abc123", title: order.title, author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+      store.upsertPr({
+        number: 42,
+        state: "queued",
+        head_sha: "abc123",
+        title: order.title,
+        author: "alice",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
       markExistingSessionReady(m, "pr-42");
       await m.inject(42, "recovered author reply");
       const command = store.activeSessionCommand("pr-42")!;
       store.claimSessionCommand(command.id, "bridge-old", "2026-08-13T10:02:00Z");
       autoBridgeReady = false;
 
-      expect(await m.retrySessionCommand(command.id, "start evidence unknown")).toBe("retry_failed");
+      expect(await m.retrySessionCommand(command.id, "start evidence unknown")).toBe(
+        "retry_failed",
+      );
 
       expect(liveSessions.has("pr-42")).toBe(false);
       expect(store.getSessionCommand(command.id)).toMatchObject({
@@ -852,7 +1021,9 @@ describe("durable command ownership", () => {
         attempt: 1,
         failure: expect.stringContaining("timed out"),
       });
-      expect(store.recentEvents(20).some((event) => event.kind === "session_bridge_readiness_failed")).toBe(true);
+      expect(
+        store.recentEvents(20).some((event) => event.kind === "session_bridge_readiness_failed"),
+      ).toBe(true);
     } finally {
       store.close();
     }
@@ -870,7 +1041,16 @@ describe("durable command ownership", () => {
       config.daemon.session_bridge_ready_timeout_s = 0.05;
       const m = manager(() => clock, store, config);
       m.setTitleResolver(() => "PR 5454");
-      store.upsertPr({ number: 5454, state: "queued", head_sha: "e038", title: "PR 5454", author: "alice", trigger_ts: clock.toISOString(), stale_recheck: 0, migration_gate: 0 });
+      store.upsertPr({
+        number: 5454,
+        state: "queued",
+        head_sha: "e038",
+        title: "PR 5454",
+        author: "alice",
+        trigger_ts: clock.toISOString(),
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
       const payload = Buffer.from("# Author reply — PR #5454\n\noldest durable wake\n", "utf8");
       const payloadPath = join(root, "state", "session-commands", "cmd-5454.md");
       mkdirSync(join(root, "state", "session-commands"), { recursive: true });
@@ -887,7 +1067,8 @@ describe("durable command ownership", () => {
         next_check_at: clock.toISOString(),
       });
       store.failPendingSessionCommand("cmd-5454", "historical attempt-zero failure");
-      for (let n = 1; n <= 4; n++) store.holdWake(5454, `# Author reply — PR #5454\n\nreply ${n}`, "author_reply");
+      for (let n = 1; n <= 4; n++)
+        store.holdWake(5454, `# Author reply — PR #5454\n\nreply ${n}`, "author_reply");
       // Exact incident shape: tmux exists, but no generation receipt does.
       liveSessions.add("pr-5454");
       autoBridgeReady = false;
@@ -960,23 +1141,39 @@ describe("durable command ownership", () => {
         work_owed: 1,
         detail: expect.stringContaining("ledger_open"),
       });
-      expect(store.recentEvents(100).filter((event) => event.kind === "session_bridge_readiness_failed")).toHaveLength(2);
+      expect(
+        store.recentEvents(100).filter((event) => event.kind === "session_bridge_readiness_failed"),
+      ).toHaveLength(2);
 
-      const listPrFiles = vi.fn(async () => { throw new Error("blocked dispatch touched GitHub"); });
-      expect(await dispatchOnce({
-        cfg: config,
-        store,
-        hooks,
-        adapter: {
-          listPrFiles,
-          getPr: async () => { throw new Error("blocked dispatch read PR"); },
-          addLabel: async () => { throw new Error("blocked dispatch mutated label"); },
-          removeLabel: async () => { throw new Error("blocked dispatch mutated label"); },
-          deleteTeamReviewRequest: async () => { throw new Error("blocked dispatch consumed trigger"); },
-          createReview: async () => { throw new Error("blocked dispatch posted review"); },
-        },
-        now: () => clock,
-      })).toEqual([]);
+      const listPrFiles = vi.fn(async () => {
+        throw new Error("blocked dispatch touched GitHub");
+      });
+      expect(
+        await dispatchOnce({
+          cfg: config,
+          store,
+          hooks,
+          adapter: {
+            listPrFiles,
+            getPr: async () => {
+              throw new Error("blocked dispatch read PR");
+            },
+            addLabel: async () => {
+              throw new Error("blocked dispatch mutated label");
+            },
+            removeLabel: async () => {
+              throw new Error("blocked dispatch mutated label");
+            },
+            deleteTeamReviewRequest: async () => {
+              throw new Error("blocked dispatch consumed trigger");
+            },
+            createReview: async () => {
+              throw new Error("blocked dispatch posted review");
+            },
+          },
+          now: () => clock,
+        }),
+      ).toEqual([]);
       expect(listPrFiles).not.toHaveBeenCalled();
       expect(store.roundsFor(5454)).toHaveLength(0);
     } finally {
@@ -993,30 +1190,60 @@ describe("durable command ownership", () => {
       const config = cfg();
       const m = manager(undefined, store, config);
       m.setTitleResolver(() => "PR 5454");
-      store.upsertPr({ number: 5454, state: "queued", head_sha: "e038", title: "PR 5454", author: "alice", trigger_ts: "2026-09-01T11:34:30.000Z", stale_recheck: 0, migration_gate: 0 });
+      store.upsertPr({
+        number: 5454,
+        state: "queued",
+        head_sha: "e038",
+        title: "PR 5454",
+        author: "alice",
+        trigger_ts: "2026-09-01T11:34:30.000Z",
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
 
       const staleRoundId = store.startRound(5454, "re-review", ["pass-baseline"], 75);
       const staleRoundNo = store.roundsFor(5454)[0]!.round_no;
       const staleInjectDir = m.injectDir("pr-5454");
       mkdirSync(staleInjectDir, { recursive: true });
-      const staleInject = join(staleInjectDir, "2026-08-31T14-28-38-150Z-0247--cmd-stale-terminal.md");
+      const staleInject = join(
+        staleInjectDir,
+        "2026-08-31T14-28-38-150Z-0247--cmd-stale-terminal.md",
+      );
       const stalePayload = Buffer.from("old terminal round transport\n", "utf8");
       const stalePayloadPath = join(root, "state", "session-commands", "stale-terminal.md");
       mkdirSync(join(root, "state", "session-commands"), { recursive: true });
       writeFileSync(staleInject, stalePayload);
       writeFileSync(stalePayloadPath, stalePayload);
       store.createSessionCommand({
-        id: "stale-terminal", pr: 5454, session: "pr-5454", kind: "round", round_no: staleRoundNo,
+        id: "stale-terminal",
+        pr: 5454,
+        session: "pr-5454",
+        kind: "round",
+        round_no: staleRoundNo,
         payload_sha256: createHash("sha256").update(stalePayload).digest("hex"),
-        payload_path: stalePayloadPath, inject_path: staleInject,
+        payload_path: stalePayloadPath,
+        inject_path: staleInject,
         next_check_at: "2026-09-01T11:00:00.000Z",
       });
       store.failPendingSessionCommand("stale-terminal", "old infrastructure failure");
-      store.markRoundCancelled(staleRoundId, "old infrastructure failure", "infrastructure_failure");
+      store.markRoundCancelled(
+        staleRoundId,
+        "old infrastructure failure",
+        "infrastructure_failure",
+      );
       const row = store.getPr(5454)!;
-      store.upsertPr({ ...row, state: "queued", head_sha: "e038", trigger_ts: "2026-09-01T11:34:30.000Z" });
+      store.upsertPr({
+        ...row,
+        state: "queued",
+        head_sha: "e038",
+        trigger_ts: "2026-09-01T11:34:30.000Z",
+      });
       for (let n = 1; n <= 5; n++) {
-        store.holdWake(5454, `# Author reply — PR #5454\n\nreply ${n}\nresponse-${n}.json`, "author_reply");
+        store.holdWake(
+          5454,
+          `# Author reply — PR #5454\n\nreply ${n}\nresponse-${n}.json`,
+          "author_reply",
+        );
       }
 
       const sent: string[] = [];
@@ -1039,7 +1266,9 @@ describe("durable command ownership", () => {
               list.push(handler);
               handlers.set(event, list);
             },
-            sendUserMessage(content: string) { sent.push(content); },
+            sendUserMessage(content: string) {
+              sent.push(content);
+            },
           } as unknown as Pi;
           activateInjectBridge(pi);
           shutdownBridge = () => {
@@ -1054,20 +1283,27 @@ describe("durable command ownership", () => {
         }
       };
 
-      expect(await flushHeldWakes({ store, inject: (pr, message) => m.inject(pr, message) }, 5454)).toBe(5);
+      expect(
+        await flushHeldWakes({ store, inject: (pr, message) => m.inject(pr, message) }, 5454),
+      ).toBe(5);
 
-      await vi.waitFor(() => expect(store.activeSessionCommand("pr-5454")).toMatchObject({
-        kind: "wake",
-        status: "running",
-        attempt: 1,
-      }));
+      await vi.waitFor(() =>
+        expect(store.activeSessionCommand("pr-5454")).toMatchObject({
+          kind: "wake",
+          status: "running",
+          attempt: 1,
+        }),
+      );
       expect(store.heldWakes(5454)).toHaveLength(0);
       expect(sent).toHaveLength(1);
       for (let n = 1; n <= 5; n++) expect(sent[0]).toContain(`response-${n}.json`);
       expect(readdirSync(join(staleInjectDir, ".terminal"))).toEqual([
         "2026-08-31T14-28-38-150Z-0247--cmd-stale-terminal.md.failed",
       ]);
-      expect(store.getSessionCommand("stale-terminal")).toMatchObject({ status: "failed", attempt: 0 });
+      expect(store.getSessionCommand("stale-terminal")).toMatchObject({
+        status: "failed",
+        attempt: 0,
+      });
       expect(store.recentEvents(50).some((event) => event.kind === "wakes_coalesced")).toBe(true);
     } finally {
       shutdownBridge();
@@ -1076,18 +1312,32 @@ describe("durable command ownership", () => {
   });
 
   it("does not report replay when a ready bridge never reserves the command", async () => {
-    const store = new StateStore(join(root, "state", "state.db"), () => new Date("2026-08-13T10:00:00Z"));
+    const store = new StateStore(
+      join(root, "state", "state.db"),
+      () => new Date("2026-08-13T10:00:00Z"),
+    );
     try {
       const m = manager(undefined, store);
       m.setTitleResolver(() => order.title);
-      store.upsertPr({ number: 42, state: "queued", head_sha: "abc123", title: order.title, author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+      store.upsertPr({
+        number: 42,
+        state: "queued",
+        head_sha: "abc123",
+        title: order.title,
+        author: "alice",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
       markExistingSessionReady(m, "pr-42");
       await m.inject(42, "recovered author reply");
       const command = store.activeSessionCommand("pr-42")!;
       const payload = readFileSync(command.payload_path);
       store.claimSessionCommand(command.id, "bridge-old", "2026-08-13T10:02:00Z");
 
-      expect(await m.retrySessionCommand(command.id, "start evidence unknown")).toBe("retry_failed");
+      expect(await m.retrySessionCommand(command.id, "start evidence unknown")).toBe(
+        "retry_failed",
+      );
 
       expect(store.getSessionCommand(command.id)).toMatchObject({
         id: command.id,
@@ -1103,18 +1353,32 @@ describe("durable command ownership", () => {
   });
 
   it("fences and replays a started ordinary wake under the same id and exact bytes", async () => {
-    const store = new StateStore(join(root, "state", "state.db"), () => new Date("2026-08-13T10:00:00Z"));
+    const store = new StateStore(
+      join(root, "state", "state.db"),
+      () => new Date("2026-08-13T10:00:00Z"),
+    );
     try {
       const m = manager(undefined, store);
       m.setTitleResolver((pr) => (pr === 42 ? order.title : undefined));
-      store.upsertPr({ number: 42, state: "queued", head_sha: "abc123", title: order.title, author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+      store.upsertPr({
+        number: 42,
+        state: "queued",
+        head_sha: "abc123",
+        title: order.title,
+        author: "alice",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
       markExistingSessionReady(m, "pr-42");
       await m.inject(42, "oldest wake 🚀\0body");
       const original = store.activeSessionCommand("pr-42")!;
       const expectedBytes = Buffer.from("oldest wake 🚀\0body\n", "utf8");
       const bytes = readFileSync(original.payload_path);
       expect(bytes).toEqual(expectedBytes);
-      expect(original.payload_sha256).toBe(createHash("sha256").update(expectedBytes).digest("hex"));
+      expect(original.payload_sha256).toBe(
+        createHash("sha256").update(expectedBytes).digest("hex"),
+      );
       store.claimSessionCommand(original.id, "bridge-old", "2026-08-13T10:02:00Z");
       store.markSessionCommandStarted(original.id, "bridge-old", "2026-08-13T10:45:00Z");
       for (let i = 0; i < 6; i++) store.holdWake(42, `later-${i}`, "author_reply");
@@ -1135,10 +1399,16 @@ describe("durable command ownership", () => {
       expect(readFileSync(original.payload_path)).toEqual(expectedBytes);
       expect(readFileSync(original.inject_path)).toEqual(expectedBytes);
       expect(store.heldWakes(42).map((wake) => wake.payload)).toEqual([
-        "later-1", "later-2", "later-3", "later-4", "later-5",
+        "later-1",
+        "later-2",
+        "later-3",
+        "later-4",
+        "later-5",
       ]);
       const kill = tmuxArgs().findIndex((a) => a[0] === "kill-session" && a.includes("=pr-42"));
-      const birth = tmuxArgs().findIndex((a, index) => index > kill && a[0] === "new-session" && a.includes("pr-42"));
+      const birth = tmuxArgs().findIndex(
+        (a, index) => index > kill && a[0] === "new-session" && a.includes("pr-42"),
+      );
       expect(kill).toBeGreaterThanOrEqual(0);
       expect(birth).toBeGreaterThan(kill);
     } finally {
@@ -1147,17 +1417,31 @@ describe("durable command ownership", () => {
   });
 
   it("does not replay an ordinary wake whose settlement wins during the fence", async () => {
-    const store = new StateStore(join(root, "state", "state.db"), () => new Date("2026-08-13T10:00:00Z"));
+    const store = new StateStore(
+      join(root, "state", "state.db"),
+      () => new Date("2026-08-13T10:00:00Z"),
+    );
     try {
       const m = manager(undefined, store);
       m.setTitleResolver(() => order.title);
-      store.upsertPr({ number: 42, state: "queued", head_sha: "abc123", title: order.title, author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+      store.upsertPr({
+        number: 42,
+        state: "queued",
+        head_sha: "abc123",
+        title: order.title,
+        author: "alice",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
       markExistingSessionReady(m, "pr-42");
       await m.inject(42, "author reply");
       const command = store.activeSessionCommand("pr-42")!;
       store.claimSessionCommand(command.id, "bridge-old", "2026-08-13T10:02:00Z");
       store.markSessionCommandStarted(command.id, "bridge-old", "2026-08-13T10:45:00Z");
-      onKillSession = () => { store.finishSessionCommand(command.id, "bridge-old", "acked"); };
+      onKillSession = () => {
+        store.finishSessionCommand(command.id, "bridge-old", "acked");
+      };
 
       expect(await m.retrySessionCommand(command.id, "expired")).toBe("settled");
       expect(store.getSessionCommand(command.id)?.status).toBe("acked");
@@ -1168,19 +1452,38 @@ describe("durable command ownership", () => {
   });
 
   it("refuses replay when the old tmux session survives the kill", async () => {
-    const store = new StateStore(join(root, "state", "state.db"), () => new Date("2026-08-13T10:00:00Z"));
+    const store = new StateStore(
+      join(root, "state", "state.db"),
+      () => new Date("2026-08-13T10:00:00Z"),
+    );
     try {
       const m = manager(undefined, store);
       m.setTitleResolver(() => order.title);
-      store.upsertPr({ number: 42, state: "reviewing", head_sha: "abc123", title: order.title, author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+      store.upsertPr({
+        number: 42,
+        state: "reviewing",
+        head_sha: "abc123",
+        title: order.title,
+        author: "alice",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
       store.startRound(42, "first", ["pass-baseline"], 45);
       await m.dispatchRound(order, "ROUND PROMPT BODY");
       const command = store.activeSessionCommand("pr-42")!;
       store.claimSessionCommand(command.id, "bridge-old", "2026-08-13T10:02:00Z");
       keepKilledSession = true;
 
-      await expect(m.retrySessionCommand(command.id, "expired")).rejects.toThrow(/survived command-recovery kill/);
-      expect(store.getSessionCommand(command.id)).toMatchObject({ status: "running", owner_token: "bridge-old", attempt: 1, started_at: null });
+      await expect(m.retrySessionCommand(command.id, "expired")).rejects.toThrow(
+        /survived command-recovery kill/,
+      );
+      expect(store.getSessionCommand(command.id)).toMatchObject({
+        status: "running",
+        owner_token: "bridge-old",
+        attempt: 1,
+        started_at: null,
+      });
       expect(tmuxArgs().filter((a) => a[0] === "new-session")).toHaveLength(1);
     } finally {
       store.close();
@@ -1188,19 +1491,36 @@ describe("durable command ownership", () => {
   });
 
   it("refuses replay when correlated acceptance wins during the kill", async () => {
-    const store = new StateStore(join(root, "state", "state.db"), () => new Date("2026-08-13T10:00:00Z"));
+    const store = new StateStore(
+      join(root, "state", "state.db"),
+      () => new Date("2026-08-13T10:00:00Z"),
+    );
     try {
       const m = manager(undefined, store);
       m.setTitleResolver(() => order.title);
-      store.upsertPr({ number: 42, state: "reviewing", head_sha: "abc123", title: order.title, author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+      store.upsertPr({
+        number: 42,
+        state: "reviewing",
+        head_sha: "abc123",
+        title: order.title,
+        author: "alice",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
       store.startRound(42, "first", ["pass-baseline"], 45);
       await m.dispatchRound(order, "ROUND PROMPT BODY");
       const command = store.activeSessionCommand("pr-42")!;
       store.claimSessionCommand(command.id, "bridge-old", "2026-08-13T10:02:00Z");
-      onKillSession = () => { store.markSessionCommandStarted(command.id, "bridge-old", "2026-08-13T10:45:00Z"); };
+      onKillSession = () => {
+        store.markSessionCommandStarted(command.id, "bridge-old", "2026-08-13T10:45:00Z");
+      };
 
       expect(await m.retrySessionCommand(command.id, "expired")).toBe("accepted_race");
-      expect(store.getSessionCommand(command.id)).toMatchObject({ status: "running", started_at: "2026-08-13T10:00:00.000Z" });
+      expect(store.getSessionCommand(command.id)).toMatchObject({
+        status: "running",
+        started_at: "2026-08-13T10:00:00.000Z",
+      });
       expect(tmuxArgs().filter((a) => a[0] === "new-session")).toHaveLength(1);
     } finally {
       store.close();
@@ -1208,16 +1528,30 @@ describe("durable command ownership", () => {
   });
 
   it("does not replay after the verdict lifecycle terminalizes the round during the kill", async () => {
-    const store = new StateStore(join(root, "state", "state.db"), () => new Date("2026-08-13T10:00:00Z"));
+    const store = new StateStore(
+      join(root, "state", "state.db"),
+      () => new Date("2026-08-13T10:00:00Z"),
+    );
     try {
       const m = manager(undefined, store);
       m.setTitleResolver(() => order.title);
-      store.upsertPr({ number: 42, state: "reviewing", head_sha: "abc123", title: order.title, author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+      store.upsertPr({
+        number: 42,
+        state: "reviewing",
+        head_sha: "abc123",
+        title: order.title,
+        author: "alice",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
       const roundId = store.startRound(42, "first", ["pass-baseline"], 45);
       await m.dispatchRound(order, "ROUND PROMPT BODY");
       const command = store.activeSessionCommand("pr-42")!;
       store.claimSessionCommand(command.id, "bridge-old", "2026-08-13T10:02:00Z");
-      onKillSession = () => { store.markRoundCancelled(roundId, "verdict won", "unknown"); };
+      onKillSession = () => {
+        store.markRoundCancelled(roundId, "verdict won", "unknown");
+      };
 
       expect(await m.retrySessionCommand(command.id, "expired")).toBe("round_finished");
       expect(store.getSessionCommand(command.id)?.status).toBe("running");
@@ -1234,7 +1568,10 @@ describe("durable command ownership", () => {
     const secondPath = join(inject, "2026-08-13T09-00-01-0000.md");
     writeFileSync(firstPath, "first legacy\n");
     writeFileSync(secondPath, "second legacy\n");
-    const store = new StateStore(join(root, "state", "state.db"), () => new Date("2026-08-13T10:00:00Z"));
+    const store = new StateStore(
+      join(root, "state", "state.db"),
+      () => new Date("2026-08-13T10:00:00Z"),
+    );
     try {
       const m = manager(undefined, store);
       const first = store.blockingSessionCommand("pr-42")!;
@@ -1246,7 +1583,11 @@ describe("durable command ownership", () => {
       store.finishSessionCommand(first.id, "bridge", "acked");
       rmSync(firstPath);
       m.restorePendingSessionCommands();
-      expect(store.blockingSessionCommand("pr-42")).toMatchObject({ kind: "legacy", status: "pending", inject_path: secondPath });
+      expect(store.blockingSessionCommand("pr-42")).toMatchObject({
+        kind: "legacy",
+        status: "pending",
+        inject_path: secondPath,
+      });
     } finally {
       store.close();
     }
@@ -1264,7 +1605,9 @@ describe("durable command ownership", () => {
       const restarted = manager(undefined, store);
       restarted.restorePendingSessionCommands();
       expect(readFileSync(command.inject_path)).toEqual(readFileSync(command.payload_path));
-      expect(store.db.prepare("SELECT COUNT(*) AS c FROM session_commands").get()).toEqual({ c: 1 });
+      expect(store.db.prepare("SELECT COUNT(*) AS c FROM session_commands").get()).toEqual({
+        c: 1,
+      });
     } finally {
       store.close();
     }
@@ -1330,7 +1673,9 @@ describe("archive and close", () => {
     expect(readFileSync(join(dest, "session.jsonl"), "utf8")).toBe('{"type":"session","n":2}\n');
     expect(readFileSync(join(dest, "ledger.md"), "utf8")).toBe("LEDGER PR #42 @ abc123\n");
     expect(readdirSync(join(dest, "verdicts"))).toEqual(["pr-42-round-1.json"]);
-    expect(JSON.parse(readFileSync(join(dest, "meta.json"), "utf8")).archived_at).toBe("2026-08-13T10:00:00.000Z");
+    expect(JSON.parse(readFileSync(join(dest, "meta.json"), "utf8")).archived_at).toBe(
+      "2026-08-13T10:00:00.000Z",
+    );
 
     const gitArgs = calls.filter((c) => c.cmd === "git").map((c) => c.args.join(" "));
     expect(gitArgs.some((a) => a.startsWith("worktree remove --force"))).toBe(true);
@@ -1369,7 +1714,9 @@ describe("overseer rotation", () => {
     expect(m.overseerRotationDue()).toBe(true);
     expect(await m.rotateOverseerIfDue()).toBe(true);
 
-    expect(existsSync(join(m.archiveDir(OVERSEER_SESSION), "2026-08-20", "session.jsonl"))).toBe(true);
+    expect(existsSync(join(m.archiveDir(OVERSEER_SESSION), "2026-08-20", "session.jsonl"))).toBe(
+      true,
+    );
     expect(tmuxArgs()).toContainEqual(["kill-session", "-t", "=overseer"]);
     expect(tmuxArgs().filter((a) => a[0] === "new-session" && a[3] === "overseer")).toHaveLength(2);
     expect(liveSessions.has(OVERSEER_SESSION)).toBe(true);

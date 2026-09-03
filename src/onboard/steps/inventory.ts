@@ -73,12 +73,18 @@ export function renderInventory(f: InventoryFacts): string {
     "# rides the same line the same way; the local default needs no host var.",
     "",
     `[${INVENTORY_GROUP}]`,
-    [`${f.host} cloudflared_enabled=${f.cloudflaredEnabled ? "true" : "false"}`, ...embedderHostVars(f.embedder).map(([k, v]) => `${k}=${v}`)].join(" "),
+    [
+      `${f.host} cloudflared_enabled=${f.cloudflaredEnabled ? "true" : "false"}`,
+      ...embedderHostVars(f.embedder).map(([k, v]) => `${k}=${v}`),
+    ].join(" "),
     "",
     `[${INVENTORY_GROUP}:vars]`,
   ];
   if (f.ansibleUser !== "") lines.push(`ansible_user=${f.ansibleUser}`);
-  else lines.push("# ansible_user is not set here: your ~/.ssh/config already decides the login user.");
+  else
+    lines.push(
+      "# ansible_user is not set here: your ~/.ssh/config already decides the login user.",
+    );
   lines.push(`ansible_python_interpreter=${f.pythonInterpreter}`);
   return `${lines.join("\n")}\n`;
 }
@@ -87,7 +93,8 @@ export function renderInventory(f: InventoryFacts): string {
 export function parseInventoryHost(text: string): string {
   for (const raw of text.split("\n")) {
     const line = raw.trim();
-    if (line === "" || line.startsWith("#") || line.startsWith(";") || line.startsWith("[")) continue;
+    if (line === "" || line.startsWith("#") || line.startsWith(";") || line.startsWith("["))
+      continue;
     return line.split(/\s+/)[0] ?? "";
   }
   return "";
@@ -98,7 +105,8 @@ export function parseInventoryHostVars(text: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const raw of text.split("\n")) {
     const line = raw.trim();
-    if (line === "" || line.startsWith("#") || line.startsWith(";") || line.startsWith("[")) continue;
+    if (line === "" || line.startsWith("#") || line.startsWith(";") || line.startsWith("["))
+      continue;
     for (const token of line.split(/\s+/).slice(1)) {
       const eq = token.indexOf("=");
       if (eq > 0) out[token.slice(0, eq)] = token.slice(eq + 1);
@@ -161,7 +169,8 @@ function tuiChecks(root: string, alias: string, write: boolean): CheckResult[] {
       {
         name: "tui",
         ok: false,
-        detail: "config.toml does not exist yet — Fix: run the config_fill step; this step then points its [tui] block at the server",
+        detail:
+          "config.toml does not exist yet — Fix: run the config_fill step; this step then points its [tui] block at the server",
       },
     ];
   }
@@ -216,14 +225,21 @@ export function vmInventoryStep(opts: VmInventoryOptions = {}): OnboardingStep {
   const pythonInterpreter = opts.pythonInterpreter ?? DEFAULT_PYTHON_INTERPRETER;
 
   function facts(ctx: StepContext, _root: string): InventoryFacts {
-    const typedUser = typeof ctx.input.ansible_user === "string" ? ctx.input.ansible_user.trim() : "";
-    const recordedUser = typeof ctx.choices[SSH_USER_CHOICE_KEY] === "string" ? (ctx.choices[SSH_USER_CHOICE_KEY] as string).trim() : "";
+    const typedUser =
+      typeof ctx.input.ansible_user === "string" ? ctx.input.ansible_user.trim() : "";
+    const recordedUser =
+      typeof ctx.choices[SSH_USER_CHOICE_KEY] === "string"
+        ? ctx.choices[SSH_USER_CHOICE_KEY].trim()
+        : "";
     return {
       host: sshAliasOf(ctx.choices),
       // The ssh config's own answer is the right default: it is what plain
       // `ssh <alias>` uses, so ansible and the operator agree by construction.
       ansibleUser: typedUser !== "" ? typedUser : recordedUser,
-      pythonInterpreter: typeof ctx.input.python === "string" && ctx.input.python.trim() !== "" ? ctx.input.python.trim() : pythonInterpreter,
+      pythonInterpreter:
+        typeof ctx.input.python === "string" && ctx.input.python.trim() !== ""
+          ? ctx.input.python.trim()
+          : pythonInterpreter,
       cloudflaredEnabled: cloudflaredEnabledFor(ingressOptionOf(ctx.choices)?.id ?? null),
       embedder: declaredEmbedderOf(readConfigText(_root) ?? ""),
     };
@@ -295,9 +311,17 @@ export function vmInventoryStep(opts: VmInventoryOptions = {}): OnboardingStep {
       );
     }
 
-    checks.push({ name: "ingress", ok: true, detail: ingressNoteFor(ingressId, webhookPortOf(root)) });
+    checks.push({
+      name: "ingress",
+      ok: true,
+      detail: ingressNoteFor(ingressId, webhookPortOf(root)),
+    });
     checks.push(...tuiChecks(root, alias, write));
-    return { ok: checks.every((c) => c.ok), checks, data: { inventory: path, host: f.host, cloudflared: f.cloudflaredEnabled } };
+    return {
+      ok: checks.every((c) => c.ok),
+      checks,
+      data: { inventory: path, host: f.host, cloudflared: f.cloudflaredEnabled },
+    };
   }
 
   return {
@@ -316,7 +340,8 @@ export function vmInventoryStep(opts: VmInventoryOptions = {}): OnboardingStep {
       properties: {
         ansible_user: {
           type: "string",
-          description: "Login user on the server. Omit unless it differs from what their ~/.ssh/config already resolves.",
+          description:
+            "Login user on the server. Omit unless it differs from what their ~/.ssh/config already resolves.",
         },
         python: {
           type: "string",
@@ -333,8 +358,12 @@ export function vmInventoryStep(opts: VmInventoryOptions = {}): OnboardingStep {
 function cloudflaredNote(text: string): string {
   const vars = parseInventoryHostVars(text);
   const parts = [
-    ...(vars.cloudflared_enabled === undefined ? [] : [`cloudflared_enabled=${vars.cloudflared_enabled}`]),
-    ...(vars.openviking_embedding_provider === undefined ? [] : [`the ${vars.openviking_embedding_provider} embedder opt-in`]),
+    ...(vars.cloudflared_enabled === undefined
+      ? []
+      : [`cloudflared_enabled=${vars.cloudflared_enabled}`]),
+    ...(vars.openviking_embedding_provider === undefined
+      ? []
+      : [`the ${vars.openviking_embedding_provider} embedder opt-in`]),
   ];
   return parts.length ? ` with ${parts.join(" and ")}` : "";
 }

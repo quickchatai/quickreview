@@ -23,7 +23,15 @@
 // turn. The old `/feed/wake` → pi.sendUserMessage path interrupted active
 // conversations with synthetic "feed updated" messages. The files are ambient
 // short-term state only; a real operator message or alert is a separate path.
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, renameSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import type { StatusSnapshot } from "../state.js";
 
@@ -187,11 +195,14 @@ export function clampScreen(text: string): { body: string; truncated: boolean } 
   // and newline are kept — they are layout, not control).
   const plain = text
     .replace(/\u001b\][\s\S]*?(?:\u0007|\u001b\\)/g, "")
-    .replace(/\u001b\[[0-9;?]*[ -\/]*[@-~]/g, "")
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
     .replace(/\u001b[@-Z\\-_]/g, "")
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "");
   if (plain.length <= SCREEN_MAX_CHARS) return { body: plain, truncated: false };
-  return { body: `${plain.slice(0, SCREEN_MAX_CHARS)}\n… screen truncated at ${SCREEN_MAX_CHARS} chars`, truncated: true };
+  return {
+    body: `${plain.slice(0, SCREEN_MAX_CHARS)}\n… screen truncated at ${SCREEN_MAX_CHARS} chars`,
+    truncated: true,
+  };
 }
 
 export function buildTuiView(src: ViewSource): TuiView {
@@ -205,7 +216,8 @@ export function buildTuiView(src: ViewSource): TuiView {
   const prs = src.snapshot?.prs;
   const by_state: Record<string, number> | null = prs === undefined ? null : {};
   for (const pr of prs ?? []) by_state![pr.state] = (by_state![pr.state] ?? 0) + 1;
-  const sel = src.selectedPr === undefined ? undefined : (prs ?? []).find((p) => p.number === src.selectedPr);
+  const sel =
+    src.selectedPr === undefined ? undefined : (prs ?? []).find((p) => p.number === src.selectedPr);
   const screen = clampScreen(src.screen ?? "");
   return {
     written_at: src.now.toISOString(),
@@ -219,7 +231,9 @@ export function buildTuiView(src: ViewSource): TuiView {
       pending_commit_count: commits?.length ?? null,
       ...(diffstat.length > 0 ? { diffstat_summary: diffstat[diffstat.length - 1] } : {}),
       container_status: d?.containerStatus ?? null,
-      ...(d?.run ? { run: { kind: d.run.kind, running: d.run.running, code: d.run.code ?? null } } : {}),
+      ...(d?.run
+        ? { run: { kind: d.run.kind, running: d.run.running, code: d.run.code ?? null } }
+        : {}),
     },
     screen: {
       tab: src.tab,
@@ -241,8 +255,14 @@ export function buildTuiView(src: ViewSource): TuiView {
       ...(src.snapshot?.pipeline
         ? {
             pipeline_healthy: src.snapshot.pipeline.healthy,
-            pipeline_causes: src.snapshot.pipeline.causes.map((cause) => ({ key: cause.key, pr: cause.pr })),
-            pipeline_recoveries: (src.snapshot.pipeline.recoveries ?? []).map((recovery) => ({ key: recovery.key, pr: recovery.pr })),
+            pipeline_causes: src.snapshot.pipeline.causes.map((cause) => ({
+              key: cause.key,
+              pr: cause.pr,
+            })),
+            pipeline_recoveries: (src.snapshot.pipeline.recoveries ?? []).map((recovery) => ({
+              key: recovery.key,
+              pr: recovery.pr,
+            })),
           }
         : {}),
     },
@@ -262,7 +282,9 @@ export function buildTuiView(src: ViewSource): TuiView {
       : src.selectedPr !== undefined
         ? { selected: { number: src.selectedPr } }
         : {}),
-    ...(src.panePr !== undefined || src.paneFocused === true ? { pane: { pr: src.panePr, focused: src.paneFocused === true } } : {}),
+    ...(src.panePr !== undefined || src.paneFocused === true
+      ? { pane: { pr: src.panePr, focused: src.paneFocused === true } }
+      : {}),
     ...(src.notice ? { notice: src.notice.slice(0, 400) } : {}),
   };
 }
@@ -328,7 +350,9 @@ export class FeedWriter {
     rmSync(join(this.dir, "wake"), { force: true });
     if (!existsSync(this.eventsPath)) return;
 
-    let lines = readFileSync(this.eventsPath, "utf8").split("\n").filter((line) => line.trim() !== "");
+    let lines = readFileSync(this.eventsPath, "utf8")
+      .split("\n")
+      .filter((line) => line.trim() !== "");
     if (lines.length > EVENT_TAIL_CAP) {
       lines = lines.slice(-EVENT_TAIL_KEEP);
       this.writeAtomic(this.eventsPath, lines.join("\n") + "\n");
@@ -348,7 +372,9 @@ export class FeedWriter {
     this.writeAtomic(this.snapshotPath, JSON.stringify(snapshot, null, 2));
 
     // Events: oldest first on disk (the TUI holds them newest-first).
-    const fresh = [...events].sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0)).filter((e) => !this.seen.has(eventKey(e)));
+    const fresh = [...events]
+      .sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0))
+      .filter((e) => !this.seen.has(eventKey(e)));
     if (fresh.length > 0) {
       appendFileSync(this.eventsPath, fresh.map((e) => JSON.stringify(e)).join("\n") + "\n");
       this.eventLines += fresh.length;
@@ -359,7 +385,10 @@ export class FeedWriter {
   }
 
   private compactEvents(): void {
-    const lines = readFileSync(this.eventsPath, "utf8").split("\n").filter((line) => line.trim() !== "").slice(-EVENT_TAIL_KEEP);
+    const lines = readFileSync(this.eventsPath, "utf8")
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .slice(-EVENT_TAIL_KEEP);
     this.writeAtomic(this.eventsPath, lines.join("\n") + (lines.length > 0 ? "\n" : ""));
     this.eventLines = lines.length;
     this.seen.clear();

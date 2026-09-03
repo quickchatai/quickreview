@@ -25,12 +25,13 @@ export function readSessionBridgeState(path: string): SessionBridgeState | undef
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<SessionBridgeState>;
     if (
-      parsed.version !== 1
-      || typeof parsed.session !== "string"
-      || typeof parsed.generation !== "string"
-      || !["starting", "ready", "failed", "closed"].includes(String(parsed.stage))
-      || typeof parsed.updated_at !== "string"
-    ) return undefined;
+      parsed.version !== 1 ||
+      typeof parsed.session !== "string" ||
+      typeof parsed.generation !== "string" ||
+      !["starting", "ready", "failed", "closed"].includes(String(parsed.stage)) ||
+      typeof parsed.updated_at !== "string"
+    )
+      return undefined;
     return parsed as SessionBridgeState;
   } catch {
     return undefined;
@@ -60,11 +61,15 @@ export async function waitForSessionBridgeReady(
         );
       }
       if (state.stage === "closed") {
-        throw new Error(`inject bridge ${session} generation ${generation} closed before readiness`);
+        throw new Error(
+          `inject bridge ${session} generation ${generation} closed before readiness`,
+        );
       }
     }
     if (Date.now() >= deadline) {
-      throw new Error(`timed out after ${timeoutMs}ms waiting for inject bridge ${session} generation ${generation}`);
+      throw new Error(
+        `timed out after ${timeoutMs}ms waiting for inject bridge ${session} generation ${generation}`,
+      );
     }
     await sleep(Math.min(pollMs, Math.max(1, deadline - Date.now())));
   }

@@ -31,7 +31,12 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 import { CHOICE_KEYS } from "../src/onboard/choices.js";
-import { OnboardingEngine, type OnboardAdapters, type ProcessResult, type StepContext } from "../src/onboard/engine.js";
+import {
+  OnboardingEngine,
+  type OnboardAdapters,
+  type ProcessResult,
+  type StepContext,
+} from "../src/onboard/engine.js";
 import { QUESTIONS, questionAsked, type AnswerKey } from "../src/onboard/steps/configfill.js";
 import { ESCALATION_STEP_ID } from "../src/onboard/steps/escalation.js";
 import { GITHUB_APP_STEP_ID, SECRET_FILES } from "../src/onboard/steps/githubapp.js";
@@ -98,8 +103,10 @@ function runner(): OnboardAdapters["runner"] {
     async run(cmd: string, args: string[]): Promise<ProcessResult> {
       const line = [cmd, ...args].join(" ");
       calls.push(line);
-      if (/docker --version/.test(line)) return { code: 0, stdout: "Docker version 27.0.0", stderr: "" };
-      if (/docker compose version/.test(line)) return { code: 0, stdout: "Docker Compose version v2.29.0", stderr: "" };
+      if (/docker --version/.test(line))
+        return { code: 0, stdout: "Docker version 27.0.0", stderr: "" };
+      if (/docker compose version/.test(line))
+        return { code: 0, stdout: "Docker Compose version v2.29.0", stderr: "" };
       if (/compose .*ps/.test(line)) return { code: 0, stdout: "", stderr: "" }; // nothing up yet
       return { code: 0, stdout: "", stderr: "" };
     },
@@ -110,16 +117,24 @@ function runner(): OnboardAdapters["runner"] {
  * labels are created on demand. Routed on the PATH, so the real api.github.com
  * base the registered step carries never leaves this process. */
 function ghFetch(): typeof fetch {
-  return (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]): Promise<Response> => {
+  return (async (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1],
+  ): Promise<Response> => {
     const url = new URL(String(input));
     const path = `${url.pathname}${url.search}`;
     const method = (init?.method ?? "GET").toUpperCase();
     calls.push(`${method} ${path}`);
     const json = (status: number, body: unknown): Response =>
-      new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { "content-type": "application/json" },
+      });
 
-    if (method === "GET" && url.pathname === "/app") return json(200, { id: 4242, slug: REAL_SLUG });
-    if (method === "GET" && url.pathname === "/app/installations") return json(200, [{ id: 77, account: { login: "acme" } }]);
+    if (method === "GET" && url.pathname === "/app")
+      return json(200, { id: 4242, slug: REAL_SLUG });
+    if (method === "GET" && url.pathname === "/app/installations")
+      return json(200, [{ id: 77, account: { login: "acme" } }]);
     if (method === "POST" && /^\/app\/installations\/\d+\/access_tokens$/.test(url.pathname)) {
       return json(201, { token: "ghs_installation", expires_at: "2026-08-31T13:00:00Z" });
     }
@@ -133,8 +148,10 @@ function ghFetch(): typeof fetch {
       labels.add(body.name);
       return json(201, { name: body.name });
     }
-    if (method === "GET" && /^\/repos\/[^/]+\/[^/]+$/.test(url.pathname)) return json(200, { full_name: url.pathname.slice(7) });
-    if (method === "GET" && url.pathname.startsWith("/users/")) return json(200, { login: url.pathname.slice(7), type: "Organization" });
+    if (method === "GET" && /^\/repos\/[^/]+\/[^/]+$/.test(url.pathname))
+      return json(200, { full_name: url.pathname.slice(7) });
+    if (method === "GET" && url.pathname.startsWith("/users/"))
+      return json(200, { login: url.pathname.slice(7), type: "Organization" });
     return json(500, { message: `unrouted ${method} ${path}` });
   }) as unknown as typeof fetch;
 }
@@ -188,7 +205,14 @@ type Inputs = Record<string, Record<string, unknown>>;
 
 interface Drive {
   engine: OnboardingEngine;
-  results: Map<string, { ok: boolean; failures: string[]; checks: Array<{ name: string; ok: boolean; detail: string }> }>;
+  results: Map<
+    string,
+    {
+      ok: boolean;
+      failures: string[];
+      checks: Array<{ name: string; ok: boolean; detail: string }>;
+    }
+  >;
 }
 
 /**
@@ -196,7 +220,12 @@ interface Drive {
  * `lastId`. Nothing is seeded: every choice a later step reads was recorded by
  * an earlier one in this same drive.
  */
-async function drive(engine: OnboardingEngine, inputs: Inputs, lastId: string, skip: string[] = []): Promise<Drive> {
+async function drive(
+  engine: OnboardingEngine,
+  inputs: Inputs,
+  lastId: string,
+  skip: string[] = [],
+): Promise<Drive> {
   const results: Drive["results"] = new Map();
   for (const step of engine.stepDefs()) {
     // A step the recorded choices disable is not part of this route — the
@@ -223,7 +252,13 @@ function producedConfig(): ReturnType<typeof loadConfig> {
 
 /** A context over the engine's REAL recorded choices — what a later step sees. */
 function ctxOverChoices(engine: OnboardingEngine): StepContext {
-  return { adapters: adapters(), input: {}, choices: engine.choices(), data: {}, recordChoice: () => undefined };
+  return {
+    adapters: adapters(),
+    input: {},
+    choices: engine.choices(),
+    data: {},
+    recordChoice: () => undefined,
+  };
 }
 
 const LAPTOP_INPUTS: Inputs = {
@@ -254,7 +289,9 @@ describe("the registered steps hand their choices to each other", () => {
   it("drives preflight → topology → LLM → interview → App → ingress → slug, in order", async () => {
     const engine = new OnboardingEngine(defaultSteps(), adapters());
     const d = await drive(engine, LAPTOP_INPUTS, "app_slug_reconcile", SKIP);
-    const failed = [...d.results].filter(([, r]) => !r.ok).map(([id, r]) => `${id}: ${r.failures.join("; ")}`);
+    const failed = [...d.results]
+      .filter(([, r]) => !r.ok)
+      .map(([id, r]) => `${id}: ${r.failures.join("; ")}`);
     expect(failed, "a step in the composed flow went red").toEqual([]);
   });
 
@@ -286,14 +323,22 @@ describe("the registered steps hand their choices to each other", () => {
     const engine = new OnboardingEngine(defaultSteps(), adapters());
     const inputs: Inputs = {
       ...LAPTOP_INPUTS,
-      escalation: { enable: "yes", targets: "example-teammate, second-teammate", why: "you both own this area", paths: "db/**" },
+      escalation: {
+        enable: "yes",
+        targets: "example-teammate, second-teammate",
+        why: "you both own this area",
+        paths: "db/**",
+      },
     };
     const d = await drive(engine, inputs, ESCALATION_STEP_ID, SKIP);
     expect(d.results.get(ESCALATION_STEP_ID)!.ok).toBe(true);
     const cfg = producedConfig();
     expect(cfg.escalation.targets).toEqual(["example-teammate", "second-teammate"]);
     expect(cfg.escalation.rules.map((r) => r.to)).toEqual(["example-teammate", "second-teammate"]);
-    expect(cfg.escalation.rules.map((r) => r.name)).toEqual(["onboarding:example-teammate", "onboarding:second-teammate"]);
+    expect(cfg.escalation.rules.map((r) => r.name)).toEqual([
+      "onboarding:example-teammate",
+      "onboarding:second-teammate",
+    ]);
     // …and the operator is TOLD that both people get told.
     expect(detail(d, ESCALATION_STEP_ID, "escalation")).toContain("more than one person is told");
   });
@@ -412,7 +457,9 @@ describe("the registered steps hand their choices to each other", () => {
     // The question now applies — and is answered from the recorded choice, so
     // the operator is never asked for the same hostname twice.
     const asked = prompts.slice(before);
-    expect(asked.some((q) => q.includes(QUESTIONS.find((x) => x.id === "webhook_hostname")!.prompt))).toBe(false);
+    expect(
+      asked.some((q) => q.includes(QUESTIONS.find((x) => x.id === "webhook_hostname")!.prompt)),
+    ).toBe(false);
     expect(producedConfig().server.hostname).toBe(HOSTNAME);
   });
 
@@ -453,7 +500,8 @@ describe("the App step's refusal is reachable for the case it describes", () => 
   });
 
   it("the step declares an app_name parameter and NOT the repo — the repo is the interview's answer", async () => {
-    const params = githubAppStep().parameters as { properties?: Record<string, unknown> } | undefined;
+    const params = githubAppStep().parameters as
+      { properties?: Record<string, unknown> } | undefined;
     expect(params?.properties).toBeDefined();
     expect(Object.keys(params!.properties!)).toEqual(["app_name"]);
   });
@@ -467,8 +515,16 @@ describe("the checklist the flow leaves behind", () => {
     expect(existsSync(path)).toBe(true);
     const file = JSON.parse(readFileSync(path, "utf8")) as { choices: Record<string, unknown> };
     // A second session reads these from disk — the same keys, one declaration.
-    for (const key of [CHOICE_KEYS.repo, CHOICE_KEYS.topology, CHOICE_KEYS.authRoute, CHOICE_KEYS.ingress, CHOICE_KEYS.appSlug]) {
-      expect(Object.keys(file.choices), `${key} did not survive to the checklist file`).toContain(key);
+    for (const key of [
+      CHOICE_KEYS.repo,
+      CHOICE_KEYS.topology,
+      CHOICE_KEYS.authRoute,
+      CHOICE_KEYS.ingress,
+      CHOICE_KEYS.appSlug,
+    ]) {
+      expect(Object.keys(file.choices), `${key} did not survive to the checklist file`).toContain(
+        key,
+      );
     }
   });
 });

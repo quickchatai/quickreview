@@ -41,7 +41,11 @@ const ROOT = join(import.meta.dirname, "..");
 
 function tsFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
-    e.isDirectory() ? tsFiles(join(dir, e.name)) : e.name.endsWith(".ts") ? [join(dir, e.name)] : [],
+    e.isDirectory()
+      ? tsFiles(join(dir, e.name))
+      : e.name.endsWith(".ts")
+        ? [join(dir, e.name)]
+        : [],
   );
 }
 
@@ -123,7 +127,10 @@ describe("[T4] every config knob has a reader, not just a parser", () => {
   it("the knob set is large enough that the parse cannot have silently failed", () => {
     // If the interface scan breaks, `unread` is empty and everything below
     // passes while checking nothing — the exact failure this file is about.
-    expect(declaredKnobs().length, "the *Config interface scan found almost nothing").toBeGreaterThan(100);
+    expect(
+      declaredKnobs().length,
+      "the *Config interface scan found almost nothing",
+    ).toBeGreaterThan(100);
   });
 
   it("only the recorded knobs are parsed and never consumed", () => {
@@ -134,10 +141,10 @@ describe("[T4] every config knob has a reader, not just a parser", () => {
 
     expect(
       unread,
-      "the parsed-but-unread knob set no longer matches the record. EXTRA means a knob is parsed by "
-        + "src/config.ts and read by nothing anywhere else — wire it, delete it, or add it to PARSED_BUT_UNREAD "
-        + "with why it is being kept. MISSING means a recorded knob either gained a reader or was deleted "
-        + "([A10] is that cut); either way its entry goes.",
+      "the parsed-but-unread knob set no longer matches the record. EXTRA means a knob is parsed by " +
+        "src/config.ts and read by nothing anywhere else — wire it, delete it, or add it to PARSED_BUT_UNREAD " +
+        "with why it is being kept. MISSING means a recorded knob either gained a reader or was deleted " +
+        "([A10] is that cut); either way its entry goes.",
     ).toEqual([...PARSED_BUT_UNREAD].sort());
   });
 });

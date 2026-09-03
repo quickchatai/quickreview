@@ -56,19 +56,23 @@ export function standingReview(mark: ReviewedHeadRow | undefined | null): Standi
   if (!mark) return { kind: "none" };
   const decided = normalizeVerdict(mark.verdict);
   if (decided === "NEEDS_HUMAN") return { kind: "undecided" };
-  if (decided === "APPROVE" || decided === "REQUEST_CHANGES") return { kind: "decided", verdict: decided, source: "verdict" };
+  if (decided === "APPROVE" || decided === "REQUEST_CHANGES")
+    return { kind: "decided", verdict: decided, source: "verdict" };
   // Exact spelling, deliberately: both writers of `posted_event` (the gate's
   // after-step and guards.sh) stamp the upper-case GitHub event, so a
   // differently-cased value is a lookalike and is NOT proof (pinned by
   // tests/operator-recovery.test.ts).
   const posted = mark.posted_event;
-  if (posted === "APPROVE" || posted === "REQUEST_CHANGES") return { kind: "decided", verdict: posted, source: "posted_event" };
+  if (posted === "APPROVE" || posted === "REQUEST_CHANGES")
+    return { kind: "decided", verdict: posted, source: "posted_event" };
   return { kind: "unknown", posted_event: mark.posted_event ?? null };
 }
 
 /** The decided standing verdict, or null when none stands (no mark, an
  * undecided legacy mark, or a COMMENT-only / bare mark). */
-export function standingVerdict(mark: ReviewedHeadRow | undefined | null): StandingDecidedVerdict | null {
+export function standingVerdict(
+  mark: ReviewedHeadRow | undefined | null,
+): StandingDecidedVerdict | null {
   const standing = standingReview(mark);
   return standing.kind === "decided" ? standing.verdict : null;
 }
@@ -76,7 +80,9 @@ export function standingVerdict(mark: ReviewedHeadRow | undefined | null): Stand
 /** The lifecycle state a PR returns to when its standing review is all that
  * stands — the same table `transition` applies to a `verdict` event, so a
  * restore can never land somewhere a verdict could not. */
-export function standingLifecycleState(verdict: StandingDecidedVerdict | null): "awaiting_author" | "tracked" {
+export function standingLifecycleState(
+  verdict: StandingDecidedVerdict | null,
+): "awaiting_author" | "tracked" {
   return verdict === "REQUEST_CHANGES" ? "awaiting_author" : "tracked";
 }
 

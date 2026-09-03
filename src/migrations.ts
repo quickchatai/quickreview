@@ -140,13 +140,18 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
     if (f.status === "removed") continue;
     const ref = parseMigrationPath(f.filename);
     if (!ref) continue;
-    prByApp.set(ref.app, [...(prByApp.get(ref.app) ?? []), { ref, ...(f.patch !== undefined ? { patch: f.patch } : {}) }]);
+    prByApp.set(ref.app, [
+      ...(prByApp.get(ref.app) ?? []),
+      { ref, ...(f.patch !== undefined ? { patch: f.patch } : {}) },
+    ]);
   }
 
   const out: MigrationCollision[] = [];
   for (const [app, entries] of [...prByApp].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
     const base = baseByApp.get(app) ?? new Map<number, MigrationRef>();
-    const ordered = [...entries].sort((a, b) => a.ref.number - b.ref.number || (a.ref.path < b.ref.path ? -1 : 1));
+    const ordered = [...entries].sort(
+      (a, b) => a.ref.number - b.ref.number || (a.ref.path < b.ref.path ? -1 : 1),
+    );
     const colliding = ordered.filter(({ ref: r }) => {
       const occupant = base.get(r.number);
       return occupant !== undefined && occupant.path !== r.path;
@@ -205,7 +210,9 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
       // remedy correct if the target policy ever tightens.
       const mustRenumber = ref.number <= dep.number;
       const targetNumber = mustRenumber ? next++ : ref.number;
-      const target = mustRenumber ? renamedTo(ref, targetNumber) : { name: `${ref.digits}_${ref.name}`, path: ref.path };
+      const target = mustRenumber
+        ? renamedTo(ref, targetNumber)
+        : { name: `${ref.digits}_${ref.name}`, path: ref.path };
       out.push({
         app,
         app_label: ref.app_label,
@@ -220,7 +227,8 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
         stale_dependency: stale,
         renumber: mustRenumber,
       });
-      if (mustRenumber) renamed.set(`${ref.digits}_${ref.name}`, { name: target.name, number: targetNumber });
+      if (mustRenumber)
+        renamed.set(`${ref.digits}_${ref.name}`, { name: target.name, number: targetNumber });
     }
   }
   return out;
@@ -229,7 +237,9 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
 /** Stable identity of a detection result — used to post the comment once per
  * (head sha, collision set) rather than on every round at the same head. */
 export function collisionFingerprint(headSha: string, collisions: MigrationCollision[]): string {
-  return [headSha, ...collisions.map((c) => `${c.pr_path}→${c.target_path}@${c.dependency}`)].join("|");
+  return [headSha, ...collisions.map((c) => `${c.pr_path}→${c.target_path}@${c.dependency}`)].join(
+    "|",
+  );
 }
 
 export interface CollisionCommentInput {

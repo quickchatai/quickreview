@@ -148,13 +148,17 @@ describe("seed integrity (hard rule 6)", () => {
         `${rel} is listed as a ratified divergence but is not a seeded file`,
       ).toContain(rel);
       const notes = divergence.files[rel] ?? [];
-      expect(notes.length, `${rel} has no ratification note — who ratified it, when?`).toBeGreaterThan(0);
+      expect(
+        notes.length,
+        `${rel} has no ratification note — who ratified it, when?`,
+      ).toBeGreaterThan(0);
       for (const note of notes) {
         // new notes are role-worded ("owner"); the personal spelling
         // on the legacy notes is history and must keep validating.
-        expect(note, `${rel}: ratification note must carry a date and a ratifier ('owner'; 'the owner' grandfathered)`).toMatch(
-          /^\d{4}-\d{2}-\d{2} .*(?:the owner|owner)/,
-        );
+        expect(
+          note,
+          `${rel}: ratification note must carry a date and a ratifier ('owner'; 'the owner' grandfathered)`,
+        ).toMatch(/^\d{4}-\d{2}-\d{2} .*(?:the owner|owner)/);
       }
     }
   });
@@ -196,25 +200,27 @@ describe("seed provenance vs in-repo canonical copies (seeds/)", () => {
     expect(existsSync(canonical), `${rel} has no canonical copy under seeds/`).toBe(true);
     const ours = readFileSync(join(repoRoot, rel));
     const theirs = readFileSync(canonical);
-    expect(
-      ours.equals(theirs),
-      `SEED DRIFT: ${rel} differs from seeds/${rel}. ${RULE_6}`,
-    ).toBe(true);
+    expect(ours.equals(theirs), `SEED DRIFT: ${rel} differs from seeds/${rel}. ${RULE_6}`).toBe(
+      true,
+    );
   });
 
-  it.each(seededPaths)("seeds/%s matches the manifest sha (the canonical copy cannot drift)", (rel) => {
-    // The guard on the copy itself: editing seeds/ instead of the seed would
-    // otherwise make the byte-identity comparison above vacuous.
-    const canonical = join(seedsDir, rel);
-    expect(existsSync(canonical), `seeds/${rel} is missing`).toBe(true);
-    const actual = sha256(canonical);
-    expect(
-      actual,
-      `CANONICAL-COPY DRIFT: seeds/${rel} no longer matches the manifest ` +
-        `(manifest ${manifest.files[rel]}, on disk ${actual}). The seeds/ copy is the ` +
-        `provenance baseline — it changes only in a ratified reseed that re-pins the manifest. ${RULE_6}`,
-    ).toBe(manifest.files[rel]);
-  });
+  it.each(seededPaths)(
+    "seeds/%s matches the manifest sha (the canonical copy cannot drift)",
+    (rel) => {
+      // The guard on the copy itself: editing seeds/ instead of the seed would
+      // otherwise make the byte-identity comparison above vacuous.
+      const canonical = join(seedsDir, rel);
+      expect(existsSync(canonical), `seeds/${rel} is missing`).toBe(true);
+      const actual = sha256(canonical);
+      expect(
+        actual,
+        `CANONICAL-COPY DRIFT: seeds/${rel} no longer matches the manifest ` +
+          `(manifest ${manifest.files[rel]}, on disk ${actual}). The seeds/ copy is the ` +
+          `provenance baseline — it changes only in a ratified reseed that re-pins the manifest. ${RULE_6}`,
+      ).toBe(manifest.files[rel]);
+    },
+  );
 
   it("no seeds/ file is missing from the manifest", () => {
     const tracked = new Set(seededPaths);

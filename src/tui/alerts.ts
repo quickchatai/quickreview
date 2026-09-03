@@ -14,7 +14,15 @@
 //   (notice → alert) of a folded cause may break the cooldown exactly once a
 //   day. Spend is never an alert — that exclusion lives in the prompt.
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { zoneDateString } from "../eod.js";
 
@@ -37,23 +45,34 @@ export type AlertParse = { ok: true; alert: AlertRecord } | { ok: false; error: 
 export const MAX_TITLE = 60;
 
 /** Strict schema parse of one alert file body. */
-export function parseAlert(text: string, file: string, now: () => Date = () => new Date()): AlertParse {
+export function parseAlert(
+  text: string,
+  file: string,
+  now: () => Date = () => new Date(),
+): AlertParse {
   let raw: unknown;
   try {
     raw = JSON.parse(text);
   } catch (err) {
     return { ok: false, error: `not JSON (${String(err instanceof Error ? err.message : err)})` };
   }
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return { ok: false, error: "not an object" };
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw))
+    return { ok: false, error: "not an object" };
   const v = raw as Record<string, unknown>;
   // LLM-written files: unambiguous digit-strings coerce, exactly as verdicts do.
   if (typeof v.pr === "string" && /^\d+$/.test(v.pr)) v.pr = Number(v.pr);
-  if (v.tier !== "notice" && v.tier !== "alert") return { ok: false, error: `bad tier: ${JSON.stringify(v.tier)}` };
-  if (typeof v.cause !== "string" || v.cause.trim() === "") return { ok: false, error: "cause must be a non-empty string" };
-  if (typeof v.title !== "string" || v.title.trim() === "") return { ok: false, error: "title must be a non-empty string" };
-  if (v.pr !== null && v.pr !== undefined && (typeof v.pr !== "number" || !Number.isInteger(v.pr))) return { ok: false, error: "pr must be an integer or null" };
-  if (v.body !== undefined && typeof v.body !== "string") return { ok: false, error: "body must be a string" };
-  if (v.ts !== undefined && typeof v.ts !== "string") return { ok: false, error: "ts must be a string" };
+  if (v.tier !== "notice" && v.tier !== "alert")
+    return { ok: false, error: `bad tier: ${JSON.stringify(v.tier)}` };
+  if (typeof v.cause !== "string" || v.cause.trim() === "")
+    return { ok: false, error: "cause must be a non-empty string" };
+  if (typeof v.title !== "string" || v.title.trim() === "")
+    return { ok: false, error: "title must be a non-empty string" };
+  if (v.pr !== null && v.pr !== undefined && (typeof v.pr !== "number" || !Number.isInteger(v.pr)))
+    return { ok: false, error: "pr must be an integer or null" };
+  if (v.body !== undefined && typeof v.body !== "string")
+    return { ok: false, error: "body must be a string" };
+  if (v.ts !== undefined && typeof v.ts !== "string")
+    return { ok: false, error: "ts must be a string" };
   return {
     ok: true,
     alert: {
@@ -101,8 +120,9 @@ export interface PolicyStore {
 export function readPolicyState(path: string): PolicyState | undefined {
   try {
     const raw = JSON.parse(readFileSync(path, "utf8")) as Partial<PolicyState>;
-    if (typeof raw.day !== "string" || typeof raw.causes !== "object" || raw.causes === null) return undefined;
-    return { day: raw.day, causes: raw.causes as Record<string, CauseMemory> };
+    if (typeof raw.day !== "string" || typeof raw.causes !== "object" || raw.causes === null)
+      return undefined;
+    return { day: raw.day, causes: raw.causes };
   } catch {
     return undefined;
   }
@@ -190,19 +210,37 @@ export class AlertPolicy {
     this.reapStaleDays(today);
     if (!prev || prev.day !== today) {
       // "Already told you" memory is per day: a new day starts clean.
-      this.memory.set(alert.cause, { day: today, lastAt: now.getTime(), lastTier: alert.tier, folds: 0, bypassed: false });
+      this.memory.set(alert.cause, {
+        day: today,
+        lastAt: now.getTime(),
+        lastTier: alert.tier,
+        folds: 0,
+        bypassed: false,
+      });
       this.persist(today);
       return { action: "route", bypass: false };
     }
     const elapsedMin = (now.getTime() - prev.lastAt) / 60_000;
     if (elapsedMin >= this.cooldownMin) {
-      this.memory.set(alert.cause, { ...prev, lastAt: now.getTime(), lastTier: alert.tier, folds: 0, bypassed: prev.bypassed });
+      this.memory.set(alert.cause, {
+        ...prev,
+        lastAt: now.getTime(),
+        lastTier: alert.tier,
+        folds: 0,
+        bypassed: prev.bypassed,
+      });
       this.persist(today);
       return { action: "route", bypass: false };
     }
     if (prev.lastTier === "notice" && alert.tier === "alert" && !prev.bypassed) {
       // Genuine escalation of a live cause — breaks the cooldown once a day.
-      this.memory.set(alert.cause, { ...prev, lastAt: now.getTime(), lastTier: "alert", folds: 0, bypassed: true });
+      this.memory.set(alert.cause, {
+        ...prev,
+        lastAt: now.getTime(),
+        lastTier: "alert",
+        folds: 0,
+        bypassed: true,
+      });
       this.persist(today);
       return { action: "route", bypass: true };
     }
@@ -227,7 +265,10 @@ export type NotifyRunner = (title: string, body: string) => void;
 
 export const notifySendRunner: NotifyRunner = (title, body) => {
   try {
-    const child = spawn("notify-send", ["--app-name=qcr", "--urgency=critical", title, body], { detached: true, stdio: "ignore" });
+    const child = spawn("notify-send", ["--app-name=qcr", "--urgency=critical", title, body], {
+      detached: true,
+      stdio: "ignore",
+    });
     child.on("error", () => {
       /* no notify-send on this box — the status line is the fallback */
     });
@@ -333,7 +374,13 @@ export class AlertConsumer {
     }
     this.badgeState.count += 1;
     this.badgeState.folds = this.policy.totalFolds();
-    this.badgeState.latest = { tier: alert.tier, title: alert.title, cause: alert.cause, pr: alert.pr, ts: alert.ts };
+    this.badgeState.latest = {
+      tier: alert.tier,
+      title: alert.title,
+      cause: alert.cause,
+      pr: alert.pr,
+      ts: alert.ts,
+    };
     this.sinks.notice(statusLine(alert, 0) + (decision.bypass ? " (escalated)" : ""));
     this.sinks.badge(this.badgeState);
     if (alert.tier === "alert") {
@@ -364,7 +411,6 @@ export class AlertConsumer {
     this.timer = undefined;
   }
 }
-
 
 // ---- daemon-detected pi auth failures → the same alert pipeline ----------
 

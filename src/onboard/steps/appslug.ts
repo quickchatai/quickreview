@@ -34,9 +34,22 @@
 // golive.ts, and only on an explicit confirmation after a completed proof.
 import { mintAppJwt } from "../../githubAuth.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
-import { configPath, readConfigText, rootOf, secretsDirFor, writeAtomic, type StreamRunner } from "./compose.js";
+import {
+  configPath,
+  readConfigText,
+  rootOf,
+  secretsDirFor,
+  writeAtomic,
+  type StreamRunner,
+} from "./compose.js";
 import { stackTransportFor } from "./transport.js";
-import { assertNoDryRunEdit, changedEdits, patchToml, tomlString, type TomlEdit } from "./configfill.js";
+import {
+  assertNoDryRunEdit,
+  changedEdits,
+  patchToml,
+  tomlString,
+  type TomlEdit,
+} from "./configfill.js";
 import { CHOICE_KEYS } from "../choices.js";
 import { readCredentials } from "./githubapp.js";
 
@@ -75,14 +88,17 @@ interface AppIdentity {
 }
 
 /** `GET /app` with the App's own JWT: the App's identity, from the App. */
-async function liveIdentity(ctx: StepContext, apiBase: string, secretsDir: string): Promise<AppIdentity> {
+async function liveIdentity(
+  ctx: StepContext,
+  apiBase: string,
+  secretsDir: string,
+): Promise<AppIdentity> {
   const creds = readCredentials(secretsDir);
   if (!creds.complete) {
     return {
       ok: false,
       slug: "",
-      detail:
-        `${creds.problems.join("; ")} — Fix: run the github_app step; it writes app_id, app.pem and webhook_secret into ${secretsDir}`,
+      detail: `${creds.problems.join("; ")} — Fix: run the github_app step; it writes app_id, app.pem and webhook_secret into ${secretsDir}`,
     };
   }
   const jwt = mintAppJwt(creds.appId!, creds.pem!, () => ctx.adapters.clock().getTime());
@@ -90,7 +106,11 @@ async function liveIdentity(ctx: StepContext, apiBase: string, secretsDir: strin
   let body: unknown = null;
   try {
     const res = await ctx.adapters.fetch(`${apiBase}/app`, {
-      headers: { accept: "application/vnd.github+json", authorization: `Bearer ${jwt}`, "user-agent": "quickreview-onboarding" },
+      headers: {
+        accept: "application/vnd.github+json",
+        authorization: `Bearer ${jwt}`,
+        "user-agent": "quickreview-onboarding",
+      },
     });
     status = res.status;
     const text = await res.text();
@@ -117,7 +137,12 @@ async function liveIdentity(ctx: StepContext, apiBase: string, secretsDir: strin
   }
   const slug = (body as { slug?: unknown } | null)?.slug;
   if (typeof slug !== "string" || slug.trim() === "") {
-    return { ok: false, slug: "", detail: "GitHub answered without a slug for this App — Fix: run this step again; if it repeats, re-run the github_app step" };
+    return {
+      ok: false,
+      slug: "",
+      detail:
+        "GitHub answered without a slug for this App — Fix: run this step again; if it repeats, re-run the github_app step",
+    };
   }
   return { ok: true, slug: slug.trim(), detail: "" };
 }
@@ -135,7 +160,10 @@ export function appSlugStep(opts: AppSlugStepOptions = {}): OnboardingStep {
       checks.push({ name: "app-identity", ok: false, detail: identity.detail });
       return { ok: false, checks };
     }
-    const recorded = typeof ctx.choices[CHOICE_KEYS.appSlug] === "string" ? (ctx.choices[CHOICE_KEYS.appSlug] as string) : "";
+    const recorded =
+      typeof ctx.choices[CHOICE_KEYS.appSlug] === "string"
+        ? (ctx.choices[CHOICE_KEYS.appSlug] as string)
+        : "";
     checks.push({
       name: "app-identity",
       ok: true,
@@ -194,10 +222,23 @@ export function appSlugStep(opts: AppSlugStepOptions = {}): OnboardingStep {
       // deploy that ships the corrected config on the server route.
       const transport = stackTransportFor(ctx, opts.stream ? { stream: opts.stream } : {});
       const running = await transport.running();
-      checks.push(await transport.restart((line) => ctx.adapters.log?.(`${APP_SLUG_STEP_ID}: ${line}`), running));
+      checks.push(
+        await transport.restart(
+          (line) => ctx.adapters.log?.(`${APP_SLUG_STEP_ID}: ${line}`),
+          running,
+        ),
+      );
     }
 
-    return { ok: checks.every((c) => c.ok), checks, data: { slug: identity.slug, bot_login: botLoginFor(identity.slug), corrected: edits.length > 0 } };
+    return {
+      ok: checks.every((c) => c.ok),
+      checks,
+      data: {
+        slug: identity.slug,
+        bot_login: botLoginFor(identity.slug),
+        corrected: edits.length > 0,
+      },
+    };
   }
 
   return {

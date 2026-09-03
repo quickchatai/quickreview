@@ -33,11 +33,21 @@ import {
   type OvDirEntry,
 } from "../src/openviking/client.js";
 import { OpenVikingContextAssembler } from "../src/openviking/context.js";
-import { OpenVikingStore, entryFrom, renderEntryBody, sha256Prefixed, tsFromName, validEntryId, withTag, withoutTag } from "../src/openviking/store.js";
+import {
+  OpenVikingStore,
+  entryFrom,
+  renderEntryBody,
+  sha256Prefixed,
+  tsFromName,
+  validEntryId,
+  withTag,
+  withoutTag,
+} from "../src/openviking/store.js";
 import { refOf } from "../src/memory/store.js";
 import type { ContextAssembler } from "../src/memory/context.js";
 
-const KEY = "cWNy.cmV2aWV3ZXI.a2V5LWZvci10ZXN0cy1vbmx5LW5vdC1hLXJlYWwta2V5";
+const KEY =
+  "cWNy.cmV2aWV3ZXI.a2V5LWZvci10ZXN0cy1vbmx5LW5vdC1hLXJlYWwta2V5";
 const BASE = "http://127.0.0.1:1933";
 const ROOT = "viking://user/reviewer/memories";
 const NOW = new Date("2026-08-20T15:30:00.000Z");
@@ -70,7 +80,12 @@ class FakeOpenViking {
     const path = u.pathname;
     const body: unknown = init.body === undefined ? undefined : JSON.parse(init.body);
     this.calls.push({ method: init.method, path, headers: init.headers, body });
-    if (!(init.headers["Authorization"] ?? "").startsWith("Bearer ")) return json(401, { status: "error", result: null, error: { code: "UNAUTHENTICATED", message: "no key" } });
+    if (!(init.headers["Authorization"] ?? "").startsWith("Bearer "))
+      return json(401, {
+        status: "error",
+        result: null,
+        error: { code: "UNAUTHENTICATED", message: "no key" },
+      });
 
     if (path === "/api/v1/content/batch-write") return this.batchWrite(body as BatchBody);
     if (path === "/api/v1/content/read") return this.read(u.searchParams.get("uri") ?? "");
@@ -89,20 +104,42 @@ class FakeOpenViking {
     if (path === "/api/v1/sessions" && init.method === "POST") {
       const req = body as { session_id: string; memory_policy?: unknown };
       this.sessions.set(req.session_id, req.memory_policy);
-      return json(200, { status: "ok", result: { session_id: req.session_id, uri: `viking://user/reviewer/sessions/${req.session_id}` } });
+      return json(200, {
+        status: "ok",
+        result: {
+          session_id: req.session_id,
+          uri: `viking://user/reviewer/sessions/${req.session_id}`,
+        },
+      });
     }
     if (path.startsWith("/api/v1/sessions/") && init.method === "DELETE") {
       const id = decodeURIComponent(path.slice("/api/v1/sessions/".length));
-      if (!this.sessions.delete(id)) return json(404, { status: "error", result: null, error: { code: "NOT_FOUND", message: "no such session" } });
+      if (!this.sessions.delete(id))
+        return json(404, {
+          status: "error",
+          result: null,
+          error: { code: "NOT_FOUND", message: "no such session" },
+        });
       return json(200, { status: "ok", result: { session_id: id } });
     }
-    return json(404, { status: "error", result: null, error: { code: "NOT_FOUND", message: `no route ${path}` } });
+    return json(404, {
+      status: "error",
+      result: null,
+      error: { code: "NOT_FOUND", message: `no route ${path}` },
+    });
   };
 
   private batchWrite(req: BatchBody): Promise<HttpResponseLike> {
     if (this.raceNextWrite) {
       this.raceNextWrite = false;
-      return json(409, { status: "error", result: null, error: { code: "CONFLICT", message: "Batch write replace precondition failed; content hash changed." } });
+      return json(409, {
+        status: "error",
+        result: null,
+        error: {
+          code: "CONFLICT",
+          message: "Batch write replace precondition failed; content hash changed.",
+        },
+      });
     }
     // Preconditions are checked for the WHOLE batch before anything lands —
     // the server leaves the tree untouched on a 409, which is what makes a
@@ -110,12 +147,31 @@ class FakeOpenViking {
     for (const op of req.operations) {
       const existing = this.files.get(op.uri);
       if (op.precondition.kind === "create_if_absent" && existing !== undefined) {
-        return json(409, { status: "error", result: null, error: { code: "CONFLICT", message: "Batch write create precondition failed; target already exists." } });
+        return json(409, {
+          status: "error",
+          result: null,
+          error: {
+            code: "CONFLICT",
+            message: "Batch write create precondition failed; target already exists.",
+          },
+        });
       }
       if (op.precondition.kind === "replace_if_hash") {
-        if (existing === undefined) return json(404, { status: "error", result: null, error: { code: "NOT_FOUND", message: "no such file" } });
+        if (existing === undefined)
+          return json(404, {
+            status: "error",
+            result: null,
+            error: { code: "NOT_FOUND", message: "no such file" },
+          });
         if (sha256Prefixed(existing) !== op.precondition.base_hash) {
-          return json(409, { status: "error", result: null, error: { code: "CONFLICT", message: "Batch write replace precondition failed; content hash changed." } });
+          return json(409, {
+            status: "error",
+            result: null,
+            error: {
+              code: "CONFLICT",
+              message: "Batch write replace precondition failed; content hash changed.",
+            },
+          });
         }
       }
     }
@@ -125,7 +181,10 @@ class FakeOpenViking {
       (this.files.has(op.uri) ? updated : created).push(op.uri);
       this.files.set(op.uri, op.content);
     }
-    return json(200, { status: "ok", result: { root_uri: req.root_uri, created, updated, unchanged: [] } });
+    return json(200, {
+      status: "ok",
+      result: { root_uri: req.root_uri, created, updated, unchanged: [] },
+    });
   }
 
   /** `fs/mkdir` as 0.4.15 really behaves: NOT idempotent — an existing
@@ -135,7 +194,11 @@ class FakeOpenViking {
   private mkdir(req: { uri: string; parents?: boolean }): Promise<HttpResponseLike> {
     const uri = req.uri.replace(/\/+$/, "");
     if (this.dirs.has(uri)) {
-      return json(409, { status: "error", result: null, error: { code: "CONFLICT", message: `already exists: ${uri}` } });
+      return json(409, {
+        status: "error",
+        result: null,
+        error: { code: "CONFLICT", message: `already exists: ${uri}` },
+      });
     }
     this.dirs.add(uri);
     return json(200, { status: "ok", result: { uri } });
@@ -143,7 +206,12 @@ class FakeOpenViking {
 
   private read(uri: string): Promise<HttpResponseLike> {
     const content = this.files.get(uri);
-    if (content === undefined) return json(404, { status: "error", result: null, error: { code: "NOT_FOUND", message: uri } });
+    if (content === undefined)
+      return json(404, {
+        status: "error",
+        result: null,
+        error: { code: "NOT_FOUND", message: uri },
+      });
     return json(200, { status: "ok", result: content });
   }
 
@@ -155,7 +223,14 @@ class FakeOpenViking {
       if (!key.startsWith(prefix)) continue;
       const rest = key.slice(prefix.length);
       const cut = rest.indexOf("/");
-      if (cut < 0) rows.push({ uri: key, name: rest, isDir: false, size: 1, modTime: "2026-08-20T15:30:00.000Z" });
+      if (cut < 0)
+        rows.push({
+          uri: key,
+          name: rest,
+          isDir: false,
+          size: 1,
+          modTime: "2026-08-20T15:30:00.000Z",
+        });
       else dirs.add(rest.slice(0, cut));
     }
     // A directory made by `fs/mkdir` and still empty is listed too — the whole
@@ -166,7 +241,14 @@ class FakeOpenViking {
       const rest = dir.slice(prefix.length);
       if (rest !== "" && !rest.includes("/")) dirs.add(rest);
     }
-    for (const dir of dirs) rows.push({ uri: `${prefix}${dir}`, name: dir, isDir: true, size: 0, modTime: "2026-08-20T15:30:00.000Z" });
+    for (const dir of dirs)
+      rows.push({
+        uri: `${prefix}${dir}`,
+        name: dir,
+        isDir: true,
+        size: 0,
+        modTime: "2026-08-20T15:30:00.000Z",
+      });
     return json(200, { status: "ok", result: rows });
   }
 
@@ -176,15 +258,39 @@ class FakeOpenViking {
     const q = req.query.toLowerCase();
     const entries = [...this.files.entries()]
       .filter(([, text]) => q !== "" && text.toLowerCase().includes(q))
-      .map(([uri, text]) => ({ uri, category: "experiences", score: 0.7, detail: "full", text, origin: "self" }));
-    const rendered = entries.map((e) => `<memory uri="${e.uri}" type="${e.category}" score="0.70" detail="full">\n${e.text}\n</memory>`).join("\n");
-    return json(200, { status: "ok", result: { entries, rendered, digest: "", stats: { used_tokens: rendered.length, candidates: entries.length } } });
+      .map(([uri, text]) => ({
+        uri,
+        category: "experiences",
+        score: 0.7,
+        detail: "full",
+        text,
+        origin: "self",
+      }));
+    const rendered = entries
+      .map(
+        (e) =>
+          `<memory uri="${e.uri}" type="${e.category}" score="0.70" detail="full">\n${e.text}\n</memory>`,
+      )
+      .join("\n");
+    return json(200, {
+      status: "ok",
+      result: {
+        entries,
+        rendered,
+        digest: "",
+        stats: { used_tokens: rendered.length, candidates: entries.length },
+      },
+    });
   }
 }
 
 interface BatchBody {
   root_uri: string;
-  operations: Array<{ uri: string; content: string; precondition: { kind: string; base_hash?: string } }>;
+  operations: Array<{
+    uri: string;
+    content: string;
+    precondition: { kind: string; base_hash?: string };
+  }>;
   wait: boolean;
 }
 
@@ -196,12 +302,35 @@ interface HttpResponseLike {
 
 function json(status: number, body: unknown): Promise<HttpResponseLike> {
   const raw = JSON.stringify(body);
-  return Promise.resolve({ ok: status >= 200 && status < 300, status, text: () => Promise.resolve(raw) });
+  return Promise.resolve({
+    ok: status >= 200 && status < 300,
+    status,
+    text: () => Promise.resolve(raw),
+  });
 }
 
-function wire(server: FakeOpenViking, log: string[] = []): { client: OpenVikingClient; store: OpenVikingStore; assembler: OpenVikingContextAssembler; log: string[] } {
-  const client = new OpenVikingClient({ baseUrl: BASE, apiKey: KEY, user: "reviewer", fetchFn: server.fetch, log: (m) => log.push(m) });
-  const store = new OpenVikingStore({ client, now: () => NOW, cacheTtlMs: 0, log: (m) => log.push(m) });
+function wire(
+  server: FakeOpenViking,
+  log: string[] = [],
+): {
+  client: OpenVikingClient;
+  store: OpenVikingStore;
+  assembler: OpenVikingContextAssembler;
+  log: string[];
+} {
+  const client = new OpenVikingClient({
+    baseUrl: BASE,
+    apiKey: KEY,
+    user: "reviewer",
+    fetchFn: server.fetch,
+    log: (m) => log.push(m),
+  });
+  const store = new OpenVikingStore({
+    client,
+    now: () => NOW,
+    cacheTtlMs: 0,
+    log: (m) => log.push(m),
+  });
   const assembler = new OpenVikingContextAssembler({ client, store, log: (m) => log.push(m) });
   return { client, store, assembler, log };
 }
@@ -300,7 +429,10 @@ describe("OpenVikingStore round trip", () => {
   it("writes an entry, reads it back, finds it by search, and refuses a stale edit", async () => {
     const { store } = wire(server);
 
-    const written = await store.apply({ op: "note", text: "#feedback kind=feedback pr=5314 day=2026-08-20 migration renumber posts as a comment, never a blocker" });
+    const written = await store.apply({
+      op: "note",
+      text: "#feedback kind=feedback pr=5314 day=2026-08-20 migration renumber posts as a comment, never a blocker",
+    });
     expect(written.ok).toBe(true);
 
     const entries = await store.read();
@@ -321,7 +453,11 @@ describe("OpenVikingStore round trip", () => {
     const uri = store.uriOf(entry.id);
     server.files.set(uri, "#feedback someone else got here first\n");
 
-    const stale = await store.apply({ op: "edit", text: "rewritten under a stale view", ...refOf(entry) });
+    const stale = await store.apply({
+      op: "edit",
+      text: "rewritten under a stale view",
+      ...refOf(entry),
+    });
     expect(stale.ok).toBe(false);
     expect(stale.message).toMatch(/changed since you read it/);
     // …and the refusal left the file exactly as the other writer left it.
@@ -329,7 +465,11 @@ describe("OpenVikingStore round trip", () => {
 
     // Re-read, retry, land.
     const fresh = (await store.read())[0]!;
-    const applied = await store.apply({ op: "edit", text: "#feedback rewritten from a fresh view", ...refOf(fresh) });
+    const applied = await store.apply({
+      op: "edit",
+      text: "#feedback rewritten from a fresh view",
+      ...refOf(fresh),
+    });
     expect(applied.ok).toBe(true);
     expect((await store.read())[0]!.text).toBe("#feedback rewritten from a fresh view");
   });
@@ -341,7 +481,10 @@ describe("OpenVikingStore round trip", () => {
     await store.apply({ op: "edit", text: "#feedback second", ...refOf(entry) });
 
     const writes = server.calls.filter((c) => c.method === "POST" && c.path.includes("/content/"));
-    expect(writes.map((c) => c.path)).toEqual(["/api/v1/content/batch-write", "/api/v1/content/batch-write"]);
+    expect(writes.map((c) => c.path)).toEqual([
+      "/api/v1/content/batch-write",
+      "/api/v1/content/batch-write",
+    ]);
     // The footgun endpoint must be unreachable, not merely unused.
     expect(server.calls.some((c) => c.path === "/api/v1/content/write")).toBe(false);
 
@@ -349,7 +492,10 @@ describe("OpenVikingStore round trip", () => {
     expect(first.operations[0]!.precondition).toEqual({ kind: "create_if_absent" });
     expect(first.wait).toBe(false); // never block a caller on the index refresh
     const second = writes[1]!.body as BatchBody;
-    expect(second.operations[0]!.precondition).toEqual({ kind: "replace_if_hash", base_hash: entry.hash });
+    expect(second.operations[0]!.precondition).toEqual({
+      kind: "replace_if_hash",
+      base_hash: entry.hash,
+    });
   });
 
   it("surfaces a server-side 409 as a clean refusal, not an exception", async () => {
@@ -360,7 +506,10 @@ describe("OpenVikingStore round trip", () => {
     // is the authority, and its 409 is an ordinary answer.
     server.raceNextWrite = true;
     const res = await store.apply({ op: "edit", text: "#feedback mine", ...refOf(entry) });
-    expect(res).toEqual({ ok: false, message: "refused: the entry changed since you read it — re-read it and retry" });
+    expect(res).toEqual({
+      ok: false,
+      message: "refused: the entry changed since you read it — re-read it and retry",
+    });
   });
 
   it("retries a create under a fresh name when the target already exists", async () => {
@@ -410,7 +559,14 @@ describe("OpenVikingStore round trip", () => {
   it("refuses an address it cannot spell rather than building a URI from it", async () => {
     const { store } = wire(server);
     for (const id of ["../../etc/passwd", "a/b/c.md", "no-extension", "has space.md"]) {
-      const res = await store.apply({ op: "edit", text: "x", id, ts: "2026-08-20 15:30:00", block: 0, expect: `sha256:${"0".repeat(64)}` });
+      const res = await store.apply({
+        op: "edit",
+        text: "x",
+        id,
+        ts: "2026-08-20 15:30:00",
+        block: 0,
+        expect: `sha256:${"0".repeat(64)}`,
+      });
       expect(res.ok).toBe(false);
       expect(res.message).toMatch(/not a memory address/);
     }
@@ -419,7 +575,10 @@ describe("OpenVikingStore round trip", () => {
 
   it("mirrors the k=v event tags onto the native retrieval tag list", async () => {
     const { store } = wire(server);
-    await store.apply({ op: "note", text: '#feedback kind=feedback pr=5314 day=2026-08-20 signal=feedback_comment human said "kind=bug" in the quoted body' });
+    await store.apply({
+      op: "note",
+      text: '#feedback kind=feedback pr=5314 day=2026-08-20 signal=feedback_comment human said "kind=bug" in the quoted body',
+    });
     const tags = [...server.tags.values()][0]!;
     expect(tags).toEqual(["kind=feedback", "pr=5314", "day=2026-08-20", "signal=feedback_comment"]);
     // The quoted `kind=bug` sits past the header and must not have won.
@@ -471,7 +630,9 @@ describe("context search", () => {
 
   it("drops an unknown quota bucket rather than 422-ing the whole request", () => {
     const gaps: string[] = [];
-    const body = buildContextSearchBody("q", { quotas: { experiences: 3, nonsense: 9 } }, (g) => gaps.push(g.message));
+    const body = buildContextSearchBody("q", { quotas: { experiences: 3, nonsense: 9 } }, (g) =>
+      gaps.push(g.message),
+    );
     expect(body["quotas"]).toEqual({ experiences: 3 });
     expect(gaps.join(" ")).toMatch(/nonsense/);
   });
@@ -479,7 +640,10 @@ describe("context search", () => {
   it("exposes the rendered block AND the usage stats", async () => {
     const server = new FakeOpenViking();
     const { client, store, assembler } = wire(server);
-    await store.apply({ op: "note", text: "#feedback migration renumber collision at the base sha" });
+    await store.apply({
+      op: "note",
+      text: "#feedback migration renumber collision at the base sha",
+    });
 
     const res = await client.searchContext("renumber", { maxTokens: 800 });
     expect(res.ok).toBe(true);
@@ -489,7 +653,10 @@ describe("context search", () => {
     expect(res.result.stats["candidates"]).toBe(1);
 
     const block = await assembler.contextBlock("renumber", { maxTokens: 800 });
-    expect(block).toMatchObject({ status: "read", text: expect.stringContaining("migration renumber collision") });
+    expect(block).toMatchObject({
+      status: "read",
+      text: expect.stringContaining("migration renumber collision"),
+    });
     expect(assembler.lastSearch?.stats["used_tokens"]).toBeGreaterThan(0);
   });
 });
@@ -540,7 +707,11 @@ describe("the reviewer USER key", () => {
   it("degrades exactly like a dead server when no key is configured, and says so once", async () => {
     const server = new FakeOpenViking();
     const gaps: string[] = [];
-    const client = new OpenVikingClient({ baseUrl: BASE, fetchFn: server.fetch, onGap: (g) => gaps.push(g.code) });
+    const client = new OpenVikingClient({
+      baseUrl: BASE,
+      fetchFn: server.fetch,
+      onGap: (g) => gaps.push(g.code),
+    });
     const store = new OpenVikingStore({ client, now: () => NOW, cacheTtlMs: 0 });
     expect(await store.read()).toEqual([]);
     expect((await store.apply({ op: "note", text: "#feedback x" })).ok).toBe(false);
@@ -573,7 +744,10 @@ describe("the reviewer USER key", () => {
 
 /** Every way the server can fail us. Each must produce a RESOLVED call. */
 const BROKEN: Array<{ name: string; fetch: HttpFetch }> = [
-  { name: "connection refused", fetch: () => Promise.reject(new Error("connect ECONNREFUSED 127.0.0.1:1933")) },
+  {
+    name: "connection refused",
+    fetch: () => Promise.reject(new Error("connect ECONNREFUSED 127.0.0.1:1933")),
+  },
   {
     name: "timeout",
     fetch: () => {
@@ -588,12 +762,57 @@ const BROKEN: Array<{ name: string; fetch: HttpFetch }> = [
       throw new TypeError("fetch failed");
     },
   },
-  { name: "500 with an HTML body", fetch: () => Promise.resolve({ ok: false, status: 500, text: () => Promise.resolve("<html>nginx</html>") }) },
-  { name: "200 with garbage", fetch: () => Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve("not json at all") }) },
-  { name: "200 with an error envelope", fetch: () => Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve('{"status":"error","result":null,"error":{"code":"BOOM","message":"nope"}}') }) },
-  { name: "403 across users", fetch: () => Promise.resolve({ ok: false, status: 403, text: () => Promise.resolve('{"status":"error","result":null,"error":{"code":"PERMISSION_DENIED","message":"Access denied"}}') }) },
-  { name: "a body that reads as null", fetch: () => Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve("null") }) },
-  { name: "text() itself rejecting", fetch: () => Promise.resolve({ ok: true, status: 200, text: () => Promise.reject(new Error("socket hang up")) }) },
+  {
+    name: "500 with an HTML body",
+    fetch: () =>
+      Promise.resolve({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve("<html>nginx</html>"),
+      }),
+  },
+  {
+    name: "200 with garbage",
+    fetch: () =>
+      Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve("not json at all") }),
+  },
+  {
+    name: "200 with an error envelope",
+    fetch: () =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () =>
+          Promise.resolve(
+            '{"status":"error","result":null,"error":{"code":"BOOM","message":"nope"}}',
+          ),
+      }),
+  },
+  {
+    name: "403 across users",
+    fetch: () =>
+      Promise.resolve({
+        ok: false,
+        status: 403,
+        text: () =>
+          Promise.resolve(
+            '{"status":"error","result":null,"error":{"code":"PERMISSION_DENIED","message":"Access denied"}}',
+          ),
+      }),
+  },
+  {
+    name: "a body that reads as null",
+    fetch: () => Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve("null") }),
+  },
+  {
+    name: "text() itself rejecting",
+    fetch: () =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.reject(new Error("socket hang up")),
+      }),
+  },
 ];
 
 describe("a dead server cannot make a caller throw", () => {
@@ -612,7 +831,12 @@ describe("a dead server cannot make a caller throw", () => {
           throw new Error("the overseer sink blew up");
         },
       });
-      const store = new OpenVikingStore({ client, now: () => NOW, cacheTtlMs: 0, log: (m) => log.push(m) });
+      const store = new OpenVikingStore({
+        client,
+        now: () => NOW,
+        cacheTtlMs: 0,
+        log: (m) => log.push(m),
+      });
       const assembler = new OpenVikingContextAssembler({ client, store, log: (m) => log.push(m) });
 
       // The seam.
@@ -621,10 +845,35 @@ describe("a dead server cannot make a caller throw", () => {
       for (const op of [
         { op: "add", text: "typed by hand" },
         { op: "note", text: "#feedback machine" },
-        { op: "edit", text: "new", id: "experiences/20260820T153000-aaaaaaaa.md", ts: "2026-08-20 15:30:00", block: 0, expect: `sha256:${"1".repeat(64)}` },
-        { op: "pin", id: "experiences/20260820T153000-aaaaaaaa.md", ts: "2026-08-20 15:30:00", block: 0, expect: `sha256:${"1".repeat(64)}` },
-        { op: "unpin", id: "experiences/20260820T153000-aaaaaaaa.md", ts: "2026-08-20 15:30:00", block: 0, expect: `sha256:${"1".repeat(64)}` },
-        { op: "retire", id: "experiences/20260820T153000-aaaaaaaa.md", ts: "2026-08-20 15:30:00", block: 0, expect: `sha256:${"1".repeat(64)}` },
+        {
+          op: "edit",
+          text: "new",
+          id: "experiences/20260820T153000-aaaaaaaa.md",
+          ts: "2026-08-20 15:30:00",
+          block: 0,
+          expect: `sha256:${"1".repeat(64)}`,
+        },
+        {
+          op: "pin",
+          id: "experiences/20260820T153000-aaaaaaaa.md",
+          ts: "2026-08-20 15:30:00",
+          block: 0,
+          expect: `sha256:${"1".repeat(64)}`,
+        },
+        {
+          op: "unpin",
+          id: "experiences/20260820T153000-aaaaaaaa.md",
+          ts: "2026-08-20 15:30:00",
+          block: 0,
+          expect: `sha256:${"1".repeat(64)}`,
+        },
+        {
+          op: "retire",
+          id: "experiences/20260820T153000-aaaaaaaa.md",
+          ts: "2026-08-20 15:30:00",
+          block: 0,
+          expect: `sha256:${"1".repeat(64)}`,
+        },
       ] as const) {
         const res = await store.apply(op);
         expect(res.ok).toBe(false);
@@ -636,7 +885,9 @@ describe("a dead server cannot make a caller throw", () => {
       // not an empty answer: a dead server must never read as a fresh store
       // with nothing pinned.
       await expect(assembler.pinnedHead()).resolves.toMatchObject({ status: "unreadable" });
-      await expect(assembler.contextBlock("q", { maxTokens: 2000 })).resolves.toMatchObject({ status: "unreadable" });
+      await expect(assembler.contextBlock("q", { maxTokens: 2000 })).resolves.toMatchObject({
+        status: "unreadable",
+      });
       // The sweep itself keeps the distinction the timeline read() collapses.
       await expect(store.sweep()).resolves.toMatchObject({ entries: [] });
       expect((await store.sweep()).unread.length).toBeGreaterThan(0);
@@ -649,7 +900,9 @@ describe("a dead server cannot make a caller throw", () => {
       await expect(client.ls(ROOT)).resolves.toMatchObject({ ok: false });
       await expect(client.remove(`${ROOT}/a.md`)).resolves.toMatchObject({ ok: false });
       await expect(client.setTags(`${ROOT}/a.md`, ["kind=feedback"])).resolves.toBe(false);
-      await expect(client.batchWrite({ root_uri: ROOT, operations: [], wait: false })).resolves.toMatchObject({ ok: false });
+      await expect(
+        client.batchWrite({ root_uri: ROOT, operations: [], wait: false }),
+      ).resolves.toMatchObject({ ok: false });
 
       // The gap was reported for alerting, and reported in a log line.
       expect(gaps.length).toBeGreaterThan(0);
@@ -661,10 +914,22 @@ describe("a dead server cannot make a caller throw", () => {
     const exploding = {
       sweep: () => Promise.reject(new Error("store is on fire")),
     } as unknown as OpenVikingStore;
-    const client = new OpenVikingClient({ baseUrl: BASE, apiKey: KEY, fetchFn: () => Promise.reject(new Error("down")) });
-    const assembler: ContextAssembler = new OpenVikingContextAssembler({ client, store: exploding });
-    await expect(assembler.pinnedHead()).resolves.toEqual({ status: "unreadable", reason: "Error: store is on fire" });
-    await expect(assembler.contextBlock("q", { maxTokens: 100 })).resolves.toMatchObject({ status: "unreadable" });
+    const client = new OpenVikingClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      fetchFn: () => Promise.reject(new Error("down")),
+    });
+    const assembler: ContextAssembler = new OpenVikingContextAssembler({
+      client,
+      store: exploding,
+    });
+    await expect(assembler.pinnedHead()).resolves.toEqual({
+      status: "unreadable",
+      reason: "Error: store is on fire",
+    });
+    await expect(assembler.contextBlock("q", { maxTokens: 100 })).resolves.toMatchObject({
+      status: "unreadable",
+    });
   });
 
   it("skips one unreadable file rather than losing the whole sweep — and the sweep says it did", async () => {
@@ -679,7 +944,10 @@ describe("a dead server cannot make a caller throw", () => {
       baseUrl: BASE,
       apiKey: KEY,
       user: "reviewer",
-      fetchFn: (url, init) => (url.includes(encodeURIComponent(doomed)) ? Promise.reject(new Error("gone")) : realFetch(url, init)),
+      fetchFn: (url, init) =>
+        url.includes(encodeURIComponent(doomed))
+          ? Promise.reject(new Error("gone"))
+          : realFetch(url, init),
     });
     const store2 = new OpenVikingStore({ client: client2, now: () => NOW, cacheTtlMs: 0 });
     const entries = await store2.read();
@@ -692,7 +960,10 @@ describe("a dead server cannot make a caller throw", () => {
     expect(sweep.unread).toHaveLength(1);
     expect(sweep.unread[0]).toContain(doomed);
     const assembler2 = new OpenVikingContextAssembler({ client: client2, store: store2 });
-    await expect(assembler2.pinnedHead()).resolves.toMatchObject({ status: "unreadable", reason: expect.stringContaining(doomed) });
+    await expect(assembler2.pinnedHead()).resolves.toMatchObject({
+      status: "unreadable",
+      reason: expect.stringContaining(doomed),
+    });
   });
 
   it("EVERY listed file answering NOT_FOUND is not a race — the sweep is unread, and the head with it", async () => {
@@ -708,13 +979,22 @@ describe("a dead server cannot make a caller throw", () => {
       // The listing still names both files; every read says they are gone.
       fetchFn: (url, init) =>
         url.includes("/content/read")
-          ? Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve('{"status":"error","result":null,"error":{"code":"NOT_FOUND","message":"no such file"}}') })
+          ? Promise.resolve({
+              ok: false,
+              status: 404,
+              text: () =>
+                Promise.resolve(
+                  '{"status":"error","result":null,"error":{"code":"NOT_FOUND","message":"no such file"}}',
+                ),
+            })
           : realFetch(url, init),
     });
     const store2 = new OpenVikingStore({ client: client2, now: () => NOW, cacheTtlMs: 0 });
     const sweep = await store2.sweep();
     expect(sweep.entries).toEqual([]);
-    expect(sweep.unread).toEqual([expect.stringContaining("all 2 listed files answered NOT_FOUND")]);
+    expect(sweep.unread).toEqual([
+      expect.stringContaining("all 2 listed files answered NOT_FOUND"),
+    ]);
     const assembler2 = new OpenVikingContextAssembler({ client: client2, store: store2 });
     await expect(assembler2.pinnedHead()).resolves.toMatchObject({ status: "unreadable" });
   });
@@ -733,7 +1013,14 @@ describe("a dead server cannot make a caller throw", () => {
       // Listed (the fake lists from its map), then 404 on read.
       fetchFn: (url, init) =>
         url.includes("/content/read") && url.includes(encodeURIComponent(gone))
-          ? Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve('{"status":"error","result":null,"error":{"code":"NOT_FOUND","message":"no such file"}}') })
+          ? Promise.resolve({
+              ok: false,
+              status: 404,
+              text: () =>
+                Promise.resolve(
+                  '{"status":"error","result":null,"error":{"code":"NOT_FOUND","message":"no such file"}}',
+                ),
+            })
           : realFetch(url, init),
     });
     const store2 = new OpenVikingStore({ client: client2, now: () => NOW, cacheTtlMs: 0 });
@@ -756,15 +1043,30 @@ describe("a failure message never carries the key", () => {
           Promise.resolve({
             ok: false,
             status: 403,
-            text: () => Promise.resolve(JSON.stringify({ status: "error", result: null, error: { code: "PERMISSION_DENIED", message: `denied for bearer ${KEY}` } })),
+            text: () =>
+              Promise.resolve(
+                JSON.stringify({
+                  status: "error",
+                  result: null,
+                  error: { code: "PERMISSION_DENIED", message: `denied for bearer ${KEY}` },
+                }),
+              ),
           })
-      : () => Promise.reject(new Error(`connect failed while sending Authorization: Bearer ${KEY}`));
+      : () =>
+          Promise.reject(new Error(`connect failed while sending Authorization: Bearer ${KEY}`));
 
   for (const arm of ["envelope", "transport"] as const) {
     it(`${arm}: the sweep, the head, the block, the gap sink and the log are all scrubbed`, async () => {
       const log: string[] = [];
       const gaps: string[] = [];
-      const client = new OpenVikingClient({ baseUrl: BASE, apiKey: KEY, user: "reviewer", fetchFn: echoing(arm), log: (m) => log.push(m), onGap: (g) => gaps.push(g.message) });
+      const client = new OpenVikingClient({
+        baseUrl: BASE,
+        apiKey: KEY,
+        user: "reviewer",
+        fetchFn: echoing(arm),
+        log: (m) => log.push(m),
+        onGap: (g) => gaps.push(g.message),
+      });
       const store = new OpenVikingStore({ client, now: () => NOW, cacheTtlMs: 0 });
       const assembler = new OpenVikingContextAssembler({ client, store, log: (m) => log.push(m) });
 
@@ -811,9 +1113,22 @@ describe("the pinned head", () => {
     // is created by the first write. Until then the server 404s the listing —
     // that is an ABSENT directory, which is known-empty, not an outage.
     const notFound = () =>
-      Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve('{"status":"error","result":null,"error":{"code":"NOT_FOUND","message":"no such directory"}}') });
+      Promise.resolve({
+        ok: false,
+        status: 404,
+        text: () =>
+          Promise.resolve(
+            '{"status":"error","result":null,"error":{"code":"NOT_FOUND","message":"no such directory"}}',
+          ),
+      });
     const log: string[] = [];
-    const client = new OpenVikingClient({ baseUrl: BASE, apiKey: KEY, user: "reviewer", fetchFn: notFound, log: (m) => log.push(m) });
+    const client = new OpenVikingClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      user: "reviewer",
+      fetchFn: notFound,
+      log: (m) => log.push(m),
+    });
     const store = new OpenVikingStore({ client, now: () => NOW, cacheTtlMs: 0 });
     const assembler = new OpenVikingContextAssembler({ client, store });
     await expect(store.sweep()).resolves.toEqual({ entries: [], unread: [] });
@@ -822,14 +1137,31 @@ describe("the pinned head", () => {
 
   it("unreadable: a listing that fails for any other reason is reported as such, with the reason", async () => {
     const denied = () =>
-      Promise.resolve({ ok: false, status: 403, text: () => Promise.resolve('{"status":"error","result":null,"error":{"code":"PERMISSION_DENIED","message":"Access denied"}}') });
-    const client = new OpenVikingClient({ baseUrl: BASE, apiKey: KEY, user: "reviewer", fetchFn: denied });
+      Promise.resolve({
+        ok: false,
+        status: 403,
+        text: () =>
+          Promise.resolve(
+            '{"status":"error","result":null,"error":{"code":"PERMISSION_DENIED","message":"Access denied"}}',
+          ),
+      });
+    const client = new OpenVikingClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      user: "reviewer",
+      fetchFn: denied,
+    });
     const store = new OpenVikingStore({ client, now: () => NOW, cacheTtlMs: 0 });
     const assembler = new OpenVikingContextAssembler({ client, store });
     const sweep = await store.sweep();
     expect(sweep.entries).toEqual([]);
-    expect(sweep.unread).toEqual([expect.stringMatching(/^ls viking:\/\/user\/reviewer\/memories: /)]);
-    await expect(assembler.pinnedHead()).resolves.toMatchObject({ status: "unreadable", reason: expect.stringContaining("Access denied") });
+    expect(sweep.unread).toEqual([
+      expect.stringMatching(/^ls viking:\/\/user\/reviewer\/memories: /),
+    ]);
+    await expect(assembler.pinnedHead()).resolves.toMatchObject({
+      status: "unreadable",
+      reason: expect.stringContaining("Access denied"),
+    });
     // And the timeline read collapses the same sweep to "nothing to show".
     await expect(store.read()).resolves.toEqual([]);
   });
@@ -840,7 +1172,12 @@ describe("the pinned head", () => {
       calls += 1;
       return Promise.reject(new Error("connect ECONNREFUSED 127.0.0.1:1933"));
     };
-    const client = new OpenVikingClient({ baseUrl: BASE, apiKey: KEY, user: "reviewer", fetchFn: refuse });
+    const client = new OpenVikingClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      user: "reviewer",
+      fetchFn: refuse,
+    });
     const store = new OpenVikingStore({ client, now: () => NOW, cacheTtlMs: 60_000 });
     const first = await store.sweep();
     const second = await store.sweep();

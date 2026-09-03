@@ -34,7 +34,14 @@ export const STALL_AFTER_MS = 20_000;
  * `set()` has to ignore an unknown key (a progress reporter must never break
  * the startup it reports on), which makes a typo INVISIBLE at runtime — so it
  * is caught at compile time instead. */
-export type StartupStepKey = "ssh" | "poll" | "memory-forward" | "memory-namespaces" | "container" | "rollover" | "companion-pi";
+export type StartupStepKey =
+  | "ssh"
+  | "poll"
+  | "memory-forward"
+  | "memory-namespaces"
+  | "container"
+  | "rollover"
+  | "companion-pi";
 
 /** The bring-up, in the order it runs. Declared here so the column shows every
  * step from the first frame — a step nobody has reached yet is `pending`, which
@@ -87,8 +94,14 @@ export class StartupProgress<K extends string = StartupStepKey> {
   private readonly order: StartupStep[];
   private readonly byKey = new Map<string, StartupStep>();
 
-  constructor(steps: ReadonlyArray<{ key: K; label: string }> = STARTUP_STEPS as unknown as ReadonlyArray<{ key: K; label: string }>, private readonly opts: StartupOpts = {}) {
-    this.order = steps.map((s) => ({ key: s.key, label: s.label, state: "pending" as StepState }));
+  constructor(
+    steps: ReadonlyArray<{ key: K; label: string }> = STARTUP_STEPS as unknown as ReadonlyArray<{
+      key: K;
+      label: string;
+    }>,
+    private readonly opts: StartupOpts = {},
+  ) {
+    this.order = steps.map((s) => ({ key: s.key, label: s.label, state: "pending" }));
     for (const s of this.order) this.byKey.set(s.key, s);
   }
 
@@ -130,7 +143,11 @@ export class StartupProgress<K extends string = StartupStepKey> {
   }
 
   begin(key: K, detail?: string): void {
-    this.set(key, { state: "running", startedAt: this.now(), ...(detail !== undefined ? { detail } : {}) });
+    this.set(key, {
+      state: "running",
+      startedAt: this.now(),
+      ...(detail !== undefined ? { detail } : {}),
+    });
   }
 
   /** Update a running step's detail WITHOUT restarting its clock — "what it is
@@ -141,7 +158,11 @@ export class StartupProgress<K extends string = StartupStepKey> {
   }
 
   done(key: K, detail?: string): void {
-    this.set(key, { state: "done", endedAt: this.now(), ...(detail !== undefined ? { detail } : {}) });
+    this.set(key, {
+      state: "done",
+      endedAt: this.now(),
+      ...(detail !== undefined ? { detail } : {}),
+    });
   }
 
   fail(key: K, detail: string): void {
@@ -149,7 +170,11 @@ export class StartupProgress<K extends string = StartupStepKey> {
   }
 
   skip(key: K, detail?: string): void {
-    this.set(key, { state: "skipped", endedAt: this.now(), ...(detail !== undefined ? { detail } : {}) });
+    this.set(key, {
+      state: "skipped",
+      endedAt: this.now(),
+      ...(detail !== undefined ? { detail } : {}),
+    });
   }
 
   steps(): StartupStep[] {
@@ -169,7 +194,9 @@ export class StartupProgress<K extends string = StartupStepKey> {
 
 /** ` · 400ms` for a step that actually ran; "" for one that never began. */
 function took(s: StartupStep): string {
-  return s.startedAt !== undefined && s.endedAt !== undefined ? ` · ${secs(s.endedAt - s.startedAt)}` : "";
+  return s.startedAt !== undefined && s.endedAt !== undefined
+    ? ` · ${secs(s.endedAt - s.startedAt)}`
+    : "";
 }
 
 function secs(ms: number): string {

@@ -94,7 +94,9 @@ export class SessionCommandLedger {
   /** Failed commands which still own the serialized lane. This SQL mirrors
    * StateStore's BLOCKING_SESSION_COMMAND_SQL failed-status branch. */
   blockingFailedCommand(excludeId?: string): CommandRow | undefined {
-    return this.db.prepare(`
+    return this.db
+      .prepare(
+        `
       SELECT c.* FROM session_commands c
        WHERE c.session=? AND c.status='failed'
          AND (? IS NULL OR c.id!=?)
@@ -105,7 +107,9 @@ export class SessionCommandLedger {
          )
        ORDER BY c.created_at, c.id
        LIMIT 1
-    `).get(this.session, excludeId ?? null, excludeId ?? null) as CommandRow | undefined;
+    `,
+      )
+      .get(this.session, excludeId ?? null, excludeId ?? null) as CommandRow | undefined;
   }
 
   private linkOrAdoptUnsafe(injectPath: string, payload: Buffer): CommandLink {
@@ -118,28 +122,31 @@ export class SessionCommandLedger {
       const prMatch = /^pr-(\d+)$/.exec(this.session);
       if (!prMatch) return { ok: false, reason: "non-PR session has no durable command slot" };
       const active = this.active();
-      if (active) return { ok: false, reason: `session command ${active.id} is already ${active.status}` };
+      if (active)
+        return { ok: false, reason: `session command ${active.id} is already ${active.status}` };
       const id = `legacy-${createHash("sha256").update(`${this.session}\0${injectPath}\0${hash}`).digest("hex").slice(0, 32)}`;
       const payloadPath = join(this.root, "state", "session-commands", `${id}.md`);
       try {
         atomicWrite(payloadPath, payload);
         const ts = this.now().toISOString();
-        this.db.prepare(
-          `INSERT INTO session_commands
+        this.db
+          .prepare(
+            `INSERT INTO session_commands
              (id, pr, session, kind, round_no, payload_sha256, payload_path, inject_path,
               status, owner_token, attempt, created_at, updated_at, next_check_at)
            VALUES (?, ?, ?, 'legacy', NULL, ?, ?, ?, 'pending', NULL, 0, ?, ?, ?)`,
-        ).run(
-          id,
-          Number(prMatch[1]),
-          this.session,
-          hash,
-          payloadPath,
-          injectPath,
-          ts,
-          ts,
-          new Date(this.now().getTime() + this.startLeaseMs()).toISOString(),
-        );
+          )
+          .run(
+            id,
+            Number(prMatch[1]),
+            this.session,
+            hash,
+            payloadPath,
+            injectPath,
+            ts,
+            ts,
+            new Date(this.now().getTime() + this.startLeaseMs()).toISOString(),
+          );
       } catch (error) {
         row = this.byInjectPath(injectPath);
         if (!row) return { ok: false, reason: `legacy adoption failed: ${String(error)}` };
@@ -147,7 +154,8 @@ export class SessionCommandLedger {
       row = this.byInjectPath(injectPath);
     }
     if (!row) return { ok: false, reason: "command row absent after adoption" };
-    if (row.session !== this.session) return { ok: false, reason: `command belongs to ${row.session}` };
+    if (row.session !== this.session)
+      return { ok: false, reason: `command belongs to ${row.session}` };
     if (row.payload_sha256 !== hash) {
       this.failPending(row.id, `payload hash mismatch: ${hash} != ${row.payload_sha256}`);
       return { ok: false, reason: "payload hash mismatch" };
@@ -161,7 +169,8 @@ export class SessionCommandLedger {
           terminal: {
             id: row.id,
             status: row.status,
-            blocksSuccessors: row.status === "failed" && this.blockingFailedCommand()?.id === row.id,
+            blocksSuccessors:
+              row.status === "failed" && this.blockingFailedCommand()?.id === row.id,
           },
         };
       }
@@ -182,15 +191,19 @@ export class SessionCommandLedger {
     return this.totalUpdate(() => {
       const ts = this.now().toISOString();
       const next = new Date(this.now().getTime() + this.startLeaseMs()).toISOString();
-      const changed = this.db.prepare(
-        `UPDATE session_commands
+      const changed = this.db
+        .prepare(
+          `UPDATE session_commands
             SET status='running', owner_token=?, attempt=attempt+1,
                 started_at=NULL, updated_at=?, next_check_at=?
           WHERE id=? AND status='pending'`,
-      ).run(this.ownerToken, ts, next, id).changes;
+        )
+        .run(this.ownerToken, ts, next, id).changes;
       if (changed === 1) return true;
       const row = this.byId(id);
-      return row?.status === "running" && row.owner_token === this.ownerToken && row.started_at == null;
+      return (
+        row?.status === "running" && row.owner_token === this.ownerToken && row.started_at == null
+      );
     });
   }
 
@@ -198,11 +211,15 @@ export class SessionCommandLedger {
     return this.totalUpdate(() => {
       const ts = this.now().toISOString();
       const next = new Date(this.now().getTime() + this.runningLeaseMs()).toISOString();
-      return this.db.prepare(
-        `UPDATE session_commands
+      return (
+        this.db
+          .prepare(
+            `UPDATE session_commands
             SET started_at=COALESCE(started_at, ?), updated_at=?, next_check_at=?
           WHERE id=? AND status='running' AND owner_token=?`,
-      ).run(ts, ts, next, id, this.ownerToken).changes === 1;
+          )
+          .run(ts, ts, next, id, this.ownerToken).changes === 1
+      );
     });
   }
 
@@ -213,42 +230,58 @@ export class SessionCommandLedger {
     return this.totalUpdate(() => {
       const ts = this.now().toISOString();
       const next = new Date(this.now().getTime() + this.startLeaseMs()).toISOString();
-      return this.db.prepare(
-        `UPDATE session_commands
+      return (
+        this.db
+          .prepare(
+            `UPDATE session_commands
             SET status='pending', owner_token=NULL, updated_at=?, next_check_at=?
           WHERE id=? AND status='running' AND owner_token=? AND started_at IS NULL`,
-      ).run(ts, next, id, this.ownerToken).changes === 1;
+          )
+          .run(ts, next, id, this.ownerToken).changes === 1
+      );
     });
   }
 
   ack(id: string): boolean {
     return this.totalUpdate(() => {
       const ts = this.now().toISOString();
-      return this.db.prepare(
-        `UPDATE session_commands
+      return (
+        this.db
+          .prepare(
+            `UPDATE session_commands
             SET status='acked', settled_at=?, updated_at=?, next_check_at=?, failure=NULL
           WHERE id=? AND status='running' AND owner_token=? AND started_at IS NOT NULL`,
-      ).run(ts, ts, ts, id, this.ownerToken).changes === 1;
+          )
+          .run(ts, ts, ts, id, this.ownerToken).changes === 1
+      );
     });
   }
 
   failPending(id: string, failure: string): boolean {
     return this.totalUpdate(() => {
       const ts = this.now().toISOString();
-      return this.db.prepare(
-        `UPDATE session_commands
+      return (
+        this.db
+          .prepare(
+            `UPDATE session_commands
             SET status='failed', failed_at=?, failure=?, updated_at=?, next_check_at=?
           WHERE id=? AND status='pending'`,
-      ).run(ts, failure, ts, ts, id).changes === 1;
+          )
+          .run(ts, failure, ts, ts, id).changes === 1
+      );
     });
   }
 
   private startLeaseMs(): number {
-    return this.leases.startMs && this.leases.startMs > 0 ? this.leases.startMs : DEFAULT_START_LEASE_MS;
+    return this.leases.startMs && this.leases.startMs > 0
+      ? this.leases.startMs
+      : DEFAULT_START_LEASE_MS;
   }
 
   private runningLeaseMs(): number {
-    return this.leases.runningMs && this.leases.runningMs > 0 ? this.leases.runningMs : DEFAULT_RUNNING_LEASE_MS;
+    return this.leases.runningMs && this.leases.runningMs > 0
+      ? this.leases.runningMs
+      : DEFAULT_RUNNING_LEASE_MS;
   }
 
   private totalUpdate(fn: () => boolean): boolean {
@@ -260,16 +293,20 @@ export class SessionCommandLedger {
   }
 
   private byId(id: string): CommandRow | undefined {
-    return this.db.prepare("SELECT * FROM session_commands WHERE id = ?").get(id) as CommandRow | undefined;
+    return this.db.prepare("SELECT * FROM session_commands WHERE id = ?").get(id) as
+      CommandRow | undefined;
   }
 
   private byInjectPath(path: string): CommandRow | undefined {
-    return this.db.prepare("SELECT * FROM session_commands WHERE inject_path = ?").get(path) as CommandRow | undefined;
+    return this.db.prepare("SELECT * FROM session_commands WHERE inject_path = ?").get(path) as
+      CommandRow | undefined;
   }
 
   private active(): CommandRow | undefined {
     return this.db
-      .prepare("SELECT * FROM session_commands WHERE session = ? AND status IN ('pending', 'running', 'failed') ORDER BY created_at DESC LIMIT 1")
+      .prepare(
+        "SELECT * FROM session_commands WHERE session = ? AND status IN ('pending', 'running', 'failed') ORDER BY created_at DESC LIMIT 1",
+      )
       .get(this.session) as CommandRow | undefined;
   }
 }

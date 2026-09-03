@@ -4,7 +4,15 @@
 // first-party glue) launched by that one pi, and it is never given
 // two instructions at once.
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkBashCommand } from "../extensions/bash-guard.js";
@@ -23,7 +31,11 @@ import { WorktreeManager } from "../src/worktrees.js";
 /** Every .ts under src/, recursively. */
 function srcFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
-    e.isDirectory() ? srcFiles(join(dir, e.name)) : e.name.endsWith(".ts") ? [join(dir, e.name)] : [],
+    e.isDirectory()
+      ? srcFiles(join(dir, e.name))
+      : e.name.endsWith(".ts")
+        ? [join(dir, e.name)]
+        : [],
   );
 }
 
@@ -40,7 +52,12 @@ describe("daemon topology", () => {
     // gate and posts nothing; its whole contract is "read a scratch tree,
     // write one JSON file".
     const offenders = srcFiles(src)
-      .filter((f) => !["sessions.ts", "smoke-session.ts", "replay.ts"].includes(f.slice(f.lastIndexOf("/") + 1)))
+      .filter(
+        (f) =>
+          !["sessions.ts", "smoke-session.ts", "replay.ts"].includes(
+            f.slice(f.lastIndexOf("/") + 1),
+          ),
+      )
       .filter((f) => /\bspawnSession\s*\(/.test(readFileSync(f, "utf8")));
     expect(offenders).toEqual([]);
   });
@@ -68,12 +85,21 @@ describe("daemon topology", () => {
       const ov: string[] = [];
       const exec: ExecFn = async (cmd, args) => {
         if (cmd === "tmux") {
-          if (args[0] === "has-session") return { code: live.has(String(args[2]).replace(/^=/, "")) ? 0 : 1, stdout: "", stderr: "" };
+          if (args[0] === "has-session")
+            return {
+              code: live.has(String(args[2]).replace(/^=/, "")) ? 0 : 1,
+              stdout: "",
+              stderr: "",
+            };
           if (args[0] === "new-session") {
             const session = String(args[3]);
             live.add(session);
-            const generation = args.find((value) => value.startsWith("QCR_SESSION_BRIDGE_GENERATION="))?.split("=", 2)[1];
-            const stateFile = args.find((value) => value.startsWith("QCR_SESSION_BRIDGE_STATE_FILE="))?.slice("QCR_SESSION_BRIDGE_STATE_FILE=".length);
+            const generation = args
+              .find((value) => value.startsWith("QCR_SESSION_BRIDGE_GENERATION="))
+              ?.split("=", 2)[1];
+            const stateFile = args
+              .find((value) => value.startsWith("QCR_SESSION_BRIDGE_STATE_FILE="))
+              ?.slice("QCR_SESSION_BRIDGE_STATE_FILE=".length);
             if (generation && stateFile) {
               writeSessionBridgeState(stateFile, {
                 version: 1,
@@ -84,7 +110,8 @@ describe("daemon topology", () => {
               });
             }
           }
-          if (args[0] === "list-sessions") return { code: 0, stdout: [...live].join("\n"), stderr: "" };
+          if (args[0] === "list-sessions")
+            return { code: 0, stdout: [...live].join("\n"), stderr: "" };
           if (args[0] === "kill-session") live.delete(String(args[2]).replace(/^=/, ""));
         }
         return { code: 0, stdout: "", stderr: "" };
@@ -97,7 +124,12 @@ describe("daemon topology", () => {
         } as unknown as Config,
         root: dir,
         tmux: new Tmux({ exec }),
-        worktrees: new WorktreeManager({ root: dir, repo: "o/n", cloneUrl: "/dev/null", run: exec }),
+        worktrees: new WorktreeManager({
+          root: dir,
+          repo: "o/n",
+          cloneUrl: "/dev/null",
+          run: exec,
+        }),
         ovSessions: {
           create: async (id) => {
             ov.push(`create ${id}`);
@@ -204,10 +236,10 @@ describe("S4: every PR-session wake goes through wakes.ts", () => {
       {
         file: "src/tui/msg.ts",
         why:
-          "RATIFIED operator exception: the quick-message box (`m`) addresses a session the operator is NOT focused on. "
-          + "Human-initiated, never automatic, carries no verdict, and reaches the same bridge the daemon uses. It "
-          + "deliberately does not go through wakeOrHold — an operator asking a question mid-round is the operator's call. "
-          + "This is the writer the `.inject(pr, …)` grep above structurally CANNOT see (MC-10), which is why this fence exists.",
+          "RATIFIED operator exception: the quick-message box (`m`) addresses a session the operator is NOT focused on. " +
+          "Human-initiated, never automatic, carries no verdict, and reaches the same bridge the daemon uses. It " +
+          "deliberately does not go through wakeOrHold — an operator asking a question mid-round is the operator's call. " +
+          "This is the writer the `.inject(pr, …)` grep above structurally CANNOT see (MC-10), which is why this fence exists.",
       },
       {
         file: "src/tui/companion.ts",
@@ -216,12 +248,15 @@ describe("S4: every PR-session wake goes through wakes.ts", () => {
       {
         file: "src/cliops.ts",
         why:
-          "`qcr checklist`'s offline ping-pong plumbing probe. Operator-run, one-shot, and scoped to the fixture PR "
-          + "999902 — but it does write into the REAL inject/ tree, so it is a writer and is recorded as one.",
+          "`qcr checklist`'s offline ping-pong plumbing probe. Operator-run, one-shot, and scoped to the fixture PR " +
+          "999902 — but it does write into the REAL inject/ tree, so it is a writer and is recorded as one.",
       },
     ];
     for (const w of INJECT_PATH_WRITERS) {
-      expect(existsSync(join(src, "..", w.file)), `${w.file} is allowlisted but does not exist`).toBe(true);
+      expect(
+        existsSync(join(src, "..", w.file)),
+        `${w.file} is allowlisted but does not exist`,
+      ).toBe(true);
       expect(w.why.length, `${w.file} needs a reason a stranger can check`).toBeGreaterThan(40);
     }
 
@@ -248,8 +283,8 @@ describe("S4: every PR-session wake goes through wakes.ts", () => {
 
     expect(
       writers,
-      "the set of modules that build a session inject path changed — route the new one through wakeOrHold, "
-        + "or add it to INJECT_PATH_WRITERS with what makes it legal; if one dropped off, delete its entry",
+      "the set of modules that build a session inject path changed — route the new one through wakeOrHold, " +
+        "or add it to INJECT_PATH_WRITERS with what makes it legal; if one dropped off, delete its entry",
     ).toEqual(INJECT_PATH_WRITERS.map((w) => w.file).sort());
   });
 });
@@ -258,12 +293,16 @@ describe("S4: every PR-session wake goes through wakes.ts", () => {
 
 describe("stripAgentSpawnTools", () => {
   it("drops agent-spawning tools and keeps the read-only ones", () => {
-    expect(stripAgentSpawnTools("tools: read, bash, subagent, grep\n")).toBe("tools: read, bash, grep\n");
+    expect(stripAgentSpawnTools("tools: read, bash, subagent, grep\n")).toBe(
+      "tools: read, bash, grep\n",
+    );
     expect(stripAgentSpawnTools("tools: read, Task, agent, glob\n")).toBe("tools: read, glob\n");
   });
 
   it("leaves a clean tools line untouched", () => {
-    expect(stripAgentSpawnTools("name: x\ntools: read, bash, grep, glob\n")).toBe("name: x\ntools: read, bash, grep, glob\n");
+    expect(stripAgentSpawnTools("name: x\ntools: read, bash, grep, glob\n")).toBe(
+      "name: x\ntools: read, bash, grep, glob\n",
+    );
   });
 
   it("removes the line entirely when nothing survives (empty ≠ absent)", () => {
@@ -319,7 +358,10 @@ describe("buildAgents — built passes cannot launch agents", () => {
 
     for (const agent of buildAgents(src, out, { riskPasses: [], validateTier: "terra-med" })) {
       const text = readFileSync(agent.output, "utf8");
-      const tools = /^tools:[ \t]*(.*)$/m.exec(text)![1]!.split(",").map((t) => t.trim());
+      const tools = /^tools:[ \t]*(.*)$/m
+        .exec(text)![1]!
+        .split(",")
+        .map((t) => t.trim());
       expect(tools.filter((t) => t.startsWith("viking_"))).toEqual([...LEAF_MEMORY_TOOLS]);
       expect(tools).not.toContain("viking_write");
       expect(text).toContain("You have no write tool and will not be given one.");
@@ -354,7 +396,9 @@ describe("subagents glue is never registered globally", () => {
       const paths = [...wanted.matchAll(/"([^"]+)"/g)].map((m) => m[1] ?? "");
       expect(paths.length).toBeGreaterThan(0);
       for (const p of paths) {
-        expect(p, `${p} must not hand children an agent launcher or memory`).not.toMatch(/subagent|openviking|register-lens/);
+        expect(p, `${p} must not hand children an agent launcher or memory`).not.toMatch(
+          /subagent|openviking|register-lens/,
+        );
       }
     });
   }
@@ -363,7 +407,14 @@ describe("subagents glue is never registered globally", () => {
 // ---- S3: bash is never an agent launcher ----------------------------------
 
 describe("bash-guard — agent spawners are named explicitly", () => {
-  for (const cmd of ["pi --no-session -p 'review'", "npx pi", "node runner.js", "claude -p x", "codex exec", "bun x pi"]) {
+  for (const cmd of [
+    "pi --no-session -p 'review'",
+    "npx pi",
+    "node runner.js",
+    "claude -p x",
+    "codex exec",
+    "bun x pi",
+  ]) {
     it(`blocks: ${cmd}`, () => {
       const res = checkBashCommand(cmd);
       expect(res.allowed).toBe(false);
@@ -372,7 +423,7 @@ describe("bash-guard — agent spawners are named explicitly", () => {
   }
 
   it("still blocks a spawner hidden behind a substitution or an env prefix", () => {
-    expect(checkBashCommand("X=\"$(cat f)\" pi -p go").allowed).toBe(false);
+    expect(checkBashCommand('X="$(cat f)" pi -p go').allowed).toBe(false);
     expect(checkBashCommand("env FOO=1 node x.js").allowed).toBe(false);
     expect(checkBashCommand("cat f | xargs pi").allowed).toBe(false);
   });
@@ -446,8 +497,14 @@ describe("wakeOrHold / flushHeldWakes", () => {
       store,
       inject: async () => {
         store.createSessionCommand({
-          id: "cmd-racer", pr: 7, session: "pr-7", kind: "wake", round_no: null,
-          payload_sha256: "b".repeat(64), payload_path: "/state/racer.md", inject_path: "/inject/pr-7/racer.md",
+          id: "cmd-racer",
+          pr: 7,
+          session: "pr-7",
+          kind: "wake",
+          round_no: null,
+          payload_sha256: "b".repeat(64),
+          payload_path: "/state/racer.md",
+          inject_path: "/inject/pr-7/racer.md",
           next_check_at: new Date(Date.now() + 120_000).toISOString(),
         });
         throw new Error("UNIQUE constraint failed: session_commands.session");
@@ -459,8 +516,14 @@ describe("wakeOrHold / flushHeldWakes", () => {
 
   it("does not hold a wake for a different PR's round", async () => {
     store.upsertPr({
-      number: 8, state: "tracked", head_sha: "d", title: "t", author: "a",
-      trigger_ts: null, stale_recheck: 0, migration_gate: 0,
+      number: 8,
+      state: "tracked",
+      head_sha: "d",
+      title: "t",
+      author: "a",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
     });
     store.startRound(8, "first", ["pass-baseline"], 75);
     expect(await wakeOrHold(deps(), 7, "hello", "author_reply")).toBe("injected");
@@ -474,7 +537,9 @@ describe("wakeOrHold / flushHeldWakes", () => {
 
     expect(await flushHeldWakes(deps(), 7)).toBe(2);
     expect(injected).toHaveLength(1);
-    expect(injected[0]!.message.indexOf("first reply")).toBeLessThan(injected[0]!.message.indexOf("second reply"));
+    expect(injected[0]!.message.indexOf("first reply")).toBeLessThan(
+      injected[0]!.message.indexOf("second reply"),
+    );
     expect(store.heldWakes(7)).toHaveLength(0);
     expect(await flushHeldWakes(deps(), 7)).toBe(0);
   });
@@ -495,8 +560,13 @@ describe("wakeOrHold / flushHeldWakes", () => {
       inject: async (pr: number, message: string) => {
         injected.push({ pr, message });
         store.createSessionCommand({
-          id: "cmd-batch", pr, session: `pr-${pr}`, kind: "wake", round_no: null,
-          payload_sha256: "b".repeat(64), payload_path: "/state/cmd-batch.md",
+          id: "cmd-batch",
+          pr,
+          session: `pr-${pr}`,
+          kind: "wake",
+          round_no: null,
+          payload_sha256: "b".repeat(64),
+          payload_path: "/state/cmd-batch.md",
           inject_path: `/inject/pr-${pr}/cmd-batch.md`,
           next_check_at: new Date(Date.now() + 120_000).toISOString(),
         });
@@ -516,7 +586,8 @@ describe("wakeOrHold / flushHeldWakes", () => {
     // serialized author-reply runs.
     const current = store.getPr(7)!;
     store.upsertPr({ ...current, state: "queued", trigger_ts: new Date().toISOString() });
-    const canDispatch = (): boolean => store.getPr(7)?.state === "queued" && !store.blockingSessionCommand("pr-7");
+    const canDispatch = (): boolean =>
+      store.getPr(7)?.state === "queued" && !store.blockingSessionCommand("pr-7");
     expect(canDispatch()).toBe(false);
     const deadline = new Date(Date.now() + 120_000).toISOString();
     store.claimSessionCommand("cmd-batch", "bridge-batch", deadline);
@@ -530,13 +601,19 @@ describe("wakeOrHold / flushHeldWakes", () => {
       store.holdWake(7, `# Author reply — PR #7\n\ncomment ${comment}`, "author_reply");
     }
     let accept!: () => void;
-    const injecting = new Promise<void>((resolve) => { accept = resolve; });
+    const injecting = new Promise<void>((resolve) => {
+      accept = resolve;
+    });
     const flush = flushHeldWakes({ store, inject: async () => injecting }, 7);
-    await vi.waitFor(() => expect(store.heldWakes(7).every((wake) => wake.claim_token !== null)).toBe(true));
+    await vi.waitFor(() =>
+      expect(store.heldWakes(7).every((wake) => wake.claim_token !== null)).toBe(true),
+    );
 
     const dropped = store.holdWake(7, "arrived while the batch was injecting", "author_reply");
     expect(dropped).toHaveLength(1);
-    expect(store.heldWakes(7).map((wake) => wake.payload)).not.toContain("arrived while the batch was injecting");
+    expect(store.heldWakes(7).map((wake) => wake.payload)).not.toContain(
+      "arrived while the batch was injecting",
+    );
 
     accept();
     expect(await flush).toBe(5);
@@ -545,7 +622,11 @@ describe("wakeOrHold / flushHeldWakes", () => {
   });
 
   it("joins a recovered author reply to its contiguous burst but never crosses another wake class", async () => {
-    store.holdWake(7, "# Author reply — PR #7\n\nrecovered comment 201", "operator_recovered:wake:old-command");
+    store.holdWake(
+      7,
+      "# Author reply — PR #7\n\nrecovered comment 201",
+      "operator_recovered:wake:old-command",
+    );
     store.holdWake(7, "# Author reply — PR #7\n\ncomment 202", "author_reply");
     store.holdWake(7, "recheck the pushed head", "recheck:push");
     store.holdWake(7, "# Author reply — PR #7\n\ncomment 203", "author_reply");
@@ -556,8 +637,13 @@ describe("wakeOrHold / flushHeldWakes", () => {
         injected.push({ pr, message });
         const command = `cmd-${seq++}`;
         store.createSessionCommand({
-          id: command, pr, session: `pr-${pr}`, kind: "wake", round_no: null,
-          payload_sha256: "c".repeat(64), payload_path: `/state/${command}.md`,
+          id: command,
+          pr,
+          session: `pr-${pr}`,
+          kind: "wake",
+          round_no: null,
+          payload_sha256: "c".repeat(64),
+          payload_path: `/state/${command}.md`,
           inject_path: `/inject/pr-${pr}/${command}.md`,
           next_check_at: new Date(Date.now() + 120_000).toISOString(),
         });
@@ -577,7 +663,8 @@ describe("wakeOrHold / flushHeldWakes", () => {
 
   it("caps held wakes per PR, dropping the oldest with an event", async () => {
     store.startRound(7, "first", ["pass-baseline"], 75);
-    for (let i = 0; i < MAX_HELD_WAKES + 2; i++) await wakeOrHold(deps(), 7, `m${i}`, "author_reply");
+    for (let i = 0; i < MAX_HELD_WAKES + 2; i++)
+      await wakeOrHold(deps(), 7, `m${i}`, "author_reply");
     const held = store.heldWakes(7);
     expect(held).toHaveLength(MAX_HELD_WAKES);
     expect(held[0]!.payload).toBe("m2"); // the two oldest were evicted
@@ -589,7 +676,12 @@ describe("wakeOrHold / flushHeldWakes", () => {
     await wakeOrHold(deps(), 7, "a", "author_reply");
     await wakeOrHold(deps(), 7, "b", "author_reply");
     const failed = await flushHeldWakes(
-      { store, inject: async () => { throw new Error("session dead"); } },
+      {
+        store,
+        inject: async () => {
+          throw new Error("session dead");
+        },
+      },
       7,
     );
     expect(failed).toBe(0);
@@ -600,7 +692,9 @@ describe("wakeOrHold / flushHeldWakes", () => {
 
     expect(await flushHeldWakes(deps(), 7)).toBe(2);
     expect(injected).toHaveLength(1);
-    expect(injected[0]!.message.indexOf("\na\n")).toBeLessThan(injected[0]!.message.indexOf("\nb\n"));
+    expect(injected[0]!.message.indexOf("\na\n")).toBeLessThan(
+      injected[0]!.message.indexOf("\nb\n"),
+    );
     expect(store.heldWakes(7)).toHaveLength(0);
   });
 });

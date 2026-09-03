@@ -7,7 +7,16 @@
 // a posted verdict; no new findings in ping-pong. The mechanical halves — "one
 // reply per message" and the exchange cap — are enforced here in SQLite; the
 // judgment halves are prompt-side, restated in every wake message.
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, watch, writeFileSync, type FSWatcher } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  watch,
+  writeFileSync,
+  type FSWatcher,
+} from "node:fs";
 import { join } from "node:path";
 import type Database from "better-sqlite3";
 import type { GitHubAdapter } from "./github.js";
@@ -92,7 +101,10 @@ export interface ReplyDiscipline {
  * the state (own tables, created on construction).
  */
 export class PingPongLedger {
-  constructor(private readonly db: Database.Database, private readonly now: () => Date = () => new Date()) {
+  constructor(
+    private readonly db: Database.Database,
+    private readonly now: () => Date = () => new Date(),
+  ) {
     this.db.exec(SCHEMA);
     // Additive: cap hits per thread (ping-pong depth metric).
     try {
@@ -107,9 +119,9 @@ export class PingPongLedger {
   }
 
   exchanges(threadId: number): number {
-    const row = this.db.prepare("SELECT exchanges FROM pingpong_threads WHERE thread_id = ?").get(threadId) as
-      | { exchanges: number }
-      | undefined;
+    const row = this.db
+      .prepare("SELECT exchanges FROM pingpong_threads WHERE thread_id = ?")
+      .get(threadId) as { exchanges: number } | undefined;
     return row?.exchanges ?? 0;
   }
 
@@ -119,15 +131,19 @@ export class PingPongLedger {
    */
   claimAuthorMessage(event: AuthorReplyEvent): boolean {
     const info = this.db
-      .prepare("INSERT OR IGNORE INTO pingpong_handled (comment_id, thread_id, pr, handled_at) VALUES (?, ?, ?, ?)")
+      .prepare(
+        "INSERT OR IGNORE INTO pingpong_handled (comment_id, thread_id, pr, handled_at) VALUES (?, ?, ?, ?)",
+      )
       .run(event.comment_id, threadIdOf(event), event.pr, this.ts());
     return info.changes === 1;
   }
 
   hasClaim(pr: number, threadId: number, commentId: number): boolean {
-    return this.db
-      .prepare("SELECT 1 FROM pingpong_handled WHERE comment_id = ? AND thread_id = ? AND pr = ?")
-      .get(commentId, threadId, pr) !== undefined;
+    return (
+      this.db
+        .prepare("SELECT 1 FROM pingpong_handled WHERE comment_id = ? AND thread_id = ? AND pr = ?")
+        .get(commentId, threadId, pr) !== undefined
+    );
   }
 
   decisionProgress(commentId: number): { reply_posted: boolean; thread_resolved: boolean } {
@@ -138,80 +154,138 @@ export class PingPongLedger {
   }
 
   markDecisionStep(commentId: number, step: "reply_posted" | "thread_resolved"): void {
-    this.db.prepare(
-      `INSERT INTO pingpong_decisions (comment_id, reply_posted, thread_resolved, updated_at)
+    this.db
+      .prepare(
+        `INSERT INTO pingpong_decisions (comment_id, reply_posted, thread_resolved, updated_at)
        VALUES (?, ?, ?, ?)
        ON CONFLICT(comment_id) DO UPDATE SET ${step} = 1, updated_at = excluded.updated_at`,
-    ).run(commentId, step === "reply_posted" ? 1 : 0, step === "thread_resolved" ? 1 : 0, this.ts());
+      )
+      .run(
+        commentId,
+        step === "reply_posted" ? 1 : 0,
+        step === "thread_resolved" ? 1 : 0,
+        this.ts(),
+      );
   }
 
-  breaker(): { state: "closed" | "open" | "half_open"; open_until?: string; rate_limit_streak: number } {
-    const row = this.db.prepare(
-      "SELECT state, open_until, rate_limit_streak FROM pingpong_decision_breaker WHERE singleton = 1",
-    ).get() as { state: "closed" | "open" | "half_open"; open_until: string | null; rate_limit_streak: number } | undefined;
-    return row ? { state: row.state, ...(row.open_until ? { open_until: row.open_until } : {}), rate_limit_streak: row.rate_limit_streak }
+  breaker(): {
+    state: "closed" | "open" | "half_open";
+    open_until?: string;
+    rate_limit_streak: number;
+  } {
+    const row = this.db
+      .prepare(
+        "SELECT state, open_until, rate_limit_streak FROM pingpong_decision_breaker WHERE singleton = 1",
+      )
+      .get() as
+      | {
+          state: "closed" | "open" | "half_open";
+          open_until: string | null;
+          rate_limit_streak: number;
+        }
+      | undefined;
+    return row
+      ? {
+          state: row.state,
+          ...(row.open_until ? { open_until: row.open_until } : {}),
+          rate_limit_streak: row.rate_limit_streak,
+        }
       : { state: "closed", rate_limit_streak: 0 };
   }
 
   openBreaker(now: Date, error: string): { open_until: string; streak: number } {
     const streak = this.breaker().rate_limit_streak + 1;
     const delays = [60, 120, 240, 480, 900];
-    const openUntil = new Date(now.getTime() + delays[Math.min(streak - 1, delays.length - 1)]! * 1000).toISOString();
-    this.db.prepare(
-      `INSERT INTO pingpong_decision_breaker (singleton, state, open_until, rate_limit_streak, last_error, updated_at)
+    const openUntil = new Date(
+      now.getTime() + delays[Math.min(streak - 1, delays.length - 1)]! * 1000,
+    ).toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO pingpong_decision_breaker (singleton, state, open_until, rate_limit_streak, last_error, updated_at)
        VALUES (1, 'open', ?, ?, ?, ?)
        ON CONFLICT(singleton) DO UPDATE SET state='open', open_until=excluded.open_until,
          rate_limit_streak=excluded.rate_limit_streak, last_error=excluded.last_error, updated_at=excluded.updated_at`,
-    ).run(openUntil, streak, error, now.toISOString());
+      )
+      .run(openUntil, streak, error, now.toISOString());
     return { open_until: openUntil, streak };
   }
 
   halfOpen(now: Date): void {
-    this.db.prepare(
-      `INSERT INTO pingpong_decision_breaker (singleton, state, open_until, rate_limit_streak, probe_started_at, updated_at)
+    this.db
+      .prepare(
+        `INSERT INTO pingpong_decision_breaker (singleton, state, open_until, rate_limit_streak, probe_started_at, updated_at)
        VALUES (1, 'half_open', NULL, 0, ?, ?)
        ON CONFLICT(singleton) DO UPDATE SET state='half_open', probe_started_at=excluded.probe_started_at, updated_at=excluded.updated_at`,
-    ).run(now.toISOString(), now.toISOString());
+      )
+      .run(now.toISOString(), now.toISOString());
   }
 
   recoverHalfOpen(now: Date): void {
-    this.db.prepare(
-      "UPDATE pingpong_decision_breaker SET state='open', probe_started_at=NULL, updated_at=? WHERE singleton=1 AND state='half_open'",
-    ).run(now.toISOString());
+    this.db
+      .prepare(
+        "UPDATE pingpong_decision_breaker SET state='open', probe_started_at=NULL, updated_at=? WHERE singleton=1 AND state='half_open'",
+      )
+      .run(now.toISOString());
   }
 
   closeBreaker(now: Date): void {
-    this.db.prepare(
-      `INSERT INTO pingpong_decision_breaker (singleton, state, open_until, rate_limit_streak, updated_at)
+    this.db
+      .prepare(
+        `INSERT INTO pingpong_decision_breaker (singleton, state, open_until, rate_limit_streak, updated_at)
        VALUES (1, 'closed', NULL, 0, ?)
        ON CONFLICT(singleton) DO UPDATE SET state='closed', open_until=NULL, rate_limit_streak=0,
          last_error=NULL, updated_at=excluded.updated_at`,
-    ).run(now.toISOString());
+      )
+      .run(now.toISOString());
   }
 
-  retry(commentId: number): { attempts: number; next_attempt_at?: string; last_error?: string; terminal: boolean } {
-    const row = this.db.prepare(
-      "SELECT attempts, next_attempt_at, last_error, terminal FROM pingpong_decision_retries WHERE comment_id = ?",
-    ).get(commentId) as { attempts: number; next_attempt_at: string | null; last_error: string | null; terminal: number } | undefined;
-    return row ? {
-      attempts: row.attempts,
-      ...(row.next_attempt_at ? { next_attempt_at: row.next_attempt_at } : {}),
-      ...(row.last_error ? { last_error: row.last_error } : {}),
-      terminal: row.terminal === 1,
-    } : { attempts: 0, terminal: false };
+  retry(commentId: number): {
+    attempts: number;
+    next_attempt_at?: string;
+    last_error?: string;
+    terminal: boolean;
+  } {
+    const row = this.db
+      .prepare(
+        "SELECT attempts, next_attempt_at, last_error, terminal FROM pingpong_decision_retries WHERE comment_id = ?",
+      )
+      .get(commentId) as
+      | {
+          attempts: number;
+          next_attempt_at: string | null;
+          last_error: string | null;
+          terminal: number;
+        }
+      | undefined;
+    return row
+      ? {
+          attempts: row.attempts,
+          ...(row.next_attempt_at ? { next_attempt_at: row.next_attempt_at } : {}),
+          ...(row.last_error ? { last_error: row.last_error } : {}),
+          terminal: row.terminal === 1,
+        }
+      : { attempts: 0, terminal: false };
   }
 
-  recordRetry(commentId: number, now: Date, error: string): { attempts: number; next_attempt_at?: string; terminal: boolean } {
+  recordRetry(
+    commentId: number,
+    now: Date,
+    error: string,
+  ): { attempts: number; next_attempt_at?: string; terminal: boolean } {
     const attempts = this.retry(commentId).attempts + 1;
     const terminal = attempts >= 3;
     const delays = [30, 120];
-    const next = terminal ? undefined : new Date(now.getTime() + delays[attempts - 1]! * 1000).toISOString();
-    this.db.prepare(
-      `INSERT INTO pingpong_decision_retries (comment_id, attempts, next_attempt_at, last_error, terminal, updated_at)
+    const next = terminal
+      ? undefined
+      : new Date(now.getTime() + delays[attempts - 1]! * 1000).toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO pingpong_decision_retries (comment_id, attempts, next_attempt_at, last_error, terminal, updated_at)
        VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(comment_id) DO UPDATE SET attempts=excluded.attempts, next_attempt_at=excluded.next_attempt_at,
          last_error=excluded.last_error, terminal=excluded.terminal, updated_at=excluded.updated_at`,
-    ).run(commentId, attempts, next ?? null, error, terminal ? 1 : 0, now.toISOString());
+      )
+      .run(commentId, attempts, next ?? null, error, terminal ? 1 : 0, now.toISOString());
     return { attempts, ...(next ? { next_attempt_at: next } : {}), terminal };
   }
 
@@ -242,9 +316,9 @@ export class PingPongLedger {
   }
 
   capHits(threadId: number): number {
-    const row = this.db.prepare("SELECT cap_hits FROM pingpong_threads WHERE thread_id = ?").get(threadId) as
-      | { cap_hits: number }
-      | undefined;
+    const row = this.db
+      .prepare("SELECT cap_hits FROM pingpong_threads WHERE thread_id = ?")
+      .get(threadId) as { cap_hits: number } | undefined;
     return row?.cap_hits ?? 0;
   }
 
@@ -284,7 +358,9 @@ export function buildWakeMessage(
     `**Thread**: \`${threadIdOf(event)}\`${ctx.finding_id ? ` (ledger ${ctx.finding_id})` : ""}` +
       `${event.path ? ` · \`${event.path}\`` : ""}`,
     `**From**: @${event.author} (comment \`${event.comment_id}\`)`,
-    ...(ctx.head_sha ? [`**Head**: \`${ctx.head_sha}\`${ctx.worktree ? ` · worktree \`${ctx.worktree}\`` : ""}`] : []),
+    ...(ctx.head_sha
+      ? [`**Head**: \`${ctx.head_sha}\`${ctx.worktree ? ` · worktree \`${ctx.worktree}\`` : ""}`]
+      : []),
     `**Exchanges so far in this thread**: ${discipline.exchanges}/${MAX_EXCHANGES_PER_FINDING}`,
     "",
   ];
@@ -318,7 +394,7 @@ export function buildWakeMessage(
       "  accept a sound author rationale. Never treat either as satisfied without checking.",
       `- Write exactly one response file at \`verdict/pr-${event.pr}-thread-${threadIdOf(event)}-comment-${event.comment_id}.json\``,
       "  atomically, with this shape:",
-      `  {\"pr\":${event.pr},\"thread_id\":${threadIdOf(event)},\"comment_id\":${event.comment_id},` +
+      `  {"pr":${event.pr},"thread_id":${threadIdOf(event)},"comment_id":${event.comment_id},` +
         '"resolution":"resolve|keep_open","reply":"brief reply","reason":"why",' +
         '"human_requested":false}.',
       "  Use `resolve` only when the code addresses the finding or the rationale is satisfactory.",
@@ -369,7 +445,11 @@ export async function postReply(
       reason: discipline.reason,
       cap_hits: capHits,
     });
-    return { posted: false, exchanges: discipline.exchanges, ...(discipline.reason ? { reason: discipline.reason } : {}) };
+    return {
+      posted: false,
+      exchanges: discipline.exchanges,
+      ...(discipline.reason ? { reason: discipline.reason } : {}),
+    };
   }
   const result = await deps.adapter.createReviewCommentReply(input.pr, input.thread_id, input.body);
   const exchanges = deps.ledger.recordExchange(input.thread_id, input.pr);
@@ -380,7 +460,10 @@ export async function postReply(
       deps.store.registerBotComment(res.id, input.pr, "review_comment");
       registered = res.id;
     }
-    deps.store.logEvent("pingpong_reply_posted", input.pr, { thread_id: input.thread_id, exchanges });
+    deps.store.logEvent("pingpong_reply_posted", input.pr, {
+      thread_id: input.thread_id,
+      exchanges,
+    });
   } else {
     deps.store.logEvent("pingpong_reply_intent", input.pr, {
       thread_id: input.thread_id,
@@ -405,17 +488,22 @@ export interface ThreadDecision {
   human_requested?: boolean;
 }
 
-export function validateThreadDecision(raw: unknown): { ok: true; value: ThreadDecision } | { ok: false; error: string } {
+export function validateThreadDecision(
+  raw: unknown,
+): { ok: true; value: ThreadDecision } | { ok: false; error: string } {
   if (typeof raw !== "object" || raw === null) return { ok: false, error: "not an object" };
   const v = raw as Record<string, unknown>;
   for (const key of ["pr", "thread_id", "comment_id"] as const) {
     if (typeof v[key] === "string" && /^\d+$/.test(v[key])) v[key] = Number(v[key]);
     if (!Number.isInteger(v[key])) return { ok: false, error: `${key} must be an integer` };
   }
-  if (v.resolution !== "resolve" && v.resolution !== "keep_open") return { ok: false, error: "bad resolution" };
+  if (v.resolution !== "resolve" && v.resolution !== "keep_open")
+    return { ok: false, error: "bad resolution" };
   if (typeof v.reply !== "string") return { ok: false, error: "reply must be a string" };
-  if (v.reason !== undefined && typeof v.reason !== "string") return { ok: false, error: "reason must be a string" };
-  if (v.human_requested !== undefined && typeof v.human_requested !== "boolean") return { ok: false, error: "human_requested must be boolean" };
+  if (v.reason !== undefined && typeof v.reason !== "string")
+    return { ok: false, error: "reason must be a string" };
+  if (v.human_requested !== undefined && typeof v.human_requested !== "boolean")
+    return { ok: false, error: "human_requested must be boolean" };
   return { ok: true, value: v as unknown as ThreadDecision };
 }
 
@@ -423,8 +511,13 @@ export type ThreadDecisionFailureClass = "rate_limit" | "non_rate";
 
 export function classifyThreadDecisionError(error: unknown): ThreadDecisionFailureClass {
   const text = String(error);
-  if (/(?:graphql|github|http|status)[^\n]{0,24}\b429\b/i.test(text) || /graphql_rate_limit|\bRATE_LIMIT\b/.test(text)) return "rate_limit";
-  if (/\b403\b/.test(text) && /rate.?limit|secondary.?rate|abuse.?detect/i.test(text)) return "rate_limit";
+  if (
+    /(?:graphql|github|http|status)[^\n]{0,24}\b429\b/i.test(text) ||
+    /graphql_rate_limit|\bRATE_LIMIT\b/.test(text)
+  )
+    return "rate_limit";
+  if (/\b403\b/.test(text) && /rate.?limit|secondary.?rate|abuse.?detect/i.test(text))
+    return "rate_limit";
   return "non_rate";
 }
 
@@ -468,11 +561,19 @@ export class ThreadDecisionWatcher {
 
   private recoverInterruptedReplays(): void {
     if (!existsSync(this.deps.verdictDir)) return;
-    for (const name of readdirSync(this.deps.verdictDir).filter((entry) => THREAD_DECISION_RE.test(entry))) {
+    for (const name of readdirSync(this.deps.verdictDir).filter((entry) =>
+      THREAD_DECISION_RE.test(entry),
+    )) {
       const match = THREAD_DECISION_RE.exec(name)!;
       const retry = this.deps.ledger.retry(Number(match[3]));
       if (retry.terminal) {
-        this.quarantineTerminal(name, Number(match[1]), Number(match[2]), Number(match[3]), retry.attempts);
+        this.quarantineTerminal(
+          name,
+          Number(match[1]),
+          Number(match[2]),
+          Number(match[3]),
+          retry.attempts,
+        );
       }
     }
   }
@@ -481,7 +582,9 @@ export class ThreadDecisionWatcher {
     if (!alias || !existsSync(this.failedDir)) return { restored: 0, refused: 0 };
     let restored = 0;
     let refused = 0;
-    for (const name of readdirSync(this.failedDir).filter((entry) => THREAD_DECISION_RE.test(entry)).sort()) {
+    for (const name of readdirSync(this.failedDir)
+      .filter((entry) => THREAD_DECISION_RE.test(entry))
+      .sort()) {
       try {
         const match = THREAD_DECISION_RE.exec(name)!;
         const pr = Number(match[1]);
@@ -490,9 +593,16 @@ export class ThreadDecisionWatcher {
         const retry = this.deps.ledger.retry(commentId);
         const expected = `Error: refusing to resolve thread ${threadId} on #${pr}: root author is ${alias}`;
         if (!retry.terminal || retry.last_error !== expected) continue;
-        const parsed = validateThreadDecision(JSON.parse(readFileSync(join(this.failedDir, name), "utf8")));
-        if (!parsed.ok || parsed.value.pr !== pr || parsed.value.thread_id !== threadId ||
-            parsed.value.comment_id !== commentId || !this.deps.ledger.hasClaim(pr, threadId, commentId)) {
+        const parsed = validateThreadDecision(
+          JSON.parse(readFileSync(join(this.failedDir, name), "utf8")),
+        );
+        if (
+          !parsed.ok ||
+          parsed.value.pr !== pr ||
+          parsed.value.thread_id !== threadId ||
+          parsed.value.comment_id !== commentId ||
+          !this.deps.ledger.hasClaim(pr, threadId, commentId)
+        ) {
           refused += 1;
           continue;
         }
@@ -507,7 +617,10 @@ export class ThreadDecisionWatcher {
         renameSync(join(this.failedDir, name), destination);
         this.deps.ledger.resetRetry(commentId);
         this.deps.store.logEvent("pingpong_owner_alias_failure_restored", pr, {
-          file: name, thread_id: threadId, comment_id: commentId, alias,
+          file: name,
+          thread_id: threadId,
+          comment_id: commentId,
+          alias,
         });
         restored += 1;
       } catch (err) {
@@ -516,7 +629,11 @@ export class ThreadDecisionWatcher {
       }
     }
     if (restored > 0) {
-      this.deps.store.logEvent("pingpong_owner_alias_backlog_restored", null, { alias, restored, refused });
+      this.deps.store.logEvent("pingpong_owner_alias_backlog_restored", null, {
+        alias,
+        restored,
+        refused,
+      });
       this.requestSweep();
     }
     return { restored, refused };
@@ -524,37 +641,62 @@ export class ThreadDecisionWatcher {
 
   retryFailed(commentId: number): { ok: boolean; reason?: string; file?: string } {
     try {
-      if (!existsSync(this.failedDir)) return { ok: false, reason: `no failed thread decision for comment ${commentId}` };
+      if (!existsSync(this.failedDir))
+        return { ok: false, reason: `no failed thread decision for comment ${commentId}` };
       const matches = readdirSync(this.failedDir).filter((name) => {
         const m = THREAD_DECISION_RE.exec(name);
         return m && Number(m[3]) === commentId;
       });
-      if (matches.length !== 1) return { ok: false, reason: matches.length === 0
-        ? `no failed thread decision for comment ${commentId}` : `ambiguous failed decisions for comment ${commentId}` };
+      if (matches.length !== 1)
+        return {
+          ok: false,
+          reason:
+            matches.length === 0
+              ? `no failed thread decision for comment ${commentId}`
+              : `ambiguous failed decisions for comment ${commentId}`,
+        };
       const name = matches[0]!;
-      const parsed = validateThreadDecision(JSON.parse(readFileSync(join(this.failedDir, name), "utf8")));
-      if (!parsed.ok || parsed.value.comment_id !== commentId || !this.deps.ledger.retry(commentId).terminal) {
+      const parsed = validateThreadDecision(
+        JSON.parse(readFileSync(join(this.failedDir, name), "utf8")),
+      );
+      if (
+        !parsed.ok ||
+        parsed.value.comment_id !== commentId ||
+        !this.deps.ledger.retry(commentId).terminal
+      ) {
         return { ok: false, reason: `failed decision ${name} does not match terminal retry state` };
       }
       const destination = join(this.deps.verdictDir, name);
-      if (existsSync(destination)) return { ok: false, reason: `pending destination already exists for ${name}` };
+      if (existsSync(destination))
+        return { ok: false, reason: `pending destination already exists for ${name}` };
       // File first, metadata second. If the process dies between them, the
       // startup sweep sees terminal metadata beside a pending file and moves it
       // back to failed; the operator can safely request replay again.
       renameSync(join(this.failedDir, name), destination);
       this.deps.ledger.resetRetry(commentId);
-      this.deps.store.logEvent("pingpong_decision_retry_requested", parsed.value.pr, { file: name, comment_id: commentId });
+      this.deps.store.logEvent("pingpong_decision_retry_requested", parsed.value.pr, {
+        file: name,
+        comment_id: commentId,
+      });
       this.requestSweep();
       return { ok: true, file: name };
     } catch (err) {
-      return { ok: false, reason: `could not restore failed thread decision ${commentId}: ${String(err)}` };
+      return {
+        ok: false,
+        reason: `could not restore failed thread decision ${commentId}: ${String(err)}`,
+      };
     }
   }
 
-  status(): { breaker_state: "closed" | "open" | "half_open"; open_until?: string; pending: number; failed: number } {
+  status(): {
+    breaker_state: "closed" | "open" | "half_open";
+    open_until?: string;
+    pending: number;
+    failed: number;
+  } {
     const breaker = this.deps.ledger.breaker();
-    const count = (dir: string): number => existsSync(dir)
-      ? readdirSync(dir).filter((name) => THREAD_DECISION_RE.test(name)).length : 0;
+    const count = (dir: string): number =>
+      existsSync(dir) ? readdirSync(dir).filter((name) => THREAD_DECISION_RE.test(name)).length : 0;
     return {
       breaker_state: breaker.state,
       ...(breaker.open_until ? { open_until: breaker.open_until } : {}),
@@ -609,7 +751,9 @@ export class ThreadDecisionWatcher {
     try {
       if (this.deps.isDraining?.()) {
         if (!this.pauseLogged) {
-          this.deps.store.logEvent("pingpong_decisions_paused_draining", null, { pending: this.status().pending });
+          this.deps.store.logEvent("pingpong_decisions_paused_draining", null, {
+            pending: this.status().pending,
+          });
           this.pauseLogged = true;
         }
         return [];
@@ -623,7 +767,8 @@ export class ThreadDecisionWatcher {
       const breaker = this.deps.ledger.breaker();
       if (breaker.state === "open") {
         if (!breaker.open_until || Date.parse(breaker.open_until) > now.getTime()) {
-          if (breaker.open_until) this.requestSweep(Math.max(1, Date.parse(breaker.open_until) - now.getTime()));
+          if (breaker.open_until)
+            this.requestSweep(Math.max(1, Date.parse(breaker.open_until) - now.getTime()));
           return [];
         }
         this.deps.ledger.halfOpen(now);
@@ -636,15 +781,26 @@ export class ThreadDecisionWatcher {
         this.requestSweep(1);
         return [];
       }
-      const files = readdirSync(this.deps.verdictDir).filter((name) => THREAD_DECISION_RE.test(name)).sort();
+      const files = readdirSync(this.deps.verdictDir)
+        .filter((name) => THREAD_DECISION_RE.test(name))
+        .sort();
       if (files.length === 0) return [];
-      const rotated = [...files.slice(this.cursor % files.length), ...files.slice(0, this.cursor % files.length)];
+      const rotated = [
+        ...files.slice(this.cursor % files.length),
+        ...files.slice(0, this.cursor % files.length),
+      ];
       let earliestRetry = Number.POSITIVE_INFINITY;
       for (const name of rotated) {
         const match = THREAD_DECISION_RE.exec(name)!;
         const retry = this.deps.ledger.retry(Number(match[3]));
         if (retry.terminal) {
-          this.quarantineTerminal(name, Number(match[1]), Number(match[2]), Number(match[3]), retry.attempts);
+          this.quarantineTerminal(
+            name,
+            Number(match[1]),
+            Number(match[2]),
+            Number(match[3]),
+            retry.attempts,
+          );
           continue;
         }
         if (retry.next_attempt_at && Date.parse(retry.next_attempt_at) > now.getTime()) {
@@ -656,7 +812,8 @@ export class ThreadDecisionWatcher {
         if (this.status().pending > 0) this.requestSweep(5_000);
         return done ? [name] : [];
       }
-      if (Number.isFinite(earliestRetry)) this.requestSweep(Math.max(1, earliestRetry - now.getTime()));
+      if (Number.isFinite(earliestRetry))
+        this.requestSweep(Math.max(1, earliestRetry - now.getTime()));
       return [];
     } finally {
       this.sweeping = false;
@@ -692,17 +849,26 @@ export class ThreadDecisionWatcher {
 
   async handleFile(name: string): Promise<boolean> {
     const match = THREAD_DECISION_RE.exec(name);
-    if (!match || this.processing || this.inFlight.has(name) || this.deps.isDraining?.()) return false;
+    if (!match || this.processing || this.inFlight.has(name) || this.deps.isDraining?.())
+      return false;
     const now = (this.deps.now ?? (() => new Date()))();
     if (this.lastGitHubStart > 0 && now.getTime() - this.lastGitHubStart < 5_000) return false;
     const breaker = this.deps.ledger.breaker();
-    if (breaker.state === "open" && (!breaker.open_until || Date.parse(breaker.open_until) > now.getTime())) return false;
+    if (
+      breaker.state === "open" &&
+      (!breaker.open_until || Date.parse(breaker.open_until) > now.getTime())
+    )
+      return false;
     if (breaker.state === "open") {
       this.deps.ledger.halfOpen(now);
       this.deps.store.logEvent("pingpong_breaker_half_open", null, {});
     }
     const retry = this.deps.ledger.retry(Number(match[3]));
-    if (retry.terminal || (retry.next_attempt_at && Date.parse(retry.next_attempt_at) > now.getTime())) return false;
+    if (
+      retry.terminal ||
+      (retry.next_attempt_at && Date.parse(retry.next_attempt_at) > now.getTime())
+    )
+      return false;
     this.processing = true;
     this.inFlight.add(name);
     try {
@@ -722,7 +888,10 @@ export class ThreadDecisionWatcher {
           return false;
         }
         const error = `unparseable: ${String(err)}`;
-        this.deps.store.logEvent("pingpong_decision_malformed", Number(match[1]), { file: name, error });
+        this.deps.store.logEvent("pingpong_decision_malformed", Number(match[1]), {
+          file: name,
+          error,
+        });
         this.archive(name);
         return true;
       }
@@ -733,15 +902,25 @@ export class ThreadDecisionWatcher {
           this.retryAfterSettle(name);
           return false;
         }
-        this.deps.store.logEvent("pingpong_decision_malformed", Number(match[1]), { file: name, error: parsed.error });
+        this.deps.store.logEvent("pingpong_decision_malformed", Number(match[1]), {
+          file: name,
+          error: parsed.error,
+        });
         this.archive(name);
         return true;
       }
       this.clearInvalid(name);
       const d = parsed.value;
-      if (d.pr !== Number(match[1]) || d.thread_id !== Number(match[2]) || d.comment_id !== Number(match[3]) ||
-          !this.deps.ledger.hasClaim(d.pr, d.thread_id, d.comment_id)) {
-        this.deps.store.logEvent("pingpong_decision_rejected", d.pr, { file: name, reason: "ids do not match a claimed author message" });
+      if (
+        d.pr !== Number(match[1]) ||
+        d.thread_id !== Number(match[2]) ||
+        d.comment_id !== Number(match[3]) ||
+        !this.deps.ledger.hasClaim(d.pr, d.thread_id, d.comment_id)
+      ) {
+        this.deps.store.logEvent("pingpong_decision_rejected", d.pr, {
+          file: name,
+          reason: "ids do not match a claimed author message",
+        });
         this.archive(name);
         return true;
       }
@@ -790,10 +969,16 @@ export class ThreadDecisionWatcher {
       if (classification === "rate_limit") {
         const opened = this.deps.ledger.openBreaker(now, String(err));
         this.deps.store.logEvent("pingpong_breaker_opened", pr, {
-          file: name, streak: opened.streak, open_until: opened.open_until, error: String(err),
+          file: name,
+          streak: opened.streak,
+          open_until: opened.open_until,
+          error: String(err),
         });
         this.deps.store.logEvent("pingpong_decision_failed", pr, {
-          file: name, error: String(err), classification, attempt: this.deps.ledger.retry(commentId).attempts,
+          file: name,
+          error: String(err),
+          classification,
+          attempt: this.deps.ledger.retry(commentId).attempts,
           next_attempt_at: opened.open_until,
         });
       } else {
@@ -815,11 +1000,17 @@ export class ThreadDecisionWatcher {
           this.quarantineTerminal(name, pr, Number(match[2]), commentId, retryState.attempts);
         } else {
           this.deps.store.logEvent("pingpong_decision_retry_scheduled", pr, {
-            file: name, comment_id: commentId, attempt: retryState.attempts, next_attempt_at: retryState.next_attempt_at,
+            file: name,
+            comment_id: commentId,
+            attempt: retryState.attempts,
+            next_attempt_at: retryState.next_attempt_at,
           });
         }
         this.deps.store.logEvent("pingpong_decision_failed", pr, {
-          file: name, error: String(err), classification, attempt: retryState.attempts,
+          file: name,
+          error: String(err),
+          classification,
+          attempt: retryState.attempts,
           next_attempt_at: retryState.next_attempt_at ?? null,
         });
       }
@@ -830,7 +1021,13 @@ export class ThreadDecisionWatcher {
     }
   }
 
-  private quarantineTerminal(name: string, pr: number, threadId: number, commentId: number, attempts: number): boolean {
+  private quarantineTerminal(
+    name: string,
+    pr: number,
+    threadId: number,
+    commentId: number,
+    attempts: number,
+  ): boolean {
     try {
       mkdirSync(this.failedDir, { recursive: true });
       const source = join(this.deps.verdictDir, name);
@@ -839,16 +1036,25 @@ export class ThreadDecisionWatcher {
       if (existsSync(failedPath)) return false;
       renameSync(source, failedPath);
       this.deps.store.logEvent("pingpong_decision_retry_exhausted", pr, {
-        file: name, comment_id: commentId, attempts, failed_path: failedPath,
+        file: name,
+        comment_id: commentId,
+        attempts,
+        failed_path: failedPath,
       });
       this.deps.store.logAnomaly?.(
-        "pingpong_decision_retry_exhausted", pr, null,
+        "pingpong_decision_retry_exhausted",
+        pr,
+        null,
         `thread ${threadId} comment ${commentId} exhausted ${attempts} attempts; preserved at ${failedPath}`,
         `PING-PONG DECISION FAILED — PR #${pr}, thread ${threadId}, comment ${commentId}\nThe decision exhausted ${attempts} attempts and is preserved at ${failedPath}. Use retry-thread-decision after fixing the cause.`,
       );
       return true;
     } catch (err) {
-      this.deps.store.logEvent("pingpong_decision_quarantine_failed", pr, { file: name, comment_id: commentId, error: String(err) });
+      this.deps.store.logEvent("pingpong_decision_quarantine_failed", pr, {
+        file: name,
+        comment_id: commentId,
+        error: String(err),
+      });
       this.requestSweep(5_000);
       return false;
     }

@@ -159,7 +159,10 @@ declare module "@earendil-works/pi-coding-agent" {
     appendEntry?(entry: unknown): void | Promise<void>;
     /** VERIFY-ON-PIN: accessor for the live session's info. */
     session?: PiSessionInfo;
-    events?: { on(name: string, handler: (payload: unknown) => void): void; emit(name: string, payload: unknown): void };
+    events?: {
+      on(name: string, handler: (payload: unknown) => void): void;
+      emit(name: string, payload: unknown): void;
+    };
     exec?: (cmd: string, args?: string[]) => Promise<unknown>;
     [key: string]: unknown;
   }

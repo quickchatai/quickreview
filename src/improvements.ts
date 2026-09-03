@@ -124,7 +124,10 @@ export function parseNumstat(out: string): NumstatEntry[] {
  * default = the old hardcode, `IMPROVEMENT_DENY_PREFIXES_DEFAULT` in
  * src/config.ts); `.env`-named files are refused UNCONDITIONALLY — a secrets
  * file is never repo-shape. */
-export function deniedPath(path: string, prefixes: readonly string[] = IMPROVEMENT_DENY_PREFIXES_DEFAULT): boolean {
+export function deniedPath(
+  path: string,
+  prefixes: readonly string[] = IMPROVEMENT_DENY_PREFIXES_DEFAULT,
+): boolean {
   const p = path.replace(/^\.\//, "");
   const segments = p.split("/");
   for (const prefix of prefixes) {
@@ -162,9 +165,13 @@ function usableCap(value: unknown): value is number {
 
 /** The refusal every cap comparison in this module returns on a cap it cannot
  * compare against, or `null` when every named cap is usable. */
-function unusableCapReason(caps: Config["caps"], keys: ReadonlyArray<keyof Config["caps"]>): string | null {
+function unusableCapReason(
+  caps: Config["caps"],
+  keys: ReadonlyArray<keyof Config["caps"]>,
+): string | null {
   for (const key of keys) {
-    if (!usableCap(caps[key])) return `caps.${key} is not a usable cap (${String(caps[key])}) — refusing rather than filing uncapped`;
+    if (!usableCap(caps[key]))
+      return `caps.${key} is not a usable cap (${String(caps[key])}) — refusing rather than filing uncapped`;
   }
   return null;
 }
@@ -173,14 +180,28 @@ function unusableCapReason(caps: Config["caps"], keys: ReadonlyArray<keyof Confi
 export function checkDiffstat(entries: NumstatEntry[], caps: Config["caps"]): DiffstatVerdict {
   const files = entries.length;
   const lines = entries.reduce((n, e) => n + e.additions + e.deletions, 0);
-  const unusable = unusableCapReason(caps, ["improvement_pr_max_files", "improvement_pr_max_lines"]);
+  const unusable = unusableCapReason(caps, [
+    "improvement_pr_max_files",
+    "improvement_pr_max_lines",
+  ]);
   if (unusable !== null) return { ok: false, reason: unusable, files, lines };
   const prefixes = caps.improvement_pr_deny_prefixes ?? IMPROVEMENT_DENY_PREFIXES_DEFAULT;
   const denied = entries.filter((e) => deniedPath(e.path, prefixes)).map((e) => e.path);
   const binary = entries.filter((e) => e.binary).map((e) => e.path);
-  if (files === 0) return { ok: false, reason: "empty diff against the base branch — nothing to file", files, lines };
+  if (files === 0)
+    return {
+      ok: false,
+      reason: "empty diff against the base branch — nothing to file",
+      files,
+      lines,
+    };
   if (binary.length > 0) {
-    return { ok: false, reason: `binary file(s) not allowed in a bot improvement: ${binary.join(", ")}`, files, lines };
+    return {
+      ok: false,
+      reason: `binary file(s) not allowed in a bot improvement: ${binary.join(", ")}`,
+      files,
+      lines,
+    };
   }
   if (denied.length > 0) {
     return {
@@ -191,10 +212,20 @@ export function checkDiffstat(entries: NumstatEntry[], caps: Config["caps"]): Di
     };
   }
   if (files > caps.improvement_pr_max_files) {
-    return { ok: false, reason: `${files} files changed > cap ${caps.improvement_pr_max_files}`, files, lines };
+    return {
+      ok: false,
+      reason: `${files} files changed > cap ${caps.improvement_pr_max_files}`,
+      files,
+      lines,
+    };
   }
   if (lines > caps.improvement_pr_max_lines) {
-    return { ok: false, reason: `${lines} changed lines > cap ${caps.improvement_pr_max_lines}`, files, lines };
+    return {
+      ok: false,
+      reason: `${lines} changed lines > cap ${caps.improvement_pr_max_lines}`,
+      files,
+      lines,
+    };
   }
   return { ok: true, files, lines };
 }
@@ -202,14 +233,20 @@ export function checkDiffstat(entries: NumstatEntry[], caps: Config["caps"]): Di
 // ---- rate caps -------------------------------------------------------------
 
 function startOfDayIso(now: Date): string {
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+  return new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+  ).toISOString();
 }
 
 function daysAgoIso(now: Date, days: number): string {
   return new Date(now.getTime() - days * 86_400_000).toISOString();
 }
 
-export function improvementRateReason(store: StateStore, caps: Config["caps"], now: Date): string | null {
+export function improvementRateReason(
+  store: StateStore,
+  caps: Config["caps"],
+  now: Date,
+): string | null {
   const unusable = unusableCapReason(caps, ["improvement_pr_per_day", "improvement_pr_per_week"]);
   if (unusable !== null) return unusable; // `day >= undefined` is false: uncapped, the same fail-open as checkDiffstat's
   const day = store.filedSince("improvement_pr", startOfDayIso(now));
@@ -227,7 +264,9 @@ export function issueRateReason(store: StateStore, caps: Config["caps"], now: Da
   const unusable = unusableCapReason(caps, ["issues_per_day"]);
   if (unusable !== null) return unusable;
   const day = store.filedSince("issue", startOfDayIso(now));
-  return day >= caps.issues_per_day ? `issue day cap reached (${day}/${caps.issues_per_day})` : null;
+  return day >= caps.issues_per_day
+    ? `issue day cap reached (${day}/${caps.issues_per_day})`
+    : null;
 }
 
 // ---- issue dedup -----------------------------------------------------------
@@ -286,7 +325,8 @@ export const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,48}$/;
  * addresses the branch as `refs/heads/<name>` everywhere — an argument that
  * begins with `refs/` is never an option to any git command.
  */
-export const BRANCH_RE = /^(?!.*\.\.)(?!.*\.lock(?:\/|$))[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)*$/;
+export const BRANCH_RE =
+  /^(?!.*\.\.)(?!.*\.lock(?:\/|$))[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)*$/;
 
 export const BRANCH_MAX = 200;
 
@@ -308,18 +348,27 @@ export function botBranchFor(slug: string): string {
  * back with a reason the command executor writes into the result file for the
  * overseer.
  */
-export async function fileImprovementPr(payload: ImprovementPayload, ctx: ImprovementContext): Promise<FileOutcome> {
+export async function fileImprovementPr(
+  payload: ImprovementPayload,
+  ctx: ImprovementContext,
+): Promise<FileOutcome> {
   const now = (ctx.now ?? (() => new Date()))();
   const base = ctx.base ?? ctx.cfg.github.base_branch;
   const botBranch = botBranchFor(payload.slug);
 
   const reject = (reason: string, extra: Record<string, unknown> = {}): FileOutcome => {
-    ctx.store.logEvent("improvement_pr_rejected", null, { slug: payload.slug, branch: payload.branch, reason, ...extra });
+    ctx.store.logEvent("improvement_pr_rejected", null, {
+      slug: payload.slug,
+      branch: payload.branch,
+      reason,
+      ...extra,
+    });
     return { ok: false, reason, ...extra };
   };
 
   if (!SLUG_RE.test(payload.slug)) return reject(`bad slug '${payload.slug}'`);
-  if (!isBranchName(payload.branch)) return reject(`bad branch name '${payload.branch}' (a plain local branch name is required)`);
+  if (!isBranchName(payload.branch))
+    return reject(`bad branch name '${payload.branch}' (a plain local branch name is required)`);
 
   const rate = improvementRateReason(ctx.store, ctx.cfg.caps, now);
   if (rate) return reject(rate);
@@ -344,7 +393,9 @@ export async function fileImprovementPr(payload: ImprovementPayload, ctx: Improv
     // code to interpret.
     const found = await ctx.run(["for-each-ref", "--format=%(refname)", branchRef], repoDir);
     if (found.trim() !== branchRef) {
-      return reject(`branch '${payload.branch}' does not exist in the reviewed repo's clone — the session never prepared it`);
+      return reject(
+        `branch '${payload.branch}' does not exist in the reviewed repo's clone — the session never prepared it`,
+      );
     }
 
     const numstat = await ctx.run(["diff", "--numstat", `${baseRef}...${branchRef}`], repoDir);
@@ -373,7 +424,8 @@ export async function fileImprovementPr(payload: ImprovementPayload, ctx: Improv
     });
     // A refused push means no branch exists on the remote — opening a PR
     // against it would fail or, worse, target a stale branch of the same name.
-    if (pushResult.blocked) return reject(`gate refused the branch push: ${pushResult.blocked}`, { branch: botBranch });
+    if (pushResult.blocked)
+      return reject(`gate refused the branch push: ${pushResult.blocked}`, { branch: botBranch });
     const pushed = pushResult.executed;
 
     const pull = await ctx.adapter.createPull(botBranch, base, payload.title, payload.body);
@@ -423,7 +475,13 @@ export async function fileIssue(payload: IssuePayload, ctx: IssueContext): Promi
     // leaves a durable anomaly row against that PR, beside the result file the
     // caller reads. The cap itself is untouched: the refusal is louder, never
     // weaker, and nothing here lifts a cap or files anything around it.
-    if (pr !== null) ctx.store.logAnomaly("deferral_ticket_refused", pr, null, `${reason} (draft: "${payload.title}")`);
+    if (pr !== null)
+      ctx.store.logAnomaly(
+        "deferral_ticket_refused",
+        pr,
+        null,
+        `${reason} (draft: "${payload.title}")`,
+      );
     return { ok: false, reason, pr, ...extra };
   };
 
@@ -438,15 +496,25 @@ export async function fileIssue(payload: IssuePayload, ctx: IssueContext): Promi
   }
   const dup = findDuplicateIssue(payload.title, open);
   if (dup) {
-    return reject(`duplicate of open issue #${dup.number} "${dup.title}" (similarity ${dup.score.toFixed(2)})`, {
-      duplicate_of: dup.number,
-    });
+    return reject(
+      `duplicate of open issue #${dup.number} "${dup.title}" (similarity ${dup.score.toFixed(2)})`,
+      {
+        duplicate_of: dup.number,
+      },
+    );
   }
 
-  const result = await ctx.adapter.createIssue(payload.title, payload.body, [ctx.cfg.github.issue_label]);
+  const result = await ctx.adapter.createIssue(payload.title, payload.body, [
+    ctx.cfg.github.issue_label,
+  ]);
   const issueNumber = (result.response as { number?: number } | undefined)?.number ?? 0;
   const ref = issueNumber > 0 ? `#${issueNumber}` : null;
   ctx.store.recordFiledItem("issue", payload.title, ref);
-  ctx.store.logEvent("issue_filed", pr, { title: payload.title, issue: issueNumber || null, pr, dry_run: ctx.gate.isDryRun });
+  ctx.store.logEvent("issue_filed", pr, {
+    title: payload.title,
+    issue: issueNumber || null,
+    pr,
+    dry_run: ctx.gate.isDryRun,
+  });
   return { ok: true, issue: issueNumber > 0 ? issueNumber : null, pr, dry_run: ctx.gate.isDryRun };
 }

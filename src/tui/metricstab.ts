@@ -15,7 +15,14 @@
 //
 // Read-only like every other tab: the only VM touch is the two qcr reads
 // through the shared ssh runner, cached stale-while-revalidate.
-import type { Dist, DailyRow, MetricsPayload, MetricsWindow, OpsInfo, TimelinePayload } from "../metrics.js";
+import type {
+  Dist,
+  DailyRow,
+  MetricsPayload,
+  MetricsWindow,
+  OpsInfo,
+  TimelinePayload,
+} from "../metrics.js";
 import type { TuiConfig } from "../config.js";
 import type { App } from "./app.js";
 import { barHeight, paintCmdBar, type BarButton, type LiveKeys } from "./cmdbar.js";
@@ -27,7 +34,20 @@ import { keyChar, type BoardKey } from "./keys.js";
 // not a cleanup. Flagged here because the unused-symbol sweep
 // removed it independently, and a merge of the two auto-applies cleanly into
 // `TS2304: Cannot find name 'MUTED'` — a semantic conflict git cannot see.
-import { ACCENT, ACCENT_BG, BAD, HEADING, MUTED, OK, RESET as DRESET, SEP, STRONG, WARN, modeBadge, sectionTitle } from "./design.js";
+import {
+  ACCENT,
+  ACCENT_BG,
+  BAD,
+  HEADING,
+  MUTED,
+  OK,
+  RESET as DRESET,
+  SEP,
+  STRONG,
+  WARN,
+  modeBadge,
+  sectionTitle,
+} from "./design.js";
 import { Frame, displayWidth, fit, rule, sanitizeText, truncate } from "./paint.js";
 import { RETIRED_STATES, RETIRED_STATE_MARK, historicalStateLabel } from "./model.js";
 import { metricsArgv, metricsPrArgv, type SshRunner } from "./remote.js";
@@ -60,7 +80,10 @@ function bucketize(values: number[], n: number): number[] {
   const per = values.length / n;
   const out: number[] = [];
   for (let i = 0; i < n; i++) {
-    const slice = values.slice(Math.floor(i * per), Math.max(Math.floor((i + 1) * per), Math.floor(i * per) + 1));
+    const slice = values.slice(
+      Math.floor(i * per),
+      Math.max(Math.floor((i + 1) * per), Math.floor(i * per) + 1),
+    );
     out.push(slice.reduce((a, b) => a + b, 0) / slice.length);
   }
   return out;
@@ -76,8 +99,13 @@ export function sparkline(values: number[], width: number): string {
   if (w === 0 || values.length === 0) return "";
   const buckets = bucketize(values, Math.min(values.length, w));
   const max = Math.max(...buckets);
-  if (max <= 0) return SPARK[0]!.repeat(buckets.length);
-  return buckets.map((v) => SPARK[Math.min(SPARK.length - 1, Math.max(0, Math.floor((v / max) * (SPARK.length - 1))))]!).join("");
+  if (max <= 0) return SPARK[0].repeat(buckets.length);
+  return buckets
+    .map(
+      (v) =>
+        SPARK[Math.min(SPARK.length - 1, Math.max(0, Math.floor((v / max) * (SPARK.length - 1))))]!,
+    )
+    .join("");
 }
 
 /** Label column width for a bar row — under a third of the card, clamped. */
@@ -91,7 +119,14 @@ function labelWidth(width: number): number {
  * track so a bar end is readable, and the value sits outside the bar in
  * normal ink. `max <= 0` renders an empty track: a zero row is still a row.
  */
-export function hbar(label: string, value: number, max: number, width: number, valueText?: string, color?: string): string {
+export function hbar(
+  label: string,
+  value: number,
+  max: number,
+  width: number,
+  valueText?: string,
+  color?: string,
+): string {
   const w = Math.max(8, Math.floor(width));
   const lw = labelWidth(w);
   const vt = valueText ?? String(value);
@@ -100,7 +135,8 @@ export function hbar(label: string, value: number, max: number, width: number, v
   if (avail < 3) return fit(`${label} ${vt}`, w);
   // The bar scales across the whole row and the value rides at its end —
   // no cap, no track run-out to the far margin (the owner, 2026-08-14).
-  const filled = max > 0 ? Math.min(avail, Math.max(value > 0 ? 1 : 0, Math.round((value / max) * avail))) : 0;
+  const filled =
+    max > 0 ? Math.min(avail, Math.max(value > 0 ? 1 : 0, Math.round((value / max) * avail))) : 0;
   const bar = filled > 0 ? `${color ?? ""}${"█".repeat(filled)}${color ? RESET : ""}` : dim("·");
   return `${fit(label, lw)} ${bar} ${truncate(vt, vw)}`;
 }
@@ -146,8 +182,14 @@ export function histogramLines(dist: Dist, width: number, color: string = FG.acc
     rows.push(truncate(row, w));
   }
   rows.push(truncate(dim("▔".repeat(Math.min(chartW, w))), w));
-  const counts = buckets.map((b) => fit(b.count > 0 ? String(b.count) : "·", slot)).join("").trimEnd();
-  const axis = buckets.map((b) => fit(b.label.replace(/^</, ""), slot)).join("").trimEnd();
+  const counts = buckets
+    .map((b) => fit(b.count > 0 ? String(b.count) : "·", slot))
+    .join("")
+    .trimEnd();
+  const axis = buckets
+    .map((b) => fit(b.label.replace(/^</, ""), slot))
+    .join("")
+    .trimEnd();
   rows.push(truncate(dim(counts), w));
   rows.push(truncate(dim(axis), w));
   return rows;
@@ -158,7 +200,12 @@ export function histogramLines(dist: Dist, width: number, color: string = FG.acc
  * full `█` rows plus a fractional top glyph, single hue, dim `·` baseline for
  * a zero day. Series longer than the width are bucket-averaged.
  */
-export function columnChart(values: number[], width: number, height: number, color: string): string[] {
+export function columnChart(
+  values: number[],
+  width: number,
+  height: number,
+  color: string,
+): string[] {
   const w = Math.max(1, Math.floor(width));
   const h = Math.max(1, Math.floor(height));
   if (values.length === 0) return [];
@@ -191,7 +238,8 @@ export function dayAxis(days: string[], width: number, slot: number): string {
   const put = (idx: number, text: string): void => {
     const start = Math.min(Math.max(0, idx * slot), w - text.length);
     if (start < 0) return;
-    for (let i = start - 1; i <= start + text.length; i++) if (i >= 0 && i < w && buf[i] !== " ") return;
+    for (let i = start - 1; i <= start + text.length; i++)
+      if (i >= 0 && i < w && buf[i] !== " ") return;
     for (let i = 0; i < text.length; i++) buf[start + i] = text[i]!;
   };
   const short = (d: string): string => (d.length >= 10 ? d.slice(5) : d);
@@ -317,7 +365,12 @@ function barList(
   return lines;
 }
 
-function barsFromRecord(rec: Record<string, number>, width: number, accent: string, fmt: (v: number) => string): string[] {
+function barsFromRecord(
+  rec: Record<string, number>,
+  width: number,
+  accent: string,
+  fmt: (v: number) => string,
+): string[] {
   const rows = Object.entries(rec)
     .sort((a, b) => b[1] - a[1])
     .map(([k, v]) => ({ label: k, value: v, text: fmt(v) }));
@@ -351,7 +404,9 @@ export function opsLines(
     // No snapshot at all means we cannot claim a mode — "LIVE" is the one
     // label that must never be guessed.
     const mode = ops.heartbeat === null ? dim("mode unknown") : modeBadge(ops.dry_run);
-    const beatS = ops.heartbeat ? Math.max(0, Math.floor((now.getTime() - new Date(ops.heartbeat).getTime()) / 1000)) : null;
+    const beatS = ops.heartbeat
+      ? Math.max(0, Math.floor((now.getTime() - new Date(ops.heartbeat).getTime()) / 1000))
+      : null;
     const beat =
       ops.heartbeat === null
         ? `${FG.anomaly}no heartbeat${RESET}`
@@ -370,7 +425,7 @@ export function opsLines(
         local.head === b.sha
           ? `${OK}✓${DRESET} ${FG.dim}your checkout (${local.head}) is what the VM runs${RESET}`
           : `${WARN}${STRONG}deploy needed${DRESET}${SEP}` +
-            `${local.ahead === undefined ? `local ${local.head} differs` : `${local.ahead} commit${local.ahead === 1 ? "" : "s"} ahead (${local.head})`}`,
+              `${local.ahead === undefined ? `local ${local.head} differs` : `${local.ahead} commit${local.ahead === 1 ? "" : "s"} ahead (${local.head})`}`,
       );
     }
   }
@@ -384,7 +439,8 @@ export function opsLines(
     lines.push(dim("no events in this window"));
   } else {
     const max = kinds.reduce((m, k) => Math.max(m, k.count), 0);
-    for (const k of kinds.slice(0, 8)) lines.push(hbar(k.kind, k.count, max, width, String(k.count), ACCENTS.magenta));
+    for (const k of kinds.slice(0, 8))
+      lines.push(hbar(k.kind, k.count, max, width, String(k.count), ACCENTS.magenta));
     if (kinds.length > 8) lines.push(dim(`…+${kinds.length - 8} more kinds`));
   }
   return lines;
@@ -414,7 +470,9 @@ export function cancellationLines(win: MetricsWindow, width: number): string[] {
   lines.push(
     c.loud > 0
       ? `${BAD}${c.loud} stopped dead${DRESET} ${FG.dim}— no verdict inside the deadline; the rest is the system working${RESET}`
-      : dim("none stopped dead — every cancellation here is a redeploy artefact or a superseded round"),
+      : dim(
+          "none stopped dead — every cancellation here is a redeploy artefact or a superseded round",
+        ),
   );
   return lines;
 }
@@ -437,7 +495,12 @@ export interface MetricsCardsExtra {
   now?: Date;
 }
 
-export function metricsCards(win: MetricsWindow, daily: DailyRow[], rows = 24, extra: MetricsCardsExtra = {}): MetricsCard[] {
+export function metricsCards(
+  win: MetricsWindow,
+  daily: DailyRow[],
+  rows = 24,
+  extra: MetricsCardsExtra = {},
+): MetricsCard[] {
   const chartH = activityChartHeight(rows);
   const now = extra.now ?? new Date();
   const opsSubtitle = extra.ops
@@ -446,7 +509,8 @@ export function metricsCards(win: MetricsWindow, daily: DailyRow[], rows = 24, e
   return [
     {
       title: "ACTIVITY",
-      subtitle: daily.length > 0 ? `${daily[0]!.day} → ${daily[daily.length - 1]!.day}` : "per ops day",
+      subtitle:
+        daily.length > 0 ? `${daily[0]!.day} → ${daily[daily.length - 1]!.day}` : "per ops day",
       accent: ACCENTS.cyan,
       body: (w) => {
         if (daily.length === 0) return [dim("no data yet")];
@@ -492,7 +556,12 @@ export function metricsCards(win: MetricsWindow, daily: DailyRow[], rows = 24, e
       accent: ACCENTS.green,
       body: (w) =>
         barList(
-          win.verdict_mix.map((r) => ({ label: r.verdict, value: r.count, text: String(r.count), color: verdictColor(r.verdict) })),
+          win.verdict_mix.map((r) => ({
+            label: r.verdict,
+            value: r.count,
+            text: String(r.count),
+            color: verdictColor(r.verdict),
+          })),
           w,
           ACCENTS.green,
         ),
@@ -518,7 +587,8 @@ export function metricsCards(win: MetricsWindow, daily: DailyRow[], rows = 24, e
               return {
                 label: historicalStateLabel(r.state),
                 value: r.median_s ?? 0,
-                text: retired === undefined ? fmtDur(r.median_s) : `${fmtDur(r.median_s)} · ${retired}`,
+                text:
+                  retired === undefined ? fmtDur(r.median_s) : `${fmtDur(r.median_s)} · ${retired}`,
                 color: retired === undefined ? stateColor(r.state) : MUTED,
               };
             }),
@@ -568,7 +638,13 @@ export function metricsCards(win: MetricsWindow, daily: DailyRow[], rows = 24, e
       accent: ACCENTS.green,
       body: (w) =>
         barList(
-          win.size.filter((r) => r.prs > 0).map((r) => ({ label: r.bucket, value: r.prs, text: `${r.prs} · ${fmtDur(r.median_ttfv_s)}` })),
+          win.size
+            .filter((r) => r.prs > 0)
+            .map((r) => ({
+              label: r.bucket,
+              value: r.prs,
+              text: `${r.prs} · ${fmtDur(r.median_ttfv_s)}`,
+            })),
           w,
           ACCENTS.green,
         ),
@@ -669,7 +745,11 @@ export function windowSwitcher(
   for (const w of WINDOW_LABELS) {
     const plain = `[ ${w.label} ]`;
     zones.push({ x1: x, x2: x + plain.length - 1, window: w.key });
-    parts.push(w.key === selected ? `${ACCENT_BG}${plain}${DRESET}` : `${FG.dim}[${RESET} ${w.label} ${FG.dim}]${RESET}`);
+    parts.push(
+      w.key === selected
+        ? `${ACCENT_BG}${plain}${DRESET}`
+        : `${FG.dim}[${RESET} ${w.label} ${FG.dim}]${RESET}`,
+    );
     x += plain.length + 1;
   }
   return { text: parts.join(" "), zones };
@@ -701,21 +781,37 @@ export function kindColor(kind: string): string {
 export function timelineLines(tl: TimelinePayload, width: number, now: Date): string[] {
   const lines: string[] = [];
   const title = tl.title ? sanitizeText(tl.title) : "(unknown PR)";
-  lines.push(truncate(`${HEADING}#${tl.pr}${DRESET} ${STRONG}${title}${DRESET}${tl.author ? ` ${FG.author}${tl.author}${RESET}` : ""}`, width));
+  lines.push(
+    truncate(
+      `${HEADING}#${tl.pr}${DRESET} ${STRONG}${title}${DRESET}${tl.author ? ` ${FG.author}${tl.author}${RESET}` : ""}`,
+      width,
+    ),
+  );
   if (!tl.known) {
     lines.push(`${FG.dim}the daemon has no record of this PR${RESET}`);
     return lines;
   }
   lines.push(truncate(section("TIMELINE", `${tl.items.length} events, oldest first`), width));
   for (const item of tl.items) {
-    lines.push(truncate(`${FG.dim}${fit(fmtAge(item.ts, now), 5)}${RESET} ${kindColor(item.kind)}${kindGlyph(item.kind)}${RESET} ${item.label}`, width));
-    if (item.detail) lines.push(truncate(`      ${FG.dim}${sanitizeText(item.detail)}${RESET}`, width));
+    lines.push(
+      truncate(
+        `${FG.dim}${fit(fmtAge(item.ts, now), 5)}${RESET} ${kindColor(item.kind)}${kindGlyph(item.kind)}${RESET} ${item.label}`,
+        width,
+      ),
+    );
+    if (item.detail)
+      lines.push(truncate(`      ${FG.dim}${sanitizeText(item.detail)}${RESET}`, width));
   }
   if (tl.backfilled_rounds.length > 0) {
     lines.push("");
     lines.push(truncate(section("BACKFILLED ROUNDS", "reconstructed from GitHub"), width));
     for (const r of tl.backfilled_rounds) {
-      lines.push(truncate(`  r${r.round_no} ${verdictColor(r.verdict)}${r.verdict ?? "—"}${RESET} ${FG.dim}${r.submitted_at}${RESET}`, width));
+      lines.push(
+        truncate(
+          `  r${r.round_no} ${verdictColor(r.verdict)}${r.verdict ?? "—"}${RESET} ${FG.dim}${r.submitted_at}${RESET}`,
+          width,
+        ),
+      );
     }
   }
   return lines;
@@ -734,10 +830,19 @@ export function timelineLines(tl: TimelinePayload, width: number, now: Date): st
  */
 export function metricsKeys(view: MetricsView): LiveKeys {
   if (view.prEntry !== undefined) {
-    return { bar: [{ key: "\r", label: "⏎ open" }, { key: "\x1b", label: "Esc cancel" }], inline: [..."0123456789"] };
+    return {
+      bar: [
+        { key: "\r", label: "⏎ open" },
+        { key: "\x1b", label: "Esc cancel" },
+      ],
+      inline: [..."0123456789"],
+    };
   }
   if (view.drill) return { bar: [{ key: "\x1b", label: "Esc back" }], inline: [] };
-  const bar: BarButton[] = WINDOW_LABELS.map((w) => ({ key: w.hotkey, label: `${w.hotkey} ${w.label}` }));
+  const bar: BarButton[] = WINDOW_LABELS.map((w) => ({
+    key: w.hotkey,
+    label: `${w.hotkey} ${w.label}`,
+  }));
   bar.push({ key: "#", label: "# pr" });
   return { bar, inline: [] };
 }
@@ -761,8 +866,13 @@ export function renderMetrics(view: MetricsView, cols: number, rows: number): Fr
   if (drill) {
     const lines = drill.payload
       ? timelineLines(drill.payload, cols - 4, now)
-      : [drill.error ? `${FG.dim}metrics unavailable: ${drill.error}${RESET}` : `${FG.dim}loading timeline for #${drill.pr}…${RESET}`];
-    for (let r = 0; r < rows - 2 - barRows; r++) frame.boxRow(1 + r, [{ text: ` ${lines[view.scroll + r] ?? ""}`, width: cols - 2 }]);
+      : [
+          drill.error
+            ? `${FG.dim}metrics unavailable: ${drill.error}${RESET}`
+            : `${FG.dim}loading timeline for #${drill.pr}…${RESET}`,
+        ];
+    for (let r = 0; r < rows - 2 - barRows; r++)
+      frame.boxRow(1 + r, [{ text: ` ${lines[view.scroll + r] ?? ""}`, width: cols - 2 }]);
     paintCmdBar(frame, "metrics", cols, rows, live.bar);
     frame.set(rows - 1, rule(cols, "└", "┘", []));
     return frame;
@@ -770,17 +880,31 @@ export function renderMetrics(view: MetricsView, cols: number, rows: number): Fr
 
   // Window switcher (row 1) + its click zones.
   const sw = windowSwitcher(view.window, 3);
-  const entry = view.prEntry !== undefined ? `   ${FG.accent}#${view.prEntry}▁${RESET} ${FG.dim}⏎ open timeline · Esc cancel${RESET}` : "";
-  const generated = view.payload ? `${FG.dim}generated ${fmtAge(view.payload.generated_at, now)} ago${RESET}` : "";
+  const entry =
+    view.prEntry !== undefined
+      ? `   ${FG.accent}#${view.prEntry}▁${RESET} ${FG.dim}⏎ open timeline · Esc cancel${RESET}`
+      : "";
+  const generated = view.payload
+    ? `${FG.dim}generated ${fmtAge(view.payload.generated_at, now)} ago${RESET}`
+    : "";
   frame.boxRow(1, [{ text: ` ${sw.text}${entry}   ${generated}`, width: cols - 2 }]);
   for (const z of sw.zones) {
-    frame.zones.push({ x1: z.x1, y1: 2, x2: z.x2, y2: 2, action: { t: "window", window: z.window } satisfies MetricsAction });
+    frame.zones.push({
+      x1: z.x1,
+      y1: 2,
+      x2: z.x2,
+      y2: 2,
+      action: { t: "window", window: z.window } satisfies MetricsAction,
+    });
   }
 
   const bodyRows = rows - 4 - barRows; // top bar + switcher + stat strip + command bar + bottom
   if (!view.payload) {
-    const msg = view.error ? `${FG.dim}metrics unavailable: ${view.error}${RESET}` : `${FG.dim}loading metrics…${RESET}`;
-    for (let r = 2; r <= rows - 2 - barRows; r++) frame.boxRow(r, [{ text: r === 2 ? ` ${msg}` : "", width: cols - 2 }]);
+    const msg = view.error
+      ? `${FG.dim}metrics unavailable: ${view.error}${RESET}`
+      : `${FG.dim}loading metrics…${RESET}`;
+    for (let r = 2; r <= rows - 2 - barRows; r++)
+      frame.boxRow(r, [{ text: r === 2 ? ` ${msg}` : "", width: cols - 2 }]);
     paintCmdBar(frame, "metrics", cols, rows, live.bar);
     frame.set(rows - 1, rule(cols, "└", "┘", []));
     return frame;
@@ -830,7 +954,8 @@ export class SshMetricsFetcher implements MetricsFetcher {
 
   private async read<T>(argv: string[]): Promise<MetricsFetchResult<T>> {
     const res = await this.ssh(this.cfg.ssh_host, argv);
-    if (!res.ok) return { error: res.stderr.trim().split("\n")[0] || `qcr exited ${res.code ?? "?"}` };
+    if (!res.ok)
+      return { error: res.stderr.trim().split("\n")[0] || `qcr exited ${res.code ?? "?"}` };
     try {
       return { payload: JSON.parse(res.stdout) as T };
     } catch {
@@ -851,7 +976,11 @@ export class SshMetricsFetcher implements MetricsFetcher {
 
 export const METRICS_TTL_MS = 60_000;
 
-export function installMetricsHooks(app: App, fetcher?: MetricsFetcher, probe?: LocalHeadProbe): MetricsView {
+export function installMetricsHooks(
+  app: App,
+  fetcher?: MetricsFetcher,
+  probe?: LocalHeadProbe,
+): MetricsView {
   const f = fetcher ?? new SshMetricsFetcher(app.cfg, app.ssh);
   const view: MetricsView = { window: "d7", loading: false, scroll: 0, dryRun: app.view.dryRun };
   let fetchedAt = 0;

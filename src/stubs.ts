@@ -32,12 +32,20 @@ export function stubHookPaths(root: string): StubHookPaths {
   };
 }
 
-export function stubSessionHooks(root: string, log: (msg: string, extra?: unknown) => void = () => {}): SessionHooks {
+export function stubSessionHooks(
+  root: string,
+  log: (msg: string, extra?: unknown) => void = () => {},
+): SessionHooks {
   const paths = stubHookPaths(root);
   return {
     async dispatchRound(order: RoundOrder, renderedPrompt: string): Promise<void> {
-      const path = writeJson(paths.roundOrders, `${order.pr}-${order.round_no}.json`, { order, prompt: renderedPrompt });
-      log(`[stub] dispatchRound #${order.pr} round ${order.round_no} (${order.round_type}) → ${path}`);
+      const path = writeJson(paths.roundOrders, `${order.pr}-${order.round_no}.json`, {
+        order,
+        prompt: renderedPrompt,
+      });
+      log(
+        `[stub] dispatchRound #${order.pr} round ${order.round_no} (${order.round_type}) → ${path}`,
+      );
     },
     async inject(pr: number, message: string): Promise<void> {
       const path = writeJson(paths.injections, `pr-${pr}-${stamp()}.json`, { pr, message });
@@ -48,7 +56,10 @@ export function stubSessionHooks(root: string, log: (msg: string, extra?: unknow
       log(`[stub] injectOverseer → ${path}`);
     },
     async archiveAndClose(pr: number): Promise<void> {
-      const path = writeJson(paths.archives, `pr-${pr}-${stamp()}.json`, { pr, requested_at: new Date().toISOString() });
+      const path = writeJson(paths.archives, `pr-${pr}-${stamp()}.json`, {
+        pr,
+        requested_at: new Date().toISOString(),
+      });
       log(`[stub] archiveAndClose #${pr} → ${path}`);
     },
   };

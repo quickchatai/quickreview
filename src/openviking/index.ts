@@ -10,7 +10,15 @@ export {
   type SupervisedChild,
   type SupervisorDeps,
 } from "./supervisor.js";
-export type { Embedder, OpenVikingHealth, OpenVikingStatus, ProcSample, ReembedJournalStatus, ReembedNamespace, ReembedStatus } from "./types.js";
+export type {
+  Embedder,
+  OpenVikingHealth,
+  OpenVikingStatus,
+  ProcSample,
+  ReembedJournalStatus,
+  ReembedNamespace,
+  ReembedStatus,
+} from "./types.js";
 // The embedder migration's daemon half: drives the script's
 // `resume` once /ready passes and folds the journal into the heartbeat.
 export {

@@ -37,7 +37,12 @@ const NOW = new Date("2026-08-14T12:00:00Z");
 
 // ---- fixtures (structural copies of the M1 contract) ------------------------
 
-const dist = (n: number, median: number | null, p90: number | null, histogram: Array<{ label: string; count: number }>) => ({ median, p90, n, histogram });
+const dist = (
+  n: number,
+  median: number | null,
+  p90: number | null,
+  histogram: Array<{ label: string; count: number }>,
+) => ({ median, p90, n, histogram });
 
 const emptyDist = dist(0, null, null, [
   { label: "0", count: 0 },
@@ -45,7 +50,15 @@ const emptyDist = dist(0, null, null, [
 ]);
 
 const fullWindow = {
-  header: { prs_triggered: 12, prs_reviewed: 9, approvals: 5, request_changes: 4, rounds: 21, spend_usd: 31.5, overruns: 2 },
+  header: {
+    prs_triggered: 12,
+    prs_reviewed: 9,
+    approvals: 5,
+    request_changes: 4,
+    rounds: 21,
+    spend_usd: 31.5,
+    overruns: 2,
+  },
   ttfv: {
     ...dist(9, 900, 3600, [
       { label: "<5m", count: 2 },
@@ -66,14 +79,28 @@ const fullWindow = {
     { verdict: "REQUEST_CHANGES", count: 4 },
     { verdict: "COMMENT", count: 1 },
   ],
-  spend: { per_pr_median: 2.4, per_pr_p90: 6.1, by_round_type: { full: 22.5, followup: 9 }, by_lens: { security: 12, correctness: 19.5 } },
+  spend: {
+    per_pr_median: 2.4,
+    per_pr_p90: 6.1,
+    by_round_type: { full: 22.5, followup: 9 },
+    by_lens: { security: 12, correctness: 19.5 },
+  },
   rounds_until_resolution: dist(6, 2, 4, [
     { label: "1", count: 2 },
     { label: "2", count: 3 },
     { label: "3+", count: 1 },
   ]),
-  duration: { ...dist(21, 540, 1500, [{ label: "<10m", count: 12 }, { label: "<30m", count: 9 }]), overrun_rate: 0.095 },
-  author_response: dist(7, 5400, 86_400, [{ label: "<1h", count: 4 }, { label: "<1d", count: 3 }]),
+  duration: {
+    ...dist(21, 540, 1500, [
+      { label: "<10m", count: 12 },
+      { label: "<30m", count: 9 },
+    ]),
+    overrun_rate: 0.095,
+  },
+  author_response: dist(7, 5400, 86_400, [
+    { label: "<1h", count: 4 },
+    { label: "<1d", count: 3 },
+  ]),
   review_depth: emptyDist,
   size: [
     { bucket: "XS", prs: 4, median_ttfv_s: 600 },
@@ -108,7 +135,10 @@ const ops = {
   build: { sha: "abc1234", at: "2026-08-13T12:00:00Z", mode: "sync" },
 };
 
-const allWindow = { ...fullWindow, header: { ...fullWindow.header, prs_triggered: 140, rounds: 302, spend_usd: 410.25 } };
+const allWindow = {
+  ...fullWindow,
+  header: { ...fullWindow.header, prs_triggered: 140, rounds: 302, spend_usd: 410.25 },
+};
 
 const daily = [
   { day: "2026-08-11", rounds: 3, prs: 2, spend_usd: 4.5, approvals: 1, request_changes: 1 },
@@ -131,12 +161,29 @@ const timeline = {
   title: "fix(ui): frame the buttons",
   author: "jbennett",
   items: [
-    { ts: "2026-08-14T09:00:00Z", kind: "trigger", label: "triggered by label", detail: "AI review requested" },
+    {
+      ts: "2026-08-14T09:00:00Z",
+      kind: "trigger",
+      label: "triggered by label",
+      detail: "AI review requested",
+    },
     { ts: "2026-08-14T09:01:00Z", kind: "state", label: "queued → reviewing", detail: null },
-    { ts: "2026-08-14T09:30:00Z", kind: "round_finish", label: "round 1 finished", detail: "REQUEST_CHANGES · $1.20" },
+    {
+      ts: "2026-08-14T09:30:00Z",
+      kind: "round_finish",
+      label: "round 1 finished",
+      detail: "REQUEST_CHANGES · $1.20",
+    },
     { ts: "2026-08-14T11:48:00Z", kind: "push", label: "author pushed 19277cd" },
   ],
-  backfilled_rounds: [{ round_no: 1, submitted_at: "2026-08-14T09:30:00Z", verdict: "REQUEST_CHANGES", trigger_ts: "2026-08-14T09:00:00Z" }],
+  backfilled_rounds: [
+    {
+      round_no: 1,
+      submitted_at: "2026-08-14T09:30:00Z",
+      verdict: "REQUEST_CHANGES",
+      trigger_ts: "2026-08-14T09:00:00Z",
+    },
+  ],
 };
 
 const mkView = (
@@ -173,7 +220,12 @@ function fakeStreams() {
   input.resume = () => {};
   input.pause = () => {};
   input.setRawMode = () => {};
-  return { out, input, written: () => buf, type: (s: string | Buffer) => input.emit("data", Buffer.from(s)) };
+  return {
+    out,
+    input,
+    written: () => buf,
+    type: (s: string | Buffer) => input.emit("data", Buffer.from(s)),
+  };
 }
 
 // ---- chart primitives -------------------------------------------------------
@@ -191,7 +243,12 @@ describe("chart primitives", () => {
 
   it("sparkline bucket-averages a series longer than the width", () => {
     expect(sparkline([1, 1, 4, 4], 2)).toBe("▂█");
-    expect(sparkline(daily.map((d) => d.rounds), 10)).toHaveLength(4);
+    expect(
+      sparkline(
+        daily.map((d) => d.rounds),
+        10,
+      ),
+    ).toHaveLength(4);
   });
 
   it("hbar scales across the row with the value riding at the bar's end", () => {
@@ -246,7 +303,13 @@ describe("chart primitives", () => {
   });
 
   it("histogramLines scales to the max count and collapses at n=0", () => {
-    const lines = histogramLines(dist(3, 1, 1, [{ label: "a", count: 3 }, { label: "b", count: 0 }]), 20);
+    const lines = histogramLines(
+      dist(3, 1, 1, [
+        { label: "a", count: 3 },
+        { label: "b", count: 0 },
+      ]),
+      20,
+    );
     expect(stripAnsi(lines[3]!)).toContain("█"); // the max bucket fills the bottom bar row
     expect(stripAnsi(lines[5]!)).toContain("·"); // the zero bucket's dot lives in the counts row
     expect(histogramLines(emptyDist, 40)).toEqual([]); // title says "no data yet"
@@ -261,7 +324,12 @@ describe("chart primitives", () => {
     expect(plain[0]![1]).toBe(" "); // the half-height column starts lower
     expect(stripAnsi(columnChart([1, 1], 2, 3, ACCENTS.blue)[0]!)).toBe("██");
     expect(columnChart([], 10, 4, ACCENTS.blue)).toEqual([]);
-    for (const line of columnChart(daily.map((d) => d.rounds), 12, 6, ACCENTS.blue)) {
+    for (const line of columnChart(
+      daily.map((d) => d.rounds),
+      12,
+      6,
+      ACCENTS.blue,
+    )) {
       expect(displayWidth(line)).toBeLessThanOrEqual(12);
     }
   });
@@ -305,7 +373,8 @@ describe("metrics dashboard", () => {
   });
 
   describe("CANCELLED ROUNDS card", () => {
-    const card = (win: unknown) => metricsCards(win as never, daily, 24).find((c) => c.title === "CANCELLED ROUNDS")!;
+    const card = (win: unknown) =>
+      metricsCards(win as never, daily, 24).find((c) => c.title === "CANCELLED ROUNDS")!;
 
     it("groups by cause and says how many stopped dead", () => {
       const c = card(fullWindow);
@@ -323,7 +392,9 @@ describe("metrics dashboard", () => {
         cancellations: {
           total: 20,
           loud: 0,
-          by_cause: [{ cause: "orphan_sweep", label: "orphan sweep (redeploy)", count: 20, loud: false }],
+          by_cause: [
+            { cause: "orphan_sweep", label: "orphan sweep (redeploy)", count: 20, loud: false },
+          ],
         },
       };
       expect(stripAnsi(statStrip(quiet as never, 200))).toContain("stopped 0");
@@ -346,7 +417,9 @@ describe("metrics dashboard", () => {
       const strip = stripAnsi(statStrip(legacy as never, 200));
       expect(strip).toContain("stopped ?");
       expect(strip).not.toContain("stopped 0");
-      expect(stripAnsi(card(legacy).body(50).join("\n"))).toContain("not reported by the daemon build");
+      expect(stripAnsi(card(legacy).body(50).join("\n"))).toContain(
+        "not reported by the daemon build",
+      );
     });
   });
 
@@ -380,7 +453,13 @@ describe("metrics dashboard", () => {
 
   it("gives every distribution card exactly title + chart + labels", () => {
     const cards = metricsCards(fullWindow as never, daily, 24);
-    for (const title of ["TIME TO FIRST VERDICT", "ROUND DURATION", "ROUNDS UNTIL RESOLUTION", "AUTHOR RESPONSE", "PING-PONG"]) {
+    for (const title of [
+      "TIME TO FIRST VERDICT",
+      "ROUND DURATION",
+      "ROUNDS UNTIL RESOLUTION",
+      "AUTHOR RESPONSE",
+      "PING-PONG",
+    ]) {
       const card = cards.find((c) => c.title === title)!;
       expect(card.body(60).length).toBeLessThanOrEqual(7);
     }
@@ -388,7 +467,11 @@ describe("metrics dashboard", () => {
     for (const card of cards) {
       for (const line of card.body(60)) {
         const plain = stripAnsi(line);
-        expect(/[█▇▆▅▄▃▂▁░]\s*\S*[A-Za-z]/.test(plain.replace(/^[^█▇▆▅▄▃▂▁░]*/, "").replace(/\s+\S+$/, ""))).toBe(false);
+        expect(
+          /[█▇▆▅▄▃▂▁░]\s*\S*[A-Za-z]/.test(
+            plain.replace(/^[^█▇▆▅▄▃▂▁░]*/, "").replace(/\s+\S+$/, ""),
+          ),
+        ).toBe(false);
       }
     }
   });
@@ -403,7 +486,13 @@ describe("metrics dashboard", () => {
   });
 
   it("caps the lens list at six rows plus a dim overflow row", () => {
-    const many = { ...fullWindow, spend: { ...fullWindow.spend, by_lens: Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`lens${i}`, 9 - i])) } };
+    const many = {
+      ...fullWindow,
+      spend: {
+        ...fullWindow.spend,
+        by_lens: Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`lens${i}`, 9 - i])),
+      },
+    };
     const card = metricsCards(many as never, daily, 24).find((c) => c.title === "SPEND BY LENS")!;
     const body = card.body(50).map(stripAnsi);
     expect(body).toHaveLength(7);
@@ -467,8 +556,12 @@ describe("metrics dashboard", () => {
   });
 
   it("switches windows: 7d / 30d / all pick different aggregates", () => {
-    const week = renderMetrics(mkView({ window: "d7" }), 160, 44).lines.map(stripAnsi).join("\n");
-    const all = renderMetrics(mkView({ window: "all" }), 160, 44).lines.map(stripAnsi).join("\n");
+    const week = renderMetrics(mkView({ window: "d7" }), 160, 44)
+      .lines.map(stripAnsi)
+      .join("\n");
+    const all = renderMetrics(mkView({ window: "all" }), 160, 44)
+      .lines.map(stripAnsi)
+      .join("\n");
     expect(week).toContain("triggered 12");
     expect(all).toContain("triggered 140");
     expect(all).toContain("$410.25");
@@ -489,9 +582,17 @@ describe("metrics dashboard", () => {
   });
 
   it("shows loading and error states instead of crashing", () => {
-    const loading = renderMetrics(mkView({ payload: undefined }), 100, 24).lines.map(stripAnsi).join("\n");
+    const loading = renderMetrics(mkView({ payload: undefined }), 100, 24)
+      .lines.map(stripAnsi)
+      .join("\n");
     expect(loading).toContain("loading metrics…");
-    const failed = renderMetrics(mkView({ payload: undefined, error: "ssh: connect timed out" }), 100, 24).lines.map(stripAnsi).join("\n");
+    const failed = renderMetrics(
+      mkView({ payload: undefined, error: "ssh: connect timed out" }),
+      100,
+      24,
+    )
+      .lines.map(stripAnsi)
+      .join("\n");
     expect(failed).toContain("metrics unavailable: ssh: connect timed out");
   });
 
@@ -516,7 +617,9 @@ describe("metrics dashboard", () => {
 // ---- the OPERATIONS card ----------------------------------------------------
 
 describe("OPERATIONS card", () => {
-  const lines = (over: { ops?: unknown; local?: { head?: string; ahead?: number }; win?: unknown } = {}) =>
+  const lines = (
+    over: { ops?: unknown; local?: { head?: string; ahead?: number }; win?: unknown } = {},
+  ) =>
     opsLines(
       ("ops" in over ? over.ops : ops) as never,
       over.local,
@@ -527,7 +630,11 @@ describe("OPERATIONS card", () => {
 
   it("sorts right after ACTIVITY", () => {
     const cards = metricsCards(fullWindow as never, daily, 24, { ops: ops as never, now: NOW });
-    expect(cards.map((c) => c.title).slice(0, 3)).toEqual(["ACTIVITY", "OPERATIONS", "TIME TO FIRST VERDICT"]);
+    expect(cards.map((c) => c.title).slice(0, 3)).toEqual([
+      "ACTIVITY",
+      "OPERATIONS",
+      "TIME TO FIRST VERDICT",
+    ]);
     const [, operations] = cards;
     expect(operations!.subtitle).toContain("dry-run");
     expect(operations!.subtitle).toContain("abc1234");
@@ -559,7 +666,13 @@ describe("OPERATIONS card", () => {
     expect(lines({ local: { head: "deadbee" } })[2]!).toContain("local deadbee differs");
     expect(lines({ local: { head: "deadbee", ahead: 1 } })[2]!).toContain("1 commit ahead");
     // the warn color is on the words, not just implied
-    const colored = opsLines(ops as never, { head: "deadbee", ahead: 4 }, fullWindow as never, 60, NOW);
+    const colored = opsLines(
+      ops as never,
+      { head: "deadbee", ahead: 4 },
+      fullWindow as never,
+      60,
+      NOW,
+    );
     expect(colored[2]!).toContain(WARN);
   });
 
@@ -588,7 +701,9 @@ describe("OPERATIONS card", () => {
     const capped = lines({ win: { ...fullWindow, events_by_kind: many } });
     expect(capped.filter((l) => /^kind_/.test(l))).toHaveLength(8);
     expect(capped.join("\n")).toContain("…+4 more kinds");
-    expect(lines({ win: { ...fullWindow, events_by_kind: [] } }).join("\n")).toContain("no events in this window");
+    expect(lines({ win: { ...fullWindow, events_by_kind: [] } }).join("\n")).toContain(
+      "no events in this window",
+    );
   });
 
   it("re-renders from the selected window's events (window-responsive)", () => {
@@ -604,9 +719,7 @@ describe("local-head probe", () => {
     const calls: string[][] = [];
     const probe = localHeadProbe(async (argv) => {
       calls.push(argv);
-      return argv.includes("log")
-        ? ok("aaa one\nbbb two\n")
-        : ok("deadbee\n");
+      return argv.includes("log") ? ok("aaa one\nbbb two\n") : ok("deadbee\n");
     });
     expect(await probe.read("abc1234")).toEqual({ head: "deadbee", ahead: 2 });
     expect(calls[0]).toEqual(["git", "rev-parse", "--short", "HEAD"]);
@@ -614,7 +727,12 @@ describe("local-head probe", () => {
   });
 
   it("degrades when git is unavailable or the sha is unknown", async () => {
-    const failing = localHeadProbe(async () => ({ ok: false, stdout: "", stderr: "not a git repo", code: 128 }));
+    const failing = localHeadProbe(async () => ({
+      ok: false,
+      stdout: "",
+      stderr: "not a git repo",
+      code: 128,
+    }));
     expect(await failing.read("abc1234")).toEqual({});
     const noSha = localHeadProbe(async () => ok("deadbee\n"));
     expect(await noSha.read(null)).toEqual({ head: "deadbee" });
@@ -626,7 +744,10 @@ describe("local-head probe", () => {
     const asked: Array<string | null> = [];
     const view = installMetricsHooks(
       app,
-      { overall: async () => ({ payload: payload as never }), timeline: async () => ({ payload: timeline as never }) },
+      {
+        overall: async () => ({ payload: payload as never }),
+        timeline: async () => ({ payload: timeline as never }),
+      },
       { read: async (sha) => (asked.push(sha), { head: "deadbee", ahead: 4 }) },
     );
     const run = app.run();
@@ -647,7 +768,10 @@ describe("local-head probe", () => {
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     const view = installMetricsHooks(
       app,
-      { overall: async () => ({ payload: payload as never }), timeline: async () => ({ payload: timeline as never }) },
+      {
+        overall: async () => ({ payload: payload as never }),
+        timeline: async () => ({ payload: timeline as never }),
+      },
       {
         read: async () => {
           throw new Error("git exploded");
@@ -674,7 +798,12 @@ describe("per-PR timeline", () => {
     expect(body).toContain("#5265 fix(ui): frame the buttons jbennett");
     expect(body).toContain("triggered by label");
     expect(body).toContain("REQUEST_CHANGES · $1.20");
-    const order = ["triggered by label", "queued → reviewing", "round 1 finished", "author pushed"].map((s) => lines.findIndex((l) => l.includes(s)));
+    const order = [
+      "triggered by label",
+      "queued → reviewing",
+      "round 1 finished",
+      "author pushed",
+    ].map((s) => lines.findIndex((l) => l.includes(s)));
     expect(order).toEqual([...order].sort((a, b) => a - b));
     expect(order[0]).toBeGreaterThan(0);
     expect(lines.some((l) => l.startsWith("3h    ▸"))).toBe(true);
@@ -691,12 +820,22 @@ describe("per-PR timeline", () => {
   });
 
   it("says so when the daemon has no record of the PR", () => {
-    const text = timelineLines({ pr: 42, known: false, items: [], backfilled_rounds: [] } as never, 80, NOW).map(stripAnsi).join("\n");
+    const text = timelineLines(
+      { pr: 42, known: false, items: [], backfilled_rounds: [] } as never,
+      80,
+      NOW,
+    )
+      .map(stripAnsi)
+      .join("\n");
     expect(text).toContain("no record of this PR");
   });
 
   it("the drill-down frame offers Esc back to the dashboard", () => {
-    const frame = renderMetrics(mkView({ drill: { pr: 5265, payload: timeline, loading: false } as never }), 120, 30);
+    const frame = renderMetrics(
+      mkView({ drill: { pr: 5265, payload: timeline, loading: false } as never }),
+      120,
+      30,
+    );
     const text = frame.lines.map(stripAnsi).join("\n");
     expect(text).toContain("metrics · #5265");
     expect(text).toContain("Esc back to the dashboard");
@@ -710,7 +849,12 @@ describe("metrics tab wiring", () => {
   it("fetches through the container's qcr, read-only", () => {
     expect(metricsArgv(TUI_DEFAULTS).slice(0, 3)).toEqual(["sudo", "docker", "exec"]);
     expect(metricsArgv(TUI_DEFAULTS).slice(-2)).toEqual(["metrics", "--json"]);
-    expect(metricsPrArgv(TUI_DEFAULTS, 5265).slice(-4)).toEqual(["metrics", "--pr", "5265", "--json"]);
+    expect(metricsPrArgv(TUI_DEFAULTS, 5265).slice(-4)).toEqual([
+      "metrics",
+      "--pr",
+      "5265",
+      "--json",
+    ]);
   });
 
   it("opens on 6, switches windows on w/m/a, drills in with # <pr> ⏎ and Esc goes back", async () => {

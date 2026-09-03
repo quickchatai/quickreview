@@ -82,8 +82,11 @@ export class OpenVikingContextAssembler implements ContextAssembler {
     try {
       const { entries, unread } = await this.store.sweep();
       if (unread.length > 0) {
-        const reason = unread.length === 1 ? unread[0]! : `${unread[0]} (+${unread.length - 1} more)`;
-        this.log(`openviking: pinned head unreadable (${reason}) — the round proceeds without standing instructions`);
+        const reason =
+          unread.length === 1 ? unread[0]! : `${unread[0]} (+${unread.length - 1} more)`;
+        this.log(
+          `openviking: pinned head unreadable (${reason}) — the round proceeds without standing instructions`,
+        );
         return { status: "unreadable", reason };
       }
       const text = entries
@@ -93,7 +96,10 @@ export class OpenVikingContextAssembler implements ContextAssembler {
         .join("\n\n");
       return { status: "read", text };
     } catch (err) {
-      this.log("openviking: pinned head unavailable — the round proceeds without standing instructions", err);
+      this.log(
+        "openviking: pinned head unavailable — the round proceeds without standing instructions",
+        err,
+      );
       return { status: "unreadable", reason: String(err) };
     }
   }
@@ -129,6 +135,8 @@ export class OpenVikingContextAssembler implements ContextAssembler {
 }
 
 /** The assembler the round path is wired with. */
-export function openVikingContextAssembler(opts: OpenVikingContextOptions): OpenVikingContextAssembler {
+export function openVikingContextAssembler(
+  opts: OpenVikingContextOptions,
+): OpenVikingContextAssembler {
   return new OpenVikingContextAssembler(opts);
 }

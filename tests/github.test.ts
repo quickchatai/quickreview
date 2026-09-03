@@ -27,7 +27,11 @@ interface Call {
 function recorder(handler: (url: string, init: RequestInit) => unknown) {
   const calls: Call[] = [];
   const fetchFn = (async (url: string | URL, init: RequestInit = {}) => {
-    calls.push({ url: String(url), method: init.method ?? "GET", body: init.body ? JSON.parse(String(init.body)) : undefined });
+    calls.push({
+      url: String(url),
+      method: init.method ?? "GET",
+      body: init.body ? JSON.parse(String(init.body)) : undefined,
+    });
     const payload = handler(String(url), init);
     return {
       ok: true,
@@ -48,7 +52,11 @@ afterEach(() => {
   rmSync(dryrunDir, { recursive: true, force: true });
 });
 
-function build(handler: (url: string, init: RequestInit) => unknown, dryRun = true, githubOverride: Partial<Config["github"]> = {}) {
+function build(
+  handler: (url: string, init: RequestInit) => unknown,
+  dryRun = true,
+  githubOverride: Partial<Config["github"]> = {},
+) {
   const rec = recorder(handler);
   let adapter!: GitHubAdapter;
   const gate = new MutationGate(dryRun, dryrunDir, (intent) => adapter.executeMutation(intent));
@@ -109,7 +117,9 @@ describe("triggered-set queries", () => {
 
   it("no longer exposes the awaiting-reviewer search (scrapped 2026-08-18)", () => {
     const { adapter } = build(() => ({ items: [] }));
-    expect((adapter as unknown as Record<string, unknown>).searchAwaitingEscalationReviewer).toBeUndefined();
+    expect(
+      (adapter as unknown as Record<string, unknown>).searchAwaitingEscalationReviewer,
+    ).toBeUndefined();
   });
 
   it("searches open bot-filed issues by label", async () => {
@@ -124,8 +134,15 @@ describe("authoritative per-PR reads", () => {
     const { adapter } = build((url) => {
       if (url.endsWith("/pulls/12")) {
         return {
-          number: 12, title: "T", user: { login: "alice" }, head: { sha: "abc" }, base: { ref: "master" },
-          updated_at: "2026-08-13T10:00:00Z", state: "open", draft: false, merged: false,
+          number: 12,
+          title: "T",
+          user: { login: "alice" },
+          head: { sha: "abc" },
+          base: { ref: "master" },
+          updated_at: "2026-08-13T10:00:00Z",
+          state: "open",
+          draft: false,
+          merged: false,
           labels: [{ name: "AI review requested" }],
         };
       }
@@ -133,22 +150,48 @@ describe("authoritative per-PR reads", () => {
     });
 
     expect(await adapter.getPr(12)).toEqual({
-      number: 12, title: "T", author: "alice", head_sha: "abc", base_ref: "master",
+      number: 12,
+      title: "T",
+      author: "alice",
+      head_sha: "abc",
+      base_ref: "master",
       body: "", //: no description on the wire normalizes to ""
-      updated_at: "2026-08-13T10:00:00Z", state: "open", draft: false, merged: false,
+      updated_at: "2026-08-13T10:00:00Z",
+      state: "open",
+      draft: false,
+      merged: false,
       labels: ["AI review requested"],
     });
-    expect(await adapter.getRequestedReviewers(12)).toEqual({ users: ["mhale"], teams: ["review"] });
+    expect(await adapter.getRequestedReviewers(12)).toEqual({
+      users: ["mhale"],
+      teams: ["review"],
+    });
   });
 
   it("classifies authoritative open, closed and repository-scoped absent PRs", async () => {
     const open = build(() => ({
-      number: 12, title: "T", user: { login: "alice" }, head: { sha: "abc" }, base: { ref: "master" },
-      updated_at: "2026-08-13T10:00:00Z", state: "open", draft: false, merged: false, labels: [],
+      number: 12,
+      title: "T",
+      user: { login: "alice" },
+      head: { sha: "abc" },
+      base: { ref: "master" },
+      updated_at: "2026-08-13T10:00:00Z",
+      state: "open",
+      draft: false,
+      merged: false,
+      labels: [],
     })).adapter;
     const closed = build(() => ({
-      number: 12, title: "T", user: { login: "alice" }, head: { sha: "abc" }, base: { ref: "master" },
-      updated_at: "2026-08-13T10:00:00Z", state: "closed", draft: false, merged: true, labels: [],
+      number: 12,
+      title: "T",
+      user: { login: "alice" },
+      head: { sha: "abc" },
+      base: { ref: "master" },
+      updated_at: "2026-08-13T10:00:00Z",
+      state: "closed",
+      draft: false,
+      merged: true,
+      labels: [],
     })).adapter;
 
     expect(await open.getPrDisposition(12)).toEqual({ kind: "open", head_sha: "abc" });
@@ -165,8 +208,12 @@ describe("authoritative per-PR reads", () => {
   });
 
   it("does not turn auth, concealed repository access or upstream failures into PR absence", async () => {
-    await expect(buildStatus(403, { message: "Resource not accessible" }).getPrDisposition(12)).rejects.toThrow("403");
-    await expect(buildStatus(500, { message: "upstream" }).getPrDisposition(12)).rejects.toThrow("500");
+    await expect(
+      buildStatus(403, { message: "Resource not accessible" }).getPrDisposition(12),
+    ).rejects.toThrow("403");
+    await expect(buildStatus(500, { message: "upstream" }).getPrDisposition(12)).rejects.toThrow(
+      "500",
+    );
     const concealed = buildStatusSequence([
       { status: 404, payload: { message: "Not Found" } },
       { status: 404, payload: { message: "Not Found" } },
@@ -204,11 +251,31 @@ describe("authoritative per-PR reads", () => {
 describe("stalenessScan", () => {
   it("keeps only PRs whose approved commit differs from the head", async () => {
     const nodes = [
-      { number: 1, headRefOid: "head1", reviews: { nodes: [{ state: "APPROVED", submittedAt: "2026-08-01T00:00:00Z", commit: { oid: "head1" } }] } },
-      { number: 2, headRefOid: "head2", reviews: { nodes: [{ state: "APPROVED", submittedAt: "2026-08-02T00:00:00Z", commit: { oid: "older" } }] } },
-      { number: 3, headRefOid: "head3", reviews: { nodes: [] } },                       // never approved by the bot
-      { number: 4, headRefOid: "head4", reviews: { nodes: [{ state: "APPROVED", submittedAt: "x", commit: null }] } },
-      {},                                                                               // non-PR search node
+      {
+        number: 1,
+        headRefOid: "head1",
+        reviews: {
+          nodes: [
+            { state: "APPROVED", submittedAt: "2026-08-01T00:00:00Z", commit: { oid: "head1" } },
+          ],
+        },
+      },
+      {
+        number: 2,
+        headRefOid: "head2",
+        reviews: {
+          nodes: [
+            { state: "APPROVED", submittedAt: "2026-08-02T00:00:00Z", commit: { oid: "older" } },
+          ],
+        },
+      },
+      { number: 3, headRefOid: "head3", reviews: { nodes: [] } }, // never approved by the bot
+      {
+        number: 4,
+        headRefOid: "head4",
+        reviews: { nodes: [{ state: "APPROVED", submittedAt: "x", commit: null }] },
+      },
+      {}, // non-PR search node
     ];
     const { adapter, calls } = build(() => ({ data: { search: { nodes } } }));
 
@@ -258,9 +325,19 @@ describe("mutations in dry-run", () => {
     await adapter.deleteTeamReviewRequest(3);
 
     expect(calls).toHaveLength(0);
-    const kinds = dryrunRecords().map((r) => r.kind).sort();
+    const kinds = dryrunRecords()
+      .map((r) => r.kind)
+      .sort();
     expect(kinds).toEqual(
-      ["add_label", "create_issue", "create_pull", "create_review", "create_review_comment_reply", "delete_team_review_request", "remove_label"].sort(),
+      [
+        "add_label",
+        "create_issue",
+        "create_pull",
+        "create_review",
+        "create_review_comment_reply",
+        "delete_team_review_request",
+        "remove_label",
+      ].sort(),
     );
     for (const r of dryrunRecords()) {
       expect(typeof r.note).toBe("string");
@@ -290,17 +367,29 @@ describe("mutations in dry-run", () => {
   it("URL-encodes the label in the remove-label path", async () => {
     const { adapter } = build(() => ({}));
     await adapter.removeLabel(3, "AI review requested");
-    expect(dryrunRecords()[0]!.path).toBe("/repos/example-org/example-app/issues/3/labels/AI%20review%20requested");
+    expect(dryrunRecords()[0]!.path).toBe(
+      "/repos/example-org/example-app/issues/3/labels/AI%20review%20requested",
+    );
   });
 });
 
 describe("resolveOwnReviewThread ownership gate", () => {
-  const threadPayload = (author = cfg.github.bot_login, isResolved = false, body = "[blocker] something") => ({
+  const threadPayload = (
+    author = cfg.github.bot_login,
+    isResolved = false,
+    body = "[blocker] something",
+  ) => ({
     data: {
       repository: {
         pullRequest: {
           reviewThreads: {
-            nodes: [{ id: "PRRT_node", isResolved, comments: { nodes: [{ databaseId: 555, author: { login: author }, body }] } }],
+            nodes: [
+              {
+                id: "PRRT_node",
+                isResolved,
+                comments: { nodes: [{ databaseId: 555, author: { login: author }, body }] },
+              },
+            ],
             pageInfo: { hasNextPage: false, endCursor: null },
           },
         },
@@ -330,17 +419,23 @@ describe("resolveOwnReviewThread ownership gate", () => {
 
   it("does not trust an independently drifted app_slug as an owner alias", async () => {
     const drifted = build(() => threadPayload("alice"), true, { app_slug: "alice" });
-    await expect(drifted.adapter.resolveOwnReviewThread(3, 555)).rejects.toThrow("root author is alice");
+    await expect(drifted.adapter.resolveOwnReviewThread(3, 555)).rejects.toThrow(
+      "root author is alice",
+    );
     expect(dryrunRecords()).toHaveLength(0);
   });
 
   it("refuses another identity's thread and skips an already-resolved own thread", async () => {
     const other = build(() => threadPayload("alice"));
-    await expect(other.adapter.resolveOwnReviewThread(3, 555)).rejects.toThrow("root author is alice");
+    await expect(other.adapter.resolveOwnReviewThread(3, 555)).rejects.toThrow(
+      "root author is alice",
+    );
     expect(dryrunRecords()).toHaveLength(0);
 
     const own = build(() => threadPayload(cfg.github.bot_login, true));
-    expect(await own.adapter.resolveOwnReviewThread(3, 555)).toEqual({ skipped: "already-resolved" });
+    expect(await own.adapter.resolveOwnReviewThread(3, 555)).toEqual({
+      skipped: "already-resolved",
+    });
     expect(dryrunRecords()).toHaveLength(0);
   });
 
@@ -348,14 +443,22 @@ describe("resolveOwnReviewThread ownership gate", () => {
   // by a human, never by the reviewer — the repo merge rule (every
   // conversation resolved) is what forces human eyes onto it.
   it("never resolves a [check this] thread — human-only, even when bot-owned and unresolved", async () => {
-    for (const body of ["[check this] auth boundary judgment", "  [Check This] casing and leading space", "**[check this]** bolded tag"]) {
+    for (const body of [
+      "[check this] auth boundary judgment",
+      "  [Check This] casing and leading space",
+      "**[check this]** bolded tag",
+    ]) {
       const own = build(() => threadPayload(cfg.github.bot_login, false, body));
-      expect(await own.adapter.resolveOwnReviewThread(3, 555)).toEqual({ skipped: "check-this-human-only" });
+      expect(await own.adapter.resolveOwnReviewThread(3, 555)).toEqual({
+        skipped: "check-this-human-only",
+      });
       expect(dryrunRecords()).toHaveLength(0);
     }
     // A mention deeper in the body is not the tag: an ordinary finding whose
     // prose references check-this still resolves normally.
-    const ordinary = build(() => threadPayload(cfg.github.bot_login, false, "[question] please [check this] value"));
+    const ordinary = build(() =>
+      threadPayload(cfg.github.bot_login, false, "[question] please [check this] value"),
+    );
     expect((await ordinary.adapter.resolveOwnReviewThread(3, 555)).skipped).toBeNull();
   });
 
@@ -375,8 +478,12 @@ describe("resolveOwnReviewThread ownership gate", () => {
   });
 
   it("still refuses when BOTH markers somehow appear — [check this] wins, human-only", async () => {
-    const own = build(() => threadPayload(cfg.github.bot_login, false, "[check this] [ask your human] mixed"));
-    expect((await own.adapter.resolveOwnReviewThread(3, 555)).skipped).toBe("check-this-human-only");
+    const own = build(() =>
+      threadPayload(cfg.github.bot_login, false, "[check this] [ask your human] mixed"),
+    );
+    expect((await own.adapter.resolveOwnReviewThread(3, 555)).skipped).toBe(
+      "check-this-human-only",
+    );
   });
 
   // an IGNORED deferral must not be tidied away by the bot, or a
@@ -389,20 +496,34 @@ describe("resolveOwnReviewThread ownership gate", () => {
       "**[deferred]** [question] bolded tag",
     ]) {
       const own = build(() => threadPayload(cfg.github.bot_login, false, body));
-      expect(await own.adapter.resolveOwnReviewThread(3, 555)).toEqual({ skipped: "deferred-human-only" });
+      expect(await own.adapter.resolveOwnReviewThread(3, 555)).toEqual({
+        skipped: "deferred-human-only",
+      });
       expect(dryrunRecords()).toHaveLength(0);
     }
     // A mention deeper in the body is not the tag.
-    const ordinary = build(() => threadPayload(cfg.github.bot_login, false, "[nit] this was [deferred] once"));
+    const ordinary = build(() =>
+      threadPayload(cfg.github.bot_login, false, "[nit] this was [deferred] once"),
+    );
     expect((await ordinary.adapter.resolveOwnReviewThread(3, 555)).skipped).toBeNull();
   });
 
   it("keeps the three markers' refusals distinct — none is a spelling of another", async () => {
-    const check = build(() => threadPayload(cfg.github.bot_login, false, "[check this] verify the boundary"));
-    const deferred = build(() => threadPayload(cfg.github.bot_login, false, "[deferred] not this PR's code"));
-    const ask = build(() => threadPayload(cfg.github.bot_login, false, "[ask your human] why does this exist?"));
-    expect((await check.adapter.resolveOwnReviewThread(3, 555)).skipped).toBe("check-this-human-only");
-    expect((await deferred.adapter.resolveOwnReviewThread(3, 555)).skipped).toBe("deferred-human-only");
+    const check = build(() =>
+      threadPayload(cfg.github.bot_login, false, "[check this] verify the boundary"),
+    );
+    const deferred = build(() =>
+      threadPayload(cfg.github.bot_login, false, "[deferred] not this PR's code"),
+    );
+    const ask = build(() =>
+      threadPayload(cfg.github.bot_login, false, "[ask your human] why does this exist?"),
+    );
+    expect((await check.adapter.resolveOwnReviewThread(3, 555)).skipped).toBe(
+      "check-this-human-only",
+    );
+    expect((await deferred.adapter.resolveOwnReviewThread(3, 555)).skipped).toBe(
+      "deferred-human-only",
+    );
     expect((await ask.adapter.resolveOwnReviewThread(3, 555)).skipped).toBeNull();
   });
 });
@@ -437,7 +558,8 @@ describe("requesting a human reviewer is an ORDINARY gated mutation", () => {
 
   it("forceLive still throws on it — the dry-run bypass did not widen", async () => {
     const { adapter } = build(() => ({}));
-    const gate = (adapter as unknown as { gate: { execute: (i: unknown) => Promise<unknown> } }).gate;
+    const gate = (adapter as unknown as { gate: { execute: (i: unknown) => Promise<unknown> } })
+      .gate;
     await expect(
       gate.execute({
         kind: "request_reviewer",
@@ -453,18 +575,33 @@ describe("requesting a human reviewer is an ORDINARY gated mutation", () => {
 
   it("dismissing a review is STILL structurally impossible — that half never moved", async () => {
     const { adapter } = build(() => ({}));
-    const gate = (adapter as unknown as { gate: { execute: (i: unknown) => Promise<unknown> } }).gate;
+    const gate = (adapter as unknown as { gate: { execute: (i: unknown) => Promise<unknown> } })
+      .gate;
     for (const kind of ["dismiss_review", "delete_review", "update_review"]) {
       await expect(
-        gate.execute({ kind, method: "PUT", path: "/repos/o/r/pulls/8/reviews/1/dismissals", note: "smuggled", pr: 8 }),
+        gate.execute({
+          kind,
+          method: "PUT",
+          path: "/repos/o/r/pulls/8/reviews/1/dismissals",
+          note: "smuggled",
+          pr: 8,
+        }),
       ).rejects.toThrow(/unknown mutation kind/);
     }
   });
 
   it("base_ref rides along on PR reads (the worktree needs it)", async () => {
     const { adapter } = build(() => ({
-      number: 8, title: "T", user: { login: "alice" }, head: { sha: "abc" }, base: { ref: "release/2026-08" },
-      updated_at: "2026-08-13T10:00:00Z", state: "open", draft: false, merged: false, labels: [],
+      number: 8,
+      title: "T",
+      user: { login: "alice" },
+      head: { sha: "abc" },
+      base: { ref: "release/2026-08" },
+      updated_at: "2026-08-13T10:00:00Z",
+      state: "open",
+      draft: false,
+      merged: false,
+      labels: [],
     }));
     expect((await adapter.getPr(8)).base_ref).toBe("release/2026-08");
   });
@@ -473,7 +610,7 @@ describe("requesting a human reviewer is an ORDINARY gated mutation", () => {
 describe("live mode", () => {
   it("sends the intent through the REST executor and verifies the team DELETE", async () => {
     const { adapter, calls } = build((url) => {
-      if (url.endsWith("/requested_reviewers") ) return { users: [], teams: [] };
+      if (url.endsWith("/requested_reviewers")) return { users: [], teams: [] };
       return {};
     }, false);
 
@@ -500,7 +637,12 @@ describe("live mode", () => {
   it("refuses to route git pushes through the REST executor", async () => {
     const { adapter } = build(() => ({}), false);
     await expect(
-      adapter.gate.execute({ kind: "push_branch", method: "git", path: "refs/heads/x", note: "push" }),
+      adapter.gate.execute({
+        kind: "push_branch",
+        method: "git",
+        path: "refs/heads/x",
+        note: "push",
+      }),
     ).rejects.toThrow(/git pushes/);
   });
 });
@@ -518,24 +660,54 @@ describe("the App's own webhook config (app-self-config class)", () => {
         auth: headers.authorization ?? "",
       });
       const payload = handler(String(url), init);
-      return { ok: true, status: 200, json: async () => payload, text: async () => JSON.stringify(payload) } as unknown as Response;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => payload,
+        text: async () => JSON.stringify(payload),
+      } as unknown as Response;
     }) as unknown as FetchFn;
     let adapter!: GitHubAdapter;
-    const gate = new MutationGate(dryRun, dryrunDir, (intent) => adapter.executeMutation(intent), undefined, undefined, () => {});
+    const gate = new MutationGate(
+      dryRun,
+      dryrunDir,
+      (intent) => adapter.executeMutation(intent),
+      undefined,
+      undefined,
+      () => {},
+    );
     adapter = new GitHubAdapter(cfg, minter, gate, fetchFn, "https://api.github.com");
     return { adapter, calls };
   }
 
   it("reads GET /app/hook/config directly on the App JWT (never an installation token)", async () => {
-    const { adapter, calls } = buildWithHeaders(() => ({ url: "https://old.example.com/webhook", content_type: "json", insecure_ssl: "0" }));
+    const { adapter, calls } = buildWithHeaders(() => ({
+      url: "https://old.example.com/webhook",
+      content_type: "json",
+      insecure_ssl: "0",
+    }));
     const config = await adapter.getAppWebhookConfig();
-    expect(config).toEqual({ url: "https://old.example.com/webhook", content_type: "json", insecure_ssl: "0" });
-    expect(calls[0]).toMatchObject({ url: "https://api.github.com/app/hook/config", method: "GET", auth: "Bearer jwt.fake.token" });
+    expect(config).toEqual({
+      url: "https://old.example.com/webhook",
+      content_type: "json",
+      insecure_ssl: "0",
+    });
+    expect(calls[0]).toMatchObject({
+      url: "https://api.github.com/app/hook/config",
+      method: "GET",
+      auth: "Bearer jwt.fake.token",
+    });
   });
 
   it("updateOwnWebhookUrl PATCHes through the gate on the App JWT — and EXECUTES in dry-run (app-self-config)", async () => {
-    const { adapter, calls } = buildWithHeaders(() => ({ url: "https://new.trycloudflare.com/webhook" }), true);
-    const result = await adapter.updateOwnWebhookUrl("https://new.trycloudflare.com/webhook", "https://old.example.com/webhook");
+    const { adapter, calls } = buildWithHeaders(
+      () => ({ url: "https://new.trycloudflare.com/webhook" }),
+      true,
+    );
+    const result = await adapter.updateOwnWebhookUrl(
+      "https://new.trycloudflare.com/webhook",
+      "https://old.example.com/webhook",
+    );
     // The ratified rule-1 amendment: real execution despite dry-run, no dryrun record.
     expect(result.executed).toBe(true);
     expect(readdirSync(dryrunDir)).toHaveLength(0);
@@ -555,7 +727,10 @@ describe("the App's own webhook config (app-self-config class)", () => {
       seen.push(intent.note);
       return originalExecute(intent);
     };
-    await adapter.updateOwnWebhookUrl("https://new.trycloudflare.com/webhook", "https://old.example.com/webhook");
+    await adapter.updateOwnWebhookUrl(
+      "https://new.trycloudflare.com/webhook",
+      "https://old.example.com/webhook",
+    );
     expect(seen[0]).toContain("https://old.example.com/webhook");
     expect(seen[0]).toContain("https://new.trycloudflare.com/webhook");
   });

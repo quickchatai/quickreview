@@ -47,8 +47,8 @@ describe("the reachability gate over the whole matrix", () => {
           const got = postTag(s, c, r);
           expect(
             RANK[got]!,
-            `postTag(${s}, ${c}, ${String(r)}) = ${got} is STRONGER than the routine base ${base}. `
-              + "The reachability axis exists to stop unreachable findings blocking — never to change the bar.",
+            `postTag(${s}, ${c}, ${String(r)}) = ${got} is STRONGER than the routine base ${base}. ` +
+              "The reachability axis exists to stop unreachable findings blocking — never to change the bar.",
           ).toBeLessThanOrEqual(RANK[base]!);
         }
       }
@@ -59,7 +59,9 @@ describe("the reachability gate over the whole matrix", () => {
     for (const s of SEVERITIES) {
       for (const c of CONFIDENCES) {
         for (const r of REACHABILITIES) {
-          expect(["blocker", "question", "nit"], `postTag(${s}, ${c}, ${String(r)})`).toContain(postTag(s, c, r));
+          expect(["blocker", "question", "nit"], `postTag(${s}, ${c}, ${String(r)})`).toContain(
+            postTag(s, c, r),
+          );
         }
       }
     }
@@ -101,7 +103,13 @@ describe("the reachability gate over the whole matrix", () => {
     for (const s of SEVERITIES) {
       for (const c of CONFIDENCES) {
         const base = postTag(s, c, "routine");
-        for (const r of [undefined, null, "banana" as Reachability, "" as Reachability, "ROUTINE" as Reachability]) {
+        for (const r of [
+          undefined,
+          null,
+          "banana" as Reachability,
+          "" as Reachability,
+          "ROUTINE" as Reachability,
+        ]) {
           expect(postTag(s, c, r), `postTag(${s}, ${c}, ${String(r)})`).toBe(base);
         }
       }

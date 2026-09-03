@@ -33,7 +33,10 @@ export function parseProcStat(raw: string): ProcStat | undefined {
   const close = raw.lastIndexOf(")");
   if (close < 0) return undefined;
   // After the closing paren comes " S 4 5 …": rest[0] is field 3 (state).
-  const rest = raw.slice(close + 1).trim().split(/\s+/);
+  const rest = raw
+    .slice(close + 1)
+    .trim()
+    .split(/\s+/);
   const field = (n: number): number => Number(rest[n - 3]);
   const utimeTicks = field(14);
   const stimeTicks = field(15);

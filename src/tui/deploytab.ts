@@ -11,18 +11,44 @@ import type { TuiConfig } from "../config.js";
 import type { App } from "./app.js";
 import type { BoardKey } from "./keys.js";
 import { barHeight, paintCmdBar, type BarButton, type LiveKeys } from "./cmdbar.js";
-import { ACCENT, ACCENT_BG, BAD, HEADING, MUTED, OK, RESET as DRESET, STRONG, WARN, WARN_BG, badge, modeBadge, sectionTitle } from "./design.js";
+import {
+  ACCENT,
+  ACCENT_BG,
+  BAD,
+  HEADING,
+  MUTED,
+  OK,
+  RESET as DRESET,
+  STRONG,
+  WARN,
+  WARN_BG,
+  badge,
+  modeBadge,
+  sectionTitle,
+} from "./design.js";
 import { Frame, displayWidth, rule, stripAnsi, truncate } from "./paint.js";
 import { transportOf, type RemoteResult, type SshRunner } from "./remote.js";
 import { CommandDrainSender, type DeployDrainSender } from "./deploy-drain.js";
 import { chainOnPoll } from "./poll-hooks.js";
-import { MemoryDeployCeremonyStore, type DeployCeremonyStore, type DurableDeployPhase } from "./deploy-ceremony.js";
+import {
+  MemoryDeployCeremonyStore,
+  type DeployCeremonyStore,
+  type DurableDeployPhase,
+} from "./deploy-ceremony.js";
 
 export type { DeployDrainSender } from "./deploy-drain.js";
 import { FG, RESET } from "./theme.js";
 
 function dockerSh(cfg: TuiConfig, script: string): string[] {
-  return [...(cfg.sudo_docker ? ["sudo"] : []), "docker", "exec", cfg.container, "sh", "-c", script];
+  return [
+    ...(cfg.sudo_docker ? ["sudo"] : []),
+    "docker",
+    "exec",
+    cfg.container,
+    "sh",
+    "-c",
+    script,
+  ];
 }
 
 /** BUILD_SHA rides the deploy rsync into the sandbox root on the VM. */
@@ -32,7 +58,16 @@ export function buildShaArgv(cfg: TuiConfig): string[] {
 
 /** Container status straight from docker — works while it is stopped too. */
 export function containerStatusArgv(cfg: TuiConfig): string[] {
-  return [...(cfg.sudo_docker ? ["sudo"] : []), "docker", "ps", "-a", "--filter", `name=${cfg.container}`, "--format", "{{.Status}}"];
+  return [
+    ...(cfg.sudo_docker ? ["sudo"] : []),
+    "docker",
+    "ps",
+    "-a",
+    "--filter",
+    `name=${cfg.container}`,
+    "--format",
+    "{{.Status}}",
+  ];
 }
 
 /** The remote shell line hooks.powerRun streams: docker stop/start. */
@@ -70,7 +105,12 @@ export function realLocalRunner(cwd: string): LocalRunner {
   return (argv) =>
     new Promise((resolvePromise) => {
       execFile(argv[0]!, argv.slice(1), { cwd, timeout: 30_000 }, (err, stdout, stderr) => {
-        resolvePromise({ ok: err === null, stdout: String(stdout), stderr: String(stderr), code: err === null ? 0 : 1 });
+        resolvePromise({
+          ok: err === null,
+          stdout: String(stdout),
+          stderr: String(stderr),
+          code: err === null ? 0 : 1,
+        });
       });
     });
 }
@@ -130,7 +170,16 @@ export interface DeployState {
   /** Which button is armed — the two never arm together. */
   armedKind?: RunKind;
   /** A confirmed deploy is a drain ceremony, not an immediate process spawn. */
-  deployPhase?: "engaging-drain" | "waiting-rounds" | "syncing" | "awaiting-lift" | "done" | "lifting-after-abort" | "aborted" | "drain-failed" | "deploy-failed";
+  deployPhase?:
+    | "engaging-drain"
+    | "waiting-rounds"
+    | "syncing"
+    | "awaiting-lift"
+    | "done"
+    | "lifting-after-abort"
+    | "aborted"
+    | "drain-failed"
+    | "deploy-failed";
   drainRounds?: number;
   drainStatusNote?: string;
   targetHead?: string;
@@ -207,7 +256,10 @@ export class RealDeployFetcher implements DeployFetcher {
       plan: (plan.ok ? plan.stdout : `${plan.stdout}${plan.stderr}`).split("\n"),
     };
     if (typeof deployed === "object") {
-      const [log, stat] = await Promise.all([this.local(logArgv(deployed.sha)), this.local(diffStatArgv(deployed.sha))]);
+      const [log, stat] = await Promise.all([
+        this.local(logArgv(deployed.sha)),
+        this.local(diffStatArgv(deployed.sha)),
+      ]);
       // A sha local git doesn't know (rewritten history?) leaves these
       // undefined and the render says so instead of pretending "0 pending".
       if (log.ok) out.commits = log.stdout.split("\n").filter((l) => l.trim() !== "");
@@ -236,16 +288,22 @@ export function deployLines(st: DeployState, width: number): string[] {
         ? `${WARN}unknown — the VM's BUILD_SHA was read but is not a <sha> <iso> <mode> line (corrupt marker; the next deploy rewrites it)${DRESET}`
         : `${WARN}unknown — the VM's BUILD_SHA could not be read (ssh/docker failed); r retries${DRESET}`;
   lines.push(truncate(`${section("DEPLOYED", "what the VM runs")}  ${depText}`, width));
-  const headText = st.head ? `${STRONG}${st.head}${DRESET}` : `${WARN}HEAD unknown — git rev-parse failed${DRESET}`;
+  const headText = st.head
+    ? `${STRONG}${st.head}${DRESET}`
+    : `${WARN}HEAD unknown — git rev-parse failed${DRESET}`;
   const cleanliness =
     st.dirty === undefined
       ? `${WARN}unknown — git status could not be read${DRESET}`
       : st.dirty.length === 0
         ? `${OK}clean${DRESET}`
         : `${BAD}dirty — ${st.dirty.length} uncommitted (deploy.sh will refuse)${DRESET}`;
-  lines.push(truncate(`${section("LOCAL", "this working copy")}     ${headText}  ${cleanliness}`, width));
-  for (const d of (st.dirty ?? []).slice(0, 8)) lines.push(truncate(`    ${FG.dim}${d}${RESET}`, width));
-  if ((st.dirty?.length ?? 0) > 8) lines.push(`    ${FG.dim}… ${st.dirty!.length - 8} more${RESET}`);
+  lines.push(
+    truncate(`${section("LOCAL", "this working copy")}     ${headText}  ${cleanliness}`, width),
+  );
+  for (const d of (st.dirty ?? []).slice(0, 8))
+    lines.push(truncate(`    ${FG.dim}${d}${RESET}`, width));
+  if ((st.dirty?.length ?? 0) > 8)
+    lines.push(`    ${FG.dim}… ${st.dirty!.length - 8} more${RESET}`);
   lines.push("");
 
   // "Up to date, nothing to deploy" is a CLAIM, so it needs all three facts —
@@ -254,9 +312,16 @@ export function deployLines(st: DeployState, width: number): string[] {
     lines.push(`${OK}✓ the VM already runs this commit — nothing to deploy${DRESET}`);
   } else if (dep) {
     if (st.commits === undefined) {
-      lines.push(truncate(`${BAD}deployed sha ${dep.sha} is unknown to local git — cannot diff${DRESET}`, width));
+      lines.push(
+        truncate(
+          `${BAD}deployed sha ${dep.sha} is unknown to local git — cannot diff${DRESET}`,
+          width,
+        ),
+      );
     } else {
-      lines.push(truncate(section(`PENDING (${st.commits.length})`, "commits a deploy would ship"), width));
+      lines.push(
+        truncate(section(`PENDING (${st.commits.length})`, "commits a deploy would ship"), width),
+      );
       for (const c of st.commits) lines.push(truncate(`  ${c}`, width));
       if (st.commits.length === 0) lines.push(`  ${MUTED}none yet — nothing to ship${DRESET}`);
       if (st.diffstat && st.diffstat.length > 0) {
@@ -270,9 +335,19 @@ export function deployLines(st: DeployState, width: number): string[] {
   for (const p of st.plan) lines.push(truncate(`  ${p}`, width));
   lines.push("");
   if (st.armedAt !== undefined) {
-    lines.push(truncate(`${badge("warn", "ARMED")} press ${STRONG}D${DRESET} again to drain → wait for zero → deploy (any other key cancels)`, width));
+    lines.push(
+      truncate(
+        `${badge("warn", "ARMED")} press ${STRONG}D${DRESET} again to drain → wait for zero → deploy (any other key cancels)`,
+        width,
+      ),
+    );
   } else {
-    lines.push(truncate(`${STRONG}to deploy:${DRESET} press ${STRONG}D${DRESET} twice (${ACCENT}drain → zero rounds → ./scripts/deploy.sh sync → healthy-boot auto-lift${DRESET})`, width));
+    lines.push(
+      truncate(
+        `${STRONG}to deploy:${DRESET} press ${STRONG}D${DRESET} twice (${ACCENT}drain → zero rounds → ./scripts/deploy.sh sync → healthy-boot auto-lift${DRESET})`,
+        width,
+      ),
+    );
   }
   return lines;
 }
@@ -299,7 +374,12 @@ export function deployKeys(st: DeployState): LiveKeys {
   return { bar, inline: [] };
 }
 
-export function renderDeployTab(st: DeployState, dryRun: boolean | undefined, cols: number, rows: number): Frame {
+export function renderDeployTab(
+  st: DeployState,
+  dryRun: boolean | undefined,
+  cols: number,
+  rows: number,
+): Frame {
   const frame = new Frame(cols, rows);
   const live = deployKeys(st);
   frame.set(0, rule(cols, "┌", "┐", [`${HEADING}quickreview${DRESET}`, modeBadge(dryRun), "deploy"]));
@@ -314,30 +394,32 @@ export function renderDeployTab(st: DeployState, dryRun: boolean | undefined, co
   };
   if (run) {
     const [busy, ok, bad] = RUN_VERBS[run.kind];
-    const deployLabel = run.kind === "deploy"
-      ? st.deployPhase === "engaging-drain"
-        ? " ⟳ ENGAGING DRAIN… "
-        : st.deployPhase === "waiting-rounds"
-          ? ` ⏳ DRAINING — ${st.drainRounds ?? "?"} round${st.drainRounds === 1 ? "" : "s"} finishing `
-          : st.deployPhase === "lifting-after-abort"
-            ? " ⟳ ABORTING — LIFTING DRAIN… "
-            : st.deployPhase === "aborted"
-              ? " ■ DEPLOY ABORTED · DRAIN OFF "
-              : st.deployPhase === "awaiting-lift"
-                ? " ✔ DEPLOY OK · DRAIN AUTO-LIFT PENDING "
-                : st.deployPhase === "done"
-                  ? " ✔ DEPLOY OK · DRAIN LIFTED "
-                  : st.deployPhase === "drain-failed" || st.deployPhase === "deploy-failed"
-                    ? ` ✖ DEPLOY FAILED (exit ${run.code ?? "signal"}) `
-                    : undefined
-      : undefined;
-    const label = deployLabel ?? (run.running ? busy : run.code === 0 ? ok : `${bad} (exit ${run.code ?? "signal"}) `);
-    const chip =
-      run.running
-        ? `${ACCENT_BG}${STRONG}${label}${DRESET}`
-        : run.code === 0
-          ? `${OK}${STRONG}${label}${DRESET}`
-          : `${BAD}${STRONG}${label}${DRESET}`;
+    const deployLabel =
+      run.kind === "deploy"
+        ? st.deployPhase === "engaging-drain"
+          ? " ⟳ ENGAGING DRAIN… "
+          : st.deployPhase === "waiting-rounds"
+            ? ` ⏳ DRAINING — ${st.drainRounds ?? "?"} round${st.drainRounds === 1 ? "" : "s"} finishing `
+            : st.deployPhase === "lifting-after-abort"
+              ? " ⟳ ABORTING — LIFTING DRAIN… "
+              : st.deployPhase === "aborted"
+                ? " ■ DEPLOY ABORTED · DRAIN OFF "
+                : st.deployPhase === "awaiting-lift"
+                  ? " ✔ DEPLOY OK · DRAIN AUTO-LIFT PENDING "
+                  : st.deployPhase === "done"
+                    ? " ✔ DEPLOY OK · DRAIN LIFTED "
+                    : st.deployPhase === "drain-failed" || st.deployPhase === "deploy-failed"
+                      ? ` ✖ DEPLOY FAILED (exit ${run.code ?? "signal"}) `
+                      : undefined
+        : undefined;
+    const label =
+      deployLabel ??
+      (run.running ? busy : run.code === 0 ? ok : `${bad} (exit ${run.code ?? "signal"}) `);
+    const chip = run.running
+      ? `${ACCENT_BG}${STRONG}${label}${DRESET}`
+      : run.code === 0
+        ? `${OK}${STRONG}${label}${DRESET}`
+        : `${BAD}${STRONG}${label}${DRESET}`;
     const suffix = run.running ? "  streaming — j/k scroll · x abort" : "  x close log · r refresh";
     frame.boxRow(1, [{ text: ` ${chip}${FG.dim}${suffix}${RESET}`, width: cols - 2 }]);
     st.buttonZone = undefined;
@@ -366,10 +448,17 @@ export function renderDeployTab(st: DeployState, dryRun: boolean | undefined, co
           : powerKind === "stop"
             ? " ■ STOP VM APP "
             : " ▶ START VM APP ";
-    const dBtn = deployArmed ? `${WARN_BG}${STRONG}${dLabel}${DRESET}` : `${ACCENT_BG}${STRONG}${dLabel}${DRESET}`;
+    const dBtn = deployArmed
+      ? `${WARN_BG}${STRONG}${dLabel}${DRESET}`
+      : `${ACCENT_BG}${STRONG}${dLabel}${DRESET}`;
     // Unknown is not a button: painted in muted ink, and — below — it claims no
     // click zone at all, so it cannot be pressed into arming a stop.
-    const pBtn = running === undefined ? `${MUTED}${pLabel}${DRESET}` : powerArmed ? `${WARN_BG}${STRONG}${pLabel}${DRESET}` : `${ACCENT_BG}${STRONG}${pLabel}${DRESET}`;
+    const pBtn =
+      running === undefined
+        ? `${MUTED}${pLabel}${DRESET}`
+        : powerArmed
+          ? `${WARN_BG}${STRONG}${pLabel}${DRESET}`
+          : `${ACCENT_BG}${STRONG}${pLabel}${DRESET}`;
     const vm =
       st.containerStatus === undefined
         ? `${WARN}VM: state unknown — r refreshes${DRESET}`
@@ -378,14 +467,22 @@ export function renderDeployTab(st: DeployState, dryRun: boolean | undefined, co
           : running
             ? `VM: ${st.containerStatus}`
             : `${STRONG}VM: ${st.containerStatus}${DRESET}`;
-    const suffix = st.armedKind !== undefined ? "  any other key/click cancels" : "  (also: D D deploy · S S stop/start)";
+    const suffix =
+      st.armedKind !== undefined
+        ? "  any other key/click cancels"
+        : "  (also: D D deploy · S S stop/start)";
     const refreshing = st.loading ? "  refreshing…" : "";
-    frame.boxRow(1, [{ text: ` ${dBtn}  ${pBtn}  ${vm}${FG.dim}${suffix}${refreshing}${RESET}`, width: cols - 2 }]);
+    frame.boxRow(1, [
+      { text: ` ${dBtn}  ${pBtn}  ${vm}${FG.dim}${suffix}${refreshing}${RESET}`, width: cols - 2 },
+    ]);
     const dW = displayWidth(stripAnsi(dLabel));
     st.buttonZone = { x1: 2, y1: 2, x2: 1 + dW, y2: 2 };
     const pX = 2 + dW + 2;
     // No zone while the state is unread: a click there must not arm anything.
-    st.powerZone = running === undefined ? undefined : { x1: pX, y1: 2, x2: pX + displayWidth(stripAnsi(pLabel)) - 1, y2: 2 };
+    st.powerZone =
+      running === undefined
+        ? undefined
+        : { x1: pX, y1: 2, x2: pX + displayWidth(stripAnsi(pLabel)) - 1, y2: 2 };
   }
 
   const bodyRows = rows - 3 - barHeight("deploy", cols, live.bar); // top bar + button row + command bar + bottom border
@@ -397,7 +494,9 @@ export function renderDeployTab(st: DeployState, dryRun: boolean | undefined, co
     const start = Math.max(0, all.length - bodyRows - off);
     for (let r = 0; r < bodyRows; r++) {
       const line = all[start + r];
-      frame.boxRow(2 + r, [{ text: ` ${line === undefined ? "" : truncate(line, cols - 4)}`, width: cols - 2 }]);
+      frame.boxRow(2 + r, [
+        { text: ` ${line === undefined ? "" : truncate(line, cols - 4)}`, width: cols - 2 },
+      ]);
     }
   } else {
     const lines = deployLines(st, cols - 4);
@@ -452,16 +551,19 @@ export function installDeployHooks(
   const line = (run: DeployRun, text: string): void => {
     if (run.lines[run.lines.length - 1] !== text) run.lines.push(text);
   };
-  const persist = (phase: DurableDeployPhase): void => ceremony.write({
-    version: 1,
-    phase,
-    ...(st.targetHead ? { target_head: st.targetHead } : {}),
-    ...(st.preDeploySnapshotAt ? { pre_deploy_snapshot_at: st.preDeploySnapshotAt } : {}),
-    ...(st.drainObserved ? { drain_observed: true } : {}),
-    ...(st.firstUndrainedSnapshotAt ? { first_undrained_snapshot_at: st.firstUndrainedSnapshotAt } : {}),
-    ...(st.deployRunId ? { deploy_run_id: st.deployRunId } : {}),
-    updated_at: new Date(now()).toISOString(),
-  });
+  const persist = (phase: DurableDeployPhase): void =>
+    ceremony.write({
+      version: 1,
+      phase,
+      ...(st.targetHead ? { target_head: st.targetHead } : {}),
+      ...(st.preDeploySnapshotAt ? { pre_deploy_snapshot_at: st.preDeploySnapshotAt } : {}),
+      ...(st.drainObserved ? { drain_observed: true } : {}),
+      ...(st.firstUndrainedSnapshotAt
+        ? { first_undrained_snapshot_at: st.firstUndrainedSnapshotAt }
+        : {}),
+      ...(st.deployRunId ? { deploy_run_id: st.deployRunId } : {}),
+      updated_at: new Date(now()).toISOString(),
+    });
   const failDrain = (theApp: App, run: DeployRun, reason: string): void => {
     if (st.run !== run) return;
     st.deployPhase = "drain-failed";
@@ -500,7 +602,10 @@ export function installDeployHooks(
         if (code === 0) {
           st.deployPhase = "awaiting-lift";
           persist("awaiting-lift");
-          line(run, "✓ sync finished — healthy boot will auto-lift the drain after its first reconcile");
+          line(
+            run,
+            "✓ sync finished — healthy boot will auto-lift the drain after its first reconcile",
+          );
           theApp.notice("deploy complete — waiting for healthy boot to auto-lift drain");
         } else {
           st.deployPhase = "deploy-failed";
@@ -537,7 +642,10 @@ export function installDeployHooks(
       run.running = false;
       run.code = 1;
       persist("deploy-failed");
-      line(run, `✖ local HEAD moved from ${st.targetHead} to ${st.head} while draining — deploy did not start; drain remains ON`);
+      line(
+        run,
+        `✖ local HEAD moved from ${st.targetHead} to ${st.head} while draining — deploy did not start; drain remains ON`,
+      );
       theApp.notice("✖ deploy target changed while draining — drain remains on");
       theApp.repaint();
       return;
@@ -558,16 +666,23 @@ export function installDeployHooks(
     targetCheckInFlight = true;
     line(run, "… board is quiet — refreshing local HEAD and deploy preflight");
     theApp.repaint();
-    void f.load().then((latest) => {
-      targetCheckInFlight = false;
-      if (st.run !== run || st.deployPhase !== "waiting-rounds") return;
-      Object.assign(st, latest);
-      st.loaded = true;
-      launchDeployProcess(theApp, run);
-    }).catch((err: unknown) => {
-      targetCheckInFlight = false;
-      failDrain(theApp, run, `could not refresh deploy target (${String(err instanceof Error ? err.message : err)})`);
-    });
+    void f
+      .load()
+      .then((latest) => {
+        targetCheckInFlight = false;
+        if (st.run !== run || st.deployPhase !== "waiting-rounds") return;
+        Object.assign(st, latest);
+        st.loaded = true;
+        launchDeployProcess(theApp, run);
+      })
+      .catch((err: unknown) => {
+        targetCheckInFlight = false;
+        failDrain(
+          theApp,
+          run,
+          `could not refresh deploy target (${String(err instanceof Error ? err.message : err)})`,
+        );
+      });
   };
 
   const observeDrain = (theApp: App): void => {
@@ -576,19 +691,32 @@ export function installDeployHooks(
     const snap = theApp.view.snapshot;
     if (!run || run.kind !== "deploy") {
       const saved = ceremony.read();
-      if (saved && snap && health.kind !== "stale" && health.kind !== "unreachable" && snap.draining !== true) {
-        const liftGenerationOk = saved.phase !== "awaiting-lift" || (
-          saved.pre_deploy_snapshot_at !== undefined && Date.parse(snap.written_at) > Date.parse(saved.pre_deploy_snapshot_at)
-        );
+      if (
+        saved &&
+        snap &&
+        health.kind !== "stale" &&
+        health.kind !== "unreachable" &&
+        snap.draining !== true
+      ) {
+        const liftGenerationOk =
+          saved.phase !== "awaiting-lift" ||
+          (saved.pre_deploy_snapshot_at !== undefined &&
+            Date.parse(snap.written_at) > Date.parse(saved.pre_deploy_snapshot_at));
         if (liftGenerationOk) ceremony.clear();
       }
       return;
     }
-    const postDeployGeneration = st.preDeploySnapshotAt !== undefined && snap !== undefined &&
+    const postDeployGeneration =
+      st.preDeploySnapshotAt !== undefined &&
+      snap !== undefined &&
       Date.parse(snap.written_at) > Date.parse(st.preDeploySnapshotAt);
     if (
-      st.deployPhase === "awaiting-lift" && snap && postDeployGeneration &&
-      health.kind !== "stale" && health.kind !== "unreachable" && snap.draining !== true
+      st.deployPhase === "awaiting-lift" &&
+      snap &&
+      postDeployGeneration &&
+      health.kind !== "stale" &&
+      health.kind !== "unreachable" &&
+      snap.draining !== true
     ) {
       st.deployPhase = "done";
       ceremony.clear();
@@ -606,14 +734,18 @@ export function installDeployHooks(
       return;
     }
     if (snap.draining !== true) {
-      const repeatedUndrained = st.firstUndrainedSnapshotAt !== undefined &&
+      const repeatedUndrained =
+        st.firstUndrainedSnapshotAt !== undefined &&
         Date.parse(snap.written_at) > Date.parse(st.firstUndrainedSnapshotAt);
       if (st.drainObserved || repeatedUndrained) {
         st.deployPhase = "aborted";
         run.running = false;
         run.code = null;
         ceremony.clear();
-        line(run, "■ drain was lifted outside this ceremony — deploy cancelled; review work resumed");
+        line(
+          run,
+          "■ drain was lifted outside this ceremony — deploy cancelled; review work resumed",
+        );
         theApp.notice("deploy cancelled — operator lifted the drain");
       } else {
         if (!st.firstUndrainedSnapshotAt) {
@@ -635,8 +767,13 @@ export function installDeployHooks(
     st.drainStatusNote = undefined;
     if (st.drainRounds !== snap.running_rounds) {
       st.drainRounds = snap.running_rounds;
-      line(run, `DRAINING — ${snap.running_rounds} round${snap.running_rounds === 1 ? "" : "s"} finishing · ${snap.drained_deliveries ?? 0} webhook delivery(ies) dropped`);
-      theApp.notice(`deploy drain — ${snap.running_rounds} round${snap.running_rounds === 1 ? "" : "s"} finishing`);
+      line(
+        run,
+        `DRAINING — ${snap.running_rounds} round${snap.running_rounds === 1 ? "" : "s"} finishing · ${snap.drained_deliveries ?? 0} webhook delivery(ies) dropped`,
+      );
+      theApp.notice(
+        `deploy drain — ${snap.running_rounds} round${snap.running_rounds === 1 ? "" : "s"} finishing`,
+      );
     }
     if (snap.running_rounds === 0) startDeployProcess(theApp, run);
     else theApp.repaint();
@@ -649,32 +786,44 @@ export function installDeployHooks(
     line(run, "→ deploy aborted before sync — lifting drain so review work can resume…");
     theApp.notice("deploy aborted — lifting drain");
     const attempt = ++drainAttempt;
-    void drain.set(false).then((result) => {
-      if (st.run !== run || attempt !== drainAttempt) return;
-      run.running = false;
-      run.code = null;
-      if (result.ok && result.draining === false) {
-        st.deployPhase = "aborted";
-        ceremony.clear();
-        line(run, `✓ drain lifted — ${result.dropped_deliveries ?? 0} dropped delivery(ies) will be recovered by reconcile`);
-        theApp.notice("deploy aborted — drain lifted; review work resumed");
-      } else {
+    void drain
+      .set(false)
+      .then((result) => {
+        if (st.run !== run || attempt !== drainAttempt) return;
+        run.running = false;
+        run.code = null;
+        if (result.ok && result.draining === false) {
+          st.deployPhase = "aborted";
+          ceremony.clear();
+          line(
+            run,
+            `✓ drain lifted — ${result.dropped_deliveries ?? 0} dropped delivery(ies) will be recovered by reconcile`,
+          );
+          theApp.notice("deploy aborted — drain lifted; review work resumed");
+        } else {
+          st.deployPhase = "drain-failed";
+          persist("drain-failed");
+          line(
+            run,
+            `✖ could not lift drain — ${result.reason ?? "daemon did not confirm"}; drain may remain ON`,
+          );
+          theApp.notice("✖ deploy aborted but drain lift failed — check board");
+        }
+        theApp.repaint();
+      })
+      .catch((err: unknown) => {
+        if (st.run !== run || attempt !== drainAttempt) return;
+        run.running = false;
+        run.code = 1;
         st.deployPhase = "drain-failed";
         persist("drain-failed");
-        line(run, `✖ could not lift drain — ${result.reason ?? "daemon did not confirm"}; drain may remain ON`);
+        line(
+          run,
+          `✖ could not lift drain — ${String(err instanceof Error ? err.message : err)}; drain may remain ON`,
+        );
         theApp.notice("✖ deploy aborted but drain lift failed — check board");
-      }
-      theApp.repaint();
-    }).catch((err: unknown) => {
-      if (st.run !== run || attempt !== drainAttempt) return;
-      run.running = false;
-      run.code = 1;
-      st.deployPhase = "drain-failed";
-      persist("drain-failed");
-      line(run, `✖ could not lift drain — ${String(err instanceof Error ? err.message : err)}; drain may remain ON`);
-      theApp.notice("✖ deploy aborted but drain lift failed — check board");
-      theApp.repaint();
-    });
+        theApp.repaint();
+      });
     theApp.repaint();
   };
 
@@ -683,7 +832,12 @@ export function installDeployHooks(
       theApp.notice("deploy target is still loading — wait for LOCAL HEAD, then press D D again");
       return;
     }
-    const run: DeployRun = { kind: "deploy", lines: ["→ engaging daemon deploy drain…"], partial: "", running: true };
+    const run: DeployRun = {
+      kind: "deploy",
+      lines: ["→ engaging daemon deploy drain…"],
+      partial: "",
+      running: true,
+    };
     st.run = run;
     st.scroll = 0;
     st.deployPhase = resumeAbort ? "lifting-after-abort" : "engaging-drain";
@@ -701,40 +855,48 @@ export function installDeployHooks(
     const attempt = ++drainAttempt;
     theApp.notice("deploy requested — engaging drain; no new review work will start");
     theApp.repaint();
-    void drain.set(true).then((result) => {
-      if (st.run !== run || attempt !== drainAttempt) return;
-      if (!result.ok || result.draining !== true) {
-        if (abortDrainRequested) liftDrainAfterAbort(theApp, run);
-        else failDrain(theApp, run, result.reason ?? "daemon did not confirm drain");
-        return;
-      }
-      if (abortDrainRequested) {
-        liftDrainAfterAbort(theApp, run);
-        return;
-      }
-      if (result.issuer === "session") {
-        // the daemon found commands/operator/ unsealed and bounded
-        // this drain like a session's — it can lapse mid-sync. A deploy never
-        // rides a drain that may lift itself; the receipt says when it does.
-        failDrain(
-          theApp,
+    void drain
+      .set(true)
+      .then((result) => {
+        if (st.run !== run || attempt !== drainAttempt) return;
+        if (!result.ok || result.draining !== true) {
+          if (abortDrainRequested) liftDrainAfterAbort(theApp, run);
+          else failDrain(theApp, run, result.reason ?? "daemon did not confirm drain");
+          return;
+        }
+        if (abortDrainRequested) {
+          liftDrainAfterAbort(theApp, run);
+          return;
+        }
+        if (result.issuer === "session") {
+          // the daemon found commands/operator/ unsealed and bounded
+          // this drain like a session's — it can lapse mid-sync. A deploy never
+          // rides a drain that may lift itself; the receipt says when it does.
+          failDrain(
+            theApp,
+            run,
+            `the daemon bounded the drain because the operator channel is NOT sealed (commands/operator/ in the container must be root-owned 0755) — ` +
+              `it lapses ${result.expires_at ?? "at an unknown time"}; \`qcr drain off\` lifts it now. Fix the directory before deploying`,
+          );
+          return;
+        }
+        st.deployPhase = "waiting-rounds";
+        persist("waiting-rounds");
+        st.drainRounds = result.running_rounds;
+        line(
           run,
-          `the daemon bounded the drain because the operator channel is NOT sealed (commands/operator/ in the container must be root-owned 0755) — ` +
-            `it lapses ${result.expires_at ?? "at an unknown time"}; \`qcr drain off\` lifts it now. Fix the directory before deploying`,
+          `✓ drain engaged — ${result.running_rounds ?? "?"} round(s) reported by command receipt`,
         );
-        return;
-      }
-      st.deployPhase = "waiting-rounds";
-      persist("waiting-rounds");
-      st.drainRounds = result.running_rounds;
-      line(run, `✓ drain engaged — ${result.running_rounds ?? "?"} round(s) reported by command receipt`);
-      theApp.notice(`drain engaged — ${result.running_rounds ?? "?"} round(s) finishing before deploy`);
-      observeDrain(theApp);
-      theApp.repaint();
-    }).catch((err: unknown) => {
-      if (abortDrainRequested) liftDrainAfterAbort(theApp, run);
-      else failDrain(theApp, run, String(err instanceof Error ? err.message : err));
-    });
+        theApp.notice(
+          `drain engaged — ${result.running_rounds ?? "?"} round(s) finishing before deploy`,
+        );
+        observeDrain(theApp);
+        theApp.repaint();
+      })
+      .catch((err: unknown) => {
+        if (abortDrainRequested) liftDrainAfterAbort(theApp, run);
+        else failDrain(theApp, run, String(err instanceof Error ? err.message : err));
+      });
   };
 
   const startPowerRun = (theApp: App, kind: "stop" | "start"): void => {
@@ -747,20 +909,25 @@ export function installDeployHooks(
     const run: DeployRun = { kind, lines: [], partial: "", running: true };
     st.run = run;
     st.scroll = 0;
-    handle = power(theApp, kind, (chunk) => {
-      if (st.run !== run) return;
-      appendRunChunk(run, chunk);
-      theApp.repaint();
-    }, (code) => {
-      if (run.partial) run.lines.push(stripAnsi(run.partial));
-      run.partial = "";
-      run.running = false;
-      run.code = code;
-      handle = undefined;
-      st.loaded = false;
-      void load();
-      theApp.repaint();
-    });
+    handle = power(
+      theApp,
+      kind,
+      (chunk) => {
+        if (st.run !== run) return;
+        appendRunChunk(run, chunk);
+        theApp.repaint();
+      },
+      (code) => {
+        if (run.partial) run.lines.push(stripAnsi(run.partial));
+        run.partial = "";
+        run.running = false;
+        run.code = code;
+        handle = undefined;
+        st.loaded = false;
+        void load();
+        theApp.repaint();
+      },
+    );
     theApp.repaint();
   };
 
@@ -779,13 +946,18 @@ export function installDeployHooks(
       startDrain(app, true, savedCeremony.phase === "abort-requested");
     } else {
       const phase = savedCeremony.phase;
-      const running = phase === "waiting-rounds" || phase === "lifting-after-abort" || phase === "syncing";
+      const running =
+        phase === "waiting-rounds" || phase === "lifting-after-abort" || phase === "syncing";
       const run: DeployRun = {
         kind: "deploy",
         lines: [`↻ restored deploy ceremony after TUI reload (${phase})`],
         partial: "",
         running,
-        ...(phase === "awaiting-lift" ? { code: 0 } : phase === "deploy-failed" || phase === "drain-failed" ? { code: 1 } : {}),
+        ...(phase === "awaiting-lift"
+          ? { code: 0 }
+          : phase === "deploy-failed" || phase === "drain-failed"
+            ? { code: 1 }
+            : {}),
       };
       st.run = run;
       st.deployPhase = phase;
@@ -813,7 +985,9 @@ export function installDeployHooks(
       return;
     }
     if (kind === "deploy" && ceremony.read()) {
-      theApp.notice("previous deploy still owns the drain — resolve or lift it before another deploy");
+      theApp.notice(
+        "previous deploy still owns the drain — resolve or lift it before another deploy",
+      );
       return;
     }
     const t = now();
@@ -845,7 +1019,11 @@ export function installDeployHooks(
    * is reachable from the moment the TUI opens.
    */
   const powerKind = (): RunKind | undefined =>
-    st.containerStatus === undefined ? undefined : /^Up /.test(st.containerStatus) ? "stop" : "start";
+    st.containerStatus === undefined
+      ? undefined
+      : /^Up /.test(st.containerStatus)
+        ? "stop"
+        : "start";
 
   /** The power button/key: refuse on an unread state, and go and read it. */
   const pressPower = (theApp: App): void => {
@@ -903,15 +1081,20 @@ export function installDeployHooks(
           liftDrainAfterAbort(theApp, st.run);
         } else if (st.deployPhase !== "lifting-after-abort") {
           handle?.kill(); // sync/power abort — drain deliberately stays on after a failed sync
-          theApp.notice(`${st.run.kind} aborted (SIGTERM)${st.run.kind === "deploy" ? " — drain remains on" : ""}`);
+          theApp.notice(
+            `${st.run.kind} aborted (SIGTERM)${st.run.kind === "deploy" ? " — drain remains on" : ""}`,
+          );
         }
       } else if (st.deployPhase === "awaiting-lift") {
         theApp.notice("deploy finished but drain has not auto-lifted yet — result stays visible");
       } else {
-        const acknowledgedFailure = st.deployPhase === "deploy-failed" || st.deployPhase === "drain-failed";
+        const acknowledgedFailure =
+          st.deployPhase === "deploy-failed" || st.deployPhase === "drain-failed";
         if (acknowledgedFailure) {
           ceremony.clear();
-          theApp.notice("deploy failure acknowledged — drain state unchanged; D D may retry safely");
+          theApp.notice(
+            "deploy failure acknowledged — drain state unchanged; D D may retry safely",
+          );
         }
         st.run = undefined; // close the finished log, back to the plan view
         st.scroll = 0;

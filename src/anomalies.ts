@@ -18,7 +18,13 @@
 // SessionHooks.injectOverseer — it never schedules an agent and never touches
 // GitHub.
 
-import { localWallClockToInstant, nextEodFire, parseHHMM, zonedParts, zoneDateString } from "./eod.js";
+import {
+  localWallClockToInstant,
+  nextEodFire,
+  parseHHMM,
+  zonedParts,
+  zoneDateString,
+} from "./eod.js";
 import type { AnomalyRecord } from "./state.js";
 
 export type AnomalySeverity = "wake" | "quiet";
@@ -231,7 +237,8 @@ const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 export function startHeartbeat(deps: HeartbeatDeps): HeartbeatTimer {
   const now = deps.now ?? (() => new Date());
   const setT = deps.setTimer ?? ((cb: () => void, ms: number) => setTimeout(cb, ms));
-  const clearT = deps.clearTimer ?? ((h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>));
+  const clearT =
+    deps.clearTimer ?? ((h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>));
   const log = deps.log ?? (() => {});
   const onError = deps.onError ?? ((err: unknown) => log("heartbeat inject failed", err));
   const { hour, minute } = parseHHMM(deps.timeHHMM);
@@ -279,7 +286,14 @@ export function startHeartbeat(deps: HeartbeatDeps): HeartbeatTimer {
   const boot = (async (): Promise<void> => {
     const t = now();
     const today = zonedParts(t, deps.timeZone);
-    const slot = localWallClockToInstant(today.year, today.month, today.day, hour, minute, deps.timeZone);
+    const slot = localWallClockToInstant(
+      today.year,
+      today.month,
+      today.day,
+      hour,
+      minute,
+      deps.timeZone,
+    );
     if (t.getTime() >= slot.getTime()) {
       const date = zoneDateString(slot, deps.timeZone);
       if (deps.lastFired() !== date) {

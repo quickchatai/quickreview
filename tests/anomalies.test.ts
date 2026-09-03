@@ -33,13 +33,24 @@ function storeWithPolicy(opts: { nowMs?: () => number; failInject?: boolean } = 
 
 describe("anomalySeverity — the map", () => {
   it("wake classes: malformed/overdue verdicts, plan≠executed, degraded migration pre-check, withheld collision comment", () => {
-    for (const kind of ["malformed", "overdue", "pass_plan_mismatch", "migration_precheck_degraded", "migration_collision_comment_withheld"]) {
+    for (const kind of [
+      "malformed",
+      "overdue",
+      "pass_plan_mismatch",
+      "migration_precheck_degraded",
+      "migration_collision_comment_withheld",
+    ]) {
       expect(anomalySeverity(kind), kind).toBe("wake");
     }
   });
 
   it("quiet classes and anything unlisted default quiet — new kinds never spam", () => {
-    for (const kind of ["recheck_merge_verify_degraded", "recheck_delta_failed", "slack_connections", "brand_new_kind"]) {
+    for (const kind of [
+      "recheck_merge_verify_degraded",
+      "recheck_delta_failed",
+      "slack_connections",
+      "brand_new_kind",
+    ]) {
       expect(anomalySeverity(kind), kind).toBe("quiet");
     }
   });
@@ -57,7 +68,13 @@ describe("anomalySeverity — the map", () => {
 describe("logAnomaly → wake funnel", () => {
   it("a wake-class anomaly writes the DB row AND the overseer inject, verbatim from injectMessage", () => {
     const { store, injected } = storeWithPolicy();
-    store.logAnomaly("malformed", 42, 3, "bad verdict json", "ANOMALY (malformed) — PR #42 round 3\nbespoke body");
+    store.logAnomaly(
+      "malformed",
+      42,
+      3,
+      "bad verdict json",
+      "ANOMALY (malformed) — PR #42 round 3\nbespoke body",
+    );
     expect(store.anomalies().map((a) => a.kind)).toEqual(["malformed"]);
     expect(injected).toEqual(["ANOMALY (malformed) — PR #42 round 3\nbespoke body"]);
   });
@@ -78,7 +95,13 @@ describe("logAnomaly → wake funnel", () => {
 
   it("an UNLISTED kind is quiet even when the caller offers an inject message (default-quiet rule)", () => {
     const { store, injected } = storeWithPolicy();
-    store.logAnomaly("slack_connections", null, null, "2 consumers", "should not be used by the funnel");
+    store.logAnomaly(
+      "slack_connections",
+      null,
+      null,
+      "2 consumers",
+      "should not be used by the funnel",
+    );
     store.logAnomaly("never_seen_before", 9, 1, "novel failure", "also unused");
     expect(store.anomalies()).toHaveLength(2);
     expect(injected).toEqual([]);
@@ -148,7 +171,10 @@ class FakeClock {
   }
 }
 
-function heartbeatHarness(startIso: string, store = new StateStore(":memory:")): {
+function heartbeatHarness(
+  startIso: string,
+  store = new StateStore(":memory:"),
+): {
   clock: FakeClock;
   store: StateStore;
   injected: string[];

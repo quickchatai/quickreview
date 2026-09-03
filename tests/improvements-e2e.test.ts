@@ -9,7 +9,16 @@
 // a file path, and the production runner (`gitRunner(nodeExec)`, the exact
 // function wire.ts installs) drives every step.
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -21,7 +30,9 @@ import { fileImprovementPr, gitRunner, type ImprovementContext } from "../src/im
 import { StateStore } from "../src/state.js";
 import { nodeExec } from "../src/tmux.js";
 
-const cfg: Config = parseConfig(readFileSync(join(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
+const cfg: Config = parseConfig(
+  readFileSync(join(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
+);
 const BASE = cfg.github.base_branch;
 
 const fakeMinter = {
@@ -55,7 +66,10 @@ function git(cwd: string, ...args: string[]): string {
 
 function commitLines(cwd: string, file: string, lines: number, message: string): string {
   mkdirSync(join(cwd, file, ".."), { recursive: true });
-  writeFileSync(join(cwd, file), Array.from({ length: lines }, (_, i) => `line ${i + 1}`).join("\n") + "\n");
+  writeFileSync(
+    join(cwd, file),
+    Array.from({ length: lines }, (_, i) => `line ${i + 1}`).join("\n") + "\n",
+  );
   git(cwd, "add", file);
   git(cwd, "commit", "-q", "-m", message);
   return git(cwd, "rev-parse", "HEAD").trim();
@@ -73,7 +87,9 @@ function prepareBranch(branch: string, file: string, lines: number): string {
 
 function remoteHeads(): Record<string, string> {
   const heads: Record<string, string> = {};
-  for (const line of git(remote, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/").trim().split("\n")) {
+  for (const line of git(remote, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/")
+    .trim()
+    .split("\n")) {
     if (!line) continue;
     const [ref, sha] = line.split(" ");
     heads[ref!] = sha!;
@@ -144,17 +160,34 @@ describe("improvement channel end to end — real git, a repo with a remote", ()
     const shape = cloneShape();
 
     const out = await fileImprovementPr(
-      { branch: "wip/docs", title: "Docs: clarify retry", body: "rationale", slug: "clarify-retry" },
+      {
+        branch: "wip/docs",
+        title: "Docs: clarify retry",
+        body: "rationale",
+        slug: "clarify-retry",
+      },
       context(gate, adapter),
     );
 
-    expect(out).toMatchObject({ ok: true, branch: "bot/improve-clarify-retry", files: 1, lines: 10, pushed: false, pr: null, dry_run: true });
+    expect(out).toMatchObject({
+      ok: true,
+      branch: "bot/improve-clarify-retry",
+      files: 1,
+      lines: 10,
+      pushed: false,
+      pr: null,
+      dry_run: true,
+    });
     const intents = dryRunIntents(dryrun);
     expect(intents.map((i) => i.kind)).toEqual(["push_branch", "create_pull", "add_label"]);
     expect(intents[0]).toMatchObject({
       method: "git",
       path: "git push origin refs/heads/wip/docs:refs/heads/bot/improve-clarify-retry",
-      body: { remote: "origin", source: "refs/heads/wip/docs", target: "bot/improve-clarify-retry" },
+      body: {
+        remote: "origin",
+        source: "refs/heads/wip/docs",
+        target: "bot/improve-clarify-retry",
+      },
     });
     // Suppressed means suppressed: the remote is byte-for-byte what it was.
     expect(remoteHeads()).toEqual(before);
@@ -182,19 +215,26 @@ describe("improvement channel end to end — real git, a repo with a remote", ()
     prepareBranch("wip/two", "docs/two.md", 3);
     const shape = cloneShape();
 
-    const first = await fileImprovementPr({ branch: "wip/one", title: "t", body: "b", slug: "one" }, context(gate, adapter));
+    const first = await fileImprovementPr(
+      { branch: "wip/one", title: "t", body: "b", slug: "one" },
+      context(gate, adapter),
+    );
     expect(first).toMatchObject({ ok: true, files: 1, lines: 2 });
     // A fresh ledger for the second call: the day cap (1/day) is not what is
     // under test here.
     store.close();
     store = new StateStore(":memory:");
-    const second = await fileImprovementPr({ branch: "wip/two", title: "t", body: "b", slug: "two" }, context(gate, adapter));
+    const second = await fileImprovementPr(
+      { branch: "wip/two", title: "t", body: "b", slug: "two" },
+      context(gate, adapter),
+    );
     expect(second).toMatchObject({ ok: true, files: 1, lines: 3 });
 
-    expect(dryRunIntents(dryrun).filter((i) => i.kind === "push_branch").map((i) => (i.body as { target: string }).target)).toEqual([
-      "bot/improve-one",
-      "bot/improve-two",
-    ]);
+    expect(
+      dryRunIntents(dryrun)
+        .filter((i) => i.kind === "push_branch")
+        .map((i) => (i.body as { target: string }).target),
+    ).toEqual(["bot/improve-one", "bot/improve-two"]);
     expect(cloneShape()).toEqual(shape);
     expect(existsSync(join(tmp, "state", "scratch-improve"))).toBe(false);
   });
@@ -218,11 +258,22 @@ describe("improvement channel end to end — real git, a repo with a remote", ()
     const sha = prepareBranch("wip/docs", "docs/readme.md", 10);
 
     const out = await fileImprovementPr(
-      { branch: "wip/docs", title: "Docs: clarify retry", body: "rationale", slug: "clarify-retry" },
+      {
+        branch: "wip/docs",
+        title: "Docs: clarify retry",
+        body: "rationale",
+        slug: "clarify-retry",
+      },
       context(gate, adapter),
     );
 
-    expect(out).toMatchObject({ ok: true, branch: "bot/improve-clarify-retry", pushed: true, pr: 77, dry_run: false });
+    expect(out).toMatchObject({
+      ok: true,
+      branch: "bot/improve-clarify-retry",
+      pushed: true,
+      pr: 77,
+      dry_run: false,
+    });
     expect(seen).toEqual(["push_branch", "create_pull", "add_label"]);
     const after = remoteHeads();
     // Rule 4, observed on the remote rather than read off the intent: the
@@ -240,10 +291,15 @@ describe("improvement channel end to end — real git, a repo with a remote", ()
     // A git step that fails must FAIL. The daemon's first runner returned
     // stdout whatever the exit code, so a refused push would have been
     // recorded as pushed and a PR opened against a branch that did not exist.
-    writeFileSync(join(remote, "hooks", "pre-receive"), "#!/bin/sh\necho 'policy: refused' >&2\nexit 1\n");
+    writeFileSync(
+      join(remote, "hooks", "pre-receive"),
+      "#!/bin/sh\necho 'policy: refused' >&2\nexit 1\n",
+    );
     chmodSync(join(remote, "hooks", "pre-receive"), 0o755);
     const seen: string[] = [];
-    const gate = new MutationGate(false, join(tmp, "state", "dryrun"), async () => ({ number: 78 }));
+    const gate = new MutationGate(false, join(tmp, "state", "dryrun"), async () => ({
+      number: 78,
+    }));
     gate.setGuard({
       before: async (i) => {
         seen.push(i.kind);
@@ -257,7 +313,12 @@ describe("improvement channel end to end — real git, a repo with a remote", ()
     prepareBranch("wip/docs", "docs/readme.md", 10);
 
     const out = await fileImprovementPr(
-      { branch: "wip/docs", title: "Docs: clarify retry", body: "rationale", slug: "clarify-retry" },
+      {
+        branch: "wip/docs",
+        title: "Docs: clarify retry",
+        body: "rationale",
+        slug: "clarify-retry",
+      },
       context(gate, adapter),
     );
 
@@ -283,25 +344,34 @@ describe("improvement channel end to end — real git, a repo with a remote", ()
     const before = remoteHeads();
 
     prepareBranch("wip/big", "src/big.ts", 51);
-    const big = await fileImprovementPr({ branch: "wip/big", title: "t", body: "b", slug: "big" }, context(gate, adapter));
+    const big = await fileImprovementPr(
+      { branch: "wip/big", title: "t", body: "b", slug: "big" },
+      context(gate, adapter),
+    );
     expect(big.ok).toBe(false);
     expect(big.reason).toContain("51 changed lines > cap 50");
 
     prepareBranch("wip/infra", "infra/main.tf", 1);
-    const infra = await fileImprovementPr({ branch: "wip/infra", title: "t", body: "b", slug: "infra" }, context(gate, adapter));
+    const infra = await fileImprovementPr(
+      { branch: "wip/infra", title: "t", body: "b", slug: "infra" },
+      context(gate, adapter),
+    );
     expect(infra.ok).toBe(false);
     expect(infra.reason).toContain("path denylist");
 
     // And the boundary itself, on real git: exactly 50 lines is filed.
     prepareBranch("wip/fifty", "src/fifty.ts", 50);
-    const fifty = await fileImprovementPr({ branch: "wip/fifty", title: "t", body: "b", slug: "fifty" }, context(gate, adapter));
+    const fifty = await fileImprovementPr(
+      { branch: "wip/fifty", title: "t", body: "b", slug: "fifty" },
+      context(gate, adapter),
+    );
     expect(fifty).toMatchObject({ ok: true, files: 1, lines: 50, dry_run: true });
 
-    expect(dryRunIntents(dryrun).map((i) => `${i.kind}:${String((i.body as { target?: string }).target ?? "")}`)).toEqual([
-      "push_branch:bot/improve-fifty",
-      "create_pull:",
-      "add_label:",
-    ]);
+    expect(
+      dryRunIntents(dryrun).map(
+        (i) => `${i.kind}:${String((i.body as { target?: string }).target ?? "")}`,
+      ),
+    ).toEqual(["push_branch:bot/improve-fifty", "create_pull:", "add_label:"]);
     expect(remoteHeads()).toEqual(before);
   });
 
@@ -317,15 +387,21 @@ describe("improvement channel end to end — real git, a repo with a remote", ()
       throw new Error("no direct fetch expected");
     }) as unknown as typeof fetch);
     // The base moves on after the clone: 200 lines in three files.
-    for (const f of ["src/a.ts", "src/b.ts", "src/c.ts"]) commitLines(seed, f, 200, `base grows ${f}`);
+    for (const f of ["src/a.ts", "src/b.ts", "src/c.ts"])
+      commitLines(seed, f, 200, `base grows ${f}`);
     git(seed, "push", "-q", "origin", BASE);
     // The session's branch is off the fresh base with one 4-line change.
     prepareBranch("wip/docs", "docs/readme.md", 4);
 
-    const out = await fileImprovementPr({ branch: "wip/docs", title: "t", body: "b", slug: "docs" }, context(gate, adapter));
+    const out = await fileImprovementPr(
+      { branch: "wip/docs", title: "t", body: "b", slug: "docs" },
+      context(gate, adapter),
+    );
 
     expect(out).toMatchObject({ ok: true, files: 1, lines: 4 });
-    expect(git(clone, "rev-parse", BASE).trim()).not.toBe(git(clone, "rev-parse", `origin/${BASE}`).trim());
+    expect(git(clone, "rev-parse", BASE).trim()).not.toBe(
+      git(clone, "rev-parse", `origin/${BASE}`).trim(),
+    );
   });
 
   it("a branch the session never prepared is a loud rejection, nothing filed", async () => {
@@ -337,10 +413,15 @@ describe("improvement channel end to end — real git, a repo with a remote", ()
       throw new Error("no direct fetch expected");
     }) as unknown as typeof fetch);
 
-    const out = await fileImprovementPr({ branch: "wip/nothing", title: "t", body: "b", slug: "nothing" }, context(gate, adapter));
+    const out = await fileImprovementPr(
+      { branch: "wip/nothing", title: "t", body: "b", slug: "nothing" },
+      context(gate, adapter),
+    );
 
     expect(out.ok).toBe(false);
-    expect(out.reason).toBe("branch 'wip/nothing' does not exist in the reviewed repo's clone — the session never prepared it");
+    expect(out.reason).toBe(
+      "branch 'wip/nothing' does not exist in the reviewed repo's clone — the session never prepared it",
+    );
     expect(dryRunIntents(dryrun)).toEqual([]);
     expect(store.filedSince("improvement_pr", "1970-01-01T00:00:00.000Z")).toBe(0);
   });
@@ -357,9 +438,14 @@ describe("improvement channel end to end — real git, a repo with a remote", ()
       throw new Error("no direct fetch expected");
     }) as unknown as typeof fetch);
     const before = remoteHeads();
-    expect(git(clone, "rev-parse", "--verify", `origin/${BASE}`).trim()).toBe(before[`refs/heads/${BASE}`]);
+    expect(git(clone, "rev-parse", "--verify", `origin/${BASE}`).trim()).toBe(
+      before[`refs/heads/${BASE}`],
+    );
 
-    const out = await fileImprovementPr({ branch: `origin/${BASE}`, title: "t", body: "b", slug: "base" }, context(gate, adapter));
+    const out = await fileImprovementPr(
+      { branch: `origin/${BASE}`, title: "t", body: "b", slug: "base" },
+      context(gate, adapter),
+    );
 
     expect(out.ok).toBe(false);
     expect(out.reason).toContain(`branch 'origin/${BASE}' does not exist`);
@@ -383,7 +469,10 @@ describe("improvement channel end to end — real git, a repo with a remote", ()
     expect(fetched()).toBe(false);
 
     for (const branch of ["--quiet", "+wip/docs", `wip/docs:refs/heads/${BASE}`]) {
-      const out = await fileImprovementPr({ branch, title: "t", body: "b", slug: "opt" }, context(gate, adapter));
+      const out = await fileImprovementPr(
+        { branch, title: "t", body: "b", slug: "opt" },
+        context(gate, adapter),
+      );
       expect(out.ok, branch).toBe(false);
       expect(out.reason, branch).toContain("bad branch name");
     }

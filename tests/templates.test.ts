@@ -37,7 +37,12 @@ const order: RoundOrder = {
       tier: "sol-med",
       raisable_to: ["pass-delivery--sol-high"],
     },
-    { lens: "pass-validate", agent: "pass-validate--terra-med", tier: "terra-med", raisable_to: [] },
+    {
+      lens: "pass-validate",
+      agent: "pass-validate--terra-med",
+      tier: "terra-med",
+      raisable_to: [],
+    },
   ],
   addable_lenses: ["pass-ui", "pass-contracts"],
   migration_gate: true,
@@ -82,8 +87,12 @@ describe("roundVars", () => {
     expect(v.base_sha).toBe("basetip");
     expect(v.merge_base).toBe("forkpoint");
     expect(v.pass_plan).toContain("| lens | subagent to call | tier | may raise to |");
-    expect(v.pass_plan).toContain("| pass-security | `pass-security--sol-high` | sol-high | — (pinned) |");
-    expect(v.pass_plan).toContain("| pass-delivery | `pass-delivery--sol-med` | sol-med | `pass-delivery--sol-high` |");
+    expect(v.pass_plan).toContain(
+      "| pass-security | `pass-security--sol-high` | sol-high | — (pinned) |",
+    );
+    expect(v.pass_plan).toContain(
+      "| pass-delivery | `pass-delivery--sol-med` | sol-med | `pass-delivery--sol-high` |",
+    );
     expect(v.addable_lenses).toBe("pass-ui, pass-contracts");
     expect(v.migration_gate_note).toMatch(/MIGRATION GATE/);
     expect(v.migration_gate_note).toContain("Ordinary Django ORM operations are acceptable");
@@ -117,13 +126,17 @@ describe("roundVars", () => {
       const tpl = readFileSync(resolve(process.cwd(), "prompts", name), "utf8");
       const rendered = renderRoundPrompt(tpl, recovering);
       expect(rendered.match(/RECOVERY — PRE-FANOUT STALL/g), name).toHaveLength(1);
-      expect(rendered.indexOf("RECOVERY — PRE-FANOUT STALL"), name).toBeLessThan(rendered.indexOf("## GitHub routine"));
+      expect(rendered.indexOf("RECOVERY — PRE-FANOUT STALL"), name).toBeLessThan(
+        rendered.indexOf("## GitHub routine"),
+      );
     }
     const reReview = renderRoundPrompt(
       readFileSync(resolve(process.cwd(), "prompts/round-re-review.md"), "utf8"),
       recovering,
     );
-    expect(reReview).toContain("Broad parent source/diff inspection happens only after that fanout is running");
+    expect(reReview).toContain(
+      "Broad parent source/diff inspection happens only after that fanout is running",
+    );
   });
 
   it("uses placeholders for an empty settled digest and no gate", () => {
@@ -195,12 +208,18 @@ describe("roundVars", () => {
   });
 
   it("says nothing about collisions when the pre-check found none", () => {
-    expect(roundVars({ ...order, migration_collisions: [] }).migration_gate_note).not.toContain("ALREADY HANDLED");
-    expect(roundVars({ ...order, migration_collisions: undefined }).migration_gate_note).not.toContain("ALREADY HANDLED");
+    expect(roundVars({ ...order, migration_collisions: [] }).migration_gate_note).not.toContain(
+      "ALREADY HANDLED",
+    );
+    expect(
+      roundVars({ ...order, migration_collisions: undefined }).migration_gate_note,
+    ).not.toContain("ALREADY HANDLED");
   });
 
   it("falls back when every known lens is already planned", () => {
-    expect(roundVars({ ...order, addable_lenses: [] }).addable_lenses).toMatch(/none — every known lens/);
+    expect(roundVars({ ...order, addable_lenses: [] }).addable_lenses).toMatch(
+      /none — every known lens/,
+    );
   });
 });
 
@@ -290,7 +309,9 @@ describe("renderNitScopeNote", () => {
   it("reaches the rendered re-review and staleness prompts at round 3, not at round 2", () => {
     for (const file of ["round-re-review.md", "round-staleness.md"]) {
       const tpl = readFileSync(resolve(process.cwd(), "prompts", file), "utf8");
-      expect(renderRoundPrompt(tpl, { ...order, round_no: 2 })).not.toContain("NIT SCOPE: this is review");
+      expect(renderRoundPrompt(tpl, { ...order, round_no: 2 })).not.toContain(
+        "NIT SCOPE: this is review",
+      );
       const r3 = renderRoundPrompt(tpl, { ...order, round_no: 3 });
       expect(r3).toContain("NIT SCOPE: this is review 3 of this PR");
       expect(r3).toContain("P0–P2 findings are exempt");
@@ -303,7 +324,12 @@ describe("renderDirectiveEscalationNote", () => {
 
   it("renders empty when the order carries no first-party directive files", () => {
     expect(renderDirectiveEscalationNote(order)).toBe("");
-    expect(renderDirectiveEscalationNote({ ...order, first_party_directives: { files: [], mention: "x" } })).toBe("");
+    expect(
+      renderDirectiveEscalationNote({
+        ...order,
+        first_party_directives: { files: [], mention: "x" },
+      }),
+    ).toBe("");
   });
 
   it("names the files, evidence burden, ordinary blocker routing and one @-mention", () => {
@@ -321,7 +347,10 @@ describe("renderDirectiveEscalationNote", () => {
   });
 
   it("degrades to a descriptive addressee when no login was resolvable", () => {
-    const note = renderDirectiveEscalationNote({ ...order, first_party_directives: { ...fpd, mention: "" } });
+    const note = renderDirectiveEscalationNote({
+      ...order,
+      first_party_directives: { ...fpd, mention: "" },
+    });
     expect(note).not.toContain("@alex");
     expect(note).toContain("no login was resolvable");
   });
@@ -330,7 +359,11 @@ describe("renderDirectiveEscalationNote", () => {
     for (const rt of ["first", "re-review", "staleness"] as RoundType[]) {
       const tpl = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile(rt)), "utf8");
       expect(tpl).toContain("{{directive_note}}");
-      const armed = renderRoundPrompt(tpl, { ...order, round_type: rt, first_party_directives: fpd });
+      const armed = renderRoundPrompt(tpl, {
+        ...order,
+        round_type: rt,
+        first_party_directives: fpd,
+      });
       expect(armed).toContain("FIRST-PARTY DIRECTIVES — concrete evidence decides.");
       expect(armed).toContain("@alex");
       const unarmed = renderRoundPrompt(tpl, { ...order, round_type: rt });
@@ -383,7 +416,9 @@ describe("shipped round templates", () => {
       expect(text).toContain("FOLDED <src> under <dst>");
       expect(text).toContain("validate task string");
       // Old rule gone: dedup is no longer unconditional.
-      expect(text).not.toMatch(/Dedup (candidates )?by `\(path, changed-line-run\)`[;:] highest severity wins/);
+      expect(text).not.toMatch(
+        /Dedup (candidates )?by `\(path, changed-line-run\)`[;:] highest severity wins/,
+      );
       // Telemetry: merged/folded ride the pass-validate entry of the verdict.
       expect(text).toContain('"merged": 1, "folded": 1');
       expect(text).toContain("step-3 merge-stage counts `merged`");
@@ -441,7 +476,9 @@ describe("shipped round templates", () => {
       // contrived never blocks, at any severity.
       expect(text).toMatch(/`contrived`[^]*never blocks, at\s*\n?\s*any severity/);
       // plausible: P0/P1 still block, P2 becomes a question.
-      expect(text).toMatch(/`plausible`[^]*P0\/P1 still block; P2\s*\n?\s*becomes a `\[question\]`/);
+      expect(text).toMatch(
+        /`plausible`[^]*P0\/P1 still block; P2\s*\n?\s*becomes a `\[question\]`/,
+      );
       // routine unchanged, and an absent field reads as routine.
       expect(text).toContain("the map above applies unchanged");
       expect(text).toContain("without the field is `routine`");
@@ -468,7 +505,9 @@ describe("shipped round templates", () => {
       expect(text).toContain('"passes": [');
       expect(text).toMatch(/"survived": 2, "killed": 1, "downgraded": 0/);
       // Fill discipline: from real returns, never the plan table; [] is honest.
-      expect(text).toContain("filled from the real returns only, never copied from\nthe plan table");
+      expect(text).toContain(
+        "filled from the real returns only, never copied from\nthe plan table",
+      );
       expect(text).toContain("A pass\nthat never returned gets NO entry");
       expect(text).toContain('"passes": []');
     });
@@ -498,7 +537,9 @@ describe("shipped round templates", () => {
       expect(text).toContain("**The tag grammar is closed.**");
       // All three marker prefixes are in the grammar sentence — `[deferred]`
       // was missing while the template's own section mandated it.
-      expect(text).toContain("optionally prefixed by `[check this]`,\n`[ask your human]` or `[deferred]` where those apply");
+      expect(text).toContain(
+        "optionally prefixed by `[check this]`,\n`[ask your human]` or `[deferred]` where those apply",
+      );
       expect(text).toContain("never invent a\ntag");
       expect(text).toContain("[start here 3/5]");
       expect(text).toContain("silently escapes its own machinery");
@@ -509,7 +550,9 @@ describe("shipped round templates", () => {
     it(`${roundTemplateFile(rt)} ledger vocab matches the code's closed sets`, () => {
       // posted_as includes `deferred` — SANCTIONED_TAGS accepts it, so the
       // template's closed list must too.
-      expect(text).toContain("`blocker`, `question`, `nit`, `check this`,\n  `ask your human` or `deferred`");
+      expect(text).toContain(
+        "`blocker`, `question`, `nit`, `check this`,\n  `ask your human` or `deferred`",
+      );
       // ask-human-unnamed-defect (include.ts addendum) is recordable: a
       // downgrade word the addendum mints must be in the template's list.
       expect(text).toContain("`ask-human-unnamed-defect`, `tag-outside-grammar`)");
@@ -522,7 +565,9 @@ describe("shipped round templates", () => {
     });
 
     it(`${roundTemplateFile(rt)} refuses to measure any of this in characters`, () => {
-      expect(text).toContain("**None of this is a length rule, and success is never counted in characters.**");
+      expect(text).toContain(
+        "**None of this is a length rule, and success is never counted in characters.**",
+      );
       expect(text).toContain("not one word of\njustification is cut");
     });
 
@@ -590,14 +635,18 @@ describe("shipped round templates", () => {
       // No markdown / no jargon, same constraints the summary carries.
       expect(text).toMatch(/No markdown, no lens names, no severity codes/);
       // The opener is written once and reused in the verdict JSON (step 7).
-      expect(text).toMatch(/This is the \*\*same text\*\* as the body's\s+plain opening paragraph \(step 6\)/);
+      expect(text).toMatch(
+        /This is the \*\*same text\*\* as the body's\s+plain opening paragraph \(step 6\)/,
+      );
       // The plain opener lives in §6 Post and precedes the body recipe that
       // names the verdict/lenses lines.
       const post = text.slice(text.indexOf("## 6. Post"), text.indexOf("## 7. Return"));
       const opener = post.indexOf("**Open in plain language.**");
       expect(opener).toBeGreaterThanOrEqual(0);
       expect(post).toMatch(/summary (body opens|opening) with|After the plain opener/);
-      expect(opener).toBeLessThan(post.search(/verdict \+ lenses lines|verdict\s+line\s+and\s+(the\s+)?lenses line/));
+      expect(opener).toBeLessThan(
+        post.search(/verdict \+ lenses lines|verdict\s+line\s+and\s+(the\s+)?lenses line/),
+      );
     });
 
     it(`${roundTemplateFile(rt)} preserves the framing judgment explicitly`, () => {
@@ -612,7 +661,9 @@ describe("shipped round templates", () => {
     it(`${roundTemplateFile(rt)} requires self-sufficient blocker bodies`, () => {
       expect(text).toContain("**Blocker bodies are self-sufficient.**");
       expect(text).toMatch(/the invariant a fix must restore/);
-      expect(text).toMatch(/a single\s*\n?sentence is CORRECT when it genuinely carries all of that/);
+      expect(text).toMatch(
+        /a single\s*\n?sentence is CORRECT when it genuinely carries all of that/,
+      );
       expect(text).toMatch(/Sufficiency is the\s*\n?test, padding is noise/);
       expect(text).toContain("lead with the general defect or violated invariant");
       expect(text).toContain("concrete reproducer is proof beneath it");
@@ -651,7 +702,9 @@ describe("shipped round templates", () => {
     });
 
     it(`${roundTemplateFile(rt)} forbids reading sibling PRs' posted reviews`, () => {
-      expect(text).toContain("**Never read another PR's posted reviews — for format or anything else.**");
+      expect(text).toContain(
+        "**Never read another PR's posted reviews — for format or anything else.**",
+      );
       expect(text).toContain("complete format authority");
       expect(text).toContain("contamination");
       expect(text).toMatch(/re-read this section — never a\s+sibling PR/);
@@ -662,7 +715,9 @@ describe("shipped round templates", () => {
     // any foreign agent name stays banned as the degraded path — never a
     // stand-in for a lens.
     it(`${roundTemplateFile(rt)} declares foreign agent names off-limits (only built passes exist)`, () => {
-      expect(text).toContain("**Only the built pass agents exist — any foreign agent name is off-limits.**");
+      expect(text).toContain(
+        "**Only the built pass agents exist — any foreign agent name is off-limits.**",
+      );
       expect(text).toContain("stock\n`researcher`/`scout`/`worker` agents no longer exist");
       expect(text).toContain("never treat it as a fallback for a lens");
     });
@@ -687,11 +742,14 @@ describe("shipped round templates", () => {
 
 describe("system prompts", () => {
   it("substitutes n/title/worktree in the conversation prompt", () => {
-    const out = renderConversationSystemPrompt("shepherd for PR #{{n}} ({{title}}) at {{worktree}}", {
-      pr: 3,
-      title: "T",
-      worktree: "/wt/pr-3",
-    });
+    const out = renderConversationSystemPrompt(
+      "shepherd for PR #{{n}} ({{title}}) at {{worktree}}",
+      {
+        pr: 3,
+        title: "T",
+        worktree: "/wt/pr-3",
+      },
+    );
     expect(out).toBe("shepherd for PR #3 (T) at /wt/pr-3");
   });
 
@@ -701,7 +759,11 @@ describe("system prompts", () => {
 
   it("resolves the identity variables on both system prompts (neutral by default, config wins)", () => {
     expect(
-      renderConversationSystemPrompt("in {{repo}} as {{bot_login}}", { pr: 3, title: "T", worktree: "/wt" }),
+      renderConversationSystemPrompt("in {{repo}} as {{bot_login}}", {
+        pr: 3,
+        title: "T",
+        worktree: "/wt",
+      }),
     ).toBe("in the reviewed repository as the review bot");
     expect(
       renderConversationSystemPrompt(
@@ -710,20 +772,32 @@ describe("system prompts", () => {
         { owner_name: "Ada", repo: "org/app", bot_login: "bot[bot]" },
       ),
     ).toBe("in org/app as bot[bot]");
-    expect(renderOverseerSystemPrompt("window of {{owner_name}}", { owner_name: "Ada" })).toBe("window of Ada");
+    expect(renderOverseerSystemPrompt("window of {{owner_name}}", { owner_name: "Ada" })).toBe(
+      "window of Ada",
+    );
     expect(renderOverseerSystemPrompt("window of {{owner_name}}")).toBe("window of the owner");
   });
 
   it("the real conversation-system.md renders with no unexpanded {{…}}", () => {
-    const template = readFileSync(resolve(import.meta.dirname, "../prompts/conversation-system.md"), "utf8");
-    const out = renderConversationSystemPrompt(template, { pr: 7, title: "T", worktree: "/wt/pr-7" });
+    const template = readFileSync(
+      resolve(import.meta.dirname, "../prompts/conversation-system.md"),
+      "utf8",
+    );
+    const out = renderConversationSystemPrompt(template, {
+      pr: 7,
+      title: "T",
+      worktree: "/wt/pr-7",
+    });
     expect(out).not.toContain("{{");
     expect(out).toContain("the reviewed repository");
     expect(out).toContain("(`the review bot`)");
   });
 
   it("the real overseer-system.md renders with no unexpanded {{…}}", () => {
-    const template = readFileSync(resolve(import.meta.dirname, "../prompts/overseer-system.md"), "utf8");
+    const template = readFileSync(
+      resolve(import.meta.dirname, "../prompts/overseer-system.md"),
+      "utf8",
+    );
     expect(renderOverseerSystemPrompt(template)).not.toContain("{{");
   });
 });
@@ -755,7 +829,10 @@ describe("conflict audit note", () => {
     const tpl = readFileSync(resolve(process.cwd(), "prompts", RECHECK_TEMPLATE_FILE), "utf8");
     const clean = renderRecheckPrompt(tpl, recheckOrder);
     expect(clean).not.toContain("CONFLICT RESOLUTION AUDIT");
-    const conflicted = renderRecheckPrompt(tpl, { ...recheckOrder, resolved_files: ["src/handlers.py"] });
+    const conflicted = renderRecheckPrompt(tpl, {
+      ...recheckOrder,
+      resolved_files: ["src/handlers.py"],
+    });
     expect(conflicted).toContain("CONFLICT RESOLUTION AUDIT");
     expect(conflicted).toContain("`src/handlers.py`");
     expect(conflicted).toContain("both");
@@ -851,7 +928,9 @@ describe("shipped recheck template", () => {
   // the sibling-review ban holds on the recheck path too; the
   // format authority is the round template the session already holds.
   it("forbids reading sibling PRs' posted reviews in recheck mode too", () => {
-    expect(text).toContain("**Never read another PR's posted reviews — for format or anything else.**");
+    expect(text).toContain(
+      "**Never read another PR's posted reviews — for format or anything else.**",
+    );
     expect(text).toContain("format authority");
     expect(text).toContain("contamination surface");
   });
@@ -901,14 +980,20 @@ describe("renderIntentNote", () => {
   it("carries the thin-body NONE rule and the severity cap into the task string", () => {
     const note = renderIntentNote(intentOrder);
     expect(note).toContain("too thin to\njudge against, return NONE");
-    expect(note).toContain("Findings are [question] or [nit]\nonly — severity P3/nit, never a [blocker]");
+    expect(note).toContain(
+      "Findings are [question] or [nit]\nonly — severity P3/nit, never a [blocker]",
+    );
   });
 
   it("the task-string block may contain nothing PR-specific beyond title and body", () => {
     // Fixed scaffolding: swap title and body and the note changes ONLY where
     // they were substituted — no other PR data can leak into the task string.
     const a = renderIntentNote(intentOrder);
-    const b = renderIntentNote({ ...intentOrder, title: "Other title", pr_body: "Other body prose entirely." });
+    const b = renderIntentNote({
+      ...intentOrder,
+      title: "Other title",
+      pr_body: "Other body prose entirely.",
+    });
     const scaffold = (note: string, title: string, bodyText: string) =>
       note.replace(`TITLE: ${title}`, "TITLE: <t>").replace(`BODY:\n${bodyText}`, "BODY:\n<b>");
     expect(scaffold(a, intentOrder.title, intentOrder.pr_body!)).toBe(
@@ -929,7 +1014,11 @@ describe("renderIntentNote", () => {
     const root = resolve(process.cwd(), "prompts");
     for (const rt of ["first", "re-review", "staleness"] as RoundType[]) {
       const template = readFileSync(resolve(root, roundTemplateFile(rt)), "utf8");
-      const withIntent = renderRoundPrompt(template, { ...intentOrder, round_type: rt, round_no: 3 });
+      const withIntent = renderRoundPrompt(template, {
+        ...intentOrder,
+        round_type: rt,
+        round_no: 3,
+      });
       expect(withIntent).toContain("INTENT ARTIFACT");
       expect(withIntent).toContain(`TITLE: ${intentOrder.title}`);
       const without = renderRoundPrompt(template, { ...order, round_type: rt, round_no: 3 });
@@ -984,7 +1073,9 @@ describe("template & script cleanups", () => {
       expect(text).toContain("not licence to invent one");
       // The live incident: a rogue ai_approved on a plain approval.
       expect(text).toMatch(/rogue\s*\n?`ai_approved: true` on a plain approval/);
-      expect(text).toContain("appear only under their\nstated conditions below; nothing else, ever.");
+      expect(text).toContain(
+        "appear only under their\nstated conditions below; nothing else, ever.",
+      );
       // The old tolerance phrasing no longer invites extras.
       expect(text).not.toContain("extra fields are fine");
     });
@@ -1009,7 +1100,8 @@ describe("template & script cleanups", () => {
 });
 
 describe("end-of-round ledger discipline", () => {
-  const PIN = "Update the ledger, then write the verdict file — in that order; nothing comes after the verdict write.";
+  const PIN =
+    "Update the ledger, then write the verdict file — in that order; nothing comes after the verdict write.";
   for (const rt of ["first", "re-review", "staleness"] as RoundType[]) {
     it(`${roundTemplateFile(rt)} orders the ledger write BEFORE the verdict file, verbatim`, () => {
       const raw = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile(rt)), "utf8");

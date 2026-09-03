@@ -14,7 +14,9 @@ export const defaultRunner: CmdRunner = (cmd, argv, stdin) =>
   new Promise((resolve) => {
     let p;
     try {
-      p = spawn(cmd, argv, { stdio: [stdin === undefined ? "ignore" : "pipe", "ignore", "ignore"] });
+      p = spawn(cmd, argv, {
+        stdio: [stdin === undefined ? "ignore" : "pipe", "ignore", "ignore"],
+      });
     } catch {
       resolve(false);
       return;

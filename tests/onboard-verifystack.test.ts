@@ -14,11 +14,20 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { OnboardingEngine, type OnboardAdapters, type ProcessResult } from "../src/onboard/engine.js";
+import {
+  OnboardingEngine,
+  type OnboardAdapters,
+  type ProcessResult,
+} from "../src/onboard/engine.js";
 import { healthUrl } from "../src/onboard/steps/compose.js";
 import { SECRET_FILES } from "../src/onboard/steps/githubapp.js";
 import { INGRESS_CHOICE_KEY, setTomlKey } from "../src/onboard/steps/ingress.js";
-import { VERIFY_STACK_STEP_ID, deliverySucceeded, parseDeliveries, verifyStackStep } from "../src/onboard/steps/verifyup.js";
+import {
+  VERIFY_STACK_STEP_ID,
+  deliverySucceeded,
+  parseDeliveries,
+  verifyStackStep,
+} from "../src/onboard/steps/verifyup.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const exampleConfig = readFileSync(join(repoRoot, "config.example.toml"), "utf8");
@@ -34,7 +43,10 @@ beforeEach(() => {
   secretsDir = join(root, "secrets");
   mkdirSync(secretsDir, { recursive: true });
   mkdirSync(join(root, "state"), { recursive: true });
-  writeFileSync(join(root, "config.toml"), setTomlKey(exampleConfig, "github", "secrets_dir", secretsDir)!);
+  writeFileSync(
+    join(root, "config.toml"),
+    setTomlKey(exampleConfig, "github", "secrets_dir", secretsDir)!,
+  );
   writeFileSync(join(secretsDir, SECRET_FILES.appId), "4242\n");
   writeFileSync(join(secretsDir, SECRET_FILES.pem), PEM);
   writeFileSync(join(secretsDir, SECRET_FILES.webhookSecret), "s".repeat(40));
@@ -45,7 +57,14 @@ function seedChoices(choices: Record<string, unknown>): void {
   mkdirSync(join(root, "state", "onboarding"), { recursive: true });
   writeFileSync(
     join(root, "state", "onboarding", "checklist.json"),
-    JSON.stringify({ version: 1, created_at: "2026-08-30T10:00:00Z", updated_at: "2026-08-30T10:00:00Z", completed_at: null, choices, steps: {} }),
+    JSON.stringify({
+      version: 1,
+      created_at: "2026-08-30T10:00:00Z",
+      updated_at: "2026-08-30T10:00:00Z",
+      completed_at: null,
+      choices,
+      steps: {},
+    }),
   );
 }
 
@@ -101,11 +120,18 @@ function harness(
     }
     if (url === `${API}/app/hook/config`) {
       const status = o.hookConfigStatus ?? 200;
-      return new Response(JSON.stringify(status === 200 ? { url: "https://abc.trycloudflare.com/webhook" } : { message: "bad" }), { status });
+      return new Response(
+        JSON.stringify(
+          status === 200 ? { url: "https://abc.trycloudflare.com/webhook" } : { message: "bad" },
+        ),
+        { status },
+      );
     }
     if (url.startsWith(`${API}/app/hook/deliveries?`)) {
-      if (o.deliveries === "error") return new Response(JSON.stringify({ message: "not found" }), { status: 404 });
-      const rows = redelivered && o.afterRedelivery ? o.afterRedelivery : (o.deliveries ?? [ping()]);
+      if (o.deliveries === "error")
+        return new Response(JSON.stringify({ message: "not found" }), { status: 404 });
+      const rows =
+        redelivered && o.afterRedelivery ? o.afterRedelivery : (o.deliveries ?? [ping()]);
       return new Response(JSON.stringify(rows), { status: 200 });
     }
     if (/\/app\/hook\/deliveries\/\d+\/attempts$/.test(url)) {
@@ -117,7 +143,12 @@ function harness(
 
   const runner = {
     run: async (_cmd: string, args: string[]): Promise<ProcessResult> => {
-      if (args.includes("ps")) return { code: 0, stdout: JSON.stringify(o.services ?? [{ Service: "daemon", State: "running" }]), stderr: "" };
+      if (args.includes("ps"))
+        return {
+          code: 0,
+          stdout: JSON.stringify(o.services ?? [{ Service: "daemon", State: "running" }]),
+          stderr: "",
+        };
       return { code: 1, stdout: "", stderr: "unexpected" };
     },
   };
@@ -144,7 +175,9 @@ describe("parsing GitHub's delivery log", () => {
   it("is total — junk yields no rows, and only 2xx counts as delivered", () => {
     expect(parseDeliveries(null)).toEqual([]);
     expect(parseDeliveries("nope")).toEqual([]);
-    expect(parseDeliveries([{ id: "x", event: "ping" }, null, { id: 3, event: "ping" }])).toHaveLength(1);
+    expect(
+      parseDeliveries([{ id: "x", event: "ping" }, null, { id: 3, event: "ping" }]),
+    ).toHaveLength(1);
     expect(deliverySucceeded(ping({ status_code: 200 }))).toBe(true);
     expect(deliverySucceeded(ping({ status_code: 502, status: "Bad Gateway" }))).toBe(false);
   });
@@ -159,12 +192,27 @@ describe("parsing GitHub's delivery log", () => {
 describe("all three layers green", () => {
   it("containers, health, and a ping GitHub says it delivered", async () => {
     seedChoices({ [INGRESS_CHOICE_KEY]: "quick" });
-    const h = harness({ services: [{ Service: "daemon", State: "running" }, { Service: "tunnel-quick", State: "running" }] });
+    const h = harness({
+      services: [
+        { Service: "daemon", State: "running" },
+        { Service: "tunnel-quick", State: "running" },
+      ],
+    });
     const result = await h.engine.runStep(VERIFY_STACK_STEP_ID);
     expect(result.ok).toBe(true);
-    expect(result.checks.map((c) => c.name)).toEqual(["containers", "ingress-sidecar", "health", "webhook-url", "ping-delivery"]);
-    expect(result.checks.find((c) => c.name === "webhook-url")!.detail).toMatch(/abc\.trycloudflare\.com/);
-    expect(result.checks.find((c) => c.name === "ping-delivery")!.detail).toMatch(/proven end to end/);
+    expect(result.checks.map((c) => c.name)).toEqual([
+      "containers",
+      "ingress-sidecar",
+      "health",
+      "webhook-url",
+      "ping-delivery",
+    ]);
+    expect(result.checks.find((c) => c.name === "webhook-url")!.detail).toMatch(
+      /abc\.trycloudflare\.com/,
+    );
+    expect(result.checks.find((c) => c.name === "ping-delivery")!.detail).toMatch(
+      /proven end to end/,
+    );
   });
 });
 
@@ -182,7 +230,9 @@ describe("a red layer blocks progress plainly", () => {
     const h = harness({ health: "refused" });
     const result = await h.engine.runStep(VERIFY_STACK_STEP_ID);
     expect(result.ok).toBe(false);
-    expect(result.failures.join(" ")).toMatch(/nothing answered http:\/\/127\.0\.0\.1:8787\/health/);
+    expect(result.failures.join(" ")).toMatch(
+      /nothing answered http:\/\/127\.0\.0\.1:8787\/health/,
+    );
     expect(result.failures.join(" ")).toMatch(/QCR_WEBHOOK_PORT/);
     expect(h.urls.filter((u) => u.includes("api.test"))).toEqual([]);
   });
@@ -204,15 +254,23 @@ describe("a red layer blocks progress plainly", () => {
 
 describe("the ping layer", () => {
   it("redelivers a failed ping and goes green when the retry lands", async () => {
-    const h = harness({ deliveries: [ping({ id: 7, status: "Bad Gateway", status_code: 502 })], afterRedelivery: [ping({ id: 8, redelivery: true })] });
+    const h = harness({
+      deliveries: [ping({ id: 7, status: "Bad Gateway", status_code: 502 })],
+      afterRedelivery: [ping({ id: 8, redelivery: true })],
+    });
     const result = await h.engine.runStep(VERIFY_STACK_STEP_ID);
     expect(result.ok).toBe(true);
     expect(h.urls).toContain(`POST ${API}/app/hook/deliveries/7/attempts`);
-    expect(result.checks.find((c) => c.name === "ping-delivery")!.detail).toMatch(/redelivered ping was accepted/);
+    expect(result.checks.find((c) => c.name === "ping-delivery")!.detail).toMatch(
+      /redelivered ping was accepted/,
+    );
   });
 
   it("a ping that keeps failing is red with the three fixes worth trying, in order", async () => {
-    const h = harness({ deliveries: [ping({ id: 7, status_code: 502 })], afterRedelivery: [ping({ id: 7, status_code: 502 })] });
+    const h = harness({
+      deliveries: [ping({ id: 7, status_code: 502 })],
+      afterRedelivery: [ping({ id: 7, status_code: 502 })],
+    });
     const result = await h.engine.runStep(VERIFY_STACK_STEP_ID);
     expect(result.ok).toBe(false);
     const detail = result.failures.join(" ");
@@ -272,6 +330,8 @@ describe("re-runnable as a diagnostic", () => {
     const up = harness();
     await up.engine.runStep(VERIFY_STACK_STEP_ID);
     const down = harness({ services: [] });
-    expect((await down.engine.reconcile()).demoted.map((d) => d.id)).toEqual([VERIFY_STACK_STEP_ID]);
+    expect((await down.engine.reconcile()).demoted.map((d) => d.id)).toEqual([
+      VERIFY_STACK_STEP_ID,
+    ]);
   });
 });

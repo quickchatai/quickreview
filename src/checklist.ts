@@ -23,11 +23,25 @@ export interface ProbeResult {
   manual?: boolean;
 }
 
-const ok = (item: string, name: string, detail: string): ProbeResult => ({ item, name, pass: true, detail });
-const bad = (item: string, name: string, detail: string): ProbeResult => ({ item, name, pass: false, detail });
+const ok = (item: string, name: string, detail: string): ProbeResult => ({
+  item,
+  name,
+  pass: true,
+  detail,
+});
+const bad = (item: string, name: string, detail: string): ProbeResult => ({
+  item,
+  name,
+  pass: false,
+  detail,
+});
 
 /** Run a probe so an exception is a failed item, never a crashed checklist. */
-export async function safeProbe(item: string, name: string, fn: () => Promise<ProbeResult>): Promise<ProbeResult> {
+export async function safeProbe(
+  item: string,
+  name: string,
+  fn: () => Promise<ProbeResult>,
+): Promise<ProbeResult> {
   try {
     return await fn();
   } catch (err) {
@@ -40,7 +54,11 @@ export async function safeProbe(item: string, name: string, fn: () => Promise<Pr
 export interface HttpResponseLike {
   status: number;
 }
-export type HttpPost = (url: string, headers: Record<string, string>, body: string) => Promise<HttpResponseLike>;
+export type HttpPost = (
+  url: string,
+  headers: Record<string, string>,
+  body: string,
+) => Promise<HttpResponseLike>;
 
 export interface TunnelProbeDeps {
   /** Locally `http://127.0.0.1:8787/webhook`; on the VM the same (the tunnel
@@ -61,15 +79,27 @@ export function signBody(secret: string, body: string): string {
 export async function probeTunnelHmac(deps: TunnelProbeDeps): Promise<ProbeResult> {
   const item = "①";
   const name = "tunnel + HMAC";
-  const body = JSON.stringify({ zen: "Non-blocking is better than blocking.", hook_id: 0, probe: "qcr-checklist" });
+  const body = JSON.stringify({
+    zen: "Non-blocking is better than blocking.",
+    hook_id: 0,
+    probe: "qcr-checklist",
+  });
   const base = (guid: string) => ({
     "content-type": "application/json",
     "x-github-event": "ping",
     "x-github-delivery": guid,
   });
 
-  const good = await deps.post(deps.url, { ...base(randomUUID()), "x-hub-signature-256": signBody(deps.webhookSecret, body) }, body);
-  const forged = await deps.post(deps.url, { ...base(randomUUID()), "x-hub-signature-256": `sha256=${"0".repeat(64)}` }, body);
+  const good = await deps.post(
+    deps.url,
+    { ...base(randomUUID()), "x-hub-signature-256": signBody(deps.webhookSecret, body) },
+    body,
+  );
+  const forged = await deps.post(
+    deps.url,
+    { ...base(randomUUID()), "x-hub-signature-256": `sha256=${"0".repeat(64)}` },
+    body,
+  );
 
   const goodOk = good.status >= 200 && good.status < 300;
   const forgedRejected = forged.status === 401 || forged.status === 403 || forged.status === 400;
@@ -116,7 +146,9 @@ export async function probeQueueDiff(deps: QueueDiffDeps): Promise<ProbeResult> 
     `manual=[${diff.manual.join(",")}] derived=[${diff.derived.join(",")}]` +
     (diff.missing.length ? ` missing=[${diff.missing.join(",")}]` : "") +
     (diff.extra.length ? ` extra=[${diff.extra.join(",")}]` : "");
-  return diff.missing.length === 0 && diff.extra.length === 0 ? ok(item, name, detail) : bad(item, name, detail);
+  return diff.missing.length === 0 && diff.extra.length === 0
+    ? ok(item, name, detail)
+    : bad(item, name, detail);
 }
 
 // ---- ④ push does not review -------------------------------------------------
@@ -207,14 +239,17 @@ export function probeDigest(deps: DigestProbeDeps): ProbeResult {
   if (!existsSync(file)) return bad(item, name, `missing ${file}`);
   const size = readFileSync(file, "utf8").trim().length;
   if (size === 0) return bad(item, name, `${file} is empty`);
-  if (!existsSync(deps.statusPath)) return bad(item, name, `${file} present but no status.json at ${deps.statusPath}`);
+  if (!existsSync(deps.statusPath))
+    return bad(item, name, `${file} present but no status.json at ${deps.statusPath}`);
   let headline: unknown;
   try {
-    headline = (JSON.parse(readFileSync(deps.statusPath, "utf8")) as { digest_headline?: unknown }).digest_headline;
+    headline = (JSON.parse(readFileSync(deps.statusPath, "utf8")) as { digest_headline?: unknown })
+      .digest_headline;
   } catch (err) {
     return bad(item, name, `status.json unreadable: ${(err as Error).message}`);
   }
-  if (typeof headline !== "string" || headline.trim() === "") return bad(item, name, `${file} present but status.json has no digest_headline`);
+  if (typeof headline !== "string" || headline.trim() === "")
+    return bad(item, name, `${file} present but status.json has no digest_headline`);
   return ok(item, name, `${file} (${size} chars), headline: "${headline.slice(0, 60)}"`);
 }
 
@@ -264,10 +299,16 @@ export async function probeRestartRecovery(deps: RestartProbeDeps): Promise<Prob
   const name = "restart recovery";
   const now = (deps.now ?? (() => new Date()))();
   const maxAge = deps.maxHeartbeatAgeS ?? 300;
-  if (!existsSync(deps.statusPath)) return bad(item, name, `no status.json at ${deps.statusPath} — the daemon never wrote a heartbeat`);
+  if (!existsSync(deps.statusPath))
+    return bad(
+      item,
+      name,
+      `no status.json at ${deps.statusPath} — the daemon never wrote a heartbeat`,
+    );
   let heartbeat: unknown;
   try {
-    heartbeat = (JSON.parse(readFileSync(deps.statusPath, "utf8")) as { heartbeat?: unknown }).heartbeat;
+    heartbeat = (JSON.parse(readFileSync(deps.statusPath, "utf8")) as { heartbeat?: unknown })
+      .heartbeat;
   } catch (err) {
     return bad(item, name, `status.json unreadable: ${(err as Error).message}`);
   }
@@ -281,7 +322,11 @@ export async function probeRestartRecovery(deps: RestartProbeDeps): Promise<Prob
   } catch (err) {
     return bad(item, name, `heartbeat fresh but adopt pass threw: ${(err as Error).message}`);
   }
-  return ok(item, name, `heartbeat ${Math.max(0, Math.round(ageS))}s old; adopt pass ok: [${adopted.join(", ") || "no sessions to adopt"}]`);
+  return ok(
+    item,
+    name,
+    `heartbeat ${Math.max(0, Math.round(ageS))}s old; adopt pass ok: [${adopted.join(", ") || "no sessions to adopt"}]`,
+  );
 }
 
 // ---- ③ ⑥ guided-manual -------------------------------------------------------
@@ -289,42 +334,47 @@ export async function probeRestartRecovery(deps: RestartProbeDeps): Promise<Prob
 /** The two live test-PR items. Never automated: they are the only steps that
  * run with `dry_run` off, and running them is the operator's act on the VM.
  * identity prose renders from config, never from a hardcoded login. */
-export function manualItems(botLogin = "the review App bot"): Array<{ item: string; name: string; instructions: string[] }> {
+export function manualItems(
+  botLogin = "the review App bot",
+): Array<{ item: string; name: string; instructions: string[] }> {
   return [
-  {
-    item: "③",
-    name: "live test PR — full pipeline (dry_run OFF)",
-    instructions: [
-      "Open a trivial doc-change PR on the reviewed repo and add the",
-      '"AI review requested" label. Then, with dry_run set to false FOR THIS ITEM ONLY:',
-      "  - the trigger is consumed and verified gone (label removed / team request cleared)",
-      '  - "AI review in progress" cycles, then "Automatic Review" lands',
-      `  - the review is posted as ${botLogin}`,
-      "  - the per-PR worktree is created and removed again",
-      "  - verdict/pr-<n>-round-1.json is written and valid",
-      "Restore dry_run = true afterwards. The cutover flip is a separate, later act.",
-    ],
-  },
-  {
-    item: "⑥",
-    name: "live test PR — the review is never handed back (dry_run OFF)",
-    instructions: [
-      "Open a second labelled test PR the reviewer would find hard to decide.",
-      "Expect a DECISION anyway: the complete review posted, APPROVE or",
-      "REQUEST_CHANGES on the merits, residual doubts under `### For a human to",
-      "double-check` and one `[check this]` inline thread per item. No park, no",
-      "third verdict, no state the PR sits in waiting for a person.",
-      "Expect NO review request on GitHub unless YOU switched `[escalation]` on",
-      "(it ships off, and an escalation is a note beside the verdict,",
-      "never instead of one).",
-      "Restore dry_run = true afterwards.",
-    ],
-  },
+    {
+      item: "③",
+      name: "live test PR — full pipeline (dry_run OFF)",
+      instructions: [
+        "Open a trivial doc-change PR on the reviewed repo and add the",
+        '"AI review requested" label. Then, with dry_run set to false FOR THIS ITEM ONLY:',
+        "  - the trigger is consumed and verified gone (label removed / team request cleared)",
+        '  - "AI review in progress" cycles, then "Automatic Review" lands',
+        `  - the review is posted as ${botLogin}`,
+        "  - the per-PR worktree is created and removed again",
+        "  - verdict/pr-<n>-round-1.json is written and valid",
+        "Restore dry_run = true afterwards. The cutover flip is a separate, later act.",
+      ],
+    },
+    {
+      item: "⑥",
+      name: "live test PR — the review is never handed back (dry_run OFF)",
+      instructions: [
+        "Open a second labelled test PR the reviewer would find hard to decide.",
+        "Expect a DECISION anyway: the complete review posted, APPROVE or",
+        "REQUEST_CHANGES on the merits, residual doubts under `### For a human to",
+        "double-check` and one `[check this]` inline thread per item. No park, no",
+        "third verdict, no state the PR sits in waiting for a person.",
+        "Expect NO review request on GitHub unless YOU switched `[escalation]` on",
+        "(it ships off, and an escalation is a note beside the verdict,",
+        "never instead of one).",
+        "Restore dry_run = true afterwards.",
+      ],
+    },
   ];
 }
 
 export function renderManualItems(botLogin?: string): string {
-  const lines: string[] = ["Guided-manual items (never automated — run these by hand on the VM):", ""];
+  const lines: string[] = [
+    "Guided-manual items (never automated — run these by hand on the VM):",
+    "",
+  ];
   for (const m of manualItems(botLogin)) {
     lines.push(`${m.item} ${m.name}`);
     for (const l of m.instructions) lines.push(`   ${l}`);
@@ -355,7 +405,9 @@ export function renderTable(results: ProbeResult[]): string {
     `---- ${"-".repeat(nameWidth)}  ------  ------`,
   ];
   for (const r of results) {
-    lines.push(`${r.item}    ${r.name.padEnd(nameWidth)}  ${(r.pass ? "PASS" : "FAIL").padEnd(6)}  ${r.detail}`);
+    lines.push(
+      `${r.item}    ${r.name.padEnd(nameWidth)}  ${(r.pass ? "PASS" : "FAIL").padEnd(6)}  ${r.detail}`,
+    );
   }
   const failed = results.filter((r) => !r.pass);
   lines.push("");
@@ -392,7 +444,10 @@ export interface ChecklistRun {
 
 /** The `qcr checklist` entrypoint. Wire it into the CLI (coordinator's job);
  * `print` defaults to console.log so tests can capture instead. */
-export async function runChecklist(deps: ChecklistDeps, print: (s: string) => void = console.log): Promise<ChecklistRun> {
+export async function runChecklist(
+  deps: ChecklistDeps,
+  print: (s: string) => void = console.log,
+): Promise<ChecklistRun> {
   const results = await runChecklistProbes(deps);
   const report = [
     "cutover checklist — automated items",

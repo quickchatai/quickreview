@@ -50,7 +50,9 @@ describe("onboardingPiArgv", () => {
 
 describe("piPinFromPackageJson", () => {
   it("reads the pin mirror from the package.json pi block", () => {
-    const pin = piPinFromPackageJson(ROOT, () => JSON.stringify({ pi: { package: "p", version: "1.2.3" } }));
+    const pin = piPinFromPackageJson(ROOT, () =>
+      JSON.stringify({ pi: { package: "p", version: "1.2.3" } }),
+    );
     expect(pin).toEqual({ package: "p", version: "1.2.3" });
   });
 
@@ -61,7 +63,11 @@ describe("piPinFromPackageJson", () => {
   });
 });
 
-function deps(complete: boolean, spawns: Array<{ cmd: string; args: string[] }>, codes: number[] = [0, 0]): OnboardRunDeps {
+function deps(
+  complete: boolean,
+  spawns: Array<{ cmd: string; args: string[] }>,
+  codes: number[] = [0, 0],
+): OnboardRunDeps {
   let call = 0;
   return {
     pin: PIN,

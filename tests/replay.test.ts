@@ -18,7 +18,13 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import { parseConfig, type Config } from "../src/config.js";
-import { ReplayRefused, parseCaseSet, runRegression, type RegressionCase, type SandboxFinding } from "../src/regression.js";
+import {
+  ReplayRefused,
+  parseCaseSet,
+  runRegression,
+  type RegressionCase,
+  type SandboxFinding,
+} from "../src/regression.js";
 import { isSandboxSession, prOfSession } from "../src/sessions.js";
 import {
   FINDINGS_FILE,
@@ -36,8 +42,12 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SRC_PATH = join(here, "..", "src", "replay.ts");
-const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
-const set = parseCaseSet(JSON.parse(readFileSync(join(here, "fixtures", "regression-cases.json"), "utf8")));
+const cfg: Config = parseConfig(
+  readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
+);
+const set = parseCaseSet(
+  JSON.parse(readFileSync(join(here, "fixtures", "regression-cases.json"), "utf8")),
+);
 
 const DRY = { isDryRun: true };
 const LIVE = { isDryRun: false };
@@ -55,7 +65,9 @@ interface FakeIo extends ReplayIo {
 /** A fake world. `gitOk` decides which git invocations succeed; anything the
  * replay writes lands in `files`, and the session "answers" by having its
  * findings file pre-seeded (or not). */
-function fakeIo(opts: { answer?: unknown; missingHead?: boolean; hasClone?: boolean } = {}): FakeIo {
+function fakeIo(
+  opts: { answer?: unknown; missingHead?: boolean; hasClone?: boolean } = {},
+): FakeIo {
   const files = new Map<string, string>();
   const calls: string[] = [];
   const spawned: string[] = [];
@@ -78,7 +90,11 @@ function fakeIo(opts: { answer?: unknown; missingHead?: boolean; hasClone?: bool
     async spawnSession(name) {
       spawned.push(name);
       // The session "answers" the moment it is spawned, if it answers at all.
-      if (opts.answer !== undefined) files.set(join(SCRATCH, `pr-${set.cases[0]!.pr}`, FINDINGS_FILE), JSON.stringify(opts.answer));
+      if (opts.answer !== undefined)
+        files.set(
+          join(SCRATCH, `pr-${set.cases[0]!.pr}`, FINDINGS_FILE),
+          JSON.stringify(opts.answer),
+        );
     },
     async injectOrder(name, body) {
       calls.push(`inject ${name} ${body.length}`);
@@ -99,7 +115,10 @@ function fakeIo(opts: { answer?: unknown; missingHead?: boolean; hasClone?: bool
   return io;
 }
 
-function replayer(io: ReplayIo, over: Partial<ConstructorParameters<typeof ScratchReplay>[0]> = {}): ScratchReplay {
+function replayer(
+  io: ReplayIo,
+  over: Partial<ConstructorParameters<typeof ScratchReplay>[0]> = {},
+): ScratchReplay {
   return new ScratchReplay({
     gate: DRY,
     cfg,
@@ -129,9 +148,22 @@ describe("a replay is not a posting path", () => {
   const code = codeOnly(src);
 
   it("imports no gate, no adapter and no daemon at runtime", () => {
-    const runtimeImports = [...src.matchAll(/^import\s+(?!type\s)[^;]*from\s+"([^"]+)"/gm)].map((m) => m[1]!);
-    for (const forbidden of ["./gate.js", "./github.js", "./githubAuth.js", "./posting.js", "./daemon.js", "./wire.js", "./reconcile.js"]) {
-      expect(runtimeImports, `${forbidden} is a mutation surface — a replay must not be able to reach one`).not.toContain(forbidden);
+    const runtimeImports = [...src.matchAll(/^import\s+(?!type\s)[^;]*from\s+"([^"]+)"/gm)].map(
+      (m) => m[1]!,
+    );
+    for (const forbidden of [
+      "./gate.js",
+      "./github.js",
+      "./githubAuth.js",
+      "./posting.js",
+      "./daemon.js",
+      "./wire.js",
+      "./reconcile.js",
+    ]) {
+      expect(
+        runtimeImports,
+        `${forbidden} is a mutation surface — a replay must not be able to reach one`,
+      ).not.toContain(forbidden);
     }
     // Dynamic imports are the other door into a module; only the pi lifecycle
     // and the exec helper may come through it.
@@ -140,7 +172,17 @@ describe("a replay is not a posting path", () => {
   });
 
   it("carries no way to mutate GitHub and never labels a PR", () => {
-    for (const banned of ["MutationGate(", "GitHubAdapter", "TokenMinter", "addLabel", "removeLabel", "createReview", "mint-token", "GH_TOKEN=", "fetch("]) {
+    for (const banned of [
+      "MutationGate(",
+      "GitHubAdapter",
+      "TokenMinter",
+      "addLabel",
+      "removeLabel",
+      "createReview",
+      "mint-token",
+      "GH_TOKEN=",
+      "fetch(",
+    ]) {
       expect(code, `${banned} must not appear in the replay`).not.toContain(banned);
     }
     // The harness's mechanism, named so the ban is greppable.
@@ -167,49 +209,63 @@ describe("a replay is not a posting path", () => {
     const prompt = replaySystemPrompt();
     expect(prompt).toContain("Post nothing, anywhere.");
     expect(prompt).toContain("Read only");
-    expect(replayOrder({
-      c: set.cases[0]!,
-      treePath: "/tmp/tree",
-      findingsPath: "/tmp/f.json",
-      lenses: ["pass-baseline"],
-      baseSha: "b",
-      changedFiles: 1,
-      degradedDiff: false,
-    })).toContain("Post NOTHING");
+    expect(
+      replayOrder({
+        c: set.cases[0]!,
+        treePath: "/tmp/tree",
+        findingsPath: "/tmp/f.json",
+        lenses: ["pass-baseline"],
+        baseSha: "b",
+        changedFiles: 1,
+        degradedDiff: false,
+      }),
+    ).toContain("Post NOTHING");
   });
 });
 
 describe("the safety assertions bind per case", () => {
   it("refuses a live gate before touching git or pi", async () => {
     const io = fakeIo();
-    await expect(replayer(io, { gate: LIVE }).replay(set.cases[0]!)).rejects.toBeInstanceOf(ReplayRefused);
+    await expect(replayer(io, { gate: LIVE }).replay(set.cases[0]!)).rejects.toBeInstanceOf(
+      ReplayRefused,
+    );
     expect(io.calls).toEqual([]);
     expect(io.spawned).toEqual([]);
   });
 
   it("refuses an open PR and a contaminated case", async () => {
     const io = fakeIo();
-    await expect(replayer(io).replay({ ...set.cases[0]!, prState: "OPEN" })).rejects.toThrow(/still-open/);
-    await expect(replayer(io).replay({ ...set.cases[0]!, submittedAt: "2026-07-01T00:00:00Z" })).rejects.toThrow(/contamination cutoff/);
+    await expect(replayer(io).replay({ ...set.cases[0]!, prState: "OPEN" })).rejects.toThrow(
+      /still-open/,
+    );
+    await expect(
+      replayer(io).replay({ ...set.cases[0]!, submittedAt: "2026-07-01T00:00:00Z" }),
+    ).rejects.toThrow(/contamination cutoff/);
     expect(io.spawned).toEqual([]);
   });
 
   it("refuses a scratch root that could collide with the daemon's worktrees", () => {
     expect(() => assertScratchIsolation(SANDBOX, SANDBOX)).toThrow(/is the sandbox root/);
     expect(() => assertScratchIsolation(join(SANDBOX, "wt"), SANDBOX)).toThrow(/worktree area/);
-    expect(() => assertScratchIsolation(join(SANDBOX, "wt", "pr-5362"), SANDBOX)).toThrow(/worktree area/);
+    expect(() => assertScratchIsolation(join(SANDBOX, "wt", "pr-5362"), SANDBOX)).toThrow(
+      /worktree area/,
+    );
     expect(() => assertScratchIsolation(SCRATCH, SANDBOX)).not.toThrow();
   });
 
   it("refuses a case whose recorded head is not reachable, rather than replaying today's head", async () => {
     const io = fakeIo({ missingHead: true });
-    await expect(replayer(io, { baseClone: REPO }).replay(set.cases[0]!)).rejects.toThrow(/not reachable/);
+    await expect(replayer(io, { baseClone: REPO }).replay(set.cases[0]!)).rejects.toThrow(
+      /not reachable/,
+    );
     expect(io.spawned).toEqual([]);
   });
 
   it("says where to run it when there is no base clone", async () => {
     const io = fakeIo();
-    await expect(replayer(io, { baseClone: "/nope/clone" }).replay(set.cases[0]!)).rejects.toBeInstanceOf(ReplayUnavailable);
+    await expect(
+      replayer(io, { baseClone: "/nope/clone" }).replay(set.cases[0]!),
+    ).rejects.toBeInstanceOf(ReplayUnavailable);
   });
 });
 
@@ -222,7 +278,9 @@ describe("one case, end to end", () => {
     await r.replay(c());
     expect(r.treePath(c().pr)).toContain("state/regression");
     expect(r.treePath(c().pr)).not.toContain("/wt/");
-    expect(io.calls.some((k) => k === `git worktree add --detach ${r.treePath(c().pr)} ${c().headSha}`)).toBe(true);
+    expect(
+      io.calls.some((k) => k === `git worktree add --detach ${r.treePath(c().pr)} ${c().headSha}`),
+    ).toBe(true);
   });
 
   it("gives the session the pass agents and the exec guard, and no scripts/", async () => {
@@ -245,7 +303,9 @@ describe("one case, end to end", () => {
       },
     });
     const out = await replayer(io, { baseClone: REPO }).replay(c());
-    expect(out).toEqual([{ path: "app/handler.py", text: "token may be None", line: 42, tag: "[blocker]" }]);
+    expect(out).toEqual([
+      { path: "app/handler.py", text: "token may be None", line: 42, tag: "[blocker]" },
+    ]);
   });
 
   it("returns nothing (and so scores VACUOUS) when the session never answers", async () => {
@@ -259,7 +319,9 @@ describe("one case, end to end", () => {
     const r = replayer(io, { baseClone: REPO });
     await r.replay(c());
     expect(io.killed).toEqual([r.sessionName(c().pr)]);
-    expect(io.calls.filter((k) => k.startsWith("git worktree remove")).length).toBeGreaterThanOrEqual(1);
+    expect(
+      io.calls.filter((k) => k.startsWith("git worktree remove")).length,
+    ).toBeGreaterThanOrEqual(1);
   });
 
   it("tears down even when the order-file write throws after the tree exists", async () => {
@@ -283,8 +345,12 @@ describe("one case, end to end", () => {
 
 describe("the findings parser", () => {
   it("accepts a bare array, coerces digit strings, and invents nothing", () => {
-    expect(parseReplayFindings([{ path: "a.py", line: "7", text: "x" }])).toEqual([{ path: "a.py", text: "x", line: 7 }]);
-    expect(parseReplayFindings({ findings: [{ path: "a.py", body: "x" }] })).toEqual([{ path: "a.py", text: "x" }]);
+    expect(parseReplayFindings([{ path: "a.py", line: "7", text: "x" }])).toEqual([
+      { path: "a.py", text: "x", line: 7 },
+    ]);
+    expect(parseReplayFindings({ findings: [{ path: "a.py", body: "x" }] })).toEqual([
+      { path: "a.py", text: "x" },
+    ]);
     expect(parseReplayFindings({ findings: "nope" })).toEqual([]);
     expect(parseReplayFindings(null)).toEqual([]);
   });
@@ -302,63 +368,101 @@ describe("qcr regression", () => {
   });
 
   it("parses its flags", () => {
-    const a = parseRegressionArgs(["--set", "/s.json", "--clone", "/c", "--change", "addendum X", "--limit", "3", "--out", "/o.md"], true);
-    expect(a).toEqual({ setPath: "/s.json", clonePath: "/c", changeUnderTest: "addendum X", limit: 3, outPath: "/o.md", json: true });
+    const a = parseRegressionArgs(
+      [
+        "--set",
+        "/s.json",
+        "--clone",
+        "/c",
+        "--change",
+        "addendum X",
+        "--limit",
+        "3",
+        "--out",
+        "/o.md",
+      ],
+      true,
+    );
+    expect(a).toEqual({
+      setPath: "/s.json",
+      clonePath: "/c",
+      changeUnderTest: "addendum X",
+      limit: 3,
+      outPath: "/o.md",
+      json: true,
+    });
     expect(parseRegressionArgs([], false).changeUnderTest).toBe("(unnamed change)");
     expect(() => parseRegressionArgs(["--limit", "0"], false)).toThrow(/usage/);
   });
 
   it("writes the investigation and exits 0 even when everything was missed", async () => {
     let written = "";
-    const code = await runRegressionCli(parseRegressionArgs(["--change", "x"], false), baseDeps({ writeReport: (_: string, b: string) => (written = b) }) as never);
+    const code = await runRegressionCli(
+      parseRegressionArgs(["--change", "x"], false),
+      baseDeps({ writeReport: (_: string, b: string) => (written = b) }) as never,
+    );
     expect(code).toBe(0);
     expect(written).toContain("This is not a gate.");
   });
 
   it("exits 2 on a safety refusal and never builds a replay", async () => {
     let built = false;
-    const code = await runRegressionCli(parseRegressionArgs([], false), baseDeps({
-      gate: LIVE,
-      makeReplay: async () => {
-        built = true;
-        return async () => [];
-      },
-    }) as never);
+    const code = await runRegressionCli(
+      parseRegressionArgs([], false),
+      baseDeps({
+        gate: LIVE,
+        makeReplay: async () => {
+          built = true;
+          return async () => [];
+        },
+      }) as never,
+    );
     expect(code).toBe(2);
     expect(built).toBe(false);
   });
 
   it("exits 3 with an actionable message when pi is not on this machine", async () => {
     const lines: string[] = [];
-    const code = await runRegressionCli(parseRegressionArgs([], false), baseDeps({
-      makeReplay: async () => {
-        throw new ReplayUnavailable("regression replay: no base clone at /x. Run this where the sandbox's clone lives");
-      },
-      log: (l: string) => lines.push(l),
-    }) as never);
+    const code = await runRegressionCli(
+      parseRegressionArgs([], false),
+      baseDeps({
+        makeReplay: async () => {
+          throw new ReplayUnavailable(
+            "regression replay: no base clone at /x. Run this where the sandbox's clone lives",
+          );
+        },
+        log: (l: string) => lines.push(l),
+      }) as never,
+    );
     expect(code).toBe(3);
     expect(lines.join("\n")).toContain("no base clone");
   });
 
   it("honours --limit so a first run is cheap", async () => {
     const seen: RegressionCase[] = [];
-    await runRegressionCli(parseRegressionArgs(["--limit", "2"], false), baseDeps({
-      makeReplay: async () => async (c: RegressionCase) => {
-        seen.push(c);
-        return [];
-      },
-    }) as never);
+    await runRegressionCli(
+      parseRegressionArgs(["--limit", "2"], false),
+      baseDeps({
+        makeReplay: async () => async (c: RegressionCase) => {
+          seen.push(c);
+          return [];
+        },
+      }) as never,
+    );
     expect(seen).toHaveLength(2);
   });
 
   it("hands runRegression the same gate it asserted against", async () => {
     let handed: unknown;
-    await runRegressionCli(parseRegressionArgs([], false), baseDeps({
-      run: async (cases: RegressionCase[], deps: { gate: unknown }) => {
-        handed = deps.gate;
-        return runRegression(cases, { replay: async () => [], gate: DRY });
-      },
-    }) as never);
+    await runRegressionCli(
+      parseRegressionArgs([], false),
+      baseDeps({
+        run: async (cases: RegressionCase[], deps: { gate: unknown }) => {
+          handed = deps.gate;
+          return runRegression(cases, { replay: async () => [], gate: DRY });
+        },
+      }) as never,
+    );
     expect(handed).toBe(DRY);
   });
 });

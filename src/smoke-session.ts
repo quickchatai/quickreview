@@ -85,7 +85,9 @@ export async function main(): Promise<number> {
   rmSync(mgr.promptPath(session), { force: true });
 
   if (!found) {
-    console.error(`[smoke] FAIL — ${MARKER} not found in the session JSONL within ${TIMEOUT_MS / 1000}s`);
+    console.error(
+      `[smoke] FAIL — ${MARKER} not found in the session JSONL within ${TIMEOUT_MS / 1000}s`,
+    );
     return 1;
   }
   console.log("[smoke] PASS — injection reached pi and the reply landed in the session JSONL");

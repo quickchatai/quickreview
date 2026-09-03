@@ -57,7 +57,16 @@
 // store row red, the EOD curator and the [feedback] sink have nowhere to write.
 // The step records the choice, writes NOTHING, and stays green so the wizard
 // finishes. It never wedges and never crashes.
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -99,7 +108,14 @@ export interface ProvisionModule {
     rootKey: string;
     fetchFn: typeof fetch;
     log?: (line: string) => void;
-  }): Promise<{ keys: Record<string, string>; created: string[]; kept: string[]; missing: string[]; ok: boolean; detail: string }>;
+  }): Promise<{
+    keys: Record<string, string>;
+    created: string[];
+    kept: string[];
+    missing: string[];
+    ok: boolean;
+    detail: string;
+  }>;
 }
 
 /** The slice of `scripts/companion-memory-forward.mjs` used here: the ONE
@@ -150,7 +166,9 @@ export function resolveSecretsDir(env: NodeJS.ProcessEnv, home: string): string 
 /** The documented key-file location (mirrors `keysFilePath` in the forward). */
 export function documentedKeysFile(env: NodeJS.ProcessEnv, home: string): string {
   const override = (env.QCR_OPENVIKING_KEYS ?? "").trim();
-  return override !== "" ? resolve(override) : join(home, ".config", "quickreview-bot", "openviking-keys.env");
+  return override !== ""
+    ? resolve(override)
+    : join(home, ".config", "quickreview-bot", "openviking-keys.env");
 }
 
 /** Is `file` inside `dir`? (A file IN the daemon-side secrets dir is readable by
@@ -182,10 +200,15 @@ export interface KeysFileChoice {
  * `QCR_OPENVIKING_KEYS` inside the secrets dir, we refuse rather than quietly
  * overriding their choice.
  */
-export function resolveKeysFile(secretsDir: string, env: NodeJS.ProcessEnv, home: string): KeysFileChoice {
+export function resolveKeysFile(
+  secretsDir: string,
+  env: NodeJS.ProcessEnv,
+  home: string,
+): KeysFileChoice {
   const pinned = (env.QCR_OPENVIKING_KEYS ?? "").trim() !== "";
   const candidate = documentedKeysFile(env, home);
-  if (!isInside(secretsDir, candidate)) return { path: candidate, relocated: false, unsafe: false, note: "" };
+  if (!isInside(secretsDir, candidate))
+    return { path: candidate, relocated: false, unsafe: false, note: "" };
   if (pinned) {
     return {
       path: candidate,
@@ -250,7 +273,10 @@ export function readKeysFile(path: string): Record<string, string> {
 /** Render the key file, preserving any variables already in it that we do not
  * own. Values already present are never replaced — that is the no-rotation rule
  * at the file level. */
-export function renderKeysFile(existing: Record<string, string>, next: Record<string, string>): string {
+export function renderKeysFile(
+  existing: Record<string, string>,
+  next: Record<string, string>,
+): string {
   const merged: Record<string, string> = { ...existing };
   for (const [k, v] of Object.entries(next)) {
     if (v && !merged[k]) merged[k] = v;
@@ -324,18 +350,30 @@ function repoRootFrom(stateDir: string): string {
   return dirname(resolve(stateDir));
 }
 
-function defaultLoaders(stateDir: string): { provision: () => Promise<ProvisionModule>; matrix: () => Promise<MatrixModule> } {
+function defaultLoaders(stateDir: string): {
+  provision: () => Promise<ProvisionModule>;
+  matrix: () => Promise<MatrixModule>;
+} {
   const root = repoRootFrom(stateDir);
   // Dynamic, by file URL, for the same reason src/tui/memforward.ts does it:
   // both scripts are dependency-free ESM outside tsconfig's include, and a
   // static import would either drag them into the build or fork their logic.
   return {
-    provision: () => import(pathToFileURL(join(root, "scripts", "openviking-provision.mjs")).href) as Promise<ProvisionModule>,
-    matrix: () => import(pathToFileURL(join(root, "scripts", "companion-memory-forward.mjs")).href) as Promise<MatrixModule>,
+    provision: () =>
+      import(
+        pathToFileURL(join(root, "scripts", "openviking-provision.mjs")).href
+      ) as Promise<ProvisionModule>,
+    matrix: () =>
+      import(
+        pathToFileURL(join(root, "scripts", "companion-memory-forward.mjs")).href
+      ) as Promise<MatrixModule>,
   };
 }
 
-async function serverReady(fetchFn: typeof fetch, base: string): Promise<{ ok: boolean; detail: string }> {
+async function serverReady(
+  fetchFn: typeof fetch,
+  base: string,
+): Promise<{ ok: boolean; detail: string }> {
   try {
     const res = await fetchFn(`${base}/ready`, { signal: AbortSignal.timeout(10_000) });
     return { ok: res.status >= 200 && res.status < 300, detail: `HTTP ${res.status}` };
@@ -357,12 +395,18 @@ function resolvePaths(opts: MemoryStepOptions): Resolved {
   const home = opts.home ?? homedir();
   const secretsDir = opts.secretsDir ? resolve(opts.secretsDir) : resolveSecretsDir(env, home);
   const keys = opts.keysFile
-    ? { path: resolve(opts.keysFile), relocated: false, unsafe: isInside(secretsDir, opts.keysFile), note: "" }
+    ? {
+        path: resolve(opts.keysFile),
+        relocated: false,
+        unsafe: isInside(secretsDir, opts.keysFile),
+        note: "",
+      }
     : resolveKeysFile(secretsDir, env, home);
   // The endpoint is the memory forward's loopback listener (the VM route) or
   // the local server (the laptop route) — same address either way, which is
   // why the forward binds 127.0.0.1 as well as the docker bridge.
-  const base = opts.base ?? ((env.QCR_OV_BASE ?? "").trim() || `http://127.0.0.1:${OPENVIKING_DEFAULTS.port}`);
+  const base =
+    opts.base ?? ((env.QCR_OV_BASE ?? "").trim() || `http://127.0.0.1:${OPENVIKING_DEFAULTS.port}`);
   const account = opts.account ?? ((env.QCR_OV_ADMIN_ACCOUNT ?? "").trim() || "default");
   return { secretsDir, keys, base, account, env };
 }
@@ -391,10 +435,18 @@ export function placeKeys(args: {
     const existing = readSecretFile(path);
     if (existing === "") {
       writePrivate(path, `${value}\n`);
-      checks.push({ name: `${name}-key-placed`, ok: true, detail: `${file} written 0600 in ${secretsDir}` });
+      checks.push({
+        name: `${name}-key-placed`,
+        ok: true,
+        detail: `${file} written 0600 in ${secretsDir}`,
+      });
     } else if (existing === value) {
       if (!modeOk(path)) chmodSync(path, 0o600);
-      checks.push({ name: `${name}-key-placed`, ok: true, detail: `${file} already holds this key — left untouched (keys are never rotated)` });
+      checks.push({
+        name: `${name}-key-placed`,
+        ok: true,
+        detail: `${file} already holds this key — left untouched (keys are never rotated)`,
+      });
     } else {
       checks.push({
         name: `${name}-key-placed`,
@@ -421,7 +473,9 @@ export function placeKeys(args: {
   const next: Record<string, string> = {};
   for (const v of COMPANION_VARS) next[v] = companionKey;
   next[REVIEWER_VAR] = reviewerKey;
-  const conflicts = Object.entries(next).filter(([k, v]) => v && existingKeys[k] && existingKeys[k] !== v);
+  const conflicts = Object.entries(next).filter(
+    ([k, v]) => v && existingKeys[k] && existingKeys[k] !== v,
+  );
   writePrivate(keysFile, renderKeysFile(existingKeys, next));
   const after = readKeysFile(keysFile);
   const haveBoth = Boolean(after[COMPANION_VARS[0]] && after[REVIEWER_VAR]);
@@ -469,7 +523,10 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
 
   const loaders = (ctx: StepContext) => {
     const fallback = defaultLoaders(ctx.adapters.paths.stateDir);
-    return { provision: opts.loadProvision ?? fallback.provision, matrix: opts.loadMatrix ?? fallback.matrix };
+    return {
+      provision: opts.loadProvision ?? fallback.provision,
+      matrix: opts.loadMatrix ?? fallback.matrix,
+    };
   };
 
   return {
@@ -489,7 +546,8 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
     async run(ctx): Promise<StepReport> {
       const choice = await askChoice(ctx);
       ctx.recordChoice(CHOICE_KEYS.memory, choice);
-      if (choice === "declined") return { ok: true, checks: [...DECLINED_CHECKS], data: { declined: true } };
+      if (choice === "declined")
+        return { ok: true, checks: [...DECLINED_CHECKS], data: { declined: true } };
 
       const { secretsDir, keys, base, account } = resolvePaths(opts);
       const checks: CheckResult[] = [];
@@ -508,7 +566,11 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
       try {
         prov = await provision();
       } catch (err) {
-        checks.push({ name: "provisioning-machinery", ok: false, detail: `could not load scripts/openviking-provision.mjs: ${String(err)}` });
+        checks.push({
+          name: "provisioning-machinery",
+          ok: false,
+          detail: `could not load scripts/openviking-provision.mjs: ${String(err)}`,
+        });
         return { ok: false, checks };
       }
       if (rootKey === "") {
@@ -521,7 +583,11 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
           detail: `minted the server root key and wrote ${rootPath} (0600). It is the SERVER's credential: never a client's, never in the key file.`,
         });
       } else {
-        checks.push({ name: "root-key", ok: true, detail: `${rootPath} already holds a root key — left untouched (nothing is ever rotated)` });
+        checks.push({
+          name: "root-key",
+          ok: true,
+          detail: `${rootPath} already holds a root key — left untouched (nothing is ever rotated)`,
+        });
       }
 
       // --- phase B: the two USER keys (the server mints them) ---
@@ -558,17 +624,33 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
               "nothing was rotated. Check that the daemon restarted after the root key landed (the server reads it at boot, and " +
               "without it runs auth_mode=dev), then run this step again.",
       });
-      if (!reviewerKey || !companionKey) return { ok: false, checks, data: { root_key_placed: true, keys_file: keys.path } };
+      if (!reviewerKey || !companionKey)
+        return { ok: false, checks, data: { root_key_placed: true, keys_file: keys.path } };
 
-      checks.push(...placeKeys({ secretsDir, keysFile: keys.path, rootKey, reviewerKey, companionKey }));
-      if (!checks.every((c) => c.ok)) return { ok: false, checks, data: { root_key_placed: true, keys_file: keys.path } };
+      checks.push(
+        ...placeKeys({ secretsDir, keysFile: keys.path, rootKey, reviewerKey, companionKey }),
+      );
+      if (!checks.every((c) => c.ok))
+        return { ok: false, checks, data: { root_key_placed: true, keys_file: keys.path } };
 
       // --- the proof ---
-      checks.push(...(await matrixChecks(matrix, base, { companion: companionKey, reviewer: reviewerKey }, ctx, opts)));
+      checks.push(
+        ...(await matrixChecks(
+          matrix,
+          base,
+          { companion: companionKey, reviewer: reviewerKey },
+          ctx,
+          opts,
+        )),
+      );
       return {
         ok: checks.every((c) => c.ok),
         checks,
-        data: { root_key_placed: true, keys_file: keys.path, users: [REVIEWER_USER, COMPANION_USER] },
+        data: {
+          root_key_placed: true,
+          keys_file: keys.path,
+          users: [REVIEWER_USER, COMPANION_USER],
+        },
       };
     },
 
@@ -635,7 +717,15 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
         return { ok: false, checks };
       }
       const { matrix } = loaders(ctx);
-      checks.push(...(await matrixChecks(matrix, base, { companion: companionKey, reviewer: reviewerKey }, ctx, opts)));
+      checks.push(
+        ...(await matrixChecks(
+          matrix,
+          base,
+          { companion: companionKey, reviewer: reviewerKey },
+          ctx,
+          opts,
+        )),
+      );
       return { ok: checks.every((c) => c.ok), checks };
     },
   };
@@ -659,7 +749,13 @@ async function matrixChecks(
   try {
     mod = await load();
   } catch (err) {
-    return [{ name: "confinement-matrix", ok: false, detail: `could not load scripts/companion-memory-forward.mjs: ${String(err)}` }];
+    return [
+      {
+        name: "confinement-matrix",
+        ok: false,
+        detail: `could not load scripts/companion-memory-forward.mjs: ${String(err)}`,
+      },
+    ];
   }
   let report: { rows: MatrixRow[]; failed: number; unclear: number };
   try {
@@ -672,7 +768,13 @@ async function matrixChecks(
       log: () => {},
     });
   } catch (err) {
-    return [{ name: "confinement-matrix", ok: false, detail: `the confinement matrix could not run: ${String(err)}` }];
+    return [
+      {
+        name: "confinement-matrix",
+        ok: false,
+        detail: `the confinement matrix could not run: ${String(err)}`,
+      },
+    ];
   }
   const checks: CheckResult[] = report.rows.map((row) => ({
     name: `matrix:${row.who}-key→${row.ns}`,

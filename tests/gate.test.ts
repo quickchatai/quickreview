@@ -2,7 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { APP_SELF_CONFIG_KINDS, GUARD_REWRITABLE_FIELDS, MUTATION_KINDS, MutationGate, type MutationIntent } from "../src/gate.js";
+import {
+  APP_SELF_CONFIG_KINDS,
+  GUARD_REWRITABLE_FIELDS,
+  MUTATION_KINDS,
+  MutationGate,
+  type MutationIntent,
+} from "../src/gate.js";
 
 let dir: string;
 
@@ -48,7 +54,12 @@ describe("MutationGate in dry-run", () => {
   });
 
   it("names files by timestamp + sequence + kind, one per intent", async () => {
-    const gate = new MutationGate(true, join(dir, "dryrun"), async () => undefined, () => new Date("2026-08-13T10:00:00.000Z"));
+    const gate = new MutationGate(
+      true,
+      join(dir, "dryrun"),
+      async () => undefined,
+      () => new Date("2026-08-13T10:00:00.000Z"),
+    );
     await gate.execute(intent);
     await gate.execute({ ...intent, kind: "remove_label", method: "DELETE" });
 
@@ -133,11 +144,16 @@ describe("the closed mutation vocabulary", () => {
   it("the runtime list matches the compile-time union, so neither can drift", () => {
     const src = readFileSync(new URL("../src/gate.ts", import.meta.url), "utf8");
     const union = src
-      .slice(src.indexOf("export type MutationKind"), src.indexOf("/**\n * The same set at RUNTIME"))
+      .slice(
+        src.indexOf("export type MutationKind"),
+        src.indexOf("/**\n * The same set at RUNTIME"),
+      )
       .split("\n")
       .filter((l) => !l.trim().startsWith("//")) // comments name retired kinds
       .join("\n");
-    const declared = [...new Set((union.match(/"[a-z_]+"/g) ?? []).map((s) => s.replace(/"/g, "")))];
+    const declared = [
+      ...new Set((union.match(/"[a-z_]+"/g) ?? []).map((s) => s.replace(/"/g, ""))),
+    ];
     expect(declared.sort()).toEqual([...MUTATION_KINDS].sort());
   });
 
@@ -151,7 +167,13 @@ describe("the closed mutation vocabulary", () => {
     const executor = vi.fn(async () => ({}));
     const gate = new MutationGate(true, dir, executor);
     await expect(
-      gate.execute({ kind: "dismiss_review" as never, method: "PUT", path: "/x", note: "smuggled", pr: 1 }),
+      gate.execute({
+        kind: "dismiss_review" as never,
+        method: "PUT",
+        path: "/x",
+        note: "smuggled",
+        pr: 1,
+      }),
     ).rejects.toThrow(/unknown mutation kind/);
     expect(executor).not.toHaveBeenCalled();
     expect(existsSync(dir) ? readdirSync(dir) : []).toHaveLength(0);
@@ -184,7 +206,10 @@ describe("request_reviewer — the escalation feature's second delivery shape", 
     const result = await gate.execute(request);
     expect(executor).not.toHaveBeenCalled();
     expect(result.executed).toBe(false);
-    expect(JSON.parse(readFileSync(result.dryRunFile!, "utf8"))).toMatchObject({ kind: "request_reviewer", pr: 7 });
+    expect(JSON.parse(readFileSync(result.dryRunFile!, "utf8"))).toMatchObject({
+      kind: "request_reviewer",
+      pr: 7,
+    });
   });
 
   it("executes through the ONE executor in live mode", async () => {
@@ -197,7 +222,9 @@ describe("request_reviewer — the escalation feature's second delivery shape", 
   it("forceLive THROWS on it — the supersede_own_review bypass is still the only one", async () => {
     const executor = vi.fn(async () => ({ ok: true }));
     const gate = new MutationGate(true, join(dir, "dryrun"), executor);
-    await expect(gate.execute({ ...request, forceLive: true })).rejects.toThrow(/forceLive is not allowed/);
+    await expect(gate.execute({ ...request, forceLive: true })).rejects.toThrow(
+      /forceLive is not allowed/,
+    );
     expect(executor).not.toHaveBeenCalled();
   });
 
@@ -209,7 +236,9 @@ describe("request_reviewer — the escalation feature's second delivery shape", 
   it("cannot ride the git performer seam", async () => {
     const perform = vi.fn(async () => ({ smuggled: true }));
     const gate = new MutationGate(false, join(dir, "dryrun"), async () => ({}));
-    await expect(gate.execute({ ...request, method: "git" }, perform)).rejects.toThrow(/only allowed for kind "push_branch"/);
+    await expect(gate.execute({ ...request, method: "git" }, perform)).rejects.toThrow(
+      /only allowed for kind "push_branch"/,
+    );
     expect(perform).not.toHaveBeenCalled();
   });
 
@@ -246,7 +275,9 @@ describe("forceLive (supersede_own_review only — the owner, 2026-08-13)", () =
     const executor = vi.fn(async () => ({ ok: true }));
     const gate = new MutationGate(true, join(dir, "dryrun"), executor);
     for (const kind of ["add_label", "create_review", "push_branch", "create_pull"] as const) {
-      await expect(gate.execute({ ...intent, kind, forceLive: true })).rejects.toThrow(/forceLive is not allowed/);
+      await expect(gate.execute({ ...intent, kind, forceLive: true })).rejects.toThrow(
+        /forceLive is not allowed/,
+      );
     }
     expect(executor).not.toHaveBeenCalled();
   });
@@ -302,7 +333,14 @@ describe("the app-self-config gate class (ratified rule-1 amendment, 2026-08-30)
 
   it("logs loudly on every execution, naming old and new URL via the note", async () => {
     const log = vi.fn();
-    const gate = new MutationGate(true, join(dir, "dryrun"), async () => ({}), undefined, undefined, log);
+    const gate = new MutationGate(
+      true,
+      join(dir, "dryrun"),
+      async () => ({}),
+      undefined,
+      undefined,
+      log,
+    );
     await gate.execute(repoint);
     expect(log).toHaveBeenCalledOnce();
     const line = String(log.mock.calls[0]![0]);
@@ -315,7 +353,14 @@ describe("the app-self-config gate class (ratified rule-1 amendment, 2026-08-30)
 
   it("logs loudly in live mode too (without the dry-run wording)", async () => {
     const log = vi.fn();
-    const gate = new MutationGate(false, join(dir, "dryrun"), async () => ({}), undefined, undefined, log);
+    const gate = new MutationGate(
+      false,
+      join(dir, "dryrun"),
+      async () => ({}),
+      undefined,
+      undefined,
+      log,
+    );
     await gate.execute(repoint);
     expect(log).toHaveBeenCalledOnce();
     const line = String(log.mock.calls[0]![0]);
@@ -326,7 +371,9 @@ describe("the app-self-config gate class (ratified rule-1 amendment, 2026-08-30)
   it("EVERY other kind stays suppressed to state/dryrun in dry-run — adversarial sweep", async () => {
     const executor = vi.fn(async () => ({ ok: true }));
     const gate = new MutationGate(true, join(dir, "dryrun"), executor);
-    const others = MUTATION_KINDS.filter((k) => !(APP_SELF_CONFIG_KINDS as readonly string[]).includes(k));
+    const others = MUTATION_KINDS.filter(
+      (k) => !(APP_SELF_CONFIG_KINDS as readonly string[]).includes(k),
+    );
     expect(others.length).toBe(MUTATION_KINDS.length - 1);
     for (const kind of others) {
       const result = await gate.execute({ ...intent, kind });
@@ -340,7 +387,9 @@ describe("the app-self-config gate class (ratified rule-1 amendment, 2026-08-30)
   it("forceLive on update_own_webhook_url still throws — the forceLive exception did not widen", async () => {
     const executor = vi.fn(async () => ({ ok: true }));
     const gate = new MutationGate(true, join(dir, "dryrun"), executor);
-    await expect(gate.execute({ ...repoint, forceLive: true })).rejects.toThrow(/forceLive is not allowed/);
+    await expect(gate.execute({ ...repoint, forceLive: true })).rejects.toThrow(
+      /forceLive is not allowed/,
+    );
     expect(executor).not.toHaveBeenCalled();
   });
 
@@ -348,7 +397,12 @@ describe("the app-self-config gate class (ratified rule-1 amendment, 2026-08-30)
     const gate = new MutationGate(true, join(dir, "dryrun"), async () => ({}));
     for (const kind of ["update_app_config", "dismiss_review", "set_app_permissions"]) {
       await expect(
-        gate.execute({ kind: kind as never, method: "PATCH", path: "/app/hook/config", note: "smuggled" }),
+        gate.execute({
+          kind: kind as never,
+          method: "PATCH",
+          path: "/app/hook/config",
+          note: "smuggled",
+        }),
       ).rejects.toThrow(/unknown mutation kind/);
     }
     expect(existsSync(join(dir, "dryrun"))).toBe(false);
@@ -401,7 +455,10 @@ describe("MutationGate — git pushes", () => {
 
     expect(perform).not.toHaveBeenCalled();
     expect(result.executed).toBe(false);
-    expect(JSON.parse(readFileSync(result.dryRunFile!, "utf8"))).toMatchObject({ kind: "push_branch", method: "git" });
+    expect(JSON.parse(readFileSync(result.dryRunFile!, "utf8"))).toMatchObject({
+      kind: "push_branch",
+      method: "git",
+    });
   });
 
   it("a guard can refuse the push, and then it never happens", async () => {
@@ -423,9 +480,9 @@ describe("MutationGate — git pushes", () => {
     const perform = vi.fn(async () => ({ smuggled: true }));
     const gate = new MutationGate(false, join(dir, "dryrun"), executor);
 
-    await expect(
-      gate.execute({ ...push, kind: "create_review", pr: 7 }, perform),
-    ).rejects.toThrow(/only allowed for kind "push_branch"/);
+    await expect(gate.execute({ ...push, kind: "create_review", pr: 7 }, perform)).rejects.toThrow(
+      /only allowed for kind "push_branch"/,
+    );
     expect(perform).not.toHaveBeenCalled();
     expect(executor).not.toHaveBeenCalled();
   });
@@ -442,7 +499,9 @@ describe("MutationGate — git pushes", () => {
       before: async () => ({ intent: { ...intent, kind: "create_review", method: "POST" } }),
     });
 
-    await expect(gate.execute(push, perform)).rejects.toThrow(/a guard may rewrite only body and note/);
+    await expect(gate.execute(push, perform)).rejects.toThrow(
+      /a guard may rewrite only body and note/,
+    );
     expect(perform).not.toHaveBeenCalled();
   });
 
@@ -469,7 +528,9 @@ describe("MutationGate — git pushes", () => {
   it("forceLive on a push still throws — the git seam did not widen the dry-run bypass", async () => {
     const perform = vi.fn(async () => ({ pushed: true }));
     const gate = new MutationGate(true, join(dir, "dryrun"), async () => ({}));
-    await expect(gate.execute({ ...push, forceLive: true }, perform)).rejects.toThrow(/forceLive is not allowed/);
+    await expect(gate.execute({ ...push, forceLive: true }, perform)).rejects.toThrow(
+      /forceLive is not allowed/,
+    );
     expect(perform).not.toHaveBeenCalled();
   });
 });
@@ -533,8 +594,16 @@ describe("a guard may rewrite only body and note", () => {
     // Rule 2: no dismissal kind exists. Before this rewrite executed.
     const executor = vi.fn(async () => ({ dismissed: true }));
     const gate = new MutationGate(false, join(dir, "dryrun"), executor);
-    gate.setGuard(hostile({ kind: "dismiss_review", method: "PUT", path: "/repos/o/r/pulls/7/reviews/99/dismissals" }));
-    await expect(gate.execute(review)).rejects.toThrow(/a guard may rewrite only body and note.*"kind"/);
+    gate.setGuard(
+      hostile({
+        kind: "dismiss_review",
+        method: "PUT",
+        path: "/repos/o/r/pulls/7/reviews/99/dismissals",
+      }),
+    );
+    await expect(gate.execute(review)).rejects.toThrow(
+      /a guard may rewrite only body and note.*"kind"/,
+    );
     nothingHappened(executor);
   });
 
@@ -546,8 +615,12 @@ describe("a guard may rewrite only body and note", () => {
     const executor = vi.fn(async () => ({ repointed: true }));
     const log = vi.fn();
     const gate = new MutationGate(true, join(dir, "dryrun"), executor, undefined, undefined, log);
-    gate.setGuard(hostile({ kind: "update_own_webhook_url", method: "PATCH", path: "/app/hook/config" }));
-    await expect(gate.execute(review)).rejects.toThrow(/a guard may rewrite only body and note.*"kind"/);
+    gate.setGuard(
+      hostile({ kind: "update_own_webhook_url", method: "PATCH", path: "/app/hook/config" }),
+    );
+    await expect(gate.execute(review)).rejects.toThrow(
+      /a guard may rewrite only body and note.*"kind"/,
+    );
     nothingHappened(executor);
     expect(log).not.toHaveBeenCalled();
     expect([...APP_SELF_CONFIG_KINDS]).toEqual(["update_own_webhook_url"]);
@@ -557,7 +630,9 @@ describe("a guard may rewrite only body and note", () => {
     const executor = vi.fn(async () => ({ posted: true }));
     const gate = new MutationGate(true, join(dir, "dryrun"), executor);
     gate.setGuard(hostile({ forceLive: true }));
-    await expect(gate.execute(review)).rejects.toThrow(/a guard may rewrite only body and note.*"forceLive"/);
+    await expect(gate.execute(review)).rejects.toThrow(
+      /a guard may rewrite only body and note.*"forceLive"/,
+    );
     nothingHappened(executor);
   });
 
@@ -567,7 +642,9 @@ describe("a guard may rewrite only body and note", () => {
     const executor = vi.fn(async () => ({ dismissed: true }));
     const gate = new MutationGate(false, join(dir, "dryrun"), executor);
     gate.setGuard(hostile({ method: "PUT", path: "/repos/o/r/pulls/7/reviews/99/dismissals" }));
-    await expect(gate.execute(review)).rejects.toThrow(/a guard may rewrite only body and note.*"method"/);
+    await expect(gate.execute(review)).rejects.toThrow(
+      /a guard may rewrite only body and note.*"method"/,
+    );
     nothingHappened(executor);
   });
 
@@ -589,7 +666,11 @@ describe("a guard may rewrite only body and note", () => {
     const gate = new MutationGate(false, join(dir, "dryrun"), executor);
     gate.setGuard(hostile({ body: { commit_id: "abc1234", event: "APPROVE", body: "x" } }));
     await expect(
-      gate.execute({ ...review, reviewPurpose: "escalation", body: { commit_id: "abc1234", event: "COMMENT", body: "x" } }),
+      gate.execute({
+        ...review,
+        reviewPurpose: "escalation",
+        body: { commit_id: "abc1234", event: "COMMENT", body: "x" },
+      }),
     ).rejects.toThrow(/reviewPurpose/);
     nothingHappened(executor);
   });
@@ -604,7 +685,11 @@ describe("a guard may rewrite only body and note", () => {
     const result = await gate.execute(review);
     expect(result.executed).toBe(true);
     expect(executor).toHaveBeenCalledOnce();
-    expect(executor.mock.calls[0]![0]).toEqual({ ...review, body: softened, note: "post COMMENT review on #7 (downgraded)" });
+    expect(executor.mock.calls[0]![0]).toEqual({
+      ...review,
+      body: softened,
+      note: "post COMMENT review on #7 (downgraded)",
+    });
   });
 
   /** The IN-PLACE shapes (review round 1): a guard that edits the object it
@@ -620,10 +705,35 @@ describe("a guard may rewrite only body and note", () => {
   });
   const dismissals = "/repos/o/r/pulls/7/reviews/99/dismissals";
   const inPlaceEdits: Array<[string, (i: Record<string, unknown>) => void]> = [
-    ["kind → dismiss_review", (i) => { i.kind = "dismiss_review"; i.method = "PUT"; i.path = dismissals; }],
-    ["kind → update_own_webhook_url", (i) => { i.kind = "update_own_webhook_url"; i.method = "PATCH"; i.path = "/app/hook/config"; }],
-    ["forceLive added", (i) => { i.forceLive = true; }],
-    ["method/path → dismissals, kind kept", (i) => { i.method = "PUT"; i.path = dismissals; }],
+    [
+      "kind → dismiss_review",
+      (i) => {
+        i.kind = "dismiss_review";
+        i.method = "PUT";
+        i.path = dismissals;
+      },
+    ],
+    [
+      "kind → update_own_webhook_url",
+      (i) => {
+        i.kind = "update_own_webhook_url";
+        i.method = "PATCH";
+        i.path = "/app/hook/config";
+      },
+    ],
+    [
+      "forceLive added",
+      (i) => {
+        i.forceLive = true;
+      },
+    ],
+    [
+      "method/path → dismissals, kind kept",
+      (i) => {
+        i.method = "PUT";
+        i.path = dismissals;
+      },
+    ],
   ];
 
   it("the guard is handed a FROZEN snapshot: an in-place edit throws inside the guard, for `return {}` and for returning the same reference, live and dry-run", async () => {
@@ -633,16 +743,30 @@ describe("a guard may rewrite only body and note", () => {
           const label = `${name} (dryRun=${dryRun}, returnSame=${returnSame})`;
           const executor = vi.fn(async () => ({}));
           const log = vi.fn();
-          const gate = new MutationGate(dryRun, join(dir, "dryrun"), executor, undefined, undefined, log);
+          const gate = new MutationGate(
+            dryRun,
+            join(dir, "dryrun"),
+            executor,
+            undefined,
+            undefined,
+            log,
+          );
           gate.setGuard(inPlace(edit, returnSame));
-          await expect(gate.execute(review), label).rejects.toThrow(/read only property|not extensible/);
+          await expect(gate.execute(review), label).rejects.toThrow(
+            /read only property|not extensible/,
+          );
           nothingHappened(executor);
           expect(log, label).not.toHaveBeenCalled();
         }
       }
     }
     // And the caller's own object was never the one on the table.
-    expect([review.kind, review.method, review.path, "forceLive" in review]).toEqual(["create_review", "POST", "/repos/o/r/pulls/7/reviews", false]);
+    expect([review.kind, review.method, review.path, "forceLive" in review]).toEqual([
+      "create_review",
+      "POST",
+      "/repos/o/r/pulls/7/reviews",
+      false,
+    ]);
   });
 
   it("the returned intent is read ONCE: a getter cannot answer the check with one path and the executor with another", async () => {
@@ -655,7 +779,10 @@ describe("a guard may rewrite only body and note", () => {
       before: async (i) => {
         let reads = 0;
         const shifty: Record<string, unknown> = { ...i };
-        Object.defineProperty(shifty, "path", { enumerable: true, get: () => (reads++ === 0 ? i.path : dismissals) });
+        Object.defineProperty(shifty, "path", {
+          enumerable: true,
+          get: () => (reads++ === 0 ? i.path : dismissals),
+        });
         return { intent: shifty as unknown as MutationIntent };
       },
     });
@@ -672,14 +799,21 @@ describe("a guard may rewrite only body and note", () => {
     // executed a purposed APPROVE — an approval exempt from guard 2 that never
     // claims the head. Without the body clone in `snapshot` the executor sees
     // APPROVE here.
-    const purposed: MutationIntent = { ...review, reviewPurpose: "escalation", body: { commit_id: "abc1234", event: "COMMENT", body: "x" } };
+    const purposed: MutationIntent = {
+      ...review,
+      reviewPurpose: "escalation",
+      body: { commit_id: "abc1234", event: "COMMENT", body: "x" },
+    };
     const executor = vi.fn(async (_i: MutationIntent) => ({}));
     const gate = new MutationGate(false, join(dir, "dryrun"), executor);
     gate.setGuard({
       before: async (i) => {
         let reads = 0;
         const body: Record<string, unknown> = { ...(i.body as object) };
-        Object.defineProperty(body, "event", { enumerable: true, get: () => (reads++ === 0 ? "COMMENT" : "APPROVE") });
+        Object.defineProperty(body, "event", {
+          enumerable: true,
+          get: () => (reads++ === 0 ? "COMMENT" : "APPROVE"),
+        });
         return { intent: { ...i, body } };
       },
     });
@@ -699,10 +833,17 @@ describe("a guard may rewrite only body and note", () => {
     const mine: MutationIntent = { ...review, body: { ...(review.body as object) } };
     const executor = vi.fn(async (_i: MutationIntent) => ({}));
     const gate = new MutationGate(false, join(dir, "dryrun"), executor);
-    gate.setGuard({ before: async (i) => { (i.body as Record<string, unknown>).event = "COMMENT"; return {}; } });
+    gate.setGuard({
+      before: async (i) => {
+        (i.body as Record<string, unknown>).event = "COMMENT";
+        return {};
+      },
+    });
     const result = await gate.execute(mine);
     expect(result.executed).toBe(true);
-    expect(((executor.mock.calls[0]![0] as MutationIntent).body as Record<string, unknown>).event).toBe("COMMENT");
+    expect(
+      ((executor.mock.calls[0]![0] as MutationIntent).body as Record<string, unknown>).event,
+    ).toBe("COMMENT");
     expect((mine.body as Record<string, unknown>).event).toBe("REQUEST_CHANGES");
     expect((review.body as Record<string, unknown>).event).toBe("REQUEST_CHANGES");
   });
@@ -725,7 +866,9 @@ describe("a guard may rewrite only body and note", () => {
     const executor = vi.fn(async () => ({}));
     const gate = new MutationGate(false, join(dir, "dryrun"), executor);
     gate.setGuard({ before: async (i) => ({ intent: { ...i, extra: 1 } as MutationIntent }) });
-    await expect(gate.execute(review)).rejects.toThrow(/a guard may rewrite only body and note.*"extra".*undefined → 1/);
+    await expect(gate.execute(review)).rejects.toThrow(
+      /a guard may rewrite only body and note.*"extra".*undefined → 1/,
+    );
     nothingHappened(executor);
   });
 
@@ -741,7 +884,10 @@ describe("a guard may rewrite only body and note", () => {
     const shifty: Record<string, unknown> = { ...review };
     for (const [field, [first, then]] of Object.entries(over)) {
       let reads = 0;
-      Object.defineProperty(shifty, field, { enumerable: true, get: () => (reads++ === 0 ? first : then) });
+      Object.defineProperty(shifty, field, {
+        enumerable: true,
+        get: () => (reads++ === 0 ? first : then),
+      });
     }
     return shifty as unknown as MutationIntent;
   };
@@ -774,7 +920,9 @@ describe("a guard may rewrite only body and note", () => {
     const gate = new MutationGate(false, join(dir, "dryrun"), executor);
     const tag = Symbol("x");
     gate.setGuard({ before: async (i) => ({ intent: { ...i, [tag]: 1 } as MutationIntent }) });
-    await expect(gate.execute(review)).rejects.toThrow(/a guard may rewrite only body and note.*"Symbol\(x\)".*undefined → 1/);
+    await expect(gate.execute(review)).rejects.toThrow(
+      /a guard may rewrite only body and note.*"Symbol\(x\)".*undefined → 1/,
+    );
     nothingHappened(executor);
   });
 
@@ -784,14 +932,21 @@ describe("a guard may rewrite only body and note", () => {
     // operator reads in the log must say which mutation went nowhere.
     const withFn = { ...review, body: { ...(review.body as object), fn: () => 1 } };
     const bare = vi.fn(async () => ({}));
-    await expect(new MutationGate(false, join(dir, "dryrun"), bare).execute(withFn))
-      .rejects.toThrow(/^gate: intent body for create_review is not plain data \(.*could not be cloned.*\) — refusing to execute or record it$/);
+    await expect(
+      new MutationGate(false, join(dir, "dryrun"), bare).execute(withFn),
+    ).rejects.toThrow(
+      /^gate: intent body for create_review is not plain data \(.*could not be cloned.*\) — refusing to execute or record it$/,
+    );
     nothingHappened(bare);
 
     const guarded = vi.fn(async () => ({}));
     const gate = new MutationGate(true, join(dir, "dryrun"), guarded);
-    gate.setGuard({ before: async (i) => ({ intent: { ...i, body: { ...(i.body as object), fn: () => 1 } } }) });
-    await expect(gate.execute(review)).rejects.toThrow(/^gate: intent body for create_review is not plain data/);
+    gate.setGuard({
+      before: async (i) => ({ intent: { ...i, body: { ...(i.body as object), fn: () => 1 } } }),
+    });
+    await expect(gate.execute(review)).rejects.toThrow(
+      /^gate: intent body for create_review is not plain data/,
+    );
     nothingHappened(guarded);
   });
 

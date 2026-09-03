@@ -34,7 +34,8 @@ import { learningRig, type Rig } from "./helpers/tui-rig.js";
 function unionMembers(): string[] {
   const src = readFileSync(resolve(process.cwd(), "src/state.ts"), "utf8");
   const decl = /export type PrLifecycleState =([^;]*);/.exec(src)?.[1];
-  if (decl === undefined) throw new Error("PrLifecycleState declaration not found — the fence cannot read the union");
+  if (decl === undefined)
+    throw new Error("PrLifecycleState declaration not found — the fence cannot read the union");
   return [...decl.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]!);
 }
 
@@ -136,7 +137,13 @@ describe("the lifecycle union has no unreachable member", () => {
   });
 
   it("reads a non-empty union, so the fence cannot pass by finding nothing", () => {
-    expect(ALL_STATES.sort()).toEqual(["awaiting_author", "closed", "queued", "reviewing", "tracked"]);
+    expect(ALL_STATES.sort()).toEqual([
+      "awaiting_author",
+      "closed",
+      "queued",
+      "reviewing",
+      "tracked",
+    ]);
   });
 });
 
@@ -150,7 +157,8 @@ describe("no LIVE state surface renders a state the state machine cannot produce
   const producible = producibleStates();
 
   it("the board's glyph table names only producible states", () => {
-    for (const state of Object.keys(STATE_GLYPHS)) expect([state, producible.has(state)]).toEqual([state, true]);
+    for (const state of Object.keys(STATE_GLYPHS))
+      expect([state, producible.has(state)]).toEqual([state, true]);
   });
 
   it("the board's colour table answers for every producible state and nothing retired", () => {
@@ -186,8 +194,10 @@ describe("no LIVE state surface renders a state the state machine cannot produce
   });
 
   it("the companion's board_filter refuses the retired state and accepts the live ones", () => {
-    const filter = (state: string): boolean => parseTuiAction(JSON.stringify({ verb: "board_filter", params: { state } })).ok;
-    for (const state of Object.keys(STATE_GLYPHS)) expect([state, filter(state)]).toEqual([state, true]);
+    const filter = (state: string): boolean =>
+      parseTuiAction(JSON.stringify({ verb: "board_filter", params: { state } })).ok;
+    for (const state of Object.keys(STATE_GLYPHS))
+      expect([state, filter(state)]).toEqual([state, true]);
     expect(filter("awaiting_human")).toBe(false);
   });
 
@@ -255,13 +265,17 @@ describe("historical dwell is kept, and reads as history", () => {
   };
 
   it("the daemon still COMPUTES the historical bucket — the data is not deleted with the state", async () => {
-    const bucket = (await historicalWindow()).time_in_state.find((r) => r.state === "awaiting_human");
+    const bucket = (await historicalWindow()).time_in_state.find(
+      (r) => r.state === "awaiting_human",
+    );
     expect(bucket?.total_s).toBe(900);
   });
 
   it("the metrics TIME IN STATE card labels a retired bucket with its retirement, and mutes it", async () => {
     const { metricsCards } = await import("../src/tui/metricstab.js");
-    const card = metricsCards(await historicalWindow(), [], 24).find((c) => c.title === "TIME IN STATE")!;
+    const card = metricsCards(await historicalWindow(), [], 24).find(
+      (c) => c.title === "TIME IN STATE",
+    )!;
     const rows = card.body(60);
     const plain = rows.map(stripAnsi).join("\n");
     // Marked, and the mark is a PREFIX so the ~16-cell label column cannot
@@ -302,18 +316,33 @@ describe("the compiled artifact agrees with the source", () => {
   const distPath = (rel: string): string => resolve(process.cwd(), "dist", rel);
 
   it("the built glyph table and legend carry no retired state", async () => {
-    const model = (await import(distPath("src/tui/model.js"))) as { STATE_GLYPHS: Record<string, string> };
+    const model = (await import(distPath("src/tui/model.js"))) as {
+      STATE_GLYPHS: Record<string, string>;
+    };
     const theme = (await import(distPath("src/tui/theme.js"))) as { legendLine: () => string };
     const producible = producibleStates();
-    for (const state of Object.keys(model.STATE_GLYPHS)) expect([state, producible.has(state)]).toEqual([state, true]);
+    for (const state of Object.keys(model.STATE_GLYPHS))
+      expect([state, producible.has(state)]).toEqual([state, true]);
     expect(stripAnsi(theme.legendLine())).not.toContain("needs-you");
   });
 
   it("the built digest view renders no awaiting panel and no zones", async () => {
     const dt = (await import(distPath("src/tui/digesttab.js"))) as {
-      renderDigestTab: (st: unknown, dryRun: boolean, today: string, cols: number, rows: number) => { lines: string[]; zones: unknown[] };
+      renderDigestTab: (
+        st: unknown,
+        dryRun: boolean,
+        today: string,
+        cols: number,
+        rows: number,
+      ) => { lines: string[]; zones: unknown[] };
     };
-    const frame = dt.renderDigestTab({ files: [], back: 0, scroll: 0, loaded: true }, false, "2026-08-31", 120, 24);
+    const frame = dt.renderDigestTab(
+      { files: [], back: 0, scroll: 0, loaded: true },
+      false,
+      "2026-08-31",
+      120,
+      24,
+    );
     expect(stripAnsi(frame.lines.join("\n"))).not.toContain("AWAITING YOU");
     expect(frame.zones).toEqual([]);
   });
@@ -340,20 +369,27 @@ describe("the always-zero metric is gone from the computation and from every sur
 
 // ---- the six freed keystrokes ----------------------------------------------
 
-function harness(tab: Tab = "memory"): Rig & { sent: string[][]; type: (t: string) => void; running: Promise<void> } {
+function harness(
+  tab: Tab = "memory",
+): Rig & { sent: string[][]; type: (t: string) => void; running: Promise<void> } {
   const rig = learningRig({ cols: 140, rows: 40 });
   const sent: string[][] = [];
   const docker: DockerRunner = async (argv) => {
     if (argv.includes("send-keys")) sent.push(argv);
     return { ok: true, stdout: "", stderr: "", code: 0 };
   };
-  rig.app.sidebar = new CompanionSidebar({ container_name: "qcr-companion", session: "companion" }, docker, { available: () => true });
+  rig.app.sidebar = new CompanionSidebar(
+    { container_name: "qcr-companion", session: "companion" },
+    docker,
+    { available: () => true },
+  );
   rig.app.tab = tab;
   return { ...rig, sent, type: rig.streams.type, running: rig.app.run() };
 }
 
 const settle = (): Promise<unknown> => new Promise((r) => setTimeout(r, 10));
-const literals = (sent: string[][]): string[] => sent.filter((a) => a.includes("-l")).map((a) => a[a.length - 1]!);
+const literals = (sent: string[][]): string[] =>
+  sent.filter((a) => a.includes("-l")).map((a) => a[a.length - 1]!);
 
 describe("the six keys the awaiting panel registered now reach the companion column", () => {
   it("the memory tab no longer claims a m w g o M", async () => {
@@ -453,7 +489,9 @@ describe("the six keys the awaiting panel registered now reach the companion col
     h.app.view.snapshot = {
       written_at: "",
       dry_run: false,
-      prs: [{ number: 5265, state: "awaiting_author", title: "t", head_sha: "x", stale_recheck: 0 }],
+      prs: [
+        { number: 5265, state: "awaiting_author", title: "t", head_sha: "x", stale_recheck: 0 },
+      ],
       running_rounds: 0,
       total_spend_usd: 0,
       heartbeat: "",

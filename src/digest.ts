@@ -4,7 +4,13 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { sandboxRoot } from "./config.js";
-import { cancelCauseLabel, isLoudCancelCause, type CancelCause, type CancellationTally, type StateStore } from "./state.js";
+import {
+  cancelCauseLabel,
+  isLoudCancelCause,
+  type CancelCause,
+  type CancellationTally,
+  type StateStore,
+} from "./state.js";
 
 export const HEADLINE_MAX = 200;
 
@@ -13,7 +19,11 @@ export function defaultDigestDir(): string {
 }
 
 /** Write digest/<date>.md. Returns the path written. */
-export function writeDigest(date: string, content: string, digestDir: string = defaultDigestDir()): string {
+export function writeDigest(
+  date: string,
+  content: string,
+  digestDir: string = defaultDigestDir(),
+): string {
   mkdirSync(digestDir, { recursive: true });
   const path = join(digestDir, `${date}.md`);
   writeFileSync(path, content.endsWith("\n") ? content : `${content}\n`);
@@ -115,8 +125,15 @@ export function dailyCancellations(store: StateStore, date: string): DailyCancel
     counts.set(cause, (counts.get(cause) ?? 0) + 1);
   }
   const byCause: CancellationTally[] = [...counts.entries()]
-    .map(([cause, count]) => ({ cause: cause as CancelCause, count, loud: isLoudCancelCause(cause) }))
-    .sort((a, b) => Number(b.loud) - Number(a.loud) || b.count - a.count || a.cause.localeCompare(b.cause));
+    .map(([cause, count]) => ({
+      cause: cause as CancelCause,
+      count,
+      loud: isLoudCancelCause(cause),
+    }))
+    .sort(
+      (a, b) =>
+        Number(b.loud) - Number(a.loud) || b.count - a.count || a.cause.localeCompare(b.cause),
+    );
   return {
     date,
     total: byCause.reduce((n, c) => n + c.count, 0),
@@ -133,9 +150,13 @@ export function dailyCancellations(store: StateStore, date: string): DailyCancel
  */
 export function cancellationSummaryLine(c: DailyCancellations): string {
   if (c.total === 0) return "cancelled: none";
-  const parts = c.by_cause.map((b) => `${cancelCauseLabel(b.cause)} ${b.count}${b.loud ? " ⚑" : ""}`);
+  const parts = c.by_cause.map(
+    (b) => `${cancelCauseLabel(b.cause)} ${b.count}${b.loud ? " ⚑" : ""}`,
+  );
   return `cancelled: ${c.total} round${c.total === 1 ? "" : "s"} — ${parts.join(", ")}${
-    c.loud > 0 ? ` (${c.loud} stopped dead — worth a look; the orphan sweep is a redeploy artefact and is not)` : ""
+    c.loud > 0
+      ? ` (${c.loud} stopped dead — worth a look; the orphan sweep is a redeploy artefact and is not)`
+      : ""
   }`;
 }
 
@@ -151,4 +172,3 @@ export function cancellationSummaryLine(c: DailyCancellations): string {
 export function eodDigestContext(store: StateStore, date: string): string {
   return cancellationSummaryLine(dailyCancellations(store, date));
 }
-

@@ -100,7 +100,10 @@ describe("[T10] guard coverage is derived from the call sites", () => {
     const numbers = guardNumbers();
     // Five numbered guards exist (1-3, 4, 5). If the
     // header parse breaks, everything below silently checks nothing.
-    expect([...new Set(numbers.values())].sort(), "the guard-number parse found the wrong set of guards").toEqual([1, 2, 3, 4, 5]);
+    expect(
+      [...new Set(numbers.values())].sort(),
+      "the guard-number parse found the wrong set of guards",
+    ).toEqual([1, 2, 3, 4, 5]);
     expect(numbers.size).toBeGreaterThanOrEqual(5);
   });
 
@@ -115,8 +118,8 @@ describe("[T10] guard coverage is derived from the call sites", () => {
     }
     expect(
       orphans,
-      "a posting script calls a guard function that sits under no `# ---- guard N:` header — "
-        + "either it is plumbing (add it to NOT_A_GUARD with a reason) or it is an unnumbered guard nobody can document",
+      "a posting script calls a guard function that sits under no `# ---- guard N:` header — " +
+        "either it is plumbing (add it to NOT_A_GUARD with a reason) or it is an unnumbered guard nobody can document",
     ).toEqual([]);
   });
 
@@ -131,7 +134,13 @@ describe("[T10] guard coverage is derived from the call sites", () => {
     const numbers = guardNumbers();
     const out: Record<string, number[]> = {};
     for (const s of POSTING_SCRIPTS) {
-      out[s] = [...new Set(guardCalls(s).map((fn) => numbers.get(fn)).filter((n): n is number => n !== undefined))].sort();
+      out[s] = [
+        ...new Set(
+          guardCalls(s)
+            .map((fn) => numbers.get(fn))
+            .filter((n): n is number => n !== undefined),
+        ),
+      ].sort();
     }
     return out;
   };
@@ -180,22 +189,27 @@ describe("[T10] guard coverage is derived from the call sites", () => {
     const claimed: Record<string, number[]> = {};
     for (const s of POSTING_SCRIPTS) {
       const m = new RegExp(`${s.replace(".", "\\.")}\\s+(?:guards?\\s+)?([\\d+]+)`).exec(doc);
-      expect(m?.[1], `scripts/CLAUDE.md no longer states coverage for ${s} in the shape this fence reads`).toBeTruthy();
+      expect(
+        m?.[1],
+        `scripts/CLAUDE.md no longer states coverage for ${s} in the shape this fence reads`,
+      ).toBeTruthy();
       claimed[s] = m![1]!.split("+").map(Number).sort();
     }
 
     const real = derived();
-    const agrees = POSTING_SCRIPTS.every((s) => JSON.stringify(claimed[s]) === JSON.stringify(real[s]));
+    const agrees = POSTING_SCRIPTS.every(
+      (s) => JSON.stringify(claimed[s]) === JSON.stringify(real[s]),
+    );
     if (agrees) {
       throw new Error(
-        "scripts/CLAUDE.md's guard-coverage sentence has been corrected — delete KNOWN_STALE_DOC and assert "
-          + "`expect(claimed).toEqual(derived())` directly.",
+        "scripts/CLAUDE.md's guard-coverage sentence has been corrected — delete KNOWN_STALE_DOC and assert " +
+          "`expect(claimed).toEqual(derived())` directly.",
       );
     }
     expect(
       claimed,
-      "the documented guard coverage drifted to a THIRD value. It is a published claim about a safety invariant: "
-        + `derive it from the call sites, which currently say ${JSON.stringify(real)}.`,
+      "the documented guard coverage drifted to a THIRD value. It is a published claim about a safety invariant: " +
+        `derive it from the call sites, which currently say ${JSON.stringify(real)}.`,
     ).toEqual(KNOWN_STALE_DOC);
   });
 
@@ -211,9 +225,17 @@ describe("[T10] guard coverage is derived from the call sites", () => {
   it("every posting script re-checks merged/closed, and only the approver gates on CI", () => {
     const real = derived();
     for (const s of POSTING_SCRIPTS) {
-      expect(real[s], `${s} does not re-check that the PR is still open before mutating (guard 3)`).toContain(3);
+      expect(
+        real[s],
+        `${s} does not re-check that the PR is still open before mutating (guard 3)`,
+      ).toContain(3);
     }
-    expect(real["approve-pr.sh"], "the approval route must gate on green CI (guard 4)").toContain(4);
-    expect(real["reply-thread.sh"], "a thread reply is not a review and must not claim the head (guard 2)").not.toContain(2);
+    expect(real["approve-pr.sh"], "the approval route must gate on green CI (guard 4)").toContain(
+      4,
+    );
+    expect(
+      real["reply-thread.sh"],
+      "a thread reply is not a review and must not claim the head (guard 2)",
+    ).not.toContain(2);
   });
 });

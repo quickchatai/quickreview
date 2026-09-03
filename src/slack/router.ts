@@ -31,7 +31,9 @@ export const SLACK_INJECT_MARKER = "<!-- qcr:slack v1 -->";
  * given (and a bot editing its own message would loop).
  */
 function isPlainMessage(ev: SlackInboundEvent): boolean {
-  return ev.type === "message" && (ev.subtype === undefined || ev.subtype === null || ev.subtype === "");
+  return (
+    ev.type === "message" && (ev.subtype === undefined || ev.subtype === null || ev.subtype === "")
+  );
 }
 
 /** Has the daemon itself posted a message with this ts? (echo layer b) */
@@ -39,8 +41,7 @@ function isOwnPostedTs(store: StateStore, ts: string): boolean {
   // slack_posts has no by-ts accessor on StateStore; this is a read-only probe
   // over the same table the post ledger owns.
   const row = store.db.prepare("SELECT 1 AS hit FROM slack_posts WHERE ts = ? LIMIT 1").get(ts) as
-    | { hit: number }
-    | undefined;
+    { hit: number } | undefined;
   return row !== undefined;
 }
 
@@ -138,7 +139,11 @@ export function buildInjectBody(input: InjectBodyInput): string {
     ["authorized_prs", input.authorizedPrs.length ? input.authorizedPrs.join(", ") : dash],
     ["received_at", isoSeconds(input.receivedAt)],
   ];
-  const table = ["| field | value |", "| --- | --- |", ...rows.map(([k, v]) => `| ${k} | ${v} |`)].join("\n");
+  const table = [
+    "| field | value |",
+    "| --- | --- |",
+    ...rows.map(([k, v]) => `| ${k} | ${v} |`),
+  ].join("\n");
   const where = input.threadPr === null ? "in the channel" : `in thread for PR #${input.threadPr}`;
   return [
     SLACK_INJECT_MARKER,
@@ -204,7 +209,12 @@ export class SlackRouter {
 
     // (1) channel allowlist — a message from anywhere else is not our business.
     if (event.channel !== cfg.slack.channel) {
-      return this.record(event, "ignored", "dropped_channel", `channel ${event.channel} is not the concierge channel`);
+      return this.record(
+        event,
+        "ignored",
+        "dropped_channel",
+        `channel ${event.channel} is not the concierge channel`,
+      );
     }
 
     // (2) echo, three layers. (a) it is a bot / it is us, (b) we posted this ts.
@@ -216,7 +226,12 @@ export class SlackRouter {
       (ownUserId !== undefined && event.user === ownUserId) ||
       (ownBotId !== undefined && event.bot_id === ownBotId);
     if (looksLikeUs || isOwnPostedTs(store, event.ts)) {
-      return this.record(event, "ignored", "dropped_echo", "message was posted by a bot (or by us)");
+      return this.record(
+        event,
+        "ignored",
+        "dropped_echo",
+        "message was posted by a bot (or by us)",
+      );
     }
 
     // (2b) no Slack user id ⇒ nobody asked anything. Such an event has no tier
@@ -225,13 +240,23 @@ export class SlackRouter {
     //      be counted (policy.decideTurn only counts a user it can name). It is
     //      machine-emitted text, which is exactly what `dropped_echo` means.
     if (tier === "ignored") {
-      return this.record(event, "ignored", "dropped_echo", "message carries no Slack user — not a person asking");
+      return this.record(
+        event,
+        "ignored",
+        "dropped_echo",
+        "message carries no Slack user — not a person asking",
+      );
     }
 
     // (3) subtype allowlist — edits, deletions, joins and broadcasts are logged,
     //     never answered.
     if (!isPlainMessage(event)) {
-      return this.record(event, tier, "dropped_subtype", `subtype '${event.subtype ?? event.type}' is not answerable`);
+      return this.record(
+        event,
+        tier,
+        "dropped_subtype",
+        `subtype '${event.subtype ?? event.type}' is not answerable`,
+      );
     }
 
     // (4) dedupe. The row is inserted BEFORE any work; a redelivery loses the
@@ -249,7 +274,11 @@ export class SlackRouter {
       disposition: "dropped_stale",
     });
     if (!created) {
-      return { disposition: "dropped_dupe", tier, reason: `event ${event.event_id} was already handled` };
+      return {
+        disposition: "dropped_dupe",
+        tier,
+        reason: `event ${event.event_id} was already handled`,
+      };
     }
 
     // (5) staleness — a reconnect backlog is history, not a conversation. The
@@ -320,7 +349,8 @@ export class SlackRouter {
       this.deps.origins.remove(provisional);
       throw err;
     }
-    const injectBasename = typeof returned === "string" && returned.length > 0 ? baseName(returned) : provisional;
+    const injectBasename =
+      typeof returned === "string" && returned.length > 0 ? baseName(returned) : provisional;
     this.deps.origins.rename(provisional, injectBasename);
     store.setSlackEventDisposition(event.event_id, "injected");
     return { disposition: "injected", tier, injectBasename };
@@ -328,7 +358,12 @@ export class SlackRouter {
 
   /** Record a pre-dedupe drop. A redelivered drop reports `dropped_dupe` and
    * leaves the original row (and its disposition) untouched. */
-  private record(event: SlackInboundEvent, tier: SlackTier, disposition: SlackDisposition, reason: string): RouteResult {
+  private record(
+    event: SlackInboundEvent,
+    tier: SlackTier,
+    disposition: SlackDisposition,
+    reason: string,
+  ): RouteResult {
     const created = this.deps.store.recordSlackEvent({
       event_id: event.event_id,
       channel: event.channel,
@@ -338,7 +373,12 @@ export class SlackRouter {
       tier,
       disposition,
     });
-    if (!created) return { disposition: "dropped_dupe", tier, reason: `event ${event.event_id} was already handled` };
+    if (!created)
+      return {
+        disposition: "dropped_dupe",
+        tier,
+        reason: `event ${event.event_id} was already handled`,
+      };
     return { disposition, tier, reason };
   }
 }

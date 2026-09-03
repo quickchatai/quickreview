@@ -22,7 +22,8 @@ let liveSessions: Set<string>;
 
 const fakeExec: ExecFn = async (cmd, args) => {
   if (cmd === "tmux") {
-    if (args[0] === "list-sessions") return { code: 0, stdout: [...liveSessions].join("\n"), stderr: "" };
+    if (args[0] === "list-sessions")
+      return { code: 0, stdout: [...liveSessions].join("\n"), stderr: "" };
     if (args[0] === "has-session") {
       const name = String(args[2]).replace(/^=/, "");
       return { code: liveSessions.has(name) ? 0 : 1, stdout: "", stderr: "" };
@@ -49,7 +50,12 @@ function cfg(slackEnabled: boolean): Config {
       secrets_dir: secrets,
     },
     server: { hostname: "h", port: 8787 },
-    daemon: { poll_interval_s: 300, max_concurrent_rounds: 6, round_deadline_min: 45, overseer_rotation_days: 7 },
+    daemon: {
+      poll_interval_s: 300,
+      max_concurrent_rounds: 6,
+      round_deadline_min: 45,
+      overseer_rotation_days: 7,
+    },
     eod: { time: "18:00", timezone: "Europe/Warsaw" },
     caps: {
       improvement_pr_max_lines: 50,
@@ -58,8 +64,17 @@ function cfg(slackEnabled: boolean): Config {
       improvement_pr_per_week: 3,
       issues_per_day: 3,
     },
-    models: { default: "openai/gpt-5.6-sol", conversation: "openai/conv", overseer: "openai/over", passes: {} },
-    pi: { package: "@earendil-works/pi-coding-agent", version: "0.84.1", session_dir: "state/pi-sessions" },
+    models: {
+      default: "openai/gpt-5.6-sol",
+      conversation: "openai/conv",
+      overseer: "openai/over",
+      passes: {},
+    },
+    pi: {
+      package: "@earendil-works/pi-coding-agent",
+      version: "0.84.1",
+      session_dir: "state/pi-sessions",
+    },
     slack: { enabled: slackEnabled },
   } as unknown as Config;
 }
@@ -107,7 +122,9 @@ describe("overseer spawn-time Slack appendix", () => {
     await manager(true).ensureOverseerSession();
     const prompt = spawnedPrompt();
     const appendix = readFileSync(APPENDIX_SRC, "utf8").trimEnd();
-    expect(prompt.startsWith(renderOverseerSystemPrompt(readFileSync(seedPath, "utf8")))).toBe(true);
+    expect(prompt.startsWith(renderOverseerSystemPrompt(readFileSync(seedPath, "utf8")))).toBe(
+      true,
+    );
     expect(prompt).toContain(appendix);
     expect(prompt).toContain("# Slack concierge appendix");
     expect(readFileSync(seedPath).equals(before)).toBe(true);
@@ -117,7 +134,9 @@ describe("overseer spawn-time Slack appendix", () => {
 
   it("throws a clear error when Slack is enabled but the appendix file is missing", async () => {
     rmSync(join(root, "prompts", "slack-overseer-appendix.md"));
-    await expect(manager(true).ensureOverseerSession()).rejects.toThrow(/slack-overseer-appendix\.md/);
+    await expect(manager(true).ensureOverseerSession()).rejects.toThrow(
+      /slack-overseer-appendix\.md/,
+    );
   });
 
   it("leaves a live overseer session alone (no respawn, no prompt rewrite)", async () => {
@@ -160,7 +179,17 @@ describe("appendix content contract", () => {
   });
 
   it("carries the origin-header field list", () => {
-    for (const field of ["source", "event_id", "thread", "thread_pr", "slack_user", "github_login", "tier", "authorized_prs", "received_at"]) {
+    for (const field of [
+      "source",
+      "event_id",
+      "thread",
+      "thread_pr",
+      "slack_user",
+      "github_login",
+      "tier",
+      "authorized_prs",
+      "received_at",
+    ]) {
       expect(appendix).toContain(field);
     }
     expect(appendix).toContain("<!-- qcr:slack v1 -->");

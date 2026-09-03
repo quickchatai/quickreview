@@ -22,7 +22,8 @@ import { captureArgv, type SshRunner } from "./remote.js";
  * would throw away the colors that make the mirror readable.
  */
 export function keepSgrOnly(line: string): string {
-  const SEQ = /\x1b\[[0-9;:?<>!$"' ]*[A-Za-z@`{|}~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[ #%()*+][0-9A-Za-z]|\x1b[@-Z\\-_]/g;
+  const SEQ =
+    /\x1b\[[0-9;:?<>!$"' ]*[A-Za-z@`{|}~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[ #%()*+][0-9A-Za-z]|\x1b[@-Z\\-_]/g;
   const kept = line
     .replace(SEQ, (m) => (/^\x1b\[[0-9;:]*m$/.test(m) ? m : ""))
     .replace(/\t/g, "  ")
@@ -89,7 +90,13 @@ export class PiMirror {
     if (pr === undefined) return undefined;
     const lines = this.cache.get(pr);
     const missing = this.missing.has(pr);
-    return { pr, lines: lines ?? [], missing, stale: missing && (lines?.length ?? 0) > 0, offset: this.offsetFor(pr) };
+    return {
+      pr,
+      lines: lines ?? [],
+      missing,
+      stale: missing && (lines?.length ?? 0) > 0,
+      offset: this.offsetFor(pr),
+    };
   }
 
   /**
@@ -153,7 +160,11 @@ export class PiMirror {
       // Live tail = the plain visible-pane capture; scrolled back = the same
       // capture with `-S -(offset + pad)` so there is history above the window.
       const range = offset > 0 ? { startBack: offset + SCROLL_PAD } : undefined;
-      const res = await this.ssh(this.cfg.ssh_host, captureArgv(this.cfg, `pr-${pr}`, range, this.paneSize), { timeoutMs: 5_000 });
+      const res = await this.ssh(
+        this.cfg.ssh_host,
+        captureArgv(this.cfg, `pr-${pr}`, range, this.paneSize),
+        { timeoutMs: 5_000 },
+      );
       if (!res.ok) {
         this.missing.add(pr);
       } else {

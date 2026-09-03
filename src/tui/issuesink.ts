@@ -28,7 +28,14 @@
 import { validateCommand } from "../commands.js";
 import type { Config, IssueSinkKind, TuiConfig } from "../config.js";
 import { sinkTicketsEffort } from "../config.js";
-import { autofileDefects, filedAs, MEMORY_KEY_LINE, memoryKey, withFiledTag, type TrackerPaths } from "./autofile.js";
+import {
+  autofileDefects,
+  filedAs,
+  MEMORY_KEY_LINE,
+  memoryKey,
+  withFiledTag,
+  type TrackerPaths,
+} from "./autofile.js";
 import { refOf, type MemoryEntry, type MemoryStore } from "./memory.js";
 import type { SshRunner } from "./remote.js";
 import { commandFileName, commandResultArgv, commandWriteArgv } from "./unwedge.js";
@@ -84,7 +91,13 @@ export class WayfinderIssueSink implements IssueSink {
 export function issueTitleFor(e: MemoryEntry): string {
   const prose = e.text
     .split(/\s+/)
-    .filter((t) => t !== "" && !t.startsWith("#") && !/^[a-z][a-z0-9_-]*=[^\s]+$/.test(t) && !/^\[\[[^\]]*\]\]$/.test(t))
+    .filter(
+      (t) =>
+        t !== "" &&
+        !t.startsWith("#") &&
+        !/^[a-z][a-z0-9_-]*=[^\s]+$/.test(t) &&
+        !/^\[\[[^\]]*\]\]$/.test(t),
+    )
     .join(" ");
   const head = (prose || "memory defect").slice(0, 90).trim();
   return `Auto-filed defect: ${head}`;
@@ -123,7 +136,8 @@ export class GithubIssueSink implements IssueSink {
     private readonly ssh: SshRunner,
     private readonly store?: MemoryStore,
     private readonly now: () => Date = () => new Date(),
-    private readonly sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+    private readonly sleep: (ms: number) => Promise<void> = (ms) =>
+      new Promise((r) => setTimeout(r, ms)),
   ) {}
 
   async file(defects: MemoryEntry[], _nowIso: string): Promise<SinkReport> {
@@ -147,7 +161,11 @@ export class GithubIssueSink implements IssueSink {
       // where the daemon's title dedup refuses the duplicate.
       if (this.store) {
         try {
-          await this.store.apply({ op: "edit", ...refOf(e), text: withFiledTag(e.text, outcome.stamp) });
+          await this.store.apply({
+            op: "edit",
+            ...refOf(e),
+            text: withFiledTag(e.text, outcome.stamp),
+          });
         } catch {
           /* the seam resolves refusals; only a broken transport lands here */
         }
@@ -182,13 +200,16 @@ export class GithubIssueSink implements IssueSink {
       } catch {
         return { ok: false, reason: "unreadable daemon result" };
       }
-      if (result.ok !== true) return { ok: false, reason: String(result.reason ?? "refused, no reason given") };
+      if (result.ok !== true)
+        return { ok: false, reason: String(result.reason ?? "refused, no reason given") };
       const issue = typeof result.issue === "number" && result.issue > 0 ? result.issue : null;
       // Dry-run leaves no issue number, but the intent IS on record (the
       // gate's dryrun/ file plus the day-cap row) — so the entry is stamped
       // anyway: re-filing the same defect every refresh would burn the cap on
       // rehearsal duplicates.
-      return issue !== null ? { ok: true, id: `#${issue}`, stamp: `#${issue}` } : { ok: true, id: "dry-run intent", stamp: "dry-run" };
+      return issue !== null
+        ? { ok: true, id: `#${issue}`, stamp: `#${issue}` }
+        : { ok: true, id: "dry-run intent", stamp: "dry-run" };
     }
     return { ok: false, reason: "no daemon result before the deadline" };
   }

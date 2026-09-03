@@ -24,7 +24,7 @@
 // paintCmdBar and barHitKey share the ONE layout() computation, so render and
 // hit-test cannot drift.
 import { button } from "./design.js";
-import { Frame, displayWidth } from "./paint.js";
+import { type Frame, displayWidth } from "./paint.js";
 import { TABS, tabDigit, type Tab } from "./tabs.js";
 
 export interface BarButton {
@@ -43,7 +43,11 @@ export interface LiveKeys {
 export const NO_LIVE_KEYS: LiveKeys = { bar: [], inline: [] };
 
 /** Row A left: one slot per tab, constant order and position. */
-const NAV: ReadonlyArray<BarButton & { tab: Tab }> = TABS.map((tab) => ({ key: tabDigit(tab), label: `${tabDigit(tab)} ${tab}`, tab }));
+const NAV: ReadonlyArray<BarButton & { tab: Tab }> = TABS.map((tab) => ({
+  key: tabDigit(tab),
+  label: `${tabDigit(tab)} ${tab}`,
+  tab,
+}));
 
 /** Row A right: always the same four, always in the same place. */
 const GLOBALS: readonly BarButton[] = [
@@ -159,7 +163,13 @@ function flow(buttons: ReadonlyArray<BarButton & { active?: boolean }>, cols: nu
       rows.push([]);
       x = 2;
     }
-    rows[rows.length - 1]!.push({ key: b.key, label: b.label, x1: x, x2: x + w - 1, active: b.active === true });
+    rows[rows.length - 1]!.push({
+      key: b.key,
+      label: b.label,
+      x1: x,
+      x2: x + w - 1,
+      active: b.active === true,
+    });
     x += w + 1;
   }
   return rows;
@@ -229,7 +239,13 @@ function rowText(slots: Slot[]): string {
 
 /** Paints the bar's rows directly above the bottom border: frame rows
  * `rows - 1 - barHeight` … `rows - 2`, all boxed. */
-export function paintCmdBar(frame: Frame, tab: Tab, cols: number, rows: number, commands: readonly BarButton[]): void {
+export function paintCmdBar(
+  frame: Frame,
+  tab: Tab,
+  cols: number,
+  rows: number,
+  commands: readonly BarButton[],
+): void {
   const bar = layout(tab, cols, commands);
   const top = rows - 1 - bar.length;
   bar.forEach((slots, i) => frame.boxRow(top + i, [{ text: rowText(slots), width: cols - 2 }]));
@@ -239,7 +255,14 @@ export function paintCmdBar(frame: Frame, tab: Tab, cols: number, rows: number, 
  * 1-based terminal click → the button's key, or undefined. Terminal row for
  * frame row r is r+1, so bar row i answers at y = rows - barHeight + i.
  */
-export function barHitKey(tab: Tab, x: number, y: number, cols: number, rows: number, commands: readonly BarButton[]): string | undefined {
+export function barHitKey(
+  tab: Tab,
+  x: number,
+  y: number,
+  cols: number,
+  rows: number,
+  commands: readonly BarButton[],
+): string | undefined {
   const bar = layout(tab, cols, commands);
   const i = y - (rows - bar.length);
   if (i < 0 || i >= bar.length) return undefined;

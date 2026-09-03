@@ -14,7 +14,12 @@ import { startEodTimer } from "../src/eod.js";
 
 const TZ = "Europe/Warsaw";
 
-function entry(id: string, block: number, hash: string, ts = "2026-08-20 09:00:00"): PinnedEntryView {
+function entry(
+  id: string,
+  block: number,
+  hash: string,
+  ts = "2026-08-20 09:00:00",
+): PinnedEntryView {
   return { id, ts, block, hash };
 }
 
@@ -76,7 +81,11 @@ function harness(
 
 describe("fingerprintPinned", () => {
   it("is order-independent and addresses by the (ts, id, block) triple", () => {
-    const a = [entry("b1", 0, "h1"), entry("b1", 1, "h2"), entry("b2", 0, "h3", "2026-08-19 10:00:00")];
+    const a = [
+      entry("b1", 0, "h1"),
+      entry("b1", 1, "h2"),
+      entry("b2", 0, "h3", "2026-08-19 10:00:00"),
+    ];
     const shuffled = [a[2]!, a[0]!, a[1]!];
     expect(fingerprintPinned(a).fingerprint).toBe(fingerprintPinned(shuffled).fingerprint);
     // Two entries of the SAME batch must not collapse into one address.
@@ -85,14 +94,23 @@ describe("fingerprintPinned", () => {
 
   it("changes when any hash, address or membership changes", () => {
     const base = fingerprintPinned([entry("b1", 0, "h1"), entry("b1", 1, "h2")]).fingerprint;
-    expect(fingerprintPinned([entry("b1", 0, "h1x"), entry("b1", 1, "h2")]).fingerprint).not.toBe(base);
+    expect(fingerprintPinned([entry("b1", 0, "h1x"), entry("b1", 1, "h2")]).fingerprint).not.toBe(
+      base,
+    );
     expect(fingerprintPinned([entry("b1", 0, "h1")]).fingerprint).not.toBe(base);
-    expect(fingerprintPinned([entry("b1", 0, "h1"), entry("b1", 1, "h2"), entry("b9", 0, "h9")]).fingerprint).not.toBe(base);
+    expect(
+      fingerprintPinned([entry("b1", 0, "h1"), entry("b1", 1, "h2"), entry("b9", 0, "h9")])
+        .fingerprint,
+    ).not.toBe(base);
   });
 
   it("names what moved", () => {
     const before = fingerprintPinned([entry("b1", 0, "h1"), entry("b1", 1, "h2")]);
-    const after = fingerprintPinned([entry("b1", 0, "h1"), entry("b1", 1, "EDITED"), entry("b2", 0, "new")]);
+    const after = fingerprintPinned([
+      entry("b1", 0, "h1"),
+      entry("b1", 1, "EDITED"),
+      entry("b2", 0, "new"),
+    ]);
     const d = diffPinned(before, after);
     expect(d.changed).toEqual(["2026-08-20 09:00:00 #b1 block 1"]);
     expect(d.added).toEqual(["2026-08-20 09:00:00 #b2 block 0"]);
@@ -248,10 +266,9 @@ describe("window close and verdict", () => {
 
   it("closes early when the day's digest appears", async () => {
     let digest = false;
-    const h = harness(
-      [[entry("b1", 0, "h1")], [entry("b1", 0, "EDITED")]],
-      { digestReady: () => digest },
-    );
+    const h = harness([[entry("b1", 0, "h1")], [entry("b1", 0, "EDITED")]], {
+      digestReady: () => digest,
+    });
     await h.watch.wrapInject(async () => {})("x");
     h.advance(60_000);
     h.tick();
@@ -270,7 +287,9 @@ describe("window close and verdict", () => {
   });
 
   it("ignores a digest that already existed when the window opened", async () => {
-    const h = harness([[entry("b1", 0, "h1")], [entry("b1", 0, "h1")]], { digestReady: () => true });
+    const h = harness([[entry("b1", 0, "h1")], [entry("b1", 0, "h1")]], {
+      digestReady: () => true,
+    });
     await h.watch.wrapInject(async () => {})("x");
     h.advance(60_000);
     h.tick();
@@ -300,7 +319,10 @@ describe("window close and verdict", () => {
 
 describe("degradation is 'could not check', never 'changed'", () => {
   it("raises the quiet kind when the before-snapshot fails", async () => {
-    const h = harness([() => Promise.reject(new Error("ECONNREFUSED 127.0.0.1:1933")), [entry("b1", 0, "h1")]]);
+    const h = harness([
+      () => Promise.reject(new Error("ECONNREFUSED 127.0.0.1:1933")),
+      [entry("b1", 0, "h1")],
+    ]);
     await h.watch.wrapInject(async () => {})("x");
     h.advance(91 * 60_000);
     h.tick();
@@ -325,9 +347,12 @@ describe("degradation is 'could not check', never 'changed'", () => {
   });
 
   it("degrades on a hung read without ever claiming a change", async () => {
-    const h = harness([() => new Promise<readonly PinnedEntryView[]>(() => {}), [entry("b1", 0, "h1")]], {
-      readTimeoutMs: 5,
-    });
+    const h = harness(
+      [() => new Promise<readonly PinnedEntryView[]>(() => {}), [entry("b1", 0, "h1")]],
+      {
+        readTimeoutMs: 5,
+      },
+    );
     await h.watch.wrapInject(async () => {})("x");
     h.advance(91 * 60_000);
     h.tick();

@@ -55,11 +55,19 @@ describe("dayWindow (Warsaw, DST-correct)", () => {
 
   it("spans 23h on the spring-forward day and 25h on the fall-back day", () => {
     const spring = dayWindow(new Date("2026-03-29T12:00:00Z"), "Europe/Warsaw");
-    expect(spring).toMatchObject({ day: "2026-03-29", startIso: "2026-03-28T23:00:00.000Z", endIso: "2026-03-29T22:00:00.000Z" });
+    expect(spring).toMatchObject({
+      day: "2026-03-29",
+      startIso: "2026-03-28T23:00:00.000Z",
+      endIso: "2026-03-29T22:00:00.000Z",
+    });
     expect(Date.parse(spring.endIso) - Date.parse(spring.startIso)).toBe(23 * 3_600_000);
 
     const fall = dayWindow(new Date("2026-10-25T12:00:00Z"), "Europe/Warsaw");
-    expect(fall).toMatchObject({ day: "2026-10-25", startIso: "2026-10-24T22:00:00.000Z", endIso: "2026-10-25T23:00:00.000Z" });
+    expect(fall).toMatchObject({
+      day: "2026-10-25",
+      startIso: "2026-10-24T22:00:00.000Z",
+      endIso: "2026-10-25T23:00:00.000Z",
+    });
     expect(Date.parse(fall.endIso) - Date.parse(fall.startIso)).toBe(25 * 3_600_000);
   });
 
@@ -121,10 +129,14 @@ describe("decideTurn", () => {
 
 describe("decideReply", () => {
   it("refuses a spent idem_key — a retry never double-posts", () => {
-    expect(claimPost(store, { idem_key: "reply:c1.json", kind: "reply", pr: 5, thread_ts: "1.1" })).toBe(true);
+    expect(
+      claimPost(store, { idem_key: "reply:c1.json", kind: "reply", pr: 5, thread_ts: "1.1" }),
+    ).toBe(true);
     const d = decideReply(store, cfg, { threadTs: "1.1", idemKey: "reply:c1.json" }, clock);
     expect(d).toMatchObject({ allow: false, cap: "idempotent" });
-    expect(claimPost(store, { idem_key: "reply:c1.json", kind: "reply", pr: 5, thread_ts: "1.1" })).toBe(false);
+    expect(
+      claimPost(store, { idem_key: "reply:c1.json", kind: "reply", pr: 5, thread_ts: "1.1" }),
+    ).toBe(false);
   });
 
   it("enforces the per-thread daily cap on REPLIES only, without silencing other threads", () => {
@@ -132,10 +144,17 @@ describe("decideReply", () => {
     // A pickup and a verdict in the same thread are daemon-authored: free.
     claimPost(store, { idem_key: "p0", kind: "pickup", thread_ts: "1.1" });
     claimPost(store, { idem_key: "p2", kind: "verdict", thread_ts: "1.1" });
-    expect(decideReply(store, cfg, { threadTs: "1.1" }, clock)).toMatchObject({ allow: true, threadUsed: 0 });
+    expect(decideReply(store, cfg, { threadTs: "1.1" }, clock)).toMatchObject({
+      allow: true,
+      threadUsed: 0,
+    });
     claimPost(store, { idem_key: "p1", kind: "reply", thread_ts: "1.1" });
     claimPost(store, { idem_key: "p3", kind: "reply", thread_ts: "1.1" });
-    expect(decideReply(store, cfg, { threadTs: "1.1" }, clock)).toMatchObject({ allow: false, cap: "thread_replies_per_day", threadUsed: 2 });
+    expect(decideReply(store, cfg, { threadTs: "1.1" }, clock)).toMatchObject({
+      allow: false,
+      cap: "thread_replies_per_day",
+      threadUsed: 2,
+    });
     expect(decideReply(store, cfg, { threadTs: "2.2" }, clock).allow).toBe(true);
   });
 
@@ -146,10 +165,24 @@ describe("decideReply", () => {
     expect(cfg.slack.policy.thread_replies_per_day).toBe(6);
     claimPost(store, { idem_key: "pickup:5263", kind: "pickup", pr: 5263, thread_ts: "1.1" });
     for (let round = 1; round <= 6; round++) {
-      claimPost(store, { idem_key: `verdict:5263:${round}`, kind: "verdict", pr: 5263, thread_ts: "1.1" });
-      claimPost(store, { idem_key: `reround:5263:${round}`, kind: "announce", pr: 5263, thread_ts: "1.1" });
+      claimPost(store, {
+        idem_key: `verdict:5263:${round}`,
+        kind: "verdict",
+        pr: 5263,
+        thread_ts: "1.1",
+      });
+      claimPost(store, {
+        idem_key: `reround:5263:${round}`,
+        kind: "announce",
+        pr: 5263,
+        thread_ts: "1.1",
+      });
     }
-    expect(decideReply(store, cfg, { threadTs: "1.1" }, clock)).toMatchObject({ allow: true, threadUsed: 0, used: 0 });
+    expect(decideReply(store, cfg, { threadTs: "1.1" }, clock)).toMatchObject({
+      allow: true,
+      threadUsed: 0,
+      used: 0,
+    });
   });
 
   it("enforces the channel-wide daily post cap on REPLIES only", () => {
@@ -159,10 +192,17 @@ describe("decideReply", () => {
     claimPost(store, { idem_key: "a2", kind: "announce" });
     claimPost(store, { idem_key: "k1", kind: "pickup", thread_ts: "1.1" });
     claimPost(store, { idem_key: "v1", kind: "verdict", thread_ts: "1.1" });
-    expect(decideReply(store, cfg, { threadTs: "1.1" }, clock)).toMatchObject({ allow: true, used: 0 });
+    expect(decideReply(store, cfg, { threadTs: "1.1" }, clock)).toMatchObject({
+      allow: true,
+      used: 0,
+    });
     claimPost(store, { idem_key: "r1", kind: "reply", thread_ts: "1.1" });
     claimPost(store, { idem_key: "r2", kind: "reply", thread_ts: "1.1" });
-    expect(decideReply(store, cfg, { threadTs: "1.1" }, clock)).toMatchObject({ allow: false, cap: "daily_posts", used: 2 });
+    expect(decideReply(store, cfg, { threadTs: "1.1" }, clock)).toMatchObject({
+      allow: false,
+      cap: "daily_posts",
+      used: 2,
+    });
   });
 
   it("a failed post does not consume the budget", () => {
@@ -188,8 +228,12 @@ describe("decideAnnouncement", () => {
     expect(announcementKey("daemon.up", null)).toBe("daemon.up");
     const a = decideAnnouncement(store, cfg, { cause: "round.overdue", pr: 5263 }, clock);
     expect(a).toMatchObject({ allow: true, key: "round.overdue:5263" });
-    expect(decideAnnouncement(store, cfg, { cause: "round.overdue", pr: 5263 }, clock).allow).toBe(false);
-    expect(decideAnnouncement(store, cfg, { cause: "round.overdue", pr: 999 }, clock)).toMatchObject({ allow: true, key: "round.overdue:999" });
+    expect(decideAnnouncement(store, cfg, { cause: "round.overdue", pr: 5263 }, clock).allow).toBe(
+      false,
+    );
+    expect(
+      decideAnnouncement(store, cfg, { cause: "round.overdue", pr: 999 }, clock),
+    ).toMatchObject({ allow: true, key: "round.overdue:999" });
   });
 
   it("refuses a disabled cause and writes no cooldown state", () => {
@@ -200,13 +244,17 @@ describe("decideAnnouncement", () => {
 
   it("folds repeats inside the cooldown and fires again once it expires", () => {
     at("2026-08-17T09:00:00Z");
-    expect(decideAnnouncement(store, cfg, { cause: "round.overdue", pr: 1 }, clock).allow).toBe(true);
+    expect(decideAnnouncement(store, cfg, { cause: "round.overdue", pr: 1 }, clock).allow).toBe(
+      true,
+    );
     at("2026-08-17T09:30:00Z"); // cooldown_min = 60
     const folded = decideAnnouncement(store, cfg, { cause: "round.overdue", pr: 1 }, clock);
     expect(folded).toMatchObject({ allow: false, block: "cooldown", folds: 1 });
     expect(decideAnnouncement(store, cfg, { cause: "round.overdue", pr: 1 }, clock).folds).toBe(2);
     at("2026-08-17T10:05:00Z");
-    expect(decideAnnouncement(store, cfg, { cause: "round.overdue", pr: 1 }, clock).allow).toBe(true);
+    expect(decideAnnouncement(store, cfg, { cause: "round.overdue", pr: 1 }, clock).allow).toBe(
+      true,
+    );
     expect(store.slackCooldown("round.overdue:1")).toMatchObject({ fire_count: 2, fold_count: 0 });
   });
 
@@ -217,28 +265,44 @@ describe("decideAnnouncement", () => {
   });
 
   it("an unlisted cause takes default_cooldown_min and is enabled", () => {
-    expect(causePolicy(cfg, "something.new")).toEqual({ enabled: true, cooldown_min: cfg.slack.policy.default_cooldown_min });
+    expect(causePolicy(cfg, "something.new")).toEqual({
+      enabled: true,
+      cooldown_min: cfg.slack.policy.default_cooldown_min,
+    });
   });
 
   it("an escalation breaks the cooldown exactly once per Warsaw day", () => {
     at("2026-08-17T09:00:00Z");
     decideAnnouncement(store, cfg, { cause: "round.overdue", pr: 1 }, clock);
     at("2026-08-17T09:10:00Z");
-    expect(decideAnnouncement(store, cfg, { cause: "round.overdue", pr: 1, escalated: true }, clock)).toMatchObject({
+    expect(
+      decideAnnouncement(store, cfg, { cause: "round.overdue", pr: 1, escalated: true }, clock),
+    ).toMatchObject({
       allow: true,
       bypass: true,
     });
     at("2026-08-17T09:20:00Z");
-    expect(decideAnnouncement(store, cfg, { cause: "round.overdue", pr: 1, escalated: true }, clock)).toMatchObject({
+    expect(
+      decideAnnouncement(store, cfg, { cause: "round.overdue", pr: 1, escalated: true }, clock),
+    ).toMatchObject({
       allow: false,
       block: "cooldown",
     });
     // Next policy day: fresh fire, and the bypass is available again.
     at("2026-08-17T22:30:00Z");
-    expect(decideAnnouncement(store, cfg, { cause: "round.overdue", pr: 1 }, clock)).toMatchObject({ allow: true });
-    expect(store.slackCooldown("round.overdue:1")).toMatchObject({ day: "2026-08-18", bypassed: 0, fire_count: 1 });
+    expect(decideAnnouncement(store, cfg, { cause: "round.overdue", pr: 1 }, clock)).toMatchObject({
+      allow: true,
+    });
+    expect(store.slackCooldown("round.overdue:1")).toMatchObject({
+      day: "2026-08-18",
+      bypassed: 0,
+      fire_count: 1,
+    });
     at("2026-08-17T22:40:00Z");
-    expect(decideAnnouncement(store, cfg, { cause: "round.overdue", pr: 1, escalated: true }, clock).bypass).toBe(true);
+    expect(
+      decideAnnouncement(store, cfg, { cause: "round.overdue", pr: 1, escalated: true }, clock)
+        .bypass,
+    ).toBe(true);
   });
 
   it("passes the rolling per-hour limiter and leaves the cooldown untouched when it bites", () => {
@@ -257,7 +321,10 @@ describe("decideAnnouncement", () => {
     cfg.slack.policy.announcements_per_hour = 2;
     claimPost(store, { idem_key: "pickup:1", kind: "pickup", pr: 1, thread_ts: "1.1" });
     claimPost(store, { idem_key: "verdict:1:1", kind: "verdict", pr: 1, thread_ts: "1.1" });
-    expect(decideAnnouncement(store, cfg, { cause: "daemon.up" }, clock)).toMatchObject({ allow: false, block: "per_hour" });
+    expect(decideAnnouncement(store, cfg, { cause: "daemon.up" }, clock)).toMatchObject({
+      allow: false,
+      block: "per_hour",
+    });
   });
 
   it("conversational replies are NOT daemon announcements and never eat that ceiling", () => {

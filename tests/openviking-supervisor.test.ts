@@ -9,10 +9,22 @@ import { EventEmitter } from "node:events";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { OPENVIKING_DEFAULTS, loadConfig, resolveOpenVikingPaths, type OpenVikingConfig } from "../src/config.js";
+import {
+  OPENVIKING_DEFAULTS,
+  loadConfig,
+  resolveOpenVikingPaths,
+  type OpenVikingConfig,
+} from "../src/config.js";
 import { createDaemon, type DaemonAdapter } from "../src/daemon.js";
 import { stubSessionHooks } from "../src/stubs.js";
-import { OpenVikingSupervisor, ProcSampler, parseProcStat, probeHealth, type FetchLike, type SupervisedChild } from "../src/openviking/index.js";
+import {
+  OpenVikingSupervisor,
+  ProcSampler,
+  parseProcStat,
+  probeHealth,
+  type FetchLike,
+  type SupervisedChild,
+} from "../src/openviking/index.js";
 import { StateStore, buildStatusSnapshot } from "../src/state.js";
 
 const cfg = (over: Partial<OpenVikingConfig> = {}): OpenVikingConfig =>
@@ -93,7 +105,10 @@ interface Harness {
   spawns: Array<{ cmd: string; args: string[]; opts: { cwd?: string; env: NodeJS.ProcessEnv } }>;
 }
 
-function harness(over: Partial<OpenVikingConfig> = {}, opts: { fetchFn?: FetchLike; exists?: (p: string) => boolean; onReady?: () => void } = {}): Harness {
+function harness(
+  over: Partial<OpenVikingConfig> = {},
+  opts: { fetchFn?: FetchLike; exists?: (p: string) => boolean; onReady?: () => void } = {},
+): Harness {
   const clock = new FakeClock();
   const children: FakeChild[] = [];
   const lines: string[] = [];
@@ -126,7 +141,8 @@ const jsonRes = (status: number, body: unknown) => ({
 describe("parseProcStat", () => {
   const line = (comm: string, utime = 100, stime = 50, rssPages = 4096): string => {
     const fields: Array<string | number> = [];
-    for (let f = 3; f <= 52; f++) fields.push(f === 14 ? utime : f === 15 ? stime : f === 24 ? rssPages : 0);
+    for (let f = 3; f <= 52; f++)
+      fields.push(f === 14 ? utime : f === 15 ? stime : f === 24 ? rssPages : 0);
     return `4242 (${comm}) S ${fields.slice(1).join(" ")}`.replace("S ", "S ");
   };
 
@@ -182,7 +198,8 @@ describe("parseProcStat", () => {
 // ---- health probe --------------------------------------------------------
 
 describe("probeHealth", () => {
-  const probe = (fetchFn: FetchLike) => probeHealth({ baseUrl: "http://127.0.0.1:1933", timeoutMs: 100, fetchFn });
+  const probe = (fetchFn: FetchLike) =>
+    probeHealth({ baseUrl: "http://127.0.0.1:1933", timeoutMs: 100, fetchFn });
 
   it("uses /ready as the gate and /health for the version — never `doctor`", async () => {
     const urls: string[] = [];
@@ -199,7 +216,9 @@ describe("probeHealth", () => {
 
   it("503 from /ready is up-but-not-serving, not a crash", async () => {
     const h = await probe(async (url) =>
-      url.endsWith("/health") ? jsonRes(200, { version: "0.4.15" }) : jsonRes(503, { status: "not_ready" }),
+      url.endsWith("/health")
+        ? jsonRes(200, { version: "0.4.15" })
+        : jsonRes(503, { status: "not_ready" }),
     );
     expect(h.reachable).toBe(true);
     expect(h.ready).toBe(false);
@@ -245,7 +264,9 @@ describe("OpenVikingSupervisor", () => {
       "--port",
       "1933",
     ]);
-    expect(h.spawns[0]!.opts.env.OPENVIKING_CONFIG_FILE).toBe("/opt/quickreview/state/openviking/ov.conf");
+    expect(h.spawns[0]!.opts.env.OPENVIKING_CONFIG_FILE).toBe(
+      "/opt/quickreview/state/openviking/ov.conf",
+    );
     expect(h.sup.status()).toMatchObject({ enabled: true, running: true, pid: 1000, ready: false });
   });
 
@@ -337,14 +358,24 @@ describe("OpenVikingSupervisor", () => {
   });
 
   it("caches the last health sample — status() is synchronous and never awaits", async () => {
-    const h = harness({}, {
-      fetchFn: async (url) =>
-        url.endsWith("/health") ? jsonRes(200, { version: "0.4.15" }) : jsonRes(200, { status: "ready" }),
-    });
+    const h = harness(
+      {},
+      {
+        fetchFn: async (url) =>
+          url.endsWith("/health")
+            ? jsonRes(200, { version: "0.4.15" })
+            : jsonRes(200, { status: "ready" }),
+      },
+    );
     h.sup.start();
     await h.sup.poll();
     const s = h.sup.status();
-    expect(s).toMatchObject({ reachable: true, ready: true, version: "0.4.15", version_drift: false });
+    expect(s).toMatchObject({
+      reachable: true,
+      ready: true,
+      version: "0.4.15",
+      version_drift: false,
+    });
     expect(s.checked_at).toBeTruthy();
   });
 
@@ -354,13 +385,19 @@ describe("OpenVikingSupervisor", () => {
   it("onReady fires once per not-ready → ready flip, and a throwing callback cannot take the loop down", async () => {
     let ready = false;
     let fired = 0;
-    const h = harness({}, {
-      fetchFn: async (url) => (url.endsWith("/health") ? jsonRes(200, { version: "0.4.15" }) : jsonRes(ready ? 200 : 503, {})),
-      onReady: () => {
-        fired += 1;
-        throw new Error("hook blew up");
+    const h = harness(
+      {},
+      {
+        fetchFn: async (url) =>
+          url.endsWith("/health")
+            ? jsonRes(200, { version: "0.4.15" })
+            : jsonRes(ready ? 200 : 503, {}),
+        onReady: () => {
+          fired += 1;
+          throw new Error("hook blew up");
+        },
       },
-    });
+    );
     h.sup.start();
     await h.sup.poll();
     expect(fired).toBe(0);
@@ -379,20 +416,31 @@ describe("OpenVikingSupervisor", () => {
   });
 
   it("flags version drift against the triple-mirrored pin", async () => {
-    const h = harness({}, {
-      fetchFn: async (url) => (url.endsWith("/health") ? jsonRes(200, { version: "0.4.16" }) : jsonRes(200, {})),
-    });
+    const h = harness(
+      {},
+      {
+        fetchFn: async (url) =>
+          url.endsWith("/health") ? jsonRes(200, { version: "0.4.16" }) : jsonRes(200, {}),
+      },
+    );
     h.sup.start();
     await h.sup.poll();
-    expect(h.sup.status()).toMatchObject({ version: "0.4.16", pinned_version: "0.4.15", version_drift: true });
+    expect(h.sup.status()).toMatchObject({
+      version: "0.4.16",
+      pinned_version: "0.4.15",
+      version_drift: true,
+    });
   });
 
   it("a throwing fetch seam degrades to unreachable instead of rejecting", async () => {
-    const h = harness({}, {
-      fetchFn: () => {
-        throw new Error("boom");
+    const h = harness(
+      {},
+      {
+        fetchFn: () => {
+          throw new Error("boom");
+        },
       },
-    });
+    );
     h.sup.start();
     await expect(h.sup.poll()).resolves.toBeUndefined();
     expect(h.sup.status()).toMatchObject({ reachable: false, ready: false });
@@ -402,7 +450,12 @@ describe("OpenVikingSupervisor", () => {
     const clock = new FakeClock();
     let ms = 0;
     const sampler = new ProcSampler({
-      readStat: () => `1000 (openviking-server) S ${Array.from({ length: 50 }, (_, i) => (i + 3 === 14 ? ms / 10 : i + 3 === 24 ? 100_000 : 0)).slice(1).join(" ")}`,
+      readStat: () =>
+        `1000 (openviking-server) S ${Array.from({ length: 50 }, (_, i) =>
+          i + 3 === 14 ? ms / 10 : i + 3 === 24 ? 100_000 : 0,
+        )
+          .slice(1)
+          .join(" ")}`,
       now: () => ms,
     });
     const sup = new OpenVikingSupervisor({
@@ -476,7 +529,8 @@ describe("status.json openviking block", () => {
     const root = mkdtempSync(join(tmpdir(), "qcr-ov-"));
     const store = new StateStore(":memory:");
     try {
-      for (const d of ["state", "state/dryrun", "verdict", "inject"]) mkdirSync(join(root, d), { recursive: true });
+      for (const d of ["state", "state/dryrun", "verdict", "inject"])
+        mkdirSync(join(root, d), { recursive: true });
       const adapter = {
         searchLabelTriggered: async () => [],
         searchTeamTriggered: async () => [],
@@ -498,8 +552,14 @@ describe("status.json openviking block", () => {
         openvikingStatus: () => h.sup.status(),
       });
       await daemon.start();
-      const snap = JSON.parse(readFileSync(join(root, "state", "status.json"), "utf8")) as { openviking?: { pid?: number } };
-      expect(snap.openviking).toMatchObject({ enabled: true, running: true, pinned_version: "0.4.15" });
+      const snap = JSON.parse(readFileSync(join(root, "state", "status.json"), "utf8")) as {
+        openviking?: { pid?: number };
+      };
+      expect(snap.openviking).toMatchObject({
+        enabled: true,
+        running: true,
+        pinned_version: "0.4.15",
+      });
       await daemon.stop();
 
       // A supervisor that throws must never cost us the heartbeat: the daemon
@@ -518,7 +578,10 @@ describe("status.json openviking block", () => {
         },
       });
       await angry.start();
-      const after = JSON.parse(readFileSync(join(root, "state", "status.json"), "utf8")) as { heartbeat?: string; openviking?: unknown };
+      const after = JSON.parse(readFileSync(join(root, "state", "status.json"), "utf8")) as {
+        heartbeat?: string;
+        openviking?: unknown;
+      };
       expect(after.heartbeat).toBeTruthy();
       expect(after.openviking).toBeUndefined();
       await angry.stop();
@@ -537,8 +600,21 @@ describe("status.json openviking block", () => {
 
       const h = harness();
       h.sup.start();
-      const snap = buildStatusSnapshot(store, false, undefined, undefined, 12, undefined, h.sup.status());
-      expect(snap.openviking).toMatchObject({ enabled: true, running: true, pinned_version: "0.4.15", ready: false });
+      const snap = buildStatusSnapshot(
+        store,
+        false,
+        undefined,
+        undefined,
+        12,
+        undefined,
+        h.sup.status(),
+      );
+      expect(snap.openviking).toMatchObject({
+        enabled: true,
+        running: true,
+        pinned_version: "0.4.15",
+        ready: false,
+      });
       // Round-trips through JSON — this is what the status collector reads.
       expect(JSON.parse(JSON.stringify(snap)).openviking.pid).toBe(1000);
     } finally {

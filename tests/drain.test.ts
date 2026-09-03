@@ -16,7 +16,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { drainManualSshCommand, drainPayload, renderStatus, runDrain } from "../src/cli.js";
-import { authorizeCommand, executeCommand, validateCommand, type CommandDeps } from "../src/commands.js";
+import {
+  authorizeCommand,
+  executeCommand,
+  validateCommand,
+  type CommandDeps,
+} from "../src/commands.js";
 import { loadConfig, parseConfig, type Config } from "../src/config.js";
 import { createDaemon, type DaemonAdapter } from "../src/daemon.js";
 import { dispatchOnce, type DispatchAdapter } from "../src/dispatch.js";
@@ -30,11 +35,15 @@ import { stripAnsi } from "../src/tui/paint.js";
 import type { RemoteResult } from "../src/tui/remote.js";
 import { handleDelivery, signBody } from "../src/webhook.js";
 
-const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
+const cfg: Config = parseConfig(
+  readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
+);
 const SECRET = "drain-secret";
 
 function eventKinds(store: StateStore): string[] {
-  return (store.db.prepare("SELECT kind FROM events ORDER BY id").all() as Array<{ kind: string }>).map((e) => e.kind);
+  return (
+    store.db.prepare("SELECT kind FROM events ORDER BY id").all() as Array<{ kind: string }>
+  ).map((e) => e.kind);
 }
 
 // ---- the persistent flag ---------------------------------------------------
@@ -78,13 +87,23 @@ const labeledPayload = () => ({
   action: "labeled",
   number: 4242,
   label: { id: 1, name: cfg.github.trigger_label, color: "ededed" },
-  pull_request: { number: 4242, title: "t", user: { login: "alice", type: "User" }, head: { sha: "abc" }, merged: false },
+  pull_request: {
+    number: 4242,
+    title: "t",
+    user: { login: "alice", type: "User" },
+    head: { sha: "abc" },
+    merged: false,
+  },
   sender: { login: "alice", type: "User" },
 });
 
 function delivery(store: StateStore, payload: unknown, event: string, guid: string) {
   const raw = Buffer.from(JSON.stringify(payload));
-  return handleDelivery({ cfg, store, secret: SECRET, onInterpretation: () => {} }, { signature: signBody(raw, SECRET), guid, event }, raw);
+  return handleDelivery(
+    { cfg, store, secret: SECRET, onInterpretation: () => {} },
+    { signature: signBody(raw, SECRET), guid, event },
+    raw,
+  );
 }
 
 describe("webhook while draining", () => {
@@ -98,7 +117,9 @@ describe("webhook while draining", () => {
     expect(store.drainState().drained_deliveries).toBe(1);
     // NOT recorded: no delivery row, no webhook_event — the reconcile poll is
     // the single recovery path, and a redelivery after the lift is not a dupe.
-    expect((store.db.prepare("SELECT COUNT(*) AS c FROM deliveries").get() as { c: number }).c).toBe(0);
+    expect(
+      (store.db.prepare("SELECT COUNT(*) AS c FROM deliveries").get() as { c: number }).c,
+    ).toBe(0);
     expect(eventKinds(store)).not.toContain("webhook_event");
 
     store.liftDrain("operator");
@@ -128,13 +149,28 @@ describe("webhook while draining", () => {
     store.engageDrain({ issuer: "operator", expires_at: null });
     const payload = {
       action: "created",
-      comment: { id: 900001, in_reply_to_id: 800001, body: "done", user: { login: "alice", type: "User" }, path: "x.py" },
-      pull_request: { number: 4242, title: "t", user: { login: "alice", type: "User" }, head: { sha: "abc" } },
+      comment: {
+        id: 900001,
+        in_reply_to_id: 800001,
+        body: "done",
+        user: { login: "alice", type: "User" },
+        path: "x.py",
+      },
+      pull_request: {
+        number: 4242,
+        title: "t",
+        user: { login: "alice", type: "User" },
+        head: { sha: "abc" },
+      },
       sender: { login: "alice", type: "User" },
     };
-    expect(delivery(store, payload, "pull_request_review_comment", "drain-g2").reason).toBe("draining");
+    expect(delivery(store, payload, "pull_request_review_comment", "drain-g2").reason).toBe(
+      "draining",
+    );
     store.liftDrain("operator");
-    expect(delivery(store, payload, "pull_request_review_comment", "drain-g3").interpretation?.kind).toBe("author_reply");
+    expect(
+      delivery(store, payload, "pull_request_review_comment", "drain-g3").interpretation?.kind,
+    ).toBe("author_reply");
     store.close();
   });
 });
@@ -204,11 +240,17 @@ describe("recheck while draining", () => {
     const store = new StateStore(":memory:");
     store.engageDrain({ issuer: "operator", expires_at: null });
     const inject = vi.fn();
-    const out = await runRecheck({ cfg, store, adapter: {}, inject }, { pr: 5, trigger: "push", head_sha: "h2" });
+    const out = await runRecheck(
+      { cfg, store, adapter: {}, inject },
+      { pr: 5, trigger: "push", head_sha: "h2" },
+    );
     expect(out).toMatchObject({ action: "noop", reason: "draining" });
     expect(inject).not.toHaveBeenCalled();
     store.liftDrain("operator");
-    const after = await runRecheck({ cfg, store, adapter: {}, inject }, { pr: 5, trigger: "push", head_sha: "h2" });
+    const after = await runRecheck(
+      { cfg, store, adapter: {}, inject },
+      { pr: 5, trigger: "push", head_sha: "h2" },
+    );
     // The drain lifted, so the recheck must get PAST the drain gate. It still
     // no-ops here — this PR carries no approval to re-check — and that is the
     // point: the reason has to be that one, not "draining".
@@ -220,9 +262,10 @@ describe("recheck while draining", () => {
     // actually pins the gate order.
     expect(after.action).toBe("noop");
     if (after.action !== "noop") throw new Error("unreachable");
-    expect(after.reason, "the drain gate must be behind us — a noop now needs a reason of its own").toBe(
-      "no-standing-approval",
-    );
+    expect(
+      after.reason,
+      "the drain gate must be behind us — a noop now needs a reason of its own",
+    ).toBe("no-standing-approval");
     store.close();
   });
 
@@ -239,10 +282,18 @@ describe("recheck while draining", () => {
       stale_recheck: 0,
       migration_gate: 0,
     });
-    store.recordReviewedHead(9, { head_sha: "h9", verdict: "APPROVE", posted_event: "approved", round_no: 1 });
+    store.recordReviewedHead(9, {
+      head_sha: "h9",
+      verdict: "APPROVE",
+      posted_event: "approved",
+      round_no: 1,
+    });
     store.engageDrain({ issuer: "operator", expires_at: null });
     const getPr = vi.fn();
-    const enabled: Config = { ...cfg, recheck: { ...cfg.recheck, enabled: true, on_base_advance: true } };
+    const enabled: Config = {
+      ...cfg,
+      recheck: { ...cfg.recheck, enabled: true, on_base_advance: true },
+    };
     const out = await runBaseAdvance(
       { cfg: enabled, store, adapter: { getPr }, inject: vi.fn() },
       { branch: "master", before: "a", after: "b" },
@@ -335,7 +386,8 @@ describe("drain auto-lift", () => {
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "qcr-drain-boot-"));
-    for (const d of ["state", "state/dryrun", "verdict", "inject"]) mkdirSync(join(root, d), { recursive: true });
+    for (const d of ["state", "state/dryrun", "verdict", "inject"])
+      mkdirSync(join(root, d), { recursive: true });
     store = new StateStore(":memory:");
   });
   afterEach(() => rmSync(root, { recursive: true, force: true }));
@@ -497,7 +549,9 @@ describe("drain surfacing", () => {
     expect(bar).toContain("DRAINING");
     expect(bar).toContain("3 rounds finishing");
     expect(bar).toContain("7 dropped");
-    const quiet = stripAnsi(topBar({ ...view, snapshot: { ...view.snapshot!, draining: undefined } }, 160));
+    const quiet = stripAnsi(
+      topBar({ ...view, snapshot: { ...view.snapshot!, draining: undefined } }, 160),
+    );
     expect(quiet).not.toContain("DRAINING");
   });
 });
@@ -511,7 +565,11 @@ describe("qcr drain over the unwedge command channel", () => {
     const writes: Array<{ argv: string[]; stdin?: string }> = [];
     const lines: string[] = [];
     let polled = 0;
-    const ssh = async (_host: string, argv: string[], opts?: { stdin?: string }): Promise<RemoteResult> => {
+    const ssh = async (
+      _host: string,
+      argv: string[],
+      opts?: { stdin?: string },
+    ): Promise<RemoteResult> => {
       if (opts?.stdin !== undefined) {
         writes.push({ argv, stdin: opts.stdin });
         return ok();
@@ -519,7 +577,12 @@ describe("qcr drain over the unwedge command channel", () => {
       polled++;
       return ok(JSON.stringify({ ok: true, draining: true, running_rounds: 2 }));
     };
-    const code = await runDrain(true, { cfg, ssh, log: (l) => lines.push(l), sleep: async () => {} });
+    const code = await runDrain(true, {
+      cfg,
+      ssh,
+      log: (l) => lines.push(l),
+      sleep: async () => {},
+    });
     expect(code).toBe(0);
     expect(writes).toHaveLength(1);
     expect(JSON.parse(writes[0]!.stdin!)).toEqual({ command: "drain", on: true });
@@ -532,17 +595,38 @@ describe("qcr drain over the unwedge command channel", () => {
 
   it("reports the drop count on drain off", async () => {
     const lines: string[] = [];
-    const ssh = async (_h: string, _a: string[], opts?: { stdin?: string }): Promise<RemoteResult> =>
-      opts?.stdin !== undefined ? ok() : ok(JSON.stringify({ ok: true, draining: false, dropped_deliveries: 11 }));
-    expect(await runDrain(false, { cfg, ssh, log: (l) => lines.push(l), sleep: async () => {} })).toBe(0);
+    const ssh = async (
+      _h: string,
+      _a: string[],
+      opts?: { stdin?: string },
+    ): Promise<RemoteResult> =>
+      opts?.stdin !== undefined
+        ? ok()
+        : ok(JSON.stringify({ ok: true, draining: false, dropped_deliveries: 11 }));
+    expect(
+      await runDrain(false, { cfg, ssh, log: (l) => lines.push(l), sleep: async () => {} }),
+    ).toBe(0);
     expect(lines.join("\n")).toContain("11 webhook delivery(ies)");
   });
 
   it("prints the exact manual ssh fallback when the runner path fails", async () => {
     const lines: string[] = [];
-    const ssh = async (): Promise<RemoteResult> => ({ ok: false, stdout: "", stderr: "no route", code: 255 });
+    const ssh = async (): Promise<RemoteResult> => ({
+      ok: false,
+      stdout: "",
+      stderr: "no route",
+      code: 255,
+    });
     const now = new Date("2026-08-31T12:00:00Z");
-    expect(await runDrain(true, { cfg, ssh, log: (l) => lines.push(l), sleep: async () => {}, now: () => now })).toBe(1);
+    expect(
+      await runDrain(true, {
+        cfg,
+        ssh,
+        log: (l) => lines.push(l),
+        sleep: async () => {},
+        now: () => now,
+      }),
+    ).toBe(1);
     const manual = drainManualSshCommand(cfg.tui, true, now);
     expect(lines.join("\n")).toContain(manual);
     expect(manual).toContain(`ssh ${cfg.tui.ssh_host}`);
@@ -551,9 +635,15 @@ describe("qcr drain over the unwedge command channel", () => {
 
   it("surfaces the daemon's refusal instead of pretending", async () => {
     const lines: string[] = [];
-    const ssh = async (_h: string, _a: string[], opts?: { stdin?: string }): Promise<RemoteResult> =>
+    const ssh = async (
+      _h: string,
+      _a: string[],
+      opts?: { stdin?: string },
+    ): Promise<RemoteResult> =>
       opts?.stdin !== undefined ? ok() : ok(JSON.stringify({ ok: false, reason: "tier: nope" }));
-    expect(await runDrain(true, { cfg, ssh, log: (l) => lines.push(l), sleep: async () => {} })).toBe(1);
+    expect(
+      await runDrain(true, { cfg, ssh, log: (l) => lines.push(l), sleep: async () => {} }),
+    ).toBe(1);
     expect(lines.join("\n")).toContain("tier: nope");
   });
 

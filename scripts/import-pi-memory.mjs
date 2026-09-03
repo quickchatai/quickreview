@@ -35,7 +35,13 @@ function die(msg) {
 }
 
 function parseArgs(argv) {
-  const args = { batchSize: undefined, memory: undefined, dest: undefined, archive: false, log: undefined };
+  const args = {
+    batchSize: undefined,
+    memory: undefined,
+    dest: undefined,
+    archive: false,
+    log: undefined,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => {
@@ -49,11 +55,14 @@ function parseArgs(argv) {
     else if (a === "--log") args.log = next();
     else if (a === "--archive") args.archive = true;
     else if (a === "-h" || a === "--help") {
-      process.stdout.write("usage: import-pi-memory.mjs [--memory PATH] [--dest MODULE#EXPORT] [--batch-size N] [--archive] [--log FILE]\n");
+      process.stdout.write(
+        "usage: import-pi-memory.mjs [--memory PATH] [--dest MODULE#EXPORT] [--batch-size N] [--archive] [--log FILE]\n",
+      );
       process.exit(0);
     } else die(`unknown argument '${a}'`);
   }
-  if (args.batchSize !== undefined && !Number.isInteger(args.batchSize)) die("--batch-size must be an integer");
+  if (args.batchSize !== undefined && !Number.isInteger(args.batchSize))
+    die("--batch-size must be an integer");
   return args;
 }
 
@@ -64,12 +73,16 @@ async function loadDest(spec) {
   if (hash <= 0) die("--dest must be '<module>#<export>'");
   const modSpec = spec.slice(0, hash);
   const exportName = spec.slice(hash + 1);
-  const target = modSpec.startsWith(".") || modSpec.startsWith("/") ? pathToFileURL(resolve(ROOT, modSpec)).href : modSpec;
+  const target =
+    modSpec.startsWith(".") || modSpec.startsWith("/")
+      ? pathToFileURL(resolve(ROOT, modSpec)).href
+      : modSpec;
   const mod = await import(target);
   const found = mod[exportName];
   if (found === undefined) die(`module '${modSpec}' has no export '${exportName}'`);
   const store = typeof found === "function" ? await found() : found;
-  if (typeof store?.read !== "function" || typeof store?.apply !== "function") die(`'${exportName}' is not a MemoryStore`);
+  if (typeof store?.read !== "function" || typeof store?.apply !== "function")
+    die(`'${exportName}' is not a MemoryStore`);
   return store;
 }
 
@@ -77,8 +90,12 @@ const args = parseArgs(process.argv.slice(2));
 
 if (!existsSync(join(DIST, "import.js"))) die("dist missing — run `npm run build` first");
 
-const { importMemory, recordingMemoryStore, archiveReadOnly, formatImportLog } = await import(pathToFileURL(join(DIST, "import.js")).href);
-const { legacyMemoryFileSource, legacyMemoryPath } = await import(pathToFileURL(join(DIST, "legacy-file.js")).href);
+const { importMemory, recordingMemoryStore, archiveReadOnly, formatImportLog } = await import(
+  pathToFileURL(join(DIST, "import.js")).href
+);
+const { legacyMemoryFileSource, legacyMemoryPath } = await import(
+  pathToFileURL(join(DIST, "legacy-file.js")).href
+);
 
 const memoryPath = args.memory ? resolve(args.memory) : legacyMemoryPath();
 const source = legacyMemoryFileSource(memoryPath);
@@ -89,7 +106,8 @@ if (dryRun) process.stdout.write("DRY RUN — no destination given, nothing will
 process.stdout.write(`source: ${memoryPath}\n`);
 
 const archive = args.archive && !dryRun ? () => archiveReadOnly(memoryPath) : undefined;
-if (args.archive && dryRun) process.stdout.write("--archive ignored in a dry run (the source file is left untouched)\n");
+if (args.archive && dryRun)
+  process.stdout.write("--archive ignored in a dry run (the source file is left untouched)\n");
 
 const report = await importMemory({
   source,

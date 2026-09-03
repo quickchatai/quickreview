@@ -241,7 +241,10 @@ export function renderMigrationPrecheckDegradedNote(): string {
  * withdrawn finding class for exactly that round (see src/include.ts,
  * MIGRATION_NUMBERING_ADDENDUM), and raises the overseer anomaly.
  */
-async function djangoPreCheck(io: EcosystemPreCheckIo, round: EcosystemRound): Promise<EcosystemPreCheckOutcome> {
+async function djangoPreCheck(
+  io: EcosystemPreCheckIo,
+  round: EcosystemRound,
+): Promise<EcosystemPreCheckOutcome> {
   const log = io.log ?? (() => {});
   const touchesMigrations = round.files.some((f) => /(^|\/)migrations\//.test(f.filename));
   if (!io.listBaseMigrations || !round.base_sha) {
@@ -262,7 +265,10 @@ async function djangoPreCheck(io: EcosystemPreCheckIo, round: EcosystemRound): P
     collisions = detectMigrationCollisions({ files: round.files, baseFiles });
   } catch (err) {
     log(`dispatch: migration pre-check failed on #${round.pr}`, err);
-    io.logEvent("migration_precheck_failed", round.pr, { head_sha: round.head_sha, error: String(err) });
+    io.logEvent("migration_precheck_failed", round.pr, {
+      head_sha: round.head_sha,
+      error: String(err),
+    });
     return touchesMigrations ? { status: "degraded" } : { status: "checked", collisions: [] };
   }
   if (collisions.length === 0) return { status: "checked", collisions };
@@ -270,7 +276,11 @@ async function djangoPreCheck(io: EcosystemPreCheckIo, round: EcosystemRound): P
     head_sha: round.head_sha,
     base_ref: round.base_ref,
     base_sha: round.base_sha,
-    collisions: collisions.map((c) => ({ pr_path: c.pr_path, base_path: c.base_path, target_path: c.target_path })),
+    collisions: collisions.map((c) => ({
+      pr_path: c.pr_path,
+      base_path: c.base_path,
+      target_path: c.target_path,
+    })),
   });
   const fingerprint = collisionFingerprint(round.head_sha, collisions);
   // A staleness round re-runs at the same head and must not repost the same
@@ -286,7 +296,9 @@ async function djangoPreCheck(io: EcosystemPreCheckIo, round: EcosystemRound): P
     // exact duplicate the dedupe exists to prevent, so the COMMENT is withheld
     // — loudly, and with the check still counted as RUN: the collisions ride
     // the round order into the gate note, so the session still hears them.
-    log(`dispatch: #${round.pr} migration collision comment withheld — an earlier comment row is unreadable`);
+    log(
+      `dispatch: #${round.pr} migration collision comment withheld — an earlier comment row is unreadable`,
+    );
     io.logEvent("migration_collision_comment_withheld", round.pr, {
       head_sha: round.head_sha,
       fingerprint,
@@ -300,11 +312,15 @@ async function djangoPreCheck(io: EcosystemPreCheckIo, round: EcosystemRound): P
       base_ref: round.base_ref,
       base_sha: round.base_sha,
     });
-    const result = await io.createReview(round.pr, {
-      commit_id: round.head_sha,
-      event: "COMMENT",
-      body,
-    }, { purpose: "migration_precheck" });
+    const result = await io.createReview(
+      round.pr,
+      {
+        commit_id: round.head_sha,
+        event: "COMMENT",
+        body,
+      },
+      { purpose: "migration_precheck" },
+    );
     io.logEvent("migration_collision_comment", round.pr, {
       head_sha: round.head_sha,
       fingerprint,

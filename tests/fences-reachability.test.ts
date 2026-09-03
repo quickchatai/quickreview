@@ -43,7 +43,11 @@ function stripComments(text: string): string {
 
 function tsFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
-    e.isDirectory() ? tsFiles(join(dir, e.name)) : e.name.endsWith(".ts") ? [join(dir, e.name)] : [],
+    e.isDirectory()
+      ? tsFiles(join(dir, e.name))
+      : e.name.endsWith(".ts")
+        ? [join(dir, e.name)]
+        : [],
   );
 }
 
@@ -62,18 +66,18 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
     {
       file: "src/posting.ts",
       why:
-        "[F1] / the manifesto audit's structural finding: ~950 lines of review-assembly law — the "
-        + "severity-to-tag mapping's caller, anchor validation, the [check this] grammar — that execute ONLY in "
-        + "tests, because sessions post through scripts/*.sh instead. The audit's sharpest sentence about it is "
-        + "'the tested guard is not the enforcing guard'. Delete, wire up, or keep as the specification the shell "
-        + "mirrors is the largest single question the inventory raised and has its own decision to make. Until it "
-        + "does, this entry is the debt being VISIBLE rather than silent, which is the whole point of [T8].",
+        "[F1] / the manifesto audit's structural finding: ~950 lines of review-assembly law — the " +
+        "severity-to-tag mapping's caller, anchor validation, the [check this] grammar — that execute ONLY in " +
+        "tests, because sessions post through scripts/*.sh instead. The audit's sharpest sentence about it is " +
+        "'the tested guard is not the enforcing guard'. Delete, wire up, or keep as the specification the shell " +
+        "mirrors is the largest single question the inventory raised and has its own decision to make. Until it " +
+        "does, this entry is the debt being VISIBLE rather than silent, which is the whole point of [T8].",
     },
     {
       file: "src/memory/import.ts",
       why:
-        "the one-time curated import. Driven by scripts/import-pi-memory.mjs, which loads it out of dist/ "
-        + "at runtime — a real driver this static scan cannot follow, not an orphan.",
+        "the one-time curated import. Driven by scripts/import-pi-memory.mjs, which loads it out of dist/ " +
+        "at runtime — a real driver this static scan cannot follow, not an orphan.",
     },
     {
       file: "src/memory/legacy-file.ts",
@@ -99,7 +103,9 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
       }
     }
     for (const r of roots) {
-      expect(files, `${relative(ROOT, r)} is named as an entrypoint but does not exist`).toContain(r);
+      expect(files, `${relative(ROOT, r)} is named as an entrypoint but does not exist`).toContain(
+        r,
+      );
     }
 
     const seen = new Set<string>();
@@ -113,15 +119,22 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
     // If the graph walk breaks, everything is "unreachable" and the equality
     // below fails loudly rather than passing on an empty set — but a partial
     // break could still look plausible, so pin that most of src/ IS reached.
-    expect(seen.size, "the module graph walk reached almost nothing — the import scan broke").toBeGreaterThan(files.length / 2);
+    expect(
+      seen.size,
+      "the module graph walk reached almost nothing — the import scan broke",
+    ).toBeGreaterThan(files.length / 2);
 
-    const unreachable = files.filter((f) => !seen.has(f)).map((f) => relative(ROOT, f)).sort();
-    for (const e of NOT_REACHED_FROM_PRODUCTION) expect(e.why.length, `${e.file} needs a reason`).toBeGreaterThan(40);
+    const unreachable = files
+      .filter((f) => !seen.has(f))
+      .map((f) => relative(ROOT, f))
+      .sort();
+    for (const e of NOT_REACHED_FROM_PRODUCTION)
+      expect(e.why.length, `${e.file} needs a reason`).toBeGreaterThan(40);
 
     expect(
       unreachable,
-      "a module under src/ is not reachable from any entrypoint — it runs only in its own tests. Wire it, delete it, "
-        + "or record it with what drives it. If one DROPPED off the list, delete its entry: it is live now.",
+      "a module under src/ is not reachable from any entrypoint — it runs only in its own tests. Wire it, delete it, " +
+        "or record it with what drives it. If one DROPPED off the list, delete its entry: it is live now.",
     ).toEqual(NOT_REACHED_FROM_PRODUCTION.map((e) => e.file).sort());
   });
 });

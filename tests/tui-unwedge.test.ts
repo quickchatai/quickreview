@@ -30,7 +30,10 @@ const cfg = {
 const NOW = new Date("2026-08-21T15:00:00.000Z");
 
 /** An ssh runner that records calls and answers the result probe from a queue. */
-function runner(results: string[]): { ssh: SshRunner; calls: Array<{ argv: string[]; stdin?: string }> } {
+function runner(results: string[]): {
+  ssh: SshRunner;
+  calls: Array<{ argv: string[]; stdin?: string }>;
+} {
   const calls: Array<{ argv: string[]; stdin?: string }> = [];
   const ssh: SshRunner = async (_host, argv, opts) => {
     calls.push({ argv, ...(opts?.stdin !== undefined ? { stdin: opts.stdin } : {}) });
@@ -42,10 +45,18 @@ function runner(results: string[]): { ssh: SshRunner; calls: Array<{ argv: strin
 }
 
 function sender(ssh: SshRunner): CommandFileSender {
-  return new CommandFileSender(cfg, ssh, () => NOW, async () => {});
+  return new CommandFileSender(
+    cfg,
+    ssh,
+    () => NOW,
+    async () => {},
+  );
 }
 
-function track(): { states: Array<[UnwedgeState, string]>; on: (s: UnwedgeState, l: string) => void } {
+function track(): {
+  states: Array<[UnwedgeState, string]>;
+  on: (s: UnwedgeState, l: string) => void;
+} {
   const states: Array<[UnwedgeState, string]> = [];
   return { states, on: (s, l) => states.push([s, l]) };
 }
@@ -54,8 +65,14 @@ describe("the unwedge command channel", () => {
   it("writes ONE fixed-shape command the daemon whitelist already accepts", () => {
     // The payload is built here, never taken from a caller, so this module
     // cannot produce a command the whitelist does not know.
-    expect(JSON.parse(commandPayload("rerun-round", 5362))).toEqual({ command: "rerun-round", pr: 5362 });
-    expect(JSON.parse(commandPayload("restart-session", 42))).toEqual({ command: "restart-session", pr: 42 });
+    expect(JSON.parse(commandPayload("rerun-round", 5362))).toEqual({
+      command: "rerun-round",
+      pr: 5362,
+    });
+    expect(JSON.parse(commandPayload("restart-session", 42))).toEqual({
+      command: "restart-session",
+      pr: 42,
+    });
   });
 
   it("sends the payload on STDIN and writes atomically — nothing reaches the command line", async () => {
@@ -105,7 +122,12 @@ describe("the unwedge command channel", () => {
     const silent = runner(Array(100).fill("pending") as string[]);
     const t2 = track();
     let clock = NOW.getTime();
-    const s = new CommandFileSender(cfg, silent.ssh, () => new Date((clock += 5_000)), async () => {});
+    const s = new CommandFileSender(
+      cfg,
+      silent.ssh,
+      () => new Date((clock += 5_000)),
+      async () => {},
+    );
     await s.send("rerun-round", 1, t2.on);
     expect(t2.states[t2.states.length - 1]![0]).toBe("failed");
     expect(t2.states[t2.states.length - 1]![1]).toContain("no result");
@@ -124,10 +146,20 @@ describe("the unwedge command channel", () => {
     // `-u 0` is the operator seal: the file arrives root-owned in a
     // root-owned directory the daemon's uid cannot write. MUTATION: drop the
     // `-u 0` pair from commandWriteArgv — this fails.
-    expect(commandWriteArgv(cfg, name).slice(0, 7)).toEqual(["sudo", "docker", "exec", "-i", "-u", "0", "quickreview-sandbox"]);
+    expect(commandWriteArgv(cfg, name).slice(0, 7)).toEqual([
+      "sudo",
+      "docker",
+      "exec",
+      "-i",
+      "-u",
+      "0",
+      "quickreview-sandbox",
+    ]);
     // The result probe is a read: no `-i`, and it never mutates.
     const probe = commandResultArgv(cfg, name);
     expect(probe).not.toContain("-i");
-    expect(probe[probe.length - 1]).toContain("results/2026-08-21T15-00-00-000Z-tui-0000.result.json");
+    expect(probe[probe.length - 1]).toContain(
+      "results/2026-08-21T15-00-00-000Z-tui-0000.result.json",
+    );
   });
 });

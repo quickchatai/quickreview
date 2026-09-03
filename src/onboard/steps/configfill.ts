@@ -40,7 +40,13 @@
 // a temp dir and fake the prompter — no network, no docker, no real repo write.
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { assertIanaTimeZone, expandHome, githubCloneDir, loadConfig, type Config } from "../../config.js";
+import {
+  assertIanaTimeZone,
+  expandHome,
+  githubCloneDir,
+  loadConfig,
+  type Config,
+} from "../../config.js";
 import { CHOICE_KEYS, ingressChoiceOf, type IngressChoice } from "../choices.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 
@@ -168,7 +174,9 @@ const DRY_RUN_TOKEN = /(^|[^0-9A-Za-z_])dry_run([^0-9A-Za-z_]|$)/;
 export function assertNoDryRunEdit(edits: readonly TomlEdit[]): void {
   for (const e of edits) {
     if (DRY_RUN_TOKEN.test(e.key) || DRY_RUN_TOKEN.test(e.section)) {
-      throw new Error("onboarding config fill: refused an edit touching dry_run — rule 1: the flag is the owner's alone");
+      throw new Error(
+        "onboarding config fill: refused an edit touching dry_run — rule 1: the flag is the owner's alone",
+      );
     }
   }
 }
@@ -250,7 +258,9 @@ export const QUESTIONS: readonly Question[] = [
     from: [CHOICE_KEYS.repo],
     read: (cfg) => cfg.github.repo,
     validate: (v) =>
-      /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(v) ? null : 'a repository is "owner/name" — e.g. "acme/web-app" (no URL, no trailing .git)',
+      /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(v)
+        ? null
+        : 'a repository is "owner/name" — e.g. "acme/web-app" (no URL, no trailing .git)',
   },
   {
     id: "reviewed_repo_dir",
@@ -269,8 +279,10 @@ export const QUESTIONS: readonly Question[] = [
       const line = oneLine(v);
       if (line) return line;
       const p = expandHome(v);
-      if (!isAbsolute(p)) return "give an absolute path (or a ~/… path) — a relative path would depend on where the wizard ran";
-      if (!existsSync(p)) return `nothing exists at ${p} — clone the repository first, then give that directory`;
+      if (!isAbsolute(p))
+        return "give an absolute path (or a ~/… path) — a relative path would depend on where the wizard ran";
+      if (!existsSync(p))
+        return `nothing exists at ${p} — clone the repository first, then give that directory`;
       return null;
     },
   },
@@ -287,7 +299,10 @@ export const QUESTIONS: readonly Question[] = [
     optional: false,
     from: [CHOICE_KEYS.appSlug],
     read: (cfg) => cfg.github.app_slug,
-    validate: (v) => (SLUG_RE.test(v) ? null : 'the slug is the name in the App URL — letters, digits and dashes, e.g. "acme-reviewer"'),
+    validate: (v) =>
+      SLUG_RE.test(v)
+        ? null
+        : 'the slug is the name in the App URL — letters, digits and dashes, e.g. "acme-reviewer"',
   },
   {
     id: "timezone",
@@ -322,7 +337,8 @@ export const QUESTIONS: readonly Question[] = [
     optional: false,
     from: [CHOICE_KEYS.baseBranch],
     read: (cfg) => cfg.github.base_branch,
-    validate: (v) => (/^[^\s~^:?*[\\]+$/.test(v) ? null : "a branch name, e.g. main or master (no spaces)"),
+    validate: (v) =>
+      /^[^\s~^:?*[\\]+$/.test(v) ? null : "a branch name, e.g. main or master (no spaces)",
   },
   {
     id: "owner_name",
@@ -331,7 +347,7 @@ export const QUESTIONS: readonly Question[] = [
     title: "Your display name",
     teach:
       "The system has ONE accountable human, configured as a role. This name is rendered in prose — Slack messages, " +
-      "the companion's day-open, the pinned-memory header. Leave it empty and every surface says \"the owner\" instead.",
+      'the companion\'s day-open, the pinned-memory header. Leave it empty and every surface says "the owner" instead.',
     prompt: "What name should the system call you in its own prose? (Enter to stay anonymous)",
     optional: true,
     read: (cfg) => cfg.owner.name,
@@ -349,7 +365,10 @@ export const QUESTIONS: readonly Question[] = [
     optional: true,
     from: [CHOICE_KEYS.ownerLogin],
     read: (cfg) => cfg.owner.github_login,
-    validate: (v) => (LOGIN_RE.test(v) ? null : "a GitHub login is letters, digits and single dashes — no @, no URL"),
+    validate: (v) =>
+      LOGIN_RE.test(v)
+        ? null
+        : "a GitHub login is letters, digits and single dashes — no @, no URL",
   },
   {
     id: "owner_slack_id",
@@ -362,7 +381,10 @@ export const QUESTIONS: readonly Question[] = [
     prompt: "Your Slack member id, if you use Slack? (U…, Enter to skip)",
     optional: true,
     read: (cfg) => cfg.owner.slack_id,
-    validate: (v) => (/^U[A-Z0-9]{4,}$/.test(v) ? null : 'a Slack member id looks like "U01ABCD2EFG" (Slack profile → More → Copy member ID)'),
+    validate: (v) =>
+      /^U[A-Z0-9]{4,}$/.test(v)
+        ? null
+        : 'a Slack member id looks like "U01ABCD2EFG" (Slack profile → More → Copy member ID)',
   },
   {
     id: "escalation_mention",
@@ -373,10 +395,14 @@ export const QUESTIONS: readonly Question[] = [
       "When a PR edits the files that instruct coding agents (.claude/**, AGENTS.md, CLAUDE.md and kin), the review " +
       "adds ONE short comment @-mentioning the person who most recently touched those files. This is the fallback when " +
       "git history names nobody — your own login is the usual answer.",
-    prompt: "Which GitHub login should that fallback mention? (Enter uses your login, or leave both empty for no @)",
+    prompt:
+      "Which GitHub login should that fallback mention? (Enter uses your login, or leave both empty for no @)",
     optional: true,
     read: (cfg) => cfg.review.escalation_mention_default,
-    validate: (v) => (LOGIN_RE.test(v) ? null : "a GitHub login is letters, digits and single dashes — no @, no URL"),
+    validate: (v) =>
+      LOGIN_RE.test(v)
+        ? null
+        : "a GitHub login is letters, digits and single dashes — no @, no URL",
   },
   {
     id: "ssh_host",
@@ -391,7 +417,10 @@ export const QUESTIONS: readonly Question[] = [
     from: [CHOICE_KEYS.sshAlias],
     asked: (choices) => str(choices, CHOICE_KEYS.topology) === "vm",
     read: (cfg) => cfg.tui.ssh_host,
-    validate: (v) => (/^[A-Za-z0-9._-]+$/.test(v) ? null : "an ssh alias as it appears in ~/.ssh/config — a Host name, not a URL"),
+    validate: (v) =>
+      /^[A-Za-z0-9._-]+$/.test(v)
+        ? null
+        : "an ssh alias as it appears in ~/.ssh/config — a Host name, not a URL",
   },
   {
     id: "webhook_hostname",
@@ -443,8 +472,13 @@ export const DERIVABLES: readonly Derivable[] = [
   {
     id: "bot_login",
     path: "[github] bot_login",
-    explain: "the bot login is the App slug plus the [bot] suffix — asking for it twice is how the two drift apart",
-    write: (f) => ({ section: "github", key: "bot_login", value: tomlString(`${f.app_slug}[bot]`) }),
+    explain:
+      "the bot login is the App slug plus the [bot] suffix — asking for it twice is how the two drift apart",
+    write: (f) => ({
+      section: "github",
+      key: "bot_login",
+      value: tomlString(`${f.app_slug}[bot]`),
+    }),
     stable: true,
     holds: (cfg) =>
       cfg.github.bot_login === `${cfg.github.app_slug}[bot]`
@@ -454,28 +488,42 @@ export const DERIVABLES: readonly Derivable[] = [
   {
     id: "clone_dir",
     path: "[github] clone_dir",
-    explain: 'left empty so the base clone directory derives from the repo slug ("owner/name" ⇒ "name")',
-    write: (_f, fresh) => (fresh ? { section: "github", key: "clone_dir", value: tomlString("") } : null),
+    explain:
+      'left empty so the base clone directory derives from the repo slug ("owner/name" ⇒ "name")',
+    write: (_f, fresh) =>
+      fresh ? { section: "github", key: "clone_dir", value: tomlString("") } : null,
     stable: true,
     holds: (cfg) => {
-      const expected = cfg.github.repo.replace(/\.git$/, "").split("/").pop() || "repo";
-      return githubCloneDir(cfg.github) === expected ? null : `the clone dir resolves to "${githubCloneDir(cfg.github)}", not the repo's "${expected}"`;
+      const expected =
+        cfg.github.repo
+          .replace(/\.git$/, "")
+          .split("/")
+          .pop() || "repo";
+      return githubCloneDir(cfg.github) === expected
+        ? null
+        : `the clone dir resolves to "${githubCloneDir(cfg.github)}", not the repo's "${expected}"`;
     },
   },
   {
     id: "secrets_dir",
     path: "[github] secrets_dir",
-    explain: "the shipped secrets directory (~/.config/quickreview-bot) — the same dir deploy/collect-secrets.sh fills",
+    explain:
+      "the shipped secrets directory (~/.config/quickreview-bot) — the same dir deploy/collect-secrets.sh fills",
     // Fill-time only: the loader EXPANDS `~`, so writing back a parsed value
     // would replace the template's portable `~/…` with this machine's home.
-    write: (f, fresh) => (fresh ? { section: "github", key: "secrets_dir", value: tomlString(f.secrets_dir) } : null),
+    write: (f, fresh) =>
+      fresh ? { section: "github", key: "secrets_dir", value: tomlString(f.secrets_dir) } : null,
     stable: true,
-    holds: (cfg) => (cfg.github.secrets_dir.trim() ? null : "[github] secrets_dir is empty — the App credential has nowhere to live"),
+    holds: (cfg) =>
+      cfg.github.secrets_dir.trim()
+        ? null
+        : "[github] secrets_dir is empty — the App credential has nowhere to live",
   },
   {
     id: "review_team",
     path: "[github] review_team",
-    explain: 'left empty: the team trigger is optional, and the trigger label always works — "org/team" is added later if wanted',
+    explain:
+      'left empty: the team trigger is optional, and the trigger label always works — "org/team" is added later if wanted',
     write: () => null,
     stable: false,
     holds: () => null,
@@ -483,10 +531,14 @@ export const DERIVABLES: readonly Derivable[] = [
   {
     id: "eod_timezone",
     path: "[eod] timezone",
-    explain: "the end-of-day sweep runs on the [ops] timezone — the cascade means you state your day once",
+    explain:
+      "the end-of-day sweep runs on the [ops] timezone — the cascade means you state your day once",
     write: () => null,
     stable: true,
-    holds: (cfg) => (cfg.eod.timezone === cfg.ops.timezone ? null : `[eod] timezone "${cfg.eod.timezone}" no longer follows [ops] "${cfg.ops.timezone}"`),
+    holds: (cfg) =>
+      cfg.eod.timezone === cfg.ops.timezone
+        ? null
+        : `[eod] timezone "${cfg.eod.timezone}" no longer follows [ops] "${cfg.ops.timezone}"`,
   },
   {
     id: "slack_policy_timezone",
@@ -502,47 +554,66 @@ export const DERIVABLES: readonly Derivable[] = [
   {
     id: "backfill_identity",
     path: "[backfill] *",
-    explain: "the history importer's identity and labels cascade off [github] — never a second copy to keep in sync",
+    explain:
+      "the history importer's identity and labels cascade off [github] — never a second copy to keep in sync",
     write: () => null,
     stable: true,
     holds: (cfg) => {
-      if (cfg.backfill.bot_login !== cfg.github.bot_login) return "[backfill] bot_login no longer follows [github] bot_login";
-      if (cfg.backfill.bot_actor !== cfg.github.app_slug) return "[backfill] bot_actor no longer follows [github] app_slug";
-      if (cfg.backfill.trigger_label !== cfg.github.trigger_label) return "[backfill] trigger_label no longer follows [github] trigger_label";
+      if (cfg.backfill.bot_login !== cfg.github.bot_login)
+        return "[backfill] bot_login no longer follows [github] bot_login";
+      if (cfg.backfill.bot_actor !== cfg.github.app_slug)
+        return "[backfill] bot_actor no longer follows [github] app_slug";
+      if (cfg.backfill.trigger_label !== cfg.github.trigger_label)
+        return "[backfill] trigger_label no longer follows [github] trigger_label";
       return null;
     },
   },
   {
     id: "sink_kind",
     path: "[sink] kind",
-    explain: 'defect auto-filing defaults to "github" — flagged defects become issues on the reviewed repo, through the one mutation gate',
-    write: (_f, fresh) => (fresh ? { section: "sink", key: "kind", value: tomlString("github") } : null),
+    explain:
+      'defect auto-filing defaults to "github" — flagged defects become issues on the reviewed repo, through the one mutation gate',
+    write: (_f, fresh) =>
+      fresh ? { section: "sink", key: "kind", value: tomlString("github") } : null,
     stable: false,
-    holds: (cfg) => (["github", "wayfinder", "none"].includes(cfg.sink.kind) ? null : `[sink] kind "${cfg.sink.kind}" is not a known sink`),
+    holds: (cfg) =>
+      ["github", "wayfinder", "none"].includes(cfg.sink.kind)
+        ? null
+        : `[sink] kind "${cfg.sink.kind}" is not a known sink`,
   },
   {
     id: "tui_ssh_host",
     path: "[tui] ssh_host",
-    explain: "empty on the local topology (the TUI needs no ssh hop to reach a daemon on this machine); the recorded alias on the VM route",
-    write: (f) => (f.ssh_host ? { section: "tui", key: "ssh_host", value: tomlString(f.ssh_host) } : null),
+    explain:
+      "empty on the local topology (the TUI needs no ssh hop to reach a daemon on this machine); the recorded alias on the VM route",
+    write: (f) =>
+      f.ssh_host ? { section: "tui", key: "ssh_host", value: tomlString(f.ssh_host) } : null,
     stable: false,
     holds: () => null,
   },
   {
     id: "server_hostname",
     path: "[server] hostname",
-    explain: "left empty where the chosen ingress assigns the hostname itself (the quick tunnel writes it at start-up)",
-    write: (f) => (f.webhook_hostname ? { section: "server", key: "hostname", value: tomlString(f.webhook_hostname) } : null),
+    explain:
+      "left empty where the chosen ingress assigns the hostname itself (the quick tunnel writes it at start-up)",
+    write: (f) =>
+      f.webhook_hostname
+        ? { section: "server", key: "hostname", value: tomlString(f.webhook_hostname) }
+        : null,
     stable: false,
     holds: () => null,
   },
   {
     id: "companion_repo_dir",
     path: "[companion] repo_dir",
-    explain: "left empty so the companion's /workspace mount derives from the sandbox root — never a path to keep in sync",
+    explain:
+      "left empty so the companion's /workspace mount derives from the sandbox root — never a path to keep in sync",
     write: () => null,
     stable: true,
-    holds: (cfg) => (isAbsolute(cfg.companion.repo_dir) ? null : "[companion] repo_dir did not derive to an absolute path"),
+    holds: (cfg) =>
+      isAbsolute(cfg.companion.repo_dir)
+        ? null
+        : "[companion] repo_dir did not derive to an absolute path",
   },
   {
     id: "escalation_mention_fallback",
@@ -550,7 +621,9 @@ export const DERIVABLES: readonly Derivable[] = [
     explain: "falls back to the owner's GitHub login when the interview leaves it blank",
     write: (f) => {
       const mention = f.escalation_mention || f.owner_github_login;
-      return mention ? { section: "review", key: "escalation_mention_default", value: tomlString(mention) } : null;
+      return mention
+        ? { section: "review", key: "escalation_mention_default", value: tomlString(mention) }
+        : null;
     },
     stable: false,
     holds: () => null,
@@ -704,7 +777,10 @@ export async function collectAnswers(
     escalation_mention: answers.escalation_mention ?? "",
     ssh_host: answers.ssh_host ?? "",
     webhook_hostname: answers.webhook_hostname ?? "",
-    secrets_dir: str(choices, CHOICE_KEYS.secretsDir) || (cfg ? cfg.github.secrets_dir : "") || DEFAULT_SECRETS_DIR,
+    secrets_dir:
+      str(choices, CHOICE_KEYS.secretsDir) ||
+      (cfg ? cfg.github.secrets_dir : "") ||
+      DEFAULT_SECRETS_DIR,
     topology: str(choices, CHOICE_KEYS.topology),
     ingress: str(choices, CHOICE_KEYS.ingress),
   };
@@ -713,7 +789,11 @@ export async function collectAnswers(
 
 /** Every edit the fill would make — answers first, then the derivations. The
  * caller filters this against the source document so only real changes land. */
-export function buildEdits(facts: FillFacts, choices: Readonly<Record<string, unknown>>, fresh: boolean): TomlEdit[] {
+export function buildEdits(
+  facts: FillFacts,
+  choices: Readonly<Record<string, unknown>>,
+  fresh: boolean,
+): TomlEdit[] {
   const edits: TomlEdit[] = [];
   for (const q of QUESTIONS) {
     if (!questionAsked(q, choices)) continue;
@@ -773,7 +853,12 @@ function secretsReport(secretsDir: string): CheckResult {
   };
 }
 
-function recordChoices(ctx: StepContext, facts: FillFacts, configPath: string, parsed: Config): void {
+function recordChoices(
+  ctx: StepContext,
+  facts: FillFacts,
+  configPath: string,
+  parsed: Config,
+): void {
   ctx.recordChoice(CHOICE_KEYS.repo, facts.repo);
   ctx.recordChoice(CHOICE_KEYS.repoDir, expandHome(facts.reviewed_repo_dir));
   ctx.recordChoice(CHOICE_KEYS.appSlug, facts.app_slug);
@@ -839,10 +924,18 @@ export function configFillStep(): OnboardingStep {
       const checks: CheckResult[] = [];
       if (collected.missing.length || collected.rejected.length) {
         for (const m of collected.missing) {
-          checks.push({ name: `answer:${m.id}`, ok: false, detail: `${m.title} was never answered — ${m.guidance}` });
+          checks.push({
+            name: `answer:${m.id}`,
+            ok: false,
+            detail: `${m.title} was never answered — ${m.guidance}`,
+          });
         }
         for (const r of collected.rejected) {
-          checks.push({ name: `answer:${r.id}`, ok: false, detail: `the answer was not usable — ${r.guidance}` });
+          checks.push({
+            name: `answer:${r.id}`,
+            ok: false,
+            detail: `the answer was not usable — ${r.guidance}`,
+          });
         }
         return { ok: false, checks };
       }
@@ -877,7 +970,12 @@ export function configFillStep(): OnboardingStep {
           ok: false,
           checks: [
             ...checks,
-            { name: "dry_run", ok: false, detail: "the shipped template no longer ships dry_run = true — refusing to write (rule 1)" },
+            {
+              name: "dry_run",
+              ok: false,
+              detail:
+                "the shipped template no longer ships dry_run = true — refusing to write (rule 1)",
+            },
           ],
         };
       }
@@ -894,7 +992,11 @@ export function configFillStep(): OnboardingStep {
                 .map((e) => `${e.section ? `[${e.section}] ` : ""}${e.key}`)
                 .join(", ")})`,
       });
-      checks.push({ name: "loader", ok: true, detail: "the strict loader parses the file as written" });
+      checks.push({
+        name: "loader",
+        ok: true,
+        detail: "the strict loader parses the file as written",
+      });
       for (const d of DERIVABLES) {
         const reason = d.holds(parsed, facts);
         checks.push(
@@ -928,7 +1030,9 @@ export function configFillStep(): OnboardingStep {
         ok,
         checks,
         data: {
-          answers: Object.fromEntries(QUESTIONS.filter((q) => questionAsked(q, ctx.choices)).map((q) => [q.id, facts[q.id]])),
+          answers: Object.fromEntries(
+            QUESTIONS.filter((q) => questionAsked(q, ctx.choices)).map((q) => [q.id, facts[q.id]]),
+          ),
           config_path: configPath,
           filled_from: existing === null ? "config.example.toml" : "config.toml",
         },
@@ -938,15 +1042,35 @@ export function configFillStep(): OnboardingStep {
       const root = rootFromStateDir(ctx.adapters.paths.stateDir);
       const configPath = configPathFor(root);
       if (!existsSync(configPath)) {
-        return { ok: false, checks: [{ name: "config", ok: false, detail: `${configPath} does not exist — run the config step` }] };
+        return {
+          ok: false,
+          checks: [
+            {
+              name: "config",
+              ok: false,
+              detail: `${configPath} does not exist — run the config step`,
+            },
+          ],
+        };
       }
       let cfg: Config;
       try {
         cfg = loadConfig(configPath);
       } catch (err) {
-        return { ok: false, checks: [{ name: "loader", ok: false, detail: `${configPath} does not load: ${String((err as Error).message)}` }] };
+        return {
+          ok: false,
+          checks: [
+            {
+              name: "loader",
+              ok: false,
+              detail: `${configPath} does not load: ${String((err as Error).message)}`,
+            },
+          ],
+        };
       }
-      const checks: CheckResult[] = [{ name: "loader", ok: true, detail: `${configPath} parses under the strict loader` }];
+      const checks: CheckResult[] = [
+        { name: "loader", ok: true, detail: `${configPath} parses under the strict loader` },
+      ];
       const previous = previousAnswers(ctx);
       for (const q of QUESTIONS) {
         if (!questionAsked(q, ctx.choices)) continue;
@@ -955,20 +1079,31 @@ export function configFillStep(): OnboardingStep {
           checks.push(
             q.optional
               ? { name: `answer:${q.id}`, ok: true, detail: `${q.title}: empty (optional)` }
-              : { name: `answer:${q.id}`, ok: false, detail: `${q.title} is still empty in ${configPath} — re-run the config step` },
+              : {
+                  name: `answer:${q.id}`,
+                  ok: false,
+                  detail: `${q.title} is still empty in ${configPath} — re-run the config step`,
+                },
           );
           continue;
         }
         const reason = q.validate(current);
         if (reason !== null) {
-          checks.push({ name: `answer:${q.id}`, ok: false, detail: `${q.title} is not usable as configured: ${reason}` });
+          checks.push({
+            name: `answer:${q.id}`,
+            ok: false,
+            detail: `${q.title} is not usable as configured: ${reason}`,
+          });
           continue;
         }
         const recorded = previous[q.id];
         checks.push({
           name: `answer:${q.id}`,
           ok: true,
-          detail: recorded && recorded !== current ? `${q.title}: "${current}" (changed since onboarding — your file wins)` : `${q.title}: "${current}"`,
+          detail:
+            recorded && recorded !== current
+              ? `${q.title}: "${current}" (changed since onboarding — your file wins)`
+              : `${q.title}: "${current}"`,
         });
       }
       // Only the STABLE derivations are invariants; the rest are fill-time
@@ -1000,7 +1135,11 @@ export function configFillStep(): OnboardingStep {
       }
       // dry_run is REPORTED, never judged: true is the shipped posture and
       // false is the owner's own ratified flip (rule 1). Neither is red.
-      checks.push({ name: "dry_run", ok: true, detail: `dry_run = ${cfg.dry_run} (the owner's flag; this step never writes it)` });
+      checks.push({
+        name: "dry_run",
+        ok: true,
+        detail: `dry_run = ${cfg.dry_run} (the owner's flag; this step never writes it)`,
+      });
       return { ok: checks.every((c) => c.ok), checks };
     },
   };

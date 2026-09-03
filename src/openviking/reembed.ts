@@ -84,7 +84,9 @@ export interface ReembedModule {
 }
 
 export function loadReembedModule(repoRoot: string): Promise<ReembedModule> {
-  return import(pathToFileURL(join(repoRoot, "scripts", "openviking-reembed.mjs")).href) as Promise<ReembedModule>;
+  return import(
+    pathToFileURL(join(repoRoot, "scripts", "openviking-reembed.mjs")).href
+  ) as Promise<ReembedModule>;
 }
 
 /** How often the driver re-checks `/ready` while a re-embed is outstanding. */
@@ -119,7 +121,9 @@ const defaultSchedule: Schedule = (fn, ms) => {
 };
 
 function sameEmbedder(a: Embedder, b: Embedder): boolean {
-  return a.provider === b.provider && a.model === b.model && Number(a.dimension) === Number(b.dimension);
+  return (
+    a.provider === b.provider && a.model === b.model && Number(a.dimension) === Number(b.dimension)
+  );
 }
 
 export class ReembedDriver {
@@ -172,10 +176,14 @@ export class ReembedDriver {
     if (!this.refresh()) return;
     const state = this.journal?.state;
     if (state === "pending" || state === "failed") {
-      this.deps.log(`openviking: reembed of ${this.deps.cfg.user} memory is outstanding (${state}) — resuming once the server is ready`);
+      this.deps.log(
+        `openviking: reembed of ${this.deps.cfg.user} memory is outstanding (${state}) — resuming once the server is ready`,
+      );
       this.arm(0);
     } else if (state === "unreadable") {
-      this.deps.log(`openviking: reembed journal under ${this.deps.cfg.home} exists and cannot be parsed — an operator has to look (docs/memory-embeddings.md)`);
+      this.deps.log(
+        `openviking: reembed journal under ${this.deps.cfg.home} exists and cannot be parsed — an operator has to look (docs/memory-embeddings.md)`,
+      );
     }
   }
 
@@ -256,7 +264,9 @@ export class ReembedDriver {
         this.deps.log(`openviking: reembed of ${this.deps.cfg.user} memory completed — ${detail}`);
       } else {
         this.lastError = detail || run.state;
-        this.deps.log(`openviking: reembed of ${this.deps.cfg.user} memory not finished (${run.state}) — retrying in ${Math.round((this.deps.retryMs ?? REEMBED_RETRY_MS) / 1000)}s: ${detail}`);
+        this.deps.log(
+          `openviking: reembed of ${this.deps.cfg.user} memory not finished (${run.state}) — retrying in ${Math.round((this.deps.retryMs ?? REEMBED_RETRY_MS) / 1000)}s: ${detail}`,
+        );
       }
     } catch (err) {
       // The script is total, but a caller-supplied fetch seam is not.
@@ -289,7 +299,9 @@ export class ReembedDriver {
             }
           : {}),
         ...(this.lastRunAt ? { last_run_at: this.lastRunAt } : {}),
-        ...(this.lastError ?? this.unknownWhy ? { last_error: this.lastError ?? this.unknownWhy } : {}),
+        ...((this.lastError ?? this.unknownWhy)
+          ? { last_error: this.lastError ?? this.unknownWhy }
+          : {}),
         ...(this.drift ? { config_drift: this.drift } : {}),
       };
     } catch {
@@ -336,10 +348,20 @@ export async function reembedNamespaces(opts: {
   for (const user of opts.users) {
     const key = opts.keyFor(user);
     if (!key) {
-      results.push({ user, status: "no-key", detail: `no ${user} key on this machine — nothing was sent` });
+      results.push({
+        user,
+        status: "no-key",
+        detail: `no ${user} key on this machine — nothing was sent`,
+      });
       continue;
     }
-    const run = await opts.module.reindexNamespace({ base: opts.base, key, user, ...(opts.fetchFn ? { fetchFn: opts.fetchFn } : {}), log: opts.log });
+    const run = await opts.module.reindexNamespace({
+      base: opts.base,
+      key,
+      user,
+      ...(opts.fetchFn ? { fetchFn: opts.fetchFn } : {}),
+      log: opts.log,
+    });
     const detail =
       run.status === "completed"
         ? `${run.rebuilt_records ?? 0} vector records rebuilt from ${run.scanned_records ?? 0} sources` +
@@ -347,5 +369,8 @@ export async function reembedNamespaces(opts: {
         : (run.detail ?? run.status);
     results.push({ user, status: run.status, detail });
   }
-  return { ok: results.every((r) => r.status === "completed" && !/FAILED/.test(r.detail)), results };
+  return {
+    ok: results.every((r) => r.status === "completed" && !/FAILED/.test(r.detail)),
+    results,
+  };
 }

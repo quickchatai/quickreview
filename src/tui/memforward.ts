@@ -123,7 +123,9 @@ const DEFAULT_PROBE_TIMEOUT_MS = 1_500;
  * something that is not a forward, which is the honest outcome). */
 async function httpProbe(baseUrl: string, timeoutMs: number): Promise<boolean> {
   try {
-    const res = await fetch(`${baseUrl.replace(/\/+$/, "")}/health`, { signal: AbortSignal.timeout(timeoutMs) });
+    const res = await fetch(`${baseUrl.replace(/\/+$/, "")}/health`, {
+      signal: AbortSignal.timeout(timeoutMs),
+    });
     if (!res.ok) return false;
     const body = (await res.json()) as { healthy?: unknown };
     return body.healthy !== false;
@@ -150,7 +152,12 @@ export class MemoryForward {
       repoRoot,
       env: deps.env ?? process.env,
       probe: deps.probe ?? httpProbe,
-      load: deps.load ?? (() => import(pathToFileURL(join(repoRoot, "scripts", "companion-memory-forward.mjs")).href) as Promise<ForwardModule>),
+      load:
+        deps.load ??
+        (() =>
+          import(
+            pathToFileURL(join(repoRoot, "scripts", "companion-memory-forward.mjs")).href
+          ) as Promise<ForwardModule>),
       log: deps.log ?? (() => {}),
       probeTimeoutMs: deps.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
       local: deps.local ?? false,
@@ -194,13 +201,19 @@ export class MemoryForward {
     if (this.handle) {
       // We bound it; confirm it still answers rather than trusting the socket.
       const alive = await this.deps.probe(this.deps.baseUrl, this.deps.probeTimeoutMs);
-      return this.settle(alive ? "owned" : "failed", alive ? this.ownedDetail() : "the forward we started stopped answering — r retries");
+      return this.settle(
+        alive ? "owned" : "failed",
+        alive ? this.ownedDetail() : "the forward we started stopped answering — r retries",
+      );
     }
     if (await this.deps.probe(this.deps.baseUrl, this.deps.probeTimeoutMs)) {
       // Somebody else's — the systemd unit, or another qcr tui. Hands off: it
       // outlives us, which is the better arrangement, and stopping it on our
       // exit would take memory away from a companion we did not start.
-      return this.settle("adopted", "already running (systemd unit or another qcr tui) — left alone on quit");
+      return this.settle(
+        "adopted",
+        "already running (systemd unit or another qcr tui) — left alone on quit",
+      );
     }
     return this.start();
   }
@@ -217,9 +230,14 @@ export class MemoryForward {
       // local mode rides the script's OWN flags — the same argv the
       // standalone runner would take — so both entrypoints keep one config
       // parser and cannot drift. ssh mode passes exactly what it always did.
-      const runArgs = ["run", ...(this.deps.local ? ["--local", ...(this.deps.sudoDocker ? [] : ["--no-sudo"])] : [])];
+      const runArgs = [
+        "run",
+        ...(this.deps.local ? ["--local", ...(this.deps.sudoDocker ? [] : ["--no-sudo"])] : []),
+      ];
       const { cfg } = mod.parseArgs(runArgs, this.deps.env);
-      const handle = mod.createForwarder(cfg, { log: (line) => this.deps.log(`memory-forward: ${line}`) });
+      const handle = mod.createForwarder(cfg, {
+        log: (line) => this.deps.log(`memory-forward: ${line}`),
+      });
       bound = await handle.listen();
       if (bound === 0) {
         // Every bind failed. Closing is still right: `listen` may hold servers
@@ -231,9 +249,15 @@ export class MemoryForward {
         // Re-probe before calling it a failure, so the race heals itself
         // instead of leaving memory dead until someone presses `r`.
         if (await this.deps.probe(this.deps.baseUrl, this.deps.probeTimeoutMs)) {
-          return this.settle("adopted", "another forward claimed the port first — adopted, left alone on quit");
+          return this.settle(
+            "adopted",
+            "another forward claimed the port first — adopted, left alone on quit",
+          );
         }
-        return this.settle("failed", `could not bind ${cfg.binds.join(", ")}:${cfg.port} — something else holds the port and is not answering`);
+        return this.settle(
+          "failed",
+          `could not bind ${cfg.binds.join(", ")}:${cfg.port} — something else holds the port and is not answering`,
+        );
       }
       this.handle = handle;
       return this.settle("owned", this.ownedDetail(bound, cfg.binds.length));
@@ -252,7 +276,12 @@ export class MemoryForward {
   }
 
   private settle(state: ForwardState, detail: string): ForwardStatus {
-    this.status = { state, detail, baseUrl: this.deps.baseUrl, studioUrl: studioUrl(this.deps.baseUrl) };
+    this.status = {
+      state,
+      detail,
+      baseUrl: this.deps.baseUrl,
+      studioUrl: studioUrl(this.deps.baseUrl),
+    };
     this.deps.log(`memory-forward: ${state} — ${detail}`);
     return this.view();
   }

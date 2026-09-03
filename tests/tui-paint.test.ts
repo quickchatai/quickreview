@@ -2,7 +2,18 @@
 // the right edge of any tab's frame. Row-width discipline is the whole point —
 // a ragged row shreds the border and rehomes the cursor.
 import { describe, expect, it } from "vitest";
-import { closeSgr, composeColumn, displayWidth, fit, Frame, SGR, sgrOpenAtEnd, sliceDisplay, spliceDisplay, stripAnsi } from "../src/tui/paint.js";
+import {
+  closeSgr,
+  composeColumn,
+  displayWidth,
+  fit,
+  Frame,
+  SGR,
+  sgrOpenAtEnd,
+  sliceDisplay,
+  spliceDisplay,
+  stripAnsi,
+} from "../src/tui/paint.js";
 
 const COLS = 20;
 const ROWS = 4;
@@ -21,7 +32,8 @@ function innerFrame(cols = COLS, rows = ROWS): Frame {
 /** A well-formed sidebar column: exactly `rows` strings of width `width`. */
 function column(width: number, rows = ROWS): string[] {
   const out = [`┬${"─".repeat(width - 2)}┐`];
-  for (let r = 1; r < rows - 1; r++) out.push(`│${fit(`${SGR.dim}pi ${r} 日本${SGR.reset}`, width - 2)}│`);
+  for (let r = 1; r < rows - 1; r++)
+    out.push(`│${fit(`${SGR.dim}pi ${r} 日本${SGR.reset}`, width - 2)}│`);
   out.push(`┴${"─".repeat(width - 2)}┘`);
   return out;
 }
@@ -120,7 +132,16 @@ describe("composeColumn", () => {
 
   it("fits entries that are too wide or too narrow", () => {
     const inner = innerFrame();
-    const out = composeColumn(inner, ["│a very long sidebar row that overflows│", "│x│", `│${SGR.red}日本語日本語${SGR.reset}│`, ""], 8);
+    const out = composeColumn(
+      inner,
+      [
+        "│a very long sidebar row that overflows│",
+        "│x│",
+        `│${SGR.red}日本語日本語${SGR.reset}│`,
+        "",
+      ],
+      8,
+    );
     for (const line of out.lines) expect(displayWidth(line)).toBe(COLS + 8);
     expect(out.lines[0]).toBe(inner.lines[0]! + fit("│a very long sidebar row that overflows│", 8));
     expect(stripAnsi(out.lines[0]!)).toMatch(/…$/); // over-wide entry truncated

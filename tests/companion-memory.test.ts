@@ -36,7 +36,13 @@ import { parseAlert } from "../src/tui/alerts.js";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 const CFG: CompanionConfig = resolveCompanionPaths(
-  { ...COMPANION_DEFAULTS, repo_dir: "/host/review-sandbox", tracker_dir: "/host/tracker", feed_dir: "/host/feed", alerts_dir: "/host/alerts" },
+  {
+    ...COMPANION_DEFAULTS,
+    repo_dir: "/host/review-sandbox",
+    tracker_dir: "/host/tracker",
+    feed_dir: "/host/feed",
+    alerts_dir: "/host/alerts",
+  },
   root,
 );
 
@@ -52,7 +58,10 @@ function fakeFs(files: Record<string, string>, mode = 0o600): CompanionFs {
 }
 
 /** A docker seam that answers the network inspect and records every call. */
-function docker(answers: Array<(argv: string[]) => DockerResult | undefined>): { runner: DockerRunner; calls: string[][] } {
+function docker(answers: Array<(argv: string[]) => DockerResult | undefined>): {
+  runner: DockerRunner;
+  calls: string[][];
+} {
   const calls: string[][] = [];
   return {
     calls,
@@ -67,15 +76,24 @@ function docker(answers: Array<(argv: string[]) => DockerResult | undefined>): {
   };
 }
 
-const networkUp = (gw = MEMORY.gateway) => (argv: string[]) =>
-  argv[0] === "network" && argv[1] === "inspect" ? { ...OK, stdout: `${gw}\n` } : undefined;
-const verb = (v: string, second?: string) => (argv: string[]) => (argv[0] === v && (second === undefined || argv[1] === second) ? OK : undefined);
+const networkUp =
+  (gw = MEMORY.gateway) =>
+  (argv: string[]) =>
+    argv[0] === "network" && argv[1] === "inspect" ? { ...OK, stdout: `${gw}\n` } : undefined;
+const verb = (v: string, second?: string) => (argv: string[]) =>
+  argv[0] === v && (second === undefined || argv[1] === second) ? OK : undefined;
 
 describe("memory wiring on the container", () => {
   it("attaches the container to the forward's bridge and passes the endpoint + peer id", async () => {
     const keys = keysFilePath({ QCR_OPENVIKING_KEYS: "/host/keys.env" });
     const { runner } = docker([networkUp()]);
-    const lc = new CompanionLifecycle(CFG, runner, { QCR_OPENVIKING_KEYS: keys }, () => {}, fakeFs({ [keys]: KEY_NAMES.map((n) => `${n}=x`).join("\n") }));
+    const lc = new CompanionLifecycle(
+      CFG,
+      runner,
+      { QCR_OPENVIKING_KEYS: keys },
+      () => {},
+      fakeFs({ [keys]: KEY_NAMES.map((n) => `${n}=x`).join("\n") }),
+    );
     await lc.resolveMemoryWiring();
     const argv = lc.runArgv();
     expect(argv).toContain("--network");
@@ -92,7 +110,16 @@ describe("memory wiring on the container", () => {
   it("passes both USER keys by --env-file — never as argv values a `ps` could read", async () => {
     const keys = "/host/keys.env";
     const { runner } = docker([networkUp()]);
-    const lc = new CompanionLifecycle(CFG, runner, { QCR_OPENVIKING_KEYS: keys }, () => {}, fakeFs({ [keys]: "OPENVIKING_API_KEY=s3cret\nOPENVIKING_COMPANION_KEY=s3cret\nOPENVIKING_REVIEWER_KEY=r3viewer\n" }));
+    const lc = new CompanionLifecycle(
+      CFG,
+      runner,
+      { QCR_OPENVIKING_KEYS: keys },
+      () => {},
+      fakeFs({
+        [keys]:
+          "OPENVIKING_API_KEY=s3cret\nOPENVIKING_COMPANION_KEY=s3cret\nOPENVIKING_REVIEWER_KEY=r3viewer\n",
+      }),
+    );
     await lc.resolveMemoryWiring();
     const argv = lc.runArgv();
     expect(argv).toContain("--env-file");
@@ -103,7 +130,13 @@ describe("memory wiring on the container", () => {
 
   it("holds NO ssh credential: no key mount, no agent socket, even with SSH_AUTH_SOCK set", async () => {
     const { runner } = docker([networkUp()]);
-    const lc = new CompanionLifecycle(CFG, runner, { SSH_AUTH_SOCK: "/tmp/agent.sock" }, () => {}, fakeFs({}));
+    const lc = new CompanionLifecycle(
+      CFG,
+      runner,
+      { SSH_AUTH_SOCK: "/tmp/agent.sock" },
+      () => {},
+      fakeFs({}),
+    );
     await lc.resolveMemoryWiring();
     const argv = lc.runArgv().join(" ");
     expect(argv).not.toContain("SSH_AUTH_SOCK");
@@ -114,7 +147,13 @@ describe("memory wiring on the container", () => {
 
   it("notes a missing / world-readable keys file instead of failing", async () => {
     const { runner } = docker([networkUp()]);
-    const missing = new CompanionLifecycle(CFG, runner, { QCR_OPENVIKING_KEYS: "/host/keys.env" }, () => {}, fakeFs({}));
+    const missing = new CompanionLifecycle(
+      CFG,
+      runner,
+      { QCR_OPENVIKING_KEYS: "/host/keys.env" },
+      () => {},
+      fakeFs({}),
+    );
     const w1 = await missing.resolveMemoryWiring();
     expect(w1.keysFile).toBeUndefined();
     expect(w1.notes.join(" ")).toMatch(/no OpenViking keys/);
@@ -172,14 +211,28 @@ describe("memory wiring on the container", () => {
     ]);
     const lc = new CompanionLifecycle(CFG, runner, {}, () => {}, fakeFs({}));
     expect(await lc.ensureUp()).toBe("adopted");
-    expect(calls.some((c) => c[0] === "network" && c[1] === "connect" && c[2] === MEMORY.network && c[3] === CFG.container_name)).toBe(true);
+    expect(
+      calls.some(
+        (c) =>
+          c[0] === "network" &&
+          c[1] === "connect" &&
+          c[2] === MEMORY.network &&
+          c[3] === CFG.container_name,
+      ),
+    ).toBe(true);
   });
 
   it("loads the vendored patched extension when it is present, and shrugs when it is not", async () => {
     const { runner } = docker([networkUp()]);
     const without = new CompanionLifecycle(CFG, runner, {}, () => {}, fakeFs({}));
     expect(without.piArgv().join(" ")).not.toContain("openviking-pi");
-    const withExt = new CompanionLifecycle(CFG, runner, {}, () => {}, fakeFs({ [`${CFG.repo_dir}/extensions/vendor/openviking-pi/index.ts`]: "" }));
+    const withExt = new CompanionLifecycle(
+      CFG,
+      runner,
+      {},
+      () => {},
+      fakeFs({ [`${CFG.repo_dir}/extensions/vendor/openviking-pi/index.ts`]: "" }),
+    );
     const argv = withExt.piArgv();
     expect(argv).toContain(MEMORY.extension);
     expect(argv[argv.indexOf(MEMORY.extension) - 1]).toBe("--extension");
@@ -205,7 +258,9 @@ describe("memory wiring on the container", () => {
   });
 
   it("reads key NAMES out of an env file without carrying values around", () => {
-    const names = keyNamesIn("# comment\nexport OPENVIKING_API_KEY=abc\nOPENVIKING_REVIEWER_KEY = def\nOTHER=1\n");
+    const names = keyNamesIn(
+      "# comment\nexport OPENVIKING_API_KEY=abc\nOPENVIKING_REVIEWER_KEY = def\nOTHER=1\n",
+    );
     expect(names.sort()).toEqual(["OPENVIKING_API_KEY", "OPENVIKING_REVIEWER_KEY"]);
   });
 
@@ -217,7 +272,9 @@ describe("memory wiring on the container", () => {
 
   it("defaults the keys file beside the app credential and honours the override", () => {
     expect(keysFilePath({}, "/home/x")).toBe("/home/x/.config/quickreview-bot/openviking-keys.env");
-    expect(keysFilePath({ QCR_OPENVIKING_KEYS: "/elsewhere/k.env" }, "/home/x")).toBe("/elsewhere/k.env");
+    expect(keysFilePath({ QCR_OPENVIKING_KEYS: "/elsewhere/k.env" }, "/home/x")).toBe(
+      "/elsewhere/k.env",
+    );
   });
 });
 
@@ -258,7 +315,10 @@ describe("the memory forward", () => {
   });
 
   it("writes a systemd --user unit that outlives the TUI and restarts itself", () => {
-    const unit = forward.unitText({ ...cfg, unit: "qcr-memory-forward" }, { XDG_RUNTIME_DIR: "/run/user/1000", SSH_AUTH_SOCK: "/run/user/1000/keyring/ssh" }) as string;
+    const unit = forward.unitText(
+      { ...cfg, unit: "qcr-memory-forward" },
+      { XDG_RUNTIME_DIR: "/run/user/1000", SSH_AUTH_SOCK: "/run/user/1000/keyring/ssh" },
+    ) as string;
     expect(unit).toContain("Restart=always");
     expect(unit).toContain("WantedBy=default.target");
     expect(unit).toContain("ExecStartPre=");
@@ -269,25 +329,48 @@ describe("the memory forward", () => {
   });
 
   it("flags a per-session agent socket rather than baking a path that dies at reboot", () => {
-    expect(forward.unitAuthSock({ XDG_RUNTIME_DIR: "/run/user/1000", SSH_AUTH_SOCK: "/run/user/1000/keyring/ssh" })).toMatchObject({ stable: true });
-    expect(forward.unitAuthSock({ SSH_AUTH_SOCK: "/tmp/ssh-AbC/agent.4242" })).toMatchObject({ stable: false });
+    expect(
+      forward.unitAuthSock({
+        XDG_RUNTIME_DIR: "/run/user/1000",
+        SSH_AUTH_SOCK: "/run/user/1000/keyring/ssh",
+      }),
+    ).toMatchObject({ stable: true });
+    expect(forward.unitAuthSock({ SSH_AUTH_SOCK: "/tmp/ssh-AbC/agent.4242" })).toMatchObject({
+      stable: false,
+    });
     expect(forward.unitAuthSock({})).toMatchObject({ value: "", stable: false });
   });
 
   it("moves bytes both ways and tears the pair down when the client goes", async () => {
     // A fake relay: two PassThroughs standing in for ssh's stdio. Proves the
     // socket↔child plumbing without spawning anything.
-    const relay = { stdin: new PassThrough(), stdout: new PassThrough(), killed: false, kill(): void { this.killed = true; }, on(): void {}, stderr: undefined };
-    const fwd = forward.createForwarder({ ...cfg, binds: ["127.0.0.1"], port: 0 }, { spawnRelay: () => relay, log: () => {} });
+    const relay = {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      killed: false,
+      kill(): void {
+        this.killed = true;
+      },
+      on(): void {},
+      stderr: undefined,
+    };
+    const fwd = forward.createForwarder(
+      { ...cfg, binds: ["127.0.0.1"], port: 0 },
+      { spawnRelay: () => relay, log: () => {} },
+    );
     await fwd.listen();
     const port = (fwd.addresses() as Array<{ port: number }>)[0]!.port;
     const client: Socket = connect(port, "127.0.0.1");
     await new Promise((r) => client.once("connect", r));
     client.write("GET /health\n");
-    const upstream = await new Promise<string>((r) => relay.stdin.once("data", (d: Buffer) => r(d.toString())));
+    const upstream = await new Promise<string>((r) =>
+      relay.stdin.once("data", (d: Buffer) => r(d.toString())),
+    );
     expect(upstream).toBe("GET /health\n");
     relay.stdout.write("HTTP/1.1 200 OK\n");
-    const back = await new Promise<string>((r) => client.once("data", (d: Buffer) => r(d.toString())));
+    const back = await new Promise<string>((r) =>
+      client.once("data", (d: Buffer) => r(d.toString())),
+    );
     expect(back).toBe("HTTP/1.1 200 OK\n");
     client.destroy();
     await new Promise((r) => setTimeout(r, 20));
@@ -299,8 +382,20 @@ describe("the memory forward", () => {
     // `server.close()` only stops accepting. The TUI now owns a forward while
     // it runs, so a close that left the pairs alive would leak one
     // ssh + remote docker exec per open connection on every quit.
-    const relay = { stdin: new PassThrough(), stdout: new PassThrough(), killed: false, kill(): void { this.killed = true; }, on(): void {}, stderr: undefined };
-    const fwd = forward.createForwarder({ ...cfg, binds: ["127.0.0.1"], port: 0 }, { spawnRelay: () => relay, log: () => {} });
+    const relay = {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      killed: false,
+      kill(): void {
+        this.killed = true;
+      },
+      on(): void {},
+      stderr: undefined,
+    };
+    const fwd = forward.createForwarder(
+      { ...cfg, binds: ["127.0.0.1"], port: 0 },
+      { spawnRelay: () => relay, log: () => {} },
+    );
     await fwd.listen();
     const port = (fwd.addresses() as Array<{ port: number }>)[0]!.port;
     const client: Socket = connect(port, "127.0.0.1");
@@ -320,20 +415,40 @@ describe("the memory forward", () => {
   // nor a remedy, because every HTTP connection spawns its own relay.
 
   it("names the likely cause and the exact command for each failure shape", () => {
-    const cause = (text: string) => forward.relayFailureCause({ ...cfg, identity: "/home/x/.ssh/gce" }, text) as { key: string; cause: string; remedy: string };
-    expect(cause("my-vm: Permission denied (publickey).")).toMatchObject({ key: "auth", remedy: "ssh-add /home/x/.ssh/gce" });
-    expect(cause("ssh: Could not resolve hostname my-vm")).toMatchObject({ key: "host", remedy: "ssh -v my-vm true" });
-    expect(cause("Control socket connect(/home/x/.ssh/cm): Connection refused")).toMatchObject({ key: "mux", remedy: "ssh -O exit my-vm" });
+    const cause = (text: string) =>
+      forward.relayFailureCause({ ...cfg, identity: "/home/x/.ssh/gce" }, text) as {
+        key: string;
+        cause: string;
+        remedy: string;
+      };
+    expect(cause("my-vm: Permission denied (publickey).")).toMatchObject({
+      key: "auth",
+      remedy: "ssh-add /home/x/.ssh/gce",
+    });
+    expect(cause("ssh: Could not resolve hostname my-vm")).toMatchObject({
+      key: "host",
+      remedy: "ssh -v my-vm true",
+    });
+    expect(cause("Control socket connect(/home/x/.ssh/cm): Connection refused")).toMatchObject({
+      key: "mux",
+      remedy: "ssh -O exit my-vm",
+    });
     // The docker daemon's own refusal also says "permission denied" — it must
     // not be mistaken for an ssh key problem and send the operator to ssh-add.
-    expect(cause("permission denied while trying to connect to the Docker daemon socket")).toMatchObject({ key: "docker" });
+    expect(
+      cause("permission denied while trying to connect to the Docker daemon socket"),
+    ).toMatchObject({ key: "docker" });
     expect(cause("").key).toBe("unknown");
   });
 
   it("collapses a repeating failure into ONE line, rate-limited, and says when it recovers", () => {
     const lines: string[] = [];
     let now = 0;
-    const c = forward.createFailureCollapser({ log: (l: string) => lines.push(l), now: () => now, windowMs: 60_000 });
+    const c = forward.createFailureCollapser({
+      log: (l: string) => lines.push(l),
+      now: () => now,
+      windowMs: 60_000,
+    });
     const auth = { key: "auth", cause: "no usable key", remedy: "ssh-add k" };
     for (let i = 0; i < 500; i++) {
       now += 10;
@@ -365,7 +480,11 @@ describe("the memory forward", () => {
     // change, so the recovery line claimed "0 suppressed" after hiding four.
     const lines: string[] = [];
     let now = 0;
-    const c = forward.createFailureCollapser({ log: (l: string) => lines.push(l), now: () => now, windowMs: 60_000 });
+    const c = forward.createFailureCollapser({
+      log: (l: string) => lines.push(l),
+      now: () => now,
+      windowMs: 60_000,
+    });
     const auth = { key: "auth", cause: "no usable key", remedy: "ssh-add k" };
     for (let i = 0; i < 5; i++) {
       now += 10;
@@ -392,11 +511,15 @@ describe("the memory forward", () => {
           if (event === "exit" && mode === "fail") setTimeout(() => cb(255), 5);
         },
       };
-      if (mode === "fail") setTimeout(() => child.stderr.write("Permission denied (publickey).\n"), 1);
+      if (mode === "fail")
+        setTimeout(() => child.stderr.write("Permission denied (publickey).\n"), 1);
       else setTimeout(() => child.stdout.write("HTTP/1.1 200 OK\n"), 5);
       return child;
     };
-    const fwd = forward.createForwarder({ ...cfg, binds: ["127.0.0.1"], port: 0 }, { spawnRelay, log: (l: string) => lines.push(l) });
+    const fwd = forward.createForwarder(
+      { ...cfg, binds: ["127.0.0.1"], port: 0 },
+      { spawnRelay, log: (l: string) => lines.push(l) },
+    );
     await fwd.listen();
     const port = (fwd.addresses() as Array<{ port: number }>)[0]!.port;
     const hit = async (): Promise<void> => {
@@ -441,9 +564,16 @@ describe("reverse direction: the reviewer key cannot reach companion memory", ()
 
   it("reads OpenViking's 200-with-error envelope rather than trusting the status line", () => {
     // The server answers some errors HTTP 200 with {status:"error"} in the body.
-    expect(forward.classify(200, { status: "error", error: { message: "permission denied for user companion" } })).toBe("refused");
+    expect(
+      forward.classify(200, {
+        status: "error",
+        error: { message: "permission denied for user companion" },
+      }),
+    ).toBe("refused");
     // An error that is not about permissions proves nothing either way.
-    expect(forward.classify(200, { status: "error", error: { message: "no such uri" } })).toBe("inconclusive");
+    expect(forward.classify(200, { status: "error", error: { message: "no such uri" } })).toBe(
+      "inconclusive",
+    );
   });
 
   it("never scores an inconclusive probe as a pass", () => {
@@ -456,7 +586,8 @@ describe("reverse direction: the reviewer key cannot reach companion memory", ()
     // The confinement the server actually enforces: the Bearer key owns one
     // user, and X-OpenViking-User names the user being addressed.
     const confined = async (_url: string, init?: { headers?: Record<string, string> }) => {
-      const owner = init?.headers?.Authorization === "Bearer companion-key" ? "companion" : "reviewer";
+      const owner =
+        init?.headers?.Authorization === "Bearer companion-key" ? "companion" : "reviewer";
       const addressed = init?.headers?.["X-OpenViking-User"];
       return { status: owner === addressed ? 200 : 403, json: async () => ({}) };
     };
@@ -535,7 +666,8 @@ describe("memory health watcher", () => {
 
   it("a deploy that recovers inside the grace announces NOTHING — no down, so no up notice either", () => {
     let state = health.initialState();
-    for (let i = 0; i < 4; i++) state = health.decide(state, { ok: false, reason: "timeout" }, true).state;
+    for (let i = 0; i < 4; i++)
+      state = health.decide(state, { ok: false, reason: "timeout" }, true).state;
     const back = health.decide(state, { ok: true, reason: "ready" });
     expect(back.emit).toBe(null);
     expect(back.state.fails).toBe(0);
@@ -544,11 +676,22 @@ describe("memory health watcher", () => {
   it("deployGraceActive: fresh marker opens it, stale or missing or future-dated does not", () => {
     const now = 1_000_000_000;
     const statAt = (mtimeMs: number) => () => ({ mtimeMs });
-    expect(health.deployGraceActive("/a", now, health.DEPLOY_GRACE_MS, statAt(now - 60_000))).toBe(true);
-    expect(health.deployGraceActive("/a", now, health.DEPLOY_GRACE_MS, statAt(now - health.DEPLOY_GRACE_MS))).toBe(false);
+    expect(health.deployGraceActive("/a", now, health.DEPLOY_GRACE_MS, statAt(now - 60_000))).toBe(
+      true,
+    );
+    expect(
+      health.deployGraceActive(
+        "/a",
+        now,
+        health.DEPLOY_GRACE_MS,
+        statAt(now - health.DEPLOY_GRACE_MS),
+      ),
+    ).toBe(false);
     // A future mtime is corruption, and corruption must fail toward alerting
     // (noisy), never toward an open-ended mute (silent).
-    expect(health.deployGraceActive("/a", now, health.DEPLOY_GRACE_MS, statAt(now + 60_000))).toBe(false);
+    expect(health.deployGraceActive("/a", now, health.DEPLOY_GRACE_MS, statAt(now + 60_000))).toBe(
+      false,
+    );
     const missing = () => {
       throw new Error("ENOENT");
     };
@@ -562,14 +705,21 @@ describe("memory health watcher", () => {
     const deploysh = readFileSync(resolve(root, "scripts/deploy.sh"), "utf8");
     expect(deploysh).toContain(health.DEPLOY_MARKER);
     // Stamped before the disruptive phase, removed once the chain answers.
-    expect(deploysh.indexOf(health.DEPLOY_MARKER)).toBeLessThan(deploysh.indexOf('"${ANSIBLE_CMD[@]}"'));
+    expect(deploysh.indexOf(health.DEPLOY_MARKER)).toBeLessThan(
+      deploysh.indexOf('"${ANSIBLE_CMD[@]}"'),
+    );
     expect(deploysh).toContain('rm -f "$DEPLOY_MARKER_FILE"');
   });
 
   it("writes an alert file the EXISTING alert policy can parse and route", async () => {
     const dir = mkdtempSync(join(tmpdir(), "qcr-memalert-"));
     const endpoint = "http://198.51.100.1:1933";
-    const body = health.alertBody("down", { endpoint, reason: "connect ECONNREFUSED", at: new Date().toISOString(), fails: 3 });
+    const body = health.alertBody("down", {
+      endpoint,
+      reason: "connect ECONNREFUSED",
+      at: new Date().toISOString(),
+      fails: 3,
+    });
     const name = health.writeAlertFile(dir, body);
     const parsed = parseAlert(readFileSync(join(dir, name), "utf8"), name);
     expect(parsed.ok).toBe(true);
@@ -579,7 +729,12 @@ describe("memory health watcher", () => {
       expect(parsed.alert.body).toContain("systemctl --user status qcr-memory-forward");
     }
     // Recovery is a notice, not a second emergency.
-    const up = health.alertBody("up", { endpoint, reason: "ready", at: new Date().toISOString(), fails: 0 });
+    const up = health.alertBody("up", {
+      endpoint,
+      reason: "ready",
+      at: new Date().toISOString(),
+      fails: 0,
+    });
     expect(up.tier).toBe("notice");
     expect(up.cause).toBe(health.CAUSE_UP);
     // Nothing half-written is ever visible to the consumer.
@@ -595,7 +750,10 @@ describe("memory health watcher", () => {
     expect(seen).toEqual(["http://x/health", "http://x/ready"]);
     expect(ok).toEqual({ ok: true, reason: "ready" });
     // 503 from /ready is "up but not serving memory" — degraded, not a crash.
-    const notReady = await health.probe("http://x", 10, async (url: string) => ({ ok: !url.endsWith("/ready"), status: url.endsWith("/ready") ? 503 : 200 }));
+    const notReady = await health.probe("http://x", 10, async (url: string) => ({
+      ok: !url.endsWith("/ready"),
+      status: url.endsWith("/ready") ? 503 : 200,
+    }));
     expect(notReady).toEqual({ ok: false, reason: "ready 503" });
     const dead = await health.probe("http://x", 10, async () => {
       throw new Error("ECONNREFUSED");
@@ -605,8 +763,15 @@ describe("memory health watcher", () => {
 
   it("stays silent when no endpoint is wired (memory-less is a legal mode)", () => {
     expect(health.watcherConfig({}).endpoint).toBe("");
-    expect(health.watcherConfig({ OPENVIKING_URL: "http://a:1933/" }).endpoint).toBe("http://a:1933");
-    expect(health.watcherConfig({ QCR_MEMORY_ENDPOINT: "http://b:1933", QCR_MEMORY_PROBE_INTERVAL_S: "5" }).intervalMs).toBe(5000);
+    expect(health.watcherConfig({ OPENVIKING_URL: "http://a:1933/" }).endpoint).toBe(
+      "http://a:1933",
+    );
+    expect(
+      health.watcherConfig({
+        QCR_MEMORY_ENDPOINT: "http://b:1933",
+        QCR_MEMORY_PROBE_INTERVAL_S: "5",
+      }).intervalMs,
+    ).toBe(5000);
   });
 });
 
@@ -647,7 +812,8 @@ describe.skipIf(!existsSync(opsDocPath))("provisioning is documented, not folklo
   });
 
   it("states the boundary the slice must not widen", () => {
-    for (const forbidden of ["never GitHub", "never the gate", "deploy.sh"]) expect(doc).toContain(forbidden);
+    for (const forbidden of ["never GitHub", "never the gate", "deploy.sh"])
+      expect(doc).toContain(forbidden);
     expect(doc).toMatch(/ADMIN|ROOT/); // the never-provision-an-admin-key rule
   });
 });

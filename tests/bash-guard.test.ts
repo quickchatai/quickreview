@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import activate, { checkBashCommand, checkReaderModes, checkWritePath } from "../extensions/bash-guard.js";
+import activate, {
+  checkBashCommand,
+  checkReaderModes,
+  checkWritePath,
+} from "../extensions/bash-guard.js";
 
 const allow = (cmd: string): void => {
   const res = checkBashCommand(cmd);
@@ -167,7 +171,10 @@ describe("checkBashCommand — gh is read-only", () => {
     // The whole chain, exactly as a session would write it: write the body
     // with the ordinary write tool, mint the token from the sanctioned script,
     // POST an APPROVE with no gate, no CI gate and no dry_run.
-    block('GH_TOKEN="$(bash scripts/mint-token.sh)" gh api repos/o/n/pulls/5/reviews --input /tmp/rev.json', "sends POST");
+    block(
+      'GH_TOKEN="$(bash scripts/mint-token.sh)" gh api repos/o/n/pulls/5/reviews --input /tmp/rev.json',
+      "sends POST",
+    );
   });
 
   /**
@@ -389,7 +396,10 @@ describe("checkBashCommand — git is read-only", () => {
     block("GIT_EXTERNAL_DIFF='sh -c \"npm test\"' git diff --ext-diff", "names a program");
     block("GIT_PAGER='sh -c \"npm test\"' git log", "names a program");
     block("GIT_SSH_COMMAND=/tmp/x git fetch origin", "names a program");
-    block("GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.x GIT_CONFIG_VALUE_0='!npm test' git x", "names a program");
+    block(
+      "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.x GIT_CONFIG_VALUE_0='!npm test' git x",
+      "names a program",
+    );
     block("LD_PRELOAD=/tmp/x.so git log", "names a program");
     block("PATH=/tmp/evil git log", "names a program");
     block("BASH_ENV=/tmp/x rg foo", "names a program");
@@ -447,29 +457,38 @@ describe("activate (pi hookup)", () => {
     };
     activate(pi as never);
     expect(handler).toBeDefined();
-    expect(handler!({ toolName: "bash", input: { command: "python x.py" } })).toMatchObject({ block: true });
+    expect(handler!({ toolName: "bash", input: { command: "python x.py" } })).toMatchObject({
+      block: true,
+    });
     expect(handler!({ toolName: "bash", input: { command: "git status" } })).toBeUndefined();
     expect(handler!({ toolName: "read", input: { command: "python x.py" } })).toBeUndefined();
     // arguments fallback field name (VERIFY-ON-PIN both ways)
-    expect(handler!({ toolName: "bash", arguments: { command: "npm test" } })).toMatchObject({ block: true });
+    expect(handler!({ toolName: "bash", arguments: { command: "npm test" } })).toMatchObject({
+      block: true,
+    });
   });
 });
 
 describe("live-day regressions (2026-08-17): quoted patterns and substitutions", () => {
-  const allow = (cmd: string) => expect(checkBashCommand(cmd), cmd).toMatchObject({ allowed: true });
+  const allow = (cmd: string) =>
+    expect(checkBashCommand(cmd), cmd).toMatchObject({ allowed: true });
   const deny = (cmd: string) => expect(checkBashCommand(cmd).allowed, cmd).toBe(false);
 
   it("never splits inside quoted arguments", () => {
     allow("rg -n -i 'reviewed by|automated review|start here' prompts src");
     allow(`jq -r '.data | select(any(.comments.nodes[]; .id)) | .url' out.json`);
-    allow("find . -maxdepth 3 -type f \\( -iname '*5270*' -o -iname '*ledger*' \\) -print | sort | head -100");
+    allow(
+      "find . -maxdepth 3 -type f \\( -iname '*5270*' -o -iname '*ledger*' \\) -print | sort | head -100",
+    );
     allow(`git log --grep="dispatch_due|match_user_specified_topic" --oneline`);
   });
 
   it("allows the sanctioned mint-token read pattern and plain scripts", () => {
     allow(`GH_TOKEN="$(scripts/mint-token.sh)" gh api repos/x/pulls/5/files`);
     allow("scripts/pr-checks.sh 4656");
-    allow("cd /opt/quickreview/sandbox && GH_TOKEN=\"$(scripts/mint-token.sh)\" scripts/pr-context.sh 5197");
+    allow(
+      'cd /opt/quickreview/sandbox && GH_TOKEN="$(scripts/mint-token.sh)" scripts/pr-context.sh 5197',
+    );
     allow("date -u +%Y-%m-%dT%H:%M:%SZ && git -C wt/pr-4656 status --short");
     allow("nl -ba file.py | head");
   });
@@ -540,15 +559,15 @@ describe("checkWritePath / git's configuration surface", () => {
   };
 
   it("refuses every location git reads configuration or hooks from", () => {
-    writeBlocked("/opt/quickreview/reviewed-repo/.git/config");        // the fifth bypass, verbatim
+    writeBlocked("/opt/quickreview/reviewed-repo/.git/config"); // the fifth bypass, verbatim
     writeBlocked("wt/pr-5249/.git/config");
     writeBlocked(".git/config.worktree");
     writeBlocked("/opt/quickreview/reviewed-repo/.git/worktrees/pr-1/config.worktree");
     writeBlocked(".git/hooks/pre-commit");
     writeBlocked(".git/info/attributes");
-    writeBlocked("/home/review/.gitconfig");                          // the global scope's file
-    writeBlocked("/home/review/.config/git/config");                  // the XDG scope's file
-    writeBlocked("reviewed-repo/.gitattributes");                     // the other half of diff.*.textconv
+    writeBlocked("/home/review/.gitconfig"); // the global scope's file
+    writeBlocked("/home/review/.config/git/config"); // the XDG scope's file
+    writeBlocked("reviewed-repo/.gitattributes"); // the other half of diff.*.textconv
   });
 
   it("leaves every write a session legitimately makes alone — this is not a write allowlist", () => {
@@ -558,7 +577,7 @@ describe("checkWritePath / git's configuration surface", () => {
     writeOk("/tmp/comments.json");
     // NOTE — state/agents/pass-intent.md moved to the policy surface
     // below; it is the BUILT pass body pi loads, not a name a session authors.
-    writeOk("src/gitconfig-parser.ts");        // a NAME is not a location
+    writeOk("src/gitconfig-parser.ts"); // a NAME is not a location
     writeOk("docs/git/configuration.md");
     writeOk("notes/gitattributes.md");
   });
@@ -714,8 +733,14 @@ describe("checkWritePath / this system's own policy surface", () => {
   it("a `bash -c` payload cannot launder a refused command behind a sanctioned script (door 4)", () => {
     // The chain from the review, and every separator the ticket
     // names, in single quotes, double quotes and $'…'.
-    block("bash -c 'scripts/pr-self.sh ; QCR_CONFIG=/tmp/x.toml scripts/approve-pr.sh 5 b.md'", "guards");
-    block(`bash -c "scripts/pr-self.sh; QCR_CONFIG=/tmp/x.toml scripts/approve-pr.sh 5 b.md"`, "guards");
+    block(
+      "bash -c 'scripts/pr-self.sh ; QCR_CONFIG=/tmp/x.toml scripts/approve-pr.sh 5 b.md'",
+      "guards",
+    );
+    block(
+      `bash -c "scripts/pr-self.sh; QCR_CONFIG=/tmp/x.toml scripts/approve-pr.sh 5 b.md"`,
+      "guards",
+    );
     block("bash -c 'scripts/pr-self.sh && git push origin HEAD'", "mutation");
     block("bash -c 'scripts/pr-self.sh || cat evil > config.toml'", "policy surface");
     block("bash -c 'scripts/pr-self.sh\npython3 evil.py'", "read-only");
@@ -746,7 +771,7 @@ describe("checkWritePath / this system's own policy surface", () => {
     // Assembled at runtime by a substitution — VERIFIED running the file.
     block('bash -c "$(cat /tmp/x)"', "assembled at runtime");
     block('bash -c "git $(echo push) origin HEAD"', "assembled at runtime");
-    block("bash -c \"echo `cat /tmp/x`\"", "assembled at runtime");
+    block('bash -c "echo `cat /tmp/x`"', "assembled at runtime");
     // A value-taking option before -c shifts which word is the payload —
     // VERIFIED running the payload.
     block("bash -o pipefail -c 'git push origin HEAD'", "option taking a value");
@@ -809,10 +834,10 @@ describe("read-only programs with write/exec modes", () => {
   it("refuses the write modes — each one wrote .git/config in a live probe", () => {
     block("sed -n 'w .git/config' payload", "reads code");
     block("sed -i 's/a/b/' src/a.ts", "writes a file or runs a command");
-    block("sed -ni 'p' src/a.ts", "reads code");          // clustered short form
+    block("sed -ni 'p' src/a.ts", "reads code"); // clustered short form
     block("sort -o out.txt in.txt", "writes a file");
     block("find . -maxdepth 0 -fprintf out.txt '%p'", "writes a file");
-    block("sed --expression='w /tmp/x' f", "reads code");   // script GLUED to its flag
+    block("sed --expression='w /tmp/x' f", "reads code"); // script GLUED to its flag
     block("sed -e'w /tmp/x' f", "reads code");
   });
 
@@ -832,7 +857,7 @@ describe("read-only programs with write/exec modes", () => {
     allow("sort -n -k2 data.tsv | head -5");
     allow("find src -name '*.ts' -maxdepth 3");
     allow("find . -type f -newer package.json");
-    allow("cut -d: -f1 /etc/passwd");                     // what awk used to be reached for
+    allow("cut -d: -f1 /etc/passwd"); // what awk used to be reached for
     allow("jq -r '.[].name' data.json | sort | uniq -c");
     allow("git diff --name-only | xargs grep -n TODO");
   });
@@ -846,7 +871,7 @@ describe("read-only programs with write/exec modes", () => {
     expect(checkReaderModes("rg", ["-n", "foo"]).allowed).toBe(true);
     expect(checkReaderModes("cat", ["-o", "x"]).allowed).toBe(true);
     // …including awk, which no longer has a rule set here at all.
-    expect(checkReaderModes("awk", ["BEGIN{system(\"x\")}"]).allowed).toBe(true);
+    expect(checkReaderModes("awk", ['BEGIN{system("x")}']).allowed).toBe(true);
   });
 });
 
@@ -873,7 +898,7 @@ describe("awk is not a read-only program (round 3)", () => {
     block(`awk 'BEGIN{f="/tmp/out"; print "x" > f}'`, "programming language");
     block(`awk 'BEGIN{f=".git/config"; printf "[diff]" >> f}'`, "programming language");
     block(`awk 'BEGIN{system("id")}'`, "programming language");
-    block("awk -F: '{print $1}' /etc/passwd", "programming language");   // even the innocent form
+    block("awk -F: '{print $1}' /etc/passwd", "programming language"); // even the innocent form
     block("gawk '{print}' f", "gawk");
     block("mawk '{print}' f", "mawk");
     block("nawk '{print}' f", "nawk");
@@ -900,6 +925,7 @@ describe("awk is not a read-only program (round 3)", () => {
       "sed -n '10,20p' src/a.ts",
       "head -50 src/a.ts | nl -ba",
       "tr -d '\\r' < f | wc -l",
-    ]) allow(cmd);
+    ])
+      allow(cmd);
   });
 });

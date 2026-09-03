@@ -79,9 +79,34 @@ import type { Pi, ToolCallEvent } from "@earendil-works/pi-coding-agent";
  * separately checks the rendered sentence against `dist/src/include.js`.
  */
 export const ALLOWED_PROGRAMS: readonly string[] = [
-  "git", "rg", "grep", "cat", "ls", "find", "head", "tail", "wc", "jq", "sed",
-  "sort", "uniq", "diff", "gh", "echo", "printf", "cut", "tr", "xargs",
-  "dirname", "basename", "test", "true", "false", "date", "nl", "stat",
+  "git",
+  "rg",
+  "grep",
+  "cat",
+  "ls",
+  "find",
+  "head",
+  "tail",
+  "wc",
+  "jq",
+  "sed",
+  "sort",
+  "uniq",
+  "diff",
+  "gh",
+  "echo",
+  "printf",
+  "cut",
+  "tr",
+  "xargs",
+  "dirname",
+  "basename",
+  "test",
+  "true",
+  "false",
+  "date",
+  "nl",
+  "stat",
 ];
 const ALLOWED = new Set(ALLOWED_PROGRAMS);
 
@@ -126,7 +151,19 @@ const SANCTIONED_SCRIPTS = new Set([
  * The PR's main pi is the only scheduler of agents, and the `subagent` tool is
  * its only launcher. */
 const AGENT_SPAWNERS = new Set([
-  "pi", "claude", "codex", "node", "npm", "npx", "pnpm", "yarn", "bun", "bunx", "deno", "tsx", "ts-node",
+  "pi",
+  "claude",
+  "codex",
+  "node",
+  "npm",
+  "npx",
+  "pnpm",
+  "yarn",
+  "bun",
+  "bunx",
+  "deno",
+  "tsx",
+  "ts-node",
 ]);
 
 const AGENT_SPAWN_REASON =
@@ -179,7 +216,12 @@ const GH_READONLY_VERBS: Readonly<Record<string, ReadonlySet<string>>> = {
 };
 
 /** `gh` namespaces that are read-only whatever the verb. */
-const GH_READONLY_NAMESPACES: ReadonlySet<string> = new Set(["search", "status", "version", "help"]);
+const GH_READONLY_NAMESPACES: ReadonlySet<string> = new Set([
+  "search",
+  "status",
+  "version",
+  "help",
+]);
 
 /**
  * `gh api` flags that carry a REQUEST BODY, and so promote gh's default GET to
@@ -203,7 +245,13 @@ const GH_READONLY_NAMESPACES: ReadonlySet<string> = new Set(["search", "status",
  * form, and no other short flag carries a body. Verified in `gh api --help`
  * and by probe: `gh api <path> -i` → GET.
  */
-const GH_API_BODY_FLAGS: ReadonlySet<string> = new Set(["--input", "-f", "-F", "--field", "--raw-field"]);
+const GH_API_BODY_FLAGS: ReadonlySet<string> = new Set([
+  "--input",
+  "-f",
+  "-F",
+  "--field",
+  "--raw-field",
+]);
 const GH_API_BODY_FLAG_ATTACHED = /^(--input|--field|--raw-field)=/;
 
 /**
@@ -248,7 +296,11 @@ function ghApiEffectiveMethod(args: string[]): string {
       explicit = attached[1]!.toUpperCase();
       continue;
     }
-    if (GH_API_BODY_FLAGS.has(a) || GH_API_BODY_FLAG_ATTACHED.test(a) || GH_API_SHORT_BODY_CLUSTER.test(a)) {
+    if (
+      GH_API_BODY_FLAGS.has(a) ||
+      GH_API_BODY_FLAG_ATTACHED.test(a) ||
+      GH_API_SHORT_BODY_CLUSTER.test(a)
+    ) {
       body = true;
     }
   }
@@ -320,15 +372,40 @@ function checkGh(args: string[]): BashCheck {
  * symmetric, which is what the first shape got wrong.
  */
 const GIT_READONLY_VERBS: ReadonlySet<string> = new Set([
-  "log", "show", "diff", "diff-tree", "diff-files", "diff-index", "status",
-  "blame", "annotate", "cat-file", "rev-parse", "rev-list", "ls-files",
-  "ls-tree", "ls-remote", "grep", "describe", "shortlog", "merge-base",
-  "name-rev", "whatchanged", "show-ref", "show-branch", "check-ignore",
-  "check-attr", "count-objects", "verify-commit", "verify-tag", "version",
+  "log",
+  "show",
+  "diff",
+  "diff-tree",
+  "diff-files",
+  "diff-index",
+  "status",
+  "blame",
+  "annotate",
+  "cat-file",
+  "rev-parse",
+  "rev-list",
+  "ls-files",
+  "ls-tree",
+  "ls-remote",
+  "grep",
+  "describe",
+  "shortlog",
+  "merge-base",
+  "name-rev",
+  "whatchanged",
+  "show-ref",
+  "show-branch",
+  "check-ignore",
+  "check-attr",
+  "count-objects",
+  "verify-commit",
+  "verify-tag",
+  "version",
   // `range-diff` is the natural tool for a force-push re-review (what changed
   // between the old and new versions of a series); `for-each-ref` is the
   // scriptable ref read.
-  "range-diff", "for-each-ref",
+  "range-diff",
+  "for-each-ref",
   // A read of the remote. It cannot mutate GitHub, and the daemon fetches the
   // base into every worktree already — but a session occasionally needs a ref
   // the round did not anticipate, and refusing it would wedge that review.
@@ -344,7 +421,20 @@ const GIT_READONLY_SUBVERBS: Readonly<Record<string, ReadonlySet<string>>> = {
   worktree: new Set(["list"]),
   remote: new Set(["-v", "--verbose", "show", "get-url"]),
   config: new Set(["--get", "--get-all", "--get-regexp", "--list", "-l"]),
-  branch: new Set(["--list", "-l", "--contains", "--merged", "--no-merged", "--show-current", "-a", "-r", "-v", "-vv", "--all", "--remotes"]),
+  branch: new Set([
+    "--list",
+    "-l",
+    "--contains",
+    "--merged",
+    "--no-merged",
+    "--show-current",
+    "-a",
+    "-r",
+    "-v",
+    "-vv",
+    "--all",
+    "--remotes",
+  ]),
   tag: new Set(["--list", "-l", "--contains", "--points-at", "--merged"]),
 };
 
@@ -437,7 +527,9 @@ function checkGit(args: string[]): BashCheck {
   // equally effective. `-c` is excluded here: see the constant above.
   for (const a of args.slice(i + 1)) {
     if (GIT_COMMAND_INJECTING_OPTS_AFTER_VERB.test(a)) {
-      return block(`exec policy: 'git ${verb} ${a}' can hand git a command to run — the reviewer never executes anything`);
+      return block(
+        `exec policy: 'git ${verb} ${a}' can hand git a command to run — the reviewer never executes anything`,
+      );
     }
   }
   const sub = GIT_READONLY_SUBVERBS[verb];
@@ -449,7 +541,9 @@ function checkGit(args: string[]): BashCheck {
     // after the verb is the one that decides what the command does.
     return sub.has(args[i + 1] ?? "")
       ? { allowed: true }
-      : block(`exec policy: 'git ${verb}' is only allowed in its read-only form (${[...sub].join(", ")})`);
+      : block(
+          `exec policy: 'git ${verb}' is only allowed in its read-only form (${[...sub].join(", ")})`,
+        );
   }
   if (verb === "push" || verb === "send-pack") {
     return block(
@@ -476,16 +570,31 @@ function checkGit(args: string[]): BashCheck {
  * and shell hooks that would subvert ANY allowed program.
  */
 const COMMAND_INJECTING_ENV = new Set([
-  "GIT_PAGER", "PAGER", "GIT_EXTERNAL_DIFF", "GIT_DIFF_OPTS", "GIT_SSH",
-  "GIT_SSH_COMMAND", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_ASKPASS",
-  "GIT_PROXY_COMMAND", "GIT_CONFIG", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM",
-  "GIT_CONFIG_COUNT", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_TEMPLATE_DIR",
+  "GIT_PAGER",
+  "PAGER",
+  "GIT_EXTERNAL_DIFF",
+  "GIT_DIFF_OPTS",
+  "GIT_SSH",
+  "GIT_SSH_COMMAND",
+  "GIT_EDITOR",
+  "GIT_SEQUENCE_EDITOR",
+  "GIT_ASKPASS",
+  "GIT_PROXY_COMMAND",
+  "GIT_CONFIG",
+  "GIT_CONFIG_GLOBAL",
+  "GIT_CONFIG_SYSTEM",
+  "GIT_CONFIG_COUNT",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_TEMPLATE_DIR",
   // The env twins of `--git-dir` / `--work-tree` / `--exec-path`: the
   // config-RELOCATING third member of the family, at the REPO scope.
   // `GIT_DIR=<dir> git diff --no-index A B` runs `diff.external` out of
   // `<dir>/config` — VERIFIED executing, with `<dir>` holding nothing but
   // that one plain-text file.
-  "GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_EXEC_PATH",
+  "GIT_DIR",
+  "GIT_COMMON_DIR",
+  "GIT_WORK_TREE",
+  "GIT_EXEC_PATH",
   // …and the same category at the GLOBAL/XDG scope. `GIT_CONFIG_GLOBAL` and
   // `GIT_CONFIG_SYSTEM` above are the EXPLICIT pointers; these two are the
   // implicit SEARCH PATH those fall back to — `$HOME/.gitconfig` and
@@ -494,10 +603,22 @@ const COMMAND_INJECTING_ENV = new Set([
   // primitive and the same cost as the repo-scope form: one plain-text file
   // written with the ordinary write tool, plus one ALLOWED command.
   // VERIFIED executing: HOME=<dir> git diff --no-index A B.
-  "HOME", "XDG_CONFIG_HOME",
-  "EDITOR", "VISUAL", "SSH_ASKPASS",
-  "LD_PRELOAD", "LD_AUDIT", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES",
-  "BASH_ENV", "ENV", "PATH", "SHELL", "IFS", "PYTHONSTARTUP", "NODE_OPTIONS",
+  "HOME",
+  "XDG_CONFIG_HOME",
+  "EDITOR",
+  "VISUAL",
+  "SSH_ASKPASS",
+  "LD_PRELOAD",
+  "LD_AUDIT",
+  "LD_LIBRARY_PATH",
+  "DYLD_INSERT_LIBRARIES",
+  "BASH_ENV",
+  "ENV",
+  "PATH",
+  "SHELL",
+  "IFS",
+  "PYTHONSTARTUP",
+  "NODE_OPTIONS",
   "PERL5OPT",
 ]);
 /** `GIT_CONFIG_KEY_0=alias.x GIT_CONFIG_VALUE_0=!cmd` is `-c` by another name. */
@@ -549,7 +670,12 @@ const COMMAND_INJECTING_ENV_RE = /^GIT_CONFIG_(KEY|VALUE)_\d+$/;
  * about, which the guards then check; it does not change what the guards ARE.
  * Blocking them would break the daemon's own dispatch path.
  */
-const POLICY_RELOCATING_ENV = new Set(["QCR_CONFIG", "QCR_STATE_DB", "QCR_DRYRUN_DIR", "QCR_POSTING_RECEIPT_DIR"]);
+const POLICY_RELOCATING_ENV = new Set([
+  "QCR_CONFIG",
+  "QCR_STATE_DB",
+  "QCR_DRYRUN_DIR",
+  "QCR_POSTING_RECEIPT_DIR",
+]);
 
 function envInjectionBlock(name: string): BashCheck | null {
   if (POLICY_RELOCATING_ENV.has(name)) {
@@ -588,7 +714,9 @@ function checkSegment(segment: string, tokens: string[], depth: number): BashChe
       // walked through the prior form of this guard (VERIFIED running).
       // Nothing a reviewer does needs it.
       if (/^-[A-Za-z0-9]*S|^--split-string/.test(raw)) {
-        return block("exec policy: 'env -S' assembles a second command line inside this one — the reviewer never launders a command through env");
+        return block(
+          "exec policy: 'env -S' assembles a second command line inside this one — the reviewer never launders a command through env",
+        );
       }
       continue; // env -i etc.
     }
@@ -601,7 +729,8 @@ function checkSegment(segment: string, tokens: string[], depth: number): BashChe
       // judged from the RAW segment, never from these tokens (door 4).
       const lifted = bashCPayload(segment);
       if (lifted.kind === "payload") {
-        if (depth >= MAX_NESTED_COMMAND_DEPTH) return block("exec policy: 'bash -c' nested too deep to analyse — refused");
+        if (depth >= MAX_NESTED_COMMAND_DEPTH)
+          return block("exec policy: 'bash -c' nested too deep to analyse — refused");
         return checkBashCommand(lifted.payload, depth + 1);
       }
       if (lifted.kind === "unliftable") return block(lifted.reason);
@@ -632,7 +761,14 @@ interface ShellWords {
  * live INSIDE a quoted word — which is exactly what a `bash -c` payload is.
  */
 function shellWords(s: string): ShellWords {
-  const ANSI_C: Readonly<Record<string, string>> = { n: "\n", t: "\t", r: "\r", "\\": "\\", "'": "'", '"': '"' };
+  const ANSI_C: Readonly<Record<string, string>> = {
+    n: "\n",
+    t: "\t",
+    r: "\r",
+    "\\": "\\",
+    "'": "'",
+    '"': '"',
+  };
   const words: string[] = [];
   let cur = "";
   let has = false;
@@ -730,7 +866,8 @@ function bashCPayload(segment: string): LiftedPayload {
     break;
   }
   const prog = words[i];
-  if (prog === undefined || prog.slice(prog.lastIndexOf("/") + 1) !== "bash") return { kind: "none" };
+  if (prog === undefined || prog.slice(prog.lastIndexOf("/") + 1) !== "bash")
+    return { kind: "none" };
   for (let j = i + 1; j < words.length; j++) {
     const w = words[j]!;
     // A non-option, or `--` / `-` (end of options), before any -c: this is
@@ -746,7 +883,8 @@ function bashCPayload(segment: string): LiftedPayload {
       if (unterminated) {
         return {
           kind: "unliftable",
-          reason: "exec policy: this 'bash -c' payload is assembled at runtime by a substitution or an unclosed quote — the reviewer runs only commands the guard can read",
+          reason:
+            "exec policy: this 'bash -c' payload is assembled at runtime by a substitution or an unclosed quote — the reviewer runs only commands the guard can read",
         };
       }
       const next = words[j + 1];
@@ -756,11 +894,18 @@ function bashCPayload(segment: string): LiftedPayload {
   return { kind: "none" };
 }
 
-function checkProgram(prog: string, args: string[], rawArgs: string[] | undefined, depth: number): BashCheck {
+function checkProgram(
+  prog: string,
+  args: string[],
+  rawArgs: string[] | undefined,
+  depth: number,
+): BashCheck {
   // Sanctioned scripts, invoked directly.
   const direct = sanctionedScript(prog);
   if (direct.name !== undefined || /(^|\/)scripts\//.test(prog)) {
-    return direct.sanctioned ? { allowed: true } : block(`exec policy: '${prog}' is not a sanctioned script`);
+    return direct.sanctioned
+      ? { allowed: true }
+      : block(`exec policy: '${prog}' is not a sanctioned script`);
   }
   const base = prog.slice(prog.lastIndexOf("/") + 1);
   if (base === "cd") return { allowed: true }; // builtin, argument is a path not a program
@@ -769,7 +914,9 @@ function checkProgram(prog: string, args: string[], rawArgs: string[] | undefine
   if (AGENT_SPAWNERS.has(base)) return block(`${AGENT_SPAWN_REASON} — '${base}' is blocked`);
   if (base === "sh") {
     // Only the `sh -n <file>` syntax check is sanctioned.
-    return args[0] === "-n" ? { allowed: true } : block("exec policy: 'sh' is only allowed as 'sh -n' (syntax check)");
+    return args[0] === "-n"
+      ? { allowed: true }
+      : block("exec policy: 'sh' is only allowed as 'sh -n' (syntax check)");
   }
   if (base === "bash") {
     // A `bash -c` with a readable payload never reaches here: `checkSegment`
@@ -781,10 +928,14 @@ function checkProgram(prog: string, args: string[], rawArgs: string[] | undefine
     // after the script is the script's own argument).
     for (const a of args) {
       if (!a.startsWith("-")) {
-        return sanctionedScript(a).sanctioned ? { allowed: true } : block(`exec policy: 'bash ${a}' is not a sanctioned scripts/*.sh`);
+        return sanctionedScript(a).sanctioned
+          ? { allowed: true }
+          : block(`exec policy: 'bash ${a}' is not a sanctioned scripts/*.sh`);
       }
       if (/^-[A-Za-z]*c/.test(a)) {
-        return block("exec policy: this 'bash -c' carries a command string the guard cannot read (through xargs, or a form it does not lift) — refused");
+        return block(
+          "exec policy: this 'bash -c' carries a command string the guard cannot read (through xargs, or a form it does not lift) — refused",
+        );
       }
     }
     return block("exec policy: 'bash' may only run sanctioned scripts/*.sh");
@@ -905,7 +1056,10 @@ export function splitShellSegments(cmd: string): string[] {
  * a redirect, a `--file=` form or an argument to any allowed reader is covered.
  */
 const ROOT_CREDENTIAL_PATTERNS: Array<{ re: RegExp; what: string }> = [
-  { re: /(^|[^A-Za-z0-9_-])ov\.conf\b/, what: "the OpenViking server config (it holds root_api_key)" },
+  {
+    re: /(^|[^A-Za-z0-9_-])ov\.conf\b/,
+    what: "the OpenViking server config (it holds root_api_key)",
+  },
   { re: /openviking_root_key/, what: "the OpenViking root key secret" },
   { re: /root_api_key/, what: "the OpenViking root key" },
   { re: /openviking-keys\.env/, what: "the companion's OpenViking key file" },
@@ -1027,7 +1181,14 @@ export function isGitConfigSurface(path: string): boolean {
  * daemon itself rebuilds it mid-round on feedback ingest and the day change.
  */
 export const POLICY_SURFACE_FILES = ["config.toml"] as const;
-export const POLICY_SURFACE_DIRS = ["scripts", "dist", "extensions", "prompts", "agents", "seeds"] as const;
+export const POLICY_SURFACE_DIRS = [
+  "scripts",
+  "dist",
+  "extensions",
+  "prompts",
+  "agents",
+  "seeds",
+] as const;
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const POLICY_SURFACE_RE = [
@@ -1134,14 +1295,21 @@ export function normalizeRedirections(cmd: string): string {
  * `normalizeRedirections`, which folds all of them onto those two first.
  */
 export function checkProtectedWrites(cmd: string): BashCheck {
-  const tokens = normalizeRedirections(cmd).split(/\s+/).filter((t) => t.length > 0);
+  const tokens = normalizeRedirections(cmd)
+    .split(/\s+/)
+    .filter((t) => t.length > 0);
   // `sed -i` / `sed -i.bak` / `sed -ne … -i` — the one allowlisted program that
   // rewrites a file named as a plain argument. When it is in play EVERY token
   // is a candidate target; being over-broad here costs a refusal on a command
   // that also mentions a protected path, which no legitimate read does.
   const sedInPlace =
-    tokens.some((t) => /(^|\/)sed$/.test(t))
-    && tokens.some((t) => /^-[a-zA-Z]*i([a-zA-Z]*)?([.'"].*)?$/.test(t) || t === "--in-place" || t.startsWith("--in-place="));
+    tokens.some((t) => /(^|\/)sed$/.test(t)) &&
+    tokens.some(
+      (t) =>
+        /^-[a-zA-Z]*i([a-zA-Z]*)?([.'"].*)?$/.test(t) ||
+        t === "--in-place" ||
+        t.startsWith("--in-place="),
+    );
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i]!;
     // `> path`, `>> path` — target is the next token. Tested BEFORE the
@@ -1150,7 +1318,8 @@ export function checkProtectedWrites(cmd: string): BashCheck {
     // `printf … >> .git/config` case and not by `> .git/config`).
     if (REDIRECT_OP_RE.test(t)) {
       const target = tokens[i + 1];
-      if (target !== undefined && isProtectedWriteTarget(dequote(target))) return protectedWriteBlock(dequote(target));
+      if (target !== undefined && isProtectedWriteTarget(dequote(target)))
+        return protectedWriteBlock(dequote(target));
       continue;
     }
     // `>path`, `>>path`, `2>path` — target attached to the operator.
@@ -1180,7 +1349,10 @@ export function checkBashCommand(cmd: string, depth = 0): BashCheck {
   const protectedWrite = checkProtectedWrites(normalized);
   if (!protectedWrite.allowed) return protectedWrite;
   for (const segment of splitShellSegments(normalized)) {
-    const tokens = segment.trim().split(/\s+/).filter((t) => t.length > 0);
+    const tokens = segment
+      .trim()
+      .split(/\s+/)
+      .filter((t) => t.length > 0);
     if (tokens.length === 0) continue;
     const res = checkSegment(segment, tokens, depth);
     if (!res.allowed) return res;
@@ -1256,7 +1428,10 @@ const READER_MODE_RULES: Readonly<Record<string, ReaderModeRule>> = {
   sed: {
     flags: /^(?:--(?:in-place|file)(?:[=.]|$)|-(?!-)[a-zA-Z]*[if])/,
     body: [
-      { re: /(?:^|[;{}\n])[ \t]*(?:\/(?:\\.|[^/\\])*\/|[0-9]+|\$|,)*[ \t]*[wWrRe](?:[ \t]|$)/, what: "a w/r/e command" },
+      {
+        re: /(?:^|[;{}\n])[ \t]*(?:\/(?:\\.|[^/\\])*\/|[0-9]+|\$|,)*[ \t]*[wWrRe](?:[ \t]|$)/,
+        what: "a w/r/e command",
+      },
       { re: /\/[gpiImMnN0-9]*[we](?:[ \t]|$)/, what: "a w/e flag on s///" },
     ],
     what: "writes a file or runs a command",
@@ -1271,7 +1446,11 @@ const READER_MODE_RULES: Readonly<Record<string, ReaderModeRule>> = {
  * Does this invocation of an allowlisted reader use one of its write/exec
  * modes? Exported so the reason is testable on its own.
  */
-export function checkReaderModes(prog: string, args: readonly string[], rawArgs?: readonly string[]): BashCheck {
+export function checkReaderModes(
+  prog: string,
+  args: readonly string[],
+  rawArgs?: readonly string[],
+): BashCheck {
   const rule = READER_MODE_RULES[prog];
   if (rule === undefined) return { allowed: true };
   for (const raw of args) {
@@ -1331,7 +1510,16 @@ export function checkWritePath(path: string): BashCheck {
 /** Tool names that take a file path and write it. Kept broad on purpose: a
  * name this list misses is a hole, and a name it carries that does not exist
  * costs nothing. // VERIFY-ON-PIN: pi's write-tool naming. */
-const WRITE_TOOLS = new Set(["write", "edit", "multi_edit", "multiedit", "str_replace", "create", "write_file", "apply_patch"]);
+const WRITE_TOOLS = new Set([
+  "write",
+  "edit",
+  "multi_edit",
+  "multiedit",
+  "str_replace",
+  "create",
+  "write_file",
+  "apply_patch",
+]);
 
 /**
  * pi activation. VERIFIED (findings §5 lines 132-141): a tool_call
@@ -1344,14 +1532,14 @@ export default function activate(pi: Pi): void {
   pi.on("tool_call", (event) => {
     const ev = event as ToolCallEvent;
     const input = (ev.input ?? ev.arguments) as
-      | { command?: unknown; path?: unknown; file_path?: unknown; filePath?: unknown }
-      | undefined;
+      { command?: unknown; path?: unknown; file_path?: unknown; filePath?: unknown } | undefined;
 
     if (ev.toolName === "bash") {
       const cmd = input?.command;
       if (typeof cmd !== "string") return;
       const res = checkBashCommand(cmd);
-      if (!res.allowed) return { block: true, reason: res.reason ?? "exec policy: command blocked" };
+      if (!res.allowed)
+        return { block: true, reason: res.reason ?? "exec policy: command blocked" };
       return;
     }
 

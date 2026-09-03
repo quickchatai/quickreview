@@ -51,7 +51,13 @@
 // Nothing here dismisses, retracts or edits an existing review. A guard's only
 // powers are to refuse a mutation and to soften an event from REQUEST_CHANGES
 // to COMMENT.
-import { ciBlocksApproval, classifyCi, withholdApproval, type CheckSummary, type CiState } from "./cigate.js";
+import {
+  ciBlocksApproval,
+  classifyCi,
+  withholdApproval,
+  type CheckSummary,
+  type CiState,
+} from "./cigate.js";
 import { standingReview } from "./standing-review.js";
 import type { GuardsConfig } from "./config.js";
 import type { GateResult, MutationGuard, MutationIntent } from "./gate.js";
@@ -67,8 +73,12 @@ export const POSTING_KINDS: ReadonlySet<string> = new Set([
 /** The read-only slice of the adapter the guards need. Both calls are reads,
  * and a read is never gated. */
 export interface GuardAdapter {
-  getPr(n: number): Promise<{ state: "open" | "closed"; merged: boolean; head_sha: string; author: string }>;
-  listReviews(n: number): Promise<Array<{ id: number; user: string; state: string; commit_id: string }>>;
+  getPr(
+    n: number,
+  ): Promise<{ state: "open" | "closed"; merged: boolean; head_sha: string; author: string }>;
+  listReviews(
+    n: number,
+  ): Promise<Array<{ id: number; user: string; state: string; commit_id: string }>>;
   /** Checks at a head (guard 4). Optional: an adapter without it
    * cannot see CI, and a guard never blocks on what it cannot see. */
   listChecks?(ref: string): Promise<CheckSummary[]>;
@@ -78,7 +88,11 @@ export interface GuardAdapter {
  * the event log. */
 export type GuardStore = Pick<
   StateStore,
-  "reviewedHead" | "recordReviewedHead" | "logEvent" | "recordApprovalWithheld" | "clearApprovalWithheld"
+  | "reviewedHead"
+  | "recordReviewedHead"
+  | "logEvent"
+  | "recordApprovalWithheld"
+  | "clearApprovalWithheld"
 >;
 
 export interface GuardDeps {
@@ -140,7 +154,11 @@ export function downgradeNote(approver: string, headSha: string): string {
 }
 
 /** REQUEST_CHANGES → COMMENT, findings untouched, with the note appended. */
-export function downgradeForHumanApproval(body: ReviewBody, approver: string, headSha: string): ReviewBody {
+export function downgradeForHumanApproval(
+  body: ReviewBody,
+  approver: string,
+  headSha: string,
+): ReviewBody {
   return {
     ...body,
     event: "COMMENT",
@@ -176,7 +194,8 @@ export function hasNewEvidence(mark: ReviewedHeadRow | undefined, headSha: strin
 
 /** Why a posting mutation was refused. Short tags — they land in the event log
  * and in `GateResult.blocked`. */
-export type BlockReason = "pr-merged" | "pr-closed" | "pr-unreadable" | "no-new-evidence" | "head-drift";
+export type BlockReason =
+  "pr-merged" | "pr-closed" | "pr-unreadable" | "no-new-evidence" | "head-drift";
 
 /**
  * Read the checks at a head for guard 4. Null means "cannot see CI" — no
@@ -204,7 +223,12 @@ async function readCi(
 export function makePostingGuard(deps: GuardDeps): MutationGuard {
   const log = deps.log ?? (() => {});
 
-  const refuse = (intent: MutationIntent, pr: number, reason: BlockReason, extra: Record<string, unknown> = {}) => {
+  const refuse = (
+    intent: MutationIntent,
+    pr: number,
+    reason: BlockReason,
+    extra: Record<string, unknown> = {},
+  ) => {
     log(`guard: refused ${intent.kind} on #${pr} — ${reason}`);
     deps.store.logEvent("posting_guard_blocked", pr, { kind: intent.kind, reason, ...extra });
     return { block: reason };
@@ -252,7 +276,10 @@ export function makePostingGuard(deps: GuardDeps): MutationGuard {
         ref &&
         ref.head_sha.toLowerCase() !== body.commit_id.toLowerCase()
       ) {
-        return refuse(intent, pr, "head-drift", { expected_head: body.commit_id, live_head: ref.head_sha });
+        return refuse(intent, pr, "head-drift", {
+          expected_head: body.commit_id,
+          live_head: ref.head_sha,
+        });
       }
 
       // --- guard 2: has anything happened since the last review? ---
@@ -269,12 +296,19 @@ export function makePostingGuard(deps: GuardDeps): MutationGuard {
       // Every other guard still binds it — merged/closed (3) and head drift
       // (5) both ran above, unconditionally.
       const mechanical = intent.reviewPurpose === "escalation";
-      if (deps.guards.skip_unchanged_head && !mechanical && !hasNewEvidence(deps.store.reviewedHead(pr), head)) {
+      if (
+        deps.guards.skip_unchanged_head &&
+        !mechanical &&
+        !hasNewEvidence(deps.store.reviewedHead(pr), head)
+      ) {
         return refuse(intent, pr, "no-new-evidence", { head_sha: head });
       }
 
       // --- guard 1: a human approved this head; do not hold the gate ---
-      if (deps.guards.downgrade_on_human_approval && (body.event ?? "").toUpperCase() === "REQUEST_CHANGES") {
+      if (
+        deps.guards.downgrade_on_human_approval &&
+        (body.event ?? "").toUpperCase() === "REQUEST_CHANGES"
+      ) {
         let approver: string | null = null;
         try {
           approver = humanApprovalAtHead(await deps.adapter.listReviews(pr), {
@@ -288,7 +322,9 @@ export function makePostingGuard(deps: GuardDeps): MutationGuard {
           log(`guard: review listing failed on #${pr}`, err);
         }
         if (approver) {
-          log(`guard: #${pr} REQUEST_CHANGES → COMMENT (@${approver} approved ${head.slice(0, 7)})`);
+          log(
+            `guard: #${pr} REQUEST_CHANGES → COMMENT (@${approver} approved ${head.slice(0, 7)})`,
+          );
           deps.store.logEvent("posting_guard_downgraded", pr, { approver, head_sha: head });
           return {
             intent: {
@@ -332,7 +368,8 @@ export function makePostingGuard(deps: GuardDeps): MutationGuard {
       // suppress the substantive review that follows. Keyed on the PRESENCE of
       // a `reviewPurpose` rather than on each spelling, so a future purpose
       // cannot claim a head by being forgotten here.
-      if (intent.kind !== "create_review" || intent.reviewPurpose || !result.executed || !intent.pr) return;
+      if (intent.kind !== "create_review" || intent.reviewPurpose || !result.executed || !intent.pr)
+        return;
       const body = (intent.body ?? {}) as ReviewBody;
       if (!body.commit_id) return;
       deps.store.recordReviewedHead(intent.pr, {

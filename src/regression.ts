@@ -69,11 +69,13 @@ export const BOT_TAG = /^\s*\[(blocker|question|nit|check this|note)\b/i;
 
 /** Polish appears freely in this corpus. Comparing an English lens against a
  * Polish finding measures translation, not review quality. */
-export const POLISH = /[ąćęłńóśźż]|\b(nie|jest|tutaj|żeby|może|trzeba|powinno|zobacz|który|tego|takie)\b/i;
+export const POLISH =
+  /[ąćęłńóśźż]|\b(nie|jest|tutaj|żeby|może|trzeba|powinno|zobacz|który|tego|takie)\b/i;
 
 /** Findings whose evidence is not in the PR — a replay structurally cannot
  * reproduce them, so they would be permanent false misses masking real ones. */
-export const OFF_PR = /\bas (we )?discussed\b|\bon the call\b|\boffline\b|\bslack\b|@[a-z0-9-]{3,}|\bscreenshot\b|\bstandup\b/i;
+export const OFF_PR =
+  /\bas (we )?discussed\b|\bon the call\b|\boffline\b|\bslack\b|@[a-z0-9-]{3,}|\bscreenshot\b|\bstandup\b/i;
 
 /** Nothing at or after this instant is human ground truth: 335 findings from
  * 2026-05-20 are the old loop's own output, and ~835 from 2026-03-01 are
@@ -93,7 +95,13 @@ export interface Substance {
   long: boolean;
 }
 
-export const RUNGS = ["L0 content-free", "L1 bare pointer", "L2 pointed claim", "L3 justified or proposes a fix", "L4 argued"] as const;
+export const RUNGS = [
+  "L0 content-free",
+  "L1 bare pointer",
+  "L2 pointed claim",
+  "L3 justified or proposes a fix",
+  "L4 argued",
+] as const;
 
 function multiSentence(s: string): boolean {
   return (s.replace(/```[\s\S]*?```/g, " ").match(/[.!?](\s|$)/g) ?? []).length >= 2;
@@ -116,7 +124,17 @@ export function classifySubstance(md: string, plain: string): Substance {
   else if (!reason && !alternative) rung = 2;
   else if (!(long && (reason || alternative) && (multi || /```/.test(md)))) rung = 3;
   else rung = 4;
-  return { rung, name: RUNGS[rung]!, contentFree, reason, alternative, context, question, multi, long };
+  return {
+    rung,
+    name: RUNGS[rung]!,
+    contentFree,
+    reason,
+    alternative,
+    context,
+    question,
+    multi,
+    long,
+  };
 }
 
 /** The substance bar for admission to the set: the finding must state a reason
@@ -186,22 +204,35 @@ export interface CaseSet {
   cases: RegressionCase[];
 }
 
-const EXPECTATIONS: readonly Expectation[] = ["expected-catch", "out-of-remit", "expected-divergence"];
+const EXPECTATIONS: readonly Expectation[] = [
+  "expected-catch",
+  "out-of-remit",
+  "expected-divergence",
+];
 
 /** Read a committed case set, refusing anything malformed. A silently-empty or
  * half-parsed set would produce a clean run out of nothing, which is the one
  * result this whole module exists to make impossible. */
 export function parseCaseSet(raw: unknown): CaseSet {
   const o = raw as Partial<CaseSet>;
-  if (!o || typeof o !== "object" || !Array.isArray(o.cases)) throw new Error("regression case set: no `cases` array");
-  if (o.cases.length === 0) throw new Error("regression case set: empty — an empty set scores clean and means nothing");
+  if (!o || typeof o !== "object" || !Array.isArray(o.cases))
+    throw new Error("regression case set: no `cases` array");
+  if (o.cases.length === 0)
+    throw new Error("regression case set: empty — an empty set scores clean and means nothing");
   for (const c of o.cases) {
-    if (!c.id || typeof c.pr !== "number" || !c.reviewer || !c.submittedAt) throw new Error(`regression case set: malformed case ${JSON.stringify(c.id ?? c.pr)}`);
-    if (!Array.isArray(c.findings) || c.findings.length === 0) throw new Error(`regression case set: case ${c.id} has no findings`);
+    if (!c.id || typeof c.pr !== "number" || !c.reviewer || !c.submittedAt)
+      throw new Error(`regression case set: malformed case ${JSON.stringify(c.id ?? c.pr)}`);
+    if (!Array.isArray(c.findings) || c.findings.length === 0)
+      throw new Error(`regression case set: case ${c.id} has no findings`);
     for (const f of c.findings) {
-      if (!f.path || typeof f.line !== "number" || !f.text) throw new Error(`regression case set: malformed finding in ${c.id}`);
-      if (!EXPECTATIONS.includes(f.expectation)) throw new Error(`regression case set: unknown expectation "${f.expectation}" in ${c.id}`);
-      if (!f.substance || typeof f.substance.rung !== "number") throw new Error(`regression case set: finding in ${c.id} carries no substance classification`);
+      if (!f.path || typeof f.line !== "number" || !f.text)
+        throw new Error(`regression case set: malformed finding in ${c.id}`);
+      if (!EXPECTATIONS.includes(f.expectation))
+        throw new Error(`regression case set: unknown expectation "${f.expectation}" in ${c.id}`);
+      if (!f.substance || typeof f.substance.rung !== "number")
+        throw new Error(
+          `regression case set: finding in ${c.id} carries no substance classification`,
+        );
     }
   }
   return { provenance: o.provenance ?? "", builtAt: o.builtAt ?? "", cases: o.cases };
@@ -220,7 +251,12 @@ export interface CandidateReview {
   headSha: string;
   changedFiles: number;
   churn: number;
-  findings: Array<Omit<CaseFinding, "substance" | "expectation"> & { substance?: Substance; expectation?: Expectation }>;
+  findings: Array<
+    Omit<CaseFinding, "substance" | "expectation"> & {
+      substance?: Substance;
+      expectation?: Expectation;
+    }
+  >;
 }
 
 export interface SelectOptions {
@@ -246,13 +282,19 @@ export interface SelectionReport {
 }
 
 /** Is this finding admissible on its own merits? Verdict is not consulted. */
-export function qualifyFinding(f: { text: string; plain?: string }): { ok: boolean; reason?: string; substance: Substance } {
+export function qualifyFinding(f: { text: string; plain?: string }): {
+  ok: boolean;
+  reason?: string;
+  substance: Substance;
+} {
   const plain = f.plain ?? f.text;
   const substance = classifySubstance(f.text, plain);
-  if (BOT_TAG.test(f.text)) return { ok: false, reason: "machine-authored (bot grammar)", substance };
+  if (BOT_TAG.test(f.text))
+    return { ok: false, reason: "machine-authored (bot grammar)", substance };
   if (POLISH.test(f.text)) return { ok: false, reason: "not English", substance };
   if (OFF_PR.test(f.text)) return { ok: false, reason: "evidence is not in the PR", substance };
-  if (substance.rung < QUALIFYING_RUNG) return { ok: false, reason: `substance ${substance.name}`, substance };
+  if (substance.rung < QUALIFYING_RUNG)
+    return { ok: false, reason: `substance ${substance.name}`, substance };
   return { ok: true, substance };
 }
 
@@ -261,7 +303,10 @@ export function qualifyFinding(f: { text: string; plain?: string }): { ok: boole
  * the GitHub verdict, which is why the same pool with every verdict flipped
  * selects identically.
  */
-export function selectCases(candidates: CandidateReview[], opts: SelectOptions = {}): SelectionReport {
+export function selectCases(
+  candidates: CandidateReview[],
+  opts: SelectOptions = {},
+): SelectionReport {
   const perReviewerCap = opts.perReviewerCap ?? 6;
   const budget = opts.budget ?? 50;
   const minFindings = opts.minFindings ?? 2;
@@ -323,7 +368,11 @@ export function selectCases(candidates: CandidateReview[], opts: SelectOptions =
     if (cases.length >= budget) break;
     const n = perReviewer[s.c.reviewer] ?? 0;
     if (n >= perReviewerCap) {
-      rejected.push({ pr: s.c.pr, reviewer: s.c.reviewer, reason: `per-reviewer cap ${perReviewerCap} reached` });
+      rejected.push({
+        pr: s.c.pr,
+        reviewer: s.c.reviewer,
+        reason: `per-reviewer cap ${perReviewerCap} reached`,
+      });
       continue;
     }
     perReviewer[s.c.reviewer] = n + 1;
@@ -350,7 +399,67 @@ export interface SandboxFinding {
  * which is most of a short human imperative. Here backticks are unwrapped and
  * only true function words are dropped. */
 const FUNCTION_WORDS = new Set([
-  "the","this","that","with","from","have","will","would","could","should","been","were","what","when","then","than","they","them","your","yours","here","there","which","while","about","into","just","also","only","very","much","more","most","some","such","like","does","doesn","don","not","but","and","for","are","was","you","its","it's","can","may","might","must","shall","because","since","otherwise","instead","consider","suggest","maybe","please",
+  "the",
+  "this",
+  "that",
+  "with",
+  "from",
+  "have",
+  "will",
+  "would",
+  "could",
+  "should",
+  "been",
+  "were",
+  "what",
+  "when",
+  "then",
+  "than",
+  "they",
+  "them",
+  "your",
+  "yours",
+  "here",
+  "there",
+  "which",
+  "while",
+  "about",
+  "into",
+  "just",
+  "also",
+  "only",
+  "very",
+  "much",
+  "more",
+  "most",
+  "some",
+  "such",
+  "like",
+  "does",
+  "doesn",
+  "don",
+  "not",
+  "but",
+  "and",
+  "for",
+  "are",
+  "was",
+  "you",
+  "its",
+  "it's",
+  "can",
+  "may",
+  "might",
+  "must",
+  "shall",
+  "because",
+  "since",
+  "otherwise",
+  "instead",
+  "consider",
+  "suggest",
+  "maybe",
+  "please",
 ]);
 
 export function findingTheme(text: string): Set<string> {
@@ -446,14 +555,19 @@ export interface ScoredCase {
   vacuous: boolean;
 }
 
-export function scoreCase(c: RegressionCase, sandbox: SandboxFinding[], opts: MatchOptions = {}): ScoredCase {
+export function scoreCase(
+  c: RegressionCase,
+  sandbox: SandboxFinding[],
+  opts: MatchOptions = {},
+): ScoredCase {
   const used = new Set<SandboxFinding>();
   const findings: ScoredFinding[] = c.findings.map((f) => {
     const m = matchFinding(f, sandbox, opts);
     if (m.matched && m.best) used.add(m.best);
     let outcome: FindingOutcome;
     if (f.expectation === "expected-divergence") outcome = "divergence";
-    else if (f.expectation === "out-of-remit") outcome = m.matched ? "out-of-remit-raised" : "correctly-silent";
+    else if (f.expectation === "out-of-remit")
+      outcome = m.matched ? "out-of-remit-raised" : "correctly-silent";
     else outcome = m.matched ? "reached" : "not-reached";
     return { finding: f, outcome, ...(m.best ? { best: m.best } : {}), score: m.score };
   });
@@ -493,7 +607,11 @@ export class ReplayRefused extends Error {}
  * establish. Exported so a caller can check before doing expensive setup, but
  * `runRegression` calls it regardless.
  */
-export function assertReplaySafe(cases: RegressionCase[], gate: ReplayGate, cutoff = CONTAMINATION_CUTOFF): void {
+export function assertReplaySafe(
+  cases: RegressionCase[],
+  gate: ReplayGate,
+  cutoff = CONTAMINATION_CUTOFF,
+): void {
   if (gate?.isDryRun !== true) {
     throw new ReplayRefused(
       "regression replay refused: the gate it was handed does not report dry-run. A replay posts real reviews to real authors otherwise, and `dry_run` is the owner's alone to change (rule 1).",
@@ -501,7 +619,9 @@ export function assertReplaySafe(cases: RegressionCase[], gate: ReplayGate, cuto
   }
   const open = cases.filter((c) => c.prState === "OPEN");
   if (open.length) {
-    throw new ReplayRefused(`regression replay refused: ${open.length} case(s) are still-open PRs (${open.map((c) => `#${c.pr}`).join(", ")}) — never replay one.`);
+    throw new ReplayRefused(
+      `regression replay refused: ${open.length} case(s) are still-open PRs (${open.map((c) => `#${c.pr}`).join(", ")}) — never replay one.`,
+    );
   }
   const late = cases.filter((c) => !(c.submittedAt < cutoff));
   if (late.length) {
@@ -532,7 +652,10 @@ export interface RegressionRun {
   exitCode: 0;
 }
 
-export async function runRegression(cases: RegressionCase[], deps: RegressionDeps): Promise<RegressionRun> {
+export async function runRegression(
+  cases: RegressionCase[],
+  deps: RegressionDeps,
+): Promise<RegressionRun> {
   assertReplaySafe(cases, deps.gate);
   const scored: ScoredCase[] = [];
   for (const c of cases) scored.push(scoreCase(c, await deps.replay(c), deps.match));
@@ -559,7 +682,8 @@ export async function runRegression(cases: RegressionCase[], deps: RegressionDep
     headline = `${vacuous.length} of ${scored.length} case(s) produced NO sandbox findings at all. Suspect the replay harness before the reviewer — a set that scores clean because it scored nothing is the failure mode this was built to avoid.`;
   } else if (notReached.length === 0) {
     recommendation = "no-action";
-    headline = "Every finding the reviewer is expected to reach, it reached. Nothing here argues against the change.";
+    headline =
+      "Every finding the reviewer is expected to reach, it reached. Nothing here argues against the change.";
   } else {
     recommendation = "look-at-these";
     headline = `${notReached.length} finding(s) the reviewer is expected to reach went unreached. Read them and decide — this is an investigation, not a verdict on the change.`;
@@ -608,39 +732,60 @@ export function renderInvestigation(run: Omit<RegressionRun, "markdown">): strin
   L.push("");
 
   const counts: Record<string, number> = {};
-  for (const sc of run.cases) for (const f of sc.findings) counts[f.outcome] = (counts[f.outcome] ?? 0) + 1;
+  for (const sc of run.cases)
+    for (const f of sc.findings) counts[f.outcome] = (counts[f.outcome] ?? 0) + 1;
   L.push("| outcome | findings | means |");
   L.push("| --- | --- | --- |");
   L.push(`| reached | ${counts["reached"] ?? 0} | the reviewer got to an expected-catch finding |`);
-  L.push(`| **not reached** | ${counts["not-reached"] ?? 0} | expected-catch, no sandbox finding aligned — **investigate** |`);
-  L.push(`| correctly silent | ${counts["correctly-silent"] ?? 0} | out of remit by ratified design, and it stayed out |`);
-  L.push(`| out-of-remit raised | ${counts["out-of-remit-raised"] ?? 0} | it raised something lint/taste owns — note, not a failure |`);
-  L.push(`| divergence | ${counts["divergence"] ?? 0} | the human was argued down; either answer is defensible |`);
+  L.push(
+    `| **not reached** | ${counts["not-reached"] ?? 0} | expected-catch, no sandbox finding aligned — **investigate** |`,
+  );
+  L.push(
+    `| correctly silent | ${counts["correctly-silent"] ?? 0} | out of remit by ratified design, and it stayed out |`,
+  );
+  L.push(
+    `| out-of-remit raised | ${counts["out-of-remit-raised"] ?? 0} | it raised something lint/taste owns — note, not a failure |`,
+  );
+  L.push(
+    `| divergence | ${counts["divergence"] ?? 0} | the human was argued down; either answer is defensible |`,
+  );
   L.push("");
 
-  L.push(`Reviewer skew: **${(run.reviewerSkew * 100).toFixed(0)}%** of scored expected-catch findings come from one reviewer.`);
+  L.push(
+    `Reviewer skew: **${(run.reviewerSkew * 100).toFixed(0)}%** of scored expected-catch findings come from one reviewer.`,
+  );
   if (run.reviewerSkew > 0.4) {
     L.push("");
-    L.push("⚠ That is high enough that this run is partly measuring one person's habits. Widen the set before acting on a pattern in it.");
+    L.push(
+      "⚠ That is high enough that this run is partly measuring one person's habits. Widen the set before acting on a pattern in it.",
+    );
   }
   L.push("");
 
   const vacuous = run.cases.filter((c) => c.vacuous);
   if (vacuous.length) {
-    L.push(`⚠ **${vacuous.length} case(s) produced no sandbox findings at all** (${vacuous.map((c) => c.case.id).join(", ")}). A case that scores clean because nothing was extracted is a harness fault, not a result — check the replay before reading anything below as a regression.`);
+    L.push(
+      `⚠ **${vacuous.length} case(s) produced no sandbox findings at all** (${vacuous.map((c) => c.case.id).join(", ")}). A case that scores clean because nothing was extracted is a harness fault, not a result — check the replay before reading anything below as a regression.`,
+    );
     L.push("");
   }
 
   L.push("## Findings to look at");
   L.push("");
-  const toLook = run.cases.flatMap((sc) => sc.findings.filter((f) => f.outcome === "not-reached").map((f) => ({ sc, f })));
+  const toLook = run.cases.flatMap((sc) =>
+    sc.findings.filter((f) => f.outcome === "not-reached").map((f) => ({ sc, f })),
+  );
   if (toLook.length === 0) {
     L.push("None.");
   } else {
     for (const { sc, f } of toLook) {
-      L.push(`### #${sc.case.pr} \`${f.finding.path}\`:${f.finding.line} — ${sc.case.reviewer}, ${sc.case.submittedAt.slice(0, 10)}`);
+      L.push(
+        `### #${sc.case.pr} \`${f.finding.path}\`:${f.finding.line} — ${sc.case.reviewer}, ${sc.case.submittedAt.slice(0, 10)}`,
+      );
       L.push("");
-      L.push(`Substance: **${f.finding.substance.name}** · thread ${f.finding.resolved ? "was resolved" : "went unresolved"}${f.finding.gotReply ? ", author replied" : ""} · GitHub verdict on the review was \`${sc.case.state}\` (not why it was selected).`);
+      L.push(
+        `Substance: **${f.finding.substance.name}** · thread ${f.finding.resolved ? "was resolved" : "went unresolved"}${f.finding.gotReply ? ", author replied" : ""} · GitHub verdict on the review was \`${sc.case.state}\` (not why it was selected).`,
+      );
       L.push("");
       L.push("> " + clip(f.finding.text, 900).split("\n").join("\n> "));
       L.push("");
@@ -650,16 +795,24 @@ export function renderInvestigation(run: Omit<RegressionRun, "markdown">): strin
         L.push("```");
         L.push("");
       }
-      L.push(f.best ? `Nearest sandbox finding (score ${f.score.toFixed(2)}, below threshold): "${esc(clip(f.best.text, 300))}"` : "The sandbox said nothing on this file.");
+      L.push(
+        f.best
+          ? `Nearest sandbox finding (score ${f.score.toFixed(2)}, below threshold): "${esc(clip(f.best.text, 300))}"`
+          : "The sandbox said nothing on this file.",
+      );
       L.push("");
-      L.push("Ask: is this in the reviewer's remit at all? If it is, is the miss the change under test, or was it never reached before either? Re-label the case `out-of-remit` if the honest answer is that we do not want it raised.");
+      L.push(
+        "Ask: is this in the reviewer's remit at all? If it is, is the miss the change under test, or was it never reached before either? Re-label the case `out-of-remit` if the honest answer is that we do not want it raised.",
+      );
       L.push("");
     }
   }
 
   L.push("## Every case");
   L.push("");
-  L.push("| case | reviewer | verdict (context only) | findings | reached | not reached | sandbox-only |");
+  L.push(
+    "| case | reviewer | verdict (context only) | findings | reached | not reached | sandbox-only |",
+  );
   L.push("| --- | --- | --- | --- | --- | --- | --- |");
   for (const sc of run.cases) {
     L.push(
@@ -669,7 +822,9 @@ export function renderInvestigation(run: Omit<RegressionRun, "markdown">): strin
     );
   }
   L.push("");
-  L.push("`sandbox-only` counts are not failures: the reviewer reads things humans skipped, and that is what it is for.");
+  L.push(
+    "`sandbox-only` counts are not failures: the reviewer reads things humans skipped, and that is what it is for.",
+  );
   L.push("");
   return L.join("\n");
 }

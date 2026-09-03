@@ -22,7 +22,9 @@ describe("focused pane frame", () => {
     frame.set(2, "│ more     │");
     frame.set(3, "└──────────┘");
     accentFrameRect(frame, 0, 0, 11, 3, "\x1b[35m", "\x1b[0m");
-    expect(stripAnsi(frame.lines.join("\n"))).toBe("┌──────────┐\n│ content  │\n│ more     │\n└──────────┘");
+    expect(stripAnsi(frame.lines.join("\n"))).toBe(
+      "┌──────────┐\n│ content  │\n│ more     │\n└──────────┘",
+    );
     expect(frame.lines[0]).toContain("\x1b[35m┌");
     expect(frame.lines[1]).toContain("\x1b[35m│");
     for (const line of frame.lines) expect(displayWidth(line)).toBe(12);
@@ -197,9 +199,13 @@ describe("rich board", () => {
       threads: { open: 0, total: 0 },
       description: "Frames the CTA buttons as the visitor sees them.\nSecond line.",
       labels: ["AI review requested", "frontend"],
-      comments: [{ author: "author1", body: "please also check mobile", created_at: "2026-08-14T11:00:00Z" }],
+      comments: [
+        { author: "author1", body: "please also check mobile", created_at: "2026-08-14T11:00:00Z" },
+      ],
     };
-    const text = renderBoard(view({ detail, selected: 1 }), 140, 44).lines.map(stripAnsi).join("\n");
+    const text = renderBoard(view({ detail, selected: 1 }), 140, 44)
+      .lines.map(stripAnsi)
+      .join("\n");
     expect(text).toContain("DESCRIPTION");
     expect(text).toContain("Frames the CTA buttons");
     expect(text).toContain("[AI review requested]");
@@ -211,7 +217,13 @@ describe("rich board", () => {
 });
 
 describe("live pi mirror pane", () => {
-  const pane = { pr: 5277, lines: ["\x1b[36m▌ pi\x1b[0m reading src/tasks.py", "…thinking"], missing: false, stale: false, offset: 0 };
+  const pane = {
+    pr: 5277,
+    lines: ["\x1b[36m▌ pi\x1b[0m reading src/tasks.py", "…thinking"],
+    missing: false,
+    stale: false,
+    offset: 0,
+  };
 
   it("fills the lower half with the selected session, colors intact", () => {
     const frame = renderBoard(view({ pi: pane }), 140, 40);
@@ -234,15 +246,28 @@ describe("live pi mirror pane", () => {
   });
 
   it("the events overlay sits on top of the mirror and takes its clicks", () => {
-    const zones = renderBoard(view({ pi: pane, eventsFocus: true, events: [{ ts: "t", text: "10:00:00 round_done #5265", anomaly: false }] }), 140, 40)
-      .zones as Zone<BoardAction>[];
+    const zones = renderBoard(
+      view({
+        pi: pane,
+        eventsFocus: true,
+        events: [{ ts: "t", text: "10:00:00 round_done #5265", anomaly: false }],
+      }),
+      140,
+      40,
+    ).zones as Zone<BoardAction>[];
     expect(hitTest(zones, 50, 10)).toEqual({ t: "event-jump", pr: 5265 }); // band top row 8 → first event on frame row 9
   });
 });
 
 describe("enrichWhy", () => {
   it("degrades silently when GitHub is unreachable (no secrets locally)", async () => {
-    const payload: WhyPayload = { pr: 1, known: false, spend_usd: 0, rounds: [], threads: { open: 0, total: 0 } };
+    const payload: WhyPayload = {
+      pr: 1,
+      known: false,
+      spend_usd: 0,
+      rounds: [],
+      threads: { open: 0, total: 0 },
+    };
     // Point the credential lookup at an empty dir: on a machine that DOES
     // carry the real app credential this would otherwise hit the network.
     const noSecrets = mkdtempSync(join(tmpdir(), "qcr-nosecrets-"));

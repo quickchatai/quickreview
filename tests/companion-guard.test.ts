@@ -6,7 +6,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import activate, { bashBlockReason, frozenPaths, readSeedManifest, writeBlockReason, REGISTRY_FIXTURES } from "../extensions/companion-guard.js";
+import activate, {
+  bashBlockReason,
+  frozenPaths,
+  readSeedManifest,
+  writeBlockReason,
+  REGISTRY_FIXTURES,
+} from "../extensions/companion-guard.js";
 
 describe("bashBlockReason", () => {
   it("vetoes the rule-8 GitHub/deploy family", () => {
@@ -49,7 +55,9 @@ describe("frozenPaths + writeBlockReason", () => {
   mkdirSync(join(root, "tests/fixtures"), { recursive: true });
   writeFileSync(
     join(root, "tests/fixtures/seed-manifest.json"),
-    JSON.stringify({ files: { "agents/pass-baseline.md": "x", "prompts/conversation-system.md": "y" } }),
+    JSON.stringify({
+      files: { "agents/pass-baseline.md": "x", "prompts/conversation-system.md": "y" },
+    }),
   );
 
   it("freezes exactly the manifest plus the two registry fixtures", () => {
@@ -63,8 +71,12 @@ describe("frozenPaths + writeBlockReason", () => {
   it("vetoes frozen writes by relative or absolute path, with the rule-6 reason", () => {
     const frozen = frozenPaths(readSeedManifest(root));
     expect(writeBlockReason("agents/pass-baseline.md", root, frozen)).toMatch(/rule 6/);
-    expect(writeBlockReason(join(root, "agents/pass-baseline.md"), root, frozen)).toMatch(/frozen seed/);
-    expect(writeBlockReason("tests/fixtures/ratified-divergence.json", root, frozen)).toMatch(/two sanctioned writers/);
+    expect(writeBlockReason(join(root, "agents/pass-baseline.md"), root, frozen)).toMatch(
+      /frozen seed/,
+    );
+    expect(writeBlockReason("tests/fixtures/ratified-divergence.json", root, frozen)).toMatch(
+      /two sanctioned writers/,
+    );
   });
 
   it("allows everything else — ours-to-edit files are NOT in the manifest, so they pass", () => {
@@ -79,7 +91,9 @@ describe("frozenPaths + writeBlockReason", () => {
   it("degrades to fixtures-only when the manifest is unreadable — never wedges pi", () => {
     const frozen = frozenPaths(readSeedManifest(join(root, "nowhere")));
     expect(frozen.size).toBe(REGISTRY_FIXTURES.length);
-    expect(writeBlockReason("tests/fixtures/seed-manifest.json", join(root, "nowhere"), frozen)).toMatch(/rule 6/);
+    expect(
+      writeBlockReason("tests/fixtures/seed-manifest.json", join(root, "nowhere"), frozen),
+    ).toMatch(/rule 6/);
   });
 
   // a manifest that names NO files disarms the rule-6 veto for every
@@ -95,7 +109,10 @@ describe("frozenPaths + writeBlockReason", () => {
     writeFileSync(at, "{}");
     expect(readSeedManifest(empty)).toEqual({ state: "unreadable", reason: "no files object" });
     writeFileSync(at, JSON.stringify({ files: {} }));
-    expect(readSeedManifest(empty)).toEqual({ state: "unreadable", reason: "manifest lists no files" });
+    expect(readSeedManifest(empty)).toEqual({
+      state: "unreadable",
+      reason: "manifest lists no files",
+    });
     writeFileSync(at, JSON.stringify({ files: [] }));
     expect(readSeedManifest(empty)).toEqual({ state: "unreadable", reason: "no files object" });
     writeFileSync(at, JSON.stringify({ files: null }));
@@ -111,11 +128,17 @@ describe("frozenPaths + writeBlockReason", () => {
       expect(readSeedManifest(empty).state, `top-level ${scalar}`).toBe("unreadable");
     }
     writeFileSync(at, "null");
-    expect(readSeedManifest(empty)).toEqual({ state: "unreadable", reason: "manifest is not an object" });
+    expect(readSeedManifest(empty)).toEqual({
+      state: "unreadable",
+      reason: "manifest is not an object",
+    });
 
     // One real entry and it is a good read again.
     writeFileSync(at, JSON.stringify({ files: { "agents/pass-baseline.md": "x" } }));
-    expect(readSeedManifest(empty)).toEqual({ state: "manifest", files: ["agents/pass-baseline.md"] });
+    expect(readSeedManifest(empty)).toEqual({
+      state: "manifest",
+      files: ["agents/pass-baseline.md"],
+    });
     rmSync(empty, { recursive: true, force: true });
   });
 
@@ -124,7 +147,11 @@ describe("frozenPaths + writeBlockReason", () => {
     const frozen = frozenPaths(readSeedManifest(repoRoot));
     expect(frozen.has("agents/pass-baseline.md")).toBe(true);
     // rule 6's ours-to-edit list must never be vetoed:
-    for (const ours of ["prompts/companion.md", "agents/pass-intent.md", "agents/pass-placement.md"]) {
+    for (const ours of [
+      "prompts/companion.md",
+      "agents/pass-intent.md",
+      "agents/pass-placement.md",
+    ]) {
       expect(frozen.has(ours)).toBe(false);
     }
   });
@@ -154,7 +181,8 @@ describe("activate — a degraded manifest read is never cached", () => {
     };
     try {
       activate(pi as never);
-      const write = (path: string): { block?: boolean; reason?: string } | undefined => handler!({ toolName: "write", input: { path } });
+      const write = (path: string): { block?: boolean; reason?: string } | undefined =>
+        handler!({ toolName: "write", input: { path } });
 
       // No manifest: degraded — the seed is NOT vetoed, the fixtures still are.
       expect(write("agents/pass-baseline.md")).toBeUndefined();
@@ -164,7 +192,10 @@ describe("activate — a degraded manifest read is never cached", () => {
       // The manifest becomes readable. The old code cached the degraded set on
       // the first write/edit, so this stayed permitted for the whole session —
       // a rule-6 veto silently switched off by one bad moment.
-      writeFileSync(join(dir, "tests/fixtures/seed-manifest.json"), JSON.stringify({ files: { "agents/pass-baseline.md": "x" } }));
+      writeFileSync(
+        join(dir, "tests/fixtures/seed-manifest.json"),
+        JSON.stringify({ files: { "agents/pass-baseline.md": "x" } }),
+      );
       expect(write("agents/pass-baseline.md")?.reason).toMatch(/rule 6/);
 
       // A GOOD read is still cached — the set changes only on a reseed, and a
@@ -214,11 +245,16 @@ describe("activate — a degraded manifest read is never cached", () => {
     };
     try {
       activate(pi as never);
-      expect(() => handler!({ toolName: "write", input: { path: "agents/pass-baseline.md" } })).not.toThrow();
+      expect(() =>
+        handler!({ toolName: "write", input: { path: "agents/pass-baseline.md" } }),
+      ).not.toThrow();
       expect(errs.filter((e) => e.includes("DEGRADED"))).toHaveLength(1);
       expect(errs[0]).toContain(expected);
       // The fixtures are still vetoed on every one of these shapes.
-      expect(handler!({ toolName: "write", input: { path: "tests/fixtures/ratified-divergence.json" } })?.block).toBe(true);
+      expect(
+        handler!({ toolName: "write", input: { path: "tests/fixtures/ratified-divergence.json" } })
+          ?.block,
+      ).toBe(true);
     } finally {
       console.error = realError;
       if (prevRoot === undefined) delete process.env.QCR_ROOT;
@@ -246,13 +282,17 @@ describe("activate — a degraded manifest read is never cached", () => {
     };
     try {
       activate(pi as never);
-      const write = (path: string): { block?: boolean; reason?: string } | undefined => handler!({ toolName: "write", input: { path } });
+      const write = (path: string): { block?: boolean; reason?: string } | undefined =>
+        handler!({ toolName: "write", input: { path } });
       expect(write("agents/pass-baseline.md")).toBeUndefined(); // fail-open, as ruled
       expect(errs.filter((e) => e.includes("DEGRADED"))).toHaveLength(1); // but never silent
       expect(errs[0]).toMatch(/manifest lists no files/);
 
       // Not cached: the moment the manifest is real, the veto is back.
-      writeFileSync(join(dir, "tests/fixtures/seed-manifest.json"), JSON.stringify({ files: { "agents/pass-baseline.md": "x" } }));
+      writeFileSync(
+        join(dir, "tests/fixtures/seed-manifest.json"),
+        JSON.stringify({ files: { "agents/pass-baseline.md": "x" } }),
+      );
       expect(write("agents/pass-baseline.md")?.reason).toMatch(/rule 6/);
     } finally {
       console.error = realError;

@@ -40,21 +40,40 @@ export interface DeployCeremonyStore {
 function valid(value: unknown): value is DeployCeremonyRecord {
   if (!value || typeof value !== "object") return false;
   const v = value as Record<string, unknown>;
-  return v.version === 1 && typeof v.phase === "string" &&
-    ["engaging-drain", "abort-requested", "waiting-rounds", "syncing", "awaiting-lift", "deploy-failed", "drain-failed", "lifting-after-abort"].includes(v.phase) &&
+  return (
+    v.version === 1 &&
+    typeof v.phase === "string" &&
+    [
+      "engaging-drain",
+      "abort-requested",
+      "waiting-rounds",
+      "syncing",
+      "awaiting-lift",
+      "deploy-failed",
+      "drain-failed",
+      "lifting-after-abort",
+    ].includes(v.phase) &&
     (v.target_head === undefined || typeof v.target_head === "string") &&
     (v.pre_deploy_snapshot_at === undefined || typeof v.pre_deploy_snapshot_at === "string") &&
     (v.drain_observed === undefined || typeof v.drain_observed === "boolean") &&
-    (v.first_undrained_snapshot_at === undefined || typeof v.first_undrained_snapshot_at === "string") &&
+    (v.first_undrained_snapshot_at === undefined ||
+      typeof v.first_undrained_snapshot_at === "string") &&
     (v.deploy_run_id === undefined || typeof v.deploy_run_id === "string") &&
-    typeof v.updated_at === "string";
+    typeof v.updated_at === "string"
+  );
 }
 
 export class MemoryDeployCeremonyStore implements DeployCeremonyStore {
   private record: DeployCeremonyRecord | undefined;
-  read(): DeployCeremonyRecord | undefined { return this.record; }
-  write(record: DeployCeremonyRecord): void { this.record = { ...record }; }
-  clear(): void { this.record = undefined; }
+  read(): DeployCeremonyRecord | undefined {
+    return this.record;
+  }
+  write(record: DeployCeremonyRecord): void {
+    this.record = { ...record };
+  }
+  clear(): void {
+    this.record = undefined;
+  }
 }
 
 export class FileDeployCeremonyStore implements DeployCeremonyStore {

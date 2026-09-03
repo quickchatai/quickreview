@@ -20,7 +20,15 @@
 // The HTTP shapes below (reindex `accepted` + task polling, the collection
 // description marker, the 403 wording) were taken from a running 0.4.15 on
 // 2026-09-02, on a throwaway copy — see docs/memory-embeddings.md.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -33,12 +41,28 @@ const HOSTED = { provider: "openai", model: "text-embedding-3-small", dimension:
 const LOCAL = { provider: "local", model: "bge-small-zh-v1.5-f16", dimension: 512 };
 
 /** The description a real 0.4.15 wrote for a hosted-embedded collection. */
-function metaText(e: { provider: string; model: string; dimension: number }, identity = e.model): string {
-  const payload = JSON.stringify({ dimension: e.dimension, model: e.model, model_identity: identity, provider: e.provider });
-  return JSON.stringify({ CollectionName: "context", Description: `Unified context collection\n\n[openviking.embedding]\n${payload}`, Fields: [] });
+function metaText(
+  e: { provider: string; model: string; dimension: number },
+  identity = e.model,
+): string {
+  const payload = JSON.stringify({
+    dimension: e.dimension,
+    model: e.model,
+    model_identity: identity,
+    provider: e.provider,
+  });
+  return JSON.stringify({
+    CollectionName: "context",
+    Description: `Unified context collection\n\n[openviking.embedding]\n${payload}`,
+    Fields: [],
+  });
 }
 
-const LOCAL_CONF = { server: { host: "127.0.0.1", port: 19333 }, storage: { workspace: "" }, embedding: { dense: { ...LOCAL, input: "text" } } };
+const LOCAL_CONF = {
+  server: { host: "127.0.0.1", port: 19333 },
+  storage: { workspace: "" },
+  embedding: { dense: { ...LOCAL, input: "text" } },
+};
 
 let home: string;
 function collectionDir(): string {
@@ -49,9 +73,21 @@ function seedStore(e = HOSTED): void {
   writeFileSync(join(collectionDir(), "collection_meta.json"), metaText(e));
   mkdirSync(join(collectionDir(), "store"), { recursive: true });
   writeFileSync(join(collectionDir(), "store", "CURRENT"), "MANIFEST-000002");
-  const memories = join(home, "workspace", "viking", "default", "user", "reviewer", "memories", "experiences");
+  const memories = join(
+    home,
+    "workspace",
+    "viking",
+    "default",
+    "user",
+    "reviewer",
+    "memories",
+    "experiences",
+  );
   mkdirSync(memories, { recursive: true });
-  writeFileSync(join(memories, "20260901T100000-aaaa0000.md"), "#calibration never dismiss an approval\n");
+  writeFileSync(
+    join(memories, "20260901T100000-aaaa0000.md"),
+    "#calibration never dismiss an approval\n",
+  );
 }
 function conf(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return { ...LOCAL_CONF, storage: { workspace: join(home, "workspace") }, ...overrides };
@@ -76,11 +112,22 @@ describe("configuredEmbedder — what ov.conf runs, credential excluded", () => 
   });
 
   it("local with no model/dimension fills the one local spec", () => {
-    expect(reembed.configuredEmbedder({ embedding: { dense: { provider: "local" } } })).toEqual(LOCAL);
+    expect(reembed.configuredEmbedder({ embedding: { dense: { provider: "local" } } })).toEqual(
+      LOCAL,
+    );
   });
 
   it("a hosted provider is reported as configured — and the api_key never rides along", () => {
-    const e = reembed.configuredEmbedder({ embedding: { dense: { provider: "OpenAI", model: "text-embedding-3-small", dimension: 1536, api_key: "sk-secret" } } });
+    const e = reembed.configuredEmbedder({
+      embedding: {
+        dense: {
+          provider: "OpenAI",
+          model: "text-embedding-3-small",
+          dimension: 1536,
+          api_key: "sk-secret",
+        },
+      },
+    });
     expect(e).toEqual(HOSTED);
     expect(JSON.stringify(e)).not.toContain("sk-secret");
   });
@@ -88,13 +135,24 @@ describe("configuredEmbedder — what ov.conf runs, credential excluded", () => 
 
 describe("storedEmbedder — the collection's own record", () => {
   it("parses the marker a real 0.4.15 writes", () => {
-    expect(reembed.storedEmbedder(metaText(HOSTED))).toEqual({ ...HOSTED, model_identity: "text-embedding-3-small" });
+    expect(reembed.storedEmbedder(metaText(HOSTED))).toEqual({
+      ...HOSTED,
+      model_identity: "text-embedding-3-small",
+    });
   });
 
   it("no marker, or garbage, is null — unknown, never compatible", () => {
-    expect(reembed.storedEmbedder(JSON.stringify({ CollectionName: "context", Description: "Unified context collection" }))).toBeNull();
+    expect(
+      reembed.storedEmbedder(
+        JSON.stringify({ CollectionName: "context", Description: "Unified context collection" }),
+      ),
+    ).toBeNull();
     expect(reembed.storedEmbedder("not json")).toBeNull();
-    expect(reembed.storedEmbedder(JSON.stringify({ Description: "x\n\n[openviking.embedding]\nnot-json" }))).toBeNull();
+    expect(
+      reembed.storedEmbedder(
+        JSON.stringify({ Description: "x\n\n[openviking.embedding]\nnot-json" }),
+      ),
+    ).toBeNull();
   });
 
   it("sameEmbedder compares provider, model and dimension — and nothing null", () => {
@@ -108,31 +166,73 @@ describe("storedEmbedder — the collection's own record", () => {
 
 describe("planPrepare — pure", () => {
   it("no collection yet ⇒ nothing to do", () => {
-    expect(reembed.planPrepare({ stored: null, metaPresent: false, expected: LOCAL, journal: null }).action).toBe("none");
+    expect(
+      reembed.planPrepare({ stored: null, metaPresent: false, expected: LOCAL, journal: null })
+        .action,
+    ).toBe("none");
   });
 
   it("a collection with unreadable metadata is REFUSED, not reset", () => {
-    expect(reembed.planPrepare({ stored: null, metaPresent: true, expected: LOCAL, journal: null }).action).toBe("refuse");
+    expect(
+      reembed.planPrepare({ stored: null, metaPresent: true, expected: LOCAL, journal: null })
+        .action,
+    ).toBe("refuse");
   });
 
   it("a matching collection ⇒ none; a different embedder ⇒ reset", () => {
-    expect(reembed.planPrepare({ stored: { ...LOCAL, model_identity: "f7e1" }, metaPresent: true, expected: LOCAL, journal: null }).action).toBe("none");
-    const plan = reembed.planPrepare({ stored: { ...HOSTED, model_identity: HOSTED.model }, metaPresent: true, expected: LOCAL, journal: null });
+    expect(
+      reembed.planPrepare({
+        stored: { ...LOCAL, model_identity: "f7e1" },
+        metaPresent: true,
+        expected: LOCAL,
+        journal: null,
+      }).action,
+    ).toBe("none");
+    const plan = reembed.planPrepare({
+      stored: { ...HOSTED, model_identity: HOSTED.model },
+      metaPresent: true,
+      expected: LOCAL,
+      journal: null,
+    });
     expect(plan.action).toBe("reset");
     expect(plan.reason).toContain("1536");
     expect(plan.reason).toContain("512");
   });
 
   it("a reset already recorded for THIS embedder is never repeated — the loop guard", () => {
-    const journal = { version: 1, embedder: LOCAL, previous: HOSTED, reset_at: "2026-09-02T15:00:00.000Z", namespaces: {} };
-    const plan = reembed.planPrepare({ stored: { ...HOSTED, model_identity: HOSTED.model }, metaPresent: true, expected: LOCAL, journal });
+    const journal = {
+      version: 1,
+      embedder: LOCAL,
+      previous: HOSTED,
+      reset_at: "2026-09-02T15:00:00.000Z",
+      namespaces: {},
+    };
+    const plan = reembed.planPrepare({
+      stored: { ...HOSTED, model_identity: HOSTED.model },
+      metaPresent: true,
+      expected: LOCAL,
+      journal,
+    });
     expect(plan.action).toBe("refuse");
     expect(plan.reason).toContain("already reset");
   });
 
   it("a reset recorded for a DIFFERENT embedder does not block a new one", () => {
-    const journal = { version: 1, embedder: HOSTED, previous: null, reset_at: "2026-08-01T00:00:00.000Z", namespaces: {} };
-    expect(reembed.planPrepare({ stored: { ...HOSTED, model_identity: HOSTED.model }, metaPresent: true, expected: LOCAL, journal }).action).toBe("reset");
+    const journal = {
+      version: 1,
+      embedder: HOSTED,
+      previous: null,
+      reset_at: "2026-08-01T00:00:00.000Z",
+      namespaces: {},
+    };
+    expect(
+      reembed.planPrepare({
+        stored: { ...HOSTED, model_identity: HOSTED.model },
+        metaPresent: true,
+        expected: LOCAL,
+        journal,
+      }).action,
+    ).toBe("reset");
   });
 });
 
@@ -143,7 +243,15 @@ describe("prepare — the disk half", () => {
     seedStore(HOSTED);
     const lines: string[] = [];
     const now = () => new Date("2026-09-02T15:30:00.000Z");
-    const report = await reembed.prepare({ home, conf: conf(), users: ["reviewer", "companion"], base: BASE, fetchFn: noServer, now, log: (l: string) => lines.push(l) });
+    const report = await reembed.prepare({
+      home,
+      conf: conf(),
+      users: ["reviewer", "companion"],
+      base: BASE,
+      fetchFn: noServer,
+      now,
+      log: (l: string) => lines.push(l),
+    });
     expect(report.action).toBe("reset");
     expect(existsSync(collectionDir())).toBe(false);
     const moved = `${collectionDir()}.pre-reembed-20260902T153000Z`;
@@ -151,7 +259,22 @@ describe("prepare — the disk half", () => {
     // Moved, not deleted: the old vectors are the rollback.
     expect(readFileSync(join(moved, "store", "CURRENT"), "utf8")).toBe("MANIFEST-000002");
     // The memory TEXT is never touched.
-    expect(readFileSync(join(home, "workspace", "viking", "default", "user", "reviewer", "memories", "experiences", "20260901T100000-aaaa0000.md"), "utf8")).toContain("never dismiss");
+    expect(
+      readFileSync(
+        join(
+          home,
+          "workspace",
+          "viking",
+          "default",
+          "user",
+          "reviewer",
+          "memories",
+          "experiences",
+          "20260901T100000-aaaa0000.md",
+        ),
+        "utf8",
+      ),
+    ).toContain("never dismiss");
     const journal = JSON.parse(readFileSync(join(home, "reembed.json"), "utf8"));
     expect(journal).toMatchObject({
       version: 1,
@@ -166,19 +289,38 @@ describe("prepare — the disk half", () => {
     });
     expect(lines.join("\n")).toContain("RESET");
     expect(lines.join("\n")).toContain("companion by its key's holder");
-    expect(reembed.journalStatus(home)).toMatchObject({ state: "pending", awaiting_operator: ["companion"] });
+    expect(reembed.journalStatus(home)).toMatchObject({
+      state: "pending",
+      awaiting_operator: ["companion"],
+    });
   });
 
   it("the own namespace is journalled even when the users list omits it", async () => {
     seedStore(HOSTED);
-    await reembed.prepare({ home, conf: conf(), users: ["companion"], own: "reviewer", base: BASE, fetchFn: noServer });
+    await reembed.prepare({
+      home,
+      conf: conf(),
+      users: ["companion"],
+      own: "reviewer",
+      base: BASE,
+      fetchFn: noServer,
+    });
     const journal = JSON.parse(readFileSync(join(home, "reembed.json"), "utf8"));
-    expect(journal.namespaces).toEqual({ reviewer: { state: "pending" }, companion: { state: "operator" } });
+    expect(journal.namespaces).toEqual({
+      reviewer: { state: "pending" },
+      companion: { state: "operator" },
+    });
   });
 
   it("a matching collection is a no-op that writes nothing", async () => {
     seedStore(LOCAL);
-    const report = await reembed.prepare({ home, conf: conf(), users: ["reviewer"], base: BASE, fetchFn: noServer });
+    const report = await reembed.prepare({
+      home,
+      conf: conf(),
+      users: ["reviewer"],
+      base: BASE,
+      fetchFn: noServer,
+    });
     expect(report.action).toBe("none");
     expect(existsSync(collectionDir())).toBe(true);
     expect(existsSync(join(home, "reembed.json"))).toBe(false);
@@ -186,7 +328,13 @@ describe("prepare — the disk half", () => {
   });
 
   it("a fresh install (no collection) is a no-op", async () => {
-    const report = await reembed.prepare({ home, conf: conf(), users: ["reviewer"], base: BASE, fetchFn: noServer });
+    const report = await reembed.prepare({
+      home,
+      conf: conf(),
+      users: ["reviewer"],
+      base: BASE,
+      fetchFn: noServer,
+    });
     expect(report.action).toBe("none");
     expect(readdirSync(home)).toEqual([]);
   });
@@ -194,7 +342,13 @@ describe("prepare — the disk half", () => {
   it("REFUSES while a server answers on the port — a collection is never moved out from under one", async () => {
     seedStore(HOSTED);
     const up = async () => ({ status: 200, json: async () => ({ version: "0.4.15" }) });
-    const report = await reembed.prepare({ home, conf: conf(), users: ["reviewer"], base: BASE, fetchFn: up });
+    const report = await reembed.prepare({
+      home,
+      conf: conf(),
+      users: ["reviewer"],
+      base: BASE,
+      fetchFn: up,
+    });
     expect(report.action).toBe("refuse");
     expect(report.reason).toContain("stop it");
     expect(existsSync(collectionDir())).toBe(true);
@@ -204,7 +358,13 @@ describe("prepare — the disk half", () => {
   it("an unreadable journal REFUSES — 'could not read' is not 'nothing there'", async () => {
     seedStore(HOSTED);
     writeFileSync(join(home, "reembed.json"), "{not json");
-    const report = await reembed.prepare({ home, conf: conf(), users: ["reviewer"], base: BASE, fetchFn: noServer });
+    const report = await reembed.prepare({
+      home,
+      conf: conf(),
+      users: ["reviewer"],
+      base: BASE,
+      fetchFn: noServer,
+    });
     expect(report.action).toBe("refuse");
     expect(existsSync(collectionDir())).toBe(true);
     expect(reembed.journalStatus(home).state).toBe("unreadable");
@@ -212,17 +372,39 @@ describe("prepare — the disk half", () => {
 
   it("the second boot after a reset does nothing: the server owns the new collection", async () => {
     seedStore(HOSTED);
-    await reembed.prepare({ home, conf: conf(), users: ["reviewer"], base: BASE, fetchFn: noServer });
+    await reembed.prepare({
+      home,
+      conf: conf(),
+      users: ["reviewer"],
+      base: BASE,
+      fetchFn: noServer,
+    });
     // The server has since created the new collection under the new embedder.
     seedStore(LOCAL);
-    const again = await reembed.prepare({ home, conf: conf(), users: ["reviewer"], base: BASE, fetchFn: noServer });
+    const again = await reembed.prepare({
+      home,
+      conf: conf(),
+      users: ["reviewer"],
+      base: BASE,
+      fetchFn: noServer,
+    });
     expect(again.action).toBe("none");
-    expect(readdirSync(join(home, "workspace", "vectordb")).filter((n) => n.startsWith("context.pre-reembed-"))).toHaveLength(1);
+    expect(
+      readdirSync(join(home, "workspace", "vectordb")).filter((n) =>
+        n.startsWith("context.pre-reembed-"),
+      ),
+    ).toHaveLength(1);
   });
 
   it("an ov.conf with no embedding section runs local — a hosted store is reset for it", async () => {
     seedStore(HOSTED);
-    const report = await reembed.prepare({ home, conf: { server: { port: 19333 }, storage: { workspace: join(home, "workspace") } }, users: ["reviewer"], base: BASE, fetchFn: noServer });
+    const report = await reembed.prepare({
+      home,
+      conf: { server: { port: 19333 }, storage: { workspace: join(home, "workspace") } },
+      users: ["reviewer"],
+      base: BASE,
+      fetchFn: noServer,
+    });
     expect(report.action).toBe("reset");
     expect(report.expected).toEqual(LOCAL);
   });
@@ -237,13 +419,31 @@ interface Call {
   body?: string;
 }
 
-function fakeFetch(routes: Array<{ match: RegExp; method?: string; status: number; body?: unknown; throws?: boolean; times?: number }>) {
+function fakeFetch(
+  routes: Array<{
+    match: RegExp;
+    method?: string;
+    status: number;
+    body?: unknown;
+    throws?: boolean;
+    times?: number;
+  }>,
+) {
   const calls: Call[] = [];
-  const fetchFn = async (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => {
+  const fetchFn = async (
+    url: string,
+    init?: { method?: string; headers?: Record<string, string>; body?: string },
+  ) => {
     const method = init?.method ?? "GET";
     calls.push({ url, method, headers: init?.headers ?? {}, body: init?.body });
-    const hit = routes.find((r) => r.match.test(url) && (r.method === undefined || r.method === method) && (r.times === undefined || r.times > 0));
-    if (!hit) return { status: 404, json: async () => ({ status: "error", error: { code: "NOT_FOUND" } }) };
+    const hit = routes.find(
+      (r) =>
+        r.match.test(url) &&
+        (r.method === undefined || r.method === method) &&
+        (r.times === undefined || r.times > 0),
+    );
+    if (!hit)
+      return { status: 404, json: async () => ({ status: "error", error: { code: "NOT_FOUND" } }) };
     if (hit.times !== undefined) hit.times -= 1;
     if (hit.throws) throw new Error("ECONNREFUSED");
     return { status: hit.status, json: async () => hit.body ?? {} };
@@ -254,19 +454,56 @@ function fakeFetch(routes: Array<{ match: RegExp; method?: string; status: numbe
 const noSleep = async () => {};
 const REINDEX = /\/api\/v1\/content\/reindex$/;
 const TASK = /\/api\/v1\/tasks\/task-1$/;
-const done = { status: "completed", uri: "viking://user/reviewer", scanned_records: 11, rebuilt_records: 14, failed_records: 0, unsupported_records: 0 };
+const done = {
+  status: "completed",
+  uri: "viking://user/reviewer",
+  scanned_records: 11,
+  rebuilt_records: 14,
+  failed_records: 0,
+  unsupported_records: 0,
+};
 
 describe("reindexNamespace — one namespace, the user's own key", () => {
   it("accepted + polled to completion, with the counts the task reports", async () => {
     const { fetchFn, calls } = fakeFetch([
-      { match: REINDEX, method: "POST", status: 200, body: { status: "ok", result: { task_id: "task-1", status: "accepted" } } },
-      { match: TASK, status: 200, body: { status: "ok", result: { task_id: "task-1", status: "running" } }, times: 2 },
-      { match: TASK, status: 200, body: { status: "ok", result: { task_id: "task-1", status: "completed", result: done } } },
+      {
+        match: REINDEX,
+        method: "POST",
+        status: 200,
+        body: { status: "ok", result: { task_id: "task-1", status: "accepted" } },
+      },
+      {
+        match: TASK,
+        status: 200,
+        body: { status: "ok", result: { task_id: "task-1", status: "running" } },
+        times: 2,
+      },
+      {
+        match: TASK,
+        status: 200,
+        body: { status: "ok", result: { task_id: "task-1", status: "completed", result: done } },
+      },
     ]);
-    const r = await reembed.reindexNamespace({ base: BASE, key: "reviewer-secret", user: "reviewer", fetchFn, sleep: noSleep });
-    expect(r).toMatchObject({ status: "completed", uri: "viking://user/reviewer", task_id: "task-1", rebuilt_records: 14, failed_records: 0 });
+    const r = await reembed.reindexNamespace({
+      base: BASE,
+      key: "reviewer-secret",
+      user: "reviewer",
+      fetchFn,
+      sleep: noSleep,
+    });
+    expect(r).toMatchObject({
+      status: "completed",
+      uri: "viking://user/reviewer",
+      task_id: "task-1",
+      rebuilt_records: 14,
+      failed_records: 0,
+    });
     const post = calls[0]!;
-    expect(JSON.parse(post.body!)).toEqual({ uri: "viking://user/reviewer", mode: "vectors_only", wait: false });
+    expect(JSON.parse(post.body!)).toEqual({
+      uri: "viking://user/reviewer",
+      mode: "vectors_only",
+      wait: false,
+    });
     // The USER key, as a Bearer — the confinement is the server's, and no
     // root/admin credential exists on this path.
     expect(post.headers["Authorization"]).toBe("Bearer reviewer-secret");
@@ -278,87 +515,234 @@ describe("reindexNamespace — one namespace, the user's own key", () => {
   });
 
   it("a synchronous 'completed' answer needs no polling", async () => {
-    const { fetchFn, calls } = fakeFetch([{ match: REINDEX, method: "POST", status: 200, body: { status: "ok", result: done } }]);
-    const r = await reembed.reindexNamespace({ base: BASE, key: "k", user: "reviewer", fetchFn, sleep: noSleep });
+    const { fetchFn, calls } = fakeFetch([
+      { match: REINDEX, method: "POST", status: 200, body: { status: "ok", result: done } },
+    ]);
+    const r = await reembed.reindexNamespace({
+      base: BASE,
+      key: "k",
+      user: "reviewer",
+      fetchFn,
+      sleep: noSleep,
+    });
     expect(r.status).toBe("completed");
     expect(calls).toHaveLength(1);
   });
 
   it("a 403 is a refusal named as such — the key does not own the namespace", async () => {
     const { fetchFn } = fakeFetch([
-      { match: REINDEX, method: "POST", status: 403, body: { status: "error", error: { code: "PERMISSION_DENIED", message: "USER can only reindex their own user namespace." } } },
+      {
+        match: REINDEX,
+        method: "POST",
+        status: 403,
+        body: {
+          status: "error",
+          error: {
+            code: "PERMISSION_DENIED",
+            message: "USER can only reindex their own user namespace.",
+          },
+        },
+      },
     ]);
-    const r = await reembed.reindexNamespace({ base: BASE, key: "k", user: "companion", fetchFn, sleep: noSleep });
+    const r = await reembed.reindexNamespace({
+      base: BASE,
+      key: "k",
+      user: "companion",
+      fetchFn,
+      sleep: noSleep,
+    });
     expect(r.status).toBe("failed");
     expect(r.detail).toContain("own user namespace");
   });
 
   it("a 409 is BUSY, a failed task is failed, a dead server is failed — never a throw", async () => {
     const busy = fakeFetch([{ match: REINDEX, method: "POST", status: 409, body: {} }]);
-    expect((await reembed.reindexNamespace({ base: BASE, key: "k", user: "reviewer", fetchFn: busy.fetchFn, sleep: noSleep })).status).toBe("busy");
+    expect(
+      (
+        await reembed.reindexNamespace({
+          base: BASE,
+          key: "k",
+          user: "reviewer",
+          fetchFn: busy.fetchFn,
+          sleep: noSleep,
+        })
+      ).status,
+    ).toBe("busy");
     const failed = fakeFetch([
-      { match: REINDEX, method: "POST", status: 200, body: { status: "ok", result: { task_id: "task-1", status: "accepted" } } },
-      { match: TASK, status: 200, body: { status: "ok", result: { task_id: "task-1", status: "failed", error: "embedder exploded" } } },
+      {
+        match: REINDEX,
+        method: "POST",
+        status: 200,
+        body: { status: "ok", result: { task_id: "task-1", status: "accepted" } },
+      },
+      {
+        match: TASK,
+        status: 200,
+        body: {
+          status: "ok",
+          result: { task_id: "task-1", status: "failed", error: "embedder exploded" },
+        },
+      },
     ]);
-    const f = await reembed.reindexNamespace({ base: BASE, key: "k", user: "reviewer", fetchFn: failed.fetchFn, sleep: noSleep });
+    const f = await reembed.reindexNamespace({
+      base: BASE,
+      key: "k",
+      user: "reviewer",
+      fetchFn: failed.fetchFn,
+      sleep: noSleep,
+    });
     expect(f.status).toBe("failed");
     expect(f.detail).toContain("embedder exploded");
     const dead = fakeFetch([{ match: REINDEX, method: "POST", status: 0, throws: true }]);
-    expect((await reembed.reindexNamespace({ base: BASE, key: "k", user: "reviewer", fetchFn: dead.fetchFn, sleep: noSleep })).status).toBe("failed");
+    expect(
+      (
+        await reembed.reindexNamespace({
+          base: BASE,
+          key: "k",
+          user: "reviewer",
+          fetchFn: dead.fetchFn,
+          sleep: noSleep,
+        })
+      ).status,
+    ).toBe("failed");
   });
 
   it("a 200 carrying an error envelope is a failure, not a success", async () => {
-    const { fetchFn } = fakeFetch([{ match: REINDEX, method: "POST", status: 200, body: { status: "error", error: { message: "queue down" } } }]);
-    const r = await reembed.reindexNamespace({ base: BASE, key: "k", user: "reviewer", fetchFn, sleep: noSleep });
+    const { fetchFn } = fakeFetch([
+      {
+        match: REINDEX,
+        method: "POST",
+        status: 200,
+        body: { status: "error", error: { message: "queue down" } },
+      },
+    ]);
+    const r = await reembed.reindexNamespace({
+      base: BASE,
+      key: "k",
+      user: "reviewer",
+      fetchFn,
+      sleep: noSleep,
+    });
     expect(r.status).toBe("failed");
     expect(r.detail).toContain("queue down");
   });
 
   it("gives the task up at the deadline — pending again, never a hang", async () => {
     const { fetchFn } = fakeFetch([
-      { match: REINDEX, method: "POST", status: 200, body: { status: "ok", result: { task_id: "task-1", status: "accepted" } } },
-      { match: TASK, status: 200, body: { status: "ok", result: { task_id: "task-1", status: "running" } } },
+      {
+        match: REINDEX,
+        method: "POST",
+        status: 200,
+        body: { status: "ok", result: { task_id: "task-1", status: "accepted" } },
+      },
+      {
+        match: TASK,
+        status: 200,
+        body: { status: "ok", result: { task_id: "task-1", status: "running" } },
+      },
     ]);
     let t = 0;
-    const r = await reembed.reindexNamespace({ base: BASE, key: "k", user: "reviewer", fetchFn, sleep: noSleep, now: () => (t += 1000), deadlineMs: 5000 });
+    const r = await reembed.reindexNamespace({
+      base: BASE,
+      key: "k",
+      user: "reviewer",
+      fetchFn,
+      sleep: noSleep,
+      now: () => (t += 1000),
+      deadlineMs: 5000,
+    });
     expect(r.status).toBe("timeout");
     expect(r.task_id).toBe("task-1");
   });
 });
 
 describe("resume — journal in, journal out", () => {
-  const journal = (state: string) => ({ version: 1, embedder: LOCAL, previous: HOSTED, reset_at: "2026-09-02T15:30:00.000Z", namespaces: { reviewer: { state }, companion: { state: "operator" } } });
+  const journal = (state: string) => ({
+    version: 1,
+    embedder: LOCAL,
+    previous: HOSTED,
+    reset_at: "2026-09-02T15:30:00.000Z",
+    namespaces: { reviewer: { state }, companion: { state: "operator" } },
+  });
   const completedServer = () =>
     fakeFetch([
-      { match: REINDEX, method: "POST", status: 200, body: { status: "ok", result: { task_id: "task-1", status: "accepted" } } },
-      { match: TASK, status: 200, body: { status: "ok", result: { task_id: "task-1", status: "completed", result: done } } },
+      {
+        match: REINDEX,
+        method: "POST",
+        status: 200,
+        body: { status: "ok", result: { task_id: "task-1", status: "accepted" } },
+      },
+      {
+        match: TASK,
+        status: 200,
+        body: { status: "ok", result: { task_id: "task-1", status: "completed", result: done } },
+      },
     ]);
 
   it("a pending namespace is re-embedded and journalled COMPLETED with its counts", async () => {
     reembed.writeJournal(home, journal("pending"));
     const { fetchFn } = completedServer();
-    const r = await reembed.resume({ home, base: BASE, key: "k", user: "reviewer", fetchFn, sleep: noSleep, now: () => new Date("2026-09-02T16:00:00.000Z") });
+    const r = await reembed.resume({
+      home,
+      base: BASE,
+      key: "k",
+      user: "reviewer",
+      fetchFn,
+      sleep: noSleep,
+      now: () => new Date("2026-09-02T16:00:00.000Z"),
+    });
     expect(r.state).toBe("completed");
     const after = JSON.parse(readFileSync(join(home, "reembed.json"), "utf8"));
-    expect(after.namespaces.reviewer).toMatchObject({ state: "completed", at: "2026-09-02T16:00:00.000Z", attempts: 1, rebuilt_records: 14, failed_records: 0, task_id: "task-1" });
+    expect(after.namespaces.reviewer).toMatchObject({
+      state: "completed",
+      at: "2026-09-02T16:00:00.000Z",
+      attempts: 1,
+      rebuilt_records: 14,
+      failed_records: 0,
+      task_id: "task-1",
+    });
     // The other namespace is untouched: this key cannot reach it — and it
     // does not hold the overall state hostage, it is listed beside it.
     expect(after.namespaces.companion).toEqual({ state: "operator" });
-    expect(reembed.journalStatus(home)).toMatchObject({ state: "completed", awaiting_operator: ["companion"] });
+    expect(reembed.journalStatus(home)).toMatchObject({
+      state: "completed",
+      awaiting_operator: ["companion"],
+    });
   });
 
   it("an operator namespace is never resumed from this host, even with a key", async () => {
     reembed.writeJournal(home, journal("completed"));
     const { fetchFn, calls } = completedServer();
-    const r = await reembed.resume({ home, base: BASE, key: "companion-key-somehow", user: "companion", fetchFn, sleep: noSleep });
+    const r = await reembed.resume({
+      home,
+      base: BASE,
+      key: "companion-key-somehow",
+      user: "companion",
+      fetchFn,
+      sleep: noSleep,
+    });
     expect(r).toMatchObject({ action: "none", state: "operator" });
     expect(calls).toHaveLength(0);
   });
 
   it("a partial rebuild stays FAILED — completed means zero failed records", async () => {
     reembed.writeJournal(home, journal("pending"));
-    const { fetchFn } = fakeFetch([{ match: REINDEX, method: "POST", status: 200, body: { status: "ok", result: { ...done, failed_records: 2 } } }]);
-    const r = await reembed.resume({ home, base: BASE, key: "k", user: "reviewer", fetchFn, sleep: noSleep });
+    const { fetchFn } = fakeFetch([
+      {
+        match: REINDEX,
+        method: "POST",
+        status: 200,
+        body: { status: "ok", result: { ...done, failed_records: 2 } },
+      },
+    ]);
+    const r = await reembed.resume({
+      home,
+      base: BASE,
+      key: "k",
+      user: "reviewer",
+      fetchFn,
+      sleep: noSleep,
+    });
     expect(r.state).toBe("failed");
     const after = JSON.parse(readFileSync(join(home, "reembed.json"), "utf8"));
     expect(after.namespaces.reviewer.detail).toContain("partial");
@@ -368,16 +752,29 @@ describe("resume — journal in, journal out", () => {
   it("busy and timeout leave the namespace pending with the attempt counted", async () => {
     reembed.writeJournal(home, journal("failed"));
     const { fetchFn } = fakeFetch([{ match: REINDEX, method: "POST", status: 409, body: {} }]);
-    const r = await reembed.resume({ home, base: BASE, key: "k", user: "reviewer", fetchFn, sleep: noSleep });
+    const r = await reembed.resume({
+      home,
+      base: BASE,
+      key: "k",
+      user: "reviewer",
+      fetchFn,
+      sleep: noSleep,
+    });
     expect(r.state).toBe("pending");
-    expect(JSON.parse(readFileSync(join(home, "reembed.json"), "utf8")).namespaces.reviewer.attempts).toBe(1);
+    expect(
+      JSON.parse(readFileSync(join(home, "reembed.json"), "utf8")).namespaces.reviewer.attempts,
+    ).toBe(1);
   });
 
   it("nothing to do: no journal, an already-completed namespace, or no key", async () => {
     const { fetchFn, calls } = completedServer();
-    expect((await reembed.resume({ home, base: BASE, key: "k", user: "reviewer", fetchFn })).action).toBe("none");
+    expect(
+      (await reembed.resume({ home, base: BASE, key: "k", user: "reviewer", fetchFn })).action,
+    ).toBe("none");
     reembed.writeJournal(home, journal("completed"));
-    expect((await reembed.resume({ home, base: BASE, key: "k", user: "reviewer", fetchFn })).state).toBe("completed");
+    expect(
+      (await reembed.resume({ home, base: BASE, key: "k", user: "reviewer", fetchFn })).state,
+    ).toBe("completed");
     reembed.writeJournal(home, journal("pending"));
     const noKey = await reembed.resume({ home, base: BASE, key: "", user: "reviewer", fetchFn });
     expect(noKey.action).toBe("none");
@@ -386,38 +783,87 @@ describe("resume — journal in, journal out", () => {
   });
 
   it("every namespace completed ⇒ status completed with nobody awaited", () => {
-    reembed.writeJournal(home, { ...journal("completed"), namespaces: { reviewer: { state: "completed" }, companion: { state: "completed" } } });
-    expect(reembed.journalStatus(home)).toMatchObject({ state: "completed", embedder: LOCAL, previous: HOSTED, awaiting_operator: [] });
+    reembed.writeJournal(home, {
+      ...journal("completed"),
+      namespaces: { reviewer: { state: "completed" }, companion: { state: "completed" } },
+    });
+    expect(reembed.journalStatus(home)).toMatchObject({
+      state: "completed",
+      embedder: LOCAL,
+      previous: HOSTED,
+      awaiting_operator: [],
+    });
   });
 });
 
 describe("settle — the operator's receipt", () => {
-  const journal = () => ({ version: 1, embedder: LOCAL, previous: HOSTED, reset_at: "2026-09-02T15:30:00.000Z", namespaces: { reviewer: { state: "completed", at: "2026-09-02T16:00:00.000Z" }, companion: { state: "operator" } } });
+  const journal = () => ({
+    version: 1,
+    embedder: LOCAL,
+    previous: HOSTED,
+    reset_at: "2026-09-02T15:30:00.000Z",
+    namespaces: {
+      reviewer: { state: "completed", at: "2026-09-02T16:00:00.000Z" },
+      companion: { state: "operator" },
+    },
+  });
 
   it("marks an operator namespace completed, by the operator, and the status stops naming it", () => {
     reembed.writeJournal(home, journal());
-    const r = reembed.settle({ home, user: "companion", detail: "qcr memory reembed: 9 records from 7 sources", now: () => new Date("2026-09-03T08:00:00.000Z") });
+    const r = reembed.settle({
+      home,
+      user: "companion",
+      detail: "qcr memory reembed: 9 records from 7 sources",
+      now: () => new Date("2026-09-03T08:00:00.000Z"),
+    });
     expect(r.ok).toBe(true);
     const after = JSON.parse(readFileSync(join(home, "reembed.json"), "utf8"));
-    expect(after.namespaces.companion).toEqual({ state: "completed", at: "2026-09-03T08:00:00.000Z", settled_by: "operator", detail: "qcr memory reembed: 9 records from 7 sources" });
-    expect(reembed.journalStatus(home)).toMatchObject({ state: "completed", awaiting_operator: [] });
+    expect(after.namespaces.companion).toEqual({
+      state: "completed",
+      at: "2026-09-03T08:00:00.000Z",
+      settled_by: "operator",
+      detail: "qcr memory reembed: 9 records from 7 sources",
+    });
+    expect(reembed.journalStatus(home)).toMatchObject({
+      state: "completed",
+      awaiting_operator: [],
+    });
   });
 
   it("refuses — as an answer — a missing journal, an unknown row and a row already completed", () => {
     expect(reembed.settle({ home, user: "companion" }).ok).toBe(false);
     reembed.writeJournal(home, journal());
-    expect(reembed.settle({ home, user: "nobody" })).toMatchObject({ ok: false, detail: expect.stringContaining("no re-embed on record") });
-    expect(reembed.settle({ home, user: "reviewer" })).toMatchObject({ ok: false, detail: expect.stringContaining("already completed") });
+    expect(reembed.settle({ home, user: "nobody" })).toMatchObject({
+      ok: false,
+      detail: expect.stringContaining("no re-embed on record"),
+    });
+    expect(reembed.settle({ home, user: "reviewer" })).toMatchObject({
+      ok: false,
+      detail: expect.stringContaining("already completed"),
+    });
     writeFileSync(join(home, "reembed.json"), "{not json");
-    expect(reembed.settle({ home, user: "companion" })).toMatchObject({ ok: false, detail: expect.stringContaining("cannot be parsed") });
+    expect(reembed.settle({ home, user: "companion" })).toMatchObject({
+      ok: false,
+      detail: expect.stringContaining("cannot be parsed"),
+    });
   });
 
   it("through main: exit 0 on a receipt, exit 1 on a refusal", async () => {
     reembed.writeJournal(home, journal());
     const lines: string[] = [];
-    expect(await reembed.main(["settle", "--home", home, "--user", "companion", "--detail", "done from the PC"], { env: {}, log: (l: string) => lines.push(l) })).toBe(0);
+    expect(
+      await reembed.main(
+        ["settle", "--home", home, "--user", "companion", "--detail", "done from the PC"],
+        { env: {}, log: (l: string) => lines.push(l) },
+      ),
+    ).toBe(0);
     expect(lines.join("\n")).toContain("completed: done from the PC");
-    expect(await reembed.main(["settle", "--home", home, "--user", "companion"], { env: {}, log: () => {} })).toBe(1);
+    expect(
+      await reembed.main(["settle", "--home", home, "--user", "companion"], {
+        env: {},
+        log: () => {},
+      }),
+    ).toBe(1);
   });
 });
 
@@ -425,34 +871,100 @@ describe("settle — the operator's receipt", () => {
 
 describe("cli surface", () => {
   it("parses the entrypoint's prepare invocation and the daemon's resume", () => {
-    const p = reembed.parseArgs(["prepare", "--home", "/opt/quickreview/state/openviking", "--config", "/opt/quickreview/state/openviking/ov.conf", "--users", "reviewer,companion", "--user", "reviewer"], {});
-    expect(p).toMatchObject({ command: "prepare", home: "/opt/quickreview/state/openviking", users: ["reviewer", "companion"], user: "reviewer", strict: false });
-    const r = reembed.parseArgs(["resume", "--home", "/h", "--base", "http://127.0.0.1:1933", "--user", "reviewer", "--key-file", "/s/openviking_reviewer_key"], {});
-    expect(r).toMatchObject({ command: "resume", base: "http://127.0.0.1:1933", user: "reviewer", keyFile: "/s/openviking_reviewer_key", config: "/h/ov.conf" });
+    const p = reembed.parseArgs(
+      [
+        "prepare",
+        "--home",
+        "/opt/quickreview/state/openviking",
+        "--config",
+        "/opt/quickreview/state/openviking/ov.conf",
+        "--users",
+        "reviewer,companion",
+        "--user",
+        "reviewer",
+      ],
+      {},
+    );
+    expect(p).toMatchObject({
+      command: "prepare",
+      home: "/opt/quickreview/state/openviking",
+      users: ["reviewer", "companion"],
+      user: "reviewer",
+      strict: false,
+    });
+    const r = reembed.parseArgs(
+      [
+        "resume",
+        "--home",
+        "/h",
+        "--base",
+        "http://127.0.0.1:1933",
+        "--user",
+        "reviewer",
+        "--key-file",
+        "/s/openviking_reviewer_key",
+      ],
+      {},
+    );
+    expect(r).toMatchObject({
+      command: "resume",
+      base: "http://127.0.0.1:1933",
+      user: "reviewer",
+      keyFile: "/s/openviking_reviewer_key",
+      config: "/h/ov.conf",
+    });
   });
 
   it("prepare with no ov.conf is a boot-safe no-op: exit 0, exit 1 only under --strict", async () => {
     const lines: string[] = [];
-    expect(await reembed.main(["prepare", "--home", home], { env: {}, log: (l: string) => lines.push(l) })).toBe(0);
+    expect(
+      await reembed.main(["prepare", "--home", home], {
+        env: {},
+        log: (l: string) => lines.push(l),
+      }),
+    ).toBe(0);
     expect(lines.join("\n")).toContain("skipped");
-    expect(await reembed.main(["prepare", "--home", home, "--strict"], { env: {}, log: () => {} })).toBe(1);
+    expect(
+      await reembed.main(["prepare", "--home", home, "--strict"], { env: {}, log: () => {} }),
+    ).toBe(1);
   });
 
   it("prepare through main resets a mismatched store and status reports it", async () => {
     seedStore(HOSTED);
-    writeFileSync(join(home, "ov.conf"), JSON.stringify(conf({ server: { host: "127.0.0.1", port: 1 } })));
+    writeFileSync(
+      join(home, "ov.conf"),
+      JSON.stringify(conf({ server: { host: "127.0.0.1", port: 1 } })),
+    );
     const lines: string[] = [];
-    expect(await reembed.main(["prepare", "--home", home, "--users", "reviewer"], { env: {}, log: (l: string) => lines.push(l) })).toBe(0);
+    expect(
+      await reembed.main(["prepare", "--home", home, "--users", "reviewer"], {
+        env: {},
+        log: (l: string) => lines.push(l),
+      }),
+    ).toBe(0);
     expect(existsSync(collectionDir())).toBe(false);
     lines.length = 0;
-    expect(await reembed.main(["status", "--home", home], { env: {}, log: (l: string) => lines.push(l) })).toBe(0);
-    expect(JSON.parse(lines.join("\n"))).toMatchObject({ state: "pending", namespaces: { reviewer: { state: "pending" } } });
+    expect(
+      await reembed.main(["status", "--home", home], {
+        env: {},
+        log: (l: string) => lines.push(l),
+      }),
+    ).toBe(0);
+    expect(JSON.parse(lines.join("\n"))).toMatchObject({
+      state: "pending",
+      namespaces: { reviewer: { state: "pending" } },
+    });
   });
 
   it("refuses to run without --home, and names the commands on an unknown one", async () => {
     expect(await reembed.main([], { env: {}, log: () => {} })).toBe(2);
     const lines: string[] = [];
-    expect(await reembed.main(["frobnicate", "--home", home], { env: {}, log: (l: string) => lines.push(l) })).toBe(2);
+    expect(
+      await reembed.main(["frobnicate", "--home", home], {
+        env: {},
+        log: (l: string) => lines.push(l),
+      }),
+    ).toBe(2);
     expect(lines.join("\n")).toContain("prepare | resume | status | settle | rehearse");
   });
 });

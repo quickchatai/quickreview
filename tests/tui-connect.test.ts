@@ -3,7 +3,12 @@
 import { describe, expect, it } from "vitest";
 import { TUI_DEFAULTS } from "../src/config.js";
 import { TripleCtrlC } from "../src/tui/chord.js";
-import { ensureSshMaster, masterCheckArgv, masterConnectArgv, type SyncSsh } from "../src/tui/connect.js";
+import {
+  ensureSshMaster,
+  masterCheckArgv,
+  masterConnectArgv,
+  type SyncSsh,
+} from "../src/tui/connect.js";
 
 describe("TripleCtrlC", () => {
   it("fires only on three bare Ctrl-C presses inside the window", () => {
@@ -46,7 +51,10 @@ describe("ensureSshMaster", () => {
     const ssh: SyncSsh = (argv, interactive) => {
       calls.push({ argv, interactive });
       const status = argv[0] === "-O" ? checkStatus : connectStatus;
-      return { status, stderr: status === 0 ? "" : "kex_exchange_identification: Connection closed" };
+      return {
+        status,
+        stderr: status === 0 ? "" : "kex_exchange_identification: Connection closed",
+      };
     };
     return { calls, ssh };
   };

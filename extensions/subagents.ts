@@ -103,7 +103,9 @@ export function resolveScope(env: Record<string, string | undefined> = process.e
  * Strict digits only — "1e3" or "6x" is a misconfiguration, and a
  * misconfiguration falls back to the safe default rather than whatever
  * parseInt salvages from the prefix. */
-export function resolveMaxConcurrency(env: Record<string, string | undefined> = process.env): number {
+export function resolveMaxConcurrency(
+  env: Record<string, string | undefined> = process.env,
+): number {
   const raw = (env[CONCURRENCY_ENV] ?? "").trim();
   if (!/^\d{1,2}$/.test(raw)) return DEFAULT_MAX_CONCURRENCY;
   const n = Number.parseInt(raw, 10);
@@ -127,7 +129,11 @@ export function sanitizeParams(
   params: Record<string, unknown>,
   env: Record<string, string | undefined> = process.env,
 ): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...params, agentScope: resolveScope(env), confirmProjectAgents: false };
+  const out: Record<string, unknown> = {
+    ...params,
+    agentScope: resolveScope(env),
+    confirmProjectAgents: false,
+  };
   delete out.cwd;
   if (Array.isArray(out.tasks)) out.tasks = out.tasks.map(stripCwd);
   if (Array.isArray(out.chain)) out.chain = out.chain.map(stripCwd);
@@ -174,7 +180,11 @@ export class WeightedSemaphore {
   release(weight: number): void {
     this.available += Math.max(1, Math.min(weight, this.permits));
     if (this.available > this.permits) this.available = this.permits;
-    while (this.waiters.length > 0 && this.waiters[0] !== undefined && this.available >= this.waiters[0].weight) {
+    while (
+      this.waiters.length > 0 &&
+      this.waiters[0] !== undefined &&
+      this.available >= this.waiters[0].weight
+    ) {
       const next = this.waiters.shift();
       if (!next) break;
       this.available -= next.weight;
@@ -197,8 +207,15 @@ function parallelResult(value: unknown): ParallelNativeResult {
     throw new Error("subagents: native parallel result contract changed (result is not an object)");
   }
   const result = value as Partial<ParallelNativeResult>;
-  if (!Array.isArray(result.content) || typeof result.details !== "object" || result.details === null || !Array.isArray(result.details.results)) {
-    throw new Error("subagents: native parallel result contract changed (content/details.results missing)");
+  if (
+    !Array.isArray(result.content) ||
+    typeof result.details !== "object" ||
+    result.details === null ||
+    !Array.isArray(result.details.results)
+  ) {
+    throw new Error(
+      "subagents: native parallel result contract changed (content/details.results missing)",
+    );
   }
   return result as ParallelNativeResult;
 }
@@ -233,9 +250,10 @@ export function wrapExecute(
       // Native can run four children inside one call. A configured process cap
       // below four therefore also bounds the array size; otherwise native
       // would exceed the cap before our outer semaphore could intervene.
-      const chunkSize = semaphore.permits < NATIVE_IN_CALL_CONCURRENCY
-        ? semaphore.permits
-        : NATIVE_MAX_PARALLEL_TASKS;
+      const chunkSize =
+        semaphore.permits < NATIVE_IN_CALL_CONCURRENCY
+          ? semaphore.permits
+          : NATIVE_MAX_PARALLEL_TASKS;
       if (tasks.length <= chunkSize) {
         return await execute.call(this, id, safe, signal, onUpdate, ctx);
       }
@@ -252,9 +270,10 @@ export function wrapExecute(
       for (let offset = 0; offset < tasks.length; offset += chunkSize) {
         signal?.throwIfAborted();
         const chunk = tasks.slice(offset, offset + chunkSize);
-        const notify = typeof onUpdate === "function"
-          ? onUpdate as unknown as (update: ParallelNativeResult) => void
-          : undefined;
+        const notify =
+          typeof onUpdate === "function"
+            ? (onUpdate as unknown as (update: ParallelNativeResult) => void)
+            : undefined;
         const chunkUpdate = notify
           ? (update: unknown) => {
               // Progress is advisory. Drop a malformed native update and let
@@ -267,18 +286,17 @@ export function wrapExecute(
               }
               notify({
                 ...value,
-                details: { ...value.details, mode: "parallel", results: [...allResults, ...value.details.results] },
+                details: {
+                  ...value.details,
+                  mode: "parallel",
+                  results: [...allResults, ...value.details.results],
+                },
               });
             }
           : undefined;
-        const value = parallelResult(await execute.call(
-          this,
-          id,
-          { ...safe, tasks: chunk },
-          signal,
-          chunkUpdate,
-          ctx,
-        ));
+        const value = parallelResult(
+          await execute.call(this, id, { ...safe, tasks: chunk }, signal, chunkUpdate, ctx),
+        );
         last = value;
         anyError ||= value.isError === true;
         allResults.push(...value.details.results);
@@ -322,7 +340,8 @@ export default async function activate(pi: Pi): Promise<void> {
     const mod = (await import(nativeExtensionPath(pkg.getExamplesPath()))) as {
       default?: (api: unknown) => void | Promise<void>;
     };
-    if (typeof mod.default !== "function") throw new Error("native subagent extension has no default export");
+    if (typeof mod.default !== "function")
+      throw new Error("native subagent extension has no default export");
     factory = mod.default;
   } catch (err) {
     // Loud, unmissable, never a crashed pi: without the tool every planned
@@ -342,17 +361,20 @@ export default async function activate(pi: Pi): Promise<void> {
   // Hand the native factory a shim that intercepts registerTool and wraps the
   // subagent tool's execute; everything else passes through bound to the real
   // API (bind keeps pi's own `this` for its class methods).
-  const shim = new Proxy(pi as object, {
+  const shim = new Proxy(pi, {
     get(target, prop, receiver) {
       if (prop === "registerTool") {
         return (definition: PiToolDefinition) => {
-          const real = (target as Pi).registerTool?.bind(target);
+          const real = target.registerTool?.bind(target);
           if (!real) {
             log("subagents: DEGRADED — pi.registerTool unavailable; subagent tool not registered.");
             return;
           }
           if (definition?.name === "subagent" && typeof definition.execute === "function") {
-            real({ ...definition, execute: wrapExecute(definition.execute.bind(definition), semaphore) });
+            real({
+              ...definition,
+              execute: wrapExecute(definition.execute.bind(definition), semaphore),
+            });
             log(
               `subagents: native subagent tool registered (pi ${version}, scope=${scope}, ` +
                 `max_concurrency=${maxConcurrency})`,
@@ -363,7 +385,9 @@ export default async function activate(pi: Pi): Promise<void> {
         };
       }
       const value = Reflect.get(target, prop, receiver);
-      return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+      return typeof value === "function"
+        ? (value as (...a: unknown[]) => unknown).bind(target)
+        : value;
     },
   });
 

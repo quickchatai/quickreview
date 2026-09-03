@@ -43,7 +43,9 @@ export function readTsconfig(root = ROOT) {
  * `.d.ts` files declare types and emit nothing.
  */
 export function inputFiles(root = ROOT, cfg = readTsconfig(root)) {
-  const includeRoots = (cfg.include ?? []).map((pattern) => pattern.split("/")[0]).filter((dir, i, all) => all.indexOf(dir) === i);
+  const includeRoots = (cfg.include ?? [])
+    .map((pattern) => pattern.split("/")[0])
+    .filter((dir, i, all) => all.indexOf(dir) === i);
   const excluded = new Set((cfg.exclude ?? []).map((p) => p.replace(/\/+$/, "")));
   const out = [];
   const walk = (relDir) => {
@@ -83,13 +85,18 @@ function main() {
   const root = process.argv[2] ? resolve(process.argv[2]) : ROOT;
   const outDir = join(root, readTsconfig(root).compilerOptions?.outDir ?? "dist");
   if (!existsSync(outDir)) {
-    console.error(`verify-dist: ${relative(root, outDir) || outDir} does not exist — the build produced nothing.`);
+    console.error(
+      `verify-dist: ${relative(root, outDir) || outDir} does not exist — the build produced nothing.`,
+    );
     process.exit(1);
   }
   const missing = missingArtifacts(root);
   if (missing.length === 0) return;
-  console.error(`verify-dist: the build reported success but ${missing.length} compiled file(s) are missing from dist/:`);
-  for (const { source, emitted } of missing.slice(0, 20)) console.error(`  ${emitted}   (from ${source})`);
+  console.error(
+    `verify-dist: the build reported success but ${missing.length} compiled file(s) are missing from dist/:`,
+  );
+  for (const { source, emitted } of missing.slice(0, 20))
+    console.error(`  ${emitted}   (from ${source})`);
   if (missing.length > 20) console.error(`  … and ${missing.length - 20} more`);
   console.error("");
   console.error("This is `incremental`: tsc emits from its build info, not from what is on disk,");

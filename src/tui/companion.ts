@@ -158,7 +158,11 @@ export const SUBAGENTS = {
 
 /** The three env names the keys file must define. Values are NEVER read into a
  * log line or an argv — docker reads the file itself via `--env-file`. */
-export const KEY_NAMES = ["OPENVIKING_API_KEY", "OPENVIKING_COMPANION_KEY", "OPENVIKING_REVIEWER_KEY"] as const;
+export const KEY_NAMES = [
+  "OPENVIKING_API_KEY",
+  "OPENVIKING_COMPANION_KEY",
+  "OPENVIKING_REVIEWER_KEY",
+] as const;
 
 export interface MemoryWiring {
   /** Docker network to attach the container to; "" = memory-less degraded. */
@@ -177,9 +181,14 @@ export function memoryEndpoint(gateway: string, port: number = MEMORY.port): str
 
 /** Host path of the OpenViking key file. `QCR_OPENVIKING_KEYS` overrides it;
  * the default sits beside the app credential, in the same 0600 discipline. */
-export function keysFilePath(env: NodeJS.ProcessEnv = process.env, home: string = homedir()): string {
+export function keysFilePath(
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = homedir(),
+): string {
   const override = env["QCR_OPENVIKING_KEYS"]?.trim();
-  return override && override !== "" ? override : join(home, ".config", "quickreview-bot", "openviking-keys.env");
+  return override && override !== ""
+    ? override
+    : join(home, ".config", "quickreview-bot", "openviking-keys.env");
 }
 
 /** Which of KEY_NAMES the file defines — names only, values never leave here. */
@@ -219,7 +228,11 @@ export function parseGateway(stdout: string): string {
 export class CompanionLifecycle {
   /** Resolved by ensureUp() before any `docker run`; the constants are the
    * safe standing answer so runArgv() stays pure and callable in tests. */
-  private wiring: MemoryWiring = { network: MEMORY.network, endpoint: memoryEndpoint(MEMORY.gateway), notes: [] };
+  private wiring: MemoryWiring = {
+    network: MEMORY.network,
+    endpoint: memoryEndpoint(MEMORY.gateway),
+    notes: [],
+  };
 
   constructor(
     readonly cfg: CompanionConfig,
@@ -346,7 +359,9 @@ export class CompanionLifecycle {
     // memory hands. Loaded only when the vendor dir is actually present: a
     // missing extension must degrade to memory-less, never to a pi that
     // refuses to start (the companion never wedges).
-    const openviking = this.fs.exists(this.hostVendorExtension()) ? ["--extension", MEMORY.extension] : [];
+    const openviking = this.fs.exists(this.hostVendorExtension())
+      ? ["--extension", MEMORY.extension]
+      : [];
     return [
       "pi",
       // --approve: pre-trust project-local .pi resources for this run. Without
@@ -526,7 +541,14 @@ export class CompanionLifecycle {
 
   /** True when the companion tmux session is already live in the container. */
   async piRunning(): Promise<boolean> {
-    const res = await this.docker(["exec", this.cfg.container_name, "tmux", "has-session", "-t", this.cfg.session]);
+    const res = await this.docker([
+      "exec",
+      this.cfg.container_name,
+      "tmux",
+      "has-session",
+      "-t",
+      this.cfg.session,
+    ]);
     return res.ok;
   }
 
@@ -554,7 +576,14 @@ export class CompanionLifecycle {
     onProgress?.(`building ${this.cfg.image} image (first run — takes a few minutes)…`);
     const uid = typeof process.getuid === "function" ? process.getuid() : 1000;
     const res = await this.docker(
-      ["build", "-t", this.cfg.image, "--build-arg", `COMPANION_UID=${uid}`, this.cfg.build_context],
+      [
+        "build",
+        "-t",
+        this.cfg.image,
+        "--build-arg",
+        `COMPANION_UID=${uid}`,
+        this.cfg.build_context,
+      ],
       { timeoutMs: 1_800_000 },
     );
     if (!res.ok) throw new Error(`docker build ${this.cfg.image} failed: ${errText(res)}`);
@@ -592,23 +621,33 @@ export class CompanionLifecycle {
     const keysText = this.fs.read(keysFile);
     let usableKeys: string | undefined;
     if (keysText === undefined) {
-      notes.push(`no OpenViking keys at ${keysFile} — memory reads/writes will be refused (see docs/companion-memory-access.md)`);
+      notes.push(
+        `no OpenViking keys at ${keysFile} — memory reads/writes will be refused (see docs/companion-memory-access.md)`,
+      );
     } else {
       const names = keyNamesIn(keysText);
       const missing = KEY_NAMES.filter((n) => !names.includes(n));
       if (missing.length > 0) notes.push(`${keysFile} is missing ${missing.join(", ")}`);
       const mode = this.fs.mode(keysFile);
-      if (mode !== undefined && (mode & 0o077) !== 0) notes.push(`${keysFile} is group/world readable — chmod 600 it`);
+      if (mode !== undefined && (mode & 0o077) !== 0)
+        notes.push(`${keysFile} is group/world readable — chmod 600 it`);
       const bad = envFileProblems(keysText);
       if (bad.length > 0) {
         // Passing it anyway would make `docker run` refuse and the companion
         // never start — memory is never allowed to cost that.
-        notes.push(`${keysFile} is not a docker env-file (${bad[0]}) — starting without memory keys`);
+        notes.push(
+          `${keysFile} is not a docker env-file (${bad[0]}) — starting without memory keys`,
+        );
       } else {
         usableKeys = keysFile;
       }
     }
-    this.wiring = { network: MEMORY.network, endpoint: memoryEndpoint(gateway), keysFile: usableKeys, notes };
+    this.wiring = {
+      network: MEMORY.network,
+      endpoint: memoryEndpoint(gateway),
+      keysFile: usableKeys,
+      notes,
+    };
     for (const n of notes) onProgress?.(n);
     return this.wiring;
   }
@@ -628,7 +667,12 @@ export class CompanionLifecycle {
    * "already exists" is the normal answer and never an error here. */
   async attachToMemoryNetwork(): Promise<boolean> {
     if (this.wiring.network === "") return false;
-    const res = await this.docker(["network", "connect", this.wiring.network, this.cfg.container_name]);
+    const res = await this.docker([
+      "network",
+      "connect",
+      this.wiring.network,
+      this.cfg.container_name,
+    ]);
     return res.ok;
   }
 
@@ -711,12 +755,14 @@ export class CompanionLifecycle {
       // mounts, so an empty set means the answer was unreadable — no opinion,
       // never a recreate. An unreadable createdDns() is no opinion too.
       const mountIssues = this.mountDrift(st.mounts);
-      const dns = mountIssues.length === 0 && st.mounts.size > 0 ? await this.createdDns() : undefined;
+      const dns =
+        mountIssues.length === 0 && st.mounts.size > 0 ? await this.createdDns() : undefined;
       const drift = [...mountIssues, ...(dns === undefined ? [] : this.dnsDrift(dns))];
       if (drift.length > 0) {
         onProgress?.(`companion mounts drifted (${drift.join("; ")}) — recreating`);
         const removed = await this.docker(["rm", "-f", this.cfg.container_name]);
-        if (!removed.ok) throw new Error(`docker rm ${this.cfg.container_name} failed: ${errText(removed)}`);
+        if (!removed.ok)
+          throw new Error(`docker rm ${this.cfg.container_name} failed: ${errText(removed)}`);
         st = { exists: false, running: false, mounts: new Map() };
         recreating = true;
       }
@@ -738,7 +784,8 @@ export class CompanionLifecycle {
       // survive the rm.
       onProgress?.(`companion container unstartable (${firstLine(errText(started))}) — recreating`);
       const removed = await this.docker(["rm", "-f", this.cfg.container_name]);
-      if (!removed.ok) throw new Error(`docker rm ${this.cfg.container_name} failed: ${errText(removed)}`);
+      if (!removed.ok)
+        throw new Error(`docker rm ${this.cfg.container_name} failed: ${errText(removed)}`);
     }
     // Self-healing first run: build the image rather than failing on its absence.
     if (!(await this.imageExists())) await this.buildImage(onProgress);

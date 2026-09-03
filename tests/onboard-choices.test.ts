@@ -17,7 +17,12 @@ import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { CHOICE_KEYS, CHOICE_WRITERS, PRIVATE_CHOICE_KEYS, type ChoiceName } from "../src/onboard/choices.js";
+import {
+  CHOICE_KEYS,
+  CHOICE_WRITERS,
+  PRIVATE_CHOICE_KEYS,
+  type ChoiceName,
+} from "../src/onboard/choices.js";
 import { defaultSteps } from "../src/onboard/steps/index.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -49,10 +54,16 @@ describe("every shared choice key is written by a step", () => {
     const registered = new Set(defaultSteps().map((s) => s.id));
     for (const name of Object.keys(CHOICE_KEYS) as ChoiceName[]) {
       const writers = CHOICE_WRITERS[name];
-      expect(writers, `CHOICE_KEYS.${name} has no writer — a key nothing writes is the defect`).toBeDefined();
+      expect(
+        writers,
+        `CHOICE_KEYS.${name} has no writer — a key nothing writes is the defect`,
+      ).toBeDefined();
       expect(writers.length, `CHOICE_KEYS.${name} has an EMPTY writer list`).toBeGreaterThan(0);
       for (const id of writers) {
-        expect(registered.has(id), `CHOICE_WRITERS.${name} names "${id}", which is not a registered step`).toBe(true);
+        expect(
+          registered.has(id),
+          `CHOICE_WRITERS.${name} names "${id}", which is not a registered step`,
+        ).toBe(true);
       }
     }
   });
@@ -78,10 +89,19 @@ describe("every shared choice key is written by a step", () => {
     for (const src of sources) {
       for (const m of src.text.matchAll(/CHOICE_KEYS\.([A-Za-z]+)/g)) used.add(m[1]!);
     }
-    expect(used.size, "no step references CHOICE_KEYS at all — did the shared declaration get bypassed?").toBeGreaterThan(5);
+    expect(
+      used.size,
+      "no step references CHOICE_KEYS at all — did the shared declaration get bypassed?",
+    ).toBeGreaterThan(5);
     for (const name of used) {
-      expect(Object.keys(CHOICE_KEYS), `a step names CHOICE_KEYS.${name}, which is not declared`).toContain(name);
-      expect(CHOICE_WRITERS[name as ChoiceName]?.length ?? 0, `CHOICE_KEYS.${name} is read but nothing writes it`).toBeGreaterThan(0);
+      expect(
+        Object.keys(CHOICE_KEYS),
+        `a step names CHOICE_KEYS.${name}, which is not declared`,
+      ).toContain(name);
+      expect(
+        CHOICE_WRITERS[name as ChoiceName]?.length ?? 0,
+        `CHOICE_KEYS.${name} is read but nothing writes it`,
+      ).toBeGreaterThan(0);
     }
   });
 });
@@ -89,16 +109,23 @@ describe("every shared choice key is written by a step", () => {
 describe("no step carries its own string literal for a shared key", () => {
   it("no step writes a choice under a literal key", () => {
     for (const src of sources) {
-      expect(src.text, `${src.file}: recordChoice("…") — a literal write is how the names drift apart`).not.toMatch(
-        /recordChoice\(\s*["']/,
-      );
+      expect(
+        src.text,
+        `${src.file}: recordChoice("…") — a literal write is how the names drift apart`,
+      ).not.toMatch(/recordChoice\(\s*["']/);
     }
   });
 
   it("no step reads a choice under a literal key", () => {
     for (const src of sources) {
-      expect(src.text, `${src.file}: choices["…"] — read the key from CHOICE_KEYS instead`).not.toMatch(/choices\s*\[\s*["']/);
-      expect(src.text, `${src.file}: choices.<name> — read the key from CHOICE_KEYS instead`).not.toMatch(/\.choices\.[a-z_]/);
+      expect(
+        src.text,
+        `${src.file}: choices["…"] — read the key from CHOICE_KEYS instead`,
+      ).not.toMatch(/choices\s*\[\s*["']/);
+      expect(
+        src.text,
+        `${src.file}: choices.<name> — read the key from CHOICE_KEYS instead`,
+      ).not.toMatch(/\.choices\.[a-z_]/);
     }
   });
 
@@ -117,7 +144,10 @@ describe("no step carries its own string literal for a shared key", () => {
           `${src.file} declares ${constName} = "${key}" as a literal. Either add it to CHOICE_KEYS (shared, with a writer) ` +
             "or to PRIVATE_CHOICE_KEYS (kept inside this step).",
         ).toBeDefined();
-        expect(owner, `PRIVATE_CHOICE_KEYS says "${key}" belongs to "${owner}", but it is declared in ${src.file}`).toBe(src.stepId);
+        expect(
+          owner,
+          `PRIVATE_CHOICE_KEYS says "${key}" belongs to "${owner}", but it is declared in ${src.file}`,
+        ).toBe(src.stepId);
         for (const other of sources) {
           if (other === src) continue;
           expect(
@@ -132,9 +162,10 @@ describe("no step carries its own string literal for a shared key", () => {
   it("every private key is really declared by the step that claims it", () => {
     for (const [key, stepId] of Object.entries(PRIVATE_CHOICE_KEYS)) {
       const src = sourceFor(stepId);
-      expect(src.text, `PRIVATE_CHOICE_KEYS lists "${key}" under ${stepId}, but ${src.file} does not declare it`).toContain(
-        `= "${key}"`,
-      );
+      expect(
+        src.text,
+        `PRIVATE_CHOICE_KEYS lists "${key}" under ${stepId}, but ${src.file} does not declare it`,
+      ).toContain(`= "${key}"`);
     }
   });
 
@@ -145,7 +176,10 @@ describe("no step carries its own string literal for a shared key", () => {
         // A step may name the key's VALUE only inside a `*_CHOICE_KEY = ` alias
         // — and none do today; the aliases all read `= CHOICE_KEYS.x`.
         const offending = src.text.includes(`_CHOICE_KEY = ${literal}`);
-        expect(offending, `${src.file} redeclares the key ${literal} instead of aliasing CHOICE_KEYS.${name}`).toBe(false);
+        expect(
+          offending,
+          `${src.file} redeclares the key ${literal} instead of aliasing CHOICE_KEYS.${name}`,
+        ).toBe(false);
       }
     }
   });
@@ -159,9 +193,10 @@ describe("the value vocabularies agree on both sides of a handoff", () => {
       // Round-trip through the shared reader: an id the ingress step records
       // must be an id `IngressChoice` accepts, or the interview's conditional
       // question can never fire (it never did — it tested "named-tunnel").
-      expect(ingressChoiceOf({ [CHOICE_KEYS.ingress]: option.id }), `ingress id "${option.id}" is not an IngressChoice`).toBe(
-        option.id,
-      );
+      expect(
+        ingressChoiceOf({ [CHOICE_KEYS.ingress]: option.id }),
+        `ingress id "${option.id}" is not an IngressChoice`,
+      ).toBe(option.id);
     }
   });
 
@@ -171,7 +206,10 @@ describe("the value vocabularies agree on both sides of a handoff", () => {
     for (const answer of ["oauth", "api"]) {
       const route = parseRouteAnswer(answer);
       expect(route).not.toBeNull();
-      expect(authRouteOf({ [CHOICE_KEYS.authRoute]: route }), `route "${route}" is not an AuthRoute`).toBe(route);
+      expect(
+        authRouteOf({ [CHOICE_KEYS.authRoute]: route }),
+        `route "${route}" is not an AuthRoute`,
+      ).toBe(route);
     }
     // The vocabulary the interview used to test for, and which nothing writes.
     expect(authRouteOf({ [CHOICE_KEYS.authRoute]: "api_key" })).toBeNull();
@@ -180,7 +218,10 @@ describe("the value vocabularies agree on both sides of a handoff", () => {
   it("the topologies the topology step can record are the ones its readers test for", async () => {
     const { TOPOLOGY_OPTIONS, topologyRecorded } = await import("../src/onboard/steps/topology.js");
     for (const option of TOPOLOGY_OPTIONS) {
-      expect(topologyRecorded({ [CHOICE_KEYS.topology]: option.id }), `topology "${option.id}" is not a Topology`).toBe(option.id);
+      expect(
+        topologyRecorded({ [CHOICE_KEYS.topology]: option.id }),
+        `topology "${option.id}" is not a Topology`,
+      ).toBe(option.id);
     }
   });
 });

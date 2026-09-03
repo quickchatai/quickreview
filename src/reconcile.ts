@@ -113,7 +113,13 @@ export interface ReconcileReport {
   errors: string[];
 }
 
-function correction(deps: ReconcileDeps, pr: number | null, what: string, detail: unknown, report: ReconcileReport): void {
+function correction(
+  deps: ReconcileDeps,
+  pr: number | null,
+  what: string,
+  detail: unknown,
+  report: ReconcileReport,
+): void {
   report.corrections++;
   deps.store.logEvent("reconcile_correction", pr, { what, ...(detail as object) });
   (deps.log ?? (() => {}))(`reconcile: correction ${what}${pr ? ` #${pr}` : ""}`, detail);
@@ -139,7 +145,11 @@ export function reconcileOrphanedRounds(
     // `orphan_sweep` is the QUIET cause: tmux lives in the container,
     // so a clean redeploy orphans every round in flight by construction. It is
     // counted and grouped like every other cause, and it raises nothing.
-    store.markRoundCancelled(round.id, "orphaned — tmux session lost across a restart", "orphan_sweep");
+    store.markRoundCancelled(
+      round.id,
+      "orphaned — tmux session lost across a restart",
+      "orphan_sweep",
+    );
     store.logEvent("round_orphaned", round.pr, { round_id: round.id, round_no: round.round_no });
     cancelled.push(round.pr);
     log(`startup: #${round.pr} round ${round.round_no} cancelled (session lost)`);
@@ -148,7 +158,8 @@ export function reconcileOrphanedRounds(
       // "reviewing" was true only while the session lived. A durable newer
       // head wins; otherwise redo the lost head.
       const successorPromoted = store.promoteSuccessor(round.pr);
-      if (!successorPromoted) store.upsertPr({ ...row, state: "queued", trigger_ts: now().toISOString() });
+      if (!successorPromoted)
+        store.upsertPr({ ...row, state: "queued", trigger_ts: now().toISOString() });
       store.logEvent("orphaned_round_requeued", round.pr, {
         round_id: round.id,
         round_no: round.round_no,
@@ -204,7 +215,13 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
           // — the author-response metric reads these.
           store.logEvent("head_push", pr.number, { head_sha: pr.head_sha, source: "reconcile" });
         }
-        applyEvent(store, pr.number, { type: "track" }, { title: pr.title, head_sha: pr.head_sha, author: pr.author }, { botLogin, now });
+        applyEvent(
+          store,
+          pr.number,
+          { type: "track" },
+          { title: pr.title, head_sha: pr.head_sha, author: pr.author },
+          { botLogin, now },
+        );
         if (pushed && deps.onHeadPush) {
           // After the track so the recheck reads the updated row. Errors are
           // contained: a failed recheck must not abort the reconcile pass.
@@ -229,7 +246,9 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
           reviewed.head_sha !== pr.head_sha &&
           !store.hasRecheck(pr.number, recheckFingerprint({ trigger: "push" }, pr.head_sha))
         ) {
-          (deps.log ?? (() => {}))(`reconcile: recheck backstop #${pr.number} — reviewed ${reviewed.head_sha.slice(0, 7)} != head ${pr.head_sha.slice(0, 7)}, unclaimed`);
+          (deps.log ?? (() => {}))(
+            `reconcile: recheck backstop #${pr.number} — reviewed ${reviewed.head_sha.slice(0, 7)} != head ${pr.head_sha.slice(0, 7)}, unclaimed`,
+          );
           try {
             await deps.onHeadPush(pr.number, pr.head_sha);
           } catch (err) {
@@ -256,14 +275,23 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       if (local.state === "closed") {
         // GitHub says open, we say closed → GitHub wins.
         correction(deps, pr.number, "reopened", { local: local.state }, report);
-        applyEvent(store, pr.number, { type: "reopened" }, { title: pr.title, head_sha: pr.head_sha, author: pr.author }, { botLogin, now });
+        applyEvent(
+          store,
+          pr.number,
+          { type: "reopened" },
+          { title: pr.title, head_sha: pr.head_sha, author: pr.author },
+          { botLogin, now },
+        );
       }
     }
   });
 
   // ---- 2. triggered-set derivation (both searches) ------------------------
   await step("triggered-set", async () => {
-    const [labelled, teamed] = await Promise.all([adapter.searchLabelTriggered(), adapter.searchTeamTriggered()]);
+    const [labelled, teamed] = await Promise.all([
+      adapter.searchLabelTriggered(),
+      adapter.searchTeamTriggered(),
+    ]);
     const kinds = ["label", "team_request"] as const;
     const searches = { label: labelled, team_request: teamed };
     const current = {
@@ -280,7 +308,10 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       for (const kind of kinds) previous.set(`${pr}:${kind}`, store.triggerLevel(pr, kind));
     }
 
-    const grouped = new Map<number, { item: ReconcileSearchItem; kinds: Array<(typeof kinds)[number]> }>();
+    const grouped = new Map<
+      number,
+      { item: ReconcileSearchItem; kinds: Array<(typeof kinds)[number]> }
+    >();
     for (const kind of kinds) {
       for (const item of searches[kind]) {
         if (isBotAuthor(item.user?.login ?? "", botLogin) || item.user?.type === "Bot") continue;
@@ -321,34 +352,57 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
         // A fresh request can upgrade an already-recorded pushed-head
         // successor to human provenance. Same-head requests need no second
         // round: the active one already covers that head.
-        if (freshKind) applyEvent(store, pr, { type: "trigger", source: freshKind }, meta, { botLogin, now, reason: `reconcile:${freshKind}:reviewing` });
+        if (freshKind)
+          applyEvent(store, pr, { type: "trigger", source: freshKind }, meta, {
+            botLogin,
+            now,
+            reason: `reconcile:${freshKind}:reviewing`,
+          });
         continue;
       }
       if (local?.state === "queued") continue; // already handled
       const reviewed = store.reviewedHead(pr);
       const pushHandled =
         !freshKind &&
-        reviewed !== undefined && standingVerdict(reviewed) === "APPROVE" &&
+        reviewed !== undefined &&
+        standingVerdict(reviewed) === "APPROVE" &&
         reviewed.head_sha !== meta.head_sha &&
         store.hasRecheck(pr, recheckFingerprint({ trigger: "push" }, meta.head_sha));
       if (pushHandled) {
         // The targeted APPROVE path already owns this head. A standing label or
         // team request is residue, not a second blank-slate review. A genuinely
         // new edge still bypasses this branch and keeps's full review.
-        store.logEvent("standing_trigger_suppressed", pr, { head_sha: meta.head_sha, kinds: group.kinds });
-        deps.log?.(`reconcile: suppressed standing trigger for #${pr} at rechecked head ${meta.head_sha.slice(0, 10)}`);
+        store.logEvent("standing_trigger_suppressed", pr, {
+          head_sha: meta.head_sha,
+          kinds: group.kinds,
+        });
+        deps.log?.(
+          `reconcile: suppressed standing trigger for #${pr} at rechecked head ${meta.head_sha.slice(0, 10)}`,
+        );
         continue;
       }
 
       // Dry-run never consumes triggers on GitHub, so an already-reviewed
       // head would re-queue forever; suppress until the head moves.
       if (cfg.dry_run && meta.head_sha && store.lastVerdictHead(pr) === meta.head_sha) {
-        deps.log?.(`dry-run: suppressing re-trigger of #${pr} at reviewed head ${meta.head_sha.slice(0, 10)}`);
+        deps.log?.(
+          `dry-run: suppressing re-trigger of #${pr} at reviewed head ${meta.head_sha.slice(0, 10)}`,
+        );
         continue;
       }
       const source = freshKind ?? "reconcile";
-      correction(deps, pr, "triggered-not-queued", { local: local?.state ?? null, source, kinds: group.kinds }, report);
-      applyEvent(store, pr, { type: "trigger", source }, meta, { botLogin, now, reason: `reconcile:${source}` });
+      correction(
+        deps,
+        pr,
+        "triggered-not-queued",
+        { local: local?.state ?? null, source, kinds: group.kinds },
+        report,
+      );
+      applyEvent(store, pr, { type: "trigger", source }, meta, {
+        botLogin,
+        now,
+        reason: `reconcile:${source}`,
+      });
     }
   });
 
@@ -407,7 +461,12 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
         deps,
         claim.pr,
         "recheck-claim-released-undelivered",
-        { fingerprint: claim.fingerprint, head_sha: claim.head_sha, trigger: claim.trigger, claimed_at: claim.created_at },
+        {
+          fingerprint: claim.fingerprint,
+          head_sha: claim.head_sha,
+          trigger: claim.trigger,
+          claimed_at: claim.created_at,
+        },
         report,
       );
     }
@@ -442,13 +501,25 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
         continue;
       }
       if (ref.state !== "closed") continue; // listing lag — leave it alone
-      correction(deps, local.number, "pr-closed", { merged: ref.merged, local: local.state }, report);
+      correction(
+        deps,
+        local.number,
+        "pr-closed",
+        { merged: ref.merged, local: local.state },
+        report,
+      );
       // same signal the webhook's closed case derives — a merge
       // landing over a standing REQUEST_CHANGES. Read the state BEFORE
       // applyEvent erases it; per-(pr, day) dedupe absorbs the overlap with
       // a webhook delivery that already fired.
       const mergedOverBlock = ref.merged && local.state === "awaiting_author";
-      applyEvent(store, local.number, { type: "closed" }, { title: ref.title, head_sha: ref.head_sha, author: ref.author }, { botLogin, now });
+      applyEvent(
+        store,
+        local.number,
+        { type: "closed" },
+        { title: ref.title, head_sha: ref.head_sha, author: ref.author },
+        { botLogin, now },
+      );
       store.logEvent("pr_closed", local.number, { merged: ref.merged, source: "reconcile" });
       if (mergedOverBlock && deps.onMergedOverBlock) {
         try {
@@ -492,7 +563,13 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
           { pr: local.number, head_sha: mark.head_sha },
         );
         if (outcome.action === "requeued")
-          correction(deps, local.number, "withheld-approval-requeued", { head_sha: mark.head_sha, ci: outcome.ci }, report);
+          correction(
+            deps,
+            local.number,
+            "withheld-approval-requeued",
+            { head_sha: mark.head_sha, ci: outcome.ci },
+            report,
+          );
       }
     });
   }
@@ -530,7 +607,12 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
   // feeds the [feedback] engine. A tagged comment picked up here gets the tag
   // recorded and nothing else — the same-day addendum stays tag-gated on the
   // webhook's feedback path, where a human is in the loop.
-  if (deps.captureComments !== false && adapter.listReviewCommentsFull && adapter.listIssueComments && adapter.listReviewsFull) {
+  if (
+    deps.captureComments !== false &&
+    adapter.listReviewCommentsFull &&
+    adapter.listIssueComments &&
+    adapter.listReviewsFull
+  ) {
     await step("comment-capture", async () => {
       // Recently-closed PRs stay in: closed-sync above marks a
       // closed-during-downtime PR closed in this very pass, and its comments
@@ -543,14 +625,21 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       };
       const candidates = store
         .allPrs()
-        .filter((p) => p.state !== "closed" || report.closed.includes(p.number) || closedRecently(p.updated_at))
+        .filter(
+          (p) =>
+            p.state !== "closed" ||
+            report.closed.includes(p.number) ||
+            closedRecently(p.updated_at),
+        )
         // Change gating (adversarial finding: ~900 standing reads/h without
         // it): a PR whose row has not moved since the last successful sweep
         // of it has produced no webhook the sweep could have missed a
         // *newer* version of than last time — skip it. The watermark is the
         // row's own `updated_at`, recorded per PR after a clean sweep.
         .filter((p) => store.lastCommentSweep(p.number) !== p.updated_at)
-        .sort((a, b) => (a.updated_at < b.updated_at ? 1 : a.updated_at > b.updated_at ? -1 : a.number - b.number))
+        .sort((a, b) =>
+          a.updated_at < b.updated_at ? 1 : a.updated_at > b.updated_at ? -1 : a.number - b.number,
+        )
         .slice(0, COMMENT_SWEEP_MAX_PRS);
       for (const local of candidates) {
         const n = local.number;
@@ -595,22 +684,33 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
         // withdraw, retract or edit a review (rule 2 — structural, not
         // prompted; there is no such call in this module or its imports).
         try {
-          const ungated = auditUngatedReviews(reviewsFetched, local.head_sha, {
-            reviewIds: store.postedReviewIds(n),
-            reviewedHead: store.reviewedHead(n) ?? undefined,
-            migrationPrecheck: store.lastEventAt("migration_collision_comment", n) !== undefined,
-          }, { botLogin, appSlug: cfg.github.app_slug });
+          const ungated = auditUngatedReviews(
+            reviewsFetched,
+            local.head_sha,
+            {
+              reviewIds: store.postedReviewIds(n),
+              reviewedHead: store.reviewedHead(n) ?? undefined,
+              migrationPrecheck: store.lastEventAt("migration_collision_comment", n) !== undefined,
+            },
+            { botLogin, appSlug: cfg.github.app_slug },
+          );
           if (ungated.length > 0) {
-            store.logEvent("ungated_review_detected", n, { head_sha: local.head_sha, reviews: ungated });
+            store.logEvent("ungated_review_detected", n, {
+              head_sha: local.head_sha,
+              reviews: ungated,
+            });
             const message = ungatedReviewMessage(n, ungated);
             // An unaccounted APPROVE wakes; anything else stays a durable row.
             // The asymmetry is the blocker bar's: an approval posted outside
             // the gate defeats rule 1, the CI hard-gate and every posting
             // guard at once, and it is the outcome all four bypasses
             // were reaching for.
-            if (hasUngatedApproval(ungated)) store.logAnomaly("ungated_approval", n, null, message, message);
+            if (hasUngatedApproval(ungated))
+              store.logAnomaly("ungated_approval", n, null, message, message);
             else store.logAnomaly("ungated_review", n, null, message);
-            report.errors.push(`ungated-review #${n}: ${ungated.length} unaccounted bot review(s) at the head`);
+            report.errors.push(
+              `ungated-review #${n}: ${ungated.length} unaccounted bot review(s) at the head`,
+            );
           }
         } catch (err) {
           // Never let the audit break the sweep it rides on.

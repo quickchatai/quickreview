@@ -42,7 +42,9 @@ Read the full evidence and decide what to do.
 
 describe("read-only feedback ticket projection", () => {
   it("parses the tracker header and preserves the complete body", () => {
-    const parsed = parseTrackerTicket(ticket("FT-0300", "open", "Settle feedback", "2026-08-25T18:00:00Z"));
+    const parsed = parseTrackerTicket(
+      ticket("FT-0300", "open", "Settle feedback", "2026-08-25T18:00:00Z"),
+    );
     expect(parsed).toMatchObject({
       id: "FT-0300",
       title: "Settle feedback",
@@ -58,8 +60,14 @@ describe("read-only feedback ticket projection", () => {
     roots.push(root);
     const dir = join(root, "efforts/review-feedback-loop/tickets");
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "FT-0300-open.md"), ticket("FT-0300", "open", "Open feedback", "2026-08-25T17:00:00Z"));
-    writeFileSync(join(dir, "FT-0299-done.md"), ticket("FT-0299", "resolved", "Done feedback", "2026-08-25T18:00:00Z"));
+    writeFileSync(
+      join(dir, "FT-0300-open.md"),
+      ticket("FT-0300", "open", "Open feedback", "2026-08-25T17:00:00Z"),
+    );
+    writeFileSync(
+      join(dir, "FT-0299-done.md"),
+      ticket("FT-0299", "resolved", "Done feedback", "2026-08-25T18:00:00Z"),
+    );
     writeFileSync(join(dir, "README.md"), "not a ticket");
 
     // FT-0345: the effort is config, not a literal — callers always name it.

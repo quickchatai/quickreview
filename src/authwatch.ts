@@ -58,7 +58,8 @@ export function scanPiAuthErrors(sessionsDir: string, sinceMs: number): AuthScan
       }
       if (!name.endsWith(".jsonl") || st.mtimeMs < sinceMs) continue;
       try {
-        if (PI_AUTH_ERROR_RE.test(tailOf(path, AUTH_TAIL_BYTES))) hits.push({ file: path, mtimeMs: st.mtimeMs });
+        if (PI_AUTH_ERROR_RE.test(tailOf(path, AUTH_TAIL_BYTES)))
+          hits.push({ file: path, mtimeMs: st.mtimeMs });
       } catch {
         // skip
       }

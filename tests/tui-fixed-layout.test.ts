@@ -41,7 +41,12 @@ function bareApp(cols = 200, rows = 40): { app: App; type: (s: string) => void }
   (input as unknown as { isTTY: boolean }).isTTY = false;
   input.resume = (() => input) as never;
   input.pause = (() => input) as never;
-  const app = new App(TUI_DEFAULTS, async () => ({ ok: true, stdout: "", stderr: "", code: 0 }), out, input);
+  const app = new App(
+    TUI_DEFAULTS,
+    async () => ({ ok: true, stdout: "", stderr: "", code: 0 }),
+    out,
+    input,
+  );
   const type = (s: string) => (input as unknown as EventEmitter).emit("data", Buffer.from(s));
   return { app, type };
 }
@@ -53,12 +58,17 @@ describe("① no full-screen attach exists", () => {
     expect(existsSync(join(TUI, "attach.ts"))).toBe(false);
     expect(existsSync(join(TUI, "term.ts"))).toBe(false);
     for (const [name, text] of tuiSources()) {
-      expect(text, `${name} must not load node-pty — a pty is how a surface takes the whole terminal`).not.toMatch(/node-pty/);
+      expect(
+        text,
+        `${name} must not load node-pty — a pty is how a surface takes the whole terminal`,
+      ).not.toMatch(/node-pty/);
       // companion.ts keeps `attachArgv()` for ONE reader: `qcr companion
       // status` PRINTS it as a hint for the operator's own shell. The TUI
       // never executes it — nothing in src/tui spawns anything interactive.
       if (name === "companion.ts") continue;
-      expect(text, `${name} must not build a \`tmux attach\``).not.toMatch(/["']attach["']\s*,\s*["']-t["']/);
+      expect(text, `${name} must not build a \`tmux attach\``).not.toMatch(
+        /["']attach["']\s*,\s*["']-t["']/,
+      );
     }
   });
 
@@ -99,7 +109,9 @@ describe("① no full-screen attach exists", () => {
     // `suspend()` hands the terminal out. The attach used to be a caller; now
     // only index.ts's onRealTerminal (the GCP key prompt, which is ssh's own
     // UI and paints no TUI surface) may call it.
-    const callers = tuiSources().filter(([name, text]) => name !== "app.ts" && /\bsuspend\(\)/.test(text)).map(([n]) => n);
+    const callers = tuiSources()
+      .filter(([name, text]) => name !== "app.ts" && /\bsuspend\(\)/.test(text))
+      .map(([n]) => n);
     expect(callers).toEqual(["index.ts"]);
   });
 });
@@ -142,7 +154,9 @@ describe("② the column never collapses", () => {
 
 describe("③ no configuration removes the column", () => {
   it("CompanionSidebar has no shown()/enabled — the width is a function of the terminal and the seam drag only", () => {
-    const sb = new CompanionSidebar({ container_name: "c", session: "s" }, docker, { available: () => false });
+    const sb = new CompanionSidebar({ container_name: "c", session: "s" }, docker, {
+      available: () => false,
+    });
     expect("shown" in sb).toBe(false);
     const { app } = bareApp(200, 40);
     app.sidebar = sb;
@@ -154,7 +168,9 @@ describe("③ no configuration removes the column", () => {
 
   it("an off companion says so in the column instead of pretending to start", async () => {
     const { paintSidebar } = await import("../src/tui/sidebar.js");
-    const sb = new CompanionSidebar({ container_name: "c", session: "s" }, docker, { available: () => false });
+    const sb = new CompanionSidebar({ container_name: "c", session: "s" }, docker, {
+      available: () => false,
+    });
     sb.setStartup(["– companion container · --no-companion"]);
     sb.setOff("--no-companion");
     const plain = paintSidebar(sb.view(), 60, 14).map(stripAnsi).join("\n");
@@ -171,7 +187,10 @@ describe("③ no configuration removes the column", () => {
     app.tab = "metrics"; // no metricsScreen hook wired in this harness
     app.repaint();
     const frame = (app as unknown as { lastFrame?: { cols: number; lines: string[] } }).lastFrame;
-    expect(frame, "the fallback must go through the frame compositor, not a bare write").toBeDefined();
+    expect(
+      frame,
+      "the fallback must go through the frame compositor, not a bare write",
+    ).toBeDefined();
     expect(frame!.cols).toBe(200);
     const plain = frame!.lines.map(stripAnsi);
     expect(plain[1]).toContain("metrics tab not wired");

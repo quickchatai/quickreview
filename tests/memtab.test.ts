@@ -6,16 +6,30 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { legacyBlockHash as blockHash, parseLegacyMemory as parseMemory } from "../src/memory/legacy-file.js";
+import {
+  legacyBlockHash as blockHash,
+  parseLegacyMemory as parseMemory,
+} from "../src/memory/legacy-file.js";
 import type { MemoryEntry, MemoryStore } from "../src/memory/store.js";
 import { WayfinderIssueSink } from "../src/tui/issuesink.js";
 import type { MemoryHealth } from "../src/tui/memory.js";
-import { dayJump, groupStarts, memoryKeys, memoryOrder, memoryRows, pinnedBudget } from "../src/tui/memtab.js";
+import {
+  dayJump,
+  groupStarts,
+  memoryKeys,
+  memoryOrder,
+  memoryRows,
+  pinnedBudget,
+} from "../src/tui/memtab.js";
 import { displayWidth, stripAnsi } from "../src/tui/paint.js";
 import { FakeMemory, SAMPLE, learningRig, settle, type Rig } from "./helpers/tui-rig.js";
 
-const screenOf = (rig: Rig, cols = 110, rows = 30): string => stripAnsi(rig.app.hooks.tabs.memory!.screen(rig.app, cols, rows).render());
-const key = (rig: Rig, k: Parameters<NonNullable<typeof rig.app.hooks.tabs.memory>["key"]>[1]): boolean => rig.app.hooks.tabs.memory!.key(rig.app, k);
+const screenOf = (rig: Rig, cols = 110, rows = 30): string =>
+  stripAnsi(rig.app.hooks.tabs.memory!.screen(rig.app, cols, rows).render());
+const key = (
+  rig: Rig,
+  k: Parameters<NonNullable<typeof rig.app.hooks.tabs.memory>["key"]>[1],
+): boolean => rig.app.hooks.tabs.memory!.key(rig.app, k);
 
 async function loaded(over: Parameters<typeof learningRig>[0] = {}): Promise<Rig> {
   const rig = learningRig(over);
@@ -32,11 +46,19 @@ describe("the day-grouped timeline", () => {
     const ordered = memoryOrder(entries, null);
     expect(ordered.map((e) => e.id)).toEqual(["01a01b03", "01a01ab3", "01a01ab3"]);
     const rows = memoryRows(ordered);
-    expect(rows.map((r) => (r.kind === "group" ? `# ${r.label}` : `${r.index}`))).toEqual(["# 2026-08-20", "0", "# 2026-08-19", "1", "2"]);
+    expect(rows.map((r) => (r.kind === "group" ? `# ${r.label}` : `${r.index}`))).toEqual([
+      "# 2026-08-20",
+      "0",
+      "# 2026-08-19",
+      "1",
+      "2",
+    ]);
   });
 
   it("a pinned entry heads its own group whatever its day", () => {
-    const pinned = parseMemory(`<!-- 2026-08-10 08:00:00 [aa] -->\n#pinned a standing rule\n\n${SAMPLE}`);
+    const pinned = parseMemory(
+      `<!-- 2026-08-10 08:00:00 [aa] -->\n#pinned a standing rule\n\n${SAMPLE}`,
+    );
     const rows = memoryRows(memoryOrder(pinned, null));
     expect(rows[0]).toEqual({ kind: "group", label: "pinned" });
     expect(rows[1]).toMatchObject({ kind: "entry", index: 0 });
@@ -54,7 +76,8 @@ describe("the day-grouped timeline", () => {
 
   it("offers a day key only when there is a day that way (the bar is state-derived)", async () => {
     const rig = await loaded();
-    const keysOf = (): string[] => memoryKeys(rig.learning.store, rig.learning.memory).bar.map((b) => b.key);
+    const keysOf = (): string[] =>
+      memoryKeys(rig.learning.store, rig.learning.memory).bar.map((b) => b.key);
     expect(keysOf()).toEqual(["[", "n", "W"]); // on the newest day: older only
     expect(key(rig, { kind: "older" })).toBe(true);
     expect(rig.learning.memory.sel).toBe(1);
@@ -154,7 +177,13 @@ describe("management verbs", () => {
     key(rig, { kind: "char", ch: "p" });
     await settle();
     const newest = parseMemory(SAMPLE).find((e) => e.id === "01a01b03")!; // timeline floats newest first
-    expect(rig.mem.applied[0]).toMatchObject({ op: "pin", id: newest.id, ts: newest.ts, block: 0, expect: blockHash(newest.text) });
+    expect(rig.mem.applied[0]).toMatchObject({
+      op: "pin",
+      id: newest.id,
+      ts: newest.ts,
+      block: 0,
+      expect: blockHash(newest.text),
+    });
   });
 
   it("e opens a prefilled edit prompt; submit applies the edit", async () => {
@@ -162,7 +191,8 @@ describe("management verbs", () => {
     expect(key(rig, { kind: "events" })).toBe(true);
     expect(rig.app.view.inputBox).toBeDefined();
     expect(rig.app.view.inputBox!.text).toContain("stale recheck flag");
-    const send = (s: string): void => (rig.app as unknown as { handleInput(b: Buffer): void }).handleInput(Buffer.from(s));
+    const send = (s: string): void =>
+      (rig.app as unknown as { handleInput(b: Buffer): void }).handleInput(Buffer.from(s));
     send(" AMENDED");
     send("\r");
     await settle();
@@ -173,11 +203,15 @@ describe("management verbs", () => {
   it("n prompts for a new manual entry", async () => {
     const rig = await loaded();
     key(rig, { kind: "char", ch: "n" });
-    const send = (s: string): void => (rig.app as unknown as { handleInput(b: Buffer): void }).handleInput(Buffer.from(s));
+    const send = (s: string): void =>
+      (rig.app as unknown as { handleInput(b: Buffer): void }).handleInput(Buffer.from(s));
     send("never trust a resolved checkmark");
     send("\r");
     await settle();
-    expect(rig.mem.applied[0]).toMatchObject({ op: "add", text: "never trust a resolved checkmark" });
+    expect(rig.mem.applied[0]).toMatchObject({
+      op: "add",
+      text: "never trust a resolved checkmark",
+    });
   });
 
   it("with no entry selected, e/p/x are neither offered nor consumed — they are the companion's", async () => {
@@ -216,10 +250,15 @@ describe("management verbs", () => {
     mkdirSync(join(root, "efforts/review-sandbox/tickets"), { recursive: true });
     writeFileSync(join(root, ".ids", "0100"), "x\n");
     const mem = new FakeMemory();
-    await loaded({ mem, sink: new WayfinderIssueSink({ root, effort: "review-sandbox", parent: "FT-0026" }, mem) });
+    await loaded({
+      mem,
+      sink: new WayfinderIssueSink({ root, effort: "review-sandbox", parent: "FT-0026" }, mem),
+    });
     const tickets = readdirSync(join(root, "efforts/review-sandbox/tickets"));
     expect(tickets).toHaveLength(1);
-    expect(readFileSync(join(root, "efforts/review-sandbox/tickets", tickets[0]!), "utf8")).toContain("by qcr-tui");
+    expect(
+      readFileSync(join(root, "efforts/review-sandbox/tickets", tickets[0]!), "utf8"),
+    ).toContain("by qcr-tui");
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -236,7 +275,9 @@ describe("management verbs", () => {
     expect(rig.learning.memory.sel).toBe(2);
     // Ordinal 1 was the LATER block of the two entries that share a second
     // (newest first within a timestamp); after the reload it is ordinal 2.
-    expect(memoryOrder(rig.learning.store.entries, null)[2]!.text).toContain("lesson about External Apps");
+    expect(memoryOrder(rig.learning.store.entries, null)[2]!.text).toContain(
+      "lesson about External Apps",
+    );
   });
 });
 
@@ -244,7 +285,10 @@ describe("mouse operation (FT-0129 UX)", () => {
   it("clicking a timeline row selects it and the detail pane shows the FULL text", async () => {
     const rig = await loaded();
     const frame = rig.app.hooks.tabs.memory!.screen(rig.app, 140, 40); // paint captures zones
-    const row = frame.zones.find((z) => (z.action as { t: string; i?: number }).t === "mem" && (z.action as { i: number }).i === 1)!;
+    const row = frame.zones.find(
+      (z) =>
+        (z.action as { t: string; i?: number }).t === "mem" && (z.action as { i: number }).i === 1,
+    )!;
     expect(rig.app.hooks.tabs.memory!.click!(rig.app, row.x1, row.y1)).toBe(true);
     const screen = screenOf(rig, 140, 40);
     expect(rig.learning.memory.sel).toBe(1);
@@ -315,11 +359,14 @@ class UnhealthyMemory implements MemoryStore {
   }
 }
 
-const DEAD = "cannot reach OpenViking at http://127.0.0.1:1933 (connect ECONNREFUSED) — check: systemctl --user status qcr-memory-forward";
+const DEAD =
+  "cannot reach OpenViking at http://127.0.0.1:1933 (connect ECONNREFUSED) — check: systemctl --user status qcr-memory-forward";
 
 describe("memory unreachable (FT-0164)", () => {
   it("paints an explicit failure banner with the reason, never 'none yet' — and the defect count reads unknown", async () => {
-    const rig = await loaded({ memory: new UnhealthyMemory({ ok: false, namespaces: [], error: DEAD }) });
+    const rig = await loaded({
+      memory: new UnhealthyMemory({ ok: false, namespaces: [], error: DEAD }),
+    });
     const screen = screenOf(rig);
     expect(rig.learning.store.memError).toBe(DEAD);
     expect(screen).toContain("MEMORY UNREACHABLE");
@@ -338,7 +385,12 @@ describe("memory unreachable (FT-0164)", () => {
   });
 
   it("one tree down shows a warning beside the other tree's entries", async () => {
-    const rig = await loaded({ memory: new UnhealthyMemory({ ok: false, namespaces: [], warning: "companion memory unreachable — no answer" }, parseMemory(SAMPLE)) });
+    const rig = await loaded({
+      memory: new UnhealthyMemory(
+        { ok: false, namespaces: [], warning: "companion memory unreachable — no answer" },
+        parseMemory(SAMPLE),
+      ),
+    });
     const screen = screenOf(rig);
     expect(screen).toContain("MEMORY (3)");
     expect(screen).toContain("companion memory unreachable");
@@ -346,9 +398,12 @@ describe("memory unreachable (FT-0164)", () => {
   });
 
   it("the error state still renders every row at exactly `cols` cells", async () => {
-    const rig = await loaded({ memory: new UnhealthyMemory({ ok: false, namespaces: [], error: DEAD }) });
+    const rig = await loaded({
+      memory: new UnhealthyMemory({ ok: false, namespaces: [], error: DEAD }),
+    });
     for (const cols of [100, 111]) {
-      for (const line of rig.app.hooks.tabs.memory!.screen(rig.app, cols, 28).lines) expect(displayWidth(line)).toBe(cols);
+      for (const line of rig.app.hooks.tabs.memory!.screen(rig.app, cols, 28).lines)
+        expect(displayWidth(line)).toBe(cols);
     }
   });
 
@@ -368,9 +423,22 @@ describe("memory unreachable (FT-0164)", () => {
 // FT-0170 — the memory forward runs in the TUI process, and the tab is where
 // its state is visible and its web UI is reachable.
 describe("memory forward on the tab", () => {
-  const UP = { state: "owned" as const, detail: "started by this TUI — closes on quit", baseUrl: "http://127.0.0.1:1933", studioUrl: "http://127.0.0.1:1933/studio" };
-  const DOWN = { state: "failed" as const, detail: "could not bind 127.0.0.1:1933", baseUrl: "http://127.0.0.1:1933", studioUrl: "http://127.0.0.1:1933/studio" };
-  const stubForward = (status: typeof UP | typeof DOWN) => ({ view: () => status, ensure: () => Promise.resolve(status) });
+  const UP = {
+    state: "owned" as const,
+    detail: "started by this TUI — closes on quit",
+    baseUrl: "http://127.0.0.1:1933",
+    studioUrl: "http://127.0.0.1:1933/studio",
+  };
+  const DOWN = {
+    state: "failed" as const,
+    detail: "could not bind 127.0.0.1:1933",
+    baseUrl: "http://127.0.0.1:1933",
+    studioUrl: "http://127.0.0.1:1933/studio",
+  };
+  const stubForward = (status: typeof UP | typeof DOWN) => ({
+    view: () => status,
+    ensure: () => Promise.resolve(status),
+  });
 
   it("shows the studio URL when the forward is up", async () => {
     const rig = await loaded({ forward: stubForward(UP) });
@@ -411,7 +479,11 @@ describe("memory forward on the tab", () => {
     const opened: string[] = [];
     rig.app.hooks.openUrl = (url) => opened.push(url);
     const frame = rig.app.hooks.tabs.memory!.screen(rig.app, 110, 30);
-    const zone = frame.zones.find((z) => (z.action as { t: string; url?: string }).t === "url" && (z.action as { url?: string }).url?.includes("/studio"));
+    const zone = frame.zones.find(
+      (z) =>
+        (z.action as { t: string; url?: string }).t === "url" &&
+        (z.action as { url?: string }).url?.includes("/studio"),
+    );
     expect(zone, "the studio row must be a click target, not just a key").toBeDefined();
     rig.app.hooks.tabs.memory!.click!(rig.app, zone!.x1, zone!.y1);
     expect(opened).toEqual(["http://127.0.0.1:1933/studio"]);

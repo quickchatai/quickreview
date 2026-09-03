@@ -176,7 +176,11 @@ export interface NotPickedUpItem {
  * paused, triggered, and with no round started since that trigger. Pure over
  * the store — the wiring agent drives it on a timer.
  */
-export function scanNotPickedUp(store: StateStore, cfg: Config, now: Date = new Date()): NotPickedUpItem[] {
+export function scanNotPickedUp(
+  store: StateStore,
+  cfg: Config,
+  now: Date = new Date(),
+): NotPickedUpItem[] {
   const graceMs = cfg.slack.policy.pickup_grace_min * 60_000;
   const queued = store.allPrs().filter((p) => p.state === "queued" && !p.paused && p.trigger_ts);
   const running = store.runningRounds().length;
@@ -206,9 +210,11 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
 
   constructor(private readonly deps: AnnouncerDeps) {
     this.setTimeoutFn = deps.setTimeoutFn ?? ((fn, ms) => setTimeout(fn, ms));
-    this.clearTimeoutFn = deps.clearTimeoutFn ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
+    this.clearTimeoutFn =
+      deps.clearTimeoutFn ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
     this.setIntervalFn = deps.setIntervalFn ?? ((fn, ms) => setInterval(fn, ms));
-    this.clearIntervalFn = deps.clearIntervalFn ?? ((h) => clearInterval(h as ReturnType<typeof setInterval>));
+    this.clearIntervalFn =
+      deps.clearIntervalFn ?? ((h) => clearInterval(h as ReturnType<typeof setInterval>));
   }
 
   /** Inert when `[slack] enabled = false`: zero posts, zero state writes. */
@@ -238,7 +244,15 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     // Root-on-first-event: with no recorded root, this post BECOMES the root.
     const threadTs = thread?.root_ts;
 
-    if (!store.recordSlackPost({ idem_key: req.idemKey, kind: req.kind, pr: req.pr ?? null, thread_ts: threadTs ?? null, chars: req.text.length })) {
+    if (
+      !store.recordSlackPost({
+        idem_key: req.idemKey,
+        kind: req.kind,
+        pr: req.pr ?? null,
+        thread_ts: threadTs ?? null,
+        chars: req.text.length,
+      })
+    ) {
       const prior = store.slackPost(req.idemKey);
       // A previously FAILED attempt may be retried; a delivered one may not.
       if (!prior || prior.ok === 1) {
@@ -249,7 +263,11 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
 
     let result: { ok: boolean; ts?: string; error?: string };
     try {
-      result = await slack.postMessage({ channel: cfg.slack.channel, text: req.text, thread_ts: threadTs });
+      result = await slack.postMessage({
+        channel: cfg.slack.channel,
+        text: req.text,
+        thread_ts: threadTs,
+      });
     } catch (err) {
       result = { ok: false, error: String(err) };
     }
@@ -260,7 +278,8 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     }
     store.settleSlackPost(req.idemKey, { ok: true, ts: result.ts });
     if (req.pr !== undefined) {
-      if (threadTs === undefined) store.upsertSlackThread({ pr: req.pr, channel: cfg.slack.channel, root_ts: result.ts });
+      if (threadTs === undefined)
+        store.upsertSlackThread({ pr: req.pr, channel: cfg.slack.channel, root_ts: result.ts });
       else store.touchSlackThread(req.pr);
     }
     return result.ts;
@@ -279,7 +298,12 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
    * without paying the cooldown. */
   private announcementAllowed(cause: string, pr?: number | null, escalated?: boolean): boolean {
     if (!this.enabled) return false;
-    const d = decideAnnouncement(this.deps.store, this.deps.cfg, { cause, pr, escalated }, this.now());
+    const d = decideAnnouncement(
+      this.deps.store,
+      this.deps.cfg,
+      { cause, pr, escalated },
+      this.now(),
+    );
     if (!d.allow) this.log(`slack: announcement '${d.key}' suppressed — ${d.reason ?? d.block}`);
     return d.allow;
   }
@@ -342,7 +366,8 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
         });
       }
     } else if (a.round_no > 1 && this.lifecycleEnabled(LIFECYCLE_CAUSES.reRound)) {
-      const reason: ReRoundReason = a.reason ?? (a.round_type === "staleness" ? { kind: "base_moved" } : { kind: "pushed" });
+      const reason: ReRoundReason =
+        a.reason ?? (a.round_type === "staleness" ? { kind: "base_moved" } : { kind: "pushed" });
       await this.post({
         idemKey: `reround:${a.pr}:${a.round_no}`,
         kind: "announce",
@@ -394,16 +419,35 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
    * round-less anomaly has nothing to say and stays silent. */
   async anomaly(a: AnomalyAnnouncement): Promise<void> {
     if (a.round_no === null) return;
-    const cause = a.kind === "overdue" ? "round.overdue" : a.kind === "failed_loud" ? "review.failed_loud" : "round.malformed_verdict";
+    const cause =
+      a.kind === "overdue"
+        ? "round.overdue"
+        : a.kind === "failed_loud"
+          ? "review.failed_loud"
+          : "round.malformed_verdict";
     // An anomaly is a genuine escalation: it may spend the day's one bypass.
     if (!this.announcementAllowed(cause, a.pr, true)) return;
     const text =
       a.kind === "overdue"
-        ? causeMessage(this.deps.cfg, { cause: "round.overdue", pr: a.pr, round_no: a.round_no, deadline_min: a.deadline_min })
+        ? causeMessage(this.deps.cfg, {
+            cause: "round.overdue",
+            pr: a.pr,
+            round_no: a.round_no,
+            deadline_min: a.deadline_min,
+          })
         : a.kind === "failed_loud"
           ? `⛔ #${a.pr} round ${a.round_no} exhausted automatic recovery — review work is still owed. Use u on the board to recover.`
-          : causeMessage(this.deps.cfg, { cause: "round.malformed_verdict", pr: a.pr, round_no: a.round_no });
-    await this.post({ idemKey: a.incident_id ?? `${cause}:${a.pr}:${a.round_no}`, kind: "announce", pr: a.pr, text });
+          : causeMessage(this.deps.cfg, {
+              cause: "round.malformed_verdict",
+              pr: a.pr,
+              round_no: a.round_no,
+            });
+    await this.post({
+      idemKey: a.incident_id ?? `${cause}:${a.pr}:${a.round_no}`,
+      kind: "announce",
+      pr: a.pr,
+      text,
+    });
   }
 
   /** A PR still waiting for a slot. This may be the FIRST event on the PR, in
@@ -450,7 +494,12 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     if (raw === undefined) return undefined;
     try {
       const snap = JSON.parse(raw) as { heartbeat?: unknown; written_at?: unknown };
-      const value = typeof snap.heartbeat === "string" ? snap.heartbeat : typeof snap.written_at === "string" ? snap.written_at : undefined;
+      const value =
+        typeof snap.heartbeat === "string"
+          ? snap.heartbeat
+          : typeof snap.written_at === "string"
+            ? snap.written_at
+            : undefined;
       return value !== undefined && Number.isFinite(Date.parse(value)) ? value : undefined;
     } catch (err) {
       this.log("slack: status.json unreadable for downtime measurement", err);
@@ -532,7 +581,9 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     if (!this.enabled) return undefined;
     const { store, cfg, slack } = this.deps;
     const refreshedAt = this.now();
-    const recoveries = store.recentReviewRecoveries(new Date(refreshedAt.getTime() - 10 * 60_000).toISOString());
+    const recoveries = store.recentReviewRecoveries(
+      new Date(refreshedAt.getTime() - 10 * 60_000).toISOString(),
+    );
     for (const recovered of recoveries) {
       const incidentPost = store.slackPost(recovered.incident_id);
       if (!incidentPost?.ts) continue;
@@ -559,7 +610,11 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     const existing = store.slackPost(HEARTBEAT_IDEM_KEY);
     if (existing?.ts) {
       try {
-        const res = await slack.updateMessage({ channel: cfg.slack.channel, ts: existing.ts, text });
+        const res = await slack.updateMessage({
+          channel: cfg.slack.channel,
+          ts: existing.ts,
+          text,
+        });
         if (!res.ok) this.log("slack: heartbeat update failed", res.error);
       } catch (err) {
         this.log("slack: heartbeat update threw", err);
@@ -610,7 +665,9 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
       `Slack socket reports ${numConnections} connections outside a deploy window — ` +
       `a second consumer is receiving (and acking) our events. Check for a stray daemon or a duplicate container.`;
     this.log(`slack: ${message}`);
-    void Promise.resolve(this.deps.onAnomalySignal?.(message)).catch((err) => this.log("slack: anomaly signal failed", err));
+    void Promise.resolve(this.deps.onAnomalySignal?.(message)).catch((err) =>
+      this.log("slack: anomaly signal failed", err),
+    );
   }
 }
 

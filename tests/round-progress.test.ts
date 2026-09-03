@@ -35,7 +35,9 @@ describe("round progress extension", () => {
       await emit("message_start", {
         message: {
           role: "user",
-          content: [{ type: "text", text: `round order\n<!-- qcr-command:cmd-5408:${"a".repeat(64)} -->` }],
+          content: [
+            { type: "text", text: `round order\n<!-- qcr-command:cmd-5408:${"a".repeat(64)} -->` },
+          ],
         },
       });
       await emit("tool_execution_start", {
@@ -48,16 +50,18 @@ describe("round progress extension", () => {
         toolCallId: "lens-1",
         partialResult: {
           details: {
-            results: [{
-              agent: "pass-security",
-              progress: {
-                status: "running",
-                durationMs: 12_000,
-                toolCount: 3,
-                lastMessage: "Tracing the bearer into the logger",
-                recentTools: [{ tool: "grep", args: "bearer", status: "running" }],
+            results: [
+              {
+                agent: "pass-security",
+                progress: {
+                  status: "running",
+                  durationMs: 12_000,
+                  toolCount: 3,
+                  lastMessage: "Tracing the bearer into the logger",
+                  recentTools: [{ tool: "grep", args: "bearer", status: "running" }],
+                },
               },
-            }],
+            ],
           },
         },
       });
@@ -79,27 +83,46 @@ describe("round progress extension", () => {
       });
       expect(running.preparing_at).toBe(running.command_accepted_at);
       expect(running.fanout_started_at).toBe(running.first_lens_started_at);
-      expect(roundExecutionStage(parseRoundProgress(JSON.stringify(running))!, ["pass-security", "pass-validate"])).toBe("fanout-started");
-      expect(running.agents).toEqual([expect.objectContaining({
-        agent: "pass-security",
-        status: "running",
-        duration_ms: 12_000,
-        tool_count: 3,
-        started_at: running.first_lens_started_at,
-        current_tool: "grep: bearer",
-        last_message: "Tracing the bearer into the logger",
-      })]);
+      expect(
+        roundExecutionStage(parseRoundProgress(JSON.stringify(running))!, [
+          "pass-security",
+          "pass-validate",
+        ]),
+      ).toBe("fanout-started");
+      expect(running.agents).toEqual([
+        expect.objectContaining({
+          agent: "pass-security",
+          status: "running",
+          duration_ms: 12_000,
+          tool_count: 3,
+          started_at: running.first_lens_started_at,
+          current_tool: "grep: bearer",
+          last_message: "Tracing the bearer into the logger",
+        }),
+      ]);
       expect(running.agents[0].finished_at).toBeUndefined();
 
       await emit("tool_execution_end", {
         toolName: "subagent",
         toolCallId: "lens-1",
-        result: { details: { results: [{ agent: "pass-security", exitCode: 0, progress: { status: "completed", durationMs: 15_000, toolCount: 4 } }] } },
+        result: {
+          details: {
+            results: [
+              {
+                agent: "pass-security",
+                exitCode: 0,
+                progress: { status: "completed", durationMs: 15_000, toolCount: 4 },
+              },
+            ],
+          },
+        },
       });
       await emit("agent_settled");
       const done = JSON.parse(readFileSync(path, "utf8"));
       expect(done.parent_status).toBe("settled");
-      expect(roundExecutionStage(parseRoundProgress(JSON.stringify(done))!, ["pass-security"])).toBe("finalized");
+      expect(
+        roundExecutionStage(parseRoundProgress(JSON.stringify(done))!, ["pass-security"]),
+      ).toBe("finalized");
       expect(done.agents[0]).toMatchObject({
         agent: "pass-security",
         status: "completed",
@@ -122,18 +145,32 @@ describe("round progress extension", () => {
     process.env.QCR_SESSION_NAME = "pr-5467";
     process.env.QCR_PR = "5467";
     const handlers = new Map<string, PiEventHandler[]>();
-    const pi = { on(name: string, handler: PiEventHandler) { handlers.set(name, [...(handlers.get(name) ?? []), handler]); } };
+    const pi = {
+      on(name: string, handler: PiEventHandler) {
+        handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+      },
+    };
     const emit = async (name: string, event: Record<string, unknown> = {}) => {
       for (const handler of handlers.get(name) ?? []) await handler(event);
     };
     try {
       activate(pi as never);
       await emit("agent_start");
-      await emit("message_start", { message: { role: "user", content: [{ type: "text", text: [
-        `<!-- qcr-command:cmd-native:${"b".repeat(64)} -->`,
-        "**Worktree**: `/worktree` @ `head-native`",
-        "export QCR_ROUND_NO=10",
-      ].join("\n") }] } });
+      await emit("message_start", {
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: [
+                `<!-- qcr-command:cmd-native:${"b".repeat(64)} -->`,
+                "**Worktree**: `/worktree` @ `head-native`",
+                "export QCR_ROUND_NO=10",
+              ].join("\n"),
+            },
+          ],
+        },
+      });
       await emit("tool_execution_start", {
         toolName: "subagent",
         toolCallId: "parallel-1",
@@ -145,14 +182,26 @@ describe("round progress extension", () => {
         },
       });
 
-      const snapshot = parseRoundProgress(readFileSync(join(root, "state", "round-progress", "pr-5467.json"), "utf8"))!;
+      const snapshot = parseRoundProgress(
+        readFileSync(join(root, "state", "round-progress", "pr-5467.json"), "utf8"),
+      )!;
       expect(snapshot).toMatchObject({ round_no: 10, head_sha: "head-native" });
       expect(snapshot.fanout_started_at).toBe(snapshot.first_lens_started_at);
-      expect(snapshot.agents).toEqual(expect.arrayContaining([
-        expect.objectContaining({ execution_id: "parallel-1:pass-baseline--sol-med", status: "running" }),
-        expect.objectContaining({ execution_id: "parallel-1:pass-security--sol-high", status: "running" }),
-      ]));
-      expect(roundExecutionStage(snapshot, ["pass-baseline", "pass-security", "pass-validate"])).toBe("fanout-started");
+      expect(snapshot.agents).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            execution_id: "parallel-1:pass-baseline--sol-med",
+            status: "running",
+          }),
+          expect.objectContaining({
+            execution_id: "parallel-1:pass-security--sol-high",
+            status: "running",
+          }),
+        ]),
+      );
+      expect(
+        roundExecutionStage(snapshot, ["pass-baseline", "pass-security", "pass-validate"]),
+      ).toBe("fanout-started");
     } finally {
       process.env = previous;
     }
@@ -166,18 +215,39 @@ describe("round progress extension", () => {
     process.env.QCR_SESSION_NAME = "pr-5408";
     process.env.QCR_PR = "5408";
     const handlers = new Map<string, PiEventHandler[]>();
-    const pi = { on(name: string, handler: PiEventHandler) { handlers.set(name, [...(handlers.get(name) ?? []), handler]); } };
+    const pi = {
+      on(name: string, handler: PiEventHandler) {
+        handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+      },
+    };
     const emit = async (name: string, event: Record<string, unknown> = {}) => {
       for (const handler of handlers.get(name) ?? []) await handler(event);
     };
     try {
       activate(pi as never);
       await emit("agent_start");
-      await emit("message_start", { message: { role: "user", content: [{ type: "text", text: `<!-- qcr-command:cmd-5408:${"a".repeat(64)} -->` }] } });
-      await emit("tool_execution_start", { toolName: "subagent", toolCallId: "lens-1", args: { agent: "pass-security" } });
+      await emit("message_start", {
+        message: {
+          role: "user",
+          content: [{ type: "text", text: `<!-- qcr-command:cmd-5408:${"a".repeat(64)} -->` }],
+        },
+      });
+      await emit("tool_execution_start", {
+        toolName: "subagent",
+        toolCallId: "lens-1",
+        args: { agent: "pass-security" },
+      });
       const path = join(root, "state", "round-progress", "pr-5408.json");
       const first = JSON.parse(readFileSync(path, "utf8"));
-      await emit("tool_execution_update", { toolName: "subagent", toolCallId: "lens-1", partialResult: { details: { results: [{ agent: "pass-security", progress: { status: "running", durationMs: 10 } }] } } });
+      await emit("tool_execution_update", {
+        toolName: "subagent",
+        toolCallId: "lens-1",
+        partialResult: {
+          details: {
+            results: [{ agent: "pass-security", progress: { status: "running", durationMs: 10 } }],
+          },
+        },
+      });
       await emit("message_update");
       const later = JSON.parse(readFileSync(path, "utf8"));
       expect(later.command_accepted_at).toBe(first.command_accepted_at);
@@ -186,15 +256,39 @@ describe("round progress extension", () => {
       expect(later.fanout_started_at).toBe(first.fanout_started_at);
       expect(later.agents[0].started_at).toBe(first.agents[0].started_at);
 
-      await emit("tool_execution_end", { toolName: "subagent", toolCallId: "lens-1", result: { details: { results: [{ agent: "pass-security", exitCode: 0 }] } } });
-      await emit("tool_execution_start", { toolName: "subagent", toolCallId: "lens-2", args: { agent: "pass-security" } });
+      await emit("tool_execution_end", {
+        toolName: "subagent",
+        toolCallId: "lens-1",
+        result: { details: { results: [{ agent: "pass-security", exitCode: 0 }] } },
+      });
+      await emit("tool_execution_start", {
+        toolName: "subagent",
+        toolCallId: "lens-2",
+        args: { agent: "pass-security" },
+      });
       const repeated = JSON.parse(readFileSync(path, "utf8"));
       expect(repeated.agents).toHaveLength(2);
-      expect(repeated.agents).toEqual(expect.arrayContaining([
-        expect.objectContaining({ execution_id: "lens-1:pass-security", agent: "pass-security", status: "completed", finished_at: expect.any(String) }),
-        expect.objectContaining({ execution_id: "lens-2:pass-security", agent: "pass-security", status: "running", started_at: expect.any(String) }),
-      ]));
-      expect(repeated.agents.find((agent: { execution_id: string }) => agent.execution_id === "lens-2:pass-security").finished_at).toBeUndefined();
+      expect(repeated.agents).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            execution_id: "lens-1:pass-security",
+            agent: "pass-security",
+            status: "completed",
+            finished_at: expect.any(String),
+          }),
+          expect.objectContaining({
+            execution_id: "lens-2:pass-security",
+            agent: "pass-security",
+            status: "running",
+            started_at: expect.any(String),
+          }),
+        ]),
+      );
+      expect(
+        repeated.agents.find(
+          (agent: { execution_id: string }) => agent.execution_id === "lens-2:pass-security",
+        ).finished_at,
+      ).toBeUndefined();
     } finally {
       process.env = previous;
     }
@@ -213,25 +307,34 @@ describe("round progress extension", () => {
       agents: [],
     };
     expect(parseRoundProgress(JSON.stringify(legacy))?.version).toBe(1);
-    expect(roundExecutionStage({
-      ...legacy,
-      version: 2,
-      command_id: "cmd-1",
-      command_sha256: "a".repeat(64),
-      command_accepted_at: "2026-08-28T09:00:10Z",
-      preparing_at: "2026-08-28T09:00:10Z",
-      last_activity: "compact context read",
-    }, ["pass-baseline"])).toBe("preparing");
-    expect(parseRoundProgress(JSON.stringify({
-      ...legacy,
-      version: 2,
-      command_id: "cmd-1",
-      command_sha256: "a".repeat(64),
-      command_accepted_at: "2026-08-28T09:00:10Z",
-      preparing_at: "2026-08-28T09:00:10Z",
-      first_lens_started_at: "2026-08-28T09:00:05Z",
-      fanout_started_at: "2026-08-28T09:00:05Z",
-    }))).toBeUndefined();
+    expect(
+      roundExecutionStage(
+        {
+          ...legacy,
+          version: 2,
+          command_id: "cmd-1",
+          command_sha256: "a".repeat(64),
+          command_accepted_at: "2026-08-28T09:00:10Z",
+          preparing_at: "2026-08-28T09:00:10Z",
+          last_activity: "compact context read",
+        },
+        ["pass-baseline"],
+      ),
+    ).toBe("preparing");
+    expect(
+      parseRoundProgress(
+        JSON.stringify({
+          ...legacy,
+          version: 2,
+          command_id: "cmd-1",
+          command_sha256: "a".repeat(64),
+          command_accepted_at: "2026-08-28T09:00:10Z",
+          preparing_at: "2026-08-28T09:00:10Z",
+          first_lens_started_at: "2026-08-28T09:00:05Z",
+          fanout_started_at: "2026-08-28T09:00:05Z",
+        }),
+      ),
+    ).toBeUndefined();
   });
 
   it("does nothing outside a numbered PR session", () => {

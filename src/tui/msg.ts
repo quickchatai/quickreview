@@ -55,7 +55,11 @@ export function injectProbeArgv(cfg: TuiConfig, session: string, name: string): 
 export type DeliveryState = "pending" | "delivered" | "undelivered";
 
 export interface MessageSender {
-  send(session: string, text: string, onState: (state: DeliveryState, label: string) => void): Promise<void>;
+  send(
+    session: string,
+    text: string,
+    onState: (state: DeliveryState, label: string) => void,
+  ): Promise<void>;
 }
 
 export class InjectSender implements MessageSender {
@@ -65,17 +69,24 @@ export class InjectSender implements MessageSender {
     private readonly cfg: TuiConfig,
     private readonly ssh: SshRunner,
     private readonly now: () => Date = () => new Date(),
-    private readonly sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+    private readonly sleep: (ms: number) => Promise<void> = (ms) =>
+      new Promise((r) => setTimeout(r, ms)),
   ) {}
 
-  async send(session: string, text: string, onState: (state: DeliveryState, label: string) => void): Promise<void> {
+  async send(
+    session: string,
+    text: string,
+    onState: (state: DeliveryState, label: string) => void,
+  ): Promise<void> {
     if (!isValidSessionName(session)) {
       onState("undelivered", `✖ msg ${session} undelivered (bad session name)`);
       return;
     }
     const name = injectFileName(this.now(), this.seq++);
     onState("pending", `→ msg ${session} pending…`);
-    const write = await this.ssh(this.cfg.ssh_host, injectWriteArgv(this.cfg, session, name), { stdin: text });
+    const write = await this.ssh(this.cfg.ssh_host, injectWriteArgv(this.cfg, session, name), {
+      stdin: text,
+    });
     if (!write.ok) {
       onState("undelivered", `✖ msg ${session} undelivered (write failed)`);
       return;

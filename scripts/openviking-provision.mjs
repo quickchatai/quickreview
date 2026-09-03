@@ -110,10 +110,13 @@ export function usersFromListing(body) {
   // `result`/`data` IS the array, not an object carrying one (verified against
   // the deployed server, 2026-08-25; the miss made boot provisioning refuse to
   // create anything, correctly but uselessly).
-  let list = Array.isArray(body) ? body
-    : Array.isArray(body?.result) ? body.result
-    : Array.isArray(body?.data) ? body.data
-    : null;
+  let list = Array.isArray(body)
+    ? body
+    : Array.isArray(body?.result)
+      ? body.result
+      : Array.isArray(body?.data)
+        ? body.data
+        : null;
   for (const c of candidates) {
     if (list) break;
     for (const key of ["users", "items", "accounts"]) {
@@ -149,20 +152,31 @@ export function usersFromListing(body) {
  * key are simply absent from the map (never guessed, never rotated).
  */
 export function userKeysFromListing(body) {
-  const list = Array.isArray(body) ? body
-    : Array.isArray(body?.result) ? body.result
-    : Array.isArray(body?.data) ? body.data
-    : Array.isArray(body?.users) ? body.users
-    : Array.isArray(body?.data?.users) ? body.data.users
-    : Array.isArray(body?.result?.users) ? body.result.users
-    : null;
+  const list = Array.isArray(body)
+    ? body
+    : Array.isArray(body?.result)
+      ? body.result
+      : Array.isArray(body?.data)
+        ? body.data
+        : Array.isArray(body?.users)
+          ? body.users
+          : Array.isArray(body?.data?.users)
+            ? body.data.users
+            : Array.isArray(body?.result?.users)
+              ? body.result.users
+              : null;
   const out = {};
   if (!Array.isArray(list)) return out;
   for (const item of list) {
     if (!item || typeof item !== "object") continue;
     const name = item.user_id ?? item.user ?? item.id ?? item.name;
     const key = item.api_key ?? item.user_key ?? item.key;
-    if (typeof name === "string" && name.trim() !== "" && typeof key === "string" && key.trim() !== "") {
+    if (
+      typeof name === "string" &&
+      name.trim() !== "" &&
+      typeof key === "string" &&
+      key.trim() !== ""
+    ) {
       out[name.trim()] = key.trim();
     }
   }
@@ -206,7 +220,11 @@ export function planProvision(existing, wanted) {
   }
   if (existing === null) return { create: [], keep: [], unknown: seen };
   const have = new Set(existing.map((u) => String(u).trim()));
-  return { create: seen.filter((u) => !have.has(u)), keep: seen.filter((u) => have.has(u)), unknown: [] };
+  return {
+    create: seen.filter((u) => !have.has(u)),
+    keep: seen.filter((u) => have.has(u)),
+    unknown: [],
+  };
 }
 
 /** Comma/space separated user list → array. */
@@ -261,29 +279,63 @@ async function call(fetchFn, url, init, timeoutMs) {
  * listing — including OpenViking's habit of answering an error HTTP 200 with
  * `{status:"error"}` in the envelope.
  */
-export async function listUsers({ base, account, rootKey, fetchFn = /** @type {OvFetch} */ (fetch), timeoutMs = DEFAULTS.requestTimeoutMs }) {
-  const r = await call(fetchFn, `${base}${adminUsersPath(account)}`, { method: "GET", headers: adminHeaders(rootKey) }, timeoutMs);
-  if (r.status < 200 || r.status >= 300) return { users: null, keys: {}, status: r.status, detail: r.error ?? `HTTP ${r.status}` };
+export async function listUsers({
+  base,
+  account,
+  rootKey,
+  fetchFn = /** @type {OvFetch} */ (fetch),
+  timeoutMs = DEFAULTS.requestTimeoutMs,
+}) {
+  const r = await call(
+    fetchFn,
+    `${base}${adminUsersPath(account)}`,
+    { method: "GET", headers: adminHeaders(rootKey) },
+    timeoutMs,
+  );
+  if (r.status < 200 || r.status >= 300)
+    return { users: null, keys: {}, status: r.status, detail: r.error ?? `HTTP ${r.status}` };
   if (r.body && typeof r.body === "object" && r.body.status === "error") {
-    return { users: null, keys: {}, status: r.status, detail: `error envelope: ${String(r.body.error?.message ?? r.body.error ?? "")}` };
+    return {
+      users: null,
+      keys: {},
+      status: r.status,
+      detail: `error envelope: ${String(r.body.error?.message ?? r.body.error ?? "")}`,
+    };
   }
   // `keys` is only ever READ by the wizard's mint path, so an
   // existing user's already-distributed key can be re-used instead of rotated.
   // The boot path ignores it and never writes a key anywhere.
-  return { users: usersFromListing(r.body), keys: userKeysFromListing(r.body), status: r.status, detail: `HTTP ${r.status}` };
+  return {
+    users: usersFromListing(r.body),
+    keys: userKeysFromListing(r.body),
+    status: r.status,
+    detail: `HTTP ${r.status}`,
+  };
 }
 
 /** Create ONE user. A 409 is success: the user already exists. */
-export async function createUser({ base, account, user, rootKey, fetchFn = /** @type {OvFetch} */ (fetch), timeoutMs = DEFAULTS.requestTimeoutMs }) {
+export async function createUser({
+  base,
+  account,
+  user,
+  rootKey,
+  fetchFn = /** @type {OvFetch} */ (fetch),
+  timeoutMs = DEFAULTS.requestTimeoutMs,
+}) {
   const r = await call(
     fetchFn,
     `${base}${adminUsersPath(account)}`,
     // role is lowercase on the live 0.4.15: uppercase gets INVALID_ARGUMENT
     // "Account user role must be user or admin" (verified 2026-08-25).
-    { method: "POST", headers: adminHeaders(rootKey), body: JSON.stringify({ user_id: user, user, role: "user" }) },
+    {
+      method: "POST",
+      headers: adminHeaders(rootKey),
+      body: JSON.stringify({ user_id: user, user, role: "user" }),
+    },
     timeoutMs,
   );
-  if (r.status === 409) return { ok: true, existed: true, key: "", detail: "HTTP 409 — already present" };
+  if (r.status === 409)
+    return { ok: true, existed: true, key: "", detail: "HTTP 409 — already present" };
   if (r.status >= 200 && r.status < 300 && !(r.body && r.body.status === "error")) {
     // The server MINTS the user's key at creation and returns it here — this is
     // the only moment it is ever handed out. The boot path discards it; the
@@ -312,7 +364,14 @@ export async function createUser({ base, account, user, rootKey, fetchFn = /** @
  * reports them; it must never invent or rotate one. Never throws, never writes
  * a file, never logs a key value.
  */
-export async function mintUserKeys({ base, account, users, rootKey, fetchFn = /** @type {OvFetch} */ (fetch), log = () => {} }) {
+export async function mintUserKeys({
+  base,
+  account,
+  users,
+  rootKey,
+  fetchFn = /** @type {OvFetch} */ (fetch),
+  log = () => {},
+}) {
   const report = { keys: {}, created: [], kept: [], missing: [], ok: true, detail: "" };
   if (!rootKey) {
     report.ok = false;
@@ -337,7 +396,9 @@ export async function mintUserKeys({ base, account, users, rootKey, fetchFn = /*
     } else {
       report.missing.push(user);
       report.ok = false;
-      log(`openviking: user ${user} already exists but the server did not hand back its key — NOT rotating`);
+      log(
+        `openviking: user ${user} already exists but the server did not hand back its key — NOT rotating`,
+      );
     }
   }
   for (const user of plan.create) {
@@ -375,12 +436,28 @@ export async function mintUserKeys({ base, account, users, rootKey, fetchFn = /*
  * request shape and verdict logic (`scripts/companion-memory-forward.mjs`) so
  * there is exactly ONE definition of reach/refusal/inconclusive in the repo.
  */
-export async function probeKey({ base, key, user, fetchFn = /** @type {OvFetch} */ (fetch), env = process.env, timeoutMs = DEFAULTS.requestTimeoutMs }) {
+export async function probeKey({
+  base,
+  key,
+  user,
+  fetchFn = /** @type {OvFetch} */ (fetch),
+  env = process.env,
+  timeoutMs = DEFAULTS.requestTimeoutMs,
+}) {
   // Namespace in the URI — the server confines by URI, not by the header
   // (verified live 2026-08-25; see PATHS.readUri in the forward).
   const url = `${base}${PATHS.read(env)}?uri=${encodeURIComponent(PATHS.readUri(env, user))}`;
-  const r = await call(fetchFn, url, { method: "GET", headers: authHeaders(key, user, env) }, timeoutMs);
-  return { classification: classify(r.status, r.body), status: r.status, detail: r.error ?? `HTTP ${r.status}` };
+  const r = await call(
+    fetchFn,
+    url,
+    { method: "GET", headers: authHeaders(key, user, env) },
+    timeoutMs,
+  );
+  return {
+    classification: classify(r.status, r.body),
+    status: r.status,
+    detail: r.error ?? `HTTP ${r.status}`,
+  };
 }
 
 // ---- the temporary server ---------------------------------------------------
@@ -394,7 +471,13 @@ export function serverArgv(cfg) {
   return ["--config", cfg.config, "--host", cfg.host, "--port", String(cfg.port)];
 }
 
-export async function waitForReady({ base, fetchFn = /** @type {OvFetch} */ (fetch), timeoutMs = DEFAULTS.readyTimeoutMs, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now }) {
+export async function waitForReady({
+  base,
+  fetchFn = /** @type {OvFetch} */ (fetch),
+  timeoutMs = DEFAULTS.readyTimeoutMs,
+  sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  now = Date.now,
+}) {
   const deadline = now() + timeoutMs;
   for (;;) {
     const r = await call(fetchFn, `${base}/ready`, { method: "GET", headers: {} }, 2000);
@@ -412,17 +495,31 @@ export async function waitForReady({ base, fetchFn = /** @type {OvFetch} */ (fet
  *
  * Returns a report; NEVER throws.
  */
-export async function provision({ base, account, users, rootKey, reviewerKey, reviewerUser = "reviewer", fetchFn = /** @type {OvFetch} */ (fetch), env = process.env, log = console.log }) {
+export async function provision({
+  base,
+  account,
+  users,
+  rootKey,
+  reviewerKey,
+  reviewerUser = "reviewer",
+  fetchFn = /** @type {OvFetch} */ (fetch),
+  env = process.env,
+  log = console.log,
+}) {
   const report = { created: [], kept: [], failed: [], reviewer: "skipped", ok: true };
   if (!rootKey) {
-    log("openviking: no root key in the secrets mount — users NOT provisioned; memory degrades until one is");
+    log(
+      "openviking: no root key in the secrets mount — users NOT provisioned; memory degrades until one is",
+    );
     report.ok = false;
     return report;
   }
   const listing = await listUsers({ base, account, rootKey, fetchFn });
   const plan = planProvision(listing.users, users);
   if (plan.unknown.length > 0) {
-    log(`openviking: could not read the user listing (${listing.detail}) — creating nothing, leaving ${plan.unknown.join(", ")} as they are`);
+    log(
+      `openviking: could not read the user listing (${listing.detail}) — creating nothing, leaving ${plan.unknown.join(", ")} as they are`,
+    );
     report.ok = false;
   }
   for (const user of plan.keep) {
@@ -435,7 +532,9 @@ export async function provision({ base, account, users, rootKey, reviewerKey, re
       log(`openviking: user ${user} ${r.existed ? "already existed" : "created"}`);
       (r.existed ? report.kept : report.created).push(user);
     } else {
-      log(`openviking: could not create user ${user} (${r.detail}) — memory for that user degrades until it exists`);
+      log(
+        `openviking: could not create user ${user} (${r.detail}) — memory for that user degrades until it exists`,
+      );
       report.failed.push(user);
       report.ok = false;
     }
@@ -457,7 +556,9 @@ export async function provision({ base, account, users, rootKey, reviewerKey, re
       report.ok = false;
     }
   } else {
-    log("openviking: no reviewer key in the secrets mount — the daemon and every review session start memory-less");
+    log(
+      "openviking: no reviewer key in the secrets mount — the daemon and every review session start memory-less",
+    );
     report.ok = false;
   }
   return report;
@@ -550,13 +651,17 @@ async function main(argv) {
       return cfg.strict ? 1 : 0;
     }
     child = spawn(cfg.bin, serverArgv(cfg), { stdio: ["ignore", "inherit", "inherit"] });
-    child.on("error", (err) => log(`openviking: could not start the provisioning server (${err.message})`));
+    child.on("error", (err) =>
+      log(`openviking: could not start the provisioning server (${err.message})`),
+    );
     // The child must never be what keeps node alive: the entrypoint's
     // `|| true` only fires once node EXITS.
     child.unref?.();
     const ready = await waitForReady({ base: cfg.base, timeoutMs: cfg.readyTimeoutMs });
     if (!ready) {
-      log("openviking: the provisioning server never became ready — users NOT provisioned; the daemon still supervises the real one");
+      log(
+        "openviking: the provisioning server never became ready — users NOT provisioned; the daemon still supervises the real one",
+      );
       await stopServerChild(child);
       return cfg.strict ? 1 : 0;
     }
@@ -583,7 +688,10 @@ async function main(argv) {
 
 const invokedDirectly = (() => {
   try {
-    return process.argv[1] !== undefined && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
+    return (
+      process.argv[1] !== undefined &&
+      import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href
+    );
   } catch {
     return false;
   }
@@ -596,6 +704,8 @@ if (invokedDirectly) {
     .catch((err) => {
       // Never a non-zero exit on an unexpected throw: memory must not block the
       // boot. Say what happened and let the daemon come up memory-less.
-      console.log(`openviking: provisioning failed (${err instanceof Error ? err.message : String(err)}) — the daemon starts memory-less`);
+      console.log(
+        `openviking: provisioning failed (${err instanceof Error ? err.message : String(err)}) — the daemon starts memory-less`,
+      );
     });
 }

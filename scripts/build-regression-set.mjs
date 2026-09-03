@@ -37,7 +37,9 @@ let sel;
 try {
   sel = await import(resolve("dist/src/regression.js"));
 } catch {
-  console.error("dist/src/regression.js missing — run `npm run build` first (the fixture must be built by the same instrument the tests use).");
+  console.error(
+    "dist/src/regression.js missing — run `npm run build` first (the fixture must be built by the same instrument the tests use).",
+  );
   process.exit(2);
 }
 
@@ -127,6 +129,21 @@ writeFileSync(outPath, `${JSON.stringify(set, null, 2)}\n`);
 
 const bytes = Buffer.byteLength(JSON.stringify(set));
 const total = report.cases.reduce((n, c) => n + c.findings.length, 0);
-console.log(`${report.cases.length} case(s), ${total} finding(s) (${labelled} human-labelled, ${total - labelled} defaulted), ${(bytes / 1024).toFixed(0)}KB -> ${outPath}`);
+console.log(
+  `${report.cases.length} case(s), ${total} finding(s) (${labelled} human-labelled, ${total - labelled} defaulted), ${(bytes / 1024).toFixed(0)}KB -> ${outPath}`,
+);
 console.log("per reviewer:", report.perReviewer);
-console.log(`rejected ${report.rejected.length} review(s); top reasons:`, Object.entries(report.rejected.reduce((m, r) => ((m[r.reason.replace(/\d+/g, "N")] = (m[r.reason.replace(/\d+/g, "N")] ?? 0) + 1), m), {})).sort((a, b) => b[1] - a[1]).slice(0, 6));
+console.log(
+  `rejected ${report.rejected.length} review(s); top reasons:`,
+  Object.entries(
+    report.rejected.reduce(
+      (m, r) => (
+        (m[r.reason.replace(/\d+/g, "N")] = (m[r.reason.replace(/\d+/g, "N")] ?? 0) + 1),
+        m
+      ),
+      {},
+    ),
+  )
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6),
+);

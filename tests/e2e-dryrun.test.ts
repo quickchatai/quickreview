@@ -32,7 +32,11 @@ const PR = {
   head_sha: "0f1e2d3c4b5a69788796a5b4c3d2e1f000112233",
   files: [
     { filename: "backend/flowdesk/flowdesk/api/webhooks.py", additions: 18, deletions: 4 },
-    { filename: "backend/flowdesk/flowdesk/api/test/test_webhooks.py", additions: 40, deletions: 0 },
+    {
+      filename: "backend/flowdesk/flowdesk/api/test/test_webhooks.py",
+      additions: 40,
+      deletions: 0,
+    },
   ],
 };
 
@@ -68,7 +72,7 @@ const FINDINGS: Finding[] = [
     line: 35,
     side: "RIGHT",
     title: "full payload logged",
-    body: "`extra={\"payload\": payload}` puts the raw webhook body (auth headers included) into Datadog.",
+    body: '`extra={"payload": payload}` puts the raw webhook body (auth headers included) into Datadog.',
     lens: "pass-security",
   },
   {
@@ -188,7 +192,9 @@ describe("dry-run fixture round", () => {
     expect(recorded!.body.commit_id).toBe(PR.head_sha);
     // two anchored findings inline, the unanchorable one stripped to the body
     expect(recorded!.body.comments).toHaveLength(2);
-    expect(recorded!.body.comments[0].body).toContain("[blocker] retry attempt counter is unbounded");
+    expect(recorded!.body.comments[0].body).toContain(
+      "[blocker] retry attempt counter is unbounded",
+    );
     expect(recorded!.body.comments[1].body).toContain("[blocker] full payload logged"); // P2 @ 0.85 ≥ 0.8
     expect(recorded!.body.body).toContain("consider a jittered backoff");
     expect(recorded!.body.body).toContain("### Additional findings (not posted inline)");
@@ -209,7 +215,11 @@ describe("dry-run fixture round", () => {
       findings: [],
     });
 
-    for (const action of approvalActions({ pr: PR.number, payload: review.payload, trigger_label: cfg.github.trigger_label })) {
+    for (const action of approvalActions({
+      pr: PR.number,
+      payload: review.payload,
+      trigger_label: cfg.github.trigger_label,
+    })) {
       await action.run(adapter);
     }
 
@@ -238,7 +248,12 @@ describe("dry-run fixture round", () => {
     expect(recorded[0]!.body.body).toContain("### Start here");
     // The gate's kind union has no review-retraction member; assert the
     // recorded intents stay inside the set the posting path may emit.
-    const allowed = new Set(["create_review", "remove_label", "delete_team_review_request", "create_review_comment_reply"]);
+    const allowed = new Set([
+      "create_review",
+      "remove_label",
+      "delete_team_review_request",
+      "create_review_comment_reply",
+    ]);
     for (const intent of recorded) expect(allowed.has(intent.kind)).toBe(true);
   });
 });

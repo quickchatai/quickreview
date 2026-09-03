@@ -26,7 +26,12 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
-import { OnboardingEngine, type OnboardAdapters, type ProcessResult, type StepContext } from "../src/onboard/engine.js";
+import {
+  OnboardingEngine,
+  type OnboardAdapters,
+  type ProcessResult,
+  type StepContext,
+} from "../src/onboard/engine.js";
 import type { StreamRunner } from "../src/onboard/steps/compose.js";
 import { deployArgv, deployCommandLine, deployScriptPath } from "../src/onboard/steps/deploysh.js";
 import { GO_LIVE_CONFIRMATION, GO_LIVE_STEP_ID, goLiveStep } from "../src/onboard/steps/golive.js";
@@ -48,11 +53,19 @@ import { SSH_USER_CHOICE_KEY } from "../src/onboard/steps/ssh.js";
 import { SSH_ALIAS_CHOICE_KEY, TOPOLOGY_CHOICE_KEY } from "../src/onboard/steps/topology.js";
 import { remoteFactsFor, stackTransportFor } from "../src/onboard/steps/transport.js";
 import { VERIFY_STACK_STEP_ID, verifyStackStep } from "../src/onboard/steps/verifyup.js";
-import { DEPLOY_BUILD_WARNING, VM_DEPLOY_CHOICE_KEY, VM_DEPLOY_STEP_ID, vmDeployStep } from "../src/onboard/steps/vmdeploy.js";
+import {
+  DEPLOY_BUILD_WARNING,
+  VM_DEPLOY_CHOICE_KEY,
+  VM_DEPLOY_STEP_ID,
+  vmDeployStep,
+} from "../src/onboard/steps/vmdeploy.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const exampleConfig = readFileSync(join(repoRoot, "config.example.toml"), "utf8");
-const exampleInventory = readFileSync(join(repoRoot, "deploy", "ansible", "inventory.example.ini"), "utf8");
+const exampleInventory = readFileSync(
+  join(repoRoot, "deploy", "ansible", "inventory.example.ini"),
+  "utf8",
+);
 const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const PEM = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
 const API = "https://api.test";
@@ -69,9 +82,15 @@ beforeEach(() => {
   mkdirSync(join(root, "deploy", "ansible"), { recursive: true });
   mkdirSync(join(root, "scripts"), { recursive: true });
   mkdirSync(secretsDir, { recursive: true });
-  writeFileSync(join(root, "config.toml"), setTomlKey(exampleConfig, "github", "secrets_dir", secretsDir)!);
+  writeFileSync(
+    join(root, "config.toml"),
+    setTomlKey(exampleConfig, "github", "secrets_dir", secretsDir)!,
+  );
   writeFileSync(join(root, "deploy", "ansible", "inventory.example.ini"), exampleInventory);
-  writeFileSync(join(root, "scripts", "deploy.sh"), "#!/usr/bin/env bash\n# a stand-in; the real one is never executed in tests\n");
+  writeFileSync(
+    join(root, "scripts", "deploy.sh"),
+    "#!/usr/bin/env bash\n# a stand-in; the real one is never executed in tests\n",
+  );
   writeFileSync(join(secretsDir, SECRET_FILES.appId), "4242\n");
   writeFileSync(join(secretsDir, SECRET_FILES.pem), PEM);
   writeFileSync(join(secretsDir, SECRET_FILES.webhookSecret), "s".repeat(40));
@@ -83,11 +102,21 @@ const VM_CHOICES = { [TOPOLOGY_CHOICE_KEY]: "vm", [SSH_ALIAS_CHOICE_KEY]: ALIAS 
 function seedChoices(choices: Record<string, unknown>): void {
   writeFileSync(
     join(root, "state", "onboarding", "checklist.json"),
-    JSON.stringify({ version: 1, created_at: "2026-08-30T10:00:00Z", updated_at: "2026-08-30T10:00:00Z", completed_at: null, choices, steps: {} }),
+    JSON.stringify({
+      version: 1,
+      created_at: "2026-08-30T10:00:00Z",
+      updated_at: "2026-08-30T10:00:00Z",
+      completed_at: null,
+      choices,
+      steps: {},
+    }),
   );
 }
 
-function baseAdapters(runner: OnboardAdapters["runner"], fetchFake?: typeof fetch): OnboardAdapters {
+function baseAdapters(
+  runner: OnboardAdapters["runner"],
+  fetchFake?: typeof fetch,
+): OnboardAdapters {
   return {
     fetch:
       fetchFake ??
@@ -112,10 +141,21 @@ describe("the inventory is filled from the interview", () => {
     );
   }
 
-  const LOCAL_EMBEDDER = { provider: "local", model: "bge-small-zh-v1.5-f16", dimension: 512, keyFile: "openai_embeddings_api_key" };
+  const LOCAL_EMBEDDER = {
+    provider: "local",
+    model: "bge-small-zh-v1.5-f16",
+    dimension: 512,
+    keyFile: "openai_embeddings_api_key",
+  };
 
   it("renders the example's shape: the group, the host, the group vars", () => {
-    const text = renderInventory({ host: ALIAS, ansibleUser: "deploy", pythonInterpreter: DEFAULT_PYTHON_INTERPRETER, cloudflaredEnabled: true, embedder: LOCAL_EMBEDDER });
+    const text = renderInventory({
+      host: ALIAS,
+      ansibleUser: "deploy",
+      pythonInterpreter: DEFAULT_PYTHON_INTERPRETER,
+      cloudflaredEnabled: true,
+      embedder: LOCAL_EMBEDDER,
+    });
     // The same group and the same two group vars the tracked example documents.
     expect(text).toMatch(/^\[quickreview\]$/m);
     expect(text).toMatch(/^\[quickreview:vars\]$/m);
@@ -128,7 +168,13 @@ describe("the inventory is filled from the interview", () => {
   });
 
   it("leaves ansible_user out when the ssh config already answers it", () => {
-    const text = renderInventory({ host: ALIAS, ansibleUser: "", pythonInterpreter: DEFAULT_PYTHON_INTERPRETER, cloudflaredEnabled: false, embedder: LOCAL_EMBEDDER });
+    const text = renderInventory({
+      host: ALIAS,
+      ansibleUser: "",
+      pythonInterpreter: DEFAULT_PYTHON_INTERPRETER,
+      cloudflaredEnabled: false,
+      embedder: LOCAL_EMBEDDER,
+    });
     expect(text).not.toMatch(/^ansible_user=/m);
     expect(text).toMatch(/your ~\/\.ssh\/config already decides the login user/);
   });
@@ -139,7 +185,12 @@ describe("the inventory is filled from the interview", () => {
       ansibleUser: "",
       pythonInterpreter: DEFAULT_PYTHON_INTERPRETER,
       cloudflaredEnabled: false,
-      embedder: { provider: "openai", model: "text-embedding-3-small", dimension: 1536, keyFile: "openai_embeddings_api_key" },
+      embedder: {
+        provider: "openai",
+        model: "text-embedding-3-small",
+        dimension: 1536,
+        keyFile: "openai_embeddings_api_key",
+      },
     });
     expect(parseInventoryHostVars(hosted)).toEqual({
       cloudflared_enabled: "false",
@@ -150,13 +201,23 @@ describe("the inventory is filled from the interview", () => {
     });
     // deploy.sh's awk reads the same line: host first, host vars after.
     expect(parseInventoryHost(hosted)).toBe(ALIAS);
-    const local = renderInventory({ host: ALIAS, ansibleUser: "", pythonInterpreter: DEFAULT_PYTHON_INTERPRETER, cloudflaredEnabled: false, embedder: LOCAL_EMBEDDER });
+    const local = renderInventory({
+      host: ALIAS,
+      ansibleUser: "",
+      pythonInterpreter: DEFAULT_PYTHON_INTERPRETER,
+      cloudflaredEnabled: false,
+      embedder: LOCAL_EMBEDDER,
+    });
     expect(parseInventoryHostVars(local)).toEqual({ cloudflared_enabled: "false" });
     expect(local).not.toContain("openviking_embedding");
   });
 
   it("writes the file scripts/deploy.sh reads by default, using the alias and the resolved login user", async () => {
-    const e = inventoryEngine({ ...VM_CHOICES, [SSH_USER_CHOICE_KEY]: "deploy", [INGRESS_CHOICE_KEY]: "named" });
+    const e = inventoryEngine({
+      ...VM_CHOICES,
+      [SSH_USER_CHOICE_KEY]: "deploy",
+      [INGRESS_CHOICE_KEY]: "named",
+    });
     const result = await e.runStep(VM_INVENTORY_STEP_ID);
     expect(result.ok).toBe(true);
     const written = readFileSync(inventoryPath(root), "utf8");
@@ -169,18 +230,27 @@ describe("the inventory is filled from the interview", () => {
   it("the ingress answer rides the host line — the tracked group_vars is never edited", async () => {
     const e = inventoryEngine({ ...VM_CHOICES, [INGRESS_CHOICE_KEY]: "named" });
     await e.runStep(VM_INVENTORY_STEP_ID);
-    expect(parseInventoryHostVars(readFileSync(inventoryPath(root), "utf8"))).toEqual({ cloudflared_enabled: "true" });
+    expect(parseInventoryHostVars(readFileSync(inventoryPath(root), "utf8"))).toEqual({
+      cloudflared_enabled: "true",
+    });
 
     const polling = inventoryEngine({ ...VM_CHOICES, [INGRESS_CHOICE_KEY]: "polling" });
     const result = await polling.runStep(VM_INVENTORY_STEP_ID);
-    expect(parseInventoryHostVars(readFileSync(inventoryPath(root), "utf8"))).toEqual({ cloudflared_enabled: "false" });
-    expect(result.checks.find((c) => c.name === "ingress")!.detail).toMatch(/nothing is exposed and nothing needs to be/);
+    expect(parseInventoryHostVars(readFileSync(inventoryPath(root), "utf8"))).toEqual({
+      cloudflared_enabled: "false",
+    });
+    expect(result.checks.find((c) => c.name === "ingress")!.detail).toMatch(
+      /nothing is exposed and nothing needs to be/,
+    );
   });
 
   it("only the named tunnel means cloudflared on the server; the others stay selectable and say what they mean", () => {
     expect(cloudflaredEnabledFor("named")).toBe(true);
-    for (const other of ["quick", "ngrok", "polling", null]) expect(cloudflaredEnabledFor(other)).toBe(false);
-    expect(ingressNoteFor("quick", 8787)).toMatch(/YOU run that tunnel on the server yourself, pointing it at 127\.0\.0\.1:8787/);
+    for (const other of ["quick", "ngrok", "polling", null])
+      expect(cloudflaredEnabledFor(other)).toBe(false);
+    expect(ingressNoteFor("quick", 8787)).toMatch(
+      /YOU run that tunnel on the server yourself, pointing it at 127\.0\.0\.1:8787/,
+    );
     expect(ingressNoteFor(null, 8787)).toMatch(/named Cloudflare tunnel is the recommended answer/);
   });
 
@@ -207,7 +277,9 @@ describe("the inventory is filled from the interview", () => {
     writeFileSync(inventoryPath(root), "[quickreview]\nsome-other-box\n");
     const report = await e.verifyAll();
     expect(report.ok).toBe(false);
-    expect(report.results[0]!.failures.join(" ")).toMatch(/targets "some-other-box", not the recorded alias "review-box"/);
+    expect(report.results[0]!.failures.join(" ")).toMatch(
+      /targets "some-other-box", not the recorded alias "review-box"/,
+    );
     expect(readFileSync(inventoryPath(root), "utf8")).toMatch(/some-other-box/);
   });
 });
@@ -238,7 +310,11 @@ function deployHarness(
   const runner = {
     run: async (cmd: string, args: string[]): Promise<ProcessResult> => {
       if (cmd === "ssh" && args.join(" ").includes("docker ps")) {
-        return { code: 0, stdout: `quickreview-sandbox ${o.containerState ?? "running"}\n`, stderr: "" };
+        return {
+          code: 0,
+          stdout: `quickreview-sandbox ${o.containerState ?? "running"}\n`,
+          stderr: "",
+        };
       }
       return { code: 1, stdout: "", stderr: `unexpected ${cmd} ${args.join(" ")}` };
     },
@@ -250,7 +326,11 @@ function deployHarness(
 describe("the deploy composes the real script, at full strictness", () => {
   it("the argv is the script and the mode — no flag that skips a check, and no env to override", () => {
     expect(deployArgv(root, "rebuild")).toEqual([deployScriptPath(root), "rebuild"]);
-    expect(deployArgv(root, "sync", { dryRun: true })).toEqual([deployScriptPath(root), "--dry-run", "sync"]);
+    expect(deployArgv(root, "sync", { dryRun: true })).toEqual([
+      deployScriptPath(root),
+      "--dry-run",
+      "sync",
+    ]);
     // The StreamRunner interface takes (cmd, args, onLine) and nothing else:
     // there is nowhere for this step to put a QC_* override even if it wanted
     // one, so the defaults the manual path gets are the ones it gets.
@@ -271,11 +351,21 @@ describe("the deploy composes the real script, at full strictness", () => {
 
   it("the first deploy is a rebuild; a later one is a sync; the operator can still ask by name", async () => {
     writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS}\n`);
-    const second = deployHarness({ choices: { ...VM_CHOICES, [VM_DEPLOY_CHOICE_KEY]: { mode: "rebuild", at: "2026-08-30T10:00:00Z" } } });
+    const second = deployHarness({
+      choices: {
+        ...VM_CHOICES,
+        [VM_DEPLOY_CHOICE_KEY]: { mode: "rebuild", at: "2026-08-30T10:00:00Z" },
+      },
+    });
     await second.engine.runStep(VM_DEPLOY_STEP_ID);
     expect(second.runs.map((r) => r.at(-1))).toEqual(["sync", "sync"]);
 
-    const asked = deployHarness({ choices: { ...VM_CHOICES, [VM_DEPLOY_CHOICE_KEY]: { mode: "sync", at: "2026-08-30T10:00:00Z" } } });
+    const asked = deployHarness({
+      choices: {
+        ...VM_CHOICES,
+        [VM_DEPLOY_CHOICE_KEY]: { mode: "sync", at: "2026-08-30T10:00:00Z" },
+      },
+    });
     await asked.engine.runStep(VM_DEPLOY_STEP_ID, { mode: "rebuild" });
     expect(asked.runs.map((r) => r.at(-1))).toEqual(["rebuild", "rebuild"]);
   });
@@ -287,7 +377,8 @@ describe("the deploy composes the real script, at full strictness", () => {
         {
           code: 1,
           stdout: "",
-          stderr: "deploy.sh: refusing to deploy — the working tree is dirty:\n    M src/daemon.ts\ndeploy.sh: commit (locally) and re-run.",
+          stderr:
+            "deploy.sh: refusing to deploy — the working tree is dirty:\n    M src/daemon.ts\ndeploy.sh: commit (locally) and re-run.",
         },
       ],
     });
@@ -304,7 +395,14 @@ describe("the deploy composes the real script, at full strictness", () => {
   it("a pin mismatch is the same story — the script's refusal, unsoftened", async () => {
     writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS}\n`);
     const h = deployHarness({
-      results: [{ code: 1, stdout: "", stderr: 'deploy.sh: openviking pin mismatch — refusing to deploy.\n    config.toml = "0.4.15"' }],
+      results: [
+        {
+          code: 1,
+          stdout: "",
+          stderr:
+            'deploy.sh: openviking pin mismatch — refusing to deploy.\n    config.toml = "0.4.15"',
+        },
+      ],
     });
     const said = (await h.engine.runStep(VM_DEPLOY_STEP_ID)).failures.join(" ");
     expect(said).toMatch(/openviking pin mismatch/);
@@ -315,7 +413,9 @@ describe("the deploy composes the real script, at full strictness", () => {
     writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS}\n`);
     const h = deployHarness();
     await h.engine.runStep(VM_DEPLOY_STEP_ID);
-    const warningAt = h.logs.findIndex((l) => l.includes("compiles the memory engine's local embedder"));
+    const warningAt = h.logs.findIndex((l) =>
+      l.includes("compiles the memory engine's local embedder"),
+    );
     const planAt = h.logs.findIndex((l) => l.includes("plan — deploy.sh rebuild"));
     const deployAt = h.logs.findIndex((l) => l.includes("PLAY [quickreview]"));
     expect(warningAt).toBeGreaterThanOrEqual(0);
@@ -335,13 +435,21 @@ describe("the deploy composes the real script, at full strictness", () => {
 
   it("verify never deploys — it asks the server what is running", async () => {
     writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS}\n`);
-    const h = deployHarness({ choices: { ...VM_CHOICES, [VM_DEPLOY_CHOICE_KEY]: { mode: "sync", at: "2026-08-30T10:00:00Z" } } });
+    const h = deployHarness({
+      choices: {
+        ...VM_CHOICES,
+        [VM_DEPLOY_CHOICE_KEY]: { mode: "sync", at: "2026-08-30T10:00:00Z" },
+      },
+    });
     const report = await h.engine.verifyAll();
     expect(report.ok).toBe(true);
     expect(h.runs).toEqual([]);
 
     const down = deployHarness({
-      choices: { ...VM_CHOICES, [VM_DEPLOY_CHOICE_KEY]: { mode: "sync", at: "2026-08-30T10:00:00Z" } },
+      choices: {
+        ...VM_CHOICES,
+        [VM_DEPLOY_CHOICE_KEY]: { mode: "sync", at: "2026-08-30T10:00:00Z" },
+      },
       containerState: "exited",
     });
     const bad = await down.engine.verifyAll();
@@ -358,7 +466,10 @@ describe("the deploy composes the real script, at full strictness", () => {
 // ----'s machinery, over ssh -------------------------------------------
 
 describe("the transport is the one decision point", () => {
-  function ctxWith(choices: Record<string, unknown>, runner: OnboardAdapters["runner"]): StepContext {
+  function ctxWith(
+    choices: Record<string, unknown>,
+    runner: OnboardAdapters["runner"],
+  ): StepContext {
     return {
       adapters: baseAdapters(runner),
       input: {},
@@ -371,27 +482,51 @@ describe("the transport is the one decision point", () => {
   it("picks compose on the laptop route and ssh on the server route, from the recorded topology alone", () => {
     const runner = { run: async () => ({ code: 0, stdout: "", stderr: "" }) };
     expect(stackTransportFor(ctxWith({}, runner)).kind).toBe("compose");
-    expect(stackTransportFor(ctxWith({ [TOPOLOGY_CHOICE_KEY]: "local" }, runner)).kind).toBe("compose");
+    expect(stackTransportFor(ctxWith({ [TOPOLOGY_CHOICE_KEY]: "local" }, runner)).kind).toBe(
+      "compose",
+    );
     expect(stackTransportFor(ctxWith(VM_CHOICES, runner)).kind).toBe("ssh");
   });
 
   it("reads the remote's own coordinates from the [tui] block the operator TUI uses", () => {
     seedChoices(VM_CHOICES);
-    expect(remoteFactsFor(root, VM_CHOICES)).toEqual({ alias: ALIAS, container: "quickreview-sandbox", sudo: true, port: 8787 });
-    writeFileSync(join(root, "config.toml"), setTomlKey(setTomlKey(exampleConfig, "tui", "container", "my-reviewer")!, "tui", "sudo_docker", "false")!);
-    expect(remoteFactsFor(root, VM_CHOICES)).toMatchObject({ container: "my-reviewer", sudo: false });
+    expect(remoteFactsFor(root, VM_CHOICES)).toEqual({
+      alias: ALIAS,
+      container: "quickreview-sandbox",
+      sudo: true,
+      port: 8787,
+    });
+    writeFileSync(
+      join(root, "config.toml"),
+      setTomlKey(
+        setTomlKey(exampleConfig, "tui", "container", "my-reviewer")!,
+        "tui",
+        "sudo_docker",
+        "false",
+      )!,
+    );
+    expect(remoteFactsFor(root, VM_CHOICES)).toMatchObject({
+      container: "my-reviewer",
+      sudo: false,
+    });
   });
 
   it("the operator-facing commands it hands out are the ones for THEIR topology", () => {
     const runner = { run: async () => ({ code: 0, stdout: "", stderr: "" }) };
     const compose = stackTransportFor(ctxWith({}, runner));
     expect(compose.logsCommand(200)).toBe("docker compose logs --tail 200 daemon");
-    expect(compose.cliCommand("events --tail 40")).toBe("docker compose exec daemon node dist/src/cli.js events --tail 40");
+    expect(compose.cliCommand("events --tail 40")).toBe(
+      "docker compose exec daemon node dist/src/cli.js events --tail 40",
+    );
 
     const ssh = stackTransportFor(ctxWith(VM_CHOICES, runner));
     expect(ssh.logsCommand(200)).toBe(`ssh ${ALIAS} sudo docker logs --tail 200 quickreview-sandbox`);
-    expect(ssh.cliCommand("events --tail 40")).toBe(`ssh ${ALIAS} sudo docker exec quickreview-sandbox node dist/src/cli.js events --tail 40`);
-    expect(ssh.attachCommand("pr-17")).toBe(`ssh -t ${ALIAS} sudo docker exec -it quickreview-sandbox tmux attach -t pr-17`);
+    expect(ssh.cliCommand("events --tail 40")).toBe(
+      `ssh ${ALIAS} sudo docker exec quickreview-sandbox node dist/src/cli.js events --tail 40`,
+    );
+    expect(ssh.attachCommand("pr-17")).toBe(
+      `ssh -t ${ALIAS} sudo docker exec -it quickreview-sandbox tmux attach -t pr-17`,
+    );
   });
 });
 
@@ -401,25 +536,46 @@ describe("the layered verification runs over ssh, unchanged", () => {
     calls: string[][];
   }
 
-  function layered(o: { containerState?: string; cloudflared?: string; health?: ProcessResult } = {}): Layered {
+  function layered(
+    o: { containerState?: string; cloudflared?: string; health?: ProcessResult } = {},
+  ): Layered {
     seedChoices({ ...VM_CHOICES, [INGRESS_CHOICE_KEY]: "named" });
     const calls: string[][] = [];
     const runner = {
       run: async (cmd: string, args: string[]): Promise<ProcessResult> => {
         calls.push([cmd, ...args]);
         const line = args.join(" ");
-        if (line.includes("docker ps")) return { code: 0, stdout: `quickreview-sandbox ${o.containerState ?? "running"}\n`, stderr: "" };
-        if (line.includes("systemctl is-active")) return { code: 0, stdout: `${o.cloudflared ?? "active"}\n`, stderr: "" };
-        if (line.includes("curl")) return o.health ?? { code: 0, stdout: '{"ok":true}\n200', stderr: "" };
+        if (line.includes("docker ps"))
+          return {
+            code: 0,
+            stdout: `quickreview-sandbox ${o.containerState ?? "running"}\n`,
+            stderr: "",
+          };
+        if (line.includes("systemctl is-active"))
+          return { code: 0, stdout: `${o.cloudflared ?? "active"}\n`, stderr: "" };
+        if (line.includes("curl"))
+          return o.health ?? { code: 0, stdout: '{"ok":true}\n200', stderr: "" };
         return { code: 1, stdout: "", stderr: "unexpected" };
       },
     };
     const fetchFake = (async (input: unknown) => {
       const url = String(input);
-      if (url === `${API}/app/hook/config`) return new Response(JSON.stringify({ url: "https://review.example.com/webhook" }), { status: 200 });
+      if (url === `${API}/app/hook/config`)
+        return new Response(JSON.stringify({ url: "https://review.example.com/webhook" }), {
+          status: 200,
+        });
       if (url.startsWith(`${API}/app/hook/deliveries?`)) {
         return new Response(
-          JSON.stringify([{ id: 1, event: "ping", status: "OK", status_code: 200, delivered_at: "2026-08-30T11:59:00Z", redelivery: false }]),
+          JSON.stringify([
+            {
+              id: 1,
+              event: "ping",
+              status: "OK",
+              status_code: 200,
+              delivered_at: "2026-08-30T11:59:00Z",
+              redelivery: false,
+            },
+          ]),
           { status: 200 },
         );
       }
@@ -434,20 +590,32 @@ describe("the layered verification runs over ssh, unchanged", () => {
     const result = await h.engine.runStep(VERIFY_STACK_STEP_ID);
     expect(result.ok).toBe(true);
     // The SAME check names as the laptop route: one implementation, not a copy.
-    expect(result.checks.map((c) => c.name)).toEqual(["containers", "ingress-sidecar", "health", "webhook-url", "ping-delivery"]);
-    expect(result.checks.find((c) => c.name === "ping-delivery")!.detail).toMatch(/proven end to end/);
+    expect(result.checks.map((c) => c.name)).toEqual([
+      "containers",
+      "ingress-sidecar",
+      "health",
+      "webhook-url",
+      "ping-delivery",
+    ]);
+    expect(result.checks.find((c) => c.name === "ping-delivery")!.detail).toMatch(
+      /proven end to end/,
+    );
     // Every hop carries BatchMode, and the health probe runs on the VM's
     // loopback (the daemon's port is deliberately not exposed off the box).
     for (const call of h.calls) expect(call.join(" ")).toMatch(/-o BatchMode=yes/);
     expect(h.calls.some((c) => c.join(" ").includes("curl -sS -m 10 -o - -w"))).toBe(true);
-    expect(h.calls.find((c) => c.join(" ").includes("curl"))!.join(" ")).toMatch(/http:\/\/127\.0\.0\.1:8787\/health/);
+    expect(h.calls.find((c) => c.join(" ").includes("curl"))!.join(" ")).toMatch(
+      /http:\/\/127\.0\.0\.1:8787\/health/,
+    );
   });
 
   it("a dead container over ssh stops the step, with the ssh fix — and no later layer is attempted", async () => {
     const h = layered({ containerState: "exited" });
     const result = await h.engine.runStep(VERIFY_STACK_STEP_ID);
     expect(result.ok).toBe(false);
-    expect(result.failures.join(" ")).toMatch(new RegExp(`ssh ${ALIAS} sudo docker logs --tail 200 quickreview-sandbox`));
+    expect(result.failures.join(" ")).toMatch(
+      new RegExp(`ssh ${ALIAS} sudo docker logs --tail 200 quickreview-sandbox`),
+    );
     expect(result.failures.join(" ")).toMatch(/health and ping-delivery layers were not run/);
     expect(h.calls.some((c) => c.join(" ").includes("curl"))).toBe(false);
   });
@@ -465,12 +633,20 @@ describe("the layered verification runs over ssh, unchanged", () => {
     const h = layered({ health: { code: 7, stdout: "", stderr: "curl: (7) Failed to connect" } });
     const result = await h.engine.runStep(VERIFY_STACK_STEP_ID);
     expect(result.ok).toBe(false);
-    expect(result.checks.find((c) => c.name === "health")!.detail).toMatch(/nothing answered http:\/\/127\.0\.0\.1:8787\/health on review-box/);
+    expect(result.checks.find((c) => c.name === "health")!.detail).toMatch(
+      /nothing answered http:\/\/127\.0\.0\.1:8787\/health on review-box/,
+    );
   });
 });
 
 describe("the go-live flip on the server route", () => {
-  const PROOF: ProofRecord = { pr: 17, round_no: 1, verdict: "REQUEST_CHANGES", completed_at: "2026-08-30T11:59:00Z", review_shown: true };
+  const PROOF: ProofRecord = {
+    pr: 17,
+    round_no: 1,
+    verdict: "REQUEST_CHANGES",
+    completed_at: "2026-08-30T11:59:00Z",
+    review_shown: true,
+  };
 
   function golive(): { engine: OnboardingEngine; deploys: string[][] } {
     seedChoices({ ...VM_CHOICES, [PROOF_CHOICE_KEY]: PROOF });
@@ -478,11 +654,17 @@ describe("the go-live flip on the server route", () => {
     const runner = {
       run: async (cmd: string, args: string[]): Promise<ProcessResult> => {
         const line = args.join(" ");
-        if (line.includes("docker ps")) return { code: 0, stdout: "quickreview-sandbox running\n", stderr: "" };
+        if (line.includes("docker ps"))
+          return { code: 0, stdout: "quickreview-sandbox running\n", stderr: "" };
         if (line.includes("why")) {
           return {
             code: 0,
-            stdout: JSON.stringify({ pr: 17, known: true, state: "awaiting_author", rounds: [{ round_no: 1, status: "done", verdict: "REQUEST_CHANGES" }] }),
+            stdout: JSON.stringify({
+              pr: 17,
+              known: true,
+              state: "awaiting_author",
+              rounds: [{ round_no: 1, status: "done", verdict: "REQUEST_CHANGES" }],
+            }),
             stderr: "",
           };
         }
@@ -495,18 +677,26 @@ describe("the go-live flip on the server route", () => {
         return { code: 0, stdout: "", stderr: "" };
       },
     };
-    return { engine: new OnboardingEngine([goLiveStep({ stream })], baseAdapters(runner)), deploys };
+    return {
+      engine: new OnboardingEngine([goLiveStep({ stream })], baseAdapters(runner)),
+      deploys,
+    };
   }
 
   it("re-verifies the proof through the SAME ssh exec, then ships the flipped config with the real deploy", async () => {
     const h = golive();
-    const result = await h.engine.runStep(GO_LIVE_STEP_ID, { decision: "go_live", confirm: GO_LIVE_CONFIRMATION });
+    const result = await h.engine.runStep(GO_LIVE_STEP_ID, {
+      decision: "go_live",
+      confirm: GO_LIVE_CONFIRMATION,
+    });
     expect(result.ok).toBe(true);
     expect(loadConfig(join(root, "config.toml")).dry_run).toBe(false);
     // On this route the deploy IS the restart: the daemon reads the config the
     // deploy ships, so a hand-rolled `docker restart` would leave it stale.
     expect(h.deploys).toEqual([["bash", deployScriptPath(root), "sync"]]);
-    expect(result.checks.find((c) => c.name === "daemon-restart")!.detail).toMatch(/scripts\/deploy\.sh sync/);
+    expect(result.checks.find((c) => c.name === "daemon-restart")!.detail).toMatch(
+      /scripts\/deploy\.sh sync/,
+    );
   });
 
   it("declining is still a first-class outcome, and ships nothing", async () => {

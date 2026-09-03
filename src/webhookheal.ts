@@ -127,7 +127,9 @@ export class WebhookHealer {
   /** Read the hostname file, retrying a partial write into shape (the
    * verdicts.ts pattern). Whitespace/newline around the hostname is the
    * sidecar's prerogative and is stripped. */
-  private async readHostname(): Promise<{ ok: true; hostname: string } | { ok: false; outcome: "missing" | "invalid" }> {
+  private async readHostname(): Promise<
+    { ok: true; hostname: string } | { ok: false; outcome: "missing" | "invalid" }
+  > {
     const retries = this.deps.parseRetries ?? 3;
     const delay = this.deps.retryDelayMs ?? 40;
     let content: string | null = null;
@@ -135,7 +137,9 @@ export class WebhookHealer {
       if (!existsSync(this.deps.hostnameFile)) {
         if (!this.missingLogged) {
           this.missingLogged = true;
-          this.log(`webhookheal: hostname file ${this.deps.hostnameFile} absent — tunnel not up yet (logged once)`);
+          this.log(
+            `webhookheal: hostname file ${this.deps.hostnameFile} absent — tunnel not up yet (logged once)`,
+          );
         }
         return { ok: false, outcome: "missing" };
       }
@@ -159,7 +163,10 @@ export class WebhookHealer {
     if (this.lastInvalidContent !== bad) {
       this.lastInvalidContent = bad;
       const detail = `webhook self-heal: hostname file ${this.deps.hostnameFile} never parsed as a bare hostname (content: ${JSON.stringify(bad)})`;
-      this.deps.logEvent("webhook_heal_invalid_hostname", { file: this.deps.hostnameFile, content: bad });
+      this.deps.logEvent("webhook_heal_invalid_hostname", {
+        file: this.deps.hostnameFile,
+        content: bad,
+      });
       this.deps.anomaly(detail);
       this.log(`webhookheal: ${detail}`);
     }
@@ -209,7 +216,11 @@ export class WebhookHealer {
       await this.deps.updateUrl(desired, current);
     } catch (err) {
       const detail = `webhook self-heal: PATCH /app/hook/config ${current || "(unset)"} → ${desired} failed (${String(err).slice(0, 200)})`;
-      this.deps.logEvent("webhook_heal_patch_failed", { old_url: current, new_url: desired, error: String(err).slice(0, 300) });
+      this.deps.logEvent("webhook_heal_patch_failed", {
+        old_url: current,
+        new_url: desired,
+        error: String(err).slice(0, 300),
+      });
       this.deps.anomaly(detail);
       this.log(`webhookheal: ${detail}`);
       return "failed";
@@ -224,13 +235,19 @@ export class WebhookHealer {
     }
     if (after !== desired) {
       const detail = `webhook self-heal: re-point did not stick — PATCHed ${desired} but read back ${after}`;
-      this.deps.logEvent("webhook_heal_verify_failed", { old_url: current, new_url: desired, read_back: after });
+      this.deps.logEvent("webhook_heal_verify_failed", {
+        old_url: current,
+        new_url: desired,
+        read_back: after,
+      });
       this.deps.anomaly(detail);
       this.log(`webhookheal: ${detail}`);
       return "failed";
     }
     this.deps.logEvent("webhook_url_repointed", { old_url: current, new_url: desired });
-    this.log(`webhookheal: re-pointed App webhook URL ${current || "(unset)"} → ${desired} (read-back verified)`);
+    this.log(
+      `webhookheal: re-pointed App webhook URL ${current || "(unset)"} → ${desired} (read-back verified)`,
+    );
     return "healed";
   }
 }

@@ -16,7 +16,15 @@
 // This module imports nothing, so keys.ts, cmdbar.ts and actions.ts can all
 // read the order without a cycle through app.ts.
 
-export const TABS = ["board", "memory", "digest", "tickets", "deploy", "metrics", "feedback"] as const;
+export const TABS = [
+  "board",
+  "memory",
+  "digest",
+  "tickets",
+  "deploy",
+  "metrics",
+  "feedback",
+] as const;
 
 export type Tab = (typeof TABS)[number];
 

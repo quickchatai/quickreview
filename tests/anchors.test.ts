@@ -38,8 +38,12 @@ describe("changedRuns", () => {
 
   it("treats +/-/+ as one contiguous RIGHT run (a '-' does not advance RIGHT)", () => {
     const runs = changedRuns(`@@ -1,3 +1,3 @@\n+a\n-gone\n+b\n c`);
-    expect(runs.filter((r) => r.side === "RIGHT")).toEqual([{ side: "RIGHT", start: 1, end: 2, hunk: 0 }]);
-    expect(runs.filter((r) => r.side === "LEFT")).toEqual([{ side: "LEFT", start: 1, end: 1, hunk: 0 }]);
+    expect(runs.filter((r) => r.side === "RIGHT")).toEqual([
+      { side: "RIGHT", start: 1, end: 2, hunk: 0 },
+    ]);
+    expect(runs.filter((r) => r.side === "LEFT")).toEqual([
+      { side: "LEFT", start: 1, end: 1, hunk: 0 },
+    ]);
   });
 
   it("breaks a run on a context line", () => {
@@ -74,7 +78,9 @@ describe("checkAnchor", () => {
   });
 
   it("accepts a multi-line range fully inside one run", () => {
-    expect(checkAnchor(runs, { path: "a.py", side: "RIGHT", line: 13, start_line: 11 }).ok).toBe(true);
+    expect(checkAnchor(runs, { path: "a.py", side: "RIGHT", line: 13, start_line: 11 }).ok).toBe(
+      true,
+    );
   });
 
   it("rejects a range that spills outside the run", () => {
@@ -83,7 +89,9 @@ describe("checkAnchor", () => {
   });
 
   it("rejects a range that spans two runs", () => {
-    expect(checkAnchor(runs, { path: "a.py", side: "RIGHT", line: 44, start_line: 11 }).ok).toBe(false);
+    expect(checkAnchor(runs, { path: "a.py", side: "RIGHT", line: 44, start_line: 11 }).ok).toBe(
+      false,
+    );
   });
 
   it("is side-sensitive", () => {
@@ -93,11 +101,16 @@ describe("checkAnchor", () => {
   });
 
   it("rejects a path that is not in the diff", () => {
-    expect(checkAnchor(runs, { path: "other.py", side: "RIGHT", line: 1 })).toEqual({ ok: false, reason: "unknown-path" });
+    expect(checkAnchor(runs, { path: "other.py", side: "RIGHT", line: 1 })).toEqual({
+      ok: false,
+      reason: "unknown-path",
+    });
   });
 
   it("rejects a file with no changed lines", () => {
-    expect(checkAnchor(runsByPath({ "b.py": "" }), { path: "b.py", side: "RIGHT", line: 1 })).toEqual({
+    expect(
+      checkAnchor(runsByPath({ "b.py": "" }), { path: "b.py", side: "RIGHT", line: 1 }),
+    ).toEqual({
       ok: false,
       reason: "no-runs",
     });
@@ -128,7 +141,10 @@ describe("partitionByAnchor", () => {
   });
 
   it("rejects everything when no patches are known, rather than failing", () => {
-    const { accepted, rejected } = partitionByAnchor([{ path: "a.py", side: "RIGHT" as const, line: 1 }], {});
+    const { accepted, rejected } = partitionByAnchor(
+      [{ path: "a.py", side: "RIGHT" as const, line: 1 }],
+      {},
+    );
     expect(accepted).toHaveLength(0);
     expect(rejected).toHaveLength(1);
   });

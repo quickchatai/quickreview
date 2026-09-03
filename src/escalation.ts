@@ -146,9 +146,13 @@ export function renderScope(scope: EscalationScope): string {
       return `\`${scope.path}\`${lines}`;
     }
     case "migration":
-      return scope.migration ? `migration \`${scope.migration}\` (\`${scope.path}\`)` : `the migration in \`${scope.path}\``;
+      return scope.migration
+        ? `migration \`${scope.migration}\` (\`${scope.path}\`)`
+        : `the migration in \`${scope.path}\``;
     case "decision":
-      return scope.path ? `the decision "${scope.decision}" (\`${scope.path}\`)` : `the decision "${scope.decision}"`;
+      return scope.path
+        ? `the decision "${scope.decision}" (\`${scope.path}\`)`
+        : `the decision "${scope.decision}"`;
   }
 }
 
@@ -162,7 +166,8 @@ export function normalizeScope(raw: unknown): EscalationScope | null {
   const r = raw as Record<string, unknown>;
   const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
   const num = (v: unknown): number | undefined => {
-    const n = typeof v === "string" && /^\d+$/.test(v.trim()) ? Number(v) : typeof v === "number" ? v : NaN;
+    const n =
+      typeof v === "string" && /^\d+$/.test(v.trim()) ? Number(v) : typeof v === "number" ? v : NaN;
     return Number.isInteger(n) && n > 0 ? n : undefined;
   };
   const kind = str(r.kind).toLowerCase();
@@ -234,8 +239,7 @@ export type EscalationRefusal =
   | "already-delivered";
 
 export type EscalationValidation =
-  | { ok: true; request: EscalationRequest }
-  | { ok: false; refusal: EscalationRefusal };
+  { ok: true; request: EscalationRequest } | { ok: false; refusal: EscalationRefusal };
 
 /** Longest question we will carry. A paragraph is not a narrow ask. */
 export const MAX_ESCALATION_QUESTION = 400;
@@ -370,7 +374,8 @@ export function validateEscalationRequest(
 
   // NB `r.origin` is deliberately NOT read. The caller says where this came
   // from; a candidate that labels itself is labelling its own trust level.
-  if (origin === "session" && !cfg.session_judgement) return { ok: false, refusal: "session-judgement-off" };
+  if (origin === "session" && !cfg.session_judgement)
+    return { ok: false, refusal: "session-judgement-off" };
 
   const scope = normalizeScope(r.scope);
   if (!scope) return { ok: false, refusal: "no-scope" };
@@ -455,7 +460,12 @@ export interface EscalationFacts {
   failing_checks: readonly string[];
 }
 
-export const NO_FACTS: EscalationFacts = { changed_paths: [], labels: [], findings: [], failing_checks: [] };
+export const NO_FACTS: EscalationFacts = {
+  changed_paths: [],
+  labels: [],
+  findings: [],
+  failing_checks: [],
+};
 
 const SEVERITY_ORDER: Record<string, number> = { P0: 0, P1: 1, P2: 2, P3: 3, NIT: 4 };
 
@@ -491,7 +501,8 @@ export function ruleFires(rule: EscalationRule, facts: EscalationFacts): boolean
   let declared = 0;
   if (rule.paths.length > 0) {
     declared++;
-    if (!facts.changed_paths.some((p) => rule.paths.some((pat) => pathMatches(pat, p)))) return false;
+    if (!facts.changed_paths.some((p) => rule.paths.some((pat) => pathMatches(pat, p))))
+      return false;
   }
   if (rule.labels.length > 0) {
     declared++;
@@ -505,7 +516,11 @@ export function ruleFires(rule: EscalationRule, facts: EscalationFacts): boolean
   }
   if (rule.min_severity) {
     declared++;
-    if (!facts.findings.some((f) => severityAtLeast(String(f.severity ?? ""), rule.min_severity as EscalationSeverityFloor))) {
+    if (
+      !facts.findings.some((f) =>
+        severityAtLeast(String(f.severity ?? ""), rule.min_severity as EscalationSeverityFloor),
+      )
+    ) {
       return false;
     }
   }
@@ -520,10 +535,15 @@ export function ruleFires(rule: EscalationRule, facts: EscalationFacts): boolean
 export function scopeForRule(rule: EscalationRule, facts: EscalationFacts): EscalationScope | null {
   if (rule.paths.length > 0) {
     const hit = facts.changed_paths.find((p) => rule.paths.some((pat) => pathMatches(pat, p)));
-    if (hit) return /(^|\/)migrations?\//i.test(hit) ? { kind: "migration", path: hit } : { kind: "code", path: hit };
+    if (hit)
+      return /(^|\/)migrations?\//i.test(hit)
+        ? { kind: "migration", path: hit }
+        : { kind: "code", path: hit };
   }
   if (rule.min_severity) {
-    const hit = facts.findings.find((f) => severityAtLeast(String(f.severity ?? ""), rule.min_severity as EscalationSeverityFloor));
+    const hit = facts.findings.find((f) =>
+      severityAtLeast(String(f.severity ?? ""), rule.min_severity as EscalationSeverityFloor),
+    );
     if (hit?.path) return { kind: "code", path: hit.path };
     // The finding's reason is model-written text reaching a rule-built scope,
     // so it is belted HERE, at the boundary it enters — not in
@@ -543,12 +563,20 @@ export function scopeForRule(rule: EscalationRule, facts: EscalationFacts): Esca
     }
   }
   if (rule.failing_checks.length > 0) {
-    const hit = facts.failing_checks.find((c) => rule.failing_checks.some((n) => n.toLowerCase() === c.toLowerCase()));
+    const hit = facts.failing_checks.find((c) =>
+      rule.failing_checks.some((n) => n.toLowerCase() === c.toLowerCase()),
+    );
     if (hit) return { kind: "decision", decision: `the failing check "${hit}"` };
   }
   if (rule.labels.length > 0) {
-    const hit = facts.labels.find((l) => rule.labels.some((n) => n.toLowerCase() === l.toLowerCase()));
-    if (hit) return { kind: "decision", decision: `what the "${hit}" label is asking for on this pull request` };
+    const hit = facts.labels.find((l) =>
+      rule.labels.some((n) => n.toLowerCase() === l.toLowerCase()),
+    );
+    if (hit)
+      return {
+        kind: "decision",
+        decision: `what the "${hit}" label is asking for on this pull request`,
+      };
   }
   return null;
 }
@@ -660,7 +688,10 @@ export interface EscalationRenderContext {
  * call to make about their own reviewers; what it cannot do is change the
  * scope the note points at.
  */
-export function renderEscalationComment(req: EscalationRequest, ctx: EscalationRenderContext): string {
+export function renderEscalationComment(
+  req: EscalationRequest,
+  ctx: EscalationRenderContext,
+): string {
   const round = ctx.round_no ? ` (round ${ctx.round_no})` : "";
   const lines = [
     `${ESCALATION_TAG} @${req.target} — one specific thing, not a review of this pull request.`,
@@ -670,18 +701,18 @@ export function renderEscalationComment(req: EscalationRequest, ctx: EscalationR
     `**The question:** ${req.question}`,
     "",
     ctx.review_posted
-      ? `This review is already decided and posted${round} — the verdict is **${ctx.verdict}** and it does not `
-        + "wait on you. This note asks only for your eyes on the item above."
-      : `This review is already decided${round} — the verdict is **${ctx.verdict}** and it does not wait on you. `
-        + "This note asks only for your eyes on the item above. (The review itself is not confirmed on this pull "
-        + "request yet; if you cannot find it, that is why, and it is not something you need to chase.)",
+      ? `This review is already decided and posted${round} — the verdict is **${ctx.verdict}** and it does not ` +
+        "wait on you. This note asks only for your eyes on the item above."
+      : `This review is already decided${round} — the verdict is **${ctx.verdict}** and it does not wait on you. ` +
+        "This note asks only for your eyes on the item above. (The review itself is not confirmed on this pull " +
+        "request yet; if you cannot find it, that is why, and it is not something you need to chase.)",
   ];
   if (ctx.review_requested) {
     lines.push(
       "",
-      "_You will also see this pull request in your review-requested queue: that is how the "
-        + "notification is delivered, and GitHub words it as \"review this pull request\". It is not what is "
-        + "being asked. The item above is._",
+      "_You will also see this pull request in your review-requested queue: that is how the " +
+        'notification is delivered, and GitHub words it as "review this pull request". It is not what is ' +
+        "being asked. The item above is._",
     );
   }
   if (req.origin === "rule" && req.rule) {
@@ -736,7 +767,7 @@ export function renderEscalationPromptNote(targets: readonly string[] | undefine
     `Targets you may name (any other login is dropped by the daemon): ${targets.map((t) => `@${t}`).join(", ")}`,
     "",
     "`scope.kind` is `code` (path plus line range), `migration` (path, optionally the migration",
-    "id) or `decision` (a named decision). There is no way to escalate \"the PR\" and you must not",
+    'id) or `decision` (a named decision). There is no way to escalate "the PR" and you must not',
     "try: an entry with no concrete scope, or a question that asks someone to review the change,",
     "is dropped. Think of it exactly as a `[check this]` item with a name on it — the smallest",
     "thing that actually needs a person, phrased so they can answer it in minutes.",
@@ -756,7 +787,10 @@ export function normalizeSessionEscalations(raw: unknown): { entries: unknown[];
   if (raw === undefined || raw === null) return { entries: [] };
   if (!Array.isArray(raw)) return { entries: [], note: "escalations was not an array — ignored" };
   const entries = raw.filter((e) => typeof e === "object" && e !== null).slice(0, 10);
-  const note = entries.length === raw.length ? undefined : `${raw.length - entries.length} escalation entr(ies) were not objects — ignored`;
+  const note =
+    entries.length === raw.length
+      ? undefined
+      : `${raw.length - entries.length} escalation entr(ies) were not objects — ignored`;
   return { entries, ...(note ? { note } : {}) };
 }
 
@@ -780,7 +814,17 @@ export interface EscalationStore {
   logEvent(kind: string, pr: number | null, payload?: unknown): void;
   escalationDelivered(pr: number, key: string): boolean;
   escalationCount(pr: number): number;
-  recordEscalation(pr: number, row: { target: string; scope_key: string; shape: string; origin: string; rule: string | null; round_no: number | null }): void;
+  recordEscalation(
+    pr: number,
+    row: {
+      target: string;
+      scope_key: string;
+      shape: string;
+      origin: string;
+      rule: string | null;
+      round_no: number | null;
+    },
+  ): void;
 }
 
 export interface EscalationDeps {
@@ -853,27 +897,54 @@ export async function deliverEscalations(
   // says about itself. Rules first: they are the deterministic half, and on a
   // capped PR the operator's own rules should win the budget.
   const queued: Array<{ raw: unknown; origin: EscalationOrigin }> = [
-    ...(args.ruleRequests ?? []).map((raw) => ({ raw: raw as unknown, origin: "rule" as const })),
+    ...(args.ruleRequests ?? []).map((raw) => ({ raw: raw, origin: "rule" as const })),
     ...(args.sessionCandidates ?? []).map((raw) => ({ raw, origin: "session" as const })),
   ];
 
   for (const { raw, origin } of queued) {
     const v = validateEscalationRequest(raw, cfg, origin, args.changed_paths ?? []);
     if (!v.ok) {
-      store.logEvent("escalation_refused", args.pr, { reason: v.refusal, origin, round_no: args.round_no ?? null, candidate: raw });
+      store.logEvent("escalation_refused", args.pr, {
+        reason: v.refusal,
+        origin,
+        round_no: args.round_no ?? null,
+        candidate: raw,
+      });
       log(`escalation: #${args.pr} refused (${origin}) — ${v.refusal}`);
-      outcomes.push({ target: "", scope_key: "", origin, refused: v.refusal, comment_executed: false });
+      outcomes.push({
+        target: "",
+        scope_key: "",
+        origin,
+        refused: v.refusal,
+        comment_executed: false,
+      });
       continue;
     }
     const req = v.request;
     const key = scopeKey(req.scope);
     if (store.escalationDelivered(args.pr, `${req.target}|${key}`)) {
-      outcomes.push({ target: req.target, scope_key: key, origin: req.origin, refused: "already-delivered", comment_executed: false });
+      outcomes.push({
+        target: req.target,
+        scope_key: key,
+        origin: req.origin,
+        refused: "already-delivered",
+        comment_executed: false,
+      });
       continue;
     }
     if (store.escalationCount(args.pr) >= cfg.max_per_pr) {
-      store.logEvent("escalation_capped", args.pr, { target: req.target, scope_key: key, max_per_pr: cfg.max_per_pr });
-      outcomes.push({ target: req.target, scope_key: key, origin: req.origin, refused: "capped", comment_executed: false });
+      store.logEvent("escalation_capped", args.pr, {
+        target: req.target,
+        scope_key: key,
+        max_per_pr: cfg.max_per_pr,
+      });
+      outcomes.push({
+        target: req.target,
+        scope_key: key,
+        origin: req.origin,
+        refused: "capped",
+        comment_executed: false,
+      });
       continue;
     }
 
@@ -892,8 +963,18 @@ export async function deliverEscalations(
     if (result.blocked) {
       // A posting guard refused (merged, closed, head drift). Nothing was
       // delivered and nothing is recorded, so a later round may try again.
-      store.logEvent("escalation_blocked", args.pr, { target: req.target, scope_key: key, reason: result.blocked });
-      outcomes.push({ target: req.target, scope_key: key, origin: req.origin, refused: null, comment_executed: false });
+      store.logEvent("escalation_blocked", args.pr, {
+        target: req.target,
+        scope_key: key,
+        reason: result.blocked,
+      });
+      outcomes.push({
+        target: req.target,
+        scope_key: key,
+        origin: req.origin,
+        refused: null,
+        comment_executed: false,
+      });
       continue;
     }
 
@@ -930,7 +1011,9 @@ export async function deliverEscalations(
         round_no: args.round_no ?? null,
         dry_run_file: result.dryRunFile ?? null,
       });
-      log(`escalation: #${args.pr} → @${req.target} recorded as an INTENT only (not executed) — nothing consumed`);
+      log(
+        `escalation: #${args.pr} → @${req.target} recorded as an INTENT only (not executed) — nothing consumed`,
+      );
       outcomes.push({
         target: req.target,
         scope_key: key,

@@ -8,7 +8,14 @@ import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
 import { TUI_DEFAULTS } from "../src/config.js";
 import { App, type Tab, type TabHooks } from "../src/tui/app.js";
-import { barHeight, barHitKey, NO_LIVE_KEYS, paintCmdBar, TAB_VOCABULARY, type BarButton } from "../src/tui/cmdbar.js";
+import {
+  barHeight,
+  barHitKey,
+  NO_LIVE_KEYS,
+  paintCmdBar,
+  TAB_VOCABULARY,
+  type BarButton,
+} from "../src/tui/cmdbar.js";
 import { boardKeys, renderBoard, type BoardView } from "../src/tui/board.js";
 import { Frame, stripAnsi } from "../src/tui/paint.js";
 import { CompanionSidebar, sidebarWidth } from "../src/tui/sidebar.js";
@@ -23,14 +30,25 @@ const GLOBALS: Array<[string, string]> = [
   ["q", "q quit"],
 ];
 
-function paint(tab: Tab, cols: number, rows: number, commands: readonly BarButton[] = TAB_VOCABULARY[tab]): Frame {
+function paint(
+  tab: Tab,
+  cols: number,
+  rows: number,
+  commands: readonly BarButton[] = TAB_VOCABULARY[tab],
+): Frame {
   const frame = new Frame(cols, rows);
   paintCmdBar(frame, tab, cols, rows, commands);
   return frame;
 }
 
 /** Contiguous hit runs along a bar row: which key answers at which x-range. */
-function hitRuns(tab: Tab, y: number, cols: number, rows: number, commands: readonly BarButton[] = TAB_VOCABULARY[tab]): Array<{ key: string; x1: number; x2: number }> {
+function hitRuns(
+  tab: Tab,
+  y: number,
+  cols: number,
+  rows: number,
+  commands: readonly BarButton[] = TAB_VOCABULARY[tab],
+): Array<{ key: string; x1: number; x2: number }> {
   const runs: Array<{ key: string; x1: number; x2: number }> = [];
   for (let x = 2; x <= cols - 1; x++) {
     const k = barHitKey(tab, x, y, cols, rows, commands);
@@ -61,8 +79,12 @@ describe("layout/hit round-trip", () => {
         runsA.forEach((r, i) => expect(plainA.slice(r.x1 - 1, r.x2)).toBe(`[${wantA[i]![1]}]`));
         runsB.forEach((r, i) => expect(plainB.slice(r.x1 - 1, r.x2)).toBe(`[${wantB[i]![1]}]`));
         // Between buttons and off the bar rows: nothing.
-        expect(barHitKey(tab, runsA[0]!.x2 + 1, rows - 2, cols, rows, TAB_VOCABULARY[tab])).toBeUndefined();
-        expect(barHitKey(tab, runsA[0]!.x1, rows - 5, cols, rows, TAB_VOCABULARY[tab])).toBeUndefined();
+        expect(
+          barHitKey(tab, runsA[0]!.x2 + 1, rows - 2, cols, rows, TAB_VOCABULARY[tab]),
+        ).toBeUndefined();
+        expect(
+          barHitKey(tab, runsA[0]!.x1, rows - 5, cols, rows, TAB_VOCABULARY[tab]),
+        ).toBeUndefined();
       });
     }
   }
@@ -73,7 +95,9 @@ describe("layout/hit round-trip", () => {
     const rowB = stripAnsi(frame.lines[rows - 2]!);
     expect(rowB).toContain("[n new]");
     expect(rowB).not.toContain("older day");
-    expect(hitRuns("memory", rows - 1, 160, rows, [{ key: "n", label: "n new" }]).map((r) => r.key)).toEqual(["n"]);
+    expect(
+      hitRuns("memory", rows - 1, 160, rows, [{ key: "n", label: "n new" }]).map((r) => r.key),
+    ).toEqual(["n"]);
   });
 });
 
@@ -95,7 +119,11 @@ describe("the bar wraps instead of dropping buttons (→)", () => {
       const h = barHeight("board", cols, commands);
       const frame = paint("board", cols, rows, commands);
       const labels = paintedLabels(frame, rows, h);
-      const want = [...NAV.map(([, l]) => l), ...GLOBALS.map(([, l]) => l), ...commands.map((b) => b.label)];
+      const want = [
+        ...NAV.map(([, l]) => l),
+        ...GLOBALS.map(([, l]) => l),
+        ...commands.map((b) => b.label),
+      ];
       // A label wider than the whole row is truncated by the paint (a `…`
       // shows), never dropped: count those as present when the row is too
       // narrow to hold the label at all.
@@ -103,9 +131,12 @@ describe("the bar wraps instead of dropping buttons (→)", () => {
       expect(labels, `cols=${cols}`).toEqual(want.filter(fits));
       // Hit-test agrees with the paint: every key answers somewhere on the bar.
       const keys = new Set<string>();
-      for (let i = 0; i < h; i++) for (const r of hitRuns("board", rows - h + i, cols, rows, commands)) keys.add(r.key);
-      for (const k of [...NAV, ...GLOBALS].map(([k]) => k)) expect(keys.has(k), `key ${k} @ cols=${cols}`).toBe(true);
-      for (const b of commands) expect(keys.has(b.key), `key ${JSON.stringify(b.key)} @ cols=${cols}`).toBe(true);
+      for (let i = 0; i < h; i++)
+        for (const r of hitRuns("board", rows - h + i, cols, rows, commands)) keys.add(r.key);
+      for (const k of [...NAV, ...GLOBALS].map(([k]) => k))
+        expect(keys.has(k), `key ${k} @ cols=${cols}`).toBe(true);
+      for (const b of commands)
+        expect(keys.has(b.key), `key ${JSON.stringify(b.key)} @ cols=${cols}`).toBe(true);
     }
   });
 
@@ -130,7 +161,16 @@ describe("the bar wraps instead of dropping buttons (→)", () => {
       snapshot: {
         written_at: "",
         dry_run: false,
-        prs: [{ number: 5012, state: "reviewing", title: "t", head_sha: "x", stale_recheck: 0, author: "alice" }],
+        prs: [
+          {
+            number: 5012,
+            state: "reviewing",
+            title: "t",
+            head_sha: "x",
+            stale_recheck: 0,
+            author: "alice",
+          },
+        ],
         running_rounds: 0,
         total_spend_usd: 0,
         heartbeat: "",
@@ -154,7 +194,9 @@ describe("the bar wraps instead of dropping buttons (→)", () => {
       const labels = paintedLabels(frame, rows, h);
       expect(labels, `terminal ${terminal} → inner ${inner}`).toContain("u unwedge");
       let hit = false;
-      for (let i = 0; i < h && !hit; i++) for (const r of hitRuns("board", rows - h + i, inner, rows, boardKeys(view).bar)) if (r.key === "u") hit = true;
+      for (let i = 0; i < h && !hit; i++)
+        for (const r of hitRuns("board", rows - h + i, inner, rows, boardKeys(view).bar))
+          if (r.key === "u") hit = true;
       expect(hit, `u must hit-test at inner ${inner}`).toBe(true);
     }
   });
@@ -212,14 +254,26 @@ describe("App-level bar clicks", () => {
     input.pause = (() => input) as never;
     return { out, input, written: () => buf };
   }
-  const findKey = (app: App, key: string, y: number, cols: number, rows: number): number | undefined => {
-    for (let x = 2; x < cols; x++) if (barHitKey(app.tab, x, y, cols, rows, app.liveKeys().bar) === key) return x;
+  const findKey = (
+    app: App,
+    key: string,
+    y: number,
+    cols: number,
+    rows: number,
+  ): number | undefined => {
+    for (let x = 2; x < cols; x++)
+      if (barHitKey(app.tab, x, y, cols, rows, app.liveKeys().bar) === key) return x;
     return undefined;
   };
 
   it("a click on the quit slot quits, from a non-board tab", async () => {
     const { out, input } = fakeStreams(120, 30);
-    const app = new App(TUI_DEFAULTS, async () => ({ ok: true, stdout: "", stderr: "", code: 0 }), out, input);
+    const app = new App(
+      TUI_DEFAULTS,
+      async () => ({ ok: true, stdout: "", stderr: "", code: 0 }),
+      out,
+      input,
+    );
     app.tab = "deploy";
     const qx = findKey(app, "q", 28, 120, 30);
     expect(qx).toBeDefined();
@@ -234,7 +288,12 @@ describe("App-level bar clicks", () => {
 
   it("bar clicks are INERT while an input box is open (review P1: [enter] must not submit a draft)", async () => {
     const { out, input } = fakeStreams(120, 30);
-    const app = new App(TUI_DEFAULTS, async () => ({ ok: true, stdout: "", stderr: "", code: 0 }), out, input);
+    const app = new App(
+      TUI_DEFAULTS,
+      async () => ({ ok: true, stdout: "", stderr: "", code: 0 }),
+      out,
+      input,
+    );
     app.tab = "board";
     app.view.snapshot = {
       written_at: "",
@@ -265,7 +324,12 @@ describe("App-level bar clicks", () => {
 
   it("a click on a nav slot switches tabs from every tab", async () => {
     const { out, input } = fakeStreams(120, 30);
-    const app = new App(TUI_DEFAULTS, async () => ({ ok: true, stdout: "", stderr: "", code: 0 }), out, input);
+    const app = new App(
+      TUI_DEFAULTS,
+      async () => ({ ok: true, stdout: "", stderr: "", code: 0 }),
+      out,
+      input,
+    );
     app.tab = "metrics";
     const x1 = findKey(app, "1", 28, 120, 30);
     const running = app.run();
@@ -298,7 +362,12 @@ describe("clean exit", () => {
 
   function harness() {
     const { out, input, written } = streams();
-    const app = new App(TUI_DEFAULTS, async () => ({ ok: true, stdout: "", stderr: "", code: 0 }), out, input);
+    const app = new App(
+      TUI_DEFAULTS,
+      async () => ({ ok: true, stdout: "", stderr: "", code: 0 }),
+      out,
+      input,
+    );
     const type = (s: string) => (input as unknown as EventEmitter).emit("data", Buffer.from(s));
     return { app, written, type, running: app.run() };
   }
@@ -364,7 +433,12 @@ describe("the focused companion column is a TERMINAL, not a text box", () => {
     (input as unknown as { isTTY: boolean }).isTTY = false;
     input.resume = (() => input) as never;
     input.pause = (() => input) as never;
-    const app = new App(TUI_DEFAULTS, async () => ({ ok: true, stdout: "", stderr: "", code: 0 }), out, input);
+    const app = new App(
+      TUI_DEFAULTS,
+      async () => ({ ok: true, stdout: "", stderr: "", code: 0 }),
+      out,
+      input,
+    );
     const sent: string[][] = [];
     const docker: DockerRunner = async (argv) => {
       if (argv.includes("send-keys")) sent.push(argv);
@@ -379,7 +453,8 @@ describe("the focused companion column is a TERMINAL, not a text box", () => {
     return { app, sent, type, running: app.run() };
   }
   const settle = () => new Promise((r) => setTimeout(r, 10));
-  const literals = (sent: string[][]) => sent.filter((a) => a.includes("-l")).map((a) => a[a.length - 1]);
+  const literals = (sent: string[][]) =>
+    sent.filter((a) => a.includes("-l")).map((a) => a[a.length - 1]);
 
   it("forwards every printable — including `/`, which opens pi's command menu", async () => {
     const h = harness();
@@ -491,9 +566,15 @@ describe("the wheel scrolls the companion column, not the tab behind it", () => 
       key: (_a, k) => (tabKeys.push(k), tabNotches.push(k.kind), true),
       keys: () => NO_LIVE_KEYS,
     };
-    const app = new App(TUI_DEFAULTS, async () => ({ ok: true, stdout: "", stderr: "", code: 0 }), out, input, {
-      tabs: Object.fromEntries(INSTALLED.map((t) => [t, hooks])),
-    });
+    const app = new App(
+      TUI_DEFAULTS,
+      async () => ({ ok: true, stdout: "", stderr: "", code: 0 }),
+      out,
+      input,
+      {
+        tabs: Object.fromEntries(INSTALLED.map((t) => [t, hooks])),
+      },
+    );
     app.tab = tab;
     app.view.snapshot = {
       written_at: "",
@@ -514,7 +595,10 @@ describe("the wheel scrolls the companion column, not the tab behind it", () => 
     );
     // 140 cols → a 70-column companion column occupying x 71…140.
     const wheel = (up: boolean, x: number) =>
-      (input as unknown as EventEmitter).emit("data", Buffer.from(`\x1b[<${up ? 64 : 65};${x};10M`));
+      (input as unknown as EventEmitter).emit(
+        "data",
+        Buffer.from(`\x1b[<${up ? 64 : 65};${x};10M`),
+      );
     return { app, tabNotches, tabKeys, wheel, running: app.run() };
   }
   const settle = () => new Promise((r) => setTimeout(r, 10));
@@ -599,7 +683,12 @@ describe("drag-to-copy", () => {
     (input as unknown as { isTTY: boolean }).isTTY = false;
     input.resume = (() => input) as never;
     input.pause = (() => input) as never;
-    const app = new App(TUI_DEFAULTS, async () => ({ ok: true, stdout: "", stderr: "", code: 0 }), out, input);
+    const app = new App(
+      TUI_DEFAULTS,
+      async () => ({ ok: true, stdout: "", stderr: "", code: 0 }),
+      out,
+      input,
+    );
     if (withSidebar) {
       app.sidebar = new CompanionSidebar(
         { container_name: "qcr-companion", session: "companion" },
@@ -610,14 +699,22 @@ describe("drag-to-copy", () => {
     const copied: string[] = [];
     app.clipboard = { write: async (t: string) => (copied.push(t), true) };
     const mouse = (b: number, x: number, y: number, press = true) =>
-      (input as unknown as EventEmitter).emit("data", Buffer.from(`\x1b[<${b};${x};${y}${press ? "M" : "m"}`));
+      (input as unknown as EventEmitter).emit(
+        "data",
+        Buffer.from(`\x1b[<${b};${x};${y}${press ? "M" : "m"}`),
+      );
     /** The plain-text block the operator can SEE at those cells — computed
      * independently of the app, so the assertion is a real check of the
      * extraction and not a restatement of it. */
     const onScreen = (x1: number, y1: number, x2: number, y2: number) => {
       const f = (app as unknown as { lastFrame?: Frame }).lastFrame!;
       const out: string[] = [];
-      for (let y = y1; y <= y2; y++) out.push(stripAnsi(f.lines[y - 1] ?? "").slice(x1 - 1, x2).replace(/\s+$/, ""));
+      for (let y = y1; y <= y2; y++)
+        out.push(
+          stripAnsi(f.lines[y - 1] ?? "")
+            .slice(x1 - 1, x2)
+            .replace(/\s+$/, ""),
+        );
       while (out.length > 0 && out[out.length - 1] === "") out.pop();
       return out.join("\n");
     };

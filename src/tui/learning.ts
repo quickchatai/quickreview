@@ -17,9 +17,20 @@
 import type { App } from "./app.js";
 import type { IssueSink } from "./issuesink.js";
 import type { ForwardStatus } from "./memforward.js";
-import { defectEntries, storeHealth, tuiMemoryStore, type MemoryEntry, type MemoryStore } from "./memory.js";
+import {
+  defectEntries,
+  storeHealth,
+  tuiMemoryStore,
+  type MemoryEntry,
+  type MemoryStore,
+} from "./memory.js";
 import type { TrackerTicket } from "./trackertickets.js";
-import { SshDigestFetcher, currentDigestFile, type DigestFetcher, type DigestState } from "./digesttab.js";
+import {
+  SshDigestFetcher,
+  currentDigestFile,
+  type DigestFetcher,
+  type DigestState,
+} from "./digesttab.js";
 import {
   acceptProposal,
   improvementsArgv,
@@ -34,7 +45,11 @@ import {
 import { installMemoryTab, type MemoryTabState } from "./memtab.js";
 import { installDigestTab } from "./digesttab.js";
 import { installTicketsTab, type TicketsTabState } from "./ticketstab.js";
-import { installFeedbackTab, type ChangeRegisterSource, type FeedbackTabState } from "./feedbacktab.js";
+import {
+  installFeedbackTab,
+  type ChangeRegisterSource,
+  type FeedbackTabState,
+} from "./feedbacktab.js";
 
 /**
  * The tracker projection, as a fact about the READ rather than a list.
@@ -58,7 +73,9 @@ export interface LearningDeps {
   memory?: MemoryStore;
   digestFetcher?: DigestFetcher;
   /** Fetch rubric slugs + heads and gh improvements; injectable for tests. */
-  fetchProposals?: (app: App) => Promise<{ proposals: RubricProposal[]; improvements: ImprovementItem[] | undefined }>;
+  fetchProposals?: (
+    app: App,
+  ) => Promise<{ proposals: RubricProposal[]; improvements: ImprovementItem[] | undefined }>;
   accept?: (app: App, slug: string) => Promise<{ ok: boolean; message: string }>;
   reject?: (app: App, slug: string, reason: string) => Promise<{ ok: boolean; message: string }>;
   /**: the configured issue sink the defect auto-filer writes through
@@ -186,12 +203,16 @@ export class LearningStore {
     const health = storeHealth(this.memory);
     this.memError = health?.error;
     this.memWarn = health?.warning;
-    if (this.memError && this.memError !== wasError) this.app.notice(`✖ memory unreachable: ${this.memError}`);
+    if (this.memError && this.memError !== wasError)
+      this.app.notice(`✖ memory unreachable: ${this.memError}`);
     else if (!this.memError && wasError) this.app.notice("memory reachable again");
     if (this.deps.sink && !this.memError) {
       // The sink holds the same store the verbs use (it stamps `filed=` back
       // onto each entry), so "already filed" stays a property of the memory.
-      const report = await this.deps.sink.file(defectEntries(this.entries), this.now().toISOString());
+      const report = await this.deps.sink.file(
+        defectEntries(this.entries),
+        this.now().toISOString(),
+      );
       if (report.filed.length > 0) {
         const ids = report.filed.map((f) => f.id).join(", ");
         this.status = `auto-filed ${ids}`;
@@ -217,8 +238,13 @@ export class LearningStore {
     } catch (err) {
       // A FAILED read is not an empty tracker: say so, and let the
       // next `r` try again instead of latching a confident zero.
-      this.tickets = { kind: "unreadable", reason: String(err instanceof Error ? err.message : err) };
-      this.app.notice("✖ the tracker could not be read — the ticket panes stay unknown (r retries)");
+      this.tickets = {
+        kind: "unreadable",
+        reason: String(err instanceof Error ? err.message : err),
+      };
+      this.app.notice(
+        "✖ the tracker could not be read — the ticket panes stay unknown (r retries)",
+      );
     }
     this.loaded("tickets");
   }
@@ -247,7 +273,9 @@ export class LearningStore {
     // instant first frame makes opening the tab before that snapshot the
     // normal case, which used to park the pane on "not read" all session.
     const hadRepo = (this.app.view.repo ?? "") !== "";
-    const { proposals, improvements } = await (this.deps.fetchProposals ?? this.defaultFetchProposals)(this.app);
+    const { proposals, improvements } = await (
+      this.deps.fetchProposals ?? this.defaultFetchProposals
+    )(this.app);
     this.proposals = proposals;
     this.improvements = improvements;
     this.propLoaded = true;
@@ -273,7 +301,9 @@ export class LearningStore {
     const repo = app.view.repo ?? "";
     let improvements: ImprovementItem[] | undefined;
     if (repo) {
-      const res = await app.ssh(app.cfg.ssh_host, improvementsArgv(app.cfg, repo), { timeoutMs: 20_000 });
+      const res = await app.ssh(app.cfg.ssh_host, improvementsArgv(app.cfg, repo), {
+        timeoutMs: 20_000,
+      });
       if (res.ok) improvements = parseImprovements(res.stdout);
     }
     return { proposals, improvements };
@@ -282,7 +312,8 @@ export class LearningStore {
   // ---- digest --------------------------------------------------------------
 
   ensureDigest(): void {
-    if (this.digest.files === undefined && this.digest.listError === undefined) this.guard("digest", () => this.loadDigest());
+    if (this.digest.files === undefined && this.digest.listError === undefined)
+      this.guard("digest", () => this.loadDigest());
   }
 
   reloadDigest(): void {
@@ -364,8 +395,16 @@ export class LearningStore {
       return { ok: false, message: `could not remove state/rubric/${slug}` };
     }
     // The sweep's never-re-propose contract rides this memory entry.
-    const mem = await this.memory.apply({ op: "add", text: `#rejected-proposal ${slug} — ${reason}` });
-    return { ok: mem.ok, message: mem.ok ? `rejected '${slug}' — recorded` : `rejected '${slug}' but the memory record failed: ${mem.message}` };
+    const mem = await this.memory.apply({
+      op: "add",
+      text: `#rejected-proposal ${slug} — ${reason}`,
+    });
+    return {
+      ok: mem.ok,
+      message: mem.ok
+        ? `rejected '${slug}' — recorded`
+        : `rejected '${slug}' but the memory record failed: ${mem.message}`,
+    };
   }
 }
 

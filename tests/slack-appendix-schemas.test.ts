@@ -104,7 +104,9 @@ describe("slack overseer appendix — corrected command schemas", () => {
   it("documents every whitelisted command, and nothing that isn't whitelisted", () => {
     // Documented names are folded exactly as validateCommand folds them, so a
     // legacy spelling in the frozen appendix still counts as its command.
-    expect([...documented.keys()].map((k) => LEGACY_DOC_NAMES[k] ?? k).sort()).toEqual([...COMMAND_WHITELIST].sort());
+    expect([...documented.keys()].map((k) => LEGACY_DOC_NAMES[k] ?? k).sort()).toEqual(
+      [...COMMAND_WHITELIST].sort(),
+    );
   });
 
   it.each([...COMMAND_WHITELIST])("%s: appendix field list matches validateCommand", (command) => {
@@ -123,7 +125,9 @@ describe("slack overseer appendix — corrected command schemas", () => {
       const docName = docNameFor(command);
       expect(appendix, `appendix never mentions '${docName}'`).toContain(docName);
       for (const field of acceptedFields(command)) {
-        expect(appendix, `appendix never mentions field '${field}' (of ${command})`).toContain(field);
+        expect(appendix, `appendix never mentions field '${field}' (of ${command})`).toContain(
+          field,
+        );
       }
     }
   });
@@ -145,7 +149,9 @@ describe("slack overseer appendix — corrected command schemas", () => {
 
   it("file-improvement-pr takes branch/title/body/slug, not the seeded 'rationale'", () => {
     expect(acceptedFields("file-improvement-pr")).toEqual(["body", "branch", "slug", "title"]);
-    expect(validateCommand({ command: "file-improvement-pr", branch: "b", rationale: "why" })).toEqual({
+    expect(
+      validateCommand({ command: "file-improvement-pr", branch: "b", rationale: "why" }),
+    ).toEqual({
       ok: false,
       reason: "unknown field(s): rationale",
     });
@@ -160,7 +166,14 @@ describe("slack overseer appendix — corrected command schemas", () => {
 
   it("documents slack_reply with no channel field — the channel is unrepresentable", () => {
     expect(documented.get("slack_reply")).toEqual(["text", "thread"]);
-    expect(validateCommand({ command: "slack_reply", thread: "1712345678.123456", text: "hi", channel: "C1" })).toEqual({
+    expect(
+      validateCommand({
+        command: "slack_reply",
+        thread: "1712345678.123456",
+        text: "hi",
+        channel: "C1",
+      }),
+    ).toEqual({
       ok: false,
       reason: "unknown field(s): channel",
     });
@@ -252,7 +265,15 @@ describe("slack overseer appendix — the origin header", () => {
 
   it("documents the em-dash empty-value convention the builder uses", () => {
     const dashed = buildInjectBody({
-      event: { event_id: "E", type: "message", channel: "C", ts: "1.1", user: "U", text: "", event_ts: "1.1" },
+      event: {
+        event_id: "E",
+        type: "message",
+        channel: "C",
+        ts: "1.1",
+        user: "U",
+        text: "",
+        event_ts: "1.1",
+      },
       threadTs: "1.1",
       threadPr: null,
       displayName: "U",

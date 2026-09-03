@@ -34,7 +34,8 @@ export function extractMouseEvents(buf: Buffer): { events: MouseEvent[]; rest: B
     // Motion carries bit 32; `32` is left-button-held motion, i.e. a drag.
     // Checked BEFORE the click case, which requires b < 32.
     else if (press && (b & 32) !== 0 && (b & 3) === 0) events.push({ kind: "drag", x, y });
-    else if (press && (b & 3) === 0 && b < 32) events.push({ kind: "click", x, y }); // left press only
+    else if (press && (b & 3) === 0 && b < 32)
+      events.push({ kind: "click", x, y }); // left press only
     else if (!press) events.push({ kind: "release", x, y });
   }
   const rest = Buffer.from(s.replace(SGR_MOUSE_RE, ""), "utf8");

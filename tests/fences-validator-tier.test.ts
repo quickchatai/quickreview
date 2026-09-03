@@ -58,11 +58,15 @@ describe("[#22] the validator floor holds against the passes that RAN", () => {
     expect(passesAboveValidator(null, [{ name: "pass-baseline", tier: "sol-high" }])).toEqual([]);
     expect(passesAboveValidator("terra-med", null)).toEqual([]);
     expect(passesAboveValidator("terra-med", [{ name: "pass-baseline", tier: null }])).toEqual([]);
-    expect(passesAboveValidator("terra-med", [{ name: "pass-baseline", tier: "nonsense" }])).toEqual([]);
+    expect(
+      passesAboveValidator("terra-med", [{ name: "pass-baseline", tier: "nonsense" }]),
+    ).toEqual([]);
   });
 
   it("the validator's own entry never counts against its own floor", () => {
-    expect(passesAboveValidator("terra-med", [{ name: "pass-validate", tier: "sol-high" }])).toEqual([]);
+    expect(
+      passesAboveValidator("terra-med", [{ name: "pass-validate", tier: "sol-high" }]),
+    ).toEqual([]);
   });
 
   /**
@@ -78,8 +82,14 @@ describe("[#22] the validator floor holds against the passes that RAN", () => {
   it("reads the property off a real rounds table", () => {
     const store = new StateStore(":memory:");
     store.upsertPr({
-      number: 42, state: "reviewing", head_sha: "aa11", title: "t", author: "alice",
-      trigger_ts: null, stale_recheck: 0, migration_gate: 0,
+      number: 42,
+      state: "reviewing",
+      head_sha: "aa11",
+      title: "t",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
     });
 
     const round = (validate: string, executed: VerdictPassEntry[]): number => {
@@ -98,7 +108,9 @@ describe("[#22] the validator floor holds against the passes that RAN", () => {
     ]);
 
     const check = (id: number) => {
-      const r = store.db.prepare("SELECT validate_tier, executed_passes FROM rounds WHERE id = ?").get(id) as {
+      const r = store.db
+        .prepare("SELECT validate_tier, executed_passes FROM rounds WHERE id = ?")
+        .get(id) as {
         validate_tier: string | null;
         executed_passes: string | null;
       };
@@ -109,9 +121,10 @@ describe("[#22] the validator floor holds against the passes that RAN", () => {
     };
 
     expect(check(ok), "a round whose lenses ran at the floor is compliant").toEqual([]);
-    expect(check(bad).map((p) => p.name), "a lens hotter than the validator that vetoed it is the violation").toEqual([
-      "pass-baseline",
-    ]);
+    expect(
+      check(bad).map((p) => p.name),
+      "a lens hotter than the validator that vetoed it is the violation",
+    ).toEqual(["pass-baseline"]);
     store.close();
   });
 });

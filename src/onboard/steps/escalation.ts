@@ -68,7 +68,9 @@ export function splitList(raw: unknown): string[] {
 }
 
 function yesNo(raw: unknown): boolean | null {
-  const v = String(raw ?? "").trim().toLowerCase();
+  const v = String(raw ?? "")
+    .trim()
+    .toLowerCase();
   if (["yes", "y", "true", "on", "enable", "enabled"].includes(v)) return true;
   if (["no", "n", "false", "off", "disable", "disabled", "skip"].includes(v)) return false;
   return null;
@@ -90,19 +92,19 @@ export function offerCheck(): CheckResult {
       "What it is NOT: it never asks anyone to review the pull request, never holds the review open,",
       "and never makes the PR wait for a person. There is no way to configure it to do those.",
       "",
-      "enable = \"no\"  → nothing changes; the system behaves exactly as it does today. This is the",
+      'enable = "no"  → nothing changes; the system behaves exactly as it does today. This is the',
       "                 right answer unless the team already knows a class of change one specific",
       "                 person always wants to see.",
-      "enable = \"yes\" → then you must also give `targets` (the logins escalation may reach — one rule is",
+      'enable = "yes" → then you must also give `targets` (the logins escalation may reach — one rule is',
       "                 written per login, so naming two people means BOTH are told), `why`",
       "                 (why that person, in your words) and at least one trigger: `paths`, `labels`,",
       "                 `min_severity` or `failing_checks`. All of them together is fine; none of",
       "                 them is refused, because a rule with no trigger can never fire.",
       "",
-      "Optional: `shape` — \"comment\" (default) posts the note; \"review_request\" ALSO puts the PR in",
-      "that person's review-requested queue. GitHub words that queue entry \"review this pull request\",",
+      'Optional: `shape` — "comment" (default) posts the note; "review_request" ALSO puts the PR in',
+      'that person\'s review-requested queue. GitHub words that queue entry "review this pull request",',
       "which is exactly what is NOT being asked, so the note is still posted alongside it and still",
-      "carries the real ask. \"comment\" is the shape that matches the intent.",
+      'carries the real ask. "comment" is the shape that matches the intent.',
       "Optional: `session_judgement` — may the reviewer ALSO escalate on its own judgement, bounded",
       "to the same targets? Default no; the rules above are the half with no model in the loop.",
     ].join("\n"),
@@ -126,7 +128,8 @@ export function patchEscalationSection(toml: string, body: string): string {
   if (header?.index === undefined) {
     // No table yet: put it before [slack] if that exists, else at the end.
     const slack = /^\[slack\]/m.exec(toml);
-    if (slack?.index !== undefined) return `${toml.slice(0, slack.index)}${body}\n${toml.slice(slack.index)}`;
+    if (slack?.index !== undefined)
+      return `${toml.slice(0, slack.index)}${body}\n${toml.slice(slack.index)}`;
     return `${toml.replace(/\n*$/, "\n")}\n${body}`;
   }
   let end = toml.length;
@@ -171,7 +174,10 @@ export interface EscalationAnswers {
 
 /** Render the whole `[escalation]` section — the switched-off form when the
  * operator declined, the full form otherwise. */
-export function renderEscalationSection(a: EscalationAnswers, foreign: readonly string[] = []): string {
+export function renderEscalationSection(
+  a: EscalationAnswers,
+  foreign: readonly string[] = [],
+): string {
   const head = [
     "[escalation]",
     "# Optional escalation. The reviewer ALWAYS decides on the merits and",
@@ -223,11 +229,18 @@ export function renderEscalationSection(a: EscalationAnswers, foreign: readonly 
 export function answerProblems(a: EscalationAnswers): string[] {
   if (!a.enabled) return [];
   const bad: string[] = [];
-  if (a.targets.length === 0) bad.push("`targets` is empty — escalation on with nobody to escalate to is not a configuration");
-  for (const t of a.targets) if (!LOGIN_RE.test(t)) bad.push(`"${t}" is not a GitHub login (letters, digits, single dashes; no @, no URL)`);
+  if (a.targets.length === 0)
+    bad.push(
+      "`targets` is empty — escalation on with nobody to escalate to is not a configuration",
+    );
+  for (const t of a.targets)
+    if (!LOGIN_RE.test(t))
+      bad.push(`"${t}" is not a GitHub login (letters, digits, single dashes; no @, no URL)`);
   if (!a.why) bad.push("`why` is empty — every escalation says why THIS person, in your words");
   if (a.paths.length + a.labels.length + a.failing_checks.length === 0 && !a.min_severity) {
-    bad.push("no trigger given — set at least one of `paths`, `labels`, `min_severity`, `failing_checks`, or a rule that can never fire is all this writes");
+    bad.push(
+      "no trigger given — set at least one of `paths`, `labels`, `min_severity`, `failing_checks`, or a rule that can never fire is all this writes",
+    );
   }
   if (a.min_severity && !SEVERITIES.includes(a.min_severity as (typeof SEVERITIES)[number])) {
     bad.push(`\`min_severity\` must be one of ${SEVERITIES.join(", ")} (got "${a.min_severity}")`);
@@ -236,7 +249,9 @@ export function answerProblems(a: EscalationAnswers): string[] {
 }
 
 function answersFrom(ctx: StepContext, enabled: boolean): EscalationAnswers {
-  const shapeRaw = String(ctx.input.shape ?? "comment").trim().toLowerCase();
+  const shapeRaw = String(ctx.input.shape ?? "comment")
+    .trim()
+    .toLowerCase();
   const targets = splitList(ctx.input.targets);
   return {
     enabled,
@@ -246,14 +261,18 @@ function answersFrom(ctx: StepContext, enabled: boolean): EscalationAnswers {
     paths: splitList(ctx.input.paths),
     labels: splitList(ctx.input.labels),
     failing_checks: splitList(ctx.input.failing_checks),
-    min_severity: String(ctx.input.min_severity ?? "").trim().toUpperCase(),
+    min_severity: String(ctx.input.min_severity ?? "")
+      .trim()
+      .toUpperCase(),
     why: String(ctx.input.why ?? "").trim(),
   };
 }
 
 function configPathOf(ctx: StepContext): string {
   const recorded = ctx.choices[CHOICE_KEYS.configPath];
-  return typeof recorded === "string" && recorded ? recorded : join(sandboxRootOf(ctx.adapters), "config.toml");
+  return typeof recorded === "string" && recorded
+    ? recorded
+    : join(sandboxRootOf(ctx.adapters), "config.toml");
 }
 
 export function escalationStep(): OnboardingStep {
@@ -261,24 +280,56 @@ export function escalationStep(): OnboardingStep {
     id: ESCALATION_STEP_ID,
     title: "Escalation: optional, off by default",
     explain:
-      "One question, and \"no\" is a perfectly good answer. The reviewer always decides every PR itself and posts a verdict — "
-      + "that never changes. Escalation, if you turn it on, adds a note beside the verdict that @-mentions one named person and "
-      + "points them at ONE thing: this file and these lines, this migration, this decision. It is never a request to review the "
-      + "pull request, and it never makes a review wait for anyone. Call the tool with no arguments first to read the trade-offs "
-      + "out to the operator, then again with their answer.",
+      'One question, and "no" is a perfectly good answer. The reviewer always decides every PR itself and posts a verdict — ' +
+      "that never changes. Escalation, if you turn it on, adds a note beside the verdict that @-mentions one named person and " +
+      "points them at ONE thing: this file and these lines, this migration, this decision. It is never a request to review the " +
+      "pull request, and it never makes a review wait for anyone. Call the tool with no arguments first to read the trade-offs " +
+      "out to the operator, then again with their answer.",
     order: 36,
     parameters: {
       type: "object",
       properties: {
-        enable: { type: "string", enum: ["yes", "no"], description: "Turn escalation on? Omit to have the step explain it first." },
-        targets: { type: "string", description: "Comma-separated GitHub logins escalation may reach. Required when enable=yes." },
-        why: { type: "string", description: "Why this person, in the operator's own words — rendered verbatim in the note. Required when enable=yes." },
-        paths: { type: "string", description: "Comma-separated path globs that warrant a look (* within a segment, ** across)." },
+        enable: {
+          type: "string",
+          enum: ["yes", "no"],
+          description: "Turn escalation on? Omit to have the step explain it first.",
+        },
+        targets: {
+          type: "string",
+          description:
+            "Comma-separated GitHub logins escalation may reach. Required when enable=yes.",
+        },
+        why: {
+          type: "string",
+          description:
+            "Why this person, in the operator's own words — rendered verbatim in the note. Required when enable=yes.",
+        },
+        paths: {
+          type: "string",
+          description:
+            "Comma-separated path globs that warrant a look (* within a segment, ** across).",
+        },
         labels: { type: "string", description: "Comma-separated PR labels that warrant a look." },
-        min_severity: { type: "string", enum: ["", "P0", "P1", "P2", "P3"], description: "Escalate when the round posted a finding at or above this severity." },
-        failing_checks: { type: "string", description: "Comma-separated check names whose failure warrants a look." },
-        shape: { type: "string", enum: ["comment", "review_request"], description: "Delivery shape; \"comment\" (default) is the one that matches the intent." },
-        session_judgement: { type: "string", enum: ["yes", "no"], description: "May the reviewer also escalate on its own judgement, bounded to `targets`? Default no." },
+        min_severity: {
+          type: "string",
+          enum: ["", "P0", "P1", "P2", "P3"],
+          description: "Escalate when the round posted a finding at or above this severity.",
+        },
+        failing_checks: {
+          type: "string",
+          description: "Comma-separated check names whose failure warrants a look.",
+        },
+        shape: {
+          type: "string",
+          enum: ["comment", "review_request"],
+          description: 'Delivery shape; "comment" (default) is the one that matches the intent.',
+        },
+        session_judgement: {
+          type: "string",
+          enum: ["yes", "no"],
+          description:
+            "May the reviewer also escalate on its own judgement, bounded to `targets`? Default no.",
+        },
       },
     },
 
@@ -296,7 +347,11 @@ export function escalationStep(): OnboardingStep {
           ok: false,
           checks: [
             { name: "escalation answers", ok: false, detail: problems.join("; ") },
-            { name: "config", ok: true, detail: "nothing was written — fix the answers above and call this step again" },
+            {
+              name: "config",
+              ok: true,
+              detail: "nothing was written — fix the answers above and call this step again",
+            },
           ],
         };
       }
@@ -306,15 +361,36 @@ export function escalationStep(): OnboardingStep {
       try {
         toml = readFileSync(path, "utf8");
       } catch (err) {
-        return { ok: false, checks: [{ name: "config.toml", ok: false, detail: `cannot read ${path}: ${String(err)} — run the interview step first` }] };
+        return {
+          ok: false,
+          checks: [
+            {
+              name: "config.toml",
+              ok: false,
+              detail: `cannot read ${path}: ${String(err)} — run the interview step first`,
+            },
+          ],
+        };
       }
-      const patched = patchEscalationSection(toml, renderEscalationSection(answers, foreignRuleBlocks(toml)));
+      const patched = patchEscalationSection(
+        toml,
+        renderEscalationSection(answers, foreignRuleBlocks(toml)),
+      );
       // Parse BEFORE writing: `parseEscalation` is the same lock the loader
       // uses, so a config this step writes can always be booted.
       try {
         parseConfig(patched);
       } catch (err) {
-        return { ok: false, checks: [{ name: "config validation", ok: false, detail: `the section this step would write does not load: ${String(err)} — nothing was written` }] };
+        return {
+          ok: false,
+          checks: [
+            {
+              name: "config validation",
+              ok: false,
+              detail: `the section this step would write does not load: ${String(err)} — nothing was written`,
+            },
+          ],
+        };
       }
       writeFileSync(path, patched);
 
@@ -323,10 +399,10 @@ export function escalationStep(): OnboardingStep {
           name: "escalation",
           ok: true,
           detail: enable
-            ? `on, shape "${answers.shape}" — ${answers.targets.length} rule(s), one per target: `
-              + answers.targets.map((t) => `@${t} (rule ${interviewRuleName(t)})`).join(", ")
-              + ". Each of them is told about the same triggers below; escalation names one person per note, so"
-              + " listing more than one login means more than one person is told."
+            ? `on, shape "${answers.shape}" — ${answers.targets.length} rule(s), one per target: ` +
+              answers.targets.map((t) => `@${t} (rule ${interviewRuleName(t)})`).join(", ") +
+              ". Each of them is told about the same triggers below; escalation names one person per note, so" +
+              " listing more than one login means more than one person is told."
             : "off — the reviewer decides every PR and posts its verdict, and nobody is @-mentioned. You can turn this on later by re-running this step.",
         },
         { name: "config.toml", ok: true, detail: `[escalation] written to ${path} and it parses` },
@@ -336,15 +412,17 @@ export function escalationStep(): OnboardingStep {
           answers.paths.length ? `paths ${answers.paths.join(", ")}` : "",
           answers.labels.length ? `labels ${answers.labels.join(", ")}` : "",
           answers.min_severity ? `findings at or above ${answers.min_severity}` : "",
-          answers.failing_checks.length ? `failing checks ${answers.failing_checks.join(", ")}` : "",
+          answers.failing_checks.length
+            ? `failing checks ${answers.failing_checks.join(", ")}`
+            : "",
         ].filter(Boolean);
         checks.push({ name: "triggers", ok: true, detail: trig.join("; ") });
         checks.push({
           name: "still a verdict",
           ok: true,
           detail:
-            "reminder, and it is structural: escalation never withholds, defers or replaces a verdict. Every PR still gets "
-            + "APPROVE or REQUEST_CHANGES on the merits, and the note rides beside it.",
+            "reminder, and it is structural: escalation never withholds, defers or replaces a verdict. Every PR still gets " +
+            "APPROVE or REQUEST_CHANGES on the merits, and the note rides beside it.",
         });
         if (answers.session_judgement) {
           checks.push({
@@ -354,7 +432,16 @@ export function escalationStep(): OnboardingStep {
           });
         }
       }
-      return { ok: true, checks, data: { enabled: enable, shape: answers.shape, targets: answers.targets, config_path: path } };
+      return {
+        ok: true,
+        checks,
+        data: {
+          enabled: enable,
+          shape: answers.shape,
+          targets: answers.targets,
+          config_path: path,
+        },
+      };
     },
 
     async verify(ctx): Promise<StepReport> {
@@ -363,26 +450,57 @@ export function escalationStep(): OnboardingStep {
       try {
         cfg = parseConfig(readFileSync(path, "utf8"));
       } catch (err) {
-        return { ok: false, checks: [{ name: "config.toml", ok: false, detail: `${path} does not load: ${String(err)}` }] };
+        return {
+          ok: false,
+          checks: [
+            { name: "config.toml", ok: false, detail: `${path} does not load: ${String(err)}` },
+          ],
+        };
       }
       const esc = cfg.escalation;
       if (!esc.enabled) {
         return {
           ok: true,
-          checks: [{ name: "escalation", ok: true, detail: "off — nothing is evaluated, nobody is @-mentioned, no review request is ever made" }],
+          checks: [
+            {
+              name: "escalation",
+              ok: true,
+              detail:
+                "off — nothing is evaluated, nobody is @-mentioned, no review request is ever made",
+            },
+          ],
         };
       }
       // On, so re-prove the two things that make it configured rather than
       // half-configured. `parseConfig` already refuses both, which is why this
       // is a re-assertion and not the only check.
       const checks: CheckResult[] = [
-        { name: "targets", ok: esc.targets.length > 0, detail: esc.targets.length > 0 ? `escalates only to ${esc.targets.map((t) => `@${t}`).join(", ")}` : "on with no targets" },
+        {
+          name: "targets",
+          ok: esc.targets.length > 0,
+          detail:
+            esc.targets.length > 0
+              ? `escalates only to ${esc.targets.map((t) => `@${t}`).join(", ")}`
+              : "on with no targets",
+        },
         {
           name: "triggers",
           ok: esc.rules.length > 0 || esc.session_judgement,
-          detail: esc.rules.length > 0 ? `${esc.rules.length} rule(s): ${esc.rules.map((r) => r.name).join(", ")}` : esc.session_judgement ? "session judgement only" : "nothing can fire",
+          detail:
+            esc.rules.length > 0
+              ? `${esc.rules.length} rule(s): ${esc.rules.map((r) => r.name).join(", ")}`
+              : esc.session_judgement
+                ? "session judgement only"
+                : "nothing can fire",
         },
-        { name: "shape", ok: true, detail: esc.shape === "comment" ? "a comment beside the verdict" : "a comment beside the verdict, plus a GitHub review request" },
+        {
+          name: "shape",
+          ok: true,
+          detail:
+            esc.shape === "comment"
+              ? "a comment beside the verdict"
+              : "a comment beside the verdict, plus a GitHub review request",
+        },
       ];
       return { ok: checks.every((c) => c.ok), checks };
     },

@@ -8,9 +8,10 @@ interface Call {
   opts?: ExecOpts;
 }
 
-function fakeExec(
-  respond: (cmd: string, args: string[]) => Partial<ExecResult> = () => ({}),
-): { exec: ExecFn; calls: Call[] } {
+function fakeExec(respond: (cmd: string, args: string[]) => Partial<ExecResult> = () => ({})): {
+  exec: ExecFn;
+  calls: Call[];
+} {
   const calls: Call[] = [];
   const exec: ExecFn = async (cmd, args, opts) => {
     calls.push({ cmd, args, opts });
@@ -24,11 +25,17 @@ describe("Tmux", () => {
     const { exec, calls } = fakeExec(() => ({ stdout: "pr-1\noverseer\n\n" }));
     const names = await new Tmux({ exec }).listSessions();
     expect(names).toEqual(["pr-1", "overseer"]);
-    expect(calls[0]).toMatchObject({ cmd: "tmux", args: ["list-sessions", "-F", "#{session_name}"] });
+    expect(calls[0]).toMatchObject({
+      cmd: "tmux",
+      args: ["list-sessions", "-F", "#{session_name}"],
+    });
   });
 
   it("returns no sessions when the tmux server is not running", async () => {
-    const { exec } = fakeExec(() => ({ code: 1, stderr: "no server running on /tmp/tmux-1000/default" }));
+    const { exec } = fakeExec(() => ({
+      code: 1,
+      stderr: "no server running on /tmp/tmux-1000/default",
+    }));
     expect(await new Tmux({ exec }).listSessions()).toEqual([]);
   });
 
@@ -47,7 +54,15 @@ describe("Tmux", () => {
       env: { PATH: "/usr/bin" },
     });
     expect(calls[0]!.args).toEqual([
-      "new-session", "-d", "-s", "pr-9", "-c", "/sandbox", "pi", "--model", "m",
+      "new-session",
+      "-d",
+      "-s",
+      "pr-9",
+      "-c",
+      "/sandbox",
+      "pi",
+      "--model",
+      "m",
     ]);
     expect(calls[0]!.opts?.env).toEqual({ PATH: "/usr/bin" });
   });
@@ -88,6 +103,8 @@ describe("runOrThrow", () => {
 
   it("throws ExecError carrying the command on failure", async () => {
     const { exec } = fakeExec(() => ({ code: 128, stderr: "boom" }));
-    await expect(runOrThrow(exec, "git", ["status"])).rejects.toThrow(/git status exited 128: boom/);
+    await expect(runOrThrow(exec, "git", ["status"])).rejects.toThrow(
+      /git status exited 128: boom/,
+    );
   });
 });

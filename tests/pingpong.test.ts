@@ -86,7 +86,16 @@ describe("exchange cap", () => {
 
 describe("buildWakeMessage", () => {
   it("carries thread context, the quoted message and the discipline rules", () => {
-    const msg = buildWakeMessage(event, { finding_id: "F2", finding: "[blocker] missing await", head_sha: "abc123", worktree: "wt/pr-77" }, ledger.discipline(4000));
+    const msg = buildWakeMessage(
+      event,
+      {
+        finding_id: "F2",
+        finding: "[blocker] missing await",
+        head_sha: "abc123",
+        worktree: "wt/pr-77",
+      },
+      ledger.discipline(4000),
+    );
 
     expect(msg).toContain("# Author reply — PR #77");
     expect(msg).toContain("`4000`");
@@ -121,7 +130,9 @@ describe("buildWakeMessage", () => {
 });
 
 describe("postReply", () => {
-  function deps(createReviewCommentReply: (n: number, commentId: number, body: string) => Promise<never>) {
+  function deps(
+    createReviewCommentReply: (n: number, commentId: number, body: string) => Promise<never>,
+  ) {
     return {
       adapter: { createReviewCommentReply },
       store: { registerBotComment: vi.fn(), logEvent: vi.fn() },
@@ -147,7 +158,11 @@ describe("postReply", () => {
     expect(out.posted).toBe(true);
     expect(out.registered).toBeUndefined();
     expect(d.store.registerBotComment).not.toHaveBeenCalled();
-    expect(d.store.logEvent).toHaveBeenCalledWith("pingpong_reply_intent", 77, expect.objectContaining({ thread_id: 4000 }));
+    expect(d.store.logEvent).toHaveBeenCalledWith(
+      "pingpong_reply_intent",
+      77,
+      expect.objectContaining({ thread_id: 4000 }),
+    );
   });
 
   it("suppresses the post once the exchange cap is reached", async () => {
@@ -158,7 +173,11 @@ describe("postReply", () => {
 
     expect(fn).not.toHaveBeenCalled();
     expect(out).toEqual({ posted: false, exchanges: 3, reason: "exchange-cap-reached" });
-    expect(d.store.logEvent).toHaveBeenCalledWith("pingpong_reply_suppressed", 77, expect.objectContaining({ reason: "exchange-cap-reached" }));
+    expect(d.store.logEvent).toHaveBeenCalledWith(
+      "pingpong_reply_suppressed",
+      77,
+      expect.objectContaining({ reason: "exchange-cap-reached" }),
+    );
   });
 });
 
@@ -168,8 +187,12 @@ describe("structured thread decision", () => {
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
   const harness = () => {
-    const createReviewCommentReply = vi.fn().mockResolvedValue({ executed: true, response: { id: 6001 } });
-    const resolveOwnReviewThread = vi.fn().mockResolvedValue({ skipped: null, result: { executed: true } });
+    const createReviewCommentReply = vi
+      .fn()
+      .mockResolvedValue({ executed: true, response: { id: 6001 } });
+    const resolveOwnReviewThread = vi
+      .fn()
+      .mockResolvedValue({ skipped: null, result: { executed: true } });
     const store = { registerBotComment: vi.fn(), logEvent: vi.fn() };
     const watcher = new ThreadDecisionWatcher({
       adapter: { createReviewCommentReply, resolveOwnReviewThread },
@@ -188,10 +211,21 @@ describe("structured thread decision", () => {
     writeFileSync(path, '{"pr":77');
 
     expect(await h.watcher.handleFile(name)).toBe(false);
-    expect(h.store.logEvent).not.toHaveBeenCalledWith("pingpong_decision_malformed", 77, expect.anything());
-    writeFileSync(path, JSON.stringify({
-      pr: 77, thread_id: 4000, comment_id: 5001, resolution: "resolve", reply: "Addressed.",
-    }));
+    expect(h.store.logEvent).not.toHaveBeenCalledWith(
+      "pingpong_decision_malformed",
+      77,
+      expect.anything(),
+    );
+    writeFileSync(
+      path,
+      JSON.stringify({
+        pr: 77,
+        thread_id: 4000,
+        comment_id: 5001,
+        resolution: "resolve",
+        reply: "Addressed.",
+      }),
+    );
     expect(await h.watcher.handleFile(name)).toBe(true);
     expect(h.createReviewCommentReply).toHaveBeenCalledTimes(1);
     expect(h.resolveOwnReviewThread).toHaveBeenCalledTimes(1);
@@ -215,31 +249,61 @@ describe("structured thread decision", () => {
     ledger.claimAuthorMessage(event);
     const h = harness();
     const name = "pr-77-thread-4000-comment-5001.json";
-    writeFileSync(join(root, name), JSON.stringify({
-      pr: 77, thread_id: 4000, comment_id: 5001, resolution: "resolve",
-      reply: "Agreed — the guard covers this case.", reason: "verified helpers.py guard",
-    }));
+    writeFileSync(
+      join(root, name),
+      JSON.stringify({
+        pr: 77,
+        thread_id: 4000,
+        comment_id: 5001,
+        resolution: "resolve",
+        reply: "Agreed — the guard covers this case.",
+        reason: "verified helpers.py guard",
+      }),
+    );
 
     expect(await h.watcher.handleFile(name)).toBe(true);
-    expect(h.createReviewCommentReply).toHaveBeenCalledWith(77, 4000, "Agreed — the guard covers this case.");
+    expect(h.createReviewCommentReply).toHaveBeenCalledWith(
+      77,
+      4000,
+      "Agreed — the guard covers this case.",
+    );
     expect(h.resolveOwnReviewThread).toHaveBeenCalledWith(77, 4000);
-    expect(h.store.logEvent).toHaveBeenCalledWith("pingpong_thread_resolved", 77, expect.objectContaining({ thread_id: 4000 }));
+    expect(h.store.logEvent).toHaveBeenCalledWith(
+      "pingpong_thread_resolved",
+      77,
+      expect.objectContaining({ thread_id: 4000 }),
+    );
   });
 
   it("does not duplicate the reply when thread resolution retries", async () => {
     ledger.claimAuthorMessage(event);
     let now = new Date("2026-08-26T09:00:00Z");
-    const createReviewCommentReply = vi.fn().mockResolvedValue({ executed: true, response: { id: 6001 } });
-    const resolveOwnReviewThread = vi.fn().mockRejectedValueOnce(new Error("graphql timeout")).mockResolvedValueOnce({ skipped: null });
+    const createReviewCommentReply = vi
+      .fn()
+      .mockResolvedValue({ executed: true, response: { id: 6001 } });
+    const resolveOwnReviewThread = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("graphql timeout"))
+      .mockResolvedValueOnce({ skipped: null });
     const store = { registerBotComment: vi.fn(), logEvent: vi.fn(), logAnomaly: vi.fn() };
     const watcher = new ThreadDecisionWatcher({
       adapter: { createReviewCommentReply, resolveOwnReviewThread },
-      store, ledger, verdictDir: root, now: () => now,
+      store,
+      ledger,
+      verdictDir: root,
+      now: () => now,
     });
     const name = "pr-77-thread-4000-comment-5001.json";
-    writeFileSync(join(root, name), JSON.stringify({
-      pr: 77, thread_id: 4000, comment_id: 5001, resolution: "resolve", reply: "That addresses it.",
-    }));
+    writeFileSync(
+      join(root, name),
+      JSON.stringify({
+        pr: 77,
+        thread_id: 4000,
+        comment_id: 5001,
+        resolution: "resolve",
+        reply: "That addresses it.",
+      }),
+    );
 
     expect(await watcher.handleFile(name)).toBe(false);
     now = new Date("2026-08-26T09:00:31Z");
@@ -250,18 +314,30 @@ describe("structured thread decision", () => {
 
   it("opens one global breaker on rate limit and preserves every later decision", async () => {
     let now = new Date("2026-08-26T09:00:00Z");
-    const resolveOwnReviewThread = vi.fn().mockRejectedValue(new Error('graphql errors: [{"code":"graphql_rate_limit"}]'));
+    const resolveOwnReviewThread = vi
+      .fn()
+      .mockRejectedValue(new Error('graphql errors: [{"code":"graphql_rate_limit"}]'));
     const store = { registerBotComment: vi.fn(), logEvent: vi.fn(), logAnomaly: vi.fn() };
     const watcher = new ThreadDecisionWatcher({
       adapter: { createReviewCommentReply: vi.fn(), resolveOwnReviewThread },
-      store, ledger, verdictDir: root, now: () => now,
+      store,
+      ledger,
+      verdictDir: root,
+      now: () => now,
     });
     for (let i = 0; i < 44; i++) {
       const comment = 6000 + i;
       ledger.claimAuthorMessage({ ...event, comment_id: comment });
-      writeFileSync(join(root, `pr-77-thread-4000-comment-${comment}.json`), JSON.stringify({
-        pr: 77, thread_id: 4000, comment_id: comment, resolution: "resolve", reply: "",
-      }));
+      writeFileSync(
+        join(root, `pr-77-thread-4000-comment-${comment}.json`),
+        JSON.stringify({
+          pr: 77,
+          thread_id: 4000,
+          comment_id: comment,
+          resolution: "resolve",
+          reply: "",
+        }),
+      );
     }
 
     await watcher.sweep();
@@ -275,20 +351,31 @@ describe("structured thread decision", () => {
 
   it("closes a half-open global breaker when the probe fails for a non-rate reason", async () => {
     let now = new Date("2026-08-26T09:00:00Z");
-    const resolveOwnReviewThread = vi.fn()
+    const resolveOwnReviewThread = vi
+      .fn()
       .mockRejectedValueOnce(new Error('graphql errors: [{"code":"graphql_rate_limit"}]'))
       .mockRejectedValueOnce(new Error("refusing to resolve thread: root author is example-review"))
       .mockResolvedValue({ skipped: null });
     const store = { registerBotComment: vi.fn(), logEvent: vi.fn(), logAnomaly: vi.fn() };
     const watcher = new ThreadDecisionWatcher({
       adapter: { createReviewCommentReply: vi.fn(), resolveOwnReviewThread },
-      store, ledger, verdictDir: root, now: () => now,
+      store,
+      ledger,
+      verdictDir: root,
+      now: () => now,
     });
     for (const comment of [6000, 6001, 6002]) {
       ledger.claimAuthorMessage({ ...event, comment_id: comment });
-      writeFileSync(join(root, `pr-77-thread-4000-comment-${comment}.json`), JSON.stringify({
-        pr: 77, thread_id: 4000, comment_id: comment, resolution: "resolve", reply: "",
-      }));
+      writeFileSync(
+        join(root, `pr-77-thread-4000-comment-${comment}.json`),
+        JSON.stringify({
+          pr: 77,
+          thread_id: 4000,
+          comment_id: comment,
+          resolution: "resolve",
+          reply: "",
+        }),
+      );
     }
 
     await watcher.sweep();
@@ -299,7 +386,9 @@ describe("structured thread decision", () => {
     expect(watcher.status().breaker_state).toBe("closed");
     expect(ledger.retry(6001)).toMatchObject({ attempts: 1, terminal: false });
     expect(store.logEvent).toHaveBeenCalledWith(
-      "pingpong_breaker_closed", 77, expect.objectContaining({ reason: "non-rate probe failure" }),
+      "pingpong_breaker_closed",
+      77,
+      expect.objectContaining({ reason: "non-rate probe failure" }),
     );
     now = new Date("2026-08-26T09:01:06Z");
     await watcher.sweep();
@@ -314,10 +403,22 @@ describe("structured thread decision", () => {
     const store = { registerBotComment: vi.fn(), logEvent: vi.fn(), logAnomaly: vi.fn() };
     const watcher = new ThreadDecisionWatcher({
       adapter: { createReviewCommentReply: vi.fn(), resolveOwnReviewThread },
-      store, ledger, verdictDir: root, now: () => now,
+      store,
+      ledger,
+      verdictDir: root,
+      now: () => now,
     });
     const name = "pr-77-thread-4000-comment-5001.json";
-    writeFileSync(join(root, name), JSON.stringify({ pr: 77, thread_id: 4000, comment_id: 5001, resolution: "resolve", reply: "" }));
+    writeFileSync(
+      join(root, name),
+      JSON.stringify({
+        pr: 77,
+        thread_id: 4000,
+        comment_id: 5001,
+        resolution: "resolve",
+        reply: "",
+      }),
+    );
 
     expect(await watcher.handleFile(name)).toBe(false);
     now = new Date("2026-08-26T09:00:31Z");
@@ -328,7 +429,11 @@ describe("structured thread decision", () => {
     expect(resolveOwnReviewThread).toHaveBeenCalledTimes(3);
     expect(watcher.status()).toMatchObject({ pending: 0, failed: 1 });
     expect(store.logAnomaly).toHaveBeenCalledWith(
-      "pingpong_decision_retry_exhausted", 77, null, expect.stringContaining("comment 5001"), expect.any(String),
+      "pingpong_decision_retry_exhausted",
+      77,
+      null,
+      expect.stringContaining("comment 5001"),
+      expect.any(String),
     );
     expect(watcher.retryFailed(5001)).toMatchObject({ ok: true, file: name });
     expect(watcher.status()).toMatchObject({ pending: 1, failed: 0 });
@@ -339,17 +444,36 @@ describe("structured thread decision", () => {
     const h = harness();
     const failed = join(root, "failed");
     mkdirSync(failed);
-    for (const [comment, owner] of [[5001, "example-review"], [5002, "alice"]] as const) {
+    for (const [comment, owner] of [
+      [5001, "example-review"],
+      [5002, "alice"],
+    ] as const) {
       ledger.claimAuthorMessage({ ...event, comment_id: comment });
       const name = `pr-77-thread-4000-comment-${comment}.json`;
-      writeFileSync(join(failed, name), JSON.stringify({ pr: 77, thread_id: 4000, comment_id: comment, resolution: "resolve", reply: "Already posted." }));
+      writeFileSync(
+        join(failed, name),
+        JSON.stringify({
+          pr: 77,
+          thread_id: 4000,
+          comment_id: comment,
+          resolution: "resolve",
+          reply: "Already posted.",
+        }),
+      );
       ledger.markDecisionStep(comment, "reply_posted");
       for (let attempt = 0; attempt < 3; attempt++) {
-        ledger.recordRetry(comment, new Date(`2026-08-26T09:0${attempt}:00Z`), `Error: refusing to resolve thread 4000 on #77: root author is ${owner}`);
+        ledger.recordRetry(
+          comment,
+          new Date(`2026-08-26T09:0${attempt}:00Z`),
+          `Error: refusing to resolve thread 4000 on #77: root author is ${owner}`,
+        );
       }
     }
 
-    expect(h.watcher.recoverOwnerAliasFailures("example-review")).toEqual({ restored: 1, refused: 0 });
+    expect(h.watcher.recoverOwnerAliasFailures("example-review")).toEqual({
+      restored: 1,
+      refused: 0,
+    });
     expect(h.watcher.status()).toMatchObject({ pending: 1, failed: 1 });
     expect(ledger.retry(5001)).toMatchObject({ attempts: 0, terminal: false });
     expect(ledger.retry(5002)).toMatchObject({ attempts: 3, terminal: true });
@@ -363,14 +487,30 @@ describe("structured thread decision", () => {
     const comment = 5001;
     ledger.claimAuthorMessage({ ...event, comment_id: comment });
     const name = "pr-77-thread-4000-comment-5001.json";
-    writeFileSync(join(root, name), JSON.stringify({ pr: 77, thread_id: 4000, comment_id: comment, resolution: "resolve", reply: "" }));
+    writeFileSync(
+      join(root, name),
+      JSON.stringify({
+        pr: 77,
+        thread_id: 4000,
+        comment_id: comment,
+        resolution: "resolve",
+        reply: "",
+      }),
+    );
     for (let attempt = 0; attempt < 3; attempt++) {
-      ledger.recordRetry(comment, new Date(`2026-08-26T09:0${attempt}:00Z`), "Error: refusing to resolve thread 4000 on #77: root author is example-review");
+      ledger.recordRetry(
+        comment,
+        new Date(`2026-08-26T09:0${attempt}:00Z`),
+        "Error: refusing to resolve thread 4000 on #77: root author is example-review",
+      );
     }
     const store = { registerBotComment: vi.fn(), logEvent: vi.fn(), logAnomaly: vi.fn() };
     const watcher = new ThreadDecisionWatcher({
       adapter: { createReviewCommentReply: vi.fn(), resolveOwnReviewThread: vi.fn() },
-      store, ledger, verdictDir: root, ownerActorAlias: "example-review",
+      store,
+      ledger,
+      verdictDir: root,
+      ownerActorAlias: "example-review",
     });
 
     watcher.start();
@@ -384,11 +524,26 @@ describe("structured thread decision", () => {
     let draining = true;
     const h = harness();
     const watcher = new ThreadDecisionWatcher({
-      adapter: { createReviewCommentReply: h.createReviewCommentReply, resolveOwnReviewThread: h.resolveOwnReviewThread },
-      store: h.store, ledger, verdictDir: root, isDraining: () => draining,
+      adapter: {
+        createReviewCommentReply: h.createReviewCommentReply,
+        resolveOwnReviewThread: h.resolveOwnReviewThread,
+      },
+      store: h.store,
+      ledger,
+      verdictDir: root,
+      isDraining: () => draining,
     });
     const name = "pr-77-thread-4000-comment-5001.json";
-    writeFileSync(join(root, name), JSON.stringify({ pr: 77, thread_id: 4000, comment_id: 5001, resolution: "resolve", reply: "" }));
+    writeFileSync(
+      join(root, name),
+      JSON.stringify({
+        pr: 77,
+        thread_id: 4000,
+        comment_id: 5001,
+        resolution: "resolve",
+        reply: "",
+      }),
+    );
 
     await watcher.sweep();
     expect(h.resolveOwnReviewThread).not.toHaveBeenCalled();
@@ -400,13 +555,24 @@ describe("structured thread decision", () => {
   it("rejects a session file that does not match a claimed author message", async () => {
     const h = harness();
     const name = "pr-77-thread-4000-comment-9999.json";
-    writeFileSync(join(root, name), JSON.stringify({
-      pr: 77, thread_id: 4000, comment_id: 9999, resolution: "resolve", reply: "done",
-    }));
+    writeFileSync(
+      join(root, name),
+      JSON.stringify({
+        pr: 77,
+        thread_id: 4000,
+        comment_id: 9999,
+        resolution: "resolve",
+        reply: "done",
+      }),
+    );
     expect(await h.watcher.handleFile(name)).toBe(true);
     expect(h.createReviewCommentReply).not.toHaveBeenCalled();
     expect(h.resolveOwnReviewThread).not.toHaveBeenCalled();
-    expect(h.store.logEvent).toHaveBeenCalledWith("pingpong_decision_rejected", 77, expect.any(Object));
+    expect(h.store.logEvent).toHaveBeenCalledWith(
+      "pingpong_decision_rejected",
+      77,
+      expect.any(Object),
+    );
   });
 });
 
@@ -435,7 +601,12 @@ describe("human_requested wake response", () => {
   });
 
   it("writes the payload the daemon reads", () => {
-    const path = writeWakeResponse(root, { pr: 77, human_requested: true, reason: "author asked for a human", thread_id: 4000 });
+    const path = writeWakeResponse(root, {
+      pr: 77,
+      human_requested: true,
+      reason: "author asked for a human",
+      thread_id: 4000,
+    });
     expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({
       pr: 77,
       human_requested: true,

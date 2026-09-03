@@ -20,7 +20,9 @@ import type { RoundOrder, SessionHooks } from "../src/types.js";
 import { AnomalyWakePolicy } from "../src/anomalies.js";
 import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
 
-const baseCfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
+const baseCfg: Config = parseConfig(
+  readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
+);
 
 class FakeVerdictAdapter implements VerdictAdapter {
   calls: string[] = [];
@@ -87,10 +89,16 @@ function reviewingRound(pr: number, head = "abc123", opts: { stampMarker?: boole
     stale_recheck: 0,
     migration_gate: 0,
   });
-  const id = store.startRound(pr, "first", ["pass-baseline", "pass-validate"], baseCfg.daemon.round_deadline_min);
+  const id = store.startRound(
+    pr,
+    "first",
+    ["pass-baseline", "pass-validate"],
+    baseCfg.daemon.round_deadline_min,
+  );
   // Dispatch stamps the receipt token (#5362); a round without one was
   // dispatched by an older build and is deliberately unjudgeable.
-  if (opts.stampMarker !== false) store.stampPromptMarker(id, roundPromptMarker(pr, store.roundsFor(pr).length));
+  if (opts.stampMarker !== false)
+    store.stampPromptMarker(id, roundPromptMarker(pr, store.roundsFor(pr).length));
   return id;
 }
 
@@ -117,9 +125,11 @@ function pastDeadline(): void {
 }
 
 function events(kind: string): Array<{ pr: number | null; payload: any }> {
-  return (store.db.prepare("SELECT pr, payload FROM events WHERE kind = ? ORDER BY id").all(kind) as Array<{ pr: number | null; payload: string | null }>).map(
-    (r) => ({ pr: r.pr, payload: r.payload ? JSON.parse(r.payload) : null }),
-  );
+  return (
+    store.db
+      .prepare("SELECT pr, payload FROM events WHERE kind = ? ORDER BY id")
+      .all(kind) as Array<{ pr: number | null; payload: string | null }>
+  ).map((r) => ({ pr: r.pr, payload: r.payload ? JSON.parse(r.payload) : null }));
 }
 
 function commandForRound(pr: number, roundNo: number, id = `cmd-${pr}-${roundNo}`): string {
@@ -140,11 +150,16 @@ function commandForRound(pr: number, roundNo: number, id = `cmd-${pr}-${roundNo}
 }
 
 function roundStatus(id: number): string {
-  return (store.db.prepare("SELECT status FROM rounds WHERE id = ?").get(id) as { status: string }).status;
+  return (store.db.prepare("SELECT status FROM rounds WHERE id = ?").get(id) as { status: string })
+    .status;
 }
 
 function silentSince(id: number): string | null {
-  return (store.db.prepare("SELECT silent_since FROM rounds WHERE id = ?").get(id) as { silent_since: string | null }).silent_since;
+  return (
+    store.db.prepare("SELECT silent_since FROM rounds WHERE id = ?").get(id) as {
+      silent_since: string | null;
+    }
+  ).silent_since;
 }
 
 describe("bounded infrastructure-stage recovery", () => {
@@ -152,15 +167,27 @@ describe("bounded infrastructure-stage recovery", () => {
     const roundId = reviewingRound(290);
     const { hooks, overseer } = hooksWith(true);
     const killed: number[] = [];
-    hooks.killSession = async (pr) => { killed.push(pr); };
+    hooks.killSession = async (pr) => {
+      killed.push(pr);
+    };
     const v = watcher(hooks);
 
-    expect(await v.recoverInfrastructureFailure(290, 1, "settled_without_verdict", "parent settled with no verdict")).toBe("requeued");
+    expect(
+      await v.recoverInfrastructureFailure(
+        290,
+        1,
+        "settled_without_verdict",
+        "parent settled with no verdict",
+      ),
+    ).toBe("requeued");
 
     expect(roundStatus(roundId)).toBe("cancelled");
     expect(store.getPr(290)).toMatchObject({ state: "queued" });
     expect(killed).toEqual([]); // a fully settled sticky session is healthy and retained
-    expect(events("round_self_requeued")[0]?.payload).toMatchObject({ mode: "infrastructure_settled", cancel_cause: "infrastructure_failure" });
+    expect(events("round_self_requeued")[0]?.payload).toMatchObject({
+      mode: "infrastructure_settled",
+      cancel_cause: "infrastructure_failure",
+    });
     expect(store.roundsFor(290)[0]?.verdict).toBeNull();
     expect(adapter.calls).toEqual([]);
     expect(overseer.some((m) => m.includes("SELF-REQUEUE (recovery)"))).toBe(true);
@@ -173,7 +200,14 @@ describe("bounded infrastructure-stage recovery", () => {
     hooks.killSession = async () => {};
     const v = watcher(hooks);
 
-    expect(await v.recoverInfrastructureFailure(294, 1, "first_pass_start", "accepted and preparing; no fanout")).toBe("requeued");
+    expect(
+      await v.recoverInfrastructureFailure(
+        294,
+        1,
+        "first_pass_start",
+        "accepted and preparing; no fanout",
+      ),
+    ).toBe("requeued");
 
     expect(store.roundRecoveryInstruction(294, 2)).toMatchObject({
       target_head_sha: "abc123",
@@ -190,12 +224,18 @@ describe("bounded infrastructure-stage recovery", () => {
     reviewingRound(292);
     const { hooks } = hooksWith(true);
     const killed: number[] = [];
-    hooks.killSession = async (pr) => { killed.push(pr); };
+    hooks.killSession = async (pr) => {
+      killed.push(pr);
+    };
     const v = watcher(hooks);
 
-    expect(await v.recoverInfrastructureFailure(292, 1, "running_hard_bound", "fixed bound exhausted")).toBe("requeued");
+    expect(
+      await v.recoverInfrastructureFailure(292, 1, "running_hard_bound", "fixed bound exhausted"),
+    ).toBe("requeued");
     expect(killed).toEqual([292]);
-    expect(events("round_self_requeued")[0]?.payload).toMatchObject({ mode: "infrastructure_active" });
+    expect(events("round_self_requeued")[0]?.payload).toMatchObject({
+      mode: "infrastructure_active",
+    });
   });
 
   it("lets a verdict that wins during strict stop go to the verdict sweep", async () => {
@@ -206,7 +246,9 @@ describe("bounded infrastructure-stage recovery", () => {
     };
     const v = watcher(hooks);
 
-    expect(await v.recoverInfrastructureFailure(293, 1, "running_hard_bound", "fixed bound exhausted")).toBe("retryable");
+    expect(
+      await v.recoverInfrastructureFailure(293, 1, "running_hard_bound", "fixed bound exhausted"),
+    ).toBe("retryable");
     expect(store.roundsFor(293)[0]?.status).toBe("running");
     expect(events("round_stage_verdict_won")).toHaveLength(1);
     expect(events("round_self_requeued")).toHaveLength(0);
@@ -223,7 +265,14 @@ describe("bounded infrastructure-stage recovery", () => {
     }
     const v = watcher(hooks);
 
-    expect(await v.recoverInfrastructureFailure(295, 1, "first_pass_start", "accepted and preparing; no fanout")).toBe("exhausted");
+    expect(
+      await v.recoverInfrastructureFailure(
+        295,
+        1,
+        "first_pass_start",
+        "accepted and preparing; no fanout",
+      ),
+    ).toBe("exhausted");
     store.failActiveSessionCommand(commandId, "first-pass recovery exhausted");
     const failure = store.openReviewFailure(295)!;
     expect(failure).toMatchObject({
@@ -245,15 +294,23 @@ describe("bounded infrastructure-stage recovery", () => {
     commandForRound(291, 1);
     const { hooks } = hooksWith(true);
     const killed: number[] = [];
-    hooks.killSession = async (pr) => { killed.push(pr); };
+    hooks.killSession = async (pr) => {
+      killed.push(pr);
+    };
     for (let i = 0; i < DEFAULT_MAX_SELF_REQUEUES; i++) {
       store.logEvent("round_self_requeued", 291, { head_sha: "abc123" });
     }
     const v = watcher(hooks);
 
-    expect(await v.recoverInfrastructureFailure(291, 1, "running_hard_bound", "fixed bound exhausted")).toBe("exhausted");
+    expect(
+      await v.recoverInfrastructureFailure(291, 1, "running_hard_bound", "fixed bound exhausted"),
+    ).toBe("exhausted");
     expect(killed).toEqual([291]);
-    expect(store.roundsFor(291)[0]).toMatchObject({ status: "cancelled", cancel_cause: "infrastructure_failure", verdict: null });
+    expect(store.roundsFor(291)[0]).toMatchObject({
+      status: "cancelled",
+      cancel_cause: "infrastructure_failure",
+      verdict: null,
+    });
     expect(store.getPr(291)?.state).toBe("queued");
     expect(store.openReviewFailure(291)).toMatchObject({
       work_owed: 1,
@@ -283,7 +340,9 @@ describe("stuck-round detection + self-requeue", () => {
     expect(requeued[0]!.pr).toBe(300);
     expect(requeued[0]!.payload).toMatchObject({ round_no: 1, attempt: 1, head_sha: "abc123" });
     expect(String(requeued[0]!.payload.reason)).toContain("session is dead");
-    expect(overseer.some((m) => m.startsWith("SELF-REQUEUE (recovery) — PR #300 round 1, attempt 1/"))).toBe(true);
+    expect(
+      overseer.some((m) => m.startsWith("SELF-REQUEUE (recovery) — PR #300 round 1, attempt 1/")),
+    ).toBe(true);
     // Never the anomaly park, never awaiting_human, no round_overdue event.
     expect(events("round_overdue")).toHaveLength(0);
     expect(row.state).not.toBe("awaiting_human");
@@ -379,7 +438,11 @@ describe("the per-head cap", () => {
     expect(store.openReviewFailure(310)?.work_owed).toBe(1);
     expect(events("round_self_requeued")).toHaveLength(cap); // unchanged
     expect(events("self_requeue_cap_exhausted")).toHaveLength(1);
-    expect(events("self_requeue_cap_exhausted")[0]!.payload).toMatchObject({ head_sha: "abc123", attempts: cap, cap });
+    expect(events("self_requeue_cap_exhausted")[0]!.payload).toMatchObject({
+      head_sha: "abc123",
+      attempts: cap,
+      cap,
+    });
     const anomaly = overseer.find((m) => m.startsWith("ANOMALY (overdue)"));
     expect(anomaly).toContain("self-requeue cap is exhausted");
   });
@@ -414,7 +477,10 @@ describe("the per-head cap", () => {
   it("max_self_requeues is config-knobbed and defaults to 2", () => {
     expect(DEFAULT_MAX_SELF_REQUEUES).toBe(2);
     const noKnob = parseConfig(
-      readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8").replace(/^max_self_requeues.*$/m, ""),
+      readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8").replace(
+        /^max_self_requeues.*$/m,
+        "",
+      ),
     );
     expect(noKnob.daemon.max_self_requeues).toBe(2);
     expect(baseCfg.daemon.max_self_requeues).toBe(2); // the shipped knob
@@ -429,7 +495,9 @@ class FakeDispatchAdapter implements DispatchAdapter {
     return { base_ref: "master" };
   }
   async listPrFiles(n: number): Promise<PrFileEntry[]> {
-    return this.files.get(n) ?? [{ filename: "a.py", additions: 5, deletions: 1, status: "modified" }];
+    return (
+      this.files.get(n) ?? [{ filename: "a.py", additions: 5, deletions: 1, status: "modified" }]
+    );
   }
   async addLabel(): Promise<GateResult> {
     return { executed: false, dryRunFile: "x" };
@@ -471,7 +539,12 @@ describe("self-requeued rounds do not age the PR", () => {
     expect(roundTypeFor(store.getPr(320)!, store.priorRoundCount(320))).toBe("first");
 
     const d = dispatchHooks();
-    const orders = await dispatchOnce({ cfg: baseCfg, store, adapter: new FakeDispatchAdapter(), hooks: d.hooks });
+    const orders = await dispatchOnce({
+      cfg: baseCfg,
+      store,
+      adapter: new FakeDispatchAdapter(),
+      hooks: d.hooks,
+    });
     expect(orders).toHaveLength(1);
     expect(orders[0]!.round_type).toBe("first");
     expect(orders[0]!.review_no).toBe(1);
@@ -493,7 +566,12 @@ describe("idempotency against the restart orphan-requeue", () => {
     expect(events("orphaned_round_requeued")).toHaveLength(0);
 
     const d = dispatchHooks();
-    const orders = await dispatchOnce({ cfg: baseCfg, store, adapter: new FakeDispatchAdapter(), hooks: d.hooks });
+    const orders = await dispatchOnce({
+      cfg: baseCfg,
+      store,
+      adapter: new FakeDispatchAdapter(),
+      hooks: d.hooks,
+    });
     expect(orders).toHaveLength(1); // one queued row ⇒ one round, ever
     expect(store.runningRounds()).toHaveLength(1);
   });
@@ -509,7 +587,12 @@ describe("idempotency against the restart orphan-requeue", () => {
     expect(events("round_self_requeued")).toHaveLength(0);
 
     const d = dispatchHooks();
-    const orders = await dispatchOnce({ cfg: baseCfg, store, adapter: new FakeDispatchAdapter(), hooks: d.hooks });
+    const orders = await dispatchOnce({
+      cfg: baseCfg,
+      store,
+      adapter: new FakeDispatchAdapter(),
+      hooks: d.hooks,
+    });
     expect(orders).toHaveLength(1);
   });
 
@@ -518,11 +601,15 @@ describe("idempotency against the restart orphan-requeue", () => {
     reviewingRound(332);
     store.upsertPr({ ...store.getPr(332)!, state: "queued", trigger_ts: clock.toISOString() });
     const d = dispatchHooks();
-    const orders = await dispatchOnce({ cfg: baseCfg, store, adapter: new FakeDispatchAdapter(), hooks: d.hooks });
+    const orders = await dispatchOnce({
+      cfg: baseCfg,
+      store,
+      adapter: new FakeDispatchAdapter(),
+      hooks: d.hooks,
+    });
     expect(orders).toHaveLength(0);
   });
 });
-
 
 // 2026-08-19 (the owner): recover, don't park — a live-but-wedged session is
 // killed and its round requeued through the same capped path, and a
@@ -637,7 +724,11 @@ describe("NEEDS_HUMAN requires a finished review", () => {
     const { hooks } = hooksWith();
     const w = watcher(hooks);
     const latestRoundNo = () =>
-      (store.db.prepare("SELECT round_no FROM rounds WHERE pr = 322 ORDER BY id DESC LIMIT 1").get() as { round_no: number }).round_no;
+      (
+        store.db
+          .prepare("SELECT round_no FROM rounds WHERE pr = 322 ORDER BY id DESC LIMIT 1")
+          .get() as { round_no: number }
+      ).round_no;
     for (let i = 0; i < DEFAULT_MAX_SELF_REQUEUES; i++) {
       reviewingRound(322);
       needsHumanFile(322, latestRoundNo());
@@ -675,7 +766,9 @@ describe("lost-prompt net (#5362) — a round with no prompt receipt", () => {
   /** hooksWith + the observation hooks, with redelivery ALWAYS failing so the
    * escalation half can be exercised on its own. `accepted` mirrors what
    * `roundPromptAccepted` reports. */
-  function netHooks(opts: { pending: boolean; accepted: boolean | null }): ReturnType<typeof hooksWith> & {
+  function netHooks(opts: { pending: boolean; accepted: boolean | null }): ReturnType<
+    typeof hooksWith
+  > & {
     redelivered: number[];
   } {
     const h = hooksWith(true);
@@ -725,7 +818,10 @@ describe("lost-prompt net (#5362) — a round with no prompt receipt", () => {
     expect(await w.checkDeadlines()).toEqual([]);
     expect(redelivered).toEqual([{ pr: 310, round: 1 }]);
     expect(events("round_prompt_lost")).toHaveLength(1);
-    expect(events("round_prompt_redelivered")[0]!.payload).toMatchObject({ attempt: 1, round_no: 1 });
+    expect(events("round_prompt_redelivered")[0]!.payload).toMatchObject({
+      attempt: 1,
+      round_no: 1,
+    });
 
     // THE POINT: this is a delivery fault, so nothing expensive happened.
     expect(roundStatus(roundId)).toBe("running");
@@ -786,7 +882,11 @@ describe("lost-prompt net (#5362) — a round with no prompt receipt", () => {
     store.markRoundCancelled(first, "self-requeue 1/2 — head_moved");
     // The head_moved requeue, exactly as verdicts.ts records it — this is the
     // event the old net read as "budget spent, stand down".
-    store.logEvent("round_self_requeued", pr, { head_sha: "abc123", mode: "head_moved", attempt: 1 });
+    store.logEvent("round_self_requeued", pr, {
+      head_sha: "abc123",
+      mode: "head_moved",
+      attempt: 1,
+    });
     const second = reviewingRound(pr); // the redispatch, whose prompt is lost
     pastGrace();
     const { hooks, redelivered } = netHooksDelivering({ accepted: false });
@@ -999,7 +1099,11 @@ describe("head_moved outcome — a guard-5 refusal lands cheaply, session surviv
     const { hooks } = hooksWith(true);
     const w = watcher(hooks);
     const latestRoundNo = () =>
-      (store.db.prepare("SELECT round_no FROM rounds WHERE pr = 341 ORDER BY id DESC LIMIT 1").get() as { round_no: number }).round_no;
+      (
+        store.db
+          .prepare("SELECT round_no FROM rounds WHERE pr = 341 ORDER BY id DESC LIMIT 1")
+          .get() as { round_no: number }
+      ).round_no;
     for (let i = 0; i < DEFAULT_MAX_SELF_REQUEUES; i++) {
       reviewingRound(341);
       headMovedFile(341, latestRoundNo());
@@ -1021,7 +1125,13 @@ describe("head_moved outcome — a guard-5 refusal lands cheaply, session surviv
     const { hooks } = hooksWith(true);
     writeFileSync(
       join(dir, "pr-342-round-1.json"),
-      JSON.stringify({ pr: 342, round_no: 1, verdict: "HEAD_MOVED", head_sha: "stale", finished_at: clock.toISOString() }),
+      JSON.stringify({
+        pr: 342,
+        round_no: 1,
+        verdict: "HEAD_MOVED",
+        head_sha: "stale",
+        finished_at: clock.toISOString(),
+      }),
     );
     await watcher(hooks).sweep();
     expect(roundStatus(roundId)).toBe("cancelled");
@@ -1143,15 +1253,21 @@ describe("cancellation causes on the live paths", () => {
     const { hooks, overseer } = hooksWith(false);
     await watcher(hooks).checkDeadlines();
 
-    expect(store.roundsFor(800).find((r) => r.id === roundId)!.cancel_cause).toBe("deadline_overrun");
-    expect(store.cancellationsByCause()).toEqual([{ cause: "deadline_overrun", count: 1, loud: true }]);
+    expect(store.roundsFor(800).find((r) => r.id === roundId)!.cancel_cause).toBe(
+      "deadline_overrun",
+    );
+    expect(store.cancellationsByCause()).toEqual([
+      { cause: "deadline_overrun", count: 1, loud: true },
+    ]);
     // The durable record found missing…
     expect(anomalies()).toEqual([{ kind: "round_stopped_dead", pr: 800, round_no: 1 }]);
     // …beside exactly ONE overseer wake, the bespoke self-requeue text. The
     // anomaly kind is deliberately not a WAKE class, or this would double.
     expect(overseer.filter((m) => m.startsWith("SELF-REQUEUE"))).toHaveLength(1);
     expect(overseer.filter((m) => m.startsWith("ANOMALY (round_stopped_dead)"))).toHaveLength(0);
-    expect(events("round_self_requeued")[0]!.payload).toMatchObject({ cancel_cause: "deadline_overrun" });
+    expect(events("round_self_requeued")[0]!.payload).toMatchObject({
+      cancel_cause: "deadline_overrun",
+    });
   });
 
   it("a superseded round is cancelled as `superseded` and raises nothing", async () => {
@@ -1171,7 +1287,9 @@ describe("cancellation causes on the live paths", () => {
     const { cancelled } = reconcileOrphanedRounds(store, [], { botLogin: "bot", now: () => clock });
 
     expect(cancelled).toHaveLength(20);
-    expect(store.cancellationsByCause()).toEqual([{ cause: "orphan_sweep", count: 20, loud: false }]);
+    expect(store.cancellationsByCause()).toEqual([
+      { cause: "orphan_sweep", count: 20, loud: false },
+    ]);
     // The whole point of the grouping: twenty of these is a redeploy, not an
     // incident. Nothing is raised, and none of them is loud.
     expect(anomalies()).toEqual([]);
@@ -1185,7 +1303,9 @@ describe("cancellation causes on the live paths", () => {
 // tighten the budget (ending in FAILED_LOUD and `u` — the recoverable side).
 describe("a self-requeue row whose head cannot be read still counts", () => {
   const tornRow = (pr: number, payload: string | null): void => {
-    store.db.prepare("INSERT INTO events (ts, kind, pr, payload) VALUES (?, 'round_self_requeued', ?, ?)").run(clock.toISOString(), pr, payload);
+    store.db
+      .prepare("INSERT INTO events (ts, kind, pr, payload) VALUES (?, 'round_self_requeued', ?, ?)")
+      .run(clock.toISOString(), pr, payload);
   };
 
   it("the store splits attributed from unattributed rows rather than dropping the unreadable ones", () => {
@@ -1220,6 +1340,10 @@ describe("a self-requeue row whose head cannot be read still counts", () => {
     expect(await w.checkDeadlines()).toEqual([352]);
     expect(roundStatus(id)).toBe("overdue");
     expect(events("self_requeue_cap_exhausted")).toHaveLength(1);
-    expect(events("self_requeue_cap_exhausted")[0]!.payload).toMatchObject({ head_sha: "head-a", attempts: cap, cap });
+    expect(events("self_requeue_cap_exhausted")[0]!.payload).toMatchObject({
+      head_sha: "head-a",
+      attempts: cap,
+      cap,
+    });
   });
 });

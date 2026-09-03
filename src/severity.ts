@@ -81,7 +81,15 @@ export interface DirectiveVocabularyExtras {
 
 /** The compiled-in vocabulary — today's exact lists; the shipped default. */
 export const DEFAULT_DIRECTIVE_VOCABULARY: DirectiveVocabulary = {
-  vendoredSegments: new Set(["node_modules", "vendor", "vendors", "vendored", "third_party", "third-party", "external"]),
+  vendoredSegments: new Set([
+    "node_modules",
+    "vendor",
+    "vendors",
+    "vendored",
+    "third_party",
+    "third-party",
+    "external",
+  ]),
   basenames: new Set(["AGENTS.md", "AGENT.md", "CLAUDE.md", ".cursorrules"]),
   dirSegments: new Set([".claude", ".cursor"]),
   rootDirs: new Set(["prompts"]),
@@ -92,7 +100,10 @@ export const DEFAULT_DIRECTIVE_VOCABULARY: DirectiveVocabulary = {
 export function directiveVocabulary(extras: DirectiveVocabularyExtras = {}): DirectiveVocabulary {
   const d = DEFAULT_DIRECTIVE_VOCABULARY;
   return {
-    vendoredSegments: new Set([...d.vendoredSegments, ...(extras.extra_vendored_segments ?? []).map((s) => s.toLowerCase())]),
+    vendoredSegments: new Set([
+      ...d.vendoredSegments,
+      ...(extras.extra_vendored_segments ?? []).map((s) => s.toLowerCase()),
+    ]),
     basenames: new Set([...d.basenames, ...(extras.extra_basenames ?? [])]),
     dirSegments: new Set([...d.dirSegments, ...(extras.extra_dir_segments ?? [])]),
     rootDirs: new Set([...d.rootDirs, ...(extras.extra_root_dirs ?? [])]),
@@ -349,7 +360,12 @@ const LEADING_TAG_RE = /^\s*\[([^\]\n]{1,40})\]\s*/;
  * collapsed — one of the sanctioned tags? */
 export function isSanctionedTag(raw: string | null | undefined): boolean {
   if (!raw) return false;
-  const inner = raw.trim().replace(/^\[|\]$/g, "").trim().replace(/\s+/g, " ").toLowerCase();
+  const inner = raw
+    .trim()
+    .replace(/^\[|\]$/g, "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
   return SANCTIONED_TAGS.includes(`[${inner}]`);
 }
 

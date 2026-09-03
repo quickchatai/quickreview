@@ -97,8 +97,7 @@ export function ovFailed(status: number, code: string, message: string): OvFailu
 /** batch-write's precondition. `create_if_absent` MUST NOT carry a hash and
  * `replace_if_hash` MUST — the server rejects the other combinations. */
 export type BatchWritePrecondition =
-  | { kind: "create_if_absent" }
-  | { kind: "replace_if_hash"; base_hash: string };
+  { kind: "create_if_absent" } | { kind: "replace_if_hash"; base_hash: string };
 
 export interface BatchWriteOperation {
   uri: string;
@@ -157,7 +156,14 @@ export interface ContextSearchResult {
  * `retrieve/context_assembler/params.py`). An unknown key is a 422 for the
  * WHOLE request, so unknown keys are dropped with a gap rather than sent.
  */
-export const QUOTA_CATEGORIES: readonly string[] = ["events", "entities", "preferences", "experiences", "resources", "skills"];
+export const QUOTA_CATEGORIES: readonly string[] = [
+  "events",
+  "entities",
+  "preferences",
+  "experiences",
+  "resources",
+  "skills",
+];
 
 export type TimeField = "updated_at" | "created_at";
 
@@ -189,7 +195,11 @@ export interface ContextSearchOptions {
  * inside the daemon's hot path. They are pinned off here so no caller can ask
  * for them by accident.
  */
-export function buildContextSearchBody(query: string, opts: ContextSearchOptions = {}, onGap?: (gap: OvGap) => void): Record<string, unknown> {
+export function buildContextSearchBody(
+  query: string,
+  opts: ContextSearchOptions = {},
+  onGap?: (gap: OvGap) => void,
+): Record<string, unknown> {
   const body: Record<string, unknown> = {
     query,
     mode: "context",
@@ -197,7 +207,8 @@ export function buildContextSearchBody(query: string, opts: ContextSearchOptions
     rewrite: false,
     query_expansion: "off",
   };
-  if (opts.maxTokens !== undefined) body["max_tokens"] = Math.max(64, Math.min(32000, Math.floor(opts.maxTokens)));
+  if (opts.maxTokens !== undefined)
+    body["max_tokens"] = Math.max(64, Math.min(32000, Math.floor(opts.maxTokens)));
   if (opts.limit !== undefined) body["limit"] = Math.max(1, Math.floor(opts.limit));
   if (opts.scoreThreshold !== undefined) body["score_threshold"] = opts.scoreThreshold;
   if (opts.purpose !== undefined) body["purpose"] = opts.purpose;
@@ -205,19 +216,27 @@ export function buildContextSearchBody(query: string, opts: ContextSearchOptions
     const quotas: Record<string, number> = {};
     for (const [key, value] of Object.entries(opts.quotas)) {
       if (!QUOTA_CATEGORIES.includes(key)) {
-        onGap?.({ op: "search", status: 0, code: "bad_quota", message: `dropped unknown quota category '${key}'` });
+        onGap?.({
+          op: "search",
+          status: 0,
+          code: "bad_quota",
+          message: `dropped unknown quota category '${key}'`,
+        });
         continue;
       }
       quotas[key] = Math.max(0, Math.floor(value));
     }
     if (Object.keys(quotas).length > 0) body["quotas"] = quotas;
   }
-  const tags = (opts.tags ?? []).map((t) => t.replace(/^#+/, "").trim().toLowerCase()).filter((t) => t !== "");
+  const tags = (opts.tags ?? [])
+    .map((t) => t.replace(/^#+/, "").trim().toLowerCase())
+    .filter((t) => t !== "");
   if (tags.length > 0) body["tags"] = [...new Set(tags)];
   if (opts.since) body["since"] = opts.since;
   if (opts.until) body["until"] = opts.until;
   if (opts.timeField) body["time_field"] = opts.timeField;
-  if (opts.excludeUris && opts.excludeUris.length > 0) body["exclude_uris"] = opts.excludeUris.slice(0, 200);
+  if (opts.excludeUris && opts.excludeUris.length > 0)
+    body["exclude_uris"] = opts.excludeUris.slice(0, 200);
   return body;
 }
 
@@ -272,7 +291,11 @@ export interface OpenVikingClientOptions {
 /** Reads a key file once and remembers the answer (including "not there"),
  * retrying at most every `ttlMs` — a secret that lands after boot is picked up
  * without a restart, and a missing one does not stat the disk per request. */
-export function keyFromFile(path: string, ttlMs = 60_000, now: () => number = Date.now): () => string | null {
+export function keyFromFile(
+  path: string,
+  ttlMs = 60_000,
+  now: () => number = Date.now,
+): () => string | null {
   let cached: string | null = null;
   let checkedAt = -Infinity;
   return () => {
@@ -335,7 +358,9 @@ export class OpenVikingClient {
   }
 
   private report(gap: OvGap): void {
-    this.log(`openviking: ${gap.op} failed (${gap.status || "no answer"} ${gap.code}): ${this.redact(gap.message)}`);
+    this.log(
+      `openviking: ${gap.op} failed (${gap.status || "no answer"} ${gap.code}): ${this.redact(gap.message)}`,
+    );
     try {
       this.onGap?.(gap);
     } catch {
@@ -349,7 +374,11 @@ export class OpenVikingClient {
    * timeout, non-JSON body, `{status:"error"}` envelope, a `fetch` seam that
    * throws synchronously — comes back as the failure arm of `OvOutcome`.
    */
-  async request<T>(op: string, path: string, init: { method: string; body?: unknown; timeoutMs?: number }): Promise<OvOutcome<T>> {
+  async request<T>(
+    op: string,
+    path: string,
+    init: { method: string; body?: unknown; timeoutMs?: number },
+  ): Promise<OvOutcome<T>> {
     const key = this.key();
     if (!key) {
       // Reported ONCE per client: a keyless deployment is a standing condition
@@ -357,7 +386,13 @@ export class OpenVikingClient {
       // same anomaly. It must still never look like success.
       if (!this.keyGapReported) {
         this.keyGapReported = true;
-        this.report({ op, status: 0, code: "no_key", message: "no OpenViking reviewer key configured — every memory call degrades until one is" });
+        this.report({
+          op,
+          status: 0,
+          code: "no_key",
+          message:
+            "no OpenViking reviewer key configured — every memory call degrades until one is",
+        });
       }
       return ovFailed(0, "no_key", "no OpenViking reviewer key configured");
     }
@@ -392,16 +427,25 @@ export class OpenVikingClient {
     // else — an nginx error page, a bare `null`, a truncated body — is NOT an
     // answer, and a 200 carrying one must not be read as success: that is how
     // a write that never happened gets reported as a write that did.
-    let body: { status?: unknown; result?: unknown; error?: { code?: unknown; message?: unknown } } | null = null;
+    let body: {
+      status?: unknown;
+      result?: unknown;
+      error?: { code?: unknown; message?: unknown };
+    } | null = null;
     try {
       const parsed: unknown = raw === "" ? {} : JSON.parse(raw);
-      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) body = parsed as NonNullable<typeof body>;
+      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) body = parsed;
     } catch {
       body = null;
     }
     if (body === null) {
       if (res.ok) {
-        const gap: OvGap = { op, status: res.status, code: "bad_body", message: `response was not an OpenViking envelope (${raw.length} bytes)` };
+        const gap: OvGap = {
+          op,
+          status: res.status,
+          code: "bad_body",
+          message: `response was not an OpenViking envelope (${raw.length} bytes)`,
+        };
         this.report(gap);
         return ovFailed(gap.status, gap.code, gap.message);
       }
@@ -410,7 +454,9 @@ export class OpenVikingClient {
 
     if (!res.ok || body.status === "error") {
       const code = typeof body.error?.code === "string" ? body.error.code : `http_${res.status}`;
-      const message = this.redact(typeof body.error?.message === "string" ? body.error.message : `HTTP ${res.status}`);
+      const message = this.redact(
+        typeof body.error?.message === "string" ? body.error.message : `HTTP ${res.status}`,
+      );
       const outcome = ovFailed(res.status, code, message);
       // A 409 is the precondition working as designed; it is an answer, not a
       // gap, so it is not alerted on.
@@ -429,7 +475,10 @@ export class OpenVikingClient {
    * precondition refused (stale `base_hash`, or `create_if_absent` on a target
    * that already exists), and the stored file is unchanged.
    */
-  async batchWrite(request: BatchWriteRequest, timeoutMs?: number): Promise<OvOutcome<BatchWriteResult>> {
+  async batchWrite(
+    request: BatchWriteRequest,
+    timeoutMs?: number,
+  ): Promise<OvOutcome<BatchWriteResult>> {
     const res = await this.request<unknown>("batch_write", "/api/v1/content/batch-write", {
       method: "POST",
       body: request,
@@ -438,7 +487,10 @@ export class OpenVikingClient {
     if (!res.ok) return res;
     // The three URI lists are the only proof a write landed; normalizing them
     // here means the caller checks membership rather than trusting a 200.
-    const raw = (res.result && typeof res.result === "object" ? res.result : {}) as Record<string, unknown>;
+    const raw = (res.result && typeof res.result === "object" ? res.result : {}) as Record<
+      string,
+      unknown
+    >;
     return {
       ok: true,
       status: res.status,
@@ -455,30 +507,46 @@ export class OpenVikingClient {
    * system writes was written by batch-write and so carries no `MEMORY_FIELDS`
    * footer for `content/read` to strip. */
   async readContent(uri: string): Promise<OvOutcome<string>> {
-    const res = await this.request<unknown>("read", `/api/v1/content/read?uri=${encodeURIComponent(uri)}`, { method: "GET" });
+    const res = await this.request<unknown>(
+      "read",
+      `/api/v1/content/read?uri=${encodeURIComponent(uri)}`,
+      { method: "GET" },
+    );
     if (!res.ok) return res;
-    return { ok: true, status: res.status, result: typeof res.result === "string" ? res.result : "" };
+    return {
+      ok: true,
+      status: res.status,
+      result: typeof res.result === "string" ? res.result : "",
+    };
   }
 
   async ls(uri: string): Promise<OvOutcome<OvDirEntry[]>> {
-    const res = await this.request<unknown>("ls", `/api/v1/fs/ls?uri=${encodeURIComponent(uri)}`, { method: "GET" });
+    const res = await this.request<unknown>("ls", `/api/v1/fs/ls?uri=${encodeURIComponent(uri)}`, {
+      method: "GET",
+    });
     if (!res.ok) return res;
     const rows = Array.isArray(res.result) ? res.result : [];
     return {
       ok: true,
       status: res.status,
-      result: rows.filter((r): r is Record<string, unknown> => !!r && typeof r === "object").map((r) => ({
-        uri: str(r["uri"]),
-        name: str(r["name"]) || basename(str(r["uri"])),
-        isDir: r["isDir"] === true,
-        size: typeof r["size"] === "number" ? r["size"] : 0,
-        modTime: str(r["modTime"]),
-      })),
+      result: rows
+        .filter((r): r is Record<string, unknown> => !!r && typeof r === "object")
+        .map((r) => ({
+          uri: str(r["uri"]),
+          name: str(r["name"]) || basename(str(r["uri"])),
+          isDir: r["isDir"] === true,
+          size: typeof r["size"] === "number" ? r["size"] : 0,
+          modTime: str(r["modTime"]),
+        })),
     };
   }
 
   remove(uri: string, recursive = false): Promise<OvOutcome<unknown>> {
-    return this.request<unknown>("delete", `/api/v1/fs?uri=${encodeURIComponent(uri)}&recursive=${recursive}`, { method: "DELETE" });
+    return this.request<unknown>(
+      "delete",
+      `/api/v1/fs?uri=${encodeURIComponent(uri)}&recursive=${recursive}`,
+      { method: "DELETE" },
+    );
   }
 
   /**
@@ -495,7 +563,10 @@ export class OpenVikingClient {
    * daemon. The store calls this lazily, on exactly that failure.
    */
   async mkdir(uri: string, parents = true): Promise<boolean> {
-    const res = await this.request<unknown>("mkdir", "/api/v1/fs/mkdir", { method: "POST", body: { uri, parents } });
+    const res = await this.request<unknown>("mkdir", "/api/v1/fs/mkdir", {
+      method: "POST",
+      body: { uri, parents },
+    });
     // `fs/mkdir` is NOT idempotent: an existing directory comes back CONFLICT
     // ("already exists"), verified live against 0.4.15. Every caller here wants
     // `mkdir -p` semantics — the directory is there afterwards either way — so
@@ -503,9 +574,16 @@ export class OpenVikingClient {
     return res.ok || res.conflict;
   }
 
-  async setTags(uri: string, tags: string[], mode: "append" | "replace" = "replace"): Promise<boolean> {
+  async setTags(
+    uri: string,
+    tags: string[],
+    mode: "append" | "replace" = "replace",
+  ): Promise<boolean> {
     if (tags.length === 0) return true;
-    const res = await this.request<unknown>("set_tags", "/api/v1/fs/attrs/set_tags", { method: "POST", body: { uri, tags, mode } });
+    const res = await this.request<unknown>("set_tags", "/api/v1/fs/attrs/set_tags", {
+      method: "POST",
+      body: { uri, tags, mode },
+    });
     return res.ok;
   }
 
@@ -516,7 +594,10 @@ export class OpenVikingClient {
    * callers that only want a prompt block take `.rendered`, callers that need
    * to know what the budget bought read `.stats`.
    */
-  async searchContext(query: string, opts: ContextSearchOptions = {}): Promise<OvOutcome<ContextSearchResult>> {
+  async searchContext(
+    query: string,
+    opts: ContextSearchOptions = {},
+  ): Promise<OvOutcome<ContextSearchResult>> {
     const body = buildContextSearchBody(query, opts, (gap) => this.report(gap));
     const res = await this.request<unknown>("search", "/api/v1/search/search", {
       method: "POST",
@@ -524,23 +605,30 @@ export class OpenVikingClient {
       ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
     });
     if (!res.ok) return res;
-    const result = (res.result && typeof res.result === "object" ? res.result : {}) as Record<string, unknown>;
+    const result = (res.result && typeof res.result === "object" ? res.result : {}) as Record<
+      string,
+      unknown
+    >;
     const rawEntries = Array.isArray(result["entries"]) ? result["entries"] : [];
     return {
       ok: true,
       status: res.status,
       result: {
-        entries: rawEntries.filter((e): e is Record<string, unknown> => !!e && typeof e === "object").map((e) => ({
-          uri: str(e["uri"]),
-          category: str(e["category"]) || "memories",
-          score: typeof e["score"] === "number" ? e["score"] : 0,
-          detail: str(e["detail"]),
-          text: str(e["text"]) || str(e["content"]) || str(e["abstract"]),
-          origin: str(e["origin"]),
-        })),
+        entries: rawEntries
+          .filter((e): e is Record<string, unknown> => !!e && typeof e === "object")
+          .map((e) => ({
+            uri: str(e["uri"]),
+            category: str(e["category"]) || "memories",
+            score: typeof e["score"] === "number" ? e["score"] : 0,
+            detail: str(e["detail"]),
+            text: str(e["text"]) || str(e["content"]) || str(e["abstract"]),
+            origin: str(e["origin"]),
+          })),
         rendered: str(result["rendered"]).trim(),
         digest: str(result["digest"]).trim(),
-        stats: (result["stats"] && typeof result["stats"] === "object" ? result["stats"] : {}) as Record<string, unknown>,
+        stats: (result["stats"] && typeof result["stats"] === "object"
+          ? result["stats"]
+          : {}) as Record<string, unknown>,
       },
     };
   }
@@ -560,7 +648,11 @@ export class OpenVikingClient {
    * Sessions are absent from the search corpus, so this frees disk, not
    * recall. */
   deleteSession(sessionId: string): Promise<OvOutcome<unknown>> {
-    return this.request<unknown>("session_delete", `/api/v1/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+    return this.request<unknown>(
+      "session_delete",
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}`,
+      { method: "DELETE" },
+    );
   }
 }
 
@@ -578,7 +670,9 @@ function strings(value: unknown): string[] {
  * the target in any of its three lists did NOT write it, and reporting that as
  * a success is how a memory silently goes missing. */
 export function batchWriteLanded(result: BatchWriteResult, uri: string): boolean {
-  return result.created.includes(uri) || result.updated.includes(uri) || result.unchanged.includes(uri);
+  return (
+    result.created.includes(uri) || result.updated.includes(uri) || result.unchanged.includes(uri)
+  );
 }
 
 function basename(uri: string): string {
@@ -588,7 +682,8 @@ function basename(uri: string): string {
 }
 
 function errText(err: unknown): string {
-  if (err instanceof Error) return err.name === "TimeoutError" || err.name === "AbortError" ? "timeout" : err.message;
+  if (err instanceof Error)
+    return err.name === "TimeoutError" || err.name === "AbortError" ? "timeout" : err.message;
   return String(err);
 }
 
@@ -602,4 +697,4 @@ function timeoutSignal(ms: number): AbortSignal | undefined {
   }
 }
 
-const defaultFetch: HttpFetch = (url, init) => fetch(url, init as RequestInit) as unknown as Promise<HttpResponse>;
+const defaultFetch: HttpFetch = (url, init) => fetch(url, init);

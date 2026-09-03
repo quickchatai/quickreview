@@ -25,7 +25,10 @@ const FAIL: DockerResult = { ok: false, stdout: "", stderr: "no server running",
 
 /** Records every docker call and answers from a scripted queue (tests never
  * spawn docker — same discipline as tui-companion.test.ts). */
-function fakeDocker(answer: (argv: string[]) => DockerResult = () => OK): { runner: DockerRunner; calls: string[][] } {
+function fakeDocker(answer: (argv: string[]) => DockerResult = () => OK): {
+  runner: DockerRunner;
+  calls: string[][];
+} {
   const calls: string[][] = [];
   const runner: DockerRunner = async (argv) => {
     calls.push(argv);
@@ -142,9 +145,11 @@ describe("paintSidebar geometry", () => {
   });
 
   it("marks a down pi and a degraded memory in the header", () => {
-    const out = paintSidebar(VIEW({ header: { up: true, piUp: false, day: "", lastWake: "—", memory: "degraded" } }), WIDE, 16).map(
-      stripAnsi,
-    );
+    const out = paintSidebar(
+      VIEW({ header: { up: true, piUp: false, day: "", lastWake: "—", memory: "degraded" } }),
+      WIDE,
+      16,
+    ).map(stripAnsi);
     expect(out[1]).toContain("mem degraded");
     expect(out[2]).toContain("pi down");
   });
@@ -232,7 +237,17 @@ describe("CompanionSidebar", () => {
     const { runner, calls } = fakeDocker(() => (ok ? { ...OK, stdout: "alpha\nbeta\n" } : FAIL));
     const sb = new CompanionSidebar(CFG, runner);
     await sb.refresh();
-    expect(calls[0]).toEqual(["exec", "qcr-companion", "tmux", "capture-pane", "-e", "-p", "-J", "-t", "companion"]);
+    expect(calls[0]).toEqual([
+      "exec",
+      "qcr-companion",
+      "tmux",
+      "capture-pane",
+      "-e",
+      "-p",
+      "-J",
+      "-t",
+      "companion",
+    ]);
     expect(sb.lines).toEqual(["alpha", "beta"]);
     expect(sb.view().header.piUp).toBe(true);
 
@@ -323,7 +338,10 @@ describe("CompanionSidebar", () => {
     const sb = new CompanionSidebar(CFG, runner);
     await sb.sendKeys(Buffer.from("ab\x1b[A\r"));
     const sends = calls.filter((c) => c[3] === "send-keys").map((c) => c.slice(6));
-    expect(sends).toEqual([["-l", "ab"], ["Up", "Enter"]]);
+    expect(sends).toEqual([
+      ["-l", "ab"],
+      ["Up", "Enter"],
+    ]);
     sb.stop();
   });
 
@@ -400,7 +418,12 @@ describe("CompanionSidebar", () => {
     const sb = new CompanionSidebar(CFG, runner);
     sb.setHeader({ day: "2026-08-21", memory: "ok", lastWake: "3m ago" });
     sb.setAlerts([{ tier: "notice", title: "n", ts: "10:00" }]);
-    expect(sb.view().header).toMatchObject({ day: "2026-08-21", memory: "ok", lastWake: "3m ago", up: true });
+    expect(sb.view().header).toMatchObject({
+      day: "2026-08-21",
+      memory: "ok",
+      lastWake: "3m ago",
+      up: true,
+    });
     expect(sb.view().alerts).toHaveLength(1);
     sb.stop();
   });

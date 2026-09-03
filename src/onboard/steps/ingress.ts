@@ -32,7 +32,13 @@ import { dirname, join } from "node:path";
 import { expandHome } from "../../config.js";
 import { CHOICE_KEYS, type IngressChoice } from "../choices.js";
 import { topologyOf } from "./topology.js";
-import type { CheckResult, OnboardAdapters, OnboardingStep, StepContext, StepReport } from "../engine.js";
+import type {
+  CheckResult,
+  OnboardAdapters,
+  OnboardingStep,
+  StepContext,
+  StepReport,
+} from "../engine.js";
 
 export const INGRESS_STEP_ID = "ingress";
 /** Recorded choice keys later steps (and verify) read. */
@@ -124,7 +130,9 @@ export function optionFor(choice: string): IngressOption | null {
 
 /** The offer text — what the guide reads out when no choice was made yet. */
 export function renderOptions(): string {
-  return INGRESS_OPTIONS.map((o) => [`${o.id}: ${o.headline}`, ...o.tradeoffs.map((t) => `    - ${t}`)].join("\n")).join("\n");
+  return INGRESS_OPTIONS.map((o) =>
+    [`${o.id}: ${o.headline}`, ...o.tradeoffs.map((t) => `    - ${t}`)].join("\n"),
+  ).join("\n");
 }
 
 // ---- small deterministic file surgery ---------------------------------------
@@ -180,7 +188,8 @@ export function patchTomlSection(toml: string, section: string, body: string): s
     return `${toml.slice(0, from)}${body}${toml.slice(to)}`;
   }
   const anchor = INGRESS_ANCHOR.exec(toml);
-  if (anchor?.index !== undefined) return `${toml.slice(0, anchor.index)}${body}\n${toml.slice(anchor.index)}`;
+  if (anchor?.index !== undefined)
+    return `${toml.slice(0, anchor.index)}${body}\n${toml.slice(anchor.index)}`;
   return `${toml.replace(/\n*$/, "\n")}\n${body}`;
 }
 
@@ -200,7 +209,12 @@ export function readTomlKey(toml: string, section: string, key: string): string 
 /** Set `key = "value"` inside an existing table, preserving everything else.
  * Returns null when the table (or the key) is not there to patch — the caller
  * turns that into a plain red check rather than inventing structure. */
-export function setTomlKey(toml: string, section: string, key: string, value: string): string | null {
+export function setTomlKey(
+  toml: string,
+  section: string,
+  key: string,
+  value: string,
+): string | null {
   const header = new RegExp(`^\\[${section}\\][^\\n]*\\n`, "m").exec(toml);
   if (header?.index === undefined) return null;
   const bodyStart = header.index + header[0].length;
@@ -246,12 +260,19 @@ function readFileOrNull(path: string): string | null {
  * documented default. */
 export function secretsDirOf(configToml: string | null): string {
   const configured = configToml ? readTomlKey(configToml, "github", "secrets_dir") : null;
-  return expandHome(configured && configured.trim() !== "" ? configured.trim() : "~/.config/quickreview-bot");
+  return expandHome(
+    configured && configured.trim() !== "" ? configured.trim() : "~/.config/quickreview-bot",
+  );
 }
 
 /** A hostname the operator typed: bare, lowercase, no scheme or path. */
 export function normalizeHostname(raw: unknown): string | null {
-  const text = String(raw ?? "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "").replace(/:\d+$/, "");
+  const text = String(raw ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/\/.*$/, "")
+    .replace(/:\d+$/, "");
   return /^[a-z0-9]([a-z0-9-]{0,62})?(\.[a-z0-9]([a-z0-9-]{0,62})?)+$/.test(text) ? text : null;
 }
 
@@ -269,8 +290,10 @@ export function parseComposePs(stdout: string): RunningService[] {
   const push = (value: unknown): void => {
     if (typeof value !== "object" || value === null) return;
     const row = value as Record<string, unknown>;
-    const service = typeof row.Service === "string" ? row.Service : typeof row.Name === "string" ? row.Name : "";
-    if (service !== "") rows.push({ service, state: typeof row.State === "string" ? row.State : "" });
+    const service =
+      typeof row.Service === "string" ? row.Service : typeof row.Name === "string" ? row.Name : "";
+    if (service !== "")
+      rows.push({ service, state: typeof row.State === "string" ? row.State : "" });
   };
   const text = stdout.trim();
   if (text === "") return rows;
@@ -304,7 +327,9 @@ const CHOICE_IDS = INGRESS_OPTIONS.map((o) => o.id);
 
 function chosen(ctx: StepContext): IngressChoice | null {
   const raw = ctx.input.choice ?? ctx.choices[INGRESS_CHOICE_KEY];
-  const id = String(raw ?? "").trim().toLowerCase();
+  const id = String(raw ?? "")
+    .trim()
+    .toLowerCase();
   return (CHOICE_IDS as string[]).includes(id) ? (id as IngressChoice) : null;
 }
 
@@ -357,7 +382,8 @@ export function ingressStep(): OnboardingStep {
         choice: {
           type: "string",
           enum: CHOICE_IDS,
-          description: "The ingress shape the operator picked. Omit to have the step list the options and their trade-offs.",
+          description:
+            "The ingress shape the operator picked. Omit to have the step list the options and their trade-offs.",
         },
         hostname: {
           type: "string",
@@ -369,7 +395,8 @@ export function ingressStep(): OnboardingStep {
 
     async run(ctx): Promise<StepReport> {
       const choice = chosen(ctx);
-      if (choice === null) return { ok: false, checks: [offerCheck(String(ctx.choices[CHOICE_KEYS.topology] ?? ""))] };
+      if (choice === null)
+        return { ok: false, checks: [offerCheck(String(ctx.choices[CHOICE_KEYS.topology] ?? ""))] };
       const option = optionFor(choice)!;
       const root = sandboxRootOf(ctx.adapters);
       const checks: CheckResult[] = [
@@ -383,7 +410,8 @@ export function ingressStep(): OnboardingStep {
         checks.push({
           name: "hostname",
           ok: false,
-          detail: "a named Cloudflare tunnel needs the public hostname it serves — re-run with hostname: \"review.example.com\"",
+          detail:
+            'a named Cloudflare tunnel needs the public hostname it serves — re-run with hostname: "review.example.com"',
         });
         return { ok: false, checks };
       }
@@ -402,7 +430,9 @@ export function ingressStep(): OnboardingStep {
           detail: present
             ? `${file} present — the sidecar reads it from the read-only secrets mount and passes it in the environment, never on a command line`
             : `${file} is missing or empty. Create it with:\n    (umask 077; printf %s '<token>' > ${file})\n` +
-              (option.secret === "tunnel_token" ? "  (`bash deploy/collect-secrets.sh` collects this one interactively.)" : ""),
+              (option.secret === "tunnel_token"
+                ? "  (`bash deploy/collect-secrets.sh` collects this one interactively.)"
+                : ""),
         });
       }
 
@@ -419,11 +449,19 @@ export function ingressStep(): OnboardingStep {
       if (hostname !== null) {
         const withHost = setTomlKey(patched, "server", "hostname", hostname);
         if (withHost === null) {
-          checks.push({ name: "server-hostname", ok: false, detail: "config.toml has no [server] table to write the hostname into" });
+          checks.push({
+            name: "server-hostname",
+            ok: false,
+            detail: "config.toml has no [server] table to write the hostname into",
+          });
           return { ok: false, checks };
         }
         patched = withHost;
-        checks.push({ name: "server-hostname", ok: true, detail: `[server] hostname = "${hostname}"` });
+        checks.push({
+          name: "server-hostname",
+          ok: true,
+          detail: `[server] hostname = "${hostname}"`,
+        });
       }
       writeAtomic(configPath, patched);
       checks.push({
@@ -468,17 +506,33 @@ export function ingressStep(): OnboardingStep {
       const recorded = String(ctx.data.choice ?? ctx.choices[INGRESS_CHOICE_KEY] ?? "");
       const option = optionFor(recorded);
       if (option === null) {
-        return { ok: false, checks: [{ name: "choice", ok: false, detail: "no ingress shape recorded — run the ingress step" }] };
+        return {
+          ok: false,
+          checks: [
+            {
+              name: "choice",
+              ok: false,
+              detail: "no ingress shape recorded — run the ingress step",
+            },
+          ],
+        };
       }
       const root = sandboxRootOf(ctx.adapters);
-      const checks: CheckResult[] = [{ name: "choice", ok: true, detail: `${option.id} — ${option.headline}` }];
+      const checks: CheckResult[] = [
+        { name: "choice", ok: true, detail: `${option.id} — ${option.headline}` },
+      ];
 
       // Reality, not the record: what does config.toml actually say?
       const configToml = readFileOrNull(join(root, "config.toml"));
-      const shape = configToml === null ? null : (readTomlKey(configToml, "ingress", "shape") ?? "none");
+      const shape =
+        configToml === null ? null : (readTomlKey(configToml, "ingress", "shape") ?? "none");
       checks.push(
         configToml === null
-          ? { name: "config", ok: false, detail: `${join(root, "config.toml")} is gone — re-run the ingress step after restoring it` }
+          ? {
+              name: "config",
+              ok: false,
+              detail: `${join(root, "config.toml")} is gone — re-run the ingress step after restoring it`,
+            }
           : shape === option.shape
             ? { name: "config", ok: true, detail: `[ingress] shape = "${shape}"` }
             : {
@@ -494,13 +548,18 @@ export function ingressStep(): OnboardingStep {
         checks.push({
           name: "credential",
           ok: present,
-          detail: present ? `${file} present` : `${file} is missing or empty — the ${option.id} tunnel cannot start without it`,
+          detail: present
+            ? `${file} present`
+            : `${file} is missing or empty — the ${option.id} tunnel cannot start without it`,
         });
       }
 
       const hostname = normalizeHostname(ctx.data.hostname ?? ctx.choices[INGRESS_HOSTNAME_KEY]);
       if (option.id === "named") {
-        const configured = configToml === null ? null : normalizeHostname(readTomlKey(configToml, "server", "hostname"));
+        const configured =
+          configToml === null
+            ? null
+            : normalizeHostname(readTomlKey(configToml, "server", "hostname"));
         checks.push(
           configured !== null && (hostname === null || configured === hostname)
             ? { name: "server-hostname", ok: true, detail: `[server] hostname = "${configured}"` }
@@ -514,13 +573,21 @@ export function ingressStep(): OnboardingStep {
 
       // The compose profile only means anything on the compose topology.
       if (topologyOf(ctx.choices) === "vm") {
-        checks.push({ name: "compose-profile", ok: true, detail: "VM topology — ingress runs on the server, not as a compose sidecar" });
+        checks.push({
+          name: "compose-profile",
+          ok: true,
+          detail: "VM topology — ingress runs on the server, not as a compose sidecar",
+        });
       } else {
         const envText = readFileOrNull(join(root, ".env")) ?? "";
         const profile = readEnvKey(envText, "COMPOSE_PROFILES") ?? "";
         checks.push(
           profile === option.profile
-            ? { name: "compose-profile", ok: true, detail: `COMPOSE_PROFILES=${profile === "" ? "(empty — no sidecar)" : profile}` }
+            ? {
+                name: "compose-profile",
+                ok: true,
+                detail: `COMPOSE_PROFILES=${profile === "" ? "(empty — no sidecar)" : profile}`,
+              }
             : {
                 name: "compose-profile",
                 ok: false,
@@ -542,8 +609,19 @@ export function ingressStep(): OnboardingStep {
  * looks. A stack that is not up yet is a note, not a failure: bring-up is a
  * later step, and this step must not hold the checklist hostage to it.
  */
-async function runningShapeChecks(ctx: StepContext, root: string, option: IngressOption): Promise<CheckResult[]> {
-  const ps = await ctx.adapters.runner.run("docker", ["compose", "--project-directory", root, "ps", "--format", "json"]);
+async function runningShapeChecks(
+  ctx: StepContext,
+  root: string,
+  option: IngressOption,
+): Promise<CheckResult[]> {
+  const ps = await ctx.adapters.runner.run("docker", [
+    "compose",
+    "--project-directory",
+    root,
+    "ps",
+    "--format",
+    "json",
+  ]);
   if (ps.code !== 0) {
     return [
       {
@@ -555,8 +633,11 @@ async function runningShapeChecks(ctx: StepContext, root: string, option: Ingres
   }
   const rows = parseComposePs(ps.stdout);
   const daemonUp = isUp(rows.find((r) => r.service === "daemon"));
-  const sidecar = option.service === null ? undefined : rows.find((r) => r.service === option.service);
-  const strays = rows.filter((r) => r.service.startsWith("tunnel-") && r.service !== option.service && isUp(r));
+  const sidecar =
+    option.service === null ? undefined : rows.find((r) => r.service === option.service);
+  const strays = rows.filter(
+    (r) => r.service.startsWith("tunnel-") && r.service !== option.service && isUp(r),
+  );
 
   const checks: CheckResult[] = [];
   if (strays.length > 0) {
@@ -567,11 +648,20 @@ async function runningShapeChecks(ctx: StepContext, root: string, option: Ingres
     });
   }
   if (!daemonUp) {
-    checks.push({ name: "running", ok: true, detail: "the stack is not up yet — configuration checked only (bring-up is a later step)" });
+    checks.push({
+      name: "running",
+      ok: true,
+      detail: "the stack is not up yet — configuration checked only (bring-up is a later step)",
+    });
     return checks;
   }
   if (option.service === null) {
-    if (strays.length === 0) checks.push({ name: "running", ok: true, detail: "daemon up, no tunnel sidecar — the polling shape, as chosen" });
+    if (strays.length === 0)
+      checks.push({
+        name: "running",
+        ok: true,
+        detail: "daemon up, no tunnel sidecar — the polling shape, as chosen",
+      });
     return checks;
   }
   if (!isUp(sidecar)) {

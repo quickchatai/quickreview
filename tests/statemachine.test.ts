@@ -15,10 +15,7 @@ const TABLE: Array<[SmEvent, PrLifecycleState[]]> = [
   [{ type: "trigger", source: "label" }, ["queued", "queued", "reviewing", "queued", "closed"]],
   [{ type: "stale_detected" }, ["queued", "queued", "reviewing", "queued", "closed"]],
   [{ type: "dispatched" }, ["reviewing", "reviewing", "reviewing", "reviewing", "closed"]],
-  [
-    { type: "verdict", verdict: "APPROVE" },
-    ["tracked", "tracked", "tracked", "tracked", "closed"],
-  ],
+  [{ type: "verdict", verdict: "APPROVE" }, ["tracked", "tracked", "tracked", "tracked", "closed"]],
   [
     { type: "verdict", verdict: "REQUEST_CHANGES" },
     ["awaiting_author", "awaiting_author", "awaiting_author", "awaiting_author", "closed"],
@@ -88,9 +85,16 @@ describe("invariants", () => {
   it("a restored pre-2026-08-19 row rejoins normal flow on its first verdict, with no migration", () => {
     const restored = "awaiting_human" as unknown as PrLifecycleState;
     expect(transition(restored, { type: "verdict", verdict: "APPROVE" })).toBe("tracked");
-    expect(transition(restored, { type: "verdict", verdict: "REQUEST_CHANGES" })).toBe("awaiting_author");
+    expect(transition(restored, { type: "verdict", verdict: "REQUEST_CHANGES" })).toBe(
+      "awaiting_author",
+    );
     // …and the caveat above is a real property, not a hedge: these leave it be.
-    for (const ev of [{ type: "track" }, { type: "author_reply" }, { type: "synchronize" }, { type: "human_requested" }] as const) {
+    for (const ev of [
+      { type: "track" },
+      { type: "author_reply" },
+      { type: "synchronize" },
+      { type: "human_requested" },
+    ] as const) {
       expect([ev.type, transition(restored, ev)]).toEqual([ev.type, "awaiting_human"]);
     }
   });
@@ -106,7 +110,9 @@ describe("invariants", () => {
   it("an overdue round returns to the standing-verdict state and can never land on an approve state", () => {
     for (const state of STATES) {
       expect(["tracked", "closed"]).toContain(transition(state, { type: "round_overdue" }));
-      expect(["awaiting_author", "closed"]).toContain(transition(state, { type: "round_overdue", standing: "REQUEST_CHANGES" }));
+      expect(["awaiting_author", "closed"]).toContain(
+        transition(state, { type: "round_overdue", standing: "REQUEST_CHANGES" }),
+      );
     }
     // "tracked" after APPROVE-standing means "no work owed" — the approval was
     // already posted by the earlier round, never by this event.
@@ -132,9 +138,15 @@ describe("applyEvent", () => {
 
   it("adopts an unknown PR at the first trigger and stamps trigger_ts", () => {
     const store = open();
-    const res = applyEvent(store, 7, { type: "trigger", source: "label" }, { title: "t", head_sha: "abc", author: "alice" }, {
-      botLogin: "example-review[bot]",
-    });
+    const res = applyEvent(
+      store,
+      7,
+      { type: "trigger", source: "label" },
+      { title: "t", head_sha: "abc", author: "alice" },
+      {
+        botLogin: "example-review[bot]",
+      },
+    );
     expect(res.to).toBe("queued");
     const row = store.getPr(7)!;
     expect(row.state).toBe("queued");
@@ -145,9 +157,15 @@ describe("applyEvent", () => {
 
   it("never tracks a bot-authored PR", () => {
     const store = open();
-    const res = applyEvent(store, 8, { type: "trigger", source: "label" }, { author: "example-review[bot]" }, {
-      botLogin: "example-review[bot]",
-    });
+    const res = applyEvent(
+      store,
+      8,
+      { type: "trigger", source: "label" },
+      { author: "example-review[bot]" },
+      {
+        botLogin: "example-review[bot]",
+      },
+    );
     expect(res.skipped).toBe("bot-author");
     expect(store.getPr(8)).toBeUndefined();
     store.close();
@@ -190,13 +208,23 @@ describe("applyEvent", () => {
 
   it("records fresh-head work owed while preserving the reviewing lifecycle", () => {
     const store = open();
-    applyEvent(store, 5408, { type: "trigger", source: "label" }, { author: "alice", head_sha: "old" }, {});
+    applyEvent(
+      store,
+      5408,
+      { type: "trigger", source: "label" },
+      { author: "alice", head_sha: "old" },
+      {},
+    );
     const roundId = store.startRound(5408, "re-review", ["pass-baseline"], 75);
     applyEvent(store, 5408, { type: "dispatched" }, {}, {});
 
     applyEvent(store, 5408, { type: "synchronize" }, { head_sha: "new" }, {});
     expect(store.getPr(5408)).toMatchObject({ state: "reviewing", head_sha: "new" });
-    expect(store.successorFor(5408)).toMatchObject({ predecessor_round_id: roundId, head_sha: "new", provenance: "system" });
+    expect(store.successorFor(5408)).toMatchObject({
+      predecessor_round_id: roundId,
+      head_sha: "new",
+      provenance: "system",
+    });
 
     applyEvent(store, 5408, { type: "trigger", source: "team_request" }, {}, {});
     expect(store.successorFor(5408)?.provenance).toBe("human");
@@ -208,7 +236,9 @@ describe("applyEvent", () => {
     applyEvent(store, 10, { type: "trigger", source: "label" }, { author: "alice" }, {});
     applyEvent(store, 10, { type: "dispatched" }, {}, {});
     applyEvent(store, 10, { type: "verdict", verdict: "REQUEST_CHANGES" }, {}, {});
-    const kinds = (store.db.prepare("SELECT kind FROM events WHERE pr = 10").all() as Array<{ kind: string }>).map((e) => e.kind);
+    const kinds = (
+      store.db.prepare("SELECT kind FROM events WHERE pr = 10").all() as Array<{ kind: string }>
+    ).map((e) => e.kind);
     expect(kinds.filter((k) => k === "pr_transition").length).toBe(3);
     expect(store.getPr(10)!.state).toBe("awaiting_author");
     store.close();

@@ -9,7 +9,15 @@
 // inject the overseer. There is no path here that touches an existing review:
 // the invariant against retracting an approval is structural, not prompted
 // (spec §3, §8).
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, watch, type FSWatcher } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  watch,
+  type FSWatcher,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { classifyCi, latestRunPerName, type CheckSummary } from "./cigate.js";
@@ -36,16 +44,47 @@ import {
   splitIntegrityChanges,
   type IntegrityFingerprint,
 } from "./execboundary.js";
-import { auditExecViolationDetails, collectWindowLines, estimateUsd, measureRoundUsage, type ModelPricing, type UsageFs } from "./usage.js";
+import {
+  auditExecViolationDetails,
+  collectWindowLines,
+  estimateUsd,
+  measureRoundUsage,
+  type ModelPricing,
+  type UsageFs,
+} from "./usage.js";
 import type { GateResult } from "./gate.js";
 import { applyEvent, restoreStandingLifecycle } from "./statemachine.js";
 import type { VerdictAnnouncer } from "./slack/announce.js";
-import { isLoudCancelCause, type CancelCause, type RoundRow, type SelfRequeueSpend, type StateStore } from "./state.js";
+import {
+  isLoudCancelCause,
+  type CancelCause,
+  type RoundRow,
+  type SelfRequeueSpend,
+  type StateStore,
+} from "./state.js";
 import { enforceLedgerFreshness } from "./ledgercheck.js";
 import { enforceFindingsRecord, findingsRecordPath, readFindingsRecord } from "./findingsrecord.js";
-import { normalizeVerdict, type RoundRecoveryDisposition, type SessionHooks, type VerdictFile, type VerdictPassEntry } from "./types.js";
-import { guardedNoopMatchesMark, postingMarker, readPostingReceipt, receiptMatchesVerdict, type GuardedNoopReceipt, type PostingReceipt } from "./posting-receipt.js";
-import { snapshotMark, standingReview, standingVerdict, type StandingDecidedVerdict } from "./standing-review.js";
+import {
+  normalizeVerdict,
+  type RoundRecoveryDisposition,
+  type SessionHooks,
+  type VerdictFile,
+  type VerdictPassEntry,
+} from "./types.js";
+import {
+  guardedNoopMatchesMark,
+  postingMarker,
+  readPostingReceipt,
+  receiptMatchesVerdict,
+  type GuardedNoopReceipt,
+  type PostingReceipt,
+} from "./posting-receipt.js";
+import {
+  snapshotMark,
+  standingReview,
+  standingVerdict,
+  type StandingDecidedVerdict,
+} from "./standing-review.js";
 import { flushHeldWakes } from "./wakes.js";
 
 /** Self-requeue mode → the cancellation cause it records. Two modes
@@ -53,7 +92,14 @@ import { flushHeldWakes } from "./wakes.js";
  * whether its session had died or was alive and wedged — and that is the ONE
  * loud cause; the rest are the machinery working (a moved head, a delivery
  * fault, a round redone because it executed no passes). */
-type SelfRequeueMode = "dead" | "alive_stuck" | "needs_human_incomplete" | "lost_prompt" | "head_moved" | "infrastructure_active" | "infrastructure_settled";
+type SelfRequeueMode =
+  | "dead"
+  | "alive_stuck"
+  | "needs_human_incomplete"
+  | "lost_prompt"
+  | "head_moved"
+  | "infrastructure_active"
+  | "infrastructure_settled";
 
 const SELF_REQUEUE_CAUSE: Record<SelfRequeueMode, CancelCause> = {
   dead: "deadline_overrun",
@@ -89,15 +135,17 @@ export interface VerdictAdapter {
   listChecks?(ref: string): Promise<CheckSummary[]>;
   /** Read-only reconciliation for an ambiguous post-success/local-crash
    * window. Exact marker + bot identity + head are required. */
-  listReviewsFull?(pr: number): Promise<Array<{
-    id: number;
-    user: string;
-    user_type?: string;
-    state: string;
-    body: string;
-    commit_id: string;
-    submitted_at: string | null;
-  }>>;
+  listReviewsFull?(pr: number): Promise<
+    Array<{
+      id: number;
+      user: string;
+      user_type?: string;
+      state: string;
+      body: string;
+      commit_id: string;
+      submitted_at: string | null;
+    }>
+  >;
 }
 
 export interface VerdictDeps {
@@ -185,7 +233,12 @@ export function normalizePasses(raw: unknown): { passes?: VerdictPassEntry[]; no
       continue;
     }
     const e = entry as Record<string, unknown>;
-    const name = typeof e.name === "string" && e.name.trim() ? e.name.trim() : typeof e.lens === "string" && e.lens.trim() ? e.lens.trim() : null;
+    const name =
+      typeof e.name === "string" && e.name.trim()
+        ? e.name.trim()
+        : typeof e.lens === "string" && e.lens.trim()
+          ? e.lens.trim()
+          : null;
     if (!name) {
       dropped++;
       continue;
@@ -202,7 +255,12 @@ export function normalizePasses(raw: unknown): { passes?: VerdictPassEntry[]; no
       folded: count(e.folded),
     });
   }
-  return { passes, ...(dropped > 0 ? { note: `${dropped} malformed entr${dropped === 1 ? "y" : "ies"} dropped` } : {}) };
+  return {
+    passes,
+    ...(dropped > 0
+      ? { note: `${dropped} malformed entr${dropped === 1 ? "y" : "ies"} dropped` }
+      : {}),
+  };
 }
 
 /** Shape validation for VerdictFile. Anything off → the anomaly path. */
@@ -217,7 +275,8 @@ export function validateVerdict(raw: unknown): ParsedVerdict {
     if (typeof val === "string" && /^\d+$/.test(val)) v[k] = Number(val);
   }
   if (typeof v.pr !== "number" || !Number.isInteger(v.pr)) return bad("pr must be an integer");
-  if (typeof v.round_no !== "number" || !Number.isInteger(v.round_no)) return bad("round_no must be an integer");
+  if (typeof v.round_no !== "number" || !Number.isInteger(v.round_no))
+    return bad("round_no must be an integer");
   // Guard-5 landing (follow-up): `outcome: "head_moved"` (or,
   // belt-and-braces, verdict spelled HEAD_MOVED) is a verdict-less round
   // ending — the PR advanced mid-round and the guard refused the stale post.
@@ -228,8 +287,10 @@ export function validateVerdict(raw: unknown): ParsedVerdict {
   if (outcome === "head_moved" || verdictSpelled === "HEAD_MOVED") {
     v.outcome = "head_moved";
     delete v.verdict;
-    if (typeof v.head_sha !== "string" || v.head_sha.length === 0) return bad("head_sha must be a non-empty string");
-    if (typeof v.finished_at !== "string" || v.finished_at.length === 0) return bad("finished_at must be a non-empty string");
+    if (typeof v.head_sha !== "string" || v.head_sha.length === 0)
+      return bad("head_sha must be a non-empty string");
+    if (typeof v.finished_at !== "string" || v.finished_at.length === 0)
+      return bad("finished_at must be a non-empty string");
     delete v.spend_usd;
     return { ok: true, verdict: raw as unknown as VerdictFile };
   }
@@ -239,21 +300,26 @@ export function validateVerdict(raw: unknown): ParsedVerdict {
   const verdict = normalizeVerdict(v.verdict);
   if (verdict === null) return bad(`bad verdict: ${String(v.verdict)}`);
   v.verdict = verdict;
-  if (typeof v.head_sha !== "string" || v.head_sha.length === 0) return bad("head_sha must be a non-empty string");
-  if (typeof v.finished_at !== "string" || v.finished_at.length === 0) return bad("finished_at must be a non-empty string");
+  if (typeof v.head_sha !== "string" || v.head_sha.length === 0)
+    return bad("head_sha must be a non-empty string");
+  if (typeof v.finished_at !== "string" || v.finished_at.length === 0)
+    return bad("finished_at must be a non-empty string");
   // spend_usd: legacy self-reported field — accepted in any shape and IGNORED
   // (models copy the template's example figure; real usage is measured from
   // the session JSONLs). Deleted so no consumer can store it.
   delete v.spend_usd;
-  if (v.ai_approved !== undefined && typeof v.ai_approved !== "boolean") return bad("ai_approved must be a boolean");
+  if (v.ai_approved !== undefined && typeof v.ai_approved !== "boolean")
+    return bad("ai_approved must be a boolean");
   // LLM-written booleans arrive as strings often enough to coerce the
   // two unambiguous spellings rather than fail the whole file over them.
   if (v.approval_withheld === "true") v.approval_withheld = true;
   if (v.approval_withheld === "false") v.approval_withheld = false;
   if (v.approval_withheld !== undefined && typeof v.approval_withheld !== "boolean")
     return bad("approval_withheld must be a boolean");
-  if (v.ledger_snapshot !== undefined && typeof v.ledger_snapshot !== "string") return bad("ledger_snapshot must be a string");
-  if (v.summary !== undefined && typeof v.summary !== "string") return bad("summary must be a string");
+  if (v.ledger_snapshot !== undefined && typeof v.ledger_snapshot !== "string")
+    return bad("ledger_snapshot must be a string");
+  if (v.summary !== undefined && typeof v.summary !== "string")
+    return bad("summary must be a string");
   if (typeof v.summary === "string") v.summary = v.summary.trim().slice(0, 800);
   // Executed-pass telemetry: tolerant by design — old-prompt
   // sessions omit it and malformed shapes degrade to unknown, never to a
@@ -269,7 +335,11 @@ export function validateVerdict(raw: unknown): ParsedVerdict {
   if (esc.entries.length > 0) v.escalations = esc.entries;
   else delete v.escalations;
   const notes = [norm.note, esc.note].filter(Boolean).join("; ");
-  return { ok: true, verdict: raw as unknown as VerdictFile, ...(notes ? { passes_note: notes } : {}) };
+  return {
+    ok: true,
+    verdict: raw as unknown as VerdictFile,
+    ...(notes ? { passes_note: notes } : {}),
+  };
 }
 
 /**
@@ -356,7 +426,10 @@ export class VerdictWatcher {
   private archive(name: string): void {
     mkdirSync(this.processedDir, { recursive: true });
     try {
-      renameSync(join(this.deps.verdictDir, name), join(this.processedDir, `${this.now().toISOString().replace(/[:.]/g, "-")}-${name}`));
+      renameSync(
+        join(this.deps.verdictDir, name),
+        join(this.processedDir, `${this.now().toISOString().replace(/[:.]/g, "-")}-${name}`),
+      );
     } catch (err) {
       this.log(`verdicts: could not archive ${name}`, err);
     }
@@ -390,7 +463,12 @@ export class VerdictWatcher {
       }
 
       if (!parsed.ok || !parsed.verdict) {
-        await this.handleAnomaly(pr, roundNo, `malformed verdict file ${name}: ${parsed.error ?? "unknown"}`, "malformed");
+        await this.handleAnomaly(
+          pr,
+          roundNo,
+          `malformed verdict file ${name}: ${parsed.error ?? "unknown"}`,
+          "malformed",
+        );
         this.archive(name);
         return true;
       }
@@ -405,7 +483,10 @@ export class VerdictWatcher {
   }
 
   private postingReceiptDir(): string {
-    return this.deps.postingReceiptDir ?? join(this.deps.root ?? sandboxRoot(), "state", "posting-receipts");
+    return (
+      this.deps.postingReceiptDir ??
+      join(this.deps.root ?? sandboxRoot(), "state", "posting-receipts")
+    );
   }
 
   private async postingProof(
@@ -421,11 +502,12 @@ export class VerdictWatcher {
     if (!round.posting_key) return { kind: "legacy" };
     const expectedHead = verdict?.head_sha ?? round.posting_key.split(":").slice(3).join(":");
     const receipt = readPostingReceipt(this.postingReceiptDir(), round.pr, round.round_no);
-    const receiptIdentityOk = receipt !== undefined
-      && receipt.posting_key === round.posting_key
-      && receipt.pr === round.pr
-      && receipt.round_no === round.round_no
-      && receipt.head_sha.toLowerCase() === expectedHead.toLowerCase();
+    const receiptIdentityOk =
+      receipt !== undefined &&
+      receipt.posting_key === round.posting_key &&
+      receipt.pr === round.pr &&
+      receipt.round_no === round.round_no &&
+      receipt.head_sha.toLowerCase() === expectedHead.toLowerCase();
     // the shell recorded a guard-2 refusal for this exact identity.
     // It is answered only AFTER the live marker reconcile below has had its
     // say: the record claims no POST was attempted, and a bot review carrying
@@ -449,9 +531,15 @@ export class VerdictWatcher {
           gh_commit_id: receipt.gh_commit_id!,
           confirmed_at: receipt.confirmed_at!,
         });
-        return persisted ? { kind: "confirmed", receipt } : { kind: "failed", detail: `conflicting posting linkage for ${round.posting_key}` };
+        return persisted
+          ? { kind: "confirmed", receipt }
+          : { kind: "failed", detail: `conflicting posting linkage for ${round.posting_key}` };
       }
-      if (receipt.status === "dryrun" && this.deps.cfg.dry_run && (!verdict || receiptMatchesVerdict(receipt, verdict))) {
+      if (
+        receipt.status === "dryrun" &&
+        this.deps.cfg.dry_run &&
+        (!verdict || receiptMatchesVerdict(receipt, verdict))
+      ) {
         const persisted = this.deps.store.confirmRoundPosting(round.id, {
           posting_key: receipt.posting_key,
           actual_event: receipt.actual_event,
@@ -459,10 +547,18 @@ export class VerdictWatcher {
           gh_commit_id: receipt.head_sha,
           confirmed_at: receipt.confirmed_at ?? receipt.prepared_at,
         });
-        return persisted ? { kind: "confirmed", receipt } : { kind: "failed", detail: `conflicting dry-run posting linkage for ${round.posting_key}` };
+        return persisted
+          ? { kind: "confirmed", receipt }
+          : {
+              kind: "failed",
+              detail: `conflicting dry-run posting linkage for ${round.posting_key}`,
+            };
       }
       if ((receipt.status === "confirmed" || receipt.status === "dryrun") && verdict) {
-        return { kind: "failed", detail: `posting receipt ${round.posting_key} does not match verdict/head` };
+        return {
+          kind: "failed",
+          detail: `posting receipt ${round.posting_key} does not match verdict/head`,
+        };
       }
     }
 
@@ -473,19 +569,22 @@ export class VerdictWatcher {
       try {
         const marker = postingMarker(round.posting_key);
         const bot = this.deps.cfg.github.bot_login;
-        const matches = (await this.deps.adapter.listReviewsFull(round.pr)).filter((review) =>
-          (review.user === bot || review.user === `${this.deps.cfg.github.app_slug}[bot]`)
-          && review.commit_id?.toLowerCase() === expectedHead.toLowerCase()
-          && review.body.includes(marker),
+        const matches = (await this.deps.adapter.listReviewsFull(round.pr)).filter(
+          (review) =>
+            (review.user === bot || review.user === `${this.deps.cfg.github.app_slug}[bot]`) &&
+            review.commit_id?.toLowerCase() === expectedHead.toLowerCase() &&
+            review.body.includes(marker),
         );
-        if (matches.length > 1) return { kind: "failed", detail: `multiple bot reviews match ${round.posting_key}` };
+        if (matches.length > 1)
+          return { kind: "failed", detail: `multiple bot reviews match ${round.posting_key}` };
         if (matches.length === 1) {
           const match = matches[0]!;
-          const actualEvent: PostingReceipt["actual_event"] = match.state.toUpperCase() === "APPROVED"
-            ? "APPROVE"
-            : match.state.toUpperCase() === "CHANGES_REQUESTED"
-              ? "REQUEST_CHANGES"
-              : "COMMENT";
+          const actualEvent: PostingReceipt["actual_event"] =
+            match.state.toUpperCase() === "APPROVED"
+              ? "APPROVE"
+              : match.state.toUpperCase() === "CHANGES_REQUESTED"
+                ? "REQUEST_CHANGES"
+                : "COMMENT";
           const synthetic: PostingReceipt = {
             version: 1,
             posting_key: round.posting_key,
@@ -504,7 +603,10 @@ export class VerdictWatcher {
             gh_state: match.state,
           };
           if (verdict && !receiptMatchesVerdict(synthetic, verdict)) {
-            return { kind: "failed", detail: `GitHub review ${match.id} event does not match verdict` };
+            return {
+              kind: "failed",
+              detail: `GitHub review ${match.id} event does not match verdict`,
+            };
           }
           const persisted = this.deps.store.confirmRoundPosting(round.id, {
             posting_key: round.posting_key,
@@ -513,7 +615,11 @@ export class VerdictWatcher {
             gh_commit_id: match.commit_id,
             confirmed_at: synthetic.confirmed_at!,
           });
-          if (!persisted) return { kind: "failed", detail: `conflicting reconciled posting linkage for ${round.posting_key}` };
+          if (!persisted)
+            return {
+              kind: "failed",
+              detail: `conflicting reconciled posting linkage for ${round.posting_key}`,
+            };
           this.deps.store.logEvent("posting_receipt_reconciled", round.pr, {
             round_no: round.round_no,
             posting_key: round.posting_key,
@@ -533,19 +639,34 @@ export class VerdictWatcher {
           return { kind: "confirmed", receipt: synthetic };
         }
       } catch (error) {
-        this.log(`posting receipt reconciliation failed for #${round.pr} round ${round.round_no}`, error);
+        this.log(
+          `posting receipt reconciliation failed for #${round.pr} round ${round.round_no}`,
+          error,
+        );
       }
     }
 
     if (noop) return { kind: "skipped", noop };
     if (noopModeMismatch) {
-      return { kind: "failed", detail: `guarded no-op record for ${round.posting_key} was written in ${this.deps.cfg.dry_run ? "live" : "dry-run"} mode; this daemon is not` };
+      return {
+        kind: "failed",
+        detail: `guarded no-op record for ${round.posting_key} was written in ${this.deps.cfg.dry_run ? "live" : "dry-run"} mode; this daemon is not`,
+      };
     }
 
-    const origin = receiptIdentityOk && receipt && receipt.status !== "skipped" ? receipt.prepared_at : round.started_at;
-    const graceS = this.deps.postingReceiptGraceS ?? this.deps.cfg.daemon.posting_receipt_grace_s ?? DEFAULT_POSTING_RECEIPT_GRACE_S;
+    const origin =
+      receiptIdentityOk && receipt && receipt.status !== "skipped"
+        ? receipt.prepared_at
+        : round.started_at;
+    const graceS =
+      this.deps.postingReceiptGraceS ??
+      this.deps.cfg.daemon.posting_receipt_grace_s ??
+      DEFAULT_POSTING_RECEIPT_GRACE_S;
     if (this.now().getTime() - Date.parse(origin) < graceS * 1000) return { kind: "waiting" };
-    return { kind: "failed", detail: `no confirmed posting receipt for ${round.posting_key} after ${graceS}s` };
+    return {
+      kind: "failed",
+      detail: `no confirmed posting receipt for ${round.posting_key} after ${graceS}s`,
+    };
   }
 
   /**
@@ -594,16 +715,22 @@ export class VerdictWatcher {
         via,
         round_status: fresh?.status ?? "missing",
       });
-      this.log(`verdicts: #${round.pr} round ${round.round_no} guarded no-op already settled (${fresh?.status ?? "missing"}) — ${via} ignored`);
+      this.log(
+        `verdicts: #${round.pr} round ${round.round_no} guarded no-op already settled (${fresh?.status ?? "missing"}) — ${via} ignored`,
+      );
       return "replayed";
     }
     const mark = store.reviewedHead(round.pr);
     if (!guardedNoopMatchesMark(noop, mark)) {
-      await this.failPostingProof(round, `guarded no-op record for ${round.posting_key} no longer matches the live reviewed-head mark`);
+      await this.failPostingProof(
+        round,
+        `guarded no-op record for ${round.posting_key} no longer matches the live reviewed-head mark`,
+      );
       return "failed";
     }
     const standingInfo = standingReview(mark);
-    const standing: StandingDecidedVerdict | null = standingInfo.kind === "decided" ? standingInfo.verdict : null;
+    const standing: StandingDecidedVerdict | null =
+      standingInfo.kind === "decided" ? standingInfo.verdict : null;
     const head7 = noop.head_sha.slice(0, 7);
     store.markRoundCancelled(
       round.id,
@@ -615,7 +742,10 @@ export class VerdictWatcher {
     // The round ran a full review and burned its tokens: measured
     // like every other terminal path, never hidden behind a benign cause.
     this.measureUsage(round.pr, round.id, round.started_at, this.now().toISOString());
-    await this.safe(() => adapter.removeLabel(round.pr, cfg.github.in_progress_label), `remove ${cfg.github.in_progress_label} on #${round.pr}`);
+    await this.safe(
+      () => adapter.removeLabel(round.pr, cfg.github.in_progress_label),
+      `remove ${cfg.github.in_progress_label} on #${round.pr}`,
+    );
 
     if (standingInfo.kind === "unknown") {
       // A COMMENT-only mark: guard 2 was right to refuse, and nothing here
@@ -633,7 +763,9 @@ export class VerdictWatcher {
     const restored = restoreStandingLifecycle(store, round.pr, standing, {
       botLogin: cfg.github.bot_login,
       now: () => this.now(),
-      reason: standing ? `posting-guarded-noop:${standing}` : "posting-guarded-noop:standing-unknown",
+      reason: standing
+        ? `posting-guarded-noop:${standing}`
+        : "posting-guarded-noop:standing-unknown",
     });
     store.logEvent("posting_guarded_noop", round.pr, {
       stage: "posting",
@@ -660,21 +792,38 @@ export class VerdictWatcher {
     // Round-end housekeeping, the same as a verdict's: a fresh-head successor
     // takes the session slot; otherwise the wakes held during the round flow.
     const successorPromoted = store.promoteSuccessor(round.pr);
-    if (successorPromoted) this.log(`verdicts: #${round.pr} preserved fresh-head successor after skipped round ${round.round_no}`);
-    await this.safe(() => this.deps.hooks.compactSession?.(round.pr) ?? Promise.resolve(), `compact pr-${round.pr}`);
+    if (successorPromoted)
+      this.log(
+        `verdicts: #${round.pr} preserved fresh-head successor after skipped round ${round.round_no}`,
+      );
+    await this.safe(
+      () => this.deps.hooks.compactSession?.(round.pr) ?? Promise.resolve(),
+      `compact pr-${round.pr}`,
+    );
     if (!successorPromoted) await this.flushWakes(round.pr);
     return "settled";
   }
 
-  private async failPostingProof(round: RoundRow, detail: string, stage = "posting_receipt"): Promise<void> {
+  private async failPostingProof(
+    round: RoundRow,
+    detail: string,
+    stage = "posting_receipt",
+  ): Promise<void> {
     const { store, cfg, adapter } = this.deps;
-    store.markRoundCancelled(round.id, `posting receipt failure — ${detail}`, "infrastructure_failure");
+    store.markRoundCancelled(
+      round.id,
+      `posting receipt failure — ${detail}`,
+      "infrastructure_failure",
+    );
     // this round ran a full review and burned its tokens — the
     // receipt is what failed, not the work. It stays in `SUM(est_usd) FROM
     // rounds` like every other row, so it must be measured here too. Its
     // window closes now and no successor is running, so nothing double-counts.
     this.measureUsage(round.pr, round.id, round.started_at, this.now().toISOString());
-    await this.safe(() => adapter.removeLabel(round.pr, cfg.github.in_progress_label), `remove ${cfg.github.in_progress_label} on #${round.pr}`);
+    await this.safe(
+      () => adapter.removeLabel(round.pr, cfg.github.in_progress_label),
+      `remove ${cfg.github.in_progress_label} on #${round.pr}`,
+    );
     const command = store.sessionCommandForRound(round.pr, round.round_no);
     const successor = store.successorFor(round.pr);
     const failure = store.openReviewFailure({
@@ -728,8 +877,13 @@ export class VerdictWatcher {
         file: name,
       });
       if (round && round.status === "running" && (await this.selfRequeue(round, "head_moved"))) {
-        await this.safe(() => adapter.removeLabel(v.pr, cfg.github.in_progress_label), `remove ${cfg.github.in_progress_label} on #${v.pr}`);
-        this.log(`verdicts: #${v.pr} round ${v.round_no} ended head_moved — cancelled and requeued at the fresh head`);
+        await this.safe(
+          () => adapter.removeLabel(v.pr, cfg.github.in_progress_label),
+          `remove ${cfg.github.in_progress_label} on #${v.pr}`,
+        );
+        this.log(
+          `verdicts: #${v.pr} round ${v.round_no} ended head_moved — cancelled and requeued at the fresh head`,
+        );
         return "applied";
       }
       await this.handleAnomaly(
@@ -749,7 +903,12 @@ export class VerdictWatcher {
     // with no running round to cancel) the normal park below stands — the cap
     // guarantees this can never loop. No reviewed-head mark is recorded on
     // this path, so the redo round can dispatch and post at the same head.
-    if (v.verdict === "NEEDS_HUMAN" && round && round.status === "running" && (!v.passes || v.passes.length === 0)) {
+    if (
+      v.verdict === "NEEDS_HUMAN" &&
+      round &&
+      round.status === "running" &&
+      (!v.passes || v.passes.length === 0)
+    ) {
       store.logEvent("needs_human_incomplete", v.pr, {
         round_id: round.id,
         round_no: v.round_no,
@@ -757,8 +916,13 @@ export class VerdictWatcher {
         passes_reported: v.passes ? 0 : null,
       });
       if (await this.selfRequeue(round, "needs_human_incomplete")) {
-        await this.safe(() => adapter.removeLabel(v.pr, cfg.github.in_progress_label), `remove ${cfg.github.in_progress_label} on #${v.pr}`);
-        this.log(`verdicts: #${v.pr} round ${v.round_no} NEEDS_HUMAN without executed passes — requeued, not parked`);
+        await this.safe(
+          () => adapter.removeLabel(v.pr, cfg.github.in_progress_label),
+          `remove ${cfg.github.in_progress_label} on #${v.pr}`,
+        );
+        this.log(
+          `verdicts: #${v.pr} round ${v.round_no} NEEDS_HUMAN without executed passes — requeued, not parked`,
+        );
         return "applied";
       }
     }
@@ -766,24 +930,36 @@ export class VerdictWatcher {
     if (round) {
       const proof = await this.postingProof(round, v);
       if (proof.kind === "waiting") {
-        store.logEvent("verdict_waiting_posting_receipt", v.pr, { round_no: v.round_no, posting_key: round.posting_key });
+        store.logEvent("verdict_waiting_posting_receipt", v.pr, {
+          round_no: v.round_no,
+          posting_key: round.posting_key,
+        });
         return "waiting";
       }
       if (proof.kind === "skipped") {
         // guard 2 refused the post. The verdict in this file was never
         // published and is never applied — no label, no transition from it, no
         // reviewed-head mark, no escalation. The file is archived by the caller.
-        return (await this.settleGuardedNoop(round, proof.noop!, "verdict", v)) === "failed" ? "failed" : "applied";
+        return (await this.settleGuardedNoop(round, proof.noop!, "verdict", v)) === "failed"
+          ? "failed"
+          : "applied";
       }
       if (proof.kind === "failed") {
         await this.failPostingProof(round, proof.detail ?? "posting receipt invalid");
         return "failed";
       }
-      if (proof.kind === "legacy") store.logEvent("posting_receipt_legacy_unknown", v.pr, { round_no: v.round_no });
+      if (proof.kind === "legacy")
+        store.logEvent("posting_receipt_legacy_unknown", v.pr, { round_no: v.round_no });
     }
 
-    await this.safe(() => adapter.removeLabel(v.pr, cfg.github.in_progress_label), `remove ${cfg.github.in_progress_label} on #${v.pr}`);
-    await this.safe(() => adapter.addLabel(v.pr, cfg.github.reviewed_label), `add ${cfg.github.reviewed_label} on #${v.pr}`);
+    await this.safe(
+      () => adapter.removeLabel(v.pr, cfg.github.in_progress_label),
+      `remove ${cfg.github.in_progress_label} on #${v.pr}`,
+    );
+    await this.safe(
+      () => adapter.addLabel(v.pr, cfg.github.reviewed_label),
+      `add ${cfg.github.reviewed_label} on #${v.pr}`,
+    );
 
     // spend_usd from the file is fiction (template echo) — never stored; the
     // measured figures land via recordRoundUsage below.
@@ -805,7 +981,13 @@ export class VerdictWatcher {
     // plan, and flag plan≠executed. Best-effort side channel — nothing in it
     // may disturb the verdict.
     if (round) await this.recordPassTelemetry(v, round);
-    applyEvent(store, v.pr, { type: "verdict", verdict: v.verdict }, { head_sha: v.head_sha }, { botLogin: cfg.github.bot_login, now: () => this.now(), reason: `verdict:${v.verdict}` });
+    applyEvent(
+      store,
+      v.pr,
+      { type: "verdict", verdict: v.verdict },
+      { head_sha: v.head_sha },
+      { botLogin: cfg.github.bot_login, now: () => this.now(), reason: `verdict:${v.verdict}` },
+    );
     store.logEvent("verdict_applied", v.pr, {
       file: name,
       round_id: round?.id ?? null,
@@ -817,8 +999,16 @@ export class VerdictWatcher {
     // The reviewed-head mark: this head has now been reviewed and
     // decided. Read by the no-new-evidence guard at dispatch and at posting
     // time, and by the post-approval delta recheck.
-    if (v.head_sha) store.recordReviewedHead(v.pr, { head_sha: v.head_sha, verdict: v.verdict, round_no: v.round_no });
-    store.recoverReviewFailure(v.pr, "verdict-applied", { round_no: v.round_no, head_sha: v.head_sha });
+    if (v.head_sha)
+      store.recordReviewedHead(v.pr, {
+        head_sha: v.head_sha,
+        verdict: v.verdict,
+        round_no: v.round_no,
+      });
+    store.recoverReviewFailure(v.pr, "verdict-applied", {
+      round_no: v.round_no,
+      head_sha: v.head_sha,
+    });
     // The withheld-approval mark, session route. The session posted
     // its review as a COMMENT because CI was not green at this head; the mark
     // is what notices when CI goes green and re-queues the PR (cigate.ts).
@@ -838,7 +1028,11 @@ export class VerdictWatcher {
         }
       }
       store.recordApprovalWithheld(v.pr, { head_sha: v.head_sha, reason: "red-ci", ci_state: ci });
-      store.logEvent("approval_withheld_red_ci", v.pr, { head_sha: v.head_sha, source: "verdict", ci_state: ci });
+      store.logEvent("approval_withheld_red_ci", v.pr, {
+        head_sha: v.head_sha,
+        source: "verdict",
+        ci_state: ci,
+      });
     } else {
       store.clearApprovalWithheld(v.pr);
     }
@@ -884,7 +1078,10 @@ export class VerdictWatcher {
     // Round is over: compact the sticky conversation. Cache re-reads of the
     // ever-growing prefix were 41% of measured cost; the continuity that
     // matters (SETTLED digest, ledger) survives compaction by design.
-    await this.safe(() => this.deps.hooks.compactSession?.(v.pr) ?? Promise.resolve(), `compact pr-${v.pr}`);
+    await this.safe(
+      () => this.deps.hooks.compactSession?.(v.pr) ?? Promise.resolve(),
+      `compact pr-${v.pr}`,
+    );
     // Ledger freshness: AFTER compaction, so ledger-pin's mirror has
     // had its chance — and DELAYED, because compactSession only sends the
     // keystrokes: the pane is still compacting when apply continues, and a
@@ -901,7 +1098,10 @@ export class VerdictWatcher {
     const planned = round?.lenses ? round.lenses.split(",").filter(Boolean) : [];
     const roundId = round?.id ?? null;
     const tail = async (): Promise<void> => {
-      await this.safe(() => this.checkLedger(v.pr, v.round_no, v.head_sha), `ledger check pr-${v.pr}`);
+      await this.safe(
+        () => this.checkLedger(v.pr, v.round_no, v.head_sha),
+        `ledger check pr-${v.pr}`,
+      );
       await this.safe(
         () => this.checkFindingsRecord(v.pr, v.round_no, roundId, v.head_sha, planned),
         `findings record check pr-${v.pr}`,
@@ -946,7 +1146,11 @@ export class VerdictWatcher {
     const facts: EscalationFacts = {
       changed_paths: await this.escalationPaths(v.pr),
       labels: await this.escalationLabels(v.pr),
-      findings: this.escalationFindings(v.pr, v.round_no, cfg.rules.some((r) => r.min_severity !== "")),
+      findings: this.escalationFindings(
+        v.pr,
+        v.round_no,
+        cfg.rules.some((r) => r.min_severity !== ""),
+      ),
       failing_checks: await this.escalationFailingChecks(v.pr, v.head_sha),
     };
 
@@ -960,8 +1164,15 @@ export class VerdictWatcher {
     // silent: the operator configured it, it matched, and they would otherwise
     // have no way to see why nobody was told.
     const ruleRequests = evaluateEscalationRules(cfg, facts, (rule, refusal) => {
-      store.logEvent("escalation_rule_refused", v.pr, { rule: rule.name, to: rule.to, refusal, round_no: v.round_no });
-      this.log(`escalation: rule "${rule.name}" fired on #${v.pr} but produced nothing — ${refusal}`);
+      store.logEvent("escalation_rule_refused", v.pr, {
+        rule: rule.name,
+        to: rule.to,
+        refusal,
+        round_no: v.round_no,
+      });
+      this.log(
+        `escalation: rule "${rule.name}" fired on #${v.pr} but produced nothing — ${refusal}`,
+      );
     });
     const sessionCandidates = cfg.session_judgement ? (v.escalations ?? []) : [];
     if (ruleRequests.length === 0 && sessionCandidates.length === 0) return;
@@ -971,7 +1182,9 @@ export class VerdictWatcher {
         store,
         adapter: {
           createReview: adapter.createReview.bind(adapter),
-          ...(adapter.requestEscalationReview ? { requestEscalationReview: adapter.requestEscalationReview.bind(adapter) } : {}),
+          ...(adapter.requestEscalationReview
+            ? { requestEscalationReview: adapter.requestEscalationReview.bind(adapter) }
+            : {}),
         },
         log: this.log.bind(this),
       },
@@ -1050,15 +1263,23 @@ export class VerdictWatcher {
     const dir = this.deps.findingsDir;
     if (!dir) {
       if (needed) {
-        this.deps.store.logEvent("escalation_findings_unavailable", pr, { round_no: roundNo, reason: "no findings dir configured" });
+        this.deps.store.logEvent("escalation_findings_unavailable", pr, {
+          round_no: roundNo,
+          reason: "no findings dir configured",
+        });
       }
       return [];
     }
     const parsed = readFindingsRecord(findingsRecordPath(dir, pr, roundNo), pr, roundNo);
     if (!parsed.record) {
       if (needed) {
-        this.log(`escalation: no reasoning record for #${pr} round ${roundNo} — severity rules cannot fire`);
-        this.deps.store.logEvent("escalation_findings_unavailable", pr, { round_no: roundNo, reason: parsed.status });
+        this.log(
+          `escalation: no reasoning record for #${pr} round ${roundNo} — severity rules cannot fire`,
+        );
+        this.deps.store.logEvent("escalation_findings_unavailable", pr, {
+          round_no: roundNo,
+          reason: parsed.status,
+        });
       }
       return [];
     }
@@ -1074,7 +1295,13 @@ export class VerdictWatcher {
     if (!this.deps.adapter.listChecks || !head) return [];
     try {
       return latestRunPerName(await this.deps.adapter.listChecks(head))
-        .filter((c) => c.status === "completed" && (c.conclusion ?? "") !== "success" && (c.conclusion ?? "") !== "skipped" && (c.conclusion ?? "") !== "neutral")
+        .filter(
+          (c) =>
+            c.status === "completed" &&
+            (c.conclusion ?? "") !== "success" &&
+            (c.conclusion ?? "") !== "skipped" &&
+            (c.conclusion ?? "") !== "neutral",
+        )
         .map((c) => c.name);
     } catch (err) {
       this.log(`escalation: checks read failed on #${pr}`, err);
@@ -1144,8 +1371,13 @@ export class VerdictWatcher {
       if (!v.passes) {
         // Old-prompt session (or the session reported nothing usable): the
         // record stays NULL = unknown, distinct from [] = "ran zero passes".
-        store.logEvent("verdict_passes_unknown", v.pr, { round_id: round.id, round_no: v.round_no });
-        this.log(`verdicts: #${v.pr} round ${v.round_no} executed passes unknown (no telemetry in verdict)`);
+        store.logEvent("verdict_passes_unknown", v.pr, {
+          round_id: round.id,
+          round_no: v.round_no,
+        });
+        this.log(
+          `verdicts: #${v.pr} round ${v.round_no} executed passes unknown (no telemetry in verdict)`,
+        );
         return;
       }
       store.recordExecutedPasses(round.id, v.passes);
@@ -1154,12 +1386,16 @@ export class VerdictWatcher {
       let planned = legacyPlanned;
       let missing: string[];
       let unknownAdditions: string[] = [];
-      let missingReason: string[] = [];
-      let wrongTier: string[] = [];
-      let allowedAdditions: Array<{ name: string; tier: string | null; reason: string }> = [];
+      const missingReason: string[] = [];
+      const wrongTier: string[] = [];
+      const allowedAdditions: Array<{ name: string; tier: string | null; reason: string }> = [];
 
       if (round.pass_plan && round.addable_passes) {
-        const plan = JSON.parse(round.pass_plan) as Array<{ lens: string; tier: string; raisable_to?: string[] }>;
+        const plan = JSON.parse(round.pass_plan) as Array<{
+          lens: string;
+          tier: string;
+          raisable_to?: string[];
+        }>;
         const addable = JSON.parse(round.addable_passes) as Array<{ lens: string; tier: string }>;
         planned = plan.map((p) => p.lens);
         missing = planned.filter((lens) => !executed.includes(lens));
@@ -1168,7 +1404,10 @@ export class VerdictWatcher {
         for (const pass of v.passes) {
           const plannedPass = byPlan.get(pass.name);
           if (plannedPass) {
-            const tiers = [plannedPass.tier, ...(plannedPass.raisable_to ?? []).map((agent) => agent.split("--").at(-1)!)];
+            const tiers = [
+              plannedPass.tier,
+              ...(plannedPass.raisable_to ?? []).map((agent) => agent.split("--").at(-1)!),
+            ];
             if (!pass.tier || !tiers.includes(pass.tier)) wrongTier.push(pass.name);
             continue;
           }
@@ -1191,22 +1430,38 @@ export class VerdictWatcher {
 
       if (allowedAdditions.length > 0) {
         store.logEvent("pass_plan_conformant_addition", v.pr, {
-          round_id: round.id, round_no: v.round_no, additions: allowedAdditions,
+          round_id: round.id,
+          round_no: v.round_no,
+          additions: allowedAdditions,
         });
       }
-      const violations = missing.length + unknownAdditions.length + missingReason.length + wrongTier.length;
+      const violations =
+        missing.length + unknownAdditions.length + missingReason.length + wrongTier.length;
       if (violations === 0) return;
       store.logEvent("pass_plan_mismatch", v.pr, {
-        round_id: round.id, round_no: v.round_no, planned, executed, missing,
+        round_id: round.id,
+        round_no: v.round_no,
+        planned,
+        executed,
+        missing,
         added: unknownAdditions,
-        unknown_additions: unknownAdditions, missing_reason: missingReason,
-        wrong_tier: wrongTier, allowed_additions: allowedAdditions,
+        unknown_additions: unknownAdditions,
+        missing_reason: missingReason,
+        wrong_tier: wrongTier,
+        allowed_additions: allowedAdditions,
       });
       this.log(`verdicts: #${v.pr} round ${v.round_no} pass plan mismatch`, {
-        planned, executed, missing, unknownAdditions, missingReason, wrongTier,
+        planned,
+        executed,
+        missing,
+        unknownAdditions,
+        missingReason,
+        wrongTier,
       });
       store.logAnomaly(
-        "pass_plan_mismatch", v.pr, v.round_no,
+        "pass_plan_mismatch",
+        v.pr,
+        v.round_no,
         `pass policy violated` +
           `${missing.length ? `; missing ${missing.join(",")}` : ""}` +
           `${unknownAdditions.length ? `; unknown ${unknownAdditions.join(",")}` : ""}` +
@@ -1217,8 +1472,12 @@ export class VerdictWatcher {
           `Planned: ${planned.join(", ") || "(none)"}`,
           `Executed: ${executed.join(", ") || "(none — solo/degraded round)"}`,
           ...(missing.length ? [`Missing planned passes: ${missing.join(", ")}`] : []),
-          ...(unknownAdditions.length ? [`Not in the dispatched addable set: ${unknownAdditions.join(", ")}`] : []),
-          ...(missingReason.length ? [`Allowed additions missing structured reason: ${missingReason.join(", ")}`] : []),
+          ...(unknownAdditions.length
+            ? [`Not in the dispatched addable set: ${unknownAdditions.join(", ")}`]
+            : []),
+          ...(missingReason.length
+            ? [`Allowed additions missing structured reason: ${missingReason.join(", ")}`]
+            : []),
           ...(wrongTier.length ? [`Passes at a non-authorized tier: ${wrongTier.join(", ")}`] : []),
           "The verdict stands — this is telemetry, not a veto.",
         ].join("\n"),
@@ -1316,7 +1575,8 @@ export class VerdictWatcher {
       // pi's own per-record usage.cost.total is the primary source (verified
       // live on the VM); the config price table is only the fallback for
       // windows whose records carried no cost object.
-      const pricing: Record<string, ModelPricing> = this.deps.usage?.pricing ?? cfg.models.pricing ?? {};
+      const pricing: Record<string, ModelPricing> =
+        this.deps.usage?.pricing ?? cfg.models.pricing ?? {};
       const est = usage.cost_usd ?? estimateUsd(usage.models, pricing);
       store.recordRoundUsage(roundId, {
         tokens_in: usage.tokens_in,
@@ -1338,7 +1598,10 @@ export class VerdictWatcher {
       if (violations.length > 0) {
         const commands = violations.map((v) => v.command);
         store.logEvent("exec_policy_violation", pr, { commands, violations });
-        this.execViolations.set(pr, violations.map((v) => `${v.kind}: ${v.command}`));
+        this.execViolations.set(
+          pr,
+          violations.map((v) => `${v.kind}: ${v.command}`),
+        );
         this.log(`verdicts: #${pr} exec-policy violations`, violations);
       }
     } catch (err) {
@@ -1350,7 +1613,12 @@ export class VerdictWatcher {
    * the PR returned to its standing-verdict state (the owner, 2026-08-19: no
    * park — the AI keeps driving). Never an approve path: "tracked" here means
    * "no work owed", not approved. */
-  private async handleAnomaly(pr: number, roundNo: number | null, message: string, kind: "malformed" | "overdue"): Promise<void> {
+  private async handleAnomaly(
+    pr: number,
+    roundNo: number | null,
+    message: string,
+    kind: "malformed" | "overdue",
+  ): Promise<void> {
     const { cfg, store, adapter } = this.deps;
     const round = this.runningRound(pr, roundNo ?? undefined);
     if (round && round.status === "running") {
@@ -1368,10 +1636,19 @@ export class VerdictWatcher {
 
     // The in-progress label must not stick, but the "Automatic Review" label is
     // deliberately NOT applied — no review was soundly produced.
-    await this.safe(() => adapter.removeLabel(pr, cfg.github.in_progress_label), `remove ${cfg.github.in_progress_label} on #${pr}`);
+    await this.safe(
+      () => adapter.removeLabel(pr, cfg.github.in_progress_label),
+      `remove ${cfg.github.in_progress_label} on #${pr}`,
+    );
 
     const standing = standingVerdict(store.reviewedHead(pr));
-    applyEvent(store, pr, { type: "round_overdue", standing }, {}, { botLogin: cfg.github.bot_login, now: () => this.now(), reason: `anomaly:${kind}` });
+    applyEvent(
+      store,
+      pr,
+      { type: "round_overdue", standing },
+      {},
+      { botLogin: cfg.github.bot_login, now: () => this.now(), reason: `anomaly:${kind}` },
+    );
     const command = round ? store.sessionCommandForRound(pr, round.round_no) : undefined;
     const successor = store.successorFor(pr);
     const failure = store.openReviewFailure({
@@ -1408,12 +1685,20 @@ export class VerdictWatcher {
         `No review was produced: work remains owed as ${failure.incident_id} (never an approve). No reviewer was requested on GitHub.`,
         "Press u on the board to clear the FAILED_LOUD hold and rerun, or restart the session deliberately.",
         ...(pendingViolations && pendingViolations.length > 0
-          ? [`Also: exec-policy violations were audited on this PR — ${pendingViolations.join(" · ")}`]
+          ? [
+              `Also: exec-policy violations were audited on this PR — ${pendingViolations.join(" · ")}`,
+            ]
           : []),
       ].join("\n"),
     );
     await this.announceSafe((a) =>
-      a.anomaly({ pr, round_no: roundNo, kind, deadline_min: cfg.daemon.round_deadline_min, incident_id: failure.incident_id }),
+      a.anomaly({
+        pr,
+        round_no: roundNo,
+        kind,
+        deadline_min: cfg.daemon.round_deadline_min,
+        incident_id: failure.incident_id,
+      }),
     );
     // FAILED_LOUD review debt owns the session ordering until an operator
     // presses u. Held conversation cannot overtake work that is still owed.
@@ -1500,7 +1785,11 @@ export class VerdictWatcher {
     await this.safe(
       () =>
         flushHeldWakes(
-          { store: this.deps.store, inject: (n, message) => this.deps.hooks.inject(n, message), log: this.log.bind(this) },
+          {
+            store: this.deps.store,
+            inject: (n, message) => this.deps.hooks.inject(n, message),
+            log: this.log.bind(this),
+          },
           pr,
         ),
       `flush held wakes on #${pr}`,
@@ -1530,7 +1819,8 @@ export class VerdictWatcher {
     } catch {
       return "not_stuck";
     }
-    if (existsSync(join(this.deps.verdictDir, `pr-${round.pr}-round-${round.round_no}.json`))) return "verdict_pending";
+    if (existsSync(join(this.deps.verdictDir, `pr-${round.pr}-round-${round.round_no}.json`)))
+      return "verdict_pending";
     if (dead) return "dead";
     // A LIVE session that never received the order is not wedged — it is idle,
     // waiting for work that was thrown away in transit (#5362, where the
@@ -1542,7 +1832,12 @@ export class VerdictWatcher {
       try {
         const startedMs = Date.parse(round.started_at);
         const accepted = Number.isFinite(startedMs)
-          ? await this.deps.hooks.roundPromptAccepted.call(this.deps.hooks, round.pr, round.round_no, startedMs)
+          ? await this.deps.hooks.roundPromptAccepted.call(
+              this.deps.hooks,
+              round.pr,
+              round.round_no,
+              startedMs,
+            )
           : null;
         if (accepted === false) return "never_delivered";
       } catch {
@@ -1581,7 +1876,10 @@ export class VerdictWatcher {
         // the session was refused by guard 2 and stopped without a
         // verdict file. The round is over and nothing is owed; the delivered
         // command stays whatever it is (an acked command proved delivery).
-        return (await this.settleGuardedNoop(round, proof.noop!, "settled_without_verdict")) === "failed" ? "failed_loud" : "settled";
+        return (await this.settleGuardedNoop(round, proof.noop!, "settled_without_verdict")) ===
+          "failed"
+          ? "failed_loud"
+          : "settled";
       }
       if (proof.kind === "confirmed") {
         await this.failPostingProof(
@@ -1605,7 +1903,8 @@ export class VerdictWatcher {
     const head = this.deps.store.getPr(pr)?.head_sha ?? "";
     const cap = this.deps.cfg.daemon.max_self_requeues ?? DEFAULT_MAX_SELF_REQUEUES;
     if (selfRequeuesSpent(this.deps.store.selfRequeueSpend(pr, head)) >= cap) {
-      const mode = stage === "settled_without_verdict" ? "infrastructure_settled" : "infrastructure_active";
+      const mode =
+        stage === "settled_without_verdict" ? "infrastructure_settled" : "infrastructure_active";
       if (mode === "infrastructure_active" && !this.deps.hooks.killSession) return "retryable";
       if (mode === "infrastructure_active") {
         try {
@@ -1623,7 +1922,11 @@ export class VerdictWatcher {
       // The old parent is now fenced (or had already settled), so this read is
       // definitive. A verdict that won before the fence stays the sweep's.
       if (existsSync(join(this.deps.verdictDir, `pr-${pr}-round-${roundNo}.json`))) {
-        this.deps.store.logEvent("round_stage_verdict_won", pr, { round_id: round.id, round_no: roundNo, mode });
+        this.deps.store.logEvent("round_stage_verdict_won", pr, {
+          round_id: round.id,
+          round_no: roundNo,
+          mode,
+        });
         return "retryable";
       }
       const command = this.deps.store.sessionCommandForRound(pr, roundNo);
@@ -1675,7 +1978,13 @@ export class VerdictWatcher {
         }`,
       );
       await this.announceSafe((a) =>
-        a.anomaly({ pr, round_no: roundNo, kind: "failed_loud", deadline_min: this.deps.cfg.daemon.round_deadline_min, incident_id: failure.incident_id }),
+        a.anomaly({
+          pr,
+          round_no: roundNo,
+          kind: "failed_loud",
+          deadline_min: this.deps.cfg.daemon.round_deadline_min,
+          incident_id: failure.incident_id,
+        }),
       );
       return "exhausted";
     }
@@ -1714,7 +2023,8 @@ export class VerdictWatcher {
     return {
       stage,
       source_command_id: command.id,
-      retry_epoch: this.deps.store.roundRecoveryInstruction(round.pr, round.round_no)?.retry_epoch ?? 0,
+      retry_epoch:
+        this.deps.store.roundRecoveryInstruction(round.pr, round.round_no)?.retry_epoch ?? 0,
     };
   }
 
@@ -1754,15 +2064,30 @@ export class VerdictWatcher {
                 ? `round ${round.round_no} failed a bounded daemon→Pi infrastructure stage before any merits verdict — redispatching through the ordinary pump`
                 : `round ${round.round_no} verdicted NEEDS_HUMAN without executing any passes — the review was not done, so it is redone rather than handed to a person`;
     if (mode === "infrastructure_active" && !this.deps.hooks.killSession) {
-      store.logEvent("session_recovery_kill_unavailable", round.pr, { round_id: round.id, round_no: round.round_no, mode });
+      store.logEvent("session_recovery_kill_unavailable", round.pr, {
+        round_id: round.id,
+        round_no: round.round_no,
+        mode,
+      });
       return false;
     }
-    if ((mode === "alive_stuck" || mode === "infrastructure_active") && this.deps.hooks.killSession) {
+    if (
+      (mode === "alive_stuck" || mode === "infrastructure_active") &&
+      this.deps.hooks.killSession
+    ) {
       try {
         await this.deps.hooks.killSession.call(this.deps.hooks, round.pr);
       } catch (error) {
-        store.logEvent("session_recovery_kill_failed", round.pr, { round_id: round.id, round_no: round.round_no, mode, error: String(error) });
-        this.log(`verdicts: refusing ${mode} requeue for #${round.pr}; old session could not be stopped`, error);
+        store.logEvent("session_recovery_kill_failed", round.pr, {
+          round_id: round.id,
+          round_no: round.round_no,
+          mode,
+          error: String(error),
+        });
+        this.log(
+          `verdicts: refusing ${mode} requeue for #${round.pr}; old session could not be stopped`,
+          error,
+        );
         return false;
       }
     }
@@ -1772,7 +2097,11 @@ export class VerdictWatcher {
       // parent, all writes are already over. A verdict that won this race is
       // left to the 10s sweep, never cancelled/quarantined here.
       if (existsSync(join(this.deps.verdictDir, `pr-${round.pr}-round-${round.round_no}.json`))) {
-        store.logEvent("round_stage_verdict_won", round.pr, { round_id: round.id, round_no: round.round_no, mode });
+        store.logEvent("round_stage_verdict_won", round.pr, {
+          round_id: round.id,
+          round_no: round.round_no,
+          mode,
+        });
         return false;
       }
       if (this.runningRound(round.pr, round.round_no)?.status !== "running") return true;
@@ -1786,12 +2115,16 @@ export class VerdictWatcher {
       cause,
       fallback_head_sha: head,
       trigger_ts: this.now().toISOString(),
-      ...(recovery ? { recovery: {
-        stage: recovery.stage,
-        source_command_id: recovery.source_command_id,
-        immediate_attempt: attempt,
-        retry_epoch: recovery.retry_epoch,
-      } } : {}),
+      ...(recovery
+        ? {
+            recovery: {
+              stage: recovery.stage,
+              source_command_id: recovery.source_command_id,
+              immediate_attempt: attempt,
+              retry_epoch: recovery.retry_epoch,
+            },
+          }
+        : {}),
     });
     if (!publication) return false;
     // a cancelled round burned real tokens and stays in every spend
@@ -1832,7 +2165,9 @@ export class VerdictWatcher {
       });
       return true;
     }
-    this.log(`verdicts: SELF-REQUEUE #${round.pr} round ${round.round_no} attempt ${attempt}/${cap} — ${reason}`);
+    this.log(
+      `verdicts: SELF-REQUEUE #${round.pr} round ${round.round_no} attempt ${attempt}/${cap} — ${reason}`,
+    );
     await this.safe(
       () =>
         this.deps.hooks.injectOverseer(
@@ -1884,7 +2219,8 @@ export class VerdictWatcher {
     const startedMs = Date.parse(round.started_at);
     if (!Number.isFinite(startedMs) || nowMs - startedMs < graceMs) return;
     if (store.hasLaterRound(round.pr, round.round_no)) return; // superseded — the deadline sweep owns that case
-    if (existsSync(join(this.deps.verdictDir, `pr-${round.pr}-round-${round.round_no}.json`))) return;
+    if (existsSync(join(this.deps.verdictDir, `pr-${round.pr}-round-${round.round_no}.json`)))
+      return;
     const clearSilent = (): void => {
       if (round.silent_since) store.clearRoundSilent(round.id);
     };
@@ -1893,7 +2229,12 @@ export class VerdictWatcher {
         clearSilent(); // bridge still holding/retrying — patience, not loss
         return;
       }
-      const accepted = await hooks.roundPromptAccepted.call(hooks, round.pr, round.round_no, startedMs);
+      const accepted = await hooks.roundPromptAccepted.call(
+        hooks,
+        round.pr,
+        round.round_no,
+        startedMs,
+      );
       if (accepted !== false) {
         // true = delivered and the session owns it; null = no evidence either
         // way. Neither is loss.
@@ -1946,7 +2287,9 @@ export class VerdictWatcher {
         );
         return;
       }
-      this.log(`verdicts: #${round.pr} round ${round.round_no} has no saved prompt to redeliver — escalating`);
+      this.log(
+        `verdicts: #${round.pr} round ${round.round_no} has no saved prompt to redeliver — escalating`,
+      );
     }
     // ---- redelivery is spent or impossible: the expensive path -------------
     await this.selfRequeue(round, "lost_prompt");
@@ -1979,11 +2322,20 @@ export class VerdictWatcher {
         continue;
       }
       if (store.hasLaterRound(round.pr, round.round_no)) {
-        store.markRoundCancelled(round.id, `superseded — round ${round.round_no} outlived by a newer round`, "superseded");
-        store.logEvent("round_superseded", round.pr, { round_id: round.id, round_no: round.round_no });
+        store.markRoundCancelled(
+          round.id,
+          `superseded — round ${round.round_no} outlived by a newer round`,
+          "superseded",
+        );
+        store.logEvent("round_superseded", round.pr, {
+          round_id: round.id,
+          round_no: round.round_no,
+        });
         // Slack: "read the newest one" — no existing review is touched, ever
         // (CLAUDE.md hard rule 2); the wording invariant lives in messages.ts.
-        const newest = store.roundsFor(round.pr).reduce((a, b) => (b.round_no > a.round_no ? b : a), round);
+        const newest = store
+          .roundsFor(round.pr)
+          .reduce((a, b) => (b.round_no > a.round_no ? b : a), round);
         await this.announceSafe((a) =>
           a.superseded({
             pr: round.pr,
@@ -1995,7 +2347,10 @@ export class VerdictWatcher {
         this.log(`verdicts: #${round.pr} round ${round.round_no} cancelled (superseded)`);
         continue;
       }
-      if (round.posting_key && !existsSync(join(this.deps.verdictDir, `pr-${round.pr}-round-${round.round_no}.json`))) {
+      if (
+        round.posting_key &&
+        !existsSync(join(this.deps.verdictDir, `pr-${round.pr}-round-${round.round_no}.json`))
+      ) {
         const proof = await this.postingProof(round);
         if (proof.kind === "waiting") continue;
         if (proof.kind === "skipped") {
@@ -2013,14 +2368,19 @@ export class VerdictWatcher {
           continue;
         }
         if (proof.kind === "failed") {
-          await this.failPostingProof(round, proof.detail ?? "round ended without posting confirmation");
+          await this.failPostingProof(
+            round,
+            proof.detail ?? "round ended without posting confirmation",
+          );
           continue;
         }
       }
       const stuck = await this.stuckDisposition(round);
       if (stuck === "verdict_pending") {
         // A real verdict is on disk — the sweep consumes it; do nothing here.
-        this.log(`verdicts: #${round.pr} round ${round.round_no} overdue but its verdict file is pending — leaving it to the sweep`);
+        this.log(
+          `verdicts: #${round.pr} round ${round.round_no} overdue but its verdict file is pending — leaving it to the sweep`,
+        );
         continue;
       }
       // A live session that provably never got the order: deliver it again
@@ -2028,7 +2388,11 @@ export class VerdictWatcher {
       // is spent or impossible does this fall through to the expensive path.
       if (stuck === "never_delivered" && (await this.recoverNeverDelivered(round))) continue;
       const expensive = stuck === "dead" || stuck === "alive_stuck" || stuck === "never_delivered";
-      if (expensive && (await this.selfRequeue(round, stuck === "never_delivered" ? "lost_prompt" : stuck))) continue;
+      if (
+        expensive &&
+        (await this.selfRequeue(round, stuck === "never_delivered" ? "lost_prompt" : stuck))
+      )
+        continue;
       overdue.push(round.pr);
       await this.handleAnomaly(
         round.pr,

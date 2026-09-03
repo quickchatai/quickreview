@@ -5,8 +5,13 @@
 import type { CheckSummary } from "./cigate.js";
 import type { Config } from "./config.js";
 import { CHECK_THIS_RE, DEFERRED_RE } from "./severity.js";
-import { APP_SELF_CONFIG_KINDS, MutationGate, type MutationIntent, type GateResult } from "./gate.js";
-import { TokenMinter, type FetchFn } from "./githubAuth.js";
+import {
+  APP_SELF_CONFIG_KINDS,
+  type MutationGate,
+  type MutationIntent,
+  type GateResult,
+} from "./gate.js";
+import { type TokenMinter, type FetchFn } from "./githubAuth.js";
 
 export interface PrConversation {
   body: string;
@@ -158,9 +163,7 @@ interface RawPrHistory {
   timelineItems?: { nodes?: Array<RawTimelineNode | null> } | null;
 }
 
-export type PrDisposition =
-  | { kind: "open" | "closed"; head_sha: string }
-  | { kind: "absent" };
+export type PrDisposition = { kind: "open" | "closed"; head_sha: string } | { kind: "absent" };
 
 export class GitHubRequestError extends Error {
   constructor(
@@ -213,7 +216,13 @@ export class GitHubAdapter {
 
   // ---- plumbing ----------------------------------------------------------
 
-  private async request<T>(method: string, path: string, body?: unknown, auth: "installation" | "jwt" = "installation", retried = false): Promise<T> {
+  private async request<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    auth: "installation" | "jwt" = "installation",
+    retried = false,
+  ): Promise<T> {
     const token = auth === "jwt" ? this.minter.appJwt() : await this.minter.installationToken();
     const res = await this.fetchFn(`${this.apiBase}${path}`, {
       method,
@@ -229,7 +238,8 @@ export class GitHubAdapter {
       this.minter.invalidate();
       return this.request(method, path, body, auth, true);
     }
-    if (!res.ok) throw new GitHubRequestError(method, path, res.status, (await res.text()).slice(0, 300));
+    if (!res.ok)
+      throw new GitHubRequestError(method, path, res.status, (await res.text()).slice(0, 300));
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
   }
@@ -243,7 +253,8 @@ export class GitHubAdapter {
     });
     if (!res.ok) throw new Error(`graphql → ${res.status}`);
     const payload = (await res.json()) as { data?: T; errors?: unknown[] };
-    if (payload.errors?.length) throw new Error(`graphql errors: ${JSON.stringify(payload.errors).slice(0, 300)}`);
+    if (payload.errors?.length)
+      throw new Error(`graphql errors: ${JSON.stringify(payload.errors).slice(0, 300)}`);
     return payload.data as T;
   }
 
@@ -251,10 +262,15 @@ export class GitHubAdapter {
    * every kind in live mode, and the app-self-config class in
    * dry-run too. The gate, never a call site, makes that decision. */
   executeMutation = async (intent: MutationIntent): Promise<unknown> => {
-    if (intent.method === "git") throw new Error("git pushes are executed by the caller, not the REST executor");
+    if (intent.method === "git")
+      throw new Error("git pushes are executed by the caller, not the REST executor");
     if (intent.path === "/graphql") {
       const body = intent.body as { query?: unknown; variables?: unknown } | undefined;
-      if (typeof body?.query !== "string" || typeof body.variables !== "object" || body.variables === null) {
+      if (
+        typeof body?.query !== "string" ||
+        typeof body.variables !== "object" ||
+        body.variables === null
+      ) {
         throw new Error(`invalid GraphQL mutation intent for ${intent.kind}`);
       }
       return this.graphql(body.query, body.variables as Record<string, unknown>);
@@ -263,7 +279,9 @@ export class GitHubAdapter {
     // GitHub authenticates those routes with the App JWT, not an installation
     // token — the same auth split request() already carries for the
     // /app/hook/deliveries read.
-    const auth = (APP_SELF_CONFIG_KINDS as readonly string[]).includes(intent.kind) ? "jwt" : "installation";
+    const auth = (APP_SELF_CONFIG_KINDS as readonly string[]).includes(intent.kind)
+      ? "jwt"
+      : "installation";
     return this.request(intent.method, intent.path, intent.body, auth);
   };
 
@@ -329,21 +347,25 @@ export class GitHubAdapter {
       closed_at: pr.closedAt ?? null,
       merged_at: pr.mergedAt ?? null,
       merged: Boolean(pr.merged),
-      reviews: (pr.reviews?.nodes ?? []).filter((r): r is RawReviewNode => Boolean(r)).map((r) => ({
-        database_id: r.databaseId ?? 0,
-        state: r.state ?? "",
-        submitted_at: r.submittedAt ?? null,
-        body: r.body ?? "",
-        commit_oid: r.commit?.oid ?? null,
-      })),
-      timeline: (pr.timelineItems?.nodes ?? []).filter((t): t is RawTimelineNode => Boolean(t?.createdAt)).map((t) => ({
-        type: t.__typename ?? "",
-        created_at: t.createdAt!,
-        label: t.label?.name ?? null,
-        actor: t.actor?.login ?? null,
-        requested_team: t.requestedReviewer?.slug ?? null,
-        requested_user: t.requestedReviewer?.login ?? null,
-      })),
+      reviews: (pr.reviews?.nodes ?? [])
+        .filter((r): r is RawReviewNode => Boolean(r))
+        .map((r) => ({
+          database_id: r.databaseId ?? 0,
+          state: r.state ?? "",
+          submitted_at: r.submittedAt ?? null,
+          body: r.body ?? "",
+          commit_oid: r.commit?.oid ?? null,
+        })),
+      timeline: (pr.timelineItems?.nodes ?? [])
+        .filter((t): t is RawTimelineNode => Boolean(t?.createdAt))
+        .map((t) => ({
+          type: t.__typename ?? "",
+          created_at: t.createdAt!,
+          label: t.label?.name ?? null,
+          actor: t.actor?.login ?? null,
+          requested_team: t.requestedReviewer?.slug ?? null,
+          requested_user: t.requestedReviewer?.login ?? null,
+        })),
     };
   }
 
@@ -395,27 +417,33 @@ export class GitHubAdapter {
         throw new Error(`malformed PR #${n} response`);
       }
       const pr = raw as { number?: unknown; state?: unknown; head?: { sha?: unknown } | null };
-      if (pr.number !== n) throw new Error(`PR endpoint #${n} returned number ${String(pr.number)}`);
-      if (pr.state !== "open" && pr.state !== "closed") throw new Error(`unexpected PR #${n} state ${String(pr.state)}`);
+      if (pr.number !== n)
+        throw new Error(`PR endpoint #${n} returned number ${String(pr.number)}`);
+      if (pr.state !== "open" && pr.state !== "closed")
+        throw new Error(`unexpected PR #${n} state ${String(pr.state)}`);
       const head = pr.head?.sha;
-      if (typeof head !== "string" || head.length === 0) throw new Error(`malformed PR #${n} head sha`);
+      if (typeof head !== "string" || head.length === 0)
+        throw new Error(`malformed PR #${n} head sha`);
       return { kind: pr.state, head_sha: head };
     } catch (error) {
       if (!(
-        error instanceof GitHubRequestError
-        && error.method === "GET"
-        && error.path === path
-        && error.status === 404
-      )) throw error;
+        error instanceof GitHubRequestError &&
+        error.method === "GET" &&
+        error.path === path &&
+        error.status === 404
+      ))
+        throw error;
       const repoPath = `/repos/${this.owner}/${this.repo}`;
       const rawRepo = await this.request<unknown>("GET", repoPath);
       if (typeof rawRepo !== "object" || rawRepo === null || Array.isArray(rawRepo)) {
-        throw new Error(`malformed repository proof for ${this.owner}/${this.repo}`);
+        throw new Error(`malformed repository proof for ${this.owner}/${this.repo}`, {
+          cause: error,
+        });
       }
       const fullName = (rawRepo as { full_name?: unknown }).full_name;
       const expected = `${this.owner}/${this.repo}`;
       if (typeof fullName !== "string" || fullName.toLowerCase() !== expected.toLowerCase()) {
-        throw new Error(`repository proof mismatch for ${expected}`);
+        throw new Error(`repository proof mismatch for ${expected}`, { cause: error });
       }
       return { kind: "absent" };
     }
@@ -433,13 +461,20 @@ export class GitHubAdapter {
       body: pr.body ?? "",
       labels: (pr.labels ?? []).map((l: { name: string }) => l.name),
       comments: comments
-        .map((c) => ({ author: c.user?.login ?? "?", body: c.body ?? "", created_at: c.created_at ?? "" }))
+        .map((c) => ({
+          author: c.user?.login ?? "?",
+          body: c.body ?? "",
+          created_at: c.created_at ?? "",
+        }))
         .reverse(),
     };
   }
 
   async listOpenPrs(): Promise<PrRef[]> {
-    const prs = await this.request<any[]>("GET", `/repos/${this.owner}/${this.repo}/pulls?state=open&per_page=100`);
+    const prs = await this.request<any[]>(
+      "GET",
+      `/repos/${this.owner}/${this.repo}/pulls?state=open&per_page=100`,
+    );
     return prs.map((pr) => ({
       number: pr.number,
       title: pr.title,
@@ -456,10 +491,10 @@ export class GitHubAdapter {
   }
 
   async getRequestedReviewers(n: number): Promise<RequestedReviewers> {
-    const res = await this.request<{ users: Array<{ login: string }>; teams: Array<{ slug: string }> }>(
-      "GET",
-      `/repos/${this.owner}/${this.repo}/pulls/${n}/requested_reviewers`,
-    );
+    const res = await this.request<{
+      users: Array<{ login: string }>;
+      teams: Array<{ slug: string }>;
+    }>("GET", `/repos/${this.owner}/${this.repo}/pulls/${n}/requested_reviewers`);
     return { users: res.users.map((u) => u.login), teams: res.teams.map((t) => t.slug) };
   }
 
@@ -532,9 +567,19 @@ export class GitHubAdapter {
     return out;
   }
 
-  async listReviews(n: number): Promise<Array<{ id: number; user: string; state: string; commit_id: string }>> {
-    const res = await this.request<any[]>("GET", `/repos/${this.owner}/${this.repo}/pulls/${n}/reviews?per_page=100`);
-    return res.map((r) => ({ id: r.id, user: r.user?.login ?? "", state: r.state, commit_id: r.commit_id }));
+  async listReviews(
+    n: number,
+  ): Promise<Array<{ id: number; user: string; state: string; commit_id: string }>> {
+    const res = await this.request<any[]>(
+      "GET",
+      `/repos/${this.owner}/${this.repo}/pulls/${n}/reviews?per_page=100`,
+    );
+    return res.map((r) => ({
+      id: r.id,
+      user: r.user?.login ?? "",
+      state: r.state,
+      commit_id: r.commit_id,
+    }));
   }
 
   /** Full review rows (bodies included) — read-only, for compare and
@@ -543,16 +588,21 @@ export class GitHubAdapter {
   async listReviewsFull(n: number): Promise<ReviewFull[]> {
     const out: ReviewFull[] = [];
     for (let page = 1; ; page++) {
-      const res = await this.request<any[]>("GET", `/repos/${this.owner}/${this.repo}/pulls/${n}/reviews?per_page=100&page=${page}`);
-      out.push(...res.map((r) => ({
-        id: r.id,
-        user: r.user?.login ?? "",
-        user_type: r.user?.type ?? "User",
-        state: r.state,
-        body: r.body ?? "",
-        commit_id: r.commit_id,
-        submitted_at: r.submitted_at ?? null,
-      })));
+      const res = await this.request<any[]>(
+        "GET",
+        `/repos/${this.owner}/${this.repo}/pulls/${n}/reviews?per_page=100&page=${page}`,
+      );
+      out.push(
+        ...res.map((r) => ({
+          id: r.id,
+          user: r.user?.login ?? "",
+          user_type: r.user?.type ?? "User",
+          state: r.state,
+          body: r.body ?? "",
+          commit_id: r.commit_id,
+          submitted_at: r.submitted_at ?? null,
+        })),
+      );
       if (res.length < 100) break;
     }
     return out;
@@ -561,7 +611,10 @@ export class GitHubAdapter {
   /** Top-level PR conversation comments — read-only, the sweep's
    * third source (the issues API is where GitHub keeps them). */
   async listIssueComments(n: number): Promise<IssueCommentFull[]> {
-    const res = await this.request<any[]>("GET", `/repos/${this.owner}/${this.repo}/issues/${n}/comments?per_page=100`);
+    const res = await this.request<any[]>(
+      "GET",
+      `/repos/${this.owner}/${this.repo}/issues/${n}/comments?per_page=100`,
+    );
     return res.map((c) => ({
       id: c.id,
       user: c.user?.login ?? "",
@@ -573,7 +626,10 @@ export class GitHubAdapter {
 
   /** Full inline review comments — read-only, for the compare harness. */
   async listReviewCommentsFull(n: number): Promise<ReviewCommentFull[]> {
-    const res = await this.request<any[]>("GET", `/repos/${this.owner}/${this.repo}/pulls/${n}/comments?per_page=100`);
+    const res = await this.request<any[]>(
+      "GET",
+      `/repos/${this.owner}/${this.repo}/pulls/${n}/comments?per_page=100`,
+    );
     return res.map((c) => ({
       id: c.id,
       user: c.user?.login ?? "",
@@ -604,7 +660,15 @@ export class GitHubAdapter {
   async stalenessScan(): Promise<StalePr[]> {
     const q = `repo:${this.cfg.github.repo} is:pr is:open sort:updated-desc`;
     const data = await this.graphql<{
-      search: { nodes: Array<{ number?: number; headRefOid?: string; reviews?: { nodes: Array<{ state: string; submittedAt: string; commit: { oid: string } | null }> } }> };
+      search: {
+        nodes: Array<{
+          number?: number;
+          headRefOid?: string;
+          reviews?: {
+            nodes: Array<{ state: string; submittedAt: string; commit: { oid: string } | null }>;
+          };
+        }>;
+      };
     }>(
       `query ($q: String!, $author: String!) {
         search(query: $q, type: ISSUE, first: 100) {
@@ -627,7 +691,12 @@ export class GitHubAdapter {
       const review = node.reviews?.nodes?.[0];
       if (!review?.commit) continue;
       if (review.commit.oid !== node.headRefOid) {
-        stale.push({ number: node.number, head_sha: node.headRefOid, approved_sha: review.commit.oid, approved_at: review.submittedAt });
+        stale.push({
+          number: node.number,
+          head_sha: node.headRefOid,
+          approved_sha: review.commit.oid,
+          approved_at: review.submittedAt,
+        });
       }
     }
     return stale;
@@ -635,7 +704,9 @@ export class GitHubAdapter {
 
   // ---- webhook redeliveries (JWT) ----------------------------------------
 
-  async listWebhookDeliveries(perPage = 100): Promise<Array<{ id: number; guid: string; status: string; delivered_at: string }>> {
+  async listWebhookDeliveries(
+    perPage = 100,
+  ): Promise<Array<{ id: number; guid: string; status: string; delivered_at: string }>> {
     return this.request("GET", `/app/hook/deliveries?per_page=${perPage}`, undefined, "jwt");
   }
 
@@ -650,7 +721,11 @@ export class GitHubAdapter {
       undefined,
       "jwt",
     );
-    return { url: res.url ?? "", content_type: res.content_type ?? "", insecure_ssl: res.insecure_ssl ?? "" };
+    return {
+      url: res.url ?? "",
+      content_type: res.content_type ?? "",
+      insecure_ssl: res.insecure_ssl ?? "",
+    };
   }
 
   /**
@@ -697,7 +772,8 @@ export class GitHubAdapter {
       // 404 ("Label does not exist") is idempotent success, not an error.
       // Recurring live noise: a label consumed by an earlier failed-dispatch
       // cycle 404s on the retry (#5309/#5314, 2026-08-19).
-      if (String(err).includes("404")) return { executed: false, response: { already_absent: label } };
+      if (String(err).includes("404"))
+        return { executed: false, response: { already_absent: label } };
       throw err;
     }
   }
@@ -756,7 +832,12 @@ export class GitHubAdapter {
 
   async createReview(
     n: number,
-    payload: { commit_id: string; event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"; body: string; comments?: unknown[] },
+    payload: {
+      commit_id: string;
+      event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
+      body: string;
+      comments?: unknown[];
+    },
     options?: { purpose?: "migration_precheck" | "escalation" },
   ): Promise<GateResult> {
     return this.gate.execute({
@@ -787,7 +868,10 @@ export class GitHubAdapter {
   async resolveOwnReviewThread(
     n: number,
     rootCommentId: number,
-  ): Promise<{ skipped: "already-resolved" | "check-this-human-only" | "deferred-human-only" | null; result?: GateResult }> {
+  ): Promise<{
+    skipped: "already-resolved" | "check-this-human-only" | "deferred-human-only" | null;
+    result?: GateResult;
+  }> {
     const query = `query ($owner: String!, $repo: String!, $number: Int!, $after: String) {
       repository(owner: $owner, name: $repo) {
         pullRequest(number: $number) {
@@ -799,21 +883,41 @@ export class GitHubAdapter {
       }
     }`;
     type ThreadPage = {
-      repository?: { pullRequest?: { reviewThreads?: {
-        nodes: Array<{ id: string; isResolved: boolean; comments: { nodes: Array<{ databaseId: number; author?: { login?: string }; body?: string }> } }>;
-        pageInfo: { hasNextPage: boolean; endCursor: string | null };
-      } } };
+      repository?: {
+        pullRequest?: {
+          reviewThreads?: {
+            nodes: Array<{
+              id: string;
+              isResolved: boolean;
+              comments: {
+                nodes: Array<{ databaseId: number; author?: { login?: string }; body?: string }>;
+              };
+            }>;
+            pageInfo: { hasNextPage: boolean; endCursor: string | null };
+          };
+        };
+      };
     };
     let after: string | null = null;
     let found: { id: string; isResolved: boolean; author: string; body: string } | undefined;
     do {
-      const data: ThreadPage = await this.graphql(query, { owner: this.owner, repo: this.repo, number: n, after });
+      const data: ThreadPage = await this.graphql(query, {
+        owner: this.owner,
+        repo: this.repo,
+        number: n,
+        after,
+      });
       const threads = data.repository?.pullRequest?.reviewThreads;
       if (!threads) throw new Error(`review threads unavailable for #${n}`);
       for (const thread of threads.nodes) {
         const root = thread.comments.nodes[0];
         if (root?.databaseId === rootCommentId) {
-          found = { id: thread.id, isResolved: thread.isResolved, author: root.author?.login ?? "", body: root.body ?? "" };
+          found = {
+            id: thread.id,
+            isResolved: thread.isResolved,
+            author: root.author?.login ?? "",
+            body: root.body ?? "",
+          };
           break;
         }
       }
@@ -827,12 +931,17 @@ export class GitHubAdapter {
     // bare App slug. Both values are independently configured; recognize
     // exactly that pair here and nowhere else. Every unrelated identity stays
     // structurally refused.
-    const bareAppActor = this.cfg.github.bot_login === `${this.cfg.github.app_slug}[bot]`
-      ? this.cfg.github.app_slug
-      : undefined;
-    const ownActors = new Set([this.cfg.github.bot_login, bareAppActor].filter((v): v is string => v !== undefined));
+    const bareAppActor =
+      this.cfg.github.bot_login === `${this.cfg.github.app_slug}[bot]`
+        ? this.cfg.github.app_slug
+        : undefined;
+    const ownActors = new Set(
+      [this.cfg.github.bot_login, bareAppActor].filter((v): v is string => v !== undefined),
+    );
     if (!ownActors.has(found.author)) {
-      throw new Error(`refusing to resolve thread ${rootCommentId} on #${n}: root author is ${found.author || "unknown"}`);
+      throw new Error(
+        `refusing to resolve thread ${rootCommentId} on #${n}: root author is ${found.author || "unknown"}`,
+      );
     }
     // addendum (the owner, 2026-08-19): a "[check this]" thread exists to
     // force a human's eyes before merge (repo rule: every conversation must be

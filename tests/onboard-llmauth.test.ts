@@ -12,11 +12,25 @@
 //   - OAuth verification proves the token landed on the container's persistent
 //     pi home, not merely that a login happened;
 //   - NO credential value ever reaches an argv, the checklist, or a message.
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { OnboardingEngine, readChecklist, type OnboardAdapters, type ProcessResult } from "../src/onboard/engine.js";
+import {
+  OnboardingEngine,
+  readChecklist,
+  type OnboardAdapters,
+  type ProcessResult,
+} from "../src/onboard/engine.js";
 import {
   API_PREFIX,
   AUTH_ROUTE_CHOICE_KEY,
@@ -121,7 +135,11 @@ interface World {
   noDocker?: boolean;
 }
 
-function fakeAdapters(world: World = {}, calls: string[][] = [], answers: string[] = []): OnboardAdapters {
+function fakeAdapters(
+  world: World = {},
+  calls: string[][] = [],
+  answers: string[] = [],
+): OnboardAdapters {
   const containers = world.containers ?? {};
   const adapters: OnboardAdapters = {
     fetch: (() => {
@@ -137,7 +155,13 @@ function fakeAdapters(world: World = {}, calls: string[][] = [], answers: string
           const c = containers[name];
           if (!c) return { code: 1, stdout: "", stderr: `Error: No such object: ${name}` };
           const mounts = c.piHome
-            ? [{ Type: c.mountType ?? "volume", Name: c.mountName ?? "some-pihome", Destination: c.piHome }]
+            ? [
+                {
+                  Type: c.mountType ?? "volume",
+                  Name: c.mountName ?? "some-pihome",
+                  Destination: c.piHome,
+                },
+              ]
             : [{ Type: "bind", Source: "/repo", Destination: "/opt/quickreview/sandbox" }];
           return { code: 0, stdout: JSON.stringify(mounts), stderr: "" };
         }
@@ -148,7 +172,9 @@ function fakeAdapters(world: World = {}, calls: string[][] = [], answers: string
         }
         if (args[0] === "exec") {
           const c = containers[args[1] ?? ""];
-          return c?.auth ? { code: 0, stdout: "", stderr: "" } : { code: 1, stdout: "", stderr: "" };
+          return c?.auth
+            ? { code: 0, stdout: "", stderr: "" }
+            : { code: 1, stdout: "", stderr: "" };
         }
         return { code: 1, stdout: "", stderr: "unexpected docker args" };
       },
@@ -163,7 +189,11 @@ function fakeAdapters(world: World = {}, calls: string[][] = [], answers: string
   return adapters;
 }
 
-function engine(world: World = {}, calls: string[][] = [], answers: string[] = []): OnboardingEngine {
+function engine(
+  world: World = {},
+  calls: string[][] = [],
+  answers: string[] = [],
+): OnboardingEngine {
   return new OnboardingEngine([llmAuthStep()], fakeAdapters(world, calls, answers));
 }
 
@@ -212,7 +242,9 @@ describe("model-string rewrite", () => {
     expect(text).toContain('"sol-high" = "openai/gpt-5.6-sol:high"');
     // Comments, trailing comments, unrelated keys and the commented-out
     // [companion] model line all survive byte-for-byte.
-    expect(text).toContain("# Provider prefix is `openai-codex/` — the ChatGPT-OAuth route's provider key");
+    expect(text).toContain(
+      "# Provider prefix is `openai-codex/` — the ChatGPT-OAuth route's provider key",
+    );
     expect(text).toContain('conversation = "openai/gpt-5.6-sol"   # sticky per-PR session');
     expect(text).toContain('# model = "openai-codex/gpt-5.6-sol"');
     expect(text).toContain('risk_passes = ["pass-security"]');
@@ -236,7 +268,10 @@ describe("model-string rewrite", () => {
   });
 
   it("leaves a deliberately custom provider alone and reports it", () => {
-    const custom = EXAMPLE_CONFIG.replace('overseer = "openai-codex/gpt-5.6-sol"', 'overseer = "anthropic/some-model"');
+    const custom = EXAMPLE_CONFIG.replace(
+      'overseer = "openai-codex/gpt-5.6-sol"',
+      'overseer = "anthropic/some-model"',
+    );
     const out = rewriteModelPrefixes(custom, "api");
     expect(out.custom).toEqual(["models.overseer"]);
     expect(out.text).toContain('overseer = "anthropic/some-model"');
@@ -352,7 +387,11 @@ describe("OAuth route", () => {
     const good = engine({
       containers: {
         "quickreview-sandbox": { piHome: "/home/review/.pi", mountName: "qcr-pihome", auth: true },
-        "qcr-companion": { piHome: "/home/companion/.pi", mountName: "companion-pihome", auth: true },
+        "qcr-companion": {
+          piHome: "/home/companion/.pi",
+          mountName: "companion-pihome",
+          auth: true,
+        },
       },
     });
     const greenAll = await good.verifyAll();
@@ -368,7 +407,9 @@ describe("OAuth route", () => {
   it("verify: a running container with no auth.json is red with the attach-and-login instruction", async () => {
     hostLogin();
     await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
-    const e = engine({ containers: { "quickreview-sandbox": { piHome: "/home/review/.pi", auth: false } } });
+    const e = engine({
+      containers: { "quickreview-sandbox": { piHome: "/home/review/.pi", auth: false } },
+    });
     const report = await e.verifyAll();
     expect(report.ok).toBe(false);
     expect(report.results[0]?.failures.join(" ")).toMatch(/no auth\.json on the pi home/);
@@ -378,7 +419,9 @@ describe("OAuth route", () => {
   it("verify: a stopped container and an undetectable docker are notes, not failures", async () => {
     hostLogin();
     await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
-    const stopped = await engine({ containers: { "quickreview-sandbox": { piHome: "/home/review/.pi", running: false } } }).verifyAll();
+    const stopped = await engine({
+      containers: { "quickreview-sandbox": { piHome: "/home/review/.pi", running: false } },
+    }).verifyAll();
     expect(stopped.ok).toBe(true);
     const noDocker = await engine({ noDocker: true }).verifyAll();
     expect(noDocker.ok).toBe(true);
@@ -386,7 +429,10 @@ describe("OAuth route", () => {
 
   it("probeContainerLogin asks about the MOUNT, not $HOME — the hazard", async () => {
     const calls: string[][] = [];
-    const adapters = fakeAdapters({ containers: { c1: { piHome: "/home/review/.pi", auth: true } } }, calls);
+    const adapters = fakeAdapters(
+      { containers: { c1: { piHome: "/home/review/.pi", auth: true } } },
+      calls,
+    );
     const probe = await probeContainerLogin(adapters.runner, "c1");
     expect(probe.state).toBe("ok");
     const exec = calls.find((c) => c[1] === "exec");
@@ -466,7 +512,10 @@ describe("API-key route", () => {
 
   it("verify: hand-edited model strings that contradict the recorded route go red", async () => {
     await engine({}, [], ["api", KEY]).runStep(LLM_AUTH_STEP_ID);
-    writeFileSync(configPathFor(stateDir), configText().replace('default = "openai/', 'default = "openai-codex/'));
+    writeFileSync(
+      configPathFor(stateDir),
+      configText().replace('default = "openai/', 'default = "openai-codex/'),
+    );
     const report = await engine().verifyAll();
     expect(report.ok).toBe(false);
     expect(report.results[0]?.failures.join(" ")).toMatch(/models\.default/);
@@ -545,7 +594,9 @@ describe("resume and re-run", () => {
     expect(existsSync(configPathFor(stateDir))).toBe(false);
     const result = await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
     expect(result.ok).toBe(true);
-    expect(detailOf(result.checks, "config")).toMatch(/created .*config\.toml from config\.example\.toml/);
+    expect(detailOf(result.checks, "config")).toMatch(
+      /created .*config\.toml from config\.example\.toml/,
+    );
     // FILL values are left for the config step — the wizard only touched models.
     expect(configText()).toContain('repo = "acme/widgets"');
   });
@@ -590,7 +641,10 @@ describe("no credential ever reaches an argv (or any other record)", () => {
 
     // …and the same for the verify pass, which probes docker.
     calls.length = 0;
-    const verified = await engine({ containers: { "quickreview-sandbox": { piHome: "/home/review/.pi", auth: true } } }, calls).verifyAll();
+    const verified = await engine(
+      { containers: { "quickreview-sandbox": { piHome: "/home/review/.pi", auth: true } } },
+      calls,
+    ).verifyAll();
     expect(verified.ok).toBe(true);
     for (const call of calls) for (const arg of call) expect(arg).not.toContain(KEY);
     expect(JSON.stringify(verified.results)).not.toContain(KEY);
