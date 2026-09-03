@@ -12,6 +12,9 @@
 //       `pending_reseed` section (frozen seed files whose de-identification
 //       is the owner-ratified reseed) and the in-file ALLOWLIST below
 //       (each entry names the file, the tokens, and the reason);
+//       — and, since 2026-09-03, a third: the manifest's `profile`. The
+//       INTERNAL profile (the company-private snapshot) replaces the token
+//       scan with (a-internal); the public profile is untouched;
 //   (b) LICENSE and THIRD-PARTY-NOTICES.md exist and are non-trivial;
 //   (c) config.example.toml exists and passes full config validation (the
 //       suite in tests/config.test.ts owns the deeper assertions);
@@ -41,12 +44,53 @@ interface PublishManifest {
   exclude: ManifestEntry[];
   /** Dies with the reseed; the assembled tree may lack it. */
   pending_reseed?: ManifestEntry[];
+  /** Absent = "public". See PROFILE below. */
+  profile?: string;
+  profile_reason?: string;
+  /** Present only in an ASSEMBLED tree (provenance of what was dropped). */
+  applied_exclusions?: ManifestEntry[];
 }
 
 const manifest = JSON.parse(
   readFileSync(join(repoRoot, "publish-manifest.json"), "utf8"),
 ) as PublishManifest;
 const pendingReseed = manifest.pending_reseed ?? [];
+
+// ---------------------------------------------------------------------------
+// The PROFILE (owner ruling, 2026-09-03) — the ONE documented mechanism by
+// which the private-token denylist may be relaxed, and it is read off the
+// APPLIED manifest rather than inferred from anything.
+//
+//   public   (a manifest with no `profile` field, i.e. every tree assembled
+//            before this existed, and publish-manifest.json forever) — the
+//            denylist scan below runs over the whole tree. Unchanged.
+//   internal — the company-private snapshot (publish-manifest.internal.json,
+//            applied by `scripts/publish-snapshot.sh --profile internal`).
+//            That tree deliberately ships the private profile pack, the
+//            internal ops docs and every CLAUDE.md, all of which name the
+//            private org, hosts and people. Scanning it for those tokens
+//            would fail by construction, so the scan is REPLACED — not
+//            weakened — by the internal-profile assertion below: the
+//            named-teammate corpora must be absent from the tree, and the
+//            manifest must say in writing why the relaxation applies.
+//
+// The public path cannot be relaxed by accident: it takes a `profile` field
+// in the manifest that a human wrote and a reason string this file checks.
+// ---------------------------------------------------------------------------
+
+const KNOWN_PROFILES = ["public", "internal"] as const;
+type Profile = (typeof KNOWN_PROFILES)[number];
+const PROFILE = (manifest.profile ?? "public") as Profile;
+const INTERNAL = PROFILE === "internal";
+
+/** Paths that never travel in ANY profile — the per-teammate review corpora. */
+const NAMED_TEAMMATE_CORPORA = [
+  "docs/retro/",
+  "docs/audits/",
+  "docs/research/",
+  "docs/review-merit-assessment.md",
+  "docs/corpus-rule-placements.md",
+];
 
 /** A manifest `path` ending in "/" is a directory prefix; otherwise exact. */
 function matchesEntry(path: string, entry: ManifestEntry): boolean {
@@ -524,6 +568,19 @@ describe("publish-manifest.json", () => {
     }
   });
 
+  it("declares a known profile, and anything but public says in writing why", () => {
+    expect(KNOWN_PROFILES as readonly string[], `unknown profile '${PROFILE}'`).toContain(PROFILE);
+    if (INTERNAL) {
+      expect(
+        (manifest.profile_reason ?? "").trim().length,
+        "a non-public profile relaxes the denylist — the manifest must carry the reason",
+      ).toBeGreaterThan(40);
+    } else {
+      // The default is public and stays implicit: no field, no relaxation.
+      expect(manifest.profile ?? "public").toBe("public");
+    }
+  });
+
   it("every pending_reseed entry cites — the section dies with that reseed", () => {
     // The section is OPTIONAL: it is deleted when the reseed lands,
     // and the assembled public tree may carry a manifest without it
@@ -554,7 +611,10 @@ describe("publish-manifest.json", () => {
 describe("publishability lint", () => {
   const tracked = trackedFiles();
 
-  it("(a) no denylisted private token in any published text file", () => {
+  // Skipped ONLY under the internal profile, which is replaced by the
+  // assertion below rather than left unchecked. A skipped test is visible in
+  // the run; a silently-passing one is not.
+  it.skipIf(INTERNAL)("(a) no denylisted private token in any published text file", () => {
     const files: { path: string; text: string }[] = [];
     for (const path of tracked) {
       if (isExcluded(path) || isPendingReseed(path)) continue;
@@ -572,6 +632,27 @@ describe("publishability lint", () => {
       `private tokens in published files (fix the file, or add a reasoned ALLOWLIST/manifest entry):\n${rendered}`,
     ).toEqual([]);
   });
+
+  it.runIf(INTERNAL)(
+    "(a-internal) the relaxation is declared in the manifest, and the named-teammate corpora are absent anyway",
+    () => {
+      expect(
+        manifest.profile_reason,
+        "the internal profile must carry its own written reason",
+      ).toBeTruthy();
+      const offenders = tracked.filter((p) =>
+        NAMED_TEAMMATE_CORPORA.some((d) => (d.endsWith("/") ? p.startsWith(d) : p === d)),
+      );
+      expect(
+        offenders,
+        "per-teammate review corpora never travel — in ANY profile (owner ruling, 2026-09-03)",
+      ).toEqual([]);
+      // …and their absence is recorded as deliberate, not incidental.
+      const dropped = (manifest.applied_exclusions ?? manifest.exclude).map((e) => e.path);
+      for (const path of NAMED_TEAMMATE_CORPORA)
+        expect(dropped, `${path} must be an applied exclusion, not merely missing`).toContain(path);
+    },
+  );
 
   it("allowlist hygiene: every entry's file is tracked, published, and still carries the granted token", () => {
     const trackedSet = new Set(tracked);
