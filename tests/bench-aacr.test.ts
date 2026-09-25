@@ -851,7 +851,7 @@ describe("the open-code-review baseline arm", () => {
         join(tmp, "run.json"),
         JSON.stringify({
           reviewer: "ocr",
-          ocr_version: "1.3.1",
+          ocr_version: "open-code-review v1.3.1 (7fcb9db) linux/amd64",
           model: "gpt-6-sol",
           effort: "medium",
           flags: { concurrency: 8, timeout_min: 30, max_tools: 30 },
@@ -894,7 +894,7 @@ describe("the open-code-review baseline arm", () => {
         JSON.stringify(s),
       );
       const md = renderOcrReport(set, tmp, [c]);
-      expect(md).toContain("open-code-review 1.3.1");
+      expect(md).toContain("- Reviewer: open-code-review v1.3.1 (7fcb9db) linux/amd64, run as");
       expect(md).toContain("--concurrency 8 --timeout 30 --max-tools 30");
       expect(md).toMatch(/\| \*\*average\*\* \| 10\/1 \| 40 \| 7\/62 \|/);
       expect(md).toMatch(/^\| 1 \| 10\/1 \| 40 \| 8\/62 \|/m);

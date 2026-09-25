@@ -182,7 +182,7 @@ export function renderOcrReport(set: CaseSet, outDir: string, cases: BenchCase[]
     `- Dataset: AACR-Bench v1.0 (\`${set.dataset.commit.slice(0, 7)}\`), ${cases.length} PRs, ${cases.reduce((a, c) => a + c.references, 0)} reference comments`,
   );
   L.push(
-    `- Reviewer: open-code-review ${run.ocr_version ?? "?"}, run as the AACR harness's reviewers/ocr.py runs it: \`ocr review --from <base_commit> --to <head_commit> --format json --audience agent --concurrency ${flags.concurrency ?? "?"} --timeout ${flags.timeout_min ?? "?"} --max-tools ${flags.max_tools ?? "?"}\` (range = merge-base..head; no PR title/description — the harness passes none)`,
+    `- Reviewer: ${run.ocr_version ?? "open-code-review ?"}, run as the AACR harness's reviewers/ocr.py runs it: \`ocr review --from <base_commit> --to <head_commit> --format json --audience agent --concurrency ${flags.concurrency ?? "?"} --timeout ${flags.timeout_min ?? "?"} --max-tools ${flags.max_tools ?? "?"}\` (range = merge-base..head; no PR title/description — the harness passes none)`,
   );
   L.push(
     `- Model: \`${run.model ?? "?"}\`, reasoning effort \`${run.effort ?? "?"}\`, text verbosity \`${run.verbosity ?? "?"}\` — the ChatGPT Codex backend through the loopback bridge (bench/aacr/codex_bridge.py: OCR's Chat Completions calls → streamed Responses)`,
