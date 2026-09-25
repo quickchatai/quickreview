@@ -44,6 +44,7 @@ import { parseCaseSet, selectCases } from "../src/bench/aacr.js";
 import {
   allCandidateExtras,
   deltaVsControl,
+  lineGate,
   linkRecord,
   lensOutputsFromEvents,
   normalizeLens,
@@ -486,6 +487,15 @@ describe("reading the scored metrics back", () => {
     expect(all.lost.map((r) => r.ref)).toEqual([0]);
   });
 
+  it("mirrors the harness's line gate (overlap, or within k lines)", () => {
+    expect(lineGate(10, 12, 12, 12)).toBe(true); // overlap at the edge
+    expect(lineGate(10, 12, 13, 13)).toBe(true); // 1 line away, k = 1
+    expect(lineGate(10, 12, 14, 14)).toBe(false);
+    expect(lineGate(10, 12, 8, 8)).toBe(false);
+    expect(lineGate(10, 12, 9, 9)).toBe(true);
+    expect(lineGate(10, 10, 5, 20)).toBe(true); // a span around the reference
+  });
+
   it("reads rounds in round order, never the average; a single-round eval's unlabelled file is round 1", () => {
     const dir = mkdtempSync(join(tmpdir(), "whatif-m-"));
     const m = (n: number): string => JSON.stringify(metrics([{ id: "a", refs: [] }], n));
@@ -532,6 +542,9 @@ describe("reading the scored metrics back", () => {
     expect(r.markdown).toContain(`**Reference:** reference 0 of ${COMFY}`);
     expect(r.markdown).toContain(`**Ours** (killed · pass-baseline · P1): ${ruff}`);
     expect(r.markdown).toContain("3/3 rounds vs posted 0/3");
+    // The ruff reference sits at p.py:1-2 in the fake metrics, where the
+    // control posted nothing: the report says the extra was alone there.
+    expect(r.markdown).toContain("The control posted NOTHING within this reference's line gate.");
     expect(r.markdown).toMatch(
       /## posted\+merged: references matched more often than by the control \(0\)/,
     );

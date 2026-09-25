@@ -796,3 +796,19 @@ export function deltaVsControl(
   }
   return { gained, lost };
 }
+
+/** The harness's line gate (judge.py diff_location_is_same): two closed
+ * ranges pass when they overlap or lie within `k` lines of each other. Only a
+ * generated comment that passes it is ever shown to the judge for that
+ * reference. */
+export function lineGate(
+  refFrom: number,
+  refTo: number,
+  genFrom: number,
+  genTo: number,
+  k = 1,
+): boolean {
+  const overlap = !(refFrom > genTo || genFrom > refTo);
+  const distance = overlap ? 0 : Math.min(Math.abs(refFrom - genTo), Math.abs(genFrom - refTo));
+  return distance <= k;
+}

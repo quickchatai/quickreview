@@ -20,6 +20,7 @@ import {
   ADDED_DISPOSITIONS,
   allCandidateExtras,
   deltaVsControl,
+  lineGate,
   linkRecord,
   parseFindingsRecord,
   rawCandidatesFromEvents,
@@ -281,11 +282,32 @@ function scoreOf(outDir: string, v: WhatifVariant): WhatifVariantScore {
   };
 }
 
-function refLine(r: RefOutcome, v: WhatifVariant): string {
+function refLine(r: RefOutcome, v: WhatifVariant, own?: RefOutcome): string {
   const m = r.matched[v];
   const c = r.matched.posted;
+  const o = own?.matched.posted;
   const lines = r.from_line === r.to_line ? `${r.from_line}` : `${r.from_line}-${r.to_line}`;
-  return `\`${r.instance_id}\` \`${r.path}:${lines}\` — ${v} ${m?.rounds ?? 0}/${m?.of ?? 0} rounds vs posted ${c?.rounds ?? 0}/${c?.of ?? 0}`;
+  return `\`${r.instance_id}\` \`${r.path}:${lines}\` — ${v} ${m?.rounds ?? 0}/${m?.of ?? 0} rounds vs posted ${c?.rounds ?? 0}/${c?.of ?? 0}${o ? ` (the source run's own scoring: ${o.rounds}/${o.of})` : ""}`;
+}
+
+/** The control's posted comments the judge could have paired with this
+ * reference — same file, inside the harness's line gate. Empty means the
+ * extra comment was the ONLY thing at that spot: a new catch if its text
+ * holds. Non-empty means the round already posted there, and a gain is the
+ * judge preferring other wording (or a second finding at the same spot). */
+function postedInGate(outDir: string, r: RefOutcome): string[] {
+  if (r.from_line === null || r.to_line === null) return [];
+  const file = readJson(join(outDir, "results", "posted", `${safeId(r.instance_id)}.json`)) as
+    { review?: { comments?: Array<Record<string, unknown>> } } | undefined;
+  return (file?.review?.comments ?? [])
+    .filter(
+      (c) =>
+        c["path"] === r.path &&
+        typeof c["start_line"] === "number" &&
+        typeof c["end_line"] === "number" &&
+        lineGate(r.from_line!, r.to_line!, c["start_line"], c["end_line"]),
+    )
+    .map((c) => String(c["content"]));
 }
 
 /** The what-if report: per variant the harness's numbers, the control beside
@@ -315,6 +337,14 @@ export function renderWhatifReport(
     WHATIF_VARIANTS.map((v) => [v, roundMetrics(join(outDir, "results", v))]),
   ) as Record<WhatifVariant, MetricsRound[]>;
   const rows = refOutcomes(rounds);
+  // The source run's own per-reference matches, for the control-noise column.
+  const ownRows = new Map(
+    refOutcomes({ posted: roundMetrics(join(src, "results", "all")) }).map((r) => [
+      `${r.instance_id}#${r.ref}`,
+      r,
+    ]),
+  );
+  const ownOf = (r: RefOutcome): RefOutcome | undefined => ownRows.get(`${r.instance_id}#${r.ref}`);
 
   const L: string[] = [];
   L.push(`# AACR-Bench what-if — ${set.name}, source run \`${origin}\``);
@@ -390,10 +420,12 @@ export function renderWhatifReport(
         reference: r.note,
         rounds: r.matched[v]?.rounds,
         control_rounds: r.matched.posted?.rounds,
+        source_own_rounds: ownOf(r)?.matched.posted?.rounds ?? null,
         matched_notes: (r.matched[v]?.notes ?? []).map((n) => ({
           text: n,
           origin: originOf(outDir, v, r.instance_id, n),
         })),
+        posted_in_gate: postedInGate(outDir, r),
       })),
       lost: lost.map((r) => ({
         instance_id: r.instance_id,
@@ -401,6 +433,7 @@ export function renderWhatifReport(
         reference: r.note,
         rounds: r.matched[v]?.rounds,
         control_rounds: r.matched.posted?.rounds,
+        source_own_rounds: ownOf(r)?.matched.posted?.rounds ?? null,
         control_notes: r.matched.posted?.notes ?? [],
       })),
     };
@@ -408,10 +441,17 @@ export function renderWhatifReport(
     L.push("");
     if (!gained.length) L.push("_None._");
     for (const r of gained) {
-      L.push(`- ${refLine(r, v)}`);
+      L.push(`- ${refLine(r, v, ownOf(r))}`);
       L.push(`  - **Reference:** ${clip(r.note, 600)}`);
       for (const n of r.matched[v]?.notes ?? [])
         L.push(`  - **Ours** (${originOf(outDir, v, r.instance_id, n)}): ${clip(n, 600)}`);
+      const there = postedInGate(outDir, r);
+      if (!there.length)
+        L.push("  - The control posted NOTHING within this reference's line gate.");
+      for (const t of there)
+        L.push(
+          `  - The control already posted here (the judge did not accept it): ${clip(t, 300)}`,
+        );
     }
     L.push("");
     L.push(`### ${v}: references matched LESS often than by the control (${lost.length})`);
@@ -424,7 +464,7 @@ export function renderWhatifReport(
     L.push("");
     if (!lost.length) L.push("_None._");
     for (const r of lost) {
-      L.push(`- ${refLine(r, v)}`);
+      L.push(`- ${refLine(r, v, ownOf(r))}`);
       L.push(`  - **Reference:** ${clip(r.note, 300)}`);
       for (const n of r.matched.posted?.notes ?? [])
         L.push(`  - **Control matched:** ${clip(n, 300)}`);
