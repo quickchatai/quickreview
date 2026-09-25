@@ -1,11 +1,19 @@
 # qcr-bench — the AACR-Bench sandbox image.
 #
-#   docker build -t qcr-bench -f bench/aacr/Dockerfile .      (bench.sh build)
+#   docker build --target runtime -t qcr-bench -f bench/aacr/Dockerfile .      (bench.sh build)
+#   docker build --target ocr --build-arg RUNTIME_BASE=node:22-trixie \
+#                -t qcr-bench-ocr -f bench/aacr/Dockerfile .                  (bench.sh build --arm ocr)
 #
 # One image, three uses, each run by bench.sh with its own minimal mounts:
 #   prefetch  git over https to github.com (anonymous) → the repos volume
 #   review    pi + the production reviewer, model API only, repos read-only
 #   eval      Alibaba's own scorer (alibaba/aacr-bench evaluation/, pinned)
+#
+# The `ocr` target is the SAME runtime (same harness, dataset, pi and judge
+# shim) plus the open-code-review baseline arm: the pinned OCR binary and the
+# loopback Codex bridge (codex_bridge.py). It needs git >= 2.41 (OCR's
+# documented floor), which bookworm (2.39) and bookworm-backports lack — hence
+# RUNTIME_BASE=node:22-trixie (git 2.47) for that target only.
 #
 # What it deliberately does NOT contain: `scripts/` (the posting route,
 # mint-token.sh), the `gh` CLI, any GitHub credential, the OpenViking memory
@@ -17,6 +25,10 @@
 #   aacr-bench harness 68a5697         = the scorer's code
 #   AACR-Bench dataset v1.0 ab8af8d    = what every published row is scored on;
 #                                        its sha256 is verified at build time
+#   open-code-review 1.3.1 (ocr only)  = the version most leaderboard rows ran;
+#                                        the linux-amd64 binary's sha256 is pinned
+
+ARG RUNTIME_BASE=node:22-bookworm
 
 # ---- build: compile the repo exactly as `npm run build` does ------------------
 FROM node:22-bookworm AS build
@@ -28,7 +40,7 @@ COPY extensions ./extensions
 RUN npx tsc -p tsconfig.json && npm prune --omit=dev --no-audit --no-fund
 
 # ---- runtime -------------------------------------------------------------------
-FROM node:22-bookworm
+FROM ${RUNTIME_BASE} AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive TZ=UTC LANG=C.UTF-8
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -98,3 +110,25 @@ ENV QCR_BENCH_COMMIT=${QCR_BENCH_COMMIT} \
     PI_CODING_AGENT_DIR=/tmp/pi-agent
 
 ENTRYPOINT ["/opt/quickreview/bench/in-container.sh"]
+
+# ---- ocr: the open-code-review baseline arm --------------------------------------
+# Built on top of `runtime`, so the scorer, the dataset, pi and the judge shim
+# are the ones the quickreviewd arm is scored with. OCR is installed from npm at
+# the pinned version, and its downloaded binary is checked against the sha256
+# recorded HERE (npm's installer checks it only against the release's own
+# sha256sum.txt). The bench calls the binary directly: the npm `ocr` wrapper
+# spawns a background self-update check on every run.
+FROM runtime AS ocr
+ARG OCR_VERSION=1.3.1
+ARG OCR_SHA256_LINUX_AMD64=7b7478be6200fba0aaa7feffd4177a951952edf5ae8cdd03ea5bfe5b8b0a703c
+RUN test "$(dpkg --print-architecture)" = amd64 \
+    && npm install -g @alibaba-group/open-code-review@${OCR_VERSION} --no-audit --no-fund \
+    && OCR_BIN="$(npm root -g)/@alibaba-group/open-code-review/bin/opencodereview" \
+    && echo "${OCR_SHA256_LINUX_AMD64}  ${OCR_BIN}" | sha256sum -c - \
+    && ln -s "${OCR_BIN}" /usr/local/bin/opencodereview \
+    && git version | awk '{split($3, v, "."); exit !(v[1] > 2 || (v[1] == 2 && v[2] >= 41))}' \
+    && OCR_NO_UPDATE=1 opencodereview version
+COPY bench/aacr/codex_bridge.py /opt/quickreview/bench/
+RUN python3 /opt/quickreview/bench/codex_bridge.py --self-test \
+    && ! test -e scripts && ! command -v gh
+ENV OCR_NO_UPDATE=1 QCR_OCR_VERSION=${OCR_VERSION}

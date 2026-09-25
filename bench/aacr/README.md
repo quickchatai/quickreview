@@ -168,12 +168,56 @@ The one bias that cannot be removed without a reseed: the frozen
   predate the public harness, and its judge, round count and line tolerance are
   undisclosed. For a like-for-like number, re-run a published baseline (e.g.
   open-code-review v1.3.1 + GPT-5.5: published 234/728 precision, 234/1505
-  recall) under the same judge and dataset, next to ours. The harness's
-  `reviewers/ocr.py` does that; its Claude Code arm must never be run from here
-  (root rule 5).
+  recall) under the same judge and dataset, next to ours — `--arm ocr` (below)
+  does that. The harness's Claude Code arm must never be run from here (root
+  rule 5).
 - **The ground truth is 74% AI-seeded** (GPT-5.2 alone 25%, our model's family),
   and precision counts every comment the annotators did not record as a false
   positive.
+
+## The open-code-review baseline arm (`--arm ocr`)
+
+A reference point measured the same way as ours: open-code-review on the same
+PRs, the same model our conversation runs, the same judge, rounds and
+`--line-k`.
+
+```sh
+bench/aacr/bench.sh build  --arm ocr                                   # image qcr-bench-ocr
+bench/aacr/bench.sh review --arm ocr --run ocr-1                       # one case at a time
+bench/aacr/bench.sh eval   --arm ocr --run ocr-1 --judge codex --rounds 3
+```
+
+- **OCR runs as the harness runs it.** `src/bench/ocr.ts` mirrors
+  `evaluation/reviewers/ocr.py` at the pinned harness commit flag for flag —
+  `ocr review --from <base_commit> --to <head_commit> --format json --audience
+  agent --concurrency 8 --timeout 30 --max-tools 30`, a process timeout of
+  30×60+300 s — and writes that runner's result file, which the harness scores
+  with its own OCR reader. OCR diffs merge-base..head itself. The repo is the
+  same `prepareTree` checkout the quickreviewd arm gets (OCR reads code only
+  through `git show/ls-tree/grep <head>` and that diff).
+- **Version**: 1.3.1, the version most leaderboard rows ran, with its binary's
+  sha256 pinned in the Dockerfile. It needs git ≥ 2.41, so the `ocr` target is
+  the same runtime stage built on `node:22-trixie` (bookworm ships 2.39):
+  same harness commit, dataset (its converted file is byte-identical), pi,
+  openai client and judge shim — only the OS base and its Python differ.
+- **The model** (`codex_bridge.py`): OCR 1.3.x speaks non-streaming Chat
+  Completions; the only access to `gpt-6-sol` is the pi login's ChatGPT Codex
+  backend, a streaming Responses endpoint. A loopback bridge inside the
+  sandbox translates, streams, aggregates to `response.completed` and
+  translates back. It forces `gpt-6-sol`, reasoning effort `medium`, text
+  verbosity `medium` (the public API's defaults) and strict:false tools (the
+  Chat Completions default); drops what the backend refuses (output caps,
+  sampling knobs) and logs it; never carries reasoning across turns (neither
+  does the public Chat Completions API). It reads the same refresh-disabled
+  token copy as the review and the judge and refuses any other auth file.
+  `runs/<id>/bridge.jsonl` has one row per model call (status, latency,
+  served model, tool-call names, usage — never content).
+- **What is not equal, and cannot be made equal by us:** OCR gets no PR title
+  or description (the harness passes no `--background`); ours does, as in
+  production. OCR's comments carry line RANGES and ours a single line, and the
+  harness only asks the judge about a pair whose lines overlap within k — a
+  range gets more candidate pairs. OCR comments have no severity, so only the
+  `all` variant exists for this arm; compare it with our `all` row.
 
 ## Running the whole benchmark later
 
@@ -197,5 +241,6 @@ out up to 6 lens children); start at 1–2.
 | `select_cases.py` | deterministic set selection from the pinned dataset |
 | `sets/*.json` | the committed case sets |
 | `judge_shim.py` | OpenAI-compatible judge endpoint over `pi -p` |
-| `src/bench/` | prefetch, review runner, result conversion, report (`tests/bench-aacr.test.ts`) |
+| `codex_bridge.py` | the OCR arm's loopback Chat Completions/Responses → Codex backend bridge |
+| `src/bench/` | prefetch, review runner, result conversion, report, the OCR arm (`ocr.ts`) (`tests/bench-aacr.test.ts`) |
 | `runs/<id>/` | per run: `run.json`, `cases/<id>/` (system prompt, round order, files, pi event stream, the session's four files, `case-summary.json`), `results/<variant>/` (the harness's input + metrics), `eval/`, `report.md`, `sandbox-commands.log` (every docker invocation, for reproduction) |

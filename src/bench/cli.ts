@@ -10,6 +10,12 @@
 //   report    --set <file> --out DIR     write DIR/report.md from summaries + metrics
 //   agents    [--profile NAME]           build the lens agents only (inspection)
 //
+// The open-code-review baseline arm (src/bench/ocr.ts; image target `ocr`):
+//   ocr-review --set <file> --out DIR [--only id,id] [--store DIR] [--resume] [--keep-tree]
+//              [--timeout-min 30] [--ocr-concurrency 8] [--max-tools 30]
+//              [--bridge URL] [--ocr-bin PATH]      cases run ONE AT A TIME
+//   ocr-report --set <file> --out DIR
+//
 // Nothing here can reach GitHub except `prefetch` (anonymous, read-only), and
 // nothing can post: this module imports no gate, adapter or token code, and the
 // image ships no `scripts/`, no `gh` and no credential.
@@ -28,7 +34,18 @@ import {
 } from "./aacr.js";
 import { AuthExpiring, syncBenchAuth } from "./auth.js";
 import { prefetchCase, storeDir } from "./prefetch.js";
-import { parseReferenceLabels, renderReport } from "./report.js";
+import {
+  OCR_HARNESS_DEFAULTS,
+  ocrProcessTimeoutMs,
+  readOcrSummary,
+  reviewCaseOcr,
+  runArmOf,
+  unprefetchedOcrCase,
+  type OcrCaseSummary,
+  type OcrFingerprint,
+} from "./ocr.js";
+import { parseReferenceLabels, renderOcrReport, renderReport } from "./report.js";
+import { run as runCmd } from "./exec.js";
 import {
   buildBenchAgents,
   collectComments,
@@ -109,6 +126,17 @@ function unprefetchedSummary(c: BenchCase, error: string): CaseSummary {
   };
 }
 
+/** A command of one arm refuses the other arm's run dir: the quickreviewd
+ * `review`/`results` rewrite every variant's result files, which would wipe an
+ * OCR run's scored input. */
+function assertArm(outDir: string, arm: "qcr" | "ocr"): void {
+  const found = runArmOf(outDir);
+  if (found !== null && found !== arm)
+    throw new Error(
+      `${outDir} is ${found === "ocr" ? "an open-code-review" : "a quickreviewd"} run — this command belongs to the ${arm === "ocr" ? "ocr" : "quickreviewd"} arm (bench.sh --arm ${found})`,
+    );
+}
+
 async function pool<T>(items: T[], n: number, fn: (x: T) => Promise<void>): Promise<void> {
   let next = 0;
   const workers = Array.from({ length: Math.max(1, n) }, async () => {
@@ -176,6 +204,7 @@ async function main(): Promise<number> {
     const set = loadSet(f.get("--set"));
     const outDir = resolve(f.get("--out") ?? "");
     if (!f.get("--out")) throw new Error("--out <dir> is required");
+    assertArm(outDir, "qcr");
     const profile = f.get("--profile") ?? "";
     const cases = selectCases(set, only(f));
     const base = contextFor(root, profile);
@@ -302,6 +331,7 @@ async function main(): Promise<number> {
   if (f.cmd === "results") {
     const set = loadSet(f.get("--set"));
     const outDir = resolve(f.get("--out") ?? "");
+    assertArm(outDir, "qcr");
     for (const c of selectCases(set, only(f))) {
       const dir = join(outDir, "cases", safeId(c.instance_id));
       const sPath = join(dir, "case-summary.json");
@@ -361,9 +391,169 @@ async function main(): Promise<number> {
     return 0;
   }
 
+  if (f.cmd === "ocr-review") {
+    const set = loadSet(f.get("--set"));
+    if (!f.get("--out")) throw new Error("--out <dir> is required");
+    const outDir = resolve(f.get("--out")!);
+    const cases = selectCases(set, only(f));
+    const bridgeUrl = f.get("--bridge") ?? "http://127.0.0.1:8766";
+    const ocrBin = f.get("--ocr-bin") ?? "opencodereview";
+    const flagsOcr = {
+      concurrency: Number(f.get("--ocr-concurrency") ?? OCR_HARNESS_DEFAULTS.concurrency),
+      timeoutMin: Number(f.get("--timeout-min") ?? OCR_HARNESS_DEFAULTS.timeoutMin),
+      maxTools: Number(f.get("--max-tools") ?? OCR_HARNESS_DEFAULTS.maxTools),
+    };
+    for (const [k, v] of Object.entries(flagsOcr))
+      if (!Number.isInteger(v) || v < 1)
+        throw new Error(`ocr-review: ${k} must be a positive integer`);
+    // What the model IS comes from the bridge that serves it, never from a
+    // flag this process could disagree with.
+    let health: Record<string, unknown>;
+    try {
+      const res = await fetch(`${bridgeUrl}/health`, { signal: AbortSignal.timeout(10_000) });
+      health = (await res.json()) as Record<string, unknown>;
+    } catch (err) {
+      throw new Error(
+        `ocr-review: the Codex bridge at ${bridgeUrl} is not answering (${String(err)})`,
+        { cause: err },
+      );
+    }
+    const model = typeof health["model"] === "string" ? health["model"] : "";
+    const effort = typeof health["effort"] === "string" ? health["effort"] : "";
+    if (!model) throw new Error("ocr-review: the bridge reported no model");
+    const version = await runCmd(ocrBin, ["version"], {
+      env: { ...process.env, OCR_NO_UPDATE: "1" },
+    });
+    const ocrVersion =
+      (version.stdout.trim().split("\n")[0] ?? "").trim() ||
+      process.env.QCR_OCR_VERSION ||
+      "unknown";
+    const fingerprint: OcrFingerprint = {
+      qcr_commit: process.env.QCR_BENCH_COMMIT ?? "unknown",
+      ocr_version: ocrVersion,
+      model,
+      effort,
+      flags: flagsOcr,
+    };
+    const resume = f.has("--resume");
+    mkdirSync(outDir, { recursive: true });
+    const runFile = join(outDir, "run.json");
+    const previous = existsSync(runFile)
+      ? (JSON.parse(readFileSync(runFile, "utf8")) as Record<string, unknown>)
+      : null;
+    assertArm(outDir, "ocr");
+    if (!resume) {
+      for (const c of cases) {
+        rmSync(join(outDir, "cases", safeId(c.instance_id), "case-summary.json"), { force: true });
+        rmSync(join(outDir, "results", "all", `${safeId(c.instance_id)}.json`), { force: true });
+      }
+    }
+    const runRecord = {
+      reviewer: "ocr",
+      set: set.name,
+      dataset: set.dataset,
+      ocr_version: ocrVersion,
+      model,
+      effort,
+      verbosity: health["verbosity"] ?? null,
+      endpoint: "ChatGPT Codex backend via the loopback bridge (bench/aacr/codex_bridge.py)",
+      flags: {
+        concurrency: flagsOcr.concurrency,
+        timeout_min: flagsOcr.timeoutMin,
+        max_tools: flagsOcr.maxTools,
+      },
+      qcr_commit: fingerprint.qcr_commit,
+      cases: cases.map((c) => c.instance_id),
+      started_at:
+        (resume && typeof previous?.["started_at"] === "string" && previous["started_at"]) ||
+        new Date().toISOString(),
+      resumes: [
+        ...(resume && Array.isArray(previous?.["resumes"])
+          ? (previous["resumes"] as unknown[])
+          : []),
+        ...(resume && previous ? [{ at: new Date().toISOString(), fingerprint }] : []),
+      ],
+      finished_at: null as string | null,
+    };
+    writeFileSync(runFile, JSON.stringify(runRecord, null, 2) + "\n");
+    const authSrc = f.get("--auth-src") ?? DEFAULTS.authSrc;
+    const agentDir = f.get("--agent-dir") ?? DEFAULTS.agentDir;
+    const summaries: OcrCaseSummary[] = [];
+    let stopped: string | null = null;
+    // One case at a time, always: OCR fans out per file inside a case already
+    // (--concurrency), and the login is shared with the companion.
+    for (const c of cases) {
+      const prior = readOcrSummary(outDir, c);
+      if (resume && prior && (prior.status === "ok" || prior.status === "partial")) {
+        if (JSON.stringify(prior.fingerprint) === JSON.stringify(fingerprint)) {
+          log(`ocr: ${c.instance_id} already done — skipped (--resume)`);
+          summaries.push(prior);
+          continue;
+        }
+        log(`ocr: ${c.instance_id} was reviewed by a different OCR/model/flags — re-running`);
+      }
+      try {
+        // The bridge reads this refresh-disabled copy on every call.
+        syncBenchAuth({
+          srcDir: authSrc,
+          dstDir: agentDir,
+          root,
+          needMs: ocrProcessTimeoutMs(flagsOcr.timeoutMin) + 5 * 60_000,
+        });
+      } catch (err) {
+        if (!(err instanceof AuthExpiring)) throw err;
+        stopped = err.message;
+        log(`ocr: STOPPED — ${err.message}`);
+        break;
+      }
+      let meta: PrefetchMeta;
+      try {
+        meta = readMeta(store, c);
+      } catch (err) {
+        const error = String(err instanceof Error ? err.message : err);
+        log(error);
+        summaries.push(unprefetchedOcrCase(outDir, c, fingerprint, error));
+        continue;
+      }
+      summaries.push(
+        await reviewCaseOcr(c, meta, {
+          root,
+          store,
+          outDir,
+          ocrBin,
+          bridgeUrl,
+          model,
+          flags: flagsOcr,
+          fingerprint,
+          keepTree: f.has("--keep-tree"),
+          log,
+        }),
+      );
+    }
+    runRecord.finished_at = new Date().toISOString();
+    writeFileSync(runFile, JSON.stringify(runRecord, null, 2) + "\n");
+    const ok = summaries.filter((s) => s.status === "ok" || s.status === "partial").length;
+    log(`ocr: ${ok}/${cases.length} reviewed — results in ${join(outDir, "results", "all")}`);
+    if (stopped !== null) log(`ocr: run stopped early — ${stopped}`);
+    return ok === cases.length ? 0 : 1;
+  }
+
+  if (f.cmd === "ocr-report") {
+    const set = loadSet(f.get("--set"));
+    const outDir = resolve(f.get("--out") ?? "");
+    assertArm(outDir, "ocr");
+    writeFileSync(
+      join(outDir, "report.md"),
+      renderOcrReport(set, outDir, selectCases(set, only(f))),
+    );
+    log(`report: ${join(outDir, "report.md")}`);
+    return 0;
+  }
+
   if (f.cmd === "report") {
     const set = loadSet(f.get("--set"));
     const outDir = resolve(f.get("--out") ?? "");
+    assertArm(outDir, "qcr");
     // Hand-checked reference labels ride beside the set, when there are any.
     const labelsPath = (f.get("--set") ?? "").replace(/\.json$/, ".labels.json");
     const labels = existsSync(labelsPath)
@@ -381,7 +571,7 @@ async function main(): Promise<number> {
     readFileSync(new URL(import.meta.url))
       .toString()
       .split("\n")
-      .slice(0, 16)
+      .slice(0, 22)
       .join("\n") + "\n",
   );
   return 2;
