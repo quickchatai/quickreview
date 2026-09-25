@@ -516,8 +516,10 @@ def make_handler(bridge: Bridge):
                 return
             bridge.count(200, dropped, resp, False)
             usage = resp.get("usage") or {}
+            usage_keys = ("input_tokens", "input_tokens_details", "output_tokens", "output_tokens_details", "total_tokens")
             row.update(status=200, ms=int((time.monotonic() - started) * 1000), response_status=resp.get("status"),
-                       out_items=[i.get("type") for i in resp.get("output") or []], usage=usage)
+                       served_model=resp.get("model"), out_items=[i.get("type") for i in resp.get("output") or []],
+                       usage={k: usage[k] for k in usage_keys if k in usage})
             bridge.log(row)
             self._send(200, response_to_chat(resp, body["model"]) if kind == "chat" else {**resp, "object": "response"})
 
