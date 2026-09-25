@@ -26,16 +26,25 @@ lens fan-out plus validator; measured live rounds run a median ~13 minutes).
 
 ## The case sets (`sets/`)
 
-Both are generated from the **pinned v1.0 dataset** (git `ab8af8d`, sha256
+All are generated from the **pinned v1.0 dataset** (git `ab8af8d`, sha256
 `d8683cb2…`, the revision every published leaderboard row is denominated in —
 x/1505) by `select_cases.py`, which refuses any other revision:
 
 | Set | PRs | References | Rule |
 |---|---|---|---|
 | `smoke10` | 10 | 62 | 20–160 changed lines, ≥4 references, quota Python 3 / TS 2 / JS 1 / Go 1 / Java 1 / Rust 1 / C 1, smallest first, one PR per repo; 17 backups |
+| `holdout10` | 10 | 85 | smoke10's filters, no smoke10 repository, quota Python 1 / TS 2 / JS 2 / Go 1 / Java 2 / Rust 1 / C 1, a short language filled from the smallest remaining PR. The generalisation check: a change is kept only if it holds here too, and nothing is ever tuned on it |
+| `dev10` | 10 | 105 | a second development set, so changes are not tuned on smoke10 alone: 20–400 changed lines (the small-PR pool is spent), ≥4 references, no smoke10 or holdout10 repository, quota C++ 2 / TS 1 / JS 1 / Go 1 / Java 1 / Rust 1 / C 1 / C# 1 / PHP 1 |
 | `full` | 196 | 1,505 | every PR the harness scores (4 of the 200 have no positive references and are never scored by it) |
 
 `--only id,id` narrows any command to named instances (backups included).
+
+`<set>.labels.json` beside a set holds a hand-checked quality label for every
+reference (real defect / real maintainability with a value, trivial, dubious,
+duplicate), checked against the code at head. When it exists, `report` adds a
+"Recall by reference quality" table: the benchmark's recall counts style and
+dubious references the same as real defects, and the real-issue column is the
+one that says whether the reviewer got better rather than merely noisier.
 
 ## The steps
 
