@@ -160,9 +160,15 @@ describe("daemon topology", () => {
     // one-shot session smoke. tui/companion.ts is the COMPANION boundary — a
     // local container on the owner's PC that never reaches GitHub or the gate
     // (CLAUDE.md hard rule 8), so its own pi argv is not a daemon spawn.
+    // bench/runner.ts is the AACR-Bench sandbox's one-shot `pi -p` round: it
+    // runs only inside the qcr-bench image (no daemon, no gate, no scripts/,
+    // no credential), under a `bench-<id>` name no adopt() can match, and the
+    // process exits when its round settles.
     const allowed = ["sessions.ts", "smoke-session.ts", "companion.ts"];
+    const allowedPaths = ["/src/bench/runner.ts"];
     const offenders = srcFiles(src)
       .filter((f) => !allowed.includes(f.slice(f.lastIndexOf("/") + 1)))
+      .filter((f) => !allowedPaths.some((p) => f.endsWith(p)))
       .filter((f) => /["'`]pi["'`]\s*,|piBin|--no-session/.test(readFileSync(f, "utf8")));
     expect(offenders).toEqual([]);
   });

@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+"""Pick a deterministic AACR-Bench case set from the PINNED v1.0 dataset.
+
+v1.0 is git ab8af8d of alibaba/aacr-bench: 196 scored PRs, 1,505 reference
+comments — the revision every published leaderboard row is denominated in
+(x/1505). `main` has since moved (1,506), so this script refuses any file whose
+sha256 is not v1.0's.
+
+Usage:
+    python3 select_cases.py <v1.0 positive_samples.json> smoke10 > sets/smoke10.json
+    python3 select_cases.py <v1.0 positive_samples.json> full    > sets/full.json
+
+`smoke10` — ten SMALL PRs for proving the plumbing end to end. The rule, in
+order, so anyone can re-derive the set:
+  1. 20 <= change_line_count <= 160 and at least 4 reference comments (fewer
+     makes recall a coin toss; tinier PRs are not representative);
+  2. language quota: Python 3, TypeScript 2, JavaScript 1, Go 1, Java 1,
+     Rust 1, C 1 — weighted to the production repo's own stack (Python + TS) while
+     still exercising the other languages the benchmark scores;
+  3. within a language, smallest change_line_count first (ties: PR URL);
+  4. at most one PR per repository, so a set never measures one project twice.
+The next three eligible PRs per language are listed as `backups`, for the case
+a head commit is no longer fetchable.
+
+`full` — every v1.0 PR, in dataset order. That is the real benchmark.
+
+Standard library only: it runs on the host before any image exists.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import sys
+from collections import OrderedDict
+
+V1_COMMIT = "ab8af8d5c74e2a4d1945d247ea4bbc49f93eb33f"
+V1_SHA256 = "d8683cb240249bc4e0aff6428802bdffa7b7573ace600552cab1cd0cb7e905c9"
+
+SMOKE_QUOTA = OrderedDict(
+    [("Python", 3), ("TypeScript", 2), ("JavaScript", 1), ("Go", 1), ("Java", 1), ("Rust", 1), ("C", 1)]
+)
+SMOKE_MIN_LINES, SMOKE_MAX_LINES, SMOKE_MIN_REFS = 20, 160, 4
+BACKUPS_PER_LANGUAGE = 3
+
+PR_URL = re.compile(r"github\.com/([^/]+)/([^/]+)/pull/(\d+)", re.IGNORECASE)
+
+
+def case_of(record: dict) -> dict:
+    """One dataset record -> one case, with the harness converter's instance_id
+    (`owner__name@<head[:7]>`, evaluation/converters/aacr_bench.py)."""
+    m = PR_URL.search(record["githubPrUrl"])
+    if not m:
+        raise SystemExit(f"unparseable PR url: {record['githubPrUrl']}")
+    owner, name, pr = m.group(1), m.group(2), int(m.group(3))
+    head = record["target_commit"]
+    return {
+        "instance_id": f"{owner}__{name}@{head[:7]}",
+        "repo": f"{owner}/{name}",
+        "pr": pr,
+        "pr_url": record["githubPrUrl"],
+        "base_commit": record["source_commit"],
+        "head_commit": head,
+        "language": record["project_main_language"],
+        "pr_category": record["category"],
+        "change_line_count": record["change_line_count"],
+        "references": len(record.get("comments") or []),
+    }
+
+
+def smoke10(records: list[dict]) -> tuple[list[dict], list[dict]]:
+    eligible = [
+        case_of(r)
+        for r in records
+        if SMOKE_MIN_LINES <= r["change_line_count"] <= SMOKE_MAX_LINES
+        and len(r.get("comments") or []) >= SMOKE_MIN_REFS
+    ]
+    eligible.sort(key=lambda c: (c["change_line_count"], c["pr_url"]))
+    chosen: list[dict] = []
+    backups: list[dict] = []
+    used_repos: set[str] = set()
+    for language, quota in SMOKE_QUOTA.items():
+        spare = 0
+        for c in (c for c in eligible if c["language"] == language):
+            if c["repo"] in used_repos:
+                continue
+            if quota > 0:
+                chosen.append(c)
+                used_repos.add(c["repo"])
+                quota -= 1
+            elif spare < BACKUPS_PER_LANGUAGE:
+                backups.append(c)
+                spare += 1
+        if quota > 0:
+            raise SystemExit(f"not enough eligible {language} PRs for the quota")
+    return chosen, backups
+
+
+def main() -> None:
+    if len(sys.argv) != 3 or sys.argv[2] not in ("smoke10", "full"):
+        raise SystemExit(__doc__)
+    path, name = sys.argv[1], sys.argv[2]
+    raw = open(path, "rb").read()
+    digest = hashlib.sha256(raw).hexdigest()
+    if digest != V1_SHA256:
+        raise SystemExit(
+            f"{path} is not AACR-Bench v1.0 (sha256 {digest}, want {V1_SHA256}) — "
+            "the published numbers are denominated in v1.0; refusing to build a set from anything else"
+        )
+    records = json.loads(raw)
+    if name == "smoke10":
+        cases, backups = smoke10(records)
+        rule = (
+            f"{SMOKE_MIN_LINES}<=change_line_count<={SMOKE_MAX_LINES}, >={SMOKE_MIN_REFS} references, "
+            f"quota {dict(SMOKE_QUOTA)}, smallest first, one PR per repo"
+        )
+    else:
+        cases, backups = [case_of(r) for r in records], []
+        rule = "every v1.0 PR, dataset order"
+    out = {
+        "name": name,
+        "dataset": {
+            "source": "https://github.com/alibaba/aacr-bench",
+            "commit": V1_COMMIT,
+            "file": "dataset/positive_samples.json",
+            "sha256": V1_SHA256,
+        },
+        "rule": rule,
+        "references": sum(c["references"] for c in cases),
+        "cases": cases,
+        "backups": backups,
+    }
+    json.dump(out, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+
+
+if __name__ == "__main__":
+    main()

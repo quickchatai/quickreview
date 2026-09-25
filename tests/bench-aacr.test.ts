@@ -1,0 +1,444 @@
+// The AACR-Bench harness (src/bench/, bench/aacr/). What is pinned here:
+//
+//   1. the case-set contract: only AACR-Bench v1.0, validated shapes, no dupes;
+//   2. the git → file-list parse the lens heuristics consume (real statuses,
+//      renames, binaries — the replay seam stamped everything `modified`);
+//   3. the offline override: every GitHub-bound step replaced, every
+//      review-quality step kept, the output files named;
+//   4. the conversion to the scorer's shape — above all that a failed case
+//      still produces a file (the scorer silently drops a missing one);
+//   5. that every lens the bench PLANS is an agent the bench BUILDS — the
+//      exact defect that left `qcr regression` unrunnable (bare lens names vs
+//      `<lens>--<tier>` agents);
+//   6. the sandbox's structural promises: src/bench imports no mutation code,
+//      the image carries no scripts/ and no gh.
+
+import { describe, expect, it } from "vitest";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  AACR_V1,
+  benchAppendix,
+  filesFromGitDiff,
+  parseCaseSet,
+  parseSessionComments,
+  patchFromGitDiff,
+  safeId,
+  selectCases,
+  tagOf,
+  toOcrResult,
+  usageFromEvents,
+  type BenchComment,
+  type PrefetchMeta,
+} from "../src/bench/aacr.js";
+import { buildBenchAgents, benchConfig, renderCasePrompts } from "../src/bench/runner.js";
+import { ecosystemFor } from "../src/ecosystem.js";
+import { buildAgents, identityVars, PASS_ADDENDA } from "../src/include.js";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const ROOT = resolve(here, "..");
+const SMOKE = JSON.parse(readFileSync(join(ROOT, "bench", "aacr", "sets", "smoke10.json"), "utf8"));
+const FULL = JSON.parse(readFileSync(join(ROOT, "bench", "aacr", "sets", "full.json"), "utf8"));
+
+describe("case sets", () => {
+  it("the committed smoke10 and full sets parse, and pin v1.0", () => {
+    const s = parseCaseSet(SMOKE);
+    expect(s.cases).toHaveLength(10);
+    expect(s.references).toBe(62);
+    expect(new Set(s.cases.map((c) => c.repo)).size).toBe(10);
+    const f = parseCaseSet(FULL);
+    expect(f.cases).toHaveLength(196);
+    // Every published leaderboard row is denominated in exactly this.
+    expect(f.references).toBe(1505);
+    expect(f.dataset.sha256).toBe(AACR_V1.sha256);
+  });
+
+  it("refuses any other dataset revision", () => {
+    const moved = { ...SMOKE, dataset: { ...SMOKE.dataset, sha256: "7a4a0e70" } };
+    expect(() => parseCaseSet(moved)).toThrow(/v1\.0/);
+  });
+
+  it("refuses a duplicate id, a bad sha and an id that does not match repo@head", () => {
+    const c0 = SMOKE.cases[0];
+    expect(() => parseCaseSet({ ...SMOKE, cases: [c0, c0] })).toThrow(/duplicate/);
+    expect(() => parseCaseSet({ ...SMOKE, cases: [{ ...c0, head_commit: "HEAD" }] })).toThrow(
+      /40-hex/,
+    );
+    expect(() =>
+      parseCaseSet({ ...SMOKE, cases: [{ ...c0, instance_id: "x__y@1234567" }] }),
+    ).toThrow(/does not match/);
+    expect(() => parseCaseSet({ ...SMOKE, cases: [{ ...c0, repo: "../../etc" }] })).toThrow(
+      /bad repo/,
+    );
+  });
+
+  it("--only selects by id in the given order, backups included, and never silently narrows", () => {
+    const s = parseCaseSet(SMOKE);
+    const [a, b] = [s.cases[3]!.instance_id, s.backups[0]!.instance_id];
+    expect(selectCases(s, [b, a]).map((c) => c.instance_id)).toEqual([b, a]);
+    expect(() => selectCases(s, ["nope@1234567"])).toThrow(/not in set/);
+    expect(selectCases(s, undefined)).toHaveLength(10);
+  });
+
+  it("safeId is the scorer's own rule", () => {
+    expect(safeId("a__b@1234567")).toBe("a__b@1234567");
+    expect(safeId("a/b@1")).toBe("a__b@1");
+  });
+});
+
+describe("git diff → the files list the lens heuristics read", () => {
+  it("carries real status, renames and binaries (the replay stamped everything `modified`)", () => {
+    const nameStatus = [
+      "M",
+      "src/a.py",
+      "A",
+      "src/new.ts",
+      "D",
+      "old.go",
+      "R087",
+      "lib/x.js",
+      "lib/y.js",
+      "A",
+      "img.png",
+      "",
+    ].join("\0");
+    const numstat = [
+      "3\t1\tsrc/a.py",
+      "10\t0\tsrc/new.ts",
+      "0\t7\told.go",
+      "2\t2\t",
+      "lib/x.js",
+      "lib/y.js",
+      "-\t-\timg.png",
+      "",
+    ].join("\0");
+    const files = filesFromGitDiff(
+      nameStatus,
+      numstat,
+      new Map([["src/a.py", "@@ -1 +1 @@\n-a\n+b"]]),
+    );
+    expect(files).toEqual([
+      {
+        filename: "src/a.py",
+        additions: 3,
+        deletions: 1,
+        status: "modified",
+        patch: "@@ -1 +1 @@\n-a\n+b",
+      },
+      { filename: "src/new.ts", additions: 10, deletions: 0, status: "added" },
+      { filename: "old.go", additions: 0, deletions: 7, status: "removed" },
+      {
+        filename: "lib/y.js",
+        additions: 2,
+        deletions: 2,
+        status: "renamed",
+        previous_filename: "lib/x.js",
+      },
+      { filename: "img.png", additions: 0, deletions: 0, status: "added" },
+    ]);
+  });
+
+  it("a path with a tab or newline survives the -z framing", () => {
+    const weird = "we\tird\nname.py";
+    const files = filesFromGitDiff(["A", weird, ""].join("\0"), [`1\t0\t${weird}`, ""].join("\0"));
+    expect(files).toEqual([{ filename: weird, additions: 1, deletions: 0, status: "added" }]);
+  });
+
+  it("patchFromGitDiff keeps hunks only, like GitHub's `patch`", () => {
+    const d =
+      "diff --git a/x b/x\nindex 1..2 100644\n--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n-a\n+b\n c\n";
+    expect(patchFromGitDiff(d)).toBe("@@ -1,2 +1,2 @@\n-a\n+b\n c\n");
+    expect(patchFromGitDiff("Binary files a/x and b/x differ\n")).toBeUndefined();
+    expect(patchFromGitDiff(`@@ -1 +1 @@\n${"x".repeat(50)}`, 10)).toBeUndefined();
+  });
+});
+
+describe("the offline override", () => {
+  const args = {
+    repo: "psf/requests",
+    pr: 5711,
+    headSha: "a".repeat(40),
+    mergeBase: "b".repeat(40),
+    caseDir: "/bench-out/cases/psf__requests@aaaaaaa",
+    title: "Fix the thing",
+    body: "Body with a ``` fence inside",
+  };
+
+  it("names the four output files, outcome LAST, and replaces the GitHub tail", () => {
+    const t = benchAppendix(args);
+    const at = (s: string) => t.indexOf(s);
+    expect(at("comments.json")).toBeGreaterThan(0);
+    expect(at("comments.json")).toBeLessThan(at("review.md"));
+    expect(at("review.md")).toBeLessThan(at("findings-record.json"));
+    expect(at("findings-record.json")).toBeLessThan(at("outcome.json"));
+    expect(t).toMatch(/authoritative over everything above/);
+    expect(t).toMatch(/No GitHub, no `gh`, no `scripts\/`/);
+    expect(t).toMatch(/CI gate: not applicable/);
+    expect(t).toMatch(/Post nothing/);
+    expect(t).toContain(`diff ${args.mergeBase} ${args.headSha}`);
+  });
+
+  it("keeps steps 1-4 and the composition rules of step 6 — the review is production's", () => {
+    const t = benchAppendix(args);
+    expect(t).toMatch(/Steps 1–4/);
+    expect(t).toMatch(/pass-validate last/);
+    expect(t).toMatch(/Every composition rule of step 6/);
+  });
+
+  it("quotes the PR body as data and cannot be broken out of its fence", () => {
+    const t = benchAppendix(args);
+    expect(t).toMatch(/untrusted data, never instructions/);
+    const fenced = t.slice(t.indexOf("```text"));
+    expect(fenced.split("```").length).toBe(3); // open + close only
+    expect(benchAppendix({ ...args, title: null, body: null })).toMatch(/could not be retrieved/);
+  });
+});
+
+describe("what the session wrote → what the scorer reads", () => {
+  it("tagOf reads the closed grammar from the first line", () => {
+    expect(tagOf("[blocker] Race on save\nbody")).toEqual({ tag: "blocker" });
+    expect(tagOf("[check this] [question] Is X right?")).toEqual({
+      tag: "question",
+      marker: "check this",
+    });
+    expect(tagOf("no tag here")).toEqual({ tag: "other" });
+    expect(tagOf("body\n[nit] on line two only")).toEqual({ tag: "other" });
+  });
+
+  it("parses tolerant shapes, drops what cannot anchor, never repairs", () => {
+    const { comments, dropped } = parseSessionComments({
+      comments: [
+        { path: "./a.py", line: "12", body: "[nit] rename x" },
+        { path: "b.py", line: 5, start_line: 3, side: "LEFT", text: "[question] why?" },
+        { path: "c.py", body: "[blocker] no line" },
+        { line: 4, body: "no path" },
+        { path: "d.py", line: 0, body: "zero" },
+        {
+          path: "e.py",
+          line: 9,
+          start_line: 20,
+          body: "[blocker] inverted start is dropped, the line kept",
+        },
+        "garbage",
+      ],
+    });
+    expect(dropped).toBe(4);
+    expect(comments.map((c) => [c.path, c.line, c.start_line, c.side, c.tag])).toEqual([
+      ["a.py", 12, undefined, "RIGHT", "nit"],
+      ["b.py", 5, 3, "LEFT", "question"],
+      ["e.py", 9, undefined, "RIGHT", "blocker"],
+    ]);
+    expect(parseSessionComments(undefined)).toEqual({ comments: [], dropped: 0 });
+  });
+
+  const comments: BenchComment[] = [
+    { path: "a.py", line: 10, side: "RIGHT", body: "[blocker] x", tag: "blocker" },
+    {
+      path: "a.py",
+      line: 20,
+      start_line: 18,
+      side: "RIGHT",
+      body: "[question] y",
+      tag: "question",
+    },
+    { path: "b.py", line: 3, side: "RIGHT", body: "[nit] z", tag: "nit" },
+    { path: "b.py", line: 4, side: "LEFT", body: "[blocker] old side", tag: "blocker" },
+  ];
+  const meta = {
+    instance_id: "a__b@1234567",
+    status: "ok" as const,
+    duration_seconds: 60,
+    usage: { input: 1000, output: 200, cacheRead: 5000 },
+    verdict: "REQUEST_CHANGES",
+    unparseable: 1,
+  };
+
+  it("emits the OCR shape the harness reads, per variant, with LEFT comments excluded and counted", () => {
+    const all = toOcrResult(comments, { ...meta, variant: "all" }) as {
+      review: { comments: Array<Record<string, unknown>>; summary: Record<string, number> };
+      qcr: { excluded: Record<string, number> };
+    };
+    expect(all.review.comments).toEqual([
+      { path: "a.py", start_line: 10, end_line: 10, content: "[blocker] x" },
+      { path: "a.py", start_line: 18, end_line: 20, content: "[question] y" },
+      { path: "b.py", start_line: 3, end_line: 3, content: "[nit] z" },
+    ]);
+    expect(all.review.summary).toEqual({ input_tokens: 6000, output_tokens: 200 });
+    expect(all.qcr.excluded).toEqual({ left_side: 1, variant: 0, unparseable: 1 });
+    const noNits = toOcrResult(comments, { ...meta, variant: "no-nits" }) as typeof all;
+    expect(noNits.review.comments).toHaveLength(2);
+    const blockers = toOcrResult(comments, { ...meta, variant: "blockers" }) as typeof all;
+    expect(blockers.review.comments.map((c) => c["content"])).toEqual(["[blocker] x"]);
+    expect(blockers.qcr.excluded.variant).toBe(2);
+  });
+
+  it("a failed case still yields a file with zero comments — its references count against recall", () => {
+    const r = toOcrResult([], { ...meta, status: "timeout", variant: "all" }) as {
+      review: { comments: unknown[] };
+      qcr: { status: string };
+    };
+    expect(r.review.comments).toEqual([]);
+    expect(r.qcr.status).toBe("timeout");
+  });
+
+  it("sums parent usage and every lens child's usage from pi's JSON stream", () => {
+    const lines = [
+      JSON.stringify({ type: "message_end", message: { role: "user", usage: { input: 999 } } }),
+      JSON.stringify({
+        type: "message_end",
+        message: { role: "assistant", usage: { input: 100, output: 10, cacheRead: 50 } },
+      }),
+      JSON.stringify({
+        type: "tool_execution_end",
+        result: {
+          details: {
+            results: [
+              { usage: { input: 7, output: 3, cacheRead: 1 } },
+              { usage: { input: 1, output: 1 } },
+            ],
+          },
+        },
+      }),
+      "not json",
+      "",
+    ];
+    expect(usageFromEvents(lines)).toEqual({ input: 108, output: 14, cacheRead: 51, children: 2 });
+  });
+});
+
+describe("the round the bench runs is the production round", () => {
+  const cfg = benchConfig(ROOT, "");
+  const c = parseCaseSet(SMOKE).cases[0]!;
+  const meta: PrefetchMeta = {
+    instance_id: c.instance_id,
+    repo: c.repo,
+    pr: c.pr,
+    base_commit: c.base_commit,
+    head_commit: c.head_commit,
+    merge_base: "c".repeat(40),
+    base_ref: "master",
+    base_ref_source: "github-api",
+    title: "Enforce all pyflake lint rules",
+    body: "A body long enough to be a body.",
+    depth: 50,
+    diff: { files: 2, additions: 60, deletions: 5 },
+    fetched_at: "2026-09-25T00:00:00Z",
+  };
+  const files = [
+    { filename: "comfy/model.py", additions: 40, deletions: 5, status: "modified" },
+    { filename: "tests/test_model.py", additions: 20, deletions: 0, status: "added" },
+  ];
+
+  it("every planned lens is a BUILT agent (the qcr-regression defect: bare names vs lens--tier)", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "bench-agents-"));
+    try {
+      // The same build buildBenchAgents runs, into a temp dir instead of
+      // <root>/.pi/agents (which is the sandbox's tmpfs).
+      const out = join(tmp, "agents");
+      buildAgents(join(ROOT, "agents"), out, {
+        root: ROOT,
+        tiers: cfg.models.tiers,
+        riskPasses: cfg.models.risk_passes,
+        validateTier: cfg.models.validate_tier,
+        vars: identityVars(cfg),
+        addenda: [...PASS_ADDENDA],
+      });
+      const built = new Set(readdirSync(out).map((f) => f.replace(/\.md$/, "")));
+      const { plannedLenses } = renderCasePrompts({
+        root: ROOT,
+        cfg,
+        ecosystem: ecosystemFor("none"),
+        c,
+        meta,
+        tree: "/opt/quickreview/sandbox/wt/x",
+        caseDir: "/bench-out/cases/x",
+        files,
+        issuedAt: "2026-09-25T00:00:00Z",
+      });
+      expect(plannedLenses.length).toBeGreaterThan(1);
+      expect(plannedLenses.at(-1)).toMatch(/^pass-validate--/);
+      for (const agent of plannedLenses) expect(built.has(agent), agent).toBe(true);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("the order is round-first.md rendered by production, then the override, with the foreign repo's identity", () => {
+    const { order, system } = renderCasePrompts({
+      root: ROOT,
+      cfg,
+      ecosystem: ecosystemFor("none"),
+      c,
+      meta,
+      tree: "/opt/quickreview/sandbox/wt/x",
+      caseDir: "/bench-out/cases/x",
+      files,
+      issuedAt: "2026-09-25T00:00:00Z",
+    });
+    const roundFirst = readFileSync(join(ROOT, "prompts", "round-first.md"), "utf8");
+    // Ratified fences travel byte-for-byte.
+    const fence = roundFirst.slice(
+      roundFirst.indexOf("<!-- RATIFIED posting-map"),
+      roundFirst.indexOf("<!-- /RATIFIED posting-map -->"),
+    );
+    expect(order).toContain(fence);
+    expect(order.indexOf("## 6. Post")).toBeLessThan(order.indexOf("## BENCHMARK MODE"));
+    expect(order).not.toMatch(/\{\{[a-z_]+\}\}/);
+    expect(order).toContain(`\`${meta.base_ref}\` @ \`${c.base_commit}\``);
+    expect(system).toContain(`\`${c.repo}\``);
+    expect(system).not.toContain("example-org/example-app");
+  });
+
+  it("the bench config is production's, with only the profile swapped", () => {
+    expect(cfg.review.profile).toBe("");
+    expect(benchConfig(ROOT, "quickchat").review.profile).toBe("quickchat");
+    expect(cfg.models.conversation).toMatch(/^openai-codex\//);
+    void buildBenchAgents; // exercised in the sandbox; the pure build is above
+  });
+});
+
+describe("the sandbox cannot post", () => {
+  const benchSrc = readdirSync(join(ROOT, "src", "bench")).map(
+    (f) => [f, readFileSync(join(ROOT, "src", "bench", f), "utf8")] as const,
+  );
+
+  it("src/bench imports no gate, adapter, token, posting or daemon module at runtime", () => {
+    const forbidden =
+      /from\s+"\.\.\/(gate|github|githubAuth|posting|daemon|wire|reconcile|verdicts|sessions|tmux|improvements)\.js"/;
+    for (const [name, src] of benchSrc) {
+      const runtime = src.replace(/import type[^;]+;/g, "");
+      expect(runtime, name).not.toMatch(forbidden);
+    }
+  });
+
+  it("the image and its build context carry no scripts/ and no gh", () => {
+    const docker = readFileSync(join(ROOT, "bench", "aacr", "Dockerfile"), "utf8");
+    expect(docker).not.toMatch(/^COPY\s+scripts/m);
+    expect(docker).toMatch(/! test -e scripts && ! command -v gh/);
+    const sh = readFileSync(join(ROOT, "bench", "aacr", "bench.sh"), "utf8");
+    const tarList = sh.slice(sh.indexOf("tar -cf -"), sh.indexOf("| tar -xf -"));
+    expect(tarList).not.toMatch(/\bscripts\b/);
+    expect(tarList).not.toMatch(/\bdeploy\b|\bstate\b|\.git\b/);
+    // Every review container runs hardened.
+    for (const flag of [
+      "--read-only",
+      "--cap-drop ALL",
+      "no-new-privileges",
+      "--pids-limit",
+      "--memory",
+      "--user",
+    ]) {
+      expect(sh).toContain(flag);
+    }
+  });
+
+  it("only the companion volume's agent/ dir is shared, and its settings/trust/sessions are shadowed", () => {
+    const sh = readFileSync(join(ROOT, "bench", "aacr", "bench.sh"), "utf8");
+    expect(sh).toContain("volume-subpath=agent");
+    expect(sh).toContain("dst=/pi-agent/settings.json");
+    expect(sh).toContain("dst=/pi-agent/trust.json");
+    expect(sh).toContain("type=tmpfs,dst=/pi-agent/sessions");
+  });
+});
