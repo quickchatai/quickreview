@@ -170,7 +170,7 @@ small_diff_lines = 150
 # PassTier → model spec; the whole spec (incl. the `:thinking` suffix) rides
 # the built agent's `model:` field — pi's --model accepts the suffix, and the
 # native subagent extension reads only that field.
-"terra-med" = "openai-codex/gpt-5.6-terra:medium"
+"terra-med" = "openai-codex/gpt-6-sol:medium"
 "sol-med" = "openai-codex/gpt-6-sol:medium"
 "sol-high" = "openai-codex/gpt-6-sol:high"
 

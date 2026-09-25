@@ -655,7 +655,7 @@ export const MODELS_TIER_DEFAULTS: Pick<
   "tiers" | "risk_passes" | "validate_tier" | "small_diff_lines" | "pricing"
 > = {
   tiers: {
-    "terra-med": "openai-codex/gpt-5.6-terra:medium",
+    "terra-med": "openai-codex/gpt-6-sol:medium",
     "sol-med": "openai-codex/gpt-6-sol:medium",
     "sol-high": "openai-codex/gpt-6-sol:high",
   },

@@ -236,7 +236,7 @@ describe("buildAgents", () => {
     // every built pass gets — the seed itself is untouched.
     expect(
       alpha.startsWith(
-        "---\nname: pass-alpha--terra-med\ndescription: a\ntools: read, bash, viking_search, viking_read\nmodel: openai-codex/gpt-5.6-terra:medium\n",
+        "---\nname: pass-alpha--terra-med\ndescription: a\ntools: read, bash, viking_search, viking_read\nmodel: openai-codex/gpt-6-sol:medium\n",
       ),
     ).toBe(true);
     expect(alpha).toContain("thinking: medium\n");
@@ -328,7 +328,7 @@ describe("buildAgents", () => {
     ]);
     expect(built.filter((b) => b.pass === "pass-beta")).toHaveLength(3);
     const validate = readFileSync(join(out, "pass-validate--terra-med.md"), "utf8");
-    expect(validate).toContain("model: openai-codex/gpt-5.6-terra:medium\n");
+    expect(validate).toContain("model: openai-codex/gpt-6-sol:medium\n");
     expect(validate).toContain("thinking: medium\n");
   });
 
