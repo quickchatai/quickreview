@@ -345,6 +345,13 @@ export const ALLOWED_COMMANDS_CLAUSE = `${ALLOWED_PROGRAMS.filter((p) => p !== "
  * registry's first entry; only its allowlist clause is derived. */
 export const EXECUTION_POLICY_ADDENDUM = `\n\n## Execution policy (sandbox rule, enforced)\nYou are a read-only reviewer. Never execute project code, tests, builds, scripts, or package managers (no python/pytest/uv/npm/node/make or similar). Allowed commands: ${ALLOWED_COMMANDS_CLAUSE}. CI results are READ via \`gh pr checks\` / \`gh api\` — never re-run or trigger anything.\n\n## You are a leaf (sandbox rule, enforced)\nYou never launch another agent: no \`subagent\` call, no nested pass, no \`pi\`/\`codex\`/\`claude\` process from bash. The PR's main session is the only scheduler of agents — it dispatched you and it merges your findings. Everything you need is in your task string; if something is missing, say so in your findings block and stop.\n`;
 
+// Every turn re-sends the pass's whole context, so a pass's cost in time and
+// tokens is its TURN count. Measured on the AACR smoke set (gpt-6-sol): the
+// baseline pass averaged 11.9 turns for 17.7 tool calls, most turns a single
+// read, often the same file paged in slices.
+const READ_BATCHING_ADDENDUM =
+  "\n## Reading is batched (sandbox rule)\nEvery turn re-sends your whole context, so what a pass costs — in time and in tokens — is its number of **turns**, not its number of reads. Your first turn fetches the diff with enough context to judge it (`git diff --unified=10 <merge-base> <head>`) together with every changed file you already know you will need. After that, every read, `rg` and `git show` that does not depend on another's answer goes into the SAME turn as parallel tool calls. Read the span you need once and generously — a whole function, or ±60 lines — rather than paging through a file slice by slice. A turn holding a single read is right only when its target comes from what the previous turn showed. This changes how you read, never what you check: every question your lens asks still gets the reading it needs.\n";
+
 const DELTA_MUST_EXIST_ADDENDUM =
   '\n## A finding asserts a delta (sandbox rule)\nA posted finding must assert a **delta from the current code**. If the recommendation is already implemented, there is nothing to say — it does not become a finding, an inline comment, a numbered item, or a bullet. Never return a verification inventory ("checked X, it holds; checked Y, also fine"): nobody reads it, and every line of it costs the reader attention that belongs to the real findings. This kills the *enumerated inventory*, not the one-sentence framing judgment that opens a good review.\n';
 
@@ -680,6 +687,7 @@ const INTENT_ANSWER_THE_AUTHOR_ADDENDUM =
  */
 export const PASS_ADDENDA: readonly PassAddendum[] = [
   { id: "execution-policy", scope: "all", text: EXECUTION_POLICY_ADDENDUM },
+  { id: "read-batching", scope: "all", text: READ_BATCHING_ADDENDUM },
   { id: "delta-must-exist", scope: "all", text: DELTA_MUST_EXIST_ADDENDUM },
   { id: "reachability", scope: "lenses", text: REACHABILITY_ADDENDUM },
   { id: "reachability-validate", scope: [VALIDATE_PASS], text: REACHABILITY_VALIDATE_ADDENDUM },
