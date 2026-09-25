@@ -19,6 +19,89 @@ export function latestMetrics(dir: string): Metrics | null {
   return JSON.parse(readFileSync(join(dir, pick), "utf8")) as Metrics;
 }
 
+/** Hand-checked reference labels (`sets/<set>.labels.json`): per instance, one
+ * entry per dataset reference in dataset order, saying whether the reference
+ * names a real issue. The score counts a match on a dubious reference the same
+ * as one on a real defect; this is how the report tells the two apart. */
+export interface ReferenceLabel {
+  reality: "real-defect" | "real-maintainability" | "trivial" | "dubious" | "duplicate";
+  value?: "high" | "medium" | "low";
+  path: string;
+  from_line: number | null;
+}
+export interface ReferenceLabels {
+  source: string;
+  labels: Record<string, (ReferenceLabel | null)[]>;
+}
+
+export function parseReferenceLabels(raw: unknown): ReferenceLabels {
+  const o = raw as { source?: unknown; labels?: unknown };
+  if (!o || typeof o.labels !== "object" || o.labels === null)
+    throw new Error("labels file: missing `labels`");
+  return { source: String(o.source ?? ""), labels: o.labels as ReferenceLabels["labels"] };
+}
+
+const QUALITY_CLASSES = [
+  "real, high/medium value",
+  "real, low value",
+  "trivial",
+  "dubious",
+  "duplicate",
+  "unlabelled",
+] as const;
+type QualityClass = (typeof QUALITY_CLASSES)[number];
+
+function qualityClass(l: ReferenceLabel | null | undefined): QualityClass {
+  if (!l) return "unlabelled";
+  if (l.reality === "real-defect" || l.reality === "real-maintainability")
+    return l.value === "low" ? "real, low value" : "real, high/medium value";
+  return l.reality;
+}
+
+interface RoundFile {
+  eval_res: {
+    instance_id: string;
+    comments: { path: string; from_line: number | null; semantic_match: boolean }[];
+  }[];
+}
+
+/** Matched references per quality class, averaged over the judge rounds of one
+ * variant. A label whose path/line no longer lines up with the reference it
+ * was written for counts as unlabelled rather than as the wrong class. */
+export function recallByQuality(
+  dir: string,
+  labels: ReferenceLabels,
+  instances: string[],
+): { cls: QualityClass; total: number; matched: number }[] | null {
+  if (!existsSync(dir)) return null;
+  const rounds = readdirSync(dir)
+    .filter((f) => /^metrics_ocr_.*_round_\d+\.json$/.test(f))
+    .map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")) as RoundFile);
+  if (!rounds.length) return null;
+  const total = new Map<QualityClass, number>();
+  const matched = new Map<QualityClass, number>();
+  let first = true;
+  for (const r of rounds) {
+    for (const e of r.eval_res) {
+      if (!instances.includes(e.instance_id)) continue;
+      const ls = labels.labels[e.instance_id] ?? [];
+      e.comments.forEach((c, k) => {
+        const l = ls[k];
+        const aligned = l && l.path === c.path && l.from_line === c.from_line ? l : null;
+        const cls = qualityClass(aligned);
+        if (first) total.set(cls, (total.get(cls) ?? 0) + 1);
+        if (c.semantic_match) matched.set(cls, (matched.get(cls) ?? 0) + 1);
+      });
+    }
+    first = false;
+  }
+  return QUALITY_CLASSES.filter((c) => total.has(c)).map((cls) => ({
+    cls,
+    total: total.get(cls) ?? 0,
+    matched: (matched.get(cls) ?? 0) / rounds.length,
+  }));
+}
+
 function readSummary(outDir: string, c: BenchCase): CaseSummary | null {
   const p = join(outDir, "cases", safeId(c.instance_id), "case-summary.json");
   return existsSync(p) ? (JSON.parse(readFileSync(p, "utf8")) as CaseSummary) : null;
@@ -35,7 +118,12 @@ function n(v: number | undefined): string {
 
 /** The run report: the scorer's numbers per variant, then per case what the
  * reviewer did, so a number is never read without what produced it. */
-export function renderReport(set: CaseSet, outDir: string, cases: BenchCase[]): string {
+export function renderReport(
+  set: CaseSet,
+  outDir: string,
+  cases: BenchCase[],
+  labels?: ReferenceLabels,
+): string {
   const L: string[] = [];
   const run = existsSync(join(outDir, "run.json"))
     ? JSON.parse(readFileSync(join(outDir, "run.json"), "utf8"))
@@ -92,6 +180,38 @@ export function renderReport(set: CaseSet, outDir: string, cases: BenchCase[]): 
     L.push(
       `| ${v} | ${n(s["evaluated_instances"])}/${cases.length} | ${n(s["generated_notes"])} | ${n(s["matched_semantic_notes"])}/${n(s["expected_notes"])} | ${s["semantic_match_rate"]} | ${s["semantic_recall_rate"]} | ${s["semantic_f1"]} | ${s["line_match_rate"]} | ${s["line_recall_rate"]} |`,
     );
+  }
+  if (labels) {
+    const ids = cases.map((c) => c.instance_id);
+    const rows = Object.keys(VARIANTS).map((v) => ({
+      v,
+      q: recallByQuality(join(outDir, "results", v), labels, ids),
+    }));
+    const classes = QUALITY_CLASSES.filter((cls) =>
+      rows.some((r) => r.q?.some((x) => x.cls === cls)),
+    );
+    if (classes.length) {
+      L.push("");
+      L.push("## Recall by reference quality");
+      L.push("");
+      L.push(
+        `Each reference hand-checked against the code (${labels.source}). A match on a dubious reference scores the same as one on a real defect; the first column is the one that says whether the review got better.`,
+      );
+      L.push("");
+      L.push(`| Variant | ${classes.map((c) => c).join(" | ")} |`);
+      L.push(`|---|${classes.map(() => "---").join("|")}|`);
+      for (const { v, q } of rows) {
+        if (!q) continue;
+        L.push(
+          `| ${v} | ${classes
+            .map((cls) => {
+              const x = q.find((y) => y.cls === cls);
+              return x ? `${n(x.matched)}/${x.total}` : "—";
+            })
+            .join(" | ")} |`,
+        );
+      }
+    }
   }
   L.push("");
   L.push("## Per case");

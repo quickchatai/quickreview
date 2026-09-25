@@ -1,0 +1,460 @@
+{
+ "set": "smoke10",
+ "source": "runs/smoke10-1 miss analysis (per-PR analysts, critic-corrected); matched to references by path + line",
+ "labels": {
+  "comfyanonymous__ComfyUI@0bb6023": [
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "api_server/routes/internal/internal_routes.py",
+    "from_line": 43
+   },
+   {
+    "reality": "trivial",
+    "value": "low",
+    "miss_reason": "style-out-of-scope",
+    "path": "comfy/controlnet.py",
+    "from_line": 824
+   },
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "comfy_extras/nodes_clip_sdxl.py",
+    "from_line": 31
+   },
+   {
+    "reality": "real-defect",
+    "value": "high",
+    "miss_reason": "matched",
+    "path": "notebooks/comfyui_colab.ipynb",
+    "from_line": 241
+   },
+   {
+    "reality": "real-defect",
+    "value": "medium",
+    "miss_reason": "generated-then-merged-into-other-concern",
+    "path": "notebooks/comfyui_colab.ipynb",
+    "from_line": 287
+   },
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "ruff.toml",
+    "from_line": 7
+   },
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "server.py",
+    "from_line": 587
+   }
+  ],
+  "infiniflow__ragflow@7051234": [
+   {
+    "reality": "real-defect",
+    "value": "high",
+    "miss_reason": "matched",
+    "path": "api/apps/api_app.py",
+    "from_line": 618
+   },
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "api/db/services/common_service.py",
+    "from_line": 267
+   },
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "api/db/services/common_service.py",
+    "from_line": 269
+   },
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "api/db/services/document_service.py",
+    "from_line": 339
+   },
+   {
+    "reality": "trivial",
+    "value": "low",
+    "miss_reason": "style-out-of-scope",
+    "path": "api/db/services/user_canvas_version.py",
+    "from_line": 38
+   },
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "api/db/services/user_canvas_version.py",
+    "from_line": 38
+   }
+  ],
+  "langflow-ai__langflow@9513d15": [
+   {
+    "reality": "real-defect",
+    "value": "high",
+    "miss_reason": "matched",
+    "path": "src/backend/base/langflow/graph/vertex/base.py",
+    "from_line": 636
+   },
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "src/backend/base/langflow/graph/vertex/base.py",
+    "from_line": 654
+   },
+   {
+    "reality": "real-maintainability",
+    "value": "low",
+    "miss_reason": "defect-no-lens-looked",
+    "path": "src/backend/base/langflow/graph/vertex/base.py",
+    "from_line": 658
+   },
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "src/backend/base/langflow/graph/vertex/vertex_types.py",
+    "from_line": 109
+   }
+  ],
+  "immich-app__immich@7e2009f": [
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "server/src/services/metadata.service.ts",
+    "from_line": 577
+   },
+   {
+    "reality": "trivial",
+    "value": "low",
+    "miss_reason": "style-out-of-scope",
+    "path": "server/src/services/metadata.service.ts",
+    "from_line": 594
+   },
+   {
+    "reality": "real-maintainability",
+    "value": "medium",
+    "miss_reason": "defect-no-lens-looked",
+    "path": "server/src/services/metadata.service.ts",
+    "from_line": 597
+   },
+   {
+    "reality": "trivial",
+    "value": "low",
+    "miss_reason": "style-out-of-scope",
+    "path": "server/src/services/metadata.service.ts",
+    "from_line": 600
+   },
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "server/src/services/metadata.service.ts",
+    "from_line": 601
+   }
+  ],
+  "cline__cline@7d18fb9": [
+   {
+    "reality": "trivial",
+    "value": "low",
+    "miss_reason": "style-out-of-scope",
+    "path": "src/integrations/editor/DiffViewProvider.ts",
+    "from_line": 49
+   },
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "src/integrations/editor/DiffViewProvider.ts",
+    "from_line": 49
+   },
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "src/integrations/editor/DiffViewProvider.ts",
+    "from_line": 237
+   },
+   {
+    "reality": "real-maintainability",
+    "value": "low",
+    "miss_reason": "style-out-of-scope",
+    "path": "src/integrations/editor/DiffViewProvider.ts",
+    "from_line": 239
+   },
+   {
+    "reality": "duplicate",
+    "value": "medium",
+    "miss_reason": "posted-wrong-location",
+    "path": "src/integrations/misc/extract-text.ts",
+    "from_line": 7
+   },
+   {
+    "reality": "real-defect",
+    "value": "medium",
+    "miss_reason": "matched",
+    "path": "src/integrations/misc/extract-text.ts",
+    "from_line": 26
+   },
+   {
+    "reality": "real-maintainability",
+    "value": "medium",
+    "miss_reason": "style-out-of-scope",
+    "path": "src/integrations/misc/extract-text.ts",
+    "from_line": 59
+   },
+   {
+    "reality": "trivial",
+    "value": "low",
+    "miss_reason": "style-out-of-scope",
+    "path": "src/integrations/misc/extract-text.ts",
+    "from_line": 61
+   },
+   {
+    "reality": "real-maintainability",
+    "value": "low",
+    "miss_reason": "style-out-of-scope",
+    "path": "src/integrations/misc/extract-text.ts",
+    "from_line": 61
+   }
+  ],
+  "mrdoob__three.js@96ab072": [
+   {
+    "reality": "real-maintainability",
+    "value": "low",
+    "miss_reason": "style-out-of-scope",
+    "path": "src/geometries/ExtrudeGeometry.js",
+    "from_line": 165
+   },
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "src/geometries/ExtrudeGeometry.js",
+    "from_line": 169
+   },
+   {
+    "reality": "trivial",
+    "value": "low",
+    "miss_reason": "style-out-of-scope",
+    "path": "src/geometries/ExtrudeGeometry.js",
+    "from_line": 406
+   },
+   {
+    "reality": "trivial",
+    "value": "low",
+    "miss_reason": "style-out-of-scope",
+    "path": "src/geometries/ExtrudeGeometry.js",
+    "from_line": 433
+   }
+  ],
+  "ollama__ollama@b6002f6": [
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "kvcache/causal.go",
+    "from_line": 202
+   },
+   {
+    "reality": "real-defect",
+    "value": "medium",
+    "miss_reason": "posted-wrong-location",
+    "path": "kvcache/encoder.go",
+    "from_line": 94
+   },
+   {
+    "reality": "trivial",
+    "value": "low",
+    "miss_reason": "style-out-of-scope",
+    "path": "kvcache/wrapper.go",
+    "from_line": 49
+   },
+   {
+    "reality": "trivial",
+    "value": "low",
+    "miss_reason": "style-out-of-scope",
+    "path": "ml/backend.go",
+    "from_line": 402
+   },
+   {
+    "reality": "real-defect",
+    "value": "low",
+    "miss_reason": "generated-then-killed",
+    "path": "ml/backend/ggml/ggml.go",
+    "from_line": 1007
+   },
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "ml/backend/ggml/ggml.go",
+    "from_line": 1007
+   },
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "ml/backend/ggml/ggml.go",
+    "from_line": 1029
+   },
+   {
+    "reality": "trivial",
+    "value": "low",
+    "miss_reason": "style-out-of-scope",
+    "path": "model/input/input.go",
+    "from_line": 61
+   },
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "model/model.go",
+    "from_line": 285
+   },
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "model/models/llama4/model_text.go",
+    "from_line": 238
+   },
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "runner/ollamarunner/runner.go",
+    "from_line": 581
+   },
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "runner/ollamarunner/runner.go",
+    "from_line": 711
+   }
+  ],
+  "dbeaver__dbeaver@bc3ac7b": [
+   {
+    "reality": "real-defect",
+    "value": "high",
+    "miss_reason": "posted-wrong-location",
+    "path": "plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/navigator/fs/DBNPathBase.java",
+    "from_line": 293
+   },
+   {
+    "reality": "trivial",
+    "value": "low",
+    "miss_reason": "style-out-of-scope",
+    "path": "plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/navigator/fs/DBNPathBase.java",
+    "from_line": 304
+   },
+   {
+    "reality": "trivial",
+    "value": "low",
+    "miss_reason": "style-out-of-scope",
+    "path": "plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/navigator/fs/DBNPathBase.java",
+    "from_line": 363
+   },
+   {
+    "reality": "real-maintainability",
+    "value": "medium",
+    "miss_reason": "defect-no-lens-looked",
+    "path": "plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/navigator/fs/DBNPathBase.java",
+    "from_line": 365
+   }
+  ],
+  "linera-io__linera-protocol@3535ddb": [
+   {
+    "reality": "trivial",
+    "value": "low",
+    "miss_reason": "style-out-of-scope",
+    "path": "linera-core/src/chain_worker/state.rs",
+    "from_line": 51
+   },
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "linera-core/src/chain_worker/state.rs",
+    "from_line": 53
+   },
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "linera-core/src/chain_worker/state.rs",
+    "from_line": 1418
+   },
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "linera-core/src/chain_worker/state.rs",
+    "from_line": 1418
+   },
+   {
+    "reality": "real-defect",
+    "value": "medium",
+    "miss_reason": "matched",
+    "path": "linera-core/src/client/mod.rs",
+    "from_line": 846
+   },
+   {
+    "reality": "trivial",
+    "value": "low",
+    "miss_reason": "defect-no-lens-looked",
+    "path": "linera-core/src/client/mod.rs",
+    "from_line": 848
+   }
+  ],
+  "lvgl__lvgl@4a57db3": [
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "src/draw/lv_draw_label.c",
+    "from_line": 220
+   },
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "src/widgets/label/lv_label.c",
+    "from_line": 856
+   },
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "src/widgets/label/lv_label.c",
+    "from_line": 968
+   },
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "src/widgets/label/lv_label_private.h",
+    "from_line": 54
+   },
+   {
+    "reality": "dubious",
+    "value": "low",
+    "miss_reason": "reference-dubious",
+    "path": "src/widgets/label/lv_label_private.h",
+    "from_line": 54
+   }
+  ]
+ }
+}

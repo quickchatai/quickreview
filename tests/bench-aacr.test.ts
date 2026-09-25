@@ -43,6 +43,7 @@ import {
   type BenchComment,
   type PrefetchMeta,
 } from "../src/bench/aacr.js";
+import { parseReferenceLabels, recallByQuality, renderReport } from "../src/bench/report.js";
 import { AuthExpiring, benchAuthFrom, DISABLED_REFRESH, syncBenchAuth } from "../src/bench/auth.js";
 import {
   boundBody,
@@ -108,6 +109,62 @@ describe("case sets", () => {
     expect(selectCases(s, [b, a]).map((c) => c.instance_id)).toEqual([b, a]);
     expect(() => selectCases(s, ["nope@1234567"])).toThrow(/not in set/);
     expect(selectCases(s, undefined)).toHaveLength(10);
+  });
+
+  it("the smoke10 labels cover every reference, in the dataset's own order", () => {
+    const s = parseCaseSet(SMOKE);
+    const l = parseReferenceLabels(
+      JSON.parse(readFileSync(join(ROOT, "bench", "aacr", "sets", "smoke10.labels.json"), "utf8")),
+    );
+    for (const c of s.cases) {
+      const ls = l.labels[c.instance_id] ?? [];
+      expect(ls, c.instance_id).toHaveLength(c.references);
+      expect(ls.every(Boolean), c.instance_id).toBe(true);
+    }
+  });
+
+  it("recall by quality averages the judge rounds, and a misaligned label is unlabelled", () => {
+    const out = mkdtempSync(join(tmpdir(), "bench-quality-"));
+    const dir = join(out, "results", "all");
+    mkdirSync(dir, { recursive: true });
+    const round = (m: boolean[]) => ({
+      eval_res: [
+        {
+          instance_id: "a__b@1234567",
+          comments: [
+            { path: "x.py", from_line: 3, semantic_match: m[0] },
+            { path: "y.py", from_line: 9, semantic_match: m[1] },
+            { path: "z.py", from_line: 1, semantic_match: m[2] },
+          ],
+        },
+        // Not in the case list: never counted.
+        { instance_id: "c__d@7654321", comments: [{ path: "q", from_line: 1, semantic_match: true }] },
+      ],
+    });
+    writeFileSync(join(dir, "metrics_ocr_1_round_1.json"), JSON.stringify(round([true, true, false])));
+    writeFileSync(join(dir, "metrics_ocr_2_round_2.json"), JSON.stringify(round([false, true, false])));
+    // The average file is not a round and must not be double-counted.
+    writeFileSync(join(dir, "metrics_ocr_average.json"), JSON.stringify({ summary: {} }));
+    const labels = parseReferenceLabels({
+      source: "test",
+      labels: {
+        "a__b@1234567": [
+          { reality: "real-defect", value: "high", path: "x.py", from_line: 3 },
+          { reality: "dubious", path: "y.py", from_line: 9 },
+          { reality: "real-defect", value: "low", path: "OTHER.py", from_line: 1 },
+        ],
+      },
+    });
+    expect(recallByQuality(dir, labels, ["a__b@1234567"])).toEqual([
+      { cls: "real, high/medium value", total: 1, matched: 0.5 },
+      { cls: "dubious", total: 1, matched: 1 },
+      { cls: "unlabelled", total: 1, matched: 0 },
+    ]);
+    const set = parseCaseSet(SMOKE);
+    const md = renderReport(set, out, [{ ...set.cases[0]!, instance_id: "a__b@1234567" }], labels);
+    expect(md).toContain("## Recall by reference quality");
+    expect(md).toContain("| all | 0.5/1 | 1/1 | 0/1 |");
+    rmSync(out, { recursive: true, force: true });
   });
 
   it("safeId is the scorer's own rule", () => {

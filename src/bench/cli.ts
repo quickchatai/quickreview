@@ -28,7 +28,7 @@ import {
 } from "./aacr.js";
 import { AuthExpiring, syncBenchAuth } from "./auth.js";
 import { prefetchCase, storeDir } from "./prefetch.js";
-import { renderReport } from "./report.js";
+import { parseReferenceLabels, renderReport } from "./report.js";
 import {
   buildBenchAgents,
   collectComments,
@@ -364,7 +364,15 @@ async function main(): Promise<number> {
   if (f.cmd === "report") {
     const set = loadSet(f.get("--set"));
     const outDir = resolve(f.get("--out") ?? "");
-    writeFileSync(join(outDir, "report.md"), renderReport(set, outDir, selectCases(set, only(f))));
+    // Hand-checked reference labels ride beside the set, when there are any.
+    const labelsPath = (f.get("--set") ?? "").replace(/\.json$/, ".labels.json");
+    const labels = existsSync(labelsPath)
+      ? parseReferenceLabels(JSON.parse(readFileSync(labelsPath, "utf8")))
+      : undefined;
+    writeFileSync(
+      join(outDir, "report.md"),
+      renderReport(set, outDir, selectCases(set, only(f)), labels),
+    );
     log(`report: ${join(outDir, "report.md")}`);
     return 0;
   }
