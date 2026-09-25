@@ -11,15 +11,15 @@
 // registers it).
 //
 // What is NOT, and why:
-//   - memory: off. A benchmark of a foreign repo must not read quickchat
-//     memory, and a PR session's memory extension would also WRITE its turns
+//   - memory: off. A benchmark of a foreign repo must not read the deployed
+//     repo's memory, and a PR session's memory extension would also WRITE its turns
 //     into reviewer memory (vendor/openviking-pi syncTurns).
 //   - inject-bridge / tmux: a benchmark round is one `pi -p` process that
 //     exits when the agent settles; there is no daemon to deliver wakes.
 //   - GitHub/CI/posting: replaced by `benchAppendix` (see aacr.ts header).
-//   - profile: generic ("") by default — the quickchat profile's Django house
-//     rules would be noise on a Rust PR. `--profile quickchat` measures
-//     production as deployed.
+//   - profile: generic ("") by default — the deployed profile's Django house
+//     rules would be noise on a Rust PR. `--profile <config.toml [review]
+//     profile>` measures production as deployed.
 
 import {
   createWriteStream,
@@ -31,6 +31,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
 import { join } from "node:path";
 import { loadConfig, type Config } from "../config.js";
 import { buildRoundOrder } from "../dispatch.js";
@@ -72,8 +73,8 @@ export interface RunnerOptions {
   store: string;
   /** This run's output dir (the one host bind mount that is written). */
   outDir: string;
-  /** pi's agent dir: the SHARED login (auth.json + its lock) with the bench's
-   * own settings.json/trust.json shadowed over it. */
+  /** pi's agent dir for this run: a PRIVATE tmpfs dir holding a copy of the
+   * shared login with its refresh token disabled (src/bench/auth.ts). */
   agentDir: string;
   profile: string;
   timeoutMs: number;
@@ -84,8 +85,13 @@ export interface RunnerOptions {
 
 export interface CaseSummary {
   instance_id: string;
-  status: "ok" | "no-output" | "timeout" | "failed";
+  /** `no-verdict`: the round wrote its files but decided nothing (its pass
+   * infrastructure failed) — not a review, so `--resume` runs it again. */
+  status: "ok" | "no-verdict" | "no-output" | "timeout" | "failed";
   error?: string;
+  /** What produced this case: `--resume` re-runs a case whose fingerprint
+   * differs from the current run's, so one run never mixes builds. */
+  fingerprint?: RunFingerprint;
   verdict: string | null;
   duration_seconds: number;
   usage: { input: number; output: number; cacheRead: number; children: number };
@@ -106,6 +112,37 @@ export interface CaseSummary {
    * ignored, an extension that failed to load) must be visible in the report,
    * not only in a log nobody opens. */
   warnings: string[];
+}
+
+export interface RunFingerprint {
+  qcr_commit: string;
+  profile: string;
+  conversation: string;
+  tiers: Record<string, string>;
+  validate_tier: string;
+  pi: string;
+}
+
+export function runFingerprint(cfg: Config, profile: string): RunFingerprint {
+  return {
+    qcr_commit: process.env.QCR_BENCH_COMMIT ?? "unknown",
+    profile,
+    conversation: cfg.models.conversation,
+    tiers: { ...cfg.models.tiers },
+    validate_tier: cfg.models.validate_tier,
+    pi: cfg.pi.version,
+  };
+}
+
+/** Cut a PR body to a UTF-8 byte budget. The body is the one unbounded input
+ * in the order, and it appears twice (the intent note and the override). */
+export function boundBody(body: string | null, maxBytes = 20_000): string | null {
+  if (body === null || Buffer.byteLength(body, "utf8") <= maxBytes) return body;
+  const cut = Buffer.from(body, "utf8")
+    .subarray(0, maxBytes)
+    .toString("utf8")
+    .replace(/\uFFFD$/, "");
+  return `${cut}\n…(truncated for the benchmark)`;
 }
 
 const GIT_ENV = {
@@ -208,6 +245,7 @@ export function renderCasePrompts(args: {
   const { root, cfg, c, meta, tree } = args;
   const identity = { ...identityVars(cfg), repo: c.repo };
   const title = meta.title ?? `AACR-Bench ${c.repo}#${c.pr}`;
+  const body = boundBody(meta.body);
   const vocab = directiveVocabulary(cfg.review.directives);
   const directiveFiles = args.files
     .filter((f) => isFirstPartyDirectivePath(f.filename, vocab))
@@ -236,7 +274,7 @@ export function renderCasePrompts(args: {
       base_sha: meta.base_commit,
       merge_base: meta.merge_base,
     },
-    ...(meta.body !== null ? { prBody: meta.body } : {}),
+    ...(body !== null ? { prBody: body } : {}),
     ...(directiveFiles.length
       ? { firstPartyDirectives: { files: directiveFiles, mention: "maintainer" } }
       : {}),
@@ -252,12 +290,6 @@ export function renderCasePrompts(args: {
     args.ecosystem,
     identity,
   );
-  // An argv string caps at 128 KiB (MAX_ARG_STRLEN); a PR description is the
-  // one unbounded input, so it is the one that gets cut.
-  const body =
-    meta.body !== null && meta.body.length > 20_000
-      ? `${meta.body.slice(0, 20_000)}\n…(truncated)`
-      : meta.body;
   const orderText =
     rendered +
     "\n\n" +
@@ -281,6 +313,7 @@ export function renderCasePrompts(args: {
 interface PiRun {
   code: number | null;
   timedOut: boolean;
+  streamError: string | null;
 }
 
 function runPi(
@@ -291,6 +324,7 @@ function runPi(
   stderrPath: string,
   timeoutMs: number,
   piBin: string,
+  stdinText?: string,
 ): Promise<PiRun> {
   return new Promise((resolve) => {
     const events = createWriteStream(eventsPath, { flags: "a" });
@@ -300,12 +334,11 @@ function runPi(
     const child = spawn(piBin, argv, {
       cwd,
       env,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [stdinText === undefined ? "ignore" : "pipe", "pipe", "pipe"],
       detached: true,
     });
-    child.stdout.pipe(events);
-    child.stderr.pipe(errs);
     let timedOut = false;
+    let streamError: string | null = null;
     const kill = (sig: NodeJS.Signals): void => {
       try {
         if (child.pid) process.kill(-child.pid, sig);
@@ -313,6 +346,30 @@ function runPi(
         // already gone
       }
     };
+    // A full disk must end THIS case as a recorded failure, not throw out of
+    // the CLI and lose every case after it.
+    const onStreamError = (e: Error): void => {
+      streamError = String(e);
+      kill("SIGKILL");
+    };
+    events.on("error", onStreamError);
+    errs.on("error", onStreamError);
+    // The round order goes in on stdin: pi -p takes piped stdin as the prompt,
+    // and an argv string caps at 128 KiB (MAX_ARG_STRLEN).
+    if (stdinText !== undefined && child.stdin) child.stdin.end(stdinText);
+    // `*_update` events re-emit a lens child's whole transcript on every
+    // update — the file grows quadratically. Nothing reads them: usage comes
+    // from `message_end` and `tool_execution_end`.
+    const lines = createInterface({ input: child.stdout! });
+    lines.on("line", (line) => {
+      if (
+        line.startsWith('{"type":"tool_execution_update"') ||
+        line.startsWith('{"type":"message_update"')
+      )
+        return;
+      events.write(line + "\n");
+    });
+    child.stderr!.pipe(errs);
     const timer = setTimeout(() => {
       timedOut = true;
       kill("SIGTERM");
@@ -325,7 +382,7 @@ function runPi(
       clearTimeout(timer);
       events.end();
       errs.end();
-      resolve({ code, timedOut });
+      resolve({ code, timedOut, streamError });
     });
   });
 }
@@ -344,18 +401,22 @@ export async function reviewCase(
   c: BenchCase,
   meta: PrefetchMeta,
   o: RunnerOptions,
-  ctx: { cfg: Config; ecosystem: Ecosystem },
+  ctx: { cfg: Config; ecosystem: Ecosystem; fingerprint: RunFingerprint },
 ): Promise<CaseSummary> {
   const log = o.log ?? (() => {});
   const safe = safeId(c.instance_id);
   const caseDir = join(o.outDir, "cases", safe);
   const tree = join(o.root, "wt", safe);
+  // pi's spill files (bash output, subagent temp) land here, on the disk-backed
+  // wt volume — not in /tmp, a tmpfs charged to the container's memory cap.
+  const tmpDir = join(o.root, "wt", `${safe}.tmp`);
   mkdirSync(caseDir, { recursive: true });
   for (const f of Object.values(CASE_FILES)) rmSync(join(caseDir, f), { force: true });
   const started = Date.now();
   const summary: CaseSummary = {
     instance_id: c.instance_id,
     status: "failed",
+    fingerprint: ctx.fingerprint,
     verdict: null,
     duration_seconds: 0,
     usage: { input: 0, output: 0, cacheRead: 0, children: 0 },
@@ -374,6 +435,8 @@ export async function reviewCase(
   let comments: BenchComment[] = [];
   try {
     await prepareTree(join(o.store, safe), tree, meta);
+    rmSync(tmpDir, { recursive: true, force: true });
+    mkdirSync(tmpDir, { recursive: true });
     const files = await changedFiles(tree, meta);
     const prompts = renderCasePrompts({
       root: o.root,
@@ -402,6 +465,7 @@ export async function reviewCase(
     const env: NodeJS.ProcessEnv = {
       PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
       HOME: process.env.HOME ?? "/tmp",
+      TMPDIR: tmpDir,
       LANG: "C.UTF-8",
       PI_CODING_AGENT_DIR: o.agentDir,
       QCR_SUBAGENT_SCOPE: "project",
@@ -445,18 +509,27 @@ export async function reviewCase(
       `review: ${c.instance_id} — ${files.length} files, lenses ${prompts.plannedLenses.join(" ")}`,
     );
     let r = await runPi(
-      [...base, "-p", prompts.order],
+      [...base, "-p"],
       env,
       o.root,
       events,
       stderr,
       o.timeoutMs,
       piBin,
+      prompts.order,
     );
     const outcomePath = join(caseDir, CASE_FILES.outcome);
     // One continuation, never more: the live system's answer to a round that
-    // stopped short is redelivery, not a fresh review (#5362). Same session.
-    if (!r.timedOut && !existsSync(outcomePath)) {
+    // stopped short is redelivery, not a fresh review (#5362). Same session —
+    // and only if there IS one: pi persists a session after its first
+    // assistant message, and `--continue` on an empty session dir silently
+    // starts a NEW session that would review with no round order at all.
+    const resumable =
+      existsSync(sessionDir) && readdirSync(sessionDir).some((f) => f.endsWith(".jsonl"));
+    if (!r.timedOut && !r.streamError && !existsSync(outcomePath) && !resumable) {
+      summary.error = `pi exited ${String(r.code)} before any assistant message — nothing to continue`;
+    }
+    if (!r.timedOut && !r.streamError && !existsSync(outcomePath) && resumable) {
       const left = o.timeoutMs - (Date.now() - started);
       if (left > 120_000) {
         summary.continued = true;
@@ -485,8 +558,13 @@ export async function reviewCase(
           .map((l) => l.trim().slice(0, 300)),
       ),
     ].slice(0, 20);
-    const lines = readFileSync(events, "utf8").split("\n");
-    summary.usage = usageFromEvents(lines);
+    if (r.streamError) summary.error = `output stream failed: ${r.streamError}`;
+    // Usage is telemetry: a failure to read it must never cost the review.
+    try {
+      summary.usage = usageFromEvents(readFileSync(events, "utf8").split("\n"));
+    } catch (err) {
+      summary.warnings.push(`usage unreadable: ${String(err).slice(0, 200)}`);
+    }
     const outcome = readJson(outcomePath) as Record<string, unknown> | undefined;
     const rawComments = readJson(join(caseDir, CASE_FILES.comments));
     const collected = collectComments(caseDir);
@@ -501,14 +579,17 @@ export async function reviewCase(
       : [];
     summary.status = r.timedOut
       ? "timeout"
-      : outcome !== undefined && rawComments !== undefined
-        ? "ok"
-        : "no-output";
+      : outcome === undefined || rawComments === undefined
+        ? "no-output"
+        : summary.verdict === "APPROVE" || summary.verdict === "REQUEST_CHANGES"
+          ? "ok"
+          : "no-verdict";
   } catch (err) {
     summary.status = "failed";
     summary.error = String(err instanceof Error ? err.message : err).slice(0, 2000);
     log(`review: ${c.instance_id} FAILED — ${summary.error}`);
   } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
     if (!o.keepTree) rmSync(tree, { recursive: true, force: true });
   }
   summary.duration_seconds = Math.round((Date.now() - started) / 1000);

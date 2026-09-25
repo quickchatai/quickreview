@@ -14,17 +14,19 @@
 // nothing can post: this module imports no gate, adapter or token code, and the
 // image ships no `scripts/`, no `gh` and no credential.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
   parseCaseSet,
   parsePrefetchMeta,
   safeId,
   selectCases,
+  VARIANTS,
   type BenchCase,
   type CaseSet,
   type PrefetchMeta,
 } from "./aacr.js";
+import { AuthExpiring, syncBenchAuth } from "./auth.js";
 import { prefetchCase, storeDir } from "./prefetch.js";
 import { renderReport } from "./report.js";
 import {
@@ -32,6 +34,7 @@ import {
   collectComments,
   contextFor,
   reviewCase,
+  runFingerprint,
   writeResults,
   type CaseSummary,
 } from "./runner.js";
@@ -39,7 +42,10 @@ import {
 const DEFAULTS = {
   root: "/opt/quickreview/sandbox",
   store: "/repos",
-  agentDir: "/pi-agent",
+  /** The companion's agent dir, mounted READ-ONLY (src/bench/auth.ts). */
+  authSrc: "/pi-agent-src",
+  /** The sandbox's own agent dir (tmpfs): a refresh-disabled token copy. */
+  agentDir: "/tmp/pi-agent",
   timeoutMin: 45,
 };
 
@@ -137,6 +143,29 @@ async function main(): Promise<number> {
     return failed ? 1 : 0;
   }
 
+  if (f.cmd === "auth") {
+    // The judge's pi login: the same read-only, refresh-disabled copy.
+    const needMs = Number(f.get("--need-min") ?? "120") * 60_000;
+    try {
+      const { expiresAt } = syncBenchAuth({
+        srcDir: f.get("--auth-src") ?? DEFAULTS.authSrc,
+        dstDir: f.get("--agent-dir") ?? DEFAULTS.agentDir,
+        root,
+        needMs,
+      });
+      log(
+        `auth: token copy ready${expiresAt ? `, expires ${new Date(expiresAt).toISOString()}` : ""}`,
+      );
+      return 0;
+    } catch (err) {
+      if (err instanceof AuthExpiring) {
+        log(`auth: ${err.message}`);
+        return 3;
+      }
+      throw err;
+    }
+  }
+
   if (f.cmd === "agents") {
     const { cfg } = contextFor(root, f.get("--profile") ?? "");
     log(`built ${buildBenchAgents(root, cfg)} agents into ${join(root, ".pi", "agents")}`);
@@ -149,13 +178,30 @@ async function main(): Promise<number> {
     if (!f.get("--out")) throw new Error("--out <dir> is required");
     const profile = f.get("--profile") ?? "";
     const cases = selectCases(set, only(f));
-    const ctx = contextFor(root, profile);
+    const base = contextFor(root, profile);
+    const ctx = { ...base, fingerprint: runFingerprint(base.cfg, profile) };
+    const authSrc = f.get("--auth-src") ?? DEFAULTS.authSrc;
+    const agentDir = f.get("--agent-dir") ?? DEFAULTS.agentDir;
+    const resume = f.has("--resume");
     const agents = buildBenchAgents(root, ctx.cfg);
     log(
       `review: ${agents} lens agents built (profile ${profile || "(generic)"}), ${cases.length} case(s)`,
     );
     mkdirSync(outDir, { recursive: true });
     const runFile = join(outDir, "run.json");
+    const previous = existsSync(runFile)
+      ? (JSON.parse(readFileSync(runFile, "utf8")) as { started_at?: string; resumes?: unknown[] })
+      : null;
+    if (!resume) {
+      // A fresh run owns its cases outright: nothing an earlier invocation
+      // left for them may be scored as this run's (an interrupted run then
+      // shows its unreached cases as MISSING, and eval refuses the number).
+      for (const c of cases) {
+        rmSync(join(outDir, "cases", safeId(c.instance_id), "case-summary.json"), { force: true });
+        for (const v of Object.keys(VARIANTS))
+          rmSync(join(outDir, "results", v, `${safeId(c.instance_id)}.json`), { force: true });
+      }
+    }
     const run = {
       set: set.name,
       dataset: set.dataset,
@@ -168,21 +214,42 @@ async function main(): Promise<number> {
       pi: ctx.cfg.pi.version,
       qcr_commit: process.env.QCR_BENCH_COMMIT ?? "unknown",
       cases: cases.map((c) => c.instance_id),
-      started_at: new Date().toISOString(),
+      started_at: (resume && previous?.started_at) || new Date().toISOString(),
+      resumes: [
+        ...(resume && Array.isArray(previous?.resumes) ? previous.resumes : []),
+        ...(resume && previous
+          ? [{ at: new Date().toISOString(), fingerprint: ctx.fingerprint }]
+          : []),
+      ],
       finished_at: null as string | null,
     };
     writeFileSync(runFile, JSON.stringify(run, null, 2) + "\n");
     const timeoutMs = Number(f.get("--timeout-min") ?? DEFAULTS.timeoutMin) * 60_000;
     const summaries: CaseSummary[] = [];
+    let authStop: string | null = null;
     await pool(cases, Number(f.get("--concurrency") ?? "1"), async (c) => {
+      if (authStop) return;
       const prior = join(outDir, "cases", safeId(c.instance_id), "case-summary.json");
-      if (f.has("--resume") && existsSync(prior)) {
+      if (resume && existsSync(prior)) {
         const s = JSON.parse(readFileSync(prior, "utf8")) as CaseSummary;
-        if (s.status === "ok") {
+        const same = JSON.stringify(s.fingerprint ?? null) === JSON.stringify(ctx.fingerprint);
+        if (s.status === "ok" && same) {
           log(`review: ${c.instance_id} already done — skipped (--resume)`);
           summaries.push(s);
           return;
         }
+        if (s.status === "ok")
+          log(`review: ${c.instance_id} was reviewed by a different build/profile — re-running`);
+      }
+      // A fresh, refresh-disabled copy of the live token before every case;
+      // stop the whole run (not case after case) when it would expire.
+      try {
+        syncBenchAuth({ srcDir: authSrc, dstDir: agentDir, root, needMs: timeoutMs });
+      } catch (err) {
+        if (!(err instanceof AuthExpiring)) throw err;
+        authStop = err.message;
+        log(`review: STOPPED — ${err.message}`);
+        return;
       }
       let meta: PrefetchMeta;
       try {
@@ -212,7 +279,7 @@ async function main(): Promise<number> {
             root,
             store,
             outDir,
-            agentDir: f.get("--agent-dir") ?? DEFAULTS.agentDir,
+            agentDir,
             profile,
             timeoutMs,
             keepTree: f.has("--keep-tree"),
@@ -226,6 +293,9 @@ async function main(): Promise<number> {
     writeFileSync(runFile, JSON.stringify(run, null, 2) + "\n");
     const ok = summaries.filter((s) => s.status === "ok").length;
     log(`review: ${ok}/${cases.length} ok — results in ${join(outDir, "results")}`);
+    // Assigned inside the pool's closures, which TS's narrowing cannot see.
+    const stopped = authStop as string | null;
+    if (stopped !== null) log(`review: run stopped early — ${stopped}`);
     return ok === cases.length ? 0 : 1;
   }
 

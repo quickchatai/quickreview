@@ -15,13 +15,18 @@
 #
 # What the sandbox can touch on this PC (and nothing else):
 #   - bench/aacr/runs/<ID>/                 read-write: prompts, transcripts, results, report
+#                                           (bench.sh itself never writes inside it)
 #   - docker volume qcr-bench-repos         the prefetched repos (read-only during review)
-#   - docker volume $QCR_BENCH_AUTH_VOLUME  ONLY its agent/ dir, for the pi login (auth.json
-#     (default companion-pihome)           + its lock). settings.json and trust.json are shadowed
-#                                           by run-owned copies, sessions/ by an empty tmpfs.
+#   - docker volume $QCR_BENCH_AUTH_VOLUME  READ-ONLY, only its agent/ dir, for the pi login;
+#     (default companion-pihome)           its sessions/ hidden by an empty tmpfs. The sandbox
+#                                           copies the access token into its own tmpfs with the
+#                                           refresh token disabled — it never writes the
+#                                           companion's config and never rotates its grant.
 # Root filesystem read-only, all capabilities dropped, no-new-privileges, non-root uid,
-# pids/memory/cpu capped. No docker socket, no ssh agent, no host network, no GitHub
-# credential, no posting scripts, no gh.
+# pids/memory/cpu capped. No docker socket, no ssh agent, no host network namespace, no
+# GitHub credential, no posting scripts, no gh. Review and codex-judge containers DO have
+# ordinary bridge egress (the model API needs it); every other step runs --network none
+# or talks only to github.com.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -48,8 +53,11 @@ while (($#)); do
     *) die "unknown flag $1 (see the header of $0)" ;;
   esac
 done
-[[ "$RUN" =~ ^[A-Za-z0-9._-]*$ ]] || die "--run must be [A-Za-z0-9._-]"
+# First character alphanumeric: `.`, `..` and dotfile ids would mount the wrong dir.
+[[ -z "$RUN" || "$RUN" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "--run must start with [A-Za-z0-9] and use only [A-Za-z0-9._-]"
 ONLY_ARGS=(); [[ -n "$ONLY" ]] && ONLY_ARGS=(--only "$ONLY")
+# `${a[@]+"${a[@]}"}` everywhere below: an empty array under `set -u` aborts
+# bash < 4.4 (stock macOS bash 3.2).
 
 HARDEN=(
   --rm --init --read-only
@@ -67,45 +75,29 @@ need_image() { docker image inspect "$IMAGE" >/dev/null 2>&1 || die "no image $I
 run_dir() {
   [[ -n "$RUN" ]] || die "--run <id> is required"
   local d="$HERE/runs/$RUN"
-  mkdir -p "$d/.pi-shadow"
+  # The container writes freely inside the run dir, so the host never writes
+  # or follows anything in it; the dir itself must not be a planted symlink.
+  [[ ! -L "$d" ]] || die "$d is a symlink — refusing to mount it"
+  mkdir -p "$d"
   echo "$d"
 }
 
-# pi's global settings for the sandbox — what the VM entrypoint provisions
-# (deploy/ansible/templates/entrypoint.sh.j2): bash-guard registered globally so
-# lens children load it too, every project trusted (no modal can ever stall a
-# run), /opt/quickreview pre-trusted. Shadowed over the shared agent dir so the
-# companion's own settings are never read or written.
-shadow_files() {
-  local d="$1"
-  [[ -f "$d/.pi-shadow/settings.json" ]] || cat > "$d/.pi-shadow/settings.json" <<'JSON'
-{
-  "extensions": ["/opt/quickreview/sandbox/extensions/bash-guard.ts"],
-  "defaultProjectTrust": "always"
-}
-JSON
-  [[ -f "$d/.pi-shadow/trust.json" ]] || printf '{\n  "/opt/quickreview": true\n}\n' > "$d/.pi-shadow/trust.json"
-}
-
 auth_mounts() {
-  local d="$1"
   docker volume inspect "$AUTH_VOLUME" >/dev/null 2>&1 \
     || die "docker volume $AUTH_VOLUME not found — it must hold a pi login (agent/auth.json). Set QCR_BENCH_AUTH_VOLUME."
-  docker run --rm --entrypoint test --user "$(id -u):$(id -g)" \
+  docker run --rm --entrypoint test --user "$(id -u):$(id -g)" --network none \
     --mount "type=volume,src=$AUTH_VOLUME,dst=/p,volume-subpath=agent,readonly" "$IMAGE" -r /p/auth.json \
     || die "$AUTH_VOLUME has no readable agent/auth.json for uid $(id -u) — log pi in there first (the companion's /login)"
-  shadow_files "$d"
   AUTH=(
-    --mount "type=volume,src=$AUTH_VOLUME,dst=/pi-agent,volume-subpath=agent"
-    --mount "type=bind,src=$d/.pi-shadow/settings.json,dst=/pi-agent/settings.json"
-    --mount "type=bind,src=$d/.pi-shadow/trust.json,dst=/pi-agent/trust.json"
-    --mount "type=tmpfs,dst=/pi-agent/sessions"
+    --mount "type=volume,src=$AUTH_VOLUME,dst=/pi-agent-src,volume-subpath=agent,readonly"
+    --mount "type=tmpfs,dst=/pi-agent-src/sessions"
   )
 }
 
+# The reproduction log lives NEXT TO the run dir, never inside it: a host-side
+# append into a dir the container writes would follow a planted symlink.
 record() {
-  local d="$1"; shift
-  { echo "# $(date -u +%FT%TZ) $cmd"; printf '%q ' docker run "$@"; echo; } >> "$d/sandbox-commands.log"
+  { echo "# $(date -u +%FT%TZ) $cmd"; printf '%q ' docker run "$@"; echo; } >> "$HERE/runs/$RUN.sandbox-commands.log"
 }
 
 case "$cmd" in
@@ -124,7 +116,7 @@ case "$cmd" in
     # deploy/, docs/, tests/ and every run output never reach the builder.
     ctx="$(mktemp -d)"; trap 'rm -rf "$ctx"' EXIT
     ( cd "$REPO" && tar -cf - --exclude=node_modules --exclude='*.tsbuildinfo' \
-        package.json package-lock.json tsconfig.json config.toml CLAUDE.md .pi \
+        package.json package-lock.json tsconfig.json config.toml AGENTS.md CLAUDE.md .pi \
         src extensions prompts agents profiles \
         bench/aacr/Dockerfile bench/aacr/sets bench/aacr/judge_shim.py bench/aacr/in-container.sh ) \
       | tar -xf - -C "$ctx"
@@ -136,17 +128,17 @@ case "$cmd" in
     # Network: github.com only in practice (anonymous https + the public API).
     docker run "${HARDEN[@]}" \
       --mount "type=volume,src=$REPOS_VOLUME,dst=/repos" \
-      "$IMAGE" prefetch "$SET" "${ONLY_ARGS[@]}" "${EXTRA[@]}"
+      "$IMAGE" prefetch "$SET" ${ONLY_ARGS[@]+"${ONLY_ARGS[@]}"} ${EXTRA[@]+"${EXTRA[@]}"}
     ;;
 
   review)
     need_image
-    d="$(run_dir)"; auth_mounts "$d"
+    d="$(run_dir)"; auth_mounts
     args=("${HARDEN[@]}" "${AUTH[@]}"
       --mount "type=volume,src=$REPOS_VOLUME,dst=/repos,readonly"
       --mount "type=bind,src=$d,dst=/bench-out"
-      "$IMAGE" review "$SET" "${ONLY_ARGS[@]}" "${EXTRA[@]}")
-    record "$d" "${args[@]}"
+      "$IMAGE" review "$SET" ${ONLY_ARGS[@]+"${ONLY_ARGS[@]}"} ${EXTRA[@]+"${EXTRA[@]}"})
+    record "${args[@]}"
     docker run "${args[@]}"
     ;;
 
@@ -154,21 +146,21 @@ case "$cmd" in
     need_image
     d="$(run_dir)"
     rounds="${ROUNDS:-$([[ "$JUDGE" == mock ]] && echo 1 || echo 3)}"
-    envs=(); mounts=()
+    envs=(); mounts=(); net=()
     case "$JUDGE" in
-      mock) ;;
+      mock) net=(--network none) ;;
       openai)
         [[ -f "$HERE/judge.env" ]] || die "judge openai needs bench/aacr/judge.env (JUDGE_BASE_URL, JUDGE_API_KEY, JUDGE_MODEL) — see README"
         envs=(--env-file "$HERE/judge.env") ;;
       codex)
-        auth_mounts "$d"; mounts=("${AUTH[@]}")
+        auth_mounts; mounts=("${AUTH[@]}")
         [[ -n "${JUDGE_CODEX_MODEL:-}" ]] && envs=(-e "JUDGE_CODEX_MODEL=$JUDGE_CODEX_MODEL") ;;
       *) die "--judge must be mock | openai | codex" ;;
     esac
-    args=("${HARDEN[@]}" "${envs[@]}" "${mounts[@]}"
+    args=("${HARDEN[@]}" ${net[@]+"${net[@]}"} ${envs[@]+"${envs[@]}"} ${mounts[@]+"${mounts[@]}"}
       --mount "type=bind,src=$d,dst=/bench-out"
-      "$IMAGE" eval "$SET" "$JUDGE" "$rounds" "${ONLY_ARGS[@]}")
-    record "$d" "${args[@]}"
+      "$IMAGE" eval "$SET" "$JUDGE" "$rounds" ${ONLY_ARGS[@]+"${ONLY_ARGS[@]}"})
+    record "${args[@]}"
     docker run "${args[@]}"
     echo "report: $d/report.md"
     ;;
@@ -177,7 +169,7 @@ case "$cmd" in
     need_image
     d="$(run_dir)"
     docker run "${HARDEN[@]}" --network none --mount "type=bind,src=$d,dst=/bench-out" \
-      "$IMAGE" report "$SET" "${ONLY_ARGS[@]}"
+      "$IMAGE" report "$SET" ${ONLY_ARGS[@]+"${ONLY_ARGS[@]}"}
     echo "report: $d/report.md"
     ;;
 
@@ -185,20 +177,20 @@ case "$cmd" in
     need_image
     d="$(run_dir)"
     docker run "${HARDEN[@]}" --network none --mount "type=bind,src=$d,dst=/bench-out" \
-      "$IMAGE" results "$SET" "${ONLY_ARGS[@]}"
+      "$IMAGE" results "$SET" ${ONLY_ARGS[@]+"${ONLY_ARGS[@]}"}
     ;;
 
   smoke)
     RUN="${RUN:-smoke-$(date -u +%Y%m%d-%H%M%S)}"
     "$0" build
     "$0" prefetch --set "$SET" ${ONLY:+--only "$ONLY"}
-    "$0" review --run "$RUN" --set "$SET" ${ONLY:+--only "$ONLY"} "${EXTRA[@]}" || echo "bench: some cases did not finish cleanly — scoring anyway (they count as zero findings)" >&2
+    "$0" review --run "$RUN" --set "$SET" ${ONLY:+--only "$ONLY"} ${EXTRA[@]+"${EXTRA[@]}"} || echo "bench: some cases did not finish cleanly — scoring anyway (they count as zero findings)" >&2
     "$0" eval --run "$RUN" --set "$SET" --judge "$JUDGE" ${ONLY:+--only "$ONLY"} ${ROUNDS:+--rounds "$ROUNDS"}
     ;;
 
   shell)
     need_image
-    d="$(run_dir)"; auth_mounts "$d"
+    d="$(run_dir)"; auth_mounts
     docker run -it "${HARDEN[@]}" "${AUTH[@]}" \
       --mount "type=volume,src=$REPOS_VOLUME,dst=/repos,readonly" \
       --mount "type=bind,src=$d,dst=/bench-out" "$IMAGE" shell

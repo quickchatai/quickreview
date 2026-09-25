@@ -32,7 +32,8 @@ FROM node:22-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive TZ=UTC LANG=C.UTF-8
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates git jq ripgrep python3 python3-venv \
+      ca-certificates git jq ripgrep fd-find python3 python3-venv \
+    && ln -s /usr/bin/fdfind /usr/local/bin/fd \
     && rm -rf /var/lib/apt/lists/*
 
 ARG PI_PACKAGE=@earendil-works/pi-coding-agent
@@ -63,7 +64,11 @@ RUN git clone --quiet ${AACR_BENCH_REPO} /opt/aacr-bench \
 WORKDIR /opt/quickreview/sandbox
 COPY --from=build /src/node_modules ./node_modules
 COPY --from=build /src/dist ./dist
-COPY package.json config.toml CLAUDE.md ./
+# AGENTS.md AND CLAUDE.md, as the VM's rsync ships them: pi loads the FIRST of
+# AGENTS.override.md → AGENTS.md → CLAUDE.md from the cwd, so without
+# AGENTS.md every bench session would read the 80 KB dev manual instead of
+# what production reviewers read.
+COPY package.json config.toml AGENTS.md CLAUDE.md ./
 # The project .pi/ (settings.json: httpIdleTimeoutMs) is baked OUTSIDE the tree
 # and seeded into a tmpfs .pi/ at start (in-container.sh): pi takes a lock
 # beside settings.json on every read, which a read-only root refuses — and pi
@@ -81,7 +86,7 @@ COPY bench/aacr/judge_shim.py bench/aacr/in-container.sh /opt/quickreview/bench/
 # Writable points — every one is replaced at run time by a tmpfs or an
 # anonymous volume (bench.sh runs with --read-only); created here so they
 # exist, world-writable, whatever uid the host maps in.
-RUN mkdir -p wt state .pi /repos /bench-out /pi-agent \
+RUN mkdir -p wt state .pi /repos /bench-out /pi-agent-src \
     && chmod 1777 wt state .pi /repos /bench-out \
     && chmod 0755 /opt/quickreview/bench/in-container.sh \
     && ! test -e scripts && ! command -v gh
@@ -90,6 +95,6 @@ ARG QCR_BENCH_COMMIT=unknown
 ENV QCR_BENCH_COMMIT=${QCR_BENCH_COMMIT} \
     PYTHONDONTWRITEBYTECODE=1 \
     HOME=/tmp/home \
-    PI_CODING_AGENT_DIR=/pi-agent
+    PI_CODING_AGENT_DIR=/tmp/pi-agent
 
 ENTRYPOINT ["/opt/quickreview/bench/in-container.sh"]

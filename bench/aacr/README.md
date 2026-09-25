@@ -6,8 +6,8 @@ by `buildAgents` with `PASS_ADDENDA`, the production models and tiers from
 `config.toml` — against [AACR-Bench](https://github.com/alibaba/aacr-bench)
 (Alibaba's 200-PR, 10-language code-review benchmark), **locally, in a locked-down
 Docker sandbox**, and scores the result with Alibaba's own harness, unmodified,
-at a pinned commit. Nothing touches the VM, the live daemon, GitHub's write API
-or the gate.
+at a pinned commit. Nothing touches the live daemon, GitHub's write API or the
+gate, and nothing runs on the VM.
 
 Background and the fairness caveats: `docs/open-code-review-comparison.md`
 (idea 3).
@@ -57,27 +57,37 @@ Every container runs with `--read-only` root, `--cap-drop ALL`,
 `no-new-privileges`, a non-root uid (yours), pids/memory/CPU caps, and tmpfs
 or anonymous volumes for its scratch space. On this PC it can touch exactly:
 
-- `bench/aacr/runs/<id>/` — read-write, the run's own output;
+- `bench/aacr/runs/<id>/` — read-write, the run's own output. `bench.sh` never
+  writes inside it or follows anything in it (the docker-command log sits
+  next to it, `runs/<id>.sandbox-commands.log`), and refuses a run dir that is
+  itself a symlink, so nothing the sandbox plants there can redirect a host
+  write;
 - the `qcr-bench-repos` docker volume — read-only during review;
-- **the pi login**: only the `agent/` directory of the companion's
-  `companion-pihome` volume (override with `QCR_BENCH_AUTH_VOLUME`).
+- **the pi login, READ-ONLY**: only the `agent/` directory of the companion's
+  `companion-pihome` volume (override with `QCR_BENCH_AUTH_VOLUME`), with its
+  `sessions/` hidden by an empty tmpfs.
 
-The login is shared, not copied, on purpose. pi refreshes its OAuth token in
-place under a lock at `<agentDir>/auth.json.lock`; two copies would each
-refresh on their own and the second refresh would invalidate the first — the
-companion would lose its login. Mounting the SAME directory makes the lock
-shared. Everything else in that directory is kept out of the benchmark's way:
-`settings.json` and `trust.json` are shadowed by run-owned copies (what the VM
-entrypoint provisions: `bash-guard` registered globally, every project
-trusted), and `sessions/` by an empty tmpfs, so the sandbox cannot see or
-change the companion's conversations.
+**How the login is used.** Before every case the sandbox copies the current
+access token into its own tmpfs agent dir with the **refresh token replaced by
+a dummy** (`src/bench/auth.ts`). So it never writes anything the companion
+reads (an injected review cannot plant `AGENTS.md`, skills or extensions for
+the companion), and it never refreshes — a second refresher would rotate the
+grant and log the companion out. The cost: a run cannot outlive the access
+token (≈10 days when fresh). Each case checks the remaining life against its
+budget first; if it is too short the run stops with an instruction — use the
+companion once so it refreshes its own login, then `--resume`.
+
+**Network.** `review` and `eval --judge codex|openai` have ordinary docker
+bridge egress — the model and judge APIs need it; `prefetch` talks to
+github.com; `eval --judge mock`, `results` and `report` run `--network none`.
 
 What the image does NOT contain: `scripts/` (the posting route and
 `mint-token.sh`), the `gh` CLI, any GitHub credential, the OpenViking server,
 tmux. The review session is told it is offline and must not post — and the
 environment makes posting impossible, not just forbidden. The reviewer can
-still read the shared `auth.json`, exactly as a production session can read its
-pihome; the no-exec policy and `bash-guard` apply as in production.
+read the (read-only) login, including its refresh token, exactly as a
+production session can read its own pihome; the no-exec policy and
+`bash-guard` apply as in production.
 
 ## What is production and what is not
 
@@ -85,18 +95,31 @@ pihome; the no-exec policy and `bash-guard` apply as in production.
 |---|---|---|
 | Round order | `round-first.md` via `renderRoundPrompt` | same, plus an appended **BENCHMARK MODE** override (below) |
 | Persona | `conversation-system.md` | same (identity `repo` = the benchmark repo) |
+| Project context | the synced repo root: pi loads `AGENTS.md` | same file (the image ships `AGENTS.md` and `CLAUDE.md`, as the rsync does) |
 | Pass plan | `buildRoundOrder` → `buildPassPlan` | same, from a real git file list (status, renames, hunks) |
-| Agents | `buildAgents` + `PASS_ADDENDA` + profile addenda + same-day feedback addendum | same minus the feedback addendum; profile `""` (generic) by default, `--profile quickchat` for production-as-deployed |
+| Agents | `buildAgents` + `PASS_ADDENDA` + profile addenda + same-day feedback addendum | same minus the feedback addendum; profile `""` (generic) by default, `--profile <name>` (the one `config.toml [review] profile` names) for production-as-deployed |
 | Models | `config.toml [models]` | same file |
 | Extensions | inject-bridge, ledger-pin, muted-theme, round-progress, subagents, openviking; bash-guard global | ledger-pin, subagents; bash-guard global |
-| Memory | OpenViking, recall + turn sync | **off** — foreign repos must not read the deployed repo's memory, and a session would write its turns into it |
+| Memory | OpenViking, recall + turn sync | **off** — foreign repos must not read the reviewed repo's memory, and a session would write its turns into it |
 | GitHub, CI, posting, verdict, ledger, deferrals | yes | replaced by the override: no CI gate (decide on the merits), write `comments.json` / `review.md` / `findings-record.json` / `outcome.json` instead of posting |
+| Delivery | inject file into a tmux session | the order on `pi -p`'s stdin (no argv size limit); one `--continue` if the session stopped before its files — only when a session exists |
+| Posting shape | `post-review.sh` keeps `path, line, side, body` | same four fields; any multi-line span is scored at its single `line` |
 
 The one bias that cannot be removed without a reseed: the frozen
 `pass-baseline` seed carries the deployed repo's pytest/Django Ninja conventions.
 
 ## Reading the numbers
 
+- **Statuses.** `ok` = the round decided (APPROVE / REQUEST_CHANGES);
+  `no-verdict` = it wrote its files but decided nothing (pass infrastructure
+  failed); `no-output`, `timeout`, `failed` as named. Only `ok` is skipped by
+  `--resume`, and only when the case was reviewed by the same build, profile
+  and models (each `case-summary.json` carries that fingerprint).
+- **The APPROVE path.** The bench tells the session CI does not apply, so a
+  no-blocker round is an APPROVE, and its nits/questions are scored as the
+  inline comments it composed. Production's green-CI approve route posts
+  those as body bullets instead (its COMMENT path — red or pending CI — posts
+  them inline). The report splits verdicts so this is visible.
 - **Variants.** `all` = every inline comment that would have been posted;
   `no-nits` drops `[nit]`; `blockers` keeps only `[blocker]`. The references are
   42% maintainability/readability — a class the validator trims on purpose — so
@@ -118,7 +141,12 @@ The one bias that cannot be removed without a reseed: the frozen
   the numbers mean nothing. `codex` runs the harness's exact judge prompt on a
   GPT model through the shared pi login (`judge_shim.py`; default
   `openai-codex/gpt-5.6-terra:low`, override with `JUDGE_CODEX_MODEL`) — a real
-  semantic judge, but not the paper's. `openai` uses any OpenAI-compatible
+  semantic judge, but not the paper's, and noticeably noisy (the same pair
+  judged yes/yes/no across three calls in testing), which is why real judges
+  default to 3 averaged rounds. A judge call that FAILS is scored by the
+  harness as a non-match; `eval` counts those, writes them into the report
+  and exits non-zero, and refuses a score built on fewer instances than the
+  set in any round. `openai` uses any OpenAI-compatible
   endpoint from `bench/aacr/judge.env` (gitignored):
 
   ```sh

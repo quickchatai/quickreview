@@ -14,7 +14,16 @@
 //      the image carries no scripts/ and no gh.
 
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,7 +43,14 @@ import {
   type BenchComment,
   type PrefetchMeta,
 } from "../src/bench/aacr.js";
-import { buildBenchAgents, benchConfig, renderCasePrompts } from "../src/bench/runner.js";
+import { AuthExpiring, benchAuthFrom, DISABLED_REFRESH, syncBenchAuth } from "../src/bench/auth.js";
+import {
+  boundBody,
+  buildBenchAgents,
+  benchConfig,
+  renderCasePrompts,
+} from "../src/bench/runner.js";
+import { loadConfig } from "../src/config.js";
 import { ecosystemFor } from "../src/ecosystem.js";
 import { buildAgents, identityVars, PASS_ADDENDA } from "../src/include.js";
 
@@ -179,6 +195,14 @@ describe("the offline override", () => {
     expect(t).toMatch(/CI gate: not applicable/);
     expect(t).toMatch(/Post nothing/);
     expect(t).toContain(`diff ${args.mergeBase} ${args.headSha}`);
+    // Exactly the fields scripts/post-review.sh keeps — no multi-line span.
+    expect(t).not.toContain("start_line");
+  });
+
+  it("an unknown DISCOVERY lens does not void the review — only an unresolvable validator does", () => {
+    const t = benchAppendix(args);
+    expect(t).toMatch(/decide from the passes that did run/);
+    expect(t).toMatch(/Only when `pass-validate` itself cannot be resolved/);
   });
 
   it("keeps steps 1-4 and the composition rules of step 6 — the review is production's", () => {
@@ -263,7 +287,9 @@ describe("what the session wrote → what the scorer reads", () => {
     };
     expect(all.review.comments).toEqual([
       { path: "a.py", start_line: 10, end_line: 10, content: "[blocker] x" },
-      { path: "a.py", start_line: 18, end_line: 20, content: "[question] y" },
+      // Single-line even though the session wrote start_line 18: production's
+      // posting script drops start_line, so the span never reaches GitHub.
+      { path: "a.py", start_line: 20, end_line: 20, content: "[question] y" },
       { path: "b.py", start_line: 3, end_line: 3, content: "[nit] z" },
     ]);
     expect(all.review.summary).toEqual({ input_tokens: 6000, output_tokens: 200 });
@@ -445,12 +471,35 @@ describe("the round the bench runs is the production round", () => {
     expect(order).not.toMatch(/\{\{[a-z_]+\}\}/);
     expect(order).toContain(`\`${meta.base_ref}\` @ \`${c.base_commit}\``);
     expect(system).toContain(`\`${c.repo}\``);
-    expect(system).not.toContain("example-org/example-app");
+    expect(system).not.toContain(identityVars(loadConfig(join(ROOT, "config.toml"))).repo);
+  });
+
+  it("the PR body is bounded ONCE, by UTF-8 bytes, before both places it appears", () => {
+    expect(boundBody(null)).toBeNull();
+    expect(boundBody("short")).toBe("short");
+    const cjk = "字".repeat(10_000); // 30,000 bytes
+    const cut = boundBody(cjk, 20_000)!;
+    expect(Buffer.byteLength(cut.split("\n…")[0]!, "utf8")).toBeLessThanOrEqual(20_000);
+    expect(cut).not.toContain("\uFFFD");
+    expect(cut).toMatch(/truncated for the benchmark/);
+    const { order } = renderCasePrompts({
+      root: ROOT,
+      cfg,
+      ecosystem: ecosystemFor("none"),
+      c,
+      meta: { ...meta, body: "x".repeat(200_000) },
+      tree: "/opt/quickreview/sandbox/wt/x",
+      caseDir: "/bench-out/cases/x",
+      files,
+      issuedAt: "2026-09-25T00:00:00Z",
+    });
+    expect(order).not.toContain("x".repeat(20_001));
   });
 
   it("the bench config is production's, with only the profile swapped", () => {
     expect(cfg.review.profile).toBe("");
-    expect(benchConfig(ROOT, "quickchat").review.profile).toBe("quickchat");
+    const deployed = loadConfig(join(ROOT, "config.toml")).review.profile;
+    expect(benchConfig(ROOT, deployed).review.profile).toBe(deployed);
     expect(cfg.models.conversation).toMatch(/^openai-codex\//);
     void buildBenchAgents; // exercised in the sandbox; the pure build is above
   });
@@ -491,11 +540,107 @@ describe("the sandbox cannot post", () => {
     }
   });
 
-  it("only the companion volume's agent/ dir is shared, and its settings/trust/sessions are shadowed", () => {
+  it("the companion's login is mounted READ-ONLY (only agent/, sessions hidden), never shadow-bound", () => {
     const sh = readFileSync(join(ROOT, "bench", "aacr", "bench.sh"), "utf8");
-    expect(sh).toContain("volume-subpath=agent");
-    expect(sh).toContain("dst=/pi-agent/settings.json");
-    expect(sh).toContain("dst=/pi-agent/trust.json");
-    expect(sh).toContain("type=tmpfs,dst=/pi-agent/sessions");
+    expect(sh).toContain(
+      "type=volume,src=$AUTH_VOLUME,dst=/pi-agent-src,volume-subpath=agent,readonly",
+    );
+    expect(sh).toContain("type=tmpfs,dst=/pi-agent-src/sessions");
+    // Nothing of the companion's is bound read-write any more…
+    expect(sh).not.toMatch(/dst=\/pi-agent[^-]/);
+    // …and no host-side file inside the run dir is bound or appended to.
+    expect(sh).not.toContain(".pi-shadow");
+    expect(sh).toContain('>> "$HERE/runs/$RUN.sandbox-commands.log"');
+    expect(sh).toContain('[[ ! -L "$d" ]]');
+  });
+
+  it("--run cannot name `.`, `..` or a dotfile, and empty arrays survive bash < 4.4", () => {
+    const sh = readFileSync(join(ROOT, "bench", "aacr", "bench.sh"), "utf8");
+    const re = /\^\[A-Za-z0-9\]\[A-Za-z0-9\._-\]\*\$/;
+    expect(sh).toMatch(re);
+    const runRe = new RegExp("^[A-Za-z0-9][A-Za-z0-9._-]*$");
+    for (const bad of [".", "..", ".ctl", "../x", "a/b"]) expect(runRe.test(bad), bad).toBe(false);
+    expect(runRe.test("smoke10-1")).toBe(true);
+    // Every possibly-empty array is expanded in the guarded form.
+    for (const a of ["ONLY_ARGS", "EXTRA", "envs", "mounts", "net"]) {
+      expect(sh, a).not.toMatch(new RegExp(`(?<!\\+)"\\$\\{${a}\\[@\\]\\}"(?!\\})`));
+    }
+  });
+
+  it("the image ships AGENTS.md — pi loads it before CLAUDE.md, as production's reviewers do", () => {
+    const docker = readFileSync(join(ROOT, "bench", "aacr", "Dockerfile"), "utf8");
+    const sh = readFileSync(join(ROOT, "bench", "aacr", "bench.sh"), "utf8");
+    // pi 0.84.4 loadContextFileFromDir order; the first that exists at the
+    // repo root is what production reviewers read.
+    const first = ["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"].find(
+      (f) => existsSync(join(ROOT, f)),
+    )!;
+    expect(docker).toMatch(
+      new RegExp(`^COPY [^\\n]*\\b${first.replace(".", "\\.")}\\b[^\\n]*\\./$`, "m"),
+    );
+    const tarList = sh.slice(sh.indexOf("tar -cf -"), sh.indexOf("| tar -xf -"));
+    expect(tarList).toContain(first);
+  });
+});
+
+describe("the benchmark's login: read-only, never refreshed", () => {
+  const auth = {
+    "openai-codex": {
+      type: "oauth",
+      access: "A",
+      refresh: "R-real",
+      expires: 2_000_000,
+      accountId: "x",
+    },
+    other: { type: "api", key: "k" },
+  };
+
+  it("disables every OAuth refresh token, keeps the rest, reports the earliest expiry", () => {
+    const { json, expiresAt } = benchAuthFrom(JSON.stringify(auth));
+    const out = JSON.parse(json);
+    expect(out["openai-codex"].refresh).toBe(DISABLED_REFRESH);
+    expect(out["openai-codex"].access).toBe("A");
+    expect(out.other).toEqual({ type: "api", key: "k" });
+    expect(json).not.toContain("R-real");
+    expect(expiresAt).toBe(2_000_000);
+  });
+
+  it("refuses a case the token would not outlive, and writes nothing then", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "bench-auth-"));
+    try {
+      const src = join(tmp, "src");
+      const dst = join(tmp, "dst");
+      mkdirSync(src);
+      writeFileSync(join(src, "auth.json"), JSON.stringify(auth));
+      expect(() =>
+        syncBenchAuth({
+          srcDir: src,
+          dstDir: dst,
+          root: "/r",
+          needMs: 1_000_000,
+          now: () => 1_500_000,
+        }),
+      ).toThrow(AuthExpiring);
+      expect(existsSync(join(dst, "auth.json"))).toBe(false);
+      syncBenchAuth({ srcDir: src, dstDir: dst, root: "/r", needMs: 1_000, now: () => 1_500_000 });
+      const copied = JSON.parse(readFileSync(join(dst, "auth.json"), "utf8"));
+      expect(copied["openai-codex"].refresh).toBe(DISABLED_REFRESH);
+      expect(statSync(join(dst, "auth.json")).mode & 0o777).toBe(0o600);
+      // The VM's global settings: bash-guard for every process, all trusted.
+      const settings = JSON.parse(readFileSync(join(dst, "settings.json"), "utf8"));
+      expect(settings).toEqual({
+        extensions: ["/r/extensions/bash-guard.ts"],
+        defaultProjectTrust: "always",
+      });
+      // The source is never touched.
+      expect(JSON.parse(readFileSync(join(src, "auth.json"), "utf8"))["openai-codex"].refresh).toBe(
+        "R-real",
+      );
+      expect(() =>
+        syncBenchAuth({ srcDir: join(tmp, "none"), dstDir: dst, root: "/r", needMs: 0 }),
+      ).toThrow(/no pi login/);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });

@@ -15,7 +15,7 @@ order, so anyone can re-derive the set:
   1. 20 <= change_line_count <= 160 and at least 4 reference comments (fewer
      makes recall a coin toss; tinier PRs are not representative);
   2. language quota: Python 3, TypeScript 2, JavaScript 1, Go 1, Java 1,
-     Rust 1, C 1 — weighted to the production repo's own stack (Python + TS) while
+     Rust 1, C 1 — weighted to the deployed repo's own stack (Python + TS) while
      still exercising the other languages the benchmark scores;
   3. within a language, smallest change_line_count first (ties: PR URL);
   4. at most one PR per repository, so a set never measures one project twice.

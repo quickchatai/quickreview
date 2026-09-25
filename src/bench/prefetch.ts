@@ -48,12 +48,35 @@ async function git(dir: string, args: string[], timeoutMs = 20 * 60_000): Promis
   return must("git", ["-C", dir, ...args], { env: GIT_ENV, timeoutMs });
 }
 
-async function mergeBase(dir: string, c: BenchCase): Promise<string | null> {
+/**
+ * The merge-base of base and head — VERIFIED against the shallow boundary.
+ *
+ * In a shallow store `git merge-base` answers from the history it has: in a
+ * merge-commit repo, base's walk runs into the second parents of recent
+ * merges, whose fork points are older than the PR's true one, and git returns
+ * that older common ancestor instead of null. The PR diff would then include
+ * unrelated base-branch work. The check: if any SHALLOW commit is reachable
+ * from base or head but not from the candidate, history was cut above it and
+ * the true merge-base may lie past the cut — so it is not trusted (null ⇒
+ * keep deepening). With no shallow commit there, the region above the
+ * candidate is complete and it is the real merge-base.
+ */
+export async function mergeBase(dir: string, c: BenchCase): Promise<string | null> {
   const r = await run("git", ["-C", dir, "merge-base", c.base_commit, c.head_commit], {
     env: GIT_ENV,
   });
   const sha = r.stdout.trim();
-  return r.code === 0 && /^[0-9a-f]{40}$/.test(sha) ? sha : null;
+  if (r.code !== 0 || !/^[0-9a-f]{40}$/.test(sha)) return null;
+  const shallowFile = join(dir, "shallow");
+  if (!existsSync(shallowFile)) return sha;
+  const shallow = new Set(readFileSync(shallowFile, "utf8").split("\n").filter(Boolean));
+  if (shallow.size === 0) return sha;
+  const above = await run("git", ["-C", dir, "rev-list", c.base_commit, c.head_commit, `^${sha}`], {
+    env: GIT_ENV,
+    timeoutMs: 120_000,
+  });
+  if (above.code !== 0) return null;
+  return above.stdout.split("\n").some((l) => shallow.has(l.trim())) ? null : sha;
 }
 
 interface PrApi {
@@ -71,7 +94,8 @@ async function prFromApi(c: BenchCase, o: PrefetchOptions): Promise<PrApi | "rat
       res = await f(url, {
         headers: { accept: "application/vnd.github+json", "user-agent": "qcr-aacr-bench" },
       });
-    } catch {
+    } catch (err) {
+      o.log?.(`prefetch: ${c.instance_id} — PR API unreachable (${String(err).slice(0, 120)})`);
       return null;
     }
     if (res.status === 200) {
@@ -96,6 +120,7 @@ async function prFromApi(c: BenchCase, o: PrefetchOptions): Promise<PrApi | "rat
       await new Promise((r) => setTimeout(r, waitMs));
       continue;
     }
+    o.log?.(`prefetch: ${c.instance_id} — PR API answered ${res.status}; title/body unavailable`);
     return null;
   }
   return null;
@@ -127,6 +152,29 @@ export async function prefetchCase(c: BenchCase, o: PrefetchOptions): Promise<Pr
       meta.head_commit === c.head_commit &&
       (await mergeBase(dir, c)) === meta.merge_base
     ) {
+      // A store fetched while the API was unavailable keeps working, but its
+      // PR title/body are worth one more try — a degraded case plans no
+      // pass-intent and reads no description, unlike production.
+      if (meta.title === null && meta.body === null) {
+        const api = await prFromApi(c, o);
+        if (api && api !== "rate-limited") {
+          const healed: PrefetchMeta = {
+            ...meta,
+            title: api.title,
+            body: api.body,
+            ...(api.base_ref && /^[A-Za-z0-9._/-]+$/.test(api.base_ref)
+              ? { base_ref: api.base_ref, base_ref_source: "github-api" as const }
+              : {}),
+          };
+          const tmpMeta = `${metaPath}.tmp`;
+          writeFileSync(tmpMeta, JSON.stringify(healed, null, 2) + "\n");
+          renameSync(tmpMeta, metaPath);
+          log(`prefetch: ${c.instance_id} cached — PR title/body filled in`);
+          return healed;
+        }
+        log(`prefetch: ${c.instance_id} cached — still WITHOUT PR title/body`);
+        return meta;
+      }
       log(`prefetch: ${c.instance_id} cached`);
       return meta;
     }

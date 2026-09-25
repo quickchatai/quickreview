@@ -34,7 +34,7 @@ case "$cmd" in
     exec "${CLI[@]}" prefetch --set "$(set_file "$set_name")" --store /repos "$@" ;;
   review)
     set_name="$1"; shift
-    exec "${CLI[@]}" review --set "$(set_file "$set_name")" --store /repos --out /bench-out --agent-dir /pi-agent "$@" ;;
+    exec "${CLI[@]}" review --set "$(set_file "$set_name")" --store /repos --out /bench-out "$@" ;;
   report)
     set_name="$1"; shift
     exec "${CLI[@]}" report --set "$(set_file "$set_name")" --out /bench-out "$@" ;;
@@ -63,12 +63,16 @@ case "$cmd" in
         echo "\`${JUDGE_MODEL}\` via an OpenAI-compatible endpoint, temperature 0.7 (the harness default), ${rounds} round(s) averaged" > /bench-out/judge.txt ;;
       codex)
         model="${JUDGE_CODEX_MODEL:-openai-codex/gpt-5.6-terra:low}"
+        # The same read-only, refresh-disabled token copy the review uses.
+        "${CLI[@]}" auth --need-min 180 || { echo "judge: no usable pi login (see above)" >&2; exit 1; }
         python3 /opt/quickreview/bench/judge_shim.py --port 8765 --model "$model" > /bench-out/eval/judge-shim.log 2>&1 &
         shim_pid=$!
+        up=0
         for _ in $(seq 1 50); do
-          curl -fsS http://127.0.0.1:8765/health >/dev/null 2>&1 && break
+          curl -fsS http://127.0.0.1:8765/health >/dev/null 2>&1 && { up=1; break; }
           sleep 0.2
         done
+        [[ "$up" == 1 ]] || { echo "judge shim never answered /health — see eval/judge-shim.log" >&2; kill "$shim_pid" 2>/dev/null || true; exit 1; }
         export JUDGE_USE_MOCK=false JUDGE_BASE_URL=http://127.0.0.1:8765/v1 JUDGE_API_KEY=local JUDGE_MODEL="$model"
         echo "\`${model}\` through the local pi shim (NOT the paper's Qwen3-235B judge — same prompt, different model), ${rounds} round(s) averaged" > /bench-out/judge.txt ;;
       *) echo "judge must be mock | openai | codex" >&2; exit 2 ;;
@@ -82,17 +86,30 @@ case "$cmd" in
       ( cd /opt/aacr-bench/evaluation && /opt/aacr-venv/bin/python -m pipeline run --stage eval --reviewer ocr \
           --dataset "$subset" --results-dir "$dir" --eval-rounds "$rounds" --line-k 1 ) \
         > "/bench-out/eval/harness-$variant.log" 2>&1 || { echo "harness failed for $variant — see eval/harness-$variant.log" >&2; status=1; continue; }
+      # A judge call that errors is scored by the harness as a NON-match
+      # (judge.py) and the run still exits 0 — deflated numbers that look
+      # real. Count them and refuse to call the result clean.
+      errs="$(grep -c '裁判模型调用失败' "/bench-out/eval/harness-$variant.log" || true)"
+      if [[ "${errs:-0}" != "0" ]]; then
+        echo "JUDGE ERRORS for $variant: $errs call(s) failed and were scored as non-matches" >&2
+        echo "- WARNING ($variant): $errs judge call(s) FAILED and were scored as non-matches — the semantic numbers are deflated (eval/harness-$variant.log)" >> /bench-out/judge.txt
+        status=1
+      fi
       # The scorer silently skips an instance with no result file; refuse a
-      # number built on fewer instances than the set has.
-      got="$(python3 - "$dir" <<'PY'
+      # number built on fewer instances than the set has — in EVERY round
+      # (the averaged file carries floats, so the per-round files are read).
+      got="$(python3 - "$dir" "$rounds" <<'PY'
 import glob, json, sys
-files = sorted(glob.glob(sys.argv[1] + "/metrics_ocr_*.json"))
-avg = [f for f in files if "average" in f]
-print(json.load(open((avg or files)[-1]))["summary"]["evaluated_instances"])
+files = [f for f in sorted(glob.glob(sys.argv[1] + "/metrics_ocr_*.json")) if "average" not in f]
+if len(files) != int(sys.argv[2]):
+    print(f"{len(files)}-of-{sys.argv[2]}-rounds")
+else:
+    print(min(int(json.load(open(f))["summary"]["evaluated_instances"]) for f in files))
 PY
 )"
       if [[ "$got" != "$expected" ]]; then
         echo "EVAL INCOMPLETE for $variant: scored $got of $expected instances" >&2
+        echo "- WARNING ($variant): EVAL INCOMPLETE — scored $got of $expected instances" >> /bench-out/judge.txt
         status=1
       fi
     done
