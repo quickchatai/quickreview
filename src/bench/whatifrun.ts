@@ -214,12 +214,14 @@ export function writeWhatifRun(outDir: string, cases: readonly BenchCase[]): Wha
 
 // ---- the report ----------------------------------------------------------------
 
-/** The per-round metrics files of one variant dir, oldest round first. */
+/** The per-round metrics files of one variant dir, first round first. A
+ * single-round eval writes one file with no `_round_N` label; it is round 1. */
 export function roundMetrics(dir: string): MetricsRound[] {
   if (!existsSync(dir)) return [];
+  const roundNo = (n: string): number => Number(/_round_(\d+)\.json$/.exec(n)?.[1] ?? 0);
   return readdirSync(dir)
-    .filter((n) => /^metrics_ocr_.*_round_\d+\.json$/.test(n))
-    .sort((a, b) => Number(/_round_(\d+)/.exec(a)![1]) - Number(/_round_(\d+)/.exec(b)![1]))
+    .filter((n) => /^metrics_ocr_.*\.json$/.test(n) && !n.includes("average"))
+    .sort((a, b) => roundNo(a) - roundNo(b) || a.localeCompare(b))
     .map((n) => JSON.parse(readFileSync(join(dir, n), "utf8")) as MetricsRound);
 }
 

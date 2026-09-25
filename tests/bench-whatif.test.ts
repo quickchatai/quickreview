@@ -58,7 +58,12 @@ import {
   type MetricsRound,
   type RawCandidate,
 } from "../src/bench/whatif.js";
-import { buildWhatifCase, renderWhatifReport, writeWhatifRun } from "../src/bench/whatifrun.js";
+import {
+  buildWhatifCase,
+  renderWhatifReport,
+  roundMetrics,
+  writeWhatifRun,
+} from "../src/bench/whatifrun.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(here, "..");
@@ -479,6 +484,18 @@ describe("reading the scored metrics back", () => {
     const all = deltaVsControl(rows, "all-candidates");
     expect(all.gained).toEqual([]);
     expect(all.lost.map((r) => r.ref)).toEqual([0]);
+  });
+
+  it("reads rounds in round order, never the average; a single-round eval's unlabelled file is round 1", () => {
+    const dir = mkdtempSync(join(tmpdir(), "whatif-m-"));
+    const m = (n: number): string => JSON.stringify(metrics([{ id: "a", refs: [] }], n));
+    writeFileSync(join(dir, "metrics_ocr_20260925_2_round_10.json"), m(10));
+    writeFileSync(join(dir, "metrics_ocr_20260925_1_round_2.json"), m(2));
+    writeFileSync(join(dir, "metrics_ocr_average.json"), m(99));
+    expect(roundMetrics(dir).map((r) => r.summary["matched_semantic_notes"])).toEqual([2, 10]);
+    const one = mkdtempSync(join(tmpdir(), "whatif-m1-"));
+    writeFileSync(join(one, "metrics_ocr_20260925_212957.json"), m(4));
+    expect(roundMetrics(one).map((r) => r.summary["matched_semantic_notes"])).toEqual([4]);
   });
 
   it("writes every variant for a copied run, and a report naming OUR text for each new match", () => {
