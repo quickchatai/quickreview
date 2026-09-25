@@ -1,0 +1,548 @@
+{
+ "set": "holdout10",
+ "source": "Hand-checked against the code at head by two labelling agents (2026-09-25); dataset labels only, never used to tune the reviewer, so holdout10 stays held out.",
+ "labels": {
+  "vllm-project__vllm@3fe1893": [
+   {
+    "reality": "trivial",
+    "path": "vllm/model_executor/models/qwen2_vl.py",
+    "from_line": 822,
+    "reason": "Asks only to name the two literals at qwen2_vl.py:822-823; the substantive problem is that they are hard-coded at all (see index 1), and naming them fixes nothing."
+   },
+   {
+    "reality": "real-defect",
+    "value": "high",
+    "path": "vllm/model_executor/models/qwen2_vl.py",
+    "from_line": 822,
+    "reason": "qwen2_vl.py:822-823 returns fixed {image:16384, video:98304}, but the dummy path it replaces derives tokens from image_processor.max_pixels (qwen2_vl.py _get_vision_info/smart_resize, user-overridable via mm_processor_kwargs) and from seq_len for video (get_num_frames_with_most_features). It is also inherited by Qwen2_5_VLProcessingInfo and Qwen2_5OmniThinkerProcessingInfo, where the dict has no 'audio' key. So the encoder budget in encoder_cache_manager.py / gpu_model_runner.profile_run can be too small or too large."
+   },
+   {
+    "reality": "trivial",
+    "path": "vllm/multimodal/processing.py",
+    "from_line": 1104,
+    "reason": "Docstring wording at processing.py:1103-1104 ('for each modality' vs 'per item'). The method name already says per_item, and the only caller (registry.py:115-137) passes mm_counts=1."
+   },
+   {
+    "reality": "real-defect",
+    "value": "medium",
+    "path": "vllm/multimodal/profiling.py",
+    "from_line": 256,
+    "reason": "First bullet is wrong: the only caller, registry.get_max_tokens_per_item_by_modality (registry.py:132), wants per-item values (mm_counts={modality: 1}) and the multiplication by limits happens in get_max_tokens_by_modality. Second bullet is valid: the new early return at profiling.py:256-258 skips the seq_len-dependent path, but Qwen video max tokens depend on seq_len via get_num_frames_with_most_features, and the hook takes no seq_len/mm_counts."
+   }
+  ],
+  "n8n-io__n8n@9321691": [
+   {
+    "reality": "real-defect",
+    "value": "high",
+    "path": ".github/workflows/release-publish.yml",
+    "from_line": 106,
+    "reason": "release-publish.yml:106 puts $(date ...) inside the docker/build-push-action `with: build-args` block, which is not shell-evaluated, so the literal string is passed. The Dockerfile ENV then carries it, Date.parse fails in decorators.ts:59-61 (warn only), releaseDate stays undefined, and the whole expiry feature never activates in published images. The OCI created label also gets the literal."
+   },
+   {
+    "reality": "trivial",
+    "path": "docker/images/n8n/Dockerfile",
+    "from_line": 7,
+    "reason": "True that N8N_RELEASE_DATE has no check in the Dockerfile (Dockerfile:7), but an empty or missing value degrades gracefully: the value is skipped or warned about in decorators.ts:58-64, and error-reporter.ts:82 `if (releaseDate)` keeps reporting on. Failing the build as suggested would break builds that don't pass the arg."
+   },
+   {
+    "reality": "dubious",
+    "path": "packages/@n8n/config/src/configs/generic.config.ts",
+    "from_line": 12,
+    "reason": "An undefined releaseDate is already handled: the only consumer, error-reporter.ts:82, guards with `if (releaseDate)`, and optional plus no default is the intended 'feature off' state."
+   },
+   {
+    "reality": "trivial",
+    "path": "packages/@n8n/config/src/configs/generic.config.ts",
+    "from_line": 12,
+    "reason": "The value is produced as ISO-8601 by the workflow (release-publish.yml:106) and parsed server-side in Node, where Date.parse on ISO strings is specified. The advice to document the format or make it a string is low-value, and a string type would lose the parsing the PR adds."
+   },
+   {
+    "reality": "dubious",
+    "path": "packages/@n8n/config/src/decorators.ts",
+    "from_line": 58,
+    "reason": "The Date branch at decorators.ts:58-64 handles failure exactly like the Number and Boolean branches just above it (console.warn, keep the class default), so there is no inconsistency to align. The 'cross-platform' concern doesn't apply to Node-only config code."
+   },
+   {
+    "reality": "dubious",
+    "path": "packages/@n8n/config/src/decorators.ts",
+    "from_line": 58,
+    "reason": "This config is only ever read in Node (packages/@n8n/config), never in a browser, and the input is ISO-8601 from release-publish.yml:106, which Date.parse handles per ECMAScript. Pulling in moment/luxon isn't justified."
+   },
+   {
+    "reality": "dubious",
+    "path": "packages/cli/src/commands/base-command.ts",
+    "from_line": 66,
+    "reason": "releaseDate is never passed to Sentry: base-command.ts:66-74 hands it to errorReporter.init, where it is only used for the expiry arithmetic at error-reporter.ts:82-92, not in Sentry's init() options."
+   },
+   {
+    "reality": "dubious",
+    "path": "packages/cli/src/commands/base-command.ts",
+    "from_line": 66,
+    "reason": "GlobalConfig declares `generic: GenericConfig` as a @Nested non-optional section (packages/@n8n/config/src/index.ts:120), and the Config factory always instantiates it (decorators.ts:36-37), so this.globalConfig.generic cannot be undefined."
+   },
+   {
+    "reality": "trivial",
+    "path": "packages/core/src/errors/error-reporter.ts",
+    "from_line": 26,
+    "reason": "SIX_WEEKS_IN_MS at error-reporter.ts:26 is already a named constant with a self-describing computation; swapping it for a 'time utility constant' is a style preference."
+   },
+   {
+    "reality": "dubious",
+    "path": "packages/core/src/errors/error-reporter.ts",
+    "from_line": 78,
+    "reason": "The uncaughtException listener at error-reporter.ts:78-80 predates this PR (it is diff context, not an addition). When the release has expired, init returns before Sentry init, so this.report stays defaultReport, which logs via logger.error (error-reporter.ts:46-62); errors are not swallowed silently."
+   },
+   {
+    "reality": "dubious",
+    "path": "packages/core/src/errors/error-reporter.ts",
+    "from_line": 82,
+    "reason": "decorators.ts:58-64 only assigns a Date when !isNaN(timestamp), so releaseDate can never be an Invalid Date when it reaches error-reporter.ts:82-83 (the added test 'should handle invalid timestamps' pins this)."
+   },
+   {
+    "reality": "dubious",
+    "path": "packages/core/src/errors/error-reporter.ts",
+    "from_line": 84,
+    "reason": "When already expired, init returns at error-reporter.ts:86 before Sentry's init() and before the beforeSend registration, so no event can reach beforeSend; leaving enabled=true has no effect and nothing is sent."
+   },
+   {
+    "reality": "real-defect",
+    "value": "high",
+    "path": "packages/core/src/errors/error-reporter.ts",
+    "from_line": 88,
+    "reason": "SIX_WEEKS_IN_MS (3,628,800,000 ms) exceeds setTimeout's 2^31-1 ms maximum. Node then clamps the delay to 1 ms (TimeoutOverflowWarning), so for any release younger than about 17 days the timer at error-reporter.ts:88-92 fires immediately, sets enabled=false, and disables Sentry reporting right after startup."
+   }
+  ],
+  "google-gemini__gemini-cli@c6e6248": [
+   {
+    "reality": "trivial",
+    "path": "integration-tests/test-helper.ts",
+    "from_line": 309,
+    "reason": "True that runCommand (test-helper.ts:309-316) uses this.testDir! without a setup() check, but it is test-only code copying the existing pattern of run(), createFile() and readFile(). A null cwd just falls back to process cwd rather than crashing."
+   },
+   {
+    "reality": "real-maintainability",
+    "value": "low",
+    "path": "integration-tests/test-helper.ts",
+    "from_line": 309,
+    "reason": "runCommand (test-helper.ts:309-358) re-implements run()'s spawn, stdout/stderr accumulation, KEEP_OUTPUT/VERBOSE echo and close handling almost line for line (test-helper.ts:208-306). Sharing a helper is a reasonable reviewer ask for test infrastructure."
+   },
+   {
+    "reality": "dubious",
+    "path": "integration-tests/test-helper.ts",
+    "from_line": 323,
+    "reason": "spawn is called with stdio: 'pipe' (test-helper.ts:316), which guarantees child.stdin, child.stdout and child.stderr are non-null streams, so the ! assertions cannot fail. Same pattern as run()."
+   },
+   {
+    "reality": "trivial",
+    "path": "integration-tests/test-helper.ts",
+    "from_line": 323,
+    "reason": "The empty-string stdin edge case at test-helper.ts:323 is never used; the only stdin caller passes 'y\\n' (extensions-install.test.ts:35-36). It is a minor robustness tweak to a test helper."
+   },
+   {
+    "reality": "dubious",
+    "path": "integration-tests/test-helper.ts",
+    "from_line": 328,
+    "reason": "String += Buffer calls Buffer.prototype.toString() (utf8), never '[object Object]' (verified in Node). The same pattern is used in the existing run() at test-helper.ts:243-255."
+   },
+   {
+    "reality": "dubious",
+    "path": "integration-tests/test-helper.ts",
+    "from_line": 342,
+    "reason": "The claim that the promise 'will never settle' is wrong: on spawn failure Node emits 'error' and then 'close' with code -2 (verified), so the close handler at test-helper.ts:343 rejects; the real effect is an unhandled 'error' throw. The spawned binary is `node`, which is always present when vitest runs, and run() has the same shape."
+   },
+   {
+    "reality": "trivial",
+    "path": "integration-tests/test-helper.ts",
+    "from_line": 352,
+    "reason": "Adding stdout to the rejection message at test-helper.ts:352 is a debugging nicety in a test helper, and it copies run()'s existing message format."
+   }
+  ],
+  "sveltejs__svelte@4bf1f91": [
+   {
+    "reality": "trivial",
+    "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/Fragment.js",
+    "from_line": 51,
+    "reason": "AST.IfBlock.elseif is a required boolean (compiler/types/template.d.ts:431), so the truthiness check at Fragment.js:51-53 is exact; `=== true` and a comment are style only."
+   },
+   {
+    "reality": "trivial",
+    "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/IfBlock.js",
+    "from_line": 26,
+    "reason": "`let` vs `const` for alternate_args at IfBlock.js:26 is pure style."
+   },
+   {
+    "reality": "trivial",
+    "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/IfBlock.js",
+    "from_line": 27,
+    "reason": "A generic 'add explanatory comments' request for IfBlock.js:27-29, with no defect."
+   },
+   {
+    "reality": "dubious",
+    "path": "packages/svelte/src/compiler/phases/3-transform/client/visitors/IfBlock.js",
+    "from_line": 44,
+    "reason": "$$render is set_branch(fn, flag) (if.js:40-46): its second argument is the boolean flag, and false correctly marks the alternate branch. The [number,number] tuple is if_block's third parameter, not $$render's. The old code passed the same b.literal(false) whenever an alternate existed (IfBlock.js:44)."
+   },
+   {
+    "reality": "dubious",
+    "path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/IfBlock.js",
+    "from_line": 21,
+    "reason": "IfBlock.alternate is typed Fragment | null (template.d.ts:434) and a Fragment always has a nodes array. The loop condition at server IfBlock.js:21 already checks `alt &&` first."
+   },
+   {
+    "reality": "dubious",
+    "path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/IfBlock.js",
+    "from_line": 24,
+    "reason": "The comment data of `<!--[1-->` is `[1`; the client reads (anchor).data, not the raw HTML, so data.substring(1) = '1' and parseInt gives 1 (if.js:59-66). Adding ']' would produce data '[1]'; parseInt still yields 1, so the suggested change is not needed."
+   },
+   {
+    "reality": "trivial",
+    "path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/IfBlock.js",
+    "from_line": 25,
+    "reason": "A generic 'move templates to constants' remark about the hydration marker at server IfBlock.js:25; at most a nit to reuse the BLOCK_OPEN prefix."
+   },
+   {
+    "reality": "dubious",
+    "path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/IfBlock.js",
+    "from_line": 34,
+    "reason": "The server Fragment visitor always returns a BlockStatement, and alt here is an AST.Fragment (template.d.ts:434). The pre-PR code made the same `context.visit(node.alternate)` BlockStatement cast."
+   },
+   {
+    "reality": "dubious",
+    "path": "packages/svelte/src/internal/client/dom/blocks/if.js",
+    "from_line": 25,
+    "reason": "if.js:25 `var anchor = node;` is unchanged context, not code this PR touched, and `var` is the deliberate convention throughout Svelte's client runtime."
+   },
+   {
+    "reality": "duplicate",
+    "path": "packages/svelte/src/internal/client/dom/blocks/if.js",
+    "from_line": 31,
+    "reason": "Same var\u2192let/const remark as index 8, on if.js:31 (`var alternate_effect = null;`), which is also unchanged by this PR."
+   },
+   {
+    "reality": "dubious",
+    "path": "packages/svelte/src/internal/client/dom/blocks/if.js",
+    "from_line": 41,
+    "reason": "The JSDoc (if.js:16-17) and the signature (if.js:20) agree. hydrate_index = -1 (if.js:78) is a deliberate sentinel ('ignore hydration in next else if'): nested blocks check `hydrating && hydrate_index !== -1` (if.js:57), and the branch is created while hydrating is false, so -1 is handled, not miscomputed."
+   },
+   {
+    "reality": "trivial",
+    "path": "packages/svelte/src/internal/client/dom/blocks/if.js",
+    "from_line": 62,
+    "reason": "Infinity as the else sentinel at if.js:62-64 makes the `hydrate_index > root_index` comparison work by construction; asking for a named constant is a readability nit."
+   },
+   {
+    "reality": "dubious",
+    "path": "packages/svelte/src/internal/client/dom/blocks/if.js",
+    "from_line": 70,
+    "reason": "hydrate_index is always a number (0, Infinity or parseInt's result, if.js:60-66), and the global isNaN is exact for numbers. The suggested `x !== x` is equivalent, so nothing is fixed."
+   },
+   {
+    "reality": "duplicate",
+    "path": "packages/svelte/src/internal/client/dom/blocks/if.js",
+    "from_line": 70,
+    "reason": "Restates index 12's isNaN concern at if.js:70 (suggesting Number.isNaN instead of x !== x); equally moot because hydrate_index is always a number."
+   }
+  ],
+  "microsoft__typescript-go@892b4a3": [
+   {
+    "reality": "real-defect",
+    "value": "high",
+    "path": "internal/fourslash/_scripts/convertFourslash.mts",
+    "from_line": 26,
+    "reason": "The PR does not add manualTests.txt (the head tree of internal/fourslash/_scripts/ has only convertFourslash.mts, failingTests.txt, makeManual.mts, tsconfig.json and updateFailing.mts). getManualTests (convertFourslash.mts:26-29) readFileSync's it unconditionally, so `npm run convertfourslash` throws ENOENT on every checkout until someone runs makemanual."
+   },
+   {
+    "reality": "duplicate",
+    "path": "internal/fourslash/_scripts/convertFourslash.mts",
+    "from_line": 26,
+    "reason": "Same key-format mismatch as index 3: the manualTests.txt entries don't match the lookup key at convertFourslash.mts:70-72. The note frames it hypothetically, via failingTests' 'Test' prefix stripping; index 3 names the actual writer (makeManual.mts)."
+   },
+   {
+    "reality": "real-maintainability",
+    "value": "low",
+    "path": "internal/fourslash/_scripts/convertFourslash.mts",
+    "from_line": 44,
+    "reason": "manualOutputDir (convertFourslash.mts:17,44) is only mkdir'd and never read or written, so convertfourslash creates an empty tests/manual dir as dead code; generation still targets only outputDir."
+   },
+   {
+    "reality": "real-defect",
+    "value": "high",
+    "path": "internal/fourslash/_scripts/convertFourslash.mts",
+    "from_line": 70,
+    "reason": "makeManual.mts:17-19,39-42 stores the argument as-is, and it must be the gen filename to pass existsSync (e.g. 'fooBar_test.go', since no suffix is appended). convertFourslash.mts:70-72 looks up the capitalized base name ('FooBar'), so the skip never fires and convertfourslash regenerates tests marked manual. The PR's core feature does not work."
+   },
+   {
+    "reality": "dubious",
+    "path": "internal/fourslash/_scripts/convertFourslash.mts",
+    "from_line": 70,
+    "reason": "test.name comes from a Strada fourslash filename minus '.ts' (convertFourslash.mts:90); an empty name needs a file literally named '.ts'. The pre-existing generateGoTest (convertFourslash.mts:946) already indexes test.name[0] the same way."
+   },
+   {
+    "reality": "dubious",
+    "path": "internal/fourslash/_scripts/convertFourslash.mts",
+    "from_line": 75,
+    "reason": "generateGoTest (convertFourslash.mts:945-975) always returns a non-empty multi-line Go template, so a whitespace-only testContent cannot happen."
+   },
+   {
+    "reality": "trivial",
+    "path": "internal/fourslash/_scripts/convertFourslash.mts",
+    "from_line": 75,
+    "reason": "Correct that `if (testContent)` at convertFourslash.mts:76 is redundant, because generateGoTest always returns a non-empty string (convertFourslash.mts:958-974), but it is a harmless redundancy."
+   },
+   {
+    "reality": "real-maintainability",
+    "value": "low",
+    "path": "internal/fourslash/_scripts/makeManual.mts",
+    "from_line": 12,
+    "reason": "makeManual.mts:12-14 calls process.exit(1) with no usage message, so a developer running `npm run makemanual` without the argument (which must be the full *_test.go filename) gets a silent failure. It is a small usability gap in a dev script."
+   },
+   {
+    "reality": "dubious",
+    "path": "internal/fourslash/_scripts/makeManual.mts",
+    "from_line": 16,
+    "reason": "makeManual.mts is a local npm dev script whose argument comes from the developer running it on their own checkout. There is no trust boundary, so path traversal gains nothing the developer can't already do."
+   },
+   {
+    "reality": "trivial",
+    "path": "internal/fourslash/_scripts/makeManual.mts",
+    "from_line": 18,
+    "reason": "genDir only ever contains generated *_test.go files plus util_test.go (convertFourslash.mts:42-43,77,978), so 'accidentally moving non-test files' is unlikely. The useful half, appending _test.go to the argument, is folded into index 3/7's naming issue."
+   },
+   {
+    "reality": "trivial",
+    "path": "internal/fourslash/_scripts/makeManual.mts",
+    "from_line": 29,
+    "reason": "A dev script crashing with Node's own stack trace on a renameSync failure (makeManual.mts:29-30) is acceptable; wrapping it in try/catch is a nicety."
+   },
+   {
+    "reality": "dubious",
+    "path": "internal/fourslash/_scripts/makeManual.mts",
+    "from_line": 32,
+    "reason": "String.prototype.split on the file content (makeManual.mts:33-36) cannot fail on 'corrupted' content. readFileSync is only called after an existsSync check, so the error-handling concern has no concrete path."
+   },
+   {
+    "reality": "trivial",
+    "path": "internal/fourslash/_scripts/makeManual.mts",
+    "from_line": 41,
+    "reason": "Appending '' to get a trailing newline at makeManual.mts:41 is a common idiom, and both readers trim and filter empty lines (convertFourslash.mts:27, makeManual.mts:35); this is formatting only."
+   }
+  ],
+  "elastic__elasticsearch@dc8943f": [
+   {
+    "reality": "real-maintainability",
+    "value": "low",
+    "path": "server/src/main/java/org/elasticsearch/index/codec/vectors/DefaultIVFVectorsReader.java",
+    "from_line": 44,
+    "reason": "CENTROID_OVERSAMPLING=8.0f (DefaultIVFVectorsReader.java:44) silently encodes DEFAULT_CENTROIDS_PER_PARENT_CLUSTER/2 (IVFVectorsFormat.java:68 =16) while centroidsPerParentCluster is configurable 2..256 (IVFVectorsFormat.java:87); tying it to the parent-cluster size (e.g. via maxChildrenSize read at :195) is a fair tuning point, though production always uses the default (DenseVectorFieldMapper.java:2315)."
+   },
+   {
+    "reality": "dubious",
+    "path": "server/src/main/java/org/elasticsearch/index/codec/vectors/DefaultIVFVectorsReader.java",
+    "from_line": 197,
+    "reason": "Unreachable: getCentroidIteratorWithParents is only called when numParents>0 (DefaultIVFVectorsReader.java:115), and parents are written only when centroids > centroidsPerParentCluster^2 (DefaultIVFVectorsWriter.java:356), so numCentroids is never 0 on this path."
+   },
+   {
+    "reality": "dubious",
+    "path": "server/src/main/java/org/elasticsearch/index/codec/vectors/DefaultIVFVectorsReader.java",
+    "from_line": 197,
+    "reason": "visitRatio is validated to [0,1] at query construction (AbstractIVFKnnVectorQuery.java:65-66) and the dynamic path computes a positive ratio (IVFVectorsReader.java:238-246); the result is already clamped by Math.max(...,1)/Math.min(...,numCentroids) at DefaultIVFVectorsReader.java:197, so NaN/negative/overflow has no concrete path; the ceil-vs-truncate point is cosmetic."
+   },
+   {
+    "reality": "duplicate",
+    "path": "server/src/main/java/org/elasticsearch/index/codec/vectors/IVFVectorsReader.java",
+    "from_line": 256,
+    "reason": "Duplicate of index 2: same speculative NaN/negative visitRatio clamping concern, moved to the call site (IVFVectorsReader.java:256-257); same rebuttal (validated at AbstractIVFKnnVectorQuery.java:65-66)."
+   }
+  ],
+  "keycloak__keycloak@805c204": [
+   {
+    "reality": "dubious",
+    "path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Context.java",
+    "from_line": 32,
+    "reason": "Context.java:32 (srcDir.listFiles loop) is unchanged context, not touched by this PR; srcDir is the plugin's configured guides directory."
+   },
+   {
+    "reality": "dubious",
+    "path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Context.java",
+    "from_line": 39,
+    "reason": "Premise wrong: priority is only ever changed from the Integer.MAX_VALUE default (Guide.java:9) by an explicit priority= attribute (GuideParser.java:79-80), so the message at Context.java:40 is accurate; f.getName() is id+'.adoc' (GuideParser.java:30), so adding the id adds nothing."
+   },
+   {
+    "reality": "trivial",
+    "path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Context.java",
+    "from_line": 50,
+    "reason": "Pure error-message rewording suggestion for Context.java:48; the existing message is already clear."
+   },
+   {
+    "reality": "trivial",
+    "path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Context.java",
+    "from_line": 56,
+    "reason": "Grammar/quoting fix in the exception text at Context.java:56 ('do no longer exist ... mis-spelled'); true but cosmetic."
+   },
+   {
+    "reality": "dubious",
+    "path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Context.java",
+    "from_line": 59,
+    "reason": "The comparator at Context.java:59-65 is unchanged by this PR, and title is a required macro parameter with no default (templates/guide.adoc:3 '<#macro guide title summary ...>'), so a null title is not a realistic path introduced here."
+   },
+   {
+    "reality": "dubious",
+    "path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Guide.java",
+    "from_line": 9,
+    "reason": "Premise wrong: the previous default was not 0 - GuideParser forced 999 (removed line) and Context forced Integer.MAX_VALUE for unpinned guides whenever pinned-guides existed; getPriority is only read in Context (sort + validation), so no caller relied on 0. The sentinel/constant suggestion is a minor style point."
+   },
+   {
+    "reality": "trivial",
+    "path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Guide.java",
+    "from_line": 10,
+    "reason": "Boolean tri-state (null = unspecified, template default true at templates/guide.adoc:3) is handled correctly by Objects.equals(..., FALSE) at Context.java:47; asking to switch to primitive or document it is a style nit."
+   },
+   {
+    "reality": "duplicate",
+    "path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Guide.java",
+    "from_line": 52,
+    "reason": "Duplicate of index 6 (use primitive boolean instead of Boolean for tileVisible); its premise that the value 'is always initialized (default true)' is also false - Guide.java:10 defaults to null."
+   },
+   {
+    "reality": "dubious",
+    "path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/GuideParser.java",
+    "from_line": 13,
+    "reason": "All 19 tileVisible usages are quoted (e.g. high-availability/concepts-threads.adoc:7 tileVisible=\"false\") and the template interpolates it as a string (templates/guide.adoc:8); the claim that unquoted values 'will not match at all' is wrong since valueInt [\\d]* matches empty; the empty-priority NumberFormatException is pre-existing."
+   },
+   {
+    "reality": "real-defect",
+    "value": "low",
+    "path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/GuideParser.java",
+    "from_line": 81,
+    "reason": "The switch really is missing a break: case \"priority\" (GuideParser.java:79-80) falls through into case \"tileVisible\" (:81-82), so every guide with priority=N gets tileVisible=parseBoolean(null)=false. Currently latent because getTileVisible is only read at Context.java:47 guarded by priority==MAX_VALUE; note the ref's suggested break after the last case is misplaced - the fix belongs after line 80."
+   }
+  ],
+  "juspay__hyperswitch@59ec03c": [
+   {
+    "reality": "trivial",
+    "path": "crates/api_models/src/admin.rs",
+    "from_line": 19,
+    "reason": "Correct but lint-level: in edition 2021 (Cargo.toml package.edition) `use url;` (admin.rs:19-20) is redundant because url::Url (admin.rs:53,276,...) resolves via the extern prelude, so deleting it beats cfg-gating it; import hygiene only."
+   },
+   {
+    "reality": "dubious",
+    "path": "crates/api_models/src/events/payment.rs",
+    "from_line": 8,
+    "reason": "The two cfgs at events/payment.rs:8-14 are mutually exclusive (`not(feature = \"payment_methods_v2\")` vs `feature = \"payment_methods_v2\"`), so they can never both be true and there is no duplicate import."
+   },
+   {
+    "reality": "trivial",
+    "path": "crates/api_models/src/events/payment.rs",
+    "from_line": 14,
+    "reason": "Import-style preference (module path vs direct type import) for the v2 CustomerPaymentMethodsListResponse import at events/payment.rs:14; no functional effect."
+   },
+   {
+    "reality": "trivial",
+    "path": "crates/api_models/src/events/refund.rs",
+    "from_line": 7,
+    "reason": "Generic 'document why these are v1-only' request for the refund imports at events/refund.rs:7-10; the gating simply mirrors the v1-only impls below."
+   },
+   {
+    "reality": "dubious",
+    "path": "crates/api_models/src/payment_methods.rs",
+    "from_line": 6,
+    "reason": "The only use of OptionalEncryptableName (payment_methods.rs:1786) is inside `#[cfg(feature = \"v1\")] pub struct PaymentMethodListResponse` (payment_methods.rs:1768), so gating the import on v1 is correct and a v2 build cannot fail on it."
+   },
+   {
+    "reality": "dubious",
+    "path": "crates/api_models/src/payment_methods.rs",
+    "from_line": 2317,
+    "reason": "The From impl was already gated with the identical cfg before this PR (payment_methods.rs:2326-2330 is unchanged context); the PR only aligns the type alias (added at :2317-2320) with it. The ungated struct/enum are pre-existing and compile fine; no new compilation issue is introduced."
+   },
+   {
+    "reality": "trivial",
+    "path": "crates/api_models/src/payments.rs",
+    "from_line": 13,
+    "reason": "Generic 'ensure it compiles under all feature combinations' request with no concrete defect named - that is the stated purpose of this warnings-cleanup PR (payments.rs:1-44 imports)."
+   },
+   {
+    "reality": "trivial",
+    "path": "crates/api_models/src/payments.rs",
+    "from_line": 7630,
+    "reason": "deserialize_option sits in `#[cfg(feature = \"v2\")] mod payment_id_type` (payments.rs:7562) whose sibling `deserialize` already carried #[allow(dead_code)] before the PR (payments.rs:7622); the PR follows the local pattern and the suggested cfg_attr(not(test)) does not fit. Minor style point."
+   }
+  ],
+  "libsdl-org__SDL@1526727": [
+   {
+    "reality": "trivial",
+    "path": "src/joystick/SDL_joystick.c",
+    "from_line": 3180,
+    "reason": "Naming/style: the new constants use mixed case (usb_ids.h:63-67 USB_PRODUCT_8BITDO_SN30_Pro) versus the file's ALL_CAPS convention, and a switch would read better than the OR chain at SDL_joystick.c:3180-3182; it compiles and behaves correctly, so no 'correctness' issue."
+   },
+   {
+    "reality": "dubious",
+    "path": "src/joystick/hidapi/SDL_hidapi_8bitdo.c",
+    "from_line": 115,
+    "reason": "ReadFeatureReport (SDL_hidapi_8bitdo.c:115-120) is a static helper byte-identical to the existing ones in SDL_hidapi_ps3.c:147, ps4.c:200 and ps5.c:290; its only caller passes a USB_PACKET_LENGTH stack buffer (:148-149), so the 'out-of-bounds write' has no concrete path (the ref concedes it is OK today)."
+   },
+   {
+    "reality": "duplicate",
+    "path": "src/joystick/hidapi/SDL_hidapi_8bitdo.c",
+    "from_line": 145,
+    "reason": "Duplicate of index 0: the same mixed-case constant naming complaint, repeated at the use site SDL_hidapi_8bitdo.c:145-147; the 'prevent compilation errors' claim is false (the names match their #defines)."
+   },
+   {
+    "reality": "trivial",
+    "path": "src/joystick/hidapi/SDL_hidapi_8bitdo.c",
+    "from_line": 149,
+    "reason": "Magic number 0x06 in ReadFeatureReport(device->dev, 0x06, ...) at SDL_hidapi_8bitdo.c:149; the rest of this driver uses literal report IDs (e.g. :205 0x05, :259), so a named constant is a nit."
+   },
+   {
+    "reality": "real-maintainability",
+    "value": "low",
+    "path": "src/joystick/hidapi/SDL_hidapi_8bitdo.c",
+    "from_line": 259,
+    "reason": "The PR widens the accepted report IDs for ALL 8BitDo devices (SDL_hidapi_8bitdo.c:259 now also 0x04), including the Ultimate 2 Wireless that never sent it; tying the expected state-report ID to the device (e.g. stored in ctx at InitDevice :135-158) is a reasonable, actionable point, though no concrete misparse is shown."
+   },
+   {
+    "reality": "trivial",
+    "path": "src/joystick/usb_ids.h",
+    "from_line": 63,
+    "reason": "Casing + missing space after // on the new #defines (usb_ids.h:63-67); a naming/formatting nit that overlaps index 0 (casing) and index 6 (comment whitespace)."
+   },
+   {
+    "reality": "trivial",
+    "path": "src/joystick/usb_ids.h",
+    "from_line": 66,
+    "reason": "True - usb_ids.h:66-67 end with '//mode switch to D ' (trailing space) - but pure whitespace formatting."
+   }
+  ],
+  "PowerShell__PowerShell@ec952ce": [
+   {
+    "reality": "trivial",
+    "path": "src/System.Management.Automation/engine/CommandCompletion/CompletionCompleters.cs",
+    "from_line": 474,
+    "reason": "Comment wording at CompletionCompleters.cs:469-473; it already frames PSReadLine as the usual case ('usually triggered by PSReadLine'), and the logic is generic by design per the PR body."
+   },
+   {
+    "reality": "dubious",
+    "path": "src/System.Management.Automation/engine/CommandCompletion/CompletionCompleters.cs",
+    "from_line": 474,
+    "reason": "For loadedModulesOnly, Get-Module returns the live PSModuleInfo instances from the session state's ModuleTable (ModuleIntrinsics.cs:314), which are the same objects held in curModule.NestedModules, so reference equality in the HashSet (CompletionCompleters.cs:478) matches; no path to distinct instances is shown."
+   },
+   {
+    "reality": "dubious",
+    "path": "src/System.Management.Automation/engine/CommandCompletion/CompletionCompleters.cs",
+    "from_line": 475,
+    "reason": "The filter at CompletionCompleters.cs:476-479 removes only curModule's own NestedModules, which is exactly what the PR intends; the PR body states deliberately not hard-coding 'PSReadLine'. For global TabExpansion2 the Module is null and nothing is filtered (comment :472-473). The 'different host/runspace' risk is speculative."
+   },
+   {
+    "reality": "dubious",
+    "path": "src/System.Management.Automation/engine/CommandCompletion/CompletionCompleters.cs",
+    "from_line": 478,
+    "reason": "PSModuleInfo.NestedModules is never null: it returns `_readonlyNestedModules ??= new ReadOnlyCollection<PSModuleInfo>(_nestedModules)` over a readonly list initialised to new List<PSModuleInfo>() (PSModuleInfo.cs:929-948)."
+   },
+   {
+    "reality": "dubious",
+    "path": "src/System.Management.Automation/engine/CommandCompletion/CompletionCompleters.cs",
+    "from_line": 489,
+    "reason": "Misreads the diff: there is no nesting - the short-name check (CompletionCompleters.cs:486-494) and the nested-module check (:496-500) are sibling if-statements at the same level, which is the ref's own alternative recommendation."
+   }
+  ]
+ }
+}

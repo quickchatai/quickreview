@@ -111,10 +111,10 @@ describe("case sets", () => {
     expect(selectCases(s, undefined)).toHaveLength(10);
   });
 
-  it("the smoke10 labels cover every reference, in the dataset's own order", () => {
-    const s = parseCaseSet(SMOKE);
+  it.each(["smoke10", "holdout10"])("the %s labels cover every reference, in the dataset's own order", (name) => {
+    const s = parseCaseSet(JSON.parse(readFileSync(join(ROOT, "bench", "aacr", "sets", `${name}.json`), "utf8")));
     const l = parseReferenceLabels(
-      JSON.parse(readFileSync(join(ROOT, "bench", "aacr", "sets", "smoke10.labels.json"), "utf8")),
+      JSON.parse(readFileSync(join(ROOT, "bench", "aacr", "sets", `${name}.labels.json`), "utf8")),
     );
     for (const c of s.cases) {
       const ls = l.labels[c.instance_id] ?? [];
