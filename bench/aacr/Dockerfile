@@ -13,7 +13,7 @@
 # because nothing in the image knows how.
 #
 # Pins — each one a rule-7-style pin, bumped only on purpose:
-#   pi 0.84.4                          = config.toml [pi], package.json "pi"
+#   pi 0.87.1                          = config.toml [pi], package.json "pi"
 #   aacr-bench harness 68a5697         = the scorer's code
 #   AACR-Bench dataset v1.0 ab8af8d    = what every published row is scored on;
 #                                        its sha256 is verified at build time
@@ -37,7 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 ARG PI_PACKAGE=@earendil-works/pi-coding-agent
-ARG PI_VERSION=0.84.4
+ARG PI_VERSION=0.87.1
 RUN npm install -g ${PI_PACKAGE}@${PI_VERSION} --no-audit --no-fund
 
 # The scorer, at a pinned commit, in its own venv with its own locked deps.

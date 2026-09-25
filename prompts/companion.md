@@ -3,7 +3,7 @@
 > Sandbox file: `prompts/companion.md`. Loaded by the local `companion` pi
 > session (tmux `companion` inside the local Docker container, cwd =
 > `/workspace`,
-> model `openai-codex/gpt-5.6-sol`). Rotated daily by the TUI on the first
+> model `openai-codex/gpt-6-sol`). Rotated daily by the TUI on the first
 > start of a new Warsaw day; OpenViking memory carries durable knowledge
 > across rotations. The daily opening context is rendered from
 > `prompts/companion-day-open.md`.

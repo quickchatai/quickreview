@@ -245,7 +245,7 @@ describe("buildAgents", () => {
     // the model field carries the WHOLE spec — the native subagent
     // extension reads only `model:`, and pi's --model accepts the :thinking
     // suffix. The separate thinking field stays as human documentation.
-    expect(high).toContain("model: openai-codex/gpt-5.6-sol:high\n");
+    expect(high).toContain("model: openai-codex/gpt-6-sol:high\n");
     expect(high).toContain("thinking: high\n");
   });
 
@@ -380,7 +380,7 @@ describe("buildAgents", () => {
     // The floor variant takes the tier's spec, split the usual way…
     const floor = readFileSync(join(out, "pass-validate--sol-med.md"), "utf8");
     expect(floor).toContain("name: pass-validate--sol-med\n");
-    expect(floor).toContain("model: openai-codex/gpt-5.6-sol:medium\n");
+    expect(floor).toContain("model: openai-codex/gpt-6-sol:medium\n");
     expect(floor).toContain("thinking: medium\n");
     // …and the per-variant override wins over it, exactly as for a lens.
     const high = built.find((b) => b.name === "pass-validate--sol-high")!;

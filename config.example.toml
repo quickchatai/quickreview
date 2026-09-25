@@ -152,9 +152,9 @@ improvement_pr_deny_prefixes = ["migrations/", "infra/", "ansible/", ".github/wo
 # default for every role; tiered pass models below (replaces [models.passes])
 # Provider prefix is `openai-codex/` — the ChatGPT-OAuth route's provider key
 # in pi's auth.json (direct `openai/` needs an API key we don't ship).
-default = "openai-codex/gpt-5.6-sol"
-conversation = "openai-codex/gpt-5.6-sol"
-overseer = "openai-codex/gpt-5.6-sol"
+default = "openai-codex/gpt-6-sol"
+conversation = "openai-codex/gpt-6-sol"
+overseer = "openai-codex/gpt-6-sol"
 # Passes always run at sol-high — single variant, not raisable (already top).
 risk_passes = ["pass-security", "pass-prod-risk", "pass-data-safety"]
 # pass-validate's FLOOR tier — raised per round to the highest-tier lens that
@@ -171,13 +171,13 @@ small_diff_lines = 150
 # the built agent's `model:` field — pi's --model accepts the suffix, and the
 # native subagent extension reads only that field.
 "terra-med" = "openai-codex/gpt-5.6-terra:medium"
-"sol-med" = "openai-codex/gpt-5.6-sol:medium"
-"sol-high" = "openai-codex/gpt-5.6-sol:high"
+"sol-med" = "openai-codex/gpt-6-sol:medium"
+"sol-high" = "openai-codex/gpt-6-sol:high"
 
 [models.pricing]
 # Spend rates keyed by bare model id, USD per million tokens. Consumed by
 # spend accounting; empty entries fall back to unpriced.
-# "gpt-5.6-sol" = { input_per_mtok = 0.0, output_per_mtok = 0.0 }
+# "gpt-6-sol" = { input_per_mtok = 0.0, output_per_mtok = 0.0 }
 
 [tui]
 # qcr tui — the operator TUI on the owner's PC, polling the VM over ssh.
@@ -215,7 +215,7 @@ evidence_timeout_s = 60           # evidence copier: per-remote-read
 # VERIFY-ON-PIN: package + version mirrored in package.json "pi" block and the
 # ansible group_vars; the image never floats.
 package = "@earendil-works/pi-coding-agent"
-version = "0.84.4"
+version = "0.87.1"
 session_dir = "state/pi-sessions"
 # Process-wide subagent fan-out cap: enforced by the first-party
 # glue over pi's native subagent extension (extensions/subagents.ts). The
@@ -359,7 +359,7 @@ embedding_key_file = "openai_embeddings_api_key"
 # image = "qcr-companion"         # docker build -t qcr-companion docker/companion
 # pihome_volume = "companion-pihome"   # its OWN pi auth — never the VM's auth.json
 # session = "companion"           # tmux session inside the container
-# model = "openai-codex/gpt-5.6-sol"
+# model = "openai-codex/gpt-6-sol"
 # repo_dir = ""                   # host review-sandbox repo → /workspace (rw);
 #                                 # empty = this sandbox root
 # tracker_dir = "~/projects/your-tracker"                  # → /tracker (rw)

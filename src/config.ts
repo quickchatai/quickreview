@@ -656,8 +656,8 @@ export const MODELS_TIER_DEFAULTS: Pick<
 > = {
   tiers: {
     "terra-med": "openai-codex/gpt-5.6-terra:medium",
-    "sol-med": "openai-codex/gpt-5.6-sol:medium",
-    "sol-high": "openai-codex/gpt-5.6-sol:high",
+    "sol-med": "openai-codex/gpt-6-sol:medium",
+    "sol-high": "openai-codex/gpt-6-sol:high",
   },
   risk_passes: ["pass-security", "pass-prod-risk", "pass-data-safety"],
   validate_tier: "sol-high",
@@ -1166,7 +1166,7 @@ export const COMPANION_DEFAULTS: CompanionConfig = {
   image: "qcr-companion",
   pihome_volume: "companion-pihome",
   session: "companion",
-  model: "openai-codex/gpt-5.6-sol",
+  model: "openai-codex/gpt-6-sol",
   repo_dir: "", // → sandboxRoot()
   tracker_dir: "~/src/tracker",
   tracker_docs_dir: "~/src/tracker-docs",
