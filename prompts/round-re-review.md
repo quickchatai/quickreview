@@ -147,6 +147,9 @@ the sandbox root — never pass a `cwd`, cite absolute paths): worktree
 files, the SETTLED list, the gate notes — **plus the prior open findings
 assigned to that lens, with the instruction to verify each mechanically at the
 current head and report its true state before looking for anything new.**
+A task string may ADD focus — files, a site, a question for that lens —
+but never NARROWS the lens's charter: never tell a pass to check one concern
+only, to skip its own questions, or which findings to leave out.
 {{nit_scope_note}}
 
 **`pass-validate` is never in this batch.** Dispatch pass-validate only after

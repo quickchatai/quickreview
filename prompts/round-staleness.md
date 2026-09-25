@@ -127,6 +127,9 @@ files **restricted to the post-approval delta**, the SETTLED list, the gate
 notes, and an explicit **staleness note**: "this PR was already approved at an
 earlier head; review the delta since that approval, and flag anything in it
 that would have blocked the approval."
+A task string may ADD focus — files, a site, a question for that lens —
+but never NARROWS the lens's charter: never tell a pass to check one concern
+only, to skip its own questions, or which findings to leave out.
 {{nit_scope_note}}
 
 **`pass-validate` is never in this batch.** Dispatch pass-validate only after

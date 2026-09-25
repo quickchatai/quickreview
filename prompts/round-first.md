@@ -132,6 +132,10 @@ with zero inherited context:
 - the SETTLED list below — "do not re-raise; reference the thread instead"
 - the gate notes below, when set
 
+A task string may ADD focus — files, a site, a question for that lens —
+but never NARROWS the lens's charter: never tell a pass to check one concern
+only, to skip its own questions, or which findings to leave out.
+
 **`pass-validate` is never in this batch.** Dispatch pass-validate only after
 every discovery pass has returned its results — never in the same batch as the
 discovery passes: launched early it vets an empty candidate set, and the round
