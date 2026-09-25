@@ -6,8 +6,8 @@
     "file": "dataset/positive_samples.json",
     "sha256": "d8683cb240249bc4e0aff6428802bdffa7b7573ace600552cab1cd0cb7e905c9"
   },
-  "rule": "20<=change_line_count<=400, >=4 references, no smoke10 or holdout10 repository, quota {'C++': 2, 'TypeScript': 1, 'JavaScript': 1, 'Go': 1, 'Java': 1, 'Rust': 1, 'C': 1, 'C#': 1, 'PHP': 1}, smallest first, one PR per repo; unreachable heads excluded (nodejs__node@b225544); a short language is filled with the smallest remaining eligible PR from an unused repo",
-  "references": 105,
+  "rule": "20<=change_line_count<=400, >=4 references, no smoke10 or holdout10 repository, quota {'C++': 2, 'TypeScript': 1, 'JavaScript': 1, 'Go': 1, 'Java': 1, 'Rust': 1, 'C': 1, 'C#': 1, 'PHP': 1}, smallest first, one PR per repo; unreachable heads excluded (nodejs__node@b225544, astral-sh__uv@ed57db2); a short language is filled with the smallest remaining eligible PR from an unused repo",
+  "references": 106,
   "cases": [
     {
       "instance_id": "bitcoin__bitcoin@724546e",
@@ -82,16 +82,16 @@
       "references": 10
     },
     {
-      "instance_id": "astral-sh__uv@ed57db2",
-      "repo": "astral-sh/uv",
-      "pr": 11088,
-      "pr_url": "https://github.com/astral-sh/uv/pull/11088",
-      "base_commit": "1fae8dbf1789717f45e82ea290c1c99642d05139",
-      "head_commit": "ed57db2b34c2a7a955b2dc76583dce7ace02e628",
+      "instance_id": "openai__codex@8c952af",
+      "repo": "openai/codex",
+      "pr": 3212,
+      "pr_url": "https://github.com/openai/codex/pull/3212",
+      "base_commit": "d6182becbe155776b159270fe4a5e88d607f0c5e",
+      "head_commit": "8c952af20fe791cc0c5d0a59089d3329968b4373",
       "language": "Rust",
       "pr_category": "Bug Fix",
-      "change_line_count": 113,
-      "references": 6
+      "change_line_count": 130,
+      "references": 7
     },
     {
       "instance_id": "mpv-player__mpv@0729afe",
@@ -214,18 +214,6 @@
       "pr_category": "Bug Fix",
       "change_line_count": 200,
       "references": 12
-    },
-    {
-      "instance_id": "openai__codex@8c952af",
-      "repo": "openai/codex",
-      "pr": 3212,
-      "pr_url": "https://github.com/openai/codex/pull/3212",
-      "base_commit": "d6182becbe155776b159270fe4a5e88d607f0c5e",
-      "head_commit": "8c952af20fe791cc0c5d0a59089d3329968b4373",
-      "language": "Rust",
-      "pr_category": "Bug Fix",
-      "change_line_count": 130,
-      "references": 7
     },
     {
       "instance_id": "unionlabs__union@d840723",
