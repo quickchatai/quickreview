@@ -52,6 +52,12 @@ HOLDOUT_QUOTA = OrderedDict(
     [("Python", 1), ("TypeScript", 2), ("JavaScript", 2), ("Go", 1), ("Java", 2), ("Rust", 1), ("C", 1)]
 )
 
+# Dataset heads GitHub no longer serves (force-pushed away): no reviewer can be
+# run on them, so a set never selects them. Found by `bench.sh prefetch`.
+UNREACHABLE_HEADS = {
+    "nodejs__node@b225544": "upload-pack: not our ref b2255442 (checked 2026-09-25)",
+}
+
 PR_URL = re.compile(r"github\.com/([^/]+)/([^/]+)/pull/(\d+)", re.IGNORECASE)
 
 
@@ -77,13 +83,22 @@ def case_of(record: dict) -> dict:
     }
 
 
-def smoke10(records: list[dict], quota_by_lang=None, exclude_repos=frozenset()) -> tuple[list[dict], list[dict]]:
+def smoke10(
+    records: list[dict], quota_by_lang=None, exclude_repos=frozenset(), fill_to: int = 0
+) -> tuple[list[dict], list[dict]]:
+    """`fill_to`: when a language cannot meet its quota (holdout only), fill up
+    to this many cases with the smallest remaining eligible PRs from unused
+    repositories, any language — deterministic, and said in the set's rule."""
     quota_by_lang = quota_by_lang or SMOKE_QUOTA
     eligible = [
-        case_of(r)
-        for r in records
-        if SMOKE_MIN_LINES <= r["change_line_count"] <= SMOKE_MAX_LINES
-        and len(r.get("comments") or []) >= SMOKE_MIN_REFS
+        c
+        for c in (
+            case_of(r)
+            for r in records
+            if SMOKE_MIN_LINES <= r["change_line_count"] <= SMOKE_MAX_LINES
+            and len(r.get("comments") or []) >= SMOKE_MIN_REFS
+        )
+        if c["instance_id"] not in UNREACHABLE_HEADS
     ]
     eligible.sort(key=lambda c: (c["change_line_count"], c["pr_url"]))
     chosen: list[dict] = []
@@ -101,8 +116,15 @@ def smoke10(records: list[dict], quota_by_lang=None, exclude_repos=frozenset()) 
             elif spare < BACKUPS_PER_LANGUAGE:
                 backups.append(c)
                 spare += 1
-        if quota > 0:
+        if quota > 0 and not fill_to:
             raise SystemExit(f"not enough eligible {language} PRs for the quota")
+    for c in eligible:
+        if len(chosen) >= fill_to:
+            break
+        if c["repo"] not in used_repos:
+            chosen.append(c)
+            used_repos.add(c["repo"])
+    backups = [b for b in backups if b["instance_id"] not in {c["instance_id"] for c in chosen}]
     return chosen, backups
 
 
@@ -126,10 +148,12 @@ def main() -> None:
         )
     elif name == "holdout10":
         smoke, _ = smoke10(records)
-        cases, backups = smoke10(records, HOLDOUT_QUOTA, frozenset(c["repo"] for c in smoke))
+        cases, backups = smoke10(records, HOLDOUT_QUOTA, frozenset(c["repo"] for c in smoke), fill_to=10)
         rule = (
             f"{SMOKE_MIN_LINES}<=change_line_count<={SMOKE_MAX_LINES}, >={SMOKE_MIN_REFS} references, "
-            f"no smoke10 repository, quota {dict(HOLDOUT_QUOTA)}, smallest first, one PR per repo"
+            f"no smoke10 repository, quota {dict(HOLDOUT_QUOTA)}, smallest first, one PR per repo; "
+            f"unreachable heads excluded ({', '.join(UNREACHABLE_HEADS)}); a short language is filled "
+            "with the smallest remaining eligible PR from an unused repo"
         )
     else:
         cases, backups = [case_of(r) for r in records], []

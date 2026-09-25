@@ -6,8 +6,8 @@
     "file": "dataset/positive_samples.json",
     "sha256": "d8683cb240249bc4e0aff6428802bdffa7b7573ace600552cab1cd0cb7e905c9"
   },
-  "rule": "20<=change_line_count<=160, >=4 references, no smoke10 repository, quota {'Python': 1, 'TypeScript': 2, 'JavaScript': 2, 'Go': 1, 'Java': 2, 'Rust': 1, 'C': 1}, smallest first, one PR per repo",
-  "references": 84,
+  "rule": "20<=change_line_count<=160, >=4 references, no smoke10 repository, quota {'Python': 1, 'TypeScript': 2, 'JavaScript': 2, 'Go': 1, 'Java': 2, 'Rust': 1, 'C': 1}, smallest first, one PR per repo; unreachable heads excluded (nodejs__node@b225544); a short language is filled with the smallest remaining eligible PR from an unused repo",
+  "references": 85,
   "cases": [
     {
       "instance_id": "vllm-project__vllm@3fe1893",
@@ -44,18 +44,6 @@
       "pr_category": "Test Suite / CI Enhancements",
       "change_line_count": 103,
       "references": 7
-    },
-    {
-      "instance_id": "nodejs__node@b225544",
-      "repo": "nodejs/node",
-      "pr": 56185,
-      "pr_url": "https://github.com/nodejs/node/pull/56185",
-      "base_commit": "6cd1805364f457b19ebecb38b8f909146f968354",
-      "head_commit": "b2255442712cb6db83d112deb6ba61197d06a5f3",
-      "language": "JavaScript",
-      "pr_category": "Bug Fix",
-      "change_line_count": 62,
-      "references": 4
     },
     {
       "instance_id": "sveltejs__svelte@4bf1f91",
@@ -128,6 +116,18 @@
       "pr_category": "New Feature Additions",
       "change_line_count": 48,
       "references": 7
+    },
+    {
+      "instance_id": "PowerShell__PowerShell@ec952ce",
+      "repo": "PowerShell/PowerShell",
+      "pr": 24910,
+      "pr_url": "https://github.com/PowerShell/PowerShell/pull/24910",
+      "base_commit": "2259f56c0786574cbde8624d031e778028352372",
+      "head_commit": "ec952ce3b70c87885ed756ffca2bec128f07c51b",
+      "language": "C#",
+      "pr_category": "Bug Fix",
+      "change_line_count": 23,
+      "references": 5
     }
   ],
   "backups": [
