@@ -1,0 +1,683 @@
+{
+ "set": "dev10",
+ "source": "Hand-checked against the code at head by two labelling agents (2026-09-26); dataset labels only.",
+ "labels": {
+  "bitcoin__bitcoin@724546e": [
+   {
+    "reality": "dubious",
+    "path": "src/bitcoin-cli.cpp",
+    "from_line": 484,
+    "reason": "The different formatting is intentional: the PR description shows the non-detailed view as 'network, bloom, witness, compact filters, network limited, p2p v2', while FormatServices keeps the one-letter form for the detailed header. `localservicesnames` is always a server-built array of strings (rpc/net.cpp:687 via GetServicesNames), and FormatServices already calls get_str() the same way."
+   },
+   {
+    "reality": "dubious",
+    "path": "src/bitcoin-cli.cpp",
+    "from_line": 487,
+    "reason": "The order is not arbitrary: localservicesnames comes from serviceFlagsToStr (protocol.cpp:108-118), which walks the service bits in ascending order, so output is deterministic and sorted by bit; alphabetical sorting would be worse."
+   },
+   {
+    "reality": "dubious",
+    "path": "src/bitcoin-cli.cpp",
+    "from_line": 488,
+    "reason": "Bitcoin Core requires C++20 (`set(CMAKE_CXX_STANDARD 20)`, CMakeLists.txt:68), and std::ranges is already used throughout src/, so `std::ranges::replace` cannot break the build."
+   },
+   {
+    "reality": "real-defect",
+    "value": "high",
+    "path": "src/bitcoin-cli.cpp",
+    "from_line": 585,
+    "reason": "Correct: `const std::string_view services{DetailsRequested() ? strprintf(\" - services %s\", ...) : \"\"};` (bitcoin-cli.cpp:585) binds a string_view to a temporary std::string (the ternary's common type), which dies at the end of the declaration. The next line reads it in strprintf: use-after-free on the `-netinfo <level>` path. ' - services nbwcl2' exceeds the SSO buffer, so it is heap memory."
+   }
+  ],
+  "FreeCAD__FreeCAD@699b45c": [
+   {
+    "reality": "trivial",
+    "path": "src/Base/StackWalker.cpp",
+    "from_line": 813,
+    "reason": "StackWalker.cpp:813 `case NumSymTypes:  // Not a real option, should never hit\\n break;` exists only to silence MSVC C4062; SymType comes from dbghelp at runtime inside a crash-reporting path, so adding assert(false)/'future std::unreachable' is style preference, not a needed fix."
+   },
+   {
+    "reality": "real-defect",
+    "value": "low",
+    "path": "src/Base/StackWalker.cpp",
+    "from_line": 1473,
+    "reason": "OnLoadModule takes `DWORD size, DWORD result` (StackWalker.cpp:1459-1460) and line 1473 formats them with `%ld`; DWORD is `unsigned long`, so `%lu` is the matching specifier. Values >= 2^31 would print negative; realistic sizes and GetLastError codes stay below that, so impact is cosmetic diagnostic output. The same sign mismatch recurs at 1490, 1540, 1559, 1576, 1609 (refs 2-6)."
+   },
+   {
+    "reality": "duplicate",
+    "path": "src/Base/StackWalker.cpp",
+    "from_line": 1490,
+    "reason": "Duplicate of [1]: same %ld-for-DWORD sign mismatch, here for v1..v4 at StackWalker.cpp:1490 (values masked to 0xFFFF, so they can never even go negative); [1] explicitly says it applies throughout the file."
+   },
+   {
+    "reality": "duplicate",
+    "path": "src/Base/StackWalker.cpp",
+    "from_line": 1540,
+    "reason": "Duplicate of [1]: same %ld-for-DWORD mismatch for entry.lineNumber at StackWalker.cpp:1540; [1] already covers the pattern across the file."
+   },
+   {
+    "reality": "duplicate",
+    "path": "src/Base/StackWalker.cpp",
+    "from_line": 1559,
+    "reason": "Duplicate of [1]: same %ld-for-DWORD mismatch for `gle` at StackWalker.cpp:1559; [1] already covers the pattern across the file."
+   },
+   {
+    "reality": "duplicate",
+    "path": "src/Base/StackWalker.cpp",
+    "from_line": 1576,
+    "reason": "Duplicate of [1]: same %ld-for-DWORD mismatch for symOptions at StackWalker.cpp:1576 (SYMOPT_DEBUG 0x80000000 is not set by the code at lines 398-403, so no negative output in practice)."
+   },
+   {
+    "reality": "duplicate",
+    "path": "src/Base/StackWalker.cpp",
+    "from_line": 1609,
+    "reason": "Duplicate of [1]: same %ld-for-DWORD mismatch for OS version fields at StackWalker.cpp:1609; [1] already covers the pattern across the file."
+   },
+   {
+    "reality": "trivial",
+    "path": "src/Base/Tools.h",
+    "from_line": 148,
+    "reason": "True that `std::roundf(static_cast<float>(value))` (Tools.h:148) is a no-op because `value` is a `long` already holding an integer, but it is harmless, pre-existing, and the PR only added the cast; not worth a review comment."
+   },
+   {
+    "reality": "dubious",
+    "path": "src/Base/Tools.h",
+    "from_line": 148,
+    "reason": "Speculative precision concern: long->float loses precision only above 2^24, but every caller passes a 0-100 percentage (e.g. Material.cpp:342 DefaultShapeTransparency, DlgSettingsLightSources.cpp:91 spin-box value); the suggested double/std::round rewrite is equally redundant."
+   },
+   {
+    "reality": "dubious",
+    "path": "src/Gui/DAGView/DAGRectItem.cpp",
+    "from_line": 67,
+    "reason": "The premise that setAlphaF takes qreal is wrong for Qt6, where `QColor::setAlphaF(float)`; FreeCAD builds against Qt6 (SetupQt.cmake FREECAD_QT_MAJOR_VERSION 6), so `0.15f` (DAGRectItem.cpp:67) removes a double->float truncation warning, which is the PR's purpose. On Qt5 the float->double widening is lossless and free."
+   },
+   {
+    "reality": "trivial",
+    "path": "src/Gui/SoDatumLabel.cpp",
+    "from_line": 84,
+    "reason": "True that `range += 2.0 * static_cast<float>(M_PI);` (SoDatumLabel.cpp:84) still multiplies by a double literal, so the addition happens in double, but the 2.0*pi product is a compile-time constant; using 2.0f is a consistency/micro-optimisation nit (whether MSVC still warns on the narrowing `+=` could not be verified offline)."
+   },
+   {
+    "reality": "duplicate",
+    "path": "src/Gui/SoDatumLabel.cpp",
+    "from_line": 552,
+    "reason": "Duplicate of [10]: identical note about the double literal in `endangle += 2. * static_cast<float>(M_PI);`, here at SoDatumLabel.cpp:552."
+   },
+   {
+    "reality": "trivial",
+    "path": "src/Gui/View3DInventor.cpp",
+    "from_line": 794,
+    "reason": "`float nearClippingPlane = 0.1f;` (View3DInventor.cpp:794) is a local used once at line 804; marking it const is pure style."
+   },
+   {
+    "reality": "dubious",
+    "path": "src/Mod/CAM/libarea/pyarea.cpp",
+    "from_line": 51,
+    "reason": "`nvertices` is declared `std::size_t` (pyarea.cpp:46), so `%zu` is correct, and the build requires C++20 (CompilerChecksAndSetups.cmake:38-40), i.e. an MSVC whose CRT has supported %zu since VS2015. The 'older MSVC' concern does not apply."
+   },
+   {
+    "reality": "trivial",
+    "path": "src/Mod/TechDraw/App/Geometry.cpp",
+    "from_line": 1718,
+    "reason": "Generic 'include exception details in the log' advice; the PR dropped the unused `e` from `catch (const Standard_Failure&)` (Geometry.cpp:1718) to fix an unused-variable warning, and the existing warning message is adequate."
+   },
+   {
+    "reality": "dubious",
+    "path": "src/Mod/TechDraw/Gui/DimensionValidators.cpp",
+    "from_line": 747,
+    "reason": "Returning the incoming dimType for every other geometry is the function's intended behaviour (header comment at DimensionValidators.cpp:726, 'handle situations where revised geometry type is valid but not suitable for existing dimType'), and it predates the PR, which only made it explicit with `default: break;  // For all other cases, return dimType`. Nothing valid is 'silently ignored', and logging would add noise on normal paths."
+   }
+  ],
+  "CherryHQ__cherry-studio@83a2594": [
+   {
+    "reality": "real-defect",
+    "value": "medium",
+    "path": "src/renderer/src/i18n/locales/en-us.json",
+    "from_line": 1391,
+    "reason": "The UI looks up `settings.data.default_aides.{title,repo_url,repo_url_placeholder}` (DataSettings.tsx:116, DefaultaidesSettings.tsx:26/29/36), but en-us.json only adds an unused flat `settings.defaultaides: \"Built-in\"`. en-US is the fallbackLng (constant.ts:164), so English, ja, ru and zh-TW users see raw key strings in the new settings menu and panel. The suggested rename alone is not the whole fix: the keys must be nested under data."
+   },
+   {
+    "reality": "duplicate",
+    "path": "src/renderer/src/i18n/locales/ja-jp.json",
+    "from_line": 1391,
+    "reason": "Duplicate of [0]: same missing `settings.data.default_aides.*` keys, here in ja-jp.json (only an unused `settings.defaultaides: \"\u5185\u8535\"` was added). This note describes the needed nesting more precisely."
+   },
+   {
+    "reality": "duplicate",
+    "path": "src/renderer/src/i18n/locales/ru-ru.json",
+    "from_line": 1391,
+    "reason": "Duplicate of [0]: same locale-key mismatch in ru-ru.json (unused `settings.defaultaides` added; `settings.data.default_aides.*` missing)."
+   },
+   {
+    "reality": "dubious",
+    "path": "src/renderer/src/i18n/locales/zh-cn.json",
+    "from_line": 970,
+    "reason": "Backwards: zh-cn.json is the only locale that is correct. The code uses `settings.data.default_aides.title/repo_url/repo_url_placeholder` (DefaultaidesSettings.tsx:26-36), and zh-CN is the base template for scripts/check-i18n.js. Renaming it to 'defaultaides' would break the Chinese UI too."
+   },
+   {
+    "reality": "duplicate",
+    "path": "src/renderer/src/i18n/locales/zh-tw.json",
+    "from_line": 1391,
+    "reason": "Duplicate of [0]: same missing `settings.data.default_aides.*` keys, here in zh-tw.json (only an unused flat `settings.defaultaides: \"\u5167\u5efa\"` added)."
+   },
+   {
+    "reality": "trivial",
+    "path": "src/renderer/src/pages/agents/index.ts",
+    "from_line": 8,
+    "reason": "`getAgentsFromSystemAgents(systemAgents: any)` (agents/index.ts:8) is pre-existing code this PR did not touch; tightening the type is generic typing advice."
+   },
+   {
+    "reality": "real-maintainability",
+    "value": "medium",
+    "path": "src/renderer/src/pages/agents/index.ts",
+    "from_line": 19,
+    "reason": "True: `const { defaultaides } = store.getState().settings` (agents/index.ts:20, again at 34) is a non-reactive read that then picks which hook set to call. It happens to work today only because consumers (AgentsPage route, AddAssistantPopup) remount after the setting changes. It is still an anti-pattern paired with conditional hook dispatch that should be fixed before merge. Note: useSelector alone would make the conditional-hooks switch more likely to fire while mounted."
+   },
+   {
+    "reality": "real-maintainability",
+    "value": "low",
+    "path": "src/renderer/src/pages/agents/index.ts",
+    "from_line": 20,
+    "reason": "The null/undefined check is repeated: useSystemAgents (index.ts:21) and useRemoteSystemAgents (index.ts:36). The second copy is unreachable, because remote is only called after the value is known to be an 'http' string, and its early `return agents` sits before a useEffect. The better fix is deleting the dead check, not extracting a helper."
+   },
+   {
+    "reality": "dubious",
+    "path": "src/renderer/src/pages/agents/index.ts",
+    "from_line": 40,
+    "reason": "The stated consequence does not exist: the repo uses React 19 (package.json `\"react\": \"^19.0.0\"`), and the 'setState on unmounted component' warning was removed in React 18, so setAgents after unmount is a silent no-op. Missing abort is at most a generic nit."
+   },
+   {
+    "reality": "trivial",
+    "path": "src/renderer/src/pages/settings/DataSettings/DataSettings.tsx",
+    "from_line": 35,
+    "reason": "'DefaultaidesSettings' vs 'DefaultAidesSettings' is identifier casing taste; no behavioural or discoverability impact."
+   },
+   {
+    "reality": "trivial",
+    "path": "src/renderer/src/pages/settings/DataSettings/DataSettings.tsx",
+    "from_line": 66,
+    "reason": "`AidesIcon` inside DataSettings (DataSettings.tsx:66) follows the file's existing `JoplinIcon`/`SiyuanIcon` pattern for a tiny static SVG; the re-creation cost is negligible."
+   },
+   {
+    "reality": "dubious",
+    "path": "src/renderer/src/pages/settings/DataSettings/DataSettings.tsx",
+    "from_line": 114,
+    "reason": "The premise is false: underscore keys are already the norm in the same menu (`export_menu`, `markdown_export`, `divider_0`; DataSettings.tsx:76-88), and 'default_aides' also matches the i18n key namespace."
+   },
+   {
+    "reality": "real-maintainability",
+    "value": "low",
+    "path": "src/renderer/src/pages/settings/DataSettings/DefaultaidesSettings.tsx",
+    "from_line": 4,
+    "reason": "Real typo in an exported Redux action creator: `import { setefaultAides } from '@renderer/store/settings'` (DefaultaidesSettings.tsx:4), defined at settings.ts:459 and exported at 576. It is a misleading public identifier that gets harder to rename once used."
+   },
+   {
+    "reality": "dubious",
+    "path": "src/renderer/src/pages/settings/DataSettings/DefaultaidesSettings.tsx",
+    "from_line": 6,
+    "reason": "`React.ChangeEvent` in a type position resolves through @types/react's UMD global namespace without an import. The repo does this widely without importing React (e.g. AddAssistantPopup.tsx, CustomTag.tsx, BackupPopup.tsx), and `tsc --noEmit` runs as part of the build, so no TS error."
+   },
+   {
+    "reality": "trivial",
+    "path": "src/renderer/src/pages/settings/DataSettings/DefaultaidesSettings.tsx",
+    "from_line": 20,
+    "reason": "Blank-line formatting (three consecutive blank lines at DefaultaidesSettings.tsx:21-23); pure style."
+   },
+   {
+    "reality": "trivial",
+    "path": "src/renderer/src/store/settings.ts",
+    "from_line": 106,
+    "reason": "`defaultaides` vs `defaultAides` field casing (settings.ts:106) is naming taste; behaviour is unaffected."
+   },
+   {
+    "reality": "real-defect",
+    "value": "low",
+    "path": "src/renderer/src/store/settings.ts",
+    "from_line": 210,
+    "reason": "Correct: `defaultaides: 'settings.defaultaides', // \u9ed8\u8ba4\u667a\u80fd\u4f53` (settings.ts:210) stores an i18n key string as the value; it is never passed through t(). New installs therefore see the literal 'settings.defaultaides' in the repo-URL input (`value={Aides || ''}`). The feature still falls back to local agents because the value lacks 'http'."
+   },
+   {
+    "reality": "duplicate",
+    "path": "src/renderer/src/store/settings.ts",
+    "from_line": 459,
+    "reason": "Duplicate of [12]: same `setefaultAides` typo, here at the reducer definition (settings.ts:459)."
+   },
+   {
+    "reality": "duplicate",
+    "path": "src/renderer/src/store/settings.ts",
+    "from_line": 576,
+    "reason": "Duplicate of [12]: same `setefaultAides` typo, here in the export list (settings.ts:576)."
+   }
+  ],
+  "bluewave-labs__Checkmate@29e03a6": [
+   {
+    "reality": "dubious",
+    "path": ".github/scripts/download-translations.js",
+    "from_line": 1,
+    "reason": "Network and HTTP errors are already caught and logged with the full error object, then `process.exit(1)` (download-translations.js:71-74 and 85-88). A global axios interceptor is unnecessary in a 92-line CI script, and nothing is left unhandled."
+   },
+   {
+    "reality": "trivial",
+    "path": ".github/scripts/download-translations.js",
+    "from_line": 10,
+    "reason": "If the secrets are unset, POEditor returns a non-success status. The script then throws at line 37-38 with the response JSON and exits 1, so the run already fails loudly. An explicit pre-check only improves the error message."
+   },
+   {
+    "reality": "real-defect",
+    "value": "low",
+    "path": ".github/scripts/download-translations.js",
+    "from_line": 12,
+    "reason": "`(process.env.LANGUAGES || 'tr,en').split(',')` (line 12) does not trim or filter. The free-text workflow_dispatch input (`tr, en` or a trailing comma) yields ' en' or '' as a language code, which fails the export or writes an oddly named file."
+   },
+   {
+    "reality": "real-maintainability",
+    "value": "low",
+    "path": ".github/scripts/download-translations.js",
+    "from_line": 12,
+    "reason": "The script default 'tr,en' (line 12) does diverge from the workflow fallback 'tr,gb' (poeditor-sync.yml:60) and from the app's primary locale 'gb' (src/Utils/i18n.js:6, src/locales/gb.json). However, the workflow always sets LANGUAGES, so the script default never affects scheduled runs as claimed. It is a stale, inconsistent default."
+   },
+   {
+    "reality": "trivial",
+    "path": ".github/scripts/download-translations.js",
+    "from_line": 37,
+    "reason": "An unexpected response shape would throw a TypeError at line 37 or 41, which is caught by the try/catch at 71-74 and fails the job with exit 1. Optional chaining would only change the error text."
+   },
+   {
+    "reality": "trivial",
+    "path": ".github/scripts/download-translations.js",
+    "from_line": 92,
+    "reason": "The missing trailing newline at download-translations.js:92 is formatting-only."
+   },
+   {
+    "reality": "real-maintainability",
+    "value": "low",
+    "path": ".github/workflows/README.md",
+    "from_line": 25,
+    "reason": "README.md:25 documents the default languages as `tr` and `gb`, but the manual-run input default is 'tr,en' (poeditor-sync.yml:10), and the PR description says tr and en. The docs contradict one of the two code paths."
+   },
+   {
+    "reality": "real-defect",
+    "value": "medium",
+    "path": ".github/workflows/poeditor-sync.yml",
+    "from_line": 60,
+    "reason": "Within the workflow, a manual run with the default input fetches 'tr,en' (poeditor-sync.yml:10) while a scheduled run falls back to 'tr,gb' (line 60). The two paths write different locale files (en.json vs gb.json, and the app's primary is gb), so at least one path syncs the wrong English file."
+   },
+   {
+    "reality": "dubious",
+    "path": ".github/workflows/poeditor-sync.yml",
+    "from_line": 76,
+    "reason": "jq is preinstalled on GitHub's ubuntu-latest runner images, so `cat \"$file\" | jq .` at poeditor-sync.yml:76 does not need an install step. The claim is factually wrong."
+   }
+  ],
+  "mudler__LocalAI@e466450": [
+   {
+    "reality": "trivial",
+    "path": "backend/backend.proto",
+    "from_line": 162,
+    "reason": "True that backend.proto:162-163 `double timing_prompt_processing = 4; double timing_token_generation = 5;` carry no unit comment, but this is a 'consider adding a comment' doc nit; the values are milliseconds straight from llama.cpp's prompt_ms/predicted_ms."
+   },
+   {
+    "reality": "trivial",
+    "path": "backend/cpp/llama/grpc-server.cpp",
+    "from_line": 2417,
+    "reason": "The 6-line timings block is copied in PredictStream (grpc-server.cpp:2417-2422) and Predict (2465-2470), but the surrounding token-count extraction is duplicated the same way already. A helper is a style nit, not a maintainability problem."
+   },
+   {
+    "reality": "trivial",
+    "path": "backend/cpp/llama/grpc-server.cpp",
+    "from_line": 2417,
+    "reason": "Calling `result.result_json.at(\"timings\")` twice per block (grpc-server.cpp:2418, 2420) is a negligible micro-optimisation on a per-reply JSON object."
+   },
+   {
+    "reality": "dubious",
+    "path": "backend/cpp/llama/grpc-server.cpp",
+    "from_line": 2417,
+    "reason": "\"timings\" is only ever written as `{\"timings\", slot.get_formated_timings()}` (grpc-server.cpp:1291), and get_formated_timings() (305-317) always returns a JSON object. A null or non-object `timings` cannot occur, so `.at(\"timings\").value(...)` cannot throw here."
+   },
+   {
+    "reality": "duplicate",
+    "path": "backend/cpp/llama/grpc-server.cpp",
+    "from_line": 2465,
+    "reason": "Duplicate of index 2: the same double-lookup micro-optimisation, raised at the second copy of the block (grpc-server.cpp:2466-2468)."
+   },
+   {
+    "reality": "duplicate",
+    "path": "backend/cpp/llama/grpc-server.cpp",
+    "from_line": 2465,
+    "reason": "Duplicate of index 3: the same null or non-object `timings` concern at the Predict copy (grpc-server.cpp:2465-2470), and unfounded for the same reason, since timings is always an object (line 1291)."
+   },
+   {
+    "reality": "real-maintainability",
+    "value": "low",
+    "path": "core/cli/run.go",
+    "from_line": 74,
+    "reason": "core/cli/run.go:74 ships `help:\"TODO: write a help string\"` for the new MachineTag flag, so a placeholder is user-visible in --help. It also lacks the `group` tag and alternate env name that every neighbouring flag has."
+   },
+   {
+    "reality": "trivial",
+    "path": "core/config/application_config.go",
+    "from_line": 103,
+    "reason": "`hostname, _ := os.Hostname()` (application_config.go:103) does ignore the error. On failure the only effect is an empty tag header, and os.Hostname essentially never fails, so logging it is optional polish."
+   },
+   {
+    "reality": "dubious",
+    "path": "core/http/endpoints/jina/rerank.go",
+    "from_line": 22,
+    "reason": "appConfig cannot be nil in practice. The same handler already dereferences it unguarded (`appConfig.ModelPath`, `appConfig.Debug` at rerank.go:44-48), and routes wire it from application.ApplicationConfig(), so the new line adds no nil risk."
+   },
+   {
+    "reality": "duplicate",
+    "path": "core/http/endpoints/localai/vad.go",
+    "from_line": 22,
+    "reason": "Duplicate of index 8 (nil appConfig). It is equally unfounded: vad.go:37-41 already dereferences appConfig. The extra 'response vs outbound header' point is also contradicted by the PR's stated intent of exposing the machine tag to clients."
+   },
+   {
+    "reality": "trivial",
+    "path": "core/http/endpoints/openai/chat.go",
+    "from_line": 174,
+    "reason": "True: chat.go:174 sets `LocalAI-Machine-Tag` for every response and chat.go:330 sets it again in the stream branch. The second set is an idempotent redundant line with no behavioural effect, a nit."
+   },
+   {
+    "reality": "real-defect",
+    "value": "low",
+    "path": "core/http/endpoints/openai/chat.go",
+    "from_line": 186,
+    "reason": "chat.go:186 `extraUsage := c.Get(\"LocalAI-Extra-Usage\", \"\") != \"\"` enables the feature for any value, including `false` or `0`, so a client that tries to opt out opts in. The impact is small: two extra omitempty usage fields."
+   },
+   {
+    "reality": "real-defect",
+    "value": "high",
+    "path": "core/http/endpoints/openai/completion.go",
+    "from_line": 183,
+    "reason": "Confirmed: in the non-streaming loop, completion.go:183-184 now only adds the timing fields. `totalTokenUsage.Prompt += ...` and `.Completion += ...` were deleted, so /v1/completions reports prompt_tokens=completion_tokens=total_tokens=0 (lines 188-191). This is a user-visible usage regression."
+   },
+   {
+    "reality": "duplicate",
+    "path": "core/http/endpoints/openai/edit.go",
+    "from_line": 30,
+    "reason": "Duplicate of index 11: the same presence-based `c.Get(\"LocalAI-Extra-Usage\", \"\") != \"\"` opt-in check, copied into edit.go:31."
+   },
+   {
+    "reality": "duplicate",
+    "path": "core/http/endpoints/openai/embeddings.go",
+    "from_line": 26,
+    "reason": "Duplicate of index 8 (nil appConfig), and unfounded for the same reason: embeddings.go:27-32 already dereferences appConfig via readRequest and `appConfig.Debug`."
+   },
+   {
+    "reality": "real-maintainability",
+    "value": "medium",
+    "path": "core/http/endpoints/openai/files.go",
+    "from_line": 86,
+    "reason": "The PR adds `c.Set(\"LocalAI-Machine-Tag\", ...)` by hand to ~30 individual handlers, and coverage is already inconsistent: elevenlabs TTS and sound-generation, tokenize, token-metrics and the stores endpoints never set it. A single middleware is the right place for a global response header."
+   },
+   {
+    "reality": "real-defect",
+    "value": "low",
+    "path": "core/http/endpoints/openai/files.go",
+    "from_line": 125,
+    "reason": "WithMachineTag defaults the tag to os.Hostname() (application_config.go:100-105), and every instrumented handler emits it unconditionally. The server hostname is therefore disclosed in responses to any client by default. This is a real, low-severity information disclosure that an opt-in would avoid."
+   },
+   {
+    "reality": "dubious",
+    "path": "core/http/endpoints/openai/image.go",
+    "from_line": 69,
+    "reason": "The core premise, that the header was meant for outbound backend requests, is wrong: the PR's stated purpose is a response header that tells the client which machine served it. MachineTag defaults to the hostname, so it is effectively never empty either."
+   },
+   {
+    "reality": "duplicate",
+    "path": "core/http/endpoints/openai/list.go",
+    "from_line": 17,
+    "reason": "Duplicate of index 8 (nil appConfig on a new endpoint signature). ListModelsEndpoint's only callers (routes/openai.go:133-134) pass application.ApplicationConfig(), so the premise does not hold."
+   },
+   {
+    "reality": "duplicate",
+    "path": "core/http/endpoints/openai/transcription.go",
+    "from_line": 28,
+    "reason": "Duplicate of indices 8 and 9 (nil appConfig plus header direction). transcription.go:29-34 already dereferences appConfig, and the response header is the intended design."
+   },
+   {
+    "reality": "trivial",
+    "path": "core/schema/openai.go",
+    "from_line": 26,
+    "reason": "Typo `is't` in the comment at core/schema/openai.go:26. True, but purely cosmetic."
+   }
+  ],
+  "alibaba__spring-ai-alibaba@4bc7305": [
+   {
+    "reality": "trivial",
+    "path": "spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/dynamic/agent/entity/DynamicAgentEntity.java",
+    "from_line": 47,
+    "reason": "`private String systemPrompt = \" \";` (DynamicAgentEntity.java:47) is an unexplained placeholder. The request is naming and comment taste: \"\" would behave identically in the only check that reads it (AgentServiceImpl.java:190)."
+   },
+   {
+    "reality": "dubious",
+    "path": "spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/dynamic/agent/service/AgentServiceImpl.java",
+    "from_line": 200,
+    "reason": "No check distinguishes \" \" from \"\". The only one, `getSystemPrompt() != null || !getSystemPrompt().trim().isEmpty()` (AgentServiceImpl.java:190), treats every non-null value as true because of the `||`, and trims anyway. Switching to \"\" changes nothing. The real bug, `||` instead of `&&`, is not what this note says."
+   },
+   {
+    "reality": "trivial",
+    "path": "spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/tool/browser/actions/InputTextAction.java",
+    "from_line": 24,
+    "reason": "True: `import com.microsoft.playwright.options.WaitForSelectorState;` (InputTextAction.java:24) is unused, as are ElementHandle and Random now. This is a lint-level nit."
+   },
+   {
+    "reality": "trivial",
+    "path": "spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/tool/browser/actions/InputTextAction.java",
+    "from_line": 73,
+    "reason": "The `fill(\"\")` before `fill(text)` at InputTextAction.java:73 is redundant because fill() replaces the value anyway, though not for the stated reason: pressSequentially may have typed partial text before failing. Removing it changes nothing, so this is a nit."
+   },
+   {
+    "reality": "dubious",
+    "path": "spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/tool/browser/actions/MoveToAndClickAction.java",
+    "from_line": 46,
+    "reason": "ConfigService.init() seeds a DB row for every @ConfigProperty with defaultValue \"false\" for manus.browser.debug (ConfigService.java:73-90), so getBrowserDebug() returns non-null on normal paths. The same unboxing already exists in GetElementPositionByNameAction.java:87."
+   },
+   {
+    "reality": "dubious",
+    "path": "spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/tool/browser/actions/MoveToAndClickAction.java",
+    "from_line": 48,
+    "reason": "Pages come from `browser.newPage()` with default context options (ChromeDriverService.java:128). That gives a 1280x720 viewport, so viewportSize() is non-null. It is null only when a context is created with an explicit null viewport, which this code never does."
+   },
+   {
+    "reality": "real-defect",
+    "value": "high",
+    "path": "spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/tool/browser/actions/MoveToAndClickAction.java",
+    "from_line": 51,
+    "reason": "Confirmed. Callers pass coordinates from Locator.boundingBox() (GetElementPositionByNameAction.java:124-131), which are viewport coordinates. The new code scrolls to `(x - w/2, y - h/2)` (MoveToAndClickAction.java:49-52) and then still clicks at `(x, y)` (69-70). Any target below the viewport midline on a scrollable page, or any already-scrolled page, gets clicked at the wrong spot."
+   },
+   {
+    "reality": "trivial",
+    "path": "spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/tool/browser/actions/MoveToAndClickAction.java",
+    "from_line": 54,
+    "reason": "Extracting the inline debug-marker JS (MoveToAndClickAction.java:57-65, 75-76) into helper methods is a readability preference."
+   },
+   {
+    "reality": "real-maintainability",
+    "value": "low",
+    "path": "spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/tool/browser/actions/MoveToAndClickAction.java",
+    "from_line": 55,
+    "reason": "True: if `mouse().move/click` throws (lines 69-70), the removal at 73-77 is skipped, so the debug marker stays in the DOM. Because of the `if (!dot)` guard (line 58), later debug clicks reuse the stale dot instead of repositioning it. The effect is debug-only and pointer-events:none, so this is missing cleanup rather than a user-facing bug."
+   },
+   {
+    "reality": "real-defect",
+    "value": "low",
+    "path": "spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/tool/browser/actions/NavigateAction.java",
+    "from_line": 41,
+    "reason": "`if (!url.startsWith(\"http://\") && !url.startsWith(\"https://\")) url = \"https://\" + url;` (NavigateAction.java:42-44) turns about:blank, file://, data: or ftp:// URLs, and `//host`, into invalid https://\u2026 URLs. An agent-driven navigate tool can plausibly receive these."
+   }
+  ],
+  "openai__codex@8c952af": [
+   {
+    "reality": "trivial",
+    "path": "codex-rs/core/src/config.rs",
+    "from_line": 81,
+    "reason": "The tombstone `// Removed: server-side response storage control. Responses are never stored.` (config.rs:81) is history that belongs in git, but it is harmless; removing it is a style nit."
+   },
+   {
+    "reality": "dubious",
+    "path": "codex-rs/core/src/config.rs",
+    "from_line": 81,
+    "reason": "Wrong premise: the field was deleted outright, so there is no field whose docs were 'demoted'. Making the line `///` as suggested would attach it to the next field (`user_instructions`, config.rs:82-83) and corrupt that field's rustdoc."
+   },
+   {
+    "reality": "duplicate",
+    "path": "codex-rs/core/src/config.rs",
+    "from_line": 416,
+    "reason": "Duplicate of [0]: same tombstone-comment objection, for the ConfigToml copy at config.rs:416."
+   },
+   {
+    "reality": "duplicate",
+    "path": "codex-rs/core/src/config.rs",
+    "from_line": 416,
+    "reason": "Duplicate of [1] (and wrong for the same reason): `disable_response_storage` was removed from ConfigToml, so a `///` at config.rs:416 would become part of the `notify` field's docs (lines 417-419)."
+   },
+   {
+    "reality": "dubious",
+    "path": "codex-rs/protocol/src/models.rs",
+    "from_line": 50,
+    "reason": "The mechanism is wrong: skip_serializing does not affect deserialization, so an API payload that contains `id` deserializes fine at client.rs:509. A missing `id` is what fails, and that happens on rollout resume, not on API responses (see [5])."
+   },
+   {
+    "reality": "real-defect",
+    "value": "medium",
+    "path": "codex-rs/protocol/src/models.rs",
+    "from_line": 50,
+    "reason": "Real: `Reasoning { #[serde(skip_serializing)] id: String }` (models.rs:50-52) has no default. The rollout recorder serializes items with serde_json::to_string (rollout/recorder.rs:329), and Reasoning is persisted (rollout/policy.rs:8). On resume, `serde_json::from_value::<ResponseItem>` (recorder.rs:189) then fails with 'missing field id', and every reasoning item is dropped with only a warn. Option<String>/#[serde(default)] fixes it."
+   },
+   {
+    "reality": "dubious",
+    "path": "codex-rs/protocol/src/models.rs",
+    "from_line": 82,
+    "reason": "Describes something that does not exist: `FunctionCallOutput` has no `id` field at head (`FunctionCallOutput { call_id: String, output: FunctionCallOutputPayload }`, models.rs:84-87), so there is nothing to skip."
+   }
+  ],
+  "mpv-player__mpv@0729afe": [
+   {
+    "reality": "dubious",
+    "path": "player/command.c",
+    "from_line": 7706,
+    "reason": "The described skip does not happen. At iteration i the loop reads option_callbacks[i] before the shift writes slot i, so every original entry is examined (command.c:7707-7719). `drop` is sticky, so later checks are moot anyway, and the loop correctly removes the first match and re-appends the new entry last. The suggested rewrite is itself broken: it drops every entry after the match and never appends the new callback."
+   },
+   {
+    "reality": "trivial",
+    "path": "player/command.c",
+    "from_line": 7729,
+    "reason": "The re-indentation comes from moving the body into the new mp_option_run_callbacks loop (command.c:7727+). Extracting the per-callback body into another function is a style preference."
+   },
+   {
+    "reality": "dubious",
+    "path": "player/command.c",
+    "from_line": 7731,
+    "reason": "Wrong claim: head already guards the pointer. `void *opt_ptr = co ? co->data : NULL;` (command.c:7732), and the coalescing loop checks `option_callbacks[i].co && ...` (7711). There is no NULL dereference."
+   },
+   {
+    "reality": "dubious",
+    "path": "player/command.c",
+    "from_line": 7778,
+    "reason": "The PR moves startup IPC init to mp_initialize, `mpctx->ipc_ctx = mp_init_ipc(mpctx->clients, mpctx->global);` (main.c:415). Dropping the `init ||` condition in the callback is therefore compensated, and there is no regression."
+   },
+   {
+    "reality": "dubious",
+    "path": "player/command.c",
+    "from_line": 7946,
+    "reason": "Not a leak. The array is talloc-parented on mpctx, and MP_TARRAY_APPEND only reallocates when capacity is exceeded (ta/ta_talloc.h:94-103). Resetting num_option_callbacks=0 (command.c:7946) reuses the buffer, which is bounded by the peak queue size and freed with mpctx."
+   },
+   {
+    "reality": "dubious",
+    "path": "player/main.c",
+    "from_line": 415,
+    "reason": "NULL is the normal return of mp_init_ipc when no ipc path is configured (input/ipc-unix.c `goto out` returns NULL; ipc-dummy.c always returns NULL), and mp_uninit_ipc handles NULL. The old callback stored it unchecked the same way."
+   },
+   {
+    "reality": "dubious",
+    "path": "player/playloop.c",
+    "from_line": 1292,
+    "reason": "Speculative. Option changes from commands and the client API, including async changes from the dispatch queue, are processed in mp_wait_events or mp_process_input, and mp_option_run_callbacks runs right after them in the same iteration (playloop.c:1286-1292). There is no evidence of 'hundreds of milliseconds' of delay."
+   },
+   {
+    "reality": "dubious",
+    "path": "player/playloop.c",
+    "from_line": 1292,
+    "reason": "This is a 'please confirm' with no concrete path. The obvious re-entrant case, input-commands, only queues commands (`mp_input_queue_cmd`, command.c:7645-7650) instead of running them inline. The per-iteration call is a no-op when the queue is empty, and nothing shown makes it unbounded."
+   }
+  ],
+  "ppy__osu@748ab3d": [
+   {
+    "reality": "dubious",
+    "path": "osu.Game.Rulesets.Osu/Difficulty/Evaluators/RhythmEvaluator.cs",
+    "from_line": 71,
+    "reason": "StrainTime is floored at MIN_DELTA_TIME=25 (OsuDifficultyHitObject.cs:25,123), so no division by zero or near-zero is possible. Smoothstep already clamps its normalised input to [0,1] (DifficultyCalculationUtils.cs:91), so tiny overshoots cannot escape. The (long)-based fraction is exact for these magnitudes."
+   },
+   {
+    "reality": "dubious",
+    "path": "osu.Game.Rulesets.Osu/Difficulty/Evaluators/RhythmEvaluator.cs",
+    "from_line": 73,
+    "reason": "Misreads the comment. `// Take value in range [0, 1]` (RhythmEvaluator.cs:73) describes deltaDifferenceFraction on line 74, which is in [0,1), not reverseDeltaDifferenceRatio on line 71."
+   },
+   {
+    "reality": "dubious",
+    "path": "osu.Game.Rulesets.Osu/Difficulty/Evaluators/RhythmEvaluator.cs",
+    "from_line": 74,
+    "reason": "No overflow is possible. The ratio is max/min of StrainTimes with min >= 25 ms, orders of magnitude below long.MaxValue (~9.2e18), so `(long)reverseDeltaDifferenceRatio` (line 74) is safe."
+   },
+   {
+    "reality": "trivial",
+    "path": "osu.Game/Rulesets/Difficulty/Utils/DifficultyCalculationUtils.cs",
+    "from_line": 69,
+    "reason": "The doc typos are real (`returns returns`, `it's` for `its` at DifficultyCalculationUtils.cs:70). The range concern resolves itself: Smoothstep clamps internally (line 91), so the output cannot go below 0."
+   },
+   {
+    "reality": "duplicate",
+    "path": "osu.Game/Rulesets/Difficulty/Utils/DifficultyCalculationUtils.cs",
+    "from_line": 70,
+    "reason": "Duplicate of index 3: the same 'returns returns' doc typo at DifficultyCalculationUtils.cs:70."
+   },
+   {
+    "reality": "trivial",
+    "path": "osu.Game/Rulesets/Difficulty/Utils/DifficultyCalculationUtils.cs",
+    "from_line": 76,
+    "reason": "True that width==0 would make Smoothstep divide by zero, but the only caller uses the default width=0.5 (RhythmEvaluator.cs:76), and the neighbouring Smoothstep and Smootherstep helpers do not validate either. This is generic defensive-validation advice."
+   },
+   {
+    "reality": "trivial",
+    "path": "osu.Game/Rulesets/Difficulty/Utils/DifficultyCalculationUtils.cs",
+    "from_line": 78,
+    "reason": "Reusing `x` in SmoothstepBellCurve (lines 78-79) is naming taste in a 3-line function."
+   },
+   {
+    "reality": "trivial",
+    "path": "osu.Game/Rulesets/Difficulty/Utils/DifficultyCalculationUtils.cs",
+    "from_line": 78,
+    "reason": "True: `x > 0 ? (width - x) : (width + x)` equals `width - Math.Abs(x)` (line 79). This is a readability micro-suggestion."
+   }
+  ],
+  "symfony__symfony@2b9721f": [
+   {
+    "reality": "trivial",
+    "path": "src/Symfony/Component/Notifier/Bridge/Mercure/MercureOptions.php",
+    "from_line": 25,
+    "reason": "`actions?: array` (MercureOptions.php:26) is not wrong, just less specific than the Web Notification action shape; tightening it is a nicety for a docblock-only PR."
+   },
+   {
+    "reality": "real-defect",
+    "value": "low",
+    "path": "src/Symfony/Component/Notifier/Bridge/Mercure/MercureOptions.php",
+    "from_line": 39,
+    "reason": "Correct: the Web Notification `vibrate` option is a VibratePattern (single number or sequence), and the content array is JSON-encoded as-is to the client (MercureTransport.php:76-81). So `vibrate?: int[]` (MercureOptions.php:39, 96) makes static analysers reject a valid `'vibrate' => 200`. It is a doc-only contract error in a PR whose sole deliverable is this shape."
+   },
+   {
+    "reality": "trivial",
+    "path": "src/Symfony/Component/Notifier/Bridge/Mercure/MercureOptions.php",
+    "from_line": 82,
+    "reason": "The shape is duplicated between @param and @return (MercureOptions.php:25-40, 81-97), but Symfony does not use @phpstan-type/@psalm-type aliases in production code (only TypeInfo fixtures/parser), so the suggested alias goes against repo convention; duplication across the two tags is routine there."
+   },
+   {
+    "reality": "trivial",
+    "path": "src/Symfony/Component/Notifier/Bridge/Mercure/MercureOptions.php",
+    "from_line": 97,
+    "reason": "True that the @return block uses 6-space key indentation and ` *  }|null` (MercureOptions.php:83-97) versus the constructor's 5 spaces; whitespace-only style nit."
+   }
+  ]
+ }
+}
