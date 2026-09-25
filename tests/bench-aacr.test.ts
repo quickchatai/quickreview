@@ -101,6 +101,16 @@ describe("case sets", () => {
     expect(new Set(h.cases.map((c) => c.repo)).size).toBe(10);
   });
 
+  it("the dev10 set shares no repository with smoke10 or holdout10", () => {
+    const set = (name: string) =>
+      parseCaseSet(JSON.parse(readFileSync(join(ROOT, "bench", "aacr", "sets", `${name}.json`), "utf8")));
+    const d = set("dev10");
+    expect(d.cases).toHaveLength(10);
+    const taken = new Set([...set("smoke10").cases, ...set("holdout10").cases].map((c) => c.repo));
+    for (const c of d.cases) expect(taken.has(c.repo), c.repo).toBe(false);
+    expect(new Set(d.cases.map((c) => c.repo)).size).toBe(10);
+  });
+
   it("refuses any other dataset revision", () => {
     const moved = { ...SMOKE, dataset: { ...SMOKE.dataset, sha256: "7a4a0e70" } };
     expect(() => parseCaseSet(moved)).toThrow(/v1\.0/);

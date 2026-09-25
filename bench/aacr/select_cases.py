@@ -28,6 +28,13 @@ smoke10, none of smoke10's repositories, quota Python 1 / TypeScript 2 /
 JavaScript 2 / Go 1 / Java 2 / Rust 1 / C 1 (only one other Python repo is
 eligible), smallest first, one PR per repo.
 
+`dev10` — a second DEVELOPMENT set, so improvements are not tuned on
+smoke10's eleven real references alone. The small-PR pool is spent (no
+Python repository is left), so the ceiling rises to 400 changed lines. Same
+other filters, none of smoke10's or holdout10's repositories, quota C++ 2 /
+TypeScript 1 / JavaScript 1 / Go 1 / Java 1 / Rust 1 / C 1 / C# 1 / PHP 1
+(C++ is the dataset's largest language), smallest first, one PR per repo.
+
 `full` — every v1.0 PR, in dataset order. That is the real benchmark.
 
 Standard library only: it runs on the host before any image exists.
@@ -50,6 +57,11 @@ SMOKE_MIN_LINES, SMOKE_MAX_LINES, SMOKE_MIN_REFS = 20, 160, 4
 BACKUPS_PER_LANGUAGE = 3
 HOLDOUT_QUOTA = OrderedDict(
     [("Python", 1), ("TypeScript", 2), ("JavaScript", 2), ("Go", 1), ("Java", 2), ("Rust", 1), ("C", 1)]
+)
+DEV_MAX_LINES = 400
+DEV_QUOTA = OrderedDict(
+    [("C++", 2), ("TypeScript", 1), ("JavaScript", 1), ("Go", 1), ("Java", 1), ("Rust", 1), ("C", 1),
+     ("C#", 1), ("PHP", 1)]
 )
 
 # Dataset heads GitHub no longer serves (force-pushed away): no reviewer can be
@@ -84,7 +96,8 @@ def case_of(record: dict) -> dict:
 
 
 def smoke10(
-    records: list[dict], quota_by_lang=None, exclude_repos=frozenset(), fill_to: int = 0
+    records: list[dict], quota_by_lang=None, exclude_repos=frozenset(), fill_to: int = 0,
+    max_lines: int = SMOKE_MAX_LINES,
 ) -> tuple[list[dict], list[dict]]:
     """`fill_to`: when a language cannot meet its quota (holdout only), fill up
     to this many cases with the smallest remaining eligible PRs from unused
@@ -95,7 +108,7 @@ def smoke10(
         for c in (
             case_of(r)
             for r in records
-            if SMOKE_MIN_LINES <= r["change_line_count"] <= SMOKE_MAX_LINES
+            if SMOKE_MIN_LINES <= r["change_line_count"] <= max_lines
             and len(r.get("comments") or []) >= SMOKE_MIN_REFS
         )
         if c["instance_id"] not in UNREACHABLE_HEADS
@@ -129,7 +142,7 @@ def smoke10(
 
 
 def main() -> None:
-    if len(sys.argv) != 3 or sys.argv[2] not in ("smoke10", "holdout10", "full"):
+    if len(sys.argv) != 3 or sys.argv[2] not in ("smoke10", "holdout10", "dev10", "full"):
         raise SystemExit(__doc__)
     path, name = sys.argv[1], sys.argv[2]
     raw = open(path, "rb").read()
@@ -152,6 +165,17 @@ def main() -> None:
         rule = (
             f"{SMOKE_MIN_LINES}<=change_line_count<={SMOKE_MAX_LINES}, >={SMOKE_MIN_REFS} references, "
             f"no smoke10 repository, quota {dict(HOLDOUT_QUOTA)}, smallest first, one PR per repo; "
+            f"unreachable heads excluded ({', '.join(UNREACHABLE_HEADS)}); a short language is filled "
+            "with the smallest remaining eligible PR from an unused repo"
+        )
+    elif name == "dev10":
+        smoke, _ = smoke10(records)
+        holdout, _ = smoke10(records, HOLDOUT_QUOTA, frozenset(c["repo"] for c in smoke), fill_to=10)
+        taken = frozenset(c["repo"] for c in smoke + holdout)
+        cases, backups = smoke10(records, DEV_QUOTA, taken, fill_to=10, max_lines=DEV_MAX_LINES)
+        rule = (
+            f"{SMOKE_MIN_LINES}<=change_line_count<={DEV_MAX_LINES}, >={SMOKE_MIN_REFS} references, "
+            f"no smoke10 or holdout10 repository, quota {dict(DEV_QUOTA)}, smallest first, one PR per repo; "
             f"unreachable heads excluded ({', '.join(UNREACHABLE_HEADS)}); a short language is filled "
             "with the smallest remaining eligible PR from an unused repo"
         )
