@@ -8,6 +8,9 @@
 #   report   <set> [--only ids]
 #   results  <set> [--only ids]   rebuild the scored files from the case dirs
 #   agents   [--profile NAME]
+#   whatif   <set> [--only ids]   what-if variants from /bench-out/source (a copied run)
+#   whatif-eval <set> <judge> <rounds> [--only ids]   score the what-if variants
+#   whatif-report <set> [--only ids]
 #   shell                          an interactive shell in the same sandbox
 #
 # The open-code-review baseline arm (image target `ocr`):
@@ -70,7 +73,7 @@ case "$cmd" in
     exec "${CLI[@]}" results --set "$(set_file "$set_name")" --out /bench-out "$@" ;;
   agents)
     exec "${CLI[@]}" agents "$@" ;;
-  eval)
+  eval|whatif-eval)
     set_name="$1"; judge="$2"; rounds="$3"; shift 3
     set_path="$(set_file "$set_name")"
     # Which arm this run dir holds (run.json `reviewer`; quickreviewd runs carry
@@ -80,8 +83,12 @@ case "$cmd" in
 try: print("ocr" if json.load(open(sys.argv[1])).get("reviewer") == "ocr" else "qcr")
 except Exception: print("qcr")' /bench-out/run.json)"
     [[ "$run_arm" == "$arm" ]] || { echo "this run dir holds the $run_arm arm — score it with bench.sh eval --arm $run_arm" >&2; exit 2; }
-    variants="all no-nits blockers"; report_cmd=report
-    [[ "$arm" == ocr ]] && { variants="all"; report_cmd=ocr-report; }
+    if [[ "$cmd" == eval ]]; then
+      variants="all no-nits blockers"; report_cmd=report
+      [[ "$arm" == ocr ]] && { variants="all"; report_cmd=ocr-report; }
+    else
+      variants="posted posted+killed posted+merged all-candidates"; report_cmd=whatif-report
+    fi
     mkdir -p /bench-out/eval
     subset="/bench-out/eval/aacr_bench_v1_${set_name}.jsonl"
     "${CLI[@]}" subset --set "$set_path" --dataset /opt/aacr-data/aacr_bench_v1.jsonl --out "$subset" "$@"
@@ -126,7 +133,7 @@ except Exception: print("qcr")' /bench-out/run.json)"
         rm -rf "$dir"; mkdir -p "$dir"
         find /bench-out/results/all -maxdepth 1 -name '*.json' ! -name 'metrics_ocr_*' -exec cp {} "$dir"/ \;
       fi
-      [[ -d "$dir" ]] || { echo "no results for variant $variant — run review first" >&2; status=1; continue; }
+      [[ -d "$dir" ]] || { echo "no results for variant $variant — run review (or whatif) first" >&2; status=1; continue; }
       rm -f "$dir"/metrics_ocr_*.json
       echo "== eval: $variant ($expected instances, judge $judge, $rounds round(s))" >&2
       ( cd /opt/aacr-bench/evaluation && /opt/aacr-venv/bin/python -m pipeline run --stage eval --reviewer ocr \
@@ -162,8 +169,14 @@ PY
     [[ -n "$shim_pid" ]] && kill "$shim_pid" 2>/dev/null || true
     [[ "$line_k" == 1 ]] && "${CLI[@]}" "$report_cmd" --set "$set_path" --out /bench-out "$@"
     exit "$status" ;;
+  whatif)
+    set_name="$1"; shift
+    exec "${CLI[@]}" whatif --set "$(set_file "$set_name")" --out /bench-out "$@" ;;
+  whatif-report)
+    set_name="$1"; shift
+    exec "${CLI[@]}" whatif-report --set "$(set_file "$set_name")" --out /bench-out "$@" ;;
   shell)
     exec bash ;;
   *)
-    sed -n '2,17p' "$0"; exit 2 ;;
+    sed -n '2,19p' "$0"; exit 2 ;;
 esac

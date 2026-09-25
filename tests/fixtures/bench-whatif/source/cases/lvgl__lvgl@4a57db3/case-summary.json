@@ -1,0 +1,57 @@
+{
+  "instance_id": "lvgl__lvgl@4a57db3",
+  "status": "ok",
+  "fingerprint": {
+    "qcr_commit": "29a79c321c803292d20e7cf35fc286f3a50444f2",
+    "profile": "",
+    "conversation": "openai-codex/gpt-5.6-sol",
+    "tiers": {
+      "terra-med": "openai-codex/gpt-5.6-terra:medium",
+      "sol-med": "openai-codex/gpt-5.6-sol:medium",
+      "sol-high": "openai-codex/gpt-5.6-sol:high"
+    },
+    "validate_tier": "sol-high",
+    "pi": "0.84.4"
+  },
+  "verdict": "APPROVE",
+  "duration_seconds": 372,
+  "usage": {
+    "input": 327057,
+    "output": 20703,
+    "cacheRead": 1492480,
+    "children": 4
+  },
+  "planned_lenses": [
+    "pass-baseline--terra-med",
+    "pass-placement--terra-med",
+    "pass-intent--terra-med",
+    "pass-validate--sol-high"
+  ],
+  "executed_passes": [
+    "pass-baseline--terra-med",
+    "pass-placement--terra-med",
+    "pass-intent--terra-med",
+    "pass-validate--sol-high"
+  ],
+  "comments": {
+    "total": 1,
+    "by_tag": {
+      "question": 1
+    },
+    "left_side": 0,
+    "unparseable": 0,
+    "body": 0
+  },
+  "pr_meta": {
+    "title": true,
+    "body": true,
+    "base_ref_source": "github-api"
+  },
+  "diff": {
+    "files": 4,
+    "additions": 10,
+    "deletions": 10
+  },
+  "continued": false,
+  "warnings": []
+}

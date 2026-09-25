@@ -1,0 +1,53 @@
+{
+  "pr": 8129,
+  "round_no": 1,
+  "head_sha": "4a57db33476f1caf3e85726a6b1e189c68c1f36b",
+  "comments_posted": 1,
+  "findings": [
+    {
+      "id": "f1",
+      "path": "src/draw/lv_draw_label.c",
+      "line": 221,
+      "lens": "pass-baseline",
+      "tier": "terra-med",
+      "severity": "P3",
+      "confidence": 0.99,
+      "reachability": "plausible",
+      "kind": "performance",
+      "evidence": "The changed generic iterator uses the cached descriptor size at lv_draw_label.c:221, while src/draw/nema_gfx/lv_draw_nema_gfx_label.c:433-442 retains its private expanded-text lv_text_get_size call on the Nema label-task route.",
+      "disposition": "downgraded",
+      "word": "inflated",
+      "axis": "severity",
+      "reason": "Reduced from P2 to P3 because this leaves a pre-existing per-draw cost on one optional backend rather than introducing a functional regression; the surviving item was posted as a question."
+    },
+    {
+      "id": "f2",
+      "path": "src/draw/lv_draw_label.c",
+      "line": 218,
+      "lens": "pass-intent",
+      "tier": "terra-med",
+      "severity": "P3",
+      "confidence": 0.96,
+      "reachability": "plausible",
+      "kind": "performance",
+      "evidence": "The Nema GFX private iterator still measures expanded text during drawing even though the changed generic iterator no longer does.",
+      "disposition": "merged",
+      "reason": "This is the same incomplete Nema GFX optimization as f1, independently phrased by the intent lens, so it was merged into f1."
+    },
+    {
+      "id": "f3",
+      "path": "src/draw/lv_draw_label.c",
+      "line": 221,
+      "lens": "pass-placement",
+      "tier": "terra-med",
+      "severity": "P3",
+      "confidence": 0.99,
+      "reachability": "routine",
+      "kind": "correctness",
+      "evidence": "Several non-label producers set LV_TEXT_FLAG_EXPAND without filling text_size, but src/misc/lv_text.c:334-343 returns from lv_text_get_next_line without consulting max_width whenever EXPAND is set.",
+      "disposition": "killed",
+      "word": "refuted",
+      "reason": "Although initially folded under f1 because it shared the changed run, validation showed that zero text_size.x cannot cause the alleged wrapping or cropping because expanded line iteration ignores the width argument."
+    }
+  ]
+}

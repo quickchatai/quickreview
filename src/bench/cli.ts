@@ -9,6 +9,8 @@
 //   subset    --set <file> --dataset <converted jsonl> --out <jsonl>
 //   report    --set <file> --out DIR     write DIR/report.md from summaries + metrics
 //   agents    [--profile NAME]           build the lens agents only (inspection)
+//   whatif    --set <file> --out DIR     what-if variants from DIR/source (a copied run)
+//   whatif-report --set <file> --out DIR DIR/report.md from the variants' metrics
 //
 // The open-code-review baseline arm (src/bench/ocr.ts; image target `ocr`):
 //   ocr-review --set <file> --out DIR [--only id,id] [--store DIR] [--resume] [--keep-tree]
@@ -46,6 +48,7 @@ import {
 } from "./ocr.js";
 import { parseReferenceLabels, renderOcrReport, renderReport } from "./report.js";
 import { run as runCmd } from "./exec.js";
+import { renderWhatifReport, writeWhatifRun } from "./whatifrun.js";
 import {
   buildBenchAgents,
   collectComments,
@@ -550,6 +553,32 @@ async function main(): Promise<number> {
     return 0;
   }
 
+  if (f.cmd === "whatif") {
+    const set = loadSet(f.get("--set"));
+    if (!f.get("--out")) throw new Error("--out <dir> is required");
+    const outDir = resolve(f.get("--out") ?? "");
+    const summaries = writeWhatifRun(outDir, selectCases(set, only(f)));
+    for (const s of summaries) {
+      const v = s.variants;
+      log(
+        `whatif: ${s.instance_id} — ${s.raw.candidates} raw candidate(s), ${s.record.rows} record row(s); posted ${s.posted}, +killed ${v["posted+killed"].added}, +merged ${v["posted+merged"].added}, all-candidates ${v["all-candidates"].added}`,
+      );
+    }
+    log(`whatif: ${summaries.length} case(s) → ${join(outDir, "results")}`);
+    return 0;
+  }
+
+  if (f.cmd === "whatif-report") {
+    const set = loadSet(f.get("--set"));
+    if (!f.get("--out")) throw new Error("--out <dir> is required");
+    const outDir = resolve(f.get("--out") ?? "");
+    const r = renderWhatifReport(set, outDir, selectCases(set, only(f)));
+    writeFileSync(join(outDir, "report.md"), r.markdown);
+    writeFileSync(join(outDir, "whatif-summary.json"), JSON.stringify(r.summary, null, 2) + "\n");
+    log(`whatif-report: ${join(outDir, "report.md")}`);
+    return 0;
+  }
+
   if (f.cmd === "report") {
     const set = loadSet(f.get("--set"));
     const outDir = resolve(f.get("--out") ?? "");
@@ -571,7 +600,7 @@ async function main(): Promise<number> {
     readFileSync(new URL(import.meta.url))
       .toString()
       .split("\n")
-      .slice(0, 22)
+      .slice(0, 24)
       .join("\n") + "\n",
   );
   return 2;

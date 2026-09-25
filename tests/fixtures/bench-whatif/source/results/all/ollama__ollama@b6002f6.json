@@ -1,0 +1,46 @@
+{
+  "review": {
+    "comments": [
+      {
+        "path": "model/models/llama4/model_text.go",
+        "start_line": 222,
+        "end_line": 222,
+        "content": "[blocker] Keep position values readable during the fit pass\n\nLlama 4 models can crash during the normal pre-allocation fit pass. `LoadOperationFit` disables allocation, `reserveWorstCaseGraph` wraps `batchPositions` in a tensor, and `FromIntSlice` deliberately does not copy those values in that mode; the tensor then contains only the backend's aligned placeholder pointer, but this loop obtains an `unsafe.Slice` through `Ints()` and dereferences every element. The same unsafe host read is possible in the encoder cache for a reserved multimodal batch. CPU-side graph construction must retain real position values without dereferencing no-allocation placeholder storage.\n\n_P1 · confidence 0.97 · lens pass-validate_"
+      },
+      {
+        "path": "ml/backend/ggml/ggml.go",
+        "start_line": 1007,
+        "end_line": 1007,
+        "content": "[question] Preserve the distinction between allocated and computed tensors\n\nCould `Bytes` continue to report pending graph outputs as unavailable? `ml.Dump` converts F16 and quantized tensors by creating an allocated F32 destination and a pending `Copy`, then uses `Bytes() == nil` to decide whether to execute that graph. This fallback returns the destination's CPU storage before the copy runs, so the dump can skip computation and decode untouched or stale bytes. The readiness check needs to distinguish materialized CPU tensors from pending operation views.\n\n_P2 · confidence 0.99 · lens pass-baseline_"
+      },
+      {
+        "path": "model/model.go",
+        "start_line": 285,
+        "end_line": 285,
+        "content": "[question] Preserve the invalid-batch error for missing positions\n\nCould this guard check for a nil `Positions` tensor before calling `Dim`? A zero-value or otherwise malformed `input.Batch` previously reached the explicit “batch size cannot be less than 1” error because `len` accepted a nil slice; it now panics while dereferencing the nil tensor interface instead.\n\n_P3 · confidence 0.98 · lens pass-simplicity_"
+      }
+    ],
+    "summary": {
+      "input_tokens": 3164375,
+      "output_tokens": 31075
+    }
+  },
+  "duration_seconds": 21073,
+  "qcr": {
+    "instance_id": "ollama__ollama@b6002f6",
+    "status": "ok",
+    "variant": "all",
+    "duration_seconds": 21073,
+    "usage": {
+      "input": 414551,
+      "output": 31075,
+      "cacheRead": 2749824
+    },
+    "verdict": "REQUEST_CHANGES",
+    "excluded": {
+      "left_side": 0,
+      "variant": 0,
+      "unparseable": 0
+    }
+  }
+}

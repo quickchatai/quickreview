@@ -1,0 +1,36 @@
+{
+  "set": "smoke10",
+  "dataset": {
+    "source": "https://github.com/alibaba/aacr-bench",
+    "commit": "ab8af8d5c74e2a4d1945d247ea4bbc49f93eb33f",
+    "file": "dataset/positive_samples.json",
+    "sha256": "d8683cb240249bc4e0aff6428802bdffa7b7573ace600552cab1cd0cb7e905c9"
+  },
+  "profile": "",
+  "models": {
+    "conversation": "openai-codex/gpt-5.6-sol",
+    "tiers": {
+      "terra-med": "openai-codex/gpt-5.6-terra:medium",
+      "sol-med": "openai-codex/gpt-5.6-sol:medium",
+      "sol-high": "openai-codex/gpt-5.6-sol:high"
+    },
+    "validate_tier": "sol-high"
+  },
+  "pi": "0.84.4",
+  "qcr_commit": "29a79c321c803292d20e7cf35fc286f3a50444f2",
+  "cases": [
+    "comfyanonymous__ComfyUI@0bb6023",
+    "infiniflow__ragflow@7051234",
+    "langflow-ai__langflow@9513d15",
+    "immich-app__immich@7e2009f",
+    "cline__cline@7d18fb9",
+    "mrdoob__three.js@96ab072",
+    "ollama__ollama@b6002f6",
+    "dbeaver__dbeaver@bc3ac7b",
+    "linera-io__linera-protocol@3535ddb",
+    "lvgl__lvgl@4a57db3"
+  ],
+  "started_at": "2026-09-25T14:46:54.270Z",
+  "resumes": [],
+  "finished_at": "2026-09-25T21:04:29.158Z"
+}
