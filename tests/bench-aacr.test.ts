@@ -90,6 +90,17 @@ describe("case sets", () => {
     expect(f.dataset.sha256).toBe(AACR_V1.sha256);
   });
 
+  it("the holdout10 set shares no repository with smoke10 — an improvement must generalise", () => {
+    const h = parseCaseSet(
+      JSON.parse(readFileSync(join(ROOT, "bench", "aacr", "sets", "holdout10.json"), "utf8")),
+    );
+    const s = parseCaseSet(SMOKE);
+    expect(h.cases).toHaveLength(10);
+    const smokeRepos = new Set(s.cases.map((c) => c.repo));
+    for (const c of h.cases) expect(smokeRepos.has(c.repo), c.repo).toBe(false);
+    expect(new Set(h.cases.map((c) => c.repo)).size).toBe(10);
+  });
+
   it("refuses any other dataset revision", () => {
     const moved = { ...SMOKE, dataset: { ...SMOKE.dataset, sha256: "7a4a0e70" } };
     expect(() => parseCaseSet(moved)).toThrow(/v1\.0/);

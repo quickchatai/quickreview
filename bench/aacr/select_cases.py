@@ -22,6 +22,12 @@ order, so anyone can re-derive the set:
 The next three eligible PRs per language are listed as `backups`, for the case
 a head commit is no longer fetchable.
 
+`holdout10` — ten PRs for checking that an improvement found on smoke10
+GENERALISES (a change is kept only if it holds on both). Same filters as
+smoke10, none of smoke10's repositories, quota Python 1 / TypeScript 2 /
+JavaScript 2 / Go 1 / Java 2 / Rust 1 / C 1 (only one other Python repo is
+eligible), smallest first, one PR per repo.
+
 `full` — every v1.0 PR, in dataset order. That is the real benchmark.
 
 Standard library only: it runs on the host before any image exists.
@@ -42,6 +48,9 @@ SMOKE_QUOTA = OrderedDict(
 )
 SMOKE_MIN_LINES, SMOKE_MAX_LINES, SMOKE_MIN_REFS = 20, 160, 4
 BACKUPS_PER_LANGUAGE = 3
+HOLDOUT_QUOTA = OrderedDict(
+    [("Python", 1), ("TypeScript", 2), ("JavaScript", 2), ("Go", 1), ("Java", 2), ("Rust", 1), ("C", 1)]
+)
 
 PR_URL = re.compile(r"github\.com/([^/]+)/([^/]+)/pull/(\d+)", re.IGNORECASE)
 
@@ -68,7 +77,8 @@ def case_of(record: dict) -> dict:
     }
 
 
-def smoke10(records: list[dict]) -> tuple[list[dict], list[dict]]:
+def smoke10(records: list[dict], quota_by_lang=None, exclude_repos=frozenset()) -> tuple[list[dict], list[dict]]:
+    quota_by_lang = quota_by_lang or SMOKE_QUOTA
     eligible = [
         case_of(r)
         for r in records
@@ -78,8 +88,8 @@ def smoke10(records: list[dict]) -> tuple[list[dict], list[dict]]:
     eligible.sort(key=lambda c: (c["change_line_count"], c["pr_url"]))
     chosen: list[dict] = []
     backups: list[dict] = []
-    used_repos: set[str] = set()
-    for language, quota in SMOKE_QUOTA.items():
+    used_repos: set[str] = set(exclude_repos)
+    for language, quota in quota_by_lang.items():
         spare = 0
         for c in (c for c in eligible if c["language"] == language):
             if c["repo"] in used_repos:
@@ -97,7 +107,7 @@ def smoke10(records: list[dict]) -> tuple[list[dict], list[dict]]:
 
 
 def main() -> None:
-    if len(sys.argv) != 3 or sys.argv[2] not in ("smoke10", "full"):
+    if len(sys.argv) != 3 or sys.argv[2] not in ("smoke10", "holdout10", "full"):
         raise SystemExit(__doc__)
     path, name = sys.argv[1], sys.argv[2]
     raw = open(path, "rb").read()
@@ -113,6 +123,13 @@ def main() -> None:
         rule = (
             f"{SMOKE_MIN_LINES}<=change_line_count<={SMOKE_MAX_LINES}, >={SMOKE_MIN_REFS} references, "
             f"quota {dict(SMOKE_QUOTA)}, smallest first, one PR per repo"
+        )
+    elif name == "holdout10":
+        smoke, _ = smoke10(records)
+        cases, backups = smoke10(records, HOLDOUT_QUOTA, frozenset(c["repo"] for c in smoke))
+        rule = (
+            f"{SMOKE_MIN_LINES}<=change_line_count<={SMOKE_MAX_LINES}, >={SMOKE_MIN_REFS} references, "
+            f"no smoke10 repository, quota {dict(HOLDOUT_QUOTA)}, smallest first, one PR per repo"
         )
     else:
         cases, backups = [case_of(r) for r in records], []

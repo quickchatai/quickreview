@@ -1,0 +1,219 @@
+{
+  "name": "holdout10",
+  "dataset": {
+    "source": "https://github.com/alibaba/aacr-bench",
+    "commit": "ab8af8d5c74e2a4d1945d247ea4bbc49f93eb33f",
+    "file": "dataset/positive_samples.json",
+    "sha256": "d8683cb240249bc4e0aff6428802bdffa7b7573ace600552cab1cd0cb7e905c9"
+  },
+  "rule": "20<=change_line_count<=160, >=4 references, no smoke10 repository, quota {'Python': 1, 'TypeScript': 2, 'JavaScript': 2, 'Go': 1, 'Java': 2, 'Rust': 1, 'C': 1}, smallest first, one PR per repo",
+  "references": 84,
+  "cases": [
+    {
+      "instance_id": "vllm-project__vllm@3fe1893",
+      "repo": "vllm-project/vllm",
+      "pr": 19756,
+      "pr_url": "https://github.com/vllm-project/vllm/pull/19756",
+      "base_commit": "c3bf9bad11193ee684ed6083b6692d0b5bf2bac7",
+      "head_commit": "3fe18934d7f33b98812d7402463fe171c24efc77",
+      "language": "Python",
+      "pr_category": "Performance Optimizations",
+      "change_line_count": 51,
+      "references": 4
+    },
+    {
+      "instance_id": "n8n-io__n8n@9321691",
+      "repo": "n8n-io/n8n",
+      "pr": 13323,
+      "pr_url": "https://github.com/n8n-io/n8n/pull/13323",
+      "base_commit": "aae55fe7ac77594444c3405161555a517902c68b",
+      "head_commit": "93216919462181f52d6994f8f20a9a478716545f",
+      "language": "TypeScript",
+      "pr_category": "Bug Fix",
+      "change_line_count": 81,
+      "references": 13
+    },
+    {
+      "instance_id": "google-gemini__gemini-cli@c6e6248",
+      "repo": "google-gemini/gemini-cli",
+      "pr": 9177,
+      "pr_url": "https://github.com/google-gemini/gemini-cli/pull/9177",
+      "base_commit": "809b933d8150c29154062e4d596cd916258022fc",
+      "head_commit": "c6e624883852318b71baa2a060c933bb5de591ef",
+      "language": "TypeScript",
+      "pr_category": "Test Suite / CI Enhancements",
+      "change_line_count": 103,
+      "references": 7
+    },
+    {
+      "instance_id": "nodejs__node@b225544",
+      "repo": "nodejs/node",
+      "pr": 56185,
+      "pr_url": "https://github.com/nodejs/node/pull/56185",
+      "base_commit": "6cd1805364f457b19ebecb38b8f909146f968354",
+      "head_commit": "b2255442712cb6db83d112deb6ba61197d06a5f3",
+      "language": "JavaScript",
+      "pr_category": "Bug Fix",
+      "change_line_count": 62,
+      "references": 4
+    },
+    {
+      "instance_id": "sveltejs__svelte@4bf1f91",
+      "repo": "sveltejs/svelte",
+      "pr": 15250,
+      "pr_url": "https://github.com/sveltejs/svelte/pull/15250",
+      "base_commit": "e4987d2a9f36b33f3934725723f9c4cc998ef278",
+      "head_commit": "4bf1f915d3374721f8a1655b1a151c1c423b1a3c",
+      "language": "JavaScript",
+      "pr_category": "Performance Optimizations",
+      "change_line_count": 105,
+      "references": 14
+    },
+    {
+      "instance_id": "microsoft__typescript-go@892b4a3",
+      "repo": "microsoft/typescript-go",
+      "pr": 1446,
+      "pr_url": "https://github.com/microsoft/typescript-go/pull/1446",
+      "base_commit": "a9efe52c52001ea5b49d2ae8d7b0fa32ec8339f3",
+      "head_commit": "892b4a3f6b701352047ceb019fc0683ab1146bb3",
+      "language": "Go",
+      "pr_category": "Test Suite / CI Enhancements",
+      "change_line_count": 80,
+      "references": 13
+    },
+    {
+      "instance_id": "elastic__elasticsearch@dc8943f",
+      "repo": "elastic/elasticsearch",
+      "pr": 133945,
+      "pr_url": "https://github.com/elastic/elasticsearch/pull/133945",
+      "base_commit": "3c264cff967750ff7cb581defa42b0d69bb31fc6",
+      "head_commit": "dc8943ff2d735c9cd71adef644378ca2850db34f",
+      "language": "Java",
+      "pr_category": "Performance Optimizations",
+      "change_line_count": 23,
+      "references": 4
+    },
+    {
+      "instance_id": "keycloak__keycloak@805c204",
+      "repo": "keycloak/keycloak",
+      "pr": 38723,
+      "pr_url": "https://github.com/keycloak/keycloak/pull/38723",
+      "base_commit": "8521b9952a989d0dac17697278610b053c613528",
+      "head_commit": "805c204a9dbfb5b8128de8f70c9f3fbd6d6583f9",
+      "language": "Java",
+      "pr_category": "Documentation Update",
+      "change_line_count": 83,
+      "references": 10
+    },
+    {
+      "instance_id": "juspay__hyperswitch@59ec03c",
+      "repo": "juspay/hyperswitch",
+      "pr": 7353,
+      "pr_url": "https://github.com/juspay/hyperswitch/pull/7353",
+      "base_commit": "50cbe20ee1da0392f4f590bade9f866435356b87",
+      "head_commit": "59ec03ceef191dcada50380ec20cd843b80a87b6",
+      "language": "Rust",
+      "pr_category": "Code Style, Linting, Formatting Fixes",
+      "change_line_count": 94,
+      "references": 8
+    },
+    {
+      "instance_id": "libsdl-org__SDL@1526727",
+      "repo": "libsdl-org/SDL",
+      "pr": 12964,
+      "pr_url": "https://github.com/libsdl-org/SDL/pull/12964",
+      "base_commit": "71303b41bf89c4bb68dbe1bed12fd2ee1dc0dd41",
+      "head_commit": "15267271865f73c996719238425f1604fc2fa205",
+      "language": "C",
+      "pr_category": "New Feature Additions",
+      "change_line_count": 48,
+      "references": 7
+    }
+  ],
+  "backups": [
+    {
+      "instance_id": "alibaba__spring-ai-alibaba@4bc7305",
+      "repo": "alibaba/spring-ai-alibaba",
+      "pr": 903,
+      "pr_url": "https://github.com/alibaba/spring-ai-alibaba/pull/903",
+      "base_commit": "71e7eeb27dfe42c5a805da413ef6e9faf84fe9d0",
+      "head_commit": "4bc73055c7b33f53433d9725eab5010b85a59632",
+      "language": "Java",
+      "pr_category": "Bug Fix",
+      "change_line_count": 118,
+      "references": 10
+    },
+    {
+      "instance_id": "alibaba__spring-ai-alibaba@3555a95",
+      "repo": "alibaba/spring-ai-alibaba",
+      "pr": 869,
+      "pr_url": "https://github.com/alibaba/spring-ai-alibaba/pull/869",
+      "base_commit": "76c06b58a4d9e8ee3fe3c0269a046987ad0502e5",
+      "head_commit": "3555a95e7b888335d9f72e432eb4f9fb9640e8cd",
+      "language": "Java",
+      "pr_category": "Bug Fix",
+      "change_line_count": 140,
+      "references": 4
+    },
+    {
+      "instance_id": "astral-sh__uv@ed57db2",
+      "repo": "astral-sh/uv",
+      "pr": 11088,
+      "pr_url": "https://github.com/astral-sh/uv/pull/11088",
+      "base_commit": "1fae8dbf1789717f45e82ea290c1c99642d05139",
+      "head_commit": "ed57db2b34c2a7a955b2dc76583dce7ace02e628",
+      "language": "Rust",
+      "pr_category": "Bug Fix",
+      "change_line_count": 113,
+      "references": 6
+    },
+    {
+      "instance_id": "openai__codex@8c952af",
+      "repo": "openai/codex",
+      "pr": 3212,
+      "pr_url": "https://github.com/openai/codex/pull/3212",
+      "base_commit": "d6182becbe155776b159270fe4a5e88d607f0c5e",
+      "head_commit": "8c952af20fe791cc0c5d0a59089d3329968b4373",
+      "language": "Rust",
+      "pr_category": "Bug Fix",
+      "change_line_count": 130,
+      "references": 7
+    },
+    {
+      "instance_id": "mpv-player__mpv@0729afe",
+      "repo": "mpv-player/mpv",
+      "pr": 15828,
+      "pr_url": "https://github.com/mpv-player/mpv/pull/15828",
+      "base_commit": "5809d4d1bc54c3a3a32b38c7cf8a6ed90e91f7db",
+      "head_commit": "0729afe8d7067f0e4d69000309ec6f3e24ac3926",
+      "language": "C",
+      "pr_category": "Performance Optimizations",
+      "change_line_count": 56,
+      "references": 8
+    },
+    {
+      "instance_id": "mpv-player__mpv@dbd327d",
+      "repo": "mpv-player/mpv",
+      "pr": 16164,
+      "pr_url": "https://github.com/mpv-player/mpv/pull/16164",
+      "base_commit": "30869ddb904f800ad1b858ac99c5fb81690f0cb7",
+      "head_commit": "dbd327d36fd0dc80ebd6e5517c102a92e31a0836",
+      "language": "C",
+      "pr_category": "Code Refactoring / Architectural Improvement",
+      "change_line_count": 79,
+      "references": 7
+    },
+    {
+      "instance_id": "mpv-player__mpv@0b0330f",
+      "repo": "mpv-player/mpv",
+      "pr": 16061,
+      "pr_url": "https://github.com/mpv-player/mpv/pull/16061",
+      "base_commit": "5ba7ee513751dd005379a06fb627303e6fe1b3dd",
+      "head_commit": "0b0330fa9d5d70c78f36e1010a3b826fa7046387",
+      "language": "C",
+      "pr_category": "New Feature Additions",
+      "change_line_count": 159,
+      "references": 4
+    }
+  ]
+}
