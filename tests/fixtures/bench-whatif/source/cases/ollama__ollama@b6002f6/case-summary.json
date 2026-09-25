@@ -1,0 +1,58 @@
+{
+  "instance_id": "ollama__ollama@b6002f6",
+  "status": "ok",
+  "fingerprint": {
+    "qcr_commit": "29a79c321c803292d20e7cf35fc286f3a50444f2",
+    "profile": "",
+    "conversation": "openai-codex/gpt-5.6-sol",
+    "tiers": {
+      "terra-med": "openai-codex/gpt-5.6-terra:medium",
+      "sol-med": "openai-codex/gpt-5.6-sol:medium",
+      "sol-high": "openai-codex/gpt-5.6-sol:high"
+    },
+    "validate_tier": "sol-high",
+    "pi": "0.84.4"
+  },
+  "verdict": "REQUEST_CHANGES",
+  "duration_seconds": 21073,
+  "usage": {
+    "input": 414551,
+    "output": 31075,
+    "cacheRead": 2749824,
+    "children": 5
+  },
+  "planned_lenses": [
+    "pass-baseline--sol-med",
+    "pass-placement--sol-med",
+    "pass-simplicity--sol-med",
+    "pass-validate--sol-high"
+  ],
+  "executed_passes": [
+    "pass-baseline--sol-med",
+    "pass-placement--sol-med",
+    "pass-simplicity--sol-med",
+    "pass-validate--sol-high"
+  ],
+  "comments": {
+    "total": 3,
+    "by_tag": {
+      "blocker": 1,
+      "question": 2
+    },
+    "left_side": 0,
+    "unparseable": 0,
+    "body": 0
+  },
+  "pr_meta": {
+    "title": true,
+    "body": true,
+    "base_ref_source": "github-api"
+  },
+  "diff": {
+    "files": 23,
+    "additions": 102,
+    "deletions": 95
+  },
+  "continued": false,
+  "warnings": []
+}

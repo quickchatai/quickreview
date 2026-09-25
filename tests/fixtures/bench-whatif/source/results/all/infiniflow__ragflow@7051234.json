@@ -1,0 +1,52 @@
+{
+  "review": {
+    "comments": [
+      {
+        "path": "api/apps/api_app.py",
+        "start_line": 618,
+        "end_line": 618,
+        "content": "[blocker] Preserve ID-only document deletion\n\nClients that send only `doc_ids` now receive a server error instead of deleting their documents. When `doc_names` is absent or has no matches, `get_doc_ids_by_doc_names()` returns `None`, and the membership test on the following lines raises `TypeError` before any explicit ID can be appended; the existing web caller in `web/src/hooks/document-hooks.ts:419-423` uses exactly this ID-only request shape. The merged identifier collection must remain iterable when no names resolve so both supported identifier forms continue to work independently.\n\n_P1 · confidence 0.99 · lens pass-baseline, pass-placement, pass-simplicity, pass-backcompat_"
+      },
+      {
+        "path": "api/db/services/document_service.py",
+        "start_line": 336,
+        "end_line": 336,
+        "content": "[blocker] Scope bulk name resolution to the authenticated tenant\n\nA tenant can delete other tenants’ documents merely by requesting a shared filename. `Document.name` is not globally unique, but this new query returns every matching ID without a tenant predicate; `document_rm()` then replaces the caller’s tenant with each matched document’s owner and removes that document’s database, search-index, file-link, and storage state. Every document selected for deletion must be authorized against the API token’s tenant before any destructive work begins.\n\n_P0 · confidence 0.99 · lens pass-security, pass-baseline, pass-simplicity, pass-backcompat_"
+      },
+      {
+        "path": "api/db/services/user_canvas_version.py",
+        "start_line": 36,
+        "end_line": 36,
+        "content": "[nit] Fetch obsolete canvas-version IDs in one query\n\nPlease select the obsolete IDs in one query before calling `delete_by_ids`. Indexing this lazy Peewee query once per version still performs a separate offset lookup for every obsolete row, so the cleanup path retains the linear database reads this change is intended to remove.\n\n_P3 · confidence 0.95 · lens pass-simplicity, pass-baseline, pass-intent_"
+      },
+      {
+        "path": "api/apps/api_app.py",
+        "start_line": 636,
+        "end_line": 636,
+        "content": "[nit] Batch the remaining tenant lookups\n\nPlease include tenant information in this batch query, or fetch it with one bulk join. The loop still calls `DocumentService.get_tenant_id()` once per document at line 646, so this optimized path continues to issue linear database reads.\n\n_P3 · confidence 0.92 · lens pass-intent_"
+      }
+    ],
+    "summary": {
+      "input_tokens": 1546154,
+      "output_tokens": 36646
+    }
+  },
+  "duration_seconds": 538,
+  "qcr": {
+    "instance_id": "infiniflow__ragflow@7051234",
+    "status": "ok",
+    "variant": "all",
+    "duration_seconds": 538,
+    "usage": {
+      "input": 303402,
+      "output": 36646,
+      "cacheRead": 1242752
+    },
+    "verdict": "REQUEST_CHANGES",
+    "excluded": {
+      "left_side": 0,
+      "variant": 0,
+      "unparseable": 0
+    }
+  }
+}

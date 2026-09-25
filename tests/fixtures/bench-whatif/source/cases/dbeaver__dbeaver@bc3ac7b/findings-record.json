@@ -1,0 +1,67 @@
+{
+  "pr": 37564,
+  "round_no": 1,
+  "head_sha": "bc3ac7bb47092a934b344791d8aa3a1c41e6c8f7",
+  "comments_posted": 1,
+  "findings": [
+    {
+      "id": "f1",
+      "path": "plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/navigator/fs/DBNPathBase.java",
+      "line": 293,
+      "lens": "pass-baseline",
+      "tier": "terra-med",
+      "severity": "P2",
+      "confidence": 0.98,
+      "reachability": "routine",
+      "kind": "resource-management",
+      "evidence": "DBNResource.java:423-425 opens an IFile.getContents() stream; DBNPathBase.java:293-296 passes it to copyInputStream and Files.copy at line 369, which does not close supplied streams.",
+      "disposition": "posted",
+      "posted_as": "blocker",
+      "reason": "Every location-less remote-file paste leaves its newly acquired source stream unclosed on both success and failure, retaining filesystem handles or connections."
+    },
+    {
+      "id": "f2",
+      "path": "plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/navigator/fs/DBNPathBase.java",
+      "line": 290,
+      "lens": "pass-baseline",
+      "tier": "terra-med",
+      "severity": "P1",
+      "confidence": 0.99,
+      "reachability": "routine",
+      "kind": "correctness",
+      "evidence": "A location-less IFolder has neither a Path nor the new IFile-only InputStream adapter, so DBNPathBase.java:290-301 continues without copying it.",
+      "disposition": "killed",
+      "word": "out-of-scope",
+      "reason": "The base implementation already skipped every Path-null node, while this PR is scoped to files and explicitly says directories remain unsupported; this is not a delta introduced by the patch."
+    },
+    {
+      "id": "f3",
+      "path": "plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/navigator/fs/DBNPathBase.java",
+      "line": 290,
+      "lens": "pass-baseline",
+      "tier": "terra-med",
+      "severity": "P1",
+      "confidence": 0.99,
+      "reachability": "routine",
+      "kind": "testing",
+      "evidence": "The diff changes only DBNResource.java and DBNPathBase.java and adds no test for the Path-null/InputStream branch.",
+      "disposition": "killed",
+      "word": "below-bar",
+      "reason": "Missing regression coverage alone does not establish a functional defect in the changed behavior."
+    },
+    {
+      "id": "f4",
+      "path": "plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/navigator/fs/DBNPathBase.java",
+      "line": 293,
+      "lens": "pass-simplicity",
+      "tier": "terra-med",
+      "severity": "P2",
+      "confidence": 0.98,
+      "reachability": "routine",
+      "kind": "correctness",
+      "evidence": "DBNPathBase.java:293 acquires the same IFile content stream identified by f1 and passes it to Files.copy without an owner closing it.",
+      "disposition": "merged",
+      "reason": "This is the same unclosed-stream defect as f1 on the same changed-line run; f1 carries the combined evidence and both lens tags."
+    }
+  ]
+}

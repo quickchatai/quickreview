@@ -1,0 +1,34 @@
+{
+  "review": {
+    "comments": [
+      {
+        "path": "notebooks/comfyui_colab.ipynb",
+        "start_line": 240,
+        "end_line": 240,
+        "content": "[blocker] **The alternative Colab launch cells fail in a fresh runtime**\n\nUsers selecting either alternative launcher get a `NameError` instead of a working tunnel or iframe. The localtunnel cell now imports only `threading` but still uses `time`, `socket`, `urllib.request`, and `subprocess`, while the iframe cell still uses `time` and `socket`; the only remaining imports are in the separate cloudflared launcher, which starts the server in the foreground and is not an unconditional setup cell. Each independently runnable launch option must import its dependencies itself or receive them from an unconditional setup cell."
+      }
+    ],
+    "summary": {
+      "input_tokens": 849051,
+      "output_tokens": 22760
+    }
+  },
+  "duration_seconds": 317,
+  "qcr": {
+    "instance_id": "comfyanonymous__ComfyUI@0bb6023",
+    "status": "ok",
+    "variant": "all",
+    "duration_seconds": 317,
+    "usage": {
+      "input": 208539,
+      "output": 22760,
+      "cacheRead": 640512
+    },
+    "verdict": "REQUEST_CHANGES",
+    "excluded": {
+      "left_side": 0,
+      "variant": 0,
+      "unparseable": 0
+    }
+  }
+}

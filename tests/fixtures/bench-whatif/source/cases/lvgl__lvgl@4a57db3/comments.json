@@ -1,0 +1,8 @@
+[
+  {
+    "path": "src/draw/lv_draw_label.c",
+    "line": 221,
+    "side": "RIGHT",
+    "body": "[question] Nema GFX still repeats the size calculation\n\nThe generic iterator now avoids measuring expanded text during each draw, but the Nema GFX backend routes labels through its private iterator in `src/draw/nema_gfx/lv_draw_nema_gfx_label.c:433-442`, where the same `lv_text_get_size` call remains. Could that path also consume the cached size or otherwise omit the redundant measurement so this optimization applies consistently?\n\n_P3 · confidence 0.99 · lens pass-baseline + pass-intent_"
+  }
+]

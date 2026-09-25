@@ -1,0 +1,83 @@
+{
+  "pr": 12185,
+  "round_no": 1,
+  "head_sha": "b6002f6b6c69370f8c18a9e6c1cafa8463273a6b",
+  "comments_posted": 3,
+  "findings": [
+    {
+      "id": "f1",
+      "path": "kvcache/causal.go",
+      "line": 203,
+      "lens": "pass-baseline",
+      "tier": "sol-med",
+      "severity": "P1",
+      "confidence": 0.99,
+      "reachability": "routine",
+      "kind": "correctness",
+      "evidence": "The candidate assumed no-allocation tensors have a nil data pointer, but ggml-backend.cpp:127-137 instead supplies an aligned nonnil placeholder; Causal reserve mode only needs the resulting slice length and does not read its values.",
+      "disposition": "killed",
+      "word": "refuted",
+      "reason": "The reserve cache retains the correct tensor length, and its reserve-only mask path does not dereference the placeholder-backed position values."
+    },
+    {
+      "id": "f2",
+      "path": "ml/backend/ggml/ggml.go",
+      "line": 1007,
+      "lens": "pass-baseline",
+      "tier": "sol-med",
+      "severity": "P2",
+      "confidence": 0.99,
+      "reachability": "plausible",
+      "kind": "correctness",
+      "evidence": "ml/backend.go:551-568 creates a pending F32 Copy for F16/quantized dumps and computes only when Bytes is nil; ggml.go:1007 now returns the copy destination's already-allocated CPU storage before the graph operation runs.",
+      "disposition": "posted",
+      "posted_as": "question",
+      "reason": "Tensor dumps can skip a required conversion graph and decode untouched or stale destination bytes."
+    },
+    {
+      "id": "f3",
+      "path": "model/model.go",
+      "line": 285,
+      "lens": "pass-simplicity",
+      "tier": "sol-med",
+      "severity": "P3",
+      "confidence": 0.98,
+      "reachability": "plausible",
+      "kind": "robustness",
+      "evidence": "model/model.go:285 calls Dim on Positions before a nil guard; the former len on a nil []int32 allowed the explicit empty-batch error at line 290 to be returned.",
+      "disposition": "posted",
+      "posted_as": "question",
+      "reason": "A zero-value or malformed Batch now panics rather than returning the existing validation error."
+    },
+    {
+      "id": "f4",
+      "path": "kvcache/wrapper.go",
+      "line": 50,
+      "lens": "pass-simplicity",
+      "tier": "sol-med",
+      "severity": "P3",
+      "confidence": 0.99,
+      "reachability": "plausible",
+      "kind": "simplicity",
+      "evidence": "Positions.Ints is inside the unwind loop, but production runner positions are unsynchronized input tensors whose Ints method returns a zero-copy slice; the path runs only after cache startup has already failed.",
+      "disposition": "killed",
+      "word": "below-bar",
+      "reason": "Moving the read outside the loop would not avoid synchronization or allocation in the production path and has negligible value on this error-only path."
+    },
+    {
+      "id": "f5",
+      "path": "model/models/llama4/model_text.go",
+      "line": 222,
+      "lens": "pass-validate",
+      "tier": "sol-high",
+      "severity": "P1",
+      "confidence": 0.97,
+      "reachability": "routine",
+      "kind": "correctness",
+      "evidence": "LoadOperationFit sets AllocMemory=false; reserveWorstCaseGraph creates Positions with FromIntSlice and calls Model.Forward. FromIntSlice skips copying values in that mode, ggml supplies only an aligned placeholder data pointer, Ints exposes it as an unsafe slice, and the default-enabled Llama 4 temperature loop at line 222 dereferences every element.",
+      "disposition": "posted",
+      "posted_as": "blocker",
+      "reason": "Normal Llama 4 model fitting can read invalid placeholder memory and crash before reporting memory requirements."
+    }
+  ]
+}

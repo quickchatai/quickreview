@@ -12,10 +12,20 @@
 #   bench/aacr/bench.sh results  --run ID [--set smoke10]    rebuild scored files from case dirs (no model calls)
 #   bench/aacr/bench.sh smoke    [--run ID] [--judge mock|codex]   build → prefetch → review → eval
 #   bench/aacr/bench.sh shell    --run ID                            a shell in the review sandbox
+#   bench/aacr/bench.sh whatif   --run ID --from RUN_DIR [--set smoke10] [--judge codex] [--rounds 3] [--force]
+#                                what-if lever scorer: copy a FINISHED run's files (regular files
+#                                only) into whatif/ID/source, build the variants posted /
+#                                posted+killed / posted+merged / all-candidates, score them, and
+#                                write whatif/ID/report.md
+#   bench/aacr/bench.sh whatif-eval   --run ID [--judge codex] [--rounds 3]   re-score the variants
+#   bench/aacr/bench.sh whatif-report --run ID                                 re-render the report
 #
 # What the sandbox can touch on this PC (and nothing else):
 #   - bench/aacr/runs/<ID>/                 read-write: prompts, transcripts, results, report
 #                                           (bench.sh itself never writes inside it)
+#   - bench/aacr/whatif/<ID>/               read-write, what-if runs only: bench.sh copies a
+#                                           finished run's regular files into a FRESH source/
+#                                           there first, and the sandbox sees only that copy
 #   - docker volume qcr-bench-repos         the prefetched repos (read-only during review)
 #   - docker volume $QCR_BENCH_AUTH_VOLUME  READ-ONLY, only its agent/ dir, for the pi login;
 #     (default companion-pihome)           its sessions/ hidden by an empty tmpfs. The sandbox
@@ -40,7 +50,7 @@ MEMORY="${QCR_BENCH_MEMORY:-8g}"
 die() { echo "bench: $*" >&2; exit 1; }
 
 cmd="${1:-}"; shift || true
-RUN="" SET="smoke10" ONLY="" JUDGE="mock" ROUNDS="" EXTRA=()
+RUN="" SET="smoke10" ONLY="" JUDGE="mock" ROUNDS="" EXTRA=() FROM="" FORCE=0
 while (($#)); do
   case "$1" in
     --run) RUN="$2"; shift 2 ;;
@@ -50,6 +60,8 @@ while (($#)); do
     --rounds) ROUNDS="$2"; shift 2 ;;
     --profile|--timeout-min|--concurrency) EXTRA+=("$1" "$2"); shift 2 ;;
     --resume|--wait-rate-limit|--keep-tree) EXTRA+=("$1"); shift ;;
+    --from) FROM="$2"; shift 2 ;;
+    --force) FORCE=1; shift ;;
     *) die "unknown flag $1 (see the header of $0)" ;;
   esac
 done
@@ -99,6 +111,64 @@ auth_mounts() {
 record() {
   { echo "# $(date -u +%FT%TZ) $cmd"; printf '%q ' docker run "$@"; echo; } >> "$HERE/runs/$RUN.sandbox-commands.log"
 }
+record_whatif() {
+  { echo "# $(date -u +%FT%TZ) $cmd"; printf '%q ' docker run "$@"; echo; } >> "$HERE/whatif/$RUN.sandbox-commands.log"
+}
+
+# The judge's network, env and mounts, shared by `eval` and `whatif-eval`.
+judge_args() {
+  envs=(); mounts=(); net=()
+  case "$JUDGE" in
+    mock) net=(--network none) ;;
+    openai)
+      [[ -f "$HERE/judge.env" ]] || die "judge openai needs bench/aacr/judge.env (JUDGE_BASE_URL, JUDGE_API_KEY, JUDGE_MODEL) — see README"
+      envs=(--env-file "$HERE/judge.env") ;;
+    codex)
+      auth_mounts; mounts=("${AUTH[@]}")
+      [[ -n "${JUDGE_CODEX_MODEL:-}" ]] && envs=(-e "JUDGE_CODEX_MODEL=$JUDGE_CODEX_MODEL") ;;
+    *) die "--judge must be mock | openai | codex" ;;
+  esac
+  return 0
+}
+
+# A what-if run's own dir: whatif/<ID>/, never inside runs/.
+whatif_dir() {
+  [[ -n "$RUN" ]] || die "--run <id> is required"
+  local d="$HERE/whatif/$RUN"
+  [[ ! -L "$HERE/whatif" && ! -L "$d" ]] || die "$d (or whatif/) is a symlink — refusing it"
+  echo "$d"
+}
+
+# Copy what the what-if scorer reads from a finished run into a FRESH
+# whatif/<ID>/source. The source was written by a review sandbox, so nothing
+# in it is followed: only regular, non-symlink files at known names are
+# copied, case dirs must look like instance ids, and `cp -P` never
+# dereferences. The container then sees only this copy.
+copy_source() {
+  local src="$1" dst="$2/source" c id f n
+  [[ -d "$src" && ! -L "$src" && -d "$src/cases" && ! -L "$src/cases" \
+     && -d "$src/results/all" && ! -L "$src/results" && ! -L "$src/results/all" ]] \
+    || die "--from $src is not a finished run dir (cases/ and results/all/, no symlinks)"
+  mkdir -p "$dst/cases" "$dst/results/all"
+  for f in run.json judge.txt; do
+    if [[ -f "$src/$f" && ! -L "$src/$f" ]]; then cp -P -- "$src/$f" "$dst/$f"; fi
+  done
+  for c in "$src"/cases/*; do
+    id="$(basename "$c")"
+    [[ "$id" =~ ^[A-Za-z0-9_.-]+__[A-Za-z0-9_.-]+@[0-9a-f]{7}$ && -d "$c" && ! -L "$c" ]] || continue
+    mkdir -p "$dst/cases/$id"
+    for f in pi-events.jsonl findings-record.json comments.json review.md case-summary.json outcome.json; do
+      if [[ -f "$c/$f" && ! -L "$c/$f" ]]; then cp -P -- "$c/$f" "$dst/cases/$id/$f"; fi
+    done
+  done
+  for f in "$src"/results/all/*.json; do
+    n="$(basename "$f")"
+    if [[ "$n" =~ ^[A-Za-z0-9_.@-]+\.json$ && -f "$f" && ! -L "$f" ]]; then
+      cp -P -- "$f" "$dst/results/all/$n"
+    fi
+  done
+  printf '%s\n' "$src" > "$dst/ORIGIN"
+}
 
 case "$cmd" in
   doctor)
@@ -146,17 +216,7 @@ case "$cmd" in
     need_image
     d="$(run_dir)"
     rounds="${ROUNDS:-$([[ "$JUDGE" == mock ]] && echo 1 || echo 3)}"
-    envs=(); mounts=(); net=()
-    case "$JUDGE" in
-      mock) net=(--network none) ;;
-      openai)
-        [[ -f "$HERE/judge.env" ]] || die "judge openai needs bench/aacr/judge.env (JUDGE_BASE_URL, JUDGE_API_KEY, JUDGE_MODEL) — see README"
-        envs=(--env-file "$HERE/judge.env") ;;
-      codex)
-        auth_mounts; mounts=("${AUTH[@]}")
-        [[ -n "${JUDGE_CODEX_MODEL:-}" ]] && envs=(-e "JUDGE_CODEX_MODEL=$JUDGE_CODEX_MODEL") ;;
-      *) die "--judge must be mock | openai | codex" ;;
-    esac
+    judge_args
     args=("${HARDEN[@]}" ${net[@]+"${net[@]}"} ${envs[@]+"${envs[@]}"} ${mounts[@]+"${mounts[@]}"}
       --mount "type=bind,src=$d,dst=/bench-out"
       "$IMAGE" eval "$SET" "$JUDGE" "$rounds" ${ONLY_ARGS[@]+"${ONLY_ARGS[@]}"})
@@ -188,6 +248,41 @@ case "$cmd" in
     "$0" eval --run "$RUN" --set "$SET" --judge "$JUDGE" ${ONLY:+--only "$ONLY"} ${ROUNDS:+--rounds "$ROUNDS"}
     ;;
 
+  whatif|whatif-eval)
+    need_image
+    d="$(whatif_dir)"
+    if [[ "$cmd" == whatif ]]; then
+      [[ -n "$FROM" ]] || die "--from <finished run dir> is required"
+      if [[ -e "$d" ]]; then
+        [[ "$FORCE" == 1 ]] || die "$d exists — pick a new --run, or --force to replace it"
+        rm -rf -- "$d"
+      fi
+      mkdir -p "$d"
+      copy_source "$(cd "$FROM" && pwd -P)" "$d"
+      args=("${HARDEN[@]}" --network none --mount "type=bind,src=$d,dst=/bench-out"
+        "$IMAGE" whatif "$SET" ${ONLY_ARGS[@]+"${ONLY_ARGS[@]}"})
+      record_whatif "${args[@]}"
+      docker run "${args[@]}"
+    fi
+    [[ -d "$d/results/posted" ]] || die "no what-if variants in $d — run: $0 whatif --run $RUN --from <run dir>"
+    rounds="${ROUNDS:-$([[ "$JUDGE" == mock ]] && echo 1 || echo 3)}"
+    judge_args
+    args=("${HARDEN[@]}" ${net[@]+"${net[@]}"} ${envs[@]+"${envs[@]}"} ${mounts[@]+"${mounts[@]}"}
+      --mount "type=bind,src=$d,dst=/bench-out"
+      "$IMAGE" whatif-eval "$SET" "$JUDGE" "$rounds" ${ONLY_ARGS[@]+"${ONLY_ARGS[@]}"})
+    record_whatif "${args[@]}"
+    docker run "${args[@]}"
+    echo "report: $d/report.md"
+    ;;
+
+  whatif-report)
+    need_image
+    d="$(whatif_dir)"
+    docker run "${HARDEN[@]}" --network none --mount "type=bind,src=$d,dst=/bench-out" \
+      "$IMAGE" whatif-report "$SET" ${ONLY_ARGS[@]+"${ONLY_ARGS[@]}"}
+    echo "report: $d/report.md"
+    ;;
+
   shell)
     need_image
     d="$(run_dir)"; auth_mounts
@@ -196,5 +291,5 @@ case "$cmd" in
       --mount "type=bind,src=$d,dst=/bench-out" "$IMAGE" shell
     ;;
 
-  *) sed -n '2,26p' "$0"; exit 2 ;;
+  *) sed -n '2,34p' "$0"; exit 2 ;;
 esac

@@ -1,0 +1,34 @@
+{
+  "review": {
+    "comments": [
+      {
+        "path": "plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/navigator/fs/DBNPathBase.java",
+        "start_line": 293,
+        "end_line": 293,
+        "content": "[blocker] Close the source stream after copying\n\nRepeated remote-file pastes can retain one filesystem handle or connection per file until resources are exhausted. `DBNResource.getAdapter(InputStream.class)` opens an `IFile.getContents()` stream, but this branch passes it to `Files.copy` without closing it; `Files.copy(InputStream, Path, ...)` does not close the supplied stream, including on failure. The copy path must close every stream it acquires on both success and failure.\n\n_P2 · confidence 0.98 · lens pass-baseline, pass-simplicity_"
+      }
+    ],
+    "summary": {
+      "input_tokens": 1070547,
+      "output_tokens": 19057
+    }
+  },
+  "duration_seconds": 20861,
+  "qcr": {
+    "instance_id": "dbeaver__dbeaver@bc3ac7b",
+    "status": "ok",
+    "variant": "all",
+    "duration_seconds": 20861,
+    "usage": {
+      "input": 193363,
+      "output": 19057,
+      "cacheRead": 877184
+    },
+    "verdict": "REQUEST_CHANGES",
+    "excluded": {
+      "left_side": 0,
+      "variant": 0,
+      "unparseable": 0
+    }
+  }
+}

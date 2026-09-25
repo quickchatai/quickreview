@@ -166,6 +166,48 @@ The one bias that cannot be removed without a reseed: the frozen
   and precision counts every comment the annotators did not record as a false
   positive.
 
+## The what-if lever scorer (`whatif`)
+
+How would the score move if the reviewer POSTED more of what its lenses found?
+`whatif` answers that from a finished run, with the same harness and judge,
+without re-running a single review:
+
+```sh
+QCR_BENCH_IMAGE=qcr-bench-whatif:latest bench/aacr/bench.sh build        # only when src/bench changed
+QCR_BENCH_IMAGE=qcr-bench-whatif:latest bench/aacr/bench.sh whatif \
+    --run smoke10-2 --from bench/aacr/runs/smoke10-2 --judge codex --rounds 3
+less bench/aacr/whatif/smoke10-2/report.md
+```
+
+It copies the run's case files and scored `results/all` into a fresh
+`whatif/<id>/source/` (regular files only — nothing the review sandbox wrote is
+followed), then, inside the sandbox, reads every lens pass's own findings block
+out of `pi-events.jsonl` (the `subagent` tool's results; the validator is not a
+lens) and links each `findings-record.json` row back to the lens candidate it
+came from (same lens, same file, nearest line; else the same lens's words), so
+a dropped row is scored with the LENS'S claim — never with its record
+`reason`, which for a killed or merged row says why it was dropped. Four
+variants, scored exactly like `eval`:
+
+| Variant | What it scores |
+|---|---|
+| `posted` | the run's own `results/all`, byte-for-byte — the control; it must land within judge noise of the run's own score |
+| `posted+killed` | + every candidate the validator KILLED, as its lens's claim |
+| `posted+merged` | + every MERGED / FOLDED candidate, as its own comment |
+| `all-candidates` | every raw lens candidate alone, deduplicated only on identical path, line and claim |
+
+The extra comments follow `toOcrResult`'s rules: single-line anchors at the
+lens's own line, LEFT side excluded, and no comment without a line (the
+harness skips its line gate for one — a free pass against every reference in
+the file); a lens that gave no line borrows the line the session's record gave
+the same finding. Posted comments stay first and in order in every posted+
+variant, so a reference the control matched and a posted+ variant lost is pure
+judge noise. `report.md` lists, per variant, every reference matched in more
+rounds than by the control — the reference text beside OUR text the judge
+matched it to, and where ours came from (killed/merged/candidate, lens,
+severity) — and every reference matched in fewer. `extract/<case>.json` holds
+every raw candidate, every record link and every extra comment.
+
 ## Running the whole benchmark later
 
 ```sh
@@ -188,5 +230,6 @@ out up to 6 lens children); start at 1–2.
 | `select_cases.py` | deterministic set selection from the pinned dataset |
 | `sets/*.json` | the committed case sets |
 | `judge_shim.py` | OpenAI-compatible judge endpoint over `pi -p` |
-| `src/bench/` | prefetch, review runner, result conversion, report (`tests/bench-aacr.test.ts`) |
+| `src/bench/` | prefetch, review runner, result conversion, report (`tests/bench-aacr.test.ts`); the what-if scorer `whatif.ts` + `whatifrun.ts` (`tests/bench-whatif.test.ts`) |
+| `whatif/<id>/` | per what-if run: `source/` (the copied run), `results/<variant>/`, `extract/`, `eval/`, `report.md`, `whatif-summary.json` |
 | `runs/<id>/` | per run: `run.json`, `cases/<id>/` (system prompt, round order, files, pi event stream, the session's four files, `case-summary.json`), `results/<variant>/` (the harness's input + metrics), `eval/`, `report.md`, `sandbox-commands.log` (every docker invocation, for reproduction) |

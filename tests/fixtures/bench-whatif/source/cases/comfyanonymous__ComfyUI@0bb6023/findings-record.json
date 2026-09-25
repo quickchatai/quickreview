@@ -1,0 +1,80 @@
+{
+  "pr": 6033,
+  "round_no": 1,
+  "head_sha": "0bb60235132cc72daea81427107a40ba1ccb5ddf",
+  "comments_posted": 0,
+  "findings": [
+    {
+      "id": "f1",
+      "path": "ruff.toml",
+      "line": 9,
+      "lens": "pass-baseline",
+      "tier": "terra-med",
+      "severity": "P1",
+      "confidence": 0.98,
+      "reachability": "routine",
+      "kind": "correctness",
+      "evidence": "ruff.toml:2 ignores ALL while ruff.toml:9 selects F, but Ruff resolves overlapping selectors by prefix specificity and F is more specific than ALL.",
+      "disposition": "killed",
+      "word": "refuted",
+      "reason": "The candidate assumed ignore always overrides select. Ruff's specificity rule means the F selection overrides the broad ALL ignore, so Pyflakes checks are enabled."
+    },
+    {
+      "id": "f2",
+      "path": "notebooks/comfyui_colab.ipynb",
+      "line": 240,
+      "lens": "pass-baseline",
+      "tier": "terra-med",
+      "severity": "P1",
+      "confidence": 0.99,
+      "reachability": "routine",
+      "kind": "backcompat",
+      "evidence": "Current lines 244-253 use time, socket, urllib.request, and subprocess after their cell-local imports were deleted; current lines 289-290 likewise use time and socket without importing them. The remaining imports are in a separate foreground launcher cell.",
+      "disposition": "posted",
+      "posted_as": "blocker",
+      "reason": "Either independently documented alternative launch cell raises NameError in a fresh Colab runtime and fails to expose ComfyUI. The deletion-only hunks cannot accept a RIGHT-side inline comment, so the full blocker was posted in the review body."
+    },
+    {
+      "id": "f3",
+      "path": "ruff.toml",
+      "line": 9,
+      "lens": "pass-placement",
+      "tier": "terra-med",
+      "severity": "P3",
+      "confidence": 0.98,
+      "reachability": "routine",
+      "kind": "configuration",
+      "evidence": "This was the same select-versus-ignore claim as f1, based on ruff.toml:2 and ruff.toml:9.",
+      "disposition": "merged",
+      "reason": "Same alleged configuration defect as f1; merged into the higher-severity baseline candidate before validation."
+    },
+    {
+      "id": "f4",
+      "path": "notebooks/comfyui_colab.ipynb",
+      "line": 240,
+      "lens": "pass-placement",
+      "tier": "terra-med",
+      "severity": "P3",
+      "confidence": 0.99,
+      "reachability": "routine",
+      "kind": "placement",
+      "evidence": "The localtunnel and iframe cells retain uses of names whose local imports this PR removes, and the preceding cloudflared launch cell is not a usable prerequisite.",
+      "disposition": "merged",
+      "reason": "Same broken standalone-cell defect as f2, phrased as a lint-placement issue; merged into the stronger runtime regression finding."
+    },
+    {
+      "id": "f5",
+      "path": "notebooks/comfyui_colab.ipynb",
+      "line": 240,
+      "lens": "pass-backcompat",
+      "tier": "terra-med",
+      "severity": "P1",
+      "confidence": 0.99,
+      "reachability": "routine",
+      "kind": "backcompat",
+      "evidence": "The two alternative launcher cells use time/socket and, for localtunnel, urllib.request/subprocess after this PR deletes their imports.",
+      "disposition": "merged",
+      "reason": "Same standalone notebook launcher regression as f2; merged so one self-contained blocker represents the defect."
+    }
+  ]
+}
