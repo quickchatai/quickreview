@@ -628,6 +628,24 @@ const TAG_GRAMMAR_ADDENDUM =
 const UNREASONED_OUTPUT_VALIDATE_ADDENDUM =
   "\n## Kill output that carries no reasoning — never output that carries some (sandbox rule)\nThree shapes consume the author's attention while carrying no reasoning at all. Each has its own kill word; each is a KILL, never a rewrite, and none of them is about length.\n\n- **A nit-class candidate with no `request`** — nothing asked for, nothing to do — is killed with `nit-no-request`. Read for the ask, not for the field name: a candidate whose body plainly names the change it wants has made its request, wherever it wrote it. If the candidate names no change at all, it is a remark; kill it. This applies to nit-class candidates ONLY — never to a `P0`–`P2`, never to a question, and it never lowers a severity to reach one.\n- **A candidate whose subject is one of the review's OWN earlier findings** — its status, its fix, its refutation, the fact that it is still open — is killed with `self-narration`. The ledger and the existing thread already carry that state. A prior finding whose fix BROKE something else is not this: it is a new defect about code and it survives on its merits.\n- **A candidate posting under a tag outside the closed grammar** (`[blocker]`, `[question]`, `[nit]`, optionally prefixed by `[check this]` or `[ask your human]`) has its tag CORRECTED to the one the posting map gives, recorded as a downgrade with the word `tag-outside-grammar` and the axis it moved; kill it only if it is one of the two shapes above once the label is off it. An invented tag escapes every consumer keyed on the real one.\n\n**Nothing here is a length rule and none of it is a licence to trim reasoning.** A long finding that names a defect and asks for a change survives untouched however long it is — the reader is an AI implementer with no other context, and the explanation of WHY is the part it needs most. Never kill, shorten or demote a candidate for being verbose, and never let this section touch the blocker bar.\n";
 
+// AACR-Bench miss analysis (2026-09-25, runs/smoke10-1): every real defect
+// the benchmark's PRs carried was found by some lens, but four were lost
+// between the lens and the posted row — a merge across two changed-line runs
+// that re-anchored a leak 75 lines away, a second broken cell folded into the
+// first, a crash anchored in the wrong file — and one posted blocker rested on
+// a wrong premise ("every cached model") with a remedy that re-broke the PR's
+// own goal. These two rules close that gap at the two passes that own it.
+const VALIDATE_PREMISE_SCOPE_ADDENDUM =
+  "\n## Premises, scope and remedy — audit them like severity (sandbox rule)\nFor every candidate you keep:\n\n" +
+  "- **A causal premise cites its source.** A claim that `F` returns, raises or produces `V` survives only when you have read `F`'s own return, raise or assignment on that path — not a nearby constructor, a caller's assumption or a docstring. A wrong premise is `refuted`; a real defect with a wrong mechanism is kept with the mechanism corrected in `detail`.\n" +
+  '- **A universal claim is traced or narrowed.** "Every caller", "all models", "any request" survives only when the canonical case is traced end to end. When you can prove it for some sites only, narrow the claim to those sites and re-anchor it on the one you proved — narrowing edits a candidate, it never originates one.\n' +
+  "- **The remedy must not undo the PR's purpose.** If the prescribed fix would re-break what the PR set out to fix (its title/body, or an issue it cites), replace the prescription with the invariant a fix must hold.\n" +
+  "- **How a tool reads its config, or what SQL an ORM emits, needs local evidence** — the worktree's vendored source, the lockfile's pinned version, the repo's own config, tests or CI. Never fetch another repository to settle it; what the worktree cannot settle stays at most a `[question]`.\n" +
+  "- **Merged sites are rows, not footnotes.** A MERGED or FOLDED pair whose anchors sit on different changed-line runs or in different files is un-merged: each site is its own row (the lead keeps the full body; a follower says what breaks there and points at the lead). Every sub-claim of a merge either survives into posted text or is logged as a kill with its reason.\n";
+
+const BASELINE_SIBLING_SITES_ADDENDUM =
+  "\n## Sibling sites (sandbox rule)\nWhen a finding's root cause is shared — a value, a helper, a flag, a pattern the diff introduces or changes — search the worktree for every other place the same cause reaches (other readers of the value, other callers of the helper, other copies of the pattern, other cells or files the same edit touched) and list each affected site as its own `path:line` in the finding's evidence. Name the root cause once; the session posts one row per affected site. Stay inside what this PR changed or newly exposes: a pre-existing problem the diff does not touch is not a sibling.\n";
+
 /**
  * The composed addendum set, in composition order.
  *
@@ -653,6 +671,7 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
     scope: ["pass-baseline"],
     text: BASELINE_SHARED_MACHINERY_ADDENDUM,
   },
+  { id: "baseline-sibling-sites", scope: ["pass-baseline"], text: BASELINE_SIBLING_SITES_ADDENDUM },
   { id: "injection-fencing", scope: "all", text: INJECTION_FENCING_ADDENDUM },
   { id: "first-party-directives", scope: "all", text: FIRST_PARTY_DIRECTIVE_ADDENDUM },
   { id: "migration-numbering", scope: ["pass-data-safety"], text: MIGRATION_NUMBERING_ADDENDUM },
@@ -676,6 +695,11 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
     id: "merge-dispositions-validate",
     scope: [VALIDATE_PASS],
     text: MERGE_DISPOSITIONS_VALIDATE_ADDENDUM,
+  },
+  {
+    id: "validate-premise-scope",
+    scope: [VALIDATE_PASS],
+    text: VALIDATE_PREMISE_SCOPE_ADDENDUM,
   },
   { id: "finding-self-sufficiency", scope: "lenses", text: FINDING_SELF_SUFFICIENCY_ADDENDUM },
   {

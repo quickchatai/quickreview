@@ -147,6 +147,10 @@ describe("selectLenses", () => {
     expect(selectLenses([f("src/auth/login.py")])).toContain("pass-security");
     expect(selectLenses([f("src/token_store.py")])).toContain("pass-security");
     expect(selectLenses([f("package-lock.json")])).toContain("pass-security");
+    // A deletion-only manifest change adds no dependency — no sol-high pass.
+    expect(selectLenses([f("docs/package-lock.json", 0, 40)])).not.toContain("pass-security");
+    // A lockfile that ADDS lines with no package.json change still fires.
+    expect(selectLenses([f("package-lock.json", 3, 3)])).toContain("pass-security");
     expect(selectLenses([f("backend/requirements.txt")])).toContain("pass-security");
     expect(selectLenses([f(".env.example")])).toContain("pass-security");
     expect(selectLenses([f("src/scenario_cache.py")])).toContain("pass-statelessness");

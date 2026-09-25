@@ -243,12 +243,16 @@ export function selectLenses(
 
   // Security & tenancy: auth/permission surfaces, secret/crypto-shaped names,
   // env files, dependency manifests. Framework settings-file globs
-  // (settings*.py) come from the profile.
+  // (settings*.py) come from the profile. A manifest/lockfile change
+  // counts only when it ADDS lines: a deletion-only hunk introduces no
+  // dependency, and on AACR-Bench it fired a sol-high security pass that
+  // returned NONE (immich: a docs lockfile trimmed). A lockfile that adds lines
+  // with no package.json change still fires — that is the poisoning shape.
   if (
     any(/(^|\/)(auth|authn|authz|security|permissions|middleware|throttling)\//) ||
     any(/(secret|token|passw|crypt|oauth|jwt|csrf|cors)/i) ||
     any(/(^|\/)\.env(\.[^/]+)?$/) ||
-    any(DEPS_MANIFEST_RE) ||
+    files.some((f) => DEPS_MANIFEST_RE.test(f.filename) && f.additions > 0) ||
     extHit("pass-security")
   )
     lenses.add("pass-security");

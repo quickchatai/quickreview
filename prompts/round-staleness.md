@@ -203,6 +203,15 @@ Log each disposition exactly as `MERGED <src> into <dst>` /
 `FOLDED <src> under <dst>` and include the lines in the validate task string —
 merge-stage attrition must show up in telemetry.
 
+**Never merge across runs or files.** Candidates on DIFFERENT changed-line
+runs, or in different files, are never MERGED or FOLDED — not even when they
+share one root cause. A root cause that shows at several sites posts **one row
+per site**: the lead row carries the full body; each follower row is one or two
+sentences — what breaks at this site, then `same root cause as <path:line>`.
+The verdict line and the body's sections count root causes, not rows. A
+candidate whose evidence itself names several distinct sites (two cells, two
+callers, two files) is split into one row per site before validation.
+
 ## 4. Validate
 
 Dispatch the planned `pass-validate` variant (its row in the plan table) with
@@ -518,6 +527,14 @@ double-check` section (concrete, minutes-verifiable bullets), standard footer.
 REQUEST_CHANGES/COMMENT posts **only** through `scripts/post-review.sh`; a
 re-APPROVE goes through `scripts/approve-pr.sh`.
 
+**Anchor where the defect shows.** Put each row on the changed line where a
+reader sees the problem: the line that must change, or the line that breaks. A
+defect caused by DELETED lines is not unanchorable: anchor it on the RIGHT-side
+line of the same hunk where the breakage appears — any line GitHub shows in
+that hunk, context lines included, is a valid anchor — or on the deleted run
+with side `LEFT` when no RIGHT line applies. Only a finding that touches no line
+of this diff at all goes to the body.
+
 **Body format — this template is the format authority.** The posted body is,
 top to bottom:
 
@@ -533,7 +550,9 @@ top to bottom:
 5. the optional `### For a human to double-check` section (each item also
    posted as an inline `[check this]` comment — see the Decide step);
 6. optional collapsible `<details>` verification material, then the standard
-   footer.
+   footer, exactly: `_Automated review by \`{{bot_login}}\` (quickreview sandbox).
+   Reply to any comment to discuss; ask for a human reviewer if you want this
+   escalated._` — it is defined here; never search the repository for it.
 
 Inline comments use the same finding grammar: first line `[blocker] <title>`
 (or `[question]` / `[nit]`), then the finding body — blockers
