@@ -11,7 +11,11 @@
 //      exact defect that left `qcr regression` unrunnable (bare lens names vs
 //      `<lens>--<tier>` agents);
 //   6. the sandbox's structural promises: src/bench imports no mutation code,
-//      the image carries no scripts/ and no gh.
+//      the image carries no scripts/ and no gh;
+//   7. the open-code-review baseline arm: OCR run flag-for-flag as the
+//      harness's reviewers/ocr.py runs it, its result file in that runner's
+//      shape, the pinned binary, the bridge reading only the refresh-disabled
+//      token copy, and neither arm able to overwrite the other's run.
 
 import { describe, expect, it } from "vitest";
 import {
@@ -44,6 +48,20 @@ import {
   type PrefetchMeta,
 } from "../src/bench/aacr.js";
 import { AuthExpiring, benchAuthFrom, DISABLED_REFRESH, syncBenchAuth } from "../src/bench/auth.js";
+import {
+  bridgeDelta,
+  OCR_HARNESS_DEFAULTS,
+  ocrEnv,
+  ocrProcessTimeoutMs,
+  ocrResultPayload,
+  ocrReviewArgv,
+  runArmOf,
+  scoredOcrComments,
+  summarizeOcrRun,
+  type BridgeStats,
+  type OcrCaseSummary,
+} from "../src/bench/ocr.js";
+import { renderOcrReport, roundMetrics } from "../src/bench/report.js";
 import {
   boundBody,
   buildBenchAgents,
@@ -642,5 +660,312 @@ describe("the benchmark's login: read-only, never refreshed", () => {
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
+  });
+});
+
+describe("the open-code-review baseline arm", () => {
+  const set = parseCaseSet(SMOKE);
+  const c = set.cases[0]!;
+
+  it("runs OCR flag for flag as the harness's reviewers/ocr.py does", () => {
+    // reviewers/ocr.py run_ocr_review at 68a5697; pipeline.py: timeout 30,
+    // --max-tools 30; ocr.py's own concurrency default 8 (pipeline passes none).
+    expect(OCR_HARNESS_DEFAULTS).toEqual({ concurrency: 8, timeoutMin: 30, maxTools: 30 });
+    expect(
+      ocrReviewArgv({
+        repo: "/wt/x",
+        from: c.base_commit,
+        to: c.head_commit,
+        ...OCR_HARNESS_DEFAULTS,
+      }),
+    ).toEqual([
+      "review",
+      "--repo",
+      "/wt/x",
+      "--from",
+      c.base_commit,
+      "--to",
+      c.head_commit,
+      "--format",
+      "json",
+      "--audience",
+      "agent",
+      "--concurrency",
+      "8",
+      "--timeout",
+      "30",
+      "--max-tools",
+      "30",
+    ]);
+    // process_timeout = timeout_minutes * 60 + 300
+    expect(ocrProcessTimeoutMs(30)).toBe(2_100_000);
+  });
+
+  it("OCR talks only to the loopback bridge, with a dummy bearer, no update check, no git config", () => {
+    const env = ocrEnv({
+      path: "/usr/bin",
+      home: "/tmp/home",
+      tmpDir: "/wt/x.tmp",
+      bridgeUrl: "http://127.0.0.1:8766/",
+      model: "gpt-6-sol",
+    });
+    expect(env["OCR_LLM_URL"]).toBe("http://127.0.0.1:8766/v1");
+    expect(env["OCR_LLM_TOKEN"]).toBe("loopback-bridge");
+    expect(env["OCR_USE_ANTHROPIC"]).toBe("false");
+    expect(env["OCR_NO_UPDATE"]).toBe("1");
+    expect(env["GIT_CONFIG_GLOBAL"]).toBe("/dev/null");
+    // Nothing of the login rides OCR's environment.
+    expect(
+      Object.keys(env).some(
+        (k) => /PI_|OPENAI|ANTHROPIC_(AUTH|BASE)|TOKEN$/.test(k) && k !== "OCR_LLM_TOKEN",
+      ),
+    ).toBe(false);
+  });
+
+  it("writes reviewers/ocr.py's result file; the scorer's reader counts exactly its comments", () => {
+    const stdout = JSON.stringify({
+      status: "success",
+      comments: [
+        { path: "a.py", content: "Null deref when x is None", start_line: 3, end_line: 4 },
+        { path: "b.py", content: "   ", start_line: 1, end_line: 1 },
+      ],
+      summary: { files_reviewed: 2, input_tokens: 1000, output_tokens: 50, total_tokens: 1050 },
+    });
+    const payload = ocrResultPayload({
+      c,
+      startedAt: "2026-09-25T00:00:00Z",
+      durationSeconds: 12.345,
+      exitCode: 0,
+      stdout,
+      stderr: "",
+      bench: {},
+    });
+    expect(Object.keys(payload)).toEqual([
+      "instance_id",
+      "repo",
+      "base_commit",
+      "head_commit",
+      "reviewer",
+      "started_at",
+      "duration_seconds",
+      "ocr_exit_code",
+      "ocr_format",
+      "review",
+      "stderr",
+      "bench",
+    ]);
+    expect(payload["duration_seconds"]).toBe(12.35);
+    // build_target_comments_from_ocr skips blank content
+    expect(scoredOcrComments(payload)).toBe(1);
+    // …and a run that printed no JSON is kept as text: zero comments, its
+    // references still count against recall.
+    const failed = ocrResultPayload({
+      c,
+      startedAt: "t",
+      durationSeconds: 1,
+      exitCode: 1,
+      stdout: "review failed: resolve LLM endpoint",
+      stderr: "boom",
+      bench: {},
+    });
+    expect(failed["review"]).toBe("review failed: resolve LLM endpoint");
+    expect(scoredOcrComments(failed)).toBe(0);
+  });
+
+  it("names a run's status from what OCR did, never from what it hoped", () => {
+    const review = (status: string) => ({
+      status,
+      comments: [],
+      summary: { files_reviewed: 3, input_tokens: 9, output_tokens: 1, total_tokens: 10 },
+    });
+    expect(
+      summarizeOcrRun({ exitCode: 0, timedOut: false, review: review("success") }),
+    ).toMatchObject({
+      status: "ok",
+      files_reviewed: 3,
+      ocr_tokens: { input: 9, output: 1, total: 10 },
+    });
+    expect(
+      summarizeOcrRun({ exitCode: 0, timedOut: false, review: review("completed_with_errors") })
+        .status,
+    ).toBe("partial");
+    expect(summarizeOcrRun({ exitCode: 1, timedOut: false, review: null }).status).toBe("failed");
+    expect(summarizeOcrRun({ exitCode: 137, timedOut: true, review: null }).status).toBe("timeout");
+    expect(summarizeOcrRun({ exitCode: 0, timedOut: false, review: null }).status).toBe(
+      "no-output",
+    );
+  });
+
+  it("a case's traffic is the bridge's after − before, and unknown stays unknown", () => {
+    const at = (n: number, s: Record<string, number>): BridgeStats => ({
+      requests: n,
+      ok: n,
+      errors: 0,
+      upstream_refusals: 0,
+      input_tokens: n * 100,
+      cached_tokens: n * 10,
+      output_tokens: n,
+      reasoning_tokens: n,
+      by_status: s,
+      dropped_keys: {},
+    });
+    expect(bridgeDelta(at(2, { "200": 2 }), at(7, { "200": 6, "429": 1 }))).toEqual({
+      requests: 5,
+      ok: 5,
+      errors: 0,
+      upstream_refusals: 0,
+      input_tokens: 500,
+      cached_tokens: 50,
+      output_tokens: 5,
+      reasoning_tokens: 5,
+      by_status: { "200": 4, "429": 1 },
+    });
+    expect(bridgeDelta(null, at(1, {}))).toBeNull();
+  });
+
+  it("the report shows every judge round and the average, and the per-case cost", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "bench-ocr-"));
+    try {
+      const all = join(tmp, "results", "all");
+      mkdirSync(all, { recursive: true });
+      const m = (p: number) => ({
+        summary: {
+          evaluated_instances: 10,
+          generated_notes: 40,
+          matched_semantic_notes: p,
+          expected_notes: 62,
+          semantic_match_rate: p / 40,
+          semantic_recall_rate: p / 62,
+          semantic_f1: 0.1,
+          line_match_rate: 0.5,
+          line_recall_rate: 0.3,
+        },
+      });
+      writeFileSync(join(all, "metrics_ocr_20260925_100000_round_1.json"), JSON.stringify(m(8)));
+      writeFileSync(join(all, "metrics_ocr_20260925_100100_round_2.json"), JSON.stringify(m(6)));
+      writeFileSync(join(all, "metrics_ocr_average.json"), JSON.stringify(m(7)));
+      const r = roundMetrics(all);
+      expect(r.rounds.map((x) => x.round)).toEqual([1, 2]);
+      expect(r.average?.["matched_semantic_notes"]).toBe(7);
+      writeFileSync(
+        join(tmp, "run.json"),
+        JSON.stringify({
+          reviewer: "ocr",
+          ocr_version: "1.3.1",
+          model: "gpt-6-sol",
+          effort: "medium",
+          flags: { concurrency: 8, timeout_min: 30, max_tools: 30 },
+        }),
+      );
+      const s: OcrCaseSummary = {
+        instance_id: c.instance_id,
+        arm: "ocr",
+        status: "ok",
+        fingerprint: {
+          qcr_commit: "x",
+          ocr_version: "1.3.1",
+          model: "gpt-6-sol",
+          effort: "medium",
+          flags: { concurrency: 8, timeoutMin: 30, maxTools: 30 },
+        },
+        ocr_status: "success",
+        exit_code: 0,
+        duration_seconds: 300,
+        comments: 4,
+        files_reviewed: 9,
+        ocr_tokens: { input: 120_000, output: 8_000, total: 128_000 },
+        bridge: {
+          requests: 31,
+          ok: 31,
+          errors: 0,
+          upstream_refusals: 0,
+          input_tokens: 120_000,
+          cached_tokens: 60_000,
+          output_tokens: 8_000,
+          reasoning_tokens: 5_000,
+          by_status: { "200": 31 },
+        },
+        merge_base_ok: true,
+        warnings: [],
+      };
+      mkdirSync(join(tmp, "cases", safeId(c.instance_id)), { recursive: true });
+      writeFileSync(
+        join(tmp, "cases", safeId(c.instance_id), "case-summary.json"),
+        JSON.stringify(s),
+      );
+      const md = renderOcrReport(set, tmp, [c]);
+      expect(md).toContain("open-code-review 1.3.1");
+      expect(md).toContain("--concurrency 8 --timeout 30 --max-tools 30");
+      expect(md).toMatch(/\| \*\*average\*\* \| 10\/1 \| 40 \| 7\/62 \|/);
+      expect(md).toMatch(/^\| 1 \| 10\/1 \| 40 \| 8\/62 \|/m);
+      expect(md).toMatch(/^\| 2 \| 10\/1 \| 40 \| 6\/62 \|/m);
+      expect(md).toContain("| 31 (0) | 120k (60k) / 8k (5k) |");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("each arm refuses the other's run dir (a quickreviewd rebuild would wipe OCR's scored files)", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "bench-arm-"));
+    try {
+      expect(runArmOf(tmp)).toBeNull();
+      writeFileSync(join(tmp, "run.json"), JSON.stringify({ set: "smoke10" }));
+      expect(runArmOf(tmp)).toBe("qcr");
+      writeFileSync(join(tmp, "run.json"), JSON.stringify({ reviewer: "ocr" }));
+      expect(runArmOf(tmp)).toBe("ocr");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+    const cli = readFileSync(join(ROOT, "src", "bench", "cli.ts"), "utf8");
+    for (const cmd of ["review", "results", "report"]) {
+      const at = cli.indexOf(`if (f.cmd === "${cmd}")`);
+      expect(cli.slice(at, at + 600), cmd).toContain('assertArm(outDir, "qcr")');
+    }
+    for (const cmd of ["ocr-review", "ocr-report"]) {
+      const at = cli.indexOf(`if (f.cmd === "${cmd}")`);
+      expect(cli.slice(at, at + 2500), cmd).toContain('assertArm(outDir, "ocr")');
+    }
+    const inContainer = readFileSync(join(ROOT, "bench", "aacr", "in-container.sh"), "utf8");
+    expect(inContainer).toContain('[[ "$run_arm" == "$arm" ]]');
+    expect(inContainer).toContain(
+      '[[ "$arm" == ocr ]] && { variants="all"; report_cmd=ocr-report; }',
+    );
+  });
+
+  it("the image pins OCR 1.3.1 by sha256, needs git >= 2.41 (trixie), and never builds it over qcr-bench", () => {
+    const docker = readFileSync(join(ROOT, "bench", "aacr", "Dockerfile"), "utf8");
+    const ocrStage = docker.slice(docker.indexOf("FROM runtime AS ocr"));
+    expect(ocrStage).toContain("ARG OCR_VERSION=1.3.1");
+    expect(ocrStage).toMatch(/ARG OCR_SHA256_LINUX_AMD64=[0-9a-f]{64}/);
+    expect(ocrStage).toContain("sha256sum -c -");
+    expect(ocrStage).toContain("v[2] >= 41");
+    expect(ocrStage).toContain("codex_bridge.py --self-test");
+    expect(ocrStage).toMatch(/! test -e scripts && ! command -v gh/);
+    expect(docker).toMatch(/^FROM \$\{RUNTIME_BASE\} AS runtime$/m);
+    const sh = readFileSync(join(ROOT, "bench", "aacr", "bench.sh"), "utf8");
+    expect(sh).toContain('qcr) IMAGE="${QCR_BENCH_IMAGE:-qcr-bench:latest}"; TARGET=runtime');
+    expect(sh).toContain('ocr) IMAGE="${QCR_BENCH_OCR_IMAGE:-qcr-bench-ocr:latest}"; TARGET=ocr');
+    expect(sh).toContain("RUNTIME_BASE=node:22-trixie");
+    expect(sh).toContain('docker build --target "$TARGET"');
+    const tarList = sh.slice(sh.indexOf("tar -cf -"), sh.indexOf("| tar -xf -"));
+    expect(tarList).toContain("bench/aacr/codex_bridge.py");
+    // Cases run one at a time: the arm has no case-level pool.
+    const cli = readFileSync(join(ROOT, "src", "bench", "cli.ts"), "utf8");
+    const ocrReview = cli.slice(
+      cli.indexOf('if (f.cmd === "ocr-review")'),
+      cli.indexOf('if (f.cmd === "ocr-report")'),
+    );
+    expect(ocrReview).not.toContain("pool(");
+  });
+
+  it("the bridge reads only the refresh-disabled token copy, and forwards no refresh token", () => {
+    const bridge = readFileSync(join(ROOT, "bench", "aacr", "codex_bridge.py"), "utf8");
+    expect(bridge).toContain(`DISABLED_REFRESH = "${DISABLED_REFRESH}"`);
+    expect(bridge).toMatch(
+      /if cred\.get\("refresh"\) != DISABLED_REFRESH:\s*\n\s*raise SystemExit/,
+    );
+    // The only credential fields read into a request: the access token and the account id.
+    expect(bridge).not.toMatch(/cred\[["']refresh["']\]/);
+    expect(bridge).toContain('ThreadingHTTPServer(("127.0.0.1", a.port)');
   });
 });

@@ -193,7 +193,7 @@ export function buildBenchAgents(root: string, cfg: Config): number {
  * head and `origin/<base_ref>` at the PR's base — the exact vocabulary the
  * round template uses. No other ref, so no later commit, is reachable.
  */
-async function prepareTree(store: string, tree: string, meta: PrefetchMeta): Promise<void> {
+export async function prepareTree(store: string, tree: string, meta: PrefetchMeta): Promise<void> {
   rmSync(tree, { recursive: true, force: true });
   mkdirSync(tree, { recursive: true });
   await git(tree, ["init", "--quiet"]);

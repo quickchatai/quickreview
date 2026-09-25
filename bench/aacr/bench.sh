@@ -13,6 +13,12 @@
 #   bench/aacr/bench.sh smoke    [--run ID] [--judge mock|codex]   build → prefetch → review → eval
 #   bench/aacr/bench.sh shell    --run ID                            a shell in the review sandbox
 #
+#   --arm ocr  (build, review, eval, report, shell, smoke): the open-code-review
+#              baseline — image qcr-bench-ocr (the same runtime + OCR 1.3.1 + the
+#              loopback Codex bridge), `review` runs OCR the way the AACR harness
+#              runs it (one case at a time; --ocr-concurrency / --max-tools /
+#              --timeout-min = its 8 / 30 / 30), `eval` scores the `all` variant.
+#
 # What the sandbox can touch on this PC (and nothing else):
 #   - bench/aacr/runs/<ID>/                 read-write: prompts, transcripts, results, report
 #                                           (bench.sh itself never writes inside it)
@@ -31,7 +37,6 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-IMAGE="${QCR_BENCH_IMAGE:-qcr-bench:latest}"
 REPOS_VOLUME="${QCR_BENCH_REPOS_VOLUME:-qcr-bench-repos}"
 AUTH_VOLUME="${QCR_BENCH_AUTH_VOLUME:-companion-pihome}"
 CPUS="${QCR_BENCH_CPUS:-4}"
@@ -40,19 +45,27 @@ MEMORY="${QCR_BENCH_MEMORY:-8g}"
 die() { echo "bench: $*" >&2; exit 1; }
 
 cmd="${1:-}"; shift || true
-RUN="" SET="smoke10" ONLY="" JUDGE="mock" ROUNDS="" EXTRA=()
+RUN="" SET="smoke10" ONLY="" JUDGE="mock" ROUNDS="" ARM="qcr" EXTRA=()
 while (($#)); do
   case "$1" in
     --run) RUN="$2"; shift 2 ;;
+    --arm) ARM="$2"; shift 2 ;;
     --set) SET="$2"; shift 2 ;;
     --only) ONLY="$2"; shift 2 ;;
     --judge) JUDGE="$2"; shift 2 ;;
     --rounds) ROUNDS="$2"; shift 2 ;;
-    --profile|--timeout-min|--concurrency) EXTRA+=("$1" "$2"); shift 2 ;;
+    --profile|--timeout-min|--concurrency|--ocr-concurrency|--max-tools) EXTRA+=("$1" "$2"); shift 2 ;;
     --resume|--wait-rate-limit|--keep-tree) EXTRA+=("$1"); shift ;;
     *) die "unknown flag $1 (see the header of $0)" ;;
   esac
 done
+case "$ARM" in
+  qcr) IMAGE="${QCR_BENCH_IMAGE:-qcr-bench:latest}"; TARGET=runtime; BASE_ARGS=(); REVIEW_ENTRY=review ;;
+  # OCR needs git >= 2.41; bookworm ships 2.39 (Dockerfile header).
+  ocr) IMAGE="${QCR_BENCH_OCR_IMAGE:-qcr-bench-ocr:latest}"; TARGET=ocr
+       BASE_ARGS=(--build-arg RUNTIME_BASE=node:22-trixie); REVIEW_ENTRY=ocr-review ;;
+  *) die "--arm must be qcr | ocr" ;;
+esac
 # First character alphanumeric: `.`, `..` and dotfile ids would mount the wrong dir.
 [[ -z "$RUN" || "$RUN" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "--run must start with [A-Za-z0-9] and use only [A-Za-z0-9._-]"
 ONLY_ARGS=(); [[ -n "$ONLY" ]] && ONLY_ARGS=(--only "$ONLY")
@@ -103,7 +116,7 @@ record() {
 case "$cmd" in
   doctor)
     docker version --format 'docker {{.Server.Version}}' || die "docker not reachable"
-    docker image inspect "$IMAGE" --format "image $IMAGE {{.Id}} built {{.Created}}" 2>/dev/null || echo "image $IMAGE: not built"
+    docker image inspect "$IMAGE" --format "image $IMAGE {{.Id}} built {{.Created}}" 2>/dev/null || echo "image $IMAGE: not built (arm $ARM)"
     docker volume inspect "$REPOS_VOLUME" >/dev/null 2>&1 && echo "repos volume $REPOS_VOLUME: present" || echo "repos volume $REPOS_VOLUME: not created yet"
     docker volume inspect "$AUTH_VOLUME" >/dev/null 2>&1 && echo "auth volume $AUTH_VOLUME: present" || echo "auth volume $AUTH_VOLUME: MISSING"
     ;;
@@ -118,9 +131,11 @@ case "$cmd" in
     ( cd "$REPO" && tar -cf - --exclude=node_modules --exclude='*.tsbuildinfo' \
         package.json package-lock.json tsconfig.json config.toml AGENTS.md CLAUDE.md .pi \
         src extensions prompts agents profiles \
-        bench/aacr/Dockerfile bench/aacr/sets bench/aacr/judge_shim.py bench/aacr/in-container.sh ) \
+        bench/aacr/Dockerfile bench/aacr/sets bench/aacr/judge_shim.py bench/aacr/in-container.sh \
+        bench/aacr/codex_bridge.py ) \
       | tar -xf - -C "$ctx"
-    docker build -t "$IMAGE" --build-arg "QCR_BENCH_COMMIT=$commit" -f "$ctx/bench/aacr/Dockerfile" "$ctx"
+    docker build --target "$TARGET" -t "$IMAGE" ${BASE_ARGS[@]+"${BASE_ARGS[@]}"} \
+      --build-arg "QCR_BENCH_COMMIT=$commit" -f "$ctx/bench/aacr/Dockerfile" "$ctx"
     ;;
 
   prefetch)
@@ -137,7 +152,7 @@ case "$cmd" in
     args=("${HARDEN[@]}" "${AUTH[@]}"
       --mount "type=volume,src=$REPOS_VOLUME,dst=/repos,readonly"
       --mount "type=bind,src=$d,dst=/bench-out"
-      "$IMAGE" review "$SET" ${ONLY_ARGS[@]+"${ONLY_ARGS[@]}"} ${EXTRA[@]+"${EXTRA[@]}"})
+      "$IMAGE" "$REVIEW_ENTRY" "$SET" ${ONLY_ARGS[@]+"${ONLY_ARGS[@]}"} ${EXTRA[@]+"${EXTRA[@]}"})
     record "${args[@]}"
     docker run "${args[@]}"
     ;;
@@ -146,15 +161,15 @@ case "$cmd" in
     need_image
     d="$(run_dir)"
     rounds="${ROUNDS:-$([[ "$JUDGE" == mock ]] && echo 1 || echo 3)}"
-    envs=(); mounts=(); net=()
+    envs=(-e "BENCH_ARM=$ARM"); mounts=(); net=()
     case "$JUDGE" in
       mock) net=(--network none) ;;
       openai)
         [[ -f "$HERE/judge.env" ]] || die "judge openai needs bench/aacr/judge.env (JUDGE_BASE_URL, JUDGE_API_KEY, JUDGE_MODEL) — see README"
-        envs=(--env-file "$HERE/judge.env") ;;
+        envs+=(--env-file "$HERE/judge.env") ;;
       codex)
         auth_mounts; mounts=("${AUTH[@]}")
-        [[ -n "${JUDGE_CODEX_MODEL:-}" ]] && envs=(-e "JUDGE_CODEX_MODEL=$JUDGE_CODEX_MODEL") ;;
+        [[ -n "${JUDGE_CODEX_MODEL:-}" ]] && envs+=(-e "JUDGE_CODEX_MODEL=$JUDGE_CODEX_MODEL") ;;
       *) die "--judge must be mock | openai | codex" ;;
     esac
     args=("${HARDEN[@]}" ${net[@]+"${net[@]}"} ${envs[@]+"${envs[@]}"} ${mounts[@]+"${mounts[@]}"}
@@ -168,12 +183,13 @@ case "$cmd" in
   report)
     need_image
     d="$(run_dir)"
-    docker run "${HARDEN[@]}" --network none --mount "type=bind,src=$d,dst=/bench-out" \
+    docker run "${HARDEN[@]}" --network none -e "BENCH_ARM=$ARM" --mount "type=bind,src=$d,dst=/bench-out" \
       "$IMAGE" report "$SET" ${ONLY_ARGS[@]+"${ONLY_ARGS[@]}"}
     echo "report: $d/report.md"
     ;;
 
   results)
+    [[ "$ARM" == qcr ]] || die "results rebuilds the quickreviewd arm's scored files; the ocr arm writes its result files directly"
     need_image
     d="$(run_dir)"
     docker run "${HARDEN[@]}" --network none --mount "type=bind,src=$d,dst=/bench-out" \
@@ -182,10 +198,10 @@ case "$cmd" in
 
   smoke)
     RUN="${RUN:-smoke-$(date -u +%Y%m%d-%H%M%S)}"
-    "$0" build
-    "$0" prefetch --set "$SET" ${ONLY:+--only "$ONLY"}
-    "$0" review --run "$RUN" --set "$SET" ${ONLY:+--only "$ONLY"} ${EXTRA[@]+"${EXTRA[@]}"} || echo "bench: some cases did not finish cleanly — scoring anyway (they count as zero findings)" >&2
-    "$0" eval --run "$RUN" --set "$SET" --judge "$JUDGE" ${ONLY:+--only "$ONLY"} ${ROUNDS:+--rounds "$ROUNDS"}
+    "$0" build --arm "$ARM"
+    "$0" prefetch --arm "$ARM" --set "$SET" ${ONLY:+--only "$ONLY"}
+    "$0" review --arm "$ARM" --run "$RUN" --set "$SET" ${ONLY:+--only "$ONLY"} ${EXTRA[@]+"${EXTRA[@]}"} || echo "bench: some cases did not finish cleanly — scoring anyway (they count as zero findings)" >&2
+    "$0" eval --arm "$ARM" --run "$RUN" --set "$SET" --judge "$JUDGE" ${ONLY:+--only "$ONLY"} ${ROUNDS:+--rounds "$ROUNDS"}
     ;;
 
   shell)
@@ -196,5 +212,5 @@ case "$cmd" in
       --mount "type=bind,src=$d,dst=/bench-out" "$IMAGE" shell
     ;;
 
-  *) sed -n '2,26p' "$0"; exit 2 ;;
+  *) sed -n '2,32p' "$0"; exit 2 ;;
 esac

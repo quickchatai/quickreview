@@ -4,6 +4,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeId, VARIANTS, type BenchCase, type CaseSet } from "./aacr.js";
+import { readOcrSummary, type OcrCaseSummary } from "./ocr.js";
 import type { CaseSummary } from "./runner.js";
 
 interface Metrics {
@@ -128,6 +129,143 @@ export function renderReport(set: CaseSet, outDir: string, cases: BenchCase[]): 
   L.push("");
   L.push(
     `Reading the numbers: precision counts every posted head-side comment against the dataset's references, so a real issue the annotators did not record scores as a false positive. ${left} LEFT-side (old-code) comment(s) were excluded — the harness forces every generated comment to the right side, so an old-side anchor could only score wrong. The references are 74% AI-authored and 42% maintainability/readability — compare variants, not just the headline. Published leaderboard rows used an undisclosed judge; only a baseline re-run under this judge is a like-for-like comparison.`,
+  );
+  L.push("");
+  return L.join("\n");
+}
+
+// ---- the open-code-review baseline arm -------------------------------------------
+
+/** Every round's metrics file, in round order, plus the average when the
+ * harness wrote one. A round's number is exact; the average is a float. */
+export function roundMetrics(dir: string): {
+  rounds: Array<{ round: number; summary: Record<string, number> }>;
+  average: Record<string, number> | null;
+} {
+  if (!existsSync(dir)) return { rounds: [], average: null };
+  const files = readdirSync(dir).filter((n) => n.startsWith("metrics_ocr_") && n.endsWith(".json"));
+  const rounds: Array<{ round: number; summary: Record<string, number> }> = [];
+  let average: Record<string, number> | null = null;
+  for (const f of files.sort()) {
+    const m = JSON.parse(readFileSync(join(dir, f), "utf8")) as Metrics;
+    if (f.includes("average")) {
+      average = m.summary;
+      continue;
+    }
+    const r = /_round_(\d+)\.json$/.exec(f);
+    rounds.push({ round: r ? Number(r[1]) : rounds.length + 1, summary: m.summary });
+  }
+  rounds.sort((a, b) => a.round - b.round);
+  return { rounds, average };
+}
+
+function scoreRow(label: string, s: Record<string, number>, cases: number): string {
+  return `| ${label} | ${n(s["evaluated_instances"])}/${cases} | ${n(s["generated_notes"])} | ${n(s["matched_semantic_notes"])}/${n(s["expected_notes"])} | ${s["semantic_match_rate"]} | ${s["semantic_recall_rate"]} | ${s["semantic_f1"]} | ${s["line_match_rate"]} | ${s["line_recall_rate"]} |`;
+}
+
+/** The OCR arm's report: the harness's numbers (average and every round),
+ * then per case what OCR did and what it cost at the bridge. */
+export function renderOcrReport(set: CaseSet, outDir: string, cases: BenchCase[]): string {
+  const L: string[] = [];
+  const run = existsSync(join(outDir, "run.json"))
+    ? JSON.parse(readFileSync(join(outDir, "run.json"), "utf8"))
+    : {};
+  const judgeFile = join(outDir, "judge.txt");
+  const judge = existsSync(judgeFile)
+    ? readFileSync(judgeFile, "utf8").trim().split("\n")
+    : ["not run"];
+  const summaries = cases.map((c) => ({ c, s: readOcrSummary(outDir, c) }));
+  const flags = run.flags ?? {};
+  L.push(`# AACR-Bench run — ${set.name} — open-code-review baseline`);
+  L.push("");
+  L.push(
+    `- Dataset: AACR-Bench v1.0 (\`${set.dataset.commit.slice(0, 7)}\`), ${cases.length} PRs, ${cases.reduce((a, c) => a + c.references, 0)} reference comments`,
+  );
+  L.push(
+    `- Reviewer: open-code-review ${run.ocr_version ?? "?"}, run as the AACR harness's reviewers/ocr.py runs it: \`ocr review --from <base_commit> --to <head_commit> --format json --audience agent --concurrency ${flags.concurrency ?? "?"} --timeout ${flags.timeout_min ?? "?"} --max-tools ${flags.max_tools ?? "?"}\` (range = merge-base..head; no PR title/description — the harness passes none)`,
+  );
+  L.push(
+    `- Model: \`${run.model ?? "?"}\`, reasoning effort \`${run.effort ?? "?"}\`, text verbosity \`${run.verbosity ?? "?"}\` — the ChatGPT Codex backend through the loopback bridge (bench/aacr/codex_bridge.py: OCR's Chat Completions calls → streamed Responses)`,
+  );
+  L.push(`- Judge: ${judge[0] ?? ""}`);
+  for (const w of judge.slice(1)) L.push(`  ${w}`);
+  L.push("");
+  L.push("## Scores (the AACR harness, OCR reader)");
+  L.push("");
+  L.push("| Round | Evaluated | Generated | Matched | Precision | Recall | F1 | Line P | Line R |");
+  L.push("|---|---|---|---|---|---|---|---|---|");
+  const { rounds, average } = roundMetrics(join(outDir, "results", "all"));
+  if (average) L.push(scoreRow("**average**", average, cases.length));
+  for (const r of rounds) L.push(scoreRow(String(r.round), r.summary, cases.length));
+  if (!average && rounds.length === 0) L.push("| — | — | — | — | — | — | — | — | — |");
+  L.push("");
+  L.push("## Per case");
+  L.push("");
+  L.push(
+    "| Case | Lang | Refs | Status | Comments | Files reviewed | Minutes | OCR tokens in/out | Model calls (failed) | Backend tokens in (cached) / out (reasoning) |",
+  );
+  L.push("|---|---|---|---|---|---|---|---|---|---|");
+  const k = (x: number): string => `${Math.round(x / 1000)}k`;
+  const tot = {
+    calls: 0,
+    errors: 0,
+    inp: 0,
+    cached: 0,
+    out: 0,
+    reasoning: 0,
+    secs: 0,
+    oin: 0,
+    oout: 0,
+  };
+  for (const { c, s } of summaries) {
+    if (!s) {
+      L.push(`| ${c.instance_id} | ${c.language} | ${c.references} | not run | | | | | | |`);
+      continue;
+    }
+    const b = s.bridge;
+    tot.secs += s.duration_seconds;
+    if (s.ocr_tokens) {
+      tot.oin += s.ocr_tokens.input;
+      tot.oout += s.ocr_tokens.output;
+    }
+    if (b) {
+      tot.calls += b.requests;
+      tot.errors += b.errors;
+      tot.inp += b.input_tokens;
+      tot.cached += b.cached_tokens;
+      tot.out += b.output_tokens;
+      tot.reasoning += b.reasoning_tokens;
+    }
+    L.push(
+      `| ${c.instance_id} | ${c.language} | ${c.references} | ${s.status}${s.ocr_status && s.ocr_status !== "success" ? ` (${s.ocr_status})` : ""} | ${s.comments} | ${s.files_reviewed ?? "?"} | ${(s.duration_seconds / 60).toFixed(1)} | ${s.ocr_tokens ? `${k(s.ocr_tokens.input)}/${k(s.ocr_tokens.output)}` : "?"} | ${b ? `${b.requests} (${b.errors})` : "?"} | ${b ? `${k(b.input_tokens)} (${k(b.cached_tokens)}) / ${k(b.output_tokens)} (${k(b.reasoning_tokens)})` : "?"} |`,
+    );
+  }
+  const ran = summaries.filter((x) => x.s).length;
+  if (ran)
+    L.push(
+      `| **total** | | ${cases.reduce((a, c) => a + c.references, 0)} | | ${summaries.reduce((a, x) => a + (x.s?.comments ?? 0), 0)} | | ${(tot.secs / 60).toFixed(1)} (avg ${(tot.secs / 60 / ran).toFixed(1)}) | ${k(tot.oin)}/${k(tot.oout)} | ${tot.calls} (${tot.errors}) | ${k(tot.inp)} (${k(tot.cached)}) / ${k(tot.out)} (${k(tot.reasoning)}) |`,
+    );
+  const warned = summaries.filter(
+    (x): x is { c: BenchCase; s: OcrCaseSummary } =>
+      x.s !== null && (x.s.warnings.length > 0 || Boolean(x.s.error) || !x.s.merge_base_ok),
+  );
+  if (warned.length) {
+    L.push("");
+    L.push("## Warnings (OCR warnings, case errors)");
+    L.push("");
+    for (const { c, s } of warned) {
+      if (!s.merge_base_ok && s.status !== "failed")
+        L.push(`- \`${c.instance_id}\`: merge-base check failed — see case-summary.json`);
+      for (const w of [
+        ...(s.error ? [s.error.replaceAll("\n", " ").slice(0, 400)] : []),
+        ...s.warnings,
+      ])
+        L.push(`- \`${c.instance_id}\`: ${w}`);
+    }
+  }
+  L.push("");
+  L.push(
+    "Reading the numbers: OCR's comments carry no severity tag, so only the `all` variant exists for this arm — compare it with the quickreviewd arm's `all` row. OCR tokens are OCR's own summary (prompt tokens, cached included); the backend columns are the bridge's count of the same calls from the backend's usage (reasoning tokens are part of output). Precision counts every comment against the dataset's references, so a real issue the annotators did not record scores as a false positive.",
   );
   L.push("");
   return L.join("\n");

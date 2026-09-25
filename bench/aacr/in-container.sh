@@ -9,6 +9,11 @@
 #   results  <set> [--only ids]   rebuild the scored files from the case dirs
 #   agents   [--profile NAME]
 #   shell                          an interactive shell in the same sandbox
+#
+# The open-code-review baseline arm (image target `ocr`):
+#   ocr-review <set> [cli flags…] → the loopback Codex bridge + node cli ocr-review
+#   eval / report with BENCH_ARM=ocr score and report that arm: only the `all`
+#   variant (OCR comments carry no severity tag), the OCR report.
 set -euo pipefail
 
 ROOT=/opt/quickreview/sandbox
@@ -37,7 +42,29 @@ case "$cmd" in
     exec "${CLI[@]}" review --set "$(set_file "$set_name")" --store /repos --out /bench-out "$@" ;;
   report)
     set_name="$1"; shift
-    exec "${CLI[@]}" report --set "$(set_file "$set_name")" --out /bench-out "$@" ;;
+    report_cmd=report; [[ "${BENCH_ARM:-qcr}" == ocr ]] && report_cmd=ocr-report
+    exec "${CLI[@]}" "$report_cmd" --set "$(set_file "$set_name")" --out /bench-out "$@" ;;
+  ocr-review)
+    set_name="$1"; shift
+    command -v opencodereview >/dev/null || { echo "this image has no open-code-review — build it with: bench.sh build --arm ocr" >&2; exit 2; }
+    # The bridge reads the SAME refresh-disabled token copy the review and the
+    # judge use (src/bench/auth.ts); `ocr-review` re-takes it before every case.
+    "${CLI[@]}" auth --need-min 40 || { echo "ocr: no usable pi login (see above)" >&2; exit 1; }
+    python3 /opt/quickreview/bench/codex_bridge.py --port 8766 \
+      --model "${OCR_BRIDGE_MODEL:-gpt-6-sol}" --effort "${OCR_BRIDGE_EFFORT:-medium}" \
+      --log /bench-out/bridge.jsonl >> /bench-out/bridge.log 2>&1 &
+    bridge_pid=$!
+    trap 'kill "$bridge_pid" 2>/dev/null || true' EXIT
+    up=0
+    for _ in $(seq 1 50); do
+      curl -fsS http://127.0.0.1:8766/health >/dev/null 2>&1 && { up=1; break; }
+      sleep 0.2
+    done
+    [[ "$up" == 1 ]] || { echo "codex bridge never answered /health — see bridge.log" >&2; exit 1; }
+    status=0
+    "${CLI[@]}" ocr-review --set "$(set_file "$set_name")" --store /repos --out /bench-out \
+      --bridge http://127.0.0.1:8766 "$@" || status=$?
+    exit "$status" ;;
   results)
     set_name="$1"; shift
     exec "${CLI[@]}" results --set "$(set_file "$set_name")" --out /bench-out "$@" ;;
@@ -46,6 +73,15 @@ case "$cmd" in
   eval)
     set_name="$1"; judge="$2"; rounds="$3"; shift 3
     set_path="$(set_file "$set_name")"
+    # Which arm this run dir holds (run.json `reviewer`; quickreviewd runs carry
+    # none) must be the arm bench.sh was asked to score.
+    arm="${BENCH_ARM:-qcr}"
+    run_arm="$(python3 -c 'import json,sys
+try: print("ocr" if json.load(open(sys.argv[1])).get("reviewer") == "ocr" else "qcr")
+except Exception: print("qcr")' /bench-out/run.json)"
+    [[ "$run_arm" == "$arm" ]] || { echo "this run dir holds the $run_arm arm — score it with bench.sh eval --arm $run_arm" >&2; exit 2; }
+    variants="all no-nits blockers"; report_cmd=report
+    [[ "$arm" == ocr ]] && { variants="all"; report_cmd=ocr-report; }
     mkdir -p /bench-out/eval
     subset="/bench-out/eval/aacr_bench_v1_${set_name}.jsonl"
     "${CLI[@]}" subset --set "$set_path" --dataset /opt/aacr-data/aacr_bench_v1.jsonl --out "$subset" "$@"
@@ -78,7 +114,7 @@ case "$cmd" in
       *) echo "judge must be mock | openai | codex" >&2; exit 2 ;;
     esac
     status=0
-    for variant in all no-nits blockers; do
+    for variant in $variants; do
       dir="/bench-out/results/$variant"
       [[ -d "$dir" ]] || { echo "no results for variant $variant — run review first" >&2; status=1; continue; }
       rm -f "$dir"/metrics_ocr_*.json
@@ -114,10 +150,10 @@ PY
       fi
     done
     [[ -n "$shim_pid" ]] && kill "$shim_pid" 2>/dev/null || true
-    "${CLI[@]}" report --set "$set_path" --out /bench-out "$@"
+    "${CLI[@]}" "$report_cmd" --set "$set_path" --out /bench-out "$@"
     exit "$status" ;;
   shell)
     exec bash ;;
   *)
-    sed -n '2,12p' "$0"; exit 2 ;;
+    sed -n '2,17p' "$0"; exit 2 ;;
 esac
