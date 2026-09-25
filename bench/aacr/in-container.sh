@@ -78,13 +78,24 @@ case "$cmd" in
       *) echo "judge must be mock | openai | codex" >&2; exit 2 ;;
     esac
     status=0
-    for variant in all no-nits blockers; do
+    # --line-k N (N != 1) is a DIAGNOSTIC: it separates "found the issue" from
+    # "put it within one line of the reference". It scores a copy of the `all`
+    # results in results/all-k<N>/ and never touches the official ±1 numbers.
+    line_k="${QCR_LINE_K:-1}"
+    variants=(all no-nits blockers)
+    [[ "$line_k" != 1 ]] && variants=("all-k$line_k")
+    for variant in "${variants[@]}"; do
       dir="/bench-out/results/$variant"
+      if [[ "$line_k" != 1 ]]; then
+        [[ -d /bench-out/results/all ]] || { echo "no results for variant all — run review first" >&2; status=1; continue; }
+        rm -rf "$dir"; mkdir -p "$dir"
+        find /bench-out/results/all -maxdepth 1 -name '*.json' ! -name 'metrics_ocr_*' -exec cp {} "$dir"/ \;
+      fi
       [[ -d "$dir" ]] || { echo "no results for variant $variant — run review first" >&2; status=1; continue; }
       rm -f "$dir"/metrics_ocr_*.json
       echo "== eval: $variant ($expected instances, judge $judge, $rounds round(s))" >&2
       ( cd /opt/aacr-bench/evaluation && /opt/aacr-venv/bin/python -m pipeline run --stage eval --reviewer ocr \
-          --dataset "$subset" --results-dir "$dir" --eval-rounds "$rounds" --line-k 1 ) \
+          --dataset "$subset" --results-dir "$dir" --eval-rounds "$rounds" --line-k "$line_k" ) \
         > "/bench-out/eval/harness-$variant.log" 2>&1 || { echo "harness failed for $variant — see eval/harness-$variant.log" >&2; status=1; continue; }
       # A judge call that errors is scored by the harness as a NON-match
       # (judge.py) and the run still exits 0 — deflated numbers that look
@@ -114,7 +125,7 @@ PY
       fi
     done
     [[ -n "$shim_pid" ]] && kill "$shim_pid" 2>/dev/null || true
-    "${CLI[@]}" report --set "$set_path" --out /bench-out "$@"
+    [[ "$line_k" == 1 ]] && "${CLI[@]}" report --set "$set_path" --out /bench-out "$@"
     exit "$status" ;;
   shell)
     exec bash ;;

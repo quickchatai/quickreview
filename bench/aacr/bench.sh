@@ -7,7 +7,9 @@
 #   bench/aacr/bench.sh prefetch [--set smoke10] [--only id,id] [--wait-rate-limit]
 #   bench/aacr/bench.sh review   --run ID [--set smoke10] [--only id,id] [--profile NAME]
 #                                [--timeout-min 45] [--concurrency 1] [--resume]
-#   bench/aacr/bench.sh eval     --run ID [--set smoke10] [--judge mock|openai|codex] [--rounds 3]
+#   bench/aacr/bench.sh eval     --run ID [--set smoke10] [--judge mock|openai|codex] [--rounds 3] [--line-k N]
+#              --line-k N (default 1, the published setting): N != 1 is a DIAGNOSTIC that scores a copy of
+#              the `all` results in results/all-kN/ and leaves the official numbers untouched
 #   bench/aacr/bench.sh report   --run ID [--set smoke10]
 #   bench/aacr/bench.sh results  --run ID [--set smoke10]    rebuild scored files from case dirs (no model calls)
 #   bench/aacr/bench.sh smoke    [--run ID] [--judge mock|codex]   build → prefetch → review → eval
@@ -40,7 +42,7 @@ MEMORY="${QCR_BENCH_MEMORY:-8g}"
 die() { echo "bench: $*" >&2; exit 1; }
 
 cmd="${1:-}"; shift || true
-RUN="" SET="smoke10" ONLY="" JUDGE="mock" ROUNDS="" EXTRA=()
+RUN="" SET="smoke10" ONLY="" JUDGE="mock" ROUNDS="" LINE_K="1" EXTRA=()
 while (($#)); do
   case "$1" in
     --run) RUN="$2"; shift 2 ;;
@@ -48,6 +50,7 @@ while (($#)); do
     --only) ONLY="$2"; shift 2 ;;
     --judge) JUDGE="$2"; shift 2 ;;
     --rounds) ROUNDS="$2"; shift 2 ;;
+    --line-k) LINE_K="$2"; shift 2 ;;
     --profile|--timeout-min|--concurrency) EXTRA+=("$1" "$2"); shift 2 ;;
     --resume|--wait-rate-limit|--keep-tree) EXTRA+=("$1"); shift ;;
     *) die "unknown flag $1 (see the header of $0)" ;;
@@ -55,6 +58,7 @@ while (($#)); do
 done
 # First character alphanumeric: `.`, `..` and dotfile ids would mount the wrong dir.
 [[ -z "$RUN" || "$RUN" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "--run must start with [A-Za-z0-9] and use only [A-Za-z0-9._-]"
+[[ "$LINE_K" =~ ^[0-9]{1,3}$ ]] || die "--line-k must be a small non-negative integer"
 ONLY_ARGS=(); [[ -n "$ONLY" ]] && ONLY_ARGS=(--only "$ONLY")
 # `${a[@]+"${a[@]}"}` everywhere below: an empty array under `set -u` aborts
 # bash < 4.4 (stock macOS bash 3.2).
@@ -157,6 +161,7 @@ case "$cmd" in
         [[ -n "${JUDGE_CODEX_MODEL:-}" ]] && envs=(-e "JUDGE_CODEX_MODEL=$JUDGE_CODEX_MODEL") ;;
       *) die "--judge must be mock | openai | codex" ;;
     esac
+    [[ "$LINE_K" != 1 ]] && envs+=(-e "QCR_LINE_K=$LINE_K")
     args=("${HARDEN[@]}" ${net[@]+"${net[@]}"} ${envs[@]+"${envs[@]}"} ${mounts[@]+"${mounts[@]}"}
       --mount "type=bind,src=$d,dst=/bench-out"
       "$IMAGE" eval "$SET" "$JUDGE" "$rounds" ${ONLY_ARGS[@]+"${ONLY_ARGS[@]}"})
