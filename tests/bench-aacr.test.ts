@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import {
   AACR_V1,
   benchAppendix,
+  bodyPostedFindings,
   filesFromGitDiff,
   parseCaseSet,
   parseSessionComments,
@@ -272,6 +273,62 @@ describe("what the session wrote → what the scorer reads", () => {
     const blockers = toOcrResult(comments, { ...meta, variant: "blockers" }) as typeof all;
     expect(blockers.review.comments.map((c) => c["content"])).toEqual(["[blocker] x"]);
     expect(blockers.qcr.excluded.variant).toBe(2);
+  });
+
+  it("a finding posted in the review BODY (no inline anchor) is scored, with its body text, never twice", () => {
+    const record = {
+      findings: [
+        {
+          path: "nb.ipynb",
+          line: 240,
+          disposition: "posted",
+          posted_as: "blocker",
+          reason: "r",
+          evidence: "e",
+        },
+        {
+          path: "a.py",
+          line: 11,
+          disposition: "posted",
+          posted_as: "nit",
+          reason: "already inline",
+        },
+        { path: "x.py", line: 5, disposition: "killed", posted_as: null, reason: "killed" },
+        {
+          path: "y.py",
+          line: 7,
+          disposition: "posted",
+          posted_as: "check this",
+          reason: "why",
+          evidence: "ev",
+        },
+      ],
+    };
+    const reviewMd = [
+      "### Blockers",
+      "",
+      "- `nb.ipynb:240` — Launchers lose their imports _(P1/0.99, pass-baseline)_",
+      "",
+      "  [blocker] Selecting a launcher fails in a fresh runtime.",
+      "",
+      "  _P1 · confidence 0.99 · lens pass-baseline_",
+      "",
+      "---",
+    ].join("\n");
+    const inline: BenchComment[] = [
+      { path: "a.py", line: 10, side: "RIGHT", body: "[nit] x", tag: "nit" },
+    ];
+    const got = bodyPostedFindings(record, reviewMd, inline);
+    expect(got.map((c) => [c.path, c.line, c.tag, c.source])).toEqual([
+      ["nb.ipynb", 240, "blocker", "body"],
+      ["y.py", 7, "question", "body"],
+    ]);
+    expect(got[0]!.body).toBe(
+      "[blocker] Launchers lose their imports\n\n[blocker] Selecting a launcher fails in a fresh runtime.",
+    );
+    // No bullet in the body for y.py: the record's own reason + evidence.
+    expect(got[1]!.body).toBe("[check this] why\n\nev");
+    expect(bodyPostedFindings(undefined, "", [])).toEqual([]);
   });
 
   it("a failed case still yields a file with zero comments — its references count against recall", () => {

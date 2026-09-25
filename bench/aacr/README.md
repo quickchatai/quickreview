@@ -45,6 +45,7 @@ x/1505) by `select_cases.py`, which refuses any other revision:
 | `prefetch` | github.com, anonymous | volume `qcr-bench-repos` | per instance: a bare store with ONLY the PR's base and reviewed head, shallow, deepened until the merge-base resolves; PR title/body/base branch from the public API (60 req/h anonymous — pass `--wait-rate-limit` for `full`) |
 | `review` | the model API | `runs/<id>/` | one production round per PR; `pi -p` exits when the round settles; one continuation if it stopped before writing its files; 45 min timeout per PR |
 | `eval` | the judge's endpoint | `runs/<id>/` | the harness's `pipeline run --stage eval` three times — variants `all`, `no-nits`, `blockers` — then `report.md` |
+| `results` | none | `runs/<id>/results/` | rebuild the scored files from the case dirs — no model calls; use after a harness change |
 | `report` | none | `runs/<id>/report.md` | re-render the report |
 
 Everything is resumable: `prefetch` reuses a verified store, `review --resume`
@@ -100,6 +101,12 @@ The one bias that cannot be removed without a reseed: the frozen
   `no-nits` drops `[nit]`; `blockers` keeps only `[blocker]`. The references are
   42% maintainability/readability — a class the validator trims on purpose — so
   compare variants, not one headline.
+- **Findings posted in the review body count.** Production sends a finding
+  with no valid inline anchor (a deletion-only change, a notebook line) into
+  the review body — "unanchorable → body". It is still a posted finding with a
+  file and a line, so the result file carries it too (`source: body`), taken
+  from the session's own findings record (`disposition: posted`) with the text
+  the body gives it. The report's "In body" column counts them.
 - **LEFT-side comments** are excluded (the harness forces every generated
   comment to the right side, so an old-side anchor could only score wrong);
   the count is in each result file's `qcr.excluded`.

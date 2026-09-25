@@ -9,6 +9,7 @@
 #                                [--timeout-min 45] [--concurrency 1] [--resume]
 #   bench/aacr/bench.sh eval     --run ID [--set smoke10] [--judge mock|openai|codex] [--rounds 3]
 #   bench/aacr/bench.sh report   --run ID [--set smoke10]
+#   bench/aacr/bench.sh results  --run ID [--set smoke10]    rebuild scored files from case dirs (no model calls)
 #   bench/aacr/bench.sh smoke    [--run ID] [--judge mock|codex]   build → prefetch → review → eval
 #   bench/aacr/bench.sh shell    --run ID                            a shell in the review sandbox
 #
@@ -178,6 +179,13 @@ case "$cmd" in
     docker run "${HARDEN[@]}" --network none --mount "type=bind,src=$d,dst=/bench-out" \
       "$IMAGE" report "$SET" "${ONLY_ARGS[@]}"
     echo "report: $d/report.md"
+    ;;
+
+  results)
+    need_image
+    d="$(run_dir)"
+    docker run "${HARDEN[@]}" --network none --mount "type=bind,src=$d,dst=/bench-out" \
+      "$IMAGE" results "$SET" "${ONLY_ARGS[@]}"
     ;;
 
   smoke)

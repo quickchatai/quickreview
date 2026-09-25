@@ -409,6 +409,9 @@ export interface BenchComment {
   tag: PostTag;
   /** `[check this]`, `[ask your human]`, `[deferred]` when present. */
   marker?: string;
+  /** `body`: a finding production posts in the REVIEW BODY because it has no
+   * valid inline anchor ("unanchorable → body", round-first.md step 6). */
+  source?: "inline" | "body";
 }
 
 const TAG_RE = /\[(blocker|question|nit)\]/i;
@@ -472,6 +475,93 @@ export function parseSessionComments(raw: unknown): { comments: BenchComment[]; 
     });
   }
   return { comments, dropped };
+}
+
+const POSTED_AS_TAG: Record<string, PostTag> = {
+  blocker: "blocker",
+  question: "question",
+  nit: "nit",
+  "check this": "question",
+  "ask your human": "question",
+  deferred: "question",
+};
+
+/** The text a body-posted finding carries in `review.md`: its bullet
+ * (`` - `path:line` — title _(…)_ ``) plus the indented paragraphs under it. */
+function bodyTextFor(reviewMd: string, path: string, line: number): string | null {
+  const lines = reviewMd.split("\n");
+  const key = `\`${path}:${line}\``;
+  const at = lines.findIndex((l) => l.trimStart().startsWith("- ") && l.includes(key));
+  if (at < 0) return null;
+  const title = (lines[at] ?? "")
+    .slice((lines[at] ?? "").indexOf(key) + key.length)
+    .replace(/^\s*[—-]\s*/, "")
+    .replace(/\s*_\([^)]*\)_\s*$/, "")
+    .trim();
+  const body: string[] = [];
+  for (const l of lines.slice(at + 1)) {
+    if (/^\s*$/.test(l)) {
+      body.push("");
+      continue;
+    }
+    if (!/^\s{2,}/.test(l)) break; // next bullet, heading or footer
+    body.push(l.trim());
+  }
+  // Drop the trailing metadata line the comment grammar ends with.
+  const text = [title, ...body]
+    .join("\n")
+    .replace(/\n_[^\n]*·[^\n]*_\s*$/, "")
+    .trim();
+  return text || null;
+}
+
+/**
+ * Findings production POSTS but not inline: the round template sends a
+ * finding with no valid changed-line anchor into the review body. They are
+ * posted findings with a file and a line, so the benchmark scores them — from
+ * the session's own findings record (`disposition: "posted"`), skipping any
+ * that already went out inline. The text is the finding as the body carries
+ * it; the record's reason + evidence stand in when the body cannot be read.
+ */
+export function bodyPostedFindings(
+  record: unknown,
+  reviewMd: string,
+  inline: readonly BenchComment[],
+): BenchComment[] {
+  const rows =
+    typeof record === "object" &&
+    record !== null &&
+    Array.isArray((record as { findings?: unknown }).findings)
+      ? (record as { findings: unknown[] }).findings
+      : [];
+  const out: BenchComment[] = [];
+  for (const row of rows) {
+    const r = (typeof row === "object" && row !== null ? row : {}) as Record<string, unknown>;
+    if (r["disposition"] !== "posted") continue;
+    const path = typeof r["path"] === "string" ? r["path"].trim().replace(/^\.?\/+/, "") : "";
+    const line = posInt(r["line"]);
+    if (!path || line === undefined) continue;
+    const inlineAlready = [...inline, ...out].some(
+      (c) => c.path === path && line >= (c.start_line ?? c.line) - 3 && line <= c.line + 3,
+    );
+    if (inlineAlready) continue;
+    const postedAs = typeof r["posted_as"] === "string" ? r["posted_as"].toLowerCase() : "";
+    const tag = POSTED_AS_TAG[postedAs] ?? "other";
+    const fallback = [r["reason"], r["evidence"]]
+      .filter((x): x is string => typeof x === "string")
+      .join("\n\n");
+    const text = bodyTextFor(reviewMd, path, line) ?? fallback;
+    if (!text.trim()) continue;
+    out.push({
+      path,
+      line,
+      side: "RIGHT",
+      body: `[${postedAs || "finding"}] ${text}`.trim(),
+      tag,
+      source: "body",
+    });
+  }
+  return out;
 }
 
 /**

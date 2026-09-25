@@ -6,6 +6,7 @@
 #   review   <set> [cli flags…]   → node cli review --out /bench-out
 #   eval     <set> <judge> <rounds> [--only ids]
 #   report   <set> [--only ids]
+#   results  <set> [--only ids]   rebuild the scored files from the case dirs
 #   agents   [--profile NAME]
 #   shell                          an interactive shell in the same sandbox
 set -euo pipefail
@@ -37,6 +38,9 @@ case "$cmd" in
   report)
     set_name="$1"; shift
     exec "${CLI[@]}" report --set "$(set_file "$set_name")" --out /bench-out "$@" ;;
+  results)
+    set_name="$1"; shift
+    exec "${CLI[@]}" results --set "$(set_file "$set_name")" --out /bench-out "$@" ;;
   agents)
     exec "${CLI[@]}" agents "$@" ;;
   eval)

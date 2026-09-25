@@ -19,10 +19,8 @@ import { join, resolve } from "node:path";
 import {
   parseCaseSet,
   parsePrefetchMeta,
-  parseSessionComments,
   safeId,
   selectCases,
-  CASE_FILES,
   type BenchCase,
   type CaseSet,
   type PrefetchMeta,
@@ -31,6 +29,7 @@ import { prefetchCase, storeDir } from "./prefetch.js";
 import { renderReport } from "./report.js";
 import {
   buildBenchAgents,
+  collectComments,
   contextFor,
   reviewCase,
   writeResults,
@@ -96,7 +95,7 @@ function unprefetchedSummary(c: BenchCase, error: string): CaseSummary {
     usage: { input: 0, output: 0, cacheRead: 0, children: 0 },
     planned_lenses: [],
     executed_passes: [],
-    comments: { total: 0, by_tag: {}, left_side: 0, unparseable: 0 },
+    comments: { total: 0, by_tag: {}, left_side: 0, unparseable: 0, body: 0 },
     pr_meta: { title: false, body: false, base_ref_source: "none" },
     diff: { files: 0, additions: 0, deletions: 0 },
     continued: false,
@@ -238,13 +237,7 @@ async function main(): Promise<number> {
       const sPath = join(dir, "case-summary.json");
       if (!existsSync(sPath)) continue;
       const s = JSON.parse(readFileSync(sPath, "utf8")) as CaseSummary;
-      let raw: unknown;
-      try {
-        raw = JSON.parse(readFileSync(join(dir, CASE_FILES.comments), "utf8"));
-      } catch {
-        raw = undefined;
-      }
-      writeResults(outDir, c, parseSessionComments(raw).comments, s);
+      writeResults(outDir, c, collectComments(dir).comments, s);
     }
     log("results: rebuilt");
     return 0;

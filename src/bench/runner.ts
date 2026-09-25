@@ -50,6 +50,7 @@ import {
   benchAppendix,
   CASE_FILES,
   filesFromGitDiff,
+  bodyPostedFindings,
   parseSessionComments,
   patchFromGitDiff,
   safeId,
@@ -95,6 +96,8 @@ export interface CaseSummary {
     by_tag: Record<string, number>;
     left_side: number;
     unparseable: number;
+    /** Posted in the review body (no valid inline anchor) — scored too. */
+    body: number;
   };
   pr_meta: { title: boolean; body: boolean; base_ref_source: string };
   diff: { files: number; additions: number; deletions: number };
@@ -358,7 +361,7 @@ export async function reviewCase(
     usage: { input: 0, output: 0, cacheRead: 0, children: 0 },
     planned_lenses: [],
     executed_passes: [],
-    comments: { total: 0, by_tag: {}, left_side: 0, unparseable: 0 },
+    comments: { total: 0, by_tag: {}, left_side: 0, unparseable: 0, body: 0 },
     pr_meta: {
       title: meta.title !== null,
       body: meta.body !== null,
@@ -486,9 +489,10 @@ export async function reviewCase(
     summary.usage = usageFromEvents(lines);
     const outcome = readJson(outcomePath) as Record<string, unknown> | undefined;
     const rawComments = readJson(join(caseDir, CASE_FILES.comments));
-    const parsed = parseSessionComments(rawComments);
-    comments = parsed.comments;
-    summary.comments.unparseable = parsed.dropped;
+    const collected = collectComments(caseDir);
+    comments = collected.comments;
+    summary.comments.unparseable = collected.dropped;
+    summary.comments.body = collected.body;
     summary.verdict = typeof outcome?.["verdict"] === "string" ? outcome["verdict"] : null;
     summary.executed_passes = Array.isArray(outcome?.["passes"])
       ? (outcome["passes"] as Array<Record<string, unknown>>).map(
@@ -518,6 +522,34 @@ export async function reviewCase(
     `review: ${c.instance_id} ${summary.status} — verdict ${summary.verdict ?? "none"}, ${comments.length} comment(s), ${summary.duration_seconds}s`,
   );
   return summary;
+}
+
+/** Everything this case POSTED, as scored comments: the inline comments the
+ * session wrote, plus the findings its record marks posted that went into the
+ * review body for want of an inline anchor. The one reader of a case dir's
+ * output, shared by a live run and `cli results` so a rebuild scores the same. */
+export function collectComments(caseDir: string): {
+  comments: BenchComment[];
+  dropped: number;
+  body: number;
+} {
+  const parsed = parseSessionComments(readJson(join(caseDir, CASE_FILES.comments)));
+  let reviewMd = "";
+  try {
+    reviewMd = readFileSync(join(caseDir, CASE_FILES.review), "utf8");
+  } catch {
+    // no body written — body findings fall back to the record's own text
+  }
+  const inBody = bodyPostedFindings(
+    readJson(join(caseDir, CASE_FILES.findings)),
+    reviewMd,
+    parsed.comments,
+  );
+  return {
+    comments: [...parsed.comments.map((c) => ({ ...c, source: "inline" as const })), ...inBody],
+    dropped: parsed.dropped,
+    body: inBody.length,
+  };
 }
 
 /** Write the scorer's input for every variant. */

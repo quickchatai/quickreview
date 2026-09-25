@@ -60,19 +60,19 @@ export function renderReport(set: CaseSet, outDir: string, cases: BenchCase[]): 
   L.push("## Per case");
   L.push("");
   L.push(
-    "| Case | Lang | Refs | Status | Verdict | Posted (b/q/n/other) | Lenses planned → ran | Minutes | Tokens in/out |",
+    "| Case | Lang | Refs | Status | Verdict | Posted (b/q/n/other) | In body | Lenses planned → ran | Minutes | Tokens in/out |",
   );
-  L.push("|---|---|---|---|---|---|---|---|---|");
+  L.push("|---|---|---|---|---|---|---|---|---|---|");
   for (const c of cases) {
     const p = join(outDir, "cases", safeId(c.instance_id), "case-summary.json");
     if (!existsSync(p)) {
-      L.push(`| ${c.instance_id} | ${c.language} | ${c.references} | not run | | | | | |`);
+      L.push(`| ${c.instance_id} | ${c.language} | ${c.references} | not run | | | | | | |`);
       continue;
     }
     const s = JSON.parse(readFileSync(p, "utf8")) as CaseSummary;
     const t = s.comments.by_tag;
     L.push(
-      `| ${c.instance_id} | ${c.language} | ${c.references} | ${s.status}${s.continued ? " (continued)" : ""} | ${s.verdict ?? "—"} | ${t["blocker"] ?? 0}/${t["question"] ?? 0}/${t["nit"] ?? 0}/${t["other"] ?? 0} | ${s.planned_lenses.length} → ${s.executed_passes.length} | ${(s.duration_seconds / 60).toFixed(1)} | ${Math.round((s.usage.input + s.usage.cacheRead) / 1000)}k/${Math.round(s.usage.output / 1000)}k |`,
+      `| ${c.instance_id} | ${c.language} | ${c.references} | ${s.status}${s.continued ? " (continued)" : ""} | ${s.verdict ?? "—"} | ${t["blocker"] ?? 0}/${t["question"] ?? 0}/${t["nit"] ?? 0}/${t["other"] ?? 0} | ${s.comments.body ?? 0} | ${s.planned_lenses.length} → ${s.executed_passes.length} | ${(s.duration_seconds / 60).toFixed(1)} | ${Math.round((s.usage.input + s.usage.cacheRead) / 1000)}k/${Math.round(s.usage.output / 1000)}k |`,
     );
   }
   const warned = cases
