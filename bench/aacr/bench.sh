@@ -16,6 +16,7 @@
 #              any run dir (either arm, archived too). → <run>/judge/<label>/report.md
 #   bench/aacr/bench.sh judge-report --run ID [--set smoke10] [--label L]   re-score, no model calls
 #   QCR_BENCH_RUNS_DIR=DIR   where runs live (default bench/aacr/runs) — keep them outside worktrees
+#   QCR_BENCH_OCR_EFFORT=L   the OCR arm's reasoning effort (low|medium|high|xhigh|max; default medium)
 #   bench/aacr/bench.sh results  --run ID [--set smoke10]    rebuild scored files from case dirs (no model calls)
 #   bench/aacr/bench.sh smoke    [--run ID] [--judge mock|codex]   build → prefetch → review → eval
 #   bench/aacr/bench.sh shell    --run ID                            a shell in the review sandbox
@@ -235,7 +236,9 @@ case "$cmd" in
   review)
     need_image
     d="$(run_dir)"; auth_mounts
-    args=("${HARDEN[@]}" "${AUTH[@]}"
+    # The OCR arm's reasoning effort (its bridge's --effort; default medium).
+    oe=(); [[ "$ARM" == ocr && -n "${QCR_BENCH_OCR_EFFORT:-}" ]] && oe=(-e "OCR_BRIDGE_EFFORT=$QCR_BENCH_OCR_EFFORT")
+    args=("${HARDEN[@]}" "${AUTH[@]}" ${oe[@]+"${oe[@]}"}
       --mount "type=volume,src=$REPOS_VOLUME,dst=/repos,readonly"
       --mount "type=bind,src=$d,dst=/bench-out"
       "$IMAGE" "$REVIEW_ENTRY" "$SET" ${ONLY_ARGS[@]+"${ONLY_ARGS[@]}"} ${EXTRA[@]+"${EXTRA[@]}"})
