@@ -84,6 +84,7 @@ UNREACHABLE_HEADS = {
     "nodejs__node@b225544": "upload-pack: not our ref b2255442 (checked 2026-09-25)",
     "astral-sh__uv@ed57db2": "upload-pack: not our ref ed57db2b (checked 2026-09-26)",
     "comfyanonymous__ComfyUI@cfc3122": "upload-pack: not our ref cfc31229 (checked 2026-09-26)",
+    "comfyanonymous__ComfyUI@4936d01": "upload-pack: not our ref 4936d018 (checked 2026-09-26)",
 }
 
 PR_URL = re.compile(r"github\.com/([^/]+)/([^/]+)/pull/(\d+)", re.IGNORECASE)
