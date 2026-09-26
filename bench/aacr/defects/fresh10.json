@@ -1,0 +1,1476 @@
+{
+ "set": "fresh10",
+ "version": "1",
+ "method": "Out-of-sample set for the 2026-09-26 review levers (none of these PRs informed them). Per PR: a blind expert hunt from the diff and code alone (head tree, base files, full diff); then every candidate — the hunt's defects, every comment BOTH review arms posted (levers off and on, anonymised, shuffled, stripped of lens footers, the arm key kept away from the verifier), and the AACR v1.0 reference comments — checked against the code by a separate verifier, merged where it is one defect, graded high/medium/low on consequence, and every rejection recorded with its reason (2026-09-27).",
+ "cases": {
+  "infiniflow__ragflow@2d06022": {
+   "pr_summary": "Two unrelated changes. In agent/component/rewrite.py, RewriteQuestionParam.get_prompt now emits exactly one language requirement (the configured language, or 'same language of the original user's question' when none is set) instead of always emitting the 'same language' line and conditionally appending a contradicting one; the two remaining requirement bullets move into a new f-string appended afterwards. In the web embed modal (web/src/components/api-service/embed-modal/index.tsx), an 'Option' panel with an avatar checkbox and a locale Select is added; their state is appended to the generated iframe src as '&visible_avatar=1' and '&locale=<value>'. The Select's options come from a new named import `languageOptions` from '@/locales/config', and a new .optionContainer LESS class pads the panel.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "`languageOptions` is not exported by '@/locales/config' - TS/bundle error and an empty locale dropdown, so the new locale option is unusable",
+     "statement": "index.tsx imports `{ languageOptions }` from '@/locales/config' and passes it as the locale Select's options, but web/src/locales/config.ts exports only `translationTable` and the default i18n instance; the name exists nowhere else in web/src. TypeScript reports a missing exported member (TS2305) and the bundled binding resolves to undefined (webpack 'export not found'), so the Select renders with no options, setLocale can never be called and '&locale=' is never added to the embed URL - half of the feature this PR adds does not work (and the TS type-check of the web app fails).",
+     "sites": [
+      {
+       "path": "web/src/components/api-service/embed-modal/index.tsx",
+       "from_line": 21,
+       "to_line": 21,
+       "role": "cause"
+      },
+      {
+       "path": "web/src/components/api-service/embed-modal/index.tsx",
+       "from_line": 87,
+       "to_line": 94,
+       "role": "symptom"
+      },
+      {
+       "path": "web/src/locales/config.ts",
+       "from_line": 32,
+       "to_line": 68,
+       "role": "other-site"
+      }
+     ],
+     "kind": "build",
+     "severity": "high",
+     "evidence": "head/web/src/components/api-service/embed-modal/index.tsx:21 `import { languageOptions } from '@/locales/config';` and :91 `options={languageOptions}`. head/web/src/locales/config.ts has exactly two exports: :32 `export const translationTable = createTranslationTable(` and :68 `export default i18n;`. `grep -rn languageOptions head/web/src` -> only embed-modal/index.tsx:21 and :91. Path: open Embed modal -> Select gets options=undefined -> nothing selectable -> locale stays '' -> generateIframeSrc (index.tsx:45-54) never appends '&locale='.",
+     "notes": "A finding must say that `languageOptions` is not exported by / does not exist in '@/locales/config' (compile/build error, undefined import, or empty locale dropdown). Near-misses that must NOT count: remarks about the Select lacking allowClear, an untranslated placeholder, or URL-encoding of the locale value.",
+     "provenance": {
+      "hunt": [
+       "H-D1"
+      ],
+      "reviewer_comments": [
+       "C3",
+       "C4"
+      ],
+      "dataset_refs": []
+     }
+    },
+    {
+     "id": "D2",
+     "title": "Placeholder-less f-string in rewrite.py (ruff F541) turns the CI 'Static check with Ruff' step red",
+     "statement": "The new `prompt += f\"\"\"...If the user's latest question is completely...DON'T generate anything except a refined question.\"\"\"` literal has an `f` prefix but no `{}` placeholders. The tests workflow runs `ruff check --ignore E402` with ruff's default rule set (E4/E7/E9/F; the repo has no ruff config), which includes F541 f-string-without-any-placeholders. This is the only placeholder-less f-string in the tree (the other AST hits are format specs), so the lint step - which runs before the docker builds and tests in the ragflow_tests job - fails on the next push to main or ci-labelled PR. No runtime effect on the prompt.",
+     "sites": [
+      {
+       "path": "agent/component/rewrite.py",
+       "from_line": 49,
+       "to_line": 51,
+       "role": "cause"
+      },
+      {
+       "path": ".github/workflows/tests.yml",
+       "from_line": 52,
+       "to_line": 57,
+       "role": "other-site"
+      }
+     ],
+     "kind": "build",
+     "severity": "high",
+     "evidence": "head/agent/component/rewrite.py:49-51 `prompt += f\"\"\"\\n    - If the user's latest question is completely, don't do anything, just return the original question.\\n    - DON'T generate anything except a refined question.\"\"\"` - no braces. head/.github/workflows/tests.yml:53-57 `uses: astral-sh/ruff-action@v2 ... args: \"check --ignore E402\"`; pyproject.toml has no [tool.ruff] section and there is no ruff.toml, so ruff defaults (incl. F541) apply. Base rewrite.py's only f-string (the language line) had a {language} placeholder.",
+     "notes": "Must identify the extraneous `f` prefix / f-string without placeholders at rewrite.py:49 (ideally that it fails ruff F541 / the CI lint step). Comments only about the whitespace-only line, the 2->4 space bullet indentation, or the 'is completely' wording do not count.",
+     "provenance": {
+      "hunt": [
+       "H-D3"
+      ],
+      "reviewer_comments": [],
+      "dataset_refs": []
+     }
+    },
+    {
+     "id": "D3",
+     "title": "New i18n keys `avatarHidden` and `locale` are missing from every locale file, so the new option labels render as raw keys",
+     "statement": "The new Form.Items use t('avatarHidden') and t('locale') from useTranslate('chat') (react-i18next with keyPrefix 'chat'), but neither key exists under `chat` (or anywhere) in web/src/locales/*.ts. i18next falls back to the key, so the modal shows raw key strings instead of labels in every language; the 'Option' heading and 'Select a locale' placeholder are additionally hard-coded English.",
+     "sites": [
+      {
+       "path": "web/src/components/api-service/embed-modal/index.tsx",
+       "from_line": 80,
+       "to_line": 89,
+       "role": "cause"
+      },
+      {
+       "path": "web/src/locales/en.ts",
+       "from_line": 403,
+       "to_line": 403,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "head/.../embed-modal/index.tsx:39 `const { t } = useTranslate('chat');`, :81 `<Form.Item label={t('avatarHidden')}>`, :87 `<Form.Item label={t('locale')}>`. head/web/src/hooks/common-hooks.tsx:121-122 `useTranslate = (keyPrefix) => useTranslation('translation', { keyPrefix })`. `grep -rn \"avatarHidden\\|locale:\" head/web/src/locales/` -> no match (en.ts `chat: {` block starts at :403).",
+     "notes": "Must say the translation keys (avatarHidden and/or locale) are missing so the labels show raw/untranslated keys. A comment only about the hard-coded 'Option'/'Select a locale' English strings is a near-miss and does not count on its own.",
+     "provenance": {
+      "hunt": [
+       "H-D2"
+      ],
+      "reviewer_comments": [
+       "C1",
+       "C2"
+      ],
+      "dataset_refs": []
+     }
+    }
+   ],
+   "excluded": [
+    {
+     "source": "A1",
+     "reason": "Pre-existing: the ungrammatical 'If the user's latest question is completely' text is verbatim in base rewrite.py; the PR only moved it. Prompt wording nit, not made worse."
+    },
+    {
+     "source": "A2",
+     "reason": "Wrong: label and behaviour agree. Checking 'avatarHidden' appends visible_avatar=1, and the share page computes visibleAvatar = searchParams.get('visible_avatar') !== '1' (head/web/src/pages/chat/shared-hooks.ts:30-32), so the avatar IS hidden. Only the internal state name is confusing - naming/maintainability."
+    },
+    {
+     "source": "A3",
+     "reason": "Wrong: `const iframeSrc = generateIframeSrc();` (index.tsx:56) runs in the component body on every render, and setVisibleAvatar/setLocale trigger re-renders, so `text` always reflects the current options."
+    },
+    {
+     "source": "A4",
+     "reason": "Not a defect: a few string concatenations per render; useMemo would be a micro-optimisation with no observable effect."
+    },
+    {
+     "source": "A5",
+     "reason": "Wrong: checking the box hides the avatar (visible_avatar=1 -> shared-hooks.ts:30-32 visibleAvatar false), which matches the 'avatarHidden' label."
+    }
+   ],
+   "instance_id": "infiniflow__ragflow@2d06022"
+  },
+  "browser-use__browser-use@aab7b3b": {
+   "pr_summary": "Switches the library from playwright to patchright (an undetected Playwright fork): every playwright.async_api / playwright._impl._errors import under browser_use/ (plus two tests and a docs snippet) is repointed to patchright, and patchright>=1.51.0 is added to dependencies alongside playwright. The builtin launch now passes channel='chrome'; BrowserContextConfig.user_agent defaults to None and is only passed when set; new contexts only get viewport/no_viewport=False in headless mode (the old unconditional no_viewport=True is gone), and bypass_csp/ignore_https_errors are passed only when disable_security is on. The anti-detection init script is cut down to the permissions.query patch (webdriver/languages/plugins/window.chrome overrides and the attachShadow open-mode override are removed). Browser.new_context now defaults to self.config.new_context_config, browser_binary_path uses validation_alias, and Agent.__init__ copies the browser-level disable_security onto the browser's new_context_config.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "Hard-coded channel='chrome' makes the default launch require a system Google Chrome - agents fail to start after the documented `playwright install chromium`",
+     "statement": "_setup_builtin_browser - the path for every Browser()/Agent() without cdp_url, wss_url or browser_binary_path - now always calls browser_class.launch(..., channel='chrome', ...). With the default browser_class 'chromium' this selects the branded Google Chrome stable install instead of the Playwright-managed Chromium. On machines without Chrome (Linux servers, Docker, CI, anyone who followed the README's `playwright install chromium`) launch raises \"Chromium distribution 'chrome' is not found\", _setup_browser re-raises, and the agent cannot start.",
+     "sites": [
+      {
+       "path": "browser_use/browser/browser.py",
+       "from_line": 281,
+       "to_line": 288,
+       "role": "cause"
+      },
+      {
+       "path": "browser_use/browser/browser.py",
+       "from_line": 302,
+       "to_line": 305,
+       "role": "other-site"
+      },
+      {
+       "path": "README.md",
+       "from_line": 31,
+       "to_line": 34,
+       "role": "other-site"
+      }
+     ],
+     "kind": "compat",
+     "severity": "high",
+     "evidence": "head/browser_use/browser/browser.py:281-288 `browser = await browser_class.launch(headless=self.config.headless, channel='chrome', args=args[self.config.browser_class], ...)`; :91 `browser_class: Literal['chromium', 'firefox', 'webkit'] = 'chromium'`; :302-305 route every config without browser_binary_path to `_setup_builtin_browser`. head/README.md:31-34 `Install Playwright: playwright install chromium` (no Chrome install). Playwright's 'chrome' channel resolves to the system Chrome path and errors when it is absent.",
+     "notes": "Counts if the comment says the unconditional channel='chrome' requires Google Chrome (not the Playwright/bundled Chromium the README installs), so the default launch fails where Chrome is not installed. A comment only about firefox/webkit counts for D3, not here; a generic 'patchright may behave differently' remark does not count.",
+     "provenance": {
+      "hunt": [
+       "H-D1"
+      ],
+      "reviewer_comments": [
+       "C4",
+       "C7"
+      ],
+      "dataset_refs": []
+     }
+    },
+    {
+     "id": "D2",
+     "title": "Headful (default) contexts no longer pass no_viewport=True, so a fixed 1280x720 emulated viewport sits inside the screen-sized window",
+     "statement": "Base created every new context with no_viewport=True, so the page viewport tracked the real window (launched with --window-size=<screen resolution> in headful mode). Head sets viewport kwargs only when browser.config.headless is true; in headful mode (the default, headless=False) neither viewport nor no_viewport is passed and Playwright falls back to its default emulated 1280x720 viewport. Pages render and are inspected at 1280x720 inside a full-screen window: less content is visible to the DOM extractor and screenshots, responsive layouts change, and innerWidth/outerWidth disagree (itself a bot signal for an anti-detection PR).",
+     "sites": [
+      {
+       "path": "browser_use/browser/context.py",
+       "from_line": 413,
+       "to_line": 421,
+       "role": "cause"
+      },
+      {
+       "path": "browser_use/browser/browser.py",
+       "from_line": 244,
+       "to_line": 255,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "head/browser_use/browser/context.py:413-416 `kwargs = {}` / `if self.browser.config.headless:` / `kwargs['viewport'] = self.config.browser_window_size` / `kwargs['no_viewport'] = False`; :420-421 `context = await browser.new_context(**kwargs, ...)` - nothing viewport-related in the headful branch. Base: `context = await browser.new_context(no_viewport=True, ...)`. head/browser.py:97 `headless: bool = False`; :244-255 headful uses `get_screen_resolution()` for `--window-size`. Playwright new_context defaults to a 1280x720 viewport unless no_viewport=True.",
+     "notes": "Must tie the regression to headful mode: no no_viewport/viewport is passed when headless=False, so the default fixed viewport is used / the viewport no longer matches the window. Near-miss that must NOT count on its own: 'the no_viewport config field is ignored' (it was ignored in base too) or remarks about the headless viewport now using browser_window_size.",
+     "provenance": {
+      "hunt": [
+       "H-D2"
+      ],
+      "reviewer_comments": [
+       "C3"
+      ],
+      "dataset_refs": []
+     }
+    },
+    {
+     "id": "D3",
+     "title": "channel='chrome' is also passed to the firefox/webkit launchers, which reject it - browser_class 'firefox'/'webkit' can no longer launch",
+     "statement": "browser_class still accepts 'firefox' and 'webkit' and the args dict just above still carries per-engine arguments for them, but the same launch call now passes channel='chrome' to whichever BrowserType was selected. Playwright resolves the channel to the Chrome executable, whose browserName is chromium, and throws `Unsupported firefox channel \"chrome\"` (likewise for webkit), so those supported configurations fail to launch on every machine, whether or not Chrome is installed.",
+     "sites": [
+      {
+       "path": "browser_use/browser/browser.py",
+       "from_line": 281,
+       "to_line": 288,
+       "role": "cause"
+      },
+      {
+       "path": "browser_use/browser/browser.py",
+       "from_line": 264,
+       "to_line": 279,
+       "role": "other-site"
+      },
+      {
+       "path": "browser_use/browser/browser.py",
+       "from_line": 91,
+       "to_line": 91,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "head/browser_use/browser/browser.py:91 `browser_class: Literal['chromium', 'firefox', 'webkit'] = 'chromium'`; :264 `browser_class = getattr(playwright, self.config.browser_class)`; :265-279 `args = {'chromium': ..., 'firefox': [... '-no-remote' ...], 'webkit': [... '--no-startup-window' ...]}`; :281-283 `browser_class.launch(headless=..., channel='chrome', args=args[self.config.browser_class], ...)`. Playwright server browserType: `const registryExecutable = registry.findExecutable(options.channel || this._name); if (!registryExecutable || registryExecutable.browserName !== this._name) throw new Error(`Unsupported ${this._name} channel \"${options.channel}\"`)`.",
+     "notes": "Must say the hard-coded channel='chrome' is passed to (or invalid for) the firefox/webkit browser_class and breaks their launch. A comment only about Chrome needing to be installed counts for D1, not here.",
+     "provenance": {
+      "hunt": [
+       "H-D1"
+      ],
+      "reviewer_comments": [
+       "C2",
+       "C4"
+      ],
+      "dataset_refs": [
+       "A1"
+      ]
+     }
+    },
+    {
+     "id": "D4",
+     "title": "Agent.__init__ unconditionally overwrites new_context_config.disable_security with the browser-level flag, clobbering an explicit context setting and mutating the caller's Browser",
+     "statement": "Agent now assigns self.browser.config.new_context_config.disable_security = self.browser.config.disable_security on every construction. A caller who set only the context-level flag (BrowserConfig default disable_security=False, new_context_config=BrowserContextConfig(disable_security=True)) - honoured by base - has it silently reset to False, so ignore_https_errors/bypass_csp are dropped and e.g. self-signed intranet sites fail; conversely BrowserConfig(disable_security=True) with an explicit context-level False now gets CSP bypass and certificate errors ignored. The write also mutates an injected, possibly shared Browser, so later contexts created from it (including Browser.new_context()) depend on whether an Agent was constructed first.",
+     "sites": [
+      {
+       "path": "browser_use/agent/service.py",
+       "from_line": 260,
+       "to_line": 264,
+       "role": "cause"
+      },
+      {
+       "path": "browser_use/browser/context.py",
+       "from_line": 423,
+       "to_line": 423,
+       "role": "symptom"
+      }
+     ],
+     "kind": "contract",
+     "severity": "low",
+     "evidence": "head/browser_use/agent/service.py:260-261 `self.browser = browser or Browser()` / `self.browser.config.new_context_config.disable_security = self.browser.config.disable_security`; head/browser.py:98 `disable_security: bool = False`; head/context.py:144 context-level `disable_security: bool = False`; :423 `**({'bypass_csp': True, 'ignore_https_errors': True} if self.config.disable_security else {})`. Base _create_context used `bypass_csp=self.config.disable_security` with the context config untouched by Agent.",
+     "notes": "Must say the Agent line overrides/clobbers an explicitly set context-level disable_security (either direction) or mutates the injected/shared Browser config. A comment merely restating the line, praising the sync, or only asking for the flag to also flow through Browser.new_context() (see C6 exclusion) does not count.",
+     "provenance": {
+      "hunt": [
+       "H-D4"
+      ],
+      "reviewer_comments": [
+       "C5",
+       "C8"
+      ],
+      "dataset_refs": []
+     }
+    },
+    {
+     "id": "D5",
+     "title": "Dropping the attachShadow open-mode override hides elements inside closed shadow roots from the DOM extractor",
+     "statement": "The base init script wrapped Element.prototype.attachShadow to force mode 'open', which is what let buildDomTree.js descend into shadow trees via node.shadowRoot. The PR deletes that block together with the stealth overrides. For pages that create closed shadow roots, node.shadowRoot is now null, buildDomTree skips the subtree, and the agent can no longer see or interact with those controls - a functional capability loss unrelated to detection evasion.",
+     "sites": [
+      {
+       "path": "browser_use/browser/context.py",
+       "from_line": 447,
+       "to_line": 457,
+       "role": "cause"
+      },
+      {
+       "path": "browser_use/dom/buildDomTree.js",
+       "from_line": 976,
+       "to_line": 982,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "Base context.py:472-477 `const originalAttachShadow = Element.prototype.attachShadow; Element.prototype.attachShadow = function attachShadow(options) { return originalAttachShadow.call(this, { ...options, mode: \"open\" }); };` - removed; head context.py:447-457 keeps only the permissions.query patch. head/browser_use/dom/buildDomTree.js:977-979 `if (node.shadowRoot) { nodeData.shadowRoot = true; for (const child of node.shadowRoot.childNodes) {` - Element.shadowRoot is null for closed roots.",
+     "notes": "Must mention the removed attachShadow/force-open override and its effect on closed shadow DOM extraction/interaction. Remarks only about losing webdriver/plugins/languages/window.chrome spoofing do not count (deliberately delegated to patchright).",
+     "provenance": {
+      "hunt": [
+       "H-D3"
+      ],
+      "reviewer_comments": [
+       "C1",
+       "C9"
+      ],
+      "dataset_refs": []
+     }
+    }
+   ],
+   "excluded": [
+    {
+     "source": "C6",
+     "reason": "Not introduced/worsened: in base, Browser.new_context() passed the BrowserConfig itself as the context config and _create_context then read self.config.user_agent (base context.py:418), which BrowserConfig lacks - that path crashed. In head it works and, like the base Agent path, applies the context-level new_context_config.disable_security; the browser-level flag never reached contexts in base either. Consistency wish, not a regression."
+    },
+    {
+     "source": "A2",
+     "reason": "Documentation wording nit (surrounding docs text still says 'Playwright'); patchright is API-compatible and the snippet is correct. Not a code defect."
+    }
+   ],
+   "instance_id": "browser-use__browser-use@aab7b3b"
+  },
+  "vllm-project__vllm@134705b": {
+   "pr_summary": "Extends vllm/logger.py so info_once/warning_once accept lazy %-style positional args (*args: Hashable) and forward them through the lru_cache'd _print_info_once/_print_warning_once helpers to logger.info/warning; the dedupe key becomes (logger, msg, *args). Call sites in config.py, punica_selector, custom_op, xgrammar_decoding, awq_marlin, weight_utils, chameleon/olmoe/qwen2_moe/qwen3_moe and multimodal profiling/registry are converted from f-strings to a format string plus args, with `# noqa: E501` on the long literals. A few docstring trailing spaces are removed.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "Multimodal profiling passes a dict to the lru_cache'd warning_once, raising TypeError: unhashable type 'dict' and aborting V0 profiling/engine startup instead of warning",
+     "statement": "_print_warning_once is decorated with functools.lru_cache, which hashes every positional argument to build its cache key. Both converted warnings in MultiModalProfiler (encoder: get_encoder_dummy_data; decoder: get_decoder_dummy_data) pass self._get_mm_num_tokens(mm_inputs), which returns a dict {modality: num_tokens}. When the warning condition holds (V0, total_len > seq_len), the call raises TypeError: unhashable type: 'dict' before anything is logged, so dummy-data construction, memory profiling and engine start-up abort where base only printed a warning. Reachable with normal configs: encoder-decoder models such as Llama-3.2-Vision (mllama) run on V0, the enc-dec profile_run does not shrink max_num_seqs, and seq_len = max_num_batched_tokens // max_num_seqs is far below the thousands of encoder image tokens; decoder-only multimodal models hit the decoder branch on V0 when max_num_batched_tokens < max_mm_tokens.",
+     "sites": [
+      {
+       "path": "vllm/multimodal/profiling.py",
+       "from_line": 215,
+       "to_line": 225,
+       "role": "cause"
+      },
+      {
+       "path": "vllm/multimodal/profiling.py",
+       "from_line": 240,
+       "to_line": 250,
+       "role": "cause"
+      },
+      {
+       "path": "vllm/multimodal/profiling.py",
+       "from_line": 185,
+       "to_line": 194,
+       "role": "other-site"
+      },
+      {
+       "path": "vllm/logger.py",
+       "from_line": 55,
+       "to_line": 64,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "high",
+     "evidence": "head/vllm/multimodal/profiling.py:185-194 `def _get_mm_num_tokens(...) -> Mapping[str, int]: ... return { modality: sum(...) for modality, placeholders in placeholders_by_modality.items() }`; :215-225 `elif total_len > seq_len and not envs.VLLM_USE_V1: logger.warning_once(\"...%d...%d...%s...\", seq_len, total_len, self._get_mm_num_tokens(mm_inputs),)`; same at :240-250. head/vllm/logger.py:61-64 `@lru_cache def _print_warning_once(logger: Logger, msg: str, *args: Hashable) -> None: logger.warning(msg, *args, stacklevel=2)`; init_logger binds warning_once = MethodType(_print_warning_once, logger) (logger.py:132-139), so the dict goes into the lru_cache key -> hash(dict) -> TypeError. Callers: worker/enc_dec_model_runner.py:305-318 and worker/model_runner.py:1310-1318 profile_run -> input_registry.dummy_data_for_profiling -> MultiModalRegistry.get_encoder/decoder_dummy_data. An AST scan of every multi-arg info_once/warning_once call in head finds no other unhashable argument.",
+     "notes": "Must identify that an unhashable value (the dict from _get_mm_num_tokens) reaches the lru_cache-backed warning_once and raises TypeError instead of logging. Either profiling.py site counts. A logger.py comment counts only if it states concretely that lru_cache hashes the *args so a dict/list argument raises TypeError (the fix can land there); a bare 'args should be hashable' or cache-size remark does not. Comments about message wording, noqa spacing, line length or %d vs %s do not count.",
+     "provenance": {
+      "hunt": [
+       "H-D1"
+      ],
+      "reviewer_comments": [
+       "C1",
+       "C4",
+       "C5",
+       "C7",
+       "C8"
+      ],
+      "dataset_refs": [
+       "A8"
+      ]
+     }
+    }
+   ],
+   "excluded": [
+    {
+     "source": "C2",
+     "reason": "Cosmetic: qwen2_moe log text changed from 'kv scale'/'kv-scale' to 'kv_scale'; no behavioural consequence."
+    },
+    {
+     "source": "C3",
+     "reason": "Cosmetic: same qwen2_moe wording change as C2 (inconsistency with qwen3_moe's message); log text only."
+    },
+    {
+     "source": "C6",
+     "reason": "Style: request to split long literals instead of `# noqa: E501`; the suppressions are valid and the lint passes."
+    },
+    {
+     "source": "A1",
+     "reason": "Wrong: dedupe semantics are unchanged. In base the arguments were interpolated into the f-string, so different values already produced different msg keys and were printed separately."
+    },
+    {
+     "source": "A2",
+     "reason": "Wrong: bare @lru_cache has maxsize=128, so the cache is bounded; and base keys already embedded the same dynamic values in the message string."
+    },
+    {
+     "source": "A3",
+     "reason": "Wrong: this PR changes warning_once to `def warning_once(self, msg, *args)` and _print_warning_once forwards *args to logger.warning (logger.py:61-64, 82-88), so the weight_utils call works."
+    },
+    {
+     "source": "A4",
+     "reason": "Style: two spaces before `noqa` in weight_utils.py; ruff still recognises the directive. No behavioural effect."
+    },
+    {
+     "source": "A5",
+     "reason": "Style: same `#  noqa` spacing nit in qwen2_moe.py; no behavioural effect."
+    },
+    {
+     "source": "A6",
+     "reason": "Wrong: _get_mm_num_tokens returns a dict ({modality: count}), so %s is the correct placeholder; %d or int(...) would itself fail. Misses the real problem (hashability, D1)."
+    },
+    {
+     "source": "A7",
+     "reason": "Wrong: same %d/int suggestion as A6 for the decoder branch; the value is a dict, so %d/int(...) would raise."
+    }
+   ],
+   "instance_id": "vllm-project__vllm@134705b"
+  },
+  "langflow-ai__langflow@6239290": {
+   "pr_summary": "Adds a new 'Parser' processing component (src/backend/base/langflow/components/processing/parser.py) and registers it in processing/__init__.py. In template mode it formats each DataFrame row with template.format(**row.to_dict()), or a single Data object with template.format(text=data.get_text()), and joins the results with a separator. With 'Stringify' enabled it hides the template, adds a dynamic 'Clean Data' toggle, and converts the input to a string (DataFrames via to_markdown, Data/Message via get_text, lists joined by newlines). _clean_args validates the input type (rejecting lists of Data and anything that is not DataFrame/Data/structured dict) and runs before either mode. Unit tests cover both modes.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "Template mode formats a Data input with only {text}, so the advertised Data key placeholders raise KeyError",
+     "statement": "For a Data input, parse_combined_text calls template.format(text=data.get_text()), so the only placeholder a template can use is {text}. The Template input's help text promises 'key values for Data' (with the example `Name: {Name}, Age: {Age}`), and the sibling ParseData helper formats with every key in data.data. Any template referencing another Data field (e.g. '{name}' on Data(data={'name': ...}), or fields of an API Request / JSON-derived Data) raises KeyError and fails the component; a Data with no 'text' key silently renders the default template as 'Text: '. Structured Data therefore cannot be formatted by field at all.",
+     "sites": [
+      {
+       "path": "src/backend/base/langflow/components/processing/parser.py",
+       "from_line": 129,
+       "to_line": 131,
+       "role": "cause"
+      },
+      {
+       "path": "src/backend/base/langflow/components/processing/parser.py",
+       "from_line": 32,
+       "to_line": 44,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "high",
+     "evidence": "head/src/backend/base/langflow/components/processing/parser.py:130 `formatted_text = template.format(text=data.get_text())` - only the `text` kwarg is supplied. parser.py:36-38 info: 'Use variables within curly brackets to extract column values for DataFrames or key values for Data.' schema/data.py `get_text` returns `self.data.get(self.text_key, self.default_value)` with default_value ''. Path: Data input -> _clean_args returns (None, data, ...) at parser.py:101-102 -> parser.py:130 -> str.format raises KeyError for any placeholder other than {text}. helpers/data.py data_to_text_list (used by ParseData) documents `data_to_text_list('{name} is {age}', Data(data={'name': 'Alice', 'age': 25}))` working.",
+     "notes": "Must say that for Data inputs only `text=data.get_text()` is passed to format, so other Data fields/keys cannot be used (KeyError), e.g. suggest format(**data.data)/format_map. A comment only about KeyError being unhandled for a missing DataFrame column does NOT count; a comment about Stringify returning empty for Data without text is D3, not this.",
+     "provenance": {
+      "hunt": [
+       "H-D1"
+      ],
+      "reviewer_comments": [
+       "C9",
+       "C11"
+      ],
+      "dataset_refs": [
+       "A4"
+      ]
+     }
+    },
+    {
+     "id": "D2",
+     "title": "Stringify is gated behind _clean_args' type checks, so list inputs (e.g. SplitText 'Chunks' list[Data]) fail and convert_to_string's list/str handling is dead",
+     "statement": "parse_combined_text calls self._clean_args() unconditionally before checking `if stringify`. _clean_args raises 'List of Data objects is not supported.' for a list of Data and 'Unsupported input type' for str and other values. convert_to_string/_validate_input/_safe_convert were written to accept Message | str | list and to join list items with newlines, but that code can never run because the input has already been rejected. In a flow, any output annotated -> list[Data] (e.g. SplitText's 'Chunks') is typed 'Data' and can be wired to the 'Data or DataFrame' handle, so enabling Stringify still errors instead of stringifying the list.",
+     "sites": [
+      {
+       "path": "src/backend/base/langflow/components/processing/parser.py",
+       "from_line": 116,
+       "to_line": 121,
+       "role": "cause"
+      },
+      {
+       "path": "src/backend/base/langflow/components/processing/parser.py",
+       "from_line": 93,
+       "to_line": 114,
+       "role": "other-site"
+      },
+      {
+       "path": "src/backend/base/langflow/components/processing/parser.py",
+       "from_line": 137,
+       "to_line": 181,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "head/.../parser.py:118 `df, data, template, sep, stringify = self._clean_args()` precedes parser.py:120 `if stringify: return self.convert_to_string()`. parser.py:96-98 raises for `isinstance(input_data, list) and all(isinstance(item, Data) ...)`; parser.py:112-114 raises for everything else (incl. str). Yet parser.py:142 accepts `Data | DataFrame | Message | str | list` and parser.py:176-177 joins list items - unreachable. split_text.py:51 `Output(display_name=\"Chunks\", name=\"chunks\", method=\"split_text\")` with split_text.py:104 `def split_text(self) -> list[Data]`; type_extraction.post_process_type unwraps list[Data] to 'Data', so the edge is allowed.",
+     "notes": "Must identify that the stringify branch runs after (and is blocked by) _clean_args validation / that _validate_input+convert_to_string accept list (or str) inputs that _clean_args rejects, so they can never be stringified. Merely saying 'lists of Data are not supported' as a feature limitation, without tying it to the stringify path or the dead list handling, is a near-miss. The dict-in-stringify inconsistency (C7/C10/A5) is a different, unreachable claim.",
+     "provenance": {
+      "hunt": [
+       "H-D2"
+      ],
+      "reviewer_comments": [
+       "C1"
+      ],
+      "dataset_refs": [
+       "A2"
+      ]
+     }
+    },
+    {
+     "id": "D3",
+     "title": "Stringify of a Data object without a 'text' key silently returns an empty message, losing its content",
+     "statement": "_safe_convert returns data.get_text() for Data. Data.get_text() falls back to default_value, which is '' (not None), so the `if data.get_text() is None` guard never fires for an ordinary Data, and any Data whose content lives under other keys (e.g. Data(data={'name': 'Alice'}), API Request results, CreateData output) stringifies to ''. The component promises to 'convert input into a readable string', but the user gets an empty Message with no error.",
+     "sites": [
+      {
+       "path": "src/backend/base/langflow/components/processing/parser.py",
+       "from_line": 153,
+       "to_line": 157,
+       "role": "cause"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "head/.../parser.py:153-157 `if isinstance(data, Data): if data.get_text() is None: raise ValueError(\"Empty Data object\") ... return data.get_text()`; schema/data.py `default_value: str | None = \"\"` and `get_text` returns `self.data.get(self.text_key, self.default_value)`. Path: stringify=True, input Data(data={'name': 'Alice'}) -> _clean_args OK (parser.py:101-102) -> convert_to_string (parser.py:179) -> _safe_convert -> '' -> Message(text='').",
+     "notes": "Must say stringifying a Data uses only its text field, so a Data without text yields empty output (or that the None guard is ineffective because default_value is ''). Template-mode {text}-only formatting is D1, not this.",
+     "provenance": {
+      "hunt": [
+       "H-D3"
+      ],
+      "reviewer_comments": [
+       "C2",
+       "C8"
+      ],
+      "dataset_refs": []
+     }
+    },
+    {
+     "id": "D4",
+     "title": "Stringify renders DataFrames to Markdown without escaping '|' or in-cell newlines, corrupting the table",
+     "statement": "_safe_convert calls data.to_markdown(index=False) directly. The ChatOutput converter this code was copied from escapes pipe characters and turns in-cell newlines into <br/> before to_markdown because tabulate's pipe format otherwise breaks: a cell containing '\\n' is rendered as extra physical table rows (one record appears as several) and a '|' in a cell adds a column separator. Clean Data only collapses repeated newlines, it does not remove them. Text columns routinely contain newlines, so the stringified table is misleading for downstream prompt/LLM use.",
+     "sites": [
+      {
+       "path": "src/backend/base/langflow/components/processing/parser.py",
+       "from_line": 158,
+       "to_line": 166,
+       "role": "cause"
+      },
+      {
+       "path": "src/backend/base/langflow/components/outputs/chat.py",
+       "from_line": 199,
+       "to_line": 207,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "head/.../parser.py:165 `data = data.replace(r\"\\n+\", \"\\n\", regex=True)` then parser.py:166 `return data.to_markdown(index=False)` with no escaping; components/outputs/chat.py:200-205 `processed_data = data.replace(r\"\\|\", r\"\\\\|\", regex=True)` and `.map(lambda x: str(x).replace(\"\\n\", \"<br/>\") ...)` before to_markdown. The PR's own test_clean_data_with_stringify (test_parser_component.py:118,141) asserts '| Person' appears for the cell 'Good\\n\\nPerson', i.e. the cell is split onto its own table line.",
+     "notes": "Must mention unescaped pipes and/or embedded newlines breaking the Markdown table in stringify mode. Generic 'the clean_data regexes are odd' comments do not count; the whitespace-row ordering issue is D6.",
+     "provenance": {
+      "hunt": [
+       "H-D4"
+      ],
+      "reviewer_comments": [
+       "C5",
+       "C6"
+      ],
+      "dataset_refs": []
+     }
+    },
+    {
+     "id": "D5",
+     "title": "'Clean Data' promises to clean Data objects but Data text is returned uncleaned",
+     "statement": "The dynamic Clean Data toggle is described as removing 'empty rows and lines in each cell of the DataFrame/ Data object', but _safe_convert applies the cleaning only in the DataFrame branch; the Data (and Message) branch returns get_text() verbatim regardless of clean_data. Stringifying Data(text='A\\n\\nB') with Clean Data on keeps the empty line, contrary to the option's stated contract.",
+     "sites": [
+      {
+       "path": "src/backend/base/langflow/components/processing/parser.py",
+       "from_line": 153,
+       "to_line": 157,
+       "role": "cause"
+      },
+      {
+       "path": "src/backend/base/langflow/components/processing/parser.py",
+       "from_line": 76,
+       "to_line": 87,
+       "role": "other-site"
+      }
+     ],
+     "kind": "contract",
+     "severity": "low",
+     "evidence": "head/.../parser.py:79-82 info 'Enable to clean the data by removing empty rows and lines in each cell of the DataFrame/ Data object.'; parser.py:153-157 Data branch returns `data.get_text()` with no reference to clean_data; cleaning exists only at parser.py:159-165 under `isinstance(data, DataFrame)`.",
+     "notes": "Must say Clean Data has no effect on Data/Message text (only DataFrames are cleaned) despite the option's description. The PR test test_stringify_data_object only checks words are present, so it does not contradict this.",
+     "provenance": {
+      "hunt": [],
+      "reviewer_comments": [
+       "C4"
+      ],
+      "dataset_refs": []
+     }
+    },
+    {
+     "id": "D6",
+     "title": "Clean Data drops empty rows before normalising whitespace cells, so whitespace-only rows survive as blank table rows",
+     "statement": "In the DataFrame stringify branch, dropna(how='all') runs first and only removes rows whose cells are all NaN; the regex that turns whitespace-only cells into '' runs afterwards and nothing re-checks row emptiness. A row consisting of whitespace (or empty-string) cells therefore remains and renders as a blank Markdown row, although Clean Data promises to remove empty rows.",
+     "sites": [
+      {
+       "path": "src/backend/base/langflow/components/processing/parser.py",
+       "from_line": 159,
+       "to_line": 166,
+       "role": "cause"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "head/.../parser.py:161 `data = data.dropna(how=\"all\")` precedes parser.py:163 `data = data.replace(r\"^\\s*$\", \"\", regex=True)`; no second dropna / emptiness filter before parser.py:166 `to_markdown`. Path: stringify=True, clean_data=True, DataFrame with a row of '  ' cells -> row kept -> blank table row.",
+     "notes": "Must say the empty-row removal happens before (or ignores) whitespace/empty-string normalisation so such rows survive. Comments about newline/pipe escaping are D4.",
+     "provenance": {
+      "hunt": [],
+      "reviewer_comments": [
+       "C3"
+      ],
+      "dataset_refs": []
+     }
+    }
+   ],
+   "excluded": [
+    {
+     "source": "C7",
+     "reason": "Unreachable in a flow: a raw dict never reaches input_data. HandleInput has field_type 'other', which is not in DIRECT_TYPES (utils/constants.py:55), so vertex/base.py:396 never passes a UI/tweak value for it, and edges deliver Data/DataFrame/Message objects (outputs typed from return annotations). Only direct Python instantiation with a dict literal can hit the dict branch."
+    },
+    {
+     "source": "C10",
+     "reason": "Same unreachable dict-input claim as C7: input_data is a HandleInput (field_type 'other', not in DIRECT_TYPES), so a structured dict cannot be supplied through the UI, tweaks or edges."
+    },
+    {
+     "source": "A5",
+     "reason": "Same unreachable dict-input claim as C7/C10; _validate_input rejecting dicts has no consequence on a flow path because no dict can arrive on the 'Data or DataFrame' handle."
+    },
+    {
+     "source": "A1",
+     "reason": "Wrong: the import is relative (`from .parser import ParserComponent`), so no stdlib shadowing occurs, and the stdlib `parser` module was removed in Python 3.10 anyway. Naming preference only."
+    },
+    {
+     "source": "A3",
+     "reason": "Speculative and unreachable: concerns the dict branch's 'columns' heuristic, but a dict cannot reach input_data in a flow (HandleInput field_type 'other' is not a DIRECT_TYPE)."
+    },
+    {
+     "source": "A6",
+     "reason": "Wrong: _safe_convert uses `hasattr(self, \"clean_data\") and self.clean_data` (parser.py:159), which cannot raise AttributeError; when the attribute is absent cleaning is simply skipped."
+    }
+   ],
+   "instance_id": "langflow-ai__langflow@6239290"
+  },
+  "cline__cline@2195a68": {
+   "pr_summary": "Changes the Cline account auth callback flow. AuthService now generates one readonly auth nonce per service instance instead of per createAuthRequest, removes resetAuthNonce, and builds the auth URL with the URL/searchParams API, throwing if no auth URI is configured. The /auth URI handler in extension.ts no longer rejects a callback whose state does not match the nonce; it shows a non-modal warning 'Store token returned from <path>' with Store/Cancel buttons and aborts only if the user picks Cancel, to allow sign-ins initiated outside the extension (e.g. Cline web). Controller.validateAuthState (which has no callers) is reduced to a plain equality check without clearing the nonce.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "State-mismatch confirmation fails open: dismissing the warning (undefined) still signs in with the untrusted token",
+     "statement": "On a state mismatch the handler awaits a non-modal vscode.window.showWarningMessage(..., 'Store', 'Cancel') and returns only when the result === 'Cancel'. A dismissed notification (closed with X/Esc, cleared from the notification centre) resolves to undefined, which falls through to controller.handleAuthCallback(token, provider). Any web page can open vscode://saoudrizwan.claude-dev/auth?idToken=<attacker token>&state=x; if the user simply closes the unexpected popup, the extension signs them into the attacker's Cline account and switches their apiProvider to 'cline' (login CSRF / session fixation). Before the PR a mismatched state was rejected outright.",
+     "sites": [
+      {
+       "path": "src/extension.ts",
+       "from_line": 310,
+       "to_line": 327,
+       "role": "cause"
+      },
+      {
+       "path": "src/services/auth/AuthService.ts",
+       "from_line": 212,
+       "to_line": 227,
+       "role": "symptom"
+      }
+     ],
+     "kind": "security",
+     "severity": "high",
+     "evidence": "head/src/extension.ts:312-321 `if (authService.authNonce !== state) { const userConfirmation = await vscode.window.showWarningMessage(`Store token returned from ${uri.path}`, \"Store\", \"Cancel\"); if (userConfirmation === \"Cancel\") { ... return } }` then extension.ts:324-326 `if (token) { await visibleWebview?.controller.handleAuthCallback(token, provider) }`. showWarningMessage resolves to undefined when dismissed (the repo itself handles that in core/controller/task/deleteAllTaskHistory.ts). Controller.handleAuthCallback (core/controller/index.ts:464-478) calls AuthService.handleAuthCallback -> provider.signIn(this._context, token, provider) (AuthService.ts:218) and sets apiProvider 'cline'. Base extension.ts:311-313 returned with showErrorMessage('Invalid auth state').",
+     "notes": "Must point out that only an explicit 'Cancel' aborts, so dismissing/closing the prompt (undefined) proceeds to store the token; fix = proceed only on === 'Store' (and/or modal). A generic 'removing the state check weakens CSRF protection' comment without the dismissal/undefined point belongs to D2, not here.",
+     "provenance": {
+      "hunt": [
+       "H-D1"
+      ],
+      "reviewer_comments": [
+       "C3",
+       "C4"
+      ],
+      "dataset_refs": []
+     }
+    },
+    {
+     "id": "D2",
+     "title": "Unsolicited auth callbacks are accepted after a one-click prompt that gives no basis for consent ('Store token returned from /auth')",
+     "statement": "The PR replaces the hard CSRF rejection with user consent, but the prompt interpolates uri.path, which inside `case \"/auth\"` is always the literal '/auth'. It shows neither the account, the provider, nor who initiated the flow, so a legitimate Cline-web sign-in and a malicious link opened by any website look identical, and a single 'Store' click stores an attacker-supplied idToken (login CSRF into the attacker's account).",
+     "sites": [
+      {
+       "path": "src/extension.ts",
+       "from_line": 310,
+       "to_line": 318,
+       "role": "cause"
+      }
+     ],
+     "kind": "security",
+     "severity": "low",
+     "evidence": "head/src/extension.ts:288 `switch (path)` / :296 `case \"/auth\": {` ... :313-314 `vscode.window.showWarningMessage(`Store token returned from ${uri.path}`, ...)` - uri.path is always '/auth' on this branch. Base extension.ts rejected with `showErrorMessage(\"Invalid auth state\")` and returned.",
+     "notes": "Must say the confirmation text is uninformative/constant ('/auth') or that accepting external tokens after a bare confirm reopens login CSRF. The dismissal-returns-undefined issue is D1, not this. Comments about the nonce being reused/static are excluded (not this).",
+     "provenance": {
+      "hunt": [
+       "H-D2"
+      ],
+      "reviewer_comments": [],
+      "dataset_refs": []
+     }
+    }
+   ],
+   "excluded": [
+    {
+     "source": "C1",
+     "reason": "Pre-existing and unchanged: the `if (!visibleWebview) return` early exit (extension.ts:284-287) is identical in base and applies to every URI callback; the PR does not touch it, and whether web-initiated sign-in must work with a hidden sidebar is a feature question."
+    },
+    {
+     "source": "C2",
+     "reason": "Speculative: the per-instance nonce only decides whether a prompt is shown; a stale callback carrying it holds the user's own short-lived token from their own earlier attempt, and in base the nonce was not cleared on callback or sign-out either (resetAuthNonce was only reached via validateAuthState, which has no callers). No concrete attacker channel to learn the nonce."
+    },
+    {
+     "source": "C5",
+     "reason": "Same speculative nonce-reuse claim as C2: 'wrong account' requires the same user to run two sign-ins with different accounts and the older callback to be replayed; no attacker path and base did not retire the nonce on callback/logout either."
+    },
+    {
+     "source": "A2",
+     "reason": "No runtime effect: Controller.validateAuthState has no callers in head or base (grep finds only its definition at core/controller/index.ts:460), so not resetting the nonce there changes nothing."
+    },
+    {
+     "source": "A3",
+     "reason": "Speculative best-practice concern (single-use state): a per-session unguessable state is acceptable CSRF protection and there is no concrete channel to obtain it; also targets validateAuthState, which is dead code. The real weakening is the fail-open prompt (D1/D2)."
+    },
+    {
+     "source": "A5",
+     "reason": "Same speculative nonce-reuse concern as A3; no concrete replay/CSRF path that bypasses the prompt without already knowing the secret nonce."
+    },
+    {
+     "source": "A1",
+     "reason": "Style: an unnecessary `async` on validateAuthState (a method with no callers) has no behavioural consequence."
+    },
+    {
+     "source": "A4",
+     "reason": "Maintainability/duplication suggestion only; validateAuthState is dead code and the inline check behaves the same."
+    },
+    {
+     "source": "A6",
+     "reason": "Pre-existing and naming-only: `Promise<String>` with the proto String type is unchanged from base."
+    },
+    {
+     "source": "A7",
+     "reason": "Unreachable: _config.URI always defaults to DefaultClineAccountURI via Object.assign in the constructor (AuthService.ts:45), so the new throw cannot fire."
+    }
+   ],
+   "instance_id": "cline__cline@2195a68"
+  },
+  "n8n-io__n8n@61fc500": {
+   "pr_summary": "Changes DELETE /projects/:projectId/folders/:folderId without transferToFolderId so that workflows inside the folder hierarchy are archived and moved to the project root instead of being cascade-deleted. The controller first checks the folder belongs to the project, then calls a new WorkflowService.flattenAndArchive, which collects all workflow ids in the folder and its subfolders (new WorkflowRepository.getAllWorkflowIdsInHierarchy), archives each with archive(user, id, skipArchived=true), then bulk-moves them to the root (new WorkflowRepository.moveToFolder); only then does FolderService.deleteFolder delete the folder row. archive() gains a skipArchived flag that returns already-archived workflows instead of throwing. The integration test and the UI label ('Archive all workflows and delete subfolders') are updated.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "Workflows added to the folder tree after the id snapshot are still cascade hard-deleted without archival or deactivation",
+     "statement": "flattenAndArchive reads the hierarchy's workflow ids once, then archives them one by one and moves only those ids; afterwards FolderService.deleteFolder deletes the folder row, whose FK (workflow.parentFolder onDelete: 'CASCADE') hard-deletes whatever workflows reference the folder tree at that moment. Nothing locks or re-checks membership, so a workflow created in, or moved into, the folder or a subfolder by another user during the (serial, possibly long) archive window is permanently deleted, and if active it is never deactivated - exactly the loss the PR set out to prevent.",
+     "sites": [
+      {
+       "path": "packages/cli/src/workflows/workflow.service.ts",
+       "from_line": 494,
+       "to_line": 505,
+       "role": "cause"
+      },
+      {
+       "path": "packages/cli/src/controllers/folder.controller.ts",
+       "from_line": 109,
+       "to_line": 115,
+       "role": "cause"
+      },
+      {
+       "path": "packages/cli/src/services/folder.service.ts",
+       "from_line": 127,
+       "to_line": 133,
+       "role": "symptom"
+      }
+     ],
+     "kind": "concurrency",
+     "severity": "low",
+     "evidence": "head/packages/cli/src/workflows/workflow.service.ts:495-504 `const workflowIds = await this.workflowRepository.getAllWorkflowIdsInHierarchy(...)`; `for (const workflowId of workflowIds) { await this.archive(user, workflowId, true); }`; `await this.workflowRepository.moveToFolder(workflowIds, PROJECT_ROOT);`. folder.controller.ts:111-115 then `await this.folderService.deleteFolder(folderId, projectId, payload)`; folder.service.ts:130-131 `if (!transferToFolderId) { await this.folderRepository.delete({ id: folderId }); }`. @n8n/db/src/entities/workflow-entity.ts:105-107 `@ManyToOne('Folder', 'workflows', { nullable: true, onDelete: 'CASCADE' })`. Workflow create/update (workflows.controller.ts:164-171, workflow.service.ts:300-305) can set parentFolder to that still-existing folder concurrently.",
+     "notes": "Must say membership is snapshotted once and a workflow added/moved into the folder (or a subfolder) before the final delete is cascade-deleted (not archived). A comment only about lack of atomicity on failure is D2; N+1 / performance comments do not count.",
+     "provenance": {
+      "hunt": [
+       "H-D1"
+      ],
+      "reviewer_comments": [
+       "C5",
+       "C12"
+      ],
+      "dataset_refs": []
+     }
+    },
+    {
+     "id": "D2",
+     "title": "Archive, move and folder delete are separate non-transactional steps, so a mid-way failure leaves archived/deactivated workflows inside an undeleted folder (and skips their hooks on retry)",
+     "statement": "Each archive() call commits its own update (deactivation, isArchived) before awaiting the workflow.afterArchive external hook, and the loop, the bulk move and the folder delete share no transaction (unlike the transfer path, which wraps move+delete in one). If deactivation or a hook throws on a later workflow, or moveToFolder/deleteFolder fails, the request errors while earlier workflows stay archived and deactivated inside the folder that was not deleted. On retry skipArchived returns early for already-archived workflows, so an afterArchive hook that failed after its row was committed is never re-run.",
+     "sites": [
+      {
+       "path": "packages/cli/src/workflows/workflow.service.ts",
+       "from_line": 494,
+       "to_line": 505,
+       "role": "cause"
+      },
+      {
+       "path": "packages/cli/src/workflows/workflow.service.ts",
+       "from_line": 434,
+       "to_line": 454,
+       "role": "other-site"
+      },
+      {
+       "path": "packages/cli/src/controllers/folder.controller.ts",
+       "from_line": 109,
+       "to_line": 115,
+       "role": "cause"
+      }
+     ],
+     "kind": "data",
+     "severity": "low",
+     "evidence": "head/packages/cli/src/workflows/workflow.service.ts:442-454 `if (workflow.active) { await this.activeWorkflowManager.remove(workflowId); }` / `await this.workflowRepository.update(workflowId, { isArchived: true, active: false, versionId })` / `await this.externalHooks.run('workflow.afterArchive', [workflowId])`; :435-437 `if (skipArchived) { return workflow; }`; :500-504 serial loop then moveToFolder. folder.controller.ts:111-115 calls flattenAndArchive then deleteFolder with no transaction, whereas folder.service.ts:143-148 wraps the transfer path's moves and delete in `this.folderRepository.manager.transaction`.",
+     "notes": "Must say the flatten/archive and folder delete are not atomic (no transaction / per-workflow commits) so a failure part-way leaves a partially archived hierarchy in an undeleted folder (or hooks skipped on retry). Generic 'add error handling/try-catch' comments without the partial-state consequence do not count; the concurrent-insert cascade is D1.",
+     "provenance": {
+      "hunt": [
+       "H-D1"
+      ],
+      "reviewer_comments": [
+       "C3",
+       "C11"
+      ],
+      "dataset_refs": [
+       "A2",
+       "A3"
+      ]
+     }
+    }
+   ],
+   "excluded": [
+    {
+     "source": "C1",
+     "reason": "Performance characteristic, not a correctness defect: the serial loop is slow for large folders, but nothing times out server-side and a retry is idempotent (skipArchived); no bound is violated."
+    },
+    {
+     "source": "C2",
+     "reason": "Speculative deployment skew: the editor UI is served by the same n8n instance that handles the API, and mixed-version multi-main serving is not a supported normal path; the label change itself introduces no defect."
+    },
+    {
+     "source": "C10",
+     "reason": "Same speculative mixed-version-rollout concern as C2; no normal path where the new label is served by one version and the DELETE handled by an older one."
+    },
+    {
+     "source": "C13",
+     "reason": "No harmful consequence: an already-open old UI sending the same request now gets the safer outcome (workflows archived and kept instead of deleted); a stale label, not a defect."
+    },
+    {
+     "source": "C4",
+     "reason": "Unreachable: every role holding folder:delete (project admin, personal-project owner, project editor) also holds workflow:delete (project-scopes.ee.ts), and a workflow's parentFolder is always a folder of its owning project (validated on create at workflows.controller.ts:164-171, on update at workflow.service.ts:300-305, reset on transfer at workflow.service.ee.ts:309-337), so archive() never returns undefined for a hierarchy workflow on a normal path."
+    },
+    {
+     "source": "C6",
+     "reason": "Same unreachable permission-gap claim as C4; the test fixture's cross-project workflow is not constructible through the API, which validates the folder's project on create/update."
+    },
+    {
+     "source": "C7",
+     "reason": "Pre-existing: folder cycles can only come from updateFolder's missing descendant check, which predates the PR, and the same recursive CTE (getAllFolderIdsInHierarchy / getFolderTree) is already used by existing paths; a detached cycle is not even reachable from the project listing to be deleted in the UI."
+    },
+    {
+     "source": "C8",
+     "reason": "Pre-existing and unchanged: DeleteFolderModal.vue's stale selectedFolder (lines 108-111) is not modified by the PR (only the i18n label changed); base already sent transferToFolderId after switching to the delete option."
+    },
+    {
+     "source": "C9",
+     "reason": "Speculative: exceeding bind-parameter limits needs tens of thousands of workflows/folders in one hierarchy (Postgres 65535, SQLite >=3.32 32766); no realistic trigger."
+    },
+    {
+     "source": "A1",
+     "reason": "Redundant query only (findFolderInProjectOrFail called in both controller and deleteFolder); harmless, and the controller check is needed before flattenAndArchive runs."
+    },
+    {
+     "source": "A4",
+     "reason": "Wrong: getAllFolderIdsInHierarchy filters folders by projectId, the root folder is verified with findFolderInProjectOrFail first, folder ids are globally unique, and workflows can only be placed in folders of their owning project, so no other project's workflows can be returned."
+    },
+    {
+     "source": "A5",
+     "reason": "Unreachable: flattenAndArchive is only called with a route folderId that has already passed findFolderInProjectOrFail, which fails for PROJECT_ROOT ('0'), so the PROJECT_ROOT case never occurs."
+    },
+    {
+     "source": "A6",
+     "reason": "Generic 'add error handling/validation' request with no concrete failure; errors propagate to the controller's catch."
+    },
+    {
+     "source": "A7",
+     "reason": "No defect: TypeORM renders In([]) as a false condition, so an empty id list is a no-op update, and toFolderId is always PROJECT_ROOT from the only caller."
+    },
+    {
+     "source": "A8",
+     "reason": "Style preference (query builder vs update) with no behavioural consequence."
+    },
+    {
+     "source": "A9",
+     "reason": "Generic try/catch request; failures already propagate to the controller, which maps them to HTTP errors."
+    },
+    {
+     "source": "A10",
+     "reason": "API-style suggestion: the new parameter defaults to false, so every existing archive() caller keeps the throwing behaviour."
+    },
+    {
+     "source": "A11",
+     "reason": "Performance suggestion, not a defect (and parallel archival would add its own concurrency concerns)."
+    },
+    {
+     "source": "A12",
+     "reason": "Docstring/ordering nit: archive-then-move produces the same final state as move-then-archive, and moveToFolder([]) is a no-op; the partial-failure aspect is not raised here."
+    }
+   ],
+   "instance_id": "n8n-io__n8n@61fc500"
+  },
+  "immich-app__immich@966c3f2": {
+   "pr_summary": "The PR removes the per-album N+1 query AssetRepository.getLastUpdatedAssetForAlbumId (and its mock) and computes lastModifiedAssetTimestamp inside AlbumRepository.getMetadataForIds, adding a required lastModifiedAssetTimestamp field to the AlbumAssetCount interface. getMetadataForIds is rewritten to select from assets joined to albums_assets_assets, grouped by album_assets.albumsId. startDate/endDate become min/max of (localDateTime AT TIME ZONE 'UTC')::date and lastModifiedAssetTimestamp becomes max of (updatedAt AT TIME ZONE 'UTC')::date, still excluding trashed assets. AlbumService.getAll (no longer needing Promise.all) and AlbumService.get read lastModifiedAssetTimestamp from that metadata. Neither the unit-test mocks nor the generated SQL snapshot are updated.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "lastModifiedAssetTimestamp is truncated to a calendar date, breaking mobile album change detection (missed same-day edits / perpetual resync)",
+     "statement": "The new aggregate casts updatedAt to ::date before max(), so lastModifiedAssetTimestamp becomes UTC midnight of the latest update day instead of the exact latest asset updatedAt that the removed getLastUpdatedAssetForAlbumId returned. The field exists only for the mobile app, which compares it with isAtSameMomentAs in _hasRemoteAlbumChanged to decide whether to resync an album. For an album the app stored straight from the server (_addAlbumFromServer stores the DTO values), any further asset edit on the same UTC day (favourite, description, location/date edit, rotation...) leaves the value unchanged, so if count/name/thumbnail/users/modifiedAt/dates are also unchanged the album is not resynced and foreign assets in shared albums stay stale. Conversely, once an album goes through _syncRemoteAlbum, recalculateMetadata overwrites the stored value with the precise local max(updatedAt), which can never equal the server's midnight value, so the album is refetched in full on every sync. Either way the field no longer serves its only purpose.",
+     "sites": [
+      {
+       "path": "server/src/repositories/album.repository.ts",
+       "from_line": 161,
+       "to_line": 171,
+       "role": "cause"
+      },
+      {
+       "path": "server/src/services/album.service.ts",
+       "from_line": 67,
+       "to_line": 68,
+       "role": "symptom"
+      },
+      {
+       "path": "server/src/services/album.service.ts",
+       "from_line": 84,
+       "to_line": 84,
+       "role": "symptom"
+      },
+      {
+       "path": "mobile/lib/services/sync.service.dart",
+       "from_line": 996,
+       "to_line": 1010,
+       "role": "other-site"
+      },
+      {
+       "path": "mobile/lib/repositories/album.repository.dart",
+       "from_line": 116,
+       "to_line": 122,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "high",
+     "evidence": "head/server/src/repositories/album.repository.ts:162-170 `.max<any>(sql`(\"assets\".\"updatedAt\" AT TIME ZONE 'UTC'::text)::date`).as('lastModifiedAssetTimestamp')`; base asset.repository.ts getLastUpdatedAssetForAlbumId ordered by updatedAt desc limit 1 and album.service returned `lastModifiedAsset?.updatedAt` (full timestamp). config.repository.ts:245-250 parses OID 1082 (date) with `new Date(x)` -> 'YYYY-MM-DD' becomes UTC midnight. Mobile sync.service.dart:1006-1009 `!isAtSameMomentAs(remoteAlbum.lastModifiedAssetTimestamp, dbAlbum.lastModifiedAssetTimestamp)`; :378 `if (!_hasRemoteAlbumChanged(dto, album)) return false;`; :473-489 _addAlbumFromServer stores the server DTO (truncated value) via create(album); :428+448 _syncRemoteAlbum then recalculateMetadata, and mobile album.repository.dart:119-120 sets `lastModifiedAssetTimestamp = await album.assets.filter().updatedAtProperty().max()` (precise). Trace A: album added at 10:00 stores 2025-03-10T00:00Z; another member edits an asset's description at 15:00; next GET /albums returns 2025-03-10T00:00Z again -> no resync, edit missed. Trace B: after a resync the DB holds 2025-03-10T15:00:12Z vs server 2025-03-10T00:00Z -> mismatch on every later sync -> full GET /albums/:id each time.",
+     "notes": "A comment counts if it says the updatedAt / lastModifiedAssetTimestamp aggregate is cast/truncated to ::date (losing time-of-day precision) and ties that to mobile sync/change detection — either missed same-day asset changes or perpetual mismatches/refetches against the mobile's locally recalculated precise value. Near-misses that do NOT count: remarks only about startDate/endDate becoming dates (that is D4), `any` typing or formatting of the sql templates, or the trashed-asset filter (C1).",
+     "provenance": {
+      "hunt": [
+       "D1"
+      ],
+      "reviewer_comments": [
+       "C2",
+       "C3"
+      ],
+      "dataset_refs": []
+     }
+    },
+    {
+     "id": "D2",
+     "title": "New required AlbumAssetCount field breaks the unchanged album.service.spec.ts mocks, so `npm run check` (tsc) fails in CI",
+     "statement": "AlbumAssetCount now declares `lastModifiedAssetTimestamp: Date | null` as required. album.service.spec.ts (not updated by the PR) passes object literals with only albumId/assetCount/startDate/endDate to the typed mock `mocks.album.getMetadataForIds.mockResolvedValue(...)`, whose parameter type is AlbumAssetCount[]. Each literal is a TS2741 missing-property error, and the server tsconfig used by `npm run check` (tsc --noEmit) includes spec files, so the server CI 'Run tsc' step fails.",
+     "sites": [
+      {
+       "path": "server/src/repositories/album.repository.ts",
+       "from_line": 10,
+       "to_line": 16,
+       "role": "cause"
+      },
+      {
+       "path": "server/src/services/album.service.spec.ts",
+       "from_line": 43,
+       "to_line": 46,
+       "role": "symptom"
+      },
+      {
+       "path": "server/src/services/album.service.spec.ts",
+       "from_line": 98,
+       "to_line": 105,
+       "role": "other-site"
+      },
+      {
+       "path": "server/src/services/album.service.spec.ts",
+       "from_line": 444,
+       "to_line": 493,
+       "role": "other-site"
+      }
+     ],
+     "kind": "build",
+     "severity": "high",
+     "evidence": "head/server/src/repositories/album.repository.ts:15 `lastModifiedAssetTimestamp: Date | null;`. album.service.spec.ts:43-46 `mocks.album.getMetadataForIds.mockResolvedValue([{ albumId: albumStub.empty.id, assetCount: 0, startDate: null, endDate: null }, ...])`, same shape at 56-63, 73-75, 85-87, 98-105, 444-451, 465-472, 486-493. test/utils.ts:156 types mocks as `Mocked<RepositoryInterface<...>>` (RepositoryInterface = Pick<T, keyof T>, src/types.ts:19), so mockResolvedValue expects AlbumAssetCount[]. server/package.json:18 `\"check\": \"tsc --noEmit\"`; tsconfig.json excludes only dist/node_modules/upload. .github/workflows/test.yml:85-86 runs `npm run check` in the server unit-test job.",
+     "notes": "A comment counts if it says the new required interface field breaks the existing getMetadataForIds mocks / type-check, or that album.service.spec.ts mocks must be updated to include lastModifiedAssetTimestamp. A generic 'add tests' request does not count.",
+     "provenance": {
+      "hunt": [
+       "D2"
+      ],
+      "reviewer_comments": [],
+      "dataset_refs": []
+     }
+    },
+    {
+     "id": "D3",
+     "title": "Generated SQL snapshot for getMetadataForIds is not regenerated, so the CI 'Generated SQL files not up to date' check fails",
+     "statement": "getMetadataForIds carries @GenerateSql, and CI runs `npm run sync:sql` then fails if anything under server/src/queries changed. The PR rewrites the query (FROM assets, ::date casts, new lastModifiedAssetTimestamp column, group by album_assets.albumsId) but leaves server/src/queries/album.repository.sql showing the old albums-join query, so regeneration produces a diff and the job exits 1.",
+     "sites": [
+      {
+       "path": "server/src/repositories/album.repository.ts",
+       "from_line": 128,
+       "to_line": 183,
+       "role": "cause"
+      },
+      {
+       "path": "server/src/queries/album.repository.sql",
+       "from_line": 202,
+       "to_line": 216,
+       "role": "symptom"
+      }
+     ],
+     "kind": "build",
+     "severity": "high",
+     "evidence": "head/server/src/repositories/album.repository.ts:128 `@GenerateSql({ params: [[DummyValue.UUID]] })` on the rewritten method. head/server/src/queries/album.repository.sql:202-216 still reads `select \"albums\".\"id\" as \"albumId\", min(\"assets\".\"localDateTime\") as \"startDate\", max(\"assets\".\"localDateTime\") as \"endDate\", count(\"assets\".\"id\")::int as \"assetCount\" from \"albums\" inner join ... group by \"albums\".\"id\"`. .github/workflows/test.yml:544-560 runs `npm run sync:sql`, checks server/src/queries with verify-changed-files, and `exit 1` with 'ERROR: Generated SQL files not up to date!'.",
+     "notes": "A comment counts if it says server/src/queries/album.repository.sql was not updated or that `npm run sync:sql` must be re-run for the changed query.",
+     "provenance": {
+      "hunt": [
+       "D3"
+      ],
+      "reviewer_comments": [],
+      "dataset_refs": []
+     }
+    },
+    {
+     "id": "D4",
+     "title": "startDate/endDate are truncated to ::date and returned as UTC-midnight instants, so web shows the previous day for users west of UTC and same-day albums lose their sort order",
+     "statement": "Both localDateTime aggregates now cast to ::date, so the API returns e.g. 2025-03-10T00:00:00.000Z instead of the full (wall-clock-as-UTC) localDateTime timestamp. The web renders these values in the browser's local zone: albums-table-row's dateLocaleString (`new Date(s).toLocaleDateString(locale, {month, day, year})`, no timeZone) shows every album's start/end date one day early for any viewer west of UTC (base values carried the photo's time of day, so only early-morning photos were affected); album-card's getShortDateRange shows the previous month when a bound falls on the 1st, and year grouping (`new Date(date).getFullYear()`) misfiles albums whose bound is Jan 1. The truncation also discards intra-day ordering, so albums whose newest/oldest photos fall on the same day tie in the most-recent/oldest-photo sorts.",
+     "sites": [
+      {
+       "path": "server/src/repositories/album.repository.ts",
+       "from_line": 141,
+       "to_line": 160,
+       "role": "cause"
+      },
+      {
+       "path": "server/src/services/album.service.ts",
+       "from_line": 64,
+       "to_line": 65,
+       "role": "other-site"
+      },
+      {
+       "path": "web/src/lib/components/album-page/albums-table-row.svelte",
+       "from_line": 23,
+       "to_line": 25,
+       "role": "symptom"
+      },
+      {
+       "path": "web/src/lib/utils/date-time.ts",
+       "from_line": 22,
+       "to_line": 30,
+       "role": "symptom"
+      },
+      {
+       "path": "web/src/lib/utils/album-utils.ts",
+       "from_line": 261,
+       "to_line": 267,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "head/server/src/repositories/album.repository.ts:143-149 `.min<any>(sql`(\"assets\".\"localDateTime\" AT TIME ZONE 'UTC'::text)::date`).as('startDate')` and :153-159 the same for endDate; base used `eb.fn.min('assets.localDateTime')`/`max(...)` (full timestamps). config.repository.ts:245-250 parses the date OID with `new Date(x)` -> UTC midnight, serialized as '...T00:00:00.000Z'. web albums-table-row.svelte:23-24 `new Date(dateString).toLocaleDateString($locale, dateFormats.album)` with constants.ts:66-70 dateFormats.album = {month, day, year} (no timeZone) and :62/:69 applied to endDate/startDate; date-time.ts:22-30 getShortDateRange uses `new Date(...)` + local toLocaleString; albums-list.svelte:88-89 `new Date(date).getFullYear()`; album-utils.ts:261,267 orderBy on `new Date(endDate/startDate)`. Trace: photo taken 2025-03-10 14:00 local, viewer in America/New_York: base value 2025-03-10T14:00Z -> 'Mar 10, 2025'; head value 2025-03-10T00:00Z -> 'Mar 9, 2025'.",
+     "notes": "A comment counts if it says the startDate/endDate aggregates are cast/truncated to ::date (losing the time component) AND names a concrete consequence: off-by-one/previous-day display in timezones west of UTC, or lost intra-day ordering in most-recent/oldest-photo sorting. Contentious: the blind hunt rejected this as an intentional return to date semantics; the display shift was verified in the web code above, while the sort-tie consequence alone is minor. Remarks about the lastModifiedAssetTimestamp cast belong to D1; remarks about `min<any>` typing or template formatting do not count.",
+     "provenance": {
+      "hunt": [],
+      "reviewer_comments": [
+       "C4",
+       "C5"
+      ],
+      "dataset_refs": []
+     }
+    }
+   ],
+   "excluded": [
+    {
+     "source": "C1",
+     "reason": "Not a defect. Trashing/restoring an asset changes assetCount (count excludes trashed assets), which _hasRemoteAlbumChanged (mobile sync.service.dart:998) also compares, so no change goes undetected; an album with only trashed assets returns no metadata row -> assetCount 0 (album.service.ts:66), so the mobile resyncs anyway. Excluding trashed assets is consistent with count/start/end. Phrased as a question with no concrete consequence."
+    },
+    {
+     "source": "A1",
+     "reason": "Style/readability of the multi-line sql templates and `any` vs `Date` generics; server eslint disables no-explicit-any and the runtime value is a Date via the postgres date parser (config.repository.ts:245-250). No behavioural consequence."
+    },
+    {
+     "source": "A2",
+     "reason": "Style. `?? undefined` is not redundant (it normalizes the repository's null to undefined for the optional DTO fields) and in any case has no behavioural effect."
+    }
+   ],
+   "instance_id": "immich-app__immich@966c3f2"
+  },
+  "google-gemini__gemini-cli@4c150ab": {
+   "pr_summary": "The PR moves the 'exclude shell/edit/write tools when non-interactive and not YOLO' logic from gemini.tsx into loadCliConfig. loadCliConfig now computes question, approvalMode and shouldBeInteractive (`!!argv.promptInteractive || (process.stdin.isTTY && question.length === 0)`) and passes [ShellTool.Name, EditTool.Name, WriteFileTool.Name] as extra excludes to mergeExcludeTools when shouldBeInteractive is false and approvalMode is not YOLO. gemini.tsx deletes loadNonInteractiveConfig, which rebuilt and re-initialised a second Config with those excludes only on the runNonInteractive path, and now calls validateNonInteractiveAuth directly with the single config. Unused imports are removed; tests are not updated.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "ACP / Zed mode (--experimental-acp) now loses the shell, edit and write_file tools",
+     "statement": "loadCliConfig now decides interactivity from argv.promptInteractive and process.stdin.isTTY only. In --experimental-acp mode the client (e.g. Zed) speaks the protocol over piped stdin/stdout with no prompt, so stdin is not a TTY and shouldBeInteractive is false; without --yolo, run_shell_command, replace and write_file are added to excludeTools and never registered. main() then hands this same config to runAcpPeer. In base the exclusion was applied only in loadNonInteractiveConfig, after the ACP early return, so ACP sessions had these tools and confirmed each call through the client's requestToolCallConfirmation. Editor-integrated agents can no longer edit/write files or run commands.",
+     "sites": [
+      {
+       "path": "packages/cli/src/config/config.ts",
+       "from_line": 369,
+       "to_line": 384,
+       "role": "cause"
+      },
+      {
+       "path": "packages/cli/src/gemini.tsx",
+       "from_line": 244,
+       "to_line": 245,
+       "role": "symptom"
+      },
+      {
+       "path": "packages/cli/src/acp/acpPeer.ts",
+       "from_line": 233,
+       "to_line": 262,
+       "role": "other-site"
+      },
+      {
+       "path": "packages/core/src/config/config.ts",
+       "from_line": 689,
+       "to_line": 735,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "high",
+     "evidence": "head/packages/cli/src/config/config.ts:372-378 `const shouldBeInteractive = !!argv.promptInteractive || (process.stdin.isTTY && question.length === 0); const extraExcludes = !shouldBeInteractive && approvalMode !== ApprovalMode.YOLO ? [ShellTool.Name, EditTool.Name, WriteFileTool.Name] : undefined;`. gemini.tsx:149 builds the single config, :188 initializes it, :244-245 `if (config.getExperimentalAcp()) { return runAcpPeer(config, settings); }`. acpPeer.ts:34-35 wires process.stdin/stdout (non-TTY) as the protocol stream; :104/:233 take tools from `this.config.getToolRegistry()` and :258 asks `client.requestToolCallConfirmation`. core config.ts:698-721 skips registering any core tool whose name is in excludeTools. Base gemini.tsx applied the excludes only inside loadNonInteractiveConfig, reached after the ACP return.",
+     "notes": "A comment counts if it identifies that ACP/--experimental-acp (Zed) mode — or more generally a non-TTY caller that is not the runNonInteractive path — now gets shell/edit/write excluded because the heuristic moved into loadCliConfig. A comment that only says the interactivity logic is duplicated between config.ts and gemini.tsx (A2) without naming a broken caller does not count.",
+     "provenance": {
+      "hunt": [
+       "D1"
+      ],
+      "reviewer_comments": [
+       "C1",
+       "C5"
+      ],
+      "dataset_refs": []
+     }
+    },
+    {
+     "id": "D2",
+     "title": "Existing mergeExcludeTools tests fail in non-TTY CI because loadCliConfig now reads process.stdin.isTTY",
+     "statement": "The config.test.ts mergeExcludeTools suite calls loadCliConfig with `process.argv = ['node', 'script.js']` (no prompt, no --yolo) and asserts exact exclude lists (lengths 5, 3, 4, 2, 2 and `[]`). Under GitHub Actions stdin is not a TTY, so loadCliConfig now appends run_shell_command, replace and write_file and those assertions fail. The PR neither updates the expectations nor stubs process.stdin.isTTY, so `npm run test:ci` goes red.",
+     "sites": [
+      {
+       "path": "packages/cli/src/config/config.ts",
+       "from_line": 372,
+       "to_line": 378,
+       "role": "cause"
+      },
+      {
+       "path": "packages/cli/src/config/config.test.ts",
+       "from_line": 563,
+       "to_line": 713,
+       "role": "symptom"
+      }
+     ],
+     "kind": "build",
+     "severity": "high",
+     "evidence": "head/packages/cli/src/config/config.test.ts:592-595 `expect(config.getExcludeTools()).toEqual(expect.arrayContaining([...5 tools])); expect(config.getExcludeTools()).toHaveLength(5);`, :621 toHaveLength(3), :655 toHaveLength(4), :669 `toEqual([])`, :686/:712 toHaveLength(2). The test's gemini-cli-core mock spreads the actual module, so ShellTool/EditTool/WriteFileTool names are real. No test in packages/cli stubs process.stdin.isTTY for config tests (only useKeypress.test.ts touches isTTY; test-setup.ts only imports matchers). core Config.getExcludeTools returns params.excludeTools verbatim (core config.ts:276,484-485). .github/workflows/ci.yml runs `npm run test:ci` (vitest run --coverage) in Actions, where stdin is not a TTY.",
+     "notes": "A comment counts if it says the existing exact-length excludeTools tests will now see the three extra tools (or fail) because of the process.stdin.isTTY / non-interactive dependency, or that those tests must set/stub the interactive mode. A generic 'add tests for the new behaviour' remark does not count.",
+     "provenance": {
+      "hunt": [
+       "D2"
+      ],
+      "reviewer_comments": [
+       "C2",
+       "C4"
+      ],
+      "dataset_refs": []
+     }
+    }
+   ],
+   "excluded": [
+    {
+     "source": "C3",
+     "reason": "Pre-existing and not made worse. runNonInteractive already called config.initialize() (nonInteractiveCli.ts:33) in base; base non-YOLO runs initialized config1 at gemini.tsx:188, then a second Config in loadNonInteractiveConfig (`await finalConfig.initialize()`) and again in runNonInteractive (three discoveries). Head does two, so the PR reduces duplicate initialization rather than introducing it."
+    },
+    {
+     "source": "C6",
+     "reason": "Duplicate of C3's claim and rejected for the same reason: the double initialize() via runNonInteractive (nonInteractiveCli.ts:33) predates the PR, and base initialized even more times on the non-YOLO path."
+    },
+    {
+     "source": "A1",
+     "reason": "Wrong. The conditional operator has lower precedence than ||, so `argv.yolo || false ? ApprovalMode.YOLO : ApprovalMode.DEFAULT` parses as `(argv.yolo || false) ? ... : ...` and always yields an ApprovalMode. The expression was also moved verbatim from the pre-existing Config construction."
+    },
+    {
+     "source": "A2",
+     "reason": "Maintainability remark (duplicated shouldBeInteractive logic) that names no broken caller or consequence; for every path that reaches gemini.tsx's check the two expressions agree. The concrete breakage from moving the heuristic (ACP) is D1, and this comment does not identify it."
+    },
+    {
+     "source": "A3",
+     "reason": "Style: `extraExcludes?: string[] | undefined` is merely redundant typing with no behavioural effect."
+    }
+   ],
+   "instance_id": "google-gemini__gemini-cli@4c150ab"
+  },
+  "mrdoob__three.js@b55b9e9": {
+   "pr_summary": "Adds explicit 3D compute dispatch to WebGPURenderer. ComputeNode's default workgroupSize changes from [64] to [64, 1, 1], and the TSL compute() helper now accepts an array as its second argument, treating it as the workgroup size and setting count to null. Renderer.compute() gains a dispatchSize = [0, 0, 0] parameter that it forwards to backend.compute(); WebGPUBackend.compute() dispatches dispatchSize directly when all three components are > 0 and otherwise falls back to the previous dispatchCount-based 1D/2D dispatch. WGSLNodeBuilder now throws unless workgroupSize has exactly 3 elements, emits @workgroup_size(x, y, z), and linearises instanceIndex from the 3D global id using the per-axis workgroup sizes.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "WGSLNodeBuilder now throws for any non-3-element workgroupSize, so previously valid, documented compute(count, [N]) calls crash at shader build",
+     "statement": "The PR adds a hard `workgroupSize.length !== 3` check that throws 'workgroupSize must have 3 elements'. Neither the compute() helper nor the ComputeNode constructor pads a shorter caller-supplied array (the [64, 1, 1] default only applies when the argument is undefined), so any existing user code passing a one-element workgroup size such as fn().compute(512, [128]) - which base turned into the valid '@workgroup_size( 128 )' and 'u32(128)' - now throws out of renderer.compute()/computeAsync() when the compute pipeline is built. The repo's own JSDoc examples in ComputeBuiltinNode.js document exactly this form. This is a breaking change to a public, documented API shape that WGSL itself accepts (missing dimensions default to 1).",
+     "sites": [
+      {
+       "path": "src/renderers/webgpu/nodes/WGSLNodeBuilder.js",
+       "from_line": 1901,
+       "to_line": 1905,
+       "role": "cause"
+      },
+      {
+       "path": "src/nodes/gpgpu/ComputeNode.js",
+       "from_line": 226,
+       "to_line": 237,
+       "role": "other-site"
+      },
+      {
+       "path": "src/nodes/gpgpu/ComputeBuiltinNode.js",
+       "from_line": 162,
+       "to_line": 162,
+       "role": "symptom"
+      },
+      {
+       "path": "src/nodes/gpgpu/ComputeBuiltinNode.js",
+       "from_line": 194,
+       "to_line": 194,
+       "role": "symptom"
+      }
+     ],
+     "kind": "compat",
+     "severity": "high",
+     "evidence": "head/src/renderers/webgpu/nodes/WGSLNodeBuilder.js:1901-1903 `const workgroupSize = this.object.workgroupSize || [ 64, 1, 1 ];` / `if ( workgroupSize.length !== 3 ) throw new Error( 'workgroupSize must have 3 elements' );`. head/src/nodes/gpgpu/ComputeNode.js:237 passes the caller's array untouched (`new ComputeNode( nodeObject( node ), count, workgroupSize )`), and the constructor default at :25 applies only when the argument is undefined. Base WGSLNodeBuilder.js:1901 `( this.object.workgroupSize || [ 64 ] ).join( ', ' )` -> '@workgroup_size( 128 )' (valid WGSL). ComputeBuiltinNode.js:162 `})().compute(512, [128]);` and :194 `} )().compute( 12, [ 3 ] );` document the now-throwing form. Path: user `fn().compute(512, [128])` -> renderer.compute -> pipelines.getForCompute -> node build -> WGSLNodeBuilder.build throws.",
+     "notes": "A comment counts if it says that 1-element (or fewer-than-3-element) workgroup sizes that previously worked now throw / are rejected, i.e. a breaking change, and that they should be padded with 1s or otherwise accepted. A comment only about 2-element arrays without the 1-element regression is a near-miss (2-element arrays already produced invalid `u32(8, 8)` in base). A comment only about the stale '@param {string} workgroupSize' JSDoc does not count. A comment about the dispatchSize (not workgroupSize) array length is a different issue and does not count.",
+     "provenance": {
+      "hunt": [
+       "D1"
+      ],
+      "reviewer_comments": [
+       "C6",
+       "C9"
+      ],
+      "dataset_refs": [
+       "A8"
+      ]
+     }
+    },
+    {
+     "id": "D2",
+     "title": "dispatchSize is dropped by computeAsync() and by compute()'s pre-init fallback, so an explicit 3D dispatch silently never happens (zero workgroups for array-form nodes)",
+     "statement": "Only Renderer.compute(computeNodes, dispatchSize) forwards the new argument. computeAsync(computeNodes) has no dispatchSize parameter and calls this.compute(computeNodes), and compute() called before initialisation returns this.computeAsync(computeNodes) without it. The backend then sees the default [0, 0, 0], treats it as invalid and falls back to computeNode.dispatchCount. For the new array form compute(fn, [x, y, z]) count is null, so dispatchCount = Math.ceil(null / size) = 0 and dispatchWorkgroups(0) runs nothing, with no warning; for a counted node the caller's explicit grid is silently replaced by the 1D count-derived dispatch. computeAsync is the path the renderer itself recommends (its own console warning).",
+     "sites": [
+      {
+       "path": "src/renderers/common/Renderer.js",
+       "from_line": 2412,
+       "to_line": 2418,
+       "role": "cause"
+      },
+      {
+       "path": "src/renderers/common/Renderer.js",
+       "from_line": 2318,
+       "to_line": 2324,
+       "role": "cause"
+      },
+      {
+       "path": "src/renderers/webgpu/WebGPUBackend.js",
+       "from_line": 1327,
+       "to_line": 1329,
+       "role": "symptom"
+      }
+     ],
+     "kind": "incomplete-fix",
+     "severity": "medium",
+     "evidence": "head/src/renderers/common/Renderer.js:2314 `compute( computeNodes, dispatchSize = [ 0, 0, 0 ] ) {`; :2320-2322 `console.warn( '... Try using .computeAsync() instead.' ); return this.computeAsync( computeNodes );`; :2412 `async computeAsync( computeNodes ) {` ... :2416 `this.compute( computeNodes );`. head/src/renderers/webgpu/WebGPUBackend.js:1327 `const isValid = dispatchSize[ 0 ] > 0 && dispatchSize[ 1 ] > 0 && dispatchSize[ 2 ] > 0;` -> false -> else branch dispatches computeNode.dispatchCount. ComputeNode.js:233 `count = null;` and :137 `this.dispatchCount = Math.ceil( count / size );` -> 0. Path: `const n = fn().compute([8, 8, 1]); await renderer.computeAsync(n, [w/8, h/8, 1]);` -> dispatchWorkgroups(0, ...) -> nothing runs.",
+     "notes": "Must say that computeAsync, or the not-yet-initialised compute() -> computeAsync fallback, does not accept/forward dispatchSize, so the requested dispatch is lost. Either path alone counts. A general remark that dispatchSize should be validated, or that the [0,0,0] default is odd, without naming the dropped forwarding, does not count; nor does a remark about updateBefore or the WebGL backend (that is D3).",
+     "provenance": {
+      "hunt": [
+       "D2"
+      ],
+      "reviewer_comments": [
+       "C5",
+       "C12"
+      ],
+      "dataset_refs": [
+       "A4"
+      ]
+     }
+    },
+    {
+     "id": "D3",
+     "title": "The new dispatchSize is only honoured by WebGPUBackend: array-form (count = null) kernels silently run zero invocations on the WebGL fallback and via ComputeNode.updateBefore",
+     "statement": "compute(fn, [x, y, z]) sets count = null, so the node's only dispatch information is a dispatchSize passed to a direct renderer.compute call, and only WebGPUBackend reads that argument. WebGLBackend.compute (used by WebGPURenderer's automatic WebGL fallback) ignores the 5th argument the renderer now passes and draws computeNode.count points/instances (null -> 0), so the same code that works on WebGPU does nothing on the fallback; for counted nodes it likewise ignores the caller's explicit dispatch. ComputeNode.updateBefore (compute node embedded in a render node graph) calls renderer.compute(this) with no dispatchSize, so array-form nodes dispatch dispatchCount = 0 there. No error or warning is emitted in either case.",
+     "sites": [
+      {
+       "path": "src/nodes/gpgpu/ComputeNode.js",
+       "from_line": 230,
+       "to_line": 235,
+       "role": "cause"
+      },
+      {
+       "path": "src/renderers/common/Renderer.js",
+       "from_line": 2393,
+       "to_line": 2393,
+       "role": "other-site"
+      },
+      {
+       "path": "src/renderers/webgl-fallback/WebGLBackend.js",
+       "from_line": 919,
+       "to_line": 919,
+       "role": "symptom"
+      },
+      {
+       "path": "src/renderers/webgl-fallback/WebGLBackend.js",
+       "from_line": 956,
+       "to_line": 964,
+       "role": "symptom"
+      },
+      {
+       "path": "src/nodes/gpgpu/ComputeNode.js",
+       "from_line": 160,
+       "to_line": 164,
+       "role": "other-site"
+      }
+     ],
+     "kind": "incomplete-fix",
+     "severity": "low",
+     "evidence": "head/src/nodes/gpgpu/ComputeNode.js:230-233 `if ( Array.isArray( countOrWorkgroupSize ) ) { workgroupSize = countOrWorkgroupSize; count = null; }`. head/src/renderers/common/Renderer.js:2393 `backend.compute( computeNodes, computeNode, computeBindings, computePipeline, dispatchSize );`. head/src/renderers/webgl-fallback/WebGLBackend.js:919 `compute( computeGroup, computeNode, bindings, pipeline ) {` (no dispatchSize) and :958/:962 `gl.drawArraysInstanced( gl.POINTS, 0, 1, computeNode.count )` / `gl.drawArrays( gl.POINTS, 0, computeNode.count )` with count null -> 0 draws. ComputeNode.js:162 `renderer.compute( this );` -> default [0,0,0] -> WebGPUBackend else branch with dispatchCount 0.",
+     "notes": "Counts if the comment says the WebGL fallback backend ignores the new dispatchSize so the count-less/array-form kernel does nothing (or explicit dispatch is not honoured) there, OR that updateBefore / node-graph-driven compute cannot supply a dispatch size and therefore dispatches nothing. A comment only about computeAsync or the pre-init path belongs to D2. A claim that count = null produces NaN (it is 0) does not count by itself.",
+     "provenance": {
+      "hunt": [
+       "D3"
+      ],
+      "reviewer_comments": [
+       "C2",
+       "C11",
+       "C8"
+      ],
+      "dataset_refs": []
+     }
+    },
+    {
+     "id": "D4",
+     "title": "WebGPUBackend fallback aliases dispatchSize to the per-node data object: computeNodeData.dispatchSize becomes dead and x/y/z are read/written on the wrong object (y/z undefined)",
+     "statement": "`dispatchSize = isValid ? dispatchSize : computeNodeData;` makes the automatic-dispatch branch operate on the backend data object itself instead of computeNodeData.dispatchSize. The branch still initialises computeNodeData.dispatchSize = { x: 0, y: 1, z: 1 } but never reads it, writes .x/.y onto the backend's per-node data object, and calls dispatchWorkgroups(dispatchCount, undefined, undefined) on the normal (non-overflow) path. It only keeps working because WebIDL substitutes the defaults (1) for undefined optional y/z arguments; the code no longer does what it says and the intended cache is dead.",
+     "sites": [
+      {
+       "path": "src/renderers/webgpu/WebGPUBackend.js",
+       "from_line": 1329,
+       "to_line": 1329,
+       "role": "cause"
+      },
+      {
+       "path": "src/renderers/webgpu/WebGPUBackend.js",
+       "from_line": 1360,
+       "to_line": 1377,
+       "role": "symptom"
+      }
+     ],
+     "kind": "maintainability",
+     "severity": "low",
+     "evidence": "head/src/renderers/webgpu/WebGPUBackend.js:1329 `dispatchSize = isValid ? dispatchSize : computeNodeData;`; :1360 `if ( computeNodeData.dispatchSize === undefined ) computeNodeData.dispatchSize = { x: 0, y: 1, z: 1 };` (never read afterwards); :1364-1369 `dispatchSize.x = ...; dispatchSize.y = ...` (writes computeNodeData.x/.y); :1373-1377 `passEncoderGPU.dispatchWorkgroups( dispatchSize.x, dispatchSize.y, dispatchSize.z )` -> (dispatchCount, undefined, undefined). Base read `const { dispatchSize } = computeNodeData;`, i.e. the {x,y,z} object.",
+     "notes": "Must identify that the fallback uses computeNodeData instead of computeNodeData.dispatchSize (so the nested cache is dead and y/z are undefined). Comments that name this mechanism count even if they overstate the consequence as a runtime failure (in browsers undefined optional args default to 1, so there is no functional failure today). The stale-y-after-overflow behaviour is pre-existing in base and alone does not count.",
+     "provenance": {
+      "hunt": [
+       "D4"
+      ],
+      "reviewer_comments": [
+       "C10",
+       "C7"
+      ],
+      "dataset_refs": [
+       "A7"
+      ]
+     }
+    }
+   ],
+   "excluded": [
+    {
+     "source": "C1",
+     "reason": "Not a code defect: no code at head references or advertises computeKernel (grep over head/ finds no occurrence); the claim rests on the PR description text. The API this commit implements - compute(node, [x, y, z]) via the existing chained compute - is callable. A description/code naming mismatch is not a defect introduced in the code."
+    },
+    {
+     "source": "C3",
+     "reason": "Duplicate of C1's claim: missing computeKernel method is only a mismatch with the PR description; nothing in head/ references computeKernel, and the overloaded compute() works. Not a code defect."
+    },
+    {
+     "source": "C4",
+     "reason": "Speculative misuse of a new API: dispatchSize is documented as [x, y, z] (Renderer.js:2311) and the [0,0,0] default is the intended sentinel; an explicit request with a zero component ([0, 10, 1]) has no in-repo caller, and for array-form nodes the fallback also dispatches 0. Phrased as a design question about warnings, not a concrete defect."
+    },
+    {
+     "source": "A1",
+     "reason": "JSDoc typing nit (countOrWorkgroupSize documented as {number}); no behavioural effect."
+    },
+    {
+     "source": "A2",
+     "reason": "Wrong: Math.ceil(null / size) evaluates Math.ceil(0) = 0, not NaN (ComputeNode.js:137). The real consequence of count = null (zero workgroups when no explicit dispatch reaches the backend) is captured by D2/D3, but this comment's stated mechanism (NaN / runtime error) is incorrect."
+    },
+    {
+     "source": "A3",
+     "reason": "Not a defect: [0, 0, 0] is the intended sentinel meaning 'no explicit dispatch'; WebGPUBackend.js:1327-1329 deliberately falls back to the count-derived dispatch for it, which is the pre-PR behaviour. Changing the default to null is a style preference (and would make dispatchSize[0] throw in the backend)."
+    },
+    {
+     "source": "A5",
+     "reason": "Feature request on a new API: dispatchSize is documented as an [x, y, z] array (Renderer.js:2311, WebGPUBackend.js:1321); accepting 1- or 2-element dispatch arrays is ergonomics, with no in-repo caller passing a short dispatch array. (The real 1/2-element regression concerns workgroupSize - D1 - not dispatchSize.)"
+    },
+    {
+     "source": "A6",
+     "reason": "Not a PR-introduced defect: an explicit dispatch is the caller's request; exceeding maxComputeWorkgroupsPerDimension is reported by WebGPU validation, and clamping would silently change the requested grid. The automatic path keeps its clamping unchanged."
+    },
+    {
+     "source": "A9",
+     "reason": "Stale JSDoc type ('{string} workgroupSize' on _getWGSLComputeCode); documentation nit with no behavioural effect."
+    },
+    {
+     "source": "A10",
+     "reason": "Wrong: workgroupSizeX/Y are JS numbers interpolated as WGSL integer literals (AbstractInt), which convert implicitly to u32 when multiplied by numWorkgroups.x (u32); @workgroup_size already requires integer constants, so a non-integer would fail there regardless. No defect in the instanceIndex expression (WGSLNodeBuilder.js:2135-2137)."
+    }
+   ],
+   "instance_id": "mrdoob__three.js@b55b9e9"
+  },
+  "microsoft__typescript-go@1a84d8d": {
+   "pr_summary": "Ports TypeScript's containerSeemsToBeEmptyDomElement into the Go checker, replacing a `return false // !!!` stub. When the 'lib' option is set and does not contain lib.dom.d.ts, every constituent of the containing type has a symbol named EventTarget, Node, Element or HTML<ASCII letters>Element, and the type is an empty object type, reportNonexistentProperty now emits TS2812 ('... Try changing the 'lib' compiler option to include 'dom'') instead of TS2339. Adds an everyContainedType helper that iterates union and intersection constituents (mirroring TypeScript's). Updates the missingDomElements baseline to TS2812 and deletes its .diff file, since output now matches tsc.",
+   "defects": [],
+   "excluded": [
+    {
+     "source": "C1",
+     "reason": "Faithful to upstream TypeScript, not a port defect: tsc's containerSeemsToBeEmptyDomElement also combines everyContainedType(name test) with isEmptyObjectType(containingType), and tsc's isEmptyObjectType uses some() for unions; the Go isEmptyObjectType (checker.go:24498-24499 `core.Some(t.Types(), c.isEmptyObjectType)`) mirrors it. The scenario needs user-declared Node/Element interfaces with lib lacking dom, and only changes which message text is chosen. Diverging here would break tsc baseline parity."
+    },
+    {
+     "source": "C2",
+     "reason": "Unreachable: CompilerOptions live in internal packages and every production construction of Lib goes through option parsing (tsconfig convertJsonOptionOfEnumType via libMap, command-line/harness ParseListTypeOption), which stores the mapped file name 'lib.dom.d.ts' (enummaps.go:27 `{Key: \"dom\", Value: \"lib.dom.d.ts\"}`); no code builds Lib with raw 'dom'. Upstream tsc performs the same filename check."
+    },
+    {
+     "source": "C3",
+     "reason": "Style/refactor suggestion (early return instead of a mutable flag); no behavioural difference."
+    },
+    {
+     "source": "C4",
+     "reason": "Matches upstream TypeScript: tsc's everyContainedType is likewise one level deep (UnionOrIntersection -> every(types, f)) and an intersection type has no symbol, so tsc also reports TS2339 for `(EventTarget & HTMLInputElement) | HTMLElement`. Not a regression either: that case reported TS2339 before this PR too."
+    },
+    {
+     "source": "A1",
+     "reason": "Wrong: the guard returns false when Lib is unset (default libs, which include DOM, are loaded - program.go:142-144) or when Lib already contains lib.dom.d.ts; the hint therefore fires only when lib is explicitly set without dom, exactly as tsc's `compilerOptions.lib && !compilerOptions.lib.includes(\"lib.dom.d.ts\")`. The baseline shows the intended TS2812 output."
+    },
+    {
+     "source": "A2",
+     "reason": "Style suggestion (reuse stringutil.IsASCIILetter); the hand-written loop is behaviourally equivalent."
+    },
+    {
+     "source": "A3",
+     "reason": "Wrong: the slice Name[4:len-7] is reached only after HasPrefix(\"HTML\") && HasSuffix(\"Element\"); no suffix of 'HTML' is a prefix of 'Element', so the two cannot overlap and len >= 11 ('HTMLElement' gives the empty slice [4:4]). 'HTML' or 'Element' alone never reach the slice (checker.go:10840-10845)."
+    }
+   ],
+   "instance_id": "microsoft__typescript-go@1a84d8d"
+  }
+ }
+}
