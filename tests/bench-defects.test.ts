@@ -1,0 +1,362 @@
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+  existsSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import {
+  judgePrompt,
+  lastJsonObject,
+  parseDefectSet,
+  parseJudgement,
+  renderDefectReport,
+  reviewForJudge,
+  scoreRun,
+  type CaseJudgement,
+  type Defect,
+  type ReviewForJudge,
+} from "../src/bench/defects.js";
+import { judgeCase, judgeLabel, judgePiArgv, loadJudgements } from "../src/bench/defectjudge.js";
+
+const D = (id: string, severity: "high" | "medium" | "low" = "high"): Defect => ({
+  id,
+  title: `defect ${id}`,
+  statement: `what ${id} breaks`,
+  sites: [{ path: "a.py", from_line: 10, to_line: 12, role: "cause" }],
+  kind: "bug",
+  severity,
+  evidence: "a.py:10",
+});
+
+const SET = {
+  set: "t",
+  version: "1",
+  method: "test",
+  cases: {
+    "o__r@1234567": {
+      instance_id: "o__r@1234567",
+      pr_summary: "x",
+      defects: [D("D1", "high"), D("D2", "low")],
+    },
+    "o__s@7654321": { instance_id: "o__s@7654321", pr_summary: "y", defects: [] },
+  },
+};
+
+const REVIEW: ReviewForJudge = {
+  verdict: "APPROVE",
+  body: null,
+  comments: [
+    { id: "C1", path: "a.py", line: 11, end_line: 11, tag: "blocker", text: "finds D1" },
+    { id: "C2", path: "b.py", line: 3, end_line: 3, tag: "nit", text: "a nit" },
+  ],
+};
+
+describe("defect sets", () => {
+  it("parse, normalise reversed sites, and refuse what a judge could not use", () => {
+    const s = parseDefectSet({
+      ...SET,
+      cases: { x: { defects: [{ ...D("D1"), sites: [{ path: "a", from_line: 9, to_line: 3 }] }] } },
+    });
+    expect(s.cases["x"]!.defects[0]!.sites[0]).toEqual({ path: "a", from_line: 3, to_line: 9 });
+    expect(() => parseDefectSet({ ...SET, cases: { x: { defects: [D("D1"), D("D1")] } } })).toThrow(
+      /duplicate/,
+    );
+    expect(() =>
+      parseDefectSet({ ...SET, cases: { x: { defects: [{ ...D("D1"), severity: "urgent" }] } } }),
+    ).toThrow(/severity/);
+    expect(() =>
+      parseDefectSet({ ...SET, cases: { x: { defects: [{ ...D("D1"), sites: [] }] } } }),
+    ).toThrow(/no site/);
+    expect(() => parseDefectSet({ ...SET, version: "" })).toThrow(/version/);
+  });
+});
+
+describe("the review as the author received it", () => {
+  it("reads either arm's run dir: tags and footers stripped, verdict and body when present", () => {
+    const run = mkdtempSync(join(tmpdir(), "defects-run-"));
+    mkdirSync(join(run, "results", "all"), { recursive: true });
+    mkdirSync(join(run, "cases", "o__r@1234567"), { recursive: true });
+    writeFileSync(
+      join(run, "results", "all", "o__r@1234567.json"),
+      JSON.stringify({
+        review: {
+          comments: [
+            {
+              path: "a.py",
+              start_line: 11,
+              end_line: 12,
+              content: "[blocker] It breaks\n\n_P1 · confidence 0.9 · lens pass-baseline_",
+            },
+            { path: "b.py", start_line: 3, end_line: 3, content: "plain OCR-style comment" },
+            { path: "c.py", start_line: 1, content: "   " },
+          ],
+        },
+      }),
+    );
+    writeFileSync(
+      join(run, "cases", "o__r@1234567", "case-summary.json"),
+      JSON.stringify({ verdict: "REQUEST_CHANGES" }),
+    );
+    writeFileSync(join(run, "cases", "o__r@1234567", "review.md"), "The body.\n");
+    const r = reviewForJudge(run, "o__r@1234567");
+    expect(r.verdict).toBe("REQUEST_CHANGES");
+    expect(r.body).toBe("The body.");
+    expect(r.comments).toEqual([
+      { id: "C1", path: "a.py", line: 11, end_line: 12, tag: "blocker", text: "It breaks" },
+      { id: "C2", path: "b.py", line: 3, end_line: 3, tag: null, text: "plain OCR-style comment" },
+    ]);
+    // A case that produced nothing is an empty review, never an error.
+    expect(reviewForJudge(run, "missing__case@0000000")).toEqual({
+      verdict: null,
+      body: null,
+      comments: [],
+    });
+  });
+
+  it("the prompt names every defect and comment by id, with sites and the counts-if note", () => {
+    const p = judgePrompt(
+      { instance_id: "o__r@1234567", repo: "o/r", title: "T", merge_base: "mb", head: "hd" },
+      [{ ...D("D1"), notes: "must name the None return" }],
+      REVIEW,
+    );
+    expect(p).toContain("D1 [high, bug] defect D1");
+    expect(p).toContain("sites: a.py:10-12 (cause)");
+    expect(p).toContain("counts if: must name the None return");
+    expect(p).toContain("C1 [blocker] a.py:11\nfinds D1");
+    expect(p).toContain("Verdict: APPROVE");
+    expect(p).toMatch(/Never run project code/);
+  });
+});
+
+describe("the judge's answer", () => {
+  const good = {
+    defects: [
+      { id: "D1", verdict: "found", comments: ["C1", "C9"], why: "C1 says it" },
+      { id: "D2", verdict: "missed", comments: [], why: "-" },
+    ],
+    comments: [
+      { id: "C1", defect: "D1", verdict: "correct-valuable", new_defect: false, why: "a.py:10" },
+      { id: "C2", defect: null, verdict: "correct-minor", new_defect: false, why: "b.py:3" },
+    ],
+  };
+
+  it("takes the last JSON object, fenced or after prose, with braces inside strings", () => {
+    expect(lastJsonObject('thinking {"a":1}\n```json\n{"b":"x}{y"}\n```\ndone')).toEqual({
+      b: "x}{y",
+    });
+    expect(lastJsonObject("no json here")).toBeUndefined();
+  });
+
+  it("parses a complete answer and drops comment ids the review does not have", () => {
+    const j = parseJudgement(JSON.stringify(good), SET.cases["o__r@1234567"].defects, REVIEW);
+    expect(j.defects[0]).toEqual({
+      id: "D1",
+      verdict: "found",
+      comments: ["C1"],
+      why: "C1 says it",
+    });
+    expect(j.comments.map((c) => c.verdict)).toEqual(["correct-valuable", "correct-minor"]);
+  });
+
+  it("refuses an answer that skips, repeats or invents an id, or leaves the vocabulary", () => {
+    const defects = SET.cases["o__r@1234567"].defects;
+    const bad = (patch: object) => JSON.stringify({ ...good, ...patch });
+    expect(() => parseJudgement(bad({ defects: [good.defects[0]] }), defects, REVIEW)).toThrow(
+      /skips defect/,
+    );
+    expect(() => parseJudgement(bad({ comments: [good.comments[0]] }), defects, REVIEW)).toThrow(
+      /skips comment/,
+    );
+    expect(() =>
+      parseJudgement(bad({ defects: [...good.defects, good.defects[0]] }), defects, REVIEW),
+    ).toThrow(/twice/);
+    expect(() =>
+      parseJudgement(
+        bad({ defects: [...good.defects, { id: "D9", verdict: "found" }] }),
+        defects,
+        REVIEW,
+      ),
+    ).toThrow(/unknown defect/);
+    expect(() =>
+      parseJudgement(
+        bad({ defects: [{ ...good.defects[0], verdict: "sort-of" }, good.defects[1]] }),
+        defects,
+        REVIEW,
+      ),
+    ).toThrow(/verdict/);
+    expect(() =>
+      parseJudgement(
+        bad({ comments: [good.comments[0], { ...good.comments[1], verdict: "fine" }] }),
+        defects,
+        REVIEW,
+      ),
+    ).toThrow(/verdict/);
+    expect(() => parseJudgement("nothing", defects, REVIEW)).toThrow(/no JSON/);
+  });
+});
+
+describe("scoring", () => {
+  const J = (
+    round: number,
+    d1: "found" | "partial" | "missed",
+    c2: string,
+    extra: Partial<CaseJudgement> = {},
+  ): CaseJudgement => ({
+    instance_id: "o__r@1234567",
+    round,
+    defect_set_version: "1",
+    model: "m",
+    defects: [
+      { id: "D1", verdict: d1, comments: d1 === "missed" ? [] : ["C1"], why: "" },
+      { id: "D2", verdict: "missed", comments: [], why: "" },
+    ],
+    comments: [
+      {
+        id: "C1",
+        defect: d1 === "missed" ? null : "D1",
+        verdict: d1 === "missed" ? "incorrect" : "correct-valuable",
+        new_defect: false,
+        why: "",
+      },
+      {
+        id: "C2",
+        defect: null,
+        verdict: c2 as never,
+        new_defect: c2 === "correct-valuable",
+        why: "new thing",
+      },
+    ],
+    ...extra,
+  });
+  const set = parseDefectSet(SET);
+
+  it("averages rounds per case; partial is half; weights high 3 / medium 2 / low 1", () => {
+    const s = scoreRun(
+      set,
+      ["o__r@1234567"],
+      { "o__r@1234567": [J(1, "found", "correct-minor"), J(2, "partial", "correct-minor")] },
+      { "o__r@1234567": REVIEW },
+    );
+    expect(s.defects.total).toBe(2);
+    expect(s.by_severity.high).toEqual({ total: 1, credit: 0.75, recall: 0.75 });
+    expect(s.defects.recall).toBeCloseTo(0.375);
+    expect(s.weighted_recall).toBeCloseTo((3 * 0.75) / 4);
+    expect(s.comments["correct-valuable"]).toBe(1);
+    expect(s.comments["correct-minor"]).toBe(1);
+    expect(s.comments.correct_share).toBe(1);
+    expect(s.approved_over_missed_high).toEqual([]);
+  });
+
+  it("an errored or unjudged case misses every defect and verifies nothing — it never leaves the denominator", () => {
+    const err = { ...J(1, "found", "correct-minor"), error: "judge timed out" };
+    const s = scoreRun(
+      set,
+      ["o__r@1234567", "o__s@7654321"],
+      { "o__r@1234567": [err] },
+      { "o__r@1234567": REVIEW },
+    );
+    expect(s.judged).toBe(0);
+    expect(s.errors).toBe(1);
+    expect(s.defects.missed).toBe(2);
+    expect(s.comments.unverifiable).toBe(2);
+  });
+
+  it("counts wrong blockers, approvals over a missed high defect, and new-defect candidates once", () => {
+    const s = scoreRun(
+      set,
+      ["o__r@1234567"],
+      { "o__r@1234567": [J(1, "missed", "correct-valuable"), J(2, "missed", "correct-valuable")] },
+      { "o__r@1234567": REVIEW },
+    );
+    expect(s.comments.wrong_blockers).toBe(1);
+    expect(s.approved_over_missed_high).toEqual(["o__r@1234567"]);
+    expect(s.new_defect_candidates).toEqual([
+      { instance_id: "o__r@1234567", comment: "C2", why: "new thing" },
+    ]);
+    const md = renderDefectReport("t", set, s, {
+      tokensInPerPr: 1_000_000,
+      tokensOutPerPr: 15_000,
+      medianMinPerPr: 5,
+    });
+    expect(md).toContain("## Did the review find the real defects?");
+    expect(md).toContain("| 2 | 0 | 0 | 2 | 0% | 0% |");
+    expect(md).toContain("Approved despite a missed high-severity defect: o__r@1234567");
+    expect(md).toContain("| 1000k | 15.0k | 5.0 |");
+  });
+});
+
+describe("the judge session", () => {
+  it("is read-only: only read and bash, bash behind the no-exec guard, no project files, no session", () => {
+    const argv = judgePiArgv("/opt/quickreview/sandbox", "openai-codex/gpt-6-sol:high");
+    expect(argv).toEqual(
+      expect.arrayContaining([
+        "-p",
+        "--no-session",
+        "--no-approve",
+        "--no-extensions",
+        "--no-context-files",
+      ]),
+    );
+    expect(argv[argv.indexOf("--tools") + 1]).toBe("read,bash");
+    expect(argv[argv.indexOf("--extension") + 1]).toBe(
+      "/opt/quickreview/sandbox/extensions/bash-guard.ts",
+    );
+    expect(argv.filter((a) => a === "--extension")).toHaveLength(1);
+    expect(judgeLabel("3", "openai-codex/gpt-6-sol:high")).toBe("v3-gpt-6-sol-high");
+  });
+
+  it("writes one file per round, records a bad answer as an error, and resumes only what is missing", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "defects-judge-"));
+    const answer = JSON.stringify({
+      defects: [
+        { id: "D1", verdict: "found", comments: ["C1"], why: "x" },
+        { id: "D2", verdict: "missed", comments: [], why: "y" },
+      ],
+      comments: [
+        { id: "C1", defect: "D1", verdict: "correct-valuable", new_defect: false, why: "z" },
+        { id: "C2", defect: null, verdict: "correct-minor", new_defect: false, why: "w" },
+      ],
+    });
+    const fake = join(dir, "fake-pi.sh");
+    const counter = join(dir, "calls");
+    // Round 1 answers well; any later call answers garbage.
+    writeFileSync(
+      fake,
+      `#!/bin/sh\ncat >/dev/null\nn=$(cat ${counter} 2>/dev/null || echo 0); n=$((n+1)); echo $n > ${counter}\n` +
+        `if [ "$n" = 1 ]; then printf '%s\\n' '${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: answer }], usage: { input: 10, output: 5, cacheRead: 2 } } }).replace(/'/g, "'\\''")}'; ` +
+        `else printf '%s\\n' '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"no idea"}]}}'; fi\n`,
+    );
+    chmodSync(fake, 0o755);
+    const common = {
+      pr: { instance_id: "o__r@1234567", repo: "o/r", title: "T", merge_base: "mb", head: "hd" },
+      defects: SET.cases["o__r@1234567"].defects,
+      review: REVIEW,
+      outDir: join(dir, "judge"),
+      defectSetVersion: "1",
+      log: () => {},
+      pi: {
+        root: "/x",
+        cwd: dir,
+        model: "m",
+        env: { PATH: process.env.PATH },
+        timeoutMs: 10_000,
+        piBin: fake,
+      },
+    };
+    const js = await judgeCase({ ...common, rounds: 2, resume: false });
+    expect(js[0]!.error).toBeUndefined();
+    expect(js[0]!.usage).toEqual({ input: 10, output: 5, cacheRead: 2 });
+    expect(js[1]!.error).toMatch(/no JSON/);
+    expect(existsSync(join(dir, "judge", "o__r@1234567.r2.answer.txt"))).toBe(true);
+    // Resume keeps the good round 1 and re-asks only the errored round 2.
+    const again = await judgeCase({ ...common, rounds: 2, resume: true });
+    expect(readFileSync(counter, "utf8").trim()).toBe("3");
+    expect(again[0]!.defects[0]!.verdict).toBe("found");
+    expect(Object.keys(loadJudgements(join(dir, "judge")))).toEqual(["o__r@1234567"]);
+  });
+});

@@ -18,6 +18,11 @@
 //              [--bridge URL] [--ocr-bin PATH]      cases run ONE AT A TIME
 //   ocr-report --set <file> --out DIR
 //
+// The defect benchmark (src/bench/defects.ts; any run dir, either arm):
+//   defect-judge  --set <file> --defects <file> --out RUN_DIR [--only id,id] [--rounds 1]
+//                 [--model openai-codex/gpt-6-sol:high] [--concurrency 3] [--resume] [--label L]
+//   defect-report --set <file> --defects <file> --out RUN_DIR [--label L]   rescore, no model calls
+//
 // Nothing here can reach GitHub except `prefetch` (anonymous, read-only), and
 // nothing can post: this module imports no gate, adapter or token code, and the
 // image ships no `scripts/`, no `gh` and no credential.
@@ -53,11 +58,21 @@ import {
   buildBenchAgents,
   collectComments,
   contextFor,
+  prepareTree,
   reviewCase,
   runFingerprint,
   writeResults,
   type CaseSummary,
 } from "./runner.js";
+import {
+  parseDefectSet,
+  renderDefectReport,
+  reviewForJudge,
+  scoreRun,
+  type DefectSet,
+  type ReviewForJudge,
+} from "./defects.js";
+import { clearJudgeCase, judgeCase, judgeLabel, loadJudgements } from "./defectjudge.js";
 
 const DEFAULTS = {
   root: "/opt/quickreview/sandbox",
@@ -579,6 +594,153 @@ async function main(): Promise<number> {
     return 0;
   }
 
+  if (f.cmd === "defect-judge" || f.cmd === "defect-report") {
+    // The defect benchmark (src/bench/defects.ts): did each review FIND the
+    // real defects, and is what it says true? Works on any run dir — ours or
+    // the OCR arm's, fresh or archived — without re-running a review.
+    const set = loadSet(f.get("--set"));
+    const outDir = resolve(f.get("--out") ?? "");
+    if (!f.get("--out")) throw new Error("--out <run dir> is required");
+    if (!f.get("--defects")) throw new Error("--defects <defect set file> is required");
+    const defects: DefectSet = parseDefectSet(
+      JSON.parse(readFileSync(f.get("--defects")!, "utf8")),
+    );
+    const model = f.get("--model") ?? "openai-codex/gpt-6-sol:high";
+    const label = f.get("--label") ?? judgeLabel(defects.version, model);
+    const judgeDir = join(outDir, "judge", label);
+    const cases = selectCases(set, only(f)).filter((c) => {
+      if (defects.cases[c.instance_id]) return true;
+      log(
+        `defect-judge: ${c.instance_id} has no ground truth in ${defects.set} v${defects.version} — skipped`,
+      );
+      return false;
+    });
+    const reviews: Record<string, ReviewForJudge> = {};
+    for (const c of cases) reviews[c.instance_id] = reviewForJudge(outDir, safeId(c.instance_id));
+    if (f.cmd === "defect-judge") {
+      const rounds = Number(f.get("--rounds") ?? "1");
+      if (!Number.isInteger(rounds) || rounds < 1)
+        throw new Error("--rounds must be a positive integer");
+      const authSrc = f.get("--auth-src") ?? DEFAULTS.authSrc;
+      const agentDir = f.get("--agent-dir") ?? DEFAULTS.agentDir;
+      const timeoutMs = Number(f.get("--timeout-min") ?? "30") * 60_000;
+      const resume = f.has("--resume");
+      mkdirSync(judgeDir, { recursive: true });
+      let authStop: string | null = null;
+      await pool(cases, Number(f.get("--concurrency") ?? "3"), async (c) => {
+        if (authStop) return;
+        try {
+          syncBenchAuth({ srcDir: authSrc, dstDir: agentDir, root, needMs: timeoutMs });
+        } catch (err) {
+          if (!(err instanceof AuthExpiring)) throw err;
+          authStop = err.message;
+          log(`defect-judge: STOPPED — ${err.message}`);
+          return;
+        }
+        const meta = readMeta(store, c);
+        const safe = safeId(c.instance_id);
+        const tree = join(root, "wt", `judge-${safe}`);
+        const tmpDir = join(root, "wt", `judge-${safe}.tmp`);
+        mkdirSync(tmpDir, { recursive: true });
+        await prepareTree(storeDir(store, c), tree, meta);
+        if (!resume) clearJudgeCase(judgeDir, safe);
+        await judgeCase({
+          pr: {
+            instance_id: safe,
+            repo: c.repo,
+            title: meta.title,
+            merge_base: meta.merge_base,
+            head: meta.head_commit,
+          },
+          defects: defects.cases[c.instance_id]!.defects,
+          review: reviews[c.instance_id]!,
+          outDir: judgeDir,
+          rounds,
+          defectSetVersion: defects.version,
+          resume,
+          log,
+          pi: {
+            root,
+            cwd: tree,
+            model,
+            timeoutMs,
+            env: {
+              PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+              HOME: process.env.HOME ?? "/tmp",
+              TMPDIR: tmpDir,
+              LANG: "C.UTF-8",
+              PI_CODING_AGENT_DIR: agentDir,
+              GIT_CONFIG_NOSYSTEM: "1",
+              GIT_CONFIG_SYSTEM: "/dev/null",
+              GIT_CONFIG_GLOBAL: "/dev/null",
+              GIT_TERMINAL_PROMPT: "0",
+            },
+          },
+        });
+        rmSync(tree, { recursive: true, force: true });
+        rmSync(tmpDir, { recursive: true, force: true });
+      });
+      if (authStop) return 1;
+    }
+    const judged = loadJudgements(judgeDir);
+    const byCase: Record<string, (typeof judged)[string]> = {};
+    for (const c of cases) byCase[c.instance_id] = judged[safeId(c.instance_id)] ?? [];
+    const score = scoreRun(
+      defects,
+      cases.map((c) => c.instance_id),
+      byCase,
+      reviews,
+    );
+    // Cost, from what the run itself recorded (both arms).
+    let tin = 0,
+      tout = 0;
+    const secs: number[] = [];
+    for (const c of cases) {
+      const p = join(outDir, "cases", safeId(c.instance_id), "case-summary.json");
+      if (!existsSync(p)) continue;
+      const s = JSON.parse(readFileSync(p, "utf8")) as {
+        usage?: { input?: number; output?: number; cacheRead?: number };
+        ocr_tokens?: { input?: number; output?: number };
+        duration_seconds?: number;
+      };
+      tin += (s.usage?.input ?? s.ocr_tokens?.input ?? 0) + (s.usage?.cacheRead ?? 0);
+      tout += s.usage?.output ?? s.ocr_tokens?.output ?? 0;
+      secs.push(s.duration_seconds ?? 0);
+    }
+    secs.sort((a, b) => a - b);
+    const extra = secs.length
+      ? {
+          tokensInPerPr: tin / secs.length,
+          tokensOutPerPr: tout / secs.length,
+          medianMinPerPr: (secs[Math.floor(secs.length / 2)] ?? 0) / 60,
+        }
+      : {};
+    mkdirSync(judgeDir, { recursive: true });
+    writeFileSync(
+      join(judgeDir, "score.json"),
+      JSON.stringify(
+        {
+          label,
+          model,
+          defect_set: defects.set,
+          defect_set_version: defects.version,
+          ...score,
+          cost: extra,
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    writeFileSync(
+      join(judgeDir, "report.md"),
+      renderDefectReport(`${set.name} — ${outDir.split("/").pop()}`, defects, score, extra),
+    );
+    log(
+      `${f.cmd}: ${score.judged}/${score.cases} judged — recall ${(score.defects.recall * 100).toFixed(0)}% (weighted ${(score.weighted_recall * 100).toFixed(0)}%), comments correct ${(score.comments.correct_share * 100).toFixed(0)}% → ${join(judgeDir, "report.md")}`,
+    );
+    return score.errors ? 1 : 0;
+  }
+
   if (f.cmd === "report") {
     const set = loadSet(f.get("--set"));
     const outDir = resolve(f.get("--out") ?? "");
@@ -600,7 +762,7 @@ async function main(): Promise<number> {
     readFileSync(new URL(import.meta.url))
       .toString()
       .split("\n")
-      .slice(0, 24)
+      .slice(0, 28)
       .join("\n") + "\n",
   );
   return 2;
