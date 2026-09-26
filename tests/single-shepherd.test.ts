@@ -163,11 +163,9 @@ describe("daemon topology", () => {
     // bench/runner.ts is the AACR-Bench sandbox's one-shot `pi -p` round: it
     // runs only inside the qcr-bench image (no daemon, no gate, no scripts/,
     // no credential), under a `bench-<id>` name no adopt() can match, and the
-    // process exits when its round settles. bench/defectjudge.ts is the same
-    // sandbox's defect judge: a sessionless `pi -p` with only the read and
-    // bash tools (bash behind the no-exec guard) in a throwaway checkout.
+    // process exits when its round settles.
     const allowed = ["sessions.ts", "smoke-session.ts", "companion.ts"];
-    const allowedPaths = ["/src/bench/runner.ts", "/src/bench/defectjudge.ts"];
+    const allowedPaths = ["/src/bench/runner.ts"];
     const offenders = srcFiles(src)
       .filter((f) => !allowed.includes(f.slice(f.lastIndexOf("/") + 1)))
       .filter((f) => !allowedPaths.some((p) => f.endsWith(p)))

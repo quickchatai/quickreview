@@ -21,7 +21,8 @@ import {
   type Defect,
   type ReviewForJudge,
 } from "../src/bench/defects.js";
-import { judgeCase, judgeLabel, judgePiArgv, loadJudgements } from "../src/bench/defectjudge.js";
+import { judgeCase, judgeLabel, loadJudgements } from "../src/bench/defectjudge.js";
+import { judgePiArgv } from "../src/bench/runner.js";
 
 const D = (id: string, severity: "high" | "medium" | "low" = "high"): Defect => ({
   id,
@@ -322,7 +323,8 @@ describe("the judge session", () => {
         { id: "C2", defect: null, verdict: "correct-minor", new_defect: false, why: "w" },
       ],
     });
-    const fake = join(dir, "fake-pi.sh");
+    mkdirSync(join(dir, "bin"));
+    const fake = join(dir, "bin", "pi");
     const counter = join(dir, "calls");
     // Round 1 answers well; any later call answers garbage.
     writeFileSync(
@@ -343,9 +345,9 @@ describe("the judge session", () => {
         root: "/x",
         cwd: dir,
         model: "m",
-        env: { PATH: process.env.PATH },
+        // The judge spawns `pi` from the env PATH: the fake stands first.
+        env: { PATH: `${join(dir, "bin")}:${process.env.PATH ?? ""}` },
         timeoutMs: 10_000,
-        piBin: fake,
       },
     };
     const js = await judgeCase({ ...common, rounds: 2, resume: false });

@@ -6,18 +6,9 @@
 // truth's version and the judge model (the label), so a run can be re-judged
 // against a newer defect set without touching the old verdicts, and re-scored
 // (`defect-report`) with no model call at all.
-import { spawn } from "node:child_process";
-import {
-  createWriteStream,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
+import { runJudgeSession } from "./runner.js";
 import {
   judgePrompt,
   parseJudgement,
@@ -34,34 +25,6 @@ export interface JudgePiOptions {
   env: NodeJS.ProcessEnv;
   eventsPath: string;
   timeoutMs: number;
-  piBin?: string;
-}
-
-/**
- * The judge's pi argv: no session, no skills/templates/context files, no
- * project-local files, no extension but the no-exec bash guard, and only the
- * `read` and `bash` tools. The judge reads code to check a claim; it never
- * runs it and never writes.
- */
-export function judgePiArgv(root: string, model: string): string[] {
-  return [
-    "-p",
-    "--no-session",
-    "--no-approve",
-    "--no-extensions",
-    "--extension",
-    join(root, "extensions", "bash-guard.ts"),
-    "--tools",
-    "read,bash",
-    "--no-skills",
-    "--no-context-files",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--model",
-    model,
-    "--mode",
-    "json",
-  ];
 }
 
 export interface JudgePiResult {
@@ -71,70 +34,46 @@ export interface JudgePiResult {
   timedOut: boolean;
 }
 
-/** Run one judge session; the prompt goes in on stdin (argv caps at 128 KiB). */
-export function runJudgePi(prompt: string, o: JudgePiOptions): Promise<JudgePiResult> {
-  return new Promise((resolve) => {
-    const events = createWriteStream(o.eventsPath, { flags: "w" });
-    const child = spawn(o.piBin ?? "pi", judgePiArgv(o.root, o.model), {
-      cwd: o.cwd,
-      env: o.env,
-      stdio: ["pipe", "pipe", "pipe"],
-      detached: true,
-    });
-    let text = "";
-    const usage = { input: 0, output: 0, cacheRead: 0 };
-    let timedOut = false;
-    const lines = createInterface({ input: child.stdout });
-    lines.on("line", (line) => {
-      if (
-        line.startsWith('{"type":"message_update"') ||
-        line.startsWith('{"type":"tool_execution_update"')
-      )
-        return;
-      events.write(line + "\n");
-      let e: {
-        type?: string;
-        message?: { role?: string; content?: unknown[]; usage?: Record<string, number> };
-      };
-      try {
-        e = JSON.parse(line);
-      } catch {
-        return;
-      }
-      if (e.type !== "message_end" || e.message?.role !== "assistant") return;
-      const u = e.message.usage ?? {};
-      usage.input += u["input"] ?? 0;
-      usage.output += u["output"] ?? 0;
-      usage.cacheRead += u["cacheRead"] ?? 0;
-      const t = (e.message.content ?? [])
-        .map((p) =>
-          (p as { type?: string; text?: string }).type === "text"
-            ? ((p as { text?: string }).text ?? "")
-            : "",
-        )
-        .join("");
-      if (t.trim()) text = t;
-    });
-    child.stderr.on("data", (d) => events.write(`# stderr: ${String(d)}`));
-    child.stdin.end(prompt);
-    const kill = (sig: NodeJS.Signals): void => {
-      try {
-        if (child.pid) process.kill(-child.pid, sig);
-      } catch {
-        // already gone
-      }
+/**
+ * Run one judge session through the bench's ONE pi spawn (runner.ts owns the
+ * judge's argv too — tests/single-shepherd.test.ts S2), then read the answer
+ * and the usage back out of the event stream it wrote.
+ */
+export async function runJudgePi(prompt: string, o: JudgePiOptions): Promise<JudgePiResult> {
+  const r = await runJudgeSession(prompt, o);
+  return { ...readJudgeEvents(o.eventsPath), code: r.code, timedOut: r.timedOut };
+}
+
+/** The last assistant text and the summed usage from a pi `--mode json` stream. */
+export function readJudgeEvents(eventsPath: string): Pick<JudgePiResult, "text" | "usage"> {
+  let text = "";
+  const usage = { input: 0, output: 0, cacheRead: 0 };
+  const raw = existsSync(eventsPath) ? readFileSync(eventsPath, "utf8") : "";
+  for (const line of raw.split("\n")) {
+    if (!line.startsWith("{")) continue;
+    let e: {
+      type?: string;
+      message?: { role?: string; content?: unknown[]; usage?: Record<string, number> };
     };
-    const timer = setTimeout(() => {
-      timedOut = true;
-      kill("SIGTERM");
-      setTimeout(() => kill("SIGKILL"), 15_000).unref();
-    }, o.timeoutMs);
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      events.end();
-      resolve({ text, usage, code, timedOut });
-    });
-  });
+    try {
+      e = JSON.parse(line) as typeof e;
+    } catch {
+      continue;
+    }
+    if (e.type !== "message_end" || e.message?.role !== "assistant") continue;
+    const u = e.message.usage ?? {};
+    usage.input += u["input"] ?? 0;
+    usage.output += u["output"] ?? 0;
+    usage.cacheRead += u["cacheRead"] ?? 0;
+    const t = (e.message.content ?? [])
+      .map((p) => {
+        const q = p as { type?: string; text?: string };
+        return q.type === "text" ? (q.text ?? "") : "";
+      })
+      .join("");
+    if (t.trim()) text = t;
+  }
+  return { text, usage };
 }
 
 export interface JudgeCaseOptions {

@@ -310,13 +310,15 @@ export function renderCasePrompts(args: {
   return { system, order: orderText, plannedLenses: order.pass_plan.map((p) => p.agent) };
 }
 
-interface PiRun {
+export interface PiRun {
   code: number | null;
   timedOut: boolean;
   streamError: string | null;
 }
 
-function runPi(
+/** The bench's ONE pi spawn (tests/single-shepherd.test.ts S2): the review
+ * round and the defect judge (defectjudge.ts) both go through it. */
+export function runPi(
   argv: string[],
   env: NodeJS.ProcessEnv,
   cwd: string,
@@ -385,6 +387,57 @@ function runPi(
       resolve({ code, timedOut, streamError });
     });
   });
+}
+
+/**
+ * The defect judge's pi argv (src/bench/defectjudge.ts): no session, no
+ * skills/templates/context files, no project-local files, no extension but the
+ * no-exec bash guard, and only the \`read\` and \`bash\` tools. The judge reads
+ * code to check a claim; it never runs it and never writes.
+ */
+export function judgePiArgv(root: string, model: string): string[] {
+  return [
+    "-p",
+    "--no-session",
+    "--no-approve",
+    "--no-extensions",
+    "--extension",
+    join(root, "extensions", "bash-guard.ts"),
+    "--tools",
+    "read,bash",
+    "--no-skills",
+    "--no-context-files",
+    "--no-prompt-templates",
+    "--no-themes",
+    "--model",
+    model,
+    "--mode",
+    "json",
+  ];
+}
+
+/** One judge session: \`pi\` from the env's PATH, the prompt on stdin. */
+export function runJudgeSession(
+  prompt: string,
+  o: {
+    root: string;
+    cwd: string;
+    model: string;
+    env: NodeJS.ProcessEnv;
+    eventsPath: string;
+    timeoutMs: number;
+  },
+): Promise<PiRun> {
+  return runPi(
+    judgePiArgv(o.root, o.model),
+    o.env,
+    o.cwd,
+    o.eventsPath,
+    o.eventsPath.replace(/\.jsonl$/, ".stderr.log"),
+    o.timeoutMs,
+    "pi",
+    prompt,
+  );
 }
 
 function readJson(path: string): unknown {
