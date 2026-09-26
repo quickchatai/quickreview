@@ -35,7 +35,7 @@ What a slip looks like:
   field or unit in the copy;
 - an inverted or off-by-one condition, `<` for `<=`, a comparison against the
   wrong constant;
-- placeholder text that ships: `TODO`, `FIXME`, "write a help string", a raw
+- placeholder text that ships: `TODO`, `FIXME`, stub help or error text, a raw
   translation key shown to users where a translated string was meant;
 - a new binding, import or parameter nothing uses — a build break when the
   repo's lint or compiler settings reject unused code (read the CI or lint

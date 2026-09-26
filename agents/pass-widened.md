@@ -21,23 +21,24 @@ Work through these steps in your notes before writing any finding:
    predicate and every reader of the list — not only the ones in the diff. One
    row per consumer: its `file:line`, the branch it takes when the check
    passes, and what that branch ASSUMES about the member (capabilities, data
-   layout, format, version, button or field count).
+   layout, format, version, which features it has).
 3. **New member × consumer.** For each newly admitted member and each
    consumer row: does the assumption hold for this member? A row where it
    does not is a finding, anchored where the PR widened the check and naming
    the consumer.
 4. **Checks that stand in for a property.** When a check stands in for a
    property — `ptr != nil` meaning "readable and already computed",
-   `!== "utf8"` meaning "not UTF-8", `len > 0` meaning "valid" — list the
-   values that pass the check without having the property: spelling variants
-   (`"UTF-8"`, `"utf-8"`, `"utf8"`), sentinels, empty-but-present, partially
-   initialised states. Trace each to what it breaks.
+   `status != "draft"` meaning "published", `len > 0` meaning "valid" — list
+   the values that pass the check without having the property: other
+   spellings and letter cases of the same name, sentinels, empty-but-present
+   values, partially initialised states. Trace each to what it breaks.
 5. **Completeness of the family.** When the PR adds members of a family
    (models, transports, platforms, error codes, locales), list the family as
    the PR text or the surrounding table defines it, and check that every
-   combination is present — each model over USB and over Bluetooth, each
-   platform in each table. A missing combination is a finding.
-6. **The smallest result.** For code that filters, merges, welds or removes
+   combination is present — every variant through every channel it can
+   arrive by, every platform in every table. A missing combination is a
+   finding.
+6. **The smallest result.** For code that filters, merges, deduplicates or removes
    items, trace the smallest possible result — zero items, one item — into
    every consumer.
 

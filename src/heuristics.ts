@@ -426,8 +426,12 @@ const ENCODING_RE =
 const WRITE_RE =
   /\b(writeFile\w*|createWriteStream|fs\.write\w*|\.write\(|\.save\(|saveDocument|applyEdit|open\([^)\n]*['"][wa]b?\+?['"]|write_text|write_bytes)/;
 
+/** Work that is recorded now and done later: queues, timers, coalescing, and
+ * the drain step on the other side ("run the pending callbacks", flush). Case
+ * does not matter — a comment saying "Coalesce" counts as much as the call —
+ * and a snake_case prefix does not hide a term (`task_enqueue`). */
 const DEFER_RE =
-  /\b(enqueue\w*|dequeue\w*|queue\w*|Queue\w*|setTimeout|setImmediate|nextTick|requestAnimationFrame|debounce\w*|throttle\w*|coalesc\w*|defer\w*|schedule\w*|apply_async|\.delay\(|create_task|call_soon\w*|run_in_executor|go func|spawn\w*|dispatch_async|post_task|wakeup\w*|mp_dispatch\w*|pending_\w+)/g;
+  /(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]*_)?(enqueue\w*|dequeue\w*|queue\w*|setTimeout|setImmediate|nextTick|requestAnimationFrame|debounce\w*|throttle\w*|coalesc\w*|defer\w*|schedule\w*|apply_async|delay\(|create_task|call_soon\w*|run_in_executor|go func|spawn\w*|dispatch_async|post_task|wakeup\w*|pending\w*|flush\w*|drain\w*|\w*run_\w*callbacks)/gi;
 
 const LOOP_RE = /^\+.*\b(while\s*\(|while\s+\w|loop\s*\{|for\s*\(\s*;\s*;|for\s*\{)/m;
 const REMOTE_RE =
@@ -495,7 +499,8 @@ export const SUBLENS_TRIGGERS: readonly SubLensTrigger[] = [
     family: "pass-concurrency",
     fires: (files) => {
       for (const { file, added } of addedCode(files)) {
-        const hits = new Set((added.match(DEFER_RE) ?? []).map((h) => h.toLowerCase()));
+        // Distinct TERMS (the capture), not distinct spellings around them.
+        const hits = new Set([...added.matchAll(DEFER_RE)].map((m) => (m[1] ?? "").toLowerCase()));
         if (hits.size >= 2) return `work is queued or deferred in ${file.filename}`;
       }
       return null;

@@ -21,7 +21,7 @@ In your notes, one row per claim:
    change, does the named warning still fire — check the types and conversions
    in every rewritten expression, not just its shape; does the named failure
    still happen on the path the PR describes; is a stated constraint ("only
-   firmware 2.05 and later", "only when X") ENFORCED in code, or only written
+   version N and later", "only when X") ENFORCED in code, or only written
    in the description?
 4. **Coverage.** Does the fix reach every site of the same problem that the
    claim covers, including sites the PR did not touch?

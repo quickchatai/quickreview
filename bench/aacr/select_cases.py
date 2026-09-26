@@ -35,6 +35,15 @@ other filters, none of smoke10's or holdout10's repositories, quota C++ 2 /
 TypeScript 1 / JavaScript 1 / Go 1 / Java 1 / Rust 1 / C 1 / C# 1 / PHP 1
 (C++ is the dataset's largest language), smallest first, one PR per repo.
 
+`fresh10` — an OUT-OF-SAMPLE set for the 2026-09-26 review levers, which were
+designed from the missed defects of smoke10, dev10 and holdout10: none of those
+30 PRs (a different PR of the same repository is allowed — the levers were
+built from specific defects, not from projects), 60 <= change_line_count <=
+400, no documentation / test-suite / style-only category, no reference minimum
+(the defect benchmark builds its own ground truth), quota weighted to the
+deployed stack — Python 4 / TypeScript 4 / JavaScript 1 / Go 1 — smallest
+first, one PR per repo.
+
 `full` — every v1.0 PR, in dataset order. That is the real benchmark.
 
 Standard library only: it runs on the host before any image exists.
@@ -59,6 +68,11 @@ HOLDOUT_QUOTA = OrderedDict(
     [("Python", 1), ("TypeScript", 2), ("JavaScript", 2), ("Go", 1), ("Java", 2), ("Rust", 1), ("C", 1)]
 )
 DEV_MAX_LINES = 400
+FRESH_QUOTA = OrderedDict([("Python", 4), ("TypeScript", 4), ("JavaScript", 1), ("Go", 1)])
+FRESH_MIN_LINES = 60
+FRESH_SKIP_CATEGORIES = frozenset(
+    {"Documentation Update", "Test Suite / CI Enhancements", "Code Style, Linting, Formatting Fixes"}
+)
 DEV_QUOTA = OrderedDict(
     [("C++", 2), ("TypeScript", 1), ("JavaScript", 1), ("Go", 1), ("Java", 1), ("Rust", 1), ("C", 1),
      ("C#", 1), ("PHP", 1)]
@@ -142,8 +156,33 @@ def smoke10(
     return chosen, backups
 
 
+def fresh10(records: list[dict], taken: frozenset) -> list[dict]:
+    eligible = [
+        c
+        for c in (case_of(r) for r in records if FRESH_MIN_LINES <= r["change_line_count"] <= DEV_MAX_LINES)
+        if c["instance_id"] not in taken
+        and c["instance_id"] not in UNREACHABLE_HEADS
+        and c["pr_category"] not in FRESH_SKIP_CATEGORIES
+    ]
+    eligible.sort(key=lambda c: (c["change_line_count"], c["pr_url"]))
+    chosen: list[dict] = []
+    used: set[str] = set()
+    for language, quota in FRESH_QUOTA.items():
+        for c in (c for c in eligible if c["language"] == language):
+            if quota == 0:
+                break
+            if c["repo"] in used:
+                continue
+            chosen.append(c)
+            used.add(c["repo"])
+            quota -= 1
+        if quota > 0:
+            raise SystemExit(f"not enough eligible {language} PRs for the fresh10 quota")
+    return chosen
+
+
 def main() -> None:
-    if len(sys.argv) != 3 or sys.argv[2] not in ("smoke10", "holdout10", "dev10", "full"):
+    if len(sys.argv) != 3 or sys.argv[2] not in ("smoke10", "holdout10", "dev10", "fresh10", "full"):
         raise SystemExit(__doc__)
     path, name = sys.argv[1], sys.argv[2]
     raw = open(path, "rb").read()
@@ -179,6 +218,19 @@ def main() -> None:
             f"no smoke10 or holdout10 repository, quota {dict(DEV_QUOTA)}, smallest first, one PR per repo; "
             f"unreachable heads excluded ({', '.join(UNREACHABLE_HEADS)}); a short language is filled "
             "with the smallest remaining eligible PR from an unused repo"
+        )
+    elif name == "fresh10":
+        smoke, _ = smoke10(records)
+        holdout, _ = smoke10(records, HOLDOUT_QUOTA, frozenset(c["repo"] for c in smoke), fill_to=10)
+        dev, _ = smoke10(
+            records, DEV_QUOTA, frozenset(c["repo"] for c in smoke + holdout), fill_to=10,
+            max_lines=DEV_MAX_LINES,
+        )
+        cases, backups = fresh10(records, frozenset(c["instance_id"] for c in smoke + holdout + dev)), []
+        rule = (
+            f"{FRESH_MIN_LINES}<=change_line_count<={DEV_MAX_LINES}, not one of the smoke10/holdout10/dev10 PRs, "
+            f"no {sorted(FRESH_SKIP_CATEGORIES)} category, quota {dict(FRESH_QUOTA)}, smallest first, "
+            "one PR per repo — out-of-sample for the levers designed from those 30 PRs' missed defects"
         )
     else:
         cases, backups = [case_of(r) for r in records], []

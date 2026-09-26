@@ -19,7 +19,7 @@ Answer each pairing with `file:line` evidence:
 - **New client against old code.** Does the new client rely on a field, page
   size, endpoint or behaviour an old server or node does not provide?
 - **State persisted by the old version.** Stored settings, persisted client
-  state (redux-persist, localStorage), cached objects, rows written before the
+  state (browser storage, local databases), cached objects, rows written before the
   change: do they still load, and does a new field get a value on upgrade — a
   migration or a version bump where the persistence layer needs one?
 - **First read of a new setting.** What does code see when it reads the new

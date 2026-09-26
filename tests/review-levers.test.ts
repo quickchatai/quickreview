@@ -163,6 +163,15 @@ describe("selectSubLenses — content, not paths", () => {
       lenses([file("player/command.c", ["mp_dispatch_enqueue(q, fn);", "pending_resize = true;"])]),
     ).toContain("pass-deferred");
     expect(lenses([file("a.ts", ["setTimeout(f, 10)"])])).not.toContain("pass-deferred");
+    // record-now-run-later with the drain on the other side (mpv's option callbacks)
+    expect(
+      lenses([
+        file("player/command.c", [
+          "    // Coalesce redundant updates and only keep the newest one.",
+          "void mp_option_run_callbacks(struct MPContext *mpctx)",
+        ]),
+      ]),
+    ).toContain("pass-deferred");
   });
 
   it("bounds: a loop over remote pages, a limited read, an unchecked cast, a host leak", () => {

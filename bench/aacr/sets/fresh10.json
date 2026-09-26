@@ -1,0 +1,134 @@
+{
+  "name": "fresh10",
+  "dataset": {
+    "source": "https://github.com/alibaba/aacr-bench",
+    "commit": "ab8af8d5c74e2a4d1945d247ea4bbc49f93eb33f",
+    "file": "dataset/positive_samples.json",
+    "sha256": "d8683cb240249bc4e0aff6428802bdffa7b7573ace600552cab1cd0cb7e905c9"
+  },
+  "rule": "60<=change_line_count<=400, not one of the smoke10/holdout10/dev10 PRs, no ['Code Style, Linting, Formatting Fixes', 'Documentation Update', 'Test Suite / CI Enhancements'] category, quota {'Python': 4, 'TypeScript': 4, 'JavaScript': 1, 'Go': 1}, smallest first, one PR per repo \u2014 out-of-sample for the levers designed from those 30 PRs' missed defects",
+  "references": 58,
+  "cases": [
+    {
+      "instance_id": "infiniflow__ragflow@2d06022",
+      "repo": "infiniflow/ragflow",
+      "pr": 5065,
+      "pr_url": "https://github.com/infiniflow/ragflow/pull/5065",
+      "base_commit": "469460483665000f522b6c9a6583bb34f17a954b",
+      "head_commit": "2d06022b78536bd22a0fd83f38804f39aa34cce8",
+      "language": "Python",
+      "pr_category": "New Feature Additions",
+      "change_line_count": 65,
+      "references": 5
+    },
+    {
+      "instance_id": "browser-use__browser-use@aab7b3b",
+      "repo": "browser-use/browser-use",
+      "pr": 857,
+      "pr_url": "https://github.com/browser-use/browser-use/pull/857",
+      "base_commit": "515b94225aa86c40dc2c20034055ab8bcc88c6ae",
+      "head_commit": "aab7b3bb54e2b15ee3b32ad7de74c91fc8b22f52",
+      "language": "Python",
+      "pr_category": "New Feature Additions",
+      "change_line_count": 95,
+      "references": 2
+    },
+    {
+      "instance_id": "vllm-project__vllm@134705b",
+      "repo": "vllm-project/vllm",
+      "pr": 17425,
+      "pr_url": "https://github.com/vllm-project/vllm/pull/17425",
+      "base_commit": "d8037867313eef09779b265ea4bace76d2d118ba",
+      "head_commit": "134705b1474ddcfac234a0a01313874f7c8b59bc",
+      "language": "Python",
+      "pr_category": "Bug Fix",
+      "change_line_count": 154,
+      "references": 8
+    },
+    {
+      "instance_id": "comfyanonymous__ComfyUI@cfc3122",
+      "repo": "comfyanonymous/ComfyUI",
+      "pr": 9560,
+      "pr_url": "https://github.com/comfyanonymous/ComfyUI/pull/9560",
+      "base_commit": "a86aaa430183068e2a264495c802c81d05eb350a",
+      "head_commit": "cfc312296c0b9f255bba6b4b2789ac7bbc66a7cb",
+      "language": "Python",
+      "pr_category": "Bug Fix",
+      "change_line_count": 319,
+      "references": 6
+    },
+    {
+      "instance_id": "cline__cline@2195a68",
+      "repo": "cline/cline",
+      "pr": 4786,
+      "pr_url": "https://github.com/cline/cline/pull/4786",
+      "base_commit": "398bc87a64800e021966868243be2f09be72e73c",
+      "head_commit": "2195a689b787a963bdacc35d348f4590c30a2692",
+      "language": "TypeScript",
+      "pr_category": "Security Patches / Vulnerability Fixes",
+      "change_line_count": 69,
+      "references": 7
+    },
+    {
+      "instance_id": "n8n-io__n8n@61fc500",
+      "repo": "n8n-io/n8n",
+      "pr": 15057,
+      "pr_url": "https://github.com/n8n-io/n8n/pull/15057",
+      "base_commit": "14f59373d2264e97d73474bed5964a6a405d8082",
+      "head_commit": "61fc500fee842539e2a5011303147fdf5df0cd96",
+      "language": "TypeScript",
+      "pr_category": "New Feature Additions",
+      "change_line_count": 111,
+      "references": 12
+    },
+    {
+      "instance_id": "immich-app__immich@966c3f2",
+      "repo": "immich-app/immich",
+      "pr": 17124,
+      "pr_url": "https://github.com/immich-app/immich/pull/17124",
+      "base_commit": "6ba94ac2f2f78c871f56874a7c2ff61b2ff4a06b",
+      "head_commit": "966c3f22d034c230a14bb21b02627ef6d00eec68",
+      "language": "TypeScript",
+      "pr_category": "Performance Optimizations",
+      "change_line_count": 122,
+      "references": 2
+    },
+    {
+      "instance_id": "google-gemini__gemini-cli@4c150ab",
+      "repo": "google-gemini/gemini-cli",
+      "pr": 5793,
+      "pr_url": "https://github.com/google-gemini/gemini-cli/pull/5793",
+      "base_commit": "53f8617b249c9f0443f5082a293a30504a118030",
+      "head_commit": "4c150ab4befb2a727b493d732d8d3d01f388e492",
+      "language": "TypeScript",
+      "pr_category": "Bug Fix",
+      "change_line_count": 262,
+      "references": 3
+    },
+    {
+      "instance_id": "mrdoob__three.js@b55b9e9",
+      "repo": "mrdoob/three.js",
+      "pr": 31402,
+      "pr_url": "https://github.com/mrdoob/three.js/pull/31402",
+      "base_commit": "de413e2112ff1ae80599f145b101354a1476976c",
+      "head_commit": "b55b9e97f6d0f5829e4d8fc364949e72b0d9e98c",
+      "language": "JavaScript",
+      "pr_category": "New Feature Additions",
+      "change_line_count": 210,
+      "references": 10
+    },
+    {
+      "instance_id": "microsoft__typescript-go@1a84d8d",
+      "repo": "microsoft/typescript-go",
+      "pr": 691,
+      "pr_url": "https://github.com/microsoft/typescript-go/pull/691",
+      "base_commit": "da4e121142cd3f891785b573a194b9caaaa01d55",
+      "head_commit": "1a84d8d5705df98fd1e1f81d9d3115a7a203509d",
+      "language": "Go",
+      "pr_category": "Performance Optimizations",
+      "change_line_count": 92,
+      "references": 3
+    }
+  ],
+  "backups": []
+}
