@@ -549,9 +549,10 @@ export function renderDefectReport(
   extra: { tokensInPerPr?: number; tokensOutPerPr?: number; medianMinPerPr?: number } = {},
 ): string {
   const s = score;
-  const sevRow = SEVERITIES.map(
-    (k) =>
-      `${num(s.by_severity[k].credit)}/${s.by_severity[k].total} (${pct(s.by_severity[k].recall)})`,
+  const sevRow = SEVERITIES.map((k) =>
+    s.by_severity[k].total
+      ? `${num(s.by_severity[k].credit)}/${s.by_severity[k].total} (${pct(s.by_severity[k].recall)})`
+      : "—",
   );
   const c = s.comments;
   const lines = [

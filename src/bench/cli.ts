@@ -733,7 +733,12 @@ async function main(): Promise<number> {
     );
     writeFileSync(
       join(judgeDir, "report.md"),
-      renderDefectReport(`${set.name} — ${outDir.split("/").pop()}`, defects, score, extra),
+      renderDefectReport(
+        `${set.name} — ${process.env.QCR_RUN_ID ?? outDir.split("/").pop()}`,
+        defects,
+        score,
+        extra,
+      ),
     );
     log(
       `${f.cmd}: ${score.judged}/${score.cases} judged — recall ${(score.defects.recall * 100).toFixed(0)}% (weighted ${(score.weighted_recall * 100).toFixed(0)}%), comments correct ${(score.comments.correct_share * 100).toFixed(0)}% → ${join(judgeDir, "report.md")}`,

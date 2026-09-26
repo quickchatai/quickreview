@@ -256,7 +256,7 @@ case "$cmd" in
     if [[ "$cmd" == judge ]]; then
       auth_mounts; jm+=("${AUTH[@]}" --mount "type=volume,src=$REPOS_VOLUME,dst=/repos,readonly"); jn=()
     fi
-    args=("${HARDEN[@]}" ${jn[@]+"${jn[@]}"} "${jm[@]}"
+    args=("${HARDEN[@]}" ${jn[@]+"${jn[@]}"} "${jm[@]}" -e "QCR_RUN_ID=$RUN"
       --mount "type=bind,src=$d,dst=/bench-out"
       "$IMAGE" "$cmd" "$SET" "${ROUNDS:-1}" ${ONLY_ARGS[@]+"${ONLY_ARGS[@]}"} ${EXTRA[@]+"${EXTRA[@]}"} ${JARGS[@]+"${JARGS[@]}"})
     record "${args[@]}"
