@@ -209,6 +209,26 @@ export function reviewForJudge(runDir: string, instanceId: string): ReviewForJud
       text,
     });
   }
+  // Comments on DELETED lines: posted in production, but the AACR scorer reads
+  // only the RIGHT side, so the scored file above leaves them out. A defect
+  // review counts them. Appended last, so every other comment keeps its id.
+  const posted = readJson(join(runDir, "cases", instanceId, "comments.json"));
+  for (const row of Array.isArray(posted) ? (posted as unknown[]) : []) {
+    const r = (row ?? {}) as Record<string, unknown>;
+    if (typeof r["side"] !== "string" || r["side"].toUpperCase() !== "LEFT") continue;
+    const raw = typeof r["body"] === "string" ? r["body"] : "";
+    if (!raw.trim()) continue;
+    const m = TAG_RE.exec(raw);
+    const line = typeof r["line"] === "number" ? r["line"] : null;
+    comments.push({
+      id: `C${comments.length + 1}`,
+      path: typeof r["path"] === "string" ? `${r["path"]} (deleted line)` : null,
+      line,
+      end_line: line,
+      tag: m ? m[1]!.toLowerCase() : null,
+      text: raw.replace(TAG_RE, "").replace(FOOTER_RE, "").trim(),
+    });
+  }
   const summary = readJson(join(runDir, "cases", instanceId, "case-summary.json")) as
     { verdict?: unknown } | undefined;
   const bodyPath = join(runDir, "cases", instanceId, "review.md");
@@ -426,7 +446,9 @@ export function parseJudgement(
   for (const row of Array.isArray(obj.comments) ? obj.comments : []) {
     const r = (row ?? {}) as Record<string, unknown>;
     const id = typeof r["id"] === "string" ? r["id"] : "";
-    if (!cIds.has(id)) throw new Error(`judge answer names unknown comment ${JSON.stringify(id)}`);
+    // A comment the review does not have (the judge read a body finding as
+    // one) carries no score: ignored. A SKIPPED real comment still fails.
+    if (!cIds.has(id)) continue;
     if (cv.has(id)) throw new Error(`judge answer judges comment ${id} twice`);
     const verdict = r["verdict"];
     if (!COMMENT_VERDICTS.includes(verdict as CommentVerdictKind))

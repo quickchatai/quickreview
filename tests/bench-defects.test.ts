@@ -112,6 +112,23 @@ describe("the review as the author received it", () => {
       { id: "C1", path: "a.py", line: 11, end_line: 12, tag: "blocker", text: "It breaks" },
       { id: "C2", path: "b.py", line: 3, end_line: 3, tag: null, text: "plain OCR-style comment" },
     ]);
+    // A comment on a DELETED line (outside the AACR-scored file) is part of
+    // the review: appended last, so the other ids never shift.
+    writeFileSync(
+      join(run, "cases", "o__r@1234567", "comments.json"),
+      JSON.stringify([
+        { path: "a.py", line: 11, side: "RIGHT", body: "[blocker] It breaks" },
+        { path: "old.py", line: 4, side: "LEFT", body: "[nit] The removed guard mattered" },
+      ]),
+    );
+    expect(reviewForJudge(run, "o__r@1234567").comments[2]).toEqual({
+      id: "C3",
+      path: "old.py (deleted line)",
+      line: 4,
+      end_line: 4,
+      tag: "nit",
+      text: "The removed guard mattered",
+    });
     // A case that produced nothing is an empty review, never an error.
     expect(reviewForJudge(run, "missing__case@0000000")).toEqual({
       verdict: null,
@@ -216,6 +233,14 @@ describe("the judge's answer", () => {
     expect(() =>
       parseJudgement(bad({ defects: [...good.defects, good.defects[0]] }), defects, REVIEW),
     ).toThrow(/twice/);
+    // A comment id the review does not have is ignored, not an error.
+    expect(
+      parseJudgement(
+        bad({ comments: [...good.comments, { id: "C9", defect: null, verdict: "incorrect" }] }),
+        defects,
+        REVIEW,
+      ).comments.map((c) => c.id),
+    ).toEqual(["C1", "C2"]);
     expect(() =>
       parseJudgement(
         bad({ defects: [...good.defects, { id: "D9", verdict: "found" }] }),
