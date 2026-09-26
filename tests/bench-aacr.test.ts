@@ -640,7 +640,12 @@ describe("the sandbox cannot post", () => {
     const sh = readFileSync(join(ROOT, "bench", "aacr", "bench.sh"), "utf8");
     const tarList = sh.slice(sh.indexOf("tar -cf -"), sh.indexOf("| tar -xf -"));
     expect(tarList).not.toMatch(/\bscripts\b/);
-    expect(tarList).not.toMatch(/\bdeploy\b|\bstate\b|\.git\b/);
+    // ONE file from deploy/ may ride: the reviewer context stub production
+    // installs at boot (tests/reviewer-context.test.ts). Nothing else of it.
+    expect(tarList).toContain("deploy/reviewer/AGENTS.override.md");
+    expect(tarList.replace("deploy/reviewer/AGENTS.override.md", "")).not.toMatch(
+      /\bdeploy\b|\bstate\b|\.git\b/,
+    );
     // Every review container runs hardened.
     for (const flag of [
       "--read-only",
