@@ -2,7 +2,6 @@
 name: pass-baseline
 description: Always-on review pass — claimed invariants, correctness, tests, conventions, sibling PRs, duplicate fixes.
 tools: read, bash, grep, glob
-model: openai/gpt-5.6-sol
 ---
 
 {{include:prompts/pass-common.md}}

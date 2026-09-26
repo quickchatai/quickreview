@@ -2,7 +2,6 @@
 name: pass-statelessness
 description: Statelessness review pass — in-process state that breaks under many pods and rolling deploys.
 tools: read, bash, grep, glob
-model: openai/gpt-5.6-sol
 ---
 
 {{include:prompts/pass-common.md}}

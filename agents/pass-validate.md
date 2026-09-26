@@ -2,7 +2,6 @@
 name: pass-validate
 description: Adversarial validation pass — every candidate finding is re-derived from the code or killed before posting.
 tools: read, bash, grep, glob
-model: openai/gpt-5.6-sol
 ---
 
 {{include:prompts/pass-common.md}}

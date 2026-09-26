@@ -2,7 +2,6 @@
 name: pass-backcompat
 description: Backward-compatibility review pass — what breaks in the deploy window, when old and new code run together and old clients, in-flight messages, and persisted state are still live? Findings name the protection.
 tools: read, bash, grep, glob
-model: openai/gpt-5.6-sol
 ---
 
 {{include:prompts/pass-common.md}}

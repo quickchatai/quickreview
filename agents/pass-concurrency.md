@@ -2,7 +2,6 @@
 name: pass-concurrency
 description: Concurrency review pass — added on demand when the session suspects a read-then-write race. Every finding names what races, walks the interleaving step by step, assesses how often it can really happen, and names the lock that fits. Falsifies its own findings first; full severity.
 tools: read, bash, grep, glob
-model: openai/gpt-5.6-sol
 ---
 
 {{include:prompts/pass-common.md}}

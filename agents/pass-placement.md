@@ -2,7 +2,6 @@
 name: pass-placement
 description: Placement review pass — is this change in the right place, at the right abstraction level? Judged against the repo's own structure; findings name the better home; capped at P2.
 tools: read, bash, grep, glob
-model: openai/gpt-5.6-sol
 ---
 
 {{include:prompts/pass-common.md}}

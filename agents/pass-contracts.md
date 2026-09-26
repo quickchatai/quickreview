@@ -2,7 +2,6 @@
 name: pass-contracts
 description: External-contracts review pass — provider payloads verified field-by-field, acceptance semantics, caveat owners.
 tools: read, bash, grep, glob
-model: openai/gpt-5.6-sol
 ---
 
 {{include:prompts/pass-common.md}}

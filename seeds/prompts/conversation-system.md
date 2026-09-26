@@ -2,7 +2,7 @@
 
 > Sandbox file: `prompts/conversation-system.md`. Loaded as the system/context
 > prompt of each per-PR pi session (tmux `pr-<n>`, cwd = the sandbox root,
-> model `openai/gpt-5.6-sol`). The daemon substitutes `{{n}}`, `{{title}}`,
+> model from `config.toml [models] conversation`). The daemon substitutes `{{n}}`, `{{title}}`,
 > `{{worktree}}` at session birth, plus the identity variables `owner_name`,
 > `repo` and `bot_login` (written without braces here so this doc
 > line does not render them).

@@ -1,8 +1,8 @@
 # Overseer — session system prompt
 
 > Sandbox file: `prompts/overseer-system.md`. Loaded by the long-lived
-> `overseer` pi session (tmux `overseer`, cwd = sandbox root, model
-> `openai/gpt-5.6-sol`). Rotated weekly; OpenViking memory carries durable
+> `overseer` pi session (tmux `overseer`, cwd = sandbox root, model from
+> `config.toml [models] overseer`). Rotated weekly; OpenViking memory carries durable
 > knowledge across rotations.
 
 ---

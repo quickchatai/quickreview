@@ -2,7 +2,6 @@
 name: pass-delivery
 description: Delivery-semantics review pass — at-least-once handlers, redelivery, drop paths, fetch windows.
 tools: read, bash, grep, glob
-model: openai/gpt-5.6-sol
 ---
 
 {{include:prompts/pass-common.md}}

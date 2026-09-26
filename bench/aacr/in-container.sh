@@ -105,7 +105,7 @@ except Exception: print("qcr")' /bench-out/run.json)"
         export JUDGE_USE_MOCK=false
         echo "\`${JUDGE_MODEL}\` via an OpenAI-compatible endpoint, temperature 0.7 (the harness default), ${rounds} round(s) averaged" > /bench-out/judge.txt ;;
       codex)
-        model="${JUDGE_CODEX_MODEL:-openai-codex/gpt-5.6-terra:low}"
+        model="${JUDGE_CODEX_MODEL:-openai-codex/gpt-6-sol:low}"
         # The same read-only, refresh-disabled token copy the review uses.
         "${CLI[@]}" auth --need-min 180 || { echo "judge: no usable pi login (see above)" >&2; exit 1; }
         python3 /opt/quickreview/bench/judge_shim.py --port 8765 --model "$model" > /bench-out/eval/judge-shim.log 2>&1 &

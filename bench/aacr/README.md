@@ -149,7 +149,7 @@ The one bias that cannot be removed without a reseed: the frozen
 - **The judge.** `mock` is the harness's string similarity — plumbing only,
   the numbers mean nothing. `codex` runs the harness's exact judge prompt on a
   GPT model through the shared pi login (`judge_shim.py`; default
-  `openai-codex/gpt-5.6-terra:low`, override with `JUDGE_CODEX_MODEL`) — a real
+  `openai-codex/gpt-6-sol:low`, override with `JUDGE_CODEX_MODEL`) — a real
   semantic judge, but not the paper's, and noticeably noisy (the same pair
   judged yes/yes/no across three calls in testing), which is why real judges
   default to 3 averaged rounds. A judge call that FAILS is scored by the

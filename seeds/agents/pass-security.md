@@ -2,7 +2,6 @@
 name: pass-security
 description: Security & tenancy review pass — injection, authz, tenant isolation, secrets in logs, cache safety.
 tools: read, bash, grep, glob
-model: openai/gpt-5.6-sol
 ---
 
 {{include:prompts/pass-common.md}}

@@ -2,7 +2,6 @@
 name: pass-data-safety
 description: Data-safety review pass — migrations DDL, blast radius, backfills; carries the migration gate.
 tools: read, bash, grep, glob
-model: openai/gpt-5.6-sol
 ---
 
 {{include:prompts/pass-common.md}}

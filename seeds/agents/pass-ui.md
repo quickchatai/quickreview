@@ -2,7 +2,6 @@
 name: pass-ui
 description: UI-state review pass — frontend effects, mutations, translations, tokens, async pipeline durability.
 tools: read, bash, grep, glob
-model: openai/gpt-5.6-sol
 ---
 
 {{include:prompts/pass-common.md}}

@@ -2,7 +2,6 @@
 name: pass-prod-risk
 description: Production-risk review pass — behavior changes to existing endpoints, rollout widening, cascade and latency risk.
 tools: read, bash, grep, glob
-model: openai/gpt-5.6-sol
 ---
 
 {{include:prompts/pass-common.md}}

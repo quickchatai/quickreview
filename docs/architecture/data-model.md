@@ -487,7 +487,7 @@ shipped default `["migrations/", "infra/", "ansible/", ".github/workflows/"]`
 regardless).
 
 **`[models]`** — `default`, `conversation`, `overseer` (model spec strings,
-all `"openai-codex/gpt-5.6-sol"` in the example), `risk_passes` (string array,
+all `"openai-codex/gpt-6-sol"` in the example), `risk_passes` (string array,
 `["pass-security", "pass-prod-risk", "pass-data-safety"]`), `validate_tier`
 (`PassTier`, `"sol-high"` — a *floor*, raised per round by `validatorTier` in
 `src/dispatch.ts`, never lowered), `small_diff_lines` (number, `150`).
