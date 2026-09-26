@@ -24,6 +24,7 @@ import {
 } from "../src/bench/defects.js";
 import { judgeCase, judgeLabel, loadJudgements } from "../src/bench/defectjudge.js";
 import { judgePiArgv } from "../src/bench/runner.js";
+import { caseCostUsd } from "../src/bench/cost.js";
 
 const D = (id: string, severity: "high" | "medium" | "low" = "high"): Defect => ({
   id,
@@ -447,4 +448,41 @@ describe("the committed ground truth", () => {
           expect(d.evidence.length, `${c.instance_id} ${d.id}`).toBeGreaterThan(20);
     },
   );
+});
+
+describe("dollar cost, as pi prices it", () => {
+  it("sums pi's per-call costs over the main session and every lens pass", () => {
+    const dir = mkdtempSync(join(tmpdir(), "defects-cost-"));
+    const ev = [
+      { type: "message_end", message: { role: "assistant", usage: { cost: { total: 0.1 } } } },
+      { type: "message_end", message: { role: "user", usage: { cost: { total: 9 } } } },
+      {
+        type: "tool_execution_end",
+        toolName: "subagent",
+        result: {
+          details: { results: [{ usage: { cost: 0.25 } }, { usage: { cost: { total: 0.05 } } }] },
+        },
+      },
+    ];
+    writeFileSync(
+      join(dir, "pi-events.jsonl"),
+      ev.map((e) => JSON.stringify(e)).join("\n") + "\nnot json\n",
+    );
+    const c = caseCostUsd(dir)!;
+    expect(c.source).toBe("pi");
+    expect(c.usd).toBeCloseTo(0.4);
+  });
+
+  it("prices the OCR arm's bridge tokens at pi's gpt-6-sol rates", () => {
+    const dir = mkdtempSync(join(tmpdir(), "defects-cost-ocr-"));
+    writeFileSync(
+      join(dir, "case-summary.json"),
+      JSON.stringify({
+        bridge: { input_tokens: 1_000_000, cached_tokens: 500_000, output_tokens: 100_000 },
+      }),
+    );
+    // 0.5M uncached × $2 + 0.5M cached × $0.20 + 0.1M output × $10
+    expect(caseCostUsd(dir)).toEqual({ usd: 1 + 0.1 + 1, source: "priced" });
+    expect(caseCostUsd(join(dir, "nope"))).toBeNull();
+  });
 });

@@ -73,6 +73,7 @@ import {
   type ReviewForJudge,
 } from "./defects.js";
 import { clearJudgeCase, judgeCase, judgeLabel, loadJudgements } from "./defectjudge.js";
+import { caseCostUsd } from "./cost.js";
 
 const DEFAULTS = {
   root: "/opt/quickreview/sandbox",
@@ -709,11 +710,32 @@ async function main(): Promise<number> {
       secs.push(s.duration_seconds ?? 0);
     }
     secs.sort((a, b) => a - b);
+    // Dollars the way pi prices them (src/bench/cost.ts): summed per call for
+    // our arm, the bridge's tokens at pi's gpt-6-sol rates for the OCR arm.
+    let usd = 0,
+      priced = 0;
+    const sources = new Set<string>();
+    for (const c of cases) {
+      const k = caseCostUsd(join(outDir, "cases", safeId(c.instance_id)));
+      if (!k) continue;
+      usd += k.usd;
+      priced++;
+      sources.add(k.source);
+    }
     const extra = secs.length
       ? {
           tokensInPerPr: tin / secs.length,
           tokensOutPerPr: tout / secs.length,
           medianMinPerPr: (secs[Math.floor(secs.length / 2)] ?? 0) / 60,
+          ...(priced
+            ? {
+                usdPerPr: usd / priced,
+                usdTotal: usd,
+                usdSource: sources.has("priced")
+                  ? "Cost: tokens priced at pi's gpt-6-sol rates ($2 input, $0.20 cache read, $10 output per million) — this arm does not run through pi."
+                  : "Cost: pi's own per-call prices, summed over the main session and every lens pass.",
+              }
+            : {}),
         }
       : {};
     mkdirSync(judgeDir, { recursive: true });

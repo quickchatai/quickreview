@@ -609,7 +609,14 @@ export function renderDefectReport(
   label: string,
   set: DefectSet,
   score: RunScore,
-  extra: { tokensInPerPr?: number; tokensOutPerPr?: number; medianMinPerPr?: number } = {},
+  extra: {
+    tokensInPerPr?: number;
+    tokensOutPerPr?: number;
+    medianMinPerPr?: number;
+    usdPerPr?: number;
+    usdTotal?: number;
+    usdSource?: string;
+  } = {},
 ): string {
   const s = score;
   const sevRow = SEVERITIES.map((k) =>
@@ -641,10 +648,11 @@ export function renderDefectReport(
     lines.push(
       "## Cost",
       "",
-      "| Input tokens / PR | Output tokens / PR | Median minutes / PR |",
-      "|---|---|---|",
-      `| ${Math.round((extra.tokensInPerPr ?? 0) / 1000)}k | ${((extra.tokensOutPerPr ?? 0) / 1000).toFixed(1)}k | ${(extra.medianMinPerPr ?? 0).toFixed(1)} |`,
+      "| $ / PR (pi's prices) | $ total | Input tokens / PR | Output tokens / PR | Median minutes / PR |",
+      "|---|---|---|---|---|",
+      `| ${extra.usdPerPr !== undefined ? `$${extra.usdPerPr.toFixed(3)}` : "—"} | ${extra.usdTotal !== undefined ? `$${extra.usdTotal.toFixed(2)}` : "—"} | ${Math.round((extra.tokensInPerPr ?? 0) / 1000)}k | ${((extra.tokensOutPerPr ?? 0) / 1000).toFixed(1)}k | ${(extra.medianMinPerPr ?? 0).toFixed(1)} |`,
       "",
+      ...(extra.usdSource ? [extra.usdSource, ""] : []),
     );
   if (s.approved_over_missed_high.length)
     lines.push(
