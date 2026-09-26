@@ -31,6 +31,7 @@ import { FeedbackEngine, feedbackDayAddendum, type FeedbackEvent } from "./feedb
 import { PASS_ADDENDA, buildAgents, identityVars } from "./include.js";
 import { ecosystemFor } from "./ecosystem.js";
 import { loadProfileAddenda, loadProfileEcosystem, loadProfileHeuristics } from "./profiles.js";
+import { prepareDependencySources, renderDependencyNote } from "./depsources.js";
 import { fileImprovementPr, fileIssue, gitRunner } from "./improvements.js";
 import {
   OpenVikingClient,
@@ -591,6 +592,17 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     // the branch it targets, together. Everything downstream (prompt, session,
     // passes) then works from the shas this returns.
     prepareWorktree: (pr, baseRef) => sessions.worktrees.ensureWorktree(pr, { baseRef }),
+    // Third-party sources at the PR's locked versions, unpacked into a cache
+    // on the state volume for the passes to read (`[review]
+    // dependency_sources`, benchmark 2026-09-26). Download and unpack only;
+    // total — a dead registry yields an empty note.
+    dependencySources: async (worktreePath, files) =>
+      renderDependencyNote(
+        await prepareDependencySources(worktreePath, files, {
+          cacheDir: join(root, "state", "depcache"),
+          log: (line) => log(`deps: ${line}`),
+        }),
+      ),
     // Migration-number pre-check input: the base branch's migrations
     // at the sha the round pinned. Local git in the just-fetched base clone.
     listBaseMigrations: (baseSha) => sessions.worktrees.listMigrationFiles(baseSha),

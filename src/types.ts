@@ -99,6 +99,13 @@ export interface PassPlanEntry {
   agent: string;
   tier: PassTier;
   raisable_to: string[];
+  /** Why a content-triggered sub-lens is in the plan (heuristics.ts
+   * SUBLENS_TRIGGERS) — shown to the session and passed on as the lens's
+   * starting point. Absent for path-selected lenses. */
+  why?: string;
+  /** The files this row's pass covers — set on sweep rows only: one row per
+   * group of changed files, several rows calling the same agent. */
+  focus?: string[];
 }
 
 export interface RoundRecoveryContext {
@@ -134,6 +141,12 @@ export interface RoundOrder {
   pass_plan: PassPlanEntry[];
   /** Lenses NOT selected for this round that the session may add. */
   addable_lenses: string[];
+  /** Changed files past the sweep's per-round cap — named in the plan so a
+   * capped sweep never reads as full coverage. */
+  sweep_unswept?: string[];
+  /** The rendered third-party-sources block (src/depsources.ts), carried
+   * into every pass's task string. Absent or "" ⇒ nothing was unpacked. */
+  dependency_note?: string;
   migration_gate: boolean;
   /**
    * Migration-number collisions with the base branch that the daemon detected

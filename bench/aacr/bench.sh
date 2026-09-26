@@ -7,6 +7,8 @@
 #   bench/aacr/bench.sh prefetch [--set smoke10] [--only id,id] [--wait-rate-limit]
 #   bench/aacr/bench.sh review   --run ID [--set smoke10] [--only id,id] [--profile NAME]
 #                                [--timeout-min 45] [--concurrency 1] [--resume]
+#                                [--config models.effort=high,review.sweep=false]
+#              --config: config.toml levers for THIS run only, so two arms share one image
 #   bench/aacr/bench.sh eval     --run ID [--set smoke10] [--judge mock|openai|codex] [--rounds 3] [--line-k N]
 #              --line-k N (default 1, the published setting): N != 1 is a DIAGNOSTIC that scores a copy of
 #              the `all` results in results/all-kN/ and leaves the official numbers untouched
@@ -79,7 +81,7 @@ while (($#)); do
     --line-k) LINE_K="$2"; shift 2 ;;
     --judge-model) JARGS+=(--model "$2"); shift 2 ;;
     --label) JARGS+=(--label "$2"); shift 2 ;;
-    --profile|--timeout-min|--concurrency|--ocr-concurrency|--max-tools) EXTRA+=("$1" "$2"); shift 2 ;;
+    --profile|--timeout-min|--concurrency|--ocr-concurrency|--max-tools|--config) EXTRA+=("$1" "$2"); shift 2 ;;
     --resume|--wait-rate-limit|--keep-tree) EXTRA+=("$1"); shift ;;
     --from) FROM="$2"; shift 2 ;;
     --force) FORCE=1; shift ;;

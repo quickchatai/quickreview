@@ -104,6 +104,12 @@ export interface DaemonDeps {
   /** Base-branch migration paths at a sha, for the collision pre-check
    *. Absent ⇒ no git: the pre-check is skipped and logged. */
   listBaseMigrations?: (baseSha: string) => Promise<string[]>;
+  /** Unpack the third-party sources a PR touches and return the round's note
+   * (src/depsources.ts; `[review] dependency_sources`). Absent ⇒ no note. */
+  dependencySources?: (
+    worktreePath: string,
+    files: import("./github.js").PrFileEntry[],
+  ) => Promise<string>;
   /** The profile-selected ecosystem seam, handed through to
    * dispatch. Absent ⇒ dispatch's own default (Django, the pre-seam
    * behavior); wire.ts always passes the profile's selection. */
@@ -537,6 +543,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         ...(deps.heuristics ? { heuristics: deps.heuristics } : {}),
         prepareWorktree: deps.prepareWorktree,
         listBaseMigrations: deps.listBaseMigrations,
+        ...(deps.dependencySources ? { dependencySources: deps.dependencySources } : {}),
         directiveAuthor: deps.directiveAuthor,
         resolvedFilesInMerges: deps.resolvedFilesInMerges,
         announce,

@@ -5,6 +5,7 @@
 //   prefetch  --set <file> [--only id,id] [--store DIR] [--wait-rate-limit]
 //   review    --set <file> --out DIR [--only id,id] [--store DIR] [--profile NAME]
 //             [--timeout-min N] [--concurrency N] [--resume] [--keep-tree]
+//             [--config a.b=v,c.d=w]   config levers for this run (runner.ts)
 //   results   --set <file> --out DIR     rebuild result files from case dirs
 //   subset    --set <file> --dataset <converted jsonl> --out <jsonl>
 //   report    --set <file> --out DIR     write DIR/report.md from summaries + metrics
@@ -226,8 +227,9 @@ async function main(): Promise<number> {
     assertArm(outDir, "qcr");
     const profile = f.get("--profile") ?? "";
     const cases = selectCases(set, only(f));
-    const base = contextFor(root, profile);
-    const ctx = { ...base, fingerprint: runFingerprint(base.cfg, profile) };
+    const overrides = f.get("--config") ?? "";
+    const base = contextFor(root, profile, overrides);
+    const ctx = { ...base, fingerprint: runFingerprint(base.cfg, profile, overrides) };
     const authSrc = f.get("--auth-src") ?? DEFAULTS.authSrc;
     const agentDir = f.get("--agent-dir") ?? DEFAULTS.agentDir;
     const resume = f.has("--resume");
@@ -254,7 +256,9 @@ async function main(): Promise<number> {
       set: set.name,
       dataset: set.dataset,
       profile,
+      ...(overrides ? { overrides } : {}),
       models: {
+        effort: ctx.cfg.models.effort,
         conversation: ctx.cfg.models.conversation,
         tiers: ctx.cfg.models.tiers,
         validate_tier: ctx.cfg.models.validate_tier,

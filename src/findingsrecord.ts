@@ -130,6 +130,9 @@ export const DOWNGRADE_WORDS: readonly string[] = [
   // the third shape is a correction, not a kill: the tag is put back
   // inside the closed grammar and the finding survives.
   "tag-outside-grammar",
+  // Benchmark 2026-09-26: the mechanism is real, the claimed consequence was
+  // wrong — posted with the true consequence instead of killed.
+  "restated",
 ];
 
 /** `settled:<thread-id>` is a kill word with a payload, so it is matched by

@@ -270,19 +270,44 @@ export function renderDirectiveEscalationNote(order: RoundOrder): string {
 
 const NO_BASE = "(unknown — the daemon could not resolve the base branch this round)";
 
-/** Markdown table of the round's pass plan — one row per subagent launch. */
-export function renderPassPlan(plan: PassPlanEntry[]): string {
-  const rows = plan.map(
-    (p) =>
-      `| ${p.lens} | \`${p.agent}\` | ${p.tier} | ${
-        p.raisable_to.length > 0 ? p.raisable_to.map((a) => `\`${a}\``).join(", ") : "— (pinned)"
-      } |`,
-  );
-  return [
-    "| lens | subagent to call | tier | may raise to |",
-    "| --- | --- | --- | --- |",
-    ...rows,
-  ].join("\n");
+/** Markdown table of the round's pass plan — one row per subagent launch.
+ * A fifth column appears only when a row carries a focus (sweep rows) or a
+ * reason (content-triggered sub-lenses), so a plan without either renders
+ * exactly as it always has. Files past the sweep cap are named under the
+ * table. */
+export function renderPassPlan(plan: PassPlanEntry[], unswept: string[] = []): string {
+  const notes = plan.some((p) => p.focus !== undefined || p.why !== undefined);
+  const rows = plan.map((p) => {
+    const cells = [
+      p.lens,
+      `\`${p.agent}\``,
+      p.tier,
+      p.raisable_to.length > 0 ? p.raisable_to.map((a) => `\`${a}\``).join(", ") : "— (pinned)",
+    ];
+    if (notes)
+      cells.push(
+        p.focus !== undefined
+          ? `files: ${p.focus.map((f) => `\`${f}\``).join(", ")}`
+          : p.why !== undefined
+            ? `because ${p.why}`
+            : "",
+      );
+    return `| ${cells.join(" | ")} |`;
+  });
+  const head = notes
+    ? [
+        "| lens | subagent to call | tier | may raise to | focus / why |",
+        "| --- | --- | --- | --- | --- |",
+      ]
+    : ["| lens | subagent to call | tier | may raise to |", "| --- | --- | --- | --- |"];
+  const tail =
+    unswept.length > 0
+      ? [
+          "",
+          `Not swept (over the per-round sweep cap): ${unswept.map((f) => `\`${f}\``).join(", ")}.`,
+        ]
+      : [];
+  return [...head, ...rows, ...tail].join("\n");
 }
 
 /** Comma list of lenses the session may additionally run this round. */
@@ -354,7 +379,10 @@ export function roundVars(
     round_type: order.round_type,
     round_no: String(order.round_no),
     lenses: order.lenses.join(", "),
-    pass_plan: renderPassPlan(order.pass_plan),
+    pass_plan: renderPassPlan(order.pass_plan, order.sweep_unswept ?? []),
+    // Third-party sources (src/depsources.ts) — "" when nothing was unpacked,
+    // so a round without them renders exactly as before.
+    dependency_note: order.dependency_note ? `\n${order.dependency_note}\n` : "",
     addable_lenses: renderAddableLenses(order.addable_lenses),
     recovery_note: renderRoundRecoveryNote(order),
     base_ref: order.base_ref || NO_BASE,

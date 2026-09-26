@@ -5,7 +5,7 @@
 > `{{n}} {{title}} {{worktree}} {{head_sha}} {{base_ref}} {{base_sha}}
 > {{merge_base}} {{lenses}} {{pass_plan}} {{addable_lenses}}
 > {{migration_gate_note}} {{settled_digest}} {{round_type}} {{round_no}}
-> `intent_note` and `recovery_note`, plus the two memory sections `pinned_head` and
+> `intent_note`, `dependency_note` and `recovery_note`, plus the two memory sections `pinned_head` and
 > `context_block` (written without braces here so this doc line
 > does not render a second copy of the memory seed), and the identity
 > variables `owner_name`/`repo`/`bot_login` (same braceless
@@ -117,6 +117,14 @@ be reviewed as if they were.
 **Pass plan for this round** (chosen by the daemon from the diff shape):
 
 {{pass_plan}}
+{{dependency_note}}
+**Rows with a focus or a reason.** When the plan table has a *focus / why*
+column: a row listing files is ONE launch of that agent with exactly those
+files as its focus — name them in its task string as the files this pass
+covers. The same agent may sit on several rows; launch every row. A row giving
+a reason ran because the diff or the PR text showed that shape: pass the
+reason on as the lens's starting point. It adds focus; it never narrows the
+lens's charter.
 
 Launch every planned pass via the **`subagent` tool** — one `subagent` call per
 row, using that row's *subagent to call* name, **all in ONE assistant turn** so
@@ -164,7 +172,12 @@ needs a one-line stated reason, and those reasons go into the verdict
 `summary`. **Never lower a tier.** A pass marked pinned has no raise option.
 
 **Add protocol.** You MAY additionally run a lens from: {{addable_lenses}} —
-with a one-line stated reason. Run it at the plan's default tier: call the
+with a one-line stated reason. The plan is chosen from the diff's shape, so
+it can miss what the diff says: read the diff once before you launch, and when
+it shows a concrete shape an addable lens exists for (a check that now admits
+more values, work moved onto a queue, a loop over another party's data, a
+release that reaches clients and servers at different times), add that lens in
+the same launch turn. Run it at the plan's default tier: call the
 `<lens>--sol-med` variant, unless it is a risk pass (risk passes exist only as
 `<lens>--sol-high`). **Never drop a planned lens.**
 

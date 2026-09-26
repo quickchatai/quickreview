@@ -79,6 +79,15 @@ const NON_SEEDED = [
   "agents/pass-concurrency.md",
   // the ask-your-human lens — post-seed, ours, addable-only.
   "agents/pass-ask-human.md",
+  // Benchmark 2026-09-26: the per-file sweep and the six content-triggered
+  // sub-lenses — post-seed, ours.
+  "agents/pass-sweep.md",
+  "agents/pass-widened.md",
+  "agents/pass-roundtrip.md",
+  "agents/pass-deferred.md",
+  "agents/pass-bounds.md",
+  "agents/pass-claims.md",
+  "agents/pass-rollout.md",
   "prompts/round-first.md",
   "prompts/round-re-review.md",
   "prompts/round-staleness.md",

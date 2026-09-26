@@ -20,7 +20,14 @@ import type { GateResult } from "./gate.js";
 import type { PrFileEntry } from "./github.js";
 import { DJANGO_ECOSYSTEM, type Ecosystem } from "./ecosystem.js";
 import { promptTargetsFor } from "./escalation.js";
-import { INTENT_PASS, passTier, selectLenses } from "./heuristics.js";
+import {
+  INTENT_PASS,
+  passTier,
+  selectLenses,
+  selectSubLenses,
+  SWEEP_PASS,
+  sweepGroups,
+} from "./heuristics.js";
 import type { HeuristicsExtension } from "./heuristics.js";
 import type { MigrationCollision } from "./migrations.js";
 import { VALIDATE_PASS } from "./include.js";
@@ -155,6 +162,12 @@ export interface DispatchDeps {
     to: string,
     pr?: number,
   ) => Promise<{ files: string[]; degraded: boolean }>;
+  /**
+   * Unpack the third-party sources this PR touches and return the rendered
+   * note for the order (src/depsources.ts; `[review] dependency_sources`).
+   * Must never throw or hang past its own budget. Absent ⇒ no note.
+   */
+  dependencySources?: (worktreePath: string, files: PrFileEntry[]) => Promise<string>;
   /** Slack announcer (S4). Optional: absent ⇒ no Slack at all, which
    * is what the stub-wired daemon core and every non-Slack test see. */
   announce?: DispatchAnnouncer;
@@ -616,6 +629,21 @@ export const ALL_PASSES: readonly string[] = [
   // dispatch the lens nearly always: the pure-spend case that bar exists to
   // prevent, on a lens whose failure mode is volume.)
   "pass-ask-human",
+  // Content-triggered sub-lenses (heuristics.ts SUBLENS_TRIGGERS — this list
+  // is held equal to SUBLENS_PASSES by tests/review-levers.test.ts): planned
+  // when their trigger fires, addable otherwise — the max-effort benchmark
+  // runs added a lens on 6 of 10 PRs, and the added lens found defects no
+  // planned one did.
+  "pass-widened",
+  "pass-roundtrip",
+  "pass-deferred",
+  "pass-bounds",
+  "pass-claims",
+  "pass-rollout",
+  // The per-file sweep: planned as one row per file group when `[review]
+  // sweep` is on; otherwise addable, so a session can sweep a file it
+  // suspects.
+  "pass-sweep",
   "pass-validate",
 ];
 
@@ -650,19 +678,26 @@ export function validatorTier(floor: PassTier, lensTiers: readonly PassTier[]): 
 export function buildPassPlan(
   cfg: Config,
   files: PrFileEntry[],
-  intent?: { body?: string | null },
+  intent?: { title?: string | null; body?: string | null },
   /**: whose tier-forcing gate applies. Default Django — the shipped
    * pre-seam behavior; `none` never forces sol-med off a migrations path. */
   ecosystem: Ecosystem = DJANGO_ECOSYSTEM,
   /** Profile lens-heuristics extension; absent ⇒ generic core. */
   heuristics?: HeuristicsExtension,
-): { pass_plan: PassPlanEntry[]; addable_lenses: string[] } {
+): { pass_plan: PassPlanEntry[]; addable_lenses: string[]; sweep_unswept: string[] } {
   const defaultTier = passTier(files, {
     migrationGate: ecosystem.migrationGate(files),
     smallDiffLines: cfg.models.small_diff_lines,
   });
   const risk = new Set(cfg.models.risk_passes);
-  const lenses = [...selectLenses(files, intent, heuristics), VALIDATE_PASS];
+  const selected0 = selectLenses(files, intent, heuristics);
+  // Sub-lenses ride after the path-selected lenses, each with the reason its
+  // trigger fired (benchmark 2026-09-26; `[review] sublenses`).
+  const sub = cfg.review.sublenses
+    ? selectSubLenses(files, intent).filter((s) => !selected0.includes(s.lens))
+    : [];
+  const whyOf = new Map(sub.map((s) => [s.lens, s.why]));
+  const lenses = [...selected0, ...sub.map((s) => s.lens), VALIDATE_PASS];
   // pass-intent starts at terra-med whatever the round's default:
   // reading comprehension over two short texts, not a judgment over production
   // risk. It is NOT pinned — the session may raise it like any other lens.
@@ -675,18 +710,37 @@ export function buildPassPlan(
   const pass_plan = lenses.map((lens): PassPlanEntry => {
     const pinned = lens === VALIDATE_PASS || risk.has(lens);
     const tier: PassTier = lens === VALIDATE_PASS ? validate : tierOf(lens);
+    const why = whyOf.get(lens);
     return {
       lens,
       agent: `${lens}--${tier}`,
       tier,
       raisable_to: pinned ? [] : raisableFrom(lens, tier),
+      ...(why !== undefined ? { why } : {}),
     };
   });
-  const selected = new Set(lenses);
+  // The sweep (benchmark 2026-09-26; `[review] sweep`): one row per group of
+  // changed files, at the cheapest tier — its job is attention, line by line,
+  // not deep reasoning — inserted before the validator. The validator's tier
+  // is computed from the lenses above and a terra-med sweep never raises it.
+  let sweep_unswept: string[] = [];
+  if (cfg.review.sweep) {
+    const { groups, unswept } = sweepGroups(files, cfg.review.sweep_max_groups);
+    sweep_unswept = unswept;
+    const rows = groups.map((focus): PassPlanEntry => ({
+      lens: SWEEP_PASS,
+      agent: `${SWEEP_PASS}--terra-med`,
+      tier: "terra-med",
+      raisable_to: raisableFrom(SWEEP_PASS, "terra-med"),
+      focus,
+    }));
+    pass_plan.splice(pass_plan.length - 1, 0, ...rows);
+  }
+  const selected = new Set(pass_plan.map((p) => p.lens));
   const addable_lenses = [...new Set([...ALL_PASSES, ...cfg.models.risk_passes])].filter(
     (l) => !selected.has(l),
   );
-  return { pass_plan, addable_lenses };
+  return { pass_plan, addable_lenses, sweep_unswept };
 }
 
 /** Build the round order for one PR — pure once the files list is in hand. */
@@ -724,12 +778,14 @@ export function buildRoundOrder(args: {
   recovery?: RoundRecoveryContext;
   /** Profile lens-heuristics extension; absent ⇒ generic core. */
   heuristics?: HeuristicsExtension;
+  /** The rendered third-party-sources block (src/depsources.ts). */
+  dependencyNote?: string;
 }): RoundOrder {
   const eco = args.ecosystem ?? DJANGO_ECOSYSTEM;
-  const { pass_plan, addable_lenses } = buildPassPlan(
+  const { pass_plan, addable_lenses, sweep_unswept } = buildPassPlan(
     args.cfg,
     args.files,
-    { body: args.prBody },
+    { title: args.row.title, body: args.prBody },
     eco,
     args.heuristics,
   );
@@ -743,10 +799,13 @@ export function buildRoundOrder(args: {
     ...(args.reviewNo !== undefined ? { review_no: args.reviewNo } : {}),
     round_type: args.roundType,
     // Kept for compatibility with the rounds table / event log: always the
-    // pass_plan's lens names in plan order.
-    lenses: pass_plan.map((p) => p.lens),
+    // pass_plan's lens names in plan order (a lens with several rows — the
+    // sweep — once).
+    lenses: [...new Set(pass_plan.map((p) => p.lens))],
     pass_plan,
     addable_lenses,
+    ...(sweep_unswept.length > 0 ? { sweep_unswept } : {}),
+    ...(args.dependencyNote ? { dependency_note: args.dependencyNote } : {}),
     migration_gate: eco.migrationGate(args.files),
     migration_collisions: args.migrationCollisions ?? [],
     migration_precheck_degraded: args.migrationPrecheckDegraded ?? false,
@@ -1018,9 +1077,15 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // computing it here and again inside buildRoundOrder yields the same
       // tiers; taking the lens list off it keeps the round row and the order
       // from ever disagreeing.
-      const passPolicy = buildPassPlan(cfg, files, { body: prBody }, eco, deps.heuristics);
+      const passPolicy = buildPassPlan(
+        cfg,
+        files,
+        { title: row.title, body: prBody },
+        eco,
+        deps.heuristics,
+      );
       const plannedPasses = passPolicy.pass_plan;
-      const lenses = plannedPasses.map((p) => p.lens);
+      const lenses = [...new Set(plannedPasses.map((p) => p.lens))];
       const riskPasses = new Set(cfg.models.risk_passes);
       const addablePasses = passPolicy.addable_lenses.map((lens) => ({
         lens,
@@ -1197,9 +1262,24 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
               : {}),
           }
         : undefined;
+      // Third-party sources for the passes (benchmark 2026-09-26; `[review]
+      // dependency_sources`). Total by contract — a dead registry yields an
+      // empty note, never a failed or delayed-past-budget round.
+      let dependencyNote = "";
+      if (cfg.review.dependency_sources && deps.dependencySources) {
+        try {
+          dependencyNote = await deps.dependencySources(
+            resolve(sandboxRoot(), worktreeFor(row.number)),
+            files,
+          );
+        } catch (err) {
+          log(`dispatch: #${row.number} dependency sources unavailable`, err);
+        }
+      }
       const order = buildRoundOrder({
         tree,
         ecosystem: eco,
+        ...(dependencyNote ? { dependencyNote } : {}),
         ...(recovery ? { recovery } : {}),
         migrationCollisions,
         migrationPrecheckDegraded: precheck.degraded,

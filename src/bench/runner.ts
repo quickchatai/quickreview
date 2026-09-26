@@ -33,15 +33,17 @@ import {
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
-import { loadConfig, type Config } from "../config.js";
+import { applyReviewEffort, loadConfig, type Config } from "../config.js";
 import { buildRoundOrder } from "../dispatch.js";
 import { ecosystemFor, type Ecosystem } from "../ecosystem.js";
 import type { PrFileEntry } from "../github.js";
+import { prepareDependencySources, renderDependencyNote } from "../depsources.js";
 import { buildAgents, identityVars, PASS_ADDENDA } from "../include.js";
 import { MEMORY_LESS } from "../memory/context.js";
 import { loadProfileAddenda, loadProfileEcosystem, loadProfileHeuristics } from "../profiles.js";
 import { directiveVocabulary, isFirstPartyDirectivePath } from "../severity.js";
 import type { PrStateRow } from "../state.js";
+import type { PassPlanEntry } from "../types.js";
 import {
   renderConversationSystemPrompt,
   renderRoundPrompt,
@@ -117,20 +119,39 @@ export interface CaseSummary {
 export interface RunFingerprint {
   qcr_commit: string;
   profile: string;
+  /** `--config` levers this run set ("" = the shipped config). */
+  overrides?: string;
   conversation: string;
   tiers: Record<string, string>;
   validate_tier: string;
   pi: string;
+  /** `[models] effort` and what "high" meant for this run. */
+  effort?: { effort: string; effort_max: string };
+  /** The benchmark-driven review levers this run had on. */
+  levers?: {
+    sublenses: boolean;
+    sweep: boolean;
+    sweep_max_groups: number;
+    dependency_sources: boolean;
+  };
 }
 
-export function runFingerprint(cfg: Config, profile: string): RunFingerprint {
+export function runFingerprint(cfg: Config, profile: string, overrides = ""): RunFingerprint {
   return {
     qcr_commit: process.env.QCR_BENCH_COMMIT ?? "unknown",
     profile,
+    ...(overrides ? { overrides } : {}),
     conversation: cfg.models.conversation,
     tiers: { ...cfg.models.tiers },
     validate_tier: cfg.models.validate_tier,
     pi: cfg.pi.version,
+    effort: { effort: cfg.models.effort, effort_max: cfg.models.effort_max },
+    levers: {
+      sublenses: cfg.review.sublenses,
+      sweep: cfg.review.sweep,
+      sweep_max_groups: cfg.review.sweep_max_groups,
+      dependency_sources: cfg.review.dependency_sources,
+    },
   };
 }
 
@@ -163,6 +184,67 @@ export function benchConfig(root: string, profile: string): Config {
   const cfg = structuredClone(loadConfig(join(root, "config.toml")));
   cfg.review.profile = profile;
   return cfg;
+}
+
+/**
+ * `--config a.b=v,c.d=w`: one bench run's config levers, set on the loaded
+ * production config — so two arms of one experiment share ONE image and differ
+ * only in the knobs named on the command line (recorded in the fingerprint).
+ * A key must already exist in the config (a typo fails loudly instead of
+ * measuring nothing); `true`/`false` and numbers are coerced to the type the
+ * key already holds. `models.effort` is re-applied to every model spec.
+ */
+export function applyConfigOverrides(cfg: Config, spec: string): Config {
+  const pairs = spec
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (pairs.length === 0) return cfg;
+  const out = structuredClone(cfg) as unknown as Record<string, unknown>;
+  for (const pair of pairs) {
+    const eq = pair.indexOf("=");
+    if (eq <= 0) throw new Error(`--config: "${pair}" is not key=value`);
+    const path = pair.slice(0, eq).trim().split(".");
+    const raw = pair.slice(eq + 1).trim();
+    let node = out;
+    for (const k of path.slice(0, -1)) {
+      const next = node[k];
+      if (typeof next !== "object" || next === null)
+        throw new Error(`--config: no section "${path.join(".")}" in config.toml`);
+      node = next as Record<string, unknown>;
+    }
+    const leaf = path[path.length - 1] as string;
+    if (!(leaf in node)) throw new Error(`--config: no key "${path.join(".")}" in config.toml`);
+    const cur = node[leaf];
+    node[leaf] =
+      typeof cur === "boolean"
+        ? raw === "true"
+          ? true
+          : raw === "false"
+            ? false
+            : (() => {
+                throw new Error(`--config: ${path.join(".")} takes true|false`);
+              })()
+        : typeof cur === "number"
+          ? Number(raw)
+          : raw;
+  }
+  const next = out as unknown as Config;
+  if (pairs.some((p) => p.startsWith("models.effort"))) {
+    const effort = next.models.effort;
+    // Re-parse through the same validation the config file gets.
+    next.models = applyReviewEffort({
+      ...next.models,
+      effort: (["", "low", "medium", "high"] as const).includes(effort)
+        ? effort
+        : effort === ("med" as string)
+          ? "medium"
+          : (() => {
+              throw new Error(`--config: models.effort must be low|medium|high (got ${effort})`);
+            })(),
+    });
+  }
+  return next;
 }
 
 /** Build the lens + validator agents into `<root>/.pi/agents` — the PROJECT
@@ -241,7 +323,9 @@ export function renderCasePrompts(args: {
   caseDir: string;
   files: PrFileEntry[];
   issuedAt: string;
-}): { system: string; order: string; plannedLenses: string[] } {
+  /** The rendered third-party-sources block, "" when none (depsources.ts). */
+  dependencyNote?: string;
+}): { system: string; order: string; plannedLenses: string[]; passPlan: PassPlanEntry[] } {
   const { root, cfg, c, meta, tree } = args;
   const identity = { ...identityVars(cfg), repo: c.repo };
   const title = meta.title ?? `AACR-Bench ${c.repo}#${c.pr}`;
@@ -280,6 +364,7 @@ export function renderCasePrompts(args: {
       : {}),
     ecosystem: args.ecosystem,
     heuristics: loadProfileHeuristics(root, cfg.review.profile),
+    ...(args.dependencyNote ? { dependencyNote: args.dependencyNote } : {}),
   });
   const template = readFileSync(join(root, "prompts", roundTemplateFile("first")), "utf8");
   const rendered = renderRoundPrompt(
@@ -307,7 +392,12 @@ export function renderCasePrompts(args: {
     { pr: c.pr, title, worktree: tree },
     identity,
   );
-  return { system, order: orderText, plannedLenses: order.pass_plan.map((p) => p.agent) };
+  return {
+    system,
+    order: orderText,
+    plannedLenses: order.pass_plan.map((p) => p.agent),
+    passPlan: order.pass_plan,
+  };
 }
 
 export interface PiRun {
@@ -491,6 +581,20 @@ export async function reviewCase(
     rmSync(tmpDir, { recursive: true, force: true });
     mkdirSync(tmpDir, { recursive: true });
     const files = await changedFiles(tree, meta);
+    // Third-party sources, exactly as the daemon's dispatch unpacks them
+    // (`[review] dependency_sources`): one cache per run container, on the
+    // disk-backed wt volume, shared by concurrent cases. What was unpacked and
+    // what was skipped is kept per case (deps.json) — the attribution record.
+    rmSync(join(caseDir, "deps.json"), { force: true });
+    let dependencyNote = "";
+    if (ctx.cfg.review.dependency_sources) {
+      const manifest = await prepareDependencySources(tree, files, {
+        cacheDir: join(o.root, "wt", ".depcache"),
+        log: (line) => log(`deps: ${c.instance_id}: ${line}`),
+      });
+      writeFileSync(join(caseDir, "deps.json"), JSON.stringify(manifest, null, 2));
+      dependencyNote = renderDependencyNote(manifest);
+    }
     const prompts = renderCasePrompts({
       root: o.root,
       cfg: ctx.cfg,
@@ -501,8 +605,10 @@ export async function reviewCase(
       caseDir,
       files,
       issuedAt: new Date().toISOString(),
+      dependencyNote,
     });
     summary.planned_lenses = prompts.plannedLenses;
+    writeFileSync(join(caseDir, "pass-plan.json"), JSON.stringify(prompts.passPlan, null, 2));
     const sysPath = join(caseDir, "system-prompt.md");
     writeFileSync(sysPath, prompts.system);
     writeFileSync(join(caseDir, "round-order.md"), prompts.order);
@@ -716,7 +822,11 @@ export function writeResults(
   }
 }
 
-export function contextFor(root: string, profile: string): { cfg: Config; ecosystem: Ecosystem } {
-  const cfg = benchConfig(root, profile);
+export function contextFor(
+  root: string,
+  profile: string,
+  overrides = "",
+): { cfg: Config; ecosystem: Ecosystem } {
+  const cfg = applyConfigOverrides(benchConfig(root, profile), overrides);
   return { cfg, ecosystem: ecosystemFor(loadProfileEcosystem(root, profile)) };
 }

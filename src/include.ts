@@ -27,7 +27,7 @@
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, resolve, join } from "node:path";
 import { ALLOWED_PROGRAMS } from "../extensions/bash-guard.js";
-import { MODELS_TIER_DEFAULTS } from "./config.js";
+import { MODELS_TIER_DEFAULTS, THINKING_LEVELS } from "./config.js";
 import { PASS_TIER_ORDER, tiersAtOrAbove } from "./types.js";
 import type { PassTier } from "./types.js";
 
@@ -275,7 +275,7 @@ export function applyMemoryTools(
  * --model accepts the suffix); the split feeds the `thinking:` field and the
  * BuiltAgent record. */
 export function splitModelSpec(spec: string): { model: string; thinking: string | null } {
-  const m = /^(.+):(off|minimal|low|medium|high)$/.exec(spec);
+  const m = new RegExp(`^(.+):(${THINKING_LEVELS.join("|")})$`).exec(spec);
   return m ? { model: m[1] as string, thinking: m[2] as string } : { model: spec, thinking: null };
 }
 
@@ -489,6 +489,17 @@ const FINDING_SELF_SUFFICIENCY_VALIDATE_ADDENDUM =
 const VALIDATE_KILL_VOCABULARY_ADDENDUM =
   "\n## Kill and downgrade reasons — a closed vocabulary (sandbox rule)\nYour kill-log feeds the EOD critic: a wrong label teaches it wrong lessons. Every kill reason comes from this closed set — never a free-text phrase, never a stretched word:\n\n- `refuted` — you found counterevidence by READING and it contradicts the claim; cite it (file:line or the command and what it showed) in the kill-log line.\n- `unverifiable` — the claim **cannot be verified by reading** the diff, the worktree, or CI output. If a grep or a file-open could settle it, you MUST do the read — \"I didn't check\" is not `unverifiable`. A claim one read could settle is never `unverifiable`: after the read it is either `refuted` (the read contradicts it) or it survives.\n- `bad-anchor` — the evidence is real but the `path:line` is wrong and the claim depends on the location. Your step 3 comes first: fix the anchor, or strip to a body-only finding, when the finding itself is sound; kill as `bad-anchor` only when the misplacement is the defect.\n- `duplicate` — the same defect as another finding this round, differently phrased; name the surviving finding it merges into.\n- `out-of-scope` — the finding is not about this PR's change or its blast radius (e.g. pre-existing code no changed line touches or depends on, or review of the review process itself).\n- `settled:<thread-id>` — re-raises a settled thread (your step 2, unchanged).\n- `nit-out-of-delta` — a new nit-class candidate outside the current delta while a NIT SCOPE block is armed (unchanged from the nit-scope rule above).\n- `below-bar` — true but beneath posting: too minor to clear the bar even as a `[nit]`. Severity honesty — use this word rather than inflating `unverifiable` or `out-of-scope` to cover it.\n- `nit-no-request` — a nit-class candidate that asks for no change (see below). Nit-class only.\n- `self-narration` — the candidate's subject is one of the review's own earlier findings rather than the code (see below).\n\n**Downgrades are not kills and carry their own discipline.** A demotion or adjustment (`security-demoted`, `intent-over-cap`, `design-over-cap`, `inflated`, `understated`, `overreachable`, `understated-reach`, `ask-human-unnamed-defect`, `tag-outside-grammar`) must name the axis moved — **severity**, **confidence**, or **reachability** — and say in one clause WHY that axis moved (e.g. `inflated — severity P1→P2: the error path logs and continues, no data loss`). An axis change without a why is not auditable and teaches the critic nothing.\n\n**Hunt counterevidence before SURVIVE.** For every `P0`–`P2` candidate, actively search the worktree for what would make the claim false — the guard clause upstream, the caller that already checks, the config default, the test that pins the behaviour — before you let it survive. Failing to refute is not the same as confirming: a validator that SURVIVEs everything untouched is not validating. If the hunt finds the counterevidence, the kill is `refuted` with the citation; if it finds nothing, say what you looked for.\n";
 
+// Benchmark 2026-09-26 (bench/aacr/RESULTS.md, missed-defect analysis): of
+// the real defects the validator threw away, every one was a kill whose own
+// reason CONFIRMED the mechanism and refuted only the consequence the lens had
+// guessed — a missing `break` "raised in 8 of 9 runs, killed 4 times" because
+// "no user-visible failure was established", a dead public field killed as
+// "the value is ignored". The defect was real; the lens had named the wrong
+// harm. Killing it loses the defect; restating it keeps the bar honest in both
+// directions (the TRUE consequence decides the severity, usually a nit).
+const VALIDATE_RESTATE_NOT_KILL_ADDENDUM =
+  "\n## Restate, don't kill: a real mechanism with the wrong consequence (sandbox rule)\nWhen your re-derivation CONFIRMS the candidate's mechanism — the code really does what the candidate says it does — but REFUTES the consequence it claims, do not kill it. Ask what the code's real consequence is, and restate the finding with that consequence: a field nothing reads, a value that is silently wrong but currently masked, a log line that lies, a branch that falls through into the next case, a check that no longer guards what its name says, a copy that has already drifted from its siblings. Post it at the severity the TRUE consequence earns — usually `[nit]` or `[question]`, a blocker only when the true consequence clears the blocker bar on its own — with the downgrade word `restated` (axis: severity, and say what the consequence became). Kill only when the mechanism itself is false (`refuted`) or when the true consequence is something no maintainer would change (`below-bar`).\n\nThree narrower cases of the same rule:\n- **A \"missing tests\" candidate whose evidence names a behaviour change.** Judge the behaviour change as its own finding first; the test ask rides on it or dies alone.\n- **\"Pre-existing\" on a line this PR rewrote, in the class of problem the PR says it fixes.** That is in scope by definition — a fix that leaves its own target half-fixed is this PR's defect, never `out-of-scope`.\n- **A reachability demotion.** Before calling a trigger rare, say how common the triggering input actually is in this codebase (ASCII-only files are the normal case for source code, not an edge case); demote only on that stated frequency.\n";
+
 // second-day audit §4.3. The old merge rule ("dedup by (path,
 // changed-line-run): highest severity wins") silently destroyed 3 of 8
 // findings on #5291 — two of them correct and DISTINCT defects sharing an
@@ -666,11 +677,10 @@ const BASELINE_SIBLING_SITES_ADDENDUM =
 const JUDGMENT_LENS_OWN_QUESTIONS_ADDENDUM =
   "\n## Finish your own questions (sandbox rule)\nA defect outside your lane — correctness, security, data — gets ONE line: the `P3` question your severity cap already prescribes, naming the concern. It does not end or narrow your pass: the lens that owns it judges it at full strength, and re-deriving it spends the round's tokens on a finding it already has. Your own lane is still yours to finish — answer your lens's own questions for every guard, `try`/`except`, handler, fallback and repeated block the diff adds before you return. A task string may point you at a site; it never removes one of your questions.\n";
 
-
 const INTENT_ANSWER_THE_AUTHOR_ADDENDUM =
   "\n## Answer the author; check the claims against callers (sandbox rule)\n" +
-  "- **A direct question in the body gets an answer.** When the author asks reviewers something (\"tell me if I should roll this part back\", \"is reusing X OK here?\"), answer it as a `P3` finding anchored on the lines it asks about, with what the worktree shows — including what the reuse or change does on the paths the author may not have considered. Answering is not agreeing.\n" +
-  "- **A behavioural claim is checked at every caller.** For each concrete claim in the body (\"avoids misclassifying X\", \"perf only\", \"no behaviour change\"), read the callers of the changed function and compare old and new behaviour on each. A claim that holds at the call site the diff edits but not at another caller still reaching the old path is a finding.\n" +
+  '- **A direct question in the body gets an answer.** When the author asks reviewers something ("tell me if I should roll this part back", "is reusing X OK here?"), answer it as a `P3` finding anchored on the lines it asks about, with what the worktree shows — including what the reuse or change does on the paths the author may not have considered. Answering is not agreeing.\n' +
+  '- **A behavioural claim is checked at every caller.** For each concrete claim in the body ("avoids misclassifying X", "perf only", "no behaviour change"), read the callers of the changed function and compare old and new behaviour on each. A claim that holds at the call site the diff edits but not at another caller still reaching the old path is a finding.\n' +
   "- **Every finding quotes the body sentence it answers or contradicts.** A finding that cites no sentence of the title or body is not an intent finding — drop it.\n";
 
 /**
@@ -728,6 +738,11 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
     id: "validate-premise-scope",
     scope: [VALIDATE_PASS],
     text: VALIDATE_PREMISE_SCOPE_ADDENDUM,
+  },
+  {
+    id: "validate-restate-not-kill",
+    scope: [VALIDATE_PASS],
+    text: VALIDATE_RESTATE_NOT_KILL_ADDENDUM,
   },
   {
     id: "judgment-lens-own-questions",

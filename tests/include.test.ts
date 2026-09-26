@@ -521,13 +521,17 @@ describe("the real seeded content", () => {
     const out = mkdtempSync(join(tmpdir(), "qcr-agents-build-"));
     try {
       const built = buildAgents(join(sandbox, "agents"), out, { root: sandbox });
-      // 11 raisable passes × 3 tiers (pass-intent; pass-placement /
+      // 18 raisable passes × 3 tiers (pass-intent; pass-placement /
       // pass-simplicity / pass-backcompat; pass-concurrency
-      //; pass-ask-human) + 3 risk passes × 1 + validate × 1
-      // (its shipped floor is the top tier) = 37.
-      expect(built).toHaveLength(37);
+      //; pass-ask-human; pass-sweep and the six sub-lenses,
+      // benchmark 2026-09-26) + 3 risk passes × 1 + validate × 1 (its shipped
+      // floor is the top tier) = 58.
+      expect(built).toHaveLength(58);
       for (const b of built) {
         const text = readFileSync(b.output, "utf8");
+        // No lens file names a model: the built variant carries exactly the
+        // configured tier's spec (2026-09-26 reseed dropped the stale headers).
+        expect(text).toMatch(/\nmodel: openai-codex\/gpt-6-sol:(medium|high)\n/);
         expect(text).not.toContain("{{include:");
         // identity variables resolve at build time — leaves must see
         // plain text, and no unexpanded {{…}} of any kind may reach a session.

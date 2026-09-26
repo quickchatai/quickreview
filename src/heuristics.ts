@@ -355,3 +355,264 @@ export function selectLenses(
 
   return [...lenses];
 }
+
+// ---- content-triggered sub-lenses (benchmark 2026-09-26) -------------------
+//
+// The defect benchmark (bench/aacr/RESULTS.md) traced 48 real defects the
+// review kept missing: 42 were never raised by ANY pass, and the conditional
+// lenses that would have caught several never ran, because the selection
+// above is path-shaped. A sub-lens is a narrow pass whose whole charter is ONE
+// procedure — a table the pass must fill (every consumer of a widened check,
+// every sample file through a round trip, every rollout pairing) — so skipping
+// a row is visible instead of silent. Each is keyed on what the diff or the PR
+// text SAYS, not on where the files live, and each names its family: the
+// broad lens it narrows. Passes stay leaves (rule 9): a sub-lens is its own
+// flat pass, launched by the PR's main session like every other lens.
+//
+// Triggers are deliberately cheap and a little generous: a sub-lens that runs
+// for nothing returns NONE and costs one small pass; a sub-lens that never
+// runs costs the defect. `SUBLENS_TRIGGERS` is the ONE registry — a new
+// sub-lens is an agent file plus one entry here.
+
+export interface SubLensTrigger {
+  lens: string;
+  /** The broad lens this one narrows — documentation and the plan's notes. */
+  family: string;
+  /** The reason the plan shows, or null when the trigger does not fire. */
+  fires: (files: PrFile[], text: string) => string | null;
+}
+
+/** Added lines of CODE files only (a README that says "encoding" is not a
+ * round trip). */
+function addedCode(files: PrFile[]): { file: PrFile; added: string }[] {
+  return files
+    .filter(
+      (f) => f.patch !== undefined && CODE_FILE_RE.test(f.filename) && !isTestFile(f.filename),
+    )
+    .map((f) => ({
+      file: f,
+      added: (f.patch as string)
+        .split("\n")
+        .filter((l) => l.startsWith("+") && !l.startsWith("+++"))
+        .join("\n"),
+    }));
+}
+
+/** Changed (added or removed) lines of code files. */
+function changedCode(files: PrFile[]): { file: PrFile; changed: string }[] {
+  return files
+    .filter(
+      (f) => f.patch !== undefined && CODE_FILE_RE.test(f.filename) && !isTestFile(f.filename),
+    )
+    .map((f) => ({
+      file: f,
+      changed: (f.patch as string)
+        .split("\n")
+        .filter((l) => /^[+-]/.test(l) && !/^(\+\+\+|---)/.test(l))
+        .join("\n"),
+    }));
+}
+
+/** A predicate's name: `isBinary(`, `is_supported(`, and the prefixed C
+ * style `SDL_IsJoystick8BitDo(` — the verb may follow a `Prefix_`. */
+const PREDICATE_CHANGE_RE =
+  /(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]*_)?(?:[iI]s|[hH]as|[cC]an|[sS]hould|[sS]upports?|[aA]llows?|[aA]ccepts?|[nN]eeds?)(?:_[a-z]|[A-Z])\w*\s*\(/;
+const LITERAL_GUARD_RE = /(===|!==|==|!=)\s*(['"][^'"\n]{1,40}['"]|0x[0-9a-fA-F]+)/;
+const HEX_ID_RE = /\b0x[0-9a-fA-F]{3,}\b/g;
+const CASE_LABEL_RE = /^\+\s*case\s+[^:\n]+:/gm;
+
+const ENCODING_RE =
+  /\b(encoding|charset|chardet|jschardet|iconv|TextDecoder|TextEncoder|codecs?|BOM|byte.?order|utf-?(8|16)|latin-?1|windows-125\d|\\r\\n|CRLF|EOL|line.?endings?)\b|\.(decode|encode)\(/i;
+const WRITE_RE =
+  /\b(writeFile\w*|createWriteStream|fs\.write\w*|\.write\(|\.save\(|saveDocument|applyEdit|open\([^)\n]*['"][wa]b?\+?['"]|write_text|write_bytes)/;
+
+const DEFER_RE =
+  /\b(enqueue\w*|dequeue\w*|queue\w*|Queue\w*|setTimeout|setImmediate|nextTick|requestAnimationFrame|debounce\w*|throttle\w*|coalesc\w*|defer\w*|schedule\w*|apply_async|\.delay\(|create_task|call_soon\w*|run_in_executor|go func|spawn\w*|dispatch_async|post_task|wakeup\w*|mp_dispatch\w*|pending_\w+)/g;
+
+const LOOP_RE = /^\+.*\b(while\s*\(|while\s+\w|loop\s*\{|for\s*\(\s*;\s*;|for\s*\{)/m;
+const REMOTE_RE =
+  /\b(fetch|request|axios|http\w*|grpc|rpc|client\.\w+|recv\w*|page|offset|cursor|next_?page|has_?more|continuation)\b/i;
+const READ_ALL_RE =
+  /\b(readFile\w*|read_to_end|read_to_string|ReadAll|readAll|\.read\(\)|arrayBuffer\(\)|\.text\(\))/;
+const LIMIT_RE = /\b(MAX_\w+|max\w*Size|size\w*Limit|limit|LIMIT\w*)\b/;
+const UNCHECKED_CAST_RE =
+  /(\.json\(\)\s*\)?\s*as\s+[A-Z]|as\s+[A-Z]\w*\[\]|JSON\.parse\([^)\n]*\)\s*as\s+)/;
+const LEAK_RE =
+  /\b(os\.Hostname|hostname\(\)|gethostname|socket\.gethostname|os\.environ|process\.env)\b/;
+
+const CLAIM_RE =
+  /\b(silenc\w*|suppress\w*|warnings?|C\d{4}|-W[a-z-]+|clippy|eslint|lint|support(s|ed)?\s+(for\s+)?\S+|compatib\w*|prevent\w*|no longer|firmware|only\s+(for|when|if|on|with)|require[sd]?\s+(version|firmware|v?\d))\b/i;
+
+const ROLLOUT_TEXT_RE =
+  /\b(hotfix|backport|sdk|protocol|wire format|older (clients?|versions?|sdks?|nodes?)|backward|compat\w*|roll-?out|mixed.?version|persist\w*|migrat\w*|validators?|client and server|server and client)\b/i;
+const ROLLOUT_CODE_RE =
+  /\b(persistReducer|redux-persist|createMigrate|localStorage|sessionStorage|MAX_[A-Z_]*(ENTRIES|PAGE|ITEMS|SIZE|LEN)\w*|protocol_version|api_version|schema_version|version:\s*\d)\b/;
+
+/** The phrase a text trigger fired on: from the match to the end of its
+ * line or sentence, capped — the pass gets the claim, not one word of it. */
+function phraseAt(text: string, at: number): string {
+  const rest = text.slice(at).split(/\n|(?<=[.!?])\s/)[0] ?? "";
+  const clean = rest.replace(/[`"]/g, "'").trim();
+  return clean.length > 80 ? `${clean.slice(0, 77)}…` : clean;
+}
+
+export const SUBLENS_TRIGGERS: readonly SubLensTrigger[] = [
+  {
+    lens: "pass-widened",
+    family: "pass-baseline",
+    fires: (files) => {
+      for (const { file, changed } of changedCode(files)) {
+        if (
+          /^[+-].*(function|def|func|bool|boolean|static)\b[^\n]*/m.test(changed) &&
+          changed.split("\n").some((l) => PREDICATE_CHANGE_RE.test(l) && /^[+-]/.test(l))
+        )
+          return `a predicate changes in ${file.filename}`;
+        if (changed.split("\n").some((l) => LITERAL_GUARD_RE.test(l)))
+          return `a guard compares against a literal in ${file.filename}`;
+      }
+      for (const { file, added } of addedCode(files)) {
+        const ids = new Set(added.match(HEX_ID_RE) ?? []);
+        const cases = (`\n${added}`.match(CASE_LABEL_RE) ?? []).length;
+        if (ids.size >= 2 || cases >= 3) return `accepted values are added in ${file.filename}`;
+      }
+      return null;
+    },
+  },
+  {
+    lens: "pass-roundtrip",
+    family: "pass-data-safety",
+    fires: (files) => {
+      const code = addedCode(files);
+      const enc = code.find((c) => ENCODING_RE.test(c.added));
+      if (!enc) return null;
+      const write = code.find((c) => WRITE_RE.test(c.added));
+      // Encoding work in one file and the write in another is still a round trip.
+      return write ? `encoding handling and a write-back in ${enc.file.filename}` : null;
+    },
+  },
+  {
+    lens: "pass-deferred",
+    family: "pass-concurrency",
+    fires: (files) => {
+      for (const { file, added } of addedCode(files)) {
+        const hits = new Set((added.match(DEFER_RE) ?? []).map((h) => h.toLowerCase()));
+        if (hits.size >= 2) return `work is queued or deferred in ${file.filename}`;
+      }
+      return null;
+    },
+  },
+  {
+    lens: "pass-bounds",
+    family: "pass-security",
+    fires: (files) => {
+      for (const { file, added } of addedCode(files)) {
+        if (LOOP_RE.test(added) && REMOTE_RE.test(added))
+          return `a loop over another party's data in ${file.filename}`;
+        if (READ_ALL_RE.test(added) && LIMIT_RE.test(added))
+          return `a read with a size limit in ${file.filename}`;
+        if (UNCHECKED_CAST_RE.test(added))
+          return `fetched data is cast to a type in ${file.filename}`;
+        if (LEAK_RE.test(added)) return `host or environment facts are read in ${file.filename}`;
+      }
+      return null;
+    },
+  },
+  {
+    lens: "pass-claims",
+    family: "pass-intent",
+    fires: (_files, text) => {
+      const m = CLAIM_RE.exec(text);
+      return m ? `the PR text claims "${phraseAt(text, m.index)}"` : null;
+    },
+  },
+  {
+    lens: "pass-rollout",
+    family: "pass-backcompat",
+    fires: (files, text) => {
+      const m = ROLLOUT_TEXT_RE.exec(text);
+      if (m) return `the PR text mentions "${phraseAt(text, m.index)}"`;
+      for (const { file, added } of addedCode(files))
+        if (ROLLOUT_CODE_RE.test(added))
+          return `persisted or versioned state changes in ${file.filename}`;
+      return null;
+    },
+  },
+];
+
+/** Every sub-lens pass name, in registry order. */
+export const SUBLENS_PASSES: readonly string[] = SUBLENS_TRIGGERS.map((t) => t.lens);
+
+/** The sub-lenses this PR fires, with the reason each fired. Pure. */
+export function selectSubLenses(
+  files: PrFile[],
+  intent?: { title?: string | null; body?: string | null },
+): { lens: string; why: string }[] {
+  const text = `${intent?.title ?? ""}\n${intent?.body ?? ""}`;
+  const out: { lens: string; why: string }[] = [];
+  for (const t of SUBLENS_TRIGGERS) {
+    const why = t.fires(files, text);
+    if (why) out.push({ lens: t.lens, why });
+  }
+  return out;
+}
+
+// ---- the per-file sweep (benchmark 2026-09-26) ------------------------------
+//
+// Fifteen of the 48 missed defects were "attention": the pass had the code in
+// front of it and never looked — a misspelled action name quoted twice without
+// being noticed, a Bluetooth ID read in six runs and never checked. The
+// open-code-review baseline catches that class by reviewing one file at a
+// time. The sweep is that shape inside our pipeline: the changed files, cut
+// into a few small groups, one line-by-line pass per group.
+
+export const SWEEP_PASS = "pass-sweep";
+
+/** Files the sweep never reads: lockfiles, generated or minified output,
+ * vendored trees, snapshots, binaries and prose. */
+const SWEEP_SKIP_RE =
+  /((^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock|go\.sum|poetry\.lock|uv\.lock|composer\.lock|Gemfile\.lock)$|\.(min\.js|map|snap|lock|svg|png|jpe?g|gif|ico|pdf|woff2?|ttf|md|rst|txt)$|(^|\/)(vendor|third_party|node_modules|dist|build|generated)\/)/i;
+
+/** A group stays under both caps unless one file alone exceeds them. */
+export const SWEEP_MAX_FILES_PER_GROUP = 3;
+export const SWEEP_MAX_LINES_PER_GROUP = 400;
+
+/**
+ * Cut the PR's changed files into sweep groups: diff order, greedy, at most
+ * `SWEEP_MAX_FILES_PER_GROUP` files and `SWEEP_MAX_LINES_PER_GROUP` changed
+ * lines per group, at most `maxGroups` groups. Files past the last group come
+ * back in `unswept` so the plan can say so — a silent cap reads as "covered".
+ */
+export function sweepGroups(
+  files: PrFile[],
+  maxGroups: number,
+): { groups: string[][]; unswept: string[] } {
+  const eligible = files.filter(
+    (f) => f.status !== "removed" && f.additions > 0 && !SWEEP_SKIP_RE.test(f.filename),
+  );
+  const groups: string[][] = [];
+  let cur: string[] = [];
+  let lines = 0;
+  const unswept: string[] = [];
+  for (const f of eligible) {
+    const size = f.additions + f.deletions;
+    if (
+      cur.length > 0 &&
+      (cur.length >= SWEEP_MAX_FILES_PER_GROUP || lines + size > SWEEP_MAX_LINES_PER_GROUP)
+    ) {
+      groups.push(cur);
+      cur = [];
+      lines = 0;
+    }
+    if (groups.length >= maxGroups) {
+      unswept.push(f.filename);
+      continue;
+    }
+    cur.push(f.filename);
+    lines += size;
+  }
+  if (cur.length > 0) {
+    if (groups.length < maxGroups) groups.push(cur);
+    else unswept.push(...cur);
+  }
+  return { groups, unswept };
+}

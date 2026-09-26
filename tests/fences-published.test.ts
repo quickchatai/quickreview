@@ -282,6 +282,21 @@ describe("MANIFESTO.md is pinned by something", () => {
           "an unexplained exclusion would be indistinguishable from hiding a real egress.",
       },
       {
+        host: "registry.npmjs.org",
+        why:
+          "`[review] dependency_sources` (src/depsources.ts, benchmark 2026-09-26): the SOURCE of the npm packages a PR " +
+          "imports, downloaded at their locked versions and unpacked as plain files for the passes to read — never " +
+          "installed, never run. What leaves the host is a package name and version; no code, no memory.",
+      },
+      {
+        host: "pypi.org",
+        why: "the same leg for Python packages: the PyPI JSON metadata that names a release's archive and its sha256.",
+      },
+      {
+        host: "files.pythonhosted.org",
+        why: "the same leg: the PyPI archive itself (a pure-Python wheel or an sdist), verified against that sha256.",
+      },
+      {
         host: "support.example.com",
         why: "the same: the #5386 injection-adjudication example, quoted in an addendum. Prose in a string.",
       },

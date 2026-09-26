@@ -369,12 +369,33 @@ export interface ReviewConfig {
   profile: string;
   /** Directive-path vocabulary extensions — see the type above. */
   directives: ReviewDirectivesConfig;
+  /** Content-triggered sub-lenses (`SUBLENS_TRIGGERS` in src/heuristics.ts):
+   * narrow passes, each a fixed procedure, planned when the diff or the PR
+   * text shows the shape its procedure exists for. Off ⇒ the path-shaped
+   * plan alone (the pre-2026-09 behaviour). */
+  sublenses: boolean;
+  /** The per-file sweep (`agents/pass-sweep.md`): changed files are grouped
+   * into a few small batches and each batch gets its own line-by-line pass —
+   * the local slips a whole-PR reading skims past. */
+  sweep: boolean;
+  /** At most this many sweep passes per round; files beyond them are listed
+   * as not swept. */
+  sweep_max_groups: number;
+  /** Unpack the sources of the third-party packages this PR touches, at
+   * their locked versions, so passes can read what a library actually does
+   * (src/depsources.ts). Download-and-unpack only — nothing is installed or
+   * run. */
+  dependency_sources: boolean;
 }
 
 export const REVIEW_DEFAULTS: ReviewConfig = {
   escalation_mention_default: "",
   profile: "",
   directives: REVIEW_DIRECTIVES_DEFAULTS,
+  sublenses: false,
+  sweep: false,
+  sweep_max_groups: 6,
+  dependency_sources: false,
 };
 
 /**
@@ -623,7 +644,7 @@ export const OWNER_DEFAULTS: OwnerConfig = {
   github_login: "",
 };
 
-/** Per-model spend rates, keyed by bare model id (e.g. "gpt-5.6-sol"). */
+/** Per-model spend rates, keyed by bare model id (e.g. "gpt-6-sol"). */
 export interface ModelPricing {
   input_per_mtok: number;
   output_per_mtok: number;
@@ -647,13 +668,81 @@ export interface ModelsConfig {
   small_diff_lines: number;
   /** Spend rates keyed by bare model id; consumed by spend accounting. */
   pricing: Record<string, ModelPricing>;
+  /** ONE reasoning-effort setting for the whole review (`""` = off: every
+   * role and tier keeps the level its own spec names). When set, the thinking
+   * suffix of EVERY model spec above — default, conversation, overseer and all
+   * three tiers — is replaced: `low` → `:low`, `medium` → `:medium`, `high` →
+   * the model's highest level (`effort_max`). Applied once, at parse time, so
+   * every consumer (sessions, the agents build, the bench) sees the same
+   * specs. */
+  effort: ReviewEffort;
+  /** The level `effort = "high"` means — the highest a model accepts. pi
+   * 0.87.1 lists `minimal…high, xhigh, max` for gpt-6-sol (model catalog,
+   * VERIFY-ON-PIN); a model that tops out lower needs this set to its own
+   * ceiling. */
+  effort_max: ThinkingLevel;
+}
+
+/** pi's thinking levels, ascending (pi 0.87.1 — VERIFY-ON-PIN). */
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+
+/** `[models] effort` — `""` leaves every spec as written. */
+export type ReviewEffort = "" | "low" | "medium" | "high";
+
+/** Replace (or add) the `:thinking` suffix of one model spec. */
+export function withThinking(spec: string, level: ThinkingLevel): string {
+  const m = new RegExp(`^(.+):(${THINKING_LEVELS.join("|")})$`).exec(spec);
+  return `${m ? (m[1] as string) : spec}:${level}`;
+}
+
+/** Apply `[models] effort` to every spec the review runs on. Pure. */
+export function applyReviewEffort(models: ModelsConfig): ModelsConfig {
+  if (models.effort === "") return models;
+  const level: ThinkingLevel = models.effort === "high" ? models.effort_max : models.effort;
+  const tiers = Object.fromEntries(
+    Object.entries(models.tiers).map(([t, spec]) => [t, withThinking(spec, level)]),
+  ) as Record<PassTier, string>;
+  return {
+    ...models,
+    default: withThinking(models.default, level),
+    conversation: withThinking(models.conversation, level),
+    overseer: withThinking(models.overseer, level),
+    tiers,
+  };
+}
+
+function parseEffort(raw: unknown): ReviewEffort {
+  const v = String(raw ?? "")
+    .trim()
+    .toLowerCase();
+  if (v === "") return "";
+  if (v === "low" || v === "high") return v;
+  if (v === "med" || v === "medium") return "medium";
+  throw new Error(`config.toml [models] effort must be "", "low", "medium" or "high" (got "${v}")`);
+}
+
+function parseEffortMax(raw: unknown): ThinkingLevel {
+  const v = String(raw ?? "max")
+    .trim()
+    .toLowerCase();
+  if ((THINKING_LEVELS as readonly string[]).includes(v) && v !== "off") return v as ThinkingLevel;
+  throw new Error(`config.toml [models] effort_max must be a pi thinking level (got "${v}")`);
 }
 
 /** Defaults for the tiered [models] knobs — older configs keep parsing. */
 export const MODELS_TIER_DEFAULTS: Pick<
   ModelsConfig,
-  "tiers" | "risk_passes" | "validate_tier" | "small_diff_lines" | "pricing"
+  | "tiers"
+  | "risk_passes"
+  | "validate_tier"
+  | "small_diff_lines"
+  | "pricing"
+  | "effort"
+  | "effort_max"
 > = {
+  effort: "",
+  effort_max: "max",
   tiers: {
     "terra-med": "openai-codex/gpt-6-sol:medium",
     "sol-med": "openai-codex/gpt-6-sol:medium",
@@ -1634,7 +1723,9 @@ export function loadConfig(path?: string): Config {
 }
 
 function parseModels(raw: Record<string, any>): ModelsConfig {
-  return {
+  return applyReviewEffort({
+    effort: parseEffort(raw.effort),
+    effort_max: parseEffortMax(raw.effort_max),
     default: String(req(raw, "default")),
     conversation: String(req(raw, "conversation")),
     overseer: String(req(raw, "overseer")),
@@ -1646,7 +1737,7 @@ function parseModels(raw: Record<string, any>): ModelsConfig {
     validate_tier: (raw.validate_tier ?? MODELS_TIER_DEFAULTS.validate_tier) as PassTier,
     small_diff_lines: Number(raw.small_diff_lines ?? MODELS_TIER_DEFAULTS.small_diff_lines),
     pricing: (raw.pricing ?? {}) as Record<string, ModelPricing>,
-  };
+  });
 }
 
 /** Full model spec ("provider/model:thinking") for a pass tier. */
