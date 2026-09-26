@@ -1,0 +1,1782 @@
+{
+ "set": "smoke10",
+ "version": "1",
+ "method": "Per PR: a blind expert hunt from the diff and code; every candidate (the hunt, the AACR references with hand labels, and every comment any reviewer posted in our runs, anonymised) checked against the code, merged and graded, exclusions recorded; an adversarial critic per set spot-checked inclusions, exclusions and merges, and its 12 corrections were applied (2026-09-26).",
+ "cases": {
+  "comfyanonymous__ComfyUI@0bb6023": {
+   "pr_summary": "The PR widens ruff's lint.select from S307+F401+F841 (plus F821 in parent commit 03ee445) to S307 plus the whole Pyflakes \"F\" family, and fixes the 14 new findings. Two nested aiohttp handlers are renamed (get_logs becomes get_raw_logs, get_history becomes get_history_prompt_id). An unused .format argument is dropped in controlnet.py, and a duplicate `from torch import Tensor` is removed. F-prefixes come off strings that have no placeholders, and the repeated \"clip\" key in CLIPTextEncodeSDXL.INPUT_TYPES is deduped. The Colab notebook loses imports that ruff reported as cross-cell F811 redefinitions. I linted the merge base, the parent and the head in memory with ruff 0.15.15 (select F,S307). The merge base and parent each have 14 findings and head has 0, so CI's `ruff check .` passes. Every Python-side edit keeps behaviour the same. The notebook edit is the one real defect: its three launch cells are independent alternatives, each ending in a blocking `!python main.py`.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "Colab notebook: localtunnel and iframe launch cells lose the imports their threads still use (NameError, UI never exposed)",
+     "statement": "To silence ruff F811 (a cross-cell redefinition report), the PR deletes `import subprocess/time/socket/urllib.request` from the localtunnel launch cell and `import time/socket` from the colab-iframe launch cell. Both cells' `iframe_thread` still calls `time.sleep`, `socket.socket`, and in the localtunnel cell also `urllib.request.urlopen` and `subprocess.Popen`. The only remaining imports are in the separate cloudflared launch cell, which is an alternative launcher that ends in a blocking `!python main.py`. A user who picks localtunnel or the iframe fallback without having run cloudflared first gets a NameError in the daemon thread on its first `time.sleep`. The thread dies, ComfyUI starts, but no tunnel URL or iframe ever appears, so the UI is unreachable through those two documented run modes.",
+     "sites": [
+      {
+       "path": "notebooks/comfyui_colab.ipynb",
+       "from_line": 237,
+       "to_line": 260,
+       "role": "cause"
+      },
+      {
+       "path": "notebooks/comfyui_colab.ipynb",
+       "from_line": 284,
+       "to_line": 302,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "At head, the localtunnel cell (id jjjjjjjjjjjjj) imports only `threading` (line 240: \"import threading\\n\"), yet uses `time.sleep(0.5)` (244), `socket.socket(socket.AF_INET, socket.SOCK_STREAM)` (245), `urllib.request.urlopen('https://ipv4.icanhazip.com')` (252) and `subprocess.Popen([\"lt\", \"--port\", ...])` (253). The iframe cell (id hhhhhhhhhh) imports only `threading` (286) and uses `time.sleep(0.5)` (289) and `socket.socket(...)` (290). In the whole notebook, `grep import` finds those modules imported only in the cloudflared cell (lines 190-194), and that cell ends with `!python main.py --dont-print-server` (216), which blocks. At the merge base each cell imported its own modules. Ruff at the merge base shows the deletions were a cross-cell lint artifact, not dead code, e.g. `notebooks/comfyui_colab.ipynb:cell 8:5:8: F811 Redefinition of unused `time` from cell 6`, and the same for subprocess, socket, urllib.request and for time/socket in cell 10. Severity is medium: the recommended cloudflared path still works, but two of the three documented launchers are fully non-functional when run on their own.",
+     "provenance": {
+      "dataset_refs": [
+       3,
+       4
+      ],
+      "hunt": true,
+      "reviewer_comments": [
+       "R1",
+       "R2",
+       "R3",
+       "R4",
+       "R5",
+       "R6",
+       "R7",
+       "R8",
+       "R9",
+       "R10",
+       "R11",
+       "R12",
+       "R13"
+      ]
+     },
+     "notes": "To count, a comment must say that imports removed from the localtunnel cell and/or the iframe cell (time, socket, subprocess, urllib.request) are still used by that cell's thread code, so running that cell raises NameError and the tunnel or iframe never starts. Flagging either cell is enough, since both share one root cause. Dataset ref 3's hedged 'please verify ... likely uses time.sleep' counts because it names the NameError consequence. Near-misses that do NOT count: comments only noting that imports were removed or that F811 fired, with no runtime breakage stated; suggestions to exclude notebooks from ruff or add noqa that do not say the cells break; and comments about the cloudflared cell, which is unchanged and still works."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 0",
+     "reason": "Wrong or not a PR defect. The PR FIXES the get_logs F811 by renaming the /logs/raw handler to get_raw_logs. The premise that the redefinition overwrote the /logs route is also false: aiohttp's @routes.get registers each handler at decoration time, so both endpoints worked before and after. The rename only affects a local nested function name that nothing else references."
+    },
+    {
+     "source": "ref 1",
+     "reason": "Nit. `\"adapter.body.{}.\".format(i, )` is valid Python and behaves exactly like the old `.format(i, j)`: the extra arg was unused (F523), and the trailing comma is a harmless style quirk, not the claimed 'syntax issue'."
+    },
+    {
+     "source": "ref 2",
+     "reason": "Wrong. The PR REMOVES the two duplicate \"clip\" keys (F601) and leaves a single \"clip\": (\"CLIP\",) at the top of the dict. Moving it changes input_order, but clip is a link input, not a widget, so widget order and widgets_values are unchanged, and it stays the only socket input (slot 0). encode() takes inputs by name."
+    },
+    {
+     "source": "ref 5",
+     "reason": "Wrong or nit. I linted the full head tree in memory with ruff 0.15.15 (select F,S307, same as head ruff.toml): 0 findings, against 14 at the merge base. So `ruff check .` in .github/workflows/ruff.yml passes, and nothing needs a temporary F821 ignore. The missing trailing newline at EOF is a formatting nit."
+    },
+    {
+     "source": "ref 6",
+     "reason": "Wrong or not a PR defect. The PR FIXES the get_history F811 by renaming the /history/{prompt_id} handler to get_history_prompt_id. The claim that the second definition overwrote the original is false: each aiohttp route decorator registered its handler independently, so /history and /history/{prompt_id} both worked before and after."
+    },
+    {
+     "source": "hunt:non-defects (handler renames, format-arg drop, Tensor dedupe, f-prefix removals, clip dedupe)",
+     "reason": "The hunt itself cleared these, and I re-checked them: none changes behaviour. The removed `from torch import Tensor` at sub_quadratic_attention.py:25 duplicated line 14's import, and the f-strings in patcher_extension.py:116, execution.py:763 and server.py:834 had no placeholders."
+    }
+   ]
+  },
+  "infiniflow__ragflow@7051234": {
+   "pr_summary": "The PR adds CommonService.delete_by_ids and DocumentService.get_doc_ids_by_doc_names. UserCanvasVersionService.delete_all_versions now collects every version past the newest 20 and deletes them with one delete_by_ids call. The old code called `cls.delete(...)`, which does not exist on CommonService, so it raised AttributeError, the `except Exception` swallowed it and nothing was ever pruned. The external DELETE /v1/api/document handler (document_rm) now resolves doc_names with one `name IN (...)` query and pre-fetches the documents with get_by_ids instead of calling get_by_id once per document. The new name helper returns None, not [], when nothing matches, and that includes the default empty doc_names. As a result an ids-only delete now crashes with TypeError. The same helper returns every document with a matching name across the whole deployment, where the old lookup returned one. It also stops reporting names that match nothing.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "get_doc_ids_by_doc_names returns None on no match, so DELETE /api/document with doc_ids only fails with TypeError",
+     "statement": "The new get_doc_ids_by_doc_names returns None, not an empty list, when no row matches. That includes the default `doc_names=[]`, because peewee renders an empty IN as `0 = 1`. document_rm then runs `doc_id not in doc_ids` against None and raises TypeError, which the except turns into server_error_response. So every request that sends doc_ids without matching doc_names (the ids-only shape) now fails and deletes nothing. The old list comprehension always gave a list.",
+     "sites": [
+      {
+       "path": "api/db/services/document_service.py",
+       "from_line": 337,
+       "to_line": 340,
+       "role": "cause"
+      },
+      {
+       "path": "api/apps/api_app.py",
+       "from_line": 618,
+       "to_line": 621,
+       "role": "symptom"
+      },
+      {
+       "path": "api/apps/api_app.py",
+       "from_line": 628,
+       "to_line": 629,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "high",
+     "evidence": "document_service.py:337-340 at head: `doc_ids = doc_ids.dicts()` / `if not doc_ids:` / `return` / `return [doc[\"id\"] for doc in doc_ids]`. That returns None for zero rows; peewee evaluates truthiness through __len__, and the sibling get_doc_id_by_doc_name uses the same pattern. api_app.py:618-621: `doc_ids = DocumentService.get_doc_ids_by_doc_names(req.get(\"doc_names\", []))` then `for doc_id in req.get(\"doc_ids\", []): if doc_id not in doc_ids: doc_ids.append(doc_id)`. 628-629 `except Exception as e: return server_error_response(e)`. Merge base: `doc_ids = [DocumentService.get_doc_id_by_doc_name(doc_name) for doc_name in req.get(\"doc_names\", [])]` always gave a list, [] when there were no names. Reached from web/src/hooks/document-hooks.ts:421 `kbService.document_delete({ doc_ids: documentIds })`, whose URL is web/src/utils/api.ts:63 `${api_host}/api/document` with method 'delete'. The shared-chat attachment removal in web/src/components/message-input/index.tsx:182 calls it, and so does any external API client that deletes by id.",
+     "provenance": {
+      "dataset_refs": [
+       0
+      ],
+      "hunt": true,
+      "reviewer_comments": [
+       "R1",
+       "R2",
+       "R3",
+       "R4",
+       "R6",
+       "R8",
+       "R10",
+       "R25",
+       "R26",
+       "R27",
+       "R28",
+       "R29"
+      ]
+     },
+     "notes": "To count, a comment must say that the new name lookup returns None, not an empty list, when no names match or doc_names is omitted or empty. It must also say that document_rm's membership test and append on doc_ids then fail with TypeError or a server error, so ids-only deletion breaks. A comment placed at either site counts. These do NOT count: a claim that the helper 'always returns None, even when documents are found' (false), and a claim that an empty doc_names list produces invalid SQL `IN ()` (peewee 3.17.1 emits `0 = 1`). Neither names the None-into-caller crash, which is dataset ref 3's near-miss. A generic 'add None handling' remark with no consequence is too vague."
+    },
+    {
+     "id": "D2",
+     "title": "Delete-by-name now deletes every document with that name in the deployment, across knowledge bases and tenants",
+     "statement": "The pre-PR name lookup already ignored tenant and knowledge base, but deleted only the first document matching each name. The new get_doc_ids_by_doc_names selects every document with a matching name across the whole deployment, so one DELETE /v1/api/document request by name now irreversibly deletes every same-named document in every tenant and knowledge base.",
+     "sites": [
+      {
+       "path": "api/db/services/document_service.py",
+       "from_line": 333,
+       "to_line": 340,
+       "role": "cause"
+      },
+      {
+       "path": "api/apps/api_app.py",
+       "from_line": 618,
+       "to_line": 618,
+       "role": "other-site"
+      },
+      {
+       "path": "api/apps/api_app.py",
+       "from_line": 641,
+       "to_line": 660,
+       "role": "symptom"
+      }
+     ],
+     "kind": "data",
+     "severity": "high",
+     "evidence": "document_service.py:335-336 `doc_ids = cls.model.select(*fields).where(cls.model.name.in_(doc_names))`, with every row returned at 340. Compare the merge-base helper at 322-329, `.where(cls.model.name == doc_name)` ... `return doc_id[0][\"id\"]`, which gives one id per name. db_models.py:624 `name = CharField(max_length=255, null=True, help_text=\"file name\", index=True)` is not unique. api_app.py:646 `tenant_id = DocumentService.get_tenant_id(doc_id)` overwrites the token tenant from line 615, and there is no ownership check before `DocumentService.remove_document(doc, tenant_id)` (652), `FileService.filter_delete(...)` (657), `File2DocumentService.delete_by_document_id` (658) and `STORAGE_IMPL.rm(b, n)` (660).",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R5",
+       "R7",
+       "R9",
+       "R17",
+       "R18",
+       "R19",
+       "R20",
+       "R21",
+       "R22",
+       "R23",
+       "R24"
+      ]
+     },
+     "notes": "To count, a comment must identify that the new bulk name lookup is not scoped to the caller's tenant or knowledge base and/or returns ALL documents with a matching name. It must also say that a delete-by-name request can therefore remove documents beyond the one intended, either other tenants' documents or several same-named documents. Framing it as cross-tenant authorization or as a multi-delete behaviour change both count. These do NOT count: a comment only about the pre-existing lack of an ownership check on caller-supplied doc_ids (an id-based IDOR that this PR does not change) that says nothing about the name lookup; and generic 'add auth' remarks with no link to the name query."
+    },
+    {
+     "id": "D3",
+     "title": "doc_names that match nothing are silently dropped instead of producing 'Document not found!'",
+     "statement": "Before, an unknown name put None into doc_ids, and the delete loop returned get_data_error_result('Document not found!') when it reached that entry. Now the IN query simply omits names with no match. A request that mixes valid names with a misspelled or already-deleted name therefore returns success (data=True), and the caller is never told that part of the request did nothing.",
+     "sites": [
+      {
+       "path": "api/db/services/document_service.py",
+       "from_line": 335,
+       "to_line": 340,
+       "role": "cause"
+      },
+      {
+       "path": "api/apps/api_app.py",
+       "from_line": 618,
+       "to_line": 626,
+       "role": "symptom"
+      },
+      {
+       "path": "api/apps/api_app.py",
+       "from_line": 641,
+       "to_line": 644,
+       "role": "other-site"
+      }
+     ],
+     "kind": "contract",
+     "severity": "low",
+     "evidence": "Merge base: `doc_ids = [DocumentService.get_doc_id_by_doc_name(doc_name) for doc_name in req.get(\"doc_names\", [])]`. get_doc_id_by_doc_name returns None for no match, then `e, doc = DocumentService.get_by_id(doc_id); if not e: return get_data_error_result(message=\"Document not found!\")` fires for that None. Head: document_service.py:340 `return [doc[\"id\"] for doc in doc_ids]` holds only matched ids, so the `if doc_id not in doc_dic` check at api_app.py:643 can never fire for an unknown name, and the handler ends with `get_json_result(data=True)`.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": []
+     },
+     "notes": "To count, a comment must say that names with no matching document are now silently ignored (no 'not found' error), so a partly unmatched name list reports success. R4's 'requests with unknown names fail the same way' does NOT count. It describes the TypeError crash, which is D1."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 1",
+     "reason": "Wrong. peewee==3.17.1 (pyproject.toml:70) renders an empty `in_([])` as `0 = 1`, not invalid SQL. The only caller, delete_all_versions, calls delete_by_ids only when count() > 20, so delete_ids is never empty."
+    },
+    {
+     "source": "ref 2",
+     "reason": "Not a defect. delete_by_ids runs a single DELETE ... WHERE id IN (...) statement, which is already atomic. There is no multi-statement sequence to wrap in DB.atomic()."
+    },
+    {
+     "source": "ref 3",
+     "reason": "Both claims are false. The helper returns a list when rows are found (line 340), and an empty IN is safe in peewee 3.17.1. It never names the real problem, which is None on no match crashing the caller (D1)."
+    },
+    {
+     "source": "ref 4",
+     "reason": "Style nit. Calling `UserCanvasVersionService.delete_by_ids` instead of `cls.delete_by_ids` has no behavioural consequence, because there are no subclasses."
+    },
+    {
+     "source": "ref 5",
+     "reason": "Praise, plus a suggestion to guard an empty list. delete_ids is never empty, since it is only built when count() > 20, and an empty IN is safe anyway."
+    },
+    {
+     "source": "R11, R12, R13",
+     "reason": "Requests about the PR description or performance claim. The remaining per-document calls (get_tenant_id, storage address, remove_document, file-link cleanup) predate the PR and are mostly inherent per-document work. The PR does batch the lookups it claims to batch, so this is not a regression or an incomplete fix."
+    },
+    {
+     "source": "R14, R15",
+     "reason": "Style or duplication preference: reuse filter_delete instead of adding delete_by_ids. A small delete-by-ids helper is a natural sibling of delete_by_id, and there is no concrete future cost."
+    },
+    {
+     "source": "R16",
+     "reason": "Speculative. Hitting a bind-parameter limit needs more than 65k pruned versions for one canvas. MySQL, the default backend, has no such parameter cap, and pruning now runs on every save."
+    },
+    {
+     "source": "R30",
+     "reason": "Pre-existing and untouched. The full-row `cls.model.select()` at user_canvas_version.py:32 is unchanged by the PR. It is a perf nit, not a regression."
+    },
+    {
+     "source": "R31",
+     "reason": "Wrong. Indexing a peewee query runs the SELECT once and fills the cursor's row cache. It does not issue a separate OFFSET query per index, so there are no per-row reads."
+    },
+    {
+     "source": "R32, R33, R34",
+     "reason": "Test-coverage requests, not defects."
+    }
+   ]
+  },
+  "langflow-ai__langflow@9513d15": {
+   "pr_summary": "The PR turns Vertex._log_transaction_async into a coroutine. Under `async with self._lock`, it gathers and clears the vertex's outstanding log_transaction tasks, then creates the new task. An outer `except asyncio.CancelledError` handler cancels whatever is left in the set, and wraps each `Task.cancel()` in `suppress(asyncio.CancelledError)`. The four call sites (Vertex._get_result at base.py:677/683 and ComponentVertex._get_result at vertex_types.py:110/149) now await it. The stated goal is to stop Loop flows raising SQLite \"database is locked\" when transaction-log tasks pile up.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "Non-reentrant vertex lock re-acquired inside get_result: every result lookup with a flow_id deadlocks",
+     "statement": "Vertex.get_result holds self._lock (a plain asyncio.Lock, which is not reentrant) while it awaits self._get_result. Both _get_result implementations now await _log_transaction_async, which does `async with self._lock` on the same lock, so the coroutine waits forever on a lock its own caller holds. Every graph with flow_id set (normal API/UI runs) hangs the first time a vertex resolves a predecessor's result, on both the success path and the not-built/error path. No transaction is ever logged and the flow never finishes.",
+     "sites": [
+      {
+       "path": "src/backend/base/langflow/graph/vertex/base.py",
+       "from_line": 636,
+       "to_line": 637,
+       "role": "cause"
+      },
+      {
+       "path": "src/backend/base/langflow/graph/vertex/base.py",
+       "from_line": 621,
+       "to_line": 622,
+       "role": "other-site"
+      },
+      {
+       "path": "src/backend/base/langflow/graph/vertex/base.py",
+       "from_line": 677,
+       "to_line": 677,
+       "role": "symptom"
+      },
+      {
+       "path": "src/backend/base/langflow/graph/vertex/base.py",
+       "from_line": 683,
+       "to_line": 683,
+       "role": "symptom"
+      },
+      {
+       "path": "src/backend/base/langflow/graph/vertex/vertex_types.py",
+       "from_line": 110,
+       "to_line": 110,
+       "role": "symptom"
+      },
+      {
+       "path": "src/backend/base/langflow/graph/vertex/vertex_types.py",
+       "from_line": 149,
+       "to_line": 149,
+       "role": "symptom"
+      }
+     ],
+     "kind": "concurrency",
+     "severity": "high",
+     "evidence": "base.py:62 `self._lock = asyncio.Lock()`. base.py:621-622 `async with self._lock:\\n    return await self._get_result(requester, target_handle_name)`. base.py:637 (inside the new async _log_transaction_async) `async with self._lock:`. base.py:683 `await self._log_transaction_async(str(flow_id), source=self, target=requester, status=\"success\")` (and :677 for the error path), plus vertex_types.py:149/110 in the ComponentVertex override. Path: Graph.process creates build_vertex tasks -> Vertex.build (base.py:821) -> _build -> _build_each_vertex_in_params_dict -> _build_vertex_and_update_params / _build_list_of_vertices_and_update_params / _build_dict_and_update_params (base.py:688/702/601) -> `await predecessor.get_result(self, ...)` -> takes predecessor._lock -> predecessor._get_result -> `if flow_id: await self._log_transaction_async(...)` -> `async with self._lock` on the already-held lock, which never resolves. The only entry to _get_result is get_result (grep confirms), so every logged lookup is affected. At the merge base _log_transaction_async was synchronous and took no lock.",
+     "provenance": {
+      "dataset_refs": [
+       0
+      ],
+      "hunt": true,
+      "reviewer_comments": [
+       "R2",
+       "R3",
+       "R4",
+       "R5",
+       "R6",
+       "R7",
+       "R8",
+       "R9",
+       "R10",
+       "R11",
+       "R23"
+      ]
+     },
+     "notes": "To count, a comment must say that _log_transaction_async acquires self._lock while its caller get_result already holds the same lock, and that asyncio.Lock is not reentrant, so the call deadlocks or hangs whenever flow_id is set. Pointing at either the lock acquisition (base.py:637) or any of the four awaited call sites is fine if the re-entrancy is named. Near-misses that do NOT count: generic 'awaiting logging adds latency / blocks on DB I/O' (R15, dataset ref 3); 'serializing under the lock hurts performance' with no deadlock; test requests that only mention 'a hang' as a hypothetical (R1, R12, R18, R22) without identifying the lock re-entry."
+    },
+    {
+     "id": "D2",
+     "title": "suppress(asyncio.CancelledError) around Task.cancel() is ineffective dead code",
+     "statement": "The new outer cancellation handler wraps `pending_task.cancel()` in `with suppress(asyncio.CancelledError)`. Task.cancel() only schedules cancellation and never raises CancelledError in the caller, so the wrapper and the new `from contextlib import suppress` import do nothing. They mislead readers about which cancellation path is handled.",
+     "sites": [
+      {
+       "path": "src/backend/base/langflow/graph/vertex/base.py",
+       "from_line": 658,
+       "to_line": 659,
+       "role": "cause"
+      },
+      {
+       "path": "src/backend/base/langflow/graph/vertex/base.py",
+       "from_line": 10,
+       "to_line": 10,
+       "role": "other-site"
+      }
+     ],
+     "kind": "maintainability",
+     "severity": "low",
+     "evidence": "base.py:658-659 `with suppress(asyncio.CancelledError):\\n    pending_task.cancel()`; base.py:10 `from contextlib import suppress` was added only for this. asyncio.Task.cancel() returns a bool and delivers CancelledError inside the target task on its next step, never synchronously to the caller.",
+     "provenance": {
+      "dataset_refs": [
+       2
+      ],
+      "hunt": false,
+      "reviewer_comments": [
+       "R19",
+       "R20",
+       "R21"
+      ]
+     },
+     "notes": "To count, a comment must say that the suppress(CancelledError) around task.cancel() cannot catch anything, because cancel() does not raise in the caller, and so the wrapper is redundant or dead. Near-misses that do NOT count: a claim that the outer handler iterates an already-cleared set and therefore misses cancellations (dataset ref 1, which is wrong because the inner handler cancels the local list); generic 'simplify the task bookkeeping' (R16)."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 1",
+     "reason": "Wrong. The inner `except asyncio.CancelledError` (base.py:644-649) already cancels the local `tasks` snapshot before re-raising, so the outer handler finding self.log_transaction_tasks empty drops no cancellation. Also, asyncio.gather cancels its children when it is cancelled. The outer loop is at most redundant."
+    },
+    {
+     "source": "ref 3",
+     "reason": "Wrong on the exception claim: create_task does not raise, and log_transaction (graph/utils.py:141-167) catches every Exception, so gather over those tasks can only raise CancelledError and cannot mask the not-built ValueError. The latency half is the PR's intended serialization and is unreachable at head, because D1's deadlock stops execution before any gather. The deadlock itself is D1 (ref 0), which ref 3 does not identify."
+    },
+    {
+     "source": "hunt:Per-vertex serialization does not serialize transaction writes across vertices",
+     "reason": "Speculative. The PR body scopes its mechanism explicitly to tasks 'in the vertex', and nothing establishes that concurrent cross-vertex log writes (graph/base.py:1525-1545 runs a layer's vertices concurrently) are what produce 'database is locked'. Other concurrent DB writers exist regardless. It is also unreachable at head: because of D1, no log task is ever created. At most a design question, not a demonstrable defect."
+    },
+    {
+     "source": "R13, R14",
+     "reason": "Same cross-vertex serialization concern as the hunt's second item. Excluded as speculative, and unreachable at head because of the D1 deadlock (R13 is itself phrased as a clarifying question)."
+    },
+    {
+     "source": "R15",
+     "reason": "Performance and design concern that result retrieval now waits on prior log I/O. This is the PR's intended serialization trade-off, each wait is bounded by one small insert, and it is unreachable at head because D1 deadlocks first. It does not identify the lock re-entry."
+    },
+    {
+     "source": "R17",
+     "reason": "Cancellation cascading into earlier log writes is unreachable at head. Every call to _log_transaction_async comes from inside get_result with the lock already held, so it blocks at `async with self._lock` before creating any task, and log_transaction_tasks is always empty when the outer handler runs. Losing best-effort log rows on cancellation is also low-consequence."
+    },
+    {
+     "source": "R16",
+     "reason": "Simplification nit (track one task instead of a set); no behavioural consequence."
+    },
+    {
+     "source": "R1, R12, R18, R22",
+     "reason": "Requests for regression tests; not defects."
+    }
+   ]
+  },
+  "immich-app__immich@7e2009f": {
+   "pr_summary": "When an asset has no usable EXIF date tag, MetadataService.getDates now falls back to the earlier of asset.fileModifiedAt and asset.fileCreatedAt. Before, it always used fileCreatedAt. The aim is that a file copied before upload (new creation time, original modification time) keeps its original date. The warn message is reworded and a unicorn/prefer-math-min-max disable is added (the rule exists in the pinned eslint-plugin-unicorn 56.0.1). The PR also makes the Android/Samsung motion-photo path build the hidden motion-video asset's fileCreatedAt, fileModifiedAt and localDateTime from getDates(asset, tags) instead of copying the still's stored fileCreatedAt/fileModifiedAt. Two unit tests are added for the still-image fallback. Separately, the stale @tsconfig/docusaurus entry is removed from docs/package-lock.json; docs/package.json had already dropped it in #14755, so this only brings the lockfile back in sync. The existing motion-photo tests still pass because the stubs have equal created and modified dates and no date tags. The only verified defect is low severity: the motion-video path gives fileModifiedAt a different meaning.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "Motion-video asset's fileModifiedAt now comes from the still's EXIF ModifyDate, and that value then feeds the new min() fallback",
+     "statement": "When the PR creates the hidden motion-video asset, it now sets fileModifiedAt to getDates(asset, tags).modifyDate. That is the still image's EXIF ModifyDate whenever one is present. Before, it was the still's stored file modification timestamp, and every other writer stores a file or client mtime in that field. The video's own queued METADATA_EXTRACTION then goes through the PR's new fallback when the video has no date tags. The fallback treats fileModifiedAt as a file mtime and takes min(fileModifiedAt, fileCreatedAt). So the linked video's capture date can be replaced by the still's EXIF ModifyDate, or by an earlier stored mtime, and end up differing from, or earlier than, the photo's capture date. The API also exposes the EXIF value as the video's fileModifiedAt.",
+     "sites": [
+      {
+       "path": "server/src/services/metadata.service.ts",
+       "from_line": 453,
+       "to_line": 460,
+       "role": "cause"
+      },
+      {
+       "path": "server/src/services/metadata.service.ts",
+       "from_line": 608,
+       "to_line": 611,
+       "role": "other-site"
+      },
+      {
+       "path": "server/src/services/metadata.service.ts",
+       "from_line": 596,
+       "to_line": 604,
+       "role": "symptom"
+      },
+      {
+       "path": "server/src/services/metadata.service.ts",
+       "from_line": 497,
+       "to_line": 497,
+       "role": "other-site"
+      }
+     ],
+     "kind": "contract",
+     "severity": "low",
+     "evidence": "Head metadata.service.ts:453-460 has `const dates = this.getDates(asset, tags); ... fileCreatedAt: dates.dateTimeOriginal, fileModifiedAt: dates.modifyDate, localDateTime: dates.localDateTime`. At the merge base it was `const createdAt = asset.fileCreatedAt ?? asset.createdAt; ... fileModifiedAt: asset.fileModifiedAt`. getDates lines 608-610: `let modifyDate = asset.fileModifiedAt; try { modifyDate = (exifTags.ModifyDate as ExifDateTime)?.toDate() ?? modifyDate; }`. Line 497 queues `JobName.METADATA_EXTRACTION` for the new motion asset. When that video has no EXIF_DATE_TAGS, line 601 takes `const earliestDate = asset.fileModifiedAt < asset.fileCreatedAt ? asset.fileModifiedAt : asset.fileCreatedAt;`, and line 222 writes the result into fileCreatedAt. Every other writer of fileModifiedAt stores an mtime: library.service.ts:410-411 and 514-515 (stat mtime), asset-media.service.ts:342 (client value), cli asset.ts:281 (stats.mtime). asset-response.dto.ts:134 exposes the field. Reach: a new Android/Samsung motion photo whose still carries an EXIF ModifyDate (or whose stored mtime is earlier than its EXIF capture instant), and whose embedded video has no usable date tag. The video is hidden, so the user-visible impact is small.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R6",
+       "R7",
+       "R12",
+       "R13",
+       "R14"
+      ]
+     },
+     "notes": "To count, a comment must say that the motion-video creation now stores the still's EXIF ModifyDate (getDates().modifyDate) as the video's fileModifiedAt instead of the file modification timestamp, i.e. that the field's meaning or provenance changes. Also count a comment that explains how the dates written here, fed into the new earliest-of fallback in the video's own metadata extraction, can move the video's date off, or before, the photo's capture date. R6's question half, R12 and R13 count; R7 and R14 count as the symptom framing. Do not count: pure test-coverage requests for the motion path (R5, R8-R11); 'reuse the dates already computed in handleMetadataExtraction' with no mention of the fileModifiedAt/modifyDate change; comments about the still-image fallback only; comments that only say fileCreatedAt now uses the EXIF DateTimeOriginal (that is the intended improvement)."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 0",
+     "reason": "Line 577 (`timeZone == null`) is untouched pre-existing code. `== null` deliberately matches both null and undefined, and the repo's eslint config does not ban it. Style claim, not a defect."
+    },
+    {
+     "source": "ref 1",
+     "reason": "Grammar in a code comment ('did not modified'). Nit."
+    },
+    {
+     "source": "ref 2",
+     "reason": "Log level preference. The fallback already logged at warn before the PR ('has no valid date, falling back to asset.fileCreatedAt') on exactly the same condition; the PR only rewords it, so no new log noise is introduced for still assets. Not a defect this PR introduces."
+    },
+    {
+     "source": "ref 3",
+     "reason": "Style: Math.min versus a ternary. The ternary is correct for Date objects (`<` compares valueOf), and the PR explicitly disables unicorn/prefer-math-min-max, a rule that exists in the pinned 56.0.1. Math.min would also need re-wrapping in new Date. Nit."
+    },
+    {
+     "source": "ref 4",
+     "reason": "Wrong. fileCreatedAt and fileModifiedAt are non-nullable timestamptz columns typed `Date` (asset.entity.ts:98-104, `@Column({ type: 'timestamptz' }) fileCreatedAt!: Date;`, not nullable). Every creation path (upload DTO, library import, motion creation) sets both. The comparison cannot see null or undefined."
+    },
+    {
+     "source": "R1, R2, R3, R4",
+     "reason": "Pre-existing and not introduced by this PR. docs/package.json dropped @tsconfig/docusaurus in commit 6a855f6 (#14755) before the merge base; the PR only removes the stale lockfile entry so the lockfile matches package.json. docs/tsconfig.json says 'This file is not used in compilation. It is here just for a nice editor experience', so there is no build or install break, and the unresolved extends dates from #14755."
+    },
+    {
+     "source": "R5, R8, R9, R10, R11",
+     "reason": "Test-coverage requests for the motion-photo date path. They state no defect in the code. The underlying semantic concern is captured by D1 only where a comment names the fileModifiedAt/ModifyDate change or the fallback interplay."
+    },
+    {
+     "source": "hunt:Fallback never reads a real file creation time for external-library, CLI or web assets",
+     "reason": "Not a regression and not a broken promise. For library, CLI and web assets both stored fields were already the same mtime, so behaviour is unchanged. The PR targets the stored creation/modification timestamps: mobile clients send distinct ones, as in the copy-before-upload case the comment describes. Using server-side stat birthtime would be wrong for uploads, since it is the upload time. Extending the fallback to library birthtime is a scope or design follow-up, not a defect of this PR."
+    },
+    {
+     "source": "hunt:getDates runs twice per motion photo, duplicating its warnings",
+     "reason": "Nit. The second call runs the same function on the identical asset and tags, so the results cannot diverge. The only cost is a repeated warn log line and trivial CPU, once per newly created motion asset. No behavioural consequence and no realistic drift risk."
+    }
+   ]
+  },
+  "cline__cline@7d18fb9": {
+   "pr_summary": "Cline PR #2347, which tries to fix non-UTF-8 file handling. It adds jschardet and iconv-lite to package.json but does not update package-lock.json. DiffViewProvider.open now reads the raw buffer, stores jschardet's guess in this.fileEncoding with no confidence check, and decodes originalContent with iconv. After VS Code has saved the document, saveChanges re-encodes normalizedPostSaveContent in that encoding and overwrites the file whenever fileEncoding.toLowerCase() !== \"utf8\". jschardet never reports \"utf8\"; it reports \"ascii\", \"UTF-8\", \"windows-1252\" and so on, so this write runs for almost every existing file. extractTextFromFile and extractTextFromIPYNB decode with the jschardet guess too. The default branch now reads the whole file before its 300KB check, and isBinaryFile runs only when jschardet returns no encoding. revertChanges and the @-mention isBinaryFile pre-filter are unchanged.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "ASCII-only files are detected as \"ascii\" and re-encoded as ASCII on save, so non-ASCII characters added by the edit become \"?\"",
+     "statement": "For any buffer with no byte >= 0x80 (most source files), jschardet returns encoding \"ascii\". \"ascii\" !== \"utf8\", so after VS Code has saved the document, saveChanges re-encodes it with iconv's ASCII codec and overwrites the file. Every non-ASCII character the model or user added (accents, em dashes, arrows, emoji, CJK comments) is silently written as \"?\". Meanwhile finalContent tells the model the Unicode text was saved.",
+     "sites": [
+      {
+       "path": "src/integrations/editor/DiffViewProvider.ts",
+       "from_line": 49,
+       "to_line": 57,
+       "role": "cause"
+      },
+      {
+       "path": "src/integrations/editor/DiffViewProvider.ts",
+       "from_line": 237,
+       "to_line": 240,
+       "role": "symptom"
+      }
+     ],
+     "kind": "data",
+     "severity": "high",
+     "evidence": "DiffViewProvider.ts:50-56 `const detected = chardet.detect(fileBuffer); this.fileEncoding = typeof detected === \"string\" ? detected : detected && (detected as any).encoding ? (detected as any).encoding : \"utf8\"`. jschardet's UniversalDetector.close() returns {encoding:\"ascii\", confidence:1} in the pure-ASCII input state (VS Code's encoding.ts lists 'ascii' in IGNORE_ENCODINGS for this reason). :237-239 `if (this.fileEncoding.toLowerCase() !== \"utf8\") { const encodedBuffer = iconv.encode(normalizedPostSaveContent, this.fileEncoding); await fs.writeFile(absolutePath, ...)`. Verified with iconv-lite 0.6.3: iconv.encode('const x = \"café — → 😀\"', 'ascii') gives 'const x = \"caf? ? ? ??\"'. Reached on every approved write_to_file/replace_in_file of an existing ASCII file (Cline.ts:1902 saveChanges), and finalContent (Cline.ts:1919/1934) reports the unmangled text.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R10",
+       "R27",
+       "R28",
+       "R32",
+       "R34"
+      ]
+     },
+     "notes": "To count, a comment must say that a pure-ASCII original (detected as \"ascii\") makes the save path encode with ASCII, so newly added non-ASCII characters are silently replaced with \"?\" or lost. Accept equivalent wording, for example \"an ASCII-detected file edited to contain an emoji is passed to iconv.encode(..., 'ascii')\". Near-misses that do not count: a generic \"no confidence check on jschardet\" with no lossy-save consequence, and a remark that a genuinely legacy file such as Shift-JIS cannot represent an emoji, without the ASCII-file case. A comment naming only the 'ascii'/'UTF-8' vs 'utf8' mismatch, without the lossy '?' consequence, counts for D12, not D1."
+    },
+    {
+     "id": "D2",
+     "title": "package-lock.json not updated: jschardet (and the direct iconv-lite dependency) missing from the lockfile, so npm ci / CI and publishing break",
+     "statement": "package.json adds iconv-lite and jschardet as dependencies, but package-lock.json is unchanged. jschardet appears nowhere in it, and neither package is in the root dependencies block. On a CI cache miss, npm ci in test.yml and publish.yml refuses the mismatched manifest and lock. On a cache hit (the key hashes the unchanged lockfile), the restored node_modules has no jschardet, so check-types and the build fail on the new import.",
+     "sites": [
+      {
+       "path": "package.json",
+       "from_line": 292,
+       "to_line": 295,
+       "role": "cause"
+      }
+     ],
+     "kind": "build",
+     "severity": "high",
+     "evidence": "The diff touches only .changeset, package.json, DiffViewProvider.ts and extract-text.ts. At head, `git show HEAD:package-lock.json | grep -c jschardet` gives 0. The root packages[\"\"].dependencies lists \"isbinaryfile\": \"^5.0.2\" but neither new package; iconv-lite exists only as a transitive node_modules/iconv-lite 0.6.3. .github/workflows/test.yml: `key: ${{ runner.os }}-npm-${{ hashFiles('package-lock.json') }}` ... `if: steps.root-cache.outputs.cache-hit != 'true'` `run: npm ci`, then `npm run check-types`. publish.yml uses npm ci too. DiffViewProvider.ts:11 and extract-text.ts:8 have `import * as chardet from \"jschardet\"`.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R1",
+       "R2",
+       "R3",
+       "R4",
+       "R5",
+       "R6",
+       "R7",
+       "R8"
+      ]
+     },
+     "notes": "To count, a comment must say the lockfile was not updated for the new dependency or dependencies (jschardet at minimum), so clean or CI installs (npm ci) or the build fail. A comment that only questions the choice of library or version does not count."
+    },
+    {
+     "id": "D3",
+     "title": "jschardet's guess is trusted with no confidence/UTF-8 validity check: valid UTF-8 files with few non-ASCII chars are misdetected as a single-byte encoding, read as mojibake and corrupted on revert/save",
+     "statement": "The detected encoding is used unconditionally. jschardet's UTF-8 prober confidence for one to three multibyte characters is only 0.5 to 0.88, while the Latin1 and SBCS probers can score higher. A UTF-8 file containing, for example, a single ©, é or em dash is therefore labelled windows-1252 or windows-1250. Those files, read correctly before the PR, now reach the model through read_file, .ipynb and the diff baseline as mojibake (\"Â©\"). revertChanges writes that mojibake originalContent back through VS Code's UTF-8 save, double-encoding the file on reject, failed SEARCH/REPLACE or abort. saveChanges writes newly added characters as windows-125x bytes, which are invalid in a UTF-8 file, or as \"?\".",
+     "sites": [
+      {
+       "path": "src/integrations/editor/DiffViewProvider.ts",
+       "from_line": 49,
+       "to_line": 57,
+       "role": "cause"
+      },
+      {
+       "path": "src/integrations/editor/DiffViewProvider.ts",
+       "from_line": 269,
+       "to_line": 279,
+       "role": "symptom"
+      },
+      {
+       "path": "src/integrations/editor/DiffViewProvider.ts",
+       "from_line": 237,
+       "to_line": 240,
+       "role": "symptom"
+      },
+      {
+       "path": "src/integrations/misc/extract-text.ts",
+       "from_line": 30,
+       "to_line": 43,
+       "role": "symptom"
+      },
+      {
+       "path": "src/integrations/misc/extract-text.ts",
+       "from_line": 58,
+       "to_line": 63,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "high",
+     "evidence": "DiffViewProvider.ts:50-57 uses `chardet.detect(fileBuffer)` with no confidence or UTF-8 validity check, then `this.originalContent = iconv.decode(fileBuffer, this.fileEncoding)`. revertChanges :276-279 `edit.replace(updatedDocument.uri, fullRange, this.originalContent ?? \"\") ... await updatedDocument.save()` saves the mojibake as UTF-8, because VS Code opened the UTF-8 file as UTF-8. extract-text.ts:30-43 and :60-63 decode with the same unchecked guess; .ipynb is JSON and always UTF-8. Proxy check with Python chardet 6: '// Copyright © 2024 ...' in UTF-8 gives WINDOWS-1252 at 0.53; 'readme — with one dash' gives WINDOWS-1252; 'const s = \"café\"' gives WINDOWS-1250. jschardet shares the UTF8Prober formula 1-0.99*0.5^n and a Latin1Prober. Reached via read_file (Cline.ts:2018), @mentions (mentions/index.ts:159,180) and every edit (Cline.ts:1732/1738, revert at 1752/1896/1952/1083).",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": []
+     },
+     "notes": "To count, a comment must say that jschardet's guess is used without a confidence or UTF-8 validity check, so real UTF-8 files (typically with few non-ASCII characters) can be detected as a legacy single-byte encoding, AND name a consequence: garbled read_file, diff or notebook text, or corruption when the file is reverted or saved. Near-misses that do not count: the ASCII-to-\"?\" case (that is D1), a bare \"add a confidence threshold\" with no misdetection consequence, and comments about VS Code's own decoding of the editable side."
+    },
+    {
+     "id": "D4",
+     "title": "Encoding-preserving write overwrites the saved file with the normalized comparison string (trimEnd, forced EOL, EOLs converted)",
+     "statement": "The new write serializes normalizedPostSaveContent, not the text VS Code saved. That string is trimEnd()'d, has exactly one EOL appended, and has every line ending rewritten to the EOL of the model's newContent. So a write on a CRLF file converts it to LF, trailing blank lines and whitespace at EOF are removed, and a final newline is forced — on-disk bytes differ from what the user approved and VS Code saved.",
+     "sites": [
+      {
+       "path": "src/integrations/editor/DiffViewProvider.ts",
+       "from_line": 211,
+       "to_line": 213,
+       "role": "cause"
+      },
+      {
+       "path": "src/integrations/editor/DiffViewProvider.ts",
+       "from_line": 237,
+       "to_line": 240,
+       "role": "symptom"
+      }
+     ],
+     "kind": "data",
+     "severity": "medium",
+     "evidence": "DiffViewProvider.ts:237 `if (this.fileEncoding.toLowerCase() !== \"utf8\") {`, where fileEncoding is jschardet's name (UTF8Prober reports \"UTF-8\"; pure ASCII reports \"ascii\"). :211-213 `const newContentEOL = this.newContent.includes(\"\\r\\n\") ? \"\\r\\n\" : \"\\n\"; const normalizedPostSaveContent = postSaveContent.replace(/\\r\\n|\\n/g, newContentEOL).trimEnd() + newContentEOL // this is the final content we return to the model`. :238-239 `iconv.encode(normalizedPostSaveContent, this.fileEncoding)` → `fs.writeFile(absolutePath, ...)`. Before the PR the normalized string was only reported to the model, never written.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R25",
+       "R30",
+       "R33"
+      ]
+     },
+     "notes": "To count, a comment must say the overwrite writes normalizedPostSaveContent (trimmed / EOL-normalized / forced final newline) instead of the text actually saved, so the file's bytes (trailing whitespace, final newline, CRLF/LF) differ from what was approved. A comment naming only the 'utf8' vs 'UTF-8'/'ascii' guard mismatch counts for D12, not here."
+    },
+    {
+     "id": "D12",
+     "title": "The `!== \"utf8\"` guard never matches jschardet's names, so every existing file is re-encoded and rewritten behind VS Code",
+     "statement": "saveChanges re-encodes and overwrites the file when this.fileEncoding.toLowerCase() !== \"utf8\", but jschardet returns \"UTF-8\", \"ascii\" and so on, never \"utf8\". So every existing file — not only legacy-encoded ones — goes through iconv and fs.writeFile after VS Code has already saved it. This is the enabler that routes ordinary UTF-8/ASCII files into the lossy and normalizing writes (D1, D4, D5).",
+     "sites": [
+      {
+       "path": "src/integrations/editor/DiffViewProvider.ts",
+       "from_line": 237,
+       "to_line": 237,
+       "role": "cause"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "DiffViewProvider.ts:237 `if (this.fileEncoding.toLowerCase() !== \"utf8\") {`, where fileEncoding is jschardet's name (UTF8Prober reports \"UTF-8\"; pure ASCII reports \"ascii\"). :211-213 `const newContentEOL = this.newContent.includes(\"\\r\\n\") ? \"\\r\\n\" : \"\\n\"; const normalizedPostSaveContent = postSaveContent.replace(/\\r\\n|\\n/g, newContentEOL).trimEnd() + newContentEOL // this is the final content we return to the model`. :238-239 `iconv.encode(normalizedPostSaveContent, this.fileEncoding)` → `fs.writeFile(absolutePath, ...)`. Before the PR the normalized string was only reported to the model, never written.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R25",
+       "R30",
+       "R33"
+      ]
+     },
+     "notes": "To count, a comment must name the case/naming mismatch: jschardet's 'UTF-8'/'ascii' never equal 'utf8', so the re-encode-and-overwrite path runs for ordinary UTF-8/ASCII files too. A comment that names only the lossy '?' consequence of encoding to 'ascii' counts for D1, not here."
+    },
+    {
+     "id": "D5",
+     "title": "Save strips the byte-order mark from UTF-8-BOM and UTF-16/32-BOM files",
+     "statement": "jschardet reports BOM-prefixed files as UTF-8, UTF-16LE/BE and so on. iconv.decode strips the BOM by default, and iconv.encode without addBOM writes the file back with none, although VS Code's own save had preserved it. After every accepted edit, UTF-8-BOM files silently lose their BOM, which BOM-dependent consumers need (Windows PowerShell 5.1, Excel CSV and similar). UTF-16 files become BOM-less UTF-16, which VS Code and other tools then misread.",
+     "sites": [
+      {
+       "path": "src/integrations/editor/DiffViewProvider.ts",
+       "from_line": 57,
+       "to_line": 57,
+       "role": "cause"
+      },
+      {
+       "path": "src/integrations/editor/DiffViewProvider.ts",
+       "from_line": 237,
+       "to_line": 240,
+       "role": "symptom"
+      }
+     ],
+     "kind": "data",
+     "severity": "medium",
+     "evidence": "DiffViewProvider.ts:57 `this.originalContent = iconv.decode(fileBuffer, this.fileEncoding)` and :238 `iconv.encode(normalizedPostSaveContent, this.fileEncoding)` pass no addBOM option. Verified with iconv-lite 0.6.3: decode(EF BB BF 68 69 0a, 'UTF-8') gives 'hi\\n', and encode('hi\\n','UTF-8') gives <68 69 0a> (no BOM). encode(decode(FF FE 68 00 69 00 0a 00,'UTF-16LE'),'UTF-16LE') gives <68 00 69 00 0a 00>, BOM gone.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R31"
+      ]
+     },
+     "notes": "To count, a comment must say that the new re-encode/overwrite drops a file's BOM, because iconv strips it on decode and does not add it on encode, so BOM-bearing files change on save. Comments about the charset alone do not count."
+    },
+    {
+     "id": "D6",
+     "title": "Binary check demoted to a fallback: any binary jschardet assigns an encoding is decoded and returned to the model as text",
+     "statement": "Before the PR, the default branch always ran isBinaryFile first and refused binaries. Now isBinaryFile runs only when jschardet returns no encoding. jschardet has no notion of binary content: any 7-bit buffer, including NULs and control bytes, is reported as \"ascii\", and single-byte probers can put a legacy charset guess on small binaries. Those files now pass the read_file path, which has no other binary guard, and up to 300KB of decoded binary garbage goes into the model's context.",
+     "sites": [
+      {
+       "path": "src/integrations/misc/extract-text.ts",
+       "from_line": 30,
+       "to_line": 43,
+       "role": "cause"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "extract-text.ts:30-43 `const detected = chardet.detect(fileBuffer) ... else if (detected && (detected as any).encoding) { encoding = (detected as any).encoding } else { const isBinary = await isBinaryFile(fileBuffer)... }` then `return iconv.decode(fileBuffer, encoding)`. Base: `const isBinary = await isBinaryFile(filePath).catch(() => false); if (!isBinary) {...} else { throw new Error(`Cannot read text for file type: ...`) }`. jschardet's pure-ASCII test is only /[\\x80-\\xFF]/ plus the escape check, so NUL-containing 7-bit data gets \"ascii\". read_file at Cline.ts:2018-2019 `const content = await extractTextFromFile(absolutePath); pushToolResult(content)`.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R54",
+       "R57",
+       "R58",
+       "R61",
+       "R62",
+       "R63",
+       "R64",
+       "R65",
+       "R66"
+      ]
+     },
+     "notes": "To count, a comment must say that isBinaryFile now runs only when charset detection returns nothing, so a binary file that gets a charset guess (for example \"ascii\" for 7-bit data) bypasses binary rejection and is decoded and sent to the model. Near-misses that do not count: requests for binary-rejection tests, and comments that isBinaryFile itself misclassifies legacy text (that is D10)."
+    },
+    {
+     "id": "D7",
+     "title": "extractTextFromFile reads the entire file into memory before the 300KB size check",
+     "statement": "The old default branch rejected binaries with a 512-byte sniff and rejected large files with fs.stat (getFileSizeInKB) before reading. The new code does fs.readFile(filePath) on the whole file first and checks byteLength afterwards. A read_file or folder mention on a multi-hundred-MB log, dataset or media file now buffers it all in the extension host just to reject it, and files over 2 GiB fail with ERR_FS_FILE_TOO_LARGE. The getFileSizeInKB import is left unused.",
+     "sites": [
+      {
+       "path": "src/integrations/misc/extract-text.ts",
+       "from_line": 26,
+       "to_line": 29,
+       "role": "cause"
+      },
+      {
+       "path": "src/integrations/misc/extract-text.ts",
+       "from_line": 7,
+       "to_line": 7,
+       "role": "other-site"
+      }
+     ],
+     "kind": "performance",
+     "severity": "medium",
+     "evidence": "extract-text.ts:26-29 `const fileBuffer = await fs.readFile(filePath); if (fileBuffer.byteLength > 300 * 1024) { throw new Error(`File is too large to read into context.`) }`. Base: `const fileSizeInKB = await getFileSizeInKB(filePath); if (fileSizeInKB > 300) { throw ... } return await fs.readFile(filePath, \"utf8\")`, and getFileSizeInKB uses fs.stat (utils/fs.ts:68-72). extract-text.ts:7 `import { getFileSizeInKB } from \"../../utils/fs\"` is now unused. Reached via read_file (Cline.ts:2018) and mentions (mentions/index.ts:159,180).",
+     "provenance": {
+      "dataset_refs": [
+       4,
+       5
+      ],
+      "hunt": true,
+      "reviewer_comments": [
+       "R36",
+       "R37",
+       "R40",
+       "R41",
+       "R42",
+       "R43",
+       "R44",
+       "R45"
+      ]
+     },
+     "notes": "To count, a comment must say that the whole file is now read into memory before the 300KB limit is enforced, a regression from the stat-based pre-check, with a memory or performance consequence for large files. A comment that only says \"remove the unused getFileSizeInKB import\" does not count. Dataset ref 4 counts because it explicitly asks for the size check before fs.readFile to avoid reading large files into memory."
+    },
+    {
+     "id": "D8",
+     "title": "Reject/revert path does not preserve the detected encoding: rejecting an edit transcodes a legacy-encoded file",
+     "statement": "On the reject/abort/failed-diff path (revertChanges), the PR restores the decoded original text through VS Code's own save, so a legacy-encoded (Shift-JIS, ISO-8859-1) file is converted to UTF-8 with its content intact instead of keeping its original encoding. That contradicts the PR's promise to preserve the encoding on write. It is an incomplete fix, not a regression: at the merge base the same path corrupted the file.",
+     "sites": [
+      {
+       "path": "src/integrations/editor/DiffViewProvider.ts",
+       "from_line": 269,
+       "to_line": 279,
+       "role": "cause"
+      },
+      {
+       "path": "src/integrations/editor/DiffViewProvider.ts",
+       "from_line": 237,
+       "to_line": 240,
+       "role": "other-site"
+      }
+     ],
+     "kind": "incomplete-fix",
+     "severity": "low",
+     "evidence": "DiffViewProvider.ts:271-279 `edit.replace(updatedDocument.uri, fullRange, this.originalContent ?? \"\"); await vscode.workspace.applyEdit(edit); await updatedDocument.save()`. This path has no iconv.encode/fs.writeFile with this.fileEncoding, unlike saveChanges:237-240. revertChanges is called from Cline.ts:1752 (diff error), 1896 (user reject), 1952 (write error) and 1083 (abortTask). The PR body says \"Verify file writing to ensure that the original encoding is preserved\".",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R11",
+       "R13",
+       "R14",
+       "R16",
+       "R19",
+       "R21",
+       "R23",
+       "R24",
+       "R26"
+      ]
+     },
+     "notes": "To count, a comment must say that revertChanges (reject, abort or failed diff) restores the decoded text through VS Code's document save without the detected encoding, so the file's bytes or encoding change when an edit is rejected. Near-misses that do not count: comments only about VS Code decoding the editable side on the accept path (R12, R15 and so on). update() replaces that document wholesale, so those are wrong."
+    },
+    {
+     "id": "D9",
+     "title": "Encodings jschardet can return but iconv-lite cannot decode now make read_file and edits throw",
+     "statement": "The detected name goes straight to iconv.decode with no encodingExists check or fallback. jschardet can return ISO-2022-JP, ISO-2022-KR, ISO-2022-CN, HZ-GB-2312, EUC-TW, and X-ISO-10646-UCS-4-3412/2143 (the last two from a BOM). iconv-lite 0.6.3 supports none of these. Such files, which were previously read as UTF-8, now fail with \"Encoding not recognized\" both in read_file and when opening the diff editor for an edit.",
+     "sites": [
+      {
+       "path": "src/integrations/editor/DiffViewProvider.ts",
+       "from_line": 57,
+       "to_line": 57,
+       "role": "cause"
+      },
+      {
+       "path": "src/integrations/misc/extract-text.ts",
+       "from_line": 43,
+       "to_line": 43,
+       "role": "cause"
+      },
+      {
+       "path": "src/integrations/misc/extract-text.ts",
+       "from_line": 63,
+       "to_line": 63,
+       "role": "other-site"
+      }
+     ],
+     "kind": "compat",
+     "severity": "low",
+     "evidence": "DiffViewProvider.ts:57 `iconv.decode(fileBuffer, this.fileEncoding)`, extract-text.ts:43 `return iconv.decode(fileBuffer, encoding)` and :63: none has a guard. Verified with iconv-lite 0.6.3: encodingExists is false for 'ISO-2022-JP', 'ISO-2022-KR', 'ISO-2022-CN', 'HZ-GB-2312', 'EUC-TW', 'X-ISO-10646-UCS-4-3412' and 'X-ISO-10646-UCS-4-2143'. jschardet's documented supported list includes all of them. The throw in open() surfaces as a \"writing file\" error (Cline.ts:1950-1953).",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": []
+     },
+     "notes": "To count, a comment must say that jschardet can report encodings iconv-lite does not support, so iconv.decode throws with no encodingExists check or fallback. Near-miss that does not count: a generic \"wrap in try/catch\" (dataset refs 1 and 2), since callers already catch and the comment does not identify the unsupported-encoding path."
+    },
+    {
+     "id": "D10",
+     "title": "@-mention path still pre-screens with isBinaryFile, so non-UTF-8 text files remain misclassified as binary there",
+     "statement": "The PR says it fixes binary misclassification of non-UTF-8 files, but only extractTextFromFile changed. getFileOrFolderContent still calls isBinaryFile(absPath) before extractTextFromFile. isbinaryfile counts high bytes that are not valid UTF-8 as suspicious, so a Shift-JIS/GBK file is still reported as \"(Binary file, unable to display content)\" for file mentions and silently dropped from folder mentions, and never reaches the new decoder.",
+     "sites": [
+      {
+       "path": "src/core/mentions/index.ts",
+       "from_line": 154,
+       "to_line": 159,
+       "role": "cause"
+      },
+      {
+       "path": "src/core/mentions/index.ts",
+       "from_line": 175,
+       "to_line": 180,
+       "role": "cause"
+      },
+      {
+       "path": "src/integrations/misc/extract-text.ts",
+       "from_line": 30,
+       "to_line": 43,
+       "role": "other-site"
+      }
+     ],
+     "kind": "incomplete-fix",
+     "severity": "low",
+     "evidence": "mentions/index.ts:155-159 `const isBinary = await isBinaryFile(absPath).catch(() => false); if (isBinary) { return \"(Binary file, unable to display content)\" } const content = await extractTextFromFile(absPath)`. :176-180 has the same pre-check in the folder loop and returns undefined. This file is untouched by the PR, whose title promises preventing \"Binary Misclassification\".",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R49",
+       "R50",
+       "R51",
+       "R53",
+       "R56",
+       "R59"
+      ]
+     },
+     "notes": "To count, a comment must say that file and folder @-mentions still gate on isBinaryFile before extractTextFromFile, so legacy-encoded text is still rejected as binary there and the claimed fix does not reach mentions. Comments about binaries getting through extractTextFromFile do not count (that is D6)."
+    },
+    {
+     "id": "D11",
+     "title": "Encoding-detection/fallback policy copy-pasted in three places (with a dead string branch and as-any casts)",
+     "statement": "The same detect-then-fallback logic is duplicated in DiffViewProvider.open, extractTextFromFile and extractTextFromIPYNB. Each copy carries an unreachable `typeof detected === \"string\"` branch and `(detected as any).encoding` casts, although jschardet.detect is typed to return {encoding, confidence}. Every fix the detection policy needs (ascii/UTF-8 normalization, a confidence threshold, an unsupported-encoding fallback) must be applied to three copies that can drift between reading and editing.",
+     "sites": [
+      {
+       "path": "src/integrations/editor/DiffViewProvider.ts",
+       "from_line": 50,
+       "to_line": 56,
+       "role": "other-site"
+      },
+      {
+       "path": "src/integrations/misc/extract-text.ts",
+       "from_line": 30,
+       "to_line": 42,
+       "role": "other-site"
+      },
+      {
+       "path": "src/integrations/misc/extract-text.ts",
+       "from_line": 60,
+       "to_line": 62,
+       "role": "other-site"
+      }
+     ],
+     "kind": "maintainability",
+     "severity": "low",
+     "evidence": "DiffViewProvider.ts:51-56 `typeof detected === \"string\" ? detected : detected && (detected as any).encoding ? (detected as any).encoding : \"utf8\"`, repeated as an if/else chain at extract-text.ts:32-41 and as a ternary at :61-62.",
+     "provenance": {
+      "dataset_refs": [
+       6
+      ],
+      "hunt": true,
+      "reviewer_comments": [
+       "R67",
+       "R68",
+       "R69",
+       "R70"
+      ]
+     },
+     "notes": "To count, a comment must point out that the charset detection and fallback logic is duplicated across these readers/DiffViewProvider and should be one shared helper so the policy cannot drift. Comments only about the nested ternary's readability, or only about `as any`, do not count."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 0",
+     "reason": "Asks for an explanatory comment on the detection logic: a documentation request or nit, not a defect."
+    },
+    {
+     "source": "ref 1",
+     "reason": "A generic \"wrap in try/catch\" request. Errors from open() and read_file are already caught by the callers (Cline.ts:1950-1953 handleError + revert; Cline.ts:2023-2025 handleError). It does not identify the concrete unsupported-encoding throw, which is D9."
+    },
+    {
+     "source": "ref 2",
+     "reason": "A generic try/catch request for fs.writeFile. saveChanges (Cline.ts:1902) runs inside the try at Cline.ts:1719, whose catch at 1950 handles write errors. No defect is identified."
+    },
+    {
+     "source": "ref 3",
+     "reason": "`as unknown as Uint8Array` is a redundant but harmless cast: a style nit with no runtime or contract consequence."
+    },
+    {
+     "source": "ref 7",
+     "reason": "A nested-ternary readability complaint: style. The repo has no such lint rule, and the ternary is correct."
+    },
+    {
+     "source": "ref 8",
+     "reason": "`as any` on jschardet's typed result is a type-safety nit with no runtime consequence. The duplication it sits in is D11, but this comment does not raise duplication."
+    },
+    {
+     "source": "R9, R48, R52, R55, R60",
+     "reason": "Requests for regression tests only: test requests are not defects."
+    },
+    {
+     "source": "R12, R15, R17, R18, R20, R22, R29",
+     "reason": "Wrong. They claim that the editable side, opened through VS Code's own decoder, leaves misdecoded original text that saveChanges then re-encodes. In fact update(accumulatedContent, isFinal) replaces every line of the editable document with newContent and deletes any remaining lines (DiffViewProvider.ts:111-134). newContent is the model's content or constructNewFileContent over the correctly decoded originalContent. So no misdecoded original text survives into postSaveContent, and the interim display is cosmetic. The revert half of R14 is counted under D8."
+    },
+    {
+     "source": "R35",
+     "reason": "Speculative. After the overwrite, VS Code reloads a non-dirty document on an external change. Any later misdecoding of a legacy file comes from VS Code's own encoding configuration, which the PR did not introduce. No concrete failure path is shown."
+    },
+    {
+     "source": "R38, R39, R46, R47",
+     "reason": "Unused getFileSizeInKB import only: a nit. tsconfig has noUnusedLocals: false and .eslintrc has no unused-vars rule, so there is no build or lint break. The real issue (full read before the size check) is D7, which these comments do not raise."
+    }
+   ]
+  },
+  "mrdoob__three.js@96ab072": {
+   "pr_summary": "The PR changes only src/geometries/ExtrudeGeometry.js. It adds a local cleanPoints() that splices out any point within an absolute 0.0002 of the last kept point, including at the wrap-around, and runs it on the contour and on every hole. It also moves ShapeUtils.triangulateShape so it triangulates the t==0 bevel layer (contractedContourVertices / expandedHoleVertices) instead of the original contour and holes. Those two arrays are filled only inside the `for ( b < bevelSegments )` loop. I checked all three defects empirically by running the head and merge-base sources under node, with scratch scripts in scratchpad/three30750/test.mjs and test2.mjs. Caps disappear for every non-bevelled extrusion: bevelEnabled:false, extrudePath, explicit bevelSegments:0, and the TextGeometry default. A hole that welds down to nothing makes the constructor throw inside earcut. The fixed world-space threshold decimates or erases valid small-scale shapes.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "Front and back caps vanish for every non-bevelled extrusion (bevelEnabled:false, extrudePath, bevelSegments:0, TextGeometry default)",
+     "statement": "The PR triangulates contractedContourVertices/expandedHoleVertices, but these are filled only inside the bevel-segment loop (`if ( t == 0 ) ...push`). When bevel is disabled, bevelSegments is forced to 0, so the loop never runs. triangulateShape([], []) then returns no faces, flen is 0, and buildLidFaces emits no bottom or top triangles. Every non-bevelled extrusion becomes an open tube of side walls with no caps.",
+     "sites": [
+      {
+       "path": "src/geometries/ExtrudeGeometry.js",
+       "from_line": 387,
+       "to_line": 435,
+       "role": "cause"
+      },
+      {
+       "path": "src/geometries/ExtrudeGeometry.js",
+       "from_line": 104,
+       "to_line": 134,
+       "role": "other-site"
+      },
+      {
+       "path": "src/geometries/ExtrudeGeometry.js",
+       "from_line": 553,
+       "to_line": 603,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "high",
+     "evidence": "L109 `bevelEnabled = false; // bevels not supported for path extrusion` and L127-129 `if ( ! bevelEnabled ) { bevelSegments = 0; ...`. L392 `for ( let b = 0; b < bevelSegments; b ++ ) {` is the only filler of the arrays: L407 `if ( t == 0 ) contractedContourVertices.push( vert );` and L427 `if ( t == 0 ) expandedHoleVertices.push( oneHoleVertices );`. L433 `const faces = ShapeUtils.triangulateShape( contractedContourVertices, expandedHoleVertices );` feeds empty input to earcut, which returns [] (`if (!outerNode ...) return triangles;`). L435 `const flen = faces.length;` is therefore 0, and both loops of buildLidFaces (L587-601 non-bevel branch) run zero times. The merge base triangulated `vertices, holes` directly. Measured by running the sources, with lid-group counts given as base -> head: square with bevelEnabled:false 12 -> 0; bevelSegments:0 12 -> 0; extrudePath (CatmullRom) 12 -> 0; holed square with bevel off 48 -> 0. Side walls are unchanged in every case. TextGeometry defaults `parameters.bevelEnabled = false` (examples/jsm/geometries/TextGeometry.js:52), so default 3D text loses its faces.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R13",
+       "R14",
+       "R16",
+       "R17",
+       "R18",
+       "R19",
+       "R22",
+       "R23",
+       "R24"
+      ]
+     },
+     "notes": "To count, a comment must say that with bevel disabled (bevelEnabled:false, extrudePath, or bevelSegments 0) the arrays passed to triangulateShape are empty or never populated because the bevel loop does not run, so the lids/caps are missing. These do not count: comments that only ask for tests of the non-bevel path (R11/R12/R15/R20); R21's question about whether triangulating the bevel-offset layer is intentional, which does not identify the empty-array/no-cap failure."
+    },
+    {
+     "id": "D2",
+     "title": "A hole that welds down to zero points crashes the constructor inside earcut (TypeError)",
+     "statement": "cleanPoints compares with the last kept point and, at the wrap-around, compares points[0] with it. Once a ring is down to one point, that point is compared with itself (distance 0) and spliced, so a tiny or all-identical hole becomes []. With bevel enabled (the default), triangulateShape still registers a zero-length hole index, and earcut's eliminateHoles gets `undefined` from linkedList and dereferences `list.next`. `new ExtrudeGeometry` then throws on input that built fine at the merge base.",
+     "sites": [
+      {
+       "path": "src/geometries/ExtrudeGeometry.js",
+       "from_line": 170,
+       "to_line": 194,
+       "role": "cause"
+      },
+      {
+       "path": "src/geometries/ExtrudeGeometry.js",
+       "from_line": 433,
+       "to_line": 433,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "L172-181: `const currentIndex = i % points.length; ... if ( distSq <= THRESHOLD_SQ ) { points.splice( currentIndex, 1 ); if ( currentIndex == 0 ) break;`. With length 1, currentIndex is 0 and currentPos === prevPos, so the last point is removed. L194 `holes.forEach( cleanPoints );`. src/extras/ShapeUtils.js triangulateShape still does `holeIndices.push( holeIndex )` for the empty hole. In earcut 3.0.1 (package.json), linkedList returns `undefined` when start===end, and eliminateHoles does `if (list === list.next)`, which throws. Measured by running the sources: a unit square with an absarc hole of radius 0.00005 builds at base (lid 168) but at head throws `TypeError: Cannot read properties of undefined (reading 'next')`. A hole of three identical points builds at base (lid 24) and throws the same way at head. With bevel off there is no throw, only because triangulation is skipped (D1).",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": []
+     },
+     "notes": "To count, a comment must say that cleanPoints can reduce a hole (or ring) to zero points, and that the empty hole then breaks triangulation (throw/crash in triangulateShape or earcut). These do not count: saying only that small holes or contours are erased or lose detail (that is D3); dataset ref 1's claim that cleanPoints itself throws on empty or 1-point input via points[0].x (false: the loop is not entered, or it compares the point with itself); its `points.length < 2` guard, which would not prevent a longer ring collapsing to empty."
+    },
+    {
+     "id": "D3",
+     "title": "Absolute 0.0002 world-unit weld threshold decimates or deletes valid small-scale shapes and holes",
+     "statement": "The threshold is a hard-coded world-space distance that ignores the shape's scale, and each point is measured against the last kept point. Any ring sampled more finely than 0.0002 loses vertices, and any contour or hole whose edges are all shorter than 0.0002 is spliced away entirely. Legitimate small-unit geometry that the merge base extruded faithfully now changes shape or produces no geometry at all, with no warning.",
+     "sites": [
+      {
+       "path": "src/geometries/ExtrudeGeometry.js",
+       "from_line": 165,
+       "to_line": 191,
+       "role": "cause"
+      },
+      {
+       "path": "src/geometries/ExtrudeGeometry.js",
+       "from_line": 193,
+       "to_line": 194,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "L167-168 `const THRESHOLD = 0.0002; const THRESHOLD_SQ = THRESHOLD * THRESHOLD;`. L178-183 splice on `distSq <= THRESHOLD_SQ`. L187 `prevPos = currentPos;` runs only for kept points. L193 `cleanPoints( vertices );`. Measured by running the sources, base -> head: a 0.0001 square with bevel off went from lid 12 / side 24 to 0 / 0 (no geometry); with a small bevel it went from 12 / 168 to 0 / 0. A circle of radius 0.001 with curveSegments 48 went from lid 570 to 132, which is heavy decimation. Upstream later renamed this function to mergeOverlappingPoints and cut the threshold to about 1e-10, which is consistent with this being a real regression.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R1",
+       "R2",
+       "R3",
+       "R4",
+       "R5",
+       "R6",
+       "R7",
+       "R8"
+      ]
+     },
+     "notes": "To count, a comment must say that the fixed or absolute 0.0002 threshold (not scale-aware) removes vertices from legitimately small or densely sampled shapes, or erases small contours or holes entirely. These do not count: pure renaming or `===` style comments; R9's seam re-check edge case (a different, contrived issue); requests only for tests of near-threshold contours."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 0",
+     "reason": "Naming preference (rename cleanPoints to mergePoints). This is naming taste, not a defect with a concrete consequence."
+    },
+    {
+     "source": "ref 1",
+     "reason": "The mechanism is wrong. With 0 points the loop `i <= points.length` is never entered, and with 1 point it compares the point with itself, so points[0]/currentPos.x never throws. The suggested `length < 2` guard also would not stop a longer ring collapsing to empty. The real related failure, an empty hole crashing earcut, is D2 and is a different mechanism."
+    },
+    {
+     "source": "ref 2",
+     "reason": "Style request (== vs ===). `t == 0` behaves identically for a number, so there is no consequence."
+    },
+    {
+     "source": "ref 3",
+     "reason": "Request to add a comment. Documentation nit."
+    },
+    {
+     "source": "R9",
+     "reason": "Contrived and not a regression. Leaving a near-duplicate pair after the first point is spliced at the seam needs the closing point to lie between P0 and P1, which means the contour folds back on itself at the seam. The result is no worse than the merge base, which did no welding at all."
+    },
+    {
+     "source": "R10",
+     "reason": "Style: `===` vs `==` on numeric comparisons, which behave identically."
+    },
+    {
+     "source": "R4 (nit part)",
+     "reason": "The numHoles vs holes.length inconsistency is a style nit. The hole count cannot change, so both expressions are always equal. The main part of R4 is credited to D3."
+    },
+    {
+     "source": "R11, R12, R15, R20",
+     "reason": "Requests to add regression tests. Test requests are not defects, though the regressions they gesture at are D1 and D3."
+    },
+    {
+     "source": "R21",
+     "reason": "A question about whether triangulating the bevel-offset (t==0) layer is intentional. It is the PR's stated purpose (the screenshots with negative bevelOffset), and the layer-0 and final top layer share that 2D shape, so the topology is correct when bevel is enabled. It does not identify the empty-array failure in D1."
+    },
+    {
+     "source": "hunt: perf/splice",
+     "reason": "Not raised as a defect. The O(n^2) splice inside the loop only matters for huge, heavily welded rings, which is not a realistic performance regression."
+    }
+   ]
+  },
+  "ollama__ollama@b6002f6": {
+   "pr_summary": "The PR changes input.Batch.Positions and input.Batch.Outputs from []int32 slices to ml.Tensor. The Ollama runner now builds both tensors once with ctx.Input().FromIntSlice (in reserveWorstCaseGraph, Outputs uses Arange), so the models stop building their own. llama4, mistral3 and qwen25vl TextModel.Forward now take the whole batch. The PR adds Tensor.Ints() to the ml.Tensor interface. In the ggml backend, Bytes(), Floats() and Ints() gain a fallback for tensors that were never computed: if ggml_get_data() is non-nil, they read that pointer as host memory (GoBytes copies it; Floats and Ints return unsafe.Slice views). The KV caches (Causal, Encoder, Wrapper) and llama4's attention-temperature loop read positions back from the tensor through Positions.Ints().",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "Fit-mode graph reservation reads positions through a no-alloc placeholder pointer, so llama4 and mllama cannot load",
+     "statement": "The runner always runs LoadOperationFit first, with AllocMemory=false. In that mode FromIntSlice never writes the positions, and ggml gives the tensor a placeholder data pointer equal to the buffer alignment (about 0x20). The new Ints() branch returns unsafe.Slice over that non-nil pointer. reserveWorstCaseGraph then dereferences it in two places: in EncoderCache.StartForward (mllama; the reservation batch carries the dummy image) and in llama4's attention-temperature loop (on by default). The read faults and becomes a nil-dereference panic, allocModel turns it into an error, /load returns 500, and ollamaServer.Load fails. Both architectures require the Ollama engine, so they cannot be loaded at all. Before the PR both sites read a host []int32 slice.",
+     "sites": [
+      {
+       "path": "runner/ollamarunner/runner.go",
+       "from_line": 1066,
+       "to_line": 1080,
+       "role": "cause"
+      },
+      {
+       "path": "ml/backend/ggml/ggml.go",
+       "from_line": 1029,
+       "to_line": 1041,
+       "role": "cause"
+      },
+      {
+       "path": "kvcache/encoder.go",
+       "from_line": 92,
+       "to_line": 95,
+       "role": "symptom"
+      },
+      {
+       "path": "model/models/llama4/model_text.go",
+       "from_line": 219,
+       "to_line": 226,
+       "role": "symptom"
+      },
+      {
+       "path": "runner/ollamarunner/runner.go",
+       "from_line": 1202,
+       "to_line": 1206,
+       "role": "other-site"
+      },
+      {
+       "path": "ml/backend/ggml/ggml.go",
+       "from_line": 926,
+       "to_line": 936,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "high",
+     "evidence": "llm/server.go:709 `for operation := LoadOperationFit; operation < LoadOperationCommit; operation++` means Fit always runs first. runner.go:1204 `AllocMemory: req.Operation != llm.LoadOperationFit`, and ggml.go:162 `C.ggml_backend_buft_set_alloc(bt, C.bool(params.AllocMemory))` covers the CPU buffer type, which backs Input(). ggml-backend.cpp:47-51: when buft->no_alloc, a buffer is created with no memory. ggml-backend.cpp:135-137 `if (buffer->no_alloc) { return (void *)ggml_backend_buffer_get_alignment(buffer); }`, and ggml.go:882 `C.ggml_backend_tensor_alloc(b, t, C.ggml_backend_buffer_get_base(b))` sets tensor->data to that placeholder. ggml.go:931 `if c.b.allocMemory && len(s) > 0 { ggml_backend_tensor_set ... }` skips the copy. ggml.go:1035-1037 `} else if bts := C.ggml_get_data(t.t); bts != nil { data = unsafe.Slice((*int32)(bts), C.ggml_nelements(t.t)) }`. runner.go:1069 `batch.Positions = ctx.Input().FromIntSlice(batchPositions, ...)` is followed by :1074 `cache.StartForward(ctx, batch, true)` and :1080 `s.model.Forward(ctx, batch)`. encoder.go:94 `c.curPos = batch.Positions.Ints()[batch.Multimodal[len(batch.Multimodal)-1].Index]` runs even when reserve is true. mllama EncodeMultimodal only builds a graph and PostTokenize keeps inputs[0].Multimodal, so the reservation batch has a Multimodal entry, and mllama's WrapperCache calls the encoder cache first. llama4 model_text.go:204 `attentionTemperatureTuning: c.Bool(\"attention.temperature_tuning\", true)` and :222 `for i, p := range batch.Positions.Ints()`. allocModel's recover turns the runtime error into panicErr, and load() then returns http 500. fs/ggml/ggml.go:241 OllamaEngineRequired lists \"llama4\" and \"mllama\". Causal's reserve path is not affected: it only takes len() and never dereferences the values.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R2",
+       "R3",
+       "R4",
+       "R7",
+       "R15",
+       "R16",
+       "R17",
+       "R18",
+       "R19"
+      ]
+     },
+     "notes": "To count, a comment must say that during the fit / no-alloc (AllocMemory=false) reservation, the positions tensor is never populated (or has only a placeholder data pointer), and that reading it back through Ints() in the encoder cache (mllama, encoder.go:94) or in llama4's temperature-scale loop (model_text.go:222) crashes or fails the model load. Naming one of the two read sites together with the fit-mode mechanism is enough. A comment on the Ints() branch or on runner.go:1069 also counts if it ties the placeholder read to the fit load crash. R2 and R19 count only weakly: they get the fit-mode root cause and (R2) the encoder-cache failure, but they wrongly say Ints() returns nil. Near-misses that do NOT count: generic advice to guard Ints() against a nil or short slice at encoder.go:94 (dataset ref 1; the slice has the correct length, the memory is invalid, and a length guard fixes nothing); claims that Causal gets curBatchSize=0 or under-reserves memory (R1, false: len() of the placeholder slice is correct); the host-vs-device-pointer contract (that is D2); and round-trip performance remarks."
+    },
+    {
+     "id": "D2",
+     "title": "The new Bytes/Floats/Ints fallback treats any non-nil data pointer as readable, already-computed host memory",
+     "statement": "For tensors whose sync is nil, the added branch reads ggml_get_data() directly and assumes it is host memory that already holds the values. That fails in two cases. A tensor in a GPU buffer (for example a weight from Layer()) has a device pointer, and GoBytes or unsafe.Slice on it crashes the process. A pending op whose result is a view of an allocated destination (ggml_cpy returns a view of dst) has a non-nil pointer to memory that was never written. ml.Dump uses `t.Bytes() == nil` to decide whether to compute first, so it now skips computation and prints uninitialized data for F16/Q8_0/Q4_0 tensors (the Copy into an Input F32 buffer), or crashes on GPU-resident F32/I32 tensors. Before the PR it always computed first.",
+     "sites": [
+      {
+       "path": "ml/backend/ggml/ggml.go",
+       "from_line": 1001,
+       "to_line": 1041,
+       "role": "cause"
+      },
+      {
+       "path": "ml/backend.go",
+       "from_line": 551,
+       "to_line": 573,
+       "role": "symptom"
+      }
+     ],
+     "kind": "contract",
+     "severity": "low",
+     "evidence": "ggml.go:1007-1009 `} else if bts := C.ggml_get_data(t.t); bts != nil { // tensor is in cpu memory; data = C.GoBytes(bts, C.int(C.ggml_nbytes(t.t)))`, with the same pattern at :1021-1024 (Floats) and :1035-1038 (Ints). ggml_get_data returns tensor->data whatever buffer holds it. ggml.c:3252 ggml_cpy_impl `struct ggml_tensor * result = ggml_view_tensor(ctx, b);` and ggml.c:1645 `void * data = view_src != NULL ? view_src->data : NULL;` give the cpy result the destination's host pointer before compute. backend.go:551-553 `f32 := ctx.Input().Empty(DTypeF32, ...); f32 = t.Copy(ctx, f32)`, then :567 `if t.Bytes() == nil { ctx.Forward(t).Compute(t) }` and :572 `binary.Read(bytes.NewBuffer(t.Bytes()), ...)`. At the merge base, Bytes() returned data only when t.sync != nil. ml.Dump has no in-tree callers; it is a developer debugging helper, which is why this is graded low.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R5",
+       "R6"
+      ]
+     },
+     "notes": "To count, a comment must say that a non-nil ggml data pointer does not mean the data is host-accessible and/or already computed, with a consequence: a crash when reading a GPU/device-buffer tensor, or stale or uninitialized values for a pending or uncomputed tensor (for example ml.Dump skipping Compute because Bytes() is no longer nil). A suggestion to check ggml_backend_buffer_is_host or to keep the computed/uncomputed distinction also counts if it gives the reason. Near-misses that do NOT count: the fit-mode placeholder crash on its own (that is D1); the C.int truncation of GoBytes for tensors over 2 GiB (dataset ref 4); remarks that the function silently returns nil (dataset refs 5 and 6, same as pre-PR behaviour)."
+    },
+    {
+     "id": "D3",
+     "title": "Floats()/Ints() return a view into C memory on the new path but a Go-owned copy on the computed path, and Causal keeps the view after its context is freed",
+     "statement": "On the new branch, Floats() and Ints() return unsafe.Slice views into the tensor's ggml buffer. On the computed (sync) path they return freshly allocated Go copies, and Bytes() copies on both paths. Callers cannot tell whether the result outlives ctx.Close() or whether writing to it changes the tensor. Causal stores the view in the long-lived field c.curPositions, which dangles once the batch context is closed (computeBatch defers activeBatch.ctx.Close()). Today it is read only inside StartForward, so this is a latent use-after-free and aliasing hazard, not a live one.",
+     "sites": [
+      {
+       "path": "ml/backend/ggml/ggml.go",
+       "from_line": 1015,
+       "to_line": 1041,
+       "role": "cause"
+      },
+      {
+       "path": "kvcache/causal.go",
+       "from_line": 200,
+       "to_line": 204,
+       "role": "symptom"
+      }
+     ],
+     "kind": "maintainability",
+     "severity": "low",
+     "evidence": "ggml.go:1024 `data = unsafe.Slice((*float32)(bts), C.ggml_nelements(t.t))` and :1038 `data = unsafe.Slice((*int32)(bts), C.ggml_nelements(t.t))` versus :1031-1034 `data = make([]int32, ...); ... ggml_backend_tensor_get(...)`. Context.Close (ggml.go) calls ggml_backend_buffer_free on every allocated buffer. causal.go:203 `c.curPositions = batch.Positions.Ints()` is a struct field declared at causal.go:66-67. runner.go computeBatch has `defer activeBatch.ctx.Close()`. The only current readers of curPositions (causal.go:221, 293-300, 364-366) run inside StartForward.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R8"
+      ]
+     },
+     "notes": "To count, a comment must say that the new Floats/Ints path returns a slice aliasing C/ggml memory that is freed when the context closes (or that writes alias the tensor), inconsistent with the copying sync path, ideally noting that Causal retains it in curPositions. Near-misses that do NOT count: pure performance remarks about slice/tensor conversion (dataset refs 0 and 2); the host-vs-device pointer issue (D2); the fit-mode placeholder read (D1)."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 0",
+     "reason": "The performance concern about the slice->tensor->slice round trip is not a real regression. On the host path Ints() is a zero-copy unsafe.Slice view, so there is no extra copy. The note is speculative and does not raise the fit-mode crash."
+    },
+    {
+     "source": "ref 1",
+     "reason": "A generic nil/short-slice guard request. For a non-empty Positions tensor, Ints() never returns nil or a shorter slice; it returns the full length (real data, or the no-alloc placeholder). The real failure at this line is D1 (dereferencing unpopulated placeholder memory during fit), which this note does not identify and which its proposed length check would not fix."
+    },
+    {
+     "source": "ref 2",
+     "reason": "Trivial hoisting/performance nit on the error-unwind path. Ints() is a zero-copy view, and Sequences and Positions are built together with equal length (model.Forward checks it)."
+    },
+    {
+     "source": "ref 3",
+     "reason": "Adding Ints() to the internal ml.Tensor interface does not break the build: both implementations (ggml Tensor and the kvcache testTensor) are updated in the PR, and grep finds no other implementers."
+    },
+    {
+     "source": "ref 4",
+     "reason": "C.int truncation in the new Bytes() branch is reachable only for an uncomputed tensor over 2 GiB through Bytes(), whose only in-tree caller is the debug helper ml.Dump. It is speculative with no realistic path."
+    },
+    {
+     "source": "ref 5",
+     "reason": "Returning nil when there is neither sync nor data is the pre-PR behaviour of Bytes(). It is not a regression, and the caller (ml.Dump) treats nil as 'compute first'."
+    },
+    {
+     "source": "ref 6",
+     "reason": "Same as ref 5 for Ints(): a nil return for an unallocated zero-size tensor is consistent with Floats/Bytes, and no caller reaches it with a non-empty expectation. Speculative."
+    },
+    {
+     "source": "ref 7",
+     "reason": "Typo in a comment that was only moved; a nit."
+    },
+    {
+     "source": "ref 8",
+     "reason": "A nil Positions tensor in model.Forward is unreachable: its only callers (forwardBatch runner.go:582 and reserveWorstCaseGraph runner.go:1069) always set Positions, and forwardBatch returns early when the batch is empty."
+    },
+    {
+     "source": "R9, R10, R11",
+     "reason": "Same as ref 8: a zero-value Batch with nil Positions is never passed to model.Forward by any in-tree caller. This is hardening, not a reachable defect."
+    },
+    {
+     "source": "ref 9",
+     "reason": "batch.Outputs holds exactly the values the former explicit outputs argument was built from, so llama4's last-layer behaviour is unchanged."
+    },
+    {
+     "source": "ref 10",
+     "reason": "Praise plus a generic 'ensure it doesn't fail silently' remark; no defect is identified."
+    },
+    {
+     "source": "ref 11",
+     "reason": "Division by zero on an empty Outputs is pre-existing (len() was also 0 before) and unreachable: sampling only happens for sequences whose output row is in this batch, so Outputs is non-empty whenever this line runs."
+    },
+    {
+     "source": "R1",
+     "reason": "False premise. In fit mode Ints() returns a non-nil, full-length slice over the placeholder pointer, so Causal's curBatchSize = len(curPositions) is correct and the reserved mask/graph size is not underestimated. Causal never dereferences the values when reserve is true."
+    },
+    {
+     "source": "R12, R13, R14",
+     "reason": "Not a defect. In gptoss, Rows(outputs) is applied after the attention block, so the KV cache is still updated for every token of an intermediate chunk, and those chunks need no logits. Passing an empty outputs tensor to Rows is what llama, qwen2, qwen3 and gemma already did before this PR (they built FromIntSlice(batch.Outputs, 0) unconditionally), and ggml skips empty nodes. The removed len>0 guard only brings gptoss in line with the other models. Cache updates are not lost."
+    }
+   ]
+  },
+  "dbeaver__dbeaver@bc3ac7b": {
+   "pr_summary": "The PR fixes pasting Team Edition (remote) project files into a file-system (DBNPathBase) folder. DBNResource.getAdapter now returns a newly opened IFile.getContents() stream when asked for InputStream.class, and throws RuntimeException if that fails. DBNPathBase.dropNodes gets a new branch for nodes that have no Path adapter: it asks the node for that InputStream and writes it to folder/<node display name> through a new copyInputStream helper that calls Files.copy. The paste handler (NavigatorHandlerObjectCreateCopy) calls pathTarget.dropNodes directly without checking supportsDrop, so the branch is reached. The PR body says directories are still not handled.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "InputStream obtained for a pasted remote file is never closed",
+     "statement": "dropNodes gets a newly opened stream from node.getAdapter(InputStream.class), which calls IFile.getContents(), and passes it to copyInputStream. That helper calls Files.copy(InputStream, Path, ...), which does not close its source. Nothing else closes the stream either: there is no try-with-resources. Every pasted remote file therefore leaks one open content stream (a file handle or a remote connection), and the stream also leaks when resolve or Files.copy throws.",
+     "sites": [
+      {
+       "path": "plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/navigator/fs/DBNPathBase.java",
+       "from_line": 290,
+       "to_line": 302,
+       "role": "cause"
+      },
+      {
+       "path": "plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/navigator/fs/DBNPathBase.java",
+       "from_line": 363,
+       "to_line": 370,
+       "role": "other-site"
+      },
+      {
+       "path": "plugins/org.jkiss.dbeaver.model.rcp/src/org/jkiss/dbeaver/model/navigator/DBNResource.java",
+       "from_line": 423,
+       "to_line": 425,
+       "role": "other-site"
+      }
+     ],
+     "kind": "resource",
+     "severity": "medium",
+     "evidence": "DBNPathBase.java:293-296 at head reads `InputStream adapter = node.getAdapter(InputStream.class); if (adapter != null) { String fileName = node.getNodeDisplayName(); copyInputStream(adapter, folder, fileName); }`, and its `finally` only calls `monitor.worked(1)`. DBNPathBase.java:363-369 `copyInputStream(...) { ... Files.copy(inputStream, targetFile, options); }` has no close. DBNResource.java:425 `return adapter.cast(file.getContents());` opens a new stream on every call. The existing copy in NavigatorHandlerObjectCreateCopy.java:233 uses `try (InputStream is = ((IFile) resource).getContents())`. Reached from NavigatorHandlerObjectCreateCopy.java:100-103 (`pathTarget.dropNodes(monitor, cbNodes)`) when a TE resource with a null location is pasted into a file-system folder.",
+     "provenance": {
+      "dataset_refs": [
+       0
+      ],
+      "hunt": true,
+      "reviewer_comments": [
+       "R8",
+       "R9",
+       "R10",
+       "R11",
+       "R12",
+       "R13",
+       "R14",
+       "R15",
+       "R16",
+       "R19"
+      ]
+     },
+     "notes": "To count, a comment must say that the InputStream from getAdapter(InputStream.class) / IFile.getContents() in the new dropNodes branch or in copyInputStream is never closed, for example because Files.copy does not close it or because there is no try-with-resources. Mentioning the failure path is optional. Near-misses that do not count: comments only about the redundant REPLACE_EXISTING check, the parameter name, or reusing DBNStreamData that never mention the stream staying open."
+    },
+    {
+     "id": "D2",
+     "title": "New InputStream adapter duplicates the existing DBNStreamData.openInputStream contract",
+     "statement": "DBNResource already implements DBNStreamData. Its supportsStreamData() is true exactly for remote IFiles with no location, and openInputStream() opens the same IFile.getContents() stream and reports failure through checked IOException. The PR adds a second way to get that stream: getAdapter(InputStream.class). It has a side effect (every adapter lookup opens a caller-owned stream) and a different failure contract (it wraps CoreException in an unchecked RuntimeException). DBNPathBase lives in the same model bundle as DBNStreamData and could have used that interface. Two stream-opening paths for the same resource will drift apart, and a generic adapter probe now leaks or throws.",
+     "sites": [
+      {
+       "path": "plugins/org.jkiss.dbeaver.model.rcp/src/org/jkiss/dbeaver/model/navigator/DBNResource.java",
+       "from_line": 423,
+       "to_line": 430,
+       "role": "cause"
+      },
+      {
+       "path": "plugins/org.jkiss.dbeaver.model.rcp/src/org/jkiss/dbeaver/model/navigator/DBNResource.java",
+       "from_line": 440,
+       "to_line": 461,
+       "role": "other-site"
+      },
+      {
+       "path": "plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/navigator/fs/DBNPathBase.java",
+       "from_line": 293,
+       "to_line": 293,
+       "role": "symptom"
+      }
+     ],
+     "kind": "maintainability",
+     "severity": "low",
+     "evidence": "New code at DBNResource.java:423-429 is `else if (adapter == InputStream.class && resource instanceof IFile file) { try { return adapter.cast(file.getContents()); } catch (CoreException e) { log.error(...); throw new RuntimeException(e); } }`. The existing code in the same class at :441-443 is `supportsStreamData() { return resource instanceof IFile && resource.getLocation() == null; }` and at :452-458 is `openInputStream() ... return file.getContents(); ... catch (CoreException e) { throw new IOException(e); }`. DBNStreamData is at plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/navigator/DBNStreamData.java, in the same bundle as DBNPathBase. The existing consumer, NavigatorDragSourceListener.java:142, uses `nextSelected instanceof DBNStreamData streamData && streamData.supportsStreamData()`.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R1",
+       "R2",
+       "R3",
+       "R4"
+      ]
+     },
+     "notes": "To count, a comment must point out that the new InputStream adapter duplicates DBNResource's existing DBNStreamData.openInputStream() / supportsStreamData() and that the paste path should use that contract, or must say that getAdapter opening a stream or throwing an unchecked exception is a bad adapter contract. A comment that only says 'close the stream' is D1, not this one. Generic remarks such as 'wrap in try/catch' or 'log the exception' do not count."
+    },
+    {
+     "id": "D3",
+     "title": "DBNResource uses DBNNode's package-private `log` across OSGi bundles, so the error path throws IllegalAccessError",
+     "statement": "DBNResource declares no `log` field of its own, so the new `log.error(...)` binds to DBNNode's package-private `static final Log log`. DBNNode is in the org.jkiss.dbeaver.model bundle, while DBNResource is in the separate org.jkiss.dbeaver.model.rcp bundle, which reuses the same package name. The two classes are defined by different bundle class loaders, so they are in different runtime packages. The code compiles, but when file.getContents() throws CoreException the catch block fails with IllegalAccessError. The intended log line and RuntimeException(cause) never happen, and the paste fails with an 'Internal error' naming IllegalAccessError instead of the real content-read failure.",
+     "sites": [
+      {
+       "path": "plugins/org.jkiss.dbeaver.model.rcp/src/org/jkiss/dbeaver/model/navigator/DBNResource.java",
+       "from_line": 426,
+       "to_line": 428,
+       "role": "cause"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "DBNResource.java:427 `log.error(\"Error get file content\");` is the only `log` reference in the file, and there is no Log field declaration. DBNNode.java:40 `static final Log log = Log.getLog(DBNNode.class);` is package-private. The org.jkiss.dbeaver.model.rcp MANIFEST.MF declares a standalone bundle (`Bundle-SymbolicName: org.jkiss.dbeaver.model.rcp`, `Require-Bundle: ... org.jkiss.dbeaver.model;visibility:=reexport`, `Export-Package: ... org.jkiss.dbeaver.model.navigator`), so the package is split across two bundles. Every other class in that rcp package declares its own `private static final Log log` (DBFResourceListener:32, DBNProjectDesktop:39, NavigatorResourceListener:31, NavigatorResources:44). UIUtils.runWithMonitor at UIUtils.java:1902-1906 turns the non-DBException target into `new DBException(\"Internal error\", e.getTargetException())`.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": []
+     },
+     "notes": "To count, a comment must say that `log` in DBNResource is not declared there and resolves to DBNNode's package-private field across bundles / split package, and that this causes IllegalAccessError at runtime, or at least that it is an invalid cross-bundle access. A comment that only says the log message should include the exception or the file name is a nit and does not count. A comment claiming a compile error is wrong, because it compiles."
+    },
+    {
+     "id": "D4",
+     "title": "Target file name comes from the node's display name instead of the resource's file name",
+     "statement": "The new branch names the copied file after node.getNodeDisplayName(), which is a UI label, not the file name. The existing Path branch uses resource.getFileName(). For DBNResource subclasses that override the display name, the copy gets the wrong name: DBNBookmark returns the bookmark title, so a pasted remote bookmark file loses its .bm extension and is named after its title. The label is also not sanitised before folder.resolve, so a separator in the title redirects or breaks the copy.",
+     "sites": [
+      {
+       "path": "plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/navigator/fs/DBNPathBase.java",
+       "from_line": 295,
+       "to_line": 296,
+       "role": "cause"
+      },
+      {
+       "path": "plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/navigator/fs/DBNPathBase.java",
+       "from_line": 363,
+       "to_line": 364,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "DBNPathBase.java:295 `String fileName = node.getNodeDisplayName();` and :364 `Path targetFile = folder.resolve(str);`, while the existing branch at :320 uses `folder.resolve(resource.getFileName().toString())`. DBNBookmark.java:62-64 (extends DBNResource) is `public String getNodeDisplayName() { return storage.getTitle(); }`. The existing stream-to-file code at NavigatorDragSourceListener.java:168 escapes the name: `getTempFolder().resolve(CommonUtils.escapeFileName(fileName))`.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": []
+     },
+     "notes": "To count, a comment must say that using getNodeDisplayName() as the target file name is wrong: it is a display label rather than the resource or file name (for example, a bookmark title without its extension), or it is unsanitised and can contain path separators. Comments that only rename the `str` parameter do not count."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 1",
+     "reason": "This is a typo in a log message ('doesn't not exists') on a line the PR did not change: it is context in the diff, carried over from the base. It is a nit and pre-existing."
+    },
+    {
+     "source": "ref 2",
+     "reason": "The request to rename the `str` parameter is a naming nit with no behavioural consequence."
+    },
+    {
+     "source": "ref 3",
+     "reason": "The redundant Files.exists check before REPLACE_EXISTING is style or simplification. It mirrors the existing block at DBNPathBase.java:340-343, and apart from a negligible race it behaves the same as passing REPLACE_EXISTING unconditionally. No concrete defect."
+    },
+    {
+     "source": "R18",
+     "reason": "Same as ref 3: a simplification nit about passing REPLACE_EXISTING directly, with no behavioural defect."
+    },
+    {
+     "source": "R5, R6, R7, R17",
+     "reason": "EFS-backed IFiles expose a synthetic dbvfs: location, so they take the Path branch and are skipped by Files.notExists. That is pre-existing behaviour: the base code `resource == null || !Files.exists(resource)` skipped them the same way. They are also outside the PR's scope, which is TE remote files; those have a null location, per DBNResource.supportsStreamData. The PR does not introduce or newly expose this."
+    },
+    {
+     "source": "hunt:Remote folders are still skipped silently after the user confirms the copy",
+     "reason": "The PR body acknowledges the limitation ('It doesn't work for directories'), and the behaviour is unchanged from the base: every node with a null Path was already skipped silently. This is not a regression and not a fix the PR claims."
+    }
+   ]
+  },
+  "linera-io__linera-protocol@3535ddb": {
+   "pr_summary": "The validator's chain worker now caps the received_log slice in a ChainInfo response at CHAIN_INFO_MAX_RECEIVED_LOG_ENTRIES (1000) (state.rs:1416-1421). The client's synchronize_received_certificates_from_validator (client/mod.rs:846-857) now pages through the log, advancing the offset until a page returns fewer than 1000 entries. The server side is correct: LogView::read clamps end to count and returns an empty Vec when start >= end (log_view.rs:316-329). The client loop's only exit is a short page. Nothing bounds it by iterations, by progress, or by the count_received_log the response already carries, so a validator that keeps returning full pages keeps it running and growing memory. A validator hotfix also silently changes the contract for existing SDK clients: they make one request and now receive only the first 1000 unseen entries. Separately, the paging loop has the client assume the server's page size.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "Client pagination loop is unbounded: a validator returning full pages keeps it running forever and growing remote_log",
+     "statement": "The new loop in synchronize_received_certificates_from_validator exits only when a page has fewer than CHAIN_INFO_MAX_RECEIVED_LOG_ENTRIES entries. Nothing bounds iterations, checks for progress, or compares against count_received_log. The client verifies only the response signature, not that the entries belong to the requested offset. A faulty or Byzantine validator (or, in theory, log growth that outpaces paging) can therefore keep returning 1000-entry pages, and the client loops forever, appending to remote_log and never reaching certificate processing. On the per-validator notification path (process_notification -> find_received_certificates_from_validator) no timeout applies, so that task hangs while the client's memory grows without limit. Before this PR the client made a single request, bounded by the gRPC message limit.",
+     "sites": [
+      {
+       "path": "linera-core/src/client/mod.rs",
+       "from_line": 846,
+       "to_line": 857,
+       "role": "cause"
+      },
+      {
+       "path": "linera-core/src/client/mod.rs",
+       "from_line": 3711,
+       "to_line": 3713,
+       "role": "symptom"
+      },
+      {
+       "path": "linera-core/src/client/mod.rs",
+       "from_line": 4019,
+       "to_line": 4029,
+       "role": "other-site"
+      },
+      {
+       "path": "linera-core/src/remote_node.rs",
+       "from_line": 150,
+       "to_line": 162,
+       "role": "other-site"
+      }
+     ],
+     "kind": "security",
+     "severity": "medium",
+     "evidence": "client/mod.rs:848-857 `loop { let query = ChainInfoQuery::new(chain_id).with_received_log_excluding_first_n(offset); let info = remote_node.handle_chain_info_query(query).await?; let received_entries = info.requested_received_log.len(); offset += received_entries as u64; remote_log.extend(info.requested_received_log); if received_entries < CHAIN_INFO_MAX_RECEIVED_LOG_ENTRIES { break; } }` has no other exit. remote_node.rs:150-162 check_and_return_info checks only the chain id of proposals and locking, plus `response.check(self.public_key)` (the signature), and never checks the log against the offset. Reach: process_notification (3696) on `Reason::NewIncomingBundle` calls `self.find_received_certificates_from_validator(remote_node).await?` (3712), which calls `synchronize_received_certificates_from_validator` directly (4026-4028), inside the per-validator listener task (3988-4003), with no timeout. Only find_received_certificates (2280-2294) goes through communicate_with_quorum, whose grace period eventually drops a slow validator. Merge base: a single `handle_chain_info_query` and `let remote_log = info.requested_received_log;` (merge-base client/mod.rs:845-847).",
+     "provenance": {
+      "dataset_refs": [
+       4
+      ],
+      "hunt": true,
+      "reviewer_comments": [
+       "R12",
+       "R15",
+       "R16",
+       "R17",
+       "R18"
+      ]
+     },
+     "notes": "To count, a comment must say the new pagination loop can fail to terminate, or grows without bound, because its only exit is receiving a page shorter than the limit, and must name a trigger: a malicious or faulty validator that keeps returning full pages or ignores the offset, or entries being appended as fast as the client pages. It should ask for a bound: an iteration or size cap, a progress or offset check, or stopping at count_received_log taken from the first response. Comments that only call this a missing test (\"add a test that the loop terminates\") do not count. Neither does the observation that an exact multiple of 1000 costs one extra request, or the suggestion to break on `<=`."
+    },
+    {
+     "id": "D2",
+     "title": "Hotfixed validators silently truncate the received log for existing (pre-PR) SDK clients",
+     "statement": "The PR ships as a validator hotfix. After it, every existing SDK client, which makes exactly one request_received_log_excluding_first_n query per sync and treats the vector it gets back as the complete tail, receives only the first 1000 unseen entries. Nothing in the response marks it as truncated, and legacy clients ignore count_received_log. For a chain with more than 1000 unseen entries, one sync by an old client now delivers only part of its incoming messages. Its tracker advances only past the returned entries, so it catches up only 1000 entries per later sync (or notification). Previously a single call returned the whole tail, for backlogs up to the gRPC size limit.",
+     "sites": [
+      {
+       "path": "linera-core/src/chain_worker/state.rs",
+       "from_line": 1416,
+       "to_line": 1421,
+       "role": "cause"
+      },
+      {
+       "path": "linera-core/src/client/mod.rs",
+       "from_line": 846,
+       "to_line": 858,
+       "role": "other-site"
+      }
+     ],
+     "kind": "compat",
+     "severity": "low",
+     "evidence": "state.rs:1418-1420 `let end = (start.saturating_add(CHAIN_INFO_MAX_RECEIVED_LOG_ENTRIES)).min(chain.received_log.count()); info.requested_received_log = chain.received_log.read(start..end).await?;` changes what the unchanged wire field returns: the doc on data_types.rs:215-217 still reads as \"the response to request_received_certificates_excluding_first_n\", and the request type carries no version or page flag. Legacy client (merge-base client/mod.rs:845-847): `let query = ChainInfoQuery::new(chain_id).with_received_log_excluding_first_n(tracker); let info = remote_node.handle_chain_info_query(query).await?; let remote_log = info.requested_received_log;`, with a single request and no paging. The tracker loop (merge base :925 onward, head :932-942) advances only over entries in remote_log. Release plan in the PR body: \"be released in a new SDK, be released in a validator hotfix\".",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": false,
+      "reviewer_comments": [
+       "R1",
+       "R5"
+      ]
+     },
+     "notes": "To count, a comment must say that the validator-side cap changes behaviour for older or already-deployed clients that make a single request: they silently get only the first 1000 entries per sync, so syncs are partial and catch-up is slow. Ideally it also suggests gating the cap behind a pagination-aware or versioned request, or at least acknowledges the rollout skew. Comments about the new client's loop, or about the server clamping arithmetic, do not count here. This is a deliberate trade-off: old clients still make progress and lose no data, so it is low severity."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 0",
+     "reason": "Doc-comment formatting nit (backticks around received_log / ChainInfo); no behavioural consequence."
+    },
+    {
+     "source": "ref 1",
+     "reason": "Wrong and a style point: the constant lives in private `mod state` inside private `mod chain_worker` (lib.rs:9) and is re-exported only via `pub(crate) use` (chain_worker/mod.rs:14-18), so it is not visible outside the crate."
+    },
+    {
+     "source": "ref 2",
+     "reason": "Already handled: LogView::read clamps end to self.count() and returns Ok(Vec::new()) when start >= end (linera-views/src/views/log_view.rs:316-329), so an offset past the end yields an empty page, not an invalid range."
+    },
+    {
+     "source": "ref 3",
+     "reason": "Incorrect: breaking on `<=` would stop after a full 1000-entry page and silently drop the remaining entries. The cited lines are server code, where no loop exists."
+    },
+    {
+     "source": "ref 4",
+     "reason": "Merged into D1: the same unbounded pagination loop, with log growth during paging as the trigger."
+    },
+    {
+     "source": "ref 5",
+     "reason": "True but negligible: when the tail is an exact multiple of 1000, the loop costs one extra cheap query that returns 0 entries. No correctness impact; a nit."
+    },
+    {
+     "source": "R1, R5",
+     "reason": "Merged into D2 (legacy clients receive a truncated tail from hotfixed validators)."
+    },
+    {
+     "source": "R12, R15, R16, R17, R18",
+     "reason": "Merged into D1 (unbounded pagination loop; termination depends only on a short page)."
+    },
+    {
+     "source": "R2, R3, R4, R6, R7, R8, R9, R10, R11, R14",
+     "reason": "Requests to add regression tests for the page boundary and multi-page sync. Test requests, not defects."
+    },
+    {
+     "source": "R13",
+     "reason": "Speculative and pre-existing: overflowing the 16 MiB limit with the heights request needs millions of distinct heights from one sender. Grouping heights and calling download_certificates_by_heights for the whole set predates the PR, and the gRPC client already pages certificate responses (linera-rpc/src/grpc/client.rs:438-478)."
+    },
+    {
+     "source": "hunt:Only the wire response is paged; the client still loads and processes the whole log in one unit of work",
+     "reason": "Pre-existing design, not introduced. Collecting the full remote_log, a single try_join_all over certificate downloads, and persisting the tracker at the end are unchanged by this PR. remote_log entries are small ChainAndHeight values, and certificate downloads are already paged by the gRPC client loop. The claim that this defeats the PR's goal is speculative (the PR itself defers to manual testnet verification), and a failure mid-sync is no worse than before, when the oversized query failed outright."
+    },
+    {
+     "source": "defect D3 (critic)",
+     "reason": "Removed: speculative. The server clamps end = min(start + 1000, count) (state.rs:1418-1420), so a short page always means the log is exhausted; the client-side constant only matters if a future release lowers the server cap."
+    }
+   ]
+  },
+  "lvgl__lvgl@4a57db3": {
+   "pr_summary": "The PR caches the label's measured text size in a new private field, lv_label_t.text_size, which lv_label_refr_text writes. In lv_label.c, draw_main's SCROLL and SCROLL_CIRCULAR paths now read that cache instead of calling lv_text_get_size. The PR also adds a public field, lv_draw_label_dsc_t.text_size, which lv_label copies into its draw descriptor. lv_draw_label_iterate_characters then uses that field as the line width when LV_TEXT_FLAG_EXPAND is set. In the steady state the output is unchanged. Under EXPAND, lv_text_get_size already forces max_width to LV_COORD_MAX, and lv_text_get_next_line ignores max_width, so both the cached size and the iterator's w match the old values or are unused. What remains: a public descriptor field that is dead and misleading, because only lv_label sets it and the value is ignored. Label drawing now depends on a cache that goes stale on the few paths that change the effective font without STYLE_CHANGED or SIZE_CHANGED. The duplicated Nema GFX iterator was not updated.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "New public lv_draw_label_dsc_t.text_size is dead and misleading: only lv_label sets it and its only consumer's value is ignored",
+     "statement": "The PR adds a public field to lv_draw_label_dsc_t, documented as 'The size of the text', and makes lv_draw_label_iterate_characters use dsc->text_size.x as the line width when EXPAND is set. Only lv_label's draw_main fills it. The roller, the table, the one-line textarea placeholder and any user code that sets LV_TEXT_FLAG_EXPAND pass the zeroed default {0,0}. This works only because the sole consumer passes w to lv_text_get_next_line, which returns early and ignores max_width whenever EXPAND is set. So the new public API field and its per-task copy carry nothing. Any future consumer, or any change that makes max_width matter under EXPAND, would get width 0 for every non-label producer.",
+     "sites": [
+      {
+       "path": "src/draw/lv_draw_label.h",
+       "from_line": 38,
+       "to_line": 39,
+       "role": "cause"
+      },
+      {
+       "path": "src/draw/lv_draw_label.c",
+       "from_line": 215,
+       "to_line": 222,
+       "role": "cause"
+      },
+      {
+       "path": "src/widgets/label/lv_label.c",
+       "from_line": 826,
+       "to_line": 826,
+       "role": "other-site"
+      },
+      {
+       "path": "src/misc/lv_text.c",
+       "from_line": 336,
+       "to_line": 343,
+       "role": "other-site"
+      },
+      {
+       "path": "src/widgets/roller/lv_roller.c",
+       "from_line": 583,
+       "to_line": 583,
+       "role": "other-site"
+      },
+      {
+       "path": "src/widgets/table/lv_table.c",
+       "from_line": 836,
+       "to_line": 837,
+       "role": "other-site"
+      },
+      {
+       "path": "src/widgets/textarea/lv_textarea.c",
+       "from_line": 1405,
+       "to_line": 1405,
+       "role": "other-site"
+      }
+     ],
+     "kind": "maintainability",
+     "severity": "low",
+     "evidence": "Head lv_draw_label.h:38-39 adds '/**The size of the text*/ lv_point_t text_size;' to the public descriptor. lv_draw_label.c:221 reads 'w = dsc->text_size.x;' in the EXPAND branch. w is used only as max_width in lv_text_get_next_line calls at lv_draw_label.c:259, 265 and 509. lv_text.c:336 is 'if((flag & LV_TEXT_FLAG_EXPAND) || (flag & LV_TEXT_FLAG_FIT)) { ... return i; }', so max_width is ignored. The only writer is lv_label.c:826 'label_draw_dsc.text_size = label->text_size;'. lv_draw_label_dsc_init (lv_draw_label.c:77) calls lv_memzero, so other EXPAND producers pass 0: roller.c:583 'label_dsc.flag |= LV_TEXT_FLAG_EXPAND;', table.c:837 'label_dsc_act.flag |= LV_TEXT_FLAG_EXPAND;' and textarea.c:1405 'if(ta->one_line) ph_dsc.flag |= LV_TEXT_FLAG_EXPAND;'. None of them sets text_size.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R1",
+       "R6"
+      ]
+     },
+     "notes": "To count, a comment must say that the new descriptor field (or the w it feeds) is unnecessary, dead or misleading. Either it says the value is ignored because lv_text_get_next_line disregards max_width under EXPAND, or it says only lv_label populates it, so other EXPAND users (roller, table, textarea placeholder, user code) pass 0. Asking to remove the field or to not read it in the iterator also counts. Near-misses that do NOT count: saying the draw-side value may be 'stale' or 'wrong after text updates' (at this site the value has no effect); 'uninitialized' claims; generic ABI or struct-size remarks with no mention of the field being unused or only set by the label."
+    },
+    {
+     "id": "D2",
+     "title": "draw_main now uses a size cached at refr_text time; paths that change the effective font without STYLE_CHANGED/SIZE_CHANGED leave the alignment override and the circular second copy using a stale width",
+     "statement": "Before the PR, draw_main measured the text at draw time with the font and letter and line spacing actually used for drawing. It now reads label->text_size, which only lv_label_refr_text writes. refr_text runs only on LV_EVENT_STYLE_CHANGED or LV_EVENT_SIZE_CHANGED, or from the label setters. Some paths change the inherited or state font without either event: lv_obj_set_parent onto a parent with a different text_font, and a state change whose differing style also holds a draw-pad property (shadow, outline, transform), where update_obj_state only invalidates. On those paths the SCROLL_CIRCULAR second copy is placed at offset.x + the old width, so the copies overlap or leave a gap. The CENTER/RIGHT to LEFT override is also decided from the old width. The label's animation and self-size were already stale on these paths, so the regression is narrow.",
+     "sites": [
+      {
+       "path": "src/widgets/label/lv_label.c",
+       "from_line": 893,
+       "to_line": 899,
+       "role": "symptom"
+      },
+      {
+       "path": "src/widgets/label/lv_label.c",
+       "from_line": 854,
+       "to_line": 857,
+       "role": "symptom"
+      },
+      {
+       "path": "src/widgets/label/lv_label.c",
+       "from_line": 967,
+       "to_line": 968,
+       "role": "cause"
+      },
+      {
+       "path": "src/widgets/label/lv_label.c",
+       "from_line": 762,
+       "to_line": 764,
+       "role": "other-site"
+      },
+      {
+       "path": "src/core/lv_obj.c",
+       "from_line": 979,
+       "to_line": 982,
+       "role": "other-site"
+      },
+      {
+       "path": "src/core/lv_obj_tree.c",
+       "from_line": 147,
+       "to_line": 206,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "Head lv_label.c:894 'lv_point_t size = label->text_size;' then 898 'label_draw_dsc.ofs_x = label->offset.x + size.x + lv_font_get_glyph_width(label_draw_dsc.font, ...)', which mixes the cached width with the draw-time font. lv_label.c:856 does the same for the align override. The only writer is lv_label.c:968 'label->text_size = size;' in lv_label_refr_text. The event handler calls refr_text only for 'LV_EVENT_STYLE_CHANGED || LV_EVENT_SIZE_CHANGED' (lv_label.c:762). lv_obj.c:979-982: on LV_STYLE_STATE_CMP_DIFF_DRAW_PAD, update_obj_state only calls lv_obj_invalidate and lv_obj_refresh_ext_draw_size, with no refresh_style and therefore no STYLE_CHANGED to the object or its children. lv_obj_style_state_compare returns DRAW_PAD when a differing style has a shadow, outline or transform property, even if it also sets text_font. lv_obj_set_parent (lv_obj_tree.c:147-206) sends no style refresh. At the merge base, draw_main called lv_text_get_size(&size, label->text, label_draw_dsc.font, ...) at draw time.",
+     "provenance": {
+      "dataset_refs": [
+       1
+      ],
+      "hunt": true,
+      "reviewer_comments": []
+     },
+     "notes": "To count, a comment must say that the SCROLL or SCROLL_CIRCULAR draw logic (alignment override or circular copy offset) now relies on label->text_size, which is refreshed only in lv_label_refr_text. It must also say that the value can go stale when the font, letter_space or line_space in effect at draw time changes without refr_text running, and that this gives a wrong copy offset or alignment. Near-misses that do NOT count: claims that a TEXT change can leave it stale (every text setter calls refr_text); claims about the stale value at lv_draw_label.c:221 (ignored there, see D1); 'uninitialized field' claims; the max_w vs LV_COORD_MAX claim (identical under EXPAND); size_cache vs text_size 'inconsistency' claims."
+    },
+    {
+     "id": "D3",
+     "title": "Nema GFX's private copy of the character iterator still runs lv_text_get_size for every EXPAND label draw",
+     "statement": "The PR removes the per-draw lv_text_get_size call from the shared lv_draw_label_iterate_characters. The Nema GFX backend keeps its own duplicated _draw_label_iterate_characters, and that copy was not updated. It still measures the whole text on every EXPAND label draw, so the claimed draw-time saving does not reach that backend, and the two copies of the routine now diverge.",
+     "sites": [
+      {
+       "path": "src/draw/nema_gfx/lv_draw_nema_gfx_label.c",
+       "from_line": 433,
+       "to_line": 442,
+       "role": "cause"
+      },
+      {
+       "path": "src/draw/lv_draw_label.c",
+       "from_line": 215,
+       "to_line": 222,
+       "role": "other-site"
+      }
+     ],
+     "kind": "performance",
+     "severity": "low",
+     "evidence": "Head lv_draw_nema_gfx_label.c:140 calls '_draw_label_iterate_characters(t, dsc, coords);' and lines 438-441 keep 'lv_point_t p; lv_text_get_size(&p, dsc->text, dsc->font, dsc->letter_space, dsc->line_space, LV_COORD_MAX, dsc->flag); w = p.x;' in the EXPAND branch. The shared iterator at lv_draw_label.c:221 now reads 'w = dsc->text_size.x;'. The PR title is 'perf(label): reduce the time of calling lv_text_get_size when drawing'.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R2",
+       "R3",
+       "R4",
+       "R5",
+       "R7"
+      ]
+     },
+     "notes": "To count, a comment must point out that the Nema GFX label path (lv_draw_nema_gfx_label.c, its private iterator) still calls lv_text_get_size per draw and did not get the optimization or the matching change. A question form ('should Nema also...') counts. Near-misses that do NOT count: generic 'other backends may need updating' with no mention of Nema GFX or a duplicated iterator. The VG-Lite, dave2d and SW backends call the shared iterator and are not affected."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 0",
+     "reason": "The claim is that the cached size in lv_draw_label.c:220-221 can be stale after text updates. It is wrong at that site. Every text mutation (set_text, set_text_static, ins_text, cut_text, set_recolor, set_long_mode) calls lv_label_refr_text, which refreshes text_size. And w there is passed only to lv_text_get_next_line, which ignores max_width under EXPAND (lv_text.c:336), so no value can change rendering. The real issue at this site is D1 (dead field), which is the opposite claim."
+    },
+    {
+     "source": "ref 2",
+     "reason": "Wrong. In SCROLL, SCROLL_CIRCULAR and CLIP modes label->expand=1 (lv_label.c:232-236), so get_label_flags adds LV_TEXT_FLAG_EXPAND, and lv_text_get_size forces 'if(flag & LV_TEXT_FLAG_EXPAND) max_width = LV_COORD_MAX;' (lv_text.c:101). The refr_text size with max_w = content width is therefore identical to the old LV_COORD_MAX measurement in the only paths that consume it."
+    },
+    {
+     "source": "ref 3",
+     "reason": "Wrong. Objects are allocated with lv_malloc_zeroed (lv_obj_class.c:51), so text_size starts at {0,0}. The constructor also calls lv_label_set_text(LV_LABEL_DEFAULT_TEXT), which runs refr_text and sets it before any draw."
+    },
+    {
+     "source": "ref 4",
+     "reason": "Not a defect. size_cache (GET_SELF_SIZE, content width or LV_COORD_MAX, no FIT flag, max_height clamp) and text_size (refr_text) are deliberately different measurements with different consumers. refr_text sets text_size and invalid_size_cache=true together, and nothing compares the two, so there is no inconsistency with a consequence."
+    }
+   ]
+  }
+ }
+}

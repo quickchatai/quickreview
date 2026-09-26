@@ -7,6 +7,7 @@ import {
   existsSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
+import { parseCaseSet } from "../src/bench/aacr.js";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -361,4 +362,25 @@ describe("the judge session", () => {
     expect(again[0]!.defects[0]!.verdict).toBe("found");
     expect(Object.keys(loadJudgements(join(dir, "judge")))).toEqual(["o__r@1234567"]);
   });
+});
+
+describe("the committed ground truth", () => {
+  it.each(["smoke10", "dev10", "holdout10"])(
+    "%s parses and covers every case of its set",
+    (name) => {
+      const root = join(import.meta.dirname, "..", "bench", "aacr");
+      const set = parseCaseSet(
+        JSON.parse(readFileSync(join(root, "sets", `${name}.json`), "utf8")),
+      );
+      const truth = parseDefectSet(
+        JSON.parse(readFileSync(join(root, "defects", `${name}.json`), "utf8")),
+      );
+      expect(truth.set).toBe(name);
+      expect(Object.keys(truth.cases).sort()).toEqual(set.cases.map((c) => c.instance_id).sort());
+      // Every defect is anchored in a file and carries the evidence it was graded on.
+      for (const c of Object.values(truth.cases))
+        for (const d of c.defects)
+          expect(d.evidence.length, `${c.instance_id} ${d.id}`).toBeGreaterThan(20);
+    },
+  );
 });

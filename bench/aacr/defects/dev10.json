@@ -1,0 +1,2020 @@
+{
+ "set": "dev10",
+ "version": "1",
+ "method": "Per PR: a blind expert hunt from the diff and code; every candidate (the hunt, the AACR references with hand labels, and every comment any reviewer posted in our runs, anonymised) checked against the code, merged and graded, exclusions recorded; an adversarial critic per set spot-checked inclusions, exclusions and merges, and its 12 corrections were applied (2026-09-26).",
+ "cases": {
+  "bitcoin__bitcoin@724546e": {
+   "pr_summary": "bitcoin-cli -netinfo now reports the node's local services. At level 0, which is the default, a new \"Local services: network, bloom, witness, ...\" line is printed before \"Local addresses\". It is built by the new ServicesList() helper, which lower-cases the names, turns '_' into spaces and joins them with \", \". At detail levels 1-4 the report header instead gets \" - services <letters>\", built with the existing FormatServices(). The PR touches one file, src/bitcoin-cli.cpp.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "std::string_view `services` dangles: it is bound to the temporary std::string from strprintf, then read on the next line",
+     "statement": "`services` is declared as `const std::string_view` and initialized from a conditional expression. Because strprintf returns std::string, the expression is a temporary std::string (the \"\" branch converts to std::string too), and that temporary is destroyed at the end of the declaration. The next statement passes the dangling view to strprintf to build the report header. On every `-netinfo 1..4` the header therefore reads freed memory: \" - services nbwcl2\" is too long for the small-string buffer, so this is a heap use-after-free that can garble the header, fail under ASan, or trigger clang -Wdangling-gsl. The fix is to own the string (`const std::string services{...}`).",
+     "sites": [
+      {
+       "path": "src/bitcoin-cli.cpp",
+       "from_line": 585,
+       "to_line": 585,
+       "role": "cause"
+      },
+      {
+       "path": "src/bitcoin-cli.cpp",
+       "from_line": 586,
+       "to_line": 586,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "high",
+     "evidence": "src/bitcoin-cli.cpp:585 at head: `const std::string_view services{DetailsRequested() ? strprintf(\" - services %s\", FormatServices(networkinfo[\"localservicesnames\"])) : \"\"};` and :586: `std::string result{strprintf(\"%s client %s%s - server %i%s%s\\n\\n\", CLIENT_NAME, FormatFullVersion(), ChainToString(), networkinfo[\"protocolversion\"].getInt<int>(), networkinfo[\"subversion\"].get_str(), services)};`. The ?: expression mixes std::string with const char[1], so its common type is a std::string prvalue, and the string_view is built through std::string::operator string_view. The temporary dies at the end of line 585's full-expression. How it is reached: NetinfoRequestHandler::ProcessReply runs on every `bitcoin-cli -netinfo N`. For N in 1..4, `DetailsRequested()` (line 407: `m_details_level > 0 && m_details_level < 5`) is true, so the heap-allocated string is created, destroyed, and then read at line 586. At level 0 the view also dangles, but its length is 0, so nothing is read.",
+     "provenance": {
+      "dataset_refs": [
+       3
+      ],
+      "hunt": true,
+      "reviewer_comments": [
+       "R1",
+       "R2",
+       "R3",
+       "R4",
+       "R5"
+      ]
+     },
+     "notes": "To count, a comment must say that the string_view `services` at line 585 refers to a temporary std::string (the result of strprintf or the ternary) that is destroyed before line 586 uses it: a dangling view, use-after-free or UB. It counts with or without the fix `std::string services`. Near-misses that do not count: a generic remark that string_view is risky with no lifetime or temporary argument; a comment about FormatServices' output format; a comment that the level-0 empty-string branch is inefficient."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 0",
+     "reason": "Incorrect. The different formatting (lower-case words vs FormatServices' letters) is the intended level-0 output shown in the PR description. localservicesnames is always a server-built array of strings (rpc/net.cpp:687, GetServicesNames via serviceFlagsToStr), and the existing FormatServices already calls get_str() on it the same way, so the defensive-typing concern has no reachable path."
+    },
+    {
+     "source": "ref 1",
+     "reason": "Incorrect. The order is not arbitrary: serviceFlagsToStr (protocol.cpp:108-118) walks the service bits in ascending order, so the output is deterministic and matches bit order and the letter order of FormatServices."
+    },
+    {
+     "source": "ref 2",
+     "reason": "Incorrect. The project requires C++20 (CMakeLists.txt:68 `set(CMAKE_CXX_STANDARD 20)`, STANDARD_REQUIRED ON), and <algorithm> is already included, so std::ranges::replace cannot break the build."
+    },
+    {
+     "source": "R6, R8, R9, R10",
+     "reason": "These are requests to add functional-test coverage for the new output modes. Test requests are not defects."
+    },
+    {
+     "source": "R7",
+     "reason": "This asks to update the `-netinfo help` level descriptions (the level-1 help still says \"Like 0\" although the new services line appears only at level 0). It is a documentation request about a human-readable dashboard whose help explicitly says the output \"will change regularly\". It has no functional consequence, so it is not a defect under this benchmark's rules."
+    }
+   ]
+  },
+  "FreeCAD__FreeCAD@699b45c": {
+   "pr_summary": "This PR cleans up MSVC warnings across 16 files, with 33 additions and 27 deletions. It adds float literals and casts where values narrow from double to float: View3DInventor(Viewer), ViewProviderPlane, DAGRectItem, Tools.h fromPercent, and three angle-wrap lines in SoDatumLabel. It changes printf-style specifiers: StackWalker %d becomes %ld for DWORD arguments, and pyarea on Windows goes from %Iu to %zu. It adds `case NumSymTypes` and `default: break` for enumerators the switches did not handle, drops unused catch variables and an unused lambda capture, and marks a debug-only local [[maybe_unused]]. FemVTKTools' countScaPos changes from int to size_t. PropertySheet::getLinksTo now passes std::string instead of .c_str() to the ObjectIdentifier ctor. The old const char* argument silently picked the (owner, bool localProperty) overload, so this is a latent fix, and the vector-identifier getLinksTo has no in-tree callers. Two test tweaks are included. Almost every hunk keeps behaviour the same. Two changes do not fully do what they intend. The SoDatumLabel angle wraps still multiply by a double literal, so the float += double narrowing remains. The StackWalker DWORD specifiers become the signed %ld instead of %lu.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "SoDatumLabel angle-wrap casts leave the right-hand side double, so the float += double narrowing (C4244) the PR targets remains",
+     "statement": "The PR rewrites `range += 2.0 * M_PI` and `endangle += 2. * M_PI` as `2.0 * static_cast<float>(M_PI)` and `2. * static_cast<float>(M_PI)`. Because `2.0` and `2.` are double literals, double * float still produces a double. Each compound assignment is still float += double with an implicit narrowing, so the MSVC C4244 warning this PR is meant to silence still fires in all three places. The cast only lowers the precision of the constant. The warning-free form is `2.0F * (float)M_PI`, which the same file already uses at line 1541.",
+     "sites": [
+      {
+       "path": "src/Gui/SoDatumLabel.cpp",
+       "from_line": 82,
+       "to_line": 85,
+       "role": "cause"
+      },
+      {
+       "path": "src/Gui/SoDatumLabel.cpp",
+       "from_line": 551,
+       "to_line": 553,
+       "role": "other-site"
+      },
+      {
+       "path": "src/Gui/SoDatumLabel.cpp",
+       "from_line": 694,
+       "to_line": 696,
+       "role": "other-site"
+      }
+     ],
+     "kind": "incomplete-fix",
+     "severity": "low",
+     "evidence": "The head has `float range = endAngle - startAngle; if (range < 0.) { range += 2.0 * static_cast<float>(M_PI); }` at SoDatumLabel.cpp:82-84. At :552 and :695 it has `float endangle = atan2f(...); if (endangle < startangle) { endangle += 2. * static_cast<float>(M_PI); }`. Under the usual arithmetic conversions, a double literal times a float gives a double, so `float += double` still narrows. The file's correct form is at :1541, `endangle += 2.0F * (float)M_PI;`, and float-only forms appear at :1199/:1201 as `angle -= (float)M_PI;`. The code runs on every glDrawArc call with a negative range and on every arc/angle datum label render where endangle < startangle. The impact is a compile warning that stays, plus a sub-ulp change to the constant. There is no functional breakage.",
+     "provenance": {
+      "dataset_refs": [
+       10,
+       11
+      ],
+      "hunt": true,
+      "reviewer_comments": []
+     },
+     "notes": "To count, a comment must say that `2.0`/`2.` is a double literal, so the expression stays double. It must also say either that the double-to-float conversion/warning is not fixed, or that `2.0F`/`2.0f` is needed. Pointing at any of the three sites counts. Near-misses that do not count: comments only about float vs double performance with no mention that the narrowing or warning remains (the dataset framed it as 'performance'; accept that framing only if it says the arithmetic is still double); comments about the default argument `endAngle=2.0*M_PI` at :81, which the PR did not touch; and generic advice to prefer float literals elsewhere."
+    },
+    {
+     "id": "D2",
+     "title": "StackWalker prints DWORD (unsigned long) arguments with the signed %ld specifier instead of %lu",
+     "statement": "The PR replaces `%d` with `%ld` in every StackWalker diagnostic format that takes DWORD arguments: module size and result, the file-version words v1..v4, entry.lineNumber, GetLastError `gle`, symOptions, and the OS-version fields. DWORD is `unsigned long`, so the matching specifier is `%lu`. As written, specifier and argument still disagree in signedness. Any value with the high bit set prints as a negative number, for example SYMOPT_DEBUG 0x80000000 in symOptions or an HRESULT-style GetLastError code. The PR's own goal of making specifiers match their types is therefore only half done.",
+     "sites": [
+      {
+       "path": "src/Base/StackWalker.cpp",
+       "from_line": 1473,
+       "to_line": 1473,
+       "role": "cause"
+      },
+      {
+       "path": "src/Base/StackWalker.cpp",
+       "from_line": 1489,
+       "to_line": 1490,
+       "role": "other-site"
+      },
+      {
+       "path": "src/Base/StackWalker.cpp",
+       "from_line": 1540,
+       "to_line": 1540,
+       "role": "other-site"
+      },
+      {
+       "path": "src/Base/StackWalker.cpp",
+       "from_line": 1559,
+       "to_line": 1559,
+       "role": "other-site"
+      },
+      {
+       "path": "src/Base/StackWalker.cpp",
+       "from_line": 1576,
+       "to_line": 1576,
+       "role": "other-site"
+      },
+      {
+       "path": "src/Base/StackWalker.cpp",
+       "from_line": 1609,
+       "to_line": 1609,
+       "role": "other-site"
+      }
+     ],
+     "kind": "incomplete-fix",
+     "severity": "low",
+     "evidence": "StackWalker.cpp:1455-1462 has `void StackWalker::OnLoadModule(..., DWORD size, DWORD result, ...)`, and :1473 formats them with `\"... size: %ld (result: %ld) ...\"`. At :1483-1486, `DWORD v4 = (DWORD)(fileVersion & 0xFFFF); ...` is printed with `\"%ld.%ld.%ld.%ld\"` at :1490. `entry.lineNumber` (DWORD) uses `%ld` at :1540. `OnDbgHelpErr(LPCSTR, DWORD gle, DWORD64)` uses `GetLastError: %ld` at :1559. `OnSymInit(LPCSTR, DWORD symOptions, ...)` uses `symOptions: %ld` at :1576. `ver.dwMajorVersion` and the other OS-version DWORDs use `%ld` at :1609. DWORD is typedef'd `unsigned long` on Windows, and `%ld` expects a signed `long`. This is not a regression, since the old `%d` was signed too. The impact is only cosmetic diagnostic output, and only for values >= 2^31.",
+     "provenance": {
+      "dataset_refs": [
+       1,
+       2,
+       3,
+       4,
+       5,
+       6
+      ],
+      "hunt": true,
+      "reviewer_comments": [
+       "R1",
+       "R2",
+       "R3",
+       "R4",
+       "R5",
+       "R6",
+       "R7",
+       "R8",
+       "R9"
+      ]
+     },
+     "notes": "To count, a comment must say that the new `%ld` is signed while the DWORD argument is unsigned (unsigned long), and that `%lu` or another unsigned conversion is the right specifier. Any one of the listed lines counts. Near-misses that do not count: claims that `%ld` is the wrong size, since long and DWORD are both 32-bit on Windows; comments about the `%p` or `0x%x` conversions; and comments about the `case NumSymTypes` addition."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 0",
+     "reason": "This is a style preference. `case NumSymTypes: break;` exists only to satisfy C4062. An assert(false) or a future std::unreachable in a crash-reporting path, where SymType comes from dbghelp at runtime, is not a needed fix, and adding one could be harmful."
+    },
+    {
+     "source": "ref 7",
+     "reason": "The redundant `std::roundf` on an integral long predates the PR, which only added the cast. It is harmless and has no behavioural consequence. This is a nit."
+    },
+    {
+     "source": "ref 8",
+     "reason": "The long-to-float precision concern is speculative. float is exact up to 2^24, and callers pass 0-100 percentages. The suggested double rewrite is equally redundant."
+    },
+    {
+     "source": "ref 9",
+     "reason": "The premise is wrong or harmless. On Qt6 `QColor::setAlphaF` takes a float, so `0.15f` removes a double-to-float truncation, which is the PR's purpose. On Qt5 the float-to-double widening is lossless."
+    },
+    {
+     "source": "ref 12",
+     "reason": "Making `nearClippingPlane` const is pure style. It is a local used once."
+    },
+    {
+     "source": "ref 13",
+     "reason": "`nvertices` is std::size_t, so `%zu` is correct. The project requires C++20, which implies an MSVC with a UCRT that supports %zu (VS2015+). The 'older MSVC' concern does not apply."
+    },
+    {
+     "source": "ref 14",
+     "reason": "This is generic advice to log exception details. The PR dropped an unused catch variable to fix a warning, and the existing message is adequate. Not a defect."
+    },
+    {
+     "source": "ref 15",
+     "reason": "Returning the incoming dimType for every other geometry is the function's documented, pre-existing behaviour. The PR only made the fallthrough explicit with `default: break;`. Nothing is newly ignored."
+    },
+    {
+     "source": "R10, R11, R12",
+     "reason": "Tools.h:148 redundant roundf. The redundancy predates the PR and has no consequence, so this is a simplification nit (same as ref 7)."
+    },
+    {
+     "source": "R13, R14, R15",
+     "reason": "pyarea.cpp: collapsing the three-way #if into a single %zu is a cleanup suggestion. The 32-bit `%d` branch's signedness mismatch predates the PR and was not touched. The PR's Windows change is correct."
+    },
+    {
+     "source": "R16",
+     "reason": "DimensionValidators: the duplicated 2D/3D switch predates the PR. The PR only added identical `default: break;` arms to silence C4062, so asking to consolidate is a refactor request, not a defect."
+    },
+    {
+     "source": "hunt: PropertySheet::getLinksTo ObjectIdentifier overload change",
+     "reason": "This is not a defect. Passing std::string makes emplace_back select the intended (owner, property) ctor. The old const char* argument silently chose (owner, bool localProperty=true) and produced an empty identifier. The change fixes that, and the vector-identifier getLinksTo overloads have no in-tree callers, so no caller relied on the old behaviour."
+    },
+    {
+     "source": "hunt: FemVTKTools countScaPos int->size_t",
+     "reason": "This is correct. countScaPos is only compared against the size_t elements of scalarPos via std::find, and it is only reset to 0 or incremented. The uninitialised use when a -2 line precedes any -1 line predates the PR, which did not change it."
+    }
+   ]
+  },
+  "CherryHQ__cherry-studio@83a2594": {
+   "pr_summary": "PR #5540 (\"feat: 支持自定义助手地址\") adds a custom assistant-list URL setting: a `settings.defaultaides` field (initial value 'settings.defaultaides', reducer `setefaultAides`), a new Data Settings panel (`DefaultaidesSettings.tsx` plus a menu entry with an inline star icon), and locale strings. The strings are nested `settings.data.default_aides.*` in zh-CN only; the other locales get a flat `settings.defaultaides`. `useSystemAgents` now reads the setting from `store.getState()` during render. If the value starts with 'http' it calls a new `useRemoteSystemAgents`, which waits 500 ms, fetches the URL and casts the JSON to Agent[]. Otherwise it calls the original local hook, now named `useLocalSystemAgents`, which reads the bundled agents.json.\n\nDefects found:\n- Hooks are called conditionally, which breaks the repo's rules-of-hooks lint, and CI runs that lint.\n- The UI strings only resolve in zh-CN.\n- The default value is a raw i18n key.\n- A failed remote load does not fall back to the bundled agents.\n- The remote payload is not validated.\n- The source setting is read without subscribing to the store.\n- Every mount pays the 500 ms delay and a re-fetch, with no caching.\n- There is no persist migration.\n- The exported action name is misspelled.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "useSystemAgents / useRemoteSystemAgents call hooks conditionally (rules-of-hooks violation): CI lint fails, and hook order differs between the local and remote sources",
+     "statement": "useSystemAgents returns `useLocalSystemAgents()` or `useRemoteSystemAgents()` from different `if` branches. The two hooks call different hook sequences: local calls useState, then useRuntime (a selector hook), then useEffect; remote calls useState, then useEffect. useRemoteSystemAgents also calls `useEffect` after an early `return agents`. The repo's ESLint config enables `reactHooks.configs['recommended-latest']`, where rules-of-hooks is an error that `--fix` cannot repair, so the PR CI `yarn lint` step fails. At runtime, a mounted consumer that re-renders after the setting crosses the http/non-http boundary would render a different hook sequence, which is React's hook-order error.",
+     "sites": [
+      {
+       "path": "src/renderer/src/pages/agents/index.ts",
+       "from_line": 19,
+       "to_line": 30,
+       "role": "cause"
+      },
+      {
+       "path": "src/renderer/src/pages/agents/index.ts",
+       "from_line": 32,
+       "to_line": 40,
+       "role": "cause"
+      },
+      {
+       "path": "src/renderer/src/pages/agents/index.ts",
+       "from_line": 61,
+       "to_line": 63,
+       "role": "other-site"
+      },
+      {
+       "path": "eslint.config.mjs",
+       "from_line": 15,
+       "to_line": 15,
+       "role": "other-site"
+      },
+      {
+       "path": ".github/workflows/pr-ci.yml",
+       "from_line": 45,
+       "to_line": 46,
+       "role": "symptom"
+      }
+     ],
+     "kind": "build",
+     "severity": "high",
+     "evidence": "index.ts:20-29 `const { defaultaides } = store.getState().settings; if (defaultaides === null || defaultaides === undefined) { ...; return useLocalSystemAgents(); } if (!defaultaides.startsWith('http')) { return useLocalSystemAgents(); } else { return useRemoteSystemAgents(); }`. index.ts:36-40 `if (defaultaides === null || defaultaides === undefined) { ... return agents; } useEffect(() => {` puts a hook after an early return. useLocalSystemAgents (61-63) calls useState, then `useRuntime()` (= `useAppSelector(...)`, useRuntime.ts:4-6), then useEffect; the remote hook calls only useState and useEffect. eslint.config.mjs:15 `reactHooks.configs['recommended-latest']` sets rules-of-hooks to error. The repo already has to opt out of this rule explicitly: useKnowledge.ts:1 `/* eslint-disable react-hooks/rules-of-hooks */`. pr-ci.yml:45-46 `- name: Lint Check / run: yarn lint`. package.json `\"lint\": \"eslint . ... --fix\"`: --fix cannot repair rules-of-hooks, so the step exits non-zero. Runtime reachability is narrow today, because both consumers (the AgentsPage route and the AddAssistantPopup modal) normally remount after a settings change. The lint break is the concrete consequence.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R14",
+       "R15",
+       "R16",
+       "R17",
+       "R18"
+      ]
+     },
+     "notes": "To count, a comment must say one of these: the local and remote hooks are selected/called conditionally; the two branches have different hook sequences, so hook order changes and React can throw a hook-order error; useEffect is called after an early return; or this violates the Rules of Hooks / fails react-hooks lint. These do NOT count on their own: saying only that store.getState() is non-reactive or should be useSelector (that is D6); saying only that the null check is duplicated or dead; generic 'refactor this hook'."
+    },
+    {
+     "id": "D2",
+     "title": "New settings UI strings exist only in zh-CN; en-US (fallback), ja, ru, zh-TW and the machine-translated locales show raw i18n keys",
+     "statement": "The new menu entry and panel call t('settings.data.default_aides.title'), '...repo_url' and '...repo_url_placeholder'. Only zh-cn.json defines `settings.data.default_aides`. en-us, ja-jp, ru-ru and zh-tw instead add a flat, unused `settings.defaultaides` string at the wrong path under a different name. en-US is the fallbackLng, so every non-zh-CN user sees the literal key strings in the Data Settings menu, the section title, the row label and the placeholder. This contradicts the PR's claim that multi-language support was updated.",
+     "sites": [
+      {
+       "path": "src/renderer/src/i18n/locales/en-us.json",
+       "from_line": 1391,
+       "to_line": 1391,
+       "role": "cause"
+      },
+      {
+       "path": "src/renderer/src/i18n/locales/ja-jp.json",
+       "from_line": 1391,
+       "to_line": 1391,
+       "role": "other-site"
+      },
+      {
+       "path": "src/renderer/src/i18n/locales/ru-ru.json",
+       "from_line": 1391,
+       "to_line": 1391,
+       "role": "other-site"
+      },
+      {
+       "path": "src/renderer/src/i18n/locales/zh-tw.json",
+       "from_line": 1391,
+       "to_line": 1391,
+       "role": "other-site"
+      },
+      {
+       "path": "src/renderer/src/i18n/locales/zh-cn.json",
+       "from_line": 970,
+       "to_line": 974,
+       "role": "other-site"
+      },
+      {
+       "path": "src/renderer/src/pages/settings/DataSettings/DataSettings.tsx",
+       "from_line": 114,
+       "to_line": 118,
+       "role": "symptom"
+      },
+      {
+       "path": "src/renderer/src/pages/settings/DataSettings/DefaultaidesSettings.tsx",
+       "from_line": 26,
+       "to_line": 36,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "DataSettings.tsx:116 `title: 'settings.data.default_aides.title'`, rendered at :180 `title={t(item.title || '')}`. DefaultaidesSettings.tsx:26/29/36 use `t('settings.data.default_aides.title' | '.repo_url' | '.repo_url_placeholder')`. Parsing the head JSON gives: en-us/ja-jp have `settings.defaultaides` = 'Built-in'/'内蔵' and no `settings.data.default_aides`; zh-cn has `settings.data.default_aides` = {repo_url, repo_url_placeholder, title} and no `settings.defaultaides`. i18n/index.ts:40 `fallbackLng: defaultLanguage`; packages/shared/config/constant.ts:164 `defaultLanguage = 'en-US'`. The translate/{el-gr,es-es,fr-fr,pt-pt}.json files are untouched, so they fall back to en-US, which also lacks the keys. No t('settings.defaultaides') call exists anywhere.",
+     "provenance": {
+      "dataset_refs": [
+       0,
+       1,
+       2,
+       4
+      ],
+      "hunt": true,
+      "reviewer_comments": [
+       "R1",
+       "R2",
+       "R3",
+       "R4",
+       "R5",
+       "R6",
+       "R7",
+       "R8",
+       "R29",
+       "R30",
+       "R32",
+       "R33"
+      ]
+     },
+     "notes": "To count, a comment must say that the keys used by the new UI (`settings.data.default_aides.*`) are missing from the non-zh-CN locales, or that en/ja/ru/zh-TW define `defaultaides` at a different name/path, so users of those languages (and the en-US fallback) see raw keys or untranslated labels. Pointing at any one of the locale files or at the t() call sites is enough. Does NOT count: a comment that says zh-cn.json is the wrong one and should be renamed to 'defaultaides' (backwards). Also does NOT count: a pure casing or naming-style remark about 'default_aides' vs other keys with no mention of lookup failure."
+    },
+    {
+     "id": "D3",
+     "title": "A failed remote load leaves the system assistant list empty; no fallback to the bundled agents despite the PR's 'fallback mechanism' claim",
+     "statement": "With an http URL configured, useRemoteSystemAgents starts from `[]`. Any failure (offline, non-2xx, invalid JSON) is caught and only console.error'd. The bundled resources/data/agents.json is never read. The Agents page and the Add Assistant popup then show no built-in assistants at all, and the user gets no indication why. The PR body advertises 'Add fallback mechanism for assistant loading', but the only fallback applies to non-http values.",
+     "sites": [
+      {
+       "path": "src/renderer/src/pages/agents/index.ts",
+       "from_line": 50,
+       "to_line": 52,
+       "role": "cause"
+      },
+      {
+       "path": "src/renderer/src/pages/agents/index.ts",
+       "from_line": 33,
+       "to_line": 33,
+       "role": "other-site"
+      },
+      {
+       "path": "src/renderer/src/pages/agents/AgentsPage.tsx",
+       "from_line": 29,
+       "to_line": 33,
+       "role": "symptom"
+      },
+      {
+       "path": "src/renderer/src/components/Popups/AddAssistantPopup.tsx",
+       "from_line": 32,
+       "to_line": 38,
+       "role": "symptom"
+      }
+     ],
+     "kind": "incomplete-fix",
+     "severity": "medium",
+     "evidence": "index.ts:33 `const [agents, setAgents] = useState<Agent[]>([]);`; :45-47 `if (!response.ok) { throw new Error(...) }`; :50-52 `} catch (error) { console.error(\"Failed to load agents:\", error); }`; :58 `return agents;`. There is no call into the local loader or `_agents` on failure. Compare useLocalSystemAgents at :61-74, which reads `resourcesPath + '/data/agents.json'`. The PR body says: 'Add fallback mechanism for assistant loading'.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R24",
+       "R25",
+       "R26",
+       "R27"
+      ]
+     },
+     "notes": "To count, a comment must say that when the remote fetch/parse fails, the built-in/bundled assistants are not used as a fallback and the system agent list stays empty. Does NOT count: a generic 'handle errors / show an error toast' comment that does not mention losing the bundled list; payload validation (D4); abort/cleanup requests."
+    },
+    {
+     "id": "D4",
+     "title": "Remote JSON is cast to Agent[] without runtime validation; a wrongly shaped payload crashes the Agents page and the Add Assistant popup",
+     "statement": "`await response.json() as Agent[]` publishes whatever the user-configured URL returns. If it is a JSON object (for example a wrapped `{agents:[...]}` or an API response), AgentsPage's effect calls `groupByCategories(systemAgents)`, and `data.forEach` throws. AddAssistantPopup spreads `...systemAgents` inside useMemo during render, which throws on a non-iterable. Entries without `name`, or with a non-array `group`, throw in `agent.name.toLowerCase()` or `item.group?.forEach`. There is no error boundary around these consumers, so the renderer tree crashes. The bad URL is persisted, so the crash repeats every time the Agents page or the popup opens.",
+     "sites": [
+      {
+       "path": "src/renderer/src/pages/agents/index.ts",
+       "from_line": 48,
+       "to_line": 49,
+       "role": "cause"
+      },
+      {
+       "path": "src/renderer/src/pages/agents/index.ts",
+       "from_line": 77,
+       "to_line": 80,
+       "role": "symptom"
+      },
+      {
+       "path": "src/renderer/src/pages/agents/AgentsPage.tsx",
+       "from_line": 32,
+       "to_line": 33,
+       "role": "symptom"
+      },
+      {
+       "path": "src/renderer/src/components/Popups/AddAssistantPopup.tsx",
+       "from_line": 37,
+       "to_line": 41,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "index.ts:48-49 `const agentsData = await response.json() as Agent[]; setAgents(agentsData);`. AgentsPage.tsx:33 `const systemAgentsGroupList = groupByCategories(systemAgents)` leads to index.ts:79-80 `data.forEach((item) => { item.group?.forEach(`. AddAssistantPopup.tsx:38 `const allAgents = [...userAgents, ...systemAgents] as Agent[]`, and :40 `agent.name.toLowerCase()`. App.tsx has no top-level ErrorBoundary around the routes or TopView.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R21",
+       "R22",
+       "R23"
+      ]
+     },
+     "notes": "To count, a comment must say that the fetched remote JSON is trusted/cast as Agent[] without checking its shape, and that a non-array or malformed payload breaks the consumers (a crash in groupByCategories/forEach/spread/name access) or should be treated as a load error. Does NOT count: the no-fallback-on-failure point (D3); 'use a stricter type than any' on getAgentsFromSystemAgents (pre-existing)."
+    },
+    {
+     "id": "D5",
+     "title": "The new setting's initial value is the raw i18n key 'settings.defaultaides', shown verbatim in the URL input",
+     "statement": "initialState sets `defaultaides: 'settings.defaultaides'`: a translation key stored as the setting's value and never passed through t(). On a fresh install the Assistant URL input binds directly to it and displays the literal 'settings.defaultaides'. The 'Built-in' strings added to the locales are never rendered. The value means 'use built-in' only by accident, because it does not start with 'http'.",
+     "sites": [
+      {
+       "path": "src/renderer/src/store/settings.ts",
+       "from_line": 209,
+       "to_line": 210,
+       "role": "cause"
+      },
+      {
+       "path": "src/renderer/src/pages/settings/DataSettings/DefaultaidesSettings.tsx",
+       "from_line": 16,
+       "to_line": 37,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "settings.ts:210 `defaultaides: 'settings.defaultaides', // 默认智能体`. DefaultaidesSettings.tsx:16 `const Aides = useSelector((state: RootState) => state.settings.defaultaides)` and :33 `value={Aides || ''}`, with no t(). index.ts:25 `if (!defaultaides.startsWith('http')) { return useLocalSystemAgents(); }`.",
+     "provenance": {
+      "dataset_refs": [
+       16
+      ],
+      "hunt": true,
+      "reviewer_comments": [
+       "R35",
+       "R36"
+      ]
+     },
+     "notes": "To count, a comment must say that the default/initial value is an i18n key (or an internal-looking literal) instead of an empty/null/real value, and that it is shown to users in the input or only works because it is not http. Does NOT count: comments about the missing `settings.data.default_aides` translations (D2); a pure naming/casing remark on the field."
+    },
+    {
+     "id": "D6",
+     "title": "useSystemAgents reads the source setting via store.getState() during render: consumers never subscribe to changes",
+     "statement": "The source selection reads `store.getState().settings.defaultaides` instead of subscribing via useSelector/useAppSelector. A change to the setting therefore never re-renders the hook's consumers, and a mounted consumer keeps the old source until something unrelated re-renders it. This is latent today, because the two current consumers remount after a settings visit. It bypasses react-redux and is exactly what makes the conditional hook dispatch (D1) look safe.",
+     "sites": [
+      {
+       "path": "src/renderer/src/pages/agents/index.ts",
+       "from_line": 20,
+       "to_line": 20,
+       "role": "cause"
+      },
+      {
+       "path": "src/renderer/src/pages/agents/index.ts",
+       "from_line": 34,
+       "to_line": 35,
+       "role": "other-site"
+      }
+     ],
+     "kind": "maintainability",
+     "severity": "low",
+     "evidence": "index.ts:20 `const { defaultaides } = store.getState().settings` and :34 the same again inside useRemoteSystemAgents. The writer is DefaultaidesSettings.tsx:18-19 `dispatch(setefaultAides(e.target.value))`. Consumers are AgentsPage.tsx:29 and AddAssistantPopup.tsx:32. App.tsx routes have no keep-alive, so AgentsPage remounts on navigation, which keeps this latent today.",
+     "provenance": {
+      "dataset_refs": [
+       6
+      ],
+      "hunt": true,
+      "reviewer_comments": [
+       "R9",
+       "R10",
+       "R11",
+       "R12",
+       "R13"
+      ]
+     },
+     "notes": "To count, a comment must say that store.getState() is a non-reactive snapshot, so consumers do not update/re-fetch when the URL setting changes, and should use useSelector/useAppSelector. Does NOT count: a comment that only flags the conditional hook calls or hook order (that is D1). A comment that makes both points counts for both."
+    },
+    {
+     "id": "D7",
+     "title": "Remote agents are fetched on every mount after a hard-coded 500 ms sleep and are never cached",
+     "statement": "Unlike the local path, which caches in the module-level `_agents`, useRemoteSystemAgents starts from `[]`, sleeps 500 ms for no reason, and re-fetches the URL every time AgentsPage mounts or the Add Assistant popup opens. Each open costs at least 500 ms plus a network round-trip, during which the list holds only user agents and then jumps.",
+     "sites": [
+      {
+       "path": "src/renderer/src/pages/agents/index.ts",
+       "from_line": 41,
+       "to_line": 56,
+       "role": "cause"
+      }
+     ],
+     "kind": "performance",
+     "severity": "low",
+     "evidence": "index.ts:33 `useState<Agent[]>([])`; :43 `await new Promise(resolve => setTimeout(resolve, 500));`; :44 `await fetch(resourcesPath)`. Nothing writes `_agents`. Compare :67 `if (!resourcesPath || _agents.length > 0) return` in the local hook.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R20"
+      ]
+     },
+     "notes": "To count, a comment must say that the artificial 500 ms delay slows every load, or that the remote list is refetched on every mount with no caching (unlike the local `_agents` cache). Does NOT count: a comment that only asks for an AbortController/cleanup or warns about setState after unmount (in React 19 that is a no-op)."
+    },
+    {
+     "id": "D8",
+     "title": "No redux-persist migration for the new settings field: upgraded installs get undefined and log console.error on every render",
+     "statement": "The store persists `settings` with redux-persist's default level-1 merge, so a rehydrated settings object replaces initialState.settings. The repo adds each new settings field through a numbered migration in migrate.ts plus a version bump. This PR adds neither, so every existing install has `defaultaides === undefined`, outside its declared `string | null` type. useSystemAgents then logs `console.error('defaultaides is null or undefined')` on every render of AgentsPage and AddAssistantPopup, and existing users get a different default from new users ('' vs 'settings.defaultaides').",
+     "sites": [
+      {
+       "path": "src/renderer/src/store/index.ts",
+       "from_line": 41,
+       "to_line": 50,
+       "role": "cause"
+      },
+      {
+       "path": "src/renderer/src/store/migrate.ts",
+       "from_line": 1232,
+       "to_line": 1242,
+       "role": "other-site"
+      },
+      {
+       "path": "src/renderer/src/pages/agents/index.ts",
+       "from_line": 21,
+       "to_line": 23,
+       "role": "symptom"
+      }
+     ],
+     "kind": "compat",
+     "severity": "low",
+     "evidence": "store/index.ts:41-47 `persistReducer({ key: 'cherry-studio', storage, version: 96, blacklist: ['runtime', 'messages'], migrate }, rootReducer)` has no stateReconciler, so it uses the default autoMergeLevel1. migrate.ts has no entry setting `state.settings.defaultaides`; repo convention is shown by e.g. '94': `state.settings.enableQuickPanelTriggers = false`. index.ts:21-22 `if (defaultaides === null || defaultaides === undefined) { console.error('defaultaides is null or undefined');`.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": []
+     },
+     "notes": "To count, a comment must say that there is no migration/persist version bump for `defaultaides`, so existing users' persisted settings lack it (undefined), with any consequence such as the error log or an inconsistent default. Does NOT count: the raw-i18n-key default value (D5); the duplicated null check (ref 7)."
+    },
+    {
+     "id": "D9",
+     "title": "The exported Redux action is misspelled `setefaultAides`",
+     "statement": "The new reducer and exported action creator are named `setefaultAides`, missing the 'D' of Default. It becomes part of the settings slice's public API. Anyone searching for or importing `setDefaultAides` will not find it, and renaming it after merge means churn across consumers.",
+     "sites": [
+      {
+       "path": "src/renderer/src/store/settings.ts",
+       "from_line": 459,
+       "to_line": 461,
+       "role": "cause"
+      },
+      {
+       "path": "src/renderer/src/store/settings.ts",
+       "from_line": 576,
+       "to_line": 576,
+       "role": "other-site"
+      },
+      {
+       "path": "src/renderer/src/pages/settings/DataSettings/DefaultaidesSettings.tsx",
+       "from_line": 4,
+       "to_line": 4,
+       "role": "other-site"
+      }
+     ],
+     "kind": "maintainability",
+     "severity": "low",
+     "evidence": "settings.ts:459 `setefaultAides: (state, action: PayloadAction<string>) => {`; :576 `setefaultAides,` in the export list; DefaultaidesSettings.tsx:4 `import { setefaultAides } from '@renderer/store/settings'`.",
+     "provenance": {
+      "dataset_refs": [
+       12,
+       17,
+       18
+      ],
+      "hunt": false,
+      "reviewer_comments": [
+       "R31",
+       "R37"
+      ]
+     },
+     "notes": "To count, a comment must point out the `setefaultAides` typo (missing D) in the action/reducer name. Does NOT count: casing preferences for `defaultaides` / `DefaultaidesSettings` (taste, excluded)."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 3",
+     "reason": "Backwards. zh-cn.json is the only locale that matches the keys the code uses (`settings.data.default_aides.*`). Renaming it to 'defaultaides' as proposed would break zh-CN too. The claim that the code uses 'defaultaides' is false."
+    },
+    {
+     "source": "ref 5",
+     "reason": "`getAgentsFromSystemAgents(systemAgents: any)` is pre-existing code the PR does not touch, and the advice is generic typing. The repo also turns off @typescript-eslint/no-explicit-any."
+    },
+    {
+     "source": "ref 7",
+     "reason": "Suggests extracting the small duplicated null guard into a helper, which is taste. The only concrete problem in that block is that useEffect is called after its early return, which is D1, and this ref does not identify it."
+    },
+    {
+     "source": "ref 8",
+     "reason": "The repo is on React 19, which removed the setState-on-unmounted warning, so the stated consequence does not exist. A URL change while mounted is not reachable (consumers remount). A missing abort is at most a nit."
+    },
+    {
+     "source": "ref 9",
+     "reason": "Identifier casing ('DefaultaidesSettings' vs 'DefaultAidesSettings') is naming taste with no behavioural impact."
+    },
+    {
+     "source": "ref 10",
+     "reason": "The inner `AidesIcon` follows the file's existing JoplinIcon/SiyuanIcon pattern. The repo explicitly disables '@eslint-react/no-nested-component-definitions', and a static 16px SVG costs nothing measurable."
+    },
+    {
+     "source": "ref 11",
+     "reason": "False premise. Underscore keys are already the norm in this menu (export_menu, markdown_export, divider_0), and 'default_aides' matches the i18n namespace."
+    },
+    {
+     "source": "ref 13",
+     "reason": "`React.ChangeEvent` in a type position resolves through @types/react's UMD global namespace. The repo does this widely without importing React, so there is no TS error."
+    },
+    {
+     "source": "ref 14",
+     "reason": "Blank-line formatting only."
+    },
+    {
+     "source": "ref 15",
+     "reason": "Field-name casing (`defaultaides` vs `defaultAides`) is naming taste."
+    },
+    {
+     "source": "R19",
+     "reason": "Request to add tests. Not a defect."
+    },
+    {
+     "source": "R28",
+     "reason": "Same as ref 10: the inner icon component follows the existing pattern, and the rule is disabled in eslint.config.mjs."
+    },
+    {
+     "source": "R34",
+     "reason": "Inline static style width is a style nit and matches sibling settings panels."
+    },
+    {
+     "source": "R20 (abort/stale-result half)",
+     "reason": "The 500 ms delay part of R20 is credited to D7. Its abort/stale-request half has no reachable consequence: a URL change while mounted does not happen in the current UI, and React 19 ignores setState after unmount."
+    }
+   ]
+  },
+  "bluewave-labs__Checkmate@29e03a6": {
+   "pr_summary": "Adds a GitHub Actions workflow (.github/workflows/poeditor-sync.yml) that runs by hand or nightly, a Node script (.github/scripts/download-translations.js) and a README. For each requested language the script exports translations from POEditor (key_value_json by default, or json, which it converts from an array into a flat map) and writes temp/<lang>.json. The workflow checks each file is non-empty, valid JSON, copies it over src/locales/, commits, and pushes with GITHUB_TOKEN to the checked-out branch. The app (src/Utils/i18n.js) globs src/locales/*.json into i18next resources. It uses \"gb\" as the primary and fallback language, and every locale file becomes an entry in the LanguageSelector.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "Manual and scheduled runs use different English codes (en vs gb); one default path writes a stray en.json and leaves gb.json stale, the other asks POEditor for 'gb'",
+     "statement": "The workflow_dispatch input defaults to \"tr,en\", but the env fallback that applies on the nightly schedule is 'tr,gb'. The script's own default is 'tr,en' and the README says the default is tr and gb. The script writes temp/<code>.json verbatim and the workflow copies it into src/locales, while the app is keyed on \"gb\" (primaryLanguage and fallbackLng). So a default manual run adds a new en.json, which becomes an extra \"EN\" language in the selector with no flag, and never refreshes gb.json. The nightly run instead requests 'gb'. Whichever code the POEditor project uses, one of the two default triggers is wrong: it either syncs the wrong English file or fails the export and exits 1.",
+     "sites": [
+      {
+       "path": ".github/workflows/poeditor-sync.yml",
+       "from_line": 7,
+       "to_line": 10,
+       "role": "cause"
+      },
+      {
+       "path": ".github/workflows/poeditor-sync.yml",
+       "from_line": 60,
+       "to_line": 60,
+       "role": "other-site"
+      },
+      {
+       "path": ".github/scripts/download-translations.js",
+       "from_line": 12,
+       "to_line": 12,
+       "role": "other-site"
+      },
+      {
+       "path": ".github/workflows/README.md",
+       "from_line": 25,
+       "to_line": 25,
+       "role": "other-site"
+      },
+      {
+       "path": ".github/scripts/download-translations.js",
+       "from_line": 64,
+       "to_line": 65,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "poeditor-sync.yml:10 `default: \"tr,en\"` vs :60 `LANGUAGES: ${{ github.event.inputs.languages || 'tr,gb' }}`. The fallback applies only when the input is empty, which is always the case on schedule. download-translations.js:12 `(process.env.LANGUAGES || 'tr,en').split(',')`; :64 `path.join(process.cwd(), 'temp', `${language}.json`)`; workflow:83 `cp -r temp/* src/locales/`. README.md:25 says \"the default languages `tr` and `gb`\", and the PR body says \"tr and en\". App side: src/Utils/i18n.js:6 `const primaryLanguage = \"gb\";`, :8 `import.meta.glob(\"../locales/*.json\")`, :24 `fallbackLng: primaryLanguage`. src/Components/LanguageSelector.jsx `Object.keys(i18n.options.resources)` and `fi fi-${lang}`. Existing locale files are gb.json and tr.json. Script:37-39 throws, and it exits 1 at :72-73, on a non-success export.",
+     "provenance": {
+      "dataset_refs": [
+       3,
+       6,
+       7
+      ],
+      "hunt": true,
+      "reviewer_comments": [
+       "R5",
+       "R6",
+       "R7",
+       "R8",
+       "R12"
+      ]
+     },
+     "notes": "To count, a comment must point out the en-vs-gb language-code mismatch between any two of: the manual input default (tr,en), the scheduled fallback (tr,gb), the script default (tr,en) and the README (tr,gb). Stronger hits add the consequence: the app uses gb.json, so the manual default writes en.json and leaves gb stale, or the nightly run requests an unsupported code. A comment that only says the README contradicts the manual default counts, because it is the same inconsistency. Near-misses that do not count: generic advice to validate language input, or the whitespace-trimming issue (D5)."
+    },
+    {
+     "id": "D2",
+     "title": "key_value_json export is written unfiltered, so untranslated terms land in tr.json as \"\" and render blank instead of falling back to gb",
+     "statement": "The default key_value_json path saves POEditor's export exactly as received. The export request passes no filters or fallback_language, and POEditor includes untranslated terms with empty-string values. Today tr.json holds only the translated subset (105 lines vs 178 in gb.json), so missing Turkish keys fall back to gb. After a sync those keys become \"\", and i18next (24.x, returnEmptyString left at its default of true) treats an empty string as a valid translation, so Turkish users see blank labels. The array path does drop empty definitions; the default path does not.",
+     "sites": [
+      {
+       "path": ".github/scripts/download-translations.js",
+       "from_line": 30,
+       "to_line": 35,
+       "role": "cause"
+      },
+      {
+       "path": ".github/scripts/download-translations.js",
+       "from_line": 49,
+       "to_line": 65,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "The export body is only `{api_token, id, language, type}` (script:29-35): no `filters: 'translated'` and no `fallback_language`. Script:50 `let formattedTranslations = translations;`. Only the `Array.isArray` branch (:53-60) filters, via `if (item.term && item.definition)`, and :65 writes the object unchanged. src/Utils/i18n.js init sets no `returnEmptyString: false`; package-lock pins i18next 24.2.2. src/locales/tr.json is 105 lines vs gb.json's 178 (tr lacks the notifications block and the #1889 auth strings). A default manual run (tr,en) exports tr successfully and pushes it.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": []
+     },
+     "notes": "To count, a comment must say that untranslated terms come back from POEditor as empty strings, are written into the locale file, and show blank text instead of falling back to gb/English. Acceptable fixes it might propose: filter empty values, or use filters=translated or fallback_language. A near-miss that does not count is R3, which argues the opposite: keep empty definitions in the array path. Generic 'validate the export' comments do not count either."
+    },
+    {
+     "id": "D3",
+     "title": "One-way download sync overwrites locale files wholesale, deleting keys developers add in the repo before they reach POEditor",
+     "statement": "The workflow only downloads. It replaces src/locales/<lang>.json with POEditor's export (cp temp/* src/locales/) and pushes the result straight to the branch. The script does no merge with the existing file and no upload. Developers in this repo add strings by editing gb.json and tr.json directly in PRs, so every sync deletes any key not yet entered in POEditor and pushes that deletion. The affected components then show raw keys, and for gb, the fallback language, there is no fallback left.",
+     "sites": [
+      {
+       "path": ".github/workflows/poeditor-sync.yml",
+       "from_line": 80,
+       "to_line": 92,
+       "role": "cause"
+      },
+      {
+       "path": ".github/scripts/download-translations.js",
+       "from_line": 63,
+       "to_line": 65,
+       "role": "other-site"
+      }
+     ],
+     "kind": "data",
+     "severity": "low",
+     "evidence": "poeditor-sync.yml:83 `cp -r temp/* src/locales/`, :90-92 `git add src/locales/*.json` / `git commit` / `git push`. script:65 `fs.writeJson(outputPath, formattedTranslations, ...)` writes only what POEditor returned. History at the merge base shows direct locale edits: d40507e (+30 gb.json), 93462d7 (+34 gb.json), a72d002 (gb.json + tr.json). i18n.js:24 `fallbackLng: primaryLanguage` (\"gb\").",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": []
+     },
+     "notes": "To count, a comment must say the sync replaces the repo's locale files with the POEditor export, with no merge and no upload of repo-side terms, so keys added directly in the repo are lost or reverted on the next run. Near-misses that do not count: the 'empty {} export' comments (R13-R16), which are about an empty export rather than repo-side keys being overwritten, and formatting or ordering churn."
+    },
+    {
+     "id": "D4",
+     "title": "Workflow pushes with GITHUB_TOKEN but requests no contents: write permission",
+     "statement": "The Commit step runs `git push` with the checkout's GITHUB_TOKEN, but the workflow and job declare no `permissions:` block. On a repo or org whose default workflow token is read-only (GitHub's default for newer orgs and repos), the job downloads and commits and then fails on the push with a 403. Translations are never published.",
+     "sites": [
+      {
+       "path": ".github/workflows/poeditor-sync.yml",
+       "from_line": 20,
+       "to_line": 28,
+       "role": "cause"
+      },
+      {
+       "path": ".github/workflows/poeditor-sync.yml",
+       "from_line": 86,
+       "to_line": 92,
+       "role": "symptom"
+      }
+     ],
+     "kind": "build",
+     "severity": "low",
+     "evidence": "poeditor-sync.yml has no `permissions:` key anywhere. Line 28 is `token: ${{ secrets.GITHUB_TOKEN }}` and line 92 is `git push`. There are no other workflows in the repo at the merge base, so nothing shows the repo's default token setting.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R9",
+       "R17",
+       "R18",
+       "R23"
+      ]
+     },
+     "notes": "To count, a comment must say the workflow needs `permissions: contents: write`, or equivalent, for the push, because the default GITHUB_TOKEN may be read-only. Near-misses that do not count: comments about which branch is pushed to (R19-R22), and token-exposure or supply-chain comments (R11)."
+    },
+    {
+     "id": "D5",
+     "title": "LANGUAGES is split on ',' without trimming or dropping empties, so 'tr, en' or a trailing comma requests ' en' or ''",
+     "statement": "The workflow_dispatch languages input is free text, and the script only splits it on ','. An operator who types 'tr, en' or leaves a trailing comma sends ' en' or '' as the POEditor language. That either fails the whole run (exit 1 after the first bad export) or writes an oddly named temp/' en'.json, which is copied into src/locales and loaded by the i18n glob as a new language.",
+     "sites": [
+      {
+       "path": ".github/scripts/download-translations.js",
+       "from_line": 12,
+       "to_line": 12,
+       "role": "cause"
+      },
+      {
+       "path": ".github/workflows/poeditor-sync.yml",
+       "from_line": 7,
+       "to_line": 10,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "script:12 `const LANGUAGES = (process.env.LANGUAGES || 'tr,en').split(',');` with no `.map(s => s.trim()).filter(Boolean)`. The values are used verbatim at :38 `language: language` and :64 `` `${language}.json` ``. The input at workflow:7-10 is free text described as 'comma separated'.",
+     "provenance": {
+      "dataset_refs": [
+       2
+      ],
+      "hunt": false,
+      "reviewer_comments": []
+     },
+     "notes": "To count, a comment must say the language list is not trimmed or filtered, so spaces or empty entries produce invalid or oddly named language codes. Near-misses that do not count: the en/gb default mismatch (D1) and generic 'validate env vars' comments (dataset ref 1)."
+    },
+    {
+     "id": "D6",
+     "title": "json (array) export conversion keys on item.term only, ignoring context, so nested keys collapse and collide",
+     "statement": "The workflow offers format=json as a supported input. For the array that export returns, the script builds a flat map keyed only by item.term and ignores item.context. POEditor stores the repo's nested keys (notifications.slack.label, notifications.discord.label, ...) as a term plus a parent-path context. Terms like label, description, webhookLabel and webhookPlaceholder therefore overwrite each other, and the nesting that t('notifications.slack.label') needs is lost. That breaks the notification-modal strings for any locale synced with format=json.",
+     "sites": [
+      {
+       "path": ".github/scripts/download-translations.js",
+       "from_line": 53,
+       "to_line": 60,
+       "role": "cause"
+      },
+      {
+       "path": ".github/workflows/poeditor-sync.yml",
+       "from_line": 11,
+       "to_line": 14,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "script:56-58 `translations.forEach(item => { if (item.term && item.definition) { formattedTranslations[item.term] = item.definition; } })`, which never reads context. workflow:12 `description: \"Export format (key_value_json or json)\"`. src/locales/gb.json nests `\"notifications\": { \"slack\": { \"label\" ... }, \"discord\": { \"label\" ... } }`, and NotificationIntegrationModal.jsx:33 calls `t('notifications.slack.label')`.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": []
+     },
+     "notes": "To count, a comment must say the array/json conversion drops context or nesting, so nested keys are flattened or terms collide and the locale no longer matches the nested lookups. A near-miss that does not count is R2, which only asks whether definitions can be objects (plurals). Comments about dropping empty definitions (R3) do not count either."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 0",
+     "reason": "Wrong. Network and HTTP errors are already caught and logged, and the script exits 1 (script:71-73, 91-93). A global axios interceptor adds nothing to a 90-line CI script."
+    },
+    {
+     "source": "ref 1",
+     "reason": "Nit. With unset secrets POEditor returns a non-success status, and the script throws with the response body and exits 1, so the run already fails loudly. A pre-check would only improve the message."
+    },
+    {
+     "source": "ref 4",
+     "reason": "Already handled. An unexpected response shape throws a TypeError inside the try block, which is caught at :71-73 and exits 1. Optional chaining would only change the error text."
+    },
+    {
+     "source": "ref 5",
+     "reason": "Formatting nit (missing trailing newline)."
+    },
+    {
+     "source": "ref 8",
+     "reason": "Factually wrong: jq is preinstalled on GitHub's ubuntu-latest runner images."
+    },
+    {
+     "source": "R1",
+     "reason": "Nit: an unused `__filename` variable and import, with negligible future cost."
+    },
+    {
+     "source": "R2",
+     "reason": "Speculative. For non-plural terms POEditor's json export has string definitions, and the repo has no plural terms. It also does not identify the context/nesting loss that is the real problem in D6."
+    },
+    {
+     "source": "R3",
+     "reason": "Wrong direction. Dropping empty definitions lets i18next fall back to gb. Keeping them would render blank strings (the D2 problem), so the suggestion is harmful."
+    },
+    {
+     "source": "R4",
+     "reason": "No real leak. The token appears verbatim, since POEditor tokens are hex and URL encoding leaves them unchanged, and GitHub masks registered secrets in logs. POEditor API failures come back as status 'fail' in the body, and that path logs only response data."
+    },
+    {
+     "source": "R10",
+     "reason": "Hardening or reproducibility preference, not a concrete defect: caret-ranged axios/fs-extra with no lockfile, and no stated breakage."
+    },
+    {
+     "source": "R11",
+     "reason": "Speculative supply-chain hardening: a compromised dependency lifecycle script. No concrete reachable path in this PR."
+    },
+    {
+     "source": "R13, R14, R15, R16",
+     "reason": "Speculative. This needs POEditor to return an empty map ({}) for a language with existing translations, which is not realistic: key_value_json includes all terms, and an empty array export only happens for a language with no translations at all."
+    },
+    {
+     "source": "R19, R20, R21, R22",
+     "reason": "Not a defect. A manual dispatch runs on the branch the operator picks, and pushing back to that branch is normal GitHub Actions behaviour. The README's 'main branch' wording is a doc inaccuracy with no concrete harm."
+    }
+   ]
+  },
+  "mudler__LocalAI@e466450": {
+   "pr_summary": "The PR adds two double timing fields in milliseconds, timing_prompt_processing and timing_token_generation, to the gRPC Reply proto. The llama.cpp grpc-server fills them from llama.cpp's final-response `timings` object (prompt_ms / predicted_ms), and they flow through backend.TokenUsage and ComputeChoices into schema.OpenAIUsage as omitempty JSON fields. Chat, completion and edit copy them into the response only when the request carries a `LocalAI-Extra-Usage` header. The PR also adds a `LOCALAI_MACHINE_TAG` run option. When the option is unset, WithMachineTag falls back to os.Hostname(). About 30 individual HTTP handlers send the tag back in a `LocalAI-Machine-Tag` response header, each with its own hand-written c.Set line. ListModelsEndpoint gains an appConfig parameter for this. While refactoring the non-streaming /v1/completions loop, the PR replaced the prompt/completion token accumulation with timing accumulation, so every non-streaming completion now reports zero token usage.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "Non-streaming /v1/completions now always reports 0 prompt/completion/total tokens",
+     "statement": "In CompletionEndpoint's non-streaming loop, the PR deleted `totalTokenUsage.Prompt += tokenUsage.Prompt` and `totalTokenUsage.Completion += tokenUsage.Completion` and put the two timing accumulations in their place. totalTokenUsage's token fields therefore stay at their zero value, and the response's usage.prompt_tokens, completion_tokens and total_tokens are always 0. This happens on every non-streaming completion, whether or not the LocalAI-Extra-Usage header is sent, and breaks token accounting for OpenAI-compatible clients.",
+     "sites": [
+      {
+       "path": "core/http/endpoints/openai/completion.go",
+       "from_line": 183,
+       "to_line": 184,
+       "role": "cause"
+      },
+      {
+       "path": "core/http/endpoints/openai/completion.go",
+       "from_line": 188,
+       "to_line": 192,
+       "role": "symptom"
+      },
+      {
+       "path": "core/http/endpoints/openai/completion.go",
+       "from_line": 163,
+       "to_line": 163,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "high",
+     "evidence": "Merge base completion.go (non-streaming loop) had `totalTokenUsage.Prompt += tokenUsage.Prompt` / `totalTokenUsage.Completion += tokenUsage.Completion`. At head, lines 183-184 are only `totalTokenUsage.TimingTokenGeneration += tokenUsage.TimingTokenGeneration` / `totalTokenUsage.TimingPromptProcessing += tokenUsage.TimingPromptProcessing`. totalTokenUsage is `backend.TokenUsage{}` (line 163) and nothing else writes Prompt/Completion. Lines 188-192 then build `usage := schema.OpenAIUsage{PromptTokens: totalTokenUsage.Prompt, CompletionTokens: totalTokenUsage.Completion, TotalTokens: totalTokenUsage.Prompt + totalTokenUsage.Completion}`. ComputeChoices (inference.go:53-56) does return populated counts, so they are simply dropped. edit.go:66-70 in the same PR keeps both accumulations and adds the timing lines, which shows the intended pattern. Reached by POST /v1/completions, /completions or /v1/engines/:model/completions with stream=false (routes/openai.go:85-110).",
+     "provenance": {
+      "dataset_refs": [
+       12
+      ],
+      "hunt": true,
+      "reviewer_comments": [
+       "R22",
+       "R23",
+       "R24",
+       "R25",
+       "R26"
+      ]
+     },
+     "notes": "To count, a comment must say that the non-streaming completion path no longer accumulates Prompt/Completion token counts, because the timing lines replaced them, so the reported prompt_tokens/completion_tokens/total_tokens are 0 (or wrong). Pointing at completion.go ~183-184 or the usage block at 188-192 with that mechanism is sufficient. Near-misses that do NOT count: a generic 'add tests for token counts' (R13 mentions the regression only as a reason to add tests and does not identify it on its own); comments about the streaming completion path; comments that only say the timings are summed across prompts."
+    },
+    {
+     "id": "D2",
+     "title": "Machine tag defaults to the server hostname and is sent to every client on most endpoints",
+     "statement": "WithMachineTag falls back to os.Hostname() whenever LOCALAI_MACHINE_TAG is unset, and the CLI always applies it. About 30 handlers then emit it unconditionally as the LocalAI-Machine-Tag response header. As a result, every LocalAI deployment, not only P2P users who opt in, discloses its internal hostname to any API client, including unauthenticated ones under the default no-API-key configuration. The header should be opt-in: sent only when a tag is explicitly configured.",
+     "sites": [
+      {
+       "path": "core/config/application_config.go",
+       "from_line": 100,
+       "to_line": 108,
+       "role": "cause"
+      },
+      {
+       "path": "core/cli/run.go",
+       "from_line": 111,
+       "to_line": 111,
+       "role": "other-site"
+      },
+      {
+       "path": "core/http/endpoints/openai/chat.go",
+       "from_line": 174,
+       "to_line": 174,
+       "role": "symptom"
+      },
+      {
+       "path": "core/http/endpoints/openai/files.go",
+       "from_line": 125,
+       "to_line": 125,
+       "role": "symptom"
+      }
+     ],
+     "kind": "security",
+     "severity": "low",
+     "evidence": "application_config.go:100-107: `func WithMachineTag(tag string) AppOption { return func(o *ApplicationConfig) { if tag == \"\" { hostname, _ := os.Hostname(); tag = hostname }; o.MachineTag = tag } }`. run.go:111 always calls `config.WithMachineTag(r.MachineTag)`. Handlers such as chat.go:174 `c.Set(\"LocalAI-Machine-Tag\", startupOptions.MachineTag)`, completion.go:66, list.go:17 and files.go:26/86/125/148/186 set the header with no condition. GET /v1/models (list.go:17) is therefore enough for any client that can reach the port to learn the host's hostname.",
+     "provenance": {
+      "dataset_refs": [
+       16
+      ],
+      "hunt": true,
+      "reviewer_comments": []
+     },
+     "notes": "To count, a comment must say that the hostname (os.Hostname default) is exposed to clients by default or unconditionally in a response header, as information disclosure, and/or that the machine-tag header should be opt-in or omitted when no tag is configured. Near-misses that do NOT count: 'the os.Hostname error is ignored' (ref 7); 'skip the header when MachineTag is empty', which is about empty values, not disclosure; a nil-appConfig guard; claims that the header should go on outbound backend requests."
+    },
+    {
+     "id": "D3",
+     "title": "Machine-tag header set by hand in each handler instead of a middleware; coverage already inconsistent",
+     "statement": "Instead of one middleware, the LocalAI-Machine-Tag response header is set by a hand-copied `c.Set(...)` line at the top of about 30 individual handlers. Coverage is already inconsistent. The ElevenLabs text-to-speech and sound-generation inference endpoints, /v1/tokenize, /stores/*, the gallery, backend-monitor, /system and /version routes never send it, while ChatEndpoint sets it twice. Clients that use the tag to identify which P2P machine served a request get no tag from those routes. Every future endpoint must also remember the line or silently lose the tag.",
+     "sites": [
+      {
+       "path": "core/http/endpoints/openai/assistant.go",
+       "from_line": 79,
+       "to_line": 79,
+       "role": "cause"
+      },
+      {
+       "path": "core/http/endpoints/openai/files.go",
+       "from_line": 86,
+       "to_line": 86,
+       "role": "other-site"
+      },
+      {
+       "path": "core/http/endpoints/openai/list.go",
+       "from_line": 17,
+       "to_line": 17,
+       "role": "other-site"
+      },
+      {
+       "path": "core/http/endpoints/openai/chat.go",
+       "from_line": 174,
+       "to_line": 174,
+       "role": "other-site"
+      },
+      {
+       "path": "core/http/endpoints/openai/chat.go",
+       "from_line": 330,
+       "to_line": 330,
+       "role": "other-site"
+      },
+      {
+       "path": "core/http/routes/elevenlabs.go",
+       "from_line": 16,
+       "to_line": 18,
+       "role": "symptom"
+      },
+      {
+       "path": "core/http/routes/localai.go",
+       "from_line": 36,
+       "to_line": 44,
+       "role": "symptom"
+      },
+      {
+       "path": "core/http/routes/localai.go",
+       "from_line": 70,
+       "to_line": 70,
+       "role": "symptom"
+      }
+     ],
+     "kind": "maintainability",
+     "severity": "low",
+     "evidence": "`git grep LocalAI-Machine-Tag` at head matches assistant.go (9 times: 79, 141, 251, 284, 314, 361, 419, 459, 514), files.go (5 times), chat.go (twice: 174 and 330), and rerank.go, localai/tts.go, vad.go, completion.go, edit.go, embeddings.go, image.go, list.go and transcription.go (once each). It has no match in core/http/endpoints/elevenlabs/* or in the tokenize/stores handlers. Those are registered at routes/elevenlabs.go:16 (`/v1/text-to-speech/:voice-id`) and :18 (`/v1/sound-generation`), and at routes/localai.go:41-44 (`/stores/*`) and :70 (`/v1/tokenize`). core/http/app.go:138-168 registers no shared middleware for the header.",
+     "provenance": {
+      "dataset_refs": [
+       15
+      ],
+      "hunt": true,
+      "reviewer_comments": [
+       "R4",
+       "R5",
+       "R6",
+       "R7",
+       "R27"
+      ]
+     },
+     "notes": "To count, a comment must say one of two things. Either: the header is duplicated per handler and belongs in one shared middleware or route scope, with the drift risk. Or: specific routes (ElevenLabs TTS/sound-generation, tokenize, stores, etc.) are missing the machine-tag header, so coverage is inconsistent. Either half counts. Near-misses that do NOT count: a comment only about the redundant second `c.Set` at chat.go:330 (ref 10 / R17), since that is an idempotent nit; CORS ExposeHeaders comments; nil-appConfig comments."
+    },
+    {
+     "id": "D4",
+     "title": "New --machine-tag CLI flag ships with placeholder help text 'TODO: write a help string'",
+     "statement": "The new MachineTag option on RunCMD has the literal help text \"TODO: write a help string\" and no `group:` tag. `local-ai run --help` therefore shows a placeholder to operators, and the flag's purpose is undocumented. Unlike its neighbours, it also lacks the un-prefixed env alias, a MACHINE_TAG alongside LOCALAI_MACHINE_TAG.",
+     "sites": [
+      {
+       "path": "core/cli/run.go",
+       "from_line": 74,
+       "to_line": 74,
+       "role": "cause"
+      }
+     ],
+     "kind": "maintainability",
+     "severity": "low",
+     "evidence": "run.go:74: `MachineTag string `env:\"LOCALAI_MACHINE_TAG\" help:\"TODO: write a help string\"``. Neighbouring flags, e.g. run.go:73 `LoadToMemory []string `env:\"LOCALAI_LOAD_TO_MEMORY,LOAD_TO_MEMORY\" help:\"A list of models to load into memory at startup\" group:\"models\"``, all carry a real help string, a group and an alias.",
+     "provenance": {
+      "dataset_refs": [
+       6
+      ],
+      "hunt": true,
+      "reviewer_comments": []
+     },
+     "notes": "To count, a comment must point out that the new MachineTag flag's help string is a TODO placeholder (user-visible in --help) or that it is otherwise undocumented or unfinished. A comment only about the missing group or env alias, without the placeholder, is a weak match. Near-misses: general 'document the timing units' comments (ref 0 / R1-R3), which are about the proto fields, not this flag."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 0",
+     "reason": "Doc nit: asks for a unit comment on the proto fields. The values are milliseconds straight from llama.cpp prompt_ms/predicted_ms; nothing breaks."
+    },
+    {
+     "source": "R1, R2, R3",
+     "reason": "Same as ref 0: requests to document or rename the timing fields with their unit. This is a naming/doc request, not a defect."
+    },
+    {
+     "source": "ref 1",
+     "reason": "Style: suggests a helper for the 6-line timings block duplicated in PredictStream and Predict. The surrounding token extraction is duplicated the same way already, and there is no concrete future cost."
+    },
+    {
+     "source": "ref 2, ref 4",
+     "reason": "Negligible micro-optimisation: two `at(\"timings\")` lookups on a small per-reply JSON object."
+    },
+    {
+     "source": "ref 3, ref 5",
+     "reason": "Unreachable. `timings` is only ever written as `{\"timings\", slot.get_formated_timings()}` in send_final_response (grpc-server.cpp:1291), and get_formated_timings() (305-317) always returns a JSON object, so `.at(\"timings\").value(...)` cannot throw on null or non-object."
+    },
+    {
+     "source": "ref 7",
+     "reason": "Trivial: `hostname, _ := os.Hostname()` ignores an error that essentially never occurs, and the only effect is an empty tag. The real hostname concern is disclosure (D2), not error handling."
+    },
+    {
+     "source": "ref 8, ref 9, ref 14, ref 18, ref 19",
+     "reason": "Unfounded nil-appConfig panic. Every route wires application.ApplicationConfig() or the non-nil appConfig (routes/openai.go:133-134, routes/localai.go:36-37), and the same handlers already dereference appConfig unguarded (e.g. rerank.go appConfig.ModelPath, transcription.go/embeddings.go readRequest with appConfig.Debug)."
+    },
+    {
+     "source": "ref 10, R17",
+     "reason": "Nit: the second `c.Set(\"LocalAI-Machine-Tag\", ...)` at chat.go:330 is redundant but idempotent, with no behavioural effect. The underlying per-handler duplication is covered by D3."
+    },
+    {
+     "source": "ref 11, ref 13",
+     "reason": "Design choice, not a defect. `c.Get(\"LocalAI-Extra-Usage\", \"\") != \"\"` is a presence-based opt-in flag (the same semantics upstream kept). The only effect of sending 'false' is two extra omitempty, non-standard usage fields that OpenAI clients ignore, and no client contract depends on parsing the value."
+    },
+    {
+     "source": "ref 17",
+     "reason": "Wrong premise: the header is intentionally a response header telling the client which machine served it, per the PR body. It is not meant for outbound backend requests, and MachineTag defaults to the hostname so it is effectively never empty."
+    },
+    {
+     "source": "ref 20",
+     "reason": "Cosmetic typo ('is't') in a comment at core/schema/openai.go:26."
+    },
+    {
+     "source": "R8, R12, R14, R15, R16",
+     "reason": "CORS concerns are speculative or wrong. With AllowHeaders empty, Fiber v2.52.5's cors middleware reflects Access-Control-Request-Headers, so a preflight with LocalAI-Extra-Usage is allowed. The missing ExposeHeaders affects only browser JS reading an operational P2P header, which is not the feature's use case, and is identical to the pre-existing X-Correlation-ID header. This is an enhancement, not a defect this PR introduces."
+    },
+    {
+     "source": "R9, R10",
+     "reason": "Refactor suggestion. The OpenAIUsage literal was already built separately at each response site before the PR, which only adds two conditional lines per site. There is no concrete drift defect."
+    },
+    {
+     "source": "R11, R18, R19, R20",
+     "reason": "Pre-existing. At the merge base, the tool-call (default) branch of processTools already emitted chunks with no Usage at all (token counts included), and the stream writer copied the last chunk's zero usage. The PR does not touch that branch, and timings merely inherit the existing gap."
+    },
+    {
+     "source": "R21",
+     "reason": "Pre-existing and out of scope: handleQuestion's fallback ModelInference (chat.go:545-556) was never counted in usage, token counts included, before the PR. Not introduced or exposed here."
+    },
+    {
+     "source": "R13, R28",
+     "reason": "Test requests ('add endpoint tests'). R13 mentions the completion regression only as a reason to add tests, so the defect itself is D1."
+    }
+   ]
+  },
+  "alibaba__spring-ai-alibaba@4bc7305": {
+   "pr_summary": "Hotfix to spring-ai-alibaba-jmanus with five changes. (1) The module version goes from 0.1.0 to 0.1.1. (2) Agent save is fixed by giving the deprecated DynamicAgentEntity.systemPrompt a \" \" default, dropping nullable=false, and having AgentServiceImpl.mergePrompts write \" \" instead of null. That avoids the NPE and the NOT NULL violation on create, scan and update, but the inverted `!= null || !trim().isEmpty()` guard is left in place. (3) InputTextAction now uses Locator.fill(\"\") + pressSequentially(delay 100). If that fails it falls back to fill(text), then to a raw JS `el.value = ...; dispatchEvent('input')`, and reports success in every case. (4) MoveToAndClickAction now does window.scrollTo(x - vw/2, y - vh/2) before mouse.click(x, y). In debug mode it also injects and removes a red marker dot. (5) NavigateAction adds \"https://\" to any URL that does not start with lowercase http:// or https://.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "move_to_and_click scrolls the page, then clicks the unadjusted (x,y), so it hits the wrong element",
+     "statement": "The action now calls window.scrollTo(x - viewportWidth/2, y - viewportHeight/2) and then still clicks at the original (x, y). Playwright's mouse.click uses viewport coordinates, and callers get (x, y) from get_element_position, which is Locator.boundingBox() and so also viewport-relative. Whenever the scroll moves the page, the click lands on different content. That covers any target right of or below the viewport centre on a scrollable page. It also covers any page that was already scrolled, because scrollTo is absolute and snaps it back. The merge base clicked (x, y) without scrolling, which was correct for this flow.",
+     "sites": [
+      {
+       "path": "spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/tool/browser/actions/MoveToAndClickAction.java",
+       "from_line": 48,
+       "to_line": 52,
+       "role": "cause"
+      },
+      {
+       "path": "spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/tool/browser/actions/MoveToAndClickAction.java",
+       "from_line": 68,
+       "to_line": 70,
+       "role": "symptom"
+      },
+      {
+       "path": "spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/tool/browser/actions/GetElementPositionByNameAction.java",
+       "from_line": 122,
+       "to_line": 131,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "high",
+     "evidence": "MoveToAndClickAction.java:49-52 `int scrollX = Math.max(0, x - page.viewportSize().width / 2); int scrollY = Math.max(0, y - page.viewportSize().height / 2); page.evaluate(\"(args) => window.scrollTo({left: args[0], top: args[1], behavior: 'instant'})\", new Object[] { scrollX, scrollY });` then :69-70 `page.mouse().move(x, y); page.mouse().click(x, y);`, and no scroll offset is subtracted. The coordinates come from GetElementPositionByNameAction.java:124-131 `box = nthLocator.boundingBox(); int x = (int) (box.x + box.width / 2); int y = (int) (box.y + box.height / 2);`. That value is viewport-relative, and the action's own highlight uses `position = 'fixed'`, which confirms it. Example 1: default 1280x720 viewport, page at scroll 0, target at (1000,600). The code scrolls to (360,240), so the target moves to viewport (640,360), and the click at (1000,600) hits something else. Example 2: the agent has scrolled down 1000px and the target is at (500,300). scrollTo(0,0) jumps back to the top of the page, and the click at (500,300) hits top-of-page content. Path: BrowserUseTool.run -> case \"move_to_and_click\" -> MoveToAndClickAction.execute. If the coordinates were read as document coordinates the click would still be wrong, because the target would then sit at the viewport centre, not at (x,y).",
+     "provenance": {
+      "dataset_refs": [
+       6
+      ],
+      "hunt": true,
+      "reviewer_comments": [
+       "R13",
+       "R14",
+       "R15",
+       "R16",
+       "R17"
+      ]
+     },
+     "notes": "To count, a comment must say that the new scroll moves the page before the click, but the click still uses the same (x,y), which are viewport coordinates from boundingBox/get_element_position. The click therefore lands on the wrong element (or the coordinates are not adjusted by the scroll offset). It is enough to note the mismatch between the scroll and the unadjusted click coordinates. Near-misses that do not count: a viewportSize() null-check comment (ref 5); comments only about the debug marker's position:absolute placement; generic 'scrolling may be unnecessary' remarks that never say the click target shifts."
+    },
+    {
+     "id": "D2",
+     "title": "input_text falls back to a raw JS el.value assignment and reports success for fields that rejected input",
+     "statement": "When both Playwright fill attempts fail, the action runs `el.value = value; el.dispatchEvent(new Event('input'))` and returns \"成功输入\" (success). Fill fails on disabled, readonly and hidden fields and on non-text types such as checkbox or radio. The JS fallback skips the editability and type checks, so it forces a value into a field the user could not edit, and the agent is told the input succeeded. The typing and change events some form handlers or controlled inputs need are also skipped. Both earlier exceptions are dropped without logging. At the merge base these cases threw and were reported as \"Browser action 'input_text' failed\". Now they wait through up to two 30s actionability timeouts and then report a false success.",
+     "sites": [
+      {
+       "path": "spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/tool/browser/actions/InputTextAction.java",
+       "from_line": 76,
+       "to_line": 88,
+       "role": "cause"
+      },
+      {
+       "path": "spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/tool/browser/actions/InputTextAction.java",
+       "from_line": 54,
+       "to_line": 57,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "InputTextAction.java:62-75 `try { elementLocator.fill(\"\"); ... elementLocator.pressSequentially(text, options); } catch (Exception e) { try { elementLocator.fill(\"\"); elementLocator.fill(text); } catch (Exception e2) { ... elementLocator.evaluate(\"(el, value) => { el.value = value; el.dispatchEvent(new Event('input', { bubbles: true })); }\", text);` and :88 `return new ToolExecuteResult(\"成功输入: '\" + text + ...)`. The only type check is the tag name at :55 (`!\"input\".equals(tagName) && !\"textarea\".equals(tagName)`). The registry indexes every `a, button, input, select, textarea` with no visibility or enabled filter (InteractiveElementRegistry.java:42, :100-112), so disabled, readonly, hidden and checkbox inputs can be selected. At the merge base, `handle.click(); handle.fill(\"\");` threw for these, and BrowserUseTool.run:272-274 returned a failure result.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R10",
+       "R11",
+       "R12"
+      ]
+     },
+     "notes": "To count, a comment must say that the JS `el.value` fallback bypasses Playwright's editability/actionability (or type) checks and still returns success. The result is a false success for disabled, readonly or hidden inputs, or input that is not accepted, or form handlers that never see the change. Near-misses that do not count: 'the second fill(\"\") is redundant' (ref 3, R9); unused-import comments; 'add tests' (R8); a remark that only says the exceptions should be logged, without the false-success consequence."
+    },
+    {
+     "id": "D3",
+     "title": "navigate prepends https:// to every URL without a lowercase http(s) prefix, breaking other schemes",
+     "statement": "The new auto-prefix rewrites any URL that does not start with lowercase \"http://\" or \"https://\". about:blank becomes https://about:blank, file:///tmp/x.html becomes https://file:///tmp/x.html, and data:, ftp:// and chrome:// URLs are broken the same way. An uppercase HTTP://example.com becomes https://HTTP://example.com. At the merge base page.navigate received these unchanged and handled them. Now they fail to navigate or go somewhere unintended.",
+     "sites": [
+      {
+       "path": "spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/tool/browser/actions/NavigateAction.java",
+       "from_line": 41,
+       "to_line": 46,
+       "role": "cause"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "NavigateAction.java:42-44 `if (!url.startsWith(\"http://\") && !url.startsWith(\"https://\")) { url = \"https://\" + url; }` then :46 `page.navigate(url, ...)`. BrowserUseTool.java:223-224 forwards the URL the agent supplies directly to NavigateAction. The merge base passed the URL to page.navigate unchanged.",
+     "provenance": {
+      "dataset_refs": [
+       9
+      ],
+      "hunt": true,
+      "reviewer_comments": [
+       "R18",
+       "R19"
+      ]
+     },
+     "notes": "To count, a comment must say the prefix check only recognises (lowercase) http/https, so URLs that already have another scheme get mangled. Examples are about:, file:, data:, ftp:, or uppercase HTTP. The fix is to prefix only when no scheme is present. A comment that only mentions protocol-relative '//host' also counts, since it is the same mechanism. Near-misses that do not count: 'URL validation should be stricter' with no mangling example, and 'url could be null' (already checked at :38)."
+    },
+    {
+     "id": "D4",
+     "title": "Agent-save fix uses a \" \" sentinel instead of fixing the inverted `||` guard, so the deprecated-prompt branch fires on every read and write",
+     "statement": "The NPE the PR works around comes from mergePrompts' guard `getSystemPrompt() != null || !getSystemPrompt().trim().isEmpty()`. That guard is true for every non-null value and dereferences null. Rather than fix it, the PR makes the field never null (a \" \" default, and \" \" written back as the 'cleared' value). The cleared state therefore still satisfies the guard. Every mapToAgentConfig and updateEntityFromConfig, for every agent including brand-new ones with no legacy prompt, re-enters the deprecation branch. Each time it logs a WARN claiming the SystemPrompt is non-empty and was merged, and prints the whole next-step prompt.",
+     "sites": [
+      {
+       "path": "spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/dynamic/agent/service/AgentServiceImpl.java",
+       "from_line": 190,
+       "to_line": 190,
+       "role": "cause"
+      },
+      {
+       "path": "spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/dynamic/agent/service/AgentServiceImpl.java",
+       "from_line": 197,
+       "to_line": 200,
+       "role": "symptom"
+      },
+      {
+       "path": "spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/dynamic/agent/entity/DynamicAgentEntity.java",
+       "from_line": 45,
+       "to_line": 47,
+       "role": "other-site"
+      }
+     ],
+     "kind": "incomplete-fix",
+     "severity": "low",
+     "evidence": "AgentServiceImpl.java:190 `if (entity.getSystemPrompt() != null || !entity.getSystemPrompt().trim().isEmpty()) {` ... :197-199 `log.warn(\"Agent[{}]的SystemPrompt不为空， 但属性已经废弃...本次将agent 的内容合并... 当前制定的值: {}\", agentName, nextPrompt);` :200 `entity.setSystemPrompt(\" \");`. DynamicAgentEntity.java:45-47 `@Column(length = 40000) @Deprecated private String systemPrompt = \" \";`. mergePrompts is called from createAgent:94, updateEntityFromConfig:168 and mapToAgentConfig:153. Creating one agent therefore warns three times, and each admin getAllAgents/getAgentById call (AgentController:46/51) warns once per agent, forever, even though \" \" is not a prompt.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": false,
+      "reviewer_comments": [
+       "R1",
+       "R2",
+       "R3",
+       "R4",
+       "R5",
+       "R6",
+       "R7"
+      ]
+     },
+     "notes": "To count, a comment must identify the mergePrompts guard at :190 (`!= null || !...trim().isEmpty()`) as the real defect the \" \" sentinel papers over, so it should be a null-safe && / isBlank check. It may name either consequence: the misleading deprecation warning firing for every agent on every read or save, or the guard still NPE-ing on null now that the column is nullable. Near-misses that do not count: 'use \"\" instead of \" \"' alone (ref 0/ref 1, which changes nothing because \"\" is also non-null); 'add a comment explaining the space'; and claims that \" \" bypasses some validation. Credit rests on identifying the inverted || guard and its misleading WARN; a claimed NPE path does not count (nothing can make systemPrompt null after this PR)."
+    },
+    {
+     "id": "D5",
+     "title": "Debug marker cleanup is not guaranteed, and its failure can turn a successful click into a reported failure",
+     "statement": "In debug mode (manus.browser.debug=true) the red marker is removed by a page.evaluate placed in the same try block right after mouse.click, not in a finally block. If the click's navigation has already destroyed the page's execution context, that evaluate throws. The catch then returns \"Failed to click at position\" for a click that happened and skips new-tab detection. If move or click throws, the removal is skipped and the dot stays in the DOM. Because of the `if (!dot)` guard, the next debug click reuses that stale dot rather than repositioning it.",
+     "sites": [
+      {
+       "path": "spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/tool/browser/actions/MoveToAndClickAction.java",
+       "from_line": 54,
+       "to_line": 82,
+       "role": "cause"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "MoveToAndClickAction.java:57-65 inject: `let dot = document.getElementById(id); if (!dot) { dot = document.createElement('div'); ... document.body.appendChild(dot); }`. Then :69-70 `page.mouse().move(x, y); page.mouse().click(x, y);`, then :73-77 `if (isDebug) { page.evaluate(\"(id) => { const dot = document.getElementById(id); if (dot) dot.remove(); }\", ...); }`. All of this is inside `try { ... } catch (Exception e) { ... return new ToolExecuteResult(\"Failed to click at position (\" + x + \", \" + y + \")\"); }` (:79-82), which returns before the new-window check at :85-103. There is no finally block. Only reached when manus.browser.debug is true (default \"false\", ManusProperties.java:93-96).",
+     "provenance": {
+      "dataset_refs": [
+       8
+      ],
+      "hunt": true,
+      "reviewer_comments": []
+     },
+     "notes": "To count, a comment must say either that the marker removal is not in a finally or guarded cleanup, so the dot leaks when the click path throws, or that the post-click removal evaluate can itself throw (for example after navigation) and make a successful click report failure. Near-misses that do not count: 'extract the marker JS into helper methods' (ref 7), and the Boolean-unboxing NPE on getBrowserDebug (ref 4)."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 0",
+     "reason": "Naming/comment taste. The \" \" default behaves the same as \"\" in the only check that reads it (AgentServiceImpl:190). The real guard defect is D4, and this note does not raise it."
+    },
+    {
+     "source": "ref 1",
+     "reason": "Wrong claim. No validation tells \" \" apart from \"\": the only check (:190) is true for any non-null value and trims anyway. Switching to \"\" changes nothing. The actual guard bug (D4) is not what this note says."
+    },
+    {
+     "source": "ref 2",
+     "reason": "Unused import (WaitForSelectorState; Random and ElementHandle are also unused now). A lint-level nit: the pom has no checkstyle, and spring-javaformat validate does not fail on unused imports."
+    },
+    {
+     "source": "ref 3",
+     "reason": "Nit. The second fill(\"\") is redundant because fill(text) replaces the value, but removing it changes no behaviour. If fill(\"\") fails, fill(text) would fail the same actionability check."
+    },
+    {
+     "source": "ref 4",
+     "reason": "Unreachable. ConfigService.initializeConfig seeds manus.browser.debug with defaultValue \"false\", so getBrowserDebug() returns Boolean.valueOf(\"false\"), not null. The same unboxing already exists in GetElementPositionByNameAction:87."
+    },
+    {
+     "source": "ref 5",
+     "reason": "Unreachable. Pages come from browser.newPage() (ChromeDriverService:128) and popups in the same context, which use the default 1280x720 viewport, so viewportSize() is non-null. The code never creates a context with a null viewport."
+    },
+    {
+     "source": "ref 7",
+     "reason": "Readability refactor suggestion (extract the debug-marker JS into methods); not a defect."
+    },
+    {
+     "source": "R8",
+     "reason": "Request to add tests; not a defect."
+    },
+    {
+     "source": "R9",
+     "reason": "Same as ref 3: the redundant second fill(\"\") is a nit. fill(text) would hit the same actionability wait, so there is no behavioural consequence."
+    },
+    {
+     "source": "hunt:pressSequentially at a fixed 100ms per character exceeds the default 30s action timeout for texts over about 300 characters",
+     "reason": "Not a regression. The merge-base code typed per character with about 50-149ms delay plus 20-69ms sleep, roughly 145ms per character, so long texts were already slower. At head a timeout falls through to fill(text), which leaves the correct final value. Per-keystroke handler side effects also happened with the old per-character type()."
+    }
+   ]
+  },
+  "openai__codex@8c952af": {
+   "pr_summary": "\"Never store requests\" (openai/codex #3212) removes the `disable_response_storage` option everywhere it appeared: Config, ConfigToml, ConfigProfile, ConfigOverrides, TurnContext, ConfigureSession, the MCP `Profile` type and the exec/tui/mcp-server callers. It also removes `Prompt.store`. Every Responses API request now sends `store: false` and, when reasoning is on, asks for `reasoning.encrypted_content`. The PR adds `#[serde(skip_serializing)]` to the `id` field of every `ResponseItem` variant (Message, Reasoning, LocalShellCall, FunctionCall, CustomToolCall, WebSearchCall), so item ids are never sent back to the API. Test expectations drop `\"id\": null`, and the PR deletes the store assertions.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "codex-core unit tests no longer compile: `store` is removed from the ResponsesApiRequest test literals but the field still exists",
+     "statement": "The PR keeps `pub(crate) store: bool` on `ResponsesApiRequest` (client_common.rs:128) but deletes `store: true,` from both struct literals in the client_common.rs test module. Neither literal uses `..Default::default()`, and the struct derives only Debug and Serialize. The lib's test target therefore fails with E0063 (missing field `store`), which breaks `cargo test` and `cargo clippy --tests` for codex-core in CI.",
+     "sites": [
+      {
+       "path": "codex-rs/core/src/client_common.rs",
+       "from_line": 190,
+       "to_line": 204,
+       "role": "cause"
+      },
+      {
+       "path": "codex-rs/core/src/client_common.rs",
+       "from_line": 219,
+       "to_line": 231,
+       "role": "cause"
+      },
+      {
+       "path": "codex-rs/core/src/client_common.rs",
+       "from_line": 128,
+       "to_line": 128,
+       "role": "other-site"
+      }
+     ],
+     "kind": "build",
+     "severity": "high",
+     "evidence": "Head client_common.rs:117-136 `#[derive(Debug, Serialize)] pub(crate) struct ResponsesApiRequest<'a> { ... pub(crate) reasoning: Option<Reasoning>, pub(crate) store: bool, pub(crate) stream: bool, ... }`. The diff removes `-            store: true,` from both test literals. At head, `let req = ResponsesApiRequest { model: \"gpt-5\", instructions: \"i\", input: &input, tools: &tools, tool_choice: \"auto\", parallel_tool_calls: false, reasoning: None, stream: true, include: vec![], prompt_cache_key: None, text: ... };` (lines 190 and 219) has no `store` and no `..` base. The production site client.rs:198 still sets `store: false`, so the field is live. CI (.github/workflows/rust-ci.yml:148) runs `cargo clippy ... --tests -- -D warnings`, and :168 runs `cargo test --all-features`.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R1",
+       "R2",
+       "R3",
+       "R4",
+       "R5"
+      ]
+     },
+     "notes": "To count, a finding must say that the ResponsesApiRequest literals in the client_common.rs tests no longer initialize the still-required `store` field, so the core test target fails to compile (missing field). Either literal, or both, is enough. Near-misses that do not count: comments about the misleading `store` doc comment being removed, or suggestions to drop the `store` field as dead or constant without saying the tests fail to compile."
+    },
+    {
+     "id": "D2",
+     "title": "mcp-server integration tests no longer compile: they still set the removed `Profile.disable_response_storage` field",
+     "statement": "The PR removes `disable_response_storage` from `codex_protocol::mcp_protocol::Profile`, but the unchanged `codex-rs/mcp-server/tests/suite/config.rs` still builds a `Profile { ..., disable_response_storage: Some(false), ... }`. That file is compiled into the mcp-server `all` integration-test binary through `tests/all.rs` -> `mod suite;` -> `mod config;`, so the mcp-server test build fails with E0560 (no field `disable_response_storage`) and CI fails.",
+     "sites": [
+      {
+       "path": "codex-rs/protocol/src/mcp_protocol.rs",
+       "from_line": 368,
+       "to_line": 378,
+       "role": "cause"
+      },
+      {
+       "path": "codex-rs/mcp-server/tests/suite/config.rs",
+       "from_line": 107,
+       "to_line": 116,
+       "role": "symptom"
+      }
+     ],
+     "kind": "build",
+     "severity": "high",
+     "evidence": "Head mcp_protocol.rs:368 `pub struct Profile { pub model, pub model_provider, pub approval_policy, pub model_reasoning_effort, pub model_reasoning_summary, pub model_verbosity, pub chatgpt_base_url }`, from which the diff removes `-    pub disable_response_storage: Option<bool>,`. At head, mcp-server/tests/suite/config.rs:114 has `disable_response_storage: Some(false),` inside `Profile { model: Some(\"gpt-4o\".into()), ... }`. `git grep disable_response_storage <head>` still finds this file, and the PR does not touch it. tests/all.rs has `mod suite;` and tests/suite/mod.rs has `mod config;`.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R13",
+       "R14",
+       "R15",
+       "R16"
+      ]
+     },
+     "notes": "To count, a finding must say that the mcp-server test `Profile` literal (tests/suite/config.rs) still sets `disable_response_storage`, which no longer exists on `Profile`, so that test target fails to compile. Near-misses that do not count: saying only that the TOML fixture line `disable_response_storage = false` (config.rs:54) is stale. It is silently ignored because Profile/ConfigProfile have no deny_unknown_fields. Generic 'update the tests' remarks that do not name the compile failure also do not count."
+    },
+    {
+     "id": "D3",
+     "title": "Reasoning items are written to rollouts without their required `id`, so resumed sessions silently drop all reasoning",
+     "statement": "`ResponseItem::Reasoning { #[serde(skip_serializing)] id: String, ... }` has no `#[serde(default)]`, unlike the other skipped ids, which are `Option`s and default to None. The rollout writer serializes ResponseItems with the same serde impl, so every persisted Reasoning line lacks `id`. On resume, `serde_json::from_value::<ResponseItem>` fails with 'missing field `id`', and `get_rollout_history` only logs a warning and skips the line. Every reasoning item, including its `encrypted_content`, is therefore lost when a session is resumed from the TUI (resume/continue), through MCP resumeConversation or through experimental_resume. With store now always false, that encrypted content is the only way the model's prior reasoning carries across turns.",
+     "sites": [
+      {
+       "path": "codex-rs/protocol/src/models.rs",
+       "from_line": 50,
+       "to_line": 57,
+       "role": "cause"
+      },
+      {
+       "path": "codex-rs/core/src/rollout/recorder.rs",
+       "from_line": 291,
+       "to_line": 334,
+       "role": "other-site"
+      },
+      {
+       "path": "codex-rs/core/src/rollout/recorder.rs",
+       "from_line": 189,
+       "to_line": 198,
+       "role": "symptom"
+      },
+      {
+       "path": "codex-rs/core/src/conversation_manager.rs",
+       "from_line": 128,
+       "to_line": 139,
+       "role": "other-site"
+      }
+     ],
+     "kind": "data",
+     "severity": "medium",
+     "evidence": "models.rs:50-56 at head: `Reasoning { #[serde(skip_serializing)] id: String, summary: Vec<...>, #[serde(default, ...)] content: ..., encrypted_content: Option<String> }`. Writer: recorder.rs:293-297 `RolloutCmd::AddItems(items) => for item in items { if is_persisted_response_item(&item) { writer.write_line(&item).await?; } }`, and write_line (:329) uses `serde_json::to_string(item)`. rollout/policy.rs:8 lists `ResponseItem::Reasoning { .. }` as persisted. Reader: recorder.rs:189-197 `match serde_json::from_value::<ResponseItem>(v.clone()) { Ok(item) => ..., Err(e) => { warn!(\"failed to parse item: {v:?}, error: {e}\"); } }`. Reasoning items are recorded in codex.rs:1520-1533 and reach the rollout via record_conversation_items. Resume callers: conversation_manager.rs:134 (used by tui/src/app.rs:90 and mcp-server codex_message_processor.rs:613) and :70 (experimental_resume).",
+     "provenance": {
+      "dataset_refs": [
+       5
+      ],
+      "hunt": true,
+      "reviewer_comments": [
+       "R17",
+       "R18",
+       "R19",
+       "R20"
+      ]
+     },
+     "notes": "To count, a finding must connect the non-optional `Reasoning.id: String` + `skip_serializing` to local persistence: rollout items are written without `id` and cannot be deserialized back (missing required field), so resume drops reasoning items. Accepted fixes include `#[serde(default)]`/Option, or a separate wire representation. Near-misses that do not count: claiming API responses fail to parse because they contain `id` (skip_serializing does not affect deserialization, so that is wrong); vague 'id may be dropped in other serialization paths' remarks that never say the item becomes unreadable or lost on resume; and complaints only that the field should be Option for consistency."
+    },
+    {
+     "id": "D4",
+     "title": "Now-unused `request_body` bindings in two auth tests fail `cargo clippy --tests -D warnings`",
+     "statement": "In `prefers_chatgpt_token_when_config_prefers_chatgpt` and `prefers_apikey_when_config_prefers_apikey_even_with_chatgpt_tokens`, the PR replaces the only use of `request_body` (the store assertion) with a comment but keeps `let request_body = request.body_json::<serde_json::Value>().unwrap();`. That triggers rustc's `unused_variables` warning, which CI's clippy step promotes to an error with `-- -D warnings`. The core test job therefore still fails after the compile errors are fixed. The replacement comment also says 'store flag removed' even though every request still sends `store: false`.",
+     "sites": [
+      {
+       "path": "codex-rs/core/tests/suite/client.rs",
+       "from_line": 578,
+       "to_line": 582,
+       "role": "cause"
+      },
+      {
+       "path": "codex-rs/core/tests/suite/client.rs",
+       "from_line": 659,
+       "to_line": 663,
+       "role": "cause"
+      }
+     ],
+     "kind": "build",
+     "severity": "high",
+     "evidence": "Head core/tests/suite/client.rs:579-581 `let request = &server.received_requests().await.unwrap()[0]; let request_body = request.body_json::<serde_json::Value>().unwrap(); // store flag removed; responses are never stored.`, followed by `}`. Lines 660-662 are the same. The diff removes `assert!(!request_body[\"store\"].as_bool().unwrap(), ...)` and `assert!(request_body[\"store\"].as_bool().unwrap(), ...)`. core/Cargo.toml has `[lints] workspace = true`, with no allow in tests/all.rs or suite/mod.rs. rust-ci.yml:148 runs `cargo clippy --target ... --all-features --tests --profile ... -- -D warnings`.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R10",
+       "R11"
+      ]
+     },
+     "notes": "To count, a finding must say that `request_body` is left unused at client.rs ~580 and/or ~661, which produces an unused-variable warning or clippy -D warnings failure (a dead binding). Near-misses that do not count: comments that only ask to restore or assert `store == false` for coverage without noting that the binding is now unused (a test request); and remarks that the comment wording is misleading."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 0",
+     "reason": "Style nit: it objects to the tombstone comment `// Removed: server-side response storage control...` at config.rs:81. The comment is harmless and has no behavioural or maintenance cost."
+    },
+    {
+     "source": "ref 1",
+     "reason": "Wrong premise: the field was deleted, so no field's docs were demoted. Turning the line into `///` as suggested would attach it to `user_instructions` and corrupt that field's docs."
+    },
+    {
+     "source": "ref 2",
+     "reason": "Duplicate of ref 0 (the same tombstone-comment nit for the ConfigToml copy at config.rs:416). Style only."
+    },
+    {
+     "source": "ref 3",
+     "reason": "Duplicate of ref 1 and wrong for the same reason: a `///` at config.rs:416 would become part of the `notify` field's rustdoc."
+    },
+    {
+     "source": "ref 4",
+     "reason": "Wrong mechanism: `skip_serializing` does not affect deserialization, so API payloads that contain `id` still parse at client.rs:509. The suggested `skip_deserializing` fix is also unneeded for that path. The real problem, a missing `id` on rollout resume, is D3, and this ref does not describe it."
+    },
+    {
+     "source": "ref 6",
+     "reason": "Describes a field that does not exist: `FunctionCallOutput` has no `id` at head or at merge base (`FunctionCallOutput { call_id, output }`, models.rs:84-87)."
+    },
+    {
+     "source": "R6, R7, R8",
+     "reason": "Docs-update requests (docs/config.md and docs/zdr.md still mention `disable_response_storage`). No behavioural consequence: ConfigToml/ConfigProfile have no deny_unknown_fields, so the stale key is silently ignored, and responses are now never stored, which is the ZDR-safe behaviour. Docs requests are out of scope for this benchmark."
+    },
+    {
+     "source": "R9, R12",
+     "reason": "Test-coverage requests (restore a `store == false` assertion so a regression would be caught). Neither comment says that `request_body` is now an unused binding that fails clippy -D warnings (D4), so they do not identify a concrete defect."
+    }
+   ]
+  },
+  "mpv-player__mpv@0729afe": {
+   "pr_summary": "The PR changes mp_option_change_callback so it no longer runs per-option side effects inline. Each change is appended as a {co, flags} entry to mpctx->option_callbacks. When a queued entry has the same nonzero flags or the same option, the older entry is dropped and the new one goes to the end. The new function mp_option_run_callbacks drains the queue in run_playloop and mp_idle, right after mp_process_input. A second commit moves startup IPC initialization out of the callback and into mp_initialize (main.c:415). As a result, the startup call mp_option_change_callback(mpctx, NULL, UPDATE_OPTS_MASK, false), which used to run every handler once inside mp_initialize, now only queues an entry. That entry runs at the first mp_idle or playloop iteration, and nothing wakes the core when an entry is queued.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "The startup 'run all update handlers' pass is only queued, so it runs against live playback state after playback has started",
+     "statement": "mp_initialize's 'Run all update handlers' call now only queues {co=NULL, flags=UPDATE_OPTS_MASK}. The handlers therefore run at the first mp_idle, which for a CLI run with no clients (no user scripts, Linux) is inside play_current_file's open loop, after stop_play was reset to 0. There the UPDATE_DVB_PROG branch sets stop_play=PT_CURRENT_ENTRY. That aborts the first file's open, and mp_play_files replays the entry, so the file opens twice, clients get spurious start-file/end-file events, and pipes/stdin lose the data the first open consumed. In the same pass, UPDATE_VO destroys and recreates any VO that force-window already made (idle+force-window, pseudo-gui with no file, force-window=immediate). Before the PR both branches were no-ops, because they ran in mp_initialize while stop_play was PT_NEXT_ENTRY and before any VO existed. The same deferral also means the initial pass no longer completes before the first file: builtin scripts (osc, ytdl_hook, auto_profiles) are created only by UPDATE_BUILTIN_SCRIPTS and are neither loaded nor waited on before the first file's hooks (the mp_play_files script-wait gate is skipped when there are no user scripts), and config-file logging/terminal settings from UPDATE_TERM apply late, losing early log messages.",
+     "sites": [
+      {
+       "path": "player/main.c",
+       "from_line": 383,
+       "to_line": 387,
+       "role": "cause"
+      },
+      {
+       "path": "player/command.c",
+       "from_line": 7705,
+       "to_line": 7725,
+       "role": "cause"
+      },
+      {
+       "path": "player/command.c",
+       "from_line": 7827,
+       "to_line": 7830,
+       "role": "symptom"
+      },
+      {
+       "path": "player/command.c",
+       "from_line": 7783,
+       "to_line": 7792,
+       "role": "symptom"
+      },
+      {
+       "path": "player/loadfile.c",
+       "from_line": 1621,
+       "to_line": 1621,
+       "role": "other-site"
+      },
+      {
+       "path": "player/loadfile.c",
+       "from_line": 1243,
+       "to_line": 1248,
+       "role": "symptom"
+      },
+      {
+       "path": "player/loadfile.c",
+       "from_line": 2070,
+       "to_line": 2076,
+       "role": "other-site"
+      },
+      {
+       "path": "player/playloop.c",
+       "from_line": 1315,
+       "to_line": 1328,
+       "role": "other-site"
+      },
+      {
+       "path": "player/main.c",
+       "from_line": 427,
+       "to_line": 428,
+       "role": "other-site"
+      },
+      {
+       "path": "player/command.c",
+       "from_line": 7758,
+       "to_line": 7759,
+       "role": "cause"
+      },
+      {
+       "path": "player/loadfile.c",
+       "from_line": 2070,
+       "to_line": 2079,
+       "role": "symptom"
+      },
+      {
+       "path": "player/client.c",
+       "from_line": 209,
+       "to_line": 221,
+       "role": "other-site"
+      },
+      {
+       "path": "player/scripting.c",
+       "from_line": 257,
+       "to_line": 266,
+       "role": "other-site"
+      },
+      {
+       "path": "player/loadfile.c",
+       "from_line": 1623,
+       "to_line": 1623,
+       "role": "symptom"
+      },
+      {
+       "path": "player/loadfile.c",
+       "from_line": 1711,
+       "to_line": 1711,
+       "role": "symptom"
+      },
+      {
+       "path": "player/command.c",
+       "from_line": 7735,
+       "to_line": 7736,
+       "role": "other-site"
+      },
+      {
+       "path": "common/msg.c",
+       "from_line": 807,
+       "to_line": 835,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "high",
+     "evidence": "main.c:387 `mp_option_change_callback(mpctx, NULL, UPDATE_OPTS_MASK, false);` now just reaches `MP_TARRAY_APPEND(mpctx, mpctx->option_callbacks, ...)` (command.c:7723). UPDATE_OPTS_MASK includes UPDATE_DVB_PROG (m_option.h:440,452). mp_create sets `.stop_play = PT_NEXT_ENTRY` (main.c:280), so the old synchronous run was a no-op. With zero clients, mp_clients_all_initialized returns true (client.c:209-221), so mp_play_files skips its mp_idle wait (loadfile.c:2071-2076). idle_loop does nothing when not idle. play_current_file does `mpctx->stop_play = 0;` (1621), and process_hooks does not idle when no hooks exist (mp_hook_test_completion returns true, command.c:191-207). The first mp_idle is in `while (!atomic_load(&mpctx->open_done)) { mp_idle(mpctx); if (mpctx->stop_play) mp_abort_playback_async(mpctx); }` (1243-1247). mp_idle calls mp_option_run_callbacks (playloop.c:1305), which runs `if (flags & UPDATE_DVB_PROG) { if (!mpctx->stop_play) mpctx->stop_play = PT_CURRENT_ENTRY; }` (command.c:7827-7830). Playback then terminates, and mp_play_files does `else if (mpctx->stop_play == PT_CURRENT_ENTRY) new_entry = mpctx->playlist->current;`. Likewise `if (flags & UPDATE_VO && mpctx->video_out) { uninit_video_out(mpctx); handle_force_window(mpctx, true); ...}` (7783-7791) fires after idle_loop's `handle_force_window(mpctx, true)` (playloop.c:1322) or main.c:427's force_vo==2 path already created the VO.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R4",
+       "R5",
+       "R6",
+       "R8"
+      ]
+     },
+     "notes": "To count, a comment must say that the startup UPDATE_OPTS_MASK 'run all update handlers' call (main.c:383-387) is now only queued and runs later, together with ANY one consequence: UPDATE_DVB_PROG aborting and reloading the first file, UPDATE_VO recreating the force-window VO, builtin scripts/hooks missing or not waited on for the first file, or config-file logging applied late. A generic 'initialization is deferred' that names the startup handler pass counts; a comment that names none of this does not."
+    },
+    {
+     "id": "D3",
+     "title": "Queued option changes never wake the core: synchronous property/option sets (mpv_set_property, IPC set_property, script mp.set_property) do not take effect while the player sleeps",
+     "statement": "mp_option_change_callback now only appends to the queue and never calls mp_wakeup_core or interrupts the dispatch queue. Synchronous client paths (mpv_set_property, mpv_set_option, and through them JSON IPC set_property and Lua/JS mp.set_property*) run under mp_dispatch_lock/unlock. Unlocking does not end the core's timed wait in mp_dispatch_queue_process. The queued handlers (set_pause_state, update_track_switch, audio_update_volume, VO/OSD refresh, ...) therefore do not run until something unrelated wakes the core. While paused or idle that can be indefinitely: for example, JSON-IPC set_property sid while paused does not switch subtitles, and a libmpv client that doesn't observe 'pause' calling set_property pause=no stays paused. Before the PR these handlers ran synchronously, and several of them woke the core themselves.",
+     "sites": [
+      {
+       "path": "player/command.c",
+       "from_line": 7705,
+       "to_line": 7725,
+       "role": "cause"
+      },
+      {
+       "path": "player/client.c",
+       "from_line": 1059,
+       "to_line": 1064,
+       "role": "other-site"
+      },
+      {
+       "path": "player/client.c",
+       "from_line": 1309,
+       "to_line": 1335,
+       "role": "other-site"
+      },
+      {
+       "path": "misc/dispatch.c",
+       "from_line": 312,
+       "to_line": 316,
+       "role": "symptom"
+      },
+      {
+       "path": "misc/dispatch.c",
+       "from_line": 402,
+       "to_line": 418,
+       "role": "other-site"
+      },
+      {
+       "path": "player/client.c",
+       "from_line": 1643,
+       "to_line": 1648,
+       "role": "other-site"
+      },
+      {
+       "path": "player/playloop.c",
+       "from_line": 1286,
+       "to_line": 1292,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "The new callback body ends with `MP_TARRAY_APPEND(mpctx, mpctx->option_callbacks, mpctx->num_option_callbacks, callback);` and contains no wakeup. The path is mpv_set_property -> `run_locked(ctx, setproperty_fn, &req)` -> `mp_dispatch_lock(...); fn(fn_data); mp_dispatch_unlock(...)`. mp_dispatch_unlock only decrements lock_requests and broadcasts, and the process loop then re-enters `} else if (queue->wait > 0 && !queue->interrupted) { mp_cond_timedwait_until(...) }`. Only mp_dispatch_append/mp_dispatch_interrupt set `interrupted`. The only incidental wake is mp_client_property_change's `if (any_pending) mp_dispatch_adjust_timeout(mpctx->dispatch, 0);`, which fires only if some client observes that exact property. Callbacks run only after mp_wait_events returns (playloop.c:1286-1292, 1303-1305). Before the PR, set_pause_state called `mp_wakeup_core(mpctx)` (playloop.c:175) and update_track_switch called `mp_wakeup_core(mpctx)` (command.c:7688) synchronously from the callback. IPC uses mpv_set_property (input/ipc.c:243), and Lua uses it too (lua.c:635-665).",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": []
+     },
+     "notes": "To count, a comment must say that queuing the option callback does not wake the core (no mp_wakeup_core or dispatch interrupt). As a result, a change made through a synchronous client/IPC/script set while the player is paused or idle isn't applied until an unrelated event wakes the loop, possibly never. Near-misses that do NOT count: generic claims that deferral adds 'latency until the next playloop iteration' or 'hundreds of ms' without the no-wakeup / stuck-while-idle mechanism (dataset ref 6); requests to confirm reentrancy (ref 7)."
+    },
+    {
+     "id": "D4",
+     "title": "Setting aid/vid/sid no longer switches the track synchronously: a read right after the set, and the command's OSD message, report the previous track",
+     "statement": "For aid/vid/sid/secondary-sid, SET goes through mp_property_generic_option, which only writes the option and queues the callback; update_track_switch now runs later in mp_option_run_callbacks. GET and PRINT for these properties read mpctx->current_track while playback is initialized. So `set sid 2` / `cycle-values sid ...` (input.conf, IPC text commands) shows the old track in its OSD message, and a get_property right after a successful set_property returns the old track id until the queue drains, which is indefinitely while paused (see D3). Before the PR, update_track_switch ran inside the SET call.",
+     "sites": [
+      {
+       "path": "player/command.c",
+       "from_line": 7928,
+       "to_line": 7933,
+       "role": "cause"
+      },
+      {
+       "path": "player/command.c",
+       "from_line": 1948,
+       "to_line": 1971,
+       "role": "symptom"
+      },
+      {
+       "path": "player/command.c",
+       "from_line": 5215,
+       "to_line": 5219,
+       "role": "symptom"
+      },
+      {
+       "path": "player/command.c",
+       "from_line": 4807,
+       "to_line": 4817,
+       "role": "other-site"
+      }
+     ],
+     "kind": "contract",
+     "severity": "low",
+     "evidence": "mp_property_switch_track: `struct track *track = mpctx->current_track[order][type]; ... case M_PROPERTY_GET: if (mpctx->playback_initialized) { *(int *)arg = track ? track->user_tid : -2; }`, and PRINT formats the same `track`. M_PROPERTY_SET falls through to `return mp_property_generic_option(...)`, which calls m_config_set_option_raw -> callback -> queue. `if (opt_ptr == &opts->stream_id[order][type]) update_track_switch(mpctx, order, type);` (7930-7931) now runs only in mp_option_run_callbacks. change_property_cmd calls `mp_property_do(...)` and then immediately show_property_status -> show_property_osd, which expands `\"%s: ${%s}\"` at call time via mp_property_expand_string (4812-4814).",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": []
+     },
+     "notes": "To count, a comment must say that because update_track_switch is deferred, setting aid/vid/sid (or another option whose effect is read back through derived state) followed immediately by a read or by the command's OSD message reports the old track, which breaks read-after-write for property sets. Near-misses that do NOT count: generic 'side effects are delayed' remarks with no stale read-back or OSD consequence; the missing wakeup itself (that is D3)."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 0",
+     "reason": "Wrong. At iteration i the loop reads option_callbacks[i] before writing slot i, so every original entry is examined. `drop` is sticky, and the loop correctly removes the first match and re-appends the new entry last (command.c:7707-7719). The suggested rewrite is itself broken: it drops every entry after the match and never appends the new callback."
+    },
+    {
+     "source": "ref 1",
+     "reason": "Style/readability preference (extract the loop body into a function). No defect."
+    },
+    {
+     "source": "ref 2",
+     "reason": "Wrong. Head guards both uses: `void *opt_ptr = co ? co->data : NULL;` (command.c:7732), and the coalescing loop checks `option_callbacks[i].co && ...` (7711). No NULL dereference."
+    },
+    {
+     "source": "ref 3",
+     "reason": "Compensated. The second commit initializes IPC in mp_initialize, `mpctx->ipc_ctx = mp_init_ipc(...)` (main.c:415), so dropping `init ||` from the callback is not a regression."
+    },
+    {
+     "source": "ref 4",
+     "reason": "Not a leak. The array is talloc-parented on mpctx, MP_TARRAY_APPEND reuses capacity, and resetting num_option_callbacks=0 reuses the buffer, which is bounded by the peak queue size and freed with mpctx."
+    },
+    {
+     "source": "ref 5",
+     "reason": "NULL is the normal return of mp_init_ipc when no IPC path is configured, and mp_uninit_ipc handles NULL. The old callback stored it unchecked the same way."
+    },
+    {
+     "source": "ref 6",
+     "reason": "Speculative, with the wrong mechanism. Changes made from input commands and async dispatch items are drained in the same iteration (playloop.c:1286-1292), so there is no generic 'hundreds of ms' delay. The real issue is the missing wakeup for synchronous sets (D3), which this comment does not identify."
+    },
+    {
+     "source": "ref 7",
+     "reason": "A 'please confirm reentrancy/boundedness' request with no concrete path. input-commands only queues commands (command.c:7645-7650), handlers use self-notifications, and the per-iteration call is a no-op when the queue is empty."
+    },
+    {
+     "source": "R1",
+     "reason": "Readability/style request to make the single-match removal explicit. The behaviour is already correct."
+    },
+    {
+     "source": "R2",
+     "reason": "Not reachable. No option has both nonzero UPDATE_* flags and an opt_ptr-specific handler: every opt_ptr-handled option (pause, speed, aid/sid/vid, vf/af, ab-loop, input-commands, ipc, vo window options, ...) has flags 0, and no group change_flags apply to them. Flag-driven handlers read the current global state, so dropping the older entry with equal flags loses nothing. The startup entry (co=NULL, flags=UPDATE_OPTS_MASK) cannot collide by flags with any real option."
+    },
+    {
+     "source": "R3",
+     "reason": "Not reachable. A given option always produces the same change mask, so a queue entry can match at most one existing entry, and zero flags never match by flags. Interleaved A,B,A,B yields [A,B], not A,A,B, so run_command_opts cannot run twice this way."
+    },
+    {
+     "source": "R7",
+     "reason": "Request to add tests. Not a defect."
+    }
+   ]
+  },
+  "ppy__osu@748ab3d": {
+   "pr_summary": "This PR targets pp-dev and is described as a speed-up of the osu! RhythmEvaluator. The old code computed the rhythm-ratio term as `Math.Min(0.5, sin²(π / (min/max)))`. The new code computes `Math.Min(0.5, SmoothstepBellCurve(frac(max/min)))` and adds the helper `DifficultyCalculationUtils.SmoothstepBellCurve(x, mean=0.5, width=0.5)`, which is smoothstep(1-2|x-0.5|). Rewriting the ratio as a fractional part is correct, because sin²(πR) has period 1. The `(long)` cast is safe, since StrainTime is floored at 25 ms, and the helper behaves as its doc says. The one real problem is that smoothstep only approximates sin². The two curves match only at frac = 0 and inside the 0.5 clamp band [0.25, 0.75]. Everywhere else the new value is strictly higher, by up to +0.010 at frac ≈ 0.139. So a PR presented as a pure optimisation also quietly raises the rhythm and speed difficulty, and therefore SR/pp, for off-integer delta ratios.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "The smoothstep bell curve is not equivalent to sin²: the 'optimisation' changes the rhythm bonus and therefore SR/pp",
+     "statement": "Before the 0.5 clamp, SmoothstepBellCurve(f) equals 12f²-16f³ for f<0.25 (mirrored for f>0.75). The old term was sin²(πf). The two agree only at f=0 and wherever both are clamped to 0.5 (f in [0.25, 0.75]). For f in (0, 0.25) ∪ (0.75, 1) the new value is always higher, by up to +0.010, so currRatio = 1 + 12·term rises by up to +0.12 (about +4%). Every pair of deltas whose ratio is not a whole or half multiple (e.g. 1.1, 1.125, 1.2, 1.89, 3.2) now gets a larger rhythm multiplier in Speed. The PR is presented as a pure speed optimisation (\"9x faster\", with a Desmos plot of the curves) with no star-rating or pp diff, although the new curve raises values for off-integer ratios.",
+     "sites": [
+      {
+       "path": "osu.Game.Rulesets.Osu/Difficulty/Evaluators/RhythmEvaluator.cs",
+       "from_line": 71,
+       "to_line": 76,
+       "role": "cause"
+      },
+      {
+       "path": "osu.Game/Rulesets/Difficulty/Utils/DifficultyCalculationUtils.cs",
+       "from_line": 76,
+       "to_line": 81,
+       "role": "other-site"
+      },
+      {
+       "path": "osu.Game.Rulesets.Osu/Difficulty/Skills/Speed.cs",
+       "from_line": 45,
+       "to_line": 47,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "Merge base: `double currRatio = 1.0 + rhythm_ratio_multiplier * Math.Min(0.5, Math.Pow(Math.Sin(Math.PI / deltaDifferenceRatio), 2));`. Head, RhythmEvaluator.cs:71-76: `reverseDeltaDifferenceRatio = Math.Max(prevDelta, currDelta) / Math.Min(prevDelta, currDelta); deltaDifferenceFraction = reverseDeltaDifferenceRatio - (long)reverseDeltaDifferenceRatio; currRatio = 1.0 + rhythm_ratio_multiplier * Math.Min(0.5, DifficultyCalculationUtils.SmoothstepBellCurve(deltaDifferenceFraction));`. Helper, DifficultyCalculationUtils.cs:78-80: `x -= mean; x = x > 0 ? (width - x) : (width + x); return Smoothstep(x, 0, width);`. Smoothstep is 3t²-2t³ (line 93). Evaluated numerically (old → new clamped term): ratio 1.1: 0.0955→0.1040; 1.125: 0.1464→0.1563; 1.2 and 3.2: 0.3455→0.3520; 1.889: 0.1170→0.1262. The maximum difference is +0.0100 at f≈0.139, and the new value is never lower. Path: Speed.StrainValueAt (Speed.cs:45) calls RhythmEvaluator.EvaluateDifficultyOf for every object, and `totalStrain = currentStrain * currentRhythm` feeds the speed rating and SR. Severity is low: the shift is small, common snapped ratios (2, 1.5, 4/3, 5/4) fall at f=0 or inside the clamp band and are unchanged, and pp-dev accepts balance changes. I estimate the objects the change touches in diffcalc-test.osu (78500, 98250, 99875) sit in low-weight strain sections, so the hard-coded SR tests (Within 1e-5) probably still pass. I did not run them.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R2"
+      ]
+     },
+     "notes": "To count, a comment must say that the new smoothstep bell curve is not a drop-in equivalent of the old sin²(π·ratio) term. It must say that it gives different (higher) values for some fractional delta ratios, so rhythm/speed difficulty, star rating or pp change, meaning the PR is not a pure performance change. Naming a concrete ratio (e.g. 1.125) or the region outside the 0.5 clamp is enough. These do not count: requests for tests (R1, R3); asking for a Version bump or star-rating cache invalidation without saying the curve changes values; saying 'tests may fail' without identifying the curve mismatch; claiming the max/min fractional-part rewrite is mathematically wrong (it is exact, since sin²(πR) has period 1); division-by-zero, long-overflow or precision concerns about the fraction; doc typos; the width==0 edge case; naming or Math.Abs simplification suggestions."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 0",
+     "reason": "Unreachable. StrainTime = Math.Max(DeltaTime, MIN_DELTA_TIME=25) (OsuDifficultyHitObject.cs:25,123), so neither division can see 0 or near-0. Smoothstep clamps its normalised input to [0,1] (DifficultyCalculationUtils.cs:91), so overshoot cannot escape, and the (long)-based fraction is exact at these magnitudes. Even a hypothetical infinite ratio gives 0 under the new code, where the old code gave NaN."
+    },
+    {
+     "source": "ref 1",
+     "reason": "Misreads the comment. `// Take value in range [0, 1]` (line 73) describes deltaDifferenceFraction on line 74, which is in [0,1), not reverseDeltaDifferenceRatio."
+    },
+    {
+     "source": "ref 2",
+     "reason": "No overflow is possible. The ratio is max/min of StrainTimes, with min ≥ 25 ms and max bounded by map length, far below long.MaxValue. The curve is also continuous and periodic at the 0/1 boundary, so the truncation choice cannot change the result."
+    },
+    {
+     "source": "ref 3",
+     "reason": "The doc typos ('returns returns', \"it's\") are real but a nit. The output-range concern is already handled because Smoothstep clamps internally, so the result stays in [0,1]."
+    },
+    {
+     "source": "ref 4",
+     "reason": "Duplicate of ref 3's doc typo, and a nit."
+    },
+    {
+     "source": "ref 5",
+     "reason": "width==0 or negative is unreachable. The sole caller (RhythmEvaluator.cs:76) uses the default width 0.5, and the sibling Smoothstep and Smootherstep helpers do not validate either. This is generic defensive-validation advice."
+    },
+    {
+     "source": "ref 6",
+     "reason": "Variable naming taste in a 3-line helper."
+    },
+    {
+     "source": "ref 7",
+     "reason": "Readability micro-suggestion (the ternary equals width - |x|). Not a defect."
+    },
+    {
+     "source": "R1, R3",
+     "reason": "Requests to add focused tests. Test requests are not defects."
+    },
+    {
+     "source": "R2 (version-bump claim)",
+     "reason": "R2's factual core, that at ratio 1.125 smoothstep changes the bonus relative to sin², is merged into D1. Its separate demand to bump OsuDifficultyCalculator.Version is not a defect for a pp-dev PR. pp-dev difficulty changes do not bump Version per PR: #28877 (60eaf088) changed Aim and Speed evaluators on pp-dev without touching it, and 20250306 was set in a master merge (33251275). The version is advanced when pp-dev is released."
+    },
+    {
+     "source": "hunt: test baseline not re-baselined (sub-claim of the hunt defect)",
+     "reason": "Not kept as a separate build defect. Tracing diffcalc-test.osu, the pairs the change affects only change the rhythm of objects 78500, 98250 and 99875. Their speed strains (~6.5 and ~2-3) rank far below the 1/4-stream sections that dominate the 0.9^i-weighted sum, so the SR shift is estimated well below the 1e-5 tolerance. zero-length-sliders' affected pairs are zeroed by windowPenalty. Unproven either way (no .NET available), so it is recorded only as context in D1."
+    }
+   ]
+  },
+  "symfony__symfony@2b9721f": {
+   "pr_summary": "Docblock-only PR on the 7.3 branch. It adds a PHPStan/Psalm array-shape type to the `$content` constructor parameter and to the `getContent()` return type of the Mercure notifier's MercureOptions (src/Symfony/Component/Notifier/Bridge/Mercure/MercureOptions.php). The shape lists the browser Web Notification options: actions, badge, body, data, dir, icon, image, lang, renotify, requireInteraction, silent, tag, timestamp and vibrate. `content` itself was added earlier on the same unreleased 7.3 branch (d54febf32, with tests passing `['tag' => '1234', 'body' => 'TEST']`), and it was meant to carry Notification options. Runtime behaviour does not change: MercureTransport::doSend still json_encodes `$options->getContent()` into the ActivityStreams `content` field as-is. The only real problem is one wrong type in the new shape: `vibrate` is documented as `int[]`, but the API also accepts a single integer.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "vibrate documented as int[] only; the Notification API VibratePattern also accepts a single integer",
+     "statement": "The new shape declares `vibrate?: int[]` in both the constructor @param and the getContent() @return. The Web Notification `vibrate` option is a VibratePattern (`unsigned long or sequence<unsigned long>`), so a valid value such as `['vibrate' => 200]` gets flagged by PHPStan/Psalm even though MercureTransport forwards it unchanged to the client and it works. The shape should be `int|list<int>` (or `int|int[]`). This shape is the only contract for the option, and it is the whole deliverable of this PR.",
+     "sites": [
+      {
+       "path": "src/Symfony/Component/Notifier/Bridge/Mercure/MercureOptions.php",
+       "from_line": 39,
+       "to_line": 39,
+       "role": "cause"
+      },
+      {
+       "path": "src/Symfony/Component/Notifier/Bridge/Mercure/MercureOptions.php",
+       "from_line": 96,
+       "to_line": 96,
+       "role": "other-site"
+      }
+     ],
+     "kind": "contract",
+     "severity": "low",
+     "evidence": "MercureOptions.php:39 ` *     vibrate?: int[],` (in `@param array{...}|null $content`) and :96 ` *      vibrate?: int[],` (in `@return array{...}|null` of getContent()). MercureTransport.php doSend: `json_encode([... 'content' => $options->getContent(), ])` passes the array through with no normalisation, so the docblock is the only type contract, and the browser Notification API accepts `vibrate: 200` as well as `vibrate: [200, 100, 200]`.",
+     "provenance": {
+      "dataset_refs": [
+       1
+      ],
+      "hunt": true,
+      "reviewer_comments": []
+     },
+     "notes": "To count, a comment must say that `vibrate` is typed as an int array only, while the Notification/Vibration API (VibratePattern) also accepts a single integer, so the type should be `int|int[]` / `int|list<int>`. Flagging either line 39 or line 96 counts. Near-misses that do NOT count: saying `int[]` should be `list<int>` without mentioning the single-int form; general comments that the shape is too loose or too strict (e.g. `actions?: array` too broad, or the shape rejects custom keys); and remarks about the duplicated shape."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 0",
+     "reason": "`actions?: array` is less specific than the Web Notification action shape, but it is not wrong. Tightening it to `list<array{action,title,icon}>` is a precision nicety in a docblock and has no concrete consequence. Trivial."
+    },
+    {
+     "source": "ref 2",
+     "reason": "Asks for a @phpstan-type/@psalm-type alias to remove the duplicated @param/@return shape. Symfony production code does not use such aliases, and repeating a shape across @param and @return is routine there. Its only cost is editing two places, which is a style/maintainability nit a Symfony maintainer would not insist on."
+    },
+    {
+     "source": "hunt:The 14-key array shape is copied verbatim into two docblocks",
+     "reason": "Same as ref 2: duplicating a shape across @param and @return is conventional in Symfony, and the only concrete cost is a two-place edit. That is not a defect. The indentation difference is a whitespace nit."
+    },
+    {
+     "source": "ref 3",
+     "reason": "Whitespace-only formatting difference: 6-space indentation and ` *  }|null` in the @return block vs 5 spaces in the constructor. A style nit with no consequence."
+    },
+    {
+     "source": "R1, R2, R3",
+     "reason": "All three argue that the closed shape narrows an 'existing' arbitrary-array contract, so custom keys like `['orderId' => 123]` would be flagged. This is a design disagreement, not a defect. `content` was added on the same unreleased 7.3 branch (d54febf32; CHANGELOG 7.3 'Add `content` option'), so no released contract is narrowed. It was meant to carry Web Notification options (its tests pass `tag`/`body`), and this PR exists to document exactly that shape, as requested in the linked #60140 review discussion. Runtime behaviour is unchanged, since only static analysis sees the docblock. Whether the payload should be open-ended is a product decision, not a bug the PR introduces."
+    }
+   ]
+  }
+ }
+}

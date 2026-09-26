@@ -1,0 +1,1603 @@
+{
+ "set": "holdout10",
+ "version": "1",
+ "method": "Per PR: a blind expert hunt from the diff and code; every candidate (the hunt, the AACR references with hand labels, and every comment any reviewer posted in our runs, anonymised) checked against the code, merged and graded, exclusions recorded; an adversarial critic per set spot-checked inclusions, exclusions and merges, and its 12 corrections were applied (2026-09-26).",
+ "cases": {
+  "vllm-project__vllm@3fe1893": {
+   "pr_summary": "The PR adds a new hook, `BaseProcessingInfo.get_max_tokens_per_item()` (processing.py:1103). It takes no arguments and returns None by default. `MultiModalProfiler.get_mm_max_tokens(seq_len, mm_counts)` (profiling.py:251-261) now returns the hook's result when it is not None, and skips building and processing dummy inputs. `Qwen2VLProcessingInfo` overrides the hook (qwen2_vl.py:822-823) with the constant `{\"image\": 16384, \"video\": 98304}`, which cuts about 40s from Qwen2/2.5-VL startup. The constants match only one configuration: Qwen2.5-VL with the checkpoint-default max_pixels (12845056) and max_model_len=128000, with image and video both enabled (video = 12 frames = 6 temporal groups x 16384). They ignore seq_len and mm_counts, which bound the video frame count. They also ignore the processor's configured min/max_pixels. Qwen2_5_VLProcessingInfo and Qwen2_5OmniThinkerProcessingInfo both inherit them, and the Omni class loses its \"audio\" entry. Every consumer reads these numbers: the V1 encoder compute/cache budget (and its disable_chunked_mm_input check, which TPU forces), the GPU/TPU runners' encoder profiling, and V0's get_max_multimodal_tokens.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "Hardcoded video bound (98304) ignores seq_len/mm_counts: wrong encoder budget for every context other than 128k (inflated 6x for Qwen2-VL's 32k, startup ValueError under disable_chunked_mm_input/TPU, under-profiled encoder memory; undersized for video-only long context)",
+     "statement": "The old path took the per-video maximum from a dummy video whose frame count came from `get_num_frames_with_most_features(seq_len, mm_counts)`. The new hook takes neither argument, and `get_mm_max_tokens` returns it before looking at them, so every Qwen2/2.5-VL/Omni config reports 98304 video tokens. That is correct only at max_model_len=128000 with images enabled. With a 32k context (the Qwen2-VL and Qwen2.5-Omni default, or any shorter --max-model-len) the old value was 16384. The V1 encoder compute and cache budget therefore grows about 6x beyond what profile_run measures, and startup raises a ValueError with disable_chunked_mm_input (forced on TPU) unless max_num_batched_tokens >= 98304. In a video-only 128k config the true bound (114688) is now under-reported, so such a video can never be scheduled.",
+     "sites": [
+      {
+       "path": "vllm/model_executor/models/qwen2_vl.py",
+       "from_line": 822,
+       "to_line": 823,
+       "role": "cause"
+      },
+      {
+       "path": "vllm/multimodal/profiling.py",
+       "from_line": 251,
+       "to_line": 261,
+       "role": "cause"
+      },
+      {
+       "path": "vllm/multimodal/processing.py",
+       "from_line": 1103,
+       "to_line": 1114,
+       "role": "other-site"
+      },
+      {
+       "path": "vllm/model_executor/models/qwen2_vl.py",
+       "from_line": 938,
+       "to_line": 966,
+       "role": "other-site"
+      },
+      {
+       "path": "vllm/v1/core/encoder_cache_manager.py",
+       "from_line": 124,
+       "to_line": 150,
+       "role": "symptom"
+      },
+      {
+       "path": "vllm/v1/worker/gpu_model_runner.py",
+       "from_line": 1975,
+       "to_line": 2025,
+       "role": "symptom"
+      },
+      {
+       "path": "vllm/platforms/tpu.py",
+       "from_line": 159,
+       "to_line": 164,
+       "role": "symptom"
+      },
+      {
+       "path": "vllm/v1/core/sched/scheduler.py",
+       "from_line": 678,
+       "to_line": 693,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "high",
+     "evidence": "Head qwen2_vl.py:822-823 is `def get_max_tokens_per_item(self) -> Mapping[str, int]: return {\"image\": 16384, \"video\": 98304}`. profiling.py:256-258 is `max_tokens_per_item = self.processing_info.get_max_tokens_per_item(); if max_tokens_per_item is not None: return max_tokens_per_item`, which returns before `seq_len`/`mm_counts` are used. The removed path was `self._get_dummy_mm_inputs(seq_len, mm_counts)`, with frames from qwen2_vl.py:938-952: `max_total_frames = self._get_max_video_frames(seq_len - max_image_tokens)`, `min(max_total_frames // max(max_videos, 1), _MAX_FRAMES_PER_VIDEO)` with _MAX_FRAMES_PER_VIDEO=16. registry.py:129-137 passes `seq_len = model_config.max_model_len` and mm_counts {modality: 1 for enabled}. At the default max_pixels each temporal group of 2 frames costs 16384 tokens. So seq_len=128000 gives 12 frames = 98304 (the constant). seq_len=32768 gives 2 frames = 16384. Video-only at 128000 gives 14 frames = 114688. encoder_cache_manager.py:137-148: `if (scheduler_config.disable_chunked_mm_input and max_tokens_per_mm_item > scheduler_config.max_num_batched_tokens): raise ValueError(...)`, then `encoder_compute_budget = max(scheduler_config.max_num_encoder_input_tokens, max_tokens_per_mm_item)` and likewise encoder_cache_size. tpu.py:159-164 forces `scheduler_config.disable_chunked_mm_input = True` for multimodal models. gpu_model_runner.py profile_run takes `max(...)` (video, 98304), computes `cdiv(encoder_budget, max_tokens_per_mm_item)` = 1 item, and builds the dummy with `get_decoder_dummy_data(seq_len=self.max_num_tokens, mm_counts={video: 1})`, a 1-frame video of about 16384 tokens. It therefore profiles 16384 encoder tokens while the scheduler (scheduler.py:188 `encoder_budget = self.max_num_encoder_input_tokens`) admits 98304 per step. scheduler.py:678-693 sets num_new_tokens=0 for an item larger than the budget or cache, and no front-end check exists, so an oversized item stalls. Path: V1 startup `Scheduler.__init__` / `GPUModelRunner.__init__` → `compute_encoder_budget` → `get_max_tokens_per_item_by_nonzero_modality` → `get_mm_max_tokens`.",
+     "provenance": {
+      "dataset_refs": [
+       1,
+       3
+      ],
+      "hunt": true,
+      "reviewer_comments": [
+       "R2",
+       "R4",
+       "R5",
+       "R8",
+       "R13",
+       "R15"
+      ]
+     },
+     "notes": "To count, a comment must say that the fixed video bound (98304), or the fast path that discards seq_len/mm_counts, no longer depends on the context length or the number of items, while the old dummy path bounded video frames by seq_len. It must also name a consequence: an inflated or wrong encoder budget or cache for shorter contexts (e.g. Qwen2-VL's 32k), a startup ValueError with disable_chunked_mm_input or on TPU when max_num_batched_tokens < 98304, encoder memory the profiler never measured or OOM, or an under-reported bound so a video can never be scheduled. A generic 'hardcoded values ignore the model config, derive them' comment counts only if it names the sequence-length / frame-count / max_model_len dependency. Near-misses that do NOT count: asking to turn the literals into named constants (ref 0); a docstring 'per item' wording note (ref 2); ref 3's first bullet, which claims the result should be summed and multiplied by counts. That bullet is wrong because the caller wants per-item values; ref 3 matches this defect only through its second bullet. A bare 'please add a test' also does not count."
+    },
+    {
+     "id": "D2",
+     "title": "Hardcoded image bound (16384) ignores the configured min/max_pixels (mm_processor_kwargs / preprocessor config): budget inflated for memory-saving configs, too small for raised max_pixels, so large images stall",
+     "statement": "The old image maximum came from a dummy image resized with `image_processor.max_pixels`, which honours `--mm-processor-kwargs` and the checkpoint's preprocessor config. The constant 16384 (and the 98304 video bound built on it) is right only for the default 12845056 pixels. A common memory-saving setting, e.g. max_pixels=1280*28*28, makes each image about 1280 tokens. The encoder budget is still sized to 98304, while profile_run measures one small dummy item, so far more encoder work per step is admitted than was profiled (OOM risk). Raising max_pixels with video disabled has the opposite effect: an image larger than max(max_num_batched_tokens, 16384) tokens can never be allocated in the encoder cache, and the request stalls forever.",
+     "sites": [
+      {
+       "path": "vllm/model_executor/models/qwen2_vl.py",
+       "from_line": 822,
+       "to_line": 823,
+       "role": "cause"
+      },
+      {
+       "path": "vllm/model_executor/models/qwen2_vl.py",
+       "from_line": 770,
+       "to_line": 815,
+       "role": "other-site"
+      },
+      {
+       "path": "vllm/model_executor/models/qwen2_vl.py",
+       "from_line": 825,
+       "to_line": 866,
+       "role": "other-site"
+      },
+      {
+       "path": "vllm/v1/core/encoder_cache_manager.py",
+       "from_line": 124,
+       "to_line": 150,
+       "role": "symptom"
+      },
+      {
+       "path": "vllm/v1/core/sched/scheduler.py",
+       "from_line": 678,
+       "to_line": 693,
+       "role": "symptom"
+      },
+      {
+       "path": "vllm/v1/core/sched/scheduler.py",
+       "from_line": 219,
+       "to_line": 236,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "qwen2_vl.py:779-780: `if mm_config.mm_processor_kwargs: kwargs.update(mm_config.mm_processor_kwargs)` feeds `get_image_processor()` (:803). `_get_vision_info` calls `smart_resize(..., min_pixels=image_processor.min_pixels, max_pixels=image_processor.max_pixels)` (:845-850), and `get_max_image_tokens()` (:908) relied on it. The override at :822-823 returns the constant 16384 regardless. encoder_cache_manager.py:145-148: `encoder_compute_budget = max(scheduler_config.max_num_encoder_input_tokens, max_tokens_per_mm_item)` and `encoder_cache_size = max(scheduler_config.encoder_cache_size, max_tokens_per_mm_item)`, with config.py:2193-2194 defaulting both to max_num_batched_tokens. In scheduler.py:678-693, `if (not self.encoder_cache_manager.can_allocate(request, i) or num_encoder_tokens > encoder_budget)` and `num_computed_tokens >= start_pos` leads to `num_new_tokens = 0`, and the running loop at :223-227 just `continue`s every step. The front end (v1/engine/processor.py) has no check of item size against the encoder cache. For small max_pixels, gpu_model_runner.profile_run builds its one dummy item through the real, configured processor, so what it profiles is far smaller than the 98304-token budget.",
+     "provenance": {
+      "dataset_refs": [
+       1
+      ],
+      "hunt": true,
+      "reviewer_comments": [
+       "R2",
+       "R3",
+       "R6",
+       "R7",
+       "R9"
+      ]
+     },
+     "notes": "To count, a comment must say that the fixed image bound (or both constants) does not follow the configured image processor size (max_pixels/min_pixels/size from mm_processor_kwargs or preprocessor_config), and name a consequence: an image larger than the reported bound exceeds the encoder budget or cache and cannot be scheduled or stalls, or a smaller max_pixels gives a budget that no longer matches what is profiled. A comment that names both the max_pixels and the seq_len dependency (e.g. R2) counts for both D1 and D2. Near-misses that do NOT count: 'use named constants'; 'verify the numbers' with no mention of processor/pixel configuration; requests for tests."
+    },
+    {
+     "id": "D3",
+     "title": "Qwen2.5-Omni thinker inherits the Qwen2-VL constant and loses its \"audio\" modality; an audio-only config gets a zero encoder budget and audio requests never finish",
+     "statement": "`Qwen2_5OmniThinkerProcessingInfo(Qwen2AudioProcessingInfo, Qwen2_5_VLProcessingInfo)` supports audio, image and video, but its MRO resolves the new hook to `Qwen2VLProcessingInfo.get_max_tokens_per_item`. The returned map therefore has no \"audio\" key, where the old dummy-processing path reported one. With image and video disabled (`limit_mm_per_prompt={audio: N, image: 0, video: 0}`), the non-zero filter yields an empty dict. The encoder budget and cache become (0, 0), profiling is skipped, and every audio item fails the `num_encoder_tokens > encoder_budget` check, so the request stalls forever. Audio is also dropped from V0's get_max_multimodal_tokens sum.",
+     "sites": [
+      {
+       "path": "vllm/model_executor/models/qwen2_5_omni_thinker.py",
+       "from_line": 129,
+       "to_line": 176,
+       "role": "cause"
+      },
+      {
+       "path": "vllm/model_executor/models/qwen2_vl.py",
+       "from_line": 822,
+       "to_line": 823,
+       "role": "cause"
+      },
+      {
+       "path": "vllm/multimodal/registry.py",
+       "from_line": 140,
+       "to_line": 160,
+       "role": "other-site"
+      },
+      {
+       "path": "vllm/v1/core/encoder_cache_manager.py",
+       "from_line": 124,
+       "to_line": 132,
+       "role": "symptom"
+      },
+      {
+       "path": "vllm/v1/core/sched/scheduler.py",
+       "from_line": 678,
+       "to_line": 693,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "qwen2_5_omni_thinker.py:129-130 is `class Qwen2_5OmniThinkerProcessingInfo(Qwen2AudioProcessingInfo, Qwen2_5_VLProcessingInfo):` and :175-176 is `get_supported_mm_limits` returning `{\"audio\": None, \"image\": None, \"video\": None}`. None of Omni, Qwen2AudioProcessingInfo or Qwen2_5_VLProcessingInfo (qwen2_5_vl.py:778) defines `get_max_tokens_per_item`, and the C3 MRO puts Qwen2VLProcessingInfo before BaseProcessingInfo. The result is `{\"image\": 16384, \"video\": 98304}`. registry.py:153-160 filters `if mm_limits[key] > 0`, so an audio-only limit yields {}. encoder_cache_manager.py:127-132: `if not max_tokens_by_modality_dict: logger.warning(\"All non-text modalities ... explicitly disabled ... Encoder cache will not be initialized.\"); return 0, 0`. scheduler.py:678-693 then sees `num_encoder_tokens > encoder_budget` (0) on every step and sets num_new_tokens to stop before the audio placeholder, or to 0 once it is reached. The old path ran the Omni dummy builder with mm_counts {audio: 1}, which does produce audio placeholders.",
+     "provenance": {
+      "dataset_refs": [
+       1
+      ],
+      "hunt": true,
+      "reviewer_comments": [
+       "R1"
+      ]
+     },
+     "notes": "To count, a comment must say that Qwen2.5-Omni (the thinker's processing info) inherits the Qwen2-VL override, so the returned map lacks \"audio\". It must also name the consequence: audio is missing from the encoder budget, and with only audio enabled the budget is empty or zero and audio requests cannot be scheduled. Dataset ref 1's hand label mentions the missing audio key, but its note does not; a reviewer matching only ref 1's note text does NOT find this. Near-misses that do NOT count: a comment that only says subclasses (Qwen2.5-VL) inherit the constants, with no mention of audio or Omni."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 0",
+     "reason": "Style nit: asks to replace the literals 16384/98304 with named constants. Naming them fixes nothing; the substantive problem (hard-coding at all) is D1/D2."
+    },
+    {
+     "source": "ref 2",
+     "reason": "Docstring wording nit ('for each modality' vs 'per item') at processing.py:1103-1104. The method name already says per_item and the only caller passes mm_counts=1 per modality; no behavioural consequence."
+    },
+    {
+     "source": "R10, R11, R12",
+     "reason": "Requests to add regression tests for the profiling shortcut. Test requests are not defects; the underlying bound errors are captured as D1/D2/D3."
+    },
+    {
+     "source": "R14",
+     "reason": "Clarifying question about the dummy processing that remains in profile_run. That remaining call is intentional: it builds the actual profiling batch sized by max_num_tokens, a different and smaller dummy than the two get_mm_max_tokens passes the PR removes. The PR does skip both max-token passes it describes, so no defect follows."
+    }
+   ]
+  },
+  "n8n-io__n8n@9321691": {
+   "pr_summary": "Adds an optional N8N_RELEASE_DATE env var (GenericConfig.releaseDate, parsed by a new Date branch in the @Env decorator) and passes it from BaseCommand.init into ErrorReporter.init. The reporter skips Sentry init when the release is more than 6 weeks old. Otherwise it schedules a setTimeout that sets enabled=false when the release reaches 6 weeks, and beforeSend drops events once that happens. The release workflow and the n8n Dockerfile are meant to bake the release date into the published image as a build arg, an ENV and an OCI `created` label.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "setTimeout overflow disables Sentry reporting about 1 ms after startup for releases younger than about 17 days",
+     "statement": "releaseExpiresInMs can be as large as SIX_WEEKS_IN_MS (3,628,800,000 ms), which is more than Node's maximum timer delay of 2^31-1 ms (about 24.8 days). Node clamps an overflowing delay to 1 ms and emits a TimeoutOverflowWarning. For any release less than about 17 days old, the callback therefore runs almost immediately. It sets enabled=false and logs the expiry warning, and beforeSend then drops every event. Fresh releases stop reporting right away, which is the opposite of what the PR intends.",
+     "sites": [
+      {
+       "path": "packages/core/src/errors/error-reporter.ts",
+       "from_line": 88,
+       "to_line": 92,
+       "role": "cause"
+      },
+      {
+       "path": "packages/core/src/errors/error-reporter.ts",
+       "from_line": 26,
+       "to_line": 26,
+       "role": "other-site"
+      },
+      {
+       "path": "packages/core/src/errors/error-reporter.ts",
+       "from_line": 83,
+       "to_line": 83,
+       "role": "other-site"
+      },
+      {
+       "path": "packages/core/src/errors/error-reporter.ts",
+       "from_line": 142,
+       "to_line": 142,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "high",
+     "evidence": "error-reporter.ts:26 `const SIX_WEEKS_IN_MS = 6 * 7 * 24 * 60 * 60 * 1000;` gives 3,628,800,000. :83 `const releaseExpiresInMs = releaseDate.getTime() + SIX_WEEKS_IN_MS - Date.now();`. :89-92 `setTimeout(() => { this.enabled = false; this.logger.warn(RELEASE_EXPIRATION_WARNING); }, releaseExpiresInMs);`. :142 `if (!this.enabled) return null;`. Verified in Node with a release date 5 days old: the delay was 3196799999, Node printed 'TimeoutOverflowWarning ... Timeout duration was set to 1', and the callback fired after 2 ms. Reached from BaseCommand.init (base-command.ts:66-75), which runs for every start, worker and webhook process whenever a valid N8N_RELEASE_DATE is set, i.e. the intended production path once the release date is supplied correctly.",
+     "provenance": {
+      "dataset_refs": [
+       12
+      ],
+      "hunt": true,
+      "reviewer_comments": [
+       "R18",
+       "R19",
+       "R20",
+       "R21",
+       "R22"
+      ]
+     },
+     "notes": "To count, a comment must say that the setTimeout delay (up to 6 weeks) exceeds Node's 32-bit/2^31-1 ms (~24.8 day) timer limit, so the timer fires immediately or almost immediately and disables reporting for fresh releases. A generic 'use a timestamp check in beforeSend instead of setTimeout' with no mention of the overflow does not count. Neither does a comment that only notes the timer is not cleared or unref'd."
+    },
+    {
+     "id": "D2",
+     "title": "Release workflow passes the literal `$(date ...)` string as N8N_RELEASE_DATE, so published images never get a usable release date",
+     "statement": "docker/build-push-action's `build-args` input is not evaluated by a shell, so no command substitution happens. N8N_RELEASE_DATE is set to the literal text `$(date -u +\"%Y-%m-%dT%H:%M:%SZ\")`, and the Dockerfile bakes that text into ENV N8N_RELEASE_DATE and the org.opencontainers.image.created label. At runtime Date.parse returns NaN, so the decorator logs 'Invalid timestamp value for N8N_RELEASE_DATE: $(date ...)' on every process start and releaseDate stays undefined. The expiry logic never runs in published images, so the PR's stated goal is not met, and every image carries a bogus `created` label.",
+     "sites": [
+      {
+       "path": ".github/workflows/release-publish.yml",
+       "from_line": 106,
+       "to_line": 106,
+       "role": "cause"
+      },
+      {
+       "path": "docker/images/n8n/Dockerfile",
+       "from_line": 13,
+       "to_line": 18,
+       "role": "other-site"
+      },
+      {
+       "path": "packages/@n8n/config/src/decorators.ts",
+       "from_line": 58,
+       "to_line": 61,
+       "role": "symptom"
+      },
+      {
+       "path": "packages/core/src/errors/error-reporter.ts",
+       "from_line": 82,
+       "to_line": 82,
+       "role": "symptom"
+      }
+     ],
+     "kind": "incomplete-fix",
+     "severity": "high",
+     "evidence": "release-publish.yml:98-106 `uses: docker/build-push-action@v6.11.0` / `with:` / `build-args: |` / `N8N_RELEASE_DATE=$(date -u +\"%Y-%m-%dT%H:%M:%SZ\")`. Action inputs only get `${{ }}` expression evaluation, and the action passes each build-arg to buildx argv with no shell. Dockerfile:13 `LABEL org.opencontainers.image.created=${N8N_RELEASE_DATE}` and :18 `ENV N8N_RELEASE_DATE=${N8N_RELEASE_DATE}`. decorators.ts:59-61 `const timestamp = Date.parse(value); if (isNaN(timestamp)) { console.warn(...)`. Verified in Node: Date.parse('$(date -u +\"%Y-%m-%dT%H:%M:%SZ\")') is NaN. error-reporter.ts:82 `if (releaseDate)` is therefore never entered.",
+     "provenance": {
+      "dataset_refs": [
+       0
+      ],
+      "hunt": true,
+      "reviewer_comments": [
+       "R1",
+       "R2",
+       "R3",
+       "R4",
+       "R5"
+      ]
+     },
+     "notes": "To count, a comment must say that `$(date ...)` in the build-push-action `build-args` input is not shell-evaluated, so the literal string, not a timestamp, reaches the image. Saying the feature is then inert (or that the value is invalid) is enough. Near-misses that do not count: generic remarks that the date may be missing or empty with no mention of the literal substitution (that is D4), and remarks that the release date should come from the npm publish step without identifying that the current value is literal."
+    },
+    {
+     "id": "D3",
+     "title": "Expiry check runs before the `!dsn` return, so instances without Sentry configured log 'Error tracking disabled' warnings",
+     "statement": "The releaseDate block (early return with a warning, or a timer that warns) sits before `if (!dsn) return;`. Any process with a release date but no Sentry DSN still runs it: backendDsn defaults to '', which covers ordinary self-hosted installs. On a release older than 6 weeks, such a process logs 'Error tracking disabled because this release is older than 6 weeks.' on every start. Otherwise the timer logs it when it fires, which D1 makes immediate for fresh releases. Error tracking was never enabled on these processes, so the warning is misleading, and they also create a pointless timer.",
+     "sites": [
+      {
+       "path": "packages/core/src/errors/error-reporter.ts",
+       "from_line": 82,
+       "to_line": 95,
+       "role": "cause"
+      },
+      {
+       "path": "packages/@n8n/config/src/configs/sentry.config.ts",
+       "from_line": 6,
+       "to_line": 7,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "error-reporter.ts:82-93 `if (releaseDate) { ... if (releaseExpiresInMs <= 0) { this.logger.warn(RELEASE_EXPIRATION_WARNING); return; } setTimeout(() => { this.enabled = false; this.logger.warn(RELEASE_EXPIRATION_WARNING); }, releaseExpiresInMs); }` is followed at :95 by `if (!dsn) return;`. sentry.config.ts:6-7 `@Env('N8N_SENTRY_DSN') backendDsn: string = '';`. BaseCommand.init (base-command.ts:66-75) always passes releaseDate, whether or not a DSN is set. This is reachable wherever N8N_RELEASE_DATE is valid, which after D2 is fixed means every official Docker install.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R15"
+      ]
+     },
+     "notes": "To count, a comment must say that the release-expiry logic runs before or regardless of the DSN check, so processes without a Sentry DSN still get the expiry warning and/or timer, and that it should sit after `if (!dsn) return`. R15's nit (move the empty-DSN return ahead of expiry scheduling) counts even though its stated keep-alive consequence is weak, since CLI commands exit via finally(). A comment that only asks for tests does not count."
+    },
+    {
+     "id": "D4",
+     "title": "Dockerfile always sets N8N_RELEASE_DATE, so images built without the arg get an empty value and warn at every start",
+     "statement": "`ARG N8N_RELEASE_DATE` has no default, but `ENV N8N_RELEASE_DATE=${N8N_RELEASE_DATE}` runs unconditionally. An image built without that build arg therefore has N8N_RELEASE_DATE set to an empty string, and an empty `created` label. The README's documented build command (`--build-arg N8N_VERSION=<VERSION>` only) produces exactly this. readEnv returns '' because the variable is present in process.env, Date.parse('') is NaN, and every process start prints 'Invalid timestamp value for N8N_RELEASE_DATE: '.",
+     "sites": [
+      {
+       "path": "docker/images/n8n/Dockerfile",
+       "from_line": 7,
+       "to_line": 7,
+       "role": "cause"
+      },
+      {
+       "path": "docker/images/n8n/Dockerfile",
+       "from_line": 13,
+       "to_line": 18,
+       "role": "cause"
+      },
+      {
+       "path": "packages/@n8n/config/src/decorators.ts",
+       "from_line": 17,
+       "to_line": 18,
+       "role": "other-site"
+      },
+      {
+       "path": "packages/@n8n/config/src/decorators.ts",
+       "from_line": 58,
+       "to_line": 61,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "Dockerfile:7 `ARG N8N_RELEASE_DATE` has no default, unlike N8N_VERSION, which is validated at :5. :13 `LABEL org.opencontainers.image.created=${N8N_RELEASE_DATE}` and :18 `ENV N8N_RELEASE_DATE=${N8N_RELEASE_DATE}`. decorators.ts:18 `if (envName in process.env) return process.env[envName];` then :59-61 Date.parse and console.warn on NaN. docker/images/n8n/README.md:194 documents `docker buildx build ... --build-arg N8N_VERSION=<VERSION>` with no release date. Verified in Node: Date.parse('') is NaN.",
+     "provenance": {
+      "dataset_refs": [
+       1
+      ],
+      "hunt": true,
+      "reviewer_comments": []
+     },
+     "notes": "To count, a comment must say that when the N8N_RELEASE_DATE build arg is not provided, the Dockerfile still sets an empty ENV (and label), which produces an invalid or empty value, a warning, or a missing default. Suggesting a default, validation, or guarding the ENV all count if the empty-value consequence is identified. The literal `$(date ...)` problem is D2, not this. Generic 'add validation' remarks that name no consequence are borderline and should be judged on whether they identify the empty value."
+    },
+    {
+     "id": "D5",
+     "title": "Task-runner error reporting never gets the release date, so runners keep reporting to Sentry for expired releases",
+     "statement": "The expiry logic lives in the shared ErrorReporter, but TaskRunnerSentry.initIfEnabled calls errorReporter.init without releaseDate. The runner's SentryConfig does not read N8N_RELEASE_DATE, and neither the internal runner's env passthrough nor the Docker launcher's allowed-env list forwards it, while N8N_SENTRY_DSN is forwarded. On a release older than 6 weeks with a DSN configured, the main process stops reporting but task-runner processes keep sending errors to Sentry. The six-week cutoff therefore covers only part of the backend.",
+     "sites": [
+      {
+       "path": "packages/@n8n/task-runner/src/task-runner-sentry.ts",
+       "from_line": 22,
+       "to_line": 29,
+       "role": "cause"
+      },
+      {
+       "path": "packages/cli/src/task-runners/task-runner-process.ts",
+       "from_line": 55,
+       "to_line": 66,
+       "role": "other-site"
+      },
+      {
+       "path": "docker/images/n8n/n8n-task-runners.json",
+       "from_line": 12,
+       "to_line": 30,
+       "role": "other-site"
+      },
+      {
+       "path": "packages/cli/src/commands/base-command.ts",
+       "from_line": 66,
+       "to_line": 75,
+       "role": "other-site"
+      }
+     ],
+     "kind": "incomplete-fix",
+     "severity": "low",
+     "evidence": "task-runner-sentry.ts:22-29 `await this.errorReporter.init({ serverType: 'task_runner', dsn, release: n8nVersion, environment, serverName: deploymentName, beforeSendFilter: this.filterOutUserCodeErrors });` passes no releaseDate. task-runner-process.ts:55-66 passthroughEnvVars include 'N8N_SENTRY_DSN' but not N8N_RELEASE_DATE. n8n-task-runners.json allowed-env lists 'N8N_SENTRY_DSN' (line 26) but not N8N_RELEASE_DATE. @n8n/task-runner/src/config/sentry-config.ts has no release-date field.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R9",
+       "R10",
+       "R12",
+       "R14",
+       "R16"
+      ]
+     },
+     "notes": "To count, a comment must say that the task runner's ErrorReporter/TaskRunnerSentry init does not receive the release date (or that N8N_RELEASE_DATE is not forwarded to runners), so runner errors keep reaching Sentry after six weeks. Comments about browser/frontend Sentry or about npm installs are different claims and do not count."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 2",
+     "reason": "Undefined releaseDate is the intended 'feature off' state and is already handled by `if (releaseDate)` at error-reporter.ts:82. Nothing to fix."
+    },
+    {
+     "source": "ref 3",
+     "reason": "A documentation or naming suggestion. The config is parsed only in Node, and the intended ISO-8601 input is well-defined for Date.parse. This is a nit, not a defect."
+    },
+    {
+     "source": "ref 4",
+     "reason": "The Date branch handles failure exactly like the Number and Boolean branches just above it (warn and keep the class default), so there is no inconsistency. The cross-platform parsing concern does not apply to Node-only config."
+    },
+    {
+     "source": "ref 5",
+     "reason": "Speculative. The code is Node-only and the input is ISO-8601, so browser Date.parse inconsistency is irrelevant. Adding moment or luxon is a taste suggestion."
+    },
+    {
+     "source": "ref 6",
+     "reason": "Wrong. releaseDate is never passed to Sentry. It is used only for expiry arithmetic in ErrorReporter.init."
+    },
+    {
+     "source": "ref 7",
+     "reason": "Wrong. GlobalConfig.generic is a non-optional @Nested section that the Config factory always instantiates (decorators.ts:36-38), so it cannot be undefined."
+    },
+    {
+     "source": "ref 8",
+     "reason": "Style. SIX_WEEKS_IN_MS is already a named, self-describing constant."
+    },
+    {
+     "source": "ref 9",
+     "reason": "The uncaughtException listener predates this PR (diff context). When the release has expired at startup, report stays defaultReport, which logs errors, so the claimed silent swallowing is not introduced here."
+    },
+    {
+     "source": "ref 10",
+     "reason": "Unreachable. The decorator only assigns a Date when !isNaN(timestamp), so an Invalid Date can never reach error-reporter.ts:83."
+    },
+    {
+     "source": "ref 11",
+     "reason": "Wrong. In the already-expired case, init returns before Sentry init() and before beforeSend is registered, so leaving enabled=true has no effect and nothing is sent."
+    },
+    {
+     "source": "R6, R7, R8",
+     "reason": "The npm installs point is a scope and design choice, not a defect. The mechanism is explicitly opt-in via env and wired only into the Docker release. npm installs report to Sentry only if the operator sets N8N_SENTRY_DSN themselves. No broken behaviour is introduced for them, since they report exactly as before."
+    },
+    {
+     "source": "R11, R13, R23",
+     "reason": "The browser/frontend Sentry client is untouched and out of the PR's stated scope (the backend error-reporter). This is a scope question, not a defect the PR introduces."
+    },
+    {
+     "source": "R17",
+     "reason": "A request to add tests. Excluded by the benchmark rules. The underlying timer bug is D1."
+    },
+    {
+     "source": "R15 (test-request half)",
+     "reason": "The request for reporter tests is excluded as a test request. Its nit about moving the empty-DSN return is credited to D3. Its claim that a pending timer keeps processes alive is not supported: BaseCommand.finally() calls this.exit, which leads oclif to call process.exit."
+    }
+   ]
+  },
+  "google-gemini__gemini-cli@c6e6248": {
+   "pr_summary": "Test-only PR (#9177, \"Add integration test for extensions\"). It adds `TestRig.runCommand(args, {stdin})` to integration-tests/test-helper.ts, which spawns the bundled CLI with arbitrary subcommand args and optional stdin. It also adds integration-tests/extensions-install.test.ts, which writes a gemini-extension.json into the rig's test dir and pre-uninstalls `test-extension`, swallowing any error. It then runs `extensions install --path=<testDir>` (answering the consent prompt with 'y') and `extensions list`, bumps the version to 0.0.2, runs `extensions update test-extension`, and finally uninstalls the extension and calls rig.cleanup() and rmSync(testDir).\n\nThe functional flow is correct at head:\n- Extension subcommands exit inside parseArguments (config.ts:343-349), before any sandbox relaunch or stdin read.\n- The local-type update check compares the source version (github.ts:124-141).\n- The success line of the update contains '0.0.2'.\n\nThe defects are in isolation and cleanup, plus one piece of duplication:\n- The test installs into and uninstalls from the runner's real ~/.gemini/extensions. Its pre-uninstall deletes any real extension of that name.\n- The final uninstall is not in a finally block.\n- An unconditional rmSync overrides the documented KEEP_OUTPUT retention.\n- `runCommand` is a near-verbatim copy of `run()`'s subprocess machinery.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "Test mutates the runner's real ~/.gemini/extensions, and its pre-uninstall deletes a pre-existing user `test-extension`",
+     "statement": "`runCommand` spawns the CLI with the parent's environment and HOME, and extension install, uninstall and update always act on `os.homedir()/.gemini/extensions`. The new test's unconditional pre-uninstall (line 28) therefore recursively deletes any real extension named `test-extension`, together with its enablement entry, on a developer's machine. The test's install, update and uninstall steps also rewrite the developer's real Gemini config. Other integration test files run in parallel, and every CLI they spawn loads that same directory while this test is changing it.",
+     "sites": [
+      {
+       "path": "integration-tests/extensions-install.test.ts",
+       "from_line": 27,
+       "to_line": 31,
+       "role": "cause"
+      },
+      {
+       "path": "integration-tests/extensions-install.test.ts",
+       "from_line": 33,
+       "to_line": 49,
+       "role": "other-site"
+      },
+      {
+       "path": "integration-tests/test-helper.ts",
+       "from_line": 313,
+       "to_line": 318,
+       "role": "cause"
+      },
+      {
+       "path": "packages/cli/src/config/extension.ts",
+       "from_line": 83,
+       "to_line": 86,
+       "role": "symptom"
+      },
+      {
+       "path": "packages/cli/src/config/extension.ts",
+       "from_line": 597,
+       "to_line": 606,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "The spawn and the pre-uninstall:\n- test-helper.ts:315-318 `spawn('node', commandArgs, { cwd: this.testDir!, stdio: 'pipe' })` passes no env or HOME override. `TestRig.setup` (test-helper.ts:131-161) isolates only the cwd.\n- extension.ts:83-85 `static getUserExtensionsDir() { const storage = new Storage(os.homedir()); return storage.getExtensionsDir(); }`.\n- uninstallExtension (extension.ts:586-606) finds the extension by name in `loadUserExtensions()` (which reads os.homedir()), calls `manager.remove(extensionName)`, then `fs.promises.rm(storage.getExtensionDir(), { recursive: true, force: true })`.\n- The test at lines 27-31 runs `rig.runCommand(['extensions','uninstall','test-extension'])` unconditionally inside try/catch {}. Install (extension.ts:392-468, 485 `enableExtension(..., SettingScope.User)`) writes into the same real directory.\n\nThe harness contract and parallelism:\n- The harness already treats HOME as state it must restore: globalSetup.ts:34-43 and :90-99 back up and restore ~/.gemini/GEMINI.md. Nothing does the same for extensions.\n- vitest.config.ts:16 `fileParallelism: true`. Every other test's CLI runs main() -> loadExtensions() -> loadExtensionsFromDir(os.homedir()) (gemini.tsx:251, extension.ts:175-203), so it reads this directory while it is being mutated. loadExtension's `fs.statSync(extensionDir)` (extension.ts:208) sits outside the try block and can throw ENOENT in that window.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R1",
+       "R2",
+       "R3",
+       "R4"
+      ]
+     },
+     "notes": "To count, a comment must say that the test or `runCommand` operates on the real user home or global extension store (~/.gemini/extensions, os.homedir()) instead of an isolated one. It must also give a consequence: it deletes or overwrites a pre-existing user `test-extension` (via the pre-uninstall), pollutes the developer's real Gemini config, or interferes with parallel tests. A comment that only says 'cleanup is skipped if an assertion fails' belongs to D2, not here. A comment that only says 'the testDir cwd is not validated' does not count."
+    },
+    {
+     "id": "D2",
+     "title": "Final uninstall is not in a finally block, so a failed step leaves test-extension installed in the real HOME",
+     "statement": "The only teardown uninstall (line 49), `rig.cleanup()` and rmSync run only if every earlier command and assertion succeeds. If the install, list or update assertion fails or a command rejects, `test-extension` stays installed and enabled in the runner's real ~/.gemini/extensions. The user's normal Gemini sessions and later test runs then load it. The pre-uninstall only rescues the next attempt of this same test, and a failed final retry leaves the state behind.",
+     "sites": [
+      {
+       "path": "integration-tests/extensions-install.test.ts",
+       "from_line": 37,
+       "to_line": 52,
+       "role": "cause"
+      }
+     ],
+     "kind": "resource",
+     "severity": "low",
+     "evidence": "The throw points and the skipped teardown:\n- extensions-install.test.ts:37 `expect(result).toContain('test-extension');`, :40 `expect(listResult).toContain('test-extension');` and :47 `expect(updateResult).toContain('0.0.2');` all throw before :49 `await rig.runCommand(['extensions', 'uninstall', 'test-extension']);`.\n- There is no try/finally or afterEach.\n- vitest.config.ts:15 `retry: 2`, so the last failing attempt leaves the extension behind.\n\nWhere the leftover lives and why nothing removes it:\n- Install writes to os.homedir() and enables the extension at User scope (extension.ts:392-468, 485).\n- globalSetup teardown (globalSetup.ts:84-99) removes only the run dir and restores GEMINI.md, not extensions.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R5",
+       "R6",
+       "R7",
+       "R8"
+      ]
+     },
+     "notes": "To count, a comment must say that the extension uninstall or teardown is not reached, or not guaranteed, when a command or assertion fails, leaving the extension installed in the home or user store. It must ask for try/finally, afterEach or equivalent cleanup on the failure path. A comment that only asks for HOME isolation, without naming the failure-path cleanup gap, belongs to D1. A comment about the test dir rmSync belongs to D3."
+    },
+    {
+     "id": "D3",
+     "title": "Unconditional rmSync of the test dir overrides the KEEP_OUTPUT retention contract",
+     "statement": "`rig.cleanup()` deliberately keeps the test directory when KEEP_OUTPUT is set, and that behaviour is documented. The line after it deletes the directory unconditionally anyway. With KEEP_OUTPUT=true, which every CI E2E job and `npm run test:e2e` set, this test's output is thrown away despite the request to keep it. When KEEP_OUTPUT is unset, the line is redundant with cleanup() and globalSetup's teardown.",
+     "sites": [
+      {
+       "path": "integration-tests/extensions-install.test.ts",
+       "from_line": 51,
+       "to_line": 52,
+       "role": "cause"
+      },
+      {
+       "path": "integration-tests/test-helper.ts",
+       "from_line": 371,
+       "to_line": 383,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "The deletion and the contract it breaks:\n- extensions-install.test.ts:52 `rmSync(rig.testDir!, { recursive: true, force: true });` runs right after :51 `await rig.cleanup();`.\n- test-helper.ts:373 `if (this.testDir && !env.KEEP_OUTPUT) { ... execSync(`rm -rf ${this.testDir}`) }`.\n- globalSetup.ts:86 `if (process.env.KEEP_OUTPUT !== 'true' && runDir)`.\n- docs/integration-tests.md:70 documents KEEP_OUTPUT as preserving test output.\n\nWhere KEEP_OUTPUT is set:\n- .github/workflows/e2e.yml sets `KEEP_OUTPUT: 'true'` on the E2E jobs.\n- package.json `test:e2e` is `cross-env VERBOSE=true KEEP_OUTPUT=true ...`.\n\nThe line is reached only on the success path.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R9",
+       "R10",
+       "R11",
+       "R12"
+      ]
+     },
+     "notes": "To count, a comment must say that the rmSync, or the extra deletion after cleanup(), removes the test directory even when KEEP_OUTPUT is set, breaking output retention. A comment that only calls it 'redundant with cleanup()' without mentioning KEEP_OUTPUT is a weak near-miss and should not count. Comments about the extension uninstall belong to D2."
+    },
+    {
+     "id": "D4",
+     "title": "runCommand duplicates run()'s spawn, stream capture and exit handling",
+     "statement": "The new `runCommand` re-implements about 45 lines of `run()` almost line for line: the spawn, the stdin write and end, stdout/stderr accumulation with the KEEP_OUTPUT/VERBOSE echo, and the close handler that resolves or rejects. The two copies already diverge (runCommand has no Podman telemetry filter and no JSON stderr exclusion). A future fix to subprocess handling will have to be made twice and will drift.",
+     "sites": [
+      {
+       "path": "integration-tests/test-helper.ts",
+       "from_line": 309,
+       "to_line": 358,
+       "role": "cause"
+      },
+      {
+       "path": "integration-tests/test-helper.ts",
+       "from_line": 210,
+       "to_line": 306,
+       "role": "other-site"
+      }
+     ],
+     "kind": "maintainability",
+     "severity": "low",
+     "evidence": "test-helper.ts:315-355 mirrors :210-242 and :244-303:\n- The same `spawn('node', commandArgs, { cwd: this.testDir!, stdio: 'pipe' })`.\n- The same `child.stdout!.on('data', (data: Buffer) => { stdout += data; if (env.KEEP_OUTPUT === 'true' || env.VERBOSE === 'true') process.stdout.write(data); })`, and likewise for stderr.\n- The same `child.on('close', (code: number) => { if (code === 0) { this._lastRunStdout = stdout; ... resolve(result) } else reject(new Error(`Process exited with code ${code}:\\n${stderr}`)) })`.\n\nIt differs only in argument building, the missing Podman filter (:253-286) and the missing `isJsonOutput` check (:290-297).",
+     "provenance": {
+      "dataset_refs": [
+       1
+      ],
+      "hunt": true,
+      "reviewer_comments": [
+       "R13",
+       "R14",
+       "R15",
+       "R16"
+      ]
+     },
+     "notes": "To count, a comment must say that runCommand duplicates or copy-pastes run()'s subprocess, spawn or stream handling and should share a helper. A comment claiming that runCommand's missing Podman filter or JSON stderr exclusion breaks the extension test does not count as a separate defect: those filters are irrelevant to extension subcommands, which exit before telemetry or JSON output. Such a comment counts here only if it frames the gap as copy drift."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 0",
+     "reason": "Trivial and not reachable. runCommand uses `this.testDir!` without checking that setup() ran, the same pattern as run(), createFile() and readFile(). The only caller calls rig.setup() first. A null cwd would fall back to process.cwd() rather than crash."
+    },
+    {
+     "source": "ref 2",
+     "reason": "Wrong. spawn is called with `stdio: 'pipe'` (test-helper.ts:317), which guarantees that child.stdin, child.stdout and child.stderr are non-null, so the `!` assertions cannot fail."
+    },
+    {
+     "source": "ref 3",
+     "reason": "Not reachable. Empty-string or omitted stdin leaves the pipe open, but every caller either passes 'y\\n' or runs an extension subcommand that never reads stdin and ends with process.exit (config.ts:343-349; uninstall.ts/list.ts error paths call process.exit(1)). No caller hangs, and the empty-string case is never used."
+    },
+    {
+     "source": "R17",
+     "reason": "Same as ref 3. The unclosed stdin pipe cannot hang any command this PR runs. The extension subcommands do not read stdin and exit via process.exit inside parseArguments. 'Any command that waits for EOF' has no caller."
+    },
+    {
+     "source": "ref 4",
+     "reason": "Wrong. `string += Buffer` calls Buffer.toString() (utf8) and never yields '[object Object]'. The pattern is identical to the existing run()."
+    },
+    {
+     "source": "R18",
+     "reason": "Not reachable and pre-existing. Decoding per chunk could split a multibyte character only on large or streamed output. The extension commands print a single short console.log line (read as one chunk), and the assertions check ASCII substrings. The pattern is copied verbatim from the existing run()."
+    },
+    {
+     "source": "ref 5",
+     "reason": "Wrong as stated and not reachable. The promise does not 'never settle': on spawn failure Node emits 'error' and then 'close', so the close handler rejects. The spawned binary is `node`, which is always present under vitest, and the cwd is created by setup(). run() has the same shape."
+    },
+    {
+     "source": "R19",
+     "reason": "Same as ref 5. A missing 'error' listener matters only if spawning `node` in a just-created testDir fails, which the normal path cannot hit. It is the pre-existing pattern of run()."
+    },
+    {
+     "source": "ref 6",
+     "reason": "Nit. Adding stdout to the rejection message is a debugging nicety. It matches run()'s existing error format."
+    }
+   ]
+  },
+  "sveltejs__svelte@4bf1f91": {
+   "pr_summary": "The PR flattens the hydration markers for `{#if}…{:else if}…{/if}` chains. On the server, the IfBlock visitor now emits a single if / else-if / else statement with one opening marker per chain: `<!--[-->` for the first branch, `<!--[N-->` for the N-th else-if and `<!--[!-->` for the else. On the client, the IfBlock visitor passes a `$$elseif` tuple into else-if alternates and anchors the nested `$.if` on the parent's `$$anchor` instead of a `$.comment()` fragment. A new Fragment special case (a single elseif IfBlock needs no template) makes that possible, and the `{}` scope wrapper is removed. At runtime, `if_block(node, fn, [root_index, hydrate_index])` changes: the root level parses the marker (`[`, `[!` or `[N`) into an index, nested levels compare that index with their depth, and a mismatch sets the index to -1. The new `[N` marker is never added to the runtime's other hydration-marker depth walkers: `remove_nodes()`, used for mismatch recovery, and the dev `assign_locations()`. Both therefore become unbalanced whenever an else-if branch after the first was server-rendered.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "remove_nodes() does not count the new `<!--[N-->` else-if opening marker, so hydration-mismatch cleanup stops at a nested `]` and leaves server DOM behind",
+     "statement": "The server now opens a non-first else-if branch with `<!--[1-->`, `<!--[2-->` and so on. `remove_nodes()` raises its nesting depth only for `[` and `[!`, but lowers it for every `]`. When the region being removed contains a nested else-if chain that rendered a later branch, cleanup returns at that inner chain's `<!--]-->` instead of the enclosing block's close. The rest of the server-rendered block (siblings and the outer `]`) stays in the DOM, and the block's anchor and hydrate_node point at the wrong comment. Hydration then continues against the wrong nodes, which gives stale or duplicated DOM or a full-app HYDRATION_ERROR remount (a hard `hydration_failed` with `recover: false`). This happens on the mismatch paths the runtime is designed to recover from locally: an if-block mismatch such as `{#if browser}`, an each-block mismatch or excess-item removal, and a svelte:boundary error during hydration.",
+     "sites": [
+      {
+       "path": "packages/svelte/src/internal/client/dom/hydration.js",
+       "from_line": 85,
+       "to_line": 105,
+       "role": "cause"
+      },
+      {
+       "path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/IfBlock.js",
+       "from_line": 21,
+       "to_line": 31,
+       "role": "other-site"
+      },
+      {
+       "path": "packages/svelte/src/internal/client/dom/blocks/if.js",
+       "from_line": 70,
+       "to_line": 79,
+       "role": "symptom"
+      },
+      {
+       "path": "packages/svelte/src/internal/client/dom/blocks/each.js",
+       "from_line": 162,
+       "to_line": 218,
+       "role": "other-site"
+      },
+      {
+       "path": "packages/svelte/src/internal/client/dom/blocks/boundary.js",
+       "from_line": 91,
+       "to_line": 95,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "server/visitors/IfBlock.js:24-26 (head) emits `b.literal(`<!--[${index++}-->`)` for each else-if branch. hydration.js:93-98 (head, unchanged by the PR): `if (data === HYDRATION_END) { if (depth === 0) return node; depth -= 1; } else if (data === HYDRATION_START || data === HYDRATION_START_ELSE) { depth += 1; }`. The comment data `[1` matches neither, so its closing `]` is taken as the end of the outer region. Example: `{#if browser}<A/>{:else}{#if a}..{:else if b}<p>B</p>{/if}<p>tail</p>{/if}`. The server (browser=false, b=true) emits `<!--[!--><!--[1--><p>B</p><!--]--><p>tail</p><!--]-->`. On the client, if.js:70 detects the mismatch and `anchor = remove_nodes()` (if.js:73) removes only `<!--[1--><p>B</p>`, then returns the inner `<!--]-->`. `<p>tail</p>` and the outer `]` stay in the DOM, and if.js:122-124 sets `anchor = hydrate_node` to the inner `]`. The same call is reached from each.js:167 (is_else mismatch) and each.js:217 (removing excess server items) and from boundary.js:94. Before the PR, the same markup was `<!--[!--><!--[--><p>B</p><!--]--><!--]-->`, which is balanced.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R7",
+       "R9",
+       "R10",
+       "R12",
+       "R14"
+      ]
+     },
+     "notes": "To count, a comment must say that the new numbered opening marker (`<!--[1-->`, `[N`) is not recognised as a block opener by remove_nodes() or the hydration-mismatch cleanup's depth tracking, so the cleanup stops at a nested else-if's `]` and leaves stale server DOM behind or leaves a wrong anchor. A comment that names remove_nodes or the if/each/boundary mismatch cleanup balancing markers counts. These do not count: saying parseInt of the raw `<!--[1-->` string yields NaN (dataset ref 5, which is wrong); a generic 'add a hydration test' (R6); raising only the dev assign_locations walker, which is D2."
+    },
+    {
+     "id": "D2",
+     "title": "Dev-mode assign_locations() depth tracking ignores `[N` markers, so `__svelte_meta` source locations shift onto the wrong elements or go missing",
+     "statement": "In dev hydration, `assign_locations()` walks a template's sibling nodes and tags only elements at depth 0. It raises depth only for `[` and `[!`, but lowers it for any comment starting with `]`. When an else-if branch was server-rendered with `<!--[N-->`, the elements inside that branch are treated as top-level and take the template's element locations. After the branch's `]`, depth becomes -1, so the template's real sibling elements that follow get no `__svelte_meta` at all. This breaks dev source-location tooling, such as the inspector and the `hydration_html_changed` warning's location, for elements after a hydrated else-if chain.",
+     "sites": [
+      {
+       "path": "packages/svelte/src/internal/client/dev/elements.js",
+       "from_line": 43,
+       "to_line": 59,
+       "role": "cause"
+      },
+      {
+       "path": "packages/svelte/src/compiler/phases/3-transform/server/visitors/IfBlock.js",
+       "from_line": 24,
+       "to_line": 26,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "dev/elements.js:48-56 (head, unchanged): `if (hydrating && node.nodeType === 8) { var comment = node; if (comment.data === HYDRATION_START || comment.data === HYDRATION_START_ELSE) depth += 1; else if (comment.data[0] === HYDRATION_END) depth -= 1; } if (depth === 0 && node.nodeType === 1) assign_location(node, filename, locations[i++]);`. Take `<div>{#if a}<p/>{:else if b}<b></b>{/if}<i></i></div>` hydrated with b true. The div's children are `<!--[1--><b></b><!--]--><i></i>`. `<b>` is tagged at depth 0 with `<i>`'s location and exhausts the location list; `<i>` then gets none, and any later walk runs at depth -1. html.js:24 reads `element.__svelte_meta?.loc` for the hydration_html_changed warning location. Before the PR, the markers were `<!--[!--><!--[-->…<!--]--><!--]-->`, which balance.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R8",
+       "R9",
+       "R11",
+       "R13"
+      ]
+     },
+     "notes": "To count, a comment must say that the dev location walker (assign_locations / add_locations in internal/client/dev/elements.js) does not count the numbered `[N` opening marker, so element source locations (`__svelte_meta`) are misassigned or missing after a hydrated else-if. A comment that raises only remove_nodes or mismatch cleanup counts for D1, not here. R9 covers both D1 and D2."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 0",
+     "reason": "Style only. AST.IfBlock.elseif is a required boolean, so the truthiness check `trimmed[0].elseif` in Fragment.js:53 is exact; asking for `=== true` or a comment is not a defect."
+    },
+    {
+     "source": "ref 1",
+     "reason": "Style nit: `let` vs `const` for alternate_args (client IfBlock.js:26)."
+    },
+    {
+     "source": "ref 2",
+     "reason": "A request to add explanatory comments, with no defect."
+    },
+    {
+     "source": "ref 3",
+     "reason": "Wrong. `$$render` is set_branch(fn, flag) (if.js:40-46): its second argument is the boolean flag, and `false` correctly marks the alternate. The `[number,number]` tuple is if_block's third parameter, not $$render's."
+    },
+    {
+     "source": "ref 4",
+     "reason": "Unreachable. IfBlock.alternate is Fragment | null, a Fragment always has `nodes`, and the loop condition already checks `alt &&` first (server IfBlock.js:21)."
+    },
+    {
+     "source": "ref 5",
+     "reason": "Wrong. The client reads Comment.data, which for `<!--[1-->` is `[1`; `parseInt(data.substring(1))` = 1 (if.js:65). No closing bracket is needed."
+    },
+    {
+     "source": "ref 6",
+     "reason": "Nit: a hardcoded marker template string, with no behavioural consequence."
+    },
+    {
+     "source": "ref 7",
+     "reason": "Unreachable. The server Fragment visitor always returns `b.block(...)` (server Fragment.js:45), and alt/elseif.consequent are AST.Fragment. The pre-PR code made the same cast."
+    },
+    {
+     "source": "ref 8",
+     "reason": "`var anchor = node` is unchanged context, and `var` is the runtime's deliberate convention. Style."
+    },
+    {
+     "source": "ref 9",
+     "reason": "Duplicate of ref 8, on an unchanged `var` line. Style."
+    },
+    {
+     "source": "ref 10",
+     "reason": "Wrong. The JSDoc and signature agree, and -1 is a deliberate sentinel. After a mismatch, set_hydrating(false) is in effect while the nested branch is built, and nested levels check `hydrating && hydrate_index !== -1` (if.js:57), so -1 is never used as an index."
+    },
+    {
+     "source": "ref 11",
+     "reason": "Readability nit. Infinity as the else sentinel makes `hydrate_index > root_index` correct by construction."
+    },
+    {
+     "source": "ref 12",
+     "reason": "Moot. hydrate_index is always a number (0, Infinity or a parseInt result), and the global isNaN is exact for numbers."
+    },
+    {
+     "source": "ref 13",
+     "reason": "Duplicate of ref 12, and equally moot."
+    },
+    {
+     "source": "R1, R2, R3, R4, R5",
+     "reason": "The unused JSDoc type imports (`Identifier` in the client IfBlock, `IfStatement` in the server IfBlock) are real but only a lint nit. The tsconfig has no noUnusedLocals, so they do not break `check`, and there is no runtime effect."
+    },
+    {
+     "source": "R6",
+     "reason": "A request to add a hydration regression test, which is excluded as a test request. The underlying bug it alludes to is D1, which the other comments name concretely."
+    },
+    {
+     "source": "hunt:if_block dereferences `anchor.data.substring` for any non-`[`/`[!` anchor, so a non-comment anchor throws a TypeError",
+     "reason": "Speculative. It needs the if-block's opening-marker slot to hold an Element during hydration, which Svelte-produced markup never does. Stripped comments or badly nested HTML fail earlier, in hydrate()'s search for the `[` anchor or in reset()/set_hydrate_node(null) with a recoverable HYDRATION_ERROR. Text or other comment anchors have `.data` and fall into the handled isNaN mismatch path. I could not construct a concrete reachable path."
+    }
+   ]
+  },
+  "microsoft__typescript-go@892b4a3": {
+   "pr_summary": "The PR adds a way to keep hand-edited fourslash tests out of the converter. A new script, internal/fourslash/_scripts/makeManual.mts (`npm run makemanual`), moves a generated test from tests/gen/ to tests/manual/ and adds its name to _scripts/manualTests.txt. convertFourslash.mts reads that list, skips regenerating the listed tests and creates tests/manual. It has four real defects. (1) The PR does not ship manualTests.txt, but the converter reads it unconditionally, so convertfourslash, updatefailing and the CI generate job all crash, after the gen suite has already been deleted. (2) makeManual records a filename, and the converter looks up a capitalized base name, so no listed test is ever skipped. (3) A test moved into the separate tests/manual Go package loses the util_test.go helpers it uses and fails to compile. (4) `*.txt` is gitignored with an exception only for failingTests.txt, so a manualTests.txt that makeManual creates is never committed. There is also a low-severity leftover: the converter creates the tests/manual directory for no purpose.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "convertFourslash crashes with ENOENT because manualTests.txt is never shipped and is read without an existence check",
+     "statement": "getManualTests() calls fs.readFileSync(manualTestsPath) without checking that the file exists, and the PR does not add internal/fourslash/_scripts/manualTests.txt. Only makeManual ever creates the file. So `npm run convertfourslash` and `npm run updatefailing` throw ENOENT on every checkout. By that point main() has already rm'd tests/gen, leaving only util_test.go, and updateFailing has already emptied failingTests.txt. The CI `generate` job, which runs `npm run updatefailing`, fails on this PR.",
+     "sites": [
+      {
+       "path": "internal/fourslash/_scripts/convertFourslash.mts",
+       "from_line": 26,
+       "to_line": 29,
+       "role": "cause"
+      },
+      {
+       "path": "internal/fourslash/_scripts/convertFourslash.mts",
+       "from_line": 42,
+       "to_line": 47,
+       "role": "symptom"
+      },
+      {
+       "path": "internal/fourslash/_scripts/updateFailing.mts",
+       "from_line": 9,
+       "to_line": 11,
+       "role": "other-site"
+      },
+      {
+       "path": ".github/workflows/ci.yml",
+       "from_line": 253,
+       "to_line": 254,
+       "role": "symptom"
+      }
+     ],
+     "kind": "build",
+     "severity": "high",
+     "evidence": "convertFourslash.mts:27 `const manualTestsList = fs.readFileSync(manualTestsPath, \"utf-8\").split(\"\\n\")...` has no existsSync guard. makeManual.mts:33 guards the same read, but the converter does not. `git ls-tree -r --name-only 892b4a3 -- internal/fourslash/_scripts` lists only convertFourslash.mts, failingTests.txt, makeManual.mts, tsconfig.json and updateFailing.mts. main() runs `fs.rmSync(outputDir, ...)` at :42 and generateHelperFile() at :46, then evaluates getManualTests() in the argument list at :47. updateFailing.mts:10-11 runs `fs.writeFileSync(failingTestsPath, \"\", ...); convertFourslash();`. ci.yml:253-254 `name: Regenerate fourslash tests and update failing test list / run: npm run updatefailing`.",
+     "provenance": {
+      "dataset_refs": [
+       0
+      ],
+      "hunt": true,
+      "reviewer_comments": [
+       "R1",
+       "R2",
+       "R3",
+       "R4"
+      ]
+     },
+     "notes": "To count, a comment must say that the converter's read of manualTests.txt throws (or crashes, or fails) when the file is absent, AND that the file is absent by default: the PR does not add it, or only makemanual creates it. Mentioning that updatefailing, CI or the regeneration workflow breaks is supportive but not required. Near-misses that should not count: generic advice to add try/catch or error handling around file reads with no claim that the file is missing, and comments about the .gitignore of *.txt alone, which is D4."
+    },
+    {
+     "id": "D2",
+     "title": "makeManual records the filename, but the converter checks the capitalized test name, so manual tests are never skipped",
+     "statement": "makeManual joins its argument to gen/ without appending `_test.go`. To pass the existence check, the argument must be the full generated filename, e.g. `basicClassMembers_test.go`, and makeManual records that raw string in manualTests.txt. convertFourslash looks up `test.name[0].toUpperCase() + test.name.substring(1)`, e.g. `BasicClassMembers`. No argument satisfies both scripts, so the skip never fires. Every moved test is regenerated into tests/gen on the next convert or updatefailing run, and the test then exists in both gen/ and manual/. The PR's stated guarantee, 'tests in manualTests.txt will be skipped and not regenerated', does not hold. In CI, the generate job's `git diff --staged --exit-code` fails because the removed gen file comes back.",
+     "sites": [
+      {
+       "path": "internal/fourslash/_scripts/makeManual.mts",
+       "from_line": 16,
+       "to_line": 19,
+       "role": "cause"
+      },
+      {
+       "path": "internal/fourslash/_scripts/makeManual.mts",
+       "from_line": 38,
+       "to_line": 41,
+       "role": "cause"
+      },
+      {
+       "path": "internal/fourslash/_scripts/convertFourslash.mts",
+       "from_line": 70,
+       "to_line": 74,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "high",
+     "evidence": "makeManual.mts:16-18 `const testName = args[0]; const testFileName = testName; const genTestFile = path.join(genDir, `${testFileName}`);` has no suffix, while gen files are written as `${test.name}_test.go` (convertFourslash.mts:77). makeManual.mts:39 `manualTests.push(testName);` stores the raw argument. convertFourslash.mts:70-72 `const testName = test.name[0].toUpperCase() + test.name.substring(1); if (manualTests.has(testName)) { return; }`. For example, gen/basicClassMembers_test.go gets list entry `basicClassMembers_test.go`, but the lookup key is `BasicClassMembers`.",
+     "provenance": {
+      "dataset_refs": [
+       3,
+       1
+      ],
+      "hunt": true,
+      "reviewer_comments": [
+       "R10",
+       "R11",
+       "R12",
+       "R13"
+      ]
+     },
+     "notes": "To count, a comment must say that the identifier written to manualTests.txt, the raw argument or filename, differs from the key convertFourslash checks, the capitalized base test name, so listed tests are still regenerated or the skip does not work. A comment framed as 'the manual list is not stripped of a Test prefix the way failing tests are, so filtering may fail' is a weaker version of the same mismatch and counts only if it claims the skip or filter fails. Near-misses that should not count: saying only that makeManual should validate the argument ends in _test.go without linking it to the converter lookup; the PR-body command-name mismatch (manualtest vs makemanual); and path-traversal comments."
+    },
+    {
+     "id": "D3",
+     "title": "Tests moved to tests/manual lose the util_test.go helpers and fail to compile",
+     "statement": "Generated tests use package-local helpers defined in util_test.go, such as defaultCommitCharacters, ignored, ptrTo and the completionGlobals vars. The converter copies that file only into tests/gen. makeManual moves just the one _test.go file into tests/manual, which is a separate Go package directory with no copy of the helpers. Moving any helper-using test, which covers roughly 730 of the 1308 files in gen/ (e.g. basicClassMembers_test.go), gives `undefined: defaultCommitCharacters` and similar errors. That breaks `hereby test` (`go test ./...`) and CI.",
+     "sites": [
+      {
+       "path": "internal/fourslash/_scripts/makeManual.mts",
+       "from_line": 25,
+       "to_line": 30,
+       "role": "cause"
+      },
+      {
+       "path": "internal/fourslash/_scripts/convertFourslash.mts",
+       "from_line": 977,
+       "to_line": 979,
+       "role": "other-site"
+      },
+      {
+       "path": "internal/fourslash/_scripts/convertFourslash.mts",
+       "from_line": 44,
+       "to_line": 46,
+       "role": "other-site"
+      }
+     ],
+     "kind": "build",
+     "severity": "medium",
+     "evidence": "convertFourslash.mts:977-979 `function generateHelperFile() { fs.copyFileSync(helperFilePath, path.join(outputDir, \"util_test.go\")); }` copies into gen only. makeManual.mts:29-30 `fs.renameSync(genTestFile, manualTestFile)` moves only the single file. tests/util_test.go defines `func ptrTo[T any]`, `var ignored`, `var defaultCommitCharacters`. gen/basicClassMembers_test.go uses `CommitCharacters: &defaultCommitCharacters, EditRange: ignored`. Herebyfile.mjs:324 runs tests over `./...`, which includes tests/manual.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R6",
+       "R7",
+       "R8",
+       "R9"
+      ]
+     },
+     "notes": "To count, a comment must say that a test moved into tests/manual no longer has the shared helper definitions (util_test.go or the named helpers) because it is a separate Go package or directory and only gen gets the copy, so the moved test fails to compile. Near-misses that should not count: saying that updateFailing does not run the manual tests, which the PR body acknowledges and is not a compile failure; and generic comments that 'manual tests might break' with no helper or package mechanism."
+    },
+    {
+     "id": "D4",
+     "title": "manualTests.txt matches the repo's `*.txt` gitignore rule, so the manual-test list is never committed",
+     "statement": ".gitignore ignores `*.txt` and re-includes only specific files, among them `internal/fourslash/_scripts/failingTests.txt`. The PR introduces a new state file, manualTests.txt, in the same directory without adding a matching `!` exception or committing the file. When makeManual creates the list, `git add .` and `git status` do not see it. The developer commits the moved manual test but not the list. On every other checkout and in CI the list is absent: at head the converter crashes (D1), and once the missing-file read is guarded, the moved tests are silently regenerated into gen/, which fails the CI generate job's diff check.",
+     "sites": [
+      {
+       "path": ".gitignore",
+       "from_line": 176,
+       "to_line": 176,
+       "role": "cause"
+      },
+      {
+       "path": ".gitignore",
+       "from_line": 200,
+       "to_line": 200,
+       "role": "other-site"
+      },
+      {
+       "path": "internal/fourslash/_scripts/makeManual.mts",
+       "from_line": 5,
+       "to_line": 5,
+       "role": "other-site"
+      },
+      {
+       "path": "internal/fourslash/_scripts/makeManual.mts",
+       "from_line": 41,
+       "to_line": 41,
+       "role": "symptom"
+      }
+     ],
+     "kind": "build",
+     "severity": "medium",
+     "evidence": ".gitignore:176 `*.txt` (under '# Benchmarking results'), and .gitignore:200 `!internal/fourslash/_scripts/failingTests.txt` is the only exception for this directory. makeManual.mts:5 `const manualTestsPath = path.join(scriptsDir, \"manualTests.txt\");` and :41 `fs.writeFileSync(manualTestsPath, ...)` create an ignored file. ci.yml:256-257 `git add .` then `git diff --staged --exit-code --stat`.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": false,
+      "reviewer_comments": [
+       "R1",
+       "R2",
+       "R4"
+      ]
+     },
+     "notes": "To count, a comment must say that manualTests.txt is ignored by .gitignore (the *.txt rule, with only failingTests.txt excepted), so the list created by makemanual will not be committed or persist across checkouts. Near-misses that should not count: saying only that the PR forgot to add manualTests.txt or that the converter crashes when it is missing, which is D1, unless the comment also names the gitignore mechanism."
+    },
+    {
+     "id": "D5",
+     "title": "convertFourslash defines manualOutputDir only to mkdir an empty directory it never uses",
+     "statement": "The converter adds manualOutputDir and runs mkdirSync on it every time, but it never writes to, reads from, formats or tests that directory. All generation still targets outputDir, i.e. gen. So every convertfourslash run creates an empty tests/manual directory, and the constant falsely suggests the converter manages manual output.",
+     "sites": [
+      {
+       "path": "internal/fourslash/_scripts/convertFourslash.mts",
+       "from_line": 17,
+       "to_line": 17,
+       "role": "cause"
+      },
+      {
+       "path": "internal/fourslash/_scripts/convertFourslash.mts",
+       "from_line": 44,
+       "to_line": 44,
+       "role": "symptom"
+      }
+     ],
+     "kind": "maintainability",
+     "severity": "low",
+     "evidence": "convertFourslash.mts:17 `const manualOutputDir = path.join(import.meta.dirname, \"../\", \"tests\", \"manual\");`, and its only use is :44 `fs.mkdirSync(manualOutputDir, { recursive: true });`. gofumpt at :50 formats only outputDir, and writes at :77 go to outputDir.",
+     "provenance": {
+      "dataset_refs": [
+       2
+      ],
+      "hunt": false,
+      "reviewer_comments": []
+     },
+     "notes": "To count, a comment must say that manualOutputDir or tests/manual is created by the converter but never used, written or read. Near-misses that should not count: comments about makeManual's own mkdir of manualDir, which is used for the rename."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 4",
+     "reason": "Unreachable. test.name comes from a Strada fourslash filename minus '.ts', so it is empty only for a file literally named '.ts'. The same test.name[0] indexing already exists in generateGoTest (convertFourslash.mts:946)."
+    },
+    {
+     "source": "ref 5",
+     "reason": "Unreachable. generateGoTest always returns a non-empty multi-line Go template (convertFourslash.mts:945-975), so whitespace-only content cannot occur."
+    },
+    {
+     "source": "ref 6",
+     "reason": "Nit. The `if (testContent)` guard is redundant but harmless, with no behavioural or future cost."
+    },
+    {
+     "source": "ref 7",
+     "reason": "Nit or UX polish. With no argument the dev script exits 1, and npm still reports the non-zero exit. The missing usage text is not a correctness defect; the real argument-format problem is D2."
+    },
+    {
+     "source": "ref 8",
+     "reason": "No trust boundary. makeManual is a local dev npm script whose argument is typed by the developer on their own checkout, so path traversal gains nothing the developer cannot already do."
+    },
+    {
+     "source": "ref 9",
+     "reason": "The claim that it 'could move non-test files or directories' has no realistic path, because gen/ only contains generated *_test.go files and util_test.go. The suffix suggestion touches D2's argument format but does not identify the list-key vs converter-lookup mismatch."
+    },
+    {
+     "source": "ref 10",
+     "reason": "A try/catch request for a dev script. A renameSync failure already surfaces as Node's own error and non-zero exit, so there is no consequence to fix."
+    },
+    {
+     "source": "ref 11",
+     "reason": "Wrong. split/trim/filter on the file content cannot fail on 'corrupted' content, and the read is guarded by existsSync (makeManual.mts:33)."
+    },
+    {
+     "source": "ref 12",
+     "reason": "A formatting nit. Appending '' to get a trailing newline is a standard idiom, and both readers trim and filter empty lines."
+    },
+    {
+     "source": "R5",
+     "reason": "Speculative misuse of a local dev script. Moving a handwritten test requires the developer to deliberately pass a '../' path. There is no trust boundary and no normal path reaches it."
+    },
+    {
+     "source": "R14, R15, R16, R17",
+     "reason": "Documentation mismatch in the PR description (`npm run manualtest` vs the registered `makemanual` script). The PR body is not shipped code, and the registered script works as named, so this is a doc/nit, not a code defect."
+    }
+   ]
+  },
+  "elastic__elasticsearch@dc8943f": {
+   "pr_summary": "The PR changes the size of the hierarchical-centroid lookahead buffer in DefaultIVFVectorsReader.getCentroidIteratorWithParents. The old buffer was a fixed 20% of all centroids (CENTROID_SAMPLING_PERCENTAGE = 0.2). The new one is bufferSize = min(max(visitRatio * numCentroids * CENTROID_OVERSAMPLING(8), 1), numCentroids). To support this, visitRatio is threaded from IVFVectorsReader.search, through the abstract getCentroidIterator, into getCentroidIteratorWithParents.\n\nChecks at head:\n- There is one implementation of the abstract method (DefaultIVFVectorsReader) and one caller (IVFVectorsReader.search:251).\n- Nothing else references the removed constant, so the build is intact.\n- visitRatio is validated to [0,1] when explicit, is positive and finite when dynamic, and is clamped at the use site. The parent path only runs when centroids > centroidsPerParentCluster^2, so the size cannot be 0, NaN or overflowed.\n\nThe surviving concerns are about recall and tuning, not crashes:\n- The buffer now scales with visitRatio, so on the default dynamic path with small k it drops below one parent's 16-child group. Candidates from other parents are then never ranked against the top parent's children.\n- The oversampling factor 8 silently hard-codes DEFAULT_CENTROIDS_PER_PARENT_CLUSTER/2.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "visitRatio-scaled centroid buffer can shrink below one parent's children group, so the hierarchical iterator stops comparing children across parents (recall risk)",
+     "statement": "bufferSize is now visitRatio*numCentroids*8. With the default dynamic visit ratio and small k it is only a few entries, fewer than one parent's ~16 children. The initial fill therefore expands only the top-scoring parent, and updateQueue() keeps refilling from that parent's remaining children before any other parent is opened. The search can spend its whole vector-visit budget on the top parent's children and never score a better child under another parent. Filtered and nested searches keep pulling centroids past the visitRatio budget, and those extra centroids are also taken in this coarse parent-greedy order. The old 20% buffer ranked children across dozens of parents first, so approximate-kNN recall can regress.",
+     "sites": [
+      {
+       "path": "server/src/main/java/org/elasticsearch/index/codec/vectors/DefaultIVFVectorsReader.java",
+       "from_line": 197,
+       "to_line": 198,
+       "role": "cause"
+      },
+      {
+       "path": "server/src/main/java/org/elasticsearch/index/codec/vectors/DefaultIVFVectorsReader.java",
+       "from_line": 215,
+       "to_line": 236,
+       "role": "symptom"
+      },
+      {
+       "path": "server/src/main/java/org/elasticsearch/index/codec/vectors/DefaultIVFVectorsReader.java",
+       "from_line": 254,
+       "to_line": 278,
+       "role": "symptom"
+      },
+      {
+       "path": "server/src/main/java/org/elasticsearch/index/codec/vectors/IVFVectorsReader.java",
+       "from_line": 244,
+       "to_line": 258,
+       "role": "other-site"
+      },
+      {
+       "path": "server/src/main/java/org/elasticsearch/index/codec/vectors/IVFVectorsReader.java",
+       "from_line": 266,
+       "to_line": 289,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "DefaultIVFVectorsReader.java:197 `final int bufferSize = (int) Math.min(Math.max(visitRatio * numCentroids * CENTROID_OVERSAMPLING, 1), numCentroids);` (was `Math.max(numCentroids * CENTROID_SAMPLING_PERCENTAGE, 1)`).\n\nThe initial fill at :216 is `while (parentsQueue.size() > 0 && neighborQueue.size() < bufferSize)`, with an inner loop at :231 that takes children of the current parent until the buffer is full. updateQueue() at :255-260 adds from currentParentQueue first, and only at :260-276 pops a new parent once that group is empty.\n\nThe visitRatio comes from AbstractIVFKnnVectorQuery.java:141-144 as `log10(totalVectors)^2 * max(numCands, 5k) / totalVectors`. It is computed over the whole index and applied per segment.\n- Example with ten 1M-vector segments (10M total) and k=10: visitRatio ≈ 2450/1e7 = 2.45e-4. Each segment has ~2604 centroids and 16 children per parent, so the buffer is 2.45e-4*2604*8 ≈ 5, below one parent group.\n- In that case maxVectorVisited (IVFVectorsReader.java:249) is ≈ 490 vectors, about 1-2 posting lists. Only the top parent's best children get visited, where the old code chose from a ~520-entry cross-parent buffer.\n- A single 1M segment with k=1 gives visitRatio ≈ 180/1e6 and a buffer of 3.\n\nThe filtered loop at IVFVectorsReader.java:282 (`actualDocs < expectedScored || actualDocs < knnCollector.k()`) and the `minCompetitiveSimilarity() == NEGATIVE_INFINITY` clause at :267 both keep iterating regardless of visitRatio.\n\nThe PR body reports no recall loss in local runs, so the impact is a plausible structural degradation, not a demonstrated one.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R1",
+       "R2",
+       "R4"
+      ]
+     },
+     "notes": "A finding counts if it says the new visitRatio-proportional buffer can be too small, whether smaller than a parent's children group or smaller than the centroids actually visited in filtered/nested searches. It must connect that to lost cross-parent ranking (the queue refills from one parent's children, better children under other parents are never considered, the order degrades to greedy-by-parent) and so to a possible recall or quality loss compared with the old 20% buffer. Low-visit-ratio examples (R1/R2/R4) and the filtered/nested variant (hunt) both count.\n\nNear-misses that do NOT count:\n- \"bufferSize can be 0/NaN/negative, clamp visitRatio\" (unreachable, see refs 1-3).\n- \"the buffer is too large / scores all centroids at high ratios\" (R3).\n- A bare \"add a recall test\" with no mechanism (R5).\n- \"the oversampling constant should be derived from centroidsPerParentCluster\" is D2, unless it also explains that low ratios make the buffer smaller than a parent group and lose cross-parent candidates."
+    },
+    {
+     "id": "D2",
+     "title": "CENTROID_OVERSAMPLING = 8 silently hard-codes DEFAULT_CENTROIDS_PER_PARENT_CLUSTER/2 instead of tracking the actual parent-cluster size",
+     "statement": "The oversampling factor is a fixed 8.0f. It only makes sense relative to the default 16 children per parent, but IVFVectorsFormat accepts centroidsPerParentCluster from 2 to 256, and the reader already reads the group size (maxChildrenSize) on the same path. With a non-default parent-cluster size the buffer is mis-sized relative to a parent's group: far below one group for large clusters, oversized for small ones. The magic number will drift if the default changes.",
+     "sites": [
+      {
+       "path": "server/src/main/java/org/elasticsearch/index/codec/vectors/DefaultIVFVectorsReader.java",
+       "from_line": 43,
+       "to_line": 44,
+       "role": "cause"
+      },
+      {
+       "path": "server/src/main/java/org/elasticsearch/index/codec/vectors/DefaultIVFVectorsReader.java",
+       "from_line": 195,
+       "to_line": 197,
+       "role": "symptom"
+      },
+      {
+       "path": "server/src/main/java/org/elasticsearch/index/codec/vectors/IVFVectorsFormat.java",
+       "from_line": 68,
+       "to_line": 70,
+       "role": "other-site"
+      }
+     ],
+     "kind": "maintainability",
+     "severity": "low",
+     "evidence": "DefaultIVFVectorsReader.java:44 `public static final float CENTROID_OVERSAMPLING = 8.0f;`\n\nIVFVectorsFormat.java:68-70: `DEFAULT_CENTROIDS_PER_PARENT_CLUSTER = 16`, `MIN_... = 2`, `MAX_... = 1 << 8`. The constructor accepts any value in that range (:75-98), and IVFVectorsFormatTests randomizes it (:63, :69).\n\nDefaultIVFVectorsReader.java:195 reads `final int maxChildrenSize = centroids.readVInt();`, but the buffer at :197 ignores it. Production currently always uses the default (DenseVectorFieldMapper.java:2315), which is why this is only low severity.",
+     "provenance": {
+      "dataset_refs": [
+       0
+      ],
+      "hunt": false,
+      "reviewer_comments": []
+     },
+     "notes": "A finding counts if it says the fixed 8.0 oversampling factor should be derived from the parent-cluster size (centroidsPerParentCluster/2, maxChildrenSize, or numCentroids/numParents), because it implicitly assumes the default of 16 children per parent. Near-misses that do NOT count: generic \"magic number, add a comment\"; complaints about the rounding or clamping of bufferSize; NaN/zero-guard suggestions."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 1",
+     "reason": "Unreachable. getCentroidIteratorWithParents runs only when numParents > 0 (DefaultIVFVectorsReader.java:117), and parents are written only when centroids > centroidsPerParentCluster^2 (DefaultIVFVectorsWriter.java:356, minimum 4). So numCentroids is never 0 here and bufferSize is never 0."
+    },
+    {
+     "source": "ref 2",
+     "reason": "Speculative. An explicit visitRatio is validated to [0,1] (AbstractIVFKnnVectorQuery.java:65-66). The dynamic ratio is positive and finite for any index large enough to have parents (AbstractIVFKnnVectorQuery.java:141-144, IVFVectorsReader.java:244-246). The expression is already clamped to [1, numCentroids] at DefaultIVFVectorsReader.java:197, so NaN, negative and overflow have no reachable path. The ceil-vs-truncate point is cosmetic."
+    },
+    {
+     "source": "ref 3",
+     "reason": "Duplicate of ref 2 (the same NaN/negative clamping concern, moved to the call site IVFVectorsReader.java:256-257). Excluded for the same reason: visitRatio is validated and the use site clamps it."
+    },
+    {
+     "source": "R3",
+     "reason": "Not a real regression. At visitRatio >= 0.125 the search will visit at least 25% of the segment's vectors (maxVectorVisited = 2*visitRatio*numVectors). Scoring every centroid costs about numVectors/384 int7 centroid scores, which is negligible next to that. The no-parent path already scores all centroids unconditionally, and a caller asking for such a high visit ratio has asked for a broad visit. This is a tuning trade-off, not a defect."
+    },
+    {
+     "source": "R5",
+     "reason": "A request to add a regression test, not a defect. The underlying recall concern is captured by D1 via R1/R2/R4."
+    }
+   ]
+  },
+  "keycloak__keycloak@805c204": {
+   "pr_summary": "The PR reorders the high-availability guide's chapters through docs/guides/high-availability/pinned-guides. It drops the route53/operate-* entries, whose files no longer exist, and adds the concepts-*, accelerator and operate-site-* guides. It also makes the docs maven plugin stricter. Guide.priority now defaults to Integer.MAX_VALUE instead of the parser forcing 999. GuideParser also parses a new `tileVisible` attribute. Context now throws in three cases: a pinned guide also declares an explicit priority; an invisible tile (tileVisible=\"false\") is neither pinned nor given a priority; or pinned-guides lists entries that match no parsed guide. The explicit `priority=` attributes are removed from the pinned operator guides and from server/vault.adoc so the new check passes, and trailing whitespace is trimmed in a few operator docs. I checked the tree at head: every pinned-guides entry in getting-started, high-availability, observability, operator and server resolves to a parsed guide. Every tileVisible=\"false\" guide is pinned or has a priority (saml-galleon-layers-detailed-config has priority=70). No guide in a pinned directory still carries priority=. The new build checks therefore pass. The one defect is a missing `break` in the parser's switch, where the new tileVisible case was added.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "Missing break: the `priority` case in GuideParser.setAttributes falls through into the new `tileVisible` case, so every guide with an explicit priority gets tileVisible=false",
+     "statement": "The PR appends `case \"tileVisible\"` right after `case \"priority\"` in GuideParser.setAttributes, and `priority` has no `break`. Parsing `priority=N` therefore also runs `guide.setTileVisible(Boolean.parseBoolean(group(\"valueString\")))`. For an integer match valueString is null, so every guide with an explicit priority is recorded as an invisible tile (tileVisible == FALSE), and a `tileVisible=\"true\"` written before `priority=` is overwritten. The only reader today (Context.java:47) also requires priority == MAX_VALUE, so the wrong value is hidden for now. Any other reader of Guide.getTileVisible(), for example a FreeMarker template reading ctx.guides[].tileVisible, would treat these visible guides as hidden.",
+     "sites": [
+      {
+       "path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/GuideParser.java",
+       "from_line": 79,
+       "to_line": 82,
+       "role": "cause"
+      },
+      {
+       "path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Context.java",
+       "from_line": 47,
+       "to_line": 49,
+       "role": "other-site"
+      },
+      {
+       "path": "docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Guide.java",
+       "from_line": 52,
+       "to_line": 58,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "GuideParser.java@head lines 79-82 read `case \"priority\": guide.setPriority(Integer.parseInt(attributeMatcher.group(\"valueInt\"))); case \"tileVisible\": guide.setTileVisible(Boolean.parseBoolean(attributeMatcher.group(\"valueString\")));` with no break between them. At the merge base `priority` was the last case, so its missing break was harmless. The PR added a case after it without adding one. For `priority=10`, GUIDE_ELEMENT_PATTERN (line 13) matches the `(?<valueInt>[\\d]*)` alternative, so valueString is null and Boolean.parseBoolean(null) is false. The path is GuideBuilder constructor -> new Context(srcDir) (Context.java:33) -> parser.parse(f) -> setAttributes. All ten docs/guides/securing-apps guides with `priority=` (for example overview.adoc:6 `priority=10`, which has no tileVisible attribute) therefore end with Guide.tileVisible == FALSE, while the template default is tileVisible=\"true\" (templates/guide.adoc:3). The wrong value is masked only because Context.java:47 checks `Objects.equals(guide.getTileVisible(), Boolean.FALSE) && guide.getPriority() == Integer.MAX_VALUE`, and a guide with an explicit priority never has MAX_VALUE. Guide.getTileVisible() is public and Guide objects reach FreeMarker through ctx.guides (index.adoc templates iterate `ctx.guides`).",
+     "provenance": {
+      "dataset_refs": [
+       9
+      ],
+      "hunt": true,
+      "reviewer_comments": [
+       "R6"
+      ]
+     },
+     "notes": "To count, a comment must identify the switch fall-through in GuideParser.setAttributes: `case \"priority\"` has no `break` and falls into the new `case \"tileVisible\"`, so parsing priority also sets (or overwrites) tileVisible, to false because valueString is null. Saying the fix is a `break` after setPriority(...) counts. Saying 'missing break causes fall-through between priority and tileVisible' counts even without the null/false detail. Near-misses that should NOT count: (a) asking only for a trailing `break` after the last `tileVisible` case, without saying that `priority` falls through into it. That edit does nothing, and it is the weak half of dataset ref 9, which the hand label accepted only because it flags the missing break at this switch. (b) Comments about unquoted tileVisible values or Boolean vs boolean typing (refs 6/7/8, R5), which are different claims. Severity is low because the only current reader masks the wrong value. A comment claiming it breaks the build today or hides tiles today overstates it, but still counts if it names the fall-through."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 0",
+     "reason": "Pre-existing and untouched: the `srcDir.listFiles(...)` loop header at Context.java:32 is unchanged context. A null only happens if the configured guides directory is missing or unreadable, which is not a path this PR introduces."
+    },
+    {
+     "source": "ref 1",
+     "reason": "The premise is wrong. Priority moves off the Integer.MAX_VALUE default (Guide.java:9) only through an explicit `priority=` attribute (GuideParser.java:79-80), so the message at Context.java:40 is accurate. The file name is id + '.adoc', so adding the id adds nothing. This is message wording at best."
+    },
+    {
+     "source": "ref 2",
+     "reason": "Rewording of the error message at Context.java:48; the existing message is already clear. Nit."
+    },
+    {
+     "source": "ref 3",
+     "reason": "Grammar and quoting in the exception text at Context.java:56 ('do no longer exist', 'mis-spelled'). True but cosmetic."
+    },
+    {
+     "source": "R4",
+     "reason": "Same grammar nit as ref 3, on the Context.java:56 exception message. Cosmetic, not a defect."
+    },
+    {
+     "source": "ref 4",
+     "reason": "The comparator at Context.java:59-65 is unchanged by the PR. `title` is a required macro parameter with no default (templates/guide.adoc:3), so a null title is not a path this PR introduces."
+    },
+    {
+     "source": "ref 5",
+     "reason": "The premise is wrong: the effective default was never 0. GuideParser forced 999 (the removed line), and Context forced MAX_VALUE for unpinned guides in pinned directories. getPriority is read only in Context (sort + validation), and ordering with no explicit priorities is unchanged (999 and MAX_VALUE both sort after the explicit values, which are all 10-120). The suggestion to add a named constant is style."
+    },
+    {
+     "source": "ref 6",
+     "reason": "Style: the tri-state Boolean (null = unspecified, template default true) is handled correctly by `Objects.equals(..., Boolean.FALSE)` at Context.java:47. Asking for a primitive boolean or for documentation is a nit."
+    },
+    {
+     "source": "ref 7",
+     "reason": "Duplicate of ref 6 (primitive boolean instead of Boolean). Its premise that the value 'is always initialized (default true)' is false: Guide.java:10 leaves it null."
+    },
+    {
+     "source": "R5",
+     "reason": "Same style suggestion as refs 6/7 (make tileVisible a primitive boolean defaulting to true). The reviewer itself notes that null behaves like true in the only reader, so behaviour does not change. Not a defect."
+    },
+    {
+     "source": "ref 8",
+     "reason": "Every tileVisible usage in the tree is quoted (for example high-availability/concepts-threads.adoc:7 `tileVisible=\"false\"`). The template interpolates it as a string (`${tileVisible}`, templates/guide.adoc:8), so an unquoted FreeMarker boolean would not be a valid usage anyway. The claim that unquoted values 'will not match at all' is also wrong, because `[\\d]*` matches the empty string. The NumberFormatException on an empty priority is pre-existing. The separate fall-through bug is D1 and is not what this ref describes."
+    },
+    {
+     "source": "R1",
+     "reason": "Micro-refactor suggestion: use the return value of `guidePriorities.remove(...)` instead of a get followed by a remove. The code is correct either way, with no behaviour or real performance impact."
+    },
+    {
+     "source": "R2, R3",
+     "reason": "Requests to add tests for the new parser/Context validation paths. Test requests are not defects under the benchmark rules."
+    },
+    {
+     "source": "hunt:behaviour change for unpinned guides with explicit priority in pinned directories (self-checked)",
+     "reason": "Before the PR, Context forced MAX_VALUE onto every unpinned guide in a directory that has pinned-guides. Now an unpinned guide keeps its explicit priority and could sort among the pinned ones. At head no guide in a pinned directory carries `priority=`: all ten are in securing-apps, which has no pinned-guides. So nothing is reachable today, and the change looks intentional."
+    },
+    {
+     "source": "hunt:removed priority= attributes change the emitted :guide-priority: (self-checked)",
+     "reason": "Removing priority=10/20/30 from the operator guides and vault.adoc changes the rendered `:guide-priority:` attribute to the template default 999. Within this repo the plugin's ordering for those pinned directories came from pinned-guides both before and after the change. Any effect on an external consumer such as the website is speculative and cannot be verified from this repo."
+    }
+   ]
+  },
+  "juspay__hyperswitch@59ec03c": {
+   "pr_summary": "This PR (juspay/hyperswitch#7353, \"chore: resolve v2 warnings in api_models\") only moves imports in five api_models files, so that v2 builds stop warning about unused imports.\n- admin.rs: `use url;` is gated on v1.\n- events/payment.rs: the v1-only payment request and response types and `payment_methods::{self}` move into a `#[cfg(feature = \"v1\")]` import. The unused `events` import is dropped from the v2+payment_methods_v2 import. The v2 `impl ApiEventMetric for payments::PaymentsResponse` loses its now-redundant `payments::` qualifier, which `unused_qualifications` would otherwise flag.\n- events/refund.rs: the four v1-only refund request types are gated.\n- payment_methods.rs: `OptionalEncryptableName` is gated on v1. The private `PaymentMethodMigrationResponseType` alias now has the same cfg as its only user, the `From` impl, which already had that cfg at the merge base.\n- payments.rs: `std::fmt`, `serde::{de, Deserializer}`, `ExtendedAuthorizationAppliedBool`/`RequestExtendedAuthorizationBool`, `disputes`, `refunds`, `EphemeralKeyCreateResponse` and `ValidateFieldAndGet` are gated on v1. `#[allow(dead_code)]` is added to the v2 `payment_id_type::deserialize_option`, matching its sibling `deserialize`.\n\nI checked every use of every newly gated name at head. Each one is inside a v1-gated item:\n- payments.rs: v1 `PaymentsRequest` (l.779/1074), its v1 impl (l.1123-1142), `payment_method_data_serde` (l.2219, which uses `use super::*`), `impl fmt::Display for PaymentIdType` (l.4087) and v1 `PaymentsResponse` (l.4583-4908).\n- payment_methods.rs: v1 `PaymentMethodListResponse` (l.1768/1786).\n- admin.rs: the v1 `MerchantAccountCreate`/`Update` and `ProfileCreate`/`Update`. In edition 2021, `url::Url` resolves through the extern prelude anyway.\n\nThe v2 and v1 `payment_id_type` modules and the `amount` module import serde `de`/`Deserializer`/`fmt` themselves. The ungated test modules that use `use super::*` touch none of the gated names. `additional_info.rs` and `trait_impls.rs` reach nothing gated through `super`. The moved imports are private `use` items, so no path outside the crate changes. The workspace enables `clippy::unnecessary_self_imports`, but that lint only inspects a top-level `use x::{self}`, and the new `crate::{payment_methods::{self}, payments::{..}}` has two top-level entries, so it does not fire. Runtime behaviour is unchanged. I found no defect that the PR introduces or exposes.",
+   "defects": [],
+   "excluded": [
+    {
+     "source": "ref 0",
+     "reason": "Nit about import cleanup, and the redundancy predates this PR. `use url;` (admin.rs:19-20) is indeed redundant in edition 2021 (Cargo.toml `package.edition = \"2021\"`), because `url::Url` at admin.rs:53/276/1798/2311 resolves through the extern prelude. The PR only gates an import that was already there. All four uses sit in v1-gated structs, so nothing breaks either way. Suggesting the line be deleted rather than gated is a style point with no consequence."
+    },
+    {
+     "source": "ref 1",
+     "reason": "Wrong. The two `CustomerPaymentMethodsListResponse` imports (events/payment.rs:8-14) have mutually exclusive cfgs: `all(any(v2,v1), not(payment_methods_v2))` and `all(v2, payment_methods_v2)`. They can never both be active, so the item is never imported twice. The split also predates the PR. The PR only removed the unused `events` from the second import."
+    },
+    {
+     "source": "ref 2",
+     "reason": "Style preference: import the module and qualify the type, instead of importing the type directly. It has no functional effect, and qualifying would also run against the workspace's `unused_qualifications = \"warn\"` lint."
+    },
+    {
+     "source": "ref 3",
+     "reason": "Asks for comments. The gate on the refund request imports (events/refund.rs:7-10) simply mirrors the `#[cfg(feature = \"v1\")]` impls that use them (l.12-73). Nothing is wrong."
+    },
+    {
+     "source": "ref 4",
+     "reason": "Wrong. The only use of `OptionalEncryptableName` in payment_methods.rs is `pub merchant_name: OptionalEncryptableName` at l.1786. That is inside `#[cfg(feature = \"v1\")] pub struct PaymentMethodListResponse` (l.1767-1768), so a v2 build does not reference the type and cannot fail on the gated import."
+    },
+    {
+     "source": "ref 5",
+     "reason": "Wrong. The `From<PaymentMethodMigrationResponseType> for PaymentMethodMigrationResponse` impl already had the identical `all(any(v2,v1), not(payment_methods_v2))` cfg at the merge base. The PR only gives the private alias, whose only user is that impl, the same cfg. The struct and enum were ungated before and after. Router's migration.rs callers are unchanged, so no new compile failure is introduced."
+    },
+    {
+     "source": "ref 6",
+     "reason": "Generic 'make sure it compiles under all feature combinations' request with no concrete defect named. I verified that every gated name's uses are v1-only (payments.rs l.1074, 1137-1142, 2251-2325, 4088, 4662, 4666, 4811, 4908), and that child modules and test modules do not depend on the gated names."
+    },
+    {
+     "source": "ref 7",
+     "reason": "Style point. `deserialize_option` sits in `#[cfg(feature = \"v2\")] mod payment_id_type` (payments.rs:7562). Its sibling `deserialize` already carried `#[allow(dead_code)]` before the PR (l.7622). The PR follows that local pattern, and the suggested `cfg_attr(not(test), ...)` does not fit, because the function is simply unused in v2."
+    }
+   ]
+  },
+  "libsdl-org__SDL@1526727": {
+   "pr_summary": "The PR adds the 8BitDo SN30 Pro (USB 0x6001, BT 0x6101), SF30 Pro (USB 0x6000) and Pro 2 (USB 0x6003, BT 0x6006) to SDL_IsJoystick8BitDoController, so the HIDAPI 8BitDo driver (on by default) and the HIDAPI gamepad-mapping branch now pick these controllers up. InitDevice probes feature report 0x06 through a new ReadFeatureReport helper. If the probe succeeds, sensors, rumble and power state are enabled. If it fails, the driver only logs at debug level and still connects the joystick. HandleStatePacket now accepts report ID 0x04 as well as 0x01 and 0x03. According to the PR body, only Pro 2 firmware v3.06+ and SF30/SN30 Pro firmware v2.05+ are supported.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "Controllers on unsupported older firmware are claimed by the HIDAPI driver and their reports are misparsed",
+     "statement": "The widened predicate matches every SN30 Pro/SF30 Pro/Pro 2 by VID/PID alone. IsSupportedDevice ignores `version`, and InitDevice calls HIDAPI_JoystickConnected even when feature report 0x06 fails, which is what happens on the pre-v2.05/v3.06 firmware the PR body calls unsupported. Those controllers are therefore taken away from the DInput/evdev/IOKit path and its gamepad-DB mappings, where they worked. Each packet then goes through the new fixed-offset parser: the report-ID filter drops most of them, and any whose first byte happens to be 0x01, 0x03 or 0x04 is decoded as garbage. The result is lost or garbled input for users who have not updated their firmware.",
+     "sites": [
+      {
+       "path": "src/joystick/SDL_joystick.c",
+       "from_line": 3178,
+       "to_line": 3183,
+       "role": "cause"
+      },
+      {
+       "path": "src/joystick/hidapi/SDL_hidapi_8bitdo.c",
+       "from_line": 122,
+       "to_line": 125,
+       "role": "cause"
+      },
+      {
+       "path": "src/joystick/hidapi/SDL_hidapi_8bitdo.c",
+       "from_line": 145,
+       "to_line": 160,
+       "role": "cause"
+      },
+      {
+       "path": "src/joystick/hidapi/SDL_hidapi_8bitdo.c",
+       "from_line": 255,
+       "to_line": 262,
+       "role": "symptom"
+      },
+      {
+       "path": "src/joystick/SDL_gamepad_db.h",
+       "from_line": 68,
+       "to_line": 70,
+       "role": "other-site"
+      }
+     ],
+     "kind": "compat",
+     "severity": "high",
+     "evidence": "At head, SDL_hidapi_8bitdo.c:124 is `return SDL_IsJoystick8BitDoController(vendor_id, product_id);` and the `version` parameter goes unused. Lines 149-157 are `int size = ReadFeatureReport(device->dev, 0x06, data, sizeof(data)); if (size > 0) {...} else { SDL_LogDebug(..., \"Couldn't read feature report 0x06\"); }`, and line 160 then runs `return HIDAPI_JoystickConnected(device, NULL);` unconditionally. Line 259 is `if (data[0] != 0x03 && data[0] != 0x01 && data[0] != 0x04) return;`, and lines 264-345 then read the hat from data[1], sticks from data[2..5], triggers from data[6..7] and buttons from data[8..10]. The PR body says 'Supported versions: Pro 2 v3.06 and above, SF30 Pro/SN30 Pro v2.05 and above'. SDL_gamepad_db.h:68-70 keeps separate mappings for SN30 Pro 0x6001/0x6101 on firmware v1.26 and v2.00, so the report layout differs by firmware and these units currently work through the generic backend. The driver's default is `true` (line 457), and SDL_HIDAPI_DEFAULT is true on desktop. HIDAPI_IsDevicePresent (SDL_hidapijoystick.c:1247) makes the other backends skip a device that a HIDAPI driver has claimed.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R1",
+       "R2",
+       "R6"
+      ]
+     },
+     "notes": "To count, a comment must say that SN30 Pro/SF30 Pro/Pro 2 units on older or unsupported firmware (below the PR's stated minimum, or ones where the 0x06 feature report fails) are still claimed by the HIDAPI driver. It must point to the PID-only match, the ignored version, or the connect-on-probe-failure, and say that this breaks or misparses input those devices previously got from the existing DInput/evdev mapping path. Asking for a firmware or version gate with that consequence counts. These do NOT count: comments that only ask for length checks on 0x04 reports (short-packet speculation), comments that only ask whether report 0x06 really implies sensors, rumble and battery, comments that only say the probe failure should be logged louder, and naming comments on the new PIDs."
+    },
+    {
+     "id": "D2",
+     "title": "SN30 Pro/SF30 Pro (and Pro 2) are advertised with four back paddles they do not have",
+     "statement": "SDL_CreateMappingForHIDAPIGamepad appends `paddle1:b12,paddle2:b11,paddle3:b14,paddle4:b13` for anything SDL_IsJoystick8BitDoController matches, and OpenJoystick always exposes 15 buttons. Widening the predicate therefore makes SN30 Pro and SF30 Pro gamepads (no back buttons) and the Pro 2 (two back buttons) report four paddles. SDL_GamepadHasButton then returns true for controls that do not exist. Before this PR, the gamepad-DB mappings for these controllers listed no paddles.",
+     "sites": [
+      {
+       "path": "src/joystick/SDL_gamepad.c",
+       "from_line": 817,
+       "to_line": 818,
+       "role": "symptom"
+      },
+      {
+       "path": "src/joystick/SDL_joystick.c",
+       "from_line": 3178,
+       "to_line": 3183,
+       "role": "cause"
+      },
+      {
+       "path": "src/joystick/hidapi/SDL_hidapi_8bitdo.c",
+       "from_line": 184,
+       "to_line": 187,
+       "role": "other-site"
+      }
+     ],
+     "kind": "contract",
+     "severity": "medium",
+     "evidence": "SDL_gamepad.c:817-818 is `} else if (SDL_IsJoystick8BitDoController(vendor, product)) { SDL_strlcat(mapping_string, \"paddle1:b12,paddle2:b11,paddle3:b14,paddle4:b13\", ...`, inside SDL_CreateMappingForHIDAPIGamepad (line 694, used at line 975 for HIDAPI GUIDs). The predicate at SDL_joystick.c:3180-3182 now includes 0x6000/0x6001/0x6101/0x6003/0x6006. SDL_hidapi_8bitdo.c:185 is `joystick->nbuttons = SDL_GAMEPAD_NUM_8BITDO_BUTTONS;` (15) for every device. SDL_GamepadHasButton (SDL_gamepad.c:2990-3005) returns true whenever a binding exists. The DB mappings for these controllers (SDL_gamepad_db.h:61-62, 68-70, 504) have no paddle entries.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R3",
+       "R4"
+      ]
+     },
+     "notes": "To count, a comment must say that the widened 8BitDo predicate, or the fixed 15-button count, makes SDL advertise back paddles (or L4/R4 or extra buttons) on SN30 Pro/SF30 Pro, which have none, or four on the Pro 2, which has two. Tracing it to the SDL_gamepad.c paddle-mapping branch or to nbuttons, or naming the capability consequence (SDL_GamepadHasButton, nonexistent buttons in UIs), is enough. These do NOT count: generic remarks that the predicate is used elsewhere with no stated consequence, and style comments about the OR chain."
+    },
+    {
+     "id": "D3",
+     "title": "SF30 Pro Bluetooth PID (0x6100) is omitted, so SF30 Pro over Bluetooth is not handled by the new driver",
+     "statement": "The PR adds Bluetooth PIDs for the SN30 Pro (0x6101) and the Pro 2 (0x6006) but only the USB PID for the SF30 Pro (0x6000). The repo's own gamepad DB identifies the SF30 Pro over Bluetooth as PID 0x6100. An SF30 Pro connected over Bluetooth therefore never matches the driver and gets none of the gyro, rumble or battery support the PR claims to add for the SF30 Pro.",
+     "sites": [
+      {
+       "path": "src/joystick/usb_ids.h",
+       "from_line": 63,
+       "to_line": 67,
+       "role": "cause"
+      },
+      {
+       "path": "src/joystick/SDL_joystick.c",
+       "from_line": 3180,
+       "to_line": 3182,
+       "role": "other-site"
+      },
+      {
+       "path": "src/joystick/SDL_gamepad_db.h",
+       "from_line": 504,
+       "to_line": 504,
+       "role": "other-site"
+      }
+     ],
+     "kind": "incomplete-fix",
+     "severity": "low",
+     "evidence": "usb_ids.h:63-67 defines SN30_Pro 0x6001, SN30_Pro_BT 0x6101, SF30_Pro 0x6000, Pro_2 0x6003 and Pro_2_BT 0x6006, with no SF30 Pro BT entry. SDL_gamepad_db.h:504 has `\"05000000c82d00000061000000010000,8BitDo SF30 Pro,...\"`, where bus 0x05 is Bluetooth and the PID is 0x6100. Lines 62 and 820 map the same 0x6100 PID as '8BitDo SF30 Pro'. The SN30 Pro's Bluetooth PID (0x6101, db line 70) was included.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": []
+     },
+     "notes": "To count, a comment must say that the SF30 Pro's Bluetooth PID (0x6100) is missing, or that the SF30 Pro over Bluetooth is not covered while the other two models' BT PIDs are. Casing or naming comments on the SF30 constant do NOT count."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 0",
+     "reason": "Style only: mixed-case constant names and an OR chain instead of a switch. The code compiles and behaves correctly, so the 'correctness' claim is false."
+    },
+    {
+     "source": "ref 1",
+     "reason": "No reachable path. ReadFeatureReport's only caller passes a USB_PACKET_LENGTH stack buffer, and the helper is identical to the ones in the PS3/PS4/PS5 drivers. The reference itself concedes it is fine today, so this is a defensive-coding suggestion."
+    },
+    {
+     "source": "ref 2",
+     "reason": "Duplicate of ref 0 (a naming nit). The 'prevent compilation errors' claim is false because the names match their #defines."
+    },
+    {
+     "source": "ref 3",
+     "reason": "Nit: a magic number 0x06. The driver already uses literal report IDs elsewhere (e.g. 0x05 and the 0x01/0x03 filter)."
+    },
+    {
+     "source": "ref 4",
+     "reason": "A design suggestion with no concrete misparse shown. Nothing shows that the Ultimate 2 Wireless sends 0x04 reports. The real harm from the device-agnostic fixed layout is old-firmware misparsing, which is D1, and this reference does not identify it."
+    },
+    {
+     "source": "ref 5",
+     "reason": "Naming/comment-spacing nit (casing, missing space after //). No behavioural effect."
+    },
+    {
+     "source": "ref 6",
+     "reason": "Trailing whitespace in comments. Pure formatting."
+    },
+    {
+     "source": "hunt:Battery and IMU fields are read regardless of packet size for the new devices",
+     "reason": "Speculative. UpdateDevice reads into a 64-byte buffer, so data[14] and data[15..26] never go out of bounds, and nothing shows that supported-firmware devices, the only ones that get powerstate/sensors enabled, send short reports. The one concrete short-report path (old firmware) only reads bytes 1-10 because the flags stay off, and it is covered by D1."
+    },
+    {
+     "source": "R10, R11, R12",
+     "reason": "The same speculative short-0x04-report length concern as the hunt's D4. Reads stay inside the 64-byte stack buffer, so R12's 'read past the HID buffer' is wrong, and no path to a short 0x04 report from a supported device is shown. These comments do not identify the old-firmware takeover (D1)."
+    },
+    {
+     "source": "R9",
+     "reason": "A question asking for confirmation that report 0x06 implies all three capabilities, with no concrete wrong behaviour shown. That the protocol ties sensors, rumble and power to this report is the vendor's design, and it is not contradicted by the code."
+    },
+    {
+     "source": "R5",
+     "reason": "Wrong about the repo's convention. SDL static helpers are CamelCase, and ReadFeatureReport matches the same-named helpers in SDL_hidapi_ps3.c, ps4.c and ps5.c."
+    },
+    {
+     "source": "R7",
+     "reason": "A request to add tests, not a defect."
+    },
+    {
+     "source": "R8 (and the nit half of R6)",
+     "reason": "Duplication of a five-PID list between the predicate and InitDevice's else-if (it could be `else`). This is a minor style/maintainability preference. The only drift consequence is that a hypothetical future PID would lack the optional capability probe, which is not a concrete defect this PR introduces."
+    }
+   ]
+  },
+  "PowerShell__PowerShell@ec952ce": {
+   "pr_summary": "The PR changes one method, CompletionCompleters.CompleteModuleName. When it completes loaded module names (loadedModulesOnly), it builds a HashSet from context.ExecutionContext.EngineSessionState.Module.NestedModules and skips any Get-Module result in that set. The set uses reference equality. The goal is to hide Microsoft.PowerShell.PSReadLine2, PSReadLine's nested module, which appears because PSReadLine runs completion in its own module session state. The PR also adds a comment to the existing short-name check without changing it. For PSReadLine the fix does what it says: Get-Module (GetLoadedModules, then ModuleIntrinsics.GetModuleCore) writes the same PSModuleInfo instances held in the module tables, so reference equality matches. The filter is deliberately generic, though, and it also hides a module that is independently visible to the user when that same instance is also the context module's nested module.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "Nested-module filter also hides modules that are independently visible (for example imported globally too)",
+     "statement": "The new filter drops every Get-Module result that belongs to the current session-state module's NestedModules. It never checks whether the module is also visible on its own, for example in the top-level module table. Import-Module reuses an already-loaded PSModuleInfo instance, and AddModuleToModuleTables appends it to the importing module's NestedModules. GetModuleCore reports the local entry and suppresses the global entry with the same path. So a module the user imported globally, which the context module (such as a module that calls TabExpansion2 or hosts completion) also imported, now disappears from Get-Module/Remove-Module/-Module name completion, even though `Get-Module <name>` returns it.",
+     "sites": [
+      {
+       "path": "src/System.Management.Automation/engine/CommandCompletion/CompletionCompleters.cs",
+       "from_line": 474,
+       "to_line": 479,
+       "role": "cause"
+      },
+      {
+       "path": "src/System.Management.Automation/engine/CommandCompletion/CompletionCompleters.cs",
+       "from_line": 496,
+       "to_line": 500,
+       "role": "symptom"
+      },
+      {
+       "path": "src/System.Management.Automation/engine/Modules/ModuleCmdletBase.cs",
+       "from_line": 6941,
+       "to_line": 6976,
+       "role": "other-site"
+      },
+      {
+       "path": "src/System.Management.Automation/engine/Modules/ModuleIntrinsics.cs",
+       "from_line": 310,
+       "to_line": 341,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "Head CompletionCompleters.cs:475-478 `PSModuleInfo curModule = context.ExecutionContext.EngineSessionState.Module; if (loadedModulesOnly && curModule?.NestedModules.Count > 0) { nestedModulesToFilterOut = new(curModule.NestedModules); }` and :496-497 `if (nestedModulesToFilterOut is not null && nestedModulesToFilterOut.Contains(moduleInfo)) continue;`. Nothing checks the top-level module table. ImportModuleCommand.cs ImportModule_ViaLocalModuleInfo: `TryGetFromModuleTable(module.Path, out alreadyLoadedModule); if (!BaseForce && DoesAlreadyLoadedModuleSatisfyConstraints(alreadyLoadedModule)) { AddModuleToModuleTables(this.Context, this.TargetSessionState.Internal, alreadyLoadedModule);` reuses the instance, and ModuleCmdletBase.cs:6976 `targetSessionState.Module?.AddNestedModule(module);` makes that same instance a nested module of the importing module. ModuleIntrinsics.GetModuleCore (~:311-341) lists EngineSessionState.ModuleTable first, then skips TopLevelSessionState entries whose path was already found (`if (!found.ContainsKey(path))`), so the shared instance is the only result and the filter removes it. Path: the user runs `Import-Module Foo` globally. Module M, whose session state is the engine session state when completion runs (the PR body says the generic behaviour is intentional), also imports Foo without -Global. Then `Get-Module Fo<tab>` completion omits Foo, although it is loaded globally and `Get-Module Foo` returns it.",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": true,
+      "reviewer_comments": [
+       "R4",
+       "R5"
+      ]
+     },
+     "notes": "To count, a finding must say that the filter hides a module that is still visible or genuinely loaded for the user, because a module can be both a nested module of the completing module AND imported globally (or otherwise independently visible). It must also say that the check should exclude only modules visible solely through the current module. Mentioning the shared/reused PSModuleInfo instance or GetModuleCore's local-before-global dedupe strengthens a finding but is not required. These near-misses do NOT count: 'this could filter unrelated nested modules on other hosts/runspaces, hard-code PSReadLine' (dataset ref 2 style: filtering the context module's nested modules is the intended design, and that comment names no over-filtering mechanism); comments on comment wording; reference-equality or null-NestedModules claims; requests for tests."
+    }
+   ],
+   "excluded": [
+    {
+     "source": "ref 0",
+     "reason": "This is a comment-wording nit. The comment at :469-473 already calls PSReadLine the usual case, and the PR body says the logic is generic by design."
+    },
+    {
+     "source": "ref 1",
+     "reason": "Wrong. With loadedModulesOnly, Get-Module goes through GetLoadedModules, then Context.Modules.GetModules, then GetModuleCore. These write the live PSModuleInfo instances from the module tables (GetModuleCommand.cs:495-499 `WriteObject(moduleInfo)`), and those are the same objects held in curModule.NestedModules, so the reference-equality HashSet matches correctly."
+    },
+    {
+     "source": "ref 2",
+     "reason": "Speculative. The only modules filtered are curModule's own NestedModules, which is exactly what the PR intends. For global-scope TabExpansion2, Module is null and nothing is filtered. The ref names no concrete path that over-filters. The real over-filtering mechanism (a module that is also visible globally) is D1, and this ref does not describe it."
+    },
+    {
+     "source": "ref 3",
+     "reason": "Wrong. PSModuleInfo.NestedModules is never null: `_readonlyNestedModules ??= new ReadOnlyCollection<PSModuleInfo>(_nestedModules)` over `private readonly List<PSModuleInfo> _nestedModules = new List<PSModuleInfo>()` (PSModuleInfo.cs:929-948)."
+    },
+    {
+     "source": "ref 4",
+     "reason": "Misreads the diff. The short-name check (:486-494) and the nested-module check (:496-500) are sibling if-statements with no nesting. It is also a style request."
+    },
+    {
+     "source": "R1, R2, R3",
+     "reason": "These only ask for a regression test that covers completion from a module session state. Test requests are not defects."
+    }
+   ]
+  }
+ }
+}
