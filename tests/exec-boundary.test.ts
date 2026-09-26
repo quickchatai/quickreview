@@ -813,7 +813,14 @@ describe("— the write class that no command string can show (round 2)", () => 
     }
     // …and the set is the one the ticket named, so a silent widening or
     // narrowing of the policy surface is a diff in this file.
-    expect([...POLICY_SURFACE_FILES]).toEqual(["config.toml"]);
+    expect([...POLICY_SURFACE_FILES]).toEqual([
+      "config.toml",
+      "AGENTS.override.md",
+      "AGENTS.md",
+      "AGENTS.MD",
+      "CLAUDE.md",
+      "CLAUDE.MD",
+    ]);
     expect([...POLICY_SURFACE_DIRS].sort()).toEqual([
       "agents",
       "dist",

@@ -324,6 +324,17 @@ if [[ ! -d dist || ! -f "$marker" || "$(cat "$marker")" != "$current" ]]; then
   echo "$current" > "$marker"
 fi
 
+# Reviewer context (the owner, 2026-09-26): pi loads the FIRST of
+# AGENTS.override.md / AGENTS.md / CLAUDE.md from the cwd into every session
+# and every lens pass, and they all run here — so without this the 14.5 KB
+# contributor guide rode every turn (~11% of a review's input). The stub says
+# where the guide is for the overseer and EOD sessions. Written at boot because
+# this tree is an rsync --delete mirror (the playbook excludes the anchored
+# /AGENTS.override.md so a sync never removes it); sessions cannot rewrite it
+# (a policy-surface file in extensions/bash-guard.ts, watched by layer 4).
+install -m 0444 "$SANDBOX/deploy/reviewer/AGENTS.override.md" "$SANDBOX/AGENTS.override.md" \
+  || echo "WARNING: reviewer context stub not installed — sessions will load the full AGENTS.md" >&2
+
 # tmux server = the jump-in surface (qcr attach / docker exec ... tmux attach
 # / the qcr tui embedded pane). The csi-u lines must exist before the server
 # starts or modified keys (Shift-Enter etc.) collapse before reaching pi.

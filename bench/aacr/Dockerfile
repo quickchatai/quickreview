@@ -81,6 +81,10 @@ COPY --from=build /src/dist ./dist
 # AGENTS.md every bench session would read the 80 KB dev manual instead of
 # what production reviewers read.
 COPY package.json config.toml AGENTS.md CLAUDE.md ./
+# …and the reviewer context stub the VM entrypoint installs at boot
+# (deploy/reviewer/AGENTS.override.md): pi takes it FIRST, so bench sessions
+# and passes read the stub, exactly as production's do.
+COPY deploy/reviewer/AGENTS.override.md ./AGENTS.override.md
 # The project .pi/ (settings.json: httpIdleTimeoutMs) is baked OUTSIDE the tree
 # and seeded into a tmpfs .pi/ at start (in-container.sh): pi takes a lock
 # beside settings.json on every read, which a read-only root refuses — and pi

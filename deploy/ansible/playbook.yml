@@ -237,6 +237,7 @@
           - "--exclude=/memory"
           - "--exclude=/notes"
           - "--exclude=/ledger.md"
+          - "--exclude=/AGENTS.override.md"
           - "--exclude=/example-app"
           - "--exclude=/pihome"
       when: sandbox_src is defined

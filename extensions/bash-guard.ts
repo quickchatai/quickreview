@@ -1164,6 +1164,12 @@ export function isGitConfigSurface(path: string): boolean {
  *   · `prompts/**`, `agents/**`, `seeds/**` — the frozen seeds (rule 6); the
  *     `agents/` rule also covers the BUILT `state/agents/**` pass bodies pi
  *     loads each round (a `state/agents/…` path has `agents/` after a slash).
+ *   · `AGENTS.override.md`, `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md`, `CLAUDE.MD`
+ *     — pi's project-context files. pi loads the FIRST of them it finds in the
+ *     cwd into EVERY session and pass it starts there (`loadContextFileFromDir`,
+ *     pi 0.87.1 — VERIFY-ON-PIN: the candidate list is pi's), and every session
+ *     and pass runs in the sandbox root. One write plants instructions in every
+ *     later session until the next deploy — the overseer's included.
  *
  * The list is OURS, closed and documented (docs/exec-boundary.md), not a list
  * of attacks. `POLICY_SURFACE_FILES` / `POLICY_SURFACE_DIRS` — top-level names
@@ -1180,7 +1186,14 @@ export function isGitConfigSurface(path: string): boolean {
  * through the `agents/` shape but deliberately NOT watched by layer 4: the
  * daemon itself rebuilds it mid-round on feedback ingest and the day change.
  */
-export const POLICY_SURFACE_FILES = ["config.toml"] as const;
+export const POLICY_SURFACE_FILES = [
+  "config.toml",
+  "AGENTS.override.md",
+  "AGENTS.md",
+  "AGENTS.MD",
+  "CLAUDE.md",
+  "CLAUDE.MD",
+] as const;
 export const POLICY_SURFACE_DIRS = [
   "scripts",
   "dist",

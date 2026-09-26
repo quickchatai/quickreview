@@ -202,7 +202,10 @@ until runtime, was re-parsed as the empty string and allowed.
 
 - **One definition, three consumers.** `POLICY_SURFACE_FILES` /
   `POLICY_SURFACE_DIRS` in the guard name this system's policy-carrying
-  top-level entries — `config.toml`; `scripts/`, `dist/`, `extensions/`,
+  top-level entries — `config.toml` and pi's five project-context file names
+  (`AGENTS.override.md`, `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md`, `CLAUDE.MD`:
+  pi loads the first one it finds in the cwd into every session and pass, and
+  they all run in the sandbox root); `scripts/`, `dist/`, `extensions/`,
   `prompts/`, `agents/`, `seeds/`. The write/edit tool veto and the shell
   redirection / `sed -i` scan both read it as a path SHAPE through
   `isProtectedWriteTarget`; layer 4 reads it as concrete paths under the sandbox

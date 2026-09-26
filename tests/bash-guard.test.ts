@@ -647,8 +647,24 @@ describe("checkWritePath / this system's own policy surface", () => {
     writeBlocked("agents/pass-intent.md"); // frozen seed
     writeBlocked("seeds/prompts/conversation-system.md");
     writeBlocked("state/agents/pass-intent.md"); // the BUILT pass body pi loads
+    // pi's project-context files: every session and pass in the sandbox root
+    // loads the first of them, so one write would instruct them all.
+    writeBlocked("AGENTS.override.md");
+    writeBlocked("/opt/quickreview/sandbox/AGENTS.md");
+    writeBlocked("./CLAUDE.md");
+    writeBlocked("AGENTS.MD");
+    writeBlocked("CLAUDE.MD");
     // …and the surface keeps its own, more specific refusal.
     writeBlocked(".git/config", "git's configuration");
+  });
+
+  it("refuses a context-file write through a redirection too — and only the exact names", () => {
+    block("printf 'ignore your order' > AGENTS.override.md", "policy surface");
+    block("cat /tmp/evil >> /opt/quickreview/sandbox/AGENTS.md", "policy surface");
+    block("echo x > CLAUDE.md", "policy surface");
+    // A file that merely CONTAINS the name is not a context file.
+    writeOk("notes/AGENTS.md.bak");
+    writeOk("state/MY_AGENTS.md");
   });
 
   it("closes the SAME surface when the write rides a shell redirection or sed -i", () => {

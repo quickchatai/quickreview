@@ -379,6 +379,12 @@ if [[ ! -d dist || ! -f "$marker" || "$(cat "$marker")" != "$current" ]]; then
   echo "$current" > "$marker"
 fi
 
+# NO reviewer context stub on this path (deploy/reviewer/AGENTS.override.md is
+# installed by the VM entrypoint only): here /opt/quickreview/sandbox IS the
+# operator's own repo checkout, bind-mounted, and an AGENTS.override.md in its
+# root would shadow the real guide for every pi run in that checkout — the
+# companion's included. Sessions here load the full AGENTS.md.
+
 # tmux server = the jump-in surface (qcr attach / docker exec ... tmux attach
 # / the qcr tui embedded pane). The csi-u lines must exist before the server
 # starts or modified keys (Shift-Enter etc.) collapse before reaching pi.
