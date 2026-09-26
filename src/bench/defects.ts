@@ -53,10 +53,19 @@ export interface Defect {
   provenance?: unknown;
 }
 
+/** A candidate checked against the code and rejected (wrong, pre-existing,
+ * unreachable, a nit…), with the reason. The judge reads these so a comment
+ * repeating one is never credited as a new defect. */
+export interface ExcludedClaim {
+  source: string;
+  reason: string;
+}
+
 export interface DefectCase {
   instance_id: string;
   pr_summary: string;
   defects: Defect[];
+  excluded: ExcludedClaim[];
 }
 
 export interface DefectSet {
@@ -121,10 +130,15 @@ export function parseDefectSet(raw: unknown): DefectSet {
         ...(x["provenance"] !== undefined ? { provenance: x["provenance"] } : {}),
       };
     });
+    const excluded = (Array.isArray(c["excluded"]) ? c["excluded"] : [])
+      .map((e) => (e ?? {}) as Record<string, unknown>)
+      .filter((e) => typeof e["source"] === "string" && typeof e["reason"] === "string")
+      .map((e) => ({ source: e["source"] as string, reason: e["reason"] as string }));
     cases[iid] = {
       instance_id: iid,
       pr_summary: typeof c["pr_summary"] === "string" ? c["pr_summary"] : "",
       defects,
+      excluded,
     };
   }
   return {
@@ -222,11 +236,31 @@ function site(s: DefectSite): string {
   return `${s.path}:${span}${s.role ? ` (${s.role})` : ""}`;
 }
 
+/** Rejected claims shown to the judge: each reason capped, the list capped. */
+const MAX_EXCLUDED_REASON = 600;
+const MAX_EXCLUDED_TOTAL = 14_000;
+
 export function judgePrompt(
   pr: JudgePr,
   defects: readonly Defect[],
   review: ReviewForJudge,
+  excluded: readonly ExcludedClaim[] = [],
 ): string {
+  let budget = MAX_EXCLUDED_TOTAL;
+  const ex: string[] = [];
+  for (const e of excluded) {
+    const reason =
+      e.reason.length > MAX_EXCLUDED_REASON
+        ? `${e.reason.slice(0, MAX_EXCLUDED_REASON)}…`
+        : e.reason;
+    const line = `- ${e.source}: ${reason}`;
+    if (line.length > budget) {
+      ex.push(`- (${excluded.length - ex.length} more rejected claims not shown)`);
+      break;
+    }
+    budget -= line.length;
+    ex.push(line);
+  }
   const d = defects.length
     ? defects
         .map(
@@ -253,7 +287,14 @@ THE PULL REQUEST: ${pr.title ?? "(untitled)"} — ${pr.repo}, head ${pr.head}, m
 THE REAL DEFECTS (ground truth — each verified against the code; trust these):
 ${d}
 
-THE REVIEW (what the author received):
+${
+  ex.length
+    ? `CLAIMS ALREADY CHECKED AGAINST THE CODE AND REJECTED (not defects — each with the reason it failed). A comment repeating one of these is never a new defect: judge it incorrect, partly-correct or correct-minor as its reason says, reading the code if the comment adds something the reason does not cover:
+${ex.join("\n")}
+
+`
+    : ""
+}THE REVIEW (what the author received):
 Verdict: ${review.verdict ?? "(none)"}
 ${review.body ? `Body:\n${review.body}\n` : ""}Comments:
 ${c}
@@ -269,7 +310,7 @@ YOUR TASK
    - partly-correct: a real problem, but the mechanism, scope or severity is materially wrong;
    - incorrect: false at the head (the code does not do what it says, or the scenario cannot happen);
    - unverifiable: cannot be decided from the repository.
-   A comment that finds a listed defect is correct-valuable, or partly-correct if it found it only partially. Set new_defect true only for a correct-valuable comment that describes a real defect NOT in the list.
+   A comment that finds a listed defect is correct-valuable, or partly-correct if it found it only partially. Set new_defect true only for a correct-valuable comment that describes a real defect that is neither in the list nor among the rejected claims.
 Be strict both ways: do not credit a comment for sounding plausible, and do not dismiss one without reading the code it cites.
 
 Answer with ONE JSON object and nothing after it:

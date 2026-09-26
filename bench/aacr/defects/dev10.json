@@ -1,7 +1,7 @@
 {
  "set": "dev10",
- "version": "1",
- "method": "Per PR: a blind expert hunt from the diff and code; every candidate (the hunt, the AACR references with hand labels, and every comment any reviewer posted in our runs, anonymised) checked against the code, merged and graded, exclusions recorded; an adversarial critic per set spot-checked inclusions, exclusions and merges, and its 12 corrections were applied (2026-09-26).",
+ "version": "2",
+ "method": "Per PR: a blind expert hunt from the diff and code; every candidate (the hunt, the AACR references with hand labels, and every comment any reviewer posted in our runs, anonymised) checked against the code, merged and graded, exclusions recorded; an adversarial critic per set spot-checked inclusions, exclusions and merges, and its 12 corrections were applied (2026-09-26). v2 (2026-09-26): the judge's 44 new-defect candidates from 12 judged runs were checked against the code — 1 added, 2 restated existing defects, 41 rejected (added to each PR's excluded list, which the judge now reads).",
  "cases": {
   "bitcoin__bitcoin@724546e": {
    "pr_summary": "bitcoin-cli -netinfo now reports the node's local services. At level 0, which is the default, a new \"Local services: network, bloom, witness, ...\" line is printed before \"Local addresses\". It is built by the new ServicesList() helper, which lower-cases the names, turns '_' into spaces and joins them with \", \". At detail levels 1-4 the report header instead gets \" - services <letters>\", built with the existing FormatServices(). The PR touches one file, src/bitcoin-cli.cpp.",
@@ -938,6 +938,22 @@
     {
      "source": "R19, R20, R21, R22",
      "reason": "Not a defect. A manual dispatch runs on the branch the operator picks, and pushing back to that branch is normal GitHub Actions behaviour. The README's 'main branch' wording is a doc inaccuracy with no concrete harm."
+    },
+    {
+     "source": "judge candidate: Manual runs on another branch leave the intended branch unsynchronized A successful manual run selected on a non-main branch will push the translations to that ",
+     "reason": "This was already excluded as R19-R22. poeditor-sync.yml:25-28 `uses: actions/checkout@v3 with: token: ...` checks out the ref the run was triggered on, and :92 runs a bare `git push`. So a manual dispatch pushes back to the branch the operator picked in the Actions UI. That is normal, operator-chosen GitHub Actions behaviour, and nothing breaks. The schedule trigger (:17-18) always runs on the default branch. The only thing that differs is prose: README/PR body item 3 says \"pushed to the main branch\" (the base_ref is `develop`). That is a doc inaccuracy with no concrete consequence, and the exclusion rationale still holds."
+    },
+    {
+     "source": "judge candidate: Reject exports that would erase a populated locale An export of `{}` passes both the nonempty-file check and `jq` validation, then replaces an existing locale f",
+     "reason": "This was already excluded as R13-R16. It is true that poeditor-sync.yml:71 `[ ! -s \"$file\" ]` and :76 `jq .` accept a file containing `{}`, and that :83 `cp -r temp/* src/locales/` would copy it. But the default key_value_json path writes POEditor's map as received (download-translations.js:50,65), and that map contains every project term (the D2 premise), so it is `{}` only for a project with no terms. On the json path (:53-60), `{}` requires that no term have a non-empty definition, which means a language with zero translations in POEditor. N8's array-conversion variant is exactly that case. A realistic version of 'the repo locale is replaced by what POEditor has' is D3's one-way overwrite, not an empty-map scenario. The exclusion rationale stands."
+    },
+    {
+     "source": "judge candidate: Keep the publishing credential away from dependency installation Checkout persists its token before `npm install`, which can run package lifecycle scripts. Once",
+     "reason": "This was already excluded as R11. checkout@v3 persists GITHUB_TOKEN (:25-28) before `npm install` of two pinned-by-caret, well-known packages, axios and fs-extra (:44-47, :54). Exploiting it requires a compromised axios or fs-extra release that runs a malicious lifecycle script. That is generic supply-chain hardening advice with no concrete reachable path this PR creates. The job also declares no `permissions:` block (D4), so it is not even established that the token is write-scoped."
+    },
+    {
+     "source": "judge candidate: Avoid logging a credential-bearing request error The export request includes `POEDITOR_API_TOKEN` in its POST body, and this catch logs the complete Axios error",
+     "reason": "This was already excluded as R4. download-translations.js:72 `console.error('...', error)` would print an AxiosError's config, including the urlencoded body `api_token=...` from :29-34, only when axios itself throws (network error or non-2xx). POEditor reports API failures as HTTP 200 with `response.status: 'fail'`, which goes to the :37-38 throw and logs only `exportResponse.data`. Even on the axios-throw path, a POEditor API token is a hex string that URL encoding leaves unchanged, so the value appears verbatim and GitHub's registered-secret masking redacts it (POEDITOR_API_TOKEN comes from `secrets.` at workflow:58). The comment's own premise, an \"encoded token that masking does not catch\", does not hold."
     }
    ]
   },
@@ -1189,6 +1205,22 @@
     {
      "source": "R13, R28",
      "reason": "Test requests ('add endpoint tests'). R13 mentions the completion regression only as a reason to add tests, so the defect itself is D1."
+    },
+    {
+     "source": "judge candidate: Include opted-in timings in streaming tool-call responses? When `processTools` selects a tool call, its emitted chunks carry zero usage even though inference pr",
+     "reason": "Already excluded as R11/R18/R19/R20 (pre-existing). This is the same gap: at head, the tool-call `default:` branch of processTools (chat.go:120-167) sends `initialMessage` and the arguments chunk with no `Usage` field. The stream writer (chat.go:345-383) does `usage = &ev.Usage` and puts `Usage: *usage` on the finish chunk. The diff shows the PR left that branch alone and changed only the no-action branch (adding the `usage` literal at lines 99-107) and the `process` callback. At the merge base the tool-call branch already dropped all usage, prompt/completion token counts included, so the missing timings come from a gap that was already there. The PR did not introduce or newly expose it."
+    },
+    {
+     "source": "judge candidate: Expose the machine tag to cross-origin clients When CORS is enabled, `core/http/app.go:138-146` does not configure `ExposeHeaders`; browsers cannot read this no",
+     "reason": "Already excluded as R8/R12/R14/R15/R16 (CORS). The PR does not touch app.go:138-146 (`cors.New()` / `cors.New(cors.Config{AllowOrigins: ...})`). With AllowHeaders empty, Fiber's cors middleware reflects Access-Control-Request-Headers, so a preflight carrying LocalAI-Extra-Usage passes. The missing ExposeHeaders only stops browser JS from reading an operational P2P response header. The pre-existing X-Correlation-ID header (chat.go:184) has the same limitation. This is an enhancement request, not a defect the PR introduces."
+    },
+    {
+     "source": "judge candidate: Account for a second inference in chat timings When `handleQuestion` gets a no-action response without a usable message, it performs another `ModelInference` at",
+     "reason": "Already excluded as R21 (pre-existing, out of scope). handleQuestion's fallback `ModelInference` (chat.go ~545-556) was never counted in usage, and before the PR the reported token counts left it out too. The PR only copies the first `ComputeChoices` tokenUsage into the new timing fields (chat.go:99-107, 469-477), the same way the existing token counts are taken, so it neither introduces nor newly exposes this gap."
+    },
+    {
+     "source": "judge candidate: Clarify the timing units in the public field names The new protobuf fields and JSON fields omit units, although the llama backend fills them from `prompt_ms` an",
+     "reason": "Already excluded as ref 0 and R1-R3: a request to put units in the names or docs. The fields at backend.proto:162-163 and core/schema/openai.go:27-28 carry llama.cpp's prompt_ms/predicted_ms unchanged, the PR body says the timings are 'in ms', and nothing breaks. This is a naming/doc nit, not a defect."
     }
    ]
   },
@@ -1819,6 +1851,54 @@
       "reviewer_comments": []
      },
      "notes": "To count, a comment must say that because update_track_switch is deferred, setting aid/vid/sid (or another option whose effect is read back through derived state) followed immediately by a read or by the command's OSD message reports the old track, which breaks read-after-write for property sets. Near-misses that do NOT count: generic 'side effects are delayed' remarks with no stale read-back or OSD consequence; the missing wakeup itself (that is D3)."
+    },
+    {
+     "title": "Coalescing a round-trip hidpi-window-scale toggle leaves one unpaired relative resize, so the window is rescaled although the option ends where it started",
+     "statement": "update_hidpi_window_scale does not re-derive the window size from state. It applies a relative resize: it multiplies the current unfullscreened window size by the cached HiDPI scale when the option is true, and by the inverse when it is false. The new queue keeps only the newest entry for an option, and the handler reads the option's value at drain time. So if hidpi-window-scale is changed and changed back before the queue drains (true→false→true, or any even number of toggles), only one callback survives. It applies a single ×scale (or ×1/scale) to a window whose size is still correct, so the window is resized by the display scale factor (for example doubled or halved on a 2x display) even though the option's net change is zero. Before the PR each change ran synchronously and the two resizes cancelled out: the x11, wayland and win32 VOs update their stored size synchronously on VOCTRL_SET_UNFS_WINDOW_SIZE, so the second GET saw the first resize. Both changes reach the queue before one drain whenever they land in the same batch. That happens with a single command that sets the option twice (load-config-file of a file or profile that sets it twice), with `;`-chained set/cycle commands (mp_process_input runs every queued command before mp_option_run_callbacks), and with a script or IPC client that sets the option and restores it while the core sleeps (the queue is not drained until an unrelated wakeup, see D3).",
+     "sites": [
+      {
+       "path": "player/command.c",
+       "from_line": 7706,
+       "to_line": 7724,
+       "role": "cause"
+      },
+      {
+       "path": "player/command.c",
+       "from_line": 7898,
+       "to_line": 7899,
+       "role": "other-site"
+      },
+      {
+       "path": "player/command.c",
+       "from_line": 2781,
+       "to_line": 2799,
+       "role": "symptom"
+      },
+      {
+       "path": "player/playloop.c",
+       "from_line": 109,
+       "to_line": 122,
+       "role": "other-site"
+      },
+      {
+       "path": "options/m_config_core.c",
+       "from_line": 802,
+       "to_line": 803,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "The coalescing loop in mp_option_change_callback (command.c:7706-7724), `if (mpctx->option_callbacks[i].co && opt_ptr == mpctx->option_callbacks[i].co->data) drop = true;`, overwrites the older same-option entry and keeps a single one. The drain calls `if (opt_ptr == &opts->vo->hidpi_window_scale) update_hidpi_window_scale(mpctx, opts->vo->hidpi_window_scale);` (7898-7899) with the value current at drain time. update_hidpi_window_scale computes `double scale = hidpi_scale ? cmd->cached_window_scale : 1 / cmd->cached_window_scale;`, then reads VOCTRL_GET_UNFS_WINDOW_SIZE, does `s[0] *= scale; s[1] *= scale;` and calls VOCTRL_SET_UNFS_WINDOW_SIZE (2781-2799), which is relative to the current size. m_config only notifies on a real change (m_config_core.c:802 `!m_option_equal(...)`), so a round trip produces exactly two queued changes, and coalescing collapses them into one. Base (e4b64fb) command.c:7870-7871 ran the handler once per change, synchronously, so the two resizes cancelled. mp_process_input loops `for (;;) { cmd = mp_input_read_cmd(...); if (!cmd) break; run_command(...); }` before `mp_option_run_callbacks(mpctx);` (playloop.c:1290-1292, 1304-1305).",
+     "notes": "To count, a comment must name hidpi-window-scale / update_hidpi_window_scale (or the relative window resize it performs) as a handler that coalescing breaks, because it applies a delta instead of re-deriving state from the final value. It must also name the consequence: changing the option and changing it back before the queue drains leaves one unpaired resize, so the window is rescaled by the HiDPI factor although the option ends where it started. The comment does not need to say that the two resizes cancelled before the PR. Near-misses that do NOT count: a generic 'coalescing may drop intermediate updates' or 'handlers must be idempotent' that names no concrete delta handler; a comment that names a state-based handler (e.g. window-scale / update_window_scale) as the broken one; the flag-collision or interleaving claims excluded as R2/R3; stale read-back after a set (D4) or the missing wakeup (D3).",
+     "id": "D5",
+     "provenance": {
+      "dataset_refs": [],
+      "hunt": false,
+      "reviewer_comments": [
+       "judge candidate: N1"
+      ]
+     }
     }
    ],
    "excluded": [
@@ -2013,6 +2093,10 @@
     {
      "source": "R1, R2, R3",
      "reason": "All three argue that the closed shape narrows an 'existing' arbitrary-array contract, so custom keys like `['orderId' => 123]` would be flagged. This is a design disagreement, not a defect. `content` was added on the same unreleased 7.3 branch (d54febf32; CHANGELOG 7.3 'Add `content` option'), so no released contract is narrowed. It was meant to carry Web Notification options (its tests pass `tag`/`body`), and this PR exists to document exactly that shape, as requested in the linked #60140 review discussion. Runtime behaviour is unchanged, since only static analysis sees the docblock. Whether the payload should be open-ended is a product decision, not a bug the PR introduces."
+    },
+    {
+     "source": "judge candidate: Preserve custom content fields in the documented type  The constructor accepts any array, and `MercureTransport::doSend()` serializes it directly into `content`",
+     "reason": "Both make the same argument that the case's excluded list already rejects as R1/R2/R3: the closed array shape narrows an 'existing' open `?array $content` contract, so custom keys like `['orderId' => 123]` would be flagged. The code bears out that exclusion. `content` was added on this same unreleased 7.3 branch by d54febf32 ('Notifier mercure7.3'; the Mercure CHANGELOG lists it under '7.3: * Add `content` option'), and the PR targets base_ref 7.3, so no released contract is narrowed. The option was meant to carry Web Notification options: its tests pass `tag`/`body`, and the PR fixes review thread #60140 by documenting exactly that shape. The diff only adds `@param array{actions?: array, ... vibrate?: int[]}|null $content` and the matching `@return` docblock on getContent(). MercureTransport::doSend still forwards the array unchanged, so nothing changes at runtime and the only effect is on static analysis. Whether the payload should allow arbitrary keys is a design decision, not a defect this PR introduces."
     }
    ]
   }

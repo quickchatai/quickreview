@@ -135,6 +135,45 @@ describe("the review as the author received it", () => {
   });
 });
 
+describe("the judge sees the claims the ground truth already rejected", () => {
+  it("lists them with their reasons, capped, and never offers them as new defects", () => {
+    const pr = {
+      instance_id: "o__r@1234567",
+      repo: "o/r",
+      title: "T",
+      merge_base: "mb",
+      head: "hd",
+    };
+    const p = judgePrompt(pr, [D("D1")], REVIEW, [
+      { source: "ref 2", reason: "Pre-existing: the old code skipped the same path." },
+      { source: "R7", reason: "x".repeat(2_000) },
+    ]);
+    expect(p).toContain("CLAIMS ALREADY CHECKED AGAINST THE CODE AND REJECTED");
+    expect(p).toContain("- ref 2: Pre-existing: the old code skipped the same path.");
+    expect(p).toContain(`- R7: ${"x".repeat(600)}…`);
+    expect(p).not.toContain("x".repeat(601));
+    expect(p).toMatch(/neither in the list nor among the rejected claims/);
+    // No rejected claims: no section at all.
+    expect(judgePrompt(pr, [D("D1")], REVIEW)).not.toContain("ALREADY CHECKED");
+    // A very long list is cut, and says so.
+    const many = Array.from({ length: 100 }, (_, i) => ({
+      source: `R${i}`,
+      reason: "y".repeat(500),
+    }));
+    const q = judgePrompt(pr, [D("D1")], REVIEW, many);
+    expect(q).toMatch(/more rejected claims not shown/);
+    expect(q.length).toBeLessThan(20_000);
+  });
+
+  it("the parser keeps a case's excluded list", () => {
+    const s = parseDefectSet({
+      ...SET,
+      cases: { x: { defects: [], excluded: [{ source: "R1", reason: "wrong" }, { source: 3 }] } },
+    });
+    expect(s.cases["x"]!.excluded).toEqual([{ source: "R1", reason: "wrong" }]);
+  });
+});
+
 describe("the judge's answer", () => {
   const good = {
     defects: [

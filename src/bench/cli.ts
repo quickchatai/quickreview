@@ -653,6 +653,7 @@ async function main(): Promise<number> {
             head: meta.head_commit,
           },
           defects: defects.cases[c.instance_id]!.defects,
+          excluded: defects.cases[c.instance_id]!.excluded,
           review: reviews[c.instance_id]!,
           outDir: judgeDir,
           rounds,

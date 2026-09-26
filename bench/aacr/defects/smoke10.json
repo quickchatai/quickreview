@@ -1,7 +1,7 @@
 {
  "set": "smoke10",
- "version": "1",
- "method": "Per PR: a blind expert hunt from the diff and code; every candidate (the hunt, the AACR references with hand labels, and every comment any reviewer posted in our runs, anonymised) checked against the code, merged and graded, exclusions recorded; an adversarial critic per set spot-checked inclusions, exclusions and merges, and its 12 corrections were applied (2026-09-26).",
+ "version": "2",
+ "method": "Per PR: a blind expert hunt from the diff and code; every candidate (the hunt, the AACR references with hand labels, and every comment any reviewer posted in our runs, anonymised) checked against the code, merged and graded, exclusions recorded; an adversarial critic per set spot-checked inclusions, exclusions and merges, and its 12 corrections were applied (2026-09-26). v2 (2026-09-26): the judge's 44 new-defect candidates from 12 judged runs were checked against the code — 1 added, 2 restated existing defects, 41 rejected (added to each PR's excluded list, which the judge now reads).",
  "cases": {
   "comfyanonymous__ComfyUI@0bb6023": {
    "pr_summary": "The PR widens ruff's lint.select from S307+F401+F841 (plus F821 in parent commit 03ee445) to S307 plus the whole Pyflakes \"F\" family, and fixes the 14 new findings. Two nested aiohttp handlers are renamed (get_logs becomes get_raw_logs, get_history becomes get_history_prompt_id). An unused .format argument is dropped in controlnet.py, and a duplicate `from torch import Tensor` is removed. F-prefixes come off strings that have no placeholders, and the repeated \"clip\" key in CLIPTextEncodeSDXL.INPUT_TYPES is deduped. The Colab notebook loses imports that ruff reported as cross-cell F811 redefinitions. I linted the merge base, the parent and the head in memory with ruff 0.15.15 (select F,S307). The merge base and parent each have 14 findings and head has 0, so CI's `ruff check .` passes. Every Python-side edit keeps behaviour the same. The notebook edit is the one real defect: its three launch cells are independent alternatives, each ending in a blocking `!python main.py`.",
@@ -256,6 +256,10 @@
     {
      "source": "R32, R33, R34",
      "reason": "Test-coverage requests, not defects."
+    },
+    {
+     "source": "judge candidate: A single `IN` clause binds one parameter per ID. For a sufficiently large `pids` list, this exceeds the database/driver parameter limit (notably PostgreSQL's 65",
+     "reason": "Same claim as the already-excluded R16 (bind-parameter limit on delete_by_ids). The only caller is UserCanvasVersionService.delete_all_versions (user_canvas_version.py:33-38, invoked from canvas_app.py:82 on each save), and it builds delete_ids only when count() > 20, so the list holds just the versions past the newest 20. Hitting the limit would need more than 65k versions for one canvas. The limit also does not bind here: both backends use client-side parameter interpolation. db_models.py:31/248 use PooledPostgresqlDatabase over psycopg2-binary==2.9.9 (pyproject.toml:73), and psycopg2 mogrifies params into the query string rather than server-binding them, while MySQL uses pymysql, which has no such cap. Even if the DELETE did fail, delete_all_versions' `except Exception: return None` would leave the versions unpruned. That is exactly the pre-PR behaviour (the old `cls.delete(...)` raised AttributeError and was swallowed), so nothing regresses. filter_scope_list's batching of 20 (common_service.py:326 `cls.cut_list(in_filters_list, 20)`) is a pre-existing style, not evidence of a limit. Speculative and unreachable in practice. Already in the excluded list as R16."
     }
    ]
   },
@@ -395,6 +399,14 @@
     {
      "source": "R1, R12, R18, R22",
      "reason": "Requests for regression tests; not defects."
+    },
+    {
+     "source": "judge candidate: Cancelling a result retrieval while it waits here cancels previously scheduled transaction writes as well. Those writes belong to earlier requests and can be lo",
+     "reason": "Already in the excluded list as R17 (cancellation cascading into earlier log writes). It cannot happen at head. grep shows the only callers of _log_transaction_async are the four _get_result sites (base.py:677/683, vertex_types.py:110/149), and _get_result is only entered from get_result, which holds `async with self._lock:` (base.py:621-622). So every call blocks at `async with self._lock:` (base.py:637) before it reaches `await asyncio.gather(*tasks)` (base.py:643) or `asyncio.create_task(...)` (base.py:651). log_transaction_tasks therefore stays empty and no earlier write exists to be cancelled. That blocking is D1. Even without D1, the loss is best-effort transaction-log rows on a request that was itself cancelled, which is low-consequence. The judge's own reason says the issue is 'masked ... by D1'."
+    },
+    {
+     "source": "judge candidate: Waiting for every previous database write before scheduling the next transaction makes result retrieval depend on logging I/O; a slow or stuck DB write now stal",
+     "reason": "Already in the excluded list as R15 (result retrieval now waits on prior log I/O). Awaiting the outstanding tasks before adding a new one is the PR's stated mechanism. The body says 'This makes sure and outstanding tasks in the vertex are awaited before adding new ones', so this is the intended serialization trade-off, and each wait is one small insert. It is also unreachable at head: `await asyncio.gather(*tasks)` at base.py:643 sits inside `async with self._lock:` (base.py:637), and that lock is already held by get_result (base.py:621-622), so execution never gets to the gather. The comment does not name the lock re-entry, so it does not count toward D1 either. D1's notes already exclude generic 'awaiting logging blocks on DB I/O' as a near-miss."
     }
    ]
   },
@@ -484,6 +496,10 @@
     {
      "source": "hunt:getDates runs twice per motion photo, duplicating its warnings",
      "reason": "Nit. The second call runs the same function on the identical asset and tags, so the results cannot diverge. The only cost is a repeated warn log line and trivial CPU, once per newly created motion asset. No behavioural consequence and no realistic drift risk."
+    },
+    {
+     "source": "judge candidate: Keep the docs editor configuration resolvable This removes the installed `@tsconfig/docusaurus` package, but `docs/tsconfig.json` still extends it. Could you re",
+     "reason": "Already in the excluded list (R1-R4): the problem predates this PR and the PR does not introduce it. At the merge base c3be74c, docs/package.json has no @tsconfig/docusaurus entry (grep finds nothing). Commit 6a855f6 (#14755) removed it before the merge base. The PR's only docs change deletes the stale lockfile entries (`-        \"@tsconfig/docusaurus\": \"^2.0.2\",` and the `node_modules/@tsconfig/docusaurus` block), which brings docs/package-lock.json back in line with package.json. A clean `npm ci` against the merge-base package.json would not have installed it either. docs/tsconfig.json:2-3 reads `// This file is not used in compilation. It is here just for a nice editor experience.` / `\"extends\": \"@tsconfig/docusaurus/tsconfig.json\"`, so the dangling extends does not break a build, install or CI step. It dates from #14755."
     }
    ]
   },
@@ -956,6 +972,10 @@
     {
      "source": "R38, R39, R46, R47",
      "reason": "Unused getFileSizeInKB import only: a nit. tsconfig has noUnusedLocals: false and .eslintrc has no unused-vars rule, so there is no build or lint break. The real issue (full read before the size check) is D7, which these comments do not raise."
+    },
+    {
+     "source": "judge candidate: Keep the open document consistent with the re-encoded file `saveChanges()` saves and displays the VS Code document (`:167-180`), then writes a different encodin",
+     "reason": "This is the same point as R35, which is already on the excluded list as speculative. The code does what the comment describes. saveChanges saves the VS Code document (DiffViewProvider.ts:169-171 `await updatedDocument.save()`), shows it (:177 `showTextDocument`), and then overwrites the file behind it (:237-239 `iconv.encode(normalizedPostSaveContent, this.fileEncoding)` -> `fs.writeFile(absolutePath, ...)`). But neither consequence the comment names is caused by the PR. (1) The document is not dirty after :170, so VS Code reloads it from disk when the file changes. Any garbled display after that reload comes from the encoding VS Code is configured to use for that file. The user sees exactly the same text when opening that legacy file themselves, before or after this PR. If VS Code is set to the legacy encoding, the reload is correct. (2) If a user later saves a misdecoded buffer, that is VS Code's normal behaviour on a legacy file under the wrong encoding setting. The PR neither introduces nor worsens it. Before the PR the same approval silently converted the file to UTF-8, which is the bug the PR sets out to fix. The comment gives no concrete path where a legacy file ends up with wrong bytes on disk through code this PR added. The only real failures on this rewrite are already listed, as D1 (ASCII to '?'), D4 (normalized content written), D5 (BOM dropped) and D12 (the 'utf8' guard never matches). Cline's own next edit also re-reads the raw bytes with fs.readFile plus detection (:48-57), not the document's decoding, so the document's encoding cannot corrupt a later Cline edit."
     }
    ]
   },
@@ -1302,6 +1322,14 @@
     {
      "source": "R12, R13, R14",
      "reason": "Not a defect. In gptoss, Rows(outputs) is applied after the attention block, so the KV cache is still updated for every token of an intermediate chunk, and those chunks need no logits. Passing an empty outputs tensor to Rows is what llama, qwen2, qwen3 and gemma already did before this PR (they built FromIntSlice(batch.Outputs, 0) unconditionally), and ggml skips empty nodes. The removed len>0 guard only brings gptoss in line with the other models. Cache updates are not lost."
+    },
+    {
+     "source": "judge candidate: Keep processing GPT-OSS prompt chunks with no requested output GPT-OSS can fail to process a prompt chunk before its final token, preventing that chunk from bei",
+     "reason": "Already in the excluded list (R12, R13, R14). In gptoss/model.go the head TransformerBlock.Forward runs `hiddenStates = d.Attention.Forward(ctx, hiddenStates, positions, cache, opts)` before `if outputs != nil { hiddenStates = hiddenStates.Rows(ctx, outputs) }`, so every token of an intermediate chunk still has its KV written to the cache in the last layer. Rows with an empty Outputs only drops the rows fed to the last MLP and to the logits, and a chunk that finishes no sequence needs no logits. At the merge base, llama/model.go:161-163 (`if i == len(m.Layers)-1 { outputs = ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs)) }`), qwen2/model.go:113-114 and gemma3/model_text.go:164 already passed a possibly empty outputs tensor to Rows with no len>0 guard. Removing gptoss's guard makes it behave like those models, and neither the forward pass nor the cache update is lost."
+    },
+    {
+     "source": "judge candidate: A zero-value `input.Batch` (or one with missing `Positions`) now panics when calling `Dim` on a nil tensor. Previously `Forward` returned a validation error for",
+     "reason": "Already in the excluded list (ref 8; R9, R10, R11). A zero-value Batch cannot reach model.Forward (model/model.go:284-285, `if batch.Positions.Dim(0) != len(batch.Sequences)`). Its only caller is forwardBatch, runner.go:584. Before that call, runner.go:573-578 returns early when `len(batchInputs) == 0`, and runner.go:582 always sets `batch.Positions = nextBatch.ctx.Input().FromIntSlice(...)`. reserveWorstCaseGraph (runner.go:1080) calls s.model.Forward directly rather than model.Forward, and it sets Positions at :1069. No test calls model.Forward either. A nil check here would be hardening, not a fix for a reachable defect."
     }
    ]
   },
@@ -1469,6 +1497,10 @@
     {
      "source": "hunt:Remote folders are still skipped silently after the user confirms the copy",
      "reason": "The PR body acknowledges the limitation ('It doesn't work for directories'), and the behaviour is unchanged from the base: every node with a null Path was already skipped silently. This is not a regression and not a fix the PR claims."
+    },
+    {
+     "source": "judge candidate: Fall back when a resource's path is not usable An EFS-backed `DBNResource` supplies a non-null `Path` from its `dbvfs:` location (`DBNResource.getAdapter(Path.c",
+     "reason": "Both say an EFS-backed DBNResource adapts to a non-null dbvfs: Path, so it skips the new null-only stream fallback and is then dropped by Files.notExists. This is the issue already in this PR's excluded list (R5, R6, R7, R17), and the code shows it is pre-existing. At merge_base 2125ab90, DBNPathBase.dropNodes read `Path resource = node.getAdapter(Path.class); if (resource == null || !Files.exists(resource)) { log.debug(...); continue; }`, so a non-null path that does not exist on the local filesystem was already skipped. At head the only change on that route is `if (Files.notExists(resource)) { ... continue; }` followed by the unchanged `if (!Files.isRegularFile(resource)) continue;`, which skips the same path. The one case where notExists and !exists differ, existence that cannot be determined, still ends at the isRegularFile skip. The diff leaves DBNResource.getAdapter(Path.class) unchanged (`return location == null ? null : adapter.cast(location.toPath());`). The PR only adds a branch for `resource == null`, the TE remote files with no location, matching DBNResource.supportsStreamData's `resource.getLocation() == null`. So the PR neither introduces nor newly exposes the skipping of EFS/dbvfs resources. At most they could ask for scope beyond the PR's stated fix (TE remote files)."
     }
    ]
   },
@@ -1603,6 +1635,10 @@
     {
      "source": "defect D3 (critic)",
      "reason": "Removed: speculative. The server clamps end = min(start + 1000, count) (state.rs:1418-1420), so a short page always means the log is exhausted; the client-side constant only matters if a future release lowers the server cap."
+    },
+    {
+     "source": "judge candidate: Bound the next request after paging the received log This loop collects every page before requesting certificates for all missing heights of each sender. For a ",
+     "reason": "Pre-existing, and not a regression. This is excluded item R13 again, with better arithmetic. The PR does not touch the step N1 describes: `git diff --stat` for linera-service/ and linera-rpc/ is empty. Downloading each sender's whole height set comes after the new loop (client/mod.rs:873-894, `remote_node.download_certificates_by_heights(sender_chain_id, remote_heights)`). The proxy looks up the hashes with no bound (proxy/grpc.rs:758-785, `ChainInfoQuery::new(..).with_sent_certificate_hashes_by_heights(original_request.heights)`, then `chain_info.requested_sent_certificate_hashes`). The worker loops over every height (state.rs:1410-1414, `for height in query.request_sent_certificate_hashes_by_heights { hashes.extend(chain.block_hashes(height..=height).await?); }`). All three are the same at the merge base. The arithmetic is right: 16 MiB (grpc/mod.rs:39) divided by 32-byte hashes is about 524k hashes. But no chain that synced before fails now. At the merge base, the single received-log query returned about 40 bytes per ChainAndHeight entry, so any backlog above about 419k entries already failed at that first step. A chain whose backlog holds more than about 524k heights from one sender therefore failed before and still fails; only the failing step moves. Whether this leaves the PR's motivating GoL chain unfixed depends on how concentrated its senders are, which nothing in the PR shows. The PR also defers that question to manual testnet testing. Asking to bound the proxy's height/hash request as well is scope expansion into untouched code: a follow-up idea, not a defect this PR introduces."
     }
    ]
   },

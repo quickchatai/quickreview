@@ -1,7 +1,7 @@
 {
  "set": "holdout10",
- "version": "1",
- "method": "Per PR: a blind expert hunt from the diff and code; every candidate (the hunt, the AACR references with hand labels, and every comment any reviewer posted in our runs, anonymised) checked against the code, merged and graded, exclusions recorded; an adversarial critic per set spot-checked inclusions, exclusions and merges, and its 12 corrections were applied (2026-09-26).",
+ "version": "2",
+ "method": "Per PR: a blind expert hunt from the diff and code; every candidate (the hunt, the AACR references with hand labels, and every comment any reviewer posted in our runs, anonymised) checked against the code, merged and graded, exclusions recorded; an adversarial critic per set spot-checked inclusions, exclusions and merges, and its 12 corrections were applied (2026-09-26). v2 (2026-09-26): the judge's 44 new-defect candidates from 12 judged runs were checked against the code — 1 added, 2 restated existing defects, 41 rejected (added to each PR's excluded list, which the judge now reads).",
  "cases": {
   "vllm-project__vllm@3fe1893": {
    "pr_summary": "The PR adds a new hook, `BaseProcessingInfo.get_max_tokens_per_item()` (processing.py:1103). It takes no arguments and returns None by default. `MultiModalProfiler.get_mm_max_tokens(seq_len, mm_counts)` (profiling.py:251-261) now returns the hook's result when it is not None, and skips building and processing dummy inputs. `Qwen2VLProcessingInfo` overrides the hook (qwen2_vl.py:822-823) with the constant `{\"image\": 16384, \"video\": 98304}`, which cuts about 40s from Qwen2/2.5-VL startup. The constants match only one configuration: Qwen2.5-VL with the checkpoint-default max_pixels (12845056) and max_model_len=128000, with image and video both enabled (video = 12 frames = 6 temporal groups x 16384). They ignore seq_len and mm_counts, which bound the video frame count. They also ignore the processor's configured min/max_pixels. Qwen2_5_VLProcessingInfo and Qwen2_5OmniThinkerProcessingInfo both inherit them, and the Omni class loses its \"audio\" entry. Every consumer reads these numbers: the V1 encoder compute/cache budget (and its disable_chunked_mm_input check, which TPU forces), the GPU/TPU runners' encoder profiling, and V0's get_max_multimodal_tokens.",
@@ -484,6 +484,14 @@
     {
      "source": "R15 (test-request half)",
      "reason": "The request for reporter tests is excluded as a test request. Its nit about moving the empty-DSN return is credited to D3. Its claim that a pending timer keeps processes alive is not supported: BaseCommand.finally() calls this.exit, which leads oclif to call process.exit."
+    },
+    {
+     "source": "judge candidate: npm installations never acquire a release date Older npm/npx installations will keep sending backend errors to Sentry. The new field defaults to undefined and t",
+     "reason": "Already in the excluded list (R6, R7, R8: the npm-installs point is a scope/design choice, not a defect). The code confirms it. generic.config.ts:12-13 `@Env('N8N_RELEASE_DATE') releaseDate?: Date;` is opt-in by design, and error-reporter.ts:82 `if (releaseDate)` treats undefined as feature-off. That path behaves exactly as before the PR. Sentry reporting on an npm install only happens when the operator sets the DSN themselves: sentry.config.ts:6-7 `@Env('N8N_SENTRY_DSN') backendDsn: string = '';`, and a repo-wide grep shows no baked-in DSN in the npm publish job (release-publish.yml:53-60) or the Dockerfile. Such an operator can also set N8N_RELEASE_DATE. The PR does not break or regress anything for npm installs. The feature simply does not extend to them, and the PR body (\"changes the error-reporter to stop reporting errors for releases older than 6 weeks\") does not promise that it does. The real release-date production bug is the literal `$(date ...)` build-arg, which is D2."
+    },
+    {
+     "source": "judge candidate: Should browser Sentry also respect the release cutoff? This passes the date only to the backend reporter, while `server.ts:252-264` continues serving the fronte",
+     "reason": "Already in the excluded list (R11, R13, R23: the browser/frontend Sentry client is untouched and outside the PR's stated scope). The PR changes only the backend ErrorReporter (packages/core/src/errors/error-reporter.ts) and BaseCommand.init (base-command.ts:66-74). The frontend path at server.ts:253-265 (`dsn: this.globalConfig.sentry.frontendDsn`) and the editor-ui sentry plugin are not in the diff. frontendDsn defaults to '' (sentry.config.ts:10-11) and is operator-supplied. Leaving them as they were introduces no new failure and exposes nothing new. The PR body names \"the error-reporter\" as its scope. This is a scope question, not a defect."
     }
    ]
   },
@@ -673,6 +681,18 @@
     {
      "source": "ref 6",
      "reason": "Nit. Adding stdout to the rejection message is a debugging nicety. It matches run()'s existing error format."
+    },
+    {
+     "source": "judge candidate: The pipe stays open when `stdin` is omitted or empty. Any command that waits for EOF will keep `runCommand` pending; close `child.stdin` regardless of whether i",
+     "reason": "Already excluded as R17 / ref 3, and the code confirms it cannot be reached. test-helper.ts:322-325 `if (options.stdin) { child.stdin!.write(options.stdin); child.stdin!.end(); }` does leave the pipe open when stdin is omitted. But the only callers that omit stdin run `extensions uninstall|list|update`, and those never read stdin. update.ts:56 calls `installExtension(installMetadata, false, cwd)` with askConsent=false, so requestConsent (extension.ts:450-451, readline at :361) is never reached. Only `install` asks for consent (install.ts:51, `installExtension(installMetadata, true)`), and the test passes it { stdin: 'y\\n' }, which is written and then ended. So no command in this PR waits for EOF, and 'any command that waits for EOF' has no caller."
+    },
+    {
+     "source": "judge candidate: Register a `child.on('error', reject)` handler as well. If `spawn` fails (e.g. the working directory has been removed or `node` is unavailable), Node emits an u",
+     "reason": "Already excluded as R19 / ref 5. The missing `child.on('error', ...)` in runCommand (test-helper.ts:314-317, `spawn('node', commandArgs, { cwd: this.testDir!, stdio: 'pipe' })`) matters only if spawning `node` fails. `node` is always present under vitest, and the cwd was just created by rig.setup() (extensions-install.test.ts:24). Neither failure the comment names (a removed working directory or a missing `node`) can happen on this path. It is also the same pattern as the pre-existing run() (merge-base test-helper.ts:210), which likewise has no error listener."
+    },
+    {
+     "source": "judge candidate: Appending each Buffer as a string decodes UTF-8 separately per chunk; a multibyte character split across chunks becomes replacement characters, corrupting captu",
+     "reason": "Already excluded as R18. `stdout += data` / `stderr += data` (test-helper.ts:327-339) is copied verbatim from the pre-existing run() (merge-base test-helper.ts:231, :238). The extension subcommands print one short console.log line and the assertions check ASCII substrings ('test-extension', '0.0.2'). A multibyte character split across chunks cannot happen on any output this PR asserts on, so no consequence is reachable."
     }
    ]
   },
@@ -1199,6 +1219,10 @@
     {
      "source": "R5",
      "reason": "A request to add a regression test, not a defect. The underlying recall concern is captured by D1 via R1/R2/R4."
+    },
+    {
+     "source": "judge candidate: Avoid scoring all children up front at higher visit ratios At visit ratios of 0.125 or higher, the new cap makes `bufferSize == numCentroids`, so the initial fi",
+     "reason": "Already in the excluded list as R3 (\"the buffer is too large / scores all centroids at high ratios\"), and the code bears that exclusion out. DefaultIVFVectorsReader.java:197 `bufferSize = (int) Math.min(Math.max(visitRatio * numCentroids * CENTROID_OVERSAMPLING, 1), numCentroids)` does reach numCentroids at visitRatio >= 0.125, so the fill loop at :216-236 scores every child up front. But the same ratio makes IVFVectorsReader.java:249 `maxVectorVisited = (long) (2.0 * visitRatio * numVectors)` cover at least 25% of the segment's vectors. The added cost is going from 20% to 100% of centroid scores, about numVectors/384 int7 scores, which is negligible next to that visit. The no-parent path (getCentroidIteratorNoParent) already scores every centroid unconditionally. A caller who sets an explicit ratio that high has asked for a broad visit. This is a tuning trade-off in the direction the PR intends (the old fixed 20% is what the PR replaces), not a regression with a statable consequence."
     }
    ]
   },
@@ -1304,6 +1328,10 @@
     {
      "source": "hunt:removed priority= attributes change the emitted :guide-priority: (self-checked)",
      "reason": "Removing priority=10/20/30 from the operator guides and vault.adoc changes the rendered `:guide-priority:` attribute to the template default 999. Within this repo the plugin's ordering for those pinned directories came from pinned-guides both before and after the change. Any effect on an external consumer such as the website is speculative and cannot be verified from this repo."
+    },
+    {
+     "source": "judge candidate: Synchronize the site before bringing it online The chapter list puts `operate-site-online` before `operate-synchronize`. A reader restoring an offline, out-of-s",
+     "reason": "This is an editorial table-of-contents choice, not a defect, and the PR did not create this order. At the merge base the three operate guides existed but were not in pinned-guides. Context.java@merge_base:34-36 gave any unpinned guide in a pinned directory `Integer.MAX_VALUE`, and :44-50 broke priority ties by title. The rendered order was therefore \"Bring site online\" < \"Synchronize Sites\" < \"Take site offline\", so online already came before synchronize. The PR's pinned-guides:13-15 (`operate-site-offline`, `operate-site-online`, `operate-synchronize`) only moves offline to the front and keeps the existing relative order of online and synchronize. The claimed consequence also needs a reader to run independent chapters one after another. Each guide is a standalone procedure with its own \"When to use this procedure\" section (operate-site-online.adoc:8-11, operate-synchronize.adoc:10-13). operate-synchronize.adoc:58-61 states the safe sequence and links to operate-site-online: \"Once the two sites have been synchronized, it is safe to add the previously offline site back ... following the steps in the <@links.ha id=\\\"operate-site-online\\\" />\". The reordering request is a documentation-structure nit with no statable consequence that this PR introduces. It is not in the excluded list, and the entry below can be added there."
     }
    ]
   },
@@ -1522,6 +1550,10 @@
     {
      "source": "R8 (and the nit half of R6)",
      "reason": "Duplication of a five-PID list between the predicate and InitDevice's else-if (it could be `else`). This is a minor style/maintainability preference. The only drift consequence is that a hypothetical future PID would lack the optional capability probe, which is not a concrete defect this PR introduces."
+    },
+    {
+     "source": "judge candidate: Check the length of new 0x04 reports before decoding The read loop passes the actual positive length of an uninitialized stack buffer, but a short 0x04 report p",
+     "reason": "This is the short-0x04-report length concern that the excluded list already rejects twice: \"R10, R11, R12\" (the same speculative short-0x04-report length concern) and \"hunt:Battery and IMU fields are read regardless of packet size\". D1's notes also say that comments which only ask for length checks on 0x04 reports do not count. At head, the PR changes only the filter at SDL_hidapi_8bitdo.c:259, `if (data[0] != 0x03 && data[0] != 0x01 && data[0] != 0x04)`. The decoder that follows has never checked length, and the existing 0x01/0x03 reports went through it unchecked before this PR, so the missing check is pre-existing rather than introduced here. UpdateDevice reads into `Uint8 data[USB_PACKET_LENGTH]` via `SDL_hid_read_timeout(device->dev, data, sizeof(data), 0)`, so offsets 1-10, 14 and 15+ always stay inside the 64-byte buffer. The new 'uninitialized bytes' angle still needs a supported-firmware device that sends a short 0x04 report, and nothing shows one. The battery and sensor reads are gated on powerstate_supported and sensors_enabled, which are set only when the 0x06 probe succeeds, i.e. on supported firmware. The only concrete misparse path, old firmware, is D1, and this comment does not identify it."
     }
    ]
   },

@@ -14,6 +14,7 @@ import {
   parseJudgement,
   type CaseJudgement,
   type Defect,
+  type ExcludedClaim,
   type JudgePr,
   type ReviewForJudge,
 } from "./defects.js";
@@ -79,6 +80,8 @@ export function readJudgeEvents(eventsPath: string): Pick<JudgePiResult, "text" 
 export interface JudgeCaseOptions {
   pr: JudgePr;
   defects: readonly Defect[];
+  /** Claims the ground truth already rejected, shown to the judge. */
+  excluded?: readonly ExcludedClaim[];
   review: ReviewForJudge;
   outDir: string;
   rounds: number;
@@ -96,7 +99,7 @@ export function roundFile(outDir: string, instanceId: string, round: number): st
 /** Judge one case for `rounds` rounds; every round is written, errors included. */
 export async function judgeCase(o: JudgeCaseOptions): Promise<CaseJudgement[]> {
   mkdirSync(o.outDir, { recursive: true });
-  const prompt = judgePrompt(o.pr, o.defects, o.review);
+  const prompt = judgePrompt(o.pr, o.defects, o.review, o.excluded ?? []);
   const out: CaseJudgement[] = [];
   for (let k = 1; k <= o.rounds; k++) {
     const file = roundFile(o.outDir, o.pr.instance_id, k);
