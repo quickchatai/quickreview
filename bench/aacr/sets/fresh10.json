@@ -7,7 +7,7 @@
     "sha256": "d8683cb240249bc4e0aff6428802bdffa7b7573ace600552cab1cd0cb7e905c9"
   },
   "rule": "60<=change_line_count<=400, not one of the smoke10/holdout10/dev10 PRs, no ['Code Style, Linting, Formatting Fixes', 'Documentation Update', 'Test Suite / CI Enhancements'] category, quota {'Python': 4, 'TypeScript': 4, 'JavaScript': 1, 'Go': 1}, smallest first, one PR per repo \u2014 out-of-sample for the levers designed from those 30 PRs' missed defects",
-  "references": 58,
+  "references": 57,
   "cases": [
     {
       "instance_id": "infiniflow__ragflow@2d06022",
@@ -46,16 +46,16 @@
       "references": 8
     },
     {
-      "instance_id": "comfyanonymous__ComfyUI@cfc3122",
+      "instance_id": "comfyanonymous__ComfyUI@4936d01",
       "repo": "comfyanonymous/ComfyUI",
-      "pr": 9560,
-      "pr_url": "https://github.com/comfyanonymous/ComfyUI/pull/9560",
-      "base_commit": "a86aaa430183068e2a264495c802c81d05eb350a",
-      "head_commit": "cfc312296c0b9f255bba6b4b2789ac7bbc66a7cb",
+      "pr": 7952,
+      "pr_url": "https://github.com/comfyanonymous/ComfyUI/pull/7952",
+      "base_commit": "924d771e18000f4cb223575189daa6d2c6c5a9c1",
+      "head_commit": "4936d01872b8719ede33f9a11dc8e898c33d39e4",
       "language": "Python",
-      "pr_category": "Bug Fix",
-      "change_line_count": 319,
-      "references": 6
+      "pr_category": "New Feature Additions",
+      "change_line_count": 323,
+      "references": 5
     },
     {
       "instance_id": "cline__cline@2195a68",
