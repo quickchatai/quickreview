@@ -218,6 +218,15 @@ The verdict line and the body's sections count root causes, not rows. A
 candidate whose evidence itself names several distinct sites (two cells, two
 callers, two files) is split into one row per site before validation.
 
+**Except one mechanical fix repeated in one file.** When the SAME change — one
+wrong format specifier, one typo, one deprecated call, one guard copied
+verbatim — is needed at several lines of ONE file, and one sentence of fix
+covers them all, post ONE row on the first site and list the rest in it
+(`Same fix at lines 1490, 1540 and 1559.`): one fix is one thread for the
+author to resolve. Sites that each break on their own path — two notebook
+cells that each fail when run, two callers that each crash — keep one row per
+site, and so do sites in other files.
+
 Log every merge-stage disposition, one line each, exactly:
 
 ```
