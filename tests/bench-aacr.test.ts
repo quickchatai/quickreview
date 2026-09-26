@@ -104,7 +104,9 @@ describe("case sets", () => {
 
   it("the dev10 set shares no repository with smoke10 or holdout10", () => {
     const set = (name: string) =>
-      parseCaseSet(JSON.parse(readFileSync(join(ROOT, "bench", "aacr", "sets", `${name}.json`), "utf8")));
+      parseCaseSet(
+        JSON.parse(readFileSync(join(ROOT, "bench", "aacr", "sets", `${name}.json`), "utf8")),
+      );
     const d = set("dev10");
     expect(d.cases).toHaveLength(10);
     const taken = new Set([...set("smoke10").cases, ...set("holdout10").cases].map((c) => c.repo));
@@ -139,17 +141,24 @@ describe("case sets", () => {
     expect(selectCases(s, undefined)).toHaveLength(10);
   });
 
-  it.each(["smoke10", "holdout10", "dev10"])("the %s labels cover every reference, in the dataset's own order", (name) => {
-    const s = parseCaseSet(JSON.parse(readFileSync(join(ROOT, "bench", "aacr", "sets", `${name}.json`), "utf8")));
-    const l = parseReferenceLabels(
-      JSON.parse(readFileSync(join(ROOT, "bench", "aacr", "sets", `${name}.labels.json`), "utf8")),
-    );
-    for (const c of s.cases) {
-      const ls = l.labels[c.instance_id] ?? [];
-      expect(ls, c.instance_id).toHaveLength(c.references);
-      expect(ls.every(Boolean), c.instance_id).toBe(true);
-    }
-  });
+  it.each(["smoke10", "holdout10", "dev10"])(
+    "the %s labels cover every reference, in the dataset's own order",
+    (name) => {
+      const s = parseCaseSet(
+        JSON.parse(readFileSync(join(ROOT, "bench", "aacr", "sets", `${name}.json`), "utf8")),
+      );
+      const l = parseReferenceLabels(
+        JSON.parse(
+          readFileSync(join(ROOT, "bench", "aacr", "sets", `${name}.labels.json`), "utf8"),
+        ),
+      );
+      for (const c of s.cases) {
+        const ls = l.labels[c.instance_id] ?? [];
+        expect(ls, c.instance_id).toHaveLength(c.references);
+        expect(ls.every(Boolean), c.instance_id).toBe(true);
+      }
+    },
+  );
 
   it("recall by quality averages the judge rounds, and a misaligned label is unlabelled", () => {
     const out = mkdtempSync(join(tmpdir(), "bench-quality-"));
@@ -166,11 +175,20 @@ describe("case sets", () => {
           ],
         },
         // Not in the case list: never counted.
-        { instance_id: "c__d@7654321", comments: [{ path: "q", from_line: 1, semantic_match: true }] },
+        {
+          instance_id: "c__d@7654321",
+          comments: [{ path: "q", from_line: 1, semantic_match: true }],
+        },
       ],
     });
-    writeFileSync(join(dir, "metrics_ocr_1_round_1.json"), JSON.stringify(round([true, true, false])));
-    writeFileSync(join(dir, "metrics_ocr_2_round_2.json"), JSON.stringify(round([false, true, false])));
+    writeFileSync(
+      join(dir, "metrics_ocr_1_round_1.json"),
+      JSON.stringify(round([true, true, false])),
+    );
+    writeFileSync(
+      join(dir, "metrics_ocr_2_round_2.json"),
+      JSON.stringify(round([false, true, false])),
+    );
     // The average file is not a round and must not be double-counted.
     writeFileSync(join(dir, "metrics_ocr_average.json"), JSON.stringify({ summary: {} }));
     const labels = parseReferenceLabels({
@@ -646,8 +664,32 @@ describe("the sandbox cannot post", () => {
     expect(sh).not.toMatch(/dst=\/pi-agent[^-]/);
     // …and no host-side file inside the run dir is bound or appended to.
     expect(sh).not.toContain(".pi-shadow");
-    expect(sh).toContain('>> "$HERE/runs/$RUN.sandbox-commands.log"');
+    expect(sh).toContain('>> "$RUNS_DIR/$RUN.sandbox-commands.log"');
     expect(sh).toContain('[[ ! -L "$d" ]]');
+  });
+
+  it("runs can live outside the worktree, and default to bench/aacr/runs", () => {
+    const sh = readFileSync(join(ROOT, "bench", "aacr", "bench.sh"), "utf8");
+    expect(sh).toContain('RUNS_DIR="${QCR_BENCH_RUNS_DIR:-$HERE/runs}"');
+    expect(sh).toContain('local d="$RUNS_DIR/$RUN"');
+    expect(sh).not.toContain('"$HERE/runs/$RUN');
+  });
+
+  it("the defect judge reads its ground truth and the repos READ-ONLY, and re-scoring needs no network", () => {
+    const sh = readFileSync(join(ROOT, "bench", "aacr", "bench.sh"), "utf8");
+    const block = sh.slice(sh.indexOf("  judge|judge-report)"), sh.indexOf("  eval)\n"));
+    expect(block).toContain(
+      '"type=bind,src=$HERE/defects,dst=/opt/quickreview/bench/defects,readonly"',
+    );
+    expect(block).toContain('"type=volume,src=$REPOS_VOLUME,dst=/repos,readonly"');
+    // The login and the repos only for `judge`; `judge-report` is --network none.
+    expect(block).toMatch(
+      /jn=\(--network none\)\n\s+if \[\[ "\$cmd" == judge \]\]; then\n\s+auth_mounts;/,
+    );
+    expect(block).toContain('"${HARDEN[@]}"');
+    const ic = readFileSync(join(ROOT, "bench", "aacr", "in-container.sh"), "utf8");
+    expect(ic).toContain("defect-judge --set");
+    expect(ic).toContain("defect-report --set");
   });
 
   it("--run cannot name `.`, `..` or a dotfile, and empty arrays survive bash < 4.4", () => {

@@ -169,6 +169,14 @@ PY
     [[ -n "$shim_pid" ]] && kill "$shim_pid" 2>/dev/null || true
     [[ "$line_k" == 1 ]] && "${CLI[@]}" "$report_cmd" --set "$set_path" --out /bench-out "$@"
     exit "$status" ;;
+  judge)
+    set_name="$1"; rounds="$2"; shift 2
+    exec "${CLI[@]}" defect-judge --set "$(set_file "$set_name")" \
+      --defects "/opt/quickreview/bench/defects/$set_name.json" --store /repos --out /bench-out --rounds "$rounds" "$@" ;;
+  judge-report)
+    set_name="$1"; shift 2
+    exec "${CLI[@]}" defect-report --set "$(set_file "$set_name")" \
+      --defects "/opt/quickreview/bench/defects/$set_name.json" --out /bench-out "$@" ;;
   whatif)
     set_name="$1"; shift
     exec "${CLI[@]}" whatif --set "$(set_file "$set_name")" --out /bench-out "$@" ;;

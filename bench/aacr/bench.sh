@@ -10,7 +10,12 @@
 #   bench/aacr/bench.sh eval     --run ID [--set smoke10] [--judge mock|openai|codex] [--rounds 3] [--line-k N]
 #              --line-k N (default 1, the published setting): N != 1 is a DIAGNOSTIC that scores a copy of
 #              the `all` results in results/all-kN/ and leaves the official numbers untouched
-#   bench/aacr/bench.sh report   --run ID [--set smoke10]
+#   bench/aacr/bench.sh judge    --run ID [--set smoke10] [--rounds 1] [--judge-model M] [--concurrency 3] [--resume]
+#              THE DEFECT BENCHMARK: did the review find each real defect in
+#              bench/aacr/defects/<set>.json, and is each comment true? Works on
+#              any run dir (either arm, archived too). → <run>/judge/<label>/report.md
+#   bench/aacr/bench.sh judge-report --run ID [--set smoke10] [--label L]   re-score, no model calls
+#   QCR_BENCH_RUNS_DIR=DIR   where runs live (default bench/aacr/runs) — keep them outside worktrees
 #   bench/aacr/bench.sh results  --run ID [--set smoke10]    rebuild scored files from case dirs (no model calls)
 #   bench/aacr/bench.sh smoke    [--run ID] [--judge mock|codex]   build → prefetch → review → eval
 #   bench/aacr/bench.sh shell    --run ID                            a shell in the review sandbox
@@ -48,6 +53,10 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Where runs live. Default: bench/aacr/runs in this checkout. Point it at a
+# directory OUTSIDE any worktree (QCR_BENCH_RUNS_DIR=~/…/qcr-bench-runs/runs)
+# so removing a worktree never deletes a run that may be re-judged later.
+RUNS_DIR="${QCR_BENCH_RUNS_DIR:-$HERE/runs}"
 REPO="$(cd "$HERE/../.." && pwd)"
 REPOS_VOLUME="${QCR_BENCH_REPOS_VOLUME:-qcr-bench-repos}"
 AUTH_VOLUME="${QCR_BENCH_AUTH_VOLUME:-companion-pihome}"
@@ -57,7 +66,7 @@ MEMORY="${QCR_BENCH_MEMORY:-8g}"
 die() { echo "bench: $*" >&2; exit 1; }
 
 cmd="${1:-}"; shift || true
-RUN="" SET="smoke10" ONLY="" JUDGE="mock" ROUNDS="" LINE_K="1" ARM="qcr" EXTRA=() FROM="" FORCE=0
+RUN="" SET="smoke10" ONLY="" JUDGE="mock" ROUNDS="" LINE_K="1" ARM="qcr" EXTRA=() FROM="" FORCE=0 JARGS=()
 while (($#)); do
   case "$1" in
     --run) RUN="$2"; shift 2 ;;
@@ -67,6 +76,8 @@ while (($#)); do
     --judge) JUDGE="$2"; shift 2 ;;
     --rounds) ROUNDS="$2"; shift 2 ;;
     --line-k) LINE_K="$2"; shift 2 ;;
+    --judge-model) JARGS+=(--model "$2"); shift 2 ;;
+    --label) JARGS+=(--label "$2"); shift 2 ;;
     --profile|--timeout-min|--concurrency|--ocr-concurrency|--max-tools) EXTRA+=("$1" "$2"); shift 2 ;;
     --resume|--wait-rate-limit|--keep-tree) EXTRA+=("$1"); shift ;;
     --from) FROM="$2"; shift 2 ;;
@@ -103,7 +114,7 @@ need_image() { docker image inspect "$IMAGE" >/dev/null 2>&1 || die "no image $I
 
 run_dir() {
   [[ -n "$RUN" ]] || die "--run <id> is required"
-  local d="$HERE/runs/$RUN"
+  local d="$RUNS_DIR/$RUN"
   # The container writes freely inside the run dir, so the host never writes
   # or follows anything in it; the dir itself must not be a planted symlink.
   [[ ! -L "$d" ]] || die "$d is a symlink — refusing to mount it"
@@ -126,7 +137,7 @@ auth_mounts() {
 # The reproduction log lives NEXT TO the run dir, never inside it: a host-side
 # append into a dir the container writes would follow a planted symlink.
 record() {
-  { echo "# $(date -u +%FT%TZ) $cmd"; printf '%q ' docker run "$@"; echo; } >> "$HERE/runs/$RUN.sandbox-commands.log"
+  { echo "# $(date -u +%FT%TZ) $cmd"; printf '%q ' docker run "$@"; echo; } >> "$RUNS_DIR/$RUN.sandbox-commands.log"
 }
 record_whatif() {
   { echo "# $(date -u +%FT%TZ) $cmd"; printf '%q ' docker run "$@"; echo; } >> "$HERE/whatif/$RUN.sandbox-commands.log"
@@ -231,6 +242,27 @@ case "$cmd" in
     docker run "${args[@]}"
     ;;
 
+  judge|judge-report)
+    # The defect benchmark (src/bench/defects.ts): did the review FIND the real
+    # defects, and is what it says true? Ground truth bench/aacr/defects/<set>.json
+    # is mounted read-only, so a corrected truth needs no rebuild. judge-report
+    # re-scores saved verdicts with no model call and no network.
+    need_image
+    d="$(run_dir)"
+    [[ -f "$HERE/defects/$SET.json" ]] || die "no ground truth for $SET (bench/aacr/defects/$SET.json)"
+    jm=(--mount "type=bind,src=$HERE/defects,dst=/opt/quickreview/bench/defects,readonly")
+    jn=(--network none)
+    if [[ "$cmd" == judge ]]; then
+      auth_mounts; jm+=("${AUTH[@]}" --mount "type=volume,src=$REPOS_VOLUME,dst=/repos,readonly"); jn=()
+    fi
+    args=("${HARDEN[@]}" ${jn[@]+"${jn[@]}"} "${jm[@]}"
+      --mount "type=bind,src=$d,dst=/bench-out"
+      "$IMAGE" "$cmd" "$SET" "${ROUNDS:-1}" ${ONLY_ARGS[@]+"${ONLY_ARGS[@]}"} ${EXTRA[@]+"${EXTRA[@]}"} ${JARGS[@]+"${JARGS[@]}"})
+    record "${args[@]}"
+    docker run "${args[@]}"
+    echo "report: $d/judge/*/report.md"
+    ;;
+
   eval)
     need_image
     d="$(run_dir)"
@@ -313,5 +345,5 @@ case "$cmd" in
       --mount "type=bind,src=$d,dst=/bench-out" "$IMAGE" shell
     ;;
 
-  *) sed -n '2,29p' "$0"; exit 2 ;;
+  *) sed -n '2,34p' "$0"; exit 2 ;;
 esac
