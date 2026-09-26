@@ -690,7 +690,11 @@ export function buildPassPlan(
     smallDiffLines: cfg.models.small_diff_lines,
   });
   const risk = new Set(cfg.models.risk_passes);
-  const selected0 = selectLenses(files, intent, heuristics);
+  const selected0 = selectLenses(files, intent, heuristics, {
+    intentMinWords: cfg.review.intent_min_words,
+    placementMinCodeFiles: cfg.review.placement_min_code_files,
+    placementMinNewFileLines: cfg.review.placement_min_new_file_lines,
+  });
   // Sub-lenses ride after the path-selected lenses, each with the reason its
   // trigger fired (benchmark 2026-09-26; `[review] sublenses`).
   const sub = cfg.review.sublenses
@@ -725,7 +729,12 @@ export function buildPassPlan(
   // is computed from the lenses above and a terra-med sweep never raises it.
   let sweep_unswept: string[] = [];
   if (cfg.review.sweep) {
-    const { groups, unswept } = sweepGroups(files, cfg.review.sweep_max_groups);
+    const { groups, unswept } = sweepGroups(
+      files,
+      cfg.review.sweep_max_groups,
+      cfg.review.sweep_group_files,
+      cfg.review.sweep_group_lines,
+    );
     sweep_unswept = unswept;
     const rows = groups.map((focus): PassPlanEntry => ({
       lens: SWEEP_PASS,

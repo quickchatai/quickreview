@@ -244,9 +244,18 @@ describe("sweepGroups", () => {
       ],
       6,
     );
-    expect(groups).toEqual([["a.ts", "b.ts", "c.ts"], ["d.ts"], ["big.ts"], ["e.ts"]]);
+    expect(groups).toEqual([["a.ts", "b.ts", "c.ts", "d.ts"], ["big.ts"], ["e.ts"]]);
     expect(groups.every((g) => g.length <= SWEEP_MAX_FILES_PER_GROUP)).toBe(true);
     expect(unswept).toEqual([]);
+  });
+
+  it("group caps are parameters: the first batch's 3 files / 400 lines", () => {
+    const five = ["a", "b", "c", "d", "e"].map((n) => f(`${n}.ts`, 10));
+    expect(sweepGroups(five, 6, 3, 400).groups).toEqual([
+      ["a.ts", "b.ts", "c.ts"],
+      ["d.ts", "e.ts"],
+    ]);
+    expect(sweepGroups(five, 6).groups).toEqual([["a.ts", "b.ts", "c.ts", "d.ts", "e.ts"]]);
   });
 
   it("names every file past the group cap instead of dropping it silently", () => {
@@ -317,7 +326,7 @@ describe("buildPassPlan with the levers", () => {
       issuedAt: "2026-09-26T00:00:00Z",
       dependencyNote: "**Third-party sources** …",
     });
-    expect(order.pass_plan.filter((p) => p.lens === SWEEP_PASS)).toHaveLength(3);
+    expect(order.pass_plan.filter((p) => p.lens === SWEEP_PASS)).toHaveLength(2);
     expect(order.lenses.filter((l) => l === SWEEP_PASS)).toHaveLength(1);
     expect(order.dependency_note).toBe("**Third-party sources** …");
     const prompt = renderRoundPrompt(
@@ -326,8 +335,45 @@ describe("buildPassPlan with the levers", () => {
     );
     expect(prompt).toContain("**Third-party sources** …");
     expect(prompt).toContain("| focus / why |");
-    expect(prompt).toContain("files: `src/f0.ts`, `src/f1.ts`, `src/f2.ts`");
+    expect(prompt).toContain(
+      "files: `src/f0.ts`, `src/f1.ts`, `src/f2.ts`, `src/f3.ts`, `src/f4.ts`",
+    );
     expect(prompt).not.toContain("{{");
+  });
+});
+
+describe("selection tuning — the [review] cost knobs", () => {
+  const added = (filename: string, additions: number): PrFileEntry => ({
+    filename,
+    additions,
+    deletions: 0,
+    status: "added",
+  });
+  const body20 = Array.from({ length: 25 }, (_, i) => `word${i}`).join(" ");
+
+  it("defaults select exactly as before the knobs existed", () => {
+    const plan = buildPassPlan(baseCfg, [added("src/new.ts", 5)], { body: body20 });
+    const lenses = plan.pass_plan.map((p) => p.lens);
+    expect(lenses).toContain("pass-placement");
+    expect(lenses).toContain("pass-intent");
+  });
+
+  it("a higher intent bar and a new-file size floor drop the two lenses", () => {
+    const cfg = withLevers({ intent_min_words: 60, placement_min_new_file_lines: 30 });
+    const lenses = buildPassPlan(cfg, [added("src/new.ts", 5)], { body: body20 }).pass_plan.map(
+      (p) => p.lens,
+    );
+    expect(lenses).not.toContain("pass-placement");
+    expect(lenses).not.toContain("pass-intent");
+    const big = buildPassPlan(cfg, [added("src/new.ts", 40)], { body: body20 }).pass_plan;
+    expect(big.map((p) => p.lens)).toContain("pass-placement");
+  });
+
+  it("placement_min_code_files moves the cross-cutting threshold", () => {
+    const files = ["a", "b", "c", "d", "e"].map((n) => file(`src/${n}.ts`, ["x();"]));
+    expect(buildPassPlan(baseCfg, files).pass_plan.map((p) => p.lens)).toContain("pass-placement");
+    const cfg = withLevers({ placement_min_code_files: 8 });
+    expect(buildPassPlan(cfg, files).pass_plan.map((p) => p.lens)).not.toContain("pass-placement");
   });
 });
 

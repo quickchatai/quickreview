@@ -104,8 +104,25 @@ export function intentSubstanceWords(body: string | null | undefined): number {
 }
 
 /** The substance bar: run pass-intent iff the body clears it. */
-export function meetsIntentBar(body: string | null | undefined): boolean {
-  return intentSubstanceWords(body) >= INTENT_MIN_SUBSTANCE_WORDS;
+export function meetsIntentBar(
+  body: string | null | undefined,
+  minWords: number = INTENT_MIN_SUBSTANCE_WORDS,
+): boolean {
+  return intentSubstanceWords(body) >= minWords;
+}
+
+/**
+ * The cost-shaped selection thresholds (`[review]` knobs), so a benchmark arm
+ * can test a tighter plan on the same image. Absent ⇒ the compiled defaults —
+ * exactly the selection every test and the pre-knob daemon use.
+ */
+export interface SelectionTuning {
+  /** pass-intent's substance bar (words of author prose). */
+  intentMinWords?: number;
+  /** Placement fires on this many code files… */
+  placementMinCodeFiles?: number;
+  /** …or on a new code file with at least this many added lines (0 = any). */
+  placementMinNewFileLines?: number;
 }
 
 // ---- placement / simplicity / backcompat ---------------
@@ -201,6 +218,7 @@ export function selectLenses(
   files: PrFile[],
   intent?: { body?: string | null },
   ext: HeuristicsExtension = EMPTY_HEURISTICS,
+  tuning: SelectionTuning = {},
 ): string[] {
   const lenses = new Set<string>(["pass-baseline"]);
   const names = files.map((f) => f.filename);
@@ -303,8 +321,12 @@ export function selectLenses(
   // small edits-in-place skip it — pure spend otherwise.
   const code = files.filter((f) => !isTestFile(f.filename) && CODE_FILE_RE.test(f.filename));
   if (
-    code.some((f) => PLACEMENT_STATUSES.has(f.status ?? "")) ||
-    code.length >= PLACEMENT_MIN_PROD_FILES
+    code.some(
+      (f) =>
+        PLACEMENT_STATUSES.has(f.status ?? "") &&
+        f.additions >= (tuning.placementMinNewFileLines ?? 0),
+    ) ||
+    code.length >= (tuning.placementMinCodeFiles ?? PLACEMENT_MIN_PROD_FILES)
   )
     lenses.add(PLACEMENT_PASS);
 
@@ -351,7 +373,7 @@ export function selectLenses(
   // Intent: keyed on the BODY, not the file shape — the artifact it
   // judges against is the author's own description, so a body below the
   // substance bar means the pass's only honest output would be NONE. Skip it.
-  if (meetsIntentBar(intent?.body)) lenses.add(INTENT_PASS);
+  if (meetsIntentBar(intent?.body, tuning.intentMinWords)) lenses.add(INTENT_PASS);
 
   return [...lenses];
 }
@@ -577,9 +599,12 @@ export const SWEEP_PASS = "pass-sweep";
 const SWEEP_SKIP_RE =
   /((^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock|go\.sum|poetry\.lock|uv\.lock|composer\.lock|Gemfile\.lock)$|\.(min\.js|map|snap|lock|svg|png|jpe?g|gif|ico|pdf|woff2?|ttf|md|rst|txt)$|(^|\/)(vendor|third_party|node_modules|dist|build|generated)\/)/i;
 
-/** A group stays under both caps unless one file alone exceeds them. */
-export const SWEEP_MAX_FILES_PER_GROUP = 3;
-export const SWEEP_MAX_LINES_PER_GROUP = 400;
+/** A group stays under both caps unless one file alone exceeds them. The
+ * first batch capped groups at 3 files and 32 of its 36 groups came out under
+ * 60 changed lines — a whole pass for a handful of lines — so the defaults
+ * are sized to hold a typical small PR in one or two passes. */
+export const SWEEP_MAX_FILES_PER_GROUP = 5;
+export const SWEEP_MAX_LINES_PER_GROUP = 500;
 
 /**
  * Cut the PR's changed files into sweep groups: diff order, greedy, at most
@@ -590,6 +615,8 @@ export const SWEEP_MAX_LINES_PER_GROUP = 400;
 export function sweepGroups(
   files: PrFile[],
   maxGroups: number,
+  maxFiles: number = SWEEP_MAX_FILES_PER_GROUP,
+  maxLines: number = SWEEP_MAX_LINES_PER_GROUP,
 ): { groups: string[][]; unswept: string[] } {
   const eligible = files.filter(
     (f) => f.status !== "removed" && f.additions > 0 && !SWEEP_SKIP_RE.test(f.filename),
@@ -600,10 +627,7 @@ export function sweepGroups(
   const unswept: string[] = [];
   for (const f of eligible) {
     const size = f.additions + f.deletions;
-    if (
-      cur.length > 0 &&
-      (cur.length >= SWEEP_MAX_FILES_PER_GROUP || lines + size > SWEEP_MAX_LINES_PER_GROUP)
-    ) {
+    if (cur.length > 0 && (cur.length >= maxFiles || lines + size > maxLines)) {
       groups.push(cur);
       cur = [];
       lines = 0;

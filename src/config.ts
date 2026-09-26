@@ -381,6 +381,15 @@ export interface ReviewConfig {
   /** At most this many sweep passes per round; files beyond them are listed
    * as not swept. */
   sweep_max_groups: number;
+  /** Files and changed lines per sweep group (heuristics.ts sweepGroups). */
+  sweep_group_files: number;
+  sweep_group_lines: number;
+  /** Selection cost knobs (heuristics.ts SelectionTuning): pass-intent's
+   * substance bar in words, and when pass-placement runs — this many code
+   * files, or a new code file with this many added lines. */
+  intent_min_words: number;
+  placement_min_code_files: number;
+  placement_min_new_file_lines: number;
   /** Unpack the sources of the third-party packages this PR touches, at
    * their locked versions, so passes can read what a library actually does
    * (src/depsources.ts). Download-and-unpack only — nothing is installed or
@@ -395,6 +404,11 @@ export const REVIEW_DEFAULTS: ReviewConfig = {
   sublenses: false,
   sweep: false,
   sweep_max_groups: 6,
+  sweep_group_files: 5,
+  sweep_group_lines: 500,
+  intent_min_words: 20,
+  placement_min_code_files: 4,
+  placement_min_new_file_lines: 0,
   dependency_sources: false,
 };
 
