@@ -48,6 +48,9 @@ describe("reviewer context stub", () => {
   });
 
   it("the bench image reads the same stub production does", () => {
+    // bench.sh builds from an explicit allowlist: the stub must be ON it, or
+    // the COPY below fails the build.
+    expect(read("bench/aacr/bench.sh")).toContain(STUB);
     const df = read("bench/aacr/Dockerfile");
     expect(df).toContain(`COPY ${STUB} ./AGENTS.override.md`);
     expect(df.indexOf(`COPY ${STUB}`)).toBeGreaterThan(

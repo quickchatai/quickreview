@@ -211,13 +211,14 @@ case "$cmd" in
     [[ -z "$(git -C "$REPO" status --porcelain 2>/dev/null)" ]] || commit="$commit-dirty"
     # The build context is ASSEMBLED from an explicit allowlist — only what a
     # review round reads. .git, state/, secrets, scripts/ (the posting route),
-    # deploy/, docs/, tests/ and every run output never reach the builder.
+    # deploy/ (bar the reviewer context stub production installs at boot),
+    # docs/, tests/ and every run output never reach the builder.
     ctx="$(mktemp -d)"; trap 'rm -rf "$ctx"' EXIT
     ( cd "$REPO" && tar -cf - --exclude=node_modules --exclude='*.tsbuildinfo' \
         package.json package-lock.json tsconfig.json config.toml AGENTS.md CLAUDE.md .pi \
         src extensions prompts agents profiles \
-        bench/aacr/Dockerfile bench/aacr/sets bench/aacr/judge_shim.py bench/aacr/in-container.sh \
-        bench/aacr/codex_bridge.py ) \
+        bench/aacr/Dockerfile bench/aacr/sets bench/aacr/defects bench/aacr/judge_shim.py \
+        bench/aacr/in-container.sh bench/aacr/codex_bridge.py deploy/reviewer/AGENTS.override.md ) \
       | tar -xf - -C "$ctx"
     docker build --target "$TARGET" -t "$IMAGE" ${BASE_ARGS[@]+"${BASE_ARGS[@]}"} \
       --build-arg "QCR_BENCH_COMMIT=$commit" -f "$ctx/bench/aacr/Dockerfile" "$ctx"
