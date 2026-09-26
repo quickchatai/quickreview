@@ -659,17 +659,13 @@ const BASELINE_SIBLING_SITES_ADDENDUM =
 // that cannot raise, an exists-check the callee already makes, one selection
 // written three times); the session's task strings narrowed a lens to one
 // concern; and pass-intent left the author's direct question unanswered.
+// (A third rule from that analysis, a checklist of simplicity shapes for
+// pass-simplicity, was withdrawn on evidence: across 30 AACR PRs it took the
+// lens from 5 to 13 posted comments, and a blind code check rated every added
+// one correct but minor — volume without value.)
 const JUDGMENT_LENS_OWN_QUESTIONS_ADDENDUM =
   "\n## Finish your own questions (sandbox rule)\nA defect outside your lane — correctness, security, data — gets ONE line: the `P3` question your severity cap already prescribes, naming the concern. It does not end or narrow your pass: the lens that owns it judges it at full strength, and re-deriving it spends the round's tokens on a finding it already has. Your own lane is still yours to finish — answer your lens's own questions for every guard, `try`/`except`, handler, fallback and repeated block the diff adds before you return. A task string may point you at a site; it never removes one of your questions.\n";
 
-const SIMPLICITY_PATTERNS_ADDENDUM =
-  "\n## Shapes to check on every diff (sandbox rule)\nEach of these is a concrete Question 1 or Question 2 answer. When one fires, name the one-line change.\n\n" +
-  "- **A redundant pre-check** — a lookup that decides what the next call already decides: an exists-check before a create-or-replace the callee does unconditionally, `containsKey` before `put`, `if k in d` before `d.get(k)`. Same behaviour, less mechanism: a Question 1 finding, with no unreachability burden.\n" +
-  "- **A guard against something the API cannot do** — `with suppress(asyncio.CancelledError): task.cancel()` (`cancel()` requests cancellation, it never raises it), a `try` around `dict.get` or `set.discard`, a null check on a value the called function's declared type never makes null. The API's own contract is the Question 2 proof: cite the stdlib behaviour, or the library's source or typings in the worktree.\n" +
-  "- **One piece of logic written three times** — the same non-trivial expression, selection or normalisation in three places in the diff, or the diff adding the third copy of one that already exists. Name the helper they share and where it lives.\n" +
-  "- **A branch the declared types rule out** — a `typeof x === \"string\"` arm on a value typed as an object, an `as any` cast to reach a field the type already declares, a `default:` after an exhaustive match.\n" +
-  "- **Copied idiom is still new code.** Added lines that copy a pre-existing idiom are reviewable on their own; that the original exists elsewhere is not a reason to pass the copy.\n\n" +
-  "Any of these is a `nit` when the simpler shape plainly keeps behaviour, a `P3` when you are not sure it does.\n";
 
 const INTENT_ANSWER_THE_AUTHOR_ADDENDUM =
   "\n## Answer the author; check the claims against callers (sandbox rule)\n" +
@@ -738,7 +734,6 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
     scope: ["pass-simplicity", "pass-placement", "pass-intent"],
     text: JUDGMENT_LENS_OWN_QUESTIONS_ADDENDUM,
   },
-  { id: "simplicity-patterns", scope: ["pass-simplicity"], text: SIMPLICITY_PATTERNS_ADDENDUM },
   {
     id: "intent-answer-the-author",
     scope: ["pass-intent"],
