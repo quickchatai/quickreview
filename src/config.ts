@@ -419,6 +419,10 @@ export interface ReviewConfig {
    * for benchmarks whose references reward nits; a repo that wants every nit
    * can set it too. Style still needs the repo's written guide either way. */
   nits: NitPolicy;
+  /** The validator demotes a confirmed, actionable observation instead of
+   * killing it for a small consequence (`validate-demote-not-kill`, 2026-09-27).
+   * On by default; off reproduces the earlier validator for a benchmark. */
+  validate_demote: boolean;
 }
 
 export type NitPolicy = "strict" | "open";
@@ -510,6 +514,7 @@ export const REVIEW_DEFAULTS: ReviewConfig = {
   preset: "default",
   ...LEAN_LEVERS,
   nits: "strict",
+  validate_demote: true,
 };
 
 /**

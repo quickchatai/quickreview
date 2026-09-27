@@ -175,6 +175,7 @@ export interface RunFingerprint {
     quality_min_added_lines?: number;
     style_lens?: boolean;
     nits?: string;
+    validate_demote?: boolean;
   };
 }
 
@@ -204,6 +205,7 @@ export function runFingerprint(cfg: Config, profile: string, overrides = ""): Ru
       quality_min_added_lines: cfg.review.quality_min_added_lines,
       style_lens: cfg.review.style_lens,
       nits: cfg.review.nits,
+      validate_demote: cfg.review.validate_demote,
     },
   };
 }

@@ -522,12 +522,25 @@ const NITS_OPEN_VALIDATE_ADDENDUM =
 
 /** Addenda that exist only when the config asks for them — composed after the
  * registry by both agent builds (src/wire.ts, src/bench/runner.ts). */
-export function configAddenda(review: { nits?: string }): PassAddendum[] {
-  if (review.nits !== "open") return [];
-  return [
-    { id: "nits-open", scope: "lenses", text: NITS_OPEN_LENS_ADDENDUM },
-    { id: "nits-open-validate", scope: [VALIDATE_PASS], text: NITS_OPEN_VALIDATE_ADDENDUM },
-  ];
+export function configAddenda(review: {
+  nits?: string;
+  validate_demote?: boolean;
+}): PassAddendum[] {
+  const out: PassAddendum[] = [];
+  // On unless switched off — the switch exists so a benchmark can measure the
+  // review without it (the pre-2026-09-27 validator).
+  if (review.validate_demote !== false)
+    out.push({
+      id: "validate-demote-not-kill",
+      scope: [VALIDATE_PASS],
+      text: VALIDATE_DEMOTE_NOT_KILL_ADDENDUM,
+    });
+  if (review.nits === "open")
+    out.push(
+      { id: "nits-open", scope: "lenses", text: NITS_OPEN_LENS_ADDENDUM },
+      { id: "nits-open-validate", scope: [VALIDATE_PASS], text: NITS_OPEN_VALIDATE_ADDENDUM },
+    );
+  return out;
 }
 
 // Benchmark 2026-09-26 (bench/aacr/RESULTS.md, missed-defect analysis): of
@@ -779,11 +792,6 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
   { id: "intent-cap-validate", scope: [VALIDATE_PASS], text: INTENT_CAP_VALIDATE_ADDENDUM },
   { id: "design-cap-validate", scope: [VALIDATE_PASS], text: DESIGN_CAP_VALIDATE_ADDENDUM },
   { id: "quality-cap-validate", scope: [VALIDATE_PASS], text: QUALITY_CAP_VALIDATE_ADDENDUM },
-  {
-    id: "validate-demote-not-kill",
-    scope: [VALIDATE_PASS],
-    text: VALIDATE_DEMOTE_NOT_KILL_ADDENDUM,
-  },
   {
     id: "validate-kill-vocabulary",
     scope: [VALIDATE_PASS],

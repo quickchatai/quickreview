@@ -157,11 +157,15 @@ describe("[review] nits — strict by default, open on request", () => {
     expect(parseConfig(withNits("open")).review.nits).toBe("open");
     expect(() => parseConfig(withNits("some"))).toThrow(/nits must be "strict" or "open"/);
     // strict adds nothing anywhere: the default install is unchanged
-    expect(configAddenda(baseCfg.review)).toEqual([]);
+    expect(configAddenda(baseCfg.review).map((a) => a.id)).toEqual(["validate-demote-not-kill"]);
     expect(renderNitPolicyNote(undefined)).toBe("");
     const open = configAddenda({ nits: "open" });
-    expect(open.map((a) => a.id)).toEqual(["nits-open", "nits-open-validate"]);
-    expect(open[1]!.text).toContain("`below-bar` is not used this round");
+    expect(open.map((a) => a.id)).toEqual([
+      "validate-demote-not-kill",
+      "nits-open",
+      "nits-open-validate",
+    ]);
+    expect(open[2]!.text).toContain("`below-bar` is not used this round");
     expect(renderNitPolicyNote("open")).toContain("NIT POLICY — open");
   });
 
@@ -185,9 +189,10 @@ describe("[review] nits — strict by default, open on request", () => {
 });
 
 describe("the validator demotes a true observation instead of killing it", () => {
-  it("is on by default, and quality-lens findings are judged on the cost they name", () => {
-    const ids = addendaForPass(VALIDATE_PASS).map((a) => a.id);
-    expect(ids).toContain("validate-demote-not-kill");
+  it("is on by default, and quality-lens findings are judged on the cost they name", async () => {
+    const { configAddenda } = await import("../src/include.js");
+    expect(configAddenda(baseCfg.review).map((a) => a.id)).toEqual(["validate-demote-not-kill"]);
+    expect(configAddenda({ ...baseCfg.review, validate_demote: false })).toEqual([]);
     const cap = addendaForPass(VALIDATE_PASS).find((a) => a.id === "quality-cap-validate")!;
     expect(cap.text).toContain("are NOT kill reasons for them");
     expect(cap.text).toContain("`pass-consistency` is capped at `P2` UNLESS it shows a failure");
