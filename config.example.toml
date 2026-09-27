@@ -478,7 +478,8 @@ escalation_mention_default = ""             # ← FILL (8): fallback GitHub logi
 # The review preset: "default" (the measured best value — every
 # benchmark-driven lever on, the lean plan), "max" (every model at its highest
 # reasoning level + the full lever plan; ~2x cost, ~3x time) or "low" (every
-# model at low reasoning; cheapest, not yet benchmarked). REVIEW_PRESETS in
+# model at low reasoning; ~half default's cost and time, about the pre-lever
+# review's recall). REVIEW_PRESETS in
 # src/config.ts. A lever set below overrides the preset.
 preset = "default"
 # The default preset fetches the SOURCE of the npm/PyPI packages a PR imports

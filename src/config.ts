@@ -413,8 +413,10 @@ export interface ReviewConfig {
  *     plan (every intent and placement pass, small sweep groups). Measured on
  *     smoke10 with the pre-lever plan: 72% of defects vs 44-51%, at ~$2 and ~18
  *     minutes a PR. For the PRs that warrant it.
- *   - `low` — every model at low reasoning, the default plan. The cheapest and
- *     fastest review; NOT yet measured on the benchmark.
+ *   - `low` — every model at low reasoning, the default plan. Half the cost
+ *     and time of `default` (~$0.52, ~3.5 min a PR on fresh10) for about the
+ *     recall the review had BEFORE the levers (69% vs 71% of real defects),
+ *     with fewer high-severity finds and less accurate comments (73%).
  */
 export type ReviewPreset = "low" | "default" | "max";
 
