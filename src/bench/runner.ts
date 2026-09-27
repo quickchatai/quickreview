@@ -36,9 +36,10 @@ import { join } from "node:path";
 import {
   applyReviewEffort,
   loadConfig,
+  parseConfig,
   parsePreset,
-  REVIEW_PRESETS,
   type Config,
+  type ReviewPreset,
 } from "../config.js";
 import { buildRoundOrder } from "../dispatch.js";
 import { ecosystemFor, type Ecosystem } from "../ecosystem.js";
@@ -212,23 +213,48 @@ export function benchConfig(root: string, profile: string): Config {
  * measuring nothing); `true`/`false` and numbers are coerced to the type the
  * key already holds. `models.effort` is re-applied to every model spec.
  */
-export function applyConfigOverrides(cfg: Config, spec: string): Config {
+/** The config text with `[review] preset` set to `preset` — replaced when the
+ * section already names one, inserted under the section header otherwise. */
+export function withPresetInToml(toml: string, preset: ReviewPreset): string {
+  const lines = toml.split("\n");
+  const head = lines.findIndex((l) => /^\[review\]\s*$/.test(l));
+  if (head < 0) return `${toml}\n[review]\npreset = "${preset}"\n`;
+  let end = lines.findIndex((l, i) => i > head && /^\[/.test(l));
+  if (end < 0) end = lines.length;
+  for (let i = head + 1; i < end; i++)
+    if (/^\s*preset\s*=/.test(lines[i] as string)) {
+      lines[i] = `preset = "${preset}"`;
+      return lines.join("\n");
+    }
+  lines.splice(head + 1, 0, `preset = "${preset}"`);
+  return lines.join("\n");
+}
+
+/**
+ * `--config a.b=v,c.d=w`: one bench run's levers (see above). `review.preset=X`
+ * means "as if config.toml said `preset = X`": the config TEXT is re-parsed
+ * with that preset, so the preset resolves exactly as in production — its
+ * reasoning level replaces whatever level the file's own preset baked into the
+ * specs, and a key the file sets explicitly still beats it. It therefore needs
+ * the config text (`toml`); every other pair then overrides on top.
+ */
+export function applyConfigOverrides(cfg: Config, spec: string, toml?: string): Config {
   const pairs = spec
     .split(",")
     .map((p) => p.trim())
     .filter(Boolean);
   if (pairs.length === 0) return cfg;
-  // A preset is applied first and whole — its reasoning level and every lever —
-  // so any other pair on the same line still overrides one of its keys.
-  const presetPair = pairs.find((p) => p.startsWith("review.preset="));
+  const keyOf = (p: string): string => p.slice(0, Math.max(p.indexOf("="), 0)).trim();
+  const presetPairs = pairs.filter((p) => keyOf(p) === "review.preset");
+  if (presetPairs.length > 1) throw new Error("--config: review.preset given more than once");
+  const presetPair = presetPairs[0];
   let base = cfg;
   if (presetPair) {
-    const preset = parsePreset(presetPair.slice("review.preset=".length));
-    const p = REVIEW_PRESETS[preset];
-    base = structuredClone(cfg);
-    base.review = { ...base.review, ...p.levers, preset };
-    if (!pairs.some((x) => x.startsWith("models.effort=")))
-      base.models = applyReviewEffort({ ...base.models, effort: p.effort });
+    const preset = parsePreset(presetPair.slice(presetPair.indexOf("=") + 1));
+    if (toml === undefined)
+      throw new Error("--config: review.preset needs the config text to re-parse");
+    base = parseConfig(withPresetInToml(toml, preset));
+    base.review.profile = cfg.review.profile;
   }
   const rest = pairs.filter((p) => p !== presetPair);
   if (rest.length === 0) return base;
@@ -859,6 +885,10 @@ export function contextFor(
   profile: string,
   overrides = "",
 ): { cfg: Config; ecosystem: Ecosystem } {
-  const cfg = applyConfigOverrides(benchConfig(root, profile), overrides);
+  const cfg = applyConfigOverrides(
+    benchConfig(root, profile),
+    overrides,
+    readFileSync(join(root, "config.toml"), "utf8"),
+  );
   return { cfg, ecosystem: ecosystemFor(loadProfileEcosystem(root, profile)) };
 }

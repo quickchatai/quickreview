@@ -234,14 +234,17 @@ shape. `pass-baseline` always runs; the conditional lenses key on paths and on
 added-line content signals — UI extensions, serializer/schema/integration dirs,
 migrations and raw SQL, auth/secret/dependency-manifest shapes, in-process state
 smells, infra and workflow files, webhook/task/queue dirs. Three judgment lenses
-have their own thresholds: `pass-placement` (new, moved, or ≥ 4 code files),
+have their own thresholds: `pass-placement` (a new or moved code file of ≥ 30
+added lines, or ≥ 8 code files — the `default` review preset; `max` restores
+any new file / ≥ 4 files),
 `pass-simplicity` (≥ 150 code lines, deep added indentation, or a file gaining
 ≥ 5 branches) and `pass-backcompat` (wire/API/queue/migration/feature-flag
 surfaces).
 
 `pass-intent` is the exception: it keys on the PR body, not on files. Its
 artifact is the title and body only, and it is selected only when the body
-clears a substance bar of `INTENT_MIN_SUBSTANCE_WORDS` (20) words of real prose
+clears a substance bar of `INTENT_MIN_SUBSTANCE_WORDS` (60; 20 under the `max`
+preset) words of real prose
 after template comments, code and links are stripped — below that the lens's
 only honest output is NONE, so it is never dispatched.
 

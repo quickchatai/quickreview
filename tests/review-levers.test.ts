@@ -12,7 +12,7 @@ import {
   withThinking,
   type Config,
 } from "../src/config.js";
-import { applyConfigOverrides } from "../src/bench/runner.js";
+import { applyConfigOverrides, withPresetInToml } from "../src/bench/runner.js";
 import { ALL_PASSES, buildPassPlan, buildRoundOrder } from "../src/dispatch.js";
 import type { PrFileEntry } from "../src/github.js";
 import {
@@ -183,18 +183,47 @@ describe("bench --config: one run's levers on the shipped config", () => {
     expect(baseCfg.review.sweep).toBe(true);
   });
 
-  it("review.preset applies the whole preset first; other pairs still override it", () => {
-    const max = applyConfigOverrides(baseCfg, "review.preset=max");
+  it("review.preset re-parses the config as if it said that preset; other pairs still override", () => {
+    const max = applyConfigOverrides(baseCfg, "review.preset=max", fixture);
     expect(max.review.preset).toBe("max");
     expect(max.models.conversation.endsWith(":max")).toBe(true);
     expect(max.models.tiers["terra-med"].endsWith(":max")).toBe(true);
     expect(max.review).toMatchObject(REVIEW_PRESETS.max.levers);
-    const maxNoSweep = applyConfigOverrides(baseCfg, "review.sweep=false,review.preset=max");
+    // exactly what production parses from the same text with that preset
+    expect(max).toEqual(parseConfig(withPresetInToml(fixture, "max")));
+    const maxNoSweep = applyConfigOverrides(
+      baseCfg,
+      "review.sweep=false,review.preset=max",
+      fixture,
+    );
     expect(maxNoSweep.review.sweep).toBe(false);
     expect(maxNoSweep.review.intent_min_words).toBe(20);
-    const low = applyConfigOverrides(baseCfg, "review.preset=low");
+    const low = applyConfigOverrides(baseCfg, "review.preset=low", fixture);
     expect(low.models.tiers["sol-high"].endsWith(":low")).toBe(true);
-    expect(() => applyConfigOverrides(baseCfg, "review.preset=turbo")).toThrow(/preset/);
+    expect(() => applyConfigOverrides(baseCfg, "review.preset=turbo", fixture)).toThrow(/preset/);
+  });
+
+  it("default over a file that runs max goes back to each tier's own level", () => {
+    const maxText = withPresetInToml(fixture, "max");
+    const def = applyConfigOverrides(parseConfig(maxText), "review.preset=default", maxText);
+    expect(def.models.tiers).toEqual(baseCfg.models.tiers);
+    expect(def.models.conversation).toBe(baseCfg.models.conversation);
+    expect(def.review.preset).toBe("default");
+  });
+
+  it("a key the file sets explicitly still beats the bench preset, as in production", () => {
+    const text = fixture.replace(/\[review\]\n/, "[review]\ndependency_sources = false\n");
+    const max = applyConfigOverrides(parseConfig(text), "review.preset=max", text);
+    expect(max.review.dependency_sources).toBe(false);
+  });
+
+  it("spaced, repeated or text-less preset pairs never relabel a run without applying it", () => {
+    const spaced = applyConfigOverrides(baseCfg, "review.preset = max", fixture);
+    expect(spaced.models.tiers["sol-high"].endsWith(":max")).toBe(true);
+    expect(() =>
+      applyConfigOverrides(baseCfg, "review.preset=max,review.preset=low", fixture),
+    ).toThrow(/more than once/);
+    expect(() => applyConfigOverrides(baseCfg, "review.preset=max")).toThrow(/config text/);
   });
 
   it("fails loudly on a typo, a missing section or a bad boolean", () => {

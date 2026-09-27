@@ -96,6 +96,12 @@ It is short.
   an explicit opt-in with its own separate credential
   ([docs/memory-embeddings.md](docs/memory-embeddings.md)); turn it on and
   every memory entry's text and every search query go to that provider too.
+  One more leg is on by default: **dependency sources** (`[review]
+  dependency_sources`) fetch the source of the third-party packages a PR
+  imports from the public npm and PyPI registries, so the reviewer can read
+  what a library really does. What leaves is package names and versions,
+  never code or memory; set `dependency_sources = false` to close it (and do,
+  if your package names are themselves private).
   The remaining legs are the ones you chose yourself: GitHub carries the
   review, and Slack and the webhook tunnel carry what you configure them to.
 
