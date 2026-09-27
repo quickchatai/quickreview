@@ -1102,7 +1102,7 @@ describe("arm.sh / compare.py — the defect-benchmark loop", () => {
     expect(arm).toMatch(/--only "\$cases" --concurrency 4 --resume/);
   });
   it("refuses to run without a runs dir outside the worktree", () => {
-    expect(arm).toContain('${QCR_BENCH_RUNS_DIR:?');
+    expect(arm).toContain("${QCR_BENCH_RUNS_DIR:?");
   });
   it("its levers16 group is exactly the 16 PRs in compare.py", () => {
     const py = readFileSync(join(ROOT, "bench", "aacr", "compare.py"), "utf8");
@@ -1113,3 +1113,13 @@ describe("arm.sh / compare.py — the defect-benchmark loop", () => {
   });
 });
 
+describe("consistency in the benchmark", () => {
+  it("arm.sh repeats an arm and compare.py scores repeats with a consistency line", () => {
+    const arm = readFileSync(join(ROOT, "bench", "aacr", "arm.sh"), "utf8");
+    const py = readFileSync(join(ROOT, "bench", "aacr", "compare.py"), "utf8");
+    expect(arm).toContain("--repeat) REPEAT=");
+    expect(arm).toContain('p="$PREFIX-r$k"');
+    expect(py).toContain("found in every run");
+    expect(py).toContain("benchmark_limitation");
+  });
+});

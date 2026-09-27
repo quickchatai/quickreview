@@ -17,6 +17,8 @@
 #                       all30              smoke10 + dev10 + holdout10
 #   --concurrency N   reviews at once per set (default 2)
 #   --no-judge        review only
+#   --repeat N        N independent runs of the arm, named NAME-r<k>-<set>;
+#                     compare.py scores them as NAME=runs+runs with a consistency line
 #
 # Compare arms afterwards with bench/aacr/compare.py. Keep QCR_BENCH_RUNS_DIR
 # outside any worktree so runs survive and can be re-judged; one image serves
@@ -27,7 +29,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${QCR_BENCH_RUNS_DIR:?set QCR_BENCH_RUNS_DIR to a directory outside any worktree}"
 export QCR_BENCH_RUNS_DIR
 
-PREFIX="" CONFIG="" CASES="" CONC=2 JUDGE=1
+PREFIX="" CONFIG="" CASES="" CONC=2 JUDGE=1 REPEAT=1
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --prefix) PREFIX="$2"; shift 2 ;;
@@ -35,6 +37,7 @@ while [[ $# -gt 0 ]]; do
     --cases) CASES="$2"; shift 2 ;;
     --concurrency) CONC="$2"; shift 2 ;;
     --no-judge) JUDGE=0; shift ;;
+    --repeat) REPEAT="$2"; shift 2 ;;
     *) echo "unknown flag $1 (see the header of $0)" >&2; exit 2 ;;
   esac
 done
@@ -60,8 +63,8 @@ for j in "${jobs[@]}"; do
   [[ -f "$HERE/sets/$set_name.json" ]] || { echo "no case set $set_name" >&2; exit 2; }
 done
 
-one() { # set ids
-  local set_name="$1" ids="$2" run="$PREFIX-$1" only=() cfg=()
+one() { # set ids run-prefix
+  local set_name="$1" ids="$2" run="$3-$1" only=() cfg=()
   [[ -n "$ids" ]] && only=(--only "$ids")
   [[ -n "$CONFIG" ]] && cfg=(--config "$CONFIG")
   "$HERE/bench.sh" review --run "$run" --set "$set_name" ${only[@]+"${only[@]}"} \
@@ -80,6 +83,9 @@ one() { # set ids
   echo "$run: $(grep 'judged —' "$QCR_BENCH_RUNS_DIR/$run.judge.log" | tail -1)"
 }
 
-for j in "${jobs[@]}"; do one "${j%%|*}" "${j#*|}" & done
+for ((k = 1; k <= REPEAT; k++)); do
+  p="$PREFIX"; [[ "$REPEAT" -gt 1 ]] && p="$PREFIX-r$k"
+  for j in "${jobs[@]}"; do one "${j%%|*}" "${j#*|}" "$p" & done
+done
 wait
 echo "arm $PREFIX done $(date +%T)"

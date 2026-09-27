@@ -88,6 +88,8 @@ const NON_SEEDED = [
   "agents/pass-bounds.md",
   "agents/pass-claims.md",
   "agents/pass-rollout.md",
+  // the tests lens — post-seed, ours.
+  "agents/pass-tests.md",
   "prompts/round-first.md",
   "prompts/round-re-review.md",
   "prompts/round-staleness.md",

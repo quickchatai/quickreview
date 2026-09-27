@@ -27,6 +27,8 @@ import {
   selectSubLenses,
   SWEEP_PASS,
   sweepGroups,
+  CODE_FILE_RE,
+  TESTS_PASS,
 } from "./heuristics.js";
 import type { HeuristicsExtension } from "./heuristics.js";
 import type { MigrationCollision } from "./migrations.js";
@@ -644,6 +646,9 @@ export const ALL_PASSES: readonly string[] = [
   // sweep` is on; otherwise addable, so a session can sweep a file it
   // suspects.
   "pass-sweep",
+  // the tests lens — planned on every PR that changes code when
+  // `[review] tests_lens` is on; addable otherwise.
+  "pass-tests",
   "pass-validate",
 ];
 
@@ -701,7 +706,11 @@ export function buildPassPlan(
     ? selectSubLenses(files, intent).filter((s) => !selected0.includes(s.lens))
     : [];
   const whyOf = new Map(sub.map((s) => [s.lens, s.why]));
-  const lenses = [...selected0, ...sub.map((s) => s.lens), VALIDATE_PASS];
+  // existing tests are consumers of every code change, and the PR's
+  // own tests are claims about the code — one lens reads both.
+  const tests =
+    cfg.review.tests_lens && files.some((f) => CODE_FILE_RE.test(f.filename)) ? [TESTS_PASS] : [];
+  const lenses = [...selected0, ...sub.map((s) => s.lens), ...tests, VALIDATE_PASS];
   // pass-intent starts at terra-med whatever the round's default:
   // reading comprehension over two short texts, not a judgment over production
   // risk. It is NOT pinned — the session may raise it like any other lens.

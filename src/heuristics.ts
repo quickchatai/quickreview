@@ -599,6 +599,9 @@ export function selectSubLenses(
 
 export const SWEEP_PASS = "pass-sweep";
 
+/**: the tests lens (agents/pass-tests.md). */
+export const TESTS_PASS = "pass-tests";
+
 /** Files the sweep never reads: lockfiles, generated or minified output,
  * vendored trees, snapshots, binaries and prose. */
 const SWEEP_SKIP_RE =

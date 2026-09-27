@@ -540,3 +540,34 @@ describe("validator: restate, don't kill", () => {
     expect(DOWNGRADE_WORDS).toContain("restated");
   });
 });
+
+// ---- ------------------------------------------------------
+
+describe("the tests lens", () => {
+  it("is planned on every PR that changes code, and only then", () => {
+    const code = buildPassPlan(baseCfg, [file("src/a.ts", ["x();"])]).pass_plan.map((p) => p.lens);
+    expect(code).toContain("pass-tests");
+    const docs = buildPassPlan(baseCfg, [file("README.md", ["hi"])]).pass_plan.map((p) => p.lens);
+    expect(docs).not.toContain("pass-tests");
+  });
+  it("is a preset lever, on in every preset, and addable when switched off", () => {
+    for (const p of ["default", "low", "max"] as const)
+      expect(REVIEW_PRESETS[p].levers.tests_lens).toBe(true);
+    const off = buildPassPlan(withLevers({ tests_lens: false }), [file("src/a.ts", ["x();"])]);
+    expect(off.pass_plan.map((p) => p.lens)).not.toContain("pass-tests");
+    expect(off.addable_lenses).toContain("pass-tests");
+  });
+});
+
+describe("one region, every problem", () => {
+  it("binds every finding lens, and the validator keeps same-line different-mechanism findings", () => {
+    for (const lens of ["pass-baseline", "pass-sweep", "pass-tests", "pass-widened"])
+      expect(addendaForPass(lens).map((a) => a.id)).toContain("every-problem-on-the-lines");
+    expect(addendaForPass(VALIDATE_PASS).map((a) => a.id)).toContain(
+      "every-problem-on-the-lines-validate",
+    );
+    expect(addendaForPass(VALIDATE_PASS).map((a) => a.id)).not.toContain(
+      "every-problem-on-the-lines",
+    );
+  });
+});

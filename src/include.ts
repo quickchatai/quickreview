@@ -500,6 +500,19 @@ const VALIDATE_KILL_VOCABULARY_ADDENDUM =
 const VALIDATE_RESTATE_NOT_KILL_ADDENDUM =
   "\n## Restate, don't kill: a real mechanism with the wrong consequence (sandbox rule)\nWhen your re-derivation CONFIRMS the candidate's mechanism — the code really does what the candidate says it does — but REFUTES the consequence it claims, do not kill it. Ask what the code's real consequence is, and restate the finding with that consequence: a field nothing reads, a value that is silently wrong but currently masked, a log line that lies, a branch that falls through into the next case, a check that no longer guards what its name says, a copy that has already drifted from its siblings. Post it at the severity the TRUE consequence earns — usually `[nit]` or `[question]`, a blocker only when the true consequence clears the blocker bar on its own — with the downgrade word `restated` (axis: severity, and say what the consequence became). Kill only when the mechanism itself is false (`refuted`) or when the true consequence is something no maintainer would change (`below-bar`).\n\nThree narrower cases of the same rule:\n- **A \"missing tests\" candidate whose evidence names a behaviour change.** Judge the behaviour change as its own finding first; the test ask rides on it or dies alone.\n- **\"Pre-existing\" on a line this PR rewrote, in the class of problem the PR says it fixes.** That is in scope by definition — a fix that leaves its own target half-fixed is this PR's defect, never `out-of-scope`.\n- **A reachability demotion.** Before calling a trigger rare, say how common the triggering input actually is for the data this code handles — the ordinary case, not the one easiest to imagine — and demote only on that stated frequency.\n";
 
+// consistency analysis over every archived benchmark run (2026-09-27):
+// when a run misses a defect the same configuration finds in other runs, the
+// file was always read — the review commented on the very lines of the missed
+// defect and said something else (another real defect, a true but different
+// point, a wrong claim). One issue found in a region ends the search there, and
+// WHICH issue comes first is the run-to-run luck. Both halves: the lens keeps
+// looking, the validator keeps both.
+const EVERY_PROBLEM_ON_THE_LINES_ADDENDUM =
+  "\n## One region, every problem (sandbox rule)\nFinding one problem in a changed region does not finish that region. After you write a candidate, re-read the same lines and the code they call and ask, as a separate question: what ELSE is wrong here — a second mechanism, another input that breaks it, another caller it now misleads, a behaviour it dropped? List every independent problem you find as its own candidate; never keep only the most important one, and never fold a second problem into the first one's wording. Two problems on the same lines with different mechanisms are two findings.\n";
+
+const EVERY_PROBLEM_ON_THE_LINES_VALIDATE_ADDENDUM =
+  "\n## Several problems on the same lines (sandbox rule)\nCandidates that share a location but describe different mechanisms are different findings: verify each on its own and never kill or merge one because another on those lines survived. A candidate that names a different consequence of the SAME mechanism is the only true duplicate.\n";
+
 // second-day audit §4.3. The old merge rule ("dedup by (path,
 // changed-line-run): highest severity wins") silently destroyed 3 of 8
 // findings on #5291 — two of them correct and DISTINCT defects sharing an
@@ -738,6 +751,12 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
     id: "validate-premise-scope",
     scope: [VALIDATE_PASS],
     text: VALIDATE_PREMISE_SCOPE_ADDENDUM,
+  },
+  { id: "every-problem-on-the-lines", scope: "lenses", text: EVERY_PROBLEM_ON_THE_LINES_ADDENDUM },
+  {
+    id: "every-problem-on-the-lines-validate",
+    scope: [VALIDATE_PASS],
+    text: EVERY_PROBLEM_ON_THE_LINES_VALIDATE_ADDENDUM,
   },
   {
     id: "validate-restate-not-kill",

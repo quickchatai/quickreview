@@ -399,6 +399,10 @@ export interface ReviewConfig {
    * (src/depsources.ts). Download-and-unpack only — nothing is installed or
    * run. */
   dependency_sources: boolean;
+  /**: the tests lens (`agents/pass-tests.md`) on every PR that
+   * changes code — which existing tests the change breaks, and whether the
+   * PR's own tests exercise the code or mock the failure point away. */
+  tests_lens: boolean;
 }
 
 /**
@@ -431,6 +435,7 @@ type PresetLevers = Pick<
   | "placement_min_code_files"
   | "placement_min_new_file_lines"
   | "dependency_sources"
+  | "tests_lens"
 >;
 
 /** The lean lever plan — `default` and `low` share it. */
@@ -444,6 +449,7 @@ const LEAN_LEVERS: PresetLevers = {
   placement_min_code_files: 8,
   placement_min_new_file_lines: 30,
   dependency_sources: true,
+  tests_lens: true,
 };
 
 export const REVIEW_PRESETS: Readonly<

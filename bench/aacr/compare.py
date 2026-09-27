@@ -5,7 +5,13 @@
     bench/aacr/compare.py --cases levers16 "default=lean-smoke10,lean-dev10,lean-holdout10"
 
 An arm is NAME=run[,run...] (run dirs under $QCR_BENCH_RUNS_DIR, e.g. what
-arm.sh produced). --cases names the PRs every arm is scored on: a set name,
+arm.sh produced); REPEATS of one arm are joined with '+', NAME=runs+runs, and
+then the arm also gets a consistency line: agreement — of the defects
+any repeat found, the share EVERY repeat found — and "found in every run"
+recall, overall and for high severity. Defects the ground truth marks with a
+`benchmark_limitation` (CI-gate defects a read-only review can only find by
+knowing the repo's CI) are counted in the table as usual and also reported on
+their own line. --cases names the PRs every arm is scored on: a set name,
 `levers16`, or `all30`; a PR an arm has no judgement for is counted in the
 PRs column, never silently dropped. Scores come only from the archived judge
 files (judge/v<ground-truth version>-<judge model>/), so this never calls a
@@ -24,8 +30,15 @@ LEVERS16 = {
 }
 
 
+LIMITED = set()  # (iid, defect id) carrying a benchmark_limitation note
+
+
 def ground_truth(set_name):
     d = json.load(open(os.path.join(HERE, "defects", f"{set_name}.json")))
+    for iid, c in d["cases"].items():
+        for x in c["defects"]:
+            if x.get("benchmark_limitation"):
+                LIMITED.add((iid, x["id"]))
     return d["version"], {iid: {x["id"]: x["severity"] for x in c["defects"]} for iid, c in d["cases"].items()}
 
 
@@ -57,6 +70,34 @@ def usd_and_minutes(case_dir):
     s = os.path.join(case_dir, "case-summary.json")
     mins = json.load(open(s)).get("duration_seconds", 0) / 60 if os.path.exists(s) else None
     return usd, mins
+
+
+def verdicts(runs_dir, runs, cases, judge_model):
+    """(iid, defect) -> credit for one repeat of an arm."""
+    out = {}
+    for run in runs:
+        for iid, (_, sevs, version) in cases.items():
+            f = os.path.join(runs_dir, run, "judge", f"v{version}-{judge_model}", f"{iid}.r1.json")
+            if not os.path.exists(f) or any(k[0] == iid for k in out):
+                continue
+            v = {d["id"]: d["verdict"] for d in json.load(open(f))["defects"]}
+            for did in sevs:
+                out[(iid, did)] = {"found": 1, "partial": 0.5}.get(v.get(did, "missed"), 0)
+    return out
+
+
+def consistency(repeats, cases):
+    """Agreement and found-in-every-run across repeats judged on the same PRs."""
+    keys = set.intersection(*(set(r) for r in repeats))
+    sev = {(iid, did): s for iid, (_, sevs, _) in cases.items() for did, s in sevs.items()}
+    lines = []
+    for label, pick in (("all", lambda k: True), ("high", lambda k: sev[k] == "high")):
+        ks = [k for k in keys if pick(k)]
+        anyf = [k for k in ks if any(r[k] == 1 for r in repeats)]
+        every = [k for k in ks if all(r[k] == 1 for r in repeats)]
+        agree = len(every) / max(len(anyf), 1)
+        lines.append(f"{label}: found in every run {len(every)}/{len(ks)} ({len(every) / max(len(ks), 1):.0%}), agreement {agree:.0%} of {len(anyf)} found by any")
+    return "; ".join(lines)
 
 
 def score(runs_dir, runs, cases, judge_model):
@@ -101,11 +142,26 @@ def main():
     print(f"{len(cases)} PRs, {sum(len(v[1]) for v in cases.values())} defects ({a.cases})\n")
     print("| Arm | Found | Weighted | High | Medium | Low | Comments correct | $ / PR | Median min | PRs judged |")
     print("|---|---|---|---|---|---|---|---|---|---|")
+    notes = []
     for arm in a.arms:
-        name, _, runs = arm.partition("=")
-        if not runs:
-            sys.exit(f"arm {arm!r} is not NAME=run[,run...]")
-        print(f"| {name} | {score(a.runs_dir, runs.split(','), cases, a.judge_model)} |")
+        name, _, spec = arm.partition("=")
+        if not spec:
+            sys.exit(f"arm {arm!r} is not NAME=run[,run...][+run[,run...]]")
+        repeats = [r.split(",") for r in spec.split("+")]
+        for k, runs in enumerate(repeats, 1):
+            label = name if len(repeats) == 1 else f"{name} (run {k})"
+            print(f"| {label} | {score(a.runs_dir, runs, cases, a.judge_model)} |")
+        vs = [verdicts(a.runs_dir, runs, cases, a.judge_model) for runs in repeats]
+        lim = [k for k in LIMITED if k[0] in cases]
+        if lim:
+            got = [sum(v.get(k, 0) for k in lim) for v in vs]
+            notes.append(f"{name}: CI-gate defects (benchmark limitation) found {' / '.join(f'{g:g}' for g in got)} of {len(lim)}")
+        if len(repeats) > 1:
+            notes.append(f"{name} consistency — {consistency(vs, cases)}")
+    if notes:
+        print()
+        for n in notes:
+            print(f"- {n}")
 
 
 if __name__ == "__main__":
