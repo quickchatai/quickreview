@@ -587,10 +587,14 @@ describe("buildPassPlan", () => {
   // finds "code whose intent was never written down", and whether the answer
   // is in the repo at all is only visible once the diff has been read.
   describe("pass-ask-human", () => {
+    // Clears the default preset's 60-word substance bar (2026-09-27).
     const body =
       "This PR introduces a token-bucket rate limiter for the public API. " +
       "Requests over the limit receive a 429 with a Retry-After header, and " +
-      "the bucket refills once per second per client key.";
+      "the bucket refills once per second per client key. The limiter lives " +
+      "in the middleware layer so every public route shares it, the per-key " +
+      "budget comes from settings, and a burst allowance keeps short spikes " +
+      "from being rejected while a sustained flood is throttled.";
 
     it("is a known pass, so it is always in the addable set", () => {
       expect(ALL_PASSES).toContain("pass-ask-human");
@@ -629,10 +633,14 @@ describe("buildPassPlan", () => {
   // pass-intent: selected on the PR body's substance, priced at the
   // cheapest tier whatever the round's default, raisable like any other lens.
   describe("pass-intent", () => {
+    // Clears the default preset's 60-word substance bar (2026-09-27).
     const body =
       "This PR introduces a token-bucket rate limiter for the public API. " +
       "Requests over the limit receive a 429 with a Retry-After header, and " +
-      "the bucket refills once per second per client key.";
+      "the bucket refills once per second per client key. The limiter lives " +
+      "in the middleware layer so every public route shares it, the per-key " +
+      "budget comes from settings, and a burst allowance keeps short spikes " +
+      "from being rejected while a sustained flood is throttled.";
 
     it("starts at terra-med even when the round's default tier is sol-med", () => {
       // 200 changed lines ⇒ defaultTier sol-med; intent stays terra-med.
@@ -685,7 +693,8 @@ describe("buildPassPlan", () => {
     });
 
     it("plans placement at terra-med on a small new-file diff", () => {
-      const added = { ...file("src/tools/new_helper.py", 20, 0), status: "added" };
+      // 40 lines: over the default preset's 30-line new-file floor (2026-09-27).
+      const added = { ...file("src/tools/new_helper.py", 40, 0), status: "added" };
       const { pass_plan } = buildPassPlan(planCfg, [added]);
       expect(pass_plan.find((p) => p.lens === "pass-placement")).toEqual({
         lens: "pass-placement",
@@ -842,8 +851,9 @@ describe("dispatchOnce", () => {
     // The escalation heuristic is gone: an infra-shaped diff carries no flag.
     expect((order as unknown as Record<string, unknown>).escalation_worthy).toBeUndefined();
     expect((order as unknown as Record<string, unknown>).escalation_reasons).toBeUndefined();
-    // pass_plan mirrors lenses in order; addable = the known passes not planned.
-    expect(order!.pass_plan.map((p) => p.lens)).toEqual(order!.lenses);
+    // pass_plan mirrors lenses in order (a lens with several rows — the sweep,
+    // one row per file group — once); addable = the known passes not planned.
+    expect([...new Set(order!.pass_plan.map((p) => p.lens))]).toEqual(order!.lenses);
     expect(order!.addable_lenses).toEqual(ALL_PASSES.filter((l) => !order!.lenses.includes(l)));
 
     const row = store.getPr(31)!;

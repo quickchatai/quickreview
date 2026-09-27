@@ -369,6 +369,10 @@ export interface ReviewConfig {
   profile: string;
   /** Directive-path vocabulary extensions — see the type above. */
   directives: ReviewDirectivesConfig;
+  /** The named review configuration (`REVIEW_PRESETS`): the reasoning level
+   * and every lever below in one word. A key set explicitly in `[review]` (or
+   * `[models] effort`) overrides what the preset would give it. */
+  preset: ReviewPreset;
   /** Content-triggered sub-lenses (`SUBLENS_TRIGGERS` in src/heuristics.ts):
    * narrow passes, each a fixed procedure, planned when the diff or the PR
    * text shows the shape its procedure exists for. Off ⇒ the path-shaped
@@ -397,19 +401,82 @@ export interface ReviewConfig {
   dependency_sources: boolean;
 }
 
+/**
+ * `[review] preset` — three named review configurations, measured on the
+ * defect benchmark (bench/aacr/RESULTS.md, 2026-09-27):
+ *
+ *   - `default` — the measured best value. Every lever on with the lean plan:
+ *     on ten PRs no change was designed from it found 81% of the real defects
+ *     (weighted 86%) against 71% before the levers, for $1.02 vs $0.90 a PR and
+ *     the same ~6 minutes.
+ *   - `max` — every model at its highest reasoning level and the full lever
+ *     plan (every intent and placement pass, small sweep groups). Measured on
+ *     smoke10 with the pre-lever plan: 72% of defects vs 44-51%, at ~$2 and ~18
+ *     minutes a PR. For the PRs that warrant it.
+ *   - `low` — every model at low reasoning, the default plan. The cheapest and
+ *     fastest review; NOT yet measured on the benchmark.
+ */
+export type ReviewPreset = "low" | "default" | "max";
+
+type PresetLevers = Pick<
+  ReviewConfig,
+  | "sublenses"
+  | "sweep"
+  | "sweep_max_groups"
+  | "sweep_group_files"
+  | "sweep_group_lines"
+  | "intent_min_words"
+  | "placement_min_code_files"
+  | "placement_min_new_file_lines"
+  | "dependency_sources"
+>;
+
+/** The lean lever plan — `default` and `low` share it. */
+const LEAN_LEVERS: PresetLevers = {
+  sublenses: true,
+  sweep: true,
+  sweep_max_groups: 6,
+  sweep_group_files: 5,
+  sweep_group_lines: 500,
+  intent_min_words: 60,
+  placement_min_code_files: 8,
+  placement_min_new_file_lines: 30,
+  dependency_sources: true,
+};
+
+export const REVIEW_PRESETS: Readonly<
+  Record<ReviewPreset, { effort: ReviewEffort; levers: PresetLevers }>
+> = {
+  default: { effort: "", levers: LEAN_LEVERS },
+  low: { effort: "low", levers: LEAN_LEVERS },
+  max: {
+    effort: "high",
+    levers: {
+      ...LEAN_LEVERS,
+      sweep_max_groups: 8,
+      sweep_group_files: 3,
+      sweep_group_lines: 400,
+      intent_min_words: 20,
+      placement_min_code_files: 4,
+      placement_min_new_file_lines: 0,
+    },
+  },
+};
+
+export function parsePreset(raw: unknown): ReviewPreset {
+  const v = String(raw ?? "default")
+    .trim()
+    .toLowerCase();
+  if (v === "low" || v === "default" || v === "max") return v;
+  throw new Error(`config.toml [review] preset must be "low", "default" or "max" (got "${v}")`);
+}
+
 export const REVIEW_DEFAULTS: ReviewConfig = {
   escalation_mention_default: "",
   profile: "",
   directives: REVIEW_DIRECTIVES_DEFAULTS,
-  sublenses: false,
-  sweep: false,
-  sweep_max_groups: 6,
-  sweep_group_files: 5,
-  sweep_group_lines: 500,
-  intent_min_words: 20,
-  placement_min_code_files: 4,
-  placement_min_new_file_lines: 0,
-  dependency_sources: false,
+  preset: "default",
+  ...LEAN_LEVERS,
 };
 
 /**
@@ -1487,6 +1554,9 @@ export function parseConfig(toml: string): Config {
     clone_dir: "",
     ...(req(raw, "github") as Partial<GithubConfig>),
   } as GithubConfig;
+  // The review preset shapes both [models] (reasoning level) and [review]
+  // (the levers), so it is read before either is parsed.
+  const preset = parsePreset((raw.review as Record<string, unknown> | undefined)?.preset);
   const companion = resolveCompanionPaths({
     ...COMPANION_DEFAULTS,
     ...((raw.companion ?? {}) as Partial<CompanionConfig>),
@@ -1542,7 +1612,7 @@ export function parseConfig(toml: string): Config {
       ...(req(raw, "eod") as Partial<Config["eod"]>),
     } as Config["eod"],
     caps: parseCaps(req(raw, "caps") as Record<string, unknown>),
-    models: parseModels(req(raw, "models") as Record<string, any>),
+    models: parseModels(req(raw, "models") as Record<string, any>, REVIEW_PRESETS[preset].effort),
     pi: {
       subagent_max_concurrency: 4,
       ...(req(raw, "pi") as Omit<Config["pi"], "subagent_max_concurrency"> &
@@ -1558,9 +1628,13 @@ export function parseConfig(toml: string): Config {
     recheck: { ...RECHECK_DEFAULTS, ...((raw.recheck ?? {}) as Partial<RecheckConfig>) },
     // [review.directives] merges under its own spread so a partial table
     // extends the defaults instead of clobbering the sibling keys.
+    // The preset fills every lever the file does not set itself; an explicit
+    // key always wins, so `preset = "max"` + `sweep = false` means exactly that.
     review: {
       ...REVIEW_DEFAULTS,
+      ...REVIEW_PRESETS[preset].levers,
       ...((raw.review ?? {}) as Partial<ReviewConfig>),
+      preset,
       directives: {
         ...REVIEW_DIRECTIVES_DEFAULTS,
         ...(((raw.review as Record<string, any> | undefined)?.directives ??
@@ -1736,9 +1810,10 @@ export function loadConfig(path?: string): Config {
   return cfg;
 }
 
-function parseModels(raw: Record<string, any>): ModelsConfig {
+function parseModels(raw: Record<string, any>, presetEffort: ReviewEffort = ""): ModelsConfig {
   return applyReviewEffort({
-    effort: parseEffort(raw.effort),
+    // `[models] effort` set explicitly wins over the preset's level.
+    effort: raw.effort !== undefined ? parseEffort(raw.effort) : presetEffort,
     effort_max: parseEffortMax(raw.effort_max),
     default: String(req(raw, "default")),
     conversation: String(req(raw, "conversation")),

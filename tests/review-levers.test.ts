@@ -5,11 +5,20 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { applyReviewEffort, parseConfig, withThinking, type Config } from "../src/config.js";
+import {
+  applyReviewEffort,
+  parseConfig,
+  REVIEW_PRESETS,
+  withThinking,
+  type Config,
+} from "../src/config.js";
 import { applyConfigOverrides } from "../src/bench/runner.js";
 import { ALL_PASSES, buildPassPlan, buildRoundOrder } from "../src/dispatch.js";
 import type { PrFileEntry } from "../src/github.js";
 import {
+  INTENT_MIN_SUBSTANCE_WORDS,
+  PLACEMENT_MIN_NEW_FILE_LINES,
+  PLACEMENT_MIN_PROD_FILES,
   selectSubLenses,
   SUBLENS_PASSES,
   SWEEP_MAX_FILES_PER_GROUP,
@@ -98,19 +107,94 @@ describe("[models] effort — one reasoning level for every model", () => {
   });
 });
 
+// ---- [review] preset -----------------------------------------------------------
+
+describe("[review] preset — default / low / max", () => {
+  const withPreset = (extra: string) =>
+    parseConfig(fixture.replace(/\[review\]\n/, `[review]\n${extra}\n`));
+
+  it("no preset key is the default preset: the lean plan, each tier at its own level", () => {
+    expect(baseCfg.review.preset).toBe("default");
+    expect(baseCfg.review).toMatchObject(REVIEW_PRESETS.default.levers);
+    expect(baseCfg.models.effort).toBe("");
+  });
+
+  it("the pure selection defaults ARE the default preset's thresholds", () => {
+    expect(INTENT_MIN_SUBSTANCE_WORDS).toBe(REVIEW_PRESETS.default.levers.intent_min_words);
+    expect(PLACEMENT_MIN_PROD_FILES).toBe(REVIEW_PRESETS.default.levers.placement_min_code_files);
+    expect(PLACEMENT_MIN_NEW_FILE_LINES).toBe(
+      REVIEW_PRESETS.default.levers.placement_min_new_file_lines,
+    );
+  });
+
+  it("low: every model at low reasoning, the lean plan", () => {
+    const cfg = withPreset(`preset = "low"`);
+    for (const spec of [cfg.models.conversation, ...Object.values(cfg.models.tiers)])
+      expect(spec.endsWith(":low")).toBe(true);
+    expect(cfg.review).toMatchObject(REVIEW_PRESETS.default.levers);
+  });
+
+  it("max: every model at its ceiling, the full lever plan", () => {
+    const cfg = withPreset(`preset = "max"`);
+    for (const spec of [
+      cfg.models.conversation,
+      cfg.models.overseer,
+      ...Object.values(cfg.models.tiers),
+    ])
+      expect(spec.endsWith(":max")).toBe(true);
+    expect(cfg.review).toMatchObject({
+      intent_min_words: 20,
+      placement_min_code_files: 4,
+      placement_min_new_file_lines: 0,
+      sweep_group_files: 3,
+      sweep_group_lines: 400,
+    });
+  });
+
+  it("an explicit key beats the preset — review knobs and [models] effort alike", () => {
+    const cfg = withPreset(`preset = "max"\nsweep = false`);
+    expect(cfg.review.sweep).toBe(false);
+    expect(cfg.review.intent_min_words).toBe(20);
+    const mixed = parseConfig(
+      fixture
+        .replace(/\[review\]\n/, `[review]\npreset = "max"\n`)
+        .replace("[models]\n", `[models]\neffort = "medium"\n`),
+    );
+    expect(mixed.models.tiers["sol-high"].endsWith(":medium")).toBe(true);
+  });
+
+  it("refuses an unknown preset", () => {
+    expect(() => withPreset(`preset = "turbo"`)).toThrow(/preset/);
+  });
+});
+
 // ---- bench --config ------------------------------------------------------------
 
 describe("bench --config: one run's levers on the shipped config", () => {
   it("sets typed keys and re-applies models.effort", () => {
     const cfg = applyConfigOverrides(
       baseCfg,
-      "review.sweep=true,review.sweep_max_groups=2,models.effort=high",
+      "review.sweep=false,review.sweep_max_groups=2,models.effort=high",
     );
-    expect(cfg.review.sweep).toBe(true);
+    expect(cfg.review.sweep).toBe(false);
     expect(cfg.review.sweep_max_groups).toBe(2);
     expect(cfg.models.conversation.endsWith(":max")).toBe(true);
     // the input config is untouched
-    expect(baseCfg.review.sweep).toBe(false);
+    expect(baseCfg.review.sweep).toBe(true);
+  });
+
+  it("review.preset applies the whole preset first; other pairs still override it", () => {
+    const max = applyConfigOverrides(baseCfg, "review.preset=max");
+    expect(max.review.preset).toBe("max");
+    expect(max.models.conversation.endsWith(":max")).toBe(true);
+    expect(max.models.tiers["terra-med"].endsWith(":max")).toBe(true);
+    expect(max.review).toMatchObject(REVIEW_PRESETS.max.levers);
+    const maxNoSweep = applyConfigOverrides(baseCfg, "review.sweep=false,review.preset=max");
+    expect(maxNoSweep.review.sweep).toBe(false);
+    expect(maxNoSweep.review.intent_min_words).toBe(20);
+    const low = applyConfigOverrides(baseCfg, "review.preset=low");
+    expect(low.models.tiers["sol-high"].endsWith(":low")).toBe(true);
+    expect(() => applyConfigOverrides(baseCfg, "review.preset=turbo")).toThrow(/preset/);
   });
 
   it("fails loudly on a typo, a missing section or a bad boolean", () => {
@@ -277,8 +361,10 @@ describe("buildPassPlan with the levers", () => {
     file("src/hid.c", ["x = 1;"]),
   ];
 
-  it("off (the code default): the plan is exactly the path-shaped one", () => {
-    const off = buildPassPlan(baseCfg, files, { title: "Silence C4244" });
+  it("switched off: the plan is exactly the path-shaped one", () => {
+    const off = buildPassPlan(withLevers({ sublenses: false, sweep: false }), files, {
+      title: "Silence C4244",
+    });
     expect(
       off.pass_plan.some((p) => SUBLENS_PASSES.includes(p.lens) || p.lens === SWEEP_PASS),
     ).toBe(false);
@@ -351,29 +437,33 @@ describe("selection tuning — the [review] cost knobs", () => {
   });
   const body20 = Array.from({ length: 25 }, (_, i) => `word${i}`).join(" ");
 
-  it("defaults select exactly as before the knobs existed", () => {
-    const plan = buildPassPlan(baseCfg, [added("src/new.ts", 5)], { body: body20 });
-    const lenses = plan.pass_plan.map((p) => p.lens);
-    expect(lenses).toContain("pass-placement");
-    expect(lenses).toContain("pass-intent");
-  });
-
-  it("a higher intent bar and a new-file size floor drop the two lenses", () => {
-    const cfg = withLevers({ intent_min_words: 60, placement_min_new_file_lines: 30 });
-    const lenses = buildPassPlan(cfg, [added("src/new.ts", 5)], { body: body20 }).pass_plan.map(
+  it("the default (lean) plan skips intent on a 25-word body and placement on a 5-line new file", () => {
+    const lenses = buildPassPlan(baseCfg, [added("src/new.ts", 5)], { body: body20 }).pass_plan.map(
       (p) => p.lens,
     );
     expect(lenses).not.toContain("pass-placement");
     expect(lenses).not.toContain("pass-intent");
-    const big = buildPassPlan(cfg, [added("src/new.ts", 40)], { body: body20 }).pass_plan;
+    // a 40-line new file still gets its placement question
+    const big = buildPassPlan(baseCfg, [added("src/new.ts", 40)], { body: body20 }).pass_plan;
     expect(big.map((p) => p.lens)).toContain("pass-placement");
+  });
+
+  it("the max preset's thresholds bring both lenses back", () => {
+    const cfg = withLevers(REVIEW_PRESETS.max.levers);
+    const lenses = buildPassPlan(cfg, [added("src/new.ts", 5)], { body: body20 }).pass_plan.map(
+      (p) => p.lens,
+    );
+    expect(lenses).toContain("pass-placement");
+    expect(lenses).toContain("pass-intent");
   });
 
   it("placement_min_code_files moves the cross-cutting threshold", () => {
     const files = ["a", "b", "c", "d", "e"].map((n) => file(`src/${n}.ts`, ["x();"]));
-    expect(buildPassPlan(baseCfg, files).pass_plan.map((p) => p.lens)).toContain("pass-placement");
-    const cfg = withLevers({ placement_min_code_files: 8 });
-    expect(buildPassPlan(cfg, files).pass_plan.map((p) => p.lens)).not.toContain("pass-placement");
+    expect(buildPassPlan(baseCfg, files).pass_plan.map((p) => p.lens)).not.toContain(
+      "pass-placement",
+    );
+    const cfg = withLevers({ placement_min_code_files: 4 });
+    expect(buildPassPlan(cfg, files).pass_plan.map((p) => p.lens)).toContain("pass-placement");
   });
 });
 

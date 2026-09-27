@@ -83,7 +83,7 @@ export const INTENT_PASS = "pass-intent";
 /** Words of author prose a body must carry before pass-intent is worth a
  * dispatch. Below this, "the body says X" has no X to check — the lens's own
  * contract says NONE is the only honest output. */
-export const INTENT_MIN_SUBSTANCE_WORDS = 20;
+export const INTENT_MIN_SUBSTANCE_WORDS = 60;
 
 /**
  * Words of actual author prose in a PR body, after stripping the parts that
@@ -148,7 +148,12 @@ export const CODE_FILE_RE =
 const PLACEMENT_STATUSES = new Set(["added", "renamed", "copied"]);
 
 /** Placement also fires on cross-cutting diffs: at least this many code files. */
-export const PLACEMENT_MIN_PROD_FILES = 4;
+export const PLACEMENT_MIN_PROD_FILES = 8;
+/** …or on a new code file of at least this many added lines. The two
+ * placement thresholds and the intent bar above are the `default` review
+ * preset's (config.ts REVIEW_PRESETS, held equal by tests/review-levers.test.ts):
+ * the lean plan, measured 2026-09-27 to keep recall at ~15% less spend. */
+export const PLACEMENT_MIN_NEW_FILE_LINES = 30;
 
 /** Simplicity fires on diffs big enough to hide complexity — aligned with
  * `small_diff_lines` (150) so a "small quiet diff" round stays lean… */
@@ -324,7 +329,7 @@ export function selectLenses(
     code.some(
       (f) =>
         PLACEMENT_STATUSES.has(f.status ?? "") &&
-        f.additions >= (tuning.placementMinNewFileLines ?? 0),
+        f.additions >= (tuning.placementMinNewFileLines ?? PLACEMENT_MIN_NEW_FILE_LINES),
     ) ||
     code.length >= (tuning.placementMinCodeFiles ?? PLACEMENT_MIN_PROD_FILES)
   )

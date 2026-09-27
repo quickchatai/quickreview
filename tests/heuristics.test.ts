@@ -250,14 +250,24 @@ describe("selectLenses", () => {
 // ---- placement / simplicity / backcompat ---------------
 
 describe("selectLenses: pass-placement", () => {
-  it("fires on a new code file", () => {
-    expect(selectLenses([{ ...f("src/service/limiter.py"), status: "added" }])).toContain(
+  it("fires on a new code file of 30+ lines (the default preset's floor)", () => {
+    expect(selectLenses([{ ...f("src/service/limiter.py", 40), status: "added" }])).toContain(
       "pass-placement",
     );
+    // A tiny new file rarely poses a placement question (2026-09-27 lean plan)…
+    expect(selectLenses([{ ...f("src/service/limiter.py", 5), status: "added" }])).not.toContain(
+      "pass-placement",
+    );
+    // …unless the floor is lowered, as the max preset does.
+    expect(
+      selectLenses([{ ...f("src/service/limiter.py", 5), status: "added" }], undefined, undefined, {
+        placementMinNewFileLines: 0,
+      }),
+    ).toContain("pass-placement");
   });
 
   it("fires on a moved code file — a move is the purest placement change", () => {
-    expect(selectLenses([{ ...f("src/service/limiter.py"), status: "renamed" }])).toContain(
+    expect(selectLenses([{ ...f("src/service/limiter.py", 40), status: "renamed" }])).toContain(
       "pass-placement",
     );
   });
@@ -274,9 +284,17 @@ describe("selectLenses: pass-placement", () => {
     }
   });
 
-  it("fires on a cross-cutting diff (>= 4 prod files), modified-only", () => {
-    const files = ["a", "b", "c", "d"].map((n) => ({ ...f(`src/${n}.py`), status: "modified" }));
-    expect(selectLenses(files)).toContain("pass-placement");
+  it("fires on a cross-cutting diff (>= 8 prod files by default), modified-only", () => {
+    const eight = ["a", "b", "c", "d", "e", "f", "g", "h"].map((n) => ({
+      ...f(`src/${n}.py`),
+      status: "modified",
+    }));
+    expect(selectLenses(eight)).toContain("pass-placement");
+    const four = eight.slice(0, 4);
+    expect(selectLenses(four)).not.toContain("pass-placement");
+    expect(selectLenses(four, undefined, undefined, { placementMinCodeFiles: 4 })).toContain(
+      "pass-placement",
+    );
   });
 
   it("stays quiet on small edits-in-place and on new TEST files", () => {
@@ -405,7 +423,10 @@ const SUBSTANTIVE_BODY =
   "This PR introduces a token-bucket rate limiter for the public API. " +
   "Requests over the limit receive a 429 with a Retry-After header, and the " +
   "bucket refills once per second per client key. No behaviour change for " +
-  "authenticated internal traffic.";
+  "authenticated internal traffic. The limiter lives in the middleware layer " +
+  "so every public route shares it, the per-key budget comes from settings, " +
+  "and a burst allowance keeps short spikes from being rejected while a " +
+  "sustained flood is throttled.";
 
 describe("intent substance bar", () => {
   it("rejects thin bodies — the lens's only honest output would be NONE", () => {
@@ -484,6 +505,11 @@ const LEGACY_DEEP_INDENT_RE = /^\+(?: {20,}|\t{5,})\S/m;
 const LEGACY_BRANCH_RE = /^\+[ \t]*[)\]}]*[ \t]*(if|elif|else[ \t]+if|case|when)\b/gm;
 
 /** Verbatim legacy selectLenses (src/heuristics.ts at commit 50ca772). */
+/** The thresholds the frozen legacy selection was written with (before the
+ * 2026-09-27 default preset raised them): the proof is about the
+ * profile's PREDICATES, so it holds the thresholds at the legacy values. */
+const LEGACY_TUNING = { intentMinWords: 20, placementMinCodeFiles: 4, placementMinNewFileLines: 0 };
+
 function legacySelectLenses(files: PrFile[], intent?: { body?: string | null }): string[] {
   const lenses = new Set<string>(["pass-baseline"]);
   const names = files.map((x) => x.filename);
@@ -561,7 +587,7 @@ function legacySelectLenses(files: PrFile[], intent?: { body?: string | null }):
   )
     lenses.add("pass-backcompat");
 
-  if (meetsIntentBar(intent?.body)) lenses.add(INTENT_PASS);
+  if (meetsIntentBar(intent?.body, LEGACY_TUNING.intentMinWords)) lenses.add(INTENT_PASS);
   return [...lenses];
 }
 
@@ -723,7 +749,7 @@ describe("equivalence: quickchat heuristics.toml == the pre-lift compiled-in sel
     () => {
       for (const c of CORPUS) {
         const intent = c.body !== undefined ? { body: c.body } : undefined;
-        expect(selectLenses(c.files, intent, QC), c.name).toEqual(
+        expect(selectLenses(c.files, intent, QC, LEGACY_TUNING), c.name).toEqual(
           legacySelectLenses(c.files, intent),
         );
       }
@@ -733,11 +759,11 @@ describe("equivalence: quickchat heuristics.toml == the pre-lift compiled-in sel
   it("with no extension (minimal profile), only the generic core fires — never more than legacy", () => {
     for (const c of CORPUS) {
       const intent = c.body !== undefined ? { body: c.body } : undefined;
-      const bare = selectLenses(c.files, intent);
+      const bare = selectLenses(c.files, intent, undefined, LEGACY_TUNING);
       const legacy = legacySelectLenses(c.files, intent);
       for (const lens of bare) expect(legacy, `${c.name}: ${lens}`).toContain(lens);
       // Explicit third-arg EMPTY_HEURISTICS is byte-identical to omitting it.
-      expect(selectLenses(c.files, intent, EMPTY_HEURISTICS), c.name).toEqual(bare);
+      expect(selectLenses(c.files, intent, EMPTY_HEURISTICS, LEGACY_TUNING), c.name).toEqual(bare);
     }
   });
 

@@ -33,7 +33,13 @@ import {
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
-import { applyReviewEffort, loadConfig, type Config } from "../config.js";
+import {
+  applyReviewEffort,
+  loadConfig,
+  parsePreset,
+  REVIEW_PRESETS,
+  type Config,
+} from "../config.js";
 import { buildRoundOrder } from "../dispatch.js";
 import { ecosystemFor, type Ecosystem } from "../ecosystem.js";
 import type { PrFileEntry } from "../github.js";
@@ -127,11 +133,17 @@ export interface RunFingerprint {
   pi: string;
   /** `[models] effort` and what "high" meant for this run. */
   effort?: { effort: string; effort_max: string };
-  /** The benchmark-driven review levers this run had on. */
+  /** The review preset and the levers it resolved to (explicit keys included). */
+  preset?: string;
   levers?: {
     sublenses: boolean;
     sweep: boolean;
     sweep_max_groups: number;
+    sweep_group_files?: number;
+    sweep_group_lines?: number;
+    intent_min_words?: number;
+    placement_min_code_files?: number;
+    placement_min_new_file_lines?: number;
     dependency_sources: boolean;
   };
 }
@@ -146,10 +158,16 @@ export function runFingerprint(cfg: Config, profile: string, overrides = ""): Ru
     validate_tier: cfg.models.validate_tier,
     pi: cfg.pi.version,
     effort: { effort: cfg.models.effort, effort_max: cfg.models.effort_max },
+    preset: cfg.review.preset,
     levers: {
       sublenses: cfg.review.sublenses,
       sweep: cfg.review.sweep,
       sweep_max_groups: cfg.review.sweep_max_groups,
+      sweep_group_files: cfg.review.sweep_group_files,
+      sweep_group_lines: cfg.review.sweep_group_lines,
+      intent_min_words: cfg.review.intent_min_words,
+      placement_min_code_files: cfg.review.placement_min_code_files,
+      placement_min_new_file_lines: cfg.review.placement_min_new_file_lines,
       dependency_sources: cfg.review.dependency_sources,
     },
   };
@@ -200,8 +218,22 @@ export function applyConfigOverrides(cfg: Config, spec: string): Config {
     .map((p) => p.trim())
     .filter(Boolean);
   if (pairs.length === 0) return cfg;
-  const out = structuredClone(cfg) as unknown as Record<string, unknown>;
-  for (const pair of pairs) {
+  // A preset is applied first and whole — its reasoning level and every lever —
+  // so any other pair on the same line still overrides one of its keys.
+  const presetPair = pairs.find((p) => p.startsWith("review.preset="));
+  let base = cfg;
+  if (presetPair) {
+    const preset = parsePreset(presetPair.slice("review.preset=".length));
+    const p = REVIEW_PRESETS[preset];
+    base = structuredClone(cfg);
+    base.review = { ...base.review, ...p.levers, preset };
+    if (!pairs.some((x) => x.startsWith("models.effort=")))
+      base.models = applyReviewEffort({ ...base.models, effort: p.effort });
+  }
+  const rest = pairs.filter((p) => p !== presetPair);
+  if (rest.length === 0) return base;
+  const out = structuredClone(base) as unknown as Record<string, unknown>;
+  for (const pair of rest) {
     const eq = pair.indexOf("=");
     if (eq <= 0) throw new Error(`--config: "${pair}" is not key=value`);
     const path = pair.slice(0, eq).trim().split(".");
@@ -230,7 +262,7 @@ export function applyConfigOverrides(cfg: Config, spec: string): Config {
           : raw;
   }
   const next = out as unknown as Config;
-  if (pairs.some((p) => p.startsWith("models.effort"))) {
+  if (rest.some((p) => p.startsWith("models.effort"))) {
     const effort = next.models.effort;
     // Re-parse through the same validation the config file gets.
     next.models = applyReviewEffort({
