@@ -1590,7 +1590,8 @@
        "R11"
       ]
      },
-     "notes": "To count, a finding must say that `request_body` is left unused at client.rs ~580 and/or ~661, which produces an unused-variable warning or clippy -D warnings failure (a dead binding). Near-misses that do not count: comments that only ask to restore or assert `store == false` for coverage without noting that the binding is now unused (a test request); and remarks that the comment wording is misleading."
+     "notes": "To count, a finding must say that `request_body` is left unused at client.rs ~580 and/or ~661, which produces an unused-variable warning or clippy -D warnings failure (a dead binding). Near-misses that do not count: comments that only ask to restore or assert `store == false` for coverage without noting that the binding is now unused (a test request); and remarks that the comment wording is misleading.",
+     "benchmark_limitation": "CI gate (lint): only fatal because CI runs `cargo clippy --tests -D warnings`; in production that job goes red and the review reads it. Kept and scored for the benchmark's integrity."
     }
    ],
    "excluded": [
