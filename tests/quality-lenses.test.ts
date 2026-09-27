@@ -135,3 +135,14 @@ describe("findStyleGuide", () => {
     expect(findStyleGuide(join(root, "nope"))).toEqual([]);
   });
 });
+
+describe("code files", () => {
+  it("counts ESM/CJS TypeScript modules as code (a .mts-only PR once got no code lenses)", async () => {
+    const { CODE_FILE_RE } = await import("../src/heuristics.js");
+    for (const f of ["a.mts", "a.cts", "a.cxx", "a.hh", "a.dart"])
+      expect(CODE_FILE_RE.test(f)).toBe(true);
+    const l = lenses(baseCfg, [file("scripts/make.mts", 45)]);
+    expect(l).toContain("pass-tests");
+    expect(l).toContain("pass-maintainability");
+  });
+});

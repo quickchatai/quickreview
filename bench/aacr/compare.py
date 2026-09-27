@@ -55,17 +55,20 @@ def ground_truth(set_name):
 
 
 def cases_for(spec):
-    """PR id -> (set, severities, judge-label version)."""
-    if ":" in spec:  # set:id,id — the same syntax as arm.sh --cases
-        name, ids = spec.split(":", 1)
-        sets = {name: " ".join(ids.split(","))}
-    else:
-        sets = {"levers16": LEVERS16, "all30": {s: None for s in ("smoke10", "dev10", "holdout10")}}.get(spec, {spec: None})
+    """PR id -> (set, severities, judge-label version). `spec` is arm.sh's
+    --cases syntax: groups joined by '+', each a set, set:id,id, levers16 or
+    all30."""
     out = {}
-    for s, ids in sets.items():
-        version, gt = ground_truth(s)
-        for iid in (ids.split() if ids else gt):
-            out[iid] = (s, gt[iid], version)
+    for group in spec.split("+"):
+        if ":" in group:
+            name, ids = group.split(":", 1)
+            sets = {name: " ".join(ids.split(","))}
+        else:
+            sets = {"levers16": LEVERS16, "all30": {s: None for s in ("smoke10", "dev10", "holdout10")}}.get(group, {group: None})
+        for s, ids in sets.items():
+            version, gt = ground_truth(s)
+            for iid in (ids.split() if ids else gt):
+                out[iid] = (s, gt[iid], version)
     return out
 
 
@@ -259,7 +262,7 @@ def aacr_row(refs, generated, scored, cases):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--cases", required=True, help="a set name, set:id,id, levers16 or all30")
+    ap.add_argument("--cases", required=True, help="arm.sh --cases syntax: groups joined by +, each a set, set:id,id, levers16 or all30")
     ap.add_argument("--judge-model", default="gpt-6-sol-high", help="the judge label's model part")
     ap.add_argument("--runs-dir", default=os.environ.get("QCR_BENCH_RUNS_DIR", os.path.join(HERE, "runs")))
     ap.add_argument("--aacr", action="store_true", help="print the AACR-Bench table even when no arm has been evaluated (it prints by itself when one has)")

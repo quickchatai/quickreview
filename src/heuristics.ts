@@ -141,7 +141,7 @@ export const BACKCOMPAT_PASS = "pass-backcompat";
  * to judge: dispatching on it is the pure-spend case the intent bar above
  * exists to avoid. */
 export const CODE_FILE_RE =
-  /\.(py|pyi|ts|tsx|js|jsx|mjs|cjs|go|rb|java|kt|kts|rs|c|cc|cpp|h|hpp|cs|php|swift|scala|ex|exs|vue|svelte)$/i;
+  /\.(py|pyi|ts|tsx|mts|cts|js|jsx|mjs|cjs|go|rb|java|kt|kts|rs|c|cc|cpp|cxx|h|hh|hpp|hxx|cs|php|swift|scala|dart|ex|exs|vue|svelte)$/i;
 
 /** New-code statuses that pose the "does this live in the right place"
  * question — a move IS the purest placement change. */
