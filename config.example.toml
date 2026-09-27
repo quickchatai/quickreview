@@ -487,6 +487,12 @@ preset = "default"
 # installed or run) so passes can read what a library does. Set false to keep
 # the reviewer off those registries — e.g. when your package names are private.
 # dependency_sources = false
+# Code-quality lenses (maintainability, duplication, abstraction; capped below
+# blocking) run once a PR's non-test code adds 20 lines; the style lens runs
+# only when your repo has a written style guide (a STYLEGUIDE/CODE_STYLE file
+# or a "Code style" section in CONTRIBUTING) and applies only that guide.
+# quality_lenses = false
+# style_lens = false
 # repo profile — names a directory under profiles/ whose house-rule
 # addenda pack (profiles/<name>/addenda/*.md) composes onto the built pass
 # bodies after the built-in generic registry, and whose optional

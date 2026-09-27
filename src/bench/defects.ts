@@ -605,6 +605,11 @@ export function scoreRun(
 const pct = (x: number): string => `${Math.round(x * 100)}%`;
 const num = (x: number): string => (Number.isInteger(x) ? String(x) : x.toFixed(1));
 
+/** What this report measures — the one paragraph every defect report opens
+ * with (the whole story: bench/aacr/METRICS.md). */
+export const DEFECT_REPORT_PREAMBLE =
+  "_What this measures: did the review FIND the real defects in the change — verified against the code and graded high/medium/low by consequence — wherever in the review it said so, and is each thing it said true. This is what the review is built for; the lead number is problems found. How it differs from AACR-Bench's own metric: bench/aacr/METRICS.md._";
+
 export function renderDefectReport(
   label: string,
   set: DefectSet,
@@ -627,6 +632,8 @@ export function renderDefectReport(
   const c = s.comments;
   const lines = [
     `# Defect benchmark — ${label}`,
+    "",
+    DEFECT_REPORT_PREAMBLE,
     "",
     `- Ground truth: \`${set.set}\` defect set, version \`${set.version}\` — ${set.method || "verified real defects"}`,
     `- Judged ${s.judged}/${s.cases} cases, ${s.rounds} round(s)${s.errors ? `, ${s.errors} judge error(s) (counted as missed / unverifiable)` : ""}`,

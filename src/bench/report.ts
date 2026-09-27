@@ -119,6 +119,10 @@ function n(v: number | undefined): string {
 
 /** The run report: the scorer's numbers per variant, then per case what the
  * reviewer did, so a number is never read without what produced it. */
+/** What an AACR-Bench report measures — opens every one (bench/aacr/METRICS.md). */
+export const AACR_REPORT_PREAMBLE =
+  "_What this measures: how closely the review reproduces AACR-Bench's reference comments (74% AI-written; 47% code defect, 42% maintainability and readability) at the same lines (±1), as judged by a model. A comment that is not a reference counts against precision even when it is a real bug, and most references are not defects — in a hand check of 253 on 30 PRs, 11% were real defects and 8% real maintainability issues. It is the cross-check against published numbers, not a defect count: the defect benchmark (`bench.sh judge`) is. Details: bench/aacr/METRICS.md._";
+
 export function renderReport(
   set: CaseSet,
   outDir: string,
@@ -135,6 +139,8 @@ export function renderReport(
     : ["not run"];
   const summaries = cases.map((c) => ({ c, s: readSummary(outDir, c) }));
   L.push(`# AACR-Bench run — ${set.name}`);
+  L.push("");
+  L.push(AACR_REPORT_PREAMBLE);
   L.push("");
   L.push(
     `- Dataset: AACR-Bench v1.0 (\`${set.dataset.commit.slice(0, 7)}\`), ${cases.length} PRs, ${cases.reduce((a, c) => a + c.references, 0)} reference comments`,
@@ -297,6 +303,8 @@ export function renderOcrReport(set: CaseSet, outDir: string, cases: BenchCase[]
   const summaries = cases.map((c) => ({ c, s: readOcrSummary(outDir, c) }));
   const flags = run.flags ?? {};
   L.push(`# AACR-Bench run — ${set.name} — open-code-review baseline`);
+  L.push("");
+  L.push(AACR_REPORT_PREAMBLE);
   L.push("");
   L.push(
     `- Dataset: AACR-Bench v1.0 (\`${set.dataset.commit.slice(0, 7)}\`), ${cases.length} PRs, ${cases.reduce((a, c) => a + c.references, 0)} reference comments`,

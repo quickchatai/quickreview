@@ -267,7 +267,7 @@ def main():
     a = ap.parse_args()
     cases = cases_for(a.cases)
     print(f"{len(cases)} PRs, {sum(len(v[1]) for v in cases.values())} defects ({a.cases})\n")
-    print("Defect benchmark (our judge: did the review find each real defect)\n")
+    print("Defect benchmark (our judge: did the review find each real defect — what the review is built for)\n")
     print("| Arm | Problems found | Recall | High | Medium | Low | Weighted | Comments correct | $ / PR | Median min | PRs judged |")
     print("|---|---|---|---|---|---|---|---|---|---|---|")
     notes, builds = [], {}
@@ -309,7 +309,7 @@ def main():
             label = name if len(repeats) == 1 else f"{name} (run {k})"
             rows.append(f"| {label} | {aacr_row(refs, gen, scored, cases) if scored else 'not evaluated' + ' |' * 12 + f' 0/{len(cases)}'} |")
     if judges or a.aacr:
-        print("\nAACR-Bench (the original benchmark's references and metric, `all` variant, judge rounds averaged)\n")
+        print("\nAACR-Bench (the original benchmark: how closely the review reproduces its reference comments at the same lines; `all` variant, judge rounds averaged)\n")
         print("| Arm | References found | Recall | Precision | F1 | Code defect | Maintainability | Performance | Security | Diff level | File level | Repo level | PRs scored |")
         print("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
         print("\n".join(rows))
@@ -317,10 +317,10 @@ def main():
             notes.append("NOT COMPARABLE — the AACR evals used different judges: " + " / ".join(sorted(judges)))
         elif judges:
             notes.append(f"AACR judge: {judges.pop()}")
-    if notes:
-        print()
-        for n in notes:
-            print(f"- {n}")
+    notes.append("How to read these tables, and why they can disagree: bench/aacr/METRICS.md")
+    print()
+    for n in notes:
+        print(f"- {n}")
 
 
 if __name__ == "__main__":
