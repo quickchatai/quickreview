@@ -16,6 +16,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -204,7 +205,7 @@ describe("compare.py", () => {
     judgement("x", A, found(["D1", "D2"]));
     judgement("x", B, { defects: [], comments: [], error: "malformed" });
     const out = await compare("x=x");
-    expect(out).toContain("| x | 2/3 (67%) |");
+    expect(out).toContain("| x | 2/3 | 67% |");
     expect(out).toContain("1/2 INCOMPLETE |");
     expect(out).toContain("1 judgement(s) are ERROR files");
   });
@@ -226,7 +227,53 @@ describe("compare.py", () => {
     expect(await compare("o=o")).toContain("| $2.10 | 1.0 | 2/2 |");
   });
 
-  it("warns when arms were reviewed by different builds, and reports the AACR metric's judge", async () => {
+  // The harness's per-round file: every reference of a PR with its match
+  // flag; and the result file whose comments it scored.
+  const ref = (n: number) => ({ path: "f.py", from_line: n, to_line: n, note: `ref ${n}` });
+  const evalRound = (dir: string, file: string, matched: Record<string, number[]>) => {
+    const d = join(runs, dir, "results", "all");
+    mkdirSync(d, { recursive: true });
+    const eval_res = Object.entries(matched).map(([id, hits]) => ({
+      instance_id: id,
+      comments: [1, 2, 3].map((n) => ({ ...ref(n), semantic_match: hits.includes(n) })),
+    }));
+    writeFileSync(join(d, file), JSON.stringify({ summary: {}, eval_res }));
+    for (const id of Object.keys(matched))
+      writeFileSync(join(d, `${id}.json`), JSON.stringify({ review: { comments: [{}, {}] } }));
+  };
+  // The benchmark's own labels for those references (references.json).
+  const labels = () => {
+    const key = (n: number) =>
+      `f.py:${n}-${n}:${createHash("sha1").update(`ref ${n}`).digest("hex").slice(0, 12)}`;
+    const per = {
+      [key(1)]: ["Code Defect", "Diff Level"],
+      [key(2)]: ["Code Defect", "Repo Level"],
+      [key(3)]: ["Performance", "File Level"],
+    };
+    writeFileSync(
+      join(t, "bench", "aacr", "references.json"),
+      JSON.stringify({ references: { [A]: per, [B]: per } }),
+    );
+  };
+
+  it("leads both tables with problems found, and breaks the benchmark's down by its own labels", async () => {
+    labels();
+    judgement("p", A, found(["D1"]));
+    judgement("p", B, found([]));
+    evalRound("p", "metrics_ocr_1_round_1.json", { [A]: [1], [B]: [] });
+    evalRound("p", "metrics_ocr_1_round_2.json", { [A]: [1, 3], [B]: [] });
+    const out = await compare("p=p");
+    expect(out).toContain("| Arm | Problems found | Recall | High | Medium | Low | Weighted |");
+    expect(out).toContain("| p | 1/3 | 33% | 1/1 | 0/1 | 0/1 |");
+    expect(out).toContain("| Arm | References found | Recall | Precision | F1 | Code defect |");
+    // A: ref 1 in both rounds, ref 3 in one of two → 1.5 of 6; 4 comments scored.
+    expect(out).toContain("| p | 1.5/6 | 25.0% | 37.5% (4 comments) |");
+    // Code defect 1.0/4, Maintainability 0/0, Performance 0.5/2, Security 0/0, Diff 1.0/2, File 0.5/2, Repo 0/2
+    expect(out).toContain("| 1.0/4 | 0.0/0 | 0.5/2 | 0.0/0 | 1.0/2 | 0.5/2 | 0.0/2 | 2/2 |");
+  });
+
+  it("warns when arms were reviewed by different builds or evaluated by different judges", async () => {
+    labels();
     for (const [dir, commit] of [
       ["p", "aaa"],
       ["q", "bbb"],
@@ -234,48 +281,25 @@ describe("compare.py", () => {
       judgement(dir, A, found(["D1"]));
       judgement(dir, B, found([]));
       writeFileSync(join(runs, dir, "run.json"), JSON.stringify({ qcr_commit: commit }));
-      mkdirSync(join(runs, dir, "results", "all"), { recursive: true });
-      writeFileSync(
-        join(runs, dir, "results", "all", "metrics_ocr_average.json"),
-        JSON.stringify({
-          summary: {
-            evaluated_instances: 2,
-            expected_notes: 10,
-            generated_notes: 4,
-            matched_semantic_notes: 2,
-            matched_line_notes: 3,
-          },
-        }),
-      );
+      evalRound(dir, "metrics_ocr_1.json", { [A]: [1], [B]: [] });
       writeFileSync(join(runs, dir, "judge.txt"), `judge-${dir}\n`);
     }
-    const out = await compare("--aacr", "p=p", "q=q");
+    const out = await compare("p=p", "q=q");
     expect(out).toContain("DIFFERENT builds");
-    expect(out).toContain("| p | 2.0/10 (20.0%) | 2.0/4 (50.0%) |");
     expect(out).toContain("NOT COMPARABLE — the AACR evals used different judges");
   });
-  it("scores `set:id,id` cases only, and reads a one-round AACR eval (no average file)", async () => {
+
+  it("scores `set:id,id` cases only — in both tables", async () => {
+    labels();
     judgement("s", A, found(["D1"]));
-    mkdirSync(join(runs, "s", "results", "all"), { recursive: true });
-    writeFileSync(
-      join(runs, "s", "results", "all", "metrics_ocr_20260927_170012.json"),
-      JSON.stringify({
-        summary: {
-          evaluated_instances: 1,
-          expected_notes: 3,
-          generated_notes: 1,
-          matched_semantic_notes: 1,
-          matched_line_notes: 1,
-        },
-      }),
-    );
+    evalRound("s", "metrics_ocr_1.json", { [A]: [2], [B]: [1, 2, 3] });
     const out = await run(
       "python3",
-      [join(t, "bench", "aacr", "compare.py"), "--cases", `fresh10:${A}`, "--aacr", "s=s"],
+      [join(t, "bench", "aacr", "compare.py"), "--cases", `fresh10:${A}`, "s=s"],
       { env: { ...process.env, QCR_BENCH_RUNS_DIR: runs } },
     ).then((r) => r.stdout);
     expect(out).toContain("1 PRs, 2 defects");
-    expect(out).toContain("| 1/1 |");
-    expect(out).toContain("| s | 1.0/3 (33.3%) |");
+    expect(out).toContain("| s | 1/2 | 50% |");
+    expect(out).toContain("| s | 1.0/3 | 33.3% | 50.0% (2 comments) |");
   });
 });

@@ -38,8 +38,17 @@ export QCR_BENCH_IMAGE=qcr-bench:exp QCR_BENCH_OCR_IMAGE=qcr-bench-ocr:exp   # b
 bench/aacr/arm.sh --prefix low --config review.preset=low --cases fresh10 --eval 3
 bench/aacr/arm.sh --prefix default --cases fresh10 --eval 3
 bench/aacr/arm.sh --prefix ocr --arm ocr --cases fresh10 --eval 3
-bench/aacr/compare.py --cases fresh10 --aacr low=low-fresh10 default=default-fresh10 ocr=ocr-fresh10
+bench/aacr/compare.py --cases fresh10 low=low-fresh10 default=default-fresh10 ocr=ocr-fresh10
 ```
+
+`compare.py` prints two tables, both led by the number of problems found:
+the defect benchmark (found / recall / high / medium / low / weighted /
+comments correct / cost / time) and AACR-Bench's own (references found /
+recall / precision / F1, then recall by the benchmark's own labels — code
+defect, maintainability, performance, security; diff / file / repo level —
+from `references.json`, built by `reference_index.py` from the pinned
+dataset). The benchmark's references carry no severity, so its table has no
+high/medium/low; its categories are the counterpart.
 
 What makes the rows comparable, and is enforced rather than assumed:
 - **One defect judge.** Every arm, OCR included, is judged in the quickreviewd
@@ -350,6 +359,7 @@ out up to 6 lens children); start at 1–2.
 | `select_cases.py` | deterministic set selection from the pinned dataset |
 | `arm.sh` / `compare.py` | one arm end to end (review → defect judge → optional AACR eval); the comparison table |
 | `check_available.py` | can every PR's base and head still be fetched from github.com |
+| `references.json` / `reference_index.py` | each AACR reference's own category and context, for the benchmark table's breakdown |
 | `sets/*.json` | the committed case sets |
 | `judge_shim.py` | OpenAI-compatible judge endpoint over `pi -p` |
 | `codex_bridge.py` | the OCR arm's loopback Chat Completions/Responses → Codex backend bridge |

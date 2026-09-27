@@ -2,6 +2,7 @@
 """Compare judged benchmark arms on the SAME PRs — the table behind RESULTS.md.
 
     bench/aacr/compare.py --cases fresh10 "before=fresh10-off" "default=lean-fresh10" "low=low-fresh10"
+    bench/aacr/compare.py --cases fresh10:id,id low=low-fresh10 default=default-fresh10 ocr=ocr-fresh10
     bench/aacr/compare.py --cases levers16 "default=lean-smoke10,lean-dev10,lean-holdout10"
 
 An arm is NAME=run[,run...] (run dirs under $QCR_BENCH_RUNS_DIR, e.g. what
@@ -17,9 +18,17 @@ PRs column, never silently dropped. Scores come only from the archived judge
 files (judge/v<ground-truth version>-<judge model>/), so this never calls a
 model. Defects found count a partial find as ½; weighted = high 3 / medium 2 /
 low 1; $ is pi's own per-call price summed over the main session and every
-pass. Standard library only.
+pass (the OCR arm's bridge tokens at the same rates). Standard library only.
+
+Two tables, both led by the NUMBER OF PROBLEMS FOUND — what the review is
+for; rates follow it. The first is the defect benchmark (our judge, real
+defects graded high/medium/low). The second, printed whenever an arm has a
+`bench.sh eval` (arm.sh --eval), is AACR-Bench's own: references matched, its
+recall/precision/F1, and recall by the benchmark's own labels — category and
+context, from references.json (reference_index.py) — since its references
+carry no severity. Both are restricted to the --cases PRs.
 """
-import argparse, collections, glob, json, os, re, statistics, sys
+import argparse, collections, glob, hashlib, json, os, re, statistics, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 W = {"high": 3, "medium": 2, "low": 1}
@@ -159,7 +168,7 @@ def score(runs_dir, runs, cases, judge_model):
     correct = (comments["correct-valuable"] + comments["correct-minor"]) / max(ct, 1)
     sev = " | ".join(f"{found[s]:g}/{total[s]}" for s in W)
     incomplete = "" if judged == len(cases) else " INCOMPLETE"
-    return (f"{f:g}/{n} ({f / max(n, 1):.0%}) | {wt:.0%} | {sev} | {correct:.0%} | "
+    return (f"{f:g}/{n} | {f / max(n, 1):.0%} | {sev} | {wt:.0%} | {correct:.0%} | "
             f"${statistics.mean(usd) if usd else 0:.2f} | {statistics.median(mins) if mins else 0:.1f} | {judged}/{len(cases)}{incomplete}")
 
 
@@ -175,35 +184,77 @@ def build(runs_dir, runs):
     return out
 
 
-def aacr(runs_dir, runs):
-    """AACR-Bench's own metric for one repeat: the harness's averaged `all`
-    variant of every run, summed as counts (rates re-derived), plus the judge
-    line each run's eval recorded."""
-    t = collections.Counter()
-    judges = set()
+CATEGORIES = ("Code Defect", "Maintainability and Readability", "Performance", "Security Vulnerability")
+CONTEXTS = ("Diff Level", "File Level", "Repo Level")
+REFS = None  # references.json: the benchmark's own label per reference
+
+
+def ref_labels():
+    global REFS
+    if REFS is None:
+        f = os.path.join(HERE, "references.json")
+        REFS = json.load(open(f))["references"] if os.path.exists(f) else {}
+    return REFS
+
+
+def note_key(path, start, end, note):
+    """reference_index.py's key for one harness reference."""
+    h = hashlib.sha1(" ".join(str(note).split()).encode()).hexdigest()[:12]
+    return f"{path}:{start}-{end}:{h}"
+
+
+def aacr(runs_dir, runs, cases):
+    """AACR-Bench's own metric for one repeat, from the harness's per-round
+    files of the `all` variant, restricted to --cases: per reference, the
+    share of judge rounds that semantically matched it; per PR, the comments
+    the harness scored (for precision). Also the judge line each eval wrote."""
+    refs, generated, scored, judges = {}, 0, set(), set()
     for run in runs:
         d = os.path.join(runs_dir, run, "results", "all")
-        f = os.path.join(d, "metrics_ocr_average.json")
-        if not os.path.exists(f):
-            # A one-round eval writes a single metrics file and no average.
-            one = sorted(glob.glob(os.path.join(d, "metrics_ocr_*.json")))
-            if len(one) != 1:
-                continue
-            f = one[0]
-        m = json.load(open(f))["summary"]
-        for k in ("evaluated_instances", "expected_notes", "generated_notes", "matched_semantic_notes", "matched_line_notes"):
-            t[k] += m.get(k) or 0
-        j = os.path.join(runs_dir, run, "judge.txt")
-        judges.add(open(j).readline().strip() if os.path.exists(j) else "(no judge.txt)")
-    return t, judges
+        rounds = [f for f in sorted(glob.glob(os.path.join(d, "metrics_ocr_*.json"))) if "average" not in f]
+        per = collections.defaultdict(list)
+        for f in rounds:
+            m = json.load(open(f))
+            for inst in m.get("eval_res") or []:
+                iid = inst["instance_id"]
+                if iid not in cases or iid in scored:
+                    continue
+                for c in inst.get("comments") or []:
+                    per[(iid, note_key(c["path"], c["from_line"], c["to_line"], c["note"]))].append(1 if c.get("semantic_match") else 0)
+        got = {k[0] for k in per}
+        for k, v in per.items():
+            refs[k] = sum(v) / len(v)
+        for iid in got:
+            # The comments the harness scored for this PR: its result file.
+            rf = os.path.join(d, f"{iid}.json")
+            r = json.load(open(rf)) if os.path.exists(rf) else {}
+            rows = (r.get("review") or {}).get("comments") or r.get("comments") or []
+            generated += len(rows)
+        if got and rounds:
+            j = os.path.join(runs_dir, run, "judge.txt")
+            judges.add(open(j).readline().strip() if os.path.exists(j) else "(no judge.txt)")
+        scored |= got
+    return refs, generated, scored, judges
 
 
-def aacr_row(t):
-    sem, gen, exp = t["matched_semantic_notes"], t["generated_notes"], t["expected_notes"]
-    p, r = sem / max(gen, 1), sem / max(exp, 1)
+def aacr_row(refs, generated, scored, cases):
+    labels = ref_labels()
+    found = sum(refs.values())
+    total = sum(len(labels.get(iid, {})) for iid in cases) or len(refs)
+    p, r = found / max(generated, 1), found / max(total, 1)
     f1 = 2 * p * r / (p + r) if p + r else 0
-    return (f"{sem:.1f}/{exp:g} ({r:.1%}) | {sem:.1f}/{gen:g} ({p:.1%}) | {f1:.1%} | "
-            f"{t['matched_line_notes'] / max(exp, 1):.1%} | {t['evaluated_instances']:g}")
+    by = collections.Counter()
+    n = collections.Counter()
+    for iid in cases:
+        for key, (cat, ctx) in labels.get(iid, {}).items():
+            n[cat] += 1
+            n[ctx] += 1
+            by[cat] += refs.get((iid, key), 0)
+            by[ctx] += refs.get((iid, key), 0)
+    cols = " | ".join(f"{by[c]:.1f}/{n[c]}" for c in CATEGORIES + CONTEXTS)
+    incomplete = "" if len(scored) == len(cases) else " INCOMPLETE"
+    return (f"{found:.1f}/{total} | {r:.1%} | {p:.1%} ({generated} comments) | {f1:.1%} | {cols} | "
+            f"{len(scored)}/{len(cases)}{incomplete}")
 
 
 def main():
@@ -211,13 +262,14 @@ def main():
     ap.add_argument("--cases", required=True, help="a set name, set:id,id, levers16 or all30")
     ap.add_argument("--judge-model", default="gpt-6-sol-high", help="the judge label's model part")
     ap.add_argument("--runs-dir", default=os.environ.get("QCR_BENCH_RUNS_DIR", os.path.join(HERE, "runs")))
-    ap.add_argument("--aacr", action="store_true", help="also print AACR-Bench's own metric (needs `bench.sh eval` on each run)")
+    ap.add_argument("--aacr", action="store_true", help="print the AACR-Bench table even when no arm has been evaluated (it prints by itself when one has)")
     ap.add_argument("arms", nargs="+", help="NAME=run[,run...]")
     a = ap.parse_args()
     cases = cases_for(a.cases)
     print(f"{len(cases)} PRs, {sum(len(v[1]) for v in cases.values())} defects ({a.cases})\n")
-    print("| Arm | Found | Weighted | High | Medium | Low | Comments correct | $ / PR | Median min | PRs judged |")
-    print("|---|---|---|---|---|---|---|---|---|---|")
+    print("Defect benchmark (our judge: did the review find each real defect)\n")
+    print("| Arm | Problems found | Recall | High | Medium | Low | Weighted | Comments correct | $ / PR | Median min | PRs judged |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|")
     notes, builds = [], {}
     for arm in a.arms:
         name, _, spec = arm.partition("=")
@@ -243,22 +295,24 @@ def main():
     if len(commits) > 1:
         notes.append("arms were reviewed by DIFFERENT builds — "
                      + "; ".join(f"{k}: {', '.join(sorted(v))}" for k, v in builds.items()))
-    if a.aacr:
-        # The benchmark's own metric, `all` variant (the only one the OCR arm
-        # has): semantic matches against the dataset's references, as scored by
-        # the harness under whatever judge each run's `bench.sh eval` used.
-        print("\nAACR-Bench metric (harness, `all` variant, judge rounds averaged)\n")
-        print("| Arm | Recall | Precision | F1 | Line recall | PRs scored |")
-        print("|---|---|---|---|---|---|")
-        judges = set()
-        for arm in a.arms:
-            name, _, spec = arm.partition("=")
-            repeats = [r.split(",") for r in spec.split("+")]
-            for k, runs in enumerate(repeats, 1):
-                t, js = aacr(a.runs_dir, runs)
-                judges |= js
-                label = name if len(repeats) == 1 else f"{name} (run {k})"
-                print(f"| {label} | {aacr_row(t) if t['evaluated_instances'] else 'not evaluated | | | | 0'} |")
+    # The benchmark's own metric, `all` variant (the only one the OCR arm
+    # has): semantic matches against the dataset's references, scored by the
+    # harness under whatever judge each run's `bench.sh eval` used — printed
+    # whenever any arm has been evaluated.
+    rows, judges = [], set()
+    for arm in a.arms:
+        name, _, spec = arm.partition("=")
+        repeats = [r.split(",") for r in spec.split("+")]
+        for k, runs in enumerate(repeats, 1):
+            refs, gen, scored, js = aacr(a.runs_dir, runs, cases)
+            judges |= js
+            label = name if len(repeats) == 1 else f"{name} (run {k})"
+            rows.append(f"| {label} | {aacr_row(refs, gen, scored, cases) if scored else 'not evaluated' + ' |' * 12 + f' 0/{len(cases)}'} |")
+    if judges or a.aacr:
+        print("\nAACR-Bench (the original benchmark's references and metric, `all` variant, judge rounds averaged)\n")
+        print("| Arm | References found | Recall | Precision | F1 | Code defect | Maintainability | Performance | Security | Diff level | File level | Repo level | PRs scored |")
+        print("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+        print("\n".join(rows))
         if len(judges) > 1:
             notes.append("NOT COMPARABLE — the AACR evals used different judges: " + " / ".join(sorted(judges)))
         elif judges:

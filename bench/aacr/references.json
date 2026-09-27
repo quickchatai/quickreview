@@ -1,0 +1,6417 @@
+{
+"dataset_sha256": "d8683cb240249bc4e0aff6428802bdffa7b7573ace600552cab1cd0cb7e905c9",
+"references": {
+"CherryHQ__cherry-studio@5644b00": {
+"src/renderer/src/middleware/convertLinksMiddleware.ts:16-21:2f83cd784626": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/renderer/src/middleware/convertLinksMiddleware.ts:16-21:57c9ce60e822": [
+"Code Defect",
+"Diff Level"
+],
+"src/renderer/src/middleware/convertLinksMiddleware.ts:16-22:8fe3c8a5cbd4": [
+"Code Defect",
+"Diff Level"
+],
+"src/renderer/src/middleware/convertLinksMiddleware.ts:9-9:f2d18d1257f9": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/renderer/src/middleware/extractReasoningMiddleware.ts:12-12:8afedfcb2c6c": [
+"Code Defect",
+"Diff Level"
+],
+"src/renderer/src/middleware/extractReasoningMiddleware.ts:20-22:e8fe5435e8bc": [
+"Code Defect",
+"Diff Level"
+],
+"src/renderer/src/middleware/extractReasoningMiddleware.ts:21-22:e421d269e05e": [
+"Code Defect",
+"Diff Level"
+],
+"src/renderer/src/middleware/extractReasoningMiddleware.ts:23-23:33e4f89c620a": [
+"Code Defect",
+"Diff Level"
+],
+"src/renderer/src/middleware/extractReasoningMiddleware.ts:34-37:1679025bb8a8": [
+"Code Defect",
+"Diff Level"
+],
+"src/renderer/src/middleware/extractReasoningMiddleware.ts:56-57:5cd9fcc05c71": [
+"Code Defect",
+"File Level"
+],
+"src/renderer/src/middleware/extractReasoningMiddleware.ts:66-66:78cad91e9a92": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/renderer/src/providers/AiProvider/OpenAIProvider.ts:496-498:995d00072cf7": [
+"Code Defect",
+"File Level"
+],
+"src/renderer/src/providers/AiProvider/OpenAIProvider.ts:502-505:b58968aa9639": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/renderer/src/providers/AiProvider/OpenAIProvider.ts:518-525:2f5b1015377a": [
+"Code Defect",
+"File Level"
+],
+"src/renderer/src/providers/AiProvider/OpenAIProvider.ts:525-529:73591920a956": [
+"Code Defect",
+"Diff Level"
+],
+"src/renderer/src/providers/AiProvider/OpenAIProvider.ts:533-549:7694e891e056": [
+"Code Defect",
+"Diff Level"
+],
+"src/renderer/src/providers/AiProvider/OpenAIProvider.ts:553-557:e88ba9e0b7b6": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/renderer/src/providers/AiProvider/OpenAIProvider.ts:585-591:dd6c553933db": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/renderer/src/providers/AiProvider/OpenAIProvider.ts:63-66:5176c62332de": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/renderer/src/utils/getPotentialIndex.ts:21-26:9739b19c495c": [
+"Performance",
+"Diff Level"
+],
+"src/renderer/src/utils/getPotentialIndex.ts:7-7:8c3168fecd1c": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/renderer/src/utils/stream.ts:1-12:58050782856a": [
+"Performance",
+"File Level"
+],
+"src/renderer/src/utils/stream.ts:14-25:d146d8fe62a2": [
+"Code Defect",
+"Diff Level"
+]
+},
+"CherryHQ__cherry-studio@83a2594": {
+"src/renderer/src/i18n/locales/en-us.json:1391-1391:6e26cc1531ed": [
+"Code Defect",
+"Repo Level"
+],
+"src/renderer/src/i18n/locales/ja-jp.json:1391-1391:7d4e98fd7fcd": [
+"Code Defect",
+"Repo Level"
+],
+"src/renderer/src/i18n/locales/ru-ru.json:1391-1391:5c6388223568": [
+"Code Defect",
+"Repo Level"
+],
+"src/renderer/src/i18n/locales/zh-cn.json:970-974:40ccc701678d": [
+"Code Defect",
+"Repo Level"
+],
+"src/renderer/src/i18n/locales/zh-tw.json:1391-1391:9797688420bd": [
+"Code Defect",
+"Repo Level"
+],
+"src/renderer/src/pages/agents/index.ts:19-19:2956a397d0b4": [
+"Code Defect",
+"File Level"
+],
+"src/renderer/src/pages/agents/index.ts:20-25:07d24eca4e1f": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"src/renderer/src/pages/agents/index.ts:40-56:d1175cc65313": [
+"Code Defect",
+"File Level"
+],
+"src/renderer/src/pages/agents/index.ts:8-8:053c649c0394": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/renderer/src/pages/settings/DataSettings/DataSettings.tsx:114-118:ff6d907181a4": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"src/renderer/src/pages/settings/DataSettings/DataSettings.tsx:35-35:d0ab71579b91": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/renderer/src/pages/settings/DataSettings/DataSettings.tsx:66-73:a9e2b6eb5bfe": [
+"Performance",
+"File Level"
+],
+"src/renderer/src/pages/settings/DataSettings/DefaultaidesSettings.tsx:20-24:6854e04508f7": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/renderer/src/pages/settings/DataSettings/DefaultaidesSettings.tsx:4-4:c33b8a48f27d": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/renderer/src/pages/settings/DataSettings/DefaultaidesSettings.tsx:6-6:1d9a9c69fa47": [
+"Code Defect",
+"File Level"
+],
+"src/renderer/src/store/settings.ts:106-106:ea2599ba65c2": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"src/renderer/src/store/settings.ts:210-210:0af2ac232259": [
+"Code Defect",
+"File Level"
+],
+"src/renderer/src/store/settings.ts:459-459:12e8c1434ab6": [
+"Code Defect",
+"File Level"
+],
+"src/renderer/src/store/settings.ts:576-576:280456f035f9": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"ClickHouse__ClickHouse@3143520": {
+"src/Common/AwsNodumpMemoryManager.cpp:18-20:6a0705974415": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"src/Common/AwsNodumpMemoryManager.cpp:8-11:0d3afa2ccba9": [
+"Code Defect",
+"Repo Level"
+],
+"src/Common/AwsNodumpMemoryManager.h:8-8:e1d3fb343192": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Common/JemallocNodumpSTLAllocator.h:15-15:be5eb9f41a63": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Common/JemallocNodumpSTLAllocator.h:23-27:a87f01176a7a": [
+"Code Defect",
+"File Level"
+],
+"src/Common/JemallocNodumpSTLAllocator.h:46-51:74d132b6f2ac": [
+"Code Defect",
+"File Level"
+],
+"src/Common/JemallocNodumpSTLAllocator.h:93-99:a5e1037941d5": [
+"Security Vulnerability",
+"Diff Level"
+],
+"src/Common/NamedCollections/NamedCollectionsMetadataStorage.cpp:374-374:2dd09aa30063": [
+"Security Vulnerability",
+"File Level"
+],
+"src/Disks/DiskEncrypted.cpp:32-33:5da65f752e5a": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Disks/DiskEncryptedTransaction.h:22-25:8d1d12163f4f": [
+"Security Vulnerability",
+"Repo Level"
+],
+"src/Disks/DiskEncryptedTransaction.h:22-28:564d784a1b0d": [
+"Security Vulnerability",
+"Repo Level"
+],
+"src/IO/FileEncryptionCommon.cpp:302-304:b693bd0c3f9e": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/configure_config.cmake:91-91:ba5679899e75": [
+"Code Defect",
+"Repo Level"
+]
+},
+"ClickHouse__ClickHouse@36ea28a": {
+"src/Analyzer/Identifier.cpp:12-12:53a5a56a2556": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Analyzer/Identifier.cpp:22-22:b3db7912373e": [
+"Code Defect",
+"Repo Level"
+],
+"src/Analyzer/Identifier.cpp:37-44:87466d264c31": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Analyzer/Identifier.cpp:48-85:2262a2083296": [
+"Code Defect",
+"File Level"
+]
+},
+"ClickHouse__ClickHouse@3eee886": {
+"src/Common/CurrentMetrics.cpp:253-255:59791243ec2f": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Common/ThreadPool.cpp:774-777:6687870ec9ea": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Common/ThreadPool.cpp:795-800:f6f865f25ecd": [
+"Code Defect",
+"Diff Level"
+],
+"src/Common/ThreadPool.cpp:798-799:4630e732efa2": [
+"Code Defect",
+"Diff Level"
+],
+"src/Common/ThreadStatus.h:161-162:14906af8378c": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"src/Common/ThreadStatus.h:163-163:ab8457617ab9": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Common/threadPoolCallbackRunner.h:161-161:4402ee5f6e56": [
+"Code Defect",
+"Repo Level"
+],
+"src/Common/threadPoolCallbackRunner.h:71-71:80c42e2b2dde": [
+"Code Defect",
+"Diff Level"
+],
+"src/Compression/ParallelCompressedWriteBuffer.cpp:51-51:01e247298c70": [
+"Code Defect",
+"Repo Level"
+],
+"src/Compression/ParallelCompressedWriteBuffer.cpp:51-51:cb33d9c72a05": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Interpreters/Aggregator.cpp:2368-2372:5e327ea91b62": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Interpreters/Aggregator.cpp:3135-3139:65f80389f73d": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Interpreters/ProfileEventsExt.cpp:132-138:427a3705dcc9": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Interpreters/ThreadStatusExt.cpp:202-203:dde5011fa8ca": [
+"Code Defect",
+"Diff Level"
+],
+"src/Interpreters/ThreadStatusExt.cpp:205-211:f38f101b149d": [
+"Code Defect",
+"Diff Level"
+],
+"src/Storages/Distributed/DistributedSink.cpp:596-596:aea24a2205c3": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Storages/MergeTree/MergePlainMergeTreeTask.cpp:42-42:18a701d461f6": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Storages/MergeTree/ReplicatedMergeMutateTaskBase.cpp:147-147:c186f101dee5": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"ClickHouse__ClickHouse@40a4654": {
+"src/Storages/ObjectStorageQueue/ObjectStorageQueueIFileMetadata.cpp:233-234:528c4baa3928": [
+"Performance",
+"File Level"
+],
+"src/Storages/ObjectStorageQueue/ObjectStorageQueueIFileMetadata.cpp:327-327:aa6e2081631f": [
+"Code Defect",
+"Diff Level"
+],
+"src/Storages/ObjectStorageQueue/ObjectStorageQueueOrderedFileMetadata.cpp:252-252:1935c86a5bea": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Storages/ObjectStorageQueue/ObjectStorageQueueOrderedFileMetadata.cpp:268-271:aab8e9f97b8f": [
+"Code Defect",
+"Diff Level"
+],
+"src/Storages/ObjectStorageQueue/ObjectStorageQueueSource.cpp:488-488:0ce7bd69dc81": [
+"Code Defect",
+"Diff Level"
+],
+"src/Storages/ObjectStorageQueue/ObjectStorageQueueSource.cpp:527-533:626e78dc5e34": [
+"Code Defect",
+"Diff Level"
+],
+"src/Storages/ObjectStorageQueue/ObjectStorageQueueSource.cpp:599-609:48f48ac52304": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Storages/ObjectStorageQueue/ObjectStorageQueueSource.cpp:658-658:c7c318dc6eef": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Storages/ObjectStorageQueue/ObjectStorageQueueSource.cpp:677-689:739abf9acdb0": [
+"Code Defect",
+"File Level"
+],
+"src/Storages/ObjectStorageQueue/ObjectStorageQueueSource.cpp:677-689:fcfafb7c6819": [
+"Code Defect",
+"Diff Level"
+]
+},
+"ClickHouse__ClickHouse@5fb6ee3": {
+"src/Functions/array/arrayAggregation.cpp:461-464:6f3a6170b04b": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Functions/array/arrayAggregation.cpp:482-482:63a08d1972dc": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Functions/array/arrayFirstLast.cpp:231-231:99cbc7945ac3": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"src/Functions/array/arrayFirstLast.cpp:262-266:0e586b5740d5": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Functions/array/arrayFirstLastIndex.cpp:128-130:abf155777698": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Functions/array/arrayFirstLastIndex.cpp:157-157:1e5c32b21e9d": [
+"Code Defect",
+"Diff Level"
+],
+"src/Functions/array/arrayFirstLastIndex.cpp:159-159:588172feed7a": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Functions/array/arrayFirstLastIndex.cpp:166-166:1ad4b720a4ac": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Functions/array/arraySplit.cpp:118-118:632f064d1c5f": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Functions/array/arraySplit.cpp:121-121:d12803b0f83b": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Functions/array/arraySplit.cpp:133-133:950a6080a20b": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"ClickHouse__ClickHouse@73ecc7d": {
+"src/Functions/base64Decode.cpp:36-40:390a706336b4": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Functions/base64Encode.cpp:26-27:97b485781d54": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Functions/base64URLDecode.cpp:26-28:b05b17e258ee": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Functions/compareSubstrings.cpp:385-386:a62dd9029f2a": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Functions/concat.cpp:293-293:37904674a58b": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Functions/concat.cpp:302-302:6924ed7e1656": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Functions/concatWithSeparator.cpp:210-211:fb5d4456fcb1": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Functions/convertCharset.cpp:224-247:84040e612521": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Functions/convertCharset.cpp:234-244:56c74b09cf77": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Functions/decodeHTMLComponent.cpp:223-230:b6443910bc0a": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Functions/decodeHTMLComponent.cpp:233-239:c10c644042f3": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Functions/empty.cpp:236-237:e3294ca44085": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Functions/encodeXMLComponent.cpp:142-166:1d315886c242": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Functions/encodeXMLComponent.cpp:150-164:3483ca58da1b": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Functions/endsWith.cpp:13-35:70367ff4908d": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Functions/endsWith.cpp:22-32:a70b08d6e73f": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Functions/endsWith.cpp:22-32:b04c83e20c77": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Functions/endsWithUTF8.cpp:23-23:61b110640139": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"ClickHouse__ClickHouse@79224f2": {
+"src/Storages/ObjectStorageQueue/ObjectStorageQueueIFileMetadata.cpp:265-272:25e98d685479": [
+"Code Defect",
+"Diff Level"
+],
+"src/Storages/ObjectStorageQueue/ObjectStorageQueueIFileMetadata.cpp:266-272:43d407d3f368": [
+"Code Defect",
+"Diff Level"
+],
+"src/Storages/ObjectStorageQueue/ObjectStorageQueueIFileMetadata.cpp:268-270:588c1589ef57": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Storages/ObjectStorageQueue/ObjectStorageQueueSource.cpp:242-250:33ee8fcc3047": [
+"Performance",
+"Diff Level"
+]
+},
+"ClickHouse__ClickHouse@cc96255": {
+"docs/en/sql-reference/functions/string-functions.md:2545-2548:1d3e2c2f3b59": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Functions/FunctionStrncmp.cpp:131-131:db3903848c6a": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Functions/FunctionStrncmp.cpp:132-132:1733e41cc190": [
+"Performance",
+"Diff Level"
+],
+"src/Functions/FunctionStrncmp.cpp:138-138:dc65084560dc": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Functions/FunctionStrncmp.cpp:142-142:308d66519822": [
+"Code Defect",
+"Diff Level"
+],
+"src/Functions/FunctionStrncmp.cpp:161-161:0739c0fb8461": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Functions/FunctionStrncmp.cpp:219-226:46b443ad3797": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Functions/FunctionStrncmp.cpp:252-257:91f850cfc2ff": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Functions/FunctionStrncmp.cpp:26-27:7a24fdc250e9": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Functions/FunctionStrncmp.cpp:302-302:02f67a2ea3bc": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Functions/FunctionStrncmp.cpp:434-436:01816c689d17": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Functions/FunctionStrncmp.cpp:437-437:12eaa0c299a1": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Functions/FunctionStrncmp.cpp:45-45:3e550af80184": [
+"Performance",
+"Diff Level"
+],
+"src/Functions/FunctionStrncmp.cpp:45-56:0bb89b8f1a04": [
+"Performance",
+"Diff Level"
+],
+"src/Functions/FunctionStrncmp.cpp:56-56:7dd89ae9a944": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Functions/FunctionStrncmp.cpp:68-70:ed75aba38648": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"ClickHouse__ClickHouse@d67628c": {
+"src/Processors/Executors/ExecutorTasks.h:51-51:04cc5fedd0ef": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Processors/Executors/ExecutorTasks.h:75-75:7f0860665346": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"src/Processors/Executors/PipelineExecutor.cpp:372-372:ba6fa9692ccb": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Processors/Executors/PipelineExecutor.cpp:381-386:846cef2d6cb1": [
+"Code Defect",
+"Diff Level"
+],
+"src/Processors/Executors/PipelineExecutor.h:88-88:1c8d71e751a5": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"ClickHouse__ClickHouse@f9987c8": {
+"src/Storages/MergeTree/KeyCondition.cpp:2924-2929:d0eb154c76b7": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Storages/MergeTree/KeyCondition.cpp:2924-2938:98f918812289": [
+"Performance",
+"Diff Level"
+],
+"src/Storages/MergeTree/KeyCondition.cpp:2929-2929:7ac9d7d5ba99": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"tests/queries/0_stateless/03518_key_condition_binary_search.sh:25-25:e7b8113d8ba6": [
+"Code Defect",
+"Diff Level"
+],
+"tests/queries/0_stateless/03518_key_condition_binary_search.sh:31-31:15edcd18f36c": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"ClickHouse__ClickHouse@f9d51fa": {
+"src/Disks/DiskLocalCheckThread.cpp:35-38:bbec2a78f403": [
+"Code Defect",
+"Repo Level"
+],
+"src/Disks/DiskLocalCheckThread.cpp:39-39:9ef834d8ed0e": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Disks/DiskLocalCheckThread.cpp:41-41:d822c10db878": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Disks/DiskLocalCheckThread.cpp:41-44:ac8e979a0805": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Disks/DiskLocalCheckThread.cpp:64-64:e18b2cf827fd": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Disks/DiskLocalCheckThread.cpp:77-77:d9e6eeeae22d": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Disks/DiskLocalCheckThread.cpp:83-84:65b290a9949b": [
+"Code Defect",
+"Repo Level"
+]
+},
+"ClickHouse__ClickHouse@fd6ba0c": {
+"src/Storages/MergeTree/MergeTreeDataMergerMutator.cpp:333-342:b4d552b82a2e": [
+"Performance",
+"File Level"
+],
+"src/Storages/MergeTree/MergeTreeDataMergerMutator.cpp:336-336:abb823aaf628": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"src/Storages/MergeTree/MergeTreeDataMergerMutator.cpp:336-342:ff4709deed26": [
+"Code Defect",
+"Diff Level"
+],
+"src/Storages/MergeTree/MergeTreeDataMergerMutator.cpp:338-338:03855d1c4491": [
+"Performance",
+"Diff Level"
+],
+"src/Storages/MergeTree/MergeTreeDataMergerMutator.cpp:344-349:cc4f731be186": [
+"Performance",
+"Diff Level"
+]
+},
+"FreeCAD__FreeCAD@290bdc7": {
+"src/App/PropertyStandard.cpp:604-604:5f4be935f4b9": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Gui/WorkbenchManipulatorPython.cpp:160-161:67c2cc460c2e": [
+"Code Defect",
+"File Level"
+],
+"src/Gui/WorkbenchManipulatorPython.cpp:162-162:9fb7c3578723": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Gui/WorkbenchManipulatorPython.cpp:317-325:269313d8bb98": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Gui/WorkbenchManipulatorPython.cpp:321-322:67c2cc460c2e": [
+"Code Defect",
+"File Level"
+],
+"src/Mod/TechDraw/App/EdgeWalker.cpp:453-458:4068c843234b": [
+"Code Defect",
+"Repo Level"
+],
+"src/Mod/TechDraw/App/EdgeWalker.cpp:453-458:4dfebbcc8353": [
+"Code Defect",
+"Repo Level"
+],
+"src/Mod/TechDraw/App/EdgeWalker.h:81-81:e928d4f9d10b": [
+"Code Defect",
+"Repo Level"
+]
+},
+"FreeCAD__FreeCAD@39c5968": {
+"src/App/Application.cpp:3488-3491:edd87af11382": [
+"Code Defect",
+"Diff Level"
+],
+"src/App/Application.cpp:402-402:3bd4723d9a02": [
+"Performance",
+"File Level"
+],
+"src/App/Application.cpp:402-402:9ab3b29d4544": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/App/Application.cpp:409-411:25c461cf7e2d": [
+"Code Defect",
+"File Level"
+],
+"src/App/Application.cpp:681-681:bed99c409bec": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"FreeCAD__FreeCAD@699b45c": {
+"src/Base/StackWalker.cpp:1473-1473:085232efffa9": [
+"Code Defect",
+"Diff Level"
+],
+"src/Base/StackWalker.cpp:1490-1490:b38daae17643": [
+"Code Defect",
+"Diff Level"
+],
+"src/Base/StackWalker.cpp:1540-1540:7173897713dd": [
+"Code Defect",
+"Diff Level"
+],
+"src/Base/StackWalker.cpp:1559-1559:d0eeea97a102": [
+"Code Defect",
+"Diff Level"
+],
+"src/Base/StackWalker.cpp:1576-1576:362eeb1b336b": [
+"Code Defect",
+"Diff Level"
+],
+"src/Base/StackWalker.cpp:1609-1609:c3fb8025e577": [
+"Code Defect",
+"Diff Level"
+],
+"src/Base/StackWalker.cpp:813-813:a75b682adff7": [
+"Code Defect",
+"Diff Level"
+],
+"src/Base/Tools.h:148-148:075fdea5c009": [
+"Code Defect",
+"Diff Level"
+],
+"src/Base/Tools.h:148-148:fbc443f87621": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Gui/DAGView/DAGRectItem.cpp:67-67:cb810a5dd65e": [
+"Performance",
+"Diff Level"
+],
+"src/Gui/SoDatumLabel.cpp:552-552:415f2e983e1a": [
+"Performance",
+"File Level"
+],
+"src/Gui/SoDatumLabel.cpp:84-84:de7ed8ddc46f": [
+"Performance",
+"File Level"
+],
+"src/Gui/View3DInventor.cpp:794-794:2ae2f75c517e": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Mod/CAM/libarea/pyarea.cpp:51-51:e2a39c7f8266": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/TechDraw/App/Geometry.cpp:1718-1719:f8d9f727f265": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Mod/TechDraw/Gui/DimensionValidators.cpp:747-748:0f85f8cf26b4": [
+"Maintainability and Readability",
+"Repo Level"
+]
+},
+"FreeCAD__FreeCAD@82fef4a": {
+"src/Base/Parameter.cpp:1866-1866:182d1173cefe": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Base/Parameter.cpp:1911-1911:bfa6c2d85a95": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Base/Parameter.cpp:1913-1913:01fb1b1f0530": [
+"Code Defect",
+"Diff Level"
+]
+},
+"FreeCAD__FreeCAD@870d7f5": {
+"src/Mod/Material/App/Library.cpp:37-43:40cfe0d5bf5a": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/Material/App/Library.cpp:37-43:4bc83781d0f5": [
+"Code Defect",
+"File Level"
+],
+"src/Mod/Material/App/MaterialManager.cpp:205-205:b89ac3088df2": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/Material/App/MaterialManager.cpp:247-247:b89ac3088df2": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/Material/App/ModelLibrary.cpp:118-118:285b8b5aefc7": [
+"Code Defect",
+"Repo Level"
+],
+"src/Mod/Material/App/ModelLibrary.cpp:118-118:87745e5a3774": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"src/Mod/Material/App/ModelLibrary.cpp:146-148:1909375c2970": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/Material/App/ModelLibrary.cpp:75-76:eeb1c5cdc876": [
+"Code Defect",
+"Repo Level"
+],
+"src/Mod/Material/App/ModelLibrary.cpp:75-79:49b44014e73f": [
+"Performance",
+"File Level"
+],
+"src/Mod/Material/App/ModelLibrary.cpp:83-83:4a719162fe93": [
+"Code Defect",
+"Diff Level"
+],
+"src/Mod/Material/App/ModelLibrary.cpp:87-87:2d8564dbb210": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Mod/Material/App/ModelLibrary.h:49-54:d83ec3f6cc9d": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Mod/Material/App/ModelLibrary.h:69-70:04e24ef8698e": [
+"Code Defect",
+"Diff Level"
+],
+"src/Mod/Material/App/ModelLoader.cpp:124-125:dd92d64c0f41": [
+"Code Defect",
+"Diff Level"
+],
+"src/Mod/Material/App/ModelLoader.cpp:231-235:321b350c44e8": [
+"Code Defect",
+"File Level"
+],
+"src/Mod/Material/App/ModelLoader.cpp:42-42:0d4323ff54e0": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Mod/Material/App/ModelLoader.h:122-123:d5c8a4610ccb": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Mod/Material/App/ModelManager.cpp:100-100:5ca8eaab5fe5": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/Material/App/ModelManager.cpp:149-151:2be449889076": [
+"Performance",
+"Diff Level"
+],
+"src/Mod/Material/App/ModelManager.cpp:161-166:90be0659e39d": [
+"Code Defect",
+"File Level"
+],
+"src/Mod/Material/App/ModelManager.cpp:168-168:31f050d318ab": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/Material/App/ModelManager.cpp:226-237:69976c332728": [
+"Code Defect",
+"File Level"
+],
+"src/Mod/Material/App/ModelManager.cpp:259-262:003c9c1ef544": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/Material/App/ModelManager.cpp:344-350:16059810b9e5": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/Material/App/ModelManager.cpp:97-97:abbbb4cc2e40": [
+"Code Defect",
+"Diff Level"
+],
+"src/Mod/Material/App/ModelManagerExternal.cpp:126-126:1cfc6bbdae00": [
+"Performance",
+"File Level"
+],
+"src/Mod/Material/App/ModelManagerExternal.cpp:157-158:2168ee7e66c5": [
+"Code Defect",
+"Diff Level"
+],
+"src/Mod/Material/App/ModelManagerExternal.cpp:180-182:39b7c20ac9d7": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/Material/App/ModelManagerExternal.cpp:59-61:1c7236ee6624": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Mod/Material/App/ModelManagerExternal.cpp:79-80:3f11ea2818e0": [
+"Performance",
+"Diff Level"
+],
+"src/Mod/Material/App/ModelManagerExternal.cpp:84-87:bd6ea741159a": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/Material/App/ModelManagerLocal.cpp:56-56:47f44844bbfd": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"FreeCAD__FreeCAD@a050e42": {
+"src/Mod/TechDraw/App/DrawProjGroup.cpp:1123-1126:7e8f412fc409": [
+"Performance",
+"File Level"
+],
+"src/Mod/TechDraw/App/DrawProjGroup.cpp:1127-1132:ab21006c69b9": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/TechDraw/App/DrawProjGroup.cpp:1153-1144:396992d66bac": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Mod/TechDraw/App/DrawProjGroup.h:133-134:4831bbd33517": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/TechDraw/App/DrawProjGroup.h:46-48:31dd6ba720f7": [
+"Code Defect",
+"Repo Level"
+],
+"src/Mod/TechDraw/App/DrawViewPart.cpp:1300-1303:77757180d2f2": [
+"Performance",
+"Diff Level"
+],
+"src/Mod/TechDraw/App/DrawViewPart.cpp:1385-1393:03a38caed937": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/TechDraw/App/DrawViewPart.cpp:96-96:de0a34f56c35": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/TechDraw/App/Preferences.cpp:180-181:73e013d1d728": [
+"Code Defect",
+"Diff Level"
+],
+"src/Mod/TechDraw/Gui/CommandCreateDims.cpp:2383-2383:62b3b24dfeda": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/TechDraw/Gui/DimensionValidators.cpp:391-392:a1e5274f5d1c": [
+"Code Defect",
+"Diff Level"
+],
+"src/Mod/TechDraw/Gui/DimensionValidators.cpp:435-437:e3a04517682f": [
+"Code Defect",
+"Diff Level"
+],
+"src/Mod/TechDraw/Gui/DimensionValidators.cpp:675-677:e3a04517682f": [
+"Code Defect",
+"Diff Level"
+],
+"src/Mod/TechDraw/Gui/DimensionValidators.h:70-70:4106d7842638": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/TechDraw/Gui/DimensionValidators.h:83-84:b799530ae8f3": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Mod/TechDraw/Gui/DlgPrefsTechDrawAnnotationImp.cpp:169-169:bf6b62ce6dfc": [
+"Code Defect",
+"File Level"
+],
+"src/Mod/TechDraw/Gui/DlgPrefsTechDrawDimensionsImp.cpp:150-150:e6bb49a81a01": [
+"Code Defect",
+"File Level"
+],
+"src/Mod/TechDraw/Gui/QGIArrow.h:86-86:3fdc7dec4db7": [
+"Code Defect",
+"File Level"
+],
+"src/Mod/TechDraw/Gui/QGILeaderLine.cpp:429-438:a5361629640d": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"FreeCAD__FreeCAD@a440ff7": {
+"src/Gui/DlgOnlineHelpImp.h:35-35:92e536479c59": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Gui/DlgOnlineHelpImp.h:35-35:c597861c92ad": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/PartDesign/App/FeaturePad.cpp:66-66:899478a3ba08": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/PartDesign/App/FeaturePocket.cpp:67-67:3282c43024a0": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/TechDraw/App/DrawTile.cpp:46-46:9c8168bc1eb4": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/TechDraw/Gui/ViewProviderProjGroupItem.cpp:157-157:a83ede0442ca": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"FreeCAD__FreeCAD@e596925": {
+"src/Mod/Fem/App/AppFemPy.cpp:259-265:3af417ee865f": [
+"Code Defect",
+"Diff Level"
+],
+"src/Mod/Fem/App/AppFemPy.cpp:262-265:cddddb49478f": [
+"Performance",
+"Diff Level"
+],
+"src/Mod/Fem/App/FemVTKTools.cpp:1040-1040:2315b88f6343": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Mod/Fem/App/FemVTKTools.cpp:1040-1053:a66ce6ab6e46": [
+"Performance",
+"Diff Level"
+],
+"src/Mod/Fem/App/FemVTKTools.cpp:1091-1096:4867b2b5bf3b": [
+"Security Vulnerability",
+"Diff Level"
+],
+"src/Mod/Fem/App/FemVTKTools.cpp:1091-1102:58136d63d213": [
+"Code Defect",
+"Diff Level"
+],
+"src/Mod/Fem/App/FemVTKTools.cpp:1091-1102:ac25df058614": [
+"Security Vulnerability",
+"Diff Level"
+],
+"src/Mod/Fem/App/FemVTKTools.cpp:1098-1102:5facd1e65f48": [
+"Code Defect",
+"Diff Level"
+],
+"src/Mod/Fem/App/FemVTKTools.cpp:1108-1108:5ab4898b351e": [
+"Code Defect",
+"Diff Level"
+],
+"src/Mod/Fem/App/FemVTKTools.cpp:1110-1113:d6eaf3fcf16d": [
+"Performance",
+"Diff Level"
+],
+"src/Mod/Fem/App/FemVTKTools.cpp:1121-1121:00e171ed0037": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/Fem/App/FemVTKTools.cpp:1123-1172:e6b3c42c9fb1": [
+"Code Defect",
+"Diff Level"
+],
+"src/Mod/Fem/App/FemVTKTools.cpp:1185-1198:7cacc0504c87": [
+"Performance",
+"Diff Level"
+],
+"src/Mod/Fem/App/FemVTKTools.cpp:1201-1211:ba3ca0843599": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/Fem/App/FemVTKTools.cpp:1214-1215:2503adb5dd12": [
+"Performance",
+"Diff Level"
+],
+"src/Mod/Fem/App/FemVTKTools.cpp:1311-1312:5020f4bfe3d1": [
+"Code Defect",
+"Diff Level"
+],
+"src/Mod/Fem/App/FemVTKTools.cpp:1355-1362:4d26971c0587": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/Fem/App/FemVTKTools.cpp:1371-1373:58a5d37a90fb": [
+"Code Defect",
+"Diff Level"
+],
+"src/Mod/Fem/App/FemVTKTools.cpp:1418-1421:e9a80c92eedc": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/Fem/App/FemVTKTools.cpp:1434-1441:e7352aa88c5f": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/Fem/App/FemVTKTools.cpp:1470-1470:0ed40576b8f4": [
+"Performance",
+"Diff Level"
+],
+"src/Mod/Fem/App/FemVTKTools.cpp:1484-1497:e9faf9cc37ff": [
+"Code Defect",
+"File Level"
+],
+"src/Mod/Fem/App/FemVTKTools.cpp:1498-1511:21228b6a163f": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"FreeCAD__FreeCAD@eb761fd": {
+"src/Mod/Measure/App/Measurement.cpp:761-767:dae5b3c0df3f": [
+"Code Defect",
+"Diff Level"
+],
+"src/Mod/Part/App/AppPartPy.cpp:2292-2297:20ce573b6612": [
+"Code Defect",
+"Diff Level"
+],
+"src/Mod/Part/App/FeatureMirroring.cpp:174-178:946d7be3419d": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/Part/App/MeasureClient.cpp:101-101:38f168736aeb": [
+"Code Defect",
+"File Level"
+],
+"src/Mod/Part/App/MeasureClient.cpp:125-131:17be3b62100c": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/Part/App/MeasureClient.cpp:187-193:11d006d619bd": [
+"Code Defect",
+"Diff Level"
+],
+"src/Mod/Part/App/PartFeature.cpp:1103-1103:943a7cb5f37c": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/Part/App/PartFeature.cpp:1269-1269:b4b369583c89": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/Part/App/PartFeature.cpp:1328-1328:0bf92f7d7774": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/Part/App/PartFeature.cpp:1328-1335:5cb411cb0854": [
+"Code Defect",
+"Diff Level"
+],
+"src/Mod/Part/App/PartFeature.cpp:1337-1342:bf8756d10d3e": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/Part/App/PartFeature.h:143-145:0bb311c053a3": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Mod/Part/App/PartFeature.h:145-145:df13947ce937": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/Part/Gui/Command.cpp:1974-1980:7daa24bca5ce": [
+"Code Defect",
+"Diff Level"
+],
+"src/Mod/Part/Gui/Mirroring.cpp:102-109:e37b21442ff3": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/Part/Gui/TaskCheckGeometry.cpp:446-452:62a78cc5100e": [
+"Performance",
+"Diff Level"
+],
+"src/Mod/Part/Gui/TaskSweep.cpp:301-307:e81aed40eb13": [
+"Code Defect",
+"File Level"
+],
+"src/Mod/PartDesign/App/FeatureSketchBased.cpp:217-223:970db0650b1c": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/Surface/App/Blending/FeatureBlendCurve.cpp:147-147:8b4412176e18": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"FreeCAD__FreeCAD@ec3da2e": {
+"src/Mod/TechDraw/App/DrawViewPart.cpp:1502-1502:301feecef6a5": [
+"Performance",
+"File Level"
+],
+"src/Mod/TechDraw/App/DrawViewPart.h:242-242:c2e022a371d9": [
+"Performance",
+"Diff Level"
+],
+"src/Mod/TechDraw/App/DrawViewPart.h:242-245:d4c47642f6f1": [
+"Code Defect",
+"Repo Level"
+]
+},
+"FreeCAD__FreeCAD@f8cd643": {
+"src/Mod/ReverseEngineering/App/AppReverseEngineering.cpp:1002-1002:ad888d48b3e8": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/ReverseEngineering/App/RegionGrowing.cpp:58-58:7e9b53cccdd7": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/Mod/ReverseEngineering/Gui/AppReverseEngineeringGui.cpp:85-85:1264cd62fa4b": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/ReverseEngineering/Gui/Command.cpp:425-425:4153bba712b9": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/ReverseEngineering/Gui/Command.cpp:602-602:028411eda159": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Mod/ReverseEngineering/Gui/Command.cpp:636-636:6bc792122415": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"PowerShell__PowerShell@ea07b93": {
+"src/System.Management.Automation/engine/remoting/common/RunspaceConnectionInfo.cs:2222-2226:ce039cf5e408": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/System.Management.Automation/engine/remoting/common/RunspaceConnectionInfo.cs:2230-2237:ee7a0fa6e505": [
+"Code Defect",
+"Diff Level"
+],
+"src/System.Management.Automation/engine/remoting/common/RunspaceConnectionInfo.cs:2230-2243:9bfd9e8c3c71": [
+"Code Defect",
+"Diff Level"
+],
+"src/System.Management.Automation/engine/remoting/common/RunspaceConnectionInfo.cs:2238-2242:e23113b492b5": [
+"Security Vulnerability",
+"File Level"
+]
+},
+"PowerShell__PowerShell@ec952ce": {
+"src/System.Management.Automation/engine/CommandCompletion/CompletionCompleters.cs:474-474:a178bcd61281": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/System.Management.Automation/engine/CommandCompletion/CompletionCompleters.cs:474-479:52ff0d35ecad": [
+"Code Defect",
+"Repo Level"
+],
+"src/System.Management.Automation/engine/CommandCompletion/CompletionCompleters.cs:475-479:6bffb9bfdbe8": [
+"Code Defect",
+"Diff Level"
+],
+"src/System.Management.Automation/engine/CommandCompletion/CompletionCompleters.cs:478-478:a24b035f832c": [
+"Code Defect",
+"File Level"
+],
+"src/System.Management.Automation/engine/CommandCompletion/CompletionCompleters.cs:489-489:36794d2165a3": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"alibaba__spring-ai-alibaba@3555a95": {
+"community/tool-calls/spring-ai-alibaba-starter-tool-calling-alitranslate/src/main/java/com/alibaba/cloud/ai/toolcalling/alitranslate/AliTranslateAutoConfiguration.java:38-38:fd04d147b224": [
+"Maintainability and Readability",
+"File Level"
+],
+"community/tool-calls/spring-ai-alibaba-starter-tool-calling-alitranslate/src/main/java/com/alibaba/cloud/ai/toolcalling/alitranslate/AliTranslateProperties.java:34-34:5456912f91c2": [
+"Security Vulnerability",
+"Repo Level"
+],
+"community/tool-calls/spring-ai-alibaba-starter-tool-calling-alitranslate/src/main/java/com/alibaba/cloud/ai/toolcalling/alitranslate/AliTranslateProperties.java:38-38:4960cdf5e90d": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"community/tool-calls/spring-ai-alibaba-starter-tool-calling-alitranslate/src/main/java/com/alibaba/cloud/ai/toolcalling/alitranslate/AliTranslateService.java:84-92:3a38c2ca207c": [
+"Code Defect",
+"Repo Level"
+]
+},
+"alibaba__spring-ai-alibaba@4bc7305": {
+"spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/dynamic/agent/entity/DynamicAgentEntity.java:47-47:25482dd5c71a": [
+"Maintainability and Readability",
+"File Level"
+],
+"spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/dynamic/agent/service/AgentServiceImpl.java:200-200:ccda3d286ec1": [
+"Code Defect",
+"File Level"
+],
+"spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/tool/browser/actions/InputTextAction.java:24-24:fd3033791af1": [
+"Maintainability and Readability",
+"File Level"
+],
+"spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/tool/browser/actions/InputTextAction.java:73-73:b9edb390e679": [
+"Maintainability and Readability",
+"File Level"
+],
+"spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/tool/browser/actions/MoveToAndClickAction.java:46-46:0884f4be7e2b": [
+"Code Defect",
+"Repo Level"
+],
+"spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/tool/browser/actions/MoveToAndClickAction.java:48-50:b4e1fc0b2e78": [
+"Code Defect",
+"Repo Level"
+],
+"spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/tool/browser/actions/MoveToAndClickAction.java:51-70:d2f4aa1b9e4e": [
+"Code Defect",
+"Repo Level"
+],
+"spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/tool/browser/actions/MoveToAndClickAction.java:54-54:384ae81896ac": [
+"Maintainability and Readability",
+"File Level"
+],
+"spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/tool/browser/actions/MoveToAndClickAction.java:55-66:9cf3cf42cbb3": [
+"Performance",
+"File Level"
+],
+"spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/tool/browser/actions/NavigateAction.java:41-44:05ffa19f5d35": [
+"Code Defect",
+"Diff Level"
+]
+},
+"appwrite__appwrite@710b8bd": {
+"app/controllers/api/console.php:46-47:05e26028e232": [
+"Code Defect",
+"Diff Level"
+],
+"app/controllers/api/console.php:46-47:66d3dc01c117": [
+"Maintainability and Readability",
+"File Level"
+],
+"app/controllers/general.php:1094-1094:42bd04659d0c": [
+"Maintainability and Readability",
+"File Level"
+],
+"app/controllers/general.php:451-452:2d78c1320ffa": [
+"Code Defect",
+"Diff Level"
+],
+"app/controllers/general.php:812-812:1a1e49e0e3ab": [
+"Code Defect",
+"Diff Level"
+],
+"app/views/general/error.phtml:18-18:b3b6cd996b7a": [
+"Code Defect",
+"File Level"
+],
+"src/Appwrite/Platform/Modules/Functions/Http/Executions/Create.php:354-355:1c16181afa3a": [
+"Code Defect",
+"File Level"
+],
+"src/Appwrite/Platform/Modules/Functions/Workers/Builds.php:597-597:063f78dccc00": [
+"Code Defect",
+"File Level"
+],
+"src/Appwrite/Platform/Modules/Functions/Workers/Builds.php:597-598:befe3f55d745": [
+"Code Defect",
+"File Level"
+],
+"src/Appwrite/Platform/Modules/Proxy/Http/Rules/API/Create.php:79-80:064893aa4e3e": [
+"Code Defect",
+"File Level"
+],
+"src/Appwrite/Platform/Modules/Proxy/Http/Rules/API/Create.php:79-80:a3d0c29b94bb": [
+"Code Defect",
+"File Level"
+],
+"src/Appwrite/Platform/Modules/Proxy/Http/Rules/Redirect/Create.php:87-88:86544edf2c5d": [
+"Security Vulnerability",
+"File Level"
+],
+"src/Appwrite/Platform/Modules/Proxy/Http/Rules/Redirect/Create.php:87-89:45e62a6ba475": [
+"Code Defect",
+"File Level"
+],
+"src/Appwrite/Platform/Modules/Proxy/Http/Rules/Site/Create.php:84-86:c73b13a498b0": [
+"Code Defect",
+"File Level"
+],
+"src/Appwrite/Platform/Workers/Functions.php:487-488:dedc55db5233": [
+"Code Defect",
+"File Level"
+],
+"src/Appwrite/Vcs/Comment.php:90-90:70c1407e52b3": [
+"Code Defect",
+"File Level"
+],
+"src/Executor/Executor.php:202-204:f18d84dacd7b": [
+"Code Defect",
+"File Level"
+],
+"src/Executor/Executor.php:203-203:de94bd716c19": [
+"Code Defect",
+"File Level"
+]
+},
+"astral-sh__uv@61b521f": {
+"Cargo.lock:4664-4664:e8af466c96a7": [
+"Security Vulnerability",
+"Repo Level"
+]
+},
+"astral-sh__uv@ed57db2": {
+"crates/uv-cache-key/src/canonical_url.rs:74-77:671006f13d38": [
+"Code Defect",
+"File Level"
+],
+"crates/uv-cache-key/src/canonical_url.rs:74-77:c8c75d263189": [
+"Code Defect",
+"File Level"
+],
+"crates/uv-cache-key/src/canonical_url.rs:75-75:654ea5f85145": [
+"Code Defect",
+"File Level"
+],
+"crates/uv-cache-key/src/canonical_url.rs:90-90:3cb407f19d43": [
+"Code Defect",
+"File Level"
+],
+"crates/uv-distribution-types/src/any.rs:17-20:49f653bb682e": [
+"Performance",
+"Repo Level"
+],
+"crates/uv-distribution-types/src/any.rs:70-74:23815099a614": [
+"Maintainability and Readability",
+"Repo Level"
+]
+},
+"bitcoin__bitcoin@4ba2e48": {
+"src/validation.cpp:3767-3772:049969c2566e": [
+"Code Defect",
+"File Level"
+]
+},
+"bitcoin__bitcoin@724546e": {
+"src/bitcoin-cli.cpp:484-493:87e8c253ee71": [
+"Code Defect",
+"File Level"
+],
+"src/bitcoin-cli.cpp:487-487:79d331bd70aa": [
+"Code Defect",
+"Repo Level"
+],
+"src/bitcoin-cli.cpp:488-490:94291cc62c99": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/bitcoin-cli.cpp:585-585:5486f2e26d58": [
+"Code Defect",
+"File Level"
+]
+},
+"bitcoin__bitcoin@e98c51f": {
+"src/init.cpp:1223-1224:cf4aef21783f": [
+"Code Defect",
+"Diff Level"
+],
+"src/init.cpp:1600-1607:875a8ee70643": [
+"Code Defect",
+"Diff Level"
+],
+"src/init.cpp:1627-1630:85f5fbdf53d7": [
+"Code Defect",
+"Diff Level"
+],
+"src/init.cpp:567-572:61df27eb2746": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"bluewave-labs__Checkmate@29e03a6": {
+".github/scripts/download-translations.js:1-5:ecf16ff87a26": [
+"Code Defect",
+"File Level"
+],
+".github/scripts/download-translations.js:10-13:da4a748ceefa": [
+"Code Defect",
+"Diff Level"
+],
+".github/scripts/download-translations.js:12-12:b1465b1e5ef6": [
+"Code Defect",
+"Diff Level"
+],
+".github/scripts/download-translations.js:12-12:e1677b16de09": [
+"Code Defect",
+"Repo Level"
+],
+".github/scripts/download-translations.js:37-41:11e44e3a0ddf": [
+"Code Defect",
+"Diff Level"
+],
+".github/scripts/download-translations.js:92-92:af5f35b659ad": [
+"Maintainability and Readability",
+"Diff Level"
+],
+".github/workflows/README.md:25-25:ef424660ad45": [
+"Maintainability and Readability",
+"Repo Level"
+],
+".github/workflows/poeditor-sync.yml:60-61:dc5b3f20fd61": [
+"Code Defect",
+"Repo Level"
+],
+".github/workflows/poeditor-sync.yml:76-76:9f80ad7b8944": [
+"Code Defect",
+"Diff Level"
+]
+},
+"bluewave-labs__Checkmate@32b54dd": {
+"client/src/Components/Table/index.jsx:104-104:7c0561189a22": [
+"Performance",
+"Diff Level"
+],
+"client/src/Pages/Incidents/Components/IncidentTable/index.jsx:27-28:a96f9c4ec88a": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"client/src/Pages/Incidents/Components/IncidentTable/index.jsx:27-29:3668bde900ed": [
+"Code Defect",
+"Diff Level"
+],
+"client/src/Pages/Incidents/Components/IncidentTable/index.jsx:42-49:ce739c55ea00": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"client/src/Pages/Incidents/Components/IncidentTable/index.jsx:61-61:8c2eb38d771e": [
+"Code Defect",
+"Diff Level"
+],
+"client/src/Pages/Logs/Queue/components/JobTable/index.jsx:51-51:8921a9b6966b": [
+"Code Defect",
+"Repo Level"
+],
+"client/src/Pages/Logs/Queue/components/JobTable/index.jsx:52-52:dedcd07fd76a": [
+"Code Defect",
+"Diff Level"
+],
+"client/src/Validation/validation.js:133-135:feec78f7449b": [
+"Code Defect",
+"File Level"
+],
+"client/src/Validation/validation.js:145-145:d19c5f6185e8": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/src/controllers/statusPageController.js:98-98:716bb0972336": [
+"Code Defect",
+"Diff Level"
+],
+"server/src/db/mongo/MongoDB.js:63-69:172b37e2f58f": [
+"Code Defect",
+"Diff Level"
+],
+"server/src/db/mongo/MongoDB.js:69-69:10ee2f369584": [
+"Performance",
+"Diff Level"
+],
+"server/src/db/mongo/migration/0001_migrateStatusWindowThreshold.js:5-9:8573f35ba9f1": [
+"Performance",
+"Diff Level"
+],
+"server/src/db/mongo/migration/0001_migrateStatusWindowThreshold.js:8-8:b245a82cb989": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/src/db/mongo/migration/index.js:3-5:d34c33213ff5": [
+"Code Defect",
+"Diff Level"
+],
+"server/src/service/infrastructure/SuperSimpleQueue/SuperSimpleQueue.js:144-144:b7d1303ca4af": [
+"Code Defect",
+"Diff Level"
+],
+"server/src/service/infrastructure/SuperSimpleQueue/SuperSimpleQueue.js:90-92:d43ffae9ec2b": [
+"Code Defect",
+"Diff Level"
+],
+"server/src/service/infrastructure/SuperSimpleQueue/SuperSimpleQueue.js:90-92:d9c6811bec91": [
+"Code Defect",
+"Diff Level"
+],
+"server/src/service/infrastructure/SuperSimpleQueue/SuperSimpleQueue.js:91-91:530b35abaa1d": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/src/service/infrastructure/SuperSimpleQueue/SuperSimpleQueue.js:91-91:d7e200c13437": [
+"Code Defect",
+"Diff Level"
+],
+"server/src/service/infrastructure/networkService.js:1-1:e20bef6a68c4": [
+"Maintainability and Readability",
+"File Level"
+],
+"server/src/service/infrastructure/networkService.js:152-152:a4e5e16dbdd8": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/src/service/infrastructure/networkService.js:152-156:29f12161be2d": [
+"Code Defect",
+"File Level"
+],
+"server/src/service/infrastructure/networkService.js:156-156:3b2a17ee70fb": [
+"Code Defect",
+"Diff Level"
+],
+"server/src/service/infrastructure/networkService.js:159-159:a074277f3e0f": [
+"Code Defect",
+"Diff Level"
+],
+"server/src/service/infrastructure/networkService.js:264-264:99d599cc725f": [
+"Code Defect",
+"Diff Level"
+],
+"server/src/service/infrastructure/networkService.js:266-279:0fdcd45054bf": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/src/service/infrastructure/networkService.js:299-305:2f3bf937f3fb": [
+"Code Defect",
+"Diff Level"
+],
+"server/src/service/infrastructure/networkService.js:305-305:144b0dbb55bf": [
+"Code Defect",
+"Diff Level"
+],
+"server/src/service/infrastructure/statusService.js:161-161:b18b56ad6818": [
+"Code Defect",
+"Diff Level"
+]
+},
+"browser-use__browser-use@0b21e50": {
+"browser_use/browser/browser.py:290-292:53655dae5dfe": [
+"Code Defect",
+"File Level"
+],
+"browser_use/browser/browser.py:82-83:4d62e5c23196": [
+"Code Defect",
+"Diff Level"
+]
+},
+"browser-use__browser-use@72f1585": {
+"browser_use/llm/google/chat.py:202-202:01aa119c67ea": [
+"Code Defect",
+"Diff Level"
+],
+"browser_use/llm/google/chat.py:376-376:30b1ad7f50ef": [
+"Code Defect",
+"File Level"
+]
+},
+"browser-use__browser-use@aab7b3b": {
+"browser_use/browser/browser.py:283-283:bc43e10672b3": [
+"Code Defect",
+"File Level"
+],
+"docs/customize/agent-settings.mdx:95-95:e10c8a50855c": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"cline__cline@2195a68": {
+"src/core/controller/index.ts:460-460:da6cfff19835": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"src/core/controller/index.ts:461-461:57691734dc14": [
+"Security Vulnerability",
+"File Level"
+],
+"src/core/controller/index.ts:461-461:616575338fac": [
+"Security Vulnerability",
+"File Level"
+],
+"src/extension.ts:312-312:e466f99d9f4e": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/services/auth/AuthService.ts:173-173:57acdbb4c3fc": [
+"Code Defect",
+"File Level"
+],
+"src/services/auth/AuthService.ts:179-181:806071591df0": [
+"Code Defect",
+"Repo Level"
+],
+"src/services/auth/AuthService.ts:33-33:b7974210d6c0": [
+"Security Vulnerability",
+"Diff Level"
+]
+},
+"cline__cline@419534c": {
+"src/core/task/index.ts:1320-1320:94b8d1306fea": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/core/task/index.ts:1322-1322:4bc9d4c81547": [
+"Code Defect",
+"Diff Level"
+]
+},
+"cline__cline@7d18fb9": {
+"src/integrations/editor/DiffViewProvider.ts:237-240:08e414193163": [
+"Code Defect",
+"File Level"
+],
+"src/integrations/editor/DiffViewProvider.ts:239-239:ecca6b211ec0": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/integrations/editor/DiffViewProvider.ts:49-51:bfe017c02b86": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/integrations/editor/DiffViewProvider.ts:49-57:d44b329db69b": [
+"Code Defect",
+"Repo Level"
+],
+"src/integrations/misc/extract-text.ts:26-29:8a0bf8f048b0": [
+"Performance",
+"File Level"
+],
+"src/integrations/misc/extract-text.ts:59-63:4a0f2d4e193a": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/integrations/misc/extract-text.ts:61-62:0232e645910c": [
+"Code Defect",
+"File Level"
+],
+"src/integrations/misc/extract-text.ts:61-62:73ff6525c836": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/integrations/misc/extract-text.ts:7-7:9826d1dbf35d": [
+"Performance",
+"File Level"
+]
+},
+"cline__cline@ca7f02b": {
+"src/api/providers/gemini.ts:271-273:d4eeb9cbc87e": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/core/controller/models/updateApiConfigurationProto.ts:32-32:f97823508d0c": [
+"Code Defect",
+"Repo Level"
+],
+"src/core/controller/state/updateSettings.ts:30-30:ce4c55f91a6f": [
+"Code Defect",
+"Repo Level"
+],
+"src/core/controller/task/taskFeedback.ts:19-19:995af73d0af5": [
+"Code Defect",
+"Repo Level"
+],
+"src/services/browser/BrowserSession.ts:174-174:f63c2add7e82": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/shared/api.ts:40-40:191e03dfd3c7": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/shared/proto-conversions/state/settings-conversion.ts:12-12:e41b1845f868": [
+"Code Defect",
+"Repo Level"
+],
+"src/shared/proto-conversions/state/settings-conversion.ts:139-139:88acbe1938c2": [
+"Code Defect",
+"Repo Level"
+],
+"src/shared/proto-conversions/state/settings-conversion.ts:139-139:df5ecddce115": [
+"Code Defect",
+"Repo Level"
+]
+},
+"cline__cline@cb4d5c9": {
+"src/api/providers/openai.ts:17-17:4f5f45f518ba": [
+"Code Defect",
+"Diff Level"
+],
+"src/api/providers/openai.ts:39-39:5a45e2e55547": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"src/api/providers/openai.ts:39-39:ac6504601218": [
+"Code Defect",
+"Diff Level"
+]
+},
+"cline__cline@d0a8db8": {
+"src/core/controller/models/updateApiConfigurationProto.ts:19-19:f898b63e48ba": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/core/controller/models/updateApiConfigurationProto.ts:28-31:6f4d8f8607dd": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/core/storage/state.ts:230-231:cf40dc8a3d4d": [
+"Performance",
+"Diff Level"
+],
+"src/core/storage/state.ts:302-303:cf40dc8a3d4d": [
+"Performance",
+"Diff Level"
+],
+"src/core/storage/state.ts:32-32:98b6709fd11f": [
+"Code Defect",
+"Diff Level"
+],
+"src/core/storage/state.ts:341-342:cf40dc8a3d4d": [
+"Performance",
+"Diff Level"
+],
+"src/core/storage/state.ts:460-461:cf40dc8a3d4d": [
+"Performance",
+"Diff Level"
+],
+"src/core/storage/state.ts:622-623:b41a0346b4f2": [
+"Code Defect",
+"Diff Level"
+],
+"src/core/storage/state.ts:625-626:cf40dc8a3d4d": [
+"Performance",
+"Diff Level"
+],
+"src/core/storage/state.ts:79-80:cf40dc8a3d4d": [
+"Performance",
+"Diff Level"
+],
+"webview-ui/src/components/history/HistoryPreview.tsx:67-68:12a1ae8ccab2": [
+"Performance",
+"Diff Level"
+],
+"webview-ui/src/components/history/HistoryPreview.tsx:68-68:2254d0e313f1": [
+"Maintainability and Readability",
+"File Level"
+],
+"webview-ui/src/components/settings/utils/useApiConfigurationHandlers.ts:21-22:f6b9d48e87b6": [
+"Maintainability and Readability",
+"File Level"
+],
+"webview-ui/src/components/settings/utils/useApiConfigurationHandlers.ts:22-22:c44b98524269": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"webview-ui/src/components/settings/utils/useApiConfigurationHandlers.ts:37-37:46ce112577ed": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"cline__cline@f098af0": {
+"src/core/task/index.ts:1495-1496:d179a92e8463": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/core/task/index.ts:1511-1515:28eea9bfc2a8": [
+"Performance",
+"Diff Level"
+],
+"src/core/task/index.ts:1575-1575:5241c9ceb3bc": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/core/task/index.ts:1608-1612:7314941437a2": [
+"Performance",
+"File Level"
+],
+"src/integrations/terminal/TerminalProcess.ts:195-195:f108876b91a5": [
+"Code Defect",
+"Diff Level"
+],
+"src/integrations/terminal/TerminalProcess.ts:200-200:30d049d4e1eb": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/services/telemetry/TelemetryService.ts:959-959:7122ce12016b": [
+"Code Defect",
+"Diff Level"
+],
+"src/services/telemetry/index.ts:13-17:7ef2475eff7c": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"comfyanonymous__ComfyUI@0bb6023": {
+"api_server/routes/internal/internal_routes.py:43-43:cbe9eb110344": [
+"Code Defect",
+"Repo Level"
+],
+"comfy/controlnet.py:824-824:5caf2202b229": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"comfy_extras/nodes_clip_sdxl.py:31-31:7747e2d2fafe": [
+"Code Defect",
+"File Level"
+],
+"notebooks/comfyui_colab.ipynb:241-243:78d4e4f67af7": [
+"Code Defect",
+"File Level"
+],
+"notebooks/comfyui_colab.ipynb:287-287:cf8c6da1aead": [
+"Code Defect",
+"File Level"
+],
+"ruff.toml:7-10:c13207357f10": [
+"Code Defect",
+"File Level"
+],
+"server.py:587-587:4bd9e7cd829a": [
+"Code Defect",
+"File Level"
+]
+},
+"comfyanonymous__ComfyUI@4936d01": {
+"comfy_extras/nodes_string.py:189-194:857bf498dc45": [
+"Code Defect",
+"File Level"
+],
+"comfy_extras/nodes_string.py:275-283:b0f51e3d2e1a": [
+"Code Defect",
+"File Level"
+],
+"comfy_extras/nodes_string.py:285-290:55788bfa23e6": [
+"Code Defect",
+"File Level"
+],
+"comfy_extras/nodes_string.py:296-297:31321ad96d94": [
+"Code Defect",
+"File Level"
+],
+"comfy_extras/nodes_string.py:5-5:57a9cd201ef7": [
+"Maintainability and Readability",
+"Repo Level"
+]
+},
+"comfyanonymous__ComfyUI@4dcd698": {
+"comfy/ldm/cosmos/blocks.py:799-800:6f5f56534a4a": [
+"Code Defect",
+"Repo Level"
+],
+"comfy/ldm/cosmos/blocks.py:800-800:46da8f3ff8bb": [
+"Code Defect",
+"File Level"
+],
+"comfy/ldm/modules/attention.py:756-756:0355f348b475": [
+"Performance",
+"File Level"
+],
+"comfy/ldm/modules/attention.py:796-801:5a9e6dffdfe6": [
+"Maintainability and Readability",
+"File Level"
+],
+"comfy/weight_adapter/base.py:128-129:f86fca6c014b": [
+"Code Defect",
+"File Level"
+],
+"comfy/weight_adapter/base.py:133-135:9e8b1a0da5c1": [
+"Maintainability and Readability",
+"File Level"
+],
+"comfy/weight_adapter/base.py:15-16:e251dfd317a9": [
+"Code Defect",
+"Repo Level"
+],
+"comfy/weight_adapter/base.py:21-27:6ad5a4b594a0": [
+"Code Defect",
+"Repo Level"
+],
+"comfy/weight_adapter/base.py:48-48:fcde8bfc22d5": [
+"Code Defect",
+"File Level"
+],
+"comfy/weight_adapter/lora.py:18-18:aa4982c01738": [
+"Maintainability and Readability",
+"File Level"
+],
+"comfy_extras/nodes_train.py:111-112:14aa216148af": [
+"Code Defect",
+"Diff Level"
+],
+"comfy_extras/nodes_train.py:346-346:57b7052d8720": [
+"Code Defect",
+"Diff Level"
+],
+"comfy_extras/nodes_train.py:402-403:0cbd1ea61d1b": [
+"Code Defect",
+"File Level"
+],
+"comfy_extras/nodes_train.py:46-51:229f4beb3ae0": [
+"Code Defect",
+"Diff Level"
+],
+"comfy_extras/nodes_train.py:508-508:c11fab4abc3d": [
+"Code Defect",
+"File Level"
+],
+"comfy_extras/nodes_train.py:56-57:e5932124c627": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"comfy_extras/nodes_train.py:637-638:7bdf5a9faead": [
+"Code Defect",
+"Diff Level"
+],
+"folder_paths.py:404-425:2c8f090f368c": [
+"Code Defect",
+"File Level"
+]
+},
+"comfyanonymous__ComfyUI@b55c224": {
+"comfy/clip_model.py:109-109:470794c3c257": [
+"Code Defect",
+"File Level"
+],
+"comfy/model_management.py:993-998:fbeaad111f03": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"comfyanonymous__ComfyUI@cfc3122": {
+"server.py:57-57:228c19dc816d": [
+"Code Defect",
+"File Level"
+],
+"server.py:59-59:c6e7cdcf7c27": [
+"Code Defect",
+"File Level"
+],
+"server.py:60-62:277b29db7012": [
+"Maintainability and Readability",
+"File Level"
+],
+"server.py:63-64:df7351e4b6ac": [
+"Code Defect",
+"File Level"
+],
+"server.py:65-69:4c629c95ed91": [
+"Maintainability and Readability",
+"File Level"
+],
+"server.py:72-72:95e9423918c1": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"dbeaver__dbeaver@8224826": {
+"plugins/org.jkiss.dbeaver.ext.databricks/src/org/jkiss/dbeaver/ext/databricks/DatabricksDataSource.java:82-82:44d8be24be95": [
+"Maintainability and Readability",
+"File Level"
+],
+"plugins/org.jkiss.dbeaver.ext.databricks/src/org/jkiss/dbeaver/ext/databricks/DatabricksDataSource.java:91-91:694403940663": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"plugins/org.jkiss.dbeaver.ext.databricks/src/org/jkiss/dbeaver/ext/databricks/DatabricksExecutionContext.java:55-55:464e43c20fe5": [
+"Code Defect",
+"Repo Level"
+],
+"plugins/org.jkiss.dbeaver.ext.databricks/src/org/jkiss/dbeaver/ext/databricks/DatabricksExecutionContext.java:68-70:8c1496e4f989": [
+"Code Defect",
+"File Level"
+],
+"plugins/org.jkiss.dbeaver.ext.databricks/src/org/jkiss/dbeaver/ext/databricks/DatabricksExecutionContext.java:91-91:400cb4c3366f": [
+"Code Defect",
+"File Level"
+]
+},
+"dbeaver__dbeaver@bc3ac7b": {
+"plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/navigator/fs/DBNPathBase.java:293-294:0d9eea96a06c": [
+"Performance",
+"File Level"
+],
+"plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/navigator/fs/DBNPathBase.java:304-304:35f2b4aa5053": [
+"Maintainability and Readability",
+"File Level"
+],
+"plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/navigator/fs/DBNPathBase.java:363-364:d21389abdf26": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/navigator/fs/DBNPathBase.java:365-369:64e81d3de005": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"dbeaver__dbeaver@dc67ca7": {
+"plugins/org.jkiss.dbeaver.ext.hana/OSGI-INF/l10n/bundle.properties:45-48:cbe0acefc6ff": [
+"Maintainability and Readability",
+"File Level"
+],
+"plugins/org.jkiss.dbeaver.ext.hana/plugin.xml:42-45:9592e0eff5d3": [
+"Code Defect",
+"Diff Level"
+],
+"plugins/org.jkiss.dbeaver.ext.hana/plugin.xml:43-44:15587c2120e2": [
+"Maintainability and Readability",
+"File Level"
+],
+"plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANANotPartitionedTable.java:21-27:0d043cce9f10": [
+"Maintainability and Readability",
+"File Level"
+],
+"plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANAPartition.java:151-154:e2f4becc1c3b": [
+"Code Defect",
+"Diff Level"
+],
+"plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANAPartition.java:26-37:bd361b14131c": [
+"Maintainability and Readability",
+"File Level"
+],
+"plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANAPartition.java:60-64:d3ce713b4f9a": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANAPartition.java:72-79:b57fa8cb8618": [
+"Code Defect",
+"Diff Level"
+],
+"plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANAPartition.java:72-79:ecf0d50202a5": [
+"Code Defect",
+"Diff Level"
+],
+"plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANATable.java:142-142:73929898a56a": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"plugins/org.jkiss.dbeaver.ext.hana/src/org/jkiss/dbeaver/ext/hana/model/HANATable.java:156-166:5e24133a46d8": [
+"Code Defect",
+"Diff Level"
+]
+},
+"dbeaver__dbeaver@ed40132": {
+"plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/navigator/DBNDatabaseNode.java:729-736:168d423a7eb1": [
+"Code Defect",
+"Repo Level"
+],
+"plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/navigator/DBNDatabaseNode.java:730-730:db3ea53f0f1e": [
+"Code Defect",
+"Diff Level"
+],
+"plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/struct/DBSObjectFilter.java:153-153:a700681ab9bd": [
+"Maintainability and Readability",
+"File Level"
+],
+"plugins/org.jkiss.dbeaver.model/src/org/jkiss/dbeaver/model/struct/DBSObjectFilter.java:194-197:02e3644f3a1b": [
+"Code Defect",
+"Repo Level"
+]
+},
+"dotnet__aspnetcore@0ce67cd": {
+"src/Shared/HttpSys/NativeInterop/SocketAddress.cs:15-20:4ed2dfbb6e69": [
+"Code Defect",
+"Repo Level"
+],
+"src/Shared/HttpSys/NativeInterop/SocketAddress.cs:46-46:3aa42ec2d9cb": [
+"Code Defect",
+"Diff Level"
+],
+"src/Shared/HttpSys/NativeInterop/SocketAddress.cs:62-62:492470cd2d5b": [
+"Code Defect",
+"Diff Level"
+],
+"src/Shared/HttpSys/NativeInterop/SocketAddress.cs:68-70:3d7745ec1b4f": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Shared/HttpSys/NativeInterop/SocketAddress.cs:70-70:e9c5845f7332": [
+"Code Defect",
+"Diff Level"
+],
+"src/Shared/HttpSys/RequestProcessing/NativeRequestContext.cs:661-662:7b3a4b487959": [
+"Code Defect",
+"Diff Level"
+]
+},
+"dotnet__aspnetcore@2f372e8": {
+"src/SignalR/server/StackExchangeRedis/test/Docker.cs:113-113:19e52e2356c5": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/SignalR/server/StackExchangeRedis/test/Docker.cs:116-116:7375f99181a2": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/SignalR/server/StackExchangeRedis/test/Docker.cs:19-19:c47682ffc67a": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/SignalR/server/StackExchangeRedis/test/Docker.cs:20-20:10674b960bf7": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/SignalR/server/StackExchangeRedis/test/Docker.cs:20-20:14e2487a2eb2": [
+"Code Defect",
+"Repo Level"
+]
+},
+"dotnet__aspnetcore@742f022": {
+"src/Identity/Extensions.Core/src/PasswordHasher.cs:252-255:d12878a174bf": [
+"Security Vulnerability",
+"Diff Level"
+],
+"src/Identity/Extensions.Core/src/PasswordHasher.cs:260-260:f87cc424f27b": [
+"Code Defect",
+"File Level"
+],
+"src/Identity/Extensions.Core/src/PasswordHasher.cs:264-270:96a0090892a7": [
+"Security Vulnerability",
+"File Level"
+],
+"src/Identity/Extensions.Core/src/PasswordHasher.cs:265-265:420ed21bed63": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"dotnet__aspnetcore@8ac940f": {
+"src/DataProtection/DataProtection/src/KeyManagement/KeyRingBasedDataProtector.cs:356-356:131607d88d6d": [
+"Code Defect",
+"File Level"
+],
+"src/DataProtection/DataProtection/src/KeyManagement/KeyRingBasedDataProtector.cs:357-363:579a5cfdd1cd": [
+"Code Defect",
+"Repo Level"
+],
+"src/DataProtection/DataProtection/src/KeyManagement/KeyRingBasedDataProtector.cs:363-365:ed85db991650": [
+"Security Vulnerability",
+"File Level"
+],
+"src/DataProtection/DataProtection/src/KeyManagement/KeyRingBasedDataProtector.cs:365-365:f795b6aaa140": [
+"Performance",
+"Diff Level"
+],
+"src/DataProtection/DataProtection/src/KeyManagement/KeyRingBasedDataProtector.cs:365-397:9121c9dc5d30": [
+"Performance",
+"File Level"
+]
+},
+"elastic__elasticsearch@10d682d": {
+"x-pack/plugin/security/cli/src/main/java/org/elasticsearch/xpack/security/cli/CertGenUtils.java:124-124:e8daec83ac15": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"x-pack/plugin/security/cli/src/main/java/org/elasticsearch/xpack/security/cli/CertGenUtils.java:124-143:18a4f41eef74": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"x-pack/plugin/security/cli/src/main/java/org/elasticsearch/xpack/security/cli/CertGenUtils.java:483-485:9ce9be769c9f": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"x-pack/plugin/security/cli/src/main/java/org/elasticsearch/xpack/security/cli/CertGenUtils.java:86-106:b1d42769447a": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"x-pack/plugin/security/cli/src/main/java/org/elasticsearch/xpack/security/cli/CertificateTool.java:283-283:d66c8ef4698a": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"x-pack/plugin/security/cli/src/main/java/org/elasticsearch/xpack/security/cli/CertificateTool.java:333-343:c42d234fe0a1": [
+"Code Defect",
+"Diff Level"
+],
+"x-pack/plugin/security/cli/src/main/java/org/elasticsearch/xpack/security/cli/CertificateTool.java:335-335:305f28c44043": [
+"Code Defect",
+"Diff Level"
+],
+"x-pack/plugin/security/cli/src/main/java/org/elasticsearch/xpack/security/cli/HttpCertificateCommand.java:1042-1065:7e7ae5b594e5": [
+"Code Defect",
+"Repo Level"
+]
+},
+"elastic__elasticsearch@2adcb2d": {
+"server/src/main/java/org/elasticsearch/cluster/ClusterChangedEvent.java:245-250:990908e15841": [
+"Maintainability and Readability",
+"File Level"
+],
+"server/src/main/java/org/elasticsearch/cluster/ClusterChangedEvent.java:350-350:3b097d5a8e16": [
+"Performance",
+"File Level"
+],
+"server/src/main/java/org/elasticsearch/cluster/ClusterChangedEvent.java:351-351:e23e1af5602a": [
+"Code Defect",
+"Diff Level"
+],
+"server/src/main/java/org/elasticsearch/cluster/ClusterChangedEvent.java:359-362:2c8a0b2bc59e": [
+"Performance",
+"File Level"
+],
+"server/src/main/java/org/elasticsearch/cluster/ClusterChangedEvent.java:366-366:2863437184af": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/src/main/java/org/elasticsearch/cluster/ClusterChangedEvent.java:366-366:758d06cd56b5": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"elastic__elasticsearch@4d9b96f": {
+"libs/entitlement/src/main/java/org/elasticsearch/entitlement/runtime/policy/FileAccessTree.java:206-206:2d937565a6e7": [
+"Performance",
+"File Level"
+],
+"libs/entitlement/src/main/java/org/elasticsearch/entitlement/runtime/policy/FileAccessTree.java:206-209:dff37b2dd5a6": [
+"Code Defect",
+"File Level"
+],
+"libs/entitlement/src/main/java/org/elasticsearch/entitlement/runtime/policy/FileAccessTree.java:224-224:c205615675fc": [
+"Performance",
+"File Level"
+],
+"libs/entitlement/src/main/java/org/elasticsearch/entitlement/runtime/policy/PolicyManager.java:311-313:9998cae1108c": [
+"Performance",
+"Diff Level"
+]
+},
+"elastic__elasticsearch@5e318eb": {
+"test/framework/src/main/java/org/elasticsearch/entitlement/bootstrap/TestEntitlementsRule.java:107-107:179c11efee19": [
+"Code Defect",
+"File Level"
+],
+"test/framework/src/main/java/org/elasticsearch/entitlement/bootstrap/TestEntitlementsRule.java:124-124:adcb62a14127": [
+"Maintainability and Readability",
+"File Level"
+],
+"test/framework/src/main/java/org/elasticsearch/entitlement/bootstrap/TestEntitlementsRule.java:129-129:1da8cc6573ab": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"test/framework/src/main/java/org/elasticsearch/entitlement/bootstrap/TestEntitlementsRule.java:147-147:c50eada0da31": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"test/framework/src/main/java/org/elasticsearch/entitlement/bootstrap/TestEntitlementsRule.java:169-169:14a2d45285ed": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"test/framework/src/main/java/org/elasticsearch/entitlement/bootstrap/TestEntitlementsRule.java:242-242:5a00d1cb6b07": [
+"Code Defect",
+"File Level"
+],
+"test/framework/src/main/java/org/elasticsearch/entitlement/bootstrap/TestEntitlementsRule.java:253-253:aa39e9febe74": [
+"Maintainability and Readability",
+"File Level"
+],
+"test/framework/src/main/java/org/elasticsearch/entitlement/bootstrap/TestEntitlementsRule.java:274-274:44a318a07c81": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"test/framework/src/main/java/org/elasticsearch/entitlement/runtime/policy/TestPolicyManager.java:83-83:fd1d417704df": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"elastic__elasticsearch@5e604e4": {
+"modules/mapper-extras/src/main/java/org/elasticsearch/index/mapper/extras/ScaledFloatFieldMapper.java:380-380:e260ddb32a21": [
+"Code Defect",
+"File Level"
+],
+"server/src/main/java/org/elasticsearch/index/codec/tsdb/es819/ES819TSDBDocValuesProducer.java:1504-1504:533e494985ca": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/src/main/java/org/elasticsearch/index/codec/tsdb/es819/ES819TSDBDocValuesProducer.java:1507-1511:edadba36abc0": [
+"Code Defect",
+"File Level"
+],
+"server/src/main/java/org/elasticsearch/index/codec/tsdb/es819/ES819TSDBDocValuesProducer.java:1512-1521:97f9463721d5": [
+"Code Defect",
+"Repo Level"
+],
+"server/src/main/java/org/elasticsearch/index/codec/tsdb/es819/ES819TSDBDocValuesProducer.java:1522-1534:da38f1449fdc": [
+"Code Defect",
+"Repo Level"
+],
+"server/src/main/java/org/elasticsearch/index/codec/tsdb/es819/ES819TSDBDocValuesProducer.java:1549-1550:0d8407a559c1": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/src/main/java/org/elasticsearch/index/mapper/BlockDocValuesReader.java:149-149:1c280c10595e": [
+"Code Defect",
+"File Level"
+],
+"server/src/main/java/org/elasticsearch/index/mapper/BlockDocValuesReader.java:149-149:c9075b95b3ef": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/src/main/java/org/elasticsearch/index/mapper/BlockDocValuesReader.java:377-377:d58b360b6614": [
+"Maintainability and Readability",
+"File Level"
+],
+"server/src/main/java/org/elasticsearch/index/mapper/BlockDocValuesReader.java:542-548:39e9797e2169": [
+"Code Defect",
+"File Level"
+]
+},
+"elastic__elasticsearch@761281a": {
+"libs/entitlement/src/main/java/org/elasticsearch/entitlement/initialization/EntitlementInitialization.java:61-61:f0f3bafbfbc5": [
+"Code Defect",
+"Diff Level"
+],
+"libs/entitlement/src/main/java/org/elasticsearch/entitlement/runtime/policy/PolicyManager.java:110-112:393f686d9324": [
+"Code Defect",
+"File Level"
+],
+"libs/entitlement/src/main/java/org/elasticsearch/entitlement/runtime/policy/PolicyManager.java:328-331:f4f2c6d102bf": [
+"Code Defect",
+"File Level"
+]
+},
+"elastic__elasticsearch@902352a": {
+"x-pack/plugin/inference/src/main/java/org/elasticsearch/xpack/inference/external/request/openai/OpenAiUnifiedChatCompletionRequestEntity.java:81-83:07fe1ab0cf4b": [
+"Code Defect",
+"Repo Level"
+]
+},
+"elastic__elasticsearch@a3bac5f": {
+"x-pack/qa/repository-old-versions-compatibility/src/javaRestTest/java/org/elasticsearch/oldrepos/TestSnapshotCases.java:21-21:e875670549bf": [
+"Code Defect",
+"Diff Level"
+],
+"x-pack/qa/repository-old-versions-compatibility/src/javaRestTest/java/org/elasticsearch/oldrepos/archiveindex/RestoreFromVersion5CustomAnalyzerIT.java:49-49:2b2197b3360a": [
+"Maintainability and Readability",
+"File Level"
+],
+"x-pack/qa/repository-old-versions-compatibility/src/javaRestTest/resources/README.md:127-127:c6e007adf49d": [
+"Maintainability and Readability",
+"File Level"
+],
+"x-pack/qa/repository-old-versions-compatibility/src/javaRestTest/resources/README.md:186-186:08725f368495": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"elastic__elasticsearch@a6a4623": {
+"server/src/main/java/org/elasticsearch/lucene/search/uhighlight/CustomFieldHighlighter.java:116-116:e509ec047095": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"server/src/main/java/org/elasticsearch/lucene/search/uhighlight/QueryMaxAnalyzedOffset.java:15-18:a080f79c3b02": [
+"Code Defect",
+"Diff Level"
+],
+"server/src/main/java/org/elasticsearch/lucene/search/uhighlight/QueryMaxAnalyzedOffset.java:27-29:9c343fa38422": [
+"Maintainability and Readability",
+"File Level"
+],
+"server/src/main/java/org/elasticsearch/search/fetch/subphase/highlight/AbstractHighlighterBuilder.java:568-568:3ac76230ca0f": [
+"Code Defect",
+"Diff Level"
+],
+"server/src/main/java/org/elasticsearch/search/fetch/subphase/highlight/PlainHighlighter.java:111-118:fbe671bdefbc": [
+"Maintainability and Readability",
+"Repo Level"
+]
+},
+"elastic__elasticsearch@a9973f6": {
+"libs/entitlement/asm-provider/src/main/java/org/elasticsearch/entitlement/instrumentation/impl/InstrumentationServiceImpl.java:73-73:83e86aec5aa2": [
+"Code Defect",
+"Repo Level"
+],
+"libs/entitlement/asm-provider/src/main/java/org/elasticsearch/entitlement/instrumentation/impl/InstrumentationServiceImpl.java:84-86:2ed06c0623f6": [
+"Code Defect",
+"File Level"
+],
+"libs/entitlement/asm-provider/src/main/java/org/elasticsearch/entitlement/instrumentation/impl/InstrumentationServiceImpl.java:86-86:a31a4538b2b3": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"libs/entitlement/asm-provider/src/main/java/org/elasticsearch/entitlement/instrumentation/impl/InstrumentationServiceImpl.java:98-99:0a3a8b22453c": [
+"Code Defect",
+"Repo Level"
+],
+"libs/entitlement/asm-provider/src/main/java/org/elasticsearch/entitlement/instrumentation/impl/InstrumenterImpl.java:172-177:ec3eec241e49": [
+"Code Defect",
+"Repo Level"
+],
+"libs/entitlement/src/main/java/org/elasticsearch/entitlement/instrumentation/MethodKey.java:20-21:8cd4ea2a8d72": [
+"Maintainability and Readability",
+"File Level"
+],
+"libs/entitlement/src/main/java/org/elasticsearch/entitlement/instrumentation/MethodKey.java:23-23:17dc19b22ef2": [
+"Maintainability and Readability",
+"Repo Level"
+]
+},
+"elastic__elasticsearch@bef908c": {
+"server/src/main/java/org/elasticsearch/index/mapper/vectors/MultiDenseVectorScriptDocValues.java:18-18:98101a825358": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"server/src/main/java/org/elasticsearch/index/mapper/vectors/MultiDenseVectorScriptDocValues.java:44-44:f0351eb2db55": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/src/main/java/org/elasticsearch/index/mapper/vectors/RankVectorsDVLeafFieldData.java:48-48:a651f29a99c0": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"server/src/main/java/org/elasticsearch/script/field/vectors/MultiDenseVector.java:49-50:58317f9a31f3": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/src/main/java/org/elasticsearch/script/field/vectors/MultiDenseVectorDocValuesField.java:55-55:1c7652576055": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"elastic__elasticsearch@dc8943f": {
+"server/src/main/java/org/elasticsearch/index/codec/vectors/DefaultIVFVectorsReader.java:197-197:75a1b6f1a2bf": [
+"Code Defect",
+"File Level"
+],
+"server/src/main/java/org/elasticsearch/index/codec/vectors/DefaultIVFVectorsReader.java:197-197:fd8d042f6b84": [
+"Code Defect",
+"Diff Level"
+],
+"server/src/main/java/org/elasticsearch/index/codec/vectors/DefaultIVFVectorsReader.java:44-44:5e90602771fd": [
+"Performance",
+"File Level"
+],
+"server/src/main/java/org/elasticsearch/index/codec/vectors/IVFVectorsReader.java:256-257:989652c31747": [
+"Code Defect",
+"File Level"
+]
+},
+"elastic__elasticsearch@e355340": {
+"server/src/main/java/org/elasticsearch/repositories/blobstore/BlobStoreRepository.java:1739-1740:f6bf9d4087bb": [
+"Code Defect",
+"Repo Level"
+],
+"server/src/main/java/org/elasticsearch/repositories/blobstore/BlobStoreRepository.java:1838-1838:4faab3f86730": [
+"Maintainability and Readability",
+"File Level"
+],
+"server/src/main/java/org/elasticsearch/repositories/blobstore/BlobStoreRepository.java:1839-1843:57c80340c44c": [
+"Performance",
+"Repo Level"
+],
+"server/src/main/java/org/elasticsearch/snapshots/SnapshotsService.java:1409-1409:30ea319fcbca": [
+"Maintainability and Readability",
+"File Level"
+],
+"server/src/main/java/org/elasticsearch/snapshots/SnapshotsService.java:1412-1412:96ef1a9a62fa": [
+"Maintainability and Readability",
+"File Level"
+],
+"server/src/main/java/org/elasticsearch/snapshots/SnapshotsService.java:1431-1432:83fae4b8c092": [
+"Code Defect",
+"File Level"
+],
+"server/src/main/java/org/elasticsearch/snapshots/SnapshotsService.java:1486-1487:9c4611b6f222": [
+"Code Defect",
+"File Level"
+],
+"server/src/main/java/org/elasticsearch/snapshots/SnapshotsService.java:1590-1597:e9f69fd6f8fb": [
+"Code Defect",
+"Repo Level"
+]
+},
+"elastic__elasticsearch@e38d20c": {
+"server/src/main/java/org/elasticsearch/search/SearchService.java:549-549:9ee3b24e2fa5": [
+"Maintainability and Readability",
+"File Level"
+],
+"server/src/main/java/org/elasticsearch/search/SearchService.java:555-555:14b57d643c16": [
+"Code Defect",
+"File Level"
+],
+"server/src/main/java/org/elasticsearch/search/SearchService.java:556-556:8887604518eb": [
+"Performance",
+"File Level"
+],
+"server/src/main/java/org/elasticsearch/search/SearchService.java:557-560:4da6daa1b965": [
+"Code Defect",
+"Diff Level"
+],
+"server/src/main/java/org/elasticsearch/search/SearchService.java:558-558:fde5f8c05f27": [
+"Maintainability and Readability",
+"Repo Level"
+]
+},
+"electron__electron@100ad24": {
+"shell/browser/ui/file_dialog_linux.cc:47-56:3b9bc4acef9b": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"shell/browser/ui/file_dialog_linux.cc:50-50:b47b9ed1037d": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"electron__electron@2cc5656": {
+"shell/browser/serial/serial_chooser_controller.cc:153-156:4410ce6a4512": [
+"Code Defect",
+"Diff Level"
+],
+"shell/browser/serial/serial_chooser_controller.cc:161-162:d5b1f49eca65": [
+"Code Defect",
+"Repo Level"
+],
+"shell/browser/serial/serial_chooser_controller.cc:165-170:e42fd331bb84": [
+"Code Defect",
+"Diff Level"
+],
+"shell/browser/serial/serial_chooser_controller.cc:268-270:8f1a91bd286e": [
+"Performance",
+"Repo Level"
+],
+"shell/browser/serial/serial_chooser_controller.cc:272-272:13fd36dae1eb": [
+"Code Defect",
+"File Level"
+],
+"shell/browser/serial/serial_chooser_controller.cc:277-277:f9db2da3234d": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"shell/browser/serial/serial_chooser_controller.h:74-74:9f3ba2263bcf": [
+"Maintainability and Readability",
+"Repo Level"
+]
+},
+"electron__electron@6084595": {
+"shell/browser/api/electron_api_session.cc:202-203:e22507551777": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"shell/browser/api/electron_api_session.cc:215-215:8d33f08d0384": [
+"Code Defect",
+"Diff Level"
+],
+"shell/browser/api/electron_api_session.cc:259-259:d74d9f338033": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"shell/browser/api/electron_api_session.cc:321-321:0ad6f3da11d8": [
+"Security Vulnerability",
+"Diff Level"
+],
+"shell/browser/api/electron_api_session.cc:322-328:30bc860cc64c": [
+"Performance",
+"Diff Level"
+],
+"shell/browser/api/electron_api_session.cc:359-359:56219fc5bc73": [
+"Code Defect",
+"Repo Level"
+]
+},
+"electron__electron@c486457": {
+"shell/browser/api/electron_api_web_contents.cc:3025-3035:bd6c67f1c171": [
+"Code Defect",
+"Diff Level"
+],
+"shell/browser/api/electron_api_web_contents.cc:3056-3056:89f049726d6c": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"shell/common/api/electron_api_url_loader.cc:612-613:c79443dc6138": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"shell/common/gin_converters/blink_converter.cc:406-407:cb60e7e0f3e1": [
+"Maintainability and Readability",
+"File Level"
+],
+"shell/common/gin_helper/persistent_dictionary.h:46-51:9d4e249a9812": [
+"Performance",
+"Diff Level"
+]
+},
+"facebook__react@b045f18": {
+"packages/react-devtools-shared/src/backend/fiber/renderer.js:149-149:a086bc2bcfb3": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/react-devtools-shared/src/backend/fiber/renderer.js:1491-1491:00a67e0a87dc": [
+"Code Defect",
+"Repo Level"
+],
+"packages/react-reconciler/src/ReactFiber.js:593-593:840c9b9d5bbe": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"packages/react-reconciler/src/ReactFiber.js:879-879:7858b0c6fa72": [
+"Code Defect",
+"Repo Level"
+],
+"packages/react-reconciler/src/ReactFiber.js:881-881:85edb6278df3": [
+"Code Defect",
+"File Level"
+],
+"packages/react-reconciler/src/ReactFiber.js:881-886:4c0bb617ed64": [
+"Code Defect",
+"Diff Level"
+],
+"packages/react-reconciler/src/ReactFiberBeginWork.js:871-871:e037a8ebbc8c": [
+"Code Defect",
+"File Level"
+],
+"packages/react-reconciler/src/ReactFiberBeginWork.js:871-883:cfd76622d06e": [
+"Maintainability and Readability",
+"File Level"
+],
+"packages/react-reconciler/src/ReactFiberBeginWork.js:897-897:212d51c99e4b": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/react-reconciler/src/ReactWorkTags.js:73-73:2bdce9cb1120": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/react-reconciler/src/getComponentNameFromFiber.js:90-90:8abd33a0061a": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/react-server/src/ReactFizzServer.js:2265-2268:ec440bc34a38": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/shared/ReactSymbols.js:36-36:837adab094e2": [
+"Maintainability and Readability",
+"File Level"
+],
+"packages/shared/ReactSymbols.js:37-37:5c10d3b6c11a": [
+"Code Defect",
+"File Level"
+],
+"packages/shared/ReactSymbols.js:37-37:9220f46ce8b1": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/shared/isValidElementType.js:54-54:ee10dc559b64": [
+"Code Defect",
+"Repo Level"
+]
+},
+"facebook__react@be58f26": {
+"packages/react-reconciler/src/ReactFiberHooks.js:3264-3264:41752f7363ac": [
+"Code Defect",
+"Diff Level"
+]
+},
+"filamentphp__filament@77874d0": {
+"packages/actions/src/Exports/Jobs/PrepareCsvExport.php:153-155:66f0696c1f2f": [
+"Code Defect",
+"File Level"
+],
+"packages/actions/src/Exports/Jobs/PrepareCsvExport.php:72-72:07fc83888cbf": [
+"Code Defect",
+"Diff Level"
+],
+"packages/actions/src/Exports/Jobs/PrepareCsvExport.php:72-72:ed10f7fd16a7": [
+"Code Defect",
+"Diff Level"
+],
+"packages/actions/src/Exports/Jobs/PrepareCsvExport.php:78-80:382cd650ebbd": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"filamentphp__filament@871ec75": {
+"packages/tables/src/Commands/FileGenerators/Concerns/CanGenerateModelTables.php:145-147:623231275b5b": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/tables/src/Commands/FileGenerators/Concerns/CanGenerateModelTables.php:145-150:8df43ca64969": [
+"Code Defect",
+"File Level"
+],
+"packages/tables/src/Commands/FileGenerators/Concerns/CanGenerateModelTables.php:148-148:331cf867d3fe": [
+"Code Defect",
+"Diff Level"
+]
+},
+"filamentphp__filament@912f080": {
+"packages/panels/resources/lang/pt_BR/pages/auth/register.php:30-30:c73111f3f4c6": [
+"Code Defect",
+"Diff Level"
+]
+},
+"filamentphp__filament@d47632c": {
+"packages/support/src/helpers.php:184-184:bf3695b6e628": [
+"Code Defect",
+"Diff Level"
+],
+"packages/support/src/helpers.php:184-188:cc11e800389b": [
+"Security Vulnerability",
+"File Level"
+]
+},
+"gofr-dev__gofr@2c0c099": {
+"go.mod:3-5:9113c56b203a": [
+"Code Defect",
+"Diff Level"
+],
+"pkg/gofr/datasource/file/ftp/go.mod:3-5:20fdedcbccd6": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"pkg/gofr/datasource/file/s3/go.mod:3-3:25ec9c2fe6dd": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"pkg/gofr/datasource/file/s3/go.mod:5-5:c9eb3f7a9c6b": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"pkg/gofr/testutil/port.go:37-40:0cd0fd6ac247": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"pkg/gofr/testutil/port.go:37-40:ae7ece073969": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"pkg/gofr/testutil/port.go:43-45:edc82e161849": [
+"Code Defect",
+"File Level"
+],
+"pkg/gofr/testutil/port.go:51-58:d5d1a9c9b841": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"gofr-dev__gofr@49ab394": {
+"pkg/gofr/datasource/pubsub/nats/client.go:150-154:14ed5f7ba963": [
+"Code Defect",
+"File Level"
+],
+"pkg/gofr/datasource/pubsub/nats/client.go:358-358:13009efe9b41": [
+"Code Defect",
+"File Level"
+],
+"pkg/gofr/datasource/pubsub/nats/client.go:75-75:c037dc9452d2": [
+"Maintainability and Readability",
+"File Level"
+],
+"pkg/gofr/datasource/pubsub/nats/client.go:83-91:b4ba031ca5c7": [
+"Code Defect",
+"Repo Level"
+],
+"pkg/gofr/datasource/pubsub/nats/client.go:83-94:cbac5086bcc3": [
+"Code Defect",
+"File Level"
+]
+},
+"gofr-dev__gofr@5e284ae": {
+"pkg/gofr/handler.go:66-73:af55f4bd866c": [
+"Code Defect",
+"Repo Level"
+],
+"pkg/gofr/handler.go:86-91:8aa3d879a442": [
+"Code Defect",
+"File Level"
+],
+"pkg/gofr/logging/ctx_logger.go:37-37:659297a922a4": [
+"Code Defect",
+"File Level"
+],
+"pkg/gofr/logging/logger.go:254-264:a53180b15e54": [
+"Code Defect",
+"File Level"
+]
+},
+"gofr-dev__gofr@b9cdcbb": {
+"pkg/gofr/http/responder.go:31-32:358d926c6bca": [
+"Code Defect",
+"Repo Level"
+],
+"pkg/gofr/http/responder.go:31-32:ddf37605d412": [
+"Code Defect",
+"File Level"
+]
+},
+"gofr-dev__gofr@c1a26ad": {
+"pkg/gofr/http/middleware/config.go:14-14:1ae3b8af1cd7": [
+"Code Defect",
+"File Level"
+],
+"pkg/gofr/http/middleware/config.go:36-36:23aff9c4d405": [
+"Code Defect",
+"File Level"
+],
+"pkg/gofr/http/middleware/config.go:36-36:d972e125a9d7": [
+"Maintainability and Readability",
+"File Level"
+],
+"pkg/gofr/http_server.go:42-46:9acbf49efcf5": [
+"Code Defect",
+"File Level"
+],
+"pkg/gofr/http_server.go:42-46:a82f18d617f1": [
+"Code Defect",
+"Repo Level"
+]
+},
+"gofr-dev__gofr@dc0b3e6": {
+"pkg/gofr/datasource/mongo/mongo.go:116-116:93a601a08407": [
+"Maintainability and Readability",
+"File Level"
+],
+"pkg/gofr/datasource/mongo/mongo.go:155-157:333c2dec4b99": [
+"Code Defect",
+"File Level"
+],
+"pkg/gofr/datasource/mongo/mongo.go:172-180:f88702ef2b49": [
+"Code Defect",
+"Diff Level"
+],
+"pkg/gofr/datasource/mongo/mongo.go:46-46:b8cbe0e678c6": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"pkg/gofr/datasource/mongo/mongo.go:94-94:95e5df7f5b87": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"pkg/gofr/datasource/mongo/mongo.go:98-98:42a1ad156d00": [
+"Code Defect",
+"Repo Level"
+]
+},
+"google-gemini__gemini-cli@0fa1bd7": {
+"packages/cli/src/config/settings.ts:359-359:de20bc1bfb6d": [
+"Maintainability and Readability",
+"File Level"
+],
+"packages/cli/src/config/settings.ts:362-362:b3691c2ea3f6": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/cli/src/config/settings.ts:715-715:63ae07653d45": [
+"Security Vulnerability",
+"Repo Level"
+],
+"packages/cli/src/utils/commentJson.ts:152-152:a749820d95b5": [
+"Code Defect",
+"Diff Level"
+],
+"packages/cli/src/utils/commentJson.ts:19-23:c3e9c1ed1449": [
+"Code Defect",
+"File Level"
+],
+"packages/cli/src/utils/commentJson.ts:33-33:91d87be2aaaa": [
+"Code Defect",
+"Diff Level"
+],
+"packages/cli/src/utils/commentJson.ts:34-40:cf94dbf0b56f": [
+"Code Defect",
+"Repo Level"
+],
+"packages/cli/src/utils/commentJson.ts:47-47:4257b3fe89ee": [
+"Code Defect",
+"Diff Level"
+],
+"packages/cli/src/utils/commentJson.ts:49-49:6ff743e45b4b": [
+"Code Defect",
+"Diff Level"
+],
+"packages/cli/src/utils/commentJson.ts:56-56:915caf5a742a": [
+"Code Defect",
+"Diff Level"
+],
+"packages/cli/src/utils/commentJson.ts:59-59:68cb6e057308": [
+"Security Vulnerability",
+"Diff Level"
+],
+"packages/cli/src/utils/commentJson.ts:63-63:c5ca0b23d1eb": [
+"Code Defect",
+"File Level"
+],
+"packages/cli/src/utils/commentJson.ts:93-94:913bd9fa5e0f": [
+"Code Defect",
+"Diff Level"
+]
+},
+"google-gemini__gemini-cli@4c150ab": {
+"packages/cli/src/config/config.ts:370-371:db2ef78251fa": [
+"Code Defect",
+"Diff Level"
+],
+"packages/cli/src/config/config.ts:372-373:99d5e00fe988": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"packages/cli/src/config/config.ts:529-533:4f684d4e4a66": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"google-gemini__gemini-cli@6fd8269": {
+"packages/cli/src/config/config.ts:489-489:556c4c8055c7": [
+"Code Defect",
+"Repo Level"
+],
+"packages/cli/src/config/settings.ts:145-145:de11c9bc4eb8": [
+"Maintainability and Readability",
+"File Level"
+],
+"packages/core/src/core/subagent.ts:301-307:a05a9bc6a255": [
+"Code Defect",
+"File Level"
+],
+"packages/core/src/core/subagent.ts:379-383:86ada0aa809f": [
+"Code Defect",
+"Repo Level"
+],
+"packages/core/src/core/subagent.ts:427-442:9c3e70674cf3": [
+"Performance",
+"File Level"
+],
+"packages/core/src/core/subagent.ts:517-559:6e91c02b6c06": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/core/src/tools/planning-tool.ts:127-132:38171ccbc23c": [
+"Performance",
+"File Level"
+],
+"packages/core/src/tools/planning-tool.ts:127-133:79887bc88749": [
+"Code Defect",
+"Repo Level"
+],
+"packages/core/src/tools/planning-tool.ts:165-178:e680791a00fb": [
+"Performance",
+"Diff Level"
+],
+"packages/core/src/tools/planning-tool.ts:167-167:b0e787b60118": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/core/src/tools/planning-tool.ts:218-221:f1c1917841d4": [
+"Maintainability and Readability",
+"File Level"
+],
+"packages/core/src/tools/planning-tool.ts:77-78:a9488294d623": [
+"Code Defect",
+"File Level"
+],
+"packages/core/src/tools/planning-tool.ts:86-86:38e80fe77eed": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"packages/core/src/tools/planning-tool.ts:91-94:6b65bafa668e": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"google-gemini__gemini-cli@77ea28a": {
+"packages/cli/src/ui/commands/mcpCommand.ts:106-106:d71653d931d0": [
+"Code Defect",
+"Repo Level"
+],
+"packages/cli/src/ui/commands/mcpCommand.ts:186-188:0f4fec36f13f": [
+"Code Defect",
+"Diff Level"
+],
+"packages/cli/src/ui/commands/mcpCommand.ts:255-263:121591896b4a": [
+"Maintainability and Readability",
+"File Level"
+],
+"packages/cli/src/ui/commands/mcpCommand.ts:255-263:54dedd852652": [
+"Code Defect",
+"Diff Level"
+],
+"packages/cli/src/ui/commands/mcpCommand.ts:272-281:5ac060050c1e": [
+"Code Defect",
+"File Level"
+],
+"packages/cli/src/ui/commands/promptCommands.ts:113-113:4236ffe31012": [
+"Maintainability and Readability",
+"File Level"
+],
+"packages/cli/src/ui/commands/promptCommands.ts:135-147:b3c9d08a70fe": [
+"Code Defect",
+"Diff Level"
+],
+"packages/cli/src/ui/commands/promptCommands.ts:146-146:dae83f1d1dd2": [
+"Code Defect",
+"Diff Level"
+],
+"packages/cli/src/ui/commands/promptCommands.ts:164-166:51a4d749e095": [
+"Code Defect",
+"Diff Level"
+],
+"packages/cli/src/ui/commands/promptCommands.ts:23-23:f26e5a2eb55b": [
+"Maintainability and Readability",
+"File Level"
+],
+"packages/cli/src/ui/commands/promptCommands.ts:28-28:d75a9cbae26d": [
+"Code Defect",
+"Diff Level"
+],
+"packages/cli/src/ui/commands/promptCommands.ts:72-72:f38f3a3c1fb9": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/cli/src/ui/commands/promptCommands.ts:80-80:69bf869b3462": [
+"Code Defect",
+"Diff Level"
+],
+"packages/cli/src/ui/commands/promptCommands.ts:80-80:d17fa81e8367": [
+"Code Defect",
+"Diff Level"
+],
+"packages/cli/src/ui/commands/promptCommands.ts:91-94:626b0fd7d495": [
+"Code Defect",
+"Diff Level"
+],
+"packages/core/src/tools/mcp-client.ts:145-145:40f506bd1df7": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"packages/core/src/tools/mcp-client.ts:424-430:4bb274da85a6": [
+"Performance",
+"File Level"
+],
+"packages/core/src/tools/mcp-client.ts:513-514:e9f0c719a0f0": [
+"Code Defect",
+"Diff Level"
+],
+"packages/core/src/tools/mcp-client.ts:519-522:d4cb7e07808e": [
+"Code Defect",
+"Diff Level"
+],
+"packages/core/src/tools/mcp-client.ts:519-528:33807356375c": [
+"Maintainability and Readability",
+"File Level"
+],
+"packages/core/src/tools/mcp-client.ts:541-546:a43b8bac97e4": [
+"Maintainability and Readability",
+"File Level"
+],
+"packages/core/src/tools/mcp-client.ts:566-568:7fb8dc890f17": [
+"Maintainability and Readability",
+"File Level"
+],
+"packages/core/src/tools/mcp-client.ts:77-77:c9db47bc792b": [
+"Performance",
+"Diff Level"
+],
+"packages/core/src/tools/mcp-client.ts:77-77:cc336a17724b": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"google-gemini__gemini-cli@c6e6248": {
+"integration-tests/test-helper.ts:309-312:fc3d324bdb1c": [
+"Code Defect",
+"Repo Level"
+],
+"integration-tests/test-helper.ts:309-358:b4eccd55206e": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"integration-tests/test-helper.ts:323-326:2a3ccf9da904": [
+"Code Defect",
+"File Level"
+],
+"integration-tests/test-helper.ts:323-326:4e2f56a21f2f": [
+"Code Defect",
+"File Level"
+],
+"integration-tests/test-helper.ts:328-333:61c753e48105": [
+"Code Defect",
+"File Level"
+],
+"integration-tests/test-helper.ts:342-355:0094f8fd52fd": [
+"Code Defect",
+"File Level"
+],
+"integration-tests/test-helper.ts:352-352:3c2ba83fc8a5": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"google-gemini__gemini-cli@d64b61e": {
+"packages/cli/src/commands/extensions/disable.ts:19-23:7b56dc2be01a": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/cli/src/commands/extensions/disable.ts:43-43:357ce1f47fca": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/cli/src/commands/extensions/enable.ts:22-22:05abe97a71b3": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/cli/src/config/extensions/extensionEnablement.ts:64-69:316cabbb94ec": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/cli/src/config/extensions/extensionEnablement.ts:82-88:d161abcc666e": [
+"Code Defect",
+"Diff Level"
+]
+},
+"google-gemini__gemini-cli@e7ed0a4": {
+"packages/core/src/config/config.ts:531-531:2db0a16e5be3": [
+"Code Defect",
+"Diff Level"
+],
+"packages/core/src/tools/grep.ts:322-336:abb82853f0b9": [
+"Performance",
+"Diff Level"
+],
+"packages/core/src/tools/read-file.ts:114-117:1207df750c05": [
+"Performance",
+"Diff Level"
+]
+},
+"immich-app__immich@5f47591": {
+"server/src/database.ts:211-239:3560eb809e1e": [
+"Maintainability and Readability",
+"File Level"
+],
+"server/src/database.ts:215-223:c2925d0edcc5": [
+"Code Defect",
+"Repo Level"
+],
+"server/src/dtos/asset-response.dto.ts:2-74:3c4da17439af": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"server/src/dtos/asset-response.dto.ts:74-80:35d9945ab09a": [
+"Performance",
+"Repo Level"
+],
+"server/src/dtos/person.dto.ts:249-260:88c426afd949": [
+"Maintainability and Readability",
+"File Level"
+],
+"server/src/queries/person.repository.sql:124-128:95999a28bcdf": [
+"Code Defect",
+"File Level"
+],
+"server/src/queries/person.repository.sql:176-180:861d3736a975": [
+"Code Defect",
+"File Level"
+],
+"server/src/queries/person.repository.sql:193-195:025dd6f23df8": [
+"Code Defect",
+"File Level"
+],
+"server/src/repositories/person.repository.ts:113-113:202cebdde484": [
+"Code Defect",
+"Diff Level"
+],
+"server/src/repositories/person.repository.ts:128-128:66810fdd44f3": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/src/repositories/person.repository.ts:132-133:b0c0666de3e3": [
+"Code Defect",
+"File Level"
+],
+"server/src/repositories/person.repository.ts:140-150:f37a1d89ade5": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/src/repositories/person.repository.ts:152-152:151f9e7ef134": [
+"Performance",
+"File Level"
+],
+"server/src/repositories/person.repository.ts:247-263:3e4308d46bbf": [
+"Code Defect",
+"File Level"
+],
+"server/src/repositories/person.repository.ts:250-263:d8f44d8672e3": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/src/repositories/person.repository.ts:285-294:4915f4c74dc0": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"server/src/repositories/person.repository.ts:331-339:430d82da8484": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/src/repositories/person.repository.ts:337-337:082b01cd3a07": [
+"Code Defect",
+"Diff Level"
+],
+"server/src/repositories/person.repository.ts:423-425:bd232eb7df06": [
+"Code Defect",
+"Repo Level"
+],
+"server/src/repositories/person.repository.ts:442-455:45104eccad23": [
+"Maintainability and Readability",
+"File Level"
+],
+"server/src/repositories/person.repository.ts:460-467:24b46ec7de6e": [
+"Code Defect",
+"File Level"
+],
+"server/src/repositories/search.repository.ts:361-362:9d2a4d0d85a8": [
+"Maintainability and Readability",
+"File Level"
+],
+"server/src/services/person.service.ts:1-2:3e07aab2bb34": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/src/services/person.service.ts:552-555:6f01f015f03c": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/src/services/person.service.ts:633-635:c614886df310": [
+"Performance",
+"File Level"
+],
+"server/src/services/person.service.ts:662-668:a8482310a31a": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/src/utils/database.ts:26-26:cf09c153bd36": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/src/utils/database.ts:29-39:5c7c7ebd1484": [
+"Code Defect",
+"Diff Level"
+]
+},
+"immich-app__immich@7e2009f": {
+"server/src/services/metadata.service.ts:577-577:47e06fe1fa94": [
+"Maintainability and Readability",
+"File Level"
+],
+"server/src/services/metadata.service.ts:594-594:3dd0bdf5fdc7": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/src/services/metadata.service.ts:597-597:0ee4b1851715": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/src/services/metadata.service.ts:600-601:02e04a78de6e": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/src/services/metadata.service.ts:601-603:d00d6a913e45": [
+"Code Defect",
+"Diff Level"
+]
+},
+"immich-app__immich@9032c7e": {
+"web/src/service-worker/index.ts:106-106:728e1e004412": [
+"Maintainability and Readability",
+"File Level"
+],
+"web/src/service-worker/index.ts:14-14:62ac8a8e4951": [
+"Code Defect",
+"File Level"
+],
+"web/src/service-worker/index.ts:19-23:9fd1c5a4bd6a": [
+"Code Defect",
+"Diff Level"
+],
+"web/src/service-worker/index.ts:35-46:f6282b3e4c76": [
+"Performance",
+"File Level"
+],
+"web/src/service-worker/index.ts:57-60:aa397e3aab2d": [
+"Code Defect",
+"Diff Level"
+],
+"web/src/service-worker/index.ts:62-77:1b7751e3ce5b": [
+"Code Defect",
+"File Level"
+]
+},
+"immich-app__immich@91b3b6a": {
+"e2e/src/api/specs/asset.e2e-spec.ts:23-23:ed9a19e31fb2": [
+"Maintainability and Readability",
+"File Level"
+],
+"e2e/src/api/specs/asset.e2e-spec.ts:808-809:7049b941eae0": [
+"Code Defect",
+"File Level"
+],
+"e2e/src/api/specs/library.e2e-spec.ts:614-614:1b769493543e": [
+"Code Defect",
+"File Level"
+],
+"e2e/src/api/specs/library.e2e-spec.ts:614-614:7260968406b1": [
+"Maintainability and Readability",
+"File Level"
+],
+"e2e/src/api/specs/library.e2e-spec.ts:626-626:ade2d3baeec5": [
+"Code Defect",
+"File Level"
+],
+"e2e/src/api/specs/trash.e2e-spec.ts:110-111:df121ef4cd20": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"e2e/src/api/specs/trash.e2e-spec.ts:112-129:ff1d612171d9": [
+"Maintainability and Readability",
+"File Level"
+],
+"e2e/src/api/specs/trash.e2e-spec.ts:176-192:7d9969d6e9b0": [
+"Maintainability and Readability",
+"File Level"
+],
+"e2e/src/api/specs/trash.e2e-spec.ts:76-80:dd37ba349672": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"e2e/src/api/specs/trash.e2e-spec.ts:91-91:b2bed6dfe6ad": [
+"Maintainability and Readability",
+"File Level"
+],
+"e2e/src/utils.ts:397-403:a6c17cf094df": [
+"Code Defect",
+"Diff Level"
+],
+"e2e/src/utils.ts:460-461:0e4beeb4e9d1": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/src/services/trash.service.ts:21-21:c229f199e7c7": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/src/services/trash.service.ts:29-29:585889ecaa00": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/src/services/trash.service.ts:55-55:0b0104aa7ba6": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/src/services/trash.service.ts:68-68:2b0c1b7b9ef3": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"immich-app__immich@966c3f2": {
+"server/src/repositories/album.repository.ts:154-157:5c64b18335ea": [
+"Maintainability and Readability",
+"File Level"
+],
+"server/src/services/album.service.ts:64-68:54d4b260b73b": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"immich-app__immich@b7a1255": {
+"server/src/repositories/event.repository.ts:50-50:3d19f0cbe6fe": [
+"Maintainability and Readability",
+"File Level"
+],
+"server/src/repositories/job.repository.ts:209-212:4a54558abfa4": [
+"Code Defect",
+"Diff Level"
+],
+"server/src/repositories/job.repository.ts:233-233:be5e621375a2": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/src/services/album.service.ts:173-175:0c1f22f91a97": [
+"Performance",
+"Diff Level"
+],
+"server/src/services/notification.service.ts:309-312:81ee5f382f77": [
+"Code Defect",
+"Repo Level"
+],
+"server/src/services/notification.service.ts:309-312:8c099353345a": [
+"Code Defect",
+"File Level"
+],
+"server/src/services/notification.service.ts:335-335:76a436ba861b": [
+"Code Defect",
+"Diff Level"
+],
+"server/src/services/notification.service.ts:98-102:05ff0e5289e3": [
+"Performance",
+"File Level"
+],
+"server/src/types.ts:255-255:3a15703228ed": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"immich-app__immich@d38f1f5": {
+"Makefile:20-21:d96759eb7166": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"web/eslint.config.js:61-61:7be3e4377bb7": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"web/eslint.config.js:61-61:95492c39dc27": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"web/src/lib/components/asset-viewer/photo-viewer.svelte:162-173:649fbc32837c": [
+"Code Defect",
+"Diff Level"
+],
+"web/src/lib/components/asset-viewer/photo-viewer.svelte:24-24:a0c43d1f23c4": [
+"Code Defect",
+"Repo Level"
+],
+"web/src/lib/components/asset-viewer/photo-viewer.svelte:75-75:50a598a6afe3": [
+"Performance",
+"Diff Level"
+],
+"web/src/lib/components/assets/thumbnail/image-thumbnail.svelte:64-72:faa67fc4265c": [
+"Performance",
+"File Level"
+],
+"web/src/lib/components/assets/thumbnail/image-thumbnail.svelte:69-71:fc5a7f0c3055": [
+"Code Defect",
+"Repo Level"
+],
+"web/src/lib/utils/sw-messaging.ts:1-1:a51fb83ccecb": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"web/src/lib/utils/sw-messaging.ts:1-8:6f9603661b79": [
+"Code Defect",
+"Diff Level"
+],
+"web/src/lib/utils/sw-messaging.ts:4-4:9859dd7f911b": [
+"Maintainability and Readability",
+"File Level"
+],
+"web/src/service-worker/index.ts:25-25:0731324d73d2": [
+"Maintainability and Readability",
+"File Level"
+],
+"web/src/service-worker/index.ts:30-30:57dbc2f675c0": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"web/src/service-worker/index.ts:63-64:74e75dc007c8": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"web/src/service-worker/index.ts:7-7:ff77e304e530": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"web/src/service-worker/index.ts:72-90:f7c28e805bfd": [
+"Code Defect",
+"Diff Level"
+],
+"web/src/service-worker/index.ts:77-77:5363b7c13fb8": [
+"Code Defect",
+"File Level"
+],
+"web/src/service-worker/index.ts:85-90:f23509046c3c": [
+"Code Defect",
+"File Level"
+],
+"web/src/service-worker/index.ts:86-87:a07345309d4d": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"infiniflow__ragflow@2d06022": {
+"agent/component/rewrite.py:49-49:9d9170738f88": [
+"Maintainability and Readability",
+"File Level"
+],
+"web/src/components/api-service/embed-modal/index.tsx:42-49:f993e264ee96": [
+"Maintainability and Readability",
+"File Level"
+],
+"web/src/components/api-service/embed-modal/index.tsx:45-56:e5e075864c42": [
+"Code Defect",
+"File Level"
+],
+"web/src/components/api-service/embed-modal/index.tsx:56-56:de880ef3dff8": [
+"Performance",
+"File Level"
+],
+"web/src/components/api-service/embed-modal/index.tsx:81-81:b93098757d8c": [
+"Code Defect",
+"File Level"
+]
+},
+"infiniflow__ragflow@7051234": {
+"api/apps/api_app.py:618-621:9d8c2079e3fd": [
+"Code Defect",
+"Repo Level"
+],
+"api/db/services/common_service.py:267-275:f8872b27f0d1": [
+"Code Defect",
+"Repo Level"
+],
+"api/db/services/common_service.py:269-269:25c3938ae9b6": [
+"Code Defect",
+"File Level"
+],
+"api/db/services/document_service.py:339-339:b0cafa9ac214": [
+"Code Defect",
+"Repo Level"
+],
+"api/db/services/user_canvas_version.py:38-38:a4788e82f16f": [
+"Performance",
+"File Level"
+],
+"api/db/services/user_canvas_version.py:38-38:be479341587e": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"infiniflow__ragflow@a63caa1": {
+"graphrag/entity_resolution.py:114-114:d89905c2ac4d": [
+"Code Defect",
+"File Level"
+],
+"graphrag/entity_resolution.py:115-115:0db0c079911d": [
+"Code Defect",
+"File Level"
+],
+"graphrag/general/extractor.py:205-205:2e7cee074dfd": [
+"Code Defect",
+"Diff Level"
+],
+"graphrag/general/extractor.py:216-217:559f523a8486": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"graphrag/general/extractor.py:216-219:4b948b6b58e8": [
+"Code Defect",
+"File Level"
+],
+"graphrag/utils.py:442-442:82706e0262a6": [
+"Performance",
+"Diff Level"
+]
+},
+"infiniflow__ragflow@f189316": {
+"graphrag/utils.py:417-417:a24244a6ac3f": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"graphrag/utils.py:417-417:d3d204a95871": [
+"Code Defect",
+"File Level"
+],
+"graphrag/utils.py:568-572:2cd29a5f3048": [
+"Code Defect",
+"Repo Level"
+],
+"rag/utils/infinity_conn.py:45-49:e398738c5f92": [
+"Code Defect",
+"Diff Level"
+],
+"rag/utils/infinity_conn.py:577-577:e2575076f487": [
+"Code Defect",
+"Repo Level"
+],
+"rag/utils/infinity_conn.py:581-584:fa328ef95122": [
+"Code Defect",
+"File Level"
+],
+"rag/utils/infinity_conn.py:588-602:d7b15b33f959": [
+"Code Defect",
+"File Level"
+],
+"rag/utils/infinity_conn.py:605-607:588c0c4df7c4": [
+"Code Defect",
+"Diff Level"
+],
+"rag/utils/infinity_conn.py:607-607:a858d42b3205": [
+"Security Vulnerability",
+"Repo Level"
+],
+"rag/utils/infinity_conn.py:83-84:2edb681bc84f": [
+"Security Vulnerability",
+"File Level"
+]
+},
+"juspay__hyperswitch@0231de6": {
+"config/config.example.toml:474-474:60a007c405ae": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"config/development.toml:989-989:47450adfd753": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"config/development.toml:989-989:fca09f9ba73c": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"crates/hyperswitch_connectors/src/connectors/checkout/transformers.rs:219-223:bfde609b8e0f": [
+"Code Defect",
+"Repo Level"
+],
+"crates/hyperswitch_connectors/src/connectors/checkout/transformers.rs:346-355:7112aa642994": [
+"Code Defect",
+"Repo Level"
+],
+"crates/router/src/core/payments.rs:6913-6916:30457b500c22": [
+"Code Defect",
+"Diff Level"
+]
+},
+"juspay__hyperswitch@59ec03c": {
+"crates/api_models/src/admin.rs:19-20:39a476e83c85": [
+"Maintainability and Readability",
+"File Level"
+],
+"crates/api_models/src/events/payment.rs:14-14:ed0dd038f67a": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"crates/api_models/src/events/payment.rs:8-14:4f29f1908800": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"crates/api_models/src/events/refund.rs:7-10:6f077f8cf3e8": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"crates/api_models/src/payment_methods.rs:2317-2324:e7004ee8d1de": [
+"Code Defect",
+"Repo Level"
+],
+"crates/api_models/src/payment_methods.rs:6-7:e32dbcd14dc1": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"crates/api_models/src/payments.rs:13-14:49cfbe5cd4c5": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"crates/api_models/src/payments.rs:7630-7633:9bef5f0637e9": [
+"Maintainability and Readability",
+"Repo Level"
+]
+},
+"juspay__hyperswitch@5e0fa17": {
+"crates/common_utils/src/macros.rs:555-557:7031d8bf6390": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"crates/hyperswitch_connectors/src/connectors/fiuu/transformers.rs:1924-1924:6b11e34501e7": [
+"Maintainability and Readability",
+"Repo Level"
+]
+},
+"kestra-io__kestra@06e7c6e": {
+"core/src/main/java/io/kestra/core/utils/TruthUtils.java:12-14:b05206e6e1dd": [
+"Code Defect",
+"Repo Level"
+],
+"core/src/main/java/io/kestra/plugin/core/execution/Assert.java:94-94:56a75d11cbd3": [
+"Code Defect",
+"Repo Level"
+],
+"core/src/main/java/io/kestra/plugin/core/output/OutputValues.java:54-54:f2e810ccddf8": [
+"Code Defect",
+"Diff Level"
+]
+},
+"kestra-io__kestra@0ec45f0": {
+"core/src/main/java/io/kestra/core/runners/pebble/Extension.java:159-162:8e674f324994": [
+"Code Defect",
+"Repo Level"
+],
+"core/src/main/java/io/kestra/core/runners/pebble/functions/FileEmptyFunction.java:22-22:9e42cbf181cb": [
+"Maintainability and Readability",
+"File Level"
+],
+"core/src/main/java/io/kestra/core/runners/pebble/functions/FileEmptyFunction.java:4-4:9828f29eeb7b": [
+"Maintainability and Readability",
+"File Level"
+],
+"core/src/main/java/io/kestra/core/runners/pebble/functions/FileEmptyFunction.java:71-74:cd42c7717645": [
+"Security Vulnerability",
+"File Level"
+],
+"core/src/main/java/io/kestra/core/runners/pebble/functions/FileEmptyFunction.java:85-85:fd5df0bfef58": [
+"Code Defect",
+"File Level"
+],
+"core/src/main/java/io/kestra/core/runners/pebble/functions/FileExistsFunction.java:19-19:b9c2d7444428": [
+"Code Defect",
+"File Level"
+],
+"core/src/main/java/io/kestra/core/runners/pebble/functions/FileExistsFunction.java:63-64:5cd1ef3f9270": [
+"Code Defect",
+"Diff Level"
+],
+"core/src/main/java/io/kestra/core/runners/pebble/functions/FileExistsFunction.java:96-97:51755082f7a1": [
+"Security Vulnerability",
+"File Level"
+]
+},
+"kestra-io__kestra@3c2a276": {
+"core/src/main/java/io/kestra/core/models/tasks/runners/ScriptService.java:97-107:c29a374101cc": [
+"Code Defect",
+"Repo Level"
+],
+"core/src/main/java/io/kestra/core/models/tasks/runners/ScriptService.java:97-107:dd24fecc66db": [
+"Code Defect",
+"File Level"
+],
+"core/src/main/java/io/kestra/core/models/tasks/runners/TaskCommands.java:4-4:500dc059119e": [
+"Maintainability and Readability",
+"File Level"
+],
+"core/src/main/java/io/kestra/core/models/tasks/runners/TaskRunner.java:139-139:2fd27fccbdf2": [
+"Code Defect",
+"File Level"
+],
+"core/src/main/java/io/kestra/core/models/tasks/runners/TaskRunner.java:139-140:0aa412e3bec3": [
+"Code Defect",
+"File Level"
+],
+"core/src/main/java/io/kestra/core/models/tasks/runners/TaskRunner.java:143-143:1f59244aa9db": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"core/src/main/java/io/kestra/plugin/core/runner/Process.java:140-140:457084e239bf": [
+"Performance",
+"Repo Level"
+],
+"core/src/main/java/io/kestra/plugin/core/runner/Process.java:140-142:58528ce9cc86": [
+"Code Defect",
+"File Level"
+],
+"core/src/main/java/io/kestra/plugin/core/runner/Process.java:140-142:edaa157520e9": [
+"Code Defect",
+"File Level"
+],
+"script/src/main/java/io/kestra/plugin/scripts/exec/scripts/runners/CommandsWrapper.java:167-179:ef6e9c88c354": [
+"Code Defect",
+"File Level"
+],
+"script/src/main/java/io/kestra/plugin/scripts/exec/scripts/runners/CommandsWrapper.java:173-179:4b4ed6474395": [
+"Code Defect",
+"File Level"
+],
+"script/src/main/java/io/kestra/plugin/scripts/runner/docker/Docker.java:431-431:7ba898fbaf98": [
+"Performance",
+"Repo Level"
+]
+},
+"keycloak__keycloak@04ad5d5": {
+"test-framework/clustering/src/main/java/org/keycloak/testframework/clustering/LoadBalancer.java:10-10:63885bf64804": [
+"Code Defect",
+"Repo Level"
+],
+"test-framework/clustering/src/main/java/org/keycloak/testframework/clustering/LoadBalancer.java:18-18:ce33a8bc5813": [
+"Code Defect",
+"Diff Level"
+],
+"test-framework/clustering/src/main/java/org/keycloak/testframework/clustering/LoadBalancerSupplier.java:14-20:1404b9427b60": [
+"Code Defect",
+"Diff Level"
+],
+"test-framework/clustering/src/main/java/org/keycloak/testframework/clustering/LoadBalancerSupplier.java:16-20:525d31c418d2": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"test-framework/clustering/src/main/java/org/keycloak/testframework/clustering/LoadBalancerSupplier.java:23-26:aeea786d8121": [
+"Code Defect",
+"Diff Level"
+],
+"test-framework/clustering/src/main/java/org/keycloak/testframework/server/ClusteredKeycloakServer.java:140-142:8bb42f6bbf62": [
+"Code Defect",
+"Diff Level"
+],
+"test-framework/clustering/src/main/java/org/keycloak/testframework/server/ClusteredKeycloakServer.java:47-47:95834cf78d8b": [
+"Code Defect",
+"File Level"
+],
+"test-framework/clustering/src/main/java/org/keycloak/testframework/server/ClusteredKeycloakServer.java:55-55:2c6945680d93": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"test-framework/clustering/src/main/java/org/keycloak/testframework/server/ClusteredKeycloakServer.java:71-71:091238937c90": [
+"Code Defect",
+"Diff Level"
+],
+"test-framework/clustering/src/main/java/org/keycloak/testframework/server/ClusteredKeycloakServerSupplier.java:10-11:51d0cf9044a9": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"test-framework/clustering/src/main/java/org/keycloak/testframework/server/ClusteredKeycloakServerSupplier.java:17-19:1ea03649033c": [
+"Code Defect",
+"Repo Level"
+],
+"test-framework/clustering/src/main/resources/META-INF/services/org.keycloak.testframework.TestFrameworkExtension:1-1:adc4c5d95a53": [
+"Maintainability and Readability",
+"File Level"
+],
+"test-framework/core/src/main/java/org/keycloak/testframework/database/AbstractContainerTestDatabase.java:86-89:112dbddf8e0d": [
+"Code Defect",
+"Diff Level"
+],
+"test-framework/core/src/main/java/org/keycloak/testframework/server/AbstractKeycloakServerSupplier.java:24-24:9bd777fb9c00": [
+"Code Defect",
+"File Level"
+],
+"tests/base/pom.xml:139-150:24f52c8072c1": [
+"Maintainability and Readability",
+"File Level"
+],
+"tests/base/pom.xml:91-95:d35bf953d56a": [
+"Code Defect",
+"Diff Level"
+],
+"tests/base/pom.xml:93-93:1112cfbd6a57": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"keycloak__keycloak@1463502": {
+"adapters/saml/wildfly/wildfly-subsystem/src/main/java/org/keycloak/subsystem/adapter/saml/extension/KeycloakDependencyProcessor.java:38-38:d6e56a2b981b": [
+"Maintainability and Readability",
+"Repo Level"
+]
+},
+"keycloak__keycloak@21d4538": {
+"quarkus/runtime/src/main/java/org/keycloak/quarkus/runtime/cli/Picocli.java:390-393:3260f749b2f4": [
+"Code Defect",
+"File Level"
+],
+"quarkus/runtime/src/main/java/org/keycloak/quarkus/runtime/cli/Picocli.java:396-396:8331512fb074": [
+"Code Defect",
+"File Level"
+],
+"quarkus/runtime/src/main/java/org/keycloak/quarkus/runtime/configuration/KcEnvConfigSource.java:54-56:c3133a27359b": [
+"Code Defect",
+"File Level"
+],
+"quarkus/runtime/src/main/java/org/keycloak/quarkus/runtime/configuration/KeycloakPropertiesConfigSource.java:172-172:f0670a3ceaed": [
+"Maintainability and Readability",
+"File Level"
+],
+"quarkus/runtime/src/main/java/org/keycloak/quarkus/runtime/configuration/NestedPropertyMappingInterceptor.java:37-41:92cddfb488a5": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"quarkus/runtime/src/main/java/org/keycloak/quarkus/runtime/configuration/NestedPropertyMappingInterceptor.java:54-56:1c40fa4ea04b": [
+"Performance",
+"File Level"
+],
+"quarkus/runtime/src/main/java/org/keycloak/quarkus/runtime/configuration/PropertyMappingInterceptor.java:109-112:a2c63ee08ee8": [
+"Code Defect",
+"Diff Level"
+],
+"quarkus/runtime/src/main/java/org/keycloak/quarkus/runtime/configuration/PropertyMappingInterceptor.java:114-114:f94f74350c4c": [
+"Code Defect",
+"File Level"
+],
+"quarkus/runtime/src/main/java/org/keycloak/quarkus/runtime/configuration/PropertyMappingInterceptor.java:73-73:f5b784482242": [
+"Performance",
+"File Level"
+],
+"quarkus/runtime/src/main/java/org/keycloak/quarkus/runtime/configuration/PropertyMappingInterceptor.java:83-83:9c7cb17cbb36": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"quarkus/runtime/src/main/java/org/keycloak/quarkus/runtime/configuration/PropertyMappingInterceptor.java:92-115:9ef74c176716": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"quarkus/runtime/src/main/java/org/keycloak/quarkus/runtime/configuration/mappers/ConfigKeystorePropertyMappers.java:50-50:1b2c7f59e1f7": [
+"Code Defect",
+"File Level"
+],
+"quarkus/runtime/src/main/java/org/keycloak/quarkus/runtime/configuration/mappers/ConfigKeystorePropertyMappers.java:58-62:75c04e6f4d7f": [
+"Code Defect",
+"Diff Level"
+],
+"quarkus/runtime/src/main/java/org/keycloak/quarkus/runtime/configuration/mappers/PropertyMapper.java:117-118:5858f3459154": [
+"Code Defect",
+"File Level"
+],
+"quarkus/runtime/src/main/java/org/keycloak/quarkus/runtime/configuration/mappers/PropertyMapper.java:330-330:d9796bbd4035": [
+"Code Defect",
+"File Level"
+],
+"quarkus/runtime/src/main/java/org/keycloak/quarkus/runtime/configuration/mappers/PropertyMappers.java:196-198:2d5a0e3f9c0b": [
+"Code Defect",
+"Diff Level"
+],
+"quarkus/runtime/src/main/java/org/keycloak/quarkus/runtime/configuration/mappers/PropertyMappers.java:273-281:34f6a572685d": [
+"Code Defect",
+"File Level"
+],
+"quarkus/runtime/src/main/java/org/keycloak/quarkus/runtime/configuration/mappers/PropertyMappers.java:276-278:5f286b43f476": [
+"Code Defect",
+"File Level"
+],
+"quarkus/runtime/src/main/java/org/keycloak/quarkus/runtime/configuration/mappers/PropertyMappers.java:89-89:c1cf06465fb3": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"quarkus/runtime/src/main/java/org/keycloak/quarkus/runtime/configuration/mappers/WildcardPropertyMapper.java:105-105:8ac02f2bcb7f": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"quarkus/runtime/src/main/resources/META-INF/services/io.smallrye.config.ConfigSourceInterceptor:20-20:4a46ca465893": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"keycloak__keycloak@2373a48": {
+"quarkus/config-api/src/main/java/org/keycloak/config/ProxyOptions.java:23-27:a958b67c3511": [
+"Maintainability and Readability",
+"File Level"
+],
+"quarkus/config-api/src/main/java/org/keycloak/config/ProxyOptions.java:41-45:3a77bd54ac92": [
+"Maintainability and Readability",
+"File Level"
+],
+"quarkus/runtime/src/main/java/org/keycloak/quarkus/runtime/configuration/mappers/ProxyPropertyMappers.java:37-40:c18022ed7587": [
+"Code Defect",
+"Repo Level"
+],
+"quarkus/runtime/src/main/java/org/keycloak/quarkus/runtime/integration/resteasy/QuarkusHttpRequest.java:172-173:e9510fc02d7f": [
+"Maintainability and Readability",
+"File Level"
+],
+"server-spi/src/main/java/org/keycloak/http/HttpRequest.java:78-84:a478c06ed99e": [
+"Maintainability and Readability",
+"File Level"
+],
+"services/src/main/java/org/keycloak/authentication/authenticators/client/X509ClientAuthenticator.java:71-71:e129e89baa0e": [
+"Code Defect",
+"Repo Level"
+],
+"services/src/main/java/org/keycloak/services/x509/X509ClientCertificateLookup.java:47-52:dd4874572a2c": [
+"Code Defect",
+"Repo Level"
+]
+},
+"keycloak__keycloak@460f800": {
+"test-framework/core/src/main/java/org/keycloak/test/framework/injection/Extensions.java:41-44:ed2f65b46356": [
+"Code Defect",
+"Diff Level"
+],
+"test-framework/core/src/main/java/org/keycloak/test/framework/injection/Extensions.java:66-67:681d32631abd": [
+"Code Defect",
+"Diff Level"
+],
+"test-framework/core/src/main/java/org/keycloak/test/framework/injection/Registry.java:106-109:c47f95625aa3": [
+"Code Defect",
+"Diff Level"
+],
+"test-framework/core/src/main/java/org/keycloak/test/framework/injection/Registry.java:237-250:5343f8f08e05": [
+"Code Defect",
+"Diff Level"
+],
+"test-framework/core/src/main/java/org/keycloak/test/framework/injection/Registry.java:27-27:8df8a2904584": [
+"Maintainability and Readability",
+"File Level"
+],
+"test-framework/core/src/main/java/org/keycloak/test/framework/server/AbstractInterceptorHelper.java:38-38:a723ff9ffb7a": [
+"Code Defect",
+"Diff Level"
+],
+"test-framework/remote/src/main/java/org/keycloak/test/framework/remote/timeoffset/TimeOffsetSupplier.java:33-33:d000fd0bb88c": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"keycloak__keycloak@79dbba9": {
+"model/storage-services/src/main/java/org/keycloak/exportimport/singlefile/SingleFileImportProviderFactory.java:52-54:d018b77333bf": [
+"Code Defect",
+"Diff Level"
+],
+"model/storage-services/src/main/java/org/keycloak/exportimport/singlefile/SingleFileImportProviderFactory.java:55-57:6804f57535ef": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server-spi/src/main/java/org/keycloak/provider/OverridableProviderFactory.java:24-24:a95527a0eece": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"server-spi/src/main/java/org/keycloak/provider/OverridableProviderFactory.java:32-32:06b730a48694": [
+"Code Defect",
+"Repo Level"
+],
+"server-spi/src/main/java/org/keycloak/provider/OverridableProviderFactory.java:32-32:706ee7082a7d": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"services/src/main/java/org/keycloak/exportimport/ExportImportManager.java:124-126:4c7fbbb8c0a0": [
+"Code Defect",
+"Repo Level"
+],
+"services/src/main/java/org/keycloak/exportimport/ExportImportManager.java:149-149:447be76ca34f": [
+"Code Defect",
+"File Level"
+],
+"services/src/main/java/org/keycloak/exportimport/ExportImportManager.java:149-149:b717979f049a": [
+"Code Defect",
+"Diff Level"
+],
+"services/src/main/java/org/keycloak/exportimport/ExportImportManager.java:149-151:10c4462ce84b": [
+"Code Defect",
+"Repo Level"
+]
+},
+"keycloak__keycloak@805c204": {
+"docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Context.java:32-32:43c19840a428": [
+"Code Defect",
+"Repo Level"
+],
+"docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Context.java:39-41:c522bef55ad0": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Context.java:50-50:969a518c35c6": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Context.java:56-56:57804a0b1447": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Context.java:59-65:c38431867aa6": [
+"Code Defect",
+"Repo Level"
+],
+"docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Guide.java:10-10:b6077a333f23": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Guide.java:52-52:a36f758d7281": [
+"Maintainability and Readability",
+"File Level"
+],
+"docs/maven-plugin/src/main/java/org/keycloak/guides/maven/Guide.java:9-9:9051fd79dc67": [
+"Code Defect",
+"Diff Level"
+],
+"docs/maven-plugin/src/main/java/org/keycloak/guides/maven/GuideParser.java:13-13:a37bfbcb1660": [
+"Code Defect",
+"Diff Level"
+],
+"docs/maven-plugin/src/main/java/org/keycloak/guides/maven/GuideParser.java:81-82:75819dd58720": [
+"Code Defect",
+"File Level"
+]
+},
+"langflow-ai__langflow@6239290": {
+"src/backend/base/langflow/components/processing/__init__.py:12-12:9954fe6e2364": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/backend/base/langflow/components/processing/parser.py:105-108:a884f2dc6ef5": [
+"Code Defect",
+"Repo Level"
+],
+"src/backend/base/langflow/components/processing/parser.py:129-131:665d798c253e": [
+"Code Defect",
+"File Level"
+],
+"src/backend/base/langflow/components/processing/parser.py:142-145:716a5ed3582c": [
+"Code Defect",
+"File Level"
+],
+"src/backend/base/langflow/components/processing/parser.py:159-159:e655041c9700": [
+"Code Defect",
+"File Level"
+],
+"src/backend/base/langflow/components/processing/parser.py:96-98:cd319f605426": [
+"Code Defect",
+"File Level"
+]
+},
+"langflow-ai__langflow@9513d15": {
+"src/backend/base/langflow/graph/vertex/base.py:636-638:7e0599d862c8": [
+"Code Defect",
+"Repo Level"
+],
+"src/backend/base/langflow/graph/vertex/base.py:654-660:871c746cfc36": [
+"Code Defect",
+"Repo Level"
+],
+"src/backend/base/langflow/graph/vertex/base.py:658-659:0327481323fc": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/backend/base/langflow/graph/vertex/vertex_types.py:109-110:ccd55ca3ea4e": [
+"Code Defect",
+"File Level"
+]
+},
+"langflow-ai__langflow@b1cbdba": {
+"src/backend/base/langflow/graph/graph/utils.py:149-150:da0e6b4cfd35": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/backend/base/langflow/graph/graph/utils.py:185-191:68bb04dc10f1": [
+"Code Defect",
+"Diff Level"
+],
+"src/backend/base/langflow/graph/graph/utils.py:193-194:3f630a41ec8e": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"langflow-ai__langflow@bcfe6f9": {
+"src/backend/base/langflow/components/vectorstores/pinecone.py:47-51:12d9fe92df5b": [
+"Code Defect",
+"Diff Level"
+],
+"src/backend/base/langflow/components/vectorstores/pinecone.py:64-67:6d18d64d7b83": [
+"Code Defect",
+"Repo Level"
+],
+"src/backend/base/langflow/graph/utils.py:163-165:7adf7f56c46d": [
+"Code Defect",
+"Repo Level"
+],
+"src/backend/base/langflow/graph/vertex/vertex_types.py:481-484:eac42c1261c1": [
+"Code Defect",
+"Repo Level"
+],
+"src/backend/base/langflow/schema/schema.py:113-113:eed087a47491": [
+"Code Defect",
+"Repo Level"
+],
+"src/backend/base/langflow/serialization/serialization.py:158-167:c58e89e3e1fe": [
+"Code Defect",
+"Diff Level"
+],
+"src/backend/base/langflow/serialization/serialization.py:182-182:961c3a623793": [
+"Code Defect",
+"File Level"
+],
+"src/backend/base/langflow/serialization/serialization.py:19-20:acfa369a09c0": [
+"Code Defect",
+"File Level"
+],
+"src/backend/base/langflow/serialization/serialization.py:87-91:5af5d995b7ad": [
+"Code Defect",
+"Diff Level"
+]
+},
+"laravel__framework@0a5238a": {
+"src/Illuminate/Database/Console/Migrations/MigrateMakeCommand.php:115-117:9d3dbf0320bd": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"laravel__framework@180c25f": {
+"tests/Validation/ValidationEmailRuleTest.php:106-108:a77ee4e462eb": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"tests/Validation/ValidationEmailRuleTest.php:327-339:0a9ff27d4280": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"libsdl-org__SDL@1526727": {
+"src/joystick/SDL_joystick.c:3180-3182:3c178570dd35": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"src/joystick/hidapi/SDL_hidapi_8bitdo.c:115-120:7cfb64808e2b": [
+"Security Vulnerability",
+"File Level"
+],
+"src/joystick/hidapi/SDL_hidapi_8bitdo.c:145-147:783438c6ab16": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"src/joystick/hidapi/SDL_hidapi_8bitdo.c:149-149:5748462b939e": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/joystick/hidapi/SDL_hidapi_8bitdo.c:259-259:08aea390c482": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/joystick/usb_ids.h:63-67:bdd73d8a66c6": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/joystick/usb_ids.h:66-66:6e2e64161eef": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"libsdl-org__SDL@96dfef3": {
+"src/gpu/vulkan/SDL_gpu_vulkan.c:10453-10453:f6b3bfa23ddf": [
+"Code Defect",
+"File Level"
+],
+"src/gpu/vulkan/SDL_gpu_vulkan.c:10533-10534:f7a4bb9a4d09": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/gpu/vulkan/SDL_gpu_vulkan.c:10548-10548:520d2f2a1ed2": [
+"Code Defect",
+"File Level"
+],
+"src/gpu/vulkan/SDL_gpu_vulkan.c:10612-10612:aadee51b5b60": [
+"Code Defect",
+"File Level"
+],
+"src/gpu/vulkan/SDL_gpu_vulkan.c:10633-10637:e83e1423167e": [
+"Code Defect",
+"File Level"
+],
+"src/gpu/vulkan/SDL_gpu_vulkan.c:10699-10703:c1a925043288": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/gpu/vulkan/SDL_gpu_vulkan.c:5799-5800:3c30803f3ae7": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/gpu/vulkan/SDL_gpu_vulkan.c:5876-5889:0acbd02a678c": [
+"Code Defect",
+"Repo Level"
+]
+},
+"linera-io__linera-protocol@024925d": {
+"linera-core/src/node.rs:205-205:67eb2acef0ce": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"linera-core/src/updater.rs:109-109:6c51b3780c9a": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"linera-core/src/updater.rs:139-139:cf397b26a58d": [
+"Code Defect",
+"Repo Level"
+],
+"linera-core/src/updater.rs:141-141:4f92cebf3d5a": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"linera-io__linera-protocol@3535ddb": {
+"linera-core/src/chain_worker/state.rs:1418-1419:de4e54fbcfd8": [
+"Performance",
+"Repo Level"
+],
+"linera-core/src/chain_worker/state.rs:1418-1420:8b1bd3682b75": [
+"Code Defect",
+"Diff Level"
+],
+"linera-core/src/chain_worker/state.rs:51-51:d658999b7bc4": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"linera-core/src/chain_worker/state.rs:53-53:386130c9f346": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"linera-core/src/client/mod.rs:846-857:d65e5433836e": [
+"Code Defect",
+"Diff Level"
+],
+"linera-core/src/client/mod.rs:848-857:90bc81bd1eff": [
+"Performance",
+"Diff Level"
+]
+},
+"linera-io__linera-protocol@8fb32bb": {
+"linera-base/src/prometheus_util.rs:25-25:c8203ac07a25": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"lvgl__lvgl@4a57db3": {
+"src/draw/lv_draw_label.c:220-221:651c06b62b72": [
+"Code Defect",
+"File Level"
+],
+"src/widgets/label/lv_label.c:856-856:c6935de5deb7": [
+"Code Defect",
+"File Level"
+],
+"src/widgets/label/lv_label.c:968-968:4791f1973777": [
+"Code Defect",
+"Repo Level"
+],
+"src/widgets/label/lv_label_private.h:54-54:a3d4a1711c79": [
+"Code Defect",
+"Repo Level"
+],
+"src/widgets/label/lv_label_private.h:54-56:4c18019e2299": [
+"Code Defect",
+"File Level"
+]
+},
+"lvgl__lvgl@9cce37c": {
+"docs/src/details/widgets/animimg.rst:34-37:0b17120bb2bb": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"src/widgets/animimage/lv_animimage.c:110-117:abadacb04e64": [
+"Security Vulnerability",
+"Diff Level"
+],
+"src/widgets/animimage/lv_animimage.c:110-125:22c484750e6b": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/widgets/animimage/lv_animimage.h:76-76:02e26487f8a2": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"src/widgets/animimage/lv_animimage.h:78-84:eb57bf88ce26": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"lvgl__lvgl@a0067e3": {
+"src/misc/lv_text.c:653-653:0d699e81bc22": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/misc/lv_text.c:653-653:b984103359ed": [
+"Code Defect",
+"File Level"
+]
+},
+"lvgl__lvgl@e526b2a": {
+"docs/src/details/auxiliary-modules/observer/observer.rst:367-367:6653f15e461b": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"docs/src/details/auxiliary-modules/observer/observer.rst:581-581:71e0aa2b1685": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"docs/src/details/auxiliary-modules/observer/observer.rst:583-583:2e1aefb93d8f": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"docs/src/details/auxiliary-modules/observer/observer.rst:584-584:e4bbb39a6dfe": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/layouts/grid/lv_grid.c:194-194:545b5131e068": [
+"Code Defect",
+"File Level"
+],
+"src/others/observer/lv_observer.h:551-551:1c267c7ee314": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/others/observer/lv_observer.h:610-610:23a5f4f13bad": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/others/xml/lv_xml.c:10-13:b83f3f380ff5": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/others/xml/lv_xml.h:24-24:86e2552a6b4a": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"src/others/xml/lv_xml_style.c:293-293:1dcd1d2a8153": [
+"Security Vulnerability",
+"Diff Level"
+],
+"src/others/xml/lv_xml_style.c:295-295:7af1724605fc": [
+"Code Defect",
+"Diff Level"
+],
+"src/others/xml/lv_xml_style.c:311-316:52810c09d05c": [
+"Performance",
+"Diff Level"
+],
+"src/others/xml/parsers/lv_xml_obj_parser.c:903-903:fcca13d6cb0c": [
+"Security Vulnerability",
+"Diff Level"
+],
+"src/others/xml/parsers/lv_xml_obj_parser.c:908-914:6e07f882f596": [
+"Security Vulnerability",
+"Diff Level"
+],
+"src/others/xml/parsers/lv_xml_spangroup_parser.c:100-100:8ecfda8cbe6f": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/others/xml/parsers/lv_xml_spangroup_parser.c:101-101:7e0a918c5f48": [
+"Security Vulnerability",
+"Diff Level"
+],
+"src/others/xml/parsers/lv_xml_spangroup_parser.c:98-101:26f452dc8acd": [
+"Code Defect",
+"Diff Level"
+],
+"src/others/xml/parsers/lv_xml_switch_parser.c:53-55:80a3677668db": [
+"Code Defect",
+"Diff Level"
+],
+"src/others/xml/parsers/lv_xml_tabview_parser.c:100-100:b7badbdb1330": [
+"Code Defect",
+"Repo Level"
+],
+"src/others/xml/parsers/lv_xml_tabview_parser.c:100-106:5cc4ca8aa859": [
+"Code Defect",
+"Diff Level"
+],
+"src/others/xml/parsers/lv_xml_tabview_parser.c:106-108:de85295b93c2": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/others/xml/parsers/lv_xml_tabview_parser.c:93-93:d8c51a51a768": [
+"Code Defect",
+"Repo Level"
+],
+"src/widgets/label/lv_label.h:100-100:deea0d65f93d": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"src/widgets/span/lv_span.c:212-214:e28b302c8c81": [
+"Code Defect",
+"Diff Level"
+],
+"src/widgets/span/lv_span.c:267-273:48192297f919": [
+"Code Defect",
+"Diff Level"
+],
+"src/widgets/span/lv_span.h:103-103:15fcd6154eaf": [
+"Code Defect",
+"Diff Level"
+],
+"src/widgets/span/lv_span.h:139-139:d36a4f0f71d2": [
+"Code Defect",
+"Diff Level"
+],
+"src/widgets/tabview/lv_tabview.c:245-245:ba9b45b1d1ac": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/widgets/tabview/lv_tabview.c:245-250:f2ec8578f8ed": [
+"Code Defect",
+"Diff Level"
+],
+"xmls/globals.xml:313-315:76febe4b1aa3": [
+"Maintainability and Readability",
+"File Level"
+],
+"xmls/lv_switch.xml:6-6:375e6746efef": [
+"Maintainability and Readability",
+"File Level"
+],
+"xmls/lv_switch.xml:9-11:5e08e3087723": [
+"Maintainability and Readability",
+"File Level"
+],
+"xmls/lv_textarea.xml:9-9:f82ec7aa5837": [
+"Code Defect",
+"Repo Level"
+]
+},
+"microsoft__PowerToys@c1cedce": {
+"src/modules/cmdpal/Microsoft.CmdPal.UI.ViewModels/TopLevelViewModel.cs:71-71:b76f22f7a2f7": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/modules/cmdpal/Microsoft.CmdPal.UI/Converters/ContextItemTemplateSelector.cs:15-15:0ad6263a7f57": [
+"Code Defect",
+"File Level"
+],
+"src/modules/cmdpal/Microsoft.CmdPal.UI/Converters/ContextItemTemplateSelector.cs:42-42:ad6e582d56cd": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"microsoft__semantic-kernel@a712b62": {
+"dotnet/samples/Demos/ModelContextProtocolPlugin/Program.cs:79-79:12e4e5d79ee8": [
+"Code Defect",
+"Diff Level"
+],
+"dotnet/samples/Demos/ModelContextProtocolPlugin/Program.cs:85-86:cfb69cf82478": [
+"Maintainability and Readability",
+"File Level"
+],
+"dotnet/samples/Demos/ModelContextProtocolPlugin/Program.cs:86-86:63a1f811109d": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"microsoft__typescript-go@100dbc5": {
+"internal/execute/outputs.go:270-270:b0aa76c254c3": [
+"Code Defect",
+"File Level"
+],
+"internal/execute/outputs.go:311-316:84c20b8cd562": [
+"Code Defect",
+"File Level"
+],
+"internal/execute/outputs.go:354-359:98f63af3ce5b": [
+"Code Defect",
+"File Level"
+],
+"testdata/baselines/reference/tsc/commandLine/Parse-watch-interval-option.js:86-86:fd1a45b2b0d8": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"testdata/baselines/reference/tsc/commandLine/help.js:148-148:9a3f4917b4ec": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"testdata/baselines/reference/tsc/commandLine/show-help-with-ExitStatus.DiagnosticsPresent_OutputsSkipped-when-host-cannot-provide-terminal-width.js:81-81:42d1b177e692": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"microsoft__typescript-go@1a84d8d": {
+"internal/checker/checker.go:10829-10831:b06abf51a028": [
+"Code Defect",
+"Repo Level"
+],
+"internal/checker/checker.go:10844-10852:d1345bdd2bf5": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"internal/checker/checker.go:10845-10845:59f910fd9118": [
+"Code Defect",
+"Diff Level"
+]
+},
+"microsoft__typescript-go@45c0de9": {
+"internal/ls/diagnostics.go:44-44:f38c2509aed2": [
+"Code Defect",
+"File Level"
+]
+},
+"microsoft__typescript-go@892b4a3": {
+"internal/fourslash/_scripts/convertFourslash.mts:26-29:423624553409": [
+"Code Defect",
+"Diff Level"
+],
+"internal/fourslash/_scripts/convertFourslash.mts:26-29:54f98dfb5e8d": [
+"Code Defect",
+"File Level"
+],
+"internal/fourslash/_scripts/convertFourslash.mts:44-44:c7b6097c24c3": [
+"Maintainability and Readability",
+"File Level"
+],
+"internal/fourslash/_scripts/convertFourslash.mts:70-70:1d9da9a2652b": [
+"Code Defect",
+"Diff Level"
+],
+"internal/fourslash/_scripts/convertFourslash.mts:70-74:89d6087526d0": [
+"Code Defect",
+"Repo Level"
+],
+"internal/fourslash/_scripts/convertFourslash.mts:75-79:038968f5871c": [
+"Maintainability and Readability",
+"File Level"
+],
+"internal/fourslash/_scripts/convertFourslash.mts:75-79:a6c0baff3a2a": [
+"Code Defect",
+"File Level"
+],
+"internal/fourslash/_scripts/makeManual.mts:12-14:047ac095ce65": [
+"Code Defect",
+"Diff Level"
+],
+"internal/fourslash/_scripts/makeManual.mts:16-18:0f573d0f5310": [
+"Security Vulnerability",
+"File Level"
+],
+"internal/fourslash/_scripts/makeManual.mts:18-23:dfa3886326e3": [
+"Code Defect",
+"Diff Level"
+],
+"internal/fourslash/_scripts/makeManual.mts:29-30:98520b9784a9": [
+"Code Defect",
+"Diff Level"
+],
+"internal/fourslash/_scripts/makeManual.mts:32-36:bfb39a3dd1e5": [
+"Code Defect",
+"Diff Level"
+],
+"internal/fourslash/_scripts/makeManual.mts:41-41:9c6e50f2ed47": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"microsoft__typescript-go@ae447d3": {
+"internal/execute/watch.go:45-48:87c0143b1c1b": [
+"Code Defect",
+"Diff Level"
+],
+"internal/execute/watcher.go:83-83:4542c4ae34c0": [
+"Code Defect",
+"Diff Level"
+]
+},
+"microsoft__typescript-go@b970689": {
+"internal/ast/ast.go:754-757:5feb44f23c51": [
+"Code Defect",
+"File Level"
+],
+"internal/ast/utilities.go:2367-2369:9d18a3b43395": [
+"Code Defect",
+"Diff Level"
+],
+"internal/checker/checker.go:29386-29386:e91362f06b4e": [
+"Code Defect",
+"File Level"
+],
+"internal/parser/reparser.go:120-122:a91a9cd7275b": [
+"Code Defect",
+"Diff Level"
+],
+"internal/parser/reparser.go:122-122:ec960badd4b7": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"internal/printer/printer.go:3956-3956:e2fa1f43f744": [
+"Code Defect",
+"File Level"
+],
+"internal/transformers/commonjsmodule.go:66-66:d4c179067e3b": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"internal/transformers/esmodule.go:43-43:ed97e7bae837": [
+"Code Defect",
+"Diff Level"
+],
+"internal/transformers/esnext.go:371-371:ee54c8d274ca": [
+"Code Defect",
+"Diff Level"
+],
+"internal/transformers/externalmoduleinfo.go:50-50:79c3824d4e57": [
+"Code Defect",
+"File Level"
+],
+"internal/transformers/externalmoduleinfo.go:50-50:a349adefde22": [
+"Code Defect",
+"Diff Level"
+],
+"internal/transformers/importelision.go:169-169:326a9b82686b": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"internal/transformers/importelision.go:31-31:7e2fa6add134": [
+"Code Defect",
+"Diff Level"
+],
+"internal/transformers/typeeraser.go:258-258:461856997689": [
+"Code Defect",
+"Diff Level"
+],
+"testdata/baselines/reference/submodule/conformance/importTag3.types:18-19:06ab18880e5b": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"mpv-player__mpv@0729afe": {
+"player/command.c:7706-7719:412585e0aeb9": [
+"Code Defect",
+"Diff Level"
+],
+"player/command.c:7729-7729:726a64e0f0d6": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"player/command.c:7731-7731:f32c6ce20244": [
+"Code Defect",
+"Repo Level"
+],
+"player/command.c:7778-7781:982919a629ad": [
+"Code Defect",
+"Repo Level"
+],
+"player/command.c:7946-7946:5ecc753b4272": [
+"Performance",
+"File Level"
+],
+"player/main.c:415-415:80dcf45edbe1": [
+"Code Defect",
+"Repo Level"
+],
+"player/playloop.c:1292-1292:054cd2967a5a": [
+"Performance",
+"Repo Level"
+],
+"player/playloop.c:1292-1292:d7f3c5dad9aa": [
+"Code Defect",
+"Repo Level"
+]
+},
+"mpv-player__mpv@0b0330f": {
+"misc/language.c:332-332:3f55956f6f74": [
+"Code Defect",
+"Diff Level"
+],
+"misc/language.c:340-342:03ad92bb03f3": [
+"Code Defect",
+"Diff Level"
+],
+"player/loadfile.c:993-993:eeeede01283c": [
+"Code Defect",
+"File Level"
+],
+"test/language.c:104-104:17eed369d881": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"mpv-player__mpv@dbd327d": {
+"common/playlist.c:175-176:950669767a7f": [
+"Security Vulnerability",
+"Repo Level"
+],
+"misc/io_utils.c:43-47:037d11e6a26a": [
+"Security Vulnerability",
+"Diff Level"
+],
+"misc/io_utils.c:44-47:cd7a0b4ed0ca": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"misc/random.c:84-84:0366ef072a0c": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"misc/random.c:89-89:148439728ec6": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"misc/random.c:93-99:2859145a4c56": [
+"Performance",
+"File Level"
+],
+"misc/random.h:28-28:4b441fc0b4ea": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"mpv-player__mpv@ff45a81": {
+"filters/f_auto_filters.c:356-359:e5d080d14e88": [
+"Performance",
+"File Level"
+],
+"filters/f_auto_filters.c:396-403:3534bf5f1da2": [
+"Code Defect",
+"File Level"
+],
+"filters/f_auto_filters.c:413-419:dd3446dba658": [
+"Code Defect",
+"Repo Level"
+],
+"filters/f_output_chain.c:379-379:c89164c86ff7": [
+"Code Defect",
+"Repo Level"
+],
+"video/mp_image.h:60-61:b090fc8b260d": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"video/out/gpu/video.c:3739-3740:57ba7149f34b": [
+"Code Defect",
+"Repo Level"
+],
+"video/out/gpu/video.c:3755-3756:0d557af0a438": [
+"Code Defect",
+"File Level"
+],
+"video/out/gpu/video.c:3755-3756:3420b2857b3f": [
+"Code Defect",
+"File Level"
+],
+"video/out/vo.c:582-584:449b1df2c15d": [
+"Code Defect",
+"File Level"
+],
+"video/out/vo_dmabuf_wayland.c:713-713:01eac68b6bda": [
+"Code Defect",
+"Diff Level"
+],
+"video/out/vo_gpu_next.c:923-923:086f301c4c11": [
+"Code Defect",
+"File Level"
+],
+"video/out/vo_gpu_next.c:923-927:e3a582209829": [
+"Code Defect",
+"File Level"
+]
+},
+"mrdoob__three.js@7388f60": {
+"src/cameras/PerspectiveCamera.js:115-117:1ac35dde0e22": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/extras/PMREMGenerator.js:106-112:4a84351a22ad": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/extras/PMREMGenerator.js:164-164:53fc4d744221": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/nodes/core/Node.js:128-128:4a3a6a1b70e9": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/nodes/core/Node.js:128-128:d6ae45b19100": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/nodes/core/Node.js:535-537:70b3e5f07397": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/nodes/core/Node.js:536-536:a4a8ac351af8": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/nodes/geometry/RangeNode.js:65-66:c10878619d84": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/nodes/lighting/PointLightNode.js:94-94:653f3ee9f0a7": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/nodes/pmrem/PMREMNode.js:206-206:4bed372ce2cf": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/nodes/utils/Oscillators.js:9-9:3988b67550c1": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/nodes/utils/StorageArrayElementNode.js:47-50:4f1d6d663590": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/renderers/common/extras/PMREMGenerator.js:132-137:8ba32736aa92": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/renderers/common/extras/PMREMGenerator.js:191-193:0da76b1e884e": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/renderers/common/extras/PMREMGenerator.js:224-224:8fb8dfffbfdd": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/renderers/common/extras/PMREMGenerator.js:228-230:c1ce882cd999": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/renderers/common/extras/PMREMGenerator.js:581-585:8ba32736aa92": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"mrdoob__three.js@96ab072": {
+"src/geometries/ExtrudeGeometry.js:165-165:04c38670e217": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/geometries/ExtrudeGeometry.js:169-169:0fa9f422e091": [
+"Code Defect",
+"Diff Level"
+],
+"src/geometries/ExtrudeGeometry.js:406-407:a2daf7ff22ff": [
+"Code Defect",
+"Diff Level"
+],
+"src/geometries/ExtrudeGeometry.js:433-433:ee016fcd0cc6": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"mrdoob__three.js@b55b9e9": {
+"src/nodes/gpgpu/ComputeNode.js:222-222:ddbced9272eb": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/nodes/gpgpu/ComputeNode.js:226-235:5d7461357a89": [
+"Code Defect",
+"Diff Level"
+],
+"src/renderers/common/Renderer.js:2314-2314:fc624515ca4c": [
+"Code Defect",
+"Repo Level"
+],
+"src/renderers/common/Renderer.js:2322-2322:f1fb8396bd28": [
+"Code Defect",
+"File Level"
+],
+"src/renderers/webgpu/WebGPUBackend.js:1327-1329:a903256a6bf4": [
+"Code Defect",
+"Diff Level"
+],
+"src/renderers/webgpu/WebGPUBackend.js:1348-1356:e72e303beded": [
+"Code Defect",
+"Diff Level"
+],
+"src/renderers/webgpu/WebGPUBackend.js:1367-1377:0c574556cfff": [
+"Code Defect",
+"File Level"
+],
+"src/renderers/webgpu/nodes/WGSLNodeBuilder.js:1903-1903:f21de2a2c9b9": [
+"Code Defect",
+"Diff Level"
+],
+"src/renderers/webgpu/nodes/WGSLNodeBuilder.js:2105-2105:33d147a575e8": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"src/renderers/webgpu/nodes/WGSLNodeBuilder.js:2131-2137:5c02934b5362": [
+"Code Defect",
+"Diff Level"
+]
+},
+"mudler__LocalAI@e466450": {
+"backend/backend.proto:162-163:f6eee707c454": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"backend/cpp/llama/grpc-server.cpp:2417-2422:0908cb4028fd": [
+"Performance",
+"Diff Level"
+],
+"backend/cpp/llama/grpc-server.cpp:2417-2422:479865231036": [
+"Code Defect",
+"Diff Level"
+],
+"backend/cpp/llama/grpc-server.cpp:2417-2422:bb9bf9ee1693": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"backend/cpp/llama/grpc-server.cpp:2465-2470:5986efd82255": [
+"Performance",
+"File Level"
+],
+"backend/cpp/llama/grpc-server.cpp:2465-2470:dacc303c9928": [
+"Code Defect",
+"Diff Level"
+],
+"core/cli/run.go:74-74:071b9be2fbd7": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"core/config/application_config.go:103-103:e32620dd760a": [
+"Code Defect",
+"Diff Level"
+],
+"core/http/endpoints/jina/rerank.go:22-22:ea73dca1039f": [
+"Code Defect",
+"Repo Level"
+],
+"core/http/endpoints/localai/vad.go:22-22:c950ecc2457a": [
+"Code Defect",
+"Diff Level"
+],
+"core/http/endpoints/openai/chat.go:174-174:781114e94640": [
+"Maintainability and Readability",
+"File Level"
+],
+"core/http/endpoints/openai/chat.go:186-187:b2de77194789": [
+"Code Defect",
+"Diff Level"
+],
+"core/http/endpoints/openai/completion.go:183-184:deadb0c25204": [
+"Code Defect",
+"File Level"
+],
+"core/http/endpoints/openai/edit.go:30-31:f3214ef998f6": [
+"Code Defect",
+"Diff Level"
+],
+"core/http/endpoints/openai/embeddings.go:26-26:279dc7ff5d56": [
+"Code Defect",
+"Diff Level"
+],
+"core/http/endpoints/openai/files.go:125-125:1ec65d3f0da6": [
+"Security Vulnerability",
+"File Level"
+],
+"core/http/endpoints/openai/files.go:86-86:57c163502593": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"core/http/endpoints/openai/image.go:69-69:3d26a59c1aa1": [
+"Code Defect",
+"Diff Level"
+],
+"core/http/endpoints/openai/list.go:17-17:8f2ff0e582a6": [
+"Code Defect",
+"File Level"
+],
+"core/http/endpoints/openai/transcription.go:28-28:b083e0c0fd61": [
+"Code Defect",
+"Diff Level"
+],
+"core/schema/openai.go:26-26:5ffa14c9e7ce": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"n8n-io__n8n@61fc500": {
+"packages/cli/src/controllers/folder.controller.ts:111-111:deced440b21d": [
+"Performance",
+"File Level"
+],
+"packages/cli/src/controllers/folder.controller.ts:111-113:39ce0da6de2e": [
+"Code Defect",
+"Diff Level"
+],
+"packages/cli/src/controllers/folder.controller.ts:111-115:b95f573405f5": [
+"Code Defect",
+"Diff Level"
+],
+"packages/cli/src/databases/repositories/workflow.repository.ts:300-314:3a48b114d117": [
+"Security Vulnerability",
+"Diff Level"
+],
+"packages/cli/src/databases/repositories/workflow.repository.ts:301-304:e4e2d50a46f3": [
+"Code Defect",
+"Diff Level"
+],
+"packages/cli/src/databases/repositories/workflow.repository.ts:301-309:186e64162721": [
+"Code Defect",
+"Diff Level"
+],
+"packages/cli/src/databases/repositories/workflow.repository.ts:689-689:aecc9ecd1e64": [
+"Code Defect",
+"Diff Level"
+],
+"packages/cli/src/databases/repositories/workflow.repository.ts:690-690:cf4328a7da07": [
+"Maintainability and Readability",
+"File Level"
+],
+"packages/cli/src/databases/repositories/workflow.repository.ts:690-694:d39d859197ea": [
+"Code Defect",
+"Diff Level"
+],
+"packages/cli/src/workflows/workflow.service.ts:421-425:759cc4ad1202": [
+"Maintainability and Readability",
+"File Level"
+],
+"packages/cli/src/workflows/workflow.service.ts:500-502:ecca7a16185c": [
+"Performance",
+"File Level"
+],
+"packages/cli/src/workflows/workflow.service.ts:504-504:8979f68de274": [
+"Code Defect",
+"File Level"
+]
+},
+"n8n-io__n8n@77ece2e": {
+"packages/@n8n/constants/src/index.ts:75-75:3c023b1f3648": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/@n8n/db/src/migrations/common/1711390882123-MoveSshKeysToDatabase.ts:75-75:10269cd49afa": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"n8n-io__n8n@9321691": {
+".github/workflows/release-publish.yml:106-106:e31fbdc83c62": [
+"Code Defect",
+"Diff Level"
+],
+"docker/images/n8n/Dockerfile:7-13:cd4a1896245a": [
+"Code Defect",
+"Diff Level"
+],
+"packages/@n8n/config/src/configs/generic.config.ts:12-13:2505dc3d3da5": [
+"Code Defect",
+"Repo Level"
+],
+"packages/@n8n/config/src/configs/generic.config.ts:12-13:533539c998cc": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/@n8n/config/src/decorators.ts:58-64:616e70c9bda1": [
+"Code Defect",
+"Diff Level"
+],
+"packages/@n8n/config/src/decorators.ts:58-64:cbdf8aaeab5f": [
+"Code Defect",
+"File Level"
+],
+"packages/cli/src/commands/base-command.ts:66-66:e8b28ebd3f09": [
+"Code Defect",
+"Diff Level"
+],
+"packages/cli/src/commands/base-command.ts:66-67:fb8c6ee623fd": [
+"Code Defect",
+"Diff Level"
+],
+"packages/core/src/errors/error-reporter.ts:26-26:b0adb299c847": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/core/src/errors/error-reporter.ts:78-80:c9172a70808c": [
+"Code Defect",
+"File Level"
+],
+"packages/core/src/errors/error-reporter.ts:82-83:95282bb40a06": [
+"Code Defect",
+"File Level"
+],
+"packages/core/src/errors/error-reporter.ts:84-87:5e13583a228c": [
+"Code Defect",
+"File Level"
+],
+"packages/core/src/errors/error-reporter.ts:88-92:0ba6b72a6ea6": [
+"Code Defect",
+"Diff Level"
+]
+},
+"n8n-io__n8n@c8d45ad": {
+"packages/nodes-base/nodes/ErrorTrigger/ErrorTrigger.node.ts:30-30:82b7dd50f850": [
+"Code Defect",
+"Diff Level"
+],
+"packages/nodes-base/nodes/Evaluation/Evaluation/Description.node.ts:355-355:00e2d674eaf2": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"n8n-io__n8n@ebe680f": {
+"packages/testing/playwright/composables/TestEntryComposer.ts:100-100:26c95b836b71": [
+"Code Defect",
+"Diff Level"
+],
+"packages/testing/playwright/composables/TestEntryComposer.ts:103-103:235163709abc": [
+"Code Defect",
+"Diff Level"
+],
+"packages/testing/playwright/composables/TestEntryComposer.ts:104-104:fc2c3a8e4b6b": [
+"Code Defect",
+"Diff Level"
+],
+"packages/testing/playwright/composables/TestEntryComposer.ts:99-106:a168e4e5a35c": [
+"Performance",
+"Diff Level"
+],
+"packages/testing/playwright/pages/SettingsPersonalPage.ts:146-168:012bcf262ed6": [
+"Maintainability and Readability",
+"File Level"
+],
+"packages/testing/playwright/pages/SettingsPersonalPage.ts:158-160:b7d545a0cbfc": [
+"Maintainability and Readability",
+"File Level"
+],
+"packages/testing/playwright/pages/SettingsUsersPage.ts:14-16:8f9666105a60": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/testing/playwright/pages/SettingsUsersPage.ts:18-20:a8101935e609": [
+"Maintainability and Readability",
+"File Level"
+],
+"packages/testing/playwright/pages/SettingsUsersPage.ts:18-20:bbdf42538c1d": [
+"Maintainability and Readability",
+"File Level"
+],
+"packages/testing/playwright/pages/SettingsUsersPage.ts:33-37:a68915ccc4c2": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/testing/playwright/pages/SettingsUsersPage.ts:33-45:d774b38f85b5": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/testing/playwright/pages/SettingsUsersPage.ts:35-37:1febe5210161": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/testing/playwright/pages/n8nPage.ts:119-119:029984e428ea": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/testing/playwright/pages/n8nPage.ts:71-71:2be876b2b699": [
+"Maintainability and Readability",
+"File Level"
+],
+"packages/testing/playwright/services/api-helper.ts:142-144:dd3d436a1f70": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"packages/testing/playwright/tests/ui/18-user-management.spec.ts:154-156:51ce9165bbcb": [
+"Performance",
+"Diff Level"
+],
+"packages/testing/playwright/tests/ui/18-user-management.spec.ts:49-54:09fd73c2ec74": [
+"Maintainability and Readability",
+"File Level"
+],
+"packages/testing/playwright/tests/ui/18-user-management.spec.ts:54-54:baed94ad8d18": [
+"Code Defect",
+"Diff Level"
+],
+"packages/testing/playwright/tests/ui/user-service.spec.ts:10-10:f417922003eb": [
+"Code Defect",
+"Repo Level"
+],
+"packages/testing/playwright/tests/ui/user-service.spec.ts:15-15:5af9da56ab8d": [
+"Code Defect",
+"Diff Level"
+],
+"packages/testing/playwright/tests/ui/user-service.spec.ts:32-37:cd47ee4035f2": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"n8n-io__n8n@f523897": {
+"packages/@n8n/api-types/src/schemas/user.schema.ts:25-25:d93816810b2e": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/@n8n/api-types/src/schemas/user.schema.ts:45-48:5125eff01364": [
+"Code Defect",
+"Repo Level"
+],
+"packages/cli/src/controllers/users.controller.ts:101-101:1ad5bcc7600c": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/cli/src/controllers/users.controller.ts:76-80:57f7b4254500": [
+"Code Defect",
+"Diff Level"
+],
+"packages/cli/src/controllers/users.controller.ts:99-106:ad9ffceac757": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/cli/src/controllers/users.controller.ts:99-99:73b5d7544023": [
+"Security Vulnerability",
+"Repo Level"
+]
+},
+"nextcloud__server@51b5ea9": {
+"lib/public/Files_FullTextSearch/Model/AFilesDocument.php:19-19:b52dfbbe4ef5": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"lib/public/Security/ICrypto.php:16-16:2520cfaff712": [
+"Maintainability and Readability",
+"Repo Level"
+]
+},
+"nodejs__node@b225544": {
+"lib/internal/bootstrap/realm.js:327-332:e7d6bdd3f141": [
+"Maintainability and Readability",
+"File Level"
+],
+"lib/internal/bootstrap/realm.js:328-331:bbbd1c3bf8ab": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"lib/repl.js:132-135:d11998015855": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"test/parallel/test-repl-tab-complete-import.js:35-35:3d3e42c2c1cb": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"nodejs__node@e8b6c18": {
+"test/parallel/test-repl-custom-eval.js:10-10:dcb837d48acf": [
+"Code Defect",
+"File Level"
+],
+"test/parallel/test-repl-custom-eval.js:112-112:6909aceede05": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"ollama__ollama@0b52f18": {
+"cmd/cmd.go:127-127:b97449700609": [
+"Performance",
+"Repo Level"
+],
+"cmd/cmd.go:128-139:be435c27bab9": [
+"Code Defect",
+"File Level"
+],
+"progress/progress.go:118-119:d1d343f719a5": [
+"Code Defect",
+"File Level"
+]
+},
+"ollama__ollama@2ed14f2": {
+"cmd/cmd.go:800-800:6e120124502d": [
+"Code Defect",
+"File Level"
+],
+"cmd/cmd.go:801-801:2a6363891b44": [
+"Code Defect",
+"File Level"
+],
+"server/internal/cache/blob/chunked.go:32-35:792be4b800f7": [
+"Code Defect",
+"Diff Level"
+],
+"server/internal/cache/blob/chunked.go:56-60:d119f4e47a43": [
+"Code Defect",
+"Diff Level"
+],
+"server/internal/cache/blob/chunked.go:63-66:3a29f71a4d7b": [
+"Code Defect",
+"Diff Level"
+],
+"server/internal/chunks/chunks.go:37-37:429318bd448a": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/internal/chunks/chunks.go:41-41:5b46272aa943": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/internal/client/ollama/registry.go:421-425:fba860545295": [
+"Code Defect",
+"Diff Level"
+],
+"server/internal/client/ollama/registry.go:430-430:9dc0dc0a3b04": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/internal/client/ollama/registry.go:477-482:8dde425d972b": [
+"Performance",
+"File Level"
+],
+"server/internal/client/ollama/registry.go:482-482:725110360992": [
+"Code Defect",
+"Repo Level"
+],
+"server/internal/client/ollama/registry.go:606-606:b4acb649fd02": [
+"Maintainability and Readability",
+"File Level"
+],
+"server/internal/client/ollama/registry.go:718-728:9c1402067b0e": [
+"Code Defect",
+"Diff Level"
+],
+"server/internal/client/ollama/registry.go:772-774:3a670166d667": [
+"Code Defect",
+"Diff Level"
+],
+"server/internal/client/ollama/registry.go:783-787:c1b05e011293": [
+"Code Defect",
+"Diff Level"
+],
+"server/internal/registry/server.go:199-202:5a5d48849b42": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/internal/registry/server.go:280-281:3c8836fd2ed7": [
+"Performance",
+"File Level"
+],
+"server/internal/registry/server.go:283-290:530addf2a403": [
+"Code Defect",
+"File Level"
+],
+"server/internal/registry/server.go:294-294:868ebcdc9447": [
+"Code Defect",
+"File Level"
+],
+"server/internal/registry/server.go:316-327:2fb67f55b0f6": [
+"Code Defect",
+"File Level"
+]
+},
+"ollama__ollama@498792c": {
+"integration/model_arch_test.go:172-172:087bda73e35a": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"integration/model_arch_test.go:49-49:b87a5f5665a4": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"integration/utils_test.go:291-291:fa3b871069ba": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"ollama__ollama@af112d6": {
+"server/create.go:161-161:6131c3ddbcd7": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/create.go:161-188:83094fd6dca1": [
+"Security Vulnerability",
+"Diff Level"
+],
+"server/create.go:267-271:78036978f360": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"server/create.go:277-277:17b97156b6a4": [
+"Code Defect",
+"Diff Level"
+],
+"server/create.go:52-52:80e90a63ef1c": [
+"Code Defect",
+"Diff Level"
+]
+},
+"ollama__ollama@b6002f6": {
+"kvcache/causal.go:202-202:59293c33a4f7": [
+"Performance",
+"Diff Level"
+],
+"kvcache/encoder.go:94-94:0fbe10cc167c": [
+"Code Defect",
+"Diff Level"
+],
+"kvcache/wrapper.go:49-54:fd8f93af1950": [
+"Performance",
+"Diff Level"
+],
+"ml/backend.go:402-404:f0262a209f1a": [
+"Maintainability and Readability",
+"File Level"
+],
+"ml/backend/ggml/ggml.go:1007-1007:0726c500d2c8": [
+"Code Defect",
+"File Level"
+],
+"ml/backend/ggml/ggml.go:1007-1010:cce4c7dfc094": [
+"Code Defect",
+"Diff Level"
+],
+"ml/backend/ggml/ggml.go:1029-1029:ebe87b8d2800": [
+"Code Defect",
+"File Level"
+],
+"model/input/input.go:61-63:56f6b5d9f690": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"model/model.go:285-285:c3163dab6d04": [
+"Code Defect",
+"Diff Level"
+],
+"model/models/llama4/model_text.go:238-241:ab2e59824af4": [
+"Code Defect",
+"Diff Level"
+],
+"runner/ollamarunner/runner.go:581-581:1cc5d4d606c3": [
+"Code Defect",
+"File Level"
+],
+"runner/ollamarunner/runner.go:711-712:4e99c2a8900d": [
+"Code Defect",
+"Diff Level"
+]
+},
+"ollama__ollama@c2d08dd": {
+"api/types.go:614-614:629996db7270": [
+"Code Defect",
+"Repo Level"
+],
+"envconfig/config.go:171-171:2cb5b925ec75": [
+"Maintainability and Readability",
+"Repo Level"
+]
+},
+"openai__codex@8c952af": {
+"codex-rs/core/src/config.rs:416-416:40562f5bf45c": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"codex-rs/core/src/config.rs:416-416:da35224dadfa": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"codex-rs/core/src/config.rs:81-81:3d537e1a2ef8": [
+"Maintainability and Readability",
+"File Level"
+],
+"codex-rs/core/src/config.rs:81-81:c0ecca52c280": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"codex-rs/protocol/src/models.rs:50-52:8e8a4e59e896": [
+"Code Defect",
+"Diff Level"
+],
+"codex-rs/protocol/src/models.rs:50-52:970428041dbc": [
+"Code Defect",
+"Repo Level"
+],
+"codex-rs/protocol/src/models.rs:82-82:1ae168a7b789": [
+"Performance",
+"Repo Level"
+]
+},
+"opencv__opencv@79afad9": {
+"modules/java/generator/gen_java.py:522-529:23550143a4a0": [
+"Code Defect",
+"File Level"
+],
+"modules/java/generator/gen_java.py:93-99:5b56891d3c14": [
+"Performance",
+"File Level"
+],
+"modules/python/src2/cv2_convert.hpp:196-206:6cd98f369cab": [
+"Code Defect",
+"Diff Level"
+],
+"modules/python/src2/hdr_parser.py:193-194:e138d9e3ea8e": [
+"Code Defect",
+"Diff Level"
+],
+"modules/python/src2/typing_stubs_generation/predefined_types.py:31-31:4039ba63a9fe": [
+"Code Defect",
+"File Level"
+],
+"modules/videoio/misc/java/src/cpp/videoio_converters.cpp:19-19:e2278a7cbc38": [
+"Code Defect",
+"Diff Level"
+],
+"modules/videoio/misc/java/src/cpp/videoio_converters.cpp:20-20:937b86b30a26": [
+"Security Vulnerability",
+"Diff Level"
+],
+"modules/videoio/misc/java/src/cpp/videoio_converters.cpp:3-5:62543240cdfd": [
+"Code Defect",
+"Diff Level"
+],
+"modules/videoio/misc/java/src/cpp/videoio_converters.cpp:3-6:e123a4f4cb4e": [
+"Code Defect",
+"Repo Level"
+],
+"modules/videoio/misc/java/src/cpp/videoio_converters.cpp:37-37:e615cc6b370d": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"modules/videoio/misc/java/src/cpp/videoio_converters.cpp:6-8:4fa098975d27": [
+"Code Defect",
+"Diff Level"
+],
+"modules/videoio/misc/java/src/cpp/videoio_converters.cpp:7-7:f1d22bbc6c5a": [
+"Code Defect",
+"Diff Level"
+],
+"modules/videoio/misc/java/src/cpp/videoio_converters.hpp:12-12:e3cdb24de1d1": [
+"Code Defect",
+"File Level"
+],
+"modules/videoio/misc/java/src/cpp/videoio_converters.hpp:23-23:c220a87b6d2e": [
+"Maintainability and Readability",
+"Repo Level"
+]
+},
+"opencv__opencv@e3e45c8": {
+"samples/cpp/tutorial_code/ImgTrans/HoughLines_Demo.cpp:75-75:1fe353f24622": [
+"Security Vulnerability",
+"File Level"
+],
+"samples/cpp/tutorial_code/ImgTrans/HoughLines_Demo.cpp:75-75:59fcdccd57a6": [
+"Performance",
+"Diff Level"
+],
+"samples/cpp/tutorial_code/objectDetection/aruco_samples_utility.hpp:35-38:717262cfd395": [
+"Code Defect",
+"File Level"
+],
+"samples/opengl/opengl_interop.cpp:242-242:2e14575e9d5e": [
+"Code Defect",
+"File Level"
+]
+},
+"opencv__opencv@e546382": {
+"modules/imgcodecs/src/grfmt_png.cpp:293-294:5bd86cff1f17": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"ppy__osu@748ab3d": {
+"osu.Game.Rulesets.Osu/Difficulty/Evaluators/RhythmEvaluator.cs:71-76:207ad9046b6a": [
+"Code Defect",
+"Diff Level"
+],
+"osu.Game.Rulesets.Osu/Difficulty/Evaluators/RhythmEvaluator.cs:73-73:114c3c1ffda2": [
+"Maintainability and Readability",
+"File Level"
+],
+"osu.Game.Rulesets.Osu/Difficulty/Evaluators/RhythmEvaluator.cs:74-74:04ca11303dfb": [
+"Code Defect",
+"Diff Level"
+],
+"osu.Game/Rulesets/Difficulty/Utils/DifficultyCalculationUtils.cs:69-75:79295594f05c": [
+"Maintainability and Readability",
+"File Level"
+],
+"osu.Game/Rulesets/Difficulty/Utils/DifficultyCalculationUtils.cs:70-70:f3d72979ab79": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"osu.Game/Rulesets/Difficulty/Utils/DifficultyCalculationUtils.cs:76-81:a1c0fcac4e77": [
+"Code Defect",
+"File Level"
+],
+"osu.Game/Rulesets/Difficulty/Utils/DifficultyCalculationUtils.cs:78-79:49dfccc27499": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"osu.Game/Rulesets/Difficulty/Utils/DifficultyCalculationUtils.cs:78-80:6999921a53a4": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"ppy__osu@87697a7": {
+"osu.Game.Rulesets.Osu/Mods/OsuModSuddenDeath.cs:27-28:e187fe509632": [
+"Code Defect",
+"Repo Level"
+],
+"osu.Game.Rulesets.Osu/Mods/OsuModSuddenDeath.cs:30-30:c13938be2c5f": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"sveltejs__svelte@44bec4c": {
+"packages/svelte/src/compiler/phases/2-analyze/index.js:437-437:4bda5d95af8b": [
+"Code Defect",
+"Diff Level"
+],
+"packages/svelte/src/compiler/phases/3-transform/client/visitors/shared/utils.js:373-373:51a0f9b26ee1": [
+"Code Defect",
+"Diff Level"
+],
+"packages/svelte/src/compiler/phases/3-transform/client/visitors/shared/utils.js:389-389:dc683f0919f6": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/svelte/src/compiler/phases/types.d.ts:53-54:685d0596904c": [
+"Maintainability and Readability",
+"File Level"
+],
+"packages/svelte/src/compiler/phases/types.d.ts:54-54:7e653ea6be1f": [
+"Code Defect",
+"Diff Level"
+]
+},
+"sveltejs__svelte@4bf1f91": {
+"packages/svelte/src/compiler/phases/3-transform/client/visitors/Fragment.js:51-53:42ffc7c665d8": [
+"Code Defect",
+"Diff Level"
+],
+"packages/svelte/src/compiler/phases/3-transform/client/visitors/IfBlock.js:26-26:f0e58464ecb3": [
+"Maintainability and Readability",
+"File Level"
+],
+"packages/svelte/src/compiler/phases/3-transform/client/visitors/IfBlock.js:27-29:826f8295986b": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/svelte/src/compiler/phases/3-transform/client/visitors/IfBlock.js:44-44:bf762d4f8cb8": [
+"Code Defect",
+"File Level"
+],
+"packages/svelte/src/compiler/phases/3-transform/server/visitors/IfBlock.js:21-21:a1ab78c8354d": [
+"Code Defect",
+"File Level"
+],
+"packages/svelte/src/compiler/phases/3-transform/server/visitors/IfBlock.js:24-26:b760750c3fc8": [
+"Code Defect",
+"Diff Level"
+],
+"packages/svelte/src/compiler/phases/3-transform/server/visitors/IfBlock.js:25-25:2ba4d1d8472f": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/svelte/src/compiler/phases/3-transform/server/visitors/IfBlock.js:34-37:949c14911d21": [
+"Code Defect",
+"Diff Level"
+],
+"packages/svelte/src/internal/client/dom/blocks/if.js:25-25:33ebbf5c614a": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/svelte/src/internal/client/dom/blocks/if.js:31-31:730f3f4c6f17": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/svelte/src/internal/client/dom/blocks/if.js:41-41:2fd4d2759932": [
+"Code Defect",
+"File Level"
+],
+"packages/svelte/src/internal/client/dom/blocks/if.js:62-64:5232393f4b4f": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/svelte/src/internal/client/dom/blocks/if.js:70-70:56fbb3cdbd43": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"packages/svelte/src/internal/client/dom/blocks/if.js:70-70:7a1c900212dc": [
+"Code Defect",
+"Diff Level"
+]
+},
+"symfony__symfony@2b9721f": {
+"src/Symfony/Component/Notifier/Bridge/Mercure/MercureOptions.php:25-27:5a78b052ba70": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Symfony/Component/Notifier/Bridge/Mercure/MercureOptions.php:39-39:2e75ac4beec8": [
+"Code Defect",
+"File Level"
+],
+"src/Symfony/Component/Notifier/Bridge/Mercure/MercureOptions.php:82-84:92491ecbce1d": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"src/Symfony/Component/Notifier/Bridge/Mercure/MercureOptions.php:97-99:4511d4ccac40": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"symfony__symfony@6478705": {
+"src/Symfony/Component/TypeInfo/TypeFactoryTrait.php:415-415:6d880235a434": [
+"Performance",
+"Diff Level"
+]
+},
+"symfony__symfony@942f8fa": {
+"src/Symfony/Component/DependencyInjection/Tests/Fixtures/xml/services31.xml:1-8:f8a19d0031e4": [
+"Code Defect",
+"Diff Level"
+],
+"src/Symfony/Component/DependencyInjection/Tests/Loader/XmlFileLoaderTest.php:1298-1298:ddf4c168f14a": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Symfony/Component/DependencyInjection/Tests/Loader/XmlFileLoaderTest.php:1300-1309:fd3a6a16c6f4": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"timescale__timescaledb@2568b01": {
+"tsl/src/hypercore/hypercore_handler.c:105-110:a2c1a8a8d0e8": [
+"Code Defect",
+"Diff Level"
+],
+"tsl/src/hypercore/hypercore_handler.c:1751-1751:c9b9f5c10ae8": [
+"Maintainability and Readability",
+"File Level"
+],
+"tsl/src/hypercore/hypercore_handler.c:1751-1752:10a2cfc2d2aa": [
+"Code Defect",
+"File Level"
+],
+"tsl/src/hypercore/hypercore_handler.c:3899-3899:c898464c4580": [
+"Maintainability and Readability",
+"File Level"
+],
+"tsl/src/hypercore/hypercore_handler.c:3899-3899:e37e01829bdf": [
+"Performance",
+"File Level"
+]
+},
+"timescale__timescaledb@5ab9b12": {
+"tsl/src/compression/recompress.c:173-173:34858716c7f6": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"tsl/src/compression/recompress.c:173-173:4ff0b86b14c2": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"timescale__timescaledb@7148e5c": {
+"sql/updates/latest-dev.sql:2-13:8a6656d98504": [
+"Code Defect",
+"Diff Level"
+],
+"sql/updates/latest-dev.sql:29-29:6f6655e5e978": [
+"Code Defect",
+"Repo Level"
+],
+"sql/updates/reverse-dev.sql:29-29:5b5f9b306d5c": [
+"Code Defect",
+"Repo Level"
+],
+"tsl/src/bgw_policy/continuous_aggregate_api.c:171-181:208f9c5f4366": [
+"Code Defect",
+"Diff Level"
+],
+"tsl/src/bgw_policy/job.c:508-509:c6e398be30c4": [
+"Performance",
+"File Level"
+],
+"tsl/src/continuous_aggs/refresh.c:1145-1145:4446d8c66a7d": [
+"Performance",
+"Repo Level"
+]
+},
+"timescale__timescaledb@f84194c": {
+"tsl/src/compression/compression.c:1268-1270:365c82a84555": [
+"Performance",
+"File Level"
+],
+"tsl/src/compression/compression.c:1269-1269:f3f2ee4a44eb": [
+"Code Defect",
+"File Level"
+],
+"tsl/src/compression/compression.c:1359-1361:71cd4ff0ea8d": [
+"Code Defect",
+"Repo Level"
+],
+"tsl/src/compression/compression.c:1378-1378:5c9232b8bb0e": [
+"Performance",
+"File Level"
+],
+"tsl/src/compression/compression.c:1913-1915:944a8bc6727b": [
+"Performance",
+"File Level"
+],
+"tsl/src/compression/compression.c:300-300:cf86a1b4872d": [
+"Code Defect",
+"File Level"
+],
+"tsl/src/compression/recompress.c:259-263:0a8c9cd80d0e": [
+"Code Defect",
+"Diff Level"
+],
+"tsl/src/hypercore/hypercore_handler.c:1946-1948:196682cbbb24": [
+"Code Defect",
+"File Level"
+],
+"tsl/src/hypercore/hypercore_handler.c:2194-2194:52eadea642b4": [
+"Code Defect",
+"File Level"
+],
+"tsl/src/hypercore/hypercore_handler.c:2198-2204:1413a9d0911c": [
+"Code Defect",
+"File Level"
+],
+"tsl/src/hypercore/hypercore_handler.c:3799-3799:b539cffc6dbf": [
+"Code Defect",
+"File Level"
+]
+},
+"unionlabs__union@d840723": {
+"lib/voyager-core/src/lib.rs:328-329:64188442775c": [
+"Code Defect",
+"Diff Level"
+],
+"lib/voyager-core/src/lib.rs:330-333:edfe6fea382f": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"lib/voyager-core/src/lib.rs:335-337:b990c64940d5": [
+"Code Defect",
+"Diff Level"
+],
+"lib/voyager-message/src/module.rs:442-443:1fce8da054ba": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"lib/voyager-message/src/module.rs:443-443:b0657274cfa8": [
+"Code Defect",
+"Diff Level"
+],
+"lib/voyager-message/src/rpc.rs:41-41:5471c750ec1d": [
+"Maintainability and Readability",
+"File Level"
+],
+"lib/voyager-message/src/rpc.rs:42-46:0eb5f9bbf610": [
+"Code Defect",
+"Diff Level"
+],
+"lib/voyager-message/src/rpc/server.rs:177-180:02d0f556761a": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"voyager/modules/consensus/cometbls/src/main.rs:168-171:748d06cec1d2": [
+"Code Defect",
+"Diff Level"
+],
+"voyager/modules/consensus/cometbls/src/main.rs:168-172:411097d3f9c1": [
+"Code Defect",
+"Repo Level"
+],
+"voyager/modules/consensus/ethereum/src/main.rs:167-180:06cbdb1dec15": [
+"Code Defect",
+"Diff Level"
+],
+"voyager/modules/consensus/movement/src/main.rs:147-147:f4d9629fe328": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"voyager/modules/consensus/movement/src/main.rs:165-165:794014146c1d": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"voyager/modules/consensus/tendermint/src/main.rs:162-164:fd986acb4dce": [
+"Code Defect",
+"Diff Level"
+],
+"voyager/modules/state/movement/src/main.rs:148-148:5463c535e7a7": [
+"Code Defect",
+"Diff Level"
+],
+"voyager/modules/state/movement/src/main.rs:148-148:a430e626ff78": [
+"Code Defect",
+"Diff Level"
+],
+"voyager/modules/state/movement/src/main.rs:148-148:d534e3c12445": [
+"Code Defect",
+"Diff Level"
+],
+"voyager/plugins/client-update/ethereum/src/main.rs:28-28:4b2d3fe3b0ac": [
+"Maintainability and Readability",
+"Repo Level"
+]
+},
+"valkey-io__valkey@1379171": {
+"cmake/Modules/ValkeySetup.cmake:127-127:6d02254a9f67": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"cmake/Modules/ValkeySetup.cmake:94-94:913ec561c458": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"deps/CMakeLists.txt:23-23:8b8fba95c112": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/Makefile:344-344:7c9af87eae90": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/cli_common.h:56-56:44129fbf381c": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/valkey-benchmark.c:1539-1539:77f067974b67": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"src/valkey-benchmark.c:253-253:8fd1b9c60202": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"src/valkey-cli.c:221-223:7d75f90e3d91": [
+"Code Defect",
+"File Level"
+],
+"src/valkey-cli.c:2831-2836:56e911838689": [
+"Code Defect",
+"Diff Level"
+],
+"src/valkey-cli.c:2831-2836:611b966d183f": [
+"Code Defect",
+"Diff Level"
+],
+"src/valkey-cli.c:2963-2963:3f5945c27cfd": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"valkey-io__valkey@36f37c0": {
+"src/networking.c:2773-2773:d99160967297": [
+"Security Vulnerability",
+"Diff Level"
+],
+"src/networking.c:2776-2776:3b992a4398f0": [
+"Code Defect",
+"Diff Level"
+]
+},
+"valkey-io__valkey@866fa4a": {
+"src/valkey-benchmark.c:1998-1998:ff8e2c046a1d": [
+"Security Vulnerability",
+"File Level"
+]
+},
+"valkey-io__valkey@8b2137d": {
+"src/io_threads.c:348-348:92ef90a33d00": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"src/io_threads.c:395-399:8ee12175b548": [
+"Code Defect",
+"Repo Level"
+],
+"src/networking.c:1981-1981:9f7c880dbad1": [
+"Maintainability and Readability",
+"File Level"
+],
+"src/networking.c:2010-2022:024ac5479fc4": [
+"Code Defect",
+"Diff Level"
+],
+"src/networking.c:2062-2064:ae32f616a2ad": [
+"Security Vulnerability",
+"Diff Level"
+],
+"src/networking.c:2072-2089:2d3d65368199": [
+"Code Defect",
+"Diff Level"
+],
+"src/networking.c:2879-2880:72d58aa72cc8": [
+"Security Vulnerability",
+"Diff Level"
+],
+"tests/unit/networking.tcl:309-310:2e2e3c4b51ef": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"valkey-io__valkey@ecb3abd": {
+"src/config.c:546-549:9d3e97b6d6f6": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"tests/unit/acl.tcl:1248-1248:c335c8f8780a": [
+"Maintainability and Readability",
+"Diff Level"
+]
+},
+"vllm-project__vllm@075f1b5": {
+"vllm/v1/core/kv_cache_manager.py:116-116:7e0200411e46": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"vllm/v1/core/kv_cache_manager.py:154-155:e0cf5a168da6": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"vllm/v1/core/kv_cache_manager.py:425-438:9641b2cab9f6": [
+"Code Defect",
+"Repo Level"
+],
+"vllm/v1/core/kv_cache_manager.py:426-426:9cc5b80ba33c": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"vllm/v1/core/kv_cache_manager.py:426-432:25f20d65bb0f": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"vllm/v1/core/scheduler.py:141-142:025e1e1cce2d": [
+"Code Defect",
+"Repo Level"
+]
+},
+"vllm-project__vllm@134705b": {
+"vllm/logger.py:55-58:4a3351f178b8": [
+"Code Defect",
+"Diff Level"
+],
+"vllm/logger.py:55-58:fd526073b849": [
+"Performance",
+"Diff Level"
+],
+"vllm/model_executor/model_loader/weight_utils.py:718-721:cb438590e3b5": [
+"Code Defect",
+"Repo Level"
+],
+"vllm/model_executor/model_loader/weight_utils.py:719-719:4221fb2fb567": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"vllm/model_executor/models/qwen2_moe.py:465-465:4221fb2fb567": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"vllm/multimodal/profiling.py:218-224:5014e315c9e2": [
+"Code Defect",
+"Repo Level"
+],
+"vllm/multimodal/profiling.py:243-249:98d0aec2351c": [
+"Code Defect",
+"Repo Level"
+],
+"vllm/multimodal/profiling.py:249-249:9c938acdbbff": [
+"Code Defect",
+"Repo Level"
+]
+},
+"vllm-project__vllm@3fe1893": {
+"vllm/model_executor/models/qwen2_vl.py:822-823:8337bb70a2b0": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"vllm/model_executor/models/qwen2_vl.py:822-823:9b66250d0e1a": [
+"Code Defect",
+"Repo Level"
+],
+"vllm/multimodal/processing.py:1104-1104:c4856786658f": [
+"Maintainability and Readability",
+"File Level"
+],
+"vllm/multimodal/profiling.py:256-258:1b65551cf203": [
+"Code Defect",
+"Repo Level"
+]
+},
+"vllm-project__vllm@6217b0c": {
+"vllm/distributed/kv_transfer/kv_connector/v1/multi_connector.py:96-97:f294bc4da936": [
+"Code Defect",
+"Diff Level"
+]
+},
+"vllm-project__vllm@a800045": {
+"benchmarks/README.md:196-196:d0ce90bd080e": [
+"Maintainability and Readability",
+"File Level"
+],
+"benchmarks/benchmark_throughput.py:335-338:d5a12266844f": [
+"Code Defect",
+"File Level"
+]
+},
+"wavetermdev__waveterm@4b7637f": {
+"frontend/app/view/preview/directorypreview.tsx:294-294:56413b3d1233": [
+"Code Defect",
+"Repo Level"
+],
+"frontend/app/view/preview/directorypreview.tsx:302-303:5c932c29d994": [
+"Code Defect",
+"File Level"
+],
+"frontend/app/view/preview/directorypreview.tsx:313-313:9c8c4384cd34": [
+"Code Defect",
+"Diff Level"
+],
+"pkg/remote/fileshare/fsutil/fsutil.go:89-100:268e56583a38": [
+"Code Defect",
+"File Level"
+],
+"pkg/remote/fileshare/pathtree/pathtree.go:37-40:2c241ebe4a3a": [
+"Performance",
+"Diff Level"
+],
+"pkg/remote/fileshare/pathtree/pathtree.go:64-64:c25f34e35844": [
+"Performance",
+"Diff Level"
+],
+"pkg/remote/fileshare/pathtree/pathtree.go:73-73:84a92dee2a6d": [
+"Performance",
+"Diff Level"
+],
+"pkg/remote/fileshare/pathtree/pathtree.go:79-84:90a28935fa7e": [
+"Security Vulnerability",
+"Diff Level"
+],
+"pkg/remote/fileshare/pathtree/pathtree.go:81-81:84a92dee2a6d": [
+"Performance",
+"Diff Level"
+],
+"pkg/remote/fileshare/s3fs/s3fs.go:210-210:9ae59f6a3fdc": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"pkg/remote/fileshare/s3fs/s3fs.go:299-299:2db9ac01521f": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"pkg/remote/fileshare/s3fs/s3fs.go:703-703:8a34430ad263": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"pkg/remote/fileshare/s3fs/s3fs.go:703-725:8c1394fc46b7": [
+"Code Defect",
+"Diff Level"
+],
+"pkg/wshrpc/wshremote/wshremote.go:322-322:a2570878c9c0": [
+"Code Defect",
+"Diff Level"
+]
+},
+"wavetermdev__waveterm@61b0fb4": {
+"cmd/wsh/cmd/wshcmd-connserver.go:232-250:609986371f29": [
+"Security Vulnerability",
+"Diff Level"
+],
+"cmd/wsh/cmd/wshcmd-connserver.go:234-234:9b0821c43843": [
+"Maintainability and Readability",
+"Repo Level"
+],
+"cmd/wsh/cmd/wshcmd-root.go:156-156:481d6a4f7aa9": [
+"Security Vulnerability",
+"Diff Level"
+],
+"frontend/types/gotypes.d.ts:109-114:33060ae9a2c5": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"pkg/blockcontroller/blockcontroller.go:365-365:b5c51155d7cd": [
+"Security Vulnerability",
+"Diff Level"
+],
+"pkg/blockcontroller/blockcontroller.go:866-869:56657c17f45f": [
+"Maintainability and Readability",
+"File Level"
+],
+"pkg/remote/conncontroller/conncontroller.go:333-337:bb0bc095f700": [
+"Code Defect",
+"Repo Level"
+],
+"pkg/shellexec/shellexec.go:323-324:0f3a9bfc919a": [
+"Security Vulnerability",
+"Diff Level"
+],
+"pkg/shellexec/shellexec.go:324-324:29a6a4f90cf5": [
+"Code Defect",
+"Repo Level"
+],
+"pkg/shellexec/shellexec.go:483-489:4f2ada87fae2": [
+"Security Vulnerability",
+"Diff Level"
+],
+"pkg/util/shellutil/shellutil.go:143-146:586f77010886": [
+"Maintainability and Readability",
+"File Level"
+],
+"pkg/util/shellutil/shellutil.go:57-72:36ac9e4dafe8": [
+"Security Vulnerability",
+"File Level"
+],
+"pkg/util/shellutil/tokenswap.go:16-17:f960e074e6bc": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"pkg/util/shellutil/tokenswap.go:41-41:0fc6b1e9dd23": [
+"Code Defect",
+"Diff Level"
+],
+"pkg/util/shellutil/tokenswap.go:46-46:e8d46f208621": [
+"Code Defect",
+"Diff Level"
+],
+"pkg/util/shellutil/tokenswap.go:78-83:06a419f77473": [
+"Code Defect",
+"File Level"
+],
+"pkg/wshrpc/wshrpctypes.go:266-273:04d39943bf0d": [
+"Code Defect",
+"Diff Level"
+],
+"pkg/wshutil/wshproxy.go:144-145:d970bd50db4b": [
+"Security Vulnerability",
+"Diff Level"
+],
+"pkg/wshutil/wshproxy.go:202-207:f9f476b75060": [
+"Maintainability and Readability",
+"File Level"
+]
+},
+"wavetermdev__waveterm@90a57d5": {
+"pkg/blockcontroller/blockcontroller.go:149-156:9c29a58300ae": [
+"Code Defect",
+"File Level"
+],
+"pkg/blockcontroller/blockcontroller.go:285-310:465ed5d08976": [
+"Security Vulnerability",
+"Diff Level"
+],
+"pkg/shellexec/shellexec.go:258-263:37aa262e9688": [
+"Security Vulnerability",
+"Diff Level"
+],
+"pkg/waveobj/wtypemeta.go:52-62:1af9695807ff": [
+"Maintainability and Readability",
+"Diff Level"
+],
+"pkg/wslconn/wslconn.go:121-121:75d1dd09c951": [
+"Code Defect",
+"File Level"
+]
+}
+}
+}
