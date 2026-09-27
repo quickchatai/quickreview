@@ -12,6 +12,26 @@ gate, and nothing runs on the VM.
 Background and the fairness caveats: `docs/open-code-review-comparison.md`
 (idea 3).
 
+## Testing a review change (the defect benchmark loop)
+
+The headline is the defect benchmark (`defects/`, `RESULTS.md`): did the review
+find the real bugs, and is what it said true. One experiment = one image and
+several ARMS that differ only in config levers:
+
+```sh
+export QCR_BENCH_RUNS_DIR=~/qcr-bench-runs/runs   # outside any worktree
+QCR_BENCH_IMAGE=qcr-bench:exp bench/aacr/bench.sh build
+QCR_BENCH_IMAGE=qcr-bench:exp bench/aacr/arm.sh --prefix low --config review.preset=low --cases fresh10+levers16
+QCR_BENCH_IMAGE=qcr-bench:exp bench/aacr/arm.sh --prefix nosweep --config review.sweep=false --cases fresh10
+bench/aacr/compare.py --cases fresh10 default=lean-fresh10 low=low-fresh10 nosweep=nosweep-fresh10
+```
+
+`arm.sh` reviews and judges (only the arm's own PRs, with one retry) with the
+sets in parallel; `compare.py` scores arms on the same PRs from the archived
+judge files, never calling a model. Claim improvements on `fresh10`: the other
+30 PRs informed the 2026-09 levers, and in-sample gains shrank by half out of
+sample. Differences under ~2 defects per 10 PRs are noise.
+
 ## Quick start
 
 ```sh

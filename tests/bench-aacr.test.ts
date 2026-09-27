@@ -1094,3 +1094,22 @@ describe("the open-code-review baseline arm", () => {
     expect(bridge).toContain('ThreadingHTTPServer(("127.0.0.1", a.port)');
   });
 });
+
+describe("arm.sh / compare.py — the defect-benchmark loop", () => {
+  const arm = readFileSync(join(ROOT, "bench", "aacr", "arm.sh"), "utf8");
+  it("judges only the arm's own PRs, and retries a malformed answer once", () => {
+    expect(arm).toContain('judge --run "$run" --set "$set_name" --only "$cases"');
+    expect(arm).toMatch(/--only "\$cases" --concurrency 4 --resume/);
+  });
+  it("refuses to run without a runs dir outside the worktree", () => {
+    expect(arm).toContain('${QCR_BENCH_RUNS_DIR:?');
+  });
+  it("its levers16 group is exactly the 16 PRs in compare.py", () => {
+    const py = readFileSync(join(ROOT, "bench", "aacr", "compare.py"), "utf8");
+    const ids = (t: string) => new Set(t.match(/[A-Za-z0-9_.-]+__[A-Za-z0-9_.-]+@[0-9a-f]{7}/g));
+    const fromArm = ids(arm.split("# Expand")[0]!);
+    expect(fromArm.size).toBe(16);
+    expect(ids(py)).toEqual(fromArm);
+  });
+});
+
