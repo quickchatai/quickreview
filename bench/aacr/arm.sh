@@ -19,7 +19,7 @@
 #   --arm qcr|ocr     quickreviewd (default) or the open-code-review baseline (bench.sh --arm ocr;
 #                     OCR reviews one case at a time in one container per set, as its harness does)
 #   --parallel N|auto reviews at once, MACHINE-WIDE (default auto; see "Scheduling" below)
-#   --concurrency N   the old spelling of --parallel N
+#   --max-parallel N, --concurrency N   other spellings of --parallel N
 #   --resume          keep cases already reviewed by the same build and levers; re-run the rest
 #   --fresh           start the arm's runs over (their earlier case results are cleared)
 #                     — an existing run dir needs one of the two, so a relaunch never wipes hours
@@ -81,7 +81,7 @@ while [[ $# -gt 0 ]]; do
     --prefix) PREFIX="$2"; shift 2 ;;
     --config) CONFIG="$2"; shift 2 ;;
     --cases) CASES="$2"; shift 2 ;;
-    --parallel|--concurrency) PAR="$2"; shift 2 ;;
+    --parallel|--max-parallel|--concurrency) PAR="$2"; shift 2 ;;
     --no-judge) JUDGE=0; shift ;;
     --judge-concurrency) JCONC="$2"; shift 2 ;;
     --arm) ARM="$2"; shift 2 ;;
