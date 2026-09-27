@@ -507,7 +507,10 @@ async function main(): Promise<number> {
     // (--concurrency), and the login is shared with the companion.
     for (const c of cases) {
       const prior = readOcrSummary(outDir, c);
-      if (resume && prior && (prior.status === "ok" || prior.status === "partial")) {
+      // Only a clean case is kept on --resume, exactly as the quickreviewd arm
+      // keeps only `ok`: `partial` (some files failed, e.g. a 429 at the
+      // bridge) is re-run, so rate-limit damage never persists in one arm only.
+      if (resume && prior && prior.status === "ok") {
         if (JSON.stringify(prior.fingerprint) === JSON.stringify(fingerprint)) {
           log(`ocr: ${c.instance_id} already done — skipped (--resume)`);
           summaries.push(prior);
@@ -620,6 +623,7 @@ async function main(): Promise<number> {
       );
       return false;
     });
+    let judgeIncomplete = false;
     const reviews: Record<string, ReviewForJudge> = {};
     for (const c of cases) reviews[c.instance_id] = reviewForJudge(outDir, safeId(c.instance_id));
     if (f.cmd === "defect-judge") {
@@ -632,6 +636,7 @@ async function main(): Promise<number> {
       const resume = f.has("--resume");
       mkdirSync(judgeDir, { recursive: true });
       let authStop: string | null = null;
+      const unjudged: string[] = [];
       await pool(cases, Number(f.get("--concurrency") ?? "3"), async (c) => {
         if (authStop) return;
         try {
@@ -642,51 +647,70 @@ async function main(): Promise<number> {
           log(`defect-judge: STOPPED — ${err.message}`);
           return;
         }
-        const meta = readMeta(store, c);
         const safe = safeId(c.instance_id);
+        // A case the review never reached (the run stopped early) has no
+        // summary: judging it would score a harness stop as a reviewer miss.
+        if (!existsSync(join(outDir, "cases", safe, "case-summary.json"))) {
+          log(`defect-judge: ${c.instance_id} was never reviewed in this run — not judged`);
+          unjudged.push(c.instance_id);
+          return;
+        }
         const tree = join(root, "wt", `judge-${safe}`);
         const tmpDir = join(root, "wt", `judge-${safe}.tmp`);
-        mkdirSync(tmpDir, { recursive: true });
-        await prepareTree(storeDir(store, c), tree, meta);
-        if (!resume) clearJudgeCase(judgeDir, safe);
-        await judgeCase({
-          pr: {
-            instance_id: safe,
-            repo: c.repo,
-            title: meta.title,
-            merge_base: meta.merge_base,
-            head: meta.head_commit,
-          },
-          defects: defects.cases[c.instance_id]!.defects,
-          excluded: defects.cases[c.instance_id]!.excluded,
-          review: reviews[c.instance_id]!,
-          outDir: judgeDir,
-          rounds,
-          defectSetVersion: defects.version,
-          resume,
-          log,
-          pi: {
-            root,
-            cwd: tree,
-            model,
-            timeoutMs,
-            env: {
-              PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
-              HOME: process.env.HOME ?? "/tmp",
-              TMPDIR: tmpDir,
-              LANG: "C.UTF-8",
-              PI_CODING_AGENT_DIR: agentDir,
-              GIT_CONFIG_NOSYSTEM: "1",
-              GIT_CONFIG_SYSTEM: "/dev/null",
-              GIT_CONFIG_GLOBAL: "/dev/null",
-              GIT_TERMINAL_PROMPT: "0",
+        // One case that cannot be prepared (not prefetched, a broken store)
+        // is that case's error, never the whole judge's.
+        try {
+          const meta = readMeta(store, c);
+          mkdirSync(tmpDir, { recursive: true });
+          await prepareTree(storeDir(store, c), tree, meta);
+          if (!resume) clearJudgeCase(judgeDir, safe);
+          await judgeCase({
+            pr: {
+              instance_id: safe,
+              repo: c.repo,
+              title: meta.title,
+              merge_base: meta.merge_base,
+              head: meta.head_commit,
             },
-          },
-        });
+            defects: defects.cases[c.instance_id]!.defects,
+            excluded: defects.cases[c.instance_id]!.excluded,
+            review: reviews[c.instance_id]!,
+            outDir: judgeDir,
+            rounds,
+            defectSetVersion: defects.version,
+            resume,
+            log,
+            pi: {
+              root,
+              cwd: tree,
+              model,
+              timeoutMs,
+              env: {
+                PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+                HOME: process.env.HOME ?? "/tmp",
+                TMPDIR: tmpDir,
+                LANG: "C.UTF-8",
+                PI_CODING_AGENT_DIR: agentDir,
+                GIT_CONFIG_NOSYSTEM: "1",
+                GIT_CONFIG_SYSTEM: "/dev/null",
+                GIT_CONFIG_GLOBAL: "/dev/null",
+                GIT_TERMINAL_PROMPT: "0",
+              },
+            },
+          });
+        } catch (err) {
+          log(
+            `defect-judge: ${c.instance_id} — ERROR ${String(err instanceof Error ? err.message : err)}`,
+          );
+          unjudged.push(c.instance_id);
+        }
         rmSync(tree, { recursive: true, force: true });
         rmSync(tmpDir, { recursive: true, force: true });
       });
+      if (unjudged.length)
+        log(`defect-judge: ${unjudged.length} case(s) NOT judged: ${unjudged.join(", ")}`);
       if (authStop) return 1;
+      judgeIncomplete = unjudged.length > 0;
     }
     const judged = loadJudgements(judgeDir);
     const byCase: Record<string, (typeof judged)[string]> = {};
@@ -770,7 +794,7 @@ async function main(): Promise<number> {
     log(
       `${f.cmd}: ${score.judged}/${score.cases} judged — recall ${(score.defects.recall * 100).toFixed(0)}% (weighted ${(score.weighted_recall * 100).toFixed(0)}%), comments correct ${(score.comments.correct_share * 100).toFixed(0)}% → ${join(judgeDir, "report.md")}`,
     );
-    return score.errors ? 1 : 0;
+    return score.errors || judgeIncomplete ? 1 : 0;
   }
 
   if (f.cmd === "report") {

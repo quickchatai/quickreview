@@ -23,6 +23,8 @@ import argparse, collections, json, os, re, statistics, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 W = {"high": 3, "medium": 2, "low": 1}
+# src/bench/cost.ts GPT6_SOL_USD_PER_MTOK — $ per million tokens, pi's price list.
+GPT6_SOL = {"input": 2, "cacheRead": 0.2, "output": 10}
 LEVERS16 = {
     "smoke10": "cline__cline@7d18fb9 linera-io__linera-protocol@3535ddb lvgl__lvgl@4a57db3 ollama__ollama@b6002f6 dbeaver__dbeaver@bc3ac7b mrdoob__three.js@96ab072",
     "dev10": "CherryHQ__cherry-studio@83a2594 bluewave-labs__Checkmate@29e03a6 mpv-player__mpv@0729afe FreeCAD__FreeCAD@699b45c openai__codex@8c952af alibaba__spring-ai-alibaba@4bc7305",
@@ -31,6 +33,7 @@ LEVERS16 = {
 
 
 LIMITED = set()  # (iid, defect id) carrying a benchmark_limitation note
+ERRORED = set()  # (run, iid) whose judgement is an error file — never scored as misses
 
 
 def ground_truth(set_name):
@@ -68,27 +71,49 @@ def usd_and_minutes(case_dir):
                     c = (r.get("usage") or {}).get("cost")
                     usd += (c.get("total") if isinstance(c, dict) else c) or 0
     s = os.path.join(case_dir, "case-summary.json")
-    mins = json.load(open(s)).get("duration_seconds", 0) / 60 if os.path.exists(s) else None
+    summary = json.load(open(s)) if os.path.exists(s) else {}
+    b = summary.get("bridge")
+    if not os.path.exists(ev) and b:
+        # The OCR arm does not run through pi: its bridge's tokens at pi's
+        # gpt-6-sol rates, exactly as src/bench/cost.ts prices them.
+        inp = b.get("input_tokens") or 0
+        cached = min(b.get("cached_tokens") or 0, inp)
+        usd = ((inp - cached) * GPT6_SOL["input"] + cached * GPT6_SOL["cacheRead"] + (b.get("output_tokens") or 0) * GPT6_SOL["output"]) / 1e6
+    mins = summary["duration_seconds"] / 60 if "duration_seconds" in summary else None
     return usd, mins
 
 
+def judgement(runs_dir, run, iid, version, judge_model):
+    """One case's round-1 judgement in one run, or None (absent or errored)."""
+    f = os.path.join(runs_dir, run, "judge", f"v{version}-{judge_model}", f"{iid}.r1.json")
+    if not os.path.exists(f):
+        return None
+    j = json.load(open(f))
+    if j.get("error"):
+        ERRORED.add((run, iid))
+        return None
+    return j
+
+
 def verdicts(runs_dir, runs, cases, judge_model):
-    """(iid, defect) -> credit for one repeat of an arm."""
+    """(iid, defect) -> credit for one repeat of an arm; unjudged PRs are absent."""
     out = {}
-    for run in runs:
-        for iid, (_, sevs, version) in cases.items():
-            f = os.path.join(runs_dir, run, "judge", f"v{version}-{judge_model}", f"{iid}.r1.json")
-            if not os.path.exists(f) or any(k[0] == iid for k in out):
+    for iid, (_, sevs, version) in cases.items():
+        for run in runs:
+            j = judgement(runs_dir, run, iid, version, judge_model)
+            if j is None:
                 continue
-            v = {d["id"]: d["verdict"] for d in json.load(open(f))["defects"]}
+            v = {d["id"]: d["verdict"] for d in j["defects"]}
             for did in sevs:
                 out[(iid, did)] = {"found": 1, "partial": 0.5}.get(v.get(did, "missed"), 0)
+            break
     return out
 
 
 def consistency(repeats, cases):
     """Agreement and found-in-every-run across repeats judged on the same PRs."""
     keys = set.intersection(*(set(r) for r in repeats))
+    dropped = len(set.union(*(set(r) for r in repeats)) - keys)
     sev = {(iid, did): s for iid, (_, sevs, _) in cases.items() for did, s in sevs.items()}
     lines = []
     for label, pick in (("all", lambda k: True), ("high", lambda k: sev[k] == "high")):
@@ -97,24 +122,25 @@ def consistency(repeats, cases):
         every = [k for k in ks if all(r[k] == 1 for r in repeats)]
         agree = len(every) / max(len(anyf), 1)
         lines.append(f"{label}: found in every run {len(every)}/{len(ks)} ({len(every) / max(len(ks), 1):.0%}), agreement {agree:.0%} of {len(anyf)} found by any")
-    return "; ".join(lines)
+    return "; ".join(lines) + (f" ({dropped} defect(s) left out: not judged in every repeat)" if dropped else "")
 
 
 def score(runs_dir, runs, cases, judge_model):
+    """One repeat's row. Every defect of every PR in --cases is in the
+    denominator: a PR with no usable judgement counts as found nothing, and
+    the PRs column says how many were actually judged."""
     found, total, comments = collections.Counter(), collections.Counter(), collections.Counter()
-    usd, mins, judged = [], [], set()
-    for run in runs:
-        for iid, (_, sevs, version) in cases.items():
-            if iid in judged:
+    usd, mins, judged = [], [], 0
+    for iid, (_, sevs, version) in cases.items():
+        for sev in sevs.values():
+            total[sev] += 1
+        for run in runs:
+            j = judgement(runs_dir, run, iid, version, judge_model)
+            if j is None:
                 continue
-            f = os.path.join(runs_dir, run, "judge", f"v{version}-{judge_model}", f"{iid}.r1.json")
-            if not os.path.exists(f):
-                continue
-            j = json.load(open(f))
-            judged.add(iid)
+            judged += 1
             verdict = {d["id"]: d["verdict"] for d in j["defects"]}
             for did, sev in sevs.items():
-                total[sev] += 1
                 found[sev] += {"found": 1, "partial": 0.5}.get(verdict.get(did, "missed"), 0)
             for c in j["comments"]:
                 comments[c["verdict"]] += 1
@@ -122,13 +148,53 @@ def score(runs_dir, runs, cases, judge_model):
             usd.append(u)
             if m:
                 mins.append(m)
+            break
     n, f = sum(total.values()), sum(found.values())
     wt = sum(W[s] * found[s] for s in W) / max(sum(W[s] * total[s] for s in W), 1)
     ct = sum(comments.values())
     correct = (comments["correct-valuable"] + comments["correct-minor"]) / max(ct, 1)
     sev = " | ".join(f"{found[s]:g}/{total[s]}" for s in W)
+    incomplete = "" if judged == len(cases) else " INCOMPLETE"
     return (f"{f:g}/{n} ({f / max(n, 1):.0%}) | {wt:.0%} | {sev} | {correct:.0%} | "
-            f"${statistics.mean(usd) if usd else 0:.2f} | {statistics.median(mins) if mins else 0:.1f} | {len(judged)}/{len(cases)}")
+            f"${statistics.mean(usd) if usd else 0:.2f} | {statistics.median(mins) if mins else 0:.1f} | {judged}/{len(cases)}{incomplete}")
+
+
+def build(runs_dir, runs):
+    """The build each run was reviewed by (run.json qcr_commit), for the
+    same-build check."""
+    out = set()
+    for run in runs:
+        f = os.path.join(runs_dir, run, "run.json")
+        if os.path.exists(f):
+            r = json.load(open(f))
+            out.add(str(r.get("qcr_commit") or (r.get("fingerprint") or {}).get("qcr_commit") or "unknown"))
+    return out
+
+
+def aacr(runs_dir, runs):
+    """AACR-Bench's own metric for one repeat: the harness's averaged `all`
+    variant of every run, summed as counts (rates re-derived), plus the judge
+    line each run's eval recorded."""
+    t = collections.Counter()
+    judges = set()
+    for run in runs:
+        f = os.path.join(runs_dir, run, "results", "all", "metrics_ocr_average.json")
+        if not os.path.exists(f):
+            continue
+        m = json.load(open(f))["summary"]
+        for k in ("evaluated_instances", "expected_notes", "generated_notes", "matched_semantic_notes", "matched_line_notes"):
+            t[k] += m.get(k) or 0
+        j = os.path.join(runs_dir, run, "judge.txt")
+        judges.add(open(j).readline().strip() if os.path.exists(j) else "(no judge.txt)")
+    return t, judges
+
+
+def aacr_row(t):
+    sem, gen, exp = t["matched_semantic_notes"], t["generated_notes"], t["expected_notes"]
+    p, r = sem / max(gen, 1), sem / max(exp, 1)
+    f1 = 2 * p * r / (p + r) if p + r else 0
+    return (f"{sem:.1f}/{exp:g} ({r:.1%}) | {sem:.1f}/{gen:g} ({p:.1%}) | {f1:.1%} | "
+            f"{t['matched_line_notes'] / max(exp, 1):.1%} | {t['evaluated_instances']:g}")
 
 
 def main():
@@ -136,13 +202,14 @@ def main():
     ap.add_argument("--cases", required=True, help="a set name, levers16 or all30")
     ap.add_argument("--judge-model", default="gpt-6-sol-high", help="the judge label's model part")
     ap.add_argument("--runs-dir", default=os.environ.get("QCR_BENCH_RUNS_DIR", os.path.join(HERE, "runs")))
+    ap.add_argument("--aacr", action="store_true", help="also print AACR-Bench's own metric (needs `bench.sh eval` on each run)")
     ap.add_argument("arms", nargs="+", help="NAME=run[,run...]")
     a = ap.parse_args()
     cases = cases_for(a.cases)
     print(f"{len(cases)} PRs, {sum(len(v[1]) for v in cases.values())} defects ({a.cases})\n")
     print("| Arm | Found | Weighted | High | Medium | Low | Comments correct | $ / PR | Median min | PRs judged |")
     print("|---|---|---|---|---|---|---|---|---|---|")
-    notes = []
+    notes, builds = [], {}
     for arm in a.arms:
         name, _, spec = arm.partition("=")
         if not spec:
@@ -151,6 +218,8 @@ def main():
         for k, runs in enumerate(repeats, 1):
             label = name if len(repeats) == 1 else f"{name} (run {k})"
             print(f"| {label} | {score(a.runs_dir, runs, cases, a.judge_model)} |")
+        for runs in repeats:
+            builds[name] = builds.get(name, set()) | build(a.runs_dir, runs)
         vs = [verdicts(a.runs_dir, runs, cases, a.judge_model) for runs in repeats]
         lim = [k for k in LIMITED if k[0] in cases]
         if lim:
@@ -158,6 +227,33 @@ def main():
             notes.append(f"{name}: CI-gate defects (benchmark limitation) found {' / '.join(f'{g:g}' for g in got)} of {len(lim)}")
         if len(repeats) > 1:
             notes.append(f"{name} consistency — {consistency(vs, cases)}")
+    if ERRORED:
+        notes.append(f"{len(ERRORED)} judgement(s) are ERROR files, scored as not judged (re-run bench.sh judge --resume): "
+                     + ", ".join(f"{r}/{i}" for r, i in sorted(ERRORED)))
+    commits = set().union(*builds.values()) if builds else set()
+    if len(commits) > 1:
+        notes.append("arms were reviewed by DIFFERENT builds — "
+                     + "; ".join(f"{k}: {', '.join(sorted(v))}" for k, v in builds.items()))
+    if a.aacr:
+        # The benchmark's own metric, `all` variant (the only one the OCR arm
+        # has): semantic matches against the dataset's references, as scored by
+        # the harness under whatever judge each run's `bench.sh eval` used.
+        print("\nAACR-Bench metric (harness, `all` variant, judge rounds averaged)\n")
+        print("| Arm | Recall | Precision | F1 | Line recall | PRs scored |")
+        print("|---|---|---|---|---|---|")
+        judges = set()
+        for arm in a.arms:
+            name, _, spec = arm.partition("=")
+            repeats = [r.split(",") for r in spec.split("+")]
+            for k, runs in enumerate(repeats, 1):
+                t, js = aacr(a.runs_dir, runs)
+                judges |= js
+                label = name if len(repeats) == 1 else f"{name} (run {k})"
+                print(f"| {label} | {aacr_row(t) if t['evaluated_instances'] else 'not evaluated | | | | 0'} |")
+        if len(judges) > 1:
+            notes.append("NOT COMPARABLE — the AACR evals used different judges: " + " / ".join(sorted(judges)))
+        elif judges:
+            notes.append(f"AACR judge: {judges.pop()}")
     if notes:
         print()
         for n in notes:

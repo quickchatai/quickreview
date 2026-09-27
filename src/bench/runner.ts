@@ -146,6 +146,7 @@ export interface RunFingerprint {
     placement_min_code_files?: number;
     placement_min_new_file_lines?: number;
     dependency_sources: boolean;
+    tests_lens: boolean;
   };
 }
 
@@ -170,6 +171,7 @@ export function runFingerprint(cfg: Config, profile: string, overrides = ""): Ru
       placement_min_code_files: cfg.review.placement_min_code_files,
       placement_min_new_file_lines: cfg.review.placement_min_new_file_lines,
       dependency_sources: cfg.review.dependency_sources,
+      tests_lens: cfg.review.tests_lens,
     },
   };
 }

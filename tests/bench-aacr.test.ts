@@ -1098,8 +1098,8 @@ describe("the open-code-review baseline arm", () => {
 describe("arm.sh / compare.py — the defect-benchmark loop", () => {
   const arm = readFileSync(join(ROOT, "bench", "aacr", "arm.sh"), "utf8");
   it("judges only the arm's own PRs, and retries a malformed answer once", () => {
-    expect(arm).toContain('judge --run "$run" --set "$set_name" --only "$cases"');
-    expect(arm).toMatch(/--only "\$cases" --concurrency 4 --resume/);
+    expect(arm).toContain('judge --run "$run" --set "$dset" --only "$dids"');
+    expect(arm).toMatch(/--only "\$dids" --concurrency 4 --resume/);
   });
   it("refuses to run without a runs dir outside the worktree", () => {
     expect(arm).toContain("${QCR_BENCH_RUNS_DIR:?");

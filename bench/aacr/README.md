@@ -28,7 +28,54 @@ bench/aacr/compare.py --cases fresh10 default=lean-fresh10 low=low-fresh10 noswe
 
 `arm.sh` reviews and judges (only the arm's own PRs, with one retry) with the
 sets in parallel; `compare.py` scores arms on the same PRs from the archived
-judge files, never calling a model. Claim improvements on `fresh10`: the other
+judge files, never calling a model.
+
+**Comparing against open-code-review, on both metrics.** One command per arm,
+the same flags, the same judges:
+
+```sh
+export QCR_BENCH_IMAGE=qcr-bench:exp QCR_BENCH_OCR_IMAGE=qcr-bench-ocr:exp   # both built from one commit
+bench/aacr/arm.sh --prefix low --config review.preset=low --cases fresh10 --eval 3
+bench/aacr/arm.sh --prefix default --cases fresh10 --eval 3
+bench/aacr/arm.sh --prefix ocr --arm ocr --cases fresh10 --eval 3
+bench/aacr/compare.py --cases fresh10 --aacr low=low-fresh10 default=default-fresh10 ocr=ocr-fresh10
+```
+
+What makes the rows comparable, and is enforced rather than assumed:
+- **One defect judge.** Every arm, OCR included, is judged in the quickreviewd
+  image (`$QCR_BENCH_IMAGE`) with the same model; `compare.py` reads one judge
+  label. `--eval R` runs AACR-Bench's own metric with the codex judge
+  (`JUDGE_CODEX_MODEL`, default `gpt-6-sol:low`) for every arm, and
+  `compare.py --aacr` prints NOT COMPARABLE if the runs' `judge.txt` differ.
+- **One denominator.** Every defect of every PR in `--cases` counts; a PR with
+  no judgement, or an errored one, scores nothing and the row says
+  INCOMPLETE (never a silently smaller denominator). A PR the review never
+  reached (the run stopped early) is not judged at all.
+- **One currency.** OCR does not run through pi; its bridge tokens are priced
+  at pi's gpt-6-sol rates (`src/bench/cost.ts`), in `compare.py` too.
+- **One build.** `compare.py` warns when arms carry different `qcr_commit`s;
+  `<run>.arm.json` beside each run records the arm, image and image id.
+- **What cannot be equal:** OCR gets no PR title/body, comments with line
+  ranges, no severity (only the AACR `all` variant), and runs one case at a
+  time while ours run `--concurrency` at once — compare minutes with that in
+  mind.
+
+`arm.sh` exits non-zero when any review, judge or eval failed; `--resume`
+keeps cases already reviewed by the same build and levers; repeats run one
+after another. `--cases full` reviews all 196 PRs and judges the 40 that have
+ground truth against their own defect sets.
+
+**Before a big run, check the PRs can still be fetched:**
+`bench/aacr/check_available.py [--sets full] [--backups]` (anonymous git, no
+API quota, about a minute for all 196). On 2026-09-27, 11 of the 196 `full`
+PRs had a reviewed head that a force-push took away (the PR ref points
+elsewhere now; no fetch can recover it): ComfyUI@4936d01, ComfyUI@cfc3122,
+node@b225544, uv@ed57db2 (also a backup in smoke10/holdout10), ClickHouse@fd6ba0c,
+ClickHouse@cc96255 and keycloak@1463502/2373a48/460f800/79dbba9/21d4538.
+Their prefetch fails, their review is `failed` and their references count as
+missed — for every arm alike, so arms stay comparable, but the absolute
+recall on `full` is out of 185 runnable PRs' worth of findability. None of
+the 40 defect-benchmark PRs is affected. Claim improvements on `fresh10`: the other
 30 PRs informed the 2026-09 levers, and in-sample gains shrank by half out of
 sample. Differences under ~2 defects per 10 PRs are noise.
 
@@ -301,6 +348,8 @@ out up to 6 lens children); start at 1–2.
 | `Dockerfile` | the sandbox image (build context assembled from an explicit allowlist) |
 | `in-container.sh` | the image's entrypoint (dispatch + the eval loop) |
 | `select_cases.py` | deterministic set selection from the pinned dataset |
+| `arm.sh` / `compare.py` | one arm end to end (review → defect judge → optional AACR eval); the comparison table |
+| `check_available.py` | can every PR's base and head still be fetched from github.com |
 | `sets/*.json` | the committed case sets |
 | `judge_shim.py` | OpenAI-compatible judge endpoint over `pi -p` |
 | `codex_bridge.py` | the OCR arm's loopback Chat Completions/Responses → Codex backend bridge |
