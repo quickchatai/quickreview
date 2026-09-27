@@ -9,6 +9,7 @@ sha256 is not v1.0's.
 Usage:
     python3 select_cases.py <v1.0 positive_samples.json> smoke10 > sets/smoke10.json
     python3 select_cases.py <v1.0 positive_samples.json> full    > sets/full.json
+    python3 select_cases.py <v1.0 positive_samples.json> rest145 > sets/rest145.json
 
 `smoke10` — ten SMALL PRs for proving the plumbing end to end. The rule, in
 order, so anyone can re-derive the set:
@@ -85,6 +86,19 @@ UNREACHABLE_HEADS = {
     "astral-sh__uv@ed57db2": "upload-pack: not our ref ed57db2b (checked 2026-09-26)",
     "comfyanonymous__ComfyUI@cfc3122": "upload-pack: not our ref cfc31229 (checked 2026-09-26)",
     "comfyanonymous__ComfyUI@4936d01": "upload-pack: not our ref 4936d018 (checked 2026-09-26)",
+}
+
+# More heads GitHub no longer serves, found by check_available.py on the whole
+# dataset (2026-09-27). Kept apart from UNREACHABLE_HEADS so the earlier sets
+# (and their backups) regenerate byte-identical; rest145 excludes both.
+UNAVAILABLE_HEADS_2026_09_27 = {
+    "ClickHouse__ClickHouse@fd6ba0c": "upload-pack: not our ref fd6ba0c1 (checked 2026-09-27)",
+    "ClickHouse__ClickHouse@cc96255": "upload-pack: not our ref cc962559 (checked 2026-09-27)",
+    "keycloak__keycloak@1463502": "upload-pack: not our ref 14635020 (checked 2026-09-27)",
+    "keycloak__keycloak@2373a48": "upload-pack: not our ref 2373a483 (checked 2026-09-27)",
+    "keycloak__keycloak@460f800": "upload-pack: not our ref 460f8008 (checked 2026-09-27)",
+    "keycloak__keycloak@79dbba9": "upload-pack: not our ref 79dbba9b (checked 2026-09-27)",
+    "keycloak__keycloak@21d4538": "upload-pack: not our ref 21d4538b (checked 2026-09-27)",
 }
 
 PR_URL = re.compile(r"github\.com/([^/]+)/([^/]+)/pull/(\d+)", re.IGNORECASE)
@@ -184,7 +198,7 @@ def fresh10(records: list[dict], taken: frozenset) -> list[dict]:
 
 
 def main() -> None:
-    if len(sys.argv) != 3 or sys.argv[2] not in ("smoke10", "holdout10", "dev10", "fresh10", "full"):
+    if len(sys.argv) != 3 or sys.argv[2] not in ("smoke10", "holdout10", "dev10", "fresh10", "rest145", "full"):
         raise SystemExit(__doc__)
     path, name = sys.argv[1], sys.argv[2]
     raw = open(path, "rb").read()
@@ -233,6 +247,25 @@ def main() -> None:
             f"{FRESH_MIN_LINES}<=change_line_count<={DEV_MAX_LINES}, not one of the smoke10/holdout10/dev10 PRs, "
             f"no {sorted(FRESH_SKIP_CATEGORIES)} category, quota {dict(FRESH_QUOTA)}, smallest first, "
             "one PR per repo — out-of-sample for the levers designed from those 30 PRs' missed defects"
+        )
+    elif name == "rest145":
+        smoke, _ = smoke10(records)
+        holdout, _ = smoke10(records, HOLDOUT_QUOTA, frozenset(c["repo"] for c in smoke), fill_to=10)
+        dev, _ = smoke10(
+            records, DEV_QUOTA, frozenset(c["repo"] for c in smoke + holdout), fill_to=10,
+            max_lines=DEV_MAX_LINES,
+        )
+        fresh = fresh10(records, frozenset(c["instance_id"] for c in smoke + holdout + dev))
+        taken = {c["instance_id"] for c in smoke + holdout + dev + fresh}
+        gone = set(UNREACHABLE_HEADS) | set(UNAVAILABLE_HEADS_2026_09_27)
+        cases = [c for c in (case_of(r) for r in records) if c["instance_id"] not in taken | gone]
+        cases = [c for c in cases if c["references"] > 0]
+        backups = []
+        rule = (
+            "every v1.0 PR the harness scores (at least one reference) that is not one of the "
+            "smoke10/holdout10/dev10/fresh10 PRs and whose head GitHub still serves "
+            f"(excluded as unfetchable: {', '.join(sorted(gone))}); dataset order — the rest of the "
+            "benchmark, for the 2026-09-27 whole-benchmark runs"
         )
     else:
         cases, backups = [case_of(r) for r in records], []
