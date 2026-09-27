@@ -43,6 +43,7 @@ import {
   selectCases,
   tagOf,
   toOcrResult,
+  modelErrorsFromEvents,
   usageFromEvents,
   type BenchComment,
   type PrefetchMeta,
@@ -68,6 +69,9 @@ import {
   buildBenchAgents,
   benchConfig,
   renderCasePrompts,
+  resultLine,
+  retryable,
+  type CaseSummary,
 } from "../src/bench/runner.js";
 import { loadConfig } from "../src/config.js";
 import { ecosystemFor } from "../src/ecosystem.js";
@@ -502,6 +506,59 @@ describe("what the session wrote → what the scorer reads", () => {
       "",
     ];
     expect(usageFromEvents(lines)).toEqual({ input: 108, output: 14, cacheRead: 51, children: 2 });
+  });
+
+  it("counts each failed model call once, by kind — the parent's and the lens children's", () => {
+    const err = (ts: number, msg: string) => ({
+      role: "assistant",
+      stopReason: "error",
+      timestamp: ts,
+      errorMessage: msg,
+    });
+    const limited = err(1, "429 Too Many Requests: rate limit reached");
+    const lines = [
+      JSON.stringify({ type: "message_end", message: limited }),
+      // pi repeats a message in later events: the same call, not a second one
+      JSON.stringify({ type: "agent_end", messages: [limited, { role: "user" }] }),
+      JSON.stringify({
+        type: "tool_execution_end",
+        toolName: "subagent",
+        result: {
+          details: {
+            results: [
+              { messages: [err(2, "Codex error: Our servers are currently overloaded.")] },
+              { messages: [err(3, "WebSocket idle timeout after 120000ms")] },
+            ],
+          },
+        },
+      }),
+      // a source file that merely MENTIONS rate limits is not an error
+      JSON.stringify({
+        type: "tool_execution_end",
+        result: { content: "usage_limit_reached 429" },
+      }),
+      "not json",
+    ];
+    const e = modelErrorsFromEvents(lines);
+    expect(e).toMatchObject({ rate_limited: 1, overloaded: 1, other: 1 });
+    expect(e.sample).toContain("429");
+  });
+
+  it("a case's result line says whether arm.sh should retry it and whether the login pushed back", () => {
+    const base = { instance_id: "o__a@1111111", error: undefined } as unknown as CaseSummary;
+    const mk = (status: CaseSummary["status"], extra: Partial<CaseSummary> = {}) =>
+      ({ ...base, status, ...extra }) as CaseSummary;
+    expect(resultLine(mk("ok"))).toBe("result: o__a@1111111 ok retry=0 limited=0");
+    expect(resultLine(mk("ok"), true)).toBe("result: o__a@1111111 ok retry=0 limited=0 skipped");
+    expect(
+      resultLine(mk("no-verdict", { model_errors: { rate_limited: 2, overloaded: 1, other: 4 } })),
+    ).toBe("result: o__a@1111111 no-verdict retry=1 limited=3");
+    // Unfetchable (force-pushed away) never succeeds on a re-run.
+    expect(
+      retryable(mk("failed", { error: "x: not prefetched (run `bench.sh prefetch` first)" })),
+    ).toBe(false);
+    expect(retryable(mk("timeout"))).toBe(true);
+    expect(retryable(mk("failed", { error: "spawn pi ENOENT" }))).toBe(true);
   });
 });
 
@@ -1074,6 +1131,8 @@ describe("the open-code-review baseline arm", () => {
     expect(sh).toContain('docker build --target "$TARGET"');
     const tarList = sh.slice(sh.indexOf("tar -cf -"), sh.indexOf("| tar -xf -"));
     expect(tarList).toContain("bench/aacr/codex_bridge.py");
+    expect(tarList).toContain("bench/aacr/eval_shards.py");
+    expect(docker).toContain("bench/aacr/eval_shards.py /opt/quickreview/bench/");
     // Cases run one at a time: the arm has no case-level pool.
     const cli = readFileSync(join(ROOT, "src", "bench", "cli.ts"), "utf8");
     const ocrReview = cli.slice(
@@ -1099,7 +1158,8 @@ describe("arm.sh / compare.py — the defect-benchmark loop", () => {
   const arm = readFileSync(join(ROOT, "bench", "aacr", "arm.sh"), "utf8");
   it("judges only the arm's own PRs, and retries a malformed answer once", () => {
     expect(arm).toContain('judge --run "$run" --set "$dset" --only "$dids"');
-    expect(arm).toMatch(/--only "\$dids" --concurrency 4 --resume/);
+    expect(arm).toMatch(/--only "\$dids" --concurrency "\$JCONC" --resume/);
+    expect(arm).toMatch(/EVAL_VARIANTS="" JCONC=4\n/);
   });
   it("refuses to run without a runs dir outside the worktree", () => {
     expect(arm).toContain("${QCR_BENCH_RUNS_DIR:?");

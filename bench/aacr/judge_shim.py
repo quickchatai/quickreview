@@ -10,7 +10,9 @@ report — never silently equated with the published judge.
 Only POST /v1/chat/completions (the last user message is the prompt) and
 GET /health. Stdlib only; one `pi -p` per call, tools/extensions/skills/context
 files all off, so the judge sees exactly the harness's prompt and nothing else.
-The harness calls it sequentially; the lock keeps it that way regardless.
+Each harness process calls it sequentially; bench.sh eval runs one harness
+process per variant (and per shard with --shards), so --concurrency is set to
+that process count and the semaphore bounds the pi calls in flight to it.
 """
 from __future__ import annotations
 
@@ -96,7 +98,10 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--model", required=True)
     ap.add_argument("--timeout", type=int, default=300)
+    ap.add_argument("--concurrency", type=int, default=2, help="pi calls in flight at once")
     a = ap.parse_args()
+    global LOCK
+    LOCK = threading.Semaphore(max(1, a.concurrency))
     srv = ThreadingHTTPServer(("127.0.0.1", a.port), make_handler(a.model, a.timeout))
     print(f"judge shim on 127.0.0.1:{a.port} → {a.model}", flush=True)
     srv.serve_forever()

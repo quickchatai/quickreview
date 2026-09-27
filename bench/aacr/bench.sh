@@ -7,9 +7,16 @@
 #   bench/aacr/bench.sh prefetch [--set smoke10] [--only id,id] [--wait-rate-limit]
 #   bench/aacr/bench.sh review   --run ID [--set smoke10] [--only id,id] [--profile NAME]
 #                                [--timeout-min 45] [--concurrency 1] [--resume]
-#                                [--config models.effort=high,review.sweep=false]
+#                                [--config models.effort=high,review.sweep=false] [--phase all|init|case|finish]
+#              --phase: arm.sh's split of one run into one container per case (init/finish
+#              run --network none with no login; see src/bench/cli.ts)
 #              --config: config.toml levers for THIS run only, so two arms share one image
 #   bench/aacr/bench.sh eval     --run ID [--set smoke10] [--judge mock|openai|codex] [--rounds 3] [--line-k N]
+#                                [--shards N] [--variants all,no-nits,blockers]
+#              --shards N: split the instances into N harness processes per variant (variants
+#              always run side by side) and merge their counts with the harness's own
+#              summary functions (eval_shards.py) — same numbers, N× sooner. --variants
+#              limits which variants are scored (compare.py reads only `all`)
 #              --line-k N (default 1, the published setting): N != 1 is a DIAGNOSTIC that scores a copy of
 #              the `all` results in results/all-kN/ and leaves the official numbers untouched
 #   bench/aacr/bench.sh judge    --run ID [--set smoke10] [--rounds 1] [--judge-model M] [--concurrency 3] [--resume]
@@ -70,6 +77,7 @@ die() { echo "bench: $*" >&2; exit 1; }
 
 cmd="${1:-}"; shift || true
 RUN="" SET="smoke10" ONLY="" JUDGE="mock" ROUNDS="" LINE_K="1" ARM="qcr" EXTRA=() FROM="" FORCE=0 JARGS=()
+PHASE="all" SHARDS="1" VARIANTS=""
 while (($#)); do
   case "$1" in
     --run) RUN="$2"; shift 2 ;;
@@ -82,6 +90,9 @@ while (($#)); do
     --judge-model) JARGS+=(--model "$2"); shift 2 ;;
     --label) JARGS+=(--label "$2"); shift 2 ;;
     --profile|--timeout-min|--concurrency|--ocr-concurrency|--max-tools|--config) EXTRA+=("$1" "$2"); shift 2 ;;
+    --phase) PHASE="$2"; EXTRA+=("$1" "$2"); shift 2 ;;
+    --shards) SHARDS="$2"; shift 2 ;;
+    --variants) VARIANTS="$2"; shift 2 ;;
     --resume|--wait-rate-limit|--keep-tree) EXTRA+=("$1"); shift ;;
     --from) FROM="$2"; shift 2 ;;
     --force) FORCE=1; shift ;;
@@ -98,6 +109,9 @@ esac
 # First character alphanumeric: `.`, `..` and dotfile ids would mount the wrong dir.
 [[ -z "$RUN" || "$RUN" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "--run must start with [A-Za-z0-9] and use only [A-Za-z0-9._-]"
 [[ "$LINE_K" =~ ^[0-9]{1,3}$ ]] || die "--line-k must be a small non-negative integer"
+[[ "$PHASE" =~ ^(all|init|case|finish)$ ]] || die "--phase must be all | init | case | finish"
+[[ "$SHARDS" =~ ^[1-9][0-9]?$ ]] || die "--shards must be 1..99"
+[[ -z "$VARIANTS" || "$VARIANTS" =~ ^[a-z+,-]+$ ]] || die "--variants takes variant names joined by ','"
 ONLY_ARGS=(); [[ -n "$ONLY" ]] && ONLY_ARGS=(--only "$ONLY")
 # `${a[@]+"${a[@]}"}` everywhere below: an empty array under `set -u` aborts
 # bash < 4.4 (stock macOS bash 3.2).
@@ -221,7 +235,8 @@ case "$cmd" in
         package.json package-lock.json tsconfig.json config.toml AGENTS.md CLAUDE.md .pi \
         src extensions prompts agents profiles \
         bench/aacr/Dockerfile bench/aacr/sets bench/aacr/defects bench/aacr/judge_shim.py \
-        bench/aacr/in-container.sh bench/aacr/codex_bridge.py deploy/reviewer/AGENTS.override.md ) \
+        bench/aacr/in-container.sh bench/aacr/codex_bridge.py bench/aacr/eval_shards.py \
+        deploy/reviewer/AGENTS.override.md ) \
       | tar -xf - -C "$ctx"
     docker build --target "$TARGET" -t "$IMAGE" ${BASE_ARGS[@]+"${BASE_ARGS[@]}"} \
       --build-arg "QCR_BENCH_COMMIT=$commit" -f "$ctx/bench/aacr/Dockerfile" "$ctx"
@@ -237,7 +252,16 @@ case "$cmd" in
 
   review)
     need_image
-    d="$(run_dir)"; auth_mounts
+    d="$(run_dir)"
+    if [[ "$PHASE" == init || "$PHASE" == finish ]]; then
+      # Bookkeeping only (run.json, the outcome tally): no model, no repos.
+      [[ "$ARM" == qcr ]] || die "--phase belongs to the quickreviewd arm"
+      args=("${HARDEN[@]}" --network none --mount "type=bind,src=$d,dst=/bench-out"
+        "$IMAGE" review "$SET" ${ONLY_ARGS[@]+"${ONLY_ARGS[@]}"} ${EXTRA[@]+"${EXTRA[@]}"})
+      record "${args[@]}"
+      exec docker run "${args[@]}"
+    fi
+    auth_mounts
     # The OCR arm's reasoning effort (its bridge's --effort; default medium).
     oe=(); [[ "$ARM" == ocr && -n "${QCR_BENCH_OCR_EFFORT:-}" ]] && oe=(-e "OCR_BRIDGE_EFFORT=$QCR_BENCH_OCR_EFFORT")
     args=("${HARDEN[@]}" "${AUTH[@]}" ${oe[@]+"${oe[@]}"}
@@ -274,7 +298,8 @@ case "$cmd" in
     d="$(run_dir)"
     rounds="${ROUNDS:-$([[ "$JUDGE" == mock ]] && echo 1 || echo 3)}"
     judge_args
-    envs+=(-e "BENCH_ARM=$ARM")
+    envs+=(-e "BENCH_ARM=$ARM" -e "QCR_EVAL_SHARDS=$SHARDS")
+    [[ -n "$VARIANTS" ]] && envs+=(-e "QCR_EVAL_VARIANTS=$VARIANTS")
     [[ "$LINE_K" != 1 ]] && envs+=(-e "QCR_LINE_K=$LINE_K")
     args=("${HARDEN[@]}" ${net[@]+"${net[@]}"} ${envs[@]+"${envs[@]}"} ${mounts[@]+"${mounts[@]}"}
       --mount "type=bind,src=$d,dst=/bench-out"
@@ -351,5 +376,5 @@ case "$cmd" in
       --mount "type=bind,src=$d,dst=/bench-out" "$IMAGE" shell
     ;;
 
-  *) sed -n '2,34p' "$0"; exit 2 ;;
+  *) sed -n '2,42p' "$0"; exit 2 ;;
 esac

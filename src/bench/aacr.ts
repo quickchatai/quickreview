@@ -694,3 +694,65 @@ export function usageFromEvents(lines: Iterable<string>): Usage & { children: nu
   }
   return u;
 }
+
+/** Model-call failures one review saw, by kind. `rate_limited` and
+ * `overloaded` are the shared login pushing back (every bench container
+ * draws on ONE ChatGPT login): a case that failed with either is retried by
+ * arm.sh after a pause, never scored as the reviewer's own miss. */
+export interface ModelErrors {
+  rate_limited: number;
+  overloaded: number;
+  other: number;
+  /** One message of the most telling kind, for the log. */
+  sample?: string;
+}
+
+export const RATE_LIMIT_RE = /\b429\b|rate[ _-]?limit|too many requests|usage[ _-]?limit|quota/i;
+export const OVERLOAD_RE = /overloaded|\b50[23]\b|\b529\b|capacity/i;
+
+/**
+ * Count the failed model calls in pi's `--mode json` stream: every assistant
+ * message with `stopReason: "error"`, the parent's and the lens children's
+ * alike (children's arrive nested in the subagent tool result). pi repeats a
+ * message in later events (updates, the final message list), so each is
+ * counted once, keyed by its timestamp and text.
+ */
+export function modelErrorsFromEvents(lines: Iterable<string>): ModelErrors {
+  const seen = new Set<string>();
+  const out: ModelErrors = { rate_limited: 0, overloaded: 0, other: 0 };
+  const visit = (x: unknown, depth: number): void => {
+    if (depth > 12 || typeof x !== "object" || x === null) return;
+    if (Array.isArray(x)) {
+      for (const y of x) visit(y, depth + 1);
+      return;
+    }
+    const r = x as Record<string, unknown>;
+    if (r["stopReason"] === "error" && typeof r["errorMessage"] === "string") {
+      const msg = r["errorMessage"];
+      const key = `${String(r["timestamp"] ?? "")}|${msg}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        if (RATE_LIMIT_RE.test(msg)) {
+          out.rate_limited++;
+          out.sample = msg.slice(0, 200);
+        } else if (OVERLOAD_RE.test(msg)) {
+          out.overloaded++;
+          if (!out.rate_limited) out.sample = msg.slice(0, 200);
+        } else {
+          out.other++;
+          out.sample ??= msg.slice(0, 200);
+        }
+      }
+    }
+    for (const v of Object.values(r)) visit(v, depth + 1);
+  };
+  for (const line of lines) {
+    if (!line.trim() || !line.includes('"errorMessage"')) continue;
+    try {
+      visit(JSON.parse(line), 0);
+    } catch {
+      // not JSON — stderr noise or a truncated final line
+    }
+  }
+  return out;
+}

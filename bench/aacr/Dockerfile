@@ -98,7 +98,7 @@ COPY agents ./agents
 COPY profiles ./profiles
 COPY bench/aacr/sets /opt/quickreview/bench/sets
 COPY bench/aacr/defects /opt/quickreview/bench/defects
-COPY bench/aacr/judge_shim.py bench/aacr/in-container.sh /opt/quickreview/bench/
+COPY bench/aacr/judge_shim.py bench/aacr/in-container.sh bench/aacr/eval_shards.py /opt/quickreview/bench/
 
 # Writable points — every one is replaced at run time by a tmpfs or an
 # anonymous volume (bench.sh runs with --read-only); created here so they

@@ -6,6 +6,8 @@
 //   review    --set <file> --out DIR [--only id,id] [--store DIR] [--profile NAME]
 //             [--timeout-min N] [--concurrency N] [--resume] [--keep-tree]
 //             [--config a.b=v,c.d=w]   config levers for this run (runner.ts)
+//             [--phase all|init|case|finish]   arm.sh's one-container-per-case split;
+//             every case ends with a `result: <id> <status> retry= limited=` line
 //   results   --set <file> --out DIR     rebuild result files from case dirs
 //   subset    --set <file> --dataset <converted jsonl> --out <jsonl>
 //   report    --set <file> --out DIR     write DIR/report.md from summaries + metrics
@@ -60,6 +62,7 @@ import {
   collectComments,
   contextFor,
   prepareTree,
+  resultLine,
   reviewCase,
   runFingerprint,
   writeResults,
@@ -225,33 +228,56 @@ async function main(): Promise<number> {
     const outDir = resolve(f.get("--out") ?? "");
     if (!f.get("--out")) throw new Error("--out <dir> is required");
     assertArm(outDir, "qcr");
+    // --phase splits one review run so arm.sh can schedule its cases on a
+    // machine-wide queue, one container per case (bench/aacr/arm.sh):
+    //   all     (default) the whole run in this process, as always
+    //   init    write run.json (and, without --resume, clear the cases'
+    //           earlier results) — no case is reviewed
+    //   case    review the --only cases with --resume semantics, never
+    //           touching run.json, so concurrent case containers never race
+    //           on it
+    //   finish  stamp run.json finished_at and tally the cases' outcomes
+    const phase = f.get("--phase") ?? "all";
+    if (!["all", "init", "case", "finish"].includes(phase))
+      throw new Error("--phase must be all | init | case | finish");
     const profile = f.get("--profile") ?? "";
     const cases = selectCases(set, only(f));
+    const runFile = join(outDir, "run.json");
+
+    if (phase === "finish") {
+      if (!existsSync(runFile)) throw new Error(`${runFile} missing — run --phase init first`);
+      const runJson = JSON.parse(readFileSync(runFile, "utf8")) as Record<string, unknown>;
+      runJson["finished_at"] = new Date().toISOString();
+      writeFileSync(runFile, JSON.stringify(runJson, null, 2) + "\n");
+      const tally: Record<string, number> = {};
+      let limited = 0;
+      for (const c of cases) {
+        const p = join(outDir, "cases", safeId(c.instance_id), "case-summary.json");
+        const s = existsSync(p) ? (JSON.parse(readFileSync(p, "utf8")) as CaseSummary) : null;
+        const st = s?.status ?? "missing";
+        tally[st] = (tally[st] ?? 0) + 1;
+        const e = s?.model_errors;
+        if (s && s.status !== "ok" && e && e.rate_limited + e.overloaded > 0) limited++;
+      }
+      const ok = tally["ok"] ?? 0;
+      const kinds = Object.entries(tally)
+        .map(([k, v]) => `${k} ${v}`)
+        .join(", ");
+      log(
+        `review: ${ok}/${cases.length} ok (${kinds})${limited ? ` — ${limited} failed under rate limiting: re-run the arm with --resume` : ""} — results in ${join(outDir, "results")}`,
+      );
+      return ok === cases.length ? 0 : 1;
+    }
+
     const overrides = f.get("--config") ?? "";
     const base = contextFor(root, profile, overrides);
     const ctx = { ...base, fingerprint: runFingerprint(base.cfg, profile, overrides) };
     const authSrc = f.get("--auth-src") ?? DEFAULTS.authSrc;
     const agentDir = f.get("--agent-dir") ?? DEFAULTS.agentDir;
-    const resume = f.has("--resume");
-    const agents = buildBenchAgents(root, ctx.cfg);
-    log(
-      `review: ${agents} lens agents built (profile ${profile || "(generic)"}), ${cases.length} case(s)`,
-    );
+    // A case container always resumes: its run was set up (and, if fresh,
+    // cleared) by the init phase, so a finished case it finds is this run's.
+    const resume = f.has("--resume") || phase === "case";
     mkdirSync(outDir, { recursive: true });
-    const runFile = join(outDir, "run.json");
-    const previous = existsSync(runFile)
-      ? (JSON.parse(readFileSync(runFile, "utf8")) as { started_at?: string; resumes?: unknown[] })
-      : null;
-    if (!resume) {
-      // A fresh run owns its cases outright: nothing an earlier invocation
-      // left for them may be scored as this run's (an interrupted run then
-      // shows its unreached cases as MISSING, and eval refuses the number).
-      for (const c of cases) {
-        rmSync(join(outDir, "cases", safeId(c.instance_id), "case-summary.json"), { force: true });
-        for (const v of Object.keys(VARIANTS))
-          rmSync(join(outDir, "results", v, `${safeId(c.instance_id)}.json`), { force: true });
-      }
-    }
     const run = {
       set: set.name,
       dataset: set.dataset,
@@ -266,16 +292,46 @@ async function main(): Promise<number> {
       pi: ctx.cfg.pi.version,
       qcr_commit: process.env.QCR_BENCH_COMMIT ?? "unknown",
       cases: cases.map((c) => c.instance_id),
-      started_at: (resume && previous?.started_at) || new Date().toISOString(),
-      resumes: [
+      started_at: new Date().toISOString(),
+      resumes: [] as unknown[],
+      finished_at: null as string | null,
+    };
+    if (phase !== "case") {
+      const previous = existsSync(runFile)
+        ? (JSON.parse(readFileSync(runFile, "utf8")) as {
+            started_at?: string;
+            resumes?: unknown[];
+          })
+        : null;
+      if (!resume) {
+        // A fresh run owns its cases outright: nothing an earlier invocation
+        // left for them may be scored as this run's (an interrupted run then
+        // shows its unreached cases as MISSING, and eval refuses the number).
+        for (const c of cases) {
+          rmSync(join(outDir, "cases", safeId(c.instance_id), "case-summary.json"), {
+            force: true,
+          });
+          for (const v of Object.keys(VARIANTS))
+            rmSync(join(outDir, "results", v, `${safeId(c.instance_id)}.json`), { force: true });
+        }
+      }
+      run.started_at = (resume && previous?.started_at) || run.started_at;
+      run.resumes = [
         ...(resume && Array.isArray(previous?.resumes) ? previous.resumes : []),
         ...(resume && previous
           ? [{ at: new Date().toISOString(), fingerprint: ctx.fingerprint }]
           : []),
-      ],
-      finished_at: null as string | null,
-    };
-    writeFileSync(runFile, JSON.stringify(run, null, 2) + "\n");
+      ];
+      writeFileSync(runFile, JSON.stringify(run, null, 2) + "\n");
+      if (phase === "init") {
+        log(`review: run initialised — ${cases.length} case(s)${resume ? " (resume)" : ""}`);
+        return 0;
+      }
+    }
+    const agents = buildBenchAgents(root, ctx.cfg);
+    log(
+      `review: ${agents} lens agents built (profile ${profile || "(generic)"}), ${cases.length} case(s)`,
+    );
     const timeoutMs = Number(f.get("--timeout-min") ?? DEFAULTS.timeoutMin) * 60_000;
     const summaries: CaseSummary[] = [];
     let authStop: string | null = null;
@@ -287,6 +343,7 @@ async function main(): Promise<number> {
         const same = JSON.stringify(s.fingerprint ?? null) === JSON.stringify(ctx.fingerprint);
         if (s.status === "ok" && same) {
           log(`review: ${c.instance_id} already done — skipped (--resume)`);
+          log(resultLine(s, true));
           summaries.push(s);
           return;
         }
@@ -301,6 +358,7 @@ async function main(): Promise<number> {
         if (!(err instanceof AuthExpiring)) throw err;
         authStop = err.message;
         log(`review: STOPPED — ${err.message}`);
+        log(`result: ${c.instance_id} auth-stop retry=0 limited=0`);
         return;
       }
       let meta: PrefetchMeta;
@@ -320,33 +378,38 @@ async function main(): Promise<number> {
           JSON.stringify(s, null, 2) + "\n",
         );
         writeResults(outDir, c, [], s);
+        log(resultLine(s));
         summaries.push(s);
         return;
       }
-      summaries.push(
-        await reviewCase(
-          c,
-          meta,
-          {
-            root,
-            store,
-            outDir,
-            agentDir,
-            profile,
-            timeoutMs,
-            keepTree: f.has("--keep-tree"),
-            log,
-          },
-          ctx,
-        ),
+      const s = await reviewCase(
+        c,
+        meta,
+        {
+          root,
+          store,
+          outDir,
+          agentDir,
+          profile,
+          timeoutMs,
+          keepTree: f.has("--keep-tree"),
+          log,
+        },
+        ctx,
       );
+      log(resultLine(s));
+      summaries.push(s);
     });
-    run.finished_at = new Date().toISOString();
-    writeFileSync(runFile, JSON.stringify(run, null, 2) + "\n");
     const ok = summaries.filter((s) => s.status === "ok").length;
-    log(`review: ${ok}/${cases.length} ok — results in ${join(outDir, "results")}`);
     // Assigned inside the pool's closures, which TS's narrowing cannot see.
     const stopped = authStop as string | null;
+    if (phase === "case") {
+      if (stopped !== null) log(`review: stopped early — ${stopped}`);
+      return ok === cases.length ? 0 : 1;
+    }
+    run.finished_at = new Date().toISOString();
+    writeFileSync(runFile, JSON.stringify(run, null, 2) + "\n");
+    log(`review: ${ok}/${cases.length} ok — results in ${join(outDir, "results")}`);
     if (stopped !== null) log(`review: run stopped early — ${stopped}`);
     return ok === cases.length ? 0 : 1;
   }
@@ -818,7 +881,7 @@ async function main(): Promise<number> {
     readFileSync(new URL(import.meta.url))
       .toString()
       .split("\n")
-      .slice(0, 28)
+      .slice(0, 30)
       .join("\n") + "\n",
   );
   return 2;

@@ -89,6 +89,19 @@ except Exception: print("qcr")' /bench-out/run.json)"
     else
       variants="posted posted+killed posted+merged all-candidates"; report_cmd=whatif-report
     fi
+    # QCR_EVAL_VARIANTS (bench.sh eval --variants) narrows the `eval` variants
+    # — compare.py reads only `all`; the other two feed report.md.
+    if [[ "$cmd" == eval && -n "${QCR_EVAL_VARIANTS:-}" ]]; then
+      for v in ${QCR_EVAL_VARIANTS//,/ }; do
+        [[ " $variants " == *" $v "* ]] || { echo "variant $v is not one of: $variants" >&2; exit 2; }
+      done
+      variants="${QCR_EVAL_VARIANTS//,/ }"
+    fi
+    line_k="${QCR_LINE_K:-1}"
+    shards="${QCR_EVAL_SHARDS:-1}"
+    [[ "$shards" =~ ^[1-9][0-9]?$ ]] || { echo "QCR_EVAL_SHARDS must be 1..99" >&2; exit 2; }
+    SHARDS_PY=/opt/quickreview/bench/eval_shards.py
+    nvar=1; [[ "$line_k" == 1 ]] && nvar="$(wc -w <<< "$variants")"
     mkdir -p /bench-out/eval
     subset="/bench-out/eval/aacr_bench_v1_${set_name}.jsonl"
     "${CLI[@]}" subset --set "$set_path" --dataset /opt/aacr-data/aacr_bench_v1.jsonl --out "$subset" "$@"
@@ -108,7 +121,8 @@ except Exception: print("qcr")' /bench-out/run.json)"
         model="${JUDGE_CODEX_MODEL:-openai-codex/gpt-6-sol:low}"
         # The same read-only, refresh-disabled token copy the review uses.
         "${CLI[@]}" auth --need-min 180 || { echo "judge: no usable pi login (see above)" >&2; exit 1; }
-        python3 /opt/quickreview/bench/judge_shim.py --port 8765 --model "$model" > /bench-out/eval/judge-shim.log 2>&1 &
+        # One call in flight per harness process: each judges sequentially.
+        python3 /opt/quickreview/bench/judge_shim.py --port 8765 --model "$model" --concurrency "$((shards * nvar))" > /bench-out/eval/judge-shim.log 2>&1 &
         shim_pid=$!
         up=0
         for _ in $(seq 1 50); do
@@ -124,29 +138,52 @@ except Exception: print("qcr")' /bench-out/run.json)"
     # --line-k N (N != 1) is a DIAGNOSTIC: it separates "found the issue" from
     # "put it within one line of the reference". It scores a copy of the `all`
     # results in results/all-k<N>/ and never touches the official ±1 numbers.
-    line_k="${QCR_LINE_K:-1}"
     [[ "$line_k" != 1 ]] && variants="all-k$line_k"
-    for variant in $variants; do
-      dir="/bench-out/results/$variant"
+    # Every variant is its own harness run in its own results dir, so they run
+    # side by side; with QCR_EVAL_SHARDS > 1 each is also split by instance
+    # (eval_shards.py). One variant's outcome lands in /tmp/eval-status/<v>.
+    rm -rf /tmp/eval-status /tmp/eval-shards; mkdir -p /tmp/eval-status
+    eval_variant() {
+      local variant="$1" dir="/bench-out/results/$1" log="/bench-out/eval/harness-$1.log" st=0 n k
       if [[ "$line_k" != 1 ]]; then
-        [[ -d /bench-out/results/all ]] || { echo "no results for variant all — run review first" >&2; status=1; continue; }
+        [[ -d /bench-out/results/all ]] || { echo "no results for variant all — run review first" >&2; echo 1 > "/tmp/eval-status/$variant"; return; }
         rm -rf "$dir"; mkdir -p "$dir"
         find /bench-out/results/all -maxdepth 1 -name '*.json' ! -name 'metrics_ocr_*' -exec cp {} "$dir"/ \;
       fi
-      [[ -d "$dir" ]] || { echo "no results for variant $variant — run review (or whatif) first" >&2; status=1; continue; }
+      [[ -d "$dir" ]] || { echo "no results for variant $variant — run review (or whatif) first" >&2; echo 1 > "/tmp/eval-status/$variant"; return; }
       rm -f "$dir"/metrics_ocr_*.json
-      echo "== eval: $variant ($expected instances, judge $judge, $rounds round(s))" >&2
-      ( cd /opt/aacr-bench/evaluation && /opt/aacr-venv/bin/python -m pipeline run --stage eval --reviewer ocr \
-          --dataset "$subset" --results-dir "$dir" --eval-rounds "$rounds" --line-k "$line_k" ) \
-        > "/bench-out/eval/harness-$variant.log" 2>&1 || { echo "harness failed for $variant — see eval/harness-$variant.log" >&2; status=1; continue; }
+      echo "== eval: $variant ($expected instances, judge $judge, $rounds round(s), $shards shard(s))" >&2
+      if [[ "$shards" == 1 ]]; then
+        ( cd /opt/aacr-bench/evaluation && /opt/aacr-venv/bin/python -m pipeline run --stage eval --reviewer ocr \
+            --dataset "$subset" --results-dir "$dir" --eval-rounds "$rounds" --line-k "$line_k" ) \
+          > "$log" 2>&1 || st=1
+      else
+        local work="/tmp/eval-shards/$variant" pids=() dirs=()
+        n="$(python3 "$SHARDS_PY" split --dataset "$subset" --results "$dir" --shards "$shards" --into "$work")" || n=0
+        for ((k = 0; k < n; k++)); do
+          ( cd /opt/aacr-bench/evaluation && /opt/aacr-venv/bin/python -m pipeline run --stage eval --reviewer ocr \
+              --dataset "$work/$k/dataset.jsonl" --results-dir "$work/$k" --eval-rounds "$rounds" --line-k "$line_k" ) \
+            > "$work/$k.log" 2>&1 &
+          pids+=($!); dirs+=("$work/$k")
+        done
+        [[ "$n" -gt 0 ]] || st=1
+        for p in ${pids[@]+"${pids[@]}"}; do wait "$p" || st=1; done
+        : > "$log"
+        for ((k = 0; k < n; k++)); do { echo "=== shard $k/$n"; cat "$work/$k.log"; } >> "$log"; done
+        if [[ "$st" == 0 ]]; then
+          /opt/aacr-venv/bin/python "$SHARDS_PY" merge --dataset "$subset" --out "$dir" --rounds "$rounds" \
+            --line-k "$line_k" "${dirs[@]}" >> "$log" 2>&1 || st=1
+        fi
+      fi
+      [[ "$st" == 0 ]] || { echo "harness failed for $variant — see eval/harness-$variant.log" >&2; echo 1 > "/tmp/eval-status/$variant"; return; }
       # A judge call that errors is scored by the harness as a NON-match
       # (judge.py) and the run still exits 0 — deflated numbers that look
       # real. Count them and refuse to call the result clean.
-      errs="$(grep -c '裁判模型调用失败' "/bench-out/eval/harness-$variant.log" || true)"
+      errs="$(grep -c '裁判模型调用失败' "$log" || true)"
       if [[ "${errs:-0}" != "0" ]]; then
         echo "JUDGE ERRORS for $variant: $errs call(s) failed and were scored as non-matches" >&2
         echo "- WARNING ($variant): $errs judge call(s) FAILED and were scored as non-matches — the semantic numbers are deflated (eval/harness-$variant.log)" >> /bench-out/judge.txt
-        status=1
+        st=1
       fi
       # The scorer silently skips an instance with no result file; refuse a
       # number built on fewer instances than the set has — in EVERY round
@@ -163,8 +200,15 @@ PY
       if [[ "$got" != "$expected" ]]; then
         echo "EVAL INCOMPLETE for $variant: scored $got of $expected instances" >&2
         echo "- WARNING ($variant): EVAL INCOMPLETE — scored $got of $expected instances" >> /bench-out/judge.txt
-        status=1
+        st=1
       fi
+      echo "$st" > "/tmp/eval-status/$variant"
+    }
+    vpids=()
+    for variant in $variants; do eval_variant "$variant" & vpids+=($!); done
+    for p in "${vpids[@]}"; do wait "$p" || true; done
+    for variant in $variants; do
+      [[ "$(cat "/tmp/eval-status/$variant" 2>/dev/null || echo 1)" == 0 ]] || status=1
     done
     [[ -n "$shim_pid" ]] && kill "$shim_pid" 2>/dev/null || true
     [[ "$line_k" == 1 ]] && "${CLI[@]}" "$report_cmd" --set "$set_path" --out /bench-out "$@"

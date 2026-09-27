@@ -12,6 +12,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -38,11 +39,14 @@ beforeEach(() => {
   mkdirSync(join(b, "defects"));
   for (const f of ["arm.sh", "compare.py"])
     copyFileSync(join(ROOT, "bench", "aacr", f), join(b, f));
+  // change_line_count: the scheduler queues the longest PR first (B, C, A).
+  const size: Record<string, number> = { [A]: 10, [B]: 50, [C]: 30 };
   const kase = (id: string) => ({
     instance_id: id,
     repo: "o/x",
     base_commit: "b",
     head_commit: "h",
+    change_line_count: size[id],
   });
   writeFileSync(join(b, "sets", "fresh10.json"), JSON.stringify({ cases: [kase(A), kase(B)] }));
   writeFileSync(
@@ -65,15 +69,32 @@ beforeEach(() => {
     }),
   );
   // The stub bench.sh: logs every call with the image it was given; `review`
-  // writes run.json unless told to fail.
+  // writes run.json unless told to fail (whole-run or --phase init); a
+  // --phase case call counts how many cases run at once and answers with the
+  // next scripted outcome from outcomes/<id> ("status retry limited"), ok by
+  // default.
+  mkdirSync(join(t, "outcomes"));
+  mkdirSync(join(t, "running"));
   writeFileSync(
     join(b, "bench.sh"),
     `#!/usr/bin/env bash
-echo "IMG=\${QCR_BENCH_IMAGE:-} $*" >> "${t}/calls.log"
-cmd="$1"; shift; run=""; set_name=""; only=""
-while (($#)); do case "$1" in --run) run="$2"; shift 2;; --set) set_name="$2"; shift 2;; --only) only="$2"; shift 2;; *) shift;; esac; done
+echo "IMG=\${QCR_BENCH_IMAGE:-} MEM=\${QCR_BENCH_MEMORY:-} $*" >> "${t}/calls.log"
+cmd="$1"; shift; run=""; set_name=""; only=""; phase=all
+while (($#)); do case "$1" in --run) run="$2"; shift 2;; --set) set_name="$2"; shift 2;; --only) only="$2"; shift 2;; --phase) phase="$2"; shift 2;; *) shift;; esac; done
 if [[ "$cmd" == review ]]; then
   [[ -n "\${STUB_REVIEW_FAIL:-}" ]] && exit 3
+  if [[ "$phase" == case ]]; then
+    : > "${t}/running/$run.$only"
+    ls "${t}/running" | wc -l >> "${t}/conc.log"
+    sleep "\${STUB_CASE_SLEEP:-0}"
+    rm -f "${t}/running/$run.$only"
+    o="ok 0 0"
+    if [[ -s "${t}/outcomes/$only" ]]; then o="$(head -1 "${t}/outcomes/$only")"; sed -i '1d' "${t}/outcomes/$only"; fi
+    read -r st rt lm <<< "$o"
+    echo "[00:00:00] result: $only $st retry=$rt limited=$lm"
+    exit 0
+  fi
+  if [[ "$phase" == finish ]]; then echo "[00:00:00] review: 1/1 ok (ok 1) — results in /bench-out/results"; exit 0; fi
   mkdir -p "$QCR_BENCH_RUNS_DIR/$run"
   ids="$only"; [[ -z "$ids" ]] && ids=$(python3 -c "import json,sys; print(','.join(c['instance_id'] for c in json.load(open(sys.argv[1]))['cases']))" "$(dirname "$0")/sets/$set_name.json")
   python3 -c "import json,sys; json.dump({'cases': sys.argv[1].split(','), 'qcr_commit': 'abc'}, open(sys.argv[2], 'w'))" "$ids" "$QCR_BENCH_RUNS_DIR/$run/run.json"
@@ -97,6 +118,10 @@ const arm = (args: string[], env: Record<string, string> = {}) =>
       QCR_BENCH_RUNS_DIR: runs,
       QCR_BENCH_IMAGE: "qcr-bench:x",
       QCR_BENCH_OCR_IMAGE: "qcr-bench-ocr:x",
+      QCR_BENCH_POLL: "0.05",
+      QCR_BENCH_LAUNCH_GAP: "0",
+      QCR_BENCH_RATE_LIMIT_PAUSE: "0",
+      QCR_BENCH_MEM_AVAILABLE_MB: "64000",
       ...env,
     },
   }).then(
@@ -122,7 +147,9 @@ describe("arm.sh", () => {
     const old = new Date(Date.now() - 3600_000);
     const { utimesSync } = await import("node:fs");
     utimesSync(join(runs, "p-fresh10", "run.json"), old, old);
-    const r = await arm(["--prefix", "p", "--cases", `fresh10:${A}`], { STUB_REVIEW_FAIL: "1" });
+    const r = await arm(["--prefix", "p", "--cases", `fresh10:${A}`, "--fresh"], {
+      STUB_REVIEW_FAIL: "1",
+    });
     expect(r.code).toBe(1);
     expect(calls().filter((c) => c.includes(" judge "))).toEqual([]);
   });
@@ -168,7 +195,7 @@ describe("arm.sh", () => {
     for (const j of judges) expect(j).toContain(`--run f-full --set fresh10 --only ${A},${B}`);
   });
 
-  it("repeats run one after another and --resume reaches bench.sh", async () => {
+  it("repeats share the one queue, and --resume reaches every run's set-up", async () => {
     const r = await arm([
       "--prefix",
       "r",
@@ -180,9 +207,114 @@ describe("arm.sh", () => {
       "--no-judge",
     ]);
     expect(r.code).toBe(0);
-    const reviews = calls().filter((x) => x.includes(" review "));
-    expect(reviews.map((x) => /--run (\S+)/.exec(x)![1])).toEqual(["r-r1-fresh10", "r-r2-fresh10"]);
-    for (const x of reviews) expect(x).toContain("--resume");
+    const inits = calls().filter((x) => x.includes(" review --phase init "));
+    expect(inits.map((x) => /--run (\S+)/.exec(x)![1])).toEqual(["r-r1-fresh10", "r-r2-fresh10"]);
+    for (const x of inits) expect(x).toContain("--resume");
+    const cases = calls().filter((x) => x.includes(" review --phase case "));
+    expect(cases.map((x) => /--run (\S+)/.exec(x)![1]).sort()).toEqual([
+      "r-r1-fresh10",
+      "r-r2-fresh10",
+    ]);
+  });
+
+  it("refuses to relaunch over an existing run unless told --resume or --fresh", async () => {
+    mkdirSync(join(runs, "p-fresh10"));
+    writeFileSync(join(runs, "p-fresh10", "run.json"), JSON.stringify({ cases: [A] }));
+    const r = await arm(["--prefix", "p", "--cases", `fresh10:${A}`]);
+    expect(r.code).toBe(2);
+    expect(calls()).toEqual([]);
+  });
+
+  it("each case runs in its own container, longest PR first, never more than --parallel at once", async () => {
+    const one = await arm(["--prefix", "q", "--cases", "full", "--parallel", "1", "--no-judge"]);
+    expect(one.code).toBe(0);
+    const order = calls()
+      .filter((x) => x.includes(" review --phase case "))
+      .map((x) => /--only (\S+)/.exec(x)![1]);
+    expect(order).toEqual([B, C, A]);
+    for (const x of calls().filter((y) => y.includes("--phase case")))
+      expect(x).toContain("MEM=3g"); // the per-case container cap, not the old 8g
+    rmSync(join(t, "calls.log"));
+    rmSync(join(t, "conc.log"));
+    const two = await arm(
+      ["--prefix", "w", "--cases", "full+fresh10", "--parallel", "2", "--no-judge"],
+      {
+        STUB_CASE_SLEEP: "0.4",
+      },
+    );
+    expect(two.code).toBe(0);
+    const conc = readFileSync(join(t, "conc.log"), "utf8").trim().split("\n").map(Number);
+    expect(conc.length).toBe(5); // full's 3 + fresh10's 2, one queue
+    expect(Math.max(...conc)).toBe(2);
+  });
+
+  it("auto sizes the slots from MemAvailable, capped by the login's share", async () => {
+    const env = { QCR_BENCH_MEM_AVAILABLE_MB: "7000" }; // (7000 - 3072) / 1280 = 3
+    expect(
+      (await arm(["--prefix", "a", "--cases", `fresh10:${A}`, "--no-judge"], env)).out,
+    ).toContain("3 review slot(s)");
+    const capped = await arm(["--prefix", "b", "--cases", `fresh10:${A}`, "--no-judge"], {
+      ...env,
+      QCR_BENCH_MAX_PARALLEL: "2",
+    });
+    expect(capped.out).toContain("2 review slot(s)");
+  });
+
+  it("a rate-limited case pauses the queue and is retried; an unfetchable one is not", async () => {
+    writeFileSync(join(t, "outcomes", A), "no-verdict 1 3\nok 0 0\n");
+    writeFileSync(join(t, "outcomes", B), "failed 0 0\n");
+    const r = await arm(["--prefix", "x", "--cases", "fresh10", "--parallel", "1", "--no-judge"]);
+    expect(r.code).toBe(1); // B never reviewed
+    const reviewed = calls()
+      .filter((x) => x.includes(" review --phase case "))
+      .map((x) => /--only (\S+)/.exec(x)![1]);
+    expect(reviewed.filter((x) => x === A).length).toBe(2);
+    expect(reviewed.filter((x) => x === B).length).toBe(1);
+    expect(r.out).toContain(`${A}: RATE-LIMITED (3 model error(s))`);
+    expect(r.out).toContain(`${B}: failed — not retried`);
+    expect(r.out).toContain("1/2 ok");
+    // The review log is the cases' own output, appended as each finishes.
+    expect(readFileSync(join(runs, "x-fresh10.review.log"), "utf8")).toContain(`result: ${A} ok`);
+  });
+
+  it("--retries 0 leaves a failed case for --resume", async () => {
+    writeFileSync(join(t, "outcomes", A), "timeout 1 0\n");
+    const r = await arm([
+      "--prefix",
+      "y",
+      "--cases",
+      `fresh10:${A}`,
+      "--retries",
+      "0",
+      "--no-judge",
+    ]);
+    expect(r.code).toBe(1);
+    expect(calls().filter((x) => x.includes(" review --phase case ")).length).toBe(1);
+    expect(r.out).toContain("--resume re-runs only what is not ok");
+  });
+
+  it("a finished run is closed, judged and sharded-evaluated", async () => {
+    const r = await arm([
+      "--prefix",
+      "e",
+      "--cases",
+      "fresh10",
+      "--eval",
+      "3",
+      "--eval-shards",
+      "6",
+      "--eval-variants",
+      "all",
+    ]);
+    expect(r.code).toBe(0);
+    const c = calls();
+    const at = (s: string) => c.findIndex((x) => x.includes(s));
+    expect(at(" review --phase finish ")).toBeGreaterThan(at(" review --phase case "));
+    expect(at(" judge ")).toBeGreaterThan(at(" review --phase finish "));
+    // 2 PRs → 1 shard (at least ~4 PRs a shard), the variants passed through.
+    expect(c.find((x) => x.includes(" eval "))).toContain(
+      `--run e-fresh10 --set fresh10 --only ${A},${B} --judge codex --rounds 3 --shards 1 --variants all`,
+    );
   });
 });
 
@@ -301,5 +433,243 @@ describe("compare.py", () => {
     expect(out).toContain("1 PRs, 2 defects");
     expect(out).toContain("| s | 1/2 | 50% |");
     expect(out).toContain("| s | 1.0/3 | 33.3% | 50.0% (2 comments) |");
+  });
+});
+
+// eval_shards.py, run for real against a stand-in harness dir holding the
+// harness's own two summary functions VERBATIM (evaluation/evaluate.py
+// _compute_summary + _compute_f1, evaluation/pipeline.py _average_summaries at
+// the pinned 68a5697): a sharded eval must merge into exactly the files one
+// harness process writes.
+describe("eval_shards.py", () => {
+  const HARNESS_EVALUATE = `
+def _compute_f1(precision: float, recall: float) -> float:
+    if (precision + recall) <= 0:
+        return 0.0
+    return round(2 * precision * recall / (precision + recall), 3)
+
+
+def _compute_summary(stats):
+    expected = stats["expected_notes"]
+    generated = stats["generated_notes"]
+    sem_p = round(stats["matched_semantic_notes"] / generated, 3) if generated else 0.0
+    line_p = round(stats["matched_line_notes"] / generated, 3) if generated else 0.0
+    sem_r = round(stats["matched_semantic_notes"] / expected, 3) if expected else 0.0
+    line_r = round(stats["matched_line_notes"] / expected, 3) if expected else 0.0
+
+    evaluated = stats["evaluated_instances"]
+    total_duration = stats.get("total_duration_seconds", 0)
+    total_input_tokens = stats.get("total_input_tokens", 0)
+    total_output_tokens = stats.get("total_output_tokens", 0)
+
+    return {
+        "total_instances": stats["total_instances"],
+        "candidate_instances": stats["candidate_instances"],
+        "evaluated_instances": evaluated,
+        "missing_instances": stats["missing_instances"],
+        "expected_notes": expected,
+        "generated_notes": generated,
+        "matched_line_notes": stats["matched_line_notes"],
+        "matched_semantic_notes": stats["matched_semantic_notes"],
+        "semantic_match_rate": sem_p,
+        "line_match_rate": line_p,
+        "semantic_recall_rate": sem_r,
+        "line_recall_rate": line_r,
+        "semantic_f1": _compute_f1(sem_p, sem_r),
+        "line_f1": _compute_f1(line_p, line_r),
+        "total_duration_seconds": round(total_duration, 2),
+        "avg_duration_seconds": round(total_duration / evaluated, 2) if evaluated else 0,
+        "total_input_tokens": total_input_tokens,
+        "total_output_tokens": total_output_tokens,
+        "total_tokens": total_input_tokens + total_output_tokens,
+        "avg_input_tokens": round(total_input_tokens / evaluated) if evaluated else 0,
+        "avg_output_tokens": round(total_output_tokens / evaluated) if evaluated else 0,
+    }
+`;
+  const HARNESS_PIPELINE = `
+def _average_summaries(summaries):
+    if not summaries:
+        return {}
+    numeric_keys = [
+        key for key, value in summaries[0].items() if isinstance(value, (int, float))
+    ]
+    averaged = {}
+    for key in numeric_keys:
+        values = [s.get(key, 0) for s in summaries]
+        averaged[key] = round(sum(values) / len(values), 4)
+    return averaged
+`;
+  const py = (...args: string[]) =>
+    run("python3", [join(ROOT, "bench", "aacr", "eval_shards.py"), ...args]).then((r) => r.stdout);
+  // Five PRs with 5, 1, 4, 2, 0 references; E has no result file.
+  const ids = ["o/a@1", "o/b@2", "o/c@3", "o/d@4", "o/e@5"];
+  const refs = [5, 1, 4, 2, 0];
+  const dataset = () => {
+    const d = join(t, "subset.jsonl");
+    writeFileSync(
+      d,
+      ids
+        .map((id, i) =>
+          JSON.stringify({
+            instance_id: id,
+            reference_comments: Array(refs[i]).fill({ note: "r" }),
+          }),
+        )
+        .join("\n") + "\n",
+    );
+    const res = join(t, "results");
+    mkdirSync(res, { recursive: true });
+    for (const id of ids.slice(0, 4))
+      writeFileSync(join(res, `${id.replace("/", "__")}.json`), JSON.stringify({ id }));
+    return { d, res };
+  };
+
+  it("splits by reference count and copies only the shard's own result files", async () => {
+    const { d, res } = dataset();
+    const work = join(t, "work");
+    expect(
+      (await py("split", "--dataset", d, "--results", res, "--shards", "2", "--into", work)).trim(),
+    ).toBe("2");
+    const shard = (k: number) =>
+      readFileSync(join(work, String(k), "dataset.jsonl"), "utf8")
+        .trim()
+        .split("\n")
+        .map((l) => (JSON.parse(l) as { instance_id: string }).instance_id);
+    // Heaviest first onto the lighter shard: a(5) → 0, c(4) → 1, d(2) → 1, b(1) → 0, e(0) → 0;
+    // each shard keeps dataset order.
+    expect(shard(0)).toEqual(["o/a@1", "o/b@2", "o/e@5"]);
+    expect(shard(1)).toEqual(["o/c@3", "o/d@4"]);
+    expect(existsSync(join(work, "0", "o__a@1.json"))).toBe(true);
+    expect(existsSync(join(work, "0", "o__e@5.json"))).toBe(false); // missing stays missing
+    expect(existsSync(join(work, "1", "o__a@1.json"))).toBe(false);
+    // Never more shards than PRs.
+    expect(
+      (
+        await py(
+          "split",
+          "--dataset",
+          d,
+          "--results",
+          res,
+          "--shards",
+          "9",
+          "--into",
+          join(t, "w9"),
+        )
+      ).trim(),
+    ).toBe("5");
+  });
+
+  it("merges round files into the harness's own numbers, and averages rounds as the harness does", async () => {
+    const { d } = dataset();
+    const harness = join(t, "harness");
+    mkdirSync(harness);
+    writeFileSync(join(harness, "evaluate.py"), HARNESS_EVALUATE);
+    writeFileSync(join(harness, "pipeline.py"), HARNESS_PIPELINE);
+    const counts = (
+      evald: number,
+      missing: number,
+      exp: number,
+      gen: number,
+      sem: number,
+      line: number,
+    ) => ({
+      total_instances: evald + missing,
+      candidate_instances: evald + missing,
+      evaluated_instances: evald,
+      missing_instances: missing,
+      expected_notes: exp,
+      generated_notes: gen,
+      matched_semantic_notes: sem,
+      matched_line_notes: line,
+      total_duration_seconds: 100,
+      total_input_tokens: 1000,
+      total_output_tokens: 10,
+    });
+    const shardFile = (k: number, r: number, summary: object, res: string[], missing: string[]) => {
+      const dir = join(t, "work", String(k));
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, `metrics_ocr_2026010${k}_000000_round_${r}.json`),
+        JSON.stringify({
+          ex_info: { start_time: `2026-01-0${k + 1}`, missing_instance_ids: missing },
+          summary,
+          eval_res: res.map((instance_id) => ({ instance_id, comments: [] })),
+        }),
+      );
+      writeFileSync(join(dir, "metrics_ocr_average.json"), "{}"); // a shard's own average is ignored
+    };
+    shardFile(0, 1, counts(2, 1, 10, 8, 4, 5), ["o/a@1", "o/b@2"], ["o/e@5"]);
+    shardFile(1, 1, counts(2, 0, 6, 4, 2, 1), ["o/c@3", "o/d@4"], []);
+    shardFile(0, 2, counts(2, 1, 10, 8, 2, 5), ["o/a@1", "o/b@2"], ["o/e@5"]);
+    shardFile(1, 2, counts(2, 0, 6, 4, 2, 1), ["o/c@3", "o/d@4"], []);
+    const out = join(t, "out");
+    mkdirSync(out);
+    await py(
+      "merge",
+      "--dataset",
+      d,
+      "--out",
+      out,
+      "--rounds",
+      "2",
+      "--harness",
+      harness,
+      join(t, "work", "1"),
+      join(t, "work", "0"),
+    );
+    const files = readdirSync(out).sort();
+    expect(files.filter((f) => /_round_1\.json$/.test(f)).length).toBe(1);
+    expect(files.filter((f) => /_round_2\.json$/.test(f)).length).toBe(1);
+    expect(files).toContain("metrics_ocr_average.json");
+    const r1 = JSON.parse(
+      readFileSync(join(out, files.find((f) => f.endsWith("_round_1.json"))!), "utf8"),
+    );
+    // 6 of 12 generated match, 6 of 16 expected: P .5, R .375, F1 .429 — one process's numbers.
+    expect(r1.summary).toMatchObject({
+      evaluated_instances: 4,
+      missing_instances: 1,
+      total_instances: 5,
+      expected_notes: 16,
+      generated_notes: 12,
+      semantic_match_rate: 0.5,
+      semantic_recall_rate: 0.375,
+      semantic_f1: 0.429,
+      line_f1: 0.429,
+      avg_duration_seconds: 50,
+    });
+    expect(r1.eval_res.map((e: { instance_id: string }) => e.instance_id)).toEqual(ids.slice(0, 4));
+    expect(r1.ex_info.missing_instance_ids).toEqual(["o/e@5"]);
+    const avg = JSON.parse(readFileSync(join(out, "metrics_ocr_average.json"), "utf8"));
+    // round 2: 4/12, 4/16 → .333/.25 → F1 .286; mean (.429 + .286) / 2
+    expect(avg.eval_rounds).toBe(2);
+    expect(avg.summary.semantic_f1).toBe(0.3575);
+    expect(avg.summary.evaluated_instances).toBe(4);
+  });
+
+  it("refuses a shard that is missing a round rather than scoring fewer PRs", async () => {
+    const { d } = dataset();
+    const harness = join(t, "harness");
+    mkdirSync(harness);
+    writeFileSync(join(harness, "evaluate.py"), HARNESS_EVALUATE);
+    writeFileSync(join(harness, "pipeline.py"), HARNESS_PIPELINE);
+    mkdirSync(join(t, "work", "0"), { recursive: true });
+    const r = await run("python3", [
+      join(ROOT, "bench", "aacr", "eval_shards.py"),
+      "merge",
+      "--dataset",
+      d,
+      "--out",
+      t,
+      "--rounds",
+      "1",
+      "--harness",
+      harness,
+      join(t, "work", "0"),
+    ]).then(
+      () => 0,
+      (e: { code: number; stderr: string }) => (expect(e.stderr).toContain("expected 1"), e.code),
+    );
+    expect(r).not.toBe(0);
   });
 });

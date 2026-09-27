@@ -62,6 +62,10 @@ import {
   CASE_FILES,
   filesFromGitDiff,
   bodyPostedFindings,
+  modelErrorsFromEvents,
+  OVERLOAD_RE,
+  RATE_LIMIT_RE,
+  type ModelErrors,
   parseSessionComments,
   patchFromGitDiff,
   safeId,
@@ -122,6 +126,25 @@ export interface CaseSummary {
    * ignored, an extension that failed to load) must be visible in the report,
    * not only in a log nobody opens. */
   warnings: string[];
+  /** Failed model calls by kind (aacr.ts modelErrorsFromEvents, plus pi's
+   * stderr): how arm.sh tells the shared login pushing back from a review
+   * that genuinely failed. Absent on summaries written before 2026-09-27. */
+  model_errors?: ModelErrors;
+}
+
+/** Whether a finished case should be re-run: anything but `ok`, except a case
+ * that can never run (not prefetched — a re-run fails the same way). */
+export function retryable(s: Pick<CaseSummary, "status" | "error">): boolean {
+  return s.status !== "ok" && !/not prefetched/.test(s.error ?? "");
+}
+
+/** The one machine-readable line a case ends with; arm.sh's scheduler reads
+ * it (and nothing inside the run dir) to decide retries and rate-limit
+ * pauses. `limited` counts rate-limit plus overload errors. */
+export function resultLine(s: CaseSummary, skipped = false): string {
+  const e = s.model_errors;
+  const limited = e ? e.rate_limited + e.overloaded : 0;
+  return `result: ${s.instance_id} ${s.status} retry=${retryable(s) ? 1 : 0} limited=${limited}${skipped ? " skipped" : ""}`;
 }
 
 export interface RunFingerprint {
@@ -795,7 +818,15 @@ export async function reviewCase(
     if (r.streamError) summary.error = `output stream failed: ${r.streamError}`;
     // Usage is telemetry: a failure to read it must never cost the review.
     try {
-      summary.usage = usageFromEvents(readFileSync(events, "utf8").split("\n"));
+      const lines = readFileSync(events, "utf8").split("\n");
+      summary.usage = usageFromEvents(lines);
+      summary.model_errors = modelErrorsFromEvents(lines);
+      // pi's own stderr reports what never reached a message (a refused
+      // connection, a 429 before the first token).
+      for (const w of summary.warnings) {
+        if (RATE_LIMIT_RE.test(w)) summary.model_errors.rate_limited++;
+        else if (OVERLOAD_RE.test(w)) summary.model_errors.overloaded++;
+      }
     } catch (err) {
       summary.warnings.push(`usage unreadable: ${String(err).slice(0, 200)}`);
     }
@@ -833,8 +864,13 @@ export async function reviewCase(
     summary.comments.by_tag[x.tag] = (summary.comments.by_tag[x.tag] ?? 0) + 1;
   writeFileSync(join(caseDir, "case-summary.json"), JSON.stringify(summary, null, 2) + "\n");
   writeResults(o.outDir, c, comments, summary);
+  const me = summary.model_errors;
+  const errs =
+    me && me.rate_limited + me.overloaded + me.other > 0
+      ? `; model errors: ${me.rate_limited} rate-limited, ${me.overloaded} overloaded, ${me.other} other${summary.status !== "ok" && me.rate_limited + me.overloaded > 0 ? " — RATE-LIMITED" : ""}`
+      : "";
   log(
-    `review: ${c.instance_id} ${summary.status} — verdict ${summary.verdict ?? "none"}, ${comments.length} comment(s), ${summary.duration_seconds}s`,
+    `review: ${c.instance_id} ${summary.status} — verdict ${summary.verdict ?? "none"}, ${comments.length} comment(s), ${summary.duration_seconds}s${errs}`,
   );
   return summary;
 }
