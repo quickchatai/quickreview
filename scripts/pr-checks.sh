@@ -6,7 +6,14 @@
 # REST only: GET /pulls/{n} for the head sha, then /commits/{sha}/check-runs.
 # Read-only: no gate involvement; token via scripts/mint-token.sh only.
 #
-# Usage: pr-checks.sh <pr-number>
+# Usage: pr-checks.sh <pr-number> [--why]
+#
+# --why: after the summary, for every FAILING latest check-run, print
+# what CI itself reported — the check's output title/summary/text, its
+# annotations (file:line: message), and for a GitHub Actions job the tail of
+# its log — so the review can tie each failure to the changed lines. Still
+# GETs only; the review reads CI, it never runs, re-runs or cancels anything.
+# The default output (without --why) is unchanged.
 
 set -euo pipefail
 
@@ -17,7 +24,9 @@ CONFIG="${QCR_CONFIG:-$ROOT/config.toml}"
 die() { echo "pr-checks: $*" >&2; exit 1; }
 
 PR="${1:-}"
-[[ "$PR" =~ ^[0-9]+$ ]] || die "usage: pr-checks.sh <pr-number>"
+[[ "$PR" =~ ^[0-9]+$ ]] || die "usage: pr-checks.sh <pr-number> [--why]"
+WHY=0
+[[ "${2:-}" == "--why" ]] && WHY=1
 
 cfg() { # cfg <section-or-empty> <key>  (tomllib, sed fallback — as mint-token.sh)
   local section="$1" key="$2"
@@ -57,15 +66,16 @@ get() { # get <path>  → body in $OUT, dies on non-200
 }
 
 OUT="$(mktemp)"
-trap 'rm -f "$OUT"' EXIT
+FAILING="$(mktemp)"
+trap 'rm -f "$OUT" "$FAILING" "$FAILING.output"' EXIT
 
 get "/repos/$REPO/pulls/$PR"
 HEAD_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["head"]["sha"])' "$OUT")"
 
 get "/repos/$REPO/commits/$HEAD_SHA/check-runs?per_page=100"
 
-python3 - "$OUT" <<'PY'
-import json, sys
+python3 - "$OUT" "$FAILING" <<'PY'
+import json, re, sys
 runs = json.load(open(sys.argv[1])).get("check_runs", [])
 # Latest-run-per-name (the owner, 2026-08-19; mirrors src/cigate.ts
 # latestRunPerName, rule stated exactly there): GitHub auto-cancels
@@ -99,6 +109,14 @@ for c in runs:
         passed += 1
     else:
         failed += 1
+        # For --why: the check-run id, the Actions job id when it is one, the name,
+        # and what the check reported about itself.
+        m = re.search(r"/job/(\d+)", c.get("details_url") or c.get("html_url") or "")
+        with open(sys.argv[2], "a") as fh:
+            fh.write(f"{c['id']}\t{m.group(1) if m else '-'}\t{c['name']}\n")
+        out = c.get("output") or {}
+        with open(sys.argv[2] + ".output", "a") as fh:
+            fh.write(json.dumps({"id": c["id"], "title": out.get("title"), "summary": out.get("summary"), "text": out.get("text")}) + "\n")
 print(f"SUMMARY: {passed} passed / {failed} failed / {pending} pending (latest run per check only)")
 # The one line the Decide step reads. Same table as the daemon gate + guards.sh.
 if not latest:
@@ -111,3 +129,47 @@ else:
     succeeded = any((c.get("conclusion") == "success") for c in latest)
     print("CLASSIFIED: green" if succeeded else "CLASSIFIED: red")
 PY
+
+[[ "$WHY" == 1 && -s "$FAILING" ]] || exit 0
+echo
+echo "WHY — what CI reported for each failing check (read it; tie each failure to the changed lines):"
+while IFS=$'\t' read -r id job name; do
+  echo
+  echo "=== $name (check-run $id)"
+  python3 - "$FAILING.output" "$id" <<'PY'
+import json, sys
+for line in open(sys.argv[1]):
+    o = json.loads(line)
+    if str(o["id"]) != sys.argv[2]:
+        continue
+    for k in ("title", "summary", "text"):
+        v = (o.get(k) or "").strip()
+        if v:
+            print(f"{k}: {v[:1500]}{' …' if len(v) > 1500 else ''}")
+PY
+  if (get "/repos/$REPO/check-runs/$id/annotations?per_page=50") 2>/dev/null; then
+    python3 - "$OUT" <<'PY'
+import json, sys
+anns = json.load(open(sys.argv[1]))
+for a in anns[:30]:
+    print(f"annotation {a.get('path')}:{a.get('start_line')} [{a.get('annotation_level')}] {(a.get('title') or '').strip()} {(a.get('message') or '').strip()[:400]}")
+if len(anns) > 30:
+    print(f"(+{len(anns) - 30} more annotations)")
+PY
+  else
+    echo "annotations: not readable"
+  fi
+  if [[ "$job" != "-" ]]; then
+    # The log endpoint redirects to storage; curl drops the Authorization
+    # header on the cross-host redirect by default, which is what storage wants.
+    code="$(curl -sS -L -o "$OUT" -w '%{http_code}' -H "Authorization: Bearer $TOKEN" \
+      -H "Accept: application/vnd.github+json" "$API/repos/$REPO/actions/jobs/$job/logs" 2>/dev/null || echo 000)"
+    if [[ "$code" == "200" ]]; then
+      echo "log tail (last 60 lines):"
+      sed -e 's/^[0-9-]*T[0-9:.]*Z //' "$OUT" | tail -n 60
+    else
+      echo "log: not readable (HTTP $code) — the App may lack Actions: read"
+    fi
+  fi
+done < "$FAILING"
+

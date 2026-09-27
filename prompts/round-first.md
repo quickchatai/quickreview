@@ -297,6 +297,14 @@ gate and say approval waits for checks to run and pass.
 - blockers found ⇒ REQUEST_CHANGES exactly as below; red CI changes nothing.
 <!-- /RATIFIED ci-gate -->
 
+**Read why CI is red.** When the CLASSIFIED line is `red`, run
+`scripts/pr-checks.sh {{n}} --why` — it prints what CI itself reported for each
+failing check: the check's output, its annotations and the tail of the job log.
+Read it, and tie every failure to the changed lines that cause it (a lint rule
+a new line breaks, a generated file the PR did not regenerate, a test the
+change breaks); say plainly when a failure is unrelated to this PR. You read
+CI's output — you never run, re-run or cancel any check yourself.
+
 <!-- RATIFIED verdicts — do not edit; owner only -->
 - any `[blocker]` ⇒ **REQUEST_CHANGES**
 - otherwise ⇒ **APPROVE**
