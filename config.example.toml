@@ -493,6 +493,10 @@ preset = "default"
 # or a "Code style" section in CONTRIBUTING) and applies only that guide.
 # quality_lenses = false
 # style_lens = false
+# How many nits a review posts: "strict" (default — true-but-trivial nits are
+# dropped, and review volume comes out of nits) or "open" (every true nit
+# posts; style still needs your written guide).
+# nits = "open"
 # repo profile — names a directory under profiles/ whose house-rule
 # addenda pack (profiles/<name>/addenda/*.md) composes onto the built pass
 # bodies after the built-in generic registry, and whose optional

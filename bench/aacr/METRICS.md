@@ -97,6 +97,18 @@ references carry hand labels (smoke10, dev10, holdout10), the per-run AACR
 `report.md` adds a "real-defect recall" column scored only against the
 genuine ones — the fairer way to quote this benchmark.
 
+## Nits, and the benchmark
+
+AACR-Bench rewards nits: most of its references are minor notes, and a
+review that posts only what clears its bar cannot match them. Production
+keeps `[review] nits = "strict"` (true-but-trivial candidates are dropped;
+review volume comes out of nits). For a benchmark run, `--config
+review.nits=open` lifts those limits — every true nit the passes raise is
+posted — which shows how much of the AACR gap is nit volume rather than
+missed problems. Style is excluded either way: it still needs the repo's
+written guide. Report which policy an arm ran; the defect table is the check
+that open nits did not cost accuracy.
+
 ## Reading a comparison
 
 Lead with problems found and high-severity found (table 1). Use comments
