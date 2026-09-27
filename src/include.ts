@@ -489,6 +489,16 @@ const FINDING_SELF_SUFFICIENCY_VALIDATE_ADDENDUM =
 const VALIDATE_KILL_VOCABULARY_ADDENDUM =
   "\n## Kill and downgrade reasons — a closed vocabulary (sandbox rule)\nYour kill-log feeds the EOD critic: a wrong label teaches it wrong lessons. Every kill reason comes from this closed set — never a free-text phrase, never a stretched word:\n\n- `refuted` — you found counterevidence by READING and it contradicts the claim; cite it (file:line or the command and what it showed) in the kill-log line.\n- `unverifiable` — the claim **cannot be verified by reading** the diff, the worktree, or CI output. If a grep or a file-open could settle it, you MUST do the read — \"I didn't check\" is not `unverifiable`. A claim one read could settle is never `unverifiable`: after the read it is either `refuted` (the read contradicts it) or it survives.\n- `bad-anchor` — the evidence is real but the `path:line` is wrong and the claim depends on the location. Your step 3 comes first: fix the anchor, or strip to a body-only finding, when the finding itself is sound; kill as `bad-anchor` only when the misplacement is the defect.\n- `duplicate` — the same defect as another finding this round, differently phrased; name the surviving finding it merges into.\n- `out-of-scope` — the finding is not about this PR's change or its blast radius (e.g. pre-existing code no changed line touches or depends on, or review of the review process itself).\n- `settled:<thread-id>` — re-raises a settled thread (your step 2, unchanged).\n- `nit-out-of-delta` — a new nit-class candidate outside the current delta while a NIT SCOPE block is armed (unchanged from the nit-scope rule above).\n- `below-bar` — true but beneath posting: too minor to clear the bar even as a `[nit]`. Severity honesty — use this word rather than inflating `unverifiable` or `out-of-scope` to cover it.\n- `nit-no-request` — a nit-class candidate that asks for no change (see below). Nit-class only.\n- `self-narration` — the candidate's subject is one of the review's own earlier findings rather than the code (see below).\n\n**Downgrades are not kills and carry their own discipline.** A demotion or adjustment (`security-demoted`, `intent-over-cap`, `design-over-cap`, `inflated`, `understated`, `overreachable`, `understated-reach`, `ask-human-unnamed-defect`, `tag-outside-grammar`) must name the axis moved — **severity**, **confidence**, or **reachability** — and say in one clause WHY that axis moved (e.g. `inflated — severity P1→P2: the error path logs and continues, no data loss`). An axis change without a why is not auditable and teaches the critic nothing.\n\n**Hunt counterevidence before SURVIVE.** For every `P0`–`P2` candidate, actively search the worktree for what would make the claim false — the guard clause upstream, the caller that already checks, the config default, the test that pins the behaviour — before you let it survive. Failing to refute is not the same as confirming: a validator that SURVIVEs everything untouched is not validating. If the hunt finds the counterevidence, the kill is `refuted` with the citation; if it finds nothing, say what you looked for.\n";
 
+// The code-quality lenses (2026-09-27): maintainability, duplication and
+// abstraction findings are structural debt, capped exactly like placement and
+// simplicity; style is judged ONLY against the repo's own written guide, by
+// the one lens planned when there is one — never by anybody's taste.
+const QUALITY_CAP_VALIDATE_ADDENDUM =
+  "\n## Code-quality findings are capped; style comes only from the repo's guide (sandbox rule)\n" +
+  "- **`pass-maintainability`, `pass-duplication`, `pass-abstraction` are capped at `P2`**, exactly as placement and simplicity are: cap anything arriving as `P0` or `P1` down to `P2` with the downgrade word `design-over-cap`. A candidate from these lenses must name its concrete cost — who reads or changes the code wrong, and how (maintainability); both sites and what drifts (duplication); the callers paying for the boundary (abstraction). One that names none is taste: kill it `below-bar`.\n" +
+  "- **`pass-style` findings are `nit`, always**: demote anything higher with the downgrade word `style-over-cap`. Each must quote a rule of the repo's written guide (file and line) and a CHANGED line that breaks it; audit both — a rule the guide does not state is `refuted`.\n" +
+  "- **Style from any other lens is killed `style-not-in-guide`** (a kill word added to the closed vocabulary by this rule). Style means formatting, whitespace, line length, quote or brace style, import order, naming conventions, comment grammar: whatever a formatter, linter or house style decides rather than what the code does. Every repo has its own; when it writes it down, `pass-style` applies it. A misleading NAME (it says something the code does not do) or a stale COMMENT (it contradicts the code) is not style — those are maintainability and survive on their evidence.\n";
+
 // Benchmark 2026-09-26 (bench/aacr/RESULTS.md, missed-defect analysis): of
 // the real defects the validator threw away, every one was a kill whose own
 // reason CONFIRMED the mechanism and refuted only the consequence the lens had
@@ -737,6 +747,7 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
   { id: "nit-scope-validate", scope: [VALIDATE_PASS], text: NIT_SCOPE_VALIDATE_ADDENDUM },
   { id: "intent-cap-validate", scope: [VALIDATE_PASS], text: INTENT_CAP_VALIDATE_ADDENDUM },
   { id: "design-cap-validate", scope: [VALIDATE_PASS], text: DESIGN_CAP_VALIDATE_ADDENDUM },
+  { id: "quality-cap-validate", scope: [VALIDATE_PASS], text: QUALITY_CAP_VALIDATE_ADDENDUM },
   {
     id: "validate-kill-vocabulary",
     scope: [VALIDATE_PASS],
@@ -765,7 +776,14 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
   },
   {
     id: "judgment-lens-own-questions",
-    scope: ["pass-simplicity", "pass-placement", "pass-intent"],
+    scope: [
+      "pass-simplicity",
+      "pass-placement",
+      "pass-intent",
+      "pass-maintainability",
+      "pass-duplication",
+      "pass-abstraction",
+    ],
     text: JUDGMENT_LENS_OWN_QUESTIONS_ADDENDUM,
   },
   {

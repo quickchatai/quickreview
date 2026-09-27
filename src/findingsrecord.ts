@@ -116,12 +116,15 @@ export const KILL_WORDS: readonly string[] = [
   // two of the three unreasoned shapes are kills.
   "nit-no-request",
   "self-narration",
+  // 2026-09-27 — style from any lens but pass-style (the repo's own guide).
+  "style-not-in-guide",
 ];
 
 export const DOWNGRADE_WORDS: readonly string[] = [
   "security-demoted",
   "intent-over-cap",
   "design-over-cap",
+  "style-over-cap",
   "inflated",
   "understated",
   "overreachable",

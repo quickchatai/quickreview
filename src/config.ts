@@ -403,6 +403,15 @@ export interface ReviewConfig {
    * changes code — which existing tests the change breaks, and whether the
    * PR's own tests exercise the code or mock the failure point away. */
   tests_lens: boolean;
+  /** The code-quality lenses (`agents/pass-maintainability.md`,
+   * `pass-duplication.md`, `pass-abstraction.md`; heuristics.ts
+   * QUALITY_PASSES) on every PR whose non-test code adds at least
+   * `quality_min_added_lines` lines. Style is none of them. */
+  quality_lenses: boolean;
+  quality_min_added_lines: number;
+  /** The style lens (`agents/pass-style.md`) — planned only when the repo has
+   * a written style guide (src/styleguide.ts), and judging only against it. */
+  style_lens: boolean;
 }
 
 /**
@@ -436,6 +445,9 @@ type PresetLevers = Pick<
   | "placement_min_new_file_lines"
   | "dependency_sources"
   | "tests_lens"
+  | "quality_lenses"
+  | "quality_min_added_lines"
+  | "style_lens"
 >;
 
 /** The lean lever plan — `default` and `low` share it. */
@@ -450,6 +462,9 @@ const LEAN_LEVERS: PresetLevers = {
   placement_min_new_file_lines: 30,
   dependency_sources: true,
   tests_lens: true,
+  quality_lenses: true,
+  quality_min_added_lines: 20,
+  style_lens: true,
 };
 
 export const REVIEW_PRESETS: Readonly<

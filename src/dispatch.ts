@@ -29,6 +29,8 @@ import {
   sweepGroups,
   CODE_FILE_RE,
   TESTS_PASS,
+  STYLE_PASS,
+  selectQualityLenses,
 } from "./heuristics.js";
 import type { HeuristicsExtension } from "./heuristics.js";
 import type { MigrationCollision } from "./migrations.js";
@@ -52,6 +54,7 @@ import {
   type DeltaFile,
 } from "./recheck.js";
 import { roundPostingKey } from "./posting-receipt.js";
+import { findStyleGuide } from "./styleguide.js";
 import { directiveVocabulary, isFirstPartyDirectivePath } from "./severity.js";
 import type { DispatchAnnouncer } from "./slack/announce.js";
 import { applyEvent, restoreStandingLifecycle, setPrGates } from "./statemachine.js";
@@ -649,6 +652,15 @@ export const ALL_PASSES: readonly string[] = [
   // the tests lens — planned on every PR that changes code when
   // `[review] tests_lens` is on; addable otherwise.
   "pass-tests",
+  // The code-quality lenses — planned when `[review] quality_lenses` is on and
+  // the change adds enough code; addable otherwise.
+  "pass-maintainability",
+  "pass-duplication",
+  "pass-abstraction",
+  // The style lens — planned only when the repo has a written style guide
+  // (src/styleguide.ts); addable otherwise, but it judges only against a
+  // guide, so without one it answers NONE.
+  "pass-style",
   "pass-validate",
 ];
 
@@ -689,6 +701,9 @@ export function buildPassPlan(
   ecosystem: Ecosystem = DJANGO_ECOSYSTEM,
   /** Profile lens-heuristics extension; absent ⇒ generic core. */
   heuristics?: HeuristicsExtension,
+  /** The repo's written style guide references (src/styleguide.ts); empty or
+   * absent ⇒ no style lens. */
+  styleGuide: readonly string[] = [],
 ): { pass_plan: PassPlanEntry[]; addable_lenses: string[]; sweep_unswept: string[] } {
   const defaultTier = passTier(files, {
     migrationGate: ecosystem.migrationGate(files),
@@ -710,7 +725,29 @@ export function buildPassPlan(
   // own tests are claims about the code — one lens reads both.
   const tests =
     cfg.review.tests_lens && files.some((f) => CODE_FILE_RE.test(f.filename)) ? [TESTS_PASS] : [];
-  const lenses = [...selected0, ...sub.map((s) => s.lens), ...tests, VALIDATE_PASS];
+  // The code-quality lenses: maintainability, duplication, abstraction — never
+  // style, which rides only on the repo's own written guide.
+  const quality = cfg.review.quality_lenses
+    ? selectQualityLenses(files, cfg.review.quality_min_added_lines).filter(
+        (l) => !selected0.includes(l),
+      )
+    : [];
+  const style =
+    cfg.review.style_lens &&
+    styleGuide.length > 0 &&
+    files.some((f) => CODE_FILE_RE.test(f.filename))
+      ? [STYLE_PASS]
+      : [];
+  if (style.length)
+    whyOf.set(STYLE_PASS, `the repo's written style guide: ${styleGuide.join(", ")}`);
+  const lenses = [
+    ...selected0,
+    ...sub.map((s) => s.lens),
+    ...tests,
+    ...quality,
+    ...style,
+    VALIDATE_PASS,
+  ];
   // pass-intent starts at terra-med whatever the round's default:
   // reading comprehension over two short texts, not a judgment over production
   // risk. It is NOT pinned — the session may raise it like any other lens.
@@ -798,6 +835,8 @@ export function buildRoundOrder(args: {
   heuristics?: HeuristicsExtension;
   /** The rendered third-party-sources block (src/depsources.ts). */
   dependencyNote?: string;
+  /** The repo's written style guide references (src/styleguide.ts). */
+  styleGuide?: readonly string[];
 }): RoundOrder {
   const eco = args.ecosystem ?? DJANGO_ECOSYSTEM;
   const { pass_plan, addable_lenses, sweep_unswept } = buildPassPlan(
@@ -806,6 +845,7 @@ export function buildRoundOrder(args: {
     { title: args.row.title, body: args.prBody },
     eco,
     args.heuristics,
+    args.styleGuide ?? [],
   );
   const headSha = args.tree?.head_sha || args.row.head_sha;
   return {
@@ -1294,9 +1334,15 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           log(`dispatch: #${row.number} dependency sources unavailable`, err);
         }
       }
+      // The repo's written style guide, if any: the style lens runs only on
+      // one (`[review] style_lens`). Total — an unreadable tree is no guide.
+      const styleGuide = cfg.review.style_lens
+        ? findStyleGuide(resolve(sandboxRoot(), worktreeFor(row.number)))
+        : [];
       const order = buildRoundOrder({
         tree,
         ecosystem: eco,
+        ...(styleGuide.length ? { styleGuide } : {}),
         ...(dependencyNote ? { dependencyNote } : {}),
         ...(recovery ? { recovery } : {}),
         migrationCollisions,

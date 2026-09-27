@@ -42,6 +42,7 @@ import {
   type ReviewPreset,
 } from "../config.js";
 import { buildRoundOrder } from "../dispatch.js";
+import { findStyleGuide } from "../styleguide.js";
 import { ecosystemFor, type Ecosystem } from "../ecosystem.js";
 import type { PrFileEntry } from "../github.js";
 import { prepareDependencySources, renderDependencyNote } from "../depsources.js";
@@ -147,6 +148,9 @@ export interface RunFingerprint {
     placement_min_new_file_lines?: number;
     dependency_sources: boolean;
     tests_lens: boolean;
+    quality_lenses?: boolean;
+    quality_min_added_lines?: number;
+    style_lens?: boolean;
   };
 }
 
@@ -172,6 +176,9 @@ export function runFingerprint(cfg: Config, profile: string, overrides = ""): Ru
       placement_min_new_file_lines: cfg.review.placement_min_new_file_lines,
       dependency_sources: cfg.review.dependency_sources,
       tests_lens: cfg.review.tests_lens,
+      quality_lenses: cfg.review.quality_lenses,
+      quality_min_added_lines: cfg.review.quality_min_added_lines,
+      style_lens: cfg.review.style_lens,
     },
   };
 }
@@ -425,6 +432,8 @@ export function renderCasePrompts(args: {
     ecosystem: args.ecosystem,
     heuristics: loadProfileHeuristics(root, cfg.review.profile),
     ...(args.dependencyNote ? { dependencyNote: args.dependencyNote } : {}),
+    // The repo's written style guide, as production finds it (dispatch.ts).
+    ...(cfg.review.style_lens ? { styleGuide: findStyleGuide(tree) } : {}),
   });
   const template = readFileSync(join(root, "prompts", roundTemplateFile("first")), "utf8");
   const rendered = renderRoundPrompt(

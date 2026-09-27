@@ -602,6 +602,39 @@ export const SWEEP_PASS = "pass-sweep";
 /**: the tests lens (agents/pass-tests.md). */
 export const TESTS_PASS = "pass-tests";
 
+// The code-quality lenses (2026-09-27, `[review] quality_lenses`): the review
+// is geared to find defects, and a benchmark built from what reviewers
+// actually write (AACR-Bench: 42% of its references are maintainability) asked
+// whether the other half of a review — will the next person understand and
+// safely change this — is worth a lens of its own. Three lenses, each one
+// question: maintainability (readers and future edits), duplication (the same
+// knowledge written twice), abstraction (boundaries and contracts at the right
+// level). Style is deliberately none of them: every repo has its own, so it
+// has its own lens, planned only where the repo writes its style down.
+export const MAINTAINABILITY_PASS = "pass-maintainability";
+export const DUPLICATION_PASS = "pass-duplication";
+export const ABSTRACTION_PASS = "pass-abstraction";
+export const QUALITY_PASSES: readonly string[] = [
+  MAINTAINABILITY_PASS,
+  DUPLICATION_PASS,
+  ABSTRACTION_PASS,
+];
+/** Added non-test code lines below which a change is too small to carry a
+ * maintainability, duplication or abstraction question worth a pass. */
+export const QUALITY_MIN_ADDED_LINES = 20;
+/** The style lens (agents/pass-style.md): planned only when the repo has a
+ * written style guide (src/styleguide.ts). */
+export const STYLE_PASS = "pass-style";
+
+/** The quality lenses a change warrants: all three once its non-test code
+ * adds `minAdded` lines, none below. */
+export function selectQualityLenses(files: PrFileEntry[], minAdded: number): string[] {
+  const added = files
+    .filter((f) => !isTestFile(f.filename) && CODE_FILE_RE.test(f.filename))
+    .reduce((n, f) => n + f.additions, 0);
+  return added >= minAdded && added > 0 ? [...QUALITY_PASSES] : [];
+}
+
 /** Files the sweep never reads: lockfiles, generated or minified output,
  * vendored trees, snapshots, binaries and prose. */
 const SWEEP_SKIP_RE =
