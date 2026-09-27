@@ -26,9 +26,10 @@ QCR_BENCH_IMAGE=qcr-bench:exp bench/aacr/arm.sh --prefix nosweep --config review
 bench/aacr/compare.py --cases fresh10 default=lean-fresh10 low=low-fresh10 nosweep=nosweep-fresh10
 ```
 
-`arm.sh` reviews and judges (only the arm's own PRs, with one retry) with the
-sets in parallel; `compare.py` scores arms on the same PRs from the archived
-judge files, never calling a model.
+`arm.sh` reviews and judges (only the arm's own PRs, with one retry) from ONE
+machine-wide queue — every case in its own container, `--parallel` at once
+(see "Running the whole benchmark" for the scheduler); `compare.py` scores
+arms on the same PRs from the archived judge files, never calling a model.
 
 **Comparing against open-code-review, on both metrics.** One command per arm,
 the same flags, the same judges:
@@ -66,12 +67,14 @@ What makes the rows comparable, and is enforced rather than assumed:
   `<run>.arm.json` beside each run records the arm, image and image id.
 - **What cannot be equal:** OCR gets no PR title/body, comments with line
   ranges, no severity (only the AACR `all` variant), and runs one case at a
-  time while ours run `--concurrency` at once — compare minutes with that in
-  mind.
+  time while ours run `--parallel` at once — compare minutes with that in
+  mind (the per-case minutes are each case's own wall clock either way).
 
 `arm.sh` exits non-zero when any review, judge or eval failed; `--resume`
-keeps cases already reviewed by the same build and levers; repeats run one
-after another. `--cases full` reviews all 196 PRs and judges the 40 that have
+keeps cases already reviewed by the same build and levers and re-runs only the
+rest; an arm whose run dirs already exist refuses to start without `--resume`
+or `--fresh`, so a relaunch never wipes hours of reviews. Repeats share the
+queue with everything else. `--cases full` reviews all 196 PRs and judges the 40 that have
 ground truth against their own defect sets.
 
 **Before a big run, check the PRs can still be fetched:**
@@ -129,7 +132,7 @@ one that says whether the reviewer got better rather than merely noisier.
 | `build` | npm, github.com (image build) | the `qcr-bench` image | compiles this repo, installs pi 0.84.4, clones the harness at `68a5697`, extracts dataset v1.0 **and verifies its sha256**, converts it with the harness's own converter (196 instances) |
 | `prefetch` | github.com, anonymous | volume `qcr-bench-repos` | per instance: a bare store with ONLY the PR's base and reviewed head, shallow, deepened until the merge-base resolves; PR title/body/base branch from the public API (60 req/h anonymous — pass `--wait-rate-limit` for `full`) |
 | `review` | the model API | `runs/<id>/` | one production round per PR; `pi -p` exits when the round settles; one continuation if it stopped before writing its files; 45 min timeout per PR |
-| `eval` | the judge's endpoint | `runs/<id>/` | the harness's `pipeline run --stage eval` three times — variants `all`, `no-nits`, `blockers` — then `report.md` |
+| `eval` | the judge's endpoint | `runs/<id>/` | the harness's `pipeline run --stage eval` once per variant — `all`, `no-nits`, `blockers`, side by side (`--variants` narrows them) — and with `--shards N` split by PR into N harness processes each, merged by `eval_shards.py` into the files one process writes; then `report.md` |
 | `results` | none | `runs/<id>/results/` | rebuild the scored files from the case dirs — no model calls; use after a harness change |
 | `report` | none | `runs/<id>/report.md` | re-render the report |
 
@@ -337,17 +340,77 @@ matched it to, and where ours came from (killed/merged/candidate, lens,
 severity) — and every reference matched in fewer. `extract/<case>.json` holds
 every raw candidate, every record link and every extra comment.
 
-## Running the whole benchmark later
+## Running the whole benchmark (throughput)
 
 ```sh
-bench/aacr/bench.sh build
-bench/aacr/bench.sh prefetch --set full --wait-rate-limit        # ~196 API calls → waits out the anonymous limit
-bench/aacr/bench.sh review   --run full-1 --set full --concurrency 2 --resume   # ~45 h serial; resumable
-bench/aacr/bench.sh eval     --run full-1 --set full --judge openai --rounds 3
+export QCR_BENCH_RUNS_DIR=~/qcr-bench-runs/runs QCR_BENCH_IMAGE=qcr-bench:full1
+bench/aacr/bench.sh build                                    # the scheduler needs an image with eval_shards.py
+bench/aacr/bench.sh prefetch --set full --wait-rate-limit    # once; ~196 API calls, waits out the anonymous limit
+bench/aacr/arm.sh --prefix full1 --cases full --eval 3       # review 185 runnable PRs, judge the 40, score AACR
+bench/aacr/arm.sh --prefix full1 --cases full --eval 3 --resume   # after an interruption: only what is not ok
 ```
 
-Concurrency multiplies model load on the shared ChatGPT login (each round fans
-out up to 6 lens children); start at 1–2.
+**Where the time went** (measured 2026-09-27 over the 513 reviewed cases in
+the runs dir): a review is a median 5.2 min, mean 7.5, p90 10.8, p95 13.5.
+The defect judge is ~1–2 min per 10 PRs. The AACR harness judges ONE PR at a
+time, ~47 s per PR per round per variant with the codex judge — 3 rounds × 3
+variants of `full` is ~22 hours in one process, more than the reviews. The
+old `arm.sh --cases full` ran the whole set in one container at
+`--concurrency 2` (~11.5 h of reviews), then the judge, then that eval:
+**~33 hours**.
+
+**What the scheduler does now** (`arm.sh`, quickreviewd arm):
+- **One queue, one container per case.** Every case of every set and repeat,
+  longest PR first (`change_line_count`, so the slow ones do not form the
+  tail). A container per case costs ~1 s (agents build in under a second) and
+  caps each review on its own (`QCR_BENCH_REVIEW_MEMORY=3g`), so one runaway
+  cannot starve the others. `bench.sh review --phase init|case|finish` splits
+  the run so that only `init` writes `run.json`.
+- **Machine-wide slots.** `--parallel N|auto` (default auto) slots are lock
+  files in `$QCR_BENCH_RUNS_DIR/.slots/`, shared by every `arm.sh` on the
+  machine: two arms started side by side split the slots rather than
+  doubling the load on the one login. `auto` = (MemAvailable −
+  `QCR_BENCH_RESERVE_MB` 3072) / `QCR_BENCH_REVIEW_MB` 1024, capped at
+  `QCR_BENCH_MAX_PARALLEL` 10. A new review also waits while MemAvailable is
+  short, counting reviews started in the last 5 minutes as still growing.
+- **Overlap.** A run is closed, defect-judged (one slot) and AACR-evaluated
+  (one machine-wide eval lock) the moment its last case finishes, while the
+  queue keeps reviewing other runs.
+- **Sharded eval.** The three variants run side by side, and each is split by
+  PR into up to `--eval-shards` (default 6, at least ~4 PRs a shard) harness
+  processes. The harness's metrics are micro sums, so `eval_shards.py` merges
+  the shards with the harness's own `_compute_summary` and
+  `_average_summaries` into exactly the files one process writes (checked
+  against an unsharded mock eval: identical rounds, average and per-PR
+  matches). `--eval-variants all` scores only what `compare.py` reads.
+- **Failures.** Every case ends with a `result:` line (status, retryable,
+  rate-limit count from pi's event stream, also in `case-summary.json`
+  `model_errors`). A failed case is queued once more at the end
+  (`--retries 1`); an unfetchable one never is. A failure under rate limiting
+  or overload pauses new launches for `QCR_BENCH_RATE_LIMIT_PAUSE` (300 s).
+  Whatever is still not ok after that is what `--resume` re-runs.
+
+**Expected on this PC** (16 cores, 31 GB, no swap): memory is not what binds.
+A review measured ~250 MB anonymous plus ~200 MB page cache, up to ~1 GB with
+six lens children at once; `auto` gives 10 slots with 14+ GB available. At 10
+slots `full` reviews in ~2.3 h (185 × 7.5 min / 10) plus a short tail, the
+defect judge ~10 min, and the 3-round eval ~1.2 h (≈18 judge processes) —
+**~4 hours** instead of ~33. `--eval 1` brings the eval to ~25 min.
+
+**Risks.** The ONE ChatGPT login is the real limit: earlier arms ran 8–10
+reviews at once (each fanning out to up to 6 lens children) with no
+rate-limit failure, so 10 is the default cap and not a measured ceiling. If
+`RATE-LIMITED` lines appear, lower `QCR_BENCH_MAX_PARALLEL` or `--parallel`
+and re-run with `--resume`. The eval adds ~18 low-effort judge calls at once
+while it runs.
+
+**Keep the desktop indexer out of the runs dir.** KDE's `baloo_file_extractor`
+was seen at 8 GB RSS indexing the multi-megabyte `pi-events.jsonl` files
+under `~/qcr-bench-runs`. That is memory the reviews could
+use, on a machine without swap. Exclude the directory: System Settings →
+Search → File Search → add it to the excluded folders, or
+`balooctl6 config add excludeFolders ~/qcr-bench-runs`
+(then `balooctl6 purge` to drop what is already indexed).
 
 ## Files
 
@@ -362,6 +425,7 @@ out up to 6 lens children); start at 1–2.
 | `references.json` / `reference_index.py` | each AACR reference's own category and context, for the benchmark table's breakdown |
 | `sets/*.json` | the committed case sets |
 | `judge_shim.py` | OpenAI-compatible judge endpoint over `pi -p` |
+| `eval_shards.py` | splits one eval by PR across harness processes and merges them with the harness's own summary functions |
 | `codex_bridge.py` | the OCR arm's loopback Chat Completions/Responses → Codex backend bridge |
 | `src/bench/` | prefetch, review runner, result conversion, report, the OCR arm (`ocr.ts`) (`tests/bench-aacr.test.ts`); the what-if scorer `whatif.ts` + `whatifrun.ts` (`tests/bench-whatif.test.ts`) |
 | `whatif/<id>/` | per what-if run: `source/` (the copied run), `results/<variant>/`, `extract/`, `eval/`, `report.md`, `whatif-summary.json` |

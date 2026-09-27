@@ -51,7 +51,9 @@
 # seconds (default 300) and is retried; `--resume` later re-runs only what is
 # still not ok.
 #
-#   QCR_BENCH_REVIEW_MB=1280     memory budget per concurrent review (auto + the admission check)
+#   QCR_BENCH_REVIEW_MB=1024     memory budget per concurrent review (auto + the admission check;
+#                                measured: ~250 MB anon + ~200 MB page cache typical, up to ~1 GB
+#                                with 6 lens children at once)
 #   QCR_BENCH_RESERVE_MB=3072    MemAvailable kept free for the rest of the machine
 #   QCR_BENCH_MAX_PARALLEL=10    auto never exceeds this (the one ChatGPT login)
 #   QCR_BENCH_REVIEW_MEMORY=3g   the hard cap of one case container (QCR_BENCH_MEMORY for it)
@@ -103,8 +105,13 @@ done
 QIMG="${QCR_BENCH_IMAGE:-qcr-bench:latest}" OIMG="${QCR_BENCH_OCR_IMAGE:-qcr-bench-ocr:latest}"
 IMG="$QIMG"; [[ "$ARM" == ocr ]] && IMG="$OIMG"
 IMG_ID="$(docker image inspect "$IMG" --format '{{.Id}}' 2>/dev/null)" || { echo "no image $IMG — build it: bench.sh build --arm $ARM" >&2; exit 2; }
+# An image built before the per-case scheduler ignores --phase, and its
+# "init" container would review every case with no network. Refuse it (and
+# an older image of the judge/eval side, which lacks the eval sharding).
+docker run --rm --network none --entrypoint test "$QIMG" -f /opt/quickreview/bench/eval_shards.py >/dev/null 2>&1 \
+  || { echo "image $QIMG predates the per-case scheduler (no eval_shards.py) — rebuild it: bench.sh build" >&2; exit 2; }
 
-REVIEW_MB="${QCR_BENCH_REVIEW_MB:-1280}" RESERVE_MB="${QCR_BENCH_RESERVE_MB:-3072}"
+REVIEW_MB="${QCR_BENCH_REVIEW_MB:-1024}" RESERVE_MB="${QCR_BENCH_RESERVE_MB:-3072}"
 MAX_PAR="${QCR_BENCH_MAX_PARALLEL:-10}" PAUSE="${QCR_BENCH_RATE_LIMIT_PAUSE:-300}"
 POLL="${QCR_BENCH_POLL:-2}" GAP="${QCR_BENCH_LAUNCH_GAP:-3}"
 SLOTS="$QCR_BENCH_RUNS_DIR/.slots"

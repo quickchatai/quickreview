@@ -105,7 +105,13 @@ exit 0
   );
   chmodSync(join(b, "bench.sh"), 0o755);
   mkdirSync(join(t, "bin"));
-  writeFileSync(join(t, "bin", "docker"), '#!/bin/sh\necho "sha256:img-$3"\n');
+  // The stub docker: `image inspect` answers an id; the image probe for
+  // eval_shards.py fails when STUB_OLD_IMAGE is set (an image from before the
+  // per-case scheduler).
+  writeFileSync(
+    join(t, "bin", "docker"),
+    '#!/bin/sh\ncase "$*" in *eval_shards.py*) [ -n "$STUB_OLD_IMAGE" ] && exit 1; exit 0;; esac\necho "sha256:img-$3"\n',
+  );
   chmodSync(join(t, "bin", "docker"), 0o755);
 });
 afterEach(() => rmSync(t, { recursive: true, force: true }));
@@ -217,6 +223,12 @@ describe("arm.sh", () => {
     ]);
   });
 
+  it("refuses an image built before the per-case scheduler (it would ignore --phase)", async () => {
+    const r = await arm(["--prefix", "o", "--cases", `fresh10:${A}`], { STUB_OLD_IMAGE: "1" });
+    expect(r.code).toBe(2);
+    expect(calls()).toEqual([]);
+  });
+
   it("refuses to relaunch over an existing run unless told --resume or --fresh", async () => {
     mkdirSync(join(runs, "p-fresh10"));
     writeFileSync(join(runs, "p-fresh10", "run.json"), JSON.stringify({ cases: [A] }));
@@ -249,7 +261,7 @@ describe("arm.sh", () => {
   });
 
   it("auto sizes the slots from MemAvailable, capped by the login's share", async () => {
-    const env = { QCR_BENCH_MEM_AVAILABLE_MB: "7000" }; // (7000 - 3072) / 1280 = 3
+    const env = { QCR_BENCH_MEM_AVAILABLE_MB: "7000" }; // (7000 - 3072) / 1024 = 3
     expect(
       (await arm(["--prefix", "a", "--cases", `fresh10:${A}`, "--no-judge"], env)).out,
     ).toContain("3 review slot(s)");

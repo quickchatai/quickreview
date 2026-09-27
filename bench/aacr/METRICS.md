@@ -65,7 +65,10 @@ reference only when both are on the same file and their lines overlap within
 thing (3 rounds, averaged). **Recall** = references matched / all
 references. **Precision** = comments that matched a reference / all comments
 — a comment that is not on the list is a false positive, even when it is a
-real bug.
+real bug. The harness's numbers are sums over PRs, so an
+eval split across several harness processes (`arm.sh --eval-shards`,
+`eval_shards.py`) and merged with the harness's own summary functions gives
+the same numbers as one process — only sooner.
 
 **Columns**: references found and recall; precision and F1; recall by the
 benchmark's own category and context (`references.json`).
