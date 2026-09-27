@@ -19,7 +19,7 @@ model. Defects found count a partial find as ½; weighted = high 3 / medium 2 /
 low 1; $ is pi's own per-call price summed over the main session and every
 pass. Standard library only.
 """
-import argparse, collections, json, os, re, statistics, sys
+import argparse, collections, glob, json, os, re, statistics, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 W = {"high": 3, "medium": 2, "low": 1}
@@ -47,7 +47,11 @@ def ground_truth(set_name):
 
 def cases_for(spec):
     """PR id -> (set, severities, judge-label version)."""
-    sets = {"levers16": LEVERS16, "all30": {s: None for s in ("smoke10", "dev10", "holdout10")}}.get(spec, {spec: None})
+    if ":" in spec:  # set:id,id — the same syntax as arm.sh --cases
+        name, ids = spec.split(":", 1)
+        sets = {name: " ".join(ids.split(","))}
+    else:
+        sets = {"levers16": LEVERS16, "all30": {s: None for s in ("smoke10", "dev10", "holdout10")}}.get(spec, {spec: None})
     out = {}
     for s, ids in sets.items():
         version, gt = ground_truth(s)
@@ -178,9 +182,14 @@ def aacr(runs_dir, runs):
     t = collections.Counter()
     judges = set()
     for run in runs:
-        f = os.path.join(runs_dir, run, "results", "all", "metrics_ocr_average.json")
+        d = os.path.join(runs_dir, run, "results", "all")
+        f = os.path.join(d, "metrics_ocr_average.json")
         if not os.path.exists(f):
-            continue
+            # A one-round eval writes a single metrics file and no average.
+            one = sorted(glob.glob(os.path.join(d, "metrics_ocr_*.json")))
+            if len(one) != 1:
+                continue
+            f = one[0]
         m = json.load(open(f))["summary"]
         for k in ("evaluated_instances", "expected_notes", "generated_notes", "matched_semantic_notes", "matched_line_notes"):
             t[k] += m.get(k) or 0
@@ -199,7 +208,7 @@ def aacr_row(t):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--cases", required=True, help="a set name, levers16 or all30")
+    ap.add_argument("--cases", required=True, help="a set name, set:id,id, levers16 or all30")
     ap.add_argument("--judge-model", default="gpt-6-sol-high", help="the judge label's model part")
     ap.add_argument("--runs-dir", default=os.environ.get("QCR_BENCH_RUNS_DIR", os.path.join(HERE, "runs")))
     ap.add_argument("--aacr", action="store_true", help="also print AACR-Bench's own metric (needs `bench.sh eval` on each run)")

@@ -254,4 +254,28 @@ describe("compare.py", () => {
     expect(out).toContain("| p | 2.0/10 (20.0%) | 2.0/4 (50.0%) |");
     expect(out).toContain("NOT COMPARABLE — the AACR evals used different judges");
   });
+  it("scores `set:id,id` cases only, and reads a one-round AACR eval (no average file)", async () => {
+    judgement("s", A, found(["D1"]));
+    mkdirSync(join(runs, "s", "results", "all"), { recursive: true });
+    writeFileSync(
+      join(runs, "s", "results", "all", "metrics_ocr_20260927_170012.json"),
+      JSON.stringify({
+        summary: {
+          evaluated_instances: 1,
+          expected_notes: 3,
+          generated_notes: 1,
+          matched_semantic_notes: 1,
+          matched_line_notes: 1,
+        },
+      }),
+    );
+    const out = await run(
+      "python3",
+      [join(t, "bench", "aacr", "compare.py"), "--cases", `fresh10:${A}`, "--aacr", "s=s"],
+      { env: { ...process.env, QCR_BENCH_RUNS_DIR: runs } },
+    ).then((r) => r.stdout);
+    expect(out).toContain("1 PRs, 2 defects");
+    expect(out).toContain("| 1/1 |");
+    expect(out).toContain("| s | 1.0/3 (33.3%) |");
+  });
 });
