@@ -146,3 +146,50 @@ describe("code files", () => {
     expect(l).toContain("pass-maintainability");
   });
 });
+
+describe("[review] nits — strict by default, open on request", () => {
+  it("defaults to strict, accepts open, refuses anything else", async () => {
+    const { configAddenda } = await import("../src/include.js");
+    const { renderNitPolicyNote } = await import("../src/templates.js");
+    expect(baseCfg.review.nits).toBe("strict");
+    const toml = readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8");
+    const withNits = (v: string) => toml.replace(/^\[review\]$/m, `[review]\nnits = "${v}"`);
+    expect(parseConfig(withNits("open")).review.nits).toBe("open");
+    expect(() => parseConfig(withNits("some"))).toThrow(/nits must be "strict" or "open"/);
+    // strict adds nothing anywhere: the default install is unchanged
+    expect(configAddenda(baseCfg.review)).toEqual([]);
+    expect(renderNitPolicyNote(undefined)).toBe("");
+    const open = configAddenda({ nits: "open" });
+    expect(open.map((a) => a.id)).toEqual(["nits-open", "nits-open-validate"]);
+    expect(open[1]!.text).toContain("`below-bar` is not used this round");
+    expect(renderNitPolicyNote("open")).toContain("NIT POLICY — open");
+  });
+
+  it("an open config reaches the round order; strict leaves it out", async () => {
+    const { buildRoundOrder } = await import("../src/dispatch.js");
+    const order = (cfg: Config) =>
+      buildRoundOrder({
+        cfg,
+        row: { number: 7, title: "t", head_sha: "h" } as never,
+        files: [file("src/a.ts", 30)],
+        roundId: 1,
+        roundNo: 1,
+        roundType: "first",
+        worktree: "wt/pr-7",
+        settledDigest: "",
+        issuedAt: "2026-09-27T00:00:00Z",
+      });
+    expect(order(withLevers({ nits: "open" })).nit_policy).toBe("open");
+    expect(order(baseCfg).nit_policy).toBeUndefined();
+  });
+});
+
+describe("the validator demotes a true observation instead of killing it", () => {
+  it("is on by default, and quality-lens findings are judged on the cost they name", () => {
+    const ids = addendaForPass(VALIDATE_PASS).map((a) => a.id);
+    expect(ids).toContain("validate-demote-not-kill");
+    const cap = addendaForPass(VALIDATE_PASS).find((a) => a.id === "quality-cap-validate")!;
+    expect(cap.text).toContain("are NOT kill reasons for them");
+    expect(cap.text).toContain("`pass-consistency` is capped at `P2` UNLESS it shows a failure");
+  });
+});

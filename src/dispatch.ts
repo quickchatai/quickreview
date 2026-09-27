@@ -657,6 +657,7 @@ export const ALL_PASSES: readonly string[] = [
   "pass-maintainability",
   "pass-duplication",
   "pass-abstraction",
+  "pass-consistency",
   // The style lens — planned only when the repo has a written style guide
   // (src/styleguide.ts); addable otherwise, but it judges only against a
   // guide, so without one it answers NONE.
@@ -864,6 +865,7 @@ export function buildRoundOrder(args: {
     addable_lenses,
     ...(sweep_unswept.length > 0 ? { sweep_unswept } : {}),
     ...(args.dependencyNote ? { dependency_note: args.dependencyNote } : {}),
+    ...(args.cfg.review.nits === "open" ? { nit_policy: "open" as const } : {}),
     migration_gate: eco.migrationGate(args.files),
     migration_collisions: args.migrationCollisions ?? [],
     migration_precheck_degraded: args.migrationPrecheckDegraded ?? false,

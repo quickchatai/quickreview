@@ -412,7 +412,16 @@ export interface ReviewConfig {
   /** The style lens (`agents/pass-style.md`) — planned only when the repo has
    * a written style guide (src/styleguide.ts), and judging only against it. */
   style_lens: boolean;
+  /** How many nits a review may post. `strict` (the default, production's
+   * behaviour): the validator drops true-but-trivial candidates (`below-bar`),
+   * a nit must name the change it asks for, and review volume comes
+   * out of nits. `open`: none of those limits — every true nit posts. Meant
+   * for benchmarks whose references reward nits; a repo that wants every nit
+   * can set it too. Style still needs the repo's written guide either way. */
+  nits: NitPolicy;
 }
+
+export type NitPolicy = "strict" | "open";
 
 /**
  * `[review] preset` — three named review configurations, measured on the
@@ -500,6 +509,7 @@ export const REVIEW_DEFAULTS: ReviewConfig = {
   directives: REVIEW_DIRECTIVES_DEFAULTS,
   preset: "default",
   ...LEAN_LEVERS,
+  nits: "strict",
 };
 
 /**
@@ -1669,6 +1679,11 @@ export function parseConfig(toml: string): Config {
     slack: parseSlack((raw.slack ?? {}) as Record<string, any>, ops.timezone),
     owner: { ...OWNER_DEFAULTS, ...((raw.owner ?? {}) as Partial<OwnerConfig>) },
   };
+  if (cfg.review.nits !== "strict" && cfg.review.nits !== "open") {
+    throw new Error(
+      `config.toml [review]: nits must be "strict" or "open" (got ${JSON.stringify(cfg.review.nits)})`,
+    );
+  }
   // Legacy alias: a set `[slack] legacy_owner_slack_id` feeds
   // [owner] slack_id when that is empty; a conflicting pair is an error that
   // names the NEW key. After this fold nothing reads the legacy key.

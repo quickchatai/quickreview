@@ -147,6 +147,8 @@ export interface RoundOrder {
   /** The rendered third-party-sources block (src/depsources.ts), carried
    * into every pass's task string. Absent or "" ⇒ nothing was unpacked. */
   dependency_note?: string;
+  /** `[review] nits = "open"`: the round lifts the nit limits. Absent ⇒ strict. */
+  nit_policy?: "open";
   migration_gate: boolean;
   /**
    * Migration-number collisions with the base branch that the daemon detected

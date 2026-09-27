@@ -496,8 +496,39 @@ const VALIDATE_KILL_VOCABULARY_ADDENDUM =
 const QUALITY_CAP_VALIDATE_ADDENDUM =
   "\n## Code-quality findings are capped; style comes only from the repo's guide (sandbox rule)\n" +
   "- **`pass-maintainability`, `pass-duplication`, `pass-abstraction` are capped at `P2`**, exactly as placement and simplicity are: cap anything arriving as `P0` or `P1` down to `P2` with the downgrade word `design-over-cap`. A candidate from these lenses must name its concrete cost — who reads or changes the code wrong, and how (maintainability); both sites and what drifts (duplication); the callers paying for the boundary (abstraction). One that names none is taste: kill it `below-bar`.\n" +
+  '- **Their standard of proof is that named cost, never a present defect.** These lenses exist for code that works today and will cost the next reader or the next change: "the copies agree now", "it works", "no current caller breaks", "hypothetical future divergence" are NOT kill reasons for them. Verify the observation itself by reading (the two copies exist and encode the same decision; the name does say what the code does not; the callers do reach through), then judge whether the named cost is real — kill `refuted` only when it is not (the copies are free to diverge by design, the name is accurate, the boundary is the repo\'s own pattern). A verified observation with a real cost survives, capped at `P3` unless the change already pays the cost.\n' +
+  "- **`pass-consistency` is capped at `P2` UNLESS it shows a failure**: a candidate naming the consistent siblings and an outlier that breaks on a path you can verify (a missing check, key, argument, update) is a defect — judge it at its own severity like any other lens's. One whose outlier only reads differently is capped at `P3` with `design-over-cap`. Both sides must be cited; a difference the code explains (a different case, a documented departure) is `refuted`.\n" +
   "- **`pass-style` findings are `nit`, always**: demote anything higher with the downgrade word `style-over-cap`. Each must quote a rule of the repo's written guide (file and line) and a CHANGED line that breaks it; audit both — a rule the guide does not state is `refuted`.\n" +
   "- **Style from any other lens is killed `style-not-in-guide`** (a kill word added to the closed vocabulary by this rule). Style means formatting, whitespace, line length, quote or brace style, import order, naming conventions, comment grammar: whatever a formatter, linter or house style decides rather than what the code does. Every repo has its own; when it writes it down, `pass-style` applies it. A misleading NAME (it says something the code does not do) or a stale COMMENT (it contradicts the code) is not style — those are maintainability and survive on their evidence.\n";
+
+// 2026-09-27 (bench/aacr/RESULTS.md, code-quality lenses): the validator was
+// killing lens observations it had itself confirmed — true, actionable, minor
+// — as `below-bar`, and duplication findings as "not a present defect". A true
+// observation that asks for a concrete change is demoted, never killed for
+// being small.
+const VALIDATE_DEMOTE_NOT_KILL_ADDENDUM =
+  "\n## A true observation is demoted, not killed (sandbox rule)\n" +
+  "When your re-derivation CONFIRMS a candidate's observation and it asks for a concrete change that would improve the code, a small consequence is a reason to lower its severity — to `P3` or `nit` — never to kill it. `below-bar` is only for a confirmed observation whose change would not make the code better at all (a pure restatement, a preference between two equally clear forms). The kills for wrong or unprovable claims (`refuted`, `unverifiable`, `bad-anchor`), for repeats (`duplicate`, `settled:…`), for scope (`out-of-scope`, `nit-out-of-delta`) and for shape (`nit-no-request`, `self-narration`, `style-not-in-guide`) are unchanged.\n";
+
+// `[review] nits = "open"` (2026-09-27): the nit limits lifted, for a
+// benchmark whose references reward nits or a repo that wants every one.
+// Composed only when the config asks (configAddenda), never by default.
+const NITS_OPEN_LENS_ADDENDUM =
+  '\n## Nits are open this round (config `[review] nits = "open"`)\n' +
+  "Report every true, actionable nit you find in your lens on the changed lines — a clearer name, a missing type, a leftover, an unhelpful message, a small simplification — each as its own `nit` finding naming the change it asks for. Do not hold one back for being minor. Style still belongs only to `pass-style` and the repo's written guide.\n";
+const NITS_OPEN_VALIDATE_ADDENDUM =
+  '\n## Nits are open this round (config `[review] nits = "open"`)\n' +
+  "Do not kill a confirmed nit for being minor: `below-bar` is not used this round, and a true nit that asks for no change is rewritten to name the change it implies rather than killed `nit-no-request`. Every other rule stands — a nit must be TRUE (kill `refuted`/`unverifiable` as ever), style still needs the repo's written guide (`style-not-in-guide`), and repeats still merge.\n";
+
+/** Addenda that exist only when the config asks for them — composed after the
+ * registry by both agent builds (src/wire.ts, src/bench/runner.ts). */
+export function configAddenda(review: { nits?: string }): PassAddendum[] {
+  if (review.nits !== "open") return [];
+  return [
+    { id: "nits-open", scope: "lenses", text: NITS_OPEN_LENS_ADDENDUM },
+    { id: "nits-open-validate", scope: [VALIDATE_PASS], text: NITS_OPEN_VALIDATE_ADDENDUM },
+  ];
+}
 
 // Benchmark 2026-09-26 (bench/aacr/RESULTS.md, missed-defect analysis): of
 // the real defects the validator threw away, every one was a kill whose own
@@ -749,6 +780,11 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
   { id: "design-cap-validate", scope: [VALIDATE_PASS], text: DESIGN_CAP_VALIDATE_ADDENDUM },
   { id: "quality-cap-validate", scope: [VALIDATE_PASS], text: QUALITY_CAP_VALIDATE_ADDENDUM },
   {
+    id: "validate-demote-not-kill",
+    scope: [VALIDATE_PASS],
+    text: VALIDATE_DEMOTE_NOT_KILL_ADDENDUM,
+  },
+  {
     id: "validate-kill-vocabulary",
     scope: [VALIDATE_PASS],
     text: VALIDATE_KILL_VOCABULARY_ADDENDUM,
@@ -783,6 +819,7 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
       "pass-maintainability",
       "pass-duplication",
       "pass-abstraction",
+      "pass-consistency",
     ],
     text: JUDGMENT_LENS_OWN_QUESTIONS_ADDENDUM,
   },

@@ -527,8 +527,8 @@ describe("the real seeded content", () => {
       // benchmark 2026-09-26) + 3 risk passes × 1 + validate × 1 (its shipped
       // floor is the top tier) = 58, + pass-tests × 3 = 61,
       // + the code-quality lenses (maintainability, duplication, abstraction)
-      // and pass-style × 3 (2026-09-27) = 73.
-      expect(built).toHaveLength(73);
+      // and pass-style × 3 (2026-09-27) = 73, + pass-consistency × 3 = 76.
+      expect(built).toHaveLength(76);
       for (const b of built) {
         const text = readFileSync(b.output, "utf8");
         // No lens file names a model: the built variant carries exactly the

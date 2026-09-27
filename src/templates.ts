@@ -177,6 +177,27 @@ export function renderNitScopeNote(roundNo: number): string {
 }
 
 /**
+ * The NIT POLICY note (`[review] nits = "open"`): the round lifts the nit
+ * limits the round prompt otherwise sets — volume no longer comes out of nits,
+ * and every true nit a pass raises is posted. Strict rounds render nothing, so
+ * a default install's prompt is unchanged.
+ */
+export function renderNitPolicyNote(policy: "open" | undefined): string {
+  if (policy !== "open") return "";
+  return [
+    "",
+    '**NIT POLICY — open (`[review] nits = "open"`).** This round the nit limits',
+    "are lifted: post every TRUE, actionable nit the passes raise and the",
+    "validator keeps, as its own inline `[nit]` — do not trim nits to keep the",
+    "review short, and do not fold them into the body. Everything else stands:",
+    "a nit must be true, must name the change it asks for, and style still comes",
+    "only from `pass-style` and the repo's written guide. The blocker bar does",
+    "not move.",
+    "",
+  ].join("\n");
+}
+
+/**
  * The INTENT note: the delivery channel for pass-intent's artifact.
  *
  * The lens judges the diff against the PR TITLE + BODY and nothing else —
@@ -391,6 +412,7 @@ export function roundVars(
     migration_gate_note: ecosystem.gateNote(order),
     settled_digest: order.settled_digest.trim() || "(nothing settled yet)",
     nit_scope_note: renderNitScopeNote(order.review_no ?? order.round_no),
+    nit_policy_note: renderNitPolicyNote(order.nit_policy),
     intent_note: renderIntentNote(order),
     directive_note: renderDirectiveEscalationNote(order),
     // "" unless the order carries escalation targets, which it only

@@ -614,10 +614,15 @@ export const TESTS_PASS = "pass-tests";
 export const MAINTAINABILITY_PASS = "pass-maintainability";
 export const DUPLICATION_PASS = "pass-duplication";
 export const ABSTRACTION_PASS = "pass-abstraction";
+/** Is the change consistent with itself and with the code around it? An
+ * outlier sibling is often a defect, so this one is not capped when it shows
+ * a failure. */
+export const CONSISTENCY_PASS = "pass-consistency";
 export const QUALITY_PASSES: readonly string[] = [
   MAINTAINABILITY_PASS,
   DUPLICATION_PASS,
   ABSTRACTION_PASS,
+  CONSISTENCY_PASS,
 ];
 /** Added non-test code lines below which a change is too small to carry a
  * maintainability, duplication or abstraction question worth a pass. */

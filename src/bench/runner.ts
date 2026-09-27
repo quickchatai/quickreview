@@ -46,7 +46,7 @@ import { findStyleGuide } from "../styleguide.js";
 import { ecosystemFor, type Ecosystem } from "../ecosystem.js";
 import type { PrFileEntry } from "../github.js";
 import { prepareDependencySources, renderDependencyNote } from "../depsources.js";
-import { buildAgents, identityVars, PASS_ADDENDA } from "../include.js";
+import { buildAgents, configAddenda, identityVars, PASS_ADDENDA } from "../include.js";
 import { MEMORY_LESS } from "../memory/context.js";
 import { loadProfileAddenda, loadProfileEcosystem, loadProfileHeuristics } from "../profiles.js";
 import { directiveVocabulary, isFirstPartyDirectivePath } from "../severity.js";
@@ -151,6 +151,7 @@ export interface RunFingerprint {
     quality_lenses?: boolean;
     quality_min_added_lines?: number;
     style_lens?: boolean;
+    nits?: string;
   };
 }
 
@@ -179,6 +180,7 @@ export function runFingerprint(cfg: Config, profile: string, overrides = ""): Ru
       quality_lenses: cfg.review.quality_lenses,
       quality_min_added_lines: cfg.review.quality_min_added_lines,
       style_lens: cfg.review.style_lens,
+      nits: cfg.review.nits,
     },
   };
 }
@@ -330,7 +332,11 @@ export function buildBenchAgents(root: string, cfg: Config): number {
     riskPasses: cfg.models.risk_passes,
     validateTier: cfg.models.validate_tier,
     vars: identityVars(cfg),
-    addenda: [...PASS_ADDENDA, ...loadProfileAddenda(root, cfg.review.profile)],
+    addenda: [
+      ...PASS_ADDENDA,
+      ...configAddenda(cfg.review),
+      ...loadProfileAddenda(root, cfg.review.profile),
+    ],
   });
   return built.length;
 }

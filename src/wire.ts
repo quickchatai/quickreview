@@ -28,7 +28,7 @@ import { GitHubAdapter } from "./github.js";
 import { makePostingGuard } from "./guards.js";
 import { TokenMinter } from "./githubAuth.js";
 import { FeedbackEngine, feedbackDayAddendum, type FeedbackEvent } from "./feedback.js";
-import { PASS_ADDENDA, buildAgents, identityVars } from "./include.js";
+import { PASS_ADDENDA, buildAgents, configAddenda, identityVars } from "./include.js";
 import { ecosystemFor } from "./ecosystem.js";
 import { loadProfileAddenda, loadProfileEcosystem, loadProfileHeuristics } from "./profiles.js";
 import { prepareDependencySources, renderDependencyNote } from "./depsources.js";
@@ -710,7 +710,12 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           riskPasses: cfg.models.risk_passes,
           validateTier: cfg.models.validate_tier,
           vars: identity,
-          addenda: [...PASS_ADDENDA, ...profileAddenda, ...(fb ? [fb] : [])],
+          addenda: [
+            ...PASS_ADDENDA,
+            ...configAddenda(cfg.review),
+            ...profileAddenda,
+            ...(fb ? [fb] : []),
+          ],
         });
         log(
           `built ${built.length} pass agents into state/agents${fb ? " (+ same-day feedback addendum)" : ""}`,
