@@ -21,6 +21,12 @@
 //              [--bridge URL] [--ocr-bin PATH]      cases run ONE AT A TIME
 //   ocr-report --set <file> --out DIR
 //
+// The OpenCode arm (src/bench/opencode.ts; image target `opencode`):
+//   opencode-review --set <file> --out DIR [--only id,id] [--store DIR] [--resume] [--keep-tree]
+//                   [--timeout-min 30] [--variant medium] [--bridge URL] [--opencode-bin PATH]
+//                   cases run ONE AT A TIME
+//   opencode-report --set <file> --out DIR
+//
 // The defect benchmark (src/bench/defects.ts; any run dir, either arm):
 //   defect-judge  --set <file> --defects <file> --out RUN_DIR [--only id,id] [--rounds 1]
 //                 [--model openai-codex/gpt-6-sol:high] [--concurrency 3] [--resume] [--label L]
@@ -55,6 +61,7 @@ import {
   type OcrFingerprint,
 } from "./ocr.js";
 import { parseReferenceLabels, renderOcrReport, renderReport } from "./report.js";
+import { OPENCODE_HARNESS_DEFAULTS, renderOpencodeReport, runOpencodeReview } from "./opencode.js";
 import { run as runCmd } from "./exec.js";
 import { renderWhatifReport, writeWhatifRun } from "./whatifrun.js";
 import {
@@ -152,11 +159,11 @@ function unprefetchedSummary(c: BenchCase, error: string): CaseSummary {
 /** A command of one arm refuses the other arm's run dir: the quickreviewd
  * `review`/`results` rewrite every variant's result files, which would wipe an
  * OCR run's scored input. */
-function assertArm(outDir: string, arm: "qcr" | "ocr"): void {
+function assertArm(outDir: string, arm: "qcr" | "ocr" | "opencode"): void {
   const found = runArmOf(outDir);
   if (found !== null && found !== arm)
     throw new Error(
-      `${outDir} is ${found === "ocr" ? "an open-code-review" : "a quickreviewd"} run — this command belongs to the ${arm === "ocr" ? "ocr" : "quickreviewd"} arm (bench.sh --arm ${found})`,
+      `${outDir} is ${found === "ocr" ? "an open-code-review" : found === "opencode" ? "an OpenCode" : "a quickreviewd"} run — this command belongs to the ${arm === "qcr" ? "quickreviewd" : arm} arm (bench.sh --arm ${found})`,
     );
 }
 
@@ -635,6 +642,69 @@ async function main(): Promise<number> {
       join(outDir, "report.md"),
       renderOcrReport(set, outDir, selectCases(set, only(f))),
     );
+    log(`report: ${join(outDir, "report.md")}`);
+    return 0;
+  }
+
+  // ---- the OpenCode arm (src/bench/opencode.ts) ----------------------------------
+  if (f.cmd === "opencode-review") {
+    const set = loadSet(f.get("--set"));
+    if (!f.get("--out")) throw new Error("--out <dir> is required");
+    const outDir = resolve(f.get("--out")!);
+    assertArm(outDir, "opencode");
+    const bridgeUrl = f.get("--bridge") ?? "http://127.0.0.1:8766";
+    const opencodeBin = f.get("--opencode-bin") ?? "opencode";
+    const timeoutMin = Number(f.get("--timeout-min") ?? OPENCODE_HARNESS_DEFAULTS.timeoutMin);
+    if (!Number.isInteger(timeoutMin) || timeoutMin < 1)
+      throw new Error("opencode-review: --timeout-min must be a positive integer");
+    // What the model IS comes from the bridge that serves it, never a flag.
+    let health: Record<string, unknown>;
+    try {
+      const res = await fetch(`${bridgeUrl}/health`, { signal: AbortSignal.timeout(10_000) });
+      health = (await res.json()) as Record<string, unknown>;
+    } catch (err) {
+      throw new Error(`opencode-review: the Codex bridge at ${bridgeUrl} is not answering (${String(err)})`, {
+        cause: err,
+      });
+    }
+    const model = typeof health["model"] === "string" ? health["model"] : "";
+    if (!model) throw new Error("opencode-review: the bridge reported no model");
+    const version = await runCmd(opencodeBin, ["--version"], {
+      env: { ...process.env, OPENCODE_DISABLE_AUTOUPDATE: "1" },
+    });
+    return runOpencodeReview({
+      set,
+      cases: selectCases(set, only(f)),
+      outDir,
+      root,
+      store,
+      authSrc: f.get("--auth-src") ?? DEFAULTS.authSrc,
+      agentDir: f.get("--agent-dir") ?? DEFAULTS.agentDir,
+      opencodeBin,
+      opencodeVersion:
+        (version.stdout.trim().split("\n")[0] ?? "").trim() ||
+        process.env.QCR_OPENCODE_VERSION ||
+        "unknown",
+      bridgeUrl,
+      model,
+      effort: typeof health["effort"] === "string" ? health["effort"] : "",
+      verbosity: typeof health["verbosity"] === "string" ? health["verbosity"] : null,
+      mcpPython: f.get("--mcp-python") ?? "/opt/aacr-venv/bin/python",
+      mcpScript: f.get("--mcp-script") ?? "/opt/aacr-bench/evaluation/mcp_codex_finding_server.py",
+      flags: { timeoutMin, variant: f.get("--variant") ?? "medium" },
+      qcrCommit: process.env.QCR_BENCH_COMMIT ?? "unknown",
+      resume: f.has("--resume"),
+      keepTree: f.has("--keep-tree"),
+      readMeta: (c) => readMeta(store, c),
+      log,
+    });
+  }
+
+  if (f.cmd === "opencode-report") {
+    const set = loadSet(f.get("--set"));
+    const outDir = resolve(f.get("--out") ?? "");
+    assertArm(outDir, "opencode");
+    writeFileSync(join(outDir, "report.md"), renderOpencodeReport(set, outDir, selectCases(set, only(f))));
     log(`report: ${join(outDir, "report.md")}`);
     return 0;
   }

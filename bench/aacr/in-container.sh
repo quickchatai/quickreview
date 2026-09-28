@@ -17,6 +17,10 @@
 #   ocr-review <set> [cli flags…] → the loopback Codex bridge + node cli ocr-review
 #   eval / report with BENCH_ARM=ocr score and report that arm: only the `all`
 #   variant (OCR comments carry no severity tag), the OCR report.
+#
+# The OpenCode arm (image target `opencode`):
+#   opencode-review <set> [cli flags…] → the same loopback Codex bridge + node cli opencode-review
+#   eval / report with BENCH_ARM=opencode: only the `all` variant, the OpenCode report.
 set -euo pipefail
 
 ROOT=/opt/quickreview/sandbox
@@ -46,6 +50,7 @@ case "$cmd" in
   report)
     set_name="$1"; shift
     report_cmd=report; [[ "${BENCH_ARM:-qcr}" == ocr ]] && report_cmd=ocr-report
+    [[ "${BENCH_ARM:-qcr}" == opencode ]] && report_cmd=opencode-report
     exec "${CLI[@]}" "$report_cmd" --set "$(set_file "$set_name")" --out /bench-out "$@" ;;
   ocr-review)
     set_name="$1"; shift
@@ -68,6 +73,28 @@ case "$cmd" in
     "${CLI[@]}" ocr-review --set "$(set_file "$set_name")" --store /repos --out /bench-out \
       --bridge http://127.0.0.1:8766 "$@" || status=$?
     exit "$status" ;;
+  # ---- the OpenCode arm ------------------------------------------------------
+  opencode-review)
+    set_name="$1"; shift
+    command -v opencode >/dev/null || { echo "this image has no OpenCode — build it with: bench.sh build --arm opencode" >&2; exit 2; }
+    # The bridge reads the SAME refresh-disabled token copy the review and the
+    # judge use (src/bench/auth.ts); `opencode-review` re-takes it before every case.
+    "${CLI[@]}" auth --need-min 40 || { echo "opencode: no usable pi login (see above)" >&2; exit 1; }
+    python3 /opt/quickreview/bench/codex_bridge.py --port 8766 \
+      --model "${OPENCODE_BRIDGE_MODEL:-gpt-6-sol}" --effort "${OPENCODE_BRIDGE_EFFORT:-medium}" \
+      --log /bench-out/bridge.jsonl >> /bench-out/bridge.log 2>&1 &
+    bridge_pid=$!
+    trap 'kill "$bridge_pid" 2>/dev/null || true' EXIT
+    up=0
+    for _ in $(seq 1 50); do
+      curl -fsS http://127.0.0.1:8766/health >/dev/null 2>&1 && { up=1; break; }
+      sleep 0.2
+    done
+    [[ "$up" == 1 ]] || { echo "codex bridge never answered /health — see bridge.log" >&2; exit 1; }
+    status=0
+    "${CLI[@]}" opencode-review --set "$(set_file "$set_name")" --store /repos --out /bench-out \
+      --bridge http://127.0.0.1:8766 --variant "${OPENCODE_BRIDGE_EFFORT:-medium}" "$@" || status=$?
+    exit "$status" ;;
   results)
     set_name="$1"; shift
     exec "${CLI[@]}" results --set "$(set_file "$set_name")" --out /bench-out "$@" ;;
@@ -80,12 +107,13 @@ case "$cmd" in
     # none) must be the arm bench.sh was asked to score.
     arm="${BENCH_ARM:-qcr}"
     run_arm="$(python3 -c 'import json,sys
-try: print("ocr" if json.load(open(sys.argv[1])).get("reviewer") == "ocr" else "qcr")
+try: r = json.load(open(sys.argv[1])).get("reviewer"); print(r if r in ("ocr", "opencode") else "qcr")
 except Exception: print("qcr")' /bench-out/run.json)"
     [[ "$run_arm" == "$arm" ]] || { echo "this run dir holds the $run_arm arm — score it with bench.sh eval --arm $run_arm" >&2; exit 2; }
     if [[ "$cmd" == eval ]]; then
       variants="all no-nits blockers"; report_cmd=report
       [[ "$arm" == ocr ]] && { variants="all"; report_cmd=ocr-report; }
+      [[ "$arm" == opencode ]] && { variants="all"; report_cmd=opencode-report; }
     else
       variants="posted posted+killed posted+merged all-candidates"; report_cmd=whatif-report
     fi
