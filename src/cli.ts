@@ -30,7 +30,10 @@ import { CommandDrainSender, drainPayload } from "./tui/deploy-drain.js";
 import {
   locateConfig,
   migrateConfig,
+  migrateProfiles,
   migrateReport,
+  profileMigrateReport,
+  profileSearchDirs,
   stateHome,
   type InstallEnv,
 } from "./install.js";
@@ -612,9 +615,10 @@ async function cmdDrain(rest: string[]): Promise<number> {
 /**
  * `qcr install <where|migrate>`. `where` prints what the install
  * locator resolves; `migrate` moves the checkout's legacy config.toml into the
- * install's config home — idempotent, and it never overwrites a differing
- * config. Deliberately NOT loadConfig(): a config that does not parse must
- * still be movable.
+ * install's config home, and every install profile out of the
+ * checkout's `profiles/` — idempotent, and it never overwrites a differing
+ * config or profile. Deliberately NOT loadConfig(): a config that does not
+ * parse must still be movable.
  */
 export function cmdInstall(
   rest: string[],
@@ -629,14 +633,19 @@ export function cmdInstall(
       log(`config      ${located.path}  (${located.source})`);
       log(`config home ${located.home}`);
       log(`state home  ${stateHome(env)}`);
+      log(`profiles    ${profileSearchDirs({ root, env }).join(" → ")}`);
       if (located.source === "checkout")
         log("the checkout config is the legacy fallback — `qcr install migrate` moves it");
       return 0;
     }
     case "migrate": {
-      const report = migrateReport(migrateConfig({ root, env }));
-      for (const line of report.lines) log(line);
-      return report.code;
+      // The config, then every install profile still in the checkout
+      // — independent moves, so a config conflict never holds a
+      // profile back, and the exit code fails if either half refused.
+      const config = migrateReport(migrateConfig({ root, env }));
+      const profiles = profileMigrateReport(migrateProfiles({ root, env }));
+      for (const line of [...config.lines, ...profiles.lines]) log(line);
+      return Math.max(config.code, profiles.code);
     }
     default:
       throw new Error("usage: qcr install <where|migrate>");

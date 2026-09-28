@@ -21,9 +21,28 @@
 // the path IT resolved as `QCR_CONFIG` (sessions.ts), so the posting scripts
 // read exactly the daemon's config rather than re-deriving one.
 //
+// Repo profiles live in the config home too: `<home>/profiles/<name>/`
+// first, then — when `$QCR_CONFIG` names a file — `profiles/` beside that file
+// (what makes the compose route work: it mounts the located config's directory,
+// profiles and all, and names the config inside the mount), then the checkout's
+// `profiles/`, which keeps the generic EXAMPLES (`EXAMPLE_PROFILES`) and, until
+// contracts it, the legacy home of every other profile — read, and
+// said so once, like the legacy config.
+//
 // Pure where it can be: `locateConfig` takes the env and an `exists` probe, so
 // the tests drive it with temp XDG homes and never touch the operator's own.
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync } from "node:fs";
+import {
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
@@ -238,4 +257,219 @@ export function migrateReport(outcome: MigrateOutcome): { code: number; lines: s
         ],
       };
   }
+}
+
+// ---- repo profiles -------------------------------------------------
+
+/** The directory, in every home, that holds one subdirectory per profile. */
+export const PROFILES_DIR = "profiles";
+
+/**
+ * The checkout's GENERIC example profiles — the ones that belong to the app,
+ * not to any install. Every other directory under the checkout's `profiles/`
+ * is an install's own profile still sitting in its legacy place: the lookup
+ * reads it (announced), and `qcr install migrate` moves it into the config
+ * home. A new example is registered here (a test holds the checkout to it).
+ */
+export const EXAMPLE_PROFILES: readonly string[] = ["example-django", "minimal"];
+
+/**
+ * Where a profile is looked up, in order, deduplicated:
+ *   1. the install's config home — `<home>/profiles/`
+ *   2. `profiles/` beside `$QCR_CONFIG`, when it is set (the compose route's
+ *      mounted config home; the bench image's baked checkout)
+ *   3. the checkout's `profiles/` — the generic examples, and the legacy place
+ */
+export function profileSearchDirs(opts: { root: string; env?: InstallEnv }): string[] {
+  const env = opts.env ?? process.env;
+  const dirs = [join(configHome(env), PROFILES_DIR)];
+  const override = (env.QCR_CONFIG ?? "").trim();
+  if (override !== "") dirs.push(join(dirname(resolve(override)), PROFILES_DIR));
+  dirs.push(join(opts.root, PROFILES_DIR));
+  return [...new Set(dirs)];
+}
+
+/** Which of `profileSearchDirs` a profile was found in. */
+export type ProfileSource = "home" | "override" | "checkout";
+
+export interface LocatedProfile {
+  name: string;
+  dir: string;
+  source: ProfileSource;
+}
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Find the named profile: the first search dir that holds it as a directory,
+ * or `null` when none does (each loader words its own not-found). The name is
+ * a plain path segment or a throw — `../x`, `a/b` and kin never reach a join.
+ */
+export function locateProfile(opts: {
+  root: string;
+  profile: string;
+  env?: InstallEnv;
+  isDir?: (path: string) => boolean;
+}): LocatedProfile | null {
+  const name = assertPathSegment("profile", opts.profile);
+  const env = opts.env ?? process.env;
+  const isDir = opts.isDir ?? isDirectory;
+  const homeDir = join(configHome(env), PROFILES_DIR);
+  const checkoutDir = join(opts.root, PROFILES_DIR);
+  for (const base of profileSearchDirs({ root: opts.root, env })) {
+    const dir = join(base, name);
+    if (!isDir(dir)) continue;
+    const source: ProfileSource =
+      base === homeDir ? "home" : base === checkoutDir ? "checkout" : "override";
+    return { name, dir, source };
+  }
+  return null;
+}
+
+/** An install's own profile read from the checkout: the expand step's
+ * fallback. The generic examples live there by design and are not this. */
+export function isLegacyCheckoutProfile(located: LocatedProfile): boolean {
+  return located.source === "checkout" && !EXAMPLE_PROFILES.includes(located.name);
+}
+
+const announcedProfiles = new Set<string>();
+
+/**
+ * `locateProfile` for a real process: the same answer, plus a legacy
+ * checkout profile LOGGED — once per path per process, never silently.
+ */
+export function resolveProfile(opts: {
+  root: string;
+  profile: string;
+  env?: InstallEnv;
+  log?: (line: string) => void;
+}): LocatedProfile | null {
+  const located = locateProfile(opts);
+  if (located && isLegacyCheckoutProfile(located) && !announcedProfiles.has(located.dir)) {
+    announcedProfiles.add(located.dir);
+    const home = join(configHome(opts.env ?? process.env), PROFILES_DIR);
+    (opts.log ?? ((line: string) => console.error(line)))(
+      `qcr: reading the LEGACY checkout profile ${located.dir} — an install's profile belongs in ` +
+        `${home}; move it there with \`qcr install migrate\``,
+    );
+  }
+  return located;
+}
+
+// ---- qcr install migrate: profiles -------------------------------------------
+
+export type ProfileMigrateOutcome =
+  | { kind: "moved"; name: string; from: string; to: string }
+  | { kind: "deduplicated"; name: string; from: string; to: string }
+  | { kind: "conflict"; name: string; from: string; to: string };
+
+/** Relative path → bytes, for every file under `dir` (sorted). */
+function treeFiles(dir: string): Map<string, Buffer> {
+  const out = new Map<string, Buffer>();
+  const walk = (rel: string): void => {
+    for (const entry of readdirSync(join(dir, rel), { withFileTypes: true })) {
+      const path = rel === "" ? entry.name : join(rel, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else out.set(path, readFileSync(join(dir, path)));
+    }
+  };
+  walk("");
+  return out;
+}
+
+function sameTree(a: string, b: string): boolean {
+  const left = treeFiles(a);
+  const right = treeFiles(b);
+  if (left.size !== right.size) return false;
+  for (const [path, bytes] of left) {
+    const other = right.get(path);
+    if (other === undefined || !bytes.equals(other)) return false;
+  }
+  return true;
+}
+
+/**
+ * Move every install profile out of the checkout's `profiles/` into the
+ * config home's — every directory there except the generic `EXAMPLE_PROFILES`.
+ * Same discipline as the config move: idempotent (a second run finds nothing
+ * left to move), an identical copy already in the home just drops the
+ * checkout's, and a DIFFERING one is a conflict that touches nothing. The
+ * destination is the config home even when `$QCR_CONFIG` is set: unlike the
+ * config file, a profile's home is never ambiguous.
+ */
+export function migrateProfiles(opts: { root: string; env?: InstallEnv }): ProfileMigrateOutcome[] {
+  const env = opts.env ?? process.env;
+  const fromBase = join(opts.root, PROFILES_DIR);
+  const toBase = join(configHome(env), PROFILES_DIR);
+  if (!isDirectory(fromBase)) return [];
+  const outcomes: ProfileMigrateOutcome[] = [];
+  const names = readdirSync(fromBase, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && !EXAMPLE_PROFILES.includes(e.name))
+    .map((e) => e.name)
+    .sort();
+  for (const name of names) {
+    const from = join(fromBase, name);
+    const to = join(toBase, name);
+    if (existsSync(to)) {
+      if (!isDirectory(to) || !sameTree(from, to)) {
+        outcomes.push({ kind: "conflict", name, from, to });
+        continue;
+      }
+      rmSync(from, { recursive: true });
+      outcomes.push({ kind: "deduplicated", name, from, to });
+      continue;
+    }
+    mkdirSync(toBase, { recursive: true, mode: 0o700 });
+    try {
+      renameSync(from, to);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
+      cpSync(from, to, { recursive: true });
+      rmSync(from, { recursive: true });
+    }
+    outcomes.push({ kind: "moved", name, from, to });
+  }
+  return outcomes;
+}
+
+/** What the profile half of `qcr install migrate` prints; a conflict fails. */
+export function profileMigrateReport(outcomes: ProfileMigrateOutcome[]): {
+  code: number;
+  lines: string[];
+} {
+  if (outcomes.length === 0) {
+    return { code: 0, lines: ["profiles: none in the checkout beyond the generic examples"] };
+  }
+  const lines: string[] = [];
+  let code = 0;
+  for (const o of outcomes) {
+    switch (o.kind) {
+      case "moved":
+        lines.push(`moved profile ${o.name}: ${o.from} → ${o.to}`);
+        break;
+      case "deduplicated":
+        lines.push(`profile ${o.name}: ${o.to} already held the same files — removed ${o.from}`);
+        break;
+      case "conflict":
+        code = 1;
+        lines.push(
+          `refused profile ${o.name}: ${o.from} and ${o.to} both exist and differ — nothing was touched. ` +
+            `Keep the one you want at ${o.to}, delete the checkout copy, and re-run.`,
+        );
+        break;
+    }
+  }
+  if (outcomes.some((o) => o.kind !== "conflict")) {
+    lines.push(
+      "A moved profile tracked in git shows as a deletion. A machine that deploys with scripts/deploy.sh sync|rebuild " +
+        "must keep the profile its config names in the checkout until ships the config home — that route refuses otherwise.",
+    );
+  }
+  return { code, lines };
 }

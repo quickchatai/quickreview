@@ -357,7 +357,9 @@ export interface ReviewConfig {
    */
   escalation_mention_default: string;
   /**
-   * Repo profile: names a directory under `profiles/` whose
+   * Repo profile: names a directory under `profiles/` — the
+   * install's config home first, then the checkout's generic examples
+   * (`src/install.ts locateProfile`; a non-plain name is refused) — whose
    * house-rule addenda pack (`profiles/<name>/addenda/*.md`) is composed onto
    * the built pass bodies AFTER the built-in generic registry and BEFORE the
    * dynamic same-day feedback addendum — and whose optional
@@ -1729,13 +1731,9 @@ export function parseConfig(toml: string): Config {
   const running =
     cfg.daemon.session_command_running_max_min ?? DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN;
   const finalize = cfg.daemon.round_finalize_grace_min ?? DEFAULT_ROUND_FINALIZE_GRACE_MIN;
-  if (!(
-    firstPass > 0 &&
-    firstPass < passes &&
-    passes < running &&
-    finalize > 0 &&
-    finalize < running
-  )) {
+  if (
+    !(firstPass > 0 && firstPass < passes && passes < running && finalize > 0 && finalize < running)
+  ) {
     throw new Error(
       "config.toml: require 0 < round_first_pass_max_min < round_passes_max_min < session_command_running_max_min and 0 < round_finalize_grace_min < session_command_running_max_min",
     );

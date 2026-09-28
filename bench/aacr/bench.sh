@@ -310,6 +310,20 @@ case "$cmd" in
     live_config="$(qcr_locate_config "$REPO")" || exit 1
     [[ -f "$live_config" ]] || die "no config.toml at $live_config — the bench reviews with the production config"
     cp "$live_config" "$ctx/config.toml"
+    # …and so are the profiles: the checkout's came in with the tar
+    # above; a profile in a higher-priority place (the config home, or beside
+    # $QCR_CONFIG) REPLACES the checkout's of the same name — whole, never
+    # merged — so the image's profiles/ holds exactly what the locator reads.
+    mkdir -p "$ctx/profiles"
+    while IFS= read -r pdir; do
+      [[ "$pdir" == "$REPO/profiles" || ! -d "$pdir" ]] && continue
+      for p in "$pdir"/*/; do
+        [[ -d "$p" ]] || continue
+        p="${p%/}"
+        rm -rf "${ctx:?}/profiles/${p##*/}"
+        cp -R "$p" "$ctx/profiles/${p##*/}"
+      done
+    done < <(qcr_profile_dirs "$REPO" | tac)
     docker build --target "$TARGET" -t "$IMAGE" ${BASE_ARGS[@]+"${BASE_ARGS[@]}"} \
       --build-arg "QCR_BENCH_COMMIT=$commit" -f "$ctx/bench/aacr/Dockerfile" "$ctx"
     ;;

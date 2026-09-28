@@ -20,17 +20,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PASS_ADDENDA, buildAgents } from "../src/include.js";
 import type { PassAddendum } from "../src/include.js";
+import { configHome, type InstallEnv } from "../src/install.js";
 import {
   loadProfileAddenda,
+  loadProfileEcosystem,
   loadProfileHeuristics,
   parseProfileAddendum,
   parseProfileHeuristics,
-  profileDir,
   reservedAddendumIds,
 } from "../src/profiles.js";
 import { PROFILE_EXTENDABLE_LENSES } from "../src/heuristics.js";
 
 const sandbox = join(import.meta.dirname, "..");
+/** A profile in a checkout's `profiles/` — the lookup's last place;
+ * the config-home half is exercised in "the two locations" below. */
+const profileDir = (root: string, profile: string): string => join(root, "profiles", profile);
 // The quickchat pack is excluded from the assembled public snapshot
 // (publish-manifest.json); the pins for that exact pack self-skip without it.
 const HAS_QC = existsSync(join(sandbox, "profiles", "quickchat"));
@@ -388,6 +392,118 @@ describe("loadProfileHeuristics", () => {
       for (const lens of [...Object.keys(ext.paths), ...Object.keys(ext.addedLines)]) {
         expect(PROFILE_EXTENDABLE_LENSES, `${profile}: ${lens}`).toContain(lens);
       }
+    }
+  });
+});
+
+// ---- the two locations --------------------------------------------
+//
+// A profile is looked up in the install's config home first, then in the
+// checkout's `profiles/` (the generic examples, and the legacy place of an
+// install's own profile until `qcr install migrate` moves it). Every loader
+// resolves through the install locator, so these cases hold for all three —
+// and, through `buildAgents`, for what the built passes actually say.
+describe("profiles load from the config home, then the checkout", () => {
+  let dir: string;
+  let root: string;
+  let env: InstallEnv;
+  const lines: string[] = [];
+  const lookup = () => ({ env, log: (l: string) => lines.push(l) });
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "qcr-profiles-home-"));
+    root = join(dir, "checkout");
+    env = { HOME: join(dir, "home"), XDG_CONFIG_HOME: join(dir, "xdg-config") };
+    lines.length = 0;
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  /** Write a whole profile under `base/profiles/<name>/`. */
+  function writeProfile(base: string, name: string, marker: string): void {
+    const p = join(base, "profiles", name);
+    mkdirSync(join(p, "addenda"), { recursive: true });
+    writeFileSync(
+      join(p, "addenda", "10-rule.md"),
+      `---\nid: house-rule\nscope: pass-baseline\n---\n## ${marker}\n`,
+    );
+    writeFileSync(join(p, "heuristics.toml"), `[pass-security]\npaths = ['${marker}']\n`);
+    writeFileSync(join(p, "profile.toml"), marker === "HOME" ? 'ecosystem = "django"\n' : "");
+  }
+
+  it("a profile only in the config home loads from there, every loader alike", () => {
+    writeProfile(configHome(env), "house", "HOME");
+    expect(loadProfileAddenda(root, "house", lookup()).map((a) => a.text)).toEqual(["\n## HOME\n"]);
+    expect(loadProfileHeuristics(root, "house", lookup()).paths["pass-security"]?.[0]?.source).toBe(
+      "HOME",
+    );
+    expect(loadProfileEcosystem(root, "house", lookup())).toBe("django");
+    expect(lines).toEqual([]); // the home is where it belongs — nothing to announce
+  });
+
+  it("the config home wins over a checkout profile of the same name", () => {
+    writeProfile(root, "house", "CHECKOUT");
+    writeProfile(configHome(env), "house", "HOME");
+    expect(loadProfileAddenda(root, "house", lookup())[0]?.text).toBe("\n## HOME\n");
+    expect(loadProfileEcosystem(root, "house", lookup())).toBe("django");
+  });
+
+  it("the checkout still serves the old path — announced once — and the generic examples silently", () => {
+    writeProfile(root, "house", "CHECKOUT");
+    expect(loadProfileAddenda(root, "house", lookup())[0]?.text).toBe("\n## CHECKOUT\n");
+    loadProfileHeuristics(root, "house", lookup());
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/LEGACY checkout profile/);
+    expect(lines[0]).toContain("qcr install migrate");
+    expect(lines[0]).toContain(join(configHome(env), "profiles"));
+    // The shipped examples live in the checkout by design.
+    lines.length = 0;
+    expect(loadProfileAddenda(sandbox, "minimal", lookup())).toEqual([]);
+    expect(loadProfileEcosystem(sandbox, "example-django", lookup())).toBe("django");
+    expect(lines).toEqual([]);
+  });
+
+  it("not found anywhere names every place it looked", () => {
+    for (const load of [loadProfileAddenda, loadProfileHeuristics]) {
+      let message = "";
+      try {
+        load(root, "nowhere", lookup());
+      } catch (err) {
+        message = String(err);
+      }
+      expect(message).toMatch(/profile "nowhere" not found/);
+      expect(message).toContain(join(configHome(env), "profiles"));
+      expect(message).toContain(join(root, "profiles"));
+    }
+    expect(loadProfileEcosystem(root, "nowhere", lookup())).toBe("none");
+  });
+
+  it("a profile name that could escape profiles/ is refused by every loader, before any read", () => {
+    writeProfile(dir, "escape", "ESCAPE"); // <dir>/profiles/escape — reachable only by '..'
+    for (const bad of ["../escape", "../../profiles/escape", "a/b", "..", ".hidden", "/abs"]) {
+      expect(() => loadProfileAddenda(root, bad, lookup()), bad).toThrow(/not a plain name/);
+      expect(() => loadProfileHeuristics(root, bad, lookup()), bad).toThrow(/not a plain name/);
+      expect(() => loadProfileEcosystem(root, bad, lookup()), bad).toThrow(/not a plain name/);
+    }
+  });
+
+  it("the built passes carry the config home's addenda, not the checkout's", () => {
+    writeProfile(root, "house", "CHECKOUT");
+    writeProfile(configHome(env), "house", "HOME");
+    const out = mkdtempSync(join(tmpdir(), "qcr-profiles-build-"));
+    try {
+      const built = buildAgents(join(sandbox, "agents"), out, {
+        root: sandbox,
+        addenda: [...PASS_ADDENDA, ...loadProfileAddenda(root, "house", lookup())],
+      });
+      const baseline = built.filter((b) => b.name.startsWith("pass-baseline"));
+      expect(baseline.length).toBeGreaterThan(0);
+      for (const b of baseline) {
+        const text = readFileSync(b.output, "utf8");
+        expect(text, b.name).toContain("## HOME");
+        expect(text, b.name).not.toContain("## CHECKOUT");
+      }
+    } finally {
+      rmSync(out, { recursive: true, force: true });
     }
   });
 });

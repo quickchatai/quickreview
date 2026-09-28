@@ -251,6 +251,14 @@ first_inventory_host() {
 if [[ "$MODE" != "verify" && "$CONFIG" != "$SANDBOX_DIR/config.toml" ]]; then
   die "the live config is $CONFIG, outside the checkout — this deploy ships only $SANDBOX_DIR/config.toml (and --delete would remove the VM's copy). Shipping the config home is; until then a deploying machine keeps its config in the checkout: unset QCR_CONFIG, or move the file back (mv \"$CONFIG\" \"$SANDBOX_DIR/config.toml\") — and do not run \`qcr install migrate\` there yet"
 fi
+# the same holds for the repo profile the config names — the VM's
+# daemon finds it only in the rsynced checkout, and a missing profile fails
+# its boot. A profile moved into the config home by `qcr install migrate`
+# waits for like the config does.
+DEPLOY_PROFILE="$(config_table_key review profile)"
+if [[ "$MODE" != "verify" && -n "$DEPLOY_PROFILE" && ! -d "$SANDBOX_DIR/profiles/$DEPLOY_PROFILE" ]]; then
+  die "config.toml [review] profile = \"$DEPLOY_PROFILE\", but $SANDBOX_DIR/profiles/$DEPLOY_PROFILE does not exist — this deploy ships only the checkout's profiles/, and the VM's daemon refuses to boot without its profile. Shipping the config home is; until then a deploying machine keeps its profile in the checkout (mv it back from the config home's profiles/)"
+fi
 [[ -d "$ANSIBLE_DIR" ]] || die "no ansible dir at $ANSIBLE_DIR (set QC_ANSIBLE_DIR)"
 [[ -f "$GROUP_VARS" ]] || die "no group_vars at $GROUP_VARS"
 [[ -f "$PLAYBOOK" ]] || die "no playbook at $PLAYBOOK"

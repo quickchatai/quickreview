@@ -9,7 +9,13 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { configHome, locateConfig, stateHome, type InstallEnv } from "../src/install.js";
+import {
+  configHome,
+  locateConfig,
+  profileSearchDirs,
+  stateHome,
+  type InstallEnv,
+} from "../src/install.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const locatorSh = join(repo, "scripts", "install-locator.sh");
@@ -142,6 +148,43 @@ describe("install-locator.sh ≡ src/install.ts", () => {
     expect(sh.lines[0]).toBe(join(root, "config.toml"));
     expect(sh.stderr).toBe("");
   });
+});
+
+describe("qcr_profile_dirs ≡ profileSearchDirs", () => {
+  // bench.sh bakes the profiles the locator would read into the bench image
+  // from this list, so it must name the same places in the same order.
+  function shellDirs(env: InstallEnv): { code: number; lines: string[]; stderr: string } {
+    const r = spawnSync("bash", ["-c", '. "$1"; qcr_profile_dirs "$2"', "l", locatorSh, root], {
+      encoding: "utf8",
+      cwd: dir,
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...env } as NodeJS.ProcessEnv,
+    });
+    return { code: r.status ?? -1, lines: r.stdout.trim().split("\n"), stderr: r.stderr };
+  }
+  const base = (): InstallEnv => ({
+    HOME: join(dir, "home"),
+    XDG_CONFIG_HOME: join(dir, "xdg-config"),
+  });
+  const cases: Array<[string, () => InstallEnv]> = [
+    ["no override → the home, then the checkout", base],
+    [
+      "QCR_CONFIG elsewhere → beside it, between",
+      () => ({ ...base(), QCR_CONFIG: join(dir, "m", "c.toml") }),
+    ],
+    [
+      "QCR_CONFIG in the checkout → deduplicated",
+      () => ({ ...base(), QCR_CONFIG: join(root, "config.toml") }),
+    ],
+    ["a named install, XDG unset", () => ({ HOME: join(dir, "home"), QCR_INSTALL: "second" })],
+  ];
+  for (const [name, arrange] of cases) {
+    it(name, () => {
+      const env = arrange();
+      const sh = shellDirs(env);
+      expect(sh.code, sh.stderr).toBe(0);
+      expect(sh.lines).toEqual(profileSearchDirs({ root, env }));
+    });
+  }
 });
 
 describe("every script that reads the live config reads it through the locator", () => {

@@ -1,6 +1,6 @@
 // Repo-profile addenda packs.
 //
-// A profile is a directory under `profiles/<name>/` whose `addenda/*.md` files
+// A profile is a directory `profiles/<name>/` whose `addenda/*.md` files
 // carry house-rule pass addenda — the same `PassAddendum` shape the compiled-in
 // registry (`PASS_ADDENDA`, src/include.ts) declares, authored as files so an
 // operator can match the reviewer's house-rule knowledge to their repo without
@@ -35,6 +35,11 @@
 // parse — missing frontmatter, unknown keys, a bad scope, an empty body, a
 // duplicate or reserved id — throws with the offending path. A malformed pack
 // is a LOUD build failure, never a silent skip.
+//
+// WHERE a profile lives is the install locator's call (,
+// `src/install.ts locateProfile`): the install's config home first, then the
+// checkout's generic examples — every loader below resolves the name through
+// it, so a name that could escape `profiles/` is refused before any read.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseToml } from "smol-toml";
@@ -43,10 +48,22 @@ import { EMPTY_HEURISTICS, PROFILE_EXTENDABLE_LENSES } from "./heuristics.js";
 import type { HeuristicsExtension } from "./heuristics.js";
 import { PASS_ADDENDA, splitFrontmatter } from "./include.js";
 import type { PassAddendum, PassAddendumScope } from "./include.js";
+import { profileSearchDirs, resolveProfile, type InstallEnv } from "./install.js";
 
-/** Where a named profile lives, relative to the sandbox root. */
-export function profileDir(root: string, profile: string): string {
-  return join(root, "profiles", profile);
+/** How a loader finds the profile: the environment the install locator reads
+ * (default `process.env`) and where a legacy checkout profile is announced. */
+export interface ProfileLookup {
+  env?: InstallEnv;
+  log?: (line: string) => void;
+}
+
+/** The named profile's directory, wherever the locator finds it — or a loud
+ * not-found naming every place it looked. */
+function profileDirOrThrow(root: string, profile: string, lookup: ProfileLookup): string {
+  const located = resolveProfile({ root, profile, ...lookup });
+  if (located) return located.dir;
+  const looked = profileSearchDirs({ root, ...(lookup.env ? { env: lookup.env } : {}) });
+  throw new Error(`[review] profile "${profile}" not found — looked in ${looked.join(", ")}`);
 }
 
 const ID_RE = /^[a-z0-9][a-z0-9-]*$/;
@@ -129,10 +146,13 @@ function mustBeDir(path: string, what: string): void {
  * a throw; the caller (wire.ts, at daemon assembly) is expected to let it
  * crash the boot rather than review with a partial pack.
  */
-export function loadProfileAddenda(root: string, profile: string): PassAddendum[] {
+export function loadProfileAddenda(
+  root: string,
+  profile: string,
+  lookup: ProfileLookup = {},
+): PassAddendum[] {
   if (profile === "") return [];
-  const dir = profileDir(root, profile);
-  mustBeDir(dir, `[review] profile "${profile}" not found`);
+  const dir = profileDirOrThrow(root, profile, lookup);
   const addendaDir = join(dir, "addenda");
   mustBeDir(addendaDir, `[review] profile "${profile}" has no addenda/ directory`);
   const files = readdirSync(addendaDir)
@@ -161,7 +181,8 @@ export function loadProfileAddenda(root: string, profile: string): PassAddendum[
  * The profile's ecosystem selection: `profiles/<name>/profile.toml`,
  * key `ecosystem = "django" | "none"`.
  *
- * No profile (`""`), no `profile.toml`, or no `ecosystem` key all mean
+ * No profile (`""`), a profile found nowhere, no `profile.toml`, or no
+ * `ecosystem` key all mean
  * `"none"` — a generic install gets NO framework-specific machinery (no
  * pre-check, no tier-forcing migration gate, no migration-gate prompt prose)
  * unless its profile asks for it. An unreadable file or an unknown value
@@ -174,9 +195,15 @@ export function loadProfileAddenda(root: string, profile: string): PassAddendum[
  * other keys in it (each reads only its own; unknown keys are not an error
  * here), while `addenda/` stays the addenda loader's alone.
  */
-export function loadProfileEcosystem(root: string, profile: string): EcosystemName {
+export function loadProfileEcosystem(
+  root: string,
+  profile: string,
+  lookup: ProfileLookup = {},
+): EcosystemName {
   if (profile === "") return "none";
-  const path = join(profileDir(root, profile), "profile.toml");
+  const located = resolveProfile({ root, profile, ...lookup });
+  if (!located) return "none";
+  const path = join(located.dir, "profile.toml");
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
@@ -311,10 +338,13 @@ export function parseProfileHeuristics(file: string, raw: string): HeuristicsExt
  * is wrong throws; the caller (wire.ts, at daemon assembly) lets it crash the
  * boot rather than review with partial selection knowledge.
  */
-export function loadProfileHeuristics(root: string, profile: string): HeuristicsExtension {
+export function loadProfileHeuristics(
+  root: string,
+  profile: string,
+  lookup: ProfileLookup = {},
+): HeuristicsExtension {
   if (profile === "") return EMPTY_HEURISTICS;
-  const dir = profileDir(root, profile);
-  mustBeDir(dir, `[review] profile "${profile}" not found`);
+  const dir = profileDirOrThrow(root, profile, lookup);
   const file = join(dir, "heuristics.toml");
   if (!existsSync(file)) return EMPTY_HEURISTICS;
   return parseProfileHeuristics(file, readFileSync(file, "utf8"));

@@ -17,10 +17,16 @@ import { fileURLToPath } from "node:url";
 import {
   assertPathSegment,
   configHome,
+  EXAMPLE_PROFILES,
   installName,
   locateConfig,
+  locateProfile,
   migrateConfig,
+  migrateProfiles,
+  profileMigrateReport,
+  profileSearchDirs,
   resolveConfigPath,
+  resolveProfile,
   stateHome,
   type InstallEnv,
 } from "../src/install.js";
@@ -250,6 +256,216 @@ describe("no TypeScript reader builds the checkout config path itself", () => {
         });
       }
     }
+    expect(offenders).toEqual([]);
+  });
+});
+
+// ---- repo profiles --------------------------------------------------
+
+/** A profile directory with one file, whose bytes tell the copies apart. */
+const putProfile = (base: string, name: string, body = "x\n"): string => {
+  const p = join(base, "profiles", name);
+  put(join(p, "addenda", "10-rule.md"), body);
+  return p;
+};
+
+describe("locateProfile", () => {
+  it("the config home first, then profiles/ beside QCR_CONFIG, then the checkout", () => {
+    const inCheckout = putProfile(root, "house");
+    expect(locateProfile({ root, profile: "house", env })).toEqual({
+      name: "house",
+      dir: inCheckout,
+      source: "checkout",
+    });
+    const beside = join(dir, "mounted");
+    const inOverride = putProfile(beside, "house");
+    const withOverride = { ...env, QCR_CONFIG: join(beside, "config.toml") };
+    expect(locateProfile({ root, profile: "house", env: withOverride })).toMatchObject({
+      dir: inOverride,
+      source: "override",
+    });
+    const inHome = putProfile(configHome(env), "house");
+    for (const e of [env, withOverride]) {
+      expect(locateProfile({ root, profile: "house", env: e })).toMatchObject({
+        dir: inHome,
+        source: "home",
+      });
+    }
+    expect(locateProfile({ root, profile: "elsewhere", env })).toBeNull();
+  });
+
+  it("QCR_CONFIG naming the checkout's own config adds no extra place", () => {
+    expect(
+      profileSearchDirs({ root, env: { ...env, QCR_CONFIG: join(root, "config.toml") } }),
+    ).toEqual([join(configHome(env), "profiles"), join(root, "profiles")]);
+  });
+
+  it("a FILE named like the profile does not shadow a directory further down", () => {
+    put(join(configHome(env), "profiles", "house"));
+    const inCheckout = putProfile(root, "house");
+    expect(locateProfile({ root, profile: "house", env })?.dir).toBe(inCheckout);
+  });
+
+  it("refuses a profile name that could escape profiles/", () => {
+    putProfile(dir, "escape");
+    for (const bad of ["..", "../escape", "a/b", ".hidden", "/etc", "x/../../escape"]) {
+      expect(() => locateProfile({ root, profile: bad, env }), bad).toThrow(
+        /profile .* not a plain name/,
+      );
+    }
+  });
+
+  it("announces a legacy checkout profile once, never an example or a home profile", () => {
+    const out: string[] = [];
+    const log = (l: string) => out.push(l);
+    putProfile(root, "house");
+    putProfile(root, "minimal");
+    resolveProfile({ root, profile: "house", env, log });
+    resolveProfile({ root, profile: "house", env, log });
+    resolveProfile({ root, profile: "minimal", env, log });
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatch(/LEGACY checkout profile .*house/);
+    putProfile(configHome(env), "homed");
+    resolveProfile({ root, profile: "homed", env, log });
+    expect(out).toHaveLength(1);
+  });
+});
+
+describe("migrateProfiles", () => {
+  it("moves every non-example checkout profile into the home, idempotently; the examples stay", () => {
+    putProfile(root, "house-pack", "qc\n");
+    putProfile(root, "minimal");
+    putProfile(root, "example-django");
+    const first = migrateProfiles({ root, env });
+    const to = join(configHome(env), "profiles", "house-pack");
+    expect(first).toEqual([
+      { kind: "moved", name: "house-pack", from: join(root, "profiles", "house-pack"), to },
+    ]);
+    expect(existsSync(join(root, "profiles", "house-pack"))).toBe(false);
+    expect(readFileSync(join(to, "addenda", "10-rule.md"), "utf8")).toBe("qc\n");
+    for (const example of EXAMPLE_PROFILES) {
+      expect(existsSync(join(root, "profiles", example)), example).toBe(true);
+    }
+    expect(locateProfile({ root, profile: "house-pack", env })).toMatchObject({ source: "home" });
+    expect(migrateProfiles({ root, env })).toEqual([]);
+  });
+
+  it("an identical home copy drops the checkout's; a differing one touches neither", () => {
+    putProfile(root, "house", "same\n");
+    putProfile(configHome(env), "house", "same\n");
+    expect(migrateProfiles({ root, env }).map((o) => o.kind)).toEqual(["deduplicated"]);
+    expect(existsSync(join(root, "profiles", "house"))).toBe(false);
+
+    putProfile(root, "house", "different\n");
+    expect(migrateProfiles({ root, env }).map((o) => o.kind)).toEqual(["conflict"]);
+    expect(readFileSync(join(root, "profiles", "house", "addenda", "10-rule.md"), "utf8")).toBe(
+      "different\n",
+    );
+    expect(
+      readFileSync(join(configHome(env), "profiles", "house", "addenda", "10-rule.md"), "utf8"),
+    ).toBe("same\n");
+    // an extra file on one side is a difference too
+    put(join(configHome(env), "profiles", "house", "README.md"));
+    rmSync(join(root, "profiles", "house"), { recursive: true });
+    putProfile(root, "house", "same\n");
+    expect(migrateProfiles({ root, env }).map((o) => o.kind)).toEqual(["conflict"]);
+  });
+
+  it("goes to the config home even while QCR_CONFIG names the config", () => {
+    putProfile(root, "house");
+    const [o] = migrateProfiles({ root, env: { ...env, QCR_CONFIG: join(dir, "x.toml") } });
+    expect(o).toMatchObject({ kind: "moved", to: join(configHome(env), "profiles", "house") });
+  });
+
+  it("reports each outcome; only a conflict fails", () => {
+    expect(profileMigrateReport([]).code).toBe(0);
+    const moved = profileMigrateReport([{ kind: "moved", name: "q", from: "/a", to: "/b" }]);
+    expect(moved.code).toBe(0);
+    expect(moved.lines.join("\n")).toMatch(/deploy\.sh[\s\S]*/);
+    expect(profileMigrateReport([{ kind: "conflict", name: "q", from: "/a", to: "/b" }]).code).toBe(
+      1,
+    );
+  });
+});
+
+describe("qcr install migrate — profiles", () => {
+  it("moves the config and the install's own profile together, and a re-run is a no-op", async () => {
+    const { cmdInstall } = await import("../src/cli.js");
+    put(join(root, "config.toml"), "x = 1\n");
+    putProfile(root, "house-pack", "qc\n");
+    putProfile(root, "minimal");
+    const out: string[] = [];
+    const log = (l: string) => out.push(l);
+    // before the move the old path is still what the lookup reads
+    expect(locateProfile({ root, profile: "house-pack", env })?.source).toBe("checkout");
+    expect(cmdInstall(["migrate"], { root, env, log })).toBe(0);
+    expect(existsSync(join(configHome(env), "config.toml"))).toBe(true);
+    expect(locateProfile({ root, profile: "house-pack", env })?.source).toBe("home");
+    expect(existsSync(join(root, "profiles", "minimal"))).toBe(true);
+    expect(out.join("\n")).toMatch(/moved profile house-pack/);
+    out.length = 0;
+    expect(cmdInstall(["migrate"], { root, env, log })).toBe(0);
+    expect(out.join("\n")).toMatch(/none in the checkout beyond the generic examples/);
+  });
+
+  it("a profile conflict fails the command even when the config moved", async () => {
+    const { cmdInstall } = await import("../src/cli.js");
+    put(join(root, "config.toml"));
+    putProfile(root, "house", "a\n");
+    putProfile(configHome(env), "house", "b\n");
+    expect(cmdInstall(["migrate"], { root, env, log: () => {} })).toBe(1);
+    expect(existsSync(join(configHome(env), "config.toml"))).toBe(true);
+  });
+
+  it("where names the profile search order", async () => {
+    const { cmdInstall } = await import("../src/cli.js");
+    const out: string[] = [];
+    cmdInstall(["where"], { root, env, log: (l) => out.push(l) });
+    expect(out.join("\n")).toContain(
+      `${join(configHome(env), "profiles")} → ${join(root, "profiles")}`,
+    );
+  });
+});
+
+describe("the checkout's profiles/ holds the generic examples", () => {
+  const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+  it("every other directory there is a legacy install pack the public snapshot excludes", () => {
+    // The one legacy pack (the deployment's own) waits there for `qcr install
+    // migrate`; whatever it is called, it must never ship publicly.
+    const excluded = (
+      JSON.parse(readFileSync(join(repo, "publish-manifest.json"), "utf8")) as {
+        exclude: { path: string }[];
+      }
+    ).exclude.map((e) => e.path);
+    const dirs = readdirSync(join(repo, "profiles"), { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name);
+    for (const name of dirs) {
+      if (EXAMPLE_PROFILES.includes(name)) continue;
+      expect(excluded, name).toContain(`profiles/${name}/`);
+    }
+    for (const example of EXAMPLE_PROFILES) expect(dirs).toContain(example);
+  });
+
+  it("no TypeScript module but the locator builds a profiles/ path", () => {
+    const offenders: string[] = [];
+    const walk = (rel: string): void => {
+      for (const entry of readdirSync(join(repo, rel), { withFileTypes: true })) {
+        const path = `${rel}/${entry.name}`;
+        if (entry.isDirectory()) {
+          if (entry.name !== "vendor") walk(path);
+        } else if (/\.(ts|mjs)$/.test(entry.name) && path !== "src/install.ts") {
+          readFileSync(join(repo, path), "utf8")
+            .split("\n")
+            .forEach((line, i) => {
+              if (/(join|resolve)\([^()]*"profiles"/.test(line))
+                offenders.push(`${path}:${i + 1}: ${line.trim()}`);
+            });
+        }
+      }
+    };
+    for (const top of ["src", "extensions"]) walk(top);
     expect(offenders).toEqual([]);
   });
 });

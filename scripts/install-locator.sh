@@ -18,6 +18,11 @@
 #   4. nothing anywhere: the config-home path (where a new config belongs)
 # `<install>` is $QCR_INSTALL, default `default`, a plain name only.
 #
+# Repo profiles: `qcr_profile_dirs <root>` prints the directories a
+# profile is looked up in, highest priority first — the config home's
+# profiles/, then profiles/ beside $QCR_CONFIG when it is set, then the
+# checkout's (the generic examples, and the legacy place).
+#
 # The legacy fallback is announced on stderr when a human is watching (stderr
 # is a terminal). Machine callers stay quiet on purpose: git's credential
 # helper runs mint-token on every fetch, and the daemon — which logs the
@@ -81,4 +86,22 @@ qcr_locate_config() { # qcr_locate_config <checkout-root>
   else
     printf '%s\n' "$home/config.toml"
   fi
+}
+
+qcr_profile_dirs() { # qcr_profile_dirs <checkout-root>
+  local root="$1" override="${QCR_CONFIG:-}" home dir seen=""
+  override="${override#"${override%%[![:space:]]*}"}"
+  override="${override%"${override##*[![:space:]]}"}"
+  home="$(qcr_config_home)" || return 1
+  local -a dirs=("$home/profiles")
+  if [[ -n "$override" ]]; then
+    [[ "$override" == /* ]] || override="$PWD/$override"
+    dirs+=("$(dirname "$override")/profiles")
+  fi
+  dirs+=("$root/profiles")
+  for dir in "${dirs[@]}"; do
+    [[ "$seen" == *$'\n'"$dir"$'\n'* ]] && continue
+    seen+=$'\n'"$dir"$'\n'
+    printf '%s\n' "$dir"
+  done
 }

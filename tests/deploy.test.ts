@@ -122,6 +122,8 @@ function makeScratch(opts: {
   inventory?: string;
   /** A `[github]` table appended to config.toml (the clone name). */
   github?: { repo?: string; cloneDir?: string };
+  /** `[review] profile` in config.toml (must ride the checkout). */
+  profile?: string;
   /** Tracked files to commit with the scratch tree, path → contents. */
   tracked?: Record<string, string>;
 }): Env {
@@ -144,7 +146,8 @@ function makeScratch(opts: {
               ? []
               : [`clone_dir = "${opts.github.cloneDir}"   # trailing comment`]),
             "",
-          ].join("\n")),
+          ].join("\n")) +
+      (opts.profile === undefined ? "" : `\n[review]\nprofile = "${opts.profile}"   # c\n`),
   );
   for (const [rel, body] of Object.entries(opts.tracked ?? {})) {
     mkdirSync(dirname(join(sandbox, rel)), { recursive: true });
@@ -340,6 +343,34 @@ describe("deploy.sh — the install locator", () => {
     expect(r.stderr).toContain("outside the checkout");
     // verify ships nothing, so it is not refused
     expect(run(env, ["--dry-run", "verify"], homeConfig(env, "0.84.1")).code).toBe(0);
+  });
+});
+
+describe("deploy.sh — the repo profile rides the checkout", () => {
+  it("a shipping mode refuses a named profile the checkout does not hold", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", profile: "house" });
+    for (const mode of ["sync", "rebuild"]) {
+      const r = run(env, ["--dry-run", mode], { XDG_CONFIG_HOME: join(env.dir, "empty-xdg") });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain('[review] profile = "house"');
+      expect(r.stderr).toContain("");
+    }
+    // verify ships nothing, so it is not refused
+    const v = run(env, ["--dry-run", "verify"], { XDG_CONFIG_HOME: join(env.dir, "empty-xdg") });
+    expect(v.stderr).not.toContain("[review] profile");
+  });
+
+  it("passes when the profile is in the checkout, and with no profile at all", () => {
+    env = makeScratch({
+      configPi: "0.84.1",
+      groupVarsPi: "0.84.1",
+      profile: "house",
+      tracked: { "profiles/house/addenda/.gitkeep": "" },
+    });
+    expect(run(env, ["--dry-run"], { XDG_CONFIG_HOME: join(env.dir, "empty-xdg") }).code).toBe(0);
+    rmSync(env.dir, { recursive: true, force: true });
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", profile: "" });
+    expect(run(env, ["--dry-run"], { XDG_CONFIG_HOME: join(env.dir, "empty-xdg") }).code).toBe(0);
   });
 });
 
@@ -745,9 +776,23 @@ describe("deploy.sh — base clone name", () => {
     const opts = playbookRsyncOpts().map((o) => render(o, vars));
     expect(opts).toContain("--exclude=/acme-api");
     // exactly one anchored exclude is not a known runtime dir: the clone's
-    const runtime = ["state", "wt", "archive", "commands", "digest", "inject", "verdict", "memory",
-      "notes", "ledger.md", "AGENTS.override.md", "pihome"];
-    const clones = opts.filter((o) => /^--exclude=\/[^/]+$/.test(o) && !runtime.includes(o.slice(11)));
+    const runtime = [
+      "state",
+      "wt",
+      "archive",
+      "commands",
+      "digest",
+      "inject",
+      "verdict",
+      "memory",
+      "notes",
+      "ledger.md",
+      "AGENTS.override.md",
+      "pihome",
+    ];
+    const clones = opts.filter(
+      (o) => /^--exclude=\/[^/]+$/.test(o) && !runtime.includes(o.slice(11)),
+    );
     expect(clones).toEqual(["--exclude=/acme-api"]);
 
     const src = join(env.dir, "src-tree");
