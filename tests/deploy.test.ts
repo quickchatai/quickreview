@@ -809,6 +809,14 @@ describe("deploy.sh — base clone name", () => {
     expect(r.stderr).toContain("not one plain directory name");
   });
 
+  it("--help still prints the whole header, Usage and Env included, however long it grows", () => {
+    const help = execFileSync("bash", [deploySh, "--help"], { encoding: "utf8" });
+    expect(help).toContain("base-clone name");
+    expect(help).toContain("Usage:");
+    expect(help).toContain("QCR_CONFIG");
+    expect(help).not.toContain("set -euo pipefail");
+  });
+
   it("refuses a clone name that is a runtime/build dir of the sandbox root — the list mirrors the playbook", () => {
     // the reserved list in deploy.sh must name every exclude the playbook
     // carries besides the clone's own (read out of the REAL playbook)

@@ -92,7 +92,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run|-n) DRY_RUN=1 ;;
     sync|rebuild|verify) [[ -n "$MODE" ]] && die "two modes given: $MODE and $1"; MODE="$1" ;;
-    -h|--help) sed -n '2,45p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown argument '$1' (usage: $SELF [--dry-run] [sync|rebuild|verify])" ;;
   esac
   shift
