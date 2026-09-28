@@ -257,4 +257,18 @@ describe.skipIf(!HAS_QC)("quickchat reviews lose nothing", () => {
     // …and the Django pre-check is still the one reporting number collisions.
     expect(ds).toContain("A number collision with master is still the daemon's to report");
   });
+
+  it("the pack's MySQL vocabulary composes AFTER the supersessions and defers to them", () => {
+    // Profile addenda compose after every compiled-in entry, so the moved
+    // ALGORITHM words now sit BELOW the no-exec and ORM-first sections that
+    // superseded them when they lived in the seed. The pack must say so, or
+    // the last word on the page re-arms the INSTANT demand #5312 retired.
+    const ds = bodies.get("pass-data-safety")!;
+    const pack = ds.indexOf("## This repo's database and migrations for the data-safety lens");
+    expect(pack).toBeGreaterThan(ds.indexOf("## Django migrations: ORM first"));
+    const section = ds.slice(pack);
+    expect(section).toContain("still wins over it");
+    expect(section).toContain("never require an `ALGORITHM=INSTANT` clause");
+    expect(section).not.toContain("self-verdict-ok");
+  });
 });

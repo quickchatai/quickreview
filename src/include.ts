@@ -671,13 +671,14 @@ const ASK_HUMAN_NAMED_DEFECT_VALIDATE_ADDENDUM =
 // `tests/profiles.test.ts` proves the moved pack composes byte-identically to
 // the constants it replaced.
 //
-// NOT moved, deliberately: `data-safety-no-exec` and `django-migration-orm`
-// (above). Their repo-specific evidence (the single `default` database, no
-// read replica) is woven into the same sentences that deliver the generic
-// no-exec supersession of the frozen seed, and `django-migration-orm` reads
-// "supersedes the migration gate above" — extracting either half would mean
-// rewriting bytes and breaking a positional reference, which is exactly what
-// the byte-preserving move forbids. Splitting them is a future ticket's call.
+// NOT moved: `data-safety-no-exec` and `django-migration-orm`
+// (above). settled both without a move: `data-safety-no-exec` was
+// rewritten stack-neutral alongside the seed it supersedes (its Django
+// spelling — `sqlmigrate`, the one `default` database — now rides the
+// deployment profile's `stack-data-safety` addendum), and
+// `django-migration-orm` stays compiled in, gated to a `django` build by its
+// registry entry's `ecosystem` field so its positional "supersedes the
+// migration gate above" reference keeps its meaning.
 //
 // Placement is per rule and deliberate — `docs/corpus-rule-placements.md`
 // carries the table, including the rules that went to reviewer memory, the one

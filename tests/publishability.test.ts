@@ -437,6 +437,12 @@ const ALLOWLIST: AllowlistEntry[] = [
       "asserts the deployed composition [generic registry + quickchat pack]; travels with profiles/quickchat/",
   },
   {
+    path: "tests/stack-neutral.test.ts",
+    tokens: ["quickchat"],
+    reason:
+      "proof that the stack rules the reseed took out of three seeds reach their lenses through the quickchat pack (self-skips without it); travels with profiles/quickchat/",
+  },
+  {
     path: "tests/ecosystem.test.ts",
     tokens: ["quickchat"],
     reason: "asserts the shipped profiles' ecosystem selections incl. the private pack",

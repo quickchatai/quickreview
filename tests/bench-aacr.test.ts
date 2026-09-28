@@ -26,6 +26,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -665,6 +666,25 @@ describe("the round the bench runs is the production round", () => {
       issuedAt: "2026-09-25T00:00:00Z",
     });
     expect(order).not.toContain("x".repeat(20_001));
+  });
+
+  it("buildBenchAgents follows the profile's ecosystem: no profile builds no Django pre-check claim", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "bench-eco-"));
+    try {
+      // A bench root the way the sandbox mounts one: the seeds and prompts,
+      // no profiles/ — cfg.review.profile is "" so the ecosystem is none.
+      symlinkSync(join(ROOT, "agents"), join(tmp, "agents"));
+      symlinkSync(join(ROOT, "prompts"), join(tmp, "prompts"));
+      expect(buildBenchAgents(tmp, cfg)).toBeGreaterThan(0);
+      const out = join(tmp, ".pi", "agents");
+      const ds = readdirSync(out).find((f) => f.startsWith("pass-data-safety--"))!;
+      const body = readFileSync(join(out, ds), "utf8");
+      expect(body).toContain("## Data safety: no execution");
+      expect(body).not.toContain("handled daemon-side");
+      expect(body).not.toContain("Django");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("the bench config is production's, with only the profile swapped", () => {
