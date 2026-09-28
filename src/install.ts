@@ -265,13 +265,14 @@ export function migrateReport(outcome: MigrateOutcome): { code: number; lines: s
 export const PROFILES_DIR = "profiles";
 
 /**
- * The checkout's GENERIC example profiles — the ones that belong to the app,
- * not to any install. Every other directory under the checkout's `profiles/`
+ * The checkout's GENERIC profiles — the ones that belong to the app, not to
+ * any install: the examples, and `default`, the shipped behaviour
+ * every generated profile extends. Every other directory under the checkout's `profiles/`
  * is an install's own profile still sitting in its legacy place: the lookup
  * reads it (announced), and `qcr install migrate` moves it into the config
  * home. A new example is registered here (a test holds the checkout to it).
  */
-export const EXAMPLE_PROFILES: readonly string[] = ["example-django", "minimal"];
+export const EXAMPLE_PROFILES: readonly string[] = ["default", "example-django", "minimal"];
 
 /**
  * Where a profile is looked up, in order, deduplicated:

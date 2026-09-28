@@ -184,6 +184,12 @@ describe("the shipped profiles", () => {
     expect(loadProfileAddenda(sandbox, "minimal")).toEqual([]);
   });
 
+  it("default is the shipped behaviour: empty pack, no heuristics, no ecosystem", () => {
+    expect(loadProfileAddenda(sandbox, "default")).toEqual([]);
+    expect(loadProfileHeuristics(sandbox, "default")).toEqual({ paths: {}, addedLines: {} });
+    expect(loadProfileEcosystem(sandbox, "default")).toBe("none");
+  });
+
   it("example-django parses clean: six single-lens rules, no team names inside", () => {
     const pack = loadProfileAddenda(sandbox, "example-django");
     expect(pack.map((a) => a.id)).toEqual([

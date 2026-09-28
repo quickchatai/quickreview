@@ -325,10 +325,11 @@ the app, collects the tokens, picks the channel and patches your config.
 ## Configuring the reviewer for *your* repo
 
 - **Repo profile** ([docs/profiles.md](docs/profiles.md)): house-rule addenda
-  packs + lens-selection heuristics. Ship-included: `profiles/example-django/`
-  (a worked Django profile: migration discipline, ORM usage, test doctrine)
-  and `profiles/minimal/` (generic only). Start from minimal, or copy the
-  Django example and edit.
+  packs + lens-selection heuristics. Ship-included: `profiles/default/` (the
+  shipped behaviour, the base to extend), `profiles/example-django/` (a
+  worked Django profile: migration discipline, ORM usage, test doctrine) and
+  `profiles/minimal/` (generic only). Start from `extends = "default"` and
+  write only what differs, or copy the Django example and edit.
 - **Ecosystem pre-checks**: the Django migration-collision pre-check is
   selected by the profile (`ecosystem = "django"`); every other ecosystem is
   cleanly off (`"none"`) — no false findings, no degraded-check noise.

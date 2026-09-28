@@ -40,6 +40,20 @@
 // `src/install.ts locateProfile`): the install's config home first, then the
 // checkout's generic examples — every loader below resolves the name through
 // it, so a name that could escape `profiles/` is refused before any read.
+//
+// INHERITANCE: `profile.toml` may say `extends = "<profile>"`, and
+// the base may extend another, in chains. Every loader below resolves the
+// WHOLE chain (`profileChain` — base first, the selected profile last; a
+// cycle is refused, a missing base is a loud failure) and merges per kind:
+//   * addenda — the base's pack first; a child entry with an inherited id
+//     REPLACES it in place, a new id appends, and `[addenda] drop = [ids]`
+//     removes inherited ids (a drop naming nothing inherited is refused —
+//     a typo must not read as a removal);
+//   * heuristics — unioned per lens, base predicates first;
+//   * scalars (`ecosystem`) — the nearest profile that sets one wins.
+// The shipped `default` profile encodes the shipped behaviour (an empty pack,
+// no heuristics, `ecosystem = "none"`) and is the base a generated profile
+// extends: an empty child of it reviews exactly as no profile does.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseToml } from "smol-toml";
@@ -68,6 +82,114 @@ function profileDirOrThrow(root: string, profile: string, lookup: ProfileLookup)
 
 const ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 const PASS_NAME_RE = /^pass-[a-z0-9][a-z0-9-]*$/;
+
+// ---- the extends chain -------------------------------------------
+
+/** One profile of a resolved chain: where it lives and what its
+ * `profile.toml` says about inheritance and the scalars it sets. */
+interface ProfileLayer {
+  name: string;
+  dir: string;
+  /** `profile.toml`'s path — named in every error about this layer. */
+  toml: string;
+  /** The profile this one extends, when it says so. */
+  extends?: string;
+  /** `[addenda] drop` — inherited addendum ids this profile removes. */
+  drop: string[];
+  /** The raw `ecosystem` value, when this profile sets one. */
+  ecosystem?: unknown;
+}
+
+/** Read one profile's `profile.toml` — an absent file is an empty one. Owns
+ * the `extends` key and the `[addenda]` table; other keys belong to other
+ * loaders and are not an error here. */
+function readLayer(name: string, dir: string): ProfileLayer {
+  const toml = join(dir, "profile.toml");
+  let raw: string;
+  try {
+    raw = readFileSync(toml, "utf8");
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return { name, dir, toml, drop: [] };
+    throw new Error(`[review] profile "${name}": cannot read ${toml}: ${String(err)}`, {
+      cause: err,
+    });
+  }
+  let doc: Record<string, unknown>;
+  try {
+    doc = parseToml(raw);
+  } catch (err) {
+    throw new Error(`[review] profile "${name}": ${toml} is not valid TOML: ${String(err)}`, {
+      cause: err,
+    });
+  }
+  const layer: ProfileLayer = { name, dir, toml, drop: [] };
+  const ext = doc["extends"];
+  if (ext !== undefined) {
+    if (typeof ext !== "string" || ext === "") {
+      throw new Error(
+        `[review] profile "${name}": ${toml} extends must be a profile name, got ${JSON.stringify(ext)}`,
+      );
+    }
+    layer.extends = ext;
+  }
+  if ("ecosystem" in doc) layer.ecosystem = doc["ecosystem"];
+  const addenda = doc["addenda"];
+  if (addenda !== undefined) {
+    if (typeof addenda !== "object" || addenda === null || Array.isArray(addenda)) {
+      throw new Error(`[review] profile "${name}": ${toml} [addenda] must be a table`);
+    }
+    for (const [key, value] of Object.entries(addenda as Record<string, unknown>)) {
+      if (key !== "drop") {
+        throw new Error(
+          `[review] profile "${name}": ${toml} [addenda] unknown key "${key}" — only "drop" is allowed`,
+        );
+      }
+      if (!Array.isArray(value) || value.some((v) => typeof v !== "string" || !ID_RE.test(v))) {
+        throw new Error(
+          `[review] profile "${name}": ${toml} [addenda] drop must be an array of addendum ids (kebab-case)`,
+        );
+      }
+      layer.drop = value as string[];
+    }
+  }
+  return layer;
+}
+
+/**
+ * The selected profile and everything it extends, BASE FIRST (the selected
+ * profile is the last element). Each name resolves through the install
+ * locator, so a base is found where any profile is. Refused, loudly: a
+ * profile not found, a base not found (naming who extends it), and a cycle
+ * (naming the whole loop, a self-extend included).
+ */
+function profileChain(root: string, profile: string, lookup: ProfileLookup): ProfileLayer[] {
+  const chain: ProfileLayer[] = [];
+  let name = profile;
+  let dir = profileDirOrThrow(root, profile, lookup);
+  for (;;) {
+    const layer = readLayer(name, dir);
+    chain.push(layer);
+    const base = layer.extends;
+    if (base === undefined) break;
+    const seen = chain.map((l) => l.name);
+    if (seen.includes(base)) {
+      throw new Error(
+        `[review] profile "${profile}": extends cycle ${[...seen, base].join(" → ")} — a profile chain must end in a profile that extends nothing`,
+      );
+    }
+    const located = resolveProfile({ root, profile: base, ...lookup });
+    if (!located) {
+      const looked = profileSearchDirs({ root, ...(lookup.env ? { env: lookup.env } : {}) });
+      throw new Error(
+        `[review] profile "${name}" extends "${base}", which was not found — looked in ${looked.join(", ")}`,
+      );
+    }
+    name = base;
+    dir = located.dir;
+  }
+  return chain.reverse();
+}
 
 /** Ids a pack may not claim: every compiled-in entry, plus the dynamic
  * same-day feedback addendum wire.ts composes last (src/feedback.ts). */
@@ -137,24 +259,13 @@ function mustBeDir(path: string, what: string): void {
   if (!ok) throw new Error(`${what}: ${path} is not a directory`);
 }
 
-/**
- * Load the named profile's addenda pack, in composition order.
- *
- * Order is ascending filename sort and nothing else — deterministic by
- * construction, so a rebuild of an unchanged tree stays byte-identical, same
- * contract as the compiled-in registry's declaration order. Every failure is
- * a throw; the caller (wire.ts, at daemon assembly) is expected to let it
- * crash the boot rather than review with a partial pack.
- */
-export function loadProfileAddenda(
-  root: string,
-  profile: string,
-  lookup: ProfileLookup = {},
-): PassAddendum[] {
-  if (profile === "") return [];
-  const dir = profileDirOrThrow(root, profile, lookup);
-  const addendaDir = join(dir, "addenda");
-  mustBeDir(addendaDir, `[review] profile "${profile}" has no addenda/ directory`);
+/** Load ONE profile's own pack (no inheritance), in filename order. A
+ * profile that extends another may omit `addenda/` (it inherits its pack);
+ * one that extends nothing must have it. */
+function loadOwnPack(layer: ProfileLayer): PassAddendum[] {
+  const addendaDir = join(layer.dir, "addenda");
+  if (layer.extends !== undefined && !existsSync(addendaDir)) return [];
+  mustBeDir(addendaDir, `[review] profile "${layer.name}" has no addenda/ directory`);
   const files = readdirSync(addendaDir)
     .filter((f) => f.endsWith(".md"))
     .sort();
@@ -178,11 +289,59 @@ export function loadProfileAddenda(
 }
 
 /**
+ * Load the named profile's addenda pack — its whole `extends` chain merged —
+ * in composition order.
+ *
+ * Within one pack the order is ascending filename sort and nothing else;
+ * across a chain the base's entries come first, a child's entry with an
+ * inherited id takes that entry's PLACE (replace in place, so a child can
+ * reword a base rule without reordering the pack), and a new id appends.
+ * `[addenda] drop` removes inherited ids before the child's own pack merges,
+ * so dropping an id and defining it again moves it to the tail. A drop that
+ * names nothing inherited is refused — a built-in registry entry can never be
+ * dropped by a profile, and a typo must not silently read as a removal.
+ * Deterministic by construction, so a rebuild of an unchanged tree stays
+ * byte-identical, same contract as the compiled-in registry's declaration
+ * order. Every failure is a throw; the caller (wire.ts, at daemon assembly)
+ * is expected to let it crash the boot rather than review with a partial
+ * pack.
+ */
+export function loadProfileAddenda(
+  root: string,
+  profile: string,
+  lookup: ProfileLookup = {},
+): PassAddendum[] {
+  if (profile === "") return [];
+  const reserved = reservedAddendumIds();
+  let merged: PassAddendum[] = [];
+  for (const layer of profileChain(root, profile, lookup)) {
+    for (const id of layer.drop) {
+      if (!merged.some((a) => a.id === id)) {
+        const why = reserved.has(id)
+          ? "a built-in registry entry, which no profile can drop"
+          : "no profile it extends defines it";
+        throw new Error(
+          `[review] profile "${layer.name}": ${layer.toml} [addenda] drop names "${id}" — ${why}`,
+        );
+      }
+      merged = merged.filter((a) => a.id !== id);
+    }
+    for (const entry of loadOwnPack(layer)) {
+      const at = merged.findIndex((a) => a.id === entry.id);
+      if (at >= 0) merged[at] = entry;
+      else merged.push(entry);
+    }
+  }
+  return merged;
+}
+
+/**
  * The profile's ecosystem selection: `profiles/<name>/profile.toml`,
  * key `ecosystem = "django" | "none"`.
  *
- * No profile (`""`), a profile found nowhere, no `profile.toml`, or no
- * `ecosystem` key all mean
+ * No profile (`""`), a profile found nowhere, or no `ecosystem` key anywhere
+ * in its `extends` chain (the nearest profile that sets it wins) all
+ * mean
  * `"none"` — a generic install gets NO framework-specific machinery (no
  * pre-check, no tier-forcing migration gate, no migration-gate prompt prose)
  * unless its profile asks for it. An unreadable file or an unknown value
@@ -201,33 +360,22 @@ export function loadProfileEcosystem(
   lookup: ProfileLookup = {},
 ): EcosystemName {
   if (profile === "") return "none";
-  const located = resolveProfile({ root, profile, ...lookup });
-  if (!located) return "none";
-  const path = join(located.dir, "profile.toml");
-  let raw: string;
-  try {
-    raw = readFileSync(path, "utf8");
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === "ENOENT" || code === "ENOTDIR") return "none";
-    throw new Error(`[review] profile "${profile}": cannot read ${path}: ${String(err)}`, {
-      cause: err,
-    });
+  if (!resolveProfile({ root, profile, ...lookup })) return "none";
+  // child-wins — the nearest profile in the chain that sets the key.
+  // Every layer's value is validated, an overridden one too: a base that
+  // names an unknown ecosystem is broken for every other child of it.
+  let chosen: EcosystemName = "none";
+  for (const layer of profileChain(root, profile, lookup)) {
+    const eco = layer.ecosystem;
+    if (eco === undefined) continue;
+    if (eco !== "django" && eco !== "none") {
+      throw new Error(
+        `[review] profile "${layer.name}": ${layer.toml} names unknown ecosystem ${JSON.stringify(eco)} — use "django" or "none"`,
+      );
+    }
+    chosen = eco;
   }
-  let doc: Record<string, unknown>;
-  try {
-    doc = parseToml(raw);
-  } catch (err) {
-    throw new Error(`[review] profile "${profile}": ${path} is not valid TOML: ${String(err)}`, {
-      cause: err,
-    });
-  }
-  const eco = doc["ecosystem"];
-  if (eco === undefined) return "none";
-  if (eco === "django" || eco === "none") return eco;
-  throw new Error(
-    `[review] profile "${profile}": ${path} names unknown ecosystem ${JSON.stringify(eco)} — use "django" or "none"`,
-  );
+  return chosen;
 }
 
 // ---- lens-selection heuristics -----------------------------------
@@ -333,7 +481,8 @@ export function parseProfileHeuristics(file: string, raw: string): HeuristicsExt
 /**
  * Load the named profile's lens-heuristics extension.
  *
- * `""` (no profile) and a profile without a `heuristics.toml` both yield the
+ * `""` (no profile) and a profile chain without a `heuristics.toml` anywhere
+ * both yield the
  * empty extension — the generic compiled-in core alone. Everything else that
  * is wrong throws; the caller (wire.ts, at daemon assembly) lets it crash the
  * boot rather than review with partial selection knowledge.
@@ -344,8 +493,21 @@ export function loadProfileHeuristics(
   lookup: ProfileLookup = {},
 ): HeuristicsExtension {
   if (profile === "") return EMPTY_HEURISTICS;
-  const dir = profileDirOrThrow(root, profile, lookup);
-  const file = join(dir, "heuristics.toml");
-  if (!existsSync(file)) return EMPTY_HEURISTICS;
-  return parseProfileHeuristics(file, readFileSync(file, "utf8"));
+  // unioned across the chain, per lens, base predicates first —
+  // heuristics only ever ADD, so a child can neither drop nor narrow a
+  // base's predicate (the same ADD-only contract as against the core).
+  const paths: Record<string, RegExp[]> = {};
+  const addedLines: Record<string, RegExp[]> = {};
+  let any = false;
+  for (const layer of profileChain(root, profile, lookup)) {
+    const file = join(layer.dir, "heuristics.toml");
+    if (!existsSync(file)) continue;
+    any = true;
+    const ext = parseProfileHeuristics(file, readFileSync(file, "utf8"));
+    for (const [lens, res = []] of Object.entries(ext.paths))
+      paths[lens] = [...(paths[lens] ?? []), ...res];
+    for (const [lens, res = []] of Object.entries(ext.addedLines))
+      addedLines[lens] = [...(addedLines[lens] ?? []), ...res];
+  }
+  return any ? { paths, addedLines } : EMPTY_HEURISTICS;
 }

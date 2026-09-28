@@ -334,8 +334,7 @@ describe("locateProfile", () => {
 describe("migrateProfiles", () => {
   it("moves every non-example checkout profile into the home, idempotently; the examples stay", () => {
     putProfile(root, "house-pack", "qc\n");
-    putProfile(root, "minimal");
-    putProfile(root, "example-django");
+    for (const example of EXAMPLE_PROFILES) putProfile(root, example);
     const first = migrateProfiles({ root, env });
     const to = join(configHome(env), "profiles", "house-pack");
     expect(first).toEqual([

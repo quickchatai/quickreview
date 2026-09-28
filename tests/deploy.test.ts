@@ -372,6 +372,36 @@ describe("deploy.sh — the repo profile rides the checkout", () => {
     env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", profile: "" });
     expect(run(env, ["--dry-run"], { XDG_CONFIG_HOME: join(env.dir, "empty-xdg") }).code).toBe(0);
   });
+
+  it("every profile the named one extends must ride the checkout too", () => {
+    const xdg = { XDG_CONFIG_HOME: "" };
+    env = makeScratch({
+      configPi: "0.84.1",
+      groupVarsPi: "0.84.1",
+      profile: "house",
+      tracked: {
+        "profiles/house/profile.toml": 'extends = "family"   # c\n',
+        "profiles/family/profile.toml": "# a base\nextends = 'default'\n[addenda]\ndrop = []\n",
+      },
+    });
+    xdg.XDG_CONFIG_HOME = join(env.dir, "empty-xdg");
+    const r = run(env, ["--dry-run", "sync"], xdg);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('profile "family" extends "default"');
+    rmSync(env.dir, { recursive: true, force: true });
+    // The whole chain present — a cycle is the daemon's to refuse, not a hang here.
+    env = makeScratch({
+      configPi: "0.84.1",
+      groupVarsPi: "0.84.1",
+      profile: "house",
+      tracked: {
+        "profiles/house/profile.toml": 'extends = "family"\n',
+        "profiles/family/profile.toml": 'extends = "house"\n',
+      },
+    });
+    xdg.XDG_CONFIG_HOME = join(env.dir, "empty-xdg");
+    expect(run(env, ["--dry-run", "sync"], xdg).code).toBe(0);
+  });
 });
 
 describe("deploy.sh — OpenViking pin drift", () => {
@@ -876,7 +906,11 @@ describe("deploy.sh — base clone name", () => {
     expect(list).toContain("dist");
 
     for (const name of ["notes", "wt", "dist"]) {
-      env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", github: { repo: `acme/${name}` } });
+      env = makeScratch({
+        configPi: "0.84.1",
+        groupVarsPi: "0.84.1",
+        github: { repo: `acme/${name}` },
+      });
       const r = run(env, ["--dry-run"]);
       expect(r.code, name).toBe(1);
       expect(r.stderr, name).toContain("runtime or build directory");

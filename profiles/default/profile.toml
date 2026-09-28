@@ -1,0 +1,9 @@
+# The default profile — the shipped behaviour, and the base every
+# generated profile extends. It adds nothing: an empty addenda pack, no
+# heuristics.toml, and no framework-specific machinery. A profile that says
+# only `extends = "default"` reviews exactly as `[review] profile = ""` does.
+#
+# Settings here are inherited by every child and a child's own value wins
+# (docs/profiles.md, "Inheritance"). Keep this file to what the code ships:
+# a house rule belongs in the child, never in the shared base.
+ecosystem = "none"

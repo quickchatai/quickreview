@@ -503,8 +503,10 @@ preset = "default"
 # heuristics.toml extends lens selection with your repo's file shapes
 # (framework settings globs, command dirs, flag-library names — ADD-only, the
 # generic selection core always stays). "" = no profile (generic addenda and
-# generic selection only). Ship-with options: "minimal" (empty pack),
-# "example-django" (a worked illustrative Django pack, heuristics included).
+# generic selection only). Ship-with options: "default" (the shipped
+# behaviour — the base your own profile extends with `extends = "default"`),
+# "minimal" (empty pack), "example-django" (a worked illustrative Django pack,
+# heuristics included).
 # See docs/profiles.md for authoring your own.
 profile = ""
 

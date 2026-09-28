@@ -259,6 +259,34 @@ DEPLOY_PROFILE="$(config_table_key review profile)"
 if [[ "$MODE" != "verify" && -n "$DEPLOY_PROFILE" && ! -d "$SANDBOX_DIR/profiles/$DEPLOY_PROFILE" ]]; then
   die "config.toml [review] profile = \"$DEPLOY_PROFILE\", but $SANDBOX_DIR/profiles/$DEPLOY_PROFILE does not exist — this deploy ships only the checkout's profiles/, and the VM's daemon refuses to boot without its profile. Shipping the config home is; until then a deploying machine keeps its profile in the checkout (mv it back from the config home's profiles/)"
 fi
+# and so must every profile it `extends`, down the chain — a base
+# the VM cannot find fails the boot exactly like a missing profile. Only
+# presence is checked here; the daemon's resolver refuses a cycle, so the
+# walk just stops at a name it has already seen.
+profile_extends() {
+  awk '
+    /^[[:space:]]*\[/ { exit }
+    /^[[:space:]]*extends[[:space:]]*=/ {
+      line = $0
+      sub(/^[^=]*=[[:space:]]*/, "", line)
+      gsub(/["'"'"']/, "", line)
+      sub(/[[:space:]]*(#.*)?$/, "", line)
+      print line
+      exit
+    }
+  ' "$1" 2>/dev/null
+}
+if [[ "$MODE" != "verify" && -n "$DEPLOY_PROFILE" ]]; then
+  chain_seen=" $DEPLOY_PROFILE "
+  chain_at="$DEPLOY_PROFILE"
+  while chain_base="$(profile_extends "$SANDBOX_DIR/profiles/$chain_at/profile.toml")" && [[ -n "$chain_base" ]]; do
+    [[ "$chain_seen" == *" $chain_base "* ]] && break
+    [[ -d "$SANDBOX_DIR/profiles/$chain_base" ]] ||
+      die "profile \"$chain_at\" extends \"$chain_base\", but $SANDBOX_DIR/profiles/$chain_base does not exist — this deploy ships only the checkout's profiles/, and the VM's daemon refuses to boot without every profile in the chain (mv it back from the config home's profiles/)"
+    chain_seen+="$chain_base "
+    chain_at="$chain_base"
+  done
+fi
 [[ -d "$ANSIBLE_DIR" ]] || die "no ansible dir at $ANSIBLE_DIR (set QC_ANSIBLE_DIR)"
 [[ -f "$GROUP_VARS" ]] || die "no group_vars at $GROUP_VARS"
 [[ -f "$PLAYBOOK" ]] || die "no playbook at $PLAYBOOK"
