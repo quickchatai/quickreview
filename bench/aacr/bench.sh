@@ -42,6 +42,10 @@
 #              loopback Codex bridge), `review` runs OCR the way the AACR harness
 #              runs it (one case at a time; --ocr-concurrency / --max-tools /
 #              --timeout-min = its 8 / 30 / 30), `eval` scores the `all` variant.
+#   --arm codex (build, review, eval, report, shell): the Codex CLI — image qcr-bench-codex
+#              (the same runtime + @openai/codex, pinned), `review` runs the AACR harness's own
+#              reviewers/codex.py (one case at a time; --timeout-min = its 30), `eval` scores
+#              the `all` variant. QCR_BENCH_CODEX_EFFORT=L sets the reasoning effort (medium).
 #
 # What the sandbox can touch on this PC (and nothing else):
 #   - bench/aacr/runs/<ID>/                 read-write: prompts, transcripts, results, report
@@ -104,7 +108,9 @@ case "$ARM" in
   # OCR needs git >= 2.41; bookworm ships 2.39 (Dockerfile header).
   ocr) IMAGE="${QCR_BENCH_OCR_IMAGE:-qcr-bench-ocr:latest}"; TARGET=ocr
        BASE_ARGS=(--build-arg RUNTIME_BASE=node:22-trixie); REVIEW_ENTRY=ocr-review ;;
-  *) die "--arm must be qcr | ocr" ;;
+  # Codex CLI arm: the harness's own reviewers/codex.py (Dockerfile target `codex`).
+  codex) IMAGE="${QCR_BENCH_CODEX_IMAGE:-qcr-bench-codex:latest}"; TARGET=codex; BASE_ARGS=(); REVIEW_ENTRY=codex-review ;;
+  *) die "--arm must be qcr | ocr | codex" ;;
 esac
 # First character alphanumeric: `.`, `..` and dotfile ids would mount the wrong dir.
 [[ -z "$RUN" || "$RUN" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "--run must start with [A-Za-z0-9] and use only [A-Za-z0-9._-]"
@@ -236,6 +242,7 @@ case "$cmd" in
         src extensions prompts agents profiles \
         bench/aacr/Dockerfile bench/aacr/sets bench/aacr/defects bench/aacr/judge_shim.py \
         bench/aacr/in-container.sh bench/aacr/codex_bridge.py bench/aacr/eval_shards.py \
+        bench/aacr/codex_arm.py \
         deploy/reviewer/AGENTS.override.md ) \
       | tar -xf - -C "$ctx"
     docker build --target "$TARGET" -t "$IMAGE" ${BASE_ARGS[@]+"${BASE_ARGS[@]}"} \
@@ -264,6 +271,14 @@ case "$cmd" in
     auth_mounts
     # The OCR arm's reasoning effort (its bridge's --effort; default medium).
     oe=(); [[ "$ARM" == ocr && -n "${QCR_BENCH_OCR_EFFORT:-}" ]] && oe=(-e "OCR_BRIDGE_EFFORT=$QCR_BENCH_OCR_EFFORT")
+    # Codex arm: its effort, and seccomp=unconfined so Codex's OWN command sandbox
+    # (bubblewrap: user namespaces, which docker's default seccomp profile refuses)
+    # works as the harness runs it (--sandbox workspace-write, no network for
+    # commands). Every other hardening flag above still applies. README "Codex CLI arm".
+    if [[ "$ARM" == codex ]]; then
+      oe+=(--security-opt seccomp=unconfined)
+      [[ -n "${QCR_BENCH_CODEX_EFFORT:-}" ]] && oe+=(-e "QCR_CODEX_EFFORT=$QCR_BENCH_CODEX_EFFORT")
+    fi
     args=("${HARDEN[@]}" "${AUTH[@]}" ${oe[@]+"${oe[@]}"}
       --mount "type=volume,src=$REPOS_VOLUME,dst=/repos,readonly"
       --mount "type=bind,src=$d,dst=/bench-out"

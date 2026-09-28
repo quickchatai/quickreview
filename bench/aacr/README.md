@@ -326,6 +326,90 @@ bench/aacr/bench.sh eval   --arm ocr --run ocr-1 --judge codex --rounds 3
   range gets more candidate pairs. OCR comments have no severity, so only the
   `all` variant exists for this arm; compare it with our `all` row.
 
+## The Codex CLI arm (`--arm codex`)
+
+Codex CLI on the same PRs, the same model (`gpt-6-sol`) through the same
+ChatGPT login, judged by the same judges — run by the AACR harness's OWN
+Codex runner.
+
+```sh
+export QCR_BENCH_RUNS_DIR=~/qcr-bench-runs/runs
+bench/aacr/bench.sh build  --arm codex                                   # image qcr-bench-codex
+bench/aacr/bench.sh review --arm codex --run codex-1 --set fresh10      # one case at a time
+bench/aacr/bench.sh judge  --run codex-1 --set fresh10                  # the defect benchmark (quickreviewd image)
+bench/aacr/bench.sh eval   --arm codex --run codex-1 --set fresh10 --judge codex --rounds 3
+bench/aacr/arm.sh --prefix codex --arm codex --cases fresh10 --eval 3   # all of the above, per set
+bench/aacr/compare.py --cases fresh10 default=default-fresh10 codex=codex-fresh10
+```
+
+- **Codex runs as the harness runs it.** `bench/aacr/codex_arm.py` imports
+  `evaluation/reviewers/codex.py` at the pinned harness commit and calls its
+  `review_instance`: the prompt (`/review <base>...<head> (<report-tool
+  instructions>)`), the argv (`codex --sandbox workspace-write exec review
+  --json --skip-git-repo-check <prompt>`), the process timeout (30×60+60 s),
+  the temporary CODEX_HOME + `config.toml` with the harness's `findings` MCP
+  server (`mcp_codex_finding_server.py`, auto-approved), the two-channel
+  finding collection (MCP partial file vs. the final JSONL message, more wins,
+  tie → MCP), the token accounting and the result file are the harness's code.
+  `case-dir/codex-driver.json` records the argv that actually ran;
+  `codex-sessions/` keeps Codex's rollouts; `codex-config.toml` the config.
+- **The login cannot refresh.** Codex gets its native ChatGPT `auth.json`
+  built from the sandbox's refresh-disabled pi copy (`src/bench/auth.ts`):
+  the access token and account id, the refresh token = the disabled sentinel,
+  `last_refresh` = now. The real refresh token never reaches Codex; any
+  refresh attempt is additionally pointed at a closed loopback port
+  (`CODEX_REFRESH_TOKEN_URL_OVERRIDE`); both the TS side and the driver
+  refuse a source whose refresh token is not the sentinel, and the driver
+  refuses to start with an API key, a gateway or a CODEX_HOME in its
+  environment (`tests/bench-codex.test.ts`). The temporary CODEX_HOME,
+  auth.json included, is removed after every case.
+- **Version**: `@openai/codex` 0.158.0, the linux-x64 binary's sha256 pinned
+  (Dockerfile target `codex`, built on the same `runtime` stage — same harness,
+  dataset, pi and judge shim). **To bump:** set `CODEX_VERSION` and
+  `CODEX_SHA256_LINUX_X64` in the Dockerfile (`sha256sum` of
+  `@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex` after
+  `npm install -g @openai/codex@<v>`), `bench.sh build --arm codex`, and run a
+  2-PR smoke before a full run; the fingerprint (`codex_version`) keeps
+  `--resume` from mixing versions.
+- **The result file** is the harness's `save_result` payload, untouched, plus
+  `review` (an OCR-shaped view of the same comments: `summary + "\n" +
+  description` at `file:start_line-end_line`) and `bench`. The view exists so
+  the rest of this bench — the eval (`pipeline --reviewer ocr`), the defect
+  judge, compare.py, the what-if tools — reads the file unchanged; every case
+  is checked by the harness's own two readers (`build_target_comments_from_codex`
+  on `review_output` and `build_target_comments_from_ocr` on `review` must
+  agree, or the case fails). Findings carry a severity, which the harness
+  ignores, so only the `all` variant exists for this arm.
+
+**What differs from the harness's own run, and why:**
+- **The repo** is `prepareTree`'s checkout (objects from the prefetched store,
+  detached head, one base ref), not a fresh clone: the sandbox reviews offline.
+  Same base, head and merge-base; `git clean -fdx` after, as the harness does.
+- **The login** is ChatGPT auth, not `CODEX_API_KEY` / a gateway: the harness
+  supports only an API key, and the benchmark's only access to `gpt-6-sol` is
+  the shared ChatGPT login. The backend is the ChatGPT Codex endpoint Codex
+  itself uses for that login.
+- **A config prelude** (top-level keys placed before the harness's lines):
+  `model_reasoning_effort = "medium"` (the harness pins none; `medium` is the
+  effort every arm uses; `QCR_BENCH_CODEX_EFFORT` overrides), file-only
+  credentials, `forced_login_method = "chatgpt"`, no update check, no
+  analytics upload, and **`web_search = "disabled"`** — the benchmark's
+  references are public PR review comments, so a web search could look the
+  answers up; no other arm can search either.
+- **The container's seccomp profile.** Codex's `workspace-write` sandbox is
+  bubblewrap, which needs user namespaces; docker's default seccomp profile
+  refuses them, and Codex's shell commands would then all fail. The codex
+  review container therefore runs `--security-opt seccomp=unconfined` — and
+  only it: read-only root, `--cap-drop ALL`, `no-new-privileges`, the
+  non-root uid, pids/memory/CPU caps, no docker socket and no GitHub
+  credential all still apply, and inside it Codex's own sandbox runs exactly
+  as the harness asks (workspace writes only, no network for commands).
+- **One case at a time**, as the harness's pipeline default
+  (`--concurrency 1`); ours run `--parallel` — compare minutes accordingly.
+- **What cannot be equal:** Codex gets no PR title or description (the
+  harness passes none); its comments carry line ranges (more candidate pairs
+  for the AACR judge, as for OCR).
+
 ## The what-if lever scorer (`whatif`)
 
 How would the score move if the reviewer POSTED more of what its lenses found?
@@ -455,6 +539,7 @@ Search → File Search → add it to the excluded folders, or
 | `judge_shim.py` | OpenAI-compatible judge endpoint over `pi -p` |
 | `eval_shards.py` | splits one eval by PR across harness processes and merges them with the harness's own summary functions |
 | `codex_bridge.py` | the OCR arm's loopback Chat Completions/Responses → Codex backend bridge |
+| `codex_arm.py` | the Codex CLI arm's driver: the harness's own `reviewers/codex.py` on one prepared case (`src/bench/codex.ts`, `codexcli.ts`, `codexreport.ts`; `tests/bench-codex.test.ts`) |
 | `src/bench/` | prefetch, review runner, result conversion, report, the OCR arm (`ocr.ts`) (`tests/bench-aacr.test.ts`); the what-if scorer `whatif.ts` + `whatifrun.ts` (`tests/bench-whatif.test.ts`) |
 | `whatif/<id>/` | per what-if run: `source/` (the copied run), `results/<variant>/`, `extract/`, `eval/`, `report.md`, `whatif-summary.json` |
 | `runs/<id>/` | per run: `run.json`, `cases/<id>/` (system prompt, round order, files, pi event stream, the session's four files, `case-summary.json`), `results/<variant>/` (the harness's input + metrics), `eval/`, `report.md`, `sandbox-commands.log` (every docker invocation, for reproduction) |

@@ -21,6 +21,11 @@
 //              [--bridge URL] [--ocr-bin PATH]      cases run ONE AT A TIME
 //   ocr-report --set <file> --out DIR
 //
+// The Codex CLI arm (src/bench/codex.ts; image target `codex`):
+//   codex-review --set <file> --out DIR [--only id,id] [--store DIR] [--resume] [--keep-tree]
+//                [--timeout-min 30] [--effort medium] [--model gpt-6-sol]   cases ONE AT A TIME
+//   codex-report --set <file> --out DIR
+//
 // The defect benchmark (src/bench/defects.ts; any run dir, either arm):
 //   defect-judge  --set <file> --defects <file> --out RUN_DIR [--only id,id] [--rounds 1]
 //                 [--model openai-codex/gpt-6-sol:high] [--concurrency 3] [--resume] [--label L]
@@ -77,6 +82,7 @@ import {
   type ReviewForJudge,
 } from "./defects.js";
 import { clearJudgeCase, judgeCase, judgeLabel, loadJudgements } from "./defectjudge.js";
+import { codexCommand } from "./codexcli.js";
 import { caseCostUsd } from "./cost.js";
 
 const DEFAULTS = {
@@ -152,11 +158,16 @@ function unprefetchedSummary(c: BenchCase, error: string): CaseSummary {
 /** A command of one arm refuses the other arm's run dir: the quickreviewd
  * `review`/`results` rewrite every variant's result files, which would wipe an
  * OCR run's scored input. */
-function assertArm(outDir: string, arm: "qcr" | "ocr"): void {
+const ARM_NAMES = {
+  qcr: "a quickreviewd",
+  ocr: "an open-code-review",
+  codex: "a Codex CLI",
+} as const;
+function assertArm(outDir: string, arm: "qcr" | "ocr" | "codex"): void {
   const found = runArmOf(outDir);
   if (found !== null && found !== arm)
     throw new Error(
-      `${outDir} is ${found === "ocr" ? "an open-code-review" : "a quickreviewd"} run — this command belongs to the ${arm === "ocr" ? "ocr" : "quickreviewd"} arm (bench.sh --arm ${found})`,
+      `${outDir} is ${ARM_NAMES[found]} run — this command belongs to ${ARM_NAMES[arm]} arm (bench.sh --arm ${found})`,
     );
 }
 
@@ -625,6 +636,22 @@ async function main(): Promise<number> {
     log(`ocr: ${ok}/${cases.length} reviewed — results in ${join(outDir, "results", "all")}`);
     if (stopped !== null) log(`ocr: run stopped early — ${stopped}`);
     return ok === cases.length ? 0 : 1;
+  }
+
+  // ---- the Codex CLI arm (src/bench/codexcli.ts) ----
+  if (f.cmd === "codex-review" || f.cmd === "codex-report") {
+    return codexCommand(f.cmd, {
+      root,
+      store,
+      authSrc: f.get("--auth-src") ?? DEFAULTS.authSrc,
+      agentDir: f.get("--agent-dir") ?? DEFAULTS.agentDir,
+      get: (k) => (k === "--out" && f.get("--out") ? resolve(f.get("--out")!) : f.get(k)),
+      has: f.has,
+      loadSet,
+      only: only(f),
+      readMeta,
+      log,
+    });
   }
 
   if (f.cmd === "ocr-report") {

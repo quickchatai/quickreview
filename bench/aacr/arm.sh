@@ -18,6 +18,8 @@
 #                                          set it overlaps (the 40 PRs with ground truth)
 #   --arm qcr|ocr     quickreviewd (default) or the open-code-review baseline (bench.sh --arm ocr;
 #                     OCR reviews one case at a time in one container per set, as its harness does)
+#   --arm codex       the Codex CLI arm (bench.sh --arm codex; the harness's reviewers/codex.py,
+#                     one case at a time in one container per set, like ocr)
 #   --parallel N|auto reviews at once, MACHINE-WIDE (default auto; see "Scheduling" below)
 #   --max-parallel N, --concurrency N   other spellings of --parallel N
 #   --resume          keep cases already reviewed by the same build and levers; re-run the rest
@@ -96,14 +98,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ -n "$PREFIX" && -n "$CASES" ]] || { echo "--prefix and --cases are required" >&2; exit 2; }
-[[ "$ARM" == qcr || "$ARM" == ocr ]] || { echo "--arm must be qcr | ocr" >&2; exit 2; }
-[[ "$ARM" == qcr || -z "$CONFIG" ]] || { echo "--config sets quickreviewd levers; the ocr arm has none" >&2; exit 2; }
+[[ "$ARM" == qcr || "$ARM" == ocr || "$ARM" == codex ]] || { echo "--arm must be qcr | ocr | codex" >&2; exit 2; }
+[[ "$ARM" == qcr || -z "$CONFIG" ]] || { echo "--config sets quickreviewd levers; the $ARM arm has none" >&2; exit 2; }
 [[ "$EVAL" =~ ^[0-9]+$ ]] || { echo "--eval takes a round count" >&2; exit 2; }
 [[ "$PAR" == auto || "$PAR" =~ ^[1-9][0-9]*$ ]] || { echo "--parallel takes a count or auto" >&2; exit 2; }
 [[ "$RETRIES" =~ ^[0-9]+$ && "$JCONC" =~ ^[1-9][0-9]*$ && "$EVAL_SHARDS" =~ ^[1-9][0-9]?$ ]] \
   || { echo "--retries, --judge-concurrency and --eval-shards take counts" >&2; exit 2; }
 QIMG="${QCR_BENCH_IMAGE:-qcr-bench:latest}" OIMG="${QCR_BENCH_OCR_IMAGE:-qcr-bench-ocr:latest}"
 IMG="$QIMG"; [[ "$ARM" == ocr ]] && IMG="$OIMG"
+[[ "$ARM" == codex ]] && IMG="${QCR_BENCH_CODEX_IMAGE:-qcr-bench-codex:latest}"
 IMG_ID="$(docker image inspect "$IMG" --format '{{.Id}}' 2>/dev/null)" || { echo "no image $IMG — build it: bench.sh build --arm $ARM" >&2; exit 2; }
 # An image built before the per-case scheduler ignores --phase, and its
 # "init" container would review every case with no network. Refuse it (and
@@ -209,7 +212,7 @@ run_cases() { # run
 # Judge (and --eval score) one run's own cases. Returns non-zero on failure.
 judge_and_eval() { # run set cases
   local run="$1" set_name="$2" cases="$3" rc=0 arm=() defs n shards var=()
-  [[ "$ARM" == ocr ]] && arm=(--arm ocr)
+  [[ "$ARM" != qcr ]] && arm=(--arm "$ARM")
   if [[ "$JUDGE" == 1 ]]; then
     # Judge ONLY this run's own cases, per ground truth that has them (a
     # `full` run spans several defect sets), always in the quickreviewd image.
@@ -255,14 +258,14 @@ PY
 START=$(date +%s)
 fail=0
 
-# ---- the open-code-review arm: one container per set, as its harness runs --------
-if [[ "$ARM" == ocr ]]; then
+# ---- the open-code-review and Codex arms: one container per set, as their harness runs --------
+if [[ "$ARM" == ocr || "$ARM" == codex ]]; then
   SLOT=""
   one() { # index
     local i="$1" run="${JRUN[$1]}" set_name="${JSET[$1]}" ids="${JIDS[$1]}" only=() rc=0 cases
     [[ -n "$ids" ]] && only=(--only "$ids")
     record_arm "$run" "$set_name" "$ids"
-    "$HERE/bench.sh" review --arm ocr --run "$run" --set "$set_name" ${only[@]+"${only[@]}"} \
+    "$HERE/bench.sh" review --arm "$ARM" --run "$run" --set "$set_name" ${only[@]+"${only[@]}"} \
       ${RESUME[@]+"${RESUME[@]}"} > "$QCR_BENCH_RUNS_DIR/$run.review.log" 2>&1 || rc=$?
     echo "$run: review exit $rc $(date +%T)"
     cases=$(run_cases "$run") || cases=""
