@@ -623,6 +623,10 @@ describe("— the post-hoc audit is no longer blind to the corpus", () => {
     expect(kindOf(bashLine("QCR_POSTING_RECEIPT_DIR=/tmp/r scripts/approve-pr.sh 5 b.md"))).toBe(
       "policy_relocation",
     );
+    // QCR_INSTALL names the config home the install locator reads.
+    expect(kindOf(bashLine("QCR_INSTALL=mine scripts/approve-pr.sh 5 b.md"))).toBe(
+      "policy_relocation",
+    );
     // Every redirection spelling reads back as the write it is, dequoted.
     expect(kindOf(bashLine("cat /tmp/evil >&config.toml"))).toBe("policy_surface_write");
     expect(kindOf(bashLine("cat /tmp/evil {v}>scripts/guards.sh"))).toBe("policy_surface_write");

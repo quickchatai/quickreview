@@ -570,6 +570,38 @@ describe("acceptProposal (local dirs, fake git)", () => {
     expect(gitCalls).toHaveLength(0);
   });
 
+  // The fence check reads the file the patch LANDS on. With the live config in
+  // the config home, reading the checkout's copy (absent, or a stale one with
+  // no fence) would wave a fenced edit through.
+  it("checks RATIFIED fences in the config home's file, not the checkout's", async () => {
+    const home = join(root, "..", "cfg-home-fence-" + Date.now());
+    mkdirSync(home, { recursive: true });
+    const lines = Array.from({ length: 420 }, (_, i) => `k${i} = ${i}`);
+    lines[406] = "# <!-- RATIFIED by the owner -->";
+    lines[408] = "# most recent human author of the touched directive files, else this:";
+    lines[409] = 'escalation_mention_default = "oldhandle"';
+    lines[410] = "# <!-- /RATIFIED -->";
+    writeFileSync(join(home, "config.toml"), lines.join("\n"));
+    propose("calibrate-mention", CONFIG_PATCH);
+    const gitCalls: string[][] = [];
+    try {
+      const res = await acceptProposal(
+        {
+          git: { run: (cmd, args) => (gitCalls.push([cmd, ...args]), Promise.resolve("")) },
+          repoRoot: root,
+          today: () => "2026-08-30",
+          configPath: join(home, "config.toml"),
+        },
+        "calibrate-mention",
+      );
+      expect(res.ok).toBe(false);
+      expect(res.message).toMatch(/RATIFIED/);
+      expect(gitCalls).toHaveLength(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("refuses a config proposal touching dry_run, before touching git — rule 1, structural", async () => {
     propose(
       "flip-dry-run",

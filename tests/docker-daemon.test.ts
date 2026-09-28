@@ -369,8 +369,13 @@ describe("docker-compose topology", () => {
   // legacy checkout config (empty home mounted) still boots.
   it("mounts the install's config home read-only and names the config only when present", () => {
     expect(compose).toContain(
-      "${QCR_CONFIG_HOME:-~/.config/qcr/default}:/opt/quickreview/config-home:ro",
+      "${QCR_CONFIG_HOME:-./docker/daemon/no-config-home}:/opt/quickreview/config-home:ro",
     );
+    // The unset default is a tracked dir holding NO config.toml — never a
+    // path under the operator's home that Docker would create owned by root.
+    const fallback = join(root, "docker/daemon/no-config-home");
+    expect(existsSync(fallback)).toBe(true);
+    expect(existsSync(join(fallback, "config.toml"))).toBe(false);
     expect(compose).toMatch(/QCR_CONFIG_NAME: \$\{QCR_CONFIG_NAME:-config\.toml\}/);
     expect(entrypoint).toMatch(
       /\[\[ -z "\$\{QCR_CONFIG:-\}" && -f "\$CONFIG_HOME_FILE" \]\] && export QCR_CONFIG="\$CONFIG_HOME_FILE"/,

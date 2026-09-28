@@ -443,13 +443,14 @@ const POLICY_SURFACE_PATH_RE =
   /(?:^|\/)config\.toml$|(?:^|\/)(?:scripts|dist|extensions|prompts|agents|seeds)\//;
 
 /** A session env-prefix that relocates this system's own policy inputs — the
- * `QCR_` directories the guard refuses in `POLICY_RELOCATING_ENV`. Matched as
+ * `QCR_` inputs the guard refuses in `POLICY_RELOCATING_ENV` (`QCR_INSTALL`
+ *: it names the config home the locator reads). Matched as
  * an assignment prefix at a command position (or after a separator), so a
  * laundered `bash -c 'sanctioned ; QCR_CONFIG=… script'` is seen: the string is
  * right there in the segment whether it is quoted or not. Independent of the
  * guard's own list by design. */
 const POLICY_RELOCATION_RE =
-  /(?:^|[\s;&|(])QCR_(?:CONFIG|STATE_DB|DRYRUN_DIR|POSTING_RECEIPT_DIR)=/;
+  /(?:^|[\s;&|(])QCR_(?:CONFIG|INSTALL|STATE_DB|DRYRUN_DIR|POSTING_RECEIPT_DIR)=/;
 
 /**
  * Programs whose ARGUMENTS are search patterns and paths, never commands.

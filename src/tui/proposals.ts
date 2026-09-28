@@ -444,14 +444,18 @@ export async function acceptProposal(
     const cfgViolation = configPatchViolation(patch);
     if (cfgViolation !== null) return { ok: false, message: cfgViolation };
   }
-  const fence = patchFenceViolation(patch, (rel) => fenceSourceFrom(deps.repoRoot, rel));
-  if (fence !== null) return { ok: false, message: fence };
   const target: ConfigTarget = kind === "config" ? configTargetOf(deps) : { kind: "checkout" };
   if (target.kind === "unappliable")
     return {
       ok: false,
       message: `refused: the live config is ${target.path} (QCR_CONFIG), not a config.toml this patch can name — apply state/rubric/${slug}/changes.patch by hand`,
     };
+  // The fence check reads the file the patch will actually land on: for a
+  // config-home target that is the home's config.toml, not the checkout's.
+  const fence = patchFenceViolation(patch, (rel) =>
+    fenceSourceFrom(target.kind === "home" ? target.dir : deps.repoRoot, rel),
+  );
+  if (fence !== null) return { ok: false, message: fence };
   const applyArgs =
     target.kind === "home" ? ["apply", "--unsafe-paths", `--directory=${target.dir}`] : ["apply"];
   try {

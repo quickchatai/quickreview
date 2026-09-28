@@ -183,6 +183,8 @@ describe("qcr install", () => {
     const moved = migrateReport({ kind: "moved", from, to });
     expect(moved.code).toBe(0);
     expect(moved.lines.join("\n")).toContain(to);
+    // deploy.sh sync|rebuild refuses a config outside the checkout until.
+    expect(moved.lines.join("\n")).toMatch(/deploy\.sh[\s\S]*/);
     expect(migrateReport({ kind: "already", to }).code).toBe(0);
     expect(migrateReport({ kind: "deduplicated", from, to }).code).toBe(0);
     expect(migrateReport({ kind: "nothing", to }).code).toBe(0);

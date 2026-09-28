@@ -200,6 +200,7 @@ export function migrateReport(outcome: MigrateOutcome): { code: number; lines: s
           `moved ${outcome.from} → ${outcome.to}`,
           "every reader now finds it there (restart a running daemon or TUI to pick it up).",
           "If this checkout tracked config.toml in git, the move shows as a deletion — the snapshot manifests already exclude the path.",
+          "A machine that deploys with scripts/deploy.sh sync|rebuild must keep its config in the checkout until ships the config home — that route refuses a config found anywhere else; move it back to deploy.",
         ],
       };
     case "already":

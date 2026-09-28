@@ -94,10 +94,12 @@ services:
       # QCR_CONFIG points. The bring-up step writes QCR_CONFIG_HOME and
       # QCR_CONFIG_NAME into .env and creates the directory first; the
       # entrypoint names the file only when it is there, so a legacy checkout
-      # config (this dir mounted empty) still boots. Run by hand without the
-      # wizard, create ~/.config/qcr/default yourself first — a missing source
-      # is created by Docker, owned by root.
-      - ${QCR_CONFIG_HOME:-~/.config/qcr/default}:/opt/quickreview/config-home:ro
+      # config (this dir mounted empty) still boots. Unset (compose run by
+      # hand, before the wizard wrote .env) it defaults to a tracked dir with
+      # no config.toml in it — never to ~/.config/qcr/<install>, which Docker
+      # would create owned by root when it is missing. To run by hand on a
+      # config home, set QCR_CONFIG_HOME in .env.
+      - ${QCR_CONFIG_HOME:-./docker/daemon/no-config-home}:/opt/quickreview/config-home:ro
       # pi's home: OAuth tokens (auth.json), session JSONLs, models.json —
       # must survive container rebuilds (sticky sessions + /login tokens).
       - qcr-pihome:/home/review/.pi
