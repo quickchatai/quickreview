@@ -102,6 +102,11 @@ const DEPLOY = {
 
 const NOW = new Date("2026-08-25T10:00:05Z");
 
+/** The published config-home fact for a deploy state. */
+function v_configHome(deploy: Parameters<typeof buildTuiView>[0]["deploy"]): string | null {
+  return buildTuiView({ now: NOW, tab: "deploy", deploy }).deploy.config_home;
+}
+
 // ---- half 1: what the TUI publishes ----------------------------------------
 
 describe("buildTuiView — the derived state behind the frame", () => {
@@ -247,6 +252,28 @@ describe("a failed read reaches the companion as UNKNOWN, never as an absent lin
     expect(answer).toContain("local HEAD: UNKNOWN");
     expect(answer).toContain("container: UNKNOWN");
     expect(answer).not.toMatch(/never deployed|no container/);
+    // an uncompared config home is UNKNOWN too — never "deployed".
+    expect(v_configHome(UNREAD)).toBeNull();
+    expect(answer).toContain("config home vs the VM: UNKNOWN");
+  });
+
+  it("publishes the tab's config-home sentence — the same words the tab paints", () => {
+    const fpA = { config: "a".repeat(64), profiles: "b".repeat(64) };
+    const fpB = { config: "a".repeat(64), profiles: "c".repeat(64) };
+    const changed = { ...DEPLOY, configLocal: fpB, configDeployed: fpA };
+    expect(v_configHome(changed)).toBe("profile changed, not deployed");
+    const answer = deployAnswer(
+      publish(buildTuiView({ now: NOW, tab: "deploy", deploy: changed })),
+      NOW,
+    );
+    expect(answer).toContain("config home vs the VM: profile changed, not deployed");
+    // one end unread → null, whichever end it is
+    expect(v_configHome({ ...DEPLOY, configLocal: fpA })).toBeNull();
+    expect(v_configHome({ ...DEPLOY, configDeployed: fpA })).toBeNull();
+    expect(v_configHome({ ...DEPLOY, configLocal: fpA, configDeployed: "unparseable" })).toBeNull();
+    expect(v_configHome({ ...DEPLOY, configLocal: fpA, configDeployed: fpA })).toContain(
+      "config home deployed",
+    );
   });
 
   it("genuine absence is its own sentence: a VM with no marker, a container docker does not list", () => {

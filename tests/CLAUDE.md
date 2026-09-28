@@ -17,7 +17,8 @@
   `guards-shell.test.ts` (the real scripts against a loopback HTTP stub — the
   shell/gate parity proof, same cases as `guards.test.ts`), `pr-self-shell`,
   `fences-gate`/`fences-cigate`, `shellquote`, `collect-secrets`, `deploy`
-  (the preflight, never a deploy), `publishability`/`publish-snapshot`, and
+  (the preflight, the playbook's rsync filters over temp dirs and
+  `config-fingerprint.sh` — never a deploy), `publishability`/`publish-snapshot`, and
   several TUI suites over stub binaries. The list drifts; find the current
   one with `grep -l child_process tests/*.test.ts`.
 - `seed-integrity.test.ts` enforces root rule 6 (sha256 manifest over the

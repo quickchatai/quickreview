@@ -210,6 +210,8 @@ export function deployAnswer(dir: string, now: Date): string {
     fmt("commits waiting to ship", d.pending_commit_count),
     fmt("diffstat", d.diffstat_summary),
     containerLine(d.container_status ?? null),
+    // whether the VM runs this machine's config home and profiles.
+    fmt("config home vs the VM", d.config_home ?? null),
     fmt("run in flight", d.run),
   ].filter((l): l is string => l !== undefined);
   const tail =

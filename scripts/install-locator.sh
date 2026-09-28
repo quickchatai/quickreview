@@ -197,3 +197,54 @@ qcr_locate_keys_file() {
     printf '%s\n' "$primary"
   fi
 }
+
+# ---- the shipped config home ---------------------------------------
+#
+#   SHIPPED="$(qcr_shipped_config "$ROOT")" || exit 1
+#
+# The located config when it is one `deploy.sh sync|rebuild` can ship: the file
+# exists and its directory — the config home, with the profiles/ beside it —
+# lies outside the checkout. Prints NOTHING (status 0) when there is none: no
+# config at all, or the legacy checkout config.toml, which deploy never ships
+# (it rides no route but the checkout rsync, and the VM reads the shipped home).
+# Status 1 only on a locator error.
+qcr_shipped_config() { # qcr_shipped_config <checkout-root>
+  local root="$1" config dir rootp
+  config="$(qcr_locate_config "$root")" || return 1
+  [[ -f "$config" ]] || return 0
+  dir="$(cd "$(dirname "$config")" 2>/dev/null && pwd -P)" || return 0
+  rootp="$(cd "$root" 2>/dev/null && pwd -P)" || return 1
+  [[ "$dir" == "$rootp" || "$dir" == "$rootp"/* ]] && return 0
+  printf '%s/%s\n' "$dir" "$(basename "$config")"
+}
+
+_qcr_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | cut -d' ' -f1
+  else
+    shasum -a 256 | cut -d' ' -f1
+  fi
+}
+
+# What a config home ships, as two hashes: `config=<sha256> profiles=<sha256>`.
+# The config file's bytes; and every file under profiles/ beside it (symlinks
+# followed, as the ship copies them), listed `<sha256>  <relative path>` in
+# byte order and hashed again — so a renamed, added or removed file changes it
+# as surely as an edited one. The same function runs on the PC over the home it
+# would ship and in the container over the home it was shipped; the deploy
+# tab's "profile changed, not deployed" is those two answers disagreeing.
+qcr_config_fingerprint() { # qcr_config_fingerprint <config-file>
+  local config="$1" dir cfg_h prof_h
+  dir="$(dirname "$config")"
+  cfg_h="$(_qcr_sha256 <"$config")" || return 1
+  prof_h="$(
+    cd "$dir" || exit 1
+    if [[ -d profiles ]]; then
+      find -L profiles -type f -print0 | LC_ALL=C sort -z |
+        while IFS= read -r -d '' f; do
+          printf '%s  %s\n' "$(_qcr_sha256 <"$f")" "$f"
+        done
+    fi | _qcr_sha256
+  )" || return 1
+  printf 'config=%s profiles=%s\n' "$cfg_h" "$prof_h"
+}

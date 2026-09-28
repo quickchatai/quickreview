@@ -5,11 +5,13 @@ import { describe, expect, it } from "vitest";
 import { TUI_DEFAULTS } from "../src/config.js";
 import { App } from "../src/tui/app.js";
 import {
+  CONFIG_FINGERPRINT_ARGV,
   DIRTY_ARGV,
   HEAD_ARGV,
   PLAN_ARGV,
   RealDeployFetcher,
   buildShaArgv,
+  configFingerprintArgv,
   deployKeys,
   deployLines,
   diffStatArgv,
@@ -22,6 +24,7 @@ import {
 } from "../src/tui/deploytab.js";
 import { stripAnsi } from "../src/tui/paint.js";
 import { MemoryDeployCeremonyStore } from "../src/tui/deploy-ceremony.js";
+import { configDrift, configDriftText, parseConfigFingerprint } from "../src/tui/confighome.js";
 import type { RemoteResult } from "../src/tui/remote.js";
 
 const ok = (stdout: string): RemoteResult => ({ ok: true, stdout, stderr: "", code: 0 });
@@ -152,11 +155,114 @@ describe("RealDeployFetcher", () => {
   });
 });
 
+const FP_A = { config: "a".repeat(64), profiles: "b".repeat(64) };
+const FP_B = { config: "a".repeat(64), profiles: "c".repeat(64) };
+
+describe("config home vs the VM", () => {
+  it("fingerprints the shipped home inside the container, and the local one with the same script", () => {
+    const argv = configFingerprintArgv(TUI_DEFAULTS);
+    expect(argv.slice(0, 4)).toEqual(["sudo", "docker", "exec", "quickreview-sandbox"]);
+    const script = argv[argv.length - 1]!;
+    expect(script).toContain(
+      "bash '/opt/quickreview/sandbox/scripts/config-fingerprint.sh' --located '/opt/quickreview/sandbox'",
+    );
+    // a VM that predates the script was never shipped a home — a fact, said as one
+    expect(script).toContain("else echo none");
+    expect(CONFIG_FINGERPRINT_ARGV).toEqual([
+      "bash",
+      "scripts/config-fingerprint.sh",
+      "--located",
+      ".",
+    ]);
+  });
+
+  it("parses the script's two answers and nothing else", () => {
+    expect(parseConfigFingerprint(`config=${"a".repeat(64)} profiles=${"b".repeat(64)}\n`)).toEqual(
+      FP_A,
+    );
+    expect(parseConfigFingerprint("none\n")).toBe("none");
+    expect(parseConfigFingerprint("")).toBe("unparseable");
+    expect(parseConfigFingerprint("bash: no such file")).toBe("unparseable");
+  });
+
+  it("compares honestly: an unread or garbled end is unknown, never 'same' and never 'changed'", () => {
+    expect(configDrift(FP_A, FP_A)).toEqual({ kind: "same" });
+    expect(configDrift(FP_B, FP_A)).toEqual({ kind: "changed", config: false, profiles: true });
+    expect(configDrift({ ...FP_A, config: "d".repeat(64) }, FP_A)).toEqual({
+      kind: "changed",
+      config: true,
+      profiles: false,
+    });
+    expect(configDrift("none", FP_A)).toEqual({ kind: "no-home" });
+    expect(configDrift(FP_A, "none")).toEqual({ kind: "never-shipped" });
+    for (const [l, d] of [
+      [undefined, FP_A],
+      ["unparseable", FP_A],
+      [FP_A, undefined],
+      [FP_A, "unparseable"],
+    ] as const)
+      expect(configDrift(l, d).kind).toBe("unknown");
+    expect(configDriftText(configDrift(FP_B, FP_A))).toBe("profile changed, not deployed");
+  });
+
+  it("the fetcher reads both ends — the VM over ssh, this machine locally", async () => {
+    const shipped = `config=${"a".repeat(64)} profiles=${"b".repeat(64)}\n`;
+    const local = `config=${"a".repeat(64)} profiles=${"c".repeat(64)}\n`;
+    const ssh = async (_h: string, argv: string[]) =>
+      argv.join(" ").includes("config-fingerprint.sh") ? ok(shipped) : ok("");
+    const f = new RealDeployFetcher(TUI_DEFAULTS, ssh, async (argv) =>
+      argv.join(" ") === CONFIG_FINGERPRINT_ARGV.join(" ") ? ok(local) : ok(""),
+    );
+    const st = await f.load();
+    expect(st.configDeployed).toEqual(FP_A);
+    expect(st.configLocal).toEqual(FP_B);
+    const text = stripAnsi(deployLines({ ...emptyState(), ...st }, 100).join("\n"));
+    expect(text).toContain("CONFIG");
+    expect(text).toContain("profile changed, not deployed");
+    // an ssh that never answered leaves the VM end unread → unknown
+    const dead = new RealDeployFetcher(
+      TUI_DEFAULTS,
+      async () => fail("timeout"),
+      async () => ok(local),
+    );
+    const unread = await dead.load();
+    expect(unread.configDeployed).toBeUndefined();
+    expect(stripAnsi(deployLines({ ...emptyState(), ...unread }, 100).join("\n"))).toContain(
+      "unknown — the VM's config home could not be read",
+    );
+  });
+
+  it("'nothing to deploy' needs the config home compared and equal, not just the commit", () => {
+    const at = (over: Partial<DeployState>) =>
+      stripAnsi(
+        deployLines(
+          emptyState({ deployed: { sha: "aaa1111" }, head: "aaa1111", commits: [], ...over }),
+          100,
+        ).join("\n"),
+      );
+    expect(at({ configLocal: FP_A, configDeployed: FP_A })).toContain("nothing to deploy");
+    const behind = at({ configLocal: FP_B, configDeployed: FP_A });
+    expect(behind).not.toContain("nothing to deploy");
+    expect(behind).toContain("config home is behind");
+    expect(at({ configLocal: FP_A, configDeployed: "none" })).toContain("config home is behind");
+    const unknown = at({});
+    expect(unknown).not.toContain("nothing to deploy");
+    expect(unknown).toContain("whether its config home matches is not known");
+  });
+});
+
 describe("deployLines", () => {
   it("says nothing-to-deploy when the VM already runs HEAD and the tree is clean", () => {
     const text = stripAnsi(
       deployLines(
-        emptyState({ deployed: { sha: "aaa1111" }, head: "aaa1111", commits: [], diffstat: [] }),
+        emptyState({
+          deployed: { sha: "aaa1111" },
+          head: "aaa1111",
+          commits: [],
+          diffstat: [],
+          configLocal: FP_A,
+          configDeployed: FP_A,
+        }),
         90,
       ).join("\n"),
     );

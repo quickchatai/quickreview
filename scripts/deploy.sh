@@ -31,6 +31,15 @@
 #       - [openviking] extension_commit     == extensions/vendor/openviking-pi/
 #                                              upstream.json "commit"
 #         (the vendored fork rides the rsync, not the image)
+#   * refuses to ship without a config home: sync|rebuild deliver
+#     the install's config home — the located config.toml and the profiles/
+#     beside it, never its secrets/ — to the VM by the secrets' route (a
+#     playbook task of its own, `-e config_home_src=…`, never the checkout
+#     rsync), and the container reads it there. A config that lives only in
+#     the checkout is refused (`qcr install migrate` moves it), and so is a
+#     `[review] profile` — or any profile it extends — found neither in the
+#     home's profiles/ nor in the checkout's (the two places the VM looks).
+#     Every pin/drift check below reads that same located config.
 #   * refuses a base-clone name (`[github] clone_dir`, else the
 #     repo slug's basename — the same rule as githubCloneDir in
 #     src/config.ts) that is not one plain path segment, that names a
@@ -54,7 +63,9 @@
 #   QC_VM_HOST      ssh target for `verify` (default: the inventory's first host)
 #   QCR_CONFIG      config.toml path    (default: the install locator's answer —
 #                   the install's config home, else the checkout's config.toml;
-#                   scripts/install-locator.sh)
+#                   scripts/install-locator.sh). Its directory is the
+#                   config home sync|rebuild ship; `verify` alone
+#                   accepts the checkout fallback
 #   (secrets)       the playbook's secrets_src is the install locator's answer
 #                   too — [github] secrets_dir, else <config home>/secrets, else
 #                   the legacy ~/.config/quickreview-bot
@@ -79,8 +90,8 @@ OV_UPSTREAM="$SANDBOX_DIR/extensions/vendor/openviking-pi/upstream.json"
 
 # The playbook (an asset — never edited from here) carries no tags, so "sync"
 # is expressed as a start-at-task: everything from the working-copy rsync
-# onwards (rsync → build context → image → container recreate), skipping host
-# packages, cloudflared install and the secrets/seed copies.
+# onwards (rsync → config home → build context → image → container recreate),
+# skipping host packages, cloudflared install and the secrets/seed copies.
 SYNC_START_TASK="Sync the local sandbox working copy (daemon, extensions) when present"
 
 MODE=""
@@ -244,28 +255,34 @@ first_inventory_host() {
 
 # ---- pre-flight --------------------------------------------------------------
 
-[[ -f "$CONFIG" ]] || die "no config.toml at $CONFIG"
-# this route ships the config the RSYNC carries — the checkout's own
-# config.toml. A live config found anywhere else (the install's config home,
-# or $QCR_CONFIG) never reaches the VM here, and the rsync's --delete REMOVES
-# the VM's copy once the checkout has none. Shipping the config home is
-#; until it lands, a shipping mode refuses rather than deploy a config
-# the preflight did not read. `verify` ships nothing and is unaffected.
-if [[ "$MODE" != "verify" && "$CONFIG" != "$SANDBOX_DIR/config.toml" ]]; then
-  die "the live config is $CONFIG, outside the checkout — this deploy ships only $SANDBOX_DIR/config.toml (and --delete would remove the VM's copy). Shipping the config home is; until then a deploying machine keeps its config in the checkout: unset QCR_CONFIG, or move the file back (mv \"$CONFIG\" \"$SANDBOX_DIR/config.toml\") — and do not run \`qcr install migrate\` there yet"
+[[ -f "$CONFIG" ]] || die "no config at $CONFIG — the install's config home holds none (run the onboarding wizard, or \`qcr install migrate\` to move a checkout config.toml there)"
+# a shipping mode ships the install's CONFIG HOME — the located
+# config and the profiles/ beside it — to the VM by the secrets' route (its own
+# playbook task, never the checkout rsync), and the container reads it there
+# ($QCR_CONFIG names the shipped file). So the config must live in such a home:
+# the legacy checkout config.toml is refused, not shipped. `verify` ships
+# nothing and still reads whatever the locator found.
+SHIPPED_CONFIG="$(qcr_shipped_config "$SANDBOX_DIR")" || exit 1
+if [[ "$MODE" != "verify" && -z "$SHIPPED_CONFIG" ]]; then
+  die "no config home to ship — the live config is $CONFIG, inside the checkout. Deploy ships the install's config home ($(qcr_config_home 2>/dev/null || echo '$XDG_CONFIG_HOME/qcr/<install>'), or the directory \$QCR_CONFIG names) to the VM, never the checkout's config.toml: move it with \`qcr install migrate\`, then re-run"
 fi
-# the same holds for the repo profile the config names — the VM's
-# daemon finds it only in the rsynced checkout, and a missing profile fails
-# its boot. A profile moved into the config home by `qcr install migrate`
-# waits for like the config does.
-DEPLOY_PROFILE="$(config_table_key review profile)"
-if [[ "$MODE" != "verify" && -n "$DEPLOY_PROFILE" && ! -d "$SANDBOX_DIR/profiles/$DEPLOY_PROFILE" ]]; then
-  die "config.toml [review] profile = \"$DEPLOY_PROFILE\", but $SANDBOX_DIR/profiles/$DEPLOY_PROFILE does not exist — this deploy ships only the checkout's profiles/, and the VM's daemon refuses to boot without its profile. Shipping the config home is; until then a deploying machine keeps its profile in the checkout (mv it back from the config home's profiles/)"
+CONFIG_HOME_SRC=""
+CONFIG_NAME=""
+if [[ -n "$SHIPPED_CONFIG" ]]; then
+  CONFIG_HOME_SRC="$(dirname "$SHIPPED_CONFIG")"
+  CONFIG_NAME="$(basename "$SHIPPED_CONFIG")"
+  # Both reach the playbook as `-e k=v`, which splits on whitespace.
+  if [[ "$MODE" != "verify" && ( "$CONFIG_HOME_SRC" =~ [[:space:]\"\'] || "$CONFIG_NAME" =~ [[:space:]\"\'] ) ]]; then
+    die "the config home path '$SHIPPED_CONFIG' contains whitespace or quotes — the playbook cannot be handed it; set XDG_CONFIG_HOME (or QCR_CONFIG) to a plain path"
+  fi
 fi
-# and so must every profile it `extends`, down the chain — a base
-# the VM cannot find fails the boot exactly like a missing profile. Only
-# presence is checked here; the daemon's resolver refuses a cycle, so the
-# walk just stops at a name it has already seen.
+# The repo profile the config names, and every profile it `extends`,
+# must be found where the VM's daemon will look for it (src/install.ts
+# locateProfile, in the container): profiles/ beside the shipped config first,
+# then the rsynced checkout's profiles/ (the generic examples, and a legacy
+# install profile until migrate moves it). A profile found in neither fails
+# the VM's boot, so it fails here. Only presence is checked; the daemon's
+# resolver refuses a cycle, so the walk just stops at a name it has seen.
 profile_extends() {
   awk '
     /^[[:space:]]*\[/ { exit }
@@ -279,14 +296,39 @@ profile_extends() {
     }
   ' "$1" 2>/dev/null
 }
+# The shipped directory holding profile <name>, or nothing.
+shipped_profile_dir() {
+  local d
+  for d in "$CONFIG_HOME_SRC/profiles" "$SANDBOX_DIR/profiles"; do
+    [[ -d "$d/$1" ]] && { echo "$d/$1"; return 0; }
+  done
+  return 0
+}
+# A profile name is one plain path segment (the daemon's assertPathSegment):
+# anything that could climb out of profiles/ is refused before any lookup.
+check_profile_name() {
+  if [[ ! "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ || "$1" == *..* ]]; then
+    die "$2 \"$1\" is not a plain profile name — letters, digits, '.', '_' and '-' only, no path separators or '..'"
+  fi
+}
+DEPLOY_PROFILE="$(config_table_key review profile)"
+PROFILE_CHAIN=""
 if [[ "$MODE" != "verify" && -n "$DEPLOY_PROFILE" ]]; then
-  chain_seen=" $DEPLOY_PROFILE "
+  check_profile_name "$DEPLOY_PROFILE" "config [review] profile"
   chain_at="$DEPLOY_PROFILE"
-  while chain_base="$(profile_extends "$SANDBOX_DIR/profiles/$chain_at/profile.toml")" && [[ -n "$chain_base" ]]; do
+  chain_dir="$(shipped_profile_dir "$chain_at")"
+  [[ -n "$chain_dir" ]] ||
+    die "config [review] profile = \"$DEPLOY_PROFILE\", but the config home does not hold it — looked in $CONFIG_HOME_SRC/profiles/$DEPLOY_PROFILE and $SANDBOX_DIR/profiles/$DEPLOY_PROFILE. The VM's daemon refuses to boot without its profile: put it in $CONFIG_HOME_SRC/profiles/ (or fix the name)"
+  chain_seen=" $DEPLOY_PROFILE "
+  PROFILE_CHAIN="$DEPLOY_PROFILE"
+  while chain_base="$(profile_extends "$chain_dir/profile.toml")" && [[ -n "$chain_base" ]]; do
     [[ "$chain_seen" == *" $chain_base "* ]] && break
-    [[ -d "$SANDBOX_DIR/profiles/$chain_base" ]] ||
-      die "profile \"$chain_at\" extends \"$chain_base\", but $SANDBOX_DIR/profiles/$chain_base does not exist — this deploy ships only the checkout's profiles/, and the VM's daemon refuses to boot without every profile in the chain (mv it back from the config home's profiles/)"
+    check_profile_name "$chain_base" "profile \"$chain_at\" extends"
+    chain_dir="$(shipped_profile_dir "$chain_base")"
+    [[ -n "$chain_dir" ]] ||
+      die "profile \"$chain_at\" extends \"$chain_base\", but the config home does not hold it — looked in $CONFIG_HOME_SRC/profiles/$chain_base and $SANDBOX_DIR/profiles/$chain_base. The VM's daemon refuses to boot without every profile in the chain"
     chain_seen+="$chain_base "
+    PROFILE_CHAIN+=" → $chain_base"
     chain_at="$chain_base"
   done
 fi
@@ -349,6 +391,10 @@ if [[ -n "$DIRTY" ]]; then
   exit 1
 fi
 HEAD_SHA="$(git -C "$SANDBOX_DIR" rev-parse --short HEAD 2>/dev/null || echo "no-commits")"
+
+# The dry_run flag as the shipped config carries it — shown in the plan, never
+# changed: a sync now ships the config home, so its flag is the VM's flag.
+CFG_DRY_RUN="$(awk '/^\[/ { exit } /^[[:space:]]*dry_run[[:space:]]*=/ { sub(/^[^=]*=[[:space:]]*/, ""); sub(/[[:space:]]*(#.*)?$/, ""); print; exit }' "$CONFIG")"
 
 # 2. the pi pin must agree, and must not be the placeholder
 CFG_PI="$(config_pi_version || true)"
@@ -461,8 +507,8 @@ fi
 
 ANSIBLE_CMD=(ansible-playbook -i "$INVENTORY" "$PLAYBOOK")
 case "$MODE" in
-  sync)    ANSIBLE_CMD+=(--start-at-task "$SYNC_START_TASK" -e force_restart=true -e "base_clone_dir=$CLONE_DIR") ;;
-  rebuild) ANSIBLE_CMD+=(-e rebuild_image=true -e "base_clone_dir=$CLONE_DIR" -e "secrets_src=$SECRETS_SRC") ;;
+  sync)    ANSIBLE_CMD+=(--start-at-task "$SYNC_START_TASK" -e force_restart=true -e "base_clone_dir=$CLONE_DIR" -e "config_home_src=$CONFIG_HOME_SRC" -e "config_file_name=$CONFIG_NAME") ;;
+  rebuild) ANSIBLE_CMD+=(-e rebuild_image=true -e "base_clone_dir=$CLONE_DIR" -e "secrets_src=$SECRETS_SRC" -e "config_home_src=$CONFIG_HOME_SRC" -e "config_file_name=$CONFIG_NAME") ;;
   verify)  ANSIBLE_CMD=() ;;
 esac
 
@@ -533,6 +579,10 @@ print_plan() {
   fi
   echo "  vm host      ${VM_HOST:-<unset — set QC_VM_HOST>}"
   echo "  base clone   /$CLONE_DIR (kept on the VM by the rsync exclude; locally ignored via info/exclude)"
+  if [[ "$MODE" != "verify" ]]; then
+    echo "  config home  $CONFIG_HOME_SRC ($CONFIG_NAME + profiles/ -> the VM's read-only /opt/quickreview/config-home, which QCR_CONFIG names; secrets/ never rides it)"
+    echo "  profile      ${PROFILE_CHAIN:-<none — the generic registry>}"
+  fi
   case "$MODE" in
     rebuild) echo "  secrets      $SECRETS_SRC (copied to the VM's read-only secrets mount)" ;;
     sync)    echo "  secrets      $SECRETS_SRC (not copied — sync starts past the secrets tasks; rebuild ships them)" ;;
@@ -548,7 +598,7 @@ print_plan() {
   echo "  then verify  ssh ${VM_HOST:-<vm>}:"
   local c
   for c in "${VERIFY_CMDS[@]}"; do echo "                 $c"; done
-  echo "  dry_run      config.toml dry_run is NOT touched by deploy — the cutover flip is a manual edit"
+  echo "  dry_run      ${CFG_DRY_RUN:-<unset>} in $CONFIG — config.toml dry_run is NOT touched by deploy — the cutover flip is a manual edit"
   if [[ "$MODE" != "verify" ]]; then
     echo "  marker       BUILD_SHA=$HEAD_SHA written before the rsync (gitignored; the qcr tui deploy tab reads it on the VM)"
   fi

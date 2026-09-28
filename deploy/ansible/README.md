@@ -82,9 +82,9 @@ yours either way — the wizard never creates a machine.
 ## Run
 
 ```
-ansible-playbook -i inventory.ini playbook.yml -e base_clone_dir=<clone dir>
-# force an image rebuild after bumping pins:
-ansible-playbook -i inventory.ini playbook.yml -e base_clone_dir=<clone dir> -e rebuild_image=true
+ansible-playbook -i inventory.ini playbook.yml -e base_clone_dir=<clone dir> \
+  -e config_home_src=<config home> -e config_file_name=config.toml
+# force an image rebuild after bumping pins: the same, plus -e rebuild_image=true
 ```
 
 `base_clone_dir` is mandatory: it is the reviewed repo's base-clone directory
@@ -92,11 +92,23 @@ under the sandbox root (`[github] clone_dir`, else the repo's basename), and
 the rsync `--delete` keeps it only because it is excluded by that name.
 `scripts/deploy.sh` derives and passes it for you.
 
+`config_home_src` and `config_file_name` are mandatory too: the
+install's config home on the controller — the directory holding the live
+config (`~/.config/qcr/<install>/`, or the one `$QCR_CONFIG` names) — and the
+config's file name there. The playbook ships exactly that file and the
+`profiles/` beside it (never the home's `secrets/`) to
+`/opt/quickreview/config-home/`, mounted read-only into the container, whose
+`QCR_CONFIG` names the shipped file. It runs in `sync` too, so a profile
+change reaches the VM without a rebuild; `deploy.sh` passes both, and refuses
+a config that lives only in the checkout or a `[review] profile` the home (or
+the checkout's generic examples) does not hold.
+
 What it does, in order: host packages + Docker → (when `cloudflared_enabled`)
 cloudflared apt repo, install, service registration with the tunnel token →
 directory layout under `/opt/quickreview/` → secrets copied `0600` → rsync of
 the `sandbox_src` working copy (daemon, extensions, prompts, agents — the
-seed content rides the repo) → image build → container up
+seed content rides the repo) → the config home (config + profiles) → image
+build → container up
 (`restart: unless-stopped`, port bound to **127.0.0.1 only**).
 
 ## Verify

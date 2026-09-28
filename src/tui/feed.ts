@@ -34,6 +34,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import type { StatusSnapshot } from "../state.js";
+import { configDrift, configDriftText, type ConfigRead } from "./confighome.js";
 
 /** A daemon event row as `qcr events --json` emits it. */
 export interface FeedEvent {
@@ -101,6 +102,10 @@ export interface ViewDeploy {
   /** `docker ps` Status line ("Up 2 hours" / "Exited (0) …"); `""` when docker
    * lists no such container; `null` when the read failed. */
   container_status: string | null;
+  /**: the deploy tab's config-home sentence ("profile changed, not
+   * deployed", …) — `null` when either end could not be read, so an
+   * uncompared home is never published as matching or as changed. */
+  config_home: string | null;
   run?: { kind: string; running: boolean; code?: number | null };
 }
 
@@ -183,6 +188,9 @@ export interface ViewSource {
     commits?: string[];
     diffstat?: string[];
     containerStatus?: string;
+    /** Structural echo of `DeployState.configLocal` / `configDeployed`. */
+    configLocal?: ConfigRead;
+    configDeployed?: ConfigRead;
     run?: { kind: string; running: boolean; code?: number | null };
   };
 }
@@ -203,6 +211,12 @@ export function clampScreen(text: string): { body: string; truncated: boolean } 
     body: `${plain.slice(0, SCREEN_MAX_CHARS)}\n… screen truncated at ${SCREEN_MAX_CHARS} chars`,
     truncated: true,
   };
+}
+
+/** The config-home sentence, or `null` when it would be built from no data. */
+function configHomeFact(local?: ConfigRead, deployed?: ConfigRead): string | null {
+  const drift = configDrift(local, deployed);
+  return drift.kind === "unknown" ? null : configDriftText(drift);
 }
 
 export function buildTuiView(src: ViewSource): TuiView {
@@ -231,6 +245,7 @@ export function buildTuiView(src: ViewSource): TuiView {
       pending_commit_count: commits?.length ?? null,
       ...(diffstat.length > 0 ? { diffstat_summary: diffstat[diffstat.length - 1] } : {}),
       container_status: d?.containerStatus ?? null,
+      config_home: configHomeFact(d?.configLocal, d?.configDeployed),
       ...(d?.run
         ? { run: { kind: d.run.kind, running: d.run.running, code: d.run.code ?? null } }
         : {}),

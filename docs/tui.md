@@ -103,6 +103,11 @@ selected — and only on the board.
 | `S` | power the VM app container — stop or start, twice; absent until its state has been read |
 | `x` | abort the running deploy / power run, or close its finished log |
 
+The CONFIG line compares the config home a sync would ship (config.toml and
+its profiles/) with the one the VM was shipped, both fingerprinted by
+`scripts/config-fingerprint.sh`: "profile changed, not deployed" until a
+sync, "unknown" when either end could not be read.
+
 ### metrics
 
 | key | does |

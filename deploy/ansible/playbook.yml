@@ -150,6 +150,9 @@
         - { path: "{{ openviking_home }}", mode: "0700" }
         - { path: "{{ sandbox_root }}/pihome", mode: "0700" }
         - { path: "{{ sandbox_root }}/secrets", mode: "0700" }
+        # The install's config home as shipped — config.toml +
+        # profiles/, mounted read-only; the ship task below also creates it.
+        - { path: "{{ sandbox_root }}/config-home", mode: "0755" }
 
     - name: Secrets into place (readable only by the container user)
       ansible.builtin.copy:
@@ -246,6 +249,33 @@
           - "--exclude=/pihome"
       when: sandbox_src is defined
 
+    # the install's config home — the live config.toml and the
+    # profiles/ beside it — shipped by the secrets' route: its own task from a
+    # controller-side dir deploy.sh names (`-e config_home_src=…`, the install
+    # locator's answer, and `-e config_file_name=…`), onto a VM dir the
+    # container mounts read-only. Never the checkout rsync: the config and the
+    # install's profiles no longer live in the checkout. It runs in `sync`
+    # (it follows the start-at task) so a profile change reaches the VM
+    # without a rebuild.
+    # Exactly two things ship — the filter admits the config file and
+    # profiles/**, and excludes the rest of the home, above all its secrets/
+    # (those ride the secrets tasks, 0400, rebuild only). --delete plus
+    # --delete-excluded keep the VM copy an exact mirror: a profile or addendum
+    # removed locally disappears there too. --copy-links ships a symlinked
+    # profile as the files it points at. No defaults on purpose — a run that
+    # does not name the home fails here rather than booting on a stale one.
+    - name: Ship the install's config home (config.toml + profiles/, never secrets/)
+      ansible.posix.synchronize:
+        src: "{{ config_home_src | mandatory }}/"
+        dest: "{{ sandbox_root }}/config-home/"
+        rsync_opts:
+          - "--delete"
+          - "--delete-excluded"
+          - "--copy-links"
+          - "--include=/{{ config_file_name | mandatory }}"
+          - "--include=/profiles/***"
+          - "--exclude=*"
+
     # rsync lands files with controller-side ownership; the container user
     # (uid 1001) must own the tree to npm-ci/build on boot.
     - name: Sandbox tree owned by the container user
@@ -258,6 +288,7 @@
       loop:
         - "{{ sandbox_root }}/sandbox"
         - "{{ sandbox_root }}/state"
+        - "{{ sandbox_root }}/config-home"
 
     - name: Build context — Dockerfile and entrypoint
       ansible.builtin.template:
@@ -307,6 +338,9 @@
           - "{{ sandbox_root }}/sandbox:/opt/quickreview/sandbox"
           - "{{ sandbox_root }}/state:/opt/quickreview/state"
           - "{{ sandbox_root }}/secrets:/opt/quickreview/secrets:ro"
+          # The shipped config home, read-only like the secrets —
+          # the same mount point the compose route uses.
+          - "{{ sandbox_root }}/config-home:/opt/quickreview/config-home:ro"
           # pi's home: OAuth tokens (auth.json), session JSONLs, models.json —
           # must survive container rebuilds (sticky sessions + /login tokens)
           - "{{ sandbox_root }}/pihome:/home/review/.pi"
@@ -316,6 +350,12 @@
           # In-container bind must be 0.0.0.0 — the published port targets the
           # container's eth0; host exposure stays 127.0.0.1-only above.
           QC_BIND_HOST: "0.0.0.0"
+          # the live config is the shipped one. The in-container
+          # install locator finds the install's profiles beside it, then the
+          # rsynced checkout's generic examples; the daemon hands this path
+          # to every session. Set on the container (not in the image) so a
+          # plain `sync` delivers it.
+          QCR_CONFIG: "/opt/quickreview/config-home/{{ config_file_name | mandatory }}"
 
     # RETIRED: the post-start pi-subagents config.json write that
     # set the fan-out cap to 6. The cap now rides config.toml [pi]

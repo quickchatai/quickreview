@@ -4,7 +4,17 @@
 // --dry-run or at a refusal.
 import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,6 +22,7 @@ import { githubCloneDir } from "../src/config.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const deploySh = join(root, "scripts", "deploy.sh");
+const fingerprintSh = join(root, "scripts", "config-fingerprint.sh");
 
 /** The OpenViking half of the pins. `undefined` = no such pin in
  * the file, which is a distinct case from a mismatching one. */
@@ -105,6 +116,11 @@ interface Env {
   sandbox: string;
   ansible: string;
   dir: string;
+  /** The scratch XDG_CONFIG_HOME every run uses unless a case overrides it —
+   * the operator's own config home is never read. */
+  xdg: string;
+  /** The install's config home under it: `<xdg>/qcr/default`. */
+  home: string;
 }
 
 let env: Env;
@@ -126,15 +142,27 @@ function makeScratch(opts: {
   profile?: string;
   /** Tracked files to commit with the scratch tree, path → contents. */
   tracked?: Record<string, string>;
+  /** Where the live config.toml lives: the install's config home
+   * (the default — what a deploy ships), or the legacy checkout. */
+  configAt?: "home" | "checkout";
+  /** Files in the config home, path relative to it → contents. */
+  homeFiles?: Record<string, string>;
 }): Env {
   const dir = mkdtempSync(join(tmpdir(), "qcr-deploy-"));
   const sandbox = join(dir, "sandbox");
   const ansible = join(dir, "ansible");
+  const xdg = join(dir, "xdg");
+  const home = join(xdg, "qcr", "default");
   mkdirSync(sandbox, { recursive: true });
+  mkdirSync(home, { recursive: true });
   mkdirSync(join(ansible, "group_vars"), { recursive: true });
+  for (const [rel, body] of Object.entries(opts.homeFiles ?? {})) {
+    mkdirSync(dirname(join(home, rel)), { recursive: true });
+    writeFileSync(join(home, rel), body);
+  }
 
   writeFileSync(
-    join(sandbox, "config.toml"),
+    join(opts.configAt === "checkout" ? sandbox : home, "config.toml"),
     CONFIG(opts.configPi, opts.configOv) +
       (opts.github === undefined
         ? ""
@@ -191,9 +219,11 @@ function makeScratch(opts: {
       },
     });
   git("init", "-q");
+  // An empty tree cannot be committed — keep one tracked file whatever the case.
+  writeFileSync(join(sandbox, "README.md"), "scratch\n");
   git("add", "-A");
   git("commit", "-qm", "scratch");
-  return { dir, sandbox, ansible };
+  return { dir, sandbox, ansible, xdg, home };
 }
 
 function run(
@@ -209,6 +239,9 @@ function run(
         QC_SANDBOX_DIR: e.sandbox,
         QC_ANSIBLE_DIR: e.ansible,
         QC_INVENTORY: join(e.ansible, "inventory.ini"),
+        XDG_CONFIG_HOME: e.xdg,
+        QCR_CONFIG: "",
+        QCR_INSTALL: "",
         ...extraEnv,
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -304,109 +337,331 @@ describe("deploy.sh --dry-run", () => {
   });
 });
 
-// ---- the memory-engine pins --------------------------------------
-// The pi pin never floats; neither does OpenViking's. Three pins, two mirrors:
-// server version and llama-cpp-python against the ansible group_vars (which
-// the Dockerfile venv layer interpolates, so agreeing there means agreeing in
-// the image), and the vendored fork's base commit against upstream.json.
-describe("deploy.sh — the install locator", () => {
-  /** A config in the install's config home under a temp XDG dir. */
-  function homeConfig(e: Env, pi: string): Record<string, string> {
-    const xdg = join(e.dir, "xdg-config");
-    mkdirSync(join(xdg, "qcr", "default"), { recursive: true });
-    writeFileSync(join(xdg, "qcr", "default", "config.toml"), CONFIG(pi));
-    return { XDG_CONFIG_HOME: xdg };
-  }
+// ---- the config home ships ----------------------------------------
+// sync|rebuild deliver the install's config home — the located config and the
+// profiles/ beside it — to the VM by a playbook task of its own; the container
+// reads it through QCR_CONFIG. The pin/drift preflight reads that same config.
 
-  it("the pin preflight reads the config home, not the checkout, when the home has one", () => {
-    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
-    const r = run(env, ["--dry-run", "verify"], homeConfig(env, "0.85.0"));
+/** The `-e k=v` extra vars on the planned ansible command. */
+function planVars(stdout: string): Record<string, string> {
+  const line = stdout.split("\n").find((l) => l.includes("  command      ")) ?? "";
+  return Object.fromEntries(
+    [...line.matchAll(/-e (\w+)=(\S+)/g)].map((m) => [m[1]!, m[2]!] as const),
+  );
+}
+
+describe("deploy.sh — the config home ships", () => {
+  it("the pin preflight reads the config home — a checkout config.toml beside it changes nothing", () => {
+    env = makeScratch({
+      configPi: "0.85.0",
+      groupVarsPi: "0.84.1",
+      tracked: { "config.toml": CONFIG("0.84.1") },
+    });
+    const r = run(env, ["--dry-run", "verify"]);
     expect(r.code).toBe(1);
     expect(r.stderr).toContain('config.toml   [pi] version = "0.85.0"');
   });
 
-  it("the checkout's config.toml is still the fallback with an empty config home", () => {
+  it("sync and rebuild hand the config home to the playbook; verify ships nothing", () => {
     env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
-    const r = run(env, ["--dry-run"], { XDG_CONFIG_HOME: join(env.dir, "empty-xdg") });
-    expect(r.code).toBe(0);
+    const home = realpathSync(env.home);
+    for (const mode of ["sync", "rebuild"]) {
+      const r = run(env, ["--dry-run", mode]);
+      expect(r.code, r.stderr).toBe(0);
+      expect(planVars(r.stdout).config_home_src).toBe(home);
+      expect(planVars(r.stdout).config_file_name).toBe("config.toml");
+      expect(r.stdout).toContain(`config home  ${home} (config.toml + profiles/`);
+      expect(r.stdout).toContain("secrets/ never rides it");
+    }
+    const v = run(env, ["--dry-run", "verify"]);
+    expect(v.code).toBe(0);
+    expect(v.stdout).not.toContain("config home");
   });
 
-  it("a shipping mode REFUSES a live config outside the checkout — the rsync would not carry it", () => {
+  it("QCR_CONFIG names the file: its directory is the home that ships, under its own name", () => {
     env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
+    const elsewhere = join(env.dir, "elsewhere");
+    mkdirSync(elsewhere);
+    writeFileSync(join(elsewhere, "prod.toml"), CONFIG("0.84.1"));
+    const r = run(env, ["--dry-run"], { QCR_CONFIG: join(elsewhere, "prod.toml") });
+    expect(r.code, r.stderr).toBe(0);
+    expect(planVars(r.stdout).config_home_src).toBe(realpathSync(elsewhere));
+    expect(planVars(r.stdout).config_file_name).toBe("prod.toml");
+  });
+
+  it("REFUSES a missing home: a config that lives only in the checkout is never shipped", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", configAt: "checkout" });
     for (const mode of ["sync", "rebuild"]) {
-      const r = run(env, ["--dry-run", mode], homeConfig(env, "0.84.1"));
+      const r = run(env, ["--dry-run", mode]);
       expect(r.code).toBe(1);
-      expect(r.stderr).toContain("outside the checkout");
-      expect(r.stderr).toContain("");
+      expect(r.stderr).toContain("no config home to ship");
+      expect(r.stderr).toContain("qcr install migrate");
     }
-    const other = join(env.dir, "elsewhere.toml");
-    writeFileSync(other, CONFIG("0.84.1"));
-    const r = run(env, ["--dry-run"], { QCR_CONFIG: other });
+    // QCR_CONFIG pointed back into the checkout is the same refusal.
+    const r = run(env, ["--dry-run"], { QCR_CONFIG: join(env.sandbox, "config.toml") });
     expect(r.code).toBe(1);
-    expect(r.stderr).toContain("outside the checkout");
-    // verify ships nothing, so it is not refused
-    expect(run(env, ["--dry-run", "verify"], homeConfig(env, "0.84.1")).code).toBe(0);
+    expect(r.stderr).toContain("no config home to ship");
+    // verify ships nothing: it still reads the checkout fallback's pins.
+    expect(run(env, ["--dry-run", "verify"]).code).toBe(0);
+  });
+
+  it("REFUSES when there is no config anywhere", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
+    rmSync(join(env.home, "config.toml"));
+    const r = run(env, ["--dry-run"]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("no config at");
+  });
+
+  it("refuses a config home path the playbook's -e k=v would split", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
+    const spaced = join(env.dir, "with space");
+    mkdirSync(spaced);
+    writeFileSync(join(spaced, "config.toml"), CONFIG("0.84.1"));
+    const r = run(env, ["--dry-run"], { QCR_CONFIG: join(spaced, "config.toml") });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("whitespace");
   });
 });
 
-describe("deploy.sh — the repo profile rides the checkout", () => {
-  it("a shipping mode refuses a named profile the checkout does not hold", () => {
+describe("deploy.sh — the repo profile ships with the config home", () => {
+  it("passes with the profile in the config home, and names it in the plan", () => {
+    env = makeScratch({
+      configPi: "0.84.1",
+      groupVarsPi: "0.84.1",
+      profile: "house",
+      homeFiles: { "profiles/house/profile.toml": "# mine\n" },
+    });
+    const r = run(env, ["--dry-run"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("profile      house");
+  });
+
+  it("REFUSES a named profile the home does not hold — for sync and rebuild, never verify", () => {
     env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", profile: "house" });
     for (const mode of ["sync", "rebuild"]) {
-      const r = run(env, ["--dry-run", mode], { XDG_CONFIG_HOME: join(env.dir, "empty-xdg") });
+      const r = run(env, ["--dry-run", mode]);
       expect(r.code).toBe(1);
       expect(r.stderr).toContain('[review] profile = "house"');
-      expect(r.stderr).toContain("");
+      expect(r.stderr).toContain("the config home does not hold it");
+      expect(r.stderr).toContain(join("profiles", "house"));
     }
-    // verify ships nothing, so it is not refused
-    const v = run(env, ["--dry-run", "verify"], { XDG_CONFIG_HOME: join(env.dir, "empty-xdg") });
+    const v = run(env, ["--dry-run", "verify"]);
     expect(v.stderr).not.toContain("[review] profile");
   });
 
-  it("passes when the profile is in the checkout, and with no profile at all", () => {
+  it("a legacy profile still in the checkout passes — the rsync carries it and the VM reads it there", () => {
     env = makeScratch({
       configPi: "0.84.1",
       groupVarsPi: "0.84.1",
       profile: "house",
       tracked: { "profiles/house/addenda/.gitkeep": "" },
     });
-    expect(run(env, ["--dry-run"], { XDG_CONFIG_HOME: join(env.dir, "empty-xdg") }).code).toBe(0);
+    expect(run(env, ["--dry-run"]).code).toBe(0);
     rmSync(env.dir, { recursive: true, force: true });
     env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", profile: "" });
-    expect(run(env, ["--dry-run"], { XDG_CONFIG_HOME: join(env.dir, "empty-xdg") }).code).toBe(0);
+    expect(run(env, ["--dry-run"]).code).toBe(0);
   });
 
-  it("every profile the named one extends must ride the checkout too", () => {
-    const xdg = { XDG_CONFIG_HOME: "" };
+  it("every profile in the chain must be found — the home first, then the checkout's examples", () => {
     env = makeScratch({
       configPi: "0.84.1",
       groupVarsPi: "0.84.1",
       profile: "house",
-      tracked: {
+      homeFiles: {
         "profiles/house/profile.toml": 'extends = "family"   # c\n',
         "profiles/family/profile.toml": "# a base\nextends = 'default'\n[addenda]\ndrop = []\n",
       },
     });
-    xdg.XDG_CONFIG_HOME = join(env.dir, "empty-xdg");
-    const r = run(env, ["--dry-run", "sync"], xdg);
+    let r = run(env, ["--dry-run", "sync"]);
     expect(r.code).toBe(1);
     expect(r.stderr).toContain('profile "family" extends "default"');
     rmSync(env.dir, { recursive: true, force: true });
-    // The whole chain present — a cycle is the daemon's to refuse, not a hang here.
+    // The base rides the checkout (a generic example) — found where the VM looks.
     env = makeScratch({
       configPi: "0.84.1",
       groupVarsPi: "0.84.1",
       profile: "house",
-      tracked: {
+      homeFiles: { "profiles/house/profile.toml": 'extends = "default"\n' },
+      tracked: { "profiles/default/profile.toml": "# the shipped behaviour\n" },
+    });
+    r = run(env, ["--dry-run", "sync"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("profile      house → default");
+    rmSync(env.dir, { recursive: true, force: true });
+    // A cycle is the daemon's to refuse, not a hang here.
+    env = makeScratch({
+      configPi: "0.84.1",
+      groupVarsPi: "0.84.1",
+      profile: "house",
+      homeFiles: {
         "profiles/house/profile.toml": 'extends = "family"\n',
         "profiles/family/profile.toml": 'extends = "house"\n',
       },
     });
-    xdg.XDG_CONFIG_HOME = join(env.dir, "empty-xdg");
-    expect(run(env, ["--dry-run", "sync"], xdg).code).toBe(0);
+    expect(run(env, ["--dry-run", "sync"]).code).toBe(0);
+  });
+
+  it("refuses a profile name — or an extends — that could climb out of profiles/", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", profile: "../secrets" });
+    let r = run(env, ["--dry-run"]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("not a plain profile name");
+    rmSync(env.dir, { recursive: true, force: true });
+    env = makeScratch({
+      configPi: "0.84.1",
+      groupVarsPi: "0.84.1",
+      profile: "house",
+      homeFiles: { "profiles/house/profile.toml": 'extends = "../../etc"\n' },
+    });
+    r = run(env, ["--dry-run"]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('profile "house" extends "../../etc" is not a plain profile name');
   });
 });
 
+describe("the playbook's config-home ship", () => {
+  const playbook = () => readFileSync(join(root, "deploy", "ansible", "playbook.yml"), "utf8");
+  const SHIP = "- name: Ship the install's config home";
+
+  /** The ship task's rsync_opts, read out of the REAL playbook. */
+  function shipOpts(vars: Record<string, string>): string[] {
+    const text = playbook();
+    const at = text.indexOf(SHIP);
+    expect(at).toBeGreaterThan(0);
+    const block = text.slice(at, text.indexOf("- name:", at + 1));
+    return [...block.matchAll(/^\s+- "(--[^"]+)"$/gm)].map((m) =>
+      m[1]!.replace(/\{\{\s*(\w+)\s*\|\s*mandatory\s*\}\}/g, (_, k: string) => {
+        const v = vars[k];
+        if (v === undefined) throw new Error(`playbook var ${k} undefined — ansible would fail`);
+        return v;
+      }),
+    );
+  }
+
+  it("runs in sync (after the start-at task), mounts the home read-only and names it QCR_CONFIG", () => {
+    const text = playbook();
+    const deploy = readFileSync(deploySh, "utf8");
+    const start = /SYNC_START_TASK="([^"]+)"/.exec(deploy)![1]!;
+    expect(text.indexOf(`- name: ${start}`)).toBeGreaterThan(0);
+    expect(text.indexOf(SHIP)).toBeGreaterThan(text.indexOf(`- name: ${start}`));
+    expect(text).toContain('src: "{{ config_home_src | mandatory }}/"');
+    expect(text).toContain('- "{{ sandbox_root }}/config-home:/opt/quickreview/config-home:ro"');
+    expect(text).toContain(
+      'QCR_CONFIG: "/opt/quickreview/config-home/{{ config_file_name | mandatory }}"',
+    );
+  });
+
+  it("ships exactly the config and profiles/ — never secrets/ — and mirrors deletions (real rsync)", () => {
+    let hasRsync = true;
+    try {
+      execFileSync("rsync", ["--version"], { stdio: "ignore" });
+    } catch {
+      hasRsync = false;
+    }
+    if (!hasRsync) return;
+    env = makeScratch({
+      configPi: "0.84.1",
+      groupVarsPi: "0.84.1",
+      homeFiles: {
+        "profiles/house/profile.toml": 'extends = "default"\n',
+        "profiles/house/addenda/10-x.md": "rule\n",
+        "secrets/app.pem": "PRIVATE\n",
+        "notes.txt": "operator scratch\n",
+      },
+    });
+    // a symlinked profile ships as the files it points at
+    const linked = join(env.dir, "linked-profile");
+    mkdirSync(linked);
+    writeFileSync(join(linked, "profile.toml"), "# linked\n");
+    symlinkSync(linked, join(env.home, "profiles", "linked"));
+    const vars = planVars(run(env, ["--dry-run"]).stdout);
+    const dest = join(env.dir, "vm-config-home");
+    mkdirSync(join(dest, "profiles", "gone"), { recursive: true });
+    writeFileSync(join(dest, "profiles", "gone", "profile.toml"), "stale\n");
+    writeFileSync(join(dest, "leftover.toml"), "stale\n");
+    execFileSync("rsync", ["-a", ...shipOpts(vars), `${vars.config_home_src}/`, `${dest}/`]);
+    expect(readFileSync(join(dest, "config.toml"), "utf8")).toContain("[pi]");
+    expect(readFileSync(join(dest, "profiles", "house", "addenda", "10-x.md"), "utf8")).toBe(
+      "rule\n",
+    );
+    expect(lstatSync(join(dest, "profiles", "linked")).isDirectory()).toBe(true);
+    expect(existsSync(join(dest, "secrets"))).toBe(false);
+    expect(existsSync(join(dest, "notes.txt"))).toBe(false);
+    expect(existsSync(join(dest, "profiles", "gone"))).toBe(false);
+    expect(existsSync(join(dest, "leftover.toml"))).toBe(false);
+
+    // The shipped copy fingerprints exactly like the home it came from — the
+    // container runs the same script with QCR_CONFIG naming the shipped file.
+    const fp = (extra: Record<string, string>) =>
+      execFileSync("bash", [fingerprintSh, "--located", env.sandbox], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          XDG_CONFIG_HOME: env.xdg,
+          QCR_CONFIG: "",
+          QCR_INSTALL: "",
+          ...extra,
+        },
+      }).trim();
+    const local = fp({});
+    expect(local).toMatch(/^config=[0-9a-f]{64} profiles=[0-9a-f]{64}$/);
+    expect(fp({ QCR_CONFIG: join(dest, "config.toml") })).toBe(local);
+  });
+});
+
+describe("scripts/config-fingerprint.sh", () => {
+  const fp = (e: Env, extra: Record<string, string> = {}) =>
+    execFileSync("bash", [fingerprintSh, "--located", e.sandbox], {
+      encoding: "utf8",
+      env: { ...process.env, XDG_CONFIG_HOME: e.xdg, QCR_CONFIG: "", QCR_INSTALL: "", ...extra },
+    }).trim();
+  const parts = (line: string) => Object.fromEntries(line.split(" ").map((p) => p.split("=")));
+
+  it("says `none` when the only config is the checkout's — there is no home to ship", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", configAt: "checkout" });
+    expect(fp(env)).toBe("none");
+  });
+
+  it("moves the profiles hash on any profile edit, add or rename — and nothing else does", () => {
+    env = makeScratch({
+      configPi: "0.84.1",
+      groupVarsPi: "0.84.1",
+      homeFiles: { "profiles/house/profile.toml": "# v1\n", "secrets/app.pem": "K1\n" },
+    });
+    const base = parts(fp(env));
+    // secrets and other files in the home never ship, so they never count
+    writeFileSync(join(env.home, "secrets", "app.pem"), "K2\n");
+    writeFileSync(join(env.home, "notes.txt"), "x\n");
+    expect(parts(fp(env))).toEqual(base);
+    // an edit
+    writeFileSync(join(env.home, "profiles", "house", "profile.toml"), "# v2\n");
+    const edited = parts(fp(env));
+    expect(edited.profiles).not.toBe(base.profiles);
+    expect(edited.config).toBe(base.config);
+    // an added file
+    mkdirSync(join(env.home, "profiles", "house", "addenda"));
+    writeFileSync(join(env.home, "profiles", "house", "addenda", "10-a.md"), "a\n");
+    const added = parts(fp(env));
+    expect(added.profiles).not.toBe(edited.profiles);
+    // a rename with identical bytes
+    execFileSync("mv", [
+      join(env.home, "profiles", "house", "addenda", "10-a.md"),
+      join(env.home, "profiles", "house", "addenda", "20-a.md"),
+    ]);
+    expect(parts(fp(env)).profiles).not.toBe(added.profiles);
+    // a config edit moves only the config hash
+    writeFileSync(join(env.home, "config.toml"), CONFIG("0.84.2"));
+    const cfg = parts(fp(env));
+    expect(cfg.config).not.toBe(base.config);
+  });
+});
+
+// ---- the memory-engine pins --------------------------------------
+// The pi pin never floats; neither does OpenViking's. Three pins, two mirrors:
+// server version and llama-cpp-python against the ansible group_vars (which
+// the Dockerfile venv layer interpolates, so agreeing there means agreeing in
+// the image), and the vendored fork's base commit against upstream.json.
 describe("deploy.sh — OpenViking pin drift", () => {
   const OV: OvPins = {
     version: "0.4.15",
@@ -689,6 +944,9 @@ describe("deploy.sh drain advisory", () => {
         QC_SANDBOX_DIR: e.sandbox,
         QC_ANSIBLE_DIR: e.ansible,
         QC_INVENTORY: join(e.ansible, "inventory.ini"),
+        XDG_CONFIG_HOME: e.xdg,
+        QCR_CONFIG: "",
+        QCR_INSTALL: "",
         ...extraEnv,
       },
     });

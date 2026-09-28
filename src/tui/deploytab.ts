@@ -37,6 +37,12 @@ import {
 } from "./deploy-ceremony.js";
 
 export type { DeployDrainSender } from "./deploy-drain.js";
+import {
+  configDrift,
+  configDriftText,
+  parseConfigFingerprint,
+  type ConfigRead,
+} from "./confighome.js";
 import { FG, RESET } from "./theme.js";
 
 function dockerSh(cfg: TuiConfig, script: string): string[] {
@@ -54,6 +60,20 @@ function dockerSh(cfg: TuiConfig, script: string): string[] {
 /** BUILD_SHA rides the deploy rsync into the sandbox root on the VM. */
 export function buildShaArgv(cfg: TuiConfig): string[] {
   return dockerSh(cfg, `cat '${cfg.remote_sandbox_root}/BUILD_SHA' 2>/dev/null || true`);
+}
+
+/**: the config home the last sync SHIPPED, fingerprinted inside the
+ * container by the very script that fingerprints the local one — the
+ * container's QCR_CONFIG names the shipped file. A VM that predates
+ * has no such script, and then no config home was ever shipped to it: that is
+ * a fact read (`none`), not an unanswered read, so it is said as one. */
+export function configFingerprintArgv(cfg: TuiConfig): string[] {
+  const root = cfg.remote_sandbox_root;
+  const script = `${root}/scripts/config-fingerprint.sh`;
+  return dockerSh(
+    cfg,
+    `if [ -f '${script}' ]; then bash '${script}' --located '${root}'; else echo none; fi`,
+  );
 }
 
 /** Container status straight from docker — works while it is stopped too. */
@@ -89,6 +109,9 @@ export function powerSpawnArgv(cfg: TuiConfig, action: "stop" | "start"): string
 export const HEAD_ARGV = ["git", "rev-parse", "--short", "HEAD"];
 export const DIRTY_ARGV = ["git", "status", "--porcelain"];
 export const PLAN_ARGV = ["bash", "scripts/deploy.sh", "--dry-run", "sync"];
+/**: the config home a sync WOULD ship, located exactly as deploy.sh
+ * locates it (scripts/install-locator.sh `qcr_shipped_config`). */
+export const CONFIG_FINGERPRINT_ARGV = ["bash", "scripts/config-fingerprint.sh", "--located", "."];
 
 export function logArgv(deployedSha: string): string[] {
   return ["git", "log", "--oneline", `${deployedSha}..HEAD`];
@@ -143,6 +166,11 @@ export interface DeployState {
    * what the VM runs, so it must never render or publish as "no marker" —
    * and a corrupt marker must never be blamed on ssh. */
   deployed?: DeployedMarker | "absent" | "unparseable";
+  /**: the config home this machine would ship, and the one the VM
+   * was shipped — each `undefined` until fetched and after a read that never
+   * answered. Compared by `configDrift`. */
+  configLocal?: ConfigRead;
+  configDeployed?: ConfigRead;
   /** Local HEAD; `undefined` when `git rev-parse` could not be read. */
   head?: string;
   /** Uncommitted paths, or `undefined` when `git status` could not be read.
@@ -232,12 +260,14 @@ export class RealDeployFetcher implements DeployFetcher {
   ) {}
 
   async load(): Promise<Omit<DeployState, "loaded" | "loading" | "scroll">> {
-    const [marker, status, head, dirty, plan] = await Promise.all([
+    const [marker, status, head, dirty, plan, cfgRemote, cfgLocal] = await Promise.all([
       this.ssh(this.cfg.ssh_host, buildShaArgv(this.cfg)),
       this.ssh(this.cfg.ssh_host, containerStatusArgv(this.cfg)),
       this.local(HEAD_ARGV),
       this.local(DIRTY_ARGV),
       this.local(PLAN_ARGV),
+      this.ssh(this.cfg.ssh_host, configFingerprintArgv(this.cfg)),
+      this.local(CONFIG_FINGERPRINT_ARGV),
     ]);
     // `buildShaArgv` swallows a missing file into empty output, so an ok/empty
     // answer is a VM with no marker; ok/garbage is a marker we read but could
@@ -250,6 +280,8 @@ export class RealDeployFetcher implements DeployFetcher {
     const out: Omit<DeployState, "loaded" | "loading" | "scroll"> = {
       deployed,
       containerStatus: status.ok ? status.stdout.trim() : undefined,
+      configLocal: cfgLocal.ok ? parseConfigFingerprint(cfgLocal.stdout) : undefined,
+      configDeployed: cfgRemote.ok ? parseConfigFingerprint(cfgRemote.stdout) : undefined,
       head: head.ok ? head.stdout.trim() : undefined,
       dirty: dirty.ok ? dirty.stdout.split("\n").filter((l) => l.trim() !== "") : undefined,
       // A refusal exits non-zero with the reason on stderr — that IS the plan.
@@ -304,12 +336,29 @@ export function deployLines(st: DeployState, width: number): string[] {
     lines.push(truncate(`    ${FG.dim}${d}${RESET}`, width));
   if ((st.dirty?.length ?? 0) > 8)
     lines.push(`    ${FG.dim}… ${st.dirty!.length - 8} more${RESET}`);
+  // the config home ships beside the commit, so it has its own line.
+  const drift = configDrift(st.configLocal, st.configDeployed);
+  const driftInk =
+    drift.kind === "same" ? OK : drift.kind === "changed" || drift.kind === "no-home" ? BAD : WARN;
+  lines.push(
+    truncate(
+      `${section("CONFIG", "config home vs the VM")}  ${driftInk}${configDriftText(drift)}${DRESET}`,
+      width,
+    ),
+  );
   lines.push("");
 
-  // "Up to date, nothing to deploy" is a CLAIM, so it needs all three facts —
-  // an unreadable working tree is not the same as a clean one.
+  // "Up to date, nothing to deploy" is a CLAIM, so it needs every fact — an
+  // unreadable working tree is not the same as a clean one, and a config home
+  // that could not be compared is not the same as one that matches.
   if (dep && st.head && dep.sha === st.head && st.dirty?.length === 0) {
-    lines.push(`${OK}✓ the VM already runs this commit — nothing to deploy${DRESET}`);
+    lines.push(
+      drift.kind === "same"
+        ? `${OK}✓ the VM already runs this commit and this config home — nothing to deploy${DRESET}`
+        : drift.kind === "changed" || drift.kind === "never-shipped"
+          ? `${WARN}the VM runs this commit, but its config home is behind — a sync ships it${DRESET}`
+          : `${WARN}the VM runs this commit; whether its config home matches is not known${DRESET}`,
+    );
   } else if (dep) {
     if (st.commits === undefined) {
       lines.push(
