@@ -371,10 +371,15 @@ describe("migrateProfiles", () => {
     expect(migrateProfiles({ root, env }).map((o) => o.kind)).toEqual(["conflict"]);
   });
 
-  it("goes to the config home even while QCR_CONFIG names the config", () => {
+  it("moves nothing while QCR_CONFIG names the config — compose mounts THAT file's dir, not the home", () => {
     putProfile(root, "house");
     const [o] = migrateProfiles({ root, env: { ...env, QCR_CONFIG: join(dir, "x.toml") } });
-    expect(o).toMatchObject({ kind: "moved", to: join(configHome(env), "profiles", "house") });
+    expect(o).toMatchObject({ kind: "override", name: "house", path: join(dir, "x.toml") });
+    expect(existsSync(join(root, "profiles", "house"))).toBe(true);
+    expect(existsSync(join(configHome(env), "profiles", "house"))).toBe(false);
+    const report = profileMigrateReport([o!]);
+    expect(report.code).toBe(0);
+    expect(report.lines.join("\n")).toMatch(/QCR_CONFIG names/);
   });
 
   it("reports each outcome; only a conflict fails", () => {

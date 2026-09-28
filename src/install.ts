@@ -367,7 +367,9 @@ export function resolveProfile(opts: {
 export type ProfileMigrateOutcome =
   | { kind: "moved"; name: string; from: string; to: string }
   | { kind: "deduplicated"; name: string; from: string; to: string }
-  | { kind: "conflict"; name: string; from: string; to: string };
+  | { kind: "conflict"; name: string; from: string; to: string }
+  /** `$QCR_CONFIG` is set: nothing moves (see migrateProfiles). */
+  | { kind: "override"; name: string; path: string };
 
 /** Relative path → bytes, for every file under `dir` (sorted). */
 function treeFiles(dir: string): Map<string, Buffer> {
@@ -375,7 +377,8 @@ function treeFiles(dir: string): Map<string, Buffer> {
   const walk = (rel: string): void => {
     for (const entry of readdirSync(join(dir, rel), { withFileTypes: true })) {
       const path = rel === "" ? entry.name : join(rel, entry.name);
-      if (entry.isDirectory()) walk(path);
+      // A symlinked directory is walked like a real one (never read as a file).
+      if (entry.isDirectory() || isDirectory(join(dir, path))) walk(path);
       else out.set(path, readFileSync(join(dir, path)));
     }
   };
@@ -399,9 +402,14 @@ function sameTree(a: string, b: string): boolean {
  * config home's — every directory there except the generic `EXAMPLE_PROFILES`.
  * Same discipline as the config move: idempotent (a second run finds nothing
  * left to move), an identical copy already in the home just drops the
- * checkout's, and a DIFFERING one is a conflict that touches nothing. The
- * destination is the config home even when `$QCR_CONFIG` is set: unlike the
- * config file, a profile's home is never ambiguous.
+ * checkout's, and a DIFFERING one is a conflict that touches nothing.
+ *
+ * While `$QCR_CONFIG` is set NOTHING moves, exactly like the config half: the
+ * compose route mounts the directory holding THAT file (bring-up's
+ * `configMountOf`), not the config home, so a profile moved into the home
+ * would vanish from the container and fail the daemon's boot. The operator
+ * who named the config also decides where its profiles sit (beside it is on
+ * the lookup path).
  */
 export function migrateProfiles(opts: { root: string; env?: InstallEnv }): ProfileMigrateOutcome[] {
   const env = opts.env ?? process.env;
@@ -413,6 +421,10 @@ export function migrateProfiles(opts: { root: string; env?: InstallEnv }): Profi
     .filter((e) => e.isDirectory() && !EXAMPLE_PROFILES.includes(e.name))
     .map((e) => e.name)
     .sort();
+  const override = (env.QCR_CONFIG ?? "").trim();
+  if (override !== "") {
+    return names.map((name) => ({ kind: "override", name, path: resolve(override) }));
+  }
   for (const name of names) {
     const from = join(fromBase, name);
     const to = join(toBase, name);
@@ -456,6 +468,12 @@ export function profileMigrateReport(outcomes: ProfileMigrateOutcome[]): {
       case "deduplicated":
         lines.push(`profile ${o.name}: ${o.to} already held the same files — removed ${o.from}`);
         break;
+      case "override":
+        lines.push(
+          `profile ${o.name}: QCR_CONFIG names ${o.path} — migrate moves no profile while it is set ` +
+            `(put it in profiles/ beside that file, or unset QCR_CONFIG and re-run)`,
+        );
+        break;
       case "conflict":
         code = 1;
         lines.push(
@@ -465,7 +483,7 @@ export function profileMigrateReport(outcomes: ProfileMigrateOutcome[]): {
         break;
     }
   }
-  if (outcomes.some((o) => o.kind !== "conflict")) {
+  if (outcomes.some((o) => o.kind === "moved" || o.kind === "deduplicated")) {
     lines.push(
       "A moved profile tracked in git shows as a deletion. A machine that deploys with scripts/deploy.sh sync|rebuild " +
         "must keep the profile its config names in the checkout until ships the config home — that route refuses otherwise.",

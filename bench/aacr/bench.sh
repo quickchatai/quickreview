@@ -314,8 +314,12 @@ case "$cmd" in
     # above; a profile in a higher-priority place (the config home, or beside
     # $QCR_CONFIG) REPLACES the checkout's of the same name — whole, never
     # merged — so the image's profiles/ holds exactly what the locator reads.
+    # Lowest priority first, so a higher place overwrites (no `tac`: macOS).
     mkdir -p "$ctx/profiles"
-    while IFS= read -r pdir; do
+    pdirs=()
+    while IFS= read -r pdir; do pdirs=("$pdir" ${pdirs[@]+"${pdirs[@]}"}); done \
+      < <(qcr_profile_dirs "$REPO")
+    for pdir in ${pdirs[@]+"${pdirs[@]}"}; do
       [[ "$pdir" == "$REPO/profiles" || ! -d "$pdir" ]] && continue
       for p in "$pdir"/*/; do
         [[ -d "$p" ]] || continue
@@ -323,7 +327,7 @@ case "$cmd" in
         rm -rf "${ctx:?}/profiles/${p##*/}"
         cp -R "$p" "$ctx/profiles/${p##*/}"
       done
-    done < <(qcr_profile_dirs "$REPO" | tac)
+    done
     docker build --target "$TARGET" -t "$IMAGE" ${BASE_ARGS[@]+"${BASE_ARGS[@]}"} \
       --build-arg "QCR_BENCH_COMMIT=$commit" -f "$ctx/bench/aacr/Dockerfile" "$ctx"
     ;;
