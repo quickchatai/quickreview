@@ -207,6 +207,9 @@ export interface WhyPayload {
     cancel_cause?: string | null;
   }>;
   threads: { open: number; total: number };
+  /** The findings the validator doubted — kept, never posted, shown
+   * in the TUI detail pane. Absent from an older daemon (never read as none). */
+  doubted?: DoubtedFinding[];
   ledger?: string;
   archive?: string[];
   /** GitHub conversation surface — present only when the enrichment fetch
@@ -214,6 +217,18 @@ export interface WhyPayload {
   description?: string;
   labels?: string[];
   comments?: Array<{ author: string; body: string; created_at: string }>;
+}
+
+/** One doubted finding as `why --json` carries it. */
+export interface DoubtedFinding {
+  round_no: number;
+  lens: string;
+  path: string | null;
+  line: number | null;
+  severity: string | null;
+  /** The validity veto word: refuted, unverifiable or bad-anchor. */
+  word: string | null;
+  reason: string | null;
 }
 
 /** Best-effort GitHub enrichment for `why --json` (description, labels, last
@@ -288,6 +303,15 @@ export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPa
     // The registry knows every bot thread; "open" needs GitHub truth the
     // daemon doesn't mirror, so it is reported as total until archived.
     threads: { open: threadTotal.c, total: threadTotal.c },
+    doubted: store.doubtedFindings(n).map((f) => ({
+      round_no: f.round_no,
+      lens: f.lens,
+      path: f.path,
+      line: f.line,
+      severity: f.severity,
+      word: f.word,
+      reason: f.reason,
+    })),
   };
   if (pr) {
     payload.state = pr.state;

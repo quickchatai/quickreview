@@ -1,36 +1,46 @@
-// audit assertion #22: the validator floor, checked POST-HOC against
-// the passes that actually RAN.
+// audit assertion #22: the validator tier, checked POST-HOC against
+// the passes that actually RAN. Restated.
 //
-// The ratified decision is "the validator is never cheaper than the findings it
-// vetoes". `validatorTier` implements it at PLAN time, and `tests/dispatch.ts`
-// pins that. The audit's note at MC-L34 is that plan time is not the whole
-// story: a lens can be added mid-round through the add protocol, or raised, so
-// the property that matters is about the passes the session ran — and nothing
-// asserted it.
+// The ratified decision was "the validator is never cheaper than the findings
+// it vetoes": `validatorTier` raised it at PLAN time to the round's
+// hottest lens, and this fence checked the passes the session reported running
+// (`rounds.executed_passes`) against the tier the round fixed
+// (`rounds.validate_tier`), because a lens can be added or raised mid-round.
 //
-// The audit listed this under "would require new code first". It does not:
-// `rounds.validate_tier` (the floor the round fixed) and
-// `rounds.executed_passes` (telemetry — the passes the session
-// reported running, each with its `tier`) have both existed, and
-// `PASS_TIER_ORDER` is the comparison. So it is written here rather than
-// declined — and it is written expecting to find something, which is the
-// situation the recorded-divergence pattern exists for.
+// amended the decision: the validator is OPTIONAL (a profile may
+// switch it off), it is NOT raised to match any lens, and its validity veto
+// is a mark — the finding is kept as `doubted`, never posted, shown in the
+// TUI — not a deletion. A lens hotter than the validator is therefore no
+// longer a breach: the cheaper model can doubt the stronger one's finding but
+// can no longer make it vanish. What the fence still owes the decision:
+//
+//   1. PLAN time — the validator runs at its own tier (`validatorTier(cfg)`),
+//      whatever the lenses run at, and it is last or absent;
+//   2. POST-HOC — the validator that RAN never ran BELOW the tier the round
+//      fixed (the session may raise nothing on a pinned row, and may never
+//      lower one), and a round with no validator (null tier, no entry) is not
+//      a violation.
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { parseConfig, type Config } from "../src/config.js";
+import { buildPassPlan, validatorTier } from "../src/dispatch.js";
+import type { PrFileEntry } from "../src/github.js";
 import { StateStore } from "../src/state.js";
 import { PASS_TIER_ORDER, type PassTier, type VerdictPassEntry } from "../src/types.js";
 
 const tierIndex = (t: string | null | undefined): number => PASS_TIER_ORDER.indexOf(t as PassTier);
 
 /**
- * The property, as a pure function over one round's telemetry, so it can be
- * applied to a live database as easily as to the fixtures below.
+ * The post-hoc property, as a pure function over one round's telemetry, so it
+ * can be applied to a live database as easily as to the fixtures below.
  *
- * Returns the passes that ran ABOVE the validator's floor. Unknowns are not
- * violations: a null tier on either side means the round predates the field or
- * the session reported none, and unknown is never read as a breach — the same
- * rule the receipt path follows.
+ * Returns the validator entries that ran BELOW the round's fixed tier.
+ * Unknowns are not violations: a null tier on either side means the round
+ * predates the field, had no validator, or the session reported none — and
+ * unknown is never read as a breach, the same rule the receipt path follows.
  */
-export function passesAboveValidator(
+export function validatorBelowFloor(
   validateTier: string | null,
   executed: readonly VerdictPassEntry[] | null,
 ): VerdictPassEntry[] {
@@ -38,46 +48,80 @@ export function passesAboveValidator(
   const floor = tierIndex(validateTier);
   if (floor < 0) return [];
   return executed.filter((p) => {
-    if (p.name === "pass-validate") return false;
+    if (p.name !== "pass-validate") return false;
     const t = tierIndex(p.tier);
-    return t >= 0 && t > floor;
+    return t >= 0 && t < floor;
   });
 }
 
-describe("[#22] the validator floor holds against the passes that RAN", () => {
-  it("the property itself is sound — it catches a raise above the floor", () => {
+const cfg: Config = parseConfig(
+  readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
+);
+const file = (filename: string, additions: number): PrFileEntry => ({
+  filename,
+  additions,
+  deletions: 0,
+  status: "modified",
+});
+
+describe("[#22] the validator tier (as amended)", () => {
+  /**
+   * MUTATION: fold the lens tiers back into the validator's (the legacy
+   * `lensTiers.reduce(higherTier, floor)`) — the risk and big-diff plans below
+   * start running the validator at sol-high/sol-med and this fails.
+   */
+  it("plan time: the validator runs at its own tier, never raised by a hotter lens", () => {
+    const low: Config = { ...cfg, models: { ...cfg.models, validate_tier: "terra-med" } };
+    for (const files of [
+      [file("README.md", 3)],
+      [file("app/service.py", 400)],
+      [file("auth/permissions.py", 10)],
+    ]) {
+      const { pass_plan } = buildPassPlan(low, files);
+      const validate = pass_plan.at(-1)!;
+      expect(validate.lens).toBe("pass-validate");
+      expect(validate.tier).toBe("terra-med");
+      expect(validate.tier).toBe(validatorTier(low));
+      expect(validate.raisable_to).toEqual([]);
+    }
+    const risky = buildPassPlan(low, [file("auth/permissions.py", 10)]).pass_plan;
+    expect(risky.some((p) => tierIndex(p.tier) > tierIndex("terra-med"))).toBe(true);
+  });
+
+  it("the property itself is sound — it catches a validator run below the floor", () => {
     const executed: VerdictPassEntry[] = [
       { name: "pass-baseline", tier: "sol-high" },
-      { name: "pass-validate", tier: "sol-med" },
+      { name: "pass-validate", tier: "terra-med" },
     ];
-    expect(passesAboveValidator("sol-med", executed).map((p) => p.name)).toEqual(["pass-baseline"]);
-    expect(passesAboveValidator("sol-high", executed)).toEqual([]);
+    expect(validatorBelowFloor("sol-med", executed).map((p) => p.name)).toEqual(["pass-validate"]);
+    expect(validatorBelowFloor("terra-med", executed)).toEqual([]);
   });
 
-  it("unknowns are never breaches — a null tier on either side is not a violation", () => {
-    expect(passesAboveValidator(null, [{ name: "pass-baseline", tier: "sol-high" }])).toEqual([]);
-    expect(passesAboveValidator("terra-med", null)).toEqual([]);
-    expect(passesAboveValidator("terra-med", [{ name: "pass-baseline", tier: null }])).toEqual([]);
+  it("a lens hotter than the validator is NOT a breach any more", () => {
     expect(
-      passesAboveValidator("terra-med", [{ name: "pass-baseline", tier: "nonsense" }]),
+      validatorBelowFloor("terra-med", [
+        { name: "pass-security", tier: "sol-high" },
+        { name: "pass-validate", tier: "terra-med" },
+      ]),
     ).toEqual([]);
   });
 
-  it("the validator's own entry never counts against its own floor", () => {
-    expect(
-      passesAboveValidator("terra-med", [{ name: "pass-validate", tier: "sol-high" }]),
-    ).toEqual([]);
+  it("unknowns and a round with no validator are never breaches", () => {
+    expect(validatorBelowFloor(null, [{ name: "pass-validate", tier: "terra-med" }])).toEqual([]);
+    expect(validatorBelowFloor("sol-high", null)).toEqual([]);
+    expect(validatorBelowFloor("sol-high", [{ name: "pass-validate", tier: null }])).toEqual([]);
+    expect(validatorBelowFloor("sol-high", [{ name: "pass-validate", tier: "nonsense" }])).toEqual(
+      [],
+    );
+    expect(validatorBelowFloor(null, [{ name: "pass-baseline", tier: "sol-high" }])).toEqual([]);
   });
 
   /**
-   * The end-to-end shape: a round whose telemetry says a lens ran hotter than
-   * the validator that vetoed it is a violation, and this is the query an
-   * operator would run against the live database.
+   * The end-to-end shape, read off a real rounds table: the query an operator
+   * would run against the live database.
    *
-   * MUTATION: change `> floor` to `>= floor` in `passesAboveValidator` — the
-   * equal-tier round below starts failing, which is the false-positive
-   * direction and exactly what the ratified decision does NOT say (the floor
-   * is "never cheaper", not "always hotter").
+   * MUTATION: change `t < floor` to `t <= floor` — the at-the-floor round below
+   * starts failing, the false-positive direction.
    */
   it("reads the property off a real rounds table", () => {
     const store = new StateStore(":memory:");
@@ -92,19 +136,20 @@ describe("[#22] the validator floor holds against the passes that RAN", () => {
       migration_gate: 0,
     });
 
-    const round = (validate: string, executed: VerdictPassEntry[]): number => {
+    const round = (validate: string | null, executed: VerdictPassEntry[]): number => {
       const id = store.startRound(42, "first", ["pass-baseline"], 75, { validate_tier: validate });
       store.recordExecutedPasses(id, executed);
       return id;
     };
 
     const ok = round("sol-med", [
-      { name: "pass-baseline", tier: "sol-med" },
+      { name: "pass-baseline", tier: "sol-high" },
       { name: "pass-validate", tier: "sol-med" },
     ]);
-    const bad = round("terra-med", [
-      { name: "pass-baseline", tier: "sol-high" },
-      { name: "pass-validate", tier: "terra-med" },
+    const off = round(null, [{ name: "pass-baseline", tier: "sol-med" }]);
+    const bad = round("sol-high", [
+      { name: "pass-baseline", tier: "sol-med" },
+      { name: "pass-validate", tier: "sol-med" },
     ]);
 
     const check = (id: number) => {
@@ -114,17 +159,18 @@ describe("[#22] the validator floor holds against the passes that RAN", () => {
         validate_tier: string | null;
         executed_passes: string | null;
       };
-      return passesAboveValidator(
+      return validatorBelowFloor(
         r.validate_tier,
         r.executed_passes === null ? null : (JSON.parse(r.executed_passes) as VerdictPassEntry[]),
       );
     };
 
-    expect(check(ok), "a round whose lenses ran at the floor is compliant").toEqual([]);
+    expect(check(ok), "a hotter lens beside a validator at its floor is compliant").toEqual([]);
+    expect(check(off), "a round the profile ran without a validator is compliant").toEqual([]);
     expect(
       check(bad).map((p) => p.name),
-      "a lens hotter than the validator that vetoed it is the violation",
-    ).toEqual(["pass-baseline"]);
+      "a validator run below the tier the round fixed is the violation",
+    ).toEqual(["pass-validate"]);
     store.close();
   });
 });

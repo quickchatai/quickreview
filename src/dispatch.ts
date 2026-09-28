@@ -61,7 +61,7 @@ import type { DispatchAnnouncer } from "./slack/announce.js";
 import { applyEvent, restoreStandingLifecycle, setPrGates } from "./statemachine.js";
 import type { PrStateRow, ReviewedHeadRow, StateStore } from "./state.js";
 import { snapshotMark, standingReview } from "./standing-review.js";
-import { higherTier, PASS_TIER_ORDER, roundPromptMarker } from "./types.js";
+import { PASS_TIER_ORDER, roundPromptMarker } from "./types.js";
 import type {
   PassPlanEntry,
   PassTier,
@@ -673,18 +673,19 @@ function raisableFrom(lens: string, tier: PassTier): string[] {
 }
 
 /**
- * The tier the round's validator runs at.
+ * The tier the round's validator runs at (amended).
  *
- * `pass-validate` is the single adversarial gate: only its survivors post, so
- * it holds a veto over every lens finding in the round. A cheaper model must
- * never decide whether a more expensive model's finding is real — the
- * configured `validate_tier` is therefore a FLOOR, raised here to the
- * highest-tier lens actually planned for this round. With the shipped pin
- * (`sol-high`) the raise is a no-op; the computation is what keeps the
- * invariant true if the floor is ever lowered again.
+ * raised `pass-validate` to the round's highest lens tier, because its
+ * veto killed a finding outright: a cheaper model must never delete what a
+ * more expensive one found. changed what a veto IS — a finding the
+ * validator cannot stand behind is kept as `doubted` in the findings record
+ * (never posted, shown in the TUI), not discarded — so the raise no longer
+ * protects anything and is gone: the validator runs at its OWN tier, the
+ * configured `validate_tier` under the profile's `min_tier` for it, whatever
+ * tier or effort any lens runs at. `lensTiers` is deliberately not an input.
  */
-export function validatorTier(floor: PassTier, lensTiers: readonly PassTier[]): PassTier {
-  return lensTiers.reduce<PassTier>((acc, t) => higherTier(acc, t), floor);
+export function validatorTier(cfg: Pick<Config, "lenses" | "models">): PassTier {
+  return flooredTier(cfg.lenses, VALIDATE_PASS, cfg.models.validate_tier);
 }
 
 /**
@@ -700,17 +701,18 @@ export function addTierOf(cfg: Config, lens: string): PassTier {
 
 /** Deterministic per-round pass plan (agent = `${lens}--${tier}`):
  * - risk passes are always "sol-high", single variant, not raisable;
- * - pass-validate runs at validatorTier() — the configured floor raised to the
- *   round's highest lens tier — and is not raisable;
+ * - pass-validate runs at validatorTier() — its own configured tier, never
+ *   raised to match a lens — is not raisable, and is always last;
  * - every other selected lens gets the passTier() tier and may be raised to
  *   any higher tier's variant (ascending order).
  * addable_lenses = every known pass not already in the plan.
  *
  * The profile's per-lens tuning (`cfg.lenses`) wins over all of
- * that: a `min_tier` floors the lens's row (and so its `raisable_to`), the
- * sweep rows and the validator's floor; `enabled = false` removes a lens from
- * the plan AND the addable list whatever selected it; `enabled = true` on a
- * lever-gated lens switches it on whatever its `[review]` lever says. */
+ * that: a `min_tier` floors the lens's row (and so its `raisable_to`) and the
+ * sweep rows; `enabled = false` removes a lens from the plan AND the addable
+ * list whatever selected it — the validator included, when the round
+ * has no validator row at all; `enabled = true` on a lever-gated lens switches
+ * it on whatever its `[review]` lever says. */
 export function buildPassPlan(
   cfg: Config,
   files: PrFileEntry[],
@@ -785,10 +787,7 @@ export function buildPassPlan(
   // The sweep's rows run at the cheapest tier unless the profile floors it.
   const sweepOn = on(SWEEP_PASS, cfg.review.sweep);
   const sweepTier = flooredTier(cfg.lenses, SWEEP_PASS, "terra-med");
-  const validate = validatorTier(
-    flooredTier(cfg.lenses, VALIDATE_PASS, cfg.models.validate_tier),
-    [...lenses.filter((l) => l !== VALIDATE_PASS).map(tierOf), ...(sweepOn ? [sweepTier] : [])],
-  );
+  const validate = validatorTier(cfg);
   const pass_plan = lenses.map((lens): PassPlanEntry => {
     const pinned = lens === VALIDATE_PASS || risk.has(lens);
     const tier: PassTier = lens === VALIDATE_PASS ? validate : tierOf(lens);
@@ -803,8 +802,9 @@ export function buildPassPlan(
   });
   // The sweep (benchmark 2026-09-26; `[review] sweep`): one row per group of
   // changed files, at the cheapest tier — its job is attention, line by line,
-  // not deep reasoning — inserted before the validator. A terra-med sweep
-  // never raises the validator; one a profile floors higher does (above).
+  // not deep reasoning — inserted before the validator (appended when a
+  // profile switched the validator off: the validator is always last or
+  // absent, never followed).
   let sweep_unswept: string[] = [];
   if (sweepOn) {
     const { groups, unswept } = sweepGroups(
@@ -821,7 +821,8 @@ export function buildPassPlan(
       raisable_to: raisableFrom(SWEEP_PASS, sweepTier),
       focus,
     }));
-    pass_plan.splice(pass_plan.length - 1, 0, ...rows);
+    const at = pass_plan.at(-1)?.lens === VALIDATE_PASS ? pass_plan.length - 1 : pass_plan.length;
+    pass_plan.splice(at, 0, ...rows);
   }
   const selected = new Set(pass_plan.map((p) => p.lens));
   const addable_lenses = [...new Set([...ALL_PASSES, ...cfg.models.risk_passes])].filter(
@@ -1190,8 +1191,9 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         lens,
         tier: addTierOf(cfg, lens),
       }));
-      const validateTier =
-        plannedPasses.find((p) => p.lens === VALIDATE_PASS)?.tier ?? cfg.models.validate_tier;
+      // Null when the profile switched the validator off: the round
+      // had no validator, and recording the configured tier would say it did.
+      const validateTier = plannedPasses.find((p) => p.lens === VALIDATE_PASS)?.tier ?? null;
 
       // Diffstat comes free off the files list dispatch already fetched — no
       // extra GitHub call in the hot path. trigger_ts is copied off pr_state

@@ -21,7 +21,8 @@
 //     whatever tier the plan would otherwise choose, so plan rows, `raisable_to`,
 //     the sweep rows and the add rule's variant all move with it. A floor never
 //     lowers: a risk pass stays at `sol-high`, the validator stays at or above
-//     its configured floor.
+//     its configured tier. A lens's floor never moves the validator (:
+//     it is not raised to match any lens).
 //   * `effort` — build time, through the per-variant model hook
 //     (`BuildAgentsOptions.models`): only that lens's `<pass>--<tier>` specs get
 //     the new thinking suffix. `high` means the model's ceiling
@@ -33,8 +34,9 @@
 //     lens a `[review]` lever gates (sub-lenses, the sweep, the tests, quality
 //     and style lenses) — there it switches that one lens on whatever the lever
 //     says. It never plans an addable-only lens or anything
-//     else the selector did not choose. The validator cannot be switched off
-//     here.
+//     else the selector did not choose. `false` on `pass-validate` switches
+//     the validator off: the round then posts the merged candidates
+//     with no adversary in front of them, and nothing is doubted.
 //   * `emphasis` and `max_severity` — compiled into addenda
 //     (`lensTuningAddenda`) that wire.ts and the bench compose after the
 //     profile's own pack, so the addendum registry stays the ONLY route into a
@@ -82,8 +84,9 @@ export const LENS_TUNING_ID_PREFIXES = ["lens-emphasis-", "lens-ceiling-"] as co
  * Parse one profile's `[lenses]` table. `where` names the file in every
  * error; `known` is every pass the system knows (dispatch.ts ALL_PASSES).
  * Anything malformed throws — an unknown lens, an unknown key, a bad value,
- * switching the validator off or giving it a ceiling: a profile that asked for
- * something this cannot honour must fail the boot, never review as if it had.
+ * giving the validator a ceiling: a profile that asked for something this
+ * cannot honour must fail the boot, never review as if it had. Switching the
+ * validator off IS honoured.
  */
 export function parseLensTable(
   where: string,
@@ -117,8 +120,6 @@ export function parseLensTable(
         }
         case "enabled":
           if (typeof value !== "boolean") throw new Error(`${at} enabled must be true or false`);
-          if (lens === VALIDATE && !value)
-            throw new Error(`${at} enabled = false — the validator cannot be switched off here`);
           t.enabled = value;
           break;
         case "emphasis":

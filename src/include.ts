@@ -506,6 +506,19 @@ const FINDING_SELF_SUFFICIENCY_VALIDATE_ADDENDUM =
 const VALIDATE_KILL_VOCABULARY_ADDENDUM =
   "\n## Kill and downgrade reasons — a closed vocabulary (sandbox rule)\nYour kill-log feeds the EOD critic: a wrong label teaches it wrong lessons. Every kill reason comes from this closed set — never a free-text phrase, never a stretched word:\n\n- `refuted` — you found counterevidence by READING and it contradicts the claim; cite it (file:line or the command and what it showed) in the kill-log line.\n- `unverifiable` — the claim **cannot be verified by reading** the diff, the worktree, or CI output. If a grep or a file-open could settle it, you MUST do the read — \"I didn't check\" is not `unverifiable`. A claim one read could settle is never `unverifiable`: after the read it is either `refuted` (the read contradicts it) or it survives.\n- `bad-anchor` — the evidence is real but the `path:line` is wrong and the claim depends on the location. Your step 3 comes first: fix the anchor, or strip to a body-only finding, when the finding itself is sound; kill as `bad-anchor` only when the misplacement is the defect.\n- `duplicate` — the same defect as another finding this round, differently phrased; name the surviving finding it merges into.\n- `out-of-scope` — the finding is not about this PR's change or its blast radius (e.g. pre-existing code no changed line touches or depends on, or review of the review process itself).\n- `settled:<thread-id>` — re-raises a settled thread (your step 2, unchanged).\n- `nit-out-of-delta` — a new nit-class candidate outside the current delta while a NIT SCOPE block is armed (unchanged from the nit-scope rule above).\n- `below-bar` — true but beneath posting: too minor to clear the bar even as a `[nit]`. Severity honesty — use this word rather than inflating `unverifiable` or `out-of-scope` to cover it.\n- `nit-no-request` — a nit-class candidate that asks for no change (see below). Nit-class only.\n- `self-narration` — the candidate's subject is one of the review's own earlier findings rather than the code (see below).\n\n**Downgrades are not kills and carry their own discipline.** A demotion or adjustment (`security-demoted`, `intent-over-cap`, `design-over-cap`, `inflated`, `understated`, `overreachable`, `understated-reach`, `ask-human-unnamed-defect`, `tag-outside-grammar`) must name the axis moved — **severity**, **confidence**, or **reachability** — and say in one clause WHY that axis moved (e.g. `inflated — severity P1→P2: the error path logs and continues, no data loss`). An axis change without a why is not auditable and teaches the critic nothing.\n\n**Hunt counterevidence before SURVIVE.** For every `P0`–`P2` candidate, actively search the worktree for what would make the claim false — the guard clause upstream, the caller that already checks, the config default, the test that pins the behaviour — before you let it survive. Failing to refute is not the same as confirming: a validator that SURVIVEs everything untouched is not validating. If the hunt finds the counterevidence, the kill is `refuted` with the citation; if it finds nothing, say what you looked for.\n";
 
+// (amends): a validity veto is a MARK, not a deletion. The
+// validator no longer runs at the round's hottest lens tier, so it must not
+// be able to make a stronger lens's finding vanish: what it cannot stand
+// behind is kept in the findings record as `doubted` ("may not be valid"),
+// never posted on the PR, and shown in the TUI. The three words are
+// `DOUBT_WORDS` in src/findingsrecord.ts, which folds a `killed` entry
+// carrying one of them onto `doubted` whatever the session wrote.
+const VALIDATE_DOUBT_NOT_KILL_ADDENDUM =
+  "\n## A validity veto is a DOUBT, not a kill (sandbox rule)\n" +
+  'When you veto a candidate because its CLAIM does not hold up — `refuted`, `unverifiable` or `bad-anchor`, and a confidence below 0.5 after your audit (write it `unverifiable`) — you are not deleting it. It is kept in the findings record as `doubted`: marked "may not be valid", never posted on the PR, shown to the operator to judge. List those under their own block, not under KILLED, each with its word and the reason in your own words (for `refuted`, the counterevidence you read):\n\n' +
+  "```\nDOUBTED\n- <lens> <path:line> — <word>: <reason>\n```\n\n" +
+  "Every other kill — a repeat (`duplicate`, `settled:…`), scope (`out-of-scope`, `nit-out-of-delta`), the bar (`below-bar`) or shape (`nit-no-request`, `self-narration`, `style-not-in-guide`) — stays under KILLED exactly as before. Being kept does not make a doubt gentler to give: a claim that fails is doubted, however strong the lens that raised it.\n";
+
 // The code-quality lenses (2026-09-27): maintainability, duplication and
 // abstraction findings are structural debt, capped exactly like placement and
 // simplicity; style is judged ONLY against the repo's own written guide, by
@@ -828,6 +841,11 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
     text: VALIDATE_KILL_VOCABULARY_ADDENDUM,
   },
   {
+    id: "validate-doubt-not-kill",
+    scope: [VALIDATE_PASS],
+    text: VALIDATE_DOUBT_NOT_KILL_ADDENDUM,
+  },
+  {
     id: "merge-dispositions-validate",
     scope: [VALIDATE_PASS],
     text: MERGE_DISPOSITIONS_VALIDATE_ADDENDUM,
@@ -974,10 +992,11 @@ export interface BuiltAgent {
 
 /** The tiers a given pass fans out into.
  *
- * `validateTier` is the validator's FLOOR, not a pin: dispatch
- * raises `pass-validate` to the round's highest lens tier, so every tier at or
- * above the floor must have a built variant on disk or that raise would name
- * an agent the subagent tool cannot find. */
+ * `validateTier` is the validator's configured tier. Dispatch no longer
+ * raises it to the round's highest lens, but a profile's `min_tier`
+ * for `pass-validate` still floors it upward, so every tier at or above it
+ * keeps a built variant on disk — a floored plan row never names an agent the
+ * subagent tool cannot find. */
 export function tiersForPass(
   pass: string,
   riskPasses: string[],

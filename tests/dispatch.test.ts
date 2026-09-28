@@ -454,25 +454,25 @@ describe("buildPassPlan", () => {
     expect(solValidate[solValidate.length - 1]!.raisable_to).toEqual([]);
   });
 
-  // the validator vetoes every finding in the round, so it may never
-  // run below the model that produced them.
-  it("raises pass-validate to the round's highest lens tier", () => {
-    // A risk lens (sol-high) alongside a terra-med floor.
+  //, amended by — the validator's veto is now a MARK (the
+  // finding is kept as `doubted`, never deleted), so the per-round raise to
+  // the hottest lens is gone: it runs at its own configured tier.
+  it("runs pass-validate at its own tier, never raised to a lens's", () => {
+    // A risk lens (sol-high) alongside a terra-med validator.
     const risky = buildPassPlan(planCfg, [file("auth/permissions.py", 10, 2)]).pass_plan;
-    const validate = risky.find((p) => p.lens === "pass-validate")!;
     expect(risky.find((p) => p.lens === "pass-security")!.tier).toBe("sol-high");
-    expect(validate).toEqual({
+    expect(risky.find((p) => p.lens === "pass-validate")).toEqual({
       lens: "pass-validate",
-      agent: "pass-validate--sol-high",
-      tier: "sol-high",
+      agent: "pass-validate--terra-med",
+      tier: "terra-med",
       raisable_to: [],
     });
-    // A big non-risk diff lands the lenses on sol-med — the validator follows.
+    // A big non-risk diff lands the lenses on sol-med — the validator stays.
     const medium = buildPassPlan(planCfg, [file("app/service.py", 200, 0)]).pass_plan;
-    expect(medium.find((p) => p.lens === "pass-validate")!.tier).toBe("sol-med");
+    expect(medium.find((p) => p.lens === "pass-validate")!.tier).toBe("terra-med");
   });
 
-  it("never runs the validator below any lens, whatever the plan", () => {
+  it("the validator's tier is independent of the plan, whatever the plan", () => {
     const sets: PrFileEntry[][] = [
       [file("README.md", 3, 1)],
       [file("app/service.py", 200, 0)],
@@ -482,25 +482,26 @@ describe("buildPassPlan", () => {
     ];
     for (const files of sets) {
       const { pass_plan } = buildPassPlan(planCfg, files);
-      const validate = pass_plan.find((p) => p.lens === "pass-validate")!;
-      for (const p of pass_plan) {
-        expect(PASS_TIER_ORDER.indexOf(validate.tier)).toBeGreaterThanOrEqual(
-          PASS_TIER_ORDER.indexOf(p.tier),
-        );
-      }
+      expect(pass_plan.at(-1)!.lens).toBe("pass-validate");
+      expect(pass_plan.at(-1)!.tier).toBe(validatorTier(planCfg));
     }
   });
 
   it("the shipped config pins the validator at the top tier", () => {
     expect(baseCfg.models.validate_tier).toBe("sol-high");
+    expect(PASS_TIER_ORDER.at(-1)).toBe("sol-high");
   });
 
-  it("validatorTier is the floor raised by the highest lens tier, never lowered", () => {
-    expect(validatorTier("terra-med", [])).toBe("terra-med");
-    expect(validatorTier("terra-med", ["terra-med", "sol-med"])).toBe("sol-med");
-    expect(validatorTier("terra-med", ["sol-high", "terra-med"])).toBe("sol-high");
-    expect(validatorTier("sol-high", ["terra-med", "sol-med"])).toBe("sol-high");
-    expect(validatorTier("sol-med", ["terra-med"])).toBe("sol-med");
+  it("validatorTier is the configured tier under the profile's min_tier, never lowered", () => {
+    expect(validatorTier(planCfg)).toBe(planCfg.models.validate_tier);
+    const floored = { ...planCfg, lenses: { "pass-validate": { min_tier: "sol-med" as const } } };
+    expect(validatorTier(floored)).toBe("sol-med");
+    const high = {
+      ...planCfg,
+      models: { ...planCfg.models, validate_tier: "sol-high" as const },
+      lenses: { "pass-validate": { min_tier: "terra-med" as const } },
+    };
+    expect(validatorTier(high)).toBe("sol-high");
   });
 
   it("gives non-risk lenses the heuristic tier with an ascending raise ladder", () => {
@@ -652,9 +653,9 @@ describe("buildPassPlan", () => {
         tier: "terra-med",
         raisable_to: ["pass-intent--sol-med", "pass-intent--sol-high"],
       });
-      // Its terra-med never DRAGS the validator below the round's highest lens.
+      // The validator runs at its own tier, whatever the lenses run at.
       const validate = pass_plan.find((p) => p.lens === "pass-validate")!;
-      expect(validate.tier).toBe("sol-med");
+      expect(validate.tier).toBe(planCfg.models.validate_tier);
     });
 
     it("is skipped (and stays addable) when the body is thin or absent", () => {

@@ -495,7 +495,8 @@ export type WhatifVariant = (typeof WHATIF_VARIANTS)[number];
 /** Which record dispositions each posted+ variant adds. */
 export const ADDED_DISPOSITIONS: Record<WhatifVariant, readonly string[]> = {
   posted: [],
-  "posted+killed": ["killed"],
+  // a doubted finding is a validator veto kept as a mark.
+  "posted+killed": ["killed", "doubted"],
   "posted+merged": ["merged", "folded"],
   "all-candidates": [],
 };

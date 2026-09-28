@@ -570,6 +570,36 @@ function currentProgressLines(
   return lines;
 }
 
+/** Doubted findings shown before the "… N more" line. */
+const DOUBTED_SHOWN = 8;
+
+/**
+ * The DOUBTED section: findings the validator could not stand behind
+ * — kept in the findings record as "may not be valid", never posted on the PR,
+ * and put here for the operator to judge. Newest round first. Nothing renders
+ * when there are none, or when an older daemon did not report the field.
+ */
+export function doubtedLines(doubted: WhyPayload["doubted"], width: number): string[] {
+  if (!doubted || doubted.length === 0) return [];
+  const lines = [truncate(section("DOUBTED", "may not be valid · kept, never posted"), width)];
+  const newest = [...doubted].sort((a, b) => b.round_no - a.round_no);
+  for (const f of newest.slice(0, DOUBTED_SHOWN)) {
+    const at = f.path ? ` ${sanitizeText(f.path)}${f.line !== null ? `:${f.line}` : ""}` : "";
+    const sev = f.severity ? ` · ${sanitizeText(f.severity)}` : "";
+    const word = f.word ? ` · ${sanitizeText(f.word)}` : "";
+    const why = f.reason ? ` — ${oneLine(f.reason)}` : "";
+    lines.push(
+      truncate(
+        `  ${WARN}? r${f.round_no} ${sanitizeText(f.lens)}${at}${sev}${word}${DRESET}${FG.dim}${why}${RESET}`,
+        width,
+      ),
+    );
+  }
+  if (newest.length > DOUBTED_SHOWN)
+    lines.push(`${FG.dim}  … ${newest.length - DOUBTED_SHOWN} more (qcr why)${RESET}`);
+  return lines;
+}
+
 export function detailLines(
   detail: WhyPayload | undefined,
   pr: SnapshotPr | undefined,
@@ -711,6 +741,7 @@ export function detailLines(
       ),
     );
   }
+  lines.push(...doubtedLines(detail.doubted, width));
   lines.push(
     truncate(`${section("THREADS", "bot review threads")} ${detail.threads.total} known`, width),
   );

@@ -235,6 +235,10 @@ Dispatch the planned `pass-validate` variant (its row in the plan table) with
 all candidates + the SETTLED list. Only survivors post; log the kills. A
 finding that only restates a point settled before the approval is a kill, not a
 finding.
+Its **DOUBTED** block — candidates it could not stand behind (`refuted`,
+`unverifiable`, `bad-anchor`) — is never posted either: record each one as
+`doubted` in the findings record (step 7); a doubt is kept, never dropped.
+{{validator_note}}
 
 ## 5. Decide
 
@@ -739,7 +743,8 @@ alone: a bare `below-bar` teaches nobody anything.
 
 - `lens` is **required on every entry** — which lens raised it is the whole
   point. `pass-validate` is a lens like any other for entries it originated.
-- `disposition` is one of: `posted`, `killed`, `downgraded`, `merged`,
+- `disposition` is one of: `posted`, `killed`, `doubted` (the validator's
+  DOUBTED block: kept here, never posted), `downgraded`, `merged`,
   `folded`, `withheld` (you dropped it before the validator saw it), or
   `conceded` (below). Nothing else.
 - `word` is the closed-vocabulary kill or downgrade word (`refuted`,
@@ -747,8 +752,8 @@ alone: a bare `below-bar` teaches nobody anything.
   `settled:<thread-id>`, `nit-out-of-delta`, `below-bar`, `security-demoted`,
   `intent-over-cap`, `design-over-cap`, `inflated`, `understated`,
   `overreachable`, `understated-reach`, `nit-no-request`, `self-narration`,
-  `ask-human-unnamed-defect`, `tag-outside-grammar`) — required on `killed` and
-  `downgraded`. On a `downgraded` entry also give `axis`: `severity`,
+  `ask-human-unnamed-defect`, `tag-outside-grammar`) — required on `killed`,
+  `doubted` and `downgraded`. On a `downgraded` entry also give `axis`: `severity`,
   `confidence` or `reachability`, the one that moved.
 - `posted_as` on a `posted` entry is the tag it actually went out under, and it
   comes from the closed grammar: `blocker`, `question`, `nit`, `check this`,

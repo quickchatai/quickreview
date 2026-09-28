@@ -344,6 +344,26 @@ export function renderAddableLenses(
     .join(", ");
 }
 
+/**
+ * The NO-VALIDATOR note, rendered into `{{validator_note}}` at the
+ * end of step 4. Empty whenever the plan has a `pass-validate` row — the
+ * shipped default, so an untuned install renders step 4 unchanged. When the
+ * repo's profile switched the validator off, the round has no adversary: the
+ * merged candidates are the survivors, nothing can be doubted, and a
+ * "pass-validate unresolvable ⇒ no verdict" reading must not wedge the round.
+ */
+export function renderValidatorNote(order: Pick<RoundOrder, "pass_plan">): string {
+  if (order.pass_plan.some((p) => p.lens === "pass-validate")) return "";
+  return [
+    "",
+    "**No validator this round.** This repo's profile switched `pass-validate`",
+    "off, so the plan has no validator row: do not dispatch it or any stand-in.",
+    "The step-3 merged candidates are this round's survivors — post them under the",
+    "ordinary posting map. Nothing is doubted: the verdict's `passes` has no",
+    "`pass-validate` entry, and the findings record has no `doubted` rows.",
+  ].join("\n");
+}
+
 /**'s changed-behavior receipt. The daemon binds it to one successor
  * order; ordinary rounds render nothing. It does not change the plan or move
  * scheduling into the daemon — it tells the fresh parent how to execute the
@@ -413,6 +433,7 @@ export function roundVars(
     // so a round without them renders exactly as before.
     dependency_note: order.dependency_note ? `\n${order.dependency_note}\n` : "",
     addable_lenses: renderAddableLenses(order.addable_lenses, order.addable_tiers),
+    validator_note: renderValidatorNote(order),
     recovery_note: renderRoundRecoveryNote(order),
     base_ref: order.base_ref || NO_BASE,
     base_sha: order.base_sha || NO_BASE,

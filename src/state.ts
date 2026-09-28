@@ -190,7 +190,8 @@ export interface RoundRow {
   est_usd: number | null;
   /** The tier `pass-validate` ran at this round — recorded so a
    * later audit can tell which tier killed which finding. Null on rounds
-   * started before the column existed (and on backfilled history). */
+   * started before the column existed (and on backfilled history), and on a
+   * round whose profile switched the validator off. */
   validate_tier: string | null;
   /** Executed-pass telemetry: JSON array of VerdictPassEntry — the
    * passes the session ACTUALLY ran, as reported in the verdict file. Distinct
@@ -726,9 +727,11 @@ CREATE TABLE IF NOT EXISTS round_findings (
   confidence REAL,
   reachability TEXT,
   kind TEXT,
-  -- posted | killed | downgraded | merged | folded | withheld | conceded |
-  -- unknown. conceded = refuted-and-conceded: the state that lets a later
-  -- round tell escalating an OPEN finding from resurrecting a SETTLED one.
+  -- posted | killed | doubted | downgraded | merged | folded | withheld |
+  -- conceded | unknown. conceded = refuted-and-conceded: the state that lets a
+  -- later round tell escalating an OPEN finding from resurrecting a SETTLED
+  -- one. doubted = the validator's validity veto kept as a mark:
+  -- never posted, shown in the TUI.
   disposition TEXT NOT NULL DEFAULT 'unknown',
   axis TEXT,
   word TEXT,
@@ -1907,6 +1910,16 @@ export class StateStore {
     return this.db
       .prepare("SELECT * FROM round_findings WHERE pr = ? AND round_no = ? ORDER BY id")
       .all(pr, roundNo) as RoundFindingRow[];
+  }
+
+  /** The findings the validator doubted on a PR, oldest round
+   * first — kept as "may not be valid", never posted, read by the TUI. */
+  doubtedFindings(pr: number): RoundFindingRow[] {
+    return this.db
+      .prepare(
+        "SELECT * FROM round_findings WHERE pr = ? AND disposition = 'doubted' ORDER BY round_no, id",
+      )
+      .all(pr) as RoundFindingRow[];
   }
 
   /**

@@ -787,9 +787,10 @@ export interface ModelsConfig {
   tiers: Record<PassTier, string>;
   /** Passes always run at sol-high, single variant, not raisable. */
   risk_passes: string[];
-  /** pass-validate's FLOOR tier. The validator holds a veto over
-   * every lens finding, so dispatch raises it to the round's highest lens
-   * tier; this knob can only make it start higher, never lower. */
+  /** The tier pass-validate runs at (amended): no longer
+   * raised to the round's highest lens tier — a validity veto is a `doubted`
+   * mark now, not a deletion. Only the profile's `min_tier` for the validator
+   * moves it, and only upward. */
   validate_tier: PassTier;
   /** Diffs under this many changed lines start at terra-med (heuristics). */
   small_diff_lines: number;

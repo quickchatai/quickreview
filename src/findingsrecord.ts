@@ -35,6 +35,10 @@ import { wakeOrHold } from "./wakes.js";
  * - `posted` — it survived validation and went out on the PR (the RAISE side,
  *   the half at 3 of 105 and the half adjudication actually needs).
  * - `killed` / `downgraded` — the validator vetoed or moved it.
+ * - `doubted` — the validator could not stand behind the CLAIM (`DOUBT_WORDS`:
+ *   refuted, unverifiable, bad anchor).: a validity veto is a mark,
+ *   not a deletion — kept here as "may not be valid", never posted on the PR,
+ *   shown in the TUI for the operator to judge.
  * - `merged` / `folded` — merge-stage attrition: the same defect
  *   collapsed into another finding, or a different defect carried as a
  *   paragraph under one. Attrition here counts like a kill; it must never
@@ -47,11 +51,20 @@ import { wakeOrHold } from "./wakes.js";
  *   (not legitimate). Nothing else in the system records it.
  */
 export type FindingDisposition =
-  "posted" | "killed" | "downgraded" | "merged" | "folded" | "withheld" | "conceded" | "unknown";
+  | "posted"
+  | "killed"
+  | "doubted"
+  | "downgraded"
+  | "merged"
+  | "folded"
+  | "withheld"
+  | "conceded"
+  | "unknown";
 
 const DISPOSITIONS: ReadonlySet<string> = new Set([
   "posted",
   "killed",
+  "doubted",
   "downgraded",
   "merged",
   "folded",
@@ -68,6 +81,8 @@ const DISPOSITION_ALIASES: Readonly<Record<string, FindingDisposition>> = {
   survived: "posted",
   kill: "killed",
   vetoed: "killed",
+  doubt: "doubted",
+  "may-not-be-valid": "doubted",
   downgrade: "downgraded",
   demoted: "downgraded",
   capped: "downgraded",
@@ -79,6 +94,16 @@ const DISPOSITION_ALIASES: Readonly<Record<string, FindingDisposition>> = {
   "refuted-and-conceded": "conceded",
   refuted_and_conceded: "conceded",
 };
+
+/**
+ * The kill words that are a doubt about the CLAIM itself — the
+ * validator's validity vetoes, as opposed to a repeat, scope, bar or shape
+ * kill. The validator lists these under DOUBTED (the
+ * `validate-doubt-not-kill` addendum in src/include.ts); a `killed` entry
+ * carrying one is folded onto `doubted` at parse time anyway, so a session
+ * still on an older prompt cannot make a doubted finding vanish as a kill.
+ */
+export const DOUBT_WORDS: readonly string[] = ["refuted", "unverifiable", "bad-anchor"];
 
 export function normalizeDisposition(raw: unknown): FindingDisposition {
   if (typeof raw !== "string") return "unknown";
@@ -195,7 +220,8 @@ export type FindingsRecordStatus =
   "ok" | "missing" | "unparseable" | "wrong_round" | "no_findings_array";
 
 /**
- * What the round's POSTED output looked like against the three rules.
+ * What the round's POSTED output looked like against the three rules
+ * — and against: a doubted finding is never posted.
  *
  * This is measurement over the record already collects — there is no
  * second table and no new mandate beyond one field (`request`) on nit entries.
@@ -215,6 +241,10 @@ export interface RecordConformance {
   /** Posted as a nit while naming no request. A nit that asks for nothing is a
    * remark, not a finding — 63.7% of them, at 449 characters each. */
   nits_without_request: string[];
+  /** Doubted AND carrying a `posted_as` — a finding the validator could not
+   * stand behind that the session says it posted anyway (a doubt is
+   * never posted on the PR). */
+  doubted_posted: string[];
   /**
    * Posted this round while first raised in an earlier one. NOT automatically
    * a defect: a severity escalation across rounds is ratified behaviour
@@ -226,7 +256,11 @@ export interface RecordConformance {
 }
 
 export function isConformant(c: RecordConformance): boolean {
-  return c.ungrammatical_tags.length === 0 && c.nits_without_request.length === 0;
+  return (
+    c.ungrammatical_tags.length === 0 &&
+    c.nits_without_request.length === 0 &&
+    c.doubted_posted.length === 0
+  );
 }
 
 export interface ParsedFindingsRecord {
@@ -300,6 +334,7 @@ export function parseFindingsRecord(
   const conformance: RecordConformance = {
     ungrammatical_tags: [],
     nits_without_request: [],
+    doubted_posted: [],
     restated: [],
   };
   for (const [i, entry] of rawFindings.entries()) {
@@ -312,9 +347,14 @@ export function parseFindingsRecord(
     if (!lens) noLens++;
     const path = str(e.path);
     const line = num(e.line);
-    const disposition = normalizeDisposition(e.disposition);
-    if (disposition === "unknown") unknownDisposition++;
     const word = str(e.word) ?? str(e.reason_word) ?? null;
+    const written = normalizeDisposition(e.disposition);
+    if (written === "unknown") unknownDisposition++;
+    // a validity veto recorded as a kill is still a doubt.
+    const disposition: FindingDisposition =
+      written === "killed" && word !== null && DOUBT_WORDS.includes(word.trim().toLowerCase())
+        ? "doubted"
+        : written;
     if (word !== null && !isKnownVocabularyWord(word)) unknownWord++;
     const key = str(e.id) ?? str(e.key) ?? `${lens || "?"}@${path ?? "?"}:${line ?? "?"}#${i}`;
     const raisedIn = (() => {
@@ -339,6 +379,7 @@ export function parseFindingsRecord(
       if (bare === "nit" && request === null) conformance.nits_without_request.push(key);
       if (raisedIn !== null && raisedIn < roundNo) conformance.restated.push(key);
     }
+    if (disposition === "doubted" && str(e.posted_as) !== null) conformance.doubted_posted.push(key);
     findings.push({
       key,
       path,
@@ -371,6 +412,8 @@ export function parseFindingsRecord(
     );
   if (conformance.nits_without_request.length > 0)
     notes.push(`${conformance.nits_without_request.length} posted nit(s) asking for nothing`);
+  if (conformance.doubted_posted.length > 0)
+    notes.push(`${conformance.doubted_posted.length} doubted finding(s) marked as posted`);
 
   const comments = num(v.comments_posted) ?? num(v.posted_comments);
   return {
@@ -434,7 +477,7 @@ export function findingsRecordWake(pr: number, roundNo: number, relPath: string)
   return [
     `FINDINGS RECORD MISSING — PR #${pr} round ${roundNo}`,
     `The round is over and its verdict has been applied, but ${relPath} is missing or unreadable.`,
-    "Write ONLY that file now, in this conversation: one entry per candidate finding this round produced — posted, killed, downgraded, merged, folded, withheld or conceded — each with its lens, severity, confidence, reachability, the closed-vocabulary kill/downgrade word, and the reason in your own words. On a POSTED entry also give `posted_as` (one of the sanctioned tags), and on a posted nit the `request` — the concrete change it asked for.",
+    "Write ONLY that file now, in this conversation: one entry per candidate finding this round produced — posted, killed, doubted, downgraded, merged, folded, withheld or conceded — each with its lens, severity, confidence, reachability, the closed-vocabulary kill/downgrade word, and the reason in your own words. On a POSTED entry also give `posted_as` (one of the sanctioned tags), and on a posted nit the `request` — the concrete change it asked for.",
     `Reconstruct it from the artifacts still on disk: state/pr-${pr}-round-${roundNo}-passes/, state/pr-${pr}-round-${roundNo}-review.md and state/pr-${pr}-round-${roundNo}-comments.json. Record only what those artifacts support — an honest partial record beats an invented complete one.`,
     "Do NOT do any review work, do NOT run passes, do NOT post anything to GitHub, and do NOT write a verdict file — this is a bookkeeping write only. You will not be asked again.",
   ].join("\n");
@@ -509,6 +552,7 @@ export async function enforceFindingsRecord(
         round_no: roundNo,
         ungrammatical_tags: c.ungrammatical_tags.length,
         nits_without_request: c.nits_without_request.length,
+        doubted_posted: c.doubted_posted.length,
         restated: c.restated.length,
       });
       if (!isConformant(c)) {
@@ -518,7 +562,10 @@ export async function enforceFindingsRecord(
           roundNo,
           `posted output outside the rules: ${c.ungrammatical_tags.length} tag(s) outside the grammar ` +
             `(${c.ungrammatical_tags.join(", ")}), ${c.nits_without_request.length} nit(s) asking for nothing ` +
-            `(${c.nits_without_request.join(", ")})`,
+            `(${c.nits_without_request.join(", ")})` +
+            (c.doubted_posted.length > 0
+              ? `, ${c.doubted_posted.length} doubted finding(s) posted (${c.doubted_posted.join(", ")})`
+              : ""),
         );
       }
     }

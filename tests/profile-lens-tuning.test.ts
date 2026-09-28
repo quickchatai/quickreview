@@ -147,17 +147,17 @@ describe("min_tier floors the plan", () => {
     });
   });
 
-  it("raises the validator's floor, and a floored lens raises the validator", () => {
+  it("raises the validator's floor; a floored lens never raises the validator", () => {
     const lowFloor = structuredClone(fixture);
     lowFloor.models.validate_tier = "terra-med";
     expect(row(lowFloor, SMALL, "pass-validate")?.tier).toBe("terra-med");
     profile("vfloor", '[lenses.pass-validate]\nmin_tier = "sol-med"\n');
     expect(row(tuned("vfloor", lowFloor), SMALL, "pass-validate")?.tier).toBe("sol-med");
     profile("lfloor", '[lenses.pass-baseline]\nmin_tier = "sol-high"\n');
-    expect(row(tuned("lfloor", lowFloor), SMALL, "pass-validate")?.tier).toBe("sol-high");
+    expect(row(tuned("lfloor", lowFloor), SMALL, "pass-validate")?.tier).toBe("terra-med");
   });
 
-  it("in the sweep's rows — and a floored sweep raises the validator", () => {
+  it("in the sweep's rows — and a floored sweep leaves the validator alone", () => {
     const swept = structuredClone(fixture);
     swept.review.sweep = true;
     swept.models.validate_tier = "terra-med";
@@ -173,7 +173,7 @@ describe("min_tier floors the plan", () => {
         raisable_to: ["pass-sweep--sol-high"],
       }),
     ]);
-    expect(row(cfg, SMALL, "pass-validate")?.tier).toBe("sol-med");
+    expect(row(cfg, SMALL, "pass-validate")?.tier).toBe("terra-med");
   });
 
   it("in the add rule: the addable lens is named with its floored variant", () => {
@@ -295,9 +295,11 @@ describe("enabled = false removes any lens", () => {
     expect(lensesOf(tuned("force"), SMALL)).not.toContain("pass-concurrency");
   });
 
-  it("the validator cannot be switched off here", () => {
+  it("the validator can be switched off too (tests/optional-validator.test.ts)", () => {
     profile("novalidate", "[lenses.pass-validate]\nenabled = false\n");
-    expect(() => tuned("novalidate")).toThrow(/validator cannot be switched off/);
+    const p = plan(tuned("novalidate"), AUTH);
+    expect(p.pass_plan.map((r) => r.lens)).not.toContain("pass-validate");
+    expect(p.addable_lenses).not.toContain("pass-validate");
   });
 });
 
