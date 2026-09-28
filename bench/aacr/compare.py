@@ -217,7 +217,8 @@ def aacr(runs_dir, runs, cases):
     refs, generated, scored, judges = {}, 0, set(), set()
     for run in runs:
         d = os.path.join(runs_dir, run, "results", "all")
-        # metrics_<reader>_*: ocr for quickreviewd and OCR runs, claude for Claude Code runs.
+        # metrics_<reader>_*: ocr for every arm (a Claude Code run scored before its
+        # `review` view existed has metrics_claude_*; its next eval clears them).
         rounds = [f for f in sorted(glob.glob(os.path.join(d, "metrics_*_*.json"))) if "average" not in f]
         per = collections.defaultdict(list)
         for f in rounds:

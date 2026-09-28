@@ -1,0 +1,16 @@
+src/Base/StackWalker.cpp
+src/Base/Tools.h
+src/Gui/DAGView/DAGRectItem.cpp
+src/Gui/Dialogs/DlgPreferencePackManagementImp.cpp
+src/Gui/SoDatumLabel.cpp
+src/Gui/View3DInventor.cpp
+src/Gui/View3DInventorViewer.cpp
+src/Gui/ViewProviderPlane.cpp
+src/Mod/CAM/libarea/pyarea.cpp
+src/Mod/Fem/App/FemVTKTools.cpp
+src/Mod/Mesh/App/Core/MeshKernel.cpp
+src/Mod/Spreadsheet/App/PropertySheet.cpp
+src/Mod/TechDraw/App/Geometry.cpp
+src/Mod/TechDraw/Gui/DimensionValidators.cpp
+tests/src/Base/Reader.cpp
+tests/src/Mod/Part/App/FuzzyBoolean.cpp

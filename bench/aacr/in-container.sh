@@ -28,8 +28,12 @@
 # ratified exception — `claude` runs HERE, inside this sandbox, and nowhere else):
 #   claude-review <set> [cli flags…] → node cli claude-review → claude_driver.py →
 #   the harness's own reviewers/claude.py, which runs `claude -p '/code-review …'`.
-#   eval / report with BENCH_ARM=claude score it with the harness's Claude
-#   reader (`--reviewer claude`), `all` variant only.
+#   claude-rebuild <set> [--only ids] → node cli claude-rebuild: rebuild each result
+#   file's OCR-shaped `review` view from what the harness stored (the prose parser
+#   for raw text; no model, --network none), then claude_driver.py --check-results.
+#   eval / report with BENCH_ARM=claude score that view with the harness's OCR
+#   reader (`--reviewer ocr`, as for every other arm), `all` variant only — and
+#   refuse a run whose result files carry no view yet.
 # The pi-review arm (image target `pireview`):
 #   pireview-review <set> [cli flags…] → node cli pireview-review (@zephyrdeng/pi-review on
 #   this image's pi, one case at a time, the refresh-disabled login copy); eval / report with
@@ -118,6 +122,15 @@ case "$cmd" in
     [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}${ANTHROPIC_API_KEY:-}" ]] \
       || { echo "claude: no credential — bench.sh passes bench/aacr/claude.env with --env-file" >&2; exit 1; }
     exec "${CLI[@]}" claude-review --set "$(set_file "$set_name")" --store /repos --out /bench-out "$@" ;;
+  claude-rebuild)
+    # The Claude Code arm's view, rebuilt from the stored results: no model, no
+    # network, the harness's payload untouched. Paths are checked against the
+    # PR's changed files from the (read-only) prefetched store.
+    set_name="$1"; shift
+    "${CLI[@]}" claude-rebuild --set "$(set_file "$set_name")" --store /repos --out /bench-out "$@"
+    # The harness's own readers: structured findings → its Claude reader and the
+    # OCR reader must see the same comments; prose → the OCR reader sees them all.
+    exec /opt/aacr-venv/bin/python /opt/quickreview/bench/claude_driver.py --check-results /bench-out/results/all ;;
   pireview-review)
     set_name="$1"; shift
     command -v pi-review >/dev/null || { echo "this image has no pi-review — build it with: bench.sh build --arm pireview" >&2; exit 2; }
@@ -151,7 +164,13 @@ except Exception: print("qcr")' /bench-out/run.json)"
       done
       variants="${QCR_EVAL_VARIANTS//,/ }"
     fi
-    reader=ocr; [[ "$arm" == claude ]] && reader=claude
+    # Every arm is scored by the harness's OCR reader on `review.comments` — the
+    # Claude Code arm too, on the view claude-rebuild (or its review) wrote.
+    reader=ocr
+    if [[ "$arm" == claude && "$cmd" == eval ]]; then
+      /opt/aacr-venv/bin/python /opt/quickreview/bench/claude_driver.py --check-results /bench-out/results/all --require-view \
+        || { echo "this Claude Code run's result files have no review view — run: bench.sh claude-rebuild --arm claude --run <id> --set $set_name" >&2; exit 2; }
+    fi
     line_k="${QCR_LINE_K:-1}"
     shards="${QCR_EVAL_SHARDS:-1}"
     [[ "$shards" =~ ^[1-9][0-9]?$ ]] || { echo "QCR_EVAL_SHARDS must be 1..99" >&2; exit 2; }
@@ -203,10 +222,12 @@ except Exception: print("qcr")' /bench-out/run.json)"
       if [[ "$line_k" != 1 ]]; then
         [[ -d /bench-out/results/all ]] || { echo "no results for variant all — run review first" >&2; echo 1 > "/tmp/eval-status/$variant"; return; }
         rm -rf "$dir"; mkdir -p "$dir"
-        find /bench-out/results/all -maxdepth 1 -name '*.json' ! -name "metrics_${reader}_*" -exec cp {} "$dir"/ \;
+        find /bench-out/results/all -maxdepth 1 -name '*.json' ! -name "metrics_*" -exec cp {} "$dir"/ \;
       fi
       [[ -d "$dir" ]] || { echo "no results for variant $variant — run review (or whatif) first" >&2; echo 1 > "/tmp/eval-status/$variant"; return; }
-      rm -f "$dir"/metrics_"${reader}"_*.json
+      # every reader's old metrics go (a Claude Code run scored before the OCR
+      # view existed left metrics_claude_*, which compare.py would also read)
+      rm -f "$dir"/metrics_*.json
       echo "== eval: $variant ($expected instances, judge $judge, $rounds round(s), $shards shard(s))" >&2
       if [[ "$shards" == 1 ]]; then
         ( cd /opt/aacr-bench/evaluation && /opt/aacr-venv/bin/python -m pipeline run --stage eval --reviewer "$reader" \

@@ -36,6 +36,14 @@ What is ours, all mechanical:
 
   --self-test   run the same two harness calls against a stub `claude` that
                 records its argv (the image build runs this; no model call)
+  --check-results DIR [--require-view]
+                check every result file's OCR-shaped `review` view (written by
+                src/bench/claudecode.ts `withClaudeView`) with the harness's
+                OWN readers: where the harness got structured findings, its
+                Claude reader and its OCR reader must see the same comments;
+                where it stored raw text, the OCR reader must see exactly the
+                comments the prose parser recorded. --require-view: a result
+                file with no view fails (the eval refuses such a run).
 """
 from __future__ import annotations
 
@@ -99,6 +107,57 @@ def review(a: argparse.Namespace) -> int:
     return 0
 
 
+def _readers():
+    os.environ.setdefault("JUDGE_USE_MOCK", "true")
+    import evaluate  # noqa: E402  (the harness's own)
+
+    return evaluate.build_target_comments_from_claude, evaluate.build_target_comments_from_ocr
+
+
+def check_result(result: dict) -> tuple:
+    """One result file: (kind, comments) — kind "harness" | "prose" | "no-view".
+    Raises SystemExit when the view disagrees with the harness's readers."""
+    from_claude, from_ocr = _readers()
+    if not isinstance(result.get("review"), dict):
+        return "no-view", 0
+    ocr = from_ocr(result)
+    if isinstance(result.get("review_output"), list):
+        claude = from_claude(result)
+        if claude != ocr:
+            raise SystemExit(
+                f"{result.get('instance_id')}: the view disagrees with the harness's Claude reader: "
+                f"{len(claude)} vs {len(ocr)} comment(s)"
+            )
+        return "harness", len(ocr)
+    want = ((result.get("bench") or {}).get("claude_prose_parsed") or {}).get("findings")
+    if want is not None and want != len(ocr):
+        raise SystemExit(
+            f"{result.get('instance_id')}: the OCR reader sees {len(ocr)} comment(s), the prose parser recorded {want}"
+        )
+    return "prose", len(ocr)
+
+
+def check_results(results_dir: Path, require_view: bool) -> int:
+    counts = {"harness": 0, "prose": 0, "no-view": 0}
+    comments = 0
+    for f in sorted(results_dir.glob("*.json")):
+        if f.name.startswith("metrics_"):
+            continue
+        kind, n = check_result(json.loads(f.read_text(encoding="utf-8")))
+        counts[kind] += 1
+        comments += n
+    print(
+        f"claude-driver: {sum(counts.values())} result file(s) — {counts['harness']} from the harness's findings "
+        f"(Claude reader == OCR reader), {counts['prose']} from the prose parser, {counts['no-view']} with no view; "
+        f"{comments} comment(s) for the OCR reader",
+        flush=True,
+    )
+    if require_view and counts["no-view"]:
+        print(f"claude-driver: {counts['no-view']} result file(s) have no review view", file=sys.stderr)
+        return 1
+    return 0
+
+
 def self_test() -> int:
     """The two harness calls against a stub `claude` — proves, at image build,
     that the pinned runner still builds the argv claudecode.ts checks and
@@ -135,6 +194,23 @@ def self_test() -> int:
     result = json.loads((results / "o__r@1234567.json").read_text())
     assert result["reviewer"] == "claude-code/code-review", result
     assert result["review_output"] == [] and result["token_usage"]["output_tokens"] == 2, result
+    # The view check, against the harness's own two readers.
+    finding = {"file": "a.py", "line": 3, "summary": " S ", "failure_scenario": "F"}
+    ok = {"review_output": [finding, "not a dict"],
+          "review": {"comments": [{"path": "a.py", "start_line": 3, "end_line": 3, "content": "S\nF"}]}}
+    assert check_result(ok) == ("harness", 1), check_result(ok)
+    bad = json.loads(json.dumps(ok))
+    bad["review"]["comments"][0]["end_line"] = 4
+    try:
+        check_result(bad)
+    except SystemExit:
+        pass
+    else:
+        raise AssertionError("a view that disagrees with the Claude reader must be refused")
+    prose = {"review_output": "- `a.py:3` — wrong", "bench": {"claude_prose_parsed": {"findings": 1}},
+             "review": {"comments": [{"path": "a.py", "start_line": 3, "end_line": 3, "content": "`a.py:3` — wrong"}]}}
+    assert check_result(prose) == ("prose", 1), check_result(prose)
+    assert check_result({"review_output": "text"}) == ("no-view", 0)
     print("claude-driver self-test: ok")
     return 0
 
@@ -151,9 +227,13 @@ def main() -> int:
     p.add_argument("--timeout-min", type=int, default=30)
     p.add_argument("--argv-out")
     p.add_argument("--stdout-out")
+    p.add_argument("--check-results")
+    p.add_argument("--require-view", action="store_true")
     a = p.parse_args()
     if a.self_test:
         return self_test()
+    if a.check_results:
+        return check_results(Path(a.check_results), a.require_view)
     for k in ("repo", "repo_name", "base", "head", "instance_id", "results_dir"):
         if not getattr(a, k):
             p.error(f"--{k.replace('_', '-')} is required")

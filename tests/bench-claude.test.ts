@@ -37,14 +37,19 @@ import {
   checkHarnessArgv,
   claudeEnv,
   claudeFinalText,
+  changedFilesFromStore,
   claudeProcessTimeoutMs,
+  claudeRebuildRun,
   claudeRepoPath,
   claudeReviewRun,
+  claudeRowsForJudge,
   claudeScoredFindings,
+  emptyClaudeResult,
   pickCredential,
   readClaudeSummary,
   renderClaudeReport,
   summarizeClaudeResult,
+  withClaudeView,
 } from "../src/bench/claudecode.js";
 import { reviewForJudge } from "../src/bench/defects.js";
 import { runArmOf } from "../src/bench/ocr.js";
@@ -479,12 +484,80 @@ describe("claudeReviewRun: one case at a time, through the driver", () => {
       },
     ]);
     expect(review.body).toContain("## Findings");
+    // The result file carries the OCR-shaped view, built from the harness's
+    // structured findings, beside the harness's untouched payload.
+    const scored = JSON.parse(
+      readFileSync(join(out, "results", "all", `${c.instance_id}.json`), "utf8"),
+    ) as Record<string, unknown>;
+    expect(scored["review_output"]).toEqual([
+      { file: "a.ts", line: 1, summary: "wrong constant", failure_scenario: "a is 2, callers expect 1" },
+    ]);
+    expect((scored["review"] as { comments: unknown[] }).comments).toEqual([
+      { path: "a.ts", start_line: 1, end_line: 1, content: "wrong constant\na is 2, callers expect 1" },
+    ]);
+    expect(scored["bench"]).toEqual({ claude_view: { source: "harness", comments: 1 } });
+    expect(s.view_source).toBe("harness");
+    expect(s.harness_comments).toBe(1);
     const run = JSON.parse(readFileSync(join(out, "run.json"), "utf8")) as Record<string, unknown>;
     expect(run["reviewer"]).toBe("claude");
     expect(runArmOf(out)).toBe("claude");
     const report = renderClaudeReport(set, out, [c]);
     expect(report).toContain("claude-opus-4-7");
     expect(report).toContain("reviewers/claude.py");
+    expect(report).toContain("OCR reader on the `review.comments` view");
+  });
+
+  it("a raw-text answer gets its view from the prose parser, paths checked against the tree's diff", async () => {
+    const t = mkdtempSync(join(tmpdir(), "qcr-claude-"));
+    const { set, c, meta, store } = scratchCase(t);
+    const d = stubDriver(t, "ok");
+    // this driver's harness stored the answer as raw text, as 2.1.283's /code-review makes it
+    writeFileSync(
+      d,
+      readFileSync(d, "utf8").replace(
+        'review, usage = [{"file": "a.ts", "line": 1, "summary": "wrong constant", "failure_scenario": "a is 2, callers expect 1"}], {"claude-opus-4-7": {"outputTokens": 50}}',
+        'review, usage = "I found 2 bugs.\\n\\n- `a.ts:1` — wrong constant.\\n- `lib/gone.ts:3` — not in this PR.\\n", {"claude-opus-4-7": {"outputTokens": 50}}',
+      ),
+    );
+    const out = join(t, "run");
+    const code = await claudeReviewRun({
+      set,
+      outDir: out,
+      store,
+      workRoot: join(t, "work"),
+      homeRoot: join(t, "homes"),
+      python: "python3",
+      driver: d,
+      timeoutMin: 30,
+      resume: false,
+      keepTree: false,
+      env: { PATH: process.env.PATH, ANTHROPIC_API_KEY: "k" },
+      readMeta: () => meta,
+      log: () => {},
+    });
+    expect(code).toBe(0);
+    const scored = JSON.parse(
+      readFileSync(join(out, "results", "all", `${c.instance_id}.json`), "utf8"),
+    ) as Record<string, unknown>;
+    expect(typeof scored["review_output"]).toBe("string");
+    expect((scored["review"] as { comments: unknown[] }).comments).toEqual([
+      { path: "a.ts", start_line: 1, end_line: 1, content: "`a.ts:1` — wrong constant." },
+      { path: "lib/gone.ts", start_line: 3, end_line: 3, content: "`lib/gone.ts:3` — not in this PR." },
+    ]);
+    expect((scored["bench"] as Record<string, unknown>)["claude_prose_parsed"]).toMatchObject({
+      findings: 2,
+      paths_matched: 1,
+      paths_unmatched: 1,
+      paths_unchecked: 0,
+      changed_files: 1,
+    });
+    const s = readClaudeSummary(out, c)!;
+    expect(s).toMatchObject({ comments: 2, harness_comments: 0, view_source: "prose", raw_text_fallback: true });
+    expect(reviewForJudge(out, c.instance_id).comments.map((x) => [x.path, x.line])).toEqual([
+      ["a.ts", 1],
+      ["lib/gone.ts", 3],
+    ]);
+    expect(renderClaudeReport(set, out, [c])).toContain("| 2 (prose) |");
   });
 
   it("an auth failure fails the case, keeps a result file, and stops the run", async () => {
@@ -549,6 +622,151 @@ describe("claudeReviewRun: one case at a time, through the driver", () => {
         env: { PATH: process.env.PATH, ANTHROPIC_API_KEY: "k" },
       }),
     ).rejects.toThrow(/another arm/);
+  });
+});
+
+// ---- the OCR-shaped view, and rebuilding it for a finished run -----------------
+
+const RAW_ANSWER =
+  "I found 2 bugs.\n\n- **`src/a.ts:12`** — wrong constant.\n- **mongo.go:7** — escaped twice.\n\n" +
+  "What I checked:\n- **Callers** (`src/b.ts:3`): fine.\n";
+
+function rawResult(extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    instance_id: "o__r@1234567",
+    reviewer: "claude-code/code-review",
+    claude_exit_code: 0,
+    review_output_source: "stdout_fallback",
+    review_output: RAW_ANSWER,
+    token_usage: { input_tokens: 5, output_tokens: 7, model_usage: { m: { outputTokens: 7 } } },
+    ...extra,
+  };
+}
+
+describe("withClaudeView: the view the eval scores, beside the harness's payload", () => {
+  it("structured findings: exactly the harness's Claude reading, no parser involved", () => {
+    const r = {
+      review_output: [
+        { file: "a.ts", line: 3, summary: "off by one", failure_scenario: "x" },
+        { file: "b.ts", summary: " ", failure_scenario: "" },
+      ],
+      review_output_source: "mcp_stream",
+      bench: { keep: 1, claude_prose_parsed: { stale: true } },
+    };
+    const v = withClaudeView(r, ["a.ts"]);
+    expect(v["review_output"]).toBe(r.review_output);
+    expect((v["review"] as { comments: unknown[] }).comments).toEqual(claudeRowsForJudge(r));
+    expect(v["bench"]).toEqual({ keep: 1, claude_view: { source: "harness", comments: 1 } });
+    // an EMPTY structured answer is still the harness's answer
+    expect(withClaudeView({ review_output: [] }, null)["bench"]).toEqual({
+      claude_view: { source: "harness", comments: 0 },
+    });
+  });
+
+  it("raw text: the prose parser's findings, a marker with its counts, review_output untouched", () => {
+    const r = rawResult();
+    const v = withClaudeView(r, ["src/a.ts", "pkg/mongo/mongo.go"]);
+    expect(v["review_output"]).toBe(RAW_ANSWER);
+    expect(v["review"]).toEqual({
+      comments: [
+        { path: "src/a.ts", start_line: 12, end_line: 12, content: "**`src/a.ts:12`** — wrong constant." },
+        { path: "pkg/mongo/mongo.go", start_line: 7, end_line: 7, content: "**mongo.go:7** — escaped twice." },
+      ],
+      summary: { input_tokens: 5, output_tokens: 7, total_tokens: 12 },
+    });
+    expect(v["bench"]).toEqual({
+      claude_view: { source: "prose", comments: 2 },
+      claude_prose_parsed: {
+        parser_version: 1,
+        findings: 2,
+        paths_matched: 2,
+        paths_unmatched: 0,
+        paths_unchecked: 0,
+        changed_files: 2,
+        skipped: { non_finding: 1, recap: 0, unlocated: 0 },
+      },
+    });
+    // idempotent: rebuilding a rebuilt file changes nothing
+    expect(withClaudeView(v, ["src/a.ts", "pkg/mongo/mongo.go"])).toEqual(v);
+    // the harness's own Claude reader still sees nothing in it
+    expect(claudeScoredFindings(v)).toEqual([]);
+    // no file list: paths as written, unchecked
+    const u = withClaudeView(r, null);
+    expect((u["bench"] as Record<string, Record<string, unknown>>)["claude_prose_parsed"]).toMatchObject({
+      paths_unchecked: 2,
+      changed_files: null,
+    });
+  });
+
+  it("the empty result of a case that never ran carries an empty view", () => {
+    const c = { instance_id: "o__r@1", repo: "o/r", base_commit: "a", head_commit: "b" } as BenchCase;
+    const e = emptyClaudeResult(c, "boom");
+    expect((e["review"] as { comments: unknown[] }).comments).toEqual([]);
+  });
+});
+
+describe("claudeRebuildRun: the view for a finished run, no model and no network", () => {
+  function finishedRun(t: string, result: Record<string, unknown>) {
+    const id = "o__r@1234567";
+    const set: CaseSet = {
+      name: "t",
+      dataset: { source: "s", commit: "c".repeat(40), file: "f", sha256: "x" },
+      rule: "r",
+      references: 1,
+      cases: [
+        { instance_id: id, repo: "o/r", pr: 1, pr_url: "u", base_commit: "a".repeat(40), head_commit: "b".repeat(40), language: "Go", pr_category: "bug", change_line_count: 1, references: 1 },
+        { instance_id: "o__r@0000000", repo: "o/r", pr: 2, pr_url: "u", base_commit: "a".repeat(40), head_commit: "c".repeat(40), language: "Go", pr_category: "bug", change_line_count: 1, references: 1 },
+      ],
+      backups: [],
+    };
+    const out = join(t, "run");
+    mkdirSync(join(out, "results", "all"), { recursive: true });
+    mkdirSync(join(out, "cases", id), { recursive: true });
+    writeFileSync(join(out, "run.json"), JSON.stringify({ reviewer: "claude" }));
+    writeFileSync(join(out, "results", "all", `${id}.json`), JSON.stringify(result));
+    writeFileSync(
+      join(out, "cases", id, "case-summary.json"),
+      JSON.stringify({ instance_id: id, arm: "claude", status: "ok", comments: 0, raw_text_fallback: true, fingerprint: {}, warnings: [], argv_ok: true, argv_mismatches: [], duration_seconds: 60, cost_usd: 0.1, tokens: null, models: [], model: "m", review_output_source: "stdout_fallback", num_turns: 0, exit_code: 0, merge_base_ok: true }),
+    );
+    const files = join(t, "code");
+    mkdirSync(join(files, id), { recursive: true });
+    writeFileSync(join(files, id, "files.txt"), "src/a.ts\npkg/mongo/mongo.go\n");
+    return { set, out, id, files };
+  }
+
+  it("adds the view and the marker, updates the case summary, skips a case with no result", async () => {
+    const t = mkdtempSync(join(tmpdir(), "qcr-claude-rebuild-"));
+    const { set, out, id, files } = finishedRun(t, rawResult());
+    const lines: string[] = [];
+    const got = await claudeRebuildRun({ set, outDir: out, filesDir: files, log: (l) => lines.push(l) });
+    expect(got).toHaveLength(1);
+    expect(got[0]).toMatchObject({ instance_id: id, source: "prose", comments: 2 });
+    const r = JSON.parse(readFileSync(join(out, "results", "all", `${id}.json`), "utf8")) as Record<string, unknown>;
+    expect(r["review_output"]).toBe(RAW_ANSWER);
+    expect((r["review"] as { comments: Array<{ path: string }> }).comments.map((x) => x.path)).toEqual([
+      "src/a.ts",
+      "pkg/mongo/mongo.go",
+    ]);
+    const s = JSON.parse(readFileSync(join(out, "cases", id, "case-summary.json"), "utf8")) as Record<string, unknown>;
+    expect(s).toMatchObject({ comments: 2, harness_comments: 0, view_source: "prose" });
+    expect(lines.join("\n")).toMatch(/o__r@0000000 — no result file, skipped/);
+    expect(lines.join("\n")).toMatch(/paths 2\/2 matched to 2 changed file\(s\)/);
+    // the defect judge now gets the comments too
+    expect(reviewForJudge(out, id).comments).toHaveLength(2);
+    // a second rebuild is a no-op
+    const before = readFileSync(join(out, "results", "all", `${id}.json`), "utf8");
+    await claudeRebuildRun({ set, outDir: out, filesDir: files, log: () => {} });
+    expect(readFileSync(join(out, "results", "all", `${id}.json`), "utf8")).toBe(before);
+  });
+
+  it("reads the changed files from the prefetched store, never writing into it", async () => {
+    const t = mkdtempSync(join(tmpdir(), "qcr-claude-rebuild-"));
+    const { c, meta, store } = scratchCase(t);
+    const listing = () => readdirSync(join(store, c.instance_id)).sort().join(",");
+    const before = listing();
+    expect(await changedFilesFromStore(join(store, c.instance_id), meta)).toEqual(["a.ts"]);
+    expect(listing()).toBe(before);
+    expect(await changedFilesFromStore(join(t, "nowhere"), meta)).toBeNull();
   });
 });
 
@@ -679,6 +897,36 @@ describe("bench.sh --arm claude: its own credential file, and the same hardening
     expect(ev).toContain("BENCH_ARM=claude");
     expect(ev).toContain("qcr-bench-claude:latest eval fresh10 mock");
     expect(ev).not.toContain("--env-file"); // scoring never gets the reviewer's credential
+  });
+
+  it("claude-rebuild: --network none, the store read-only, no credential; only for this arm", () => {
+    const t = benchTree();
+    let r = bench(t, {}, "claude-rebuild", "--arm", "claude", "--run", "r3", "--set", "fresh10", "--only", "o__r@1234567");
+    expect(r.status, r.stderr).toBe(0);
+    const run = readFileSync(t.log, "utf8")
+      .split("\n")
+      .filter((l) => l.startsWith("run "))
+      .at(-1)!;
+    expect(run).toContain("--network none");
+    expect(run).toContain("dst=/repos,readonly");
+    expect(run).toContain("qcr-bench-claude:latest claude-rebuild fresh10 --only o__r@1234567");
+    expect(run).not.toContain("--env-file");
+    expect(run).not.toContain("/pi-agent-src");
+    r = bench(t, {}, "claude-rebuild", "--run", "r3");
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/pass --arm claude/);
+  });
+
+  it("the eval scores the Claude Code arm with the OCR reader on its view, and refuses a run without one", () => {
+    const sh = readFileSync(join(B, "in-container.sh"), "utf8");
+    expect(sh).toMatch(/^\s*reader=ocr$/m);
+    expect(sh).not.toMatch(/reader=claude/);
+    expect(sh).toContain("--check-results /bench-out/results/all --require-view");
+    expect(sh).toMatch(/claude-rebuild\)[\s\S]*?"\$\{CLI\[@\]\}" claude-rebuild --set/);
+    // stale metrics of the old reader are cleared with the new ones
+    expect(sh).toContain('rm -f "$dir"/metrics_*.json');
+    const driver = readFileSync(join(B, "claude_driver.py"), "utf8");
+    expect(driver).toContain("build_target_comments_from_claude, evaluate.build_target_comments_from_ocr");
   });
 });
 

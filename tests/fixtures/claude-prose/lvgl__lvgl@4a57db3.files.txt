@@ -1,0 +1,4 @@
+src/draw/lv_draw_label.c
+src/draw/lv_draw_label.h
+src/widgets/label/lv_label.c
+src/widgets/label/lv_label_private.h

@@ -1,0 +1,14 @@
+.unreleased/pr_7915
+sql/policy_api.sql
+sql/updates/latest-dev.sql
+sql/updates/reverse-dev.sql
+tsl/src/bgw_policy/continuous_aggregate_api.c
+tsl/src/bgw_policy/continuous_aggregate_api.h
+tsl/src/bgw_policy/job.c
+tsl/src/bgw_policy/job.h
+tsl/src/bgw_policy/policies_v2.h
+tsl/src/continuous_aggs/refresh.c
+tsl/src/continuous_aggs/refresh.h
+tsl/test/expected/cagg_refresh_policy_incremental.out
+tsl/test/shared/expected/extension.out
+tsl/test/sql/cagg_refresh_policy_incremental.sql

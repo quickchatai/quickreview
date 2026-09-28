@@ -35,6 +35,9 @@
 //   claude-review --set <file> --out DIR [--only id,id] [--store DIR] [--resume] [--keep-tree]
 //                 [--timeout-min 30]     through the harness's reviewers/claude.py, one case at a time
 //   claude-report --set <file> --out DIR
+//   claude-rebuild --set <file> --out DIR [--only id,id] [--store DIR] [--files-dir DIR]
+//                 rebuild each result file's OCR-shaped view from what the harness
+//                 stored (the prose parser for raw text) — no model, no network
 // The pi-review arm (src/bench/pireview.ts; image target `pireview`):
 //   pireview-review --set <file> --out DIR [--only id,id] [--store DIR] [--resume] [--keep-tree]
 //                   [--timeout-min 30] [--thinking medium] [--model openai-codex/gpt-6-sol]
@@ -76,7 +79,12 @@ import {
 } from "./ocr.js";
 import { parseReferenceLabels, renderOcrReport, renderReport } from "./report.js";
 import { OPENCODE_HARNESS_DEFAULTS, renderOpencodeReport, runOpencodeReview } from "./opencode.js";
-import { CLAUDE_HARNESS_DEFAULTS, claudeReviewRun, renderClaudeReport } from "./claudecode.js";
+import {
+  CLAUDE_HARNESS_DEFAULTS,
+  claudeRebuildRun,
+  claudeReviewRun,
+  renderClaudeReport,
+} from "./claudecode.js";
 import { PIREVIEW_DEFAULTS, renderPireviewReport, runPireviewReview } from "./pireview.js";
 import { run as runCmd } from "./exec.js";
 import { renderWhatifReport, writeWhatifRun } from "./whatifrun.js";
@@ -821,6 +829,26 @@ async function main(): Promise<number> {
     assertArm(outDir, "opencode");
     writeFileSync(join(outDir, "report.md"), renderOpencodeReport(set, outDir, selectCases(set, only(f))));
     log(`report: ${join(outDir, "report.md")}`);
+    return 0;
+  }
+
+  if (f.cmd === "claude-rebuild") {
+    // The Claude Code arm's view, rebuilt from the stored result — no model call.
+    const set = loadSet(f.get("--set"));
+    if (!f.get("--out")) throw new Error("--out <dir> is required");
+    const outDir = resolve(f.get("--out")!);
+    if (runArmOf(outDir) !== "claude")
+      throw new Error(`${outDir} is not a Claude Code run (run.json reviewer != "claude")`);
+    const filesDir = f.get("--files-dir");
+    await claudeRebuildRun({
+      set,
+      only: only(f),
+      outDir,
+      filesDir: filesDir ? resolve(filesDir) : undefined,
+      store: existsSync(store) ? store : undefined,
+      readMeta: (c) => readMeta(store, c),
+      log,
+    });
     return 0;
   }
 
