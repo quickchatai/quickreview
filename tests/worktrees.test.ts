@@ -7,7 +7,12 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { WorktreeManager, cloneUrlFor } from "../src/worktrees.js";
+import {
+  WorktreeManager,
+  cloneUrlFor,
+  ensureLocallyIgnored,
+  localExcludePath,
+} from "../src/worktrees.js";
 import type { ExecFn } from "../src/tmux.js";
 
 let tmp: string;
@@ -430,5 +435,55 @@ describe("lastHumanAuthor", () => {
     expect(await m.lastHumanAuthor(tip, ["never-touched.md"])).toBeNull();
     expect(await m.lastHumanAuthor(tip, [])).toBeNull();
     expect(await m.lastHumanAuthor("not-a-sha", ["CLAUDE.md"])).toBeNull();
+  });
+});
+
+// the base clone's name is per-install, so no tracked .gitignore line
+// can cover it. Where the sandbox root IS a checkout (`npm run daemon`, the
+// plain-docker bind mount), the manager itself files the clone in the
+// checkout's LOCAL info/exclude — the same `/<name>/` line deploy.sh writes.
+describe("base clone is locally ignored", () => {
+  it("a clone of any name inside a checkout leaves `git status` clean, and the rule is written once", async () => {
+    git(root, "init", "-q", "-b", "master");
+    writeFileSync(join(root, "tracked.txt"), "x\n");
+    git(root, "add", "tracked.txt");
+    git(root, "commit", "-q", "-m", "t");
+    const m = new WorktreeManager({ root, repo: "acme/acme-api", cloneUrl: origin });
+    await m.ensureBaseClone();
+    expect(existsSync(join(root, "acme-api", ".git"))).toBe(true);
+    expect(git(root, "status", "--porcelain")).toBe("");
+    await m.ensureBaseClone();
+    const exclude = readFileSync(join(root, ".git", "info", "exclude"), "utf8");
+    expect(exclude.match(/^\/acme-api\/$/gm)).toHaveLength(1);
+  });
+
+  it("does nothing where the root is not a checkout (the VM: no .git is shipped)", async () => {
+    const m = new WorktreeManager({ root, repo: "acme/acme-api", cloneUrl: origin });
+    await m.ensureBaseClone();
+    expect(existsSync(join(root, ".git"))).toBe(false);
+    expect(localExcludePath(root)).toBeNull();
+  });
+
+  it("accepts deploy.sh's spelling as already present and never glues onto an unterminated line", () => {
+    git(root, "init", "-q");
+    const exclude = join(root, ".git", "info", "exclude");
+    writeFileSync(exclude, "*.swp");
+    expect(ensureLocallyIgnored(root, "acme-api")).toBe(true);
+    expect(readFileSync(exclude, "utf8")).toBe("*.swp\n/acme-api/\n");
+    expect(ensureLocallyIgnored(root, "acme-api")).toBe(false);
+  });
+
+  it("a checkout that is itself a linked worktree writes the SHARED exclude", () => {
+    git(root, "init", "-q", "-b", "master");
+    writeFileSync(join(root, "f"), "x\n");
+    git(root, "add", "f");
+    git(root, "commit", "-q", "-m", "t");
+    const linked = join(tmp, "linked");
+    git(root, "worktree", "add", "-q", linked);
+    expect(localExcludePath(linked)).toBe(join(root, ".git", "info", "exclude"));
+    expect(ensureLocallyIgnored(linked, "acme-api")).toBe(true);
+    mkdirSync(join(linked, "acme-api"));
+    writeFileSync(join(linked, "acme-api", "x"), "y\n");
+    expect(git(linked, "status", "--porcelain")).toBe("");
   });
 });

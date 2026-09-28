@@ -18,6 +18,8 @@ wt/
 # The base clone (<sandbox root>/<[github] clone_dir>) is NOT listed here: its
 # name is per-install, so scripts/deploy.sh writes it into the LOCAL
 # .git/info/exclude instead — a tracked line would name one repo.
+# The daemon's WorktreeManager.ensureBaseClone writes the same line when the
+# sandbox root is a checkout (npm run daemon, the plain-docker bind mount).
 # finished-round evidence copied down from the VM. The default store
 # lives outside the repo (~/.local/share/qcr/evidence) because it grows without
 # bound; this covers an in-repo `[companion] evidence_dir` (and the empty-string

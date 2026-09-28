@@ -3,8 +3,16 @@
 // and refreshed at the start of every round. Worktrees are read-only working
 // copies for the lens passes — nothing here ever commits, pushes or touches a
 // branch of the upstream repo.
-import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { ExecFn, ExecResult } from "./tmux.js";
 import { nodeExec, runOrThrow } from "./tmux.js";
 
@@ -55,6 +63,61 @@ function repoBasename(repo: string): string {
   return tail || "repo";
 }
 
+/** The info/exclude file of the git repository whose work tree is exactly
+ * `root`, or null when `root` is not a work-tree root (the VM's sandbox: the
+ * rsync ships no `.git`). Pure filesystem — no `git` process, so a checkout
+ * owned by another uid (the plain-docker bind mount) cannot trip git's
+ * safe.directory refusal. A `.git` FILE (the checkout is itself a linked
+ * worktree) resolves through `gitdir:` and `commondir`, because info/ is
+ * shared by every worktree of a repository. */
+export function localExcludePath(root: string): string | null {
+  const dotGit = join(root, ".git");
+  let st;
+  try {
+    st = statSync(dotGit);
+  } catch {
+    return null;
+  }
+  if (st.isDirectory()) return join(dotGit, "info", "exclude");
+  const m = /^gitdir:\s*(.+?)\s*$/m.exec(readFileSync(dotGit, "utf8"));
+  if (!m) return null;
+  const gitDir = isAbsolute(m[1]!) ? m[1]! : resolve(root, m[1]!);
+  const commonFile = join(gitDir, "commondir");
+  const common = existsSync(commonFile)
+    ? resolve(gitDir, readFileSync(commonFile, "utf8").trim())
+    : gitDir;
+  return join(common, "info", "exclude");
+}
+
+/**
+ * keep the base clone out of `git status` of the checkout it lives
+ * in. The clone's name is per-install (`[github] clone_dir`, else the repo's
+ * basename), so no tracked `.gitignore` line can name it; the rule goes into
+ * the repository's LOCAL `info/exclude` instead — the same line
+ * `scripts/deploy.sh` writes, so either writer finding it is a no-op. Only
+ * matters where the sandbox root IS a checkout (`npm run daemon`, the
+ * plain-docker bind mount); on the VM there is no `.git` and nothing happens.
+ * Best-effort by contract: an unwritable exclude costs a dirty-looking tree,
+ * never a round. Returns whether a line was appended.
+ */
+export function ensureLocallyIgnored(root: string, dirName: string): boolean {
+  try {
+    const exclude = localExcludePath(root);
+    if (exclude === null) return false;
+    const rule = `/${dirName}/`;
+    const current = existsSync(exclude) ? readFileSync(exclude, "utf8") : "";
+    const spellings = new Set([rule, `/${dirName}`, `${dirName}/`, dirName]);
+    if (current.split("\n").some((l) => spellings.has(l.trim()))) return false;
+    mkdirSync(dirname(exclude), { recursive: true });
+    // never glue the rule onto a last line that lacks its newline
+    const sep = current.length > 0 && !current.endsWith("\n") ? "\n" : "";
+    appendFileSync(exclude, `${sep}${rule}\n`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export class WorktreeManager {
   readonly root: string;
   readonly basePath: string;
@@ -80,6 +143,10 @@ export class WorktreeManager {
 
   /** Clone the base repo if it is not there yet. Idempotent. */
   async ensureBaseClone(): Promise<string> {
+    // Only when the clone sits directly under root — the one shape the
+    // anchored `/<name>/` rule describes.
+    if (resolve(dirname(this.basePath)) === resolve(this.root))
+      ensureLocallyIgnored(this.root, basename(this.basePath));
     if (existsSync(join(this.basePath, ".git"))) return this.basePath;
     mkdirSync(this.root, { recursive: true });
     await runOrThrow(this.run, "git", ["clone", this.cloneUrl, this.basePath], { cwd: this.root });

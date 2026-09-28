@@ -153,7 +153,11 @@ is verified.
   the same name and passes it to the playbook as `-e base_clone_dir=…` — the
   rsync `--delete` keeps the VM's clone only because it is excluded by that
   name — and writes it into the checkout's local `.git/info/exclude`, never
-  the tracked `.gitignore`;
+  the tracked `.gitignore`. `ensureBaseClone` writes the same line
+  itself (`ensureLocallyIgnored`, pure filesystem, best-effort) whenever the
+  sandbox root is a checkout — `npm run daemon` and the plain-docker bind
+  mount, which never run deploy.sh; on the VM there is no `.git` and it is a
+  no-op;
 - worktrees: `<root>/wt/pr-<n>`, detached, created or reset by `checkoutAt`.
 
 `ensureWorktree(pr, { baseRef })` fetches the PR head into the local ref
