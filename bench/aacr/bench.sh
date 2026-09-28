@@ -69,6 +69,7 @@
 #              OWN: bench/aacr/claude.env (gitignored; QCR_BENCH_CLAUDE_ENV=FILE overrides)
 #              holding CLAUDE_CODE_OAUTH_TOKEN=… (`claude setup-token`) or ANTHROPIC_API_KEY=…,
 #              passed with --env-file — never the host's login, never on an argv.
+#              QCR_BENCH_CLAUDE_MODEL=ID pins the model (ANTHROPIC_MODEL), e.g. claude-opus-5-5.
 #
 # What the sandbox can touch on this PC (and nothing else):
 #   - bench/aacr/runs/<ID>/                 read-write: prompts, transcripts, results, report
@@ -327,6 +328,14 @@ case "$cmd" in
       # the case repos (no CLAUDE.md above it — Claude Code reads parent dirs).
       claude_env_args
       AUTH=("${CENV[@]}" --mount type=volume,dst=/work)
+      # QCR_BENCH_CLAUDE_MODEL pins the model (Claude Code reads ANTHROPIC_MODEL, as
+      # the harness's own runner sets it); unset = Claude Code's default for the
+      # credential. Reasoning stays Claude Code's default. The case records the
+      # model that actually ran.
+      if [[ -n "${QCR_BENCH_CLAUDE_MODEL:-}" ]]; then
+        [[ "$QCR_BENCH_CLAUDE_MODEL" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]*$ ]] || die "QCR_BENCH_CLAUDE_MODEL must be a model id"
+        AUTH+=(-e "ANTHROPIC_MODEL=$QCR_BENCH_CLAUDE_MODEL")
+      fi
     else
       auth_mounts
     fi
