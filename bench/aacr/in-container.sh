@@ -17,6 +17,10 @@
 #   ocr-review <set> [cli flags…] → the loopback Codex bridge + node cli ocr-review
 #   eval / report with BENCH_ARM=ocr score and report that arm: only the `all`
 #   variant (OCR comments carry no severity tag), the OCR report.
+#
+# The Codex CLI arm (image target `codex`):
+#   codex-review <set> [cli flags…] → node cli codex-review (the harness's reviewers/codex.py
+#   via codex_arm.py, one case at a time); eval / report with BENCH_ARM=codex likewise.
 set -euo pipefail
 
 ROOT=/opt/quickreview/sandbox
@@ -45,7 +49,7 @@ case "$cmd" in
     exec "${CLI[@]}" review --set "$(set_file "$set_name")" --store /repos --out /bench-out "$@" ;;
   report)
     set_name="$1"; shift
-    report_cmd=report; [[ "${BENCH_ARM:-qcr}" == ocr ]] && report_cmd=ocr-report
+    report_cmd=report; [[ "${BENCH_ARM:-qcr}" != qcr ]] && report_cmd="${BENCH_ARM}-report"
     exec "${CLI[@]}" "$report_cmd" --set "$(set_file "$set_name")" --out /bench-out "$@" ;;
   ocr-review)
     set_name="$1"; shift
@@ -68,6 +72,10 @@ case "$cmd" in
     "${CLI[@]}" ocr-review --set "$(set_file "$set_name")" --store /repos --out /bench-out \
       --bridge http://127.0.0.1:8766 "$@" || status=$?
     exit "$status" ;;
+  codex-review)
+    set_name="$1"; shift
+    command -v codex >/dev/null || { echo "this image has no Codex CLI — build it with: bench.sh build --arm codex" >&2; exit 2; }
+    exec "${CLI[@]}" codex-review --set "$(set_file "$set_name")" --store /repos --out /bench-out "$@" ;;
   results)
     set_name="$1"; shift
     exec "${CLI[@]}" results --set "$(set_file "$set_name")" --out /bench-out "$@" ;;
@@ -80,12 +88,12 @@ case "$cmd" in
     # none) must be the arm bench.sh was asked to score.
     arm="${BENCH_ARM:-qcr}"
     run_arm="$(python3 -c 'import json,sys
-try: print("ocr" if json.load(open(sys.argv[1])).get("reviewer") == "ocr" else "qcr")
+try: print(json.load(open(sys.argv[1])).get("reviewer") or "qcr")
 except Exception: print("qcr")' /bench-out/run.json)"
     [[ "$run_arm" == "$arm" ]] || { echo "this run dir holds the $run_arm arm — score it with bench.sh eval --arm $run_arm" >&2; exit 2; }
     if [[ "$cmd" == eval ]]; then
       variants="all no-nits blockers"; report_cmd=report
-      [[ "$arm" == ocr ]] && { variants="all"; report_cmd=ocr-report; }
+      [[ "$arm" != qcr ]] && { variants="all"; report_cmd="$arm-report"; }
     else
       variants="posted posted+killed posted+merged all-candidates"; report_cmd=whatif-report
     fi

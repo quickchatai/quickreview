@@ -3,6 +3,7 @@
 #   docker build --target runtime -t qcr-bench -f bench/aacr/Dockerfile .      (bench.sh build)
 #   docker build --target ocr --build-arg RUNTIME_BASE=node:22-trixie \
 #                -t qcr-bench-ocr -f bench/aacr/Dockerfile .                  (bench.sh build --arm ocr)
+#   docker build --target codex -t qcr-bench-codex -f bench/aacr/Dockerfile .  (bench.sh build --arm codex)
 #
 # One image, three uses, each run by bench.sh with its own minimal mounts:
 #   prefetch  git over https to github.com (anonymous) → the repos volume
@@ -27,6 +28,8 @@
 #                                        its sha256 is verified at build time
 #   open-code-review 1.3.1 (ocr only)  = the version most leaderboard rows ran;
 #                                        the linux-amd64 binary's sha256 is pinned
+#   Codex CLI 0.158.0 (codex only)     = @openai/codex; the linux-x64 binary's
+#                                        sha256 is pinned (CODEX_SHA256_LINUX_X64)
 
 ARG RUNTIME_BASE=node:22-bookworm
 
@@ -115,6 +118,26 @@ ENV QCR_BENCH_COMMIT=${QCR_BENCH_COMMIT} \
     PI_CODING_AGENT_DIR=/tmp/pi-agent
 
 ENTRYPOINT ["/opt/quickreview/bench/in-container.sh"]
+
+# ---- codex: the Codex CLI arm (bench.sh build --arm codex) ----------------------
+# Placed BEFORE `ocr`: the legacy builder builds every stage up to the target
+# in file order, and `ocr` needs a trixie base.
+# The SAME runtime plus the Codex CLI at a pinned version, run the way the
+# AACR harness's own evaluation/reviewers/codex.py runs it (bench/aacr/
+# codex_arm.py imports that runner). Bump: change CODEX_VERSION (and the
+# sha256 of the linux-x64 binary it ships), rebuild with bench.sh build --arm
+# codex, and record the bump in bench/aacr/README.md.
+FROM runtime AS codex
+ARG CODEX_VERSION=0.158.0
+ARG CODEX_SHA256_LINUX_X64=167c0148a849d2444f1b5a7fb5f8bb2de1de5ae13a2a504b833fc765980f5cd9
+RUN test "$(dpkg --print-architecture)" = amd64 \
+    && npm install -g @openai/codex@${CODEX_VERSION} --no-audit --no-fund \
+    && echo "${CODEX_SHA256_LINUX_X64}  $(npm root -g)/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex" | sha256sum -c - \
+    && codex --version | grep -qx "codex-cli ${CODEX_VERSION}"
+COPY bench/aacr/codex_arm.py /opt/quickreview/bench/
+RUN /opt/aacr-venv/bin/python /opt/quickreview/bench/codex_arm.py --self-test \
+    && ! test -e scripts && ! command -v gh
+ENV QCR_CODEX_VERSION=${CODEX_VERSION}
 
 # ---- ocr: the open-code-review baseline arm --------------------------------------
 # Built on top of `runtime`, so the scorer, the dataset, pi and the judge shim

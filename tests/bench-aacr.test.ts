@@ -1110,7 +1110,7 @@ describe("the open-code-review baseline arm", () => {
     const inContainer = readFileSync(join(ROOT, "bench", "aacr", "in-container.sh"), "utf8");
     expect(inContainer).toContain('[[ "$run_arm" == "$arm" ]]');
     expect(inContainer).toContain(
-      '[[ "$arm" == ocr ]] && { variants="all"; report_cmd=ocr-report; }',
+      '[[ "$arm" != qcr ]] && { variants="all"; report_cmd="$arm-report"; }',
     );
   });
 
