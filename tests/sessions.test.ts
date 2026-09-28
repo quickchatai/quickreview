@@ -513,6 +513,20 @@ describe("birth", () => {
     }
   });
 
+  // the daemon hands each session the config IT loaded, so the posting
+  // scripts never re-locate one (and never land on a different file than the
+  // daemon's). QCR_ rides the argv, so it reaches the pane.
+  it("hands the session the daemon's resolved config as QCR_CONFIG when wired", () => {
+    const wired = new PiSessionManager({
+      cfg: cfg(),
+      root,
+      tmux: new Tmux({ exec: fakeExec }),
+      configPath: "/home/op/.config/qcr/default/config.toml",
+    });
+    expect(wired.buildEnv("pr-7").QCR_CONFIG).toBe("/home/op/.config/qcr/default/config.toml");
+    expect(manager().buildEnv("pr-7").QCR_CONFIG).toBeUndefined();
+  });
+
   it("omits the OpenAI key when the secrets dir has none", async () => {
     rmSync(join(secrets, "openai_api_key"));
     expect(manager().buildEnv("pr-1").OPENAI_API_KEY).toBeUndefined();

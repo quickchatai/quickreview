@@ -53,7 +53,7 @@ function adapters(): OnboardAdapters {
     runner: { run: async () => ({ code: 127, stdout: "", stderr: "no subprocesses in tests" }) },
     clock: () => new Date("2026-09-02T12:00:00Z"),
     host: { nodeVersion: "v22.5.1", uid: 1000 },
-    paths: { stateDir: join(root, "state") },
+    paths: { stateDir: join(root, "state"), configPath: join(root, "config.toml") },
   };
 }
 

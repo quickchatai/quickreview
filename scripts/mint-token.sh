@@ -19,7 +19,10 @@ set -euo pipefail
 
 API="${GITHUB_API:-https://api.github.com}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CONFIG="${QCR_CONFIG:-$ROOT/config.toml}"
+# the install locator decides — $QCR_CONFIG, the install's config
+# home, then (legacy) the checkout. Never a path built here.
+. "$ROOT/scripts/install-locator.sh"
+CONFIG="$(qcr_locate_config "$ROOT")" || exit 1
 FORCE=0
 [[ "${1:-}" == "--refresh" || "${1:-}" == "-f" ]] && FORCE=1
 

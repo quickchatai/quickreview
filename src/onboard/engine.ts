@@ -52,8 +52,11 @@ export interface OnboardAdapters {
    * never read process globals themselves. `uid` is null where the platform
    * has no uid (Windows). */
   host: { nodeVersion: string; uid: number | null };
-  /** Filesystem roots. `stateDir` is `<sandbox root>/state`. */
-  paths: { stateDir: string };
+  /** Filesystem roots. `stateDir` is `<sandbox root>/state`; `configPath` is
+   * the live config.toml as the install locator resolved it — the
+   * ONE file every step reads and writes, captured once by the real assembly
+   * so no step builds a config path itself. */
+  paths: { stateDir: string; configPath: string };
   log?: (line: string) => void;
 }
 

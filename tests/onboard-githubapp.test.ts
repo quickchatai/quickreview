@@ -191,7 +191,7 @@ function adapters(s: GhState, over: Partial<OnboardAdapters> = {}): OnboardAdapt
     runner: { run: async () => ({ code: 0, stdout: "", stderr: "" }) },
     clock: () => new Date("2026-08-30T12:00:00Z"),
     host: { nodeVersion: "v22.5.1", uid: 1000 },
-    paths: { stateDir },
+    paths: { stateDir, configPath: join(dirname(stateDir), "config.toml") },
     log: () => undefined,
     ...over,
   };

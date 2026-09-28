@@ -95,6 +95,10 @@ COPY --from=build /src/dist ./dist
 # AGENTS.md every bench session would read the 80 KB dev manual instead of
 # what production reviewers read.
 COPY package.json config.toml AGENTS.md CLAUDE.md ./
+# That config.toml is the operator's live one, copied in by bench.sh from
+# wherever the install locator found it. Named explicitly so the
+# locator inside the image takes it as given rather than as a legacy fallback.
+ENV QCR_CONFIG=/opt/quickreview/sandbox/config.toml
 # …and the reviewer context stub the VM entrypoint installs at boot
 # (deploy/reviewer/AGENTS.override.md): pi takes it FIRST, so bench sessions
 # and passes read the stub, exactly as production's do.

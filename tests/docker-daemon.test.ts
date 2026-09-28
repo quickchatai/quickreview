@@ -364,6 +364,23 @@ describe("docker-compose topology", () => {
   // a symlink to a path that exists only inside the container. Both volumes
   // are therefore mounted at BOTH spellings, and the entrypoint detects the
   // double mount by inode instead of running its destructive migration.
+  // the config the install locator found on the host reaches the
+  // container read-only; the entrypoint names it only when it is there, so a
+  // legacy checkout config (empty home mounted) still boots.
+  it("mounts the install's config home read-only and names the config only when present", () => {
+    expect(compose).toContain(
+      "${QCR_CONFIG_HOME:-~/.config/qcr/default}:/opt/quickreview/config-home:ro",
+    );
+    expect(compose).toMatch(/QCR_CONFIG_NAME: \$\{QCR_CONFIG_NAME:-config\.toml\}/);
+    expect(entrypoint).toMatch(
+      /\[\[ -z "\$\{QCR_CONFIG:-\}" && -f "\$CONFIG_HOME_FILE" \]\] && export QCR_CONFIG="\$CONFIG_HOME_FILE"/,
+    );
+    // Before the daemon starts, which inherits it and hands it to sessions.
+    expect(entrypoint.indexOf("export QCR_CONFIG=")).toBeLessThan(
+      entrypoint.indexOf('exec node "$SANDBOX/dist/src/wire.js"'),
+    );
+  });
+
   it("the state and ingress volumes are mounted at both the absolute and the sandbox path", () => {
     expect(compose).toContain("qcr-state:/opt/quickreview/state");
     expect(compose).toContain("qcr-state:/opt/quickreview/sandbox/state");

@@ -41,7 +41,6 @@ import {
   OPENAI_KEY_FILE,
   auditModelStrings,
   companionContainerName,
-  configPathFor,
   daemonContainerName,
   expandHomePath,
   hostAuthJsonPath,
@@ -54,6 +53,10 @@ import {
   rewriteModelPrefixes,
   validateOpenAiKey,
 } from "../src/onboard/steps/llmauth.js";
+
+/** The config beside the state dir — what these tests hand the adapters as the
+ * locator's answer. */
+const configPathFor = (dir: string): string => join(dirname(dir), "config.toml");
 
 const KEY = "sk-proj-onboardingtestkey000000000000";
 
@@ -181,7 +184,7 @@ function fakeAdapters(
     },
     clock: () => new Date("2026-08-30T12:00:00Z"),
     host: { nodeVersion: "v22.5.1", uid: 1000 },
-    paths: { stateDir },
+    paths: { stateDir, configPath: join(dirname(stateDir), "config.toml") },
   };
   if (answers.length) {
     adapters.prompter = async () => answers.shift() ?? "";

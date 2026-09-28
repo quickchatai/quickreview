@@ -220,6 +220,10 @@ export interface PiSessionManagerOptions {
   /** Durable PR-session command ownership. Optional only for narrow unit
    * wiring; production binds the daemon's StateStore before sessions start. */
   commandStore?: StateStore;
+  /** The live config.toml the daemon itself loaded — handed to every
+   * session as QCR_CONFIG so its scripts read exactly the daemon's config
+   * rather than re-locating one. Absent in unit wiring. */
+  configPath?: string;
 }
 
 export interface AdoptionReport {
@@ -239,6 +243,7 @@ export class PiSessionManager implements SessionHooks {
   private readonly ovSessions: OvSessionLifecycle | undefined;
   private readonly now: () => Date;
   private commandStore: StateStore | undefined;
+  private readonly configPath: string | undefined;
   private readonly prSessionBirths = new Map<number, Promise<string>>();
   private injectSeq = 0;
 
@@ -261,6 +266,7 @@ export class PiSessionManager implements SessionHooks {
     this.ovSessions = opts.ovSessions;
     this.now = opts.now ?? (() => new Date());
     this.commandStore = opts.commandStore;
+    this.configPath = opts.configPath;
     if (this.commandStore) this.restorePendingSessionCommands();
   }
 
@@ -425,6 +431,10 @@ export class PiSessionManager implements SessionHooks {
       // old pi-subagents config.json number — the glue's own default is the
       // companion's 4).
       QCR_SUBAGENT_MAX_CONCURRENCY: String(this.cfg.pi.subagent_max_concurrency),
+      // the daemon's own resolved config, so the posting scripts read
+      // the file the daemon read. Set by the DAEMON — the bash guard still
+      // refuses a session's own `QCR_CONFIG=` prefix.
+      ...(this.configPath ? { QCR_CONFIG: this.configPath } : {}),
       // The config-scope pin. Here as well as on the argv because
       // buildEnv is also the tmux CLIENT's environment; the argv copy is the
       // one that reaches the pane (ARGV_ENV_PREFIXES carries `GIT_CONFIG_`).

@@ -35,7 +35,7 @@ import { CHOICE_KEYS } from "../choices.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 import { readTextOrNull, secretsDirFor, writeAtomic } from "./compose.js";
 import { assertNoDryRunEdit, patchToml, tomlString, type TomlEdit } from "./configfill.js";
-import { readTomlKey, sandboxRootOf } from "./ingress.js";
+import { readTomlKey } from "./ingress.js";
 import { topologyOf } from "./topology.js";
 
 export const EMBEDDINGS_STEP_ID = "embeddings";
@@ -136,9 +136,7 @@ export function keyFileCheck(secretsDir: string, keyFile: string): CheckResult {
 
 function configPathOf(ctx: StepContext): string {
   const recorded = ctx.choices[CHOICE_KEYS.configPath];
-  return typeof recorded === "string" && recorded
-    ? recorded
-    : join(sandboxRootOf(ctx.adapters), "config.toml");
+  return typeof recorded === "string" && recorded ? recorded : ctx.adapters.paths.configPath;
 }
 
 function propagationNote(ctx: StepContext, e: DeclaredEmbedder): CheckResult {
@@ -296,9 +294,7 @@ export function embeddingsStep(): OnboardingStep {
         },
       ];
       if (provider !== "local")
-        checks.push(
-          keyFileCheck(secretsDirFor(sandboxRootOf(ctx.adapters), ctx.choices), declared.keyFile),
-        );
+        checks.push(keyFileCheck(secretsDirFor(ctx.adapters, ctx.choices), declared.keyFile));
       checks.push(propagationNote(ctx, declared), MIGRATION_NOTE);
       return {
         ok: checks.every((c) => c.ok),
@@ -340,9 +336,7 @@ export function embeddingsStep(): OnboardingStep {
         },
       ];
       if (declared.provider !== "local")
-        checks.push(
-          keyFileCheck(secretsDirFor(sandboxRootOf(ctx.adapters), ctx.choices), declared.keyFile),
-        );
+        checks.push(keyFileCheck(secretsDirFor(ctx.adapters, ctx.choices), declared.keyFile));
       return { ok: checks.every((c) => c.ok), checks };
     },
   };

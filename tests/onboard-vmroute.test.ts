@@ -113,6 +113,10 @@ function seedChoices(choices: Record<string, unknown>): void {
   );
 }
 
+const IDLE_RUNNER: OnboardAdapters["runner"] = {
+  run: async () => ({ code: 0, stdout: "", stderr: "" }),
+};
+
 function baseAdapters(
   runner: OnboardAdapters["runner"],
   fetchFake?: typeof fetch,
@@ -126,7 +130,7 @@ function baseAdapters(
     runner,
     clock: () => new Date("2026-08-30T12:00:00Z"),
     host: { nodeVersion: "v22.5.1", uid: 1000 },
-    paths: { stateDir: join(root, "state") },
+    paths: { stateDir: join(root, "state"), configPath: join(root, "config.toml") },
   };
 }
 
@@ -490,7 +494,7 @@ describe("the transport is the one decision point", () => {
 
   it("reads the remote's own coordinates from the [tui] block the operator TUI uses", () => {
     seedChoices(VM_CHOICES);
-    expect(remoteFactsFor(root, VM_CHOICES)).toEqual({
+    expect(remoteFactsFor(baseAdapters(IDLE_RUNNER), VM_CHOICES)).toEqual({
       alias: ALIAS,
       container: "quickreview-sandbox",
       sudo: true,
@@ -505,7 +509,7 @@ describe("the transport is the one decision point", () => {
         "false",
       )!,
     );
-    expect(remoteFactsFor(root, VM_CHOICES)).toMatchObject({
+    expect(remoteFactsFor(baseAdapters(IDLE_RUNNER), VM_CHOICES)).toMatchObject({
       container: "my-reviewer",
       sudo: false,
     });

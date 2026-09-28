@@ -51,7 +51,9 @@
 #   QC_INVENTORY    inventory file      (default: $QC_ANSIBLE_DIR/inventory.ini)
 #   QC_SANDBOX_DIR  sandbox working copy (default: this script's parent)
 #   QC_VM_HOST      ssh target for `verify` (default: the inventory's first host)
-#   QCR_CONFIG      config.toml path    (default: $QC_SANDBOX_DIR/config.toml)
+#   QCR_CONFIG      config.toml path    (default: the install locator's answer —
+#                   the install's config home, else the checkout's config.toml;
+#                   scripts/install-locator.sh)
 
 set -euo pipefail
 
@@ -61,7 +63,11 @@ DEFAULT_ANSIBLE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/deploy/ans
 SANDBOX_DIR="${QC_SANDBOX_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 ANSIBLE_DIR="${QC_ANSIBLE_DIR:-$DEFAULT_ANSIBLE_DIR}"
 INVENTORY="${QC_INVENTORY:-$ANSIBLE_DIR/inventory.ini}"
-CONFIG="${QCR_CONFIG:-$SANDBOX_DIR/config.toml}"
+# the pin/drift preflight reads the config the install locator names.
+# Sourced from beside THIS script, not from $SANDBOX_DIR: the sandbox may be a
+# scratch working copy.
+. "$(dirname "${BASH_SOURCE[0]}")/install-locator.sh"
+CONFIG="$(qcr_locate_config "$SANDBOX_DIR")" || exit 1
 GROUP_VARS="$ANSIBLE_DIR/group_vars/all.yml"
 PLAYBOOK="$ANSIBLE_DIR/playbook.yml"
 CONTAINER="quickreview-sandbox"
@@ -235,6 +241,15 @@ first_inventory_host() {
 # ---- pre-flight --------------------------------------------------------------
 
 [[ -f "$CONFIG" ]] || die "no config.toml at $CONFIG"
+# this route ships the config the RSYNC carries — the checkout's own
+# config.toml. A live config found anywhere else (the install's config home,
+# or $QCR_CONFIG) never reaches the VM here, and the rsync's --delete REMOVES
+# the VM's copy once the checkout has none. Shipping the config home is
+#; until it lands, a shipping mode refuses rather than deploy a config
+# the preflight did not read. `verify` ships nothing and is unaffected.
+if [[ "$MODE" != "verify" && "$CONFIG" != "$SANDBOX_DIR/config.toml" ]]; then
+  die "the live config is $CONFIG, outside the checkout — this deploy ships only $SANDBOX_DIR/config.toml (and --delete would remove the VM's copy). Shipping the config home is; until then a deploying machine keeps its config in the checkout: unset QCR_CONFIG, or move the file back (mv \"$CONFIG\" \"$SANDBOX_DIR/config.toml\") — and do not run \`qcr install migrate\` there yet"
+fi
 [[ -d "$ANSIBLE_DIR" ]] || die "no ansible dir at $ANSIBLE_DIR (set QC_ANSIBLE_DIR)"
 [[ -f "$GROUP_VARS" ]] || die "no group_vars at $GROUP_VARS"
 [[ -f "$PLAYBOOK" ]] || die "no playbook at $PLAYBOOK"

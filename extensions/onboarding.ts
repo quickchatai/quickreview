@@ -33,6 +33,7 @@ import {
   type StepStatusLine,
 } from "../src/onboard/engine.js";
 import { defaultSteps } from "../src/onboard/steps/index.js";
+import { resolveConfigPath } from "../src/install.js";
 
 const NO_PARAMS = { type: "object", properties: {} } as const;
 
@@ -64,7 +65,10 @@ export function realAdapters(root: string): OnboardAdapters {
       nodeVersion: process.version,
       uid: typeof process.getuid === "function" ? process.getuid() : null,
     },
-    paths: { stateDir: join(root, "state") },
+    // the install locator decides which config.toml the wizard
+    // edits — $QCR_CONFIG, else the install's config home, else (logged) the
+    // checkout's legacy file. A fresh install writes into the config home.
+    paths: { stateDir: join(root, "state"), configPath: resolveConfigPath({ root }).path },
     log: (line) => console.error(line),
   };
 }

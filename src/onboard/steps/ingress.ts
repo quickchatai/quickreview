@@ -418,7 +418,7 @@ export function ingressStep(): OnboardingStep {
 
       // 2. the credential, where the shape needs one. Read from the secrets
       // dir, never from an argument: the wizard must not carry a token.
-      const configPath = join(root, "config.toml");
+      const configPath = ctx.adapters.paths.configPath;
       const configToml = readFileOrNull(configPath);
       const secretsDir = secretsDirOf(configToml);
       if (option.secret) {
@@ -523,7 +523,7 @@ export function ingressStep(): OnboardingStep {
       ];
 
       // Reality, not the record: what does config.toml actually say?
-      const configToml = readFileOrNull(join(root, "config.toml"));
+      const configToml = readFileOrNull(ctx.adapters.paths.configPath);
       const shape =
         configToml === null ? null : (readTomlKey(configToml, "ingress", "shape") ?? "none");
       checks.push(
@@ -531,7 +531,7 @@ export function ingressStep(): OnboardingStep {
           ? {
               name: "config",
               ok: false,
-              detail: `${join(root, "config.toml")} is gone — re-run the ingress step after restoring it`,
+              detail: `${ctx.adapters.paths.configPath} is gone — re-run the ingress step after restoring it`,
             }
           : shape === option.shape
             ? { name: "config", ok: true, detail: `[ingress] shape = "${shape}"` }

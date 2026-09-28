@@ -163,7 +163,7 @@ function adapters(over: Partial<OnboardAdapters> = {}): OnboardAdapters {
     clock: () => new Date("2026-08-31T12:00:00Z"),
     prompter: prompter(),
     host: { nodeVersion: "v22.5.1", uid: 1000 },
-    paths: { stateDir: join(root, "state") },
+    paths: { stateDir: join(root, "state"), configPath: join(root, "config.toml") },
     log: () => undefined,
     ...over,
   };

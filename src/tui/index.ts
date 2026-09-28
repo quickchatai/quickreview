@@ -1,7 +1,7 @@
 // `qcr tui [pr|overseer]` entry point. Wires the real ssh runner; the
 // optional target becomes the deep link.
 import { join } from "node:path";
-import { loadConfig, sandboxRoot, type Config } from "../config.js";
+import { liveConfigPath, loadConfig, sandboxRoot, type Config } from "../config.js";
 import type { TuiDriver } from "./actions.js";
 import { App } from "./app.js";
 import type { DeployState } from "./deploytab.js";
@@ -520,6 +520,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     forward: memForward,
     gitRun,
     repoRoot: sandboxRoot(),
+    configPath: liveConfigPath(),
     sink: buildIssueSink(full, app.ssh, memStore),
     changes: new ChangeLog(
       new ChangeRegisterStore(join(sandboxRoot(), "state", "changes")),

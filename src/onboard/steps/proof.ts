@@ -23,9 +23,15 @@
 // dry-run directory, and records what it saw on the checklist — the record the
 // go-live step later demands before it will even offer the flip.
 import { CHOICE_KEYS } from "../choices.js";
-import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
+import type {
+  CheckResult,
+  OnboardAdapters,
+  OnboardingStep,
+  StepContext,
+  StepReport,
+} from "../engine.js";
 import { sandboxReviewFrom, type DryrunRecord, type ReviewSnapshot } from "../../compare.js";
-import { CONTAINER_DRYRUN_DIR, readConfigText, rootOf } from "./compose.js";
+import { CONTAINER_DRYRUN_DIR, readConfigText } from "./compose.js";
 import { readTomlKey } from "./ingress.js";
 import { DEFAULT_LABELS } from "./githubapp.js";
 import { stackTransportFor, type StackTransport, type TransportOptions } from "./transport.js";
@@ -212,16 +218,16 @@ export interface ProofStepOptions {
   transport?: TransportOptions;
 }
 
-function triggerLabelOf(root: string): string {
-  const text = readConfigText(root);
+function triggerLabelOf(adapters: OnboardAdapters): string {
+  const text = readConfigText(adapters);
   const configured = text ? readTomlKey(text, "github", "trigger_label") : null;
   return configured && configured.trim() !== "" ? configured.trim() : DEFAULT_LABELS.trigger;
 }
 
-function repoOf(choices: Readonly<Record<string, unknown>>, root: string): string {
+function repoOf(choices: Readonly<Record<string, unknown>>, adapters: OnboardAdapters): string {
   const recorded = choices[CHOICE_KEYS.repo];
   if (typeof recorded === "string" && recorded.trim() !== "") return recorded.trim();
-  const text = readConfigText(root);
+  const text = readConfigText(adapters);
   return (text ? readTomlKey(text, "github", "repo") : null) ?? "your repository";
 }
 
@@ -286,10 +292,9 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
     },
 
     async run(ctx): Promise<StepReport> {
-      const root = rootOf(ctx.adapters);
       const transport = stackTransportFor(ctx, opts.transport);
-      const repo = repoOf(ctx.choices, root);
-      const label = triggerLabelOf(root);
+      const repo = repoOf(ctx.choices, ctx.adapters);
+      const label = triggerLabelOf(ctx.adapters);
       const pr = prFrom(ctx.input, ctx.choices);
       if (pr === null) {
         return {

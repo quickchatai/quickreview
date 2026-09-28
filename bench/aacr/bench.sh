@@ -296,7 +296,7 @@ case "$cmd" in
     # docs/, tests/ and every run output never reach the builder.
     ctx="$(mktemp -d)"; trap 'rm -rf "$ctx"' EXIT
     ( cd "$REPO" && tar -cf - --exclude=node_modules --exclude='*.tsbuildinfo' \
-        package.json package-lock.json tsconfig.json config.toml AGENTS.md CLAUDE.md .pi \
+        package.json package-lock.json tsconfig.json AGENTS.md CLAUDE.md .pi \
         src extensions prompts agents profiles \
         bench/aacr/Dockerfile bench/aacr/sets bench/aacr/defects bench/aacr/judge_shim.py \
         bench/aacr/in-container.sh bench/aacr/codex_bridge.py bench/aacr/eval_shards.py \
@@ -304,6 +304,12 @@ case "$cmd" in
         bench/aacr/claude_driver.py \
         deploy/reviewer/AGENTS.override.md ) \
       | tar -xf - -C "$ctx"
+    # The production config is the operator's live one, wherever the install
+    # locator finds it — baked in as the image's config.toml.
+    . "$REPO/scripts/install-locator.sh"
+    live_config="$(qcr_locate_config "$REPO")" || exit 1
+    [[ -f "$live_config" ]] || die "no config.toml at $live_config — the bench reviews with the production config"
+    cp "$live_config" "$ctx/config.toml"
     docker build --target "$TARGET" -t "$IMAGE" ${BASE_ARGS[@]+"${BASE_ARGS[@]}"} \
       --build-arg "QCR_BENCH_COMMIT=$commit" -f "$ctx/bench/aacr/Dockerfile" "$ctx"
     ;;

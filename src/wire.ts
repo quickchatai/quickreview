@@ -9,6 +9,7 @@ import { homedir } from "node:os";
 import {
   fsSecretReader,
   ingressHostnameFile,
+  liveConfigPath,
   loadConfig,
   openVikingBaseUrl,
   sandboxRoot,
@@ -98,7 +99,12 @@ export function buildParts(root = sandboxRoot(), cfg = loadConfig()): Production
       timeoutMs: cfg.openviking.request_timeout_ms,
     }),
   );
-  const sessions = new PiSessionManager({ cfg, root, ovSessions });
+  const sessions = new PiSessionManager({
+    cfg,
+    root,
+    ovSessions,
+    configPath: liveConfigPath(root),
+  });
   return { cfg, root, minter, gate, adapter, sessions };
 }
 

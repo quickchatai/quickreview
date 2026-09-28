@@ -56,8 +56,10 @@ export function rootOf(adapters: OnboardAdapters): string {
   return resolve(adapters.paths.stateDir, "..");
 }
 
-export function configPath(root: string): string {
-  return join(root, "config.toml");
+/** The live config.toml — the install locator's answer, captured on the
+ * adapters. Never `<root>/config.toml` built here. */
+export function configPath(adapters: OnboardAdapters): string {
+  return adapters.paths.configPath;
 }
 
 export function readTextOrNull(path: string): string | null {
@@ -68,8 +70,8 @@ export function readTextOrNull(path: string): string | null {
   }
 }
 
-export function readConfigText(root: string): string | null {
-  return readTextOrNull(configPath(root));
+export function readConfigText(adapters: OnboardAdapters): string | null {
+  return readTextOrNull(configPath(adapters));
 }
 
 /** tmp+rename, the convention every other wizard writer uses: a reader (the
@@ -91,11 +93,12 @@ export function readEnvText(root: string): string {
  * documented default cover the earlier states.
  */
 export function secretsDirFor(
-  root: string,
+  adapters: OnboardAdapters,
   choices: Readonly<Record<string, unknown>>,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  const configText = readConfigText(root);
+  const root = rootOf(adapters);
+  const configText = readConfigText(adapters);
   const fromConfig = configText ? readTomlKey(configText, "github", "secrets_dir") : null;
   if (fromConfig && fromConfig.trim()) return absolutize(root, expandHome(fromConfig.trim()));
   const raw = choices[CHOICE_KEYS.secretsDir];

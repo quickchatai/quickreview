@@ -113,7 +113,10 @@ function scriptedPrompter(
   };
 }
 
-function adapters(prompter?: (q: string) => Promise<string>): OnboardAdapters {
+function adapters(
+  prompter?: (q: string) => Promise<string>,
+  configPath = join(root, "config.toml"),
+): OnboardAdapters {
   return {
     fetch: (() => {
       throw new Error("no network in tests");
@@ -121,7 +124,7 @@ function adapters(prompter?: (q: string) => Promise<string>): OnboardAdapters {
     runner: { run: async () => ({ code: 127, stdout: "", stderr: "no subprocesses in tests" }) },
     clock: () => new Date("2026-08-30T12:00:00Z"),
     host: { nodeVersion: "v22.5.1", uid: 1000 },
-    paths: { stateDir: join(root, "state") },
+    paths: { stateDir: join(root, "state"), configPath },
     prompter,
   };
 }
@@ -132,6 +135,8 @@ interface RunOpts {
   data?: Record<string, unknown>;
   /** Omit the prompter entirely (the no-interactive-entry path). */
   noPrompter?: boolean;
+  /** The install locator's answer handed to the adapters. */
+  configPath?: string;
 }
 
 function askedIds(choices: Record<string, unknown>): AnswerKey[] {
@@ -146,7 +151,7 @@ async function runStep(opts: RunOpts = {}) {
   const log: Prompted = { questions: [] };
   const prompter = opts.noPrompter ? undefined : scriptedPrompter(answers, askedIds(choices), log);
   const ctx: StepContext = {
-    adapters: adapters(prompter),
+    adapters: adapters(prompter, opts.configPath),
     input: {},
     choices,
     data: opts.data ?? {},
@@ -170,6 +175,17 @@ function failed(report: { checks: Array<{ ok: boolean; name: string; detail: str
 }
 
 // ---- the full interview -----------------------------------------------------
+
+describe("the config file is the install locator's", () => {
+  it("fills the config where the adapters say — a config home that does not exist yet — and never the checkout", async () => {
+    const home = join(root, "xdg-config", "qcr", "default", "config.toml");
+    const { report, choices } = await runStep({ configPath: home });
+    expect(failed(report)).toBe("");
+    expect(loadConfig(home).dry_run).toBe(true);
+    expect(existsSync(join(root, "config.toml"))).toBe(false);
+    expect(choices[CHOICE_KEYS.configPath]).toBe(home);
+  });
+});
 
 describe("the full interview", () => {
   it("produces a config the STRICT LOADER parses on the first try", async () => {

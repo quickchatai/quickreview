@@ -43,7 +43,7 @@ function adapters(): OnboardAdapters {
     runner: { run: async () => ({ code: 127, stdout: "", stderr: "no process in tests" }) },
     clock: () => new Date("2026-08-30T12:00:00Z"),
     host: { nodeVersion: "v22.5.1", uid: 1000 },
-    paths: { stateDir: join(root, "state") },
+    paths: { stateDir: join(root, "state"), configPath: join(root, "config.toml") },
   };
 }
 
@@ -172,7 +172,7 @@ describe("the recorded topology steers the whole checklist", () => {
     mkdirSync(join(root, "state", "onboarding"), { recursive: true });
     const e = new OnboardingEngine(defaultSteps(), {
       ...adapters(),
-      paths: { stateDir: join(root, "state") },
+      paths: { stateDir: join(root, "state"), configPath: join(root, "config.toml") },
     });
     // Seed choices the way a completed topology step would have.
     (e as unknown as { checklist: { choices: Record<string, unknown> } }).checklist.choices =

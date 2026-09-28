@@ -32,8 +32,14 @@
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "../../config.js";
-import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
-import { configPath, readConfigText, rootOf, writeAtomic, type StreamRunner } from "./compose.js";
+import type {
+  CheckResult,
+  OnboardAdapters,
+  OnboardingStep,
+  StepContext,
+  StepReport,
+} from "../engine.js";
+import { configPath, readConfigText, writeAtomic, type StreamRunner } from "./compose.js";
 import { patchToml } from "./configfill.js";
 import {
   PROOF_CHOICE_KEY,
@@ -133,9 +139,9 @@ function decisionOf(input: Readonly<Record<string, unknown>>): GoLiveDecision | 
   return null;
 }
 
-function currentDryRun(root: string): boolean | null {
+function currentDryRun(adapters: OnboardAdapters): boolean | null {
   try {
-    return loadConfig(configPath(root)).dry_run;
+    return loadConfig(configPath(adapters)).dry_run;
   } catch {
     return null;
   }
@@ -217,7 +223,6 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
     },
 
     async run(ctx): Promise<StepReport> {
-      const root = rootOf(ctx.adapters);
       const transport = stackTransportFor(ctx, transportOpts);
       const decision = decisionOf(ctx.input);
 
@@ -281,7 +286,7 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
         };
       }
 
-      const configText = readConfigText(root);
+      const configText = readConfigText(ctx.adapters);
       if (configText === null) {
         return {
           ok: false,
@@ -289,7 +294,7 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
             {
               name: "config",
               ok: false,
-              detail: `${configPath(root)} is not readable — nothing was changed`,
+              detail: `${configPath(ctx.adapters)} is not readable — nothing was changed`,
             },
           ],
         };
@@ -340,14 +345,14 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
       } finally {
         rmSync(probe, { force: true });
       }
-      writeAtomic(configPath(root), flipped);
+      writeAtomic(configPath(ctx.adapters), flipped);
 
       const checks: CheckResult[] = [
         {
           name: "flip",
           ok: true,
           detail:
-            `dry_run = false in ${configPath(root)} — you ratified this, on the evidence of #${proof.pr} round ${proof.round_no}. ` +
+            `dry_run = false in ${configPath(ctx.adapters)} — you ratified this, on the evidence of #${proof.pr} round ${proof.round_no}. ` +
             "From the daemon's next start, reviews are posted to GitHub for real. To go back, set it to true and restart.",
         },
       ];
@@ -358,7 +363,7 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
           running,
         ),
       );
-      const now = currentDryRun(root);
+      const now = currentDryRun(ctx.adapters);
       checks.push(
         now === false
           ? {
@@ -369,7 +374,7 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
           : {
               name: "confirmed",
               ok: false,
-              detail: `the config on disk reads back as dry_run = ${String(now)} — check ${configPath(root)} by hand`,
+              detail: `the config on disk reads back as dry_run = ${String(now)} — check ${configPath(ctx.adapters)} by hand`,
             },
       );
       if (checks.every((c) => c.ok)) ctx.recordChoice(GO_LIVE_CHOICE_KEY, "live");
@@ -381,9 +386,8 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
     },
 
     async verify(ctx): Promise<StepReport> {
-      const root = rootOf(ctx.adapters);
       const recorded = ctx.choices[GO_LIVE_CHOICE_KEY];
-      const dryRun = currentDryRun(root);
+      const dryRun = currentDryRun(ctx.adapters);
       if (recorded !== "live" && recorded !== "dry_run") {
         return {
           ok: false,

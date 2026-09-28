@@ -78,7 +78,7 @@ function fakeAdapters(host: FakeHost = {}, calls: string[] = []): OnboardAdapter
       nodeVersion: host.nodeVersion ?? "v22.5.1",
       uid: host.uid === undefined ? 1000 : host.uid,
     },
-    paths: { stateDir },
+    paths: { stateDir, configPath: join(dirname(stateDir), "config.toml") },
   };
 }
 

@@ -25,6 +25,11 @@ beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "qcr-prchecks-"));
   mkdirSync(join(dir, "scripts"));
   copyFileSync(join(root, "scripts", "pr-checks.sh"), join(dir, "scripts", "pr-checks.sh"));
+  // the script finds its config through the install locator.
+  copyFileSync(
+    join(root, "scripts", "install-locator.sh"),
+    join(dir, "scripts", "install-locator.sh"),
+  );
   writeFileSync(join(dir, "scripts", "mint-token.sh"), "#!/usr/bin/env bash\necho test-token\n");
   chmodSync(join(dir, "scripts", "mint-token.sh"), 0o755);
   writeFileSync(join(dir, "config.toml"), '[github]\nrepo = "o/r"\n');

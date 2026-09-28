@@ -45,6 +45,7 @@ import { dirname, join } from "node:path";
 import { CHOICE_KEYS, type AuthRoute } from "../choices.js";
 import type {
   CheckResult,
+  OnboardAdapters,
   OnboardingStep,
   ProcessRunner,
   StepContext,
@@ -94,12 +95,6 @@ export function modelLabels(): string[] {
 }
 
 // ---- paths ------------------------------------------------------------------
-
-/** `stateDir` is `<sandbox root>/state` (engine contract), so the config sits
- * beside it. Derived rather than injected: no engine surface changes. */
-export function configPathFor(stateDir: string): string {
-  return join(dirname(stateDir), "config.toml");
-}
 
 export function configExamplePathFor(stateDir: string): string {
   return join(dirname(stateDir), "config.example.toml");
@@ -525,8 +520,8 @@ interface ConfigState {
   error: string | null;
 }
 
-function loadConfig(stateDir: string, allowSeed: boolean): ConfigState {
-  const path = configPathFor(stateDir);
+function loadConfig(paths: OnboardAdapters["paths"], allowSeed: boolean): ConfigState {
+  const path = paths.configPath;
   if (existsSync(path)) {
     try {
       return { path, text: readFileSync(path, "utf8"), seeded: false, error: null };
@@ -534,7 +529,7 @@ function loadConfig(stateDir: string, allowSeed: boolean): ConfigState {
       return { path, text: null, seeded: false, error: `cannot read ${path}: ${String(err)}` };
     }
   }
-  const example = configExamplePathFor(stateDir);
+  const example = configExamplePathFor(paths.stateDir);
   if (!allowSeed)
     return {
       path,
@@ -550,6 +545,9 @@ function loadConfig(stateDir: string, allowSeed: boolean): ConfigState {
       error: `neither ${path} nor ${example} exists — is this a QuickReview checkout?`,
     };
   try {
+    // A fresh install's config lives in the config home, which may
+    // not exist yet.
+    mkdirSync(dirname(path), { recursive: true });
     copyFileSync(example, path);
     return { path, text: readFileSync(path, "utf8"), seeded: true, error: null };
   } catch (err) {
@@ -674,7 +672,7 @@ export function llmAuthStep(): OnboardingStep {
 
     async run(ctx): Promise<StepReport> {
       const home = hostHome();
-      const cfg = loadConfig(ctx.adapters.paths.stateDir, true);
+      const cfg = loadConfig(ctx.adapters.paths, true);
       if (cfg.text === null) {
         return {
           ok: false,
@@ -810,7 +808,7 @@ export function llmAuthStep(): OnboardingStep {
           ],
         };
       }
-      const cfg = loadConfig(ctx.adapters.paths.stateDir, false);
+      const cfg = loadConfig(ctx.adapters.paths, false);
       if (cfg.text === null) {
         return {
           ok: false,

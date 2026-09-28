@@ -664,6 +664,14 @@ const COMMAND_INJECTING_ENV_RE = /^GIT_CONFIG_(KEY|VALUE)_\d+$/;
  * business moving where the posting RECEIPT — the record that settles a round —
  * is written. It is a relocator, and it is refused.
  *
+ * `QCR_INSTALL` is HERE as: the install locator (src/install.ts,
+ * mirrored by scripts/install-locator.sh) finds the live config in
+ * `$XDG_CONFIG_HOME/qcr/$QCR_INSTALL/`, so naming another install is
+ * `QCR_CONFIG=` by another spelling. (`HOME=` and `XDG_CONFIG_HOME=`, the
+ * other two inputs, are refused above as git relocators.) The daemon hands
+ * each session the path it resolved as `QCR_CONFIG` in the pane environment —
+ * a session's own `QCR_CONFIG=` prefix is still refused here.
+ *
  * NOT here, deliberately: `QCR_EXPECTED_HEAD`, `QCR_POSTING_KEY`,
  * `QCR_ROUND_NO`, `QCR_POST_RESPONSE`. Those are per-invocation ARGUMENTS the
  * daemon hands the script — a session setting one changes what this call is
@@ -672,6 +680,7 @@ const COMMAND_INJECTING_ENV_RE = /^GIT_CONFIG_(KEY|VALUE)_\d+$/;
  */
 const POLICY_RELOCATING_ENV = new Set([
   "QCR_CONFIG",
+  "QCR_INSTALL",
   "QCR_STATE_DB",
   "QCR_DRYRUN_DIR",
   "QCR_POSTING_RECEIPT_DIR",

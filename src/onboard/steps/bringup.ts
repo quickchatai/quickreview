@@ -31,7 +31,9 @@
 // health endpoint and webhook ping delivery are the verify_stack step's job —
 // layered, each with its own fix. Bring-up's own success bar is "the compose
 // command succeeded and the daemon container is running".
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { basename, dirname, resolve } from "node:path";
+import { configHome } from "../../install.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 import {
   composePs,
@@ -72,6 +74,13 @@ export interface BringUpStepOptions {
   stream?: StreamRunner;
   /** Emit an elapsed-time marker every N streamed lines. */
   progressEvery?: number;
+}
+
+/** What the compose file mounts as the container's config home. */
+export function configMountOf(root: string, configPath: string): { dir: string; name: string } {
+  const located = resolve(configPath);
+  if (located === resolve(root, "config.toml")) return { dir: configHome(), name: "config.toml" };
+  return { dir: dirname(located), name: basename(located) };
 }
 
 /** `docker compose [--profile p] up -d --build`, built in one place. */
@@ -125,7 +134,7 @@ export function bringUpStep(opts: BringUpStepOptions = {}): OnboardingStep {
         });
         return { ok: false, checks };
       }
-      if (!existsSync(`${root}/config.toml`)) {
+      if (!existsSync(ctx.adapters.paths.configPath)) {
         checks.push({
           name: "config",
           ok: false,
@@ -147,8 +156,17 @@ export function bringUpStep(opts: BringUpStepOptions = {}): OnboardingStep {
       // compose file passes to the container — the ONE place the boot reads
       // it from on this route. config.toml is the truth; this is its mirror,
       // re-asserted on every bring-up so the two cannot drift apart.
-      const embedder = declaredEmbedderOf(readFileSync(`${root}/config.toml`, "utf8"));
+      const embedder = declaredEmbedderOf(readFileSync(ctx.adapters.paths.configPath, "utf8"));
       for (const [key, value] of embedderEnvEntries(embedder)) next = setEnvKey(next, key, value);
+      // the directory the compose file mounts read-only as the
+      // container's config home — the one holding the config the install
+      // locator found. A legacy checkout config mounts the install's (empty)
+      // config home instead, and the container falls back to the sandbox copy.
+      // Created here so Docker never creates it, owned by root.
+      const mount = configMountOf(root, ctx.adapters.paths.configPath);
+      mkdirSync(mount.dir, { recursive: true, mode: 0o700 });
+      next = setEnvKey(next, "QCR_CONFIG_HOME", mount.dir);
+      next = setEnvKey(next, "QCR_CONFIG_NAME", mount.name);
       if (next !== envText) writeAtomic(`${root}/.env`, next);
       checks.push({
         name: "build-inputs",

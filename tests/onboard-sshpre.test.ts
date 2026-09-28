@@ -88,7 +88,7 @@ function harness(
     runner,
     clock: () => new Date("2026-08-30T12:00:00Z"),
     host: { nodeVersion: "v22.5.1", uid: 1000 },
-    paths: { stateDir: join(root, "state") },
+    paths: { stateDir: join(root, "state"), configPath: join(root, "config.toml") },
   };
   const engine = new OnboardingEngine([sshPreflightStep()], adapters);
   (engine as unknown as { checklist: { choices: Record<string, unknown> } }).checklist.choices =

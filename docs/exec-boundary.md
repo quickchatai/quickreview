@@ -423,6 +423,11 @@ the write tool, a redirection, or a `bash -c` payload — and getting an
   itself sets (`QCR_EXPECTED_HEAD`, `QCR_POSTING_KEY`, `QCR_ROUND_NO`,
   `QCR_POST_RESPONSE`) stay allowed — blocking them would break the daemon's
   own dispatch.
+- **`QCR_INSTALL` is refused as a relocator** too: the install
+  locator finds the live config in `$XDG_CONFIG_HOME/qcr/$QCR_INSTALL/`, so
+  naming another install moves the config exactly as `QCR_CONFIG=` would. The
+  daemon hands each session the config path it resolved as `QCR_CONFIG` in the
+  pane environment; a session's own prefix is still refused.
 
 ## Review discipline for changes to any of this
 

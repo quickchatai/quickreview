@@ -160,10 +160,10 @@ export interface RemoteFacts {
 }
 
 export function remoteFactsFor(
-  root: string,
+  adapters: OnboardAdapters,
   choices: Readonly<Record<string, unknown>>,
 ): RemoteFacts {
-  const text = readConfigText(root);
+  const text = readConfigText(adapters);
   const container = (text ? readTomlKey(text, "tui", "container") : null)?.trim();
   const sudo = (text ? readTomlKey(text, "tui", "sudo_docker") : null)?.trim();
   const port = (text ? readTomlKey(text, "server", "port") : null)?.trim();
@@ -179,7 +179,7 @@ export function remoteFactsFor(
 
 function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport {
   const root = rootOf(ctx.adapters);
-  const facts = remoteFactsFor(root, ctx.choices);
+  const facts = remoteFactsFor(ctx.adapters, ctx.choices);
   const stream = opts.stream ?? nodeStreamRunner;
   const dockerPrefix = facts.sudo ? ["sudo", "docker"] : ["docker"];
   const remote = (argv: readonly string[]): Promise<ProcessResult> =>

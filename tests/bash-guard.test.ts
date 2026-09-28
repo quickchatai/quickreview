@@ -814,6 +814,17 @@ describe("checkWritePath / this system's own policy surface", () => {
     allow("QCR_POSTING_KEY=k scripts/post-review.sh 5 COMMENT b.md");
   });
 
+  // MUTATION: drop "QCR_INSTALL" from POLICY_RELOCATING_ENV and this fails.
+  // the install locator resolves the live config from the install's
+  // config home, named by QCR_INSTALL — so naming another install is
+  // `QCR_CONFIG=` by another spelling. QCR_CONFIG itself stays refused.
+  it("QCR_INSTALL and QCR_CONFIG both move the config the locator finds — refused", () => {
+    block("QCR_INSTALL=mine scripts/approve-pr.sh 5 b.md", "guards");
+    block("env QCR_INSTALL=mine scripts/post-review.sh 5 COMMENT b.md", "guards");
+    block("bash -c 'QCR_INSTALL=mine scripts/approve-pr.sh 5 b.md'", "guards");
+    block("QCR_CONFIG=/tmp/x.toml scripts/approve-pr.sh 5 b.md", "guards");
+  });
+
   it("leaves the reads and the legitimate writes a session lives on alone", () => {
     // Reading a policy file is the reviewer's whole job.
     allow("cat config.toml");

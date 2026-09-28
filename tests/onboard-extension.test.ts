@@ -5,7 +5,7 @@
 // first-run marker and shuts down exactly once.
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import activate, { renderChecks, toolDefinitions } from "../extensions/onboarding.js";
 import {
@@ -45,7 +45,7 @@ function fakeAdapters(opts: { dockerOk?: boolean } = {}): OnboardAdapters {
     },
     clock: () => new Date("2026-08-30T12:00:00Z"),
     host: { nodeVersion: "v22.5.1", uid: 1000 },
-    paths: { stateDir },
+    paths: { stateDir, configPath: join(dirname(stateDir), "config.toml") },
   };
 }
 

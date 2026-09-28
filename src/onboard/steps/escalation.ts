@@ -24,11 +24,9 @@
 // re-running the step never destroys rules it did not author (it rewrites only
 // the `onboarding:<login>` family).
 import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { CHOICE_KEYS } from "../choices.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 import { parseConfig } from "../../config.js";
-import { sandboxRootOf } from "./ingress.js";
 
 export const ESCALATION_STEP_ID = "escalation";
 
@@ -270,9 +268,7 @@ function answersFrom(ctx: StepContext, enabled: boolean): EscalationAnswers {
 
 function configPathOf(ctx: StepContext): string {
   const recorded = ctx.choices[CHOICE_KEYS.configPath];
-  return typeof recorded === "string" && recorded
-    ? recorded
-    : join(sandboxRootOf(ctx.adapters), "config.toml");
+  return typeof recorded === "string" && recorded ? recorded : ctx.adapters.paths.configPath;
 }
 
 export function escalationStep(): OnboardingStep {

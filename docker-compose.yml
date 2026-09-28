@@ -89,12 +89,22 @@ services:
       # path too, so both spellings of the hostname file are the SAME file.
       - qcr-ingress:/opt/quickreview/sandbox/state/ingress
       - ${QCR_SECRETS_DIR:-~/.config/quickreview-bot}:/opt/quickreview/secrets:ro
+      # The directory holding the live config.toml the install locator found
+      # on the host — the install's config home, or wherever
+      # QCR_CONFIG points. The bring-up step writes QCR_CONFIG_HOME and
+      # QCR_CONFIG_NAME into .env and creates the directory first; the
+      # entrypoint names the file only when it is there, so a legacy checkout
+      # config (this dir mounted empty) still boots. Run by hand without the
+      # wizard, create ~/.config/qcr/default yourself first — a missing source
+      # is created by Docker, owned by root.
+      - ${QCR_CONFIG_HOME:-~/.config/qcr/default}:/opt/quickreview/config-home:ro
       # pi's home: OAuth tokens (auth.json), session JSONLs, models.json —
       # must survive container rebuilds (sticky sessions + /login tokens).
       - qcr-pihome:/home/review/.pi
     environment:
       TZ: ${TZ:-Europe/Warsaw}
       QC_REVIEW_PORT: "8787"
+      QCR_CONFIG_NAME: ${QCR_CONFIG_NAME:-config.toml}
       # The memory engine's embedder: local by default, so nothing
       # but the model call leaves the machine. A hosted opt-in is these four
       # in the project .env (the onboarding bring-up step mirrors them from

@@ -37,7 +37,6 @@ import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../en
 import {
   configPath,
   readConfigText,
-  rootOf,
   secretsDirFor,
   writeAtomic,
   type StreamRunner,
@@ -151,8 +150,8 @@ export function appSlugStep(opts: AppSlugStepOptions = {}): OnboardingStep {
   const apiBase = opts.apiBase ?? "https://api.github.com";
 
   async function reconcile(ctx: StepContext, write: boolean): Promise<StepReport> {
-    const root = rootOf(ctx.adapters);
-    const secretsDir = opts.secretsDir ?? secretsDirFor(root, ctx.choices, opts.env ?? process.env);
+    const secretsDir =
+      opts.secretsDir ?? secretsDirFor(ctx.adapters, ctx.choices, opts.env ?? process.env);
     const checks: CheckResult[] = [];
 
     const identity = await liveIdentity(ctx, apiBase, secretsDir);
@@ -174,12 +173,12 @@ export function appSlugStep(opts: AppSlugStepOptions = {}): OnboardingStep {
           : ""),
     });
 
-    const configText = readConfigText(root);
+    const configText = readConfigText(ctx.adapters);
     if (configText === null) {
       checks.push({
         name: "config",
         ok: false,
-        detail: `${configPath(root)} does not exist — Fix: run the config_fill step first; it creates the file this step corrects`,
+        detail: `${configPath(ctx.adapters)} does not exist — Fix: run the config_fill step first; it creates the file this step corrects`,
       });
       return { ok: false, checks };
     }
@@ -201,7 +200,7 @@ export function appSlugStep(opts: AppSlugStepOptions = {}): OnboardingStep {
       });
       return { ok: false, checks };
     } else {
-      writeAtomic(configPath(root), patchToml(configText, edits));
+      writeAtomic(configPath(ctx.adapters), patchToml(configText, edits));
       checks.push({
         name: "config",
         ok: true,

@@ -35,7 +35,7 @@
 // runs, and that is exactly why it is the layer that proves the path.
 import { mintAppJwt } from "../../githubAuth.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
-import { ingressOptionOf, rootOf, secretsDirFor } from "./compose.js";
+import { ingressOptionOf, secretsDirFor } from "./compose.js";
 import { readCredentials } from "./githubapp.js";
 import { stackTransportFor, type TransportOptions } from "./transport.js";
 
@@ -146,8 +146,9 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
   const healthTimeoutMs = opts.healthTimeoutMs ?? 10_000;
 
   /** Layer 3 — GitHub's own record that a webhook reached the daemon. */
-  async function pingLayer(ctx: StepContext, root: string): Promise<CheckResult[]> {
-    const secretsDir = opts.secretsDir ?? secretsDirFor(root, ctx.choices, opts.env ?? process.env);
+  async function pingLayer(ctx: StepContext): Promise<CheckResult[]> {
+    const secretsDir =
+      opts.secretsDir ?? secretsDirFor(ctx.adapters, ctx.choices, opts.env ?? process.env);
     const creds = readCredentials(secretsDir);
     if (!creds.complete) {
       return [
@@ -279,7 +280,6 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
    * step only ever LOOKS (plus the one ping redelivery, which is the remedy
    * for what it looked at), so there is nothing for a "run" to do differently. */
   async function layers(ctx: StepContext): Promise<StepReport> {
-    const root = rootOf(ctx.adapters);
     const transport = stackTransportFor(ctx, { ...opts.transport, healthTimeoutMs });
     const checks: CheckResult[] = await transport.containerChecks(ingressOptionOf(ctx.choices));
     if (!checks.every((c) => c.ok)) {
@@ -305,7 +305,7 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
       });
       return { ok: false, checks };
     }
-    checks.push(...(await pingLayer(ctx, root)));
+    checks.push(...(await pingLayer(ctx)));
     return { ok: checks.every((c) => c.ok), checks };
   }
 

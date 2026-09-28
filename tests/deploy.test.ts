@@ -303,6 +303,46 @@ describe("deploy.sh --dry-run", () => {
 // server version and llama-cpp-python against the ansible group_vars (which
 // the Dockerfile venv layer interpolates, so agreeing there means agreeing in
 // the image), and the vendored fork's base commit against upstream.json.
+describe("deploy.sh — the install locator", () => {
+  /** A config in the install's config home under a temp XDG dir. */
+  function homeConfig(e: Env, pi: string): Record<string, string> {
+    const xdg = join(e.dir, "xdg-config");
+    mkdirSync(join(xdg, "qcr", "default"), { recursive: true });
+    writeFileSync(join(xdg, "qcr", "default", "config.toml"), CONFIG(pi));
+    return { XDG_CONFIG_HOME: xdg };
+  }
+
+  it("the pin preflight reads the config home, not the checkout, when the home has one", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
+    const r = run(env, ["--dry-run", "verify"], homeConfig(env, "0.85.0"));
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('config.toml   [pi] version = "0.85.0"');
+  });
+
+  it("the checkout's config.toml is still the fallback with an empty config home", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
+    const r = run(env, ["--dry-run"], { XDG_CONFIG_HOME: join(env.dir, "empty-xdg") });
+    expect(r.code).toBe(0);
+  });
+
+  it("a shipping mode REFUSES a live config outside the checkout — the rsync would not carry it", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
+    for (const mode of ["sync", "rebuild"]) {
+      const r = run(env, ["--dry-run", mode], homeConfig(env, "0.84.1"));
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("outside the checkout");
+      expect(r.stderr).toContain("");
+    }
+    const other = join(env.dir, "elsewhere.toml");
+    writeFileSync(other, CONFIG("0.84.1"));
+    const r = run(env, ["--dry-run"], { QCR_CONFIG: other });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("outside the checkout");
+    // verify ships nothing, so it is not refused
+    expect(run(env, ["--dry-run", "verify"], homeConfig(env, "0.84.1")).code).toBe(0);
+  });
+});
+
 describe("deploy.sh — OpenViking pin drift", () => {
   const OV: OvPins = {
     version: "0.4.15",

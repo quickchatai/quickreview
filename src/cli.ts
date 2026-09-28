@@ -27,6 +27,13 @@ import {
   renderTimeline,
 } from "./metrics.js";
 import { CommandDrainSender, drainPayload } from "./tui/deploy-drain.js";
+import {
+  locateConfig,
+  migrateConfig,
+  migrateReport,
+  stateHome,
+  type InstallEnv,
+} from "./install.js";
 import { operatorCommandWriteScript } from "./tui/unwedge.js";
 
 export { drainPayload } from "./tui/deploy-drain.js";
@@ -602,6 +609,40 @@ async function cmdDrain(rest: string[]): Promise<number> {
   return runDrain(on, { cfg, ssh: runnerFor(cfg.tui), log: (l) => console.log(l) });
 }
 
+/**
+ * `qcr install <where|migrate>`. `where` prints what the install
+ * locator resolves; `migrate` moves the checkout's legacy config.toml into the
+ * install's config home — idempotent, and it never overwrites a differing
+ * config. Deliberately NOT loadConfig(): a config that does not parse must
+ * still be movable.
+ */
+export function cmdInstall(
+  rest: string[],
+  deps: { root?: string; env?: InstallEnv; log?: (line: string) => void } = {},
+): number {
+  const root = deps.root ?? sandboxRoot();
+  const env = deps.env ?? process.env;
+  const log = deps.log ?? ((line: string) => console.log(line));
+  switch (rest[0]) {
+    case "where": {
+      const located = locateConfig({ root, env });
+      log(`config      ${located.path}  (${located.source})`);
+      log(`config home ${located.home}`);
+      log(`state home  ${stateHome(env)}`);
+      if (located.source === "checkout")
+        log("the checkout config is the legacy fallback — `qcr install migrate` moves it");
+      return 0;
+    }
+    case "migrate": {
+      const report = migrateReport(migrateConfig({ root, env }));
+      for (const line of report.lines) log(line);
+      return report.code;
+    }
+    default:
+      throw new Error("usage: qcr install <where|migrate>");
+  }
+}
+
 function cmdAttach(target: string): void {
   // Live sessions run inside the quickreview container on the VM; locally the
   // tmux server is direct. Print the right invocation and exec it when local
@@ -891,13 +932,17 @@ export async function main(argv: string[]): Promise<void> {
       process.exitCode = await cmdDrain(rest);
       return;
     }
+    case "install": {
+      process.exitCode = cmdInstall(rest);
+      return;
+    }
     case "attach": {
       if (!rest[0]) throw new Error("usage: qcr attach <pr-number|session>");
       return cmdAttach(rest[0]);
     }
     default:
       console.log(
-        "usage: qcr <onboard|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|tui [pr|overseer]|drain <on|off>|" +
+        "usage: qcr <onboard|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|tui [pr|overseer]|drain <on|off>|install <where|migrate>|" +
           "companion <up|down|status|rebuild>|memory reembed [--user <name>]|backfill [--dry-run] [--limit <n>]|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );

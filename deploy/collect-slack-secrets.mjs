@@ -10,6 +10,7 @@
 //   node deploy/collect-slack-secrets.mjs --force       # offer to replace existing tokens too
 //   node deploy/collect-slack-secrets.mjs --no-verify   # skip every network call (offline)
 //   node deploy/collect-slack-secrets.mjs --config PATH # patch a different config.toml
+//                                        (default: the install locator's answer)
 //   node deploy/collect-slack-secrets.mjs --secrets-dir PATH   # override the secrets dir
 //   QC_SECRETS_DIR=/tmp/sec node deploy/collect-slack-secrets.mjs   # same, via env
 //
@@ -26,6 +27,7 @@
 // (auth.test, apps.connections.open, conversations.info, users.list) — it never
 // posts, never joins, never mutates anything in Slack.
 
+import { execFileSync } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import {
   chmodSync,
@@ -457,7 +459,17 @@ async function main() {
 
   const FORCE = flag("--force");
   const VERIFY = !flag("--no-verify");
-  const CONFIG_PATH = resolve(valueOf("--config", join(REPO, "config.toml")));
+  // the default is the install locator's answer ($QCR_CONFIG, the
+  // install's config home, then the checkout's legacy file) — asked of its
+  // shell mirror, so this script builds no config path of its own.
+  const CONFIG_PATH = resolve(
+    valueOf("--config", "") ||
+      execFileSync(
+        "bash",
+        ["-c", '. "$1/scripts/install-locator.sh" && qcr_locate_config "$1"', "locate", REPO],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
+      ).trim(),
+  );
 
   const out = (s = "") => process.stdout.write(`${s}\n`);
   const title = (s) => out(`\n${bold(s)}`);

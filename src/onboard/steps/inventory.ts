@@ -22,8 +22,21 @@
 //'s local runner belongs to the other one.
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
-import { ingressOptionOf, readConfigText, readTextOrNull, rootOf, writeAtomic } from "./compose.js";
+import type {
+  CheckResult,
+  OnboardAdapters,
+  OnboardingStep,
+  StepContext,
+  StepReport,
+} from "../engine.js";
+import {
+  configPath,
+  ingressOptionOf,
+  readConfigText,
+  readTextOrNull,
+  rootOf,
+  writeAtomic,
+} from "./compose.js";
 import { assertNoDryRunEdit, patchToml, tomlString, type TomlEdit } from "./configfill.js";
 import { declaredEmbedderOf, embedderHostVars, type DeclaredEmbedder } from "./embeddings.js";
 import { readTomlKey } from "./ingress.js";
@@ -155,15 +168,15 @@ export function ingressNoteFor(ingressId: string | null, webhookPort: number): s
   }
 }
 
-function webhookPortOf(root: string): number {
-  const text = readConfigText(root);
+function webhookPortOf(adapters: OnboardAdapters): number {
+  const text = readConfigText(adapters);
   const raw = (text ? readTomlKey(text, "server", "port") : null)?.trim() ?? "";
   return /^[0-9]{1,5}$/.test(raw) ? Number(raw) : 8787;
 }
 
 /** Assert (and, on run, correct) the two `[tui]` keys this topology needs. */
-function tuiChecks(root: string, alias: string, write: boolean): CheckResult[] {
-  const text = readConfigText(root);
+function tuiChecks(adapters: OnboardAdapters, alias: string, write: boolean): CheckResult[] {
+  const text = readConfigText(adapters);
   if (text === null) {
     return [
       {
@@ -204,7 +217,7 @@ function tuiChecks(root: string, alias: string, write: boolean): CheckResult[] {
     { section: "tui", key: "ssh_host", value: tomlString(alias) },
   ];
   assertNoDryRunEdit(edits);
-  writeAtomic(join(root, "config.toml"), patchToml(text, edits));
+  writeAtomic(configPath(adapters), patchToml(text, edits));
   return [
     {
       name: "tui",
@@ -241,7 +254,7 @@ export function vmInventoryStep(opts: VmInventoryOptions = {}): OnboardingStep {
           ? ctx.input.python.trim()
           : pythonInterpreter,
       cloudflaredEnabled: cloudflaredEnabledFor(ingressOptionOf(ctx.choices)?.id ?? null),
-      embedder: declaredEmbedderOf(readConfigText(_root) ?? ""),
+      embedder: declaredEmbedderOf(readConfigText(ctx.adapters) ?? ""),
     };
   }
 
@@ -314,9 +327,9 @@ export function vmInventoryStep(opts: VmInventoryOptions = {}): OnboardingStep {
     checks.push({
       name: "ingress",
       ok: true,
-      detail: ingressNoteFor(ingressId, webhookPortOf(root)),
+      detail: ingressNoteFor(ingressId, webhookPortOf(ctx.adapters)),
     });
-    checks.push(...tuiChecks(root, alias, write));
+    checks.push(...tuiChecks(ctx.adapters, alias, write));
     return {
       ok: checks.every((c) => c.ok),
       checks,

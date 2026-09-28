@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { resolve, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "smol-toml";
+import { resolveConfigPath } from "./install.js";
 import type { PassTier } from "./types.js";
 
 export interface GithubConfig {
@@ -1844,9 +1845,19 @@ export function validateSlackConfig(cfg: Config, deps: { readSecret?: SecretRead
 
 let cached: Config | null = null;
 
+/**
+ * The live config's path for this process, decided by the install locator
+ *: `$QCR_CONFIG`, else the install's config home, else — logged —
+ * the checkout's legacy `config.toml`. The ONE answer every no-argument
+ * `loadConfig()` reads, and the one the daemon hands its sessions.
+ */
+export function liveConfigPath(root: string = sandboxRoot()): string {
+  return resolveConfigPath({ root }).path;
+}
+
 export function loadConfig(path?: string): Config {
   if (cached && !path) return cached;
-  const p = path ?? resolve(sandboxRoot(), "config.toml");
+  const p = path ?? liveConfigPath();
   const cfg = parseConfig(readFileSync(p, "utf8"));
   validateSlackConfig(cfg);
   if (!path) cached = cfg;

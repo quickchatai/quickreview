@@ -37,7 +37,7 @@
 //     smuggled inside it.
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type { TuiConfig } from "../config.js";
 
 export interface RubricProposal {
@@ -399,6 +399,30 @@ export interface AcceptDeps {
   git: LocalGit;
   repoRoot: string;
   today: () => string; // YYYY-MM-DD
+  /** The live config.toml as the install locator resolved it.
+   * Absent = `<repoRoot>/config.toml`, the checkout's legacy file. */
+  configPath?: string;
+}
+
+/**
+ * Where a config proposal lands. The patch always names
+ * `config.toml`; the live file may be the checkout's (apply + commit, as
+ * before) or the install's config home's — outside this repo, so `git apply`
+ * is pointed at its directory and nothing is committed. A `$QCR_CONFIG` file
+ * under another name cannot take a `config.toml` patch: refused, never
+ * applied to a file the daemon does not read.
+ */
+type ConfigTarget =
+  | { kind: "checkout" }
+  | { kind: "home"; dir: string; path: string }
+  | { kind: "unappliable"; path: string };
+
+function configTargetOf(deps: AcceptDeps): ConfigTarget {
+  const path = deps.configPath;
+  if (path === undefined || resolve(path) === resolve(deps.repoRoot, "config.toml"))
+    return { kind: "checkout" };
+  if (basename(path) !== "config.toml") return { kind: "unappliable", path };
+  return { kind: "home", dir: dirname(resolve(path)), path: resolve(path) };
 }
 
 export async function acceptProposal(
@@ -422,13 +446,37 @@ export async function acceptProposal(
   }
   const fence = patchFenceViolation(patch, (rel) => fenceSourceFrom(deps.repoRoot, rel));
   if (fence !== null) return { ok: false, message: fence };
+  const target: ConfigTarget = kind === "config" ? configTargetOf(deps) : { kind: "checkout" };
+  if (target.kind === "unappliable")
+    return {
+      ok: false,
+      message: `refused: the live config is ${target.path} (QCR_CONFIG), not a config.toml this patch can name — apply state/rubric/${slug}/changes.patch by hand`,
+    };
+  const applyArgs =
+    target.kind === "home" ? ["apply", "--unsafe-paths", `--directory=${target.dir}`] : ["apply"];
   try {
-    await deps.git.run("git", ["apply", "--check", "-"], patch);
+    await deps.git.run("git", [...applyArgs, "--check", "-"], patch);
   } catch (err) {
     return {
       ok: false,
       message: `patch does not apply cleanly: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`,
     };
+  }
+  if (target.kind === "home") {
+    // The config home is not this repo: applied in place, nothing to commit.
+    try {
+      await deps.git.run("git", [...applyArgs, "-"], patch);
+    } catch (err) {
+      return {
+        ok: false,
+        message: `apply failed — ${target.path} may need manual attention: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`,
+      };
+    }
+    return finishAccept(
+      deps.repoRoot,
+      slug,
+      `accepted '${slug}': applied to ${target.path} (the install's config home — not committed)`,
+    );
   }
   try {
     await deps.git.run("git", ["apply", "-"], patch);
@@ -456,14 +504,27 @@ export async function acceptProposal(
       message: `apply/commit failed — repo may need manual attention: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`,
     };
   }
+  return finishAccept(
+    deps.repoRoot,
+    slug,
+    `accepted '${slug}': ${files.join(", ")} — committed locally; deploy to ship`,
+  );
+}
+
+/** The accepted proposal's dir is removed; a failed removal is said, not fatal. */
+function finishAccept(
+  repoRoot: string,
+  slug: string,
+  message: string,
+): { ok: boolean; message: string } {
   let removed = true;
   try {
-    removeRubricDir(deps.repoRoot, slug);
+    removeRubricDir(repoRoot, slug);
   } catch {
     removed = false;
   }
   return {
     ok: true,
-    message: `accepted '${slug}': ${files.join(", ")} — committed locally; deploy to ship${removed ? "" : " (proposal dir removal failed — remove by hand)"}`,
+    message: `${message}${removed ? "" : " (proposal dir removal failed — remove by hand)"}`,
   };
 }

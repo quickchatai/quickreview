@@ -9,5 +9,7 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     include: ["tests/**/*.test.ts"],
+    // the install locator never sees the developer's own homes.
+    setupFiles: ["tests/helpers/install-env.ts"],
   },
 });

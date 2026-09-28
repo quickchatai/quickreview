@@ -84,6 +84,7 @@ function harness(
     psCode?: number;
     uid?: number | null;
     step?: OnboardingStep;
+    configPath?: string;
   } = {},
 ): Harness {
   const streamed: string[][] = [];
@@ -123,7 +124,7 @@ function harness(
     runner,
     clock: () => new Date("2026-08-30T12:00:00Z"),
     host: { nodeVersion: "v22.5.1", uid: o.uid === undefined ? 1000 : o.uid },
-    paths: { stateDir: join(root, "state") },
+    paths: { stateDir: join(root, "state"), configPath: o.configPath ?? join(root, "config.toml") },
     log: (line) => events.push(`log:${line}`),
   };
   return {
@@ -230,6 +231,34 @@ describe("bring-up, happy path", () => {
     expect(h.streamed[0]).toEqual(["docker", ...bringUpArgs(root, "quick-tunnel")]);
     expect(h.engine.choices()[BROUGHT_UP_CHOICE_KEY]).toBe("2026-08-30T12:00:00.000Z");
     expect(result.checks.find((c) => c.name === "ingress-sidecar")!.ok).toBe(true);
+  });
+
+  // the container reads the config the install locator found on the
+  // host. The compose file mounts QCR_CONFIG_HOME read-only and the entrypoint
+  // names QCR_CONFIG_NAME inside it — so a config in the install's config home
+  // reaches the daemon, and a legacy checkout config still does (the home is
+  // mounted empty, the in-container locator falls back to the sandbox).
+  it("mounts the directory of the config the locator found", async () => {
+    const home = join(root, "..", `${root.split("/").pop()}-cfghome`);
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, "config.toml"), readFileSync(join(root, "config.toml"), "utf8"));
+    rmSync(join(root, "config.toml"));
+    try {
+      const h = harness({ configPath: join(home, "config.toml") });
+      expect((await h.engine.runStep(BRINGUP_STEP_ID)).ok).toBe(true);
+      expect(readEnvKey(envText(), "QCR_CONFIG_HOME")).toBe(home);
+      expect(readEnvKey(envText(), "QCR_CONFIG_NAME")).toBe("config.toml");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("a legacy checkout config mounts the (created, empty) config home instead", async () => {
+    const { configHome } = await import("../src/install.js");
+    const h = harness();
+    expect((await h.engine.runStep(BRINGUP_STEP_ID)).ok).toBe(true);
+    expect(readEnvKey(envText(), "QCR_CONFIG_HOME")).toBe(configHome());
+    expect(existsSync(configHome())).toBe(true);
   });
 
   it("falls back to the live host uid when preflight recorded none", async () => {
@@ -464,7 +493,7 @@ describe("memory phase B — driven, never duplicated", () => {
       runner: { run: async () => ({ code: 1, stdout: "", stderr: "" }) },
       clock: () => new Date("2026-08-30T12:00:00Z"),
       host: { nodeVersion: "v22.5.1", uid: 1000 },
-      paths: { stateDir: join(root, "state") },
+      paths: { stateDir: join(root, "state"), configPath: join(root, "config.toml") },
     };
     const engine = new OnboardingEngine([step], adapters);
     const result = await engine.runStep(MEMORY_KEYS_STEP_ID);

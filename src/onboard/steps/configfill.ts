@@ -646,10 +646,6 @@ export function rootFromStateDir(stateDir: string): string {
   return resolve(stateDir, "..");
 }
 
-export function configPathFor(root: string): string {
-  return join(root, "config.toml");
-}
-
 export function templatePathFor(root: string): string {
   return join(root, "config.example.toml");
 }
@@ -902,7 +898,7 @@ export function configFillStep(): OnboardingStep {
     order: 35,
     async run(ctx): Promise<StepReport> {
       const root = rootFromStateDir(ctx.adapters.paths.stateDir);
-      const configPath = configPathFor(root);
+      const configPath = ctx.adapters.paths.configPath;
       const templatePath = templatePathFor(root);
       const existing = readIfPresent(configPath);
       const source = existing ?? readIfPresent(templatePath);
@@ -1039,8 +1035,7 @@ export function configFillStep(): OnboardingStep {
       };
     },
     async verify(ctx): Promise<StepReport> {
-      const root = rootFromStateDir(ctx.adapters.paths.stateDir);
-      const configPath = configPathFor(root);
+      const configPath = ctx.adapters.paths.configPath;
       if (!existsSync(configPath)) {
         return {
           ok: false,

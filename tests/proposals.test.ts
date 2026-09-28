@@ -523,6 +523,53 @@ describe("acceptProposal (local dirs, fake git)", () => {
     expect(existsSync(join(root, "state/rubric/calibrate-mention"))).toBe(false);
   });
 
+  // the live config lives in the install's config home, outside the
+  // checkout — the accept applies to THAT file and commits nothing (the home
+  // is not this repo). A QCR_CONFIG file not named config.toml cannot take a
+  // `config.toml` patch, so it is refused rather than applied somewhere else.
+  it("applies a config proposal to the config home's file, outside the checkout, without a commit", async () => {
+    const home = join(root, "..", "cfg-home-" + Date.now());
+    propose("calibrate-mention", CONFIG_PATCH);
+    const gitCalls: string[][] = [];
+    const res = await acceptProposal(
+      {
+        git: {
+          run: (cmd, args) => {
+            gitCalls.push([cmd, ...args]);
+            return Promise.resolve("");
+          },
+        },
+        repoRoot: root,
+        today: () => "2026-08-30",
+        configPath: join(home, "config.toml"),
+      },
+      "calibrate-mention",
+    );
+    expect(res.ok).toBe(true);
+    expect(gitCalls.map((c) => c.slice(0, 2).join(" "))).toEqual(["git apply", "git apply"]);
+    for (const call of gitCalls) {
+      expect(call).toContain("--unsafe-paths");
+      expect(call).toContain(`--directory=${home}`);
+    }
+    expect(res.message).toContain(join(home, "config.toml"));
+    expect(existsSync(join(root, "state/rubric/calibrate-mention"))).toBe(false);
+
+    propose("calibrate-mention", CONFIG_PATCH);
+    gitCalls.length = 0;
+    const odd = await acceptProposal(
+      {
+        git: { run: (cmd, args) => (gitCalls.push([cmd, ...args]), Promise.resolve("")) },
+        repoRoot: root,
+        today: () => "2026-08-30",
+        configPath: join(home, "mine.toml"),
+      },
+      "calibrate-mention",
+    );
+    expect(odd.ok).toBe(false);
+    expect(odd.message).toContain("mine.toml");
+    expect(gitCalls).toHaveLength(0);
+  });
+
   it("refuses a config proposal touching dry_run, before touching git — rule 1, structural", async () => {
     propose(
       "flip-dry-run",

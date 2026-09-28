@@ -96,6 +96,9 @@ export interface LearningDeps {
   /** The canonical repo root the accept path applies/ratifies/commits in —
    * NOT process.cwd(): `qcr` runs from anywhere. */
   repoRoot?: string;
+  /** The live config.toml the install locator resolved — where an
+   * accepted CONFIG proposal lands. Absent = `<repoRoot>/config.toml`. */
+  configPath?: string;
   /**: the TUI-owned memory forward. Structural on purpose — tests
    * hand in a stub and never spawn ssh. Absent = the memory tab paints
    * "starting…" and offers no Studio link, which is the honest state for a
@@ -382,6 +385,7 @@ export class LearningStore {
         git: { run: this.deps.gitRun ?? failingGit },
         repoRoot: this.deps.repoRoot ?? process.cwd(),
         today: () => this.now().toISOString().slice(0, 10),
+        ...(this.deps.configPath ? { configPath: this.deps.configPath } : {}),
       },
       slug,
     );

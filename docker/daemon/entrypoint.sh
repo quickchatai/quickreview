@@ -12,6 +12,14 @@ set -euo pipefail
 SANDBOX=/opt/quickreview/sandbox
 SECRETS=/opt/quickreview/secrets
 
+# The live config: the host's install locator found it, and compose
+# mounts its directory read-only at /opt/quickreview/config-home. Named for the
+# daemon (which hands the same path to every session) only when the file is
+# there: an empty mount means the host still runs on the legacy checkout
+# config, which the in-container locator finds in $SANDBOX on its own.
+CONFIG_HOME_FILE="/opt/quickreview/config-home/${QCR_CONFIG_NAME:-config.toml}"
+[[ -z "${QCR_CONFIG:-}" && -f "$CONFIG_HOME_FILE" ]] && export QCR_CONFIG="$CONFIG_HOME_FILE"
+
 # Runtime knobs — defaults mirror deploy/ansible/group_vars/all.yml and
 # config.toml [openviking]; override via the container environment.
 OV_HOME="${QCR_OPENVIKING_HOME:-/opt/quickreview/state/openviking}"
