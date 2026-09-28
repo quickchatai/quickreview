@@ -134,12 +134,11 @@ def chart_high(arms, out):
 
 
 def chart_cost(arms, out):
-    fig, ax = plt.subplots(figsize=(7, 4.6))
+    fig, ax = plt.subplots(figsize=(9, 4.8))
     for name, color, s in arms:
         x, y = s["usd"], recall(s) * 100
-        ax.scatter([x], [y], s=160, color=color, zorder=3)
-        ax.annotate(f"{name}\n{y:.0f}% · ${x:.2f}/PR", (x, y), xytext=(10, -4), textcoords="offset points",
-                    fontsize=10, va="center")
+        ax.scatter([x], [y], s=140, color=color, zorder=3, label=f"{name} — {y:.0f}% · ${x:.2f}/PR")
+    ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), frameon=False, fontsize=10)
     ax.set_xlim(0, max(s["usd"] for _, _, s in arms) * 1.6)
     ax.set_ylim(0, 100)
     ax.set_xlabel("model cost per PR (list prices)")
@@ -240,10 +239,55 @@ def chart_overview(arms, out):
     axes[0].invert_yaxis()
     for ax in axes[1:]:
         ax.invert_yaxis()
-    fig.suptitle(f"Code review benchmark — AACR-Bench v1.0, {len(CASES)} PRs, 10 languages", x=0.01, y=1.0,
-                 ha="left", va="bottom", fontweight="bold", fontsize=15)
-    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    fig.tight_layout(rect=(0, 0, 1, 0.93))
+    fig.suptitle(f"Code review benchmark — AACR-Bench v1.0, {len(CASES)} PRs, 10 languages", x=0.01, y=0.99,
+                 ha="left", va="top", fontweight="bold", fontsize=15)
     save(fig, out, "overview.jpg")
+
+
+def chart_judges(names, colors, a, b, la, lb, out):
+    """Share of real defects found under two judges, side by side."""
+    import numpy as np
+    fig, ax = plt.subplots(figsize=(10, 1.2 + 0.62 * len(names)))
+    y = np.arange(len(names))
+    ax.barh(y - 0.19, a, height=0.36, color=colors, label=la)
+    ax.barh(y + 0.19, b, height=0.36, color=[shade(c, 0.5) for c in colors], label=lb)
+    for i in range(len(names)):
+        ax.text(a[i] + 0.8, y[i] - 0.19, f"{a[i]:.0f}%", va="center", fontsize=9.5)
+        ax.text(b[i] + 0.8, y[i] + 0.19, f"{b[i]:.0f}%", va="center", fontsize=9.5, color=MUTED)
+    ax.set_yticks(y, names)
+    ax.invert_yaxis()
+    ax.set_xlim(0, 105)
+    ax.xaxis.set_major_formatter(matplotlib.ticker.PercentFormatter())
+    ax.grid(axis="x", color=GRID)
+    ax.set_axisbelow(True)
+    ax.set_title(f"Two judges, same reviews — share of real defects found (dark: {la}, light: {lb})", fontsize=12)
+    save(fig, out, "judge-agreement.jpg")
+
+
+def chart_independent(names, colors, all_r, ind_r, n_all, n_ind, out):
+    import numpy as np
+    fig, ax = plt.subplots(figsize=(10, 1.2 + 0.62 * len(names)))
+    y = np.arange(len(names))
+    ax.barh(y - 0.19, all_r, height=0.36, color=[shade(c, 0.5) for c in colors])
+    ax.barh(y + 0.19, ind_r, height=0.36, color=colors)
+    for i in range(len(names)):
+        ax.text(all_r[i] + 0.8, y[i] - 0.19, f"{all_r[i]:.0f}%", va="center", fontsize=9.5, color=MUTED)
+        ax.text(ind_r[i] + 0.8, y[i] + 0.19, f"{ind_r[i]:.0f}%", va="center", fontsize=9.5)
+    ax.set_yticks(y, names)
+    ax.invert_yaxis()
+    ax.set_xlim(0, 105)
+    ax.xaxis.set_major_formatter(matplotlib.ticker.PercentFormatter())
+    ax.grid(axis="x", color=GRID)
+    ax.set_axisbelow(True)
+    ax.set_title(f"Share found — light: all {n_all} defects; dark: the {n_ind} no reviewer contributed (code hunt or AACR references only)",
+                 fontsize=11)
+    save(fig, out, "independent-defects.jpg")
+
+
+def defect_recall(runs_dir, runs, cases, judge_model, keys):
+    v = compare.verdicts(runs_dir, runs, cases, judge_model)
+    return sum(v.get(k, 0) for k in keys) / max(len(keys), 1) * 100
 
 
 CASES = {}
@@ -256,7 +300,8 @@ def main():
     ap.add_argument("--tuned", default="all30+fresh10", help="the tuning PRs, for the split chart")
     ap.add_argument("--unseen", default="rest145", help="the unseen PRs, for the split chart")
     ap.add_argument("--judge-model", default="gpt-6-sol-high")
-    ap.add_argument("--runs-dir", default=os.environ.get("QCR_BENCH_RUNS_DIR", os.path.join(HERE, "runs")))
+    ap.add_argument("--second-judge", help="a second judge label (e.g. claude-opus-5-5) for the agreement chart")
+    ap.add_argument("--runs-dir", default=os.environ.get("QCR_BENCH_RUNS_DIR", os.path.expanduser("~/qcr-bench-runs/runs") if os.path.isdir(os.path.expanduser("~/qcr-bench-runs/runs")) else os.path.join(HERE, "runs")))
     ap.add_argument("--out", default=os.path.join(HERE, "charts"))
     ap.add_argument("arms", nargs="+", help="NAME=run[,run...]")
     a = ap.parse_args()
@@ -278,6 +323,25 @@ def main():
     chart_two_scores(arms, a.out)
     chart_references(a.out)
     chart_split(split, a.out)
+    names = [n for n, _, _ in arms]
+    colors = [c for _, c, _ in arms]
+    run_lists = [spec.partition("=")[2].split(",") for spec in a.arms]
+    if a.second_judge:
+        chart_judges(names, colors, [recall(s) * 100 for _, _, s in arms],
+                     [recall(arm_stats(a.runs_dir, r, CASES, a.second_judge)) * 100 for r in run_lists],
+                     a.judge_model, a.second_judge, a.out)
+    # The independence check: only defects the code hunt or an AACR reference surfaced.
+    alld, indep = [], []
+    for iid, (s, sevs, _) in CASES.items():
+        truth = json.load(open(os.path.join(HERE, "defects", f"{s}.json")))["cases"][iid]
+        for x in truth["defects"]:
+            alld.append((iid, x["id"]))
+            p = x.get("provenance") or {}
+            if p.get("hunt") or p.get("dataset_refs"):
+                indep.append((iid, x["id"]))
+    chart_independent(names, colors, [defect_recall(a.runs_dir, r, CASES, a.judge_model, alld) for r in run_lists],
+                      [defect_recall(a.runs_dir, r, CASES, a.judge_model, indep) for r in run_lists],
+                      len(alld), len(indep), a.out)
     summary = {name: {"recall": round(recall(s), 4), **{k: s[k] for k in ("found", "total", "usd", "aacr_recall", "aacr_precision", "correct")}} for name, _, s in arms}
     json.dump({"cases": len(CASES), "arms": summary}, open(os.path.join(a.out, "numbers.json"), "w"), indent=1)
     print("wrote", os.path.relpath(os.path.join(a.out, "numbers.json")))
