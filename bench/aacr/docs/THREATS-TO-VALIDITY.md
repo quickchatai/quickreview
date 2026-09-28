@@ -149,7 +149,8 @@ basis of a decision.
 - **The 145 new PRs are the honest test.** No design decision looked at them.
   There default finds 85% (key v2) and 54 of 56 high-severity defects. That
   is higher than on the 40, not lower, which is the opposite of what
-  overfitting predicts.
+  overfitting predicts. But every reviewer except Codex CLI also scores
+  higher on the 145, so this is weak evidence.
 - **But see threat 1.** Those 145 PRs' ground truth was built after seeing
   default's reviews, which inflates exactly that number.
 
@@ -157,8 +158,14 @@ basis of a decision.
 - **Tuning never touched the new PRs.** The 145 were selected mechanically
   (`select_cases.py rest145`: every runnable PR not in the tuning sets). None
   was opened during tuning.
-- **The same pattern holds out of sample.** On the 40 and on the 145 the
-  ordering is the same, and default's margin is the same size.
+- **Default stays first out of sample.** Its lead over the next reviewer is
+  21 points on the 40 and 16 on the 145. Over the mean of the other six it
+  leads by 29.0 points on the 40 and 27.6 on the 145; the difference, +1.4,
+  has a 95% CI of [−6.3, +8.9], so the margin does not measurably shrink.
+  The rest of the ordering does not hold across the halves (OCR is last on
+  the 40 and fourth on the 145; low and Claude Code swap). Every reviewer
+  except Codex CLI scores higher on the 145, so the 145 look easier for
+  everyone, which makes this weak evidence about overfitting.
 
 **To resolve.**
 - **Freeze the reviewer (commit `1ad710b`) now.**
@@ -176,9 +183,12 @@ basis of a decision.
   verifier, then extension critics.
 - **What the critics changed.** They corrected 6 things in the first pass and
   4 in the extension.
-- **Human review so far.** The only human-labelled data in this project is
-  AACR's reference comments on the 30 original PRs (`sets/*.labels.json`). It
-  labels AACR's comments, not our defects.
+- **Human review so far.** None confirmed. The only other labelled data is
+  the quality labels on AACR's reference comments for the 30 original PRs
+  (`sets/*.labels.json`, 253 references). Their own `source` fields say
+  agents produced them ("per-PR analysts", "two labelling agents"); whether
+  a human checked them is not confirmed. They label AACR's comments, not our
+  defects.
 
 **Size.** Unknown, which is the point.
 - **If the verifier accepted plausible-but-wrong defects,** every reviewer's
@@ -310,12 +320,17 @@ same budget.
     the third-party tools (22–36 points) is far larger than that noise.
   - Gaps under about 5 points are not. That covers most comparisons among
     the single-pass tools: OCR vs pi-review, and Codex CLI vs OpenCode.
+  - Bootstrap intervals over PRs (`FULL-BENCHMARK.md`, Uncertainty) agree:
+    every gap between default and another reviewer excludes zero, while low
+    vs Claude Code, pi-review vs OCR and OpenCode vs Codex CLI do not. Those
+    intervals cover PR sampling only, not run-to-run or judge variance.
 - **Parallelism:**
   - Our arms ran 10 PRs at a time on the machine-wide scheduler.
   - Third-party arms ran one PR at a time per container (the harness default),
     later split into four parallel chunks.
-  - Minutes per PR are measured per case and are comparable.
-  - Wall-clock time is not.
+  - Minutes per PR are wall-clock under that shared scheduler, so they
+    include contention and are not directly comparable between our arms and
+    the single-pass tools (as `FULL-BENCHMARK.md` and `METHODOLOGY.md` say).
 
 **To resolve.**
 - **An equal-inputs arm:** give every tool the PR description.
@@ -464,16 +479,20 @@ documented in `../README.md`.
 
 - On AACR-Bench's 185 runnable PRs, under our defect judge and our verified
   ground truth, quickreviewd default finds more real defects than every other
-  reviewer we ran. It also finds more high-severity ones, and more of its
-  comments are correct. The margin (84% against 48–66% of defects found) is
-  far larger than run-to-run noise. The same ordering holds on the 145 PRs
-  no tuning decision ever looked at, under a second judge from another model
-  family, and on the 369 defects the key would hold without any reviewer's
-  comment.
+  reviewer we ran. It also finds more high-severity ones, and under the
+  primary judge more of its comments are correct (under the Opus judge
+  Claude Code is level). The margin (84% against 48–66% of defects found) is
+  far larger than run-to-run noise, and every paired bootstrap interval
+  between default and another reviewer excludes zero. Default is first on
+  the 145 PRs no tuning decision ever looked at, under a second judge from
+  another model family, and on the 369 defects the key would hold without
+  any reviewer's comment.
 - On AACR-Bench's own metric the reviewers are close. That metric mostly
   rewards reproducing a reference list that is largely not real defects.
-- Codex CLI is the most cost-efficient tool: fewer finds, high accuracy, about
-  $0.15 per PR.
+- On cost per defect found, pi-review is the most cost-efficient tool: $0.07
+  per defect and $0.27 per high-severity defect at $0.11 per PR, against
+  $0.11/$0.40 for Codex CLI, $0.11/$0.50 for Claude Code and $0.72/$3.68 for
+  quickreviewd default.
 
 **We do not claim:**
 
@@ -482,7 +501,8 @@ documented in `../README.md`.
 - That the size of our lead is exact. Threats 1, 2, 4 and 5 all push it the
   same way. Threats 1 and 4 have been measured, and neither explains the
   lead; threats 2 and 5 have not been measured.
-- A variance estimate. Every reviewer ran once.
+- A run-to-run variance estimate. Every reviewer ran once; the bootstrap
+  intervals cover PR sampling only.
 - A human-verified answer key for the 145 new PRs.
 - A like-for-like comparison at equal inputs or equal compute. We compared
   tools as shipped; ours reads the PR description and spends about 10× the

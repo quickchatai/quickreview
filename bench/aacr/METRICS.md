@@ -52,7 +52,8 @@ different reviewer can be under-credited); the primary judge is the same model
 family as the reviewer; differences under ~2 defects per 10 PRs are noise.
 In the final benchmark, a second judge (Claude Opus 5.5) and a recall check
 on the defects the key would hold without any reviewer's comment both leave
-the ordering unchanged — `FULL-BENCHMARK.md`.
+default first and the ordering nearly unchanged (under the second judge
+pi-review and OCR, one defect apart, swap places) — `FULL-BENCHMARK.md`.
 
 ## Table 2 — AACR-Bench (the original benchmark)
 
