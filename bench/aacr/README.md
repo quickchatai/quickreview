@@ -248,8 +248,7 @@ The one bias that cannot be removed without a reseed: the frozen
   undisclosed. For a like-for-like number, re-run a published baseline (e.g.
   open-code-review v1.3.1 + GPT-5.5: published 234/728 precision, 234/1505
   recall) under the same judge and dataset, next to ours — `--arm ocr` (below)
-  does that. The harness's Claude Code arm must never be run from here (root
-  rule 5).
+  does that. The harness's Claude Code arm runs only as `--arm claude`, inside this sandbox (root rule 5's one ratified exception, 2026-09-28).
 - **The ground truth is 74% AI-seeded** (GPT-5.2 alone 25%, our model's family),
   and precision counts every comment the annotators did not record as a false
   positive.
