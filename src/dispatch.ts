@@ -660,8 +660,9 @@ export const ALL_PASSES: readonly string[] = [
   "pass-abstraction",
   "pass-consistency",
   // The style lens — planned only when the repo has a written style guide
-  // (src/styleguide.ts); addable otherwise, but it judges only against a
-  // guide, so without one it answers NONE.
+  // (src/styleguide.ts) or the profile points it at one; addable
+  // otherwise, but it judges only against a guide, so without one it answers
+  // NONE.
   "pass-style",
   "pass-validate",
 ];
@@ -723,7 +724,7 @@ export function buildPassPlan(
   /** Profile lens-heuristics extension; absent ⇒ generic core. */
   heuristics?: HeuristicsExtension,
   /** The repo's written style guide references (src/styleguide.ts); empty or
-   * absent ⇒ no style lens. */
+   * absent ⇒ the style lens only on the profile's guide, if any. */
   styleGuide: readonly string[] = [],
 ): { pass_plan: PassPlanEntry[]; addable_lenses: string[]; sweep_unswept: string[] } {
   const defaultTier = passTier(files, {
@@ -756,14 +757,22 @@ export function buildPassPlan(
   const quality = selectQualityLenses(files, cfg.review.quality_min_added_lines).filter(
     (l) => on(l, cfg.review.quality_lenses) && !selected0.includes(l),
   );
+  // a guide the repo writes wins; the profile's drafted guide is
+  // the standard only when the repo writes none.
+  const profileGuide = cfg.lenses?.[STYLE_PASS]?.guide;
   const style =
     on(STYLE_PASS, cfg.review.style_lens) &&
-    styleGuide.length > 0 &&
+    (styleGuide.length > 0 || profileGuide !== undefined) &&
     files.some((f) => CODE_FILE_RE.test(f.filename))
       ? [STYLE_PASS]
       : [];
   if (style.length)
-    whyOf.set(STYLE_PASS, `the repo's written style guide: ${styleGuide.join(", ")}`);
+    whyOf.set(
+      STYLE_PASS,
+      styleGuide.length > 0
+        ? `the repo's written style guide: ${styleGuide.join(", ")}`
+        : `this repo's profile style guide (\`${profileGuide!.file}\`, in your instructions) — the repo writes none of its own`,
+    );
   // `enabled = false` is the last word on every lens, whatever selected it —
   // a profile-level subtraction, separate from the ADD-only heuristics.
   const lenses = [

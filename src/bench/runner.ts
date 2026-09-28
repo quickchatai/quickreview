@@ -30,6 +30,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
@@ -191,8 +192,33 @@ export interface RunFingerprint {
     validate_demote?: boolean;
   };
   /**: the profile's resolved per-lens tuning. Absent when untuned, so
-   * an untuned run's fingerprint is what it was before per-lens tuning. */
-  lenses?: Record<string, LensTuning>;
+   * an untuned run's fingerprint is what it was before per-lens tuning. A
+   * profile style guide is recorded by name and content hash. */
+  lenses?: Record<string, FingerprintLensTuning>;
+}
+
+type FingerprintLensTuning = Omit<LensTuning, "guide"> & {
+  guide?: { file: string; sha256: string };
+};
+
+function fingerprintLenses(
+  lenses: Readonly<Record<string, LensTuning>>,
+): Record<string, FingerprintLensTuning> {
+  const out: Record<string, FingerprintLensTuning> = {};
+  for (const [lens, { guide, ...rest }] of Object.entries(lenses)) {
+    out[lens] = {
+      ...structuredClone(rest),
+      ...(guide
+        ? {
+            guide: {
+              file: guide.file,
+              sha256: createHash("sha256").update(guide.text).digest("hex"),
+            },
+          }
+        : {}),
+    };
+  }
+  return out;
 }
 
 export function runFingerprint(cfg: Config, profile: string, overrides = ""): RunFingerprint {
@@ -223,9 +249,7 @@ export function runFingerprint(cfg: Config, profile: string, overrides = ""): Ru
       nits: cfg.review.nits,
       validate_demote: cfg.review.validate_demote,
     },
-    ...(Object.keys(cfg.lenses ?? {}).length > 0
-      ? { lenses: structuredClone({ ...cfg.lenses }) }
-      : {}),
+    ...(Object.keys(cfg.lenses ?? {}).length > 0 ? { lenses: fingerprintLenses(cfg.lenses!) } : {}),
   };
 }
 

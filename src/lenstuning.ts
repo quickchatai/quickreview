@@ -1,6 +1,7 @@
 // Per-lens tuning from the repo profile.
 //
-// `profile.toml` may carry one `[lenses.<pass>]` table per lens, five keys:
+// `profile.toml` may carry one `[lenses.<pass>]` table per lens, five keys
+// (and a sixth for the style lens alone):
 //
 //   [lenses.pass-security]
 //   min_tier = "sol-high"      # the lowest tier the plan may run it at
@@ -10,6 +11,9 @@
 //
 //   [lenses.pass-ui]
 //   enabled = false            # remove the lens from the plan and the add list
+//
+//   [lenses.pass-style]
+//   guide = "style-guide.md"   #: a guide file in this profile's dir
 //
 // The resolved map (the whole `extends` chain merged, child-wins per key —
 // src/profiles.ts `loadProfileLensTuning`) rides the `Config` as `cfg.lenses`,
@@ -42,19 +46,41 @@
 //     profile's own pack, so the addendum registry stays the ONLY route into a
 //     pass body (rule 6). The ceiling binds at the validator, which enforces
 //     every other cap, and is also told to the lens itself.
+//   * `guide` (`pass-style` only) — a style guide drafted into the
+//     profile for a repo that writes none: a file path RELATIVE to the
+//     profile's own directory (so it lives in the config home), read and
+//     checked at load. Plan time: the style lens is planned on it only when
+//     the repo's own guide (src/styleguide.ts) finds nothing — **a guide the
+//     repo writes wins**. Build time: the text is compiled into an addendum
+//     for `pass-style` and the validator, like `emphasis`, so it reaches the
+//     session wherever the session runs. Style findings stay `nit` against
+//     either guide unless `max_severity` raises the lens's ceiling.
+import { readFileSync, realpathSync, statSync } from "node:fs";
+import { isAbsolute, join, relative, sep } from "node:path";
 import type { ModelsConfig, ReviewEffort, ThinkingLevel } from "./config.js";
 import { withThinking } from "./config.js";
 import { VALIDATE_PASS as VALIDATE, type PassAddendum } from "./include.js";
 import type { Severity } from "./severity.js";
 import { higherTier, PASS_TIER_ORDER, type PassTier } from "./types.js";
 
-/** The five keys of one `[lenses.<pass>]` table, after validation. */
+/** A style guide a profile points `pass-style` at. */
+export interface ProfileStyleGuide {
+  /** As `profile.toml` spells it — relative to the profile's directory. */
+  file: string;
+  /** Where it was read from. */
+  path: string;
+  text: string;
+}
+
+/** The keys of one `[lenses.<pass>]` table, after validation. */
 export interface LensTuning {
   min_tier?: PassTier;
   effort?: Exclude<ReviewEffort, "">;
   enabled?: boolean;
   emphasis?: string;
   max_severity?: Severity;
+  /** `pass-style` only. */
+  guide?: ProfileStyleGuide;
 }
 
 /** Pass name → its resolved tuning. Empty ⇒ untuned (the shipped behaviour). */
@@ -66,7 +92,15 @@ export const LENS_TUNING_KEYS = [
   "enabled",
   "emphasis",
   "max_severity",
+  "guide",
 ] as const;
+
+/** The one lens a profile may point at a guide. */
+export const STYLE_LENS = "pass-style";
+
+/** A drafted guide is a guide, not a manual: it is compiled into two built
+ * bodies (the style lens and the validator). */
+export const PROFILE_GUIDE_MAX_CHARS = 32_000;
 
 const SEVERITIES: readonly Severity[] = ["P0", "P1", "P2", "P3", "nit"];
 
@@ -78,20 +112,58 @@ export const EMPHASIS_MAX_CHARS = 2000;
 export const PROFILE_CAP_WORD = "profile-over-cap";
 
 /** Ids the compiled tuning addenda take — a profile pack may not claim them. */
-export const LENS_TUNING_ID_PREFIXES = ["lens-emphasis-", "lens-ceiling-"] as const;
+export const LENS_TUNING_ID_PREFIXES = ["lens-emphasis-", "lens-ceiling-", "lens-guide-"] as const;
+
+/** Read the guide a profile's `[lenses.pass-style] guide` names: a relative
+ * path that stays inside the profile's directory (symlinks resolved), a
+ * readable, non-empty file within the size cap. Anything else throws. */
+function readProfileGuide(at: string, value: unknown, dir: string | undefined): ProfileStyleGuide {
+  if (typeof value !== "string" || value.trim() === "")
+    throw new Error(`${at} guide must be a file name in the profile's directory`);
+  if (dir === undefined) throw new Error(`${at} guide needs the profile's directory to resolve`);
+  const file = value.trim();
+  if (isAbsolute(file) || file.split(/[\\/]/).includes(".."))
+    throw new Error(
+      `${at} guide ${JSON.stringify(file)} must be relative to the profile's directory, without '..'`,
+    );
+  const path = join(dir, file);
+  let text: string;
+  try {
+    const real = realpathSync(path);
+    const inside = relative(realpathSync(dir), real);
+    if (inside === "" || inside.startsWith(`..${sep}`) || isAbsolute(inside))
+      throw new Error("resolves outside the profile's directory");
+    if (!statSync(real).isFile()) throw new Error("is not a file");
+    text = readFileSync(real, "utf8");
+  } catch (err) {
+    throw new Error(
+      `${at} guide ${JSON.stringify(file)}: cannot use ${path}: ${(err as Error).message}`,
+      {
+        cause: err,
+      },
+    );
+  }
+  if (text.trim() === "") throw new Error(`${at} guide ${path} is empty`);
+  if (text.length > PROFILE_GUIDE_MAX_CHARS)
+    throw new Error(`${at} guide ${path} is over ${PROFILE_GUIDE_MAX_CHARS} characters`);
+  return { file, path, text };
+}
 
 /**
  * Parse one profile's `[lenses]` table. `where` names the file in every
- * error; `known` is every pass the system knows (dispatch.ts ALL_PASSES).
+ * error; `known` is every pass the system knows (dispatch.ts ALL_PASSES);
+ * `dir` is the profile's directory, which a `guide` resolves against.
  * Anything malformed throws — an unknown lens, an unknown key, a bad value,
- * giving the validator a ceiling: a profile that asked for something this
- * cannot honour must fail the boot, never review as if it had. Switching the
- * validator off IS honoured.
+ * giving the validator a ceiling, a guide on any lens but `pass-style` or one
+ * that cannot be read: a profile that asked for something this cannot honour
+ * must fail the boot, never review as if it had. Switching the validator off
+ * IS honoured.
  */
 export function parseLensTable(
   where: string,
   raw: unknown,
   known: readonly string[],
+  dir?: string,
 ): Record<string, LensTuning> {
   const table = (v: unknown): v is Record<string, unknown> =>
     typeof v === "object" && v !== null && !Array.isArray(v);
@@ -135,6 +207,11 @@ export function parseLensTable(
           if (!(SEVERITIES as readonly unknown[]).includes(value))
             throw new Error(`${at} max_severity must be one of ${SEVERITIES.join(", ")}`);
           t.max_severity = value as Severity;
+          break;
+        case "guide":
+          if (lens !== STYLE_LENS)
+            throw new Error(`${at} guide — only [lenses.${STYLE_LENS}] judges against a guide`);
+          t.guide = readProfileGuide(at, value, dir);
           break;
         default:
           throw new Error(`${at} unknown key "${key}" — allowed: ${LENS_TUNING_KEYS.join(", ")}`);
@@ -210,12 +287,27 @@ function ceilingText(lens: string, sev: Severity): string {
   );
 }
 
+function guideText(g: ProfileStyleGuide): string {
+  return (
+    `\n## This repo's profile style guide (\`${g.file}\`)\n` +
+    `This repo's profile carries a style guide for \`${STYLE_LENS}\`, below, for when the repo writes none of its own. ` +
+    `It is the standard ONLY in a round whose \`${STYLE_LENS}\` plan row names "this repo's profile style guide"; ` +
+    `when that row names a guide the repo itself writes, the repo's guide is the only standard and this section does not apply. ` +
+    `A \`${STYLE_LENS}\` finding against it quotes the rule verbatim and cites it as \`profile style guide ${g.file}\` in place of a repo file and line, ` +
+    `and cites the CHANGED line that breaks it, exactly as for a repo guide. ` +
+    `Validator: audit such a finding against this text as you would a repo guide — a rule it does not state is \`refuted\`, and so is a finding citing it in a round whose style row named the repo's own guide.\n\n` +
+    `----- begin profile style guide -----\n${g.text.replace(/\n*$/, "\n")}----- end profile style guide -----\n`
+  );
+}
+
 /**
- * The addenda a profile's `emphasis` and `max_severity` compile into, in a
- * deterministic order (lens name, emphasis before ceiling). An emphasis binds
- * its lens alone; a ceiling binds its lens (so it knows how high it may go)
- * and the validator (which enforces it). Composed after the profile's own
- * pack, so a ceiling is the last word on a lens's cap.
+ * The addenda a profile's `emphasis`, `max_severity` and `guide` compile
+ * into, in a deterministic order (lens name; emphasis, ceiling, guide). An
+ * emphasis binds its lens alone; a ceiling binds its lens (so it knows how
+ * high it may go) and the validator (which enforces it); a guide binds the
+ * style lens (its standard) and the validator (which audits against it).
+ * Composed after the profile's own pack, so a ceiling is the last word on a
+ * lens's cap.
  */
 export function lensTuningAddenda(lenses: LensTuningMap | undefined): PassAddendum[] {
   const out: PassAddendum[] = [];
@@ -234,6 +326,9 @@ export function lensTuningAddenda(lenses: LensTuningMap | undefined): PassAddend
         scope: [lens, VALIDATE],
         text: ceilingText(lens, t.max_severity),
       });
+    }
+    if (t.guide !== undefined) {
+      out.push({ id: `lens-guide-${lens}`, scope: [lens, VALIDATE], text: guideText(t.guide) });
     }
   }
   return out;

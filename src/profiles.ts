@@ -294,7 +294,7 @@ function loadOwnPack(layer: ProfileLayer): PassAddendum[] {
     }
     if (LENS_TUNING_ID_PREFIXES.some((p) => entry.id.startsWith(p))) {
       throw new Error(
-        `profile addendum ${path}: id "${entry.id}" is reserved for the addenda [lenses] compiles (emphasis, max_severity)`,
+        `profile addendum ${path}: id "${entry.id}" is reserved for the addenda [lenses] compiles (emphasis, max_severity, guide)`,
       );
     }
     if (seen.has(entry.id))
@@ -421,7 +421,7 @@ export function loadProfileLensTuning(
   for (const layer of profileChain(root, profile, lookup)) {
     if (layer.lenses === undefined) continue;
     const where = `[review] profile "${layer.name}": ${layer.toml}`;
-    merged = mergeLensTuning(merged, parseLensTable(where, layer.lenses, ALL_PASSES));
+    merged = mergeLensTuning(merged, parseLensTable(where, layer.lenses, ALL_PASSES, layer.dir));
   }
   return merged;
 }
