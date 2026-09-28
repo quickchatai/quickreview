@@ -79,10 +79,15 @@ yours either way — the wizard never creates a machine.
 ## Run
 
 ```
-ansible-playbook -i inventory.ini playbook.yml
+ansible-playbook -i inventory.ini playbook.yml -e base_clone_dir=<clone dir>
 # force an image rebuild after bumping pins:
-ansible-playbook -i inventory.ini playbook.yml -e rebuild_image=true
+ansible-playbook -i inventory.ini playbook.yml -e base_clone_dir=<clone dir> -e rebuild_image=true
 ```
+
+`base_clone_dir` is mandatory: it is the reviewed repo's base-clone directory
+under the sandbox root (`[github] clone_dir`, else the repo's basename), and
+the rsync `--delete` keeps it only because it is excluded by that name.
+`scripts/deploy.sh` derives and passes it for you.
 
 What it does, in order: host packages + Docker → (when `cloudflared_enabled`)
 cloudflared apt repo, install, service registration with the tunnel token →

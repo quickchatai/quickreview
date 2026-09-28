@@ -31,6 +31,14 @@
 #       - [openviking] extension_commit     == extensions/vendor/openviking-pi/
 #                                              upstream.json "commit"
 #         (the vendored fork rides the rsync, not the image)
+#   * refuses a base-clone name (`[github] clone_dir`, else the
+#     repo slug's basename — the same rule as githubCloneDir in
+#     src/config.ts) that is not one plain path segment or that names a
+#     tracked path. That name is handed to the playbook as
+#     `-e base_clone_dir=…`, which is what keeps the VM's clone out of the
+#     rsync --delete, and it is written into this checkout's LOCAL ignore
+#     (.git/info/exclude, never the tracked .gitignore) so a clone of any
+#     name never reads as a dirty tree.
 #
 # This script performs NO live run on its own beyond ansible/ssh; every live
 # invocation belongs to the owner on a machine with VM access.
@@ -201,6 +209,22 @@ effective_var() {
   group_vars_key "$1"
 }
 
+# The base clone's directory name, derived exactly as githubCloneDir
+# (src/config.ts) derives it: `[github] clone_dir` when set, else the repo
+# slug's basename (`.git` and trailing slashes stripped), else "repo".
+# tests/deploy.test.ts pins the two derivations against each other.
+base_clone_dir() {
+  local explicit repo tail
+  explicit="$(config_table_key github clone_dir || true)"
+  explicit="$(echo "$explicit" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+  if [[ -n "$explicit" ]]; then echo "$explicit"; return 0; fi
+  repo="$(config_table_key github repo || true)"
+  repo="${repo%.git}"
+  while [[ "$repo" == */ ]]; do repo="${repo%/}"; done
+  tail="${repo##*/}"
+  echo "${tail:-repo}"
+}
+
 first_inventory_host() {
   [[ -f "$INVENTORY" ]] || return 0
   awk '/^[[:space:]]*[#;]/ { next }
@@ -219,6 +243,32 @@ first_inventory_host() {
 if ! git -C "$SANDBOX_DIR" rev-parse --git-dir >/dev/null 2>&1; then
   die "$SANDBOX_DIR is not a git repository — refusing to deploy an untracked tree"
 fi
+
+# 1a. the base clone. Its name reaches the playbook's rsync exclude,
+# so it must be one plain path segment, and it must not name anything this
+# tree tracks — excluding `/src` would ship no daemon, and a clone called
+# `src` would be deleted by the --delete it was meant to survive.
+CLONE_DIR="$(base_clone_dir)"
+if [[ ! "$CLONE_DIR" =~ ^[A-Za-z0-9._-]+$ || "$CLONE_DIR" == "." || "$CLONE_DIR" == ".." ]]; then
+  die "base clone name '$CLONE_DIR' ([github] clone_dir, else the repo's basename) is not one plain directory name — fix config.toml"
+fi
+if [[ -n "$(git -C "$SANDBOX_DIR" ls-files -- "$CLONE_DIR" | head -1)" ]]; then
+  die "base clone name '$CLONE_DIR' collides with a tracked path in $SANDBOX_DIR — set [github] clone_dir to a free name"
+fi
+# The clone is untracked by construction, so the ignore rule is local: the
+# repo's info/exclude (shared by every worktree), never the tracked
+# .gitignore — a per-install name there would itself be a dirty tree. Written
+# in every mode, --dry-run included: it is bookkeeping for the check below,
+# not a deploy action, and it is idempotent.
+if ! git -C "$SANDBOX_DIR" check-ignore -q --no-index "$CLONE_DIR/" 2>/dev/null; then
+  CLONE_EXCLUDE="$(git -C "$SANDBOX_DIR" rev-parse --path-format=absolute --git-path info/exclude)"
+  mkdir -p "$(dirname "$CLONE_EXCLUDE")"
+  # never glue the rule onto a last line that lacks its newline
+  if [[ -s "$CLONE_EXCLUDE" && -n "$(tail -c1 "$CLONE_EXCLUDE")" ]]; then echo >>"$CLONE_EXCLUDE"; fi
+  printf '/%s/\n' "$CLONE_DIR" >>"$CLONE_EXCLUDE"
+  note "base clone '$CLONE_DIR' added to the local ignore ($CLONE_EXCLUDE)"
+fi
+
 DIRTY="$(git -C "$SANDBOX_DIR" status --porcelain)"
 if [[ -n "$DIRTY" ]]; then
   echo "$SELF: refusing to deploy — the working tree is dirty:" >&2
@@ -339,8 +389,8 @@ fi
 
 ANSIBLE_CMD=(ansible-playbook -i "$INVENTORY" "$PLAYBOOK")
 case "$MODE" in
-  sync)    ANSIBLE_CMD+=(--start-at-task "$SYNC_START_TASK" -e force_restart=true) ;;
-  rebuild) ANSIBLE_CMD+=(-e rebuild_image=true) ;;
+  sync)    ANSIBLE_CMD+=(--start-at-task "$SYNC_START_TASK" -e force_restart=true -e "base_clone_dir=$CLONE_DIR") ;;
+  rebuild) ANSIBLE_CMD+=(-e rebuild_image=true -e "base_clone_dir=$CLONE_DIR") ;;
   verify)  ANSIBLE_CMD=() ;;
 esac
 
@@ -410,6 +460,7 @@ print_plan() {
     echo "  memory pins  <no [openviking] block in config.toml — unverified>"
   fi
   echo "  vm host      ${VM_HOST:-<unset — set QC_VM_HOST>}"
+  echo "  base clone   /$CLONE_DIR (kept on the VM by the rsync exclude; locally ignored via info/exclude)"
   case "$MODE" in
     sync)    echo "  action       mirror-rsync working copy -> /opt/quickreview/sandbox (--delete, runtime dirs kept), restart container (no image rebuild)" ;;
     rebuild) echo "  action       full playbook with -e rebuild_image=true (image rebuilt against the pins)" ;;

@@ -149,7 +149,11 @@ is verified.
 `src/worktrees.ts` keeps one base clone plus one worktree per PR:
 
 - base clone: `<root>/<clone_dir>` (`[github] clone_dir`, else the repo
-  basename), cloned once by `ensureBaseClone`;
+  basename), cloned once by `ensureBaseClone`. `scripts/deploy.sh` derives
+  the same name and passes it to the playbook as `-e base_clone_dir=…` — the
+  rsync `--delete` keeps the VM's clone only because it is excluded by that
+  name — and writes it into the checkout's local `.git/info/exclude`, never
+  the tracked `.gitignore`;
 - worktrees: `<root>/wt/pr-<n>`, detached, created or reset by `checkoutAt`.
 
 `ensureWorktree(pr, { baseRef })` fetches the PR head into the local ref

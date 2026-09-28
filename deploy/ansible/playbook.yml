@@ -222,6 +222,10 @@
         # own `src/memory/` — the VM got no src/memory or dist/src/memory, and
         # the daemon crash-looped on a missing ovsession.js (2026-08-20).
         # .git/.claude/node_modules stay unanchored: those may nest.
+        # The base clone's name is the configured one: deploy.sh
+        # derives it from config.toml and passes `-e base_clone_dir=…`. No
+        # default on purpose — a run that does not name the clone fails here
+        # rather than letting --delete wipe a clone it did not know about.
         rsync_opts:
           - "--delete"
           - "--exclude=.git"
@@ -238,7 +242,7 @@
           - "--exclude=/notes"
           - "--exclude=/ledger.md"
           - "--exclude=/AGENTS.override.md"
-          - "--exclude=/example-app"
+          - "--exclude=/{{ base_clone_dir | mandatory }}"
           - "--exclude=/pihome"
       when: sandbox_src is defined
 

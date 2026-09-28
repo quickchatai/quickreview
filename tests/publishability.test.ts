@@ -398,12 +398,6 @@ const ALLOWLIST: AllowlistEntry[] = [
     reason: "asserts the companion evidence skill names its frozen /example-app mount",
   },
   {
-    path: ".gitignore",
-    tokens: ["quickchat"],
-    reason:
-      "ignores the live deployment's clone dir; the name derives from config since and is genericized with",
-  },
-  {
     path: "publish-manifest.json",
     tokens: ["quickchat"],
     reason: "the exclusion record itself must name the excluded private-profile path",
@@ -478,15 +472,6 @@ const ALLOWLIST: AllowlistEntry[] = [
     path: "tests/publishability.test.ts",
     tokens: DENYLIST.map((d) => d.token),
     reason: "this lint — the denylist itself plus the negative-control plants",
-  },
-
-  // -- Live deploy path values (private VM deploy; the plain-docker path is
-  //    the public deploy story).
-  {
-    path: "deploy/ansible/playbook.yml",
-    tokens: ["quickchat"],
-    reason:
-      "rsync exclude for the live clone dir on the private VM; parameterized with the ansible genericization",
   },
 ];
 

@@ -15,7 +15,9 @@ archive/*
 memory/*
 !memory/.gitkeep
 wt/
-example-app/
+# The base clone (<sandbox root>/<[github] clone_dir>) is NOT listed here: its
+# name is per-install, so scripts/deploy.sh writes it into the LOCAL
+# .git/info/exclude instead — a tracked line would name one repo.
 # finished-round evidence copied down from the VM. The default store
 # lives outside the repo (~/.local/share/qcr/evidence) because it grows without
 # bound; this covers an in-repo `[companion] evidence_dir` (and the empty-string

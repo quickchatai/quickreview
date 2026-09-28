@@ -4,10 +4,11 @@
 // --dry-run or at a refusal.
 import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { githubCloneDir } from "../src/config.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const deploySh = join(root, "scripts", "deploy.sh");
@@ -119,6 +120,10 @@ function makeScratch(opts: {
   upstreamCommit?: string;
   /** The inventory text — host vars on the host line outrank group_vars. */
   inventory?: string;
+  /** A `[github]` table appended to config.toml (the clone name). */
+  github?: { repo?: string; cloneDir?: string };
+  /** Tracked files to commit with the scratch tree, path → contents. */
+  tracked?: Record<string, string>;
 }): Env {
   const dir = mkdtempSync(join(tmpdir(), "qcr-deploy-"));
   const sandbox = join(dir, "sandbox");
@@ -126,7 +131,25 @@ function makeScratch(opts: {
   mkdirSync(sandbox, { recursive: true });
   mkdirSync(join(ansible, "group_vars"), { recursive: true });
 
-  writeFileSync(join(sandbox, "config.toml"), CONFIG(opts.configPi, opts.configOv));
+  writeFileSync(
+    join(sandbox, "config.toml"),
+    CONFIG(opts.configPi, opts.configOv) +
+      (opts.github === undefined
+        ? ""
+        : [
+            "",
+            "[github]",
+            ...(opts.github.repo === undefined ? [] : [`repo = "${opts.github.repo}"`]),
+            ...(opts.github.cloneDir === undefined
+              ? []
+              : [`clone_dir = "${opts.github.cloneDir}"   # trailing comment`]),
+            "",
+          ].join("\n")),
+  );
+  for (const [rel, body] of Object.entries(opts.tracked ?? {})) {
+    mkdirSync(dirname(join(sandbox, rel)), { recursive: true });
+    writeFileSync(join(sandbox, rel), body);
+  }
   writeFileSync(
     join(ansible, "group_vars", "all.yml"),
     GROUP_VARS(opts.groupVarsPi, opts.sandboxSrc ?? true, opts.groupVarsOv ?? opts.configOv),
@@ -599,5 +622,176 @@ describe("deploy.sh drain advisory", () => {
     const res = runMerged(env, [], { QC_STATUS_JSON_CMD: "false" });
     expect(res.code).toBe(0);
     expect(res.out).toContain("heartbeat unreadable");
+  });
+});
+
+// ---- the base clone, for ANY repo name ---------------------------
+// The VM's base clone lives inside the rsync --delete target, and it survives
+// a sync only because the playbook excludes it BY NAME. That name used to be
+// one install's literal repo name, so any other reviewed repo had its clone
+// wiped on every sync; and the tracked `.gitignore` line of that literal left
+// any other clone reading as a dirty tree, which this script refuses. Both
+// now follow the configured clone name.
+describe("deploy.sh — base clone name", () => {
+  const ACME = { repo: "acme/acme-api" };
+
+  /** The sync task's rsync_opts, read out of the REAL playbook. */
+  function playbookRsyncOpts(): string[] {
+    const playbook = readFileSync(join(root, "deploy", "ansible", "playbook.yml"), "utf8");
+    const at = playbook.indexOf("- name: Sync the local sandbox working copy");
+    expect(at).toBeGreaterThan(0);
+    const block = playbook.slice(at, playbook.indexOf("- name:", at + 1));
+    return [...block.matchAll(/^\s+- "(--[^"]+)"$/gm)].map((m) => m[1]!);
+  }
+
+  /** Render the playbook's Jinja the way ansible would for these extra vars. */
+  function render(opt: string, vars: Record<string, string>): string {
+    return opt.replace(/\{\{\s*(\w+)(?:\s*\|\s*mandatory)?\s*\}\}/g, (_, k: string) => {
+      const v = vars[k];
+      if (v === undefined) throw new Error(`playbook var ${k} undefined — ansible would fail`);
+      return v;
+    });
+  }
+
+  /** The `-e k=v` extra vars on the planned ansible command. */
+  function extraVars(stdout: string): Record<string, string> {
+    const line = stdout.split("\n").find((l) => l.includes("  command      ")) ?? "";
+    return Object.fromEntries(
+      [...line.matchAll(/-e (\w+)=(\S+)/g)].map((m) => [m[1]!, m[2]!] as const),
+    );
+  }
+
+  it("names the clone in the plan and hands it to the playbook in sync and rebuild", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", github: ACME });
+    const sync = run(env, ["--dry-run"]);
+    expect(sync.code).toBe(0);
+    expect(sync.stdout).toContain("base clone   /acme-api");
+    expect(extraVars(sync.stdout).base_clone_dir).toBe("acme-api");
+    const rebuild = run(env, ["--dry-run", "rebuild"]);
+    expect(rebuild.code).toBe(0);
+    expect(extraVars(rebuild.stdout).base_clone_dir).toBe("acme-api");
+  });
+
+  it("derives the name exactly as githubCloneDir does", () => {
+    const cases: { repo?: string; cloneDir?: string }[] = [
+      { repo: "acme/acme-api" },
+      { repo: "https://github.com/acme/widgets.git" },
+      { repo: "git@github.com:acme/gadgets.git" },
+      { repo: "acme/trailing/" },
+      { repo: "acme/acme-api", cloneDir: "base" },
+      { repo: "acme/acme-api", cloneDir: "  " },
+      {},
+    ];
+    for (const g of cases) {
+      env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", github: g });
+      const r = run(env, ["--dry-run"]);
+      expect(r.code, JSON.stringify(g)).toBe(0);
+      const want = githubCloneDir({ repo: g.repo ?? "", clone_dir: g.cloneDir ?? "" } as never);
+      expect(extraVars(r.stdout).base_clone_dir, JSON.stringify(g)).toBe(want);
+      rmSync(env.dir, { recursive: true, force: true });
+    }
+  }, 60_000); // seven scratch repos + seven script runs
+
+  it("a clone of another repo's name SURVIVES the playbook's real rsync --delete, and stale files still go", () => {
+    let hasRsync = true;
+    try {
+      execFileSync("rsync", ["--version"], { stdio: "ignore" });
+    } catch {
+      hasRsync = false;
+    }
+    if (!hasRsync) return; // the sync itself needs rsync; the plan cases above still run
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", github: ACME });
+    const vars = extraVars(run(env, ["--dry-run"]).stdout);
+    const opts = playbookRsyncOpts().map((o) => render(o, vars));
+    expect(opts).toContain("--exclude=/acme-api");
+    // exactly one anchored exclude is not a known runtime dir: the clone's
+    const runtime = ["state", "wt", "archive", "commands", "digest", "inject", "verdict", "memory",
+      "notes", "ledger.md", "AGENTS.override.md", "pihome"];
+    const clones = opts.filter((o) => /^--exclude=\/[^/]+$/.test(o) && !runtime.includes(o.slice(11)));
+    expect(clones).toEqual(["--exclude=/acme-api"]);
+
+    const src = join(env.dir, "src-tree");
+    const dest = join(env.dir, "vm-sandbox");
+    mkdirSync(join(src, "dist"), { recursive: true });
+    writeFileSync(join(src, "dist", "daemon.js"), "new build\n");
+    mkdirSync(join(dest, "acme-api", ".git"), { recursive: true });
+    writeFileSync(join(dest, "acme-api", ".git", "HEAD"), "ref: refs/heads/main\n");
+    writeFileSync(join(dest, "acme-api", "README.md"), "the reviewed repo\n");
+    writeFileSync(join(dest, "removed-upstream.txt"), "stale\n");
+
+    execFileSync("rsync", ["-a", ...opts, `${src}/`, `${dest}/`]);
+    expect(readFileSync(join(dest, "acme-api", "README.md"), "utf8")).toBe("the reviewed repo\n");
+    expect(existsSync(join(dest, "acme-api", ".git", "HEAD"))).toBe(true);
+    expect(existsSync(join(dest, "removed-upstream.txt"))).toBe(false);
+    expect(readFileSync(join(dest, "dist", "daemon.js"), "utf8")).toBe("new build\n");
+  });
+
+  it("the playbook refuses to render without a clone name (no silent default)", () => {
+    const opt = playbookRsyncOpts().find((o) => o.includes("base_clone_dir"));
+    expect(opt).toBe("--exclude=/{{ base_clone_dir | mandatory }}");
+    expect(() => render(opt!, {})).toThrow(/undefined/);
+  });
+
+  it("a local clone of any name does not dirty the tree: it lands in info/exclude, once", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", github: ACME });
+    // a real nested repo, exactly what WorktreeManager.ensureBaseClone leaves
+    execFileSync("git", ["init", "-q", join(env.sandbox, "acme-api")]);
+    const r = run(env, ["--dry-run"]);
+    expect(r.code).toBe(0);
+    const exclude = readFileSync(join(env.sandbox, ".git", "info", "exclude"), "utf8");
+    expect(exclude).toMatch(/^\/acme-api\/$/m);
+    const status = execFileSync("git", ["-C", env.sandbox, "status", "--porcelain"], {
+      encoding: "utf8",
+    });
+    expect(status).toBe("");
+    expect(run(env, ["--dry-run"]).code).toBe(0);
+    const again = readFileSync(join(env.sandbox, ".git", "info", "exclude"), "utf8");
+    expect(again.match(/^\/acme-api\/$/gm)).toHaveLength(1);
+  });
+
+  it("never glues the rule onto an exclude file's unterminated last line", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", github: ACME });
+    writeFileSync(join(env.sandbox, ".git", "info", "exclude"), "*.swp");
+    expect(run(env, ["--dry-run"]).code).toBe(0);
+    expect(readFileSync(join(env.sandbox, ".git", "info", "exclude"), "utf8")).toBe(
+      "*.swp\n/acme-api/\n",
+    );
+  });
+
+  it("refuses a clone name that is not one plain directory name", () => {
+    env = makeScratch({
+      configPi: "0.84.1",
+      groupVarsPi: "0.84.1",
+      github: { repo: "acme/acme-api", cloneDir: "../escape" },
+    });
+    const r = run(env, ["--dry-run"]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("not one plain directory name");
+  });
+
+  it("refuses a clone name that collides with a tracked path — excluding it would ship no daemon", () => {
+    env = makeScratch({
+      configPi: "0.84.1",
+      groupVarsPi: "0.84.1",
+      github: { repo: "acme/src" },
+      tracked: { "src/daemon.ts": "export {};\n" },
+    });
+    const r = run(env, ["--dry-run"]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("collides with a tracked path");
+  });
+
+  it("the tracked .gitignore names no install's clone — that rule is local now", () => {
+    const gitignore = readFileSync(join(root, ".gitignore"), "utf8");
+    // this checkout's own live config, when it has one (the published
+    // snapshot does not): its clone name must not be a tracked ignore line
+    const live = join(root, "config.toml");
+    if (existsSync(live)) {
+      const g = /\[github\]([\s\S]*?)(?:\n\[|$)/.exec(readFileSync(live, "utf8"))?.[1] ?? "";
+      const val = (k: string) => new RegExp(`^${k}\\s*=\\s*"([^"]*)"`, "m").exec(g)?.[1] ?? "";
+      const name = githubCloneDir({ repo: val("repo"), clone_dir: val("clone_dir") } as never);
+      expect(gitignore.split("\n").map((l) => l.replace(/^\/|\/$/g, ""))).not.toContain(name);
+    }
+    expect(gitignore).toContain("info/exclude");
   });
 });
