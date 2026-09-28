@@ -26,6 +26,7 @@ import {
 } from "../src/lenstuning.js";
 import { loadProfileAddenda, loadProfileLensTuning } from "../src/profiles.js";
 import { runFingerprint } from "../src/bench/runner.js";
+import { buildParts } from "../src/wire.js";
 import { renderAddableLenses } from "../src/templates.js";
 import type { PrStateRow } from "../src/state.js";
 
@@ -409,6 +410,29 @@ describe("resolution", () => {
     profile("brokenbase", '[lenses.pass-ui]\neffort = "turbo"\n');
     profile("fixes", 'extends = "brokenbase"\n[lenses.pass-ui]\neffort = "low"\n');
     expect(() => tuned("fixes")).toThrow(/profile "brokenbase"/);
+  });
+});
+
+// ---- the production seam -------------------------------------------------------
+
+describe("the daemon's assembly overlays the tuning (wire.ts buildParts)", () => {
+  it("parts.cfg carries the selected profile's resolved lenses", () => {
+    profile("wired", '[lenses.pass-ui]\nenabled = false\n');
+    const saved = { HOME: process.env.HOME, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME };
+    process.env.HOME = env.HOME;
+    process.env.XDG_CONFIG_HOME = env.XDG_CONFIG_HOME;
+    try {
+      const loaded = structuredClone(fixture);
+      loaded.review.profile = "wired";
+      const parts = buildParts(sandbox, loaded);
+      expect(parts.cfg.lenses).toEqual({ "pass-ui": { enabled: false } });
+      expect(lensesOf(parts.cfg, [file("web/src/App.tsx")])).not.toContain("pass-ui");
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
   });
 });
 

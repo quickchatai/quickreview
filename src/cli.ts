@@ -480,8 +480,14 @@ export async function cmdRegression(rest: string[], json: boolean): Promise<numb
   const { MutationGate } = await import("./gate.js");
   const { nodeReplayIo, parseRegressionArgs, readCaseSet, runRegressionCli, ScratchReplay } =
     await import("./replay.js");
-  const cfg = loadConfig();
   const root = sandboxRoot();
+  // the replay plans rounds with `buildPassPlan`, so it must see the
+  // profile's per-lens tuning exactly as the daemon does (wire.ts buildParts)
+  // — otherwise a lens the profile switched off would be replayed.
+  const { applyProfileTuning } = await import("./lenstuning.js");
+  const { loadProfileLensTuning } = await import("./profiles.js");
+  const loaded = loadConfig();
+  const cfg = applyProfileTuning(loaded, loadProfileLensTuning(root, loaded.review.profile));
   const args = parseRegressionArgs(rest, json);
   const gate = new MutationGate(true, join(stateDir(), "dryrun"), async () => {
     throw new Error("qcr regression performs no mutations");
