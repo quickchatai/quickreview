@@ -264,12 +264,19 @@ export function renderReport(
 
 /** Every round's metrics file, in round order, plus the average when the
  * harness wrote one. A round's number is exact; the average is a float. */
-export function roundMetrics(dir: string): {
+export function roundMetrics(
+  dir: string,
+  /** The harness reader the eval ran with (`--reviewer`): ocr, or claude for
+   * the Claude Code arm. */
+  reviewer = "ocr",
+): {
   rounds: Array<{ round: number; summary: Record<string, number> }>;
   average: Record<string, number> | null;
 } {
   if (!existsSync(dir)) return { rounds: [], average: null };
-  const files = readdirSync(dir).filter((n) => n.startsWith("metrics_ocr_") && n.endsWith(".json"));
+  const files = readdirSync(dir).filter(
+    (n) => n.startsWith(`metrics_${reviewer}_`) && n.endsWith(".json"),
+  );
   const rounds: Array<{ round: number; summary: Record<string, number> }> = [];
   let average: Record<string, number> | null = null;
   for (const f of files.sort()) {

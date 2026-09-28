@@ -17,6 +17,13 @@
 #   ocr-review <set> [cli flags…] → the loopback Codex bridge + node cli ocr-review
 #   eval / report with BENCH_ARM=ocr score and report that arm: only the `all`
 #   variant (OCR comments carry no severity tag), the OCR report.
+#
+# The Claude Code arm (image target `claude`; root CLAUDE.md rule 5's one
+# ratified exception — `claude` runs HERE, inside this sandbox, and nowhere else):
+#   claude-review <set> [cli flags…] → node cli claude-review → claude_driver.py →
+#   the harness's own reviewers/claude.py, which runs `claude -p '/code-review …'`.
+#   eval / report with BENCH_ARM=claude score it with the harness's Claude
+#   reader (`--reviewer claude`), `all` variant only.
 set -euo pipefail
 
 ROOT=/opt/quickreview/sandbox
@@ -46,6 +53,7 @@ case "$cmd" in
   report)
     set_name="$1"; shift
     report_cmd=report; [[ "${BENCH_ARM:-qcr}" == ocr ]] && report_cmd=ocr-report
+    [[ "${BENCH_ARM:-qcr}" == claude ]] && report_cmd=claude-report
     exec "${CLI[@]}" "$report_cmd" --set "$(set_file "$set_name")" --out /bench-out "$@" ;;
   ocr-review)
     set_name="$1"; shift
@@ -68,6 +76,13 @@ case "$cmd" in
     "${CLI[@]}" ocr-review --set "$(set_file "$set_name")" --store /repos --out /bench-out \
       --bridge http://127.0.0.1:8766 "$@" || status=$?
     exit "$status" ;;
+  claude-review)
+    # --- the Claude Code arm (the ONLY path that runs `claude`) ---
+    set_name="$1"; shift
+    command -v claude >/dev/null || { echo "this image has no Claude Code — build it with: bench.sh build --arm claude" >&2; exit 2; }
+    [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}${ANTHROPIC_API_KEY:-}" ]] \
+      || { echo "claude: no credential — bench.sh passes bench/aacr/claude.env with --env-file" >&2; exit 1; }
+    exec "${CLI[@]}" claude-review --set "$(set_file "$set_name")" --store /repos --out /bench-out "$@" ;;
   results)
     set_name="$1"; shift
     exec "${CLI[@]}" results --set "$(set_file "$set_name")" --out /bench-out "$@" ;;
@@ -80,12 +95,13 @@ case "$cmd" in
     # none) must be the arm bench.sh was asked to score.
     arm="${BENCH_ARM:-qcr}"
     run_arm="$(python3 -c 'import json,sys
-try: print("ocr" if json.load(open(sys.argv[1])).get("reviewer") == "ocr" else "qcr")
+try: r = json.load(open(sys.argv[1])).get("reviewer"); print(r if r in ("ocr", "claude") else "qcr")
 except Exception: print("qcr")' /bench-out/run.json)"
     [[ "$run_arm" == "$arm" ]] || { echo "this run dir holds the $run_arm arm — score it with bench.sh eval --arm $run_arm" >&2; exit 2; }
     if [[ "$cmd" == eval ]]; then
       variants="all no-nits blockers"; report_cmd=report
       [[ "$arm" == ocr ]] && { variants="all"; report_cmd=ocr-report; }
+      [[ "$arm" == claude ]] && { variants="all"; report_cmd=claude-report; }
     else
       variants="posted posted+killed posted+merged all-candidates"; report_cmd=whatif-report
     fi
@@ -97,6 +113,7 @@ except Exception: print("qcr")' /bench-out/run.json)"
       done
       variants="${QCR_EVAL_VARIANTS//,/ }"
     fi
+    reader=ocr; [[ "$arm" == claude ]] && reader=claude
     line_k="${QCR_LINE_K:-1}"
     shards="${QCR_EVAL_SHARDS:-1}"
     [[ "$shards" =~ ^[1-9][0-9]?$ ]] || { echo "QCR_EVAL_SHARDS must be 1..99" >&2; exit 2; }
@@ -148,20 +165,20 @@ except Exception: print("qcr")' /bench-out/run.json)"
       if [[ "$line_k" != 1 ]]; then
         [[ -d /bench-out/results/all ]] || { echo "no results for variant all — run review first" >&2; echo 1 > "/tmp/eval-status/$variant"; return; }
         rm -rf "$dir"; mkdir -p "$dir"
-        find /bench-out/results/all -maxdepth 1 -name '*.json' ! -name 'metrics_ocr_*' -exec cp {} "$dir"/ \;
+        find /bench-out/results/all -maxdepth 1 -name '*.json' ! -name "metrics_${reader}_*" -exec cp {} "$dir"/ \;
       fi
       [[ -d "$dir" ]] || { echo "no results for variant $variant — run review (or whatif) first" >&2; echo 1 > "/tmp/eval-status/$variant"; return; }
-      rm -f "$dir"/metrics_ocr_*.json
+      rm -f "$dir"/metrics_"${reader}"_*.json
       echo "== eval: $variant ($expected instances, judge $judge, $rounds round(s), $shards shard(s))" >&2
       if [[ "$shards" == 1 ]]; then
-        ( cd /opt/aacr-bench/evaluation && /opt/aacr-venv/bin/python -m pipeline run --stage eval --reviewer ocr \
+        ( cd /opt/aacr-bench/evaluation && /opt/aacr-venv/bin/python -m pipeline run --stage eval --reviewer "$reader" \
             --dataset "$subset" --results-dir "$dir" --eval-rounds "$rounds" --line-k "$line_k" ) \
           > "$log" 2>&1 || st=1
       else
         local work="/tmp/eval-shards/$variant" pids=() dirs=()
         n="$(python3 "$SHARDS_PY" split --dataset "$subset" --results "$dir" --shards "$shards" --into "$work")" || n=0
         for ((k = 0; k < n; k++)); do
-          ( cd /opt/aacr-bench/evaluation && /opt/aacr-venv/bin/python -m pipeline run --stage eval --reviewer ocr \
+          ( cd /opt/aacr-bench/evaluation && /opt/aacr-venv/bin/python -m pipeline run --stage eval --reviewer "$reader" \
               --dataset "$work/$k/dataset.jsonl" --results-dir "$work/$k" --eval-rounds "$rounds" --line-k "$line_k" ) \
             > "$work/$k.log" 2>&1 &
           pids+=($!); dirs+=("$work/$k")
@@ -172,7 +189,7 @@ except Exception: print("qcr")' /bench-out/run.json)"
         for ((k = 0; k < n; k++)); do { echo "=== shard $k/$n"; cat "$work/$k.log"; } >> "$log"; done
         if [[ "$st" == 0 ]]; then
           /opt/aacr-venv/bin/python "$SHARDS_PY" merge --dataset "$subset" --out "$dir" --rounds "$rounds" \
-            --line-k "$line_k" "${dirs[@]}" >> "$log" 2>&1 || st=1
+            --line-k "$line_k" --reviewer "$reader" "${dirs[@]}" >> "$log" 2>&1 || st=1
         fi
       fi
       [[ "$st" == 0 ]] || { echo "harness failed for $variant — see eval/harness-$variant.log" >&2; echo 1 > "/tmp/eval-status/$variant"; return; }
@@ -188,9 +205,9 @@ except Exception: print("qcr")' /bench-out/run.json)"
       # The scorer silently skips an instance with no result file; refuse a
       # number built on fewer instances than the set has — in EVERY round
       # (the averaged file carries floats, so the per-round files are read).
-      got="$(python3 - "$dir" "$rounds" <<'PY'
+      got="$(python3 - "$dir" "$rounds" "$reader" <<'PY'
 import glob, json, sys
-files = [f for f in sorted(glob.glob(sys.argv[1] + "/metrics_ocr_*.json")) if "average" not in f]
+files = [f for f in sorted(glob.glob(sys.argv[1] + f"/metrics_{sys.argv[3]}_*.json")) if "average" not in f]
 if len(files) != int(sys.argv[2]):
     print(f"{len(files)}-of-{sys.argv[2]}-rounds")
 else:

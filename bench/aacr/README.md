@@ -297,6 +297,43 @@ bench/aacr/bench.sh eval   --arm ocr --run ocr-1 --judge codex --rounds 3
   range gets more candidate pairs. OCR comments have no severity, so only the
   `all` variant exists for this arm; compare it with our `all` row.
 
+## The Claude Code arm (`--arm claude`)
+
+Claude Code as a BENCHMARKED REVIEWER — root CLAUDE.md rule 5's one ratified
+exception: `claude` exists only in image `qcr-bench-claude` and runs only inside
+its hardened review container, never on the host (`tests/bench-claude.test.ts`
+fences it).
+
+```sh
+# once: its OWN credential (never the host's login), gitignored, chmod 600
+#   CLAUDE_CODE_OAUTH_TOKEN=…   (run `claude setup-token` yourself)  or  ANTHROPIC_API_KEY=…
+$EDITOR bench/aacr/claude.env                 # or QCR_BENCH_CLAUDE_ENV=/path/to/file
+bench/aacr/bench.sh build  --arm claude                                 # image qcr-bench-claude
+bench/aacr/bench.sh review --arm claude --run claude-1 --set fresh10    # one case at a time
+bench/aacr/bench.sh judge  --arm claude --run claude-1 --set fresh10
+bench/aacr/bench.sh eval   --arm claude --run claude-1 --set fresh10 --judge codex --rounds 3
+bench/aacr/arm.sh --prefix claude --arm claude --cases fresh10 --eval 3  # all of it
+```
+
+- **The harness runs it.** `claude_driver.py` imports the pinned harness's own
+  `evaluation/reviewers/claude.py` and calls `run_claude_review` +
+  `save_result`: `claude -p '/code-review <base>...<head> ' --add-dir <repo>
+  --permission-mode acceptEdits --output-format json --mcp-config <findings
+  server> --allowed-tools mcp__findings__report --append-system-prompt
+  <findings requirement> --settings <StopFailure hook>`, 30 min (+60 s). The
+  argv it ran is checked against that shape per case (`claude-argv.json`,
+  `argv_ok`); the result file is scored by the harness's Claude reader
+  (`--reviewer claude`). `/code-review` is Claude Code's built-in skill.
+- **What differs:** the repo is the `prepareTree` checkout at
+  `/work/repo/<owner>__<name>` (no CLAUDE.md above it); the credential is
+  Claude Code's own and the model its default for it (the harness pins one
+  through a gateway's `ANTHROPIC_MODEL`) — each case records the model that
+  ran (`model` in `case-summary.json`); every case gets a fresh HOME. Version
+  2.1.283, binary sha256 pinned; auto-update, telemetry and non-essential
+  traffic off.
+- **An auth failure exits 0** in Claude Code; the arm reads it from the output
+  (`auth-failed`), and stops the run rather than scoring empty reviews.
+
 ## The what-if lever scorer (`whatif`)
 
 How would the score move if the reviewer POSTED more of what its lenses found?

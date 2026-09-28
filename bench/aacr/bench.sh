@@ -42,6 +42,15 @@
 #              loopback Codex bridge), `review` runs OCR the way the AACR harness
 #              runs it (one case at a time; --ocr-concurrency / --max-tools /
 #              --timeout-min = its 8 / 30 / 30), `eval` scores the `all` variant.
+#   --arm claude (build, review, eval, report, judge): Claude Code as a BENCHMARKED
+#              REVIEWER — root CLAUDE.md rule 5's one ratified exception; `claude` exists
+#              only in image qcr-bench-claude and runs only in its review container.
+#              `review` runs the AACR harness's own reviewers/claude.py (`claude -p
+#              '/code-review <base>...<head> '` …, one case at a time, --timeout-min 30);
+#              `eval` scores `all` with the harness's Claude reader. Its credential is its
+#              OWN: bench/aacr/claude.env (gitignored; QCR_BENCH_CLAUDE_ENV=FILE overrides)
+#              holding CLAUDE_CODE_OAUTH_TOKEN=… (`claude setup-token`) or ANTHROPIC_API_KEY=…,
+#              passed with --env-file — never the host's login, never on an argv.
 #
 # What the sandbox can touch on this PC (and nothing else):
 #   - bench/aacr/runs/<ID>/                 read-write: prompts, transcripts, results, report
@@ -104,8 +113,14 @@ case "$ARM" in
   # OCR needs git >= 2.41; bookworm ships 2.39 (Dockerfile header).
   ocr) IMAGE="${QCR_BENCH_OCR_IMAGE:-qcr-bench-ocr:latest}"; TARGET=ocr
        BASE_ARGS=(--build-arg RUNTIME_BASE=node:22-trixie); REVIEW_ENTRY=ocr-review ;;
-  *) die "--arm must be qcr | ocr" ;;
+  # --- the Claude Code arm (rule 5's ratified exception: inside this image only) ---
+  # trixie as for OCR: the classic builder builds every stage before the target, ocr's included.
+  claude) IMAGE="${QCR_BENCH_CLAUDE_IMAGE:-qcr-bench-claude:latest}"; TARGET=claude
+       BASE_ARGS=(--build-arg RUNTIME_BASE=node:22-trixie); REVIEW_ENTRY=claude-review ;;
+  *) die "--arm must be qcr | ocr | claude" ;;
 esac
+# The Claude Code arm's own credential file (never the host's interactive login).
+CLAUDE_ENV="${QCR_BENCH_CLAUDE_ENV:-$HERE/claude.env}"
 # First character alphanumeric: `.`, `..` and dotfile ids would mount the wrong dir.
 [[ -z "$RUN" || "$RUN" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "--run must start with [A-Za-z0-9] and use only [A-Za-z0-9._-]"
 [[ "$LINE_K" =~ ^[0-9]{1,3}$ ]] || die "--line-k must be a small non-negative integer"
@@ -149,6 +164,22 @@ auth_mounts() {
     --mount "type=volume,src=$AUTH_VOLUME,dst=/pi-agent-src,volume-subpath=agent,readonly"
     --mount "type=tmpfs,dst=/pi-agent-src/sessions"
   )
+}
+
+# The Claude Code arm's credential: its OWN token file, handed to docker with
+# --env-file so no value ever reaches an argv or the reproduction log. Only the
+# key NAMES are read here, never a value.
+claude_env_args() {
+  local how="create it (it is gitignored) with ONE of:
+    CLAUDE_CODE_OAUTH_TOKEN=<token>   # from: claude setup-token  (run it yourself, in your own terminal)
+    ANTHROPIC_API_KEY=<key>           # an Anthropic API key
+  then chmod 600 it. Its own credential only — never copy the host's interactive login."
+  [[ -e "$CLAUDE_ENV" ]] || die "the Claude Code arm needs its own credential in $CLAUDE_ENV — $how"
+  [[ -f "$CLAUDE_ENV" && ! -L "$CLAUDE_ENV" ]] || die "$CLAUDE_ENV must be a regular file, not a symlink"
+  local n
+  n="$(grep -cE '^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY)=.+' "$CLAUDE_ENV" || true)"
+  [[ "$n" == 1 ]] || die "$CLAUDE_ENV must set exactly one of CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY (found $n) — $how"
+  CENV=(--env-file "$CLAUDE_ENV")
 }
 
 # The reproduction log lives NEXT TO the run dir, never inside it: a host-side
@@ -236,6 +267,7 @@ case "$cmd" in
         src extensions prompts agents profiles \
         bench/aacr/Dockerfile bench/aacr/sets bench/aacr/defects bench/aacr/judge_shim.py \
         bench/aacr/in-container.sh bench/aacr/codex_bridge.py bench/aacr/eval_shards.py \
+        bench/aacr/claude_driver.py \
         deploy/reviewer/AGENTS.override.md ) \
       | tar -xf - -C "$ctx"
     docker build --target "$TARGET" -t "$IMAGE" ${BASE_ARGS[@]+"${BASE_ARGS[@]}"} \
@@ -261,7 +293,14 @@ case "$cmd" in
       record "${args[@]}"
       exec docker run "${args[@]}"
     fi
-    auth_mounts
+    if [[ "$ARM" == claude ]]; then
+      # No pi login: Claude Code's own credential, and a disk-backed /work for
+      # the case repos (no CLAUDE.md above it — Claude Code reads parent dirs).
+      claude_env_args
+      AUTH=("${CENV[@]}" --mount type=volume,dst=/work)
+    else
+      auth_mounts
+    fi
     # The OCR arm's reasoning effort (its bridge's --effort; default medium).
     oe=(); [[ "$ARM" == ocr && -n "${QCR_BENCH_OCR_EFFORT:-}" ]] && oe=(-e "OCR_BRIDGE_EFFORT=$QCR_BENCH_OCR_EFFORT")
     args=("${HARDEN[@]}" "${AUTH[@]}" ${oe[@]+"${oe[@]}"}
@@ -318,7 +357,7 @@ case "$cmd" in
     ;;
 
   results)
-    [[ "$ARM" == qcr ]] || die "results rebuilds the quickreviewd arm's scored files; the ocr arm writes its result files directly"
+    [[ "$ARM" == qcr ]] || die "results rebuilds the quickreviewd arm's scored files; the $ARM arm writes its result files directly"
     need_image
     d="$(run_dir)"
     docker run "${HARDEN[@]}" --network none --mount "type=bind,src=$d,dst=/bench-out" \
@@ -376,5 +415,5 @@ case "$cmd" in
       --mount "type=bind,src=$d,dst=/bench-out" "$IMAGE" shell
     ;;
 
-  *) sed -n '2,42p' "$0"; exit 2 ;;
+  *) sed -n '2,52p' "$0"; exit 2 ;;
 esac

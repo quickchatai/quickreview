@@ -21,6 +21,12 @@
 //              [--bridge URL] [--ocr-bin PATH]      cases run ONE AT A TIME
 //   ocr-report --set <file> --out DIR
 //
+// The Claude Code arm (src/bench/claudecode.ts; image target `claude`; root
+// CLAUDE.md rule 5's one ratified exception — inside that sandbox ONLY):
+//   claude-review --set <file> --out DIR [--only id,id] [--store DIR] [--resume] [--keep-tree]
+//                 [--timeout-min 30]     through the harness's reviewers/claude.py, one case at a time
+//   claude-report --set <file> --out DIR
+//
 // The defect benchmark (src/bench/defects.ts; any run dir, either arm):
 //   defect-judge  --set <file> --defects <file> --out RUN_DIR [--only id,id] [--rounds 1]
 //                 [--model openai-codex/gpt-6-sol:high] [--concurrency 3] [--resume] [--label L]
@@ -55,6 +61,7 @@ import {
   type OcrFingerprint,
 } from "./ocr.js";
 import { parseReferenceLabels, renderOcrReport, renderReport } from "./report.js";
+import { CLAUDE_HARNESS_DEFAULTS, claudeReviewRun, renderClaudeReport } from "./claudecode.js";
 import { run as runCmd } from "./exec.js";
 import { renderWhatifReport, writeWhatifRun } from "./whatifrun.js";
 import {
@@ -152,11 +159,12 @@ function unprefetchedSummary(c: BenchCase, error: string): CaseSummary {
 /** A command of one arm refuses the other arm's run dir: the quickreviewd
  * `review`/`results` rewrite every variant's result files, which would wipe an
  * OCR run's scored input. */
-function assertArm(outDir: string, arm: "qcr" | "ocr"): void {
+function assertArm(outDir: string, arm: "qcr" | "ocr" | "claude"): void {
   const found = runArmOf(outDir);
+  const name = { qcr: "a quickreviewd", ocr: "an open-code-review", claude: "a Claude Code" };
   if (found !== null && found !== arm)
     throw new Error(
-      `${outDir} is ${found === "ocr" ? "an open-code-review" : "a quickreviewd"} run — this command belongs to the ${arm === "ocr" ? "ocr" : "quickreviewd"} arm (bench.sh --arm ${found})`,
+      `${outDir} is ${name[found]} run — this command belongs to the ${arm === "qcr" ? "quickreviewd" : arm} arm (bench.sh --arm ${found})`,
     );
 }
 
@@ -634,6 +642,41 @@ async function main(): Promise<number> {
     writeFileSync(
       join(outDir, "report.md"),
       renderOcrReport(set, outDir, selectCases(set, only(f))),
+    );
+    log(`report: ${join(outDir, "report.md")}`);
+    return 0;
+  }
+
+  if (f.cmd === "claude-review") {
+    // The Claude Code arm: the harness's own runner, via the driver (claudecode.ts).
+    if (!f.get("--out")) throw new Error("--out <dir> is required");
+    const outDir = resolve(f.get("--out")!);
+    assertArm(outDir, "claude");
+    return claudeReviewRun({
+      set: loadSet(f.get("--set")),
+      only: only(f),
+      outDir,
+      store,
+      workRoot: f.get("--work") ?? "/work",
+      homeRoot: f.get("--home-root") ?? "/tmp/claude-home",
+      python: f.get("--python") ?? "/opt/aacr-venv/bin/python",
+      driver: f.get("--driver") ?? "/opt/quickreview/bench/claude_driver.py",
+      timeoutMin: Number(f.get("--timeout-min") ?? CLAUDE_HARNESS_DEFAULTS.timeoutMin),
+      resume: f.has("--resume"),
+      keepTree: f.has("--keep-tree"),
+      env: process.env,
+      readMeta: (c) => readMeta(store, c),
+      log,
+    });
+  }
+
+  if (f.cmd === "claude-report") {
+    const set = loadSet(f.get("--set"));
+    const outDir = resolve(f.get("--out") ?? "");
+    assertArm(outDir, "claude");
+    writeFileSync(
+      join(outDir, "report.md"),
+      renderClaudeReport(set, outDir, selectCases(set, only(f))),
     );
     log(`report: ${join(outDir, "report.md")}`);
     return 0;
