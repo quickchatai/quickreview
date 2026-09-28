@@ -197,7 +197,9 @@ key name and a value spelling at once.
 One directory, `0700`, files `0600`, found by the install locator
 (`src/install.ts`): a set `[github] secrets_dir`, else
 `<config home>/secrets` (`~/.config/qcr/<install>/secrets`), else — logged —
-the legacy `~/.config/quickreview-bot` until `qcr install migrate` moves it.
+the legacy `~/.config/quickreview-bot` until `qcr install migrate` moves it
+(and repoints a compose `.env` `QCR_SECRETS_DIR` that still names it — recreate
+the stack afterwards).
 Overridable with `QCR_SECRETS_DIR` (compose) / `QC_SECRETS_DIR` (the wizards);
 mounted read-only into the daemon container at `/opt/quickreview/secrets`. The
 companion's `openviking-keys.env` is kept OUT of it, in

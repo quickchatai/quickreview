@@ -46,6 +46,7 @@ import {
   rmSync,
   statSync,
   unlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -814,4 +815,51 @@ export function secretsMigrateReport(m: SecretsMigration): { code: number; lines
       : `secrets: ${m.from} still holds ${m.remaining.join(", ")} — resolve those by hand; every reader already prefers ${m.to}`,
   );
   return { code, lines };
+}
+
+// ---- qcr install migrate: the compose route's .env --------------------------
+//
+// The wizard's bring-up writes the secrets dir the compose stack mounts into
+// `<root>/.env` as `QCR_SECRETS_DIR` — the locator's answer AT THAT TIME,
+// which on an un-migrated machine is the legacy dir. Once migrate has moved
+// the secrets, that line would mount a dir that is gone (Docker then creates
+// it empty, as root) or half-emptied by a conflict: the daemon would boot with
+// no credential. So migrate follows its own move into the one line that names
+// the old dir — and touches nothing else in the file.
+
+export type ComposeEnvRepoint =
+  | { kind: "none" }
+  | { kind: "repointed"; file: string; from: string; to: string };
+
+export function repointComposeSecrets(opts: { root: string; env?: InstallEnv }): ComposeEnvRepoint {
+  const env = opts.env ?? process.env;
+  const file = join(opts.root, ".env");
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    return { kind: "none" };
+  }
+  const line = /^QCR_SECRETS_DIR=(.*)$/m.exec(text);
+  if (!line) return { kind: "none" };
+  const value = (line[1] ?? "").trim().replace(/^(["'])(.*)\1$/, "$2");
+  if (value === "" || !isLegacySecretsSpelling(value, env)) return { kind: "none" };
+  const to = secretsHome(env);
+  if (!existsSync(to)) return { kind: "none" };
+  const next = text.replace(/^QCR_SECRETS_DIR=.*$/m, `QCR_SECRETS_DIR=${to}`);
+  const mode = statSync(file).mode & 0o7777;
+  const tmp = join(opts.root, ".env.qcr-migrate.tmp");
+  writeFileSync(tmp, next, { mode });
+  chmodSync(tmp, mode);
+  renameSync(tmp, file);
+  return { kind: "repointed", file, from: value, to };
+}
+
+export function composeRepointReport(r: ComposeEnvRepoint): string[] {
+  return r.kind === "none"
+    ? []
+    : [
+        `secrets: ${r.file} mounted the legacy dir (QCR_SECRETS_DIR=${r.from}) — it now names ${r.to}; ` +
+          "recreate the compose stack (`docker compose up -d`) so the container mounts it",
+      ];
 }

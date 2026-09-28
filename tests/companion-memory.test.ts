@@ -136,6 +136,32 @@ describe("memory wiring on the container", () => {
     expect(argv.join(" ")).not.toContain("r3viewer");
   });
 
+  it("says so in the column when the key file is the LEGACY fallback", async () => {
+    const home = mkdtempSync(join(tmpdir(), "qcr-keys-note-"));
+    const saved = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      const env = { XDG_CONFIG_HOME: join(home, "xdg") };
+      const legacy = join(home, ".config", "quickreview-bot", "openviking-keys.env");
+      mkdirSync(dirname(legacy), { recursive: true });
+      writeFileSync(legacy, "K=1\n");
+      const body = KEY_NAMES.map((n) => `${n}=x`).join("\n");
+      const lc = new CompanionLifecycle(CFG, docker([networkUp()]).runner, env, () => {}, fakeFs({ [legacy]: body }));
+      const w = await lc.resolveMemoryWiring();
+      expect(w.keysFile).toBe(legacy);
+      expect(w.notes.join(" ")).toMatch(/LEGACY path .*qcr install migrate/);
+      const primary = join(home, "xdg", "qcr-operator", "default", "openviking-keys.env");
+      mkdirSync(dirname(primary), { recursive: true });
+      writeFileSync(primary, "K=1\n");
+      const lc2 = new CompanionLifecycle(CFG, docker([networkUp()]).runner, env, () => {}, fakeFs({ [primary]: body }));
+      expect((await lc2.resolveMemoryWiring()).notes.join(" ")).not.toMatch(/LEGACY/);
+    } finally {
+      if (saved === undefined) delete process.env.HOME;
+      else process.env.HOME = saved;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("holds NO ssh credential: no key mount, no agent socket, even with SSH_AUTH_SOCK set", async () => {
     const { runner } = docker([networkUp()]);
     const lc = new CompanionLifecycle(

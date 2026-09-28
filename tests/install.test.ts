@@ -34,6 +34,7 @@ import {
   operatorHome,
   profileMigrateReport,
   profileSearchDirs,
+  repointComposeSecrets,
   resolveConfigPath,
   resolveProfile,
   resolveSecretsDir,
@@ -703,6 +704,46 @@ describe("migrateSecrets", () => {
     expect(cmdInstall(["where"], { root, env, log })).toBe(0);
     expect(out.join("\n")).toContain(`secrets     ${secretsHome(env)}  (home`);
     expect(out.join("\n")).toContain(join(operatorHome(env), "openviking-keys.env"));
+  });
+});
+
+describe("migrate repoints the compose .env (review)", () => {
+  const legacy = (): string => legacySecretsDir(env);
+  it("a QCR_SECRETS_DIR naming the legacy dir follows the move; nothing else changes", async () => {
+    const { cmdInstall } = await import("../src/cli.js");
+    mkdirSync(legacy(), { recursive: true });
+    writeFileSync(join(legacy(), "app.pem"), "PEM\n", { mode: 0o600 });
+    const envFile = join(root, ".env");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(envFile, `COMPOSE_PROFILES=tunnel\nQCR_SECRETS_DIR=${legacy()}\nQCR_CONFIG_NAME=config.toml\n`, {
+      mode: 0o600,
+    });
+    const out: string[] = [];
+    expect(cmdInstall(["migrate"], { root, env, log: (l) => out.push(l) })).toBe(0);
+    expect(readFileSync(envFile, "utf8")).toBe(
+      `COMPOSE_PROFILES=tunnel\nQCR_SECRETS_DIR=${secretsHome(env)}\nQCR_CONFIG_NAME=config.toml\n`,
+    );
+    expect(statSync(envFile).mode & 0o777).toBe(0o600);
+    expect(out.join("\n")).toMatch(/docker compose up -d/);
+  });
+
+  it("the ~ spelling is repointed too; a dir the operator chose is never touched", () => {
+    mkdirSync(secretsHome(env), { recursive: true });
+    const envFile = join(root, ".env");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(envFile, "QCR_SECRETS_DIR=~/.config/quickreview-bot\n");
+    expect(repointComposeSecrets({ root, env }).kind).toBe("repointed");
+    expect(readFileSync(envFile, "utf8")).toBe(`QCR_SECRETS_DIR=${secretsHome(env)}\n`);
+    writeFileSync(envFile, "QCR_SECRETS_DIR=/srv/my-secrets\n");
+    expect(repointComposeSecrets({ root, env }).kind).toBe("none");
+    expect(readFileSync(envFile, "utf8")).toBe("QCR_SECRETS_DIR=/srv/my-secrets\n");
+  });
+
+  it("leaves the line while the home does not exist yet (nothing was moved)", () => {
+    const envFile = join(root, ".env");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(envFile, `QCR_SECRETS_DIR=${legacy()}\n`);
+    expect(repointComposeSecrets({ root, env }).kind).toBe("none");
   });
 });
 

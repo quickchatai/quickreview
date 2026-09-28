@@ -15,7 +15,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { resolveKeysFile } from "../install.js";
+import { locateKeysFile, resolveKeysFile } from "../install.js";
 import type { CompanionConfig } from "../config.js";
 
 export interface DockerResult {
@@ -618,6 +618,14 @@ export class CompanionLifecycle {
       return this.wiring;
     }
     const keysFile = keysFilePath(this.env);
+    // the legacy fallback is announced on stderr once per process —
+    // before the first frame, where the alt screen then hides it — so the
+    // column, which the operator actually reads, says it too.
+    const located = locateKeysFile({ env: { ...this.env, HOME: homedir() } });
+    if (located.source === "legacy" && located.path === keysFile)
+      notes.push(
+        `OpenViking keys read from the LEGACY path ${keysFile} — \`qcr install migrate\` moves them to ${located.home}`,
+      );
     const keysText = this.fs.read(keysFile);
     let usableKeys: string | undefined;
     if (keysText === undefined) {

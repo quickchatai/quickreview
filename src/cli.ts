@@ -37,6 +37,8 @@ import {
   profileMigrateReport,
   profileSearchDirs,
   migrateSecrets,
+  repointComposeSecrets,
+  composeRepointReport,
   secretsMigrateReport,
   stateHome,
   type InstallEnv,
@@ -626,7 +628,8 @@ async function cmdDrain(rest: string[]): Promise<number> {
  * `where` names the secrets dir and the companion key file the locator picks
  * (without the configured `[github] secrets_dir`, which only a parsed config
  * knows), and `migrate` moves `~/.config/quickreview-bot/` into
- * `<config home>/secrets/`.
+ * `<config home>/secrets/` — and repoints a compose `.env` whose
+ * `QCR_SECRETS_DIR` still names it.
  */
 export function cmdInstall(
   rest: string[],
@@ -663,7 +666,9 @@ export function cmdInstall(
       const config = migrateReport(migrateConfig({ root, env }));
       const profiles = profileMigrateReport(migrateProfiles({ root, env }));
       const secrets = secretsMigrateReport(migrateSecrets({ env }));
-      for (const line of [...config.lines, ...profiles.lines, ...secrets.lines]) log(line);
+      const compose = composeRepointReport(repointComposeSecrets({ root, env }));
+      for (const line of [...config.lines, ...profiles.lines, ...secrets.lines, ...compose])
+        log(line);
       return Math.max(config.code, profiles.code, secrets.code);
     }
     default:
