@@ -809,6 +809,28 @@ describe("deploy.sh — base clone name", () => {
     expect(r.stderr).toContain("not one plain directory name");
   });
 
+  it("refuses a clone name that is a runtime/build dir of the sandbox root — the list mirrors the playbook", () => {
+    // the reserved list in deploy.sh must name every exclude the playbook
+    // carries besides the clone's own (read out of the REAL playbook)
+    const reserved = /^BASE_CLONE_RESERVED=\(([^)]*)\)$/m.exec(readFileSync(deploySh, "utf8"))?.[1];
+    expect(reserved).toBeDefined();
+    const list = reserved!.split(/\s+/).filter(Boolean);
+    const excludes = playbookRsyncOpts()
+      .filter((o) => o.startsWith("--exclude=") && !o.includes("{{"))
+      .map((o) => o.slice("--exclude=".length).replace(/^\//, ""));
+    expect(excludes.length).toBeGreaterThan(5);
+    for (const e of excludes) expect(list, e).toContain(e);
+    expect(list).toContain("dist");
+
+    for (const name of ["notes", "wt", "dist"]) {
+      env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", github: { repo: `acme/${name}` } });
+      const r = run(env, ["--dry-run"]);
+      expect(r.code, name).toBe(1);
+      expect(r.stderr, name).toContain("runtime or build directory");
+      rmSync(env.dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   it("refuses a clone name that collides with a tracked path — excluding it would ship no daemon", () => {
     env = makeScratch({
       configPi: "0.84.1",

@@ -33,8 +33,8 @@
 #         (the vendored fork rides the rsync, not the image)
 #   * refuses a base-clone name (`[github] clone_dir`, else the
 #     repo slug's basename — the same rule as githubCloneDir in
-#     src/config.ts) that is not one plain path segment or that names a
-#     tracked path. That name is handed to the playbook as
+#     src/config.ts) that is not one plain path segment, that names a
+#     runtime/build dir of the sandbox root, or that names a tracked path. That name is handed to the playbook as
 #     `-e base_clone_dir=…`, which is what keeps the VM's clone out of the
 #     rsync --delete, and it is written into this checkout's LOCAL ignore
 #     (.git/info/exclude, never the tracked .gitignore) so a clone of any
@@ -267,6 +267,17 @@ CLONE_DIR="$(base_clone_dir)"
 if [[ ! "$CLONE_DIR" =~ ^[A-Za-z0-9._-]+$ || "$CLONE_DIR" == "." || "$CLONE_DIR" == ".." ]]; then
   die "base clone name '$CLONE_DIR' ([github] clone_dir, else the repo's basename) is not one plain directory name — fix config.toml"
 fi
+# Nor may it name a directory the daemon or the build already owns at the
+# sandbox root — every runtime exclude of the playbook's rsync, plus the build
+# output. Those are untracked, so the ls-files check below cannot see them,
+# and a repo called `notes` or `wt` would otherwise be cloned into (or over)
+# a runtime dir. tests/deploy.test.ts pins this list against the playbook.
+BASE_CLONE_RESERVED=(.git .claude node_modules state wt archive commands digest inject verdict memory notes ledger.md AGENTS.override.md pihome dist)
+for reserved in "${BASE_CLONE_RESERVED[@]}"; do
+  if [[ "$CLONE_DIR" == "$reserved" ]]; then
+    die "base clone name '$CLONE_DIR' is a runtime or build directory of the sandbox root — set [github] clone_dir to a free name"
+  fi
+done
 if [[ -n "$(git -C "$SANDBOX_DIR" ls-files -- "$CLONE_DIR" | head -1)" ]]; then
   die "base clone name '$CLONE_DIR' collides with a tracked path in $SANDBOX_DIR — set [github] clone_dir to a free name"
 fi
