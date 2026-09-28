@@ -34,7 +34,8 @@
 #   * refuses a base-clone name (`[github] clone_dir`, else the
 #     repo slug's basename — the same rule as githubCloneDir in
 #     src/config.ts) that is not one plain path segment, that names a
-#     runtime/build dir of the sandbox root, or that names a tracked path. That name is handed to the playbook as
+#     runtime/build dir of the sandbox root, or that names a tracked path.
+#     That name is handed to the playbook as
 #     `-e base_clone_dir=…`, which is what keeps the VM's clone out of the
 #     rsync --delete, and it is written into this checkout's LOCAL ignore
 #     (.git/info/exclude, never the tracked .gitignore) so a clone of any
