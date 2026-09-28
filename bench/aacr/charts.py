@@ -280,7 +280,7 @@ def chart_independent(names, colors, all_r, ind_r, n_all, n_ind, out):
     ax.xaxis.set_major_formatter(matplotlib.ticker.PercentFormatter())
     ax.grid(axis="x", color=GRID)
     ax.set_axisbelow(True)
-    ax.set_title(f"Share found — light: all {n_all} defects; dark: the {n_ind} no reviewer contributed (code hunt or AACR references only)",
+    ax.set_title(f"Share found — light: all {n_all} defects; dark: the {n_ind} that the code hunt or an AACR reference also found (in the key without any reviewer)",
                  fontsize=11)
     save(fig, out, "independent-defects.jpg")
 

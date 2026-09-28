@@ -211,10 +211,33 @@ versions were **not changed** (their new exclusions stay in
 `qcr-bench-runs/{orig40-code}/*/truth-ext.json`); only rest145 moved to v2
 (commit `df1f82c`) and all seven reviewers are re-judged on it.
 
-The ground truth builder is Claude (the session model, Opus 5.5 for the
-2026-09-28 work); the defect judge is gpt-6-sol. See
-[`THREATS-TO-VALIDITY.md`](THREATS-TO-VALIDITY.md) for what that does and does
-not rule out.
+**Totals.** 520 defects: 90 high, 145 medium, 285 low. That is 126 on the
+original 40 and 394 on rest145.
+
+**Who built and who judges.**
+
+- The ground-truth builder is Claude: the session model, Opus 5.5 for the
+  2026-09-28 work.
+- The primary defect judge is gpt-6-sol.
+- A second defect judge, `claude-opus-5-5`, scored every review again (§6).
+
+See [`THREATS-TO-VALIDITY.md`](THREATS-TO-VALIDITY.md) for what that does and
+does not rule out.
+
+**Independent-source subset.** Each defect's `provenance` records which
+sources raised it: the hunt, the AACR references (`dataset_refs`) and the
+reviewer comments. This lets us score every reviewer on a subset of the key:
+the **369 of 520 defects (82 of 90 high)** that the hunt or an AACR reference
+raised. These defects would be in the key if no reviewer comment had been a
+candidate.
+
+- 330 of the 369 were also raised by some reviewer.
+- 39 have no reviewer among their sources.
+
+`charts.py` computes the subset (the `independent-defects.jpg` chart), and
+`FULL-BENCHMARK.md` has the table. On it, quickreviewd default scores 86% under
+both judges (80 of 82 high), against 84% on the whole key. The next reviewer
+scores 71% (low), then 70% (Claude Code).
 
 ## 6. Judging
 
@@ -230,6 +253,39 @@ as not judged (the row says INCOMPLETE) rather than as misses. Cases the review
 never reached are not judged. Three CI-gate defects (a lint rule, stale generated
 SQL, clippy) carry a `benchmark_limitation` note: a read-only review can find
 them only by knowing the repo's CI; they are scored and also reported apart.
+
+**Second defect judge** (`claude-opus-5-5`). The same judge prompt, the same
+inputs and the same parser, run on Anthropic's model over the same 1,295
+reviews (7 reviewers × 185 PRs).
+
+- Its verdicts live in `judge/v<version>-claude-opus-5-5/`, beside
+  `judge/v<version>-gpt-6-sol-high/`, so neither overwrites the other.
+- `compare.py --judge-model claude-opus-5-5` prints its table, and
+  `charts.py --second-judge claude-opus-5-5` draws `judge-agreement.jpg`.
+
+How far it agrees with the primary judge:
+
+- **Problems found:** every reviewer is within ±3 defects. For example,
+  default is 437.5 under GPT and 439 under Opus; Claude Code is 324.5 and
+  321.5.
+- **Recall:** identical for all seven reviewers after rounding.
+- **Per defect:** the same verdict (found, partly or missed) on 3,593 of
+  3,640 reviewer-defect pairs (98.7%). For high-severity defects, 628 of 630.
+- **Comments correct:** differs by up to 5 points. For Claude Code it is 81%
+  under GPT and 86% under Opus.
+
+**Judge errors and the Opus rate limit.** The Opus judge hit the Anthropic
+organisation's rate limit for `claude-opus-5-5`. That limit is 50 requests
+per minute, and a judgement averages about 1.7 API calls. The first pass
+produced HTTP 429 error files. Here is what was done:
+
+1. The queue was stopped and resumed at lower parallelism (`-P 3` ×
+   concurrency 4).
+2. A final `--resume` pass at `-P 1` re-ran every remaining error file.
+
+Final state: **0 errors in 1,295 Opus judgements**. The GPT judge left 2
+error files, which were retried to 0. `compare.py` treats an error file as
+"not judged", never as a miss, and every final row reads 185/185.
 
 **AACR eval** (`bench.sh eval`, `in-container.sh`): the harness's
 `pipeline run --stage eval` unmodified, judge prompt run on
@@ -254,7 +310,10 @@ digit. Bridge-based arms (OCR, Codex, OpenCode) report OpenAI-style input
 including cached tokens; the cached part is subtracted and priced at $0.20 / M.
 Claude Code's cost is Anthropic's `costUSD` from its own output. The runs go
 through a ChatGPT login and one API key; the dollar figures are list-price
-equivalents for comparison, not invoices.
+equivalents for comparison, not invoices. The per-PR token table (uncached
+input, cached input, output) for all seven reviewers is in
+`../FULL-BENCHMARK.md`. For Claude Code, the uncached column includes cache
+writes.
 
 Minutes are wall-clock per PR under the shared machine-wide scheduler (up to 10
 reviews at once on one login), so they include contention; the tools that run
@@ -275,7 +334,8 @@ QCR_BENCH_CLAUDE_ENV=~/.config/qcr-bench/claude.env QCR_BENCH_CLAUDE_MODEL=claud
   bench/aacr/arm.sh --prefix all-claude --arm claude --cases … --no-judge
 bench/aacr/bench.sh claude-rebuild --arm claude --run <run> --set <set>    # prose → comments, then eval
 bench/aacr/compare.py --cases all30+fresh10+rest145 "default=…" "low=…" …  # both tables
-uv run bench/aacr/charts.py --cases all30+fresh10+rest145 "…=…"            # the JPGs
+bench/aacr/compare.py --judge-model claude-opus-5-5 --cases …  "…=…"       # the second judge
+uv run bench/aacr/charts.py --cases all30+fresh10+rest145 --second-judge claude-opus-5-5 "…=…"  # the JPGs
 ```
 
 Ground truth for new PRs: `analysis/2026-09-27-rest145/` holds `extract-in.sh`,
@@ -307,7 +367,7 @@ have been tuned on what.
 | 09-27 | Code-quality lenses [`32b5ac5`] | 9 PRs (3 fresh10 + 6 of the 30), both metrics | motivated partly by AACR maintainability refs |
 | 09-27 | Validator demote-not-kill, `[review] nits`, pass-consistency [`051c422`] | the 3 fresh10 PRs (gemini-cli duplication reference) | |
 | 09-27 23:34 | **rest145 set created** [`1ad710b`]; default/low/OCR runs start on build `1ad710b` | — | **no reviewer change after this point** |
-| 09-28 | New arms, parser, ground-truth extension, re-judging | — | no reviewer behaviour change |
+| 09-28 | New arms, parser, ground-truth extension (rest145 v2, +15), re-judging, second (Opus) judge | — | no reviewer behaviour change |
 
 What this means, plainly: the smoke10/dev10/holdout10/fresh10 numbers are
 **in-sample** for our reviewer (its prompts and levers were designed while

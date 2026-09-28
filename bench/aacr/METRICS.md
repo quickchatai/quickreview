@@ -24,7 +24,8 @@ the change the review identified.
 
 ## Table 1 — the defect benchmark (our method)
 
-**Ground truth** (`defects/<set>.json`, 40 PRs): for each PR, a blind expert
+**Ground truth** (`defects/<set>.json`; 185 PRs, 520 defects in the final
+benchmark): for each PR, a blind expert
 hunt for defects from the diff and the code; then every candidate — the
 hunt's, the reviews' own comments, and every AACR-Bench reference comment —
 checked against the code by a separate verifier, merged where it is one
@@ -47,9 +48,11 @@ are counted and also reported apart.
 **Limits to keep in mind**: the ground truth was built with our reviewer's
 comments among the candidates (the verifier is independent, but a real
 defect only another reviewer found could be absent — so on this table a
-different reviewer can be under-credited); the judge is the same model family
-as the reviewer; 40 PRs, and differences under ~2 defects per 10 PRs are
-noise.
+different reviewer can be under-credited); the primary judge is the same model
+family as the reviewer; differences under ~2 defects per 10 PRs are noise.
+In the final benchmark, a second judge (Claude Opus 5.5) and a recall check
+on the defects the key would hold without any reviewer's comment both leave
+the ordering unchanged — `FULL-BENCHMARK.md`.
 
 ## Table 2 — AACR-Bench (the original benchmark)
 

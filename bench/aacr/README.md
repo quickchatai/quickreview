@@ -16,30 +16,54 @@ Background and the fairness caveats: `docs/open-code-review-comparison.md`
 
 ![Code review benchmark — overview](charts/overview.jpg)
 
-The whole benchmark (185 runnable PRs, 505 real defects, 1,418 AACR
-references) with quickreviewd `default`, `low` and open-code-review — numbers,
-method and caveats in [`FULL-BENCHMARK.md`](FULL-BENCHMARK.md); how to read
-the two metrics in [`METRICS.md`](METRICS.md). Charts, all in `charts/`:
+The whole benchmark: 185 runnable PRs, 520 real defects and 1,418 AACR
+references, with seven reviewers. The reviewers are:
+
+- quickreviewd `default` and `low`;
+- open-code-review;
+- Codex CLI;
+- OpenCode;
+- pi-review;
+- Claude Code.
+
+Every review was scored by two defect judges (gpt-6-sol high and Claude
+Opus 5.5). Numbers, method and caveats are in
+[`FULL-BENCHMARK.md`](FULL-BENCHMARK.md); how to read the two metrics is in
+[`METRICS.md`](METRICS.md). Charts, all in `charts/`:
 
 | Chart | Shows |
 |---|---|
 | [`overview.jpg`](charts/overview.jpg) | defects found, high-severity caught, AACR recall — the one-image summary |
 | [`defects-by-severity.jpg`](charts/defects-by-severity.jpg) | real defects found, split high / medium / low |
-| [`high-severity.jpg`](charts/high-severity.jpg) | merge-blocking defects caught, of 89 |
+| [`high-severity.jpg`](charts/high-severity.jpg) | merge-blocking defects caught, of 90 |
 | [`cost-vs-coverage.jpg`](charts/cost-vs-coverage.jpg) | $ per PR against share of defects found |
 | [`two-scores.jpg`](charts/two-scores.jpg) | the same reviews on our judge vs AACR's metric |
 | [`reference-quality.jpg`](charts/reference-quality.jpg) | what AACR's reference comments are, hand-checked against the code |
 | [`tuned-vs-unseen.jpg`](charts/tuned-vs-unseen.jpg) | the 40 tuning PRs vs the 145 never-seen ones |
+| [`judge-agreement.jpg`](charts/judge-agreement.jpg) | share of defects found under each of the two judges (gpt-6-sol high, Claude Opus 5.5) |
+| [`independent-defects.jpg`](charts/independent-defects.jpg) | share found on all 520 defects vs on the 369 the code hunt or an AACR reference raised (in the key without any reviewer's comment) |
 
-Regenerate after a run (every number comes from the judge and harness files
-through `compare.py`'s scoring; adding a reviewer is one more `NAME=runs`):
+`numbers.json` holds the headline figures behind the charts.
+
+Regenerate after a run. Every number comes from the judge and harness files
+through `compare.py`'s scoring, and adding a reviewer is one more
+`NAME=runs`. The runs directory is `$QCR_BENCH_RUNS_DIR`, defaulting to
+`~/qcr-bench-runs/runs` when it exists.
+`--second-judge` adds the agreement chart:
 
 ```sh
-uv run bench/aacr/charts.py --cases all30+fresh10+rest145 \
+uv run bench/aacr/charts.py --cases all30+fresh10+rest145 --second-judge claude-opus-5-5 \
   "quickreviewd default=b40-smoke10,b40-dev10,b40-holdout10,b40-fresh10,all-default-rest145" \
   "quickreviewd low=all-low-smoke10,all-low-dev10,all-low-holdout10,all-low-fresh10,all-low-rest145" \
-  "open-code-review=b40ocr-smoke10,b40ocr-dev10,b40ocr-holdout10,b40ocr-fresh10,all-ocr-rest145"
+  "open-code-review=b40ocr-smoke10,b40ocr-dev10,b40ocr-holdout10,b40ocr-fresh10,all-ocr-rest145" \
+  "Codex CLI=all-codex-smoke10,all-codex-dev10,all-codex-holdout10,all-codex-fresh10,all-codex-rest145,all-codex-c1-rest145,all-codex-c2-rest145,all-codex-c3-rest145,all-codex-c4-rest145" \
+  "OpenCode=all-opencode-smoke10,all-opencode-dev10,all-opencode-holdout10,all-opencode-fresh10,all-opencode-rest145,all-opencode-c1-rest145,all-opencode-c2-rest145,all-opencode-c3-rest145,all-opencode-c4-rest145" \
+  "pi-review=all-pireview-smoke10,all-pireview-dev10,all-pireview-holdout10,all-pireview-fresh10,all-pireview-c1-rest145,all-pireview-c2-rest145,all-pireview-c3-rest145,all-pireview-c4-rest145" \
+  "Claude Code (Opus 5.5)=all-claude-smoke10,all-claude-dev10,all-claude-holdout10,all-claude-fresh10,all-claude-c1-rest145,all-claude-c2-rest145,all-claude-c3-rest145,all-claude-c4-rest145"
 ```
+
+The same `NAME=runs` arguments work for `compare.py`, which prints both
+tables. Add `--judge-model claude-opus-5-5` for the second judge.
 
 ## Testing a review change (the defect benchmark loop)
 

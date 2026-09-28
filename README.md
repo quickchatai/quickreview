@@ -115,11 +115,27 @@ reviewer memory engine.
 ![Code review benchmark — AACR-Bench v1.0, 185 PRs](bench/aacr/charts/overview.jpg)
 
 On all 185 runnable PRs of [AACR-Bench](https://github.com/alibaba/aacr-bench)
-(10 languages), the default review finds **87% of 505 real defects verified
-in the code, and 86 of 89 merge-blocking ones**, against 57% for
-open-code-review on the same model; 86% of what it says is true. On the
-benchmark's own reference-comment metric the reviewers are within about two
-points of each other — most of those references are not real problems.
+(10 languages), the default review finds **84% of 520 real defects verified in
+the code, including 86 of the 90 merge-blocking ones**, and 86% of what it says
+is true.
+
+The other six reviewers find between 48% and 66% of the defects:
+
+- quickreviewd's own `low` preset: 66%;
+- Claude Code on Opus 5.5: 62%;
+- open-code-review: 56%;
+- pi-review: 56%;
+- Codex CLI: 48%;
+- OpenCode: 48%.
+
+A second judge from a different model family (Claude Opus 5.5) gives the same
+recall for every reviewer. On the 369 defects that would be in the answer key
+without any reviewer's comment, the default finds 86%. The default costs more
+per PR ($1.71 at list prices, against $0.11–$0.83 for the others).
+
+On the benchmark's own reference-comment metric every reviewer scores between
+4% and 12% recall; most of those references are not real problems.
+
 Full results, charts and method: [`bench/aacr/FULL-BENCHMARK.md`](bench/aacr/FULL-BENCHMARK.md).
 
 ## How a review runs
