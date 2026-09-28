@@ -110,6 +110,18 @@ Optional extras that degrade cleanly when unconfigured: an operator TUI
 Slack concierge, a local "companion" pi session, and the OpenViking-backed
 reviewer memory engine.
 
+## How well it finds bugs
+
+![Code review benchmark — AACR-Bench v1.0, 185 PRs](bench/aacr/charts/overview.jpg)
+
+On all 185 runnable PRs of [AACR-Bench](https://github.com/alibaba/aacr-bench)
+(10 languages), the default review finds **87% of 505 real defects verified
+in the code, and 86 of 89 merge-blocking ones**, against 57% for
+open-code-review on the same model; 86% of what it says is true. On the
+benchmark's own reference-comment metric the reviewers are within about two
+points of each other — most of those references are not real problems.
+Full results, charts and method: [`bench/aacr/FULL-BENCHMARK.md`](bench/aacr/FULL-BENCHMARK.md).
+
 ## How a review runs
 
 1. **Trigger** — someone labels the PR (or requests the review team).
