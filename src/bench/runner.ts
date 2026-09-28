@@ -740,6 +740,9 @@ export async function reviewCase(
       GIT_CONFIG_SYSTEM: "/dev/null",
       GIT_CONFIG_GLOBAL: "/dev/null",
       GIT_TERMINAL_PROMPT: "0",
+      // An `anthropic/` model arm: pi's anthropic provider reads this key. bench.sh
+      // passes it by --env-file only when --config names an anthropic/ model.
+      ...(process.env.ANTHROPIC_API_KEY ? { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY } : {}),
     };
     const sessionDir = join(caseDir, "session");
     const base = [

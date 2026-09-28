@@ -342,6 +342,14 @@ case "$cmd" in
       fi
     else
       auth_mounts
+      # quickreviewd on an Anthropic model (--config models.*=anthropic/…): pi's
+      # anthropic provider needs an ANTHROPIC_API_KEY — the same dedicated
+      # credential file as the Claude Code arm, by --env-file, never an argv.
+      if [[ "$ARM" == qcr && " ${EXTRA[*]-} " == *anthropic/* ]]; then
+        claude_env_args
+        grep -qE '^ANTHROPIC_API_KEY=.+' "$CLAUDE_ENV" || die "an anthropic/ model arm needs ANTHROPIC_API_KEY in $CLAUDE_ENV (pi does not take the Claude Code OAuth token)"
+        AUTH+=("${CENV[@]}")
+      fi
     fi
     # The OCR arm's reasoning effort (its bridge's --effort; default medium).
     oe=(); [[ "$ARM" == ocr && -n "${QCR_BENCH_OCR_EFFORT:-}" ]] && oe=(-e "OCR_BRIDGE_EFFORT=$QCR_BENCH_OCR_EFFORT")
