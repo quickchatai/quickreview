@@ -546,7 +546,7 @@ describe("the sandbox wiring", () => {
     expect(inContainer).toContain("opencode-review)");
     expect(inContainer).toContain('[[ "$arm" != qcr ]] && { variants="all"; report_cmd="$arm-report"; }');
     expect(inContainer).toContain('print(json.load(open(sys.argv[1])).get("reviewer") or "qcr")');
-    expect(arm).toContain('[[ "$ARM" == ocr || "$ARM" == codex || "$ARM" == opencode || "$ARM" == claude ]]; then');
+    expect(arm).toContain('[[ "$ARM" == ocr || "$ARM" == codex || "$ARM" == opencode || "$ARM" == claude || "$ARM" == pireview ]]; then');
     const cli = readFileSync(join(ROOT, "src", "bench", "cli.ts"), "utf8");
     for (const cmd of ["opencode-review", "opencode-report"]) {
       const at = cli.indexOf(`if (f.cmd === "${cmd}")`);

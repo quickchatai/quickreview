@@ -30,6 +30,10 @@
 #   the harness's own reviewers/claude.py, which runs `claude -p '/code-review …'`.
 #   eval / report with BENCH_ARM=claude score it with the harness's Claude
 #   reader (`--reviewer claude`), `all` variant only.
+# The pi-review arm (image target `pireview`):
+#   pireview-review <set> [cli flags…] → node cli pireview-review (@zephyrdeng/pi-review on
+#   this image's pi, one case at a time, the refresh-disabled login copy); eval / report with
+#   BENCH_ARM=pireview: only the `all` variant, the pi-review report.
 set -euo pipefail
 
 ROOT=/opt/quickreview/sandbox
@@ -114,6 +118,10 @@ case "$cmd" in
     [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}${ANTHROPIC_API_KEY:-}" ]] \
       || { echo "claude: no credential — bench.sh passes bench/aacr/claude.env with --env-file" >&2; exit 1; }
     exec "${CLI[@]}" claude-review --set "$(set_file "$set_name")" --store /repos --out /bench-out "$@" ;;
+  pireview-review)
+    set_name="$1"; shift
+    command -v pi-review >/dev/null || { echo "this image has no pi-review — build it with: bench.sh build --arm pireview" >&2; exit 2; }
+    exec "${CLI[@]}" pireview-review --set "$(set_file "$set_name")" --store /repos --out /bench-out "$@" ;;
   results)
     set_name="$1"; shift
     exec "${CLI[@]}" results --set "$(set_file "$set_name")" --out /bench-out "$@" ;;

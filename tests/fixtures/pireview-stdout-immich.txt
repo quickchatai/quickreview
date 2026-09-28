@@ -1,0 +1,43 @@
+## Verdict
+request_changes
+
+## Summary
+- The combined metadata query removes per-album asset lookups, but changes the meaning of three timestamp fields.
+- Truncating `lastModifiedAssetTimestamp` can prevent mobile from detecting asset updates made on the same day.
+
+## Findings
+
+### F1: Preserve the full last-modified timestamp
+- Severity: high
+- Path: server/src/repositories/album.repository.ts
+- Lines: 162-170
+- Actionable: yes
+- Evidence: `max(("assets"."updatedAt" AT TIME ZONE 'UTC')::date)` discards the time of day. Mobile compares this value in `_hasRemoteAlbumChanged` (`mobile/lib/services/sync.service.dart`).
+- Impact: An asset updated again on the same day can leave the album’s change marker unchanged, so mobile may skip syncing the updated asset.
+- Recommendation: Aggregate `max(assets.updatedAt)` without casting it to `date`, and test two updates on the same day.
+
+### F2: Preserve timestamp precision in album date ranges
+- Severity: medium
+- Path: server/src/repositories/album.repository.ts
+- Lines: 140-160
+- Actionable: yes
+- Evidence: `startDate` and `endDate` previously used `min` and `max` of `localDateTime`; both now cast values to `date`. The DTO still exposes them as dates, and web album lists use them for sorting.
+- Impact: Albums whose boundary assets fall on the same day lose their ordering precision; clients also receive a different value than before.
+- Recommendation: Retain the full `localDateTime` aggregates unless a date-only API change is intended and its clients are updated accordingly.
+
+## Risks and Blind Spots
+- No database-backed test or test run was available to verify the query’s returned date types and serialization.
+
+## Open Questions
+None.── pi-review ────────────────────────────
+  Verdict     ! REQUEST CHANGES
+  Status      HAS FINDINGS
+  Mode        code
+  Findings    2 actionable / 2 total
+  Model       openai-codex/gpt-6-sol
+  Thinking    medium
+  Tokens      in 38.6K · out 1.5K · cache 63.9K · reason 318 · total 104K
+  Cost        $0.1069
+  Duration    50.2s
+──────────────────────────────────────────
+PI_REVIEW_META_JSON: {"metaVersion":1,"reviewMode":"code","verdict":"request_changes","verdictSource":"parsed","status":"has_findings","findings":[{"id":"F1","severity":"high","path":"server/src/repositories/album.repository.ts","summary":"Preserve the full last-modified timestamp","actionable":true,"details":"Evidence: `max((\"assets\".\"updatedAt\" AT TIME ZONE 'UTC')::date)` discards the time of day. Mobile compares this value in `_hasRemoteAlbumChanged` (`mobile/lib/services/sync.service.dart`).\n\nImpact: An asset updated again on the same day can leave the album’s change marker unchanged, so mobile may skip syncing the updated asset.","recommendation":"Aggregate `max(assets.updatedAt)` without casting it to `date`, and test two updates on the same day.","location":{"startLine":162,"endLine":170}},{"id":"F2","severity":"medium","path":"server/src/repositories/album.repository.ts","summary":"Preserve timestamp precision in album date ranges","actionable":true,"details":"Evidence: `startDate` and `endDate` previously used `min` and `max` of `localDateTime`; both now cast values to `date`. The DTO still exposes them as dates, and web album lists use them for sorting.\n\nImpact: Albums whose boundary assets fall on the same day lose their ordering precision; clients also receive a different value than before.","recommendation":"Retain the full `localDateTime` aggregates unless a date-only API change is intended and its clients are updated accordingly.","location":{"startLine":140,"endLine":160}}],"actionableCount":2,"durationMs":50183,"model":"openai-codex/gpt-6-sol","thinking":"medium","usage":{"input":39477,"output":1487,"cacheRead":65408,"cacheWrite":0,"reasoning":318,"totalTokens":106372,"costTotal":0.10690559999999999}}

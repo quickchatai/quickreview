@@ -489,6 +489,135 @@ Its findings carry the harness's codex severities, not our tags, so only the
   calls); `bridge.jsonl` one row per model call, including the effort OpenCode
   asked for.
 
+## The pi-review arm (`--arm pireview`)
+
+[`@zephyrdeng/pi-review`](https://github.com/ZephyrDeng/pi-review) (npm,
+**0.18.0**) — "isolated AI-powered code and plan reviews from the command
+line", the most-downloaded dedicated code-review package for the pi coding
+agent — as a benchmarked reviewer, on the SAME pi (**0.87.1**, the runtime
+image's pin) and the same ChatGPT login our own sessions use. The harness has
+no pi-review runner, so `src/bench/pireview.ts` is one:
+
+```sh
+bench/aacr/bench.sh build  --arm pireview                              # image qcr-bench-pireview
+bench/aacr/bench.sh review --arm pireview --run pr-1 --set fresh10     # one case at a time
+bench/aacr/bench.sh judge  --run pr-1 --set fresh10                    # the defect benchmark (QCR_BENCH_IMAGE)
+bench/aacr/bench.sh eval   --arm pireview --run pr-1 --set fresh10 --judge codex --rounds 3
+bench/aacr/arm.sh --prefix pireview --arm pireview --cases fresh10 --eval 3   # all of it, per set
+```
+
+**What pi-review is (from its source).** A node CLI (`dist/cli.js`, node
+builtins only) that hands the review to ONE fresh child `pi -p --mode json
+--no-session --no-extensions` session with a hard read-only tool allowlist
+(`read,grep,find,ls` — no shell), its own `--append-system-prompt`
+(`resources/system-prompt.md`), its `.claude/rules` loader
+(`--extension dist/rules-extension.js`), and a review contract in the user
+message (`dist/prompt.js`, mode `code`: correctness, regressions, security,
+concurrency, API contracts, edge cases, maintainability, missing tests) that
+fixes the answer's Markdown: `## Verdict` / `## Summary` / `## Findings` with
+one `### F<n>: <summary>` block per finding (`Severity`, `Path`, `Lines`,
+`Side: base|working`, `Actionable`, `Evidence`, `Impact`, `Recommendation`) /
+`## Risks and Blind Spots` / `## Open Questions`. pi-review parses that itself
+(`dist/review-result.js`) and prints ONE `PI_REVIEW_META_JSON:` line — its
+documented, versioned machine contract (`metaVersion: 1`; findings with
+`path`, `location.{startLine,endLine,side}`, `details` = Evidence + Impact,
+`recommendation`). Panels (`--reviewers`/`--panel`), `loop` and the Jev
+`screen`/adjudicator (a hosted service, only with `TYPESAFE_API_KEY`) are
+opt-in features; the CLI default is the single reviewer, and that is what runs.
+
+**How it is invoked.** Per case, in the tree checked out at head:
+
+```sh
+git diff <base>...<head> > /work/<id>.pireview/pr.diff        # outside the tree
+cd /work/wt/<id>
+timeout -k 30s 1860s pi-review --model openai-codex/gpt-6-sol --thinking medium \
+  --progress-log <case>/pi-events.jsonl \
+  -- @/work/<id>.pireview/pr.diff \
+  "Review the code changes in the attached diff (git diff <base>...<head>). The working directory is the repository checked out at <head>."
+```
+
+- **The diff rides a documented `@file` attachment** (pi inlines it into the
+  first message): the reviewer has no shell, so it cannot compute a diff
+  itself. Piping it on stdin also works in pi-review's code, but that text is
+  appended to the child's ARGV, and Linux caps one argument at 128 KiB — a
+  large PR would fail to spawn. The one target sentence says what the
+  attachment is and nothing about how to review ("pass the review request as
+  natural language after `--`" is pi-review's own contract). No PR title or
+  description (the harness's CLI runners pass none).
+- **Its defaults**, with ONE departure: `--thinking medium` (its `code`
+  preset says `high`) so gpt-6-sol runs at the same effort in every arm
+  (`QCR_BENCH_PIREVIEW_THINKING` changes it). No findings tool or instruction
+  of ours is added: the output is already structured.
+- **`timeout`** (coreutils) signals its own process GROUP, so the child pi
+  dies with pi-review; the budget is the harness's 30 min + 60 s.
+- **The tree is on `/work`** (a disk-backed volume), NOT under
+  `/opt/quickreview/sandbox`: pi loads `AGENTS.md`/`CLAUDE.md` from every
+  ancestor of its cwd, and the sandbox root carries OUR production reviewer's
+  context files. The reviewed repo's own `AGENTS.md`/`CLAUDE.md` are still
+  read, as pi always does.
+
+**Output → findings.** The last `PI_REVIEW_META_JSON:` line (stdout, via
+`PI_REVIEW_META_STDOUT=1`) is parsed; every finding it reports becomes one
+comment, actionable or not (the review shows them all): `path` =
+`Path` (the tree's absolute prefix, `./` and git's `a/`/`b/` stripped; a
+`:42`/`:42-58` the model wrote into `Path` becomes the line range only when
+pi-review parsed no `Lines`), `start_line`/`end_line` = `location` (a single
+line ends where it starts; no `Lines` → null, scored as it is, like the codex
+and opencode arms' line-less findings), text = summary, then `details`, then
+`Recommendation: …`. A finding with `Side: base` (a deleted/old line) is NOT
+put in the scored file — AACR reads the new side — but in
+`cases/<id>/comments.json` as a LEFT row, which the defect judge shows as
+`path (deleted line)`, exactly as it does for the quickreviewd arm. The result
+file is the harness CLI-runner shape (`reviewer: "pireview"`, `review_output`
+= pi-review's findings verbatim, `token_usage`) plus `review.comments` in the
+OCR reader's shape, so `eval` (`--reviewer ocr`), the defect judge and
+`compare.py` read it unchanged; `review.md` is pi-review's Markdown (the
+defect judge reads it as the review body, as for the Claude Code arm). Tested
+on stub and on real output: `tests/bench-pireview.test.ts`.
+
+- **The model and the credential**: pi's built-in `openai-codex` provider
+  (`gpt-6-sol`), on the benchmark's one ChatGPT login through the
+  refresh-disabled copy `src/bench/auth.ts` takes before EVERY case (the
+  companion's volume is read-only; the copy's refresh token is a sentinel no
+  OAuth server accepts; a token that would expire inside a case's budget
+  stops the run instead). The child's agent dir (`/tmp/pi-agent-pireview`)
+  holds that token and pi's DEFAULT settings (`defaultProjectTrust` only —
+  not the bash-guard the quickreviewd sessions register). HOME is a fresh
+  per-case dir (so `~/.pi/pi-review/config.json` and `~/.claude/rules` are
+  absent: its defaults), deleted with the case.
+- **No phone-home**: `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`,
+  `PI_TELEMETRY=0`; pi-review itself has no update check on the review path,
+  and Jev stays off (no `TYPESAFE_API_KEY`). Container hardening is
+  `bench.sh`'s, unchanged: read-only root, all capabilities dropped,
+  no-new-privileges, non-root, no GitHub credential, no docker socket.
+- **Pin and bump**: `ARG PIREVIEW_VERSION` + `PIREVIEW_SHA512` in the
+  Dockerfile's `pireview` stage. The npm tarball is fetched with `npm pack`,
+  checked against that sha512 (= the registry's `dist.integrity`), and
+  UNPACKED — never `npm install`ed, so no install script runs and its one
+  floating dependency (typebox, used only by the pi-extension half) is not
+  pulled. To bump: `npm view @zephyrdeng/pi-review@<v> dist.integrity`,
+  decode it (`echo <b64> | base64 -d | xxd -p -c 100`), set both (or pass
+  `QCR_BENCH_PIREVIEW_VERSION` + `QCR_BENCH_PIREVIEW_SHA512` to `bench.sh build
+  --arm pireview`), re-read `dist/prompt.js`, `resources/system-prompt.md` and
+  the `PI_REVIEW_META_JSON` shape, and re-run the smoke test. pi itself is the
+  runtime's pin (rule 7) — bump it there, for every arm at once.
+- **Per case**: `cases/<id>/` holds `pireview-argv.json`, `pi-events.jsonl`
+  (the child's pi event stream — `compare.py` prices it like our own
+  sessions'), `pireview-stdout.txt`, `pireview-stderr.log`,
+  `pireview-meta.json`, `review.md`, `comments.json` (base-side findings) and
+  `case-summary.json` (status, verdict, findings/actionable, pi's tokens and
+  cost, tool calls).
+
+**Smoke test (2026-09-28, 2 PRs of `fresh10`)**: `arm.sh --prefix sm-pireview
+--arm pireview --cases fresh10:immich-app__immich@966c3f2,google-gemini__gemini-cli@4c150ab
+--eval 1` — both `ok`, 2 comments each (all actionable, verdict
+`request_changes`), 0.9 / 0.8 min, ~105k tokens in (65k cached) / 1.5k out,
+$0.11 per PR; every comment carries a repo-relative path and a line range
+(3 of 4 inside the diff's hunks, the 4th on an existing test the change
+breaks); defect judge 4/6 found (67%, 3/5 high, 1/1 medium), 100% of comments
+correct; AACR `all` 0/5 references matched (4 comments, line precision 0.5).
+One pi-review session, no subagents, 14–22 read/grep/find calls per PR.
+
 ## The Claude Code arm (`--arm claude`)
 
 Claude Code as a BENCHMARKED REVIEWER — root CLAUDE.md rule 5's one ratified
@@ -655,6 +784,7 @@ Search → File Search → add it to the excluded folders, or
 | `judge_shim.py` | OpenAI-compatible judge endpoint over `pi -p` |
 | `eval_shards.py` | splits one eval by PR across harness processes and merges them with the harness's own summary functions |
 | `codex_bridge.py` | the OCR and OpenCode arms' loopback Chat Completions/Responses → Codex backend bridge |
+| `src/bench/pireview.ts` | the pi-review arm (`tests/bench-pireview.test.ts`, real-output fixture `tests/fixtures/pireview-stdout-immich.txt`) |
 | `codex_arm.py` | the Codex CLI arm's driver: the harness's own `reviewers/codex.py` on one prepared case (`src/bench/codex.ts`, `codexcli.ts`, `codexreport.ts`; `tests/bench-codex.test.ts`) |
 | `src/bench/` | prefetch, review runner, result conversion, report, the OCR arm (`ocr.ts`) (`tests/bench-aacr.test.ts`); the OpenCode arm (`opencode.ts`, `tests/bench-opencode.test.ts`); the what-if scorer `whatif.ts` + `whatifrun.ts` (`tests/bench-whatif.test.ts`); the Codex CLI arm (`codex.ts`, `codexcli.ts`, `codexreport.ts`, `tests/bench-codex.test.ts`) |
 | `whatif/<id>/` | per what-if run: `source/` (the copied run), `results/<variant>/`, `extract/`, `eval/`, `report.md`, `whatif-summary.json` |

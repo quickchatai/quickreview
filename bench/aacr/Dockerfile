@@ -8,6 +8,8 @@
 #                                                                        (bench.sh build --arm opencode)
 #   docker build --target claude --build-arg RUNTIME_BASE=node:22-trixie \
 #                -t qcr-bench-claude -f bench/aacr/Dockerfile .               (bench.sh build --arm claude)
+#   docker build --target pireview -t qcr-bench-pireview -f bench/aacr/Dockerfile .
+#                                                                        (bench.sh build --arm pireview)
 #
 # One image, three uses, each run by bench.sh with its own minimal mounts:
 #   prefetch  git over https to github.com (anonymous) → the repos volume
@@ -37,6 +39,8 @@
 #   opencode-ai 1.18.33 (opencode only) = the linux-x64 binary's sha256 is pinned
 #   Claude Code 2.1.283 (claude only)  = the version the Claude Code arm ran; the
 #                                        linux-x64 native binary's sha256 is pinned
+#   @zephyrdeng/pi-review 0.18.0       = the npm tarball's sha512 (= the registry's
+#     (pireview only)                    dist.integrity) is pinned; runs on the pi above
 
 ARG RUNTIME_BASE=node:22-bookworm
 
@@ -179,6 +183,38 @@ RUN python3 /opt/quickreview/bench/codex_bridge.py --self-test \
 ENV OPENCODE_DISABLE_AUTOUPDATE=1 OPENCODE_DISABLE_SHARE=1 OPENCODE_DISABLE_MODELS_FETCH=1 \
     OPENCODE_DISABLE_LSP_DOWNLOAD=1 OPENCODE_DISABLE_DEFAULT_PLUGINS=1 OPENCODE_DISABLE_PROJECT_CONFIG=1 \
     QCR_OPENCODE_VERSION=${OPENCODE_VERSION}
+
+# ---- pireview: @zephyrdeng/pi-review, a pi code-review package ---------------------
+# Above `ocr` for the same reason as opencode (no BuildKit here). Built on
+# `runtime`, so pi (0.87.1 — the pin every arm shares), the scorer, the dataset
+# and the judge shim are the ones every other arm is scored with. The npm
+# TARBALL is fetched with `npm pack`, checked against the sha512 recorded HERE
+# (the registry's own dist.integrity for that version), and unpacked — never
+# `npm install`ed: its CLI (dist/) imports nothing but node builtins, and its
+# one dependency (typebox, a floating ^range) serves only the pi-extension half
+# the bench does not load. No install scripts run.
+# To bump: `npm view @zephyrdeng/pi-review@<v> dist.integrity`, base64-decode it
+# to hex (`echo <b64> | base64 -d | xxd -p -c 100`), set both ARGs (or pass
+# QCR_BENCH_PIREVIEW_VERSION + QCR_BENCH_PIREVIEW_SHA512 to `bench.sh build
+# --arm pireview`), re-read its prompt contract (dist/prompt.js,
+# resources/system-prompt.md) and its PI_REVIEW_META_JSON shape, and re-run the
+# smoke test — src/bench/pireview.ts reads that line.
+FROM runtime AS pireview
+ARG PIREVIEW_VERSION=0.18.0
+ARG PIREVIEW_SHA512=5b5910dfde9730d38c64120a221be624a50fa5efd089a5fc4f8d8d9e00b49241584a1b6f2061cc6c557fa5f7b68b3f06afebece4440dbb489a2551cb8b909a99
+RUN mkdir -p /tmp/pr-build && cd /tmp/pr-build \
+    && npm pack "@zephyrdeng/pi-review@${PIREVIEW_VERSION}" --silent >/dev/null \
+    && echo "${PIREVIEW_SHA512}  zephyrdeng-pi-review-${PIREVIEW_VERSION}.tgz" | sha512sum -c - \
+    && mkdir -p /opt/pi-review \
+    && tar -xzf "zephyrdeng-pi-review-${PIREVIEW_VERSION}.tgz" -C /opt/pi-review --no-same-owner \
+    && chmod 0755 /opt/pi-review/package/bin/pi-review.js \
+    && ln -s /opt/pi-review/package/bin/pi-review.js /usr/local/bin/pi-review \
+    && test "$(node -p 'require("/opt/pi-review/package/package.json").version')" = "${PIREVIEW_VERSION}" \
+    && HOME=/tmp/pr-build pi-review --help | grep -q 'pi-review \[review\] \[options\]' \
+    && cd / && rm -rf /tmp/pr-build /root/.npm \
+    && mkdir -p /work && chmod 1777 /work
+RUN ! test -e scripts && ! command -v gh
+ENV QCR_PIREVIEW_VERSION=${PIREVIEW_VERSION} PI_OFFLINE=1 PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0
 
 # ---- ocr: the open-code-review baseline arm --------------------------------------
 # Built on top of `runtime`, so the scorer, the dataset, pi and the judge shim

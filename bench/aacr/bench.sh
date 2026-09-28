@@ -44,6 +44,13 @@
 #              base...head, findings through the harness's MCP findings server, the model
 #              through the loopback Codex bridge; one case at a time; `eval` scores `all`.
 #              QCR_BENCH_OPENCODE_EFFORT=L its reasoning effort (default medium)
+#   --arm pireview (build, review, eval, report, shell, smoke): @zephyrdeng/pi-review (image
+#              qcr-bench-pireview; the npm tarball pinned by PIREVIEW_VERSION + sha512 in the
+#              Dockerfile; QCR_BENCH_PIREVIEW_VERSION + QCR_BENCH_PIREVIEW_SHA512 build another)
+#              on the image's pi (0.87.1): its CLI, single reviewer, mode code, over
+#              `git diff base...head` attached as @file, gpt-6-sol through pi's openai-codex
+#              provider on the refresh-disabled login copy; one case at a time; `eval` scores
+#              `all`. QCR_BENCH_PIREVIEW_THINKING=L its --thinking (default medium)
 #   --arm ocr  (build, review, eval, report, shell, smoke): the open-code-review
 #              baseline — image qcr-bench-ocr (the same runtime + OCR 1.3.1 + the
 #              loopback Codex bridge), `review` runs OCR the way the AACR harness
@@ -134,7 +141,11 @@ case "$ARM" in
   # trixie as for OCR: the classic builder builds every stage before the target, ocr's included.
   claude) IMAGE="${QCR_BENCH_CLAUDE_IMAGE:-qcr-bench-claude:latest}"; TARGET=claude
        BASE_ARGS=(--build-arg RUNTIME_BASE=node:22-trixie); REVIEW_ENTRY=claude-review ;;
-  *) die "--arm must be qcr | ocr | codex | opencode | claude" ;;
+  # pi-review: its own target on the same runtime (PIREVIEW_VERSION build arg, Dockerfile).
+  pireview) IMAGE="${QCR_BENCH_PIREVIEW_IMAGE:-qcr-bench-pireview:latest}"; TARGET=pireview
+       BASE_ARGS=(); REVIEW_ENTRY=pireview-review
+       [[ -n "${QCR_BENCH_PIREVIEW_VERSION:-}" ]] && BASE_ARGS=(--build-arg "PIREVIEW_VERSION=$QCR_BENCH_PIREVIEW_VERSION" --build-arg "PIREVIEW_SHA512=${QCR_BENCH_PIREVIEW_SHA512:?set QCR_BENCH_PIREVIEW_SHA512 with QCR_BENCH_PIREVIEW_VERSION}") ;;
+  *) die "--arm must be qcr | ocr | codex | opencode | pireview | claude" ;;
 esac
 # The Claude Code arm's own credential file (never the host's interactive login).
 CLAUDE_ENV="${QCR_BENCH_CLAUDE_ENV:-$HERE/claude.env}"
@@ -330,6 +341,12 @@ case "$cmd" in
       [[ -n "${QCR_BENCH_CODEX_EFFORT:-}" ]] && oe+=(-e "QCR_CODEX_EFFORT=$QCR_BENCH_CODEX_EFFORT")
     fi
     [[ "$ARM" == opencode && -n "${QCR_BENCH_OPENCODE_EFFORT:-}" ]] && oe+=(-e "OPENCODE_BRIDGE_EFFORT=$QCR_BENCH_OPENCODE_EFFORT")
+    # pi-review: a disk-backed /work for the case trees — NOT under the sandbox
+    # root, whose AGENTS.md/CLAUDE.md pi would load from every ancestor dir.
+    if [[ "$ARM" == pireview ]]; then
+      oe+=(--mount type=volume,dst=/work)
+      [[ -n "${QCR_BENCH_PIREVIEW_THINKING:-}" ]] && oe+=(-e "QCR_PIREVIEW_THINKING=$QCR_BENCH_PIREVIEW_THINKING")
+    fi
     args=("${HARDEN[@]}" "${AUTH[@]}" ${oe[@]+"${oe[@]}"}
       --mount "type=volume,src=$REPOS_VOLUME,dst=/repos,readonly"
       --mount "type=bind,src=$d,dst=/bench-out"

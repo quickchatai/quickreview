@@ -35,6 +35,11 @@
 //   claude-review --set <file> --out DIR [--only id,id] [--store DIR] [--resume] [--keep-tree]
 //                 [--timeout-min 30]     through the harness's reviewers/claude.py, one case at a time
 //   claude-report --set <file> --out DIR
+// The pi-review arm (src/bench/pireview.ts; image target `pireview`):
+//   pireview-review --set <file> --out DIR [--only id,id] [--store DIR] [--resume] [--keep-tree]
+//                   [--timeout-min 30] [--thinking medium] [--model openai-codex/gpt-6-sol]
+//                   [--work /work] [--pireview-bin pi-review]      cases run ONE AT A TIME
+//   pireview-report --set <file> --out DIR
 //
 // The defect benchmark (src/bench/defects.ts; any run dir, either arm):
 //   defect-judge  --set <file> --defects <file> --out RUN_DIR [--only id,id] [--rounds 1]
@@ -72,6 +77,7 @@ import {
 import { parseReferenceLabels, renderOcrReport, renderReport } from "./report.js";
 import { OPENCODE_HARNESS_DEFAULTS, renderOpencodeReport, runOpencodeReview } from "./opencode.js";
 import { CLAUDE_HARNESS_DEFAULTS, claudeReviewRun, renderClaudeReport } from "./claudecode.js";
+import { PIREVIEW_DEFAULTS, renderPireviewReport, runPireviewReview } from "./pireview.js";
 import { run as runCmd } from "./exec.js";
 import { renderWhatifReport, writeWhatifRun } from "./whatifrun.js";
 import {
@@ -176,8 +182,9 @@ const ARM_NAMES = {
   codex: "a Codex CLI",
   opencode: "an OpenCode",
   claude: "a Claude Code",
+  pireview: "a pi-review",
 } as const;
-function assertArm(outDir: string, arm: "qcr" | "ocr" | "codex" | "opencode" | "claude"): void {
+function assertArm(outDir: string, arm: keyof typeof ARM_NAMES): void {
   const found = runArmOf(outDir);
   if (found !== null && found !== arm)
     throw new Error(
@@ -755,6 +762,57 @@ async function main(): Promise<number> {
       readMeta: (c) => readMeta(store, c),
       log,
     });
+  }
+
+  // ---- the pi-review arm (src/bench/pireview.ts) ----------------------------------
+  if (f.cmd === "pireview-review") {
+    const set = loadSet(f.get("--set"));
+    if (!f.get("--out")) throw new Error("--out <dir> is required");
+    const outDir = resolve(f.get("--out")!);
+    assertArm(outDir, "pireview");
+    const timeoutMin = Number(f.get("--timeout-min") ?? PIREVIEW_DEFAULTS.timeoutMin);
+    if (!Number.isInteger(timeoutMin) || timeoutMin < 1)
+      throw new Error("pireview-review: --timeout-min must be a positive integer");
+    const pireviewBin = f.get("--pireview-bin") ?? "pi-review";
+    // pi's version from its installed package (the runtime image's pin) — read,
+    // never spawned: nothing here launches pi outside a benchmarked reviewer.
+    let piVersion = "unknown";
+    try {
+      const pkg = f.get("--pi-package") ?? "/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/package.json";
+      piVersion = String((JSON.parse(readFileSync(pkg, "utf8")) as { version?: unknown }).version ?? "unknown");
+    } catch {
+      // stays unknown
+    }
+    return runPireviewReview({
+      set,
+      cases: selectCases(set, only(f)),
+      outDir,
+      work: f.get("--work") ?? "/work",
+      root,
+      store,
+      authSrc: f.get("--auth-src") ?? DEFAULTS.authSrc,
+      agentDir: f.get("--agent-dir") ?? "/tmp/pi-agent-pireview",
+      pireviewBin,
+      pireviewVersion: process.env.QCR_PIREVIEW_VERSION || "unknown",
+      piVersion,
+      model: f.get("--model") ?? PIREVIEW_DEFAULTS.model,
+      thinking: f.get("--thinking") ?? process.env.QCR_PIREVIEW_THINKING ?? PIREVIEW_DEFAULTS.thinking,
+      timeoutMin,
+      qcrCommit: process.env.QCR_BENCH_COMMIT ?? "unknown",
+      resume: f.has("--resume"),
+      keepTree: f.has("--keep-tree"),
+      readMeta: (c) => readMeta(store, c),
+      log,
+    });
+  }
+
+  if (f.cmd === "pireview-report") {
+    const set = loadSet(f.get("--set"));
+    const outDir = resolve(f.get("--out") ?? "");
+    assertArm(outDir, "pireview");
+    writeFileSync(join(outDir, "report.md"), renderPireviewReport(set, outDir, selectCases(set, only(f))));
+    log(`report: ${join(outDir, "report.md")}`);
+    return 0;
   }
 
   if (f.cmd === "opencode-report") {
