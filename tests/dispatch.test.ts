@@ -303,7 +303,8 @@ describe("recording at round start", () => {
 
     const round = store.roundsFor(29)[0]!;
     const fp = store.roundGitConfig(round.id) as
-      { digest?: unknown; files?: Record<string, string> } | undefined;
+      | { digest?: unknown; files?: Record<string, string> }
+      | undefined;
     expect(fp, "dispatch must record a baseline, or verdicts has nothing to compare").toBeTruthy();
     expect(typeof fp!.digest).toBe("string");
     // The clone's own config and the PINNED global file are both in it — the
@@ -341,6 +342,25 @@ describe("recording at round start", () => {
     ).toBe(true);
     const dispatched = store.recentEvents(50).find((e) => e.kind === "round_dispatched")!;
     expect(JSON.parse(dispatched.payload ?? "{}").validate_tier).toBe("sol-high");
+  });
+
+  // a round whose profile switched the validator off had no
+  // validator, so the round row must not claim one ran at the configured tier.
+  // MUTATION: restore `?? cfg.models.validate_tier` on dispatch's validateTier
+  // and this fails.
+  it("records a NULL validator tier when the profile switched the validator off", async () => {
+    queue(24, "2026-08-13T09:00:00Z");
+    adapter.files.set(24, [file("auth/permissions.py", 10, 2)]);
+    const { hooks, orders } = recordingHooks();
+    const off: Config = { ...baseCfg, lenses: { "pass-validate": { enabled: false } } };
+
+    await dispatchOnce({ cfg: off, store, adapter, hooks });
+
+    expect(orders[0]!.order.pass_plan.some((p) => p.lens === "pass-validate")).toBe(false);
+    const round = store.roundsFor(24)[0]!;
+    expect(round.validate_tier).toBeNull();
+    const dispatched = store.recentEvents(50).find((e) => e.kind === "round_dispatched")!;
+    expect(JSON.parse(dispatched.payload ?? "{}").validate_tier).toBeNull();
   });
 
   it("counts only daemon-run rounds when choosing first vs re-review", async () => {

@@ -119,6 +119,11 @@ describe("a profile can switch the validator off", () => {
     for (const t of TEMPLATES) {
       const prompt = renderRoundPrompt(template(t), order(cfg));
       expect(prompt, t).toContain("No validator this round");
+      // The validator's belts do not go with it: the note hands them to the
+      // session. MUTATION: drop those lines from renderValidatorNote.
+      expect(prompt, t).toContain("settled:<thread-id>");
+      expect(prompt, t).toContain("nit-out-of-delta");
+      expect(prompt, t).toContain("severity cap");
       expect(prompt, t).not.toMatch(/\{\{\w+\}\}/);
     }
   });

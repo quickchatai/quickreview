@@ -361,6 +361,12 @@ export function renderValidatorNote(order: Pick<RoundOrder, "pass_plan">): strin
     "The step-3 merged candidates are this round's survivors — post them under the",
     "ordinary posting map. Nothing is doubted: the verdict's `passes` has no",
     "`pass-validate` entry, and the findings record has no `doubted` rows.",
+    "The filters and caps the validator would have applied are still yours to",
+    "apply before posting — none of them is switched off with it: drop a candidate",
+    "that re-raises a SETTLED thread (`killed`, `settled:<thread-id>`) and a new",
+    "nit outside the delta while a NIT SCOPE block is armed (`nit-out-of-delta`),",
+    "and hold every lens to its own severity cap — the one its instructions set,",
+    "and any ceiling this repo's profile sets for it.",
   ].join("\n");
 }
 
