@@ -95,6 +95,9 @@ def usd_and_minutes(case_dir):
         inp = b.get("input_tokens") or 0
         cached = min(b.get("cached_tokens") or 0, inp)
         usd = ((inp - cached) * GPT6_SOL["input"] + cached * GPT6_SOL["cacheRead"] + (b.get("output_tokens") or 0) * GPT6_SOL["output"]) / 1e6
+    if not os.path.exists(ev) and summary.get("arm") == "claude" and summary.get("cost_usd") is not None:
+        # The Claude Code arm: its own total_cost_usd (API-price equivalent).
+        usd = summary["cost_usd"]
     mins = summary["duration_seconds"] / 60 if "duration_seconds" in summary else None
     return usd, mins
 
@@ -214,7 +217,8 @@ def aacr(runs_dir, runs, cases):
     refs, generated, scored, judges = {}, 0, set(), set()
     for run in runs:
         d = os.path.join(runs_dir, run, "results", "all")
-        rounds = [f for f in sorted(glob.glob(os.path.join(d, "metrics_ocr_*.json"))) if "average" not in f]
+        # metrics_<reader>_*: ocr for quickreviewd and OCR runs, claude for Claude Code runs.
+        rounds = [f for f in sorted(glob.glob(os.path.join(d, "metrics_*_*.json"))) if "average" not in f]
         per = collections.defaultdict(list)
         for f in rounds:
             m = json.load(open(f))
@@ -232,6 +236,10 @@ def aacr(runs_dir, runs, cases):
             rf = os.path.join(d, f"{iid}.json")
             r = json.load(open(rf)) if os.path.exists(rf) else {}
             rows = (r.get("review") or {}).get("comments") or r.get("comments") or []
+            if not rows and isinstance(r.get("review_output"), list):
+                # A Claude Code result: the findings the harness's Claude reader scores.
+                rows = [x for x in r["review_output"] if isinstance(x, dict)
+                        and "\n".join(p for p in [(x.get("summary") or "").strip(), (x.get("failure_scenario") or "").strip()] if p)]
             generated += len(rows)
         if got and rounds:
             j = os.path.join(runs_dir, run, "judge.txt")

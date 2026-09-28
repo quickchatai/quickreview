@@ -517,13 +517,14 @@ export function readOcrSummary(outDir: string, c: BenchCase): OcrCaseSummary | n
 }
 
 /** The arm a run dir holds, from its run.json (`reviewer: "ocr"` / `"codex"` /
- * `"opencode"`; a quickreviewd run carries no `reviewer`); `null` when there is
+ * `"opencode"` / `"claude"`; a quickreviewd run carries no `reviewer`); `null` when there is
  * no readable run.json yet. */
-export function runArmOf(outDir: string): "qcr" | "ocr" | "codex" | "opencode" | null {
+export function runArmOf(outDir: string): "qcr" | "ocr" | "codex" | "opencode" | "claude" | null {
   const p = join(outDir, "run.json");
   if (!existsSync(p)) return null;
   try {
     const r = JSON.parse(readFileSync(p, "utf8")) as Record<string, unknown>;
+    if (r["reviewer"] === "claude") return "claude";
     if (r["reviewer"] === "opencode") return "opencode";
     return r["reviewer"] === "ocr" ? "ocr" : r["reviewer"] === "codex" ? "codex" : "qcr";
   } catch {

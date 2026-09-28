@@ -26,6 +26,7 @@
 // run dir alone — nothing here needs the review to be re-run.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { claudeRowsForJudge } from "./claudeshape.js";
 
 export const SEVERITIES = ["high", "medium", "low"] as const;
 export type Severity = (typeof SEVERITIES)[number];
@@ -189,7 +190,9 @@ function readJson(path: string): unknown {
 export function reviewForJudge(runDir: string, instanceId: string): ReviewForJudge {
   const scored = readJson(join(runDir, "results", "all", `${instanceId}.json`)) as
     { review?: { comments?: unknown[] } } | undefined;
-  const rows: unknown[] = scored?.review?.comments ?? [];
+  // The Claude Code arm's file is the harness's Claude shape (`review_output`),
+  // read into the same rows its scorer would score (src/bench/claudeshape.ts).
+  const rows: unknown[] = scored?.review?.comments ?? claudeRowsForJudge(scored) ?? [];
   const comments: ReviewComment[] = [];
   for (const row of rows) {
     const r = (row ?? {}) as Record<string, unknown>;

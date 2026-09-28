@@ -86,8 +86,8 @@ def split(a):
     print(n)
 
 
-def round_file(shard, rounds, r):
-    files = [f for f in glob.glob(os.path.join(shard, "metrics_ocr_*.json")) if "average" not in f]
+def round_file(shard, rounds, r, reviewer="ocr"):
+    files = [f for f in glob.glob(os.path.join(shard, f"metrics_{reviewer}_*.json")) if "average" not in f]
     if rounds > 1:
         files = [f for f in files if f.endswith(f"_round_{r}.json")]
     if len(files) != 1:
@@ -105,7 +105,7 @@ def merge(a):
     summaries = []
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     for r in range(1, a.rounds + 1):
-        parts = [round_file(s, a.rounds, r) for s in a.shards]
+        parts = [round_file(s, a.rounds, r, a.reviewer) for s in a.shards]
         stats = {k: sum(p["summary"].get(k, 0) for p in parts) for k in COUNT_KEYS}
         summary = evaluate._compute_summary(stats)
         eval_res = sorted((e for p in parts for e in p.get("eval_res") or []),
@@ -116,7 +116,7 @@ def merge(a):
             "ex_info": {
                 "start_time": min(str((p.get("ex_info") or {}).get("start_time", "")) for p in parts),
                 "results_dir": a.out,
-                "reviewer": "ocr",
+                "reviewer": a.reviewer,
                 "line_k": a.line_k,
                 "limit": None,
                 "missing_instance_ids": missing,
@@ -126,12 +126,12 @@ def merge(a):
             "eval_res": eval_res,
         }
         label = f"_round_{r}" if a.rounds > 1 else ""
-        with open(os.path.join(a.out, f"metrics_ocr_{ts}{label}.json"), "w", encoding="utf-8") as f:
+        with open(os.path.join(a.out, f"metrics_{a.reviewer}_{ts}{label}.json"), "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         summaries.append(summary)
     if a.rounds > 1:
         avg = {"summary": pipeline._average_summaries(summaries), "eval_rounds": a.rounds}
-        with open(os.path.join(a.out, "metrics_ocr_average.json"), "w", encoding="utf-8") as f:
+        with open(os.path.join(a.out, f"metrics_{a.reviewer}_average.json"), "w", encoding="utf-8") as f:
             json.dump(avg, f, ensure_ascii=False, indent=2)
     s = summaries[-1]
     print(f"merged {len(a.shards)} shard(s) × {a.rounds} round(s): "
@@ -152,6 +152,9 @@ def main():
     m.add_argument("--rounds", type=int, required=True)
     m.add_argument("--line-k", type=int, default=1)
     m.add_argument("--harness", default="/opt/aacr-bench/evaluation")
+    # The harness reader the shards ran with: ocr (quickreviewd and OCR runs),
+    # claude (the Claude Code arm) — it names the metrics files.
+    m.add_argument("--reviewer", default="ocr", choices=["ocr", "claude"])
     m.add_argument("shards", nargs="+")
     a = ap.parse_args()
     if a.cmd == "split":

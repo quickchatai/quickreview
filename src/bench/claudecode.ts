@@ -1,0 +1,788 @@
+// The Claude Code arm of the AACR-Bench harness — a BENCHMARKED REVIEWER only.
+//
+// Root CLAUDE.md rule 5 forbids spawning `claude`, with ONE ratified exception
+// (2026-09-28): Claude Code may run as a benchmarked reviewer inside
+// the locked-down bench/aacr docker sandbox (`bench.sh --arm claude`), never on
+// the host, never in the daemon/TUI/companion/review rounds, never as a tool
+// our reviewer calls. So this module never spawns `claude` itself: it spawns
+// bench/aacr/claude_driver.py, which calls the AACR harness's OWN runner
+// (`evaluation/reviewers/claude.py`, pinned in the image) — and that runner is
+// what runs `claude`. `in-container.sh claude-review` is the only way in
+// (tests/bench-claude.test.ts fences the chain, and that no host path spawns
+// `claude` at all).
+//
+// What is the harness's, exactly (reviewers/claude.py `run_claude_review` +
+// `save_result`, pipeline.py `apply_defaults`):
+//   claude -p '/code-review <base>...<head> ' --add-dir <repo>
+//     --permission-mode acceptEdits --output-format json
+//     --mcp-config '{"mcpServers":{"findings":{…mcp_finding_server.py…}}}'
+//     --allowed-tools mcp__findings__report
+//     --append-system-prompt <the findings-reporting requirement>
+//     --settings <a temp file holding the StopFailure hook>
+//   cwd = the repo, timeout 30 min → process timeout 30×60+60 s, and the
+//   result file `save_result` writes — scored by the harness's
+//   `build_target_comments_from_claude` untouched (`--reviewer claude`).
+// `/code-review` is Claude Code's BUILT-IN skill (2.1.283 ships it; no plugin
+// is installed), exactly as the harness assumes.
+//
+// What differs, all mechanical (and said in the report):
+//   - the repo is `prepareTree`'s (prefetched objects, detached head) at
+//     /work/repo/<owner>__<name> — the harness's own layout (repo/<owner>__<name>)
+//     under a directory with no CLAUDE.md above it, instead of a fresh clone;
+//   - the credential is Claude Code's own (CLAUDE_CODE_OAUTH_TOKEN from
+//     `claude setup-token`, or ANTHROPIC_API_KEY), from bench/aacr/claude.env
+//     via `docker run --env-file` — never the host's interactive login — and
+//     the model is Claude Code's default for it (the harness pins one through
+//     its ANTHROPIC_MODEL gateway triple; we record which model ran instead);
+//   - every case gets a FRESH, empty HOME/CLAUDE_CONFIG_DIR on tmpfs, so no
+//     session, memory or settings carry from one case to the next.
+
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { safeId, selectCases, type BenchCase, type CaseSet, type PrefetchMeta } from "./aacr.js";
+import { run } from "./exec.js";
+import { AACR_REPORT_PREAMBLE, roundMetrics } from "./report.js";
+import { claudeScoredFindings } from "./claudeshape.js";
+import { prepareTree } from "./runner.js";
+
+export { claudeRowsForJudge, claudeScoredFindings } from "./claudeshape.js";
+
+/** pipeline.py `apply_defaults`: `--timeout-minutes` None → 30. */
+export const CLAUDE_HARNESS_DEFAULTS = { timeoutMin: 30 } as const;
+
+/** The pinned Claude Code version (Dockerfile `CLAUDE_CODE_VERSION`). */
+export const CLAUDE_CODE_PIN = "2.1.283";
+
+/** reviewers/claude.py: `process_timeout = timeout_minutes * 60 + 60`. Our
+ * outer bound on the driver leaves the harness's own timeout room to fire and
+ * still write its result file. */
+export function claudeProcessTimeoutMs(timeoutMin: number): number {
+  return (timeoutMin * 60 + 60) * 1000;
+}
+export function driverTimeoutMs(timeoutMin: number): number {
+  return claudeProcessTimeoutMs(timeoutMin) + 5 * 60_000;
+}
+
+/** The flags reviewers/claude.py passes, in order, after `claude -p <cmd>`. */
+export const CLAUDE_HARNESS_FLAGS = [
+  "--add-dir",
+  "--permission-mode",
+  "--output-format",
+  "--mcp-config",
+  "--allowed-tools",
+  "--append-system-prompt",
+  "--settings",
+] as const;
+
+/** Check the argv the harness ran (the driver's CompletedProcess.args) against
+ * the pinned shape. Returns the mismatches — [] is faithful. */
+export function checkHarnessArgv(
+  argv: unknown,
+  o: { repo: string; base: string; head: string },
+): string[] {
+  const bad: string[] = [];
+  if (!Array.isArray(argv) || argv.some((x) => typeof x !== "string"))
+    return ["argv is not a list of strings"];
+  const a = argv as string[];
+  if (a[0] !== "claude") bad.push(`argv[0] is ${JSON.stringify(a[0])}, not "claude"`);
+  if (a[1] !== "-p") bad.push(`argv[1] is ${JSON.stringify(a[1])}, not "-p"`);
+  if (a[2] !== `/code-review ${o.base}...${o.head} `)
+    bad.push(`the prompt is ${JSON.stringify(a[2])}, not "/code-review <base>...<head> "`);
+  const rest = a.slice(3);
+  if (rest.length !== CLAUDE_HARNESS_FLAGS.length * 2)
+    bad.push(`${rest.length} trailing args, expected ${CLAUDE_HARNESS_FLAGS.length * 2}`);
+  const val = (flag: string): string | undefined => {
+    const i = rest.indexOf(flag);
+    return i >= 0 && i % 2 === 0 ? rest[i + 1] : undefined;
+  };
+  CLAUDE_HARNESS_FLAGS.forEach((flag, k) => {
+    if (rest[k * 2] !== flag)
+      bad.push(`flag ${k + 1} is ${JSON.stringify(rest[k * 2])}, not ${flag}`);
+  });
+  if (val("--add-dir") !== o.repo) bad.push(`--add-dir is not the repo (${o.repo})`);
+  if (val("--permission-mode") !== "acceptEdits") bad.push("--permission-mode is not acceptEdits");
+  if (val("--output-format") !== "json") bad.push("--output-format is not json");
+  if (val("--allowed-tools") !== "mcp__findings__report")
+    bad.push("--allowed-tools is not mcp__findings__report");
+  try {
+    const m = JSON.parse(val("--mcp-config") ?? "") as {
+      mcpServers?: Record<string, { args?: string[] }>;
+    };
+    const f = m.mcpServers?.["findings"];
+    if (!f || !String(f.args?.[0] ?? "").endsWith("mcp_finding_server.py"))
+      bad.push("--mcp-config does not start the harness's findings server");
+  } catch {
+    bad.push("--mcp-config is not JSON");
+  }
+  if (!(val("--append-system-prompt") ?? "").includes("mcp__findings__report"))
+    bad.push("--append-system-prompt is not the findings requirement");
+  return bad;
+}
+
+/** Which credential the env-file gave: exactly one of the two, never both. */
+export type ClaudeCredential = "oauth-token" | "api-key";
+
+export function pickCredential(env: NodeJS.ProcessEnv): {
+  kind: ClaudeCredential;
+  vars: Record<string, string>;
+} {
+  const oauth = (env["CLAUDE_CODE_OAUTH_TOKEN"] ?? "").trim();
+  const key = (env["ANTHROPIC_API_KEY"] ?? "").trim();
+  if (oauth && key)
+    throw new Error(
+      "claude-review: bench/aacr/claude.env sets BOTH CLAUDE_CODE_OAUTH_TOKEN and ANTHROPIC_API_KEY — keep exactly one",
+    );
+  if (oauth) return { kind: "oauth-token", vars: { CLAUDE_CODE_OAUTH_TOKEN: oauth } };
+  if (key) return { kind: "api-key", vars: { ANTHROPIC_API_KEY: key } };
+  throw new Error(
+    "claude-review: no Claude Code credential in the environment — bench/aacr/claude.env must hold CLAUDE_CODE_OAUTH_TOKEN=… (from `claude setup-token`) or ANTHROPIC_API_KEY=…",
+  );
+}
+
+/** The environment the driver (and so the harness, and so `claude`) runs
+ * with: a fresh per-case HOME and CLAUDE_CONFIG_DIR, exactly one credential,
+ * no auto-update, no telemetry or other non-essential traffic, git without any
+ * system/global config. Nothing else of the container's environment rides. */
+export function claudeEnv(o: {
+  path: string;
+  home: string;
+  tmpDir: string;
+  credential: Record<string, string>;
+  maxRetries?: string;
+}): NodeJS.ProcessEnv {
+  return {
+    PATH: o.path,
+    HOME: o.home,
+    CLAUDE_CONFIG_DIR: join(o.home, ".claude"),
+    TMPDIR: o.tmpDir,
+    LANG: "C.UTF-8",
+    ...o.credential,
+    ...(o.maxRetries ? { CLAUDE_CODE_MAX_RETRIES: o.maxRetries } : {}),
+    DISABLE_AUTOUPDATER: "1",
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+    DISABLE_TELEMETRY: "1",
+    DISABLE_ERROR_REPORTING: "1",
+    DISABLE_BUG_COMMAND: "1",
+    CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY: "1",
+    CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL: "1",
+    PYTHONDONTWRITEBYTECODE: "1",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_SYSTEM: "/dev/null",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_TERMINAL_PROMPT: "0",
+  };
+}
+
+/** The harness's repo layout: repo/<owner>__<name> (repo_utils.local_repo_path). */
+export function claudeRepoPath(workRoot: string, repo: string): string {
+  return join(workRoot, "repo", repo.replaceAll("/", "__"));
+}
+
+type Obj = Record<string, unknown>;
+const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
+
+// ---- one case ---------------------------------------------------------------------
+
+/** `auth-failed`: Claude Code could not authenticate — it still exits 0 and
+ * prints the error as its "result", so this is read from the output, and it
+ * stops the run (every later case would fail the same way). `no-model-call`:
+ * exit 0 but no model reported any usage — nothing was reviewed. */
+export type ClaudeStatus =
+  "ok" | "failed" | "timeout" | "no-output" | "retry-exhausted" | "auth-failed" | "no-model-call";
+
+const AUTH_FAILURE_RE =
+  /failed to authenticate|invalid api key|oauth (access )?token (is )?(invalid|expired|revoked)|\b401\b|please run \/login/i;
+
+export interface ClaudeFingerprint {
+  qcr_commit: string;
+  claude_code_version: string;
+  credential: ClaudeCredential;
+  timeout_min: number;
+}
+
+export interface ClaudeTokens {
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_creation: number;
+}
+
+export interface ClaudeCaseSummary {
+  instance_id: string;
+  arm: "claude";
+  status: ClaudeStatus;
+  error?: string;
+  fingerprint: ClaudeFingerprint;
+  exit_code: number | null;
+  duration_seconds: number;
+  /** Findings the harness's scorer reads from the result file. */
+  comments: number;
+  /** `mcp_stream` | `stdout_fallback` — which channel save_result kept. */
+  review_output_source: string | null;
+  /** True when review_output is the harness's raw-text fallback (scores 0). */
+  raw_text_fallback: boolean;
+  /** Every model Claude Code's JSON output reports usage for… */
+  models: string[];
+  /** …and the one that produced the most output tokens: the model that ran. */
+  model: string | null;
+  tokens: ClaudeTokens | null;
+  /** Claude Code's own `total_cost_usd` (API-price equivalent). */
+  cost_usd: number | null;
+  num_turns: number | null;
+  /** Did the argv the harness ran match the pinned shape? */
+  argv_ok: boolean;
+  argv_mismatches: string[];
+  merge_base_ok: boolean;
+  warnings: string[];
+}
+
+const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+
+/** Status + what ran, from the result file save_result wrote. */
+export function summarizeClaudeResult(a: {
+  result: unknown;
+  driverExit: number;
+  driverTimedOut: boolean;
+  /** Claude Code's stdout (the JSON envelope), when the driver saved it. */
+  stdout?: string;
+}): Pick<
+  ClaudeCaseSummary,
+  | "status"
+  | "exit_code"
+  | "comments"
+  | "review_output_source"
+  | "raw_text_fallback"
+  | "models"
+  | "model"
+  | "tokens"
+  | "cost_usd"
+  | "num_turns"
+> {
+  const r = isObj(a.result) ? a.result : null;
+  const exit = r && typeof r["claude_exit_code"] === "number" ? r["claude_exit_code"] : null;
+  const tu = r && isObj(r["token_usage"]) ? r["token_usage"] : null;
+  const mu = tu && isObj(tu["model_usage"]) ? tu["model_usage"] : {};
+  const models = Object.keys(mu).sort();
+  let model: string | null = null;
+  let best = -1;
+  for (const m of models) {
+    const u = mu[m];
+    const out = isObj(u) ? num(u["outputTokens"]) : 0;
+    if (out > best) {
+      best = out;
+      model = m;
+    }
+  }
+  const stderr = r && typeof r["stderr"] === "string" ? r["stderr"] : "";
+  const status: ClaudeStatus = a.driverTimedOut
+    ? "timeout"
+    : r === null
+      ? "no-output"
+      : exit === -1 && /timed out/i.test(stderr)
+        ? "timeout"
+        : r["retry_exhausted"]
+          ? "retry-exhausted"
+          : exit !== 0 || a.driverExit !== 0
+            ? "failed"
+            : "ok";
+  // Exit 0 is not success: an auth failure (or any API error before the first
+  // model call) is printed as the envelope's `result` with exit 0.
+  let envelope: Obj | null = null;
+  try {
+    const e = JSON.parse(a.stdout ?? "") as unknown;
+    envelope = isObj(e) ? e : null;
+  } catch {
+    envelope = null;
+  }
+  const said = typeof envelope?.["result"] === "string" ? envelope["result"] : "";
+  const raw = typeof r?.["review_output"] === "string" ? r["review_output"] : "";
+  const finalStatus: ClaudeStatus =
+    status !== "ok"
+      ? status
+      : models.length === 0 || envelope?.["is_error"] === true
+        ? AUTH_FAILURE_RE.test(said) || AUTH_FAILURE_RE.test(raw)
+          ? "auth-failed"
+          : "no-model-call"
+        : "ok";
+  return {
+    status: finalStatus,
+    exit_code: exit,
+    comments: claudeScoredFindings(r).length,
+    review_output_source:
+      r && typeof r["review_output_source"] === "string" ? r["review_output_source"] : null,
+    raw_text_fallback: !!r && typeof r["review_output"] === "string",
+    models,
+    model,
+    tokens: tu
+      ? {
+          input: num(tu["input_tokens"]),
+          output: num(tu["output_tokens"]),
+          cache_read: num(tu["cache_read_input_tokens"]),
+          cache_creation: num(tu["cache_creation_input_tokens"]),
+        }
+      : null,
+    cost_usd: r && typeof r["claude_cost_usd"] === "number" ? r["claude_cost_usd"] : null,
+    num_turns: r && typeof r["claude_num_turns"] === "number" ? r["claude_num_turns"] : null,
+  };
+}
+
+/** The final text Claude Code printed (the JSON envelope's `result`), which
+ * is what `/code-review` said to the user — the defect judge reads it as the
+ * review body (cases/<id>/review.md). */
+export function claudeFinalText(stdout: string): string {
+  try {
+    const e = JSON.parse(stdout) as unknown;
+    if (isObj(e) && typeof e["result"] === "string") return e["result"];
+  } catch {
+    // stream-json: the `result` event, as the harness's fallback reads it
+    for (const line of stdout.split("\n")) {
+      try {
+        const e = JSON.parse(line) as unknown;
+        if (isObj(e) && e["type"] === "result" && typeof e["result"] === "string")
+          return e["result"];
+      } catch {
+        // not an event line
+      }
+    }
+  }
+  return "";
+}
+
+export interface ClaudeRunnerOptions {
+  /** Where case repos are materialised: a disk-backed anonymous volume with no
+   * CLAUDE.md anywhere above it (Claude Code reads parent-dir CLAUDE.md files). */
+  workRoot: string;
+  store: string;
+  outDir: string;
+  /** The driver: `<python> claude_driver.py` (the harness venv's python). */
+  python: string;
+  driver: string;
+  /** The container's PATH, and where per-case HOMEs go (a tmpfs). */
+  path: string;
+  homeRoot: string;
+  credential: Record<string, string>;
+  timeoutMin: number;
+  fingerprint: ClaudeFingerprint;
+  keepTree?: boolean;
+  log?: (line: string) => void;
+}
+
+function writeClaudeSummary(outDir: string, s: ClaudeCaseSummary): void {
+  const caseDir = join(outDir, "cases", safeId(s.instance_id));
+  mkdirSync(caseDir, { recursive: true });
+  writeFileSync(join(caseDir, "case-summary.json"), JSON.stringify(s, null, 2) + "\n");
+}
+
+function readJson(p: string): unknown {
+  try {
+    return JSON.parse(readFileSync(p, "utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
+/** Review one case with Claude Code, through the harness's runner. Never
+ * throws for a case that fails — a failure is a recorded outcome, and a
+ * result file always exists so the case counts against recall. */
+export async function reviewCaseClaude(
+  c: BenchCase,
+  meta: PrefetchMeta,
+  o: ClaudeRunnerOptions,
+): Promise<ClaudeCaseSummary> {
+  const log = o.log ?? (() => {});
+  const safe = safeId(c.instance_id);
+  const caseDir = join(o.outDir, "cases", safe);
+  const resultsDir = join(o.outDir, "results", "all");
+  const tree = claudeRepoPath(o.workRoot, c.repo);
+  const home = join(o.homeRoot, safe);
+  const tmpDir = join(o.homeRoot, `${safe}.tmp`);
+  mkdirSync(caseDir, { recursive: true });
+  mkdirSync(resultsDir, { recursive: true });
+  const started = Date.now();
+  const summary: ClaudeCaseSummary = {
+    instance_id: c.instance_id,
+    arm: "claude",
+    status: "failed",
+    fingerprint: o.fingerprint,
+    exit_code: null,
+    duration_seconds: 0,
+    comments: 0,
+    review_output_source: null,
+    raw_text_fallback: false,
+    models: [],
+    model: null,
+    tokens: null,
+    cost_usd: null,
+    num_turns: null,
+    argv_ok: false,
+    argv_mismatches: [],
+    merge_base_ok: false,
+    warnings: [],
+  };
+  const resultFile = join(resultsDir, `${safe}.json`);
+  rmSync(resultFile, { force: true });
+  try {
+    await prepareTree(join(o.store, safe), tree, meta);
+    for (const d of [home, tmpDir]) {
+      rmSync(d, { recursive: true, force: true });
+      mkdirSync(d, { recursive: true });
+    }
+    const env = claudeEnv({
+      path: o.path,
+      home,
+      tmpDir,
+      credential: o.credential,
+      maxRetries: process.env.CLAUDE_CODE_MAX_RETRIES,
+    });
+    const mb = await run("git", ["-C", tree, "merge-base", c.base_commit, c.head_commit], { env });
+    summary.merge_base_ok = mb.code === 0 && mb.stdout.trim() === meta.merge_base;
+    if (!summary.merge_base_ok)
+      summary.warnings.push(
+        `merge-base(${c.base_commit.slice(0, 7)}, head) = ${mb.stdout.trim() || mb.stderr.trim().slice(0, 200)}, prefetched ${meta.merge_base.slice(0, 7)}`,
+      );
+    const argvFile = join(caseDir, "claude-argv.json");
+    const stdoutFile = join(caseDir, "claude-stdout.json");
+    rmSync(argvFile, { force: true });
+    rmSync(stdoutFile, { force: true });
+    log(
+      `claude: ${c.instance_id} — ${meta.diff.files} files, /code-review ${c.base_commit.slice(0, 7)}...${c.head_commit.slice(0, 7)}`,
+    );
+    const r = await run(
+      o.python,
+      [
+        o.driver,
+        "--repo",
+        tree,
+        "--repo-name",
+        c.repo,
+        "--base",
+        c.base_commit,
+        "--head",
+        c.head_commit,
+        "--instance-id",
+        c.instance_id,
+        "--results-dir",
+        resultsDir,
+        "--timeout-min",
+        String(o.timeoutMin),
+        "--argv-out",
+        argvFile,
+        "--stdout-out",
+        stdoutFile,
+      ],
+      { cwd: tree, env, timeoutMs: driverTimeoutMs(o.timeoutMin) },
+    );
+    writeFileSync(join(caseDir, "driver.log"), `${r.stdout}\n--- stderr\n${r.stderr}`);
+    const argv = readJson(argvFile);
+    summary.argv_mismatches =
+      argv === undefined
+        ? ["the driver wrote no argv"]
+        : checkHarnessArgv(argv, { repo: tree, base: c.base_commit, head: c.head_commit });
+    summary.argv_ok = summary.argv_mismatches.length === 0;
+    const result = readJson(resultFile);
+    const stdout = existsSync(stdoutFile) ? readFileSync(stdoutFile, "utf8") : "";
+    Object.assign(
+      summary,
+      summarizeClaudeResult({ result, driverExit: r.code, driverTimedOut: r.timedOut, stdout }),
+    );
+    const finalText = claudeFinalText(stdout);
+    if (finalText.trim()) writeFileSync(join(caseDir, "review.md"), finalText.trim() + "\n");
+    if (summary.status !== "ok") {
+      const stderr = isObj(result) && typeof result["stderr"] === "string" ? result["stderr"] : "";
+      summary.error = (
+        finalText.trim() ||
+        stderr.trim() ||
+        r.stderr.trim() ||
+        r.stdout.trim()
+      ).slice(-1500);
+    }
+  } catch (err) {
+    summary.status = "failed";
+    summary.error = String(err instanceof Error ? err.message : err).slice(0, 2000);
+    log(`claude: ${c.instance_id} FAILED — ${summary.error}`);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(tmpDir, { recursive: true, force: true });
+    if (!o.keepTree) rmSync(tree, { recursive: true, force: true });
+  }
+  // The harness always leaves a result file; a case that never reached it
+  // still needs one, or the scorer would drop it from both denominators.
+  if (!existsSync(resultFile))
+    writeFileSync(
+      resultFile,
+      JSON.stringify(emptyClaudeResult(c, summary.error ?? ""), null, 2) + "\n",
+    );
+  summary.duration_seconds = Math.round((Date.now() - started) / 1000);
+  writeClaudeSummary(o.outDir, summary);
+  log(
+    `claude: ${c.instance_id} ${summary.status} — ${summary.comments} finding(s), ${summary.duration_seconds}s, model ${summary.model ?? "?"}` +
+      (summary.cost_usd !== null ? `, $${summary.cost_usd.toFixed(2)}` : "") +
+      (summary.argv_ok ? "" : ` — ARGV DRIFT: ${summary.argv_mismatches.join("; ")}`),
+  );
+  return summary;
+}
+
+/** save_result's shape for a case that produced nothing. */
+export function emptyClaudeResult(c: BenchCase, error: string): Obj {
+  return {
+    instance_id: c.instance_id,
+    repo: c.repo,
+    base_commit: c.base_commit,
+    head_commit: c.head_commit,
+    reviewer: "claude-code/code-review",
+    model: null,
+    started_at: new Date().toISOString(),
+    duration_seconds: 0,
+    claude_exit_code: -1,
+    retry_exhausted: null,
+    review_output_source: "stdout_fallback",
+    review_output: [],
+    stderr: error,
+  };
+}
+
+/** A case with no prefetched store: failed WITH an empty result file. */
+export function unprefetchedClaudeCase(
+  outDir: string,
+  c: BenchCase,
+  fingerprint: ClaudeFingerprint,
+  error: string,
+): ClaudeCaseSummary {
+  const s: ClaudeCaseSummary = {
+    instance_id: c.instance_id,
+    arm: "claude",
+    status: "failed",
+    error,
+    fingerprint,
+    exit_code: null,
+    duration_seconds: 0,
+    comments: 0,
+    review_output_source: null,
+    raw_text_fallback: false,
+    models: [],
+    model: null,
+    tokens: null,
+    cost_usd: null,
+    num_turns: null,
+    argv_ok: false,
+    argv_mismatches: [],
+    merge_base_ok: false,
+    warnings: [],
+  };
+  writeClaudeSummary(outDir, s);
+  const dir = join(outDir, "results", "all");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, `${safeId(c.instance_id)}.json`),
+    JSON.stringify(emptyClaudeResult(c, error), null, 2) + "\n",
+  );
+  return s;
+}
+
+export function readClaudeSummary(outDir: string, c: BenchCase): ClaudeCaseSummary | null {
+  const s = readJson(join(outDir, "cases", safeId(c.instance_id), "case-summary.json")) as
+    Partial<ClaudeCaseSummary> | undefined;
+  return s?.arm === "claude" ? (s as ClaudeCaseSummary) : null;
+}
+
+// ---- the whole run -------------------------------------------------------------
+
+export interface ClaudeReviewCommand {
+  set: CaseSet;
+  only?: string[];
+  outDir: string;
+  store: string;
+  workRoot: string;
+  homeRoot: string;
+  python: string;
+  driver: string;
+  timeoutMin: number;
+  resume: boolean;
+  keepTree: boolean;
+  env: NodeJS.ProcessEnv;
+  readMeta: (c: BenchCase) => PrefetchMeta;
+  log: (line: string) => void;
+}
+
+/** `cli.js claude-review`: every case ONE AT A TIME (the harness's default
+ * concurrency is 1), each through reviewCaseClaude. */
+export async function claudeReviewRun(o: ClaudeReviewCommand): Promise<number> {
+  if (!Number.isInteger(o.timeoutMin) || o.timeoutMin < 1)
+    throw new Error("claude-review: --timeout-min must be a positive integer");
+  const cred = pickCredential(o.env);
+  const version = (o.env["QCR_CLAUDE_VERSION"] ?? "").trim() || "unknown";
+  const cases = selectCases(o.set, o.only);
+  const fingerprint: ClaudeFingerprint = {
+    qcr_commit: o.env["QCR_BENCH_COMMIT"] ?? "unknown",
+    claude_code_version: version,
+    credential: cred.kind,
+    timeout_min: o.timeoutMin,
+  };
+  mkdirSync(o.outDir, { recursive: true });
+  const runFile = join(o.outDir, "run.json");
+  const previous = readJson(runFile) as Obj | undefined;
+  if (previous && previous["reviewer"] !== "claude")
+    throw new Error(
+      `${o.outDir} holds another arm's run (reviewer ${JSON.stringify(previous["reviewer"] ?? "quickreviewd")}) — pick a new --run`,
+    );
+  if (!o.resume) {
+    for (const c of cases) {
+      rmSync(join(o.outDir, "cases", safeId(c.instance_id), "case-summary.json"), { force: true });
+      rmSync(join(o.outDir, "results", "all", `${safeId(c.instance_id)}.json`), { force: true });
+    }
+  }
+  const runRecord = {
+    reviewer: "claude",
+    set: o.set.name,
+    dataset: o.set.dataset,
+    claude_code_version: version,
+    credential: cred.kind,
+    model: "Claude Code's default for the credential (per case: case-summary.json `model`)",
+    invocation:
+      "AACR harness evaluation/reviewers/claude.py run_claude_review + save_result, via bench/aacr/claude_driver.py",
+    flags: { timeout_min: o.timeoutMin },
+    qcr_commit: fingerprint.qcr_commit,
+    cases: cases.map((c) => c.instance_id),
+    started_at:
+      (o.resume && typeof previous?.["started_at"] === "string" && previous["started_at"]) ||
+      new Date().toISOString(),
+    finished_at: null as string | null,
+  };
+  writeFileSync(runFile, JSON.stringify(runRecord, null, 2) + "\n");
+  const summaries: ClaudeCaseSummary[] = [];
+  for (const c of cases) {
+    const prior = readClaudeSummary(o.outDir, c);
+    if (o.resume && prior && prior.status === "ok") {
+      if (JSON.stringify(prior.fingerprint) === JSON.stringify(fingerprint)) {
+        o.log(`claude: ${c.instance_id} already done — skipped (--resume)`);
+        summaries.push(prior);
+        continue;
+      }
+      o.log(`claude: ${c.instance_id} was reviewed by a different build/version — re-running`);
+    }
+    let meta: PrefetchMeta;
+    try {
+      meta = o.readMeta(c);
+    } catch (err) {
+      const error = String(err instanceof Error ? err.message : err);
+      o.log(error);
+      summaries.push(unprefetchedClaudeCase(o.outDir, c, fingerprint, error));
+      continue;
+    }
+    const s = await reviewCaseClaude(c, meta, {
+      workRoot: o.workRoot,
+      store: o.store,
+      outDir: o.outDir,
+      python: o.python,
+      driver: o.driver,
+      path: o.env["PATH"] ?? "/usr/local/bin:/usr/bin:/bin",
+      homeRoot: o.homeRoot,
+      credential: cred.vars,
+      timeoutMin: o.timeoutMin,
+      fingerprint,
+      keepTree: o.keepTree,
+      log: o.log,
+    });
+    summaries.push(s);
+    if (s.status === "auth-failed") {
+      o.log(
+        `claude: STOPPED — Claude Code could not authenticate (${s.error ?? "?"}). Renew the token in bench/aacr/claude.env (\`claude setup-token\`), then re-run with --resume.`,
+      );
+      break;
+    }
+  }
+  runRecord.finished_at = new Date().toISOString();
+  writeFileSync(runFile, JSON.stringify(runRecord, null, 2) + "\n");
+  const ok = summaries.filter((s) => s.status === "ok").length;
+  o.log(`claude: ${ok}/${cases.length} reviewed — results in ${join(o.outDir, "results", "all")}`);
+  return ok === cases.length ? 0 : 1;
+}
+
+// ---- the report ------------------------------------------------------------------
+
+function fmt(v: number | undefined): string {
+  return v === undefined
+    ? "?"
+    : Number.isInteger(v)
+      ? String(v)
+      : String(Math.round(v * 100) / 100);
+}
+
+/** The Claude Code arm's report: the harness's numbers (its Claude reader),
+ * then per case what ran, which model, and what it cost. */
+export function renderClaudeReport(set: CaseSet, outDir: string, cases: BenchCase[]): string {
+  const L: string[] = [];
+  const run = (readJson(join(outDir, "run.json")) ?? {}) as Obj;
+  const judgeFile = join(outDir, "judge.txt");
+  const judge = existsSync(judgeFile)
+    ? readFileSync(judgeFile, "utf8").trim().split("\n")
+    : ["not run"];
+  const summaries = cases.map((c) => ({ c, s: readClaudeSummary(outDir, c) }));
+  const models = [...new Set(summaries.flatMap((x) => (x.s?.model ? [x.s.model] : [])))];
+  L.push(`# AACR-Bench run — ${set.name} — Claude Code`);
+  L.push("");
+  L.push(AACR_REPORT_PREAMBLE);
+  L.push("");
+  L.push(
+    `- Dataset: AACR-Bench v1.0 (\`${set.dataset.commit.slice(0, 7)}\`), ${cases.length} PRs, ${cases.reduce((a, c) => a + c.references, 0)} reference comments`,
+  );
+  L.push(
+    `- Reviewer: Claude Code ${String(run["claude_code_version"] ?? "?")}, run by the AACR harness's own reviewers/claude.py: \`claude -p '/code-review <base_commit>...<head_commit> ' --add-dir <repo> --permission-mode acceptEdits --output-format json --mcp-config <findings server> --allowed-tools mcp__findings__report --append-system-prompt <findings requirement> --settings <StopFailure hook>\`, timeout ${String((run["flags"] as Obj | undefined)?.["timeout_min"] ?? "?")} min; no PR title/description (the harness passes none)`,
+  );
+  L.push(
+    `- Model: ${models.length ? models.map((m) => `\`${m}\``).join(", ") : "?"} — Claude Code's default for its ${String(run["credential"] ?? "?")} credential (the harness pins one via its gateway's ANTHROPIC_MODEL; this arm records what ran)`,
+  );
+  L.push(`- Judge: ${judge[0] ?? ""}`);
+  for (const w of judge.slice(1)) L.push(`  ${w}`);
+  L.push("");
+  L.push("## Scores (the AACR harness, Claude reader)");
+  L.push("");
+  L.push("| Round | Evaluated | Generated | Matched | Precision | Recall | F1 | Line P | Line R |");
+  L.push("|---|---|---|---|---|---|---|---|---|");
+  const { rounds, average } = roundMetrics(join(outDir, "results", "all"), "claude");
+  const row = (label: string, s: Record<string, number>) =>
+    `| ${label} | ${fmt(s["evaluated_instances"])}/${cases.length} | ${fmt(s["generated_notes"])} | ${fmt(s["matched_semantic_notes"])}/${fmt(s["expected_notes"])} | ${s["semantic_match_rate"]} | ${s["semantic_recall_rate"]} | ${s["semantic_f1"]} | ${s["line_match_rate"]} | ${s["line_recall_rate"]} |`;
+  if (average) L.push(row("**average**", average));
+  for (const r of rounds) L.push(row(String(r.round), r.summary));
+  if (!average && rounds.length === 0) L.push("| — | — | — | — | — | — | — | — | — |");
+  L.push("");
+  L.push("## Per case");
+  L.push("");
+  L.push(
+    "| Case | Refs | Status | Findings | Source | Model | Turns | Minutes | Tokens in (cache read/created) / out | $ |",
+  );
+  L.push("|---|---|---|---|---|---|---|---|---|---|");
+  let usd = 0;
+  for (const { c, s } of summaries) {
+    if (!s) {
+      L.push(`| ${c.instance_id} | ${c.references} | not run | — | — | — | — | — | — | — |`);
+      continue;
+    }
+    usd += s.cost_usd ?? 0;
+    const t = s.tokens;
+    L.push(
+      `| ${c.instance_id} | ${c.references} | ${s.status}${s.argv_ok ? "" : " (argv drift)"} | ${s.comments}${s.raw_text_fallback ? " (raw text)" : ""} | ${s.review_output_source ?? "?"} | ${s.model ?? "?"} | ${s.num_turns ?? "?"} | ${(s.duration_seconds / 60).toFixed(1)} | ${t ? `${t.input} (${t.cache_read}/${t.cache_creation}) / ${t.output}` : "?"} | ${s.cost_usd !== null ? s.cost_usd.toFixed(2) : "?"} |`,
+    );
+  }
+  L.push("");
+  L.push(
+    `Total Claude Code cost (its own \`total_cost_usd\`, API-price equivalent): $${usd.toFixed(2)}`,
+  );
+  const bad = summaries.filter((x) => x.s && (x.s.error || x.s.warnings.length || !x.s.argv_ok));
+  if (bad.length) {
+    L.push("");
+    L.push("## Warnings (case errors, argv drift)");
+    L.push("");
+    for (const { c, s } of bad) {
+      if (!s) continue;
+      if (!s.argv_ok) L.push(`- ${c.instance_id}: argv drift — ${s.argv_mismatches.join("; ")}`);
+      if (s.error) L.push(`- ${c.instance_id}: ${s.error.replace(/\s+/g, " ").slice(0, 400)}`);
+      for (const w of s.warnings) L.push(`- ${c.instance_id}: ${w}`);
+    }
+  }
+  L.push("");
+  L.push(
+    "Reading the numbers: Claude Code's findings carry no severity tag, so only the `all` variant exists for this arm — compare it with the quickreviewd arm's `all` row. A finding is scored at its single `line` (the harness's Claude reader). A case whose `/code-review` output was neither reported through the findings tool nor parseable as JSON is stored as raw text and scores zero findings, exactly as in the harness.",
+  );
+  return L.join("\n") + "\n";
+}

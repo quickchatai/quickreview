@@ -6,6 +6,8 @@
 #   docker build --target codex -t qcr-bench-codex -f bench/aacr/Dockerfile .  (bench.sh build --arm codex)
 #   docker build --target opencode -t qcr-bench-opencode -f bench/aacr/Dockerfile .
 #                                                                        (bench.sh build --arm opencode)
+#   docker build --target claude --build-arg RUNTIME_BASE=node:22-trixie \
+#                -t qcr-bench-claude -f bench/aacr/Dockerfile .               (bench.sh build --arm claude)
 #
 # One image, three uses, each run by bench.sh with its own minimal mounts:
 #   prefetch  git over https to github.com (anonymous) → the repos volume
@@ -33,6 +35,8 @@
 #   Codex CLI 0.158.0 (codex only)     = @openai/codex; the linux-x64 binary's
 #                                        sha256 is pinned (CODEX_SHA256_LINUX_X64)
 #   opencode-ai 1.18.33 (opencode only) = the linux-x64 binary's sha256 is pinned
+#   Claude Code 2.1.283 (claude only)  = the version the Claude Code arm ran; the
+#                                        linux-x64 native binary's sha256 is pinned
 
 ARG RUNTIME_BASE=node:22-bookworm
 
@@ -197,3 +201,41 @@ COPY bench/aacr/codex_bridge.py /opt/quickreview/bench/
 RUN python3 /opt/quickreview/bench/codex_bridge.py --self-test \
     && ! test -e scripts && ! command -v gh
 ENV OCR_NO_UPDATE=1 QCR_OCR_VERSION=${OCR_VERSION}
+
+# ---- claude: Claude Code as a BENCHMARKED REVIEWER --------------------------------
+# Root CLAUDE.md rule 5's ONE ratified exception (2026-09-28): `claude`
+# exists in this target only and runs only inside its hardened review container
+# (bench.sh --arm claude) — never on the host. Built on `runtime`, so the scorer,
+# the dataset, pi and the judge shim are the ones every other arm is scored with.
+# Pinned like OCR: the npm version here, and the linux-x64 native binary's sha256
+# checked against the value recorded HERE (npm checks only the registry's own
+# integrity). `/code-review` is Claude Code's built-in skill — nothing else is
+# installed. The run is `claude_driver.py` → the harness's reviewers/claude.py.
+# No credential is baked: bench.sh passes bench/aacr/claude.env with --env-file.
+FROM runtime AS claude
+ARG CLAUDE_CODE_VERSION=2.1.283
+ARG CLAUDE_CODE_SHA256_LINUX_X64=1859583ce32920595c61ef868bee52e1b1594f7486db209935e01f1e5e804ae2
+ENV DISABLE_AUTOUPDATER=1 \
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
+    DISABLE_TELEMETRY=1 \
+    DISABLE_ERROR_REPORTING=1 \
+    DISABLE_BUG_COMMAND=1 \
+    CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1 \
+    CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL=1
+RUN test "$(dpkg --print-architecture)" = amd64 \
+    && npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} --no-audit --no-fund \
+    && CC_BIN="$(readlink -f "$(command -v claude)")" \
+    && echo "${CLAUDE_CODE_SHA256_LINUX_X64}  ${CC_BIN}" | sha256sum -c - \
+    && grep -q '/code-review low' "${CC_BIN}" \
+    && HOME=/tmp/cc-build claude --version | tee /opt/quickreview/bench/claude-version.txt \
+    && grep -q "^${CLAUDE_CODE_VERSION} " /opt/quickreview/bench/claude-version.txt \
+    && rm -rf /tmp/cc-build
+COPY bench/aacr/claude_driver.py /opt/quickreview/bench/
+# The driver against a stub `claude` through the PINNED harness runner: the
+# argv shape claudecode.ts checks and the result shape the scorer reads.
+RUN HOME=/tmp/cc-build /opt/aacr-venv/bin/python /opt/quickreview/bench/claude_driver.py --self-test \
+    && /opt/aacr-venv/bin/python -c 'import mcp.server.fastmcp' \
+    && rm -rf /tmp/cc-build /tmp/claude-driver-selftest-* \
+    && mkdir -p /work && chmod 1777 /work \
+    && ! test -e scripts && ! command -v gh
+ENV QCR_CLAUDE_VERSION=${CLAUDE_CODE_VERSION}

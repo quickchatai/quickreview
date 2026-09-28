@@ -22,6 +22,9 @@
 #                     one case at a time in one container per set, like ocr)
 #   --arm opencode    OpenCode (bench.sh --arm opencode), one case at a time in one container per
 #                     set, like ocr
+#   --arm claude      Claude Code as a benchmarked reviewer (bench.sh --arm claude; root CLAUDE.md
+#                     rule 5's one ratified exception — inside its sandbox only): the ocr path, one
+#                     container per set, the harness's reviewers/claude.py; needs bench/aacr/claude.env
 #   --parallel N|auto reviews at once, MACHINE-WIDE (default auto; see "Scheduling" below)
 #   --max-parallel N, --concurrency N   other spellings of --parallel N
 #   --resume          keep cases already reviewed by the same build and levers; re-run the rest
@@ -100,7 +103,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ -n "$PREFIX" && -n "$CASES" ]] || { echo "--prefix and --cases are required" >&2; exit 2; }
-[[ "$ARM" == qcr || "$ARM" == ocr || "$ARM" == codex || "$ARM" == opencode ]] || { echo "--arm must be qcr | ocr | codex | opencode" >&2; exit 2; }
+[[ "$ARM" == qcr || "$ARM" == ocr || "$ARM" == codex || "$ARM" == opencode || "$ARM" == claude ]] || { echo "--arm must be qcr | ocr | codex | opencode | claude" >&2; exit 2; }
 [[ "$ARM" == qcr || -z "$CONFIG" ]] || { echo "--config sets quickreviewd levers; the $ARM arm has none" >&2; exit 2; }
 [[ "$EVAL" =~ ^[0-9]+$ ]] || { echo "--eval takes a round count" >&2; exit 2; }
 [[ "$PAR" == auto || "$PAR" =~ ^[1-9][0-9]*$ ]] || { echo "--parallel takes a count or auto" >&2; exit 2; }
@@ -110,12 +113,18 @@ QIMG="${QCR_BENCH_IMAGE:-qcr-bench:latest}" OIMG="${QCR_BENCH_OCR_IMAGE:-qcr-ben
 IMG="$QIMG"; [[ "$ARM" == ocr ]] && IMG="$OIMG"
 [[ "$ARM" == codex ]] && IMG="${QCR_BENCH_CODEX_IMAGE:-qcr-bench-codex:latest}"
 [[ "$ARM" == opencode ]] && IMG="${QCR_BENCH_OPENCODE_IMAGE:-qcr-bench-opencode:latest}"
+[[ "$ARM" == claude ]] && IMG="${QCR_BENCH_CLAUDE_IMAGE:-qcr-bench-claude:latest}"
 IMG_ID="$(docker image inspect "$IMG" --format '{{.Id}}' 2>/dev/null)" || { echo "no image $IMG — build it: bench.sh build --arm $ARM" >&2; exit 2; }
 # An image built before the per-case scheduler ignores --phase, and its
 # "init" container would review every case with no network. Refuse it (and
 # an older image of the judge/eval side, which lacks the eval sharding).
 docker run --rm --network none --entrypoint test "$QIMG" -f /opt/quickreview/bench/eval_shards.py >/dev/null 2>&1 \
   || { echo "image $QIMG predates the per-case scheduler (no eval_shards.py) — rebuild it: bench.sh build" >&2; exit 2; }
+# The Claude Code arm is judged in $QIMG too, which must read its result shape.
+if [[ "$ARM" == claude ]]; then
+  docker run --rm --network none --entrypoint test "$QIMG" -f /opt/quickreview/sandbox/dist/src/bench/claudeshape.js >/dev/null 2>&1 \
+    || { echo "image $QIMG cannot read a Claude Code run (no claudeshape.js) — rebuild it: bench.sh build" >&2; exit 2; }
+fi
 
 REVIEW_MB="${QCR_BENCH_REVIEW_MB:-1024}" RESERVE_MB="${QCR_BENCH_RESERVE_MB:-3072}"
 MAX_PAR="${QCR_BENCH_MAX_PARALLEL:-10}" PAUSE="${QCR_BENCH_RATE_LIMIT_PAUSE:-300}"
@@ -261,8 +270,8 @@ PY
 START=$(date +%s)
 fail=0
 
-# ---- the open-code-review, Codex and OpenCode arms: one container per set, as their harness runs --
-if [[ "$ARM" == ocr || "$ARM" == codex || "$ARM" == opencode ]]; then
+# ---- the open-code-review, Codex, OpenCode and Claude Code arms: one container per set, as their harness runs --
+if [[ "$ARM" == ocr || "$ARM" == codex || "$ARM" == opencode || "$ARM" == claude ]]; then
   SLOT=""
   one() { # index
     local i="$1" run="${JRUN[$1]}" set_name="${JSET[$1]}" ids="${JIDS[$1]}" only=() rc=0 cases
