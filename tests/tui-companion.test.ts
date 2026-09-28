@@ -9,6 +9,12 @@ import {
   type CompanionConfig,
 } from "../src/config.js";
 import {
+  companionGithubDir,
+  legacySecretsDir,
+  operatorHome,
+  secretsHome,
+} from "../src/install.js";
+import {
   CompanionLifecycle,
   CONTAINER,
   PUBLIC_DNS,
@@ -35,6 +41,17 @@ const CFG: CompanionConfig = resolveCompanionPaths(
   },
   root,
 );
+
+/**: the lifecycle's install env — so the config/state home mounts are
+ * derived from a HOME no machine has, never the operator's own. */
+const HOST_ENV = { HOME: "/host/home" };
+/** The host side of the mounts under HOST_ENV. */
+const HOMES = {
+  profiles: "/host/home/.config/qcr/default/profiles",
+  configFile: "/host/home/.config/qcr/default/config.toml",
+  state: "/host/home/.local/state/qcr/default",
+  github: "/host/home/.local/state/qcr-operator/default/companion-github",
+};
 
 const OK: DockerResult = { ok: true, stdout: "", stderr: "", code: 0 };
 const FAIL: DockerResult = {
@@ -70,14 +87,14 @@ const inspect = (running: boolean | "absent") => (argv: string[]) =>
 const okFor = (verb: string) => (argv: string[]) => (argv[0] === verb ? OK : undefined);
 const noDirs = (): void => {};
 
-function lifecycle(answers: Parameters<typeof fakeDocker>[0], env: NodeJS.ProcessEnv = {}) {
+function lifecycle(answers: Parameters<typeof fakeDocker>[0], env: NodeJS.ProcessEnv = HOST_ENV) {
   const { runner, calls } = fakeDocker(answers);
   return { lc: new CompanionLifecycle(CFG, runner, env, noDirs), calls };
 }
 
 /** Same, but with the reviewed-repo checkout PRESENT on the host.
  * The fs seam answers for that one path only, so nothing else changes. */
-function withRepo(answers: Parameters<typeof fakeDocker>[0], env: NodeJS.ProcessEnv = {}) {
+function withRepo(answers: Parameters<typeof fakeDocker>[0], env: NodeJS.ProcessEnv = HOST_ENV) {
   const { runner, calls } = fakeDocker(answers);
   const fs: CompanionFs = {
     exists: (p) => p === CFG.reviewed_repo_dir,
@@ -155,6 +172,12 @@ describe("CompanionLifecycle argv", () => {
       `${CFG.evidence_dir}:${CONTAINER.evidence}:ro`,
       `/host/feed:${CONTAINER.feed}:rw`,
       `/host/alerts:${CONTAINER.alerts}:rw`,
+      // the config home's profiles/ (rw — setup writes the profile),
+      // the state home (rw — survey and scan state) and the read-only token
+      // dir. No config file here: none exists under this HOME.
+      `${HOMES.profiles}:${CONTAINER.profiles}:rw`,
+      `${HOMES.state}:${CONTAINER.stateHome}:rw`,
+      `${HOMES.github}:${CONTAINER.githubRead}:ro`,
     ]);
     expect(argv[argv.length - 1]).toBe("qcr-companion"); // image last
   });
@@ -275,9 +298,14 @@ describe("the reviewed repo, read-only", () => {
     [CONTAINER.evidence]: CFG.evidence_dir,
     [CONTAINER.feed]: "/host/feed",
     [CONTAINER.alerts]: "/host/alerts",
+    // the install homes and the token dir.
+    [`${CONTAINER.profiles}`]: HOMES.profiles,
+    [CONTAINER.stateHome]: HOMES.state,
+    [CONTAINER.githubRead]: HOMES.github,
   };
 
-  it("mounts example-app READ-ONLY when the checkout is there", () => {
+  it("mounts the reviewed repo READ-ONLY at a generic path when the checkout is there", () => {
+    expect(CONTAINER.reviewedRepo).toBe("/reviewed-repo"); //: no repo's name
     const argv = withRepo([]).lc.runArgv();
     const mounts = argv.filter((_, i) => argv[i - 1] === "--volume");
     expect(mounts).toContain(`/host/example-app:${CONTAINER.reviewedRepo}:ro`);
@@ -381,18 +409,21 @@ describe("the reviewed repo, read-only", () => {
 
   it("the entrypoint reports the mount either way, and never fabricates it", () => {
     const entrypoint = readFileSync(resolve(root, "docker/companion/entrypoint.sh"), "utf8");
-    expect(entrypoint).toContain("/example-app is not mounted");
-    expect(entrypoint).toContain("READ-ONLY at /example-app");
+    expect(entrypoint).toContain(`${CONTAINER.reviewedRepo} is not mounted`);
+    expect(entrypoint).toContain(`READ-ONLY at ${CONTAINER.reviewedRepo}`);
     // An invented empty dir reads as "the code says nothing" — worse than a
     // plainly absent mount. Never mkdir it.
-    expect(entrypoint).not.toMatch(/mkdir[^\n]*\/example-app/);
+    expect(entrypoint).not.toMatch(/mkdir[^\n]*\/reviewed-repo/);
+    // the old repo-named path is gone from the image's boot text.
+    expect(entrypoint).not.toContain("/example-app");
   });
 
   it("tells the companion it has it, and that it is read-only", () => {
     const prompt = readFileSync(resolve(root, "prompts/companion.md"), "utf8");
     expect(prompt).toContain(CONTAINER.reviewedRepo);
-    expect(prompt).toMatch(/READ-ONLY at `\/example-app`/);
-    expect(prompt).toMatch(/Never\*\* write to `\/example-app`/);
+    expect(prompt).toMatch(/READ-ONLY at `\/reviewed-repo`/);
+    expect(prompt).toMatch(/Never\*\* write to `\/reviewed-repo`/);
+    expect(prompt).not.toContain("/example-app");
   });
 
   it("alert family 3 does not lean on the retired awaiting_human state", () => {
@@ -435,6 +466,10 @@ describe("mount drift", () => {
     [CONTAINER.evidence]: CFG.evidence_dir,
     [CONTAINER.feed]: "/host/feed",
     [CONTAINER.alerts]: "/host/alerts",
+    // the install homes and the token dir.
+    [`${CONTAINER.profiles}`]: HOMES.profiles,
+    [CONTAINER.stateHome]: HOMES.state,
+    [CONTAINER.githubRead]: HOMES.github,
   };
 
   it("adopts a running container whose mounts already match", async () => {
@@ -515,6 +550,9 @@ describe("mount drift", () => {
                 `${CONTAINER.evidence}=${CFG.evidence_dir}`,
                 `${CONTAINER.feed}=/host/feed`,
                 `${CONTAINER.alerts}=/host/alerts`,
+                `${CONTAINER.profiles}=${HOMES.profiles}`,
+                `${CONTAINER.stateHome}=${HOMES.state}`,
+                `${CONTAINER.githubRead}=${HOMES.github}`,
                 "",
               ].join("\n"),
             };
@@ -1076,14 +1114,155 @@ describe("native subagents (companion)", () => {
     expect(entry).toContain("is not a symlink — NOT touching it");
   });
 
-  it("keeps the desktop cap at 4 — the glue's default, no env override in piArgv", () => {
-    // The VM's 6 rides QCR_SUBAGENT_MAX_CONCURRENCY (sessions.ts buildEnv);
-    // the companion deliberately sets nothing and inherits the default 4.
-    const argv = new CompanionLifecycle(CFG, async () => OK, {}, noDirs, {
+  it("raises the companion's cap to 8 and pins it on the pi command line", () => {
+    // Survey and scan fan out one case per unit, so the desktop default of 4
+    // is raised. Like every QCR_* var it rides the env prefix of the tmux
+    // command — never the client env, which tmux panes do not inherit.
+    expect(SUBAGENTS.maxConcurrency).toBe(8);
+    const lc = new CompanionLifecycle(CFG, async () => OK, HOST_ENV, noDirs, {
       exists: () => false,
       read: () => undefined,
       mode: () => undefined,
-    }).piArgv();
-    expect(argv.join(" ")).not.toContain("QCR_SUBAGENT_MAX_CONCURRENCY");
+    });
+    const argv = lc.spawnArgv();
+    expect(argv).toContain("QCR_SUBAGENT_MAX_CONCURRENCY=8");
+    expect(argv.indexOf("QCR_SUBAGENT_MAX_CONCURRENCY=8")).toBeLessThan(argv.indexOf("pi"));
+    // The glue parses it as a valid cap (strict digits, 1..64).
+    expect(lc.piArgv().join(" ")).not.toContain("QCR_SUBAGENT_MAX_CONCURRENCY");
+  });
+});
+
+describe("the install's homes and the read-only GitHub token", () => {
+  /** A lifecycle whose fs answers `exists` for the given paths only. */
+  const withFiles = (
+    present: string[],
+    answers: Parameters<typeof fakeDocker>[0] = [],
+    env: NodeJS.ProcessEnv = HOST_ENV,
+  ) => {
+    const { runner, calls } = fakeDocker(answers);
+    const fs: CompanionFs = {
+      exists: (p) => present.includes(p),
+      read: () => undefined,
+      mode: () => undefined,
+    };
+    const dirs: string[][] = [];
+    return {
+      lc: new CompanionLifecycle(CFG, runner, env, (p) => dirs.push(p), fs),
+      calls,
+      dirs,
+    };
+  };
+  const volumes = (argv: string[]) => argv.filter((_, i) => argv[i - 1] === "--volume");
+
+  it("mounts the live config READ-ONLY when it exists, and names it to pi", () => {
+    const { lc } = withFiles([HOMES.configFile]);
+    expect(volumes(lc.runArgv())).toContain(
+      `${HOMES.configFile}:${CONTAINER.configFile}:ro`,
+    );
+    // The in-container locator then finds profiles beside it, as on the host.
+    expect(lc.spawnArgv()).toContain(`QCR_CONFIG=${CONTAINER.configFile}`);
+    expect(lc.expectedMounts().get(`${CONTAINER.configFile}`)).toBe(HOMES.configFile);
+  });
+
+  it("follows the locator: a legacy checkout config is the one mounted", () => {
+    const legacy = `${CFG.repo_dir}/config.toml`;
+    const { lc } = withFiles([legacy]);
+    expect(volumes(lc.runArgv())).toContain(`${legacy}:${CONTAINER.configFile}:ro`);
+    const { lc: pinned } = withFiles(["/elsewhere/c.toml"], [], {
+      ...HOST_ENV,
+      QCR_CONFIG: "/elsewhere/c.toml",
+    });
+    expect(volumes(pinned.runArgv())).toContain(
+      `/elsewhere/c.toml:${CONTAINER.configFile}:ro`,
+    );
+  });
+
+  it("never mounts a missing config file — docker would invent a directory there", () => {
+    const { lc } = withFiles([]);
+    expect(lc.runArgv().join(" ")).not.toContain(`${CONTAINER.configFile}`);
+    expect(lc.spawnArgv().some((a) => a.startsWith("QCR_CONFIG="))).toBe(false);
+  });
+
+  it("never mounts a secret: not the config home whole, not secrets/, not the operator home", () => {
+    const { lc } = withFiles([HOMES.configFile, CFG.reviewed_repo_dir]);
+    const sources = volumes(lc.runArgv()).map((v) => v.split(":")[0]!);
+    const forbidden = [secretsHome(HOST_ENV), legacySecretsDir(HOST_ENV), operatorHome(HOST_ENV)];
+    for (const src of sources) {
+      for (const bad of forbidden)
+        expect(src === bad || src.startsWith(`${bad}/`), `${src} under ${bad}`).toBe(false);
+      // The config home itself holds secrets/ — only named pieces of it go in.
+      expect(src).not.toBe("/host/home/.config/qcr/default");
+    }
+    // The token dir is the operator side's, mounted read-only and alone.
+    expect(companionGithubDir(HOST_ENV)).toBe(HOMES.github);
+    expect(volumes(lc.runArgv())).toContain(`${HOMES.github}:${CONTAINER.githubRead}:ro`);
+    // The token itself never rides an argv: only the path of its env file.
+    expect(lc.runArgv().join(" ")).not.toMatch(/QCR_GITHUB_READ_TOKEN|GH_TOKEN|GITHUB_TOKEN/);
+    expect(lc.spawnArgv()).toContain(`QCR_GITHUB_READ_ENV=${CONTAINER.githubRead}/github-read.env`);
+  });
+
+  it("tells pi where the homes are", () => {
+    const argv = withFiles([]).lc.spawnArgv();
+    expect(argv).toContain(`QCR_CONFIG_HOME=${CONTAINER.configHome}`);
+    expect(argv).toContain(`QCR_STATE_HOME=${CONTAINER.stateHome}`);
+  });
+
+  it("creates the homes and the token dir before a cold run, never secrets/", async () => {
+    const { lc, dirs } = withFiles([], [inspect("absent"), okFor("image"), okFor("run")]);
+    expect(await lc.ensureUp()).toBe("created");
+    const made = dirs.flat();
+    expect(made).toEqual(expect.arrayContaining([HOMES.profiles, HOMES.state, HOMES.github]));
+    expect(made.some((d) => d.includes("secrets"))).toBe(false);
+  });
+
+  it("mount drift covers them: a container from before is recreated", async () => {
+    // The legacy container: the old repo-named reviewed-repo mount, and
+    // none of the homes.
+    const OLD: Record<string, string> = {
+      [CONTAINER.piHome]: "companion-pihome",
+      [CONTAINER.workspace]: "/host/review-sandbox",
+      [CONTAINER.tracker]: "/host/tracker",
+      [CONTAINER.trackerDocs]: CFG.tracker_docs_dir,
+      [CONTAINER.evidence]: CFG.evidence_dir,
+      [CONTAINER.feed]: "/host/feed",
+      [CONTAINER.alerts]: "/host/alerts",
+      "/example-app": "/host/example-app",
+    };
+    const inspectOld = (argv: string[]) =>
+      argv[0] === "inspect"
+        ? {
+            ...OK,
+            stdout: ["true", ...Object.entries(OLD).map(([d, src]) => `${d}=${src}`), ""].join(
+              "\n",
+            ),
+          }
+        : undefined;
+    const { lc, calls } = withFiles(
+      [CFG.reviewed_repo_dir, HOMES.configFile],
+      [inspectOld, okFor("rm"), okFor("image"), okFor("run")],
+    );
+    const drift = lc.mountDrift(new Map(Object.entries(OLD)));
+    expect(drift).toEqual(
+      expect.arrayContaining([
+        `missing ${CONTAINER.reviewedRepo}`,
+        `missing ${CONTAINER.profiles}`,
+        `missing ${CONTAINER.configFile}`,
+        `missing ${CONTAINER.stateHome}`,
+        `missing ${CONTAINER.githubRead}`,
+        "stale /example-app",
+      ]),
+    );
+    expect(await lc.ensureUp()).toBe("recreated");
+    expect(calls.find((c) => c[0] === "run")!).toContain(
+      `${HOMES.state}:${CONTAINER.stateHome}:rw`,
+    );
+  });
+
+  it("a config file created or removed later is drift too — one condition, both places", () => {
+    const { lc } = withFiles([]);
+    const withFile = new Map(lc.expectedMounts());
+    withFile.set(`${CONTAINER.configFile}`, HOMES.configFile);
+    expect(lc.mountDrift(withFile)).toEqual([`stale ${CONTAINER.configFile}`]);
+    expect(lc.mountDrift(new Map(lc.expectedMounts()))).toEqual([]);
   });
 });

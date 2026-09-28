@@ -622,6 +622,20 @@ export function operatorHome(env: InstallEnv = process.env): string {
   return join(xdgBase(env.XDG_CONFIG_HOME, env, ".config"), "qcr-operator", installName(env));
 }
 
+/** `$XDG_STATE_HOME/qcr-operator/<install>` — operator-side runtime state
+ * that belongs in neither home: not the state home (the companion mounts it
+ * read-write) and not the config home (shipped to the VM). */
+export function operatorStateHome(env: InstallEnv = process.env): string {
+  return join(xdgBase(env.XDG_STATE_HOME, env, join(".local", "state")), "qcr-operator", installName(env));
+}
+
+/** Where the host writes the companion's down-scoped, READ-ONLY GitHub token
+ * as an env file (`src/tui/ghread.ts`). Mounted read-only into the
+ * companion, and only this directory — never the secrets it was minted from. */
+export function companionGithubDir(env: InstallEnv = process.env): string {
+  return join(operatorStateHome(env), "companion-github");
+}
+
 export type KeysFileSource = "override" | "home" | "legacy";
 
 export interface LocatedKeysFile {

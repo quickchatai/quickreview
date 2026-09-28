@@ -425,6 +425,17 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   const { CompanionSidebar, restorePreferredSidebarWidth } = await import("./sidebar.js");
   const { CompanionLifecycle, realDockerRunner } = await import("./companion.js");
   const companion = new CompanionLifecycle(full.companion, realDockerRunner);
+  // the companion's READ-ONLY GitHub token, minted HERE from the App
+  // credential this host holds and handed over as an env file in a dir the
+  // container mounts read-only. Refreshed while the TUI runs (it lives an
+  // hour); constructed now, first minted in the bring-up — it is network.
+  const { CompanionGithubToken, tokenOutcomeLine } = await import("./ghread.js");
+  const { companionGithubDir } = await import("../install.js");
+  const ghToken = new CompanionGithubToken({
+    dir: companionGithubDir(),
+    repo: full.github.repo,
+    secretsDir: full.github.secrets_dir,
+  });
   const companionOn = args.companion && full.companion.enabled;
   let companionUp = false;
   let companionError: string | undefined;
@@ -723,6 +734,14 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
         progress.skip("memory-namespaces", "forward down");
       }
       progress.begin("container");
+      // Before the container, so a cold start finds the token already there.
+      // Total: no credential, or GitHub down, is a note — never a failed start.
+      const gh = await ghToken.refresh();
+      progress.note("container", tokenOutcomeLine(gh));
+      app.notice(`companion: ${tokenOutcomeLine(gh)}`);
+      ghToken.start((o) => {
+        if (o.kind === "failed") app.notice(`companion: ${tokenOutcomeLine(o)}`);
+      });
       await companion.ensureUp((line) => {
         progress.note("container", line);
         app.notice(`companion: ${line}`);
@@ -1072,6 +1091,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   reloader?.stop();
   progress.stop();
   alerts?.stop();
+  ghToken.stop();
   // Closes only a forward THIS process bound; an adopted one (systemd unit,
   // another qcr tui) is left running on purpose — see memforward.ts.
   memForward.stop();

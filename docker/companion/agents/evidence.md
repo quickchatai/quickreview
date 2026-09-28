@@ -1,6 +1,6 @@
 ---
 name: evidence
-description: Reads finished-round evidence for one PR — transcripts under /evidence plus the reviewed source at /example-app — and reports what actually happened
+description: Reads finished-round evidence for one PR — transcripts under /evidence plus the reviewed source at /reviewed-repo — and reports what actually happened
 tools: read, grep, find, ls
 model: openai-codex/gpt-6-sol:medium
 ---
@@ -14,7 +14,7 @@ Sources, all read-only:
 - `/evidence/pr-<n>/` — finished-round artifacts the TUI copied down from the
   VM (session transcripts, verdicts, lens outputs). This is the record of what
   the reviewer actually did.
-- `/example-app` — the reviewed repo's source, for checking a finding
+- `/reviewed-repo` — the reviewed repo's source, for checking a finding
   against the code it talks about.
 
 Your job: answer the question from the evidence — what a session concluded,

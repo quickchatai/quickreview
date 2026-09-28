@@ -23,6 +23,48 @@ describe("bashBlockReason", () => {
     expect(bashBlockReason("bash scripts/deploy.sh sync")).toMatch(/rule 8/);
   });
 
+  it("still vetoes GitHub writes, the gate and deploy.sh with the read-only token in hand", () => {
+    // The gate's shell route, by name — the companion holds no App key, and
+    // these stay refused rather than merely failing.
+    expect(bashBlockReason("bash scripts/post-review.sh 5362 1")).toMatch(/gate/);
+    expect(bashBlockReason("/workspace/scripts/approve-pr.sh 1")).toMatch(/gate/);
+    expect(bashBlockReason("scripts/reply-thread.sh 1 2 x")).toMatch(/gate/);
+    expect(bashBlockReason("TOKEN=$(scripts/mint-token.sh)")).toMatch(/gate/);
+    // Write-shaped API calls with the token: PUT/PATCH/DELETE, REST POST
+    // (explicit or implied by a data flag), GraphQL mutations.
+    const auth = 'curl -H "Authorization: Bearer $QCR_GITHUB_READ_TOKEN"';
+    for (const cmd of [
+      `${auth} -X PATCH https://api.github.com/repos/o/r/pulls/1 -d '{"state":"closed"}'`,
+      `${auth} --request DELETE https://api.github.com/repos/o/r/issues/comments/9`,
+      `${auth} -XPUT https://api.github.com/repos/o/r/pulls/1/merge`,
+      `${auth} -X POST https://api.github.com/repos/o/r/issues`,
+      `${auth} -d '{"body":"hi"}' https://api.github.com/repos/o/r/issues/1/comments`,
+      `${auth} --json '{"event":"APPROVE"}' https://api.github.com/repos/o/r/pulls/1/reviews`,
+      `${auth} -X POST https://api.github.com/graphql -d '{"query":"mutation { addComment(input:{}) { clientMutationId } }"}'`,
+    ]) {
+      expect(bashBlockReason(cmd), cmd).toMatch(/rule 8/);
+    }
+    // The old bright lines are untouched.
+    expect(bashBlockReason("gh api repos/o/r/pulls")).toMatch(/rule 8/);
+    expect(bashBlockReason("git push")).toMatch(/rule 8/);
+    expect(bashBlockReason("scripts/deploy.sh sync")).toMatch(/rule 8/);
+  });
+
+  it("lets the companion READ GitHub with its token", () => {
+    const auth = 'curl -sH "Authorization: Bearer $QCR_GITHUB_READ_TOKEN"';
+    expect(bashBlockReason(`${auth} https://api.github.com/repos/o/r/pulls/1`)).toBeUndefined();
+    expect(
+      bashBlockReason(`${auth} "https://api.github.com/repos/o/r/pulls?state=closed&per_page=100"`),
+    ).toBeUndefined();
+    // GraphQL queries go by POST — a query is a read.
+    expect(
+      bashBlockReason(
+        `${auth} -X POST https://api.github.com/graphql -d '{"query":"{ repository(owner:\"o\",name:\"r\") { id } }"}'`,
+      ),
+    ).toBeUndefined();
+    expect(bashBlockReason(`. "$QCR_GITHUB_READ_ENV" && echo "$QCR_GITHUB_REPO"`)).toBeUndefined();
+  });
+
   it("vetoes the rule-11 discard family", () => {
     expect(bashBlockReason("git stash")).toMatch(/rule 11/);
     expect(bashBlockReason("git stash pop")).toMatch(/rule 11/);

@@ -15,8 +15,19 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { locateKeysFile, resolveKeysFile } from "../install.js";
+import { join } from "node:path";
+import {
+  companionGithubDir,
+  configHome,
+  locateConfig,
+  locateKeysFile,
+  PROFILES_DIR,
+  resolveKeysFile,
+  stateHome,
+  type InstallEnv,
+} from "../install.js";
 import type { CompanionConfig } from "../config.js";
+import { TOKEN_FILE } from "./ghread.js";
 
 export interface DockerResult {
   ok: boolean;
@@ -86,11 +97,33 @@ export const CONTAINER = {
    * issues; the doc that says how to write them lives one level up on the
    * host, outside every other mount. */
   trackerDocs: "/tracker-docs",
-  /** The REVIEWED repo (example-app), read-only. The companion
-   * reads the code a review is about; `:ro` is the whole guarantee that it can
-   * never touch that repo's `master`. Mounted only when the host checkout
-   * exists — a missing one leaves the companion under-equipped, never broken. */
-  reviewedRepo: "/example-app",
+  /** The REVIEWED repo, read-only. The companion reads the code a
+   * review is about; `:ro` is the whole guarantee that it can never touch that
+   * repo's `master`. Mounted only when the host checkout exists — a missing
+   * one leaves the companion under-equipped, never broken. A GENERIC path
+   *: it used to be named after the one repo this system was built
+   * for, and the container path is not the place a repo's name belongs. */
+  reviewedRepo: "/reviewed-repo",
+  /** The install's config home, in part: `profiles/` read-write —
+   * setup writes and re-tunes the repo profile there — and the live
+   * `config.toml` read-only. Deliberately NOT the whole home: it holds
+   * `secrets/` (the App's private key, which can write to GitHub), and the
+   * companion's reach into GitHub is the read-only token below and nothing
+   * else. Mounting the two pieces rather than masking a subdirectory is what
+   * keeps a `secrets/` created LATER out as well. */
+  configHome: "/qcr-config",
+  /** Inside `configHome`: the live config (`:ro`, only when one exists) and
+   * the profiles dir (`:rw`). Spelled out so the in-container paths are
+   * literals — nothing here builds a host config path (the locator does). */
+  configFile: "/qcr-config/config.toml",
+  profiles: "/qcr-config/profiles",
+  /** The install's state home, read-write: the survey, the scan
+   * ledger, findings and the portrait facts — PC-only, never shipped. */
+  stateHome: "/qcr-state",
+  /** The down-scoped READ-ONLY GitHub token, as an env file the host re-mints
+   * before it expires (`src/tui/ghread.ts`). `:ro` — the file is the
+   * host's to write; the token itself cannot write to GitHub either way. */
+  githubRead: "/github-read",
   /** Finished-round evidence, read-only. The TUI holds the VM access
    * and copies each finished round's artefacts down here; the companion reads
    * plain files. That is the WHOLE of the transport — it grants no ssh, no
@@ -154,7 +187,15 @@ export const MEMORY = {
  * child never runs where repo-controlled `.pi/` config could load). */
 export const SUBAGENTS = {
   extension: `${CONTAINER.workspace}/extensions/subagents.ts`,
+  /** The companion's process-wide child cap: 8, up from the glue's
+   * desktop default of 4, because a survey or scan fans out one case per
+   * unit. Rides `QCR_SUBAGENT_MAX_CONCURRENCY` on the pi command line (the
+   * glue reads nothing else). One `tasks:[…]` call still runs at most 4 —
+   * the native extension's own in-call cap — so 8 is reached by two calls
+   * in one turn. Pinned by tests/tui-companion.test.ts. */
+  maxConcurrency: 8,
 } as const;
+
 
 /** The three env names the keys file must define. Values are NEVER read into a
  * log line or an argv — docker reads the file itself via `--env-file`. */
@@ -301,6 +342,20 @@ export class CompanionLifecycle {
       "--volume",
       `${this.cfg.alerts_dir}:${CONTAINER.alerts}:rw`,
     );
+    // the install's homes and the read-only GitHub token. Created
+    // before a cold run (`ensureDirs`), so unconditional like the evidence
+    // store — except the config FILE, which is only mounted when it exists
+    // (a file bind to a missing path makes docker invent a directory there).
+    const homes = this.hostHomes();
+    argv.push("--volume", `${homes.profiles}:${CONTAINER.profiles}:rw`);
+    if (homes.configFile !== undefined)
+      argv.push("--volume", `${homes.configFile}:${CONTAINER.configFile}:ro`);
+    argv.push(
+      "--volume",
+      `${homes.state}:${CONTAINER.stateHome}:rw`,
+      "--volume",
+      `${homes.github}:${CONTAINER.githubRead}:ro`,
+    );
     argv.push(...this.memoryEnvArgv());
     argv.push(this.cfg.image);
     return argv;
@@ -400,8 +455,8 @@ export class CompanionLifecycle {
       // extensions/subagents.ts). First-party and always in the repo, so it
       // loads unconditionally like inject-bridge; a failed native import
       // inside it degrades to "no subagent tool", never a pi that won't
-      // start. No QCR_SUBAGENT_MAX_CONCURRENCY here: the glue's default cap
-      // is the desktop 4.
+      // start. Its cap rides QCR_SUBAGENT_MAX_CONCURRENCY in piEnvPrefix
+      // (SUBAGENTS.maxConcurrency).
       SUBAGENTS.extension,
       "--extension",
       // 2026-08-25: the companion's bright lines (frozen seeds, no-GitHub,
@@ -439,7 +494,40 @@ export class CompanionLifecycle {
       `QCR_FEED_DIR=${CONTAINER.feed}`,
       `QCR_ALERTS_DIR=${CONTAINER.alerts}`,
       `QCR_TRACKER_DIR=${CONTAINER.tracker}`,
+      // where the install's homes and the token file sit in here.
+      // QCR_CONFIG only when the file is really mounted — the locator then
+      // finds profiles beside it (`profileSearchDirs`), exactly as on the host.
+      `QCR_CONFIG_HOME=${CONTAINER.configHome}`,
+      ...(this.hostHomes().configFile !== undefined
+        ? [`QCR_CONFIG=${CONTAINER.configFile}`]
+        : []),
+      `QCR_STATE_HOME=${CONTAINER.stateHome}`,
+      `QCR_GITHUB_READ_ENV=${CONTAINER.githubRead}/${TOKEN_FILE}`,
+      // survey and scan fan out one case per unit — see SUBAGENTS.
+      `QCR_SUBAGENT_MAX_CONCURRENCY=${SUBAGENTS.maxConcurrency}`,
     ];
+  }
+
+  /**
+   * Host side of the mounts, from the install locator over THIS
+   * lifecycle's env (so a test's temp XDG homes are what it mounts):
+   * `<config home>/profiles`, the live config file when one exists, the state
+   * home, and the token dir. Never the config home as a whole — see
+   * `CONTAINER.configHome` for why `secrets/` must stay out.
+   */
+  hostHomes(): { profiles: string; configFile?: string; state: string; github: string } {
+    const env = this.installEnv();
+    const located = locateConfig({ root: this.cfg.repo_dir, env, exists: (p) => this.fs.exists(p) });
+    return {
+      profiles: join(configHome(env), PROFILES_DIR),
+      configFile: this.fs.exists(located.path) ? located.path : undefined,
+      state: stateHome(env),
+      github: companionGithubDir(env),
+    };
+  }
+
+  private installEnv(): InstallEnv {
+    return { ...this.env, HOME: this.env.HOME || homedir() };
   }
 
   /** `docker exec … tmux new-session -d -s companion env QCR_… pi …`. */
@@ -470,7 +558,7 @@ export class CompanionLifecycle {
   }
 
   /**
-   * Is the reviewed repo (example-app) checked out on this host?
+   * Is the reviewed repo checked out on this host?
    *
    * The mount is conditional on this, in `runArgv()` AND in `expectedMounts()`,
    * so the two never disagree: present ⇒ the container must carry it (absence
@@ -737,6 +825,14 @@ export class CompanionLifecycle {
     ]);
     // Same condition as runArgv() — see reviewedRepoPresent().
     if (this.reviewedRepoPresent()) m.set(CONTAINER.reviewedRepo, this.cfg.reviewed_repo_dir);
+    // same shape as runArgv(), so a container created before these
+    // mounts (or with the old repo-named reviewed-repo one) drifts and is
+    // recreated.
+    const homes = this.hostHomes();
+    m.set(CONTAINER.profiles, homes.profiles);
+    if (homes.configFile !== undefined) m.set(CONTAINER.configFile, homes.configFile);
+    m.set(CONTAINER.stateHome, homes.state);
+    m.set(CONTAINER.githubRead, homes.github);
     return m;
   }
 
@@ -797,7 +893,15 @@ export class CompanionLifecycle {
     }
     // Self-healing first run: build the image rather than failing on its absence.
     if (!(await this.imageExists())) await this.buildImage(onProgress);
-    this.ensureDirs([this.cfg.feed_dir, this.cfg.alerts_dir, this.cfg.evidence_dir]);
+    const homes = this.hostHomes();
+    this.ensureDirs([
+      this.cfg.feed_dir,
+      this.cfg.alerts_dir,
+      this.cfg.evidence_dir,
+      homes.profiles,
+      homes.state,
+      homes.github,
+    ]);
     const created = await this.docker(this.runArgv(), { timeoutMs: 120_000 });
     if (!created.ok) throw new Error(`docker run ${this.cfg.image} failed: ${errText(created)}`);
     return st.exists || recreating ? "recreated" : "created";

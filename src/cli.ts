@@ -712,6 +712,17 @@ export async function cmdCompanion(sub: string | undefined): Promise<void> {
   const lc = new CompanionLifecycle(cfg, realDockerRunner);
   switch (sub) {
     case "up": {
+      // mint the read-only GitHub token first. One-shot: nothing
+      // refreshes it after this command exits (the TUI does, while it runs).
+      const { CompanionGithubToken, tokenOutcomeLine } = await import("./tui/ghread.js");
+      const { companionGithubDir } = await import("./install.js");
+      const full = loadConfig();
+      const gh = await new CompanionGithubToken({
+        dir: companionGithubDir(),
+        repo: full.github.repo,
+        secretsDir: full.github.secrets_dir,
+      }).refresh();
+      console.log(`companion ${cfg.container_name}: ${tokenOutcomeLine(gh)}`);
       const outcome = await lc.ensureUp();
       const born = await lc.spawnPi();
       console.log(

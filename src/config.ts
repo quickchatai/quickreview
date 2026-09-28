@@ -98,8 +98,8 @@ export interface CompanionConfig {
    * Sits outside `tracker_dir`, so it needs its own mount: without it the
    * companion drives wayfinder from a summary instead of the real adapter. */
   tracker_docs_dir: string;
-  /** Host path of the REVIEWED repo (example-app) → /example-app,
-   * READ-ONLY. The companion reads the code a review is about; it
+  /** Host path of the REVIEWED repo → /reviewed-repo (a generic container
+   * path), READ-ONLY. The companion reads the code a review is about; it
    * can never write to it, and rule 8's boundary is otherwise unchanged (no
    * GitHub, no gate, no deploy.sh, no VM credential). A missing checkout
    * simply drops the mount — under-equipped, never broken. */
@@ -1392,7 +1392,7 @@ export const COMPANION_DEFAULTS: CompanionConfig = {
   repo_dir: "", // → sandboxRoot()
   tracker_dir: "~/src/tracker",
   tracker_docs_dir: "~/src/tracker-docs",
-  reviewed_repo_dir: "~/src/example-app", // → /example-app (ro)
+  reviewed_repo_dir: "~/src/example-app", // → /reviewed-repo (ro)
   evidence_dir: "~/.local/share/qcr/evidence", // → /evidence (ro),
   feed_dir: "", // → <root>/state/companion/feed
   alerts_dir: "", // → <root>/state/companion/alerts

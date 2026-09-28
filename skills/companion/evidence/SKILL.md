@@ -58,7 +58,7 @@ about *now* or is a supplement.
    `verdict.json`. Never read a backfilled round's transcript as that round's
    transcript — if a role is in `skipped_stale`, that round's session record
    simply does not exist locally, and the account must say so.
-2. **`/example-app`** (read-only) — the reviewed source. Reach for it the
+2. **`/reviewed-repo`** (read-only) — the reviewed source. Reach for it the
    moment a question turns on what the code *does* rather than on what a finding
    *says* about it. Two standing cautions: the working tree is whatever the owner
    has checked out locally, usually **not** the PR's head — so treat it as the
@@ -98,7 +98,7 @@ it is the difference between a reconstruction and a guess.
 - **`truncated: true`** — you are reading the first 32 MiB of that artefact. For
   a transcript that means the *beginning* of the session, and the tail — where
   the verdict is decided — is what you are missing. Say so before quoting.
-- **The `/example-app` mount is absent** — no local checkout. Then you cannot
+- **The `/reviewed-repo` mount is absent** — no local checkout. Then you cannot
   read the code, and any question that turns on the code is unanswerable rather
   than answerable-with-caution. Say that instead of reasoning from the diff.
 - **The feed is stale** — the TUI is down. Everything you say about "now" is as
@@ -129,7 +129,7 @@ Short, and citation-first. The shape that works:
   (`round-2/verdict.json`, `round-3/session.jsonl:…`).
 - **What is not in the record** — the missing legs, plainly.
 - **What would settle the open question**, if one is left — which artefact,
-  which file in `/example-app`, which memory entry.
+  which file in `/reviewed-repo`, which memory entry.
 
 No verdict, no attribution, no recommendation to change anything. If the
 reconstruction makes a change look obvious, say what you saw and stop — deciding
@@ -143,7 +143,7 @@ is `adjudicate`, landing is `land`.
   not known.
 - Never claim a surface you did not read, and never present four sources as
   five.
-- Never write to `/evidence` or `/example-app` — both are `:ro`, and that is
+- Never write to `/evidence` or `/reviewed-repo` — both are `:ro`, and that is
   the guarantee, not an inconvenience.
 - Never call GitHub, the mutation gate, `deploy.sh`, or the VM. Everything
   above is a local file or a daemon-produced read.

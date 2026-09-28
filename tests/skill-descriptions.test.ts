@@ -503,7 +503,7 @@ describe("companion skill descriptions", () => {
   it("evidence names the two read-only mounts and what a missing leg costs", () => {
     const body = skills.get("evidence")!.body;
     expect(body).toMatch(/\/evidence\//);
-    expect(body).toMatch(/\/example-app/);
+    expect(body).toMatch(/\/reviewed-repo/);
     expect(body).toMatch(/manifest\.json/);
     expect(body).toMatch(/missing/i);
   });

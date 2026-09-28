@@ -28,18 +28,19 @@ else
   echo "pi home on the volume: $PI_HOME_DIR (OAuth + conversation are durable)"
 fi
 
-# Reviewed-repo mount. example-app's source arrives READ-ONLY at
-# /example-app so the companion can read the code a review is about. It is
+# Reviewed-repo mount. The reviewed repo's source arrives READ-ONLY
+# at /reviewed-repo (a generic path since — it used to be named after
+# one repo) so the companion can read the code a review is about. It is
 # conditional by design (src/tui/companion.ts runArgv): a host without the
 # checkout gets no mount, and that must leave the companion under-equipped
 # rather than unable to start — same degrade discipline as the skills dir and
 # the vendored extension. Never `mkdir` it as a fallback: an empty tree reads
 # as "the code says nothing", which is worse than a plainly absent mount.
-if [ -d /example-app ] && [ -n "$(ls -A /example-app 2>/dev/null)" ]; then
-  echo "reviewed repo mounted READ-ONLY at /example-app (read it; you can never write it)"
+if [ -d /reviewed-repo ] && [ -n "$(ls -A /reviewed-repo 2>/dev/null)" ]; then
+  echo "reviewed repo mounted READ-ONLY at /reviewed-repo (read it; you can never write it)"
 else
-  echo "!! /example-app is not mounted — no reviewed-repo source to read."
-  echo "!! Set [companion] reviewed_repo_dir to the example-app checkout on this host."
+  echo "!! /reviewed-repo is not mounted — no reviewed-repo source to read."
+  echo "!! Set [companion] reviewed_repo_dir to the reviewed repo's checkout on this host."
 fi
 
 # Evidence store. Finished-round artefacts the TUI copied down from
@@ -51,6 +52,15 @@ if [ -d /evidence ]; then
 else
   echo "!! /evidence is not mounted — no finished-round transcripts to read."
   echo "!! Set [companion] evidence_dir and restart the TUI (qcr companion rebuild not needed)."
+fi
+
+# Read-only GitHub token. The TUI mints it on the host and re-mints
+# it into /github-read before it expires; only the file's PRESENCE is echoed,
+# never a value. Absent = the TUI has no App credential or is not running.
+if [ -s /github-read/github-read.env ]; then
+  echo "read-only GitHub token file at /github-read/github-read.env (source it; it cannot write)"
+else
+  echo "!! no read-only GitHub token yet — GitHub reads unavailable until the TUI mints one."
 fi
 
 # csi-u extended keys must be configured BEFORE the server starts, or modified

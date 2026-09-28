@@ -1,7 +1,8 @@
 // companion-guard — the companion's bright lines, made structural (2026-08-25).
 //
 // The companion's boundary (CLAUDE.md rule 8) is mostly structural already: no
-// GitHub credential, no VM credential, no gh binary in the image. But three
+// GitHub WRITE credential (its token is read-only), no VM credential,
+// no gh binary in the image. But three
 // bright lines were held by PROMPT alone, and this extension turns them into
 // tool_call vetoes the model cannot talk itself past:
 //
@@ -14,9 +15,12 @@
 //      exactly "frozen". The two registry fixtures are frozen too: the
 //      manifest itself, and ratified-divergence.json, whose two sanctioned
 //      writers (a human; the TUI rubric-accept path) do not include us.
-//   2. Rule 8 — never GitHub, never deploy.sh: `git push`, `gh`,
-//      `scripts/deploy.sh` are refused by name, not just by missing
-//      credentials.
+//   2. Rule 8 — never a GitHub WRITE, never the gate, never deploy.sh:
+//      `git push`, `gh`, the gate's shell route (post-review.sh and kin,
+//      mint-token.sh) and `scripts/deploy.sh` are refused by name, not just
+//      by missing credentials. Since the companion holds a READ-ONLY
+//      App token (src/tui/ghread.ts); write-shaped API calls made with it are
+//      refused here too, though GitHub would refuse them anyway.
 //   3. Rule 11 — the shared checkout is other actors' desk too: `git stash`,
 //      `git reset --hard`, `git checkout --`/`git checkout .`, `git restore`
 //      (worktree-discarding form) and `git clean` destroy uncommitted work
@@ -56,12 +60,37 @@ export const BASH_RULES: BashRule[] = [
   {
     pattern: /(^|[\s/;&|])gh\s+/,
     reason:
-      "rule 8: the companion never talks to GitHub — gh is not installed here, and this guard keeps it a boundary rather than an accident of the image.",
+      "rule 8: no gh here — it is not installed, and this guard keeps it a boundary rather than an accident of the image. GitHub reads go through the read-only token in $QCR_GITHUB_READ_ENV.",
   },
   {
     pattern: /(^|[\s/;&|])deploy\.sh\b/,
     reason:
       "rule 8: the companion never runs scripts/deploy.sh. Deploys are the owner's, via the deploying skill.",
+  },
+  {
+    // the gate's shell route. The companion holds no App key, so
+    // these would fail anyway — refused by name so that stays a boundary.
+    pattern: /(^|[\s/;&|])(post-review|approve-pr|reply-thread|mint-token)\.sh\b/,
+    reason:
+      "rule 8: the companion never touches the gate — the posting scripts and mint-token.sh are the daemon's route to GitHub, not yours.",
+  },
+  {
+    // the read-only token's belt. The token is scoped read-only by
+    // GitHub itself (the brace — src/tui/ghread.ts); this refuses the shapes
+    // of a write aimed at the API anyway: PUT/PATCH/DELETE, or a GraphQL
+    // mutation.
+    pattern:
+      /^(?=[\s\S]*(api\.github\.com|QCR_GITHUB_READ_TOKEN))(?=[\s\S]*(-X\s*['"]?(PUT|PATCH|DELETE)\b|--request[=\s]+['"]?(PUT|PATCH|DELETE)\b|--method[=\s]+['"]?(PUT|PATCH|DELETE)\b|\bmutation\b))/i,
+    reason:
+      "rule 8: the companion reads GitHub and never writes it — its token is read-only, and write-shaped calls (PUT/PATCH/DELETE, GraphQL mutations) are refused outright.",
+  },
+  {
+    // …and a REST POST (explicit, or implied by curl's data flags) anywhere
+    // but /graphql, where POST is how a READ query is sent.
+    pattern:
+      /^(?=[\s\S]*(api\.github\.com|QCR_GITHUB_READ_TOKEN))(?![\s\S]*\/graphql\b)(?=[\s\S]*(-X\s*['"]?POST\b|--request[=\s]+['"]?POST\b|--method[=\s]+['"]?POST\b|\s(-d|-F|--data[\w-]*|--form|--json)[=\s]))/i,
+    reason:
+      "rule 8: the companion reads GitHub and never writes it — a POST to the REST API creates something; only GraphQL queries go by POST.",
   },
   {
     pattern: /\bgit\s+stash\b(?!\s+(list|show)\b)/,

@@ -313,55 +313,27 @@ const ALLOWLIST: AllowlistEntry[] = [
       "the public ownership doc names the grandfathered historical spelling the fence grammar accepts",
   },
 
-  // -- The companion's reviewed-repo mount point `/example-app`: pinned by
-  //    the FROZEN prompts/companion.md seed, so the rename is part of the
-  //    reseed — code, entrypoint and tests must agree with the seed
-  //    until then.
-  {
-    path: "src/tui/companion.ts",
-    tokens: ["quickchat"],
-    reason:
-      "the /example-app container mount point — pinned by the frozen companion seed; renamed with",
-  },
+  // -- The companion's reviewed-repo mount point is the generic
+  //    `/reviewed-repo`; what is left here is the private
+  //    identity the companion commits under and the tests that pin the shipped
+  //    reviewed_repo_dir default and the retired path's drift.
   {
     path: "docker/companion/entrypoint.sh",
     tokens: ["quickchat"],
     reason:
-      "mounts /example-app and provisions the [companion] git identity — path frozen until",
+      "provisions the [companion] git identity (its commit email) — the mount path itself is generic since",
   },
   {
     path: "tests/tui-companion.test.ts",
     tokens: ["quickchat"],
-    reason: "pins the /example-app mount contract and the shipped reviewed_repo_dir default",
-  },
-  {
-    path: "skills/companion/evidence/SKILL.md",
-    tokens: ["quickchat"],
-    reason: "companion doctrine references the /example-app mount by its frozen path",
+    reason:
+      "pins the shipped reviewed_repo_dir default and that a container still carrying the retired /example-app mount drifts",
   },
   {
     path: "skills/companion/land/SKILL.md",
     tokens: ["quickchat"],
     reason:
       "companion doctrine references the reviewed repo's mount/name — frozen alongside the companion seed",
-  },
-  {
-    path: "docker/companion/agents/explore.md",
-    tokens: ["quickchat"],
-    reason:
-      "companion agent references the /example-app reviewed-repo mount point (relocation of the first-party agent set; path frozen with the companion seed)",
-  },
-  {
-    path: "docker/companion/agents/evidence.md",
-    tokens: ["quickchat"],
-    reason:
-      "companion agent references the /example-app reviewed-repo mount point (relocation; path frozen with the companion seed)",
-  },
-  {
-    path: "prompts/companion-first-run.md",
-    tokens: ["quickchat"],
-    reason:
-      "the first-run interview tells the companion where the reviewed repo is mounted — the same /example-app path the code, entrypoint and companion doctrine carry, frozen until renames it everywhere at once",
   },
 
   // -- Live-deployment defaults the private installation still boots from
@@ -377,12 +349,6 @@ const ALLOWLIST: AllowlistEntry[] = [
   // removed the sentence outright: it promised a handover had
   // retired, so the private name went with the false promise.
   {
-    path: "prompts/companion.md",
-    tokens: ["quickchat"],
-    reason:
-      "container mount path literal /example-app — mirrors CONTAINER.reviewedRepo (live-deployment carrier; genericized with the private-profile split)",
-  },
-  {
     path: "tests/posting.test.ts",
     tokens: ["owner_legacy"],
     reason: "negative assertion that the assembled review body stays scrubbed of the personal name",
@@ -391,11 +357,6 @@ const ALLOWLIST: AllowlistEntry[] = [
     path: "tests/github-app-manifest.test.ts",
     tokens: ["quickchat"],
     reason: "negative assertion that the shipped App manifest carries no private-org hostname",
-  },
-  {
-    path: "tests/skill-descriptions.test.ts",
-    tokens: ["quickchat"],
-    reason: "asserts the companion evidence skill names its frozen /example-app mount",
   },
   {
     path: "publish-manifest.json",
