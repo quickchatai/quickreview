@@ -331,9 +331,17 @@ export function renderPassPlan(plan: PassPlanEntry[], unswept: string[] = []): s
   return [...head, ...rows, ...tail].join("\n");
 }
 
-/** Comma list of lenses the session may additionally run this round. */
-export function renderAddableLenses(addable: string[]): string {
-  return addable.length > 0 ? addable.join(", ") : "(none — every known lens is already planned)";
+/** Comma list of lenses the session may additionally run this round. A lens
+ * the profile floors above the add rule's own variant carries its
+ * variant: `pass-x (run \`pass-x--sol-high\`)`. */
+export function renderAddableLenses(
+  addable: string[],
+  tiers: Readonly<Record<string, string>> = {},
+): string {
+  if (addable.length === 0) return "(none — every known lens is already planned)";
+  return addable
+    .map((l) => (tiers[l] !== undefined ? `${l} (run \`${l}--${tiers[l]}\`)` : l))
+    .join(", ");
 }
 
 /**'s changed-behavior receipt. The daemon binds it to one successor
@@ -404,7 +412,7 @@ export function roundVars(
     // Third-party sources (src/depsources.ts) — "" when nothing was unpacked,
     // so a round without them renders exactly as before.
     dependency_note: order.dependency_note ? `\n${order.dependency_note}\n` : "",
-    addable_lenses: renderAddableLenses(order.addable_lenses),
+    addable_lenses: renderAddableLenses(order.addable_lenses, order.addable_tiers),
     recovery_note: renderRoundRecoveryNote(order),
     base_ref: order.base_ref || NO_BASE,
     base_sha: order.base_sha || NO_BASE,

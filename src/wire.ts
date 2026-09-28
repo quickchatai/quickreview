@@ -31,7 +31,13 @@ import { TokenMinter } from "./githubAuth.js";
 import { FeedbackEngine, feedbackDayAddendum, type FeedbackEvent } from "./feedback.js";
 import { PASS_ADDENDA, buildAgents, configAddenda, identityVars } from "./include.js";
 import { ecosystemFor } from "./ecosystem.js";
-import { loadProfileAddenda, loadProfileEcosystem, loadProfileHeuristics } from "./profiles.js";
+import { applyProfileTuning, lensModelOverrides, lensTuningAddenda } from "./lenstuning.js";
+import {
+  loadProfileAddenda,
+  loadProfileEcosystem,
+  loadProfileHeuristics,
+  loadProfileLensTuning,
+} from "./profiles.js";
 import { prepareDependencySources, renderDependencyNote } from "./depsources.js";
 import { fileImprovementPr, fileIssue, gitRunner } from "./improvements.js";
 import {
@@ -78,7 +84,13 @@ export interface ProductionParts {
   sessions: PiSessionManager;
 }
 
-export function buildParts(root = sandboxRoot(), cfg = loadConfig()): ProductionParts {
+export function buildParts(root = sandboxRoot(), loaded = loadConfig()): ProductionParts {
+  // the profile's per-lens tuning overlays the parsed config ONCE,
+  // here, so every consumer downstream (the plan, the agents build, the
+  // round row) reads the one resolved `cfg.lenses` — the profile wins over
+  // config.toml, the preset and the defaults. A malformed `[lenses]` table
+  // fails the boot loudly, like every other profile loader.
+  const cfg = applyProfileTuning(loaded, loadProfileLensTuning(root, loaded.review.profile));
   const minter = new TokenMinter(cfg.github.secrets_dir);
   const gate: MutationGate = new MutationGate(
     cfg.dry_run,
@@ -705,6 +717,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       const profileAddenda = loadProfileAddenda(root, cfg.review.profile);
       if (cfg.review.profile !== "") {
         log(`profile ${cfg.review.profile}: ${profileAddenda.length} addenda loaded`);
+        const tuned = Object.keys(cfg.lenses ?? {});
+        if (tuned.length) log(`profile ${cfg.review.profile}: lens tuning for ${tuned.join(", ")}`);
       }
       let builtDay = opsDay(cfg.ops.timezone);
       const rebuildAgents = (day?: string): void => {
@@ -718,10 +732,14 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           vars: identity,
           // ecosystem-gated addenda follow the profile's selection.
           ecosystem: ecosystem.name,
+          // a lens's profile `effort` rides the per-variant hook.
+          models: lensModelOverrides(cfg.models, cfg.lenses),
           addenda: [
             ...PASS_ADDENDA,
             ...configAddenda(cfg.review),
             ...profileAddenda,
+            // the profile's `emphasis` / `max_severity`, compiled.
+            ...lensTuningAddenda(cfg.lenses),
             ...(fb ? [fb] : []),
           ],
         });

@@ -125,6 +125,9 @@ export const DOWNGRADE_WORDS: readonly string[] = [
   "intent-over-cap",
   "design-over-cap",
   "style-over-cap",
+  // a profile's `[lenses.<pass>] max_severity` ceiling
+  // (src/lenstuning.ts PROFILE_CAP_WORD).
+  "profile-over-cap",
   "inflated",
   "understated",
   "overreachable",

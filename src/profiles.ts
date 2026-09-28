@@ -50,7 +50,9 @@
 //     removes inherited ids (a drop naming nothing inherited is refused —
 //     a typo must not read as a removal);
 //   * heuristics — unioned per lens, base predicates first;
-//   * scalars (`ecosystem`) — the nearest profile that sets one wins.
+//   * scalars (`ecosystem`) — the nearest profile that sets one wins;
+//   * per-lens tuning (`[lenses.<pass>]`) — per lens, per key, the
+//     nearest profile that sets it wins.
 // The shipped `default` profile encodes the shipped behaviour (an empty pack,
 // no heuristics, `ecosystem = "none"`) and is the base a generated profile
 // extends: an empty child of it reviews exactly as no profile does.
@@ -58,11 +60,18 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import type { EcosystemName } from "./ecosystem.js";
+import { ALL_PASSES } from "./dispatch.js";
 import { EMPTY_HEURISTICS, PROFILE_EXTENDABLE_LENSES } from "./heuristics.js";
 import type { HeuristicsExtension } from "./heuristics.js";
 import { PASS_ADDENDA, splitFrontmatter } from "./include.js";
 import type { PassAddendum, PassAddendumScope } from "./include.js";
 import { profileSearchDirs, resolveProfile, type InstallEnv } from "./install.js";
+import {
+  LENS_TUNING_ID_PREFIXES,
+  mergeLensTuning,
+  parseLensTable,
+  type LensTuning,
+} from "./lenstuning.js";
 
 /** How a loader finds the profile: the environment the install locator reads
  * (default `process.env`) and where a legacy checkout profile is announced. */
@@ -98,6 +107,8 @@ interface ProfileLayer {
   drop: string[];
   /** The raw `ecosystem` value, when this profile sets one. */
   ecosystem?: unknown;
+  /** The raw `[lenses]` table, when this profile has one. */
+  lenses?: unknown;
 }
 
 /** Read one profile's `profile.toml` — an absent file is an empty one. Owns
@@ -134,6 +145,7 @@ function readLayer(name: string, dir: string): ProfileLayer {
     layer.extends = ext;
   }
   if ("ecosystem" in doc) layer.ecosystem = doc["ecosystem"];
+  if ("lenses" in doc) layer.lenses = doc["lenses"];
   const addenda = doc["addenda"];
   if (addenda !== undefined) {
     if (typeof addenda !== "object" || addenda === null || Array.isArray(addenda)) {
@@ -280,6 +292,11 @@ function loadOwnPack(layer: ProfileLayer): PassAddendum[] {
         `profile addendum ${path}: id "${entry.id}" collides with a built-in registry entry`,
       );
     }
+    if (LENS_TUNING_ID_PREFIXES.some((p) => entry.id.startsWith(p))) {
+      throw new Error(
+        `profile addendum ${path}: id "${entry.id}" is reserved for the addenda [lenses] compiles (emphasis, max_severity)`,
+      );
+    }
     if (seen.has(entry.id))
       throw new Error(`profile addendum ${path}: duplicate id "${entry.id}" within the pack`);
     seen.add(entry.id);
@@ -376,6 +393,37 @@ export function loadProfileEcosystem(
     chosen = eco;
   }
   return chosen;
+}
+
+// ---- per-lens tuning ---------------------------------------------
+
+/**
+ * The named profile's per-lens tuning — `[lenses.<pass>]` in `profile.toml`,
+ * the whole `extends` chain merged (per lens, per key, the nearest profile
+ * that sets it wins). The keys and what each one moves are src/lenstuning.ts's
+ * header; the caller overlays the result on the config with
+ * `applyProfileTuning`, which is what makes the profile win over config.toml,
+ * the preset and the defaults.
+ *
+ * `""` (no profile), a profile found nowhere and a chain with no `[lenses]`
+ * anywhere all mean `{}` — untuned. Everything malformed, in ANY layer (an
+ * overridden base value too — a broken base is broken for every child of it),
+ * throws with the file named: same loud-boot contract as the loaders above.
+ */
+export function loadProfileLensTuning(
+  root: string,
+  profile: string,
+  lookup: ProfileLookup = {},
+): Record<string, LensTuning> {
+  if (profile === "") return {};
+  if (!resolveProfile({ root, profile, ...lookup })) return {};
+  let merged: Record<string, LensTuning> = {};
+  for (const layer of profileChain(root, profile, lookup)) {
+    if (layer.lenses === undefined) continue;
+    const where = `[review] profile "${layer.name}": ${layer.toml}`;
+    merged = mergeLensTuning(merged, parseLensTable(where, layer.lenses, ALL_PASSES));
+  }
+  return merged;
 }
 
 // ---- lens-selection heuristics -----------------------------------

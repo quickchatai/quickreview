@@ -33,6 +33,7 @@ import {
   selectQualityLenses,
 } from "./heuristics.js";
 import type { HeuristicsExtension } from "./heuristics.js";
+import { flooredTier, lensEnabled } from "./lenstuning.js";
 import type { MigrationCollision } from "./migrations.js";
 import { VALIDATE_PASS } from "./include.js";
 import { hasNewEvidence } from "./guards.js";
@@ -686,13 +687,30 @@ export function validatorTier(floor: PassTier, lensTiers: readonly PassTier[]): 
   return lensTiers.reduce<PassTier>((acc, t) => higherTier(acc, t), floor);
 }
 
+/**
+ * The tier a lens ADDED by the session runs at (the round templates' add
+ * rule): a risk pass exists only as `sol-high`; every other lens at `sol-med`,
+ * or at the profile's `min_tier` for it when that is higher.
+ */
+export function addTierOf(cfg: Config, lens: string): PassTier {
+  return cfg.models.risk_passes.includes(lens)
+    ? "sol-high"
+    : flooredTier(cfg.lenses, lens, "sol-med");
+}
+
 /** Deterministic per-round pass plan (agent = `${lens}--${tier}`):
  * - risk passes are always "sol-high", single variant, not raisable;
  * - pass-validate runs at validatorTier() — the configured floor raised to the
  *   round's highest lens tier — and is not raisable;
  * - every other selected lens gets the passTier() tier and may be raised to
  *   any higher tier's variant (ascending order).
- * addable_lenses = every known pass not already in the plan. */
+ * addable_lenses = every known pass not already in the plan.
+ *
+ * The profile's per-lens tuning (`cfg.lenses`) wins over all of
+ * that: a `min_tier` floors the lens's row (and so its `raisable_to`), the
+ * sweep rows and the validator's floor; `enabled = false` removes a lens from
+ * the plan AND the addable list whatever selected it; `enabled = true` on a
+ * lever-gated lens switches it on whatever its `[review]` lever says. */
 export function buildPassPlan(
   cfg: Config,
   files: PrFileEntry[],
@@ -711,6 +729,9 @@ export function buildPassPlan(
     smallDiffLines: cfg.models.small_diff_lines,
   });
   const risk = new Set(cfg.models.risk_passes);
+  // the profile's switch for one lens — explicit `enabled` wins,
+  // otherwise the `[review]` lever that gates it (true for an ungated lens).
+  const on = (lens: string, lever = true): boolean => lensEnabled(cfg.lenses, lens, lever);
   const selected0 = selectLenses(files, intent, heuristics, {
     intentMinWords: cfg.review.intent_min_words,
     placementMinCodeFiles: cfg.review.placement_min_code_files,
@@ -718,29 +739,31 @@ export function buildPassPlan(
   });
   // Sub-lenses ride after the path-selected lenses, each with the reason its
   // trigger fired (benchmark 2026-09-26; `[review] sublenses`).
-  const sub = cfg.review.sublenses
-    ? selectSubLenses(files, intent).filter((s) => !selected0.includes(s.lens))
-    : [];
+  const sub = selectSubLenses(files, intent).filter(
+    (s) => on(s.lens, cfg.review.sublenses) && !selected0.includes(s.lens),
+  );
   const whyOf = new Map(sub.map((s) => [s.lens, s.why]));
   // existing tests are consumers of every code change, and the PR's
   // own tests are claims about the code — one lens reads both.
   const tests =
-    cfg.review.tests_lens && files.some((f) => CODE_FILE_RE.test(f.filename)) ? [TESTS_PASS] : [];
+    on(TESTS_PASS, cfg.review.tests_lens) && files.some((f) => CODE_FILE_RE.test(f.filename))
+      ? [TESTS_PASS]
+      : [];
   // The code-quality lenses: maintainability, duplication, abstraction — never
   // style, which rides only on the repo's own written guide.
-  const quality = cfg.review.quality_lenses
-    ? selectQualityLenses(files, cfg.review.quality_min_added_lines).filter(
-        (l) => !selected0.includes(l),
-      )
-    : [];
+  const quality = selectQualityLenses(files, cfg.review.quality_min_added_lines).filter(
+    (l) => on(l, cfg.review.quality_lenses) && !selected0.includes(l),
+  );
   const style =
-    cfg.review.style_lens &&
+    on(STYLE_PASS, cfg.review.style_lens) &&
     styleGuide.length > 0 &&
     files.some((f) => CODE_FILE_RE.test(f.filename))
       ? [STYLE_PASS]
       : [];
   if (style.length)
     whyOf.set(STYLE_PASS, `the repo's written style guide: ${styleGuide.join(", ")}`);
+  // `enabled = false` is the last word on every lens, whatever selected it —
+  // a profile-level subtraction, separate from the ADD-only heuristics.
   const lenses = [
     ...selected0,
     ...sub.map((s) => s.lens),
@@ -748,15 +771,23 @@ export function buildPassPlan(
     ...quality,
     ...style,
     VALIDATE_PASS,
-  ];
+  ].filter((l) => on(l));
   // pass-intent starts at terra-med whatever the round's default:
   // reading comprehension over two short texts, not a judgment over production
   // risk. It is NOT pinned — the session may raise it like any other lens.
+  // A profile `min_tier` floors whatever this picks (it never lowers one).
   const tierOf = (lens: string): PassTier =>
-    risk.has(lens) ? "sol-high" : lens === INTENT_PASS ? "terra-med" : defaultTier;
+    flooredTier(
+      cfg.lenses,
+      lens,
+      risk.has(lens) ? "sol-high" : lens === INTENT_PASS ? "terra-med" : defaultTier,
+    );
+  // The sweep's rows run at the cheapest tier unless the profile floors it.
+  const sweepOn = on(SWEEP_PASS, cfg.review.sweep);
+  const sweepTier = flooredTier(cfg.lenses, SWEEP_PASS, "terra-med");
   const validate = validatorTier(
-    cfg.models.validate_tier,
-    lenses.filter((l) => l !== VALIDATE_PASS).map(tierOf),
+    flooredTier(cfg.lenses, VALIDATE_PASS, cfg.models.validate_tier),
+    [...lenses.filter((l) => l !== VALIDATE_PASS).map(tierOf), ...(sweepOn ? [sweepTier] : [])],
   );
   const pass_plan = lenses.map((lens): PassPlanEntry => {
     const pinned = lens === VALIDATE_PASS || risk.has(lens);
@@ -772,10 +803,10 @@ export function buildPassPlan(
   });
   // The sweep (benchmark 2026-09-26; `[review] sweep`): one row per group of
   // changed files, at the cheapest tier — its job is attention, line by line,
-  // not deep reasoning — inserted before the validator. The validator's tier
-  // is computed from the lenses above and a terra-med sweep never raises it.
+  // not deep reasoning — inserted before the validator. A terra-med sweep
+  // never raises the validator; one a profile floors higher does (above).
   let sweep_unswept: string[] = [];
-  if (cfg.review.sweep) {
+  if (sweepOn) {
     const { groups, unswept } = sweepGroups(
       files,
       cfg.review.sweep_max_groups,
@@ -785,16 +816,16 @@ export function buildPassPlan(
     sweep_unswept = unswept;
     const rows = groups.map((focus): PassPlanEntry => ({
       lens: SWEEP_PASS,
-      agent: `${SWEEP_PASS}--terra-med`,
-      tier: "terra-med",
-      raisable_to: raisableFrom(SWEEP_PASS, "terra-med"),
+      agent: `${SWEEP_PASS}--${sweepTier}`,
+      tier: sweepTier,
+      raisable_to: raisableFrom(SWEEP_PASS, sweepTier),
       focus,
     }));
     pass_plan.splice(pass_plan.length - 1, 0, ...rows);
   }
   const selected = new Set(pass_plan.map((p) => p.lens));
   const addable_lenses = [...new Set([...ALL_PASSES, ...cfg.models.risk_passes])].filter(
-    (l) => !selected.has(l),
+    (l) => !selected.has(l) && on(l),
   );
   return { pass_plan, addable_lenses, sweep_unswept };
 }
@@ -849,6 +880,14 @@ export function buildRoundOrder(args: {
     args.styleGuide ?? [],
   );
   const headSha = args.tree?.head_sha || args.row.head_sha;
+  // an addable lens the profile floors above the add rule's own
+  // variant is named with its variant in the prompt.
+  const addable_tiers = Object.fromEntries(
+    addable_lenses
+      .filter((l) => !args.cfg.models.risk_passes.includes(l))
+      .map((l) => [l, addTierOf(args.cfg, l)] as const)
+      .filter(([, t]) => t !== "sol-med"),
+  );
   return {
     pr: args.row.number,
     title: args.row.title,
@@ -863,6 +902,7 @@ export function buildRoundOrder(args: {
     lenses: [...new Set(pass_plan.map((p) => p.lens))],
     pass_plan,
     addable_lenses,
+    ...(Object.keys(addable_tiers).length > 0 ? { addable_tiers } : {}),
     ...(sweep_unswept.length > 0 ? { sweep_unswept } : {}),
     ...(args.dependencyNote ? { dependency_note: args.dependencyNote } : {}),
     ...(args.cfg.review.nits === "open" ? { nit_policy: "open" as const } : {}),
@@ -1146,10 +1186,9 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       );
       const plannedPasses = passPolicy.pass_plan;
       const lenses = [...new Set(plannedPasses.map((p) => p.lens))];
-      const riskPasses = new Set(cfg.models.risk_passes);
       const addablePasses = passPolicy.addable_lenses.map((lens) => ({
         lens,
-        tier: riskPasses.has(lens) ? "sol-high" : "sol-med",
+        tier: addTierOf(cfg, lens),
       }));
       const validateTier =
         plannedPasses.find((p) => p.lens === VALIDATE_PASS)?.tier ?? cfg.models.validate_tier;
@@ -1338,7 +1377,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       }
       // The repo's written style guide, if any: the style lens runs only on
       // one (`[review] style_lens`). Total — an unreadable tree is no guide.
-      const styleGuide = cfg.review.style_lens
+      const styleGuide = lensEnabled(cfg.lenses, STYLE_PASS, cfg.review.style_lens)
         ? findStyleGuide(resolve(sandboxRoot(), worktreeFor(row.number)))
         : [];
       const order = buildRoundOrder({

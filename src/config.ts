@@ -5,6 +5,7 @@ import { resolve, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "smol-toml";
 import { resolveConfigPath, resolveSecretsDir } from "./install.js";
+import type { LensTuningMap } from "./lenstuning.js";
 import type { PassTier } from "./types.js";
 
 export interface GithubConfig {
@@ -1191,6 +1192,12 @@ export function ingressHostnameFile(cfg: Config, root: string): string {
 
 export interface Config {
   dry_run: boolean;
+  /**: the selected profile's resolved per-lens tuning
+   * (`[lenses.<pass>]` in profile.toml, src/lenstuning.ts). config.toml never
+   * sets it: `applyProfileTuning` overlays it after parsing, which is what
+   * makes the profile win over config.toml, the preset and the defaults.
+   * Absent or empty ⇒ untuned. */
+  lenses?: LensTuningMap;
   ops: OpsConfig;
   ingress: IngressConfig;
   github: GithubConfig;

@@ -49,7 +49,19 @@ import type { PrFileEntry } from "../github.js";
 import { prepareDependencySources, renderDependencyNote } from "../depsources.js";
 import { buildAgents, configAddenda, identityVars, PASS_ADDENDA } from "../include.js";
 import { MEMORY_LESS } from "../memory/context.js";
-import { loadProfileAddenda, loadProfileEcosystem, loadProfileHeuristics } from "../profiles.js";
+import {
+  applyProfileTuning,
+  lensEnabled,
+  lensModelOverrides,
+  lensTuningAddenda,
+  type LensTuning,
+} from "../lenstuning.js";
+import {
+  loadProfileAddenda,
+  loadProfileEcosystem,
+  loadProfileHeuristics,
+  loadProfileLensTuning,
+} from "../profiles.js";
 import { directiveVocabulary, isFirstPartyDirectivePath } from "../severity.js";
 import type { PrStateRow } from "../state.js";
 import type { PassPlanEntry } from "../types.js";
@@ -178,6 +190,9 @@ export interface RunFingerprint {
     nits?: string;
     validate_demote?: boolean;
   };
+  /**: the profile's resolved per-lens tuning. Absent when untuned, so
+   * an untuned run's fingerprint is what it was before per-lens tuning. */
+  lenses?: Record<string, LensTuning>;
 }
 
 export function runFingerprint(cfg: Config, profile: string, overrides = ""): RunFingerprint {
@@ -208,6 +223,9 @@ export function runFingerprint(cfg: Config, profile: string, overrides = ""): Ru
       nits: cfg.review.nits,
       validate_demote: cfg.review.validate_demote,
     },
+    ...(Object.keys(cfg.lenses ?? {}).length > 0
+      ? { lenses: structuredClone({ ...cfg.lenses }) }
+      : {}),
   };
 }
 
@@ -361,10 +379,12 @@ export function buildBenchAgents(root: string, cfg: Config): number {
     validateTier: cfg.models.validate_tier,
     vars: identityVars(cfg),
     ecosystem: loadProfileEcosystem(root, cfg.review.profile),
+    models: lensModelOverrides(cfg.models, cfg.lenses),
     addenda: [
       ...PASS_ADDENDA,
       ...configAddenda(cfg.review),
       ...loadProfileAddenda(root, cfg.review.profile),
+      ...lensTuningAddenda(cfg.lenses),
     ],
   });
   return built.length;
@@ -468,7 +488,9 @@ export function renderCasePrompts(args: {
     heuristics: loadProfileHeuristics(root, cfg.review.profile),
     ...(args.dependencyNote ? { dependencyNote: args.dependencyNote } : {}),
     // The repo's written style guide, as production finds it (dispatch.ts).
-    ...(cfg.review.style_lens ? { styleGuide: findStyleGuide(tree) } : {}),
+    ...(lensEnabled(cfg.lenses, "pass-style", cfg.review.style_lens)
+      ? { styleGuide: findStyleGuide(tree) }
+      : {}),
   });
   const template = readFileSync(join(root, "prompts", roundTemplateFile("first")), "utf8");
   const rendered = renderRoundPrompt(
@@ -949,10 +971,16 @@ export function contextFor(
   profile: string,
   overrides = "",
 ): { cfg: Config; ecosystem: Ecosystem } {
-  const cfg = applyConfigOverrides(
-    benchConfig(root, profile),
-    overrides,
-    readFileSync(resolveConfigPath({ root }).path, "utf8"),
+  // the profile's lens tuning is overlaid LAST — after the `--config`
+  // levers and any preset re-parse — exactly as production overlays it after
+  // config.toml: the profile wins.
+  const cfg = applyProfileTuning(
+    applyConfigOverrides(
+      benchConfig(root, profile),
+      overrides,
+      readFileSync(resolveConfigPath({ root }).path, "utf8"),
+    ),
+    loadProfileLensTuning(root, profile),
   );
   return { cfg, ecosystem: ecosystemFor(loadProfileEcosystem(root, profile)) };
 }

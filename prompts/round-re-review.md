@@ -196,7 +196,8 @@ more values, work moved onto a queue, a loop over another party's data, a
 release that reaches clients and servers at different times), add that lens in
 the same launch turn. Run it at the plan's default tier: call the
 `<lens>--sol-med` variant, unless it is a risk pass (risk passes exist only as
-`<lens>--sol-high`). **Never drop a planned lens.**
+`<lens>--sol-high`) or the list above names the variant to run (this repo's
+profile floors that lens higher). **Never drop a planned lens.**
 
 **Two lenses exist only to be added — no plan ever selects them.**
 `pass-concurrency` demands that your one-line reason NAME the suspected

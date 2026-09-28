@@ -141,6 +141,10 @@ export interface RoundOrder {
   pass_plan: PassPlanEntry[];
   /** Lenses NOT selected for this round that the session may add. */
   addable_lenses: string[];
+  /**: the addable lenses whose add variant is NOT the templates' own
+   * rule (`sol-med`, or `sol-high` for a risk pass) — the ones a profile
+   * `min_tier` floors higher, lens → tier. Absent ⇒ the rule holds for all. */
+  addable_tiers?: Record<string, PassTier>;
   /** Changed files past the sweep's per-round cap — named in the plan so a
    * capped sweep never reads as full coverage. */
   sweep_unswept?: string[];
