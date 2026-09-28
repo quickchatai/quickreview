@@ -314,13 +314,25 @@ bench/aacr/arm.sh --prefix opencode --arm opencode --cases fresh10 --eval 3   # 
 
 | Harness `reviewers/codex.py` | Here |
 |---|---|
-| `codex exec review "/review <base>...<head> (<fragment>)"` — codex's built-in review | `opencode run --pure --auto --format json --command review "<base>...<head> (<fragment>)"` — OpenCode's **built-in** `review` command ("review changes [commit\|branch\|pr]", run as a subtask) |
+| `codex exec review "/review <base>...<head> (<fragment>)"` — codex's built-in review | `opencode run --pure --auto --format json --command review "<base>...<head> (<fragment>)"` — OpenCode's **built-in** `review` command template, byte for byte, re-declared in the config with `subtask: false` (below) |
 | `INLINE_FINDINGS_PROMPT_FRAGMENT`: call `report` once per finding with file / start_line / end_line / severity / summary / description | the same fragment word for word, naming the tool `findings_report` (OpenCode prefixes MCP tools with the server's name) |
 | `mcp_codex_finding_server.py` via `[mcp_servers.findings]` | the SAME script from the pinned harness, run by the harness's venv, as OpenCode's local MCP server `findings` |
 | `--sandbox workspace-write` (no network) | `--auto` (every permission not denied is approved); `webfetch`, `websearch` and directories outside the tree denied |
 | process timeout 30 × 60 + 60 s | the same (`--timeout-min`, default 30) |
-| `save_result`: MCP partial vs JSON parsed from the final text, the larger wins, a tie goes to MCP; raw text scores nothing | the same, the "final text" being the review subtask's result |
+| `save_result`: MCP partial vs JSON parsed from the final text, the larger wins, a tie goes to MCP; raw text scores nothing | the same, the "final text" being the session's last answer |
 | result file `{reviewer: "codex", review_output, token_usage, …}` | the same payload with `reviewer: "opencode"`, **plus** `review.comments` — the same notes (summary + "\n" + description), paths and line ranges in the OCR reader's shape, because `eval` scores every arm with the harness's OCR reader and the defect judge reads that key |
+
+**Why `subtask: false`.** The built-in `review` runs as a subtask; when it
+returns, OpenCode tells the parent session to "continue with your task",
+and the parent — which holds the same prompt, fragment and findings tool —
+reviewed the PR again and re-reported the same findings (first smoke test:
+3 + 2 and 1 + 1 reports of the same issues, a pure precision penalty codex's
+relay-only main thread does not pay). `REVIEW_COMMAND_TEMPLATE` is the
+built-in's text verbatim (checked: the rendered prompt and system prompt are
+identical to the built-in's), so the one session gets exactly the built-in
+prompt and reports once. The difference that remains: as a primary session
+it also has OpenCode's `task` and `todowrite` tools. Re-check the template on
+every version bump.
 
 No PR title or description reaches OpenCode (the codex runner passes none).
 Its findings carry the harness's codex severities, not our tags, so only the
@@ -359,7 +371,7 @@ Its findings carry the harness's codex severities, not our tags, so only the
   command are not stable contracts.
 - **Per case**: `cases/<id>/` holds `opencode-argv.json`, `opencode-config.json`,
   `opencode-events.jsonl` (the event stream), `opencode-result.txt` (the
-  subtask's final text), `opencode.log`, `case-summary.json` (status, comment
+  session's final text), `opencode.log`, `case-summary.json` (status, comment
   source, MCP vs text counts, the bridge's tokens, the parent session's tool
   calls); `bridge.jsonl` one row per model call, including the effort OpenCode
   asked for.

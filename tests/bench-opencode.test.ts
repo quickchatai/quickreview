@@ -30,6 +30,7 @@ import {
   opencodeStatus,
   parseOpencodeEvents,
   renderOpencodeReport,
+  REVIEW_COMMAND_TEMPLATE,
   reviewCaseOpencode,
   runOpencodeReview,
   toOcrShapedComments,
@@ -177,6 +178,24 @@ describe("the OpenCode arm runs in the shape of the harness's codex runner", () 
       },
     });
     expect(c["permission"]).toMatchObject({ webfetch: "deny", external_directory: "deny" });
+    // The built-in review template, re-declared only to run in ONE session:
+    // as a subtask the parent re-reviewed and re-reported every finding.
+    expect(c["command"]["review"]).toEqual({
+      template: REVIEW_COMMAND_TEMPLATE,
+      description: "review changes [commit|branch|pr], defaults to uncommitted",
+      subtask: false,
+    });
+  });
+
+  it("the review template is OpenCode 1.18.33's built-in text", () => {
+    expect(REVIEW_COMMAND_TEMPLATE.startsWith(
+      "You are a code reviewer. Your job is to review code changes and provide actionable feedback.\n\n---\n\nInput: $ARGUMENTS\n\n---\n\n## Determining What to Review",
+    )).toBe(true);
+    expect(REVIEW_COMMAND_TEMPLATE.match(/\$ARGUMENTS/g)).toHaveLength(5);
+    expect(REVIEW_COMMAND_TEMPLATE).toContain("   - Run: `git diff $ARGUMENTS...HEAD`");
+    expect(REVIEW_COMMAND_TEMPLATE).toContain("O(n²) on unbounded data");
+    expect(REVIEW_COMMAND_TEMPLATE.trimEnd().endsWith('Avoid phrasing like "Great job ...", "Thanks for ...".')).toBe(true);
+    expect(REVIEW_COMMAND_TEMPLATE).not.toContain("findings_report");
   });
 
   it("env: a fresh HOME/XDG per case, project config and every phone-home off, and no pi login in reach", () => {

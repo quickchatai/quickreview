@@ -8,8 +8,9 @@
 //   harness codex.py                          here
 //   ----------------------------------------  ---------------------------------------
 //   `codex exec review "/review B...H (F)"`   `opencode run --command review "B...H (F)"`
-//     (codex's built-in /review)                (OpenCode's built-in /review command,
-//                                               "review changes [commit|branch|pr]")
+//     (codex's built-in /review)                (OpenCode's built-in /review template,
+//                                               re-declared with subtask:false — see
+//                                               REVIEW_COMMAND_TEMPLATE)
 //   F = INLINE_FINDINGS_PROMPT_FRAGMENT       the same fragment, word for word, but the
 //                                               tool is named `findings_report` (OpenCode
 //                                               prefixes MCP tools with the server name)
@@ -21,7 +22,7 @@
 //                                               the tree denied (workspace-write has no network)
 //   process timeout = timeout×60 + 60 s       the same (timeout 30 → 1,860 s)
 //   save_result: MCP partial vs JSON parsed   the same dual channel and the same tie rule
-//     from the final text, the larger wins,     (text = the review subtask's result)
+//     from the final text, the larger wins,     (text = the session's last answer)
 //     tie → MCP
 //   result file { review_output, … }          the same payload, reviewer "opencode", PLUS
 //                                               `review.comments` — the identical comments in
@@ -97,6 +98,20 @@ export const INLINE_FINDINGS_PROMPT_FRAGMENT =
 export function opencodeReviewArguments(base: string, head: string): string {
   return `${base}...${head} (${INLINE_FINDINGS_PROMPT_FRAGMENT})`;
 }
+
+/**
+ * OpenCode 1.18.33's built-in `review` command template, byte for byte (taken
+ * from the prompt the binary renders, `$ARGUMENTS` restored; its text matches
+ * the binary's embedded template). It is re-declared in the config ONLY to set
+ * `subtask: false`: the built-in runs as a subtask, and after the subtask
+ * returns OpenCode tells the parent session to "continue with your task" — the
+ * parent, which also holds the findings tool and the fragment, then reviewed
+ * the PR again and re-reported the same findings (smoke test, 2026-09-28:
+ * 3 + 2 and 1 + 1 reports of the same issues). Codex's /review delegates too,
+ * but its main thread only relays. With `subtask: false` the one session gets
+ * exactly this prompt and reports once. Re-check it on every version bump.
+ */
+export const REVIEW_COMMAND_TEMPLATE: string = "You are a code reviewer. Your job is to review code changes and provide actionable feedback.\n\n---\n\nInput: $ARGUMENTS\n\n---\n\n## Determining What to Review\n\nBased on the input provided, determine which type of review to perform:\n\n1. **No arguments (default)**: Review all uncommitted changes\n   - Run: `git diff` for unstaged changes\n   - Run: `git diff --cached` for staged changes\n   - Run: `git status --short` to identify untracked (net new) files\n\n2. **Commit hash** (40-char SHA or short hash): Review that specific commit\n   - Run: `git show $ARGUMENTS`\n\n3. **Branch name**: Compare current branch to the specified branch\n   - Run: `git diff $ARGUMENTS...HEAD`\n\n4. **PR URL or number** (contains \"github.com\" or \"pull\" or looks like a PR number): Review the pull request\n   - Run: `gh pr view $ARGUMENTS` to get PR context\n   - Run: `gh pr diff $ARGUMENTS` to get the diff\n\nUse best judgement when processing input.\n\n---\n\n## Gathering Context\n\n**Diffs alone are not enough.** After getting the diff, read the entire file(s) being modified to understand the full context. Code that looks wrong in isolation may be correct given surrounding logic—and vice versa.\n\n- Use the diff to identify which files changed\n- Use `git status --short` to identify untracked files, then read their full contents\n- Read the full file to understand existing patterns, control flow, and error handling\n- Check for existing style guide or conventions files (CONVENTIONS.md, AGENTS.md, .editorconfig, etc.)\n\n---\n\n## What to Look For\n\n**Bugs** - Your primary focus.\n- Logic errors, off-by-one mistakes, incorrect conditionals\n- If-else guards: missing guards, incorrect branching, unreachable code paths\n- Edge cases: null/empty/undefined inputs, error conditions, race conditions\n- Security issues: injection, auth bypass, data exposure\n- Broken error handling that swallows failures, throws unexpectedly or returns error types that are not caught.\n\n**Structure** - Does the code fit the codebase?\n- Does it follow existing patterns and conventions?\n- Are there established abstractions it should use but doesn't?\n- Excessive nesting that could be flattened with early returns or extraction\n\n**Performance** - Only flag if obviously problematic.\n- O(n²) on unbounded data, N+1 queries, blocking I/O on hot paths\n\n**Behavior Changes** - If a behavioral change is introduced, raise it (especially if it's possibly unintentional).\n\n---\n\n## Before You Flag Something\n\n**Be certain.** If you're going to call something a bug, you need to be confident it actually is one.\n\n- Only review the changes - do not review pre-existing code that wasn't modified\n- Don't flag something as a bug if you're unsure - investigate first\n- Don't invent hypothetical problems - if an edge case matters, explain the realistic scenario where it breaks\n- If you need more context to be sure, use the tools below to get it\n\n**Don't be a zealot about style.** When checking code against conventions:\n\n- Verify the code is *actually* in violation. Don't complain about else statements if early returns are already being used correctly.\n- Some \"violations\" are acceptable when they're the simplest option. A `let` statement is fine if the alternative is convoluted.\n- Excessive nesting is a legitimate concern regardless of other style choices.\n- Don't flag style preferences as issues unless they clearly violate established project conventions.\n\n---\n\n## Tools\n\nUse these to inform your review:\n\n- **Explore agent** - Find how existing code handles similar problems. Check patterns, conventions, and prior art before claiming something doesn't fit.\n- **Exa Code Context** - Verify correct usage of libraries/APIs before flagging something as wrong.\n- **Web Search** - Research best practices if you're unsure about a pattern.\n\nIf you're uncertain about something and can't verify it with these tools, say \"I'm not sure about X\" rather than flagging it as a definite issue.\n\n---\n\n## Output\n\n1. If there is a bug, be direct and clear about why it is a bug.\n2. Clearly communicate severity of issues. Do not overstate severity.\n3. Critiques should clearly and explicitly communicate the scenarios, environments, or inputs that are necessary for the bug to arise. The comment should immediately indicate that the issue's severity depends on these factors.\n4. Your tone should be matter-of-fact and not accusatory or overly positive. It should read as a helpful AI assistant suggestion without sounding too much like a human reviewer.\n5. Write so the reader can quickly understand the issue without reading too closely.\n6. AVOID flattery, do not give any comments that are not helpful to the reader. Avoid phrasing like \"Great job ...\", \"Thanks for ...\".";
 
 /** The provider id and model OpenCode is told to use: `bridge/<model>`. */
 export const BRIDGE_PROVIDER = "bridge";
@@ -187,6 +202,13 @@ export function opencodeConfig(o: {
       },
     },
     permission: { webfetch: "deny", websearch: "deny", external_directory: "deny" },
+    command: {
+      review: {
+        template: REVIEW_COMMAND_TEMPLATE,
+        description: "review changes [commit|branch|pr], defaults to uncommitted",
+        subtask: false,
+      },
+    },
     mcp: {
       [FINDINGS_SERVER]: {
         type: "local",
@@ -236,8 +258,8 @@ export function opencodeEnv(o: {
 // ---- reading what OpenCode did -----------------------------------------------------
 
 export interface OpencodeEvents {
-  /** The review subtask's final answer (the `task` tool's result), else the
-   * session's last text — what codex.py reads as the `agent_message`. */
+  /** The session's last text — or, if the review ran as a subtask (the
+   * built-in command's default), the `task` tool's result — what codex.py reads as the `agent_message`. */
   resultText: string;
   /** Tokens OpenCode itself reported per step (the parent session only — a
    * subtask's steps are not in the stream; the bridge counts everything). */
@@ -974,7 +996,7 @@ export function renderOpencodeReport(set: CaseSet, outDir: string, cases: BenchC
   }
   L.push("");
   L.push(
-    "Reading the numbers: the findings carry the harness's codex severities (Critical…Info), not our blocker/nit tags, so only the `all` variant exists for this arm. The Tools column counts the parent session's tool calls (the review itself runs as a subtask, visible as `task`); the backend columns are the bridge's count of every call, subtask included.",
+    "Reading the numbers: the findings carry the harness's codex severities (Critical…Info), not our blocker/nit tags, so only the `all` variant exists for this arm. The Tools column counts the session's tool calls (a `task` is a subagent OpenCode chose to spawn, whose own calls are not listed); the backend columns are the bridge's count of every call, subagents included.",
   );
   L.push("");
   return L.join("\n");
