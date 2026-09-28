@@ -271,9 +271,16 @@ CONFIG_NAME=""
 if [[ -n "$SHIPPED_CONFIG" ]]; then
   CONFIG_HOME_SRC="$(dirname "$SHIPPED_CONFIG")"
   CONFIG_NAME="$(basename "$SHIPPED_CONFIG")"
-  # Both reach the playbook as `-e k=v`, which splits on whitespace.
-  if [[ "$MODE" != "verify" && ( "$CONFIG_HOME_SRC" =~ [[:space:]\"\'] || "$CONFIG_NAME" =~ [[:space:]\"\'] ) ]]; then
-    die "the config home path '$SHIPPED_CONFIG' contains whitespace or quotes — the playbook cannot be handed it; set XDG_CONFIG_HOME (or QCR_CONFIG) to a plain path"
+  # Both reach the playbook as `-e k=v`, which splits on whitespace, and
+  # ansible templates the values, so a `{`/`}` could render as Jinja.
+  if [[ "$MODE" != "verify" && ( "$CONFIG_HOME_SRC" =~ [[:space:]\"\'{}] || "$CONFIG_NAME" =~ [[:space:]\"\'{}] ) ]]; then
+    die "the config home path '$SHIPPED_CONFIG' contains whitespace, quotes or braces — the playbook cannot be handed it; set XDG_CONFIG_HOME (or QCR_CONFIG) to a plain path"
+  fi
+  # The file name is also an rsync filter pattern (`--include=/<name>`): a
+  # wildcard in it would ship some other file, or none, and the container's
+  # QCR_CONFIG would name a config that is not there — refused, not shipped.
+  if [[ "$MODE" != "verify" && ! "$CONFIG_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    die "the config file name '$CONFIG_NAME' is not a plain file name — letters, digits, '.', '_' and '-' only (it becomes an rsync filter pattern and the container's QCR_CONFIG); rename it, or point QCR_CONFIG at one that is"
   fi
 fi
 # The repo profile the config names, and every profile it `extends`,

@@ -422,6 +422,28 @@ describe("deploy.sh — the config home ships", () => {
     expect(r.code).toBe(1);
     expect(r.stderr).toContain("whitespace");
   });
+
+  it("refuses a config file name that is not a plain name (it becomes an rsync filter pattern)", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
+    const other = join(env.dir, "globbed");
+    mkdirSync(other);
+    writeFileSync(join(other, "c[1].toml"), CONFIG("0.84.1"));
+    const r = run(env, ["--dry-run"], { QCR_CONFIG: join(other, "c[1].toml") });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("not a plain file name");
+    // verify ships nothing, so it is not refused.
+    expect(run(env, ["--dry-run", "verify"], { QCR_CONFIG: join(other, "c[1].toml") }).code).toBe(0);
+  });
+
+  it("refuses a config home path with braces (ansible would template it)", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
+    const braced = join(env.dir, "x{{y}}");
+    mkdirSync(braced);
+    writeFileSync(join(braced, "config.toml"), CONFIG("0.84.1"));
+    const r = run(env, ["--dry-run"], { QCR_CONFIG: join(braced, "config.toml") });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("braces");
+  });
 });
 
 describe("deploy.sh — the repo profile ships with the config home", () => {
