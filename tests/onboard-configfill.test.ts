@@ -13,6 +13,7 @@
 //   * malformed answers fail AT THE STEP with plain guidance;
 //   * rule 1: however the answers are shaped, this step cannot produce a
 //     config with dry_run false — nor flip an owner's false back to true.
+import { locateSecrets } from "../src/install.js";
 import {
   copyFileSync,
   existsSync,
@@ -319,7 +320,8 @@ describe("derivables", () => {
     // the sink default
     expect(cfg.sink.kind).toBe("github");
     // directory defaults
-    expect(cfg.github.secrets_dir).toContain(".config/quickreview-bot");
+    // written empty, resolved by the install locator at load.
+    expect(cfg.github.secrets_dir).toBe(locateSecrets().path);
     expect(cfg.companion.repo_dir).not.toBe("");
     // escalation mention falls back to the owner's login
     expect(cfg.review.escalation_mention_default).toBe("dana-op");

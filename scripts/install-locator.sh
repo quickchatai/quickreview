@@ -105,3 +105,95 @@ qcr_profile_dirs() { # qcr_profile_dirs <checkout-root>
     printf '%s\n' "$dir"
   done
 }
+
+# ---- secrets -------------------------------------------------------
+#
+#   SECRETS_DIR="$(qcr_locate_secrets "$configured" "${QC_SECRETS_DIR:-}")" || exit 1
+#
+# The rule, in order (src/install.ts `locateSecrets`):
+#   1. the configured [github] secrets_dir, unless empty or the legacy default
+#      spelling (~/.config/quickreview-bot) — taken as given, ~ expanded
+#   2. the caller's override (the wizards' $QC_SECRETS_DIR), ~ expanded
+#   3. <config home>/secrets when it exists
+#   4. the legacy ~/.config/quickreview-bot when it exists — announced on a tty
+#   5. nothing anywhere: <config home>/secrets (where new secrets belong)
+
+qcr_secrets_home() {
+  local home
+  home="$(qcr_config_home)" || return 1
+  printf '%s\n' "$home/secrets"
+}
+
+_qcr_home_dir() { printf '%s\n' "${HOME:-$(cd ~ && pwd)}"; }
+
+_qcr_expand_home() { # _qcr_expand_home <path>
+  local p="$1"
+  if [[ "$p" == "~" ]]; then
+    _qcr_home_dir
+  elif [[ "$p" == "~/"* ]]; then
+    printf '%s\n' "$(_qcr_home_dir)/${p#\~/}"
+  else
+    printf '%s\n' "$p"
+  fi
+}
+
+_qcr_trim() { # _qcr_trim <text>
+  local t="$1"
+  t="${t#"${t%%[![:space:]]*}"}"
+  printf '%s\n' "${t%"${t##*[![:space:]]}"}"
+}
+
+qcr_legacy_secrets_dir() { printf '%s\n' "$(_qcr_home_dir)/.config/quickreview-bot"; }
+
+qcr_locate_secrets() { # qcr_locate_secrets [configured] [override]
+  local configured override home legacy stripped
+  configured="$(_qcr_trim "${1:-}")"
+  override="$(_qcr_trim "${2:-}")"
+  legacy="$(qcr_legacy_secrets_dir)"
+  if [[ -n "$configured" ]]; then
+    stripped="$configured"
+    while [[ "$stripped" == */ ]]; do stripped="${stripped%/}"; done
+    if [[ "$stripped" != "~/.config/quickreview-bot" && "$(_qcr_expand_home "$stripped")" != "$legacy" ]]; then
+      _qcr_expand_home "$configured"
+      return 0
+    fi
+  fi
+  if [[ -n "$override" ]]; then
+    _qcr_expand_home "$override"
+    return 0
+  fi
+  home="$(qcr_secrets_home)" || return 1
+  if [[ -e "$home" ]]; then
+    printf '%s\n' "$home"
+  elif [[ -e "$legacy" ]]; then
+    if [[ -t 2 ]]; then
+      echo "qcr: reading secrets from the LEGACY dir $legacy — the install's secrets home is $home; move them there with \`qcr install migrate\`" >&2
+    fi
+    printf '%s\n' "$legacy"
+  else
+    printf '%s\n' "$home"
+  fi
+}
+
+# The companion's OpenViking key file (src/install.ts `locateKeysFile`):
+# $QCR_OPENVIKING_KEYS, else $XDG_CONFIG_HOME/qcr-operator/<install>/, else the
+# legacy ~/.config/quickreview-bot/, else the operator home. Deliberately OUTSIDE
+# the config home, which a container mounts.
+qcr_locate_keys_file() {
+  local override name primary legacy
+  override="$(_qcr_trim "${QCR_OPENVIKING_KEYS:-}")"
+  if [[ -n "$override" ]]; then
+    printf '%s\n' "$override"
+    return 0
+  fi
+  name="$(qcr_install_name)" || return 1
+  primary="$(_qcr_xdg_base "${XDG_CONFIG_HOME:-}" .config)/qcr-operator/$name/openviking-keys.env"
+  legacy="$(qcr_legacy_secrets_dir)/openviking-keys.env"
+  if [[ -e "$primary" ]]; then
+    printf '%s\n' "$primary"
+  elif [[ -e "$legacy" ]]; then
+    printf '%s\n' "$legacy"
+  else
+    printf '%s\n' "$primary"
+  fi
+}

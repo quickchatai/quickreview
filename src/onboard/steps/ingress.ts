@@ -29,7 +29,7 @@
 // config.toml, the project `.env`'s COMPOSE_PROFILES line, and nothing else.
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { expandHome } from "../../config.js";
+import { resolveSecretsDir } from "../../install.js";
 import { CHOICE_KEYS, type IngressChoice } from "../choices.js";
 import { topologyOf } from "./topology.js";
 import type {
@@ -257,12 +257,10 @@ function readFileOrNull(path: string): string | null {
 }
 
 /** The operator's secrets dir: config.toml's value when it has one, else the
- * documented default. */
+ * install locator's answer. */
 export function secretsDirOf(configToml: string | null): string {
   const configured = configToml ? readTomlKey(configToml, "github", "secrets_dir") : null;
-  return expandHome(
-    configured && configured.trim() !== "" ? configured.trim() : "~/.config/quickreview-bot",
-  );
+  return resolveSecretsDir({ configured }).path;
 }
 
 /** A hostname the operator typed: bare, lowercase, no scheme or path. */

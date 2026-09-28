@@ -45,12 +45,15 @@ yours either way — the wizard never creates a machine.
    The container is capped at 2 CPU / 8 GiB.
 2. **Ingress**: either a Cloudflare tunnel (remote-managed tunnel, public
    hostname → `http://localhost:8787`; its **token** saved as
-   `~/.config/quickreview-bot/tunnel_token` locally — required only with
+   `tunnel_token` in the local secrets dir (item 3) — required only with
    `cloudflared_enabled: true`), or your own HTTPS proxy/tunnel pointed at
    the VM's `localhost:8787` (then set `cloudflared_enabled: false`). The
    wizard's ingress step writes that flag into `inventory.ini` for you: `true`
    for the named-tunnel shape, `false` for every other one.
-3. **Local secrets dir** `~/.config/quickreview-bot/` contains:
+3. **Local secrets dir** — the install's `~/.config/qcr/<install>/secrets/`
+   (or the legacy `~/.config/quickreview-bot/` until `qcr install migrate`
+   moves it; `deploy.sh rebuild` passes the install locator's answer as
+   `secrets_src`) contains:
    `app_id`, `app.pem`, `webhook_secret` (plus `openai_api_key` optional —
    pi's API-key route — and `tunnel_token` when the tunnel is enabled), and
    `openviking_root_key` / `openviking_reviewer_key` for the memory engine.

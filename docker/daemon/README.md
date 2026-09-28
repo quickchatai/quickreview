@@ -42,8 +42,10 @@ symlink migration, which the double mount deliberately skips.
 
 - **The repo, bind-mounted rw** at `/opt/quickreview/sandbox` (compose mounts
   `./`). The code, prompts and agents ride the repo — there is no seed step.
-- **A secrets dir, mounted read-only** at `/opt/quickreview/secrets` (default
-  `~/.config/quickreview-bot`, override with `QCR_SECRETS_DIR`):
+- **A secrets dir, mounted read-only** at `/opt/quickreview/secrets`
+  (`QCR_SECRETS_DIR`, which the wizard's bring-up writes into `.env` as the
+  install's `~/.config/qcr/<install>/secrets`; unset, the legacy
+  `~/.config/quickreview-bot`):
   - `app_id`, `app.pem`, `webhook_secret` — the GitHub App credential
     (required; the only credential the system ever uses).
   - `openai_api_key` — optional; pi's model credential on the API-key route
@@ -104,7 +106,7 @@ secrets dir **read-only** and the wrapper passes the value to the client in its
 environment:
 
 ```sh
-(umask 077; printf %s '<ngrok authtoken>' > ~/.config/quickreview-bot/ngrok_authtoken)
+(umask 077; printf %s '<ngrok authtoken>' > ~/.config/qcr/default/secrets/ngrok_authtoken)
 ```
 
 The wrapper itself is `docker/tunnel/sidecar.mjs`: it runs the vendor's own

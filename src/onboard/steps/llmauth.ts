@@ -42,6 +42,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { resolveSecretsDir as resolveLocatedSecrets } from "../../install.js";
 import { CHOICE_KEYS, type AuthRoute } from "../choices.js";
 import type {
   CheckResult,
@@ -72,7 +73,6 @@ export function prefixFor(route: AuthRoute): string {
 /** The secrets-dir file name — the same one `deploy/collect-secrets.sh` writes
  * and the container entrypoints export as OPENAI_API_KEY. */
 export const OPENAI_KEY_FILE = "openai_api_key";
-const DEFAULT_SECRETS_DIR = "~/.config/quickreview-bot";
 
 /**
  * The SIX model strings the route decides. Every one of them lives in
@@ -146,18 +146,15 @@ export function readTomlString(text: string, section: string, key: string): stri
 }
 
 /** Where the secrets live: `[github] secrets_dir` wins (it is what the daemon
- * and the compose mount actually use), then $QC_SECRETS_DIR, then the shipped
- * default — the same order `deploy/collect-secrets.sh` and docker-compose.yml
- * follow. */
+ * and the compose mount actually use), then $QC_SECRETS_DIR, then the install
+ * locator's answer — `<config home>/secrets`, or the legacy dir
+ * while it still holds them: the same answer the daemon's loader reaches. */
 export function resolveSecretsDir(configText: string, home: string, envDir?: string): string {
-  const configured = readTomlString(configText, "github", "secrets_dir")?.trim();
-  const chosen =
-    configured && configured.length > 0
-      ? configured
-      : envDir && envDir.trim()
-        ? envDir.trim()
-        : DEFAULT_SECRETS_DIR;
-  return expandHomePath(chosen, home);
+  return resolveLocatedSecrets({
+    configured: readTomlString(configText, "github", "secrets_dir"),
+    override: envDir,
+    env: { ...process.env, HOME: home },
+  }).path;
 }
 
 // ---- the model-string rewrite ----------------------------------------------

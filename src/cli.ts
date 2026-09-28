@@ -29,11 +29,15 @@ import {
 import { CommandDrainSender, drainPayload } from "./tui/deploy-drain.js";
 import {
   locateConfig,
+  locateKeysFile,
+  locateSecrets,
   migrateConfig,
   migrateProfiles,
   migrateReport,
   profileMigrateReport,
   profileSearchDirs,
+  migrateSecrets,
+  secretsMigrateReport,
   stateHome,
   type InstallEnv,
 } from "./install.js";
@@ -618,11 +622,19 @@ async function cmdDrain(rest: string[]): Promise<number> {
  * install's config home, and every install profile out of the
  * checkout's `profiles/` — idempotent, and it never overwrites a differing
  * config or profile. Deliberately NOT loadConfig(): a config that does not
- * parse must still be movable.
+ * parse must still be movable.: both verbs cover the secrets too —
+ * `where` names the secrets dir and the companion key file the locator picks
+ * (without the configured `[github] secrets_dir`, which only a parsed config
+ * knows), and `migrate` moves `~/.config/quickreview-bot/` into
+ * `<config home>/secrets/`.
  */
 export function cmdInstall(
   rest: string[],
-  deps: { root?: string; env?: InstallEnv; log?: (line: string) => void } = {},
+  deps: {
+    root?: string;
+    env?: InstallEnv & { QCR_OPENVIKING_KEYS?: string };
+    log?: (line: string) => void;
+  } = {},
 ): number {
   const root = deps.root ?? sandboxRoot();
   const env = deps.env ?? process.env;
@@ -634,18 +646,25 @@ export function cmdInstall(
       log(`config home ${located.home}`);
       log(`state home  ${stateHome(env)}`);
       log(`profiles    ${profileSearchDirs({ root, env }).join(" → ")}`);
+      const secrets = locateSecrets({ env });
+      const keys = locateKeysFile({ env });
+      log(`secrets     ${secrets.path}  (${secrets.source}; a set [github] secrets_dir overrides it)`);
+      log(`memory keys ${keys.path}  (${keys.source})`);
       if (located.source === "checkout")
         log("the checkout config is the legacy fallback — `qcr install migrate` moves it");
+      if (secrets.source === "legacy" || keys.source === "legacy")
+        log("the legacy secrets dir is the fallback — `qcr install migrate` moves it");
       return 0;
     }
     case "migrate": {
-      // The config, then every install profile still in the checkout
-      // — independent moves, so a config conflict never holds a
-      // profile back, and the exit code fails if either half refused.
+      // The config, every install profile still in the checkout,
+      // then the secrets — independent moves, so one refusal never
+      // holds another back, and the exit code fails if any of them refused.
       const config = migrateReport(migrateConfig({ root, env }));
       const profiles = profileMigrateReport(migrateProfiles({ root, env }));
-      for (const line of [...config.lines, ...profiles.lines]) log(line);
-      return Math.max(config.code, profiles.code);
+      const secrets = secretsMigrateReport(migrateSecrets({ env }));
+      for (const line of [...config.lines, ...profiles.lines, ...secrets.lines]) log(line);
+      return Math.max(config.code, profiles.code, secrets.code);
     }
     default:
       throw new Error("usage: qcr install <where|migrate>");

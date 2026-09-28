@@ -22,9 +22,8 @@
 // this slice that writes that key at all (root CLAUDE.md rule 1).
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
-import { expandHome } from "../../config.js";
+import { resolveSecretsDir } from "../../install.js";
 import { CHOICE_KEYS } from "../choices.js";
 import type {
   CheckResult,
@@ -89,8 +88,10 @@ export function readEnvText(root: string): string {
 
 /**
  * The daemon-side secrets dir. config.toml is the truth once the config step
- * has run (it is what the daemon itself reads); a recorded choice and the
- * documented default cover the earlier states.
+ * has run (it is what the daemon itself reads); a recorded choice and
+ * `$QC_SECRETS_DIR` cover the earlier states, and the install locator
+ * has the last word: `<config home>/secrets`, or the legacy dir
+ * while it still holds them — the same answer the daemon's loader reaches.
  */
 export function secretsDirFor(
   adapters: OnboardAdapters,
@@ -99,14 +100,15 @@ export function secretsDirFor(
 ): string {
   const root = rootOf(adapters);
   const configText = readConfigText(adapters);
-  const fromConfig = configText ? readTomlKey(configText, "github", "secrets_dir") : null;
-  if (fromConfig && fromConfig.trim()) return absolutize(root, expandHome(fromConfig.trim()));
+  const fromConfig = (configText ? readTomlKey(configText, "github", "secrets_dir") : null)?.trim();
   const raw = choices[CHOICE_KEYS.secretsDir];
   const choice = typeof raw === "string" ? raw.trim() : "";
-  if (choice) return absolutize(root, expandHome(choice));
-  const fromEnv = (env.QC_SECRETS_DIR ?? "").trim();
-  if (fromEnv) return absolutize(root, expandHome(fromEnv));
-  return join(homedir(), ".config", "quickreview-bot");
+  const located = resolveSecretsDir({
+    configured: fromConfig || choice,
+    override: env.QC_SECRETS_DIR,
+    env,
+  });
+  return absolutize(root, located.path);
 }
 
 function absolutize(root: string, path: string): string {

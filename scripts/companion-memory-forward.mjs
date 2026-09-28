@@ -50,7 +50,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -74,10 +74,28 @@ export const DEFAULTS = {
   unit: "qcr-memory-forward",
 };
 
-/** The keys file — same path src/tui/companion.ts reads (0600, two USER keys). */
+/**
+ * The keys file (0600, two USER keys) — the install locator's rule
+ * (`locateKeysFile` in src/install.ts), the same path
+ * src/tui/companion.ts reads: `QCR_OPENVIKING_KEYS`, else the operator home
+ * `$XDG_CONFIG_HOME/qcr-operator/<install>/`, else the legacy
+ * `~/.config/quickreview-bot/`, else the operator home. Mirrored rather than
+ * imported because this script runs from a checkout with no dist/;
+ * tests/companion-memory.test.ts runs both over the same temp homes.
+ */
 export function keysFilePath(env = process.env, home = homedir()) {
   const override = (env.QCR_OPENVIKING_KEYS ?? "").trim();
-  return override !== "" ? override : join(home, ".config", "quickreview-bot", "openviking-keys.env");
+  if (override !== "") return override;
+  const install = (env.QCR_INSTALL ?? "").trim() || "default";
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(install) || install.includes("..")) {
+    throw new Error(`QCR_INSTALL ${JSON.stringify(install)} is not a plain name`);
+  }
+  const xdg = (env.XDG_CONFIG_HOME ?? "").trim();
+  const base = xdg !== "" && isAbsolute(xdg) ? xdg : join(home, ".config");
+  const primary = join(base, "qcr-operator", install, "openviking-keys.env");
+  if (existsSync(primary)) return primary;
+  const legacy = join(home, ".config", "quickreview-bot", "openviking-keys.env");
+  return existsSync(legacy) ? legacy : primary;
 }
 
 // ---- the remote half --------------------------------------------------------

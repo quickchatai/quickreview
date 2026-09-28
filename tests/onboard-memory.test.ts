@@ -416,29 +416,59 @@ describe("placement rules", () => {
     expect(filesContaining(secretsDir, "COMP")).toEqual([]);
   });
 
-  it("relocates the key file out of a colliding default (the compose route mounts the whole secrets dir)", () => {
+  it("the key file's default home is outside the secrets dir AND the config home", () => {
     const home = "/home/op";
-    const colliding = resolveSecretsDir({}, home); // ~/.config/quickreview-bot
-    expect(documentedKeysFile({}, home).startsWith(colliding)).toBe(true);
-    const choice = resolveKeysFile(colliding, {}, home);
-    expect(choice.relocated).toBe(true);
-    expect(isInside(colliding, choice.path)).toBe(false);
-    expect(choice.note).toMatch(/QCR_OPENVIKING_KEYS=/);
-
-    // A secrets dir elsewhere leaves the documented path exactly as documented.
-    const apart = resolveKeysFile("/opt/other-secrets", {}, home);
-    expect(apart.relocated).toBe(false);
-    expect(apart.path).toBe(documentedKeysFile({}, home));
-
-    // An operator who PINS the key file inside the secrets dir is refused, not
-    // silently overridden.
-    const pinned = resolveKeysFile(
-      colliding,
-      { QCR_OPENVIKING_KEYS: join(colliding, "keys.env") },
+    const secrets = resolveSecretsDir({}, home);
+    expect(secrets).toBe("/home/op/.config/qcr/default/secrets");
+    const keys = documentedKeysFile({}, home);
+    expect(keys).toBe("/home/op/.config/qcr-operator/default/openviking-keys.env");
+    // Both dirs are mounted read-only into the daemon container on compose.
+    expect(isInside(secrets, keys)).toBe(false);
+    expect(isInside("/home/op/.config/qcr/default", keys)).toBe(false);
+    expect(resolveKeysFile(secrets, {}, home)).toMatchObject({ relocated: false, unsafe: false });
+    // A pin inside the config home is refused like one inside the secrets dir.
+    const inHome = resolveKeysFile(
+      secrets,
+      { QCR_OPENVIKING_KEYS: "/home/op/.config/qcr/default/keys.env" },
       home,
     );
-    expect(pinned.unsafe).toBe(true);
-    expect(pinned.note).toMatch(/outside that directory/);
+    expect(inHome.unsafe).toBe(true);
+    expect(inHome.note).toMatch(/config home/);
+  });
+
+  it("relocates a LEGACY key file out of a colliding legacy secrets dir (the compose route mounts the whole dir)", () => {
+    const home = mkdtempSync(join(tmpdir(), "qcr-mem-home-"));
+    try {
+      const colliding = join(home, ".config", "quickreview-bot");
+      mkdirSync(colliding, { recursive: true });
+      writeFileSync(join(colliding, "openviking-keys.env"), "K=1\n");
+      expect(resolveSecretsDir({}, home)).toBe(colliding); // the legacy fallback
+      expect(documentedKeysFile({}, home).startsWith(colliding)).toBe(true);
+      const choice = resolveKeysFile(colliding, {}, home);
+      expect(choice.relocated).toBe(true);
+      expect(isInside(colliding, choice.path)).toBe(false);
+      expect(choice.path).toBe(
+        join(home, ".config", "qcr-operator", "default", "openviking-keys.env"),
+      );
+      expect(choice.note).toMatch(/QCR_OPENVIKING_KEYS=/);
+
+      // A secrets dir elsewhere leaves the documented path exactly as documented.
+      const apart = resolveKeysFile("/opt/other-secrets", {}, home);
+      expect(apart.relocated).toBe(false);
+      expect(apart.path).toBe(documentedKeysFile({}, home));
+
+      // An operator who PINS the key file inside the secrets dir is refused, not
+      // silently overridden.
+      const pinned = resolveKeysFile(
+        colliding,
+        { QCR_OPENVIKING_KEYS: join(colliding, "keys.env") },
+        home,
+      );
+      expect(pinned.unsafe).toBe(true);
+      expect(pinned.note).toMatch(/outside that directory/);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("fails the step (writing nothing) when the pinned key file would sit in the secrets dir", async () => {

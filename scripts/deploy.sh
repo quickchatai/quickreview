@@ -55,6 +55,9 @@
 #   QCR_CONFIG      config.toml path    (default: the install locator's answer —
 #                   the install's config home, else the checkout's config.toml;
 #                   scripts/install-locator.sh)
+#   (secrets)       the playbook's secrets_src is the install locator's answer
+#                   too — [github] secrets_dir, else <config home>/secrets, else
+#                   the legacy ~/.config/quickreview-bot
 
 set -euo pipefail
 
@@ -332,6 +335,12 @@ if ! git -C "$SANDBOX_DIR" check-ignore -q --no-index "$CLONE_DIR/" 2>/dev/null;
   note "base clone '$CLONE_DIR' added to the local ignore ($CLONE_EXCLUDE)"
 fi
 
+# 1b. the secrets source: the install locator's answer — the
+# configured [github] secrets_dir, else <config home>/secrets, else (legacy)
+# ~/.config/quickreview-bot — handed to the playbook's secrets copy as
+# secrets_src, so group_vars' legacy default is never what ships.
+SECRETS_SRC="$(qcr_locate_secrets "$(config_table_key github secrets_dir || true)")" || exit 1
+
 DIRTY="$(git -C "$SANDBOX_DIR" status --porcelain)"
 if [[ -n "$DIRTY" ]]; then
   echo "$SELF: refusing to deploy — the working tree is dirty:" >&2
@@ -453,7 +462,7 @@ fi
 ANSIBLE_CMD=(ansible-playbook -i "$INVENTORY" "$PLAYBOOK")
 case "$MODE" in
   sync)    ANSIBLE_CMD+=(--start-at-task "$SYNC_START_TASK" -e force_restart=true -e "base_clone_dir=$CLONE_DIR") ;;
-  rebuild) ANSIBLE_CMD+=(-e rebuild_image=true -e "base_clone_dir=$CLONE_DIR") ;;
+  rebuild) ANSIBLE_CMD+=(-e rebuild_image=true -e "base_clone_dir=$CLONE_DIR" -e "secrets_src=$SECRETS_SRC") ;;
   verify)  ANSIBLE_CMD=() ;;
 esac
 
@@ -524,6 +533,10 @@ print_plan() {
   fi
   echo "  vm host      ${VM_HOST:-<unset — set QC_VM_HOST>}"
   echo "  base clone   /$CLONE_DIR (kept on the VM by the rsync exclude; locally ignored via info/exclude)"
+  case "$MODE" in
+    rebuild) echo "  secrets      $SECRETS_SRC (copied to the VM's read-only secrets mount)" ;;
+    sync)    echo "  secrets      $SECRETS_SRC (not copied — sync starts past the secrets tasks; rebuild ships them)" ;;
+  esac
   case "$MODE" in
     sync)    echo "  action       mirror-rsync working copy -> /opt/quickreview/sandbox (--delete, runtime dirs kept), restart container (no image rebuild)" ;;
     rebuild) echo "  action       full playbook with -e rebuild_image=true (image rebuilt against the pins)" ;;

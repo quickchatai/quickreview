@@ -425,11 +425,12 @@ export function expandHome(p, home = homedir()) {
   return s;
 }
 
-/** [github].secrets_dir out of config.toml text (no TOML dependency here). */
+/** [github].secrets_dir out of config.toml text (no TOML dependency here), as
+ * written — "" when unset, which leaves the choice to the install locator. */
 export function readSecretsDir(text) {
   const gh = sliceSection(String(text ?? ""), "[github]");
   const m = gh.body.match(/^\s*secrets_dir\s*=\s*"([^"]*)"/m);
-  return m ? m[1] : "~/.config/quickreview-bot";
+  return m ? m[1] : "";
 }
 
 // -------------------------------------------------------------------- runtime
@@ -561,8 +562,25 @@ async function main() {
     bad(`no config.toml at ${CONFIG_PATH} — pass --config <path>`);
     process.exit(1);
   }
+  // --secrets-dir, then $QC_SECRETS_DIR, else the install locator's
+  // answer (its shell mirror, as for the config above): the configured
+  // [github] secrets_dir, else <config home>/secrets, else the legacy dir.
   const SECRETS_DIR = resolve(
-    expandHome(valueOf("--secrets-dir", process.env.QC_SECRETS_DIR || readSecretsDir(configText))),
+    expandHome(
+      valueOf("--secrets-dir", "") ||
+        process.env.QC_SECRETS_DIR ||
+        execFileSync(
+          "bash",
+          [
+            "-c",
+            '. "$1/scripts/install-locator.sh" && qcr_locate_secrets "$2"',
+            "locate",
+            REPO,
+            readSecretsDir(configText),
+          ],
+          { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
+        ).trim(),
+    ),
   );
   const BOT_FILE = join(SECRETS_DIR, "slack_bot_token");
   const APP_FILE = join(SECRETS_DIR, "slack_app_token");

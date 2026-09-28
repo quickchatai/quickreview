@@ -2,8 +2,10 @@
 #
 #   docker compose up -d --build
 #
-# Prerequisites: a secrets dir (default ~/.config/quickreview-bot — override
-# with QCR_SECRETS_DIR) holding at least app_id, app.pem, webhook_secret;
+# Prerequisites: a secrets dir — QCR_SECRETS_DIR, which the wizard's bring-up
+# writes into .env as the install locator's answer (<config home>/secrets,
+#); unset, the legacy ~/.config/quickreview-bot — holding at least
+# app_id, app.pem, webhook_secret;
 # optional openai_api_key (pi's API-key route), openviking_root_key,
 # openviking_reviewer_key, and openai_embeddings_api_key (only under the
 # hosted-embeddings opt-in — memory embeds locally by default).

@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Interactive wizard: collect the quickreview secrets into ~/.config/quickreview-bot/.
+# Interactive wizard: collect the quickreview secrets into the install's secrets
+# dir — $QC_SECRETS_DIR, else the install locator's answer:
+# <config home>/secrets (~/.config/qcr/<install>/secrets), or the legacy
+# ~/.config/quickreview-bot/ while it still holds them (`qcr install migrate`).
 # Values are read with hidden input and NEVER printed back. Re-run any time —
 # existing files are kept unless you choose to replace them.
 #
@@ -24,7 +27,8 @@
 #   bash deploy/collect-secrets.sh --force  # offer to replace existing files too
 set -euo pipefail
 
-DIR="${QC_SECRETS_DIR:-$HOME/.config/quickreview-bot}"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/install-locator.sh"
+DIR="$(qcr_locate_secrets "" "${QC_SECRETS_DIR:-}")"
 FORCE=0
 [[ "${1:-}" == "--force" ]] && FORCE=1
 
@@ -228,7 +232,7 @@ fi
 
 if want openviking_reviewer_key; then
   bold "openviking_reviewer_key — the reviewer USER key (daemon + every review session)"
-  info "the SAME value goes in ~/.config/quickreview-bot/openviking-keys.env on your PC"
+  info "the SAME value goes in $(qcr_locate_keys_file) on your PC"
   prompt_hidden openviking_reviewer_key "the reviewer USER key" v_nonempty
 fi
 

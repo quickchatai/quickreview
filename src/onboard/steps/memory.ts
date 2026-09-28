@@ -71,6 +71,11 @@ import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { OPENVIKING_DEFAULTS } from "../../config.js";
+import {
+  configHome,
+  resolveKeysFile as resolveKeysFile0,
+  resolveSecretsDir as resolveLocatedSecrets,
+} from "../../install.js";
 import { CHOICE_KEYS, type MemoryChoice } from "../choices.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 
@@ -142,7 +147,7 @@ export interface MatrixRow {
 }
 
 export interface MemoryStepOptions {
-  /** Daemon-side secrets dir (default `$QC_SECRETS_DIR` or ~/.config/quickreview-bot). */
+  /** Daemon-side secrets dir (default `$QC_SECRETS_DIR`, else the install locator's answer). */
   secretsDir?: string;
   /** Operator-side key file (default: resolved, and relocated out of the
    * secrets dir when they would collide). */
@@ -158,17 +163,17 @@ export interface MemoryStepOptions {
 
 // ---- path rules -------------------------------------------------------------
 
+/** `$QC_SECRETS_DIR`, else the install locator's answer. */
 export function resolveSecretsDir(env: NodeJS.ProcessEnv, home: string): string {
-  const override = (env.QC_SECRETS_DIR ?? "").trim();
-  return override !== "" ? resolve(override) : join(home, ".config", "quickreview-bot");
+  return resolve(
+    resolveLocatedSecrets({ override: env.QC_SECRETS_DIR, env: { ...env, HOME: home } }).path,
+  );
 }
 
-/** The documented key-file location (mirrors `keysFilePath` in the forward). */
+/** The documented key-file location — the install locator's, the
+ * same one `keysFilePath` in the TUI and the forward read. */
 export function documentedKeysFile(env: NodeJS.ProcessEnv, home: string): string {
-  const override = (env.QCR_OPENVIKING_KEYS ?? "").trim();
-  return override !== ""
-    ? resolve(override)
-    : join(home, ".config", "quickreview-bot", "openviking-keys.env");
+  return resolve(resolveKeysFile0({ env: { ...env, HOME: home } }).path);
 }
 
 /** Is `file` inside `dir`? (A file IN the daemon-side secrets dir is readable by
@@ -192,12 +197,13 @@ export interface KeysFileChoice {
  * Where the operator key file goes.
  *
  * The companion key lives in that file, so the file must not be inside the
- * daemon-side secrets dir. On the compose route those default to the SAME
- * directory (`docker-compose.yml` mounts `${QCR_SECRETS_DIR:-~/.config/quickreview-bot}`
- * read-only at `/opt/quickreview/secrets`), so the documented layout would put the
- * companion key one `cat` away from every review session. We relocate instead
- * of writing it there — and if the operator explicitly pinned
- * `QCR_OPENVIKING_KEYS` inside the secrets dir, we refuse rather than quietly
+ * daemon-side secrets dir (`docker-compose.yml` mounts `$QCR_SECRETS_DIR`
+ * read-only at `/opt/quickreview/secrets`) nor inside the install's config home
+ * (mounted read-only too), or it would be one `cat` away from every review
+ * session. Its default home is the operator home, outside both; the
+ * LEGACY default sat inside the legacy secrets dir, and when those collide we
+ * relocate instead of writing it there — and if the operator explicitly pinned
+ * `QCR_OPENVIKING_KEYS` inside either dir, we refuse rather than quietly
  * overriding their choice.
  */
 export function resolveKeysFile(
@@ -207,6 +213,20 @@ export function resolveKeysFile(
 ): KeysFileChoice {
   const pinned = (env.QCR_OPENVIKING_KEYS ?? "").trim() !== "";
   const candidate = documentedKeysFile(env, home);
+  // the install's config home is mounted read-only into the daemon
+  // container too (the compose route), so a key file pinned inside
+  // it is exactly as readable by a review session as one in the secrets dir.
+  const cfgHome = configHome({ ...env, HOME: home });
+  if (pinned && isInside(cfgHome, candidate)) {
+    return {
+      path: candidate,
+      relocated: false,
+      unsafe: true,
+      note:
+        `QCR_OPENVIKING_KEYS points inside the install's config home (${cfgHome}), which the container mounts read-only — ` +
+        "a review session could read the companion key there. Point it at a path outside that directory and run this step again.",
+    };
+  }
   if (!isInside(secretsDir, candidate))
     return { path: candidate, relocated: false, unsafe: false, note: "" };
   if (pinned) {
@@ -219,7 +239,8 @@ export function resolveKeysFile(
         "a review session could read the companion key there. Point it at a path outside that directory and run this step again.",
     };
   }
-  const relocated = join(home, ".config", "quickreview-keys", "openviking-keys.env");
+  // The operator home — outside every dir a container can see.
+  const relocated = resolveKeysFile0({ env: { ...env, HOME: home, QCR_OPENVIKING_KEYS: "" } }).home;
   return {
     path: relocated,
     relocated: true,

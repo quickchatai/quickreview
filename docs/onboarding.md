@@ -463,11 +463,12 @@ and never to mention it in the posted review) and the overseer hears a
 `round_memory_degraded` anomaly once an hour. Loud, harmless, and yours to
 ignore until that state is given its own name.
 
-One placement detail you may see: the documented key-file location
-(`~/.config/quickreview-bot/openviking-keys.env`) sits inside the secrets dir by
-default, which is exactly where the companion key must not be. When they
-collide, the wizard writes the file to
-`~/.config/quickreview-keys/openviking-keys.env` instead and tells you the
+One placement detail you may see: the key file's home is
+`~/.config/qcr-operator/<install>/openviking-keys.env` — outside the secrets dir
+and the config home, both of which the container mounts. The LEGACY
+location (`~/.config/quickreview-bot/openviking-keys.env`) sat inside the legacy
+secrets dir, exactly where the companion key must not be. When they collide,
+the wizard writes the file to the operator home instead and tells you the
 `export QCR_OPENVIKING_KEYS=…` line — the TUI, the companion and
 `scripts/companion-memory-forward.mjs` all read that variable, and you have to
 set it yourself for them to find the relocated file.

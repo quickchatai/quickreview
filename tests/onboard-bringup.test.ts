@@ -261,6 +261,31 @@ describe("bring-up, happy path", () => {
     expect(existsSync(configHome())).toBe(true);
   });
 
+  // the compose file mounts QCR_SECRETS_DIR read-only as the
+  // container's secrets — the install locator's answer, created before Docker
+  // could create it as root.
+  it("writes the located secrets dir into .env and creates it", async () => {
+    const { locateSecrets } = await import("../src/install.js");
+    // The example config leaves secrets_dir empty: the locator's answer (the
+    // temp config home — or a developer's own legacy dir while it exists).
+    const located = locateSecrets().path;
+    let h = harness();
+    expect((await h.engine.runStep(BRINGUP_STEP_ID)).ok).toBe(true);
+    expect(readEnvKey(envText(), "QCR_SECRETS_DIR")).toBe(located);
+    expect(existsSync(located)).toBe(true);
+    const chosen = join(root, "..", `${root.split("/").pop()}-secrets`);
+    const cfg = join(root, "config.toml");
+    writeFileSync(cfg, setTomlKey(readFileSync(cfg, "utf8"), "github", "secrets_dir", chosen)!);
+    try {
+      h = harness();
+      expect((await h.engine.runStep(BRINGUP_STEP_ID)).ok).toBe(true);
+      expect(readEnvKey(envText(), "QCR_SECRETS_DIR")).toBe(chosen);
+      expect(existsSync(chosen)).toBe(true);
+    } finally {
+      rmSync(chosen, { recursive: true, force: true });
+    }
+  });
+
   it("falls back to the live host uid when preflight recorded none", async () => {
     const h = harness({ uid: 501 });
     expect((await h.engine.runStep(BRINGUP_STEP_ID)).ok).toBe(true);

@@ -41,7 +41,9 @@ improvement_label = "Bot improvement"
 issue_label = "bot-filed"
 # secrets dir: app_id, app.pem, webhook_secret, tunnel_token; optional openai_api_key (pi, API-key
 # route) and openai_embeddings_api_key (only with embedding_provider = "openai" in the openviking table)
-secrets_dir = "~/.config/quickreview-bot"      # ← FILL (5): dir holding app_id, app.pem, webhook_secret, …
+# "" (recommended) = the install's config home, $XDG_CONFIG_HOME/qcr/<install>/secrets — or, until
+# `qcr install migrate` moves them, the legacy ~/.config/quickreview-bot (logged). A path here wins.
+secrets_dir = ""
 # The repo's default branch: the improvement filer's PR base, the
 # replay diff base, the CLI-ops fixture base. PR review rounds always use each
 # PR's own base_ref from the GitHub API, never this.

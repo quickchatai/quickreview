@@ -300,10 +300,17 @@ describe("tolerant config reads", () => {
     expect(readTomlString(EXAMPLE_CONFIG, "models", "nope")).toBeNull();
   });
 
-  it("resolves the secrets dir: config first, then $QC_SECRETS_DIR, then the shipped default", () => {
+  it("resolves the secrets dir: config first, then $QC_SECRETS_DIR, then the install locator", async () => {
     expect(resolveSecretsDir('[github]\nsecrets_dir = "~/keys"\n', "/h")).toBe("/h/keys");
     expect(resolveSecretsDir("[github]\n", "/h", "/env/keys")).toBe("/env/keys");
-    expect(resolveSecretsDir("", "/h")).toBe("/h/.config/quickreview-bot");
+    // nothing set → the install locator (the test's temp XDG config
+    // home; /h holds no legacy dir), and the legacy spelling means the same.
+    const { secretsHome } = await import("../src/install.js");
+    const home = secretsHome({ ...process.env, HOME: "/h" });
+    expect(resolveSecretsDir("", "/h")).toBe(home);
+    expect(
+      resolveSecretsDir('[github]\nsecrets_dir = "~/.config/quickreview-bot"\n', "/h"),
+    ).toBe(home);
     expect(expandHomePath("~", "/h")).toBe("/h");
     expect(expandHomePath("/abs", "/h")).toBe("/abs");
   });

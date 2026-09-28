@@ -169,7 +169,7 @@ On the guided path, the App step above writes the three credential files
 itself, and the interview step writes the three config keys — you do not run
 this by hand at all. Doing it manually, run the secrets wizard: it prompts for
 whatever is missing, validates, and stores everything `0600` in the secrets dir
-(`~/.config/quickreview-bot` by default; in-container `/opt/quickreview/secrets`):
+(`~/.config/qcr/<install>/secrets` by default — `qcr install where`; in-container `/opt/quickreview/secrets`):
 
 ```sh
 bash deploy/collect-secrets.sh

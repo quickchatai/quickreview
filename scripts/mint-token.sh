@@ -58,9 +58,10 @@ cfg_sed() { # crude fallback: first `key = "value"` inside [section]
      | head -n1 | sed 's/[[:space:]]*#.*$//; s/^"//; s/"$//; s/[[:space:]]*$//'
 }
 
-SECRETS_DIR="$(cfg github secrets_dir)"
-[[ -n "$SECRETS_DIR" ]] || die "config.toml: [github].secrets_dir missing"
-SECRETS_DIR="${SECRETS_DIR/#\~/$HOME}"
+# the install locator decides — the configured [github] secrets_dir
+# when the operator set one, else <config home>/secrets, else (legacy) the old
+# ~/.config/quickreview-bot. The same answer the daemon's loader reaches.
+SECRETS_DIR="$(qcr_locate_secrets "$(cfg github secrets_dir || true)")" || exit 1
 
 APP_ID_FILE="$SECRETS_DIR/app_id"
 PEM_FILE="$SECRETS_DIR/app.pem"

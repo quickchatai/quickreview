@@ -45,10 +45,10 @@
 import { createPrivateKey, randomBytes } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import type { Socket } from "node:net";
 import { mintAppJwt } from "../../githubAuth.js";
+import { resolveSecretsDir } from "../../install.js";
 import { CHOICE_KEYS } from "../choices.js";
 import { CONFIG_FILL_STEP_ID } from "./configfill.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
@@ -755,8 +755,8 @@ export interface GithubAppStepOptions {
   /** Repo root holding deploy/github-app-manifest.json; default: the parent of
    * the engine's stateDir (`<root>/state`). */
   repoRoot?: string;
-  /** Secrets dir; default: the recorded choice, then QC_SECRETS_DIR, then
-   * ~/.config/quickreview-bot (config.example.toml's value). */
+  /** Secrets dir; default: the recorded choice, then QC_SECRETS_DIR, then the
+   * install locator's answer (`<config home>/secrets`). */
   secretsDir?: string;
   apiBase?: string;
   githubBase?: string;
@@ -770,10 +770,6 @@ export interface GithubAppStepOptions {
   randomToken?: (bytes: number) => string;
   /** Try to open the operator's browser at the page (best effort, never fatal). */
   openBrowser?: boolean;
-}
-
-function expandHome(p: string): string {
-  return p.startsWith("~/") ? join(homedir(), p.slice(2)) : p;
 }
 
 interface Resolved {
@@ -832,11 +828,10 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
       typeof ctx.choices[CHOICE_KEYS.secretsDir] === "string"
         ? (ctx.choices[CHOICE_KEYS.secretsDir] as string).trim()
         : "";
-    const secretsDir = opts.secretsDir
-      ? opts.secretsDir
-      : choiceDir
-        ? expandHome(choiceDir)
-        : expandHome(process.env.QC_SECRETS_DIR ?? "~/.config/quickreview-bot");
+    // the install locator decides whatever the choice does not name.
+    const secretsDir =
+      opts.secretsDir ??
+      resolveSecretsDir({ configured: choiceDir, override: process.env.QC_SECRETS_DIR }).path;
     const root = opts.repoRoot ?? dirname(ctx.adapters.paths.stateDir);
     return {
       root,

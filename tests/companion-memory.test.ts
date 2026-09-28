@@ -9,7 +9,15 @@
 //      container's own netns — nothing is published anywhere;
 //   3. an unreachable memory engine alerts through the existing alert policy
 //      and never wedges anything.
-import { existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -270,11 +278,34 @@ describe("memory wiring on the container", () => {
     expect(parseGateway("<no value>\n")).toBe("");
   });
 
-  it("defaults the keys file beside the app credential and honours the override", () => {
-    expect(keysFilePath({}, "/home/x")).toBe("/home/x/.config/quickreview-bot/openviking-keys.env");
+  it("defaults the keys file to the operator home and honours the override", () => {
+    expect(keysFilePath({}, "/home/x")).toBe(
+      "/home/x/.config/qcr-operator/default/openviking-keys.env",
+    );
     expect(keysFilePath({ QCR_OPENVIKING_KEYS: "/elsewhere/k.env" }, "/home/x")).toBe(
       "/elsewhere/k.env",
     );
+  });
+
+  it("the TUI and the forward resolve the SAME keys file, legacy fallback included", async () => {
+    const { keysFilePath: forwardKeysFilePath } = await import(
+      "../scripts/companion-memory-forward.mjs"
+    );
+    const home = mkdtempSync(join(tmpdir(), "qcr-keys-"));
+    const legacy = join(home, ".config", "quickreview-bot", "openviking-keys.env");
+    const primary = join(home, "xdg", "qcr-operator", "default", "openviking-keys.env");
+    const env = { XDG_CONFIG_HOME: join(home, "xdg") };
+    const both = () => [keysFilePath(env, home), forwardKeysFilePath(env, home)];
+    expect(both()).toEqual([primary, primary]);
+    mkdirSync(dirname(legacy), { recursive: true });
+    writeFileSync(legacy, "K=1\n");
+    expect(both()).toEqual([legacy, legacy]);
+    mkdirSync(dirname(primary), { recursive: true });
+    writeFileSync(primary, "K=1\n");
+    expect(both()).toEqual([primary, primary]);
+    const named = { ...env, QCR_INSTALL: "second" };
+    expect(keysFilePath(named, home)).toBe(forwardKeysFilePath(named, home));
+    rmSync(home, { recursive: true, force: true });
   });
 });
 

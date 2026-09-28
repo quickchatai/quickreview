@@ -469,3 +469,37 @@ describe("ansible decoupling", () => {
     expect(example).toContain("ansible_user");
   });
 });
+
+// both entrypoints point the install locator's secrets home at the
+// read-only secrets mount, so the in-container loader (an empty or
+// legacy-default `secrets_dir`) resolves to the mount through the HOME rule,
+// not the legacy fallback. The real lines, run in a real bash, temp HOME only.
+describe("entrypoint secrets link", () => {
+  for (const rel of ["docker/daemon/entrypoint.sh", "deploy/ansible/templates/entrypoint.sh.j2"]) {
+    it(`${rel} links <config home>/secrets to the mount, where the locator looks`, async () => {
+      const { locateSecrets } = await import("../src/install.js");
+      const text = readFileSync(resolve(root, rel), "utf8");
+      const start = text.indexOf('XDG_BASE="${XDG_CONFIG_HOME:-}"');
+      const end = text.indexOf('ln -sfn "$SECRETS" "$HOME/.config/quickreview-bot"');
+      expect(start).toBeGreaterThan(-1);
+      expect(end).toBeGreaterThan(start);
+      const block = text.slice(start, text.indexOf("\n", end));
+      const dir = mkdtempSync(join(tmpdir(), "qcr-ep-secrets-"));
+      try {
+        const home = join(dir, "home");
+        const mount = join(dir, "secrets");
+        mkdirSync(home);
+        mkdirSync(mount);
+        writeFileSync(join(mount, "app_id"), "1\n");
+        execFileSync("bash", ["-c", `set -euo pipefail\nSECRETS=${JSON.stringify(mount)}\n${block}`], {
+          env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home },
+        });
+        const located = locateSecrets({ configured: "~/.config/quickreview-bot", env: { HOME: home } });
+        expect(located.source).toBe("home");
+        expect(readFileSync(join(located.path, "app_id"), "utf8")).toBe("1\n");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  }
+});

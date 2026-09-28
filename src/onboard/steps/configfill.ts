@@ -47,6 +47,7 @@ import {
   loadConfig,
   type Config,
 } from "../../config.js";
+import { locateSecrets } from "../../install.js";
 import { CHOICE_KEYS, ingressChoiceOf, type IngressChoice } from "../choices.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 
@@ -508,7 +509,8 @@ export const DERIVABLES: readonly Derivable[] = [
     id: "secrets_dir",
     path: "[github] secrets_dir",
     explain:
-      "the shipped secrets directory (~/.config/quickreview-bot) — the same dir deploy/collect-secrets.sh fills",
+      "the install's secrets directory — left empty in the file, so the install locator finds it: <config home>/secrets " +
+      "(or, until `qcr install migrate`, the legacy ~/.config/quickreview-bot) — the same dir deploy/collect-secrets.sh fills",
     // Fill-time only: the loader EXPANDS `~`, so writing back a parsed value
     // would replace the template's portable `~/…` with this machine's home.
     write: (f, fresh) =>
@@ -650,7 +652,9 @@ export function templatePathFor(root: string): string {
   return join(root, "config.example.toml");
 }
 
-export const DEFAULT_SECRETS_DIR = "~/.config/quickreview-bot";
+/** Empty = the install locator's answer: `<config home>/secrets`,
+ * else the legacy dir while it still holds the secrets. */
+export const DEFAULT_SECRETS_DIR = "";
 
 /** The secret files `deploy/collect-secrets.sh` requires, by deployment shape.
  * Read from ITS artefacts (the `deploy_shape` marker it writes) so this step
@@ -829,7 +833,10 @@ export function changedEdits(text: string, edits: readonly TomlEdit[]): TomlEdit
 }
 
 function secretsReport(secretsDir: string): CheckResult {
-  const dir = expandHome(secretsDir);
+  const dir = locateSecrets({
+    configured: secretsDir,
+    override: process.env.QC_SECRETS_DIR,
+  }).path;
   if (!existsSync(dir)) {
     return {
       name: "secrets",

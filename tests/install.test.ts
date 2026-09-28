@@ -3,12 +3,16 @@
 // the locator an explicit env.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,18 +23,26 @@ import {
   configHome,
   EXAMPLE_PROFILES,
   installName,
+  legacySecretsDir,
   locateConfig,
+  locateKeysFile,
   locateProfile,
+  locateSecrets,
   migrateConfig,
   migrateProfiles,
+  migrateSecrets,
+  operatorHome,
   profileMigrateReport,
   profileSearchDirs,
   resolveConfigPath,
   resolveProfile,
+  resolveSecretsDir,
+  secretsHome,
+  secretsMigrateReport,
   stateHome,
   type InstallEnv,
 } from "../src/install.js";
-import { loadConfig } from "../src/config.js";
+import { loadConfig, parseConfig } from "../src/config.js";
 
 let dir: string;
 let root: string;
@@ -470,6 +482,268 @@ describe("the checkout's profiles/ holds the generic examples", () => {
       }
     };
     for (const top of ["src", "extensions"]) walk(top);
+    expect(offenders).toEqual([]);
+  });
+});
+
+// ----: secrets under the install's config home ----------------------
+
+describe("locateSecrets", () => {
+  const secret = (dirPath: string, name = "app_id", text = "123\n"): string => {
+    mkdirSync(dirPath, { recursive: true });
+    writeFileSync(join(dirPath, name), text, { mode: 0o600 });
+    return dirPath;
+  };
+
+  it("the secrets home is <config home>/secrets; the legacy dir is $HOME/.config/quickreview-bot", () => {
+    expect(secretsHome(env)).toBe(join(configHome(env), "secrets"));
+    expect(legacySecretsDir(env)).toBe(join(dir, "home", ".config", "quickreview-bot"));
+  });
+
+  it("a configured secrets_dir the operator chose is taken as given, ~ expanded", () => {
+    secret(secretsHome(env));
+    expect(locateSecrets({ configured: "~/keys", env })).toMatchObject({
+      path: join(dir, "home", "keys"),
+      source: "configured",
+    });
+    expect(locateSecrets({ configured: "/abs/keys", override: "/x", env }).path).toBe("/abs/keys");
+  });
+
+  it("empty or the legacy default spelling lets the locator decide — home first", () => {
+    secret(legacySecretsDir(env));
+    secret(secretsHome(env));
+    for (const configured of [
+      "",
+      null,
+      "~/.config/quickreview-bot",
+      "~/.config/quickreview-bot/",
+      legacySecretsDir(env),
+    ]) {
+      expect(locateSecrets({ configured, env })).toEqual({
+        path: secretsHome(env),
+        source: "home",
+        home: secretsHome(env),
+      });
+    }
+  });
+
+  it("the legacy dir is the fallback while the home does not exist", () => {
+    secret(legacySecretsDir(env));
+    expect(locateSecrets({ configured: "~/.config/quickreview-bot", env })).toMatchObject({
+      path: legacySecretsDir(env),
+      source: "legacy",
+    });
+  });
+
+  it("a caller's override sits below a configured value and above the homes", () => {
+    secret(secretsHome(env));
+    expect(locateSecrets({ override: "~/over", env })).toMatchObject({
+      path: join(dir, "home", "over"),
+      source: "override",
+    });
+  });
+
+  it("with nothing anywhere, the answer is the home — where new secrets belong", () => {
+    expect(locateSecrets({ env })).toMatchObject({ path: secretsHome(env), source: "home" });
+  });
+
+  it("logs the legacy fallback once per path, and never the home", () => {
+    const lines: string[] = [];
+    const log = (l: string) => lines.push(l);
+    resolveSecretsDir({ env, log });
+    secret(legacySecretsDir(env));
+    resolveSecretsDir({ env, log });
+    resolveSecretsDir({ env, log });
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/LEGACY dir/);
+    expect(lines[0]).toContain("qcr install migrate");
+    expect(lines[0]).toContain(secretsHome(env));
+  });
+
+  it("the config loader resolves [github] secrets_dir through the locator", () => {
+    const fixture = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "fixtures", "config.toml"),
+      "utf8",
+    );
+    const withDir = (value: string): string =>
+      fixture.replace(/^secrets_dir = .*$/m, `secrets_dir = ${JSON.stringify(value)}`);
+    const saved = { ...process.env };
+    try {
+      Object.assign(process.env, env);
+      expect(parseConfig(withDir("")).github.secrets_dir).toBe(secretsHome(env));
+      secret(legacySecretsDir(env));
+      expect(parseConfig(withDir("~/.config/quickreview-bot")).github.secrets_dir).toBe(
+        legacySecretsDir(env),
+      );
+      secret(secretsHome(env));
+      expect(parseConfig(withDir("~/.config/quickreview-bot")).github.secrets_dir).toBe(
+        secretsHome(env),
+      );
+      expect(parseConfig(withDir("/elsewhere")).github.secrets_dir).toBe("/elsewhere");
+      // An absent key is the same as an empty one.
+      expect(
+        parseConfig(fixture.replace(/^secrets_dir = .*$/m, "")).github.secrets_dir,
+      ).toBe(secretsHome(env));
+    } finally {
+      for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+      Object.assign(process.env, saved);
+    }
+  });
+});
+
+describe("locateKeysFile", () => {
+  const keys = (path: string): string => {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, "OPENVIKING_REVIEWER_KEY=x\n", { mode: 0o600 });
+    return path;
+  };
+
+  it("lives in the operator home — outside the config home a container mounts", () => {
+    const home = join(operatorHome(env), "openviking-keys.env");
+    expect(operatorHome(env)).toBe(join(dir, "xdg-config", "qcr-operator", "default"));
+    expect(home.startsWith(configHome(env) + "/")).toBe(false);
+    expect(locateKeysFile({ env })).toEqual({ path: home, source: "home", home });
+  });
+
+  it("QCR_OPENVIKING_KEYS wins; the legacy file is the fallback until the home has one", () => {
+    const legacy = keys(join(legacySecretsDir(env), "openviking-keys.env"));
+    expect(locateKeysFile({ env })).toMatchObject({ path: legacy, source: "legacy" });
+    const home = keys(join(operatorHome(env), "openviking-keys.env"));
+    expect(locateKeysFile({ env })).toMatchObject({ path: home, source: "home" });
+    expect(locateKeysFile({ env: { ...env, QCR_OPENVIKING_KEYS: "/k.env" } })).toMatchObject({
+      path: "/k.env",
+      source: "override",
+    });
+  });
+});
+
+describe("migrateSecrets", () => {
+  const legacy = (): string => legacySecretsDir(env);
+  const put600 = (name: string, text: string, mode = 0o600): void => {
+    mkdirSync(legacy(), { recursive: true });
+    writeFileSync(join(legacy(), name), text);
+    chmodSync(join(legacy(), name), mode);
+  };
+  const mode = (p: string): number => statSync(p).mode & 0o777;
+
+  it("moves every secret into the home preserving 0600, the key file to the operator home", () => {
+    put600("app_id", "123\n");
+    put600("app.pem", "PEM\n");
+    put600("openviking-keys.env", "OPENVIKING_REVIEWER_KEY=x\n");
+    const m = migrateSecrets({ env });
+    expect(m.kind).toBe("done");
+    for (const name of ["app_id", "app.pem"]) {
+      const to = join(secretsHome(env), name);
+      expect(readFileSync(to, "utf8").length).toBeGreaterThan(0);
+      expect(mode(to)).toBe(0o600);
+    }
+    const keysTo = join(operatorHome(env), "openviking-keys.env");
+    expect(mode(keysTo)).toBe(0o600);
+    expect(mode(secretsHome(env))).toBe(0o700);
+    expect(mode(operatorHome(env))).toBe(0o700);
+    expect(existsSync(legacy())).toBe(false);
+    // Every reader follows: the locator now answers the homes.
+    expect(locateSecrets({ configured: "~/.config/quickreview-bot", env }).source).toBe("home");
+    expect(locateKeysFile({ env }).path).toBe(keysTo);
+  });
+
+  it("is idempotent, and never overwrites a differing secret", () => {
+    put600("app_id", "123\n");
+    migrateSecrets({ env });
+    expect(migrateSecrets({ env }).kind).toBe("nothing");
+
+    put600("app_id", "123\n"); // same bytes → the legacy copy goes
+    put600("webhook_secret", "s3cret-old\n");
+    mkdirSync(secretsHome(env), { recursive: true });
+    writeFileSync(join(secretsHome(env), "webhook_secret"), "s3cret-new\n");
+    const m = migrateSecrets({ env });
+    if (m.kind !== "done") throw new Error(m.kind);
+    expect(Object.fromEntries(m.files.map((f) => [f.name, f.outcome]))).toEqual({
+      app_id: "deduplicated",
+      webhook_secret: "conflict",
+    });
+    expect(readFileSync(join(secretsHome(env), "webhook_secret"), "utf8")).toBe("s3cret-new\n");
+    expect(readFileSync(join(legacy(), "webhook_secret"), "utf8")).toBe("s3cret-old\n");
+    expect(m.remaining).toEqual(["webhook_secret"]);
+    const report = secretsMigrateReport(m);
+    expect(report.code).toBe(1);
+    expect(report.lines.join("\n")).toMatch(/differ/);
+    // Names only — never a value.
+    expect(report.lines.join("\n")).not.toContain("s3cret");
+  });
+
+  it("leaves a pinned key file, and a symlinked legacy dir, alone", () => {
+    put600("openviking-keys.env", "K=1\n");
+    const m = migrateSecrets({ env: { ...env, QCR_OPENVIKING_KEYS: "/pinned.env" } });
+    if (m.kind !== "done") throw new Error(m.kind);
+    expect(m.files[0]).toMatchObject({ name: "openviking-keys.env", outcome: "skipped" });
+    expect(existsSync(join(legacy(), "openviking-keys.env"))).toBe(true);
+
+    rmSync(legacy(), { recursive: true });
+    const target = join(dir, "real-secrets");
+    mkdirSync(target);
+    writeFileSync(join(target, "app_id"), "1\n");
+    symlinkSync(target, legacy());
+    expect(migrateSecrets({ env }).kind).toBe("symlink");
+    expect(lstatSync(legacy()).isSymbolicLink()).toBe(true);
+    expect(existsSync(join(target, "app_id"))).toBe(true);
+  });
+
+  it("`qcr install migrate` moves config and secrets; `where` names both", async () => {
+    const { cmdInstall } = await import("../src/cli.js");
+    put(join(root, "config.toml"), "x = 1\n");
+    put600("app.pem", "PEM\n");
+    const out: string[] = [];
+    const log = (l: string) => out.push(l);
+    expect(cmdInstall(["migrate"], { root, env, log })).toBe(0);
+    expect(mode(join(secretsHome(env), "app.pem"))).toBe(0o600);
+    expect(out.join("\n")).toContain("secrets: moved app.pem");
+    expect(out.join("\n")).not.toContain("PEM");
+    out.length = 0;
+    expect(cmdInstall(["where"], { root, env, log })).toBe(0);
+    expect(out.join("\n")).toContain(`secrets     ${secretsHome(env)}  (home`);
+    expect(out.join("\n")).toContain(join(operatorHome(env), "openviking-keys.env"));
+  });
+});
+
+describe("no reader builds the legacy secrets path itself", () => {
+  // acceptance: every secrets reader resolves through the locator.
+  // Only the locator (both halves), the forward's documented mirror of it, and
+  // the entrypoints' in-container compatibility link spell the legacy dir.
+  const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const ALLOWED = new Set([
+    "src/install.ts",
+    "scripts/install-locator.sh",
+    "scripts/companion-memory-forward.mjs",
+    "docker/daemon/entrypoint.sh",
+    "deploy/ansible/templates/entrypoint.sh.j2",
+  ]);
+  const SPELLS = /quickreview-bot/;
+
+  function* files(rel: string): Generator<string> {
+    for (const entry of readdirSync(join(repo, rel), { withFileTypes: true })) {
+      const path = `${rel}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (entry.name !== "vendor" && entry.name !== "node_modules") yield* files(path);
+      } else if (/\.(ts|mjs|sh|j2)$/.test(entry.name)) yield path;
+    }
+  }
+
+  it("src/, extensions/, scripts/, deploy/ and docker/ name it only in comments and prose", () => {
+    const offenders: string[] = [];
+    for (const top of ["src", "extensions", "scripts", "deploy", "docker"]) {
+      for (const rel of files(top)) {
+        if (ALLOWED.has(rel)) continue;
+        readFileSync(join(repo, rel), "utf8")
+          .split("\n")
+          .forEach((line, i) => {
+            const code = line.trim();
+            if (/^(\/\/|\*|\/\*|#)/.test(code)) return; // a comment
+            // Prose that names it AS the legacy dir is a pointer, not a read.
+            if (SPELLS.test(code) && !/legacy/i.test(code)) offenders.push(`${rel}:${i + 1}: ${code}`);
+          });
+      }
+    }
     expect(offenders).toEqual([]);
   });
 });

@@ -520,6 +520,9 @@ describe("live-day regressions (2026-08-17): quoted patterns and substitutions",
     deny("cat /opt/quickreview/secrets/openviking_root_key");
     deny("head -c 200 ~/.config/quickreview-bot/openviking_root_key");
     deny("cat ~/.config/quickreview-bot/openviking-keys.env");
+    // the same files at their install-locator homes.
+    deny("cat ~/.config/qcr/default/secrets/openviking_root_key");
+    deny("cat ~/.config/qcr-operator/default/openviking-keys.env");
   });
 
   it("says WHY, so the session learns the identity rule rather than retrying", () => {

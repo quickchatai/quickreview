@@ -43,6 +43,7 @@ import {
   nodeStreamRunner,
   readEnvText,
   rootOf,
+  secretsDirFor,
   writeAtomic,
   type StreamRunner,
 } from "./compose.js";
@@ -167,6 +168,14 @@ export function bringUpStep(opts: BringUpStepOptions = {}): OnboardingStep {
       mkdirSync(mount.dir, { recursive: true, mode: 0o700 });
       next = setEnvKey(next, "QCR_CONFIG_HOME", mount.dir);
       next = setEnvKey(next, "QCR_CONFIG_NAME", mount.name);
+      // the secrets dir the compose file mounts read-only at
+      // /opt/quickreview/secrets — the install locator's answer, the same one
+      // the daemon's loader reaches (the compose default is only the legacy
+      // dir, for a stack started by hand before this step ran). Created here
+      // for the same reason as the config home: never by Docker, as root.
+      const secretsDir = secretsDirFor(ctx.adapters, ctx.choices);
+      mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
+      next = setEnvKey(next, "QCR_SECRETS_DIR", secretsDir);
       if (next !== envText) writeAtomic(`${root}/.env`, next);
       checks.push({
         name: "build-inputs",

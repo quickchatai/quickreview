@@ -194,10 +194,14 @@ key name and a value spelling at once.
 
 ## Secrets layout
 
-One directory, `0700`, files `0600`. Default `~/.config/quickreview-bot`,
-overridable with `QCR_SECRETS_DIR` (compose) / `QC_SECRETS_DIR`
-(`deploy/collect-secrets.sh`); mounted read-only into the daemon container at
-`/opt/quickreview/secrets`.
+One directory, `0700`, files `0600`, found by the install locator
+(`src/install.ts`): a set `[github] secrets_dir`, else
+`<config home>/secrets` (`~/.config/qcr/<install>/secrets`), else — logged —
+the legacy `~/.config/quickreview-bot` until `qcr install migrate` moves it.
+Overridable with `QCR_SECRETS_DIR` (compose) / `QC_SECRETS_DIR` (the wizards);
+mounted read-only into the daemon container at `/opt/quickreview/secrets`. The
+companion's `openviking-keys.env` is kept OUT of it, in
+`~/.config/qcr-operator/<install>/` — the one credential no container mounts.
 
 | File | Purpose | Required |
 |---|---|---|

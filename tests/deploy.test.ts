@@ -121,7 +121,7 @@ function makeScratch(opts: {
   /** The inventory text — host vars on the host line outrank group_vars. */
   inventory?: string;
   /** A `[github]` table appended to config.toml (the clone name). */
-  github?: { repo?: string; cloneDir?: string };
+  github?: { repo?: string; cloneDir?: string; secretsDir?: string };
   /** `[review] profile` in config.toml (must ride the checkout). */
   profile?: string;
   /** Tracked files to commit with the scratch tree, path → contents. */
@@ -145,6 +145,9 @@ function makeScratch(opts: {
             ...(opts.github.cloneDir === undefined
               ? []
               : [`clone_dir = "${opts.github.cloneDir}"   # trailing comment`]),
+            ...(opts.github.secretsDir === undefined
+              ? []
+              : [`secrets_dir = "${opts.github.secretsDir}"`]),
             "",
           ].join("\n")) +
       (opts.profile === undefined ? "" : `\n[review]\nprofile = "${opts.profile}"   # c\n`),
@@ -771,6 +774,37 @@ describe("deploy.sh — base clone name", () => {
     const rebuild = run(env, ["--dry-run", "rebuild"]);
     expect(rebuild.code).toBe(0);
     expect(extraVars(rebuild.stdout).base_clone_dir).toBe("acme-api");
+  });
+
+  it("hands the install locator's secrets dir to rebuild's secrets copy", () => {
+    // Temp homes only: the locator never sees the operator's own.
+    const homes = (e: Env) => ({ HOME: join(e.dir, "home"), XDG_CONFIG_HOME: join(e.dir, "xdg") });
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", github: ACME });
+    const h = homes(env);
+    // Nothing anywhere → the config home's secrets dir.
+    let r = run(env, ["--dry-run", "rebuild"], h);
+    expect(r.code).toBe(0);
+    const home = join(h.XDG_CONFIG_HOME, "qcr", "default", "secrets");
+    expect(extraVars(r.stdout).secrets_src).toBe(home);
+    expect(r.stdout).toContain(`secrets      ${home}`);
+    // Only the legacy dir holds them → the legacy dir, until migrate.
+    const legacy = join(h.HOME, ".config", "quickreview-bot");
+    mkdirSync(legacy, { recursive: true });
+    r = run(env, ["--dry-run", "rebuild"], h);
+    expect(extraVars(r.stdout).secrets_src).toBe(legacy);
+    mkdirSync(home, { recursive: true });
+    r = run(env, ["--dry-run", "rebuild"], h);
+    expect(extraVars(r.stdout).secrets_src).toBe(home);
+    // sync ships no secrets, so it passes none.
+    expect(extraVars(run(env, ["--dry-run"], h).stdout).secrets_src).toBeUndefined();
+    // A secrets_dir the operator set wins.
+    env = makeScratch({
+      configPi: "0.84.1",
+      groupVarsPi: "0.84.1",
+      github: { ...ACME, secretsDir: "/srv/keys" },
+    });
+    r = run(env, ["--dry-run", "rebuild"], homes(env));
+    expect(extraVars(r.stdout).secrets_src).toBe("/srv/keys");
   });
 
   it("derives the name exactly as githubCloneDir does", () => {

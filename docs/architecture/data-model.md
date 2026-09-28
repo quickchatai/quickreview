@@ -438,7 +438,7 @@ mutation is recorded to `state/dryrun/` instead of executed.
 | `reviewed_label` | string | `"Automatic Review"` |
 | `improvement_label` | string | `"Bot improvement"` |
 | `issue_label` | string | `"bot-filed"` |
-| `secrets_dir` | path | `"~/.config/quickreview-bot"` |
+| `secrets_dir` | path | `""` (the install locator: `<config home>/secrets`) |
 | `base_branch` | string | `"main"` |
 | `clone_dir` | path | `""` (derived) |
 

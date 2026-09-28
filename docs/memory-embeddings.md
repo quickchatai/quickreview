@@ -207,7 +207,7 @@ node scripts/openviking-reembed.mjs rehearse \
   --home /tmp/ov-rehearsal --config /tmp/ov-rehearsal/ov.conf \
   --bin /path/to/openviking-server --port 19333 \
   --users reviewer,companion --user reviewer \
-  --key-file ~/.config/quickreview-bot/openviking_reviewer_key
+  --key-file ~/.config/qcr/default/secrets/openviking_reviewer_key
 node scripts/openviking-reembed.mjs status --home /tmp/ov-rehearsal
 ```
 

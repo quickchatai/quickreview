@@ -220,8 +220,8 @@ describe("readSecretsDir", () => {
     expect(wiz.readSecretsDir(shipped)).toMatch(/example-review-bot/);
   });
 
-  it("falls back when the key is absent", () => {
-    expect(wiz.readSecretsDir('[github]\nrepo = "x"\n')).toBe("~/.config/quickreview-bot");
+  it("reads an absent key as empty — the install locator's call", () => {
+    expect(wiz.readSecretsDir('[github]\nrepo = "x"\n')).toBe("");
   });
 });
 

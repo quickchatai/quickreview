@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { resolve, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "smol-toml";
-import { resolveConfigPath } from "./install.js";
+import { resolveConfigPath, resolveSecretsDir } from "./install.js";
 import type { PassTier } from "./types.js";
 
 export interface GithubConfig {
@@ -17,6 +17,10 @@ export interface GithubConfig {
   reviewed_label: string;
   improvement_label: string;
   issue_label: string;
+  /** Always an absolute-or-given path after parse: an empty (or the legacy
+   * default `~/.config/quickreview-bot`) value is resolved by the install
+   * locator to `<config home>/secrets`, else — logged — the legacy dir
+   *. A value the operator set is taken as given. */
   secrets_dir: string;
   /** The reviewed repo's default branch: the base the improvement
    * filer targets, the branch replay diffs against, and the fixture base for
@@ -1717,10 +1721,13 @@ export function parseConfig(toml: string): Config {
     "reviewed_label",
     "improvement_label",
     "issue_label",
-    "secrets_dir",
   ] as const)
     req(cfg.github as unknown as Record<string, unknown>, k);
-  cfg.github.secrets_dir = expandHome(cfg.github.secrets_dir);
+  // every secrets reader in the daemon reads THIS field, so the
+  // install locator decides it here, once, for all of them.
+  cfg.github.secrets_dir = resolveSecretsDir({
+    configured: typeof cfg.github.secrets_dir === "string" ? cfg.github.secrets_dir : "",
+  }).path;
   if (cfg.tui.target !== "ssh" && cfg.tui.target !== "local") {
     throw new Error(
       `config.toml [tui]: target must be "ssh" or "local" (got ${JSON.stringify(cfg.tui.target)})`,

@@ -15,7 +15,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { resolveKeysFile } from "../install.js";
 import type { CompanionConfig } from "../config.js";
 
 export interface DockerResult {
@@ -179,16 +179,16 @@ export function memoryEndpoint(gateway: string, port: number = MEMORY.port): str
   return `http://${gateway}:${port}`;
 }
 
-/** Host path of the OpenViking key file. `QCR_OPENVIKING_KEYS` overrides it;
- * the default sits beside the app credential, in the same 0600 discipline. */
+/** Host path of the OpenViking key file, decided by the install locator
+ *: `QCR_OPENVIKING_KEYS`, else the operator home
+ * (`$XDG_CONFIG_HOME/qcr-operator/<install>/`, outside every dir a container
+ * mounts), else — logged — the legacy `~/.config/quickreview-bot/`. 0600, and
+ * handed to the container by `--env-file`, so no value reaches an argv. */
 export function keysFilePath(
   env: NodeJS.ProcessEnv = process.env,
   home: string = homedir(),
 ): string {
-  const override = env["QCR_OPENVIKING_KEYS"]?.trim();
-  return override && override !== ""
-    ? override
-    : join(home, ".config", "quickreview-bot", "openviking-keys.env");
+  return resolveKeysFile({ env: { ...env, HOME: home } }).path;
 }
 
 /** Which of KEY_NAMES the file defines — names only, values never leave here. */

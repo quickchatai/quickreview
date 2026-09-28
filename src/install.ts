@@ -3,7 +3,8 @@
 // the config loader, the onboarding wizard (via its adapters), the bench, the
 // TUI, the daemon's session env, and — through `scripts/install-locator.sh`,
 // its shell mirror, pinned by a differential test — the posting scripts,
-// mint-token and deploy.sh's pin/drift preflight.
+// mint-token and deploy.sh's pin/drift preflight. Every reader of the secrets
+// goes through it the same way (the section at the end).
 //
 // Two homes, split by kind:
 //   config home  $XDG_CONFIG_HOME/qcr/<install>/  config.toml, profiles/, secrets/
@@ -32,13 +33,16 @@
 // Pure where it can be: `locateConfig` takes the env and an `exists` probe, so
 // the tests drive it with temp XDG homes and never touch the operator's own.
 import {
+  chmodSync,
   copyFileSync,
   cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
   renameSync,
+  rmdirSync,
   rmSync,
   statSync,
   unlinkSync,
@@ -490,5 +494,324 @@ export function profileMigrateReport(outcomes: ProfileMigrateOutcome[]): {
         "must keep the profile its config names in the checkout until ships the config home — that route refuses otherwise.",
     );
   }
+  return { code, lines };
+}
+
+// ---- secrets ------------------------------------------------------
+//
+// The install's secrets live in `<config home>/secrets/` — one install, one
+// directory. The legacy `~/.config/quickreview-bot/` is the expand step's
+// fallback, exactly as the checkout config is for config.toml: still read,
+// never silently, and `qcr install migrate` moves it. contracts it.
+//
+// `[github] secrets_dir` still names the dir outright when the operator set
+// one. Empty — or the legacy default spelling every config shipped with until
+// now — means "the locator decides", so an install that never touched the key
+// follows its secrets into the home the moment they are moved there, with no
+// config edit.
+//
+// The companion's OpenViking key file is the ONE credential deliberately kept
+// OUT of the config home: that home is mounted into the reviewer container on
+// the compose route and shipped to the VM, and the file
+// holds the companion key review sessions must never read (rule 8). It lives
+// in a sibling tree, `$XDG_CONFIG_HOME/qcr-operator/<install>/`, that nothing
+// mounts or ships.
+
+export const SECRETS_SUBDIR = "secrets";
+export const KEYS_FILE = "openviking-keys.env";
+/** The spelling every config.toml shipped with before the config home. */
+export const LEGACY_SECRETS_SPELLING = "~/.config/quickreview-bot";
+
+function homeOf(env: InstallEnv): string {
+  return (env.HOME ?? "").trim() || homedir();
+}
+
+function expandHomeIn(path: string, env: InstallEnv): string {
+  if (path === "~") return homeOf(env);
+  return path.startsWith("~/") ? join(homeOf(env), path.slice(2)) : path;
+}
+
+/** `<config home>/secrets` — where an install's secrets belong. */
+export function secretsHome(env: InstallEnv = process.env): string {
+  return join(configHome(env), SECRETS_SUBDIR);
+}
+
+/** The pre-config-home secrets dir, `$HOME/.config/quickreview-bot` (never XDG:
+ * it was always spelled `~/.config/…`). */
+export function legacySecretsDir(env: InstallEnv = process.env): string {
+  return join(homeOf(env), ".config", "quickreview-bot");
+}
+
+/** Is a configured `secrets_dir` just the old shipped default? Then it names
+ * no choice the operator made, and the locator decides. */
+export function isLegacySecretsSpelling(value: string, env: InstallEnv = process.env): boolean {
+  const v = value.trim().replace(/\/+$/, "");
+  return v === LEGACY_SECRETS_SPELLING || expandHomeIn(v, env) === legacySecretsDir(env);
+}
+
+/**
+ * Where the secrets came from:
+ *   configured — `[github] secrets_dir`, set to something other than the old
+ *                default: the operator named it, it is taken as given
+ *   override   — the caller's env override (`$QC_SECRETS_DIR`, the wizards')
+ *   home       — `<config home>/secrets` (also the answer when nothing exists
+ *                yet: that is where new secrets are written)
+ *   legacy     — `~/.config/quickreview-bot`, the expand step's fallback
+ */
+export type SecretsSource = "configured" | "override" | "home" | "legacy";
+
+export interface LocatedSecrets {
+  path: string;
+  source: SecretsSource;
+  /** `<config home>/secrets`, whichever source won — where migrate moves to. */
+  home: string;
+}
+
+export interface LocateSecretsOptions {
+  /** `[github] secrets_dir` as written (unexpanded), or null/"" when unset. */
+  configured?: string | null;
+  /** A caller's env override (`$QC_SECRETS_DIR`), below a configured value. */
+  override?: string | null;
+  env?: InstallEnv;
+  exists?: (path: string) => boolean;
+}
+
+export function locateSecrets(opts: LocateSecretsOptions = {}): LocatedSecrets {
+  const env = opts.env ?? process.env;
+  const exists = opts.exists ?? existsSync;
+  const home = secretsHome(env);
+  const configured = (opts.configured ?? "").trim();
+  if (configured !== "" && !isLegacySecretsSpelling(configured, env))
+    return { path: expandHomeIn(configured, env), source: "configured", home };
+  const override = (opts.override ?? "").trim();
+  if (override !== "") return { path: expandHomeIn(override, env), source: "override", home };
+  if (exists(home)) return { path: home, source: "home", home };
+  const legacy = legacySecretsDir(env);
+  if (exists(legacy)) return { path: legacy, source: "legacy", home };
+  return { path: home, source: "home", home };
+}
+
+/** The legacy-secrets notice, one wording for every surface. */
+export function legacySecretsNotice(located: { path: string; home: string }): string {
+  return (
+    `qcr: reading secrets from the LEGACY dir ${located.path} — the install's secrets home is ` +
+    `${located.home}; move them there with \`qcr install migrate\``
+  );
+}
+
+/** `locateSecrets` for a real process: the legacy fallback LOGGED, once per
+ * path per process (the config loader runs on every tick). */
+export function resolveSecretsDir(
+  opts: LocateSecretsOptions & { log?: (line: string) => void } = {},
+): LocatedSecrets {
+  const located = locateSecrets(opts);
+  if (located.source === "legacy") announce(located.path, legacySecretsNotice(located), opts.log);
+  return located;
+}
+
+function announce(path: string, line: string, log?: (line: string) => void): void {
+  if (announced.has(path)) return;
+  announced.add(path);
+  (log ?? ((l: string) => console.error(l)))(line);
+}
+
+/** `$XDG_CONFIG_HOME/qcr-operator/<install>` — the operator-only credentials
+ * that must never reach a container (see the header of this section). */
+export function operatorHome(env: InstallEnv = process.env): string {
+  return join(xdgBase(env.XDG_CONFIG_HOME, env, ".config"), "qcr-operator", installName(env));
+}
+
+export type KeysFileSource = "override" | "home" | "legacy";
+
+export interface LocatedKeysFile {
+  path: string;
+  source: KeysFileSource;
+  /** `<operator home>/openviking-keys.env` — where migrate moves the file. */
+  home: string;
+}
+
+/**
+ * The companion's OpenViking key file (two USER keys, handed to the companion
+ * container by `--env-file`, so no value ever reaches an argv):
+ * `$QCR_OPENVIKING_KEYS` as given, else the operator home's file, else the
+ * legacy `~/.config/quickreview-bot/openviking-keys.env`, else the operator home.
+ */
+export function locateKeysFile(
+  opts: { env?: InstallEnv & { QCR_OPENVIKING_KEYS?: string }; exists?: (path: string) => boolean } = {},
+): LocatedKeysFile {
+  const env = opts.env ?? process.env;
+  const exists = opts.exists ?? existsSync;
+  const home = join(operatorHome(env), KEYS_FILE);
+  const override = (env.QCR_OPENVIKING_KEYS ?? "").trim();
+  if (override !== "") return { path: override, source: "override", home };
+  if (exists(home)) return { path: home, source: "home", home };
+  const legacy = join(legacySecretsDir(env), KEYS_FILE);
+  if (exists(legacy)) return { path: legacy, source: "legacy", home };
+  return { path: home, source: "home", home };
+}
+
+/** `locateKeysFile` with the legacy fallback logged once per process. */
+export function resolveKeysFile(
+  opts: Parameters<typeof locateKeysFile>[0] & { log?: (line: string) => void } = {},
+): LocatedKeysFile {
+  const located = locateKeysFile(opts);
+  if (located.source === "legacy") {
+    announce(
+      located.path,
+      `qcr: reading the OpenViking key file from the LEGACY path ${located.path} — its home is ` +
+        `${located.home}; move it there with \`qcr install migrate\``,
+      opts.log,
+    );
+  }
+  return located;
+}
+
+// ---- qcr install migrate: the secrets half ----------------------------------
+
+export type SecretFileOutcome =
+  /** Moved, mode bits intact (0600 stays 0600). */
+  | "moved"
+  /** The destination already held the same bytes: the legacy copy is removed. */
+  | "deduplicated"
+  /** The destination holds DIFFERENT bytes: both are left for the operator. */
+  | "conflict"
+  /** Not moved on purpose (`why` says which rule). */
+  | "skipped";
+
+export interface SecretFileResult {
+  name: string;
+  to: string;
+  outcome: SecretFileOutcome;
+  why?: string;
+}
+
+export type SecretsMigration =
+  /** No legacy dir: nothing to move. */
+  | { kind: "nothing"; from: string; to: string }
+  /** The legacy path is a symlink (the container layout, or an operator's own
+   * redirect) — never followed and emptied. */
+  | { kind: "symlink"; from: string; to: string }
+  | {
+      kind: "done";
+      from: string;
+      to: string;
+      files: SecretFileResult[];
+      /** What is still in the legacy dir afterwards; empty ⇒ it was removed. */
+      remaining: string[];
+    };
+
+function moveFile(from: string, to: string): void {
+  try {
+    renameSync(from, to);
+  } catch (err) {
+    // ~/.config and XDG_CONFIG_HOME on different filesystems: copy, keep the
+    // mode (copyFileSync does not promise it), then remove.
+    if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
+    const mode = statSync(from).mode & 0o7777;
+    copyFileSync(from, to);
+    chmodSync(to, mode);
+    unlinkSync(from);
+  }
+}
+
+function ensurePrivateDir(dir: string): void {
+  if (existsSync(dir)) return;
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  chmodSync(dir, 0o700);
+}
+
+/**
+ * Move every file in `~/.config/quickreview-bot/` into `<config home>/secrets/`
+ * — except the companion key file, which goes to the operator home (it must
+ * never sit where a container can read it). A rename, so mode bits travel
+ * with the file; the destination dirs are created 0700. Idempotent, and it
+ * never overwrites a secret it did not move: a differing pair is a conflict.
+ */
+export function migrateSecrets(opts: { env?: InstallEnv & { QCR_OPENVIKING_KEYS?: string } } = {}): SecretsMigration {
+  const env = opts.env ?? process.env;
+  const from = legacySecretsDir(env);
+  const to = secretsHome(env);
+  let st;
+  try {
+    st = lstatSync(from);
+  } catch {
+    return { kind: "nothing", from, to };
+  }
+  if (st.isSymbolicLink()) return { kind: "symlink", from, to };
+  if (!st.isDirectory()) return { kind: "nothing", from, to };
+  const keysPinned = (env.QCR_OPENVIKING_KEYS ?? "").trim() !== "";
+  const files: SecretFileResult[] = [];
+  for (const name of readdirSync(from).sort()) {
+    const src = join(from, name);
+    const isKeys = name === KEYS_FILE;
+    const dest = isKeys ? join(operatorHome(env), KEYS_FILE) : join(to, name);
+    if (!lstatSync(src).isFile()) {
+      files.push({ name, to: dest, outcome: "skipped", why: "not a regular file" });
+      continue;
+    }
+    if (isKeys && keysPinned) {
+      files.push({
+        name,
+        to: dest,
+        outcome: "skipped",
+        why: "QCR_OPENVIKING_KEYS is set — that variable names the key file",
+      });
+      continue;
+    }
+    if (existsSync(dest)) {
+      if (!readFileSync(src).equals(readFileSync(dest))) {
+        files.push({ name, to: dest, outcome: "conflict" });
+        continue;
+      }
+      unlinkSync(src);
+      files.push({ name, to: dest, outcome: "deduplicated" });
+      continue;
+    }
+    ensurePrivateDir(dirname(dest));
+    moveFile(src, dest);
+    files.push({ name, to: dest, outcome: "moved" });
+  }
+  const remaining = readdirSync(from).sort();
+  if (remaining.length === 0) rmdirSync(from);
+  return { kind: "done", from, to, files, remaining };
+}
+
+/** What the secrets half of `qcr install migrate` prints, and its exit code.
+ * Names only — a secret's VALUE never reaches a line. */
+export function secretsMigrateReport(m: SecretsMigration): { code: number; lines: string[] } {
+  if (m.kind === "nothing")
+    return { code: 0, lines: [`secrets: no legacy dir ${m.from} — nothing to move (the home is ${m.to})`] };
+  if (m.kind === "symlink")
+    return {
+      code: 0,
+      lines: [`secrets: ${m.from} is a symlink — left alone (point it, or [github] secrets_dir, at ${m.to} yourself)`],
+    };
+  const lines: string[] = [];
+  let code = 0;
+  for (const f of m.files) {
+    switch (f.outcome) {
+      case "moved":
+        lines.push(`secrets: moved ${f.name} → ${f.to}`);
+        break;
+      case "deduplicated":
+        lines.push(`secrets: ${f.to} already held the same bytes — removed the legacy ${f.name}`);
+        break;
+      case "conflict":
+        code = 1;
+        lines.push(
+          `secrets: refused ${f.name}: ${join(m.from, f.name)} and ${f.to} both exist and differ — nothing was touched; keep one and re-run`,
+        );
+        break;
+      case "skipped":
+        lines.push(`secrets: left ${f.name} in ${m.from} (${f.why})`);
+        break;
+    }
+  }
+  if (m.files.length === 0) lines.push(`secrets: ${m.from} is empty`);
+  lines.push(
+    m.remaining.length === 0
+      ? `secrets: removed the now-empty ${m.from}; every reader finds them in ${m.to} (restart a running daemon, TUI or companion)`
+      : `secrets: ${m.from} still holds ${m.remaining.join(", ")} — resolve those by hand; every reader already prefers ${m.to}`,
+  );
   return { code, lines };
 }
