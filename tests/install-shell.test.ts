@@ -119,6 +119,22 @@ describe("install-locator.sh ≡ src/install.ts", () => {
       },
     ],
     [
+      "QCR_CONFIG_HOME / QCR_STATE_HOME override the whole home",
+      () => {
+        put(join(dir, "cfg-home", "config.toml"));
+        return {
+          HOME: join(dir, "home"),
+          XDG_CONFIG_HOME: join(dir, "xdg-config"),
+          QCR_CONFIG_HOME: `${join(dir, "cfg-home")}//`,
+          QCR_STATE_HOME: join(dir, "st-home"),
+        };
+      },
+    ],
+    [
+      "a RELATIVE home override is ignored",
+      () => ({ HOME: join(dir, "home"), QCR_CONFIG_HOME: "rel/cfg", QCR_STATE_HOME: "rel/st" }),
+    ],
+    [
       "a RELATIVE XDG value is ignored (the XDG spec)",
       () => ({
         HOME: join(dir, "home"),

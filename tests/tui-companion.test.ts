@@ -1,7 +1,16 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import {
   COMPANION_DEFAULTS,
   parseConfig,
@@ -10,13 +19,18 @@ import {
 } from "../src/config.js";
 import {
   companionGithubDir,
+  configHome,
   legacySecretsDir,
+  locateConfig,
   operatorHome,
+  profileSearchDirs,
   secretsHome,
+  stateHome,
 } from "../src/install.js";
 import {
   CompanionLifecycle,
   CONTAINER,
+  mirrorConfigFile,
   PUBLIC_DNS,
   SUBAGENTS,
   type CompanionFs,
@@ -49,6 +63,7 @@ const HOST_ENV = { HOME: "/host/home" };
 const HOMES = {
   profiles: "/host/home/.config/qcr/default/profiles",
   configFile: "/host/home/.config/qcr/default/config.toml",
+  configMirror: "/host/home/.local/state/qcr-operator/default/companion-config",
   state: "/host/home/.local/state/qcr/default",
   github: "/host/home/.local/state/qcr-operator/default/companion-github",
 };
@@ -173,9 +188,10 @@ describe("CompanionLifecycle argv", () => {
       `/host/feed:${CONTAINER.feed}:rw`,
       `/host/alerts:${CONTAINER.alerts}:rw`,
       // the config home's profiles/ (rw — setup writes the profile),
-      // the state home (rw — survey and scan state) and the read-only token
-      // dir. No config file here: none exists under this HOME.
+      // the config mirror (ro), the state home (rw — survey and scan state)
+      // and the read-only token dir.
       `${HOMES.profiles}:${CONTAINER.profiles}:rw`,
+      `${HOMES.configMirror}:${CONTAINER.configLive}:ro`,
       `${HOMES.state}:${CONTAINER.stateHome}:rw`,
       `${HOMES.github}:${CONTAINER.githubRead}:ro`,
     ]);
@@ -300,6 +316,7 @@ describe("the reviewed repo, read-only", () => {
     [CONTAINER.alerts]: "/host/alerts",
     // the install homes and the token dir.
     [`${CONTAINER.profiles}`]: HOMES.profiles,
+    [CONTAINER.configLive]: HOMES.configMirror,
     [CONTAINER.stateHome]: HOMES.state,
     [CONTAINER.githubRead]: HOMES.github,
   };
@@ -468,6 +485,7 @@ describe("mount drift", () => {
     [CONTAINER.alerts]: "/host/alerts",
     // the install homes and the token dir.
     [`${CONTAINER.profiles}`]: HOMES.profiles,
+    [CONTAINER.configLive]: HOMES.configMirror,
     [CONTAINER.stateHome]: HOMES.state,
     [CONTAINER.githubRead]: HOMES.github,
   };
@@ -551,6 +569,7 @@ describe("mount drift", () => {
                 `${CONTAINER.feed}=/host/feed`,
                 `${CONTAINER.alerts}=/host/alerts`,
                 `${CONTAINER.profiles}=${HOMES.profiles}`,
+                `${CONTAINER.configLive}=${HOMES.configMirror}`,
                 `${CONTAINER.stateHome}=${HOMES.state}`,
                 `${CONTAINER.githubRead}=${HOMES.github}`,
                 "",
@@ -1154,33 +1173,31 @@ describe("the install's homes and the read-only GitHub token", () => {
   };
   const volumes = (argv: string[]) => argv.filter((_, i) => argv[i - 1] === "--volume");
 
-  it("mounts the live config READ-ONLY when it exists, and names it to pi", () => {
-    const { lc } = withFiles([HOMES.configFile]);
-    expect(volumes(lc.runArgv())).toContain(
-      `${HOMES.configFile}:${CONTAINER.configFile}:ro`,
-    );
-    // The in-container locator then finds profiles beside it, as on the host.
-    expect(lc.spawnArgv()).toContain(`QCR_CONFIG=${CONTAINER.configFile}`);
-    expect(lc.expectedMounts().get(`${CONTAINER.configFile}`)).toBe(HOMES.configFile);
+  it("mounts the live config as a READ-ONLY MIRROR dir, never as a file bind, and names it to pi", () => {
+    // A file bind pins the inode: config.toml rewritten by rename (the
+    // onboarding wizard, most editors) would read stale inside forever.
+    for (const present of [[HOMES.configFile], []]) {
+      const { lc } = withFiles(present);
+      const vols = volumes(lc.runArgv());
+      expect(vols).toContain(`${HOMES.configMirror}:${CONTAINER.configLive}:ro`);
+      expect(vols.some((v) => v.startsWith(`${HOMES.configFile}:`))).toBe(false);
+      expect(lc.spawnArgv()).toContain(`QCR_CONFIG=${CONTAINER.configFile}`);
+      expect(lc.expectedMounts().get(CONTAINER.configLive)).toBe(HOMES.configMirror);
+      expect(lc.expectedMounts().has(CONTAINER.configFile)).toBe(false);
+    }
+    expect(CONTAINER.configFile).toBe(`${CONTAINER.configLive}/config.toml`);
   });
 
-  it("follows the locator: a legacy checkout config is the one mounted", () => {
+  it("the mirror follows the locator: home, legacy checkout, or QCR_CONFIG", () => {
+    expect(withFiles([HOMES.configFile]).lc.hostHomes().configFile).toBe(HOMES.configFile);
     const legacy = `${CFG.repo_dir}/config.toml`;
-    const { lc } = withFiles([legacy]);
-    expect(volumes(lc.runArgv())).toContain(`${legacy}:${CONTAINER.configFile}:ro`);
+    expect(withFiles([legacy]).lc.hostHomes().configFile).toBe(legacy);
     const { lc: pinned } = withFiles(["/elsewhere/c.toml"], [], {
       ...HOST_ENV,
       QCR_CONFIG: "/elsewhere/c.toml",
     });
-    expect(volumes(pinned.runArgv())).toContain(
-      `/elsewhere/c.toml:${CONTAINER.configFile}:ro`,
-    );
-  });
-
-  it("never mounts a missing config file — docker would invent a directory there", () => {
-    const { lc } = withFiles([]);
-    expect(lc.runArgv().join(" ")).not.toContain(`${CONTAINER.configFile}`);
-    expect(lc.spawnArgv().some((a) => a.startsWith("QCR_CONFIG="))).toBe(false);
+    expect(pinned.hostHomes().configFile).toBe("/elsewhere/c.toml");
+    expect(withFiles([]).lc.hostHomes().configFile).toBeUndefined();
   });
 
   it("never mounts a secret: not the config home whole, not secrets/, not the operator home", () => {
@@ -1201,17 +1218,33 @@ describe("the install's homes and the read-only GitHub token", () => {
     expect(lc.spawnArgv()).toContain(`QCR_GITHUB_READ_ENV=${CONTAINER.githubRead}/github-read.env`);
   });
 
-  it("tells pi where the homes are", () => {
+  it("tells pi where the homes are — in variables the install locator actually reads", () => {
     const argv = withFiles([]).lc.spawnArgv();
     expect(argv).toContain(`QCR_CONFIG_HOME=${CONTAINER.configHome}`);
     expect(argv).toContain(`QCR_STATE_HOME=${CONTAINER.stateHome}`);
+    // The seam: code run in the container resolves the MOUNTED homes, with
+    // the container user's own HOME beside them.
+    const inContainer = {
+      HOME: "/home/companion",
+      QCR_CONFIG_HOME: CONTAINER.configHome,
+      QCR_STATE_HOME: CONTAINER.stateHome,
+      QCR_CONFIG: CONTAINER.configFile,
+    };
+    expect(configHome(inContainer)).toBe(CONTAINER.configHome);
+    expect(stateHome(inContainer)).toBe(CONTAINER.stateHome);
+    expect(profileSearchDirs({ root: "/workspace", env: inContainer })[0]).toBe(CONTAINER.profiles);
+    expect(locateConfig({ root: "/workspace", env: inContainer, exists: () => false }).path).toBe(
+      CONTAINER.configFile,
+    );
   });
 
   it("creates the homes and the token dir before a cold run, never secrets/", async () => {
     const { lc, dirs } = withFiles([], [inspect("absent"), okFor("image"), okFor("run")]);
     expect(await lc.ensureUp()).toBe("created");
     const made = dirs.flat();
-    expect(made).toEqual(expect.arrayContaining([HOMES.profiles, HOMES.state, HOMES.github]));
+    expect(made).toEqual(
+      expect.arrayContaining([HOMES.profiles, HOMES.configMirror, HOMES.state, HOMES.github]),
+    );
     expect(made.some((d) => d.includes("secrets"))).toBe(false);
   });
 
@@ -1246,7 +1279,7 @@ describe("the install's homes and the read-only GitHub token", () => {
       expect.arrayContaining([
         `missing ${CONTAINER.reviewedRepo}`,
         `missing ${CONTAINER.profiles}`,
-        `missing ${CONTAINER.configFile}`,
+        `missing ${CONTAINER.configLive}`,
         `missing ${CONTAINER.stateHome}`,
         `missing ${CONTAINER.githubRead}`,
         "stale /example-app",
@@ -1258,11 +1291,46 @@ describe("the install's homes and the read-only GitHub token", () => {
     );
   });
 
-  it("a config file created or removed later is drift too — one condition, both places", () => {
-    const { lc } = withFiles([]);
-    const withFile = new Map(lc.expectedMounts());
-    withFile.set(`${CONTAINER.configFile}`, HOMES.configFile);
-    expect(lc.mountDrift(withFile)).toEqual([`stale ${CONTAINER.configFile}`]);
-    expect(lc.mountDrift(new Map(lc.expectedMounts()))).toEqual([]);
+  it("a config file created or removed later is NOT drift — the mirror dir is always mounted", () => {
+    const without = withFiles([]).lc.expectedMounts();
+    const withCfg = withFiles([HOMES.configFile]).lc.expectedMounts();
+    expect([...withCfg.entries()]).toEqual([...without.entries()]);
+    // …and a container from the first cut, with the file bind,
+    // drifts and is recreated onto the mirror.
+    const { lc } = withFiles([HOMES.configFile]);
+    const old = new Map(lc.expectedMounts());
+    old.delete(CONTAINER.configLive);
+    old.set("/qcr-config/config.toml", HOMES.configFile);
+    expect(lc.mountDrift(old)).toEqual(
+      expect.arrayContaining([`missing ${CONTAINER.configLive}`, "stale /qcr-config/config.toml"]),
+    );
+  });
+
+});
+
+describe("the config mirror (review)", () => {
+  const base = mkdtempSync(join(tmpdir(), "qcr-cfg-mirror-"));
+  afterAll(() => rmSync(base, { recursive: true, force: true }));
+
+  it("copies the live config, sees a rename-replace, and removes the copy when the config goes", () => {
+    const src = join(base, "config.toml");
+    const dir = join(base, "mirror");
+    writeFileSync(src, "a = 1\n");
+    expect(mirrorConfigFile(src, dir)).toBe("copied");
+    expect(readFileSync(join(dir, "config.toml"), "utf8")).toBe("a = 1\n");
+    expect(mirrorConfigFile(src, dir)).toBe("unchanged");
+    // The writer every onboarding step uses: tmp + rename — a NEW inode.
+    writeFileSync(`${src}.tmp`, "a = 2\n");
+    renameSync(`${src}.tmp`, src);
+    expect(mirrorConfigFile(src, dir)).toBe("copied");
+    expect(readFileSync(join(dir, "config.toml"), "utf8")).toBe("a = 2\n");
+    expect(mirrorConfigFile(undefined, dir)).toBe("removed");
+    expect(existsSync(join(dir, "config.toml"))).toBe(false);
+    expect(mirrorConfigFile(undefined, dir)).toBe("absent");
+  });
+
+  it("is total: an unreadable source is an outcome, never a throw", () => {
+    const out = mirrorConfigFile(join(base, "nope.toml"), join(base, "mirror2"));
+    expect(typeof out === "object" && "failed" in out).toBe(true);
   });
 });

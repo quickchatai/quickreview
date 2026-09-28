@@ -436,6 +436,8 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     repo: full.github.repo,
     secretsDir: full.github.secrets_dir,
   });
+  let configMirrorTimer: NodeJS.Timeout | undefined;
+  const CONFIG_MIRROR_EVERY_MS = 30_000;
   const companionOn = args.companion && full.companion.enabled;
   let companionUp = false;
   let companionError: string | undefined;
@@ -742,6 +744,16 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       ghToken.start((o) => {
         if (o.kind === "failed") app.notice(`companion: ${tokenOutcomeLine(o)}`);
       });
+      // The companion's read-only mirror of the live config — a copy, not a
+      // file bind, so a config.toml replaced by rename is still seen (see
+      // CONTAINER.configLive). Kept in step on the same timer as the token.
+      const syncConfig = (): void => {
+        const m = companion.syncConfigMirror();
+        if (typeof m === "object") app.notice(`companion: config mirror NOT refreshed — ${m.failed}`);
+      };
+      syncConfig();
+      configMirrorTimer ??= setInterval(syncConfig, CONFIG_MIRROR_EVERY_MS);
+      configMirrorTimer.unref();
       await companion.ensureUp((line) => {
         progress.note("container", line);
         app.notice(`companion: ${line}`);
@@ -1092,6 +1104,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   progress.stop();
   alerts?.stop();
   ghToken.stop();
+  if (configMirrorTimer) clearInterval(configMirrorTimer);
   // Closes only a forward THIS process bound; an adopted one (systemd unit,
   // another qcr tui) is left running on purpose — see memforward.ts.
   memForward.stop();

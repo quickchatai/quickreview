@@ -178,6 +178,37 @@ describe("CompanionGithubToken — the env file the companion mounts", () => {
     expect(mints()).toBe(2);
   });
 
+  it("a token minted for another repo is not fresh — a changed [github] repo re-mints at once", async () => {
+    const dir = join(tmp, "out-5");
+    const gh = fakeGithub();
+    const t = new CompanionGithubToken({
+      dir,
+      repo: "acme/widgets",
+      secretsDir: secrets(),
+      fetchFn: gh.fetchFn,
+      now: () => NOW,
+    });
+    expect((await t.refresh()).kind).toBe("minted");
+    writeFileSync(
+      join(dir, TOKEN_FILE),
+      readFileSync(join(dir, TOKEN_FILE), "utf8").replace("acme/widgets", "acme/other"),
+    );
+    expect((await t.refresh()).kind).toBe("minted");
+    expect(gh.calls.filter((c) => c.method === "POST")).toHaveLength(2);
+  });
+
+  it("bounds every GitHub call with a timeout — a hung API cannot hold the bring-up", async () => {
+    const signals: (AbortSignal | null | undefined)[] = [];
+    const inner = fakeGithub().fetchFn;
+    const fetchFn = ((url: string, init?: RequestInit) => {
+      signals.push(init?.signal);
+      return inner(url, init);
+    }) as unknown as typeof fetch;
+    await mintReadOnlyToken({ appId: "1", pem: PEM, repo: "acme/widgets", fetchFn, now: () => NOW });
+    expect(signals).toHaveLength(2);
+    for (const sig of signals) expect(sig).toBeInstanceOf(AbortSignal);
+  });
+
   it("is total: no App credential, or GitHub failing, is an outcome — never a throw", async () => {
     const none = new CompanionGithubToken({
       dir: join(tmp, "out-3"),

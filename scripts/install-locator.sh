@@ -14,6 +14,7 @@
 # The rule, in order:
 #   1. $QCR_CONFIG, taken as given (a missing file is the caller's error)
 #   2. the install's config home: ${XDG_CONFIG_HOME:-$HOME/.config}/qcr/<install>/config.toml
+#      ($QCR_CONFIG_HOME, when set and absolute, IS the config home)
 #   3. the checkout's legacy <root>/config.toml — the expand step's fallback
 #   4. nothing anywhere: the config-home path (where a new config belongs)
 # `<install>` is $QCR_INSTALL, default `default`, a plain name only.
@@ -54,14 +55,36 @@ _qcr_xdg_base() { # _qcr_xdg_base <value> <fallback-under-home>
   fi
 }
 
+# A whole-home override ($QCR_CONFIG_HOME / $QCR_STATE_HOME, — the
+# companion container points them at its mounts): taken only when set AND
+# absolute, trailing slashes dropped. Prints nothing when it does not apply.
+_qcr_home_override() { # _qcr_home_override <value>
+  local v="$1"
+  v="${v#"${v%%[![:space:]]*}"}"
+  v="${v%"${v##*[![:space:]]}"}"
+  [[ -n "$v" && "$v" == /* ]] || return 0
+  while [[ "$v" == */ && "$v" != / ]]; do v="${v%/}"; done
+  printf '%s\n' "$v"
+}
+
 qcr_config_home() {
-  local name
+  local name over
+  over="$(_qcr_home_override "${QCR_CONFIG_HOME:-}")"
+  if [[ -n "$over" ]]; then
+    printf '%s\n' "$over"
+    return 0
+  fi
   name="$(qcr_install_name)" || return 1
   printf '%s\n' "$(_qcr_xdg_base "${XDG_CONFIG_HOME:-}" .config)/qcr/$name"
 }
 
 qcr_state_home() {
-  local name
+  local name over
+  over="$(_qcr_home_override "${QCR_STATE_HOME:-}")"
+  if [[ -n "$over" ]]; then
+    printf '%s\n' "$over"
+    return 0
+  fi
   name="$(qcr_install_name)" || return 1
   printf '%s\n' "$(_qcr_xdg_base "${XDG_STATE_HOME:-}" .local/state)/qcr/$name"
 }

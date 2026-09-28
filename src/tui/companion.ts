@@ -13,10 +13,20 @@
 //   ensureUp() and spawnPi() are both idempotent and there is no kill path
 //   except the explicit `qcr companion down`.
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+  companionConfigMirrorDir,
+  CONFIG_FILE,
   companionGithubDir,
   configHome,
   locateConfig,
@@ -105,17 +115,25 @@ export const CONTAINER = {
    * for, and the container path is not the place a repo's name belongs. */
   reviewedRepo: "/reviewed-repo",
   /** The install's config home, in part: `profiles/` read-write —
-   * setup writes and re-tunes the repo profile there — and the live
-   * `config.toml` read-only. Deliberately NOT the whole home: it holds
+   * setup writes and re-tunes the repo profile there — and a mirror of the
+   * live `config.toml` read-only. Deliberately NOT the whole home: it holds
    * `secrets/` (the App's private key, which can write to GitHub), and the
    * companion's reach into GitHub is the read-only token below and nothing
    * else. Mounting the two pieces rather than masking a subdirectory is what
    * keeps a `secrets/` created LATER out as well. */
   configHome: "/qcr-config",
-  /** Inside `configHome`: the live config (`:ro`, only when one exists) and
-   * the profiles dir (`:rw`). Spelled out so the in-container paths are
-   * literals — nothing here builds a host config path (the locator does). */
-  configFile: "/qcr-config/config.toml",
+  /** Inside `configHome`: the profiles dir (`:rw`) and a read-only MIRROR of
+   * the live config (`configLive`, a DIRECTORY mount). The live config is not
+   * bind-mounted as a file: a file bind pins the inode, and every writer of
+   * config.toml (the onboarding wizard, most editors) replaces it by rename —
+   * the companion would read the old text until the container was recreated,
+   * and no drift check can see it (the source path never changes). The host
+   * copies the located config into the mirror dir instead
+   * (`syncConfigMirror`), and a rename inside a mounted dir IS visible.
+   * Spelled out so the in-container paths are literals — nothing here builds
+   * a host config path (the locator does). */
+  configLive: "/qcr-config/live",
+  configFile: "/qcr-config/live/config.toml",
   profiles: "/qcr-config/profiles",
   /** The install's state home, read-write: the survey, the scan
    * ledger, findings and the portrait facts — PC-only, never shipped. */
@@ -196,6 +214,35 @@ export const SUBAGENTS = {
   maxConcurrency: 8,
 } as const;
 
+export type ConfigMirrorOutcome = "copied" | "unchanged" | "removed" | "absent" | { failed: string };
+
+/** Mirror `source` (the host's live config, or undefined when there is none)
+ * into `dir/config.toml`. Pure fs, total — see `syncConfigMirror`. */
+export function mirrorConfigFile(source: string | undefined, dir: string): ConfigMirrorOutcome {
+  const target = join(dir, CONFIG_FILE);
+  try {
+    if (source === undefined) {
+      if (!existsSync(target)) return "absent";
+      rmSync(target, { force: true });
+      return "removed";
+    }
+    const text = readFileSync(source, "utf8");
+    let current: string | undefined;
+    try {
+      current = readFileSync(target, "utf8");
+    } catch {
+      current = undefined;
+    }
+    if (current === text) return "unchanged";
+    mkdirSync(dir, { recursive: true });
+    const tmp = join(dir, `.${CONFIG_FILE}.tmp`);
+    writeFileSync(tmp, text);
+    renameSync(tmp, target);
+    return "copied";
+  } catch (err) {
+    return { failed: err instanceof Error ? err.message : String(err) };
+  }
+}
 
 /** The three env names the keys file must define. Values are NEVER read into a
  * log line or an argv — docker reads the file itself via `--env-file`. */
@@ -342,15 +389,15 @@ export class CompanionLifecycle {
       "--volume",
       `${this.cfg.alerts_dir}:${CONTAINER.alerts}:rw`,
     );
-    // the install's homes and the read-only GitHub token. Created
-    // before a cold run (`ensureDirs`), so unconditional like the evidence
-    // store — except the config FILE, which is only mounted when it exists
-    // (a file bind to a missing path makes docker invent a directory there).
+    // the install's homes, the config mirror and the read-only
+    // GitHub token. All directories, created before a cold run (`ensureDirs`),
+    // so unconditional like the evidence store.
     const homes = this.hostHomes();
-    argv.push("--volume", `${homes.profiles}:${CONTAINER.profiles}:rw`);
-    if (homes.configFile !== undefined)
-      argv.push("--volume", `${homes.configFile}:${CONTAINER.configFile}:ro`);
     argv.push(
+      "--volume",
+      `${homes.profiles}:${CONTAINER.profiles}:rw`,
+      "--volume",
+      `${homes.configMirror}:${CONTAINER.configLive}:ro`,
       "--volume",
       `${homes.state}:${CONTAINER.stateHome}:rw`,
       "--volume",
@@ -495,12 +542,14 @@ export class CompanionLifecycle {
       `QCR_ALERTS_DIR=${CONTAINER.alerts}`,
       `QCR_TRACKER_DIR=${CONTAINER.tracker}`,
       // where the install's homes and the token file sit in here.
-      // QCR_CONFIG only when the file is really mounted — the locator then
-      // finds profiles beside it (`profileSearchDirs`), exactly as on the host.
+      // The locator (src/install.ts) honours QCR_CONFIG_HOME/QCR_STATE_HOME
+      // as whole-home overrides, so code run in the container resolves the
+      // mounted homes — profiles written by setup land on the host, not in
+      // the container user's ~/.config. QCR_CONFIG always names the mirror:
+      // when the host has no config the file is simply absent, which the
+      // reader reports — never a silent fall back to /workspace/config.toml.
       `QCR_CONFIG_HOME=${CONTAINER.configHome}`,
-      ...(this.hostHomes().configFile !== undefined
-        ? [`QCR_CONFIG=${CONTAINER.configFile}`]
-        : []),
+      `QCR_CONFIG=${CONTAINER.configFile}`,
       `QCR_STATE_HOME=${CONTAINER.stateHome}`,
       `QCR_GITHUB_READ_ENV=${CONTAINER.githubRead}/${TOKEN_FILE}`,
       // survey and scan fan out one case per unit — see SUBAGENTS.
@@ -511,19 +560,39 @@ export class CompanionLifecycle {
   /**
    * Host side of the mounts, from the install locator over THIS
    * lifecycle's env (so a test's temp XDG homes are what it mounts):
-   * `<config home>/profiles`, the live config file when one exists, the state
+   * `<config home>/profiles`, the live config file when one exists (the
+   * SOURCE of the mirror — never itself mounted), the mirror dir, the state
    * home, and the token dir. Never the config home as a whole — see
    * `CONTAINER.configHome` for why `secrets/` must stay out.
    */
-  hostHomes(): { profiles: string; configFile?: string; state: string; github: string } {
+  hostHomes(): {
+    profiles: string;
+    configFile?: string;
+    configMirror: string;
+    state: string;
+    github: string;
+  } {
     const env = this.installEnv();
     const located = locateConfig({ root: this.cfg.repo_dir, env, exists: (p) => this.fs.exists(p) });
     return {
       profiles: join(configHome(env), PROFILES_DIR),
       configFile: this.fs.exists(located.path) ? located.path : undefined,
+      configMirror: companionConfigMirrorDir(env),
       state: stateHome(env),
       github: companionGithubDir(env),
     };
+  }
+
+  /**
+   * Copy the host's live config into the mirror dir the companion mounts
+   * (see `CONTAINER.configLive`), or remove the mirror when the host has none
+   * — an absent file is the honest answer, a stale one is not. Atomic (tmp +
+   * rename inside the mounted dir) and a no-op when nothing changed. Total:
+   * a failure is an outcome, never a throw.
+   */
+  syncConfigMirror(): ConfigMirrorOutcome {
+    const homes = this.hostHomes();
+    return mirrorConfigFile(homes.configFile, homes.configMirror);
   }
 
   private installEnv(): InstallEnv {
@@ -830,7 +899,7 @@ export class CompanionLifecycle {
     // recreated.
     const homes = this.hostHomes();
     m.set(CONTAINER.profiles, homes.profiles);
-    if (homes.configFile !== undefined) m.set(CONTAINER.configFile, homes.configFile);
+    m.set(CONTAINER.configLive, homes.configMirror);
     m.set(CONTAINER.stateHome, homes.state);
     m.set(CONTAINER.githubRead, homes.github);
     return m;
@@ -899,6 +968,7 @@ export class CompanionLifecycle {
       this.cfg.alerts_dir,
       this.cfg.evidence_dir,
       homes.profiles,
+      homes.configMirror,
       homes.state,
       homes.github,
     ]);

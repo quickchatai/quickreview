@@ -45,6 +45,10 @@ export const TOKEN_VAR = "QCR_GITHUB_READ_TOKEN";
 export const EXPIRES_VAR = "QCR_GITHUB_READ_EXPIRES_AT";
 export const REPO_VAR = "QCR_GITHUB_REPO";
 
+/** Each GitHub call is bounded: the mint runs in the companion bring-up,
+ * ahead of the container, and a hung API must cost seconds, not the start. */
+export const FETCH_TIMEOUT_MS = 15_000;
+
 /** Re-mint when less than this is left; GitHub tokens live an hour. */
 export const REFRESH_MARGIN_MS = 15 * 60 * 1000;
 /** How often the host checks. Well inside the margin, so a slow or failed
@@ -99,7 +103,10 @@ export async function mintReadOnlyToken(opts: {
     authorization: `Bearer ${mintAppJwt(opts.appId, opts.pem, opts.now)}`,
     accept: "application/vnd.github+json",
   };
-  const inst = await fetchFn(`${api}/repos/${owner}/${name}/installation`, { headers });
+  const inst = await fetchFn(`${api}/repos/${owner}/${name}/installation`, {
+    headers,
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
   if (!inst.ok) throw new Error(`GET /repos/${owner}/${name}/installation failed: ${inst.status}`);
   const id = ((await inst.json()) as { id?: unknown }).id;
   if (typeof id !== "number") throw new Error("the installation lookup returned no id");
@@ -107,6 +114,7 @@ export async function mintReadOnlyToken(opts: {
     method: "POST",
     headers: { ...headers, "content-type": "application/json" },
     body: JSON.stringify({ repositories: [name], permissions: COMPANION_GITHUB_PERMISSIONS }),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`read-only token mint failed: ${res.status}`);
   const body = (await res.json()) as {
@@ -160,13 +168,20 @@ export function writeTokenEnv(dir: string, text: string): string {
   return file;
 }
 
-/** The expiry recorded in the env file, as epoch ms, or undefined. */
-export function tokenExpiry(dir: string): number | undefined {
+/** The expiry recorded in the env file, as epoch ms, or undefined. With
+ * `repo`, a file minted for a DIFFERENT repository counts as no token at all,
+ * so a changed `[github] repo` re-mints at once rather than when the old
+ * token runs out. */
+export function tokenExpiry(dir: string, repo?: string): number | undefined {
   let text: string;
   try {
     text = readFileSync(join(dir, TOKEN_FILE), "utf8");
   } catch {
     return undefined;
+  }
+  if (repo !== undefined) {
+    const r = new RegExp(`^${REPO_VAR}=(.*)$`, "m").exec(text);
+    if (!r || r[1]!.trim() !== repo) return undefined;
   }
   const m = new RegExp(`^${EXPIRES_VAR}=(.+)$`, "m").exec(text);
   const ms = m ? Date.parse(m[1]!.trim()) : Number.NaN;
@@ -223,7 +238,7 @@ export class CompanionGithubToken {
 
   private async doRefresh(): Promise<TokenOutcome> {
     const now = (this.opts.now ?? Date.now)();
-    const current = tokenExpiry(this.opts.dir);
+    const current = tokenExpiry(this.opts.dir, this.opts.repo);
     if (current !== undefined && current - now > REFRESH_MARGIN_MS)
       return { kind: "fresh", expiresAt: new Date(current).toISOString() };
     let appId: string;

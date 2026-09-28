@@ -54,6 +54,13 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 /** The slice of the environment the locator reads — nothing else. */
 export interface InstallEnv {
   QCR_CONFIG?: string;
+  /** A whole-home override (absolute paths only): the companion
+   * container sets these to its `/qcr-config` and `/qcr-state` mounts, so the
+   * locator in there resolves the SAME homes the host mounted, not the
+   * container user's own `~/.config` / `~/.local/state`. Unset on a normal
+   * host, where the XDG derivation below is the answer. */
+  QCR_CONFIG_HOME?: string;
+  QCR_STATE_HOME?: string;
   QCR_INSTALL?: string;
   XDG_CONFIG_HOME?: string;
   XDG_STATE_HOME?: string;
@@ -92,13 +99,28 @@ function xdgBase(value: string | undefined, env: InstallEnv, fallback: string): 
   return join(home, fallback);
 }
 
-/** `$XDG_CONFIG_HOME/qcr/<install>` — config.toml, profiles/, secrets/. */
+/** A home override is taken only when it is set AND absolute — a relative
+ * value would resolve against whatever the cwd happens to be. Trailing
+ * slashes are dropped; nothing else is rewritten (the shell mirror,
+ * `scripts/install-locator.sh`, applies the same rule). */
+function homeOverride(value: string | undefined): string | undefined {
+  const v = (value ?? "").trim();
+  if (v === "" || !isAbsolute(v)) return undefined;
+  return v.replace(/\/+$/, "") || "/";
+}
+
+/** `$XDG_CONFIG_HOME/qcr/<install>` — config.toml, profiles/, secrets/
+ * (or `$QCR_CONFIG_HOME` as given, see `InstallEnv`). */
 export function configHome(env: InstallEnv = process.env): string {
+  const override = homeOverride(env.QCR_CONFIG_HOME);
+  if (override !== undefined) return override;
   return join(xdgBase(env.XDG_CONFIG_HOME, env, ".config"), "qcr", installName(env));
 }
 
 /** `$XDG_STATE_HOME/qcr/<install>` — PC-only scan state, never shipped. */
 export function stateHome(env: InstallEnv = process.env): string {
+  const override = homeOverride(env.QCR_STATE_HOME);
+  if (override !== undefined) return override;
   return join(xdgBase(env.XDG_STATE_HOME, env, join(".local", "state")), "qcr", installName(env));
 }
 
@@ -634,6 +656,14 @@ export function operatorStateHome(env: InstallEnv = process.env): string {
  * companion, and only this directory — never the secrets it was minted from. */
 export function companionGithubDir(env: InstallEnv = process.env): string {
   return join(operatorStateHome(env), "companion-github");
+}
+
+/** Where the host keeps the companion's read-only MIRROR of the live config
+ * (`CompanionLifecycle.syncConfigMirror`): a copy refreshed while the
+ * TUI runs, mounted as a directory so a rename-replaced config.toml is seen.
+ * config.toml holds no secret values (secrets are files under `secrets/`). */
+export function companionConfigMirrorDir(env: InstallEnv = process.env): string {
+  return join(operatorStateHome(env), "companion-config");
 }
 
 export type KeysFileSource = "override" | "home" | "legacy";

@@ -85,6 +85,16 @@ describe("homes", () => {
     expect(stateHome(relative)).toBe(stateHome(bare));
   });
 
+  it("QCR_CONFIG_HOME / QCR_STATE_HOME override the whole home, absolute only", () => {
+    // The companion container sets these to its mounts; unset on a host.
+    const o = { ...env, QCR_CONFIG_HOME: "/qcr-config", QCR_STATE_HOME: "/qcr-state/" };
+    expect(configHome(o)).toBe("/qcr-config");
+    expect(stateHome(o)).toBe("/qcr-state");
+    const rel = { ...env, QCR_CONFIG_HOME: "rel/cfg", QCR_STATE_HOME: " " };
+    expect(configHome(rel)).toBe(configHome(env));
+    expect(stateHome(rel)).toBe(stateHome(env));
+  });
+
   it("refuses an install name that could escape the qcr dir", () => {
     for (const bad of ["..", "../x", "a/b", ".hidden", "a..b", "", " /"]) {
       if (bad.trim() === "") {

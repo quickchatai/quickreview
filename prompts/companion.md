@@ -66,8 +66,9 @@ active conversation.
   copied (the TUI was down, or the copy is still pending); say that rather
   than inferring what the session must have done.
 - **The install's homes** — `/qcr-config/profiles/` read-write
-  (the repo profile setup writes and re-tunes), `/qcr-config/config.toml`
-  read-only when the install has one, and the state home at `/qcr-state`
+  (the repo profile setup writes and re-tunes), `/qcr-config/live/config.toml`
+  read-only (a copy the TUI keeps in step with the live config while it runs;
+  absent when the install has none), and the state home at `/qcr-state`
   read-write (survey, scan ledger, findings, portrait facts — PC-only, never
   shipped). The config home's `secrets/` is deliberately NOT mounted, and a
   profile change reaches the VM only when the owner deploys it.

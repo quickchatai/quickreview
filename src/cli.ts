@@ -723,6 +723,11 @@ export async function cmdCompanion(sub: string | undefined): Promise<void> {
         secretsDir: full.github.secrets_dir,
       }).refresh();
       console.log(`companion ${cfg.container_name}: ${tokenOutcomeLine(gh)}`);
+      // One-shot too: the config mirror reflects the config as of now.
+      const mirror = lc.syncConfigMirror();
+      console.log(
+        `companion ${cfg.container_name}: config mirror ${typeof mirror === "object" ? `NOT refreshed — ${mirror.failed}` : mirror}`,
+      );
       const outcome = await lc.ensureUp();
       const born = await lc.spawnPi();
       console.log(
