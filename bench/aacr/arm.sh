@@ -20,6 +20,8 @@
 #                     OCR reviews one case at a time in one container per set, as its harness does)
 #   --arm codex       the Codex CLI arm (bench.sh --arm codex; the harness's reviewers/codex.py,
 #                     one case at a time in one container per set, like ocr)
+#   --arm opencode    OpenCode (bench.sh --arm opencode), one case at a time in one container per
+#                     set, like ocr
 #   --parallel N|auto reviews at once, MACHINE-WIDE (default auto; see "Scheduling" below)
 #   --max-parallel N, --concurrency N   other spellings of --parallel N
 #   --resume          keep cases already reviewed by the same build and levers; re-run the rest
@@ -98,7 +100,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ -n "$PREFIX" && -n "$CASES" ]] || { echo "--prefix and --cases are required" >&2; exit 2; }
-[[ "$ARM" == qcr || "$ARM" == ocr || "$ARM" == codex ]] || { echo "--arm must be qcr | ocr | codex" >&2; exit 2; }
+[[ "$ARM" == qcr || "$ARM" == ocr || "$ARM" == codex || "$ARM" == opencode ]] || { echo "--arm must be qcr | ocr | codex | opencode" >&2; exit 2; }
 [[ "$ARM" == qcr || -z "$CONFIG" ]] || { echo "--config sets quickreviewd levers; the $ARM arm has none" >&2; exit 2; }
 [[ "$EVAL" =~ ^[0-9]+$ ]] || { echo "--eval takes a round count" >&2; exit 2; }
 [[ "$PAR" == auto || "$PAR" =~ ^[1-9][0-9]*$ ]] || { echo "--parallel takes a count or auto" >&2; exit 2; }
@@ -107,6 +109,7 @@ done
 QIMG="${QCR_BENCH_IMAGE:-qcr-bench:latest}" OIMG="${QCR_BENCH_OCR_IMAGE:-qcr-bench-ocr:latest}"
 IMG="$QIMG"; [[ "$ARM" == ocr ]] && IMG="$OIMG"
 [[ "$ARM" == codex ]] && IMG="${QCR_BENCH_CODEX_IMAGE:-qcr-bench-codex:latest}"
+[[ "$ARM" == opencode ]] && IMG="${QCR_BENCH_OPENCODE_IMAGE:-qcr-bench-opencode:latest}"
 IMG_ID="$(docker image inspect "$IMG" --format '{{.Id}}' 2>/dev/null)" || { echo "no image $IMG — build it: bench.sh build --arm $ARM" >&2; exit 2; }
 # An image built before the per-case scheduler ignores --phase, and its
 # "init" container would review every case with no network. Refuse it (and
@@ -258,8 +261,8 @@ PY
 START=$(date +%s)
 fail=0
 
-# ---- the open-code-review and Codex arms: one container per set, as their harness runs --------
-if [[ "$ARM" == ocr || "$ARM" == codex ]]; then
+# ---- the open-code-review, Codex and OpenCode arms: one container per set, as their harness runs --
+if [[ "$ARM" == ocr || "$ARM" == codex || "$ARM" == opencode ]]; then
   SLOT=""
   one() { # index
     local i="$1" run="${JRUN[$1]}" set_name="${JSET[$1]}" ids="${JIDS[$1]}" only=() rc=0 cases

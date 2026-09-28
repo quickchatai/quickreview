@@ -37,6 +37,13 @@
 #   bench/aacr/bench.sh whatif-eval   --run ID [--judge codex] [--rounds 3]   re-score the variants
 #   bench/aacr/bench.sh whatif-report --run ID                                 re-render the report
 #
+#   --arm opencode (build, review, eval, report, shell, smoke): OpenCode (image
+#              qcr-bench-opencode, `opencode-ai` pinned by OPENCODE_VERSION + sha256 in the
+#              Dockerfile; QCR_BENCH_OPENCODE_VERSION + QCR_BENCH_OPENCODE_SHA256 build another)
+#              run in the shape of the harness's codex runner — its built-in /review over
+#              base...head, findings through the harness's MCP findings server, the model
+#              through the loopback Codex bridge; one case at a time; `eval` scores `all`.
+#              QCR_BENCH_OPENCODE_EFFORT=L its reasoning effort (default medium)
 #   --arm ocr  (build, review, eval, report, shell, smoke): the open-code-review
 #              baseline — image qcr-bench-ocr (the same runtime + OCR 1.3.1 + the
 #              loopback Codex bridge), `review` runs OCR the way the AACR harness
@@ -110,7 +117,11 @@ case "$ARM" in
        BASE_ARGS=(--build-arg RUNTIME_BASE=node:22-trixie); REVIEW_ENTRY=ocr-review ;;
   # Codex CLI arm: the harness's own reviewers/codex.py (Dockerfile target `codex`).
   codex) IMAGE="${QCR_BENCH_CODEX_IMAGE:-qcr-bench-codex:latest}"; TARGET=codex; BASE_ARGS=(); REVIEW_ENTRY=codex-review ;;
-  *) die "--arm must be qcr | ocr | codex" ;;
+  # OpenCode: its own target on the same runtime (OPENCODE_VERSION build arg, Dockerfile).
+  opencode) IMAGE="${QCR_BENCH_OPENCODE_IMAGE:-qcr-bench-opencode:latest}"; TARGET=opencode
+       BASE_ARGS=(); REVIEW_ENTRY=opencode-review
+       [[ -n "${QCR_BENCH_OPENCODE_VERSION:-}" ]] && BASE_ARGS=(--build-arg "OPENCODE_VERSION=$QCR_BENCH_OPENCODE_VERSION" --build-arg "OPENCODE_SHA256_LINUX_X64=${QCR_BENCH_OPENCODE_SHA256:?set QCR_BENCH_OPENCODE_SHA256 with QCR_BENCH_OPENCODE_VERSION}") ;;
+  *) die "--arm must be qcr | ocr | codex | opencode" ;;
 esac
 # First character alphanumeric: `.`, `..` and dotfile ids would mount the wrong dir.
 [[ -z "$RUN" || "$RUN" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "--run must start with [A-Za-z0-9] and use only [A-Za-z0-9._-]"
@@ -279,6 +290,7 @@ case "$cmd" in
       oe+=(--security-opt seccomp=unconfined)
       [[ -n "${QCR_BENCH_CODEX_EFFORT:-}" ]] && oe+=(-e "QCR_CODEX_EFFORT=$QCR_BENCH_CODEX_EFFORT")
     fi
+    [[ "$ARM" == opencode && -n "${QCR_BENCH_OPENCODE_EFFORT:-}" ]] && oe+=(-e "OPENCODE_BRIDGE_EFFORT=$QCR_BENCH_OPENCODE_EFFORT")
     args=("${HARDEN[@]}" "${AUTH[@]}" ${oe[@]+"${oe[@]}"}
       --mount "type=volume,src=$REPOS_VOLUME,dst=/repos,readonly"
       --mount "type=bind,src=$d,dst=/bench-out"

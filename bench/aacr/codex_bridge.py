@@ -18,7 +18,10 @@ This bridge sits between them, inside the sandbox, on 127.0.0.1:
                               Chat Completions default) — streamed upstream,
                               the SSE aggregated until `response.completed`,
                               and translated back into one chat.completion
-                              (text, tool_calls, usage).
+                              (text, tool_calls, usage). With "stream": true
+                              (the OpenCode arm's AI SDK client) the same
+                              aggregated answer is replayed as chat.completion
+                              .chunk SSE events (chat_stream_chunks).
   POST /v1/responses          newer OCR: forced to stream/store:false,
                               aggregated, returned whole.
   POST /label                 {"label": "<case id>"}: tags later log rows.
@@ -374,6 +377,29 @@ def response_to_chat(resp: Dict[str, Any], model: str) -> Dict[str, Any]:
     }
 
 
+def chat_stream_chunks(chat: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """One aggregated chat.completion → the `chat.completion.chunk` sequence a
+    STREAMING Chat Completions client reads (the OpenCode arm: the AI SDK's
+    openai-compatible provider always streams). The answer is complete before
+    the first chunk is sent — the upstream call is aggregated exactly as for a
+    non-streaming client, so an upstream failure is still an HTTP status the
+    client can retry — then replayed as: role + text, one delta per tool call
+    (id, name and the whole arguments string at once), the finish reason, and a
+    final usage chunk (what `stream_options.include_usage` asks for)."""
+    base = {"id": chat["id"], "object": "chat.completion.chunk", "created": chat["created"], "model": chat["model"]}
+    choice = chat["choices"][0]
+    msg = choice["message"]
+    delta: Dict[str, Any] = {"role": "assistant"}
+    if msg.get("content"):
+        delta["content"] = msg["content"]
+    chunks = [{**base, "choices": [{"index": 0, "delta": delta, "finish_reason": None}]}]
+    for i, call in enumerate(msg.get("tool_calls") or []):
+        chunks.append({**base, "choices": [{"index": 0, "delta": {"tool_calls": [{"index": i, **call}]}, "finish_reason": None}]})
+    chunks.append({**base, "choices": [{"index": 0, "delta": {}, "finish_reason": choice["finish_reason"]}]})
+    chunks.append({**base, "choices": [], "usage": chat["usage"]})
+    return chunks
+
+
 # ---- the server -----------------------------------------------------------------
 
 class Bridge:
@@ -500,6 +526,9 @@ def make_handler(bridge: Bridge):
                 "route": kind, "asked_model": req.get("model"), "model": body["model"],
                 "effort": bridge.a.effort, "items": len(body.get("input") or []),
                 "tools": len(body.get("tools") or []), "dropped": dropped,
+                # What the client ASKED for (OpenCode's --variant arrives as
+                # reasoning_effort); the bridge still forces --effort.
+                "asked_effort": req.get("reasoning_effort") or (req.get("reasoning") or {}).get("effort"),
             }
             try:
                 resp = bridge.call(body)
@@ -521,8 +550,23 @@ def make_handler(bridge: Bridge):
                        served_model=resp.get("model"), out_items=[i.get("type") for i in resp.get("output") or []],
                        calls=[i.get("name") for i in resp.get("output") or [] if i.get("type") == "function_call"],
                        usage={k: usage[k] for k in usage_keys if k in usage})
+            if kind == "chat" and req.get("stream") is True:
+                row["streamed"] = True
+                bridge.log(row)
+                self._send_sse(chat_stream_chunks(response_to_chat(resp, body["model"])))
+                return
             bridge.log(row)
             self._send(200, response_to_chat(resp, body["model"]) if kind == "chat" else {**resp, "object": "response"})
+
+        def _send_sse(self, chunks: List[Dict[str, Any]]) -> None:
+            body = "".join(f"data: {json.dumps(c)}\n\n" for c in chunks) + "data: [DONE]\n\n"
+            raw = body.encode("utf-8")
+            self.send_response(200)
+            self.send_header("content-type", "text/event-stream")
+            self.send_header("cache-control", "no-cache")
+            self.send_header("content-length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
 
     return Handler
 
@@ -577,6 +621,14 @@ def _self_test() -> None:
     text = aggregate(iter_sse([b'data: {"type":"response.output_item.done","output_index":0,"item":{"type":"message","content":[{"type":"output_text","text":"[]"}]}}\n\n',
                                b'data: {"type":"response.completed","response":{"status":"completed","usage":{}}}\n\n']))
     assert response_to_chat(text, "m")["choices"][0]["message"]["content"] == "[]"
+
+    # Streaming replay: role+text, one delta per tool call, finish, usage.
+    chunks = chat_stream_chunks(out)
+    assert [c["choices"][0]["finish_reason"] if c["choices"] else "usage" for c in chunks] == [None, None, "tool_calls", "usage"], chunks
+    assert chunks[1]["choices"][0]["delta"]["tool_calls"] == [{"index": 0, "id": "call_9", "type": "function", "function": {"name": "task_done", "arguments": "{}"}}]
+    assert chunks[-1]["usage"]["prompt_tokens"] == 100 and all(c["object"] == "chat.completion.chunk" for c in chunks)
+    tchunks = chat_stream_chunks(response_to_chat(text, "m"))
+    assert tchunks[0]["choices"][0]["delta"] == {"role": "assistant", "content": "[]"} and tchunks[1]["choices"][0]["finish_reason"] == "stop"
 
     for failing, status in ((b'data: {"type":"response.failed","response":{"error":{"code":"rate_limit_exceeded","message":"slow down"}}}\n\n', 429),
                             (b'data: {"type":"response.failed","response":{"error":{"code":"server_error","message":"x"}}}\n\n', 502),

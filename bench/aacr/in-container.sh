@@ -21,6 +21,9 @@
 # The Codex CLI arm (image target `codex`):
 #   codex-review <set> [cli flags…] → node cli codex-review (the harness's reviewers/codex.py
 #   via codex_arm.py, one case at a time); eval / report with BENCH_ARM=codex likewise.
+# The OpenCode arm (image target `opencode`):
+#   opencode-review <set> [cli flags…] → the same loopback Codex bridge + node cli opencode-review
+#   eval / report with BENCH_ARM=opencode: only the `all` variant, the OpenCode report.
 set -euo pipefail
 
 ROOT=/opt/quickreview/sandbox
@@ -76,6 +79,28 @@ case "$cmd" in
     set_name="$1"; shift
     command -v codex >/dev/null || { echo "this image has no Codex CLI — build it with: bench.sh build --arm codex" >&2; exit 2; }
     exec "${CLI[@]}" codex-review --set "$(set_file "$set_name")" --store /repos --out /bench-out "$@" ;;
+  # ---- the OpenCode arm ------------------------------------------------------
+  opencode-review)
+    set_name="$1"; shift
+    command -v opencode >/dev/null || { echo "this image has no OpenCode — build it with: bench.sh build --arm opencode" >&2; exit 2; }
+    # The bridge reads the SAME refresh-disabled token copy the review and the
+    # judge use (src/bench/auth.ts); `opencode-review` re-takes it before every case.
+    "${CLI[@]}" auth --need-min 40 || { echo "opencode: no usable pi login (see above)" >&2; exit 1; }
+    python3 /opt/quickreview/bench/codex_bridge.py --port 8766 \
+      --model "${OPENCODE_BRIDGE_MODEL:-gpt-6-sol}" --effort "${OPENCODE_BRIDGE_EFFORT:-medium}" \
+      --log /bench-out/bridge.jsonl >> /bench-out/bridge.log 2>&1 &
+    bridge_pid=$!
+    trap 'kill "$bridge_pid" 2>/dev/null || true' EXIT
+    up=0
+    for _ in $(seq 1 50); do
+      curl -fsS http://127.0.0.1:8766/health >/dev/null 2>&1 && { up=1; break; }
+      sleep 0.2
+    done
+    [[ "$up" == 1 ]] || { echo "codex bridge never answered /health — see bridge.log" >&2; exit 1; }
+    status=0
+    "${CLI[@]}" opencode-review --set "$(set_file "$set_name")" --store /repos --out /bench-out \
+      --bridge http://127.0.0.1:8766 --variant "${OPENCODE_BRIDGE_EFFORT:-medium}" "$@" || status=$?
+    exit "$status" ;;
   results)
     set_name="$1"; shift
     exec "${CLI[@]}" results --set "$(set_file "$set_name")" --out /bench-out "$@" ;;

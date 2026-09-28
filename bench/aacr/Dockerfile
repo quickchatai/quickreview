@@ -4,6 +4,8 @@
 #   docker build --target ocr --build-arg RUNTIME_BASE=node:22-trixie \
 #                -t qcr-bench-ocr -f bench/aacr/Dockerfile .                  (bench.sh build --arm ocr)
 #   docker build --target codex -t qcr-bench-codex -f bench/aacr/Dockerfile .  (bench.sh build --arm codex)
+#   docker build --target opencode -t qcr-bench-opencode -f bench/aacr/Dockerfile .
+#                                                                        (bench.sh build --arm opencode)
 #
 # One image, three uses, each run by bench.sh with its own minimal mounts:
 #   prefetch  git over https to github.com (anonymous) → the repos volume
@@ -30,6 +32,7 @@
 #                                        the linux-amd64 binary's sha256 is pinned
 #   Codex CLI 0.158.0 (codex only)     = @openai/codex; the linux-x64 binary's
 #                                        sha256 is pinned (CODEX_SHA256_LINUX_X64)
+#   opencode-ai 1.18.33 (opencode only) = the linux-x64 binary's sha256 is pinned
 
 ARG RUNTIME_BASE=node:22-bookworm
 
@@ -138,6 +141,40 @@ COPY bench/aacr/codex_arm.py /opt/quickreview/bench/
 RUN /opt/aacr-venv/bin/python /opt/quickreview/bench/codex_arm.py --self-test \
     && ! test -e scripts && ! command -v gh
 ENV QCR_CODEX_VERSION=${CODEX_VERSION}
+
+# ---- opencode: the OpenCode arm ----------------------------------------------------
+# Placed ABOVE `ocr` on purpose: without BuildKit (this PC has no buildx),
+# `docker build --target X` builds every stage above X, and the ocr stage
+# refuses bookworm's git — a stage on the default runtime base below it would
+# never build.
+# Built on top of `runtime`, so the scorer, the dataset, pi, the judge shim and
+# the harness's own MCP findings server (evaluation/mcp_codex_finding_server.py,
+# run by /opt/aacr-venv) are the ones every other arm is scored with. OpenCode
+# is the `opencode-ai` npm package's linux-x64 binary, installed as its platform
+# package directly (the `opencode-ai` wrapper only links it in a postinstall
+# script) and checked against the sha256 recorded HERE.
+# To bump: `npm pack opencode-linux-x64@<v>`, `sha256sum package/bin/opencode`,
+# then set both ARGs below (or pass QCR_BENCH_OPENCODE_VERSION +
+# QCR_BENCH_OPENCODE_SHA256 to `bench.sh build --arm opencode`) and re-run the
+# smoke test — src/bench/opencode.ts reads OpenCode's --format json events and
+# its built-in `review` command, neither of which is a stable contract.
+FROM runtime AS opencode
+ARG OPENCODE_VERSION=1.18.33
+ARG OPENCODE_SHA256_LINUX_X64=0abbb7c32ab0294c0a7bfa2705f9ff0df5dce5ab721d1f00cccfe393f2a11427
+RUN test "$(dpkg --print-architecture)" = amd64 \
+    && npm install -g opencode-linux-x64@${OPENCODE_VERSION} --no-audit --no-fund \
+    && OPENCODE_BIN="$(npm root -g)/opencode-linux-x64/bin/opencode" \
+    && echo "${OPENCODE_SHA256_LINUX_X64}  ${OPENCODE_BIN}" | sha256sum -c - \
+    && ln -s "${OPENCODE_BIN}" /usr/local/bin/opencode \
+    && test "$(HOME=/tmp OPENCODE_DISABLE_AUTOUPDATE=1 opencode --version)" = "${OPENCODE_VERSION}"
+COPY bench/aacr/codex_bridge.py /opt/quickreview/bench/
+RUN python3 /opt/quickreview/bench/codex_bridge.py --self-test \
+    && test -f /opt/aacr-bench/evaluation/mcp_codex_finding_server.py \
+    && /opt/aacr-venv/bin/python -c "import mcp.server.fastmcp" \
+    && ! test -e scripts && ! command -v gh
+ENV OPENCODE_DISABLE_AUTOUPDATE=1 OPENCODE_DISABLE_SHARE=1 OPENCODE_DISABLE_MODELS_FETCH=1 \
+    OPENCODE_DISABLE_LSP_DOWNLOAD=1 OPENCODE_DISABLE_DEFAULT_PLUGINS=1 OPENCODE_DISABLE_PROJECT_CONFIG=1 \
+    QCR_OPENCODE_VERSION=${OPENCODE_VERSION}
 
 # ---- ocr: the open-code-review baseline arm --------------------------------------
 # Built on top of `runtime`, so the scorer, the dataset, pi and the judge shim
