@@ -23,7 +23,8 @@ below favour our reviewer. Two have now been measured:
 - Seeding the answer key with its comments (threat 1) did not create its
   lead.
 - A second judge from another model family (threat 4) agrees with the first
-  on 98.7% of verdicts.
+  on 98.7% of verdicts, which largely retires judge bias as a threat. It
+  does not validate the answer key, which both judges share.
 
 The rest have not been measured away.
 
@@ -245,6 +246,14 @@ unmeasured.
     move, though (62% under both).
   - So a same-family preference, if present, is small next to the gaps
     between reviewers.
+  - **Status: the judge half of this threat is largely retired.** Two
+    judges from different model families agree on almost every verdict, so
+    the defect scores are not an artifact of a single-model judge or of one
+    family favouring its own reviewers. The answer-key half is not retired
+    by this: both judges score against the same Claude-built key, and
+    agreement between them says nothing about whether that key is complete
+    or right. That rests on the verification pipeline and on the
+    independent-source check (threat 1).
 - **The judge sees what it needs to judge fairly:** each defect's statement,
   evidence and "counts if / near-misses" notes. It must decide found, partly
   found or missed against those notes, not against style.

@@ -272,7 +272,22 @@ How far it agrees with the primary judge:
 - **Per defect:** the same verdict (found, partly or missed) on 3,593 of
   3,640 reviewer-defect pairs (98.7%). For high-severity defects, 628 of 630.
 - **Comments correct:** differs by up to 5 points. For Claude Code it is 81%
-  under GPT and 86% under Opus.
+  under GPT and 86% under Opus. Its recall is the same under both.
+- **Independent-source subset** (§5, 369 defects): the same ranking under
+  both judges; default 86% under each.
+
+**Why this makes the defect numbers trustworthy.** Every review is graded by
+two independent judges from different model families, OpenAI's gpt-6-sol and
+Anthropic's Opus 5.5, and they agree on almost every verdict. A preference
+of one family for its own reviewers' phrasing, or one model's quirks in
+reading the prompt, would show up as disagreement; there is almost none, and
+the one visible gap (Claude Code's comments correct) does not touch any
+recall figure. What this establishes is the *grading*: whether a review finds
+a given defect, and whether a comment is true, is not an artifact of one
+model family. It does not by itself validate the *answer key*. Both judges
+score against the same 520 defects; the key rests on the verification
+pipeline (§5) and the independent-source check, and its limits are in
+[`THREATS-TO-VALIDITY.md`](THREATS-TO-VALIDITY.md).
 
 **Judge errors and the Opus rate limit.** The Opus judge hit the Anthropic
 organisation's rate limit for `claude-opus-5-5`. That limit is 50 requests

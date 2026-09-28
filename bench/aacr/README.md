@@ -27,7 +27,10 @@ references, with seven reviewers. The reviewers are:
 - Claude Code.
 
 Every review was scored by two defect judges (gpt-6-sol high and Claude
-Opus 5.5). Numbers, method and caveats are in
+Opus 5.5). The two come from different model families and give the same
+verdict on 98.7% of reviewer-defect pairs, so the grading does not depend on
+which family judges; the answer key rests on its own verification. Numbers,
+method and caveats are in
 [`FULL-BENCHMARK.md`](FULL-BENCHMARK.md); how to read the two metrics is in
 [`METRICS.md`](METRICS.md). Charts, all in `charts/`:
 

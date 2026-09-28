@@ -129,7 +129,9 @@ The other six reviewers find between 48% and 66% of the defects:
 - OpenCode: 48%.
 
 A second judge from a different model family (Claude Opus 5.5) gives the same
-recall for every reviewer. On the 369 defects that would be in the answer key
+recall for every reviewer. The two judges agree on 98.7% of per-defect
+verdicts, so the scores are not an artifact of one model family's grading;
+the answer key itself rests on its verification. On the 369 defects that would be in the answer key
 without any reviewer's comment, the default finds 86%. The default costs more
 per PR ($1.71 at list prices, against $0.11–$0.83 for the others).
 
