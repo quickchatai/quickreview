@@ -53,6 +53,10 @@ const LEGACY_DECLARED_SHAPE = "[private profile text removed]";
 
 const LEGACY_CONFIG_PLACEMENT = "[private profile text removed]";
 
+/**: the stack rules the three reseeded seeds carried, composed after
+ * the six (filename order: 70-, 80-, 90-). */
+const STACK_PACK_IDS = ["stack-baseline", "stack-ui", "stack-data-safety"];
+
 /** The moved pack exactly as the compiled-in registry declared it. */
 const LEGACY_PACK: PassAddendum[] = [
   { id: "migration-discipline", scope: ["pass-data-safety"], text: LEGACY_MIGRATION_DISCIPLINE },
@@ -222,8 +226,10 @@ describe("the shipped profiles", () => {
     "quickchat carries the six moved corpus rules under their original ids, in registry order",
     () => {
       const pack = loadProfileAddenda(sandbox, "quickchat");
-      expect(pack.map((a) => a.id)).toEqual(LEGACY_PACK.map((a) => a.id));
-      expect(pack.map((a) => a.scope)).toEqual(LEGACY_PACK.map((a) => a.scope));
+      expect(pack.map((a) => a.id)).toEqual([...LEGACY_PACK.map((a) => a.id), ...STACK_PACK_IDS]);
+      expect(pack.slice(0, LEGACY_PACK.length).map((a) => a.scope)).toEqual(
+        LEGACY_PACK.map((a) => a.scope),
+      );
     },
   );
 });
@@ -235,8 +241,8 @@ describe("quickchat extraction is byte-preserving", () => {
     "every moved file's composed text is byte-identical to the legacy constant",
     () => {
       const pack = loadProfileAddenda(sandbox, "quickchat");
-      expect(pack.length).toBe(LEGACY_PACK.length);
-      for (let i = 0; i < pack.length; i++) {
+      expect(pack.length).toBe(LEGACY_PACK.length + STACK_PACK_IDS.length);
+      for (let i = 0; i < LEGACY_PACK.length; i++) {
         expect(pack[i]!.text, pack[i]!.id).toBe(LEGACY_PACK[i]!.text);
       }
     },
@@ -265,8 +271,10 @@ describe("quickchat extraction is byte-preserving", () => {
   it.skipIf(!HAS_QC)(
     "building with the quickchat pack reproduces the compiled-in constants' output byte-for-byte",
     () => {
-      const expected = build([...PASS_ADDENDA, ...LEGACY_PACK]);
-      const actual = build([...PASS_ADDENDA, ...loadProfileAddenda(sandbox, "quickchat")]);
+      // The six at the tail as before;'s stack rules after them.
+      const pack = loadProfileAddenda(sandbox, "quickchat");
+      const expected = build([...PASS_ADDENDA, ...LEGACY_PACK, ...pack.slice(LEGACY_PACK.length)]);
+      const actual = build([...PASS_ADDENDA, ...pack]);
       expect([...actual.keys()].sort()).toEqual([...expected.keys()].sort());
       for (const [name, bytes] of expected) {
         expect(actual.get(name), name).toBe(bytes);

@@ -6,23 +6,25 @@ tools: read, bash, grep, glob
 
 {{include:prompts/pass-common.md}}
 
-# Lens: data safety (MySQL; assume the repo's hot tables hold millions of rows)
+# Lens: data safety (assume the repo's hot tables hold millions of rows)
 
 Apply to: migrations, backfills, bulk writes, scheduled jobs that fan out per
 row.
 
-- **Migrations** — judge by the real DDL: run `sqlmigrate` in the worktree,
-  read the `ALGORITHM`. `INSTANT` is deploy-safe; `INPLACE` still scans;
-  `COPY` write-locks through a rebuild. Check rolling-deploy ordering for DROP
+- **Migrations** — judge by the real DDL the migration produces: does the
+  operation change metadata only, scan the table, or rebuild it while holding
+  a write lock? A metadata-only change is deploy-safe; a scan still costs; a
+  rebuild write-locks for its whole run. Check rolling-deploy ordering for DROP
   COLUMN / NOT NULL adds (old pods still run the old schema mid-rollout).
-  **Migration naming/order — P1 ONLY when out of order with master**: if the
-  PR adds `<app>/migrations/<NNNN>_*.py`, verify against **master**: the
-  number must not already exist on master, and the migration's `dependencies`
-  must point at master's current head for that app — out-of-sequence with
-  master (`migrate`/`makemigrations --check` would break on merge) is P1.
-  Number overlaps with other still-open PRs are **NOT findings** — at most one
-  `nit` note listing the PR numbers (whoever merges second renumbers; that is
-  routine).
+  **Migration naming/order — P1 ONLY when out of order with the base
+  branch**: if the PR adds a migration that the repo's migration tool orders
+  (by a sequence number, a timestamp, or a declared parent), verify it against
+  the **base branch**: its number must not already exist there, and its
+  declared parent must be the base branch's current head for that migration
+  set — out of sequence with the base branch (the migration tool would break
+  on merge) is P1. Number overlaps with other still-open PRs are **NOT
+  findings** — at most one `nit` note listing the PR numbers (whoever merges
+  second renumbers; that is routine).
 - **Blast radius sizing** — judge fan-out against **production row counts, not
   the diff**. Any new/changed scheduled job, recovery cron, backfill, or
   redispatch that does work per matching row needs three things or it is P1:
@@ -39,7 +41,7 @@ row.
 ## MIGRATION GATE (when the task string flags it)
 
 Judge by the real DDL as above. The ONLY ordering blocker is being out of
-order with **master**. ESCALATE-recommend (report `gate: escalate` in your
-findings block) unless the migration is provably `INSTANT`-safe on a small
-table, in sequence with master, backfill-free, and rolling-deploy
+order with the **base branch**. ESCALATE-recommend (report `gate: escalate` in
+your findings block) unless the migration is provably metadata-only on a small
+table, in sequence with the base branch, backfill-free, and rolling-deploy
 ordering-safe — only in that narrow case report `gate: self-verdict-ok`.

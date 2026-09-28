@@ -6,7 +6,7 @@
 > {{addable_lenses}} {{base_ref}} {{base_sha}} {{merge_base}} {{migration_gate_note}}
 > {{settled_digest}} {{round_type}} {{round_no}} {{nit_scope_note}} {{nit_policy_note}}
 {{nit_policy_note}}
-> `intent_note`, `dependency_note` and `recovery_note`, plus the two memory sections `pinned_head` and
+> `intent_note`, `missing_migration_note`, `dependency_note` and `recovery_note`, plus the two memory sections `pinned_head` and
 > `context_block` (written without braces here so this doc line
 > does not render a second copy of the memory seed), and the identity
 > variables `owner_name`/`repo`/`bot_login` (same braceless
@@ -184,17 +184,7 @@ read-then-write shape (which read, which write, what interleaves between
 them); a bare worry gets NONE back. `pass-ask-human` demands that the reason
 name the question and why the answer is not in the repository. A reason that
 cannot meet its lens's bar means the lens is not added.
-
-**Add on a missing migration.** If the diff changes a Django model's fields — a
-field added, removed or altered, or a changed `db_index`/`unique`/`choices`/
-`default` — and the PR carries **no migration file at all**, add
-`pass-data-safety` and give that as your one-line reason. The daemon's plan is
-path-shaped: `pass-data-safety` is selected on `migrations/`, `.sql`,
-`backfills/` and management commands, so the one case where the **absence** of a
-file is the defect is invisible to it. This is the team's longest-running
-migration complaint; the lens carries the rule, but only you can see that it
-needs to run.
-
+{{missing_migration_note}}
 <!-- RATIFIED no-exec — do not edit; owner only -->
 **No-exec policy (absolute).** You and every pass NEVER execute project code,
 tests, builds, or package managers — no test runners, no app entrypoints, no

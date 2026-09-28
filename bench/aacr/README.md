@@ -249,8 +249,10 @@ production session can read its own pihome; the no-exec policy and
 | Delivery | inject file into a tmux session | the order on `pi -p`'s stdin (no argv size limit); one `--continue` if the session stopped before its files — only when a session exists |
 | Posting shape | `post-review.sh` keeps `path, line, side, body` | same four fields; any multi-line span is scored at its single `line` |
 
-The one bias that cannot be removed without a reseed: the frozen
-`pass-baseline` seed carries the deployed repo's pytest/Django Ninja conventions.
+The seeds carry no reviewed repo's stack since the reseed: the
+pytest/Django Ninja, Tailwind and MySQL rules `pass-baseline`, `pass-ui` and
+`pass-data-safety` used to carry ride the deployed repo's own profile addenda,
+so a bench run picks them up only when its `--config` selects that profile.
 
 ## Reading the numbers
 

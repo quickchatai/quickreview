@@ -716,6 +716,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           riskPasses: cfg.models.risk_passes,
           validateTier: cfg.models.validate_tier,
           vars: identity,
+          // ecosystem-gated addenda follow the profile's selection.
+          ecosystem: ecosystem.name,
           addenda: [
             ...PASS_ADDENDA,
             ...configAddenda(cfg.review),

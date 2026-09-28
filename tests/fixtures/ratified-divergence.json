@@ -32,14 +32,16 @@
     ],
     "agents/pass-data-safety.md": [
       "2026-08-29 owner: de-identification reseed — ratified by the owner 2026-08-30 (in-session)",
-      "2026-09-26 the owner: reseed (ratified in-session) — the stale gpt-5.6 model line removed; a lens's model comes only from config.toml [models] at agent build time (the build always rewrote this header), and the prompt headers name the config key instead of a model"
+      "2026-09-26 the owner: reseed (ratified in-session) — the stale gpt-5.6 model line removed; a lens's model comes only from config.toml [models] at agent build time (the build always rewrote this header), and the prompt headers name the config key instead of a model",
+      "2026-09-28 owner: stack-neutral reseed (ratified) — MySQL, the sqlmigrate/ALGORITHM (INSTANT/INPLACE/COPY) vocabulary, the Django migration file shape and 'master' removed; ordering is judged against the base branch for any migration tool, and the MySQL/Django rules moved to the deployment profile's addenda (90-stack-data-safety)"
     ],
     "agents/pass-prod-risk.md": [
       "2026-08-29 owner: de-identification reseed — ratified by the owner 2026-08-30 (in-session)",
       "2026-09-26 the owner: reseed (ratified in-session) — the stale gpt-5.6 model line removed; a lens's model comes only from config.toml [models] at agent build time (the build always rewrote this header), and the prompt headers name the config key instead of a model"
     ],
     "agents/pass-baseline.md": [
-      "2026-09-26 the owner: reseed (ratified in-session) — the stale gpt-5.6 model line removed; a lens's model comes only from config.toml [models] at agent build time (the build always rewrote this header), and the prompt headers name the config key instead of a model"
+      "2026-09-26 the owner: reseed (ratified in-session) — the stale gpt-5.6 model line removed; a lens's model comes only from config.toml [models] at agent build time (the build always rewrote this header), and the prompt headers name the config key instead of a model",
+      "2026-09-28 owner: stack-neutral reseed (ratified) — the pytest markers, Django Ninja/Pydantic conventions, ORM N+1 spelling, Python falsy-empty example and EXPECTED_* health-test constants removed; the lens states its rules for any stack, and those rules moved verbatim in force to the deployment profile's addenda (70-stack-baseline)"
     ],
     "agents/pass-contracts.md": [
       "2026-09-26 the owner: reseed (ratified in-session) — the stale gpt-5.6 model line removed; a lens's model comes only from config.toml [models] at agent build time (the build always rewrote this header), and the prompt headers name the config key instead of a model"
@@ -51,7 +53,8 @@
       "2026-09-26 the owner: reseed (ratified in-session) — the stale gpt-5.6 model line removed; a lens's model comes only from config.toml [models] at agent build time (the build always rewrote this header), and the prompt headers name the config key instead of a model"
     ],
     "agents/pass-ui.md": [
-      "2026-09-26 the owner: reseed (ratified in-session) — the stale gpt-5.6 model line removed; a lens's model comes only from config.toml [models] at agent build time (the build always rewrote this header), and the prompt headers name the config key instead of a model"
+      "2026-09-26 the owner: reseed (ratified in-session) — the stale gpt-5.6 model line removed; a lens's model comes only from config.toml [models] at agent build time (the build always rewrote this header), and the prompt headers name the config key instead of a model",
+      "2026-09-28 owner: stack-neutral reseed (ratified) — the Tailwind tokens, lucide icons, em/en-dash rule, translation path, queryClient.ts, react-query and localStorage spellings removed; the lens states its rules for any stack, and those rules moved to the deployment profile's addenda (80-stack-ui)"
     ],
     "agents/pass-validate.md": [
       "2026-09-26 the owner: reseed (ratified in-session) — the stale gpt-5.6 model line removed; a lens's model comes only from config.toml [models] at agent build time (the build always rewrote this header), and the prompt headers name the config key instead of a model"

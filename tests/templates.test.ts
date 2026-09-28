@@ -19,6 +19,7 @@ import {
   roundVars,
   RECHECK_TEMPLATE_FILE,
 } from "../src/templates.js";
+import { DJANGO_ECOSYSTEM, NONE_ECOSYSTEM } from "../src/ecosystem.js";
 import type { RecheckOrder } from "../src/recheck.js";
 import type { RoundOrder, RoundType } from "../src/types.js";
 
@@ -458,14 +459,41 @@ describe("shipped round templates", () => {
     // plan is path-shaped (`migrationGate` and pass-data-safety selection both
     // key on `migrations/`-ish paths), so a models change with no migration
     // file reaches no lens at all unless the session adds one.
+    // the rule names Django model fields, so the ecosystem renders it
+    // (`{{missing_migration_note}}`) — present for Django, absent for `none`.
     it(`${roundTemplateFile(rt)} tells the session to add pass-data-safety on a missing migration`, () => {
-      expect(text).toContain("**Add on a missing migration.**");
-      expect(text).toContain("no migration file at all");
-      expect(text).toContain("add\n`pass-data-safety`");
+      expect(text).toContain("\n{{missing_migration_note}}\n<!-- RATIFIED no-exec");
+      const out = renderRoundPrompt(
+        text,
+        { ...order, round_type: rt },
+        undefined,
+        undefined,
+        DJANGO_ECOSYSTEM,
+      );
+      expect(out).toContain("**Add on a missing migration.**");
+      expect(out).toContain("no migration file at all");
+      expect(out).toContain("add\n`pass-data-safety`");
       // The reason is stated, so the rule survives a reader who wants to drop it.
-      expect(text).toContain("the **absence** of a\nfile is the defect");
+      expect(out).toContain("the **absence** of a\nfile is the defect");
       // It rides the existing add protocol — it is not a second dispatch path.
-      expect(text).toContain("one-line reason");
+      expect(out).toContain("one-line reason");
+      // The paragraph keeps its old place and spacing: one blank line either side.
+      expect(out).toContain("the lens is not added.\n\n**Add on a missing migration.**");
+      expect(out).toContain("needs to run.\n\n<!-- RATIFIED no-exec");
+    });
+
+    it(`${roundTemplateFile(rt)} carries no Django migration rule for ecosystem none`, () => {
+      const out = renderRoundPrompt(
+        text,
+        { ...order, round_type: rt },
+        undefined,
+        undefined,
+        NONE_ECOSYSTEM,
+      );
+      expect(out).not.toContain("Add on a missing migration");
+      expect(out).not.toContain("Django");
+      // No stray blank line where the rule was.
+      expect(out).toContain("the lens is not added.\n\n<!-- RATIFIED no-exec");
     });
 
     // the halves of the shared pass contract that live in the round

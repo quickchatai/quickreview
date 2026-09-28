@@ -1037,9 +1037,10 @@ describe("the built pass contract (rules)", () => {
       "**Both instructions are withdrawn, and where they conflict with this section this section wins.**",
     );
     expect(text).toContain("there is no read replica");
-    // ALGORITHM undeterminable → a question asking for sqlmigrate output.
+    // Real DDL undeterminable → a question asking for the rendered DDL (the
+    // stack's spelling of it — `sqlmigrate` for Django — rides the profile).
     expect(text).toContain("cannot be read off the operation, **ask for it**");
-    expect(text).toContain("a `[question]` requesting the `sqlmigrate` output in the PR body");
+    expect(text).toContain("a `[question]` requesting the rendered DDL in the PR body");
     expect(text).toContain("Never a blocker asserting a hazard that was never rendered.");
     // Missing row count → a question, never a P1; the readable P1s survive.
     expect(text).toContain("a missing production row count is a `[question]`");
@@ -1051,7 +1052,7 @@ describe("the built pass contract (rules)", () => {
     expect(text).toContain("first tick over the accumulated backlog");
     // Migration numbering / dependencies ordering is explicitly unchanged.
     expect(text).toContain(
-      "Migration numbering and `dependencies` ordering against the base branch are untouched by this section",
+      "Migration numbering and ordering against the base branch are untouched by this section",
     );
     expect(text).toContain("## Migration numbering against the base branch is handled daemon-side");
     // Ordinary ORM operations remain the source of truth. Generated SQL is
@@ -1065,7 +1066,7 @@ describe("the built pass contract (rules)", () => {
       "Block only a concrete hazard established by the diff or supplied generated SQL",
     );
     // The addendum lands AFTER the seed rule it supersedes.
-    expect(text.indexOf("run `sqlmigrate` in the worktree")).toBeLessThan(
+    expect(text.indexOf("judge by the real DDL")).toBeLessThan(
       text.indexOf("## Data safety: no execution"),
     );
   });
@@ -1119,7 +1120,7 @@ describe("the built pass contract (rules)", () => {
     // The exec-demanding phrasings that survive in a seed must each be
     // withdrawn by a later addendum section in the SAME built body.
     const withdrawals: Record<string, string> = {
-      "run `sqlmigrate` in the worktree": "## Data safety: no execution",
+      "judge by the real DDL": "## Data safety: no execution",
       "replica query": "## Data safety: no execution",
       "must show a replica count": "## Data safety: no execution",
       "reverted proves nothing": "## Baseline: test vacuity is a STATIC read",
@@ -1791,8 +1792,14 @@ describe.skipIf(!HAS_QC_PACK)(
       ]);
       // The quickchat pack composes AFTER every generic entry, in filename
       // order — which the numeric prefixes pin to the old declaration order.
+      //'s three stack rules (moved out of the reseeded seeds) follow.
       const packIds = REGISTRY.slice(PASS_ADDENDA.length).map((a) => a.id);
-      expect(packIds).toEqual(SCOPED.map(([id]) => id).filter((id) => id !== "diff-leftovers"));
+      expect(packIds).toEqual([
+        ...SCOPED.map(([id]) => id).filter((id) => id !== "diff-leftovers"),
+        "stack-baseline",
+        "stack-ui",
+        "stack-data-safety",
+      ]);
     });
   },
 );

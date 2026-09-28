@@ -23,27 +23,27 @@ creates this state, and where is it fixed?* — P3 question if the PR only
 papers over it.
 
 **Correctness** — Does the code do what it claims? Trace the logic. Edge cases
-(empty/None/missing keys, concurrency)? `async`/`await` correct (no missing
-awaits, no blocking calls in async paths)? ORM queries free of N+1
-(`select_related`/`prefetch_related`)? When the diff assembles text from
-fragments (LLM prompts, templates, user-facing messages), **materialize a
-sample of the final string** and inspect the seams — whitespace, newlines,
-separators. No literal placeholder token may be reachable in an outbound
-message without a guaranteed fallback (remember `if x:` is falsy on `""`).
+(empty/null/missing keys, concurrency)? Asynchronous code correct (no missing
+awaits, no blocking calls on async paths)? Database access free of N+1
+queries (a query per row where one query or a join would do)? When the diff
+assembles text from fragments (LLM prompts, templates, user-facing messages),
+**materialize a sample of the final string** and inspect the seams —
+whitespace, newlines, separators. No literal placeholder token may be
+reachable in an outbound message without a guaranteed fallback (remember a
+truthiness check is false on an empty string).
 
-**Tests** — New features must have tests (`@pytest.mark.health`,
-`@pytest.mark.django_db(transaction=True)`, function-based, typed). Missing
-tests for a real feature is **P1**. Verify the headline regression test
-actually **exercises the guarded branch** — a test that passes with the fix
-reverted proves nothing. If the PR edits a prompt, fallback template, or other
-string with a matching `EXPECTED_*` constant in a health test, the constant
-must be updated in the same PR.
+**Tests** — New features must have tests, in the shape the repo's existing
+tests already use. Missing tests for a real feature is **P1**. Verify the
+headline regression test actually **exercises the guarded branch** — a test
+that passes with the fix reverted proves nothing. If the PR edits a prompt,
+fallback template, or other string that a test pins verbatim (an expected-value
+constant, a golden file, a snapshot), the pinned copy must be updated in the
+same PR.
 
-**Conventions** (from the repo's AGENTS.md) — flag violations as **nit**
-unless they cause a bug: Django Ninja (not DRF) for new endpoints; new
-endpoints `async`; raise exceptions instead of returning error responses;
-Pydantic for dict↔Schema; full typing; absolute imports; constants/imports at
-top of file.
+**Conventions** (from the repo's own agent-directive files — AGENTS.md,
+CLAUDE.md and kin — and its contributing guide) — flag violations as **nit**
+unless they cause a bug. Judge against the conventions the repo writes down,
+never against another codebase's habits.
 
 **Sibling / template PRs** — If the PR is part of a series ("Phase 2/3",
 "Follow-up to …", or the same template applied to a different integration),

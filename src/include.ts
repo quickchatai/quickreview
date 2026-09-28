@@ -30,6 +30,7 @@ import { ALLOWED_PROGRAMS } from "../extensions/bash-guard.js";
 import { MODELS_TIER_DEFAULTS, THINKING_LEVELS } from "./config.js";
 import { PASS_TIER_ORDER, tiersAtOrAbove } from "./types.js";
 import type { PassTier } from "./types.js";
+import type { EcosystemName } from "./ecosystem.js";
 
 const INCLUDE_RE = /\{\{include:([^}\r\n]+)\}\}/g;
 
@@ -321,6 +322,18 @@ export interface PassAddendum {
   scope: PassAddendumScope;
   /** Rendered verbatim into the built body, in registry order. */
   text: string;
+  /**
+   * Composed ONLY when the build's ecosystem is this one. Absent ⇒
+   * every ecosystem. The gate keeps the entry at its registry position, so a
+   * Django build composes exactly the bytes it always did, and a `none` build
+   * carries no framework rule and no claim about a pre-check that never runs.
+   */
+  ecosystem?: EcosystemName;
+}
+
+/** Does `addendum` compose into a build for `ecosystem`? */
+export function addendumInEcosystem(addendum: PassAddendum, ecosystem: EcosystemName): boolean {
+  return addendum.ecosystem === undefined || addendum.ecosystem === ecosystem;
 }
 
 /** Does `scope` bind `pass`? */
@@ -411,14 +424,17 @@ const MIGRATION_NUMBERING_ADDENDUM =
   "\n## Migration numbering against the base branch is handled daemon-side (sandbox rule)\nYour lens above classes a migration numbered out of order with the base branch as P1. **That classification is withdrawn — unless the round prompt says the migration pre-check did not run (see below).** The daemon runs a deterministic pre-check every round — it reads the base branch's migrations at the round's pinned base sha, detects a number this PR claims that the base already occupies, and posts the exact remedy (target number + the `dependencies` tuple) to the PR as a COMMENT before you were ever launched. The collision is therefore already reported and already remedied by the time you read the diff.\n\nSo: **never return a base-branch migration-number collision as a finding** — not P1, not P2, not a nit, not a question, at no confidence. It is mechanics: deterministic, one remedy, no design content, and raised as a blocker it consumed the merge gate and cost the author a full re-review round for a rename. If the round order's GATE NOTES list collisions, that is the daemon telling you they are settled, not evidence for you to re-report.\n\n**The withdrawal holds only when the daemon's check ran.** If the round prompt's GATE NOTES say the **migration pre-check did not run** this round, then nothing was checked and no remedy was posted — the class is yours again for exactly that round: check this PR's migration numbers against the base branch at the pinned base sha yourself, and report a collision as a normal finding at your lens's severity, remedy included (the free target number and the exact `dependencies` entry). Absent that note, the withdrawal stands.\n\nNothing else about migrations moves: the DDL itself, `ALGORITHM`, lock duration, backfill safety, rolling-deploy ordering, a `dependencies` list that is wrong for reasons OTHER than this collision, and a migration whose data change is unsafe are all judged exactly as before, at their existing severities.\n";
 
 // the two seed rules that demand evidence the execution policy
-// forbids gathering — `sqlmigrate` output and a replica row count. Neither is
-// obtainable (no app dependencies in the container, no read replica in the
-// app's DATABASES at all), so the pass could only drop the finding or assert
-// it unproven; the second is the likelier failure and it manufactures exactly
-// the over-blocking the team complained about. The replacement asks for what a
-// READER can establish and routes the rest to the author as a question.
+// forbids gathering — rendered DDL and a replica row count. Neither is
+// obtainable (no app dependencies in the container, no database reachable at
+// all), so the pass could only drop the finding or assert it unproven; the
+// second is the likelier failure and it manufactures exactly the over-blocking
+// the team complained about. The replacement asks for what a READER can
+// establish and routes the rest to the author as a question. made it
+// stack-neutral with the seed it supersedes: the Django spelling of the
+// evidence (`sqlmigrate`, the one `default` database) rides the deployment's
+// own profile pack.
 const DATA_SAFETY_NO_EXEC_ADDENDUM =
-  '\n## Data safety: no execution — read the migration, ask for the rest (sandbox rule, supersedes the lens above)\nYour lens above tells you to judge migrations "by the real DDL: run `sqlmigrate` in the worktree", and to require "evidence of the current production count" from a replica query. **Both instructions are withdrawn, and where they conflict with this section this section wins.** Neither is obtainable: the execution policy forbids running project code, the sandbox carries none of the app\'s dependencies, `sqlmigrate` needs a live database connection for the schema editor, and **there is no read replica** — the app defines a single `default` database and no read-only alias. A rule whose evidence cannot be gathered is not satisfied by asserting the hazard anyway.\n\n**Migration DDL** — judge from the migration file and the model diff: the operation types, `NOT NULL` adds, `DROP COLUMN`, added defaults, `RunPython`/`RunSQL` bodies, index adds on large tables, and rolling-deploy ordering (old pods still run the old schema mid-rollout). Where the real `ALGORITHM` is the deciding factor and cannot be read off the operation, **ask for it**: a `[question]` requesting the `sqlmigrate` output in the PR body. Never a blocker asserting a hazard that was never rendered.\n\n**Blast radius** — a missing production row count is a `[question]` ("state the current count of rows matching this predicate"), **never a P1**; the backfill-vs-validator rule\'s count of nonconforming source rows is the same `[question]`, not a P2. What stays P1 is what the diff alone establishes: **no per-run cap, no deterministic ordering, no kill switch, or a backfill over an unbounded predicate**. Still review the first tick over the accumulated backlog, not the steady state.\n\n**The migration gate** is judged on that same readable evidence — report `gate: self-verdict-ok` only where the operation is readably safe on a small table, backfill-free and rolling-deploy ordering-safe; otherwise report the gate exactly as the lens says and let a human settle it, with the `[question]` that would settle it attached. Migration numbering and `dependencies` ordering against the base branch are untouched by this section: pure file reading, and already handled daemon-side above.\n';
+  '\n## Data safety: no execution — read the migration, ask for the rest (sandbox rule, supersedes the lens above)\nYour lens above tells you to judge migrations "by the real DDL the migration produces" as though you could render it, and to require "evidence of the current production count" from a replica query. **Both instructions are withdrawn, and where they conflict with this section this section wins.** Neither is obtainable: the execution policy forbids running project code, the sandbox carries none of the app\'s dependencies, rendering a migration\'s DDL needs the migration tool and usually a live database connection, and **there is no read replica** — the sandbox reaches no database at all. A rule whose evidence cannot be gathered is not satisfied by asserting the hazard anyway.\n\n**Migration DDL** — judge from the migration file and the model diff: the operation types, `NOT NULL` adds, `DROP COLUMN`, added defaults, data-step and raw-SQL bodies, index adds on large tables, and rolling-deploy ordering (old pods still run the old schema mid-rollout). Where the real DDL — whether the database rebuilds, scans or locks — is the deciding factor and cannot be read off the operation, **ask for it**: a `[question]` requesting the rendered DDL in the PR body. Never a blocker asserting a hazard that was never rendered.\n\n**Blast radius** — a missing production row count is a `[question]` ("state the current count of rows matching this predicate"), **never a P1**; the backfill-vs-validator rule\'s count of nonconforming source rows is the same `[question]`, not a P2. What stays P1 is what the diff alone establishes: **no per-run cap, no deterministic ordering, no kill switch, or a backfill over an unbounded predicate**. Still review the first tick over the accumulated backlog, not the steady state.\n\n**The migration gate** is judged on that same readable evidence — report `gate: self-verdict-ok` only where the operation is readably safe on a small table, backfill-free and rolling-deploy ordering-safe; otherwise report the gate exactly as the lens says and let a human settle it, with the `[question]` that would settle it attached. Migration numbering and ordering against the base branch are untouched by this section: pure file reading.\n';
 
 // Feedback #5312 (the owner, 2026-08-27): the proof-or-block gate turned a
 // large-table fail-closed technique into a universal demand for handwritten
@@ -426,6 +442,7 @@ const DATA_SAFETY_NO_EXEC_ADDENDUM =
 // review see what they produce, but reviewability is not a reason to replace
 // them with executable RunSQL. Appended after so this narrower policy
 // explicitly supersedes its remaining gate language without touching seeds.
+// A Django rule, so it composes only into a Django build.
 const DJANGO_MIGRATION_ORM_ADDENDUM =
   "\n## Django migrations: ORM first, concrete hazards only (sandbox rule; supersedes the migration gate above)\nOrdinary Django ORM migration operations are the source of truth and are acceptable by default. You **must not demand `RunSQL` or `SeparateDatabaseAndState` merely to expose DDL, spell an `ALGORITHM`, or make review easier**. Those tools remain appropriate when the migration itself genuinely needs database-specific behavior; their presence is never the default remedy.\n\n**Generated SQL is review evidence, not executable migration source.** Read it when the PR supplies it and compare it with the ORM operations. Absence of generated SQL is not itself a finding. Ask one `[question]` for generated SQL only when its exact shape materially decides a specific safety concern that the migration and model diff cannot settle.\n\n**Block only a concrete hazard established by the diff or supplied generated SQL**: destructive or mutating DDL, a demonstrated table rebuild or locking path, unsafe `NOT NULL`/default/index behavior, an unbounded or operationally unsafe backfill, or old/new-pod incompatibility. Never turn uncertainty about the database's chosen algorithm into a blocker, and never require a fail-closed `ALGORITHM=INSTANT` clause without evidence tying fallback behavior to a concrete operational hazard in this migration. Migration numbering remains under the daemon-side COMMENT-only rule above.\n";
 
@@ -779,9 +796,21 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
   { id: "baseline-sibling-sites", scope: ["pass-baseline"], text: BASELINE_SIBLING_SITES_ADDENDUM },
   { id: "injection-fencing", scope: "all", text: INJECTION_FENCING_ADDENDUM },
   { id: "first-party-directives", scope: "all", text: FIRST_PARTY_DIRECTIVE_ADDENDUM },
-  { id: "migration-numbering", scope: ["pass-data-safety"], text: MIGRATION_NUMBERING_ADDENDUM },
+  // the withdrawal leans on the Django pre-check; a `none`
+  // build has no pre-check, so the lens keeps the class and hears no claim.
+  {
+    id: "migration-numbering",
+    scope: ["pass-data-safety"],
+    text: MIGRATION_NUMBERING_ADDENDUM,
+    ecosystem: "django",
+  },
   { id: "data-safety-no-exec", scope: ["pass-data-safety"], text: DATA_SAFETY_NO_EXEC_ADDENDUM },
-  { id: "django-migration-orm", scope: ["pass-data-safety"], text: DJANGO_MIGRATION_ORM_ADDENDUM },
+  {
+    id: "django-migration-orm",
+    scope: ["pass-data-safety"],
+    text: DJANGO_MIGRATION_ORM_ADDENDUM,
+    ecosystem: "django",
+  },
   {
     id: "baseline-test-vacuity-static",
     scope: ["pass-baseline"],
@@ -879,20 +908,25 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
   },
 ];
 
-/** The addenda binding `pass`, in composition order. */
+/** The addenda binding `pass`, in composition order. `ecosystem` defaults to
+ * Django — the shipped pre-seam behavior, as everywhere on the seam. */
 export function addendaForPass(
   pass: string,
   registry: readonly PassAddendum[] = PASS_ADDENDA,
+  ecosystem: EcosystemName = "django",
 ): PassAddendum[] {
-  return registry.filter((a) => addendumApplies(a.scope, pass));
+  return registry.filter(
+    (a) => addendumApplies(a.scope, pass) && addendumInEcosystem(a, ecosystem),
+  );
 }
 
 /** The text appended to `pass`'s BUILT body (never to its seed). */
 export function composeAddendum(
   pass: string,
   registry: readonly PassAddendum[] = PASS_ADDENDA,
+  ecosystem: EcosystemName = "django",
 ): string {
-  return addendaForPass(pass, registry)
+  return addendaForPass(pass, registry, ecosystem)
     .map((a) => a.text)
     .join("");
 }
@@ -909,6 +943,10 @@ export interface BuildAgentsOptions {
   /** Addendum registry to compose from — injected for tests; defaults to
    * `PASS_ADDENDA`. Composition order is the registry's own order. */
   addenda?: readonly PassAddendum[];
+  /** The profile's ecosystem — decides which ecosystem-gated
+   * addenda compose. Defaults to Django, the pre-seam behavior;
+   * wire.ts and the bench always pass the profile's selection. */
+  ecosystem?: EcosystemName;
   /** Per-VARIANT model-spec overrides, keyed by variant name
    * (`<pass>--<tier>`) — wins over the tier's spec; same splitting rules. */
   models?: Record<string, string>;
@@ -967,6 +1005,7 @@ export function buildAgents(
   const riskPasses = opts.riskPasses ?? MODELS_TIER_DEFAULTS.risk_passes;
   const validateTier = opts.validateTier ?? MODELS_TIER_DEFAULTS.validate_tier;
   const addenda = opts.addenda ?? PASS_ADDENDA;
+  const ecosystem = opts.ecosystem ?? "django";
   const vars = opts.vars ?? NEUTRAL_IDENTITY_VARS;
   const sources = readdirSync(srcDir)
     .filter((f) => f.startsWith("pass-") && f.endsWith(".md"))
@@ -983,7 +1022,7 @@ export function buildAgents(
     // so a `{{…}}` inside one must stay data, never a build failure.
     const body =
       expandVariables(expandIncludes(doc.body, { root, readFile: opts.readFile }), vars) +
-      composeAddendum(pass, addenda);
+      composeAddendum(pass, addenda, ecosystem);
     for (const tier of tiersForPass(pass, riskPasses, validateTier)) {
       const name = `${pass}--${tier}`;
       const spec = opts.models?.[name] ?? tiers[tier];

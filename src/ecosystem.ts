@@ -12,8 +12,9 @@
 //   * `DJANGO_ECOSYSTEM` — today's behavior, byte-for-byte: the
 //     collision pre-check (detection at the pinned base sha, remedy posted as
 //     a gated COMMENT, degraded-is-never-quieter), the `migrations/` tier
-//     gate, and the MIGRATION GATE prompt prose that used to live in
-//     src/templates.ts. The detection/rendering pure functions stay in
+//     gate, the MIGRATION GATE prompt prose that used to live in
+//     src/templates.ts, and the round templates' "add on a missing
+//     migration" rule (it names Django model fields). The detection/rendering pure functions stay in
 //     src/migrations.ts — this object is the seam over them, not a rewrite.
 //   * `NONE_ECOSYSTEM` — the clean CONFIGURED-OFF state, first-class and
 //     distinct from degradation: no pre-check runs (`{ status: "off" }` — an
@@ -132,6 +133,12 @@ export interface Ecosystem {
   /** The round prompt's entire `{{migration_gate_note}}` text. `none` renders
    * `""` — a none round carries NO migration-gate prose at all. */
   gateNote(facts: GateNoteFacts): string;
+  /** The round templates' `{{missing_migration_note}}`: the rule
+   * that tells the session to add pass-data-safety when models change with no
+   * migration. The placeholder sits on its own line after a paragraph, so
+   * the text carries its own leading blank line; `none` renders `""` — no
+   * Django rule and no stray blank line. */
+  readonly missingMigrationNote: string;
 }
 
 // ---- Django prose (moved byte-for-byte from src/templates.ts) -----
@@ -142,6 +149,19 @@ export interface Ecosystem {
 const GATE_ON =
   "MIGRATION GATE: this PR touches migrations — pass-data-safety must judge the ORM operations and any supplied generated SQL for destructive mutation, concrete rebuild/locking risk, backfill safety, and rolling-deploy ordering. Ordinary Django ORM operations are acceptable and must not be rewritten as handwritten SQL merely for reviewability. Only a concrete migration hazard blocks; missing generated SQL or an unproven database algorithm does not.";
 const GATE_OFF = "no migration gate on this round";
+
+//'s missing-migration add trigger, moved byte-for-byte out of the three
+// round templates: it is a Django rule, so a `none` round omits it.
+const MISSING_MIGRATION_NOTE =
+  "\n**Add on a missing migration.** If the diff changes a Django model's fields — a\n" +
+  "field added, removed or altered, or a changed `db_index`/`unique`/`choices`/\n" +
+  "`default` — and the PR carries **no migration file at all**, add\n" +
+  "`pass-data-safety` and give that as your one-line reason. The daemon's plan is\n" +
+  "path-shaped: `pass-data-safety` is selected on `migrations/`, `.sql`,\n" +
+  "`backfills/` and management commands, so the one case where the **absence** of a\n" +
+  "file is the defect is invisible to it. This is the team's longest-running\n" +
+  "migration complaint; the lens carries the rule, but only you can see that it\n" +
+  "needs to run.\n";
 
 /**
  * The GATE NOTES paragraph that carries's pre-check result to the
@@ -347,6 +367,7 @@ export const DJANGO_ECOSYSTEM: Ecosystem = {
   name: "django",
   migrationGate: (files) => djangoMigrationGate(files),
   preCheck: djangoPreCheck,
+  missingMigrationNote: MISSING_MIGRATION_NOTE,
   gateNote: (facts) =>
     (facts.migration_gate ? GATE_ON : GATE_OFF) +
     (facts.migration_precheck_degraded
@@ -366,6 +387,7 @@ export const NONE_ECOSYSTEM: Ecosystem = {
   migrationGate: () => false,
   preCheck: async () => ({ status: "off" }),
   gateNote: () => "",
+  missingMigrationNote: "",
 };
 
 /** The implementation a profile's `ecosystem` name selects. */

@@ -410,6 +410,7 @@ export function roundVars(
     base_sha: order.base_sha || NO_BASE,
     merge_base: order.merge_base || NO_BASE,
     migration_gate_note: ecosystem.gateNote(order),
+    missing_migration_note: ecosystem.missingMigrationNote,
     settled_digest: order.settled_digest.trim() || "(nothing settled yet)",
     nit_scope_note: renderNitScopeNote(order.review_no ?? order.round_no),
     nit_policy_note: renderNitPolicyNote(order.nit_policy),

@@ -360,6 +360,7 @@ export function buildBenchAgents(root: string, cfg: Config): number {
     riskPasses: cfg.models.risk_passes,
     validateTier: cfg.models.validate_tier,
     vars: identityVars(cfg),
+    ecosystem: loadProfileEcosystem(root, cfg.review.profile),
     addenda: [
       ...PASS_ADDENDA,
       ...configAddenda(cfg.review),
@@ -745,7 +746,9 @@ export async function reviewCase(
       GIT_TERMINAL_PROMPT: "0",
       // An `anthropic/` model arm: pi's anthropic provider reads this key. bench.sh
       // passes it by --env-file only when --config names an anthropic/ model.
-      ...(process.env.ANTHROPIC_API_KEY ? { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY } : {}),
+      ...(process.env.ANTHROPIC_API_KEY
+        ? { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY }
+        : {}),
     };
     const sessionDir = join(caseDir, "session");
     const base = [
