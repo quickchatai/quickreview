@@ -297,6 +297,73 @@ bench/aacr/bench.sh eval   --arm ocr --run ocr-1 --judge codex --rounds 3
   range gets more candidate pairs. OCR comments have no severity, so only the
   `all` variant exists for this arm; compare it with our `all` row.
 
+## The OpenCode arm (`--arm opencode`)
+
+[OpenCode](https://opencode.ai) (`opencode-ai` **1.18.33**) as a benchmarked
+reviewer. The AACR harness has no OpenCode runner — only `reviewers/ocr.py`,
+`claude.py` and `codex.py` — so `src/bench/opencode.ts` is one, built in the
+shape of the harness's **codex** runner so the rows compare:
+
+```sh
+bench/aacr/bench.sh build  --arm opencode                              # image qcr-bench-opencode
+bench/aacr/bench.sh review --arm opencode --run oc-1 --set fresh10     # one case at a time
+bench/aacr/bench.sh judge  --run oc-1 --set fresh10                    # the defect benchmark (QCR_BENCH_IMAGE)
+bench/aacr/bench.sh eval   --arm opencode --run oc-1 --set fresh10 --judge codex --rounds 3
+bench/aacr/arm.sh --prefix opencode --arm opencode --cases fresh10 --eval 3   # all of it, per set
+```
+
+| Harness `reviewers/codex.py` | Here |
+|---|---|
+| `codex exec review "/review <base>...<head> (<fragment>)"` — codex's built-in review | `opencode run --pure --auto --format json --command review "<base>...<head> (<fragment>)"` — OpenCode's **built-in** `review` command ("review changes [commit\|branch\|pr]", run as a subtask) |
+| `INLINE_FINDINGS_PROMPT_FRAGMENT`: call `report` once per finding with file / start_line / end_line / severity / summary / description | the same fragment word for word, naming the tool `findings_report` (OpenCode prefixes MCP tools with the server's name) |
+| `mcp_codex_finding_server.py` via `[mcp_servers.findings]` | the SAME script from the pinned harness, run by the harness's venv, as OpenCode's local MCP server `findings` |
+| `--sandbox workspace-write` (no network) | `--auto` (every permission not denied is approved); `webfetch`, `websearch` and directories outside the tree denied |
+| process timeout 30 × 60 + 60 s | the same (`--timeout-min`, default 30) |
+| `save_result`: MCP partial vs JSON parsed from the final text, the larger wins, a tie goes to MCP; raw text scores nothing | the same, the "final text" being the review subtask's result |
+| result file `{reviewer: "codex", review_output, token_usage, …}` | the same payload with `reviewer: "opencode"`, **plus** `review.comments` — the same notes (summary + "\n" + description), paths and line ranges in the OCR reader's shape, because `eval` scores every arm with the harness's OCR reader and the defect judge reads that key |
+
+No PR title or description reaches OpenCode (the codex runner passes none).
+Its findings carry the harness's codex severities, not our tags, so only the
+`all` variant exists — compare it with the other arms' `all` rows.
+
+- **The model**: `gpt-6-sol`, reasoning effort `medium` (`--variant medium`,
+  and the bridge forces it whatever arrives; `QCR_BENCH_OPENCODE_EFFORT`
+  changes both), through the same loopback `codex_bridge.py` as the OCR arm,
+  configured as a custom OpenAI-compatible provider (`@ai-sdk/openai-compatible`,
+  bundled in the binary). That client always streams, so the bridge replays
+  its aggregated answer as `chat.completion.chunk` SSE events (it still
+  aggregates upstream first, so an upstream 429 stays an HTTP status the
+  client retries). Reasoning is not carried across turns, as for OCR.
+- **The credential**: OpenCode never holds one. Its API key is a dummy for the
+  loopback; the token lives only in the bridge, which reads the sandbox's
+  refresh-disabled copy (`src/bench/auth.ts`, re-taken before every case) and
+  refuses any auth file whose refresh token is not the disabled sentinel — so
+  nothing in the container can refresh, rotate or write the companion's login.
+  OpenCode's own `auth.json`, sessions DB, config and caches live in a fresh
+  per-case HOME/XDG tree that is deleted with the case (tested:
+  `tests/bench-opencode.test.ts`).
+- **No phone-home, no repo-controlled config**: `--pure` (no external
+  plugins), `autoupdate: false`, `share: "disabled"`,
+  `OPENCODE_DISABLE_{PROJECT_CONFIG,AUTOUPDATE,SHARE,MODELS_FETCH,LSP_DOWNLOAD,DEFAULT_PLUGINS}`
+  — the reviewed repo's `opencode.json`/`.opencode/` cannot add providers,
+  plugins, MCP servers or permissions. Its `AGENTS.md` is still read, as
+  OpenCode (and codex) always do. Two performance-only settings: `snapshot:
+  false` (OpenCode's undo tracking hashes the whole tree every step) and no
+  file watcher.
+- **Pin and bump**: `ARG OPENCODE_VERSION` + `OPENCODE_SHA256_LINUX_X64` in the
+  Dockerfile's `opencode` stage (the platform package's binary, checked by
+  sha256). To bump: `npm pack opencode-linux-x64@<v>`, `sha256sum
+  package/bin/opencode`, set both (or pass `QCR_BENCH_OPENCODE_VERSION` and
+  `QCR_BENCH_OPENCODE_SHA256` to `bench.sh build --arm opencode`), then re-run
+  the smoke test: the `--format json` event stream and the built-in `review`
+  command are not stable contracts.
+- **Per case**: `cases/<id>/` holds `opencode-argv.json`, `opencode-config.json`,
+  `opencode-events.jsonl` (the event stream), `opencode-result.txt` (the
+  subtask's final text), `opencode.log`, `case-summary.json` (status, comment
+  source, MCP vs text counts, the bridge's tokens, the parent session's tool
+  calls); `bridge.jsonl` one row per model call, including the effort OpenCode
+  asked for.
+
 ## The what-if lever scorer (`whatif`)
 
 How would the score move if the reviewer POSTED more of what its lenses found?
@@ -425,7 +492,7 @@ Search → File Search → add it to the excluded folders, or
 | `sets/*.json` | the committed case sets |
 | `judge_shim.py` | OpenAI-compatible judge endpoint over `pi -p` |
 | `eval_shards.py` | splits one eval by PR across harness processes and merges them with the harness's own summary functions |
-| `codex_bridge.py` | the OCR arm's loopback Chat Completions/Responses → Codex backend bridge |
-| `src/bench/` | prefetch, review runner, result conversion, report, the OCR arm (`ocr.ts`) (`tests/bench-aacr.test.ts`); the what-if scorer `whatif.ts` + `whatifrun.ts` (`tests/bench-whatif.test.ts`) |
+| `codex_bridge.py` | the OCR and OpenCode arms' loopback Chat Completions/Responses → Codex backend bridge |
+| `src/bench/` | prefetch, review runner, result conversion, report, the OCR arm (`ocr.ts`) (`tests/bench-aacr.test.ts`); the OpenCode arm (`opencode.ts`, `tests/bench-opencode.test.ts`); the what-if scorer `whatif.ts` + `whatifrun.ts` (`tests/bench-whatif.test.ts`) |
 | `whatif/<id>/` | per what-if run: `source/` (the copied run), `results/<variant>/`, `extract/`, `eval/`, `report.md`, `whatif-summary.json` |
 | `runs/<id>/` | per run: `run.json`, `cases/<id>/` (system prompt, round order, files, pi event stream, the session's four files, `case-summary.json`), `results/<variant>/` (the harness's input + metrics), `eval/`, `report.md`, `sandbox-commands.log` (every docker invocation, for reproduction) |
