@@ -634,6 +634,8 @@ bench/aacr/bench.sh review --arm claude --run claude-1 --set fresh10    # one ca
 bench/aacr/bench.sh judge  --arm claude --run claude-1 --set fresh10
 bench/aacr/bench.sh eval   --arm claude --run claude-1 --set fresh10 --judge codex --rounds 3
 bench/aacr/arm.sh --prefix claude --arm claude --cases fresh10 --eval 3  # all of it
+# a run reviewed before the view below existed: add it (no model call, --network none)
+bench/aacr/bench.sh claude-rebuild --arm claude --run claude-1 --set fresh10
 ```
 
 - **The harness runs it.** `claude_driver.py` imports the pinned harness's own
@@ -643,8 +645,49 @@ bench/aacr/arm.sh --prefix claude --arm claude --cases fresh10 --eval 3  # all o
   server> --allowed-tools mcp__findings__report --append-system-prompt
   <findings requirement> --settings <StopFailure hook>`, 30 min (+60 s). The
   argv it ran is checked against that shape per case (`claude-argv.json`,
-  `argv_ok`); the result file is scored by the harness's Claude reader
-  (`--reviewer claude`). `/code-review` is Claude Code's built-in skill.
+  `argv_ok`). `/code-review` is Claude Code's built-in skill.
+- **Why a prose parser, and what the eval scores.** In 2.1.283 `/code-review`
+  is a built-in LOCAL command (`"local_command": "code_review"`,
+  `num_turns: 0`): it runs its own review and never sees the harness's
+  `--append-system-prompt` findings requirement or its findings MCP tool. So
+  `save_result` finds no MCP partial and no structured stdout and stores the
+  answer as raw text ("Fallback level 2 (WORST CASE)") — which the harness's
+  Claude reader scores as ZERO comments, however good the review. Every
+  result file therefore also carries an OCR-shaped `review.comments` view
+  (`path`, `start_line`, `end_line`, `content`), exactly as the Codex and
+  OpenCode arms' do, and `eval` scores the arm with the harness's OCR reader
+  (`--reviewer ocr`) — the defect judge reads the same view. The harness's
+  payload, `review_output` included, is never touched; `bench.claude_view`
+  says where the view came from, `bench.claude_prose_parsed` counts what the
+  parser did.
+  - **Structured findings** (the few cases where the model called the
+    findings tool anyway): the view is the harness's own Claude reading of
+    them; `claude_driver.py --check-results` proves, with the harness's two
+    readers, that the OCR reader sees exactly the same comments.
+  - **Raw text:** `src/bench/claudeprose.ts` reads the markdown,
+    deterministically. A finding is a top-level list item (`- `, `1. `) whose
+    FIRST line carries a `path:LINE` / `path:A-B` location — in a code span,
+    in bold, after a bold title, or bare — or a paragraph that opens with one
+    (then the un-located bullets right under it are its body), or an item
+    starting `Line N` under a lead-in that names exactly one file. The item's
+    first location is its location (later `(and line 352)` references are
+    body text); its text is the whole item, markdown kept. Paths lose the
+    sandbox's `/work/repo/<owner>__<name>/` prefix and `./`, and resolve to
+    the PR's changed files (exact, `a/`/`b/`, or a unique suffix — `mongo.go`
+    → `pkg/…/mongo.go`); an unmatched path is kept as written and counted.
+  - **Not counted:** items that name a file but no line; items in a list the
+    review itself calls not-findings ("What I checked:", "chose not to
+    report:", "neither is a bug:", "To fix it:", "they are fine:", or any
+    un-labelled list in a review that opens "I found no bugs" — a lead-in
+    that counts issues wins); a recap list whose every location repeats an
+    earlier finding ("Summary:"). Two findings on the same line in one list
+    both count. Twelve real outputs are its golden tests
+    (`tests/fixtures/claude-prose/`, `tests/bench-claude-prose.test.ts`).
+  - **What it does not do:** judge, merge or rewrite a finding — it only reads
+    where the review put it. A finding written with no line at all scores
+    nothing, as it would through the harness. The view is built at review
+    time; `claude-rebuild` rebuilds it for a finished run, and `eval` refuses
+    a Claude Code run whose result files have no view.
 - **What differs:** the repo is the `prepareTree` checkout at
   `/work/repo/<owner>__<name>` (no CLAUDE.md above it); the credential is
   Claude Code's own and the model its default for it (the harness pins one

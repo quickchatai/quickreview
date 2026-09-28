@@ -190,8 +190,10 @@ function readJson(path: string): unknown {
 export function reviewForJudge(runDir: string, instanceId: string): ReviewForJudge {
   const scored = readJson(join(runDir, "results", "all", `${instanceId}.json`)) as
     { review?: { comments?: unknown[] } } | undefined;
-  // The Claude Code arm's file is the harness's Claude shape (`review_output`),
-  // read into the same rows its scorer would score (src/bench/claudeshape.ts).
+  // The Claude Code arm's file carries the same OCR-shaped view (claudecode.ts
+  // `withClaudeView`: the harness's findings, or the prose parser's); one
+  // written before that view existed is read the harness's Claude reader's way
+  // (src/bench/claudeshape.ts) — zero rows for a raw-text answer.
   const rows: unknown[] = scored?.review?.comments ?? claudeRowsForJudge(scored) ?? [];
   const comments: ReviewComment[] = [];
   for (const row of rows) {

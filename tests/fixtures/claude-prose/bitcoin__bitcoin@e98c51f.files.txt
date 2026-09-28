@@ -1,0 +1,5 @@
+doc/tor.md
+src/init.cpp
+src/torcontrol.cpp
+src/torcontrol.h
+test/functional/feature_proxy.py

@@ -1,0 +1,13 @@
+codex-rs/core/src/client.rs
+codex-rs/core/src/client_common.rs
+codex-rs/core/src/codex.rs
+codex-rs/core/src/config.rs
+codex-rs/core/src/config_profile.rs
+codex-rs/core/tests/suite/client.rs
+codex-rs/core/tests/suite/prompt_caching.rs
+codex-rs/exec/src/lib.rs
+codex-rs/mcp-server/src/codex_message_processor.rs
+codex-rs/mcp-server/src/codex_tool_config.rs
+codex-rs/protocol/src/mcp_protocol.rs
+codex-rs/protocol/src/models.rs
+codex-rs/tui/src/lib.rs

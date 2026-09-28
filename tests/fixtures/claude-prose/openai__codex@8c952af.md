@@ -1,0 +1,5 @@
+I found two problems in this diff, both in how item ids are handled in `protocol/src/models.rs`. I found them by reading the code and did not run any tests.
+
+1. **Reasoning items are dropped when a session resumes (confirmed).** `codex-rs/protocol/src/models.rs:51` — the `id` on a reasoning item is no longer written out but is still required when read back, because it lacks `#[serde(default)]`. The rollout file is saved without the id, so parsing it on resume fails with "missing field `id`" (`core/src/rollout/recorder.rs:189`). Each reasoning item is then logged as a warning and thrown away, so resumed sessions silently lose their reasoning history. The fix is to use `#[serde(default, skip_serializing)]`.
+
+2. **Item ids are removed everywhere, not just from API requests (plausible).** `codex-rs/protocol/src/models.rs:44` — marking every id as never-written also strips it from rollout files, the conversation history sent over MCP, and the protocol stream. Anything that matches items by id after a resume, or reads that history, gets items with no id. A narrower approach is to remove ids only when building the outgoing request.

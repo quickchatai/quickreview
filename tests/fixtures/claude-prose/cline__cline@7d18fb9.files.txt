@@ -1,0 +1,4 @@
+.changeset/shiny-dingos-float.md
+package.json
+src/integrations/editor/DiffViewProvider.ts
+src/integrations/misc/extract-text.ts

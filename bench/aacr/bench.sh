@@ -65,7 +65,11 @@
 #              only in image qcr-bench-claude and runs only in its review container.
 #              `review` runs the AACR harness's own reviewers/claude.py (`claude -p
 #              '/code-review <base>...<head> '` …, one case at a time, --timeout-min 30);
-#              `eval` scores `all` with the harness's Claude reader. Its credential is its
+#              `eval` scores `all` with the harness's OCR reader on each result file's
+#              `review` view (2.1.283's /code-review ignores the harness's findings tool, so
+#              the view is read out of its markdown by src/bench/claudeprose.ts).
+#              `claude-rebuild --run ID [--set S] [--only ids]` rebuilds that view for a
+#              finished run (--network none, no model call). Its credential is its
 #              OWN: bench/aacr/claude.env (gitignored; QCR_BENCH_CLAUDE_ENV=FILE overrides)
 #              holding CLAUDE_CODE_OAUTH_TOKEN=… (`claude setup-token`) or ANTHROPIC_API_KEY=…,
 #              passed with --env-file — never the host's login, never on an argv.
@@ -398,6 +402,21 @@ case "$cmd" in
     docker run "${HARDEN[@]}" --network none -e "BENCH_ARM=$ARM" --mount "type=bind,src=$d,dst=/bench-out" \
       "$IMAGE" report "$SET" ${ONLY_ARGS[@]+"${ONLY_ARGS[@]}"}
     echo "report: $d/report.md"
+    ;;
+
+  claude-rebuild)
+    # The Claude Code arm: rebuild each result file's OCR-shaped view from what
+    # the harness stored (the prose parser for raw text) — no model call, no
+    # network, the prefetched store read-only for the PR's changed files.
+    [[ "$ARM" == claude ]] || die "claude-rebuild belongs to the Claude Code arm — pass --arm claude"
+    need_image
+    d="$(run_dir)"
+    args=("${HARDEN[@]}" --network none
+      --mount "type=volume,src=$REPOS_VOLUME,dst=/repos,readonly"
+      --mount "type=bind,src=$d,dst=/bench-out"
+      "$IMAGE" claude-rebuild "$SET" ${ONLY_ARGS[@]+"${ONLY_ARGS[@]}"})
+    record "${args[@]}"
+    docker run "${args[@]}"
     ;;
 
   results)

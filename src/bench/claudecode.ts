@@ -20,8 +20,8 @@
 //     --append-system-prompt <the findings-reporting requirement>
 //     --settings <a temp file holding the StopFailure hook>
 //   cwd = the repo, timeout 30 min → process timeout 30×60+60 s, and the
-//   result file `save_result` writes — scored by the harness's
-//   `build_target_comments_from_claude` untouched (`--reviewer claude`).
+//   result file `save_result` writes, kept untouched (the view below is added
+//   beside it, and scored with the harness's OCR reader).
 // `/code-review` is Claude Code's BUILT-IN skill (2.1.283 ships it; no plugin
 // is installed), exactly as the harness assumes.
 //
@@ -36,13 +36,29 @@
 //     its ANTHROPIC_MODEL gateway triple; we record which model ran instead);
 //   - every case gets a FRESH, empty HOME/CLAUDE_CONFIG_DIR on tmpfs, so no
 //     session, memory or settings carry from one case to the next.
+//
+// The result file gets one thing the harness does not write (its payload stays
+// untouched, `review_output` included): `review` — an OCR-shaped view
+// (`review.comments[].path/start_line/end_line/content`) that the eval scores
+// with the harness's OCR reader and the defect judge reads, exactly as for the
+// Codex and OpenCode arms — plus a `bench` marker saying where it came from.
+// Why it is needed: Claude Code 2.1.283's `/code-review` is a built-in LOCAL
+// command that never sees the harness's findings prompt or its findings MCP
+// tool, so `save_result` stores its answer as RAW TEXT, which the harness's
+// Claude reader scores as zero. The view is built (`withClaudeView`) from the
+// harness's structured findings when it got any, and otherwise by reading the
+// stored text with the documented prose parser (src/bench/claudeprose.ts). It
+// is built at review time, and `claude-rebuild` rebuilds it for a finished run
+// without re-reviewing anything.
 
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { safeId, selectCases, type BenchCase, type CaseSet, type PrefetchMeta } from "./aacr.js";
 import { run } from "./exec.js";
 import { AACR_REPORT_PREAMBLE, roundMetrics } from "./report.js";
-import { claudeScoredFindings } from "./claudeshape.js";
+import { claudeRowsForJudge, claudeScoredFindings } from "./claudeshape.js";
+import { parseClaudeProse, PROSE_PARSER_VERSION } from "./claudeprose.js";
 import { prepareTree } from "./runner.js";
 
 export { claudeRowsForJudge, claudeScoredFindings } from "./claudeshape.js";
@@ -180,6 +196,157 @@ export function claudeRepoPath(workRoot: string, repo: string): string {
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
+const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+
+// ---- the OCR-shaped view ----------------------------------------------------------
+
+export type ClaudeViewSource = "harness" | "prose";
+
+/** What the prose parser did for one case (the result file's
+ * `bench.claude_prose_parsed`). */
+export interface ClaudeProseMarker {
+  parser_version: number;
+  findings: number;
+  /** Findings whose path resolved to one of the PR's changed files… */
+  paths_matched: number;
+  /** …did not (kept as written; the harness only matches same-file anyway)… */
+  paths_unmatched: number;
+  /** …or could not be checked (no changed-file list for the case). */
+  paths_unchecked: number;
+  /** How many changed files the paths were checked against; null = none known. */
+  changed_files: number | null;
+  skipped: { non_finding: number; recap: number; unlocated: number };
+}
+
+/**
+ * The result file with its OCR-shaped `review` view (and `bench` marker)
+ * rebuilt; the harness's own payload — `review_output` included — is kept as
+ * it is. The view comes from the harness's structured findings when
+ * `review_output` is a list (even an empty one: the harness then got an
+ * answer through its findings tool, and that answer is the one it scores),
+ * read exactly as its Claude reader reads them, so the OCR reader scores the
+ * same comments. Otherwise (`review_output` is the raw-text fallback, or
+ * missing) the stored text is read by the prose parser (claudeprose.ts), with
+ * paths resolved against the PR's changed files when they are known. Pure and
+ * idempotent: a rebuild replaces the previous view and marker.
+ */
+export function withClaudeView(
+  result: Obj,
+  changedFiles: readonly string[] | null,
+  /** The text to parse when `review_output` holds none (the case's review.md). */
+  fallbackText?: string,
+): Obj {
+  const ro = result["review_output"];
+  const tu = isObj(result["token_usage"]) ? result["token_usage"] : {};
+  const summary = {
+    input_tokens: num(tu["input_tokens"]),
+    output_tokens: num(tu["output_tokens"]),
+    total_tokens: num(tu["input_tokens"]) + num(tu["output_tokens"]),
+  };
+  const bench: Obj = { ...(isObj(result["bench"]) ? result["bench"] : {}) };
+  delete bench["claude_prose_parsed"];
+  if (Array.isArray(ro)) {
+    const comments = claudeRowsForJudge(result) ?? [];
+    return {
+      ...result,
+      review: { comments, summary },
+      bench: { ...bench, claude_view: { source: "harness", comments: comments.length } },
+    };
+  }
+  const text = typeof ro === "string" && ro.trim() ? ro : (fallbackText ?? "");
+  const parsed = parseClaudeProse(text, changedFiles);
+  const comments = parsed.findings.map((f) => ({
+    path: f.path,
+    start_line: f.start_line,
+    end_line: f.end_line,
+    content: f.text,
+  }));
+  const marker: ClaudeProseMarker = {
+    parser_version: PROSE_PARSER_VERSION,
+    findings: comments.length,
+    paths_matched: parsed.findings.filter((f) => f.matched === true).length,
+    paths_unmatched: parsed.findings.filter((f) => f.matched === false).length,
+    paths_unchecked: parsed.findings.filter((f) => f.matched === null).length,
+    changed_files: changedFiles ? changedFiles.length : null,
+    skipped: parsed.skipped,
+  };
+  return {
+    ...result,
+    review: { comments, summary },
+    bench: {
+      ...bench,
+      claude_view: { source: "prose", comments: comments.length },
+      claude_prose_parsed: marker,
+    },
+  };
+}
+
+/** The view's comment count and source, read back from a result file; null
+ * when the file has no view. */
+export function claudeViewOf(
+  result: unknown,
+): { comments: number; source: ClaudeViewSource | null } | null {
+  if (!isObj(result) || !isObj(result["review"])) return null;
+  const c = result["review"]["comments"];
+  const b = isObj(result["bench"]) ? result["bench"] : {};
+  const v = isObj(b["claude_view"]) ? b["claude_view"] : {};
+  const source = v["source"] === "harness" || v["source"] === "prose" ? v["source"] : null;
+  return { comments: Array.isArray(c) ? c.length : 0, source };
+}
+
+const GIT_ENV: NodeJS.ProcessEnv = {
+  PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+  HOME: tmpdir(),
+  GIT_TERMINAL_PROMPT: "0",
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_CONFIG_SYSTEM: "/dev/null",
+  GIT_CONFIG_GLOBAL: "/dev/null",
+};
+
+/** The PR's changed files (`diff --name-only -M <merge base> <head>`, the new
+ * name of a rename) in a checkout that has both commits; null on any failure —
+ * checking paths is best-effort and never fails a case. */
+export async function changedFilesIn(
+  tree: string,
+  mergeBase: string,
+  head: string,
+): Promise<string[] | null> {
+  const r = await run(
+    "git",
+    ["-C", tree, "diff", "-z", "--name-only", "-M", "--no-ext-diff", mergeBase, head],
+    { env: GIT_ENV, timeoutMs: 5 * 60_000 },
+  );
+  if (r.code !== 0) return null;
+  return r.stdout.split("\0").filter(Boolean);
+}
+
+/** The same, from a prefetched store (mounted read-only): a throwaway repo
+ * borrows its objects through `alternates`, as prepareTree does, so the store
+ * is never written and never has to pass git's ownership check. */
+export async function changedFilesFromStore(
+  store: string,
+  meta: PrefetchMeta,
+): Promise<string[] | null> {
+  if (!existsSync(join(store, "objects"))) return null;
+  const tmp = mkdtempSync(join(tmpdir(), "claude-files-"));
+  try {
+    const init = await run("git", ["init", "--quiet", tmp], { env: GIT_ENV });
+    if (init.code !== 0) return null;
+    writeFileSync(join(tmp, ".git", "objects", "info", "alternates"), `${join(store, "objects")}\n`);
+    return await changedFilesIn(tmp, meta.merge_base, meta.head_commit);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+/** A changed-file list saved as text, one path per line (`files.txt`). */
+export function readFilesList(file: string): string[] | null {
+  if (!existsSync(file)) return null;
+  return readFileSync(file, "utf8")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+}
 
 // ---- one case ---------------------------------------------------------------------
 
@@ -215,8 +382,13 @@ export interface ClaudeCaseSummary {
   fingerprint: ClaudeFingerprint;
   exit_code: number | null;
   duration_seconds: number;
-  /** Findings the harness's scorer reads from the result file. */
+  /** Comments the eval scores: the result file's OCR-shaped `review` view. */
   comments: number;
+  /** Findings the harness's own Claude reader sees (0 on a raw-text result). */
+  harness_comments?: number;
+  /** Where the view came from: the harness's structured findings, or the
+   * prose parser over the stored text. */
+  view_source?: ClaudeViewSource | null;
   /** `mcp_stream` | `stdout_fallback` — which channel save_result kept. */
   review_output_source: string | null;
   /** True when review_output is the harness's raw-text fallback (scores 0). */
@@ -236,8 +408,6 @@ export interface ClaudeCaseSummary {
   warnings: string[];
 }
 
-const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
-
 /** Status + what ran, from the result file save_result wrote. */
 export function summarizeClaudeResult(a: {
   result: unknown;
@@ -250,6 +420,8 @@ export function summarizeClaudeResult(a: {
   | "status"
   | "exit_code"
   | "comments"
+  | "harness_comments"
+  | "view_source"
   | "review_output_source"
   | "raw_text_fallback"
   | "models"
@@ -304,10 +476,15 @@ export function summarizeClaudeResult(a: {
           ? "auth-failed"
           : "no-model-call"
         : "ok";
+  const harness = claudeScoredFindings(r).length;
+  const view = claudeViewOf(r);
   return {
     status: finalStatus,
     exit_code: exit,
-    comments: claudeScoredFindings(r).length,
+    // what the eval scores: the view when the file has one
+    comments: view ? view.comments : harness,
+    harness_comments: harness,
+    view_source: view ? view.source : null,
     review_output_source:
       r && typeof r["review_output_source"] === "string" ? r["review_output_source"] : null,
     raw_text_fallback: !!r && typeof r["review_output"] === "string",
@@ -479,13 +656,19 @@ export async function reviewCaseClaude(
         ? ["the driver wrote no argv"]
         : checkHarnessArgv(argv, { repo: tree, base: c.base_commit, head: c.head_commit });
     summary.argv_ok = summary.argv_mismatches.length === 0;
-    const result = readJson(resultFile);
+    let result = readJson(resultFile);
     const stdout = existsSync(stdoutFile) ? readFileSync(stdoutFile, "utf8") : "";
+    const finalText = claudeFinalText(stdout);
+    if (isObj(result)) {
+      // The OCR-shaped view the eval scores, beside the harness's payload.
+      const files = await changedFilesIn(tree, meta.merge_base, c.head_commit);
+      result = withClaudeView(result, files, finalText);
+      writeFileSync(resultFile, JSON.stringify(result, null, 2) + "\n");
+    }
     Object.assign(
       summary,
       summarizeClaudeResult({ result, driverExit: r.code, driverTimedOut: r.timedOut, stdout }),
     );
-    const finalText = claudeFinalText(stdout);
     if (finalText.trim()) writeFileSync(join(caseDir, "review.md"), finalText.trim() + "\n");
     if (summary.status !== "ok") {
       const stderr = isObj(result) && typeof result["stderr"] === "string" ? result["stderr"] : "";
@@ -522,9 +705,9 @@ export async function reviewCaseClaude(
   return summary;
 }
 
-/** save_result's shape for a case that produced nothing. */
+/** save_result's shape for a case that produced nothing (with its empty view). */
 export function emptyClaudeResult(c: BenchCase, error: string): Obj {
-  return {
+  return withClaudeView({
     instance_id: c.instance_id,
     repo: c.repo,
     base_commit: c.base_commit,
@@ -538,7 +721,7 @@ export function emptyClaudeResult(c: BenchCase, error: string): Obj {
     review_output_source: "stdout_fallback",
     review_output: [],
     stderr: error,
-  };
+  }, null);
 }
 
 /** A case with no prefetched store: failed WITH an empty result file. */
@@ -583,6 +766,84 @@ export function readClaudeSummary(outDir: string, c: BenchCase): ClaudeCaseSumma
   const s = readJson(join(outDir, "cases", safeId(c.instance_id), "case-summary.json")) as
     Partial<ClaudeCaseSummary> | undefined;
   return s?.arm === "claude" ? (s as ClaudeCaseSummary) : null;
+}
+
+// ---- rebuilding the view of a finished run ---------------------------------------
+
+export interface ClaudeRebuildCommand {
+  set: CaseSet;
+  only?: string[];
+  outDir: string;
+  /** Where each case's changed files come from: a directory of
+   * `<safe id>/files.txt` lists, checked first… */
+  filesDir?: string;
+  /** …then the prefetched store (`<store>/<safe id>` + its bench-meta.json). */
+  store?: string;
+  readMeta?: (c: BenchCase) => PrefetchMeta;
+  log: (line: string) => void;
+}
+
+export interface ClaudeRebuildCase {
+  instance_id: string;
+  source: ClaudeViewSource | null;
+  comments: number;
+  prose?: ClaudeProseMarker;
+}
+
+/** `cli.js claude-rebuild`: rebuild every case's `review` view (and `bench`
+ * marker) from the result file the harness wrote — no model, no network, no
+ * re-review; the harness's payload stays as it is. Updates each
+ * case-summary.json's counts to match. A case with no result file is
+ * reported and skipped. */
+export async function claudeRebuildRun(o: ClaudeRebuildCommand): Promise<ClaudeRebuildCase[]> {
+  const out: ClaudeRebuildCase[] = [];
+  let missing = 0;
+  for (const c of selectCases(o.set, o.only)) {
+    const safe = safeId(c.instance_id);
+    const resultFile = join(o.outDir, "results", "all", `${safe}.json`);
+    const result = readJson(resultFile);
+    if (!isObj(result)) {
+      missing++;
+      o.log(`claude-rebuild: ${c.instance_id} — no result file, skipped`);
+      continue;
+    }
+    let files: string[] | null = o.filesDir ? readFilesList(join(o.filesDir, safe, "files.txt")) : null;
+    if (!files && o.store && o.readMeta) {
+      try {
+        files = await changedFilesFromStore(join(o.store, safe), o.readMeta(c));
+      } catch {
+        files = null;
+      }
+    }
+    const md = join(o.outDir, "cases", safe, "review.md");
+    const next = withClaudeView(result, files, existsSync(md) ? readFileSync(md, "utf8") : undefined);
+    writeFileSync(resultFile, JSON.stringify(next, null, 2) + "\n");
+    const view = claudeViewOf(next)!;
+    const bench = next["bench"] as Obj;
+    const prose = bench["claude_prose_parsed"] as ClaudeProseMarker | undefined;
+    const summary = readClaudeSummary(o.outDir, c);
+    if (summary) {
+      summary.comments = view.comments;
+      summary.harness_comments = claudeScoredFindings(next).length;
+      summary.view_source = view.source;
+      writeClaudeSummary(o.outDir, summary);
+    }
+    out.push({ instance_id: c.instance_id, source: view.source, comments: view.comments, prose });
+    o.log(
+      `claude-rebuild: ${c.instance_id} — ${view.comments} comment(s) from the ${view.source === "prose" ? "prose parser" : "harness's findings"}` +
+        (prose
+          ? prose.changed_files === null
+            ? " (paths unchecked: no changed-file list)"
+            : `, paths ${prose.paths_matched}/${prose.findings} matched to ${prose.changed_files} changed file(s)`
+          : ""),
+    );
+  }
+  const n = out.reduce((a, x) => a + x.comments, 0);
+  o.log(
+    `claude-rebuild: ${out.length} case(s) rebuilt (${out.filter((x) => x.source === "prose").length} from prose), ${n} comment(s)` +
+      (missing ? `; ${missing} case(s) had no result file` : ""),
+  );
+  return out;
 }
 
 // ---- the whole run -------------------------------------------------------------
@@ -735,11 +996,11 @@ export function renderClaudeReport(set: CaseSet, outDir: string, cases: BenchCas
   L.push(`- Judge: ${judge[0] ?? ""}`);
   for (const w of judge.slice(1)) L.push(`  ${w}`);
   L.push("");
-  L.push("## Scores (the AACR harness, Claude reader)");
+  L.push("## Scores (the AACR harness, OCR reader on the `review.comments` view)");
   L.push("");
   L.push("| Round | Evaluated | Generated | Matched | Precision | Recall | F1 | Line P | Line R |");
   L.push("|---|---|---|---|---|---|---|---|---|");
-  const { rounds, average } = roundMetrics(join(outDir, "results", "all"), "claude");
+  const { rounds, average } = roundMetrics(join(outDir, "results", "all"), "ocr");
   const row = (label: string, s: Record<string, number>) =>
     `| ${label} | ${fmt(s["evaluated_instances"])}/${cases.length} | ${fmt(s["generated_notes"])} | ${fmt(s["matched_semantic_notes"])}/${fmt(s["expected_notes"])} | ${s["semantic_match_rate"]} | ${s["semantic_recall_rate"]} | ${s["semantic_f1"]} | ${s["line_match_rate"]} | ${s["line_recall_rate"]} |`;
   if (average) L.push(row("**average**", average));
@@ -761,7 +1022,7 @@ export function renderClaudeReport(set: CaseSet, outDir: string, cases: BenchCas
     usd += s.cost_usd ?? 0;
     const t = s.tokens;
     L.push(
-      `| ${c.instance_id} | ${c.references} | ${s.status}${s.argv_ok ? "" : " (argv drift)"} | ${s.comments}${s.raw_text_fallback ? " (raw text)" : ""} | ${s.review_output_source ?? "?"} | ${s.model ?? "?"} | ${s.num_turns ?? "?"} | ${(s.duration_seconds / 60).toFixed(1)} | ${t ? `${t.input} (${t.cache_read}/${t.cache_creation}) / ${t.output}` : "?"} | ${s.cost_usd !== null ? s.cost_usd.toFixed(2) : "?"} |`,
+      `| ${c.instance_id} | ${c.references} | ${s.status}${s.argv_ok ? "" : " (argv drift)"} | ${s.comments}${s.view_source === "prose" ? " (prose)" : s.raw_text_fallback ? " (raw text)" : ""} | ${s.review_output_source ?? "?"} | ${s.model ?? "?"} | ${s.num_turns ?? "?"} | ${(s.duration_seconds / 60).toFixed(1)} | ${t ? `${t.input} (${t.cache_read}/${t.cache_creation}) / ${t.output}` : "?"} | ${s.cost_usd !== null ? s.cost_usd.toFixed(2) : "?"} |`,
     );
   }
   L.push("");
@@ -782,7 +1043,7 @@ export function renderClaudeReport(set: CaseSet, outDir: string, cases: BenchCas
   }
   L.push("");
   L.push(
-    "Reading the numbers: Claude Code's findings carry no severity tag, so only the `all` variant exists for this arm — compare it with the quickreviewd arm's `all` row. A finding is scored at its single `line` (the harness's Claude reader). A case whose `/code-review` output was neither reported through the findings tool nor parseable as JSON is stored as raw text and scores zero findings, exactly as in the harness.",
+    "Reading the numbers: Claude Code's findings carry no severity tag, so only the `all` variant exists for this arm — compare it with the quickreviewd arm's `all` row. Claude Code 2.1.283's `/code-review` is a built-in local command that ignores the harness's findings prompt and findings tool, so the harness stores its answer as raw text, which the harness's own Claude reader scores as zero. Each result file therefore carries an OCR-shaped `review` view, scored with the harness's OCR reader: built from the harness's structured findings when it got any (identical to what its Claude reader sees), otherwise read out of the stored markdown by a deterministic prose parser (src/bench/claudeprose.ts) — every top-level list item (or paragraph) that opens with a `path:line` location, outside lists the review itself says are not findings. `(prose)` in the Findings column marks those cases. Items that name a file but no line are not counted.",
   );
   return L.join("\n") + "\n";
 }
