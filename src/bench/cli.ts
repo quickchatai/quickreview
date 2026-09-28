@@ -712,9 +712,12 @@ async function main(): Promise<number> {
       const res = await fetch(`${bridgeUrl}/health`, { signal: AbortSignal.timeout(10_000) });
       health = (await res.json()) as Record<string, unknown>;
     } catch (err) {
-      throw new Error(`opencode-review: the Codex bridge at ${bridgeUrl} is not answering (${String(err)})`, {
-        cause: err,
-      });
+      throw new Error(
+        `opencode-review: the Codex bridge at ${bridgeUrl} is not answering (${String(err)})`,
+        {
+          cause: err,
+        },
+      );
     }
     const model = typeof health["model"] === "string" ? health["model"] : "";
     if (!model) throw new Error("opencode-review: the bridge reported no model");
@@ -786,8 +789,12 @@ async function main(): Promise<number> {
     // never spawned: nothing here launches pi outside a benchmarked reviewer.
     let piVersion = "unknown";
     try {
-      const pkg = f.get("--pi-package") ?? "/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/package.json";
-      piVersion = String((JSON.parse(readFileSync(pkg, "utf8")) as { version?: unknown }).version ?? "unknown");
+      const pkg =
+        f.get("--pi-package") ??
+        "/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/package.json";
+      piVersion = String(
+        (JSON.parse(readFileSync(pkg, "utf8")) as { version?: unknown }).version ?? "unknown",
+      );
     } catch {
       // stays unknown
     }
@@ -804,7 +811,8 @@ async function main(): Promise<number> {
       pireviewVersion: process.env.QCR_PIREVIEW_VERSION || "unknown",
       piVersion,
       model: f.get("--model") ?? PIREVIEW_DEFAULTS.model,
-      thinking: f.get("--thinking") ?? process.env.QCR_PIREVIEW_THINKING ?? PIREVIEW_DEFAULTS.thinking,
+      thinking:
+        f.get("--thinking") ?? process.env.QCR_PIREVIEW_THINKING ?? PIREVIEW_DEFAULTS.thinking,
       timeoutMin,
       qcrCommit: process.env.QCR_BENCH_COMMIT ?? "unknown",
       resume: f.has("--resume"),
@@ -818,7 +826,10 @@ async function main(): Promise<number> {
     const set = loadSet(f.get("--set"));
     const outDir = resolve(f.get("--out") ?? "");
     assertArm(outDir, "pireview");
-    writeFileSync(join(outDir, "report.md"), renderPireviewReport(set, outDir, selectCases(set, only(f))));
+    writeFileSync(
+      join(outDir, "report.md"),
+      renderPireviewReport(set, outDir, selectCases(set, only(f))),
+    );
     log(`report: ${join(outDir, "report.md")}`);
     return 0;
   }
@@ -827,7 +838,10 @@ async function main(): Promise<number> {
     const set = loadSet(f.get("--set"));
     const outDir = resolve(f.get("--out") ?? "");
     assertArm(outDir, "opencode");
-    writeFileSync(join(outDir, "report.md"), renderOpencodeReport(set, outDir, selectCases(set, only(f))));
+    writeFileSync(
+      join(outDir, "report.md"),
+      renderOpencodeReport(set, outDir, selectCases(set, only(f))),
+    );
     log(`report: ${join(outDir, "report.md")}`);
     return 0;
   }
@@ -979,6 +993,15 @@ async function main(): Promise<number> {
                 TMPDIR: tmpDir,
                 LANG: "C.UTF-8",
                 PI_CODING_AGENT_DIR: agentDir,
+                // An Anthropic judge model reads its key from the environment
+                // (bench.sh passes the Claude arm's credential file); nothing
+                // else is passed through.
+                ...(model.startsWith("anthropic/") && process.env.ANTHROPIC_API_KEY
+                  ? { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY }
+                  : {}),
+                ...(model.startsWith("anthropic/") && process.env.CLAUDE_CODE_OAUTH_TOKEN
+                  ? { ANTHROPIC_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN }
+                  : {}),
                 GIT_CONFIG_NOSYSTEM: "1",
                 GIT_CONFIG_SYSTEM: "/dev/null",
                 GIT_CONFIG_GLOBAL: "/dev/null",

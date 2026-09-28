@@ -108,7 +108,7 @@ MEMORY="${QCR_BENCH_MEMORY:-8g}"
 die() { echo "bench: $*" >&2; exit 1; }
 
 cmd="${1:-}"; shift || true
-RUN="" SET="smoke10" ONLY="" JUDGE="mock" ROUNDS="" LINE_K="1" ARM="qcr" EXTRA=() FROM="" FORCE=0 JARGS=()
+JUDGE_MODEL="" RUN="" SET="smoke10" ONLY="" JUDGE="mock" ROUNDS="" LINE_K="1" ARM="qcr" EXTRA=() FROM="" FORCE=0 JARGS=()
 PHASE="all" SHARDS="1" VARIANTS=""
 while (($#)); do
   case "$1" in
@@ -119,7 +119,7 @@ while (($#)); do
     --judge) JUDGE="$2"; shift 2 ;;
     --rounds) ROUNDS="$2"; shift 2 ;;
     --line-k) LINE_K="$2"; shift 2 ;;
-    --judge-model) JARGS+=(--model "$2"); shift 2 ;;
+    --judge-model) JARGS+=(--model "$2"); JUDGE_MODEL="$2"; shift 2 ;;
     --label) JARGS+=(--label "$2"); shift 2 ;;
     --profile|--timeout-min|--concurrency|--ocr-concurrency|--max-tools|--config) EXTRA+=("$1" "$2"); shift 2 ;;
     --phase) PHASE="$2"; EXTRA+=("$1" "$2"); shift 2 ;;
@@ -380,6 +380,10 @@ case "$cmd" in
     jn=(--network none)
     if [[ "$cmd" == judge ]]; then
       auth_mounts; jm+=("${AUTH[@]}" --mount "type=volume,src=$REPOS_VOLUME,dst=/repos,readonly"); jn=()
+      # An Anthropic judge (--judge-model anthropic/…) uses the Claude arm's OWN
+      # credential file (--env-file; never an argv, never the host's login). Its
+      # verdicts land under judge/v<version>-<model>/, beside the GPT judge's.
+      if [[ "${JUDGE_MODEL:-}" == anthropic/* ]]; then claude_env_args; jm+=("${CENV[@]}"); fi
     fi
     args=("${HARDEN[@]}" ${jn[@]+"${jn[@]}"} "${jm[@]}" -e "QCR_RUN_ID=$RUN"
       --mount "type=bind,src=$d,dst=/bench-out"
