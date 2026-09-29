@@ -61,6 +61,14 @@ function stampLines(t: TrackerTicket): string {
     .join("\n");
 }
 
+/** The ticket body with any line that would read as a stamp defused: the
+ * body quotes the scanned code and the model's words, and a quoted
+ * `Scan-fingerprint:` line would otherwise make this ticket answer for
+ * another finding — which would then never be filed. */
+function safeBody(body: string): string {
+  return body.trimEnd().replace(new RegExp(`^(\\s*)${FINGERPRINT_LINE}`, "gm"), "$1(quoted) Scan-fingerprint:");
+}
+
 /** The fingerprints a ticket's text is stamped with. */
 export function stampedFingerprints(text: string): string[] {
   return [...text.matchAll(new RegExp(`^${FINGERPRINT_LINE} ([0-9a-f]+)\\s*$`, "gm"))].map((m) => m[1]!);
@@ -272,13 +280,16 @@ export function issueTrackerSink(opts: IssueTrackerOptions): TrackerSink {
           "Claimed: —",
           "Closed: —",
           "",
-          t.body.trimEnd(),
+          safeBody(t.body),
           "",
           stampLines(t),
           "",
           "## Comments",
           "",
         ].join("\n");
+        // An effort may have a map and no ticket yet: its tickets/ is made
+        // here, or the claimed id would point at a file never written.
+        mkdirSync(join(root, "efforts", t.effort, "tickets"), { recursive: true });
         const fd = openSync(join(root, rel(n)), "wx");
         writeFileSync(fd, content);
         closeSync(fd);
@@ -341,7 +352,7 @@ export function markdownFindingSink(state: StateFs, clock: () => Date): TrackerS
           `Effort: ${t.effort}`,
           `Created: ${ts}`,
           "",
-          t.body.trimEnd(),
+          safeBody(t.body),
           "",
           stampLines(t),
           "",

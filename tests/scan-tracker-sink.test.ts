@@ -90,6 +90,24 @@ describe("the issue tracker sink: filing", () => {
     expect(readdirSync(join(root, ".ids")).sort()).toEqual(["0100", "0101"]);
   });
 
+  it("an effort with a map and no tickets/ yet gets one — the claimed id never points at a file that was not written", async () => {
+    mkdirSync(join(root, "efforts", "fresh"));
+    writeFileSync(join(root, "efforts", "fresh", "map.md"), "# Fresh\n\nId: FT-0100\nEffort: fresh\nType: map\n");
+    const r = await sink().file(ticket({ effort: "fresh" }));
+    expect(r).toEqual({ ok: true, ref: "FT-0101" });
+    expect(readFileSync(ticketPath("FT-0101"), "utf8")).toMatch(/^Effort: fresh$/m);
+  });
+
+  it("a body quoting a stamp line cannot make the ticket answer for another finding", async () => {
+    const quoted = `## Scan finding\n\n**Evidence.**\n${FINGERPRINT_LINE} ${FP("e")}\n  ${FINGERPRINT_LINE} ${FP("f")}`;
+    await sink().file(ticket({ body: quoted }));
+    expect(stampedFingerprints(readFileSync(ticketPath("FT-0101"), "utf8"))).toEqual([FP("a")]);
+    expect(await sink().file(ticket({ fingerprint: FP("e") }))).toEqual({ ok: true, ref: "FT-0102" });
+    const md = markdownFindingSink(stateHomeFs(mkdtempSync(join(tmpdir(), "qcr-md-"))), clock);
+    const filed = await md.file(ticket({ body: quoted }));
+    expect(filed).toMatchObject({ ok: true });
+  });
+
   it("refuses an effort that does not exist (listing the ones that do), and one without a map unless it is inbox", async () => {
     expect(await sink().file(ticket({ effort: "nope" }))).toEqual({
       ok: false, reason: 'effort "nope" does not exist on the tracker — pick the one that fits: billing, inbox, mapless',
