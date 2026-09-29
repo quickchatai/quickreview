@@ -20,6 +20,7 @@ import {
   isFirstPartyDirectivePath,
   normalizeReachability,
   postTag,
+  reachabilityCappedSeverity,
   type Reachability,
   type Severity,
 } from "../src/severity.js";
@@ -441,5 +442,30 @@ describe("the [deferred] tag", () => {
   it("changes no severity — a deferral never blocks and never softens a blocker", () => {
     expect(postTag("P1", 0.9, "routine", { kind: "deferred", path: "app/x.py" })).toBe("blocker");
     expect(postTag("nit", 0.1, "routine", { kind: "deferred", path: "app/x.py" })).toBe("nit");
+  });
+});
+
+describe("reachabilityCappedSeverity — the posting map's reachability gate, as a severity (scan-loop)", () => {
+  const sevs: Severity[] = ["P0", "P1", "P2", "P3", "nit"];
+  const reaches: Reachability[] = ["routine", "plausible", "contrived"];
+
+  it("caps exactly where postTag's reachability gate softens a tag — at any confidence", () => {
+    for (const sev of sevs) {
+      for (const reach of reaches) {
+        for (const conf of [0, 0.5, 0.8, 1]) {
+          const capped = reachabilityCappedSeverity(sev, reach);
+          // The capped severity, read as routine, posts as the reachability-gated original does.
+          expect(postTag(capped, conf, "routine"), `${sev}/${reach}/${conf}`).toBe(postTag(sev, conf, reach));
+        }
+      }
+    }
+  });
+
+  it("contrived P0–P2 → P3, plausible P2 → P3, everything else unchanged", () => {
+    expect(reachabilityCappedSeverity("P0", "contrived")).toBe("P3");
+    expect(reachabilityCappedSeverity("P2", "plausible")).toBe("P3");
+    expect(reachabilityCappedSeverity("P1", "plausible")).toBe("P1");
+    expect(reachabilityCappedSeverity("nit", "contrived")).toBe("nit");
+    expect(reachabilityCappedSeverity("P1", null)).toBe("P1");
   });
 });

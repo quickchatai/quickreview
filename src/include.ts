@@ -829,7 +829,7 @@ const INTENT_ANSWER_THE_AUTHOR_ADDENDUM =
 export const SCAN_MODE_ANCHOR_ADDENDUM =
   "\n## Scan mode — there is no pull request (sandbox rule; supersedes every diff rule above)\n" +
   "This build reviews a whole-repository SCAN, not a pull request. There is no diff, no PR number, title or body, no author, no SETTLED list and no earlier round. Wherever these instructions speak of the PR, its head, its diff, a changed-line run, the delta or the merge base, read instead: the files of your scan case as they are at the scan sha, under the tree root your task string names. Rules that exist only because there is a diff — the nit scope, in-flight PRs, the delta a finding must assert against a PR — do not apply; a finding still states what is wrong with the code as it is, and a fix still changes it.\n\n" +
-  "**Anchoring.** A scan finding is anchored at the lines it is about, in one file: `path` is the file's repo-relative path (as your task string lists it — never the tree root's absolute path), `line` is a line number of that file at the scan sha, or a range `start-end` covering the code the finding is about, and `side` is always `RIGHT`. Any line of the file may be an anchor; there is no changed-line run to land in. A problem you cannot tie to lines of one file is not a scan finding — leave it out.\n\n" +
+  "**Anchoring.** A scan finding is anchored at the lines it is about, in one file: `path` is the file's repo-relative path (as your task string lists it — never the tree root's absolute path), `line` is a line number of that file at the scan sha, or a range `start-end` covering the code the finding is about, and `side` is always `RIGHT`. Any line of the file may be an anchor; there is no changed-line run to land in. The anchor is the line where the defect happens (the dereference, the unchecked call, the write — not the signature of the function it sits in), and `evidence` quotes that line's code verbatim in backticks: the scan checks the quote against the anchored lines and flags a finding whose evidence cites only other code. A problem you cannot tie to lines of one file is not a scan finding — leave it out.\n\n" +
   "**Kind.** Every scan finding also carries `kind:` — one lowercase word naming its class (`bug`, `security`, `data`, `concurrency`, `contract`, `design`, `performance`, `error-handling`, `style`, …). The kind is part of the finding's identity across re-scans, so name one class of problem the same way every time.\n\n" +
   "You post nothing, and you read nothing outside the tree root. Your findings block is headed `FINDINGS <lens> SCAN <case id> @<scan sha>`.\n\n" +
   "Validator: verify an anchor by opening the file under the tree root, never against a diff — a finding whose lines do not show the code it describes is `bad-anchor`.\n";
@@ -1050,6 +1050,11 @@ export interface BuildAgentsOptions {
    * `srcDir`'s — the scan build's `agents/scan/` (`pass-scan`), which no PR
    * build ever reads. A name in two directories is refused. */
   extraSrcDirs?: string[];
+  /** Narrow a pass's fan-out to these tiers (intersected with
+   * `tiersForPass`), keyed by pass name. The scan build's `pass-scan` runs at
+   * `[scan] tier` alone, so that is the only variant it builds. A pass not
+   * named keeps every tier `tiersForPass` gives it. */
+  onlyTiers?: Readonly<Record<string, readonly PassTier[]>>;
   readFile?: (path: string) => string;
 }
 
@@ -1168,7 +1173,9 @@ export function buildAgents(
     const body =
       expandVariables(expandIncludes(doc.body, { root, readFile: opts.readFile }), vars) +
       composeAddendum(pass, addenda, ecosystem, mode);
-    for (const tier of tiersForPass(pass, riskPasses, validateTier)) {
+    const only = opts.onlyTiers?.[pass];
+    const passTiers = tiersForPass(pass, riskPasses, validateTier).filter((t) => only === undefined || only.includes(t));
+    for (const tier of passTiers) {
       const name = `${pass}--${tier}`;
       const spec = opts.models?.[name] ?? tiers[tier];
       const { model, thinking } = splitModelSpec(spec);

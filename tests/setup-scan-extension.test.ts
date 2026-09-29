@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PiToolDefinition } from "@earendil-works/pi-coding-agent";
-import { scanToolDefinitions, watchTuiRequests } from "../extensions/setup-scan.js";
+import { renderFindings, scanToolDefinitions, watchTuiRequests } from "../extensions/setup-scan.js";
 import { SCAN_DEFAULTS } from "../src/config.js";
 import { stateHomeFs } from "../src/setup/adapters.js";
 import { FindingsStore } from "../src/setup/findings.js";
@@ -206,5 +206,36 @@ describe("the stage 2 tools", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("renderFindings — the quality marks (scan-loop)", () => {
+  const base = {
+    fingerprint: "f".repeat(64),
+    unit: "app",
+    path: "app/a.py",
+    start: 5,
+    end: 5,
+    lens: "pass-scan",
+    kind: "bug",
+    severity: "P3" as const,
+    confidence: 0.9,
+    claim: "c",
+    evidence: null,
+    fix: null,
+    detail: null,
+    state: "new" as const,
+    validated: false,
+    doubt: null,
+    first_seen: { run: "r", sha: SHA, at: "t" },
+    last_seen: { run: "r", sha: SHA, at: "t" },
+    seen: 1,
+  };
+
+  it("names a reachability cap and an unquoted anchor; an older finding without the fields renders as before", () => {
+    const out = renderFindings([{ ...base, reachability: "contrived", capped_from: "P1", anchor_quoted: false }], 1);
+    expect(out).toContain("P1→P3: contrived");
+    expect(out).toContain("ANCHOR NOT QUOTED");
+    expect(renderFindings([base], 1)).toBe(`- [P3] app/a.py:5 (app, bug, new, unvalidated) c [${"f".repeat(12)}]`);
   });
 });

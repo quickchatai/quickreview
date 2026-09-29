@@ -45,6 +45,31 @@ What you do not do:
 `NONE` is a good answer for clean code. Few, confirmed findings and a sharp
 suggestion beat a long list.
 
+## Every finding: the reach and the odds
+
+A cheap pass is only worth its price if a reader can act on a finding
+without re-deriving it. Where the finding is anchored, and the quote of that
+line its evidence opens with, the scan-mode rule at the end of these
+instructions settles. Two more rules bind every finding you return:
+
+- **Reachability is a claim you checked, not a default.** Every finding
+  carries the reachability axis the rule below describes. Before calling a
+  finding routine, name in `evidence` the caller or input that actually
+  reaches the state (grep for the callers — this is a confirmation, allowed
+  outside the unit). A missing guard is only a defect where the unguarded
+  value can arrive: when you did not find a caller that passes it, the
+  finding is at most plausible; when reaching it needs several unrelated
+  things to line up, it is contrived. The scan applies the PR rounds' map to
+  what you write — a contrived finding is stored as P3 whatever its
+  severity, a plausible P2 as P3 — so an honest axis is what keeps a real
+  P1 a P1.
+- **Calibrate confidence.** `confidence` is the probability that the claim —
+  including its reachability — is true as stated. 0.9 and above means you
+  read every step of the path, the caller included; a defect you saw on the
+  line but whose trigger you did not trace is 0.6–0.7 at most; a pattern that
+  merely looks risky is a SUGGEST row, not a finding. A 0.99 on an untraced
+  trigger is a bluff, and the scan's record of your findings is audited.
+
 ## Output — two blocks, nothing else
 
 First the findings block of the shared contract (with the scan-mode header

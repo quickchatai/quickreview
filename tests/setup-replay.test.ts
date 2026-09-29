@@ -524,6 +524,8 @@ describe("replay rules", () => {
     kind: "bug",
     severity: "P2",
     confidence: null,
+    reachability: null,
+    capped_from: null,
     claim: "c",
     evidence: null,
     fix: null,

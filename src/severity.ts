@@ -184,6 +184,21 @@ export function postTag(
   }
 }
 
+/**
+ * `postTag`'s reachability gate expressed as a SEVERITY, for a surface with
+ * no posting map (the whole-repo scan): the severity whose ROUTINE tag equals
+ * the original's reachability-gated tag. `contrived` P0–P2 → `P3` (a
+ * question, never a blocker), `plausible` P2 → `P3`; everything else — and an
+ * absent axis, read as `routine` — is unchanged. Pinned against `postTag` at
+ * every severity × reachability × confidence by tests/severity.test.ts.
+ */
+export function reachabilityCappedSeverity(severity: Severity, reachability?: Reachability | null): Severity {
+  const reach = normalizeReachability(reachability);
+  if (reach === "contrived" && (severity === "P0" || severity === "P1" || severity === "P2")) return "P3";
+  if (reach === "plausible" && severity === "P2") return "P3";
+  return severity;
+}
+
 export type { Verdict } from "./types.js";
 
 export interface VerdictInput {

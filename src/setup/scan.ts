@@ -23,6 +23,7 @@ import { ALL_PASSES } from "../dispatch.js";
 import { globMatcher } from "../glob.js";
 import { isSweepSkipped, isTestFile } from "../heuristics.js";
 import { VALIDATE_PASS } from "../include.js";
+import { REACHABILITY_VALUES, reachabilityCappedSeverity, type Reachability } from "../severity.js";
 import { assign, splitUnit, type CaseBudget, type UnitCut } from "./unitcut.js";
 
 /** The stage-1 lens (agents/scan/pass-scan.md). */
@@ -275,6 +276,7 @@ export function scanValidatorPrompt(
         `  kind: ${f.kind}`,
         `  severity: ${f.severity}`,
         ...(f.confidence !== null ? [`  confidence: ${f.confidence}`] : []),
+        ...(f.reachability !== null ? [`  reachability: ${f.reachability}`] : []),
         `  claim: ${f.claim}`,
         ...(f.evidence ? [`  evidence: ${f.evidence}`] : []),
         ...(f.fix ? [`  fix: ${f.fix}`] : []),
@@ -308,8 +310,16 @@ export interface ScanCandidate {
   start: number;
   end: number;
   kind: string;
+  /** After the reachability cap (`capped_from` holds what the lens said). */
   severity: ScanSeverity;
   confidence: number | null;
+  /** The lens's `reachability:` field, or null when it wrote none (read as
+   * `routine`, exactly as a PR round reads it). */
+  reachability: Reachability | null;
+  /** The severity the lens wrote, when the reachability axis capped it —
+   * the posting map's gate (`reachabilityCappedSeverity`): contrived never
+   * blocks, plausible P2 is a question. Null when nothing was capped. */
+  capped_from: ScanSeverity | null;
   claim: string;
   evidence: string | null;
   fix: string | null;
@@ -395,6 +405,11 @@ function severityOf(v: string | undefined): ScanSeverity {
   return /^nit\b/i.test(s) ? "nit" : "P3";
 }
 
+function reachabilityOf(v: string | undefined): Reachability | null {
+  const r = (v ?? "").trim().replace(/[`*]/g, "").toLowerCase().split(/[\s,;.(—–-]/)[0] ?? "";
+  return (REACHABILITY_VALUES as readonly string[]).includes(r) ? (r as Reachability) : null;
+}
+
 /** One lowercase word naming the class — the identity half of a kind. */
 export function normalizeKind(v: string | undefined): string {
   const k = (v ?? "")
@@ -424,12 +439,17 @@ function readFindings(text: string, root: string | null): { candidates: ScanCand
       const v = f.get(k)?.trim();
       return v ? v : null;
     };
+    const said = severityOf(f.get("severity"));
+    const reachability = reachabilityOf(f.get("reachability"));
+    const severity = reachabilityCappedSeverity(said, reachability);
     candidates.push({
       path,
       ...range,
       kind: normalizeKind(f.get("kind")),
-      severity: severityOf(f.get("severity")),
+      severity,
       confidence: (f.get("confidence") ?? "").trim() !== "" && Number.isFinite(conf) ? conf : null,
+      reachability,
+      capped_from: severity === said ? null : said,
       claim,
       evidence: opt("evidence"),
       fix: opt("fix"),
@@ -548,6 +568,36 @@ export function anchoredLines(text: string, start: number, end: number): string[
   if (text.endsWith("\n")) lines.pop();
   if (start < 1 || end < start || end > lines.length) return null;
   return lines.slice(start - 1, end);
+}
+
+/** Whitespace collapsed and trimmed, for the quote check. */
+const squash = (t: string): string => t.replace(/\s+/g, " ").trim();
+
+/** A fragment long enough to mean something: four characters or more with a
+ * letter or digit in it (never a lone `}` or `)`). */
+const quotable = (t: string): boolean => t.length >= 4 && /[A-Za-z0-9]/.test(t);
+
+/**
+ * Does a finding's evidence quote its anchored code? True when the evidence
+ * contains a whole anchored line (whitespace-normalised), or a quoted
+ * fragment of it — a `backticked` or "double-quoted" run that sits inside one
+ * of the anchored lines. An anchor with nothing quotable in it (braces, blank
+ * lines) cannot be checked and is not held against the finding. A finding
+ * whose evidence quotes only code ABOVE or BELOW its anchor — the function
+ * signature for a dereference twelve lines down — is exactly the misanchor
+ * this catches.
+ */
+export function evidenceQuotesAnchor(evidence: string | null, anchored: readonly string[]): boolean {
+  const lines = anchored.map(squash).filter(quotable);
+  if (lines.length === 0) return true;
+  if (evidence === null) return false;
+  const ev = squash(evidence);
+  if (lines.some((l) => ev.includes(l))) return true;
+  for (const m of evidence.matchAll(/`([^`]+)`|"([^"]+)"/g)) {
+    const frag = squash(m[1] ?? m[2] ?? "");
+    if (quotable(frag) && lines.some((l) => l.includes(frag))) return true;
+  }
+  return false;
 }
 
 /**

@@ -14,7 +14,7 @@ import { stateHomeFs } from "../src/setup/adapters.js";
 import type { CaseOutcome, CaseSpec } from "../src/setup/engine.js";
 import { FindingsStore } from "../src/setup/findings.js";
 import { LEDGER_FILE, type LedgerFile } from "../src/setup/ledger.js";
-import { findingFingerprint, normalizeCode, parseScanAnswer } from "../src/setup/scan.js";
+import { anchoredLines, evidenceQuotesAnchor, findingFingerprint, normalizeCode, parseScanAnswer } from "../src/setup/scan.js";
 import { RUN_FILE, ScanRunner, type ScanPorts, type ScanSource, type ScanTree } from "../src/setup/scanrun.js";
 import type { UnitCut } from "../src/setup/unitcut.js";
 
@@ -521,5 +521,105 @@ describe("reading the lens's answer", () => {
     ]);
     expect(a.suggestions).toEqual([]);
     expect(parseScanAnswer("NONE\n\nSUGGEST NONE").none).toBe(true);
+  });
+});
+
+describe("a finding's severity follows the reachability axis (scan-loop)", () => {
+  const one = (sev: string, reach: string | null, conf = "0.9"): string =>
+    [
+      "FINDINGS pass-scan SCAN x @y",
+      "- path: src/a.py",
+      "  line: 7",
+      "  kind: bug",
+      `  severity: ${sev}`,
+      `  confidence: ${conf}`,
+      ...(reach === null ? [] : [`  reachability: ${reach}`]),
+      "  claim: c",
+    ].join("\n");
+
+  it("contrived never blocks: a P0/P1/P2 caps at P3, a nit stays a nit", () => {
+    for (const sev of ["P0", "P1", "P2"]) {
+      const [c] = parseScanAnswer(one(sev, "contrived")).candidates;
+      expect(c).toMatchObject({ severity: "P3", capped_from: sev, reachability: "contrived" });
+    }
+    expect(parseScanAnswer(one("nit", "contrived")).candidates[0]).toMatchObject({ severity: "nit", capped_from: null });
+    expect(parseScanAnswer(one("P3", "contrived")).candidates[0]).toMatchObject({ severity: "P3", capped_from: null });
+  });
+
+  it("plausible: a P2 becomes P3, a P0/P1 keeps its severity", () => {
+    expect(parseScanAnswer(one("P2", "plausible")).candidates[0]).toMatchObject({ severity: "P3", capped_from: "P2" });
+    expect(parseScanAnswer(one("P1", "plausible")).candidates[0]).toMatchObject({ severity: "P1", capped_from: null });
+  });
+
+  it("routine — or the field absent, read as routine like a PR round — leaves severity alone", () => {
+    expect(parseScanAnswer(one("P1", "routine")).candidates[0]).toMatchObject({ severity: "P1", capped_from: null, reachability: "routine" });
+    expect(parseScanAnswer(one("P1", null)).candidates[0]).toMatchObject({ severity: "P1", capped_from: null, reachability: null });
+    expect(parseScanAnswer(one("P1", "`Contrived`")).candidates[0]).toMatchObject({ severity: "P3", reachability: "contrived" });
+  });
+});
+
+describe("the evidence quotes the anchored line (scan-loop)", () => {
+  const code = [
+    "def handler(request):", // 1
+    "    user = lookup(request.user_id)", // 2
+    "    if request.flag:", // 3
+    "        log('x')", // 4
+    "    return user.profile.name", // 5
+    "", // 6
+  ].join("\n");
+
+  it("evidenceQuotesAnchor: a quoted fragment or the whole line counts; code elsewhere in the file does not", () => {
+    const at5 = anchoredLines(code, 5, 5)!;
+    expect(evidenceQuotesAnchor("L5 `user.profile.name` dereferences a None from lookup", at5)).toBe(true);
+    expect(evidenceQuotesAnchor("line 5: return user.profile.name — lookup returns None", at5)).toBe(true);
+    expect(evidenceQuotesAnchor("`lookup(request.user_id)` may return None", at5)).toBe(false);
+    expect(evidenceQuotesAnchor(null, at5)).toBe(false);
+    // An anchor with nothing quotable (a lone brace) cannot be checked, so it is not flagged.
+    expect(evidenceQuotesAnchor("anything", ["    }"])).toBe(true);
+  });
+
+  it("a stored finding carries anchor_quoted — false when the anchor sits above the defect its evidence cites", async () => {
+    const tree = { ...TREE, "app/models.py": code };
+    const answer = (spec: CaseSpec): string =>
+      spec.unit !== "app"
+        ? "NONE\n\nSUGGEST NONE\n"
+        : [
+            `FINDINGS pass-scan SCAN ${spec.id} @sha`,
+            "- path: app/models.py",
+            "  line: 1",
+            "  kind: bug",
+            "  severity: P1",
+            "  confidence: 0.99",
+            "  reachability: plausible",
+            "  claim: handler dereferences a None user",
+            "  evidence: `user.profile.name` on a None from lookup",
+            "- path: app/models.py",
+            "  line: 5",
+            "  kind: error-handling",
+            "  severity: P2",
+            "  confidence: 0.7",
+            "  claim: same, anchored right",
+            "  evidence: L5 `return user.profile.name` after `lookup` may return None",
+            "",
+            "SUGGEST NONE",
+          ].join("\n");
+    await runToEnd(new ScanRunner(ports(runner({ answer }), {}, fakeSource({ [SHA1]: tree }, SHA1))));
+    const { findings } = new FindingsStore(stateHomeFs(stateDir)).list();
+    const byLine = new Map(findings.map((f) => [f.start, f]));
+    expect(byLine.get(1)).toMatchObject({ anchor_quoted: false, reachability: "plausible", severity: "P1" });
+    expect(byLine.get(5)).toMatchObject({ anchor_quoted: true, severity: "P2", capped_from: null });
+  });
+});
+
+describe("the preview's lines and the measured rate's lines agree (scan-loop)", () => {
+  it("an empty __init__.py counts 0 lines on both sides", async () => {
+    const tree = { ...TREE, "app/__init__.py": "", "web/empty.ts": "" };
+    const s = new ScanRunner(ports(runner({ perFile: 0.01 }), {}, fakeSource({ [SHA1]: tree }, SHA1)));
+    const cal = await runToEnd(s);
+    expect(cal.preview.cases.flatMap((c) => c.files.map((f) => f.path))).toContain("app/__init__.py");
+    const next = await previewOf(s);
+    expect(next.rate!.lines).toBe(cal.preview.lines);
+    // 7 priced files at $0.01 over the calibration's real lines.
+    expect(next.rate!.usd_per_kline).toBeCloseTo((0.07 / cal.preview.lines) * 1000, 9);
   });
 });

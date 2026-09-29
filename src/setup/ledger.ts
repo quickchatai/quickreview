@@ -141,7 +141,10 @@ export function rateWhere(entries: readonly LedgerEntry[], keep: (e: LedgerEntry
   for (const e of entries) {
     if (!keep(e) || e.cost_usd === null) continue;
     cost += e.cost_usd;
-    lines += Math.max(e.lines, 1);
+    // The file's REAL lines — the count the preview showed. An empty file
+    // (an `__init__.py`) is 0 here as there; `Math.max(lines, 1)` belongs to
+    // splitting a case's cost across its rows, never to the rate's basis.
+    lines += e.lines;
     cases.add(`${e.run}\0${e.case}`);
   }
   if (cases.size === 0 || lines === 0) return null;

@@ -162,6 +162,8 @@ export function renderFindings(fs: readonly ScanFinding[], total: number): strin
     (f) =>
       `- [${f.severity}] ${f.path}:${f.start === f.end ? f.start : `${f.start}-${f.end}`} (${f.unit}, ${f.kind}, ${f.state}` +
       `${f.doubt ? `, MAY NOT BE VALID — ${f.doubt.word}` : f.validated ? "" : ", unvalidated"}` +
+      `${f.capped_from ? `, ${f.capped_from}→${f.severity}: ${f.reachability}` : ""}` +
+      `${f.anchor_quoted === false ? ", ANCHOR NOT QUOTED — the lines may not be the defect's" : ""}` +
       `${f.fixed ? ` at ${f.fixed.sha.slice(0, 12)}, was ${f.fixed.from}` : ""}) ${f.claim} [${f.fingerprint.slice(0, 12)}]`,
   );
   if (total > fs.length) rows.push(`… ${total - fs.length} more — narrow the filter.`);

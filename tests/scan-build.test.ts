@@ -87,12 +87,29 @@ describe("the scan-mode anchor addendum rides only the scan build", () => {
   it("the scan build carries it in EVERY variant (the validator included) and builds pass-scan", () => {
     const agents = scanBuild();
     for (const [name, body] of agents) expect(body, name).toContain(SCAN_MODE_ANCHOR_ADDENDUM);
-    expect([...agents.keys()].filter((n) => n.startsWith("pass-scan--")).sort()).toEqual([
-      "pass-scan--sol-high",
-      "pass-scan--sol-med",
-      "pass-scan--terra-med",
-    ]);
+    // Only the [scan] tier's variant: nothing runs pass-scan at another tier.
+    expect([...agents.keys()].filter((n) => n.startsWith("pass-scan--")).sort()).toEqual([`pass-scan--${fixture.scan.tier}`]);
     expect(agents.has("pass-validate--sol-high")).toBe(true);
+  });
+
+  it("builds pass-scan at the [scan] tier alone; the deep lenses keep every tier for stage 2", () => {
+    const cfg = scanConfig(sandbox, `${fixtureToml}\n[scan]\ntier = "terra-med"\n`, { env });
+    const agents = scanBuild(cfg);
+    expect([...agents.keys()].filter((n) => n.startsWith("pass-scan--"))).toEqual(["pass-scan--terra-med"]);
+    for (const t of ["terra-med", "sol-med", "sol-high"]) expect(agents.has(`pass-baseline--${t}`), t).toBe(true);
+  });
+
+  it("pass-scan's built body pins the defect line, quotes it, and carries the reachability axis", () => {
+    const body = scanBuild().get(`pass-scan--${fixture.scan.tier}`)!;
+    // Anchoring is the scan-mode addendum's (every scan lens, stage 2 too)…
+    expect(SCAN_MODE_ANCHOR_ADDENDUM).toContain("The anchor is the line where the defect happens");
+    expect(SCAN_MODE_ANCHOR_ADDENDUM).toContain("`evidence` quotes that line's code verbatim");
+    expect(body).toContain(SCAN_MODE_ANCHOR_ADDENDUM);
+    // …reachability and confidence discipline the lens's own (agents/scan/pass-scan.md)…
+    expect(body).toContain("Reachability is a claim you checked, not a default");
+    expect(body).toContain("Calibrate confidence");
+    // …and the field itself is the shared reachability addendum's, as in a PR lens.
+    expect(body).toContain("## Reachability — the third axis on every finding");
   });
 
   it("gives every scan leaf exactly the read-only tools — no bash, no memory", () => {
@@ -106,6 +123,7 @@ describe("the scan-mode anchor addendum rides only the scan build", () => {
 
   it("runs pass-scan at the [scan] effort on each tier's model, other lenses untouched", () => {
     const agents = scanBuild();
+    expect(fixture.scan.tier).toBe("sol-med");
     expect(/^model: (.*)$/m.exec(agents.get("pass-scan--sol-med")!)?.[1]).toBe(
       fixture.models.tiers["sol-med"].replace(/:[a-z]+$/, "") + ":low",
     );

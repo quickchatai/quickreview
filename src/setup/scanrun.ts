@@ -67,6 +67,7 @@ import {
   anchoredLines,
   calibrationCases,
   caseEstimate,
+  evidenceQuotesAnchor,
   findingFingerprint,
   normalizeCode,
   parseScanAnswer,
@@ -1151,7 +1152,7 @@ export class ScanRunner {
     const inTree = new Set(tree.files.map((f) => f.path));
     const answer = parseScanAnswer(outcome.output, { root: tree.root });
     let dropped = answer.dropped + answer.suggestions_dropped;
-    const anchored: Array<{ cand: ScanCandidate; code: string }> = [];
+    const anchored: Array<{ cand: ScanCandidate; code: string; quoted: boolean }> = [];
     for (const cand of answer.candidates) {
       const text = inTree.has(cand.path) ? tree.read(cand.path) : null;
       const lines = text === null ? null : anchoredLines(text, cand.start, cand.end);
@@ -1159,7 +1160,7 @@ export class ScanRunner {
         dropped++;
         continue;
       }
-      anchored.push({ cand, code: normalizeCode(lines) });
+      anchored.push({ cand, code: normalizeCode(lines), quoted: evidenceQuotesAnchor(cand.evidence, lines) });
     }
 
     // The validator, when this scan runs one: survivors are validated, a
@@ -1191,7 +1192,7 @@ export class ScanRunner {
           const text = inTree.has(s.path) ? tree.read(s.path) : null;
           const lines = text === null ? null : anchoredLines(text, s.start, s.end);
           if (lines === null) dropped++;
-          else survivors.push({ cand: s, code: normalizeCode(lines) });
+          else survivors.push({ cand: s, code: normalizeCode(lines), quoted: evidenceQuotesAnchor(s.evidence, lines) });
         }
         for (const d of read.doubted) {
           const hit = anchored.find(
@@ -1207,7 +1208,7 @@ export class ScanRunner {
     }
 
     const blobOf = new Map(tree.files.map((f) => [f.path, f.blob]));
-    const all: ReportedFinding[] = kept.map(({ cand, code }) => ({
+    const all: ReportedFinding[] = kept.map(({ cand, code, quoted }) => ({
       fingerprint: findingFingerprint({ path: cand.path, lens: job.lens, kind: cand.kind, code }),
       unit: job.unitOf(cand.path),
       path: cand.path,
@@ -1218,6 +1219,9 @@ export class ScanRunner {
       kind: cand.kind,
       severity: cand.severity,
       confidence: cand.confidence,
+      reachability: cand.reachability,
+      capped_from: cand.capped_from,
+      anchor_quoted: quoted,
       claim: cand.claim,
       evidence: cand.evidence,
       fix: cand.fix,

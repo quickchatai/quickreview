@@ -37,7 +37,6 @@ import {
   loadProfileScan,
   type ProfileLookup,
 } from "../profiles.js";
-import { PASS_TIER_ORDER } from "../types.js";
 import type { Refusal } from "./engine.js";
 import { SCAN_PASS } from "./scan.js";
 import type { ScanSettings } from "./scanrun.js";
@@ -93,14 +92,12 @@ export function scanSettings(cfg: Config): ScanSettings {
   };
 }
 
-/** `pass-scan`'s model spec per tier: the tier's spec at `[scan] effort`
+/** `pass-scan`'s model spec: the `[scan] tier`'s spec at `[scan] effort`
  * (`high` = the model's ceiling), through the same per-variant hook a
- * lens's `effort` uses. */
+ * lens's `effort` uses. One variant — stage 1 runs at that tier alone. */
 export function scanPassModels(cfg: Pick<Config, "models" | "scan">): Record<string, string> {
   const level = cfg.scan.effort === "high" ? cfg.models.effort_max : cfg.scan.effort;
-  const out: Record<string, string> = {};
-  for (const tier of PASS_TIER_ORDER) out[`${SCAN_PASS}--${tier}`] = withThinking(cfg.models.tiers[tier], level);
-  return out;
+  return { [`${SCAN_PASS}--${cfg.scan.tier}`]: withThinking(cfg.models.tiers[cfg.scan.tier], level) };
 }
 
 /** Build the scan agents into `outDir` — `buildAgents` in `"scan"` mode, the
@@ -116,6 +113,9 @@ export function buildScanAgents(root: string, outDir: string, cfg: Config, looku
     vars: identityVars(cfg),
     ecosystem: loadProfileEcosystem(root, cfg.review.profile, lookup),
     models: { ...lensModelOverrides(cfg.models, cfg.lenses), ...scanPassModels(cfg) },
+    // Stage 1 runs `pass-scan--<[scan] tier>` and nothing else names it
+    // (stage 2 rows refuse it), so no other tier's variant is built.
+    onlyTiers: { [SCAN_PASS]: [cfg.scan.tier] },
     addenda: [
       ...PASS_ADDENDA,
       ...configAddenda(cfg.review),

@@ -45,6 +45,7 @@ import { createHash } from "node:crypto";
 import type { StateFs } from "./engine.js";
 import type { LedgerEntry } from "./ledger.js";
 import type { ScanSeverity } from "./scan.js";
+import type { Reachability } from "../severity.js";
 import { FINDINGS_FILE, FINDINGS_VERSION, parseFindingsFile } from "./scanreport.js";
 
 export { FINDINGS_FILE, FINDINGS_VERSION };
@@ -77,6 +78,14 @@ export interface ScanFinding {
   kind: string;
   severity: ScanSeverity;
   confidence: number | null;
+  /** The lens's reachability (null: it wrote none, read as routine). Absent
+   * on findings stored before the scan-loop quality pass. */
+  reachability?: Reachability | null;
+  /** What the lens said before the reachability cap lowered `severity`. */
+  capped_from?: ScanSeverity | null;
+  /** Whether `evidence` quotes the anchored code (`evidenceQuotesAnchor`) —
+   * false marks a finding whose lines may not be the defect's. */
+  anchor_quoted?: boolean;
   claim: string;
   evidence: string | null;
   fix: string | null;
