@@ -127,7 +127,9 @@ export function tagsOf(text: string): string[] {
 export function renderEntryBody(text: string, addTags: readonly string[] = []): string {
   const trimmed = text.trim();
   if (trimmed === "") return "";
-  const have = new Set(tagsOf(trimmed).map((t) => t.toLowerCase()));
+  // Header-only, like `pinned`: a tag quoted in the body is prose, so it
+  // must not stop the real one landing in the header where readers look.
+  const have = new Set(parseHashTags(trimmed));
   const missing = addTags
     .map((t) => t.replace(/^#+/, "").toLowerCase())
     .filter((t) => t !== "" && !have.has(t));
@@ -230,7 +232,10 @@ export class OpenVikingStore implements MemoryStore {
   private readonly cacheTtlMs: number;
 
   private cache: { at: number; sweep: MemorySweep } | null = null;
-  private inFlight: Promise<MemorySweep> | null = null;
+  private inFlight: { gen: number; sweep: Promise<MemorySweep> } | null = null;
+  /** Bumped by every write: a sweep started before it may have read the old
+   * bytes, so it neither fills the cache nor serves a later reader. */
+  private generation = 0;
 
   constructor(opts: OpenVikingStoreOptions) {
     this.client = opts.client;
@@ -250,6 +255,7 @@ export class OpenVikingStore implements MemoryStore {
    * that writes and immediately re-reads sees its own edit. */
   invalidate(): void {
     this.cache = null;
+    this.generation += 1;
   }
 
   /**
@@ -306,14 +312,16 @@ export class OpenVikingStore implements MemoryStore {
     const fresh = this.cache && this.now().getTime() - this.cache.at < this.cacheTtlMs;
     if (fresh && this.cache) return this.cache.sweep;
     // One sweep at a time: the round path and the TUI poll can both land here.
-    if (this.inFlight) return this.inFlight;
-    this.inFlight = this.runSweep().finally(() => {
-      this.inFlight = null;
+    if (this.inFlight && this.inFlight.gen === this.generation) return this.inFlight.sweep;
+    const gen = this.generation;
+    const sweep = this.runSweep(gen).finally(() => {
+      if (this.inFlight?.sweep === sweep) this.inFlight = null;
     });
-    return this.inFlight;
+    this.inFlight = { gen, sweep };
+    return sweep;
   }
 
-  private async runSweep(): Promise<MemorySweep> {
+  private async runSweep(gen: number): Promise<MemorySweep> {
     const unread: string[] = [];
     const files = await this.listFiles(unread);
     const entries: MemoryEntry[] = [];
@@ -328,7 +336,9 @@ export class OpenVikingStore implements MemoryStore {
       }
       const entry = entryFrom(file.id, res.result, file.modTime);
       if (entry.text === "") return;
-      if (entry.tags.some((t) => t.toLowerCase() === RETIRED_TAG)) return;
+      // Header-only, like `pinned`: a [feedback] entry quoting "#retired"
+      // must not vanish from every read. `retire` writes the tag at the head.
+      if (parseHashTags(entry.text).includes(RETIRED_TAG)) return;
       entries.push(entry);
     });
     // One file gone between the listing and the read is a race (the companion
@@ -345,7 +355,7 @@ export class OpenVikingStore implements MemoryStore {
       a.ts !== b.ts ? (a.ts < b.ts ? -1 : 1) : a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
     );
     const sweep: MemorySweep = { entries, unread };
-    this.cache = { at: this.now().getTime(), sweep };
+    if (gen === this.generation) this.cache = { at: this.now().getTime(), sweep };
     return sweep;
   }
 
@@ -521,8 +531,11 @@ export class OpenVikingStore implements MemoryStore {
       // alternative is a bootstrap step that a restart or a new category
       // silently outlives.
       if (res.code === "NOT_FOUND" && !this.rootEnsured) {
-        this.rootEnsured = true;
+        // Set only on success: a transient mkdir failure must leave the next
+        // write (and ensureWritable) free to try again. One attempt per call
+        // still holds — a failed mkdir falls through to the refusal below.
         if (await this.client.mkdir(`${this.root}/${this.category}`)) {
+          this.rootEnsured = true;
           this.log(`openviking: created the memory root ${this.root}/${this.category}`);
           continue;
         }

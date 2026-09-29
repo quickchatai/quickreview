@@ -162,6 +162,17 @@ export class OpenVikingSupervisor {
         // the backoff ladder governs the retry.
         this.lastError = err.message;
         this.log("openviking: spawn error", err);
+        // Node emits `error` then `close` for a failed spawn — never `exit` —
+        // and leaves `pid` unset. An error on a child that HAS a pid (a failed
+        // kill) is not an exit: the live process stays tracked.
+        if (this.child !== child || child.pid !== undefined) return;
+        this.child = null;
+        this.childPid = undefined;
+        this.startedAt = null;
+        this.sampler.reset();
+        this.proc = undefined;
+        this.health = null;
+        this.scheduleRestart();
       });
       child.on("exit", (code, signal) => this.onExit(code, signal));
       this.log(

@@ -1257,3 +1257,111 @@ describe("pinned is header-only (prompt-injection guard)", () => {
     expect(entry!.pinned).toBe(false);
   });
 });
+
+// ---- selfscan fixes: retirement header-only, sweep generation, lazy root ----
+
+describe("retired is header-only, like pinned", () => {
+  let server: FakeOpenViking;
+
+  beforeEach(() => {
+    server = new FakeOpenViking();
+  });
+
+  it("a #retired quoted inside a [feedback] comment does not hide the entry", async () => {
+    const { store } = wire(server);
+    await store.apply({
+      op: "note",
+      text: `#feedback kind=feedback pr=5400 author said: "that helper is #retired now"`,
+    });
+    const entries = await store.read();
+    expect(entries.map((e) => e.text)).toEqual([
+      `#feedback kind=feedback pr=5400 author said: "that helper is #retired now"`,
+    ]);
+  });
+
+  it("retiring such an entry still hides it — the tag lands in the header", async () => {
+    const { store } = wire(server);
+    await store.apply({ op: "note", text: `#feedback quoting: "mark it #retired"` });
+    const [entry] = await store.read();
+    expect((await store.apply({ op: "retire", ...refOf(entry!) })).ok).toBe(true);
+    expect(await store.read()).toEqual([]);
+    expect([...server.files.values()][0]!.startsWith("#retired ")).toBe(true);
+  });
+});
+
+describe("a write outruns an older in-flight sweep", () => {
+  it("the pre-write sweep never repopulates the cache, and a post-write reader never joins it", async () => {
+    const server = new FakeOpenViking();
+    let armed = false;
+    let hit: () => void = () => {};
+    const hitP = new Promise<void>((r) => (hit = r));
+    let release: () => void = () => {};
+    const releaseP = new Promise<void>((r) => (release = r));
+    // The gated read is answered with the bytes as they were WHEN it was
+    // asked — the sweep read the old entry, then the edit committed.
+    const fetchFn: HttpFetch = async (url, init) => {
+      if (armed && url.includes("/api/v1/content/read")) {
+        armed = false;
+        const res = await server.fetch(url, init);
+        hit();
+        await releaseP;
+        return res;
+      }
+      return server.fetch(url, init);
+    };
+    let ms = NOW.getTime();
+    const client = new OpenVikingClient({ baseUrl: BASE, apiKey: KEY, user: "reviewer", fetchFn });
+    const store = new OpenVikingStore({ client, now: () => new Date(ms), cacheTtlMs: 60_000 });
+    await store.apply({ op: "note", text: "v1" });
+    const [entry] = await store.read();
+    ms += 120_000; // the cached sweep expires
+
+    armed = true;
+    const stale = store.sweep();
+    await hitP;
+    expect((await store.apply({ op: "edit", ...refOf(entry!), text: "v2" })).ok).toBe(true);
+    const joined = store.sweep(); // started after the write
+    release();
+    expect((await stale).entries.map((e) => e.text)).toEqual(["v1"]);
+    expect((await joined).entries.map((e) => e.text)).toEqual(["v2"]);
+    expect((await store.read()).map((e) => e.text)).toEqual(["v2"]);
+  });
+});
+
+describe("the lazy memory root is ensured only by a mkdir that succeeded", () => {
+  it("a transient mkdir failure is retried by the next write and by ensureWritable", async () => {
+    const server = new FakeOpenViking();
+    let mkdirFailures = 1;
+    // A fresh namespace: create_if_absent 404s until the root exists.
+    const fetchFn: HttpFetch = async (url, init) => {
+      if (url.includes("/api/v1/fs/mkdir") && mkdirFailures > 0) {
+        mkdirFailures -= 1;
+        throw new Error("socket hang up");
+      }
+      if (url.includes("/api/v1/content/batch-write") && server.dirs.size === 0)
+        return json(404, {
+          status: "error",
+          result: null,
+          error: { code: "NOT_FOUND", message: "parent does not exist" },
+        });
+      return server.fetch(url, init);
+    };
+    const client = new OpenVikingClient({ baseUrl: BASE, apiKey: KEY, user: "reviewer", fetchFn });
+    const store = new OpenVikingStore({ client, now: () => NOW, cacheTtlMs: 0 });
+    expect((await store.apply({ op: "note", text: "first" })).ok).toBe(false);
+    expect((await store.apply({ op: "note", text: "second" })).ok).toBe(true);
+    expect(server.dirs.size).toBe(1);
+
+    const other = new OpenVikingStore({
+      client: new OpenVikingClient({ baseUrl: BASE, apiKey: KEY, user: "reviewer", fetchFn }),
+      now: () => NOW,
+      cacheTtlMs: 0,
+      defaultCategory: "other",
+    });
+    server.dirs.clear();
+    mkdirFailures = 1;
+    expect((await other.apply({ op: "note", text: "third" })).ok).toBe(false);
+    expect((await other.ensureWritable()).ok).toBe(true);
+    expect(server.dirs.size).toBe(1);
+  });
+});

@@ -33,14 +33,14 @@ const cfg = (over: Partial<OpenVikingConfig> = {}): OpenVikingConfig =>
 // ---- fakes ---------------------------------------------------------------
 
 class FakeChild extends EventEmitter implements SupervisedChild {
-  readonly pid: number;
+  readonly pid: number | undefined;
   stdout = new EventEmitter() as unknown as SupervisedChild["stdout"];
   stderr = new EventEmitter() as unknown as SupervisedChild["stderr"];
   killed: NodeJS.Signals[] = [];
   /** SIGTERM is ignored when true — the SIGKILL escalation path. */
   stubborn = false;
 
-  constructor(pid: number) {
+  constructor(pid: number | undefined) {
     super();
     this.pid = pid;
   }
@@ -107,7 +107,14 @@ interface Harness {
 
 function harness(
   over: Partial<OpenVikingConfig> = {},
-  opts: { fetchFn?: FetchLike; exists?: (p: string) => boolean; onReady?: () => void } = {},
+  opts: {
+    fetchFn?: FetchLike;
+    exists?: (p: string) => boolean;
+    onReady?: () => void;
+    /** Spawn n (0-based) fails the way Node reports it: no pid, then an
+     * async `error` (and `close`) — never `exit`. */
+    spawnFails?: (n: number) => boolean;
+  } = {},
 ): Harness {
   const clock = new FakeClock();
   const children: FakeChild[] = [];
@@ -118,7 +125,8 @@ function harness(
     log: (msg) => lines.push(msg),
     spawn: (cmd, args, o) => {
       spawns.push({ cmd, args, opts: o });
-      const child = new FakeChild(1000 + children.length);
+      const n = children.length;
+      const child = new FakeChild(opts.spawnFails?.(n) ? undefined : 1000 + n);
       children.push(child);
       return child;
     },
@@ -321,6 +329,32 @@ describe("OpenVikingSupervisor", () => {
     expect(h.spawns).toHaveLength(5);
     expect(h.sup.status().restarts).toBe(4);
     expect(h.sup.status().running).toBe(true);
+  });
+
+  it("an async spawn failure (ENOENT/EACCES on a respawn) enters the ladder — no exit ever comes", () => {
+    // Node reports a failed spawn as `error` then `close`, never `exit`. The
+    // binary check runs only at start(), so a respawn after a crash is where a
+    // vanished binary or a broken venv shebang surfaces.
+    const h = harness({ restart_backoff_ms: [1000, 5000] }, { spawnFails: (n) => n === 1 });
+    h.sup.start();
+    h.children[0]!.exit(1, null);
+    h.clock.fireLast(); // respawn → spawn 1, which fails asynchronously
+    h.children[1]!.emit("error", Object.assign(new Error("spawn ov ENOENT"), { code: "ENOENT" }));
+    h.children[1]!.emit("close", -2, null);
+    expect(h.sup.status().running).toBe(false);
+    expect(h.sup.status().last_error).toContain("ENOENT");
+    expect(h.clock.fireLast()).toBe(5000); // the ladder, not silence
+    expect(h.spawns).toHaveLength(3);
+    expect(h.sup.status().running).toBe(true);
+  });
+
+  it("an error on a RUNNING child is not an exit — the live process stays tracked", () => {
+    const h = harness();
+    h.sup.start();
+    const before = h.clock.delays.length;
+    h.children[0]!.emit("error", new Error("kill EPERM"));
+    expect(h.sup.status().running).toBe(true);
+    expect(h.clock.delays).toHaveLength(before);
   });
 
   it("an exit records code/signal without an approve-like guess about why", () => {
