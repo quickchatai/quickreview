@@ -1328,6 +1328,42 @@ describe("a write outruns an older in-flight sweep", () => {
   });
 });
 
+describe("a sweep that read before a write never fills the cache", () => {
+  it("the author's re-read after the stale sweep settles sees its own edit", async () => {
+    const server = new FakeOpenViking();
+    let armed = false;
+    let hit: () => void = () => {};
+    const hitP = new Promise<void>((r) => (hit = r));
+    let release: () => void = () => {};
+    const releaseP = new Promise<void>((r) => (release = r));
+    const fetchFn: HttpFetch = async (url, init) => {
+      if (armed && url.includes("/api/v1/content/read")) {
+        armed = false;
+        const res = await server.fetch(url, init);
+        hit();
+        await releaseP;
+        return res;
+      }
+      return server.fetch(url, init);
+    };
+    let ms = NOW.getTime();
+    const client = new OpenVikingClient({ baseUrl: BASE, apiKey: KEY, user: "reviewer", fetchFn });
+    const store = new OpenVikingStore({ client, now: () => new Date(ms), cacheTtlMs: 60_000 });
+    await store.apply({ op: "note", text: "v1" });
+    const [entry] = await store.read();
+    ms += 120_000;
+
+    armed = true;
+    const stale = store.sweep();
+    await hitP;
+    expect((await store.apply({ op: "edit", ...refOf(entry!), text: "v2" })).ok).toBe(true);
+    release();
+    expect((await stale).entries.map((e) => e.text)).toEqual(["v1"]);
+    // No other sweep ran: only the cache could answer v1 here.
+    expect((await store.read()).map((e) => e.text)).toEqual(["v2"]);
+  });
+});
+
 describe("the lazy memory root is ensured only by a mkdir that succeeded", () => {
   it("a transient mkdir failure is retried by the next write and by ensureWritable", async () => {
     const server = new FakeOpenViking();
