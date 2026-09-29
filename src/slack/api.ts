@@ -30,6 +30,10 @@ export interface SlackApiOptions {
   apiBase?: string;
   /** Clock seam. */
   now?: () => number;
+  /** Deadline for ONE HTTP attempt (headers and body), ms. A stalled
+   * attempt is aborted and handled like any other failure, so it can never
+   * hold the serialized post queue for longer than this. */
+  requestTimeoutMs?: number;
   /** Timer seam. */
   setTimeoutFn?: (fn: () => void, ms: number) => unknown;
   /** Structured log sink. */
@@ -42,6 +46,7 @@ const DEFAULT_USER_CACHE_TTL_SEC = 86_400;
 const RETRIES = 2;
 /** Cap on an honored Retry-After, so a hostile header cannot wedge the queue. */
 const MAX_RETRY_AFTER_MS = 60_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 
 interface SlackApiResponse {
   ok?: boolean;
@@ -54,6 +59,7 @@ export class SlackApiClient implements SlackWebApi {
   private readonly botToken: string;
   private readonly fetchFn: SlackFetchFn;
   private readonly postMinIntervalMs: number;
+  private readonly requestTimeoutMs: number;
   private readonly userCacheTtlMs: number;
   private readonly apiBase: string;
   private readonly now: () => number;
@@ -69,6 +75,7 @@ export class SlackApiClient implements SlackWebApi {
     this.botToken = opts.botToken;
     this.fetchFn = opts.fetchFn ?? fetch;
     this.postMinIntervalMs = opts.postMinIntervalMs ?? DEFAULT_POST_MIN_INTERVAL_MS;
+    this.requestTimeoutMs = opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     this.userCacheTtlMs = (opts.userCacheTtlSec ?? DEFAULT_USER_CACHE_TTL_SEC) * 1000;
     this.apiBase = opts.apiBase ?? "https://slack.com/api";
     this.now = opts.now ?? Date.now;
@@ -192,8 +199,15 @@ export class SlackApiClient implements SlackWebApi {
     return { ok: false, error: last.error ?? "unknown" };
   }
 
-  /** One HTTP call. Swallows everything; returns an outcome. */
+  /** One HTTP call, bounded by `requestTimeoutMs` end to end (the abort
+   * signal covers the body read too). Swallows everything; returns an outcome. */
   private async callOnce(method: string, body: Record<string, unknown>): Promise<CallOutcome> {
+    const abort = new AbortController();
+    const timer = setTimeout(
+      () => abort.abort(new Error(`timeout after ${this.requestTimeoutMs}ms`)),
+      this.requestTimeoutMs,
+    );
+    timer.unref?.();
     try {
       const res = await this.fetchFn(`${this.apiBase}/${method}`, {
         method: "POST",
@@ -202,6 +216,7 @@ export class SlackApiClient implements SlackWebApi {
           "content-type": "application/json; charset=utf-8",
         },
         body: JSON.stringify(body),
+        signal: abort.signal,
       });
       if (res.status === 429) {
         return { ok: false, error: "rate_limited", retryAfterMs: this.retryAfterMs(res) };
@@ -220,6 +235,8 @@ export class SlackApiClient implements SlackWebApi {
       return { ok: true, ...(ts ? { ts } : {}), raw: payload };
     } catch (err) {
       return { ok: false, error: String(err) };
+    } finally {
+      clearTimeout(timer);
     }
   }
 

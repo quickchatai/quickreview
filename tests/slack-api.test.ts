@@ -164,6 +164,34 @@ describe("rate limits and retries", () => {
     expect(f.calls).toHaveLength(4);
   });
 
+  it("a stalled request is abandoned at the per-attempt deadline, so it cannot wedge the queue", async () => {
+    // Slack accepts the connection and never answers: only the abort signal
+    // can end the attempt.
+    let n = 0;
+    const fetchFn = ((_url: string, init: RequestInit = {}) => {
+      n += 1;
+      if (n > 3) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: { get: () => null },
+          json: async () => ({ ok: true, ts: "1712345678.000200" }),
+        } as unknown as Response);
+      }
+      return new Promise<Response>((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+      });
+    }) as unknown as SlackFetchFn;
+    const api = build(fetchFn, { requestTimeoutMs: 5_000 });
+    const first = api.postMessage({ channel: "C1", text: "stalled" });
+    const second = api.postMessage({ channel: "C1", text: "next" });
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect((await first).ok).toBe(false);
+    expect(await second).toEqual({ ok: true, ts: "1712345678.000200" });
+    expect(n).toBe(4);
+  });
+
   it("a network throw is swallowed into an error result", async () => {
     const fetchFn = (async () => {
       throw new Error("ECONNRESET");

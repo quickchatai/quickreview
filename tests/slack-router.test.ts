@@ -316,6 +316,44 @@ describe("SlackRouter dispositions", () => {
     expect(origins.latest()?.event_id).toBe("Ev09ABCDEF");
   });
 
+  it("reserves the turn before its first await, so a burst at the cap edge cannot overshoot", async () => {
+    // One per-user slot left; the name lookup is an HTTP round-trip, and every
+    // message in the burst arrives while it is in flight.
+    const cap = cfg.slack.policy.per_user_daily_turns;
+    for (let i = 0; i < cap - 1; i++) {
+      store.recordSlackEvent({
+        event_id: `seed${i}`,
+        channel: CHANNEL,
+        ts: `1.${i}`,
+        slack_user: ALICE,
+        tier: "author",
+        disposition: "injected",
+      });
+    }
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const r = router({
+      users: {
+        usersInfo: (async (id: string) => {
+          await gate;
+          return { id, display_name: "Alice Nowak", is_bot: false };
+        }) as never,
+      },
+    });
+    const burst = [0, 1, 2].map((i) =>
+      r.handle(event({ event_id: `EvBurst${i}`, ts: evTs(clock, i + 1) })),
+    );
+    await Promise.resolve();
+    release();
+    const results = await Promise.all(burst);
+    expect(results.filter((x) => x.disposition === "injected")).toHaveLength(1);
+    expect(results.filter((x) => x.disposition === "dropped_cap")).toHaveLength(2);
+    expect(injected).toHaveLength(1);
+    expect(store.slackTurnsBetween("2026-01-01T00:00:00Z", "2027-01-01T00:00:00Z", ALICE)).toBe(
+      cap,
+    );
+  });
+
   it("removes the rights again when the wake file never lands", async () => {
     const r = router({
       inject: async () => {

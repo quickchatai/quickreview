@@ -303,7 +303,27 @@ export class SlackRouter {
       return { disposition: "dropped_cap", tier, reason: decision.reason };
     }
 
-    // ---- admitted: resolve identity, write the rights down, then inject ----
+    // ---- admitted: reserve the turn, resolve identity, write the rights down,
+    //      then inject ----
+    // The budget counts `injected` rows, and everything below awaits (a
+    // users.info round-trip, the inject). Handlers run unserialized, so the
+    // slot is reserved HERE, before the first await — otherwise a burst at the
+    // cap edge all passes admission while the first one is still in flight.
+    // injected_at stays null until the wake file actually lands; any throw
+    // before it does releases the slot again (no turn, no budget spent).
+    store.setSlackEventDisposition(event.event_id, "injected", false);
+    try {
+      return await this.deliver(event, tier);
+    } catch (err) {
+      store.setSlackEventDisposition(event.event_id, "dropped_stale"); // fail closed
+      throw err;
+    }
+  }
+
+  /** The admitted half of `handle`, run with the turn already reserved. */
+  private async deliver(event: SlackInboundEvent, tier: SlackTier): Promise<RouteResult> {
+    const cfg = this.deps.cfg;
+    const store = this.deps.store;
     const threadTs = event.thread_ts ?? event.ts;
     const threadPr = store.slackThreadByRoot(cfg.slack.channel, threadTs)?.pr ?? null;
     const login = githubLoginFor(cfg, event.user);
