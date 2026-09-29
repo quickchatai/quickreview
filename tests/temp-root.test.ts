@@ -42,11 +42,16 @@ describe("the per-file temp root", () => {
   });
 
   it("restores an UNSET TMPDIR as unset, not as the string 'undefined'", () => {
-    const saved = process.env.TMPDIR;
+    const saved = process.env.TMPDIR!;
     delete process.env.TMPDIR;
-    const r = openTempRoot(process.env.QCR_TEST_REAL_TMPDIR!, "qcr-test-root-probe-");
-    r.close();
-    expect("TMPDIR" in process.env).toBe(false);
-    process.env.TMPDIR = saved;
+    try {
+      const r = openTempRoot(process.env.QCR_TEST_REAL_TMPDIR!, "qcr-test-root-probe-");
+      r.close();
+      expect("TMPDIR" in process.env).toBe(false);
+    } finally {
+      // Restored even on a failed assertion, so the rest of the file keeps
+      // its root (a lost TMPDIR would send later temp dirs to the real /tmp).
+      process.env.TMPDIR = saved;
+    }
   });
 });
