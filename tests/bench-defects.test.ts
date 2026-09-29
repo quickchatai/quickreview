@@ -466,6 +466,26 @@ describe("the judge session", () => {
     });
     expect(readFileSync(counter, "utf8").trim()).toBe("5");
     expect(rerun[0]!.error).toMatch(/no JSON/);
+    // A round written before the stamp existed: kept while it judged exactly
+    // this review's comment ids (no re-spend on an old judge dir), re-judged
+    // once the ids differ.
+    const { review_hash: _h, ...legacy } = again[0]!;
+    expect(_h).toMatch(/^[0-9a-f]{64}$/);
+    for (const k of [1, 2])
+      writeFileSync(
+        join(dir, "judge", `o__r@1234567.r${k}.json`),
+        JSON.stringify({ ...legacy, round: k }),
+      );
+    const kept = await judgeCase({ ...common, rounds: 2, resume: true });
+    expect(readFileSync(counter, "utf8").trim()).toBe("5");
+    expect(kept.map((j) => j.error)).toEqual([undefined, undefined]);
+    await judgeCase({
+      ...common,
+      review: { ...REVIEW, comments: [REVIEW.comments[0]!] },
+      rounds: 2,
+      resume: true,
+    });
+    expect(readFileSync(counter, "utf8").trim()).toBe("7");
   });
 });
 
@@ -504,8 +524,14 @@ describe("the bench's one pi spawn", () => {
     });
     const { dir, env } = fakePi("");
     const big = join(dir, "big");
-    writeFileSync(big, ('{"type":"x","pad":"' + "z".repeat(2000) + '"}\n').repeat(2000) + answer + "\n");
-    writeFileSync(join(dir, "bin", "pi"), `#!/bin/sh\ncat >/dev/null\ncat ${big} >&2\ncat ${big}\n`);
+    writeFileSync(
+      big,
+      ('{"type":"x","pad":"' + "z".repeat(2000) + '"}\n').repeat(2000) + answer + "\n",
+    );
+    writeFileSync(
+      join(dir, "bin", "pi"),
+      `#!/bin/sh\ncat >/dev/null\ncat ${big} >&2\ncat ${big}\n`,
+    );
     for (let i = 0; i < 30; i++) {
       const eventsPath = join(dir, `e${i}.jsonl`);
       const r = await runJudgeSession("prompt", {

@@ -97,6 +97,12 @@ export function roundFile(outDir: string, instanceId: string, round: number): st
   return join(outDir, `${instanceId}.r${round}.json`);
 }
 
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  const x = [...a].sort();
+  const y = [...b].sort();
+  return x.length === y.length && x.every((id, i) => id === y[i]);
+}
+
 /** Judge one case for `rounds` rounds; every round is written, errors included. */
 export async function judgeCase(o: JudgeCaseOptions): Promise<CaseJudgement[]> {
   mkdirSync(o.outDir, { recursive: true });
@@ -108,9 +114,18 @@ export async function judgeCase(o: JudgeCaseOptions): Promise<CaseJudgement[]> {
     if (o.resume && existsSync(file)) {
       const prior = JSON.parse(readFileSync(file, "utf8")) as CaseJudgement;
       // A round kept on resume must have judged THIS review: `review --resume`
-      // rewrites a failed case's review in the same run dir. An unstamped
-      // (older) round cannot prove it, so it is re-judged too.
-      if (!prior.error && prior.review_hash === reviewHash) {
+      // rewrites a failed case's review in the same run dir. A round written
+      // before the stamp existed is kept only while it judged exactly this
+      // review's comment ids (a clean answer covers every one, parseJudgement)
+      // — re-paying every legacy round on resume would be a silent spend.
+      const judgedThis =
+        prior.review_hash !== undefined
+          ? prior.review_hash === reviewHash
+          : sameIds(
+              prior.comments.map((c) => c.id),
+              o.review.comments.map((c) => c.id),
+            );
+      if (!prior.error && judgedThis) {
         out.push(prior);
         continue;
       }
