@@ -419,9 +419,6 @@ const ALLOWLIST: AllowlistEntry[] = [
     reason: "documents the shipped profile set incl. the private pack the live deployment selects",
   },
 
-  // -- The live-config invariant block (reads config.toml, which is excluded;
-  //    the block self-skips when the file is absent).
-
   // -- Deliberate negative assertions / scrub tripwires.
   {
     path: "tests/checklist.test.ts",
