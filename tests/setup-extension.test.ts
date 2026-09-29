@@ -210,6 +210,9 @@ describe("the tool belt", () => {
         "scan_status",
         "scan_stop",
         "scan_findings",
+        // the companion's sameness hand-off.
+        "scan_matches",
+        "scan_match",
       ]);
     } finally {
       err.mockRestore();

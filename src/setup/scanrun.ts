@@ -27,6 +27,15 @@
 //     expired login) reads as `interrupted`. Either way, only FINISHED cases
 //     wrote ledger rows, so starting again reads only what is left.
 //
+// A DELTA re-scan is the same run over only the files whose
+// content changed since the last scan (scan.ts changedSince): priced from the
+// ledger like any stage-1 preview — so never before calibration — and
+// stopped hard at its estimate. Deep passes never ride a delta; stage 2 runs
+// only when asked. Every run, delta or not, ends by RECONCILING the findings
+// store (findings.ts): exact matches were already recognised case by case;
+// what a re-read file no longer reports is fixed, or handed to the companion
+// as a match question when a fresh finding might be the same one.
+//
 // Where a case runs: background pi subagents inside the companion (the case
 // runner port), from the scan agent build — `pass-scan`, and the validator
 // when `[scan] validator` is on, both built with the scan-mode anchor
@@ -40,8 +49,8 @@
 import type { PassTier } from "../types.js";
 import type { ScanConfig } from "../config.js";
 import type { CaseOutcome, CaseRunner, Refusal, StateFs } from "./engine.js";
-import { FindingsStore, type ReportedFinding } from "./findings.js";
-import { casesFor, coveredBy, Ledger, measuredRate, type LedgerEntry, type RateKey } from "./ledger.js";
+import { FindingsStore, type ReconcileResult, type ReportedFinding } from "./findings.js";
+import { blobsRead, casesFor, coveredBy, lastScanned, Ledger, measuredRate, type LedgerEntry, type RateKey } from "./ledger.js";
 import {
   anchoredLines,
   calibrationCases,
@@ -84,6 +93,9 @@ export interface ScanSource {
   /** The tree at `sha`, materialised; earlier trees other than `keep` may be
    * removed to bound the disk. */
   open(sha: string, keep: readonly string[]): { ok: true; tree: ScanTree } | { ok: false; reason: string };
+  /** The files (and content hashes) at `sha`, listed without materialising
+   * anything, or null when git cannot list them — a delta's baseline. */
+  list(sha: string): TreeFile[] | null;
 }
 
 /** The resolved settings a scan runs with: `config.toml [scan]` under the
@@ -115,7 +127,7 @@ export const RUN_VERSION = 1;
 /** Summaries of finished runs kept beside the current one. */
 export const RUN_HISTORY = 20;
 
-export type ScanMode = "calibration" | "stage1";
+export type ScanMode = "calibration" | "stage1" | "delta";
 export type ScanCaseStatus = "pending" | "running" | "done" | "failed" | "stopped" | "skipped";
 export type ScanRunState = "running" | "complete" | "partial" | "stopped" | "capped";
 
@@ -158,6 +170,9 @@ export interface ScanRun {
   settings: { tier: PassTier; effort: string; validator: boolean; validate_tier: PassTier | null };
   cases: ScanCaseState[];
   problems: string[];
+  /** What the run's end did to the stored findings; null until it
+   * ran, or when it could not. */
+  matching?: ReconcileResult | null;
 }
 
 export interface ScanRunSummary {
@@ -209,6 +224,10 @@ export interface ScanPreview {
   unassigned: string[];
   unreadable: number;
   settings: ScanRun["settings"] & { exclude: string[]; concurrency: number };
+  /** A delta: the last scan's sha it compares against, and the unchanged
+   * files it leaves out that the ledger does not cover (the rest of an
+   * unfinished scan). Null for a full preview. */
+  delta: { since: string; unchanged: number } | null;
   /** Why a start would be refused whatever the key. */
   blockers: string[];
 }
@@ -292,7 +311,7 @@ export class ScanRunner {
 
   // -- the plan --
 
-  private async plan(ref: string | undefined): Promise<{ ok: true; planned: Planned } | Refusal> {
+  private async plan(ref: string | undefined, delta = false): Promise<{ ok: true; planned: Planned } | Refusal> {
     const s = this.ports.settings();
     if (!s.ok) return s;
     const cut = this.ports.savedCut();
@@ -307,6 +326,18 @@ export class ScanRunner {
     if (error !== null) return { ok: false, errors: [error] };
     const settings = s.settings;
     const cfg = settings.scan;
+    // A delta compares against the last scan: every content the ledger read
+    // per file, and the tree that scan read (listed, not materialised).
+    let basis: { since: string; read: Map<string, Set<string>>; baseline: Map<string, string> } | null = null;
+    if (delta) {
+      const last = lastScanned(entries, SCAN_PASS);
+      if (last === null) return { ok: false, errors: ["no stage-1 scan to re-scan against — preview and run a full scan first"] };
+      const listed = this.ports.source.list(last.sha);
+      if (listed === null) {
+        return { ok: false, errors: [`cannot list the tree the last scan read (${last.sha.slice(0, 12)}) — a delta cannot tell which files are new`] };
+      }
+      basis = { since: last.sha, read: blobsRead(entries, SCAN_PASS), baseline: new Map(listed.map((f) => [f.path, f.blob])) };
+    }
     const plan = planStage1({
       cut: cut.cut,
       files: tree.files,
@@ -314,6 +345,7 @@ export class ScanRunner {
       covered: coveredBy(entries, SCAN_PASS),
       exclude: cfg.exclude,
       budget: { maxFiles: cfg.case_max_files, maxLines: cfg.case_max_lines },
+      ...(basis ? { delta: basis } : {}),
     });
     const key: RateKey = { lens: SCAN_PASS, tier: cfg.tier, effort: cfg.effort, validator: cfg.validator };
     const rate = measuredRate(entries, key);
@@ -327,7 +359,16 @@ export class ScanRunner {
     let cases: Array<ScanCasePlan & { estimate_usd: number | null }>;
     let cap: number;
     let estimate: number | null;
-    if (calibrated) {
+    if (delta) {
+      // Priced like stage 1 — a delta never calibrates, and never guesses.
+      mode = "delta";
+      if (rate === null) {
+        blockers.push("no measured price for stage 1 at these settings — run the calibration (an ordinary preview) before a delta re-scan");
+      }
+      cases = plan.cases.map((c) => ({ ...c, estimate_usd: rate === null ? null : caseEstimate(c.lines, rate) }));
+      estimate = rate === null ? null : cases.reduce((n, c) => n + (c.estimate_usd ?? 0), 0);
+      cap = estimate ?? 0;
+    } else if (calibrated) {
       mode = "stage1";
       cases = plan.cases.map((c) => ({ ...c, estimate_usd: caseEstimate(c.lines, rate) }));
       estimate = cases.reduce((n, c) => n + (c.estimate_usd ?? 0), 0);
@@ -344,7 +385,9 @@ export class ScanRunner {
       estimate = null;
       cap = cfg.calibration_max_usd;
     }
-    if (cases.length === 0) {
+    if (cases.length === 0 && delta) {
+      blockers.push(`nothing changed to read at ${sha.slice(0, 12)} since the last scan (${basis!.since.slice(0, 12)})`);
+    } else if (cases.length === 0) {
       blockers.push(
         plan.covered > 0
           ? `nothing left to read at ${sha.slice(0, 12)}: the ledger already covers every stage-1 file at this content`
@@ -374,12 +417,13 @@ export class ScanRunner {
       cap_usd: cap,
       rate,
       calibration: { measured, wanted: cfg.calibration_units },
-      remaining_cases: mode === "stage1" ? 0 : plan.cases.length - cases.length,
+      remaining_cases: mode === "calibration" ? plan.cases.length - cases.length : 0,
       excluded: plan.excluded,
       covered: plan.covered,
       unassigned: plan.unassigned,
       unreadable: plan.unreadable,
       settings: { ...runSettings, exclude: cfg.exclude, concurrency: cfg.concurrency },
+      delta: basis ? { since: basis.since, unchanged: plan.unchanged } : null,
       blockers,
     };
     return { ok: true, planned: { preview, tree, settings } };
@@ -389,13 +433,13 @@ export class ScanRunner {
 
   /** What a scan would read and cost now at `sha` (default the checkout's
    * HEAD), and the key a start must quote. */
-  async preview(args: { sha?: string } = {}): Promise<{ ok: true; preview: ScanPreview } | Refusal> {
-    const p = await this.plan(args.sha);
+  async preview(args: { sha?: string; delta?: boolean } = {}): Promise<{ ok: true; preview: ScanPreview } | Refusal> {
+    const p = await this.plan(args.sha, args.delta === true);
     return p.ok ? { ok: true, preview: p.planned.preview } : p;
   }
 
   /** Start the previewed run in the background. Returns once it is recorded. */
-  async start(args: { key?: unknown; sha?: string }): Promise<{ ok: true; run: ScanRun } | Refusal> {
+  async start(args: { key?: unknown; sha?: string; delta?: boolean }): Promise<{ ok: true; run: ScanRun } | Refusal> {
     if (this.active) return { ok: false, errors: [`scan ${this.active.id} is still running — stop it or wait for it`] };
     // Two starts in parallel (a model may issue tool calls concurrently) must
     // not both pass the check above while the first is still planning: that
@@ -406,15 +450,15 @@ export class ScanRunner {
     }
     this.starting = true;
     try {
-      return await this.startPlanned(args.key, args.sha);
+      return await this.startPlanned(args.key, args.sha, args.delta === true);
     } finally {
       this.starting = false;
     }
   }
 
-  private async startPlanned(key: string, sha: string | undefined): Promise<{ ok: true; run: ScanRun } | Refusal> {
+  private async startPlanned(key: string, sha: string | undefined, delta: boolean): Promise<{ ok: true; run: ScanRun } | Refusal> {
     const args = { key, sha };
-    const p = await this.plan(args.sha);
+    const p = await this.plan(args.sha, delta);
     if (!p.ok) return p;
     const { preview, tree, settings } = p.planned;
     if (args.key !== preview.key) {
@@ -467,6 +511,7 @@ export class ScanRunner {
         finished_at: null,
       })),
       problems: [],
+      matching: null,
     };
     // A run left `running` by a companion that is gone was interrupted.
     if (file.current !== null) {
@@ -608,6 +653,7 @@ export class ScanRunner {
 
     // Never started: `skipped` when the cap kept it out, `stopped` when a stop did.
     for (const c of run.cases) if (c.status === "pending") c.status = capHit ? "skipped" : "stopped";
+    this.reconcile(run, tree);
     const allDone = run.cases.every((c) => c.status === "done");
     this.settle(file, run, allDone ? "complete" : capHit ? "capped" : signal.aborted ? "stopped" : "partial");
   }
@@ -723,10 +769,12 @@ export class ScanRunner {
       }
     }
 
+    const blobOf = new Map(tree.files.map((f) => [f.path, f.blob]));
     const all: ReportedFinding[] = kept.map(({ cand, code }) => ({
       fingerprint: findingFingerprint({ path: cand.path, lens: SCAN_PASS, kind: cand.kind, code }),
       unit: plan.unit,
       path: cand.path,
+      blob: blobOf.get(cand.path) ?? null,
       start: cand.start,
       end: cand.end,
       lens: SCAN_PASS,
@@ -820,6 +868,23 @@ export class ScanRunner {
       this.ports.state.write(SUGGESTIONS_FILE, `${JSON.stringify({ version: RUN_VERSION, suggestions: [...byKey.values()] }, null, 1)}\n`);
     } catch (err) {
       run.problems.push(`deep-lens suggestions not stored: ${clean(err)}`);
+    }
+  }
+
+  /** The run's end, whatever ended it: what re-read files no longer report
+   * is fixed, or handed to the companion (findings.ts reconcile). Only
+   * FINISHED cases wrote ledger rows, so only their reading counts. */
+  private reconcile(run: ScanRun, tree: ScanTree): void {
+    const { entries, error } = this.ledger.load();
+    try {
+      if (error !== null) throw new Error(error);
+      run.matching = this.findings.reconcile({
+        rows: entries,
+        tree: new Set(tree.files.map((f) => f.path)),
+        run: { run: run.id, sha: run.sha, at: this.ports.clock().toISOString() },
+      });
+    } catch (err) {
+      run.problems.push(`the findings were not reconciled (${clean(err)}) — the next run's end does it`);
     }
   }
 

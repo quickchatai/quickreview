@@ -139,3 +139,26 @@ export function measuredRate(entries: readonly LedgerEntry[], key: RateKey): Sca
   if (cases.size === 0 || lines === 0) return null;
   return { usd_per_kline: (cost / lines) * 1000, cases: cases.size, lines, cost_usd: cost };
 }
+
+// ---- the delta's basis --------------------------------------------------
+
+/** Every content hash the ledger holds per path for `lens` — a path read at
+ * none of them now has CHANGED since it was scanned. */
+export function blobsRead(entries: readonly LedgerEntry[], lens: string): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  for (const e of entries) {
+    if (e.lens !== lens) continue;
+    const s = out.get(e.path) ?? new Set<string>();
+    s.add(e.blob);
+    out.set(e.path, s);
+  }
+  return out;
+}
+
+/** The sha of the LAST scan by `lens` — its newest row's — or null when the
+ * ledger holds none: what a delta re-scan compares the tree against. */
+export function lastScanned(entries: readonly LedgerEntry[], lens: string): { sha: string; at: string; run: string } | null {
+  let last: LedgerEntry | null = null;
+  for (const e of entries) if (e.lens === lens && (last === null || e.at >= last.at)) last = e;
+  return last === null ? null : { sha: last.sha, at: last.at, run: last.run };
+}

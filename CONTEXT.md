@@ -80,7 +80,11 @@ The scan's cheap wide pass — one case per unit, tests and migrations excluded 
 The scan's deep, targeted plan — rows of file set × lens × tier with a cost — proposed by the companion and approved by the operator.
 
 **Delta re-scan**:
-Stage 1 over only the files whose content changed since the last scan.
+Stage 1 over only the files whose content changed since the last scan — read by the ledger at other content, or new or different against the tree the last scan read. A file the last scan never reached is not a change.
+
+**Match question**:
+The findings a re-scan stopped reporting exactly, held beside the fresh findings of the same lens that might be them moved or reworded; the companion answers it whole, and every old finding it pairs with nothing is fixed.
+_Avoid_: dedup, merge queue
 
 **Coverage ledger**:
 What a scan has read — file, content hash and lens (with tier, sha, cost); the resume grain and the source of cost previews.

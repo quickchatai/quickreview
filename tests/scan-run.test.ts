@@ -67,6 +67,7 @@ function fakeSource(trees: Record<string, Record<string, string>>, head: string)
         },
       };
     },
+    list: (sha: string) => (trees[sha] ? Object.entries(trees[sha]!).map(([path, text]) => ({ path, blob: blob(text) })) : null),
   };
   return src;
 }

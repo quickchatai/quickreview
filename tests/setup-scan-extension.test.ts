@@ -22,11 +22,15 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 const SHA = "a".repeat(40);
 const FILES: Record<string, string> = { "app/a.py": "one\ntwo\nthree\n", "lib/b.py": "x\ny\n" };
 
-function belt(): { defs: PiToolDefinition[]; scan: ScanRunner } {
+let tick = 0;
+
+function belt(trees: Record<string, Record<string, string>> = { [SHA]: FILES }, head = SHA): { defs: PiToolDefinition[]; scan: ScanRunner } {
   const state = stateHomeFs(join(dir, "state"));
+  const listOf = (sha: string) => Object.keys(trees[sha] ?? {}).map((path) => ({ path, blob: `b-${path}-${JSON.stringify(trees[sha]![path])}` }));
   const scan = new ScanRunner({
     state,
-    clock: () => new Date("2026-09-29T10:00:00Z"),
+    // Advancing: a run's id is its start second, and two runs must differ.
+    clock: () => new Date(Date.parse("2026-09-29T10:00:00Z") + 1000 * tick++),
     cases: {
       run: async (spec) => ({
         ok: true,
@@ -36,17 +40,18 @@ function belt(): { defs: PiToolDefinition[]; scan: ScanRunner } {
     },
     source: {
       location: "/reviewed-repo",
-      resolve: (ref) => (ref === "HEAD" || ref === SHA ? SHA : null),
+      resolve: (ref) => (ref === "HEAD" ? head : ref in trees ? ref : null),
       open: (sha) => ({
         ok: true,
         tree: {
           sha,
           root: "/tree",
-          files: Object.keys(FILES).map((path) => ({ path, blob: `b-${path}` })),
-          read: (p) => FILES[p] ?? null,
-          lines: (p) => (FILES[p] === undefined ? null : FILES[p]!.split("\n").length - 1),
+          files: listOf(sha),
+          read: (p) => trees[sha]?.[p] ?? null,
+          lines: (p) => (trees[sha]?.[p] === undefined ? null : trees[sha]![p]!.split("\n").length - 1),
         },
       }),
+      list: (sha) => (trees[sha] ? listOf(sha) : null),
     },
     savedCut: () => ({
       ok: true,
@@ -83,5 +88,35 @@ describe("the scan tools", () => {
 
     // Priced now: the next preview is stage 1 — and nothing is left to read.
     expect(await call(defs, "scan_preview")).toMatch(/✗ nothing left to read/);
+  });
+});
+
+describe("the delta and match tools", () => {
+  it("a delta preview reads only what changed; the match question is shown, answered and settled", async () => {
+    const SHA2 = "b".repeat(40);
+    const trees = { [SHA]: FILES, [SHA2]: { ...FILES, "app/a.py": "ONE\nTWO\nthree\n" } };
+    const { defs, scan } = belt(trees);
+    // Calibrate (both units), which is the whole repo here.
+    const key = /scan_start with key (\w+)/.exec(await call(defs, "scan_preview"))![1]!;
+    await call(defs, "scan_start", { key });
+    await scan.idle();
+
+    const delta = await call(defs, "scan_preview", { sha: SHA2, delta: true });
+    expect(delta).toMatch(/^DELTA re-scan at bbbbbbbbbbbb .* against the last scan at aaaaaaaaaaaa\./);
+    expect(delta).toMatch(/1 files, 3 lines in 1 case\(s\) — 1 already read at this content\./);
+    expect(delta).toMatch(/and delta true/);
+    const dkey = /scan_start with key (\w+)/.exec(delta)![1]!;
+    expect(await call(defs, "scan_start", { key: dkey, sha: SHA2 })).toMatch(/refused/);
+    expect(await call(defs, "scan_start", { key: dkey, sha: SHA2, delta: true })).toMatch(/\(delta\) started/);
+    await scan.idle();
+    expect(await call(defs, "scan_status")).toMatch(/Findings no longer reported: 0 fixed, 1 waiting on your match \(scan_matches\)/);
+
+    const q = await call(defs, "scan_matches");
+    expect(q).toMatch(/^MATCH QUESTION (\w+)/);
+    const qkey = /^MATCH QUESTION (\w+)/.exec(q)![1]!;
+    const [oldFp, newFp] = [...q.matchAll(/^ {2}- ([0-9a-f]{64}) /gm)].map((m) => m[1]!);
+    expect(await call(defs, "scan_match", { key: "stale", pairs: [] })).toMatch(/^Match refused:\n✗ the question moved/);
+    expect(await call(defs, "scan_match", { key: qkey, pairs: [{ old: oldFp, new: newFp }] })).toBe("Settled: 1 matched (state kept), 0 fixed, 0 new.");
+    expect(await call(defs, "scan_matches")).toMatch(/^No match question is pending/);
   });
 });

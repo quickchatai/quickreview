@@ -68,4 +68,13 @@ describe("gitScanSource", () => {
     expect(src.open(second, []).ok).toBe(true);
     expect(existsSync(join(state, SCAN_TREES_DIR, first))).toBe(false);
   });
+
+  it("lists a sha's files and blob hashes without materialising anything — a delta's baseline", () => {
+    const first = git("rev-parse", "HEAD");
+    const src = gitScanSource(repo, state);
+    expect(src.list(first)).toEqual([{ path: "src/a.py", blob: git("rev-parse", `${first}:src/a.py`) }]);
+    expect(existsSync(join(state, SCAN_TREES_DIR, first))).toBe(false);
+    expect(src.list("f".repeat(40))).toBeNull();
+    expect(src.list("HEAD")).toBeNull();
+  });
 });

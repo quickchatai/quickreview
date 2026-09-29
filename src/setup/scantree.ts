@@ -38,6 +38,20 @@ export function gitScanSource(repoRoot: string, stateRoot: string): ScanSource {
     }
   };
   const treesDir = join(stateRoot, SCAN_TREES_DIR);
+  const list = (sha: string): TreeFile[] | null => {
+    if (!SHA_RE.test(sha)) return null;
+    const listed = git(["ls-tree", "-r", "-z", "--full-tree", sha], 512 * 1024 * 1024);
+    if (listed === null) return null;
+    const files: TreeFile[] = [];
+    for (const rec of listed.split("\0")) {
+      // `<mode> <type> <object>\t<path>` — regular files only: no submodule
+      // (`commit`), no symlink (120000) a lens could follow out of the tree.
+      const m = /^(\d{6}) (\w+) ([0-9a-f]+)\t(.+)$/s.exec(rec);
+      if (!m || m[2] !== "blob" || m[1] === "120000") continue;
+      files.push({ path: m[4]!, blob: m[3]! });
+    }
+    return files;
+  };
   return {
     location: repoRoot,
     resolve: (ref) => {
@@ -47,16 +61,8 @@ export function gitScanSource(repoRoot: string, stateRoot: string): ScanSource {
     },
     open: (sha, keep) => {
       if (!SHA_RE.test(sha)) return { ok: false, reason: `not a commit sha: ${JSON.stringify(sha)}` };
-      const listed = git(["ls-tree", "-r", "-z", "--full-tree", sha], 512 * 1024 * 1024);
-      if (listed === null) return { ok: false, reason: "git cannot list that commit's tree" };
-      const files: TreeFile[] = [];
-      for (const rec of listed.split("\0")) {
-        // `<mode> <type> <object>\t<path>` — regular files only: no submodule
-        // (`commit`), no symlink (120000) a lens could follow out of the tree.
-        const m = /^(\d{6}) (\w+) ([0-9a-f]+)\t(.+)$/s.exec(rec);
-        if (!m || m[2] !== "blob" || m[1] === "120000") continue;
-        files.push({ path: m[4]!, blob: m[3]! });
-      }
+      const files = list(sha);
+      if (files === null) return { ok: false, reason: "git cannot list that commit's tree" };
       const root = join(treesDir, sha);
       try {
         mkdirSync(treesDir, { recursive: true });
@@ -82,6 +88,7 @@ export function gitScanSource(repoRoot: string, stateRoot: string): ScanSource {
       }
       return { ok: true, tree: treeAt(sha, root, files) };
     },
+    list,
   };
 }
 

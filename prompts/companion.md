@@ -213,6 +213,26 @@ run as background subagents here; the records live in `/qcr-state/scan/`.
   finding the validator doubted is kept and marked "may not be valid", never
   dropped. Stage 1 also stores deep-lens suggestions for stage 2.
 
+## Re-scanning what changed
+
+- **A delta re-scan** is `scan_preview` / `scan_start` with `delta: true`:
+  stage 1 over only the files whose content changed since the last scan,
+  priced from past cases and stopped hard at the estimate like any scan.
+  It needs a finished, priced scan to compare against. Never run a deep pass
+  on a delta unless he asks for one.
+- **Recognition is automatic where it can be.** A finding reported again
+  with the same fingerprint is the same finding and keeps its triage. A
+  finding its re-read file no longer reports, with nothing fresh that could
+  be it, becomes `fixed` on its own (with the scan sha).
+- **The rest is yours to judge: `scan_matches`, then `scan_match`.** When a
+  re-scan stops reporting a finding but reports a fresh one of the same lens
+  nearby, the pair waits in one match question. Read both sides, decide
+  which fresh finding is the SAME problem (moved, reworded, on edited code)
+  and answer the whole question with its key and those pairs. A pair keeps
+  the old finding's state; every old one you leave unpaired becomes fixed;
+  every fresh one you leave unpaired stays new. Pair only what is truly the
+  same problem — a wrong pair hides a new finding under an old triage.
+
 ## Boundary (absolute)
 
 - **Never** run `deploy.sh` (any mode), never modify code or config on the VM,

@@ -9,7 +9,13 @@
 //   - scan_start: start exactly what a preview showed (its key), in the
 //     background; hard stop at the estimate;
 //   - scan_status / scan_stop: progress, and the stop (the ledger resumes);
-//   - scan_findings: the stored findings, filterable.
+//   - scan_findings: the stored findings, filterable;
+//   - scan_matches / scan_match: the pending match question — the
+//     findings a re-scan stopped reporting exactly, beside the fresh ones
+//     that might be them — and the companion's whole answer to it.
+//
+// A DELTA re-scan is scan_preview / scan_start with `delta: true`: stage 1
+// over only the files whose content changed since the last scan.
 //
 // Convention (setup.ts, onboarding.ts): every tool answers a refusal as its
 // result, never a throw.
@@ -19,7 +25,7 @@ import { sandboxRoot } from "../src/config.js";
 import { stateHome } from "../src/install.js";
 import { piCaseRunner } from "../src/setup/caserunner.js";
 import type { Refusal, SetupEngine } from "../src/setup/engine.js";
-import type { FindingsFilter, FindingState, ScanFinding } from "../src/setup/findings.js";
+import type { FindingsFilter, FindingState, MatchQuestionView, ScanFinding } from "../src/setup/findings.js";
 import { FindingsStore } from "../src/setup/findings.js";
 import { stateHomeFs } from "../src/setup/adapters.js";
 import { SEVERITIES, type ScanSeverity } from "../src/setup/scan.js";
@@ -44,7 +50,17 @@ const usd = (n: number | null): string => (n === null ? "unknown" : `$${n.toFixe
 export function renderPreview(p: ScanPreview): string {
   const out: string[] = [];
   const head = `at ${p.sha.slice(0, 12)} — ${p.settings.tier} at ${p.settings.effort} effort, validator ${p.settings.validator ? `on (${p.settings.validate_tier})` : "off"}`;
-  if (p.mode === "calibration") {
+  if (p.mode === "delta") {
+    out.push(
+      `DELTA re-scan ${head}, against the last scan at ${p.delta?.since.slice(0, 12) ?? "?"}.`,
+      `Only files whose content changed since: ${p.files} files, ${p.lines} lines in ${p.cases.length} case(s) — ` +
+        `${p.covered} already read at this content` +
+        (p.delta && p.delta.unchanged > 0 ? `; ${p.delta.unchanged} unchanged file(s) no scan has reached yet are left for an ordinary preview` : "") +
+        `. Estimate ${usd(p.estimate_usd)}, measured at ` +
+        `${usd(p.rate?.usd_per_kline ?? null)}/kline over ${p.rate?.cases ?? 0} finished case(s). The run stops hard at the estimate. ` +
+        "No deep pass runs on a delta.",
+    );
+  } else if (p.mode === "calibration") {
     out.push(
       `CALIBRATION run ${head}.`,
       `No measured price for stage 1 at these settings yet (${p.calibration.measured} of ${p.calibration.wanted} priced cases). ` +
@@ -73,7 +89,9 @@ export function renderPreview(p: ScanPreview): string {
     out.push(`! ${p.unassigned.length} file(s) no unit owns at this sha (e.g. ${p.unassigned.slice(0, 3).join(", ")}) — the unit cut may need adjusting; they are not read.`);
   }
   for (const b of p.blockers) out.push(`✗ ${b}`);
-  if (p.blockers.length === 0) out.push(`To run it: scan_start with key ${p.key} and sha ${p.sha} — only after the operator agreed to the cost.`);
+  if (p.blockers.length === 0) {
+    out.push(`To run it: scan_start with key ${p.key} and sha ${p.sha}${p.mode === "delta" ? " and delta true" : ""} — only after the operator agreed to the cost.`);
+  }
   return out.join("\n\n");
 }
 
@@ -97,6 +115,12 @@ export function renderStatus(s: ScanStatus): string {
     const failed = r.cases.filter((c) => c.status === "failed");
     for (const c of failed.slice(0, 10)) out.push(`  ✗ ${c.id}: ${c.error}`);
     for (const p of r.problems.slice(-5)) out.push(`  ! ${p}`);
+    if (r.matching && (r.matching.fixed > 0 || r.matching.pending > 0)) {
+      out.push(
+        `Findings no longer reported: ${r.matching.fixed} fixed` +
+          (r.matching.pending > 0 ? `, ${r.matching.pending} waiting on your match (scan_matches)` : ""),
+      );
+    }
   }
   if (s.ledger) out.push(`Ledger: ${s.ledger.files} file(s) read by stage 1, ${usd(s.ledger.cost_usd)} recorded.`);
   return out.join("\n");
@@ -107,13 +131,34 @@ export function renderFindings(fs: readonly ScanFinding[], total: number): strin
   const rows = fs.map(
     (f) =>
       `- [${f.severity}] ${f.path}:${f.start === f.end ? f.start : `${f.start}-${f.end}`} (${f.unit}, ${f.kind}, ${f.state}` +
-      `${f.doubt ? `, MAY NOT BE VALID — ${f.doubt.word}` : f.validated ? "" : ", unvalidated"}) ${f.claim} [${f.fingerprint.slice(0, 12)}]`,
+      `${f.doubt ? `, MAY NOT BE VALID — ${f.doubt.word}` : f.validated ? "" : ", unvalidated"}` +
+      `${f.fixed ? ` at ${f.fixed.sha.slice(0, 12)}, was ${f.fixed.from}` : ""}) ${f.claim} [${f.fingerprint.slice(0, 12)}]`,
   );
   if (total > fs.length) rows.push(`… ${total - fs.length} more — narrow the filter.`);
   return rows.join("\n");
 }
 
+export function renderQuestion(q: MatchQuestionView | null): string {
+  if (q === null) return "No match question is pending: every finding a re-scan stopped reporting has been settled.";
+  const row = (f: ScanFinding): string =>
+    `  - ${f.fingerprint} [${f.severity}] ${f.path}:${f.start === f.end ? f.start : `${f.start}-${f.end}`} (${f.unit}, ${f.lens}, ${f.kind}` +
+    `${f.state === "new" ? "" : `, ${f.state}`}) ${f.claim}`;
+  return [
+    `MATCH QUESTION ${q.key} (re-scan ${q.run} at ${q.sha.slice(0, 12)}).`,
+    `No longer reported exactly (${q.unreported.length}):`,
+    ...q.unreported.map(row),
+    `Fresh — first seen by the re-scan, possibly one of the above moved or reworded (${q.fresh.length}):`,
+    ...q.fresh.map(row),
+    `Answer with scan_match: key ${q.key} and the pairs that are the SAME finding. Every unpaired old one becomes fixed; every unpaired fresh one stays new.`,
+  ].join("\n");
+}
+
 // ---- tool belt ---------------------------------------------------------------
+
+const DELTA_PARAM = {
+  type: "boolean",
+  description: "A DELTA re-scan: only the files whose content changed since the last scan (priced from the ledger; never before calibration).",
+} as const;
 
 const SHA_PARAM = {
   type: "string",
@@ -130,9 +175,9 @@ export function scanToolDefinitions(scan: ScanRunner, findings: FindingsStore): 
       "CALIBRATION run instead — a few units, a small hard cap — whose measured cost prices every later preview. Free: it runs nothing. " +
       "Show the operator the cost before starting anything.",
     promptSnippet: "Preview a scan's cases and cost",
-    parameters: { type: "object", properties: { sha: SHA_PARAM } },
+    parameters: { type: "object", properties: { sha: SHA_PARAM, delta: DELTA_PARAM } },
     execute: async (_id, params) => {
-      const r = await scan.preview({ sha: typeof params?.sha === "string" ? params.sha : undefined });
+      const r = await scan.preview({ sha: typeof params?.sha === "string" ? params.sha : undefined, delta: params?.delta === true });
       if (!r.ok) return refused("Scan preview", r);
       return text(renderPreview(r.preview), { preview: { ...r.preview, cases: r.preview.cases.map((c) => ({ id: c.id, files: c.files.length, lines: c.lines, estimate_usd: c.estimate_usd })) } });
     },
@@ -145,9 +190,9 @@ export function scanToolDefinitions(scan: ScanRunner, findings: FindingsStore): 
       "HARD at the previewed estimate (the calibration cap for a calibration run). Refused if anything moved since the preview. Only after " +
       "the operator agreed to the cost ('do it').",
     promptSnippet: "Start the previewed scan",
-    parameters: { type: "object", properties: { key: { type: "string" }, sha: SHA_PARAM }, required: ["key"] },
+    parameters: { type: "object", properties: { key: { type: "string" }, sha: SHA_PARAM, delta: DELTA_PARAM }, required: ["key"] },
     execute: async (_id, params) => {
-      const r = await scan.start({ key: params?.key, sha: typeof params?.sha === "string" ? params.sha : undefined });
+      const r = await scan.start({ key: params?.key, sha: typeof params?.sha === "string" ? params.sha : undefined, delta: params?.delta === true });
       if (!r.ok) return refused("Scan start", r);
       return text(
         `Scan ${r.run.id} (${r.run.mode}) started at ${r.run.sha.slice(0, 12)}: ${r.run.cases.length} case(s), hard stop ${usd(r.run.cap_usd)}. ` +
@@ -217,7 +262,47 @@ export function scanToolDefinitions(scan: ScanRunner, findings: FindingsStore): 
       return text(renderFindings(fs.slice(0, limit), fs.length), { total: fs.length });
     },
   };
-  return [preview, start, status, stop, list];
+  const matches: PiToolDefinition = {
+    name: "scan_matches",
+    label: "Scan match question",
+    description:
+      "The pending match question: findings a re-scan no longer reports exactly (their file changed or went away), beside the fresh " +
+      "findings of the same lens that might be them moved or reworded. Exact fingerprints were matched already and anything no fresh " +
+      "finding could be is fixed already — only these need your judgement.",
+    promptSnippet: "Show findings waiting on a sameness call",
+    parameters: NO_PARAMS,
+    execute: async () => {
+      const { question, error } = findings.question();
+      if (error !== null) return text(`✗ ${error}`);
+      return text(renderQuestion(question), { key: question?.key ?? null });
+    },
+  };
+  const match: PiToolDefinition = {
+    name: "scan_match",
+    label: "Answer the match question",
+    description:
+      "Answer the pending match question WHOLE: its key, and the pairs {old, new} (fingerprints) that are the same finding. A pair keeps " +
+      "the old finding's state (dismissed stays dismissed, promoted stays promoted) under the new wording and position. Every unpaired " +
+      "old finding becomes fixed; every unpaired fresh one stays new. An empty `pairs` means none are the same. Refused whole on a stale key.",
+    promptSnippet: "Settle which re-scan findings are the same as old ones",
+    parameters: {
+      type: "object",
+      properties: {
+        key: { type: "string" },
+        pairs: {
+          type: "array",
+          items: { type: "object", properties: { old: { type: "string" }, new: { type: "string" } }, required: ["old", "new"] },
+        },
+      },
+      required: ["key"],
+    },
+    execute: async (_id, params) => {
+      const r = findings.match({ key: params?.key, pairs: params?.pairs ?? [] });
+      if (!r.ok) return refused("Match", r);
+      return text(`Settled: ${r.matched} matched (state kept), ${r.fixed} fixed, ${r.new} new.`, { ...r });
+    },
+  };
+  return [preview, start, status, stop, list, matches, match];
 }
 
 // ---- assembly ------------------------------------------------------------------

@@ -12,6 +12,12 @@
 // exclude` globs. A file the coverage ledger already holds at the same
 // content hash for `pass-scan` is not read again: that is how an interrupted
 // scan resumes, and why a finished one costs nothing to "re-run".
+//
+// A DELTA re-scan is stage 1 over only the files whose content
+// CHANGED since the last scan: read by the ledger at another content, or new
+// or different against the tree the last scan read. A file the last scan
+// simply never reached (a capped or stopped run) is not a change — that is
+// the rest of the scan, and an ordinary preview prices it.
 import { createHash } from "node:crypto";
 import { ALL_PASSES } from "../dispatch.js";
 import { globMatcher } from "../glob.js";
@@ -93,6 +99,27 @@ export interface Stage1Plan {
   unassigned: string[];
   /** Files the tree lists but whose text cannot be read (binary, too big). */
   unreadable: number;
+  /** Delta only: readable files the ledger does not cover that are left out
+   * because they have not changed since the last scan — the rest of an
+   * unfinished scan, which an ordinary preview prices (0 for a full plan). */
+  unchanged: number;
+}
+
+/** What a delta re-scan compares against. */
+export interface DeltaBasis {
+  /** Every content hash the ledger holds per path for `pass-scan`. */
+  read: ReadonlyMap<string, ReadonlySet<string>>;
+  /** The tree the last scan read: path → blob. */
+  baseline: ReadonlyMap<string, string>;
+}
+
+/** Has `f`'s content changed since the last scan? Read at another content
+ * by the ledger, or absent from / different in the last scan's tree. */
+export function changedSince(f: TreeFile, basis: DeltaBasis): boolean {
+  const read = basis.read.get(f.path);
+  if (read !== undefined && !read.has(f.blob)) return true;
+  const was = basis.baseline.get(f.path);
+  return was === undefined || was !== f.blob;
 }
 
 export interface PlanInput {
@@ -103,12 +130,15 @@ export interface PlanInput {
   covered: ReadonlySet<string>;
   exclude: readonly string[];
   budget: CaseBudget;
+  /** A delta re-scan: only files changed since the last scan. */
+  delta?: DeltaBasis;
 }
 
 export const coverKey = (path: string, blob: string): string => `${path}\0${blob}`;
 
 /** Stage 1 over the saved cut at one tree: every readable, uncovered,
- * non-excluded file, one case per unit, split to fit. Deterministic. */
+ * non-excluded file (with `delta`, only the changed ones), one case per
+ * unit, split to fit. Deterministic. */
 export function planStage1(input: PlanInput): Stage1Plan {
   const excludedGlob = globMatcher(input.exclude);
   const excluded: Record<ExclusionReason, number> = { test: 0, migration: 0, "unreadable-kind": 0, "excluded-glob": 0 };
@@ -116,6 +146,7 @@ export function planStage1(input: PlanInput): Stage1Plan {
   const lines = new Map<string, number>();
   let covered = 0;
   let unreadable = 0;
+  let unchanged = 0;
   const readable: string[] = [];
   for (const f of [...input.files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))) {
     const why = stage1Exclusion(f.path, excludedGlob);
@@ -130,6 +161,10 @@ export function planStage1(input: PlanInput): Stage1Plan {
     }
     if (input.covered.has(coverKey(f.path, f.blob))) {
       covered++;
+      continue;
+    }
+    if (input.delta !== undefined && !changedSince(f, input.delta)) {
+      unchanged++;
       continue;
     }
     lines.set(f.path, n);
@@ -151,7 +186,7 @@ export function planStage1(input: PlanInput): Stage1Plan {
       });
     }
   }
-  return { cases, excluded, covered, unassigned: a.unassigned, unreadable };
+  return { cases, excluded, covered, unassigned: a.unassigned, unreadable, unchanged };
 }
 
 /**
