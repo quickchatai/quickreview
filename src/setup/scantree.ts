@@ -25,7 +25,10 @@ export const SCAN_TREES_DIR = "scan/tree";
 const COMPLETE_MARKER = ".qcr-tree-complete";
 const SHA_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 
-export function gitScanSource(repoRoot: string, stateRoot: string): ScanSource {
+/** `treesDir` (relative to the state home) is where this source keeps its
+ * trees — the scan's own by default; another reader of trees (the PR
+ * replay) passes its own, so neither prunes the other's. */
+export function gitScanSource(repoRoot: string, stateRoot: string, opts: { treesDir?: string } = {}): ScanSource {
   const git = (args: string[], maxBuffer = 64 * 1024 * 1024): string | null => {
     try {
       return execFileSync("git", ["-c", `safe.directory=${repoRoot}`, "-C", repoRoot, ...args], {
@@ -37,7 +40,7 @@ export function gitScanSource(repoRoot: string, stateRoot: string): ScanSource {
       return null;
     }
   };
-  const treesDir = join(stateRoot, SCAN_TREES_DIR);
+  const treesDir = join(stateRoot, opts.treesDir ?? SCAN_TREES_DIR);
   const list = (sha: string): TreeFile[] | null => {
     if (!SHA_RE.test(sha)) return null;
     const listed = git(["ls-tree", "-r", "-z", "--full-tree", sha], 512 * 1024 * 1024);

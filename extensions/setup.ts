@@ -34,6 +34,9 @@
 //     daemon's own loaders, a commit asked of the operator's machine; the same
 //     check for a direct edit; and the memory entries proposed for pinning,
 //     which the OPERATOR pins in the TUI (no tool here pins).
+// the PR replay's (extensions/setup-replay.ts): setup_replay_preview /
+// _start / _status / _stop — one or two recent PRs reviewed with the old and
+// the new profile, the cost stated first, the two reviews side by side;
 // and the scan's (extensions/setup-scan.ts): scan_preview / _start /
 // _status / _stop and scan_findings; stage 2's scan_suggestions /
 // scan_stage2_propose / scan_stage2_start, and the watcher that answers the
@@ -99,6 +102,7 @@ import { triageToolDefinitions } from "./setup-triage.js";
 import type { MemoryStore } from "../src/memory/store.js";
 import type { TrackerSink } from "../src/setup/engine.js";
 import { scanTrackerSink } from "../src/setup/trackersink.js";
+import { buildReplay, replayToolDefinitions } from "./setup-replay.js";
 
 const NO_PARAMS = { type: "object", properties: {} } as const;
 
@@ -1138,6 +1142,9 @@ const activate = (pi: Pi): void => {
   for (const def of scanToolDefinitions(scan, findings, settingsOf, triage ? () => triage.closeFixed() : null)) pi.registerTool(def);
   // triage — dismiss, promote, close fixed, scan memory.
   if (triage) for (const def of triageToolDefinitions(triage)) pi.registerTool(def);
+  // the PR replay — old vs new profile, cost first.
+  const replay = buildReplay(process.env.QCR_REVIEWED_REPO?.trim() || DEFAULT_REVIEWED_REPO, process.env, resolveMaxConcurrency());
+  for (const def of replayToolDefinitions(replay)) pi.registerTool(def);
   // the TUI's stage-2 start click, answered while the companion's
   // session runs (the inject-bridge's lifecycle: start on session_start, stop
   // on session_shutdown).

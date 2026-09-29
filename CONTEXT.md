@@ -70,6 +70,14 @@ _Avoid_: weight, score
 A memory entry the companion proposes to pin, with one line of why; the operator pins it (or not) in the TUI.
 _Avoid_: pin (a proposal is not one)
 
+**Profile baseline**:
+The repo profile as it stood before one of setup's writes — the files that write replaced and what the live config named then, kept in the state home under the write's id; what a replay's old side is put back together from.
+_Avoid_: backup, snapshot (nothing is restored to the config home)
+
+**Replay**:
+One or two recent PRs reviewed twice as background subagents — once under the old profile, once under the new — priced before anything runs and shown side by side; nothing is posted. A lens case the two profiles build identically runs once and counts for both.
+_Avoid_: re-review (that is a PR round), regression replay (that is the daemon-side benchmark over closed PRs)
+
 ### Cutting a repo up
 
 **Unit**:

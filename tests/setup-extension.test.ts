@@ -235,6 +235,11 @@ describe("the tool belt", () => {
         "scan_promote",
         "scan_close_fixed",
         "scan_memory",
+        // the PR replay, old vs new profile.
+        "setup_replay_preview",
+        "setup_replay_start",
+        "setup_replay_status",
+        "setup_replay_stop",
       ]);
     } finally {
       err.mockRestore();

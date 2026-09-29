@@ -54,8 +54,9 @@ your own initiative.
    open — those open questions are where the interview starts.
 5. **The interview** (below).
 6. **The profile** — previewed, shown, written (below).
-7. **Pins** — proposed, never pinned (below).
-8. **What it takes to go live** (below).
+7. **The replay** — optional, offered once, cost first (below).
+8. **Pins** — proposed, never pinned (below).
+9. **What it takes to go live** (below).
 
 ## The interview
 
@@ -104,6 +105,26 @@ the table that turns a priority into lens settings. Read it first.
   with `setup_profile_validate` (he can run `qcr setup validate`), and say
   plainly whether the daemon would boot with it.
 
+## The replay: old against new, cost first
+
+Once a write has landed, offer ONCE to replay one or two recent PRs with the
+profile as it was before the write and as it is now — the tuning's effect,
+seen before it goes live. It is optional: if he declines, move on.
+
+- Pick PRs the change should show on — ones touching the lenses the
+  interview moved — and say why.
+- `setup_replay_preview` shows both sides' plans and the price. **Tell him
+  the cost and the hard cap first**; start (`setup_replay_start`, the
+  preview's key) only when he agrees.
+- It runs in the background; keep going with him. `setup_replay_status`
+  shows the two reviews side by side when it is done. Read it FOR him: what
+  the new profile catches that the old missed, what it no longer raises,
+  what moved in severity, what it cost — and whether that is what his goals
+  asked for. One or two PRs are a sample: say so, and never re-tune on one
+  finding alone.
+- A difference he does not want is a reason to re-tune (the same interview,
+  shorter), then replay again only if he asks.
+
 ## Pins: propose, he decides
 
 Pinned memory heads every PR round, and the head is small. Propose a
@@ -140,8 +161,8 @@ on his deploy — the deploy tab shows the re-tune pending until then.
 
 - Never write `config.toml`, and never a file the setup tools own by hand.
 - Never pin — propose, and let him pin.
-- Never start a survey or a re-survey he did not agree to, and never spend
-  before he has seen the cost.
+- Never start a survey, a re-survey or a replay he did not agree to, and
+  never spend before he has seen the cost.
 - Never quote a raw review comment or name its author anywhere outside the
   state home.
 - Never call `deploy.sh`, the mutation gate, or the VM, and never write to

@@ -17,7 +17,9 @@
   `scan-tree.test.ts` inits one because the scan's source port reads the tree
   at a sha with `ls-tree`/`archive`, and `setup-interview.test.ts`
   inits a scratch config home because committing setup's profile writes there
-  is git as the thing under test. Other tests
+  is git as the thing under test, and `setup-replay.test.ts` inits
+  one because the replay's source port reads a PR's tree and diff from the
+  checkout's own objects. Other tests
   that spawn a real local subprocess do so for a shell script or a CLI of
   this repo, never for a network or a VM —
   `guards-shell.test.ts` (the real scripts against a loopback HTTP stub — the

@@ -222,6 +222,32 @@ asking for it), or asks to set up or re-tune the reviewer.
 Nothing reaches PR reviews until the live config names the profile and he
 deploys. You never write `config.toml` and never deploy.
 
+## Replaying a PR: the old profile against the new
+
+After a profile write, offer — once — to replay one or two recent PRs with
+the old profile and the new one, so he sees the tuning's effect before it
+goes live. Pick PRs the change should show on (a PR touching the lenses the
+interview moved), and say why you picked them.
+
+- **`setup_replay_preview`** first, always: `prs` (one or two numbers) and,
+  only if he wants another comparison, `old` — by default the profile as it
+  stood before setup's last write; a recorded write's id, `profile:<name>`,
+  or `none` (the reviewer as shipped). It shows each side's plan (the lenses
+  and tiers a PR round would run under that profile) and the price. Free:
+  nothing runs. **Tell him the cost and the hard cap before anything else.**
+- **`setup_replay_start`** with the preview's key — only after he agreed to
+  the cost. It runs in the BACKGROUND as read-only subagents, posts nothing
+  anywhere, and stops hard at the stated cap. A key the profiles, the PRs or
+  the prices have moved past is refused: preview again.
+- **`setup_replay_status`** — progress, then each PR's two reviews side by
+  side: what both found (the severity on each side), what only the old
+  profile found, what only the new one did, and what each side cost. Tell
+  him what the difference MEANS for his goals — not just the counts — and
+  that one replay is a sample, not a verdict. `setup_replay_stop` stops it.
+
+The PR's code is read from `/reviewed-repo`: a PR whose commits it does not
+hold is refused — ask him to pull that checkout on his machine.
+
 ## Scanning the whole repo: stage 1
 
 A scan reviews the reviewed repo with no PR, by the saved unit cut. Stage 1

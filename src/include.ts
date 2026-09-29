@@ -1015,6 +1015,13 @@ export interface BuildAgentsOptions {
    * runs with no extensions, so no bash guard stands between it and a shell,
    * and none of the memory tools exists in it. */
   mode?: BuildMode;
+  /** A `"pr"` build whose leaves the COMPANION's case runner runs (,
+   * the profile replay): composed exactly as a PR round's build — no
+   * scan-mode addendum — but every variant's tools are `SCAN_LEAF_TOOLS`,
+   * for the scan build's reason: such a leaf loads no extensions, so no bash
+   * guard stands between it and a shell, and no memory tool exists in it.
+   * Implied by `mode: "scan"`. */
+  readOnlyLeaves?: boolean;
   /** More source directories of `pass-*.md` agents, built exactly like
    * `srcDir`'s — the scan build's `agents/scan/` (`pass-scan`), which no PR
    * build ever reads. A name in two directories is refused. */
@@ -1124,7 +1131,9 @@ export function buildAgents(
       // read-only memory tools to what remains.
       frontmatter = stripAgentSpawnTools(frontmatter);
       frontmatter =
-        mode === "scan" ? applyScanLeafTools(frontmatter) : applyMemoryTools(frontmatter);
+        mode === "scan" || opts.readOnlyLeaves === true
+          ? applyScanLeafTools(frontmatter)
+          : applyMemoryTools(frontmatter);
       // the FULL spec ("provider/model:thinking") goes into `model:`.
       // The native subagent extension reads only the `model` frontmatter field
       // and passes it verbatim as `--model`, and pi's CLI accepts the

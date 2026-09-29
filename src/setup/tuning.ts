@@ -25,6 +25,7 @@ import { EMPHASIS_MAX_CHARS, PROFILE_GUIDE_MAX_CHARS, STYLE_LENS } from "../lens
 import { lineDiff } from "./portrait.js";
 import { parsePinProposals, PIN_PROPOSALS_FILE, proposalKey, type PinProposal, type PinProposalsFile } from "./pins.js";
 import type { Refusal, StateFs } from "./engine.js";
+import { recordBaseline } from "./baselines.js";
 import { commitId, requestFile, resultFile, type CommitRequest, type CommitResult } from "./configcommit.js";
 import {
   CONCERN_NAMES,
@@ -220,6 +221,11 @@ export interface ApplyResult {
   /** The profile the live config names ("" = none), for the "not in use" note. */
   config_names: string | null;
   commit: { id: string } | null;
+  /**: the profile as it was before this write, recorded for the PR
+   * replay under the commit id — or why it could not be (the write still
+   * landed; only the replay's default "old" side is missing). Null when
+   * nothing was written. */
+  baseline: { id: string } | { error: string } | null;
 }
 
 export function parseEmphasis(raw: unknown): { ok: true; emphasis: Record<string, string | null> } | Refusal {
@@ -334,15 +340,37 @@ export function profileApply(deps: TuningDeps, input: ApplyInput, opts: { messag
   const unchanged = Object.keys(files).length === 0;
 
   let commit: { id: string } | null = null;
+  let baseline: ApplyResult["baseline"] = null;
   if (write) {
     const now = deps.clock();
     if (!unchanged) {
+      // what the write is about to replace, kept for the replay's
+      // "old" side — BEFORE the files change, so a crash in between leaves a
+      // baseline of the profile still on disk, never a missing one.
+      const id = commitId(now, profile);
+      try {
+        recordBaseline(deps.state, {
+          id,
+          taken_at: now.toISOString(),
+          profile,
+          existed: where.exists,
+          files: Object.fromEntries(
+            Object.keys(files).map((f) => {
+              const was = f === PROFILE_FILE ? before : f === DRAFTED_GUIDE_FILE ? guideBefore : "";
+              return [f, was === "" ? null : was];
+            }),
+          ),
+          config_named: named,
+        });
+        baseline = { id };
+      } catch (err) {
+        baseline = { error: `the profile before this write was not recorded for a replay: ${String(err)}` };
+      }
       try {
         writeProfileFiles(where.dir, files);
       } catch (err) {
         return { ok: false, errors: [`writing ${where.dir} failed: ${String(err)}`] };
       }
-      const id = commitId(now, profile);
       const req: CommitRequest = {
         id,
         requested_at: now.toISOString(),
@@ -377,6 +405,7 @@ export function profileApply(deps: TuningDeps, input: ApplyInput, opts: { messag
     summary: check.summary,
     config_names: named,
     commit,
+    baseline,
   };
 }
 
