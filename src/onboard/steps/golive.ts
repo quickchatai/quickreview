@@ -79,6 +79,20 @@ export const GO_LIVE_EXPLANATION = [
   "this step or by editing that one line yourself. Plenty of people run it this way for a week first.",
 ].join("\n");
 
+/**
+ * What comes after onboarding, said at its end whichever way the operator
+ * answered (setup & scan spec "Setup entry"): the reviewer knows
+ * nothing about the repo yet. A recommendation only — this step starts
+ * nothing, and setup changes no review until the operator deploys the
+ * profile it writes.
+ */
+export const SETUP_RECOMMENDATION =
+  "Next, set up your repo: run `qcr setup` (or press I on the TUI board). Until you do, the reviewer knows nothing " +
+  "about this codebase — every PR gets the same generic lenses. The companion surveys the repo (its agent and design " +
+  "docs, then a sample of each part of the code; you see the cost first), reads what past reviews asked for, and " +
+  "interviews you about what matters here; your answers become the repo profile. Nothing changes in PR reviews until " +
+  "you deploy that profile.";
+
 // ---- the flip ----------------------------------------------------------------
 
 export class GoLiveRefused extends Error {}
@@ -265,6 +279,7 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
                 `decision: "go_live" and confirm: "${GO_LIVE_CONFIRMATION}", or by setting dry_run = false in config.toml ` +
                 "yourself and restarting the daemon.",
             },
+            { name: "next", ok: true, detail: SETUP_RECOMMENDATION },
           ],
           data: { decision: "dry_run" },
         };
@@ -377,7 +392,10 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
               detail: `the config on disk reads back as dry_run = ${String(now)} — check ${configPath(ctx.adapters)} by hand`,
             },
       );
-      if (checks.every((c) => c.ok)) ctx.recordChoice(GO_LIVE_CHOICE_KEY, "live");
+      if (checks.every((c) => c.ok)) {
+        ctx.recordChoice(GO_LIVE_CHOICE_KEY, "live");
+        checks.push({ name: "next", ok: true, detail: SETUP_RECOMMENDATION });
+      }
       return {
         ok: checks.every((c) => c.ok),
         checks,

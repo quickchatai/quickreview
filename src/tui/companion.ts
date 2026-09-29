@@ -319,6 +319,12 @@ export function parseGateway(stdout: string): string {
   return /^\d{1,3}(\.\d{1,3}){3}$/.test(line.trim()) ? line.trim() : "";
 }
 
+/** Host side of the companion's inject dir (`/workspace/inject/<session>`):
+ * the rollover's day-open and `qcr setup`'s request land here. */
+export function companionInjectDir(cfg: Pick<CompanionConfig, "repo_dir" | "session">): string {
+  return `${cfg.repo_dir}/inject/${cfg.session}`;
+}
+
 export class CompanionLifecycle {
   /** Resolved by ensureUp() before any `docker run`; the constants are the
    * safe standing answer so runArgv() stays pure and callable in tests. */
@@ -643,7 +649,7 @@ export class CompanionLifecycle {
   /** Host side of `/workspace/inject/<session>` — where the rollover drops the
    * day-open message (the repo is bind-mounted, so no docker exec needed). */
   hostInjectDir(): string {
-    return `${this.cfg.repo_dir}/inject/${this.cfg.session}`;
+    return companionInjectDir(this.cfg);
   }
 
   /**

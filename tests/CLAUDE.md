@@ -15,7 +15,9 @@
   `setup-extension.test.ts` inits one scratch repo because the setup
   engine's checkout port lists by `git ls-files`, and
   `scan-tree.test.ts` inits one because the scan's source port reads the tree
-  at a sha with `ls-tree`/`archive`. Other tests
+  at a sha with `ls-tree`/`archive`, and `setup-interview.test.ts`
+  inits a scratch config home because committing setup's profile writes there
+  is git as the thing under test. Other tests
   that spawn a real local subprocess do so for a shell script or a CLI of
   this repo, never for a network or a VM —
   `guards-shell.test.ts` (the real scripts against a loopback HTTP stub — the

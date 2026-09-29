@@ -59,7 +59,8 @@ Three rules hold everywhere:
 ### board
 
 The verbs act on the **selected PR**, so they exist only while one is
-selected — and only on the board.
+selected — and only on the board. `e` and `I` are the exceptions: the events
+overlay and setup are about the whole repo.
 
 | key | does |
 | --- | --- |
@@ -69,6 +70,7 @@ selected — and only on the board.
 | `e` | the events overlay — j/k scroll, e/Esc close, click an event to jump to its PR |
 | `u` | unwedge: cancel the running round and re-queue it — nothing posted, no GitHub write |
 | `F` | clear the board filter the PRS title is advertising |
+| `I` | set up the repo: the companion runs its setup skill — survey, interview, the repo profile (same as `qcr setup`) |
 
 ### memory
 

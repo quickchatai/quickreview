@@ -14,6 +14,7 @@
 // `undefined` / `unread` means nobody has asked, an error field means the
 // ask failed, and only a real answer sets a list. An empty list from a dead
 // store and an empty list from an empty store must never look alike.
+import { proposalKey, type PinProposalsRead } from "../setup/pins.js";
 import type { App } from "./app.js";
 import type { IssueSink } from "./issuesink.js";
 import type { ForwardStatus } from "./memforward.js";
@@ -104,6 +105,10 @@ export interface LearningDeps {
    * "starting…" and offers no Studio link, which is the honest state for a
    * TUI that was built without one. */
   forward?: { view(): ForwardStatus; ensure(): Promise<ForwardStatus> };
+  /**: the entries setup's companion proposed to pin
+   * (`<state home>/setup/pin-proposals.json`) — re-read with memory. Absent =
+   * no proposals channel; the memory tab marks nothing. */
+  readPinProposals?: () => PinProposalsRead;
   now?: () => Date;
 }
 
@@ -124,6 +129,11 @@ export class LearningStore {
   filedTotal = 0;
   /**: where the memory forward stands. */
   forward?: ForwardStatus;
+  /**: entry key (memtab `entryKey`) → why setup proposes pinning it.
+   * Only proposals whose entry still holds the proposed content count. */
+  pinProposals = new Map<string, string>();
+  /** Set when the proposals file exists and cannot be read. */
+  pinProposalsError?: string;
 
   // ---- tickets -------------------------------------------------------------
   tickets: TicketsRead;
@@ -179,6 +189,23 @@ export class LearningStore {
 
   // ---- memory --------------------------------------------------------------
 
+  /** Match setup's pin proposals to the entries just read: a proposal whose
+   * entry is gone, already pinned, or edited since is not shown. */
+  private loadPinProposals(): void {
+    this.pinProposals = new Map();
+    this.pinProposalsError = undefined;
+    const read = this.deps.readPinProposals?.();
+    if (!read || read.state === "absent") return;
+    if (read.state === "unreadable") {
+      this.pinProposalsError = read.error;
+      return;
+    }
+    for (const p of read.file.entries) {
+      const e = this.entries.find((x) => proposalKey(x) === proposalKey(p));
+      if (e && !e.pinned && e.hash === p.hash) this.pinProposals.set(proposalKey(p), p.why);
+    }
+  }
+
   /** Load memory if it has never been read; a paint-path call. */
   ensureMemory(): void {
     if (!this.memLoaded) this.guard("memory", () => this.loadMemoryPart());
@@ -200,6 +227,7 @@ export class LearningStore {
     const wasError = this.memError;
     this.entries = await this.memory.read();
     this.memLoaded = true;
+    this.loadPinProposals();
     // Reachability is a property of the READ, not of the result: an empty
     // array from a dead store and an empty array from an empty store are the
     // same array. The store says which one it was.

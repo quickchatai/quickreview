@@ -949,6 +949,60 @@ export async function cmdMemory(rest: string[]): Promise<number> {
   return ok ? 0 : 1;
 }
 
+const SETUP_USAGE = "usage: qcr setup [validate [<profile>] | commit]";
+
+/**
+ * `qcr setup` — set up the reviewed repo with the companion.
+ *   qcr setup                     ask the companion to run its setup skill (an
+ *                                 inject into its column; open `qcr tui`)
+ *   qcr setup validate [profile]  the daemon's own check of a repo profile as
+ *                                 it is on disk — for a direct edit
+ *   qcr setup commit              carry out the profile commits setup asked
+ *                                 for (the TUI does this on its own timer)
+ */
+export async function cmdSetup(rest: string[]): Promise<number> {
+  const sub = rest[0];
+  if (sub === "validate") {
+    const { checkProfile, describeCheck, readProfileTarget } = await import("./setup/profile.js");
+    const home = { root: sandboxRoot(), env: process.env };
+    let name = rest[1]?.trim() ?? "";
+    if (name === "") {
+      const t = readProfileTarget(home);
+      if (t.state !== "ok") {
+        console.log(`✖ ${t.error}`);
+        return 1;
+      }
+      name = t.named;
+    }
+    if (name === "") {
+      console.log("the live config names no repo profile — name one: qcr setup validate <profile>");
+      return 1;
+    }
+    const check = checkProfile(home, name);
+    console.log(describeCheck(name, check));
+    return check.ok ? 0 : 1;
+  }
+  if (sub === "commit") {
+    const { commitRequestedProfiles, commitLine } = await import("./tui/setupentry.js");
+    const results = commitRequestedProfiles();
+    if (results.length === 0) console.log("no profile commits waiting");
+    for (const r of results) console.log(commitLine(r));
+    return results.some((r) => r.state === "failed" || r.state === "refused") ? 1 : 0;
+  }
+  if (sub !== undefined) throw new Error(SETUP_USAGE);
+  const { requestSetup, commitRequestedProfiles, commitLine } = await import("./tui/setupentry.js");
+  const { companionInjectDir } = await import("./tui/companion.js");
+  const cfg = loadConfig();
+  for (const r of commitRequestedProfiles()) console.log(commitLine(r));
+  const file = requestSetup({ injectDir: companionInjectDir(cfg.companion) });
+  console.log(
+    `asked the companion to set up ${cfg.github.repo} (${file}).\n` +
+      "Open `qcr tui` — the companion column picks it up (at its next start, if it is not running) and walks you through " +
+      "the survey and the interview. Nothing reaches PR reviews until you deploy the profile it writes.",
+  );
+  return 0;
+}
+
 /** `qcr onboard` — the guided setup wizard: pi at the pinned
  * version via npx (works from a bare clone; pi stays a non-dependency), the
  * onboarding prompt + extension + a restricted tool set, then the TUI handoff
@@ -1091,6 +1145,10 @@ export async function main(argv: string[]): Promise<void> {
       process.exitCode = await cmdOnboard();
       return;
     }
+    case "setup": {
+      process.exitCode = await cmdSetup(rest);
+      return;
+    }
     case "drain": {
       process.exitCode = await cmdDrain(rest);
       return;
@@ -1105,7 +1163,7 @@ export async function main(argv: string[]): Promise<void> {
     }
     default:
       console.log(
-        "usage: qcr <onboard|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|tui [pr|overseer]|drain <on|off>|install <where|migrate>|" +
+        "usage: qcr <onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|tui [pr|overseer]|drain <on|off>|install <where|migrate>|" +
           "companion <up|down|status|rebuild>|memory reembed [--user <name>]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );

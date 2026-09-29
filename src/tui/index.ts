@@ -72,7 +72,7 @@ keys: 1…7 the seven surfaces — board · memory · digest · tickets · deplo
       focused, walks its scrollback ·
       drag its left edge to resize · click it to take the keyboard ·
       board: j/k select · ⏎ focus the PR's pi pane · m quick-message ·
-      g github · u unwedge · e events overlay ·
+      g github · u unwedge · e events overlay · I set up the repo ·
       Ctrl-q release focus · Ctrl-c ×3 hard-kill the TUI ·
       s reconnect ssh (GCP passphrase, once) · r refresh ·
       ? full key map · q quit
@@ -403,7 +403,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     durableDeploy.startOrAttach(runId, onData, onExit);
   app.view.repo = full.github.repo;
   const { spawn } = await import("node:child_process");
-  const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
+  const { existsSync, mkdirSync, readFileSync, writeFileSync } = await import("node:fs");
   app.hooks.openUrl = (url) => {
     spawn("xdg-open", [url], { detached: true, stdio: "ignore" }).unref();
   };
@@ -476,6 +476,31 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   installMessageHooks(app);
   const { installUnwedgeHooks } = await import("./unwedge.js");
   installUnwedgeHooks(app);
+  // `I` asks the companion to run its setup skill — one inject into
+  // its own column (drained now, or at its next start) — and hands it the
+  // keyboard. The same ask `qcr setup` makes from a shell.
+  const { requestSetup, commitRequestedProfiles, commitLine } = await import("./setupentry.js");
+  const { companionInjectDir } = await import("./companion.js");
+  app.hooks.setup = (theApp) => {
+    try {
+      requestSetup({ injectDir: companionInjectDir(full.companion) });
+    } catch (err) {
+      theApp.notice(`setup: the request could not be written — ${String(err)}`);
+      return;
+    }
+    theApp.notice(
+      companionUp
+        ? "setup: asked the companion — it takes it from here"
+        : "setup: asked — the companion picks it up when it starts",
+    );
+    theApp.openCompanion();
+  };
+  // The profile commits setup asked for, carried out HERE, on the config
+  // mirror's timer — the container cannot see the config home's .git (the
+  // home holds secrets/, so it is never mounted whole).
+  const commitProfiles = (): void => {
+    for (const r of commitRequestedProfiles()) app.notice(commitLine(r));
+  };
   // The four learning surfaces — [2] memory, [3] digest, [4] tickets,
   // [7] feedback — over ONE store. Accept-verdict git
   // actions run against THIS working copy (the canonical repo); the [sink]
@@ -528,8 +553,20 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   // touches the VM, GitHub or the gate. Persisted under state/ so the list is
   // on screen before git has been asked anything.
   const { ChangeLog, ChangeRegisterStore } = await import("./changelog-store.js");
+  const { stateHome } = await import("../install.js");
+  const { PIN_PROPOSALS_FILE, parsePinProposals } = await import("../setup/pins.js");
   const learning = installLearningTabs(app, {
     memory: memStore,
+    // the entries setup proposed to pin, marked ☆ on the memory tab.
+    readPinProposals: () => {
+      try {
+        return parsePinProposals(readFileSync(join(stateHome(), PIN_PROPOSALS_FILE), "utf8"));
+      } catch (err) {
+        return (err as NodeJS.ErrnoException).code === "ENOENT"
+          ? { state: "absent" }
+          : { state: "unreadable", error: String(err) };
+      }
+    },
     forward: memForward,
     gitRun,
     repoRoot: sandboxRoot(),
@@ -750,6 +787,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       const syncConfig = (): void => {
         const m = companion.syncConfigMirror();
         if (typeof m === "object") app.notice(`companion: config mirror NOT refreshed — ${m.failed}`);
+        commitProfiles();
       };
       syncConfig();
       configMirrorTimer ??= setInterval(syncConfig, CONFIG_MIRROR_EVERY_MS);

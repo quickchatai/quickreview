@@ -17,6 +17,7 @@
 // When the store does not answer, the timeline is replaced by an explicit
 // failure banner: an empty list must never be mistaken for an empty store
 //.
+import { pinnedBudget } from "../memory/store.js";
 import type { App } from "./app.js";
 import { barHeight, paintCmdBar, type BarButton, type LiveKeys } from "./cmdbar.js";
 import {
@@ -76,10 +77,16 @@ export function memoryOrder(
 
 /** The visible one-line form of a timeline entry. The text already leads
  * with its #tags — never re-print them as a prefix (they doubled before). */
-export function entryLine(e: MemoryEntry, width: number): string {
+export function entryLine(e: MemoryEntry, width: number, proposed = false): string {
   const text = sanitizeText(e.text).replace(/\s+/g, " ");
-  const line = truncate(`${e.pinned ? "● " : "  "}${e.ts.slice(5, 16)} ${text}`, width);
-  return e.pinned ? line.replace("● ", `${ACCENT}●${RESET} `) : line;
+  // ● pinned; ☆ proposed for pinning by setup — the operator's call.
+  const mark = e.pinned ? "● " : proposed ? "☆ " : "  ";
+  const line = truncate(`${mark}${e.ts.slice(5, 16)} ${text}`, width);
+  return e.pinned
+    ? line.replace("● ", `${ACCENT}●${RESET} `)
+    : proposed
+      ? line.replace("☆ ", `${WARN}☆${RESET} `)
+      : line;
 }
 
 export type MemoryRow =
@@ -119,12 +126,9 @@ export function dayJump(ordered: MemoryEntry[], sel: number, dir: 1 | -1): numbe
   return starts[here + dir];
 }
 
-/** Pinned-region budget: only the first ~1,991 chars / 75 lines of
- * the injection head survive truncation — warn when pins outgrow it. */
-export function pinnedBudget(entries: MemoryEntry[]): { chars: number; over: boolean } {
-  const chars = entries.filter((e) => e.pinned).reduce((n, e) => n + e.text.length + 2, 0);
-  return { chars, over: chars > 1900 };
-}
+/** Pinned-region budget — the seam's, since setup's pin proposals
+ * price against the same one. */
+export { pinnedBudget };
 
 /** Every click target on the memory tab. */
 export type MemAction =
@@ -241,10 +245,17 @@ export function renderMemoryTab(
     const budget = pinnedBudget(ordered);
     const budgetNote = budget.over ? ` ${WARN}⚠ pinned ${budget.chars}ch${RESET}` : "";
     const fl = memoryFilterLabel(st.filter);
+    const proposals = store.pinProposals.size;
+    const proposalNote =
+      proposals > 0 ? ` ${WARN}☆ ${proposals} proposed pin${proposals === 1 ? "" : "s"}${RESET}` : "";
     left.push(
-      `${sectionTitle(`MEMORY (${ordered.length})`)}${budgetNote}${fl !== "" ? ` ${fl}` : ""}`,
+      `${sectionTitle(`MEMORY (${ordered.length})`)}${budgetNote}${proposalNote}${fl !== "" ? ` ${fl}` : ""}`,
     );
     leftActions.push(undefined);
+    if (store.pinProposalsError) {
+      left.push(`${WARN}⚠ ${truncate(sanitizeText(`pin proposals: ${store.pinProposalsError}`), leftW - 5)}${RESET}`);
+      leftActions.push(undefined);
+    }
     if (store.memWarn) {
       left.push(`${WARN}⚠ ${truncate(sanitizeText(store.memWarn), leftW - 5)}${RESET}`);
       leftActions.push(undefined);
@@ -270,7 +281,7 @@ export function renderMemoryTab(
           leftActions.push(undefined);
           continue;
         }
-        const line = entryLine(row.entry, leftW - 3);
+        const line = entryLine(row.entry, leftW - 3, store.pinProposals.has(entryKey(row.entry)));
         left.push(row.index === st.sel ? selectedLine(line) : line);
         leftActions.push({ t: "mem", i: row.index });
       }
@@ -298,6 +309,11 @@ export function renderMemoryTab(
         action: { t: "key", key: "x" },
       },
     ]);
+    const why = store.pinProposals.get(entryKey(selected));
+    if (why !== undefined) {
+      for (const l of wrap(sanitizeText(`☆ setup proposes pinning this: ${why} — p pins it`), rightW - 3))
+        row([{ text: `${WARN}${l}${RESET}` }]);
+    }
     // Leave room for the defect flags and the store rows below; a long entry
     // must not bury the panel that says whether memory is reachable.
     const detailCap = Math.max(5, bodyRows - 14);

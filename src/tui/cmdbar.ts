@@ -73,6 +73,7 @@ export const TAB_VOCABULARY: Readonly<Record<Tab, readonly BarButton[]>> = {
     { key: "g", label: "g github" },
     { key: "e", label: "e events" },
     { key: "u", label: "u unwedge" },
+    { key: "I", label: "I setup" },
   ],
   memory: [
     { key: "[", label: "[ older day" },

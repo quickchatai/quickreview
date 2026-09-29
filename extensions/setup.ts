@@ -26,6 +26,14 @@
 //    : the repo portrait — deterministic facts assembled into the
 //     state home, the companion's narrative of them stored in the config home
 //     against the facts' key, each keeping the version it replaced for a diff.
+//   - setup_interview / setup_profile / setup_profile_apply /
+//     setup_profile_validate / setup_pin_propose: the interview's
+//     fixed points, concerns and priority table; the profile the install uses
+//     and whether setup is owed (the nudge); the answers applied to the repo
+//     profile — previewed with a diff, written only once validated by the
+//     daemon's own loaders, a commit asked of the operator's machine; the same
+//     check for a direct edit; and the memory entries proposed for pinning,
+//     which the OPERATOR pins in the TUI (no tool here pins).
 // and the scan's (extensions/setup-scan.ts): scan_preview / _start /
 // _status / _stop and scan_findings; stage 2's scan_suggestions /
 // scan_stage2_propose / scan_stage2_start, and the watcher that answers the
@@ -69,6 +77,22 @@ import {
 import { resolveMaxConcurrency } from "./subagents.js";
 import type { RepoFacts } from "../src/setup/facts.js";
 import { ADJUST_OPS } from "../src/setup/unitcut.js";
+import {
+  CONCERNS,
+  FIXED_POINTS,
+  PRIORITIES,
+  PRIORITY_SETTINGS,
+  TABLE_KEYS,
+  type LensDecision,
+} from "../src/setup/interview.js";
+import { describeCheck, describeSummary } from "../src/setup/profile.js";
+import {
+  GOALS_MAX_CHARS,
+  MAX_PIN_PROPOSALS,
+  PIN_WHY_MAX,
+  type ApplyResult,
+  type ProfileStatus,
+} from "../src/setup/tuning.js";
 import { buildScan, scanToolDefinitions, watchStage2Requests } from "./setup-scan.js";
 
 const NO_PARAMS = { type: "object", properties: {} } as const;
@@ -345,6 +369,108 @@ export function renderPortrait(v: PortraitView): string {
         : v.narrative_diff.length === 0
           ? "Narrative: the same text as the one it replaced."
           : `Narrative changes since the one it replaced:\n${v.narrative_diff.map((l) => `  ${l}`).join("\n")}`,
+    );
+  }
+  return out.join("\n\n");
+}
+
+// ---- the interview's tuning --------------------------------------------
+
+const settingsText = (s: Record<string, unknown>): string => {
+  const parts = TABLE_KEYS.filter((k) => s[k] !== undefined).map((k) => `${k} = ${JSON.stringify(s[k])}`);
+  return parts.length === 0 ? "(nothing — the shipped behaviour)" : parts.join(", ");
+};
+
+export function renderInterviewTable(): string {
+  const out = [
+    "The four points every setup interview covers (adaptive otherwise — ask from the portrait):",
+    ...FIXED_POINTS.map((p) => `  - ${p.name}: ${p.question}`),
+    "",
+    "Concerns — give each a priority; the table below turns it into lens settings:",
+  ];
+  for (const point of ["merge-blocking", "risk", "style-tests"] as const) {
+    out.push(`  ${point}:`);
+    for (const c of CONCERNS.filter((x) => x.point === point)) out.push(`    - ${c.name} — ${c.title} [${c.lenses.join(", ")}]`);
+  }
+  out.push("", "The table (priority → the lens settings it writes on every lens its concern names):");
+  for (const p of PRIORITIES) out.push(`  - ${p}: ${settingsText(PRIORITY_SETTINGS[p])}`);
+  out.push(
+    "",
+    "A lens two concerns share takes the HIGHER priority. `normal` clears what an earlier answer wrote. The goals point is " +
+      "words: record them as `goals`, and turn what a lens should watch for into that lens's `emphasis`.",
+  );
+  return out.join("\n");
+}
+
+export const renderCheck = describeCheck;
+
+export function renderProfileStatus(s: ProfileStatus): string {
+  const out: string[] = [];
+  out.push(
+    s.target.state === "ok"
+      ? `Live config ${s.target.config} names ${s.target.named === "" ? "NO repo profile" : `profile "${s.target.named}"`}.`
+      : `✗ Live config: ${s.target.error}`,
+  );
+  if (s.needs_setup) {
+    out.push(
+      `SETUP IS OWED: ${s.why_setup}. Tell the owner, once, and offer to run setup (the \`setup\` skill) — never start it on your own.`,
+    );
+  }
+  if (s.profile && s.check) out.push(renderCheck(s.profile, s.check));
+  if (s.target.state === "ok" && s.profile && s.target.named !== s.profile) {
+    out.push(
+      `The live config does not name "${s.profile}", so PR rounds do not use it yet: the owner sets \`[review] profile = "${s.profile}"\` in ${s.target.config} (you cannot write it) and deploys.`,
+    );
+  }
+  if (s.interview.state === "unreadable") out.push(`✗ ${s.interview.error}`);
+  else if (s.interview.state === "ok") {
+    const r = s.interview.record;
+    out.push(
+      `Interview answers (${r.updated_at}): goals ${r.goals === null ? "NOT recorded" : "recorded"}; ` +
+        Object.entries(r.priorities)
+          .map(([c, p]) => `${c} ${p}`)
+          .join(", "),
+    );
+  } else out.push("No interview recorded yet.");
+  if (s.unanswered.length > 0) out.push(`Unanswered concerns: ${s.unanswered.join(", ")}.`);
+  for (const c of s.commits) {
+    const r = c.result;
+    out.push(
+      `  commit ${c.id}: ${r === null ? "requested — the owner's TUI (or `qcr setup commit`) carries it out" : r === "unreadable" ? "result UNKNOWN (unreadable)" : `${r.state}${r.sha ? ` ${r.sha.slice(0, 12)}` : ""} — ${r.detail}`}`,
+    );
+  }
+  return out.join("\n");
+}
+
+function renderDecisions(ds: readonly LensDecision[]): string {
+  return ds.length === 0
+    ? "  (no concern answered yet)"
+    : ds.map((d) => `  - ${d.lens}: ${d.priority} (${d.because.join(", ")}) → ${settingsText(d.settings)}`).join("\n");
+}
+
+export function renderApply(r: ApplyResult): string {
+  const out: string[] = [];
+  out.push(
+    r.written
+      ? `Profile "${r.profile}" ${r.created ? "created" : "updated"} at ${r.dir}.`
+      : r.unchanged
+        ? `Profile "${r.profile}": these answers change nothing — it already says this.`
+        : `PREVIEW of profile "${r.profile}" (${r.dir}) — nothing written. Show the owner the diff; write only when he agrees.`,
+  );
+  out.push(`What the table decides:\n${renderDecisions(r.decisions)}`);
+  for (const d of r.diff) out.push(`${d.file}:\n${d.lines.map((l) => `  ${l}`).join("\n")}`);
+  out.push(`Validated with the daemon's own loaders:\n${describeSummary(r.summary)}`);
+  const todo = [...(r.goals_missing ? ["the goals"] : []), ...r.unanswered];
+  if (todo.length > 0) out.push(`Still to ask before it can be written: ${todo.join(", ")}.`);
+  if (r.config_names !== null && r.config_names !== r.profile) {
+    out.push(
+      `The live config names ${r.config_names === "" ? "no profile" : `"${r.config_names}"`}: until the owner sets \`[review] profile = "${r.profile}"\` there and deploys, PR rounds do not use this one.`,
+    );
+  }
+  if (r.written) {
+    out.push(
+      `${r.commit ? `A commit was asked for (${r.commit.id}); it lands if the config home is a git repo. ` : ""}` +
+        "PR reviews change only when the owner deploys — the deploy tab says \"profile changed, not deployed\" until then.",
     );
   }
   return out.join("\n\n");
@@ -684,6 +810,124 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     },
   };
 
+  const interview: PiToolDefinition = {
+    name: "setup_interview",
+    label: "Setup interview",
+    description:
+      "The setup interview's fixed frame: the four points every interview covers (goals, merge-blocking concerns, risk areas, " +
+      "style & tests), the concerns you give a priority each (critical | important | normal | ignore), and the table in code " +
+      "that turns a priority into lens settings. Read it before the interview; ask adaptively from the portrait.",
+    promptSnippet: "Show the setup interview's points, concerns and priority table",
+    parameters: NO_PARAMS,
+    execute: async () => text(renderInterviewTable()),
+  };
+
+  const profileState: PiToolDefinition = {
+    name: "setup_profile",
+    label: "Repo profile",
+    description:
+      "The repo profile this install uses: what the live config names, whether it loads (the daemon's own check), whether " +
+      "setup is OWED (no profile of the repo's own — nudge the owner once), the interview answers recorded so far, the " +
+      "concerns still unanswered, and each commit asked for with what became of it.",
+    promptSnippet: "Show the repo profile, whether setup is owed, and the interview so far",
+    parameters: NO_PARAMS,
+    execute: async () => {
+      const s = engine.profileStatus();
+      if (!("target" in s)) return refused("Profile status", s);
+      return text(renderProfileStatus(s), { needs_setup: s.needs_setup, profile: s.profile, unanswered: s.unanswered });
+    },
+  };
+
+  const profileApply: PiToolDefinition = {
+    name: "setup_profile_apply",
+    label: "Apply the interview to the profile",
+    description:
+      "Turn the interview's answers into the repo profile. `priorities` {concern: critical|important|normal|ignore} map through " +
+      "the table (setup_interview) onto each concern's lenses; `emphasis` {lens: words | null} is what that lens should watch " +
+      "for here; `style_guide` is a guide you drafted (markdown) for a repo that writes none — a guide the repo writes always " +
+      "wins; `goals` is the project's goals in the owner's words. A WRITE records the answers, so a later call (a re-tune) " +
+      "sends only what changed; a preview uses the recorded answers plus its own and records nothing. Without `write` it " +
+      "PREVIEWS: the diff and what the table decided, nothing written. `write: true` needs every concern answered and the " +
+      "goals, validates the result with the daemon's own loaders (refused, unchanged, if it would not load), writes it into " +
+      "the config home and asks for a commit there. Write only after the owner saw the diff and agreed.",
+    promptSnippet: "Preview or write the repo profile from the interview's answers",
+    parameters: {
+      type: "object",
+      properties: {
+        profile: { type: "string", description: "The profile's name — needed only when the live config names none (the repo's name is a good one)." },
+        goals: { type: "string", description: `The project's goals, in the owner's words (at most ${GOALS_MAX_CHARS} characters).` },
+        priorities: {
+          type: "object",
+          description: `{concern: priority}; concerns: ${CONCERNS.map((c) => c.name).join(", ")}; priorities: ${PRIORITIES.join(", ")}.`,
+        },
+        emphasis: { type: "object", description: "{lens: the words for it, or null to remove them}." },
+        style_guide: { type: "string", description: "A style guide you drafted (markdown), for a repo that writes none." },
+        drop_style_guide: { type: "boolean", description: "true stops the style lens reading the drafted guide." },
+        write: { type: "boolean", description: "true writes; omitted or false previews." },
+      },
+    },
+    execute: async (_id, params) => {
+      const r = engine.profileApply((params ?? {}) as Record<string, unknown>);
+      if (!r.ok) return refused("Profile", r);
+      return text(renderApply(r), { written: r.written, unchanged: r.unchanged, profile: r.profile, commit: r.commit });
+    },
+  };
+
+  const profileValidate: PiToolDefinition = {
+    name: "setup_profile_validate",
+    label: "Validate the repo profile",
+    description:
+      "Check a repo profile AS IT IS ON DISK with the daemon's own loaders — for a direct edit (the owner's editor, or yours): " +
+      "whether the daemon would boot with it and what it resolves to (the extends chain, addenda, tuned lenses, heuristics, " +
+      "[scan]). Defaults to the profile setup works on.",
+    promptSnippet: "Validate the repo profile on disk",
+    parameters: { type: "object", properties: { profile: { type: "string" } } },
+    execute: async (_id, params) => {
+      const r = engine.profileValidate((params as { profile?: unknown } | undefined)?.profile);
+      if (!("check" in r)) return refused("Validate", r);
+      return text(renderCheck(r.profile, r.check), { ok: r.check.ok });
+    },
+  };
+
+  const pins: PiToolDefinition = {
+    name: "setup_pin_propose",
+    label: "Propose memory pins",
+    description:
+      `Propose up to ${MAX_PIN_PROPOSALS} reviewer-memory entries (the survey's and history's most important conventions) for ` +
+      "PINNING — pinned entries head every PR round, and the head is small. Each is {id, ts, block, why}: a live, unpinned " +
+      `entry as memory lists it, and one line (≤${PIN_WHY_MAX}) of why. It REPLACES earlier proposals and pins NOTHING: the ` +
+      "owner pins in the TUI's memory tab, where each proposal is marked with your reason. The answer prices the pinned head.",
+    promptSnippet: "Propose memory entries for the owner to pin",
+    parameters: {
+      type: "object",
+      properties: {
+        entries: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { id: { type: "string" }, ts: { type: "string" }, block: { type: "number" }, why: { type: "string" } },
+            required: ["id", "ts", "block", "why"],
+          },
+        },
+      },
+      required: ["entries"],
+    },
+    execute: async (_id, params) => {
+      const r = await engine.proposePins((params as { entries?: unknown } | undefined)?.entries);
+      if (!r.ok) return refused("Pin proposals", r);
+      const over = r.projected_chars > r.budget_chars;
+      return text(
+        [
+          `Proposed ${r.proposed.length} entr${r.proposed.length === 1 ? "y" : "ies"} for the owner to pin${r.replaced > 0 ? ` (replacing ${r.replaced} earlier proposals)` : ""}:`,
+          ...r.proposed.map((p) => `  ☆ ${p.ts} [${p.id}#${p.block}] ${p.excerpt} — ${p.why}`),
+          `Pinned head: ${r.pinned_chars} characters now, ${r.projected_chars} if he pins them all (budget ~${r.budget_chars})${over ? " — OVER: propose fewer, or shorter entries" : ""}.`,
+          "Tell him they are marked ☆ on the TUI's memory tab ([2]); he pins with p. You do not pin them.",
+        ].join("\n"),
+        { proposed: r.proposed.length, projected_chars: r.projected_chars },
+      );
+    },
+  };
+
   return [
     facts,
     status,
@@ -699,6 +943,11 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     portraitAssemble,
     portrait,
     narrative,
+    interview,
+    profileState,
+    profileApply,
+    profileValidate,
+    pins,
   ];
 }
 
@@ -709,6 +958,10 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
  * SOURCE file: pi loads the extension's .ts through jiti, never dist/. */
 export const COMPANION_AGENTS_DIR = fileURLToPath(new URL("../docker/companion/agents", import.meta.url));
 
+/** The app checkout this extension runs from (`/workspace` in the
+ * companion) — where the generic profiles a repo profile extends live. */
+export const APP_ROOT = fileURLToPath(new URL("..", import.meta.url));
+
 export function buildEngine(env: NodeJS.ProcessEnv = process.env): SetupEngine {
   return new SetupEngine(
     {
@@ -718,6 +971,10 @@ export function buildEngine(env: NodeJS.ProcessEnv = process.env): SetupEngine {
       // companion only `profiles/` and `portrait/` of it are mounted
       // read-write, and the narrative is written under `portrait/` alone.
       config: configHomeFs(configHome(env)),
+      // The repo profile: read, checked with the daemon's own
+      // loaders against the app's generic examples, and written under the
+      // config home's `profiles/` — the one part of it mounted read-write.
+      profiles: { root: env.QCR_ROOT?.trim() || APP_ROOT, env },
       clock: () => new Date(),
       // The REVIEWER's memory (survey notes and's review history
       // themes are for PR rounds), or null — the survey then refuses to start

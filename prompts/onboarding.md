@@ -67,3 +67,8 @@ open the TUI. If it returns red checks, that is the answer: explain them, fix
 what can be fixed through the step tools, and try again. Never present
 onboarding as finished while anything is red, and never tell the operator to
 quit around a red check.
+
+Before `finish_and_exit`, pass on what comes next, as the go-live step's
+`next` line says it: set up the repo with `qcr setup` (or `I` on the TUI
+board). Until then the reviewer knows nothing about this codebase. It is a
+recommendation, once — never start it from here.

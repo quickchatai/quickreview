@@ -27,6 +27,7 @@ import {
   GO_LIVE_EXPLANATION,
   GO_LIVE_STEP_ID,
   GoLiveRefused,
+  SETUP_RECOMMENDATION,
   flipDryRunToFalse,
   goLiveStep,
   isGoLiveConfirmation,
@@ -308,6 +309,17 @@ describe("declining is a first-class outcome", () => {
     expect(detail).toMatch(/Flip whenever you want/);
     expect(detail).not.toMatch(/fail/i);
     expect(h.engine.choices()[GO_LIVE_CHOICE_KEY]).toBe("dry_run");
+  });
+
+  it("either answer ends by recommending setup next — a recommendation, never a start", async () => {
+    expect(SETUP_RECOMMENDATION).toMatch(/qcr setup/);
+    expect(SETUP_RECOMMENDATION).toMatch(/press I on the TUI board/);
+    expect(SETUP_RECOMMENDATION).toMatch(/until you deploy/);
+    const declined = await harness().engine.runStep(GO_LIVE_STEP_ID, { decision: "stay_dry_run" });
+    expect(declined.checks.at(-1)).toEqual({ name: "next", ok: true, detail: SETUP_RECOMMENDATION });
+    const live = await harness().engine.runStep(GO_LIVE_STEP_ID, { decision: "go_live", confirm: GO_LIVE_CONFIRMATION });
+    expect(live.ok).toBe(true);
+    expect(live.checks.at(-1)).toEqual({ name: "next", ok: true, detail: SETUP_RECOMMENDATION });
   });
 
   it("the checklist can COMPLETE on a decline — a dry-run install finishes the wizard", async () => {

@@ -162,7 +162,7 @@ export function listWidth(prs: SnapshotPr[], cols: number, now: Date = new Date(
  * no snapshot, or an empty list, a `[u unwedge]` would be an action derived
  * from no data — the second half of the honest-unknown rule. `g` also needs
  * the repo slug the URL is built from. `e` toggles the events overlay
- * regardless. Inline: `a` is ⏎'s printable twin and `F` clears a filter the
+ * regardless, and `I` (setup) is about the repo, not a PR. Inline: `a` is ⏎'s printable twin and `F` clears a filter the
  * PRS subtitle is advertising.
  */
 export function boardKeys(
@@ -174,6 +174,8 @@ export function boardKeys(
   if (selected && view.repo) bar.push({ key: "g", label: "g github" });
   bar.push({ key: "e", label: "e events" });
   if (selected) bar.push({ key: "u", label: "u unwedge" });
+  // setup is about the repo, not a PR — offered whatever is selected.
+  bar.push({ key: "I", label: "I setup" });
   const inline: string[] = [];
   if (selected) inline.push("a");
   if (view.boardFilter != null) inline.push("F");
@@ -791,6 +793,7 @@ export const HELP_LINES = [
   "u              unwedge: cancel the running round and re-queue it (nothing posted, no GitHub write)",
   "e              events overlay (j/k scroll, e/Esc close; click an event → its PR)",
   "F              clear the board filter the PRS title is advertising",
+  "I              set up the repo: the companion runs its setup skill (survey, interview, the repo profile)",
   "[2] memory — the store, newest first, grouped by day:",
   "j/k · [ / ]    select an entry · jump to the older / newer day",
   "e / p / x / n  edit · pin or unpin · retire (x twice) · new #manual entry — painted beside the selected entry",

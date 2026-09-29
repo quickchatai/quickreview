@@ -222,6 +222,19 @@ function profileChain(root: string, profile: string, lookup: ProfileLookup): Pro
   return chain.reverse();
 }
 
+/** The selected profile's resolved `extends` chain, base first — name and
+ * directory of each layer (the setup's profile validate names what
+ * it checked). Same refusals as every loader: not found, base not found,
+ * cycle. `""` is no profile: an empty chain. */
+export function resolveProfileChain(
+  root: string,
+  profile: string,
+  lookup: ProfileLookup = {},
+): Array<{ name: string; dir: string }> {
+  if (profile === "") return [];
+  return profileChain(root, profile, lookup).map((l) => ({ name: l.name, dir: l.dir }));
+}
+
 /** Ids a pack may not claim: every compiled-in entry, plus the dynamic
  * same-day feedback addendum wire.ts composes last (src/feedback.ts). */
 export function reservedAddendumIds(): Set<string> {

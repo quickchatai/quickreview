@@ -9,8 +9,11 @@
 // Behaviours so far: the deterministic repo facts and the unit cut
 //, the survey (preview, start, status, stop; the run
 // itself is surveyrun.ts, its rules survey.ts), the review history themes
-// (history.ts) and the repo portrait (portrait.ts — facts
-// assembled here, the companion's narrative stored in the config home). The ports for the later
+// (history.ts), the repo portrait (portrait.ts — facts
+// assembled here, the companion's narrative stored in the config home) and
+// the interview's tuning (tuning.ts — the priority table applied to
+// the repo profile, validated with the daemon's own loaders; pin proposals
+// handed to the operator). The ports for the later
 // slices (tracker sink, GitHub reader) are declared and injected now so every
 // later tool lands on the same engine; their real implementations arrive with
 // the slice that first calls them.
@@ -47,6 +50,18 @@ import {
   type PortraitView,
   type StoreNarrativeResult,
 } from "./portrait.js";
+import type { ProfileHome } from "./profile.js";
+import {
+  profileApply,
+  profileStatus,
+  profileValidate,
+  proposePins,
+  type ApplyInput,
+  type ApplyResult,
+  type PinProposeResult,
+  type ProfileStatus,
+} from "./tuning.js";
+import type { ProfileCheck } from "./profile.js";
 import {
   DEFAULT_CASE_BUDGET,
   applyOps,
@@ -157,6 +172,12 @@ export interface SetupPorts {
    * only some of it is mounted: code writes only under a mounted directory
    * (`portrait/`), never at the root. */
   config?: StateFs | null;
+  /** Where the repo profile is read, checked and written: the app
+   * checkout (for the generic examples a profile extends) and the install
+   * environment whose config home holds `profiles/`. Real paths, because the
+   * check IS the daemon's own loaders, which read disk. Absent or null when
+   * this assembly has none — every profile tool then refuses, naming why. */
+  profiles?: ProfileHome | null;
   clock: () => Date;
   /** The ONE memory seam. Null when this assembly has no memory — every
    * memory write then answers a refusal naming why. */
@@ -723,5 +744,39 @@ export class SetupEngine {
 
   private portraitDeps(): { state: StateFs; config: StateFs | null; clock: () => Date } {
     return { state: this.ports.state, config: this.ports.config ?? null, clock: this.ports.clock };
+  }
+
+  // -- the interview's tuning (src/setup/tuning.ts) --
+
+  private tuningDeps(): Parameters<typeof profileStatus>[0] {
+    return {
+      state: this.ports.state,
+      profiles: this.ports.profiles ?? null,
+      memory: this.ports.memory,
+      clock: this.ports.clock,
+    };
+  }
+
+  /** Which profile the install uses, whether it loads, whether setup is
+   * owed (the companion's nudge), the answers so far and the commits asked. */
+  profileStatus(): ProfileStatus | Refusal {
+    return profileStatus(this.tuningDeps());
+  }
+
+  /** The daemon's own check of a profile as it is on disk — a direct edit's
+   * safety net. */
+  profileValidate(name?: unknown): { profile: string; check: ProfileCheck } | Refusal {
+    return profileValidate(this.tuningDeps(), name);
+  }
+
+  /** The interview's answers → the profile: previewed with a diff, or
+   * written (validated first, committed on the operator's machine). */
+  profileApply(input: ApplyInput): ApplyResult | Refusal {
+    return profileApply(this.tuningDeps(), input);
+  }
+
+  /** Propose memory entries to pin; the operator decides in the TUI. */
+  proposePins(entries: unknown): Promise<PinProposeResult | Refusal> {
+    return proposePins(this.tuningDeps(), entries);
   }
 }

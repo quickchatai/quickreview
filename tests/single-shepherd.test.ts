@@ -178,13 +178,17 @@ describe("daemon topology", () => {
     expect(offenders).toEqual([]);
     // The case runner's allowance holds only while no daemon module can reach
     // it: src/setup/ is imported from src/setup/ and the companion's
-    // extension — with two LEAF exceptions: setup/history.js (the
-    // TUI's `qcr history pull` needs the digest's file name) and
+    // extension — with leaf exceptions: setup/history.js (the
+    // TUI's `qcr history pull` needs the digest's file name),
     // setup/stage2request.js (the TUI's stage-2 start click reads the
-    // proposal and writes the request). A leaf may reach the rest of
-    // src/setup/ by TYPE only (erased at build), so the exception can never
+    // proposal and writes the request), and's three for the
+    // operator's machine — pins.js (the TUI marks proposed pins),
+    // configcommit.js (the TUI and `qcr setup commit` carry out the profile
+    // commits setup asked for) and profile.js (`qcr setup validate`, the
+    // daemon's own loaders over a profile). Each leaf may reach the rest of
+    // src/setup/ by TYPE only (erased at build), so no exception can ever
     // carry the case runner along with it.
-    const setupLeaves = ["history.js", "stage2request.js"];
+    const setupLeaves = ["history.js", "stage2request.js", "pins.js", "configcommit.js", "profile.js"];
     const reachesSetup = srcFiles(src)
       .filter((f) => !f.includes("/src/setup/"))
       .filter((f) =>

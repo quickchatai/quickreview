@@ -54,6 +54,17 @@ export interface MemoryEntry {
   hash: string;
 }
 
+/** Pinned-region budget: only the first ~1,991 chars / 75 lines of
+ * the injection head survive truncation — past this, pins are warned about
+ * (the TUI's memory tab; setup's pin proposals). */
+export const PINNED_BUDGET_CHARS = 1900;
+
+/** What the pinned entries among `entries` take of that head. */
+export function pinnedBudget(entries: MemoryEntry[]): { chars: number; over: boolean } {
+  const chars = entries.filter((e) => e.pinned).reduce((n, e) => n + e.text.length + 2, 0);
+  return { chars, over: chars > PINNED_BUDGET_CHARS };
+}
+
 /** Where a mutation lands, plus the content it expects to find there. */
 export interface MemoryRef {
   id: string;

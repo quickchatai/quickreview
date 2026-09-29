@@ -50,6 +50,22 @@ _Avoid_: summary, report
 The per-repo tuning of the reviewer, extending a base profile.
 _Avoid_: config (that is the install's), portrait
 
+**Interview**:
+Setup's conversation with the operator — adaptive, driven by the portrait, always covering four fixed points (goals, merge-blocking concerns, risk areas, style & tests) — whose answers become the repo profile.
+_Avoid_: questionnaire, form
+
+**Concern**:
+One thing the interview asks the operator to weigh (security, data, money, tests…); it names the lenses its priority decides.
+_Avoid_: category, area
+
+**Priority**:
+How much one concern matters to the repo — critical, important, normal or ignore — turned into lens settings by one table in code; normal is the reviewer as shipped.
+_Avoid_: weight, score
+
+**Pin proposal**:
+A memory entry the companion proposes to pin, with one line of why; the operator pins it (or not) in the TUI.
+_Avoid_: pin (a proposal is not one)
+
 ### Cutting a repo up
 
 **Unit**:

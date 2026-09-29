@@ -104,6 +104,9 @@ export interface AppHooks {
    * `commands/` dir. The board's one write action beyond wakes — see
    * src/tui/unwedge.ts for why it exists and what bounds it. */
   unwedge?: (pr: number, app: App) => void;
+  /**: the board's `I` — ask the companion to run its setup skill
+   * (an inject into its own column, src/tui/setupentry.ts) and focus it. */
+  setup?: (app: App) => void;
   /** Open a URL in the user's browser (default: xdg-open, detached). */
   openUrl?: (url: string) => void;
   /** First-launch marker (read, write). Default: state/tui-help-shown. */
@@ -1172,6 +1175,12 @@ export class App {
         // F clears the board filter — the indicator promises it.
         if (key.ch === "F" && this.tab === "board" && this.view.boardFilter != null) {
           this.view.boardFilter = null;
+          break;
+        }
+        // I starts setup — the companion takes it from there.
+        if (key.ch === "I" && this.tab === "board") {
+          if (this.hooks.setup) this.hooks.setup(this);
+          else this.notice("setup: not wired (no companion in this TUI)");
           break;
         }
         return;

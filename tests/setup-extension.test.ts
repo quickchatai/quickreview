@@ -95,6 +95,11 @@ describe("the tool belt", () => {
       "setup_portrait_assemble",
       "setup_portrait",
       "setup_portrait_narrative",
+      "setup_interview",
+      "setup_profile",
+      "setup_profile_apply",
+      "setup_profile_validate",
+      "setup_pin_propose",
     ]);
     for (const n of names) expect(n).toMatch(/^[a-z][a-z0-9_]*$/);
   });
@@ -204,6 +209,12 @@ describe("the tool belt", () => {
         "setup_portrait_assemble",
         "setup_portrait",
         "setup_portrait_narrative",
+        // the interview's tuning.
+        "setup_interview",
+        "setup_profile",
+        "setup_profile_apply",
+        "setup_profile_validate",
+        "setup_pin_propose",
         // the scan half of the belt.
         "scan_preview",
         "scan_start",
@@ -221,6 +232,52 @@ describe("the tool belt", () => {
     } finally {
       err.mockRestore();
     }
+  });
+});
+
+describe("the interview's profile tools", () => {
+  function profileBelt(profile: string): PiToolDefinition[] {
+    const cfgHome = join(dir, "config");
+    tree(cfgHome, { "config.toml": `[review]\nprofile = ${JSON.stringify(profile)}\n` });
+    const engine = buildEngine({
+      QCR_REVIEWED_REPO: join(dir, "repo"),
+      QCR_STATE_HOME: join(dir, "state"),
+      QCR_CONFIG_HOME: cfgHome,
+    } as NodeJS.ProcessEnv);
+    return toolDefinitions(engine);
+  }
+
+  it("the table tool shows the four points, every concern and the priority table", async () => {
+    const out = await call(profileBelt(""), "setup_interview");
+    for (const point of ["goals", "merge-blocking", "risk", "style-tests"]) expect(out).toContain(point);
+    expect(out).toMatch(/security — .*\[pass-security, pass-bounds\]/);
+    expect(out).toMatch(/critical: enabled = true, min_tier = "sol-high", effort = "high", max_severity = "P0"/);
+    expect(out).toMatch(/normal: \(nothing — the shipped behaviour\)/);
+  });
+
+  it("status nudges while no profile is named; apply previews, then writes against the app's own default", async () => {
+    const defs = profileBelt("");
+    expect(await call(defs, "setup_profile")).toMatch(/SETUP IS OWED: the live config names no repo profile/);
+    const all = Object.fromEntries(
+      ["correctness", "reliability", "compatibility", "integrations", "frontend", "design", "security", "data", "money", "compliance", "style", "tests"].map(
+        (c) => [c, "normal"],
+      ),
+    );
+    const preview = await call(defs, "setup_profile_apply", { profile: "acme", priorities: { ...all, security: "critical" }, goals: "g" });
+    expect(preview).toMatch(/PREVIEW of profile "acme"/);
+    expect(preview).toContain('+ [lenses.pass-security]');
+    expect(existsSync(join(dir, "config", "profiles", "acme"))).toBe(false);
+    const written = await call(defs, "setup_profile_apply", {
+      profile: "acme",
+      priorities: { ...all, security: "critical" },
+      goals: "g",
+      write: true,
+    });
+    expect(written).toMatch(/Profile "acme" created/);
+    expect(written).toMatch(/chain: default → acme/);
+    expect(written).toMatch(/until the owner sets `\[review\] profile = "acme"`/);
+    expect(written).toMatch(/profile changed, not deployed/);
+    expect(await call(defs, "setup_profile_validate", { profile: "acme" })).toMatch(/Profile "acme" loads/);
   });
 });
 

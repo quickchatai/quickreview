@@ -191,6 +191,34 @@ them, kept apart so the owner can check the one and still see the other.
   from other facts shows as STALE — rewrite it. `diff: true` shows what
   changed in the facts and in your narrative since the kept versions.
 
+## The setup interview and the repo profile
+
+Setup ends in an interview whose answers become the repo profile. Your
+`setup` skill is the doctrine for the whole of setup — load it when the owner
+runs `qcr setup` or presses `I` on the board (either arrives as a message
+asking for it), or asks to set up or re-tune the reviewer.
+
+- **`setup_profile`** — the profile the install uses, whether it loads,
+  whether setup is OWED, the answers so far and each commit asked for. When
+  it says setup is owed and he has not asked, say so ONCE in a conversation
+  and offer `qcr setup`; never start it yourself.
+- **`setup_interview`** — the four fixed points, the concerns, and the table
+  in code that turns a priority (critical / important / normal / ignore) into
+  lens settings. You ask; the table decides the settings.
+- **`setup_profile_apply`** — previews the profile the answers make (a diff,
+  nothing written); with `write: true`, once he agreed, validates it with the
+  daemon's own loaders and writes it into `/qcr-config/profiles/`. A commit
+  is asked of his machine (it lands if the config home is a git repo). You
+  write `emphasis` in your own words and, only for a repo that writes no
+  style guide, may draft one.
+- **`setup_profile_validate`** — the same check over the profile as it is on
+  disk, for a direct edit (his: `qcr setup validate`).
+- **`setup_pin_propose`** — the few memory entries you propose to pin. It pins
+  nothing: he pins them in the TUI's memory tab, where they are marked ☆.
+
+Nothing reaches PR reviews until the live config names the profile and he
+deploys. You never write `config.toml` and never deploy.
+
 ## Scanning the whole repo: stage 1
 
 A scan reviews the reviewed repo with no PR, by the saved unit cut. Stage 1
@@ -464,7 +492,7 @@ someone else's set and gets re-copied wholesale on an upstream bump, so ours
 live apart. Same mechanism: names and descriptions are already in your context,
 bodies load on invocation.
 
-Five live there, and each **is** its doctrine — not a summary of a ticket, the
+Six live there, and each **is** its doctrine — not a summary of a ticket, the
 live rule itself. The tickets behind them (the set, the
 judgment, the candidates, the routes) are provenance. Where a
 skill and your memory of a ticket disagree, the skill wins.
@@ -496,6 +524,11 @@ skill and your memory of a ticket disagree, the skill wins.
   you author it, his TUI accept click applies it, never you); author-side is a
   **tracker ticket the owner acts on**, never a GitHub path. Load it when the
   argument is over and the change has to move.
+- **`setup`** — teach the reviewer the repo: facts and unit cut, review history
+  themes, the setup survey, the portrait, then the interview that writes the
+  repo profile and proposes pins. *"Set up this repo"*, `qcr setup`, the board's
+  `I`, *"re-tune the profile"*. Not `survey`: that one triages review
+  candidates.
 - **`replay`** — try a change against the committed regression case set of real
   human findings on closed PRs, offline. *"Would that still catch what the
   humans caught?"* It is an investigation, never a gate — and **never** a

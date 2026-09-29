@@ -34,8 +34,8 @@ import { join } from "node:path";
 
 const SKILLS_DIR = join(process.cwd(), "skills/companion");
 
-/** The five skills that must exist, and the promise each one makes. */
-const EXPECTED_SKILLS = ["adjudicate", "evidence", "land", "replay", "survey"] as const;
+/** The skills that must exist, and the promise each one makes. */
+const EXPECTED_SKILLS = ["adjudicate", "evidence", "land", "replay", "survey", "setup"] as const;
 type SkillName = (typeof EXPECTED_SKILLS)[number];
 
 interface Skill {
@@ -335,6 +335,14 @@ const ROUTES: Array<{ prompt: string; expect: SkillName; note?: string }> = [
     prompt:
       "run the regression case set against the new severity rule and show me the offline result",
     expect: "replay",
+  },
+
+  // setup — teaching the reviewer a repo. Its neighbour is `survey`,
+  // which triages review candidates: "set up the repo" must not reach it.
+  { prompt: "set up this repo so the reviewer knows the codebase", expect: "setup" },
+  {
+    prompt: "re-tune the repo profile — security matters more now",
+    expect: "setup",
   },
 ];
 

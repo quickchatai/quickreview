@@ -320,7 +320,8 @@ describe("the key law: painted ⇔ registered ⇔ answers", () => {
     const rig = fullRig();
     rig.app.view.snapshot = undefined;
     const live = rig.app.liveKeys();
-    expect(live.bar.map((b) => b.key)).toEqual(["e"]);
+    // `e` (events) and `I` (setup) are about the repo, not a PR.
+    expect(live.bar.map((b) => b.key)).toEqual(["e", "I"]);
     expect(live.inline).toEqual([]);
     for (const k of ["u", "m", "g", "a"]) expect(rig.app.registeredKeys().has(k)).toBe(false);
   });
