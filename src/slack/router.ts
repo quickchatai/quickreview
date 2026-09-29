@@ -262,8 +262,11 @@ export class SlackRouter {
     // (4) dedupe. The row is inserted BEFORE any work; a redelivery loses the
     //     race and is dropped, so at-least-once delivery becomes exactly-once
     //     injection. The provisional disposition is a DROP: if the daemon dies
-    //     mid-turn the event stays un-injected (fail closed), and it costs no
-    //     turn budget (only `injected` rows count).
+    //     before admission the event stays un-injected (fail closed), and it
+    //     costs no turn budget (only `injected` rows count). Past admission the
+    //     row is a reservation (`injected`, injected_at NULL — see below): a
+    //     death mid-delivery strands it, which spends one slot of that day's
+    //     cap on no turn — the cost side, the closed direction.
     const created = store.recordSlackEvent({
       event_id: event.event_id,
       channel: event.channel,
