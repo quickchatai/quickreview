@@ -5,9 +5,9 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PiToolDefinition } from "@earendil-works/pi-coding-agent";
-import { scanToolDefinitions } from "../extensions/setup-scan.js";
+import { scanToolDefinitions, watchStage2Requests } from "../extensions/setup-scan.js";
 import { SCAN_DEFAULTS } from "../src/config.js";
 import { stateHomeFs } from "../src/setup/adapters.js";
 import { FindingsStore } from "../src/setup/findings.js";
@@ -20,7 +20,7 @@ beforeEach(() => {
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 const SHA = "a".repeat(40);
-const FILES: Record<string, string> = { "app/a.py": "one\ntwo\nthree\n", "lib/b.py": "x\ny\n" };
+const FILES: Record<string, string> = { "app/a.py": "one\ntwo\nthree\n", "lib/b.py": "x\ny\n", "lib/tests/test_b.py": "t\n" };
 
 let tick = 0;
 
@@ -60,7 +60,8 @@ function belt(trees: Record<string, Record<string, string>> = { [SHA]: FILES }, 
     settings: () => ({ ok: true, settings: { scan: SCAN_DEFAULTS, validateTier: "sol-high" } }),
     buildAgents: () => ({ ok: true }),
   });
-  return { defs: scanToolDefinitions(scan, new FindingsStore(state)), scan };
+  const settings = { scan: SCAN_DEFAULTS, validateTier: "sol-high" as const, riskPasses: ["pass-data-safety"] };
+  return { defs: scanToolDefinitions(scan, new FindingsStore(state), () => settings), scan };
 }
 
 async function call(defs: PiToolDefinition[], name: string, params: Record<string, unknown> = {}): Promise<string> {
@@ -118,5 +119,55 @@ describe("the delta and match tools", () => {
     expect(await call(defs, "scan_match", { key: "stale", pairs: [] })).toMatch(/^Match refused:\n✗ the question moved/);
     expect(await call(defs, "scan_match", { key: qkey, pairs: [{ old: oldFp, new: newFp }] })).toBe("Settled: 1 matched (state kept), 0 fixed, 0 new.");
     expect(await call(defs, "scan_matches")).toMatch(/^No match question is pending/);
+  });
+});
+
+describe("the stage 2 tools", () => {
+  it("suggestions name the usable lenses; a proposal shows its rows, pairs and cost; the start takes its key", async () => {
+    const { defs, scan } = belt();
+    const cal = await call(defs, "scan_preview");
+    await call(defs, "scan_start", { key: /scan_start with key (\w+)/.exec(cal)![1]! });
+    await scan.idle();
+
+    const sugs = await call(defs, "scan_suggestions");
+    expect(sugs).toMatch(/^No deep-lens suggestions stored/);
+    expect(sugs).toMatch(/Stage 2 may run: .*pass-security \(terra-med\|sol-med\|sol-high\)/);
+    expect(sugs).toMatch(/pass-data-safety \(sol-high\)/);
+    expect(sugs).not.toMatch(/pass-intent/);
+
+    expect(await call(defs, "scan_stage2_propose", { rows: [{ lens: "pass-intent", files: ["app/a.py"], reason: "r" }] })).toMatch(
+      /^Stage 2 proposal refused:\n✗ row-1: "pass-intent" is not a deep lens/,
+    );
+    const proposal = await call(defs, "scan_stage2_propose", {
+      rows: [{ lens: "pass-security", files: ["app/a.py", "lib/b.py"], reason: "auth crosses both" }],
+    });
+    expect(proposal).toMatch(/^STAGE 2 proposal at aaaaaaaaaaaa — 1 row\(s\) to run, estimate \$\d+\.\d\d \(the run stops hard there\); validator off\./);
+    expect(proposal).toMatch(/row-1: pass-security at sol-med over app \+ lib \(cross-module\) — 2 file\(s\) \+ 1 paired test\(s\)/);
+    expect(proposal).toMatch(/extrapolated from pass-scan/);
+    expect(proposal).toMatch(/tests: lib\/tests\/test_b\.py/);
+    const key = /scan_stage2_start with key (\w+)/.exec(proposal)![1]!;
+
+    expect(await call(defs, "scan_stage2_start", { key: "nope" })).toMatch(/^Stage 2 start refused:\n✗ nope is not the latest/);
+    expect(await call(defs, "scan_stage2_start", { key })).toMatch(/^Stage 2 scan-\S+ started at aaaaaaaaaaaa: 1 row\(s\), hard stop/);
+    await scan.idle();
+    const status = await call(defs, "scan_status");
+    expect(status).toMatch(/\(stage 2\) at aaaaaaaaaaaa: COMPLETE — 1\/1 cases/);
+    expect(status).toMatch(/- row-1 pass-security at sol-med \(app, lib\): done/);
+    expect(status).toMatch(/3 file × lens read by stage 2/);
+  });
+
+  it("the watcher polls for the TUI's click and stops when told", async () => {
+    vi.useFakeTimers();
+    try {
+      const consumeStage2Request = vi.fn(async () => null);
+      const stop = watchStage2Requests({ consumeStage2Request } as unknown as ScanRunner, 1000);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(consumeStage2Request).toHaveBeenCalledTimes(3);
+      stop();
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(consumeStage2Request).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

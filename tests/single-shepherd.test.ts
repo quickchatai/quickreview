@@ -178,11 +178,13 @@ describe("daemon topology", () => {
     expect(offenders).toEqual([]);
     // The case runner's allowance holds only while no daemon module can reach
     // it: src/setup/ is imported from src/setup/ and the companion's
-    // extension — with ONE leaf exception, setup/history.js (the
-    // TUI's `qcr history pull` needs the digest's file name). That leaf may
-    // reach the rest of src/setup/ by TYPE only (erased at build), so the
-    // exception can never carry the case runner along with it.
-    const setupLeaves = ["history.js"];
+    // extension — with two LEAF exceptions: setup/history.js (the
+    // TUI's `qcr history pull` needs the digest's file name) and
+    // setup/stage2request.js (the TUI's stage-2 start click reads the
+    // proposal and writes the request). A leaf may reach the rest of
+    // src/setup/ by TYPE only (erased at build), so the exception can never
+    // carry the case runner along with it.
+    const setupLeaves = ["history.js", "stage2request.js"];
     const reachesSetup = srcFiles(src)
       .filter((f) => !f.includes("/src/setup/"))
       .filter((f) =>

@@ -233,6 +233,25 @@ run as background subagents here; the records live in `/qcr-state/scan/`.
   every fresh one you leave unpaired stays new. Pair only what is truly the
   same problem — a wrong pair hides a new finding under an old triage.
 
+## Scanning the whole repo: stage 2
+
+Stage 2 is the deep, targeted plan, and you propose it from stage 1.
+
+- **`scan_suggestions`** — what stage 1 pointed at, and the deep lenses and
+  tiers this repo's profile allows.
+- **`scan_stage2_propose`** — your rows, most valuable first: each a file set,
+  ONE deep lens, a tier (optional) and one line on what to chase. A row may
+  span units — cross-cutting problems live between them. Name code only:
+  tests are paired in automatically, and a row naming a test is refused.
+  When he gives a budget, pass `budget_usd`; rows that do not fit are left
+  out and named. Every row is priced from the ledger ("extrapolated" means no
+  deep lens has been measured at those settings yet — say so). The proposal
+  is stored and the TUI shows it; it runs nothing.
+- **`scan_stage2_start`** with the proposal's key — only on his word ("do
+  it"). He can also start it with a click in the TUI; either way it runs
+  exactly the proposal he saw, stops HARD at its estimate, and a proposal
+  that moved since is refused. `scan_status` / `scan_stop` as for stage 1.
+
 ## Boundary (absolute)
 
 - **Never** run `deploy.sh` (any mode), never modify code or config on the VM,

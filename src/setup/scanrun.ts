@@ -43,14 +43,24 @@
 // materialised read-only by the source port; the sha is recorded on every
 // ledger row and finding.
 //
+// STAGE 2 is the same run over a different plan: the companion
+// PROPOSES rows (file set × deep lens × tier, cost — stage2.ts's rules),
+// optionally fitted to a budget; the proposal is stored, and its key starts
+// it — quoted by the companion on the operator's word, or by the TUI's click
+// through the start channel (stage2request.ts). One case per row, the same
+// hard stop at the approved estimate, the same ledger (keyed by the row's
+// lens), the same findings store (filed under the unit owning each file).
+//
 // Persistence: `<state home>/scan/run.json` (the current run and a short
 // history), `scan/suggestions.json` (stage 1's deep-lens suggestions, the
-// input to stage 2), beside the ledger and the findings store.
-import type { PassTier } from "../types.js";
+// input to stage 2), `scan/stage2.json` (the latest stage-2 proposal),
+// beside the ledger and the findings store.
+import type { LensTuningMap } from "../lenstuning.js";
+import { PASS_TIER_ORDER, type PassTier } from "../types.js";
 import type { ScanConfig } from "../config.js";
 import type { CaseOutcome, CaseRunner, Refusal, StateFs } from "./engine.js";
 import { FindingsStore, type ReconcileResult, type ReportedFinding } from "./findings.js";
-import { blobsRead, casesFor, coveredBy, lastScanned, Ledger, measuredRate, type LedgerEntry, type RateKey } from "./ledger.js";
+import { blobsRead, casesFor, coveredBy, lastScanned, Ledger, measuredRate, rateWhere, type LedgerEntry, type RateKey } from "./ledger.js";
 import {
   anchoredLines,
   calibrationCases,
@@ -65,12 +75,25 @@ import {
   scanValidatorPrompt,
   SCAN_PASS,
   type ExclusionReason,
+  type PromptContext,
   type ScanCandidate,
   type ScanCasePlan,
   type ScanRate,
   type ScanSuggestion,
   type TreeFile,
 } from "./scan.js";
+import { planStage2, stage2CasePrompt, stage2Key, unitOwner, type RowPrice, type Stage2Row, type Stage2RowRequest } from "./stage2.js";
+import {
+  parseStage2File,
+  parseStartRequest,
+  parseStartResult,
+  STAGE2_FILE,
+  STAGE2_RESULT_FILE,
+  STAGE2_START_FILE,
+  STAGE2_VERSION,
+  type Stage2StartResult,
+  type StoredStage2Proposal,
+} from "./stage2request.js";
 import type { UnitCut } from "./unitcut.js";
 
 // ---- ports ---------------------------------------------------------------------
@@ -103,6 +126,11 @@ export interface ScanSource {
 export interface ScanSettings {
   scan: ScanConfig;
   validateTier: PassTier;
+  /** The profile's per-lens tuning — which deep lenses stage 2 may run, at
+   * which tiers and effort. */
+  lenses?: LensTuningMap;
+  /** `[models] risk_passes` — built at `sol-high` only. */
+  riskPasses?: readonly string[];
 }
 
 export interface ScanPorts {
@@ -127,7 +155,7 @@ export const RUN_VERSION = 1;
 /** Summaries of finished runs kept beside the current one. */
 export const RUN_HISTORY = 20;
 
-export type ScanMode = "calibration" | "stage1" | "delta";
+export type ScanMode = "calibration" | "stage1" | "delta" | "stage2";
 export type ScanCaseStatus = "pending" | "running" | "done" | "failed" | "stopped" | "skipped";
 export type ScanRunState = "running" | "complete" | "partial" | "stopped" | "capped";
 
@@ -151,6 +179,11 @@ export interface ScanCaseState {
   error: string | null;
   started_at: string | null;
   finished_at: string | null;
+  /** Stage 2: the row's lens, tier, reason and every unit it spans. */
+  lens?: string;
+  tier?: PassTier;
+  reason?: string;
+  units?: string[];
 }
 
 export interface ScanRun {
@@ -238,13 +271,37 @@ export interface ScanStatus {
   run: (ScanRun & { display: ScanRunState | "interrupted" }) | null;
   active: boolean;
   history: ScanRunSummary[];
-  ledger: { files: number; cost_usd: number } | null;
+  /** `files`: read by stage 1; `deep_files`: file × lens rows stage 2 read. */
+  ledger: { files: number; deep_files: number; cost_usd: number } | null;
 }
+
+/** What `proposeStage2` answers. */
+export type Stage2Proposal = StoredStage2Proposal;
 
 const EPS = 1e-9;
 const clean = (err: unknown): string => (err instanceof Error ? err.message : String(err));
-const stage1Agent = (tier: PassTier): string => `${SCAN_PASS}--${tier}`;
 const validatorAgent = (tier: PassTier): string => `pass-validate--${tier}`;
+
+/** One case of a run, whatever the stage: what it reads, with which lens at
+ * which tier and effort, what it is told, and where its findings are filed. */
+interface CaseJob {
+  plan: ScanCasePlan & { estimate_usd: number | null };
+  lens: string;
+  tier: PassTier;
+  effort: string;
+  prompt: (ctx: PromptContext) => string;
+  /** The validator's view of the case, e.g. `stage 1, unit app`. */
+  label: string;
+  /** The unit a finding at `path` is filed under. */
+  unitOf: (path: string) => string;
+  /** Stage 1 reads and stores deep-lens suggestions; stage 2 does not. */
+  suggestions: boolean;
+  /** Stage 2: why the row, and every unit it spans. */
+  reason?: string;
+  units?: string[];
+}
+
+type Stage2Planned = { ok: true; proposal: StoredStage2Proposal; tree: ScanTree; settings: ScanSettings; cut: UnitCut } | Refusal;
 
 interface Planned {
   preview: ScanPreview;
@@ -255,6 +312,7 @@ interface Planned {
 export class ScanRunner {
   private active: { id: string; sha: string; abort: AbortController; done: Promise<void> } | null = null;
   private starting = false;
+  private consuming = false;
   private readonly ledger: Ledger;
   private readonly findings: FindingsStore;
 
@@ -473,26 +531,51 @@ export class ScanRunner {
     const built = this.ports.buildAgents(settings);
     if (!built.ok) return { ok: false, errors: built.errors.map((e) => `the scan agents could not be built: ${e}`) };
 
-    const now = this.ports.clock();
-    const run: ScanRun = {
-      id: `scan-${now.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}`,
+    const cfg = settings.scan;
+    const jobs: CaseJob[] = preview.cases.map((c) => ({
+      plan: c,
+      lens: SCAN_PASS,
+      tier: cfg.tier,
+      effort: cfg.effort,
+      prompt: (ctx) => scanCasePrompt(c, ctx),
+      label: `stage 1, unit ${c.unit}`,
+      unitOf: () => c.unit,
+      suggestions: true,
+    }));
+    const run = this.launch(file, {
       mode: preview.mode,
       sha: preview.sha,
       plan_key: preview.key,
-      started_at: now.toISOString(),
-      finished_at: null,
-      state: "running",
       cap_usd: preview.cap_usd,
       estimate_usd: preview.estimate_usd,
-      spent_usd: 0,
-      unpriced_cases: 0,
       settings: {
         tier: preview.settings.tier,
         effort: preview.settings.effort,
         validator: preview.settings.validator,
         validate_tier: preview.settings.validate_tier,
       },
-      cases: preview.cases.map((c) => ({
+    }, jobs, tree, settings);
+    return { ok: true, run };
+  }
+
+  /** Record a new run as current and drive its cases in the background. */
+  private launch(
+    file: RunFile,
+    head: Pick<ScanRun, "mode" | "sha" | "plan_key" | "cap_usd" | "estimate_usd" | "settings">,
+    jobs: CaseJob[],
+    tree: ScanTree,
+    settings: ScanSettings,
+  ): ScanRun {
+    const now = this.ports.clock();
+    const run: ScanRun = {
+      id: `scan-${now.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}`,
+      ...head,
+      started_at: now.toISOString(),
+      finished_at: null,
+      state: "running",
+      spent_usd: 0,
+      unpriced_cases: 0,
+      cases: jobs.map(({ plan: c, ...job }) => ({
         id: c.id,
         unit: c.unit,
         part: c.part,
@@ -500,7 +583,7 @@ export class ScanRunner {
         files: c.files.map((f) => f.path),
         lines: c.lines,
         estimate_usd: c.estimate_usd,
-        status: "pending",
+        status: "pending" as const,
         cost_usd: null,
         findings: 0,
         doubted: 0,
@@ -509,6 +592,7 @@ export class ScanRunner {
         error: null,
         started_at: null,
         finished_at: null,
+        ...(head.mode === "stage2" ? { lens: job.lens, tier: job.tier, reason: job.reason, units: job.units } : {}),
       })),
       problems: [],
       matching: null,
@@ -522,7 +606,7 @@ export class ScanRunner {
     this.store(file);
 
     const abort = new AbortController();
-    const done = this.drive(file, run, preview.cases, tree, settings, abort)
+    const done = this.drive(file, run, jobs, tree, settings, abort)
       .catch((err: unknown) => {
         // Belt: drive() records its own failures; this catches a bug in it.
         run.problems.push(`the scan stopped on an internal error: ${clean(err)}`);
@@ -533,7 +617,7 @@ export class ScanRunner {
         if (this.active?.id === run.id) this.active = null;
       });
     this.active = { id: run.id, sha: run.sha, abort, done };
-    return { ok: true, run };
+    return run;
   }
 
   /** The latest run, the history and the ledger's totals. */
@@ -554,6 +638,7 @@ export class ScanRunner {
           ? null
           : {
               files: ledger.entries.filter((e) => e.lens === SCAN_PASS).length,
+              deep_files: ledger.entries.filter((e) => e.lens !== SCAN_PASS).length,
               cost_usd: ledger.entries.reduce((n, e) => n + (e.cost_usd ?? 0), 0),
             },
     };
@@ -585,12 +670,265 @@ export class ScanRunner {
     }
   }
 
+  // -- stage 2 --
+
+  /** The latest stored stage-2 proposal, none, or why it cannot be read. */
+  stage2Proposal(): { proposal: StoredStage2Proposal | null; error: string | null } {
+    try {
+      const text = this.ports.state.read(STAGE2_FILE);
+      return { proposal: text === null ? null : parseStage2File(text).proposal, error: null };
+    } catch (err) {
+      return { proposal: null, error: `${STAGE2_FILE} cannot be read: ${clean(err)}` };
+    }
+  }
+
+  /** A row's price at `lens`/`tier`/`effort` from the ledger (stage2.ts
+   * "PRICED FROM THE LEDGER"). */
+  private priceRow(entries: readonly LedgerEntry[], cfg: ScanConfig, lens: string, tier: PassTier, effort: string): RowPrice | null {
+    const validator = cfg.validator;
+    const own = measuredRate(entries, { lens, tier, effort, validator });
+    if (own) return { rate: own, basis: "measured", from: lens };
+    const others = (e: LedgerEntry): boolean => e.lens !== lens && e.tier === tier && e.effort === effort && e.validator === validator;
+    const borrowed = rateWhere(entries, others);
+    if (borrowed) {
+      const from = [...new Set(entries.filter((e) => others(e) && e.cost_usd !== null).map((e) => e.lens))].sort().join(", ");
+      return { rate: borrowed, basis: "borrowed", from };
+    }
+    const stage1 =
+      measuredRate(entries, { lens: SCAN_PASS, tier: cfg.tier, effort: cfg.effort, validator }) ??
+      rateWhere(entries, (e) => e.lens === SCAN_PASS);
+    if (!stage1) return null;
+    return {
+      rate: { ...stage1, usd_per_kline: stage1.usd_per_kline * cfg.unmeasured_rate_factor },
+      basis: "extrapolated",
+      from: SCAN_PASS,
+    };
+  }
+
+  private async planStage2(request: Stage2RowRequest[], budgetUsd: number | null, ref: string | undefined): Promise<Stage2Planned> {
+    const s = this.ports.settings();
+    if (!s.ok) return s;
+    const cut = this.ports.savedCut();
+    if (!cut.ok) return cut;
+    const wanted = (ref ?? "").trim() || "HEAD";
+    const sha = this.ports.source.resolve(wanted);
+    if (sha === null) return { ok: false, errors: [`${JSON.stringify(wanted)} names no commit in ${this.ports.source.location}`] };
+    const opened = this.ports.source.open(sha, this.active ? [this.active.sha] : []);
+    if (!opened.ok) return { ok: false, errors: [`cannot read the tree at ${sha.slice(0, 12)}: ${opened.reason}`] };
+    const tree = opened.tree;
+    const { entries, error } = this.ledger.load();
+    if (error !== null) return { ok: false, errors: [error] };
+    const settings = s.settings;
+    const cfg = settings.scan;
+    const plan = planStage2({
+      rows: request,
+      cut: cut.cut,
+      files: tree.files,
+      linesOf: (p) => tree.lines(p),
+      exclude: cfg.exclude,
+      budget: { maxFiles: cfg.case_max_files, maxLines: cfg.case_max_lines },
+      lenses: settings.lenses,
+      riskPasses: settings.riskPasses ?? [],
+      defaultTier: cfg.tier,
+      covered: (lens) => coveredBy(entries, lens),
+      price: (lens, tier, effort) => this.priceRow(entries, cfg, lens, tier, effort),
+      budgetUsd,
+    });
+    if (!plan.ok) return { ok: false, errors: plan.errors };
+    const validateTier = cfg.validator ? settings.validateTier : null;
+    const runnable = plan.rows.filter((r) => r.status === "run");
+    const key = stage2Key({
+      sha,
+      rows: runnable.map((r) => [r.id, r.lens, r.tier, r.effort, [...r.files, ...r.tests].map((f) => `${f.path}@${f.blob}`)]),
+      validator: cfg.validator,
+      validate_tier: validateTier,
+      cap: Math.round(plan.total_usd * 1e6),
+    });
+    const proposal: StoredStage2Proposal = {
+      key,
+      sha,
+      at: this.ports.clock().toISOString(),
+      request,
+      budget_usd: budgetUsd,
+      rows: plan.rows,
+      cap_usd: plan.total_usd,
+      runnable: plan.runnable,
+      over_budget_usd: plan.over_budget_usd,
+      validator: cfg.validator,
+    };
+    return { ok: true, proposal, tree, settings, cut: cut.cut };
+  }
+
+  /**
+   * Plan and STORE a stage-2 proposal from the companion's rows: checked,
+   * tests paired, priced from the ledger, fitted to `budget_usd` when given.
+   * Runs nothing. The stored proposal replaces the previous one — it is what
+   * the TUI shows and what a start's key must name.
+   */
+  async proposeStage2(args: { rows?: unknown; budget_usd?: unknown; sha?: string }): Promise<{ ok: true; proposal: Stage2Proposal } | Refusal> {
+    if (!Array.isArray(args.rows)) return { ok: false, errors: ["`rows` must be a list of { lens, files, tier?, reason }"] };
+    const request: Stage2RowRequest[] = [];
+    for (const [i, r] of args.rows.entries()) {
+      if (typeof r !== "object" || r === null || Array.isArray(r)) return { ok: false, errors: [`row-${i + 1}: not a { lens, files, tier?, reason } object`] };
+      const o = r as Record<string, unknown>;
+      request.push({
+        lens: typeof o.lens === "string" ? o.lens : "",
+        files: Array.isArray(o.files) ? o.files.filter((f): f is string => typeof f === "string") : typeof o.files === "string" ? o.files.split(",") : [],
+        ...(typeof o.tier === "string" && o.tier.trim() !== "" ? { tier: o.tier.trim() } : {}),
+        reason: typeof o.reason === "string" ? o.reason : "",
+      });
+    }
+    let budget: number | null = null;
+    if (args.budget_usd !== undefined && args.budget_usd !== null) {
+      if (typeof args.budget_usd !== "number" || !Number.isFinite(args.budget_usd) || args.budget_usd <= 0) {
+        return { ok: false, errors: ["`budget_usd` must be a positive number of dollars (or left out)"] };
+      }
+      budget = args.budget_usd;
+    }
+    const p = await this.planStage2(request, budget, args.sha);
+    if (!p.ok) return p;
+    try {
+      this.ports.state.write(STAGE2_FILE, `${JSON.stringify({ version: STAGE2_VERSION, proposal: p.proposal }, null, 1)}\n`);
+    } catch (err) {
+      return { ok: false, errors: [`the proposal could not be stored: ${clean(err)}`] };
+    }
+    return { ok: true, proposal: p.proposal };
+  }
+
+  /**
+   * Start the stored stage-2 proposal whose key is quoted — on the
+   * operator's word (the companion) or his click (the TUI, through
+   * `consumeStage2Request`). Re-planned first: a proposal that moved since it
+   * was shown is refused. Hard stop at its estimate.
+   */
+  async startStage2(args: { key?: unknown }): Promise<{ ok: true; run: ScanRun } | Refusal> {
+    if (this.active) return { ok: false, errors: [`scan ${this.active.id} is still running — stop it or wait for it`] };
+    if (this.starting) return { ok: false, errors: ["a scan is already starting — wait for it, then check scan_status"] };
+    if (typeof args.key !== "string" || args.key === "") {
+      return { ok: false, errors: ["no proposal key — propose stage 2, show the operator the rows and the cost, then start with its key"] };
+    }
+    this.starting = true;
+    try {
+      return await this.startStage2Planned(args.key);
+    } finally {
+      this.starting = false;
+    }
+  }
+
+  private async startStage2Planned(key: string): Promise<{ ok: true; run: ScanRun } | Refusal> {
+    const stored = this.stage2Proposal();
+    if (stored.error !== null) return { ok: false, errors: [stored.error] };
+    if (stored.proposal === null) return { ok: false, errors: ["no stage 2 proposal — propose one first"] };
+    if (stored.proposal.key !== key) {
+      return { ok: false, errors: [`${key} is not the latest stage 2 proposal (that is ${stored.proposal.key}) — show the operator the latest one`] };
+    }
+    const p = await this.planStage2(stored.proposal.request, stored.proposal.budget_usd, stored.proposal.sha);
+    if (!p.ok) return p;
+    if (p.proposal.key !== key) {
+      return {
+        ok: false,
+        errors: [`the plan changed since the proposal (key ${key}, now ${p.proposal.key}: a file, a price or the settings moved) — propose again and show the operator the new cost`],
+      };
+    }
+    const rows = p.proposal.rows.filter((r) => r.status === "run");
+    if (rows.length === 0) return { ok: false, errors: ["nothing to run: every row is covered by the ledger or over the budget"] };
+    const { file, error } = this.load();
+    if (error !== null) return { ok: false, errors: [error] };
+    const built = this.ports.buildAgents(p.settings);
+    if (!built.ok) return { ok: false, errors: built.errors.map((e) => `the scan agents could not be built: ${e}`) };
+    const unitOf = unitOwner(p.cut, p.tree.files.map((f) => f.path));
+    const jobs: CaseJob[] = rows.map((row: Stage2Row) => ({
+      plan: {
+        unit: row.units.join("+"),
+        id: row.id,
+        part: 1,
+        parts: 1,
+        files: [...row.files, ...row.tests],
+        lines: row.lines,
+        estimate_usd: row.estimate_usd,
+      },
+      lens: row.lens,
+      tier: row.tier,
+      effort: row.effort,
+      prompt: (ctx) => stage2CasePrompt(row, ctx),
+      label: `stage 2, ${row.id} (${row.lens})`,
+      unitOf,
+      suggestions: false,
+      reason: row.reason,
+      units: row.units,
+    }));
+    const cfg = p.settings.scan;
+    const top = rows.reduce<PassTier>((t, r) => (PASS_TIER_ORDER.indexOf(r.tier) > PASS_TIER_ORDER.indexOf(t) ? r.tier : t), rows[0]!.tier);
+    const run = this.launch(
+      file,
+      {
+        mode: "stage2",
+        sha: p.proposal.sha,
+        plan_key: key,
+        cap_usd: p.proposal.cap_usd,
+        estimate_usd: p.proposal.cap_usd,
+        settings: { tier: top, effort: "per row", validator: cfg.validator, validate_tier: cfg.validator ? p.settings.validateTier : null },
+      },
+      jobs,
+      p.tree,
+      p.settings,
+    );
+    return { ok: true, run };
+  }
+
+  /**
+   * Answer the TUI's start request, if there is one not yet answered: start
+   * the proposal it names and write the outcome to `STAGE2_RESULT_FILE`.
+   * Resolves null when there is nothing to answer. The companion's scan belt
+   * polls this; one request is answered once.
+   */
+  async consumeStage2Request(): Promise<Stage2StartResult | null> {
+    if (this.consuming) return null;
+    this.consuming = true;
+    try {
+      let text: string | null;
+      try {
+        text = this.ports.state.read(STAGE2_START_FILE);
+      } catch (err) {
+        this.ports.log?.(`setup: ${STAGE2_START_FILE} cannot be read: ${clean(err)}`);
+        return null;
+      }
+      const req = text === null ? null : parseStartRequest(text);
+      if (req === null) return null;
+      let prev: string | null = null;
+      try {
+        prev = this.ports.state.read(STAGE2_RESULT_FILE);
+      } catch {
+        // Unreadable: answer again rather than never.
+      }
+      if (prev !== null && parseStartResult(prev)?.request === req.id) return null;
+      const r = await this.startStage2({ key: req.key });
+      const result: Stage2StartResult = {
+        request: req.id,
+        key: req.key,
+        at: this.ports.clock().toISOString(),
+        ok: r.ok,
+        run: r.ok ? r.run.id : null,
+        errors: r.ok ? [] : r.errors,
+      };
+      try {
+        this.ports.state.write(STAGE2_RESULT_FILE, `${JSON.stringify(result)}\n`);
+      } catch (err) {
+        this.ports.log?.(`setup: the stage 2 start result could not be written: ${clean(err)}`);
+      }
+      this.ports.log?.(`setup: the TUI asked to start stage 2 (${req.key}): ${r.ok ? `started ${r.run.id}` : r.errors.join("; ")}`);
+      return result;
+    } finally {
+      this.consuming = false;
+    }
+  }
+
   // -- the background run --
 
   private async drive(
     file: RunFile,
     run: ScanRun,
-    plans: ReadonlyArray<ScanCasePlan & { estimate_usd: number | null }>,
+    jobs: readonly CaseJob[],
     tree: ScanTree,
     settings: ScanSettings,
     abort: AbortController,
@@ -620,8 +958,9 @@ export class ScanRunner {
         ? run.spent_usd + reserved + extra <= run.cap_usd + EPS
         : run.spent_usd + reserved < run.cap_usd - EPS);
     const lane = async (): Promise<void> => {
-      while (next < plans.length && !signal.aborted) {
-        const plan = plans[next]!;
+      while (next < jobs.length && !signal.aborted) {
+        const job = jobs[next]!;
+        const plan = job.plan;
         const est = plan.estimate_usd ?? 0;
         if (!within(est)) {
           capHit = true;
@@ -630,7 +969,7 @@ export class ScanRunner {
         next++;
         reserved += est;
         live.set(plan.id, 0);
-        const spent = await this.runCase(file, run, plan, tree, settings, signal, (v) => onCost(plan.id, v));
+        const spent = await this.runCase(file, run, job, tree, settings, signal, (v) => onCost(plan.id, v));
         live.delete(plan.id);
         reserved -= est;
         run.spent_usd += spent;
@@ -648,7 +987,7 @@ export class ScanRunner {
         }
       }
     };
-    const lanes = Math.max(1, Math.min(settings.scan.concurrency, plans.length));
+    const lanes = Math.max(1, Math.min(settings.scan.concurrency, jobs.length));
     await Promise.all(Array.from({ length: lanes }, lane));
 
     // Never started: `skipped` when the cap kept it out, `stopped` when a stop did.
@@ -663,12 +1002,13 @@ export class ScanRunner {
   private async runCase(
     file: RunFile,
     run: ScanRun,
-    plan: ScanCasePlan & { estimate_usd: number | null },
+    job: CaseJob,
     tree: ScanTree,
     settings: ScanSettings,
     signal: AbortSignal,
     onCost: (spentSoFar: number) => void = () => {},
   ): Promise<number> {
+    const plan = job.plan;
     const c = run.cases.find((x) => x.id === plan.id)!;
     if (signal.aborted) {
       c.status = "stopped";
@@ -694,7 +1034,7 @@ export class ScanRunner {
       onCost(seen);
     };
     const outcome = await this.runOne(
-      { id: ctx.caseId, unit: plan.unit, agent: stage1Agent(settings.scan.tier), files: c.files, prompt: scanCasePrompt(plan, ctx) },
+      { id: ctx.caseId, unit: plan.unit, agent: `${job.lens}--${job.tier}`, files: c.files, prompt: job.prompt(ctx) },
       signal,
       report(0),
     );
@@ -737,7 +1077,7 @@ export class ScanRunner {
           unit: plan.unit,
           agent: validatorAgent(settings.validateTier),
           files: c.files,
-          prompt: scanValidatorPrompt(plan, anchored.map((a) => a.cand), ctx),
+          prompt: scanValidatorPrompt(plan, anchored.map((a) => a.cand), ctx, job.lens, job.label),
         },
         signal,
         report(cost ?? seen),
@@ -771,13 +1111,13 @@ export class ScanRunner {
 
     const blobOf = new Map(tree.files.map((f) => [f.path, f.blob]));
     const all: ReportedFinding[] = kept.map(({ cand, code }) => ({
-      fingerprint: findingFingerprint({ path: cand.path, lens: SCAN_PASS, kind: cand.kind, code }),
-      unit: plan.unit,
+      fingerprint: findingFingerprint({ path: cand.path, lens: job.lens, kind: cand.kind, code }),
+      unit: job.unitOf(cand.path),
       path: cand.path,
       blob: blobOf.get(cand.path) ?? null,
       start: cand.start,
       end: cand.end,
-      lens: SCAN_PASS,
+      lens: job.lens,
       kind: cand.kind,
       severity: cand.severity,
       confidence: cand.confidence,
@@ -806,22 +1146,24 @@ export class ScanRunner {
     c.findings = reported.length;
     c.doubted = reported.filter((r) => r.doubt !== null).length;
 
-    const suggestions = answer.suggestions
-      .map((s) => ({ ...s, files: s.files.filter((p) => inTree.has(p)) }))
-      .filter((s) => s.files.length > 0);
-    dropped += answer.suggestions.length - suggestions.length;
-    c.suggestions = suggestions;
+    if (job.suggestions) {
+      const suggestions = answer.suggestions
+        .map((s) => ({ ...s, files: s.files.filter((p) => inTree.has(p)) }))
+        .filter((s) => s.files.length > 0);
+      dropped += answer.suggestions.length - suggestions.length;
+      c.suggestions = suggestions;
+      this.storeSuggestions(run, plan.unit, suggestions, at);
+    }
     c.dropped = dropped;
-    this.storeSuggestions(run, plan.unit, suggestions, at);
 
     // Last: the ledger. Only now is the case's reading on record.
     const total = plan.files.reduce((n, f) => n + Math.max(f.lines, 1), 0);
     const rows: LedgerEntry[] = plan.files.map((f) => ({
       path: f.path,
       blob: f.blob,
-      lens: SCAN_PASS,
-      tier: settings.scan.tier,
-      effort: settings.scan.effort,
+      lens: job.lens,
+      tier: job.tier,
+      effort: job.effort,
       validator: settings.scan.validator,
       sha: run.sha,
       lines: f.lines,

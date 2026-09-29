@@ -260,7 +260,13 @@ export function scanCasePrompt(c: ScanCasePlan, ctx: PromptContext, deepLenses: 
 }
 
 /** The validator's task string over one case's stage-1 candidates. */
-export function scanValidatorPrompt(c: ScanCasePlan, candidates: readonly ScanCandidate[], ctx: PromptContext): string {
+export function scanValidatorPrompt(
+  c: ScanCasePlan,
+  candidates: readonly ScanCandidate[],
+  ctx: PromptContext,
+  lens: string = SCAN_PASS,
+  label = `stage 1, unit ${c.unit}`,
+): string {
   const block = candidates
     .map((f) =>
       [
@@ -276,15 +282,15 @@ export function scanValidatorPrompt(c: ScanCasePlan, candidates: readonly ScanCa
     )
     .join("\n");
   return [
-    `SCAN VALIDATION ${ctx.caseId} — stage 1, unit ${c.unit}.`,
+    `SCAN VALIDATION ${ctx.caseId} — ${label}.`,
     `Scan sha: ${ctx.sha}`,
     `Tree root (read-only): ${ctx.root}`,
     "",
-    `The ${SCAN_PASS} lens read these files:`,
+    `The ${lens} lens read these files:`,
     fileList(c),
     "",
     `Its ${candidates.length} candidate finding(s):`,
-    `FINDINGS ${SCAN_PASS} SCAN ${ctx.caseId} @${ctx.sha}`,
+    `FINDINGS ${lens} SCAN ${ctx.caseId} @${ctx.sha}`,
     block,
     "",
     `Validate every candidate against the files under the tree root. Return the survivors as a findings block headed \`FINDINGS ${VALIDATE_PASS} SCAN ${ctx.caseId} @${ctx.sha}\` (keep each survivor's path, line and kind), then your DOUBTED and KILLED blocks.`,

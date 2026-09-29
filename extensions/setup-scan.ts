@@ -13,6 +13,14 @@
 //   - scan_matches / scan_match: the pending match question — the
 //     findings a re-scan stopped reporting exactly, beside the fresh ones
 //     that might be them — and the companion's whole answer to it.
+//   - scan_suggestions: stage 1's deep-lens suggestions and the
+//     lenses and tiers stage 2 may use — the companion's input;
+//   - scan_stage2_propose: the companion's rows (file set × deep lens × tier,
+//     reason) checked, tests paired, priced from the ledger and fitted to a
+//     budget when given one — stored, so the TUI can show it;
+//   - scan_stage2_start: start the stored proposal by its key, on the
+//     operator's word. The TUI's click reaches the same start through
+//     `watchStage2Requests` (the start channel, src/setup/stage2request.ts).
 //
 // A DELTA re-scan is scan_preview / scan_start with `delta: true`: stage 1
 // over only the files whose content changed since the last scan.
@@ -29,8 +37,10 @@ import type { FindingsFilter, FindingState, MatchQuestionView, ScanFinding } fro
 import { FindingsStore } from "../src/setup/findings.js";
 import { stateHomeFs } from "../src/setup/adapters.js";
 import { SEVERITIES, type ScanSeverity } from "../src/setup/scan.js";
+import { lensTiers, stage2Lenses, MAX_STAGE2_ROWS } from "../src/setup/stage2.js";
+import type { StoredStage2Proposal } from "../src/setup/stage2request.js";
 import { buildScanAgents, loadScanConfig, scanSettings, SCAN_AGENTS_DIR } from "../src/setup/scanbuild.js";
-import { ScanRunner, type ScanPreview, type ScanStatus } from "../src/setup/scanrun.js";
+import { ScanRunner, type ScanPreview, type ScanSettings, type ScanStatus, type StoredSuggestion } from "../src/setup/scanrun.js";
 import { gitScanSource } from "../src/setup/scantree.js";
 
 const NO_PARAMS = { type: "object", properties: {} } as const;
@@ -106,12 +116,17 @@ export function renderStatus(s: ScanStatus): string {
     const findings = r.cases.reduce((n, c) => n + c.findings, 0);
     const doubted = r.cases.reduce((n, c) => n + c.doubted, 0);
     out.push(
-      `${r.id} (${r.mode}) at ${r.sha.slice(0, 12)}: ${r.display.toUpperCase()} — ${done}/${r.cases.length} cases, ` +
+      `${r.id} (${r.mode === "stage2" ? "stage 2" : r.mode}) at ${r.sha.slice(0, 12)}: ${r.display.toUpperCase()} — ${done}/${r.cases.length} cases, ` +
         `${findings} finding(s)${doubted ? ` (${doubted} may not be valid)` : ""}, spent ${usd(r.spent_usd)} of ${usd(r.cap_usd)}` +
         (r.unpriced_cases ? ` (${r.unpriced_cases} unpriced case(s) counted at their estimate)` : ""),
     );
     if (r.display === "interrupted") out.push("It was interrupted (the companion restarted). Preview and start again — the ledger resumes it.");
     if (r.display === "capped") out.push("It stopped at its hard cap. Preview again for the price of what is left.");
+    if (r.mode === "stage2") {
+      for (const c of r.cases.slice(0, 40)) {
+        out.push(`  - ${c.id} ${c.lens ?? "?"} at ${c.tier ?? "?"} (${(c.units ?? [c.unit]).join(", ")}): ${c.status}, ${c.findings} finding(s), ${usd(c.cost_usd)}`);
+      }
+    }
     const failed = r.cases.filter((c) => c.status === "failed");
     for (const c of failed.slice(0, 10)) out.push(`  ✗ ${c.id}: ${c.error}`);
     for (const p of r.problems.slice(-5)) out.push(`  ! ${p}`);
@@ -122,7 +137,13 @@ export function renderStatus(s: ScanStatus): string {
       );
     }
   }
-  if (s.ledger) out.push(`Ledger: ${s.ledger.files} file(s) read by stage 1, ${usd(s.ledger.cost_usd)} recorded.`);
+  if (s.ledger) {
+    out.push(
+      `Ledger: ${s.ledger.files} file(s) read by stage 1` +
+        (s.ledger.deep_files ? `, ${s.ledger.deep_files} file × lens read by stage 2` : "") +
+        `, ${usd(s.ledger.cost_usd)} recorded.`,
+    );
+  }
   return out.join("\n");
 }
 
@@ -153,6 +174,60 @@ export function renderQuestion(q: MatchQuestionView | null): string {
   ].join("\n");
 }
 
+export function renderSuggestions(sugs: readonly StoredSuggestion[], settings: ScanSettings | null): string {
+  const out: string[] = [];
+  if (sugs.length === 0) out.push("No deep-lens suggestions stored — stage 1 has not suggested any yet.");
+  else {
+    const byLens = new Map<string, StoredSuggestion[]>();
+    for (const s of sugs) byLens.set(s.lens, [...(byLens.get(s.lens) ?? []), s]);
+    for (const [lens, ss] of [...byLens.entries()].sort((a, b) => b[1].length - a[1].length || (a[0] < b[0] ? -1 : 1))) {
+      out.push(`${lens} (${ss.length}):`);
+      for (const s of ss.slice(0, 30)) out.push(`  - [${s.unit}] ${s.files.join(", ")} — ${s.reason} (at ${s.sha.slice(0, 12)})`);
+      if (ss.length > 30) out.push(`  … and ${ss.length - 30} more`);
+    }
+  }
+  if (settings) {
+    const lenses = stage2Lenses(settings.lenses);
+    out.push(
+      "",
+      `Stage 2 may run: ${lenses.map((l) => `${l} (${lensTiers(settings.lenses, l, settings.riskPasses ?? []).join("|")})`).join(", ")}.`,
+      `One row reads at most ${settings.scan.case_max_files} files / ${settings.scan.case_max_lines} lines, paired tests included; at most ${MAX_STAGE2_ROWS} rows.`,
+    );
+  }
+  return out.join("\n");
+}
+
+export function renderProposal(p: StoredStage2Proposal): string {
+  const out: string[] = [];
+  const run = p.rows.filter((r) => r.status === "run");
+  out.push(
+    `STAGE 2 proposal at ${p.sha.slice(0, 12)} — ${run.length} row(s) to run, estimate ${usd(p.cap_usd)} (the run stops hard there)` +
+      (p.budget_usd !== null ? `, fitted to a ${usd(p.budget_usd)} budget` : "") +
+      `; validator ${p.validator ? "on" : "off"}.`,
+  );
+  const rows = p.rows.map((r) => {
+    const mark = r.status === "run" ? "" : r.status === "covered" ? " — COVERED (already read at this content, free)" : ` — OVER BUDGET (${usd(r.estimate_usd)}, left out)`;
+    const price = r.price.basis === "measured" ? "measured" : r.price.basis === "borrowed" ? `borrowed from ${r.price.from}` : `extrapolated from ${r.price.from}`;
+    return [
+      `  ${r.id}: ${r.lens} at ${r.tier} over ${r.units.join(" + ")}${r.units.length > 1 ? " (cross-module)" : ""} — ${r.files.length} file(s)` +
+        (r.tests.length ? ` + ${r.tests.length} paired test(s)` : "") +
+        `, ${r.lines} lines, ~${usd(r.estimate_usd)} (${price})${mark}`,
+      `      ${r.reason}`,
+      `      files: ${r.files.map((f) => f.path).join(", ")}`,
+      ...(r.tests.length ? [`      tests: ${r.tests.map((f) => f.path).join(", ")}`] : []),
+      ...(r.unpaired.length ? [`      not paired (row full): ${r.unpaired.join(", ")}`] : []),
+    ].join("\n");
+  });
+  out.push(rows.join("\n"));
+  if (p.over_budget_usd > 0) out.push(`Left out by the budget: ${usd(p.over_budget_usd)} of rows.`);
+  if (p.runnable > 0) {
+    out.push(
+      `To run it: scan_stage2_start with key ${p.key} — only after the operator agreed to the cost ("do it"); the TUI's start click starts the same proposal.`,
+    );
+  } else out.push("✗ nothing to run: every row is covered or over the budget.");
+  return out.join("\n\n");
+}
+
 // ---- tool belt ---------------------------------------------------------------
 
 const DELTA_PARAM = {
@@ -165,7 +240,11 @@ const SHA_PARAM = {
   description: "The commit to scan: a sha or ref of the reviewed checkout (default HEAD). The tree AT that commit is read.",
 } as const;
 
-export function scanToolDefinitions(scan: ScanRunner, findings: FindingsStore): PiToolDefinition[] {
+export function scanToolDefinitions(
+  scan: ScanRunner,
+  findings: FindingsStore,
+  settingsOf: () => ScanSettings | null = () => null,
+): PiToolDefinition[] {
   const preview: PiToolDefinition = {
     name: "scan_preview",
     label: "Scan preview",
@@ -302,7 +381,96 @@ export function scanToolDefinitions(scan: ScanRunner, findings: FindingsStore): 
       return text(`Settled: ${r.matched} matched (state kept), ${r.fixed} fixed, ${r.new} new.`, { ...r });
     },
   };
-  return [preview, start, status, stop, list, matches, match];
+  const suggestions: PiToolDefinition = {
+    name: "scan_suggestions",
+    label: "Scan stage 2 suggestions",
+    description:
+      "Stage 1's stored deep-lens suggestions (lens, files, why) grouped by lens, and the deep lenses and tiers stage 2 may use on this " +
+      "repo. Read them before proposing stage 2.",
+    promptSnippet: "List stage 1's deep-lens suggestions",
+    parameters: NO_PARAMS,
+    execute: async () => {
+      const { suggestions: sugs, error } = scan.suggestions();
+      if (error !== null) return text(`✗ ${error}`);
+      const s = settingsOf();
+      return text(renderSuggestions(sugs, s), { suggestions: sugs.length });
+    },
+  };
+  const propose: PiToolDefinition = {
+    name: "scan_stage2_propose",
+    label: "Propose scan stage 2",
+    description:
+      "Propose stage 2 — the scan's deep, targeted plan — as rows: each a set of files, ONE deep lens, a tier (optional) and a one-line " +
+      "reason, most valuable first. A row may span units (cross-cutting problems live between them). Name code only: each code file's " +
+      "tests are paired in automatically. Give budget_usd to fit the plan to a budget (rows that do not fit are left out). Every row is " +
+      "priced from the coverage ledger; the proposal is stored (the TUI shows it) and runs nothing. Refused as a whole if any row is bad.",
+    promptSnippet: "Propose a priced stage-2 plan",
+    parameters: {
+      type: "object",
+      properties: {
+        rows: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              lens: { type: "string" },
+              files: { type: "array", items: { type: "string" } },
+              tier: { type: "string" },
+              reason: { type: "string" },
+            },
+            required: ["lens", "files", "reason"],
+          },
+        },
+        budget_usd: { type: "number" },
+        sha: SHA_PARAM,
+      },
+      required: ["rows"],
+    },
+    execute: async (_id, params) => {
+      const r = await scan.proposeStage2({
+        rows: params?.rows,
+        budget_usd: params?.budget_usd,
+        sha: typeof params?.sha === "string" ? params.sha : undefined,
+      });
+      if (!r.ok) return refused("Stage 2 proposal", r);
+      return text(renderProposal(r.proposal), {
+        proposal: { key: r.proposal.key, sha: r.proposal.sha, cap_usd: r.proposal.cap_usd, runnable: r.proposal.runnable, rows: r.proposal.rows.length },
+      });
+    },
+  };
+  const start2: PiToolDefinition = {
+    name: "scan_stage2_start",
+    label: "Start scan stage 2",
+    description:
+      "Start the stored stage-2 proposal by its key — only after the operator agreed to its cost ('do it'). It runs in the background, " +
+      "one case per row, and stops HARD at the proposal's estimate. Refused if the proposal moved since it was shown.",
+    promptSnippet: "Start the proposed stage 2",
+    parameters: { type: "object", properties: { key: { type: "string" } }, required: ["key"] },
+    execute: async (_id, params) => {
+      const r = await scan.startStage2({ key: params?.key });
+      if (!r.ok) return refused("Stage 2 start", r);
+      return text(
+        `Stage 2 ${r.run.id} started at ${r.run.sha.slice(0, 12)}: ${r.run.cases.length} row(s), hard stop ${usd(r.run.cap_usd)}. ` +
+          "It runs in the background — scan_status shows progress, scan_stop stops it.",
+        { run: { id: r.run.id, mode: r.run.mode, sha: r.run.sha, cases: r.run.cases.length, cap_usd: r.run.cap_usd } },
+      );
+    },
+  };
+  return [preview, start, status, stop, list, matches, match, suggestions, propose, start2];
+}
+
+/** How often the belt looks for the TUI's stage-2 start click. */
+export const STAGE2_POLL_MS = 2000;
+
+/** Answer the TUI's stage-2 start requests while the companion runs: the
+ * click starts the stored proposal it showed, exactly as the operator's word
+ * would. Returns the stop. */
+export function watchStage2Requests(scan: ScanRunner, everyMs = STAGE2_POLL_MS): () => void {
+  const timer = setInterval(() => {
+    scan.consumeStage2Request().catch((err: unknown) => console.error(`setup: stage 2 start request failed: ${String(err)}`));
+  }, everyMs);
+  timer.unref?.();
+  return () => clearInterval(timer);
 }
 
 // ---- assembly ------------------------------------------------------------------
@@ -315,11 +483,15 @@ export function buildScan(
   engine: SetupEngine,
   reviewedRepo: string,
   env: NodeJS.ProcessEnv = process.env,
-): { scan: ScanRunner; findings: FindingsStore } {
+): { scan: ScanRunner; findings: FindingsStore; settingsOf: () => ScanSettings | null } {
   const root = env.QCR_ROOT?.trim() || sandboxRoot();
   const home = stateHome(env);
   const state = stateHomeFs(home);
   const agentsDir = join(home, SCAN_AGENTS_DIR);
+  const settingsOf = (): ScanSettings | null => {
+    const loaded = loadScanConfig(root, env);
+    return loaded.ok ? scanSettings(loaded.cfg) : null;
+  };
   const scan = new ScanRunner({
     state,
     clock: () => new Date(),
@@ -350,5 +522,5 @@ export function buildScan(
     },
     log: (line) => console.error(line),
   });
-  return { scan, findings: new FindingsStore(state) };
+  return { scan, findings: new FindingsStore(state), settingsOf };
 }

@@ -77,7 +77,14 @@ _Avoid_: audit, sweep (that is a PR lens), survey
 The scan's cheap wide pass — one case per unit, tests and migrations excluded — producing findings and deep-lens suggestions.
 
 **Stage 2**:
-The scan's deep, targeted plan — rows of file set × lens × tier with a cost — proposed by the companion and approved by the operator.
+The scan's deep, targeted plan — rows of file set × lens × tier with a cost — proposed by the companion, optionally fitted to a budget, and started by the operator's word to the companion or a click in the TUI (no approval record; the start quotes the proposal's key).
+
+**Row**:
+One case of stage 2: a set of files, which may span units, read by one deep lens at one tier, with the reason it deserves the look and the tests paired with its code.
+_Avoid_: job, task
+
+**Paired test**:
+A test file stage 2 reads beside the code a row names, found by subject and directory; tests enter a scan only this way.
 
 **Delta re-scan**:
 Stage 1 over only the files whose content changed since the last scan — read by the ledger at other content, or new or different against the tree the last scan read. A file the last scan never reached is not a change.

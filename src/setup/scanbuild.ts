@@ -1,8 +1,9 @@
 // The SCAN AGENT BUILD and the settings a scan runs with.
 //
 // A scan's leaves are the production lenses — `pass-scan` for stage 1, the
-// validator when `[scan] validator` is on, and (stage 2) any deep
-// lens — built by the ONE agent build (`src/include.ts buildAgents`) in
+// validator when `[scan] validator` is on, and stage 2's deep lenses (:
+// every suggestible lens the profile leaves on, at the tier its row names) —
+// built by the ONE agent build (`src/include.ts buildAgents`) in
 // `"scan"` mode:
 //
 //   * the scan-mode anchor addendum composes (`mode: "scan"` in PASS_ADDENDA)
@@ -82,7 +83,14 @@ export function loadScanConfig(root: string, env: NodeJS.ProcessEnv = process.en
 
 /** The settings a scan run takes from a resolved config. */
 export function scanSettings(cfg: Config): ScanSettings {
-  return { scan: cfg.scan, validateTier: flooredTier(cfg.lenses, VALIDATE_PASS, cfg.models.validate_tier) };
+  return {
+    scan: cfg.scan,
+    validateTier: flooredTier(cfg.lenses, VALIDATE_PASS, cfg.models.validate_tier),
+    // Stage 2: which deep lenses run, at which tiers and effort —
+    // the same per-lens tuning the build composes.
+    lenses: cfg.lenses,
+    riskPasses: cfg.models.risk_passes,
+  };
 }
 
 /** `pass-scan`'s model spec per tier: the tier's spec at `[scan] effort`

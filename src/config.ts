@@ -1339,6 +1339,12 @@ export interface ScanConfig {
   /** One case reads at most this much; a bigger unit splits, name kept. */
   case_max_files: number;
   case_max_lines: number;
+  /** Stage 2: a deep lens never measured at a row's tier, effort
+   * and validator setting — and no other lens measured there either — is
+   * priced at stage 1's measured rate times this. A conservative stand-in
+   * until the first stage-2 run measures the real one; the hard stop holds
+   * whatever it says. */
+  unmeasured_rate_factor: number;
 }
 
 export const SCAN_DEFAULTS: ScanConfig = {
@@ -1351,6 +1357,7 @@ export const SCAN_DEFAULTS: ScanConfig = {
   concurrency: 8,
   case_max_files: 30,
   case_max_lines: 3000,
+  unmeasured_rate_factor: 4,
 };
 
 /** The `[scan]` keys a repo profile may override — what is about THIS repo
@@ -1406,6 +1413,10 @@ export function parseScanTable(
       case "calibration_max_usd":
         if (typeof v === "number" && Number.isFinite(v) && v > 0) out.calibration_max_usd = v;
         else fail(key, "must be a positive number of dollars", v);
+        break;
+      case "unmeasured_rate_factor":
+        if (typeof v === "number" && Number.isFinite(v) && v >= 1) out.unmeasured_rate_factor = v;
+        else fail(key, "must be a number of at least 1", v);
         break;
       default: {
         // The integer knobs.

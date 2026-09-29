@@ -27,7 +27,9 @@
 //     state home, the companion's narrative of them stored in the config home
 //     against the facts' key, each keeping the version it replaced for a diff.
 // and the scan's (extensions/setup-scan.ts): scan_preview / _start /
-// _status / _stop and scan_findings.
+// _status / _stop and scan_findings; stage 2's scan_suggestions /
+// scan_stage2_propose / scan_stage2_start, and the watcher that answers the
+// TUI's stage-2 start click.
 //
 // Convention (onboarding.ts, tui-view.ts): degrade, never wedge — a pi
 // without registerTool registers nothing and says so, and every tool answers
@@ -67,7 +69,7 @@ import {
 import { resolveMaxConcurrency } from "./subagents.js";
 import type { RepoFacts } from "../src/setup/facts.js";
 import { ADJUST_OPS } from "../src/setup/unitcut.js";
-import { buildScan, scanToolDefinitions } from "./setup-scan.js";
+import { buildScan, scanToolDefinitions, watchStage2Requests } from "./setup-scan.js";
 
 const NO_PARAMS = { type: "object", properties: {} } as const;
 
@@ -753,8 +755,21 @@ const activate = (pi: Pi): void => {
   }
   for (const def of toolDefinitions(engine)) pi.registerTool(def);
   // the scan tools, over the same engine's saved unit cut.
-  const { scan, findings } = buildScan(engine, process.env.QCR_REVIEWED_REPO?.trim() || DEFAULT_REVIEWED_REPO);
-  for (const def of scanToolDefinitions(scan, findings)) pi.registerTool(def);
+  const { scan, findings, settingsOf } = buildScan(engine, process.env.QCR_REVIEWED_REPO?.trim() || DEFAULT_REVIEWED_REPO);
+  for (const def of scanToolDefinitions(scan, findings, settingsOf)) pi.registerTool(def);
+  // the TUI's stage-2 start click, answered while the companion's
+  // session runs (the inject-bridge's lifecycle: start on session_start, stop
+  // on session_shutdown).
+  let unwatch: (() => void) | null = null;
+  // VERIFY-ON-PIN: "session_start" / "session_shutdown" event names (as inject-bridge).
+  pi.on("session_start", () => {
+    unwatch?.();
+    unwatch = watchStage2Requests(scan);
+  });
+  pi.on("session_shutdown", () => {
+    unwatch?.();
+    unwatch = null;
+  });
 };
 
 export default activate;

@@ -126,12 +126,20 @@ export function casesFor(entries: readonly LedgerEntry[], key: RateKey): { cases
 /** The measured price for `key`: every priced row's cost over its lines, or
  * null when no priced case has finished at these settings. */
 export function measuredRate(entries: readonly LedgerEntry[], key: RateKey): ScanRate | null {
+  return rateWhere(
+    entries,
+    (e) => e.lens === key.lens && e.tier === key.tier && e.effort === key.effort && e.validator === key.validator,
+  );
+}
+
+/** The measured price over the priced rows `keep` selects (stage 2 borrows
+ * another lens's price at the same settings this way), or null when none. */
+export function rateWhere(entries: readonly LedgerEntry[], keep: (e: LedgerEntry) => boolean): ScanRate | null {
   let cost = 0;
   let lines = 0;
   const cases = new Set<string>();
   for (const e of entries) {
-    if (e.lens !== key.lens || e.tier !== key.tier || e.effort !== key.effort || e.validator !== key.validator) continue;
-    if (e.cost_usd === null) continue;
+    if (!keep(e) || e.cost_usd === null) continue;
     cost += e.cost_usd;
     lines += Math.max(e.lines, 1);
     cases.add(`${e.run}\0${e.case}`);
