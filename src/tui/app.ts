@@ -993,7 +993,7 @@ export class App {
       this.repaint();
       return;
     }
-    // The pi pane owns the keyboard while it is focused: j/k/q/1-7/? and every
+    // The pi pane owns the keyboard while it is focused: j/k/q/1-8/? and every
     // other board binding is just text as far as the session is concerned.
     // Ctrl-q — and only Ctrl-q — comes back to the board.
     if (this.tab === "board" && this.view.piFocus) {
@@ -1015,7 +1015,7 @@ export class App {
       return;
     }
     // A focused sidebar owns the keyboard, exactly as the pi pane does above:
-    // the companion is a live terminal, so j/k/1-7/? are just text to it.
+    // the companion is a live terminal, so j/k/1-8/? are just text to it.
     // Ctrl-q releases — the same chord, so there is ONE way out of every
     // embedded surface — and Esc drops the draft.
     if (this.sidebar?.focused) {

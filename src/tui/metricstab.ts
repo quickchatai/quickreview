@@ -305,7 +305,7 @@ export type MetricsWindowKey = "d7" | "d30" | "all";
 
 /**
  * The window switcher. Hotkeys are LETTERS — week / month / all — because the
- * digits `1`…`7` open the seven surfaces on every tab: the old `7`
+ * digits `1`…`8` open the eight surfaces on every tab: the old `7`
  * for the 7-day window would have been a tab digit that did something else on
  * exactly one tab, which is the hidden-mode class the layout removed.
  */

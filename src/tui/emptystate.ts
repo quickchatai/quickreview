@@ -10,7 +10,7 @@
 //
 // `(—)` is the unknown count. fixed this class one surface at a time
 // (PRS (?), the ticket panes, the bot-PR read); this is the shared spelling so
-// the seven surfaces cannot each invent their own.
+// the surfaces cannot each invent their own.
 import { MUTED, RESET, WARN } from "./design.js";
 
 export type Emptiness =

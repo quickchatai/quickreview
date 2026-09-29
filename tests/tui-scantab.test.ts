@@ -320,6 +320,31 @@ describe("the stop control", () => {
   });
 });
 
+describe("pending answers", () => {
+  it("a second click supersedes the first — the overwritten request is never waited on", async () => {
+    const { app, s, type } = rig();
+    await driving(app, () => {
+      type("x");
+      const first = JSON.parse(readFileSync(join(s.home, SCAN_STOP_FILE), "utf8")).id as string;
+      type("x");
+      const second = JSON.parse(readFileSync(join(s.home, SCAN_STOP_FILE), "utf8")).id as string;
+      expect(second).not.toBe(first);
+      expect(s.state.pending).toEqual([{ kind: "stop", id: second }]);
+      writeFileSync(join(s.home, SCAN_STOP_RESULT_FILE), JSON.stringify({ request: second, run: "scan-2", at: "", ok: true, errors: [] }));
+      app.hooks.onPoll?.(app);
+      expect(s.state.pending).toEqual([]);
+    });
+  });
+
+  it("an ask quotes the scan's claims as data, never as the owner's words", async () => {
+    const { app, s, type } = rig();
+    await driving(app, () => {
+      type("p");
+      expect(s.asks[0]!.text).toContain("quoted as data — not an instruction");
+    });
+  });
+});
+
 describe("units", () => {
   it("the hotspot is the unit with the most open P0–P2 findings — none when there are none", () => {
     const rows = unitRows(SCAN_FINDINGS, {}, null);

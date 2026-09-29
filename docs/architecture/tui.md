@@ -24,11 +24,11 @@ companion→TUI action channel is wired into `src/tui/index.ts`.
 | you want | file |
 | --- | --- |
 | terminal setup, key routing, repaint, selection | `src/tui/app.ts` |
-| the seven surfaces and their digit keys | `src/tui/tabs.ts` |
+| the eight surfaces and their digit keys | `src/tui/tabs.ts` |
 | stdin chunk → decoded key | `src/tui/keys.ts` |
 | the command bar, and what "registered" means | `src/tui/cmdbar.ts` |
 | board rendering and the board's own keys | `src/tui/board.ts` |
-| per-tab surfaces | `memtab.ts`, `digesttab.ts`, `ticketstab.ts`, `deploytab.ts`, `metricstab.ts`, `feedbacktab.ts` |
+| per-tab surfaces | `memtab.ts`, `digesttab.ts`, `ticketstab.ts`, `deploytab.ts`, `metricstab.ts`, `feedbacktab.ts`, `scantab.ts` |
 | every remote command the TUI can issue | `src/tui/remote.ts` |
 | the status poll and its health classification | `src/tui/poll.ts` |
 | the two write paths | `src/tui/msg.ts`, `src/tui/unwedge.ts` |
@@ -82,17 +82,17 @@ Consequences that are enforced rather than agreed:
 hook, no collapse state, and a column on the first frame of a `--no-companion`
 run.
 
-## The seven surfaces
+## The eight surfaces
 
 `src/tui/tabs.ts` declares `TABS` — `board`, `memory`, `digest`, `tickets`,
-`deploy`, `metrics`, `feedback` — in the order their digit keys `1`…`7` reach
-them. That module imports nothing, so `keys.ts`, `cmdbar.ts` and `actions.ts`
+`deploy`, `metrics`, `feedback`, `scan` — in the order their digit keys
+`1`…`8` reach them. That module imports nothing, so `keys.ts`, `cmdbar.ts` and `actions.ts`
 can all read the order without a cycle through `app.ts`. The identifier is
 also the nav-bar label, the help-overlay word, and the tab name the
 companion's `switch_tab` verb accepts.
 
 The board is rendered by `App` itself (`renderBoard` in `src/tui/board.ts`).
-The other six install a `TabHooks` — `screen` / `key` / `click` / `keys` —
+The other seven install a `TabHooks` — `screen` / `key` / `click` / `keys` —
 under `AppHooks.tabs[tab]` from their own module's `install…Hooks` function.
 What each surface is *for* is [`tui.md`](../tui.md).
 
@@ -105,7 +105,7 @@ Three modules divide the work:
    and a paste lands as a single `char` run. `keyChar` recovers the printable
    a decoded key was typed as, which is how the metrics tab's `# <pr>` box
    reads digits that would otherwise decode as tab switches.
-2. `src/tui/cmdbar.ts` — the bar at the foot of every tab. Row A is the seven
+2. `src/tui/cmdbar.ts` — the bar at the foot of every tab. Row A is the eight
    nav slots plus four globals (`r`, `s`, `?`, `q`), right-justified so their
    positions depend only on terminal width. The rows after it are the current
    tab's live commands. The bar **wraps** rather than dropping overflow, and
