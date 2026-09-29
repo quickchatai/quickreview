@@ -19,6 +19,7 @@
 
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { PI_DISABLED_BUILTINS } from "../pibuiltins.js";
 
 /** What a copied OAuth credential carries instead of the real refresh token. */
 export const DISABLED_REFRESH = "bench-refresh-disabled";
@@ -48,13 +49,18 @@ export function benchAuthFrom(raw: string): { json: string; expiresAt: number | 
 
 /** pi's global settings for the sandbox — what the VM entrypoint provisions
  * (deploy/ansible/templates/entrypoint.sh.j2): bash-guard registered globally
- * so lens children load it too; every project trusted so no modal can stall a
- * run; /opt/quickreview pre-trusted. */
+ * so lens children load it too; pi's built-in extensions switched off
+ * (src/pibuiltins.ts — the reviewed checkout is exactly the untrusted ground a
+ * `.pi/mcp.json` would come from); every project trusted so no modal can stall
+ * a run; /opt/quickreview pre-trusted. */
 export function benchSettings(root: string): { settings: string; trust: string } {
   return {
     settings:
       JSON.stringify(
-        { extensions: [join(root, "extensions", "bash-guard.ts")], defaultProjectTrust: "always" },
+        {
+          extensions: [join(root, "extensions", "bash-guard.ts"), ...PI_DISABLED_BUILTINS],
+          defaultProjectTrust: "always",
+        },
         null,
         2,
       ) + "\n",

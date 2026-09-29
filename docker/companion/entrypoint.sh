@@ -130,6 +130,15 @@ if (!Array.isArray(cfg.extensions)) cfg.extensions = [];
 // Never block on pi's interactive "Trust project folder?" modal (mirrors the
 // VM entrypoint; the owner, 2026-08-20 — pr-5334 stall).
 cfg.defaultProjectTrust = "always";
+// pi 0.99's built-in extensions (mcp, codemode, tool-search, llama.cpp) are
+// switched OFF, as on the VM: MCP launches server processes from any trusted
+// mcp.json — a path around companion-guard, which vetoes TOOL CALLS — and the
+// other three change the tool/provider set (reasons per built-in:
+// src/pibuiltins.ts, the list this mirrors). Documented switch: a
+// `-builtin:<name>` entry in the global `extensions`. This one key overrides
+// "hand edits win": any other global `builtin:` entry is dropped first.
+const DISABLED_BUILTINS = ["-builtin:mcp", "-builtin:codemode", "-builtin:tool-search", "-builtin:llama.cpp"];
+cfg.extensions = cfg.extensions.filter((p) => !/^[-+!]?builtin:/.test(p)).concat(DISABLED_BUILTINS);
 
 // Skills (2026-08-21). The repo carries the vendored mattpocock set at
 // /workspace/.claude/skills/ — wayfinder, grilling, domain-modeling and 22

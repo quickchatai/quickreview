@@ -123,9 +123,9 @@ keeps `rg`, `grep`, `jq`, `cut`, `sort`, `uniq`, `head`, `tail`, `wc`, `nl`,
      inside a `.git` directory, `.gitconfig`, `<any>/git/config`,
      `.gitattributes` — git's own config locations, not attacks.
    - **this system's own policy surface** (`isPolicySurface`):
-     `config.toml`, `scripts/**`, `dist/**`, `extensions/**`, and the frozen
+     `config.toml`, `scripts/**`, `dist/**`, `extensions/**`, the frozen
      seeds `prompts/**` / `agents/**` / `seeds/**` (the built `state/agents/**`
-     pass bodies included). These are the files that decide what every layer
+     pass bodies included), and pi's project dir `.pi/**` (pi 0.99 bump). These are the files that decide what every layer
      here DOES; the boundary protected git's configuration and, until,
      not its own. See "The policy surface" below.
 4. **Integrity across the round** — `gitConfigWatchPaths` /
@@ -206,13 +206,23 @@ until runtime, was re-parsed as the empty string and allowed.
   (`AGENTS.override.md`, `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md`, `CLAUDE.MD`:
   pi loads the first one it finds in the cwd into every session and pass, and
   they all run in the sandbox root); `scripts/`, `dist/`, `extensions/`,
-  `prompts/`, `agents/`, `seeds/`. The write/edit tool veto and the shell
+  `prompts/`, `agents/`, `seeds/`, `.pi/`. The write/edit tool veto and the shell
   redirection / `sed -i` scan both read it as a path SHAPE through
   `isProtectedWriteTarget`; layer 4 reads it as concrete paths under the sandbox
   root through `policySurfaceWatchPaths`. A session cannot write through one
   channel what it is refused through another, and the integrity check cannot
   watch a different set than the veto refuses. It is git's own list one level
   out: the files that configure US, closed and listed here.
+- **`.pi/` joined the set at the pi 0.99.1 bump.** It is pi's PROJECT
+  resource dir — `settings.json`, `extensions/`, and since 0.99 `mcp.json` —
+  and every project is trusted (`defaultProjectTrust = "always"`), so a file
+  planted there loads into every later session and pass in that root: an
+  extension is code, an `mcp.json` launches server processes that never pass
+  through a tool call, and a project `+builtin:mcp` overrides the global
+  `-builtin:mcp` the entrypoints provision (`src/pibuiltins.ts`). As a shape it
+  also refuses `<pi home>/.pi/agent/…`, the session's own global settings and
+  login. Layer 4 watches `<sandbox root>/.pi` like the other six directories
+  (the pi home is NOT watched: pi itself rewrites its login there).
 - **Every redirection spelling, one canonical form.** `normalizeRedirections`
   folds `&>`, `&>>`, `>&file`, `{v}>`, `<>` and `>|` onto `>`/`>>` and drops
   the fd-dups that name no file (`2>&1`, `>&2`, `1>&-`), before the scan and the
@@ -243,7 +253,7 @@ until runtime, was re-parsed as the empty string and allowed.
   receipt-dir relocation (`QCR_POSTING_RECEIPT_DIR`) — and a rewrite
   that reaches it anyway is a `policy_surface_modified` wake at round end.
 - **Layer 4 watches the policy surface.** The same fingerprint dispatch takes
-  and verdicts re-checks now hashes `config.toml` and the six directories,
+  and verdicts re-checks now hashes `config.toml` and the seven directories,
   recursively by content, so `T=config.toml; cat p > $T` — the one spelling no
   string scan can see — is a wake, exactly as its `.git/config` twin is.
   `state/agents/**` is deliberately NOT in the watch set: the daemon itself

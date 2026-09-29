@@ -347,7 +347,7 @@ export type ExecViolationKind =
    * blind to. */
   | "reader_write_or_exec"
   /** A write landing on THIS system's own policy surface — config.toml,
-   * scripts/, dist/, extensions/, prompts/agents/seeds. The
+   * scripts/, dist/, extensions/, prompts/agents/seeds, .pi/. The
    * one-level-out analogue of `git_config_surface_write`. */
   | "policy_surface_write"
   /** A session env-prefix that relocates this system's policy inputs
@@ -427,7 +427,7 @@ const GIT_CONFIG_SURFACE_WRITE_RE =
  * and reads these paths all day, and auditing a read would be the routine false
  * line that teaches an operator to skip the event. Mirrors `isPolicySurface` in
  * the guard, kept an independent implementation on purpose. */
-const POLICY_SURFACE_TARGET = String.raw`(?:\S*\/)?(?:config\.toml|(?:scripts|dist|extensions|prompts|agents|seeds)\/\S+)`;
+const POLICY_SURFACE_TARGET = String.raw`(?:\S*\/)?(?:config\.toml|(?:scripts|dist|extensions|prompts|agents|seeds|\.pi)\/\S+)`;
 const POLICY_SURFACE_WRITE_RE = new RegExp(
   String.raw`(?:>>?\s*` +
     POLICY_SURFACE_TARGET +
@@ -437,10 +437,10 @@ const POLICY_SURFACE_WRITE_RE = new RegExp(
 );
 
 /** The same policy surface as a WRITE-TOOL target path: `config.toml`
- * at any depth, or anything under scripts/dist/extensions/prompts/agents/seeds
+ * at any depth, or anything under scripts/dist/extensions/prompts/agents/seeds/.pi
  * (the built `state/agents/…` included — `agents/` follows a slash). */
 const POLICY_SURFACE_PATH_RE =
-  /(?:^|\/)config\.toml$|(?:^|\/)(?:scripts|dist|extensions|prompts|agents|seeds)\//;
+  /(?:^|\/)config\.toml$|(?:^|\/)(?:scripts|dist|extensions|prompts|agents|seeds|\.pi)\//;
 
 /** A session env-prefix that relocates this system's own policy inputs — the
  * `QCR_` inputs the guard refuses in `POLICY_RELOCATING_ENV` (`QCR_INSTALL`

@@ -330,9 +330,11 @@ for (const p of wanted) {
 // tolerates a missing extension, so it never surfaced as a failure; it just
 // sat there misreporting what the reviewer loads. Prune anything that is not
 // on disk.
-const stale = settings.extensions.filter((p) => !fs.existsSync(p));
+// A `builtin:` override (below) names no file, so it is never "stale".
+const isBuiltinEntry = (p) => /^[-+!]?builtin:/.test(p);
+const stale = settings.extensions.filter((p) => !isBuiltinEntry(p) && !fs.existsSync(p));
 if (stale.length) {
-  settings.extensions = settings.extensions.filter((p) => fs.existsSync(p));
+  settings.extensions = settings.extensions.filter((p) => isBuiltinEntry(p) || fs.existsSync(p));
   console.log("pi extensions pruned (not on disk): " + stale.join(", "));
 }
 // The reviewer never blocks on interactive input (the owner, 2026-08-20 —
@@ -341,6 +343,16 @@ if (stale.length) {
 // store for /opt/quickreview so even a settings regression cannot re-surface the
 // prompt. Third layer: sessions.ts passes --approve on every spawn.
 settings.defaultProjectTrust = "always";
+// pi 0.99's built-in extensions (mcp, codemode, tool-search, llama.cpp) are
+// switched OFF: MCP launches server processes from any trusted mcp.json, the
+// other three change the tool/provider set, and no session uses any of them
+// (reasons per built-in: src/pibuiltins.ts, the list this mirrors). The
+// documented switch is a `-builtin:<name>` entry in the global `extensions`.
+// Any other global `builtin:` entry — a `+builtin:mcp` a hand edit or an older
+// write left on the pihome volume — is dropped first, so this list is the
+// only word the user settings say about built-ins.
+const DISABLED_BUILTINS = ["-builtin:mcp", "-builtin:codemode", "-builtin:tool-search", "-builtin:llama.cpp"];
+settings.extensions = settings.extensions.filter((p) => !isBuiltinEntry(p)).concat(DISABLED_BUILTINS);
 
 fs.writeFileSync(file, JSON.stringify(settings, null, 2) + "\n");
 console.log("pi extensions registered: " + settings.extensions.join(", "));

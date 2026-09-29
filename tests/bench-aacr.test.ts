@@ -857,10 +857,17 @@ describe("the benchmark's login: read-only, never refreshed", () => {
       const copied = JSON.parse(readFileSync(join(dst, "auth.json"), "utf8"));
       expect(copied["openai-codex"].refresh).toBe(DISABLED_REFRESH);
       expect(statSync(join(dst, "auth.json")).mode & 0o777).toBe(0o600);
-      // The VM's global settings: bash-guard for every process, all trusted.
+      // The VM's global settings: bash-guard for every process, pi's built-in
+      // extensions (MCP first) switched off, all trusted.
       const settings = JSON.parse(readFileSync(join(dst, "settings.json"), "utf8"));
       expect(settings).toEqual({
-        extensions: ["/r/extensions/bash-guard.ts"],
+        extensions: [
+          "/r/extensions/bash-guard.ts",
+          "-builtin:mcp",
+          "-builtin:codemode",
+          "-builtin:tool-search",
+          "-builtin:llama.cpp",
+        ],
         defaultProjectTrust: "always",
       });
       // The source is never touched.

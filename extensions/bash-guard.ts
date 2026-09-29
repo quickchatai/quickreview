@@ -1179,6 +1179,15 @@ export function isGitConfigSurface(path: string): boolean {
  *     pi 0.87.1, unchanged at 0.99.1 — VERIFY-ON-PIN: the candidate list is pi's), and every session
  *     and pass runs in the sandbox root. One write plants instructions in every
  *     later session until the next deploy — the overseer's included.
+ *   · `.pi/**`                — pi's PROJECT resource dir: `settings.json`,
+ *     `extensions/`, `mcp.json` (pi 0.99+). Every project is trusted
+ *     (`defaultProjectTrust = "always"`, the no-stall decision), so a file
+ *     planted here loads into every later session and pass started in that
+ *     root: an extension runs as code, a `mcp.json` launches server processes,
+ *     and a `+builtin:mcp` in project settings re-enables what the global
+ *     settings switch off (src/pibuiltins.ts) — project entries override the
+ *     user's. As a SHAPE this also covers `<pi home>/.pi/agent/…`, the
+ *     session's own global pi settings and login; a session writes neither.
  *
  * The list is OURS, closed and documented (docs/exec-boundary.md), not a list
  * of attacks. `POLICY_SURFACE_FILES` / `POLICY_SURFACE_DIRS` — top-level names
@@ -1210,6 +1219,7 @@ export const POLICY_SURFACE_DIRS = [
   "prompts",
   "agents",
   "seeds",
+  ".pi",
 ] as const;
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -1237,7 +1247,7 @@ export function isProtectedWriteTarget(path: string): boolean {
 /** Veto reason for a policy-surface write target. */
 function policySurfaceWriteBlock(path: string): BashCheck {
   return block(
-    `exec policy: '${path}' is part of this system's own policy surface (config.toml, scripts/, dist/, extensions/, prompts/agents/seeds) — writing it reconfigures the posting guards, the mutation gate or the compiled boundary itself. The reviewer reads code; it never edits its own controls.`,
+    `exec policy: '${path}' is part of this system's own policy surface (config.toml, scripts/, dist/, extensions/, prompts/agents/seeds, .pi/) — writing it reconfigures the posting guards, the mutation gate or the compiled boundary itself. The reviewer reads code; it never edits its own controls.`,
   );
 }
 
