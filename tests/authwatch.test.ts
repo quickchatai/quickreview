@@ -122,6 +122,19 @@ describe("PiAuthWatch", () => {
     t += 60_000;
     expect(watch.scan()).toHaveLength(1);
   });
+
+  it("an error line whose newline lands a scan later is counted ONCE", () => {
+    let t = Date.parse("2026-08-19T15:00:00Z");
+    const watch = new PiAuthWatch(dir, () => new Date(t));
+    const path = jsonl("s.jsonl", ERR.slice(0, -1), new Date(t)); // no trailing \n yet
+    t += 60_000;
+    watch.scan();
+    writeFileSync(path, "\n", { flag: "a" });
+    utimesSync(path, new Date(t), new Date(t));
+    t += 60_000;
+    watch.scan();
+    expect(watch.status()!.hits).toBe(1);
+  });
 });
 
 describe("surfaces", () => {

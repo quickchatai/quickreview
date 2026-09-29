@@ -19,10 +19,10 @@ export interface AuthScanHit {
   mtimeMs: number;
 }
 
-/** The bytes of `path` not yet scanned: from `from` (clamped into the last
- * `bytes`) to the end. Returns the text and the offset the NEXT read starts
- * at — just past the last complete line, so an error line still being written
- * is read whole next time rather than split across two scans. */
+/** The complete lines of `path` not yet scanned: from `from` (clamped into the
+ * last `bytes`) up to the last newline. Returns the text and the offset the
+ * NEXT read starts at — just past that newline, so a line still being written
+ * is read whole, exactly once, next time rather than split or counted twice. */
 function readFrom(path: string, from: number, bytes: number): { text: string; next: number } {
   const fd = openSync(path, "r");
   try {
@@ -31,8 +31,11 @@ function readFrom(path: string, from: number, bytes: number): { text: string; ne
     const start = Math.max(from > size ? 0 : from, size - bytes, 0);
     const buf = Buffer.alloc(size - start);
     readSync(fd, buf, 0, buf.length, start);
+    // Only COMPLETE lines are tested: a trailing partial line is left for the
+    // next scan, so testing it now too would count the same error twice.
     const lastNl = buf.lastIndexOf(0x0a);
-    return { text: buf.toString("utf8"), next: lastNl < 0 ? start : start + lastNl + 1 };
+    if (lastNl < 0) return { text: "", next: start };
+    return { text: buf.subarray(0, lastNl + 1).toString("utf8"), next: start + lastNl + 1 };
   } finally {
     closeSync(fd);
   }
