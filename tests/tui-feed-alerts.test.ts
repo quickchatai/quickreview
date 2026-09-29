@@ -667,6 +667,16 @@ describe("companion tab", () => {
     await running;
   });
 
+  it("runTui routes BOTH the boot start and the retry through the one wiring starter", () => {
+    // The helper above is only half the fix: runTui must hand it to the retry
+    // hook (not the bare startCompanion) and must wire channels nowhere else.
+    const src = readFileSync(new URL("../src/tui/index.ts", import.meta.url), "utf8");
+    expect(src).toMatch(/retry:\s*companionOn\s*\?\s*startAndWire\s*:/);
+    expect(src).not.toMatch(/retry:\s*companionOn\s*\?\s*startCompanion\b/);
+    expect(src.match(/wireCompanionChannels\(\)/g)).toHaveLength(1); // only inside the starter
+    expect(src).toMatch(/if \(companionOn\) \{\s*await startAndWire\(\);/);
+  });
+
   it("⏎ on a failed companion runs retry and focuses the column once it heals", async () => {
     const s = fakeStreams();
     const app = new App(

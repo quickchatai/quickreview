@@ -774,6 +774,12 @@ export class App {
         this.view.confirmQuit = false;
         this.repaint();
       }
+      // A release swallowed here still ends any gesture begun before the
+      // prompt opened — never leave a seam resize armed behind it.
+      if (ev.kind === "release") {
+        this.sidebarResizeActive = false;
+        this.selAnchor = undefined;
+      }
       return;
     }
     const cols = this.out.columns ?? 80;
