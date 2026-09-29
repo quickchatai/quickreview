@@ -20,7 +20,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PASS_ADDENDA, buildAgents } from "../src/include.js";
 import type { PassAddendum } from "../src/include.js";
-import { configHome, locateProfile, type InstallEnv } from "../src/install.js";
+import { configHome, type InstallEnv } from "../src/install.js";
+import { stageTrackedProfile } from "./helpers/tracked-profiles.js";
 import {
   loadProfileAddenda,
   loadProfileEcosystem,
@@ -43,7 +44,7 @@ const at = (root: string) => ({
 });
 // The quickchat pack is excluded from the assembled public snapshot
 // (publish-manifest.json); the pins for that exact pack self-skip without it.
-const HAS_QC = locateProfile({ root: sandbox, profile: "quickchat" }) !== null; //: the config home
+const HAS_QC = stageTrackedProfile(sandbox, "quickchat"); //: staged into the temp config home
 
 // ---- the frozen legacy constants (verbatim from legacy src/include.ts) --
 

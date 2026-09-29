@@ -48,6 +48,7 @@ import { postTag } from "../src/severity.js";
 import { renderOverseerSystemPrompt } from "../src/templates.js";
 import { loadProfileAddenda } from "../src/profiles.js";
 import { locateProfile } from "../src/install.js";
+import { stageTrackedProfiles } from "./helpers/tracked-profiles.js";
 import { INITIAL_STATE, transition, type SmEvent } from "../src/statemachine.js";
 import { CANCEL_CAUSES, type PrLifecycleState } from "../src/state.js";
 
@@ -655,7 +656,10 @@ describe("what a built pass is told it may run is exactly what the guard lets th
    */
   it("no built pass variant names the park, NEEDS_HUMAN or awk, and each carries the rendered allowlist", () => {
     // Every pack the locator would load (a stranded checkout pack is
-    // not one — it is never read, so it composes into nothing).
+    // not one — it is never read, so it composes into nothing). A pack the
+    // checkout still tracks is staged into the temp config home first, so the
+    // deployed pack stays one of the compositions this fence covers.
+    stageTrackedProfiles(ROOT);
     const profiles = readdirSync(join(ROOT, "profiles"), { withFileTypes: true })
       .filter((e) => e.isDirectory())
       .map((e) => e.name)
