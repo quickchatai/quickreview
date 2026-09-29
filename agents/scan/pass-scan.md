@@ -48,9 +48,9 @@ suggestion beat a long list.
 ## Every finding: the reach and the odds
 
 A cheap pass is only worth its price if a reader can act on a finding
-without re-deriving it. Where the finding is anchored, and the quote of that
-line its evidence opens with, the scan-mode rule at the end of these
-instructions settles. Two more rules bind every finding you return:
+without re-deriving it. Where the finding is anchored, and how its evidence
+quotes that line, the scan-mode rule at the end of these instructions
+settles. Two more rules bind every finding you return:
 
 - **Reachability is a claim you checked, not a default.** Every finding
   carries the reachability axis the rule below describes. Before calling a

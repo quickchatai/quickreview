@@ -14,7 +14,7 @@ import { stateHomeFs } from "../src/setup/adapters.js";
 import type { CaseOutcome, CaseSpec } from "../src/setup/engine.js";
 import { FindingsStore } from "../src/setup/findings.js";
 import { LEDGER_FILE, type LedgerFile } from "../src/setup/ledger.js";
-import { anchoredLines, evidenceQuotesAnchor, findingFingerprint, normalizeCode, parseScanAnswer } from "../src/setup/scan.js";
+import { anchoredLines, evidenceQuotesAnchor, findingFingerprint, normalizeCode, parseScanAnswer, scanValidatorPrompt } from "../src/setup/scan.js";
 import { RUN_FILE, ScanRunner, type ScanPorts, type ScanSource, type ScanTree } from "../src/setup/scanrun.js";
 import type { UnitCut } from "../src/setup/unitcut.js";
 
@@ -549,6 +549,20 @@ describe("a finding's severity follows the reachability axis (scan-loop)", () =>
   it("plausible: a P2 becomes P3, a P0/P1 keeps its severity", () => {
     expect(parseScanAnswer(one("P2", "plausible")).candidates[0]).toMatchObject({ severity: "P3", capped_from: "P2" });
     expect(parseScanAnswer(one("P1", "plausible")).candidates[0]).toMatchObject({ severity: "P1", capped_from: null });
+  });
+
+  it("the validator is shown the severity the lens WROTE, so a reach it corrects to routine restores it", () => {
+    const [c] = parseScanAnswer(one("P1", "contrived")).candidates;
+    expect(c).toMatchObject({ severity: "P3", capped_from: "P1" });
+    const plan = { unit: "src", id: "src", part: 1, parts: 1, files: [{ path: "src/a.py", blob: "b", lines: 9 }], lines: 9 } as never;
+    const prompt = scanValidatorPrompt(plan, [c!], { root: "/t", sha: "y", caseId: "x" });
+    expect(prompt).toContain("  severity: P1\n");
+    expect(prompt).toContain("  reachability: contrived\n");
+    // Its survivor, re-read with the corrected axis, is a P1 again — and still capped if it upholds contrived.
+    const back = (reach: string): unknown =>
+      parseScanAnswer(prompt.replace(/^.*?(FINDINGS pass-scan SCAN)/s, "$1").replace("reachability: contrived", `reachability: ${reach}`)).candidates[0];
+    expect(back("routine")).toMatchObject({ severity: "P1", capped_from: null });
+    expect(back("contrived")).toMatchObject({ severity: "P3", capped_from: "P1" });
   });
 
   it("routine — or the field absent, read as routine like a PR round — leaves severity alone", () => {

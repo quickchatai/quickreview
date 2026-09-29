@@ -274,7 +274,10 @@ export function scanValidatorPrompt(
         `- path: ${f.path}`,
         `  line: ${f.start === f.end ? f.end : `${f.start}-${f.end}`}`,
         `  kind: ${f.kind}`,
-        `  severity: ${f.severity}`,
+        // The severity the LENS wrote, not the capped one: the validator audits
+        // reachability, and a corrected `routine` must be able to restore it —
+        // its survivors are re-read, so the cap applies again on the way out.
+        `  severity: ${f.capped_from ?? f.severity}`,
         ...(f.confidence !== null ? [`  confidence: ${f.confidence}`] : []),
         ...(f.reachability !== null ? [`  reachability: ${f.reachability}`] : []),
         `  claim: ${f.claim}`,
