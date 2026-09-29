@@ -43,6 +43,7 @@ import { SURVEY_FILE, type SurveyFile } from "../src/setup/surveyrun.js";
 class FakeMemory implements MemoryStore {
   entries: MemoryEntry[] = [];
   refuseNotes = false;
+  refuseRetires = false;
   private n = 0;
   constructor(texts: string[] = []) {
     for (const t of texts) this.add(t);
@@ -77,6 +78,7 @@ class FakeMemory implements MemoryStore {
       return { ok: true, message: "wrote" };
     }
     if (op.op === "retire") {
+      if (this.refuseRetires) return { ok: false, message: "refused: server down" };
       const e = this.entries.find((x) => x.id === op.id && x.hash === op.expect);
       if (!e) return { ok: false, message: "stale" };
       e.text = `#retired ${e.text}`;
@@ -504,6 +506,43 @@ describe("a survey run", () => {
     const s = engine.surveyStatus().run!;
     expect(s.state).toBe("partial");
     expect(s.cases.find((c) => c.id === "web")).toMatchObject({ notes_failed: 1, error: expect.stringMatching(/memory refused/) });
+  });
+
+  it("an answer with no notes and no NONE line is not a read: the unit keeps its earlier entries; the run is partial", async () => {
+    const mem = new FakeMemory([
+      "#survey kind=convention unit=web run=survey-old — web v1",
+      "#survey kind=convention unit=gone run=survey-old — a unit since removed",
+    ]);
+    const fake = new FakeCases((spec) =>
+      spec.unit === "web" ? answer("I could not read the files; the tool errored.") : answer(`[convention] ${spec.unit} v2`),
+    );
+    const { engine } = await started({ cases: fake, memory: mem });
+    await engine.surveyIdle();
+    const live = mem.live().map((e) => e.text.split(" — ")[1]);
+    expect(live).toContain("web v1");
+    expect(live).toContain("a unit since removed");
+    const s = engine.surveyStatus().run!;
+    expect(s.state).toBe("partial");
+    expect(s.cases.find((c) => c.id === "web")).toMatchObject({
+      status: "failed",
+      none: false,
+      notes_written: 0,
+      error: expect.stringMatching(/no \[convention\]\/\[architecture\] note and no NONE/),
+    });
+    expect(onDisk().last_complete).toBeNull();
+  });
+
+  it("a retire memory refused leaves the run partial, never complete beside two live generations", async () => {
+    const mem = new FakeMemory(["#survey kind=convention unit=web run=survey-old — web v1"]);
+    mem.refuseRetires = true;
+    const fake = new FakeCases((spec) => answer(`[convention] ${spec.unit} v2`));
+    const { engine } = await started({ cases: fake, memory: mem });
+    await engine.surveyIdle();
+    expect(mem.live().map((e) => e.text.split(" — ")[1])).toContain("web v1");
+    const s = engine.surveyStatus().run!;
+    expect(s.state).toBe("partial");
+    expect(s.problems).toEqual([expect.stringMatching(/could not retire an earlier survey entry/)]);
+    expect(onDisk().last_complete).toBeNull(); // a plain start may run it again
   });
 
   it("stop aborts what runs and never starts what waits; written notes stay", async () => {

@@ -161,7 +161,9 @@ export function shapeLines(f: PortraitFacts): Record<PortraitSection, string[]> 
   const root = (r: string): string => r || "(repo root)";
   return {
     stack: [
-      ...f.stack.languages.map((l) => `language ${l.language}`),
+      // By name, not the facts' by-count ranking: one language overtaking
+      // another is a count moving, not a new shape.
+      ...f.stack.languages.map((l) => `language ${l.language}`).sort(),
       ...ev("manifest", f.stack.manifests),
       ...ev("framework", f.stack.frameworks),
     ],

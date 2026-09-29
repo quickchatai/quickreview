@@ -249,6 +249,21 @@ describe("the narrative: stored in the config home against the facts' key", () =
     expect(existsSync(join(configDir(), NARRATIVE_FILE))).toBe(false);
   });
 
+  it("a language overtaking another in file count is not a new shape: the key holds and the narrative stays current", () => {
+    const { e, repo } = engine();
+    const first = assembled(e);
+    const key = first.current.key;
+    e.storePortraitNarrative({ facts_key: key, narrative: BODY });
+    repo.files["frontend/src/a.tsx"] = "x\n";
+    repo.files["frontend/src/b.tsx"] = "x\n";
+    repo.files["frontend/src/c.tsx"] = "x\n";
+    const second = assembled(e);
+    const order = (f: typeof first.current): string[] => f.facts.stack.languages.map((l) => l.language);
+    expect(order(second.current)).not.toEqual(order(first.current)); // the ranking flipped
+    expect(second.current.key).toBe(key);
+    expect(e.portrait().stale).toBe(false);
+  });
+
   it("is refused, honestly, in an assembly with no config home", () => {
     const { e } = engine({ config: false });
     const key = assembled(e).current.key;

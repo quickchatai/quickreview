@@ -416,7 +416,7 @@ export class SurveyRunner {
     if (earlier === null) {
       run.problems.push("could not read memory to supersede earlier survey entries — they stay live");
     }
-    const ctx = { file, run, signal, earlier: earlier ?? [] };
+    const ctx = { file, run, signal, earlier: earlier ?? [], retireFailed: false };
     const repoCases = plan.cases.filter((c) => c.stage === "repo");
     const unitCases = plan.cases.filter((c) => c.stage === "unit");
     const repoNotes: string[] = [];
@@ -436,12 +436,15 @@ export class SurveyRunner {
     // A run that could not see the earlier survey memory could not supersede
     // it: it is not complete, so a plain start may run it again once memory
     // answers, rather than a "re-survey" leaving two generations live.
-    const complete = earlier !== null && run.cases.every((c) => c.status === "done" && c.notes_failed === 0);
+    // Likewise a retire memory refused: the old generation is still live
+    // beside the new one, so the run is partial, never "complete".
+    let complete = earlier !== null && run.cases.every((c) => c.status === "done" && c.notes_failed === 0);
     if (complete) {
       // Whatever earlier survey memory is still live belongs to a unit this
       // cut no longer has (or to @repo parts that no longer exist).
-      await this.supersede(run, ctx.earlier, () => true);
+      if (!(await this.supersede(run, ctx.earlier, () => true))) ctx.retireFailed = true;
     }
+    complete &&= !ctx.retireFailed;
     this.settle(file, run, complete ? "complete" : "partial");
   }
 
@@ -469,7 +472,7 @@ export class SurveyRunner {
   /** One case, start to finish. Resolves with the note texts it wrote (for
    * stage 1's hand-over), or null when it did not finish. */
   private async runCase(
-    ctx: { file: SurveyFile; run: SurveyRun; signal: AbortSignal; earlier: LiveSurveyEntry[] },
+    ctx: { file: SurveyFile; run: SurveyRun; signal: AbortSignal; earlier: LiveSurveyEntry[]; retireFailed: boolean },
     plan: SurveyCasePlan,
     repoNotes: string[] | null,
   ): Promise<string[] | null> {
@@ -511,6 +514,15 @@ export class SurveyRunner {
     c.none = parsed.none;
     c.notes_dropped = parsed.dropped;
     c.notes_truncated = parsed.truncated;
+    // Only notes or an explicit NONE is a read. Prose with neither (a tool
+    // error told in words, a broken grammar) is not "nothing to say", and
+    // must never authorize retiring the unit's earlier notes.
+    if (parsed.notes.length === 0 && !parsed.none) {
+      c.status = "failed";
+      c.error = "the lens answered with no [convention]/[architecture] note and no NONE line";
+      this.store(file);
+      return null;
+    }
     const written: string[] = [];
     for (const note of parsed.notes) {
       const r = await this.write(surveyMemoryText(note, plan.unit, run.id, run.head));
@@ -529,7 +541,7 @@ export class SurveyRunner {
     // every note landed; a partial read keeps them.
     const mine = run.cases.filter((x) => x.unit === plan.unit);
     if (mine.every((x) => x.status === "done" && x.notes_failed === 0)) {
-      await this.supersede(run, ctx.earlier, (unit) => unit === plan.unit);
+      if (!(await this.supersede(run, ctx.earlier, (unit) => unit === plan.unit))) ctx.retireFailed = true;
       this.store(file);
     }
     return written;
@@ -544,12 +556,14 @@ export class SurveyRunner {
   }
 
   /** Retire the `earlier` entries (of any other run) whose unit `which`
-   * picks, taking each out of `earlier` so none is retired twice. */
+   * picks, taking each out of `earlier` so none is retired twice. False when
+   * memory refused any retire (recorded in `run.problems`). */
   private async supersede(
     run: SurveyRun,
     earlier: LiveSurveyEntry[],
     which: (unit: string | null) => boolean,
-  ): Promise<void> {
+  ): Promise<boolean> {
+    let ok = true;
     for (const e of [...earlier]) {
       // Only what a survey RUN wrote (engine-written header with a `run=`),
       // never this run's own, and never an entry the owner made his — pinned
@@ -564,8 +578,12 @@ export class SurveyRunner {
         r = { ok: false, message: clean(err) };
       }
       if (r.ok) run.superseded++;
-      else run.problems.push(`could not retire an earlier survey entry (${e.entry.id}): ${r.message}`);
+      else {
+        ok = false;
+        run.problems.push(`could not retire an earlier survey entry (${e.entry.id}): ${r.message}`);
+      }
     }
+    return ok;
   }
 
   private settle(file: SurveyFile, run: SurveyRun, state: RunState): void {
