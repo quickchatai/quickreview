@@ -94,7 +94,8 @@ export function configDriftText(d: ConfigDrift): string {
  *   - profiles `changed` → those written after the VM's last deploy (the
  *     BUILD_SHA marker's time, written on this machine by deploy.sh); with no
  *     readable deploy time, the latest re-tune, as UNKNOWN;
- *   - drift `unknown` → the re-tunes since the last deploy, as UNKNOWN.
+ *   - drift `unknown` → the re-tunes since the last deploy, as UNKNOWN (with
+ *     no readable deploy time either, the latest re-tune, as UNKNOWN).
  *
  * An unreadable log is UNKNOWN with its reason, never "no re-tunes".
  */
@@ -115,12 +116,18 @@ export function pendingRetunes(
   const written = log.retunes.filter((r) => r.files.length > 0);
   if (written.length === 0) return { state: "none" };
   if (drift.kind === "never-shipped") return { state: "pending", retunes: written };
-  const since = deployedAt ? written.filter((r) => r.at > deployedAt) : [];
+  // Compared as instants, never as strings: the BUILD_SHA marker is written
+  // to the second (`…:32Z`) and a re-tune to the millisecond (`…:32.123Z`),
+  // so a string compare reads a re-tune in the deploy's own second as shipped.
+  const deployed = deployedAt === undefined ? Number.NaN : Date.parse(deployedAt);
+  const known = Number.isFinite(deployed);
+  const since = known ? written.filter((r) => !(Date.parse(r.at) < deployed)) : [];
+  if (!known) {
+    const why = drift.kind === "unknown" ? `${drift.why}; when the VM was last deployed is unknown` : "when the VM was last deployed is unknown";
+    return { state: "unknown", why, retunes: written.slice(-1) };
+  }
   if (drift.kind === "unknown") {
     return since.length === 0 ? { state: "none" } : { state: "unknown", why: drift.why, retunes: since };
-  }
-  if (!deployedAt) {
-    return { state: "unknown", why: "when the VM was last deployed is unknown", retunes: written.slice(-1) };
   }
   return since.length === 0 ? { state: "none" } : { state: "pending", retunes: since };
 }

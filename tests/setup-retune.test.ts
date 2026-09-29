@@ -401,6 +401,27 @@ describe("the post-scan re-tune", () => {
     expect(c.effects.some((x) => x.startsWith("pass-data-safety: min_tier"))).toBe(true);
   });
 
+  it("refuses to 'remove' an emphasis the profile only inherits — the report never claims what did not happen", () => {
+    const e = engine();
+    // A base in the config home carrying an emphasis; acme extends it.
+    write(join(home(), "profiles/strict/profile.toml"), `extends = "default"\n\n[lenses.pass-security]\nemphasis = "Inherited words."\n`);
+    write(join(home(), "config.toml"), `dry_run = true\n\n[review]\nprofile = "acme"\n`);
+    write(join(home(), "profiles/acme/profile.toml"), `extends = "strict"\n`);
+    const set = e.profileApply({ priorities: answers({ security: "important" }), goals: "g", write: true });
+    if (!set.ok) throw new Error(set.errors.join("; "));
+    finishedScan();
+    expect(tuned("acme").lenses?.["pass-security"]).toMatchObject({ emphasis: "Inherited words." });
+    const profile = readFileSync(join(home(), "profiles/acme/profile.toml"), "utf8");
+    expect(
+      refusal(e.retune({ emphasis: { "pass-security": null }, reasons: { "pass-security": "scan says so" }, write: true })),
+    ).toMatch(/inherited from the profile's base/);
+    expect(readFileSync(join(home(), "profiles/acme/profile.toml"), "utf8")).toBe(profile);
+    expect(existsSync(join(stateDir(), RETUNES_FILE))).toBe(false);
+    // replacement text is a real change
+    const r = done(e.retune({ emphasis: { "pass-security": "New words." }, reasons: { "pass-security": "scan says so" }, write: true }));
+    expect(r.changes[0]!.effects).toEqual(['pass-security: emphasis "Inherited words." → "New words."']);
+  });
+
   it("refuses to write over a re-tune log it cannot read", () => {
     const e = engine();
     setUp(e);
@@ -464,6 +485,19 @@ describe("the deploy tab shows the pending re-tune", () => {
       retunes: [],
     });
     expect(pendingRetunes({ state: "absent" }, configDrift(FP_B, FP_A), DEPLOYED)).toEqual({ state: "none" });
+    // neither the VM end nor the deploy time: the latest re-tune, UNKNOWN — never silence
+    expect(pendingRetunes(log(fresh), configDrift(FP_B, undefined), undefined)).toMatchObject({ state: "unknown", retunes: [fresh] });
+    // an unparseable deploy time is no deploy time
+    expect(pendingRetunes(log(fresh), configDrift(FP_B, FP_A), "not-a-time")).toMatchObject({ state: "unknown", retunes: [fresh] });
+  });
+
+  it("compares instants, not strings: a re-tune in the deploy's own second is still pending", () => {
+    // The marker is written to the second, a re-tune to the millisecond —
+    // as strings "…:00.500Z" < "…:00Z", which read it as shipped.
+    const sameSecond = record("2026-09-29T08:00:00.500Z");
+    expect(pendingRetunes(log(sameSecond), configDrift(FP_B, FP_A), DEPLOYED)).toEqual({ state: "pending", retunes: [sameSecond] });
+    const before = record("2026-09-29T07:59:59.999Z");
+    expect(pendingRetunes(log(before), configDrift(FP_B, FP_A), DEPLOYED)).toEqual({ state: "none" });
   });
 
   it("the tab paints the re-tune, its changes and why, under the CONFIG line", async () => {

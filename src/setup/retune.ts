@@ -177,17 +177,33 @@ export function retune(deps: RetuneDeps, input: RetuneInput): RetuneResult | Ref
     if (log.state === "unreadable") return { ok: false, errors: [`${log.error} — nothing was written; move it aside to re-tune`] };
     if (log.state === "ok") prior = log.retunes;
   }
-  const applied = profileApply(
-    deps,
-    {
-      profile,
-      priorities: pr.priorities,
-      emphasis: em.emphasis,
-      ...(guide !== undefined ? { style_guide: guide } : {}),
-      write,
-    },
-    { message: `qcr setup: re-tune profile ${profile} after scan ${run.id} (${changes.map((c) => `${c.input} ${c.to}`).join(", ")})` },
+  const applyInput = {
+    profile,
+    priorities: pr.priorities,
+    emphasis: em.emphasis,
+    ...(guide !== undefined ? { style_guide: guide } : {}),
+  };
+  const opts = { message: `qcr setup: re-tune profile ${profile} after scan ${run.id} (${changes.map((c) => `${c.input} ${c.to}`).join(", ")})` };
+  // Staged first, whatever `write` says: an emphasis "removed" that the
+  // profile only INHERITS (from its base) stays resolved after the write, so
+  // the report would claim a change that never happened. Refused before
+  // anything lands.
+  const staged = profileApply(deps, { ...applyInput, write: false }, opts);
+  if (!staged.ok) return staged;
+  const phantom = changes.filter(
+    (c) =>
+      c.input.startsWith("emphasis ") &&
+      lensEffects(c.key, before.summary.lenses[c.key] ?? {}, staged.summary.lenses[c.key] ?? {}, ["emphasis"]).length === 0,
   );
+  if (phantom.length > 0) {
+    return {
+      ok: false,
+      errors: phantom.map(
+        (c) => `${c.input}: ${c.from} → ${c.to} would not change what the reviewer resolves — that emphasis is inherited from the profile's base, which a re-tune does not edit; give replacement text instead`,
+      ),
+    };
+  }
+  const applied = write ? profileApply(deps, { ...applyInput, write: true }, opts) : staged;
   if (!applied.ok) return applied;
 
   // What each change moved in the resolved profile, before vs after.
@@ -212,9 +228,10 @@ export function retune(deps: RetuneDeps, input: RetuneInput): RetuneResult | Ref
   let entry: RetuneRecord | null = null;
   if (write) {
     const portrait = deps.refreshPortrait();
+    const at = deps.clock().toISOString();
     entry = {
-      id: `retune-${deps.clock().toISOString().replace(/[-:.]/g, "")}`,
-      at: deps.clock().toISOString(),
+      id: `retune-${at.replace(/[-:.]/g, "")}`,
+      at,
       profile,
       scan,
       changes: report,
