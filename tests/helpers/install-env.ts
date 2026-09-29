@@ -7,12 +7,21 @@
 // a no-argument loader finds NO config (the checkout's config.toml is
 // never a fallback) — a test that needs one names it by path or QCR_CONFIG,
 // and tests that exercise the homes pass their own env.
-import { mkdtempSync } from "node:fs";
+//
+// The temp home is removed when the file finishes (afterAll): setup files run
+// once per test file, and a process 'exit' hook never fires in a vitest worker
+// thread — without this every run leaked one `qcr-test-xdg-*` dir per file.
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { afterAll } from "vitest";
 
 const base = mkdtempSync(join(tmpdir(), "qcr-test-xdg-"));
 process.env.XDG_CONFIG_HOME = join(base, "config");
 process.env.XDG_STATE_HOME = join(base, "state");
 delete process.env.QCR_CONFIG;
 delete process.env.QCR_INSTALL;
+
+afterAll(() => {
+  rmSync(base, { recursive: true, force: true });
+});
