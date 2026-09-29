@@ -150,6 +150,25 @@ Vocabulary: `/workspace/CONTEXT.md`.
   words running or names an author; rewrite it, do not trim it. An empty
   history is normal for a repo new to the reviewer: save an empty list.
 
+## The setup survey
+
+Setup's read of the repo — it hunts no bugs. Over the SAVED unit cut, it
+reads every agent-directive file and design doc in full first, then one small
+code sample per unit (entry points, models/schemas, the most-changed and the
+largest files), through the `pass-survey` lens at `low`. Not your `survey`
+skill: that one triages review candidates; this one learns a repo.
+
+- **`setup_survey_preview`** first, always: the cases, why each file is read,
+  and the price. Show the owner the price; start only when he agrees.
+- **`setup_survey_start`** with the preview's key runs it in the BACKGROUND
+  and returns at once — keep talking; `setup_survey_status` shows progress,
+  `setup_survey_stop` stops it. A key from before the plan moved is refused:
+  preview again.
+- Each note becomes an unpinned `#survey` entry in the REVIEWER's memory, so
+  PR rounds use it at once. Once a survey has completed, starting again is a
+  re-survey that supersedes its entries — only when the owner asks, with
+  `resurvey: true`. Never start one on your own initiative.
+
 ## Boundary (absolute)
 
 - **Never** run `deploy.sh` (any mode), never modify code or config on the VM,

@@ -15,7 +15,7 @@ import {
   type SetupPorts,
   type UnitCutFile,
 } from "../src/setup/engine.js";
-import { notYetCaseRunner, notYetTrackerSink, stateHomeFs } from "../src/setup/adapters.js";
+import { notYetTrackerSink, stateHomeFs } from "../src/setup/adapters.js";
 
 let stateDir: string;
 
@@ -63,7 +63,7 @@ function engine(repo: RepoReader = fakeRepo({ ...REPO }), caseBudget?: { maxFile
     state: stateHomeFs(stateDir),
     clock: () => now,
     memory: null,
-    cases: notYetCaseRunner(""),
+    cases: { run: async () => ({ ok: false, reason: "no cases in these tests" }) },
     tracker: notYetTrackerSink(""),
     github: { get: async () => ({ ok: false, reason: "no network in tests" }) },
   };
@@ -267,11 +267,7 @@ describe("cases — the saved cut split to fit, names kept", () => {
 });
 
 describe("the later slices' ports are injected and honest", () => {
-  it("the not-yet case runner and tracker sink refuse, naming their ticket", async () => {
-    expect(await notYetCaseRunner("").launch({ id: "x", unit: "u", agent: "a", files: [], prompt: "" })).toEqual({
-      ok: false,
-      reason: "background cases are not wired yet",
-    });
+  it("the not-yet tracker sink refuses, naming its ticket", async () => {
     expect(await notYetTrackerSink("").file({ title: "t", body: "b", effort: "e", fingerprint: "f" })).toEqual({
       ok: false,
       reason: "the tracker sink is not wired yet",

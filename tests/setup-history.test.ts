@@ -13,7 +13,7 @@ import { matchesQuery } from "../src/memory/store.js";
 import { parseHashTags, parseEventTags } from "../src/memory/eventtags.js";
 import { DIGEST_KIND, DIGEST_VERSION, type ReviewHistoryDigest } from "../src/reviewhistory.js";
 import { SetupEngine } from "../src/setup/engine.js";
-import { notYetCaseRunner, notYetTrackerSink, reviewerMemoryFromEnv, stateHomeFs } from "../src/setup/adapters.js";
+import { notYetTrackerSink, reviewerMemoryFromEnv, stateHomeFs } from "../src/setup/adapters.js";
 import {
   HISTORY_DIGEST_FILE,
   HISTORY_THEMES_FILE,
@@ -98,7 +98,7 @@ function engine(memory: MemoryStore | null) {
     state,
     clock: () => new Date("2026-09-29T13:00:00Z"),
     memory,
-    cases: notYetCaseRunner(""),
+    cases: { run: async () => ({ ok: false, reason: "no cases in these tests" }) },
     tracker: notYetTrackerSink(""),
     github: { get: async () => ({ ok: false, reason: "no network in tests" }) },
   });

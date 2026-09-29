@@ -16,6 +16,10 @@ _Avoid_: onboarding (that is installing quickreviewd itself), calibration
 Setup's read of the repo — agent-directive files and design docs in full, then a sample of each unit's code; it hunts no bugs.
 _Avoid_: scan, audit, crawl
 
+**Survey note**:
+One convention or architecture note the survey's lens writes about the repo or one unit — an unpinned `#survey` entry in the reviewer's memory; a re-survey supersedes the previous run's notes.
+_Avoid_: finding (a survey finds nothing wrong), learning
+
 **Repo facts**:
 What a repo says about itself in files, read without a model: stack, frameworks, CI, linters, design docs, style guides, agent-directive files — each with the file that shows it.
 _Avoid_: metadata, detection results

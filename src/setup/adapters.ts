@@ -1,4 +1,5 @@
-// The real ports behind SetupEngine. Assembled by the companion's
+// The real ports behind SetupEngine (the case runner is its own
+// file, caserunner.ts). Assembled by the companion's
 // setup extension (extensions/setup.ts) inside the companion container, where
 // the reviewed checkout is mounted read-only and the state home read-write
 // (root CLAUDE.md rule 8, third amendment). Tests use fakes and temp dirs;
@@ -22,7 +23,6 @@ import type { MemoryStore } from "../memory/store.js";
 import { OpenVikingClient } from "../openviking/client.js";
 import { openVikingStore } from "../openviking/store.js";
 import type {
-  CaseRunner,
   GitHubReader,
   RepoReader,
   StateFs,
@@ -122,8 +122,23 @@ export function checkoutReader(root: string): RepoReader {
       return text.endsWith("\n") ? n : n + 1;
     },
     head: () => git(["rev-parse", "HEAD"])?.trim() || null,
+    changeCounts: () => {
+      // Six months, bounded twice over: a busy repo's whole history is not
+      // what "most-changed" means, and the listing must stay cheap.
+      const log = git(["log", "--since=6.months", "--no-merges", "-n", String(CHANGE_LOG_COMMITS), "--name-only", "--format="]);
+      if (log === null) return null;
+      const counts: Record<string, number> = {};
+      for (const line of log.split("\n")) {
+        const p = line.trim();
+        if (p !== "") counts[p] = (counts[p] ?? 0) + 1;
+      }
+      return counts;
+    },
   };
 }
+
+/** The most commits the "most-changed" count walks. */
+export const CHANGE_LOG_COMMITS = 2000;
 
 /** The state home as a rooted filesystem: relative paths only, never out of
  * the root, every write tmp+rename atomic. */
@@ -210,14 +225,6 @@ export function tokenFileGitHubReader(opts: {
 
 /** A port whose slice has not landed yet: every call is an honest refusal
  * naming the ticket that wires it, never a silent no-op that reads as done. */
-export function notYetCaseRunner(ticket: string): CaseRunner {
-  const reason = `background cases are not wired yet (${ticket})`;
-  return {
-    launch: async () => ({ ok: false, reason }),
-    stop: async () => ({ ok: false, reason }),
-  };
-}
-
 export function notYetTrackerSink(ticket: string): TrackerSink {
   const reason = `the tracker sink is not wired yet (${ticket})`;
   return {
@@ -230,12 +237,14 @@ export function notYetTrackerSink(ticket: string): TrackerSink {
  * Reviewer memory, from the companion's environment: the endpoint
  * its spawn is given (`OPENVIKING_URL`) and the REVIEWER user key its
  * `--env-file` carries — what setup writes is for the reviewer to read, and
- * the server confines that key to the reviewer's tree. Null when either is
- * missing: the caller then says memory was not written, never pretends.
+ * the server confines that key to the reviewer's tree — never the
+ * companion's own key (survey notes and history themes are for PR rounds),
+ * never an ADMIN key. Null when either is missing: the caller then says memory
+ * was not written (the survey refuses to start), never pretends.
  * A dead server is the store's own refusal, per write.
  */
 export function reviewerMemoryFromEnv(env: NodeJS.ProcessEnv): MemoryStore | null {
-  const baseUrl = env.OPENVIKING_URL?.trim();
+  const baseUrl = env.OPENVIKING_URL?.trim() || env.OPENVIKING_BASE_URL?.trim();
   const key = env.OPENVIKING_REVIEWER_KEY?.trim();
   if (!baseUrl || !key) return null;
   return openVikingStore(new OpenVikingClient({ baseUrl, apiKey: key, user: "reviewer" }), { cacheTtlMs: 0 });

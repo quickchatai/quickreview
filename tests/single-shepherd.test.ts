@@ -164,13 +164,25 @@ describe("daemon topology", () => {
     // runs only inside the qcr-bench image (no daemon, no gate, no scripts/,
     // no credential), under a `bench-<id>` name no adopt() can match, and the
     // process exits when its round settles.
+    // setup/caserunner.ts is the companion's survey/scan case
+    // runner: it runs only inside the companion container (extensions/
+    // setup.ts, never the daemon — the check below pins that no daemon module
+    // imports src/setup/), and each spawn is a `-p --no-session
+    // --no-extensions` leaf with read-only tools, not a session.
     const allowed = ["sessions.ts", "smoke-session.ts", "companion.ts"];
-    const allowedPaths = ["/src/bench/runner.ts"];
+    const allowedPaths = ["/src/bench/runner.ts", "/src/setup/caserunner.ts"];
     const offenders = srcFiles(src)
       .filter((f) => !allowed.includes(f.slice(f.lastIndexOf("/") + 1)))
       .filter((f) => !allowedPaths.some((p) => f.endsWith(p)))
       .filter((f) => /["'`]pi["'`]\s*,|piBin|--no-session/.test(readFileSync(f, "utf8")));
     expect(offenders).toEqual([]);
+    // The case runner's allowance holds only while no daemon module can reach
+    // it: src/setup/ is imported from src/setup/ and the companion's
+    // extension, never from anything else under src/.
+    const reachesSetup = srcFiles(src)
+      .filter((f) => !f.includes("/src/setup/"))
+      .filter((f) => /from\s+["'][^"']*\/setup\/[^"']*["']/.test(readFileSync(f, "utf8")));
+    expect(reachesSetup).toEqual([]);
   });
 });
 

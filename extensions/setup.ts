@@ -16,12 +16,18 @@
 //     digest the TUI pulled into the state home, page by page, and save the
 //     THEMES condensed from it — the only part that goes on to reviewer
 //     memory (`#history`) and the portrait. A theme quoting a raw comment or
-//     naming its author is refused.
+//     naming its author is refused;
+//   - setup_survey_preview / _start / _status / _stop: the survey
+//     over the saved cut, behind a cost preview whose key the start must
+//     quote; it runs as background `pass-survey` subagents so the companion
+//     keeps talking, and writes unpinned `#survey` notes into the REVIEWER's
+//     memory, superseding the previous survey's.
 //
 // Convention (onboarding.ts, tui-view.ts): degrade, never wedge — a pi
 // without registerTool registers nothing and says so, and every tool answers
 // a refusal as its result rather than throwing.
 import type { Pi, PiToolDefinition, PiToolResult } from "@earendil-works/pi-coding-agent";
+import { fileURLToPath } from "node:url";
 import { stateHome } from "../src/install.js";
 import {
   SetupEngine,
@@ -33,12 +39,15 @@ import type { HistoryTheme, HistoryThemesFile } from "../src/setup/history.js";
 import { MAX_THEMES, THEME_SOURCES, THEME_SUMMARY_MAX, THEME_TITLE_MAX } from "../src/setup/history.js";
 import {
   checkoutReader,
-  notYetCaseRunner,
-  reviewerMemoryFromEnv,
   notYetTrackerSink,
+  reviewerMemoryFromEnv,
   stateHomeFs,
   tokenFileGitHubReader,
 } from "../src/setup/adapters.js";
+import { piCaseRunner } from "../src/setup/caserunner.js";
+import { REPO_SCOPE } from "../src/setup/survey.js";
+import type { SurveyPreview, SurveyStatus } from "../src/setup/surveyrun.js";
+import { resolveMaxConcurrency } from "./subagents.js";
 import type { RepoFacts } from "../src/setup/facts.js";
 import { ADJUST_OPS } from "../src/setup/unitcut.js";
 
@@ -156,6 +165,73 @@ export function renderHistory(h: ReturnType<SetupEngine["history"]>): string {
   }
   out.push(saved(h.themes));
   return out.join("\n\n");
+}
+
+const usd = (n: number | null): string => (n === null ? "unknown" : `$${n.toFixed(2)}`);
+const scopeName = (unit: string): string => (unit === REPO_SCOPE ? "repo-wide read" : `unit ${unit}`);
+
+export function renderSurveyPreview(p: SurveyPreview): string {
+  const rows = p.cases.map(
+    (c) =>
+      `  - ${c.id} (${scopeName(c.unit)}): ${c.files.length} files, ${c.lines} lines, ~${usd(c.estimate_usd)}\n` +
+      c.files.map((f) => `      ${f.path} — ${f.reason}`).join("\n"),
+  );
+  const out = [
+    `Survey plan${p.head ? ` at ${p.head.slice(0, 12)}` : ""}: ${p.cases.length} cases, ${p.lines} lines, estimated ${usd(p.estimate_usd)} ` +
+      `(${p.concurrency} at once; the repo-wide read first, then one case per unit).`,
+    `Price basis: ${p.rate.basis}.`,
+    ...rows,
+  ];
+  if (p.unsampled.length > 0) out.push(`Not surveyed (no code to sample outside tests and migrations): ${p.unsampled.join(", ")}`);
+  out.push(
+    p.existing_entries === null
+      ? "Existing #survey memory: UNKNOWN (memory could not be read)."
+      : `Existing #survey memory: ${p.existing_entries} live entries — a completed survey supersedes them.`,
+  );
+  if (p.last_complete) {
+    out.push(
+      `A survey already completed (${p.last_complete.id}, ${p.last_complete.finished_at}, ${p.last_complete.notes} notes, ${usd(p.last_complete.cost_usd)}) — ` +
+        "starting again is a RE-SURVEY: only when the operator asked for one, with resurvey: true.",
+    );
+  }
+  for (const b of p.blockers) out.push(`✗ ${b}`);
+  out.push(`Preview key: ${p.key} — show the operator this cost; start with this key only when he agrees.`);
+  return out.join("\n");
+}
+
+export function renderSurveyStatus(s: SurveyStatus): string {
+  const out: string[] = s.problems.map((p) => `✗ ${p}`);
+  const run = s.run;
+  if (run === null) {
+    out.push(s.ok ? "No survey has run yet." : "Survey record: UNKNOWN — the file could not be read (see above); nothing will overwrite it.");
+  } else {
+    const done = run.cases.filter((c) => c.status === "done").length;
+    const cost = run.cases.some((c) => c.cost_usd !== null)
+      ? run.cases.reduce((n, c) => n + (c.cost_usd ?? 0), 0)
+      : null;
+    const state =
+      run.display === "interrupted"
+        ? "INTERRUPTED — the companion restarted mid-run; notes written so far are kept, start again (after a preview) to finish"
+        : run.display;
+    out.push(
+      `Survey ${run.id}: ${state}. ${done}/${run.cases.length} cases done; ${run.cases.reduce((n, c) => n + c.notes_written, 0)} notes written; ` +
+        `${run.superseded} earlier entries superseded; spent ${usd(cost)} of an estimated ${usd(run.estimate_usd)}.`,
+    );
+    for (const c of run.cases) {
+      const extra = [
+        c.none ? "NONE" : "",
+        c.notes_failed ? `${c.notes_failed} notes refused by memory` : "",
+        c.notes_dropped ? `${c.notes_dropped} over the cap` : "",
+        c.error ?? "",
+      ].filter(Boolean);
+      out.push(`  - ${c.id}: ${c.status}, ${c.notes_written} notes${c.cost_usd !== null ? `, ${usd(c.cost_usd)}` : ""}${extra.length ? ` — ${extra.join("; ")}` : ""}`);
+    }
+    for (const p of run.problems) out.push(`  ! ${p}`);
+  }
+  if (s.last_complete && s.last_complete.id !== run?.id) {
+    out.push(`Last completed survey: ${s.last_complete.id} (${s.last_complete.finished_at}).`);
+  }
+  return out.join("\n");
 }
 
 // ---- tool belt ---------------------------------------------------------------
@@ -334,28 +410,112 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     },
   };
 
-  return [facts, status, propose, adjust, save, history, themes];
+  const surveyPreview: PiToolDefinition = {
+    name: "setup_survey_preview",
+    label: "Survey preview",
+    description:
+      "What the setup survey would read and cost, over the SAVED unit cut: first a repo-wide read of every agent-directive file and " +
+      "design doc in full, then one `pass-survey` case (at `low`) per unit over a small code sample — entry points, models/schemas, " +
+      "the most-changed and the largest files. Returns the price and a preview key. Show the operator the price before starting.",
+    promptSnippet: "Preview the setup survey and its cost",
+    parameters: NO_PARAMS,
+    execute: async () => {
+      const r = await engine.surveyPreview();
+      if (!r.ok) return refused("Survey preview", r);
+      return text(renderSurveyPreview(r.preview), { preview: r.preview });
+    },
+  };
+
+  const surveyStart: PiToolDefinition = {
+    name: "setup_survey_start",
+    label: "Start the survey",
+    description:
+      "Start the previewed survey in the BACKGROUND and return at once — keep talking to the operator; setup_survey_status shows " +
+      "progress. `key` is the preview's key: a plan or price that changed since is refused. A survey writes unpinned `#survey` notes " +
+      "into reviewer memory; once one has completed, starting again is a re-survey that supersedes them — only when the operator " +
+      "asks, with `resurvey: true`. Never start one on your own initiative.",
+    promptSnippet: "Start the previewed survey in the background",
+    parameters: {
+      type: "object",
+      properties: {
+        key: { type: "string", description: "The key setup_survey_preview returned." },
+        resurvey: { type: "boolean", description: "The operator asked to survey again, superseding the last survey's notes." },
+      },
+      required: ["key"],
+    },
+    execute: async (_id, params) => {
+      const p = (params ?? {}) as { key?: unknown; resurvey?: unknown };
+      const r = await engine.surveyStart({ key: p.key, resurvey: p.resurvey });
+      if (!r.ok) return refused("Survey start", r);
+      return text(
+        `Survey ${r.run.id} started in the background: ${r.run.cases.length} cases, estimated ${usd(r.run.estimate_usd)}. ` +
+          "It needs nothing from you; check setup_survey_status when the operator asks, or in a while.",
+        { run: r.run },
+      );
+    },
+  };
+
+  const surveyStatus: PiToolDefinition = {
+    name: "setup_survey_status",
+    label: "Survey status",
+    description:
+      "The latest survey: each case's state, notes written, cost so far against the estimate, earlier entries superseded, and " +
+      "anything that went wrong. A run the companion restarted in the middle of shows as INTERRUPTED.",
+    promptSnippet: "Show the survey's progress",
+    parameters: NO_PARAMS,
+    execute: async () => {
+      const s = engine.surveyStatus();
+      return text(renderSurveyStatus(s), { status: s });
+    },
+  };
+
+  const surveyStop: PiToolDefinition = {
+    name: "setup_survey_stop",
+    label: "Stop the survey",
+    description: "Stop the running survey: running cases are killed, pending ones never start; notes already written stay.",
+    promptSnippet: "Stop the running survey",
+    parameters: NO_PARAMS,
+    execute: async () => {
+      const r = engine.surveyStop();
+      if (!r.ok) return refused("Survey stop", r);
+      return text(`Stopping survey ${r.id}; setup_survey_status shows what it finished.`);
+    },
+  };
+
+  return [facts, status, propose, adjust, save, history, themes, surveyPreview, surveyStart, surveyStatus, surveyStop];
 }
 
 // ---- activation ----------------------------------------------------------------
 
+/** The companion agent set (docker/companion/agents), beside this file in
+ * the /workspace checkout — where `pass-survey` lives. Resolved from this
+ * SOURCE file: pi loads the extension's .ts through jiti, never dist/. */
+export const COMPANION_AGENTS_DIR = fileURLToPath(new URL("../docker/companion/agents", import.meta.url));
+
 export function buildEngine(env: NodeJS.ProcessEnv = process.env): SetupEngine {
-  return new SetupEngine({
-    repo: checkoutReader(env.QCR_REVIEWED_REPO?.trim() || DEFAULT_REVIEWED_REPO),
-    state: stateHomeFs(stateHome(env)),
-    clock: () => new Date(),
-    // Reviewer memory (the review history themes) — null, and said
-    // so on every write, when the spawn carries no endpoint or reviewer key.
-    memory: reviewerMemoryFromEnv(env),
-    cases: notYetCaseRunner(""),
-    tracker: notYetTrackerSink(""),
-    github: tokenFileGitHubReader({
-      envFile: env.QCR_GITHUB_READ_ENV,
-      fetch: (input, init) => fetch(input, init),
+  return new SetupEngine(
+    {
+      repo: checkoutReader(env.QCR_REVIEWED_REPO?.trim() || DEFAULT_REVIEWED_REPO),
+      state: stateHomeFs(stateHome(env)),
       clock: () => new Date(),
-    }),
-    log: (line) => console.error(line),
-  });
+      // The REVIEWER's memory (survey notes and's review history
+      // themes are for PR rounds), or null — the survey then refuses to start
+      // and a themes save says memory was not written.
+      memory: reviewerMemoryFromEnv(env),
+      // Background pi subagents, run from the companion's own cwd (first-party
+      // ground), never from the reviewed checkout.
+      cases: piCaseRunner({ agentsDir: COMPANION_AGENTS_DIR, cwd: env.QCR_ROOT?.trim() || process.cwd() }),
+      tracker: notYetTrackerSink(""),
+      github: tokenFileGitHubReader({
+        envFile: env.QCR_GITHUB_READ_ENV,
+        fetch: (input, init) => fetch(input, init),
+        clock: () => new Date(),
+      }),
+      log: (line) => console.error(line),
+    },
+    // The companion's subagent cap (QCR_SUBAGENT_MAX_CONCURRENCY).
+    { surveyConcurrency: resolveMaxConcurrency(env) },
+  );
 }
 
 const activate = (pi: Pi): void => {

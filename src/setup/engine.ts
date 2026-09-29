@@ -6,9 +6,10 @@
 // units a repo has, what a finding means — and these tools ACT: what they do
 // with its answers is deterministic, validated, and persisted here.
 //
-// This slice carries the first two behaviours: the deterministic repo facts
-// and the unit cut. The ports for the later slices (case runner, tracker
-// sink, GitHub reader, MemoryStore) are declared and injected now so every
+// Behaviours so far: the deterministic repo facts and the unit cut
+//, and the survey (preview, start, status, stop; the run
+// itself is surveyrun.ts, its rules survey.ts). The ports for the later
+// slices (tracker sink, GitHub reader) are declared and injected now so every
 // later tool lands on the same engine; their real implementations arrive with
 // the slice that first calls them.
 //
@@ -22,6 +23,7 @@
 import type { MemoryStore } from "../memory/store.js";
 import { isSweepSkipped } from "../heuristics.js";
 import { repoFacts, unitCandidates, vendoredRoots, type RepoFacts } from "./facts.js";
+import { SurveyRunner, type SurveyInputs, type SurveyPreview, type SurveyRun, type SurveyStatus } from "./surveyrun.js";
 import {
   historyPage,
   readDigest,
@@ -61,6 +63,10 @@ export interface RepoReader {
   lines(rel: string): number | null;
   /** The checked-out commit, or null when it cannot be read. */
   head(): string | null;
+  /** Commits touching each file over the recent history — the survey's
+   * "most-changed" sample. Optional and total: absent or null when
+   * the history cannot be read, which only empties that one reason. */
+  changeCounts?(): Record<string, number> | null;
 }
 
 /** The filesystem rooted at the install's STATE home — PC-only, never shipped.
@@ -85,12 +91,16 @@ export interface CaseSpec {
   prompt: string;
 }
 
-export type CaseLaunch = { ok: true; id: string } | { ok: false; reason: string };
+/** How a case ended: the lens's final answer and what it cost (null when
+ * the runner could not tell), or why there is none. */
+export type CaseOutcome = { ok: true; output: string; cost_usd: number | null } | { ok: false; reason: string };
 
-/** Launches cases as background subagents (survey, scan). */
+/** Runs cases as background subagents (survey, scan). The
+ * ENGINE decides what runs when and how many at once; the runner runs one
+ * case to its end. Resolves for every outcome — a failed or aborted case is
+ * `{ok:false}`, never a rejection. */
 export interface CaseRunner {
-  launch(spec: CaseSpec): Promise<CaseLaunch>;
-  stop(id: string): Promise<CaseLaunch>;
+  run(spec: CaseSpec, signal: AbortSignal): Promise<CaseOutcome>;
 }
 
 export interface TrackerTicket {
@@ -135,6 +145,8 @@ export interface SetupPorts {
 export interface SetupOptions {
   /** How much one case may read (`[scan]` config will own it). */
   caseBudget?: CaseBudget;
+  /** Survey cases in flight at once (the companion passes its subagent cap). */
+  surveyConcurrency?: number;
 }
 
 // ---- the persisted file ------------------------------------------------------
@@ -233,12 +245,17 @@ function cutShapeError(cut: unknown): string | null {
 
 export class SetupEngine {
   private readonly budget: CaseBudget;
+  private readonly surveyRun: SurveyRunner;
 
   constructor(
     private readonly ports: SetupPorts,
     opts: SetupOptions = {},
   ) {
     this.budget = opts.caseBudget ?? DEFAULT_CASE_BUDGET;
+    this.surveyRun = new SurveyRunner(ports, () => this.surveyInputs(), {
+      repoRoot: ports.repo.location,
+      ...(opts.surveyConcurrency !== undefined ? { concurrency: opts.surveyConcurrency } : {}),
+    });
   }
 
   private files(): string[] | null {
@@ -544,5 +561,60 @@ export class SetupEngine {
    * to memory and the portrait. */
   saveHistoryThemes(raw: unknown): Promise<SaveThemesResult> {
     return saveHistoryThemes({ state: this.ports.state, memory: this.ports.memory, clock: this.ports.clock }, raw);
+  }
+
+  // -- the survey (the run itself is surveyrun.ts) --
+
+  /** What a survey reads, over the SAVED cut and the facts as they are now. */
+  private surveyInputs(): SurveyInputs {
+    const files = this.files();
+    if (files === null) return this.noRepo();
+    const { file, error } = this.load();
+    if (error !== null) return { ok: false, errors: [error] };
+    if (!file.saved) return { ok: false, errors: ["no saved unit cut — the survey reads by unit; propose, adjust and save one first"] };
+    const facts = repoFacts(files, (p) => this.ports.repo.read(p));
+    let changes: Record<string, number> | null = null;
+    try {
+      changes = this.ports.repo.changeCounts?.() ?? null;
+    } catch {
+      changes = null;
+    }
+    return {
+      ok: true,
+      head: this.ports.repo.head(),
+      input: {
+        cut: file.saved,
+        files,
+        agentFiles: facts.agent_files,
+        guides: facts.guides,
+        linesOf: this.lineCounter(),
+        changes,
+        budget: this.budget,
+      },
+    };
+  }
+
+  /** The survey's cases, sample and price now, and the key a start quotes. */
+  surveyPreview(): Promise<{ ok: true; preview: SurveyPreview } | Refusal> {
+    return this.surveyRun.preview();
+  }
+
+  /** Start the previewed survey in the background (see surveyrun.ts for
+   * every refusal). Returns as soon as the run is recorded. */
+  surveyStart(args: { key?: unknown; resurvey?: unknown }): Promise<{ ok: true; run: SurveyRun } | Refusal> {
+    return this.surveyRun.start(args);
+  }
+
+  surveyStatus(): SurveyStatus {
+    return this.surveyRun.status();
+  }
+
+  surveyStop(): { ok: true; id: string } | Refusal {
+    return this.surveyRun.stop();
+  }
+
+  /** Resolves when no survey is running. */
+  surveyIdle(): Promise<void> {
+    return this.surveyRun.idle();
   }
 }

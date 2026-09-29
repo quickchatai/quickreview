@@ -1107,12 +1107,14 @@ describe("native subagents (companion)", () => {
 
   it("carries the companion agent set in its first-party home", () => {
     const agents = readdirSync(agentsDir).sort();
-    expect(agents).toEqual(["evidence.md", "explore.md", "study.md"]);
+    // pass-survey is the setup survey's lens, launched by the
+    // setup engine's case runner — named apart from the `survey` skill.
+    expect(agents).toEqual(["evidence.md", "explore.md", "pass-survey.md", "study.md"]);
     for (const file of agents) {
       const body = readFileSync(resolve(agentsDir, file), "utf8");
       // The native loader requires string name + description or it silently
       // skips the file — pin both.
-      expect(body).toMatch(/^name: [a-z]+$/m);
+      expect(body).toMatch(new RegExp(`^name: ${file.replace(/\.md$/, "")}$`, "m"));
       expect(body).toMatch(/^description: .+$/m);
       // ChatGPT OAuth is the only credential in the container: an anthropic/
       // model or a web tool would be's dead weight all over again.
