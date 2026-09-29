@@ -1114,6 +1114,17 @@ function readStringField(payload: string | null, field: string): string | undefi
   }
 }
 
+/** A boolean field of an event payload; `undefined` when absent or unreadable. */
+function readBooleanField(payload: string | null, field: string): boolean | undefined {
+  if (!payload) return undefined;
+  try {
+    const value = (JSON.parse(payload) as Record<string, unknown>)[field];
+    return typeof value === "boolean" ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Durable command lifecycle at the daemon→Pi boundary. */
 export type SessionCommandStatus = "pending" | "running" | "acked" | "failed" | "cancelled";
 export type SessionCommandKind = "round" | "wake" | "legacy";
@@ -1640,6 +1651,19 @@ export class StateStore {
     }
     if (sets.length === 0) return;
     this.db.prepare(`UPDATE rounds SET ${sets.join(", ")} WHERE id = ?`).run(...args, id);
+  }
+
+  /** Re-stamp a running round's plan with the one actually dispatched: the
+   * repo's written style guide is found only after the worktree is prepared,
+   * and it can add pass-style, so the plan startRound recorded can
+   * be short of the order's. */
+  setRoundPlan(
+    id: number,
+    lenses: string[],
+    meta: Pick<RoundStartMeta, "validate_tier" | "pass_plan" | "addable_passes">,
+  ): void {
+    this.db.prepare("UPDATE rounds SET lenses = ? WHERE id = ?").run(lenses.join(","), id);
+    this.setRoundMeta(id, meta);
   }
 
   stampPostingKey(id: number, postingKey: string): void {
@@ -5067,7 +5091,11 @@ export class StateStore {
    * comment on the reviewed repo is an external mutation, which outranks the
    * low odds of the daemon corrupting its own JSON).
    */
-  migrationCollisionCommented(pr: number, fingerprint: string): CollisionCommentRecord {
+  migrationCollisionCommented(
+    pr: number,
+    fingerprint: string,
+    opts: { live?: boolean } = {},
+  ): CollisionCommentRecord {
     const rows = this.db
       .prepare("SELECT payload FROM events WHERE kind = 'migration_collision_comment' AND pr = ?")
       .all(pr) as Array<{ payload: string | null }>;
@@ -5075,7 +5103,14 @@ export class StateStore {
     for (const r of rows) {
       const stamped = readStringField(r.payload, "fingerprint");
       if (stamped === undefined) unreadable = true;
-      else if (stamped === fingerprint) return "commented";
+      else if (stamped === fingerprint) {
+        // Live, a row stamped `executed: false` is a dry-run record of the
+        // would-be comment (or a pre-fix guard refusal): nothing reached
+        // GitHub, so it cannot suppress the real post. A row with no
+        // `executed` field predates the stamp and still counts.
+        if (opts.live && readBooleanField(r.payload, "executed") === false) continue;
+        return "commented";
+      }
     }
     return unreadable ? "unknown" : "not_commented";
   }

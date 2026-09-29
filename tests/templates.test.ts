@@ -318,6 +318,22 @@ describe("renderNitScopeNote", () => {
       expect(r3).toContain("P0–P2 findings are exempt");
     }
   });
+
+  // `[review] nits = "open"` lifts the volume limits, never the ratified
+  // treadmill rule: from review 3 the two notes must not give opposite
+  // posting orders (own inline `[nit]` vs never a new inline nit thread).
+  it("an open nit policy defers to an armed NIT SCOPE instead of contradicting it", () => {
+    for (const file of ["round-re-review.md", "round-staleness.md"]) {
+      const tpl = readFileSync(resolve(process.cwd(), "prompts", file), "utf8");
+      const r2 = renderRoundPrompt(tpl, { ...order, round_no: 2, nit_policy: "open" });
+      expect(r2).toContain("as its own inline `[nit]`");
+      const r3 = renderRoundPrompt(tpl, { ...order, round_no: 3, nit_policy: "open" });
+      expect(r3).toContain("NIT POLICY — open");
+      expect(r3).not.toContain("as its own inline `[nit]`");
+      expect(r3).toContain("the NIT SCOPE rule below still binds");
+      expect(r3).toContain("**Never open a new inline thread for a nit**");
+    }
+  });
 });
 
 describe("renderDirectiveEscalationNote", () => {

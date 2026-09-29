@@ -182,14 +182,28 @@ export function renderNitScopeNote(roundNo: number): string {
  * and every true nit a pass raises is posted. Strict rounds render nothing, so
  * a default install's prompt is unchanged.
  */
-export function renderNitPolicyNote(policy: "open" | undefined): string {
+export function renderNitPolicyNote(policy: "open" | undefined, reviewNo = 1): string {
   if (policy !== "open") return "";
+  // From review 3 the NIT SCOPE note is armed (ratified): open lifts
+  // the volume limits, never the treadmill rule, so the posting order defers
+  // to it rather than contradicting it.
+  const posting =
+    reviewNo >= 3
+      ? [
+          "validator keeps — do not trim nits to keep the review short. Where and",
+          "which nits post is the NIT SCOPE rule's: the NIT SCOPE rule below still binds",
+          "(new nits only inside the current delta, surviving nits on the one running",
+          "thread or under `### Nits`). Everything else stands:",
+        ]
+      : [
+          "validator keeps, as its own inline `[nit]` — do not trim nits to keep the",
+          "review short, and do not fold them into the body. Everything else stands:",
+        ];
   return [
     "",
     '**NIT POLICY — open (`[review] nits = "open"`).** This round the nit limits',
     "are lifted: post every TRUE, actionable nit the passes raise and the",
-    "validator keeps, as its own inline `[nit]` — do not trim nits to keep the",
-    "review short, and do not fold them into the body. Everything else stands:",
+    ...posting,
     "a nit must be true, must name the change it asks for, and style still comes",
     "only from `pass-style` and the repo's written guide. The blocker bar does",
     "not move.",
@@ -448,7 +462,7 @@ export function roundVars(
     missing_migration_note: ecosystem.missingMigrationNote,
     settled_digest: order.settled_digest.trim() || "(nothing settled yet)",
     nit_scope_note: renderNitScopeNote(order.review_no ?? order.round_no),
-    nit_policy_note: renderNitPolicyNote(order.nit_policy),
+    nit_policy_note: renderNitPolicyNote(order.nit_policy, order.review_no ?? order.round_no),
     intent_note: renderIntentNote(order),
     directive_note: renderDirectiveEscalationNote(order),
     // "" unless the order carries escalation targets, which it only

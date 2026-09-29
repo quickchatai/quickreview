@@ -31,6 +31,7 @@ import {
   reservedAddendumIds,
 } from "../src/profiles.js";
 import { PROFILE_EXTENDABLE_LENSES } from "../src/heuristics.js";
+import { SCAN_PASS } from "../src/setup/scan.js";
 
 const sandbox = join(import.meta.dirname, "..");
 /** A fixture profile in `<root>/profiles/` — found because `at(root)` names a
@@ -95,6 +96,8 @@ describe("parseProfileAddendum", () => {
     expect(one("lenses")).toBe("lenses");
     expect(one("pass-baseline, pass-data-safety")).toEqual(["pass-baseline", "pass-data-safety"]);
     expect(one("pass-placement")).toEqual(["pass-placement"]);
+    // The scan build's own agent is a pass a house rule may bind too.
+    expect(one(SCAN_PASS)).toEqual([SCAN_PASS]);
   });
 
   it("blank frontmatter lines are tolerated; order of keys is free", () => {
@@ -116,6 +119,12 @@ describe("parseProfileAddendum", () => {
       ["bad id", "---\nid: Not_Kebab\nscope: all\n---\nB\n", /must be kebab-case/],
       ["unknown scope word", "---\nid: x\nscope: everything\n---\nB\n", /unknown scope/],
       ["non-pass name in list", "---\nid: x\nscope: baseline\n---\nB\n", /unknown scope/],
+      // A well-shaped name no pass carries would bind nothing, silently.
+      [
+        "misspelt pass name",
+        "---\nid: x\nscope: pass-baseline, pass-securty\n---\nB\n",
+        /unknown pass "pass-securty"/,
+      ],
       ["empty scope list", "---\nid: x\nscope: ,\n---\nB\n", /empty scope/],
       ["empty body", "---\nid: x\nscope: all\n---\n   \n", /empty body/],
       ["duplicate key", "---\nid: x\nid: y\nscope: all\n---\nB\n", /duplicate frontmatter key/],

@@ -184,7 +184,8 @@ describe("detectMigrationCollisions", () => {
     });
     expect(body).toContain("backend/chat/migrations/0044_a.py");
     expect(body).toContain('reference `"0042_a"`');
-    expect(body).toContain('`[("chat", "0044_a")]`');
+    expect(body).toContain('replace `("chat", "0042_a")` with `("chat", "0044_a")`');
+    expect(body).not.toContain('`[("chat", "0044_a")]`');
     expect(body).toContain("backend/chat/migrations/0045_b.py");
   });
 
@@ -262,9 +263,23 @@ describe("renderMigrationCollisionComment", () => {
       base_sha: "abcdef1234567890",
     });
     expect(body).toContain("backend/chat/migrations/0043_add_rate_limit.py");
-    expect(body).toContain('`[("chat", "0042_add_widget_flag")]`');
+    expect(body).toContain('`("chat", "0042_add_widget_flag")`');
     expect(body).toContain("**0043**");
     expect(body).toContain("abcdef123456");
+  });
+
+  // The remedy edits ONE entry: the detector never reads the migration's
+  // other dependencies (a cross-app edge, say), so it must never tell the
+  // author to replace the whole list with a singleton.
+  it("tells the author to change one dependencies entry and keep the others", () => {
+    const body = renderMigrationCollisionComment({
+      collisions,
+      base_ref: "master",
+      base_sha: "abc",
+    });
+    expect(body).not.toContain('`[("chat", "0042_add_widget_flag")]`');
+    expect(body).toContain("point its `chat` entry at");
+    expect(body).toContain("keep every other entry");
   });
 
   it("says plainly that it is not a blocker and consumes no verdict", () => {

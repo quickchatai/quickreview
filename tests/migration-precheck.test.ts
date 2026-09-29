@@ -33,10 +33,12 @@ class GatedAdapter implements DispatchAdapter {
   intents: MutationIntent[] = [];
   files: PrFileEntry[] = [];
   failCreateReview = false;
+  /** A posting guard's refusal tag for create_review, or null to let it by. */
+  refuseReview: string | null = null;
   private readonly gate: MutationGate;
 
-  constructor(dryrunDir: string) {
-    this.gate = new MutationGate(false, dryrunDir, async (intent) => {
+  constructor(dryrunDir: string, dryRun = false) {
+    this.gate = new MutationGate(dryRun, dryrunDir, async (intent) => {
       this.intents.push(intent);
       if (intent.kind === "create_review") {
         if (this.failCreateReview) throw new Error("500 boom");
@@ -44,6 +46,10 @@ class GatedAdapter implements DispatchAdapter {
         this.reviews.push({ pr: intent.pr as number, ...body });
       }
       return { ok: true };
+    });
+    this.gate.setGuard({
+      before: async (intent) =>
+        intent.kind === "create_review" && this.refuseReview ? { block: this.refuseReview } : {},
     });
   }
 
@@ -171,7 +177,7 @@ describe("migration collision pre-check", () => {
     expect(review.event).toBe("COMMENT");
     expect(review.commit_id).toBe("headsha");
     expect(review.body).toContain("backend/chat/migrations/0043_add_rate_limit.py");
-    expect(review.body).toContain('`[("chat", "0042_add_widget_flag")]`');
+    expect(review.body).toContain('point its `chat` entry at `("chat", "0042_add_widget_flag")`');
     // Never a blocker: no REQUEST_CHANGES, and the round still dispatched
     // normally with the PR's verdict untouched.
     expect(adapter.reviews.some((r) => r.event === "REQUEST_CHANGES")).toBe(false);
@@ -487,6 +493,63 @@ describe("migration collision pre-check", () => {
     // Detection still fired on the second round — only the duplicate post is
     // suppressed, never the check.
     expect(events("migration_collision_detected", 46)).toHaveLength(2);
+  });
+
+  // A guard refusal returns without throwing; it is not a delivered comment,
+  // so it must not consume the fingerprint the staleness dedupe keys on.
+  it("a guard-refused COMMENT is not ledgered as commented, and the next round posts it", async () => {
+    queue(60);
+    adapter.files = [file("backend/chat/migrations/0042_x.py")];
+    adapter.refuseReview = "pr-unreadable";
+    const args = {
+      cfg,
+      store,
+      adapter,
+      hooks: hooks(orders),
+      prepareWorktree: tree,
+      listBaseMigrations: async () => BASE_MIGRATIONS,
+    };
+
+    await dispatchOnce(args);
+    expect(adapter.reviews).toHaveLength(0);
+    expect(events("migration_collision_comment", 60)).toHaveLength(0);
+    expect(events("migration_collision_comment_refused", 60)[0]).toMatchObject({
+      reason: "pr-unreadable",
+      fingerprint: expect.any(String),
+    });
+
+    adapter.refuseReview = null;
+    store.finishRound(store.roundsFor(60)[0]!.id, "REQUEST_CHANGES", null);
+    store.setPrState(60, "queued");
+    await dispatchOnce(args);
+    expect(adapter.reviews).toHaveLength(1);
+  });
+
+  // A dry-run record is the would-be comment, not a posted one: it dedupes
+  // dry-run re-rounds, but after the flip to live the same head still posts.
+  it("a dry-run comment record does not suppress the live post at the same head", async () => {
+    queue(61);
+    adapter.files = [file("backend/chat/migrations/0042_x.py")];
+    const dry = new GatedAdapter(mkdtempSync(join(tmpdir(), "qcr-precheck-")), true);
+    dry.files = adapter.files;
+    const base = {
+      store,
+      hooks: hooks(orders),
+      prepareWorktree: tree,
+      listBaseMigrations: async () => BASE_MIGRATIONS,
+    };
+
+    await dispatchOnce({ ...base, cfg: { ...cfg, dry_run: true }, adapter: dry });
+    expect(events("migration_collision_comment", 61)[0]).toMatchObject({ executed: false });
+    store.finishRound(store.roundsFor(61)[0]!.id, "REQUEST_CHANGES", null);
+    store.setPrState(61, "queued");
+    await dispatchOnce({ ...base, cfg: { ...cfg, dry_run: true }, adapter: dry });
+    expect(events("migration_collision_comment", 61)).toHaveLength(1); // dry-run re-round deduped
+
+    store.finishRound(store.roundsFor(61)[1]!.id, "REQUEST_CHANGES", null);
+    store.setPrState(61, "queued");
+    await dispatchOnce({ ...base, cfg: { ...cfg, dry_run: false }, adapter });
+    expect(adapter.reviews).toHaveLength(1);
   });
 
   it("logs a skip (never a silent pass) when there is no base reader", async () => {

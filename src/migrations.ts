@@ -272,7 +272,7 @@ export function renderMigrationCollisionComment(input: CollisionCommentInput): s
     if (c.kind === "renamed-dependency") {
       lines.push(
         `- \`${c.pr_path}\` — its \`dependencies\` reference \`"${c.stale_dependency ?? ""}"\`, which the renumber above moves to \`${c.dependency_name}\`.`,
-        `  - update its \`dependencies\` to \`[${c.dependency}]\``,
+        `  - in its \`dependencies\`, replace \`("${c.app_label}", "${c.stale_dependency ?? ""}")\` with \`${c.dependency}\` — keep every other entry`,
       );
       if (c.renumber)
         lines.push(
@@ -283,7 +283,7 @@ export function renderMigrationCollisionComment(input: CollisionCommentInput): s
     lines.push(
       `- \`${c.pr_path}\` collides with \`${c.base_path}\` on ${branch}.`,
       `  - rename it to \`${c.target_path}\` (number **${String(c.target_number).padStart(4, "0")}**)`,
-      `  - set its \`dependencies\` to \`[${c.dependency}]\``,
+      `  - in its \`dependencies\`, point its \`${c.app_label}\` entry at \`${c.dependency}\` — keep every other entry`,
     );
   }
   lines.push(

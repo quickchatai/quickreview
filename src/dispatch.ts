@@ -287,7 +287,7 @@ async function ecosystemPreCheck(
     {
       logEvent: (kind, pr, payload) => deps.store.logEvent(kind, pr, payload),
       migrationCollisionCommented: (pr, fingerprint) =>
-        deps.store.migrationCollisionCommented(pr, fingerprint),
+        deps.store.migrationCollisionCommented(pr, fingerprint, { live: !deps.cfg.dry_run }),
       createReview: async (pr, payload, options) => {
         // A throw after transport begins is ambiguous. Persist that BEFORE the
         // gated call, then narrow it only from the gate's returned fact. The
@@ -1369,6 +1369,15 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // read. It is bounded and total: the worst case is this round's prompt
       // arriving memory-less a couple of seconds later.
       store.stampPostingKey(roundId, order.posting_key!);
+      // The order's plan can outgrow the one startRound recorded — the repo's
+      // style guide is read off the prepared tree and adds pass-style — and the
+      // verdict audit reads the round row, so the row takes the order's plan.
+      if (styleGuide.length > 0)
+        store.setRoundPlan(roundId, order.lenses, {
+          validate_tier: order.pass_plan.find((p) => p.lens === VALIDATE_PASS)?.tier ?? null,
+          pass_plan: order.pass_plan,
+          addable_passes: order.addable_lenses.map((lens) => ({ lens, tier: addTierOf(cfg, lens) })),
+        });
       const memory = await seedRoundMemory(deps, order, files);
 
       // The round is provisional until the worktree/session/prompt handoff

@@ -341,12 +341,24 @@ async function djangoPreCheck(
       },
       { purpose: "migration_precheck" },
     );
-    io.logEvent("migration_collision_comment", round.pr, {
-      head_sha: round.head_sha,
-      fingerprint,
-      executed: result.executed,
-      dry_run_file: result.dryRunFile ?? null,
-    });
+    // Only a delivered (or, in dry-run, recorded) comment marks the
+    // fingerprint. A guard refusal returns without throwing and delivered
+    // nothing, so it must not consume the dedupe: the next round retries.
+    if (!result.executed && !result.dryRunFile) {
+      log(`dispatch: #${round.pr} migration collision comment refused (${result.blocked ?? "not executed"})`);
+      io.logEvent("migration_collision_comment_refused", round.pr, {
+        head_sha: round.head_sha,
+        fingerprint,
+        reason: result.blocked ?? "not_executed",
+      });
+    } else {
+      io.logEvent("migration_collision_comment", round.pr, {
+        head_sha: round.head_sha,
+        fingerprint,
+        executed: result.executed,
+        dry_run_file: result.dryRunFile ?? null,
+      });
+    }
   } catch (err) {
     // The COMMENT failed, but the collisions are real, already detected and
     // already logged — throwing them away here would leave the round's gate

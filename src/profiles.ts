@@ -235,6 +235,12 @@ export function resolveProfileChain(
   return profileChain(root, profile, lookup).map((l) => ({ name: l.name, dir: l.dir }));
 }
 
+/** The scan build's agent (src/setup/scan.ts `SCAN_PASS`) — not in
+ * ALL_PASSES, yet a pass a house rule may bind. Spelled here, not imported:
+ * no daemon module may reach src/setup/ at runtime (tests/single-shepherd S2);
+ * tests/profiles.test.ts pins the two spellings together. */
+const SCAN_PASS = "pass-scan";
+
 /** Ids a pack may not claim: every compiled-in entry, plus the dynamic
  * same-day feedback addendum wire.ts composes last (src/feedback.ts). */
 export function reservedAddendumIds(): Set<string> {
@@ -252,6 +258,14 @@ function parseScope(raw: string, file: string): PassAddendumScope {
     if (!PASS_NAME_RE.test(n)) {
       throw new Error(
         `profile addendum ${file}: unknown scope "${raw}" — use "all", "lenses", or a comma-separated list of pass names (pass-…)`,
+      );
+    }
+    // A well-shaped name no pass carries matches nothing at composition
+    // (addendumApplies is an exact match), so the rule would bind silently
+    // nowhere — refuse it, as [lenses] tables are refused.
+    if (!ALL_PASSES.includes(n) && n !== SCAN_PASS) {
+      throw new Error(
+        `profile addendum ${file}: unknown pass "${n}" in scope "${raw}" — no pass carries that name`,
       );
     }
   }
