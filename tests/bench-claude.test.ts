@@ -960,7 +960,8 @@ function repoFiles(): string[] {
   };
   for (const d of ["src", "scripts", "tests", "bench", "extensions", "docker", "deploy", "bin"])
     if (existsSync(join(ROOT, d))) walk(join(ROOT, d));
-  for (const f of ["package.json", "config.toml"]) out.push(join(ROOT, f));
+  // config.example.toml is the tracked config (untracked the live config.toml).
+  for (const f of ["package.json", "config.example.toml"]) out.push(join(ROOT, f));
   return out.map((p) => relative(ROOT, p));
 }
 

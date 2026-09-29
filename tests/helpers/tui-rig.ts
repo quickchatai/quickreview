@@ -7,6 +7,7 @@ import { EventEmitter } from "node:events";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { onTestFinished } from "vitest";
 import { TUI_DEFAULTS } from "../../src/config.js";
 import { parseLegacyMemory } from "../../src/memory/legacy-file.js";
 import type { MemoryEntry, MemoryOp, MemoryStore } from "../../src/memory/store.js";
@@ -321,10 +322,18 @@ export function writeScanHome(
   }
 }
 
-const scanHomes: string[] = [];
-process.on("exit", () => {
-  for (const h of scanHomes) rmSync(h, { recursive: true, force: true });
-});
+/** Removes a scan rig's temp home when the test that made it finishes. A
+ * `process.on("exit")` sweep leaked ~2,000 dirs: vitest worker threads never
+ * fire it. Outside a running test there is no hook, so the rig refuses rather
+ * than leak. Pinned by tests/tui-scantab.test.ts "scratch hygiene". */
+function removeWhenTestFinishes(home: string): void {
+  try {
+    onTestFinished(() => rmSync(home, { recursive: true, force: true }));
+  } catch (e) {
+    rmSync(home, { recursive: true, force: true });
+    throw new Error(`installScanRig must be called inside a test: ${String(e)}`);
+  }
+}
 
 export interface ScanRig {
   home: string;
@@ -337,7 +346,7 @@ export interface ScanRig {
  * records; every ask is recorded instead of reaching a companion. */
 export function installScanRig(app: App, opts: Parameters<typeof writeScanHome>[1] & { companionUp?: boolean | undefined } = {}): ScanRig {
   const home = mkdtempSync(join(tmpdir(), "qcr-scantab-"));
-  scanHomes.push(home);
+  removeWhenTestFinishes(home);
   writeScanHome(home, opts);
   const store = new ScanReportStore(home);
   const asks: ScanRig["asks"] = [];

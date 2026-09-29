@@ -9,9 +9,9 @@
 // --no-extensions`, read-only tools, no memory, no fan-out (root rule 9 is
 // unchanged: no new session kind, nothing on the VM).
 import { spawn as nodeSpawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { CaseOutcome, CaseRunner, CaseSpec } from "./engine.js";
 
 /** An agent file of the companion set: `name`/`tools`/`model` frontmatter
@@ -58,13 +58,57 @@ export type SpawnFn = (
   kill(signal?: NodeJS.Signals): boolean;
 };
 
-/** How to start pi from inside pi: the running script under the running
- * runtime when there is one (the native subagent extension's rule), else
- * `pi` on the PATH. */
-export function piInvocation(): { command: string; prefix: string[] } {
-  const script = process.argv[1];
-  if (script && !script.startsWith("/$bunfs/") && existsSync(script)) {
-    return { command: process.execPath, prefix: [script] };
+/** The package names pi's CLI ships under. VERIFY-ON-PIN (0.87.1): the
+ * pinned package is `@earendil-works/pi-coding-agent` (package.json `pi`
+ * block); the legacy `@mariozechner` scope is what older installs carry. */
+export const PI_PACKAGES: readonly string[] = ["@earendil-works/pi-coding-agent", "@mariozechner/pi-coding-agent"];
+
+/** True only when `script` is a `bin` entry of the pi package: the nearest
+ * package.json above its real path names pi, and one of its `bin` targets
+ * resolves to that same real path. Anything unreadable is "not pi". */
+export function isPiCliEntry(script: string): boolean {
+  let real: string;
+  try {
+    real = realpathSync(script);
+  } catch {
+    return false;
+  }
+  for (let d = dirname(real); ; d = dirname(d)) {
+    const pkgFile = join(d, "package.json");
+    if (existsSync(pkgFile)) {
+      try {
+        const pkg = JSON.parse(readFileSync(pkgFile, "utf8")) as { name?: unknown; bin?: unknown };
+        if (typeof pkg.name !== "string" || !PI_PACKAGES.includes(pkg.name)) return false;
+        const bins = typeof pkg.bin === "string" ? [pkg.bin] : pkg.bin && typeof pkg.bin === "object" ? Object.values(pkg.bin) : [];
+        return bins.some((b) => {
+          if (typeof b !== "string") return false;
+          try {
+            return realpathSync(resolve(d, b)) === real;
+          } catch {
+            return false;
+          }
+        });
+      } catch {
+        return false;
+      }
+    }
+    if (dirname(d) === d) return false;
+  }
+}
+
+/** How to start pi. When the running process IS pi (argv[1] is verifiably
+ * pi's CLI entry — the native subagent extension's rule) it reuses that
+ * script under the running runtime; any other host — a node driver, a test,
+ * the TUI — gets `pi` on the PATH. The old rule reused argv[1] whenever the
+ * file merely existed, so every non-pi host spawned ITSELF for every scan
+ * case. A bun-compiled pi (`/$bunfs/…`) also falls back to the PATH.
+ * VERIFY-ON-PIN (0.87.1): pi's entry is a `bin` of its package, run by node. */
+export function piInvocation(
+  host: { argv1: string | undefined; execPath: string } = { argv1: process.argv[1], execPath: process.execPath },
+): { command: string; prefix: string[] } {
+  const script = host.argv1;
+  if (script && !script.startsWith("/$bunfs/") && isPiCliEntry(script)) {
+    return { command: host.execPath, prefix: [script] };
   }
   return { command: "pi", prefix: [] };
 }

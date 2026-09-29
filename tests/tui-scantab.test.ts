@@ -4,7 +4,7 @@
 // home holding the records the companion writes. What is asserted is what the
 // operator SEES and what the tab WRITES — the request files the companion's
 // scan belt answers, and the asks that reach its column.
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { TUI_DEFAULTS } from "../src/config.js";
@@ -351,5 +351,19 @@ describe("units", () => {
     expect(rows.filter((r) => r.hotspot).map((r) => r.unit)).toEqual(["billing"]);
     const calm = [scanFinding({ fingerprint: "c", severity: "nit" })] as ScanFinding[];
     expect(unitRows(calm, {}, null).some((r) => r.hotspot)).toBe(false);
+  });
+});
+
+describe("scratch hygiene — a scan rig's temp home never outlives its test", () => {
+  // The live smoke found ~2,000 /tmp/qcr-scantab-* dirs: the rig only
+  // cleaned up on process exit, which a vitest worker thread never reaches.
+  let home = "";
+  it("a rig installed in one test…", () => {
+    home = rig().s.home;
+    expect(existsSync(home)).toBe(true);
+  });
+  it("…is gone by the next", () => {
+    expect(home).not.toBe("");
+    expect(existsSync(home)).toBe(false);
   });
 });
