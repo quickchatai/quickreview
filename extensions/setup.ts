@@ -4,7 +4,7 @@
 // spawn by the companion's piArgv (src/tui/companion.ts), never registered
 // globally, never on the VM (rule 9 is unchanged: no new session kind).
 //
-// This slice's tools:
+// Tools:
 //   - setup_repo_facts: the deterministic facts (stack, frameworks, CI,
 //     linters, guides, agent files) and the stack-aware unit candidates;
 //   - setup_unit_cut: the saved cut and the draft, re-checked against the
@@ -22,6 +22,8 @@
 //     quote; it runs as background `pass-survey` subagents so the companion
 //     keeps talking, and writes unpinned `#survey` notes into the REVIEWER's
 //     memory, superseding the previous survey's.
+// and the scan's (extensions/setup-scan.ts): scan_preview / _start /
+// _status / _stop and scan_findings.
 //
 // Convention (onboarding.ts, tui-view.ts): degrade, never wedge — a pi
 // without registerTool registers nothing and says so, and every tool answers
@@ -50,6 +52,7 @@ import type { SurveyPreview, SurveyStatus } from "../src/setup/surveyrun.js";
 import { resolveMaxConcurrency } from "./subagents.js";
 import type { RepoFacts } from "../src/setup/facts.js";
 import { ADJUST_OPS } from "../src/setup/unitcut.js";
+import { buildScan, scanToolDefinitions } from "./setup-scan.js";
 
 const NO_PARAMS = { type: "object", properties: {} } as const;
 
@@ -536,6 +539,9 @@ const activate = (pi: Pi): void => {
     return;
   }
   for (const def of toolDefinitions(engine)) pi.registerTool(def);
+  // the scan tools, over the same engine's saved unit cut.
+  const { scan, findings } = buildScan(engine, process.env.QCR_REVIEWED_REPO?.trim() || DEFAULT_REVIEWED_REPO);
+  for (const def of scanToolDefinitions(scan, findings)) pi.registerTool(def);
 };
 
 export default activate;

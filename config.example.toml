@@ -604,6 +604,25 @@ session_drain_budget_min_per_day = 90      # total session-drain minutes per day
 session_pause_max_min = 240                # longest single session pause of one PR
 session_pause_budget_min_per_day = 480     # total session-pause minutes per PR per day (>= the cap)
 
+# The companion's whole-repo scan — read only inside the companion,
+# never on the VM. Stage 1 runs `pass-scan` over every unit of the saved unit
+# cut (tests, migrations, lockfiles and prose never). The FIRST scan at these
+# settings is a calibration run over a few units; every later cost preview is
+# priced from the coverage ledger's actual costs, and a run stops hard at the
+# estimate the operator approved. A repo profile's `[scan]` table overrides
+# effort / tier / validator / exclude (the profile wins); the rest is the
+# install's. All optional — these are the defaults.
+[scan]
+effort = "low"                 # stage 1's reasoning level: low | medium | high (= [models] effort_max)
+tier = "sol-med"               # whose model pass-scan runs on ([models.tiers])
+validator = false              # validate each case's candidates; a doubt is kept, marked "may not be valid"
+exclude = []                   # repo-relative globs never scanned, e.g. ["generated/", "*.pb.go"]
+calibration_units = 3          # units the first-scan calibration run reads
+calibration_max_usd = 3.0      # the calibration run's hard stop
+concurrency = 8                # stage-1 cases in flight at once
+case_max_files = 30            # one case reads at most this much; a bigger unit splits, name kept
+case_max_lines = 3000
+
 [slack]
 # The Slack concierge — ONE channel, one thread per PR. Tokens are
 # NEVER here: bot_token_file / app_token_file name flat files under

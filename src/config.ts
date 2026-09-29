@@ -10,8 +10,9 @@ import {
   missingConfigMessage,
   strandedCheckoutConfig,
 } from "./install.js";
+import { globProblem } from "./glob.js";
 import type { LensTuningMap } from "./lenstuning.js";
-import type { PassTier } from "./types.js";
+import { PASS_TIER_ORDER, type PassTier } from "./types.js";
 
 export interface GithubConfig {
   repo: string;
@@ -1305,6 +1306,121 @@ export interface Config {
   levers: LeversConfig;
   slack: SlackConfig;
   owner: OwnerConfig;
+  /**: the whole-repo scan's defaults. The repo profile's `[scan]`
+   * table overrides the keys in `SCAN_PROFILE_KEYS` (`applyProfileScan`,
+   * src/profiles.ts) — the profile wins, as for per-lens tuning. */
+  scan: ScanConfig;
+}
+
+/**
+ * `[scan]`: the companion's whole-repo scan. Read only by the scan
+ * engine inside the companion (src/setup/) — nothing on the VM reads it.
+ */
+export interface ScanConfig {
+  /** Stage 1's reasoning level for `pass-scan` (`high` = the model's
+   * ceiling, `[models] effort_max`). */
+  effort: Exclude<ReviewEffort, "">;
+  /** Stage 1's tier — whose model `pass-scan` runs on, at `effort`. */
+  tier: PassTier;
+  /** Run `pass-validate` over each stage-1 case's candidates. Off by
+   * default for scans (the spec's cost choice); a doubt it raises is kept
+   * and marked "may not be valid", never dropped. */
+  validator: boolean;
+  /** Repo-relative globs never scanned (src/glob.ts), on top of tests,
+   * migrations and what no pass reads (lockfiles, binaries, prose). */
+  exclude: string[];
+  /** Units the first-scan calibration run reads (spread across the size
+   * range), before any stage-1 estimate is offered. */
+  calibration_units: number;
+  /** The calibration run's hard stop — it has no estimate to stop at. */
+  calibration_max_usd: number;
+  /** Stage-1 cases in flight at once (background subagents). */
+  concurrency: number;
+  /** One case reads at most this much; a bigger unit splits, name kept. */
+  case_max_files: number;
+  case_max_lines: number;
+}
+
+export const SCAN_DEFAULTS: ScanConfig = {
+  effort: "low",
+  tier: "sol-med",
+  validator: false,
+  exclude: [],
+  calibration_units: 3,
+  calibration_max_usd: 3,
+  concurrency: 8,
+  case_max_files: 30,
+  case_max_lines: 3000,
+};
+
+/** The `[scan]` keys a repo profile may override — what is about THIS repo
+ * (how hard to look, whether to validate, what is not worth reading), never
+ * the install's operating limits. */
+export const SCAN_PROFILE_KEYS = ["effort", "tier", "validator", "exclude"] as const;
+
+/**
+ * Validate one `[scan]` table — config.toml's (every key) or a profile's
+ * (`SCAN_PROFILE_KEYS` only). Returns just the keys it set; an unknown key or
+ * a bad value throws naming `where`.
+ */
+export function parseScanTable(
+  where: string,
+  raw: unknown,
+  allowed: readonly string[] = Object.keys(SCAN_DEFAULTS),
+): Partial<ScanConfig> {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new Error(`${where} [scan] must be a table`);
+  }
+  const out: Partial<ScanConfig> = {};
+  const fail = (key: string, what: string, v: unknown): never => {
+    throw new Error(`${where} [scan] ${key} ${what} (got ${JSON.stringify(v)})`);
+  };
+  for (const [key, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!allowed.includes(key)) {
+      throw new Error(`${where} [scan] unknown key "${key}" — allowed here: ${allowed.join(", ")}`);
+    }
+    switch (key) {
+      case "effort": {
+        const e = String(v ?? "").trim().toLowerCase();
+        if (e === "low" || e === "medium" || e === "high") out.effort = e;
+        else fail(key, 'must be "low", "medium" or "high"', v);
+        break;
+      }
+      case "tier":
+        if (typeof v === "string" && (PASS_TIER_ORDER as readonly string[]).includes(v)) out.tier = v as PassTier;
+        else fail(key, `must be one of ${PASS_TIER_ORDER.join(", ")}`, v);
+        break;
+      case "validator":
+        if (typeof v === "boolean") out.validator = v;
+        else fail(key, "must be true or false", v);
+        break;
+      case "exclude": {
+        if (!Array.isArray(v)) fail(key, "must be an array of globs", v);
+        for (const g of v as unknown[]) {
+          const problem = globProblem(g);
+          if (problem !== null) fail(key, `entry ${JSON.stringify(g)} ${problem}`, v);
+        }
+        out.exclude = [...(v as string[])];
+        break;
+      }
+      case "calibration_max_usd":
+        if (typeof v === "number" && Number.isFinite(v) && v > 0) out.calibration_max_usd = v;
+        else fail(key, "must be a positive number of dollars", v);
+        break;
+      default: {
+        // The integer knobs.
+        if (typeof v === "number" && Number.isInteger(v) && v >= 1) {
+          (out as Record<string, unknown>)[key] = v;
+        } else fail(key, "must be a positive integer", v);
+      }
+    }
+  }
+  return out;
+}
+
+/** `[scan]` from config.toml: the defaults, overlaid by what it sets. */
+export function parseScan(raw: unknown): ScanConfig {
+  return { ...SCAN_DEFAULTS, ...parseScanTable("config.toml", raw ?? {}) };
 }
 
 /**
@@ -1703,6 +1819,7 @@ export function parseConfig(toml: string): Config {
     levers: parseLevers((raw.levers ?? {}) as Record<string, any>),
     slack: parseSlack((raw.slack ?? {}) as Record<string, any>, ops.timezone),
     owner: { ...OWNER_DEFAULTS, ...((raw.owner ?? {}) as Partial<OwnerConfig>) },
+    scan: parseScan(raw.scan),
   };
   if (cfg.review.nits !== "strict" && cfg.review.nits !== "open") {
     throw new Error(

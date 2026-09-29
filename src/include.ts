@@ -329,11 +329,27 @@ export interface PassAddendum {
    * carries no framework rule and no claim about a pre-check that never runs.
    */
   ecosystem?: EcosystemName;
+  /**
+   * Composed ONLY in a build of this mode. Absent ⇒ every build.
+   * `"scan"` entries redefine what a PR build takes for granted (a diff, a
+   * changed-line anchor), so they reach the companion's scan agent build and
+   * never a PR round's — the daemon's build is a `"pr"` build, always.
+   */
+  mode?: BuildMode;
 }
+
+/** What an agent build is for: a PR round (the daemon, the bench,
+ * the replay — the default) or the companion's whole-repo scan. */
+export type BuildMode = "pr" | "scan";
 
 /** Does `addendum` compose into a build for `ecosystem`? */
 export function addendumInEcosystem(addendum: PassAddendum, ecosystem: EcosystemName): boolean {
   return addendum.ecosystem === undefined || addendum.ecosystem === ecosystem;
+}
+
+/** Does `addendum` compose into a build of `mode`? */
+export function addendumInMode(addendum: PassAddendum, mode: BuildMode): boolean {
+  return addendum.mode === undefined || addendum.mode === mode;
 }
 
 /** Does `scope` bind `pass`? */
@@ -781,6 +797,19 @@ const INTENT_ANSWER_THE_AUTHOR_ADDENDUM =
   '- **A behavioural claim is checked at every caller.** For each concrete claim in the body ("avoids misclassifying X", "perf only", "no behaviour change"), read the callers of the changed function and compare old and new behaviour on each. A claim that holds at the call site the diff edits but not at another caller still reaching the old path is a finding.\n' +
   "- **Every finding quotes the body sentence it answers or contradicts.** A finding that cites no sentence of the title or body is not an intent finding — drop it.\n";
 
+// the scan-mode anchor rule. The frozen common contract and
+// validator (rule 6) anchor every finding "inside a changed-line run of the
+// diff" — a scan has no diff, so without this every scan finding would be
+// unanchorable. `mode: "scan"` keeps it out of every PR build; it rides the
+// registry like every other pass rule, seeds untouched.
+export const SCAN_MODE_ANCHOR_ADDENDUM =
+  "\n## Scan mode — there is no pull request (sandbox rule; supersedes every diff rule above)\n" +
+  "This build reviews a whole-repository SCAN, not a pull request. There is no diff, no PR number, title or body, no author, no SETTLED list and no earlier round. Wherever these instructions speak of the PR, its head, its diff, a changed-line run, the delta or the merge base, read instead: the files of your scan case as they are at the scan sha, under the tree root your task string names. Rules that exist only because there is a diff — the nit scope, in-flight PRs, the delta a finding must assert against a PR — do not apply; a finding still states what is wrong with the code as it is, and a fix still changes it.\n\n" +
+  "**Anchoring.** A scan finding is anchored at the lines it is about, in one file: `path` is the file's repo-relative path (as your task string lists it — never the tree root's absolute path), `line` is a line number of that file at the scan sha, or a range `start-end` covering the code the finding is about, and `side` is always `RIGHT`. Any line of the file may be an anchor; there is no changed-line run to land in. A problem you cannot tie to lines of one file is not a scan finding — leave it out.\n\n" +
+  "**Kind.** Every scan finding also carries `kind:` — one lowercase word naming its class (`bug`, `security`, `data`, `concurrency`, `contract`, `design`, `performance`, `error-handling`, `style`, …). The kind is part of the finding's identity across re-scans, so name one class of problem the same way every time.\n\n" +
+  "You post nothing, and you read nothing outside the tree root. Your findings block is headed `FINDINGS <lens> SCAN <case id> @<scan sha>`.\n\n" +
+  "Validator: verify an anchor by opening the file under the tree root, never against a diff — a finding whose lines do not show the code it describes is `bad-anchor`.\n";
+
 /**
  * The composed addendum set, in composition order.
  *
@@ -925,6 +954,9 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
     scope: [VALIDATE_PASS],
     text: CONCRETE_INJECTION_EVIDENCE_VALIDATE_ADDENDUM,
   },
+  // last, so it is the final word on anchoring in a scan build — and
+  // composed in no other build.
+  { id: "scan-mode-anchor", scope: "all", mode: "scan", text: SCAN_MODE_ANCHOR_ADDENDUM },
 ];
 
 /** The addenda binding `pass`, in composition order. `ecosystem` defaults to
@@ -933,9 +965,11 @@ export function addendaForPass(
   pass: string,
   registry: readonly PassAddendum[] = PASS_ADDENDA,
   ecosystem: EcosystemName = "django",
+  mode: BuildMode = "pr",
 ): PassAddendum[] {
   return registry.filter(
-    (a) => addendumApplies(a.scope, pass) && addendumInEcosystem(a, ecosystem),
+    (a) =>
+      addendumApplies(a.scope, pass) && addendumInEcosystem(a, ecosystem) && addendumInMode(a, mode),
   );
 }
 
@@ -944,8 +978,9 @@ export function composeAddendum(
   pass: string,
   registry: readonly PassAddendum[] = PASS_ADDENDA,
   ecosystem: EcosystemName = "django",
+  mode: BuildMode = "pr",
 ): string {
-  return addendaForPass(pass, registry, ecosystem)
+  return addendaForPass(pass, registry, ecosystem, mode)
     .map((a) => a.text)
     .join("");
 }
@@ -973,7 +1008,30 @@ export interface BuildAgentsOptions {
    * (threaded from wire.ts). Defaults to the neutral role wording so a
    * config-less build never ships a literal `{{…}}`. */
   vars?: Readonly<Record<string, string>>;
+  /** What the build is for. `"pr"` (the default) is every PR
+   * round's build. `"scan"` is the companion's: it composes the `mode: "scan"`
+   * addenda (the scan-mode anchor rule), builds `extraSrcDirs` beside
+   * `srcDir`, and gives every variant exactly `SCAN_LEAF_TOOLS` — a scan leaf
+   * runs with no extensions, so no bash guard stands between it and a shell,
+   * and none of the memory tools exists in it. */
+  mode?: BuildMode;
+  /** More source directories of `pass-*.md` agents, built exactly like
+   * `srcDir`'s — the scan build's `agents/scan/` (`pass-scan`), which no PR
+   * build ever reads. A name in two directories is refused. */
+  extraSrcDirs?: string[];
   readFile?: (path: string) => string;
+}
+
+/** The tools a SCAN leaf holds: read-only, pi's own names, the
+ * same set the companion's other read-only leaves carry. No `bash` — the
+ * bash guard is an extension and a scan leaf loads none — and no memory. */
+export const SCAN_LEAF_TOOLS: readonly string[] = ["read", "grep", "find", "ls"];
+
+/** Put exactly `SCAN_LEAF_TOOLS` on a variant's `tools:` line, adding the
+ * line when absent (a scan leaf's allowlist is never "whatever the harness
+ * gives you"). */
+export function applyScanLeafTools(frontmatter: string): string {
+  return applyField(frontmatter, "tools", SCAN_LEAF_TOOLS.join(", "));
 }
 
 export interface BuiltAgent {
@@ -1027,13 +1085,26 @@ export function buildAgents(
   const addenda = opts.addenda ?? PASS_ADDENDA;
   const ecosystem = opts.ecosystem ?? "django";
   const vars = opts.vars ?? NEUTRAL_IDENTITY_VARS;
-  const sources = readdirSync(srcDir)
-    .filter((f) => f.startsWith("pass-") && f.endsWith(".md"))
-    .sort();
+  const mode = opts.mode ?? "pr";
+  const passFiles = (dir: string): string[] =>
+    readdirSync(dir)
+      .filter((f) => f.startsWith("pass-") && f.endsWith(".md"))
+      .sort()
+      .map((f) => join(dir, f));
+  const sources = passFiles(srcDir);
+  for (const dir of opts.extraSrcDirs ?? []) {
+    for (const src of passFiles(dir)) {
+      const name = src.slice(src.lastIndexOf("/") + 1);
+      if (sources.some((s) => s.endsWith(`/${name}`))) {
+        throw new Error(`buildAgents: ${name} is in more than one source directory (${dir})`);
+      }
+      sources.push(src);
+    }
+  }
   mkdirSync(outDir, { recursive: true });
   const built: BuiltAgent[] = [];
-  for (const file of sources) {
-    const src = join(srcDir, file);
+  for (const src of sources) {
+    const file = src.slice(src.lastIndexOf("/") + 1);
     const doc = splitFrontmatter(read(src));
     const pass = frontmatterName(doc.frontmatter) ?? file.replace(/\.md$/, "");
     // Variables expand AFTER includes (so pass-common.md's variables resolve
@@ -1042,7 +1113,7 @@ export function buildAgents(
     // so a `{{…}}` inside one must stay data, never a build failure.
     const body =
       expandVariables(expandIncludes(doc.body, { root, readFile: opts.readFile }), vars) +
-      composeAddendum(pass, addenda, ecosystem);
+      composeAddendum(pass, addenda, ecosystem, mode);
     for (const tier of tiersForPass(pass, riskPasses, validateTier)) {
       const name = `${pass}--${tier}`;
       const spec = opts.models?.[name] ?? tiers[tier];
@@ -1052,7 +1123,8 @@ export function buildAgents(
       // removed entirely, and a removed line stays removed), then grant the two
       // read-only memory tools to what remains.
       frontmatter = stripAgentSpawnTools(frontmatter);
-      frontmatter = applyMemoryTools(frontmatter);
+      frontmatter =
+        mode === "scan" ? applyScanLeafTools(frontmatter) : applyMemoryTools(frontmatter);
       // the FULL spec ("provider/model:thinking") goes into `model:`.
       // The native subagent extension reads only the `model` frontmatter field
       // and passes it verbatim as `--model`, and pi's CLI accepts the

@@ -149,7 +149,25 @@ describe("the tool belt", () => {
       expect(err).toHaveBeenCalledWith(expect.stringMatching(/registerTool unavailable/));
       const registered: string[] = [];
       activate({ on: () => {}, sendUserMessage: () => {}, registerTool: (d) => registered.push(d.name) });
-      expect(registered).toHaveLength(11);
+      expect(registered).toEqual([
+        "setup_repo_facts",
+        "setup_unit_cut",
+        "setup_unit_cut_propose",
+        "setup_unit_cut_adjust",
+        "setup_unit_cut_save",
+        "setup_review_history",
+        "setup_review_history_themes",
+        "setup_survey_preview",
+        "setup_survey_start",
+        "setup_survey_status",
+        "setup_survey_stop",
+        // the scan half of the belt.
+        "scan_preview",
+        "scan_start",
+        "scan_status",
+        "scan_stop",
+        "scan_findings",
+      ]);
     } finally {
       err.mockRestore();
     }

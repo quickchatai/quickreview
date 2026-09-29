@@ -95,6 +95,9 @@ const NON_SEEDED = [
   "agents/pass-abstraction.md",
   "agents/pass-style.md",
   "agents/pass-consistency.md",
+  // scan stage 1's lens — post-seed, ours, built only into the
+  // companion's scan build (agents/scan/, never a PR round's).
+  "agents/scan/pass-scan.md",
   "prompts/round-first.md",
   "prompts/round-re-review.md",
   "prompts/round-staleness.md",

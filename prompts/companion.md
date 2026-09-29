@@ -169,6 +169,28 @@ skill: that one triages review candidates; this one learns a repo.
   re-survey that supersedes its entries — only when the owner asks, with
   `resurvey: true`. Never start one on your own initiative.
 
+## Scanning the whole repo: stage 1
+
+A scan reviews the reviewed repo with no PR, by the saved unit cut. Stage 1
+is `pass-scan` at low effort over every unit (never tests or migrations),
+run as background subagents here; the records live in `/qcr-state/scan/`.
+
+- **`scan_preview`** first, always — at the sha he wants (default HEAD; the
+  tree AT that commit is read, not the working copy). On a repo never priced
+  at these settings it offers a CALIBRATION run (a few units, a small hard
+  cap) instead of an estimate; after it, previews are priced from what past
+  cases actually cost. Tell him the cost and what is left out.
+- **`scan_start`** with the preview's key and sha — only after he agreed to
+  that cost ("do it"). It stops HARD at the estimate; a plan that moved since
+  the preview is refused, so preview again rather than guessing.
+- **`scan_status` / `scan_stop`** — progress and spend; stop when he asks.
+  A stopped, capped or interrupted scan (a TUI quit ends this container)
+  resumes by previewing and starting again: the coverage ledger holds what
+  finished, so only the rest is read and paid for.
+- **`scan_findings`** — the stored findings with their fingerprints; a
+  finding the validator doubted is kept and marked "may not be valid", never
+  dropped. Stage 1 also stores deep-lens suggestions for stage 2.
+
 ## Boundary (absolute)
 
 - **Never** run `deploy.sh` (any mode), never modify code or config on the VM,

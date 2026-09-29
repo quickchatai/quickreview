@@ -16,6 +16,7 @@ import {
   VALIDATE_PASS,
   addendaForPass,
   addendumApplies,
+  addendumInMode,
   composeAddendum,
   LEAF_MEMORY_TOOLS,
   applyMemoryTools,
@@ -591,7 +592,8 @@ describe("addendum registry", () => {
   it("composes in registry order, deterministically", () => {
     const ids = addendaForPass("pass-baseline").map((a) => a.id);
     expect(ids).toEqual(
-      PASS_ADDENDA.filter((a) => addendumApplies(a.scope, "pass-baseline")).map((a) => a.id),
+      // a `mode: "scan"` entry composes only in the scan build.
+      PASS_ADDENDA.filter((a) => addendumApplies(a.scope, "pass-baseline") && addendumInMode(a, "pr")).map((a) => a.id),
     );
     expect(composeAddendum("pass-baseline")).toBe(
       addendaForPass("pass-baseline")
@@ -1139,7 +1141,12 @@ describe("the built pass contract (rules)", () => {
   });
 
   it("delivers all of it without touching a single seed", () => {
-    for (const f of readdirSync(join(sandbox, "agents"))) {
+    const agentFiles = [
+      ...readdirSync(join(sandbox, "agents")).filter((f) => f.endsWith(".md")),
+      // the scan-only lens sits one level down.
+      ...readdirSync(join(sandbox, "agents", "scan")).map((f) => join("scan", f)),
+    ];
+    for (const f of agentFiles) {
       const seed = readFileSync(join(sandbox, "agents", f), "utf8");
       expect(seed).not.toContain("(sandbox rule)");
       expect(seed).not.toContain("reachability: routine");
@@ -1789,6 +1796,9 @@ describe.skipIf(!HAS_QC_PACK)(
         "unreasoned-output-validate",
         "concrete-injection-evidence",
         "concrete-injection-evidence-validate",
+        // composed only in the companion's scan build (`mode: "scan"`),
+        // so a PR build's bytes are unchanged by it.
+        "scan-mode-anchor",
       ]);
       // The quickchat pack composes AFTER every generic entry, in filename
       // order — which the numeric prefixes pin to the old declaration order.

@@ -52,13 +52,16 @@
 //   * heuristics — unioned per lens, base predicates first;
 //   * scalars (`ecosystem`) — the nearest profile that sets one wins;
 //   * per-lens tuning (`[lenses.<pass>]`) — per lens, per key, the
-//     nearest profile that sets it wins.
+//     nearest profile that sets it wins;
+//   * the scan table (`[scan]`) — per key, the nearest profile that
+//     sets it wins (a list, `exclude`, is replaced whole, never appended).
 // The shipped `default` profile encodes the shipped behaviour (an empty pack,
 // no heuristics, `ecosystem = "none"`) and is the base a generated profile
 // extends: an empty child of it reviews exactly as no profile does.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseToml } from "smol-toml";
+import { parseScanTable, SCAN_PROFILE_KEYS, type ScanConfig } from "./config.js";
 import type { EcosystemName } from "./ecosystem.js";
 import { ALL_PASSES } from "./dispatch.js";
 import { EMPTY_HEURISTICS, PROFILE_EXTENDABLE_LENSES } from "./heuristics.js";
@@ -123,6 +126,8 @@ interface ProfileLayer {
   ecosystem?: unknown;
   /** The raw `[lenses]` table, when this profile has one. */
   lenses?: unknown;
+  /** The raw `[scan]` table, when this profile has one. */
+  scan?: unknown;
 }
 
 /** Read one profile's `profile.toml` — an absent file is an empty one. Owns
@@ -160,6 +165,7 @@ function readLayer(name: string, dir: string): ProfileLayer {
   }
   if ("ecosystem" in doc) layer.ecosystem = doc["ecosystem"];
   if ("lenses" in doc) layer.lenses = doc["lenses"];
+  if ("scan" in doc) layer.scan = doc["scan"];
   const addenda = doc["addenda"];
   if (addenda !== undefined) {
     if (typeof addenda !== "object" || addenda === null || Array.isArray(addenda)) {
@@ -437,6 +443,42 @@ export function loadProfileLensTuning(
     merged = mergeLensTuning(merged, parseLensTable(where, layer.lenses, ALL_PASSES, layer.dir));
   }
   return merged;
+}
+
+// ---- the scan table ------------------------------------------------
+
+/**
+ * The named profile's overrides of `config.toml [scan]` — `[scan]` in
+ * `profile.toml`, the whole `extends` chain merged (per key, the nearest
+ * profile that sets it wins). Only `SCAN_PROFILE_KEYS` may appear: how hard
+ * stage 1 looks at THIS repo (`effort`, `tier`), whether its candidates are
+ * validated (`validator`), and what is not worth reading (`exclude`). The
+ * install's operating limits (concurrency, case size, the calibration cap)
+ * stay config.toml's.
+ *
+ * `""`, a profile found nowhere and a chain with no `[scan]` all mean `{}`;
+ * anything malformed in any layer throws with the file named.
+ */
+export function loadProfileScan(
+  root: string,
+  profile: string,
+  lookup: ProfileLookup = {},
+): Partial<ScanConfig> {
+  if (profile === "") return {};
+  if (!locateProfile({ root, profile, ...lookup })) return {};
+  let merged: Partial<ScanConfig> = {};
+  for (const layer of profileChain(root, profile, lookup)) {
+    if (layer.scan === undefined) continue;
+    const where = `[review] profile "${layer.name}": ${layer.toml}`;
+    merged = { ...merged, ...parseScanTable(where, layer.scan, SCAN_PROFILE_KEYS) };
+  }
+  return merged;
+}
+
+/** The config with the profile's `[scan]` overrides applied — the profile
+ * wins over config.toml, as it does for per-lens tuning. */
+export function applyProfileScan<C extends { scan: ScanConfig }>(cfg: C, overrides: Partial<ScanConfig>): C {
+  return { ...cfg, scan: { ...cfg.scan, ...overrides } };
 }
 
 // ---- lens-selection heuristics -----------------------------------

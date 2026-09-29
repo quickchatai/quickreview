@@ -78,6 +78,17 @@ Stage 1 over only the files whose content changed since the last scan.
 **Coverage ledger**:
 What a scan has read — file, content hash and lens (with tier, sha, cost); the resume grain and the source of cost previews.
 
+**Calibration run**:
+The first stage-1 run at given settings: one case from each of a few units spread across the size range, under its own small hard cap, whose measured cost prices every later preview.
+_Avoid_: dry run, trial
+
+**Hard stop**:
+The cap a scan run never spends past — the estimate the operator approved (the calibration cap for a calibration run); reaching it aborts what is in flight, and the ledger holds only what finished.
+_Avoid_: budget (that is what the operator gives stage 2's proposal)
+
+**Deep-lens suggestion**:
+Stage 1's pointer for stage 2: a lens, the files it should read, and one line on why.
+
 **Scan finding**:
 A candidate defect from a scan, new, promoted, dismissed or fixed, and possibly marked "may not be valid".
 _Avoid_: issue, ticket (a promoted finding becomes one)
