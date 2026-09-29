@@ -186,7 +186,7 @@ describe("MANIFESTO.md is pinned by something", () => {
    */
   it("ALL_PASSES and agents/pass-*.md agree", () => {
     const passFiles = readdirSync(join(ROOT, "agents")).filter((f) => /^pass-.*\.md$/.test(f));
-    const allPasses = arrayMembers("src/dispatch.ts", "ALL_PASSES");
+    const allPasses = arrayMembers("src/passes.ts", "ALL_PASSES");
     expect(
       allPasses.length,
       "ALL_PASSES and agents/pass-*.md disagree — a lens with no agent file, or an agent file with no plan entry",

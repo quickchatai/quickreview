@@ -167,6 +167,17 @@ risk_passes = ["pass-security", "pass-prod-risk", "pass-data-safety"]
 validate_tier = "sol-high"
 # Diffs under this many changed lines (additions+deletions) start at terra-med.
 small_diff_lines = 150
+# [models.pass_tiers] — per-lens tier pins (2026-09-29; empty = today's
+# behaviour): pass name → tier name (a key of [models.tiers]). A pinned lens
+# runs at that tier on every PR whatever the diff size — the plan names it, it
+# is not raisable, and every built variant of it carries that tier's spec. The
+# validator never follows a pinned lens (it runs at validate_tier).
+# Not for pass-validate (use validate_tier) nor for a risk pass (always
+# sol-high). A profile min_tier still floors a pin. Unknown passes or tiers
+# are refused at load. e.g.
+#   [models.pass_tiers]
+#   "pass-sweep" = "sol-high"
+#   "pass-baseline" = "sol-high"
 
 [models.tiers]
 # PassTier → model spec; the whole spec (incl. the `:thinking` suffix) rides
@@ -499,6 +510,15 @@ preset = "default"
 # dropped, and review volume comes out of nits) or "open" (every true nit
 # posts; style still needs your written guide).
 # nits = "open"
+# Per-lens cost knobs — both off by default, and the defaults are the review
+# as shipped. skip_lenses lists passes never planned nor addable (known pass
+# names only; pass-validate is refused — switch the validator off in the
+# profile instead). validate_consequence_rule
+# adds the validator's consequence rules (intent/contract appeals post as a
+# [question], dead or latent code demotes to nit, a CI-enabled lint rule is a
+# build defect, merges need a shared consequence).
+# skip_lenses = ["pass-abstraction", "pass-duplication"]
+# validate_consequence_rule = true
 # repo profile — names a directory under profiles/ whose house-rule
 # addenda pack (profiles/<name>/addenda/*.md) composes onto the built pass
 # bodies after the built-in generic registry, and whose optional

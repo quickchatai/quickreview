@@ -39,6 +39,7 @@ import {
   loadConfig,
   parseConfig,
   parsePreset,
+  validateLensKnobs,
   type Config,
   type ReviewPreset,
 } from "../config.js";
@@ -48,7 +49,13 @@ import { findStyleGuide } from "../styleguide.js";
 import { ecosystemFor, type Ecosystem } from "../ecosystem.js";
 import type { PrFileEntry } from "../github.js";
 import { prepareDependencySources, renderDependencyNote } from "../depsources.js";
-import { buildAgents, configAddenda, identityVars, PASS_ADDENDA } from "../include.js";
+import {
+  buildAgents,
+  configAddenda,
+  identityVars,
+  passTierModels,
+  PASS_ADDENDA,
+} from "../include.js";
 import { MEMORY_LESS } from "../memory/context.js";
 import {
   applyProfileTuning,
@@ -190,11 +197,16 @@ export interface RunFingerprint {
     style_lens?: boolean;
     nits?: string;
     validate_demote?: boolean;
+    skip_lenses?: string[];
+    validate_consequence_rule?: boolean;
   };
   /**: the profile's resolved per-lens tuning. Absent when untuned, so
    * an untuned run's fingerprint is what it was before per-lens tuning. A
    * profile style guide is recorded by name and content hash. */
   lenses?: Record<string, FingerprintLensTuning>;
+  /** Per-lens tier pins (`[models.pass_tiers]`) and the risk passes. */
+  pass_tiers?: Record<string, string>;
+  risk_passes?: string[];
 }
 
 type FingerprintLensTuning = Omit<LensTuning, "guide"> & {
@@ -229,6 +241,8 @@ export function runFingerprint(cfg: Config, profile: string, overrides = ""): Ru
     conversation: cfg.models.conversation,
     tiers: { ...cfg.models.tiers },
     validate_tier: cfg.models.validate_tier,
+    pass_tiers: { ...(cfg.models.pass_tiers ?? {}) },
+    risk_passes: [...cfg.models.risk_passes],
     pi: cfg.pi.version,
     effort: { effort: cfg.models.effort, effort_max: cfg.models.effort_max },
     preset: cfg.review.preset,
@@ -248,6 +262,8 @@ export function runFingerprint(cfg: Config, profile: string, overrides = ""): Ru
       style_lens: cfg.review.style_lens,
       nits: cfg.review.nits,
       validate_demote: cfg.review.validate_demote,
+      skip_lenses: [...(cfg.review.skip_lenses ?? [])],
+      validate_consequence_rule: cfg.review.validate_consequence_rule ?? false,
     },
     ...(Object.keys(cfg.lenses ?? {}).length > 0 ? { lenses: fingerprintLenses(cfg.lenses!) } : {}),
   };
@@ -291,9 +307,16 @@ export function benchConfig(profile: string): Config {
  * production config — so two arms of one experiment share ONE image and differ
  * only in the knobs named on the command line (recorded in the fingerprint).
  * A key must already exist in the config (a typo fails loudly instead of
- * measuring nothing); `true`/`false` and numbers are coerced to the type the
- * key already holds. `models.effort` is re-applied to every model spec.
+ * measuring nothing) — except inside an OPEN map (`OPEN_MAP_KEYS`, e.g.
+ * `models.pass_tiers.pass-sweep=sol-high`), whose keys are data. `true`/`false`
+ * and numbers are coerced to the type the key already holds; an array-valued
+ * key takes `|`-separated items (`,` separates pairs), empty = `[]`.
+ * `models.effort` is re-applied to every model spec, and the per-lens knobs
+ * are re-validated exactly as config parsing validates them.
  */
+/** Config maps whose keys are data rather than schema — `--config` may add a
+ * key to them. Every other path must already exist. */
+export const OPEN_MAP_KEYS: ReadonlySet<string> = new Set(["models.pass_tiers"]);
 /** The config text with `[review] preset` set to `preset` — replaced when the
  * section already names one, inserted under the section header otherwise. */
 export function withPresetInToml(toml: string, preset: ReviewPreset): string {
@@ -353,8 +376,27 @@ export function applyConfigOverrides(cfg: Config, spec: string, toml?: string): 
       node = next as Record<string, unknown>;
     }
     const leaf = path[path.length - 1] as string;
-    if (!(leaf in node)) throw new Error(`--config: no key "${path.join(".")}" in config.toml`);
+    const open = OPEN_MAP_KEYS.has(path.slice(0, -1).join("."));
+    if (!open && !Object.hasOwn(node, leaf))
+      throw new Error(`--config: no key "${path.join(".")}" in config.toml`);
     const cur = node[leaf];
+    const num = (v: string): number => {
+      const n = Number(v);
+      if (v === "" || !Number.isFinite(n))
+        throw new Error(`--config: ${path.join(".")} takes a number (got "${v}")`);
+      return n;
+    };
+    if (Array.isArray(cur)) {
+      const items = raw === "" ? [] : raw.split("|").map((x) => x.trim());
+      if (items.some((x) => x === ""))
+        throw new Error(`--config: ${path.join(".")} has an empty item in "${raw}"`);
+      node[leaf] = cur.length > 0 && typeof cur[0] === "number" ? items.map(num) : items;
+      continue;
+    }
+    if (typeof cur === "object" && cur !== null)
+      throw new Error(
+        `--config: ${path.join(".")} is a table — set one of its keys (${path.join(".")}.<key>=…)`,
+      );
     node[leaf] =
       typeof cur === "boolean"
         ? raw === "true"
@@ -365,7 +407,7 @@ export function applyConfigOverrides(cfg: Config, spec: string, toml?: string): 
                 throw new Error(`--config: ${path.join(".")} takes true|false`);
               })()
         : typeof cur === "number"
-          ? Number(raw)
+          ? num(raw)
           : raw;
   }
   const next = out as unknown as Config;
@@ -383,6 +425,7 @@ export function applyConfigOverrides(cfg: Config, spec: string, toml?: string): 
             })(),
     });
   }
+  validateLensKnobs(next);
   return next;
 }
 
@@ -403,7 +446,11 @@ export function buildBenchAgents(root: string, cfg: Config): number {
     validateTier: cfg.models.validate_tier,
     vars: identityVars(cfg),
     ecosystem: loadProfileEcosystem(root, cfg.review.profile),
-    models: lensModelOverrides(cfg.models, cfg.lenses),
+    models: passTierModels(
+      cfg.models.pass_tiers,
+      cfg.models.tiers,
+      lensModelOverrides(cfg.models, cfg.lenses),
+    ),
     addenda: [
       ...PASS_ADDENDA,
       ...configAddenda(cfg.review),

@@ -12,6 +12,7 @@ import {
 } from "./install.js";
 import { globProblem } from "./glob.js";
 import type { LensTuningMap } from "./lenstuning.js";
+import { ALL_PASSES } from "./passes.js";
 import { PASS_TIER_ORDER, type PassTier } from "./types.js";
 
 export interface GithubConfig {
@@ -437,6 +438,16 @@ export interface ReviewConfig {
    * killing it for a small consequence (`validate-demote-not-kill`, 2026-09-27).
    * On by default; off reproduces the earlier validator for a benchmark. */
   validate_demote: boolean;
+  /** Passes never planned and never addable this round (cost tuning,
+   * 2026-09-29). `[]` (the default) plans every lens selection picks. Names
+   * must be known passes; `pass-validate` is refused here — switching the
+   * validator off is the profile's `enabled = false`. Not a preset
+   * lever. */
+  skip_lenses: string[];
+  /** The validator's consequence rules (`validate-consequence-rule`,
+   * 2026-09-29): intent/contract appeals, dead code, CI-enabled lint rules and
+   * merges judged by consequence. Off by default; opt-in for a benchmark arm. */
+  validate_consequence_rule: boolean;
 }
 
 export type NitPolicy = "strict" | "open";
@@ -529,6 +540,8 @@ export const REVIEW_DEFAULTS: ReviewConfig = {
   ...LEAN_LEVERS,
   nits: "strict",
   validate_demote: true,
+  skip_lenses: [],
+  validate_consequence_rule: false,
 };
 
 /**
@@ -815,6 +828,14 @@ export interface ModelsConfig {
    * VERIFY-ON-PIN); a model that tops out lower needs this set to its own
    * ceiling. */
   effort_max: ThinkingLevel;
+  /** Per-lens tier pins (`[models.pass_tiers]`, 2026-09-29): pass name → tier.
+   * A pinned lens runs at that tier on every PR whatever the diff size — the
+   * plan names that tier, the lens is not raisable, and every built variant
+   * of it carries that tier's spec. Empty (the default) changes nothing. Not
+   * for pass-validate (its knob is `validate_tier`) nor for a risk pass
+   * (always sol-high). A profile `min_tier` still floors a pin, and the
+   * validator never follows a pinned lens's tier. */
+  pass_tiers: Record<string, PassTier>;
 }
 
 /** pi's thinking levels, ascending (pi 0.87.1 — VERIFY-ON-PIN). */
@@ -874,7 +895,9 @@ export const MODELS_TIER_DEFAULTS: Pick<
   | "pricing"
   | "effort"
   | "effort_max"
+  | "pass_tiers"
 > = {
+  pass_tiers: {},
   effort: "",
   effort_max: "max",
   tiers: {
@@ -1832,6 +1855,7 @@ export function parseConfig(toml: string): Config {
     owner: { ...OWNER_DEFAULTS, ...((raw.owner ?? {}) as Partial<OwnerConfig>) },
     scan: parseScan(raw.scan),
   };
+  validateLensKnobs(cfg);
   if (cfg.review.nits !== "strict" && cfg.review.nits !== "open") {
     throw new Error(
       `config.toml [review]: nits must be "strict" or "open" (got ${JSON.stringify(cfg.review.nits)})`,
@@ -2033,7 +2057,57 @@ function parseModels(raw: Record<string, any>, presetEffort: ReviewEffort = ""):
     validate_tier: (raw.validate_tier ?? MODELS_TIER_DEFAULTS.validate_tier) as PassTier,
     small_diff_lines: Number(raw.small_diff_lines ?? MODELS_TIER_DEFAULTS.small_diff_lines),
     pricing: (raw.pricing ?? {}) as Record<string, ModelPricing>,
+    pass_tiers: { ...((raw.pass_tiers ?? {}) as Record<string, PassTier>) },
   });
+}
+
+/**
+ * Validate the per-lens knobs — `[review] skip_lenses`,
+ * `[review] validate_consequence_rule` and `[models.pass_tiers]`. Called by
+ * `parseConfig` and again by the bench's `--config` overrides (which write
+ * past the parser), so both routes refuse the same things.
+ */
+export function validateLensKnobs(cfg: Pick<Config, "review" | "models">): void {
+  const known = new Set(ALL_PASSES);
+  const skip: unknown = cfg.review.skip_lenses ?? [];
+  if (!Array.isArray(skip) || skip.some((s) => typeof s !== "string"))
+    throw new Error(
+      `config.toml [review] skip_lenses must be an array of pass names (got ${JSON.stringify(skip)})`,
+    );
+  for (const s of skip as string[]) {
+    if (s === "pass-validate")
+      throw new Error(
+        "config.toml [review] skip_lenses may not name pass-validate — switch the validator off in the profile ([lenses.pass-validate] enabled = false)",
+      );
+    if (!known.has(s)) throw new Error(`config.toml [review] skip_lenses: unknown pass "${s}"`);
+  }
+  if (
+    cfg.review.validate_consequence_rule !== undefined &&
+    typeof cfg.review.validate_consequence_rule !== "boolean"
+  )
+    throw new Error(
+      `config.toml [review] validate_consequence_rule must be true or false (got ${JSON.stringify(cfg.review.validate_consequence_rule)})`,
+    );
+  const pins: unknown = cfg.models.pass_tiers ?? {};
+  if (typeof pins !== "object" || pins === null || Array.isArray(pins))
+    throw new Error("config.toml [models.pass_tiers] must be a table of pass = tier");
+  const risk = new Set(cfg.models.risk_passes ?? []);
+  for (const [pass, tier] of Object.entries(pins as Record<string, unknown>)) {
+    if (!known.has(pass))
+      throw new Error(`config.toml [models.pass_tiers]: unknown pass "${pass}"`);
+    if (pass === "pass-validate")
+      throw new Error(
+        "config.toml [models.pass_tiers] may not pin pass-validate — use [models] validate_tier",
+      );
+    if (risk.has(pass))
+      throw new Error(
+        `config.toml [models.pass_tiers]: ${pass} is a risk pass (always sol-high) — remove it from [models] risk_passes first`,
+      );
+    if (!(PASS_TIER_ORDER as readonly unknown[]).includes(tier))
+      throw new Error(
+        `config.toml [models.pass_tiers] ${pass}: unknown tier ${JSON.stringify(tier)} (one of ${PASS_TIER_ORDER.join(", ")})`,
+      );
+  }
 }
 
 /** Full model spec ("provider/model:thinking") for a pass tier. */

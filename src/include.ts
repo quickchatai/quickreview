@@ -556,6 +556,22 @@ const VALIDATE_DEMOTE_NOT_KILL_ADDENDUM =
   "\n## A true observation is demoted, not killed (sandbox rule)\n" +
   "When your re-derivation CONFIRMS a candidate's observation and it asks for a concrete change that would improve the code, a small consequence is a reason to lower its severity — to `P3` or `nit` — never to kill it. `below-bar` is only for a confirmed observation whose change would not make the code better at all (a pure restatement, a preference between two equally clear forms). The kills for wrong or unprovable claims (`refuted`, `unverifiable`, `bad-anchor`), for repeats (`duplicate`, `settled:…`), for scope (`out-of-scope`, `nit-out-of-delta`) and for shape (`nit-no-request`, `self-narration`, `style-not-in-guide`) are unchanged.\n";
 
+// `[review] validate_consequence_rule` (2026-09-29, offline validator
+// analysis of the 185-PR default arm): the few real defects the default
+// validator still killed were confident kills that confirmed the mechanism and
+// then judged the CONSEQUENCE away — by the author's intent or a declared
+// contract, by calling dead code below-bar, by calling a CI-enabled lint rule
+// style, or by folding a second defect into a first because it shared a line.
+// Opt-in only (configAddenda), never by default.
+const VALIDATE_CONSEQUENCE_RULE_ADDENDUM =
+  "\n## A confirmed mechanism is judged by its consequence (sandbox rule)\n" +
+  "When your re-derivation CONFIRMS what the code does, these do not license a kill:\n" +
+  '- **Intent and contract do not refute an observable effect.** "The author intended it" or "it is outside the stated contract" does not refute an effect users or callers can observe. Post it as a `[question]` naming that effect instead of killing it.\n' +
+  "- **Dead, unreachable or not-yet-triggered code is demoted, not killed.** Dead code, unreachable code, or a latent defect with no trigger today is demoted to `nit` — never killed as `below-bar`.\n" +
+  "- **A CI-enabled lint rule is a build defect, not style.** A change that violates a lint rule the repo's CI enables breaks the build; judge it as a defect, never kill it as style (`style-not-in-guide`) or `below-bar`.\n" +
+  "- **Merge by consequence, not by line.** Merge two candidates (`duplicate`) only when they share a consequence — not merely because they sit on the same line. Two consequences on one line are two findings.\n" +
+  "The kills for a mechanism that is false or unprovable (`refuted`, `unverifiable`, `bad-anchor`) are unchanged.\n";
+
 // `[review] nits = "open"` (2026-09-27): the nit limits lifted, for a
 // benchmark whose references reward nits or a repo that wants every one.
 // Composed only when the config asks (configAddenda), never by default.
@@ -571,6 +587,7 @@ const NITS_OPEN_VALIDATE_ADDENDUM =
 export function configAddenda(review: {
   nits?: string;
   validate_demote?: boolean;
+  validate_consequence_rule?: boolean;
 }): PassAddendum[] {
   const out: PassAddendum[] = [];
   // On unless switched off — the switch exists so a benchmark can measure the
@@ -580,6 +597,13 @@ export function configAddenda(review: {
       id: "validate-demote-not-kill",
       scope: [VALIDATE_PASS],
       text: VALIDATE_DEMOTE_NOT_KILL_ADDENDUM,
+    });
+  // Off unless switched on — an experiment arm, not (yet) the review.
+  if (review.validate_consequence_rule === true)
+    out.push({
+      id: "validate-consequence-rule",
+      scope: [VALIDATE_PASS],
+      text: VALIDATE_CONSEQUENCE_RULE_ADDENDUM,
     });
   if (review.nits === "open")
     out.push(
@@ -1053,6 +1077,29 @@ export interface BuiltAgent {
   model: string | null;
   /** Thinking level written to frontmatter, when the spec carried one. */
   thinking: string | null;
+}
+
+/**
+ * `[models.pass_tiers]` as the per-VARIANT model map `buildAgents` takes
+ * (`BuildAgentsOptions.models`): every variant of a pinned pass carries its
+ * pinned tier's spec, so whichever variant name a session calls, the lens runs
+ * at that tier. Dispatch plans the pinned tier by name too (buildPassPlan).
+ * `overrides` is the per-variant map the rest of the config already asks for
+ * (the profile's per-lens `effort`): it is kept, and a pinned pass
+ * takes ITS pinned tier's entry from it when there is one — a pin moves the
+ * tier, the profile still sets the effort. Empty pins ⇒ `overrides` unchanged.
+ */
+export function passTierModels(
+  passTiers: Readonly<Record<string, PassTier>> | undefined,
+  tiers: Readonly<Record<PassTier, string>>,
+  overrides: Readonly<Record<string, string>> = {},
+): Record<string, string> {
+  const out: Record<string, string> = { ...overrides };
+  for (const [pass, tier] of Object.entries(passTiers ?? {})) {
+    const spec = overrides[`${pass}--${tier}`] ?? tiers[tier];
+    for (const t of PASS_TIERS) out[`${pass}--${t}`] = spec;
+  }
+  return out;
 }
 
 /** The tiers a given pass fans out into.

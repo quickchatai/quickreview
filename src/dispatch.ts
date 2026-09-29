@@ -62,6 +62,7 @@ import { applyEvent, restoreStandingLifecycle, setPrGates } from "./statemachine
 import type { PrStateRow, ReviewedHeadRow, StateStore } from "./state.js";
 import { snapshotMark, standingReview } from "./standing-review.js";
 import { PASS_TIER_ORDER, roundPromptMarker } from "./types.js";
+import { ALL_PASSES } from "./passes.js";
 import type {
   PassPlanEntry,
   PassTier,
@@ -603,69 +604,7 @@ async function consumeTriggers(
   return consumed;
 }
 
-/** Every pass the system knows: the lenses selectLenses can emit plus the
- * always-appended validator. addable_lenses derives from this set (∪ the
- * configured risk passes, which today are a subset of it). */
-export const ALL_PASSES: readonly string[] = [
-  "pass-baseline",
-  "pass-ui",
-  "pass-contracts",
-  "pass-data-safety",
-  "pass-security",
-  "pass-statelessness",
-  "pass-prod-risk",
-  "pass-delivery",
-  "pass-intent",
-  "pass-placement",
-  "pass-simplicity",
-  "pass-backcompat",
-  // ADDABLE-ONLY, deliberately. `selectLenses` never emits
-  // pass-concurrency — a read-modify-write race has no filename (the 29
-  // corpus findings span eight unrelated modules), so no path predicate finds
-  // the set. It reaches a round only through the add protocol, when the
-  // session names the read-then-write it suspects.
-  "pass-concurrency",
-  // ADDABLE-ONLY for the same reason and one more. No path predicate
-  // finds "code whose intent is written down nowhere", and the deciding fact —
-  // whether the answer is in the repo at all — is only visible after the diff
-  // has been read, which is exactly when the session runs the add protocol.
-  // (pass-intent's substance bar is the precedent for what daemon-side
-  // selection must be: cheap AND honest. The one body-shaped signal here — "the
-  // PR text never says why" — is true of most PRs, so planning on it would
-  // dispatch the lens nearly always: the pure-spend case that bar exists to
-  // prevent, on a lens whose failure mode is volume.)
-  "pass-ask-human",
-  // Content-triggered sub-lenses (heuristics.ts SUBLENS_TRIGGERS — this list
-  // is held equal to SUBLENS_PASSES by tests/review-levers.test.ts): planned
-  // when their trigger fires, addable otherwise — the max-effort benchmark
-  // runs added a lens on 6 of 10 PRs, and the added lens found defects no
-  // planned one did.
-  "pass-widened",
-  "pass-roundtrip",
-  "pass-deferred",
-  "pass-bounds",
-  "pass-claims",
-  "pass-rollout",
-  // The per-file sweep: planned as one row per file group when `[review]
-  // sweep` is on; otherwise addable, so a session can sweep a file it
-  // suspects.
-  "pass-sweep",
-  // the tests lens — planned on every PR that changes code when
-  // `[review] tests_lens` is on; addable otherwise.
-  "pass-tests",
-  // The code-quality lenses — planned when `[review] quality_lenses` is on and
-  // the change adds enough code; addable otherwise.
-  "pass-maintainability",
-  "pass-duplication",
-  "pass-abstraction",
-  "pass-consistency",
-  // The style lens — planned only when the repo has a written style guide
-  // (src/styleguide.ts) or the profile points it at one; addable
-  // otherwise, but it judges only against a guide, so without one it answers
-  // NONE.
-  "pass-style",
-  "pass-validate",
-];
+export { ALL_PASSES } from "./passes.js";
 
 /** raisable_to lists the higher rungs only — a session may raise a pass, never
  * lower it. */
@@ -773,16 +712,22 @@ export function buildPassPlan(
         ? `the repo's written style guide: ${styleGuide.join(", ")}`
         : `this repo's profile style guide (\`${profileGuide!.file}\`, in your instructions) — the repo writes none of its own`,
     );
+  // `[review] skip_lenses` (cost tuning): a listed lens is neither planned
+  // nor addable. pass-validate is refused at config parse, and is re-appended
+  // unconditionally here besides.
+  const skip = new Set((cfg.review.skip_lenses ?? []).filter((l) => l !== VALIDATE_PASS));
   // `enabled = false` is the last word on every lens, whatever selected it —
   // a profile-level subtraction, separate from the ADD-only heuristics.
   const lenses = [
-    ...selected0,
-    ...sub.map((s) => s.lens),
-    ...tests,
-    ...quality,
-    ...style,
+    ...[...selected0, ...sub.map((s) => s.lens), ...tests, ...quality, ...style].filter(
+      (l) => !skip.has(l),
+    ),
     VALIDATE_PASS,
   ].filter((l) => on(l));
+  // `[models.pass_tiers]`: a pinned lens runs at its pinned tier on every PR,
+  // whatever the diff size, and is not raisable (config refuses a pin on a
+  // risk pass or on pass-validate). A profile `min_tier` still floors it.
+  const pins: Readonly<Record<string, PassTier>> = cfg.models.pass_tiers ?? {};
   // pass-intent starts at terra-med whatever the round's default:
   // reading comprehension over two short texts, not a judgment over production
   // risk. It is NOT pinned — the session may raise it like any other lens.
@@ -791,14 +736,19 @@ export function buildPassPlan(
     flooredTier(
       cfg.lenses,
       lens,
-      risk.has(lens) ? "sol-high" : lens === INTENT_PASS ? "terra-med" : defaultTier,
+      risk.has(lens)
+        ? "sol-high"
+        : (pins[lens] ?? (lens === INTENT_PASS ? "terra-med" : defaultTier)),
     );
-  // The sweep's rows run at the cheapest tier unless the profile floors it.
-  const sweepOn = on(SWEEP_PASS, cfg.review.sweep);
-  const sweepTier = flooredTier(cfg.lenses, SWEEP_PASS, "terra-med");
+  // The sweep's rows run at the cheapest tier unless pinned (`[models.pass_tiers]`)
+  // or floored by the profile.
+  const sweepOn = on(SWEEP_PASS, cfg.review.sweep) && !skip.has(SWEEP_PASS);
+  const sweepTier = flooredTier(cfg.lenses, SWEEP_PASS, pins[SWEEP_PASS] ?? "terra-med");
+  // the validator runs at its own tier — never raised to match a
+  // lens, pinned or not.
   const validate = validatorTier(cfg);
   const pass_plan = lenses.map((lens): PassPlanEntry => {
-    const pinned = lens === VALIDATE_PASS || risk.has(lens);
+    const pinned = lens === VALIDATE_PASS || risk.has(lens) || pins[lens] !== undefined;
     const tier: PassTier = lens === VALIDATE_PASS ? validate : tierOf(lens);
     const why = whyOf.get(lens);
     return {
@@ -827,7 +777,7 @@ export function buildPassPlan(
       lens: SWEEP_PASS,
       agent: `${SWEEP_PASS}--${sweepTier}`,
       tier: sweepTier,
-      raisable_to: raisableFrom(SWEEP_PASS, sweepTier),
+      raisable_to: pins[SWEEP_PASS] !== undefined ? [] : raisableFrom(SWEEP_PASS, sweepTier),
       focus,
     }));
     const at = pass_plan.at(-1)?.lens === VALIDATE_PASS ? pass_plan.length - 1 : pass_plan.length;
@@ -835,7 +785,7 @@ export function buildPassPlan(
   }
   const selected = new Set(pass_plan.map((p) => p.lens));
   const addable_lenses = [...new Set([...ALL_PASSES, ...cfg.models.risk_passes])].filter(
-    (l) => !selected.has(l) && on(l),
+    (l) => !selected.has(l) && on(l) && !skip.has(l),
   );
   return { pass_plan, addable_lenses, sweep_unswept };
 }

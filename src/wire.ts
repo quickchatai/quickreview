@@ -29,7 +29,13 @@ import { GitHubAdapter } from "./github.js";
 import { makePostingGuard } from "./guards.js";
 import { TokenMinter } from "./githubAuth.js";
 import { FeedbackEngine, feedbackDayAddendum, type FeedbackEvent } from "./feedback.js";
-import { PASS_ADDENDA, buildAgents, configAddenda, identityVars } from "./include.js";
+import {
+  PASS_ADDENDA,
+  buildAgents,
+  configAddenda,
+  identityVars,
+  passTierModels,
+} from "./include.js";
 import { ecosystemFor } from "./ecosystem.js";
 import { applyProfileTuning, lensModelOverrides, lensTuningAddenda } from "./lenstuning.js";
 import {
@@ -732,8 +738,13 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           vars: identity,
           // ecosystem-gated addenda follow the profile's selection.
           ecosystem: ecosystem.name,
-          // a lens's profile `effort` rides the per-variant hook.
-          models: lensModelOverrides(cfg.models, cfg.lenses),
+          // a lens's profile `effort` rides the per-variant hook;
+          // `[models.pass_tiers]` pins move a lens's tier on top of it.
+          models: passTierModels(
+            cfg.models.pass_tiers,
+            cfg.models.tiers,
+            lensModelOverrides(cfg.models, cfg.lenses),
+          ),
           addenda: [
             ...PASS_ADDENDA,
             ...configAddenda(cfg.review),
