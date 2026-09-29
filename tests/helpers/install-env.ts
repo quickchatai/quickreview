@@ -8,20 +8,30 @@
 // never a fallback) — a test that needs one names it by path or QCR_CONFIG,
 // and tests that exercise the homes pass their own env.
 //
-// The temp home is removed when the file finishes (afterAll): setup files run
+// The same per-file root is also the file's TMPDIR (tests/helpers/
+// temp-root.ts): every `mkdtempSync(tmpdir())` a test makes, and every
+// `mktemp` a spawned script makes, lands under it — so nothing a test forgets
+// to remove outlives the file.
+//
+// The root is removed when the file finishes (afterAll): setup files run
 // once per test file, and a process 'exit' hook never fires in a vitest worker
-// thread — without this every run leaked one `qcr-test-xdg-*` dir per file.
-import { mkdtempSync, rmSync } from "node:fs";
+// thread — without this every run leaked one dir per file, plus every temp
+// dir a test did not clean up itself.
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll } from "vitest";
+import { openTempRoot } from "./temp-root.js";
 
-const base = mkdtempSync(join(tmpdir(), "qcr-test-xdg-"));
-process.env.XDG_CONFIG_HOME = join(base, "config");
-process.env.XDG_STATE_HOME = join(base, "state");
+// The machine's real temp dir, captured before the redirect and inherited by
+// any later file in the same worker, so a root is never nested in another.
+const realTmp = (process.env.QCR_TEST_REAL_TMPDIR ??= tmpdir());
+const temp = openTempRoot(realTmp, "qcr-test-xdg-");
+process.env.QCR_TEST_TEMP_ROOT = temp.root;
+process.env.XDG_CONFIG_HOME = join(temp.root, "config");
+process.env.XDG_STATE_HOME = join(temp.root, "state");
 delete process.env.QCR_CONFIG;
 delete process.env.QCR_INSTALL;
 
 afterAll(() => {
-  rmSync(base, { recursive: true, force: true });
+  temp.close();
 });
