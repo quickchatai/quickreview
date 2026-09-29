@@ -105,7 +105,7 @@ function scanAnswer(spec: CaseSpec): string {
 }
 
 interface FakeRunner {
-  run(spec: CaseSpec, signal: AbortSignal): Promise<CaseOutcome>;
+  run(spec: CaseSpec, signal: AbortSignal, onCost?: (spentSoFar: number) => void): Promise<CaseOutcome>;
   specs: CaseSpec[];
 }
 
@@ -227,6 +227,16 @@ describe("nothing runs unseen", () => {
     await s.idle();
   });
 
+  it("two starts issued together run the scan once (review)", async () => {
+    const r = runner();
+    const s = new ScanRunner(ports(r));
+    const p = await previewOf(s);
+    const [a, b] = await Promise.all([s.start({ key: p.key }), s.start({ key: p.key })]);
+    expect([a.ok, b.ok].filter(Boolean)).toHaveLength(1);
+    await s.idle();
+    expect(r.specs).toHaveLength(p.cases.length);
+  });
+
   it("the build of the scan agents happens at start, and its refusal stops the start", async () => {
     const p = ports(runner());
     p.buildAgents = () => ({ ok: false, errors: ["profile broken"] });
@@ -265,6 +275,71 @@ describe("hard stop at the estimate", () => {
     expect(run.mode).toBe("calibration");
     expect(run.state).toBe("capped");
     expect(run.cases.filter((c) => c.status === "done")).toHaveLength(1);
+  });
+});
+
+describe("hard stop — mid-case, and what a failure spent (review)", () => {
+  it("a case whose running cost crosses the cap is aborted mid-flight, and what it spent is counted", async () => {
+    // One calibration case that keeps spending until it is stopped.
+    const specs: CaseSpec[] = [];
+    const r: FakeRunner = {
+      specs,
+      run: (spec, signal, onCost) =>
+        new Promise((res) => {
+          specs.push(spec);
+          let spent = 0;
+          const tick = setInterval(() => {
+            spent += 1;
+            onCost?.(spent);
+          }, 1);
+          signal.addEventListener(
+            "abort",
+            () => {
+              clearInterval(tick);
+              res({ ok: false, reason: "stopped", cost_usd: spent });
+            },
+            { once: true },
+          );
+        }),
+    };
+    const s = new ScanRunner(ports(r, { concurrency: 1, calibration_units: 1, calibration_max_usd: 3 }));
+    const { run } = await runToEnd(s);
+    expect(run.mode).toBe("calibration");
+    expect(run.state).toBe("capped");
+    expect(specs).toHaveLength(1);
+    expect(run.cases[0]!.status).toBe("stopped");
+    // Aborted the moment it reached the cap, and the money counted.
+    expect(run.spent_usd).toBe(3);
+  });
+
+  it("a FAILED case's spend counts toward the cap — failures cannot run a scan past it", async () => {
+    const cheap = runner({ perFile: 0.01 });
+    await runToEnd(new ScanRunner(ports(cheap, { case_max_files: 1, concurrency: 1 })));
+    // Every case now fails after spending ten times its estimate.
+    const failing: FakeRunner = {
+      specs: [],
+      run: async (spec) => {
+        failing.specs.push(spec);
+        return { ok: false, reason: "the subagent gave no answer", cost_usd: 0.1 };
+      },
+    };
+    const s = new ScanRunner(ports(failing, { case_max_files: 1, concurrency: 1 }));
+    const p = await previewOf(s);
+    expect(p.mode).toBe("stage1");
+    const { run } = await runToEnd(s);
+    expect(run.state).toBe("capped");
+    expect(failing.specs.length).toBeLessThan(p.cases.length);
+    expect(run.spent_usd).toBeLessThanOrEqual(run.cap_usd + 0.1 + 1e-9);
+  });
+
+  it("a failed case that cannot say what it spent is counted at its estimate, never as free", async () => {
+    await runToEnd(new ScanRunner(ports(runner({ perFile: 0.01 }), { case_max_files: 1, concurrency: 1 })));
+    const s = new ScanRunner(ports({ specs: [], run: async () => ({ ok: false, reason: "pi exited 1" }) }, { case_max_files: 1, concurrency: 1 }));
+    const p = await previewOf(s);
+    const { run } = await runToEnd(s);
+    expect(run.cases.every((c) => c.status === "failed")).toBe(true);
+    expect(run.spent_usd).toBeCloseTo(p.estimate_usd!, 9);
+    expect(run.unpriced_cases).toBe(run.cases.length);
   });
 });
 
@@ -409,6 +484,28 @@ describe("the validator — off by default, a doubt kept and marked", () => {
     expect(byUnit.get("lib")).toMatchObject({ validated: true, doubt: null });
     expect(byUnit.has("web")).toBe(false);
     expect(new FindingsStore(stateHomeFs(stateDir)).list({ doubted: true }).findings.map((f) => f.unit)).toEqual(["app"]);
+  });
+});
+
+describe("the validator — a survivor it also doubts (review)", () => {
+  it("is one finding, doubted, counted once", async () => {
+    const answer = (spec: CaseSpec): string => {
+      if (spec.agent.startsWith("pass-validate")) {
+        const f = spec.files[0]!;
+        const kept = scanAnswer(spec).split("SUGGEST")[0]!.replace("FINDINGS pass-scan", "FINDINGS pass-validate");
+        return `${kept}\nDOUBTED\n- pass-scan ${f}:2 — refuted: guarded above\n`;
+      }
+      return scanAnswer(spec);
+    };
+    const { run } = await runToEnd(new ScanRunner(ports(runner({ answer }), { validator: true })));
+    const { findings } = new FindingsStore(stateHomeFs(stateDir)).list();
+    expect(findings).toHaveLength(3);
+    expect(findings.every((f) => f.doubt?.word === "refuted")).toBe(true);
+    expect(run.cases.map((c) => [c.findings, c.doubted])).toEqual([
+      [1, 1],
+      [1, 1],
+      [1, 1],
+    ]);
   });
 });
 

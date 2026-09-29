@@ -95,16 +95,16 @@ export function piCaseRunner(opts: {
 }): CaseRunner {
   const spawn = opts.spawn ?? (nodeSpawn as unknown as SpawnFn);
   return {
-    run: async (spec: CaseSpec, signal: AbortSignal): Promise<CaseOutcome> => {
-      if (!/^[a-z][a-z0-9-]*$/.test(spec.agent)) return { ok: false, reason: `not an agent name: ${JSON.stringify(spec.agent)}` };
+    run: async (spec: CaseSpec, signal: AbortSignal, onCost?: (spentSoFar: number) => void): Promise<CaseOutcome> => {
+      if (!/^[a-z][a-z0-9-]*$/.test(spec.agent)) return { ok: false, reason: `not an agent name: ${JSON.stringify(spec.agent)}`, cost_usd: 0 };
       let agent: AgentFile | null;
       try {
         agent = parseAgentFile(readFileSync(join(opts.agentsDir, `${spec.agent}.md`), "utf8"));
       } catch {
-        return { ok: false, reason: `no agent ${spec.agent} in ${opts.agentsDir}` };
+        return { ok: false, reason: `no agent ${spec.agent} in ${opts.agentsDir}`, cost_usd: 0 };
       }
-      if (agent === null || agent.name !== spec.agent) return { ok: false, reason: `${spec.agent}.md is not an agent file` };
-      if (signal.aborted) return { ok: false, reason: "stopped before it started" };
+      if (agent === null || agent.name !== spec.agent) return { ok: false, reason: `${spec.agent}.md is not an agent file`, cost_usd: 0 };
+      if (signal.aborted) return { ok: false, reason: "stopped before it started", cost_usd: 0 };
 
       const tmp = mkdtempSync(join(tmpdir(), "qcr-case-"));
       try {
@@ -135,6 +135,11 @@ export function piCaseRunner(opts: {
             if (typeof usage?.cost?.total === "number") {
               cost += usage.cost.total;
               priced = true;
+              try {
+                onCost?.(cost);
+              } catch {
+                // A listener's fault never ends the case.
+              }
             }
             const parts = Array.isArray(msg.content) ? (msg.content as Array<{ type?: string; text?: string }>) : [];
             const text = parts.filter((p) => p.type === "text" && typeof p.text === "string").map((p) => p.text).join("\n");
@@ -149,7 +154,7 @@ export function piCaseRunner(opts: {
           try {
             child = spawn(inv.command, args, { cwd: opts.cwd, stdio: ["ignore", "pipe", "pipe"] });
           } catch (err) {
-            resolve({ ok: false, reason: `could not start pi: ${err instanceof Error ? err.message : String(err)}` });
+            resolve({ ok: false, reason: `could not start pi: ${err instanceof Error ? err.message : String(err)}`, cost_usd: 0 });
             return;
           }
           const kill = (): void => {
@@ -173,16 +178,19 @@ export function piCaseRunner(opts: {
             signal.removeEventListener("abort", kill);
             resolve(outcome);
           };
-          child.on("error", (err) => finish({ ok: false, reason: `pi failed to run: ${err.message}` }));
+          // What a case that ended without an answer had spent: a failure
+          // costs money too, and a caller holding a budget must count it.
+          const spent = (): number | null => (priced ? cost : null);
+          child.on("error", (err) => finish({ ok: false, reason: `pi failed to run: ${err.message}`, cost_usd: spent() }));
           child.on("close", (code) => {
             if (buffer.trim() !== "") onLine(buffer);
-            if (signal.aborted) return finish({ ok: false, reason: "stopped" });
+            if (signal.aborted) return finish({ ok: false, reason: "stopped", cost_usd: spent() });
             if (code !== 0) {
               const tail = stderr.trim().split("\n").slice(-3).join(" / ");
-              return finish({ ok: false, reason: `pi exited ${code}${tail ? `: ${tail}` : ""}` });
+              return finish({ ok: false, reason: `pi exited ${code}${tail ? `: ${tail}` : ""}`, cost_usd: spent() });
             }
-            if (failure !== null) return finish({ ok: false, reason: failure });
-            if (final.trim() === "") return finish({ ok: false, reason: "the subagent gave no answer" });
+            if (failure !== null) return finish({ ok: false, reason: failure, cost_usd: spent() });
+            if (final.trim() === "") return finish({ ok: false, reason: "the subagent gave no answer", cost_usd: spent() });
             finish({ ok: true, output: final, cost_usd: priced ? cost : null });
           });
         });

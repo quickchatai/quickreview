@@ -16,9 +16,12 @@
 //     approved (the calibration cap, for a calibration run). A case starts
 //     only while what is spent, plus the estimates of the cases in flight,
 //     plus its own estimate stays within the cap; the moment spending reaches
-//     the cap, every case still in flight is aborted and the run ends
-//     `capped`. What it did not read stays out of the ledger, so the next
-//     preview prices exactly the rest.
+//     the cap — read LIVE, from the running cost the case runner reports as
+//     each case goes, not only when a case ends — every case still in flight
+//     is aborted and the run ends `capped`. A case that failed or was aborted
+//     counts what it spent (its estimate when the runner cannot say), so
+//     failures can never carry a run past the cap. What it did not read stays
+//     out of the ledger, so the next preview prices exactly the rest.
 //   * STOP AND RESUME BY THE LEDGER. `stop` aborts in-flight cases and starts
 //     no more. A run the companion was not there to finish (a TUI quit, an
 //     expired login) reads as `interrupted`. Either way, only FINISHED cases
@@ -232,6 +235,7 @@ interface Planned {
 
 export class ScanRunner {
   private active: { id: string; sha: string; abort: AbortController; done: Promise<void> } | null = null;
+  private starting = false;
   private readonly ledger: Ledger;
   private readonly findings: FindingsStore;
 
@@ -393,9 +397,23 @@ export class ScanRunner {
   /** Start the previewed run in the background. Returns once it is recorded. */
   async start(args: { key?: unknown; sha?: string }): Promise<{ ok: true; run: ScanRun } | Refusal> {
     if (this.active) return { ok: false, errors: [`scan ${this.active.id} is still running — stop it or wait for it`] };
+    // Two starts in parallel (a model may issue tool calls concurrently) must
+    // not both pass the check above while the first is still planning: that
+    // would run — and pay for — the same scan twice.
+    if (this.starting) return { ok: false, errors: ["a scan is already starting — wait for it, then check scan_status"] };
     if (typeof args.key !== "string" || args.key === "") {
       return { ok: false, errors: ["no preview key — preview the scan, show the operator the cost, then start with its key"] };
     }
+    this.starting = true;
+    try {
+      return await this.startPlanned(args.key, args.sha);
+    } finally {
+      this.starting = false;
+    }
+  }
+
+  private async startPlanned(key: string, sha: string | undefined): Promise<{ ok: true; run: ScanRun } | Refusal> {
+    const args = { key, sha };
     const p = await this.plan(args.sha);
     if (!p.ok) return p;
     const { preview, tree, settings } = p.planned;
@@ -536,6 +554,18 @@ export class ScanRunner {
     let capHit = false;
     let reserved = 0;
     let next = 0;
+    // What each in-flight case has spent SO FAR, as its runner reports it.
+    // The hard stop reads these live: a case never runs on past the cap just
+    // because it has not finished yet.
+    const live = new Map<string, number>();
+    const liveTotal = (): number => [...live.values()].reduce((n, v) => n + v, 0);
+    const onCost = (caseId: string, spentSoFar: number): void => {
+      live.set(caseId, spentSoFar);
+      if (run.cap_usd > EPS && !signal.aborted && run.spent_usd + liveTotal() >= run.cap_usd - EPS) {
+        capHit = true;
+        abort.abort();
+      }
+    };
     // May a case with this estimate start? Within the cap counting what is in
     // flight; a case with no estimate (calibration) only while the cap is not
     // yet reached. A zero cap is a free run (the runner prices at zero).
@@ -554,7 +584,9 @@ export class ScanRunner {
         }
         next++;
         reserved += est;
-        const spent = await this.runCase(file, run, plan, tree, settings, signal);
+        live.set(plan.id, 0);
+        const spent = await this.runCase(file, run, plan, tree, settings, signal, (v) => onCost(plan.id, v));
+        live.delete(plan.id);
         reserved -= est;
         run.spent_usd += spent;
         this.store(file);
@@ -589,6 +621,7 @@ export class ScanRunner {
     tree: ScanTree,
     settings: ScanSettings,
     signal: AbortSignal,
+    onCost: (spentSoFar: number) => void = () => {},
   ): Promise<number> {
     const c = run.cases.find((x) => x.id === plan.id)!;
     if (signal.aborted) {
@@ -600,13 +633,24 @@ export class ScanRunner {
     this.store(file);
     const ctx = { root: tree.root, sha: run.sha, caseId: `${run.id}/${plan.id}` };
 
+    // What the case has spent: every call's cost, a FAILED call's included
+    // (it spent money too). Null once any call could not say.
     let cost: number | null = 0;
+    // The most the runner has reported so far — the floor of what an
+    // unpriced case is counted at.
+    let seen = 0;
     const addCost = (o: CaseOutcome): void => {
-      if (o.ok) cost = cost === null || o.cost_usd === null ? null : cost + o.cost_usd;
+      const spent = o.cost_usd === undefined ? null : o.cost_usd;
+      cost = cost === null || spent === null ? null : cost + spent;
+    };
+    const report = (base: number) => (v: number): void => {
+      seen = Math.max(seen, base + v);
+      onCost(seen);
     };
     const outcome = await this.runOne(
       { id: ctx.caseId, unit: plan.unit, agent: stage1Agent(settings.scan.tier), files: c.files, prompt: scanCasePrompt(plan, ctx) },
       signal,
+      report(0),
     );
     addCost(outcome);
     const finish = (status: ScanCaseStatus, error: string | null): number => {
@@ -615,7 +659,9 @@ export class ScanRunner {
       c.cost_usd = cost;
       c.finished_at = this.ports.clock().toISOString();
       if (cost === null) run.unpriced_cases++;
-      return cost ?? plan.estimate_usd ?? 0;
+      // Unpriced: counted at its estimate (or what the runner saw it spend,
+      // if more) — never as free.
+      return cost ?? Math.max(seen, plan.estimate_usd ?? 0);
     };
     if (!outcome.ok) return finish(signal.aborted ? "stopped" : "failed", outcome.reason);
 
@@ -648,6 +694,7 @@ export class ScanRunner {
           prompt: scanValidatorPrompt(plan, anchored.map((a) => a.cand), ctx),
         },
         signal,
+        report(cost ?? seen),
       );
       addCost(v);
       if (!v.ok && signal.aborted) return finish("stopped", v.reason);
@@ -676,7 +723,7 @@ export class ScanRunner {
       }
     }
 
-    const reported: ReportedFinding[] = kept.map(({ cand, code }) => ({
+    const all: ReportedFinding[] = kept.map(({ cand, code }) => ({
       fingerprint: findingFingerprint({ path: cand.path, lens: SCAN_PASS, kind: cand.kind, code }),
       unit: plan.unit,
       path: cand.path,
@@ -693,6 +740,14 @@ export class ScanRunner {
       validated,
       doubt: doubts.get(cand) ?? null,
     }));
+    // One finding per fingerprint: the validator may list a candidate as a
+    // survivor AND doubt it — the doubt wins, and it is counted once.
+    const byFp = new Map<string, ReportedFinding>();
+    for (const r of all) {
+      const had = byFp.get(r.fingerprint);
+      if (!had || (had.doubt === null && r.doubt !== null)) byFp.set(r.fingerprint, r);
+    }
+    const reported = [...byFp.values()];
     const at = this.ports.clock().toISOString();
     try {
       this.findings.report(reported, { run: run.id, sha: run.sha, at });
@@ -736,11 +791,15 @@ export class ScanRunner {
     return finish("done", null);
   }
 
-  private async runOne(spec: Parameters<CaseRunner["run"]>[0], signal: AbortSignal): Promise<CaseOutcome> {
+  private async runOne(
+    spec: Parameters<CaseRunner["run"]>[0],
+    signal: AbortSignal,
+    onCost: (spentSoFar: number) => void,
+  ): Promise<CaseOutcome> {
     try {
-      return await this.ports.cases.run(spec, signal);
+      return await this.ports.cases.run(spec, signal, onCost);
     } catch (err) {
-      return { ok: false, reason: `the case runner threw: ${clean(err)}` };
+      return { ok: false, reason: `the case runner threw: ${clean(err)}`, cost_usd: null };
     }
   }
 

@@ -339,8 +339,12 @@ describe("the pass-survey agent and the case runner", () => {
   it("runs the agent as an isolated pi leaf and returns its last answer and summed cost", async () => {
     const f = fakeSpawn([msg("thinking…", 0.01), { type: "tool_result_end", message: {} }, msg("[convention] x", 0.02)]);
     const runner = piCaseRunner({ agentsDir: COMPANION_AGENTS_DIR, cwd: "/workspace", spawn: f.spawn, invocation: { command: "pi", prefix: [] } });
-    const out = await runner.run(spec, new AbortController().signal);
+    const heard: number[] = [];
+    const out = await runner.run(spec, new AbortController().signal, (v) => heard.push(v));
     expect(out).toEqual({ ok: true, output: "[convention] x", cost_usd: expect.closeTo(0.03) });
+    // the running cost is heard as it grows, so a capped caller can
+    // stop a case mid-flight.
+    expect(heard).toEqual([expect.closeTo(0.01), expect.closeTo(0.03)]);
     const { command, args, cwd } = f.calls[0]!;
     expect(command).toBe("pi");
     expect(cwd).toBe("/workspace"); // never the reviewed checkout
@@ -349,24 +353,26 @@ describe("the pass-survey agent and the case runner", () => {
     expect(args.at(-1)).toBe("Task: SURVEY — do it");
   });
 
-  it("every failure resolves as a refusal: exit code, model error, no answer, unknown agent, abort", async () => {
+  it("every failure resolves as a refusal — with what it spent: exit code, model error, no answer, unknown agent, abort", async () => {
     const inv = { command: "pi", prefix: [] };
     const sig = () => new AbortController().signal;
     const run = (lines: unknown[], code = 0) =>
       piCaseRunner({ agentsDir: COMPANION_AGENTS_DIR, cwd: "/w", spawn: fakeSpawn(lines, code).spawn, invocation: inv }).run(spec, sig());
-    expect(await run([], 1)).toEqual({ ok: false, reason: "pi exited 1" });
-    expect(await run([msg("", 0, { stopReason: "error", errorMessage: "rate limited" })])).toEqual({ ok: false, reason: "rate limited" });
-    expect(await run([])).toEqual({ ok: false, reason: "the subagent gave no answer" });
+    // A failure spent money too (review): priced when pi said, null
+    // (unknown, never free) when it did not, 0 when nothing ever started.
+    expect(await run([], 1)).toEqual({ ok: false, reason: "pi exited 1", cost_usd: null });
+    expect(await run([msg("", 0.02, { stopReason: "error", errorMessage: "rate limited" })])).toEqual({ ok: false, reason: "rate limited", cost_usd: 0.02 });
+    expect(await run([])).toEqual({ ok: false, reason: "the subagent gave no answer", cost_usd: null });
     const r = piCaseRunner({ agentsDir: COMPANION_AGENTS_DIR, cwd: "/w", spawn: fakeSpawn([]).spawn, invocation: inv });
-    expect(await r.run({ ...spec, agent: "nope" }, sig())).toEqual({ ok: false, reason: expect.stringMatching(/no agent nope/) });
-    expect(await r.run({ ...spec, agent: "../x" }, sig())).toEqual({ ok: false, reason: expect.stringMatching(/not an agent name/) });
+    expect(await r.run({ ...spec, agent: "nope" }, sig())).toEqual({ ok: false, reason: expect.stringMatching(/no agent nope/), cost_usd: 0 });
+    expect(await r.run({ ...spec, agent: "../x" }, sig())).toEqual({ ok: false, reason: expect.stringMatching(/not an agent name/), cost_usd: 0 });
 
     const held = fakeSpawn([msg("partial", 0.01)], 0, true);
     const ac = new AbortController();
     const pending = piCaseRunner({ agentsDir: COMPANION_AGENTS_DIR, cwd: "/w", spawn: held.spawn, invocation: inv }).run(spec, ac.signal);
     await new Promise((res) => setTimeout(res, 10));
     ac.abort();
-    expect(await pending).toEqual({ ok: false, reason: "stopped" });
+    expect(await pending).toEqual({ ok: false, reason: "stopped", cost_usd: 0.01 });
     expect(held.kills[0]).toBe("SIGTERM");
   });
 });

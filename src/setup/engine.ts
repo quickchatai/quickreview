@@ -92,15 +92,22 @@ export interface CaseSpec {
 }
 
 /** How a case ended: the lens's final answer and what it cost (null when
- * the runner could not tell), or why there is none. */
-export type CaseOutcome = { ok: true; output: string; cost_usd: number | null } | { ok: false; reason: string };
+ * the runner could not tell), or why there is none. A failed or aborted case
+ * may still have SPENT money: `cost_usd` on a failure is what it spent before
+ * it ended (0 when it never started, null or absent when the runner cannot
+ * tell) — a caller holding a budget counts it (review). */
+export type CaseOutcome =
+  | { ok: true; output: string; cost_usd: number | null }
+  | { ok: false; reason: string; cost_usd?: number | null };
 
 /** Runs cases as background subagents (survey, scan). The
  * ENGINE decides what runs when and how many at once; the runner runs one
  * case to its end. Resolves for every outcome — a failed or aborted case is
- * `{ok:false}`, never a rejection. */
+ * `{ok:false}`, never a rejection. `onCost`, when given, hears the case's
+ * running cost each time the runner learns more of it, so a caller with a
+ * hard cap can abort a case mid-flight rather than after the fact. */
 export interface CaseRunner {
-  run(spec: CaseSpec, signal: AbortSignal): Promise<CaseOutcome>;
+  run(spec: CaseSpec, signal: AbortSignal, onCost?: (spentSoFar: number) => void): Promise<CaseOutcome>;
 }
 
 export interface TrackerTicket {
