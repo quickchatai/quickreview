@@ -30,6 +30,12 @@ export function writeDigest(
   return path;
 }
 
+/** Has the day's digest been written — the exact file `writeDigest` and the
+ * EOD sweep (`digest/{{date}}.md`, cwd = the sandbox root) produce. */
+export function digestWritten(date: string, digestDir: string = defaultDigestDir()): boolean {
+  return existsSync(join(digestDir, `${date}.md`));
+}
+
 /** First non-empty, non-heading line, trimmed and truncated to 200 chars. */
 export function digestHeadline(content: string): string | undefined {
   for (const raw of content.split("\n")) {

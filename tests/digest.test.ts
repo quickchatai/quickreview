@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   digestHeadline,
+  digestWritten,
   latestDigestFile,
   latestDigestHeadline,
   writeDigest,
@@ -42,6 +43,13 @@ describe("writeDigest / latestDigestHeadline", () => {
     writeDigest("2026-08-11", "# d\n\noldest", dir);
     expect(latestDigestFile(dir)).toBe(join(dir, "2026-08-13.md"));
     expect(latestDigestHeadline(dir)).toBe("3 PRs reviewed, 1 escalated to the owner.");
+  });
+
+  it("digestWritten answers for exactly the file writeDigest writes (the EOD pin-watch's early close)", () => {
+    expect(digestWritten("2026-08-12", dir)).toBe(false);
+    writeDigest("2026-08-12", "# d\n\nheadline", dir);
+    expect(digestWritten("2026-08-12", dir)).toBe(true);
+    expect(digestWritten("2026-08-13", dir)).toBe(false);
   });
 
   it("ignores non-digest files and an empty/missing dir", () => {

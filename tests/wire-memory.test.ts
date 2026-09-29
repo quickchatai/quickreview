@@ -66,4 +66,12 @@ describe("wire.ts: the memory phase is actually connected", () => {
     expect(wire).toContain("OV_REVIEWER_KEY_SECRET");
     expect(wire).not.toMatch(/root_api_key|admin_key|ROOT_KEY/i);
   });
+  it("the EOD pin-watch waits for the digest where the sweep WRITES it — the sandbox root's digest/, the same dir the headline reads", () => {
+    // prompts/eod-sweep.md has the overseer (cwd = the sandbox root) write
+    // `digest/<date>.md`. A readiness probe on state/digest/ never saw it, so
+    // the watch never closed early and ran its whole window every night.
+    expect(wire).toContain('latestDigestHeadline(join(root, "digest"))');
+    expect(wire).toMatch(/digestReady:\s*\(date\)\s*=>\s*digestWritten\(date, join\(root, "digest"\)\)/);
+    expect(wire).not.toMatch(/"state",\s*"digest"/);
+  });
 });

@@ -3,7 +3,7 @@
 // the overseer command executor, and the weekly overseer rotation. `npm run
 // daemon` runs this; createDaemon() alone (src/daemon.ts) stays the
 // stub-wired, test-friendly core.
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import {
@@ -21,7 +21,7 @@ import {
 import { CommandWatcher, processOperatorSeal, type CommandDeps } from "./commands.js";
 import { drainLever, pauseLever, resumeLever, type LeverDeps } from "./levers.js";
 import { createDaemon, type Daemon } from "./daemon.js";
-import { eodDigestContext, latestDigestHeadline } from "./digest.js";
+import { digestWritten, eodDigestContext, latestDigestHeadline } from "./digest.js";
 import { startHeartbeat, type HeartbeatTimer } from "./anomalies.js";
 import { opsDay, promptReader, startEodTimer, type EodTimer } from "./eod.js";
 import { MutationGate, type MutationIntent } from "./gate.js";
@@ -985,7 +985,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
               logAnomaly: (kind, pr, reason, detail, injectMessage) =>
                 d.store.logAnomaly(kind, pr, reason, detail, injectMessage),
               timeZone: cfg.eod.timezone,
-              digestReady: (date) => existsSync(join(root, "state", "digest", `${date}.md`)),
+              digestReady: (date) => digestWritten(date, join(root, "digest")),
               windowMin: cfg.eod.pinned_watchdog_window_min,
               log,
             })
