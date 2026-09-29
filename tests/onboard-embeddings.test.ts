@@ -230,6 +230,27 @@ describe("the writers that carry the answer to the boot", () => {
     });
   });
 
+  it("declaredEmbedderOf reads what the loader reads when the keys are indented (valid TOML) — never the local defaults", () => {
+    // An indented hosted embedder: the loader says openai, so bring-up must
+    // not mirror `local` into .env — that drift is a vector-store reset.
+    const example = readFileSync(join(import.meta.dirname, "..", "config.example.toml"), "utf8");
+    const text = example
+      .replace('\nembedding_provider = "local"', '\n  embedding_provider = "openai"')
+      .replace(
+        '\nembedding_model = "bge-small-zh-v1.5-f16"',
+        '\n  embedding_model = "text-embedding-3-small"',
+      )
+      .replace("\nembedding_dimension = 512", "\n\tembedding_dimension = 1536");
+    const loaded = parseConfig(text).openviking;
+    expect(loaded.embedding_provider).toBe("openai");
+    expect(declaredEmbedderOf(text)).toEqual({
+      provider: loaded.embedding_provider,
+      model: loaded.embedding_model,
+      dimension: loaded.embedding_dimension,
+      keyFile: loaded.embedding_key_file,
+    });
+  });
+
   it("the .env entries are the four keys docker-compose.yml passes through, and host vars exist only for an opt-in", () => {
     const compose = readFileSync(join(import.meta.dirname, "..", "docker-compose.yml"), "utf8");
     const local = declaredEmbedderOf("");

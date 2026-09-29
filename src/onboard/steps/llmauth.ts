@@ -112,6 +112,23 @@ export function hostAuthJsonPath(home: string): string {
   return join(home, ".pi", "agent", "auth.json");
 }
 
+/** pi's provider key for the ChatGPT-OAuth route — the `openai-codex/` prefix
+ * without its slash, and the entry pi writes into auth.json on /login. */
+const OAUTH_PROVIDER = OAUTH_PREFIX.replace(/\/$/, "");
+
+/** Does this host's auth.json hold a ChatGPT (openai-codex) OAuth login? The
+ * file existing proves nothing: pi keeps every provider's login there, and a
+ * logged-out pi can leave `{}` behind. Unreadable or malformed ⇒ false. */
+export function hostHasOAuthLogin(authPath: string): boolean {
+  try {
+    const parsed = JSON.parse(readFileSync(authPath, "utf8")) as Record<string, unknown>;
+    const cred = parsed?.[OAUTH_PROVIDER] as Record<string, unknown> | undefined;
+    return typeof cred === "object" && cred !== null && cred.type === "oauth";
+  } catch {
+    return false;
+  }
+}
+
 function hostHome(): string {
   return process.env.HOME ?? homedir();
 }
@@ -610,15 +627,7 @@ async function oauthLoginChecks(
 ): Promise<CheckResult[]> {
   const checks: CheckResult[] = [];
   const authPath = hostAuthJsonPath(home);
-  const hostOk =
-    existsSync(authPath) &&
-    (() => {
-      try {
-        return readFileSync(authPath, "utf8").trim().length > 0;
-      } catch {
-        return false;
-      }
-    })();
+  const hostOk = hostHasOAuthLogin(authPath);
   checks.push(
     hostOk
       ? {
@@ -630,7 +639,7 @@ async function oauthLoginChecks(
           name: "wizard_login",
           ok: false,
           detail:
-            `no pi OAuth token on this host (${authPath}). Log in from this very session — type /login at pi's input line ` +
+            `no ChatGPT (${OAUTH_PROVIDER}) OAuth login in this host's pi (${authPath}). Log in from this very session — type /login at pi's input line ` +
             "and follow the browser flow — then run this step again. This is login 1 of 3; the two container logins come later.",
         },
   );
@@ -687,7 +696,7 @@ export function llmAuthStep(): OnboardingStep {
 
       const secretsDir = resolveSecretsDir(cfg.text, home, process.env.QC_SECRETS_DIR);
       let keyFile = readKeyFileState(secretsDir);
-      const hostLogin = existsSync(hostAuthJsonPath(home));
+      const hostLogin = hostHasOAuthLogin(hostAuthJsonPath(home));
 
       const decision = await decideRoute(ctx, keyFile, hostLogin);
       if (decision.route === null) {

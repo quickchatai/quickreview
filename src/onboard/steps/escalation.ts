@@ -121,8 +121,10 @@ export function offerCheck(): CheckResult {
  * step exists to make impossible.
  */
 export function patchEscalationSection(toml: string, body: string): string {
-  const header = /^\[escalation\][^\n]*\n/m.exec(toml);
-  const tableRe = /^\[\[?[^\n\]]+\]\]?[^\n]*$/gm;
+  const header = /^[ \t]*\[[ \t]*escalation[ \t]*\][^\n]*\n/m.exec(toml);
+  // TOML allows whitespace before a header, inside its brackets and a comment
+  // after it — every spelling counts, or a hand-written rule is swallowed.
+  const tableRe = /^[ \t]*\[\[?[^\n\]]+\]\]?[^\n]*$/gm;
   if (header?.index === undefined) {
     // No table yet: put it before [slack] if that exists, else at the end.
     const slack = /^\[slack\]/m.exec(toml);
@@ -133,18 +135,25 @@ export function patchEscalationSection(toml: string, body: string): string {
   let end = toml.length;
   tableRe.lastIndex = header.index + header[0].length;
   for (let m = tableRe.exec(toml); m; m = tableRe.exec(toml)) {
-    if (m[0].trim() === "[[escalation.rules]]") continue; // ours; keep consuming
+    if (isRuleHeader(m[0])) continue; // ours; keep consuming
     end = m.index;
     break;
   }
   return `${toml.slice(0, header.index)}${body}${toml.slice(end)}`;
 }
 
+/** Is this header line `[[escalation.rules]]` — in any valid TOML spelling
+ * (leading whitespace, whitespace inside the brackets, a trailing comment)? */
+function isRuleHeader(line: string): boolean {
+  return /^[ \t]*\[\[[ \t]*escalation[ \t]*\.[ \t]*rules[ \t]*\]\][ \t]*(#.*)?$/.test(line);
+}
+
 /** Every `[[escalation.rules]]` block in `toml` that this step does NOT own,
  * rendered back verbatim — so a re-run never eats a hand-written rule. */
 export function foreignRuleBlocks(toml: string): string[] {
   const out: string[] = [];
-  const re = /^\[\[escalation\.rules\]\][^\n]*\n((?:(?!^\[)[^\n]*\n?)*)/gm;
+  const re =
+    /^[ \t]*\[\[[ \t]*escalation[ \t]*\.[ \t]*rules[ \t]*\]\][^\n]*\n((?:(?![ \t]*\[)[^\n]*\n?)*)/gm;
   for (let m = re.exec(toml); m; m = re.exec(toml)) {
     const body = m[1] ?? "";
     const name = /^\s*name\s*=\s*"([^"]*)"/m.exec(body)?.[1];

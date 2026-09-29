@@ -193,14 +193,17 @@ export function patchTomlSection(toml: string, section: string, body: string): s
   return `${toml.replace(/\n*$/, "\n")}\n${body}`;
 }
 
-/** Read a bare `key = "value"` (or unquoted scalar) out of one table. */
+/** Read a bare `key = "value"` (or unquoted scalar) out of one table.
+ * Indentation is valid TOML before a header or a key, and the loader
+ * (smol-toml) accepts it — so this does too, or a reader here disagrees with
+ * the daemon about the same file. */
 export function readTomlKey(toml: string, section: string, key: string): string | null {
-  const header = new RegExp(`^\\[${section}\\][^\\n]*\\n`, "m").exec(toml);
+  const header = new RegExp(`^[ \\t]*\\[${section}\\][^\\n]*\\n`, "m").exec(toml);
   if (header?.index === undefined) return null;
   const rest = toml.slice(header.index + header[0].length);
-  const nextTable = /^\[[^\n]*\]/m.exec(rest);
+  const nextTable = /^[ \t]*\[[^\n]*\]/m.exec(rest);
   const body = rest.slice(0, nextTable?.index ?? rest.length);
-  const line = new RegExp(`^${key}\\s*=\\s*(.+)$`, "m").exec(body);
+  const line = new RegExp(`^[ \\t]*${key}\\s*=\\s*(.+)$`, "m").exec(body);
   if (!line?.[1]) return null;
   const raw = line[1].replace(/\s*#.*$/, "").trim();
   return raw.replace(/^"(.*)"$/, "$1").replace(/^'(.*)'$/, "$1");

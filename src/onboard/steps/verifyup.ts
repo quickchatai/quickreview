@@ -96,8 +96,11 @@ export function deliverySucceeded(d: HookDelivery): boolean {
   return d.status_code >= 200 && d.status_code < 300;
 }
 
+/** The ping deliveries, NEWEST FIRST (delivery ids only grow). Only the
+ * newest one speaks for the path as it is configured now: an older accepted
+ * ping may have reached a previous URL, or been signed with a previous secret. */
 export function pings(deliveries: readonly HookDelivery[]): HookDelivery[] {
-  return deliveries.filter((d) => d.event === "ping");
+  return deliveries.filter((d) => d.event === "ping").sort((a, b) => b.id - a.id);
 }
 
 // ---- the step ----------------------------------------------------------------
@@ -196,8 +199,8 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
       return checks;
     }
     let candidates = pings(rows);
-    if (candidates.some(deliverySucceeded)) {
-      const good = candidates.filter(deliverySucceeded).at(0)!;
+    const good = candidates[0];
+    if (good && deliverySucceeded(good)) {
       checks.push({
         name: "ping-delivery",
         ok: true,
@@ -243,8 +246,8 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
       ({ rows, problem } = await read());
       if (problem) break;
       candidates = pings(rows);
-      const good = candidates.find(deliverySucceeded);
-      if (good) {
+      const good = candidates[0];
+      if (good && deliverySucceeded(good)) {
         checks.push({
           name: "ping-delivery",
           ok: true,

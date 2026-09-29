@@ -77,6 +77,7 @@ import {
   locateSecrets,
 } from "../../install.js";
 import { CHOICE_KEYS, type MemoryChoice } from "../choices.js";
+import { readTomlKey } from "./ingress.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 
 export const MEMORY_STEP_ID = "memory";
@@ -163,11 +164,28 @@ export interface MemoryStepOptions {
 
 // ---- path rules -------------------------------------------------------------
 
-/** `$QC_SECRETS_DIR`, else the install locator's answer. */
-export function resolveSecretsDir(env: NodeJS.ProcessEnv, home: string): string {
+/** The install locator's answer: a set `[github] secrets_dir`
+ * first — exactly as the daemon's loader and the compose mount read it — then
+ * `$QC_SECRETS_DIR`, then `<config home>/secrets`. */
+export function resolveSecretsDir(
+  env: NodeJS.ProcessEnv,
+  home: string,
+  configured?: string | null,
+): string {
   return resolve(
-    locateSecrets({ override: env.QC_SECRETS_DIR, env: { ...env, HOME: home } }).path,
+    locateSecrets({ configured, override: env.QC_SECRETS_DIR, env: { ...env, HOME: home } })
+      .path,
   );
+}
+
+/** `[github] secrets_dir` as the live config.toml writes it; null when the
+ * file is not there yet (the step then resolves as an unset value would). */
+function configuredSecretsDir(configPath: string): string | null {
+  try {
+    return readTomlKey(readFileSync(configPath, "utf8"), "github", "secrets_dir");
+  } catch {
+    return null;
+  }
 }
 
 /** The documented key-file location — the install locator's, the
@@ -394,10 +412,12 @@ interface Resolved {
   env: NodeJS.ProcessEnv;
 }
 
-function resolvePaths(opts: MemoryStepOptions): Resolved {
+function resolvePaths(opts: MemoryStepOptions, ctx: StepContext): Resolved {
   const env = opts.env ?? process.env;
   const home = opts.home ?? homedir();
-  const secretsDir = opts.secretsDir ? resolve(opts.secretsDir) : resolveSecretsDir(env, home);
+  const secretsDir = opts.secretsDir
+    ? resolve(opts.secretsDir)
+    : resolveSecretsDir(env, home, configuredSecretsDir(ctx.adapters.paths.configPath));
   const keys = opts.keysFile
     ? {
         path: resolve(opts.keysFile),
@@ -552,7 +572,7 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
       if (choice === "declined")
         return { ok: true, checks: [...DECLINED_CHECKS], data: { declined: true } };
 
-      const { secretsDir, keys, base, account } = resolvePaths(opts);
+      const { secretsDir, keys, base, account } = resolvePaths(opts, ctx);
       const checks: CheckResult[] = [];
       if (keys.unsafe) {
         checks.push({ name: "key-file-location", ok: false, detail: keys.note });
@@ -660,7 +680,7 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
       if (ctx.choices[MEMORY_CHOICE_KEY] === "declined" || ctx.data.declined === true) {
         return { ok: true, checks: [...DECLINED_CHECKS] };
       }
-      const { secretsDir, keys, base } = resolvePaths(opts);
+      const { secretsDir, keys, base } = resolvePaths(opts, ctx);
       const keysPath = typeof ctx.data.keys_file === "string" ? ctx.data.keys_file : keys.path;
       const checks: CheckResult[] = [];
 

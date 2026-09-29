@@ -573,6 +573,29 @@ describe("degraded modes stay legal and loud", () => {
     expect(normalizeMemoryChoice(undefined)).toBe("configure");
   });
 
+  it("places the keys in the configured [github] secrets_dir — the dir the daemon and the compose mount read", async () => {
+    // No injected secretsDir and no $QC_SECRETS_DIR: the step must resolve the
+    // same dir as the loader, where a set `secrets_dir` wins.
+    const custom = join(root, "custom-secrets");
+    writeFileSync(
+      join(dirname(stateDir), "config.toml"),
+      `[github]\nrepo = "acme/widgets"\nsecrets_dir = "${custom}"\n`,
+    );
+    const server = fakeServer();
+    const engine = new OnboardingEngine(
+      [memoryStep(stepOptions({ secretsDir: undefined }))],
+      adapters(server.fetchFn),
+    );
+    const result = await runStep(engine);
+    expect(result.failures).toEqual([]);
+    expect(existsSync(join(custom, ROOT_KEY_FILE))).toBe(true);
+    expect(existsSync(join(custom, REVIEWER_KEY_FILE))).toBe(true);
+    expect(existsSync(join(root, "home", ".config", "qcr", "default", "secrets"))).toBe(false);
+    // …and verify reads the same dir back.
+    const verified = await engine.verifyAll();
+    expect(verified.results.find((r) => r.id === MEMORY_STEP_ID)?.failures).toEqual([]);
+  });
+
   it("lands the root key and waits when the server is not up yet (phase A before bring-up)", async () => {
     const server = fakeServer({ ready: false });
     const result = await runStep(engineWith(server.fetchFn));

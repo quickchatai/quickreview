@@ -266,6 +266,53 @@ describe("the ping layer", () => {
     );
   });
 
+  it("an OLD accepted ping does not certify the path when the newest ping failed — it redelivers the newest", async () => {
+    // The ingress or secret changed since: GitHub's log (newest first) holds
+    // the old 200 and the current 401.
+    const h = harness({
+      deliveries: [
+        ping({
+          id: 9,
+          status: "Unauthorized",
+          status_code: 401,
+          delivered_at: "2026-08-30T11:59:00Z",
+        }),
+        ping({ id: 5, delivered_at: "2026-08-29T09:00:00Z" }),
+      ],
+      afterRedelivery: [
+        ping({
+          id: 9,
+          status: "Unauthorized",
+          status_code: 401,
+          delivered_at: "2026-08-30T11:59:00Z",
+        }),
+        ping({ id: 5, delivered_at: "2026-08-29T09:00:00Z" }),
+      ],
+    });
+    const result = await h.engine.runStep(VERIFY_STACK_STEP_ID);
+    expect(result.ok).toBe(false);
+    expect(h.urls).toContain(`POST ${API}/app/hook/deliveries/9/attempts`);
+    expect(result.checks.find((c) => c.name === "ping-delivery")!.detail).not.toMatch(
+      /proven end to end/,
+    );
+  });
+
+  it("goes green once the redelivery of the newest ping lands — the old success never counted", async () => {
+    const h = harness({
+      deliveries: [ping({ id: 9, status_code: 401 }), ping({ id: 5 })],
+      afterRedelivery: [
+        ping({ id: 10, redelivery: true }),
+        ping({ id: 9, status_code: 401 }),
+        ping({ id: 5 }),
+      ],
+    });
+    const result = await h.engine.runStep(VERIFY_STACK_STEP_ID);
+    expect(result.ok).toBe(true);
+    expect(result.checks.find((c) => c.name === "ping-delivery")!.detail).toMatch(
+      /redelivered ping was accepted/,
+    );
+  });
+
   it("a ping that keeps failing is red with the three fixes worth trying, in order", async () => {
     const h = harness({
       deliveries: [ping({ id: 7, status_code: 502 })],

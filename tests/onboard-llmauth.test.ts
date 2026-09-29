@@ -204,10 +204,14 @@ function configText(): string {
   return readFileSync(configPathFor(stateDir), "utf8");
 }
 
-function hostLogin(): void {
+/** pi's auth.json with a ChatGPT (openai-codex) OAuth login in it — the
+ * shape pi writes; `body` overrides it for the logins that are NOT that. */
+function hostLogin(
+  body = '{"openai-codex":{"type":"oauth","access":"redacted","refresh":"redacted","expires":1}}',
+): void {
   const p = hostAuthJsonPath(home);
   mkdirSync(dirname(p), { recursive: true });
-  writeFileSync(p, '{"token":"redacted"}');
+  writeFileSync(p, body);
 }
 
 function keyFileOnDisk(value = KEY): void {
@@ -498,6 +502,24 @@ describe("API-key route", () => {
     expect(decided.ok).toBe(true);
     expect(detailOf(decided.checks, "route")).toMatch(/api route/);
     for (const a of auditModelStrings(configText())) expect(a.kind).toBe("api");
+  });
+
+  it("run: a pi login for ANOTHER provider (or an empty auth.json) is not an OpenAI OAuth login — the key file decides", async () => {
+    keyFileOnDisk();
+    for (const body of ["{}", '{"anthropic":{"type":"oauth","access":"x","refresh":"y","expires":1}}']) {
+      hostLogin(body);
+      const result = await engine().runStep(LLM_AUTH_STEP_ID);
+      expect(result.ok, result.failures.join("; ")).toBe(true);
+      expect(detailOf(result.checks, "route")).toMatch(/api route/);
+      for (const a of auditModelStrings(configText())) expect(a.kind).toBe("api");
+    }
+  });
+
+  it("run: on the OAuth route, an auth.json without an openai-codex login does not count as login 1 of 3", async () => {
+    hostLogin('{"anthropic":{"type":"oauth","access":"x","refresh":"y","expires":1}}');
+    const result = await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
+    expect(result.ok).toBe(false);
+    expect(detailOf(result.checks, "wizard_login")).toMatch(/\/login/);
   });
 
   it("run: an invalid key file on disk sends you to collect-secrets.sh rather than the LLM", async () => {
