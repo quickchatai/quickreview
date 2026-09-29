@@ -276,6 +276,37 @@ describe("the inventory is filled from the interview", () => {
     expect((await e.verifyAll()).ok).toBe(true);
   });
 
+  it("an inventory written under another ingress choice is red at verify, not described as the new choice", async () => {
+    await inventoryEngine({ ...VM_CHOICES, [INGRESS_CHOICE_KEY]: "named" }).runStep(
+      VM_INVENTORY_STEP_ID,
+    );
+    // The operator re-runs the ingress step and picks polling; the file still
+    // says cloudflared_enabled=true, and the deploy consumes the file.
+    const e = inventoryEngine({ ...VM_CHOICES, [INGRESS_CHOICE_KEY]: "polling" });
+    const report = await e.verifyAll();
+    expect(report.ok).toBe(false);
+    const said = report.results[0]!.failures.join(" ");
+    expect(said).toMatch(/cloudflared_enabled=true/);
+    expect(said).toMatch(/run the vm_inventory step/);
+    expect(readFileSync(inventoryPath(root), "utf8")).toMatch(/cloudflared_enabled=true/);
+    // Re-running the step rewrites it and verify goes green.
+    await e.runStep(VM_INVENTORY_STEP_ID);
+    expect((await e.verifyAll()).ok).toBe(true);
+  });
+
+  it("an inventory with no cloudflared_enabled host var reads as the tracked default (true)", async () => {
+    await inventoryEngine({ ...VM_CHOICES, [INGRESS_CHOICE_KEY]: "polling" }).runStep(
+      VM_INVENTORY_STEP_ID,
+    );
+    writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS}\n`);
+    const report = await inventoryEngine({
+      ...VM_CHOICES,
+      [INGRESS_CHOICE_KEY]: "polling",
+    }).verifyAll();
+    expect(report.ok).toBe(false);
+    expect(report.results[0]!.failures.join(" ")).toMatch(/cloudflared_enabled/);
+  });
+
   it("an inventory pointing somewhere else is reported, not silently overwritten by verify", async () => {
     const e = inventoryEngine({ ...VM_CHOICES, [INGRESS_CHOICE_KEY]: "named" });
     writeFileSync(inventoryPath(root), "[quickreview]\nsome-other-box\n");

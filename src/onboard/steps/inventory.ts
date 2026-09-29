@@ -324,11 +324,15 @@ export function vmInventoryStep(opts: VmInventoryOptions = {}): OnboardingStep {
       );
     }
 
-    checks.push({
-      name: "ingress",
-      ok: true,
-      detail: ingressNoteFor(ingressId, webhookPortOf(ctx.adapters)),
-    });
+    checks.push(
+      write
+        ? {
+            name: "ingress",
+            ok: true,
+            detail: ingressNoteFor(ingressId, webhookPortOf(ctx.adapters)),
+          }
+        : ingressVerifyCheck(readTextOrNull(path) ?? "", ingressId, webhookPortOf(ctx.adapters)),
+    );
     checks.push(...tuiChecks(ctx.adapters, alias, write));
     return {
       ok: checks.every((c) => c.ok),
@@ -365,6 +369,32 @@ export function vmInventoryStep(opts: VmInventoryOptions = {}): OnboardingStep {
 
     run: (ctx) => act(ctx, true),
     verify: (ctx) => act(ctx, false),
+  };
+}
+
+/** Verify's ingress check reads what the FILE holds — the deploy consumes the
+ * file, not the choice. An absent host var falls back to the tracked
+ * group_vars/all.yml default, which is true. An absent file is the inventory
+ * check's red already; this one stays quiet about it. */
+function ingressVerifyCheck(
+  text: string,
+  ingressId: string | null,
+  webhookPort: number,
+): CheckResult {
+  const note = ingressNoteFor(ingressId, webhookPort);
+  if (text === "") return { name: "ingress", ok: true, detail: note };
+  const raw = parseInventoryHostVars(text).cloudflared_enabled;
+  const effective = (raw ?? "true").trim().toLowerCase() === "true";
+  const wanted = cloudflaredEnabledFor(ingressId);
+  if (effective === wanted) return { name: "ingress", ok: true, detail: note };
+  return {
+    name: "ingress",
+    ok: false,
+    detail:
+      `the inventory says cloudflared_enabled=${effective ? "true" : "false"}` +
+      `${raw === undefined ? " (no host var — the tracked group_vars default)" : ""}, but your recorded ingress ` +
+      `choice ${ingressId === null ? "(none yet)" : `"${ingressId}"`} means cloudflared_enabled=${wanted ? "true" : "false"} ` +
+      `— the deploy reads the file. Fix: run the ${VM_INVENTORY_STEP_ID} step; it rewrites it from your answers`,
   };
 }
 
