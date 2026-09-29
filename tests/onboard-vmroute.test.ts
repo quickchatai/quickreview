@@ -307,6 +307,30 @@ describe("the inventory is filled from the interview", () => {
     expect(report.results[0]!.failures.join(" ")).toMatch(/cloudflared_enabled/);
   });
 
+  it("a hand-edited ansible truthy spelling reads as the deploy's `| bool` does", async () => {
+    await inventoryEngine({ ...VM_CHOICES, [INGRESS_CHOICE_KEY]: "named" }).runStep(
+      VM_INVENTORY_STEP_ID,
+    );
+    for (const [value, polling] of [
+      ["yes", false],
+      ['"True"', false],
+      ["on", false],
+      ["no", true],
+    ] as const) {
+      writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS} cloudflared_enabled=${value}\n`);
+      const named = await inventoryEngine({
+        ...VM_CHOICES,
+        [INGRESS_CHOICE_KEY]: "named",
+      }).verifyAll();
+      expect(named.ok, `named vs ${value}`).toBe(!polling);
+      const poll = await inventoryEngine({
+        ...VM_CHOICES,
+        [INGRESS_CHOICE_KEY]: "polling",
+      }).verifyAll();
+      expect(poll.ok, `polling vs ${value}`).toBe(polling);
+    }
+  });
+
   it("an inventory pointing somewhere else is reported, not silently overwritten by verify", async () => {
     const e = inventoryEngine({ ...VM_CHOICES, [INGRESS_CHOICE_KEY]: "named" });
     writeFileSync(inventoryPath(root), "[quickreview]\nsome-other-box\n");

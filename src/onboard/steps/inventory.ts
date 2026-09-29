@@ -372,6 +372,18 @@ export function vmInventoryStep(opts: VmInventoryOptions = {}): OnboardingStep {
   };
 }
 
+/** The playbook reads the flag as `cloudflared_enabled | bool`, so a
+ * hand-edited `yes`/`on`/`1`/`True` (quoted or not) is true to the deploy and
+ * must be true here — ansible's own BOOLEANS_TRUE set, everything else false. */
+function ansibleBool(value: string): boolean {
+  const v = value
+    .trim()
+    .replace(/^(["'])(.*)\1$/, "$2")
+    .trim()
+    .toLowerCase();
+  return ["y", "yes", "on", "1", "true", "t", "1.0"].includes(v);
+}
+
 /** Verify's ingress check reads what the FILE holds — the deploy consumes the
  * file, not the choice. An absent host var falls back to the tracked
  * group_vars/all.yml default, which is true. An absent file is the inventory
@@ -384,7 +396,7 @@ function ingressVerifyCheck(
   const note = ingressNoteFor(ingressId, webhookPort);
   if (text === "") return { name: "ingress", ok: true, detail: note };
   const raw = parseInventoryHostVars(text).cloudflared_enabled;
-  const effective = (raw ?? "true").trim().toLowerCase() === "true";
+  const effective = ansibleBool(raw ?? "true");
   const wanted = cloudflaredEnabledFor(ingressId);
   if (effective === wanted) return { name: "ingress", ok: true, detail: note };
   return {
