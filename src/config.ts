@@ -707,7 +707,7 @@ export function parseEscalation(raw: Record<string, any>): EscalationConfig {
       `config.toml [escalation]: shape must be "comment" or "review_request" (got ${JSON.stringify(cfg.shape)})`,
     );
   }
-  if (!Number.isFinite(cfg.max_per_pr) || cfg.max_per_pr < 1) {
+  if (!Number.isInteger(cfg.max_per_pr) || cfg.max_per_pr < 1) {
     throw new Error(
       `config.toml [escalation]: max_per_pr must be a positive integer (got ${JSON.stringify(cfg.max_per_pr)})`,
     );

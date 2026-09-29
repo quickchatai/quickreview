@@ -218,6 +218,18 @@ describe("migrateConfig", () => {
     expect(readFileSync(to, "utf8")).toBe("same\n");
   });
 
+  it("a config home that IS the checkout never deletes the live config (or its profiles)", () => {
+    // onboard bring-up writes QCR_CONFIG_HOME=<root> for a config named inside
+    // the checkout; migrate then sees from === to and must not unlink it.
+    const home = { ...env, QCR_CONFIG_HOME: root };
+    const cfg = put(join(root, "config.toml"), "live = 1\n");
+    const prof = put(join(root, "profiles", "mine", "profile.toml"), "p = 1\n");
+    expect(migrateConfig({ root, env: home })).toEqual({ kind: "already", to: cfg });
+    expect(readFileSync(cfg, "utf8")).toBe("live = 1\n");
+    expect(migrateProfiles({ root, env: home })).toEqual([]);
+    expect(readFileSync(prof, "utf8")).toBe("p = 1\n");
+  });
+
   it("nothing to move is reported, and QCR_CONFIG makes migrate refuse to guess", () => {
     expect(migrateConfig({ root, env }).kind).toBe("nothing");
     put(join(root, "config.toml"));

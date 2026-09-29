@@ -209,7 +209,9 @@ export interface WhyPayload {
     summary?: string | null;
     cancel_cause?: string | null;
   }>;
-  threads: { open: number; total: number };
+  /** `open` is null: resolution is GitHub's state and the daemon does not
+   * mirror it — unknown, never the total dressed as a count. */
+  threads: { open: number | null; total: number };
   /** The findings the validator doubted — kept, never posted, shown
    * in the TUI detail pane. Absent from an older daemon (never read as none). */
   doubted?: DoubtedFinding[];
@@ -304,8 +306,8 @@ export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPa
       cancel_cause: r.cancel_cause ?? null,
     })),
     // The registry knows every bot thread; "open" needs GitHub truth the
-    // daemon doesn't mirror, so it is reported as total until archived.
-    threads: { open: threadTotal.c, total: threadTotal.c },
+    // daemon doesn't mirror, so it is UNKNOWN (null) — never the total.
+    threads: { open: null, total: threadTotal.c },
     doubted: store.doubtedFindings(n).map((f) => ({
       round_no: f.round_no,
       lens: f.lens,

@@ -1770,6 +1770,7 @@ describe("configuration refuses a half-configured feature", () => {
       }),
     ).toThrow(/min_severity must be/);
     expect(() => parseEscalation({ ...base, max_per_pr: 0 })).toThrow(/max_per_pr/);
+    expect(() => parseEscalation({ ...base, max_per_pr: 1.5 })).toThrow(/max_per_pr/);
     expect(() => parseEscalation({ ...base, targets: ["not a login!"] })).toThrow(
       /is not a GitHub login/,
     );

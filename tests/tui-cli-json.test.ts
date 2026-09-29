@@ -58,7 +58,9 @@ describe("whyJson", () => {
       [1, "REQUEST_CHANGES", "done"],
       [2, null, "running"],
     ]);
-    expect(payload.threads).toEqual({ open: 2, total: 2 });
+    // "open" needs GitHub resolution state the daemon does not mirror: it is
+    // UNKNOWN (null), never the total dressed up as a count.
+    expect(payload.threads).toEqual({ open: null, total: 2 });
     expect(payload.ledger).toBeUndefined();
   });
 

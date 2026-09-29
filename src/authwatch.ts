@@ -19,14 +19,20 @@ export interface AuthScanHit {
   mtimeMs: number;
 }
 
-function tailOf(path: string, bytes: number): string {
+/** The bytes of `path` not yet scanned: from `from` (clamped into the last
+ * `bytes`) to the end. Returns the text and the offset the NEXT read starts
+ * at — just past the last complete line, so an error line still being written
+ * is read whole next time rather than split across two scans. */
+function readFrom(path: string, from: number, bytes: number): { text: string; next: number } {
   const fd = openSync(path, "r");
   try {
     const size = statSync(path).size;
-    const len = Math.min(size, bytes);
-    const buf = Buffer.alloc(len);
-    readSync(fd, buf, 0, len, size - len);
-    return buf.toString("utf8");
+    // A file that shrank was rewritten: its old offset means nothing.
+    const start = Math.max(from > size ? 0 : from, size - bytes, 0);
+    const buf = Buffer.alloc(size - start);
+    readSync(fd, buf, 0, buf.length, start);
+    const lastNl = buf.lastIndexOf(0x0a);
+    return { text: buf.toString("utf8"), next: lastNl < 0 ? start : start + lastNl + 1 };
   } finally {
     closeSync(fd);
   }
@@ -34,8 +40,17 @@ function tailOf(path: string, bytes: number): string {
 
 /** Scan *.jsonl files modified at/after `sinceMs` (dir + one sublevel) for
  * auth-error signatures. Unreadable files are skipped — observation must
- * never throw into the daemon tick. */
-export function scanPiAuthErrors(sessionsDir: string, sinceMs: number): AuthScanHit[] {
+ * never throw into the daemon tick.
+ *
+ * `seen` (path → byte offset, updated in place) makes the scan read only what
+ * was APPENDED since the last scan: without it an old error still inside the
+ * tail matched again on every healthy write after a re-login, and the flag
+ * never cleared. A file not in `seen` is read tail-only, as before. */
+export function scanPiAuthErrors(
+  sessionsDir: string,
+  sinceMs: number,
+  seen?: Map<string, number>,
+): AuthScanHit[] {
   const hits: AuthScanHit[] = [];
   const visit = (dir: string, depth: number): void => {
     let names: string[] = [];
@@ -58,8 +73,9 @@ export function scanPiAuthErrors(sessionsDir: string, sinceMs: number): AuthScan
       }
       if (!name.endsWith(".jsonl") || st.mtimeMs < sinceMs) continue;
       try {
-        if (PI_AUTH_ERROR_RE.test(tailOf(path, AUTH_TAIL_BYTES)))
-          hits.push({ file: path, mtimeMs: st.mtimeMs });
+        const { text, next } = readFrom(path, seen?.get(path) ?? 0, AUTH_TAIL_BYTES);
+        seen?.set(path, next);
+        if (PI_AUTH_ERROR_RE.test(text)) hits.push({ file: path, mtimeMs: st.mtimeMs });
       } catch {
         // skip
       }
@@ -87,6 +103,9 @@ export class PiAuthWatch {
   private sinceMs: number;
   private lastErrorAt: number | null = null;
   private totalHits = 0;
+  /** Per-file offset already scanned — a match is a NEW error line, never an
+   * old one the tail still holds. */
+  private readonly seen = new Map<string, number>();
 
   constructor(
     private readonly sessionsDir: string,
@@ -98,10 +117,10 @@ export class PiAuthWatch {
   /** Returns the NEW hits found this scan (empty array when quiet). */
   scan(): AuthScanHit[] {
     const started = this.now().getTime();
-    const hits = scanPiAuthErrors(this.sessionsDir, this.sinceMs);
+    const hits = scanPiAuthErrors(this.sessionsDir, this.sinceMs, this.seen);
     // Next scan starts at this scan's start, minus a minute of overlap so a
-    // write racing the scan is never missed; the anomaly wake dedup absorbs
-    // the duplicate detection.
+    // write racing the scan is never missed; the per-file offsets keep the
+    // overlap from re-reading (and re-counting) bytes already scanned.
     this.sinceMs = started - 60 * 1000;
     if (hits.length > 0) {
       this.lastErrorAt = started;

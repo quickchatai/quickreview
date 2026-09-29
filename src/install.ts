@@ -186,6 +186,21 @@ export function missingConfigMessage(located: LocatedConfig, stranded: string | 
 
 // ---- qcr install migrate ----------------------------------------------------
 
+/** Whether two existing paths are the SAME file or directory (dev + inode, so
+ * a symlink or a config home that IS the checkout both count). A migrate whose
+ * source is its destination has nothing to move — and must never "deduplicate"
+ * the only copy by deleting it. */
+function samePath(a: string, b: string): boolean {
+  if (resolve(a) === resolve(b)) return true;
+  try {
+    const sa = statSync(a);
+    const sb = statSync(b);
+    return sa.dev === sb.dev && sa.ino === sb.ino;
+  } catch {
+    return false;
+  }
+}
+
 export type MigrateOutcome =
   /** The checkout's config.toml is now in the config home. */
   | { kind: "moved"; from: string; to: string }
@@ -215,6 +230,7 @@ export function migrateConfig(opts: { root: string; env?: InstallEnv }): Migrate
   const inCheckout = existsSync(from);
   const inHome = existsSync(to);
   if (!inCheckout) return inHome ? { kind: "already", to } : { kind: "nothing", to };
+  if (samePath(from, to)) return { kind: "already", to };
   if (inHome) {
     if (!readFileSync(from).equals(readFileSync(to))) return { kind: "conflict", from, to };
     unlinkSync(from);
@@ -462,6 +478,8 @@ export function migrateProfiles(opts: { root: string; env?: InstallEnv }): Profi
   const fromBase = join(opts.root, PROFILES_DIR);
   const toBase = join(configHome(env), PROFILES_DIR);
   if (!isDirectory(fromBase)) return [];
+  // A config home that IS the checkout: its profiles are already home.
+  if (samePath(fromBase, toBase)) return [];
   const outcomes: ProfileMigrateOutcome[] = [];
   const names = readdirSync(fromBase, { withFileTypes: true })
     .filter((e) => e.isDirectory() && !EXAMPLE_PROFILES.includes(e.name))

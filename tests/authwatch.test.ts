@@ -86,6 +86,42 @@ describe("PiAuthWatch", () => {
     t += 2 * 60_000;
     expect(watch.status()).toBeUndefined();
   });
+
+  it("an OLD error still in the tail is not re-counted when healthy turns are appended", () => {
+    // Token expired, operator re-ran /login, the session keeps writing
+    // successful turns: the old error line stays inside the 128 KiB tail.
+    let t = Date.parse("2026-08-19T15:00:00Z");
+    const watch = new PiAuthWatch(dir, () => new Date(t));
+    const path = jsonl("s.jsonl", ERR, new Date(t));
+    t += 60_000;
+    expect(watch.scan()).toHaveLength(1);
+    for (let i = 0; i < 40; i++) {
+      writeFileSync(path, '{"ok":true}\n', { flag: "a" });
+      utimesSync(path, new Date(t), new Date(t));
+      t += 60_000;
+      expect(watch.scan()).toEqual([]);
+    }
+    expect(watch.status()).toBeUndefined(); // cleared 30 min after the last REAL error
+    // A genuinely NEW error in the same file is still caught.
+    writeFileSync(path, ERR, { flag: "a" });
+    utimesSync(path, new Date(t), new Date(t));
+    t += 60_000;
+    expect(watch.scan()).toHaveLength(1);
+    expect(watch.status()!.hits).toBe(2);
+  });
+
+  it("an error line split across two scans is still caught", () => {
+    let t = Date.parse("2026-08-19T15:00:00Z");
+    const watch = new PiAuthWatch(dir, () => new Date(t));
+    const half = ERR.indexOf("token") + 3;
+    const path = jsonl("s.jsonl", '{"ok":true}\n' + ERR.slice(0, half), new Date(t));
+    t += 60_000;
+    expect(watch.scan()).toEqual([]);
+    writeFileSync(path, ERR.slice(half), { flag: "a" });
+    utimesSync(path, new Date(t), new Date(t));
+    t += 60_000;
+    expect(watch.scan()).toHaveLength(1);
+  });
 });
 
 describe("surfaces", () => {
