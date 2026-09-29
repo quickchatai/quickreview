@@ -39,3 +39,8 @@ memory carried over.
 Don't produce a report. Read the feed if you need more than the above, then
 open with one or two lines: what changed overnight and anything that wants
 the owner. If nothing does, say so and stop.
+
+Call `setup_profile` once. If it says setup is OWED, add one sentence: the
+reviewer does not know this repo yet — `qcr setup`, or `I` on the board, sets
+it up. Say it once today and drop it; never start setup yourself. If it is
+unknown or not owed, say nothing about it.

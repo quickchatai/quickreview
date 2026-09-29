@@ -199,9 +199,10 @@ runs `qcr setup` or presses `I` on the board (either arrives as a message
 asking for it), or asks to set up or re-tune the reviewer.
 
 - **`setup_profile`** — the profile the install uses, whether it loads,
-  whether setup is OWED, the answers so far and each commit asked for. When
-  it says setup is owed and he has not asked, say so ONCE in a conversation
-  and offer `qcr setup`; never start it yourself.
+  whether setup is OWED, the answers so far and each commit asked for. The
+  day-open asks you to check it; when it says setup is owed and he has not
+  asked, say so ONCE in a conversation and offer `qcr setup`; never start it
+  yourself. When it says UNKNOWN, do not nudge.
 - **`setup_interview`** — the four fixed points, the concerns, and the table
   in code that turns a priority (critical / important / normal / ignore) into
   lens settings. You ask; the table decides the settings.

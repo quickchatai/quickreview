@@ -995,6 +995,13 @@ export async function cmdSetup(rest: string[]): Promise<number> {
   const cfg = loadConfig();
   for (const r of commitRequestedProfiles()) console.log(commitLine(r));
   const file = requestSetup({ injectDir: companionInjectDir(cfg.companion) });
+  if (!cfg.companion.enabled) {
+    console.log(
+      `the request is queued (${file}), but [companion] enabled = false — the companion never starts, so nothing ` +
+        "picks it up until you turn it on. Setup runs in the companion.",
+    );
+    return 1;
+  }
   console.log(
     `asked the companion to set up ${cfg.github.repo} (${file}).\n` +
       "Open `qcr tui` — the companion column picks it up (at its next start, if it is not running) and walks you through " +

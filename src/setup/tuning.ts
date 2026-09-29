@@ -133,11 +133,14 @@ export interface ProfileStatus {
   profile: string | null;
   /** The daemon's own check of it; null when there is none to check. */
   check: ProfileCheck | null;
-  /** No profile of the install's own is in use — the companion nudges. */
-  needs_setup: boolean;
+  /** No profile of the install's own is in use — the companion nudges.
+   * Null when the live config cannot be read: whether setup is owed is then
+   * UNKNOWN, never guessed either way (`why_setup` says why). */
+  needs_setup: boolean | null;
   why_setup: string | null;
   interview: RecordRead;
-  unanswered: string[];
+  /** Null when the interview record cannot be read — unknown, never "all". */
+  unanswered: string[] | null;
   commits: Array<{ id: string; requested_at: string; result: CommitResult | null | "unreadable" }>;
 }
 
@@ -150,6 +153,7 @@ export function profileStatus(deps: TuningDeps): ProfileStatus | Refusal {
   const profile = record?.profile ?? (named !== "" ? named : null);
   const check = profile ? checkProfile(deps.profiles, profile) : null;
   let why: string | null = null;
+  let owed: boolean | null = null;
   if (target.state !== "ok") why = `the live config cannot be read (${target.error})`;
   else if (named === "") why = "the live config names no repo profile — PR rounds run the untuned shipped behaviour";
   else if (EXAMPLE_PROFILES.includes(named)) why = `the live config names "${named}", a generic example — the repo has no profile of its own`;
@@ -159,14 +163,15 @@ export function profileStatus(deps: TuningDeps): ProfileStatus | Refusal {
     const inUse = profile === named ? check : checkProfile(deps.profiles, named);
     if (inUse && !inUse.ok) why = `the profile the live config names does not load: ${inUse.errors[0]}`;
   }
+  if (target.state === "ok") owed = why !== null;
   return {
     target,
     profile,
     check,
-    needs_setup: why !== null,
+    needs_setup: owed,
     why_setup: why,
     interview,
-    unanswered: unansweredConcerns(record?.priorities ?? {}),
+    unanswered: interview.state === "unreadable" ? null : unansweredConcerns(record?.priorities ?? {}),
     commits: (record?.commits ?? []).map((c) => ({ ...c, result: readResult(deps.state, c.id) })),
   };
 }
@@ -416,9 +421,10 @@ export async function proposePins(deps: TuningDeps, raw: unknown): Promise<PinPr
     const block = typeof r.block === "string" && /^\d+$/.test(r.block) ? Number(r.block) : r.block;
     const e = entries.find((x) => x.id === r.id && x.ts === r.ts && x.block === block);
     const why = typeof r.why === "string" ? r.why.trim() : "";
+    const oneLine = !/[\r\n]/.test(why);
     if (!e) errors.push(`entries[${i}]: no memory entry ${JSON.stringify({ id: r.id, ts: r.ts, block: r.block })} — read memory again`);
     else if (e.pinned) errors.push(`entries[${i}]: ${e.id} is already pinned`);
-    else if (why === "" || why.length > PIN_WHY_MAX) errors.push(`entries[${i}]: \`why\` must be one line of at most ${PIN_WHY_MAX} characters`);
+    else if (why === "" || !oneLine || why.length > PIN_WHY_MAX) errors.push(`entries[${i}]: \`why\` must be one line of at most ${PIN_WHY_MAX} characters`);
     else if (proposed.some((p) => proposalKey(p) === proposalKey(e))) errors.push(`entries[${i}]: proposed twice`);
     else proposed.push({ id: e.id, ts: e.ts, block: e.block, hash: e.hash, excerpt: e.text.replace(/\s+/g, " ").slice(0, 160), why });
   }

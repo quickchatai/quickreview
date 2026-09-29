@@ -9,7 +9,7 @@
 // with a key or a command, exactly like typing the request into the column:
 // never ambient, never a synthetic turn the TUI decides to send on its own
 // (the retired companion-wake stays retired).
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { configHome, stateHome, type InstallEnv } from "../install.js";
 import { processProfileCommits, type CommitResult } from "../setup/configcommit.js";
@@ -28,10 +28,14 @@ export function setupRequestName(now: Date): string {
 }
 
 /** Drop the setup request into the companion's host inject dir (tmp+rename:
- * the bridge must never drain a torn file). Returns the file written. */
+ * the bridge must never drain a torn file). Returns the file written — or
+ * the request already waiting there: a second `I` (or `qcr setup`) before
+ * the companion drained the first asks nothing new, so it queues nothing. */
 export function requestSetup(opts: { injectDir: string; now?: Date }): string {
   const name = setupRequestName(opts.now ?? new Date());
   mkdirSync(opts.injectDir, { recursive: true });
+  const pending = readdirSync(opts.injectDir).filter((f) => !f.startsWith(".") && f.endsWith("-setup.md")).sort();
+  if (pending.length > 0) return join(opts.injectDir, pending[0]!);
   const target = join(opts.injectDir, name);
   const tmp = join(opts.injectDir, `.${name}.tmp`);
   writeFileSync(tmp, `${SETUP_REQUEST_TEXT}\n`);

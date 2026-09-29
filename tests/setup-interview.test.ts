@@ -334,6 +334,20 @@ describe("profile write tools: validate, diff, commit", () => {
     expect(done.commits[0]?.result).toBeNull();
   });
 
+  it("status never guesses: an unreadable live config or interview record reads UNKNOWN, not owed or all-unanswered", () => {
+    // no live config at all: whether setup is owed is unknown
+    const noConfig = engine().profileStatus();
+    if (!("target" in noConfig)) throw new Error("refused");
+    expect(noConfig.needs_setup).toBeNull();
+    expect(noConfig.why_setup).toMatch(/cannot be read/);
+    liveConfig("acme");
+    write(join(dir, "state", INTERVIEW_FILE), "{ torn");
+    const torn = engine().profileStatus();
+    if (!("target" in torn)) throw new Error("refused");
+    expect(torn.interview.state).toBe("unreadable");
+    expect(torn.unanswered).toBeNull();
+  });
+
   it("a write asks for a commit of exactly the profile's files; the operator's machine carries it out", () => {
     liveConfig("acme");
     const r = applied(engine().profileApply({ priorities: answers({ security: "critical" }), goals: "g", style_guide: "# s\n", write: true }));
@@ -484,6 +498,8 @@ describe("pin proposals go to the operator", () => {
     ]);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.errors).toHaveLength(3);
+    const twoLines = await engine(mem).proposePins([{ id: "a", ts: "2026-09-29 09:00:00", block: 0, why: "one\ntwo" }]);
+    expect(twoLines.ok).toBe(false);
     const many = Array.from({ length: 9 }, () => ({ id: "a", ts: "2026-09-29 09:00:00", block: 0, why: "w" }));
     const capped = await engine(mem).proposePins(many);
     expect(capped.ok).toBe(false);

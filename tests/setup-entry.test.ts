@@ -5,7 +5,7 @@
 import { EventEmitter } from "node:events";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cmdSetup } from "../src/cli.js";
 import { TUI_DEFAULTS } from "../src/config.js";
@@ -38,10 +38,27 @@ describe("the setup request", () => {
     expect(SETUP_REQUEST_TEXT).toMatch(/setup_profile/);
   });
 
+  it("a second ask before the first is drained queues nothing new", () => {
+    const inject = companionInjectDir({ repo_dir: dir, session: "companion" });
+    const first = requestSetup({ injectDir: inject, now: new Date("2026-09-29T10:00:00Z") });
+    const again = requestSetup({ injectDir: inject, now: new Date("2026-09-29T10:05:00Z") });
+    expect(again).toBe(first);
+    expect(readdirSync(inject)).toEqual([basename(first)]);
+  });
+
   it("sorts after that day's day-open, so a fresh conversation reads the day first", () => {
     const name = setupRequestName(new Date("2026-09-29T10:00:00Z"));
     expect(["2026-09-29-day-open.md", name].sort()).toEqual(["2026-09-29-day-open.md", name]);
     expect([name, "2026-09-30-day-open.md"].sort()).toEqual([name, "2026-09-30-day-open.md"]);
+  });
+});
+
+describe("the companion's nudge when no profile exists", () => {
+  it("every day-open asks it to check setup_profile, nudge once when owed, and never start setup", () => {
+    const dayOpen = readFileSync(join(process.cwd(), "prompts", "companion-day-open.md"), "utf8");
+    expect(dayOpen).toMatch(/`setup_profile`/);
+    expect(dayOpen).toMatch(/OWED/);
+    expect(dayOpen).toMatch(/never start setup yourself/);
   });
 });
 

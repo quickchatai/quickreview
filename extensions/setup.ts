@@ -411,10 +411,12 @@ export function renderProfileStatus(s: ProfileStatus): string {
       ? `Live config ${s.target.config} names ${s.target.named === "" ? "NO repo profile" : `profile "${s.target.named}"`}.`
       : `✗ Live config: ${s.target.error}`,
   );
-  if (s.needs_setup) {
+  if (s.needs_setup === true) {
     out.push(
       `SETUP IS OWED: ${s.why_setup}. Tell the owner, once, and offer to run setup (the \`setup\` skill) — never start it on your own.`,
     );
+  } else if (s.needs_setup === null) {
+    out.push(`Whether setup is owed is UNKNOWN: ${s.why_setup}. Do not nudge on it; say what could not be read.`);
   }
   if (s.profile && s.check) out.push(renderCheck(s.profile, s.check));
   if (s.target.state === "ok" && s.profile && s.target.named !== s.profile) {
@@ -432,7 +434,8 @@ export function renderProfileStatus(s: ProfileStatus): string {
           .join(", "),
     );
   } else out.push("No interview recorded yet.");
-  if (s.unanswered.length > 0) out.push(`Unanswered concerns: ${s.unanswered.join(", ")}.`);
+  if (s.unanswered === null) out.push("Unanswered concerns: UNKNOWN (the interview record cannot be read).");
+  else if (s.unanswered.length > 0) out.push(`Unanswered concerns: ${s.unanswered.join(", ")}.`);
   for (const c of s.commits) {
     const r = c.result;
     out.push(
