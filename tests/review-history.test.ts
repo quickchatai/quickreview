@@ -10,16 +10,18 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
 import { MutationGate } from "../src/gate.js";
-import { GitHubAdapter } from "../src/github.js";
+import { GitHubAdapter, type SearchIssueItem } from "../src/github.js";
 import type { FetchFn, TokenMinter } from "../src/githubAuth.js";
 import {
   COMMENT_BODY_MAX,
   collectReviewHistory,
   humanCommentsOf,
+  mergedPrsQueries,
   mergedPrsQuery,
   parseDigest,
   windowStart,
   type PrReviews,
+  type ReviewHistorySource,
 } from "../src/reviewhistory.js";
 import { StateStore } from "../src/state.js";
 
@@ -153,9 +155,39 @@ describe("collectReviewHistory", () => {
     const d = await collectReviewHistory(h.adapter, s, cfg, { now: () => NOW });
     expect(d.window.since).toBe(windowStart(NOW, 6));
     expect(d.window.since.slice(0, 10)).toBe("2026-03-29");
-    const q = decodeURIComponent(new URL(h.calls[0]!.url).searchParams.get("q") ?? "");
-    expect(q).toBe(mergedPrsQuery(cfg, d.window.since));
-    expect(q).toBe(`repo:${cfg.github.repo} is:pr is:merged merged:>=2026-03-29 -author:app/${cfg.github.app_slug}`);
+    // One query per month — GitHub's search stops at 1000 results a query,
+    // which six months of a busy repo passes. The last slice is open-ended.
+    const qs = h.calls.filter((c) => c.url.includes("/search/issues")).map((c) => new URL(c.url).searchParams.get("q") ?? "");
+    const base = `repo:${cfg.github.repo} is:pr is:merged`;
+    const tail = `-author:app/${cfg.github.app_slug}`;
+    expect(qs).toEqual([
+      `${base} merged:2026-03-29..2026-04-29 ${tail}`,
+      `${base} merged:2026-04-29..2026-05-29 ${tail}`,
+      `${base} merged:2026-05-29..2026-06-29 ${tail}`,
+      `${base} merged:2026-06-29..2026-07-29 ${tail}`,
+      `${base} merged:2026-07-29..2026-08-29 ${tail}`,
+      `${base} merged:>=2026-08-29 ${tail}`,
+    ]);
+    expect(qs[0]).toBe(mergedPrsQuery(cfg, d.window.since, windowStart(NOW, 5)));
+    expect(mergedPrsQueries(cfg, NOW, 1)).toEqual([`${base} merged:>=2026-08-29 ${tail}`]);
+    s.close();
+  });
+
+  it("a PR found by two month slices is read once, and a slice at the search cap is a problem", async () => {
+    const h = harness(PRS); // the fake answers every slice with both PRs
+    const s = new StateStore(":memory:", () => NOW);
+    const d = await collectReviewHistory(h.adapter, s, cfg, { now: () => NOW });
+    expect(d.human.prs_enumerated).toBe(2);
+    expect(h.calls.filter((c) => c.url.endsWith("/graphql"))).toHaveLength(2);
+    expect(d.problems).toEqual([]);
+
+    const capped: ReviewHistorySource = {
+      searchIssuesPaged: async (q) => (q.includes(">=") ? Array.from({ length: 1000 }, (_, i) => ({ number: i + 1 }) as SearchIssueItem) : []),
+      prReviews: async () => null,
+    };
+    const c = await collectReviewHistory(capped, s, cfg, { now: () => NOW, limit: 0 });
+    expect(c.human.prs_enumerated).toBe(1000);
+    expect(c.problems).toEqual([expect.stringMatching(/returned its cap \(1000 PRs\) for .*merged:>=2026-08-29/)]);
     s.close();
   });
 
@@ -212,6 +244,8 @@ describe("collectReviewHistory", () => {
     const s = new StateStore(":memory:", () => NOW);
     const d = await collectReviewHistory(harness(PRS).adapter, s, cfg, { now: () => NOW, limit: 1 });
     expect(d.human).toMatchObject({ prs_enumerated: 2, prs_scanned: 1 });
+    // The newest PR is the one kept — it describes the team as it is now.
+    expect(d.human.comments.map((c) => c.pr)).toEqual([11]);
     s.close();
   });
 });
@@ -233,6 +267,13 @@ describe("parseDigest", () => {
     expect(parseDigest("nope")).toEqual({ ok: false, error: "not JSON" });
     expect(parseDigest(JSON.stringify({ kind: "other" })).ok).toBe(false);
     expect(parseDigest(JSON.stringify({ kind: "qcr-review-history", version: 99 })).ok).toBe(false);
+    // A field the companion's pages render is checked too, never printed as "undefined".
+    const empty = { kind: "qcr-review-history", version: 1, repo: "o/r", generated_at: "t", window: { since: "a", until: "b", months: 6 },
+      human: { prs_enumerated: 0, prs_scanned: 0, prs_missing: 0, truncated: false, comments: [] }, rounds: [], problems: [] };
+    expect(parseDigest(JSON.stringify({ ...empty, feedback: [] })).ok).toBe(true);
+    expect(parseDigest(JSON.stringify({ ...empty, feedback: [{ pr: 1, kind: "k", body: null, author: null }] }))).toEqual({
+      ok: false, error: "feedback[0] is not a feedback signal",
+    });
   });
 });
 

@@ -9,8 +9,8 @@
 // and the repo portrait (`src/setup/history.ts`). The raw comments are the
 // operator's colleagues' names and words; they stay in the state home.
 //
-// READ-ONLY against GitHub, in the backfill shape (`src/backfill.ts`): one
-// paged issue search enumerates the PRs, one GraphQL query per PR reads its
+// READ-ONLY against GitHub, in the backfill shape (`src/backfill.ts`): paged
+// issue searches (one per month of the window) enumerate the PRs, one GraphQL query per PR reads its
 // reviews. `ReviewHistorySource` has no method that could write, and nothing
 // here imports the gate — `qcr history digest` hands the adapter a dry-run gate
 // whose executor throws, exactly as `qcr backfill` does.
@@ -134,9 +134,28 @@ export function windowStart(now: Date, months: number): string {
   return d.toISOString();
 }
 
-/** The one enumeration query: merged PRs in the window, the App's own excluded. */
-export function mergedPrsQuery(cfg: Config, since: string): string {
-  return `repo:${cfg.github.repo} is:pr is:merged merged:>=${since.slice(0, 10)} -author:app/${cfg.github.app_slug}`;
+/** The enumeration query: merged PRs from `since` (to `until`, both days
+ * inclusive, when given), the App's own excluded. */
+export function mergedPrsQuery(cfg: Config, since: string, until?: string): string {
+  const range = until === undefined ? `>=${since.slice(0, 10)}` : `${since.slice(0, 10)}..${until.slice(0, 10)}`;
+  return `repo:${cfg.github.repo} is:pr is:merged merged:${range} -author:app/${cfg.github.app_slug}`;
+}
+
+/**
+ * The window cut into one-month slices, oldest first. GitHub's search returns
+ * at most 1000 results per query, and six months of a busy repo is more than
+ * that — one query would silently keep an arbitrary subset. Per month, the cap
+ * is only reached by a repo merging 1000+ PRs a month, and then the digest
+ * says so. The last slice is open-ended (`merged:>=`), so a PR merged today
+ * is never lost to a day boundary; adjacent slices share a boundary day and
+ * the caller deduplicates.
+ */
+export function mergedPrsQueries(cfg: Config, now: Date, months: number): string[] {
+  if (months <= 1) return [mergedPrsQuery(cfg, windowStart(now, months))];
+  const out: string[] = [];
+  for (let m = months; m > 1; m--) out.push(mergedPrsQuery(cfg, windowStart(now, m), windowStart(now, m - 1)));
+  out.push(mergedPrsQuery(cfg, windowStart(now, 1)));
+  return out;
 }
 
 function clip(body: string): string {
@@ -200,17 +219,21 @@ export async function collectReviewHistory(
   const since = windowStart(now, months);
   const problems: string[] = [];
 
-  let prs: number[] = [];
-  try {
-    const found = await source.searchIssuesPaged(mergedPrsQuery(cfg, since), cfg.backfill.max_search_pages);
-    prs = [...new Set(found.map((i) => i.number).filter((n) => Number.isInteger(n)))].sort((a, b) => a - b);
-  } catch (err) {
-    problems.push(`merged-PR search failed: ${String(err)}`);
+  const numbers = new Set<number>();
+  for (const q of mergedPrsQueries(cfg, now, months)) {
+    try {
+      const found = await source.searchIssuesPaged(q, cfg.backfill.max_search_pages);
+      for (const i of found) if (Number.isInteger(i.number)) numbers.add(i.number);
+      if (found.length >= Math.min(cfg.backfill.max_search_pages * 100, 1000)) {
+        problems.push(`the search returned its cap (${found.length} PRs) for ${q} — some merged PRs in that month were not read`);
+      }
+    } catch (err) {
+      problems.push(`merged-PR search failed (${q}): ${String(err)}`);
+    }
   }
+  // Newest first: `--limit` and the comment cap both keep the recent team.
+  let prs = [...numbers].sort((a, b) => b - a);
   const enumerated = prs.length;
-  if (enumerated >= cfg.backfill.max_search_pages * 100) {
-    problems.push(`the search returned its cap (${enumerated} PRs) — older merged PRs in the window were not read`);
-  }
   if (opts.limit !== undefined && opts.limit >= 0) prs = prs.slice(0, opts.limit);
   log(`history: ${enumerated} merged PRs since ${since.slice(0, 10)}${prs.length !== enumerated ? ` · ${prs.length} after --limit` : ""}`);
 
@@ -314,19 +337,19 @@ export function parseDigest(text: string): { ok: true; digest: ReviewHistoryDige
     return { ok: false, error: "bad human section" };
   }
   for (const [i, c] of h.comments.entries()) {
-    if (!c || !isInt(c.pr) || (c.kind !== "review" && c.kind !== "inline") || !isStr(c.author) || !isStr(c.body) || !isStrOrNull(c.path) || !isStr(c.state)) {
+    if (!c || !isInt(c.pr) || (c.kind !== "review" && c.kind !== "inline") || !isStr(c.author) || !isStr(c.body) || !isStrOrNull(c.path) || !isStr(c.state) || !isStrOrNull(c.merged_at)) {
       return { ok: false, error: `human.comments[${i}] is not a comment` };
     }
   }
   if (!Array.isArray(d.rounds)) return { ok: false, error: "no rounds array" };
   for (const [i, r] of d.rounds.entries()) {
-    if (!r || !isInt(r.pr) || !isInt(r.round_no) || typeof r.backfilled !== "boolean" || !isStrOrNull(r.summary) || !isStrOrNull(r.verdict)) {
+    if (!r || !isInt(r.pr) || !isInt(r.round_no) || typeof r.backfilled !== "boolean" || !isStrOrNull(r.summary) || !isStrOrNull(r.verdict) || !isStrOrNull(r.finished_at)) {
       return { ok: false, error: `rounds[${i}] is not a round` };
     }
   }
   if (!Array.isArray(d.feedback)) return { ok: false, error: "no feedback array" };
   for (const [i, f] of d.feedback.entries()) {
-    if (!f || !isInt(f.pr) || !isStr(f.kind) || !isStrOrNull(f.body) || !isStrOrNull(f.author)) {
+    if (!f || !isInt(f.pr) || !isStr(f.kind) || !isStr(f.created_at) || !isStrOrNull(f.body) || !isStrOrNull(f.author)) {
       return { ok: false, error: `feedback[${i}] is not a feedback signal` };
     }
   }

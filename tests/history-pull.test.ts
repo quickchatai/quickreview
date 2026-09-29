@@ -21,7 +21,7 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-const tui: TuiConfig = { ...TUI_DEFAULTS, ssh_host: "my-vm", container: "quickreview-sandbox", sudo_docker: true };
+const tui: TuiConfig = { ...TUI_DEFAULTS, ssh_host: "review-vm", container: "quickreview-sandbox", sudo_docker: true };
 const REPO = "example-org/example-app";
 
 function digest(over: Partial<ReviewHistoryDigest> = {}): ReviewHistoryDigest {
@@ -71,7 +71,7 @@ describe("pullReviewHistory", () => {
     const ssh = runner(JSON.stringify(d));
     const r = await pullReviewHistory({ tui, ssh, stateHome: home, repo: REPO, months: 4 });
     expect(r.ok).toBe(true);
-    expect(ssh.calls).toEqual([{ host: "my-vm", argv: historyDigestArgv(tui, 4), timeoutMs: 30 * 60_000 }]);
+    expect(ssh.calls).toEqual([{ host: "review-vm", argv: historyDigestArgv(tui, 4), timeoutMs: 30 * 60_000 }]);
     const path = join(home, HISTORY_DIGEST_FILE);
     expect(JSON.parse(readFileSync(path, "utf8"))).toEqual(d);
     expect(statSync(path).mode & 0o777).toBe(0o600);
