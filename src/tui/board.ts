@@ -883,6 +883,19 @@ function renderEventsOverlay(
 ): void {
   const { top, height } = eventsOverlayBand(rows, barRows);
   const visible = Math.max(0, height - 2);
+  // The band is opaque: whatever it paints over must not stay clickable
+  // underneath it (a hidden PR row, the pi pane's focus zone). Zones are
+  // clipped to the rows the band leaves visible; only event rows below are
+  // declared in its place.
+  const bandY1 = top + 1; // frame row → terminal y
+  const bandY2 = top + height;
+  frame.zones = frame.zones.flatMap((z) => {
+    if (z.y2 < bandY1 || z.y1 > bandY2) return [z];
+    const kept: typeof frame.zones = [];
+    if (z.y1 < bandY1) kept.push({ ...z, y2: bandY1 - 1 });
+    if (z.y2 > bandY2) kept.push({ ...z, y1: bandY2 + 1 });
+    return kept;
+  });
   frame.set(
     top,
     rule(cols, "├", "┤", [
@@ -972,7 +985,9 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
     // otherwise leave phantom click targets over the pi region and the
     // bar-row gaps — a click there could select (or double-click into the
     // pi pane of) an invisible PR.
-    if (i >= bodyRows - 1) return;
+    // The last body row is the legend, painted over whatever PR would sit
+    // there — so the last PR that is actually visible is index bodyRows - 3.
+    if (i >= bodyRows - 2) return;
     frame.zones.push({
       x1: 2,
       y1: y,

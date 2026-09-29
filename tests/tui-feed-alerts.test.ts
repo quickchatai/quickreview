@@ -23,7 +23,7 @@ import {
 } from "../src/tui/alerts.js";
 import { alertSegment, alertZone, topBar, renderBoard, type BoardView } from "../src/tui/board.js";
 import { CompanionLifecycle, type DockerRunner } from "../src/tui/companion.js";
-import { installCompanionTabHooks } from "../src/tui/companiontab.js";
+import { companionStarter, installCompanionTabHooks } from "../src/tui/companiontab.js";
 import { EVENT_TAIL_CAP, FeedWriter, eventKey, type FeedEvent } from "../src/tui/feed.js";
 import { stripAnsi } from "../src/tui/paint.js";
 import { CompanionSidebar } from "../src/tui/sidebar.js";
@@ -621,6 +621,50 @@ describe("companion tab", () => {
     expect(h.app.view.noticeLine).toContain("not running: docker build qcr-companion failed: boom");
     expect(h.app.view.noticeLine).not.toContain("disabled (--no-companion)");
     await h.close();
+  });
+
+  it("a companion that heals on RETRY gets its channels wired — exactly once", async () => {
+    // The boot start fails (docker down); the operator's later retry heals it.
+    // The feed/alerts/tui-actions channels must come up then, not only when
+    // the BOOT start succeeded — and never twice (each wiring chains pollers).
+    let up = false;
+    let attempts = 0;
+    let wired = 0;
+    const start = companionStarter({
+      start: async () => {
+        attempts++;
+        if (attempts > 1) up = true;
+      },
+      up: () => up,
+      wire: async () => {
+        wired++;
+      },
+    });
+    await start(); // bringUp: fails
+    expect(wired).toBe(0);
+    const s = fakeStreams();
+    const app = new App(
+      TUI_DEFAULTS,
+      async () => ({ ok: false, stdout: "", stderr: "", code: 1 }),
+      s.out,
+      s.input,
+    );
+    app.sidebar = new CompanionSidebar(CFG, noDocker, { available: () => up });
+    installCompanionTabHooks(app, {
+      lifecycle: new CompanionLifecycle(CFG, noDocker, {}),
+      available: () => up,
+      retry: start,
+    });
+    const running = app.run();
+    app.openCompanion();
+    for (let i = 0; i < 100 && !app.sidebar.focused; i++)
+      await new Promise((r) => setTimeout(r, 5));
+    expect(up).toBe(true);
+    expect(wired).toBe(1);
+    await start(); // any later start never wires a second time
+    expect(wired).toBe(1);
+    app.quit();
+    await running;
   });
 
   it("⏎ on a failed companion runs retry and focuses the column once it heals", async () => {

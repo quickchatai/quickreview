@@ -656,7 +656,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   // off companionOn, so --no-companion really means "none of this runs" —
   // the column itself is not part of "this": it is layout, and it is always
   // there.
-  const { installCompanionTabHooks } = await import("./companiontab.js");
+  const { companionStarter, installCompanionTabHooks } = await import("./companiontab.js");
 
   // the companion sidebar is the ONLY companion surface (the strip and
   // the full-screen attach it opened are both retired). Mirror + send go
@@ -892,11 +892,18 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   const companionStateDir = join(sandboxRoot(), "state", "companion");
   const policyStatePath = join(companionStateDir, "alert-policy.json");
 
+  // Boot and retry share ONE start: the channels below are wired after the
+  // first start that leaves the companion up, whichever path that was.
+  const startAndWire = companionStarter({
+    start: startCompanion,
+    up: () => companionUp,
+    wire: () => wireCompanionChannels(),
+  });
   installCompanionTabHooks(app, {
     lifecycle: companion,
     available: () => companionUp,
     failure: () => companionError,
-    retry: companionOn ? startCompanion : undefined,
+    retry: companionOn ? startAndWire : undefined,
   });
 
   /** Everything the companion feed / alert pipeline needs, once it is up. */
@@ -1050,8 +1057,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       );
     }
     if (companionOn) {
-      await startCompanion();
-      if (companionUp) await wireCompanionChannels();
+      await startAndWire();
     } else {
       for (const key of ["memory-namespaces", "container", "rollover", "companion-pi"] as const) {
         progress.skip(key, "--no-companion");

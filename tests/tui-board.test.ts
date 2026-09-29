@@ -29,6 +29,17 @@ import {
   type SshRunner,
 } from "../src/tui/remote.js";
 import { PiMirror, type PiPaneView } from "../src/tui/pipane.js";
+import { hitTest, type Zone } from "../src/tui/mouse.js";
+import { eventsOverlayBand } from "../src/tui/board.js";
+
+/** The overlay band a rendered frame used (barRows recovered from its meta). */
+function eventsOverlayBandFor(
+  rows: number,
+  frame: { meta: Record<string, number> },
+): { top: number; height: number } {
+  const barRows = rows - 2 - frame.meta["bodyRows"]! - frame.meta["piRows"]!;
+  return eventsOverlayBand(rows, barRows);
+}
 import { TUI_DEFAULTS } from "../src/config.js";
 
 const snapshot: StatusSnapshot = {
@@ -737,6 +748,44 @@ describe("renderBoard", () => {
       .join("\n");
     expect(text).toContain("PI pr-5049 · focused");
     expect(text).toContain("locked output");
+  });
+
+  it("declares PR zones only on rows the list actually paints — never on the legend", () => {
+    const prs = Array.from({ length: 40 }, (_, i) => ({
+      number: 6000 + i,
+      state: "reviewing" as const,
+      title: `pr ${i}`,
+      head_sha: "a2e380ff11",
+      stale_recheck: 0,
+    }));
+    const frame = renderBoard(view({ snapshot: { ...snapshot, prs } }), 140, 30);
+    const bodyRows = frame.meta["bodyRows"]!;
+    const legendY = 1 + (bodyRows - 1) + 1; // frame row of the legend → terminal y
+    const text = frame.lines.map(stripAnsi);
+    for (const z of frame.zones) {
+      const t = (z.action as { t: string }).t;
+      if (t !== "select-pr" && t !== "open-github") continue;
+      expect(z.y1).toBeLessThan(legendY);
+      const pr = (z.action as { pr: number }).pr;
+      expect(text[z.y1 - 1]).toContain(String(pr)); // the zone's own PR is painted there
+    }
+  });
+
+  it("the events overlay is opaque: nothing it covers stays clickable", () => {
+    const events = [
+      { ts: "t0", text: "10:00:00 verdict_applied #5049", anomaly: false },
+      { ts: "t1", text: "10:00:01 reconcile ok", anomaly: false },
+    ];
+    const pi = { pr: 5012, lines: ["x"], missing: false, stale: false, offset: 0 };
+    const frame = renderBoard(view({ events, eventsFocus: true, pi }), 100, 24);
+    const { top, height } = eventsOverlayBandFor(24, frame);
+    for (let y = top + 1; y <= top + height; y++)
+      for (let x = 1; x <= 100; x++) {
+        const hit = hitTest(frame.zones as Zone<{ t: string }>[], x, y);
+        if (hit) expect(hit.t).toBe("event-jump");
+      }
+    // And the parts of the pi region the band leaves visible still focus it.
+    expect(frame.zones.some((z) => (z.action as { t: string }).t === "pi-focus")).toBe(true);
   });
 
   it("toggles the events overlay on e, with its own scroll and jump zones", () => {

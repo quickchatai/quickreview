@@ -21,6 +21,28 @@ export interface CompanionTabDeps {
   retry?: () => Promise<void>;
 }
 
+/**
+ * The companion's start, wherever it is asked for — the boot bring-up AND
+ * the operator's later retry. The feed / alert / tui-actions channels are
+ * wired after the FIRST start that leaves the companion up, whichever path
+ * that was: wiring only after a successful BOOT start left a companion healed
+ * by retry running with no view feed, no alerts and a dead action channel
+ * until the TUI restarted. Wired at most once — every wiring chains pollers.
+ */
+export function companionStarter(deps: {
+  start: () => Promise<void>;
+  up: () => boolean;
+  wire: () => Promise<void>;
+}): () => Promise<void> {
+  let wired = false;
+  return async () => {
+    await deps.start();
+    if (wired || !deps.up()) return;
+    wired = true;
+    await deps.wire();
+  };
+}
+
 export function installCompanionTabHooks(app: App, deps: CompanionTabDeps): void {
   let retrying = false;
 

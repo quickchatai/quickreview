@@ -765,6 +765,17 @@ export class App {
   }
 
   private handleMouse(ev: MouseEvent): void {
+    // The quit prompt is modal for the mouse as it is for the keyboard: a
+    // click is its "any other key" (cancel), and nothing under the prompt —
+    // a PR row, a GitHub link, the pi pane, the companion column, a tab's
+    // zones — ever sees it. Wheel, drag and release are swallowed.
+    if (this.view.confirmQuit) {
+      if (ev.kind === "click") {
+        this.view.confirmQuit = false;
+        this.repaint();
+      }
+      return;
+    }
     const cols = this.out.columns ?? 80;
     // The sidebar's left seam is the ONE drag surface that is chrome rather
     // than selectable content. Everywhere else still owns drag and

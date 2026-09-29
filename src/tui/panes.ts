@@ -58,7 +58,8 @@ export interface SplitPane<A> {
 /** Paint the two columns from `top` for `bodyRows` rows and register every
  * click zone at its terminal coordinates (frame row r ↔ terminal y r+1). */
 export function paintSplit<A>(frame: Frame, pane: SplitPane<A>): void {
-  const rightX0 = pane.leftW + 4; // │ + left cell (leftW+1) + │ + leading space
+  // 1-based: │ (1) + left cell (leftW+1) + │ + leading space ⇒ text at leftW+5.
+  const rightX0 = pane.leftW + 5;
   for (let r = 0; r < pane.bodyRows; r++) {
     const row = pane.top + r;
     const rr = pane.right[r];

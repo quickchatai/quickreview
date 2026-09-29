@@ -391,6 +391,57 @@ describe("clean exit", () => {
     await h.running;
   });
 
+  it("the prompt is modal for the mouse too: a click cancels it and fires nothing underneath", async () => {
+    const { out, input } = streams();
+    const opened: string[] = [];
+    const app = new App(
+      TUI_DEFAULTS,
+      async () => ({ ok: true, stdout: "", stderr: "", code: 0 }),
+      out,
+      input,
+      { openUrl: (u: string) => void opened.push(u) },
+    );
+    app.view.repo = "acme/app";
+    app.view.snapshot = {
+      written_at: "",
+      dry_run: true,
+      prs: [
+        { number: 1, state: "reviewing", title: "a", head_sha: "x", stale_recheck: 0 },
+        { number: 2, state: "reviewing", title: "b", head_sha: "x", stale_recheck: 0 },
+      ],
+      running_rounds: 0,
+      total_spend_usd: 0,
+      heartbeat: "",
+    };
+    const running = app.run();
+    app.repaint();
+    const emit = (s: string) => (input as unknown as EventEmitter).emit("data", Buffer.from(s));
+    const zones = () =>
+      (app as unknown as { lastFrame: Frame }).lastFrame.zones as Array<{
+        x1: number;
+        y1: number;
+        action: { t: string; pr?: number };
+      }>;
+    const gh = zones().find((z) => z.action.t === "open-github" && z.action.pr === 2)!;
+    const row = zones().find((z) => z.action.t === "select-pr" && z.action.pr === 2)!;
+    expect(gh).toBeDefined();
+    emit("q");
+    expect(app.view.confirmQuit).toBe(true);
+    emit(`\x1b[<0;${gh.x1};${gh.y1}M`);
+    emit(`\x1b[<0;${gh.x1};${gh.y1}m`);
+    expect(opened).toEqual([]); // nothing underneath fired
+    expect(app.view.selected).toBe(0);
+    expect(app.view.confirmQuit).toBe(false); // the click was the "no"
+    // Wheel notches while the prompt is up move nothing either.
+    emit("q");
+    emit(`\x1b[<65;${row.x1};${row.y1}M`);
+    expect(app.view.selected).toBe(0);
+    expect(app.view.confirmQuit).toBe(true);
+    emit("n");
+    app.quit();
+    await running;
+  });
+
   it("a repeated q cancels rather than confirming — that is what the prompt is for", async () => {
     const h = harness();
     h.type("q");
