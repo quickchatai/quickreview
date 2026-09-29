@@ -256,6 +256,9 @@ describe("CompanionLifecycle argv", () => {
       // the same mount as every other repo extension.
       "--extension",
       `${CONTAINER.workspace}/extensions/companion-guard.ts`,
+      // the setup & scan tool belt over the SetupEngine.
+      "--extension",
+      `${CONTAINER.workspace}/extensions/setup.ts`,
       // 2026-08-25: `!{cmd}` inline expansion, vendored from pi's examples.
       "--extension",
       `${CONTAINER.workspace}/extensions/inline-bash.ts`,
@@ -1222,6 +1225,8 @@ describe("the install's homes and the read-only GitHub token", () => {
     const argv = withFiles([]).lc.spawnArgv();
     expect(argv).toContain(`QCR_CONFIG_HOME=${CONTAINER.configHome}`);
     expect(argv).toContain(`QCR_STATE_HOME=${CONTAINER.stateHome}`);
+    // the setup tools read the reviewed checkout where it is mounted.
+    expect(argv).toContain(`QCR_REVIEWED_REPO=${CONTAINER.reviewedRepo}`);
     // The seam: code run in the container resolves the MOUNTED homes, with
     // the container user's own HOME beside them.
     const inContainer = {

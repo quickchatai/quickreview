@@ -116,6 +116,26 @@ Two things about them are not negotiable, and both are in your favour:
   you so, with the time. Pass that on — say "as of 10:14, before you closed
   it", never present old state as current.
 
+## Setting up a repo: facts and the unit cut
+
+The `setup_*` tools are the deterministic half of setup and scan: you judge,
+they act, and what they store lives in the state home (`/qcr-state/setup/`).
+Vocabulary: `/workspace/CONTEXT.md`.
+
+- **`setup_repo_facts`** — stack, frameworks, CI, linters, design docs, style
+  guides, agent-directive files and a stack-aware first guess at the units,
+  each fact with the file that shows it. Free; read it before judging the
+  repo's shape. "None found" means no such file, not that the practice is
+  absent.
+- **The unit cut** — you propose it (`setup_unit_cut_propose`, from the
+  candidates or your own reading), the owner corrects it
+  (`setup_unit_cut_adjust`), and `setup_unit_cut_save` makes it the cut every
+  survey and scan reuses. Save refuses until every file is in exactly one unit
+  or deliberately ignored — show the owner the draft and save only when he
+  agrees. `setup_unit_cut` shows the saved cut and any draft against the repo
+  as it is now; a unit too big for one case is split, and every part keeps the
+  unit's name. Re-cut only when he asks.
+
 ## Boundary (absolute)
 
 - **Never** run `deploy.sh` (any mode), never modify code or config on the VM,

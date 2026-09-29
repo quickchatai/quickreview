@@ -513,6 +513,14 @@ export class CompanionLifecycle {
       // the gate + guards.sh.
       `${CONTAINER.workspace}/extensions/companion-guard.ts`,
       "--extension",
+      // the setup & scan tool belt — the deterministic SetupEngine
+      // (repo facts, the unit cut) as `setup_*` tools. Reads the reviewed
+      // checkout (`:ro`) and writes only the state home; see the header of
+      // extensions/setup.ts. Unconditional like every other repo extension:
+      // a missing checkout is a refusal from the tools, never a pi that
+      // won't start.
+      `${CONTAINER.workspace}/extensions/setup.ts`,
+      "--extension",
       // 2026-08-25: `!{cmd}` inline expansion in typed prompts — vendored
       // verbatim from the pinned pi package's shipped examples (see its
       // header; byte-identical at 0.84.1 and 0.84.4). QoL for the operator
@@ -552,6 +560,8 @@ export class CompanionLifecycle {
       `QCR_CONFIG_HOME=${CONTAINER.configHome}`,
       `QCR_CONFIG=${CONTAINER.configFile}`,
       `QCR_STATE_HOME=${CONTAINER.stateHome}`,
+      // where the setup tools read the reviewed checkout.
+      `QCR_REVIEWED_REPO=${CONTAINER.reviewedRepo}`,
       `QCR_GITHUB_READ_ENV=${CONTAINER.githubRead}/${TOKEN_FILE}`,
       // survey and scan fan out one case per unit — see SUBAGENTS.
       `QCR_SUBAGENT_MAX_CONCURRENCY=${SUBAGENTS.maxConcurrency}`,

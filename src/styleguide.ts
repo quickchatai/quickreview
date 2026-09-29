@@ -115,27 +115,26 @@ const isDirectiveHeading = (l: string): boolean =>
 
 /** Style rules in the repo's agent-directive files, as references:
  * `path:from-to` per style section, `path` for a directive file whose name
- * says style. */
-function directiveStyleRules(root: string): string[] {
-  const files: string[] = [];
-  for (const name of list(root)) if (ROOT_DIRECTIVE_RE.test(name)) files.push(name);
-  for (const name of list(join(root, ".github")))
-    if (/^copilot-instructions\.md$/i.test(name)) files.push(join(".github", name));
-  for (const name of list(join(root, ".github", "instructions")))
-    if (/\.(md|markdown)$/i.test(name)) files.push(join(".github", "instructions", name));
+ * says style. Over a listing: `identity` names the file a path really is, so a
+ * directive file that links to another is read once; null = skip the path. */
+function directiveStyleRules(
+  listing: readonly string[],
+  read: (rel: string) => string | null,
+  identity: (rel: string) => string | null,
+): string[] {
+  const files = listing.filter((rel) => {
+    const parts = rel.split("/");
+    if (parts.length === 1) return ROOT_DIRECTIVE_RE.test(parts[0]!);
+    if (parts.length === 2 && parts[0] === ".github") return /^copilot-instructions\.md$/i.test(parts[1]!);
+    return parts.length === 3 && parts[0] === ".github" && parts[1] === "instructions" && /\.(md|markdown)$/i.test(parts[2]!);
+  });
   const out: string[] = [];
   const seen = new Set<string>();
-  for (const rel of files.sort()) {
-    const path = join(root, rel);
-    let real: string;
-    try {
-      real = realpathSync(path);
-    } catch {
-      continue;
-    }
-    if (seen.has(real)) continue;
+  for (const rel of [...new Set(files)].sort()) {
+    const real = identity(rel);
+    if (real === null || seen.has(real)) continue;
     seen.add(real);
-    const text = read(path);
+    const text = read(rel);
     if (text === null) continue;
     if (rel.startsWith(".github/instructions/") && DIRECTIVE_NAME_RE.test(rel)) {
       if (contentLines(text) >= SECTION_MIN_LINES) out.push(rel);
@@ -148,28 +147,59 @@ function directiveStyleRules(root: string): string[] {
 }
 
 /**
+ * The same rule over a FILE LISTING rather than a directory tree: the
+ * setup engine reads the reviewed repo through a port, so it hands over the
+ * repo-relative paths it has and a reader that answers null for anything it
+ * cannot or will not read (a directory, a file over the size cap). The
+ * candidates are exactly the ones `findStyleGuide` lists — the root, `docs/`,
+ * `doc/`, `.github/`, and one level down under `docs/`/`doc/` by name only —
+ * plus the agent-directive files — so both spellings return the same
+ * references for the same tree. `identity` says which file a path really is
+ * (findStyleGuide passes realpath); without one a directive file is known by
+ * its text, so a link and its target — which read the same — count once.
+ */
+export function styleGuideRefsIn(
+  files: readonly string[],
+  read: (rel: string) => string | null,
+  identity: (rel: string) => string | null = (rel) => {
+    const text = read(rel);
+    return text === null ? null : `text:${text}`;
+  },
+): string[] {
+  const out: string[] = [];
+  for (const rel of files) {
+    const parts = rel.split("/");
+    const name = parts[parts.length - 1] as string;
+    const dir = parts.slice(0, -1).join("/");
+    if (dir === "" || dir === "docs" || dir === "doc" || dir === ".github") {
+      if (GUIDE_NAME_RE.test(name) || (dir !== "" && DOCS_NAME_RE.test(name))) {
+        const text = read(rel);
+        if (text !== null && contentLines(text) >= GUIDE_MIN_LINES) out.push(rel);
+      } else if (CONTRIBUTING_RE.test(name)) {
+        const text = read(rel);
+        const sec = text === null ? null : styleSection(text);
+        if (sec) out.push(`${rel}:${sec[0]}-${sec[1]}`);
+      }
+    } else if (parts.length === 3 && (parts[0] === "docs" || parts[0] === "doc")) {
+      if (!DOCS_NAME_RE.test(name)) continue;
+      const text = read(rel);
+      if (text !== null && contentLines(text) >= GUIDE_MIN_LINES) out.push(rel);
+    }
+  }
+  out.push(...directiveStyleRules(files, read, identity));
+  return [...new Set(out)].sort();
+}
+
+/**
  * The repo's written style guide(s) under `root`, as repo-relative
  * references — `path` for a whole guide file, `path:from-to` for a style
  * section — or [] when there is none worth a lens.
  */
 export function findStyleGuide(root: string): string[] {
   if (!existsSync(root)) return [];
-  const out: string[] = [];
-  const dirs = ["", "docs", "doc", ".github"];
-  for (const d of dirs) {
-    const base = join(root, d);
-    for (const name of list(base)) {
-      const path = join(base, name);
-      const rel = relative(root, path);
-      if (GUIDE_NAME_RE.test(name) || (d !== "" && DOCS_NAME_RE.test(name))) {
-        const text = read(path);
-        if (text !== null && contentLines(text) >= GUIDE_MIN_LINES) out.push(rel);
-      } else if (CONTRIBUTING_RE.test(name)) {
-        const text = read(path);
-        const sec = text === null ? null : styleSection(text);
-        if (sec) out.push(`${rel}:${sec[0]}-${sec[1]}`);
-      }
-    }
+  const listing: string[] = [];
+  for (const d of ["", "docs", "doc", ".github", ".github/instructions"]) {
+    for (const name of list(join(root, d))) listing.push(relative(root, join(root, d, name)));
   }
   // docs/<sub>/ one level down, by name only (a docs site's style page).
   for (const d of ["docs", "doc"]) {
@@ -182,14 +212,18 @@ export function findStyleGuide(root: string): string[] {
         continue;
       }
       if (!isDir) continue;
-      for (const name of list(subdir)) {
-        if (!DOCS_NAME_RE.test(name)) continue;
-        const text = read(join(subdir, name));
-        if (text !== null && contentLines(text) >= GUIDE_MIN_LINES)
-          out.push(relative(root, join(subdir, name)));
-      }
+      for (const name of list(subdir)) listing.push(relative(root, join(subdir, name)));
     }
   }
-  out.push(...directiveStyleRules(root));
-  return [...new Set(out)].sort();
+  return styleGuideRefsIn(
+    listing,
+    (rel) => read(join(root, rel)),
+    (rel) => {
+      try {
+        return realpathSync(join(root, rel));
+      } catch {
+        return null;
+      }
+    },
+  );
 }

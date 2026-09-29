@@ -645,6 +645,12 @@ export function selectQualityLenses(files: PrFileEntry[], minAdded: number): str
 const SWEEP_SKIP_RE =
   /((^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock|go\.sum|poetry\.lock|uv\.lock|composer\.lock|Gemfile\.lock)$|\.(min\.js|map|snap|lock|svg|png|jpe?g|gif|ico|pdf|woff2?|ttf|md|rst|txt)$|(^|\/)(vendor|third_party|node_modules|dist|build|generated)\/)/i;
 
+/** Is `path` a file the sweep never reads? Exported for the setup engine's
+ * case sizing: a unit is sized by what a pass would actually read. */
+export function isSweepSkipped(path: string): boolean {
+  return SWEEP_SKIP_RE.test(path);
+}
+
 /** A group stays under both caps unless one file alone exceeds them. The
  * first batch capped groups at 3 files and 32 of its 36 groups came out under
  * 60 changed lines — a whole pass for a handful of lines — so the defaults

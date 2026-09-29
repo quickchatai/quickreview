@@ -8,10 +8,12 @@
   (scratch git repo subprocesses) and `improvements-e2e.test.ts` (:
   the improvement channel against a scratch clone with a bare "remote" — the
   push, the caps and the dry-run suppression observed on the remote, through
-  the production git runner; no network). Three more shell out to git on the
+  the production git runner; no network). Four more shell out to git on the
   way to something else: `deploy.test.ts` and `publish-snapshot.test.ts`
   `init` a scratch repo for the script under test, `publishability.test.ts`
-  runs `ls-files` on this checkout to enumerate what it lints. Other tests
+  runs `ls-files` on this checkout to enumerate what it lints, and
+  `setup-extension.test.ts` inits one scratch repo because the setup
+  engine's checkout port lists by `git ls-files`. Other tests
   that spawn a real local subprocess do so for a shell script or a CLI of
   this repo, never for a network or a VM —
   `guards-shell.test.ts` (the real scripts against a loopback HTTP stub — the
