@@ -293,6 +293,7 @@ function guideText(g: ProfileStyleGuide): string {
     `This repo's profile carries a style guide for \`${STYLE_LENS}\`, below, for when the repo writes none of its own. ` +
     `It is the standard ONLY in a round whose \`${STYLE_LENS}\` plan row names "this repo's profile style guide"; ` +
     `when that row names a guide the repo itself writes, the repo's guide is the only standard and this section does not apply. ` +
+    `It is not a file in the repo: do not look for it at head — the guide is the text below, so "guide missing or unreadable at head, answer NONE" never applies to it. ` +
     `A \`${STYLE_LENS}\` finding against it quotes the rule verbatim and cites it as \`profile style guide ${g.file}\` in place of a repo file and line, ` +
     `and cites the CHANGED line that breaks it, exactly as for a repo guide. ` +
     `Validator: audit such a finding against this text as you would a repo guide — a rule it does not state is \`refuted\`, and so is a finding citing it in a round whose style row named the repo's own guide.\n\n` +

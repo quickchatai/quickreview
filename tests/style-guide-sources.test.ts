@@ -109,7 +109,7 @@ describe("findStyleGuide reads the style rules a repo wrote for its agents", () 
     expect(findStyleGuide(repo)).toEqual([`AGENTS.md:1-${1 + SECTION_MIN_LINES}`]);
   });
 
-  it("detects the first reviewed repo's AGENTS.md (its heading outline, 2026-09-23)", () => {
+  it("detects the first reviewed repo's real AGENTS.md (its heading outline, 2026-09-23)", () => {
     // The live file's section structure: the style rules sit under
     // `## Code Conventions`, split into per-stack `###`/`####` subsections,
     // between `## Production Database` and `## Datadog Observability`.
