@@ -73,6 +73,7 @@ function fakeSource(files: Record<string, string>): ScanSource {
         lines: (p) => (files[p] === undefined ? null : files[p]!.split("\n").length - 1),
       },
     }),
+    list: (sha) => (sha === SHA ? Object.entries(files).map(([path, text]) => ({ path, blob: blob(text) })) : null),
   };
 }
 
