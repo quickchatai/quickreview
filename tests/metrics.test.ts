@@ -457,6 +457,56 @@ describe("computeMetrics", () => {
       empty.close();
     }
   });
+
+  it("time-to-first-verdict is the PR's FIRST round across all history, not the first inside the window", () => {
+    const s = new StateStore(":memory:", now);
+    try {
+      // Round 1 landed 20 days ago; round 3 lands today.
+      insertRound(s, {
+        pr: 300,
+        round_no: 1,
+        trigger_ts: "2026-07-25T09:00:00.000Z",
+        started_at: "2026-07-25T09:00:00.000Z",
+        finished_at: "2026-07-25T09:10:00.000Z",
+        additions: 5,
+        deletions: 0,
+      });
+      insertRound(s, {
+        pr: 300,
+        round_no: 3,
+        trigger_ts: "2026-08-14T09:00:00.000Z",
+        started_at: "2026-08-14T09:00:00.000Z",
+        finished_at: "2026-08-14T10:00:00.000Z",
+        additions: 5,
+        deletions: 0,
+      });
+      const m = computeMetrics(s, { now });
+      // The first verdict was outside the 7-day window: no sample there.
+      expect(m.windows.d7.ttfv.n).toBe(0);
+      expect(m.windows.d7.size.find((b) => b.bucket === "XS")!.median_ttfv_s).toBeNull();
+      // Across all history it is round 1's ten minutes, not round 3's hour.
+      expect(m.windows.all.ttfv.n).toBe(1);
+      expect(m.windows.all.ttfv.median).toBe(600);
+    } finally {
+      s.close();
+    }
+  });
+
+  it.each([
+    ["spring forward", "2026-03-29T22:30:00.000Z", ["2026-03-28", "2026-03-29", "2026-03-30"]],
+    ["fall back", "2026-10-25T22:30:00.000Z", ["2026-10-23", "2026-10-24", "2026-10-25"]],
+  ])("daily rows are consecutive calendar days across a DST %s", (_label, at, tail) => {
+    const s = new StateStore(":memory:", now);
+    try {
+      const m = computeMetrics(s, { now: () => new Date(at), timeZone: "Europe/Warsaw" });
+      const days = m.daily.map((d) => d.day);
+      expect(days).toHaveLength(30);
+      expect(new Set(days).size).toBe(30);
+      expect(days.slice(-3)).toEqual(tail);
+    } finally {
+      s.close();
+    }
+  });
 });
 
 // ---- the per-PR timeline ---------------------------------------------------

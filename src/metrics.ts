@@ -280,16 +280,19 @@ function isBackfilled(r: RoundRow): boolean {
 }
 
 /** Time-to-first-verdict per PR: trigger (or, absent a recorded trigger, the
- * round start) -> the first finished round. */
-function ttfvByPr(rounds: RoundRow[]): Map<number, number> {
+ * round start) -> the first finished round. The first round is picked from
+ * the PR's WHOLE history and only then windowed on its own landing: picking
+ * it from the windowed rounds would report a later round as the "first". */
+function ttfvByPr(allRounds: RoundRow[], since: string | null): Map<number, number> {
   const first = new Map<number, RoundRow>();
-  for (const r of rounds) {
+  for (const r of allRounds) {
     if (!r.finished_at) continue;
     const seen = first.get(r.pr);
     if (!seen || r.round_no < seen.round_no) first.set(r.pr, r);
   }
   const out = new Map<number, number>();
   for (const [pr, r] of first) {
+    if (!within(roundAnchor(r), since)) continue;
     const value = seconds(r.trigger_ts ?? r.started_at, r.finished_at!);
     if (Number.isFinite(value) && value >= 0) out.set(pr, value);
   }
@@ -384,7 +387,7 @@ export function computeWindow(input: WindowInput): MetricsWindow {
   const overruns = finishedLive.filter((r) => r.finished_at! > r.deadline_at).length;
 
   // ---- ttfv (backfilled rounds included — they carry real timestamps) ----
-  const ttfv = ttfvByPr(rounds);
+  const ttfv = ttfvByPr(input.rounds, since);
   const queue: number[] = [];
   const review: number[] = [];
   for (const r of rounds) {
@@ -583,9 +586,15 @@ export function computeWindow(input: WindowInput): MetricsWindow {
 // ---- daily rows ------------------------------------------------------------
 
 export function dailyRows(rounds: RoundRow[], now: Date, timeZone: string, days = 30): DailyRow[] {
+  // Step CALENDAR dates back from today's zone date: fixed 24h offsets from
+  // `now` skip or repeat a day around a DST transition.
+  const today = new Date(`${zoneDateString(now, timeZone)}T00:00:00.000Z`);
   const wanted: string[] = [];
-  for (let i = days - 1; i >= 0; i--)
-    wanted.push(zoneDateString(new Date(now.getTime() - i * 86_400_000), timeZone));
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(today);
+    d.setUTCDate(d.getUTCDate() - i);
+    wanted.push(d.toISOString().slice(0, 10));
+  }
   const byDay = new Map<string, DailyRow & { prSet: Set<number> }>();
   for (const day of wanted) {
     byDay.set(day, {
