@@ -165,6 +165,20 @@ describe("postReply", () => {
     );
   });
 
+  it("a guard-refused reply is not posted and does not spend an exchange", async () => {
+    const fn = vi.fn().mockResolvedValue({ executed: false, blocked: "pr-unreadable" });
+    const d = deps(fn);
+    const out = await postReply(d, { pr: 77, thread_id: 4000, body: "x" });
+
+    expect(out).toMatchObject({ posted: false, exchanges: 0, blocked: "pr-unreadable" });
+    expect(ledger.discipline(4000).exchanges).toBe(0);
+    expect(d.store.logEvent).not.toHaveBeenCalledWith(
+      "pingpong_reply_intent",
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
   it("suppresses the post once the exchange cap is reached", async () => {
     for (let i = 0; i < 3; i++) ledger.recordExchange(4000, 77);
     const fn = vi.fn();
@@ -273,6 +287,42 @@ describe("structured thread decision", () => {
       77,
       expect.objectContaining({ thread_id: 4000 }),
     );
+  });
+
+  it("retries a reply the PR-state guard could not verify, instead of dropping it", async () => {
+    ledger.claimAuthorMessage(event);
+    let now = new Date("2026-08-26T09:00:00Z");
+    const createReviewCommentReply = vi
+      .fn()
+      .mockResolvedValueOnce({ executed: false, blocked: "pr-unreadable" })
+      .mockResolvedValueOnce({ executed: true, response: { id: 6001 } });
+    const resolveOwnReviewThread = vi.fn().mockResolvedValue({ skipped: null });
+    const store = { registerBotComment: vi.fn(), logEvent: vi.fn(), logAnomaly: vi.fn() };
+    const watcher = new ThreadDecisionWatcher({
+      adapter: { createReviewCommentReply, resolveOwnReviewThread },
+      store,
+      ledger,
+      verdictDir: root,
+      now: () => now,
+    });
+    const name = "pr-77-thread-4000-comment-5001.json";
+    writeFileSync(
+      join(root, name),
+      JSON.stringify({
+        pr: 77,
+        thread_id: 4000,
+        comment_id: 5001,
+        resolution: "resolve",
+        reply: "That addresses it.",
+      }),
+    );
+
+    expect(await watcher.handleFile(name)).toBe(false);
+    expect(resolveOwnReviewThread).not.toHaveBeenCalled();
+    now = new Date("2026-08-26T09:00:31Z");
+    expect(await watcher.handleFile(name)).toBe(true);
+    expect(createReviewCommentReply).toHaveBeenCalledTimes(2);
+    expect(ledger.discipline(4000).exchanges).toBe(1);
   });
 
   it("does not duplicate the reply when thread resolution retries", async () => {

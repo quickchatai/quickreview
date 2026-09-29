@@ -430,6 +430,8 @@ export interface ReplyResult {
   exchanges: number;
   registered?: number;
   reason?: ReplyDiscipline["reason"];
+  /** A posting guard refused the reply: nothing reached GitHub, no exchange spent. */
+  blocked?: string;
 }
 
 /** Post one thread reply through the gate and register the posted comment id. */
@@ -452,6 +454,15 @@ export async function postReply(
     };
   }
   const result = await deps.adapter.createReviewCommentReply(input.pr, input.thread_id, input.body);
+  if (result.blocked) {
+    // A posting guard refused (PR merged/closed, or its state unreadable).
+    // Nothing was posted, so nothing is counted against the exchange cap.
+    deps.store.logEvent("pingpong_reply_blocked", input.pr, {
+      thread_id: input.thread_id,
+      reason: result.blocked,
+    });
+    return { posted: false, result, exchanges: discipline.exchanges, blocked: result.blocked };
+  }
   const exchanges = deps.ledger.recordExchange(input.thread_id, input.pr);
   let registered: number | undefined;
   if (result.executed) {
@@ -930,7 +941,17 @@ export class ThreadDecisionWatcher {
         if (this.deps.isDraining?.()) return false;
         if (d.reply.trim()) {
           this.lastGitHubStart = now.getTime();
-          await postReply(this.deps, { pr: d.pr, thread_id: d.thread_id, body: d.reply.trim() });
+          const out = await postReply(this.deps, {
+            pr: d.pr,
+            thread_id: d.thread_id,
+            body: d.reply.trim(),
+          });
+          // An unverifiable PR state is transient: fail this attempt so the
+          // bounded retry schedule below posts the reply later. A merged or
+          // closed PR is final — the reply is moot, so the decision proceeds.
+          if (out.blocked === "pr-unreadable") {
+            throw new Error(`reply refused by posting guard: ${out.blocked}`);
+          }
         }
         this.deps.ledger.markDecisionStep(d.comment_id, "reply_posted");
         this.deps.ledger.resetRetry(d.comment_id);

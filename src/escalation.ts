@@ -982,9 +982,22 @@ export async function deliverEscalations(
     // entry says "review this pull request", and the narrow ask must already
     // be on the PR before that framing reaches anyone.
     let requested = false;
+    // The comment has already landed (or been recorded as intent), so a failed
+    // request (GitHub 422s the PR author or a non-collaborator) must not throw
+    // past the ledger below: that would leave a posted note unrecorded, re-post
+    // it every round, and skip every later candidate in this loop.
     if (wantsRequest && adapter.requestEscalationReview) {
-      const rr = await adapter.requestEscalationReview(args.pr, [req.target]);
-      requested = rr.executed;
+      try {
+        const rr = await adapter.requestEscalationReview(args.pr, [req.target]);
+        requested = rr.executed;
+      } catch (err) {
+        store.logEvent("escalation_request_failed", args.pr, {
+          target: req.target,
+          scope_key: key,
+          error: String(err),
+        });
+        log(`escalation: #${args.pr} → @${req.target} review request failed: ${String(err)}`);
+      }
     }
 
     // ---- THE LEDGER RECORDS DELIVERIES, NOT ATTEMPTS (review) ------

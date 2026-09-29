@@ -104,7 +104,9 @@ function request(over: Partial<EscalationRequest> = {}): EscalationRequest {
 }
 
 /** The write half, recorded. */
-function fakeAdapter(over: { blocked?: string; throws?: boolean; dryRun?: boolean } = {}) {
+function fakeAdapter(
+  over: { blocked?: string; throws?: boolean; dryRun?: boolean; requestThrows?: boolean } = {},
+) {
   const reviews: Array<{ pr: number; payload: unknown; purpose?: string }> = [];
   const requests: Array<{ pr: number; logins: string[] }> = [];
   const order: string[] = [];
@@ -129,6 +131,7 @@ function fakeAdapter(over: { blocked?: string; throws?: boolean; dryRun?: boolea
     async requestEscalationReview(pr: number, logins: string[]): Promise<GateResult> {
       order.push("request");
       requests.push({ pr, logins });
+      if (over.requestThrows) throw new Error("POST /requested_reviewers → 422");
       return over.dryRun
         ? { executed: false, dryRunFile: `/tmp/dryrun/${pr}-req.json` }
         : { executed: true };
@@ -1322,6 +1325,45 @@ describe("delivery", () => {
     // request", so the narrow ask must already be on the PR when it lands.
     expect(adapter.order).toEqual(["comment", "request"]);
     expect(adapter.requests[0]).toEqual({ pr: 12, logins: ["teammate-one"] });
+  });
+
+  it("a failed review request after a posted comment still records the delivery (never re-posts the note)", async () => {
+    // GitHub 422s a request for the PR author or a non-collaborator. The
+    // comment is already on the PR by then; losing the ledger row would make
+    // every later round post the same note again, and skip the candidates
+    // after it in this one.
+    const adapter = fakeAdapter({ requestThrows: true });
+    const c = on({ shape: "review_request" });
+    const candidates = evaluateEscalationRules(
+      c,
+      facts({ changed_paths: ["app/migrations/0042.py"] }),
+    );
+    const outcomes = await deliverEscalations(
+      { cfg: c, store, adapter },
+      {
+        pr: 14,
+        verdict: "APPROVE",
+        head_sha: HEAD,
+        changed_paths: CHANGED,
+        ruleRequests: candidates,
+      },
+    );
+    expect(adapter.order).toEqual(["comment", "request"]);
+    expect(outcomes[0]).toMatchObject({ comment_executed: true, review_requested: false });
+    expect(store.escalationCount(14)).toBe(1);
+    const again = fakeAdapter();
+    const second = await deliverEscalations(
+      { cfg: c, store, adapter: again },
+      {
+        pr: 14,
+        verdict: "APPROVE",
+        head_sha: HEAD,
+        changed_paths: CHANGED,
+        ruleRequests: candidates,
+      },
+    );
+    expect(again.reviews).toHaveLength(0);
+    expect(second[0]).toMatchObject({ refused: "already-delivered" });
   });
 
   it("a guard refusal stops the review request too — and records nothing, so a later round retries", async () => {
