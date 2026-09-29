@@ -345,7 +345,14 @@ export class FindingsStore {
       .map((f) => f.fingerprint);
     const at: Sighting = args.run;
     const settled = settleQuestion(byFp, [...pending, ...unreported], [...(prior?.fresh ?? []), ...fresh], at);
-    this.write(byFp.values(), settled.question);
+    // A run that changed nothing about the question leaves it as it was: its
+    // key must not move under a companion that is judging it right now.
+    const same = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && a.every((x, i) => x === b[i]);
+    const question =
+      prior !== null && settled.question !== null && same(settled.question.unreported, prior.unreported) && same(settled.question.fresh, prior.fresh)
+        ? prior
+        : settled.question;
+    this.write(byFp.values(), question);
     return { fixed: settled.fixed, pending: settled.question?.unreported.length ?? 0 };
   }
 

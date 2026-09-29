@@ -394,6 +394,19 @@ describe("the findings store's lifecycle", () => {
     expect(st.load().findings.every((f) => f.state === "new")).toBe(true);
   });
 
+  it("a later run that changes nothing about the pending question leaves its key where it was", () => {
+    const st = store();
+    st.report([reported("a/x.py", "old")], S("r1", "s1", "2026-09-29T10:00:00Z"));
+    st.report([reported("a/x.py", "fresh", { blob: "b2" })], S("r2", "s2", "2026-09-29T11:00:00Z"));
+    const rows = [row("a/x.py", "b2", "r2", "2026-09-29T11:00:01Z")];
+    st.reconcile({ rows, tree: new Set(["a/x.py"]), run: S("r2", "s2", "2026-09-29T11:00:02Z") });
+    const before = st.question().question!;
+    // r3 read nothing new: the companion's answer to the key it read still lands.
+    expect(st.reconcile({ rows, tree: new Set(["a/x.py"]), run: S("r3", "s3", "2026-09-29T12:00:00Z") })).toEqual({ fixed: 0, pending: 1 });
+    expect(st.question().question).toMatchObject({ key: before.key, run: "r2", sha: "s2" });
+    expect(st.match({ key: before.key, pairs: [{ old: "old", new: "fresh" }] })).toMatchObject({ ok: true, matched: 1 });
+  });
+
   it("an unreported finding reported exactly again later leaves the question", () => {
     const st = store();
     st.report([reported("a/x.py", "old")], S("r1", "s1", "2026-09-29T10:00:00Z"));
