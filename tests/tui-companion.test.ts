@@ -1188,10 +1188,10 @@ describe("the install's homes and the read-only GitHub token", () => {
     expect(CONTAINER.configFile).toBe(`${CONTAINER.configLive}/config.toml`);
   });
 
-  it("the mirror follows the locator: home, legacy checkout, or QCR_CONFIG", () => {
+  it("the mirror follows the locator: home or QCR_CONFIG — never the checkout's", () => {
     expect(withFiles([HOMES.configFile]).lc.hostHomes().configFile).toBe(HOMES.configFile);
-    const legacy = `${CFG.repo_dir}/config.toml`;
-    expect(withFiles([legacy]).lc.hostHomes().configFile).toBe(legacy);
+    const stranded = `${CFG.repo_dir}/config.toml`;
+    expect(withFiles([stranded]).lc.hostHomes().configFile).toBeUndefined();
     const { lc: pinned } = withFiles(["/elsewhere/c.toml"], [], {
       ...HOST_ENV,
       QCR_CONFIG: "/elsewhere/c.toml",
@@ -1233,7 +1233,7 @@ describe("the install's homes and the read-only GitHub token", () => {
     expect(configHome(inContainer)).toBe(CONTAINER.configHome);
     expect(stateHome(inContainer)).toBe(CONTAINER.stateHome);
     expect(profileSearchDirs({ root: "/workspace", env: inContainer })[0]).toBe(CONTAINER.profiles);
-    expect(locateConfig({ root: "/workspace", env: inContainer, exists: () => false }).path).toBe(
+    expect(locateConfig({ env: inContainer }).path).toBe(
       CONTAINER.configFile,
     );
   });
