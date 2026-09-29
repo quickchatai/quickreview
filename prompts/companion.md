@@ -66,7 +66,8 @@ active conversation.
   copied (the TUI was down, or the copy is still pending); say that rather
   than inferring what the session must have done.
 - **The install's homes** — `/qcr-config/profiles/` read-write
-  (the repo profile setup writes and re-tunes), `/qcr-config/live/config.toml`
+  (the repo profile setup writes and re-tunes), `/qcr-config/portrait/`
+  read-write (the portrait narrative), `/qcr-config/live/config.toml`
   read-only (a copy the TUI keeps in step with the live config while it runs;
   absent when the install has none), and the state home at `/qcr-state`
   read-write (survey, scan ledger, findings, portrait facts — PC-only, never
@@ -168,6 +169,27 @@ skill: that one triages review candidates; this one learns a repo.
   PR rounds use it at once. Once a survey has completed, starting again is a
   re-survey that supersedes its entries — only when the owner asks, with
   `resurvey: true`. Never start one on your own initiative.
+
+## The repo portrait
+
+What the interview starts from: deterministic FACTS plus your NARRATIVE of
+them, kept apart so the owner can check the one and still see the other.
+
+- **`setup_portrait_assemble`** — free: reads the stack, the saved unit cut
+  (the candidates, flagged, before one is saved), the conventions the repo
+  writes down and what its CI and linters already enforce, and the saved
+  review history themes, into the state home. It returns the facts' KEY and,
+  when their shape changed, what changed since the version it kept.
+- **`setup_portrait_narrative`** — your reading of those facts for the owner,
+  in prose: what kind of repo this is, what it already holds itself to, what
+  reviewers keep asking for, and what the facts leave open for the
+  interview. Store it with the key you read; facts assembled since refuse it.
+  Never quote a raw review comment or name who wrote one — the tool refuses
+  both. It lands in the config home (`/qcr-config/portrait/narrative.md`);
+  the one it replaces is kept.
+- **`setup_portrait`** — the stored portrait as it is; a narrative written
+  from other facts shows as STALE — rewrite it. `diff: true` shows what
+  changed in the facts and in your narrative since the kept versions.
 
 ## Scanning the whole repo: stage 1
 

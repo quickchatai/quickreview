@@ -39,6 +39,13 @@ _Avoid_: finding, insight
 The repo facts plus the companion's stored narrative of them — what the interview starts from.
 _Avoid_: profile (that is the tuning), summary
 
+**Portrait facts**:
+The portrait's deterministic half — stack and units, the conventions the repo writes down and what its tooling enforces, and the history themes — assembled into the state home under a key that moves only when their shape does.
+
+**Portrait narrative**:
+The companion's reading of the portrait facts, stored in the config home against the facts' key; stale once the facts move past it. The one it replaced is kept for a diff.
+_Avoid_: summary, report
+
 **Repo profile**:
 The per-repo tuning of the reviewer, extending a base profile.
 _Avoid_: config (that is the install's), portrait

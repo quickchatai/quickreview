@@ -62,6 +62,7 @@ const HOST_ENV = { HOME: "/host/home" };
 /** The host side of the mounts under HOST_ENV. */
 const HOMES = {
   profiles: "/host/home/.config/qcr/default/profiles",
+  portrait: "/host/home/.config/qcr/default/portrait",
   configFile: "/host/home/.config/qcr/default/config.toml",
   configMirror: "/host/home/.local/state/qcr-operator/default/companion-config",
   state: "/host/home/.local/state/qcr/default",
@@ -188,9 +189,11 @@ describe("CompanionLifecycle argv", () => {
       `/host/feed:${CONTAINER.feed}:rw`,
       `/host/alerts:${CONTAINER.alerts}:rw`,
       // the config home's profiles/ (rw — setup writes the profile),
-      // the config mirror (ro), the state home (rw — survey and scan state)
-      // and the read-only token dir.
+      // its portrait/ (rw — the portrait narrative), the config
+      // mirror (ro), the state home (rw — survey and scan state) and the
+      // read-only token dir.
       `${HOMES.profiles}:${CONTAINER.profiles}:rw`,
+      `${HOMES.portrait}:${CONTAINER.portrait}:rw`,
       `${HOMES.configMirror}:${CONTAINER.configLive}:ro`,
       `${HOMES.state}:${CONTAINER.stateHome}:rw`,
       `${HOMES.github}:${CONTAINER.githubRead}:ro`,
@@ -319,6 +322,7 @@ describe("the reviewed repo, read-only", () => {
     [CONTAINER.alerts]: "/host/alerts",
     // the install homes and the token dir.
     [`${CONTAINER.profiles}`]: HOMES.profiles,
+    [CONTAINER.portrait]: HOMES.portrait,
     [CONTAINER.configLive]: HOMES.configMirror,
     [CONTAINER.stateHome]: HOMES.state,
     [CONTAINER.githubRead]: HOMES.github,
@@ -488,6 +492,7 @@ describe("mount drift", () => {
     [CONTAINER.alerts]: "/host/alerts",
     // the install homes and the token dir.
     [`${CONTAINER.profiles}`]: HOMES.profiles,
+    [CONTAINER.portrait]: HOMES.portrait,
     [CONTAINER.configLive]: HOMES.configMirror,
     [CONTAINER.stateHome]: HOMES.state,
     [CONTAINER.githubRead]: HOMES.github,
@@ -572,6 +577,7 @@ describe("mount drift", () => {
                 `${CONTAINER.feed}=/host/feed`,
                 `${CONTAINER.alerts}=/host/alerts`,
                 `${CONTAINER.profiles}=${HOMES.profiles}`,
+                `${CONTAINER.portrait}=${HOMES.portrait}`,
                 `${CONTAINER.configLive}=${HOMES.configMirror}`,
                 `${CONTAINER.stateHome}=${HOMES.state}`,
                 `${CONTAINER.githubRead}=${HOMES.github}`,
@@ -1250,7 +1256,7 @@ describe("the install's homes and the read-only GitHub token", () => {
     expect(await lc.ensureUp()).toBe("created");
     const made = dirs.flat();
     expect(made).toEqual(
-      expect.arrayContaining([HOMES.profiles, HOMES.configMirror, HOMES.state, HOMES.github]),
+      expect.arrayContaining([HOMES.profiles, HOMES.portrait, HOMES.configMirror, HOMES.state, HOMES.github]),
     );
     expect(made.some((d) => d.includes("secrets"))).toBe(false);
   });
@@ -1286,6 +1292,7 @@ describe("the install's homes and the read-only GitHub token", () => {
       expect.arrayContaining([
         `missing ${CONTAINER.reviewedRepo}`,
         `missing ${CONTAINER.profiles}`,
+        `missing ${CONTAINER.portrait}`,
         `missing ${CONTAINER.configLive}`,
         `missing ${CONTAINER.stateHome}`,
         `missing ${CONTAINER.githubRead}`,
@@ -1296,6 +1303,16 @@ describe("the install's homes and the read-only GitHub token", () => {
     expect(calls.find((c) => c[0] === "run")!).toContain(
       `${HOMES.state}:${CONTAINER.stateHome}:rw`,
     );
+  });
+
+  it("the portrait narrative's dir is its own rw mount under the config home — a container without it drifts", () => {
+    const { lc } = withFiles([HOMES.configFile]);
+    expect(CONTAINER.portrait).toBe(`${CONTAINER.configHome}/portrait`);
+    expect(lc.hostHomes().portrait).toBe(HOMES.portrait);
+    expect(volumes(lc.runArgv())).toContain(`${HOMES.portrait}:${CONTAINER.portrait}:rw`);
+    const before = new Map(lc.expectedMounts());
+    before.delete(CONTAINER.portrait);
+    expect(lc.mountDrift(before)).toEqual([`missing ${CONTAINER.portrait}`]);
   });
 
   it("a config file created or removed later is NOT drift — the mirror dir is always mounted", () => {

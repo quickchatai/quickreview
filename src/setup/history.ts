@@ -336,9 +336,20 @@ export async function saveHistoryThemes(deps: SaveThemesDeps, raw: unknown): Pro
 
 /**
  * The saved themes — the ONLY thing about review history the repo portrait
- * reads, never the digest. Null when none are saved or the file
+ * carries, never the digest (the portrait reads the digest only to
+ * check its narrative quotes none of it). Null when none are saved or the file
  * cannot be read.
  */
 export function readHistoryThemes(fs: StateFs): HistoryThemesFile | null {
   return readThemesFile(fs).file;
+}
+
+/** `readHistoryThemes` with the two nulls told apart — the portrait records
+ * an unreadable themes file as UNKNOWN, never as "no themes yet". */
+export function historyThemesState(
+  fs: StateFs,
+): { state: "absent" } | { state: "unreadable"; error: string } | { state: "ok"; file: HistoryThemesFile } {
+  const r = readThemesFile(fs);
+  if (r.error !== null) return { state: "unreadable", error: r.error };
+  return r.file === null ? { state: "absent" } : { state: "ok", file: r.file };
 }

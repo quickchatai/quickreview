@@ -7,7 +7,8 @@
 // goes through it the same way (the section at the end).
 //
 // Two homes, split by kind:
-//   config home  $XDG_CONFIG_HOME/qcr/<install>/  config.toml, profiles/, secrets/
+//   config home  $XDG_CONFIG_HOME/qcr/<install>/  config.toml, profiles/, secrets/,
+//                                                  portrait/ (the portrait narrative)
 //   state home   $XDG_STATE_HOME/qcr/<install>/   scan ledger, findings, portrait facts
 //
 // `<install>` is `$QCR_INSTALL`, default `default` — one name per install, so
@@ -286,6 +287,13 @@ export function migrateReport(outcome: MigrateOutcome): { code: number; lines: s
 
 /** The directory, in every home, that holds one subdirectory per profile. */
 export const PROFILES_DIR = "profiles";
+
+/** The directory in the config home that holds the repo portrait's NARRATIVE
+ * — the companion's reading of the portrait facts, and the one it replaced
+ * (`src/setup/portrait.ts`). Config, not state: it is the operator's
+ * to read and keep (a config home that is a git repo versions it). Never
+ * shipped: deploy's filter admits the config file and `profiles/` only. */
+export const PORTRAIT_DIR = "portrait";
 
 /**
  * The checkout's GENERIC profiles — the ones that belong to the app, not to

@@ -33,6 +33,7 @@ import {
   legacySecretsDir,
   locateConfig,
   locateKeysFile,
+  PORTRAIT_DIR,
   PROFILES_DIR,
   stateHome,
   type InstallEnv,
@@ -116,8 +117,9 @@ export const CONTAINER = {
    * for, and the container path is not the place a repo's name belongs. */
   reviewedRepo: "/reviewed-repo",
   /** The install's config home, in part: `profiles/` read-write —
-   * setup writes and re-tunes the repo profile there — and a mirror of the
-   * live `config.toml` read-only. Deliberately NOT the whole home: it holds
+   * setup writes and re-tunes the repo profile there — `portrait/`
+   * read-write (the portrait narrative), and a mirror of the live
+   * `config.toml` read-only. Deliberately NOT the whole home: it holds
    * `secrets/` (the App's private key, which can write to GitHub), and the
    * companion's reach into GitHub is the read-only token below and nothing
    * else. Mounting the two pieces rather than masking a subdirectory is what
@@ -136,6 +138,9 @@ export const CONTAINER = {
   configLive: "/qcr-config/live",
   configFile: "/qcr-config/live/config.toml",
   profiles: "/qcr-config/profiles",
+  /** Inside `configHome`: the repo portrait's narrative (`:rw`) —
+   * setup writes it there, keeping the one it replaced. */
+  portrait: "/qcr-config/portrait",
   /** The install's state home, read-write: the survey, the scan
    * ledger, findings and the portrait facts — PC-only, never shipped. */
   stateHome: "/qcr-state",
@@ -390,13 +395,15 @@ export class CompanionLifecycle {
       "--volume",
       `${this.cfg.alerts_dir}:${CONTAINER.alerts}:rw`,
     );
-    // the install's homes, the config mirror and the read-only
-    // GitHub token. All directories, created before a cold run (`ensureDirs`),
+    // the install's homes (added `portrait/`), the config
+    // mirror and the read-only GitHub token. All directories, created before a cold run (`ensureDirs`),
     // so unconditional like the evidence store.
     const homes = this.hostHomes();
     argv.push(
       "--volume",
       `${homes.profiles}:${CONTAINER.profiles}:rw`,
+      "--volume",
+      `${homes.portrait}:${CONTAINER.portrait}:rw`,
       "--volume",
       `${homes.configMirror}:${CONTAINER.configLive}:ro`,
       "--volume",
@@ -571,13 +578,14 @@ export class CompanionLifecycle {
   /**
    * Host side of the mounts, from the install locator over THIS
    * lifecycle's env (so a test's temp XDG homes are what it mounts):
-   * `<config home>/profiles`, the live config file when one exists (the
-   * SOURCE of the mirror — never itself mounted), the mirror dir, the state
-   * home, and the token dir. Never the config home as a whole — see
+   * `<config home>/profiles` and `<config home>/portrait`, the
+   * live config file when one exists (the SOURCE of the mirror — never itself
+   * mounted), the mirror dir, the state home, and the token dir. Never the config home as a whole — see
    * `CONTAINER.configHome` for why `secrets/` must stay out.
    */
   hostHomes(): {
     profiles: string;
+    portrait: string;
     configFile?: string;
     configMirror: string;
     state: string;
@@ -587,6 +595,7 @@ export class CompanionLifecycle {
     const located = locateConfig({ env });
     return {
       profiles: join(configHome(env), PROFILES_DIR),
+      portrait: join(configHome(env), PORTRAIT_DIR),
       configFile: this.fs.exists(located.path) ? located.path : undefined,
       configMirror: companionConfigMirrorDir(env),
       state: stateHome(env),
@@ -906,6 +915,7 @@ export class CompanionLifecycle {
     // recreated.
     const homes = this.hostHomes();
     m.set(CONTAINER.profiles, homes.profiles);
+    m.set(CONTAINER.portrait, homes.portrait);
     m.set(CONTAINER.configLive, homes.configMirror);
     m.set(CONTAINER.stateHome, homes.state);
     m.set(CONTAINER.githubRead, homes.github);
@@ -975,6 +985,7 @@ export class CompanionLifecycle {
       this.cfg.alerts_dir,
       this.cfg.evidence_dir,
       homes.profiles,
+      homes.portrait,
       homes.configMirror,
       homes.state,
       homes.github,

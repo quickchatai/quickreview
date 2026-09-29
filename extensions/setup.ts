@@ -21,7 +21,11 @@
 //     over the saved cut, behind a cost preview whose key the start must
 //     quote; it runs as background `pass-survey` subagents so the companion
 //     keeps talking, and writes unpinned `#survey` notes into the REVIEWER's
-//     memory, superseding the previous survey's.
+//     memory, superseding the previous survey's;
+//   - setup_portrait_assemble / setup_portrait / setup_portrait_narrative
+//    : the repo portrait — deterministic facts assembled into the
+//     state home, the companion's narrative of them stored in the config home
+//     against the facts' key, each keeping the version it replaced for a diff.
 // and the scan's (extensions/setup-scan.ts): scan_preview / _start /
 // _status / _stop and scan_findings.
 //
@@ -30,7 +34,7 @@
 // a refusal as its result rather than throwing.
 import type { Pi, PiToolDefinition, PiToolResult } from "@earendil-works/pi-coding-agent";
 import { fileURLToPath } from "node:url";
-import { stateHome } from "../src/install.js";
+import { configHome, stateHome } from "../src/install.js";
 import {
   SetupEngine,
   type CutStatus,
@@ -41,6 +45,7 @@ import type { HistoryTheme, HistoryThemesFile } from "../src/setup/history.js";
 import { MAX_THEMES, THEME_SOURCES, THEME_SUMMARY_MAX, THEME_TITLE_MAX } from "../src/setup/history.js";
 import {
   checkoutReader,
+  configHomeFs,
   notYetTrackerSink,
   reviewerMemoryFromEnv,
   stateHomeFs,
@@ -49,6 +54,16 @@ import {
 import { piCaseRunner } from "../src/setup/caserunner.js";
 import { REPO_SCOPE } from "../src/setup/survey.js";
 import type { SurveyPreview, SurveyStatus } from "../src/setup/surveyrun.js";
+import {
+  NARRATIVE_FILE,
+  NARRATIVE_MAX,
+  NARRATIVE_PREVIOUS_FILE,
+  PORTRAIT_FACTS_FILE,
+  shapeLines,
+  type FactsVersion,
+  type PortraitView,
+  type SectionDiff,
+} from "../src/setup/portrait.js";
 import { resolveMaxConcurrency } from "./subagents.js";
 import type { RepoFacts } from "../src/setup/facts.js";
 import { ADJUST_OPS } from "../src/setup/unitcut.js";
@@ -238,6 +253,96 @@ export function renderSurveyStatus(s: SurveyStatus): string {
     out.push(`Last completed survey: ${s.last_complete.id} (${s.last_complete.finished_at}).`);
   }
   return out.join("\n");
+}
+
+const SECTION_TITLES: Record<string, string> = {
+  stack: "Stack",
+  units: "Units",
+  conventions: "Conventions (written down)",
+  enforced: "Enforced (by tooling)",
+  history: "Review history themes",
+  survey: "Survey",
+  problems: "Problems",
+};
+
+const bullets = (xs: readonly string[], none = "  (none found)"): string =>
+  xs.length === 0 ? none : xs.map((x) => `  - ${x}`).join("\n");
+
+/** The facts, for reading: counts beside the shape lines the key is over. */
+export function renderPortraitFacts(v: FactsVersion): string {
+  const f = v.facts;
+  const lines = shapeLines(f);
+  const out = [
+    `Portrait facts ${v.key} (assembled ${v.assembled_at}${f.head ? ` at ${f.head.slice(0, 12)}` : ""}; ${f.stack.files} tracked files). ` +
+      "Deterministic; the key moves only when the SHAPE does (a framework, unit, doc, tool or theme), never with a count.",
+  ];
+  const langs = f.stack.languages.map((l) => `${l.language} ${l.files}`).join(", ");
+  out.push(
+    `${SECTION_TITLES.stack}:\n  languages: ${langs || "(none recognised)"}\n` +
+      bullets(lines.stack.filter((l) => !l.startsWith("language ")), "  (no manifests or frameworks found)"),
+  );
+  const units = f.units.units.map(
+    (u) =>
+      `${u.name} [${u.kind}] ${u.roots.map((r) => r || "(repo root)").join(", ")}: ${u.files} files, ${u.lines} lines` +
+      `${u.cases > 1 ? `, ${u.cases} cases` : ""}${u.note ? ` — ${u.note}` : ""}`,
+  );
+  const cut = f.units.source === "saved" ? `the saved cut (${f.units.saved_at})` : "NO SAVED CUT — the deterministic candidates, not the cut";
+  out.push(
+    `${SECTION_TITLES.units}, ${cut}:\n${bullets(units)}` +
+      (f.units.ignored.length > 0 ? `\n  ignored: ${f.units.ignored.join(", ")}` : ""),
+  );
+  for (const section of ["conventions", "enforced", "history", "survey"] as const) {
+    out.push(`${SECTION_TITLES[section]}:\n${bullets(lines[section])}`);
+  }
+  if (f.problems.length > 0) {
+    out.push(`${SECTION_TITLES.problems} (these parts are UNKNOWN, not empty):\n${f.problems.map((p) => `  ✗ ${p}`).join("\n")}`);
+  }
+  return out.join("\n\n");
+}
+
+export function renderFactsDiff(diff: readonly SectionDiff[], since: string): string {
+  if (diff.length === 0) return `Facts: no change in shape since ${since}.`;
+  const sections = diff.map(
+    (d) =>
+      `  ${SECTION_TITLES[d.section] ?? d.section}:\n` +
+      [...d.added.map((l) => `    + ${l}`), ...d.removed.map((l) => `    - ${l}`)].join("\n"),
+  );
+  return [`Facts changed since ${since}:`, ...sections].join("\n");
+}
+
+export function renderPortrait(v: PortraitView): string {
+  const out: string[] = [];
+  if (v.facts.state === "absent") out.push("No portrait facts yet — setup_portrait_assemble reads them (free, deterministic).");
+  else if (v.facts.state === "unreadable") out.push(`✗ ${v.facts.error}\nPortrait facts: UNKNOWN.`);
+  else out.push(renderPortraitFacts(v.facts.file.current));
+  const n = v.narrative;
+  if (n.state === "no-config-home") out.push("Narrative: no config home in this assembly.");
+  else if (n.state === "absent") out.push(`Narrative: none yet (${NARRATIVE_FILE} in the config home).`);
+  else if (n.state === "unreadable") out.push(`✗ ${n.error}\nNarrative: UNKNOWN.`);
+  else {
+    const fresh =
+      v.stale === null
+        ? "which facts it was written from is unknown (its header was edited) — check it against the facts yourself"
+        : v.stale
+          ? `STALE — written from facts ${n.doc.facts_key}, and the facts have moved since; re-read them and rewrite it`
+          : "current with these facts";
+    out.push(`Narrative (${n.doc.written_at ?? "time unknown"}; ${fresh}):\n\n${n.doc.body}`);
+  }
+  if (v.has_previous_narrative) out.push(`The narrative it replaced is kept (${NARRATIVE_PREVIOUS_FILE}).`);
+  if (v.facts_diff !== null && v.facts.state === "ok") {
+    const prev = v.facts.file.previous;
+    out.push(prev ? renderFactsDiff(v.facts_diff, `${prev.key} (${prev.assembled_at})`) : "Facts: no earlier version kept yet.");
+  }
+  if (v.narrative_diff !== null) {
+    out.push(
+      !v.has_previous_narrative
+        ? "Narrative: no earlier version kept yet."
+        : v.narrative_diff.length === 0
+          ? "Narrative: the same text as the one it replaced."
+          : `Narrative changes since the one it replaced:\n${v.narrative_diff.map((l) => `  ${l}`).join("\n")}`,
+    );
+  }
+  return out.join("\n\n");
 }
 
 // ---- tool belt ---------------------------------------------------------------
@@ -488,7 +593,106 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     },
   };
 
-  return [facts, status, propose, adjust, save, history, themes, surveyPreview, surveyStart, surveyStatus, surveyStop];
+  const portraitAssemble: PiToolDefinition = {
+    name: "setup_portrait_assemble",
+    label: "Assemble the portrait facts",
+    description:
+      "Assemble the repo portrait's FACTS from what is on disk now — the stack, the saved unit cut (the candidates, flagged, before " +
+      "one is saved), the conventions the repo writes down and what its CI and linters already enforce, and the saved review " +
+      `history themes — and store them in the state home (${PORTRAIT_FACTS_FILE}). Free and deterministic. When their shape changed, ` +
+      "the version they replace is kept and the answer says what changed. Returns the facts key a narrative is stored against.",
+    promptSnippet: "Assemble the repo portrait facts",
+    parameters: NO_PARAMS,
+    execute: async () => {
+      const r = engine.portraitAssemble();
+      if (!r.ok) return refused("Portrait facts", r);
+      const out = [renderPortraitFacts(r.current)];
+      out.push(
+        r.unchanged
+          ? "Facts: no change in shape since they were last assembled (counts refreshed)."
+          : r.previous
+            ? renderFactsDiff(r.diff, `${r.previous.key} (${r.previous.assembled_at})`)
+            : "The first facts for this repo — nothing earlier to compare.",
+      );
+      const v = engine.portrait();
+      if (v.narrative.state === "ok") {
+        out.push(
+          v.stale === false
+            ? "Your stored narrative is current with these facts."
+            : "Your stored narrative was not written from these facts — read it (setup_portrait) and rewrite it from them.",
+        );
+      } else if (v.narrative.state === "absent") {
+        out.push(`No narrative stored yet: write the operator a reading of these facts and store it with setup_portrait_narrative, facts_key ${r.current.key}.`);
+      }
+      return text(out.join("\n\n"), { key: r.current.key, unchanged: r.unchanged, diff: r.diff });
+    },
+  };
+
+  const portrait: PiToolDefinition = {
+    name: "setup_portrait",
+    label: "Repo portrait",
+    description:
+      "The stored repo portrait as it is, nothing reassembled: the facts, your narrative and whether it is STALE (written from " +
+      "other facts), and — with `diff: true` — what changed in the facts and in the narrative since the versions they replaced.",
+    promptSnippet: "Read the stored repo portrait",
+    parameters: {
+      type: "object",
+      properties: { diff: { type: "boolean", description: "Also show what changed since the kept previous versions." } },
+    },
+    execute: async (_id, params) => {
+      const v = engine.portrait({ diff: (params as { diff?: unknown } | undefined)?.diff === true });
+      return text(renderPortrait(v), { facts: v.facts.state, narrative: v.narrative.state, stale: v.stale });
+    },
+  };
+
+  const narrative: PiToolDefinition = {
+    name: "setup_portrait_narrative",
+    label: "Store the portrait narrative",
+    description:
+      `Store YOUR narrative of the portrait facts — prose for the operator, at most ${NARRATIVE_MAX} characters — in the install's ` +
+      `config home (${NARRATIVE_FILE}). \`facts_key\` is the key of the facts you read: facts assembled since refuse it (read ` +
+      "them again). A narrative that quotes a raw review comment or names its author is refused. The narrative it replaces is " +
+      `kept (${NARRATIVE_PREVIOUS_FILE}) and the answer shows what changed.`,
+    promptSnippet: "Store the repo portrait narrative",
+    parameters: {
+      type: "object",
+      properties: {
+        facts_key: { type: "string", description: "The key setup_portrait_assemble (or setup_portrait) showed." },
+        narrative: { type: "string", description: "Markdown prose: what the facts say about this repo, and what they leave open." },
+      },
+      required: ["facts_key", "narrative"],
+    },
+    execute: async (_id, params) => {
+      const p = (params ?? {}) as { facts_key?: unknown; narrative?: unknown };
+      const r = engine.storePortraitNarrative({ facts_key: p.facts_key, narrative: p.narrative });
+      if (!r.ok) return refused("Narrative", r);
+      if (r.unchanged) {
+        return text(`Narrative unchanged — the stored one is the same text, from facts ${r.facts_key}.`, { unchanged: true });
+      }
+      const out = [`Narrative stored from facts ${r.facts_key} (${NARRATIVE_FILE} in the config home).`];
+      if (r.replaced) {
+        out.push(`The previous one is kept (${NARRATIVE_PREVIOUS_FILE}); changes:\n${r.diff.map((l) => `  ${l}`).join("\n")}`);
+      }
+      return text(out.join("\n\n"), { facts_key: r.facts_key, replaced: r.replaced });
+    },
+  };
+
+  return [
+    facts,
+    status,
+    propose,
+    adjust,
+    save,
+    history,
+    themes,
+    surveyPreview,
+    surveyStart,
+    surveyStatus,
+    surveyStop,
+    portraitAssemble,
+    portrait,
+    narrative,
+  ];
 }
 
 // ---- activation ----------------------------------------------------------------
@@ -503,6 +707,10 @@ export function buildEngine(env: NodeJS.ProcessEnv = process.env): SetupEngine {
     {
       repo: checkoutReader(env.QCR_REVIEWED_REPO?.trim() || DEFAULT_REVIEWED_REPO),
       state: stateHomeFs(stateHome(env)),
+      // The CONFIG home, for the portrait narrative. In the
+      // companion only `profiles/` and `portrait/` of it are mounted
+      // read-write, and the narrative is written under `portrait/` alone.
+      config: configHomeFs(configHome(env)),
       clock: () => new Date(),
       // The REVIEWER's memory (survey notes and's review history
       // themes are for PR rounds), or null — the survey then refuses to start

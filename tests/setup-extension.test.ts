@@ -22,6 +22,7 @@ import activate, {
 import { CONTAINER } from "../src/tui/companion.js";
 import {
   checkoutReader,
+  configHomeFs,
   reviewerMemoryFromEnv,
   stateHomeFs,
   tokenFileGitHubReader,
@@ -69,7 +70,11 @@ describe("the tool belt", () => {
       "web/src/a.tsx": "x\n",
       ".github/workflows/ci.yml": "name: CI\n",
     });
-    const engine = buildEngine({ QCR_REVIEWED_REPO: repo, QCR_STATE_HOME: join(dir, "state") } as NodeJS.ProcessEnv);
+    const engine = buildEngine({
+      QCR_REVIEWED_REPO: repo,
+      QCR_STATE_HOME: join(dir, "state"),
+      QCR_CONFIG_HOME: join(dir, "config"),
+    } as NodeJS.ProcessEnv);
     return toolDefinitions(engine);
   }
 
@@ -87,6 +92,9 @@ describe("the tool belt", () => {
       "setup_survey_start",
       "setup_survey_status",
       "setup_survey_stop",
+      "setup_portrait_assemble",
+      "setup_portrait",
+      "setup_portrait_narrative",
     ]);
     for (const n of names) expect(n).toMatch(/^[a-z][a-z0-9_]*$/);
   });
@@ -116,6 +124,37 @@ describe("the tool belt", () => {
     expect(status).toMatch(/Saved unit cut/);
     expect(status).toMatch(/- api \[custom\] api: 2 files/);
     expect(status).not.toMatch(/Draft/);
+  });
+
+  it("drives the portrait: assemble → narrative → read, the narrative in the CONFIG home", async () => {
+    const defs = belt();
+    expect(await call(defs, "setup_portrait")).toMatch(/No portrait facts yet/);
+    const assembled = await call(defs, "setup_portrait_assemble");
+    expect(assembled).toMatch(/Portrait facts ([0-9a-f]{12})/);
+    expect(assembled).toMatch(/NO SAVED CUT — the deterministic candidates, not the cut/);
+    expect(assembled).toMatch(/CI GitHub Actions — \.github\/workflows\/ci\.yml \("CI"\)/);
+    expect(assembled).toMatch(/themes: none saved/);
+    expect(assembled).toMatch(/The first facts for this repo/);
+    const key = /Portrait facts ([0-9a-f]{12})/.exec(assembled)![1]!;
+    expect(assembled).toContain(`setup_portrait_narrative, facts_key ${key}`);
+
+    expect(await call(defs, "setup_portrait_narrative", { facts_key: "000000000000", narrative: "x" })).toMatch(
+      /Narrative refused:\n✗ the facts changed since that key/,
+    );
+    const stored = await call(defs, "setup_portrait_narrative", { facts_key: key, narrative: "A Django API beside a React app." });
+    expect(stored).toMatch(new RegExp(`Narrative stored from facts ${key}`));
+    expect(existsSync(join(dir, "config", "portrait", "narrative.md"))).toBe(true);
+    expect(existsSync(join(dir, "state", "setup", "portrait-facts.json"))).toBe(true);
+
+    const replaced = await call(defs, "setup_portrait_narrative", { facts_key: key, narrative: "A Django API and a React app." });
+    expect(replaced).toMatch(/The previous one is kept \(portrait\/narrative\.previous\.md\); changes:\n  - A Django API beside a React app\.\n  \+ A Django API and a React app\./);
+
+    const read = await call(defs, "setup_portrait", { diff: true });
+    expect(read).toMatch(/Narrative \(.*; current with these facts\):\n\nA Django API and a React app\./);
+    expect(read).toMatch(/The narrative it replaced is kept/);
+    expect(read).toMatch(/Facts: no earlier version kept yet\./);
+    expect(read).toMatch(/Narrative changes since the one it replaced:/);
+    expect(await call(defs, "setup_portrait_assemble")).toMatch(/Facts: no change in shape since they were last assembled/);
   });
 
   it("answers a bad call with a refusal, never a throw", async () => {
@@ -161,6 +200,10 @@ describe("the tool belt", () => {
         "setup_survey_start",
         "setup_survey_status",
         "setup_survey_stop",
+        // the repo portrait.
+        "setup_portrait_assemble",
+        "setup_portrait",
+        "setup_portrait_narrative",
         // the scan half of the belt.
         "scan_preview",
         "scan_start",
@@ -408,6 +451,15 @@ describe("checkoutReader", () => {
     expect(r.head()).toBeNull();
     expect(r.changeCounts?.()).toBeNull();
     expect(checkoutReader(join(dir, "absent")).listFiles()).toBeNull();
+  });
+});
+
+describe("configHomeFs", () => {
+  it("is the same rooted, atomic port, and names the config home when a path leaves it", () => {
+    const fs = configHomeFs(join(dir, "config"));
+    fs.write("portrait/narrative.md", "hi\n");
+    expect(readFileSync(join(dir, "config", "portrait", "narrative.md"), "utf8")).toBe("hi\n");
+    expect(() => fs.write("../secrets/app.pem", "x")).toThrow(/leaves the config home/);
   });
 });
 

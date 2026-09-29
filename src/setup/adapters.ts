@@ -1,7 +1,8 @@
 // The real ports behind SetupEngine (the case runner is its own
 // file, caserunner.ts). Assembled by the companion's
 // setup extension (extensions/setup.ts) inside the companion container, where
-// the reviewed checkout is mounted read-only and the state home read-write
+// the reviewed checkout is mounted read-only, the state home read-write and
+// the config home in part (`profiles/`, `portrait/`)
 // (root CLAUDE.md rule 8, third amendment). Tests use fakes and temp dirs;
 // these are the only implementations that touch a real disk or network.
 //
@@ -143,9 +144,20 @@ export const CHANGE_LOG_COMMITS = 2000;
 /** The state home as a rooted filesystem: relative paths only, never out of
  * the root, every write tmp+rename atomic. */
 export function stateHomeFs(root: string): StateFs {
+  return homeFs(root, "state home");
+}
+
+/** The config home, the same way (the portrait narrative). In the
+ * companion only parts of it are mounted, so its callers write only under a
+ * mounted directory. */
+export function configHomeFs(root: string): StateFs {
+  return homeFs(root, "config home");
+}
+
+function homeFs(root: string, what: string): StateFs {
   const resolve = (rel: string): string => {
     const full = inside(root, rel);
-    if (full === null) throw new Error(`state path ${JSON.stringify(rel)} leaves the state home`);
+    if (full === null) throw new Error(`path ${JSON.stringify(rel)} leaves the ${what}`);
     return full;
   };
   return {

@@ -7,8 +7,10 @@
 // with its answers is deterministic, validated, and persisted here.
 //
 // Behaviours so far: the deterministic repo facts and the unit cut
-//, and the survey (preview, start, status, stop; the run
-// itself is surveyrun.ts, its rules survey.ts). The ports for the later
+//, the survey (preview, start, status, stop; the run
+// itself is surveyrun.ts, its rules survey.ts), the review history themes
+// (history.ts) and the repo portrait (portrait.ts — facts
+// assembled here, the companion's narrative stored in the config home). The ports for the later
 // slices (tracker sink, GitHub reader) are declared and injected now so every
 // later tool lands on the same engine; their real implementations arrive with
 // the slice that first calls them.
@@ -26,6 +28,7 @@ import { repoFacts, unitCandidates, vendoredRoots, type RepoFacts } from "./fact
 import { SurveyRunner, type SurveyInputs, type SurveyPreview, type SurveyRun, type SurveyStatus } from "./surveyrun.js";
 import {
   historyPage,
+  historyThemesState,
   readDigest,
   readHistoryThemes,
   saveHistoryThemes,
@@ -35,6 +38,15 @@ import {
   type HistoryThemesFile,
   type SaveThemesResult,
 } from "./history.js";
+import {
+  readPortrait,
+  saveFacts,
+  storeNarrative,
+  type AssembleResult,
+  type PortraitFacts,
+  type PortraitView,
+  type StoreNarrativeResult,
+} from "./portrait.js";
 import {
   DEFAULT_CASE_BUDGET,
   applyOps,
@@ -71,7 +83,7 @@ export interface RepoReader {
 
 /** The filesystem rooted at the install's STATE home — PC-only, never shipped.
  * Paths are relative to that root; the implementation refuses any that would
- * leave it. */
+ * leave it. The same shape roots the CONFIG home (`SetupPorts.config`). */
 export interface StateFs {
   readonly location: string;
   /** The file's text, or null when it does not exist. Throws only when it
@@ -139,6 +151,12 @@ export interface GitHubReader {
 export interface SetupPorts {
   repo: RepoReader;
   state: StateFs;
+  /** The install's CONFIG home, where the operator-facing results live (the
+   * portrait narrative). Absent or null when this assembly has none
+   * — every write there then answers a refusal naming why. In the companion
+   * only some of it is mounted: code writes only under a mounted directory
+   * (`portrait/`), never at the root. */
+  config?: StateFs | null;
   clock: () => Date;
   /** The ONE memory seam. Null when this assembly has no memory — every
    * memory write then answers a refusal naming why. */
@@ -623,5 +641,87 @@ export class SetupEngine {
   /** Resolves when no survey is running. */
   surveyIdle(): Promise<void> {
     return this.surveyRun.idle();
+  }
+
+  // -- the repo portrait (src/setup/portrait.ts) --
+
+  /** The portrait facts as they are now, from what is already on disk: the
+   * repo facts, the SAVED cut (the candidates, flagged, when none is saved),
+   * the saved history themes and the last completed survey. */
+  private portraitFacts(): { ok: true; facts: PortraitFacts } | Refusal {
+    const files = this.files();
+    if (files === null) return this.noRepo();
+    const repo = repoFacts(files, (p) => this.ports.repo.read(p));
+    const problems: string[] = [];
+    const { file, error } = this.load();
+    if (error !== null) problems.push(error);
+    const cut: UnitCut = file.saved ?? {
+      units: repo.unit_candidates.map((c) => ({ name: c.name, roots: c.roots, kind: c.kind, note: c.reason })),
+      ignored: vendoredRoots(files),
+    };
+    const view = this.view(cut, files, this.lineCounter());
+    const themes = historyThemesState(this.ports.state);
+    if (themes.state === "unreadable") problems.push(themes.error);
+    const survey = this.surveyRun.status();
+    problems.push(...survey.problems);
+    const done = survey.last_complete;
+    return {
+      ok: true,
+      facts: {
+        head: this.ports.repo.head(),
+        stack: { files: repo.files, languages: repo.languages, manifests: repo.manifests, frameworks: repo.frameworks },
+        units: {
+          source: file.saved ? "saved" : "candidates",
+          saved_at: file.saved?.saved_at ?? null,
+          units: view.units.map((u) => ({
+            name: u.name,
+            kind: u.kind,
+            roots: u.roots,
+            note: u.note,
+            files: u.files,
+            reviewable: u.reviewable,
+            lines: u.lines,
+            cases: u.cases.length,
+          })),
+          ignored: cut.ignored,
+        },
+        conventions: { guides: repo.guides, style_guides: repo.style_guides, agent_files: repo.agent_files },
+        enforced: { ci: repo.ci, linters: repo.linters },
+        history:
+          themes.state === "ok"
+            ? {
+                state: "ok",
+                saved_at: themes.file.saved_at,
+                digest_generated_at: themes.file.digest_generated_at,
+                themes: themes.file.themes,
+              }
+            : { state: themes.state, saved_at: null, digest_generated_at: null, themes: [] },
+        survey: done ? { id: done.id, finished_at: done.finished_at, head: done.head, notes: done.notes } : null,
+        problems,
+      },
+    };
+  }
+
+  /** Assemble the portrait facts and store them in the state home, keeping
+   * the version a new shape replaces (portrait.ts `saveFacts`). */
+  portraitAssemble(): AssembleResult {
+    const r = this.portraitFacts();
+    if (!r.ok) return r;
+    return saveFacts(this.ports.state, r.facts, this.ports.clock());
+  }
+
+  /** The stored portrait — facts, narrative, whether the narrative predates
+   * the facts — and, when asked, what changed since the kept versions. */
+  portrait(opts: { diff?: boolean } = {}): PortraitView {
+    return readPortrait(this.portraitDeps(), opts);
+  }
+
+  /** Store the companion's narrative against the facts key it read. */
+  storePortraitNarrative(raw: { facts_key?: unknown; narrative?: unknown }): StoreNarrativeResult {
+    return storeNarrative(this.portraitDeps(), raw);
+  }
+
+  private portraitDeps(): { state: StateFs; config: StateFs | null; clock: () => Date } {
+    return { state: this.ports.state, config: this.ports.config ?? null, clock: this.ports.clock };
   }
 }
