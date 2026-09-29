@@ -96,25 +96,65 @@ export interface NumstatEntry {
   deletions: number;
   path: string;
   binary: boolean;
+  /** A rename/copy record's source path (the destination is `path`). */
+  from?: string;
 }
 
-/** Parse `git diff --numstat` output. Binary files show as "-\t-\tpath". */
+/**
+ * Parse `git diff --numstat -z` output. Binary files show as "-\t-\tpath".
+ *
+ * Always the NUL-terminated form, so a path is raw bytes — never the
+ * core.quotePath-quoted `"…"` spelling, never a rename's display string
+ * (`src/cfg.txt => .env`, `{src => migrations}/x.sql`), neither of which
+ * the denylist can read. The caller also passes `--no-renames`, so a move is
+ * a delete plus an add; the rename record (`a\td\t\0from\0to\0`) is still
+ * parsed defensively, onto `path` = destination and `from` = source, and
+ * `checkDiffstat` checks both. A newline-separated input (no NUL anywhere)
+ * is read line by line — the non-`-z` spelling, kept for fixtures.
+ */
 export function parseNumstat(out: string): NumstatEntry[] {
   const entries: NumstatEntry[] = [];
-  for (const raw of out.split("\n")) {
-    const line = raw.trim();
-    if (!line) continue;
-    const cols = line.split("\t");
-    if (cols.length < 3) continue;
-    const [a, d, ...rest] = cols;
-    const path = rest.join("\t");
+  const push = (a: string, d: string, path: string, from?: string): void => {
     const binary = a === "-" || d === "-";
     entries.push({
       additions: binary ? 0 : Number(a),
       deletions: binary ? 0 : Number(d),
       path,
       binary,
+      ...(from === undefined ? {} : { from }),
     });
+  };
+  if (!out.includes("\0")) {
+    for (const raw of out.split("\n")) {
+      const line = raw.trim();
+      if (!line) continue;
+      const cols = line.split("\t");
+      if (cols.length < 3) continue;
+      const [a, d, ...rest] = cols;
+      push(a!, d!, rest.join("\t"));
+    }
+    return entries;
+  }
+  const tokens = out.split("\0");
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i]!.replace(/^\n+/, "");
+    if (!tok) continue;
+    const first = tok.indexOf("\t");
+    const second = first < 0 ? -1 : tok.indexOf("\t", first + 1);
+    if (second < 0) continue;
+    const a = tok.slice(0, first);
+    const d = tok.slice(first + 1, second);
+    const path = tok.slice(second + 1);
+    if (path !== "") {
+      push(a, d, path);
+      continue;
+    }
+    // Rename/copy record: the two paths ride the next two tokens.
+    const from = tokens[i + 1];
+    const to = tokens[i + 2];
+    i += 2;
+    if (from === undefined || to === undefined) continue;
+    push(a, d, to, from);
   }
   return entries;
 }
@@ -186,7 +226,9 @@ export function checkDiffstat(entries: NumstatEntry[], caps: Config["caps"]): Di
   ]);
   if (unusable !== null) return { ok: false, reason: unusable, files, lines };
   const prefixes = caps.improvement_pr_deny_prefixes ?? IMPROVEMENT_DENY_PREFIXES_DEFAULT;
-  const denied = entries.filter((e) => deniedPath(e.path, prefixes)).map((e) => e.path);
+  const denied = entries.flatMap((e) =>
+    [e.from, e.path].filter((p): p is string => p !== undefined && deniedPath(p, prefixes)),
+  );
   const binary = entries.filter((e) => e.binary).map((e) => e.path);
   if (files === 0)
     return {
@@ -398,7 +440,13 @@ export async function fileImprovementPr(
       );
     }
 
-    const numstat = await ctx.run(["diff", "--numstat", `${baseRef}...${branchRef}`], repoDir);
+    const numstat = await ctx.run(
+      // -z: raw paths (no quotePath quoting, no rename display string);
+      // --no-renames: a move is a delete + an add, so BOTH sides reach the
+      // denylist and the line cap — whatever diff.renames the clone carries.
+      ["diff", "--numstat", "-z", "--no-renames", `${baseRef}...${branchRef}`],
+      repoDir,
+    );
     const entries = parseNumstat(numstat);
     const verdict = checkDiffstat(entries, ctx.cfg.caps);
     if (!verdict.ok) return reject(verdict.reason!, { files: verdict.files, lines: verdict.lines });

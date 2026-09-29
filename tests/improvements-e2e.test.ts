@@ -333,6 +333,56 @@ describe("improvement channel end to end — real git, a repo with a remote", ()
     expect(store.filedSince("improvement_pr", "1970-01-01T00:00:00.000Z")).toBe(0);
   });
 
+  it("a RENAME cannot smuggle a file past the denylist: moving onto .env or into migrations/ is refused, with rename detection on", async () => {
+    // `git diff --numstat` detects renames by default and prints them as ONE
+    // display string (`src/cfg.txt => .env`, `{src => migrations}/x.sql`),
+    // which no path segment of matches `.env` or `migrations`. The diffstat
+    // must see both sides of a move as real paths.
+    const dryrun = join(tmp, "state", "dryrun");
+    const gate = new MutationGate(true, dryrun, async () => {
+      throw new Error("executor must not run in dry-run");
+    });
+    const adapter = new GitHubAdapter(cfg, fakeMinter, gate, (async () => {
+      throw new Error("no direct fetch expected");
+    }) as unknown as typeof fetch);
+    commitLines(seed, "src/cfg.txt", 3, "base cfg");
+    commitLines(seed, "src/x.sql", 3, "base sql");
+    git(seed, "push", "-q", "origin", BASE);
+    git(clone, "config", "diff.renames", "true");
+    const before = remoteHeads();
+
+    const move = (branch: string, from: string, to: string): void => {
+      git(clone, "fetch", "-q", "origin", `+refs/heads/${BASE}:refs/remotes/origin/${BASE}`);
+      git(clone, "branch", "-q", branch, `origin/${BASE}`);
+      git(clone, "checkout", "-q", branch);
+      mkdirSync(join(clone, to, ".."), { recursive: true });
+      git(clone, "mv", from, to);
+      git(clone, "commit", "-q", "-m", `move ${from}`);
+      git(clone, "checkout", "-q", "--detach", `origin/${BASE}`);
+    };
+
+    move("wip/env", "src/cfg.txt", ".env");
+    const env = await fileImprovementPr(
+      { branch: "wip/env", title: "t", body: "b", slug: "env" },
+      context(gate, adapter),
+    );
+    expect(env.ok).toBe(false);
+    expect(env.reason).toContain("path denylist");
+    expect(env.reason).toContain(".env");
+
+    move("wip/mig", "src/x.sql", "migrations/x.sql");
+    const mig = await fileImprovementPr(
+      { branch: "wip/mig", title: "t", body: "b", slug: "mig" },
+      context(gate, adapter),
+    );
+    expect(mig.ok).toBe(false);
+    expect(mig.reason).toContain("path denylist");
+    expect(mig.reason).toContain("migrations/x.sql");
+
+    expect(dryRunIntents(dryrun)).toEqual([]);
+    expect(remoteHeads()).toEqual(before);
+  });
+
   it("the caps bind on the real diffstat: 51 lines refused, a denylisted path refused, nothing reaches the gate or the remote", async () => {
     const dryrun = join(tmp, "state", "dryrun");
     const gate = new MutationGate(true, dryrun, async () => {

@@ -46,6 +46,22 @@ describe("parseNumstat / deniedPath / checkDiffstat", () => {
     ]);
   });
 
+  it("parses the -z form: raw paths (unquoted), binary markers, and a rename record whose BOTH sides the denylist checks", () => {
+    const out = parseNumstat("3\t2\tsrc/a b.ts\0-\t-\tdocs/logo.png\0" + "0\t0\t\0src/cfg.txt\0.env\0");
+    expect(out).toEqual([
+      { additions: 3, deletions: 2, path: "src/a b.ts", binary: false },
+      { additions: 0, deletions: 0, path: "docs/logo.png", binary: true },
+      { additions: 0, deletions: 0, path: ".env", binary: false, from: "src/cfg.txt" },
+    ]);
+    // A move OUT of a denied place is refused as well as a move into one.
+    const outOf = checkDiffstat(
+      parseNumstat("0\t0\t\0migrations/0001.sql\0src/x.sql\0"),
+      cfg.caps,
+    );
+    expect(outOf.ok).toBe(false);
+    expect(outOf.reason).toContain("migrations/0001.sql");
+  });
+
   it("denies migrations / infra / ansible / workflows / .env at any depth", () => {
     for (const p of [
       "migrations/0001.sql",
@@ -406,6 +422,8 @@ describe("fileImprovementPr / fileIssue (dry-run)", () => {
     expect(calls[2]).toEqual([
       "diff",
       "--numstat",
+      "-z",
+      "--no-renames",
       `refs/remotes/origin/${cfg.github.base_branch}...refs/heads/wip/docs`,
     ]);
     expect(new Set(cwds)).toEqual(new Set([REPO_DIR]));
