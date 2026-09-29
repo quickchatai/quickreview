@@ -1052,37 +1052,46 @@ export function pythonManifestEdits(
 ): ManifestEdit[] {
   const isPyproject = posix.basename(relPath) === "pyproject.toml";
   const headDeps = isPyproject && headText !== null ? parsePyprojectDeps(headText) : null;
-  const added = new Map<string, string>();
-  const removed = new Map<string, string>();
-  const candidates = (body: string): Array<{ name: string; range: string }> => {
+  // `spec` is what the two sides are compared on; `range` is what is reported.
+  // They differ only for a bare `key = value` line (Poetry): its range is `*`
+  // (untrusted without a head file), but its spec is the value as written, so a
+  // `requests = "^2.31"` → `"^2.32"` bump is not mistaken for a moved line.
+  type Candidate = { name: string; range: string; spec: string };
+  const added = new Map<string, Candidate>();
+  const removed = new Map<string, Candidate>();
+  const candidates = (body: string): Candidate[] => {
     if (!isPyproject) {
       const line = body.replace(/(^|\s)#.*$/, "").trim();
       if (!line || line.startsWith("-")) return [];
       const r = parsePep508(line);
-      return r ? [{ name: r.name, range: r.range }] : [];
+      return r ? [{ name: r.name, range: r.range, spec: r.range }] : [];
     }
-    const found: Array<{ name: string; range: string }> = [];
+    const found: Candidate[] = [];
     for (const s of tomlStrings(body)) {
       const r = parsePep508(s);
-      if (r) found.push({ name: r.name, range: r.range });
+      if (r) found.push({ name: r.name, range: r.range, spec: r.range });
     }
-    const kv = /^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*=/.exec(body);
-    if (kv?.[1]) found.push({ name: normPy(kv[1]), range: "*" });
+    const kv = /^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*=(.*)$/.exec(body);
+    if (kv?.[1])
+      found.push({
+        name: normPy(kv[1]),
+        range: "*",
+        spec: (kv[2] ?? "").trim(),
+      });
     return found;
   };
   for (const line of patch.split(/\r?\n/)) {
     if (line.startsWith("@@")) continue;
     if (line.startsWith("-")) {
-      for (const c of candidates(line.slice(1)))
-        if (!removed.has(c.name)) removed.set(c.name, c.range);
+      for (const c of candidates(line.slice(1))) if (!removed.has(c.name)) removed.set(c.name, c);
     } else if (line.startsWith("+")) {
-      for (const c of candidates(line.slice(1))) if (!added.has(c.name)) added.set(c.name, c.range);
+      for (const c of candidates(line.slice(1))) if (!added.has(c.name)) added.set(c.name, c);
     }
   }
   const out: ManifestEdit[] = [];
-  for (const [name, range] of added) {
+  for (const [name, { range, spec }] of added) {
     // Unchanged spec on both sides: the line moved or was re-wrapped.
-    if (name === "python" || removed.get(name) === range) continue;
+    if (name === "python" || removed.get(name)?.spec === spec) continue;
     // For pyproject the head file decides what is a dependency (a random
     // `line-length = 100` is a key, not a requirement); without a readable
     // head, a bare key is never trusted.
@@ -1719,7 +1728,11 @@ export function planDependencyRequests(
 ): DepRequest[] {
   const io = treeIo(resolve(tree), readFile);
   const resolver = new Resolver(io);
-  const accs = new Map<string, Acc>();
+  // Keyed by package, one Acc per distinct resolved VERSION: two workspaces can
+  // lock one package at different versions, and each importer must be shown the
+  // sources it actually runs against. An unresolved (null) sighting joins the
+  // package's first entry, and a later resolution fills a null one in.
+  const accs = new Map<string, Acc[]>();
   let seq = 0;
   const note = (
     eco: DepEcosystem,
@@ -1727,7 +1740,11 @@ export function planDependencyRequests(
     why: { manifest?: string; importer?: string },
   ): void => {
     const key = `${eco}:${r.name}`;
-    let a = accs.get(key);
+    const same = accs.get(key) ?? [];
+    let a =
+      r.version === null
+        ? same[0]
+        : (same.find((x) => x.version === r.version) ?? same.find((x) => x.version === null));
     if (!a) {
       a = {
         ecosystem: eco,
@@ -1738,7 +1755,8 @@ export function planDependencyRequests(
         seq: seq++,
       };
       if (r.range !== undefined) a.range = r.range;
-      accs.set(key, a);
+      same.push(a);
+      accs.set(key, same);
     } else if (a.version === null && r.version !== null) {
       a.version = r.version;
     }
@@ -1803,6 +1821,7 @@ export function planDependencyRequests(
   }
 
   return [...accs.values()]
+    .flat()
     .sort((a, b) => {
       const am = a.manifestWhys.length > 0;
       const bm = b.manifestWhys.length > 0;

@@ -229,6 +229,19 @@ describe("matching", () => {
     expect(matchFinding(human, elsewhere).matched).toBe(false);
     expect(matchFinding(human, []).matched).toBe(false);
   });
+
+  // Same basename is not the same file: `src/a/index.ts` and `src/b/index.ts`
+  // are different places, and proximity alone must not bridge them.
+  it("keeps repo-relative file identity: a same-named file elsewhere is not a match", () => {
+    const human = { ...set.cases[0]!.findings[0]!, path: "src/a/index.ts", line: 40 };
+    const sibling: SandboxFinding[] = [
+      { path: "src/b/index.ts", line: 45, text: "unrelated wording entirely" },
+    ];
+    expect(matchFinding(human, sibling).matched).toBe(false);
+    // A path the session wrote with a tree prefix (or `./`) is still the same file.
+    for (const path of ["./src/a/index.ts", "/opt/quickreview/state/regression/pr-1/src/a/index.ts"])
+      expect(matchFinding(human, [{ path, line: 45, text: "unrelated" }]).matched).toBe(true);
+  });
 });
 
 describe("scoring reads the expectation label", () => {

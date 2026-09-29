@@ -251,9 +251,20 @@ function pathFrom(text: string): { path: string; line?: number } {
  * an over-collected row shows up as an unmatched flag for the human, which is
  * the safe direction. */
 export function extractBlockers(review: ReviewSnapshot): Finding[] {
+  return extractFindingsWhere(review, true);
+}
+
+/** Every finding in a review regardless of its posting severity: every inline
+ * comment plus every body bullet. Gate (d) reads this — a question or nit that
+ * re-raises a SETTLED thread breaks the discipline exactly as a blocker does. */
+export function extractAllFindings(review: ReviewSnapshot): Finding[] {
+  return extractFindingsWhere(review, false);
+}
+
+function extractFindingsWhere(review: ReviewSnapshot, blockersOnly: boolean): Finding[] {
   const found: Finding[] = [];
   for (const c of review.comments) {
-    if (!BLOCKER_MARKERS.test(c.body)) continue;
+    if (blockersOnly && !BLOCKER_MARKERS.test(c.body)) continue;
     found.push({
       path: c.path,
       line: c.line,
@@ -271,7 +282,7 @@ export function extractBlockers(review: ReviewSnapshot): Finding[] {
     }
     const isBullet = /^([-*]|\d+\.)\s+/.test(line);
     if (!isBullet) continue;
-    if (!underBlockerHeading && !BLOCKER_MARKERS.test(line)) continue;
+    if (blockersOnly && !underBlockerHeading && !BLOCKER_MARKERS.test(line)) continue;
     const text = line.replace(/^([-*]|\d+\.)\s+/, "");
     const { path, line: ln } = pathFrom(text);
     found.push({
@@ -634,7 +645,10 @@ export function comparePr(input: ComparePrInput): CompareResult {
   const parity = blockerParity(oldFindings, sandboxFindings);
   const violations = invariantScan(input.records, input.pr);
   const anchors = checkAnchors(input.sandboxReview?.comments ?? [], input.patches);
-  const settled = settledThreadViolations(sandboxFindings, parseSettledThreads(input.ledgerMd));
+  const settled = settledThreadViolations(
+    input.sandboxReview ? extractAllFindings(input.sandboxReview) : [],
+    parseSettledThreads(input.ledgerMd),
+  );
 
   const missed = parity.filter((r) => r.status === "missed-by-sandbox");
   const badAnchors = anchors.filter((a) => a.status !== "on-changed-line");

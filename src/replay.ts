@@ -403,7 +403,6 @@ export class ScratchReplay {
       baseSha = mb.stdout.trim();
       const diff = await this.git(["diff", "--numstat", baseSha, c.headSha], baseClone);
       if (diff.code === 0) {
-        degraded = false;
         for (const line of diff.stdout.split("\n")) {
           const [add = "", del = "", path = ""] = line.trim().split("\t");
           if (!path) continue;
@@ -414,6 +413,11 @@ export class ScratchReplay {
             status: "modified",
           });
         }
+        // A merge-committed PR's head is an ancestor of TODAY's base, so the
+        // merge-base is the head itself and the diff is empty. A replayed PR
+        // changed something by definition: an empty diff means the base was
+        // not recovered, never that the change was empty.
+        degraded = files.length === 0;
       }
     }
     return { tree, baseSha, files, degraded };

@@ -682,6 +682,24 @@ describe("manifest edits in the diff", () => {
       { name: "httpx", kind: "added", range: ">=0.27" },
     ]);
   });
+
+  it("pyproject.toml: a Poetry version bump is a bump, not a moved line", () => {
+    const p = [
+      "@@ -7,3 +7,3 @@",
+      " [tool.poetry.dependencies]",
+      '-requests = "^2.31"',
+      '+requests = "^2.32"',
+      " [tool.black]",
+    ].join("\n");
+    const headText =
+      '[tool.poetry.dependencies]\npython = "^3.11"\nrequests = "^2.32"\n[tool.black]\nline-length = 100\n';
+    expect(pythonManifestEdits("pyproject.toml", p, headText)).toEqual([
+      { name: "requests", kind: "bumped", range: "^2.32" },
+    ]);
+    // A Poetry line that only moved is still not an edit.
+    const moved = ["@@ -7,3 +7,3 @@", '-requests = "^2.32"', '+requests = "^2.32"'].join("\n");
+    expect(pythonManifestEdits("pyproject.toml", moved, headText)).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -790,6 +808,34 @@ describe("planDependencyRequests", () => {
       name: "a",
       version: "1.0.0",
     });
+  });
+
+  it("npm monorepo: two importers that lock different versions get one request each", () => {
+    const files = {
+      "package.json": JSON.stringify({ dependencies: { a: "^1.0.0" } }),
+      "packages/web/package.json": JSON.stringify({
+        name: "@acme/web",
+        dependencies: { a: "^2.0.0" },
+      }),
+      "package-lock.json": JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "": {},
+          "node_modules/a": { version: "1.0.0" },
+          "packages/web/node_modules/a": { version: "2.0.0" },
+        },
+      }),
+      "packages/web/src/x.js": "import a from 'a';\n",
+      "src/y.js": "import a from 'a';\n",
+    };
+    const reqs = planDependencyRequests(tree(files), [
+      { filename: "packages/web/src/x.js" },
+      { filename: "src/y.js" },
+    ]);
+    const byVersion = new Map(reqs.map((r) => [r.version, r.why]));
+    expect(reqs).toHaveLength(2);
+    expect(byVersion.get("2.0.0")).toBe("imported by packages/web/src/x.js");
+    expect(byVersion.get("1.0.0")).toBe("imported by src/y.js");
   });
 
   it("npm: a yarn.lock with several copies picks the one whose header names the declared range", () => {

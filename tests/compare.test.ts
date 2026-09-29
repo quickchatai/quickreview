@@ -327,6 +327,33 @@ describe("(d) settled threads", () => {
     })[0]!;
     expect(settledThreadViolations([finding], parseSettledThreads(ledger))).toHaveLength(0);
   });
+
+  // Gate (d) is about ANY finding, not only blockers: a question or a nit that
+  // re-raises a SETTLED thread is the same discipline failure.
+  it("catches a non-blocker finding that re-raises a settled thread", () => {
+    const r = comparePr({
+      pr: 501,
+      oldReview: null,
+      sandboxReview: {
+        source: "sandbox",
+        state: "COMMENT",
+        body: "",
+        comments: [
+          {
+            path: "web/ui.tsx",
+            line: 3,
+            body: "[question] memoization concern — this component re-renders",
+          },
+        ],
+      },
+      records: [],
+      patches: [],
+      ledgerMd: ledger,
+    });
+    expect(r.settled).toHaveLength(1);
+    expect(r.settled[0]!.settled.text).toContain("memoization");
+    expect(r.markdown).not.toContain("No sandbox finding re-raises a SETTLED thread.");
+  });
 });
 
 describe("report rendering", () => {

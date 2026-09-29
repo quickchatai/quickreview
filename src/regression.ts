@@ -493,8 +493,18 @@ export interface MatchOptions {
 
 const DEFAULT_MATCH: Required<MatchOptions> = { threshold: 0.34, lineWindow: 12 };
 
-function baseName(p: string): string {
-  return p.split("/").pop() ?? p;
+function normPath(p: string): string {
+  return p.replace(/\\/g, "/").replace(/^(\.\/)+/, "").replace(/\/+/g, "/");
+}
+
+/** The same repo file: equal repo-relative paths, or one a path-segment suffix
+ * of the other (a session may write its finding with the scratch-tree prefix).
+ * A bare basename is NOT identity — `src/a/index.ts` is not `src/b/index.ts`. */
+function sameFile(a: string, b: string): boolean {
+  const x = normPath(a);
+  const y = normPath(b);
+  if (!x || !y) return false;
+  return x === y || x.endsWith(`/${y}`) || y.endsWith(`/${x}`);
 }
 
 /** Did the sandbox reach this finding? Same file, then either the same place or
@@ -510,7 +520,7 @@ export function matchFinding(
   let best: SandboxFinding | undefined;
   let bestScore = 0;
   for (const s of sandbox) {
-    if (baseName(s.path) !== baseName(human.path)) continue;
+    if (!sameFile(s.path, human.path)) continue;
     const near = typeof s.line === "number" && Math.abs(s.line - human.line) <= lineWindow;
     const score = Math.max(overlap(theme, findingTheme(s.text)), near ? threshold : 0);
     if (score > bestScore) {

@@ -66,7 +66,13 @@ interface FakeIo extends ReplayIo {
  * replay writes lands in `files`, and the session "answers" by having its
  * findings file pre-seeded (or not). */
 function fakeIo(
-  opts: { answer?: unknown; missingHead?: boolean; hasClone?: boolean } = {},
+  opts: {
+    answer?: unknown;
+    missingHead?: boolean;
+    hasClone?: boolean;
+    mergeBase?: string;
+    diff?: string;
+  } = {},
 ): FakeIo {
   const files = new Map<string, string>();
   const calls: string[] = [];
@@ -83,8 +89,10 @@ function fakeIo(
     async exec(bin, args): Promise<ExecOut> {
       calls.push([bin, ...args].join(" "));
       if (args[0] === "cat-file") return { code: opts.missingHead ? 1 : 0, stdout: "", stderr: "" };
-      if (args[0] === "merge-base") return { code: 0, stdout: "basesha\n", stderr: "" };
-      if (args[0] === "diff") return { code: 0, stdout: "3\t1\tapp/handler.py\n", stderr: "" };
+      if (args[0] === "merge-base")
+        return { code: 0, stdout: `${opts.mergeBase ?? "basesha"}\n`, stderr: "" };
+      if (args[0] === "diff")
+        return { code: 0, stdout: opts.diff ?? "3\t1\tapp/handler.py\n", stderr: "" };
       return { code: 0, stdout: "", stderr: "" };
     },
     async spawnSession(name) {
@@ -281,6 +289,17 @@ describe("one case, end to end", () => {
     expect(
       io.calls.some((k) => k === `git worktree add --detach ${r.treePath(c().pr)} ${c().headSha}`),
     ).toBe(true);
+  });
+
+  // A merge-committed PR's head is an ancestor of today's base branch, so the
+  // merge-base IS the head and the diff is empty. That is not "this PR changed
+  // nothing" — the session must be told the base could not be resolved.
+  it("marks the diff degraded when the recorded head is already merged into today's base", async () => {
+    const io = fakeIo({ answer: { findings: [] }, mergeBase: c().headSha, diff: "" });
+    await replayer(io, { baseClone: REPO }).replay(c());
+    const order = io.files.get(join(SCRATCH, `pr-${c().pr}`, "order.md"))!;
+    expect(order).toContain("could not be resolved");
+    expect(order).not.toContain("0 file(s)");
   });
 
   it("gives the session the pass agents and the exec guard, and no scripts/", async () => {
