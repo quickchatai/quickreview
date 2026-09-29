@@ -699,6 +699,13 @@ describe("manifest edits in the diff", () => {
     // A Poetry line that only moved is still not an edit.
     const moved = ["@@ -7,3 +7,3 @@", '-requests = "^2.32"', '+requests = "^2.32"'].join("\n");
     expect(pythonManifestEdits("pyproject.toml", moved, headText)).toEqual([]);
+    // Nor is a Poetry line whose trailing comment alone changed.
+    const recommented = [
+      "@@ -7,3 +7,3 @@",
+      '-requests = "^2.32"  # http',
+      '+requests = "^2.32"  # http client',
+    ].join("\n");
+    expect(pythonManifestEdits("pyproject.toml", recommented, headText)).toEqual([]);
   });
 });
 

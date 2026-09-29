@@ -1076,7 +1076,9 @@ export function pythonManifestEdits(
       found.push({
         name: normPy(kv[1]),
         range: "*",
-        spec: (kv[2] ?? "").trim(),
+        // A trailing `# comment` is not part of the spec: editing only the
+        // comment is not a bump (a `#` inside a quoted value is kept).
+        spec: (kv[2] ?? "").replace(/\s#[^"']*$/, "").trim(),
       });
     return found;
   };
