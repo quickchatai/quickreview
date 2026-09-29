@@ -241,7 +241,11 @@ export function saveFacts(fs: StateFs, facts: PortraitFacts, now: Date): Assembl
   const unchanged = before !== null && before.current.key === current.key;
   const previous = before === null ? null : unchanged ? before.previous : before.current;
   const file: PortraitFactsFile = { version: PORTRAIT_FACTS_VERSION, current, previous };
-  fs.write(PORTRAIT_FACTS_FILE, `${JSON.stringify(file, null, 2)}\n`);
+  try {
+    fs.write(PORTRAIT_FACTS_FILE, `${JSON.stringify(file, null, 2)}\n`);
+  } catch (err) {
+    return { ok: false, errors: [`${PORTRAIT_FACTS_FILE} in ${fs.location} cannot be written: ${String(err)}`] };
+  }
   return { ok: true, current, previous, unchanged, diff: previous ? factsDiff(previous.facts, facts) : [] };
 }
 
@@ -383,16 +387,28 @@ export function storeNarrative(deps: NarrativeDeps, raw: { facts_key?: unknown; 
   const text = renderNarrative(body, key, facts.file.current.facts.head, writtenAt);
   let replaced = false;
   let diff: string[] = [];
-  if (prior.state === "ok") {
-    // Only a DIFFERENT reading displaces the kept one: re-storing the same
-    // prose against moved facts must not overwrite the version a diff needs.
-    if (prior.doc.body !== body) {
-      deps.config.write(NARRATIVE_PREVIOUS_FILE, deps.config.read(NARRATIVE_FILE) ?? "");
-      replaced = true;
-      diff = lineDiff(prior.doc.body, body);
+  try {
+    if (prior.state === "ok") {
+      // Only a DIFFERENT reading displaces the kept one: re-storing the same
+      // prose against moved facts must not overwrite the version a diff needs.
+      if (prior.doc.body !== body) {
+        deps.config.write(NARRATIVE_PREVIOUS_FILE, deps.config.read(NARRATIVE_FILE) ?? "");
+        replaced = true;
+        diff = lineDiff(prior.doc.body, body);
+      }
     }
+    deps.config.write(NARRATIVE_FILE, text);
+  } catch (err) {
+    // The config home is only partly mounted in the companion: a missing or
+    // read-only `portrait/` is a refusal naming the cause, never a throw.
+    return {
+      ok: false,
+      errors: [
+        `${replaced ? NARRATIVE_FILE : `${NARRATIVE_PREVIOUS_FILE} or ${NARRATIVE_FILE}`} in ${deps.config.location} cannot be written: ${String(err)}` +
+          (replaced ? ` — the narrative it would replace is already kept as ${NARRATIVE_PREVIOUS_FILE}` : ""),
+      ],
+    };
   }
-  deps.config.write(NARRATIVE_FILE, text);
   return { ok: true, facts_key: key, written_at: writtenAt, replaced, unchanged: false, diff };
 }
 
@@ -405,6 +421,9 @@ export interface PortraitView {
    * (null when there is no narrative, or its freshness is unknown). */
   stale: boolean | null;
   has_previous_narrative: boolean;
+  /** The kept previous narrative exists but cannot be read — UNKNOWN, never
+   * "none kept". */
+  previous_narrative_error: string | null;
   /** Only when asked for. */
   facts_diff: SectionDiff[] | null;
   narrative_diff: string[] | null;
@@ -430,6 +449,7 @@ export function readPortrait(deps: NarrativeDeps, opts: { diff?: boolean } = {})
     narrative,
     stale,
     has_previous_narrative: previous.state === "ok",
+    previous_narrative_error: previous.state === "unreadable" ? previous.error : null,
     facts_diff: factsDiffOut,
     narrative_diff: narrativeDiff,
   };

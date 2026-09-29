@@ -25,6 +25,8 @@ import {
   type PortraitFactsFile,
 } from "../src/setup/portrait.js";
 import { PORTRAIT_DIR } from "../src/install.js";
+import { renderPortrait } from "../extensions/setup.js";
+import type { StateFs } from "../src/setup/engine.js";
 
 let dir: string;
 let now: Date;
@@ -335,6 +337,75 @@ describe("the narrative: stored in the config home against the facts' key", () =
     const r = e.storePortraitNarrative({ facts_key: key, narrative: "The companion's reading." });
     expect(r).toMatchObject({ ok: true, replaced: true });
     expect(readFileSync(join(configDir(), NARRATIVE_PREVIOUS_FILE), "utf8")).toBe("My own notes.\n");
+  });
+});
+
+describe("the honest unknowns and the refusals at the disk (review fixes)", () => {
+  it("facts that cannot be read make the narrative's freshness UNKNOWN — never blamed on an edited header", () => {
+    const { e } = engine();
+    const key = assembled(e).current.key;
+    expect(e.storePortraitNarrative({ facts_key: key, narrative: "Prose." })).toMatchObject({ ok: true });
+    stateHomeFs(stateDir()).write(PORTRAIT_FACTS_FILE, "{ nope");
+    const v = e.portrait();
+    expect(v.stale).toBeNull();
+    const text = renderPortrait(v);
+    expect(text).toContain(`written from facts ${key}; whether it is current is UNKNOWN`);
+    expect(text).not.toMatch(/header was edited/);
+  });
+
+  it("a kept previous narrative that cannot be read is UNKNOWN, not 'no earlier version'", () => {
+    const { e } = engine();
+    const key = assembled(e).current.key;
+    expect(e.storePortraitNarrative({ facts_key: key, narrative: "Prose." })).toMatchObject({ ok: true });
+    // A directory where the file should be: reading it throws EISDIR.
+    mkdirSync(join(configDir(), NARRATIVE_PREVIOUS_FILE), { recursive: true });
+    const v = e.portrait({ diff: true });
+    expect(v.has_previous_narrative).toBe(false);
+    expect(v.previous_narrative_error).toMatch(/narrative\.previous\.md .*cannot be read/);
+    const text = renderPortrait(v);
+    expect(text).toMatch(/The kept previous narrative: UNKNOWN/);
+    expect(text).not.toMatch(/Narrative: no earlier version kept yet/);
+  });
+
+  it("a config home that cannot be written (portrait/ unmounted or read-only) is a refusal, never a throw", () => {
+    const real = configHomeFs(configDir());
+    const readOnly: StateFs = {
+      location: real.location,
+      read: (rel) => real.read(rel),
+      write: () => {
+        throw new Error("EROFS: read-only file system");
+      },
+    };
+    const e = new SetupEngine({
+      repo: fakeRepo({ ...REPO }),
+      state: stateHomeFs(stateDir()),
+      config: readOnly,
+      clock: () => now,
+      memory: null,
+      cases: { run: async () => ({ ok: false, reason: "no cases in these tests" }) },
+      tracker: notYetTrackerSink(""),
+      github: { get: async () => ({ ok: false, reason: "no network in tests" }) },
+    });
+    const key = assembled(e).current.key;
+    expect(e.storePortraitNarrative({ facts_key: key, narrative: "Prose." })).toEqual({
+      ok: false,
+      errors: [expect.stringMatching(/cannot be written: Error: EROFS/)],
+    });
+  });
+
+  it("a state home that cannot be written refuses the assemble rather than throwing", () => {
+    const real = stateHomeFs(stateDir());
+    const e = new SetupEngine({
+      repo: fakeRepo({ ...REPO }),
+      state: { location: real.location, read: (rel) => real.read(rel), write: () => { throw new Error("EACCES"); } },
+      config: configHomeFs(configDir()),
+      clock: () => now,
+      memory: null,
+      cases: { run: async () => ({ ok: false, reason: "no cases in these tests" }) },
+      tracker: notYetTrackerSink(""),
+      github: { get: async () => ({ ok: false, reason: "no network in tests" }) },
+    });
+    expect(e.portraitAssemble()).toEqual({ ok: false, errors: [expect.stringMatching(/portrait-facts\.json .*cannot be written: Error: EACCES/)] });
   });
 });
 

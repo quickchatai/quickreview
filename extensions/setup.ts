@@ -322,18 +322,21 @@ export function renderPortrait(v: PortraitView): string {
   else {
     const fresh =
       v.stale === null
-        ? "which facts it was written from is unknown (its header was edited) — check it against the facts yourself"
+        ? n.doc.facts_key === null
+          ? "which facts it was written from is unknown (its header was edited) — check it against the facts yourself"
+          : `written from facts ${n.doc.facts_key}; whether it is current is UNKNOWN — the facts cannot be read`
         : v.stale
           ? `STALE — written from facts ${n.doc.facts_key}, and the facts have moved since; re-read them and rewrite it`
           : "current with these facts";
     out.push(`Narrative (${n.doc.written_at ?? "time unknown"}; ${fresh}):\n\n${n.doc.body}`);
   }
   if (v.has_previous_narrative) out.push(`The narrative it replaced is kept (${NARRATIVE_PREVIOUS_FILE}).`);
+  if (v.previous_narrative_error !== null) out.push(`✗ ${v.previous_narrative_error}\nThe kept previous narrative: UNKNOWN.`);
   if (v.facts_diff !== null && v.facts.state === "ok") {
     const prev = v.facts.file.previous;
     out.push(prev ? renderFactsDiff(v.facts_diff, `${prev.key} (${prev.assembled_at})`) : "Facts: no earlier version kept yet.");
   }
-  if (v.narrative_diff !== null) {
+  if (v.narrative_diff !== null && v.previous_narrative_error === null) {
     out.push(
       !v.has_previous_narrative
         ? "Narrative: no earlier version kept yet."
@@ -619,7 +622,9 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
         out.push(
           v.stale === false
             ? "Your stored narrative is current with these facts."
-            : "Your stored narrative was not written from these facts — read it (setup_portrait) and rewrite it from them.",
+            : v.stale === true
+              ? "Your stored narrative was not written from these facts — read it (setup_portrait) and rewrite it from them."
+              : "Which facts your stored narrative was written from is unknown (its header was edited) — read it (setup_portrait) and check it against these facts.",
         );
       } else if (v.narrative.state === "absent") {
         out.push(`No narrative stored yet: write the operator a reading of these facts and store it with setup_portrait_narrative, facts_key ${r.current.key}.`);
