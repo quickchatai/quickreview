@@ -42,6 +42,9 @@ import type { StoredStage2Proposal } from "../src/setup/stage2request.js";
 import { buildScanAgents, loadScanConfig, scanSettings, SCAN_AGENTS_DIR } from "../src/setup/scanbuild.js";
 import { ScanRunner, type ScanPreview, type ScanSettings, type ScanStatus, type StoredSuggestion } from "../src/setup/scanrun.js";
 import { gitScanSource } from "../src/setup/scantree.js";
+import { ScanTriage, type CloseFixedResult } from "../src/setup/triage.js";
+import type { MemoryStore } from "../src/memory/store.js";
+import type { TrackerSink } from "../src/setup/engine.js";
 
 const NO_PARAMS = { type: "object", properties: {} } as const;
 
@@ -133,6 +136,7 @@ export function renderStatus(s: ScanStatus): string {
     const failed = r.cases.filter((c) => c.status === "failed");
     for (const c of failed.slice(0, 10)) out.push(`  ✗ ${c.id}: ${c.error}`);
     for (const p of r.problems.slice(-5)) out.push(`  ! ${p}`);
+    if (r.tickets_closed) out.push(`Tickets closed as fixed at ${r.sha.slice(0, 12)}: ${r.tickets_closed}.`);
     if (r.matching && (r.matching.fixed > 0 || r.matching.pending > 0)) {
       out.push(
         `Findings no longer reported: ${r.matching.fixed} fixed` +
@@ -247,6 +251,9 @@ export function scanToolDefinitions(
   scan: ScanRunner,
   findings: FindingsStore,
   settingsOf: () => ScanSettings | null = () => null,
+  /** After a match answer: close the tickets of the promoted findings it
+   * fixed (`ScanTriage.closeFixed`). */
+  afterMatch: (() => Promise<CloseFixedResult>) | null = null,
 ): PiToolDefinition[] {
   const preview: PiToolDefinition = {
     name: "scan_preview",
@@ -381,7 +388,14 @@ export function scanToolDefinitions(
     execute: async (_id, params) => {
       const r = findings.match({ key: params?.key, pairs: params?.pairs ?? [] });
       if (!r.ok) return refused("Match", r);
-      return text(`Settled: ${r.matched} matched (state kept), ${r.fixed} fixed, ${r.new} new.`, { ...r });
+      const out = [`Settled: ${r.matched} matched (state kept), ${r.fixed} fixed, ${r.new} new.`];
+      let tickets: CloseFixedResult | null = null;
+      if (afterMatch && r.fixed > 0) {
+        tickets = await afterMatch();
+        if (tickets.closed.length > 0) out.push(`Closed as fixed: ${tickets.closed.map((c) => c.ref).join(", ")}.`);
+        for (const p of tickets.problems) out.push(`! ticket not closed: ${p}`);
+      }
+      return text(out.join("\n"), { ...r, tickets_closed: tickets?.closed.length ?? 0 });
     },
   };
   const suggestions: PiToolDefinition = {
@@ -481,12 +495,14 @@ export function watchStage2Requests(scan: ScanRunner, everyMs = STAGE2_POLL_MS):
 /** The scan runner the companion's belt drives: the reviewed checkout as a
  * source of trees, the state home for every record, the saved unit cut from
  * the setup engine, the live config under the profile, and a case runner
- * over the scan agent build. */
+ * over the scan agent build — and the TRIAGE over its findings:
+ * reviewer memory and the tracker sink are the engine's own, handed in. */
 export function buildScan(
   engine: SetupEngine,
   reviewedRepo: string,
   env: NodeJS.ProcessEnv = process.env,
-): { scan: ScanRunner; findings: FindingsStore; settingsOf: () => ScanSettings | null } {
+  shared: { memory: MemoryStore | null; tracker: TrackerSink } | null = null,
+): { scan: ScanRunner; findings: FindingsStore; settingsOf: () => ScanSettings | null; triage: ScanTriage | null } {
   const root = env.QCR_ROOT?.trim() || sandboxRoot();
   const home = stateHome(env);
   const state = stateHomeFs(home);
@@ -495,6 +511,10 @@ export function buildScan(
     const loaded = loadScanConfig(root, env);
     return loaded.ok ? scanSettings(loaded.cfg) : null;
   };
+  const findings = new FindingsStore(state);
+  // Assigned below: the triage reads the runner's runs, the runner closes
+  // the triage's tickets at every run's end.
+  let triage: ScanTriage | null = null;
   const scan = new ScanRunner({
     state,
     clock: () => new Date(),
@@ -523,7 +543,29 @@ export function buildScan(
         return { ok: false, errors: [err instanceof Error ? err.message : String(err)] };
       }
     },
+    closeFixedTickets: async () => (triage ? triage.closeFixed() : { closed: [], problems: [] }),
     log: (line) => console.error(line),
   });
-  return { scan, findings: new FindingsStore(state), settingsOf };
+  if (shared) {
+    triage = new ScanTriage({
+      findings,
+      state,
+      memory: shared.memory,
+      tracker: shared.tracker,
+      clock: () => new Date(),
+      units: () => engine.savedCut()?.units.map((u) => u.name) ?? null,
+      runs: () => scanRuns(scan),
+    });
+  }
+  return { scan, findings, settingsOf, triage };
+}
+
+/** The runner's runs, newest first, as the triage sees them: a run left
+ * `running` by a companion that is gone reads as interrupted. */
+export function scanRuns(scan: ScanRunner): Array<{ id: string; sha: string; state: string }> {
+  const s = scan.status();
+  const out: Array<{ id: string; sha: string; state: string }> = [];
+  if (s.run) out.push({ id: s.run.id, sha: s.run.sha, state: s.run.display });
+  for (const h of s.history) if (!out.some((r) => r.id === h.id)) out.push({ id: h.id, sha: h.sha, state: h.state });
+  return out;
 }

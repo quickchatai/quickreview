@@ -126,3 +126,14 @@ Stage 1's pointer for stage 2: a lens, the files it should read, and one line on
 **Scan finding**:
 A candidate defect from a scan, new, promoted, dismissed or fixed, and possibly marked "may not be valid".
 _Avoid_: issue, ticket (a promoted finding becomes one)
+
+**Dismissal**:
+The operator's word that a scan finding is not a problem, with a reason; it holds across re-scans and leaves an unpinned memory note so PR rounds stop raising it.
+
+**Promotion**:
+Filing one ticket for a scan finding — in the issue tracker effort its work belongs in, or as a markdown file without a tracker — stamped with the fingerprint so it is never filed twice, and closed with the scan's sha when a re-scan finds it fixed.
+_Avoid_: export, escalation
+
+**Scan memory**:
+What a scan teaches about the repo — recurring patterns and one hotspot per unit — written to reviewer memory as unpinned `#scan` entries, capped per scan; never an individual finding.
+_Avoid_: findings memory

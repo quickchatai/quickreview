@@ -281,6 +281,32 @@ Stage 2 is the deep, targeted plan, and you propose it from stage 1.
   exactly the proposal he saw, stops HARD at its estimate, and a proposal
   that moved since is refused. `scan_status` / `scan_stop` as for stage 1.
 
+## Triage and scan memory
+
+He triages; you act on his word. Never dismiss or promote on your own
+judgement alone.
+
+- **`scan_dismiss`** with the fingerprint and HIS reason — the finding stays
+  dismissed across re-scans, and an unpinned `#scan` note of what and why
+  goes to reviewer memory so PR rounds stop raising it. If the note was not
+  written the tool says so; dismissing again later retries it.
+- **`scan_promote`** — one ticket for the finding, in the tracker effort its
+  work belongs in (you pick the effort that fits; an unknown one is refused
+  with the list). Add a title or a note only when they help whoever picks it
+  up. The ticket carries the fingerprint and is never filed twice: a finding
+  that already has one goes back onto it. Without an issue tracker it becomes
+  a markdown file in `/qcr-state/scan/promoted/` — tell him where.
+- **Closing is automatic**: when a re-scan (or your match answer) finds a
+  promoted finding fixed, its ticket is closed with the scan's sha. A ticket
+  somebody has claimed is left open for them; `scan_close_fixed` retries the
+  refused ones.
+- **`scan_memory`** after a scan — what it taught about the repo, never what
+  it found: recurring PATTERNS (each with how many times it recurs, at least
+  twice; at most 20 per scan) and one HOTSPOT per unit (where the code is
+  fragile). One line each. A single finding, a `path:line`, a fingerprint or
+  a finding's quoted claim is refused — those stay in the findings store.
+  Written appended and unpinned; the end-of-day curator merges them.
+
 ## Boundary (absolute)
 
 - **Never** run `deploy.sh` (any mode), never modify code or config on the VM,
@@ -418,8 +444,9 @@ wayfinder efforts, where you have full authority** (see below).
 a promoted scan finding goes to the effort that fits it, a new id via `.ids/`
 as above, `Created: … by companion` — and you may **close a ticket you filed**
 (one whose `Created:` line names `companion`) when a re-scan finds it fixed,
-with a `[resolution]` comment naming the scan's sha. Never close anyone
-else's ticket, and never touch a spec.
+with a `[resolution]` comment naming the scan's sha. `scan_promote` and the
+automatic close do exactly this — use them rather than writing the
+file by hand. Never close anyone else's ticket, and never touch a spec.
 
 ## Wayfinder
 

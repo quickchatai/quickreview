@@ -37,7 +37,8 @@
 // and the scan's (extensions/setup-scan.ts): scan_preview / _start /
 // _status / _stop and scan_findings; stage 2's scan_suggestions /
 // scan_stage2_propose / scan_stage2_start, and the watcher that answers the
-// TUI's stage-2 start click.
+// TUI's stage-2 start click; triage's (extensions/setup-triage.ts):
+// scan_dismiss / scan_promote / scan_close_fixed / scan_memory.
 //
 // Convention (onboarding.ts, tui-view.ts): degrade, never wedge — a pi
 // without registerTool registers nothing and says so, and every tool answers
@@ -56,7 +57,6 @@ import { MAX_THEMES, THEME_SOURCES, THEME_SUMMARY_MAX, THEME_TITLE_MAX } from ".
 import {
   checkoutReader,
   configHomeFs,
-  notYetTrackerSink,
   reviewerMemoryFromEnv,
   stateHomeFs,
   tokenFileGitHubReader,
@@ -94,6 +94,10 @@ import {
   type ProfileStatus,
 } from "../src/setup/tuning.js";
 import { buildScan, scanToolDefinitions, watchStage2Requests } from "./setup-scan.js";
+import { triageToolDefinitions } from "./setup-triage.js";
+import type { MemoryStore } from "../src/memory/store.js";
+import type { TrackerSink } from "../src/setup/engine.js";
+import { scanTrackerSink } from "../src/setup/trackersink.js";
 
 const NO_PARAMS = { type: "object", properties: {} } as const;
 
@@ -965,7 +969,21 @@ export const COMPANION_AGENTS_DIR = fileURLToPath(new URL("../docker/companion/a
  * companion) — where the generic profiles a repo profile extends live. */
 export const APP_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
-export function buildEngine(env: NodeJS.ProcessEnv = process.env): SetupEngine {
+/** The ports the engine and the scan triage share: the REVIEWER's memory
+ * and the tracker sink — the issue tracker mounted at QCR_TRACKER_DIR
+ * (`/tracker`), or one markdown file per promoted finding in the state home
+ * when there is none. */
+export function sharedPorts(env: NodeJS.ProcessEnv = process.env): { memory: MemoryStore | null; tracker: TrackerSink } {
+  return {
+    memory: reviewerMemoryFromEnv(env),
+    tracker: scanTrackerSink({ trackerDir: env.QCR_TRACKER_DIR?.trim(), state: stateHomeFs(stateHome(env)), clock: () => new Date() }),
+  };
+}
+
+export function buildEngine(
+  env: NodeJS.ProcessEnv = process.env,
+  shared: { memory: MemoryStore | null; tracker: TrackerSink } = sharedPorts(env),
+): SetupEngine {
   return new SetupEngine(
     {
       repo: checkoutReader(env.QCR_REVIEWED_REPO?.trim() || DEFAULT_REVIEWED_REPO),
@@ -982,11 +1000,11 @@ export function buildEngine(env: NodeJS.ProcessEnv = process.env): SetupEngine {
       // The REVIEWER's memory (survey notes and's review history
       // themes are for PR rounds), or null — the survey then refuses to start
       // and a themes save says memory was not written.
-      memory: reviewerMemoryFromEnv(env),
+      memory: shared.memory,
       // Background pi subagents, run from the companion's own cwd (first-party
       // ground), never from the reviewed checkout.
       cases: piCaseRunner({ agentsDir: COMPANION_AGENTS_DIR, cwd: env.QCR_ROOT?.trim() || process.cwd() }),
-      tracker: notYetTrackerSink(""),
+      tracker: shared.tracker,
       github: tokenFileGitHubReader({
         envFile: env.QCR_GITHUB_READ_ENV,
         fetch: (input, init) => fetch(input, init),
@@ -1005,8 +1023,10 @@ const activate = (pi: Pi): void => {
     return;
   }
   let engine: SetupEngine;
+  let shared: ReturnType<typeof sharedPorts>;
   try {
-    engine = buildEngine();
+    shared = sharedPorts();
+    engine = buildEngine(process.env, shared);
   } catch (err) {
     // A bad QCR_INSTALL is the only throw on this path: say so, start without
     // the belt rather than failing the companion's start.
@@ -1015,8 +1035,15 @@ const activate = (pi: Pi): void => {
   }
   for (const def of toolDefinitions(engine)) pi.registerTool(def);
   // the scan tools, over the same engine's saved unit cut.
-  const { scan, findings, settingsOf } = buildScan(engine, process.env.QCR_REVIEWED_REPO?.trim() || DEFAULT_REVIEWED_REPO);
-  for (const def of scanToolDefinitions(scan, findings, settingsOf)) pi.registerTool(def);
+  const { scan, findings, settingsOf, triage } = buildScan(
+    engine,
+    process.env.QCR_REVIEWED_REPO?.trim() || DEFAULT_REVIEWED_REPO,
+    process.env,
+    shared,
+  );
+  for (const def of scanToolDefinitions(scan, findings, settingsOf, triage ? () => triage.closeFixed() : null)) pi.registerTool(def);
+  // triage — dismiss, promote, close fixed, scan memory.
+  if (triage) for (const def of triageToolDefinitions(triage)) pi.registerTool(def);
   // the TUI's stage-2 start click, answered while the companion's
   // session runs (the inject-bridge's lifecycle: start on session_start, stop
   // on session_shutdown).

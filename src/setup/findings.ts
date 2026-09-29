@@ -32,6 +32,12 @@
 //     dropped.
 //   * Individual findings never become memory (spec "Scan memory") — this
 //     store is the PC-side record, in the state home, never shipped.
+//   * TRIAGE (triage.ts drives it): a DISMISSED finding carries its
+//     reason and whether its memory note was written; a PROMOTED one carries
+//     its TICKET — where it was filed (the issue tracker or a markdown file)
+//     and, once a re-scan found it fixed, when that ticket was closed. The
+//     ticket record is what makes a finding never filed twice: it survives a
+//     match (the new fingerprint inherits it), a fix and a return.
 //
 // Persistence: `<state home>/scan/findings.json`. An unreadable store is
 // reported and refuses writes, like the ledger and the unit cut.
@@ -89,10 +95,35 @@ export interface ScanFinding {
   /** Fingerprints this finding carried before the companion matched it to
    * a moved or reworded sighting — a ticket stamped with one still finds it. */
   aliases?: string[];
+  /** Why the operator dismissed it; kept after a later promote. */
+  dismissal?: Dismissal | null;
+  /** Where it was filed when promoted. */
+  ticket?: FindingTicket | null;
+}
+
+export interface Dismissal {
+  reason: string;
+  at: string;
+  /** The unpinned memory note: written, or why not (a later dismiss retries). */
+  memory: "written" | { problem: string };
+}
+
+export interface FindingTicket {
+  /** Which sink filed it — a close goes back through the same kind. */
+  sink: string;
+  /** The sink's reference: `FT-NNNN`, or the markdown file's path. */
+  ref: string;
+  effort: string;
+  filed_at: string;
+  /** Set once the ticket was closed because a re-scan found it fixed. */
+  closed?: { at: string; sha: string; run: string } | null;
 }
 
 /** What a scan reports — a finding before the store gives it a history. */
-export type ReportedFinding = Omit<ScanFinding, "state" | "first_seen" | "last_seen" | "seen" | "fixed" | "aliases">;
+export type ReportedFinding = Omit<
+  ScanFinding,
+  "state" | "first_seen" | "last_seen" | "seen" | "fixed" | "aliases" | "dismissal" | "ticket"
+>;
 
 /** The companion's pending sameness call: stored findings a re-scan no
  * longer reports exactly, and the fresh findings any of them might be. */
@@ -155,6 +186,17 @@ export interface MatchQuestionView {
  * and the same unit or the same kind. */
 function mightBe(o: ScanFinding, n: ScanFinding): boolean {
   return o.lens === n.lens && (o.unit === n.unit || o.kind === n.kind);
+}
+
+/** The state a `fixed` finding takes when a scan reports it again: dismissed
+ * stays dismissed (the operator already said it is not a problem); promoted
+ * stays promoted while its ticket is still open (nothing closed it
+ * yet); anything else, including a promoted one whose ticket was closed, is
+ * `new` again — the ticket record stays, so a re-promote never files twice. */
+function returnedState(f: ScanFinding): FindingState {
+  if (f.fixed?.from === "dismissed") return "dismissed";
+  if (f.fixed?.from === "promoted" && f.ticket && !f.ticket.closed) return "promoted";
+  return "new";
 }
 
 function fixIt(f: ScanFinding, at: Sighting): ScanFinding {
@@ -273,7 +315,7 @@ export class FindingsStore {
       if (known) {
         // The same sighting twice (one case reporting a duplicate) counts once.
         const again = known.last_seen.run === seen.run && known.last_seen.sha === seen.sha;
-        const state: FindingState = known.state === "fixed" ? (known.fixed?.from === "dismissed" ? "dismissed" : "new") : known.state;
+        const state: FindingState = known.state === "fixed" ? returnedState(known) : known.state;
         byFp.set(r.fingerprint, {
           ...known,
           ...r,
@@ -418,6 +460,10 @@ export class FindingsStore {
         first_seen: o.first_seen,
         seen: o.seen + n.seen,
         aliases: [...new Set([...(o.aliases ?? []), old, ...(n.aliases ?? [])])],
+        // The triage travels with the finding: a matched promoted finding
+        // keeps its ticket (never filed twice), a dismissed one its reason.
+        dismissal: o.dismissal ?? null,
+        ticket: o.ticket ?? null,
       });
       matched++;
     }
@@ -449,5 +495,48 @@ export class FindingsStore {
       )
       .sort((a, b) => rank(a.severity) - rank(b.severity) || (a.path < b.path ? -1 : a.path > b.path ? 1 : a.start - b.start));
     return { findings: kept, error };
+  }
+
+  // -- triage (the rules are triage.ts's, the record is here) --
+
+  /**
+   * The one stored finding `ref` names: a full fingerprint, an alias (a
+   * fingerprint it carried before a match), or an unambiguous prefix of at
+   * least 12 hex characters — what `scan_findings` shows.
+   */
+  find(ref: string): { ok: true; finding: ScanFinding } | { ok: false; errors: string[] } {
+    const { findings, error } = this.load();
+    if (error !== null) return { ok: false, errors: [error] };
+    const want = ref.trim().toLowerCase();
+    if (!/^[0-9a-f]{12,64}$/.test(want)) return { ok: false, errors: [`${JSON.stringify(ref)} is not a fingerprint (12+ hex characters)`] };
+    const exact = findings.find((f) => f.fingerprint === want || (f.aliases ?? []).includes(want));
+    if (exact) return { ok: true, finding: exact };
+    const hits = findings.filter((f) => f.fingerprint.startsWith(want) || (f.aliases ?? []).some((a) => a.startsWith(want)));
+    if (hits.length === 1) return { ok: true, finding: hits[0]! };
+    return {
+      ok: false,
+      errors: [hits.length === 0 ? `no stored finding has fingerprint ${want}` : `${want} matches ${hits.length} findings — give more of the fingerprint`],
+    };
+  }
+
+  /**
+   * Rewrite ONE finding, by its current fingerprint, under a fresh load —
+   * refused (nothing written) when the store cannot be read or the finding
+   * is gone (a match renamed it since the caller looked). `change` returns
+   * the new record, or an error string to refuse.
+   */
+  update(
+    fingerprint: string,
+    change: (f: ScanFinding) => ScanFinding | string,
+  ): { ok: true; finding: ScanFinding } | { ok: false; errors: string[] } {
+    const { file, error } = this.loadFile();
+    if (error !== null) return { ok: false, errors: [error] };
+    const i = file.findings.findIndex((f) => f.fingerprint === fingerprint);
+    if (i < 0) return { ok: false, errors: [`finding ${fingerprint.slice(0, 12)} is no longer stored under that fingerprint — list the findings again`] };
+    const next = change(file.findings[i]!);
+    if (typeof next === "string") return { ok: false, errors: [next] };
+    file.findings[i] = next;
+    this.write(file.findings, file.question ?? null);
+    return { ok: true, finding: next };
   }
 }

@@ -228,6 +228,11 @@ describe("the tool belt", () => {
         "scan_suggestions",
         "scan_stage2_propose",
         "scan_stage2_start",
+        // triage and scan memory.
+        "scan_dismiss",
+        "scan_promote",
+        "scan_close_fixed",
+        "scan_memory",
       ]);
     } finally {
       err.mockRestore();

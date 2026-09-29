@@ -144,6 +144,9 @@ export interface ScanPorts {
   settings: () => { ok: true; settings: ScanSettings } | Refusal;
   /** (Re)build the scan agents where `cases` reads them. */
   buildAgents: (settings: ScanSettings) => { ok: true } | Refusal;
+  /** After the run's reconcile: close the tickets of promoted findings it
+   * found fixed (triage.ts `closeFixed`). Absent: nothing closes. */
+  closeFixedTickets?: () => Promise<{ closed: readonly unknown[]; problems: readonly string[] }>;
   log?: (line: string) => void;
 }
 
@@ -206,6 +209,8 @@ export interface ScanRun {
   /** What the run's end did to the stored findings; null until it
    * ran, or when it could not. */
   matching?: ReconcileResult | null;
+  /** Tickets of promoted findings this run's end closed as fixed. */
+  tickets_closed?: number;
 }
 
 export interface ScanRunSummary {
@@ -998,6 +1003,7 @@ export class ScanRunner {
     // Never started: `skipped` when the cap kept it out, `stopped` when a stop did.
     for (const c of run.cases) if (c.status === "pending") c.status = capHit ? "skipped" : "stopped";
     this.reconcile(run, tree);
+    await this.closeFixedTickets(run);
     const allDone = run.cases.every((c) => c.status === "done");
     this.settle(file, run, allDone ? "complete" : capHit ? "capped" : signal.aborted ? "stopped" : "partial");
   }
@@ -1232,6 +1238,19 @@ export class ScanRunner {
       });
     } catch (err) {
       run.problems.push(`the findings were not reconciled (${clean(err)}) — the next run's end does it`);
+    }
+  }
+
+  /** A promoted finding the reconcile fixed has its ticket closed with the
+   * run's sha; a refused close is a problem on the run, retried next time. */
+  private async closeFixedTickets(run: ScanRun): Promise<void> {
+    if (!this.ports.closeFixedTickets) return;
+    try {
+      const r = await this.ports.closeFixedTickets();
+      run.tickets_closed = r.closed.length;
+      for (const p of r.problems) run.problems.push(`ticket not closed: ${p}`);
+    } catch (err) {
+      run.problems.push(`the fixed findings' tickets were not closed (${clean(err)}) — the next run's end retries`);
     }
   }
 

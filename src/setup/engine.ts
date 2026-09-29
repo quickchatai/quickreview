@@ -13,10 +13,10 @@
 // assembled here, the companion's narrative stored in the config home) and
 // the interview's tuning (tuning.ts — the priority table applied to
 // the repo profile, validated with the daemon's own loaders; pin proposals
-// handed to the operator). The ports for the later
-// slices (tracker sink, GitHub reader) are declared and injected now so every
-// later tool lands on the same engine; their real implementations arrive with
-// the slice that first calls them.
+// handed to the operator). The scan's own records and triage live beside it
+// (scanrun.ts, findings.ts, triage.ts) over the same ports:
+// the tracker sink is trackersink.ts's; the GitHub reader is
+// declared and injected for the slice that first calls it.
 //
 // Persistence: `<state home>/setup/unit-cut.json`, tmp+rename atomic through
 // the state port. It holds the SAVED cut (the one survey and scan reuse), the
@@ -144,13 +144,24 @@ export interface TrackerTicket {
   effort: string;
   /** Stamped on the ticket, so a finding is never filed twice. */
   fingerprint: string;
+  /** Fingerprints the finding carried before a match — a ticket stamped with
+   * one of them is the same finding's. */
+  aliases?: string[];
+  /** The tracker's `Category:` — `bug` when absent. */
+  category?: "bug" | "enhancement";
 }
 
-export type SinkResult = { ok: true; ref: string } | { ok: false; reason: string };
+/** Filed or closed: the sink's reference, and `existing` when nothing new was
+ * written — a ticket already stamped with the fingerprint, or one already
+ * closed. */
+export type SinkResult = { ok: true; ref: string; existing?: boolean } | { ok: false; reason: string };
 
-/** Where a promoted finding goes: the issue tracker, or one markdown
- * file per finding when the install has none. */
+/** Where a promoted finding goes (trackersink.ts): the issue
+ * tracker, or one markdown file per finding in the state home when the
+ * install has none. `kind` is recorded on the finding, so a close goes back
+ * to the sink that filed it. `close` closes only a ticket this sink filed. */
 export interface TrackerSink {
+  readonly kind: string;
   file(ticket: TrackerTicket): Promise<SinkResult>;
   close(ref: string, note: string): Promise<SinkResult>;
 }

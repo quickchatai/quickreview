@@ -240,6 +240,7 @@ export function tokenFileGitHubReader(opts: {
 export function notYetTrackerSink(ticket: string): TrackerSink {
   const reason = `the tracker sink is not wired yet (${ticket})`;
   return {
+    kind: "none",
     file: async () => ({ ok: false, reason }),
     close: async () => ({ ok: false, reason }),
   };
