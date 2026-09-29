@@ -256,6 +256,12 @@ until runtime, was re-parsed as the empty string and allowed.
   and verdicts re-checks now hashes `config.toml` and the seven directories,
   recursively by content, so `T=config.toml; cat p > $T` — the one spelling no
   string scan can see — is a wake, exactly as its `.git/config` twin is.
+  Since the install locator the live config is not necessarily
+  `<sandbox>/config.toml`: layer 4 also watches the LOCATED config
+  (`$QCR_CONFIG` — on the VM the shipped, read-only config home, —
+  else `<config home>/config.toml`) and the profile dirs the loader reads from
+  the homes (`<config home>/profiles`, and `profiles/` beside `$QCR_CONFIG`),
+  through `locatedPolicyWatchPaths`. Not `secrets/` or `portrait/`.
   `state/agents/**` is deliberately NOT in the watch set: the daemon itself
   rebuilds it mid-round on feedback ingest and the day change, and a check that
   fires on the daemon's own work gets switched off.

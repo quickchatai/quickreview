@@ -51,7 +51,9 @@
 
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { POLICY_SURFACE_DIRS, POLICY_SURFACE_FILES } from "../extensions/bash-guard.js";
+import { configHome, locateConfig, PROFILES_DIR, type InstallEnv } from "./install.js";
 
 // ---- git-config integrity (round 2) --------------------------------
 //
@@ -97,6 +99,13 @@ import { POLICY_SURFACE_DIRS, POLICY_SURFACE_FILES } from "../extensions/bash-gu
 // round measurement.* The set is read from ONE definition shared with the
 // guard (`POLICY_SURFACE_FILES` / `POLICY_SURFACE_DIRS`), so the write veto and
 // this check cannot protect different files.
+//
+// Since the LIVE config is not `<sandbox>/config.toml` but wherever the
+// install locator finds it (on the VM, the shipped config home named by
+// `$QCR_CONFIG`), so layer 4 also watches that located file and the
+// config home's `profiles/` (`locatedPolicyWatchPaths`). Those are concrete
+// paths, not names under the root, so they sit beside the one definition
+// rather than in it; the write veto's path shape is unchanged.
 //
 // Known limits, stated rather than implied away:
 //   · It is a DETECTOR. The write lands; the round completes; the anomaly says
@@ -167,6 +176,40 @@ export function policySurfaceWatchPaths(sandboxRoot: string): string[] {
   return [...POLICY_SURFACE_FILES, ...POLICY_SURFACE_DIRS].map((name) => `${root}/${name}`);
 }
 
+/**
+ * The policy surface that lives OUTSIDE the sandbox root: the
+ * LIVE config, wherever the install locator finds it (`$QCR_CONFIG` — on the
+ * VM the shipped config home,, whose basename is the operator's
+ * choice — else `<config home>/config.toml`), and the profile directories the
+ * loader reads from the homes (`<config home>/profiles`, and `profiles/`
+ * beside `$QCR_CONFIG` — the same two places `locateProfile` searches before
+ * the checkout). A profile's `profile.toml` and `addenda/` change what every
+ * pass does, so they are policy exactly as `config.toml` is.
+ *
+ * Deliberately NOT the rest of the config home: `secrets/` is credentials (not
+ * behaviour, and none of this check's business to hash) and `portrait/` is the
+ * operator's narrative. The checkout's own `profiles/` (the generic examples)
+ * is not added here either: it is not in the write veto's one definition, and
+ * widening that is a separate decision.
+ *
+ * Resolved from `env` (default: this process's), so dispatch's baseline and
+ * verdicts' re-check — same process, same env — watch the same set.
+ */
+export function locatedPolicyWatchPaths(env: InstallEnv = process.env): string[] {
+  const located = locateConfig({ env });
+  const paths = [located.path, join(configHome(env), PROFILES_DIR)];
+  if (located.source === "override") paths.push(join(dirname(located.path), PROFILES_DIR));
+  return [...new Set(paths)];
+}
+
+/** The whole policy half of a round's watch set: the sandbox's own surface and
+ * the located config's, deduplicated (`$QCR_CONFIG` may name the sandbox's own
+ * `config.toml`). ONE function for both the fingerprint and the split, so the
+ * two can never disagree about which paths are policy. */
+function roundPolicyWatchPaths(sandboxRoot: string, env: InstallEnv): string[] {
+  return [...new Set([...policySurfaceWatchPaths(sandboxRoot), ...locatedPolicyWatchPaths(env)])];
+}
+
 /** Deepest directory nesting the recursive hash follows — a bound against a
  * symlink cycle, well above anything under the sandbox (dist/ is 4 deep). */
 const MAX_HASH_DEPTH = 16;
@@ -224,6 +267,10 @@ export interface RoundIntegrityOpts {
   /** The sandbox root whose policy surface is watched; omitted ⇒
    * git's paths only, which is what a caller with no sandbox has. */
   sandboxRoot?: string | undefined;
+  /** The install env the live config is located from (follow-up);
+   * default `process.env`. Only read when `sandboxRoot` is given — the
+   * located config is part of the policy half. */
+  installEnv?: InstallEnv | undefined;
 }
 
 /**
@@ -237,8 +284,8 @@ export function fingerprintRoundIntegrity(
 ): IntegrityFingerprint {
   const paths = gitConfigWatchPaths(opts);
   if (opts.sandboxRoot !== undefined && opts.sandboxRoot.length > 0)
-    paths.push(...policySurfaceWatchPaths(opts.sandboxRoot));
-  return integrityFingerprint(paths, fs);
+    paths.push(...roundPolicyWatchPaths(opts.sandboxRoot, opts.installEnv ?? process.env));
+  return integrityFingerprint([...new Set(paths)], fs);
 }
 
 export interface IntegrityChange {
@@ -279,8 +326,9 @@ export function integrityChanges(
 export function splitIntegrityChanges(
   changes: readonly IntegrityChange[],
   sandboxRoot: string | undefined,
+  installEnv: InstallEnv = process.env,
 ): { git: IntegrityChange[]; policy: IntegrityChange[] } {
-  const policyPaths = new Set(sandboxRoot ? policySurfaceWatchPaths(sandboxRoot) : []);
+  const policyPaths = new Set(sandboxRoot ? roundPolicyWatchPaths(sandboxRoot, installEnv) : []);
   const git: IntegrityChange[] = [];
   const policy: IntegrityChange[] = [];
   for (const c of changes) (policyPaths.has(c.path) ? policy : git).push(c);
@@ -315,8 +363,9 @@ export function policySurfaceChangeMessage(
     "(a variable-indirected redirection, most likely). config.toml carries dry_run and every posting-guard knob,",
     "scripts/ is the mutation gate's shell mirror and dist/ is the compiled guard itself — so treat this round's",
     "output as untrusted AND assume every later round in this container runs under a rewritten boundary.",
-    "Restore the tree from the deployed revision (`git status` / `git diff` in the sandbox names the file),",
-    "then read the session transcript for the write.",
+    "Restore the tree from the deployed revision (`git status` / `git diff` in the sandbox names the file;",
+    "a path outside the sandbox is the located config or a config-home profile — restore it from the operator's",
+    "config home and redeploy), then read the session transcript for the write.",
   ].join("\n");
 }
 

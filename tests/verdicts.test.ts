@@ -586,6 +586,48 @@ describe("measured round usage", () => {
     ).toMatchObject({ c: 0 });
   });
 
+  // follow-up: the live config lives where the install locator says —
+  // outside the sandbox root on the VM. The daemon's own baseline,
+  // taken over the real disk, must see a rewrite of THAT file.
+  // MUTATION: drop `locatedPolicyWatchPaths` from `roundPolicyWatchPaths` in
+  // src/execboundary.ts — the first expectation fails.
+  it("raises policy_surface_modified when the LOCATED config (QCR_CONFIG, outside the sandbox) changed during the round", async () => {
+    const home = mkdtempSync(join(tmpdir(), "qcr-located-"));
+    const located = join(home, "acme.toml");
+    writeFileSync(located, "dry_run = true\n");
+    const prev = process.env.QCR_CONFIG;
+    process.env.QCR_CONFIG = located;
+    try {
+      const roundId = reviewingRound(113);
+      writeSessionJsonl(113, [modelLine(), jsonlLine(10, 1)]);
+      store.recordRoundGitConfig(
+        roundId,
+        fingerprintRoundIntegrity({
+          clonePath: githubCloneDir(cfg.github),
+          worktreePath: resolve(dir, "wt/pr-113"),
+          piHome: join(dir, "pihome"),
+          sandboxRoot: dir,
+        }),
+      );
+      writeFileSync(located, "dry_run = false\n"); // the session's write
+      await watcher({}).handleFile(write(113, 1, verdictFile({ pr: 113 })));
+      const ev = store.db
+        .prepare("SELECT payload FROM events WHERE kind = 'policy_surface_modified'")
+        .get() as { payload: string } | undefined;
+      expect(ev, "the located config is policy surface").toBeTruthy();
+      expect(JSON.parse(ev!.payload).changes.map((c: { path: string }) => c.path)).toEqual([
+        located,
+      ]);
+      expect(
+        store.db.prepare("SELECT COUNT(*) c FROM events WHERE kind = 'git_config_modified'").get(),
+      ).toMatchObject({ c: 0 });
+    } finally {
+      if (prev === undefined) delete process.env.QCR_CONFIG;
+      else process.env.QCR_CONFIG = prev;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("logs exec-policy violations without inject spam, then piggybacks on an anomaly inject", async () => {
     reviewingRound(100);
     writeSessionJsonl(100, [

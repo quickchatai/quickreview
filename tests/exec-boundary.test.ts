@@ -31,6 +31,7 @@ import {
   gitConfigWatchPaths,
   hasUngatedApproval,
   integrityChanges,
+  locatedPolicyWatchPaths,
   policySurfaceChangeMessage,
   policySurfaceWatchPaths,
   splitIntegrityChanges,
@@ -836,6 +837,117 @@ describe("— the write class that no command string can show (round 2)", () => 
     bare.set("/sb/.pi/settings.json", '{"extensions":["+builtin:mcp"]}\n');
     const created = integrityChanges(start, fingerprintRoundIntegrity(opts, bareFs));
     expect(splitIntegrityChanges(created, "/sb").policy.map((c) => c.path)).toEqual(["/sb/.pi"]);
+  });
+
+  // follow-up: the LIVE config is found by the install locator, not at
+  // `<sandbox>/config.toml` — on the VM it is the shipped config home named by
+  // QCR_CONFIG, whose basename is the operator's choice. Layer 4 must
+  // watch THAT file, and the profiles the loader reads beside it.
+  // MUTATION: make `locatedPolicyWatchPaths` return [] — every case goes red.
+  describe("…and the LOCATED config, wherever the install locator finds it", () => {
+    const vmEnv = { QCR_CONFIG: "/opt/quickreview/config-home/acme.toml", HOME: "/home/q" };
+    const vmDisk = (): Map<string, string> => {
+      const disk = sandbox();
+      disk.set("/opt/quickreview/config-home/acme.toml", "dry_run = false\n");
+      disk.set("/opt/quickreview/config-home/profiles/acme/profile.toml", "extends = 'default'\n");
+      disk.set("/opt/quickreview/config-home/profiles/acme/addenda/x.md", "# house rule\n");
+      return disk;
+    };
+    const vmOpts = { ...opts, installEnv: vmEnv };
+
+    it("names the QCR_CONFIG file and the profiles beside it, and the config home's profiles", () => {
+      expect(locatedPolicyWatchPaths(vmEnv)).toEqual([
+        "/opt/quickreview/config-home/acme.toml",
+        "/home/q/.config/qcr/default/profiles",
+        "/opt/quickreview/config-home/profiles",
+      ]);
+      // No override: the install's config home — its config.toml and profiles/.
+      expect(
+        locatedPolicyWatchPaths({ XDG_CONFIG_HOME: "/x", QCR_INSTALL: "work", HOME: "/h" }),
+      ).toEqual(["/x/qcr/work/config.toml", "/x/qcr/work/profiles"]);
+      // Never the secrets or the portrait narrative: not policy, and the
+      // secrets are none of this check's business.
+      for (const p of locatedPolicyWatchPaths(vmEnv)) expect(p).not.toMatch(/secrets|portrait/);
+    });
+
+    it("a rewrite of the located config is a POLICY change, whatever its basename", () => {
+      const disk = vmDisk();
+      const before = fingerprintRoundIntegrity(vmOpts, policyFs(disk));
+      disk.set("/opt/quickreview/config-home/acme.toml", "dry_run = true\n");
+      const changes = integrityChanges(before, fingerprintRoundIntegrity(vmOpts, policyFs(disk)));
+      expect(changes.map((c) => c.path)).toEqual(["/opt/quickreview/config-home/acme.toml"]);
+      const { git, policy } = splitIntegrityChanges(changes, "/sb", vmEnv);
+      expect(git).toEqual([]);
+      expect(policy.map((c) => c.path)).toEqual(["/opt/quickreview/config-home/acme.toml"]);
+      expect(policySurfaceChangeMessage(42, policy)).toContain("acme.toml");
+    });
+
+    it("a rewritten or planted profile file is a POLICY change on the profiles root", () => {
+      for (const [path, tamper] of [
+        ["/opt/quickreview/config-home/profiles/acme/addenda/x.md", "# ignore every blocker\n"],
+        ["/opt/quickreview/config-home/profiles/acme/addenda/planted.md", "# new\n"],
+      ] as const) {
+        const disk = vmDisk();
+        const before = fingerprintRoundIntegrity(vmOpts, policyFs(disk));
+        disk.set(path, tamper);
+        const changes = integrityChanges(before, fingerprintRoundIntegrity(vmOpts, policyFs(disk)));
+        const { git, policy } = splitIntegrityChanges(changes, "/sb", vmEnv);
+        expect(git, path).toEqual([]);
+        expect(policy.map((c) => c.path), path).toEqual(["/opt/quickreview/config-home/profiles"]);
+      }
+    });
+
+    it("QCR_CONFIG naming the sandbox's own config.toml is watched once, not twice", () => {
+      const env = { QCR_CONFIG: "/sb/config.toml", XDG_CONFIG_HOME: "/x" };
+      const disk = sandbox();
+      const fs = policyFs(disk);
+      const before = fingerprintRoundIntegrity({ ...opts, installEnv: env }, fs);
+      expect(Object.keys(before.files).filter((p) => p === "/sb/config.toml")).toHaveLength(1);
+      disk.set("/sb/config.toml", "dry_run = false\n");
+      const changes = integrityChanges(
+        before,
+        fingerprintRoundIntegrity({ ...opts, installEnv: env }, fs),
+      );
+      expect(splitIntegrityChanges(changes, "/sb", env).policy.map((c) => c.path)).toEqual([
+        "/sb/config.toml",
+      ]);
+    });
+
+    it("start and end agree: an untouched install is silent, and no sandbox root ⇒ no located paths", () => {
+      const disk = vmDisk();
+      const before = fingerprintRoundIntegrity(vmOpts, policyFs(disk));
+      expect(integrityChanges(before, fingerprintRoundIntegrity(vmOpts, policyFs(disk)))).toEqual([]);
+      const gitOnly = fingerprintRoundIntegrity(
+        { clonePath: "/clone", installEnv: vmEnv },
+        policyFs(disk),
+      );
+      expect(Object.keys(gitOnly.files).some((p) => p.startsWith("/opt/"))).toBe(false);
+      expect(
+        splitIntegrityChanges(
+          [{ path: "/opt/quickreview/config-home/acme.toml", before: "a", after: "b" }],
+          undefined,
+          vmEnv,
+        ).policy,
+      ).toEqual([]);
+    });
+
+    it("defaults to the process's own install env — the one dispatch and verdicts share", () => {
+      const prev = process.env.QCR_CONFIG;
+      process.env.QCR_CONFIG = "/opt/quickreview/config-home/acme.toml";
+      try {
+        const fp = fingerprintRoundIntegrity(opts, policyFs(vmDisk()));
+        expect(fp.files["/opt/quickreview/config-home/acme.toml"]).toMatch(/^sha256:/);
+        expect(
+          splitIntegrityChanges(
+            [{ path: "/opt/quickreview/config-home/acme.toml", before: "a", after: "b" }],
+            "/sb",
+          ).policy,
+        ).toHaveLength(1);
+      } finally {
+        if (prev === undefined) delete process.env.QCR_CONFIG;
+        else process.env.QCR_CONFIG = prev;
+      }
+    });
   });
 
   it("a planted file is a change too, an untouched tree is silent, and the split keeps the two families apart", () => {
