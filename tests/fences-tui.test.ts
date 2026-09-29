@@ -23,7 +23,7 @@ import { installDeployHooks } from "../src/tui/deploytab.js";
 import { installMetricsHooks } from "../src/tui/metricstab.js";
 import { installMessageHooks } from "../src/tui/msg.js";
 import { TABS, tabDigit } from "../src/tui/tabs.js";
-import { FakeChanges, changeEntry, learningRig } from "./helpers/tui-rig.js";
+import { FakeChanges, changeEntry, installScanRig, learningRig } from "./helpers/tui-rig.js";
 
 const ROOT = join(import.meta.dirname, "..");
 
@@ -300,6 +300,7 @@ describe("[T1] every registered key is answerable", () => {
       ),
     } as never);
     installMessageHooks(app, { send: async () => {} });
+    const scan = installScanRig(app);
 
     // An effect that leaves the process entirely — `g` hands a URL to the
     // operator's browser and changes nothing on screen. Not recording it
@@ -334,6 +335,7 @@ describe("[T1] every registered key is answerable", () => {
         metrics: metricsState,
         deploy: deployState,
         changes: changes.refreshes,
+        scan: { state: scan.state, asks: scan.asks.length },
       });
 
     return { app, ssh, opened, fetched, tabState };

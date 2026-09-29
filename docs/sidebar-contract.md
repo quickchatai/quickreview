@@ -129,8 +129,8 @@ The bar now WRAPS instead of dropping buttons — at the shipped companion
 width the board used to lose `[u unwedge]` — so a tab's body height is
 `rows - 2 - barHeight(tab, cols, live.bar)` (`src/tui/cmdbar.ts`), and the
 board's pi viewport is sized from the same number (`boardBarHeight`). The
-seven tabs (`src/tui/tabs.ts`: board · memory · digest · tickets · deploy ·
-metrics · feedback) register under `AppHooks.tabs[tab]` as one `TabHooks`
+eight tabs (`src/tui/tabs.ts`: board · memory · digest · tickets · deploy ·
+metrics · feedback · scan) register under `AppHooks.tabs[tab]` as one `TabHooks`
 each — `screen` / `key` / `click` / `keys`, the last being the LIVE key set
 the bar paints and `App.registeredKeys()` derives from. `docs/tui.md` is the
 surface contract.

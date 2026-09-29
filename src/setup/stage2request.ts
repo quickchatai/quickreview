@@ -22,6 +22,13 @@
 // see priced. A request is answered once — the result names the request it
 // answered — so a click is never replayed.
 //
+// The click may NARROW the plan (space toggles a row off in the
+// plan pane): the request then names the runnable rows the operator kept,
+// and the run is exactly those rows, stopped hard at THEIR total — the sum
+// the pane showed. It can only narrow: a row that was not runnable in the
+// proposal (covered, over the budget) can never be named, so nothing runs
+// that was not shown priced and runnable.
+//
 // Files, all in the state home: `scan/stage2.json` (the latest proposal, the
 // engine's), `scan/stage2-start.json` (the TUI's request),
 // `scan/stage2-start-result.json` (the engine's answer).
@@ -62,6 +69,8 @@ export interface Stage2StartRequest {
   key: string;
   at: string;
   by: "tui";
+  /** The runnable rows the operator kept (their ids); absent = all of them. */
+  rows?: string[];
 }
 
 export interface Stage2StartResult {
@@ -92,7 +101,8 @@ export function parseStartRequest(text: string): Stage2StartRequest | null {
   try {
     const r = JSON.parse(text) as Partial<Stage2StartRequest> | null;
     if (typeof r !== "object" || r === null || typeof r.id !== "string" || r.id === "" || typeof r.key !== "string") return null;
-    return { id: r.id, key: r.key, at: typeof r.at === "string" ? r.at : "", by: "tui" };
+    if (r.rows !== undefined && (!Array.isArray(r.rows) || !r.rows.every((x) => typeof x === "string"))) return null;
+    return { id: r.id, key: r.key, at: typeof r.at === "string" ? r.at : "", by: "tui", ...(r.rows !== undefined ? { rows: [...r.rows] } : {}) };
   } catch {
     return null;
   }
@@ -144,16 +154,33 @@ export function readStage2Proposal(home: string): { ok: true; proposal: StoredSt
 }
 
 /**
+ * The runnable rows a start runs: all of them, or the subset `keep` names —
+ * refused when `keep` is empty or names a row that is not runnable in the
+ * proposal (the engine applies the same rule after it re-plans).
+ */
+export function keptRows(rows: readonly Stage2Row[], keep: readonly string[] | undefined): { ok: true; rows: Stage2Row[]; cap_usd: number | null } | { ok: false; errors: string[] } {
+  const runnable = rows.filter((r) => r.status === "run");
+  if (keep === undefined) return { ok: true, rows: runnable, cap_usd: null };
+  if (keep.length === 0) return { ok: false, errors: ["every row is toggled off — keep at least one"] };
+  const bad = keep.filter((id) => !runnable.some((r) => r.id === id));
+  if (bad.length > 0) return { ok: false, errors: [`not a runnable row of the proposal: ${bad.join(", ")}`] };
+  const kept = runnable.filter((r) => keep.includes(r.id));
+  return { ok: true, rows: kept, cap_usd: kept.reduce((n, r) => n + r.estimate_usd, 0) };
+}
+
+/**
  * The TUI's click: ask the companion to start the stored proposal whose key
- * the TUI showed. Refused when there is no proposal or it is no longer the
- * one shown (`key`). Writes the request; the companion starts it (or says
- * why not) in `STAGE2_RESULT_FILE`.
+ * the TUI showed — all its runnable rows, or the ones in `keep`. Refused when
+ * there is no proposal, it is no longer the one shown (`key`), or `keep`
+ * names a row that is not runnable. Writes the request; the companion starts
+ * it (or says why not) in `STAGE2_RESULT_FILE`.
  */
 export function requestStage2Start(
   home: string,
   key: string,
   now: Date,
-): { ok: true; request: Stage2StartRequest; proposal: StoredStage2Proposal } | { ok: false; errors: string[] } {
+  keep?: readonly string[],
+): { ok: true; request: Stage2StartRequest; proposal: StoredStage2Proposal; rows: number; cap_usd: number } | { ok: false; errors: string[] } {
   const read = readStage2Proposal(home);
   if (!read.ok) return { ok: false, errors: [read.error] };
   const p = read.proposal;
@@ -162,18 +189,21 @@ export function requestStage2Start(
     return { ok: false, errors: [`the proposal changed since it was shown (showed ${key}, now ${p.key}) — look at the new one first`] };
   }
   if (p.runnable === 0) return { ok: false, errors: ["the proposal has no row to run"] };
+  const kept = keptRows(p.rows, keep);
+  if (!kept.ok) return kept;
   const request: Stage2StartRequest = {
     id: `${now.toISOString()}-${Math.random().toString(36).slice(2, 8)}`,
     key,
     at: now.toISOString(),
     by: "tui",
+    ...(keep !== undefined ? { rows: [...keep] } : {}),
   };
   try {
     writeAtomic(join(home, STAGE2_START_FILE), `${JSON.stringify(request)}\n`);
   } catch (err) {
     return { ok: false, errors: [`the start request could not be written: ${clean(err)}`] };
   }
-  return { ok: true, request, proposal: p };
+  return { ok: true, request, proposal: p, rows: kept.rows.length, cap_usd: kept.cap_usd ?? p.cap_usd };
 }
 
 /** The companion's answer to the request `id`, or null while it has not
@@ -195,19 +225,21 @@ const usd = (n: number): string => `$${n.toFixed(2)}`;
 
 /**
  * The click: ask the companion to start the proposal whose key the TUI
- * showed. The notice line says what was asked, or why nothing was.
+ * showed — its kept rows when the operator toggled some off. The notice line
+ * says what was asked, or why nothing was.
  */
 export function clickStartStage2(
   home: string,
   key: string,
   now: Date = new Date(),
+  keep?: readonly string[],
 ): { ok: true; request: string; line: string } | { ok: false; line: string } {
-  const r = requestStage2Start(home, key, now);
+  const r = requestStage2Start(home, key, now, keep);
   if (!r.ok) return { ok: false, line: `stage 2 not started: ${r.errors.join("; ")}` };
   return {
     ok: true,
     request: r.request.id,
-    line: `stage 2 asked to start — ${r.proposal.runnable} row(s), hard stop ${usd(r.proposal.cap_usd)}; the companion starts it within seconds`,
+    line: `stage 2 asked to start — ${r.rows} row(s), hard stop ${usd(r.cap_usd)}; the companion starts it within seconds`,
   };
 }
 

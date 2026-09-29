@@ -20,7 +20,8 @@
 //     budget when given one — stored, so the TUI can show it;
 //   - scan_stage2_start: start the stored proposal by its key, on the
 //     operator's word. The TUI's click reaches the same start through
-//     `watchStage2Requests` (the start channel, src/setup/stage2request.ts).
+//     `watchTuiRequests` (the start channel, src/setup/stage2request.ts —
+//     and the [8] scan tab's stop, src/setup/scanreport.ts).
 //
 // A DELTA re-scan is scan_preview / scan_start with `delta: true`: stage 1
 // over only the files whose content changed since the last scan.
@@ -476,14 +477,21 @@ export function scanToolDefinitions(
   return [preview, start, status, stop, list, matches, match, suggestions, propose, start2];
 }
 
-/** How often the belt looks for the TUI's stage-2 start click. */
+/** How often the belt looks for the TUI's requests (a stage-2 start click,
+ * a stop). */
 export const STAGE2_POLL_MS = 2000;
 
-/** Answer the TUI's stage-2 start requests while the companion runs: the
+/** Answer the TUI's requests while the companion runs: the stage-2 start
  * click starts the stored proposal it showed, exactly as the operator's word
- * would. Returns the stop. */
-export function watchStage2Requests(scan: ScanRunner, everyMs = STAGE2_POLL_MS): () => void {
+ * would, and the `[8] scan` tab's stop stops the run it showed
+ * running, exactly as scan_stop would. Returns the stop. */
+export function watchTuiRequests(scan: ScanRunner, everyMs = STAGE2_POLL_MS): () => void {
   const timer = setInterval(() => {
+    try {
+      scan.consumeStopRequest();
+    } catch (err) {
+      console.error(`setup: scan stop request failed: ${String(err)}`);
+    }
     scan.consumeStage2Request().catch((err: unknown) => console.error(`setup: stage 2 start request failed: ${String(err)}`));
   }, everyMs);
   timer.unref?.();

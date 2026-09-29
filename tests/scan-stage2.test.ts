@@ -429,4 +429,44 @@ describe("starting stage 2 from the TUI", () => {
     expect(s.status().run!.mode).toBe("calibration");
     expect(readFileSync(join(stateDir, STAGE2_START_FILE), "utf8")).toContain(second.key);
   });
+
+  it("the click may NARROW the plan: only the kept rows run, stopped hard at their total", async () => {
+    const cases = runner();
+    const s = new ScanRunner(ports(cases));
+    await calibrate(s);
+    const p = await propose(s, [CROSS, { lens: "pass-security", files: ["web/index.ts"], reason: "the client token" }]);
+    expect(p.rows.map((r) => r.status)).toEqual(["run", "run"]);
+    const keptCap = p.rows[1]!.estimate_usd;
+
+    const click = clickStartStage2(stateDir, p.key, new Date("2026-09-29T11:00:00Z"), ["row-2"]);
+    expect(click.ok).toBe(true);
+    if (!click.ok) return;
+    expect(click.line).toContain(`1 row(s), hard stop $${keptCap.toFixed(2)}`);
+    expect(JSON.parse(readFileSync(join(stateDir, STAGE2_START_FILE), "utf8")).rows).toEqual(["row-2"]);
+
+    const before = cases.specs.length;
+    expect(await s.consumeStage2Request()).toMatchObject({ ok: true });
+    await s.idle();
+    const run = s.status().run!;
+    expect(run.cases.map((c) => c.id)).toEqual(["row-2"]);
+    expect(run.cap_usd).toBeCloseTo(keptCap, 9);
+    expect(cases.specs.slice(before).map((c) => c.files)).toEqual([["web/index.ts", "web/index.test.ts"]]);
+  });
+
+  it("a narrowed click can never name a row that was not runnable, nor keep nothing — at the TUI and at the engine", async () => {
+    const s = new ScanRunner(ports(runner()));
+    await calibrate(s);
+    const perKline = STAGE1_RATE * SCAN_DEFAULTS.unmeasured_rate_factor;
+    const p = await propose(
+      s,
+      [CROSS, { lens: "pass-concurrency", files: ["lib/big.py"], reason: "shared cache" }],
+      { budget_usd: (70 / 1000) * perKline + 1e-6 },
+    );
+    expect(p.rows.map((r) => r.status)).toEqual(["run", "over-budget"]);
+    expect(clickStartStage2(stateDir, p.key, undefined, ["row-2"])).toMatchObject({ ok: false, line: expect.stringMatching(/not a runnable row.*row-2/) });
+    expect(clickStartStage2(stateDir, p.key, undefined, [])).toMatchObject({ ok: false, line: expect.stringMatching(/keep at least one/) });
+    expect(await s.startStage2({ key: p.key, rows: ["row-2"] })).toMatchObject({ ok: false, errors: [expect.stringMatching(/not a runnable row/)] });
+    expect(await s.startStage2({ key: p.key, rows: "row-1" })).toMatchObject({ ok: false });
+    expect(s.status().run!.mode).toBe("calibration");
+  });
 });

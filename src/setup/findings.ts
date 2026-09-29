@@ -45,9 +45,9 @@ import { createHash } from "node:crypto";
 import type { StateFs } from "./engine.js";
 import type { LedgerEntry } from "./ledger.js";
 import type { ScanSeverity } from "./scan.js";
+import { FINDINGS_FILE, FINDINGS_VERSION, parseFindingsFile } from "./scanreport.js";
 
-export const FINDINGS_FILE = "scan/findings.json";
-export const FINDINGS_VERSION = 1;
+export { FINDINGS_FILE, FINDINGS_VERSION };
 
 export type FindingState = "new" | "promoted" | "dismissed" | "fixed";
 
@@ -261,20 +261,7 @@ export class FindingsStore {
     }
     if (text === null) return { file: empty, error: null };
     try {
-      const raw = JSON.parse(text) as Partial<FindingsFile> | null;
-      if (typeof raw !== "object" || raw === null || raw.version !== FINDINGS_VERSION || !Array.isArray(raw.findings)) {
-        throw new Error("not a version-1 findings store");
-      }
-      for (const f of raw.findings) {
-        if (typeof f?.fingerprint !== "string" || typeof f.path !== "string" || typeof f.state !== "string") {
-          throw new Error("a finding has no fingerprint, path or state");
-        }
-      }
-      const q = raw.question ?? null;
-      if (q !== null && (typeof q.key !== "string" || !Array.isArray(q.unreported) || !Array.isArray(q.fresh))) {
-        throw new Error("the pending match question is malformed");
-      }
-      return { file: { version: FINDINGS_VERSION, findings: raw.findings, question: q }, error: null };
+      return { file: parseFindingsFile(text), error: null };
     } catch (err) {
       return {
         file: empty,

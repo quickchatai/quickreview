@@ -776,7 +776,7 @@ export function detailLines(
  * to; this is the whole map.
  */
 export const HELP_LINES = [
-  "1…7            the seven surfaces: board · memory · digest · tickets · deploy · metrics · feedback",
+  "1…8            the eight surfaces: board · memory · digest · tickets · deploy · metrics · feedback · scan",
   "               the bar at the foot shows what THIS frame answers to; a button that is not there is a key that would do nothing",
   "r / s / ? / q  refresh · reconnect VM ssh (the one ssh key-passphrase prompt) · this overlay · quit (asks first)",
   "Ctrl-c ×3      kill the TUI from anywhere (terminal restored) — the un-stuck hatch",
@@ -807,6 +807,12 @@ export const HELP_LINES = [
   "a              show / hide archived (acted-on) signals",
   "A / x          accept / reject the focused rubric proposal (accept applies + auto-ratifies + commits locally)",
   "R then y       arm and confirm a revert of the focused change — a local commit only, never pushed",
+  "[8] scan — the whole-repo scan: units left, the unit's findings (style grouped per rule) over the detail, the run on top:",
+  "[ / ] · j/k    previous / next unit · select a finding",
+  "p / d          promote (the companion files one ticket each) · dismiss with a reason (it becomes reviewer memory)",
+  "f / F          filter by state, lens, severity, doubted · clear it",
+  "P              the stage 2 plan: space toggles a row, ⏎ approves (hard stop = the kept total), Esc back",
+  "x / D          stop the running scan (the ledger resumes it) · ask the companion for a delta re-scan (it shows the price first)",
   "Ctrl-q         release a focused pi pane or the companion column back to the board",
   "",
   "any key to close",

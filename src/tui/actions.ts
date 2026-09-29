@@ -128,7 +128,7 @@ export function parseTuiAction(
   switch (verb) {
     case "switch_tab": {
       const tab = p["tab"];
-      // The seven surfaces, by the one name each has everywhere (src/tui/tabs.ts).
+      // The eight surfaces, by the one name each has everywhere (src/tui/tabs.ts).
       if (!isTab(tab)) return { ok: false, error: `switch_tab needs tab: ${TABS.join("|")}` };
       return { ok: true, action: { verb, tab } };
     }

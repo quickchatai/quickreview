@@ -97,7 +97,7 @@ import {
   type ProfileStatus,
 } from "../src/setup/tuning.js";
 import { GUIDE_REASON, RETUNE_REASON_MAX, type RetuneResult } from "../src/setup/retune.js";
-import { buildScan, scanToolDefinitions, watchStage2Requests } from "./setup-scan.js";
+import { buildScan, scanToolDefinitions, watchTuiRequests } from "./setup-scan.js";
 import { triageToolDefinitions } from "./setup-triage.js";
 import type { MemoryStore } from "../src/memory/store.js";
 import type { TrackerSink } from "../src/setup/engine.js";
@@ -1154,14 +1154,14 @@ const activate = (pi: Pi): void => {
   // the PR replay — old vs new profile, cost first.
   const replay = buildReplay(process.env.QCR_REVIEWED_REPO?.trim() || DEFAULT_REVIEWED_REPO, process.env, resolveMaxConcurrency());
   for (const def of replayToolDefinitions(replay)) pi.registerTool(def);
-  // the TUI's stage-2 start click, answered while the companion's
+  // the TUI's stage-2 start click and its scan stop, answered while the companion's
   // session runs (the inject-bridge's lifecycle: start on session_start, stop
   // on session_shutdown).
   let unwatch: (() => void) | null = null;
   // VERIFY-ON-PIN: "session_start" / "session_shutdown" event names (as inject-bridge).
   pi.on("session_start", () => {
     unwatch?.();
-    unwatch = watchStage2Requests(scan);
+    unwatch = watchTuiRequests(scan);
   });
   pi.on("session_shutdown", () => {
     unwatch?.();

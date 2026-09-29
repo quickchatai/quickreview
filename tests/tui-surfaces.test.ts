@@ -1,7 +1,7 @@
-// the seven surfaces (ratified layout), and the fences
-// that keep them honest:
+// the seven surfaces (ratified layout; the eighth,
+// `scan`), and the fences that keep them honest:
 //
-//   * seven named tabs, one vocabulary, each reachable by its digit — and the
+//   * eight named tabs, one vocabulary, each reachable by its digit — and the
 //     retired names (`changes`, the `digest` tab id for tab [2]) refused;
 //   * no hidden mode: the `v` toggle, the full-screen detail page and the
 //     `changes` tab are GONE from the source, not merely unreachable;
@@ -34,7 +34,7 @@ import { isTab, TABS, tabDigit, tabForDigit } from "../src/tui/tabs.js";
 import { installDeployHooks } from "../src/tui/deploytab.js";
 import { installMetricsHooks } from "../src/tui/metricstab.js";
 import { installMessageHooks } from "../src/tui/msg.js";
-import { FakeChanges, changeEntry, learningRig, settle, type Rig } from "./helpers/tui-rig.js";
+import { FakeChanges, changeEntry, installScanRig, learningRig, settle, type Rig } from "./helpers/tui-rig.js";
 
 const ROOT = join(import.meta.dirname, "..");
 const TUI = join(ROOT, "src", "tui");
@@ -93,6 +93,7 @@ function fullRig(): Rig & { docker: string[][] } {
     load: async () => ({ dirty: [], plan: [], containerStatus: "Up 2 hours" }),
   } as never);
   installMessageHooks(rig.app, { send: async () => {} });
+  installScanRig(rig.app);
   const docker: string[][] = [];
   rig.app.sidebar = new CompanionSidebar(
     { container_name: "c", session: "s" },
@@ -111,8 +112,8 @@ async function settled(rig: Rig, tab: Tab): Promise<void> {
   await settle(20);
 }
 
-describe("seven surfaces, one vocabulary", () => {
-  it("the seven, in digit order, each reachable by its digit and by name", () => {
+describe("eight surfaces, one vocabulary", () => {
+  it("the eight, in digit order, each reachable by its digit and by name", () => {
     expect([...TABS]).toEqual([
       "board",
       "memory",
@@ -121,6 +122,7 @@ describe("seven surfaces, one vocabulary", () => {
       "deploy",
       "metrics",
       "feedback",
+      "scan",
     ]);
     for (const tab of TABS) {
       expect(tabForDigit(tabDigit(tab))).toBe(tab);
@@ -130,8 +132,8 @@ describe("seven surfaces, one vocabulary", () => {
       const parsed = parseTuiAction(JSON.stringify({ verb: "switch_tab", params: { tab } }));
       expect(parsed).toEqual({ ok: true, action: { verb: "switch_tab", tab } });
     }
-    expect(tabForDigit("8")).toBeUndefined();
-    expect(decodeKey(Buffer.from("8"))).toEqual({ kind: "char", ch: "8" });
+    expect(tabForDigit("9")).toBeUndefined();
+    expect(decodeKey(Buffer.from("9"))).toEqual({ kind: "char", ch: "9" });
   });
 
   it("the retired names are refused everywhere, not aliased (hard cut)", () => {
@@ -199,6 +201,7 @@ describe("no hidden mode survives", () => {
       "feedback",
       "memory",
       "metrics",
+      "scan",
       "tickets",
     ]);
   });
@@ -416,7 +419,7 @@ describe("docs/tui.md is the contract the code is pinned to", () => {
     }
   });
 
-  it("the surfaces table lists exactly the seven, in digit order, and the globals table names the global keys", () => {
+  it("the surfaces table lists exactly the eight, in digit order, and the globals table names the global keys", () => {
     const rows = [...doc.matchAll(/^\| (\d) \| \*\*(\w+)\*\* \|/gm)].map((m) => [m[1], m[2]]);
     expect(rows).toEqual(TABS.map((t) => [tabDigit(t), t]));
     const globals = documented("everywhere");

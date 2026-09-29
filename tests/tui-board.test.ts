@@ -534,11 +534,13 @@ describe("adaptive layout", () => {
   it("the body reaches the command bar now the companion strip is retired", () => {
     // Frame geometry: top bar (0), body 1..rows-4, command bar rows-3..rows-2,
     // bottom border rows-1. The 7 strip rows the board used to give up are the
-    // sidebar's problem now — it is a column, not a band.
+    // sidebar's problem now — it is a column, not a band. (140 wide: the bar
+    // is two rows only while the nav and the globals share one — at 120 the
+    // eight nav slots,, wrap the globals onto a row of their own.)
     for (const rows of [24, 40]) {
       const frame = renderBoard(
         view({ pi: { pr: 5012, lines: ["pi output"], missing: false, stale: false, offset: 0 } }),
-        120,
+        140,
         rows,
       );
       expect(frame.meta["bodyRows"]! + frame.meta["piRows"]!).toBe(rows - 4);

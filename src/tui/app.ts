@@ -64,7 +64,7 @@ export type { Tab } from "./tabs.js";
 /**
  * One installed surface (every tab but the board, which the App renders
  * itself). The install functions in memtab / digesttab / ticketstab /
- * deploytab / metricstab / feedbacktab each build one of these over their own
+ * deploytab / metricstab / feedbacktab / scantab each build one of these over their own
  * state and register it under `AppHooks.tabs`.
  */
 export interface TabHooks {
@@ -88,7 +88,7 @@ export interface TabHooks {
 }
 
 export interface AppHooks {
-  /** The six installed surfaces, by tab. The board is not here: the App owns
+  /** The seven installed surfaces, by tab. The board is not here: the App owns
    * its render, its keys and its `boardKeys` (src/tui/board.ts). */
   tabs: Partial<Record<Exclude<Tab, "board">, TabHooks>>;
   // There is deliberately NO `attach` hook. The full-screen attach

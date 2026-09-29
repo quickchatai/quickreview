@@ -729,9 +729,9 @@ One request per file, exactly this shape: `{"verb": "…", "params": {…}}`.
 The verbs:
 
 - `switch_tab` — `{"verb":"switch_tab","params":{"tab":"metrics"}}` — one
-  of the seven surfaces, by its one name:
-  `board`|`memory`|`digest`|`tickets`|`deploy`|`metrics`|`feedback`
-  (`[1]`…`[7]` on his keyboard; `docs/tui.md` says what each is for).
+  of the eight surfaces, by its one name:
+  `board`|`memory`|`digest`|`tickets`|`deploy`|`metrics`|`feedback`|`scan`
+  (`[1]`…`[8]` on his keyboard; `docs/tui.md` says what each is for).
 - `select_pr` — `{"verb":"select_pr","params":{"pr":1234}}` — switches to the
   board and selects that PR.
 - `metrics` — `{"verb":"metrics","params":{"window":"30d"}}`

@@ -54,7 +54,9 @@
 // Persistence: `<state home>/scan/run.json` (the current run and a short
 // history), `scan/suggestions.json` (stage 1's deep-lens suggestions, the
 // input to stage 2), `scan/stage2.json` (the latest stage-2 proposal),
-// beside the ledger and the findings store.
+// beside the ledger and the findings store — and the TUI's stop request
+// and its answer (`scan/stop.json`, `scan/stop-result.json`, —
+// scanreport.ts, which also owns the run record's name and parser).
 import type { LensTuningMap } from "../lenstuning.js";
 import { PASS_TIER_ORDER, type PassTier } from "../types.js";
 import type { ScanConfig } from "../config.js";
@@ -84,6 +86,7 @@ import {
 } from "./scan.js";
 import { planStage2, stage2CasePrompt, stage2Key, unitOwner, type RowPrice, type Stage2Row, type Stage2RowRequest } from "./stage2.js";
 import {
+  keptRows,
   parseStage2File,
   parseStartRequest,
   parseStartResult,
@@ -95,6 +98,16 @@ import {
   type StoredStage2Proposal,
 } from "./stage2request.js";
 import type { UnitCut } from "./unitcut.js";
+import {
+  parseRunFile,
+  parseStopRequest,
+  parseStopResult,
+  RUN_FILE,
+  RUN_VERSION,
+  SCAN_STOP_FILE,
+  SCAN_STOP_RESULT_FILE,
+  type ScanStopResult,
+} from "./scanreport.js";
 
 // ---- ports ---------------------------------------------------------------------
 
@@ -152,9 +165,8 @@ export interface ScanPorts {
 
 // ---- records -------------------------------------------------------------------
 
-export const RUN_FILE = "scan/run.json";
+export { RUN_FILE, RUN_VERSION };
 export const SUGGESTIONS_FILE = "scan/suggestions.json";
-export const RUN_VERSION = 1;
 /** Summaries of finished runs kept beside the current one. */
 export const RUN_HISTORY = 20;
 
@@ -326,13 +338,7 @@ export function readRunFile(state: StateFs): { file: RunFile; error: string | nu
   }
   if (text === null) return { file: empty, error: null };
   try {
-    const raw = JSON.parse(text) as Partial<RunFile> | null;
-    if (typeof raw !== "object" || raw === null || raw.version !== RUN_VERSION) throw new Error("unknown version");
-    const current = raw.current ?? null;
-    if (current !== null && (typeof current !== "object" || !Array.isArray(current.cases))) {
-      throw new Error("`current` is not a scan run");
-    }
-    return { file: { version: RUN_VERSION, current, history: Array.isArray(raw.history) ? raw.history : [] }, error: null };
+    return { file: parseRunFile(text), error: null };
   } catch (err) {
     return {
       file: empty,
@@ -836,23 +842,32 @@ export class ScanRunner {
    * Start the stored stage-2 proposal whose key is quoted — on the
    * operator's word (the companion) or his click (the TUI, through
    * `consumeStage2Request`). Re-planned first: a proposal that moved since it
-   * was shown is refused. Hard stop at its estimate.
+   * was shown is refused. Hard stop at its estimate — or, when `rows` keeps
+   * only some of its runnable rows (the TUI's plan pane), exactly
+   * those rows, stopped hard at their total.
    */
-  async startStage2(args: { key?: unknown }): Promise<{ ok: true; run: ScanRun } | Refusal> {
+  async startStage2(args: { key?: unknown; rows?: unknown }): Promise<{ ok: true; run: ScanRun } | Refusal> {
     if (this.active) return { ok: false, errors: [`scan ${this.active.id} is still running — stop it or wait for it`] };
     if (this.starting) return { ok: false, errors: ["a scan is already starting — wait for it, then check scan_status"] };
     if (typeof args.key !== "string" || args.key === "") {
       return { ok: false, errors: ["no proposal key — propose stage 2, show the operator the rows and the cost, then start with its key"] };
     }
+    let keep: string[] | undefined;
+    if (args.rows !== undefined && args.rows !== null) {
+      if (!Array.isArray(args.rows) || !args.rows.every((r): r is string => typeof r === "string")) {
+        return { ok: false, errors: ["`rows` must be a list of row ids (row-<n>) from the proposal"] };
+      }
+      keep = args.rows;
+    }
     this.starting = true;
     try {
-      return await this.startStage2Planned(args.key);
+      return await this.startStage2Planned(args.key, keep);
     } finally {
       this.starting = false;
     }
   }
 
-  private async startStage2Planned(key: string): Promise<{ ok: true; run: ScanRun } | Refusal> {
+  private async startStage2Planned(key: string, keep: readonly string[] | undefined): Promise<{ ok: true; run: ScanRun } | Refusal> {
     const stored = this.stage2Proposal();
     if (stored.error !== null) return { ok: false, errors: [stored.error] };
     if (stored.proposal === null) return { ok: false, errors: ["no stage 2 proposal — propose one first"] };
@@ -867,8 +882,13 @@ export class ScanRunner {
         errors: [`the plan changed since the proposal (key ${key}, now ${p.proposal.key}: a file, a price or the settings moved) — propose again and show the operator the new cost`],
       };
     }
-    const rows = p.proposal.rows.filter((r) => r.status === "run");
-    if (rows.length === 0) return { ok: false, errors: ["nothing to run: every row is covered by the ledger or over the budget"] };
+    if (!p.proposal.rows.some((r) => r.status === "run")) {
+      return { ok: false, errors: ["nothing to run: every row is covered by the ledger or over the budget"] };
+    }
+    const kept = keptRows(p.proposal.rows, keep);
+    if (!kept.ok) return kept;
+    const rows = kept.rows;
+    const cap = kept.cap_usd ?? p.proposal.cap_usd;
     const { file, error } = this.load();
     if (error !== null) return { ok: false, errors: [error] };
     const built = this.ports.buildAgents(p.settings);
@@ -902,8 +922,8 @@ export class ScanRunner {
         mode: "stage2",
         sha: p.proposal.sha,
         plan_key: key,
-        cap_usd: p.proposal.cap_usd,
-        estimate_usd: p.proposal.cap_usd,
+        cap_usd: cap,
+        estimate_usd: cap,
         settings: { tier: top, effort: "per row", validator: cfg.validator, validate_tier: cfg.validator ? p.settings.validateTier : null },
       },
       jobs,
@@ -939,7 +959,7 @@ export class ScanRunner {
         // Unreadable: answer again rather than never.
       }
       if (prev !== null && parseStartResult(prev)?.request === req.id) return null;
-      const r = await this.startStage2({ key: req.key });
+      const r = await this.startStage2({ key: req.key, ...(req.rows !== undefined ? { rows: req.rows } : {}) });
       const result: Stage2StartResult = {
         request: req.id,
         key: req.key,
@@ -958,6 +978,45 @@ export class ScanRunner {
     } finally {
       this.consuming = false;
     }
+  }
+
+  /**
+   * Answer the TUI's stop request (scanreport.ts), if there is one
+   * not yet answered: stop the run it names when that is the run in flight
+   * here, and write the outcome to `SCAN_STOP_RESULT_FILE`. A request naming
+   * another run — or arriving when nothing runs in this companion (a run
+   * recorded as running that nobody is driving is already interrupted) — is
+   * refused, never aimed at whatever runs now. Answered once.
+   */
+  consumeStopRequest(): ScanStopResult | null {
+    let text: string | null;
+    try {
+      text = this.ports.state.read(SCAN_STOP_FILE);
+    } catch (err) {
+      this.ports.log?.(`setup: ${SCAN_STOP_FILE} cannot be read: ${clean(err)}`);
+      return null;
+    }
+    const req = text === null ? null : parseStopRequest(text);
+    if (req === null) return null;
+    let prev: string | null = null;
+    try {
+      prev = this.ports.state.read(SCAN_STOP_RESULT_FILE);
+    } catch {
+      // Unreadable: answer again rather than never.
+    }
+    if (prev !== null && parseStopResult(prev)?.request === req.id) return null;
+    const errors: string[] = [];
+    if (!this.active) errors.push(`no scan is running in this companion — ${req.run} is not in flight, so there is nothing to stop (the ledger resumes it when started again)`);
+    else if (this.active.id !== req.run) errors.push(`the scan in flight is ${this.active.id}, not ${req.run} — look at the report again`);
+    else this.stop();
+    const result: ScanStopResult = { request: req.id, run: req.run, at: this.ports.clock().toISOString(), ok: errors.length === 0, errors };
+    try {
+      this.ports.state.write(SCAN_STOP_RESULT_FILE, `${JSON.stringify(result)}\n`);
+    } catch (err) {
+      this.ports.log?.(`setup: the scan stop result could not be written: ${clean(err)}`);
+    }
+    this.ports.log?.(`setup: the TUI asked to stop ${req.run}: ${result.ok ? "stopped" : errors.join("; ")}`);
+    return result;
   }
 
   // -- the background run --

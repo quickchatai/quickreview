@@ -2,8 +2,8 @@
 
 One layout, always: **the tab on the left, the companion column on the
 right**, on every frame and in every configuration. Nothing takes the whole
-terminal and nothing folds the column away. Seven surfaces sit on the left;
-the digit keys `1`…`7` reach them, and the bar at the foot of the screen shows
+terminal and nothing folds the column away. Eight surfaces sit on the left;
+the digit keys `1`…`8` reach them, and the bar at the foot of the screen shows
 what the *current frame* answers to — a button that is not there is a key that
 would do nothing.
 
@@ -22,8 +22,9 @@ pinned against — `tests/tui-surfaces.test.ts` fails when they disagree.
 | 5 | **deploy** | what the VM runs versus this checkout, and the button that ships the difference |
 | 6 | **metrics** | whether the reviewer is working well over time |
 | 7 | **feedback** | the tuning loop on one surface — signal → adjudication → proposal → change → revert |
+| 8 | **scan** | the whole-repo scan's report — findings by unit, triage, the stage 2 plan for approval, the run and its stop |
 
-`digest` and `tickets` are the two the owner reaches for least; if seven reads
+`digest` and `tickets` are the two the owner reaches for least; if eight reads
 too wide in practice, the recorded collapse is to fold them back into `memory`
 as named sections.
 
@@ -47,7 +48,7 @@ Three rules hold everywhere:
 
 | key | does |
 | --- | --- |
-| `1` … `7` | open that surface |
+| `1` … `8` | open that surface |
 | `j` / `k`, `↓` / `↑` | move the selection (or scroll a document) |
 | `r` | refresh |
 | `s` | re-check the VM ssh connection — the one ssh key-passphrase prompt |
@@ -132,6 +133,35 @@ deploy time or the log could not be read.
 | `x` | reject it, with a reason |
 | `R` | arm a revert of the focused change; `y` confirms — a local commit only, never pushed |
 
+### scan
+
+The run on top (sha, mode, state, cases done, spend against the hard stop,
+finding and doubted counts), the units on the left (the count under the
+filter, `▲` the hotspot, the run's mark per unit), and on the right the
+selected unit's findings — most severe first, style findings grouped per
+rule with a count (`?` = may not be valid) — over the selected one's detail.
+The tab reads the state home; a run the record calls running while the
+companion is down shows as interrupted, never as "no scan".
+
+| key | does |
+| --- | --- |
+| `[` / `]` | the previous / next unit (`all` first) |
+| `p` | promote the finding (or the style group): the companion files one ticket each, in the effort that fits |
+| `d` | dismiss it — the reason is typed in the message box and becomes an unpinned reviewer-memory note |
+| `f` | filter: `state=new\|promoted\|dismissed\|fixed` `lens=<name>` `sev=P0…P3\|nit` `doubted` / `valid` |
+| `F` | clear the filter the FINDINGS title is advertising |
+| `P` | swap the right pane to the stage 2 plan: rows, their cost, the kept total that is the hard stop, the budget |
+| `⏎` | in the plan: approve — the companion starts exactly the kept rows, stopped hard at their total |
+| ` ` | in the plan (space): toggle the selected row off / on |
+| `Esc` | in the plan: back to the findings |
+| `x` | stop the running scan — in-flight cases abort, the ledger resumes the rest |
+| `D` | ask the companion for a delta re-scan — it shows what changed and the price, and starts it on your word |
+
+`p`, `d` and `D` go to the companion as your words (its inject channel, like
+`I`); `⏎` and `x` are request files its scan belt answers within seconds, each
+naming what you were shown — the proposal's key, the run's id — so nothing
+starts or stops that was not on screen.
+
 ## The mouse
 
 Click a PR row to select it, again to focus its pi pane; click a `[button]`
@@ -158,6 +188,6 @@ container's state is known; the board offers no `u` until a PR is selected).
 ## What the companion can drive
 
 `prompts/companion.md` documents the action channel: `switch_tab` takes the
-seven names above, `digest_day` pages the digest tab to a day, `memory_view`
+eight names above, `digest_day` pages the digest tab to a day, `memory_view`
 filters the memory timeline by tag and jumps to a day, `memory_filter` sets or
 clears the tag filter. The vocabulary there is this vocabulary.

@@ -1,6 +1,6 @@
 // The shared command bar at the foot of EVERY tab. Pure layout, no I/O.
 //
-// Row A is identical everywhere: the seven nav slots, then the globals
+// Row A is identical everywhere: the eight nav slots, then the globals
 // right-justified so their x-positions depend only on the terminal width,
 // never on the tab. The rows after it carry the current tab's LIVE commands.
 //
@@ -110,6 +110,19 @@ export const TAB_VOCABULARY: Readonly<Record<Tab, readonly BarButton[]>> = {
     { key: "x", label: "x reject" },
     { key: "R", label: "R revert" },
   ],
+  scan: [
+    { key: "p", label: "p promote" },
+    { key: "d", label: "d dismiss" },
+    { key: "f", label: "f filter" },
+    { key: "P", label: "P plan" },
+    { key: "x", label: "x stop" },
+    { key: "D", label: "D delta" },
+    { key: "[", label: "[ prev unit" },
+    { key: "]", label: "] next unit" },
+    { key: "\r", label: "⏎ approve" },
+    { key: " ", label: "space toggle" },
+    { key: "\x1b", label: "Esc back" },
+  ],
 };
 
 /**
@@ -117,7 +130,8 @@ export const TAB_VOCABULARY: Readonly<Record<Tab, readonly BarButton[]>> = {
  * bar — the `inline` half of a `LiveKeys`, as a universe. `boardKeys` offers
  * `a` (⏎'s twin) only with a PR selected and `F` only with a filter to clear;
  * memory paints `e p x` next to the selected entry; the feedback tab's `y`
- * confirms an armed revert; the metrics `# <pr>` box reads every digit.
+ * confirms an armed revert; the metrics `# <pr>` box reads every digit; the
+ * scan tab's `F` clears the filter its FINDINGS title is advertising.
  */
 export const TAB_INLINE_KEYS: Readonly<Record<Tab, readonly string[]>> = {
   board: ["a", "F"],
@@ -127,6 +141,7 @@ export const TAB_INLINE_KEYS: Readonly<Record<Tab, readonly string[]>> = {
   deploy: [],
   metrics: [..."0123456789"],
   feedback: ["y", "Y"],
+  scan: ["F"],
 };
 
 /**

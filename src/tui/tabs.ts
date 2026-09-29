@@ -1,4 +1,4 @@
-// The TUI's seven surfaces (built), in the order their digit
+// The TUI's eight surfaces (built; `scan`), in the order their digit
 // keys reach them. One vocabulary, applied everywhere: the identifier here IS
 // the label on the nav bar, the word in the help overlay, the tab name the
 // companion's `switch_tab` verb accepts, and the heading in docs/tui.md. The
@@ -12,6 +12,8 @@
 //   deploy    what the VM runs versus this checkout, and the button that ships
 //   metrics   whether the reviewer is working well over time
 //   feedback  the loop: signal → adjudication → proposal → change → revert
+//   scan      the whole-repo scan's report — findings by unit, triage, the
+//             stage 2 plan, the run and its stop
 //
 // This module imports nothing, so keys.ts, cmdbar.ts and actions.ts can all
 // read the order without a cycle through app.ts.
@@ -24,6 +26,7 @@ export const TABS = [
   "deploy",
   "metrics",
   "feedback",
+  "scan",
 ] as const;
 
 export type Tab = (typeof TABS)[number];
@@ -32,7 +35,7 @@ export function isTab(value: unknown): value is Tab {
   return typeof value === "string" && (TABS as readonly string[]).includes(value);
 }
 
-/** The digit key that opens each tab: `1`…`7` in TABS order. */
+/** The digit key that opens each tab: `1`…`8` in TABS order. */
 export function tabDigit(tab: Tab): string {
   return String(TABS.indexOf(tab) + 1);
 }

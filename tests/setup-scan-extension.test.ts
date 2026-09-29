@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PiToolDefinition } from "@earendil-works/pi-coding-agent";
-import { scanToolDefinitions, watchStage2Requests } from "../extensions/setup-scan.js";
+import { scanToolDefinitions, watchTuiRequests } from "../extensions/setup-scan.js";
 import { SCAN_DEFAULTS } from "../src/config.js";
 import { stateHomeFs } from "../src/setup/adapters.js";
 import { FindingsStore } from "../src/setup/findings.js";
@@ -156,16 +156,19 @@ describe("the stage 2 tools", () => {
     expect(status).toMatch(/3 file × lens read by stage 2/);
   });
 
-  it("the watcher polls for the TUI's click and stops when told", async () => {
+  it("the watcher polls for the TUI's click and stop, and stops when told", async () => {
     vi.useFakeTimers();
     try {
       const consumeStage2Request = vi.fn(async () => null);
-      const stop = watchStage2Requests({ consumeStage2Request } as unknown as ScanRunner, 1000);
+      const consumeStopRequest = vi.fn(() => null);
+      const stop = watchTuiRequests({ consumeStage2Request, consumeStopRequest } as unknown as ScanRunner, 1000);
       await vi.advanceTimersByTimeAsync(3000);
       expect(consumeStage2Request).toHaveBeenCalledTimes(3);
+      expect(consumeStopRequest).toHaveBeenCalledTimes(3);
       stop();
       await vi.advanceTimersByTimeAsync(3000);
       expect(consumeStage2Request).toHaveBeenCalledTimes(3);
+      expect(consumeStopRequest).toHaveBeenCalledTimes(3);
     } finally {
       vi.useRealTimers();
     }

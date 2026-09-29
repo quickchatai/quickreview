@@ -58,8 +58,8 @@ layout: ONE shape, always — the tab on the left, the companion column on the
         anything you would have attached to a VM session for, ask the
         companion.
 
-keys: 1…7 the seven surfaces — board · memory · digest · tickets · deploy ·
-      metrics · feedback (docs/tui.md says what each is for; the bar at the
+keys: 1…8 the eight surfaces — board · memory · digest · tickets · deploy ·
+      metrics · feedback · scan (docs/tui.md says what each is for; the bar at the
       foot of the screen shows what the current frame answers to) ·
       2 memory: j/k select · [ ] older/newer day · e p x n edit/pin/retire/new ·
       3 digest: [ ] older/newer · 4 tickets: c actionable ⇄ all ·
@@ -67,6 +67,8 @@ keys: 1…7 the seven surfaces — board · memory · digest · tickets · deplo
       6 metrics: w/m/a window, # <pr> ⏎ for a PR timeline ·
       7 feedback: t focus · a archived · A/x accept/reject a proposal ·
       R then y reverts a feedback-derived commit (local, never pushed) ·
+      8 scan: [ ] unit · p promote · d dismiss · f/F filter · P plan (space
+      toggles a row, ⏎ approves, Esc back) · x stop · D delta re-scan ·
       companion column on every tab: type any unclaimed key (or /) to talk to
       it — every byte reaches pi · wheel over the column, or PgUp/PgDn while
       focused, walks its scrollback ·
@@ -618,6 +620,30 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   // The metrics OPERATIONS card answers "deploy needed?" through the same
   // read-only local-git seam the deploy tab uses.
   const metricsView = installMetricsHooks(app, undefined, localHeadProbe(localRunner));
+  // `[8] scan` — the scan report, read from the state home the
+  // companion writes. Its two request files (the stage-2 start, the stop)
+  // are answered by the companion's scan belt; promote, dismiss and delta go
+  // to the companion as the operator's asks, through the setup entry's inject
+  // channel.
+  const { installScanTab, ScanReportStore } = await import("./scantab.js");
+  const { writeCompanionAsk } = await import("./setupentry.js");
+  installScanTab(app, {
+    store: new ScanReportStore(stateHome()),
+    ask: (text, verb) => {
+      try {
+        writeCompanionAsk({ injectDir: companionInjectDir(full.companion), suffix: `scan-${verb}`, text });
+      } catch (err) {
+        return { ok: false, line: `✖ scan ${verb}: the ask could not be written — ${String(err)}` };
+      }
+      return {
+        ok: true,
+        line: companionUp
+          ? `scan ${verb}: asked the companion — the report updates when it has acted`
+          : `scan ${verb}: asked — the companion picks it up when it starts`,
+      };
+    },
+    companionUp: () => (!companionOn || companionError !== undefined ? false : companionUp ? true : undefined),
+  });
 
   // finished-round evidence, copied down from the VM into a local
   // store the companion reads read-only. Its dir is CREATED in the bring-up,

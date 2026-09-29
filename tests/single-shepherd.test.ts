@@ -186,10 +186,12 @@ describe("daemon topology", () => {
     // configcommit.js (the TUI and `qcr setup commit` carry out the profile
     // commits setup asked for) and profile.js (`qcr setup validate`, the
     // daemon's own loaders over a profile), and's retunelog.js (the
-    // deploy tab says which post-scan re-tune is not deployed). Each leaf may reach the rest of
+    // deploy tab says which post-scan re-tune is not deployed), and
+    // scanreport.js (the [8] scan tab reads the run record and the findings
+    // store, and asks for a stop). Each leaf may reach the rest of
     // src/setup/ by TYPE only (erased at build), so no exception can ever
     // carry the case runner along with it.
-    const setupLeaves = ["history.js", "stage2request.js", "pins.js", "configcommit.js", "profile.js", "retunelog.js"];
+    const setupLeaves = ["history.js", "stage2request.js", "pins.js", "configcommit.js", "profile.js", "retunelog.js", "scanreport.js"];
     const reachesSetup = srcFiles(src)
       .filter((f) => !f.includes("/src/setup/"))
       .filter((f) =>

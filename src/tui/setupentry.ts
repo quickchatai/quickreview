@@ -32,13 +32,23 @@ export function setupRequestName(now: Date): string {
  * the request already waiting there: a second `I` (or `qcr setup`) before
  * the companion drained the first asks nothing new, so it queues nothing. */
 export function requestSetup(opts: { injectDir: string; now?: Date }): string {
-  const name = setupRequestName(opts.now ?? new Date());
   mkdirSync(opts.injectDir, { recursive: true });
   const pending = readdirSync(opts.injectDir).filter((f) => !f.startsWith(".") && f.endsWith("-setup.md")).sort();
   if (pending.length > 0) return join(opts.injectDir, pending[0]!);
+  return writeCompanionAsk({ injectDir: opts.injectDir, suffix: "setup", text: SETUP_REQUEST_TEXT, now: opts.now });
+}
+
+/** One operator ask into the companion's host inject dir, named by an ISO
+ * stamp and `suffix` (the bridge drains oldest name first), written
+ * tmp+rename. The same channel the setup request rides; the `[8] scan` tab's
+ * promote, dismiss and delta asks use it too. Returns the file. */
+export function writeCompanionAsk(opts: { injectDir: string; suffix: string; text: string; now?: Date }): string {
+  const stamp = (opts.now ?? new Date()).toISOString().replace(/[:.]/g, "-");
+  const name = `${stamp}-${opts.suffix}.md`;
+  mkdirSync(opts.injectDir, { recursive: true });
   const target = join(opts.injectDir, name);
   const tmp = join(opts.injectDir, `.${name}.tmp`);
-  writeFileSync(tmp, `${SETUP_REQUEST_TEXT}\n`);
+  writeFileSync(tmp, `${opts.text}\n`);
   renameSync(tmp, target);
   return target;
 }

@@ -331,13 +331,19 @@ describe("App-level bar clicks", () => {
       input,
     );
     app.tab = "metrics";
-    const x1 = findKey(app, "1", 28, 120, 30);
+    // The nav is the bar's FIRST row, wherever the bar's height put it (at
+    // 120 columns the eight nav slots and the globals no longer share a row).
+    const navY = (): number => 30 - barHeight(app.tab, 120, app.liveKeys().bar);
+    const x1 = findKey(app, "1", navY(), 120, 30);
     const running = app.run();
-    (input as unknown as EventEmitter).emit("data", Buffer.from(`\x1b[<0;${x1};28M`));
+    (input as unknown as EventEmitter).emit("data", Buffer.from(`\x1b[<0;${x1};${navY()}M`));
     expect(app.tab).toBe("board");
-    const x7 = findKey(app, "7", 28, 120, 30);
-    (input as unknown as EventEmitter).emit("data", Buffer.from(`\x1b[<0;${x7};28M`));
+    const x7 = findKey(app, "7", navY(), 120, 30);
+    (input as unknown as EventEmitter).emit("data", Buffer.from(`\x1b[<0;${x7};${navY()}M`));
     expect(app.tab).toBe("feedback");
+    const x8 = findKey(app, "8", navY(), 120, 30);
+    (input as unknown as EventEmitter).emit("data", Buffer.from(`\x1b[<0;${x8};${navY()}M`));
+    expect(app.tab).toBe("scan");
     app.quit();
     await running;
   });
