@@ -87,6 +87,9 @@ export interface DigestState {
   /** Offset back from the newest file: 0 = latest, 1 = one older, … */
   back: number;
   content?: string;
+  /** Why `content` is undefined after a read of the current file — the cat
+   * failed, which is not "still loading". */
+  contentError?: string;
   scroll: number;
 }
 
@@ -142,6 +145,8 @@ export function renderDigestTab(
         what: "the EOD sweep writes digest/<date>.md at 18:00 Europe/Warsaw",
       }),
     );
+  else if (st.contentError !== undefined)
+    body.push(emptyLine({ kind: "unreadable", why: `${st.contentError} · r retries` }));
   else if (st.content === undefined) body.push(`${MUTED}loading ${file}…${RESET}`);
   else for (const line of st.content.split("\n")) body.push(styleDigestLine(line));
 

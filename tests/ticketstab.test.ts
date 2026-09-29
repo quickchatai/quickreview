@@ -155,6 +155,24 @@ describe("the list and the pane", () => {
     expect(rig.learning.tickets.sel).toBe(1);
   });
 
+  it("each ticket's click zone sits on the row that ticket is drawn on", () => {
+    const rig = readRig();
+    const frame = rig.app.hooks.tabs.tickets!.screen(rig.app, 120, 30);
+    const lines = frame.lines.map(stripAnsi);
+    const shown = visibleTickets(rig.learning.store.tickets, rig.learning.tickets.showClosed);
+    expect(shown.length).toBeGreaterThan(1);
+    for (const [i, t] of shown.entries()) {
+      const y = lines.findIndex((l) => l.includes(`${t.id} [`));
+      expect(y, `${t.id} not drawn`).toBeGreaterThan(0);
+      // Zones are terminal coordinates: frame row r ↔ terminal y r+1.
+      const zone = frame.zones.find(
+        (z) => z.y1 === y + 1 && (z.action as { t: string }).t === "ticket",
+      );
+      expect(zone, `no click zone on ${t.id}'s row`).toBeDefined();
+      expect((zone!.action as { i: number }).i).toBe(i);
+    }
+  });
+
   it("renders every line at exactly cols cells in every state", () => {
     for (const rig of [
       readRig(),

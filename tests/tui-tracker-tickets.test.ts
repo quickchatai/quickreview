@@ -75,4 +75,16 @@ describe("read-only feedback ticket projection", () => {
     expect(tickets.map((t) => t.id)).toEqual(["FT-0300", "FT-0299"]);
     expect(tickets[0]!.path).toContain("FT-0300-open.md");
   });
+
+  it("a missing tracker root or effort is UNREADABLE (throws), not a confident zero", () => {
+    const root = mkdtempSync(join(tmpdir(), "qcr-feedback-tickets-"));
+    roots.push(root);
+    expect(() => readEffortTickets(join(root, "absent"), "review-feedback-loop")).toThrow(
+      /tracker/,
+    );
+    expect(() => readEffortTickets(root, "no-such-effort")).toThrow(/no-such-effort/);
+    // An EXISTING effort that has not filed a ticket yet is a real empty.
+    mkdirSync(join(root, "efforts/review-feedback-loop"), { recursive: true });
+    expect(readEffortTickets(root, "review-feedback-loop")).toEqual([]);
+  });
 });

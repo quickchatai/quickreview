@@ -636,6 +636,15 @@ export function renderFeedbackTab(
         text: emptyLine({ kind: "unread", how: "the gh query was skipped or failed · r retries" }),
       },
     ]);
+  else if (store.improvementsFailed.length > 0)
+    row([
+      {
+        text: emptyLine({
+          kind: "unreadable",
+          why: `the gh ${store.improvementsFailed.join(" + ")} list failed · r retries`,
+        }),
+      },
+    ]);
   else if (store.improvements.length === 0)
     row([{ text: emptyLine({ kind: "none", what: "the overseer files them" }) }]);
   for (const it of (store.improvements ?? []).slice(0, 4)) {

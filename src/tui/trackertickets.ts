@@ -57,7 +57,15 @@ export function orderTrackerTickets(tickets: TrackerTicket[]): TrackerTicket[] {
 /**: the effort is CONFIG (`[sink] tickets_effort`, falling back to
  * the filer's `effort`), never a literal — index.ts wires both arguments. */
 export function readEffortTickets(root: string, effort: string): TrackerTicket[] {
-  const dir = join(root, "efforts", effort, "tickets");
+  // A tracker root or effort that is not there is a read that FAILED (a
+  // missing mount, a checkout this machine does not have, a typo in the
+  // effort) — it throws, and the store shows it unreadable. Only an
+  // EXISTING effort that has no tickets/ yet is a real, empty tracker.
+  if (!existsSync(root)) throw new Error(`tracker root ${root} does not exist`);
+  const effortDir = join(root, "efforts", effort);
+  if (!existsSync(effortDir))
+    throw new Error(`tracker effort '${effort}' does not exist under ${root}`);
+  const dir = join(effortDir, "tickets");
   if (!existsSync(dir)) return [];
   const tickets: TrackerTicket[] = [];
   for (const name of readdirSync(dir)) {

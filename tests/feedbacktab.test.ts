@@ -14,6 +14,7 @@ import {
   feedbackPresentation,
 } from "../src/tui/feedbacktab.js";
 import { displayWidth, stripAnsi } from "../src/tui/paint.js";
+import { IMPROVEMENTS_FAILED } from "../src/tui/proposals.js";
 import {
   FakeChanges,
   FakeMemory,
@@ -188,6 +189,35 @@ describe("the surface", () => {
     expect(screen).toContain("could not read — no tracker configured");
     expect(screen).toContain("BOT PRs / ISSUES (—)");
     expect(screen).toContain("the gh query was skipped or failed");
+  });
+
+  it("a failed gh read is never a confident 'none' — both lists, or just the one that failed", async () => {
+    const ghOut = { stdout: "" };
+    const rig = learningRig({ fetchProposals: undefined });
+    (rig.app as unknown as { ssh: unknown }).ssh = () =>
+      Promise.resolve({ ok: true, stdout: ghOut.stdout, stderr: "", code: 0 });
+    rig.app.view.repo = "o/r";
+    ghOut.stdout = `${IMPROVEMENTS_FAILED}\n---\n${IMPROVEMENTS_FAILED}\n`;
+    rig.learning.store.reloadProposals();
+    await settle();
+    expect(rig.learning.store.improvements).toBeUndefined();
+    let screen = screenOf(rig);
+    expect(screen).toContain("BOT PRs / ISSUES (—)");
+    expect(screen).not.toContain("none yet — the overseer files them");
+
+    ghOut.stdout = `[]\n---\n${IMPROVEMENTS_FAILED}\n`;
+    rig.learning.store.reloadProposals();
+    await settle();
+    screen = screenOf(rig);
+    expect(screen).not.toContain("none yet — the overseer files them");
+    expect(screen).toContain("could not read — the gh issue list failed");
+
+    ghOut.stdout = "[]\n---\n[]\n";
+    rig.learning.store.reloadProposals();
+    await settle();
+    screen = screenOf(rig);
+    expect(screen).toContain("BOT PRs / ISSUES (0)");
+    expect(screen).toContain("none yet — the overseer files them");
   });
 
   it("an unreachable store says so in the inbox and never renders a count", async () => {

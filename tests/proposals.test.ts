@@ -13,6 +13,7 @@ import {
   configPatchViolation,
   fenceRanges,
   fenceSourceFrom,
+  IMPROVEMENTS_FAILED,
   improvementsArgv,
   listRubricProposals,
   parseImprovements,
@@ -100,14 +101,32 @@ describe("gh improvements read (still remote — the ONLY ssh this module produc
 
   it("parses the two gh JSON lists around the --- separator", () => {
     const out = `[{"number":12,"title":"docs: fix typo","state":"MERGED"}]\n---\n[{"number":9,"title":"flaky test","state":"OPEN"}]`;
-    expect(parseImprovements(out)).toEqual([
-      { kind: "pr", number: 12, title: "docs: fix typo", state: "merged" },
-      { kind: "issue", number: 9, title: "flaky test", state: "open" },
-    ]);
+    expect(parseImprovements(out)).toEqual({
+      items: [
+        { kind: "pr", number: 12, title: "docs: fix typo", state: "merged" },
+        { kind: "issue", number: 9, title: "flaky test", state: "open" },
+      ],
+      failed: [],
+    });
   });
 
-  it("degrades to empty lists on garbage", () => {
-    expect(parseImprovements("gh: auth broken")).toEqual([]);
+  it("a failed gh call is a FAILED list, never an empty one — per list", () => {
+    // What the in-container script prints when gh (or mint-token) fails: the
+    // per-list fallback keeps the other list, but marks this one failed.
+    const s = improvementsArgv(cfg, "exampleorg/example-app").join(" ");
+    expect(s).not.toContain("echo '[]'");
+    expect(s).toContain(`echo '${IMPROVEMENTS_FAILED}'`);
+    expect(
+      parseImprovements(`${IMPROVEMENTS_FAILED}\n---\n[{"number":9,"title":"t","state":"OPEN"}]`),
+    ).toEqual({
+      items: [{ kind: "issue", number: 9, title: "t", state: "open" }],
+      failed: ["pr"],
+    });
+    expect(parseImprovements("[]\n---\n[]")).toEqual({ items: [], failed: [] });
+  });
+
+  it("garbage is a failed read of both lists, not two empty ones", () => {
+    expect(parseImprovements("gh: auth broken")).toEqual({ items: [], failed: ["pr", "issue"] });
   });
 
   it("refuses a malformed repo string in the gh read", () => {

@@ -114,39 +114,53 @@ function dockerSh(cfg: TuiConfig, script: string): string[] {
   ];
 }
 
-/** Bot-filed improvement PRs + issues, one in-container gh read. gh's exit
- * code is ignored per list (a missing label must not blank the other list). */
+/** What the in-container script prints in place of a list whose gh call
+ * failed — deliberately not JSON, so it can never parse as an empty list. */
+export const IMPROVEMENTS_FAILED = "QCR_GH_READ_FAILED";
+
+/** Bot-filed improvement PRs + issues, one in-container gh read. A failing gh
+ * call is caught PER LIST (a missing label must not blank the other list),
+ * but it prints the failure sentinel, never `[]`: "could not ask" is not
+ * "there are none". */
 export function improvementsArgv(cfg: TuiConfig, repo: string): string[] {
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error(`bad repo '${repo}'`);
   const gh = `GH_TOKEN="$(bash scripts/mint-token.sh)"`;
   return dockerSh(
     cfg,
     `cd '${cfg.remote_sandbox_root}' && ` +
-      `{ ${gh} gh pr list -R '${repo}' --state all --limit 30 --search 'head:bot/improve' --json number,title,state 2>/dev/null || echo '[]'; } && echo '---' && ` +
-      `{ ${gh} gh issue list -R '${repo}' --state all --limit 30 --label bot-filed --json number,title,state 2>/dev/null || echo '[]'; }`,
+      `{ ${gh} gh pr list -R '${repo}' --state all --limit 30 --search 'head:bot/improve' --json number,title,state 2>/dev/null || echo '${IMPROVEMENTS_FAILED}'; } && echo '---' && ` +
+      `{ ${gh} gh issue list -R '${repo}' --state all --limit 30 --label bot-filed --json number,title,state 2>/dev/null || echo '${IMPROVEMENTS_FAILED}'; }`,
   );
 }
 
-export function parseImprovements(stdout: string): ImprovementItem[] {
+export interface ImprovementsRead {
+  items: ImprovementItem[];
+  /** The lists that could not be read — their absence from `items` is NOT
+   * an empty list. */
+  failed: Array<"pr" | "issue">;
+}
+
+export function parseImprovements(stdout: string): ImprovementsRead {
   const [prPart, issuePart] = stdout.split("\n---\n");
+  const failed: ImprovementsRead["failed"] = [];
   const parse = (raw: string | undefined, kind: "pr" | "issue"): ImprovementItem[] => {
     try {
-      const rows = JSON.parse((raw ?? "[]").trim()) as Array<{
-        number: number;
-        title: string;
-        state: string;
-      }>;
-      return rows.map((r) => ({
+      const rows: unknown = JSON.parse((raw ?? "").trim());
+      if (!Array.isArray(rows)) throw new Error("not a list");
+      return (rows as Array<{ number: number; title: string; state: string }>).map((r) => ({
         kind,
         number: r.number,
         title: r.title,
         state: r.state.toLowerCase(),
       }));
     } catch {
+      // The failure sentinel, a missing half, or garbage: all unread.
+      failed.push(kind);
       return [];
     }
   };
-  return [...parse(prPart, "pr"), ...parse(issuePart, "issue")];
+  const items = [...parse(prPart, "pr"), ...parse(issuePart, "issue")];
+  return { items, failed };
 }
 
 // ---- accept = merge + auto-ratify (local, canonical repo) -----------------

@@ -74,9 +74,7 @@ export interface LearningDeps {
   memory?: MemoryStore;
   digestFetcher?: DigestFetcher;
   /** Fetch rubric slugs + heads and gh improvements; injectable for tests. */
-  fetchProposals?: (
-    app: App,
-  ) => Promise<{ proposals: RubricProposal[]; improvements: ImprovementItem[] | undefined }>;
+  fetchProposals?: (app: App) => Promise<ProposalsFetch>;
   accept?: (app: App, slug: string) => Promise<{ ok: boolean; message: string }>;
   reject?: (app: App, slug: string, reason: string) => Promise<{ ok: boolean; message: string }>;
   /**: the configured issue sink the defect auto-filer writes through
@@ -112,6 +110,15 @@ export interface LearningDeps {
   now?: () => Date;
 }
 
+/** One proposals load: the local rubric dirs and the remote gh read. */
+export interface ProposalsFetch {
+  proposals: RubricProposal[];
+  /** `undefined` = the gh read was skipped or failed outright. */
+  improvements: ImprovementItem[] | undefined;
+  /** Lists whose gh call failed while the other one answered. */
+  improvementsFailed?: Array<"pr" | "issue">;
+}
+
 const failingGit = (): Promise<string> => Promise.reject(new Error("local git runner not wired"));
 
 export class LearningStore {
@@ -143,6 +150,9 @@ export class LearningStore {
   /** `undefined` = the gh read was skipped or failed, NOT "no bot PRs"
    *: the fetch needs `view.repo`, which is not always set. */
   improvements: ImprovementItem[] | undefined;
+  /** The gh lists that failed while `improvements` holds the other one: a
+   * partial read, and the pane says which half it could not see. */
+  improvementsFailed: Array<"pr" | "issue"> = [];
   propLoaded = false;
   /** Whether the last proposals load ran with `view.repo` known. `false` means
    * the gh half was SKIPPED and is worth exactly one retry once it arrives. */
@@ -304,19 +314,18 @@ export class LearningStore {
     // instant first frame makes opening the tab before that snapshot the
     // normal case, which used to park the pane on "not read" all session.
     const hadRepo = (this.app.view.repo ?? "") !== "";
-    const { proposals, improvements } = await (
+    const { proposals, improvements, improvementsFailed } = await (
       this.deps.fetchProposals ?? this.defaultFetchProposals
     )(this.app);
     this.proposals = proposals;
     this.improvements = improvements;
+    this.improvementsFailed = improvements === undefined ? [] : (improvementsFailed ?? []);
     this.propLoaded = true;
     this.improvementsTriedWithRepo = hadRepo;
     this.loaded("proposals");
   }
 
-  private readonly defaultFetchProposals = async (
-    app: App,
-  ): Promise<{ proposals: RubricProposal[]; improvements: ImprovementItem[] | undefined }> => {
+  private readonly defaultFetchProposals = async (app: App): Promise<ProposalsFetch> => {
     // Proposals are LOCAL (producer change: the companion's `land`
     // skill writes state/rubric/ in this repo — no ssh, no VM path).
     const root = this.deps.repoRoot ?? process.cwd();
@@ -331,13 +340,22 @@ export class LearningStore {
     // "there are none" are different answers.
     const repo = app.view.repo ?? "";
     let improvements: ImprovementItem[] | undefined;
+    let improvementsFailed: Array<"pr" | "issue"> = [];
     if (repo) {
       const res = await app.ssh(app.cfg.ssh_host, improvementsArgv(app.cfg, repo), {
         timeoutMs: 20_000,
       });
-      if (res.ok) improvements = parseImprovements(res.stdout);
+      if (res.ok) {
+        // gh fails PER LIST inside a successful shell: both failing is an
+        // unread pane, one failing is a partial read that says so.
+        const read = parseImprovements(res.stdout);
+        if (read.failed.length < 2) {
+          improvements = read.items;
+          improvementsFailed = read.failed;
+        }
+      }
     }
-    return { proposals, improvements };
+    return { proposals, improvements, improvementsFailed };
   };
 
   // ---- digest --------------------------------------------------------------
@@ -371,7 +389,14 @@ export class LearningStore {
 
   private async loadDigestContent(): Promise<void> {
     const file = currentDigestFile(this.digest);
-    this.digest.content = file ? await this.digestFetcher.read(file) : undefined;
+    this.digest.contentError = undefined;
+    const content = file ? await this.digestFetcher.read(file) : undefined;
+    // Paging does not cancel a read in flight: only the answer for the day
+    // still on screen may land, or a slow read lands under another heading.
+    if (currentDigestFile(this.digest) !== file) return;
+    this.digest.content = content;
+    if (file && content === undefined)
+      this.digest.contentError = `${file} could not be read over ssh`;
   }
 
   /** Page the digest by `dir` days (+1 older, −1 newer). False at a boundary. */
@@ -382,6 +407,7 @@ export class LearningStore {
     this.digest.back = next;
     this.digest.scroll = 0;
     this.digest.content = undefined;
+    this.digest.contentError = undefined;
     void this.loadDigestContent().then(() => this.app.repaint());
     return true;
   }

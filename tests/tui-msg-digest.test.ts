@@ -325,6 +325,55 @@ describe("digest tab", () => {
     expect(rig.learning.store.digest.scroll).toBe(1);
   });
 
+  it("a failed CONTENT read is unreadable, never 'loading' forever — and r asks again", async () => {
+    let dead = true;
+    const rig = learningRig({
+      digestFetcher: {
+        list: async () => ["2026-08-20.md"],
+        read: async (f) => (dead ? undefined : `# digest ${f}`),
+      },
+    });
+    rig.app.tab = "digest";
+    const tab = rig.app.hooks.tabs.digest!;
+    tab.screen(rig.app, 100, 24);
+    await settle();
+    let screen = stripAnsi(tab.screen(rig.app, 100, 24).render());
+    expect(screen).not.toContain("loading 2026-08-20.md");
+    expect(screen).toContain("could not read — 2026-08-20.md could not be read over ssh");
+    dead = false;
+    tab.key(rig.app, { kind: "refresh" });
+    await settle();
+    screen = stripAnsi(tab.screen(rig.app, 100, 24).render());
+    expect(screen).toContain("digest 2026-08-20");
+    expect(screen).not.toContain("could not read");
+  });
+
+  it("a slow read for a day paged away from never lands under another day's heading", async () => {
+    const pending = new Map<string, (text: string) => void>();
+    const rig = learningRig({
+      digestFetcher: {
+        list: async () => ["2026-08-18.md", "2026-08-19.md", "2026-08-20.md"],
+        read: (f) => new Promise((res) => pending.set(f, res)),
+      },
+    });
+    rig.app.tab = "digest";
+    const tab = rig.app.hooks.tabs.digest!;
+    tab.screen(rig.app, 100, 24);
+    await settle();
+    pending.get("2026-08-20.md")!("# body of 2026-08-20");
+    await settle();
+    tab.key(rig.app, { kind: "older" }); // → 08-19, read A in flight
+    tab.key(rig.app, { kind: "older" }); // → 08-18, read B in flight
+    pending.get("2026-08-18.md")!("# body of 2026-08-18");
+    await settle();
+    pending.get("2026-08-19.md")!("# body of 2026-08-19"); // A lands LAST
+    await settle();
+    const screen = stripAnsi(tab.screen(rig.app, 100, 24).render());
+    expect(screen).toContain("digest 2026-08-18");
+    expect(screen).toContain("body of 2026-08-18");
+    expect(screen).not.toContain("body of 2026-08-19");
+  });
+
   it("a failed listing on the installed tab says so and r asks again", async () => {
     let dead = true;
     const rig = learningRig({

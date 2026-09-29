@@ -140,7 +140,10 @@ export function renderTicketsTab(
         left.push(emptyLine({ kind: "filtered", what: `c shows all ${read.tickets.length}` }));
       break;
   }
-  leftActions.push(undefined);
+  // One action per drawn line: the switch draws a placeholder in every state
+  // but "read with visible tickets" — an unconditional push there shifted
+  // every ticket's click target one row down.
+  while (leftActions.length < left.length) leftActions.push(undefined);
   const visible = Math.max(1, bodyRows - left.length);
   const start = windowStart(sel, tickets.length, visible);
   tickets.slice(start, start + visible).forEach((ticket, offset) => {
