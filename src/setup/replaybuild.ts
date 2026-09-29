@@ -174,12 +174,19 @@ function oldSource(
       ],
     };
   }
-  return restoreBaseline(deps, b);
+  // Every later write to the same profile is unwound too (newest first, `b`
+  // last): a file only a LATER write changed — a style guide redrafted after
+  // `b` — must read as it did before `b`, not as it does now.
+  const at = read.baselines.indexOf(b);
+  const unwind = read.baselines.slice(at).filter((x) => x.profile === b.profile).reverse();
+  return restoreBaseline(deps, b, unwind);
 }
 
 /** A copy of the config home's `profiles/` with baseline `b` put back, in
- * the state home — the profiles as they read before that write. */
-function restoreBaseline(deps: SidesDeps, b: ProfileBaseline): { ok: true; source: SideSource } | Refusal {
+ * the state home — the profiles as they read before that write. `unwind`
+ * is every recorded write to `b.profile` from the newest down to `b`
+ * itself, applied in that order. */
+function restoreBaseline(deps: SidesDeps, b: ProfileBaseline, unwind: readonly ProfileBaseline[] = [b]): { ok: true; source: SideSource } | Refusal {
   const out = join(deps.stateRoot, REPLAY_HOME_DIR);
   try {
     assertPathSegment("profile", b.profile);
@@ -188,9 +195,12 @@ function restoreBaseline(deps: SidesDeps, b: ProfileBaseline): { ok: true; sourc
     const real = join(configHome(deps.env), PROFILES_DIR);
     if (existsSync(real)) cpSync(real, join(out, PROFILES_DIR), { recursive: true });
     const dir = join(out, PROFILES_DIR, b.profile);
-    if (!b.existed) rmSync(dir, { recursive: true, force: true });
-    else {
-      for (const [rel, text] of Object.entries(b.files)) {
+    for (const w of unwind) {
+      if (!w.existed) {
+        rmSync(dir, { recursive: true, force: true });
+        continue;
+      }
+      for (const [rel, text] of Object.entries(w.files)) {
         const full = join(dir, assertPathSegment("profile file", rel));
         if (text === null) rmSync(full, { force: true });
         else {

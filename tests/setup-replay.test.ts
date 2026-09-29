@@ -14,7 +14,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { renderReplayPreview, renderReplayStatus, replayToolDefinitions } from "../extensions/setup-replay.js";
+import { renderComparison, renderReplayPreview, renderReplayStatus, replayToolDefinitions } from "../extensions/setup-replay.js";
+import { renderApply } from "../extensions/setup.js";
 import { SCAN_LEAF_TOOLS, VALIDATE_PASS } from "../src/include.js";
 import { configHome, type InstallEnv } from "../src/install.js";
 import { notYetTrackerSink, stateHomeFs } from "../src/setup/adapters.js";
@@ -31,7 +32,7 @@ import {
   type ReplayPr,
   type ReplayTree,
 } from "../src/setup/replay.js";
-import { REPLAY_AGENTS_DIR, replaySides } from "../src/setup/replaybuild.js";
+import { REPLAY_AGENTS_DIR, REPLAY_HOME_DIR, replaySides } from "../src/setup/replaybuild.js";
 import { compareRun, ReplayRunner, validated, type ReplayPreview, type ReplayRun } from "../src/setup/replayrun.js";
 import { gitReplaySource, parsePull, REPLAY_TREES_DIR } from "../src/setup/replaysource.js";
 import type { ApplyResult } from "../src/setup/tuning.js";
@@ -229,6 +230,9 @@ describe("every profile write records the profile it replaces", () => {
     const r = tune({ security: "critical" });
     expect(r.written).toBe(true);
     expect(r.baseline).toMatchObject({ error: expect.stringContaining("not recorded") });
+    // …and the companion is TOLD, not left to find out at the replay's preview.
+    expect(renderApply(r)).toContain("pass old explicitly");
+    expect(renderApply(tune({ security: "critical", tests: "ignore" }))).not.toContain("kept for a replay");
     expect(readFileSync(join(stateRoot(), PROFILE_BASELINES_FILE), "utf8")).toBe("{not json");
   });
 });
@@ -298,6 +302,27 @@ describe("the two sides resolve the way the daemon resolves a profile", () => {
     const missing = sides("profile:nope");
     expect(!missing.ok && missing.errors.join("\n")).toContain("would not load");
     expect(sides("profile:../x").ok).toBe(false);
+  });
+
+  it("an earlier write by id unwinds every LATER write too — a file only a later write changed reads as before", () => {
+    // Review fix: restoring only the named write's files left a style guide
+    // a LATER write redrafted at its current text on the "old" side.
+    now = new Date(now.getTime() + 60_000);
+    const w = (over: Record<string, Priority>, guide?: string): ApplyResult => {
+      now = new Date(now.getTime() + 60_000);
+      const r = engine().profileApply({ profile: "acme", priorities: answers(over), goals: "a payments API", write: true, ...(guide ? { style_guide: guide } : {}) });
+      if (!r.ok) throw new Error((r as Refusal).errors.join("; "));
+      return r;
+    };
+    w({ security: "critical" }, "# Guide v1\n");
+    const second = w({ security: "critical", tests: "ignore" });
+    w({ security: "critical", tests: "ignore" }, "# Guide v2\n");
+    expect(readFileSync(join(configHome(env), "profiles/acme/style-guide.md"), "utf8")).toBe("# Guide v2\n");
+    const r = sides(second.commit!.id);
+    if (!r.ok) throw new Error(r.errors.join("; "));
+    const home = join(stateRoot(), REPLAY_HOME_DIR, "profiles/acme");
+    expect(readFileSync(join(home, "style-guide.md"), "utf8")).toBe("# Guide v1\n");
+    expect(readFileSync(join(home, "profile.toml"), "utf8")).not.toContain("[lenses.pass-tests]");
   });
 
   it("with no write recorded and no profile, there is nothing to compare", () => {
@@ -409,6 +434,46 @@ describe("replay: cost first, subagents, side by side", () => {
     expect(run.cases.some((c) => c.status === "skipped")).toBe(true);
   });
 
+  it("a background failure aborts every case still in flight — none goes on spending past the run", async () => {
+    // Review fix: one lane's store failure rejected the drive while the other
+    // lane's case kept running, unaborted, after the run had settled.
+    const real = stateHomeFs(stateRoot());
+    let failing = false;
+    const state = { ...real, location: real.location, write: (rel: string, text: string) => {
+      if (failing) throw new Error("disk full");
+      real.write(rel, text);
+    } } as typeof real;
+    let first = true;
+    const aborted: boolean[] = [];
+    const rr = new ReplayRunner({
+      state,
+      clock: () => now,
+      source: { pr: async (n) => ({ ok: true, pr: pr(n) }), open: () => ({ ok: true, tree: tree() }) },
+      sides: (req) => replaySides({ root: sandbox, env, stateRoot: stateRoot(), state: real, clock: () => now }, req),
+      cases: () => ({
+        run: async (spec: CaseSpec, signal: AbortSignal): Promise<CaseOutcome> => {
+          if (first) {
+            first = false;
+            await new Promise((r) => setTimeout(r, 10));
+            failing = true;
+            return { ok: true, output: block(spec.agent.replace(/--.*$/, ""), []), cost_usd: 0.0001 };
+          }
+          await new Promise<void>((r) => (signal.aborted ? r() : signal.addEventListener("abort", () => r(), { once: true })));
+          aborted.push(signal.aborted);
+          return { ok: false, reason: "stopped", cost_usd: 0 };
+        },
+      }),
+      styleGuide: () => [],
+      concurrency: 2,
+    });
+    const p = previewOf(await rr.preview({ prs: [7], old: "none" }));
+    const s = await rr.start({ key: p.key });
+    expect(s.ok).toBe(true);
+    await rr.idle();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(aborted).toEqual([true]);
+  });
+
   it("a finished replay prices the next preview from what it measured", async () => {
     const rr = runner([], () => 0.5);
     const p = previewOf(await rr.preview({ prs: [7], old: "none" }));
@@ -467,6 +532,13 @@ describe("replay rules", () => {
     doubt: null,
     validated: false,
     ...over,
+  });
+
+  it("a shared cost the runner could not price reads UNKNOWN, never vanishes", () => {
+    const c = { pr: 7, title: "t", findings: { old: [], new: [] }, complete: { old: true, new: true }, both: [], old_only: [], new_only: [] };
+    const sides = { old: { profile: "", basis: "b", baseline: null }, new: { profile: "acme", basis: "b", baseline: null } };
+    expect(renderComparison({ ...c, cost: { old: 1, new: 2, shared: null } }, sides)).toContain("+ unknown shared");
+    expect(renderComparison({ ...c, cost: { old: 1, new: 2, shared: 0 } }, sides)).not.toContain("shared");
   });
 
   it("pairs the same finding across sides within a few lines; never one finding twice", () => {

@@ -105,7 +105,9 @@ function counts(fs: readonly ReplayFinding[]): string {
 /** One PR's two reviews, side by side. */
 export function renderComparison(c: ReplayComparison, sides: Record<SideName, ReplaySideView>): string {
   const col = (s: SideName): string => `${counts(c.findings[s])}${c.complete[s] ? "" : " — INCOMPLETE"}`;
-  const cost = (s: SideName): string => `${usd(c.cost[s])}${c.cost.shared ? ` + ${usd(c.cost.shared)} shared` : ""}`;
+  // A shared cost of null is UNKNOWN (a shared case ran unpriced): shown as
+  // such, never dropped as if nothing were shared.
+  const cost = (s: SideName): string => `${usd(c.cost[s])}${c.cost.shared !== 0 ? ` + ${usd(c.cost.shared)} shared` : ""}`;
   const out = [
     `PR #${c.pr} "${c.title}"`,
     `  ${pad("", 12)} ${pad(`old (${sides.old.profile || "no profile"})`, 34)} new (${sides.new.profile || "no profile"})`,

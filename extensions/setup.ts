@@ -503,6 +503,15 @@ export function renderApply(r: ApplyResult): string {
         "PR reviews change only when the owner deploys — the deploy tab says \"profile changed, not deployed\" until then.",
     );
   }
+  // the replay's default "old" side is this record — say when it
+  // could not be kept, never leave the companion to find out at preview.
+  if (r.baseline !== null) {
+    out.push(
+      "id" in r.baseline
+        ? `The profile as it was before this write is kept for a replay (${r.baseline.id}).`
+        : `✗ ${r.baseline.error} — a replay cannot default to "before this write"; pass old explicitly.`,
+    );
+  }
   return out.join("\n\n");
 }
 

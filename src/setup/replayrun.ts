@@ -566,6 +566,10 @@ export class ReplayRunner {
     const abort = new AbortController();
     const done = this.drive(file, run, planned.jobs, abort)
       .catch((err: unknown) => {
+        // One lane's failure rejects the whole drive while the other lanes'
+        // cases are still running: abort them, or they would go on spending
+        // past `settle` with no run left to count them against the cap.
+        abort.abort();
         run.problems.push(`the replay stopped on an internal error: ${clean(err)}`);
         this.settle(file, run, "partial");
         this.ports.log?.(`setup: replay ${run.id} failed: ${clean(err)}`);
