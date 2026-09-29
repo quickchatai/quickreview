@@ -233,6 +233,8 @@ let apiBase = "";
  * field; it is stripped here so the shell sees exactly what GitHub sends. */
 let checkRuns: CheckSummary[] = [];
 let statuses: Array<{ context: string; state: string }> = [];
+/** When set, check-runs page N answers 403 with GitHub's error body. */
+let failRunsPage: number | null = null;
 
 /** GitHub's pagination, as both endpoints apply it: `per_page` (default 30)
  * rows of page `page` (default 1). A reader that asks for page 1 alone sees
@@ -246,7 +248,18 @@ function pageOf<T>(url: string, rows: T[]): T[] {
 
 beforeEach(async () => {
   statuses = [];
+  failRunsPage = null;
   server = createServer((req, res) => {
+    if (
+      req.method === "GET" &&
+      req.url?.includes("/check-runs") &&
+      failRunsPage !== null &&
+      new URL(req.url, "http://stub").searchParams.get("page") === String(failRunsPage)
+    ) {
+      res.writeHead(403, { "content-type": "application/json" });
+      res.end(JSON.stringify({ message: "API rate limit exceeded" }));
+      return;
+    }
     if (req.method === "GET" && req.url?.includes("/check-runs")) {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(
@@ -384,6 +397,22 @@ describe("the shell CI classifier agrees with classifyCi", () => {
       expect(await shellClassify(), "scripts/guards.sh guard_ci_state").toBe(c.want);
     });
   }
+
+  /**
+   * An error body on a LATER page is not a short page. Read as one, the first
+   * 100 green rows pass for the whole list and the shell says green while the
+   * adapter throws. The shell must drop the truncated read (unreadable), never
+   * classify it.
+   *
+   * MUTATION: in `guard_ci_pages`, read a later page's error object as `[]`
+   * (the page-1 reading) — the shell says "green" here.
+   */
+  it("an error on page 2 is an unreadable read, never a green one", async () => {
+    checkRuns = [...greens(100), { ...greens(1)[0]!, name: "late", conclusion: "failure" }];
+    failRunsPage = 2;
+    await expect(adapterClassifyInput()).rejects.toThrow();
+    expect(await shellClassify()).not.toBe("green");
+  });
 
   /**
    * THE ONE CASE WHERE THEY DO NOT AGREE, asserted as the disagreement it is.

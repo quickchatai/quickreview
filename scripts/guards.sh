@@ -263,8 +263,14 @@ guard_ci_pages() { # guard_ci_pages <path?per_page=100> <key> — every page's <
   local path="$1" key="$2" page body page_rows rows="" n
   for ((page = 1; page <= 10; page++)); do
     body="$(guard_api_get "${path}&page=${page}")"
-    page_rows="$(printf '%s' "$body" | jq -c --arg k "$key" \
-      'select(type == "object") | (.[$k] // []) | if type == "array" then . else [] end' \
+    # Page 1 keeps the historical reading (an error object counts as no rows).
+    # A later page must actually carry the <key> array: an error body there
+    # (rate limit, 5xx JSON) would otherwise read as a short page and pass a
+    # truncated list off as the whole — src/github.ts throws on it instead.
+    page_rows="$(printf '%s' "$body" | jq -c --arg k "$key" --argjson p "$page" \
+      'select(type == "object")
+       | if $p > 1 then (.[$k] | select(type == "array"))
+         else (.[$k] // []) | if type == "array" then . else [] end end' \
       2>/dev/null)" || page_rows=""
     [[ -n "$page_rows" ]] || return 0
     rows+="$page_rows"$'\n'
