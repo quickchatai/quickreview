@@ -30,7 +30,7 @@ import type { CompanionConfig } from "../config.js";
 import type { DockerRunner } from "./companion.js";
 import { ACCENT, BAD, MUTED, OK, RESET, SEP, WARN } from "./design.js";
 import { displayWidth, fit } from "./paint.js";
-import { keysToTmux, SCROLL_STEP, splitCapture } from "./pipane.js";
+import { clampScrollback, keysToTmux, SCROLL_STEP, splitCapture } from "./pipane.js";
 
 /** Left divider + right border — the two cells the column adds beyond content. */
 export const SIDEBAR_BORDER = 2;
@@ -455,6 +455,7 @@ export class CompanionSidebar {
    * so capture can never race an asynchronous resize. */
   async refresh(): Promise<void> {
     if (!this.available()) return;
+    const offset = this.offset;
     const argv = ["exec", this.cfg.container_name, "tmux"];
     if (this.paneSize) {
       argv.push(
@@ -470,7 +471,7 @@ export class CompanionSidebar {
     }
     argv.push("capture-pane", "-e", "-p", "-J");
     // Parked in scrollback: ask for history above the window, as pipane does.
-    if (this.offset > 0) argv.push("-S", `-${this.offset + SCROLL_PAD}`);
+    if (offset > 0) argv.push("-S", `-${offset + SCROLL_PAD}`);
     argv.push("-t", this.cfg.session);
     const res = await this.docker(argv, { timeoutMs: 5_000 });
     if (!res.ok) {
@@ -481,7 +482,10 @@ export class CompanionSidebar {
       return;
     }
     this.captureOk = true;
-    this.lines = splitCapture(res.stdout);
+    this.lines = splitCapture(res.stdout, offset);
+    // Same rule as pipane: clamp only an offset this capture actually answers.
+    if (this.offset === offset)
+      this.offset = clampScrollback(offset, this.lines.length, this.paneSize?.rows);
     // One-way latch: from the first capture that actually said something, this
     // column is the companion's mirror and never the bring-up checklist again.
     if (!this.mirrored && this.lines.some((l) => l.trim() !== "")) this.mirrored = true;

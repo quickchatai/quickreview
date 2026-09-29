@@ -109,12 +109,18 @@ export function readRolloverStateFile(path: string): RolloverStateRead {
     if (code === "ENOENT") return { state: "absent" };
     return { state: "unreadable", reason: code ?? errText(err) };
   }
-  let raw: Partial<RolloverState>;
+  let parsed: unknown;
   try {
-    raw = JSON.parse(text) as Partial<RolloverState>;
+    parsed = JSON.parse(text);
   } catch (err) {
     return { state: "unreadable", reason: errText(err) };
   }
+  // `null`, a number, an array: valid JSON, still not a state row. Without
+  // this the property read below throws past the catch above.
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return { state: "unreadable", reason: "not a JSON object" };
+  }
+  const raw = parsed as Partial<RolloverState>;
   if (typeof raw.last_open_date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(raw.last_open_date)) {
     return { state: "unreadable", reason: "no usable last_open_date" };
   }
@@ -637,9 +643,12 @@ export class CompanionRollover {
       : { state: "unreadable", reason: execReason(res) };
   }
 
-  async killSession(): Promise<void> {
-    // Never fatal: no session to kill is the state we want anyway.
-    await this.docker([
+  /** Stop the old session. No session (or no tmux server) to kill is the
+   * state we want, so it counts as `killed`; any OTHER failure is `failed` —
+   * the session may still be live, and `spawnPi` would adopt it (
+   * loss-vs-absence rule, applied to the kill). */
+  async killSession(): Promise<{ state: "killed" } | { state: "failed"; reason: string }> {
+    const res = await this.docker([
       "exec",
       this.cfg.container_name,
       "tmux",
@@ -647,6 +656,9 @@ export class CompanionRollover {
       "-t",
       this.cfg.session,
     ]);
+    if (res.ok || /can't find session|no server running|session not found/i.test(res.stderr))
+      return { state: "killed" };
+    return { state: "failed", reason: execReason(res) };
   }
 
   /** tmp+rename into the inject dir — the bridge must never drain a torn file. */
@@ -833,7 +845,20 @@ export class CompanionRollover {
       steps.push(`compacted ${turns.length} turn${turns.length === 1 ? "" : "s"}`);
       dayOpen = this.buildDayOpen(today, turns);
       steps.push(`assembled opening context (${dayOpen.length} chars)`);
-      await this.killSession();
+      const kill = await this.killSession();
+      if (kill.state === "failed") {
+        // Yesterday's conversation may still be running: a day-open queued now
+        // would land in it, and a recorded day would never retry the rotation.
+        const deferred = `could not stop the companion session ${this.cfg.session} (${kill.reason}) — day NOT rolled over; retrying on the next start`;
+        steps.push(deferred);
+        return {
+          verdict,
+          steps,
+          archivedTo,
+          deferred,
+          ...this.maybeInterview(today, prior, current, steps),
+        };
+      }
       steps.push(`killed tmux session ${this.cfg.session}`);
       dayOpenFile = this.writeDayOpen(dayOpen, today);
       steps.push(`queued day-open message → ${dayOpenFile}`);

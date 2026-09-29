@@ -208,6 +208,13 @@ describe("rollover decision", () => {
       state: "unreadable",
       reason: "no usable last_open_date",
     });
+
+    // Valid JSON that is not an object at all is unreadable too — it used to
+    // throw a TypeError past the parse catch and take the companion down.
+    for (const text of ["null", "42", '"2026-08-13"', "[]"]) {
+      writeFileSync(p, text);
+      expect(readRolloverStateFile(p).state).toBe("unreadable");
+    }
   });
 });
 
@@ -565,6 +572,40 @@ describe("the rollover sequence", () => {
       expect(report.dayOpenFile).toBeUndefined();
       expect(calls.map((c) => c.join(" ")).some((s) => s.includes("kill-session"))).toBe(false);
       expect(readRolloverState(statePath())?.last_open_date).toBe("2026-08-13");
+    });
+
+    // A kill that FAILED is not a session that was absent: queuing the
+    // day-open and recording the day would hand it to yesterday's still-live
+    // conversation (spawnPi adopts a running session) and never retry.
+    function killFails(stderr: string): { runner: DockerRunner; calls: string[][] } {
+      const calls: string[][] = [];
+      const runner: DockerRunner = async (argv) => {
+        calls.push(argv);
+        if (argv.includes("kill-session")) return { ok: false, stdout: "", stderr, code: 1 };
+        const script = argv[argv.length - 1] ?? "";
+        if (script.includes("ls -1t"))
+          return OK("/home/companion/.pi/agent/sessions/companion/abc.jsonl\n");
+        return OK();
+      };
+      return { runner, calls };
+    }
+
+    it("a failed kill-session defers: no day-open, the day stays UNRECORDED", async () => {
+      writeRolloverState(statePath(), { last_open_date: "2026-08-13", updated_at: "" });
+      const report = await rollover(killFails("Error response from daemon: timeout").runner).run();
+      expect(report.deferred).toMatch(/could not stop the companion session/);
+      expect(report.dayOpenFile).toBeUndefined();
+      expect(readRolloverState(statePath())?.last_open_date).toBe("2026-08-13");
+    });
+
+    it("a kill that finds no session is the state we wanted — the rollover completes", async () => {
+      for (const stderr of ["can't find session: companion", "no server running on /tmp/tmux-1000/default"]) {
+        writeRolloverState(statePath(), { last_open_date: "2026-08-13", updated_at: "" });
+        const report = await rollover(killFails(stderr).runner).run();
+        expect(report.deferred).toBeUndefined();
+        expect(report.dayOpenFile).toBeDefined();
+        expect(readRolloverState(statePath())?.last_open_date).toBe("2026-08-14");
+      }
     });
 
     //, and it GATES the two above: a torn rollover.json used to read

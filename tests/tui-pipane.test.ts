@@ -308,6 +308,32 @@ describe("PiMirror", () => {
     expect(mirror.view(3)?.lines).toEqual(["done"]);
   });
 
+  // Scrollback past MAX_LINES: the capture asked for the history, so the
+  // mirror must keep enough of it that the parked window is not empty.
+  const history = (n: number): string =>
+    Array.from({ length: n }, (_, i) => `l${i}`).join("\n") + "\n";
+
+  it("keeps the history a deep scrolled capture asked for — the window is never blank", async () => {
+    const { mirror } = mirrorWith({ 6: ok(history(1000)) });
+    mirror.setViewport({ cols: 80, rows: 10 });
+    mirror.setOffset(6, 600);
+    await mirror.refresh(6);
+    const v = mirror.view(6)!;
+    expect(v.offset).toBe(600);
+    // The line just above the parked window's bottom edge is l399.
+    expect(v.lines[v.lines.length - v.offset - 1]).toBe("l399");
+  });
+
+  it("clamps the offset to the history that exists — scrolling past the top shows the top", async () => {
+    const { mirror } = mirrorWith({ 6: ok(history(50)) });
+    mirror.setViewport({ cols: 80, rows: 10 });
+    mirror.setOffset(6, 600);
+    await mirror.refresh(6);
+    const v = mirror.view(6)!;
+    expect(v.offset).toBe(40);
+    expect(v.lines.slice(0, v.lines.length - v.offset)).toHaveLength(10);
+  });
+
   it("invalidate drops a PR's mirror", async () => {
     const { mirror } = mirrorWith({ 4: ok("y") });
     await mirror.refresh(4);
@@ -361,7 +387,10 @@ function appWith(opts: { liveSessions?: number[] } = {}) {
       captures.push(pr);
       captureArgvs.push(argv);
       if (opts.liveSessions && !opts.liveSessions.includes(pr)) return fail();
-      return ok(`pane of pr-${pr}`);
+      // A real session has scrollback above the pane: without it every
+      // scrolled (-S) capture reaches the top of history and clamps to live.
+      const above = argv.includes("-S") ? "history\n".repeat(300) : "";
+      return ok(`${above}pane of pr-${pr}`);
     }
     if (argv.includes("send-keys")) {
       sendKeys.push(argv);

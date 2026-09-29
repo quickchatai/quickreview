@@ -169,7 +169,12 @@ export class PiMirror {
         this.missing.add(pr);
       } else {
         this.missing.delete(pr);
-        this.cache.set(pr, splitCapture(res.stdout));
+        const lines = splitCapture(res.stdout, offset);
+        this.cache.set(pr, lines);
+        // Only when the user has not scrolled again while this was in flight:
+        // the capture describes the offset it was asked for, not a newer one.
+        if (this.offsetFor(pr) === offset)
+          this.setOffset(pr, clampScrollback(offset, lines.length, this.paneSize?.rows));
       }
     } finally {
       this.inFlight.delete(pr);
@@ -316,9 +321,21 @@ export function keysToTmux(buf: Buffer): string[][] {
   return groups;
 }
 
-/** Capture text → sanitized lines, trailing blanks trimmed, bounded. */
-export function splitCapture(stdout: string): string[] {
+/** Capture text → sanitized lines, trailing blanks trimmed, bounded. The
+ * bound is MAX_LINES ABOVE the parked window: a capture scrolled `offset`
+ * lines back keeps those `offset` lines too, or the window the renderer cuts
+ * at `length - offset` would fall off the front and paint blank. */
+export function splitCapture(stdout: string, offset = 0): string[] {
   const lines = stdout.split("\n").map(keepSgrOnly);
   while (lines.length > 0 && lines[lines.length - 1]!.trim() === "") lines.pop();
-  return lines.slice(-MAX_LINES);
+  return lines.slice(-(MAX_LINES + Math.max(0, offset)));
+}
+
+/** A scrolled capture that came back with less history than the window needs
+ * has reached the top of tmux's scrollback: park the window there instead of
+ * past it (which paints blank under a "↑N" that points at nothing). `rows` is
+ * the painted window height (1 when not yet known). 0 stays 0. */
+export function clampScrollback(offset: number, lineCount: number, rows = 1): number {
+  if (offset <= 0) return 0;
+  return Math.min(offset, Math.max(0, lineCount - Math.max(1, rows)));
 }

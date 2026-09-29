@@ -353,6 +353,30 @@ describe("CompanionSidebar", () => {
     sb.stop();
   });
 
+  const history = (n: number): string =>
+    Array.from({ length: n }, (_, i) => `l${i}`).join("\n") + "\n";
+
+  it("keeps the history a deep scrolled capture asked for — the window is never blank", async () => {
+    const { runner } = fakeDocker(() => ({ ...OK, stdout: history(1000) }));
+    const sb = new CompanionSidebar(CFG, runner);
+    sb.offset = 600;
+    await sb.refresh();
+    const v = sb.view();
+    expect(sb.offset).toBe(600);
+    expect(v.lines[v.lines.length - sb.offset - 1]).toBe("l399");
+    sb.stop();
+  });
+
+  it("clamps the scrollback offset to the history that exists", async () => {
+    const { runner } = fakeDocker(() => ({ ...OK, stdout: history(50) }));
+    const sb = new CompanionSidebar(CFG, runner);
+    sb.offset = 600;
+    await sb.refresh();
+    expect(sb.offset).toBeGreaterThan(0);
+    expect(sb.offset).toBeLessThan(50);
+    sb.stop();
+  });
+
   it("clamps the scrollback offset at the live tail", async () => {
     const { runner } = fakeDocker(() => ({ ...OK, stdout: "x\n" }));
     const sb = new CompanionSidebar(CFG, runner);

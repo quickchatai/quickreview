@@ -101,6 +101,9 @@ export interface CauseMemory {
   folds: number;
   /** The one escalation bypass this cause gets today. */
   bypassed: boolean;
+  /** Times this cause was ROUTED (not folded) today — the badge's count.
+   * Optional: a state file written before it existed still loads. */
+  routed?: number;
 }
 
 /** The whole "already told you" memory, as it survives a TUI restart. */
@@ -203,6 +206,15 @@ export class AlertPolicy {
     return total;
   }
 
+  /** Alerts routed (not folded) across all causes today — the badge count. A
+   * cause loaded from a state file that predates `routed` routed once. */
+  totalRouted(): number {
+    const today = this.dayKey(this.now());
+    let total = 0;
+    for (const m of this.memory.values()) if (m.day === today) total += m.routed ?? 1;
+    return total;
+  }
+
   decide(alert: AlertRecord): AlertDecision {
     const now = this.now();
     const today = this.dayKey(now);
@@ -216,6 +228,7 @@ export class AlertPolicy {
         lastTier: alert.tier,
         folds: 0,
         bypassed: false,
+        routed: 1,
       });
       this.persist(today);
       return { action: "route", bypass: false };
@@ -228,6 +241,7 @@ export class AlertPolicy {
         lastTier: alert.tier,
         folds: 0,
         bypassed: prev.bypassed,
+        routed: (prev.routed ?? 1) + 1,
       });
       this.persist(today);
       return { action: "route", bypass: false };
@@ -240,6 +254,7 @@ export class AlertPolicy {
         lastTier: "alert",
         folds: 0,
         bypassed: true,
+        routed: (prev.routed ?? 1) + 1,
       });
       this.persist(today);
       return { action: "route", bypass: true };
@@ -367,12 +382,15 @@ export class AlertConsumer {
   route(alert: AlertRecord): void {
     const decision = this.policy.decide(alert);
     if (decision.action === "fold") {
+      this.badgeState.count = this.policy.totalRouted();
       this.badgeState.folds = this.policy.totalFolds();
       this.sinks.notice(statusLine(alert, decision.count));
       this.sinks.badge(this.badgeState);
       return;
     }
-    this.badgeState.count += 1;
+    // Derived from the policy's per-day memory, like `folds`: a per-process
+    // tally never reset at midnight and started from 0 on every restart.
+    this.badgeState.count = this.policy.totalRouted();
     this.badgeState.folds = this.policy.totalFolds();
     this.badgeState.latest = {
       tier: alert.tier,

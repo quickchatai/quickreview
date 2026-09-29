@@ -18,6 +18,8 @@ import {
   type AlertBadge,
   type AlertRecord,
   type AlertSinks,
+  type PolicyState,
+  type PolicyStore,
 } from "../src/tui/alerts.js";
 import { alertSegment, alertZone, topBar, renderBoard, type BoardView } from "../src/tui/board.js";
 import { CompanionLifecycle, type DockerRunner } from "../src/tui/companion.js";
@@ -353,6 +355,41 @@ describe("AlertConsumer", () => {
     expect(f.injected).toHaveLength(1); // and no second overseer inject
     expect(f.notices.at(-1)).toContain("×2");
     expect(f.badges.at(-1)).toMatchObject({ count: 1, folds: 1 });
+  });
+
+  // The badge says "landed today": the count follows the ops day, like the
+  // folds beside it, and survives a TUI restart the way the policy does.
+  it("the badge count is TODAY's — it resets at the ops-day boundary and survives a restart", () => {
+    let t = new Date("2026-08-14T21:00:00Z");
+    let saved: PolicyState | undefined;
+    const store: PolicyStore = { load: () => saved, save: (st) => (saved = st) };
+    const policy = (): AlertPolicy => new AlertPolicy(60, () => t, store, "Europe/Warsaw");
+    const alertFor = (cause: string) => ({
+      tier: "notice",
+      cause,
+      pr: null,
+      title: cause,
+      body: "b",
+      ts: "x",
+    });
+    const f = fakeSinks();
+    const c = new AlertConsumer(dir, policy(), f.sinks, () => t);
+    dropAlert(dir, "a1.json", alertFor("one"));
+    dropAlert(dir, "a2.json", alertFor("two"));
+    c.scanOnce();
+    expect(f.badges.at(-1)).toMatchObject({ count: 2 });
+
+    // A restart the same day keeps counting from what already landed.
+    const restarted = new AlertConsumer(dir, policy(), f.sinks, () => t);
+    dropAlert(dir, "a3.json", alertFor("three"));
+    restarted.scanOnce();
+    expect(f.badges.at(-1)).toMatchObject({ count: 3 });
+
+    // 22:30Z is 00:30 in Warsaw: a new day, a fresh count.
+    t = new Date("2026-08-14T22:30:00Z");
+    dropAlert(dir, "a4.json", alertFor("four"));
+    restarted.scanOnce();
+    expect(f.badges.at(-1)).toMatchObject({ count: 1, folds: 0 });
   });
 
   it("surfaces a malformed file by name and never swallows it", () => {

@@ -596,7 +596,14 @@ describe("the wheel scrolls the companion column, not the tab behind it", () => 
     };
     app.sidebar = new CompanionSidebar(
       { container_name: "qcr-companion", session: "companion" },
-      async () => ({ ok: true, stdout: "", stderr: "", code: 0 }),
+      // A scrolled (-S) capture comes back with history above the pane, as a
+      // real session's does; an empty one would clamp the offset back to live.
+      async (argv) => ({
+        ok: true,
+        stdout: argv.includes("-S") ? "history\n".repeat(300) : "",
+        stderr: "",
+        code: 0,
+      }),
       { available: () => true },
     );
     // 140 cols → a 70-column companion column occupying x 71…140.
