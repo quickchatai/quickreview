@@ -427,7 +427,9 @@ export class EvidenceCopier {
         role: f.role,
         remote_path: f.remotePath,
         chars: got.stdout.length,
-        truncated: got.stdout.length >= MAX_FILE_BYTES,
+        // The cap is BYTES (`head -c`) and stdout arrives decoded, so compare
+        // in bytes — multibyte text would otherwise read as short of the cap.
+        truncated: Buffer.byteLength(got.stdout, "utf8") >= MAX_FILE_BYTES,
         scope: PR_CURRENT_ROLES.includes(f.role) ? "pr-current" : "round",
       });
     }

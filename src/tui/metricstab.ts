@@ -504,7 +504,7 @@ export function metricsCards(
   const chartH = activityChartHeight(rows);
   const now = extra.now ?? new Date();
   const opsSubtitle = extra.ops
-    ? `${extra.ops.dry_run ? "dry-run" : "live"} · ${extra.ops.build ? extra.ops.build.sha : "build unknown"}`
+    ? `${extra.ops.heartbeat === null ? "mode unknown" : extra.ops.dry_run ? "dry-run" : "live"} · ${extra.ops.build ? extra.ops.build.sha : "build unknown"}`
     : "daemon health · version · event traffic";
   return [
     {
@@ -1018,11 +1018,11 @@ export function installMetricsHooks(
     app.repaint();
   };
 
-  const drillTo = (pr: number): void => {
+  const drillTo = (pr: number, force = false): void => {
     const cached = timelineCache.get(pr);
     view.drill = { pr, payload: cached?.payload, loading: true };
     view.scroll = 0;
-    if (cached && Date.now() - cached.fetched_at < METRICS_TTL_MS) {
+    if (!force && cached && Date.now() - cached.fetched_at < METRICS_TTL_MS) {
       view.drill.loading = false;
       app.repaint();
       return;
@@ -1096,7 +1096,7 @@ export function installMetricsHooks(
         theApp.repaint();
         return true;
       case "refresh":
-        if (view.drill) drillTo(view.drill.pr);
+        if (view.drill) drillTo(view.drill.pr, true);
         else void load(true);
         theApp.repaint();
         return true;

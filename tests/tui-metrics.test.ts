@@ -640,6 +640,17 @@ describe("OPERATIONS card", () => {
     expect(operations!.subtitle).toContain("abc1234");
   });
 
+  it("the subtitle never claims live without a heartbeat — the body's 'mode unknown' and it agree", () => {
+    // readOps keeps emptyOps()'s dry_run=false when status.json is unreadable.
+    const noBeat = { ...ops, heartbeat: null, dry_run: false };
+    const operations = metricsCards(fullWindow as never, daily, 24, {
+      ops: noBeat as never,
+      now: NOW,
+    }).find((c) => c.title === "OPERATIONS")!;
+    expect(operations.subtitle).toContain("mode unknown");
+    expect(operations.subtitle).not.toContain("live");
+  });
+
   it("line 1 is the daemon: mode, heartbeat age and round concurrency", () => {
     const l = lines()[0]!;
     expect(l).toContain("DRY-RUN");
@@ -906,6 +917,28 @@ describe("metrics tab wiring", () => {
     expect(view.drill).toBeUndefined();
     streams.type("1");
     expect(app.tab).toBe("board");
+    app.quit();
+    await run;
+  });
+
+  it("r inside a drill-down refetches the timeline, like r on the dashboard — never the cache", async () => {
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    const timelineCalls: number[] = [];
+    const view = installMetricsHooks(app, {
+      overall: async () => ({ payload: payload as never }),
+      timeline: async (pr) => (timelineCalls.push(pr), { payload: timeline as never }),
+    });
+    const run = app.run();
+    streams.type("6");
+    await new Promise((r) => setTimeout(r, 0));
+    for (const ch of "#5265\r") streams.type(ch);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(timelineCalls).toEqual([5265]);
+    streams.type("r"); // well inside the TTL
+    await new Promise((r) => setTimeout(r, 0));
+    expect(timelineCalls).toEqual([5265, 5265]);
+    expect(view.drill?.pr).toBe(5265);
     app.quit();
     await run;
   });

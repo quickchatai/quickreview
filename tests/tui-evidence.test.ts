@@ -13,6 +13,7 @@ import {
   EvidenceCopier,
   EvidenceStore,
   MANIFEST_NAME,
+  MAX_FILE_BYTES,
   fetchArgv,
   finishedRounds,
   manifestArgv,
@@ -337,6 +338,24 @@ describe("EvidenceCopier", () => {
     expect(manifest.skipped_stale.sort()).toEqual(["ledger", "prompt", "transcript"]);
     expect(manifest.missing).toEqual([]); // skipped is deliberate, not absent
     expect(manifest.files).toEqual([expect.objectContaining({ role: "verdict", scope: "round" })]);
+  });
+
+  it("a byte-capped multibyte transcript is recorded truncated — the cap is BYTES, not code units", async () => {
+    // `head -c` cuts at MAX_FILE_BYTES bytes; the ssh runner hands back that
+    // many bytes DECODED, which for two-byte UTF-8 is half as many code units.
+    const capped = "é".repeat(MAX_FILE_BYTES / 2);
+    const vm = fakeVm([round(1)]);
+    const ssh: SshRunner = async (host, argv, opts) =>
+      argv.join(" ").includes("head -c") && argv.join(" ").includes(".jsonl")
+        ? OK(capped)
+        : vm.ssh(host, argv, opts);
+    await copier(ssh).sweep(snapshot([{ number: 5306, rounds: 1 }]));
+    const manifest = JSON.parse(readFileSync(join(store.roundDir(5306, 1), MANIFEST_NAME), "utf8"));
+    const byRole = Object.fromEntries(
+      manifest.files.map((f: { role: string; truncated: boolean }) => [f.role, f.truncated]),
+    );
+    expect(byRole.transcript).toBe(true);
+    expect(byRole.ledger).toBe(false);
   });
 
   it("a fresh round is copied whole, with every file's scope recorded", async () => {
