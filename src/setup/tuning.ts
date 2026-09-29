@@ -82,9 +82,9 @@ export interface InterviewRecord {
   commits: Array<{ id: string; requested_at: string }>;
 }
 
-type RecordRead = { state: "absent" } | { state: "ok"; record: InterviewRecord } | { state: "unreadable"; error: string };
+export type RecordRead = { state: "absent" } | { state: "ok"; record: InterviewRecord } | { state: "unreadable"; error: string };
 
-function readRecord(state: StateFs): RecordRead {
+export function readRecord(state: StateFs): RecordRead {
   let text: string | null;
   try {
     text = state.read(INTERVIEW_FILE);
@@ -222,7 +222,7 @@ export interface ApplyResult {
   commit: { id: string } | null;
 }
 
-function parseEmphasis(raw: unknown): { ok: true; emphasis: Record<string, string | null> } | Refusal {
+export function parseEmphasis(raw: unknown): { ok: true; emphasis: Record<string, string | null> } | Refusal {
   if (raw === undefined || raw === null) return { ok: true, emphasis: {} };
   if (typeof raw !== "object" || Array.isArray(raw)) return { ok: false, errors: ["`emphasis` must be an object of {lens: text | null}"] };
   const errors: string[] = [];
@@ -243,8 +243,10 @@ function parseEmphasis(raw: unknown): { ok: true; emphasis: Record<string, strin
  * Staged and checked with the daemon's loaders before anything is written;
  * with `write` the files land, the answers are recorded and — when a file
  * changed — a commit is requested for the operator's machine to carry out.
+ * `opts.message` is the commit message a caller other than the interview
+ * asks for (a post-scan re-tune, retune.ts) — never a tool parameter.
  */
-export function profileApply(deps: TuningDeps, input: ApplyInput): ApplyResult | Refusal {
+export function profileApply(deps: TuningDeps, input: ApplyInput, opts: { message?: string } = {}): ApplyResult | Refusal {
   if (!deps.profiles) return { ok: false, errors: ["this assembly has no config home to write profiles to"] };
   const home = deps.profiles;
   const write = input.write === true;
@@ -346,7 +348,7 @@ export function profileApply(deps: TuningDeps, input: ApplyInput): ApplyResult |
         requested_at: now.toISOString(),
         profile,
         paths: Object.keys(files).map((f) => `${PROFILES_DIR}/${profile}/${f}`),
-        message: commitMessage(profile, priorities),
+        message: opts.message ?? commitMessage(profile, priorities),
       };
       deps.state.write(requestFile(id), `${JSON.stringify(req, null, 2)}\n`);
       commit = { id };

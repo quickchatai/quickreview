@@ -121,19 +121,19 @@ export function findingTicket(f: ScanFinding, effort: string, extra: { title?: s
 
 // ---- the scan memory ledger -------------------------------------------------------
 
-interface ScanMemoryRecord {
+export interface ScanMemoryRecord {
   run: string;
   patterns: Array<{ text: string; occurrences: number; at: string }>;
   hotspots: Record<string, { text: string; at: string }>;
 }
 
-interface ScanMemoryFile {
+export interface ScanMemoryFile {
   version: number;
   /** Keyed by the scan's full sha. */
   scans: Record<string, ScanMemoryRecord>;
 }
 
-function readScanMemory(state: StateFs): { file: ScanMemoryFile; error: string | null } {
+export function readScanMemory(state: StateFs): { file: ScanMemoryFile; error: string | null } {
   const empty: ScanMemoryFile = { version: SCAN_MEMORY_VERSION, scans: {} };
   let text: string | null;
   try {

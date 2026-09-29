@@ -98,6 +98,7 @@ describe("the tool belt", () => {
       "setup_interview",
       "setup_profile",
       "setup_profile_apply",
+      "setup_retune",
       "setup_profile_validate",
       "setup_pin_propose",
     ]);
@@ -213,6 +214,7 @@ describe("the tool belt", () => {
         "setup_interview",
         "setup_profile",
         "setup_profile_apply",
+        "setup_retune",
         "setup_profile_validate",
         "setup_pin_propose",
         // the scan half of the belt.

@@ -226,7 +226,7 @@ export interface ScanRunSummary {
   spent_usd: number;
 }
 
-interface RunFile {
+export interface RunFile {
   version: number;
   current: ScanRun | null;
   history: ScanRunSummary[];
@@ -314,6 +314,65 @@ interface Planned {
   settings: ScanSettings;
 }
 
+/** The run record, read totally: an unreadable file is the error beside an
+ * empty record, never a throw (the portrait and the re-tune read it too). */
+export function readRunFile(state: StateFs): { file: RunFile; error: string | null } {
+  const empty: RunFile = { version: RUN_VERSION, current: null, history: [] };
+  let text: string | null;
+  try {
+    text = state.read(RUN_FILE);
+  } catch (err) {
+    return { file: empty, error: `${RUN_FILE} in ${state.location} cannot be read: ${clean(err)}` };
+  }
+  if (text === null) return { file: empty, error: null };
+  try {
+    const raw = JSON.parse(text) as Partial<RunFile> | null;
+    if (typeof raw !== "object" || raw === null || raw.version !== RUN_VERSION) throw new Error("unknown version");
+    const current = raw.current ?? null;
+    if (current !== null && (typeof current !== "object" || !Array.isArray(current.cases))) {
+      throw new Error("`current` is not a scan run");
+    }
+    return { file: { version: RUN_VERSION, current, history: Array.isArray(raw.history) ? raw.history : [] }, error: null };
+  } catch (err) {
+    return {
+      file: empty,
+      error: `${RUN_FILE} in ${state.location} is not a scan record this version reads (${clean(err)}) — nothing will overwrite it; move it aside to scan again`,
+    };
+  }
+}
+
+export function runSummary(run: ScanRun, state: ScanRunSummary["state"]): ScanRunSummary {
+  return {
+    id: run.id,
+    mode: run.mode,
+    sha: run.sha,
+    state,
+    started_at: run.started_at,
+    finished_at: run.finished_at,
+    cases_done: run.cases.filter((c) => c.status === "done").length,
+    cases: run.cases.length,
+    findings: run.cases.reduce((n, c) => n + c.findings, 0),
+    spent_usd: run.spent_usd,
+  };
+}
+
+/**
+ * The scan runs that FINISHED — complete, partial, stopped or capped —
+ * newest first (what a portrait refresh and a re-tune stand on). A
+ * run still `running` in the file is either live or was interrupted; neither
+ * is a scan whose findings are settled.
+ */
+export function finishedRuns(state: StateFs): { runs: ScanRunSummary[]; error: string | null } {
+  const { file, error } = readRunFile(state);
+  const out: ScanRunSummary[] = [];
+  if (file.current && file.current.state !== "running") out.push(runSummary(file.current, file.current.state));
+  for (const h of file.history) {
+    if (h.state !== "running" && h.state !== "interrupted" && !out.some((r) => r.id === h.id)) out.push(h);
+  }
+  out.sort((a, b) => (b.finished_at ?? b.started_at).localeCompare(a.finished_at ?? a.started_at));
+  return { runs: out, error };
+}
+
 export class ScanRunner {
   private active: { id: string; sha: string; abort: AbortController; done: Promise<void> } | null = null;
   private starting = false;
@@ -329,28 +388,7 @@ export class ScanRunner {
   // -- the run file --
 
   private load(): { file: RunFile; error: string | null } {
-    const empty: RunFile = { version: RUN_VERSION, current: null, history: [] };
-    let text: string | null;
-    try {
-      text = this.ports.state.read(RUN_FILE);
-    } catch (err) {
-      return { file: empty, error: `${RUN_FILE} in ${this.ports.state.location} cannot be read: ${clean(err)}` };
-    }
-    if (text === null) return { file: empty, error: null };
-    try {
-      const raw = JSON.parse(text) as Partial<RunFile> | null;
-      if (typeof raw !== "object" || raw === null || raw.version !== RUN_VERSION) throw new Error("unknown version");
-      const current = raw.current ?? null;
-      if (current !== null && (typeof current !== "object" || !Array.isArray(current.cases))) {
-        throw new Error("`current` is not a scan run");
-      }
-      return { file: { version: RUN_VERSION, current, history: Array.isArray(raw.history) ? raw.history : [] }, error: null };
-    } catch (err) {
-      return {
-        file: empty,
-        error: `${RUN_FILE} in ${this.ports.state.location} is not a scan record this version reads (${clean(err)}) — nothing will overwrite it; move it aside to scan again`,
-      };
-    }
+    return readRunFile(this.ports.state);
   }
 
   private store(file: RunFile): void {
@@ -358,18 +396,7 @@ export class ScanRunner {
   }
 
   private summary(run: ScanRun, state: ScanRunSummary["state"]): ScanRunSummary {
-    return {
-      id: run.id,
-      mode: run.mode,
-      sha: run.sha,
-      state,
-      started_at: run.started_at,
-      finished_at: run.finished_at,
-      cases_done: run.cases.filter((c) => c.status === "done").length,
-      cases: run.cases.length,
-      findings: run.cases.reduce((n, c) => n + c.findings, 0),
-      spent_usd: run.spent_usd,
-    };
+    return runSummary(run, state);
   }
 
   // -- the plan --

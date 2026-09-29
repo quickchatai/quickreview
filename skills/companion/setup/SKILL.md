@@ -129,6 +129,13 @@ ask only about what changed, and write only the difference — a write keeps
 every answer it was not given. Moving a concern back to `normal` clears what
 the table wrote for it. The same preview-then-write discipline applies.
 
+**After a scan** the re-tune is yours: `setup_retune`, not the
+interview. Change only what the scan gives grounds for, give every change
+its reason from what it found, preview, write, then report to him what
+changed and why. Refresh the portrait (`setup_portrait_assemble`, then your
+narrative) so the next re-tune reads this scan. It reaches PR reviews only
+on his deploy — the deploy tab shows the re-tune pending until then.
+
 ## Never
 
 - Never write `config.toml`, and never a file the setup tools own by hand.

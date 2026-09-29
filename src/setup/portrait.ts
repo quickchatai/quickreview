@@ -23,6 +23,13 @@
 // moved past reads as STALE, so a new framework or unit shows up as "your
 // reading predates this"; an ordinary commit adding a file does not.
 //
+// After a scan the facts gain a SCAN section — the last finished
+// scan, the findings by unit and state, and the per-unit hotspots from scan
+// memory (scanfacts.ts) — so re-assembling after a scan moves the key (the
+// narrative reads STALE until it is rewritten from what the scan found) and
+// keeps the pre-scan version as `previous`. A portrait that never saw a scan
+// has no scan section at all, and its key is the one it always had.
+//
 // The raw review history never reaches either half: the facts take only the
 // saved themes (`historyThemesState`), and a narrative that quotes a raw
 // comment or names its author is refused by the history slice's own belt
@@ -86,8 +93,45 @@ export interface PortraitFacts {
   /** The last completed survey, for provenance — its notes are in reviewer
    * memory as `#survey` entries, not here. */
   survey: { id: string; finished_at: string; head: string | null; notes: number } | null;
+  /** What the scans found (scanfacts.ts); null — or absent, on facts
+   * stored before it existed — when nothing was ever scanned. */
+  scan?: PortraitScan | null;
   /** What could not be read while assembling — the rest is then partial. */
   problems: string[];
+}
+
+/** One unit's findings, by state. `open` = new or promoted (still standing). */
+export interface ScanUnitFacts {
+  unit: string;
+  open: number;
+  promoted: number;
+  dismissed: number;
+  fixed: number;
+  /** Open findings the validator doubted ("may not be valid"). */
+  doubted: number;
+  /** The open findings' `<severity> <lens>` pairs, most severe first — the
+   * shape the key is over (never the counts). */
+  open_by: string[];
+}
+
+export interface PortraitScan {
+  /** `unreadable`: a scan record could not be read — the counts are then
+   * partial and the section reads UNKNOWN (the facts' problems say which). */
+  state: "ok" | "unreadable";
+  /** The last FINISHED scan run. */
+  last: { id: string; mode: string; sha: string; state: string; finished_at: string | null } | null;
+  findings: {
+    open: number;
+    promoted: number;
+    dismissed: number;
+    fixed: number;
+    doubted: number;
+    /** Open findings per severity. */
+    by_severity: Record<string, number>;
+    units: ScanUnitFacts[];
+  };
+  /** The latest hotspot per unit the companion wrote to scan memory. */
+  hotspots: Array<{ unit: string; text: string; sha: string; at: string }>;
 }
 
 export interface FactsVersion {
@@ -103,7 +147,7 @@ export interface PortraitFactsFile {
   previous: FactsVersion | null;
 }
 
-export const PORTRAIT_SECTIONS = ["stack", "units", "conventions", "enforced", "history", "survey", "problems"] as const;
+export const PORTRAIT_SECTIONS = ["stack", "units", "conventions", "enforced", "history", "survey", "scan", "problems"] as const;
 export type PortraitSection = (typeof PORTRAIT_SECTIONS)[number];
 
 /**
@@ -140,12 +184,29 @@ export function shapeLines(f: PortraitFacts): Record<PortraitSection, string[]> 
         ? f.history.themes.map((t) => `theme ${t.title} [${t.source}] — ${t.summary}`)
         : [`themes: ${f.history.state === "absent" ? "none saved" : "UNKNOWN (unreadable)"}`],
     survey: f.survey ? [`survey ${f.survey.id}`] : ["survey: none completed"],
+    scan: scanShape(f.scan ?? null),
     problems: [...f.problems],
   };
 }
 
+/** The scan section's shape: which scan, where open findings stand (severity
+ * × lens per unit, no counts) and the hotspots. Nothing when never scanned. */
+function scanShape(s: PortraitScan | null): string[] {
+  if (s === null) return [];
+  if (s.state === "unreadable") return ["scan: UNKNOWN (a scan record is unreadable)"];
+  return [
+    s.last ? `scan ${s.last.id} [${s.last.mode}, ${s.last.state}] at ${s.last.sha.slice(0, 12)}` : "scan: none finished",
+    ...s.findings.units.filter((u) => u.open_by.length > 0).map((u) => `open in ${u.unit}: ${u.open_by.join(", ")}`),
+    ...s.hotspots.map((h) => `hotspot ${h.unit} — ${h.text}`),
+  ];
+}
+
 export function factsKey(f: PortraitFacts): string {
-  return createHash("sha256").update(JSON.stringify(shapeLines(f))).digest("hex").slice(0, 12);
+  const lines: Partial<Record<PortraitSection, string[]>> = shapeLines(f);
+  // A portrait that never saw a scan keeps the key it had before the scan
+  // section existed, so the upgrade alone never stales a narrative.
+  if (lines.scan!.length === 0) delete lines.scan;
+  return createHash("sha256").update(JSON.stringify(lines)).digest("hex").slice(0, 12);
 }
 
 export interface SectionDiff {

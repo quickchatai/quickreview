@@ -93,6 +93,7 @@ import {
   type ApplyResult,
   type ProfileStatus,
 } from "../src/setup/tuning.js";
+import { GUIDE_REASON, RETUNE_REASON_MAX, type RetuneResult } from "../src/setup/retune.js";
 import { buildScan, scanToolDefinitions, watchStage2Requests } from "./setup-scan.js";
 import { triageToolDefinitions } from "./setup-triage.js";
 import type { MemoryStore } from "../src/memory/store.js";
@@ -292,6 +293,7 @@ const SECTION_TITLES: Record<string, string> = {
   enforced: "Enforced (by tooling)",
   history: "Review history themes",
   survey: "Survey",
+  scan: "What the scans found",
   problems: "Problems",
 };
 
@@ -323,6 +325,23 @@ export function renderPortraitFacts(v: FactsVersion): string {
   );
   for (const section of ["conventions", "enforced", "history", "survey"] as const) {
     out.push(`${SECTION_TITLES[section]}:\n${bullets(lines[section])}`);
+  }
+  const scan = f.scan ?? null;
+  if (scan !== null) {
+    const t = scan.findings;
+    const sev = Object.entries(t.by_severity).map(([k, n]) => `${k} ${n}`).join(", ");
+    const units = t.units.map(
+      (u) =>
+        `${u.unit}: ${u.open} open (${u.promoted} promoted${u.doubted > 0 ? `, ${u.doubted} may not be valid` : ""}), ` +
+        `${u.dismissed} dismissed, ${u.fixed} fixed${u.open_by.length > 0 ? ` — ${u.open_by.join(", ")}` : ""}`,
+    );
+    out.push(
+      `${SECTION_TITLES.scan}${scan.state === "unreadable" ? " (PARTIAL — a scan record is unreadable, see Problems)" : ""}:\n` +
+        `  last scan: ${scan.last ? `${scan.last.id} [${scan.last.mode}, ${scan.last.state}] at ${scan.last.sha.slice(0, 12)}${scan.last.finished_at ? `, ${scan.last.finished_at}` : ""}` : "none finished"}\n` +
+        `  findings: ${t.open} open${sev ? ` (${sev})` : ""}, ${t.promoted} promoted, ${t.dismissed} dismissed, ${t.fixed} fixed\n` +
+        `${bullets(units, "  (no findings by unit)")}\n` +
+        `  hotspots:\n${scan.hotspots.length === 0 ? "    (none written to scan memory)" : scan.hotspots.map((h) => `    - ${h.unit} — ${h.text}`).join("\n")}`,
+    );
   }
   if (f.problems.length > 0) {
     out.push(`${SECTION_TITLES.problems} (these parts are UNKNOWN, not empty):\n${f.problems.map((p) => `  ✗ ${p}`).join("\n")}`);
@@ -478,6 +497,45 @@ export function renderApply(r: ApplyResult): string {
     out.push(
       `${r.commit ? `A commit was asked for (${r.commit.id}); it lands if the config home is a git repo. ` : ""}` +
         "PR reviews change only when the owner deploys — the deploy tab says \"profile changed, not deployed\" until then.",
+    );
+  }
+  return out.join("\n\n");
+}
+
+/** A re-tune's report: what changed, why, what it moved, and that it waits on a deploy. */
+export function renderRetune(r: RetuneResult): string {
+  const out: string[] = [];
+  out.push(
+    r.written
+      ? `Re-tuned profile "${r.profile}" after scan ${r.scan.run} (${r.scan.mode} at ${r.scan.sha.slice(0, 12)}).`
+      : r.record
+        ? `Re-tune recorded after scan ${r.scan.run}, but no profile file changed — nothing to deploy.`
+        : `PREVIEW of a re-tune of "${r.profile}" after scan ${r.scan.run} — nothing written. Tell the owner what you will change and why; then write it.`,
+  );
+  out.push(
+    "What changed, and why:\n" +
+      r.changes
+        .map(
+          (c) =>
+            `  - ${c.input}: ${c.from} → ${c.to}\n    why: ${c.why}\n` +
+            (c.effects.length > 0 ? c.effects.map((e) => `    moves ${e}`).join("\n") : "    moves no resolved lens setting"),
+        )
+        .join("\n"),
+  );
+  for (const d of r.diff) out.push(`${d.file}:\n${d.lines.map((l) => `  ${l}`).join("\n")}`);
+  if (r.config_names !== null && r.config_names !== r.profile) {
+    out.push(`The live config names ${r.config_names === "" ? "no profile" : `"${r.config_names}"`} — PR rounds do not use "${r.profile}" even once deployed.`);
+  }
+  if (r.record) {
+    const portrait = "key" in r.record.portrait
+      ? `Portrait facts refreshed (key ${r.record.portrait.key}) — if your narrative is now STALE, rewrite it from them.`
+      : `The portrait facts could NOT be refreshed: ${r.record.portrait.error}.`;
+    out.push(portrait);
+  }
+  if (r.written) {
+    out.push(
+      `${r.commit ? `A commit was asked for (${r.commit.id}). ` : ""}` +
+        "Report this to the owner: what changed and why. It reaches PR reviews ONLY when he deploys — the deploy tab shows this re-tune as \"profile changed, not deployed\" until then. You never deploy.",
     );
   }
   return out.join("\n\n");
@@ -880,6 +938,41 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     },
   };
 
+  const retune: PiToolDefinition = {
+    name: "setup_retune",
+    label: "Re-tune the profile after a scan",
+    description:
+      "After a scan, change the repo profile from what the scan found — through the same path as setup_profile_apply " +
+      "(`priorities` through the table, `emphasis`, a drafted `style_guide`) — and REPORT it. Needs a finished scan run (the " +
+      "latest, or `scan`) and a finished setup interview. Every change needs its reason in `reasons` — keyed by the concern " +
+      `(a priority), the lens (an emphasis) or "${GUIDE_REASON}" — at most ${RETUNE_REASON_MAX} characters, citing what the scan ` +
+      "found; a reason for something that does not change is refused. Without `write` it PREVIEWS. `write: true` writes the " +
+      "profile (validated with the daemon's own loaders), logs the report, refreshes the portrait facts and asks for a " +
+      "commit. You apply it yourself — then tell the owner what changed and why. It reaches PR reviews only when HE deploys.",
+    promptSnippet: "Preview or apply a post-scan re-tune of the repo profile, with its reasons",
+    parameters: {
+      type: "object",
+      properties: {
+        scan: { type: "string", description: "The finished scan run it follows (scan_status); the latest when omitted." },
+        priorities: {
+          type: "object",
+          description: `{concern: priority} to change; concerns: ${CONCERNS.map((c) => c.name).join(", ")}; priorities: ${PRIORITIES.join(", ")}.`,
+        },
+        emphasis: { type: "object", description: "{lens: the words for it, or null to remove them}." },
+        style_guide: { type: "string", description: "A revised drafted style guide (markdown)." },
+        drop_style_guide: { type: "boolean", description: "true stops the style lens reading the drafted guide." },
+        reasons: { type: "object", description: `{concern | lens | "${GUIDE_REASON}": why, from what the scan found} — one per change.` },
+        write: { type: "boolean", description: "true writes; omitted or false previews." },
+      },
+      required: ["reasons"],
+    },
+    execute: async (_id, params) => {
+      const r = engine.retune((params ?? {}) as Record<string, unknown>);
+      if (!r.ok) return refused("Re-tune", r);
+      return text(renderRetune(r), { written: r.written, profile: r.profile, scan: r.scan.run, changes: r.changes.length, commit: r.commit });
+    },
+  };
+
   const profileValidate: PiToolDefinition = {
     name: "setup_profile_validate",
     label: "Validate the repo profile",
@@ -953,6 +1046,7 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     interview,
     profileState,
     profileApply,
+    retune,
     profileValidate,
     pins,
   ];

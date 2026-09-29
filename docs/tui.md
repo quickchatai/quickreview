@@ -108,7 +108,11 @@ overlay and setup are about the whole repo.
 The CONFIG line compares the config home a sync would ship (config.toml and
 its profiles/) with the one the VM was shipped, both fingerprinted by
 `scripts/config-fingerprint.sh`: "profile changed, not deployed" until a
-sync, "unknown" when either end could not be read.
+sync, "unknown" when either end could not be read. Under it, while
+the profiles are behind, the post-scan re-tunes the companion wrote since the
+last deploy (`<state home>/setup/retunes.json`), each change with its reason
+— which re-tune a sync would ship; "unknown" when the VM end, the
+deploy time or the log could not be read.
 
 ### metrics
 

@@ -5,6 +5,9 @@
 // over `scripts/install-locator.sh`), locally and inside the container; this
 // module only reads and compares the two answers. Pure — shared by the tab's
 // render and the companion feed, so the two can never say different things.
+// the tab also says WHICH post-scan re-tune a pending profile change
+// is, from the setup re-tune log (the type-only S2 leaf `setup/retunelog.js`).
+import { retuneLine, type RetuneRecord, type RetunesRead } from "../setup/retunelog.js";
 
 /** `scripts/config-fingerprint.sh` output: what a config home ships, as the
  * config file's hash and one hash over every file under its profiles/. */
@@ -74,4 +77,66 @@ export function configDriftText(d: ConfigDrift): string {
           ? "profile changed, not deployed"
           : "config.toml changed, not deployed";
   }
+}
+
+// ---- the re-tunes a deploy would ship ------------------------------
+
+/**
+ * Which post-scan re-tunes (`<state home>/setup/retunes.json`, written by the
+ * companion's `setup_retune`) the VM does NOT run yet. The config drift is the
+ * authority on WHETHER the profile is behind; the re-tune log only says WHICH
+ * change that is, so it is consulted only while the profile is (or may be)
+ * behind:
+ *
+ *   - drift `same`, `no-home`, or only config.toml changed → none: the VM runs
+ *     these profiles (or nothing could ship them);
+ *   - `never-shipped` → every logged re-tune that wrote a file is pending;
+ *   - profiles `changed` → those written after the VM's last deploy (the
+ *     BUILD_SHA marker's time, written on this machine by deploy.sh); with no
+ *     readable deploy time, the latest re-tune, as UNKNOWN;
+ *   - drift `unknown` → the re-tunes since the last deploy, as UNKNOWN.
+ *
+ * An unreadable log is UNKNOWN with its reason, never "no re-tunes".
+ */
+export type PendingRetunes =
+  | { state: "none" }
+  | { state: "pending"; retunes: RetuneRecord[] }
+  | { state: "unknown"; why: string; retunes: RetuneRecord[] };
+
+export function pendingRetunes(
+  log: RetunesRead | undefined,
+  drift: ConfigDrift,
+  deployedAt: string | undefined,
+): PendingRetunes {
+  if (drift.kind === "same" || drift.kind === "no-home") return { state: "none" };
+  if (drift.kind === "changed" && !drift.profiles) return { state: "none" };
+  if (log === undefined || log.state === "absent") return { state: "none" };
+  if (log.state === "unreadable") return { state: "unknown", why: log.error, retunes: [] };
+  const written = log.retunes.filter((r) => r.files.length > 0);
+  if (written.length === 0) return { state: "none" };
+  if (drift.kind === "never-shipped") return { state: "pending", retunes: written };
+  const since = deployedAt ? written.filter((r) => r.at > deployedAt) : [];
+  if (drift.kind === "unknown") {
+    return since.length === 0 ? { state: "none" } : { state: "unknown", why: drift.why, retunes: since };
+  }
+  if (!deployedAt) {
+    return { state: "unknown", why: "when the VM was last deployed is unknown", retunes: written.slice(-1) };
+  }
+  return since.length === 0 ? { state: "none" } : { state: "pending", retunes: since };
+}
+
+/** The deploy tab's lines for the pending re-tunes (plain text; the tab inks
+ * them). Each re-tune, then each change with its reason. */
+export function pendingRetuneLines(p: PendingRetunes): string[] {
+  if (p.state === "none") return [];
+  const head =
+    p.state === "pending"
+      ? `${p.retunes.length} post-scan re-tune${p.retunes.length === 1 ? "" : "s"} not deployed — a sync ships ${p.retunes.length === 1 ? "it" : "them"}:`
+      : `whether these re-tunes are deployed is unknown — ${p.why}`;
+  const out = [head];
+  for (const r of p.retunes) {
+    out.push(`  ${retuneLine(r)}`);
+    for (const c of r.changes) out.push(`    ${c.input}: ${c.from} → ${c.to} — ${c.why}`);
+  }
+  return out;
 }

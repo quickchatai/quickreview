@@ -7,6 +7,10 @@
 // after its first healthy reconcile; a failed sync stays drained.
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { stateHome } from "../install.js";
+import { parseRetunes, RETUNES_FILE, type RetunesRead } from "../setup/retunelog.js";
 import type { TuiConfig } from "../config.js";
 import type { App } from "./app.js";
 import type { BoardKey } from "./keys.js";
@@ -41,6 +45,8 @@ import {
   configDrift,
   configDriftText,
   parseConfigFingerprint,
+  pendingRetuneLines,
+  pendingRetunes,
   type ConfigRead,
 } from "./confighome.js";
 import { FG, RESET } from "./theme.js";
@@ -171,6 +177,9 @@ export interface DeployState {
    * answered. Compared by `configDrift`. */
   configLocal?: ConfigRead;
   configDeployed?: ConfigRead;
+  /**: the setup re-tune log in this machine's state home — which
+   * post-scan re-tune a pending profile change is. `undefined` until fetched. */
+  retunes?: RetunesRead;
   /** Local HEAD; `undefined` when `git rev-parse` could not be read. */
   head?: string;
   /** Uncommitted paths, or `undefined` when `git status` could not be read.
@@ -252,11 +261,25 @@ export interface DeployFetcher {
   load(): Promise<Omit<DeployState, "loaded" | "loading" | "scroll">>;
 }
 
+/**: the re-tune log in this machine's state home (the companion
+ * writes it through the mounted state home). A read that throws is UNKNOWN. */
+export function readRetuneLog(home: string = stateHome()): RetunesRead {
+  let text: string | null;
+  try {
+    text = readFileSync(join(home, RETUNES_FILE), "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") text = null;
+    else return { state: "unreadable", error: `${RETUNES_FILE} cannot be read: ${String(err)}` };
+  }
+  return parseRetunes(text);
+}
+
 export class RealDeployFetcher implements DeployFetcher {
   constructor(
     private readonly cfg: TuiConfig,
     private readonly ssh: SshRunner,
     private readonly local: LocalRunner,
+    private readonly retuneLog: () => RetunesRead = () => readRetuneLog(),
   ) {}
 
   async load(): Promise<Omit<DeployState, "loaded" | "loading" | "scroll">> {
@@ -282,6 +305,7 @@ export class RealDeployFetcher implements DeployFetcher {
       containerStatus: status.ok ? status.stdout.trim() : undefined,
       configLocal: cfgLocal.ok ? parseConfigFingerprint(cfgLocal.stdout) : undefined,
       configDeployed: cfgRemote.ok ? parseConfigFingerprint(cfgRemote.stdout) : undefined,
+      retunes: this.retuneLog(),
       head: head.ok ? head.stdout.trim() : undefined,
       dirty: dirty.ok ? dirty.stdout.split("\n").filter((l) => l.trim() !== "") : undefined,
       // A refusal exits non-zero with the reason on stderr — that IS the plan.
@@ -346,6 +370,12 @@ export function deployLines(st: DeployState, width: number): string[] {
       width,
     ),
   );
+  // which post-scan re-tune that profile change is, and why.
+  const retunes = pendingRetunes(st.retunes, drift, dep?.at);
+  const retuneInk = retunes.state === "pending" ? BAD : WARN;
+  for (const [i, l] of pendingRetuneLines(retunes).entries()) {
+    lines.push(truncate(i === 0 ? `  ${retuneInk}${l}${DRESET}` : `  ${FG.dim}${l}${RESET}`, width));
+  }
   lines.push("");
 
   // "Up to date, nothing to deploy" is a CLAIM, so it needs every fact — an

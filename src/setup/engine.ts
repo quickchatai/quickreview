@@ -13,7 +13,9 @@
 // assembled here, the companion's narrative stored in the config home) and
 // the interview's tuning (tuning.ts — the priority table applied to
 // the repo profile, validated with the daemon's own loaders; pin proposals
-// handed to the operator). The scan's own records and triage live beside it
+// handed to the operator) and the post-scan re-tune (retune.ts —
+// the same profile path, every change with its reason, logged for the
+// deploy tab). The scan's own records and triage live beside it
 // (scanrun.ts, findings.ts, triage.ts) over the same ports:
 // the tracker sink is trackersink.ts's; the GitHub reader is
 // declared and injected for the slice that first calls it.
@@ -51,6 +53,8 @@ import {
   type StoreNarrativeResult,
 } from "./portrait.js";
 import type { ProfileHome } from "./profile.js";
+import { retune, type RetuneInput, type RetuneResult } from "./retune.js";
+import { scanFacts } from "./scanfacts.js";
 import {
   profileApply,
   profileStatus,
@@ -679,7 +683,8 @@ export class SetupEngine {
 
   /** The portrait facts as they are now, from what is already on disk: the
    * repo facts, the SAVED cut (the candidates, flagged, when none is saved),
-   * the saved history themes and the last completed survey. */
+   * the saved history themes, the last completed survey and what the scans
+   * found. */
   private portraitFacts(): { ok: true; facts: PortraitFacts } | Refusal {
     const files = this.files();
     if (files === null) return this.noRepo();
@@ -697,6 +702,9 @@ export class SetupEngine {
     const survey = this.surveyRun.status();
     problems.push(...survey.problems);
     const done = survey.last_complete;
+    // what the scans found, from the state home's scan records.
+    const scanned = scanFacts(this.ports.state);
+    problems.push(...scanned.problems);
     return {
       ok: true,
       facts: {
@@ -729,6 +737,7 @@ export class SetupEngine {
               }
             : { state: themes.state, saved_at: null, digest_generated_at: null, themes: [] },
         survey: done ? { id: done.id, finished_at: done.finished_at, head: done.head, notes: done.notes } : null,
+        scan: scanned.scan,
         problems,
       },
     };
@@ -784,6 +793,23 @@ export class SetupEngine {
    * written (validated first, committed on the operator's machine). */
   profileApply(input: ApplyInput): ApplyResult | Refusal {
     return profileApply(this.tuningDeps(), input);
+  }
+
+  /** After a scan (src/setup/retune.ts): the companion's profile
+   * changes, each with its reason, previewed or written through the same
+   * path as the interview's — a write logs the report and refreshes the
+   * portrait facts. It reaches PR reviews only on the operator's deploy. */
+  retune(input: RetuneInput): RetuneResult | Refusal {
+    return retune(
+      {
+        ...this.tuningDeps(),
+        refreshPortrait: () => {
+          const r = this.portraitAssemble();
+          return r.ok ? { ok: true, key: r.current.key } : r;
+        },
+      },
+      input,
+    );
   }
 
   /** Propose memory entries to pin; the operator decides in the TUI. */

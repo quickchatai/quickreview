@@ -40,7 +40,7 @@ The repo facts plus the companion's stored narrative of them — what the interv
 _Avoid_: profile (that is the tuning), summary
 
 **Portrait facts**:
-The portrait's deterministic half — stack and units, the conventions the repo writes down and what its tooling enforces, and the history themes — assembled into the state home under a key that moves only when their shape does.
+The portrait's deterministic half — stack and units, the conventions the repo writes down and what its tooling enforces, the history themes and, after a scan, what the scans found (findings by unit and state, the per-unit hotspots) — assembled into the state home under a key that moves only when their shape does. The version it replaced is kept.
 
 **Portrait narrative**:
 The companion's reading of the portrait facts, stored in the config home against the facts' key; stale once the facts move past it. The one it replaced is kept for a diff.
@@ -49,6 +49,10 @@ _Avoid_: summary, report
 **Repo profile**:
 The per-repo tuning of the reviewer, extending a base profile.
 _Avoid_: config (that is the install's), portrait
+
+**Re-tune**:
+A change to the repo profile the companion makes itself after a scan, each change with its reason from what the scan found; logged in the state home, and live only once the operator deploys.
+_Avoid_: re-interview, retrain
 
 **Interview**:
 Setup's conversation with the operator — adaptive, driven by the portrait, always covering four fixed points (goals, merge-blocking concerns, risk areas, style & tests) — whose answers become the repo profile.

@@ -177,9 +177,11 @@ them, kept apart so the owner can check the one and still see the other.
 
 - **`setup_portrait_assemble`** — free: reads the stack, the saved unit cut
   (the candidates, flagged, before one is saved), the conventions the repo
-  writes down and what its CI and linters already enforce, and the saved
-  review history themes, into the state home. It returns the facts' KEY and,
-  when their shape changed, what changed since the version it kept.
+  writes down and what its CI and linters already enforce, the saved
+  review history themes and — after a scan — what the scans found:
+  the last scan, findings by unit and state, and the hotspots you wrote to
+  scan memory, into the state home. It returns the facts' KEY and, when
+  their shape changed, what changed since the version it kept.
 - **`setup_portrait_narrative`** — your reading of those facts for the owner,
   in prose: what kind of repo this is, what it already holds itself to, what
   reviewers keep asking for, and what the facts leave open for the
@@ -306,6 +308,28 @@ judgement alone.
   fragile). One line each. A single finding, a `path:line`, a fingerprint or
   a finding's quoted claim is refused — those stay in the findings store.
   Written appended and unpinned; the end-of-day curator merges them.
+
+## After a scan: refresh the portrait, re-tune the profile
+
+A finished scan is evidence about what this repo's reviewer should watch.
+Once he has triaged what he wants to and `scan_memory` is written:
+
+- **`setup_portrait_assemble`** — the facts now carry the scan (findings by
+  unit, the hotspots); the pre-scan version is kept. Rewrite your narrative
+  from them (`setup_portrait_narrative`) — it reads STALE until you do.
+- **`setup_retune`** — YOU apply the profile changes the scan calls for:
+  priorities through the same table as the interview, `emphasis` in your
+  words, a revised drafted guide. Every change carries its reason in
+  `reasons` (keyed by the concern, the lens, or `style_guide`), citing what
+  the scan found; a change without one — or a reason without a change — is
+  refused. Preview first, then `write: true`: it writes the profile
+  (validated with the daemon's own loaders), logs the report, refreshes the
+  portrait facts and asks for a commit. Change only what the scan gives you
+  grounds for; no grounds, no re-tune.
+- **Then tell him** what changed and why — the tool's report is the text.
+  It reaches PR reviews ONLY when he deploys: the deploy tab lists the
+  re-tune under "profile changed, not deployed" until then. That deploy is
+  his safety net. You never deploy.
 
 ## Boundary (absolute)
 
