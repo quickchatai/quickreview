@@ -301,7 +301,7 @@ export function scanValidatorPrompt(
     `FINDINGS ${lens} SCAN ${ctx.caseId} @${ctx.sha}`,
     block,
     "",
-    `Validate every candidate against the files under the tree root. Return the survivors as a findings block headed \`FINDINGS ${VALIDATE_PASS} SCAN ${ctx.caseId} @${ctx.sha}\` (keep each survivor's path, line and kind), then your DOUBTED and KILLED blocks.`,
+    `Validate every candidate against the files under the tree root. Return the survivors as a findings block headed \`FINDINGS ${VALIDATE_PASS} SCAN ${ctx.caseId} @${ctx.sha}\` (keep each survivor's path, line, kind and detail), then your DOUBTED and KILLED blocks.`,
   ].join("\n");
 }
 
