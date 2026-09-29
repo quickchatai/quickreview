@@ -516,7 +516,7 @@ describe("the sandbox wiring", () => {
     expect(stage).toMatch(/! test -e scripts && ! command -v gh/);
     expect(stage).toContain("PI_OFFLINE=1");
     // The same pi as every other arm: the runtime's one pin.
-    expect(docker).toContain("ARG PI_VERSION=0.87.1");
+    expect(docker).toContain("ARG PI_VERSION=0.99.1");
   });
 
   it("bench.sh, in-container.sh and arm.sh know the arm; the trees sit on /work", () => {

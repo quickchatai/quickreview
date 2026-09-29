@@ -15,7 +15,7 @@ node_major: "22"
 # 2026-08-13). The image never floats — bumping is a deliberate edit +
 # `-e rebuild_image=true`.
 pi_npm_package: "@earendil-works/pi-coding-agent"
-pi_version: "0.87.1"
+pi_version: "0.99.1"
 
 # RETIRED: pi_subagents_repo/pi_subagents_commit. The third-party
 # amosblomqvist/pi-subagents extension is removed entirely — subagents are

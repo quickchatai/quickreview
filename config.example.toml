@@ -228,7 +228,7 @@ evidence_timeout_s = 60           # evidence copier: per-remote-read
 # VERIFY-ON-PIN: package + version mirrored in package.json "pi" block and the
 # ansible group_vars; the image never floats.
 package = "@earendil-works/pi-coding-agent"
-version = "0.87.1"
+version = "0.99.1"
 session_dir = "state/pi-sessions"
 # Process-wide subagent fan-out cap: enforced by the first-party
 # glue over pi's native subagent extension (extensions/subagents.ts). The

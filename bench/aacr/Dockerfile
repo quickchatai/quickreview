@@ -28,7 +28,7 @@
 # because nothing in the image knows how.
 #
 # Pins — each one a rule-7-style pin, bumped only on purpose:
-#   pi 0.87.1                          = config.toml [pi], package.json "pi"
+#   pi 0.99.1                          = config.toml [pi], package.json "pi"
 #   aacr-bench harness 68a5697         = the scorer's code
 #   AACR-Bench dataset v1.0 ab8af8d    = what every published row is scored on;
 #                                        its sha256 is verified at build time
@@ -63,7 +63,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 ARG PI_PACKAGE=@earendil-works/pi-coding-agent
-ARG PI_VERSION=0.87.1
+ARG PI_VERSION=0.99.1
 RUN npm install -g ${PI_PACKAGE}@${PI_VERSION} --no-audit --no-fund
 
 # The scorer, at a pinned commit, in its own venv with its own locked deps.
@@ -190,7 +190,7 @@ ENV OPENCODE_DISABLE_AUTOUPDATE=1 OPENCODE_DISABLE_SHARE=1 OPENCODE_DISABLE_MODE
 
 # ---- pireview: @zephyrdeng/pi-review, a pi code-review package ---------------------
 # Above `ocr` for the same reason as opencode (no BuildKit here). Built on
-# `runtime`, so pi (0.87.1 — the pin every arm shares), the scorer, the dataset
+# `runtime`, so pi (0.99.1 — the pin every arm shares), the scorer, the dataset
 # and the judge shim are the ones every other arm is scored with. The npm
 # TARBALL is fetched with `npm pack`, checked against the sha512 recorded HERE
 # (the registry's own dist.integrity for that version), and unpacked — never

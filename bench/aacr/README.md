@@ -523,8 +523,8 @@ Its findings carry the harness's codex severities, not our tags, so only the
 [`@zephyrdeng/pi-review`](https://github.com/ZephyrDeng/pi-review) (npm,
 **0.18.0**) — "isolated AI-powered code and plan reviews from the command
 line", the most-downloaded dedicated code-review package for the pi coding
-agent — as a benchmarked reviewer, on the SAME pi (**0.87.1**, the runtime
-image's pin) and the same ChatGPT login our own sessions use. The harness has
+agent — as a benchmarked reviewer, on the SAME pi (**0.99.1**, the runtime
+image's pin; the published pireview rows ran on 0.87.1) and the same ChatGPT login our own sessions use. The harness has
 no pi-review runner, so `src/bench/pireview.ts` is one:
 
 ```sh

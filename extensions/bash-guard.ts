@@ -1176,7 +1176,7 @@ export function isGitConfigSurface(path: string): boolean {
  *   · `AGENTS.override.md`, `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md`, `CLAUDE.MD`
  *     — pi's project-context files. pi loads the FIRST of them it finds in the
  *     cwd into EVERY session and pass it starts there (`loadContextFileFromDir`,
- *     pi 0.87.1 — VERIFY-ON-PIN: the candidate list is pi's), and every session
+ *     pi 0.87.1, unchanged at 0.99.1 — VERIFY-ON-PIN: the candidate list is pi's), and every session
  *     and pass runs in the sandbox root. One write plants instructions in every
  *     later session until the next deploy — the overseer's included.
  *

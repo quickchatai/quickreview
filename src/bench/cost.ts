@@ -10,7 +10,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-/** pi's price list for openai-codex/gpt-6-sol, $ per million tokens (pi 0.87.1,
+/** pi's price list for openai-codex/gpt-6-sol, $ per million tokens (pi 0.87.1, unchanged at 0.99.1;
  * model catalog `cost` — VERIFY-ON-PIN). Requests above 272k input tokens are
  * priced higher by pi; OCR's per-file calls never get near that. */
 export const GPT6_SOL_USD_PER_MTOK = { input: 2, cacheRead: 0.2, output: 10 } as const;

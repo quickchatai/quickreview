@@ -58,7 +58,7 @@ export type SpawnFn = (
   kill(signal?: NodeJS.Signals): boolean;
 };
 
-/** The package names pi's CLI ships under. VERIFY-ON-PIN (0.87.1): the
+/** The package names pi's CLI ships under. VERIFY-ON-PIN (0.87.1, re-read at 0.99.1): the
  * pinned package is `@earendil-works/pi-coding-agent` (package.json `pi`
  * block); the legacy `@mariozechner` scope is what older installs carry. */
 export const PI_PACKAGES: readonly string[] = ["@earendil-works/pi-coding-agent", "@mariozechner/pi-coding-agent"];
@@ -102,7 +102,7 @@ export function isPiCliEntry(script: string): boolean {
  * the TUI — gets `pi` on the PATH. The old rule reused argv[1] whenever the
  * file merely existed, so every non-pi host spawned ITSELF for every scan
  * case. A bun-compiled pi (`/$bunfs/…`) also falls back to the PATH.
- * VERIFY-ON-PIN (0.87.1): pi's entry is a `bin` of its package, run by node. */
+ * VERIFY-ON-PIN (0.87.1, re-read at 0.99.1 — bin still dist/bundle/cli.js): pi's entry is a `bin` of its package, run by node. */
 export function piInvocation(
   host: { argv1: string | undefined; execPath: string } = { argv1: process.argv[1], execPath: process.execPath },
 ): { command: string; prefix: string[] } {
@@ -127,7 +127,7 @@ export function piInvocation(
  * per-message accounting summed (null when it reported none). An abort kills
  * the child (TERM, then KILL). Every outcome resolves.
  *
- * VERIFY-ON-PIN (0.87.1, read from the published examples/extensions/subagent
+ * VERIFY-ON-PIN (0.87.1, re-read at 0.99.1: examples/extensions/subagent byte-identical, CLI flag set identical; read from the published examples/extensions/subagent
  * and dist/cli/args.js): the argv spelling, `--no-extensions`/`--approve`,
  * and the `message_end` event carrying `message.usage.cost.total`.
  */

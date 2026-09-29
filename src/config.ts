@@ -824,7 +824,7 @@ export interface ModelsConfig {
    * specs. */
   effort: ReviewEffort;
   /** The level `effort = "high"` means — the highest a model accepts. pi
-   * 0.87.1 lists `minimal…high, xhigh, max` for gpt-6-sol (model catalog,
+   * 0.87.1 (and 0.99.1, also for gpt-6.1-sol) lists `minimal…high, xhigh, max` for gpt-6-sol (model catalog,
    * VERIFY-ON-PIN); a model that tops out lower needs this set to its own
    * ceiling. */
   effort_max: ThinkingLevel;
@@ -838,7 +838,7 @@ export interface ModelsConfig {
   pass_tiers: Record<string, PassTier>;
 }
 
-/** pi's thinking levels, ascending (pi 0.87.1 — VERIFY-ON-PIN). */
+/** pi's thinking levels, ascending (pi 0.87.1, unchanged at 0.99.1 — VERIFY-ON-PIN). */
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
