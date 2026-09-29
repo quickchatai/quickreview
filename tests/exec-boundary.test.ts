@@ -931,6 +931,28 @@ describe("— the write class that no command string can show (round 2)", () => 
       ).toEqual([]);
     });
 
+    it("a watch set that GREW between baseline and re-check is drift, not a change", () => {
+      // A round dispatched under the legacy watch set (no located config)
+      // and judged after a deploy that added it must stay silent — deploy.sh
+      // only WARNS on an undrained deploy, so rounds do straddle one.
+      // MUTATION: drop the both-sides-watched skip in `integrityChanges` — red.
+      const disk = vmDisk();
+      const fs = policyFs(disk);
+      const after = fingerprintRoundIntegrity(vmOpts, fs);
+      const oldFiles = Object.fromEntries(
+        Object.entries(after.files).filter(([p]) => !p.startsWith("/opt/") && !p.startsWith("/home/q")),
+      );
+      const before = { digest: "old-release", files: oldFiles };
+      expect(Object.keys(after.files).length).toBeGreaterThan(Object.keys(oldFiles).length);
+      expect(integrityChanges(before, after)).toEqual([]);
+      // …and the shrunk direction too (QCR_CONFIG moved across a restart).
+      expect(integrityChanges(after, { ...before, digest: "x" })).toEqual([]);
+      // A real change on a path BOTH sides watched is still reported.
+      disk.set("/sb/config.toml", "dry_run = false\n");
+      const tampered = fingerprintRoundIntegrity(vmOpts, fs);
+      expect(integrityChanges(before, tampered).map((c) => c.path)).toEqual(["/sb/config.toml"]);
+    });
+
     it("defaults to the process's own install env — the one dispatch and verdicts share", () => {
       const prev = process.env.QCR_CONFIG;
       process.env.QCR_CONFIG = "/opt/quickreview/config-home/acme.toml";

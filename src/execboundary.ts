@@ -308,9 +308,18 @@ export function integrityChanges(
   // can see, and which mutation-verification could not see before.
   const beforeFiles = before.files ?? {};
   const afterFiles = after.files ?? {};
+  // A path only ONE well-formed side watched is watch-set drift, not a change:
+  // the set grows between releases (located config joined it), and a
+  // round dispatched before a deploy and judged after it would otherwise read
+  // every newly watched file as "absent → sha256" — a false
+  // policy_surface_modified on every round in flight across an undrained
+  // deploy (deploy.sh only warns). Unknown is not evidence of a change. A
+  // malformed side (no `files` map) keeps the total behaviour above.
+  const bothWatched = before.files !== undefined && after.files !== undefined;
   const paths = new Set([...Object.keys(beforeFiles), ...Object.keys(afterFiles)]);
   const out: IntegrityChange[] = [];
   for (const path of [...paths].sort()) {
+    if (bothWatched && (!(path in beforeFiles) || !(path in afterFiles))) continue;
     const b = beforeFiles[path] ?? "absent";
     const a = afterFiles[path] ?? "absent";
     if (b !== a) out.push({ path, before: b, after: a });
