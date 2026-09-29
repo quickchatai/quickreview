@@ -12,6 +12,7 @@ import {
   type GateResult,
 } from "./gate.js";
 import { type TokenMinter, type FetchFn } from "./githubAuth.js";
+import type { PrReviews } from "./reviewhistory.js";
 
 export interface PrConversation {
   body: string;
@@ -365,6 +366,70 @@ export class GitHubAdapter {
           actor: t.actor?.login ?? null,
           requested_team: t.requestedReviewer?.slug ?? null,
           requested_user: t.requestedReviewer?.login ?? null,
+        })),
+    };
+  }
+
+  /** One read-only GraphQL query per PR for the review history digest
+   *: EVERY author's reviews, each with its inline comments, and the
+   * author's type so the digest can keep people and drop Apps. Returns null
+   * when the PR is gone. */
+  async prReviews(n: number): Promise<PrReviews | null> {
+    interface RawAuthor {
+      __typename?: string;
+      login?: string;
+    }
+    interface RawPr {
+      number?: number;
+      title?: string;
+      mergedAt?: string | null;
+      author?: { login?: string } | null;
+      reviews?: {
+        nodes?: Array<{
+          author?: RawAuthor | null;
+          state?: string;
+          submittedAt?: string | null;
+          body?: string;
+          comments?: { nodes?: Array<{ author?: RawAuthor | null; path?: string | null; body?: string } | null> } | null;
+        } | null>;
+      } | null;
+    }
+    const data = await this.graphql<{ repository?: { pullRequest?: RawPr | null } | null }>(
+      `query ($owner: String!, $repo: String!, $number: Int!) {
+        repository(owner: $owner, name: $repo) {
+          pullRequest(number: $number) {
+            number title mergedAt
+            author { login }
+            reviews(first: 100) {
+              nodes {
+                author { __typename login } state submittedAt body
+                comments(first: 100) { nodes { author { __typename login } path body } }
+              }
+            }
+          }
+        }
+      }`,
+      { owner: this.owner, repo: this.repo, number: n },
+    );
+    const pr = data.repository?.pullRequest;
+    if (!pr) return null;
+    const author = (a: RawAuthor | null | undefined): { login: string; type: string } | null =>
+      a ? { login: a.login ?? "", type: a.__typename ?? "" } : null;
+    return {
+      number: pr.number ?? n,
+      title: pr.title ?? "",
+      author: pr.author?.login ?? "",
+      merged_at: pr.mergedAt ?? null,
+      reviews: (pr.reviews?.nodes ?? [])
+        .filter((r): r is NonNullable<typeof r> => Boolean(r))
+        .map((r) => ({
+          author: author(r.author),
+          state: r.state ?? "",
+          submitted_at: r.submittedAt ?? null,
+          body: r.body ?? "",
+          comments: (r.comments?.nodes ?? [])
+            .filter((c): c is NonNullable<typeof c> => Boolean(c))
+            .map((c) => ({ author: author(c.author), path: c.path ?? null, body: c.body ?? "" })),
         })),
     };
   }

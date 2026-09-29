@@ -11,7 +11,12 @@
 //     repo as it is now, with each unit's case split;
 //   - setup_unit_cut_propose / _adjust / _save: the companion proposes, the
 //     operator's corrections are applied, and save persists the cut in the
-//     state home — refused until it is a complete partition of the repo.
+//     state home — refused until it is a complete partition of the repo;
+//   - setup_review_history / _themes: read the review history
+//     digest the TUI pulled into the state home, page by page, and save the
+//     THEMES condensed from it — the only part that goes on to reviewer
+//     memory (`#history`) and the portrait. A theme quoting a raw comment or
+//     naming its author is refused.
 //
 // Convention (onboarding.ts, tui-view.ts): degrade, never wedge — a pi
 // without registerTool registers nothing and says so, and every tool answers
@@ -24,9 +29,12 @@ import {
   type CutView,
   type Refusal,
 } from "../src/setup/engine.js";
+import type { HistoryTheme, HistoryThemesFile } from "../src/setup/history.js";
+import { MAX_THEMES, THEME_SOURCES, THEME_SUMMARY_MAX, THEME_TITLE_MAX } from "../src/setup/history.js";
 import {
   checkoutReader,
   notYetCaseRunner,
+  reviewerMemoryFromEnv,
   notYetTrackerSink,
   stateHomeFs,
   tokenFileGitHubReader,
@@ -99,6 +107,54 @@ export function renderStatus(s: CutStatus): string {
   }
   if (s.draft) out.push(renderCut(`Draft (${s.draft.source}, updated ${s.draft.updated_at}) — not in use until saved`, s.draft));
   if (s.has_previous) out.push("The cut before the saved one is kept as `previous` in the state home.");
+  return out.join("\n\n");
+}
+
+export function renderThemes(themes: readonly HistoryTheme[]): string {
+  return themes.length === 0
+    ? "  (none — an empty history has no themes)"
+    : themes.map((t) => `  - ${t.title} [${t.source}, ${t.weight}] — ${t.summary}`).join("\n");
+}
+
+export function renderHistory(h: ReturnType<SetupEngine["history"]>): string {
+  const out: string[] = [];
+  const saved = (f: HistoryThemesFile | null): string =>
+    f
+      ? `Saved themes (${f.saved_at}, from the digest of ${f.digest_generated_at}):\n${renderThemes(f.themes)}`
+      : "No themes saved yet.";
+  if (h.digest === "absent") {
+    out.push(
+      "No review history digest in the state home yet. Ask the owner to run `qcr history pull` on his machine — it reads " +
+        "the history on the VM through the App (minutes on a busy repo) and writes the digest here. You cannot fetch it yourself.",
+    );
+    out.push(saved(h.themes));
+    return out.join("\n\n");
+  }
+  if (h.digest === "unreadable") {
+    for (const p of h.problems) out.push(`✗ ${p}`);
+    out.push("The digest is UNKNOWN until it is pulled again.");
+    out.push(saved(h.themes));
+    return out.join("\n\n");
+  }
+  const s = h.summary!;
+  out.push(
+    `Review history of ${s.repo} (digest ${s.generated_at}, since ${s.since.slice(0, 10)}, ${s.months} months):\n` +
+      `  human review comments: ${s.human_comments} on ${s.prs_scanned} of ${s.prs_enumerated} merged PRs${s.truncated ? " (capped — newest kept)" : ""}\n` +
+      `  own rounds: ${s.rounds}\n  [feedback] signals: ${s.feedback}`,
+  );
+  for (const p of s.problems) out.push(`! ${p}`);
+  if (s.empty) {
+    out.push("EMPTY history: no merged-PR review comments, no rounds, no feedback. Save an empty theme list to record that.");
+  }
+  if (h.page) {
+    const end = h.page.offset + h.page.lines.length;
+    out.push(
+      `${h.page.section} ${h.page.total === 0 ? "(none)" : `${h.page.offset + 1}–${end} of ${h.page.total}`}` +
+        `${end < h.page.total ? ` — next page: offset ${end}` : ""}. RAW text: condense it, never copy it onward.\n` +
+        h.page.lines.map((l) => `  ${l}`).join("\n"),
+    );
+  }
+  out.push(saved(h.themes));
   return out.join("\n\n");
 }
 
@@ -208,7 +264,77 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     },
   };
 
-  return [facts, status, propose, adjust, save];
+  const history: PiToolDefinition = {
+    name: "setup_review_history",
+    label: "Review history",
+    description:
+      "The review history digest in the install's state home: human review comments on merged PRs of the last six months, the " +
+      "reviewer's own rounds, and [feedback]. Without `section` it summarises; with one it returns a page of RAW items " +
+      "(human | rounds | feedback) to read and condense. Raw comments stay in the state home: never quote them, and never name " +
+      "who wrote them, in anything you write elsewhere.",
+    promptSnippet: "Read the review history digest",
+    parameters: {
+      type: "object",
+      properties: {
+        section: { type: "string", enum: ["human", "rounds", "feedback"] },
+        offset: { type: "number", description: "First item of the page (0-based)." },
+        limit: { type: "number", description: "Items per page (at most 200; default 50)." },
+      },
+    },
+    execute: async (_id, params) => {
+      const p = (params ?? {}) as { section?: unknown; offset?: unknown; limit?: unknown };
+      const section = p.section === "human" || p.section === "rounds" || p.section === "feedback" ? p.section : null;
+      const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+      const offset = num(p.offset);
+      const limit = num(p.limit);
+      const h = engine.history(
+        section ? { section, ...(offset !== undefined ? { offset } : {}), ...(limit !== undefined ? { limit } : {}) } : null,
+      );
+      return text(renderHistory(h), { digest: h.digest, summary: h.summary });
+    },
+  };
+
+  const themes: PiToolDefinition = {
+    name: "setup_review_history_themes",
+    label: "Save review history themes",
+    description:
+      `Save the THEMES you condensed from the review history — at most ${MAX_THEMES}, each {title (≤${THEME_TITLE_MAX}), summary ` +
+      `(≤${THEME_SUMMARY_MAX}), source: ${THEME_SOURCES.join("|")}, weight: items behind it}. Your own words about the code and ` +
+      "what reviewers ask for; a theme that quotes a raw comment (eight words running) or names a comment's author is refused. " +
+      "Saved to the state home (the portrait reads them) and written to reviewer memory as #history entries, replacing the " +
+      "earlier unpinned ones. An empty list is valid for an empty history.",
+    promptSnippet: "Save the review history themes",
+    parameters: {
+      type: "object",
+      properties: {
+        themes: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              title: { type: "string" },
+              summary: { type: "string" },
+              source: { type: "string", enum: [...THEME_SOURCES] },
+              weight: { type: "number" },
+            },
+            required: ["title", "summary", "source", "weight"],
+          },
+        },
+      },
+      required: ["themes"],
+    },
+    execute: async (_id, params) => {
+      const r = await engine.saveHistoryThemes((params as { themes?: unknown } | undefined)?.themes);
+      if (!r.ok) return refused("Themes", r);
+      const mem = r.memory;
+      const memLine =
+        `Memory: ${mem.written} #history entr${mem.written === 1 ? "y" : "ies"} written, ${mem.retired} earlier retired.` +
+        (mem.problems.length > 0 ? `\n${mem.problems.map((p) => `! ${p}`).join("\n")}` : "");
+      return text(`Themes saved:\n${renderThemes(r.themes)}\n\n${memLine}`, { themes: r.themes, memory: mem });
+    },
+  };
+
+  return [facts, status, propose, adjust, save, history, themes];
 }
 
 // ---- activation ----------------------------------------------------------------
@@ -218,9 +344,9 @@ export function buildEngine(env: NodeJS.ProcessEnv = process.env): SetupEngine {
     repo: checkoutReader(env.QCR_REVIEWED_REPO?.trim() || DEFAULT_REVIEWED_REPO),
     state: stateHomeFs(stateHome(env)),
     clock: () => new Date(),
-    // Memory writes (survey, scan memory) land with; until
-    // then this belt writes none, and says so if asked.
-    memory: null,
+    // Reviewer memory (the review history themes) — null, and said
+    // so on every write, when the spawn carries no endpoint or reviewer key.
+    memory: reviewerMemoryFromEnv(env),
     cases: notYetCaseRunner(""),
     tracker: notYetTrackerSink(""),
     github: tokenFileGitHubReader({

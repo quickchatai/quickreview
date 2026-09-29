@@ -492,6 +492,76 @@ export async function cmdBackfill(
   }
 }
 
+/** `--months N` / `--limit N`, or undefined; a malformed value is an error. */
+function intFlag(rest: string[], flag: string, usage: string): number | undefined {
+  const i = rest.indexOf(flag);
+  if (i < 0) return undefined;
+  const n = Number(rest[i + 1]);
+  if (!Number.isInteger(n) || n < 0) throw new Error(usage);
+  return n;
+}
+
+const HISTORY_USAGE = "usage: qcr history <digest [--months <n>] [--limit <n>] | pull [--months <n>]>";
+
+/**
+ * `qcr history` — the review history digest setup reads.
+ *
+ * `digest` runs WHERE THE APP CREDENTIAL IS (in the VM container) and prints
+ * the digest to stdout, writing nothing: read-only against GitHub, built with
+ * the same record-only gate `qcr backfill` builds, so no mutation is reachable
+ * from it even by mistake. `pull` runs on the PC: it runs `digest` over the
+ * TUI's route and writes the result into THIS install's state home — the only
+ * place the raw comments ever land.
+ */
+export async function cmdHistory(rest: string[]): Promise<number> {
+  const sub = rest[0];
+  const months = intFlag(rest, "--months", HISTORY_USAGE);
+  if (sub === "digest") {
+    const limit = intFlag(rest, "--limit", HISTORY_USAGE);
+    const { TokenMinter } = await import("./githubAuth.js");
+    const { MutationGate } = await import("./gate.js");
+    const { GitHubAdapter } = await import("./github.js");
+    const { collectReviewHistory } = await import("./reviewhistory.js");
+    const cfg = loadConfig();
+    const gate = new MutationGate(true, join(stateDir(), "dryrun"), async () => {
+      throw new Error("qcr history performs no mutations");
+    });
+    const adapter = new GitHubAdapter(cfg, new TokenMinter(cfg.github.secrets_dir), gate);
+    const store = openStore();
+    try {
+      const digest = await collectReviewHistory(adapter, store, cfg, {
+        ...(months !== undefined ? { months } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+        log: (line) => process.stderr.write(`${line}\n`),
+      });
+      process.stdout.write(`${JSON.stringify(digest)}\n`);
+      return 0;
+    } finally {
+      store.close();
+    }
+  }
+  if (sub === "pull") {
+    const { runnerFor } = await import("./tui/remote.js");
+    const { pullReviewHistory } = await import("./tui/historypull.js");
+    const { stateHome } = await import("./install.js");
+    const cfg = loadConfig();
+    const r = await pullReviewHistory({
+      tui: cfg.tui,
+      ssh: runnerFor(cfg.tui),
+      stateHome: stateHome(),
+      repo: cfg.github.repo,
+      ...(months !== undefined ? { months } : {}),
+      log: (line) => console.log(line),
+    });
+    if (!r.ok) {
+      console.log(`✖ ${r.reason}`);
+      return 1;
+    }
+    return 0;
+  }
+  throw new Error(HISTORY_USAGE);
+}
+
 /**
  * `qcr regression` — run the human-review case set against the
  * reviewer and write the investigation.
@@ -961,6 +1031,10 @@ export async function main(argv: string[]): Promise<void> {
       }
       return cmdBackfill(rest.includes("--dry-run"), limit, json);
     }
+    case "history": {
+      process.exitCode = await cmdHistory(rest);
+      return;
+    }
     case "regression": {
       process.exitCode = await cmdRegression(rest, json);
       return;
@@ -1032,7 +1106,7 @@ export async function main(argv: string[]): Promise<void> {
     default:
       console.log(
         "usage: qcr <onboard|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|tui [pr|overseer]|drain <on|off>|install <where|migrate>|" +
-          "companion <up|down|status|rebuild>|memory reembed [--user <name>]|backfill [--dry-run] [--limit <n>]|checklist|compare <pr...>|" +
+          "companion <up|down|status|rebuild>|memory reembed [--user <name>]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );
       loadConfig(); // surface config errors early even on bad usage

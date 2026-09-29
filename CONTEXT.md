@@ -23,6 +23,14 @@ _Avoid_: metadata, detection results
 **Review history**:
 The human review comments on the repo's recently merged PRs plus the daemon's own rounds and `[feedback]`, condensed into themes; only the themes reach memory and the portrait.
 
+**Review history digest**:
+The raw review history as the VM reads it through the App and the operator pulls it into the state home (`qcr history pull`); it never leaves the state home.
+_Avoid_: export, dump
+
+**History theme**:
+One recurring thing reviews of the repo ask for, in the companion's own words — never a quote, never a name; what the digest becomes.
+_Avoid_: finding, insight
+
 **Repo portrait**:
 The repo facts plus the companion's stored narrative of them — what the interview starts from.
 _Avoid_: profile (that is the tuning), summary

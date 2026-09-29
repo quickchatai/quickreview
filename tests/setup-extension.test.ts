@@ -67,6 +67,8 @@ describe("the tool belt", () => {
       "setup_unit_cut_propose",
       "setup_unit_cut_adjust",
       "setup_unit_cut_save",
+      "setup_review_history",
+      "setup_review_history_themes",
     ]);
     for (const n of names) expect(n).toMatch(/^[a-z][a-z0-9_]*$/);
   });
@@ -129,7 +131,7 @@ describe("the tool belt", () => {
       expect(err).toHaveBeenCalledWith(expect.stringMatching(/registerTool unavailable/));
       const registered: string[] = [];
       activate({ on: () => {}, sendUserMessage: () => {}, registerTool: (d) => registered.push(d.name) });
-      expect(registered).toHaveLength(5);
+      expect(registered).toHaveLength(7);
     } finally {
       err.mockRestore();
     }

@@ -99,6 +99,22 @@ export function metricsArgv(cfg: TuiConfig): string[] {
   return [...dockerPrefix(cfg), cfg.container, "node", "dist/src/cli.js", "metrics", "--json"];
 }
 
+/** In-container `qcr history digest --json`: the review history
+ * digest, printed — the VM keeps no copy; `historypull.ts` writes it into the
+ * PC's state home. Read-only against GitHub and the box. */
+export function historyDigestArgv(cfg: TuiConfig, months?: number): string[] {
+  return [
+    ...dockerPrefix(cfg),
+    cfg.container,
+    "node",
+    "dist/src/cli.js",
+    "history",
+    "digest",
+    ...(months !== undefined ? ["--months", String(months)] : []),
+    "--json",
+  ];
+}
+
 /** In-container `qcr metrics --pr <n> --json` (the per-PR timeline). */
 export function metricsPrArgv(cfg: TuiConfig, pr: number): string[] {
   return [

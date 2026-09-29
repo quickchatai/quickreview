@@ -23,6 +23,17 @@ import type { MemoryStore } from "../memory/store.js";
 import { isSweepSkipped } from "../heuristics.js";
 import { repoFacts, unitCandidates, vendoredRoots, type RepoFacts } from "./facts.js";
 import {
+  historyPage,
+  readDigest,
+  readHistoryThemes,
+  saveHistoryThemes,
+  summarize,
+  type HistorySection,
+  type HistorySummary,
+  type HistoryThemesFile,
+  type SaveThemesResult,
+} from "./history.js";
+import {
   DEFAULT_CASE_BUDGET,
   applyOps,
   assign,
@@ -497,5 +508,41 @@ export class SetupEngine {
       if (owned.length > 0) cases.push(...splitUnit(u.name, owned, lines, this.budget));
     }
     return { ok: true, cases };
+  }
+
+  // -- review history (src/setup/history.ts) --
+
+  /** The digest in the state home: its summary, one page of one half, and the
+   * themes saved from it so far. `digest: "absent"` is the normal state
+   * before the TUI has pulled one — never an error. */
+  history(
+    page: { section: HistorySection; offset?: number; limit?: number } | null = null,
+  ): {
+    digest: "absent" | "unreadable" | "ok";
+    problems: string[];
+    summary: HistorySummary | null;
+    page: { section: HistorySection; total: number; offset: number; lines: string[] } | null;
+    themes: HistoryThemesFile | null;
+  } {
+    const read = readDigest(this.ports.state);
+    const themes = readHistoryThemes(this.ports.state);
+    if (read.state !== "ok") {
+      return { digest: read.state, problems: read.state === "unreadable" ? [read.error] : [], summary: null, page: null, themes };
+    }
+    return {
+      digest: "ok",
+      problems: [],
+      summary: summarize(read.digest),
+      page: page
+        ? { section: page.section, ...historyPage(read.digest, page.section, page.offset ?? 0, page.limit ?? 50) }
+        : null,
+      themes,
+    };
+  }
+
+  /** Save the companion's themes — the only part of the history that goes on
+   * to memory and the portrait. */
+  saveHistoryThemes(raw: unknown): Promise<SaveThemesResult> {
+    return saveHistoryThemes({ state: this.ports.state, memory: this.ports.memory, clock: this.ports.clock }, raw);
   }
 }

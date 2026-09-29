@@ -18,6 +18,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
+import type { MemoryStore } from "../memory/store.js";
+import { OpenVikingClient } from "../openviking/client.js";
+import { openVikingStore } from "../openviking/store.js";
 import type {
   CaseRunner,
   GitHubReader,
@@ -221,4 +224,19 @@ export function notYetTrackerSink(ticket: string): TrackerSink {
     file: async () => ({ ok: false, reason }),
     close: async () => ({ ok: false, reason }),
   };
+}
+
+/**
+ * Reviewer memory, from the companion's environment: the endpoint
+ * its spawn is given (`OPENVIKING_URL`) and the REVIEWER user key its
+ * `--env-file` carries — what setup writes is for the reviewer to read, and
+ * the server confines that key to the reviewer's tree. Null when either is
+ * missing: the caller then says memory was not written, never pretends.
+ * A dead server is the store's own refusal, per write.
+ */
+export function reviewerMemoryFromEnv(env: NodeJS.ProcessEnv): MemoryStore | null {
+  const baseUrl = env.OPENVIKING_URL?.trim();
+  const key = env.OPENVIKING_REVIEWER_KEY?.trim();
+  if (!baseUrl || !key) return null;
+  return openVikingStore(new OpenVikingClient({ baseUrl, apiKey: key, user: "reviewer" }), { cacheTtlMs: 0 });
 }

@@ -4596,6 +4596,14 @@ export class StateStore {
       .all(day) as FeedbackSignalRow[];
   }
 
+  /** Every feedback signal recorded at or after `since` (an ISO instant),
+   * oldest first — the review history digest's feedback half. */
+  feedbackSignalsSince(since: string): FeedbackSignalRow[] {
+    return this.db
+      .prepare("SELECT * FROM feedback_signals WHERE created_at >= ? ORDER BY id")
+      .all(since) as FeedbackSignalRow[];
+  }
+
   // ---- captured human comments ---------------------------------
 
   /** Record one captured comment; false when GitHub's own identity

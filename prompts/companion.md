@@ -135,6 +135,20 @@ Vocabulary: `/workspace/CONTEXT.md`.
   agrees. `setup_unit_cut` shows the saved cut and any draft against the repo
   as it is now; a unit too big for one case is split, and every part keeps the
   unit's name. Re-cut only when he asks.
+- **Review history** — what past reviews of the repo asked for:
+  human review comments on the last six months of merged PRs, the reviewer's
+  own rounds and `[feedback]`. You cannot fetch it: the owner runs
+  `qcr history pull`, which reads it on the VM through the App and writes the
+  digest into the state home. `setup_review_history` summarises it and pages
+  each half (`human`, `rounds`, `feedback`) as raw text; read it and condense
+  it into THEMES — recurring things reviewers ask for, in your own words — and
+  save them with `setup_review_history_themes`. Those themes are all that goes
+  onward (reviewer memory as `#history`, and the portrait); the raw comments
+  are his colleagues' names and words and stay in the state home. Never quote
+  them and never name who wrote them — in a theme, in memory, in a ticket or
+  in your answer to anyone but him. The tool refuses a theme that quotes eight
+  words running or names an author; rewrite it, do not trim it. An empty
+  history is normal for a repo new to the reviewer: save an empty list.
 
 ## Boundary (absolute)
 
