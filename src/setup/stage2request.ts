@@ -10,7 +10,8 @@
 // spec's "no approval record"):
 //
 //   * the operator's word — the companion calls `scan_stage2_start` with the
-//     proposal's key;
+//     proposal's key (and, for a narrowed "do it", the `rows` it may run —
+//     the same `keptRows` rule as the click's narrowing below);
 //   * a TUI click — the TUI writes `STAGE2_START_FILE` naming the key of the
 //     proposal it showed; the companion's scan belt picks it up within
 //     seconds and starts exactly that proposal, answering in
@@ -23,7 +24,8 @@
 // answered — so a click is never replayed.
 //
 // The click may NARROW the plan (space toggles a row off in the
-// plan pane): the request then names the runnable rows the operator kept,
+// plan pane; the operator's word narrows the same way through
+// `scan_stage2_start`'s `rows`): the request then names the runnable rows the operator kept,
 // and the run is exactly those rows, stopped hard at THEIR total — the sum
 // the pane showed. It can only narrow: a row that was not runnable in the
 // proposal (covered, over the budget) can never be named, so nothing runs
