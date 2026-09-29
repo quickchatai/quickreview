@@ -735,13 +735,20 @@ export async function ensureLabel(
     body: JSON.stringify({ name: label.name, color: label.color, description: label.description }),
   });
   if (created.status === 201) return { name: `label "${label.name}"`, ok: true, detail: "created" };
-  // 422 = "already_exists": someone (or a parallel run) got there first.
-  if (created.status === 422)
-    return {
-      name: `label "${label.name}"`,
-      ok: true,
-      detail: "already existed at creation time — treated as success",
-    };
+  // 422 is either "already_exists" (someone, or a parallel run, got there
+  // first) or a validation failure (e.g. an over-long configured name) that
+  // leaves the repo without it. Only a re-read tells them apart.
+  if (created.status === 422) {
+    const reread = await api(fetchFn, `${base}/${encodeURIComponent(label.name)}`, {
+      headers: auth,
+    });
+    if (reread.status === 200)
+      return {
+        name: `label "${label.name}"`,
+        ok: true,
+        detail: "already existed at creation time — treated as success",
+      };
+  }
   return {
     name: `label "${label.name}"`,
     ok: false,

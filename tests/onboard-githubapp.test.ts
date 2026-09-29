@@ -104,6 +104,10 @@ interface GhState {
   ownerType: string;
   calls: string[];
   labelCreateStatus?: number;
+  /** With a non-201 labelCreateStatus: does the label exist afterwards? True
+   * models the "already_exists" race (a parallel creator won); false a
+   * validation 422 that leaves the repo without it. */
+  labelCreateRaceAdds?: boolean;
 }
 
 function ghState(over: Partial<GhState> = {}): GhState {
@@ -167,8 +171,12 @@ function ghFetch(s: GhState): typeof fetch {
     const labelPost = /^\/repos\/([^/]+)\/([^/]+)\/labels$/.exec(path);
     if (method === "POST" && labelPost) {
       const body = JSON.parse(String(init?.body ?? "{}")) as { name: string };
-      if (s.labelCreateStatus && s.labelCreateStatus !== 201)
-        return json(s.labelCreateStatus, { message: "already_exists" });
+      if (s.labelCreateStatus && s.labelCreateStatus !== 201) {
+        if (s.labelCreateRaceAdds) s.labels.add(body.name);
+        return json(s.labelCreateStatus, {
+          message: s.labelCreateRaceAdds ? "already_exists" : "Validation Failed",
+        });
+      }
       s.labels.add(body.name);
       return json(201, { name: body.name });
     }
@@ -640,13 +648,24 @@ describe("labels are idempotent", () => {
   });
 
   it("a 422 'already_exists' race on creation is also a success", async () => {
-    const s = ghState({ labelCreateStatus: 422 });
+    const s = ghState({ labelCreateStatus: 422, labelCreateRaceAdds: true });
     const server = fakeServer({ code: "c" });
     const { report } = await runStep(s, server.factory);
     expect(report.ok).toBe(true);
     expect(detail(report.checks, `label "${DEFAULT_LABELS.reviewed}"`)).toMatch(
       /already existed at creation time/,
     );
+  });
+
+  it("a 422 that leaves the label absent (validation failure) is red, never 'already existed'", async () => {
+    const s = ghState({ labelCreateStatus: 422, labelCreateRaceAdds: false });
+    const server = fakeServer({ code: "c" });
+    const { report } = await runStep(s, server.factory);
+    expect(report.ok).toBe(false);
+    const d = detail(report.checks, `label "${DEFAULT_LABELS.reviewed}"`);
+    expect(d).not.toMatch(/already existed/);
+    expect(d).toMatch(/could not create the label/);
+    expect(d).toMatch(/Validation Failed/);
   });
 
   it("recorded non-default label names are used verbatim", async () => {
