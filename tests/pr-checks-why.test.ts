@@ -20,6 +20,9 @@ let dir: string;
 let apiBase: string;
 let methods: string[];
 let logStatus: number;
+/** When set, the check-runs route serves these rows the way GitHub does —
+ * `per_page` of page `page` — instead of the two-run fixture. */
+let pagedRuns: unknown[] | null;
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "qcr-prchecks-"));
@@ -35,6 +38,7 @@ beforeEach(async () => {
   writeFileSync(join(dir, "config.toml"), '[github]\nrepo = "o/r"\n');
   methods = [];
   logStatus = 200;
+  pagedRuns = null;
   server = createServer((req, res) => {
     methods.push(req.method ?? "?");
     const url = req.url ?? "";
@@ -47,6 +51,12 @@ beforeEach(async () => {
       return res.end("write attempted");
     }
     if (url === "/repos/o/r/pulls/7") return json({ head: { sha: HEAD } });
+    if (url.startsWith(`/repos/o/r/commits/${HEAD}/check-runs`) && pagedRuns) {
+      const q = new URL(url, "http://stub").searchParams;
+      const per = Number(q.get("per_page") ?? 30);
+      const page = Number(q.get("page") ?? 1);
+      return json({ check_runs: pagedRuns.slice((page - 1) * per, page * per) });
+    }
     if (url.startsWith(`/repos/o/r/commits/${HEAD}/check-runs`))
       return json({
         check_runs: [
@@ -123,6 +133,33 @@ describe("pr-checks.sh --why", () => {
     expect(stdout).not.toContain("=== tests");
     // read-only by construction
     expect(new Set(methods)).toEqual(new Set(["GET"]));
+  });
+
+  it("reads every page of check-runs: a failure past row 100 still classifies red", async () => {
+    // The same table as the daemon gate and guards.sh, which both page — a
+    // first-page read of a big matrix showed only its green runs.
+    pagedRuns = [
+      ...Array.from({ length: 100 }, (_, i) => ({
+        id: 100 + i,
+        name: `matrix-${i}`,
+        status: "completed",
+        conclusion: "success",
+        started_at: "2026-09-27T10:00:00Z",
+        html_url: `m${i}`,
+      })),
+      {
+        id: 999,
+        name: "late",
+        status: "completed",
+        conclusion: "failure",
+        started_at: "2026-09-27T10:00:00Z",
+        html_url: "late",
+      },
+    ];
+    const { stdout } = await checks();
+    expect(stdout).toContain("late: completed/failure");
+    expect(stdout).toContain("SUMMARY: 100 passed / 1 failed / 0 pending");
+    expect(stdout.trim().split("\n").pop()).toBe("CLASSIFIED: red");
   });
 
   it("an unreadable log is said, not fatal", async () => {

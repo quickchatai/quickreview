@@ -599,36 +599,46 @@ export class GitHubAdapter {
   /**
    * Checks at a ref — check-runs plus the legacy commit statuses, since a repo
    * can gate on either (guard 4). Read-only: CI is consulted, never
-   * triggered or re-run.
+   * triggered or re-run. Both endpoints are paginated the way listPrFiles is:
+   * guard 4 classifies what it is handed, so a failing or pending check past
+   * the first 100 rows must reach it, or a truncated list reads green.
    */
   async listChecks(ref: string): Promise<CheckSummary[]> {
     const out: CheckSummary[] = [];
     const enc = encodeURIComponent(ref);
-    const runs = await this.request<{ check_runs?: any[] }>(
-      "GET",
-      `/repos/${this.owner}/${this.repo}/commits/${enc}/check-runs?per_page=100`,
-    );
-    for (const r of runs.check_runs ?? [])
-      out.push({
-        name: r.name ?? "check",
-        source: "check_run",
-        status: r.status ?? "",
-        conclusion: r.conclusion ?? null,
-        started_at: r.started_at ?? null,
-      });
-    const status = await this.request<{ statuses?: any[] }>(
-      "GET",
-      `/repos/${this.owner}/${this.repo}/commits/${enc}/status?per_page=100`,
-    );
-    for (const s of status.statuses ?? [])
-      // A commit status has no status/conclusion split: `pending` is unfinished,
-      // `success`/`failure`/`error` are its conclusions.
-      out.push({
-        name: s.context ?? "status",
-        source: "status",
-        status: s.state === "pending" ? "pending" : "completed",
-        conclusion: s.state === "pending" ? null : s.state === "success" ? "success" : "failure",
-      });
+    for (let page = 1; page <= 10; page++) {
+      const runs = await this.request<{ check_runs?: any[] }>(
+        "GET",
+        `/repos/${this.owner}/${this.repo}/commits/${enc}/check-runs?per_page=100&page=${page}`,
+      );
+      const batch = runs.check_runs ?? [];
+      for (const r of batch)
+        out.push({
+          name: r.name ?? "check",
+          source: "check_run",
+          status: r.status ?? "",
+          conclusion: r.conclusion ?? null,
+          started_at: r.started_at ?? null,
+        });
+      if (batch.length < 100) break;
+    }
+    for (let page = 1; page <= 10; page++) {
+      const status = await this.request<{ statuses?: any[] }>(
+        "GET",
+        `/repos/${this.owner}/${this.repo}/commits/${enc}/status?per_page=100&page=${page}`,
+      );
+      const batch = status.statuses ?? [];
+      for (const s of batch)
+        // A commit status has no status/conclusion split: `pending` is unfinished,
+        // `success`/`failure`/`error` are its conclusions.
+        out.push({
+          name: s.context ?? "status",
+          source: "status",
+          status: s.state === "pending" ? "pending" : "completed",
+          conclusion: s.state === "pending" ? null : s.state === "success" ? "success" : "failure",
+        });
+      if (batch.length < 100) break;
+    }
     return out;
   }
 

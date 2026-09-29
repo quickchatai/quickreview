@@ -69,15 +69,30 @@ get() { # get <path>  → body in $OUT, dies on non-200
 }
 
 OUT="$(mktemp)"
+RUNS="$(mktemp)"
 FAILING="$(mktemp)"
-trap 'rm -f "$OUT" "$FAILING" "$FAILING.output"' EXIT
+trap 'rm -f "$OUT" "$RUNS" "$FAILING" "$FAILING.output"' EXIT
 
 get "/repos/$REPO/pulls/$PR"
 HEAD_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["head"]["sha"])' "$OUT")"
 
-get "/repos/$REPO/commits/$HEAD_SHA/check-runs?per_page=100"
+# Every page, as src/github.ts listChecks and guards.sh read them: a failing
+# or pending run past row 100 is still a check at this head. Up to 10 pages; a
+# short page ends it. The pages accumulate into $RUNS as one {check_runs: [...]}.
+echo '{"check_runs": []}' >"$RUNS"
+for ((page = 1; page <= 10; page++)); do
+  get "/repos/$REPO/commits/$HEAD_SHA/check-runs?per_page=100&page=$page"
+  n="$(python3 -c '
+import json, sys
+acc = json.load(open(sys.argv[1]))
+rows = json.load(open(sys.argv[2])).get("check_runs") or []
+acc["check_runs"] += rows
+json.dump(acc, open(sys.argv[1], "w"))
+print(len(rows))' "$RUNS" "$OUT")"
+  if ((n < 100)); then break; fi
+done
 
-python3 - "$OUT" "$FAILING" <<'PY'
+python3 - "$RUNS" "$FAILING" <<'PY'
 import json, re, sys
 runs = json.load(open(sys.argv[1])).get("check_runs", [])
 # Latest-run-per-name (the owner, 2026-08-19; mirrors src/cigate.ts

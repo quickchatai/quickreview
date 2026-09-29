@@ -234,19 +234,36 @@ let apiBase = "";
 let checkRuns: CheckSummary[] = [];
 let statuses: Array<{ context: string; state: string }> = [];
 
+/** GitHub's pagination, as both endpoints apply it: `per_page` (default 30)
+ * rows of page `page` (default 1). A reader that asks for page 1 alone sees
+ * only the first slice. */
+function pageOf<T>(url: string, rows: T[]): T[] {
+  const q = new URL(url, "http://stub").searchParams;
+  const per = Number(q.get("per_page") ?? 30);
+  const page = Number(q.get("page") ?? 1);
+  return rows.slice((page - 1) * per, page * per);
+}
+
 beforeEach(async () => {
   statuses = [];
   server = createServer((req, res) => {
     if (req.method === "GET" && req.url?.includes("/check-runs")) {
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ check_runs: checkRuns.map(({ source: _source, ...run }) => run) }));
+      res.end(
+        JSON.stringify({
+          check_runs: pageOf(
+            req.url,
+            checkRuns.map(({ source: _source, ...run }) => run),
+          ),
+        }),
+      );
       return;
     }
     if (req.method === "GET" && req.url?.includes("/status")) {
       // The combined-status endpoint — the corpus's statuses, so the two
       // classifiers see the same mixed input through their own real readers.
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ state: "success", statuses }));
+      res.end(JSON.stringify({ state: "success", statuses: pageOf(req.url, statuses) }));
       return;
     }
     res.writeHead(500, { "content-type": "application/json" });
@@ -310,6 +327,61 @@ describe("the shell CI classifier agrees with classifyCi", () => {
           `scripts/guards.sh says "${shell}", src/cigate.ts says "${ts}". Change both, or the shell route — which is ` +
           "the LIVE posting route — enforces a different rule from the one the tests pin.",
       ).toBe(ts);
+    });
+  }
+
+  /**
+   * Both readers must see EVERY check at the head, not the first page of each
+   * endpoint. A head with more than 100 check-runs (matrix jobs plus reruns —
+   * superseded runs still count toward the total) or 100 status contexts puts
+   * the rest on page 2; a failing or pending one there was invisible, the
+   * first page classified green, and APPROVE was allowed.
+   *
+   * MUTATION: drop the page loop from `listChecks` in src/github.ts, or from
+   * `guard_ci_pages` in scripts/guards.sh — the matching case reads green.
+   */
+  const greens = (n: number): CheckSummary[] =>
+    Array.from({ length: n }, (_, i) => ({
+      name: `matrix-${i}`,
+      source: "check_run" as const,
+      status: "completed",
+      conclusion: "success",
+      started_at: "2026-08-19T10:00:00Z",
+    }));
+  for (const c of [
+    {
+      name: "a failing check-run on page 2",
+      runs: [
+        ...greens(100),
+        { ...greens(1)[0]!, name: "late", conclusion: "failure" },
+      ] as CheckSummary[],
+      statuses: [] as Array<{ context: string; state: string }>,
+      want: "red",
+    },
+    {
+      name: "a still-running check-run on page 2",
+      runs: [
+        ...greens(150),
+        { ...greens(1)[0]!, name: "late", status: "in_progress", conclusion: null },
+      ] as CheckSummary[],
+      statuses: [],
+      want: "pending",
+    },
+    {
+      name: "a failing commit status on page 2",
+      runs: greens(1),
+      statuses: [
+        ...Array.from({ length: 100 }, (_, i) => ({ context: `ctx-${i}`, state: "success" })),
+        { context: "late", state: "failure" },
+      ],
+      want: "red",
+    },
+  ]) {
+    it(`both read past the first page: ${c.name}`, async () => {
+      checkRuns = c.runs;
+      statuses = c.statuses;
+      expect(classifyCi(await adapterClassifyInput()), "src/github.ts listChecks").toBe(c.want);
+      expect(await shellClassify(), "scripts/guards.sh guard_ci_state").toBe(c.want);
     });
   }
 

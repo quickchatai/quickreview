@@ -253,11 +253,32 @@ guard_downgrade_note() { # guard_downgrade_note <approver> <head-sha>
 # never blocks — a GitHub outage must not turn into a pile of withheld
 # approvals.
 
+guard_ci_pages() { # guard_ci_pages <path?per_page=100> <key> — every page's <key> rows as ONE compact {<key>: [...]} line
+  # Mirrors the page loop in src/github.ts listChecks: guard 4 classifies what
+  # it is handed, so a failing or pending check past row 100 must reach it —
+  # a first-page read of a big matrix classified green. Up to 10 pages, a
+  # short page ends it. Any page that cannot be read makes the whole read
+  # unreadable (""), exactly as a throw anywhere in listChecks does: a
+  # truncated list is never passed off as the list.
+  local path="$1" key="$2" page body page_rows rows="" n
+  for ((page = 1; page <= 10; page++)); do
+    body="$(guard_api_get "${path}&page=${page}")"
+    page_rows="$(printf '%s' "$body" | jq -c --arg k "$key" \
+      'select(type == "object") | (.[$k] // []) | if type == "array" then . else [] end' \
+      2>/dev/null)" || page_rows=""
+    [[ -n "$page_rows" ]] || return 0
+    rows+="$page_rows"$'\n'
+    n="$(printf '%s' "$page_rows" | jq 'length')"
+    if ((n < 100)); then break; fi
+  done
+  printf '%s' "$rows" | jq -cs --arg k "$key" '{($k): add}'
+}
+
 guard_ci_state() { # guard_ci_state <head-sha> — green|red|pending|none|unknown
   local head="${1:-}" runs status
   [[ -n "$head" ]] || { echo unknown; return 0; }
-  runs="$(guard_api_get "/repos/$REPO/commits/$head/check-runs?per_page=100")"
-  status="$(guard_api_get "/repos/$REPO/commits/$head/status?per_page=100")"
+  runs="$(guard_ci_pages "/repos/$REPO/commits/$head/check-runs?per_page=100" check_runs)"
+  status="$(guard_ci_pages "/repos/$REPO/commits/$head/status?per_page=100" statuses)"
   # Mirrors src/cigate.ts classifyCi — keep the two in step.
   # Latest-run-per-name (the owner, 2026-08-19; rule stated exactly on
   # src/cigate.ts latestRunPerName): GitHub auto-cancels superseded
@@ -268,9 +289,10 @@ guard_ci_state() { # guard_ci_state <head-sha> — green|red|pending|none|unknow
   # statuses carry no time and are never grouped with check-runs at all: a
   # status under the same context as a check-run is a second check, and a
   # failing one must never be masked by a passing run of that name.
-  GUARD_CI_RUNS="$runs" GUARD_CI_STATUS="$status" jq -rn '
-    [env.GUARD_CI_RUNS // "", env.GUARD_CI_STATUS // ""]
-    | map(select(. != "") | try fromjson catch empty) as $docs
+  # The two docs ride stdin, one line each — never the environment, where
+  # a page of full check-run objects can pass the kernel's per-string cap.
+  printf '%s\n%s\n' "$runs" "$status" | jq -rRn '
+    [inputs | select(. != "") | try fromjson catch empty] as $docs
     | if ($docs | length) == 0 then "unknown"
       else
         ( [ [ $docs[] | select(type == "object") | (.check_runs? // [])[] ]
