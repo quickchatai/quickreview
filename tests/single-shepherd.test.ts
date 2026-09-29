@@ -178,11 +178,26 @@ describe("daemon topology", () => {
     expect(offenders).toEqual([]);
     // The case runner's allowance holds only while no daemon module can reach
     // it: src/setup/ is imported from src/setup/ and the companion's
-    // extension, never from anything else under src/.
+    // extension — with ONE leaf exception, setup/history.js (the
+    // TUI's `qcr history pull` needs the digest's file name). That leaf may
+    // reach the rest of src/setup/ by TYPE only (erased at build), so the
+    // exception can never carry the case runner along with it.
+    const setupLeaves = ["history.js"];
     const reachesSetup = srcFiles(src)
       .filter((f) => !f.includes("/src/setup/"))
-      .filter((f) => /from\s+["'][^"']*\/setup\/[^"']*["']/.test(readFileSync(f, "utf8")));
+      .filter((f) =>
+        [...readFileSync(f, "utf8").matchAll(/from\s+["'][^"']*\/setup\/([^"']*)["']/g)].some(
+          (m) => !setupLeaves.includes(m[1]!),
+        ),
+      );
     expect(reachesSetup).toEqual([]);
+    for (const leaf of setupLeaves) {
+      const body = readFileSync(join(src, "setup", leaf.replace(/\.js$/, ".ts")), "utf8");
+      const runtimeSibling = body
+        .split("\n")
+        .filter((l) => /^import\s/.test(l) && !/^import\s+type\s/.test(l) && /from\s+["']\.\//.test(l));
+      expect(runtimeSibling, `setup/${leaf} must reach its siblings by type only`).toEqual([]);
+    }
   });
 });
 
