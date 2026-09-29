@@ -4678,7 +4678,9 @@ export class StateStore {
     this.logEvent("comment_sweep", pr, { row_updated_at: rowUpdatedAt });
   }
 
-  /** The pr_state `updated_at` this PR was last cleanly swept at, when any. */
+  /** The watermark this PR was last cleanly swept at, when any — reconcile's
+   * pairing of the pr_state `updated_at` with GitHub's (selfscan
+   * d02908a3); opaque here. */
   lastCommentSweep(pr: number): string | undefined {
     const row = this.db
       .prepare(

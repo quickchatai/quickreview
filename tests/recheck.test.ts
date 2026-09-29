@@ -65,6 +65,34 @@ describe("trivial-delta classifier", () => {
     expect(d.files[0]?.reason).toBe("formatting");
   });
 
+  it("keeps a Python indentation change significant — it can move a line out of a block", () => {
+    // Selfscan finding 410aac68: dropping every whitespace character made a
+    // dedent out of an `if` body read as formatting.
+    const d = classifyDelta([
+      file({
+        filename: "app/views.py",
+        patch: "@@\n     if ok:\n         log()\n-        return x\n+    return x",
+      }),
+    ]);
+    expect(d.class).toBe("significant");
+    expect(formattingOnly("@@\n-  a: 1\n+a: 1", "conf/app.yaml")).toBe(false);
+  });
+
+  it("still calls trailing / in-line whitespace in Python formatting", () => {
+    const d = classifyDelta([
+      file({ filename: "app/views.py", patch: "@@\n-    x = f(a,b)   \n+    x = f(a, b)" }),
+    ]);
+    expect(d.class).toBe("trivial");
+    expect(d.files[0]?.reason).toBe("formatting");
+  });
+
+  it("keeps a whitespace change inside a string literal significant", () => {
+    expect(formattingOnly('@@\n-return "a b";\n+return "ab";', "src/x.ts")).toBe(false);
+    expect(formattingOnly("@@\n-x = 'a  b'\n+x = 'a b'", "app/x.py")).toBe(false);
+    // …while whitespace around the literal is still formatting.
+    expect(formattingOnly('@@\n-return   "a b";\n+return "a b";', "src/x.ts")).toBe(true);
+  });
+
   it("does not call a reordering formatting", () => {
     expect(formattingOnly("@@\n-a()\n-b()\n+b()\n+a()")).toBe(false);
   });
@@ -132,17 +160,54 @@ describe("trivial-delta classifier", () => {
         filename: "app/migrations/0042_add_col.py",
         status: "removed",
         additions: 0,
-        deletions: 30,
+        deletions: 3,
+        patch:
+          '@@\n-class Migration:\n-    dependencies = [("app", "0041_prev")]\n-    operations = [AddField(model_name="user", name="email")]',
       }),
       file({
         filename: "app/migrations/0043_add_col.py",
         status: "added",
-        additions: 30,
+        additions: 3,
         deletions: 0,
+        patch:
+          '@@\n+class Migration:\n+    dependencies = [("app", "0042_prev")]\n+    operations = [AddField(model_name="user", name="email")]',
       }),
     ]);
     expect(d.class).toBe("trivial");
     expect(d.files.every((f) => f.reason === "migration-renumber")).toBe(true);
+  });
+
+  it("keeps a delete + add migration pair significant when the DDL changed", () => {
+    // Selfscan finding bb94437e: the pair was trivial from the filenames
+    // alone. GitHub reports a rename as delete + add exactly when similarity
+    // is LOW — i.e. when the content changed most.
+    const d = classifyDelta([
+      file({
+        filename: "app/migrations/0042_add_col.py",
+        status: "removed",
+        additions: 0,
+        deletions: 1,
+        patch: '@@\n-    operations = [AddField(model_name="user", name="email")]',
+      }),
+      file({
+        filename: "app/migrations/0043_add_col.py",
+        status: "added",
+        additions: 1,
+        deletions: 0,
+        patch: '@@\n+    operations = [RemoveField(model_name="user", name="email")]',
+      }),
+    ]);
+    expect(d.class).toBe("significant");
+  });
+
+  it("keeps a delete + add migration pair significant when a patch is missing", () => {
+    // GitHub omits `patch` on large files: the content cannot be proven
+    // mechanical, so the pair is not a renumber.
+    const d = classifyDelta([
+      file({ filename: "app/migrations/0042_add_col.py", status: "removed", deletions: 30 }),
+      file({ filename: "app/migrations/0043_add_col.py", status: "added", additions: 30 }),
+    ]);
+    expect(d.class).toBe("significant");
   });
 
   it("keeps a renamed migration whose DDL changed significant", () => {

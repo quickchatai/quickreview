@@ -162,18 +162,53 @@ export function patchLines(patch: string): PatchLines {
   return { added, removed };
 }
 
-const squash = (lines: string[]): string => lines.join("").replace(/\s+/g, "");
+/** A quoted literal on one line. Whitespace inside one is content, never
+ * formatting: `"a b"` → `"ab"` changes the program. */
+const QUOTED = /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`)/;
+
+/** Drop whitespace OUTSIDE quoted literals; the literals stay verbatim. */
+function stripOutsideQuotes(line: string): string {
+  return line
+    .split(QUOTED)
+    .map((part, i) => (i % 2 === 1 ? part : part.replace(/\s+/g, "")))
+    .join("");
+}
+
+/** Languages whose leading whitespace is syntax — a dedent in Python moves a
+ * line out of its block; in YAML it moves a key to another mapping. */
+function indentSignificant(path: string | undefined): boolean {
+  if (!path) return false;
+  const base = baseName(path);
+  return /\.(py|pyi|ya?ml)$/i.test(base) || base === "Makefile" || /\.mk$/i.test(base);
+}
 
 /**
- * Whitespace-only change: the added and removed text are identical once every
- * whitespace character is dropped. Concatenation (not a per-line set) is the
- * comparison, so a re-indent or a re-flow passes while a reordering of real
- * lines does not.
+ * The whitespace-insensitive form of a side of a patch. Whitespace between
+ * tokens is dropped (quoted literals kept verbatim) and the lines are
+ * concatenated, so a re-indent or a re-flow compares equal. For an
+ * indentation-significant file each non-blank line keeps its leading
+ * whitespace and stays its own line — a re-flow or re-indent there is not
+ * provably meaningless, so it is not formatting.
  */
-export function formattingOnly(patch: string): boolean {
+function squash(lines: string[], path?: string): string {
+  if (!indentSignificant(path)) return lines.map(stripOutsideQuotes).join("");
+  return lines
+    .filter((l) => l.trim() !== "")
+    .map((l) => (/^\s*/.exec(l)?.[0] ?? "") + stripOutsideQuotes(l))
+    .join("\n");
+}
+
+/**
+ * Whitespace-only change: the added and removed text are identical once
+ * insignificant whitespace is dropped (see `squash` — never inside a quoted
+ * literal, never leading indentation of a whitespace-significant language).
+ * Concatenation (not a per-line set) is the comparison, so a re-indent or a
+ * re-flow passes while a reordering of real lines does not.
+ */
+export function formattingOnly(patch: string, path?: string): boolean {
   const { added, removed } = patchLines(patch);
   if (added.length === 0 && removed.length === 0) return false;
-  return squash(added) === squash(removed);
+  return squash(added, path) === squash(removed, path);
 }
 
 /** Same text once every MIGRATION-NUMBER run is masked — the renumber's
@@ -182,9 +217,9 @@ export function formattingOnly(patch: string): boolean {
  * migration filename or `dependencies` entry carries) is masked: a semantic
  * numeric change inside a renamed migration — a batch size, a timeout, a
  * default — does NOT mask away, so it classifies significant. */
-export function digitsOnly(patch: string): boolean {
+export function digitsOnly(patch: string, path?: string): boolean {
   const { added, removed } = patchLines(patch);
-  const mask = (lines: string[]): string => squash(lines).replace(/\d+(?=_)/g, "#");
+  const mask = (lines: string[]): string => squash(lines, path).replace(/\d+(?=_)/g, "#");
   return mask(added) === mask(removed);
 }
 
@@ -237,7 +272,7 @@ export function classifyFile(file: DeltaFile, opts: ClassifyOpts = {}): FileClas
   const churn = (file.additions ?? 0) + (file.deletions ?? 0);
 
   if (file.previous_filename && isMigrationRenumber(file.previous_filename, name)) {
-    if (churn === 0 || !patch || digitsOnly(patch) || formattingOnly(patch))
+    if (churn === 0 || !patch || digitsOnly(patch, name) || formattingOnly(patch, name))
       return trivial("migration-renumber");
     return { filename: name, class: "significant", reason: "content" };
   }
@@ -247,7 +282,7 @@ export function classifyFile(file: DeltaFile, opts: ClassifyOpts = {}): FileClas
   if (VERSION_MANIFESTS.has(baseName(name)) && patch && versionOnly(patch))
     return trivial("version-bump");
 
-  if (patch && formattingOnly(patch)) return trivial("formatting");
+  if (patch && formattingOnly(patch, name)) return trivial("formatting");
   if (!patch && churn === 0) return trivial("no-content-change");
 
   return { filename: name, class: "significant", reason: "content" };
@@ -256,8 +291,8 @@ export function classifyFile(file: DeltaFile, opts: ClassifyOpts = {}): FileClas
 /**
  * Classify the whole delta. Run before the per-file pass: GitHub reports a
  * migration renumber as a rename only when it detects one — a large enough
- * content edit comes back as a delete + an add, and that pair is the same
- * mechanical renumber.
+ * content edit comes back as a delete + an add. That pair is a renumber only
+ * when its content, too, differs by migration numbers alone (`digitsOnly`).
  */
 export function classifyDelta(
   files: readonly DeltaFile[],
@@ -276,6 +311,16 @@ export function classifyDelta(
     const partner = m ? removedMigrations.get(m.rest) : undefined;
     if (!m || !partner) continue;
     if (migrationName(partner.filename)?.num === m.num) continue;
+    // The names only say it MIGHT be a renumber; the content must say it is.
+    // GitHub reports a rename as delete + add exactly when similarity is low,
+    // so the pair is trivial only when the removed file's text and the added
+    // file's text differ by migration numbers alone. A missing patch (GitHub
+    // omits it on large files) proves nothing, so it is not a renumber.
+    if (!f.patch || !partner.patch) continue;
+    const gone = patchLines(partner.patch).removed.map((l) => `-${l}`);
+    const came = patchLines(f.patch).added.map((l) => `+${l}`);
+    if (gone.length === 0 && came.length === 0) continue;
+    if (!digitsOnly([...gone, ...came].join("\n"), f.filename)) continue;
     renumbered.add(f.filename);
     renumbered.add(partner.filename);
   }

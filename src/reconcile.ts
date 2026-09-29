@@ -623,6 +623,8 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
         const t = Date.parse(updated_at);
         return Number.isFinite(t) && nowMs - t <= COMMENT_SWEEP_CLOSED_WINDOW_MS;
       };
+      const sweepMark = (p: { number: number; updated_at: string }): string =>
+        `${p.updated_at}|${open.get(p.number)?.updated_at ?? ""}`;
       const candidates = store
         .allPrs()
         .filter(
@@ -635,8 +637,13 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
         // it): a PR whose row has not moved since the last successful sweep
         // of it has produced no webhook the sweep could have missed a
         // *newer* version of than last time — skip it. The watermark is the
-        // row's own `updated_at`, recorded per PR after a clean sweep.
-        .filter((p) => store.lastCommentSweep(p.number) !== p.updated_at)
+        // row's own `updated_at` PAIRED with GitHub's `updated_at` for the PR
+        // (from the open-PR list above), recorded per PR after a clean sweep.
+        // The remote half is load-bearing: capturing a comment never moves
+        // the local row, so a comment whose webhook was lost (the daemon was
+        // down, no push, no title change) only shows up as GitHub's
+        // timestamp moving (selfscan finding d02908a3).
+        .filter((p) => store.lastCommentSweep(p.number) !== sweepMark(p))
         .sort((a, b) =>
           a.updated_at < b.updated_at ? 1 : a.updated_at > b.updated_at ? -1 : a.number - b.number,
         )
@@ -718,7 +725,7 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
         }
         // Watermark only a CLEAN sweep of this PR — a failed read `continue`s
         // above without one, so it is retried on the next pass.
-        store.markCommentSweep(n, local.updated_at);
+        store.markCommentSweep(n, sweepMark(local));
       }
     });
   }

@@ -580,6 +580,52 @@ describe("the reconcile capture sweep (§6)", () => {
     store.close();
   });
 
+  it("re-sweeps an otherwise unchanged PR when GitHub's own updated_at moved (a comment the webhook lost)", async () => {
+    // Selfscan finding d02908a3: the watermark was the LOCAL row's updated_at,
+    // which capturing a comment never moves — so a human comment posted while
+    // the daemon was down, with no push or title change, was filtered out of
+    // every later pass. GitHub's PR `updated_at` moves on a new comment.
+    let tick = 0;
+    const store = new StateStore(":memory:", () => new Date(1756100000000 + tick++ * 1000));
+    store.upsertPr({
+      number: PR,
+      state: "tracked",
+      head_sha: "sha4242",
+      title: "Add retry to the ingest worker",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    const gh = new SweepGitHub();
+    gh.open = [ref(PR, { head_sha: "sha4242", title: "Add retry to the ingest worker" })];
+    const first = await reconcileOnce({ cfg, store, adapter: gh, hooks: hooks() });
+    expect(first.captured_comments).toBe(0);
+    const reads = gh.swept.length;
+    expect(reads).toBe(1);
+
+    // Daemon down; a human comments. Same head, same title — only GitHub's
+    // updated_at moves.
+    gh.open = [
+      ref(PR, {
+        head_sha: "sha4242",
+        title: "Add retry to the ingest worker",
+        updated_at: "2026-08-25T10:30:00Z",
+      }),
+    ];
+    gh.top.set(PR, [
+      { id: 4401, user: "alex", user_type: "User", body: "posted while down", created_at: null },
+    ]);
+    const second = await reconcileOnce({ cfg, store, adapter: gh, hooks: hooks() });
+    expect(gh.swept.length).toBe(reads + 1);
+    expect(second.captured_comments).toBe(1);
+
+    // And the gate still holds once that is swept: nothing moved → no reads.
+    await reconcileOnce({ cfg, store, adapter: gh, hooks: hooks() });
+    expect(gh.swept.length).toBe(reads + 1);
+    store.close();
+  });
+
   it("a failed read leaves no watermark, so the PR is retried next pass", async () => {
     const store = trackedStore();
     const gh = new SweepGitHub();
