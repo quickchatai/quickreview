@@ -136,6 +136,9 @@ describe("[scan] — config.toml defaults, the profile's overrides", () => {
     expect(() => parseConfig(`${fixtureToml}\n[scan]\nconcurrency = 0\n`)).toThrow(/positive integer/);
     expect(() => parseConfig(`${fixtureToml}\n[scan]\nexclude = ["/abs"]\n`)).toThrow(/repo-relative/);
     expect(() => parseConfig(`${fixtureToml}\n[scan]\nturbo = true\n`)).toThrow(/unknown key "turbo"/);
+    // stage 2's stand-in factor — at least 1 (never a discount on stage 1's rate).
+    expect(parseConfig(`${fixtureToml}\n[scan]\nunmeasured_rate_factor = 2.5\n`).scan.unmeasured_rate_factor).toBe(2.5);
+    expect(() => parseConfig(`${fixtureToml}\n[scan]\nunmeasured_rate_factor = 0.5\n`)).toThrow(/unmeasured_rate_factor must be a number of at least 1/);
   });
 
   it("the profile's [scan] wins over config.toml, per key, along the extends chain", () => {
@@ -155,6 +158,8 @@ describe("[scan] — config.toml defaults, the profile's overrides", () => {
   it("a profile may not set the install's operating limits", () => {
     profile("repo", `[scan]\nconcurrency = 64\n`);
     expect(() => scanConfig(sandbox, configWith("repo"), { env })).toThrow(/unknown key "concurrency"/);
+    profile("repo", `[scan]\nunmeasured_rate_factor = 1\n`);
+    expect(() => scanConfig(sandbox, configWith("repo"), { env })).toThrow(/unknown key "unmeasured_rate_factor"/);
     expect(() => parseScanTable("x", { effort: "low" }, ["effort"])).not.toThrow();
   });
 

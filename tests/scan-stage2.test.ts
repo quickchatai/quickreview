@@ -211,6 +211,18 @@ describe("a stage 2 proposal", () => {
     expect(stored.proposal.key).toBe(p.key);
   });
 
+  it("never borrows pass-scan's rate: a deep lens at stage 1's tier and effort is still extrapolated", async () => {
+    // A profile giving pass-security `effort = "low"` puts it at pass-scan's
+    // exact settings (sol-med, low, validator off) — stage 1's cheap rate must
+    // still reach it only through the factor.
+    const s = new ScanRunner(ports(runner(), { lenses: { "pass-security": { effort: "low" } } }));
+    await calibrate(s);
+    const p = await propose(s, [CROSS]);
+    expect(p.rows[0]!.effort).toBe("low");
+    expect(p.rows[0]!.price).toMatchObject({ basis: "extrapolated", from: "pass-scan" });
+    expect(p.rows[0]!.estimate_usd).toBeCloseTo((70 / 1000) * STAGE1_RATE * SCAN_DEFAULTS.unmeasured_rate_factor, 9);
+  });
+
   it("refuses, as a whole, a row naming a test, an excluded or missing file, a non-deep or switched-off lens, or a tier the lens is not built at", async () => {
     const s = new ScanRunner(
       ports(runner(), { lenses: { "pass-ui": { enabled: false }, "pass-contracts": { min_tier: "sol-high" } } }),

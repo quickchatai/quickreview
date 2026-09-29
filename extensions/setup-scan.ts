@@ -120,8 +120,11 @@ export function renderStatus(s: ScanStatus): string {
         `${findings} finding(s)${doubted ? ` (${doubted} may not be valid)` : ""}, spent ${usd(r.spent_usd)} of ${usd(r.cap_usd)}` +
         (r.unpriced_cases ? ` (${r.unpriced_cases} unpriced case(s) counted at their estimate)` : ""),
     );
-    if (r.display === "interrupted") out.push("It was interrupted (the companion restarted). Preview and start again — the ledger resumes it.");
-    if (r.display === "capped") out.push("It stopped at its hard cap. Preview again for the price of what is left.");
+    // Stage 2 is re-entered by a new proposal (the rows already read are
+    // covered, free); stage 1 by a new preview.
+    const again = r.mode === "stage2" ? "Propose stage 2 again" : "Preview";
+    if (r.display === "interrupted") out.push(`It was interrupted (the companion restarted). ${again} and start again — the ledger resumes it.`);
+    if (r.display === "capped") out.push(`It stopped at its hard cap. ${again} for the price of what is left.`);
     if (r.mode === "stage2") {
       for (const c of r.cases.slice(0, 40)) {
         out.push(`  - ${c.id} ${c.lens ?? "?"} at ${c.tier ?? "?"} (${(c.units ?? [c.unit]).join(", ")}): ${c.status}, ${c.findings} finding(s), ${usd(c.cost_usd)}`);

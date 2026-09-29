@@ -688,7 +688,12 @@ export class ScanRunner {
     const validator = cfg.validator;
     const own = measuredRate(entries, { lens, tier, effort, validator });
     if (own) return { rate: own, basis: "measured", from: lens };
-    const others = (e: LedgerEntry): boolean => e.lens !== lens && e.tier === tier && e.effort === effort && e.validator === validator;
+    // Borrowed only from another DEEP lens: pass-scan is the cheap wide pass,
+    // and its rate at a matching tier/effort (a profile giving a deep lens
+    // `effort = "low"` at `[scan] tier`) would price a deep row at stage 1's
+    // cost unscaled — stage 1's rate reaches a row only through the factor.
+    const others = (e: LedgerEntry): boolean =>
+      e.lens !== lens && e.lens !== SCAN_PASS && e.tier === tier && e.effort === effort && e.validator === validator;
     const borrowed = rateWhere(entries, others);
     if (borrowed) {
       const from = [...new Set(entries.filter((e) => others(e) && e.cost_usd !== null).map((e) => e.lens))].sort().join(", ");

@@ -26,8 +26,9 @@
 //     for a risk pass) are refused.
 //   * PRICED FROM THE LEDGER. A row's price is its lines at a measured
 //     $/kline: this lens at these settings when the ledger has it; else
-//     another lens measured at the same tier, effort and validator setting
-//     ("borrowed"); else stage 1's own measured rate scaled by `[scan]
+//     another DEEP lens measured at the same tier, effort and validator
+//     setting ("borrowed" — never pass-scan, whose cheap wide rate reaches a
+//     row only through the factor); else stage 1's own measured rate scaled by `[scan]
 //     unmeasured_rate_factor` ("extrapolated"). With no measured rate at all
 //     there is no estimate, and the proposal is refused: run stage 1 first.
 //   * FITTED TO A BUDGET, WHEN GIVEN ONE. Rows are kept in the companion's
