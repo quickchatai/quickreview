@@ -626,6 +626,36 @@ describe("the reconcile capture sweep (§6)", () => {
     store.close();
   });
 
+  it("a failed open-PR list is not read as GitHub's updated_at moving", async () => {
+    const store = new StateStore(":memory:");
+    store.upsertPr({
+      number: PR,
+      state: "tracked",
+      head_sha: "sha4242",
+      title: "Add retry to the ingest worker",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    const gh = new SweepGitHub();
+    gh.open = [ref(PR, { head_sha: "sha4242", title: "Add retry to the ingest worker" })];
+    await reconcileOnce({ cfg, store, adapter: gh, hooks: hooks() });
+    expect(gh.swept.length).toBe(1);
+
+    const listOk = gh.listOpenPrs.bind(gh);
+    gh.listOpenPrs = async () => {
+      throw new Error("502");
+    };
+    await reconcileOnce({ cfg, store, adapter: gh, hooks: hooks() });
+    expect(gh.swept.length).toBe(1);
+
+    gh.listOpenPrs = listOk;
+    await reconcileOnce({ cfg, store, adapter: gh, hooks: hooks() });
+    expect(gh.swept.length).toBe(1);
+    store.close();
+  });
+
   it("a failed read leaves no watermark, so the PR is retried next pass", async () => {
     const store = trackedStore();
     const gh = new SweepGitHub();

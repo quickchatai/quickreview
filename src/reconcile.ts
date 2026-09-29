@@ -201,8 +201,10 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
 
   // ---- 1. open-PR truth ---------------------------------------------------
   const open = new Map<number, PrRef>();
+  let openListed = false;
   await step("listOpenPrs", async () => {
     for (const pr of await adapter.listOpenPrs()) open.set(pr.number, pr);
+    openListed = true;
     report.open_prs = open.size;
     for (const pr of open.values()) {
       if (isBotAuthor(pr.author, botLogin)) continue;
@@ -623,8 +625,15 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
         const t = Date.parse(updated_at);
         return Number.isFinite(t) && nowMs - t <= COMMENT_SWEEP_CLOSED_WINDOW_MS;
       };
+      // A failed open-PR list is UNKNOWN remote state, not a change: keep the
+      // stored remote half, or every PR would re-sweep on the failing pass
+      // and again on the recovering one.
+      const remoteHalf = (n: number): string =>
+        openListed
+          ? (open.get(n)?.updated_at ?? "")
+          : (store.lastCommentSweep(n)?.split("|")[1] ?? "");
       const sweepMark = (p: { number: number; updated_at: string }): string =>
-        `${p.updated_at}|${open.get(p.number)?.updated_at ?? ""}`;
+        `${p.updated_at}|${remoteHalf(p.number)}`;
       const candidates = store
         .allPrs()
         .filter(
