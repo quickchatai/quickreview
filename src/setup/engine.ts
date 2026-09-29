@@ -188,6 +188,9 @@ export interface CutStatus {
   ok: boolean;
   /** Why the file or the repo could not be read — the rest is then partial. */
   problems: string[];
+  /** The cut file exists but could not be read: `saved`/`draft` are then
+   * UNKNOWN, not absent. */
+  cut_file_unreadable: boolean;
   saved: (CutView & { saved_at: string; head: string | null; files_at_save: number }) | null;
   draft: (CutView & { updated_at: string; source: DraftCut["source"] }) | null;
   has_previous: boolean;
@@ -196,6 +199,24 @@ export interface CutStatus {
 }
 
 export type FactsResult = { ok: true; head: string | null; facts: RepoFacts } | Refusal;
+
+/** Why a stored cut is not one this version can read, or null when it is (or
+ * is absent). Structure only — the partition itself is `checkCut`'s. */
+function cutShapeError(cut: unknown): string | null {
+  if (cut === null) return null;
+  if (typeof cut !== "object") return "is not an object";
+  const c = cut as { units?: unknown; ignored?: unknown };
+  const strings = (v: unknown): boolean => Array.isArray(v) && v.every((x) => typeof x === "string");
+  if (!Array.isArray(c.units)) return "has no `units` array";
+  for (const [i, u] of c.units.entries()) {
+    const unit = (u ?? {}) as { name?: unknown; roots?: unknown; kind?: unknown; note?: unknown };
+    if (typeof unit.name !== "string" || !strings(unit.roots) || typeof unit.kind !== "string" || typeof unit.note !== "string") {
+      return `units[${i}] is not {name, roots, kind, note}`;
+    }
+  }
+  if (!strings(c.ignored)) return "has no `ignored` array of paths";
+  return null;
+}
 
 // ---- engine ------------------------------------------------------------------
 
@@ -245,10 +266,19 @@ export class SetupEngine {
       if (typeof raw !== "object" || raw === null || raw.version !== UNIT_CUT_VERSION) {
         throw new Error(`unknown version ${JSON.stringify((raw as { version?: unknown } | null)?.version)}`);
       }
-      return {
-        file: { version: UNIT_CUT_VERSION, saved: raw.saved ?? null, previous: raw.previous ?? null, draft: raw.draft ?? null },
-        error: null,
+      const file: UnitCutFile = {
+        version: UNIT_CUT_VERSION,
+        saved: raw.saved ?? null,
+        previous: raw.previous ?? null,
+        draft: raw.draft ?? null,
       };
+      // A hand-edited file must be REPORTED, never crash a view: every later
+      // reader (assign, splitUnit) takes the shape on trust.
+      for (const key of ["saved", "previous", "draft"] as const) {
+        const bad = cutShapeError(file[key]);
+        if (bad !== null) throw new Error(`\`${key}\` ${bad}`);
+      }
+      return { file, error: null };
     } catch (err) {
       return {
         file: empty,
@@ -330,6 +360,7 @@ export class SetupEngine {
     return {
       ok: problems.length === 0,
       problems,
+      cut_file_unreadable: error !== null,
       saved: file.saved
         ? { ...see(file.saved), saved_at: file.saved.saved_at, head: file.saved.head, files_at_save: file.saved.files }
         : null,

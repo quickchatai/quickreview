@@ -217,6 +217,21 @@ describe("the unit cut: propose → adjust → save, persisted in the state home
     expect(r.ok).toBe(false);
     expect(readFileSync(join(stateDir, UNIT_CUT_FILE), "utf8")).toBe("{ not json");
   });
+
+  it("a hand-edited file of the wrong shape is reported, never a throw — and the saved cut reads UNKNOWN, not absent", () => {
+    mkdirSync(join(stateDir, "setup"), { recursive: true });
+    const bad = JSON.stringify({ version: 1, saved: { units: [{ name: "x" }], ignored: [] }, previous: null, draft: null });
+    writeFileSync(join(stateDir, UNIT_CUT_FILE), bad);
+    const e = engine();
+    const s = e.status();
+    expect(s.ok).toBe(false);
+    expect(s.cut_file_unreadable).toBe(true);
+    expect(s.saved).toBeNull();
+    expect(s.problems.join("\n")).toMatch(/`saved` units\[0\] is not/);
+    expect(e.cases().ok).toBe(false);
+    expect(e.adjust([{ op: "note", unit: "x", note: "y" }]).ok).toBe(false);
+    expect(readFileSync(join(stateDir, UNIT_CUT_FILE), "utf8")).toBe(bad);
+  });
 });
 
 describe("cases — the saved cut split to fit, names kept", () => {

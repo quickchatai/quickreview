@@ -481,7 +481,9 @@ export function unitCandidates(files: readonly string[]): UnitCandidate[] {
   for (const c of out) {
     const root = c.roots[0]!;
     let name = slug(byLast.get(base(root))! > 1 ? root : base(root));
-    for (let i = 2; taken.has(name); i++) name = `${slug(root)}-${i}`;
+    // The suffix must fit UNIT_NAME_RE's 64 too, or the whole candidate cut
+    // is refused for one long colliding path.
+    for (let i = 2; taken.has(name); i++) name = `${slug(root).slice(0, 64 - `-${i}`.length)}-${i}`;
     taken.add(name);
     c.name = name;
   }

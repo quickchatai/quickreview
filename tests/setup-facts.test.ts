@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
   isAgentFile,
   repoFacts,
+  UNIT_NAME_RE,
   unitCandidates,
   vendoredRoots,
 } from "../src/setup/facts.js";
@@ -127,6 +128,14 @@ describe("unitCandidates — the stack-aware first guess", () => {
     expect(names).toContain("b-core");
     expect(names).toContain("c-d");
     for (const n of names) expect(n).toMatch(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
+  });
+
+  it("keeps a collision suffix inside the 64-character name limit", () => {
+    const long = "x".repeat(70);
+    const units = unitCandidates([`${long}a/core/apps.py`, `${long}b/core/apps.py`]);
+    const names = units.map((u) => u.name);
+    expect(new Set(names).size).toBe(names.length);
+    for (const n of names) expect(n).toMatch(UNIT_NAME_RE);
   });
 });
 

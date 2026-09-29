@@ -123,6 +123,13 @@ describe("applyOps — all or nothing", () => {
     expect(r.errors.join("\n")).toMatch(/no unit named "nope"/);
     expect(r.errors.join("\n")).toMatch(/unknown op "explode"/);
   });
+
+  it("refuses a note op without a note rather than silently doing nothing", () => {
+    const r = applyOps(base, [{ op: "note", unit: "backend" }]);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.errors.join("\n")).toMatch(/note needs `note`/);
+  });
 });
 
 describe("splitUnit — an oversized unit split to fit, its name kept", () => {

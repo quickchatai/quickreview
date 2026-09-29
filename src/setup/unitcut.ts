@@ -352,6 +352,7 @@ export function applyOps(cut: UnitCut, ops: readonly unknown[]): { ok: true; cut
       case "note": {
         const u = unit(o.unit, i);
         if (u && typeof o.note === "string") u.note = o.note.trim();
+        else if (u) errors.push(`ops[${i}]: note needs \`note\``);
         break;
       }
       default:

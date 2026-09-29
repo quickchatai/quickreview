@@ -9,7 +9,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PiToolDefinition, PiToolResult } from "@earendil-works/pi-coding-agent";
-import activate, { buildEngine, toolDefinitions } from "../extensions/setup.js";
+import activate, { DEFAULT_REVIEWED_REPO, buildEngine, toolDefinitions } from "../extensions/setup.js";
+import { CONTAINER } from "../src/tui/companion.js";
 import {
   checkoutReader,
   stateHomeFs,
@@ -103,6 +104,19 @@ describe("the tool belt", () => {
     expect(await call(defs, "setup_unit_cut_propose", { units: "nope" })).toMatch(/Proposal refused/);
   });
 
+  it("the default checkout path is the companion's mount point", () => {
+    expect(DEFAULT_REVIEWED_REPO).toBe(CONTAINER.reviewedRepo);
+  });
+
+  it("an unreadable cut file renders the saved cut as UNKNOWN, never as 'no saved cut'", async () => {
+    const state = join(dir, "state");
+    tree(state, { "setup/unit-cut.json": "{ not json" });
+    const engine = buildEngine({ QCR_REVIEWED_REPO: join(dir, "absent"), QCR_STATE_HOME: state } as NodeJS.ProcessEnv);
+    const out = await call(toolDefinitions(engine), "setup_unit_cut");
+    expect(out).toMatch(/Saved unit cut: UNKNOWN/);
+    expect(out).not.toMatch(/No saved unit cut yet/);
+  });
+
   it("a missing checkout is a refusal from the tools, not a failed start", async () => {
     const engine = buildEngine({ QCR_REVIEWED_REPO: join(dir, "absent"), QCR_STATE_HOME: join(dir, "state") } as NodeJS.ProcessEnv);
     expect(await call(toolDefinitions(engine), "setup_repo_facts")).toMatch(/no readable checkout at .*absent/);
@@ -184,7 +198,7 @@ describe("tokenFileGitHubReader — GET only, API paths only", () => {
     const fetch = vi.fn();
     const f = fetch as unknown as typeof globalThis.fetch;
     const live = tokenFileGitHubReader({ envFile: envFile("2026-09-29T11:00:00Z"), fetch: f, clock: () => now });
-    for (const bad of ["https://evil.example/x", "//evil.example/x", "/repos/../x", "repos/o/r"]) {
+    for (const bad of ["https://evil.example/x", "//evil.example/x", "/repos/../x", "/repos/%2E%2e/x", "repos/o/r"]) {
       expect((await live.get(bad)).ok).toBe(false);
     }
     const expired = tokenFileGitHubReader({ envFile: envFile("2026-09-29T09:00:00Z"), fetch: f, clock: () => now });

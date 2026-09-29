@@ -92,6 +92,8 @@ export function renderStatus(s: CutStatus): string {
   if (s.saved) {
     const stale = s.saved.blocking_save.length > 0 ? " — STALE against the repo now, see the ! lines" : "";
     out.push(renderCut(`Saved unit cut (saved ${s.saved.saved_at}${s.saved.head ? ` at ${s.saved.head.slice(0, 12)}` : ""})${stale}`, s.saved));
+  } else if (s.cut_file_unreadable) {
+    out.push("Saved unit cut: UNKNOWN — the cut file could not be read (see above); nothing will overwrite it.");
   } else {
     out.push("No saved unit cut yet.");
   }

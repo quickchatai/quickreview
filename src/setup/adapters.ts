@@ -170,7 +170,7 @@ export function tokenFileGitHubReader(opts: {
   const apiRoot = opts.apiRoot ?? "https://api.github.com";
   return {
     get: async (path) => {
-      if (!/^\/[A-Za-z0-9_./?&=%,:+-]*$/.test(path) || path.startsWith("//") || path.includes("..")) {
+      if (!/^\/[A-Za-z0-9_./?&=%,:+-]*$/.test(path) || path.startsWith("//") || path.includes("..") || /%2e/i.test(path)) {
         return { ok: false, reason: `not an API path: ${JSON.stringify(path)}` };
       }
       if (!opts.envFile) return { ok: false, reason: "no read-only GitHub token is configured (QCR_GITHUB_READ_ENV unset)" };
