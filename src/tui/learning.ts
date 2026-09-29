@@ -387,13 +387,18 @@ export class LearningStore {
     this.loaded("digest");
   }
 
+  /** Bumped per content read; only the newest read's answer may land. */
+  private digestReadSeq = 0;
+
   private async loadDigestContent(): Promise<void> {
     const file = currentDigestFile(this.digest);
+    const seq = ++this.digestReadSeq;
     this.digest.contentError = undefined;
     const content = file ? await this.digestFetcher.read(file) : undefined;
-    // Paging does not cancel a read in flight: only the answer for the day
-    // still on screen may land, or a slow read lands under another heading.
-    if (currentDigestFile(this.digest) !== file) return;
+    // Paging does not cancel a read in flight: only the LATEST read may land,
+    // or a slow read lands under another heading — or, paged away and back,
+    // a stale failure overwrites the fresh text of the same day.
+    if (seq !== this.digestReadSeq || currentDigestFile(this.digest) !== file) return;
     this.digest.content = content;
     if (file && content === undefined)
       this.digest.contentError = `${file} could not be read over ssh`;

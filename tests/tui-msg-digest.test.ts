@@ -374,6 +374,35 @@ describe("digest tab", () => {
     expect(screen).not.toContain("body of 2026-08-19");
   });
 
+  it("paged away and back, a stale read of the same day never overwrites the fresh one", async () => {
+    const pending: Array<[string, (text: string | undefined) => void]> = [];
+    const rig = learningRig({
+      digestFetcher: {
+        list: async () => ["2026-08-19.md", "2026-08-20.md"],
+        read: (f) => new Promise((res) => pending.push([f, res])),
+      },
+    });
+    rig.app.tab = "digest";
+    const tab = rig.app.hooks.tabs.digest!;
+    tab.screen(rig.app, 100, 24);
+    await settle();
+    pending.shift()![1]("# body of 2026-08-20");
+    await settle();
+    tab.key(rig.app, { kind: "older" }); // → 08-19, read A in flight
+    tab.key(rig.app, { kind: "newer" }); // → 08-20, read B in flight
+    tab.key(rig.app, { kind: "older" }); // → 08-19, read C in flight
+    const [a, b, c] = pending.splice(0);
+    expect([a![0], b![0], c![0]]).toEqual(["2026-08-19.md", "2026-08-20.md", "2026-08-19.md"]);
+    c![1]("# fresh body of 2026-08-19");
+    await settle();
+    a![1](undefined); // the stale read of the SAME day fails last
+    b![1]("# body of 2026-08-20");
+    await settle();
+    const screen = stripAnsi(tab.screen(rig.app, 100, 24).render());
+    expect(screen).toContain("fresh body of 2026-08-19");
+    expect(screen).not.toContain("could not read");
+  });
+
   it("a failed listing on the installed tab says so and r asks again", async () => {
     let dead = true;
     const rig = learningRig({
