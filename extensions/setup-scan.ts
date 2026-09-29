@@ -18,7 +18,8 @@
 //   - scan_stage2_propose: the companion's rows (file set × deep lens × tier,
 //     reason) checked, tests paired, priced from the ledger and fitted to a
 //     budget when given one — stored, so the TUI can show it;
-//   - scan_stage2_start: start the stored proposal by its key, on the
+//   - scan_stage2_start: start the stored proposal by its key — or only the
+//     runnable rows named in `rows`, stopped hard at their total — on the
 //     operator's word. The TUI's click reaches the same start through
 //     `watchTuiRequests` (the start channel, src/setup/stage2request.ts —
 //     and the [8] scan tab's stop, src/setup/scanreport.ts).
@@ -230,7 +231,8 @@ export function renderProposal(p: StoredStage2Proposal): string {
   if (p.over_budget_usd > 0) out.push(`Left out by the budget: ${usd(p.over_budget_usd)} of rows.`);
   if (p.runnable > 0) {
     out.push(
-      `To run it: scan_stage2_start with key ${p.key} — only after the operator agreed to the cost ("do it"); the TUI's start click starts the same proposal.`,
+      `To run it: scan_stage2_start with key ${p.key} — only after the operator agreed to the cost ("do it"); the TUI's start click starts the same proposal. ` +
+        `To run only some rows: add rows (their ids, e.g. ["row-1"]) — only runnable rows, and the run stops hard at their total.`,
     );
   } else out.push("✗ nothing to run: every row is covered or over the budget.");
   return out.join("\n\n");
@@ -461,14 +463,28 @@ export function scanToolDefinitions(
     label: "Start scan stage 2",
     description:
       "Start the stored stage-2 proposal by its key — only after the operator agreed to its cost ('do it'). It runs in the background, " +
-      "one case per row, and stops HARD at the proposal's estimate. Refused if the proposal moved since it was shown.",
+      "one case per row, and stops HARD at the proposal's estimate. Give rows (row ids from the proposal) to run only those — the " +
+      "operator's narrowed 'do it' ('only the security rows'): each must be a runnable row, and the hard stop is their total. " +
+      "Refused if the proposal moved since it was shown.",
     promptSnippet: "Start the proposed stage 2",
-    parameters: { type: "object", properties: { key: { type: "string" } }, required: ["key"] },
+    parameters: {
+      type: "object",
+      properties: { key: { type: "string" }, rows: { type: "array", items: { type: "string" } } },
+      required: ["key"],
+    },
     execute: async (_id, params) => {
-      const r = await scan.startStage2({ key: params?.key });
+      // The engine validates `rows` (a list of runnable row ids, not empty —
+      // `keptRows`, the TUI click's own rule) and re-plans before it starts.
+      const r = await scan.startStage2({ key: params?.key, ...(params?.rows !== undefined ? { rows: params.rows } : {}) });
       if (!r.ok) return refused("Stage 2 start", r);
+      const runnable = scan.stage2Proposal().proposal?.runnable ?? null;
+      const narrowed = params?.rows !== undefined && params?.rows !== null;
+      const count =
+        narrowed && runnable !== null
+          ? `${r.run.cases.length} row(s) of ${runnable} (${r.run.cases.map((c) => c.id).join(", ")})`
+          : `${r.run.cases.length} row(s)`;
       return text(
-        `Stage 2 ${r.run.id} started at ${r.run.sha.slice(0, 12)}: ${r.run.cases.length} row(s), hard stop ${usd(r.run.cap_usd)}. ` +
+        `Stage 2 ${r.run.id} started at ${r.run.sha.slice(0, 12)}: ${count}, hard stop ${usd(r.run.cap_usd)}. ` +
           "It runs in the background — scan_status shows progress, scan_stop stops it.",
         { run: { id: r.run.id, mode: r.run.mode, sha: r.run.sha, cases: r.run.cases.length, cap_usd: r.run.cap_usd } },
       );

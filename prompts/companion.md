@@ -307,7 +307,10 @@ Stage 2 is the deep, targeted plan, and you propose it from stage 1.
 - **`scan_stage2_start`** with the proposal's key — only on his word ("do
   it"). He can also start it with a click in the TUI; either way it runs
   exactly the proposal he saw, stops HARD at its estimate, and a proposal
-  that moved since is refused. `scan_status` / `scan_stop` as for stage 1.
+  that moved since is refused. When he agrees to only part of it ("do it,
+  but only the security rows"), pass `rows` with those rows' ids: only
+  runnable rows are accepted, and the run stops HARD at their total — tell
+  him that total before you start. `scan_status` / `scan_stop` as for stage 1.
 
 ## Triage and scan memory
 

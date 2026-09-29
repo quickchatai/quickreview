@@ -156,6 +156,40 @@ describe("the stage 2 tools", () => {
     expect(status).toMatch(/3 file × lens read by stage 2/);
   });
 
+  it("a narrowed start runs only the named runnable rows, stopped hard at their total — the same rule as the TUI click", async () => {
+    const { defs, scan } = belt();
+    const cal = await call(defs, "scan_preview");
+    await call(defs, "scan_start", { key: /scan_start with key (\w+)/.exec(cal)![1]! });
+    await scan.idle();
+
+    const proposal = await call(defs, "scan_stage2_propose", {
+      rows: [
+        { lens: "pass-security", files: ["app/a.py"], reason: "auth" },
+        { lens: "pass-concurrency", files: ["lib/b.py"], reason: "shared cache" },
+      ],
+    });
+    expect(proposal).toMatch(/— 2 row\(s\) to run/);
+    expect(proposal).toMatch(/only some rows: add rows/);
+    const key = /scan_stage2_start with key (\w+)/.exec(proposal)![1]!;
+    const stored = scan.stage2Proposal().proposal!;
+    const row2 = stored.rows.find((r) => r.id === "row-2")!;
+    expect(row2.estimate_usd).toBeLessThan(stored.cap_usd);
+
+    // Every bad subset is refused, and nothing starts.
+    expect(await call(defs, "scan_stage2_start", { key, rows: ["row-9"] })).toMatch(/^Stage 2 start refused:\n✗ not a runnable row of the proposal: row-9/);
+    expect(await call(defs, "scan_stage2_start", { key, rows: [] })).toMatch(/^Stage 2 start refused:\n✗ every row is toggled off — keep at least one/);
+    expect(await call(defs, "scan_stage2_start", { key, rows: "row-2" })).toMatch(/^Stage 2 start refused:\n✗ `rows` must be a list/);
+    expect(scan.status().run!.mode).toBe("calibration");
+
+    const started = await call(defs, "scan_stage2_start", { key, rows: ["row-2"] });
+    expect(started).toMatch(new RegExp(`^Stage 2 scan-\\S+ started at aaaaaaaaaaaa: 1 row\\(s\\) of 2 \\(row-2\\), hard stop \\$${row2.estimate_usd.toFixed(2)}`));
+    await scan.idle();
+    const run = scan.status().run!;
+    expect(run.mode).toBe("stage2");
+    expect(run.cases.map((c) => c.id)).toEqual(["row-2"]);
+    expect(run.cap_usd).toBeCloseTo(row2.estimate_usd, 9);
+  });
+
   it("the watcher polls for the TUI's click and stop, and stops when told", async () => {
     vi.useFakeTimers();
     try {
