@@ -21,7 +21,6 @@ import { PASS_TIER_ORDER } from "../src/types.js";
 import { renderRoundPrompt, roundTemplateFile } from "../src/templates.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
 import type { ContextAssembler, MemoryRead } from "../src/memory/context.js";
-import { stageTrackedProfile } from "./helpers/tracked-profiles.js";
 
 const baseCfg: Config = parseConfig(
   readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
@@ -420,14 +419,14 @@ describe("buildPassPlan", () => {
     },
   };
 
-  // Self-skips where the quickchat pack is absent (the assembled
-  // public snapshot excludes it).: the tracked pack is staged into the
-  // temp config home, the place the locator reads (tests/helpers/tracked-profiles.ts).
-  it.skipIf(!stageTrackedProfile(resolve(import.meta.dirname, ".."), "quickchat"))(
+  // The threading is profile-agnostic, so it runs on the generic
+  // example-django pack every tree ships (the same Django settings/DRF
+  // predicates) — never skipped, in any tree.
+  it(
     "threads the profile heuristics extension into selection",
     async () => {
       const { loadProfileHeuristics } = await import("../src/profiles.js");
-      const qc = loadProfileHeuristics(resolve(import.meta.dirname, ".."), "quickchat");
+      const qc = loadProfileHeuristics(resolve(import.meta.dirname, ".."), "example-django");
       const files = [file("project/settings_prod.py", 12, 1)];
       // Without the extension the settings glob is not in the generic core…
       expect(buildPassPlan(planCfg, files).pass_plan.map((p) => p.lens)).not.toContain(

@@ -10,7 +10,7 @@
 // dry_run = false) is a GitHub mutation and is deferred to the VM cutover
 // — it cannot and must not run here.
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../src/config.js";
@@ -123,19 +123,15 @@ afterEach(() => {
 });
 
 describe("dry-run fixture round", () => {
-  // Live-only tripwire: the assembled public snapshot has no
-  // config.toml (adopters start from config.example.toml, dry_run = true),
-  // so the pin self-skips there — same discipline as tests/config.test.ts.
-  it.skipIf(!existsSync(join(SANDBOX, "config.toml")))(
-    "has dry_run false in the committed config — LIVE since the 2026-08-14 cutover",
-    () => {
-      // Deliberately reads the LIVE config.toml (rule 1): the production flag is
-      // the owner's alone, and this pin is the tripwire against an accidental
-      // flip. Every other test in this file runs on tests/fixtures/config.toml
-      // so operator identity edits never redden the suite.
-      expect(loadConfig(join(SANDBOX, "config.toml")).dry_run).toBe(false);
-    },
-  );
+  // This used to be a live-only tripwire on the committed config.toml's
+  // dry_run = false. moved the live config into the install's config
+  // home, out of every test's reach, so it skipped on every run. The live flag
+  // is the owner's (rule 1) and deploy.sh's plan shows the value it ships
+  // without ever changing it. What this file CAN pin is its own premise: the
+  // fixture round it drives is a DRY-RUN round.
+  it("runs on a dry-run fixture config — the round never reaches GitHub", () => {
+    expect(harness().cfg.dry_run).toBe(true);
+  });
 
   it("builds the round's agent variant definitions with includes expanded", () => {
     const { cfg } = harness();

@@ -383,25 +383,25 @@ const ALLOWLIST: AllowlistEntry[] = [
     path: "tests/profiles.test.ts",
     tokens: ["quickchat", "owner_legacy", "mhale", "gfrost"],
     reason:
-      "byte-pins the private quickchat pack's moved corpus rules (verbatim, incl. their leak-check list); travels with profiles/quickchat/",
+      "byte-pins the private quickchat pack's moved corpus rules (verbatim, incl. their leak-check list); its fixture copy tests/fixtures/profiles/quickchat/ is excluded beside profiles/quickchat/",
   },
   {
     path: "tests/heuristics.test.ts",
     tokens: ["quickchat"],
     reason:
-      "equivalence proof: quickchat heuristics.toml == the pre-lift compiled-in selection; travels with profiles/quickchat/",
+      "equivalence proof: quickchat heuristics.toml == the pre-lift compiled-in selection; its fixture copy tests/fixtures/profiles/quickchat/ is excluded beside profiles/quickchat/",
   },
   {
     path: "tests/include.test.ts",
     tokens: ["quickchat"],
     reason:
-      "asserts the deployed composition [generic registry + quickchat pack]; travels with profiles/quickchat/",
+      "asserts the deployed composition [generic registry + quickchat pack]; its fixture copy tests/fixtures/profiles/quickchat/ is excluded beside profiles/quickchat/",
   },
   {
     path: "tests/stack-neutral.test.ts",
     tokens: ["quickchat"],
     reason:
-      "proof that the stack rules the reseed took out of three seeds reach their lenses through the quickchat pack (self-skips without it); travels with profiles/quickchat/",
+      "proof that the stack rules the reseed took out of three seeds reach their lenses through the quickchat pack (self-skips without it); its fixture copy tests/fixtures/profiles/quickchat/ is excluded beside profiles/quickchat/",
   },
   {
     path: "tests/ecosystem.test.ts",
@@ -411,7 +411,7 @@ const ALLOWLIST: AllowlistEntry[] = [
   {
     path: "tests/dispatch.test.ts",
     tokens: ["quickchat"],
-    reason: "lens-selection cases running the private quickchat profile's heuristics",
+    reason: "a lens-selection case names a quickchat-shaped settings path (project/settings_prod.py)",
   },
   {
     path: "docs/profiles.md",
@@ -421,12 +421,6 @@ const ALLOWLIST: AllowlistEntry[] = [
 
   // -- The live-config invariant block (reads config.toml, which is excluded;
   //    the block self-skips when the file is absent).
-  {
-    path: "tests/config.test.ts",
-    tokens: ["quickchat"],
-    reason:
-      "live config.toml invariant block pins the private deployment's explicit values; self-skips without config.toml",
-  },
 
   // -- Deliberate negative assertions / scrub tripwires.
   {

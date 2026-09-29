@@ -1,46 +1,81 @@
 // the install locator never reads an install's own profile from the
 // checkout, and every test file runs against an EMPTY temp config home
-// (tests/helpers/install-env.ts). So a deployment pack the checkout still
-// TRACKS is invisible to `locateProfile` in every test run, and the pins that
-// bind that exact pack (the byte-equivalence proof, the
-// heuristics equivalence, the stack-rule proof, the deployed
-// composition, the built-variant fence) would self-skip everywhere — silently,
-// forever.
+// (tests/helpers/install-env.ts). `qcr install migrate` then moved the
+// deployment's own pack out of the checkout altogether,
+// so the pins that bind that exact pack — the byte-equivalence proof,
+// the heuristics equivalence, the stack-rule proof, the
+// deployed composition, the built-variant fence — had nothing to read and
+// self-skipped everywhere: silently, forever.
 //
-// This stages the checkout's tracked pack into this test file's temp config
-// home — the place the locator really reads — so those pins run through the
-// real lookup wherever the pack is tracked, and self-skip only where it is
-// absent (the assembled snapshots exclude it). Idempotent; it refuses
-// to write anywhere but the temp home the setup file installed, so it can
-// never touch the developer's own config home.
-import { cpSync, existsSync, readdirSync } from "node:fs";
+// They now read a TRACKED, frozen copy under tests/fixtures/profiles/ — the
+// exact bytes the pins were written against — staged into this test file's
+// temp config home, the place the locator really reads, so they run through
+// the real lookup. The operator's live pack lives in the install's config
+// home and may move on; the fixture does not.
+//
+// A fixture pack is absent in exactly one place: an assembled
+// snapshot, whose manifests drop it (the pack's content never travels). There
+// the pins self-skip. In the SOURCE tree a missing fixture is a loud failure,
+// never a skip — that silent skip is the thing this file exists to end.
+//
+// Idempotent; it refuses to write anywhere but the temp home the setup file
+// installed, so it can never touch the developer's own config home.
+import { cpSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EXAMPLE_PROFILES, configHome, locateProfile } from "../../src/install.js";
 
-/** Stage `<root>/profiles/<name>` into the temp config home; true when the
- * locator now finds `<name>`. */
-export function stageTrackedProfile(root: string, name: string): boolean {
-  const src = join(root, "profiles", name);
+/** Where the frozen fixture packs live, relative to a checkout root. */
+export const FIXTURE_PROFILES = join("tests", "fixtures", "profiles");
+
+/** True in the source tree, false in an assembled snapshot (whose
+ * publish-manifest.json carries an EMPTY `exclude` — applied at assembly). */
+export function inSourceTree(root: string): boolean {
+  try {
+    const m = JSON.parse(readFileSync(join(root, "publish-manifest.json"), "utf8")) as {
+      exclude?: unknown[];
+    };
+    return (m.exclude?.length ?? 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Stage the fixture pack `<root>/tests/fixtures/profiles/<name>` into the temp
+ * config home; true when the locator now finds `<name>`. False only in an
+ * assembled snapshot; in the source tree a missing fixture THROWS. */
+export function stageFixtureProfile(root: string, name: string): boolean {
+  const src = join(root, FIXTURE_PROFILES, name);
   if (existsSync(src) && !EXAMPLE_PROFILES.includes(name)) {
     const home = configHome(process.env);
     if (!home.startsWith(tmpdir()))
-      throw new Error(`stageTrackedProfile: config home ${home} is not a temp dir — refusing to write`);
+      throw new Error(`stageFixtureProfile: config home ${home} is not a temp dir — refusing to write`);
     const dest = join(home, "profiles", name);
     if (!existsSync(dest)) cpSync(src, dest, { recursive: true });
   }
-  return locateProfile({ root, profile: name }) !== null;
+  const found = locateProfile({ root, profile: name }) !== null;
+  if (!found && inSourceTree(root))
+    throw new Error(
+      `stageFixtureProfile: fixture pack ${src} is missing from the source tree — its pins would ` +
+        `silently skip. Restore it (it is tracked); only an assembled snapshot may lack it.`,
+    );
+  return found;
 }
 
-/** Stage every non-example pack under `<root>/profiles/`. */
-export function stageTrackedProfiles(root: string): void {
-  let names: string[] = [];
+/** The fixture packs a checkout tracks (none in an assembled snapshot). */
+export function fixtureProfileNames(root: string): string[] {
   try {
-    names = readdirSync(join(root, "profiles"), { withFileTypes: true })
+    return readdirSync(join(root, FIXTURE_PROFILES), { withFileTypes: true })
       .filter((e) => e.isDirectory())
       .map((e) => e.name);
   } catch {
-    return;
+    return [];
   }
-  for (const name of names) stageTrackedProfile(root, name);
+}
+
+/** Stage every fixture pack; returns the names staged. */
+export function stageFixtureProfiles(root: string): string[] {
+  const names = fixtureProfileNames(root);
+  for (const name of names) stageFixtureProfile(root, name);
+  return names;
 }

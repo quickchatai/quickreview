@@ -18,14 +18,11 @@ import { fileURLToPath } from "node:url";
 import { LOCAL_EMBEDDING, OPENVIKING_DEFAULTS, parseConfig } from "../src/config.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-// The LIVE config.toml where present (the rule-7 drift tripwire); in the
-// assembled public snapshot — which excludes it — the mirror runs
-// against config.example.toml, whose pin blocks are identical by construction.
-const liveConfigPath = resolve(root, "config.toml");
-const configToml = readFileSync(
-  existsSync(liveConfigPath) ? liveConfigPath : resolve(root, "config.example.toml"),
-  "utf8",
-);
+// The TRACKED config.example.toml (the rule-7 pin spelling every tree
+// carries). The operator's LIVE config.toml left the checkout with `qcr
+// install migrate`; its pins are held by scripts/deploy.sh's
+// preflight, which reads it through the install locator and refuses on drift.
+const configToml = readFileSync(resolve(root, "config.example.toml"), "utf8");
 const groupVars = readFileSync(resolve(root, "deploy/ansible/group_vars/all.yml"), "utf8");
 const dockerfile = readFileSync(resolve(root, "docker/daemon/Dockerfile"), "utf8");
 const entrypoint = readFileSync(resolve(root, "docker/daemon/entrypoint.sh"), "utf8");

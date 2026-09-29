@@ -22,11 +22,13 @@ import { DJANGO_ECOSYSTEM, NONE_ECOSYSTEM } from "../src/ecosystem.js";
 import { loadProfileAddenda } from "../src/profiles.js";
 import { renderRoundPrompt, roundTemplateFile } from "../src/templates.js";
 import type { RoundOrder, RoundType } from "../src/types.js";
-import { stageTrackedProfile } from "./helpers/tracked-profiles.js";
+import { stageFixtureProfile } from "./helpers/tracked-profiles.js";
 
 const sandbox = join(import.meta.dirname, "..");
-// The quickchat pack is excluded from the public snapshot; its pins self-skip.
-const HAS_QC = stageTrackedProfile(sandbox, "quickchat"); //: staged into the temp config home
+// The quickchat pack as its frozen fixture copy (tests/fixtures/profiles/
+// quickchat). Dropped from the assembled snapshots, where its pins
+// self-skip; in the source tree a missing fixture throws.
+const HAS_QC = stageFixtureProfile(sandbox, "quickchat");
 
 /** Build the real agents/ seeds; return pass name → its sol-med (or only) body. */
 function build(addenda: readonly PassAddendum[], ecosystem?: EcosystemName): Map<string, string> {

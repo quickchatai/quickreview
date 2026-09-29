@@ -48,7 +48,7 @@ import { postTag } from "../src/severity.js";
 import { renderOverseerSystemPrompt } from "../src/templates.js";
 import { loadProfileAddenda } from "../src/profiles.js";
 import { locateProfile } from "../src/install.js";
-import { stageTrackedProfiles } from "./helpers/tracked-profiles.js";
+import { stageFixtureProfiles } from "./helpers/tracked-profiles.js";
 import { INITIAL_STATE, transition, type SmEvent } from "../src/statemachine.js";
 import { CANCEL_CAUSES, type PrLifecycleState } from "../src/state.js";
 
@@ -309,11 +309,12 @@ describe("[T12] the pi version pin is one fact, spelled the same everywhere", ()
    * follow, both private-only.
    */
   /**
-   * PRIVATE-ONLY SPELLINGS. Three of the seven places this fact is written
-   * down are absent from the published snapshot: `config.toml` (the
-   * operator's LIVE config — gitignored for an adopter, excluded by
-   * publish-manifest.json), the operating rulebook `CLAUDE.md`, and the
-   * deploying skill (bound to the private VM). Each of their fences is
+   * PRIVATE-ONLY SPELLINGS. Two of the places this fact is written down are
+   * absent from the published snapshot: the operating rulebook `CLAUDE.md`
+   * and the deploying skill (bound to the private VM). (The operator's LIVE
+   * `config.toml` left the checkout altogether with; deploy.sh's
+   * preflight holds its pin, and the test fixture stands in below.) Each of
+   * their fences is
    * GUARDED on the file existing rather than deleted, so in this tree they
    * run exactly as before and drift still fails; in a published tree they
    * skip visibly instead of reading a file that is not there. The PUBLIC
@@ -357,24 +358,29 @@ describe("[T12] the pi version pin is one fact, spelled the same everywhere", ()
   });
 
   /**
-   * The live config is the fifth spelling, and the one `scripts/deploy.sh`
-   * and the container actually read. Private-only, so guarded.
+   * The test fixture is the fifth spelling. The LIVE config — the one
+   * `scripts/deploy.sh` and the container read — left the checkout with
+   * `qcr install migrate`, so no test can see it; its pin is held
+   * by deploy.sh's preflight instead, which reads it through the install
+   * locator and REFUSES on drift from group_vars (pinned in
+   * tests/deploy.test.ts). The fixture is the config every other test
+   * parses, so a stale pin there would let those tests exercise a pi the
+   * image never runs.
    *
-   * MUTATION: change `version` in config.toml's `[pi]` block — this fails.
+   * MUTATION: change `version` in tests/fixtures/config.toml's `[pi]` block —
+   * this fails.
    */
-  it.skipIf(!has("config.toml"))(
-    "config.toml's pin agrees with the published spellings (private tree only)",
-    () => {
-      const cfg = tomlPiVersion("config.toml");
-      expect(
-        cfg,
-        "config.toml no longer spells the pin in the shape this fence reads",
-      ).toBeTruthy();
-      expect(cfg, "config.toml's pi version drifted from config.example.toml — reconcile it").toBe(
-        realPin(),
-      );
-    },
-  );
+  it("the test fixture config's pin agrees with the published spellings", () => {
+    const cfg = tomlPiVersion("tests/fixtures/config.toml");
+    expect(
+      cfg,
+      "tests/fixtures/config.toml no longer spells the pin in the shape this fence reads",
+    ).toBeTruthy();
+    expect(
+      cfg,
+      "tests/fixtures/config.toml's pi version drifted from config.example.toml — reconcile it",
+    ).toBe(realPin());
+  });
 
   /**
    * The rulebook half. Until this recorded a KNOWN stale value
@@ -656,14 +662,17 @@ describe("what a built pass is told it may run is exactly what the guard lets th
    */
   it("no built pass variant names the park, NEEDS_HUMAN or awk, and each carries the rendered allowlist", () => {
     // Every pack the locator would load (a stranded checkout pack is
-    // not one — it is never read, so it composes into nothing). A pack the
-    // checkout still tracks is staged into the temp config home first, so the
-    // deployed pack stays one of the compositions this fence covers.
-    stageTrackedProfiles(ROOT);
-    const profiles = readdirSync(join(ROOT, "profiles"), { withFileTypes: true })
+    // not one — it is never read, so it composes into nothing): the generic
+    // examples, plus the frozen fixture copy of the deployment's pack
+    // (tests/fixtures/profiles/), staged into the temp config home so the
+    // deployed composition stays one of the compositions this fence covers.
+    const fixtures = stageFixtureProfiles(ROOT);
+    const examples = readdirSync(join(ROOT, "profiles"), { withFileTypes: true })
       .filter((e) => e.isDirectory())
-      .map((e) => e.name)
-      .filter((name) => locateProfile({ root: ROOT, profile: name }) !== null);
+      .map((e) => e.name);
+    const profiles = [...examples, ...fixtures].filter(
+      (name) => locateProfile({ root: ROOT, profile: name }) !== null,
+    );
     expect(
       profiles.length,
       "no profile packs found — the profile half of this fence would be vacuous",

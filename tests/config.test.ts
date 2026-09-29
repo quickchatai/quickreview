@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,12 +16,9 @@ import {
 } from "../src/config.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-// the suite parses the NEUTRAL FIXTURE, not the operator's live
-// config — editing identities in config.toml must never redden a test. The
-// live file is read only by the "live config.toml" block at the bottom, which
-// pins production invariants (rule 1) rather than identity values.
+// the suite parses the NEUTRAL FIXTURE, never the operator's live
+// config (that lives in the install's config home now, out of reach).
 const configPath = resolve(root, "tests/fixtures/config.toml");
-const liveConfigPath = resolve(root, "config.toml");
 
 describe("expandHome", () => {
   it("expands a leading ~/ and leaves other paths alone", () => {
@@ -387,41 +384,25 @@ describe("loadConfig", () => {
   });
 });
 
-// ---- the LIVE config.toml — production invariants only ----------
+// ---- the tracked configs — both parse and validate ------
 //
-// Deliberately the only place in this file that reads the committed
-// config.toml. It pins what must hold in PRODUCTION regardless of the
-// operator's identity values: the file stays parseable/valid, and dry_run
-// stays false (rule 1 — LIVE since the 2026-08-14 cutover; the flag is
-// the owner's alone). Identity assertions live on the fixture above, so an
-// adopter editing repo/app/team/ssh values never reddens the suite.
-// config.toml is the live production file and is EXCLUDED from the
-// public snapshot (publish-manifest.json) — this block self-skips when the
-// file is absent, so a fresh public clone stays green; on the private tree
-// it always runs.
-describe.skipIf(!existsSync(liveConfigPath))("live config.toml (production invariants)", () => {
-  it("parses and passes full config validation", () => {
-    expect(() => loadConfig(liveConfigPath)).not.toThrow();
-  });
-
-  it("keeps dry_run false — the cutover flag (rule 1, the owner's alone)", () => {
-    expect(loadConfig(liveConfigPath).dry_run).toBe(false);
-  });
-
-  it("live values are stated explicitly — master base, example-app clone, shipped denylist", () => {
-    const cfg = loadConfig(liveConfigPath);
-    expect(cfg.github.base_branch).toBe("master");
-    expect(githubCloneDir(cfg.github)).toBe("example-app"); // explicit AND what the slug derives
-    expect(cfg.github.clone_dir).toBe("example-app");
-    expect(cfg.caps.improvement_pr_deny_prefixes).toEqual([...IMPROVEMENT_DENY_PREFIXES_DEFAULT]);
-    // Directive vocabulary unextended: today's exact behaviour.
-    expect(cfg.review.directives).toEqual({
-      extra_vendored_segments: [],
-      extra_basenames: [],
-      extra_dir_segments: [],
-      extra_root_dirs: [],
-      extra_files: [],
+// This block used to read the LIVE config.toml and pin its production
+// invariants (parses, dry_run = false, the deployment's explicit base branch /
+// clone / denylist). `qcr install migrate` moved that file into the install's
+// config home, where no test can — or may — read it, so the block
+// skipped on every run. What a tracked file can carry is asserted here; what
+// only the live file can carry is the operator's: deploy.sh's preflight reads
+// it through the install locator (its pin checks refuse on drift, and its plan
+// SHOWS the dry_run flag it ships — never changes it, rule 1).
+describe("the tracked configs (fixture + example)", () => {
+  for (const rel of ["tests/fixtures/config.toml", "config.example.toml"]) {
+    it(`${rel} parses and passes full config validation`, () => {
+      expect(() => loadConfig(resolve(root, rel))).not.toThrow();
     });
+  }
+
+  it("the fixture every test parses is dry-run — a test config never mutates GitHub", () => {
+    expect(loadConfig(configPath).dry_run).toBe(true);
   });
 });
 

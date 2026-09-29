@@ -6,7 +6,7 @@
 // codebase drifts from a principle, the drift is the bug". It is currently
 // referenced by `README.md` and asserted by no test at all. Two of its claims
 // can be checked by a machine; these are them.
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -81,26 +81,17 @@ describe("[T11] the shipped configs describe the system that exists", () => {
   const RETIRED_KNOBS_PENDING_REMOVAL: readonly string[] = [];
 
   /**
-   * Two shipped configs, and only ONE of them travels. `config.example.toml`
-   * is in every tree — it is the file an adopter copies — so its fences run
-   * unconditionally. `config.toml` is the operator's LIVE config: gitignored
-   * for an adopter and excluded by publish-manifest.json, so it is absent
-   * from the published snapshot. Its fences are therefore guarded on the file
-   * existing rather than deleted or made to read a file that is not there:
-   * in THIS (private) tree it exists, so the guard is a no-op and drift
-   * still fails. A skipped test is visible in the run; a silent pass is not.
+   * The two tracked configs, both in every tree: `config.example.toml`, the
+   * file an adopter copies, and `tests/fixtures/config.toml`, the neutral copy
+   * of the live config's STRUCTURE that the suite parses (kept in lockstep
+   * with it). The operator's LIVE config.toml left the checkout with
+   * `qcr install migrate` — it is the operator's file in their
+   * config home now, and no test reads it.
    */
-  const CONFIGS = [
-    { file: "config.toml", private: true },
-    { file: "config.example.toml", private: false },
-  ] as const;
-  const absent = (file: string) => !existsSync(join(ROOT, file));
+  const CONFIGS = ["config.example.toml", "tests/fixtures/config.toml"] as const;
 
-  for (const { file, private: isPrivate } of CONFIGS) {
-    const label = isPrivate
-      ? `${file} carries no present-tense park (private tree only — the live config is not published)`
-      : `${file} carries no present-tense park`;
-    it.skipIf(isPrivate && absent(file))(label, () => {
+  for (const file of CONFIGS) {
+    it(`${file} carries no present-tense park`, () => {
       const lines = readFileSync(join(ROOT, file), "utf8").split("\n");
       const offenders: string[] = [];
       for (const [i, line] of lines.entries()) {
@@ -133,11 +124,8 @@ describe("[T11] the shipped configs describe the system that exists", () => {
     "all means a reference to the retired park reappeared in a config we ship — delete it, or record it in " +
     "RETIRED_KNOBS_PENDING_REMOVAL with the ticket that removes it.";
 
-  for (const { file, private: isPrivate } of CONFIGS) {
-    const label = isPrivate
-      ? `no awaiting_human remnant survives in ${file} (private tree only)`
-      : `no awaiting_human remnant survives in ${file}`;
-    it.skipIf(isPrivate && absent(file))(label, () => {
+  for (const file of CONFIGS) {
+    it(`no awaiting_human remnant survives in ${file}`, () => {
       expect(awaitingHumanRemnants(file), REMNANT_MESSAGE).toEqual(
         [...RETIRED_KNOBS_PENDING_REMOVAL].sort(),
       );

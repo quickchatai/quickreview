@@ -37,7 +37,7 @@ import {
 import { renderMigrationPrecheckDegradedNote } from "../src/ecosystem.js";
 import { renderNitScopeNote } from "../src/templates.js";
 import { loadProfileAddenda } from "../src/profiles.js";
-import { stageTrackedProfile } from "./helpers/tracked-profiles.js";
+import { stageFixtureProfile } from "./helpers/tracked-profiles.js";
 
 /** In-memory fs for the pure expansion tests. */
 function fakeFs(files: Record<string, string>) {
@@ -1528,10 +1528,12 @@ describe("the memory addendum", () => {
   });
 });
 
-// The quickchat pack is excluded from the assembled public snapshot;
-// the deployed-composition pins self-skip where it is absent.
+// The quickchat pack, as its frozen fixture copy (tests/fixtures/profiles/
+// quickchat — moved the live pack to the install's config home). The
+// fixture is dropped from the assembled snapshots, where these pins
+// self-skip; in the source tree a missing fixture throws instead.
 const corpusSandbox = join(import.meta.dirname, "..");
-const HAS_QC_PACK = stageTrackedProfile(corpusSandbox, "quickchat"); //: staged into the temp config home
+const HAS_QC_PACK = stageFixtureProfile(corpusSandbox, "quickchat");
 describe.skipIf(!HAS_QC_PACK)(
   "the corpus-derived rules (six of seven ride the quickchat profile)",
   () => {

@@ -25,7 +25,7 @@ import { loadProfileEcosystem } from "../src/profiles.js";
 import { StateStore } from "../src/state.js";
 import { renderRoundPrompt, roundVars } from "../src/templates.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
-import { stageTrackedProfile } from "./helpers/tracked-profiles.js";
+import { stageFixtureProfile } from "./helpers/tracked-profiles.js";
 
 const cfg: Config = parseConfig(
   readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
@@ -487,9 +487,9 @@ describe("loadProfileEcosystem", () => {
   const repoRoot = process.cwd();
 
   it("reads the shipped profiles: quickchat and example-django are django, minimal is none", () => {
-    // The quickchat pack is excluded from the assembled public
-    // snapshot; its expectation applies only where the pack ships.
-    if (stageTrackedProfile(repoRoot, "quickchat")) {
+    // The quickchat pack's frozen fixture copy; dropped from the
+    // assembled snapshots, where this expectation does not apply.
+    if (stageFixtureProfile(repoRoot, "quickchat")) {
       expect(loadProfileEcosystem(repoRoot, "quickchat")).toBe("django");
     }
     expect(loadProfileEcosystem(repoRoot, "example-django")).toBe("django");

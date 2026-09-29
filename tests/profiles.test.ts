@@ -21,7 +21,7 @@ import { join } from "node:path";
 import { PASS_ADDENDA, buildAgents } from "../src/include.js";
 import type { PassAddendum } from "../src/include.js";
 import { configHome, type InstallEnv } from "../src/install.js";
-import { stageTrackedProfile } from "./helpers/tracked-profiles.js";
+import { stageFixtureProfile } from "./helpers/tracked-profiles.js";
 import {
   loadProfileAddenda,
   loadProfileEcosystem,
@@ -42,9 +42,11 @@ const profileDir = (root: string, profile: string): string => join(root, "profil
 const at = (root: string) => ({
   env: { QCR_CONFIG: join(root, "config.toml"), HOME: root, XDG_CONFIG_HOME: join(root, "xdg") },
 });
-// The quickchat pack is excluded from the assembled public snapshot
-// (publish-manifest.json); the pins for that exact pack self-skip without it.
-const HAS_QC = stageTrackedProfile(sandbox, "quickchat"); //: staged into the temp config home
+// The quickchat pack, as its frozen fixture copy (tests/fixtures/profiles/
+// quickchat — moved the live pack to the install's config home). The
+// fixture is dropped from the assembled snapshots, where the pins for
+// that exact pack self-skip; in the source tree a missing fixture throws.
+const HAS_QC = stageFixtureProfile(sandbox, "quickchat");
 
 // ---- the frozen legacy constants (verbatim from legacy src/include.ts) --
 

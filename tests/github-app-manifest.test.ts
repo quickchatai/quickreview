@@ -15,7 +15,7 @@
 //     there — the Record<MutationKind, …> makes a NEW kind a compile error
 //     until it is mapped.
 import { describe, expect, it } from "vitest";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -36,16 +36,10 @@ const manifest = JSON.parse(
   default_events: string[];
 };
 const webhookSrc = readFileSync(resolve(root, "src/webhook.ts"), "utf8");
-// The LIVE config.toml where present; the assembled public snapshot
-// excludes it, and config.example.toml (full-validation-clean per the
-// publishability lint) stands in there.
-const liveConfigPath = resolve(root, "config.toml");
-const cfg = parseConfig(
-  readFileSync(
-    existsSync(liveConfigPath) ? liveConfigPath : resolve(root, "config.example.toml"),
-    "utf8",
-  ),
-);
+// The TRACKED config.example.toml (full-validation-clean per the
+// publishability lint). The operator's LIVE config.toml left the checkout
+// with `qcr install migrate` and is never read by a test.
+const cfg = parseConfig(readFileSync(resolve(root, "config.example.toml"), "utf8"));
 
 /** The events src/webhook.ts actually accepts: the `case "<event>"` labels of
  * interpretEvent's switch. The slice ends at the next top-level function so

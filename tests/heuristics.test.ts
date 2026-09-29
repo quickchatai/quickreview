@@ -16,15 +16,17 @@ import {
 } from "../src/heuristics.js";
 import { loadProfileHeuristics } from "../src/profiles.js";
 import type { PrFileEntry } from "../src/github.js";
-import { stageTrackedProfile } from "./helpers/tracked-profiles.js";
+import { stageFixtureProfile } from "./helpers/tracked-profiles.js";
 
 const sandbox = join(import.meta.dirname, "..");
-/** The REAL quickchat profile's heuristics.toml — the predicates
- * moved out of the compiled-in core. Loading it here is deliberate: these
- * tests are the equivalence proof for that exact file. The pack is excluded
- * from the assembled public snapshot, so its equivalence proofs
- * self-skip (HAS_QC) where it is absent. */
-const HAS_QC = stageTrackedProfile(sandbox, "quickchat"); //: staged into the temp config home
+/** The quickchat profile's heuristics.toml — the predicates moved out
+ * of the compiled-in core — as the frozen fixture copy
+ * (tests/fixtures/profiles/quickchat,: the live pack now lives in the
+ * install's config home). These tests are the equivalence proof for those
+ * bytes. The fixture is dropped from the assembled snapshots, so the
+ * proofs self-skip (HAS_QC) there — and only there: in the source tree a
+ * missing fixture throws (tests/helpers/tracked-profiles.ts). */
+const HAS_QC = stageFixtureProfile(sandbox, "quickchat");
 const QC = HAS_QC ? loadProfileHeuristics(sandbox, "quickchat") : EMPTY_HEURISTICS;
 
 const f = (filename: string, additions = 1, deletions = 0): PrFile => ({

@@ -7,7 +7,7 @@
 // data-shape change nobody would notice until the vectors stopped matching.
 import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,18 +21,13 @@ import {
 } from "../src/config.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-// Deliberately the LIVE config.toml, not the test fixture: this file
-// IS the drift tripwire between the deployed config and group_vars/Dockerfile
-// (rule 7) — running it on a fixture would let the live pins float. It asserts
-// pins only, never identity values, so operator edits stay green here.
-// The assembled public snapshot excludes config.toml; there the
-// mirror runs against config.example.toml, whose pin blocks are identical by
-// construction — the same drift coverage, minus the live-identity values.
-const liveConfigPath = resolve(root, "config.toml");
-const configToml = readFileSync(
-  existsSync(liveConfigPath) ? liveConfigPath : resolve(root, "config.example.toml"),
-  "utf8",
-);
+// The TRACKED config.example.toml — the pin spelling every tree carries —
+// against group_vars/Dockerfile (rule 7). The operator's LIVE config.toml
+// left the checkout with `qcr install migrate`, so no test reads
+// it: its half of the drift tripwire is scripts/deploy.sh's preflight, which
+// reads it through the install locator and REFUSES on any OpenViking pin
+// drift (pinned in tests/deploy.test.ts, "OpenViking pin drift").
+const configToml = readFileSync(resolve(root, "config.example.toml"), "utf8");
 const groupVars = readFileSync(resolve(root, "deploy/ansible/group_vars/all.yml"), "utf8");
 const dockerfile = readFileSync(resolve(root, "deploy/ansible/templates/Dockerfile.j2"), "utf8");
 const entrypoint = readFileSync(resolve(root, "deploy/ansible/templates/entrypoint.sh.j2"), "utf8");
