@@ -868,6 +868,49 @@ describe("durable FAILED_LOUD review obligations", () => {
     expect(store.activateDueReviewFailureRetries(clock.toISOString())).toEqual([]);
   });
 
+  it("activates a due retry on a PR whose session pause lapsed before the lever sweep ran", () => {
+    // getPr folds a lapsed session pause to paused=0 before expireLevers has
+    // cleared the column. The activation's PR-state CAS must read the same
+    // live pause, or it throws "PR-state CAS lost" and aborts the sweep.
+    store.upsertPr(prRow(5470, { state: "reviewing", head_sha: "lapse-head" }));
+    const roundId = store.startRound(5470, "re-review", ["pass-baseline", "pass-validate"], 75);
+    const roundNo = store.roundsFor(5470)[0]!.round_no;
+    store.stampPostingKey(roundId, `v1:5470:${roundNo}:lapse-head`);
+    store.createSessionCommand({
+      id: "cmd-lapse",
+      pr: 5470,
+      session: "pr-5470",
+      kind: "round",
+      round_no: roundNo,
+      payload_sha256: "e".repeat(64),
+      payload_path: "/payload/cmd-lapse.md",
+      inject_path: "/inject/cmd-lapse.md",
+      next_check_at: T0.toISOString(),
+    });
+    store.failPendingSessionCommand("cmd-lapse", "no planned pass started");
+    store.markRoundCancelled(roundId, "pre-fanout recovery exhausted", "infrastructure_failure");
+    store.openReviewFailure({
+      pr: 5470,
+      command_id: "cmd-lapse",
+      round_id: roundId,
+      round_no: roundNo,
+      head_sha: "lapse-head",
+      stage: "first_pass_start",
+      detail: "accepted but no planned pass started",
+      attempts: 2,
+      retry_cap: 2,
+    });
+    store.pausePr(5470, { issuer: "session", expires_at: "2026-08-13T09:10:00.000Z" }, "hold");
+
+    clock = new Date("2026-08-13T09:15:00.000Z");
+    expect(store.getPr(5470)?.paused).toBe(0);
+    expect(store.activateDueReviewFailureRetries(clock.toISOString())).toEqual([
+      expect.objectContaining({ pr: 5470, incident_id: "review-failure:cmd-lapse" }),
+    ]);
+    expect(store.getPr(5470)).toMatchObject({ state: "queued", head_sha: "lapse-head" });
+    expect(store.openReviewFailure(5470)).toBeUndefined();
+  });
+
   it("resets a same-head fast-retry generation after exact fanout progress", () => {
     store.logEvent("round_self_requeued", 5467, { head_sha: "same-head" });
     store.logEvent("round_self_requeued", 5467, { head_sha: "same-head" });

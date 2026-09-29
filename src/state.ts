@@ -3834,12 +3834,18 @@ export class StateStore {
           }).changes;
         if (failureChanged !== 1)
           throw new Error(`automatic retry failure CAS lost for ${failure.incident_id}`);
+        // The pause test must be the one `getPr` answered above
+        // (`withLivePause`): a session pause past its expiry no longer binds
+        // even while the column still reads 1 because the lever sweep has
+        // not run yet. Reading the raw column here lost the CAS and threw.
         const prChanged = this.db
           .prepare(
             `UPDATE pr_state
               SET state='queued', head_sha=@head, trigger_ts=@trigger,
                   trigger_provenance=@provenance, updated_at=@ts
-            WHERE number=@pr AND state!='closed' AND paused=0`,
+            WHERE number=@pr AND state!='closed'
+              AND (paused=0 OR (pause_issuer IS NOT NULL
+                AND pause_expires_at IS NOT NULL AND pause_expires_at<=@ts))`,
           )
           .run({
             pr: failure.pr,
