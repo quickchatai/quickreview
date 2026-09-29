@@ -434,8 +434,11 @@ export interface UngatedReview {
  * malformed key is not evidence that the sanctioned route was NOT used. */
 const POSTING_MARKER_RE = /<!--\s*qcr-post:/;
 
+/** Authored by THIS reviewer — by its identities, never by the account type:
+ * every GitHub App posts as a `Bot`, and another installed review bot has no
+ * posting trace here by construction, so a type check would report each of
+ * its reviews (and raise the severe wake on its approvals) as ours. */
 function isBotAuthored(review: AuditedReview, botLogin: string, appSlug?: string): boolean {
-  if (review.user_type === "Bot") return true;
   const login = review.user.toLowerCase();
   return (
     login === botLogin.toLowerCase() ||

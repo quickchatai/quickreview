@@ -566,6 +566,29 @@ describe("— the layer that was NOT told about them", () => {
     );
   });
 
+  it("audits THIS reviewer's reviews only — another installed review bot is not ours", () => {
+    // Every GitHub App posts as a `Bot` account. Copilot, CodeRabbit, bugbot:
+    // none of them has a posting trace here, because none of them posts
+    // through this daemon — so counting the account TYPE as identity turns
+    // each of their reviews into an ungated-write anomaly, and their approval
+    // into the severe wake. The audit is of our own identities.
+    for (const user of ["copilot-pull-request-reviewer[bot]", "coderabbitai[bot]"]) {
+      for (const state of ["COMMENTED", "APPROVED"]) {
+        expect(
+          auditUngatedReviews([review({ user, state })], HEAD, noTraces, bot),
+          `${user} ${state}`,
+        ).toHaveLength(0);
+      }
+    }
+    // …while both of our spellings still land, whatever GitHub calls the type.
+    for (const user of ["quickreview-bot[bot]", "QuickReview[bot]"]) {
+      expect(
+        auditUngatedReviews([review({ user, user_type: "User" })], HEAD, noTraces, bot),
+        user,
+      ).toHaveLength(1);
+    }
+  });
+
   it("the migration excuse covers ONE comment, not every comment forever", () => {
     // Mutation-verification caught this: with a single COMMENT in the fixture,
     // an excuse bounded to 1 and an excuse bounded to 99 are indistinguishable.
