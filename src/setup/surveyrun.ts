@@ -23,7 +23,9 @@
 // once; a unit's entries among it — any run but this one — are retired once
 // ALL of that unit's cases finished and every note of
 // theirs was written; a unit whose read failed keeps its old entries, since
-// stale is better than none. When the whole run completes, whatever survey
+// stale is better than none. Only engine-written entries (a `run=` in the
+// header) are ever superseded, and never one the owner pinned or wrote
+// himself (#manual). When the whole run completes, whatever survey
 // memory is left from earlier runs (units since removed from the cut) goes
 // too. Retire, never delete: the timeline keeps the history.
 //
@@ -49,7 +51,7 @@ import {
   type SurveyPlan,
   type SurveyRate,
 } from "./survey.js";
-import { refOf, type MemoryEntry } from "../memory/store.js";
+import { matchesQuery, normalizeTag, refOf, type MemoryEntry, type MemoryStore } from "../memory/store.js";
 
 export const SURVEY_FILE = "setup/survey.json";
 export const SURVEY_VERSION = 1;
@@ -226,7 +228,20 @@ export class SurveyRunner {
     if (memory === null) return null;
     let entries: MemoryEntry[];
     try {
-      entries = await memory.search("", { tag: SURVEY_TAG });
+      // The seam's search() is total and answers [] for a store that did not
+      // answer — the right shape for a timeline, a lie here: "0 entries" would
+      // price a re-survey as superseding nothing and let a complete run leave
+      // the old notes live without a word. An engine that can tell an outage
+      // from an empty store (OpenViking's sweep) is asked that way; any part
+      // unread makes the answer UNKNOWN (null).
+      const sweeper = memory as MemoryStore & { sweep?: () => Promise<{ entries: MemoryEntry[]; unread: string[] }> };
+      if (typeof sweeper.sweep === "function") {
+        const sweep = await sweeper.sweep();
+        if (sweep.unread.length > 0) return null;
+        entries = sweep.entries.filter((e) => matchesQuery(e, "", { tag: SURVEY_TAG }));
+      } else {
+        entries = await memory.search("", { tag: SURVEY_TAG });
+      }
     } catch {
       return null;
     }
@@ -342,7 +357,11 @@ export class SurveyRunner {
       problems: [],
     };
     file.current = run;
-    this.store(file);
+    try {
+      this.store(file);
+    } catch (err) {
+      return { ok: false, errors: [`could not record the survey in ${this.ports.state.location}: ${clean(err)} — nothing started`] };
+    }
 
     const abort = new AbortController();
     const done = this.drive(file, run, p.plan, abort.signal)
@@ -414,7 +433,10 @@ export class SurveyRunner {
       this.settle(file, run, "stopped");
       return;
     }
-    const complete = run.cases.every((c) => c.status === "done" && c.notes_failed === 0);
+    // A run that could not see the earlier survey memory could not supersede
+    // it: it is not complete, so a plain start may run it again once memory
+    // answers, rather than a "re-survey" leaving two generations live.
+    const complete = earlier !== null && run.cases.every((c) => c.status === "done" && c.notes_failed === 0);
     if (complete) {
       // Whatever earlier survey memory is still live belongs to a unit this
       // cut no longer has (or to @repo parts that no longer exist).
@@ -427,13 +449,21 @@ export class SurveyRunner {
    * abort. */
   private async pool<T>(items: readonly T[], work: (item: T) => Promise<unknown>): Promise<void> {
     let next = 0;
+    let failed: { err: unknown } | null = null;
     const lane = async (): Promise<void> => {
-      while (next < items.length) {
+      while (next < items.length && failed === null) {
         const item = items[next++]!;
-        await work(item);
+        try {
+          await work(item);
+        } catch (err) {
+          failed ??= { err };
+        }
       }
     };
+    // Every lane settles before the pool does — a failure must not end the
+    // run (and free `active` for a second start) while cases still run.
     await Promise.all(Array.from({ length: Math.min(this.concurrency, items.length) }, lane));
+    if (failed !== null) throw (failed as { err: unknown }).err;
   }
 
   /** One case, start to finish. Resolves with the note texts it wrote (for
@@ -521,7 +551,11 @@ export class SurveyRunner {
     which: (unit: string | null) => boolean,
   ): Promise<void> {
     for (const e of [...earlier]) {
-      if (e.run === run.id || !which(e.unit)) continue;
+      // Only what a survey RUN wrote (engine-written header with a `run=`),
+      // never this run's own, and never an entry the owner made his — pinned
+      // or #manual stays, exactly as the EOD curator leaves it.
+      if (e.run === null || e.run === run.id || !which(e.unit)) continue;
+      if (e.entry.pinned || e.entry.tags.some((t) => normalizeTag(t) === "manual")) continue;
       earlier.splice(earlier.indexOf(e), 1);
       let r: { ok: boolean; message: string };
       try {

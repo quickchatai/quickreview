@@ -16,6 +16,7 @@ import activate, {
   COMPANION_AGENTS_DIR,
   DEFAULT_REVIEWED_REPO,
   buildEngine,
+  renderSurveyStatus,
   toolDefinitions,
 } from "../extensions/setup.js";
 import { CONTAINER } from "../src/tui/companion.js";
@@ -242,6 +243,23 @@ describe("the survey tools", () => {
     const status = await call(defs, "setup_survey_status");
     expect(status).toMatch(/: partial\. 0\/3 cases done/);
     expect(status).toMatch(/- api: failed, 0 notes — pi exited 1/);
+  });
+
+  it("a spend that misses an unpriced finished case reads as a floor, never the whole spend", () => {
+    const c = (id: string, cost: number | null) => ({
+      id, unit: id, stage: "unit" as const, files: [], lines: 10, status: "done" as const,
+      notes_written: 1, notes_failed: 0, notes_dropped: 0, notes_truncated: 0, none: false,
+      cost_usd: cost, error: null, started_at: null, finished_at: null,
+    });
+    const run = {
+      id: "survey-x", started_at: "t", finished_at: "t", head: null, plan_key: "k", estimate_usd: 1,
+      rate_basis: "r", resurvey: false, state: "complete" as const, display: "complete" as const,
+      cases: [c("a", 0.25), c("b", null)], unsampled: [], superseded: 0, problems: [],
+    };
+    const text = renderSurveyStatus({ ok: true, problems: [], run, last_complete: null, active: false });
+    expect(text).toMatch(/spent at least \$0\.25 of an estimated \$1\.00/);
+    const all = renderSurveyStatus({ ok: true, problems: [], run: { ...run, cases: [c("a", 0.25)] }, last_complete: null, active: false });
+    expect(all).toMatch(/spent \$0\.25 of/);
   });
 
   it("the belt's engine reads the REVIEWER key only, and no memory without it", async () => {

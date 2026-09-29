@@ -370,7 +370,7 @@ export function surveyMemoryText(note: SurveyNote, unit: string, run: string, he
   // `#word` in the body is de-hashed: the store's tag list reads the whole
   // text, so a note saying "#retired" would read as retired (and a real
   // retire of it would then be a no-op).
-  const body = note.text.replace(/(^|\s)#+(?=[A-Za-z])/g, "$1");
+  const body = note.text.replace(/(^|\s)#+(?=[\w-])/g, "$1");
   return `#${SURVEY_TAG} ${formatEventTags(tags)} — ${body}`;
 }
 

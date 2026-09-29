@@ -552,6 +552,55 @@ describe("a survey run", () => {
     expect(readFileSync(join(stateDir, SURVEY_FILE), "utf8")).toBe("{ nope");
   });
 
+  it("memory that did not answer is UNKNOWN, never 0 entries — and the run is not complete", async () => {
+    // OpenViking's search() is total and answers [] for an outage; its sweep()
+    // keeps the difference, and the survey asks that way.
+    class SweepMemory extends FakeMemory {
+      unread: string[] = ["ls viking://user/reviewer/memories: connection refused"];
+      async sweep(): Promise<{ entries: MemoryEntry[]; unread: string[] }> {
+        return { entries: this.entries.filter((e) => !e.tags.includes("retired")), unread: this.unread };
+      }
+      override async search(): Promise<MemoryEntry[]> {
+        return []; // what the real store answers when the server is down
+      }
+    }
+    const mem = new SweepMemory(["#survey kind=convention unit=web run=survey-old — web v1"]);
+    const fake = new FakeCases((spec) => answer(`[convention] ${spec.unit} v2`));
+    const s = setup({ cases: fake, memory: mem });
+    const p = await s.engine.surveyPreview();
+    if (!p.ok) throw new Error("preview");
+    expect(p.preview.existing_entries).toBeNull();
+    expect((await s.engine.surveyStart({ key: p.preview.key })).ok).toBe(true);
+    await s.engine.surveyIdle();
+    const run = s.engine.surveyStatus().run!;
+    expect(run.state).toBe("partial");
+    expect(run.problems).toContain("could not read memory to supersede earlier survey entries — they stay live");
+    expect(mem.live().map((e) => e.text.split(" — ")[1])).toContain("web v1");
+    expect(onDisk().last_complete).toBeNull();
+
+    // Once memory answers, a sweep with nothing unread counts for real.
+    mem.unread = [];
+    const again = await s.engine.surveyPreview();
+    if (!again.ok) throw new Error("preview");
+    expect(again.preview.existing_entries).toBe(5);
+  });
+
+  it("a re-survey supersedes only what a survey run wrote — never a pinned, #manual or run-less entry", async () => {
+    const mem = new FakeMemory([
+      "#survey kind=convention unit=web run=survey-old — web v1",
+      "#survey #pinned kind=convention unit=web run=survey-old — pinned by the owner",
+      "#manual #survey — the owner's own survey note",
+      "#survey — hand-tagged, no run",
+    ]);
+    const fake = new FakeCases((spec) => answer(`[convention] ${spec.unit} v2`));
+    const { engine } = await started({ cases: fake, memory: mem });
+    await engine.surveyIdle();
+    const live = mem.live().map((e) => e.text.split(" — ")[1]);
+    expect(live).not.toContain("web v1");
+    expect(live).toEqual(expect.arrayContaining(["pinned by the owner", "the owner's own survey note", "hand-tagged, no run"]));
+    expect(engine.surveyStatus().run).toMatchObject({ state: "complete", superseded: 1 });
+  });
+
   it("a case runner that throws fails that case, never the companion", async () => {
     const throwing: CaseRunner = { run: async () => { throw new Error("boom"); } };
     const { engine } = await started({ cases: throwing });

@@ -209,13 +209,16 @@ export function renderSurveyStatus(s: SurveyStatus): string {
     const cost = run.cases.some((c) => c.cost_usd !== null)
       ? run.cases.reduce((n, c) => n + (c.cost_usd ?? 0), 0)
       : null;
+    // A finished case the runner could not price makes the sum a floor, and
+    // it says so rather than reading as the whole spend.
+    const unpriced = run.cases.some((c) => c.status === "done" && c.cost_usd === null);
     const state =
       run.display === "interrupted"
         ? "INTERRUPTED — the companion restarted mid-run; notes written so far are kept, start again (after a preview) to finish"
         : run.display;
     out.push(
       `Survey ${run.id}: ${state}. ${done}/${run.cases.length} cases done; ${run.cases.reduce((n, c) => n + c.notes_written, 0)} notes written; ` +
-        `${run.superseded} earlier entries superseded; spent ${usd(cost)} of an estimated ${usd(run.estimate_usd)}.`,
+        `${run.superseded} earlier entries superseded; spent ${cost !== null && unpriced ? "at least " : ""}${usd(cost)} of an estimated ${usd(run.estimate_usd)}.`,
     );
     for (const c of run.cases) {
       const extra = [
