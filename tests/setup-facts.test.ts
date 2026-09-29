@@ -170,7 +170,7 @@ describe("styleGuideRefsIn — the listing twin of findStyleGuide", () => {
         writeFileSync(join(dir, p), t);
       }
       symlinkSync("AGENTS.md", join(dir, "CLAUDE.md"));
-      const listing = { ...tree, "CLAUDE.md": section };
+      const listing: Record<string, string> = { ...tree, "CLAUDE.md": section };
       const listed = styleGuideRefsIn(Object.keys(listing), (p) => listing[p] ?? null);
       expect(listed).toEqual(findStyleGuide(dir));
       expect(listed).toEqual([
