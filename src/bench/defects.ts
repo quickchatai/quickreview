@@ -380,6 +380,9 @@ export interface CaseJudgement {
   comments: CommentVerdict[];
   usage?: { input: number; output: number; cacheRead: number };
   error?: string;
+  /** sha256 of the review this round judged: a re-run review in the same
+   * run dir makes the round stale (defectjudge.ts re-judges it on resume). */
+  review_hash?: string;
 }
 
 /** The last balanced top-level JSON object in `text` (fences allowed). */
@@ -494,6 +497,17 @@ export interface RunScore {
   new_defect_candidates: { instance_id: string; comment: string; why: string }[];
   /** Approved although the PR has a high-severity defect the review missed. */
   approved_over_missed_high: string[];
+}
+
+/** The exit code of a defect-judge/-report run: 1 whenever the measurement is
+ * incomplete — a judge error, a case defect-judge could not judge, or a case
+ * with no usable round on disk (a bare defect-report over a partial judge
+ * dir). The report still discloses it ("judged k/N"); the exit code must too. */
+export function scoreExitCode(
+  score: Pick<RunScore, "cases" | "judged" | "errors">,
+  judgeIncomplete: boolean,
+): 0 | 1 {
+  return score.errors || judgeIncomplete || score.judged < score.cases ? 1 : 0;
 }
 
 /**

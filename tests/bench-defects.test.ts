@@ -18,12 +18,18 @@ import {
   renderDefectReport,
   reviewForJudge,
   scoreRun,
+  scoreExitCode,
   type CaseJudgement,
   type Defect,
   type ReviewForJudge,
 } from "../src/bench/defects.js";
-import { judgeCase, judgeLabel, loadJudgements } from "../src/bench/defectjudge.js";
-import { judgePiArgv } from "../src/bench/runner.js";
+import {
+  judgeCase,
+  judgeLabel,
+  loadJudgements,
+  readJudgeEvents,
+} from "../src/bench/defectjudge.js";
+import { judgePiArgv, runJudgeSession } from "../src/bench/runner.js";
 import { caseCostUsd } from "../src/bench/cost.js";
 
 const D = (id: string, severity: "high" | "medium" | "low" = "high"): Defect => ({
@@ -333,6 +339,29 @@ describe("scoring", () => {
     expect(s.comments.unverifiable).toBe(2);
   });
 
+  it("a report over missing judgements exits 1, like one over judge errors", () => {
+    // defect-report over a judge dir with no round for one case: no error
+    // round exists, and defect-judge never ran to flag it incomplete.
+    const s = scoreRun(
+      set,
+      ["o__r@1234567", "o__s@7654321"],
+      { "o__r@1234567": [J(1, "found", "correct-minor")] },
+      { "o__r@1234567": REVIEW },
+    );
+    expect(s.errors).toBe(0);
+    expect(s.judged).toBe(1);
+    expect(scoreExitCode(s, false)).toBe(1);
+    const full = scoreRun(
+      set,
+      ["o__r@1234567"],
+      { "o__r@1234567": [J(1, "found", "correct-minor")] },
+      { "o__r@1234567": REVIEW },
+    );
+    expect(scoreExitCode(full, false)).toBe(0);
+    expect(scoreExitCode(full, true)).toBe(1);
+    expect(scoreExitCode({ ...full, errors: 1 }, false)).toBe(1);
+  });
+
   it("counts wrong blockers, approvals over a missed high defect, and new-defect candidates once", () => {
     const s = scoreRun(
       set,
@@ -426,7 +455,74 @@ describe("the judge session", () => {
     expect(readFileSync(counter, "utf8").trim()).toBe("3");
     expect(again[0]!.defects[0]!.verdict).toBe("found");
     expect(Object.keys(loadJudgements(join(dir, "judge")))).toEqual(["o__r@1234567"]);
+    // The review was re-run in the same run dir (`review --resume`): a saved
+    // round judged the OLD review, so resume re-asks both rather than scoring
+    // the old verdicts against the new comment ids.
+    const rerun = await judgeCase({
+      ...common,
+      review: { ...REVIEW, comments: [{ ...REVIEW.comments[0]!, text: "different words" }] },
+      rounds: 2,
+      resume: true,
+    });
+    expect(readFileSync(counter, "utf8").trim()).toBe("5");
+    expect(rerun[0]!.error).toMatch(/no JSON/);
   });
+});
+
+describe("the bench's one pi spawn", () => {
+  const fakePi = (script: string): { dir: string; env: NodeJS.ProcessEnv } => {
+    const dir = mkdtempSync(join(tmpdir(), "defects-runpi-"));
+    mkdirSync(join(dir, "bin"));
+    writeFileSync(join(dir, "bin", "pi"), `#!/bin/sh\n${script}\n`);
+    chmodSync(join(dir, "bin", "pi"), 0o755);
+    return { dir, env: { PATH: `${join(dir, "bin")}:${process.env.PATH ?? ""}` } };
+  };
+
+  it("records a pi that exits without reading its prompt as a failure, never an unhandled EPIPE", async () => {
+    // The stdin path exists because orders exceed the 128 KiB argv cap.
+    const { dir, env } = fakePi("exit 3");
+    const r = await runJudgeSession("x".repeat(4 << 20), {
+      root: "/x",
+      cwd: dir,
+      model: "m",
+      env,
+      eventsPath: join(dir, "e.jsonl"),
+      timeoutMs: 10_000,
+    });
+    expect(r.code).toBe(3);
+    // Let a late EPIPE surface inside this test, not after it.
+    await new Promise((res) => setTimeout(res, 200));
+  });
+
+  it("resolves only once its output files are fully written", async () => {
+    // A long stream whose LAST line carries the answer: the judge reads the
+    // events file, and the review reads stderr, synchronously the moment
+    // runPi resolves. One run can win the race by luck; thirty in a row not.
+    const answer = JSON.stringify({
+      type: "message_end",
+      message: { role: "assistant", content: [{ type: "text", text: "THE ANSWER" }] },
+    });
+    const { dir, env } = fakePi("");
+    const big = join(dir, "big");
+    writeFileSync(big, ('{"type":"x","pad":"' + "z".repeat(2000) + '"}\n').repeat(2000) + answer + "\n");
+    writeFileSync(join(dir, "bin", "pi"), `#!/bin/sh\ncat >/dev/null\ncat ${big} >&2\ncat ${big}\n`);
+    for (let i = 0; i < 30; i++) {
+      const eventsPath = join(dir, `e${i}.jsonl`);
+      const r = await runJudgeSession("prompt", {
+        root: "/x",
+        cwd: dir,
+        model: "m",
+        env,
+        eventsPath,
+        timeoutMs: 60_000,
+      });
+      expect(r.code).toBe(0);
+      expect(readJudgeEvents(eventsPath).text).toBe("THE ANSWER");
+      expect(readFileSync(join(dir, `e${i}.stderr.log`), "utf8").endsWith(answer + "\n")).toBe(
+        true,
+      );
+    }
+  }, 120_000);
 });
 
 describe("the committed ground truth", () => {

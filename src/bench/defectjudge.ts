@@ -7,6 +7,7 @@
 // against a newer defect set without touching the old verdicts, and re-scored
 // (`defect-report`) with no model call at all.
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { runJudgeSession } from "./runner.js";
 import {
@@ -100,12 +101,16 @@ export function roundFile(outDir: string, instanceId: string, round: number): st
 export async function judgeCase(o: JudgeCaseOptions): Promise<CaseJudgement[]> {
   mkdirSync(o.outDir, { recursive: true });
   const prompt = judgePrompt(o.pr, o.defects, o.review, o.excluded ?? []);
+  const reviewHash = createHash("sha256").update(JSON.stringify(o.review)).digest("hex");
   const out: CaseJudgement[] = [];
   for (let k = 1; k <= o.rounds; k++) {
     const file = roundFile(o.outDir, o.pr.instance_id, k);
     if (o.resume && existsSync(file)) {
       const prior = JSON.parse(readFileSync(file, "utf8")) as CaseJudgement;
-      if (!prior.error) {
+      // A round kept on resume must have judged THIS review: `review --resume`
+      // rewrites a failed case's review in the same run dir. An unstamped
+      // (older) round cannot prove it, so it is re-judged too.
+      if (!prior.error && prior.review_hash === reviewHash) {
         out.push(prior);
         continue;
       }
@@ -117,6 +122,7 @@ export async function judgeCase(o: JudgeCaseOptions): Promise<CaseJudgement[]> {
       model: o.pi.model,
       defects: [],
       comments: [],
+      review_hash: reviewHash,
     };
     // An empty review with no defects needs no model: nothing to find, nothing to check.
     if (!o.defects.length && !o.review.comments.length) {

@@ -104,6 +104,7 @@ import {
   renderDefectReport,
   reviewForJudge,
   scoreRun,
+  scoreExitCode,
   type DefectSet,
   type ReviewForJudge,
 } from "./defects.js";
@@ -1105,7 +1106,7 @@ async function main(): Promise<number> {
     log(
       `${f.cmd}: ${score.judged}/${score.cases} judged — recall ${(score.defects.recall * 100).toFixed(0)}% (weighted ${(score.weighted_recall * 100).toFixed(0)}%), comments correct ${(score.comments.correct_share * 100).toFixed(0)}% → ${join(judgeDir, "report.md")}`,
     );
-    return score.errors || judgeIncomplete ? 1 : 0;
+    return scoreExitCode(score, judgeIncomplete);
   }
 
   if (f.cmd === "report") {

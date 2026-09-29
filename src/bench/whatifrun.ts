@@ -448,9 +448,18 @@ export function renderWhatifReport(
       const there = postedInGate(outDir, r);
       if (!there.length)
         L.push("  - The control posted NOTHING within this reference's line gate.");
+      // A gain is only a HIGHER match rate: the control may have matched in
+      // some rounds, and then with one of these very comments.
+      const c = r.matched.posted;
       for (const t of there)
         L.push(
-          `  - The control already posted here (the judge did not accept it): ${clip(t, 300)}`,
+          `  - The control already posted here (${
+            c?.notes.includes(t)
+              ? `the judge accepted it in ${c.rounds}/${c.of} control rounds`
+              : c?.rounds
+                ? "the judge matched a different control comment"
+                : "the judge did not accept it"
+          }): ${clip(t, 300)}`,
         );
     }
     L.push("");

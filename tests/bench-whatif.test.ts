@@ -549,6 +549,33 @@ describe("reading the scored metrics back", () => {
       /## posted\+merged: references matched more often than by the control \(0\)/,
     );
   });
+
+  it("never calls a control comment rejected when the judge accepted it in some control rounds", () => {
+    const out = mkdtempSync(join(tmpdir(), "whatif-acc-"));
+    cpSync(FIX, join(out, "source"), { recursive: true });
+    writeWhatifRun(out, CASES);
+    // The control posted at the reference's spot, and the judge matched that
+    // very comment in 2 of 3 rounds; the variant matched in 3 of 3.
+    const ctl = "The control's own comment at the reference.";
+    const posted = join(out, "results", "posted", `${COMFY}.json`);
+    const file = JSON.parse(readFileSync(posted, "utf8")) as {
+      review: { comments: Array<Record<string, unknown>> };
+    };
+    file.review.comments.push({ path: "p.py", start_line: 1, end_line: 2, content: ctl });
+    writeFileSync(posted, JSON.stringify(file));
+    for (const v of WHATIF_VARIANTS)
+      for (const r of [1, 2, 3]) {
+        const m = v === "posted" ? r !== 3 : true;
+        writeFileSync(
+          join(out, "results", v, `metrics_ocr_2026_round_${r}.json`),
+          JSON.stringify(metrics([{ id: COMFY, refs: [[m, m ? ctl : ""]] }], m ? 1 : 0)),
+        );
+      }
+    const md = renderWhatifReport(SET, out, CASES).markdown;
+    expect(md).toContain("3/3 rounds vs posted 2/3");
+    expect(md).not.toContain(`(the judge did not accept it): ${ctl}`);
+    expect(md).toContain(`the judge accepted it in 2/3 control rounds): ${ctl}`);
+  });
 });
 
 describe("bench.sh whatif: the copy follows nothing, and every container is hardened", () => {

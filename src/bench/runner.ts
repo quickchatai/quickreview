@@ -645,7 +645,12 @@ export function runPi(
     errs.on("error", onStreamError);
     // The round order goes in on stdin: pi -p takes piped stdin as the prompt,
     // and an argv string caps at 128 KiB (MAX_ARG_STRLEN).
-    if (stdinText !== undefined && child.stdin) child.stdin.end(stdinText);
+    // A pi that dies before reading its prompt (bad model, auth refusal)
+    // EPIPEs this write asynchronously: unheard, that error kills the CLI.
+    if (stdinText !== undefined && child.stdin) {
+      child.stdin.on("error", (e) => onStreamError(new Error(`prompt delivery: ${String(e)}`)));
+      child.stdin.end(stdinText);
+    }
     // `*_update` events re-emit a lens child's whole transcript on every
     // update — the file grows quadratically. Nothing reads them: usage comes
     // from `message_end` and `tool_execution_end`.
@@ -667,11 +672,22 @@ export function runPi(
     child.on("error", (e) => {
       errs.write(`spawn error: ${String(e)}\n`);
     });
+    // Resolve only once both files are flushed and closed: every caller reads
+    // them synchronously the moment this resolves (the judge's answer is the
+    // events file's LAST message_end).
     child.on("close", (code) => {
       clearTimeout(timer);
-      events.end();
-      errs.end();
-      resolve({ code, timedOut, streamError });
+      let open = 2;
+      const settled = (): void => {
+        if (--open === 0) resolve({ code, timedOut, streamError });
+      };
+      for (const s of [events, errs]) {
+        if (s.closed) settled();
+        else {
+          s.once("close", settled);
+          s.end();
+        }
+      }
     });
   });
 }
