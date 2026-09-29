@@ -373,7 +373,18 @@ export class ScanTriage {
    * exceeded; a note memory refuses is reported and not counted, so it can be
    * written again.
    */
-  async writeMemory(req: ScanMemoryRequest): Promise<ScanMemoryResult> {
+  writeMemory(req: ScanMemoryRequest): Promise<ScanMemoryResult> {
+    // Serialized: each call reads the cap record, awaits memory, then writes
+    // the record back — two in flight (pi runs a turn's tool calls in
+    // parallel) would both pass the caps and overwrite each other's accounting.
+    const run = this.memoryWrites.then(() => this.writeMemoryNow(req));
+    this.memoryWrites = run.catch(() => undefined);
+    return run;
+  }
+
+  private memoryWrites: Promise<unknown> = Promise.resolve();
+
+  private async writeMemoryNow(req: ScanMemoryRequest): Promise<ScanMemoryResult> {
     const picked = this.pickRun(req.run);
     if (!picked.ok) return picked;
     const run = picked.run;

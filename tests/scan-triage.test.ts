@@ -315,6 +315,20 @@ describe("#scan memory: patterns and hotspots, capped per scan; findings never",
     expect(JSON.parse(state.read(SCAN_MEMORY_FILE)!).scans[SHA2].patterns).toHaveLength(1);
   });
 
+  it("two concurrent calls share one cap record: the second is judged after the first is counted (selfscan 3ec87ec3)", async () => {
+    const { memory, triage, state } = setup();
+    const [a, b] = await Promise.all([
+      triage.writeMemory({ patterns: Array.from({ length: 15 }, (_, i) => pattern(i)), hotspots: [{ unit: "app", text: "fragile a" }] }),
+      triage.writeMemory({ patterns: Array.from({ length: 15 }, (_, i) => pattern(100 + i)), hotspots: [{ unit: "app", text: "fragile b" }] }),
+    ]);
+    expect(a).toMatchObject({ ok: true, written: { patterns: 15, hotspots: 1 } });
+    expect(b).toMatchObject({ ok: false, errors: expect.arrayContaining([expect.stringMatching(/app already has its one hotspot/), expect.stringMatching(/15 written .* already, 5 left \(got 15\)/)]) });
+    expect(memory!.entries).toHaveLength(16);
+    const rec = JSON.parse(state.read(SCAN_MEMORY_FILE)!).scans[SHA2];
+    expect(rec.patterns).toHaveLength(15);
+    expect(rec.hotspots.app.text).toBe("fragile a");
+  });
+
   it("caps: 20 patterns per scan across calls, one hotspot per unit; refused whole, nothing written", async () => {
     const { memory, triage } = setup();
     expect(await triage.writeMemory({ patterns: Array.from({ length: 21 }, (_, i) => pattern(i)) })).toMatchObject({

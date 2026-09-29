@@ -565,6 +565,16 @@ describe("a finding's severity follows the reachability axis (scan-loop)", () =>
     expect(back("contrived")).toMatchObject({ severity: "P3", capped_from: "P1" });
   });
 
+  it("the validator is shown each candidate's detail paragraph, and it round-trips (selfscan 9cfaa2db)", () => {
+    const [c] = parseScanAnswer(one("P1", "routine")).candidates;
+    const withDetail = { ...c!, detail: "Two writers race on the cache; the second overwrites the first's entry." };
+    const plan = { unit: "src", id: "src", part: 1, parts: 1, files: [{ path: "src/a.py", blob: "b", lines: 9 }], lines: 9 } as never;
+    const prompt = scanValidatorPrompt(plan, [withDetail], { root: "/t", sha: "y", caseId: "x" });
+    expect(prompt).toContain("  detail: Two writers race on the cache; the second overwrites the first's entry.\n");
+    const back = parseScanAnswer(prompt.replace(/^.*?(FINDINGS pass-scan SCAN)/s, "$1")).candidates[0];
+    expect(back?.detail).toBe(withDetail.detail);
+  });
+
   it("routine — or the field absent, read as routine like a PR round — leaves severity alone", () => {
     expect(parseScanAnswer(one("P1", "routine")).candidates[0]).toMatchObject({ severity: "P1", capped_from: null, reachability: "routine" });
     expect(parseScanAnswer(one("P1", null)).candidates[0]).toMatchObject({ severity: "P1", capped_from: null, reachability: null });

@@ -268,6 +268,15 @@ describe("a stage 2 proposal", () => {
     expect(p.rows[0]!.files.map((f) => f.path)).toContain("app/migrations/0001_init.py");
   });
 
+  it("never pairs a test that [scan] exclude keeps out of scans (selfscan 30a4d516)", async () => {
+    const s = new ScanRunner(ports(runner(), { scan: { exclude: ["gen/", "tests/lib/"] } }));
+    await calibrate(s);
+    const p = await propose(s, [CROSS]);
+    expect(p.rows[0]!.tests.map((f) => f.path)).toEqual(["app/tests/test_views.py"]);
+    expect(p.rows[0]!.unpaired).toEqual([]);
+    expect(p.rows[0]!.lines).toBe(20 + 30 + 8);
+  });
+
   it("refuses a row bigger than one case, paired tests included in the count", async () => {
     const s = new ScanRunner(ports(runner(), { scan: { case_max_lines: 40 } }));
     await calibrate(s);

@@ -312,6 +312,8 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
       for (const t of pairTests(code, treePaths)) {
         if (taken.has(t)) continue;
         taken.add(t);
+        // An excluded file is never scanned — paired or named.
+        if (excluded(t)) continue;
         const n = input.linesOf(t);
         if (n === null) continue;
         if (sorted.length + tests.length + 1 > input.budget.maxFiles || rowLines + n > input.budget.maxLines) {

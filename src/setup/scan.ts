@@ -282,6 +282,9 @@ export function scanValidatorPrompt(
         ...(f.reachability !== null ? [`  reachability: ${f.reachability}`] : []),
         `  claim: ${f.claim}`,
         ...(f.evidence ? [`  evidence: ${f.evidence}`] : []),
+        // The failure mechanism: the validator judges with it, and a survivor
+        // is re-read from the validator's answer, so it must travel both ways.
+        ...(f.detail ? [`  detail: ${f.detail}`] : []),
         ...(f.fix ? [`  fix: ${f.fix}`] : []),
       ].join("\n"),
     )
