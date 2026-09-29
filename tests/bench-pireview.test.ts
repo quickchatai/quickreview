@@ -34,6 +34,7 @@ import {
   runPireviewReview,
   toComments,
   toolCounts,
+  unprefetchedPireviewCase,
   type PireviewFingerprint,
 } from "../src/bench/pireview.js";
 
@@ -391,6 +392,33 @@ describe("one case end to end, pi-review stubbed", () => {
       const md = renderPireviewReport(SET, outDir, [c]);
       expect(md).toContain("| acme__widget@bbbbbbb | Python | 2 | ok | request_changes | 2 (+1) | 3 (2) |");
       expect(md).toContain("read 1");
+      // A rerun into the same run dir that produces nothing must not leave the
+      // judge the earlier attempt's body or base-side rows.
+      expect(reviewForJudge(outDir, c.instance_id).comments.length).toBe(3);
+      const opts = {
+        work,
+        store,
+        outDir,
+        agentDir: join(tmp, "agent"),
+        pireviewBin: "pi-review",
+        model: "openai-codex/gpt-6-sol",
+        thinking: "medium",
+        timeoutMin: 30,
+        fingerprint: FP,
+      };
+      const silent: typeof run = async (bin, args, o = {}) =>
+        bin === "timeout" ? { code: 124, stdout: "", stderr: "", timedOut: true } : run(bin, args, o);
+      const again = await reviewCasePireview(c, meta, { ...opts, runImpl: silent });
+      expect(again.status).not.toBe("ok");
+      expect(existsSync(join(caseDir, "review.md"))).toBe(false);
+      expect(reviewForJudge(outDir, c.instance_id)).toMatchObject({ body: null, comments: [] });
+      // …and a case that was never prefetched this time leaves neither behind.
+      await reviewCasePireview(c, meta, { ...opts, runImpl });
+      expect(existsSync(join(caseDir, "review.md"))).toBe(true);
+      unprefetchedPireviewCase(outDir, c, FP, "no store");
+      expect(existsSync(join(caseDir, "review.md"))).toBe(false);
+      expect(existsSync(join(caseDir, "comments.json"))).toBe(false);
+      expect(reviewForJudge(outDir, c.instance_id)).toMatchObject({ body: null, comments: [] });
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

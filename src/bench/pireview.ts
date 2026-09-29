@@ -497,6 +497,7 @@ export async function reviewCasePireview(
   const progressLog = join(caseDir, "pi-events.jsonl");
   mkdirSync(caseDir, { recursive: true });
   rmSync(progressLog, { force: true });
+  clearJudgeInputs(caseDir);
   const startedAt = new Date().toISOString();
   const started = Date.now();
   const summary = emptySummary(c, o.fingerprint);
@@ -616,6 +617,13 @@ export async function reviewCasePireview(
   return summary;
 }
 
+/** An earlier attempt's review body and base-side rows must not outlive it:
+ * the defect judge reads both whatever this attempt's status. */
+function clearJudgeInputs(caseDir: string): void {
+  rmSync(join(caseDir, "review.md"), { force: true });
+  rmSync(join(caseDir, "comments.json"), { force: true });
+}
+
 /** A case with no prefetched store: failed WITH an empty result file, so its
  * references count against recall instead of vanishing from both denominators. */
 export function unprefetchedPireviewCase(
@@ -627,6 +635,7 @@ export function unprefetchedPireviewCase(
   const summary = { ...emptySummary(c, fingerprint), error };
   const caseDir = join(outDir, "cases", safeId(c.instance_id));
   mkdirSync(caseDir, { recursive: true });
+  clearJudgeInputs(caseDir);
   writeFileSync(join(caseDir, "case-summary.json"), JSON.stringify(summary, null, 2) + "\n");
   writePireviewResult(
     outDir,

@@ -505,6 +505,27 @@ describe("claudeReviewRun: one case at a time, through the driver", () => {
     expect(report).toContain("claude-opus-4-7");
     expect(report).toContain("reviewers/claude.py");
     expect(report).toContain("OCR reader on the `review.comments` view");
+    // A rerun into the same run dir whose driver produces nothing must not
+    // leave the judge (or claude-rebuild) the earlier attempt's review body.
+    const again = await claudeReviewRun({
+      set,
+      outDir: out,
+      store,
+      workRoot: join(t, "work"),
+      homeRoot: join(t, "homes"),
+      python: "python3",
+      driver: join(t, "no-such-driver.py"),
+      timeoutMin: 30,
+      resume: false,
+      keepTree: false,
+      env: { PATH: process.env.PATH, CLAUDE_CODE_OAUTH_TOKEN: "tok-123" },
+      readMeta: () => meta,
+      log: () => {},
+    });
+    expect(again).not.toBe(0);
+    expect(readClaudeSummary(out, c)!.status).not.toBe("ok");
+    expect(existsSync(join(caseDir, "review.md"))).toBe(false);
+    expect(reviewForJudge(out, c.instance_id)).toMatchObject({ body: null, comments: [] });
   });
 
   it("a raw-text answer gets its view from the prose parser, paths checked against the tree's diff", async () => {

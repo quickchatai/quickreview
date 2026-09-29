@@ -598,6 +598,9 @@ export async function reviewCaseClaude(
   };
   const resultFile = join(resultsDir, `${safe}.json`);
   rmSync(resultFile, { force: true });
+  // An earlier attempt's body must not outlive it: the defect judge and
+  // claude-rebuild read review.md whatever this attempt's status.
+  rmSync(join(caseDir, "review.md"), { force: true });
   try {
     await prepareTree(join(o.store, safe), tree, meta);
     for (const d of [home, tmpDir]) {
