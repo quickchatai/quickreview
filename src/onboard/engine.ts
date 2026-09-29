@@ -140,8 +140,14 @@ export interface ChecklistFile {
   version: number;
   created_at: string;
   updated_at: string;
-  /** Set exactly once, by finish() when every enabled step verifies green. */
+  /** Set exactly once, by finish() when every enabled step verifies green.
+   * HISTORY — when onboarding first finished; it never moves and never clears. */
   completed_at: string | null;
+  /** When a completed checklist stopped verifying (a demotion, a failed run,
+   * a refused finish, a newly-enabled unfinished step); null/absent while the
+   * completion still holds. A green finish() clears it. Whether onboarding is
+   * complete NOW is `completed_at` set AND this unset. */
+  reopened_at?: string | null;
   choices: Record<string, unknown>;
   steps: Record<string, StepRecord>;
 }
@@ -176,7 +182,8 @@ export function readChecklist(stateDir: string): ChecklistFile | null {
  * handoff reads exactly this (the finish tool only sets it after a full green
  * re-verification, so "the file says so" is a verified claim). */
 export function checklistComplete(stateDir: string): boolean {
-  return typeof readChecklist(stateDir)?.completed_at === "string";
+  const file = readChecklist(stateDir);
+  return typeof file?.completed_at === "string" && !file.reopened_at;
 }
 
 /** tmp+rename atomic write, the same convention as the CLI's command files and
@@ -299,7 +306,14 @@ export class OnboardingEngine {
   }
 
   isComplete(): boolean {
-    return this.checklist.completed_at !== null;
+    return this.checklist.completed_at !== null && !this.checklist.reopened_at;
+  }
+
+  /** A completed checklist no longer verifies: withdraw the current-completion
+   * claim (the post-exit handoff reads it) without touching the history. */
+  private reopen(): void {
+    if (this.checklist.completed_at === null || this.checklist.reopened_at) return;
+    this.checklist.reopened_at = this.adapters.clock().toISOString();
   }
 
   list(): StepStatusLine[] {
@@ -326,7 +340,10 @@ export class OnboardingEngine {
     for (const step of this.registry) {
       if (!this.enabled(step)) continue;
       const rec = this.checklist.steps[step.id];
-      if (!rec || rec.status !== "done") continue;
+      if (!rec || rec.status !== "done") {
+        this.reopen();
+        continue;
+      }
       const outcome = await this.safeVerify(step);
       if (outcome.ok) {
         rec.verified_at = this.adapters.clock().toISOString();
@@ -335,6 +352,7 @@ export class OnboardingEngine {
         const fails = failures(outcome.checks);
         rec.status = "pending";
         rec.note = `re-verification failed: ${fails.join("; ") || "unknown"}`;
+        this.reopen();
         report.demoted.push({ id: step.id, failures: fails });
       }
     }
@@ -382,6 +400,7 @@ export class OnboardingEngine {
     } else {
       rec.status = "pending";
       rec.note = `last run failed: ${failures(report.checks).join("; ") || "unknown"}`;
+      this.reopen();
     }
     this.save();
     return { id, ok: report.ok, checks: report.checks, failures: failures(report.checks) };
@@ -433,9 +452,14 @@ export class OnboardingEngine {
    */
   async finish(): Promise<FinishResult> {
     const all = await this.verifyAll();
-    if (!all.ok) return { ok: false, results: all.results };
+    if (!all.ok) {
+      this.reopen();
+      this.save();
+      return { ok: false, results: all.results };
+    }
     const completedAt = this.checklist.completed_at ?? this.adapters.clock().toISOString();
     this.checklist.completed_at = completedAt;
+    this.checklist.reopened_at = null;
     this.save();
     const marker = firstRunMarkerPath(this.adapters.paths.stateDir);
     let markerWritten = false;

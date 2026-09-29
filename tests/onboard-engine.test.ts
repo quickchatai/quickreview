@@ -273,6 +273,77 @@ describe("finish", () => {
     expect(readChecklist(stateDir)?.completed_at).toBe("2026-08-30T12:00:00.000Z");
   });
 
+  it("a completed checklist that no longer verifies stops claiming completion — the history does not move", async () => {
+    const e = engine();
+    await e.runStep(PREFLIGHT_STEP_ID);
+    expect((await e.finish()).ok).toBe(true);
+    const markerBytes = readFileSync(firstRunMarkerPath(stateDir), "utf8");
+
+    // Later: docker broke. `qcr onboard` again reconciles and demotes; the
+    // operator quits pi without a green finish. The handoff must not read
+    // "verified complete".
+    const resumed = engine({ dockerOk: false });
+    const report = await resumed.reconcile();
+    expect(report.demoted.map((d) => d.id)).toEqual([PREFLIGHT_STEP_ID]);
+    expect(checklistComplete(stateDir)).toBe(false);
+    expect(resumed.isComplete()).toBe(false);
+    // The historical completion and the first-run marker stay put.
+    expect(readChecklist(stateDir)?.completed_at).toBe("2026-08-30T12:00:00.000Z");
+    expect(readFileSync(firstRunMarkerPath(stateDir), "utf8")).toBe(markerBytes);
+
+    // Fixed and re-finished: complete again, same history.
+    const fixed = engine();
+    await fixed.runStep(PREFLIGHT_STEP_ID);
+    expect((await fixed.finish()).ok).toBe(true);
+    expect(checklistComplete(stateDir)).toBe(true);
+    expect(readChecklist(stateDir)?.completed_at).toBe("2026-08-30T12:00:00.000Z");
+  });
+
+  it("a failed run or a refused finish on a completed checklist also withdraws the claim", async () => {
+    const e = engine();
+    await e.runStep(PREFLIGHT_STEP_ID);
+    expect((await e.finish()).ok).toBe(true);
+    expect((await engine({ dockerOk: false }).runStep(PREFLIGHT_STEP_ID)).ok).toBe(false);
+    expect(checklistComplete(stateDir)).toBe(false);
+
+    const again = engine();
+    await again.runStep(PREFLIGHT_STEP_ID);
+    expect((await again.finish()).ok).toBe(true);
+    expect(checklistComplete(stateDir)).toBe(true);
+    expect((await engine({ dockerOk: false }).finish()).ok).toBe(false);
+    expect(checklistComplete(stateDir)).toBe(false);
+  });
+
+  it("a step newly enabled on a completed checklist withdraws the claim at reconcile", async () => {
+    const vmOnly: OnboardingStep = {
+      id: "vm_only",
+      title: "VM only",
+      explain: "x",
+      order: 20,
+      enabled: (choices) => choices.topology === "vm",
+      run: async () => ({ ok: true, checks: [] }),
+      verify: async () => ({ ok: false, checks: [{ name: "vm", ok: false, detail: "nope" }] }),
+    };
+    const flip: OnboardingStep = {
+      id: "flip",
+      title: "flip",
+      explain: "x",
+      order: 30,
+      run: async (ctx) => {
+        ctx.recordChoice("topology", "vm");
+        return { ok: true, checks: [] };
+      },
+      verify: async () => ({ ok: true, checks: [] }),
+    };
+    const e = new OnboardingEngine([preflightStep(), vmOnly], fakeAdapters());
+    await e.runStep(PREFLIGHT_STEP_ID);
+    expect((await e.finish()).ok).toBe(true);
+    const e2 = new OnboardingEngine([preflightStep(), vmOnly, flip], fakeAdapters());
+    await e2.runStep("flip");
+    await e2.reconcile();
+    expect(checklistComplete(stateDir)).toBe(false);
+  });
+
   it("verifyAll promotes a step whose outcome exists in reality but was never marked", async () => {
     // preflight cannot pass verify without a recorded uid, so use a synthetic
     // step to pin the promotion rule the later idempotent steps rely on.
