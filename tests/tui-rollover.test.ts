@@ -599,7 +599,12 @@ describe("the rollover sequence", () => {
     });
 
     it("a kill that finds no session is the state we wanted — the rollover completes", async () => {
-      for (const stderr of ["can't find session: companion", "no server running on /tmp/tmux-1000/default"]) {
+      for (const stderr of [
+        "can't find session: companion",
+        "no server running on /tmp/tmux-1000/default",
+        // tmux 3.x with no socket at all (a freshly started container).
+        "error connecting to /tmp/tmux-1000/default (No such file or directory)",
+      ]) {
         writeRolloverState(statePath(), { last_open_date: "2026-08-13", updated_at: "" });
         const report = await rollover(killFails(stderr).runner).run();
         expect(report.deferred).toBeUndefined();

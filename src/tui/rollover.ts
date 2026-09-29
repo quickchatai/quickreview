@@ -656,7 +656,16 @@ export class CompanionRollover {
       "-t",
       this.cfg.session,
     ]);
-    if (res.ok || /can't find session|no server running|session not found/i.test(res.stderr))
+    // tmux words "no server" two ways: `no server running on <sock>` (a stale
+    // socket, ECONNREFUSED) and `error connecting to <sock> (No such file or
+    // directory)` (no socket at all — a freshly started container). Both mean
+    // nothing is running; any other connect error does not.
+    if (
+      res.ok ||
+      /can't find session|no server running|session not found|error connecting to .*\(No such file or directory\)/i.test(
+        res.stderr,
+      )
+    )
       return { state: "killed" };
     return { state: "failed", reason: execReason(res) };
   }
