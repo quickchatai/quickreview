@@ -15,12 +15,12 @@
 //     for the one deliberate delta vs the legacy registry: an extracted
 //     entry that used to sit mid-registry now composes at its pass's tail.
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PASS_ADDENDA, buildAgents } from "../src/include.js";
 import type { PassAddendum } from "../src/include.js";
-import { configHome, type InstallEnv } from "../src/install.js";
+import { configHome, locateProfile, type InstallEnv } from "../src/install.js";
 import {
   loadProfileAddenda,
   loadProfileEcosystem,
@@ -32,12 +32,18 @@ import {
 import { PROFILE_EXTENDABLE_LENSES } from "../src/heuristics.js";
 
 const sandbox = join(import.meta.dirname, "..");
-/** A profile in a checkout's `profiles/` — the lookup's last place;
- * the config-home half is exercised in "the two locations" below. */
+/** A fixture profile in `<root>/profiles/` — found because `at(root)` names a
+ * config in `<root>`, and a profile beside `$QCR_CONFIG` is on the lookup
+ * path (the compose / VM shape).: a checkout's `profiles/` serves only
+ * the generic examples, so a fixture can no longer just sit in one. The
+ * config-home half is exercised in "the two locations" below. */
 const profileDir = (root: string, profile: string): string => join(root, "profiles", profile);
+const at = (root: string) => ({
+  env: { QCR_CONFIG: join(root, "config.toml"), HOME: root, XDG_CONFIG_HOME: join(root, "xdg") },
+});
 // The quickchat pack is excluded from the assembled public snapshot
 // (publish-manifest.json); the pins for that exact pack self-skip without it.
-const HAS_QC = existsSync(join(sandbox, "profiles", "quickchat"));
+const HAS_QC = locateProfile({ root: sandbox, profile: "quickchat" }) !== null; //: the config home
 
 // ---- the frozen legacy constants (verbatim from legacy src/include.ts) --
 
@@ -140,12 +146,12 @@ describe("loadProfileAddenda", () => {
   });
 
   it("a missing profile directory fails loudly, naming the profile", () => {
-    expect(() => loadProfileAddenda(root, "nope")).toThrow(/profile "nope" not found/);
+    expect(() => loadProfileAddenda(root, "nope", at(root))).toThrow(/profile "nope" not found/);
   });
 
   it("a profile without an addenda/ directory fails loudly", () => {
     mkdirSync(profileDir(root, "bare"), { recursive: true });
-    expect(() => loadProfileAddenda(root, "bare")).toThrow(/has no addenda\/ directory/);
+    expect(() => loadProfileAddenda(root, "bare", at(root))).toThrow(/has no addenda\/ directory/);
   });
 
   it("composes in ascending filename order and ignores non-.md files", () => {
@@ -154,30 +160,30 @@ describe("loadProfileAddenda", () => {
     put("p", "30-third.md", entry("third"));
     writeFileSync(join(profileDir(root, "p"), "addenda", ".gitkeep"), "");
     writeFileSync(join(profileDir(root, "p"), "addenda", "README"), "not an addendum");
-    expect(loadProfileAddenda(root, "p").map((a) => a.id)).toEqual(["first", "second", "third"]);
+    expect(loadProfileAddenda(root, "p", at(root)).map((a) => a.id)).toEqual(["first", "second", "third"]);
   });
 
   it("a duplicate id within the pack fails loudly", () => {
     put("p", "10-a.md", entry("same"));
     put("p", "20-b.md", entry("same"));
-    expect(() => loadProfileAddenda(root, "p")).toThrow(/duplicate id "same"/);
+    expect(() => loadProfileAddenda(root, "p", at(root))).toThrow(/duplicate id "same"/);
   });
 
   it("an id colliding with a built-in registry entry fails loudly", () => {
     put("p", "10-a.md", entry("execution-policy"));
-    expect(() => loadProfileAddenda(root, "p")).toThrow(/collides with a built-in registry entry/);
+    expect(() => loadProfileAddenda(root, "p", at(root))).toThrow(/collides with a built-in registry entry/);
   });
 
   it("the dynamic feedback-day addendum's id is reserved too", () => {
     expect(reservedAddendumIds().has("feedback-day-validate")).toBe(true);
     put("p", "10-a.md", entry("feedback-day-validate"));
-    expect(() => loadProfileAddenda(root, "p")).toThrow(/collides/);
+    expect(() => loadProfileAddenda(root, "p", at(root))).toThrow(/collides/);
   });
 
   it("a malformed file inside an otherwise good pack fails the whole load", () => {
     put("p", "10-good.md", entry("good"));
     put("p", "20-bad.md", "## no frontmatter\n");
-    expect(() => loadProfileAddenda(root, "p")).toThrow(/missing frontmatter/);
+    expect(() => loadProfileAddenda(root, "p", at(root))).toThrow(/missing frontmatter/);
   });
 });
 
@@ -387,15 +393,15 @@ describe("loadProfileHeuristics", () => {
   });
 
   it("a missing profile directory fails loudly; an ABSENT heuristics.toml does not", () => {
-    expect(() => loadProfileHeuristics(root, "nope")).toThrow(/profile "nope" not found/);
+    expect(() => loadProfileHeuristics(root, "nope", at(root))).toThrow(/profile "nope" not found/);
     mkdirSync(profileDir(root, "bare"), { recursive: true });
-    expect(loadProfileHeuristics(root, "bare")).toEqual({ paths: {}, addedLines: {} });
+    expect(loadProfileHeuristics(root, "bare", at(root))).toEqual({ paths: {}, addedLines: {} });
   });
 
   it("a malformed heuristics.toml fails the load, naming the file", () => {
     mkdirSync(profileDir(root, "bad"), { recursive: true });
     writeFileSync(join(profileDir(root, "bad"), "heuristics.toml"), "[pass-ui]\npaths = ['(']\n");
-    expect(() => loadProfileHeuristics(root, "bad")).toThrow(
+    expect(() => loadProfileHeuristics(root, "bad", at(root))).toThrow(
       /heuristics\.toml.*not a valid RegExp/,
     );
   });
@@ -413,22 +419,21 @@ describe("loadProfileHeuristics", () => {
 // ---- the two locations --------------------------------------------
 //
 // A profile is looked up in the install's config home first, then in the
-// checkout's `profiles/` (the generic examples, and the legacy place of an
-// install's own profile until `qcr install migrate` moves it). Every loader
-// resolves through the install locator, so these cases hold for all three —
-// and, through `buildAgents`, for what the built passes actually say.
-describe("profiles load from the config home, then the checkout", () => {
+// checkout's `profiles/` — for the generic examples ONLY (an
+// install's own profile left there is stranded, never read, until `qcr
+// install migrate` moves it). Every loader resolves through the install
+// locator, so these cases hold for all three — and, through `buildAgents`,
+// for what the built passes actually say.
+describe("profiles load from the config home, then the checkout's examples", () => {
   let dir: string;
   let root: string;
   let env: InstallEnv;
-  const lines: string[] = [];
-  const lookup = () => ({ env, log: (l: string) => lines.push(l) });
+  const lookup = () => ({ env });
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "qcr-profiles-home-"));
     root = join(dir, "checkout");
     env = { HOME: join(dir, "home"), XDG_CONFIG_HOME: join(dir, "xdg-config") };
-    lines.length = 0;
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -451,7 +456,6 @@ describe("profiles load from the config home, then the checkout", () => {
       "HOME",
     );
     expect(loadProfileEcosystem(root, "house", lookup())).toBe("django");
-    expect(lines).toEqual([]); // the home is where it belongs — nothing to announce
   });
 
   it("the config home wins over a checkout profile of the same name", () => {
@@ -461,19 +465,28 @@ describe("profiles load from the config home, then the checkout", () => {
     expect(loadProfileEcosystem(root, "house", lookup())).toBe("django");
   });
 
-  it("the checkout still serves the old path — announced once — and the generic examples silently", () => {
+  it("a checkout profile is never read — the not-found names it and the way out; the examples still load", () => {
     writeProfile(root, "house", "CHECKOUT");
-    expect(loadProfileAddenda(root, "house", lookup())[0]?.text).toBe("\n## CHECKOUT\n");
-    loadProfileHeuristics(root, "house", lookup());
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toMatch(/LEGACY checkout profile/);
-    expect(lines[0]).toContain("qcr install migrate");
-    expect(lines[0]).toContain(join(configHome(env), "profiles"));
+    for (const load of [loadProfileAddenda, loadProfileHeuristics]) {
+      let message = "";
+      try {
+        load(root, "house", lookup());
+      } catch (err) {
+        message = String(err);
+      }
+      expect(message).toMatch(/profile "house" not found/);
+      expect(message).toContain(`${join(root, "profiles", "house")} is no longer read`);
+      expect(message).toContain("qcr install migrate");
+    }
+    // …and a chain whose base is stranded fails the same way.
+    writeProfile(configHome(env), "child", "HOME");
+    writeFileSync(join(configHome(env), "profiles", "child", "profile.toml"), 'extends = "house"\n');
+    expect(() => loadProfileAddenda(root, "child", lookup())).toThrow(
+      /extends "house", which was not found.*no longer read.*qcr install migrate/,
+    );
     // The shipped examples live in the checkout by design.
-    lines.length = 0;
     expect(loadProfileAddenda(sandbox, "minimal", lookup())).toEqual([]);
     expect(loadProfileEcosystem(sandbox, "example-django", lookup())).toBe("django");
-    expect(lines).toEqual([]);
   });
 
   it("not found anywhere names every place it looked", () => {

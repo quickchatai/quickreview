@@ -59,8 +59,8 @@ cfg_sed() { # crude fallback: first `key = "value"` inside [section]
 }
 
 # the install locator decides — the configured [github] secrets_dir
-# when the operator set one, else <config home>/secrets, else (legacy) the old
-# ~/.config/quickreview-bot. The same answer the daemon's loader reaches.
+# when the operator set one, else <config home>/secrets (never the old
+# ~/.config/quickreview-bot). The same answer the daemon's loader reaches.
 SECRETS_DIR="$(qcr_locate_secrets "$(cfg github secrets_dir || true)")" || exit 1
 
 APP_ID_FILE="$SECRETS_DIR/app_id"

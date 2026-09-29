@@ -21,11 +21,11 @@
 //             this whole design exists to enforce.
 //
 // The compose route mounts the WHOLE secrets dir into the container read-only,
-// and the documented key file lives in that same directory by default — so on
-// the laptop route the documented layout would hand review sessions the
-// companion key. `resolveKeysFile` relocates the key file out of the secrets
-// dir rather than writing a key into a mounted directory, and the step reports
-// the one env line that keeps the TUI and companion pointed at it.
+// so the key file must never sit inside it. Its documented home is the
+// operator home, outside every mounted dir; `resolveKeysFile`
+// refuses any layout that would put it inside the secrets dir or the config
+// home anyway, rather than writing a key into a mounted directory. (The old
+// relocation out of the old secrets dir went with that dir,.)
 //
 // IDEMPOTENT BY CONSTRUCTION. An existing key is left exactly alone: minting
 // asks the server for the key a user ALREADY has instead of issuing a second
@@ -73,8 +73,8 @@ import { pathToFileURL } from "node:url";
 import { OPENVIKING_DEFAULTS } from "../../config.js";
 import {
   configHome,
-  resolveKeysFile as resolveKeysFile0,
-  resolveSecretsDir as resolveLocatedSecrets,
+  locateKeysFile,
+  locateSecrets,
 } from "../../install.js";
 import { CHOICE_KEYS, type MemoryChoice } from "../choices.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
@@ -149,8 +149,8 @@ export interface MatrixRow {
 export interface MemoryStepOptions {
   /** Daemon-side secrets dir (default `$QC_SECRETS_DIR`, else the install locator's answer). */
   secretsDir?: string;
-  /** Operator-side key file (default: resolved, and relocated out of the
-   * secrets dir when they would collide). */
+  /** Operator-side key file (default: the install locator's answer; refused
+   * when it would sit inside a dir the container mounts). */
   keysFile?: string;
   /** OpenViking endpoint: the memory forward's loopback listener. */
   base?: string;
@@ -166,14 +166,14 @@ export interface MemoryStepOptions {
 /** `$QC_SECRETS_DIR`, else the install locator's answer. */
 export function resolveSecretsDir(env: NodeJS.ProcessEnv, home: string): string {
   return resolve(
-    resolveLocatedSecrets({ override: env.QC_SECRETS_DIR, env: { ...env, HOME: home } }).path,
+    locateSecrets({ override: env.QC_SECRETS_DIR, env: { ...env, HOME: home } }).path,
   );
 }
 
 /** The documented key-file location — the install locator's, the
  * same one `keysFilePath` in the TUI and the forward read. */
 export function documentedKeysFile(env: NodeJS.ProcessEnv, home: string): string {
-  return resolve(resolveKeysFile0({ env: { ...env, HOME: home } }).path);
+  return resolve(locateKeysFile({ env: { ...env, HOME: home } }).path);
 }
 
 /** Is `file` inside `dir`? (A file IN the daemon-side secrets dir is readable by
@@ -186,9 +186,7 @@ export function isInside(dir: string, file: string): boolean {
 
 export interface KeysFileChoice {
   path: string;
-  /** Moved out of the secrets dir because the documented default collided. */
-  relocated: boolean;
-  /** The operator PINNED a path inside the secrets dir — we refuse it. */
+  /** The key file would sit inside a dir the container mounts — refused. */
   unsafe: boolean;
   note: string;
 }
@@ -200,11 +198,10 @@ export interface KeysFileChoice {
  * daemon-side secrets dir (`docker-compose.yml` mounts `$QCR_SECRETS_DIR`
  * read-only at `/opt/quickreview/secrets`) nor inside the install's config home
  * (mounted read-only too), or it would be one `cat` away from every review
- * session. Its default home is the operator home, outside both; the
- * LEGACY default sat inside the legacy secrets dir, and when those collide we
- * relocate instead of writing it there — and if the operator explicitly pinned
- * `QCR_OPENVIKING_KEYS` inside either dir, we refuse rather than quietly
- * overriding their choice.
+ * session. Its default home is the operator home, outside both. A
+ * layout that puts it inside either anyway — a pinned `QCR_OPENVIKING_KEYS`,
+ * or a secrets dir that contains the operator home — is refused rather than
+ * quietly moved: there is no other documented place to move it to.
  */
 export function resolveKeysFile(
   secretsDir: string,
@@ -220,35 +217,21 @@ export function resolveKeysFile(
   if (pinned && isInside(cfgHome, candidate)) {
     return {
       path: candidate,
-      relocated: false,
       unsafe: true,
       note:
         `QCR_OPENVIKING_KEYS points inside the install's config home (${cfgHome}), which the container mounts read-only — ` +
         "a review session could read the companion key there. Point it at a path outside that directory and run this step again.",
     };
   }
-  if (!isInside(secretsDir, candidate))
-    return { path: candidate, relocated: false, unsafe: false, note: "" };
-  if (pinned) {
-    return {
-      path: candidate,
-      relocated: false,
-      unsafe: true,
-      note:
-        `QCR_OPENVIKING_KEYS points inside the daemon-side secrets dir (${secretsDir}), which the container mounts read-only — ` +
-        "a review session could read the companion key there. Point it at a path outside that directory and run this step again.",
-    };
-  }
-  // The operator home — outside every dir a container can see.
-  const relocated = resolveKeysFile0({ env: { ...env, HOME: home, QCR_OPENVIKING_KEYS: "" } }).home;
+  if (!isInside(secretsDir, candidate)) return { path: candidate, unsafe: false, note: "" };
   return {
-    path: relocated,
-    relocated: true,
-    unsafe: false,
-    note:
-      `the default key-file location sits inside the secrets dir (${secretsDir}), which the daemon container mounts read-only — ` +
-      `using ${relocated} instead so the companion key never reaches the container. Export QCR_OPENVIKING_KEYS=${relocated} ` +
-      "(the TUI, the companion and scripts/companion-memory-forward.mjs all read that variable).",
+    path: candidate,
+    unsafe: true,
+    note: pinned
+      ? `QCR_OPENVIKING_KEYS points inside the daemon-side secrets dir (${secretsDir}), which the container mounts read-only — ` +
+        "a review session could read the companion key there. Point it at a path outside that directory and run this step again."
+      : `the key file's home ${candidate} sits inside the daemon-side secrets dir (${secretsDir}), which the container mounts read-only — ` +
+        "a review session could read the companion key there. Point the secrets dir elsewhere, or set QCR_OPENVIKING_KEYS to a path outside it, and run this step again.",
   };
 }
 
@@ -418,7 +401,6 @@ function resolvePaths(opts: MemoryStepOptions): Resolved {
   const keys = opts.keysFile
     ? {
         path: resolve(opts.keysFile),
-        relocated: false,
         unsafe: isInside(secretsDir, opts.keysFile),
         note: "",
       }
@@ -576,7 +558,6 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
         checks.push({ name: "key-file-location", ok: false, detail: keys.note });
         return { ok: false, checks };
       }
-      if (keys.relocated) checks.push({ name: "key-file-location", ok: true, detail: keys.note });
       ctx.recordChoice(KEYS_FILE_CHOICE_KEY, keys.path);
 
       // --- phase A: the root key (offline; needed before the daemon boots) ---

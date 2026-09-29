@@ -13,12 +13,12 @@ SANDBOX=/opt/quickreview/sandbox
 SECRETS=/opt/quickreview/secrets
 
 # The live config: the host's install locator found it, and compose
-# mounts its directory read-only at /opt/quickreview/config-home. Named for the
-# daemon (which hands the same path to every session) only when the file is
-# there: an empty mount means the host still runs on the legacy checkout
-# config, which the in-container locator finds in $SANDBOX on its own.
-CONFIG_HOME_FILE="/opt/quickreview/config-home/${QCR_CONFIG_NAME:-config.toml}"
-[[ -z "${QCR_CONFIG:-}" && -f "$CONFIG_HOME_FILE" ]] && export QCR_CONFIG="$CONFIG_HOME_FILE"
+# mounts its directory read-only at /opt/quickreview/config-home. Always named
+# for the daemon (which hands the same path to every session): there is no
+# checkout config to fall back to, so an empty mount — a stack
+# started by hand before the wizard wrote QCR_CONFIG_HOME — fails the boot
+# naming this file, rather than reading one the operator never chose.
+export QCR_CONFIG="${QCR_CONFIG:-/opt/quickreview/config-home/${QCR_CONFIG_NAME:-config.toml}}"
 
 # Runtime knobs — defaults mirror deploy/ansible/group_vars/all.yml and
 # config.toml [openviking]; override via the container environment.
@@ -72,17 +72,15 @@ else
 fi
 
 # The code resolves secrets through the install locator: an empty
-# (or legacy-default) config.toml [github].secrets_dir means
+# (or old-default) config.toml [github].secrets_dir means
 # <config home>/secrets, i.e. ${XDG_CONFIG_HOME:-~/.config}/qcr/<install>/secrets
-# — point that at the read-only secrets mount. The legacy
-# ~/.config/quickreview-bot link stays until the contract step, for a
-# config that still names it as an absolute path.
+# — point that at the read-only secrets mount. (The old ~/.config/quickreview-bot
+# link is gone with the contract step,: nothing reads that dir.)
 XDG_BASE="${XDG_CONFIG_HOME:-}"
 [[ "$XDG_BASE" == /* ]] || XDG_BASE="$HOME/.config"
 SECRETS_HOME="$XDG_BASE/qcr/${QCR_INSTALL:-default}/secrets"
-mkdir -p "$HOME/.config" "$(dirname "$SECRETS_HOME")"
+mkdir -p "$(dirname "$SECRETS_HOME")"
 [[ -L "$SECRETS_HOME" ]] || ln -sfn "$SECRETS" "$SECRETS_HOME"
-[[ -L "$HOME/.config/quickreview-bot" ]] || ln -sfn "$SECRETS" "$HOME/.config/quickreview-bot"
 
 # OpenAI auth for pi — native, two routes (findings):
 #   1. API key: exported here so the tmux server and every pi process inherit it.

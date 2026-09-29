@@ -29,7 +29,7 @@
 // config.toml, the project `.env`'s COMPOSE_PROFILES line, and nothing else.
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { resolveSecretsDir } from "../../install.js";
+import { locateSecrets } from "../../install.js";
 import { CHOICE_KEYS, type IngressChoice } from "../choices.js";
 import { topologyOf } from "./topology.js";
 import type {
@@ -260,7 +260,7 @@ function readFileOrNull(path: string): string | null {
  * install locator's answer. */
 export function secretsDirOf(configToml: string | null): string {
   const configured = configToml ? readTomlKey(configToml, "github", "secrets_dir") : null;
-  return resolveSecretsDir({ configured }).path;
+  return locateSecrets({ configured }).path;
 }
 
 /** A hostname the operator typed: bare, lowercase, no scheme or path. */

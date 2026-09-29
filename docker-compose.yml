@@ -4,7 +4,8 @@
 #
 # Prerequisites: a secrets dir — QCR_SECRETS_DIR, which the wizard's bring-up
 # writes into .env as the install locator's answer (<config home>/secrets,
-#); unset, the legacy ~/.config/quickreview-bot — holding at least
+#); unset, the default install's ~/.config/qcr/default/secrets —
+# holding at least
 # app_id, app.pem, webhook_secret;
 # optional openai_api_key (pi's API-key route), openviking_root_key,
 # openviking_reviewer_key, and openai_embeddings_api_key (only under the
@@ -90,19 +91,19 @@ services:
       # …and, for the same reason as the state volume above, at the sandbox
       # path too, so both spellings of the hostname file are the SAME file.
       - qcr-ingress:/opt/quickreview/sandbox/state/ingress
-      - ${QCR_SECRETS_DIR:-~/.config/quickreview-bot}:/opt/quickreview/secrets:ro
+      - ${QCR_SECRETS_DIR:-~/.config/qcr/default/secrets}:/opt/quickreview/secrets:ro
       # The directory holding the live config.toml the install locator found
       # on the host — the install's config home, or wherever
       # QCR_CONFIG points — and with it the profiles/ beside that config, which
       # the in-container locator finds beside the QCR_CONFIG the entrypoint
       # names. The bring-up step writes QCR_CONFIG_HOME and
-      # QCR_CONFIG_NAME into .env and creates the directory first; the
-      # entrypoint names the file only when it is there, so a legacy checkout
-      # config (this dir mounted empty) still boots. Unset (compose run by
+      # QCR_CONFIG_NAME into .env and creates the directory first. The
+      # container reads no other config. Unset (compose run by
       # hand, before the wizard wrote .env) it defaults to a tracked dir with
-      # no config.toml in it — never to ~/.config/qcr/<install>, which Docker
-      # would create owned by root when it is missing. To run by hand on a
-      # config home, set QCR_CONFIG_HOME in .env.
+      # no config.toml in it, so the boot fails naming the missing file —
+      # never to ~/.config/qcr/<install>, which Docker would create owned by
+      # root when it is missing. To run by hand on a config home, set
+      # QCR_CONFIG_HOME in .env.
       - ${QCR_CONFIG_HOME:-./docker/daemon/no-config-home}:/opt/quickreview/config-home:ro
       # pi's home: OAuth tokens (auth.json), session JSONLs, models.json —
       # must survive container rebuilds (sticky sessions + /login tokens).
@@ -176,7 +177,7 @@ services:
       QCR_TUNNEL_DOMAIN: ${QCR_NGROK_DOMAIN:-}
     volumes:
       - qcr-ingress:/ingress
-      - ${QCR_SECRETS_DIR:-~/.config/quickreview-bot}:/opt/quickreview/secrets:ro
+      - ${QCR_SECRETS_DIR:-~/.config/qcr/default/secrets}:/opt/quickreview/secrets:ro
 
   # Your own named Cloudflare tunnel: a permanent hostname on your domain,
   # driven by the connector token the secrets wizard collects (tunnel_token).
@@ -195,7 +196,7 @@ services:
     environment:
       QCR_TUNNEL_KIND: named
     volumes:
-      - ${QCR_SECRETS_DIR:-~/.config/quickreview-bot}:/opt/quickreview/secrets:ro
+      - ${QCR_SECRETS_DIR:-~/.config/qcr/default/secrets}:/opt/quickreview/secrets:ro
 
 volumes:
   qcr-state:

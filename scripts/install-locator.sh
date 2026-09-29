@@ -13,22 +13,18 @@
 #
 # The rule, in order:
 #   1. $QCR_CONFIG, taken as given (a missing file is the caller's error)
-#   2. the install's config home: ${XDG_CONFIG_HOME:-$HOME/.config}/qcr/<install>/config.toml
+#   2. the install's config home: ${XDG_CONFIG_HOME:-$HOME/.config}/qcr/<install>/config.toml,
+#      whether or not it exists (a missing file is the caller's error too)
 #      ($QCR_CONFIG_HOME, when set and absolute, IS the config home)
-#   3. the checkout's legacy <root>/config.toml — the expand step's fallback
-#   4. nothing anywhere: the config-home path (where a new config belongs)
-# `<install>` is $QCR_INSTALL, default `default`, a plain name only.
+# `<install>` is $QCR_INSTALL, default `default`, a plain name only. The
+# checkout's own config.toml is never read — `qcr install migrate`
+# moves it. The <checkout-root> argument is kept for the profile lookup.
 #
 # Repo profiles: `qcr_profile_dirs <root>` prints the directories a
 # profile is looked up in, highest priority first — the config home's
 # profiles/, then profiles/ beside $QCR_CONFIG when it is set, then the
-# checkout's (the generic examples, and the legacy place).
-#
-# The legacy fallback is announced on stderr when a human is watching (stderr
-# is a terminal). Machine callers stay quiet on purpose: git's credential
-# helper runs mint-token on every fetch, and the daemon — which logs the
-# fallback itself, once, at boot — hands each session its resolved path as
-# $QCR_CONFIG, so a session's scripts never reach step 3 at all.
+# checkout's, which serves ONLY the generic examples (`QCR_EXAMPLE_PROFILES`,
+# pinned to src/install.ts EXAMPLE_PROFILES): `qcr_profile_dir` applies that.
 
 qcr_install_name() {
   local name="${QCR_INSTALL:-}"
@@ -89,8 +85,8 @@ qcr_state_home() {
   printf '%s\n' "$(_qcr_xdg_base "${XDG_STATE_HOME:-}" .local/state)/qcr/$name"
 }
 
-qcr_locate_config() { # qcr_locate_config <checkout-root>
-  local root="$1" override="${QCR_CONFIG:-}" home
+qcr_locate_config() { # qcr_locate_config [checkout-root]
+  local override="${QCR_CONFIG:-}" home
   override="${override#"${override%%[![:space:]]*}"}"
   override="${override%"${override##*[![:space:]]}"}"
   if [[ -n "$override" ]]; then
@@ -99,16 +95,16 @@ qcr_locate_config() { # qcr_locate_config <checkout-root>
     return 0
   fi
   home="$(qcr_config_home)" || return 1
-  if [[ -e "$home/config.toml" ]]; then
-    printf '%s\n' "$home/config.toml"
-  elif [[ -e "$root/config.toml" ]]; then
-    if [[ -t 2 ]]; then
-      echo "qcr: reading the LEGACY checkout config $root/config.toml — the install's config home is $home; move it there with \`qcr install migrate\`" >&2
-    fi
-    printf '%s\n' "$root/config.toml"
-  else
-    printf '%s\n' "$home/config.toml"
-  fi
+  printf '%s\n' "$home/config.toml"
+}
+
+# The generic profiles the checkout ships — the only ones read from there.
+QCR_EXAMPLE_PROFILES=(default example-django minimal)
+
+qcr_is_example_profile() { # qcr_is_example_profile <name>
+  local p
+  for p in "${QCR_EXAMPLE_PROFILES[@]}"; do [[ "$p" == "$1" ]] && return 0; done
+  return 1
 }
 
 qcr_profile_dirs() { # qcr_profile_dirs <checkout-root>
@@ -129,17 +125,39 @@ qcr_profile_dirs() { # qcr_profile_dirs <checkout-root>
   done
 }
 
+# The directory holding profile <name> — src/install.ts `locateProfile`: the
+# first of qcr_profile_dirs that has it, the checkout's only for an example
+# (a directory reached first as "beside $QCR_CONFIG" is not the checkout's,
+# even when it is the same path). Prints nothing when none does.
+qcr_profile_dir() { # qcr_profile_dir <checkout-root> <name>
+  local root="$1" name="$2" dir override="${QCR_CONFIG:-}" beside=""
+  override="$(_qcr_trim "$override")"
+  if [[ -n "$override" ]]; then
+    [[ "$override" == /* ]] || override="$PWD/$override"
+    beside="$(dirname "$override")/profiles"
+  fi
+  while IFS= read -r dir; do
+    if [[ "$dir" == "$root/profiles" && "$dir" != "$beside" ]] && ! qcr_is_example_profile "$name"; then
+      continue
+    fi
+    if [[ -d "$dir/$name" ]]; then
+      printf '%s\n' "$dir/$name"
+      return 0
+    fi
+  done < <(qcr_profile_dirs "$root")
+  return 0
+}
+
 # ---- secrets -------------------------------------------------------
 #
 #   SECRETS_DIR="$(qcr_locate_secrets "$configured" "${QC_SECRETS_DIR:-}")" || exit 1
 #
 # The rule, in order (src/install.ts `locateSecrets`):
-#   1. the configured [github] secrets_dir, unless empty or the legacy default
+#   1. the configured [github] secrets_dir, unless empty or the old default
 #      spelling (~/.config/quickreview-bot) — taken as given, ~ expanded
 #   2. the caller's override (the wizards' $QC_SECRETS_DIR), ~ expanded
-#   3. <config home>/secrets when it exists
-#   4. the legacy ~/.config/quickreview-bot when it exists — announced on a tty
-#   5. nothing anywhere: <config home>/secrets (where new secrets belong)
+#   3. <config home>/secrets, whether or not it exists
+# The old ~/.config/quickreview-bot dir itself is never read.
 
 qcr_secrets_home() {
   local home
@@ -166,17 +184,17 @@ _qcr_trim() { # _qcr_trim <text>
   printf '%s\n' "${t%"${t##*[![:space:]]}"}"
 }
 
-qcr_legacy_secrets_dir() { printf '%s\n' "$(_qcr_home_dir)/.config/quickreview-bot"; }
+# The old default's spelling, only to recognise it in a configured value.
+_qcr_old_secrets_dir() { printf '%s\n' "$(_qcr_home_dir)/.config/quickreview-bot"; }
 
 qcr_locate_secrets() { # qcr_locate_secrets [configured] [override]
-  local configured override home legacy stripped
+  local configured override home stripped
   configured="$(_qcr_trim "${1:-}")"
   override="$(_qcr_trim "${2:-}")"
-  legacy="$(qcr_legacy_secrets_dir)"
   if [[ -n "$configured" ]]; then
     stripped="$configured"
     while [[ "$stripped" == */ ]]; do stripped="${stripped%/}"; done
-    if [[ "$stripped" != "~/.config/quickreview-bot" && "$(_qcr_expand_home "$stripped")" != "$legacy" ]]; then
+    if [[ "$stripped" != "~/.config/quickreview-bot" && "$(_qcr_expand_home "$stripped")" != "$(_qcr_old_secrets_dir)" ]]; then
       _qcr_expand_home "$configured"
       return 0
     fi
@@ -186,39 +204,22 @@ qcr_locate_secrets() { # qcr_locate_secrets [configured] [override]
     return 0
   fi
   home="$(qcr_secrets_home)" || return 1
-  if [[ -e "$home" ]]; then
-    printf '%s\n' "$home"
-  elif [[ -e "$legacy" ]]; then
-    if [[ -t 2 ]]; then
-      echo "qcr: reading secrets from the LEGACY dir $legacy — the install's secrets home is $home; move them there with \`qcr install migrate\`" >&2
-    fi
-    printf '%s\n' "$legacy"
-  else
-    printf '%s\n' "$home"
-  fi
+  printf '%s\n' "$home"
 }
 
 # The companion's OpenViking key file (src/install.ts `locateKeysFile`):
-# $QCR_OPENVIKING_KEYS, else $XDG_CONFIG_HOME/qcr-operator/<install>/, else the
-# legacy ~/.config/quickreview-bot/, else the operator home. Deliberately OUTSIDE
-# the config home, which a container mounts.
+# $QCR_OPENVIKING_KEYS, else $XDG_CONFIG_HOME/qcr-operator/<install>/ — whether
+# or not it exists. Deliberately OUTSIDE the config home, which a container
+# mounts.
 qcr_locate_keys_file() {
-  local override name primary legacy
+  local override name
   override="$(_qcr_trim "${QCR_OPENVIKING_KEYS:-}")"
   if [[ -n "$override" ]]; then
     printf '%s\n' "$override"
     return 0
   fi
   name="$(qcr_install_name)" || return 1
-  primary="$(_qcr_xdg_base "${XDG_CONFIG_HOME:-}" .config)/qcr-operator/$name/openviking-keys.env"
-  legacy="$(qcr_legacy_secrets_dir)/openviking-keys.env"
-  if [[ -e "$primary" ]]; then
-    printf '%s\n' "$primary"
-  elif [[ -e "$legacy" ]]; then
-    printf '%s\n' "$legacy"
-  else
-    printf '%s\n' "$primary"
-  fi
+  printf '%s\n' "$(_qcr_xdg_base "${XDG_CONFIG_HOME:-}" .config)/qcr-operator/$name/openviking-keys.env"
 }
 
 # ---- the shipped config home ---------------------------------------
@@ -228,8 +229,9 @@ qcr_locate_keys_file() {
 # The located config when it is one `deploy.sh sync|rebuild` can ship: the file
 # exists and its directory — the config home, with the profiles/ beside it —
 # lies outside the checkout. Prints NOTHING (status 0) when there is none: no
-# config at all, or the legacy checkout config.toml, which deploy never ships
-# (it rides no route but the checkout rsync, and the VM reads the shipped home).
+# config at all, or a $QCR_CONFIG naming a file inside the checkout, which
+# deploy never ships (it rides no route but the checkout rsync, and the VM
+# reads the shipped home).
 # Status 1 only on a locator error.
 qcr_shipped_config() { # qcr_shipped_config <checkout-root>
   local root="$1" config dir rootp

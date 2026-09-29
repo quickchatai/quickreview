@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
   EMPTY_HEURISTICS,
@@ -17,6 +16,7 @@ import {
 } from "../src/heuristics.js";
 import { loadProfileHeuristics } from "../src/profiles.js";
 import type { PrFileEntry } from "../src/github.js";
+import { locateProfile } from "../src/install.js";
 
 const sandbox = join(import.meta.dirname, "..");
 /** The REAL quickchat profile's heuristics.toml — the predicates
@@ -24,7 +24,7 @@ const sandbox = join(import.meta.dirname, "..");
  * tests are the equivalence proof for that exact file. The pack is excluded
  * from the assembled public snapshot, so its equivalence proofs
  * self-skip (HAS_QC) where it is absent. */
-const HAS_QC = existsSync(join(sandbox, "profiles", "quickchat"));
+const HAS_QC = locateProfile({ root: sandbox, profile: "quickchat" }) !== null; //: the config home
 const QC = HAS_QC ? loadProfileHeuristics(sandbox, "quickchat") : EMPTY_HEURISTICS;
 
 const f = (filename: string, additions = 1, deletions = 0): PrFile => ({

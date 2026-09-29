@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
@@ -21,6 +21,7 @@ import { PASS_TIER_ORDER } from "../src/types.js";
 import { renderRoundPrompt, roundTemplateFile } from "../src/templates.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
 import type { ContextAssembler, MemoryRead } from "../src/memory/context.js";
+import { locateProfile } from "../src/install.js";
 
 const baseCfg: Config = parseConfig(
   readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
@@ -420,8 +421,8 @@ describe("buildPassPlan", () => {
   };
 
   // Self-skips where the quickchat pack is absent (the assembled
-  // public snapshot excludes it).
-  it.skipIf(!existsSync(resolve(import.meta.dirname, "..", "profiles", "quickchat")))(
+  // public snapshot excludes it) (wherever the install locator finds it — the config home once migrated; never the checkout).
+  it.skipIf(!locateProfile({ root: resolve(import.meta.dirname, ".."), profile: "quickchat" }))(
     "threads the profile heuristics extension into selection",
     async () => {
       const { loadProfileHeuristics } = await import("../src/profiles.js");

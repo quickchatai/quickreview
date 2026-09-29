@@ -4,8 +4,9 @@
 // migrate` would read the operator's real config wherever a test calls the
 // no-argument loader or spawns a script with `...process.env` — and a test
 // that writes a config would write it into the operator's real home. With it,
-// the locator falls back to this checkout's own config.toml exactly as before
-// the locator existed; tests that exercise the homes pass their own env.
+// a no-argument loader finds NO config (the checkout's config.toml is
+// never a fallback) — a test that needs one names it by path or QCR_CONFIG,
+// and tests that exercise the homes pass their own env.
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

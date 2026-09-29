@@ -136,7 +136,7 @@ describe("memory wiring on the container", () => {
     expect(argv.join(" ")).not.toContain("r3viewer");
   });
 
-  it("says so in the column when the key file is the LEGACY fallback", async () => {
+  it("never reads the old key file — the column names it and migrate when it is the reason", async () => {
     const home = mkdtempSync(join(tmpdir(), "qcr-keys-note-"));
     const saved = process.env.HOME;
     process.env.HOME = home;
@@ -146,15 +146,15 @@ describe("memory wiring on the container", () => {
       mkdirSync(dirname(legacy), { recursive: true });
       writeFileSync(legacy, "K=1\n");
       const body = KEY_NAMES.map((n) => `${n}=x`).join("\n");
+      const primary = join(home, "xdg", "qcr-operator", "default", "openviking-keys.env");
       const lc = new CompanionLifecycle(CFG, docker([networkUp()]).runner, env, () => {}, fakeFs({ [legacy]: body }));
       const w = await lc.resolveMemoryWiring();
-      expect(w.keysFile).toBe(legacy);
-      expect(w.notes.join(" ")).toMatch(/LEGACY path .*qcr install migrate/);
-      const primary = join(home, "xdg", "qcr-operator", "default", "openviking-keys.env");
-      mkdirSync(dirname(primary), { recursive: true });
-      writeFileSync(primary, "K=1\n");
+      expect(w.keysFile).toBeUndefined(); // no usable key file: memory refuses, the old one is not a stand-in
+      const notes = w.notes.join(" ");
+      expect(notes).toContain(`no OpenViking keys at ${primary}`);
+      expect(notes).toMatch(/quickreview-bot\/openviking-keys\.env is no longer read .*qcr install migrate/);
       const lc2 = new CompanionLifecycle(CFG, docker([networkUp()]).runner, env, () => {}, fakeFs({ [primary]: body }));
-      expect((await lc2.resolveMemoryWiring()).notes.join(" ")).not.toMatch(/LEGACY/);
+      expect((await lc2.resolveMemoryWiring()).notes.join(" ")).not.toMatch(/no longer read/);
     } finally {
       if (saved === undefined) delete process.env.HOME;
       else process.env.HOME = saved;
@@ -313,7 +313,7 @@ describe("memory wiring on the container", () => {
     );
   });
 
-  it("the TUI and the forward resolve the SAME keys file, legacy fallback included", async () => {
+  it("the TUI and the forward resolve the SAME keys file — neither reads the old copy", async () => {
     const { keysFilePath: forwardKeysFilePath } = await import(
       "../scripts/companion-memory-forward.mjs"
     );
@@ -325,7 +325,7 @@ describe("memory wiring on the container", () => {
     expect(both()).toEqual([primary, primary]);
     mkdirSync(dirname(legacy), { recursive: true });
     writeFileSync(legacy, "K=1\n");
-    expect(both()).toEqual([legacy, legacy]);
+    expect(both()).toEqual([primary, primary]);
     mkdirSync(dirname(primary), { recursive: true });
     writeFileSync(primary, "K=1\n");
     expect(both()).toEqual([primary, primary]);

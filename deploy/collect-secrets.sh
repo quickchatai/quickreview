@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Interactive wizard: collect the quickreview secrets into the install's secrets
 # dir — $QC_SECRETS_DIR, else the install locator's answer:
-# <config home>/secrets (~/.config/qcr/<install>/secrets), or the legacy
-# ~/.config/quickreview-bot/ while it still holds them (`qcr install migrate`).
+# <config home>/secrets (~/.config/qcr/<install>/secrets). An old
+# ~/.config/quickreview-bot/ is never read (`qcr install migrate`).
 # Values are read with hidden input and NEVER printed back. Re-run any time —
 # existing files are kept unless you choose to replace them.
 #

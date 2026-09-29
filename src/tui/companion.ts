@@ -29,10 +29,11 @@ import {
   CONFIG_FILE,
   companionGithubDir,
   configHome,
+  KEYS_FILE,
+  legacySecretsDir,
   locateConfig,
   locateKeysFile,
   PROFILES_DIR,
-  resolveKeysFile,
   stateHome,
   type InstallEnv,
 } from "../install.js";
@@ -270,13 +271,13 @@ export function memoryEndpoint(gateway: string, port: number = MEMORY.port): str
 /** Host path of the OpenViking key file, decided by the install locator
  *: `QCR_OPENVIKING_KEYS`, else the operator home
  * (`$XDG_CONFIG_HOME/qcr-operator/<install>/`, outside every dir a container
- * mounts), else — logged — the legacy `~/.config/quickreview-bot/`. 0600, and
- * handed to the container by `--env-file`, so no value reaches an argv. */
+ * mounts). 0600, and handed to the container by `--env-file`, so no value
+ * reaches an argv. */
 export function keysFilePath(
   env: NodeJS.ProcessEnv = process.env,
   home: string = homedir(),
 ): string {
-  return resolveKeysFile({ env: { ...env, HOME: home } }).path;
+  return locateKeysFile({ env: { ...env, HOME: home } }).path;
 }
 
 /** Which of KEY_NAMES the file defines — names only, values never leave here. */
@@ -573,7 +574,7 @@ export class CompanionLifecycle {
     github: string;
   } {
     const env = this.installEnv();
-    const located = locateConfig({ root: this.cfg.repo_dir, env, exists: (p) => this.fs.exists(p) });
+    const located = locateConfig({ env });
     return {
       profiles: join(configHome(env), PROFILES_DIR),
       configFile: this.fs.exists(located.path) ? located.path : undefined,
@@ -775,20 +776,16 @@ export class CompanionLifecycle {
       return this.wiring;
     }
     const keysFile = keysFilePath(this.env);
-    // the legacy fallback is announced on stderr once per process —
-    // before the first frame, where the alt screen then hides it — so the
-    // column, which the operator actually reads, says it too.
-    const located = locateKeysFile({ env: { ...this.env, HOME: homedir() } });
-    if (located.source === "legacy" && located.path === keysFile)
-      notes.push(
-        `OpenViking keys read from the LEGACY path ${keysFile} — \`qcr install migrate\` moves them to ${located.home}`,
-      );
     const keysText = this.fs.read(keysFile);
     let usableKeys: string | undefined;
     if (keysText === undefined) {
       notes.push(
         `no OpenViking keys at ${keysFile} — memory reads/writes will be refused (see docs/companion-memory-access.md)`,
       );
+      // the old copy is never read; say so when it is the reason.
+      const stranded = `${legacySecretsDir({ ...this.env, HOME: homedir() })}/${KEYS_FILE}`;
+      if (this.fs.exists(stranded))
+        notes.push(`${stranded} is no longer read — \`qcr install migrate\` moves it to ${keysFile}`);
     } else {
       const names = keyNamesIn(keysText);
       const missing = KEY_NAMES.filter((n) => !names.includes(n));

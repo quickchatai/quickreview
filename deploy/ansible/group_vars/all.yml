@@ -123,9 +123,9 @@ cloudflared_enabled: true
 # Controller-side sources
 # scripts/deploy.sh rebuild passes `-e secrets_src=<dir>` — the install
 # locator's answer: [github] secrets_dir, else the install's config home
-# (~/.config/qcr/<install>/secrets), else the legacy dir below. This
-# default only serves a playbook run by hand.
-secrets_src: "{{ lookup('env', 'HOME') }}/.config/quickreview-bot"
+# (~/.config/qcr/<install>/secrets). This default — the default
+# install's home — only serves a playbook run by hand.
+secrets_src: "{{ lookup('env', 'HOME') }}/.config/qcr/default/secrets"
 # Expected files there: app_id, app.pem, webhook_secret; openai_api_key
 # optional (pi's API-key route); tunnel_token only when cloudflared_enabled;
 # openai_embeddings_api_key only under the hosted-embedder opt-in above.

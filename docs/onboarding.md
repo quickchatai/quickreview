@@ -465,10 +465,11 @@ ignore until that state is given its own name.
 
 One placement detail you may see: the key file's home is
 `~/.config/qcr-operator/<install>/openviking-keys.env` — outside the secrets dir
-and the config home, both of which the container mounts. The LEGACY
-location (`~/.config/quickreview-bot/openviking-keys.env`) sat inside the legacy
-secrets dir, exactly where the companion key must not be. When they collide,
-the wizard writes the file to the operator home instead and tells you the
+and the config home, both of which the container mounts. The old
+location (`~/.config/quickreview-bot/openviking-keys.env`) sat inside the old
+secrets dir, exactly where the companion key must not be; nothing reads it
+since (`qcr install migrate` moves it). A layout that would put the
+key file inside a mounted dir anyway is refused, and the wizard tells you the
 `export QCR_OPENVIKING_KEYS=…` line — the TUI, the companion and
 `scripts/companion-memory-forward.mjs` all read that variable, and you have to
 set it yourself for them to find the relocated file.

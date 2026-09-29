@@ -544,10 +544,19 @@ describe("publish-manifest.json", () => {
 
   it("directory entries end with '/' and match at least one tracked file (or are known-untracked belts)", () => {
     const tracked = trackedFiles();
+    // config, profiles and the retro/audit/research corpora moved to
+    // the install's config and state homes — their entries stay as belts, so
+    // a checkout that still strands one (un-migrated) never ships it.
     const KNOWN_UNTRACKED = new Set([
       "deploy/ansible/inventory.ini",
       ".claude/worktrees/",
       "config.toml",
+      "docs/retro/",
+      "docs/audits/",
+      "docs/research/",
+      ...manifest.exclude
+        .map((e) => e.path)
+        .filter((p) => p.startsWith("profiles/") && p.endsWith("/")),
     ]);
     for (const entry of [...manifest.exclude, ...pendingReseed]) {
       if (KNOWN_UNTRACKED.has(entry.path)) continue;

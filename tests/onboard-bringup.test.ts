@@ -236,8 +236,8 @@ describe("bring-up, happy path", () => {
   // the container reads the config the install locator found on the
   // host. The compose file mounts QCR_CONFIG_HOME read-only and the entrypoint
   // names QCR_CONFIG_NAME inside it — so a config in the install's config home
-  // reaches the daemon, and a legacy checkout config still does (the home is
-  // mounted empty, the in-container locator falls back to the sandbox).
+  // reaches the daemon.: there is no checkout fallback in the
+  // container either, so whatever the locator found is what is mounted.
   it("mounts the directory of the config the locator found", async () => {
     const home = join(root, "..", `${root.split("/").pop()}-cfghome`);
     mkdirSync(home, { recursive: true });
@@ -253,12 +253,11 @@ describe("bring-up, happy path", () => {
     }
   });
 
-  it("a legacy checkout config mounts the (created, empty) config home instead", async () => {
-    const { configHome } = await import("../src/install.js");
+  it("a config named inside the checkout mounts its own directory — never an empty home", async () => {
     const h = harness();
     expect((await h.engine.runStep(BRINGUP_STEP_ID)).ok).toBe(true);
-    expect(readEnvKey(envText(), "QCR_CONFIG_HOME")).toBe(configHome());
-    expect(existsSync(configHome())).toBe(true);
+    expect(readEnvKey(envText(), "QCR_CONFIG_HOME")).toBe(root);
+    expect(readEnvKey(envText(), "QCR_CONFIG_NAME")).toBe("config.toml");
   });
 
   // the compose file mounts QCR_SECRETS_DIR read-only as the
@@ -267,7 +266,7 @@ describe("bring-up, happy path", () => {
   it("writes the located secrets dir into .env and creates it", async () => {
     const { locateSecrets } = await import("../src/install.js");
     // The example config leaves secrets_dir empty: the locator's answer (the
-    // temp config home — or a developer's own legacy dir while it exists).
+    // temp config home).
     const located = locateSecrets().path;
     let h = harness();
     expect((await h.engine.runStep(BRINGUP_STEP_ID)).ok).toBe(true);

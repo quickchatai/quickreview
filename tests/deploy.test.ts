@@ -143,7 +143,8 @@ function makeScratch(opts: {
   /** Tracked files to commit with the scratch tree, path → contents. */
   tracked?: Record<string, string>;
   /** Where the live config.toml lives: the install's config home
-   * (the default — what a deploy ships), or the legacy checkout. */
+   * (the default — what a deploy ships), or stranded in the checkout (never
+   * read). */
   configAt?: "home" | "checkout";
   /** Files in the config home, path relative to it → contents. */
   homeFiles?: Record<string, string>;
@@ -389,20 +390,24 @@ describe("deploy.sh — the config home ships", () => {
     expect(planVars(r.stdout).config_file_name).toBe("prod.toml");
   });
 
-  it("REFUSES a missing home: a config that lives only in the checkout is never shipped", () => {
+  it("REFUSES a missing home: a config that lives only in the checkout is never read or shipped", () => {
     env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", configAt: "checkout" });
-    for (const mode of ["sync", "rebuild"]) {
+    // the checkout's config.toml is not a fallback for ANY mode —
+    // the located config (the empty home's) is missing, and migrate is named.
+    for (const mode of ["sync", "rebuild", "verify"]) {
       const r = run(env, ["--dry-run", mode]);
       expect(r.code).toBe(1);
-      expect(r.stderr).toContain("no config home to ship");
+      expect(r.stderr).toContain(`no config at ${join(env.home, "config.toml")}`);
       expect(r.stderr).toContain("qcr install migrate");
     }
-    // QCR_CONFIG pointed back into the checkout is the same refusal.
+    // QCR_CONFIG pointed back into the checkout: shipping refuses it…
     const r = run(env, ["--dry-run"], { QCR_CONFIG: join(env.sandbox, "config.toml") });
     expect(r.code).toBe(1);
     expect(r.stderr).toContain("no config home to ship");
-    // verify ships nothing: it still reads the checkout fallback's pins.
-    expect(run(env, ["--dry-run", "verify"]).code).toBe(0);
+    // …and verify, which ships nothing, reads the file the operator named.
+    expect(
+      run(env, ["--dry-run", "verify"], { QCR_CONFIG: join(env.sandbox, "config.toml") }).code,
+    ).toBe(0);
   });
 
   it("REFUSES when there is no config anywhere", () => {
@@ -472,12 +477,24 @@ describe("deploy.sh — the repo profile ships with the config home", () => {
     expect(v.stderr).not.toContain("[review] profile");
   });
 
-  it("a legacy profile still in the checkout passes — the rsync carries it and the VM reads it there", () => {
+  it("an install profile left in the checkout is REFUSED — the VM never reads it there", () => {
     env = makeScratch({
       configPi: "0.84.1",
       groupVarsPi: "0.84.1",
       profile: "house",
       tracked: { "profiles/house/addenda/.gitkeep": "" },
+    });
+    const r = run(env, ["--dry-run"]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("the config home does not hold it");
+    expect(r.stderr).toContain("qcr install migrate");
+    rmSync(env.dir, { recursive: true, force: true });
+    // A generic example in the checkout is still found there.
+    env = makeScratch({
+      configPi: "0.84.1",
+      groupVarsPi: "0.84.1",
+      profile: "minimal",
+      tracked: { "profiles/minimal/addenda/.gitkeep": "" },
     });
     expect(run(env, ["--dry-run"]).code).toBe(0);
     rmSync(env.dir, { recursive: true, force: true });
@@ -1067,11 +1084,12 @@ describe("deploy.sh — base clone name", () => {
     const home = join(h.XDG_CONFIG_HOME, "qcr", "default", "secrets");
     expect(extraVars(r.stdout).secrets_src).toBe(home);
     expect(r.stdout).toContain(`secrets      ${home}`);
-    // Only the legacy dir holds them → the legacy dir, until migrate.
+    // the old dir holding them changes nothing — it is never shipped.
     const legacy = join(h.HOME, ".config", "quickreview-bot");
     mkdirSync(legacy, { recursive: true });
+    writeFileSync(join(legacy, "app_id"), "1\n");
     r = run(env, ["--dry-run", "rebuild"], h);
-    expect(extraVars(r.stdout).secrets_src).toBe(legacy);
+    expect(extraVars(r.stdout).secrets_src).toBe(home);
     mkdirSync(home, { recursive: true });
     r = run(env, ["--dry-run", "rebuild"], h);
     expect(extraVars(r.stdout).secrets_src).toBe(home);

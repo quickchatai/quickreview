@@ -103,7 +103,7 @@ describe("checkBashCommand — gh mutating verbs", () => {
  *
  * `gh pr review <n> --approve` was permitted: a direct approval around the
  * mutation gate, the CI gate and `dry_run`. It is not hypothetical — the
- * predecessor system posted 47 approvals exactly that way (docs/retro), and a
+ * predecessor system posted 47 approvals exactly that way (the retro corpus), and a
  * session can mint the credential itself from the sanctioned
  * `scripts/mint-token.sh`, whose installation token carries `pull_requests:
  * write` and is the very token `scripts/approve-pr.sh` uses to POST an APPROVE.
@@ -156,7 +156,7 @@ describe("checkBashCommand — gh is read-only", () => {
    * the recipe the PREDECESSOR system actually used for every review it posted
    * — "a JSON file written with `Write` then `POST`ed via
    * `gh api .../pulls/<n>/reviews --input`"
-   * (docs/retro/sources/12-review-content.md:5). Closing `gh pr review` while
+   * (the retro corpus, sources/12-review-content.md:5 — state home). Closing `gh pr review` while
    * leaving this open would have shut the documented door and left the
    * historical one wide.
    *

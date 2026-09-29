@@ -43,7 +43,7 @@ import {
   type ReviewPreset,
 } from "../config.js";
 import { buildRoundOrder } from "../dispatch.js";
-import { resolveConfigPath } from "../install.js";
+import { locateConfig } from "../install.js";
 import { findStyleGuide } from "../styleguide.js";
 import { ecosystemFor, type Ecosystem } from "../ecosystem.js";
 import type { PrFileEntry } from "../github.js";
@@ -280,8 +280,8 @@ async function git(tree: string, args: string[]): Promise<string> {
  * Escalation stays whatever it ships as (off), so no escalation note renders.
  * "Production config.toml" is the install locator's answer — inside
  * the bench image that is the copy bench.sh baked from the operator's own. */
-export function benchConfig(root: string, profile: string): Config {
-  const cfg = structuredClone(loadConfig(resolveConfigPath({ root }).path));
+export function benchConfig(profile: string): Config {
+  const cfg = structuredClone(loadConfig(locateConfig().path));
   cfg.review.profile = profile;
   return cfg;
 }
@@ -1000,9 +1000,9 @@ export function contextFor(
   // config.toml: the profile wins.
   const cfg = applyProfileTuning(
     applyConfigOverrides(
-      benchConfig(root, profile),
+      benchConfig(profile),
       overrides,
-      readFileSync(resolveConfigPath({ root }).path, "utf8"),
+      readFileSync(locateConfig().path, "utf8"),
     ),
     loadProfileLensTuning(root, profile),
   );

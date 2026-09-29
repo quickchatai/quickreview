@@ -6,7 +6,7 @@
 // from a degraded Django check. The ratified decision this file guards for
 // the Django case: "migration renumber posts as a COMMENT, never a blocker —
 // and the check gets MORE reliable, never quieter."
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -25,6 +25,7 @@ import { loadProfileEcosystem } from "../src/profiles.js";
 import { StateStore } from "../src/state.js";
 import { renderRoundPrompt, roundVars } from "../src/templates.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
+import { locateProfile } from "../src/install.js";
 
 const cfg: Config = parseConfig(
   readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
@@ -488,7 +489,7 @@ describe("loadProfileEcosystem", () => {
   it("reads the shipped profiles: quickchat and example-django are django, minimal is none", () => {
     // The quickchat pack is excluded from the assembled public
     // snapshot; its expectation applies only where the pack ships.
-    if (existsSync(join(repoRoot, "profiles", "quickchat"))) {
+    if (locateProfile({ root: repoRoot, profile: "quickchat" })) {
       expect(loadProfileEcosystem(repoRoot, "quickchat")).toBe("django");
     }
     expect(loadProfileEcosystem(repoRoot, "example-django")).toBe("django");
@@ -502,23 +503,23 @@ describe("loadProfileEcosystem", () => {
   it("an absent profile.toml or absent ecosystem key means none", () => {
     const root = mkdtempSync(join(tmpdir(), "qcr-eco-"));
     mkdirSync(join(root, "profiles", "bare"), { recursive: true });
-    expect(loadProfileEcosystem(root, "bare")).toBe("none"); // no file at all
+    expect(loadProfileEcosystem(root, "bare", { env: { QCR_CONFIG: join(root, "config.toml"), HOME: root } })).toBe("none"); // no file at all
     writeFileSync(join(root, "profiles", "bare", "profile.toml"), "# no ecosystem key\n");
-    expect(loadProfileEcosystem(root, "bare")).toBe("none"); // file, no key
-    expect(loadProfileEcosystem(root, "missing-profile-dir")).toBe("none");
+    expect(loadProfileEcosystem(root, "bare", { env: { QCR_CONFIG: join(root, "config.toml"), HOME: root } })).toBe("none"); // file, no key
+    expect(loadProfileEcosystem(root, "missing-profile-dir", { env: { QCR_CONFIG: join(root, "config.toml"), HOME: root } })).toBe("none");
   });
 
   it("an unknown ecosystem value fails the boot loudly", () => {
     const root = mkdtempSync(join(tmpdir(), "qcr-eco-"));
     mkdirSync(join(root, "profiles", "p"), { recursive: true });
     writeFileSync(join(root, "profiles", "p", "profile.toml"), 'ecosystem = "rails"\n');
-    expect(() => loadProfileEcosystem(root, "p")).toThrow(/unknown ecosystem "rails"/);
+    expect(() => loadProfileEcosystem(root, "p", { env: { QCR_CONFIG: join(root, "config.toml"), HOME: root } })).toThrow(/unknown ecosystem "rails"/);
   });
 
   it("invalid TOML fails the boot loudly, never a silent none", () => {
     const root = mkdtempSync(join(tmpdir(), "qcr-eco-"));
     mkdirSync(join(root, "profiles", "p"), { recursive: true });
     writeFileSync(join(root, "profiles", "p", "profile.toml"), "ecosystem = [broken\n");
-    expect(() => loadProfileEcosystem(root, "p")).toThrow(/not valid TOML/);
+    expect(() => loadProfileEcosystem(root, "p", { env: { QCR_CONFIG: join(root, "config.toml"), HOME: root } })).toThrow(/not valid TOML/);
   });
 });

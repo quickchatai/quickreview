@@ -34,13 +34,15 @@ import {
   operatorHome,
   profileMigrateReport,
   profileSearchDirs,
+  missingConfigMessage,
   repointComposeSecrets,
-  resolveConfigPath,
-  resolveProfile,
-  resolveSecretsDir,
   secretsHome,
   secretsMigrateReport,
   stateHome,
+  strandedCheckoutConfig,
+  strandedCheckoutProfile,
+  strandedCheckoutProfiles,
+  strandedLegacySecrets,
   type InstallEnv,
 } from "../src/install.js";
 import { loadConfig, parseConfig } from "../src/config.js";
@@ -113,47 +115,70 @@ describe("locateConfig", () => {
     put(join(configHome(env), "config.toml"));
     put(join(root, "config.toml"));
     const target = join(dir, "elsewhere.toml");
-    expect(locateConfig({ root, env: { ...env, QCR_CONFIG: target } })).toMatchObject({
+    expect(locateConfig({ env: { ...env, QCR_CONFIG: target } })).toMatchObject({
       path: target,
       source: "override",
     });
   });
 
-  it("the config home beats the checkout", () => {
+  it("the config home is the answer", () => {
     const home = put(join(configHome(env), "config.toml"));
     put(join(root, "config.toml"));
-    expect(locateConfig({ root, env })).toEqual({
+    expect(locateConfig({ env })).toEqual({
       path: home,
       source: "home",
       home: configHome(env),
     });
   });
 
-  it("the checkout's config.toml is the legacy fallback when the home has none", () => {
-    const legacy = put(join(root, "config.toml"));
-    expect(locateConfig({ root, env })).toMatchObject({ path: legacy, source: "checkout" });
+  it("the checkout's config.toml is never the answer — not even with the home empty", () => {
+    put(join(root, "config.toml"));
+    expect(locateConfig({ env })).toEqual({
+      path: join(configHome(env), "config.toml"),
+      source: "home",
+      home: configHome(env),
+    });
   });
 
   it("with nothing anywhere, the answer is the home — where a new config belongs", () => {
-    expect(locateConfig({ root, env })).toMatchObject({
+    expect(locateConfig({ env })).toMatchObject({
       path: join(configHome(env), "config.toml"),
       source: "home",
     });
   });
 
-  it("logs the checkout fallback once per path, and never the home or the override", () => {
-    const lines: string[] = [];
-    const log = (l: string) => lines.push(l);
-    resolveConfigPath({ root, env, log }); // nothing yet → home, silent
-    put(join(root, "config.toml"));
-    resolveConfigPath({ root, env, log });
-    resolveConfigPath({ root, env, log });
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toMatch(/LEGACY checkout config/);
-    expect(lines[0]).toContain("qcr install migrate");
-    expect(lines[0]).toContain(configHome(env));
-    resolveConfigPath({ root, env: { ...env, QCR_CONFIG: join(dir, "x.toml") }, log });
-    expect(lines).toHaveLength(1);
+  it("a stranded checkout config is only NAMED, so a missing config points at migrate", () => {
+    expect(strandedCheckoutConfig({ root, env })).toBeNull();
+    const stranded = put(join(root, "config.toml"));
+    expect(strandedCheckoutConfig({ root, env })).toBe(stranded);
+    // QCR_CONFIG naming that very file is the operator's choice, not a strand.
+    expect(strandedCheckoutConfig({ root, env: { ...env, QCR_CONFIG: stranded } })).toBeNull();
+    const msg = missingConfigMessage(locateConfig({ env }), stranded);
+    expect(msg).toContain(join(configHome(env), "config.toml"));
+    expect(msg).toContain(stranded);
+    expect(msg).toContain("qcr install migrate");
+    expect(missingConfigMessage(locateConfig({ env }), null)).not.toContain("migrate");
+    const named = missingConfigMessage(
+      locateConfig({ env: { ...env, QCR_CONFIG: "/x.toml" } }),
+      null,
+    );
+    expect(named).toMatch(/\/x\.toml .*QCR_CONFIG/);
+  });
+
+  it("loadConfig() with no config in the home refuses — it never reads the checkout's", async () => {
+    const { loadConfig: load, sandboxRoot } = await import("../src/config.js");
+    const saved = { ...process.env };
+    try {
+      delete process.env.QCR_CONFIG;
+      Object.assign(process.env, env);
+      expect(() => load()).toThrow(new RegExp(`no config at ${join(configHome(env), "config.toml")}`));
+      // The real checkout may strand one; either way the message is the locator's.
+      const stranded = strandedCheckoutConfig({ root: sandboxRoot(), env });
+      if (stranded) expect(() => load()).toThrow(/qcr install migrate/);
+    } finally {
+      for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+      Object.assign(process.env, saved);
+    }
   });
 
   it("loadConfig reads the file the locator names (explicit path unchanged)", () => {
@@ -162,7 +187,7 @@ describe("locateConfig", () => {
       "utf8",
     );
     const p = put(join(configHome(env), "config.toml"), fixture);
-    expect(loadConfig(locateConfig({ root, env }).path).github.repo).toBe(
+    expect(loadConfig(locateConfig({ env }).path).github.repo).toBe(
       loadConfig(p).github.repo,
     );
   });
@@ -176,7 +201,7 @@ describe("migrateConfig", () => {
     expect(first).toEqual({ kind: "moved", from: join(root, "config.toml"), to });
     expect(existsSync(join(root, "config.toml"))).toBe(false);
     expect(readFileSync(to, "utf8")).toBe("x = 1\n");
-    expect(locateConfig({ root, env })).toMatchObject({ path: to, source: "home" });
+    expect(locateConfig({ env })).toMatchObject({ path: to, source: "home" });
     expect(migrateConfig({ root, env })).toEqual({ kind: "already", to });
     expect(readFileSync(to, "utf8")).toBe("x = 1\n");
   });
@@ -237,25 +262,31 @@ describe("qcr install", () => {
     expect(readFileSync(to, "utf8")).toBe("x = 1\n");
   });
 
-  it("the CLI's where names both homes and the config's source", async () => {
+  it("the CLI's where names both homes, and what the checkout still strands", async () => {
     const { cmdInstall } = await import("../src/cli.js");
-    put(join(root, "config.toml"));
     const out: string[] = [];
     expect(cmdInstall(["where"], { root, env, log: (l) => out.push(l) })).toBe(0);
-    const text = out.join("\n");
+    let text = out.join("\n");
     expect(text).toContain(configHome(env));
     expect(text).toContain(stateHome(env));
-    expect(text).toMatch(/checkout/);
+    expect(text).toMatch(/\(home, missing\)/);
+    expect(text).not.toMatch(/stranded/);
+    put(join(root, "config.toml"));
+    out.length = 0;
+    cmdInstall(["where"], { root, env, log: (l) => out.push(l) });
+    text = out.join("\n");
+    expect(text).toContain(`config      ${join(configHome(env), "config.toml")}  (home, missing)`);
+    expect(text).toMatch(new RegExp(`stranded +${join(root, "config.toml")} — no longer read`));
     expect(() => cmdInstall(["bogus"], { root, env, log: () => {} })).toThrow(/usage: qcr install/);
   });
 });
 
 describe("no TypeScript reader builds the checkout config path itself", () => {
   // acceptance: every reader of the live config goes through the
-  // locator. The two allowed spellings COMPARE a located path against the
-  // checkout's (to decide where a proposal applies / what compose mounts) —
-  // neither reads it. The shell half is swept in tests/install-shell.test.ts.
-  const ALLOWED = new Set(["src/onboard/steps/bringup.ts", "src/tui/proposals.ts"]);
+  // locator. The one allowed spelling COMPARES a located path against the
+  // checkout's (to decide whether an accepted proposal is committed) — it
+  // never reads it. The shell half is swept in tests/install-shell.test.ts.
+  const ALLOWED = new Set(["src/tui/proposals.ts"]);
   const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
   const BUILDS = /(join|resolve)\([^()]*"config\.toml"\)|\$\{[A-Za-z_.]+\}\/config\.toml/;
 
@@ -293,13 +324,16 @@ const putProfile = (base: string, name: string, body = "x\n"): string => {
 };
 
 describe("locateProfile", () => {
-  it("the config home first, then profiles/ beside QCR_CONFIG, then the checkout", () => {
-    const inCheckout = putProfile(root, "house");
-    expect(locateProfile({ root, profile: "house", env })).toEqual({
-      name: "house",
-      dir: inCheckout,
+  it("the config home first, then profiles/ beside QCR_CONFIG, then the checkout's examples", () => {
+    const example = putProfile(root, "minimal");
+    expect(locateProfile({ root, profile: "minimal", env })).toEqual({
+      name: "minimal",
+      dir: example,
       source: "checkout",
     });
+    putProfile(root, "house");
+    // an install's own profile left in the checkout is never read.
+    expect(locateProfile({ root, profile: "house", env })).toBeNull();
     const beside = join(dir, "mounted");
     const inOverride = putProfile(beside, "house");
     const withOverride = { ...env, QCR_CONFIG: join(beside, "config.toml") };
@@ -324,9 +358,21 @@ describe("locateProfile", () => {
   });
 
   it("a FILE named like the profile does not shadow a directory further down", () => {
-    put(join(configHome(env), "profiles", "house"));
-    const inCheckout = putProfile(root, "house");
-    expect(locateProfile({ root, profile: "house", env })?.dir).toBe(inCheckout);
+    put(join(configHome(env), "profiles", "minimal"));
+    const inCheckout = putProfile(root, "minimal");
+    expect(locateProfile({ root, profile: "minimal", env })?.dir).toBe(inCheckout);
+  });
+
+  it("profiles/ beside a QCR_CONFIG inside the checkout is the override place, not the checkout's", () => {
+    // The bench image and a hand-run QCR_CONFIG: the directory is reached
+    // first as "beside the named config", which the operator chose.
+    const house = putProfile(root, "house");
+    const e = { ...env, QCR_CONFIG: join(root, "config.toml") };
+    expect(locateProfile({ root, profile: "house", env: e })).toMatchObject({
+      dir: house,
+      source: "override",
+    });
+    expect(strandedCheckoutProfile({ root, profile: "house", env: e })).toBeNull();
   });
 
   it("refuses a profile name that could escape profiles/", () => {
@@ -338,19 +384,18 @@ describe("locateProfile", () => {
     }
   });
 
-  it("announces a legacy checkout profile once, never an example or a home profile", () => {
-    const out: string[] = [];
-    const log = (l: string) => out.push(l);
-    putProfile(root, "house");
+  it("names a stranded checkout profile — never an example, never one the home holds too", () => {
+    const house = putProfile(root, "house");
     putProfile(root, "minimal");
-    resolveProfile({ root, profile: "house", env, log });
-    resolveProfile({ root, profile: "house", env, log });
-    resolveProfile({ root, profile: "minimal", env, log });
-    expect(out).toHaveLength(1);
-    expect(out[0]).toMatch(/LEGACY checkout profile .*house/);
-    putProfile(configHome(env), "homed");
-    resolveProfile({ root, profile: "homed", env, log });
-    expect(out).toHaveLength(1);
+    putProfile(root, "second");
+    expect(strandedCheckoutProfile({ root, profile: "house", env })).toBe(house);
+    expect(strandedCheckoutProfile({ root, profile: "minimal", env })).toBeNull();
+    expect(strandedCheckoutProfile({ root, profile: "absent", env })).toBeNull();
+    expect(strandedCheckoutProfiles({ root, env })).toEqual([
+      house,
+      join(root, "profiles", "second"),
+    ]);
+    expect(() => strandedCheckoutProfile({ root, profile: "../x", env })).toThrow(/plain name/);
   });
 });
 
@@ -423,8 +468,8 @@ describe("qcr install migrate — profiles", () => {
     putProfile(root, "minimal");
     const out: string[] = [];
     const log = (l: string) => out.push(l);
-    // before the move the old path is still what the lookup reads
-    expect(locateProfile({ root, profile: "house-pack", env })?.source).toBe("checkout");
+    // before the move the lookup reads nothing — the pack is stranded
+    expect(locateProfile({ root, profile: "house-pack", env })).toBeNull();
     expect(cmdInstall(["migrate"], { root, env, log })).toBe(0);
     expect(existsSync(join(configHome(env), "config.toml"))).toBe(true);
     expect(locateProfile({ root, profile: "house-pack", env })?.source).toBe("home");
@@ -449,28 +494,33 @@ describe("qcr install migrate — profiles", () => {
     const out: string[] = [];
     cmdInstall(["where"], { root, env, log: (l) => out.push(l) });
     expect(out.join("\n")).toContain(
-      `${join(configHome(env), "profiles")} → ${join(root, "profiles")}`,
+      `${join(configHome(env), "profiles")} → ${join(root, "profiles")}  (the checkout: generic examples only)`,
     );
+    putProfile(root, "house");
+    out.length = 0;
+    cmdInstall(["where"], { root, env, log: (l) => out.push(l) });
+    expect(out.join("\n")).toMatch(/stranded +\S*profiles\/house — no longer read/);
   });
 });
 
 describe("the checkout's profiles/ holds the generic examples", () => {
   const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-  it("every other directory there is a legacy install pack the public snapshot excludes", () => {
-    // The one legacy pack (the deployment's own) waits there for `qcr install
-    // migrate`; whatever it is called, it must never ship publicly.
-    const excluded = (
-      JSON.parse(readFileSync(join(repo, "publish-manifest.json"), "utf8")) as {
-        exclude: { path: string }[];
-      }
-    ).exclude.map((e) => e.path);
+  it("every other directory there is a stranded install pack BOTH snapshots exclude", () => {
+    // a pack left there (the deployment's own, until `qcr install
+    // migrate` moves it) is never read, and whatever it is called it must
+    // never ship — publicly or internally.
     const dirs = readdirSync(join(repo, "profiles"), { withFileTypes: true })
       .filter((e) => e.isDirectory())
       .map((e) => e.name);
-    for (const name of dirs) {
-      if (EXAMPLE_PROFILES.includes(name)) continue;
-      expect(excluded, name).toContain(`profiles/${name}/`);
+    for (const manifest of ["publish-manifest.json", "publish-manifest.internal.json"]) {
+      const excluded = (
+        JSON.parse(readFileSync(join(repo, manifest), "utf8")) as { exclude: { path: string }[] }
+      ).exclude.map((e) => e.path);
+      for (const name of dirs) {
+        if (EXAMPLE_PROFILES.includes(name)) continue;
+        expect(excluded, `${manifest}: ${name}`).toContain(`profiles/${name}/`);
+      }
     }
     for (const example of EXAMPLE_PROFILES) expect(dirs).toContain(example);
   });
@@ -538,12 +588,22 @@ describe("locateSecrets", () => {
     }
   });
 
-  it("the legacy dir is the fallback while the home does not exist", () => {
+  it("the old dir is never the answer — not even with the home missing", () => {
     secret(legacySecretsDir(env));
-    expect(locateSecrets({ configured: "~/.config/quickreview-bot", env })).toMatchObject({
-      path: legacySecretsDir(env),
-      source: "legacy",
-    });
+    for (const configured of ["", "~/.config/quickreview-bot", legacySecretsDir(env)]) {
+      expect(locateSecrets({ configured, env })).toEqual({
+        path: secretsHome(env),
+        source: "home",
+        home: secretsHome(env),
+      });
+    }
+    // …it is only NAMED, while it still holds anything, so a missing
+    // credential can point at migrate.
+    expect(strandedLegacySecrets(env)).toBe(legacySecretsDir(env));
+    rmSync(join(legacySecretsDir(env), "app_id"));
+    expect(strandedLegacySecrets(env)).toBeNull();
+    rmSync(legacySecretsDir(env), { recursive: true });
+    expect(strandedLegacySecrets(env)).toBeNull();
   });
 
   it("a caller's override sits below a configured value and above the homes", () => {
@@ -558,19 +618,6 @@ describe("locateSecrets", () => {
     expect(locateSecrets({ env })).toMatchObject({ path: secretsHome(env), source: "home" });
   });
 
-  it("logs the legacy fallback once per path, and never the home", () => {
-    const lines: string[] = [];
-    const log = (l: string) => lines.push(l);
-    resolveSecretsDir({ env, log });
-    secret(legacySecretsDir(env));
-    resolveSecretsDir({ env, log });
-    resolveSecretsDir({ env, log });
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toMatch(/LEGACY dir/);
-    expect(lines[0]).toContain("qcr install migrate");
-    expect(lines[0]).toContain(secretsHome(env));
-  });
-
   it("the config loader resolves [github] secrets_dir through the locator", () => {
     const fixture = readFileSync(
       join(dirname(fileURLToPath(import.meta.url)), "fixtures", "config.toml"),
@@ -583,8 +630,9 @@ describe("locateSecrets", () => {
       Object.assign(process.env, env);
       expect(parseConfig(withDir("")).github.secrets_dir).toBe(secretsHome(env));
       secret(legacySecretsDir(env));
+      // the old spelling, with the old dir populated, still reads the home.
       expect(parseConfig(withDir("~/.config/quickreview-bot")).github.secrets_dir).toBe(
-        legacySecretsDir(env),
+        secretsHome(env),
       );
       secret(secretsHome(env));
       expect(parseConfig(withDir("~/.config/quickreview-bot")).github.secrets_dir).toBe(
@@ -616,9 +664,12 @@ describe("locateKeysFile", () => {
     expect(locateKeysFile({ env })).toEqual({ path: home, source: "home", home });
   });
 
-  it("QCR_OPENVIKING_KEYS wins; the legacy file is the fallback until the home has one", () => {
-    const legacy = keys(join(legacySecretsDir(env), "openviking-keys.env"));
-    expect(locateKeysFile({ env })).toMatchObject({ path: legacy, source: "legacy" });
+  it("QCR_OPENVIKING_KEYS wins; the old copy is never read", () => {
+    keys(join(legacySecretsDir(env), "openviking-keys.env"));
+    expect(locateKeysFile({ env })).toMatchObject({
+      path: join(operatorHome(env), "openviking-keys.env"),
+      source: "home",
+    });
     const home = keys(join(operatorHome(env), "openviking-keys.env"));
     expect(locateKeysFile({ env })).toMatchObject({ path: home, source: "home" });
     expect(locateKeysFile({ env: { ...env, QCR_OPENVIKING_KEYS: "/k.env" } })).toMatchObject({
@@ -757,18 +808,62 @@ describe("migrate repoints the compose .env (review)", () => {
   });
 });
 
-describe("no reader builds the legacy secrets path itself", () => {
-  // acceptance: every secrets reader resolves through the locator.
-  // Only the locator (both halves), the forward's documented mirror of it, and
-  // the entrypoints' in-container compatibility link spell the legacy dir.
+describe("nothing but migrate (and a not-found's hint) touches the old places", () => {
+  // Acceptance "no fallback reads remain (grep-clean)": the locator's old-place
+  // helpers are called from exactly the modules that MOVE or NAME what is
+  // stranded — `qcr install` (cli.ts), the loaders' not-found (config.ts,
+  // profiles.ts) and the companion column's missing-keys note — never from a
+  // reader deciding where to read.
   const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const OLD_PLACE = /\b(legacySecretsDir|strandedLegacySecrets|strandedCheckoutConfig|strandedCheckoutProfiles?|migrate(Config|Profiles|Secrets)|repointComposeSecrets)\(/;
   const ALLOWED = new Set([
     "src/install.ts",
-    "scripts/install-locator.sh",
-    "scripts/companion-memory-forward.mjs",
-    "docker/daemon/entrypoint.sh",
-    "deploy/ansible/templates/entrypoint.sh.j2",
+    "src/cli.ts",
+    "src/config.ts",
+    "src/profiles.ts",
+    "src/tui/companion.ts",
   ]);
+  it("src/ and extensions/ call the old-place helpers only where they move or name a strand", () => {
+    const offenders: string[] = [];
+    const walk = (rel: string): void => {
+      for (const entry of readdirSync(join(repo, rel), { withFileTypes: true })) {
+        const path = `${rel}/${entry.name}`;
+        if (entry.isDirectory()) {
+          if (entry.name !== "vendor") walk(path);
+        } else if (/\.(ts|mjs)$/.test(entry.name) && !ALLOWED.has(path)) {
+          readFileSync(join(repo, path), "utf8")
+            .split("\n")
+            .forEach((line, i) => {
+              if (OLD_PLACE.test(line)) offenders.push(`${path}:${i + 1}: ${line.trim()}`);
+            });
+        }
+      }
+    };
+    for (const top of ["src", "extensions"]) walk(top);
+    expect(offenders).toEqual([]);
+  });
+
+  it("the locator's answers carry no old-place source any more", () => {
+    // A type-level fact checked at runtime too: every source the locator can
+    // return, over a machine where every old place is populated.
+    put(join(root, "config.toml"));
+    mkdirSync(join(root, "profiles", "house"), { recursive: true });
+    mkdirSync(legacySecretsDir(env), { recursive: true });
+    writeFileSync(join(legacySecretsDir(env), "openviking-keys.env"), "K=1\n");
+    expect(locateConfig({ env }).source).toBe("home");
+    expect(locateProfile({ root, profile: "house", env })).toBeNull();
+    expect(locateSecrets({ env }).source).toBe("home");
+    expect(locateKeysFile({ env }).source).toBe("home");
+  });
+});
+
+describe("no reader builds the legacy secrets path itself", () => {
+  // acceptance: every secrets reader resolves through the locator.
+  // contracted the rest: only the locator's migrate half (and its
+  // spelling check) and the shell mirror's spelling check name the old dir —
+  // the entrypoints' compatibility link and the forward's fallback are gone.
+  const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const ALLOWED = new Set(["src/install.ts", "scripts/install-locator.sh"]);
   const SPELLS = /quickreview-bot/;
 
   function* files(rel: string): Generator<string> {

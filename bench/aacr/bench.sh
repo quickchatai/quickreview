@@ -297,7 +297,7 @@ case "$cmd" in
     ctx="$(mktemp -d)"; trap 'rm -rf "$ctx"' EXIT
     ( cd "$REPO" && tar -cf - --exclude=node_modules --exclude='*.tsbuildinfo' \
         package.json package-lock.json tsconfig.json AGENTS.md CLAUDE.md .pi \
-        src extensions prompts agents profiles \
+        src extensions prompts agents \
         bench/aacr/Dockerfile bench/aacr/sets bench/aacr/defects bench/aacr/judge_shim.py \
         bench/aacr/in-container.sh bench/aacr/codex_bridge.py bench/aacr/eval_shards.py \
         bench/aacr/codex_arm.py \
@@ -310,12 +310,16 @@ case "$cmd" in
     live_config="$(qcr_locate_config "$REPO")" || exit 1
     [[ -f "$live_config" ]] || die "no config.toml at $live_config — the bench reviews with the production config"
     cp "$live_config" "$ctx/config.toml"
-    # …and so are the profiles: the checkout's came in with the tar
-    # above; a profile in a higher-priority place (the config home, or beside
-    # $QCR_CONFIG) REPLACES the checkout's of the same name — whole, never
+    # …and so are the profiles: the checkout's generic examples
+    # only (no other checkout profile is read, so none is baked);
+    # a profile in a higher-priority place (the config home, or beside
+    # $QCR_CONFIG) REPLACES an example of the same name — whole, never
     # merged — so the image's profiles/ holds exactly what the locator reads.
     # Lowest priority first, so a higher place overwrites (no `tac`: macOS).
     mkdir -p "$ctx/profiles"
+    for p in "${QCR_EXAMPLE_PROFILES[@]}"; do
+      if [[ -d "$REPO/profiles/$p" ]]; then cp -R "$REPO/profiles/$p" "$ctx/profiles/$p"; fi
+    done
     pdirs=()
     while IFS= read -r pdir; do pdirs=("$pdir" ${pdirs[@]+"${pdirs[@]}"}); done \
       < <(qcr_profile_dirs "$REPO")

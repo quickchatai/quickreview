@@ -33,7 +33,6 @@
 // command succeeded and the daemon container is running".
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
-import { configHome } from "../../install.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 import {
   composePs,
@@ -77,10 +76,11 @@ export interface BringUpStepOptions {
   progressEvery?: number;
 }
 
-/** What the compose file mounts as the container's config home. */
-export function configMountOf(root: string, configPath: string): { dir: string; name: string } {
+/** What the compose file mounts as the container's config home:
+ * the directory of the config the locator found, whatever it is — the
+ * container reads no other (there is no checkout fallback left). */
+export function configMountOf(configPath: string): { dir: string; name: string } {
   const located = resolve(configPath);
-  if (located === resolve(root, "config.toml")) return { dir: configHome(), name: "config.toml" };
   return { dir: dirname(located), name: basename(located) };
 }
 
@@ -161,17 +161,16 @@ export function bringUpStep(opts: BringUpStepOptions = {}): OnboardingStep {
       for (const [key, value] of embedderEnvEntries(embedder)) next = setEnvKey(next, key, value);
       // the directory the compose file mounts read-only as the
       // container's config home — the one holding the config the install
-      // locator found. A legacy checkout config mounts the install's (empty)
-      // config home instead, and the container falls back to the sandbox copy.
-      // Created here so Docker never creates it, owned by root.
-      const mount = configMountOf(root, ctx.adapters.paths.configPath);
+      // locator found — the only config the container reads. Created here so
+      // Docker never creates it, owned by root.
+      const mount = configMountOf(ctx.adapters.paths.configPath);
       mkdirSync(mount.dir, { recursive: true, mode: 0o700 });
       next = setEnvKey(next, "QCR_CONFIG_HOME", mount.dir);
       next = setEnvKey(next, "QCR_CONFIG_NAME", mount.name);
       // the secrets dir the compose file mounts read-only at
       // /opt/quickreview/secrets — the install locator's answer, the same one
-      // the daemon's loader reaches (the compose default is only the legacy
-      // dir, for a stack started by hand before this step ran). Created here
+      // the daemon's loader reaches (the compose default is only the default
+      // install's, for a stack started by hand before this step ran). Created here
       // for the same reason as the config home: never by Docker, as root.
       const secretsDir = secretsDirFor(ctx.adapters, ctx.choices);
       mkdirSync(secretsDir, { recursive: true, mode: 0o700 });

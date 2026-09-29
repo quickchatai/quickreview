@@ -36,7 +36,7 @@ let env: InstallEnv;
 /** The checkout the loaders search last: this repo, so the shipped
  * `profiles/default` is found exactly where production finds it. */
 const root = sandbox;
-const lookup = () => ({ env, log: () => {} });
+const lookup = () => ({ env });
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "qcr-profile-chain-"));

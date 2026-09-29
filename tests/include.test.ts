@@ -1,6 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import {
-  existsSync,
   mkdtempSync,
   mkdirSync,
   readdirSync,
@@ -37,6 +36,7 @@ import {
 import { renderMigrationPrecheckDegradedNote } from "../src/ecosystem.js";
 import { renderNitScopeNote } from "../src/templates.js";
 import { loadProfileAddenda } from "../src/profiles.js";
+import { locateProfile } from "../src/install.js";
 
 /** In-memory fs for the pure expansion tests. */
 function fakeFs(files: Record<string, string>) {
@@ -1524,7 +1524,7 @@ describe("the memory addendum", () => {
 // The quickchat pack is excluded from the assembled public snapshot;
 // the deployed-composition pins self-skip where it is absent.
 const corpusSandbox = join(import.meta.dirname, "..");
-const HAS_QC_PACK = existsSync(join(corpusSandbox, "profiles", "quickchat"));
+const HAS_QC_PACK = locateProfile({ root: corpusSandbox, profile: "quickchat" }) !== null; //: the config home
 describe.skipIf(!HAS_QC_PACK)(
   "the corpus-derived rules (six of seven ride the quickchat profile)",
   () => {

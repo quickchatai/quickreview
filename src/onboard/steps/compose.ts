@@ -23,7 +23,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
-import { resolveSecretsDir } from "../../install.js";
+import { locateSecrets } from "../../install.js";
 import { CHOICE_KEYS } from "../choices.js";
 import type {
   CheckResult,
@@ -90,8 +90,8 @@ export function readEnvText(root: string): string {
  * The daemon-side secrets dir. config.toml is the truth once the config step
  * has run (it is what the daemon itself reads); a recorded choice and
  * `$QC_SECRETS_DIR` cover the earlier states, and the install locator
- * has the last word: `<config home>/secrets`, or the legacy dir
- * while it still holds them — the same answer the daemon's loader reaches.
+ * has the last word: `<config home>/secrets` — the same answer the
+ * daemon's loader reaches.
  */
 export function secretsDirFor(
   adapters: OnboardAdapters,
@@ -103,7 +103,7 @@ export function secretsDirFor(
   const fromConfig = (configText ? readTomlKey(configText, "github", "secrets_dir") : null)?.trim();
   const raw = choices[CHOICE_KEYS.secretsDir];
   const choice = typeof raw === "string" ? raw.trim() : "";
-  const located = resolveSecretsDir({
+  const located = locateSecrets({
     configured: fromConfig || choice,
     override: env.QC_SECRETS_DIR,
     env,

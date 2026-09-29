@@ -38,7 +38,8 @@
 #     rsync), and the container reads it there. A config that lives only in
 #     the checkout is refused (`qcr install migrate` moves it), and so is a
 #     `[review] profile` — or any profile it extends — found neither in the
-#     home's profiles/ nor in the checkout's (the two places the VM looks).
+#     home's profiles/ nor among the checkout's generic examples (the two
+#     places the VM looks;: no other checkout profile is read).
 #     Every pin/drift check below reads that same located config.
 #   * refuses a base-clone name (`[github] clone_dir`, else the
 #     repo slug's basename — the same rule as githubCloneDir in
@@ -62,13 +63,13 @@
 #   QC_SANDBOX_DIR  sandbox working copy (default: this script's parent)
 #   QC_VM_HOST      ssh target for `verify` (default: the inventory's first host)
 #   QCR_CONFIG      config.toml path    (default: the install locator's answer —
-#                   the install's config home, else the checkout's config.toml;
+#                   the install's config home's config.toml;
 #                   scripts/install-locator.sh). Its directory is the
 #                   config home sync|rebuild ship; `verify` alone
-#                   accepts the checkout fallback
+#                   accepts a QCR_CONFIG inside the checkout
 #   (secrets)       the playbook's secrets_src is the install locator's answer
-#                   too — [github] secrets_dir, else <config home>/secrets, else
-#                   the legacy ~/.config/quickreview-bot
+#                   too — [github] secrets_dir, else <config home>/secrets
+#                  
 
 set -euo pipefail
 
@@ -255,13 +256,13 @@ first_inventory_host() {
 
 # ---- pre-flight --------------------------------------------------------------
 
-[[ -f "$CONFIG" ]] || die "no config at $CONFIG — the install's config home holds none (run the onboarding wizard, or \`qcr install migrate\` to move a checkout config.toml there)"
+[[ -f "$CONFIG" ]] || die "no config at $CONFIG — the install's config home holds none (run the onboarding wizard, or \`qcr install migrate\` to move a checkout config.toml there: the checkout's is no longer read)"
 # a shipping mode ships the install's CONFIG HOME — the located
 # config and the profiles/ beside it — to the VM by the secrets' route (its own
 # playbook task, never the checkout rsync), and the container reads it there
 # ($QCR_CONFIG names the shipped file). So the config must live in such a home:
-# the legacy checkout config.toml is refused, not shipped. `verify` ships
-# nothing and still reads whatever the locator found.
+# a $QCR_CONFIG naming a file inside the checkout is refused, not shipped.
+# `verify` ships nothing and still reads whatever the locator found.
 SHIPPED_CONFIG="$(qcr_shipped_config "$SANDBOX_DIR")" || exit 1
 if [[ "$MODE" != "verify" && -z "$SHIPPED_CONFIG" ]]; then
   die "no config home to ship — the live config is $CONFIG, inside the checkout. Deploy ships the install's config home ($(qcr_config_home 2>/dev/null || echo '$XDG_CONFIG_HOME/qcr/<install>'), or the directory \$QCR_CONFIG names) to the VM, never the checkout's config.toml: move it with \`qcr install migrate\`, then re-run"
@@ -286,9 +287,9 @@ fi
 # The repo profile the config names, and every profile it `extends`,
 # must be found where the VM's daemon will look for it (src/install.ts
 # locateProfile, in the container): profiles/ beside the shipped config first,
-# then the rsynced checkout's profiles/ (the generic examples, and a legacy
-# install profile until migrate moves it). A profile found in neither fails
-# the VM's boot, so it fails here. Only presence is checked; the daemon's
+# then the rsynced checkout's profiles/ — for a generic example ONLY
+# (`qcr_is_example_profile`, pinned to EXAMPLE_PROFILES). A profile
+# found in neither fails the VM's boot, so it fails here. Only presence is checked; the daemon's
 # resolver refuses a cycle, so the walk just stops at a name it has seen.
 profile_extends() {
   awk '
@@ -305,10 +306,8 @@ profile_extends() {
 }
 # The shipped directory holding profile <name>, or nothing.
 shipped_profile_dir() {
-  local d
-  for d in "$CONFIG_HOME_SRC/profiles" "$SANDBOX_DIR/profiles"; do
-    [[ -d "$d/$1" ]] && { echo "$d/$1"; return 0; }
-  done
+  [[ -d "$CONFIG_HOME_SRC/profiles/$1" ]] && { echo "$CONFIG_HOME_SRC/profiles/$1"; return 0; }
+  qcr_is_example_profile "$1" && [[ -d "$SANDBOX_DIR/profiles/$1" ]] && echo "$SANDBOX_DIR/profiles/$1"
   return 0
 }
 # A profile name is one plain path segment (the daemon's assertPathSegment):
@@ -325,7 +324,7 @@ if [[ "$MODE" != "verify" && -n "$DEPLOY_PROFILE" ]]; then
   chain_at="$DEPLOY_PROFILE"
   chain_dir="$(shipped_profile_dir "$chain_at")"
   [[ -n "$chain_dir" ]] ||
-    die "config [review] profile = \"$DEPLOY_PROFILE\", but the config home does not hold it — looked in $CONFIG_HOME_SRC/profiles/$DEPLOY_PROFILE and $SANDBOX_DIR/profiles/$DEPLOY_PROFILE. The VM's daemon refuses to boot without its profile: put it in $CONFIG_HOME_SRC/profiles/ (or fix the name)"
+    die "config [review] profile = \"$DEPLOY_PROFILE\", but the config home does not hold it — looked in $CONFIG_HOME_SRC/profiles/$DEPLOY_PROFILE and the checkout's generic examples. The VM's daemon refuses to boot without its profile: put it in $CONFIG_HOME_SRC/profiles/ (\`qcr install migrate\` moves one left in the checkout), or fix the name"
   chain_seen=" $DEPLOY_PROFILE "
   PROFILE_CHAIN="$DEPLOY_PROFILE"
   while chain_base="$(profile_extends "$chain_dir/profile.toml")" && [[ -n "$chain_base" ]]; do
@@ -333,7 +332,7 @@ if [[ "$MODE" != "verify" && -n "$DEPLOY_PROFILE" ]]; then
     check_profile_name "$chain_base" "profile \"$chain_at\" extends"
     chain_dir="$(shipped_profile_dir "$chain_base")"
     [[ -n "$chain_dir" ]] ||
-      die "profile \"$chain_at\" extends \"$chain_base\", but the config home does not hold it — looked in $CONFIG_HOME_SRC/profiles/$chain_base and $SANDBOX_DIR/profiles/$chain_base. The VM's daemon refuses to boot without every profile in the chain"
+      die "profile \"$chain_at\" extends \"$chain_base\", but the config home does not hold it — looked in $CONFIG_HOME_SRC/profiles/$chain_base and the checkout's generic examples. The VM's daemon refuses to boot without every profile in the chain"
     chain_seen+="$chain_base "
     PROFILE_CHAIN+=" → $chain_base"
     chain_at="$chain_base"
@@ -385,9 +384,9 @@ if ! git -C "$SANDBOX_DIR" check-ignore -q --no-index "$CLONE_DIR/" 2>/dev/null;
 fi
 
 # 1b. the secrets source: the install locator's answer — the
-# configured [github] secrets_dir, else <config home>/secrets, else (legacy)
-# ~/.config/quickreview-bot — handed to the playbook's secrets copy as
-# secrets_src, so group_vars' legacy default is never what ships.
+# configured [github] secrets_dir, else <config home>/secrets — handed to the
+# playbook's secrets copy as secrets_src, so group_vars' hand-run default is
+# never what ships.
 SECRETS_SRC="$(qcr_locate_secrets "$(config_table_key github secrets_dir || true)")" || exit 1
 
 DIRTY="$(git -C "$SANDBOX_DIR" status --porcelain)"

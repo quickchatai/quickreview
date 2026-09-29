@@ -47,6 +47,7 @@ import {
 import { postTag } from "../src/severity.js";
 import { renderOverseerSystemPrompt } from "../src/templates.js";
 import { loadProfileAddenda } from "../src/profiles.js";
+import { locateProfile } from "../src/install.js";
 import { INITIAL_STATE, transition, type SmEvent } from "../src/statemachine.js";
 import { CANCEL_CAUSES, type PrLifecycleState } from "../src/state.js";
 
@@ -653,9 +654,12 @@ describe("what a built pass is told it may run is exactly what the guard lets th
    * into the allowlist sentence — fails on every variant.
    */
   it("no built pass variant names the park, NEEDS_HUMAN or awk, and each carries the rendered allowlist", () => {
+    // Every pack the locator would load (a stranded checkout pack is
+    // not one — it is never read, so it composes into nothing).
     const profiles = readdirSync(join(ROOT, "profiles"), { withFileTypes: true })
       .filter((e) => e.isDirectory())
-      .map((e) => e.name);
+      .map((e) => e.name)
+      .filter((name) => locateProfile({ root: ROOT, profile: name }) !== null);
     expect(
       profiles.length,
       "no profile packs found — the profile half of this fence would be vacuous",

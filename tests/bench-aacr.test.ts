@@ -17,7 +17,7 @@
 //      shape, the pinned binary, the bridge reading only the refresh-disabled
 //      token copy, and neither arm able to overwrite the other's run.
 
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import {
   existsSync,
   mkdirSync,
@@ -564,7 +564,17 @@ describe("what the session wrote → what the scorer reads", () => {
 });
 
 describe("the round the bench runs is the production round", () => {
-  const cfg = benchConfig(ROOT, "");
+  // The bench reads the install locator's config (inside the image: the copy
+  // bench.sh baked, named by QCR_CONFIG).: the checkout's own
+  // config.toml is never read, so the test names a production-shaped one.
+  const LIVE = join(ROOT, "tests", "fixtures", "config.toml");
+  const savedConfig = process.env.QCR_CONFIG;
+  process.env.QCR_CONFIG = LIVE;
+  afterAll(() => {
+    if (savedConfig === undefined) delete process.env.QCR_CONFIG;
+    else process.env.QCR_CONFIG = savedConfig;
+  });
+  const cfg = benchConfig("");
   const c = parseCaseSet(SMOKE).cases[0]!;
   const meta: PrefetchMeta = {
     instance_id: c.instance_id,
@@ -643,7 +653,7 @@ describe("the round the bench runs is the production round", () => {
     expect(order).not.toMatch(/\{\{[a-z_]+\}\}/);
     expect(order).toContain(`\`${meta.base_ref}\` @ \`${c.base_commit}\``);
     expect(system).toContain(`\`${c.repo}\``);
-    expect(system).not.toContain(identityVars(loadConfig(join(ROOT, "config.toml"))).repo);
+    expect(system).not.toContain(identityVars(loadConfig(LIVE)).repo);
   });
 
   it("the PR body is bounded ONCE, by UTF-8 bytes, before both places it appears", () => {
@@ -689,8 +699,9 @@ describe("the round the bench runs is the production round", () => {
 
   it("the bench config is production's, with only the profile swapped", () => {
     expect(cfg.review.profile).toBe("");
-    const deployed = loadConfig(join(ROOT, "config.toml")).review.profile;
-    expect(benchConfig(ROOT, deployed).review.profile).toBe(deployed);
+    const swapped = benchConfig("example-django");
+    expect(swapped.review.profile).toBe("example-django");
+    expect({ ...swapped, review: { ...swapped.review, profile: "" } }).toEqual(cfg);
     expect(cfg.models.conversation).toMatch(/^openai-codex\//);
     void buildBenchAgents; // exercised in the sandbox; the pure build is above
   });

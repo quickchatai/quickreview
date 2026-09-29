@@ -12,9 +12,10 @@
 //
 // `<install>` is `$QCR_INSTALL`, default `default` — one name per install, so
 // one PC can hold more than one. `$QCR_CONFIG` overrides the config FILE
-// outright (not the home). The checkout's own `config.toml` is the EXPAND
-// step's fallback: still read, never silently — every process that falls back
-// to it says so once, naming `qcr install migrate`. contracts it away.
+// outright (not the home). The checkout's own `config.toml` is NOT read
+// (contracted the expand step's fallback away): a checkout that still
+// holds one is STRANDED — `strandedCheckoutConfig` names it so a not-found can
+// point at `qcr install migrate`, which is the only thing that ever opens it.
 //
 // A session must never move any of this: `QCR_CONFIG=` and `QCR_INSTALL=` are
 // both in the bash guard's POLICY_RELOCATING_ENV, and `HOME=` /
@@ -26,9 +27,9 @@
 // first, then — when `$QCR_CONFIG` names a file — `profiles/` beside that file
 // (what makes the compose route work: it mounts the located config's directory,
 // profiles and all, and names the config inside the mount), then the checkout's
-// `profiles/`, which keeps the generic EXAMPLES (`EXAMPLE_PROFILES`) and, until
-// contracts it, the legacy home of every other profile — read, and
-// said so once, like the legacy config.
+// `profiles/` — for the generic EXAMPLES (`EXAMPLE_PROFILES`) only. Any other
+// profile left there is stranded, never read, and `qcr install
+// migrate` moves it.
 //
 // Pure where it can be: `locateConfig` takes the env and an `exists` probe, so
 // the tests drive it with temp XDG homes and never touch the operator's own.
@@ -128,11 +129,11 @@ export function stateHome(env: InstallEnv = process.env): string {
  * Where the live config came from:
  *   override — `$QCR_CONFIG`, taken as given (a missing file is the READER's
  *              error, never a reason to look elsewhere)
- *   home     — the install's config home (also the answer when nothing exists
- *              yet: that is where a new config is written)
- *   checkout — the legacy `<root>/config.toml`, the expand step's fallback
+ *   home     — the install's config home, whether or not the file exists yet
+ *              (that is where a new config is written, and a missing one is
+ *              the reader's error — never a reason to read the checkout's)
  */
-export type ConfigSource = "override" | "home" | "checkout";
+export type ConfigSource = "override" | "home";
 
 export interface LocatedConfig {
   path: string;
@@ -142,49 +143,44 @@ export interface LocatedConfig {
 }
 
 export interface LocateOptions {
-  /** The app checkout (the sandbox root) — only for the legacy fallback. */
-  root: string;
   env?: InstallEnv;
-  exists?: (path: string) => boolean;
 }
 
-export function locateConfig(opts: LocateOptions): LocatedConfig {
+export function locateConfig(opts: LocateOptions = {}): LocatedConfig {
   const env = opts.env ?? process.env;
-  const exists = opts.exists ?? existsSync;
   const home = configHome(env);
   const override = (env.QCR_CONFIG ?? "").trim();
   if (override !== "") return { path: resolve(override), source: "override", home };
-  const inHome = join(home, CONFIG_FILE);
-  if (exists(inHome)) return { path: inHome, source: "home", home };
-  const legacy = join(opts.root, CONFIG_FILE);
-  if (exists(legacy)) return { path: legacy, source: "checkout", home };
-  return { path: inHome, source: "home", home };
+  return { path: join(home, CONFIG_FILE), source: "home", home };
 }
-
-/** The legacy-fallback notice, one wording for every surface. */
-export function checkoutFallbackNotice(located: LocatedConfig): string {
-  return (
-    `qcr: reading the LEGACY checkout config ${located.path} — the install's config home is ` +
-    `${located.home}; move it there with \`qcr install migrate\``
-  );
-}
-
-const announced = new Set<string>();
 
 /**
- * `locateConfig` for a real process: the same answer, plus the checkout
- * fallback LOGGED — once per path per process, so a loader called on every
- * tick does not repeat itself, and never silently.
+ * The checkout's own `config.toml` when it is still there and is NOT the
+ * located config — i.e. an install that has not run `qcr install migrate`.
+ * Nothing reads it; this only lets a not-found name the way out.
+ * Null when `$QCR_CONFIG` names that very file (the operator's choice).
  */
-export function resolveConfigPath(
-  opts: LocateOptions & { log?: (line: string) => void },
-): LocatedConfig {
-  const located = locateConfig(opts);
-  if (located.source === "checkout" && !announced.has(located.path)) {
-    announced.add(located.path);
-    (opts.log ?? ((line: string) => console.error(line)))(checkoutFallbackNotice(located));
-  }
-  return located;
+export function strandedCheckoutConfig(opts: {
+  root: string;
+  env?: InstallEnv;
+  exists?: (path: string) => boolean;
+}): string | null {
+  const exists = opts.exists ?? existsSync;
+  const stranded = join(opts.root, CONFIG_FILE);
+  if (!exists(stranded)) return null;
+  return locateConfig(opts).path === resolve(stranded) ? null : stranded;
+}
+
+/** What a reader says when the located config is missing — one wording for
+ * every surface, naming `qcr install migrate` when the checkout strands one. */
+export function missingConfigMessage(located: LocatedConfig, stranded: string | null): string {
+  const base =
+    located.source === "override"
+      ? `no config at ${located.path} (named by QCR_CONFIG)`
+      : `no config at ${located.path} — the install's config home holds none (\`qcr onboard\` writes one)`;
+  return stranded === null
+    ? base
+    : `${base}; ${stranded} is no longer read — move it into the config home with \`qcr install migrate\``;
 }
 
 // ---- qcr install migrate ----------------------------------------------------
@@ -294,31 +290,45 @@ export const PROFILES_DIR = "profiles";
 /**
  * The checkout's GENERIC profiles — the ones that belong to the app, not to
  * any install: the examples, and `default`, the shipped behaviour
- * every generated profile extends. Every other directory under the checkout's `profiles/`
- * is an install's own profile still sitting in its legacy place: the lookup
- * reads it (announced), and `qcr install migrate` moves it into the config
- * home. A new example is registered here (a test holds the checkout to it).
+ * every generated profile extends. They are the ONLY profiles the lookup reads
+ * from the checkout. Any other directory under the checkout's `profiles/` is
+ * an install's own profile stranded in its old place: never read,
+ * and `qcr install migrate` moves it into the config home. A new example is
+ * registered here (a test holds the checkout to it, and the shell mirror's
+ * `QCR_EXAMPLE_PROFILES` to this list).
  */
 export const EXAMPLE_PROFILES: readonly string[] = ["default", "example-django", "minimal"];
 
-/**
- * Where a profile is looked up, in order, deduplicated:
- *   1. the install's config home — `<home>/profiles/`
- *   2. `profiles/` beside `$QCR_CONFIG`, when it is set (the compose route's
- *      mounted config home; the bench image's baked checkout)
- *   3. the checkout's `profiles/` — the generic examples, and the legacy place
- */
-export function profileSearchDirs(opts: { root: string; env?: InstallEnv }): string[] {
-  const env = opts.env ?? process.env;
-  const dirs = [join(configHome(env), PROFILES_DIR)];
-  const override = (env.QCR_CONFIG ?? "").trim();
-  if (override !== "") dirs.push(join(dirname(resolve(override)), PROFILES_DIR));
-  dirs.push(join(opts.root, PROFILES_DIR));
-  return [...new Set(dirs)];
-}
-
 /** Which of `profileSearchDirs` a profile was found in. */
 export type ProfileSource = "home" | "override" | "checkout";
+
+/**
+ * Where a profile is looked up, in order, deduplicated (the FIRST place a
+ * directory is reached by names its source):
+ *   1. the install's config home — `<home>/profiles/`
+ *   2. `profiles/` beside `$QCR_CONFIG`, when it is set (the compose route's
+ *      mounted config home; the VM's shipped one; the bench image's)
+ *   3. the checkout's `profiles/` — the generic examples ONLY
+ */
+function profileSearchPlaces(opts: {
+  root: string;
+  env?: InstallEnv;
+}): { dir: string; source: ProfileSource }[] {
+  const env = opts.env ?? process.env;
+  const places: { dir: string; source: ProfileSource }[] = [
+    { dir: join(configHome(env), PROFILES_DIR), source: "home" },
+  ];
+  const override = (env.QCR_CONFIG ?? "").trim();
+  if (override !== "")
+    places.push({ dir: join(dirname(resolve(override)), PROFILES_DIR), source: "override" });
+  places.push({ dir: join(opts.root, PROFILES_DIR), source: "checkout" });
+  return places.filter((p, i) => places.findIndex((q) => q.dir === p.dir) === i);
+}
+
+/** The directories of `profileSearchPlaces`, for a not-found to name. */
+export function profileSearchDirs(opts: { root: string; env?: InstallEnv }): string[] {
+  return profileSearchPlaces(opts).map((p) => p.dir);
+}
 
 export interface LocatedProfile {
   name: string;
@@ -335,9 +345,10 @@ function isDirectory(path: string): boolean {
 }
 
 /**
- * Find the named profile: the first search dir that holds it as a directory,
- * or `null` when none does (each loader words its own not-found). The name is
- * a plain path segment or a throw — `../x`, `a/b` and kin never reach a join.
+ * Find the named profile: the first search place that holds it as a
+ * directory — the checkout only for a generic example — or `null` when none
+ * does (each loader words its own not-found). The name is a plain path
+ * segment or a throw — `../x`, `a/b` and kin never reach a join.
  */
 export function locateProfile(opts: {
   root: string;
@@ -346,48 +357,47 @@ export function locateProfile(opts: {
   isDir?: (path: string) => boolean;
 }): LocatedProfile | null {
   const name = assertPathSegment("profile", opts.profile);
-  const env = opts.env ?? process.env;
   const isDir = opts.isDir ?? isDirectory;
-  const homeDir = join(configHome(env), PROFILES_DIR);
-  const checkoutDir = join(opts.root, PROFILES_DIR);
-  for (const base of profileSearchDirs({ root: opts.root, env })) {
-    const dir = join(base, name);
-    if (!isDir(dir)) continue;
-    const source: ProfileSource =
-      base === homeDir ? "home" : base === checkoutDir ? "checkout" : "override";
-    return { name, dir, source };
+  for (const place of profileSearchPlaces(opts)) {
+    if (place.source === "checkout" && !EXAMPLE_PROFILES.includes(name)) continue;
+    const dir = join(place.dir, name);
+    if (isDir(dir)) return { name, dir, source: place.source };
   }
   return null;
 }
 
-/** An install's own profile read from the checkout: the expand step's
- * fallback. The generic examples live there by design and are not this. */
-export function isLegacyCheckoutProfile(located: LocatedProfile): boolean {
-  return located.source === "checkout" && !EXAMPLE_PROFILES.includes(located.name);
-}
-
-const announcedProfiles = new Set<string>();
-
 /**
- * `locateProfile` for a real process: the same answer, plus a legacy
- * checkout profile LOGGED — once per path per process, never silently.
+ * The checkout's `profiles/<name>` when it is an install's own profile left
+ * there (not a generic example) — stranded, never read. Only for a
+ * not-found to name `qcr install migrate`; null when there is none, or when
+ * `profiles/` beside `$QCR_CONFIG` IS the checkout's (then it was read).
  */
-export function resolveProfile(opts: {
+export function strandedCheckoutProfile(opts: {
   root: string;
   profile: string;
   env?: InstallEnv;
-  log?: (line: string) => void;
-}): LocatedProfile | null {
-  const located = locateProfile(opts);
-  if (located && isLegacyCheckoutProfile(located) && !announcedProfiles.has(located.dir)) {
-    announcedProfiles.add(located.dir);
-    const home = join(configHome(opts.env ?? process.env), PROFILES_DIR);
-    (opts.log ?? ((line: string) => console.error(line)))(
-      `qcr: reading the LEGACY checkout profile ${located.dir} — an install's profile belongs in ` +
-        `${home}; move it there with \`qcr install migrate\``,
-    );
+}): string | null {
+  const name = assertPathSegment("profile", opts.profile);
+  if (EXAMPLE_PROFILES.includes(name)) return null;
+  const checkout = join(opts.root, PROFILES_DIR);
+  if (!profileSearchPlaces(opts).some((p) => p.dir === checkout && p.source === "checkout"))
+    return null;
+  const dir = join(checkout, name);
+  return isDirectory(dir) ? dir : null;
+}
+
+/** Every stranded checkout profile (see `strandedCheckoutProfile`), sorted. */
+export function strandedCheckoutProfiles(opts: { root: string; env?: InstallEnv }): string[] {
+  let names: string[];
+  try {
+    names = readdirSync(join(opts.root, PROFILES_DIR)).sort();
+  } catch {
+    return [];
   }
-  return located;
+  return names
+    .filter((name) => SEGMENT_RE.test(name) && !name.includes(".."))
+    .map((profile) => strandedCheckoutProfile({ ...opts, profile }))
+    .filter((dir): dir is string => dir !== null);
 }
 
 // ---- qcr install migrate: profiles -------------------------------------------
@@ -523,15 +533,14 @@ export function profileMigrateReport(outcomes: ProfileMigrateOutcome[]): {
 // ---- secrets ------------------------------------------------------
 //
 // The install's secrets live in `<config home>/secrets/` — one install, one
-// directory. The legacy `~/.config/quickreview-bot/` is the expand step's
-// fallback, exactly as the checkout config is for config.toml: still read,
-// never silently, and `qcr install migrate` moves it. contracts it.
+// directory. The old `~/.config/quickreview-bot/` is never read (
+// contracted the expand step's fallback away); only `qcr install migrate`
+// opens it, to move what it still holds into the home.
 //
 // `[github] secrets_dir` still names the dir outright when the operator set
-// one. Empty — or the legacy default spelling every config shipped with until
-// now — means "the locator decides", so an install that never touched the key
-// follows its secrets into the home the moment they are moved there, with no
-// config edit.
+// one. Empty — or the old default spelling every config shipped with before
+// the config home — means "the locator decides", so a config that never
+// touched the key reads the home, never the old dir it happens to spell.
 //
 // The companion's OpenViking key file is the ONE credential deliberately kept
 // OUT of the config home: that home is mounted into the reviewer container on
@@ -560,13 +569,14 @@ export function secretsHome(env: InstallEnv = process.env): string {
 }
 
 /** The pre-config-home secrets dir, `$HOME/.config/quickreview-bot` (never XDG:
- * it was always spelled `~/.config/…`). */
+ * it was always spelled `~/.config/…`). Nothing reads it but migrate. */
 export function legacySecretsDir(env: InstallEnv = process.env): string {
   return join(homeOf(env), ".config", "quickreview-bot");
 }
 
 /** Is a configured `secrets_dir` just the old shipped default? Then it names
- * no choice the operator made, and the locator decides. */
+ * no choice the operator made, and the locator decides — the home, never the
+ * old dir itself. */
 export function isLegacySecretsSpelling(value: string, env: InstallEnv = process.env): boolean {
   const v = value.trim().replace(/\/+$/, "");
   return v === LEGACY_SECRETS_SPELLING || expandHomeIn(v, env) === legacySecretsDir(env);
@@ -577,11 +587,10 @@ export function isLegacySecretsSpelling(value: string, env: InstallEnv = process
  *   configured — `[github] secrets_dir`, set to something other than the old
  *                default: the operator named it, it is taken as given
  *   override   — the caller's env override (`$QC_SECRETS_DIR`, the wizards')
- *   home       — `<config home>/secrets` (also the answer when nothing exists
- *                yet: that is where new secrets are written)
- *   legacy     — `~/.config/quickreview-bot`, the expand step's fallback
+ *   home       — `<config home>/secrets`, whether or not it exists yet (that
+ *                is where new secrets are written)
  */
-export type SecretsSource = "configured" | "override" | "home" | "legacy";
+export type SecretsSource = "configured" | "override" | "home";
 
 export interface LocatedSecrets {
   path: string;
@@ -596,46 +605,29 @@ export interface LocateSecretsOptions {
   /** A caller's env override (`$QC_SECRETS_DIR`), below a configured value. */
   override?: string | null;
   env?: InstallEnv;
-  exists?: (path: string) => boolean;
 }
 
 export function locateSecrets(opts: LocateSecretsOptions = {}): LocatedSecrets {
   const env = opts.env ?? process.env;
-  const exists = opts.exists ?? existsSync;
   const home = secretsHome(env);
   const configured = (opts.configured ?? "").trim();
   if (configured !== "" && !isLegacySecretsSpelling(configured, env))
     return { path: expandHomeIn(configured, env), source: "configured", home };
   const override = (opts.override ?? "").trim();
   if (override !== "") return { path: expandHomeIn(override, env), source: "override", home };
-  if (exists(home)) return { path: home, source: "home", home };
-  const legacy = legacySecretsDir(env);
-  if (exists(legacy)) return { path: legacy, source: "legacy", home };
   return { path: home, source: "home", home };
 }
 
-/** The legacy-secrets notice, one wording for every surface. */
-export function legacySecretsNotice(located: { path: string; home: string }): string {
-  return (
-    `qcr: reading secrets from the LEGACY dir ${located.path} — the install's secrets home is ` +
-    `${located.home}; move them there with \`qcr install migrate\``
-  );
-}
-
-/** `locateSecrets` for a real process: the legacy fallback LOGGED, once per
- * path per process (the config loader runs on every tick). */
-export function resolveSecretsDir(
-  opts: LocateSecretsOptions & { log?: (line: string) => void } = {},
-): LocatedSecrets {
-  const located = locateSecrets(opts);
-  if (located.source === "legacy") announce(located.path, legacySecretsNotice(located), opts.log);
-  return located;
-}
-
-function announce(path: string, line: string, log?: (line: string) => void): void {
-  if (announced.has(path)) return;
-  announced.add(path);
-  (log ?? ((l: string) => console.error(l)))(line);
+/** The old secrets dir when it still holds anything — an install that has
+ * not run `qcr install migrate`. Never read; only named, so a missing
+ * credential can point at the way out. Null when it is gone or empty. */
+export function strandedLegacySecrets(env: InstallEnv = process.env): string | null {
+  const dir = legacySecretsDir(env);
+  try {
+    return readdirSync(dir).length > 0 ? dir : null;
+  } catch {
+    return null;
+  }
 }
 
 /** `$XDG_CONFIG_HOME/qcr-operator/<install>` — the operator-only credentials
@@ -666,7 +658,7 @@ export function companionConfigMirrorDir(env: InstallEnv = process.env): string 
   return join(operatorStateHome(env), "companion-config");
 }
 
-export type KeysFileSource = "override" | "home" | "legacy";
+export type KeysFileSource = "override" | "home";
 
 export interface LocatedKeysFile {
   path: string;
@@ -678,40 +670,22 @@ export interface LocatedKeysFile {
 /**
  * The companion's OpenViking key file (two USER keys, handed to the companion
  * container by `--env-file`, so no value ever reaches an argv):
- * `$QCR_OPENVIKING_KEYS` as given, else the operator home's file, else the
- * legacy `~/.config/quickreview-bot/openviking-keys.env`, else the operator home.
+ * `$QCR_OPENVIKING_KEYS` as given, else the operator home's file — whether or
+ * not it exists yet. The old `~/.config/quickreview-bot/` copy is never read.
  */
 export function locateKeysFile(
-  opts: { env?: InstallEnv & { QCR_OPENVIKING_KEYS?: string }; exists?: (path: string) => boolean } = {},
+  opts: { env?: InstallEnv & { QCR_OPENVIKING_KEYS?: string } } = {},
 ): LocatedKeysFile {
   const env = opts.env ?? process.env;
-  const exists = opts.exists ?? existsSync;
   const home = join(operatorHome(env), KEYS_FILE);
   const override = (env.QCR_OPENVIKING_KEYS ?? "").trim();
   if (override !== "") return { path: override, source: "override", home };
-  if (exists(home)) return { path: home, source: "home", home };
-  const legacy = join(legacySecretsDir(env), KEYS_FILE);
-  if (exists(legacy)) return { path: legacy, source: "legacy", home };
   return { path: home, source: "home", home };
 }
 
-/** `locateKeysFile` with the legacy fallback logged once per process. */
-export function resolveKeysFile(
-  opts: Parameters<typeof locateKeysFile>[0] & { log?: (line: string) => void } = {},
-): LocatedKeysFile {
-  const located = locateKeysFile(opts);
-  if (located.source === "legacy") {
-    announce(
-      located.path,
-      `qcr: reading the OpenViking key file from the LEGACY path ${located.path} — its home is ` +
-        `${located.home}; move it there with \`qcr install migrate\``,
-      opts.log,
-    );
-  }
-  return located;
-}
-
 // ---- qcr install migrate: the secrets half ----------------------------------
+//
+// The one place the old dir is opened — to empty it into the homes.
 
 export type SecretFileOutcome =
   /** Moved, mode bits intact (0600 stays 0600). */
@@ -856,7 +830,7 @@ export function secretsMigrateReport(m: SecretsMigration): { code: number; lines
   lines.push(
     m.remaining.length === 0
       ? `secrets: removed the now-empty ${m.from}; every reader finds them in ${m.to} (restart a running daemon, TUI or companion)`
-      : `secrets: ${m.from} still holds ${m.remaining.join(", ")} — resolve those by hand; every reader already prefers ${m.to}`,
+      : `secrets: ${m.from} still holds ${m.remaining.join(", ")} — resolve those by hand; nothing reads them there, every reader reads ${m.to}`,
   );
   return { code, lines };
 }

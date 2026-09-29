@@ -48,7 +48,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { dirname, isAbsolute, join } from "node:path";
 import type { Socket } from "node:net";
 import { mintAppJwt } from "../../githubAuth.js";
-import { resolveSecretsDir } from "../../install.js";
+import { locateSecrets } from "../../install.js";
 import { CHOICE_KEYS } from "../choices.js";
 import { CONFIG_FILL_STEP_ID } from "./configfill.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
@@ -831,7 +831,7 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
     // the install locator decides whatever the choice does not name.
     const secretsDir =
       opts.secretsDir ??
-      resolveSecretsDir({ configured: choiceDir, override: process.env.QC_SECRETS_DIR }).path;
+      locateSecrets({ configured: choiceDir, override: process.env.QC_SECRETS_DIR }).path;
     const root = opts.repoRoot ?? dirname(ctx.adapters.paths.stateDir);
     return {
       root,

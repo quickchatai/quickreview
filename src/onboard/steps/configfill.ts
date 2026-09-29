@@ -510,7 +510,7 @@ export const DERIVABLES: readonly Derivable[] = [
     path: "[github] secrets_dir",
     explain:
       "the install's secrets directory — left empty in the file, so the install locator finds it: <config home>/secrets " +
-      "(or, until `qcr install migrate`, the legacy ~/.config/quickreview-bot) — the same dir deploy/collect-secrets.sh fills",
+      "— the same dir deploy/collect-secrets.sh fills",
     // Fill-time only: the loader EXPANDS `~`, so writing back a parsed value
     // would replace the template's portable `~/…` with this machine's home.
     write: (f, fresh) =>

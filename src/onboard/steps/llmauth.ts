@@ -42,7 +42,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { resolveSecretsDir as resolveLocatedSecrets } from "../../install.js";
+import { locateSecrets } from "../../install.js";
 import { CHOICE_KEYS, type AuthRoute } from "../choices.js";
 import type {
   CheckResult,
@@ -147,10 +147,10 @@ export function readTomlString(text: string, section: string, key: string): stri
 
 /** Where the secrets live: `[github] secrets_dir` wins (it is what the daemon
  * and the compose mount actually use), then $QC_SECRETS_DIR, then the install
- * locator's answer — `<config home>/secrets`, or the legacy dir
- * while it still holds them: the same answer the daemon's loader reaches. */
+ * locator's answer — `<config home>/secrets`: the same answer the
+ * daemon's loader reaches. */
 export function resolveSecretsDir(configText: string, home: string, envDir?: string): string {
-  return resolveLocatedSecrets({
+  return locateSecrets({
     configured: readTomlString(configText, "github", "secrets_dir"),
     override: envDir,
     env: { ...process.env, HOME: home },

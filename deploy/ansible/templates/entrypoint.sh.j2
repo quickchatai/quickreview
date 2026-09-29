@@ -15,17 +15,15 @@ fi
 [[ -L "$SANDBOX/state" ]] || ln -sfn /opt/quickreview/state "$SANDBOX/state"
 
 # The code resolves secrets through the install locator: an empty
-# (or legacy-default) config.toml [github].secrets_dir means
+# (or old-default) config.toml [github].secrets_dir means
 # <config home>/secrets, i.e. ${XDG_CONFIG_HOME:-~/.config}/qcr/<install>/secrets
-# — point that at the read-only secrets mount. The legacy
-# ~/.config/quickreview-bot link stays until the contract step, for a
-# config that still names it as an absolute path.
+# — point that at the read-only secrets mount. (The old ~/.config/quickreview-bot
+# link is gone with the contract step,: nothing reads that dir.)
 XDG_BASE="${XDG_CONFIG_HOME:-}"
 [[ "$XDG_BASE" == /* ]] || XDG_BASE="$HOME/.config"
 SECRETS_HOME="$XDG_BASE/qcr/${QCR_INSTALL:-default}/secrets"
-mkdir -p "$HOME/.config" "$(dirname "$SECRETS_HOME")"
+mkdir -p "$(dirname "$SECRETS_HOME")"
 [[ -L "$SECRETS_HOME" ]] || ln -sfn "$SECRETS" "$SECRETS_HOME"
-[[ -L "$HOME/.config/quickreview-bot" ]] || ln -sfn "$SECRETS" "$HOME/.config/quickreview-bot"
 
 # OpenAI auth for pi — native, two routes (findings):
 #   1. API key: exported here so the tmux server and every pi process inherit it.

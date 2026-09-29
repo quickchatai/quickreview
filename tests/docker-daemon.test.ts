@@ -352,7 +352,8 @@ describe("docker-compose topology", () => {
 
   it("state on a volume, secrets read-only, pihome persistent, repo as the sandbox", () => {
     expect(compose).toContain("qcr-state:/opt/quickreview/state");
-    expect(compose).toMatch(/quickreview-bot\}:\/opt\/quickreview\/secrets:ro/);
+    expect(compose).toContain("${QCR_SECRETS_DIR:-~/.config/qcr/default/secrets}:/opt/quickreview/secrets:ro");
+    expect(compose).not.toContain("quickreview-bot"); //: the old dir is never mounted
     expect(compose).toContain("qcr-pihome:/home/review/.pi");
     expect(compose).toContain("./:/opt/quickreview/sandbox");
   });
@@ -367,7 +368,7 @@ describe("docker-compose topology", () => {
   // the config the install locator found on the host reaches the
   // container read-only; the entrypoint names it only when it is there, so a
   // legacy checkout config (empty home mounted) still boots.
-  it("mounts the install's config home read-only and names the config only when present", () => {
+  it("mounts the install's config home read-only and ALWAYS names the config in it", () => {
     expect(compose).toContain(
       "${QCR_CONFIG_HOME:-./docker/daemon/no-config-home}:/opt/quickreview/config-home:ro",
     );
@@ -377,8 +378,10 @@ describe("docker-compose topology", () => {
     expect(existsSync(fallback)).toBe(true);
     expect(existsSync(join(fallback, "config.toml"))).toBe(false);
     expect(compose).toMatch(/QCR_CONFIG_NAME: \$\{QCR_CONFIG_NAME:-config\.toml\}/);
-    expect(entrypoint).toMatch(
-      /\[\[ -z "\$\{QCR_CONFIG:-\}" && -f "\$CONFIG_HOME_FILE" \]\] && export QCR_CONFIG="\$CONFIG_HOME_FILE"/,
+    // No "only when present": there is no sandbox config to fall back to, so
+    // an empty mount fails the boot naming this file.
+    expect(entrypoint).toContain(
+      'export QCR_CONFIG="${QCR_CONFIG:-/opt/quickreview/config-home/${QCR_CONFIG_NAME:-config.toml}}"',
     );
     // Before the daemon starts, which inherits it and hands it to sessions.
     expect(entrypoint.indexOf("export QCR_CONFIG=")).toBeLessThan(
@@ -480,7 +483,7 @@ describe("entrypoint secrets link", () => {
       const { locateSecrets } = await import("../src/install.js");
       const text = readFileSync(resolve(root, rel), "utf8");
       const start = text.indexOf('XDG_BASE="${XDG_CONFIG_HOME:-}"');
-      const end = text.indexOf('ln -sfn "$SECRETS" "$HOME/.config/quickreview-bot"');
+      const end = text.indexOf('[[ -L "$SECRETS_HOME" ]] || ln -sfn "$SECRETS" "$SECRETS_HOME"');
       expect(start).toBeGreaterThan(-1);
       expect(end).toBeGreaterThan(start);
       const block = text.slice(start, text.indexOf("\n", end));
@@ -497,6 +500,9 @@ describe("entrypoint secrets link", () => {
         const located = locateSecrets({ configured: "~/.config/quickreview-bot", env: { HOME: home } });
         expect(located.source).toBe("home");
         expect(readFileSync(join(located.path, "app_id"), "utf8")).toBe("1\n");
+        // the old compatibility link is gone — nothing reads that dir.
+        expect(existsSync(join(home, ".config", "quickreview-bot"))).toBe(false);
+        expect(text).not.toContain("quickreview-bot\"");
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }

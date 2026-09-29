@@ -13,7 +13,7 @@
 // bodies, and what `renderRoundPrompt` puts in a round order — for a generic
 // install (no profile, ecosystem none) and for quickchat (its pack, django).
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PASS_ADDENDA, buildAgents, type PassAddendum } from "../src/include.js";
@@ -22,10 +22,11 @@ import { DJANGO_ECOSYSTEM, NONE_ECOSYSTEM } from "../src/ecosystem.js";
 import { loadProfileAddenda } from "../src/profiles.js";
 import { renderRoundPrompt, roundTemplateFile } from "../src/templates.js";
 import type { RoundOrder, RoundType } from "../src/types.js";
+import { locateProfile } from "../src/install.js";
 
 const sandbox = join(import.meta.dirname, "..");
 // The quickchat pack is excluded from the public snapshot; its pins self-skip.
-const HAS_QC = existsSync(join(sandbox, "profiles", "quickchat"));
+const HAS_QC = locateProfile({ root: sandbox, profile: "quickchat" }) !== null; //: the config home
 
 /** Build the real agents/ seeds; return pass name → its sol-med (or only) body. */
 function build(addenda: readonly PassAddendum[], ecosystem?: EcosystemName): Map<string, string> {

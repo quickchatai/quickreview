@@ -41,6 +41,9 @@ import {
   composeRepointReport,
   secretsMigrateReport,
   stateHome,
+  strandedCheckoutConfig,
+  strandedCheckoutProfiles,
+  strandedLegacySecrets,
   type InstallEnv,
 } from "./install.js";
 import { operatorCommandWriteScript } from "./tui/unwedge.js";
@@ -650,7 +653,7 @@ async function cmdDrain(rest: string[]): Promise<number> {
 
 /**
  * `qcr install <where|migrate>`. `where` prints what the install
- * locator resolves; `migrate` moves the checkout's legacy config.toml into the
+ * locator resolves; `migrate` moves the checkout's old config.toml into the
  * install's config home, and every install profile out of the
  * checkout's `profiles/` — idempotent, and it never overwrites a differing
  * config or profile. Deliberately NOT loadConfig(): a config that does not
@@ -659,7 +662,9 @@ async function cmdDrain(rest: string[]): Promise<number> {
  * (without the configured `[github] secrets_dir`, which only a parsed config
  * knows), and `migrate` moves `~/.config/quickreview-bot/` into
  * `<config home>/secrets/` — and repoints a compose `.env` whose
- * `QCR_SECRETS_DIR` still names it.
+ * `QCR_SECRETS_DIR` still names it.: nothing else reads those old
+ * places any more, so `where` lists whatever is still STRANDED there, and
+ * `migrate` is the one command that opens them.
  */
 export function cmdInstall(
   rest: string[],
@@ -674,19 +679,24 @@ export function cmdInstall(
   const log = deps.log ?? ((line: string) => console.log(line));
   switch (rest[0]) {
     case "where": {
-      const located = locateConfig({ root, env });
-      log(`config      ${located.path}  (${located.source})`);
+      const located = locateConfig({ env });
+      log(`config      ${located.path}  (${located.source}${existsSync(located.path) ? "" : ", missing"})`);
       log(`config home ${located.home}`);
       log(`state home  ${stateHome(env)}`);
-      log(`profiles    ${profileSearchDirs({ root, env }).join(" → ")}`);
+      log(`profiles    ${profileSearchDirs({ root, env }).join(" → ")}  (the checkout: generic examples only)`);
       const secrets = locateSecrets({ env });
       const keys = locateKeysFile({ env });
       log(`secrets     ${secrets.path}  (${secrets.source}; a set [github] secrets_dir overrides it)`);
       log(`memory keys ${keys.path}  (${keys.source})`);
-      if (located.source === "checkout")
-        log("the checkout config is the legacy fallback — `qcr install migrate` moves it");
-      if (secrets.source === "legacy" || keys.source === "legacy")
-        log("the legacy secrets dir is the fallback — `qcr install migrate` moves it");
+      // nothing reads the old places any more, so an install that
+      // has not migrated is told what it is stranding, and the way out.
+      const stranded = [
+        strandedCheckoutConfig({ root, env }),
+        ...strandedCheckoutProfiles({ root, env }),
+        strandedLegacySecrets(env),
+      ].filter((p): p is string => p !== null);
+      for (const path of stranded)
+        log(`stranded    ${path} — no longer read; \`qcr install migrate\` moves it into the homes`);
       return 0;
     }
     case "migrate": {

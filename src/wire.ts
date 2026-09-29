@@ -115,7 +115,7 @@ export function buildParts(root = sandboxRoot(), loaded = loadConfig()): Product
     cfg,
     root,
     ovSessions,
-    configPath: liveConfigPath(root),
+    configPath: liveConfigPath(),
   });
   return { cfg, root, minter, gate, adapter, sessions };
 }

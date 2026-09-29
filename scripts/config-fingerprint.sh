@@ -8,8 +8,8 @@
 # `qcr_shipped_config`) and prints one line:
 #
 #   config=<sha256> profiles=<sha256>   the home a sync ships (or shipped)
-#   none                                no shippable home: no config, or only
-#                                       the legacy checkout config.toml
+#   none                                no shippable home: no config, or a
+#                                       QCR_CONFIG inside the checkout
 #
 # The TUI runs it twice — here, over the home a sync WOULD ship, and inside the
 # VM container (whose QCR_CONFIG names the home a sync DID ship). Read-only.

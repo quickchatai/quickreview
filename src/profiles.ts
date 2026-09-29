@@ -65,7 +65,12 @@ import { EMPTY_HEURISTICS, PROFILE_EXTENDABLE_LENSES } from "./heuristics.js";
 import type { HeuristicsExtension } from "./heuristics.js";
 import { PASS_ADDENDA, splitFrontmatter } from "./include.js";
 import type { PassAddendum, PassAddendumScope } from "./include.js";
-import { profileSearchDirs, resolveProfile, type InstallEnv } from "./install.js";
+import {
+  locateProfile,
+  profileSearchDirs,
+  strandedCheckoutProfile,
+  type InstallEnv,
+} from "./install.js";
 import {
   LENS_TUNING_ID_PREFIXES,
   mergeLensTuning,
@@ -74,19 +79,28 @@ import {
 } from "./lenstuning.js";
 
 /** How a loader finds the profile: the environment the install locator reads
- * (default `process.env`) and where a legacy checkout profile is announced. */
+ * (default `process.env`). */
 export interface ProfileLookup {
   env?: InstallEnv;
-  log?: (line: string) => void;
+}
+
+/** Where a not-found looked — and, when the checkout still strands a profile
+ * of that name (never read), the way out. */
+function notFoundWhere(root: string, profile: string, lookup: ProfileLookup): string {
+  const env = lookup.env ? { env: lookup.env } : {};
+  const looked = `looked in ${profileSearchDirs({ root, ...env }).join(", ")} (the checkout's: generic examples only)`;
+  const stranded = strandedCheckoutProfile({ root, profile, ...env });
+  return stranded === null
+    ? looked
+    : `${looked}; ${stranded} is no longer read — move it into the config home with \`qcr install migrate\``;
 }
 
 /** The named profile's directory, wherever the locator finds it — or a loud
  * not-found naming every place it looked. */
 function profileDirOrThrow(root: string, profile: string, lookup: ProfileLookup): string {
-  const located = resolveProfile({ root, profile, ...lookup });
+  const located = locateProfile({ root, profile, ...lookup });
   if (located) return located.dir;
-  const looked = profileSearchDirs({ root, ...(lookup.env ? { env: lookup.env } : {}) });
-  throw new Error(`[review] profile "${profile}" not found — looked in ${looked.join(", ")}`);
+  throw new Error(`[review] profile "${profile}" not found — ${notFoundWhere(root, profile, lookup)}`);
 }
 
 const ID_RE = /^[a-z0-9][a-z0-9-]*$/;
@@ -190,11 +204,10 @@ function profileChain(root: string, profile: string, lookup: ProfileLookup): Pro
         `[review] profile "${profile}": extends cycle ${[...seen, base].join(" → ")} — a profile chain must end in a profile that extends nothing`,
       );
     }
-    const located = resolveProfile({ root, profile: base, ...lookup });
+    const located = locateProfile({ root, profile: base, ...lookup });
     if (!located) {
-      const looked = profileSearchDirs({ root, ...(lookup.env ? { env: lookup.env } : {}) });
       throw new Error(
-        `[review] profile "${name}" extends "${base}", which was not found — looked in ${looked.join(", ")}`,
+        `[review] profile "${name}" extends "${base}", which was not found — ${notFoundWhere(root, base, lookup)}`,
       );
     }
     name = base;
@@ -377,7 +390,7 @@ export function loadProfileEcosystem(
   lookup: ProfileLookup = {},
 ): EcosystemName {
   if (profile === "") return "none";
-  if (!resolveProfile({ root, profile, ...lookup })) return "none";
+  if (!locateProfile({ root, profile, ...lookup })) return "none";
   // child-wins — the nearest profile in the chain that sets the key.
   // Every layer's value is validated, an overridden one too: a base that
   // names an unknown ecosystem is broken for every other child of it.
@@ -416,7 +429,7 @@ export function loadProfileLensTuning(
   lookup: ProfileLookup = {},
 ): Record<string, LensTuning> {
   if (profile === "") return {};
-  if (!resolveProfile({ root, profile, ...lookup })) return {};
+  if (!locateProfile({ root, profile, ...lookup })) return {};
   let merged: Record<string, LensTuning> = {};
   for (const layer of profileChain(root, profile, lookup)) {
     if (layer.lenses === undefined) continue;

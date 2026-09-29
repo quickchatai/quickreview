@@ -11,9 +11,11 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   configHome,
+  EXAMPLE_PROFILES,
   legacySecretsDir,
   locateConfig,
   locateKeysFile,
+  locateProfile,
   locateSecrets,
   operatorHome,
   profileSearchDirs,
@@ -56,7 +58,7 @@ function shell(env: InstallEnv): { code: number; lines: string[]; stderr: string
 }
 
 function reference(env: InstallEnv): string[] {
-  return [locateConfig({ root, env }).path, configHome(env), stateHome(env)];
+  return [locateConfig({ env }).path, configHome(env), stateHome(env)];
 }
 
 const put = (path: string): void => {
@@ -75,7 +77,7 @@ describe("install-locator.sh ≡ src/install.ts", () => {
       }),
     ],
     [
-      "checkout only → the legacy fallback",
+      "checkout only → still the config home (the checkout is never read)",
       () => {
         put(join(root, "config.toml"));
         return { HOME: join(dir, "home"), XDG_CONFIG_HOME: join(dir, "xdg-config") };
@@ -163,12 +165,85 @@ describe("install-locator.sh ≡ src/install.ts", () => {
     }
   });
 
-  it("the legacy fallback is silent to a machine caller (stderr not a terminal)", () => {
+  it("a stranded checkout config is never printed, and nothing is said about it", () => {
     put(join(root, "config.toml"));
     const sh = shell({ HOME: join(dir, "home"), XDG_CONFIG_HOME: join(dir, "xdg-config") });
-    expect(sh.lines[0]).toBe(join(root, "config.toml"));
+    expect(sh.lines[0]).toBe(join(dir, "xdg-config", "qcr", "default", "config.toml"));
     expect(sh.stderr).toBe("");
   });
+});
+
+describe("qcr_profile_dir ≡ locateProfile", () => {
+  // deploy.sh's preflight and bench.sh decide which profiles the VM / image
+  // can read from this; the checkout serves the generic examples ONLY.
+  function shellDir(env: InstallEnv, name: string): string {
+    const r = spawnSync(
+      "bash",
+      ["-c", '. "$1"; set -e; qcr_profile_dir "$2" "$3"', "l", locatorSh, root, name],
+      {
+        encoding: "utf8",
+        cwd: dir,
+        env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...env } as NodeJS.ProcessEnv,
+      },
+    );
+    expect(r.status, r.stderr).toBe(0);
+    return r.stdout.trim();
+  }
+  const putProfile = (base: string, name: string): void => {
+    mkdirSync(join(base, "profiles", name), { recursive: true });
+  };
+  const base = (): InstallEnv => ({
+    HOME: join(dir, "home"),
+    XDG_CONFIG_HOME: join(dir, "xdg-config"),
+  });
+
+  it("QCR_EXAMPLE_PROFILES is EXAMPLE_PROFILES", () => {
+    const r = spawnSync("bash", ["-c", '. "$1"; printf "%s\\n" "${QCR_EXAMPLE_PROFILES[@]}"', "l", locatorSh], {
+      encoding: "utf8",
+    });
+    expect(r.stdout.trim().split("\n")).toEqual([...EXAMPLE_PROFILES]);
+  });
+
+  const cases: Array<[string, () => { env: InstallEnv; name: string }]> = [
+    [
+      "an example in the checkout → found",
+      () => (putProfile(root, "minimal"), { env: base(), name: "minimal" }),
+    ],
+    [
+      "an install profile left in the checkout → nothing",
+      () => (putProfile(root, "house"), { env: base(), name: "house" }),
+    ],
+    [
+      "the home beats the checkout's example",
+      () => {
+        putProfile(root, "minimal");
+        putProfile(join(dir, "xdg-config", "qcr", "default"), "minimal");
+        return { env: base(), name: "minimal" };
+      },
+    ],
+    [
+      "beside QCR_CONFIG elsewhere",
+      () => {
+        putProfile(join(dir, "m"), "house");
+        return { env: { ...base(), QCR_CONFIG: join(dir, "m", "c.toml") }, name: "house" };
+      },
+    ],
+    [
+      "QCR_CONFIG inside the checkout → its profiles/ is the override place",
+      () => {
+        putProfile(root, "house");
+        return { env: { ...base(), QCR_CONFIG: join(root, "config.toml") }, name: "house" };
+      },
+    ],
+  ];
+  for (const [name, arrange] of cases) {
+    it(name, () => {
+      const c = arrange();
+      expect(shellDir(c.env, c.name)).toBe(
+        locateProfile({ root, profile: c.name, env: c.env })?.dir ?? "",
+      );
+    });
+  }
 });
 
 describe("qcr_profile_dirs ≡ profileSearchDirs", () => {
@@ -271,7 +346,7 @@ describe("qcr_locate_secrets / qcr_locate_keys_file ≡ src/install.ts", () => {
   const cases: Array<[string, () => { env: KeysEnv; configured: string; override: string }]> = [
     ["nothing anywhere → the homes", () => ({ env: base(), configured: "", override: "" })],
     [
-      "legacy dir only → the legacy fallback (secrets and key file)",
+      "legacy dir only → still the homes (the old dir is never read)",
       () => {
         const env = base();
         mkdir(legacySecretsDir(env));

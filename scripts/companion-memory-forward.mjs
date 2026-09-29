@@ -78,8 +78,8 @@ export const DEFAULTS = {
  * The keys file (0600, two USER keys) — the install locator's rule
  * (`locateKeysFile` in src/install.ts), the same path
  * src/tui/companion.ts reads: `QCR_OPENVIKING_KEYS`, else the operator home
- * `$XDG_CONFIG_HOME/qcr-operator/<install>/`, else the legacy
- * `~/.config/quickreview-bot/`, else the operator home. Mirrored rather than
+ * `$XDG_CONFIG_HOME/qcr-operator/<install>/` (the old
+ * `~/.config/quickreview-bot/` copy is never read). Mirrored rather than
  * imported because this script runs from a checkout with no dist/;
  * tests/companion-memory.test.ts runs both over the same temp homes.
  */
@@ -92,10 +92,7 @@ export function keysFilePath(env = process.env, home = homedir()) {
   }
   const xdg = (env.XDG_CONFIG_HOME ?? "").trim();
   const base = xdg !== "" && isAbsolute(xdg) ? xdg : join(home, ".config");
-  const primary = join(base, "qcr-operator", install, "openviking-keys.env");
-  if (existsSync(primary)) return primary;
-  const legacy = join(home, ".config", "quickreview-bot", "openviking-keys.env");
-  return existsSync(legacy) ? legacy : primary;
+  return join(base, "qcr-operator", install, "openviking-keys.env");
 }
 
 // ---- the remote half --------------------------------------------------------

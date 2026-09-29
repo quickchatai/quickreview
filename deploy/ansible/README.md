@@ -51,9 +51,9 @@ yours either way — the wizard never creates a machine.
    wizard's ingress step writes that flag into `inventory.ini` for you: `true`
    for the named-tunnel shape, `false` for every other one.
 3. **Local secrets dir** — the install's `~/.config/qcr/<install>/secrets/`
-   (or the legacy `~/.config/quickreview-bot/` until `qcr install migrate`
-   moves it; `deploy.sh rebuild` passes the install locator's answer as
-   `secrets_src`) contains:
+   (`deploy.sh rebuild` passes the install locator's answer as `secrets_src`,
+; an old `~/.config/quickreview-bot/` is never read — `qcr install
+   migrate` moves it) contains:
    `app_id`, `app.pem`, `webhook_secret` (plus `openai_api_key` optional —
    pi's API-key route — and `tunnel_token` when the tunnel is enabled), and
    `openviking_root_key` / `openviking_reviewer_key` for the memory engine.

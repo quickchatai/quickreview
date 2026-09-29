@@ -234,7 +234,7 @@ const GH_READONLY_NAMESPACES: ReadonlySet<string> = new Set([
  * `--input` is the one that mattered and the one a flag blocklist missed: it is
  * the recipe the PREDECESSOR system actually used to post every one of its
  * reviews — "a JSON file written with `Write` then `POST`ed via
- * `gh api .../pulls/<n>/reviews --input`" (docs/retro/sources/12-review-content.md).
+ * `gh api .../pulls/<n>/reviews --input`" (the retro corpus, sources/12-review-content.md — in the state home).
  * A session can write `{"event":"APPROVE"}` with its ordinary write tool and
  * mint the token from the sanctioned `scripts/mint-token.sh`, so leaving this
  * open left the historical approval channel open while closing the documented

@@ -37,7 +37,7 @@ const fixture: Config = parseConfig(
 
 let dir: string;
 let env: InstallEnv;
-const lookup = () => ({ env, log: () => {} });
+const lookup = () => ({ env });
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "qcr-lens-tuning-"));
