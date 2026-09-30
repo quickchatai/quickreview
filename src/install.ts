@@ -53,7 +53,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 /** The slice of the environment the locator reads — nothing else. */
 export interface InstallEnv {
@@ -509,7 +509,23 @@ export function migrateProfiles(opts: { root: string; env?: InstallEnv }): Profi
   if (override !== "") {
     return names.map((name) => ({ kind: "override", name, path: resolve(override) }));
   }
+  // Linked profiles resolve BEFORE anything moves, and move LAST: a link to a
+  // sibling in the checkout (`house -> house-real`) must follow that sibling
+  // into the home, not point at the spot it was just moved out of.
+  const realBase = realpathSync(fromBase);
+  const linkTargets = new Map<string, string>();
   for (const name of names) {
+    const from = join(fromBase, name);
+    if (lstatSync(from).isSymbolicLink()) linkTargets.set(name, realpathSync(from));
+  }
+  const ordered = [...names.filter((n) => !linkTargets.has(n)), ...names.filter((n) => linkTargets.has(n))];
+  const linkTargetNow = (real: string): string => {
+    const rel = relative(realBase, real);
+    if (rel === "" || rel.startsWith("..") || isAbsolute(rel) || existsSync(real)) return real;
+    const moved = join(toBase, rel);
+    return existsSync(moved) ? moved : real;
+  };
+  for (const name of ordered) {
     const from = join(fromBase, name);
     const to = join(toBase, name);
     if (existsSync(to)) {
@@ -531,7 +547,7 @@ export function migrateProfiles(opts: { root: string; env?: InstallEnv }): Profi
     if (lstatSync(from).isSymbolicLink()) {
       // A linked pack stays linked: re-point from the home at its real target
       // (a relative link renamed as-is would resolve against the home).
-      symlinkSync(realpathSync(from), to);
+      symlinkSync(linkTargetNow(linkTargets.get(name) ?? realpathSync(from)), to);
       unlinkSync(from);
       outcomes.push({ kind: "moved", name, from, to });
       continue;
@@ -547,7 +563,7 @@ export function migrateProfiles(opts: { root: string; env?: InstallEnv }): Profi
     }
     outcomes.push({ kind: "moved", name, from, to });
   }
-  return outcomes;
+  return outcomes.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
 
 /** What the profile half of `qcr install migrate` prints; a conflict fails. */

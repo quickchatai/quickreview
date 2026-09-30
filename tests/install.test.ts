@@ -489,6 +489,19 @@ describe("migrateProfiles", () => {
     expect(strandedCheckoutProfiles({ root, env })).toEqual([]);
   });
 
+  it("a checkout profile linked to a SIBLING checkout profile follows it into the home (review)", () => {
+    put(join(root, "profiles", "house-real", "addenda", "10-rule.md"), "real\n");
+    symlinkSync("house-real", join(root, "profiles", "house"));
+    const home = join(configHome(env), "profiles");
+    const out = migrateProfiles({ root, env });
+    expect(out.map((o) => [o.kind, o.name])).toEqual([
+      ["moved", "house"],
+      ["moved", "house-real"],
+    ]);
+    expect(readFileSync(join(home, "house", "addenda", "10-rule.md"), "utf8")).toBe("real\n");
+    expect(readFileSync(join(home, "house-real", "addenda", "10-rule.md"), "utf8")).toBe("real\n");
+  });
+
   it("moves nothing while QCR_CONFIG names the config — compose mounts THAT file's dir, not the home", () => {
     putProfile(root, "house");
     const [o] = migrateProfiles({ root, env: { ...env, QCR_CONFIG: join(dir, "x.toml") } });
