@@ -494,6 +494,7 @@ function detailLines(i: ReportItem | undefined, width: number): string[] {
   const f = i.finding;
   out.push(`${STRONG}${f.severity} ${f.lens.replace(/^pass-/, "")} · ${f.path}:${f.start}${f.end !== f.start ? `-${f.end}` : ""}${RESET}  ${MUTED}${f.kind} · ${f.fingerprint.slice(0, 12)}${RESET}`);
   out.push(...wrap(sanitizeText(f.claim), width));
+  if (f.detail) out.push(...wrap(sanitizeText(`detail: ${f.detail}`), width));
   if (f.evidence) out.push(...wrap(sanitizeText(`evidence: ${f.evidence}`), width).map((l) => `${MUTED}${l}${RESET}`));
   if (f.fix) out.push(...wrap(sanitizeText(`fix: ${f.fix}`), width).map((l) => `${MUTED}${l}${RESET}`));
   let state = `state: ${f.state}`;

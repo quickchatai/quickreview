@@ -402,3 +402,14 @@ describe("a long finding's detail is never clipped out of reach (selfscan 9d6319
     expect(screen()).toContain("P1 data-safety · billing/models.py:88");
   });
 });
+
+describe("a finding's detail paragraph reaches the detail pane (selfscan fc1128ac)", () => {
+  it("the failure mechanism a P0–P2 finding carries in `detail` is shown beside its evidence", () => {
+    const f = scanFinding({
+      fingerprint: "detail".padEnd(64, "0"),
+      detail: "two workers read the balance before either writes it back, so one debit is lost",
+    });
+    const { screen } = rig({ findings: [f] });
+    expect(screen()).toContain("detail: two workers read the balance");
+  });
+});
