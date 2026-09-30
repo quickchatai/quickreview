@@ -727,4 +727,27 @@ describe("concurrent posts", () => {
     expect(slack.posts).toHaveLength(1);
     expect(slack.pins).toHaveLength(1);
   });
+
+  it("two anomalies admitted in one tick at cap-1 post ONE — the ceiling is re-read at claim time (selfscan 71870f5b)", async () => {
+    cfg.slack.policy.announcements_per_hour = 2;
+    const a = announcer();
+    await a.anomaly({ pr: 5263, round_no: 1, kind: "overdue", deadline_min: 45 });
+    expect(slack.posts).toHaveLength(1); // rolling count is now cap-1
+
+    // Both pass admission in the same synchronous stretch, before either claims.
+    const one = a.anomaly({ pr: 5270, round_no: 1, kind: "overdue", deadline_min: 45 });
+    const two = a.anomaly({ pr: 5271, round_no: 1, kind: "overdue", deadline_min: 45 });
+    await Promise.all([one, two]);
+
+    expect(slack.posts).toHaveLength(2);
+    expect(store.slackPostsSince(new Date(T0.getTime() - 3_600_000).toISOString())).toBe(2);
+  });
+
+  it("the claim-time ceiling never gates a lifecycle post (it counts, it is not blocked)", async () => {
+    cfg.slack.policy.announcements_per_hour = 1;
+    const a = announcer();
+    await a.anomaly({ pr: 5270, round_no: 1, kind: "overdue", deadline_min: 45 });
+    await a.roundStarted(round);
+    expect(slack.posts).toHaveLength(2);
+  });
 });

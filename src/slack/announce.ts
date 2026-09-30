@@ -45,7 +45,7 @@ import {
   type ReRoundReason,
   type VerdictName,
 } from "./messages.js";
-import { causePolicy, decideAnnouncement } from "./policy.js";
+import { causePolicy, decideAnnouncement, hourlyCeiling } from "./policy.js";
 import type { SlackWebApi } from "./types.js";
 
 /** Cause keys for the thread-lifecycle posts. They live in the same namespace
@@ -164,6 +164,11 @@ interface PostRequest {
   text: string;
   /** PR-scoped posts thread under the PR's root (or become it). */
   pr?: number;
+  /** Set on every post admitted by `announcementAllowed`: the rolling-hour
+   * ceiling is re-read just before the row is claimed (admission reserves no
+   * slot). Lifecycle posts leave it unset — they count, they are never
+   * blocked (header rule 3). */
+  hourCapped?: true;
 }
 
 /** One `pr.not_picked_up` candidate, as the scan reports it. */
@@ -272,6 +277,14 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     const thread = req.pr === undefined ? undefined : store.slackThreadForPr(req.pr);
     // Root-on-first-event: with no recorded root, this post BECOMES the root.
     const threadTs = thread?.root_ts;
+
+    if (req.hourCapped && store.slackPost(req.idemKey)?.ok !== 1) {
+      const ceiling = hourlyCeiling(store, cfg, this.now());
+      if (ceiling.reached) {
+        this.log(`slack: announcement suppressed at claim (${req.idemKey}) — ${ceiling.reason}`);
+        return undefined;
+      }
+    }
 
     if (
       !store.recordSlackPost({
@@ -474,6 +487,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     await this.post({
       idemKey: a.incident_id ?? `${cause}:${a.pr}:${a.round_no}`,
       kind: "announce",
+      hourCapped: true,
       pr: a.pr,
       text,
     });
@@ -486,6 +500,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     await this.post({
       idemKey: `pr.not_picked_up:${item.pr}:${this.hourBucket()}`,
       kind: "announce",
+      hourCapped: true,
       pr: item.pr,
       text: causeMessage(this.deps.cfg, { cause: "pr.not_picked_up", ...item }),
     });
@@ -510,6 +525,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     await this.post({
       idemKey: `slack.cap_reached:${this.policyDay()}`,
       kind: "announce",
+      hourCapped: true,
       text: causeMessage(this.deps.cfg, { cause: "slack.cap_reached", cap }),
     });
   }
@@ -564,6 +580,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     const ts = await this.post({
       idemKey: `daemon.up:${this.minuteBucket()}`,
       kind: "announce",
+      hourCapped: true,
       text: causeMessage(this.deps.cfg, {
         cause: "daemon.up",
         version: this.deps.version ?? "unknown",
@@ -581,6 +598,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     const post = this.post({
       idemKey: `daemon.stopping:${this.minuteBucket()}`,
       kind: "announce",
+      hourCapped: true,
       text: causeMessage(this.deps.cfg, { cause: "daemon.stopping", reason }),
     });
     let timer: unknown;

@@ -240,6 +240,31 @@ export interface AnnouncementDecision {
 }
 
 /**
+ * The rolling-hour announcement ceiling, read from the claimed `slack_posts`
+ * rows. EVERY daemon-authored post counts here — `pickup` and `verdict` are as
+ * visible in the channel as an `announce`, and this ceiling is their only
+ * back-stop now that they no longer touch the conversational budget.
+ * Expressed as "all posts minus replies" so a kind added later is bounded by
+ * default rather than silently exempt. Read at admission (decideAnnouncement)
+ * AND again when an admitted announcement claims its row (announce.ts
+ * postNow): admission does not reserve a slot, so two announcements admitted
+ * before either claims would otherwise both post at cap-1.
+ */
+export function hourlyCeiling(
+  store: StateStore,
+  cfg: Config,
+  now: Date,
+): { reached: boolean; reason: string } {
+  const perHour = cfg.slack.policy.announcements_per_hour;
+  const hourAgo = new Date(now.getTime() - 3_600_000).toISOString();
+  const recent = store.slackPostsSince(hourAgo) - store.slackPostsSince(hourAgo, "reply");
+  return {
+    reached: recent >= perHour,
+    reason: `announcement rate cap reached (${recent}/${perHour} in the last hour)`,
+  };
+}
+
+/**
  * Decide *and record*: on a fire the cooldown row is stamped, on a suppressed
  * repeat the fold counter grows — the same mutate-on-decide contract as
  * AlertPolicy.decide, so a caller can never fire without paying the cooldown.
@@ -264,21 +289,14 @@ export function decideAnnouncement(
     };
   }
 
-  const perHour = cfg.slack.policy.announcements_per_hour;
-  const hourAgo = new Date(now.getTime() - 3_600_000).toISOString();
-  // EVERY daemon-authored post counts here — `pickup` and `verdict` are as
-  // visible in the channel as an `announce`, and this ceiling is their only
-  // back-stop now that they no longer touch the conversational budget.
-  // Expressed as "all posts minus replies" so a kind added later is bounded by
-  // default rather than silently exempt.
-  const recent = store.slackPostsSince(hourAgo) - store.slackPostsSince(hourAgo, "reply");
-  if (recent >= perHour) {
+  const ceiling = hourlyCeiling(store, cfg, now);
+  if (ceiling.reached) {
     return {
       allow: false,
       key,
       bypass: false,
       block: "per_hour",
-      reason: `announcement rate cap reached (${recent}/${perHour} in the last hour)`,
+      reason: ceiling.reason,
     };
   }
 
