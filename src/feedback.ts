@@ -223,6 +223,32 @@ export function memoryEntryFor(e: FeedbackEvent, day: string): string {
 // ---- the same-day validator addendum ---------------------------------------
 
 /**
+ * The day bookkeeping behind wire.ts's agents rebuild. `builtDay` names the
+ * day whose build LANDED — it is assigned only after `build` returns, so a
+ * build that throws on the day-change tick leaves the old day in place and
+ * the next `tick` retries, rather than every later tick seeing "already
+ * built" while yesterday's feedback addendum stays in force.
+ */
+export function dayScopedRebuild(
+  today: () => string,
+  build: (day: string) => void,
+): { rebuild: (day?: string) => void; tick: () => void; builtDay: () => string | null } {
+  let builtDay: string | null = null;
+  const rebuild = (day?: string): void => {
+    const target = day ?? today();
+    build(target);
+    builtDay = target;
+  };
+  return {
+    rebuild,
+    tick: () => {
+      if (today() !== builtDay) rebuild();
+    },
+    builtDay: () => builtDay,
+  };
+}
+
+/**
  * The day-scoped addendum composed into pass-validate's built body when the
  * day carries explicit [feedback] comments. Demotion-only by construction:
  * it introduces the `feedback-shape` downgrade label and explicitly forbids

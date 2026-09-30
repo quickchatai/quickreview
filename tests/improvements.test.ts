@@ -792,6 +792,31 @@ describe("fileImprovementPr — the push goes through the gate in live mode", ()
     ).toBe(true);
   });
 
+  it("a label failure after the PR opened still records the filing — the cap slot is spent, the caller told it filed", async () => {
+    const { run } = liveRunner();
+    gate = new MutationGate(false, join(dir, "dryrun"), async (i) => {
+      if (i.kind === "add_label") throw new Error("HTTP 502 on add_label");
+      return { number: 4242 };
+    });
+    adapter = new GitHubAdapter(cfg, fakeMinter, gate, (async () => {
+      throw new Error("no direct fetch expected");
+    }) as unknown as typeof fetch);
+    const out = await fileImprovementPr(
+      { branch: "wip/docs", title: "Docs: clarify retry", body: "rationale", slug: "clarify-retry" },
+      ctx(run),
+    );
+
+    // The PR exists on GitHub: the outcome and the ledger must both say so.
+    expect(out).toMatchObject({ ok: true, pr: 4242 });
+    expect(String(out.label_warning)).toContain("502");
+    expect(store.filedSince("improvement_pr", "1970-01-01T00:00:00.000Z")).toBe(1);
+    // …so the day's 1/day slot is spent and a second filing is refused.
+    expect(improvementRateReason(store, cfg.caps, new Date())).toContain("day cap");
+    expect(
+      store.eventsOn(new Date().toISOString().slice(0, 10)).some((e) => e.kind === "improvement_pr_label_failed"),
+    ).toBe(true);
+  });
+
   it("a guard refusal stops the push AND the PR — no branch, no pull", async () => {
     const { run, calls } = liveRunner();
     gate.setGuard({

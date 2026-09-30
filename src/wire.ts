@@ -28,7 +28,7 @@ import { MutationGate, type MutationIntent } from "./gate.js";
 import { GitHubAdapter } from "./github.js";
 import { makePostingGuard } from "./guards.js";
 import { TokenMinter } from "./githubAuth.js";
-import { FeedbackEngine, feedbackDayAddendum, type FeedbackEvent } from "./feedback.js";
+import { FeedbackEngine, dayScopedRebuild, feedbackDayAddendum, type FeedbackEvent } from "./feedback.js";
 import {
   PASS_ADDENDA,
   buildAgents,
@@ -738,38 +738,43 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         const tuned = Object.keys(cfg.lenses ?? {});
         if (tuned.length) log(`profile ${cfg.review.profile}: lens tuning for ${tuned.join(", ")}`);
       }
-      let builtDay = opsDay(cfg.ops.timezone);
-      const rebuildAgents = (day?: string): void => {
-        builtDay = day ?? opsDay(cfg.ops.timezone);
-        const fb = feedbackDayAddendum(d.store.feedbackCommentsForDay(builtDay), builtDay);
-        const built = buildAgents(join(root, "agents"), join(root, "state", "agents"), {
-          root,
-          tiers: cfg.models.tiers,
-          riskPasses: cfg.models.risk_passes,
-          validateTier: cfg.models.validate_tier,
-          vars: identity,
-          // ecosystem-gated addenda follow the profile's selection.
-          ecosystem: ecosystem.name,
-          // a lens's profile `effort` rides the per-variant hook;
-          // `[models.pass_tiers]` pins move a lens's tier on top of it.
-          models: passTierModels(
-            cfg.models.pass_tiers,
-            cfg.models.tiers,
-            lensModelOverrides(cfg.models, cfg.lenses),
-          ),
-          addenda: [
-            ...PASS_ADDENDA,
-            ...configAddenda(cfg.review),
-            ...profileAddenda,
-            // the profile's `emphasis` / `max_severity`, compiled.
-            ...lensTuningAddenda(cfg.lenses),
-            ...(fb ? [fb] : []),
-          ],
-        });
-        log(
-          `built ${built.length} pass agents into state/agents${fb ? " (+ same-day feedback addendum)" : ""}`,
-        );
-      };
+      // The day is marked built only once the build LANDS (dayScopedRebuild):
+      // a throw on the day-change tick is retried by the next tick instead of
+      // leaving yesterday's feedback addendum in force all day.
+      const agentsDay = dayScopedRebuild(
+        () => opsDay(cfg.ops.timezone),
+        (buildDay) => {
+          const fb = feedbackDayAddendum(d.store.feedbackCommentsForDay(buildDay), buildDay);
+          const built = buildAgents(join(root, "agents"), join(root, "state", "agents"), {
+            root,
+            tiers: cfg.models.tiers,
+            riskPasses: cfg.models.risk_passes,
+            validateTier: cfg.models.validate_tier,
+            vars: identity,
+            // ecosystem-gated addenda follow the profile's selection.
+            ecosystem: ecosystem.name,
+            // a lens's profile `effort` rides the per-variant hook;
+            // `[models.pass_tiers]` pins move a lens's tier on top of it.
+            models: passTierModels(
+              cfg.models.pass_tiers,
+              cfg.models.tiers,
+              lensModelOverrides(cfg.models, cfg.lenses),
+            ),
+            addenda: [
+              ...PASS_ADDENDA,
+              ...configAddenda(cfg.review),
+              ...profileAddenda,
+              // the profile's `emphasis` / `max_severity`, compiled.
+              ...lensTuningAddenda(cfg.lenses),
+              ...(fb ? [fb] : []),
+            ],
+          });
+          log(
+            `built ${built.length} pass agents into state/agents${fb ? " (+ same-day feedback addendum)" : ""}`,
+          );
+        },
+      );
+      const rebuildAgents = agentsDay.rebuild;
       rebuildAgents();
       // Reviewer memory: the ONE daemon-side `MemoryStore`, over the
       // supervised OpenViking server on loopback. The reviewer USER key is
@@ -1059,7 +1064,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // bite at most minutes into a new day, not an hour.
       const dayCheck = setInterval(() => {
         try {
-          if (opsDay(cfg.ops.timezone) !== builtDay) rebuildAgents();
+          agentsDay.tick();
         } catch (err) {
           log("feedback: day-change agents rebuild failed", err);
         }

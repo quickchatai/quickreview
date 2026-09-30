@@ -10,6 +10,7 @@ import { parseConfig, type Config } from "../src/config.js";
 import {
   REVIEW_SET_ASIDE_STALE_WINDOW_MS,
   FeedbackEngine,
+  dayScopedRebuild,
   feedbackDayAddendum,
   isFeedbackBody,
   eventTagsFor,
@@ -108,6 +109,45 @@ describe("opsDay", () => {
     expect(builtDay).toBe("2026-01-14");
     expect(opsDay(tz, new Date("2026-01-15T04:59:59Z"))).toBe(builtDay); // 23:59:59 — no rebuild
     expect(opsDay(tz, new Date("2026-01-15T05:00:01Z"))).not.toBe(builtDay); // 00:00:01 — rebuild fires
+  });
+});
+
+describe("dayScopedRebuild — the day-change agents rebuild wire.ts runs", () => {
+  it("a build that throws on the day-change tick leaves the day unbuilt, so the next tick retries", () => {
+    let today = "2026-01-14";
+    let fail = false;
+    const built: string[] = [];
+    const r = dayScopedRebuild(
+      () => today,
+      (day) => {
+        if (fail) throw new Error("ENOSPC writing state/agents");
+        built.push(day);
+      },
+    );
+    r.rebuild();
+    expect(built).toEqual(["2026-01-14"]);
+    r.tick(); // same day: no rebuild
+    expect(built).toEqual(["2026-01-14"]);
+
+    today = "2026-01-15";
+    fail = true;
+    expect(() => r.tick()).toThrow("ENOSPC");
+    // Yesterday's addendum must not be treated as today's build.
+    expect(r.builtDay()).toBe("2026-01-14");
+
+    fail = false;
+    r.tick(); // the next 5-minute tick retries and lands today's build
+    expect(built).toEqual(["2026-01-14", "2026-01-15"]);
+    expect(r.builtDay()).toBe("2026-01-15");
+  });
+
+  it("an explicit day (the [feedback] ingest path) builds that day", () => {
+    const built: string[] = [];
+    const r = dayScopedRebuild(() => "2026-01-15", (day) => built.push(day));
+    r.rebuild("2026-01-15");
+    expect(r.builtDay()).toBe("2026-01-15");
+    r.tick();
+    expect(built).toEqual(["2026-01-15"]);
   });
 });
 

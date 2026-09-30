@@ -508,10 +508,24 @@ async function fileImprovementPrNow(
 
     const pull = await ctx.adapter.createPull(botBranch, base, payload.title, payload.body);
     const prNumber = (pull.response as { number?: number } | undefined)?.number ?? 0;
-    await ctx.adapter.addLabel(prNumber, ctx.cfg.github.improvement_label);
-
+    // The PR now exists: record it BEFORE anything else can throw, so the
+    // 1/day + 3/week caps (counted from filed_items alone) see the slot spent.
+    // A label failure after this point is a warning on a real filing, never
+    // a rejection that frees the slot for a second PR.
     const ref = prNumber > 0 ? `#${prNumber}` : botBranch;
     ctx.store.recordFiledItem("improvement_pr", payload.title, ref);
+    let labelWarning: string | undefined;
+    try {
+      await ctx.adapter.addLabel(prNumber, ctx.cfg.github.improvement_label);
+    } catch (err) {
+      labelWarning = (err as Error).message;
+      ctx.store.logEvent("improvement_pr_label_failed", prNumber > 0 ? prNumber : null, {
+        branch: botBranch,
+        label: ctx.cfg.github.improvement_label,
+        error: labelWarning,
+      });
+    }
+
     ctx.store.logEvent("improvement_pr_filed", prNumber > 0 ? prNumber : null, {
       slug: payload.slug,
       branch: botBranch,
@@ -527,6 +541,7 @@ async function fileImprovementPrNow(
       pushed,
       pr: prNumber > 0 ? prNumber : null,
       dry_run: ctx.gate.isDryRun,
+      ...(labelWarning !== undefined ? { label_warning: labelWarning } : {}),
     };
   } catch (err) {
     return reject(`improvement-PR pipeline failed: ${(err as Error).message}`);
