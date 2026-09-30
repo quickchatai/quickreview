@@ -135,7 +135,7 @@ describe("the skeptic addendum is a scan-mode registry entry for the validator a
   // scan-loop: the skeptic vs an outside adversarial check on the 30 findings
   // of self-scan rounds 6–7 — confirmed held 86%, likely 50%. The seven misses
   // each skipped one link; these are the rules that would have failed them
-  // (issue-tracker …/scan-and-setup/assets/improvement-loop/skeptic-disagreements.md).
+  // (recorded in the scan-and-setup effort's improvement-loop notes).
   it("tightened from its disagreements: confirmed names every link with file:line; likely names its untraced link; the misses' shapes are doubtful", () => {
     const t = SCAN_SKEPTIC_ADDENDUM;
     // confirmed: every link, anchored, and "at most likely" when one is missing.
