@@ -77,6 +77,21 @@ describe("FeedWriter", () => {
     expect(readdirSync(dir).filter((f) => f.endsWith(".tmp"))).toEqual([]);
   });
 
+  it("never writes into another TUI's staging file (two TUIs share one feed dir)", () => {
+    // A second TUI mid-publish holds `<target>.tmp`. A fixed staging name
+    // would truncate and rename THAT inode: the other writer's rename then
+    // throws ENOENT and the companion can read its half-written body.
+    const w = new FeedWriter(dir);
+    const foreign = join(dir, "snapshot.json.tmp");
+    writeFileSync(foreign, "other TUI, half-written");
+    const s = snap();
+    w.write(s, [], "ok");
+    expect(readFileSync(foreign, "utf8")).toBe("other TUI, half-written");
+    expect(JSON.parse(readFileSync(w.snapshotPath, "utf8"))).toEqual(s);
+    // and our own staging file is still cleaned up
+    expect(readdirSync(dir).filter((f) => f.endsWith(".tmp"))).toEqual(["snapshot.json.tmp"]);
+  });
+
   it("appends only new events, dedup by ts+kind+pr", () => {
     const w = new FeedWriter(dir);
     w.write(snap(), [ev("2026-08-14T10:00:00Z"), ev("2026-08-14T10:00:01Z", "verdict")], "ok");

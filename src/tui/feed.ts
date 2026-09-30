@@ -32,6 +32,7 @@ import {
   renameSync,
   writeFileSync,
 } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import type { StatusSnapshot } from "../state.js";
 import { configDrift, configDriftText, type ConfigRead } from "./confighome.js";
@@ -416,9 +417,19 @@ export class FeedWriter {
     }
   }
 
+  /** Stage-then-rename. The staging name is unique per process AND per
+   *  write, created exclusively (`wx`): two TUIs open at once publish into one
+   *  feed dir, and a shared `<target>.tmp` let one truncate and rename the
+   *  other's inode — a half-written file for the companion and an ENOENT for
+   *  the loser. A failed write removes its own staging file, never another's. */
   private writeAtomic(target: string, body: string): void {
-    const tmp = `${target}.tmp`;
-    writeFileSync(tmp, body);
-    renameSync(tmp, target);
+    const tmp = `${target}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+    try {
+      writeFileSync(tmp, body, { flag: "wx" });
+      renameSync(tmp, target);
+    } catch (e) {
+      rmSync(tmp, { force: true });
+      throw e;
+    }
   }
 }
