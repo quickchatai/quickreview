@@ -19,9 +19,11 @@ import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -896,6 +898,133 @@ describe("CommandWatcher over commands/operator/", () => {
       await new Promise((r) => setTimeout(r, 20));
     expect(issuers).toEqual(["operator"]);
     w.stop();
+  });
+
+  /** A seal that vouches for exactly the INODES it was handed — what a real
+   * root-owned directory is — so a directory swapped in at the same path is
+   * the session's, as it would be on the VM. */
+  function inodeSeal(rootInodes: Set<bigint>, onStat?: (p: string) => void): OperatorSeal {
+    return {
+      euid: 1001,
+      gids: [1001],
+      stat: (p) => {
+        onStat?.(p);
+        try {
+          const s = lstatSync(p, { bigint: true });
+          const kind = s.isSymbolicLink()
+            ? "symlink"
+            : s.isDirectory()
+              ? "dir"
+              : s.isFile()
+                ? "file"
+                : "other";
+          return rootInodes.has(s.ino)
+            ? { uid: 0, gid: 0, mode: kind === "dir" ? 0o755 : 0o644, kind }
+            : { uid: 1001, gid: 1001, mode: 0o755, kind };
+        } catch {
+          return null;
+        }
+      },
+    };
+  }
+  const ino = (p: string): bigint => statSync(p, { bigint: true }).ino;
+
+  it("the seal binds to the bytes executed: a directory swapped in during a parse retry is served as a session's", async () => {
+    mkdirSync(opDir());
+    writeFileSync(join(opDir(), "d4.json"), ""); // an empty file parses on retry
+    const { deps: d, issuers } = watcherDeps();
+    const w = new CommandWatcher({
+      dir: opDir(),
+      operator: inodeSeal(new Set([ino(opDir()), ino(join(opDir(), "d4.json"))])),
+      deps: d,
+      store,
+      sweepIntervalMs: 0,
+      parseAttempts: 3,
+      parseRetryMs: 30,
+    });
+    const swept = w.sweep(); // the first read has happened synchronously
+    renameSync(opDir(), join(root, "commands", "operator.sealed"));
+    mkdirSync(opDir());
+    writeFileSync(join(opDir(), "d4.json"), JSON.stringify({ command: "drain", on: true }));
+    await swept;
+    w.stop();
+    // MUTATION: decide the issuer before the read (the old order) — this fails.
+    expect(issuers).toContain("session");
+    expect(issuers).not.toContain("operator");
+  });
+
+  it("the seal binds to the bytes executed: a directory swapped BACK before the seal check is still not the operator's", async () => {
+    mkdirSync(opDir());
+    writeFileSync(join(opDir(), "d5.json"), JSON.stringify({ command: "drain", on: true }));
+    const sealedAway = join(root, "commands", "operator.sealed");
+    const roots = new Set([ino(opDir()), ino(join(opDir(), "d5.json"))]);
+    renameSync(opDir(), sealedAway);
+    // The session's directory stands at the path while the file is read…
+    mkdirSync(opDir());
+    writeFileSync(join(opDir(), "d5.json"), JSON.stringify({ command: "drain", on: true }));
+    const evilAway = join(root, "commands", "operator.evil");
+    let swapped = false;
+    const { deps: d, issuers } = watcherDeps();
+    const w = new CommandWatcher({
+      // …and the sealed one is back by the time the seal is checked.
+      operator: inodeSeal(roots, () => {
+        if (swapped) return;
+        swapped = true;
+        renameSync(opDir(), evilAway);
+        renameSync(sealedAway, opDir());
+      }),
+      dir: opDir(),
+      deps: d,
+      store,
+      sweepIntervalMs: 0,
+    });
+    await w.sweep();
+    w.stop();
+    expect(swapped).toBe(true);
+    // MUTATION: drop the read-identity comparison in issuerFor — this fails.
+    expect(issuers[0]).toBe("session");
+    expect(eventsOf(store, "operator_channel_unsealed")[0]).toMatchObject({
+      reason: expect.stringContaining("replaced"),
+    });
+  });
+
+  it("a sealed operator file skips the Slack belt; an unsealed one does not", async () => {
+    mkdirSync(opDir());
+    writeFileSync(join(opDir(), "b1.json"), JSON.stringify({ command: "drain", on: true }));
+    const guest = {
+      dir: "local" as const,
+      currentOrigin: () =>
+        ({
+          event_id: "Ev1",
+          source: "slack",
+          slack_user: "U0GUEST",
+          tier: "anyone",
+          authorized_prs: [],
+        }) as never,
+    };
+    const { deps: d, issuers } = watcherDeps();
+    await new CommandWatcher({
+      dir: opDir(),
+      operator: sealed,
+      tier: guest,
+      deps: d,
+      store,
+      sweepIntervalMs: 0,
+    }).sweep();
+    expect(issuers).toEqual(["operator"]);
+    writeFileSync(join(opDir(), "b2.json"), JSON.stringify({ command: "drain", on: true }));
+    await new CommandWatcher({
+      dir: opDir(),
+      operator: processOperatorSeal(),
+      tier: guest,
+      deps: d,
+      store,
+      sweepIntervalMs: 0,
+    }).sweep();
+    // MUTATION: skip tierCheck for every operator-dir file — this fails.
+    expect(issuers).toEqual(["operator"]);
+    expect(result("b2")).toMatchObject({ ok: false, issuer: "session" });
+    expect(String(result("b2").reason)).toMatch(/^tier: this turn was caused by a Slack message/);
   });
 
   it("a session directory's watcher stamps session and archives as before", async () => {

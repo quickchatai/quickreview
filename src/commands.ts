@@ -17,9 +17,13 @@
 // operator's. A file in the operator directory without the seal is served as
 // a session's, loudly.
 import {
+  closeSync,
+  constants as fsConstants,
   existsSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -750,6 +754,16 @@ export function operatorCommandVersion(path: string): string | null {
   }
 }
 
+/** `dev:ino` of the object AT `path` (a symlink as itself), `null` when absent. */
+function fileIdentityAt(path: string): string | null {
+  try {
+    const s = lstatSync(path, { bigint: true });
+    return `${s.dev}:${s.ino}`;
+  } catch {
+    return null;
+  }
+}
+
 /** The inode at `path` — what `fs.watch` binds to — or `null` when nothing is there. */
 function inodeAt(path: string): bigint | null {
   try {
@@ -920,20 +934,40 @@ export class CommandWatcher {
     return this.queue;
   }
 
+  /**
+   * Read and parse one command file. `identity` names the file object the
+   * parsed bytes came from (`dev:ino` of the open descriptor) so the operator
+   * seal can be checked against THOSE bytes rather than against whatever
+   * stands at the path a moment earlier or later (the parent `commands/` is
+   * the daemon's, so a session can swap the directory between two syscalls).
+   * The operator directory is opened without following a symlink.
+   */
   private async readCommandFile(
     path: string,
-  ): Promise<{ ok: true; value: unknown } | { ok: false; reason: string }> {
+  ): Promise<{ ok: true; value: unknown; identity: string } | { ok: false; reason: string }> {
     const attempts = this.opts.parseAttempts ?? 3;
     const delay = this.opts.parseRetryMs ?? 40;
+    const flags = this.opts.operator
+      ? fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW
+      : fsConstants.O_RDONLY;
     let lastError = "unreadable";
     for (let i = 0; i < attempts; i++) {
       if (!existsSync(path)) return { ok: false, reason: "file disappeared" };
       try {
-        const text = readFileSync(path, "utf8");
+        const fd = openSync(path, flags);
+        let text: string;
+        let identity: string;
+        try {
+          const st = fstatSync(fd, { bigint: true });
+          identity = `${st.dev}:${st.ino}`;
+          text = readFileSync(fd, "utf8");
+        } finally {
+          closeSync(fd);
+        }
         if (text.trim().length === 0) {
           lastError = "empty file";
         } else {
-          return { ok: true, value: JSON.parse(text) as unknown };
+          return { ok: true, value: JSON.parse(text) as unknown, identity };
         }
       } catch (err) {
         // A partially-written file is expected transiently — retry before rejecting.
@@ -951,10 +985,16 @@ export class CommandWatcher {
    * session's — loudly, with the reason in the ledger — so an unsealed channel
    * degrades to the bounded side and never to the unbounded one.
    */
-  private issuerFor(path: string): CommandIssuer {
+  private issuerFor(path: string, readIdentity: string | null): CommandIssuer {
     const seal = this.opts.operator;
     if (!seal) return "session";
-    const verdict = operatorSealVerdict(seal, this.dir, path);
+    // Checked AFTER the read, and then bound to it: the file at the path must
+    // still be the very object whose bytes were parsed. Otherwise a directory
+    // swapped in for the read and swapped back for the seal check would lend
+    // its bytes the operator's authority.
+    let verdict = operatorSealVerdict(seal, this.dir, path);
+    if (verdict.sealed && readIdentity !== null && fileIdentityAt(path) !== readIdentity)
+      verdict = { sealed: false, reason: "command file replaced while it was read" };
     if (verdict.sealed) return "operator";
     this.opts.store.logEvent("operator_channel_unsealed", null, {
       file: basename(path),
@@ -983,10 +1023,10 @@ export class CommandWatcher {
     this.inFlight.add(path);
     try {
       this.ensureDirs();
-      const issuer = this.issuerFor(path);
       const read = await this.readCommandFile(path);
+      if (!read.ok && read.reason === "file disappeared") return null;
+      const issuer = this.issuerFor(path, read.ok ? read.identity : null);
       if (!read.ok) {
-        if (read.reason === "file disappeared") return null;
         return this.finish(
           path,
           name,
@@ -1010,7 +1050,10 @@ export class CommandWatcher {
           true,
         );
       }
-      const denial = this.tierCheck(validation.command);
+      // The Slack belt stops a SESSION mis-filing; a sealed operator file is
+      // the human at the terminal and never rides a Slack turn. An UNSEALED
+      // operator file is a session's and gets the belt like any other.
+      const denial = issuer === "operator" ? null : this.tierCheck(validation.command);
       if (denial)
         return this.finish(
           path,

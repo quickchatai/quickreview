@@ -397,19 +397,28 @@ export function buildLocalCommandWatcher(opts: {
  * The OPERATOR's command watcher: `commands/operator/`, the
  * directory `qcr drain`, the board's `u` and the deploy tab write AS ROOT.
  * Same vocabulary, same handlers; the difference is the issuer the watcher
- * stamps, and only the real process seal decides it. No Slack tier gate: the
- * belt exists to stop the overseer mis-filing, and the overseer cannot write
- * here. The daemon never creates the directory — see `CommandWatcherOptions`.
+ * stamps, and only the real process seal decides it. The same local Slack
+ * belt as `commands/` is installed, and binds ONLY files the seal does not
+ * vouch for: the overseer cannot write into a sealed directory, but the
+ * parent is the daemon's, so it can make or swap in an unsealed one — and a
+ * file there is a session's, so it must be refused exactly where `commands/`
+ * would refuse it. The daemon never creates the directory — see
+ * `CommandWatcherOptions`.
  */
 export function buildOperatorCommandWatcher(opts: {
   root: string;
   deps: CommandDeps;
   store: StateStore;
+  slack: SlackRuntime | null;
   log: (line: string) => void;
 }): CommandWatcher {
+  const { slack } = opts;
   return new CommandWatcher({
     dir: join(opts.root, "commands", "operator"),
     operator: processOperatorSeal(),
+    ...(slack
+      ? { tier: { dir: "local" as const, currentOrigin: () => slack.origins.latestAny() } }
+      : {}),
     deps: opts.deps,
     store: opts.store,
     log: opts.log,
@@ -950,6 +959,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         root,
         deps: commandDeps,
         store: d.store,
+        slack,
         log: (l) => log(l),
       });
       await operatorCommands.start();

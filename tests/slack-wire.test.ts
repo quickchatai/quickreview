@@ -24,6 +24,7 @@ import type { SlackInboundHandler, SlackTransport } from "../src/slack/types.js"
 import type { SessionHooks } from "../src/types.js";
 import {
   buildLocalCommandWatcher,
+  buildOperatorCommandWatcher,
   daemonOriginWakes,
   startSlack,
   type SlackRuntime,
@@ -404,6 +405,38 @@ describe("origin cause, not recency (the belt)", () => {
 
     const r = legacyResult("late");
     expect(r.ok).toBe(false);
+    expect(String(r.reason)).toMatch(/^tier: this turn was caused by a Slack message from U0GUEST/);
+    expect(fileIssue).not.toHaveBeenCalled();
+    await runtime.stop("test");
+  });
+
+  it("an UNSEALED operator directory gets the same belt as commands/ — a session cannot file around it", async () => {
+    const runtime = (await startSlack(wiring()))!;
+    runtime.origins.write("wake.md", {
+      event_id: "Ev1",
+      slack_user: "U0GUEST",
+      tier: "anyone",
+      authorized_prs: [],
+    });
+    // Made by this process's uid — exactly what a session can make, so no seal.
+    mkdirSync(join(dir, "commands", "operator"), { recursive: true });
+    writeFileSync(
+      join(dir, "commands", "operator", "sneak.json"),
+      JSON.stringify({ command: "file-issue", title: "t", body: "b" }),
+    );
+    const fileIssue = vi.fn(() => ({ ok: true }));
+    const watcher = buildOperatorCommandWatcher({
+      root: dir,
+      deps: { ...noopCommandDeps, fileIssue },
+      store,
+      slack: runtime,
+      log: () => {},
+    });
+    await watcher.sweep();
+    watcher.stop();
+    const r = legacyResult("sneak");
+    // MUTATION: build the operator watcher without the tier gate — this fails.
+    expect(r).toMatchObject({ ok: false, issuer: "session" });
     expect(String(r.reason)).toMatch(/^tier: this turn was caused by a Slack message from U0GUEST/);
     expect(fileIssue).not.toHaveBeenCalled();
     await runtime.stop("test");
