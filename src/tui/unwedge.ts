@@ -126,6 +126,20 @@ export function commandWriteArgv(cfg: TuiConfig, name: string): string[] {
   ];
 }
 
+/** The `reason` of a daemon result file, made safe to paint. Every result
+ * this channel reads sits in `<commands>/results/` — operator results
+ * included (commands.ts writes them to the parent results dir) — and that
+ * dir is writable by the session uid, so the text is untrusted: no control
+ * byte may reach the operator's terminal (ESC/CSI/OSC would repaint or
+ * forge the frame), and no newline may split a one-line notice. Shared by
+ * every reader of that dir (unwedge, deploy drain, issue sink). */
+export function resultReason(value: unknown, fallback: string): string {
+  const text = sanitizeText(String(value ?? fallback))
+    .replace(/\s+/g, " ")
+    .trim();
+  return text === "" ? fallback : text;
+}
+
 /** argv reading the daemon's result file for a command, or `pending`. */
 export function commandResultArgv(cfg: TuiConfig, name: string): string[] {
   const dir = commandDirFor(cfg);
@@ -213,13 +227,10 @@ export class CommandFileSender implements UnwedgeSender {
         );
         return;
       }
-      // The result file lives in the session-writable results dir, so the
-      // reason is untrusted: no control byte may reach the terminal, and no
-      // newline may split the one-line notice.
-      const reason = sanitizeText(String(result.reason ?? "no reason given"))
-        .replace(/\s+/g, " ")
-        .trim();
-      onState("failed", `✖ ${command} #${pr} refused (${reason})`);
+      onState(
+        "failed",
+        `✖ ${command} #${pr} refused (${resultReason(result.reason, "no reason given")})`,
+      );
       return;
     }
     onState("failed", `✖ ${command} #${pr} — no result (daemon down?)`);

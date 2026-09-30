@@ -4,7 +4,7 @@
 // successful ssh write and it cannot produce any command except drain on/off.
 import { randomUUID } from "node:crypto";
 import type { TuiConfig } from "../config.js";
-import { commandResultArgv, commandWriteArgv } from "./unwedge.js";
+import { commandResultArgv, commandWriteArgv, resultReason } from "./unwedge.js";
 import type { SshRunner } from "./remote.js";
 
 export interface DrainCommandOutcome {
@@ -82,7 +82,7 @@ export class CommandDrainSender implements DeployDrainSender {
         return { ok: false, reason: "unreadable daemon result" };
       }
       if (value.ok !== true)
-        return { ok: false, reason: String(value.reason ?? "no reason given") };
+        return { ok: false, reason: resultReason(value.reason, "no reason given") };
       if (value.draining !== on)
         return { ok: false, reason: `daemon result did not confirm drain ${on ? "on" : "off"}` };
       if (on) {

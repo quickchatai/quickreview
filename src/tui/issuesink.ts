@@ -38,7 +38,7 @@ import {
 } from "./autofile.js";
 import { refOf, type MemoryEntry, type MemoryStore } from "./memory.js";
 import type { SshRunner } from "./remote.js";
-import { commandFileName, commandResultArgv, commandWriteArgv } from "./unwedge.js";
+import { commandFileName, commandResultArgv, commandWriteArgv, resultReason } from "./unwedge.js";
 
 /** One filing the sink performed: `id` is the human handle ("FT-0123",
  * "#456", "dry-run intent"), `key` the entry's stable dedup key. */
@@ -201,7 +201,7 @@ export class GithubIssueSink implements IssueSink {
         return { ok: false, reason: "unreadable daemon result" };
       }
       if (result.ok !== true)
-        return { ok: false, reason: String(result.reason ?? "refused, no reason given") };
+        return { ok: false, reason: resultReason(result.reason, "refused, no reason given") };
       const issue = typeof result.issue === "number" && result.issue > 0 ? result.issue : null;
       // Dry-run leaves no issue number, but the intent IS on record (the
       // gate's dryrun/ file plus the day-cap row) — so the entry is stamped

@@ -17,6 +17,7 @@ import {
   type UnwedgeState,
 } from "../src/tui/unwedge.js";
 import type { RemoteResult, SshRunner } from "../src/tui/remote.js";
+import { CommandDrainSender } from "../src/tui/deploy-drain.js";
 
 const cfg = {
   ssh_host: "my-vm",
@@ -118,6 +119,14 @@ describe("the unwedge command channel", () => {
     const label = t.states[1]![1];
     expect(label).not.toMatch(/[\x00-\x1f\x7f-\x9f]/);
     expect(label).toContain("refused (tier[2J[H]0;pwned refused)");
+  });
+
+  it("the deploy drain reads the same results dir, so its refusal reason is stripped too", async () => {
+    const { ssh } = runner([
+      JSON.stringify({ ok: false, reason: "nope\u001b[2J\u001b[H\nagain\u0085" }),
+    ]);
+    const out = await new CommandDrainSender(cfg, ssh, () => NOW, async () => {}).set(true);
+    expect(out).toEqual({ ok: false, reason: "nope[2J[H again" });
   });
 
   it("surfaces how many rounds the daemon actually cancelled", async () => {

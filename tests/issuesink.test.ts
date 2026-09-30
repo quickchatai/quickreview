@@ -187,6 +187,15 @@ describe("github sink", () => {
     expect(store.ops).toHaveLength(0);
   });
 
+  it("a refusal's reason is untrusted result-dir text: control bytes stripped, one line", async () => {
+    const store = recordingStore();
+    const { ssh } = runner([
+      JSON.stringify({ ok: false, reason: "cap\u001b[2J\u001b]0;x\u0007\nreached\u009b" }),
+    ]);
+    const report = await githubSink(ssh, store).file([entry()], NOW_ISO);
+    expect(report.refused).toBe("cap[2J]0;x reached");
+  });
+
   it("dry-run receipt (no issue number) still stamps — the intent is on record and the cap was spent", async () => {
     const store = recordingStore();
     const { ssh } = runner(['{"ok":true,"issue":null,"dry_run":true}']);
