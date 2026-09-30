@@ -381,15 +381,16 @@ describe("starting stage 2 on the operator's word", () => {
   it("an unmeasured row is priced from a factor LEARNED at the other validator setting; the run keeps its approved price, the NEXT proposal is measured", async () => {
     const s = new ScanRunner(ports(runner()));
     await calibrate(s);
-    // Earlier runs with the skeptic ON: stage 1 at $0.10/kline, pass-security
-    // at $0.30/kline — stage 2 cost 3× stage 1 there.
+    // Earlier runs with the skeptic ON: stage 1 at $0.50/kline (above this
+    // run's skeptic-off stage 1 — the skeptic adds work), pass-security at
+    // $1.50/kline — stage 2 cost 3× stage 1 there.
     const past = (lens: string, tier: string, effort: string, usd: number, i: number): LedgerEntry => ({
       path: `old/${lens}-${i}.py`, blob: `b${i}`, lens, tier, effort, validator: true, sha: SHA,
       lines: 1000, cost_usd: usd, run: "scan-old", case: `c${i}`, at: "2026-09-01T00:00:00Z",
     });
     new Ledger(stateHomeFs(stateDir)).record([
-      past("pass-scan", SCAN_DEFAULTS.tier, SCAN_DEFAULTS.effort, 0.1, 1),
-      past("pass-security", "sol-med", "tier", 0.3, 2),
+      past("pass-scan", SCAN_DEFAULTS.tier, SCAN_DEFAULTS.effort, 0.5, 1),
+      past("pass-security", "sol-med", "tier", 1.5, 2),
     ]);
     const p = await propose(s, [CROSS]);
     const row = p.rows[0]!;

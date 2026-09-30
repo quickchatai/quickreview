@@ -118,6 +118,30 @@ describe("a stage-2 row's price", () => {
     expect(price([S1_OFF, S2_OFF])).toMatchObject({ basis: "extrapolated" });
   });
 
+  it("reads the skeptic's share from stage 1 at ONE tier and effort — never a ratio across tiers", () => {
+    // Stage 1 on at [scan]'s tier, off only at another tier: the ratio would
+    // be the tier's price, not the skeptic's, so nothing is learned.
+    const offElsewhere = row("pass-scan", false, 0.01, 1000, { tier: "sol-high" });
+    expect(price([S1_ON, offElsewhere, S2_OFF])).toMatchObject({ basis: "extrapolated" });
+    // A pair measured both ways at another tier still carries the share.
+    const onElsewhere = row("pass-scan", true, 0.02, 1000, { tier: "sol-high" });
+    const p = price([S1_ON, offElsewhere, onElsewhere, S2_OFF]);
+    expect(p.basis).toBe("learned");
+    expect(p.rate.usd_per_kline).toBeCloseTo(0.14 * 2, 9);
+  });
+
+  it("never lets a noisy stage-1 pair price a validated row under the unvalidated measurement (or the reverse)", () => {
+    // Stage 1 happened to measure CHEAPER with the skeptic on.
+    const on = row("pass-scan", true, 0.04, 1000);
+    const p = price([S1_OFF, on, S2_OFF]);
+    expect(p.basis).toBe("learned");
+    expect(p.rate.usd_per_kline).toBeCloseTo(0.14, 9);
+    expect(p.learned!.skeptic).toBe(1);
+    // …and a skeptic-off row learned from a skeptic-on measurement is never raised.
+    const q = price([S1_OFF, on, row("pass-security", true, 0.2, 1000)], false);
+    expect(q.rate.usd_per_kline).toBeCloseTo(0.2, 9);
+  });
+
   it("ignores unpriced rows, and is null with no priced stage 1 at all", () => {
     expect(price([S1_OFF, S1_ON, row("pass-security", false, 0, 1000, { cost_usd: null })])).toMatchObject({ basis: "extrapolated" });
     expect(priceStage2Row([S2_OFF], cfg(true), "pass-security", "sol-med", "tier")).toBeNull();

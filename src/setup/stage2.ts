@@ -102,6 +102,26 @@ export interface RowPrice {
   factor?: number;
 }
 
+/** Stage 1 measured at BOTH validator settings at one tier and effort —
+ * `[scan]`'s own when it has both, else the first other pair (sorted) that
+ * does — or null: the skeptic's share is then unmeasured. */
+function stage1Pair(entries: readonly LedgerEntry[], cfg: PriceSettings, validator: boolean): { row: ScanRate; other: ScanRate } | null {
+  const at = (tier: string, effort: string) => {
+    const row = measuredRate(entries, { lens: SCAN_PASS, tier, effort, validator });
+    const other = measuredRate(entries, { lens: SCAN_PASS, tier, effort, validator: !validator });
+    return row && other ? { row, other } : null;
+  };
+  const own = at(cfg.tier, cfg.effort);
+  if (own) return own;
+  const keys = [...new Set(entries.filter((e) => e.lens === SCAN_PASS).map((e) => `${e.tier}\0${e.effort}`))].sort();
+  for (const k of keys) {
+    const [tier, effort] = k.split("\0") as [string, string];
+    const p = at(tier, effort);
+    if (p) return p;
+  }
+  return null;
+}
+
 /** The scan settings a stage-2 price reads. */
 export type PriceSettings = { tier: string; effort: string; validator: boolean; unmeasured_rate_factor: number };
 
@@ -129,23 +149,29 @@ export function priceStage2Row(entries: readonly LedgerEntry[], cfg: PriceSettin
     measuredRate(entries, { lens: SCAN_PASS, tier: cfg.tier, effort: cfg.effort, validator: v }) ??
     rateWhere(entries, (e) => e.lens === SCAN_PASS && e.validator === v);
   // Learned: a stage-2 measurement at the same tier and effort with the
-  // validator the other way, as a factor over stage 1 at that setting,
-  // applied to stage 1 at the row's setting. Both stage-1 rates must be
-  // measured — their ratio IS the skeptic's measured share; without it
-  // there is nothing to carry the measurement across.
+  // validator the other way, carried across by the skeptic's measured share —
+  // stage 1's rate at the row's setting over its rate at the other. Both
+  // stage-1 rates must come from ONE tier and effort (`[scan]`'s first, else
+  // the first other pair measured both ways): a ratio across tiers would be
+  // the tier's price, not the skeptic's. The share is bounded by direction —
+  // the skeptic adds work, so it can raise a price learned from a skeptic-off
+  // measurement and lower one learned from a skeptic-on one, never the
+  // reverse (two noisy stage-1 samples must not price a validated row UNDER
+  // what the unvalidated lens was measured at).
   const other = !validator;
   const s1Row = stage1At(validator);
-  const s1Other = stage1At(other);
-  if (s1Row && s1Other && s1Other.usd_per_kline > 0) {
+  const pair = stage1Pair(entries, cfg, validator);
+  if (pair && pair.other.usd_per_kline > 0) {
+    const raw = pair.row.usd_per_kline / pair.other.usd_per_kline;
+    const skeptic = validator ? Math.max(raw, 1) : Math.min(raw, 1);
     for (const same of [true, false]) {
       const s2 = rateWhere(entries, deepAt(other, same));
       if (!s2) continue;
-      const factor = s2.usd_per_kline / s1Other.usd_per_kline;
       return {
-        rate: { ...s2, usd_per_kline: s1Row.usd_per_kline * factor },
+        rate: { ...s2, usd_per_kline: s2.usd_per_kline * skeptic },
         basis: "learned",
         from: lensesOf(deepAt(other, same)),
-        learned: { validator: other, factor, skeptic: s1Row.usd_per_kline / s1Other.usd_per_kline },
+        learned: { validator: other, factor: s2.usd_per_kline / pair.other.usd_per_kline, skeptic },
       };
     }
   }
