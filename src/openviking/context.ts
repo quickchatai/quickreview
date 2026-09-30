@@ -109,7 +109,8 @@ export class OpenVikingContextAssembler implements ContextAssembler {
    *
    * `rendered` is used rather than re-rendering `entries` locally: the server
    * did the budgeting, and a second renderer here would be a second place for
-   * the token budget to be wrong.
+   * the token budget to be wrong. The one exception is a retired entry that
+   * leaked past the exclusion cap (see below).
    */
   async contextBlock(query: string, opts: { maxTokens: number }): Promise<MemoryRead> {
     try {
@@ -132,6 +133,22 @@ export class OpenVikingContextAssembler implements ContextAssembler {
         return { status: "unreadable", reason: `search ${res.code}: ${res.message}` };
       }
       this.lastSearch = res.result;
+      // The request carries at most EXCLUDE_URIS_CAP exclusions, so past that
+      // many retirements the server can hand a retired entry back. The
+      // server's block cannot be edited safely, so a leak rebuilds the block
+      // from the surviving entries' text — the only time this module renders.
+      const retired = new Set(excludeUris);
+      const kept = res.result.entries.filter((e) => !retired.has(e.uri));
+      if (kept.length < res.result.entries.length) {
+        this.log(
+          `openviking: context search returned ${res.result.entries.length - kept.length} retired entr(ies) past the exclusion cap — dropped`,
+        );
+        const text = kept
+          .map((e) => e.text.trim())
+          .filter((t) => t !== "")
+          .join("\n\n");
+        return { status: "read", text };
+      }
       return { status: "read", text: res.result.rendered };
     } catch (err) {
       this.lastSearch = null;

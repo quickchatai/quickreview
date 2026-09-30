@@ -26,11 +26,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   DISABLED_MEMORY_POLICY,
+  EXCLUDE_URIS_CAP,
   OpenVikingClient,
   buildContextSearchBody,
   keyFromFile,
   type HttpFetch,
   type OvDirEntry,
+  type OvGap,
 } from "../src/openviking/client.js";
 import { OpenVikingContextAssembler } from "../src/openviking/context.js";
 import {
@@ -677,6 +679,37 @@ describe("context search", () => {
       text: expect.stringContaining("current advice"),
     });
     expect(block.status === "read" && block.text).not.toContain("stale advice");
+  });
+
+  it("past the exclusion cap, a retired entry still never reaches the round's context block", async () => {
+    // The request carries at most EXCLUDE_URIS_CAP exclusions. Retired entries
+    // past the cap in URI order used to come back from the search and be
+    // pasted into the session prompt verbatim.
+    const server = new FakeOpenViking();
+    const gaps: OvGap[] = [];
+    const log: string[] = [];
+    const client = new OpenVikingClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      user: "reviewer",
+      fetchFn: server.fetch,
+      onGap: (g) => gaps.push(g),
+    });
+    const store = new OpenVikingStore({ client, now: () => NOW, cacheTtlMs: 0 });
+    const assembler = new OpenVikingContextAssembler({ client, store, log: (m) => log.push(m) });
+    const retiredCount = EXCLUDE_URIS_CAP + 5;
+    for (let i = 0; i < retiredCount; i++)
+      await store.apply({ op: "note", text: `#feedback renumber stale advice ${i}` });
+    await store.apply({ op: "note", text: "#feedback renumber current advice" });
+    for (const e of (await store.read()).filter((x) => x.text.includes("stale advice")))
+      expect((await store.apply({ op: "retire", ...refOf(e) })).ok).toBe(true);
+    expect(await store.retiredUris()).toHaveLength(retiredCount);
+
+    const block = await assembler.contextBlock("renumber", { maxTokens: 32000 });
+    expect(block).toMatchObject({ status: "read", text: expect.stringContaining("current advice") });
+    expect(block.status === "read" && block.text).not.toContain("stale advice");
+    // The truncation itself is reported, not silent.
+    expect(gaps.map((g) => g.code)).toContain("exclude_truncated");
   });
 
   it("the context search never waits on a store sweep once one has completed (no serial sweep in the round's deadline)", async () => {

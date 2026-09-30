@@ -185,6 +185,12 @@ export interface ContextSearchOptions {
   timeoutMs?: number;
 }
 
+/** The most exclusions one search request carries. A request-size bound, not
+ * a correctness one: past it the search can return an excluded entry, so a
+ * caller that must never see one (the round's context block) filters the
+ * result against its full list too. */
+export const EXCLUDE_URIS_CAP = 200;
+
 /**
  * The exact body of a context search — pure, so the determinism guarantees are
  * unit-testable without a server.
@@ -235,8 +241,16 @@ export function buildContextSearchBody(
   if (opts.since) body["since"] = opts.since;
   if (opts.until) body["until"] = opts.until;
   if (opts.timeField) body["time_field"] = opts.timeField;
-  if (opts.excludeUris && opts.excludeUris.length > 0)
-    body["exclude_uris"] = opts.excludeUris.slice(0, 200);
+  if (opts.excludeUris && opts.excludeUris.length > 0) {
+    body["exclude_uris"] = opts.excludeUris.slice(0, EXCLUDE_URIS_CAP);
+    if (opts.excludeUris.length > EXCLUDE_URIS_CAP)
+      onGap?.({
+        op: "search",
+        status: 0,
+        code: "exclude_truncated",
+        message: `sent ${EXCLUDE_URIS_CAP} of ${opts.excludeUris.length} exclusions; the rest are filtered from the result by the caller`,
+      });
+  }
   return body;
 }
 
