@@ -516,7 +516,7 @@ export function scanValidatorPrompt(
     `FINDINGS ${lens} SCAN ${ctx.caseId} @${ctx.sha}`,
     block,
     "",
-    `Judge every candidate against the files under the tree root, as the scan's skeptic: try to refute each one. Return the survivors as a findings block headed \`FINDINGS ${VALIDATE_PASS} SCAN ${ctx.caseId} @${ctx.sha}\` (keep each survivor's path, line, kind and detail, and add its \`validity:\` — confirmed or likely — and its \`scenario:\`), then your DOUBTED block for every other candidate. Nothing is killed in a scan: write no KILLED block.`,
+    `Judge every candidate against the files under the tree root, as the scan's skeptic: try to refute each one. Return the survivors as a findings block headed \`FINDINGS ${VALIDATE_PASS} SCAN ${ctx.caseId} @${ctx.sha}\` (keep each survivor's path, line, kind and detail, and add its \`validity:\` — confirmed or likely — and its \`scenario:\`; a confirmed scenario cites a \`path:line\` for every hop it traced, or it is read as likely), then your DOUBTED block for every other candidate. Nothing is killed in a scan: write no KILLED block.`,
   ].join("\n");
 }
 
@@ -758,10 +758,28 @@ export interface DoubtLine {
 /** The slugs a doubt may name as its class — the ONE class list. */
 export const SCAN_FALSE_POSITIVE_SLUGS: readonly string[] = SCAN_FALSE_POSITIVE_CLASSES.map((c) => c.slug);
 
+/** A `path:line` reference — a file with an extension, a colon, a line
+ * (`src/tui/app.ts:369`, `webhook.ts:88`, `a.py:3-7`). */
+const PATH_LINE = /[A-Za-z0-9_][\w./-]*\.[A-Za-z][A-Za-z0-9]*:\d+/;
+
+/**
+ * Whether a skeptic's scenario is ANCHORED: it cites at least one `path:line`
+ * of the path it traced. scan-loop (skeptic vs the outside check, self-scan
+ * rounds 6–7): every refuted `confirmed` was a prose chain of names and
+ * arrows with no `path:line` — the hop it had not read is exactly the one it
+ * could not cite. The engine can check that structure; the rest of the
+ * tightening lives in SCAN_SKEPTIC_ADDENDUM.
+ */
+export function scenarioIsAnchored(scenario: string): boolean {
+  return PATH_LINE.test(scenario);
+}
+
 /** A survivor as the scan's skeptic sorted it (owner ruling 2026-09-30). */
 export interface SkepticSurvivor extends ScanCandidate {
-  /** `confirmed` only with a written `scenario:` — a demonstration not
-   * written down is not one; anything else that survived is `likely`. */
+  /** `confirmed` only with a written `scenario:` that cites a `path:line`
+   * (scenarioIsAnchored) — a demonstration not written down, or not anchored
+   * in the code it traced, is not one; anything else that survived is
+   * `likely` (the scenario kept, so the reader sees what was traced). */
   validity: "confirmed" | "likely";
   scenario: string | null;
 }
@@ -796,7 +814,7 @@ function judgementLines(body: string | null, root: string | null): DoubtLine[] {
  * Read the validator's answer over a scan case — the scan's SKEPTIC
  * (owner ruling 2026-09-30): the survivors (its findings block — they carry the
  * lens's anchors), each with its tier (`validity: confirmed` with a
- * `scenario:`, else `likely`), its DOUBTED lines,
+ * `scenario:` citing a `path:line`, else `likely`), its DOUBTED lines,
  * `- <lens> <path:line> — <word>: [<class>] <reason>`, and its KILLED lines
  * in the same shape. In a scan nothing is killed: the caller stores a KILLED
  * line as a doubt exactly like a DOUBTED one (the frozen validator's kill
@@ -812,7 +830,8 @@ export function parseValidatorAnswer(
   const survivors = read.map(({ candidate, fields }): SkepticSurvivor => {
     const said = (fields.get("validity") ?? "").trim().replace(/[`*]/g, "").toLowerCase();
     const scenario = fields.get("scenario")?.trim() || null;
-    return { ...candidate, validity: said.startsWith("confirmed") && scenario !== null ? "confirmed" : "likely", scenario };
+    const confirmed = said.startsWith("confirmed") && scenario !== null && scenarioIsAnchored(scenario);
+    return { ...candidate, validity: confirmed ? "confirmed" : "likely", scenario };
   });
   const body = blockBody(text, "DOUBTED");
   const killedBody = blockBody(text, "KILLED");

@@ -131,6 +131,36 @@ describe("the skeptic addendum is a scan-mode registry entry for the validator a
     // Each frozen kill path is named as a doubt.
     for (const k of ["below the bar", "a duplicate", "a restatement", "a confidence under 0.5"]) expect(SCAN_SKEPTIC_ADDENDUM).toContain(k);
   });
+
+  // scan-loop: the skeptic vs an outside adversarial check on the 30 findings
+  // of self-scan rounds 6–7 — confirmed held 86%, likely 50%. The seven misses
+  // each skipped one link; these are the rules that would have failed them
+  // (issue-tracker …/scan-and-setup/assets/improvement-loop/skeptic-disagreements.md).
+  it("tightened from its disagreements: confirmed names every link with file:line; likely names its untraced link; the misses' shapes are doubtful", () => {
+    const t = SCAN_SKEPTIC_ADDENDUM;
+    // confirmed: every link, anchored, and "at most likely" when one is missing.
+    for (const link of ["the entry point", "the concrete input or state", "one `path:line` per hop", "who observes it", "not intended:"]) expect(t, link).toContain(link);
+    expect(t).toContain("If any link is missing, it is at most **likely**");
+    expect(t).toContain("a `confirmed` scenario with no `path:line` reference is read as `likely`");
+    // the three refutation questions the confirmed misses skipped
+    expect(t).toMatch(/same synchronous tick/);
+    expect(t).toMatch(/at-least-once/);
+    expect(t).toMatch(/every other candidate on the same path/);
+    // likely: says which link, and the untraced links that make it doubtful instead.
+    expect(t).toContain("untraced: <the link>");
+    for (const cls of ["no-consequence", "unreachable", "contrived-concurrency", "same-principal"]) expect(t, cls).toContain(`\`[${cls}]\``);
+    expect(t).toMatch(/operator or by this system's own first-party code/);
+    // and still: nothing is dropped.
+    expect(t).toContain("It is NOT deleted");
+  });
+
+  it("the scan build's validator body carries the tightened rules", () => {
+    const out = join(dir, "scan-agents-tight");
+    buildScanAgents(sandbox, out, fixture, { env });
+    const body = built(out).get(`${VALIDATE_PASS}--${SCAN_DEFAULTS.tier}`)!;
+    expect(body).toContain("If any link is missing, it is at most **likely**");
+    expect(body).toContain("untraced: <the link>");
+  });
 });
 
 // ---- reading the answer ----------------------------------------------------------------
@@ -143,7 +173,7 @@ describe("parseValidatorAnswer reads tiers, classes and kills", () => {
     "  kind: bug",
     "  severity: P1",
     "  validity: confirmed",
-    "  scenario: POST /refund with an empty cart reaches line 1",
+    "  scenario: POST /refund at app/views.py:40 with an empty cart → app/a.py:1",
     "  claim: one",
     "- path: app/a.py",
     "  line: 3",
@@ -168,10 +198,26 @@ describe("parseValidatorAnswer reads tiers, classes and kills", () => {
   it("a confirmed survivor needs its scenario; anything else that survived is likely", () => {
     const r = parseValidatorAnswer(answer, null);
     expect(r.survivors.map((s) => [s.start, s.validity, s.scenario])).toEqual([
-      [1, "confirmed", "POST /refund with an empty cart reaches line 1"],
+      [1, "confirmed", "POST /refund at app/views.py:40 with an empty cart → app/a.py:1"],
       [3, "likely", null],
       [5, "likely", null],
     ]);
+  });
+
+  it("a confirmed scenario with no path:line reference is demoted to likely — the scenario is kept", () => {
+    const one = (scenario: string) =>
+      parseValidatorAnswer(
+        ["FINDINGS pass-validate SCAN x @y", "- path: app/a.py", "  line: 1", "  kind: bug", "  severity: P2", "  validity: confirmed", `  scenario: ${scenario}`, "  claim: c"].join("\n"),
+        null,
+      ).survivors[0]!;
+    // The shape of the three refuted confirmeds: prose arrows, no anchor.
+    const bare = "runTui() → app.run(initial) → poller.start() → tick() → SSH starts before the layout is painted";
+    expect(one(bare)).toMatchObject({ validity: "likely", scenario: bare });
+    expect(one("a request reaches line 250 and it breaks").validity).toBe("likely");
+    // Anchored, in any of the usual spellings.
+    expect(one("runTui src/tui/index.ts:1177 → app.run src/tui/app.ts:369").validity).toBe("confirmed");
+    expect(one("dispatch (`src/dispatch.ts:1470-1472`) → spawnSession").validity).toBe("confirmed");
+    expect(one("the webhook in webhook.ts:88 passes the header").validity).toBe("confirmed");
   });
 
   it("a doubt names its class only when it is one of the ten; KILLED lines are read in the same shape", () => {
@@ -223,7 +269,7 @@ function skepticAnswer(id: string): string {
     "  kind: bug",
     "  severity: P1",
     "  validity: confirmed",
-    "  scenario: POST /refund with an empty cart → refund_total() → line 1 goes negative",
+    "  scenario: POST /refund (app/views.py:40) with an empty cart → refund_total() app/b.py:7 → app/a.py:1 goes negative",
     `  claim: ${CLAIMS[0]}`,
     "  evidence: `line_1 = compute(1)`",
     "- path: app/a.py",
@@ -348,7 +394,7 @@ describe("the engine sorts every finding into a tier and drops none", () => {
         "  kind: bug",
         "  severity: P1",
         "  validity: confirmed",
-        "  scenario: POST /refund → line 1",
+        "  scenario: POST /refund app/views.py:40 → app/a.py:1",
         `  claim: ${CLAIMS[0]}`,
         "",
         "DOUBTED",
@@ -362,6 +408,19 @@ describe("the engine sorts every finding into a tier and drops none", () => {
     expect(byKind("bug")).toMatchObject({ validity: "confirmed", doubt: null });
     expect(byKind("data")).toMatchObject({ validity: "doubtful", doubt: { word: "duplicate" } });
     expect(byKind("io")).toMatchObject({ validity: "doubtful", doubt: { word: "not-upheld" } });
+  });
+
+  it("scan-loop: a confirmed whose scenario cites no path:line is stored LIKELY, with its scenario — and nothing is dropped", async () => {
+    const unanchored = "runTui() → app.run(initial) → poller.start() → SSH starts before the layout is painted";
+    const answer = (id: string) => skepticAnswer(id).replace(/  scenario: POST \/refund[^\n]*/, `  scenario: ${unanchored}`);
+    const { ports: p, state } = ports({ validator: (id) => ({ ok: true, output: answer(id), cost_usd: 0.01 }) });
+    const s = new ScanRunner(p);
+    await runOnce(s);
+    const { findings } = new FindingsStore(state).list();
+    expect(findings).toHaveLength(6);
+    expect(findings.find((f) => f.start === 1)).toMatchObject({ validity: "likely", scenario: unanchored, doubt: null });
+    const app = s.status().run!.cases.find((c) => c.unit === "app")!;
+    expect([app.findings, app.confirmed, app.likely, app.doubted]).toEqual([6, 0, 2, 4]);
   });
 
   it("a validator that answers NONE upholds nothing — every candidate is kept doubtful", async () => {
