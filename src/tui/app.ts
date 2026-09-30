@@ -954,6 +954,17 @@ export class App {
     }
     const tab = this.tabHooks();
     if (this.tab !== "board") {
+      // The KEYS overlay covers the tab (see repaint): its zones are not on
+      // screen, so a click must not reach them (a hidden [url] or row would
+      // fire unseen). A click dismisses help, as any key does; the wheel is
+      // swallowed.
+      if (this.view.help) {
+        if (ev.kind === "click") {
+          this.view.help = false;
+          this.repaint();
+        }
+        return;
+      }
       // An installed surface: clicks hit its own zones (rows select, buttons
       // act); the wheel is handed over as a key that says it was a wheel.
       if (ev.kind === "click") tab?.click?.(this, ev.x, ev.y);

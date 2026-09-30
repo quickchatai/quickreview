@@ -448,4 +448,27 @@ describe("? help on a non-board tab", () => {
     rig.app.quit();
     await running;
   });
+
+  it("a click while the overlay covers a tab dismisses help and never reaches the tab's hidden zones", async () => {
+    const rig = learningRig();
+    const running = rig.app.run();
+    rig.streams.type("3");
+    const tabs = (rig.app as unknown as { hooks: { tabs: Record<string, { click?: unknown }> } })
+      .hooks.tabs;
+    let clicks = 0;
+    tabs["digest"]!.click = () => {
+      clicks++;
+      return true;
+    };
+    rig.streams.type("?");
+    expect(framePlain(rig.app)).toContain("KEYS");
+    rig.streams.type("\x1b[<0;10;6M");
+    expect(clicks).toBe(0);
+    expect(rig.app.view.help).toBe(false);
+    expect(framePlain(rig.app)).not.toContain("KEYS");
+    rig.streams.type("\x1b[<0;10;6M");
+    expect(clicks).toBe(1);
+    rig.app.quit();
+    await running;
+  });
 });
