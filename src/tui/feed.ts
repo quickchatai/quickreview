@@ -382,10 +382,10 @@ export class FeedWriter {
       lines = lines.slice(-EVENT_TAIL_KEEP);
       this.writeAtomic(this.eventsPath, lines.join("\n") + "\n");
     }
-    this.eventLines = lines.length;
-    this.seen.clear();
-    this.seedSeen(lines);
-    this.noteJournal();
+    // Seed through the same whole-lines reader every later write uses, so a
+    // row another TUI is mid-appending right now is not lost to a failed parse.
+    this.journalIno = -1;
+    this.syncJournal();
   }
 
   private seedSeen(lines: string[]): void {
@@ -427,28 +427,31 @@ export class FeedWriter {
       return; // no journal yet: nothing anyone else wrote
     }
     if (ino === this.journalIno && size === this.journalBytes) return;
-    if (ino !== this.journalIno || size < this.journalBytes) {
-      const lines = readFileSync(this.eventsPath, "utf8")
-        .split("\n")
-        .filter((line) => line.trim() !== "");
+    const reseed = ino !== this.journalIno || size < this.journalBytes;
+    const from = reseed ? 0 : this.journalBytes;
+    const buf = Buffer.alloc(size - from);
+    const fd = openSync(this.eventsPath, "r");
+    try {
+      readSync(fd, buf, 0, buf.length, from);
+    } finally {
+      closeSync(fd);
+    }
+    // Consume only whole lines: a row caught mid-append by the other writer
+    // is left for the next sync, so its key is not lost to a failed parse.
+    const end = buf.lastIndexOf(0x0a) + 1;
+    const lines = buf
+      .subarray(0, end)
+      .toString("utf8")
+      .split("\n")
+      .filter((line) => line.trim() !== "");
+    if (reseed) {
       this.eventLines = lines.length;
       this.seen.clear();
-      this.seedSeen(lines);
     } else {
-      const buf = Buffer.alloc(size - this.journalBytes);
-      const fd = openSync(this.eventsPath, "r");
-      try {
-        readSync(fd, buf, 0, buf.length, this.journalBytes);
-      } finally {
-        closeSync(fd);
-      }
-      const lines = buf
-        .toString("utf8")
-        .split("\n")
-        .filter((line) => line.trim() !== "");
       this.eventLines += lines.length;
-      this.seedSeen(lines);
     }
+    this.seedSeen(lines);
+    size = from + end;
     this.journalIno = ino;
     this.journalBytes = size;
   }
@@ -464,10 +467,11 @@ export class FeedWriter {
       .filter((e) => !this.seen.has(eventKey(e)));
     if (fresh.length > 0) {
       appendFileSync(this.eventsPath, fresh.map((e) => JSON.stringify(e)).join("\n") + "\n");
-      this.eventLines += fresh.length;
-      for (const e of fresh) this.seen.add(eventKey(e));
+      // Read our own rows back through the journal cursor rather than jumping
+      // it to EOF: a row the other TUI appended between the sync above and our
+      // append sits before ours and must be folded in, not skipped.
+      this.syncJournal();
       if (this.eventLines > EVENT_TAIL_CAP) this.compactEvents();
-      else this.noteJournal();
     }
     return { appended: fresh.length };
   }

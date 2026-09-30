@@ -2,7 +2,7 @@
 // I/O is a temp dir per test; nothing spawns docker, notify-send, ssh or pi.
 import { FG } from "../src/tui/theme.js";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -132,6 +132,37 @@ describe("FeedWriter", () => {
     expect(a.write(snap(), [v, ev("2026-08-14T10:00:01Z")], "ok").appended).toBe(0);
     const lines = readFileSync(a.eventsPath, "utf8").trim().split("\n");
     expect(lines).toHaveLength(2);
+  });
+
+  it("a row caught mid-append by the other TUI is read whole on the next sync", () => {
+    const a = new FeedWriter(dir);
+    a.start();
+    const v = ev("2026-08-14T10:00:00Z", "verdict");
+    const line = JSON.stringify(v) + "\n";
+    const half = Math.floor(line.length / 2);
+    appendFileSync(a.eventsPath, line.slice(0, half)); // the other TUI, mid-write
+    a.write(snap(), [], "ok");
+    appendFileSync(a.eventsPath, line.slice(half));
+    expect(a.write(snap(), [v], "ok").appended).toBe(0);
+  });
+
+  it("a row the other TUI appends between our sync and our append is not skipped", () => {
+    const a = new FeedWriter(dir);
+    a.start();
+    a.write(snap(), [ev("2026-08-14T10:00:00Z")], "ok");
+    const other = ev("2026-08-14T10:00:01Z", "verdict");
+    // B's row lands in the window between A's pre-append sync and A's append.
+    const probe = a as unknown as { syncJournal: () => void };
+    const sync = probe.syncJournal.bind(a);
+    let calls = 0;
+    probe.syncJournal = () => {
+      sync();
+      if (++calls === 1) appendFileSync(a.eventsPath, JSON.stringify(other) + "\n");
+    };
+    a.write(snap(), [ev("2026-08-14T10:00:02Z")], "ok");
+    probe.syncJournal = sync;
+    expect(a.write(snap(), [other], "ok").appended).toBe(0);
+    expect(readFileSync(a.eventsPath, "utf8").trim().split("\n")).toHaveLength(3);
   });
 
   it("re-seeds after another TUI compacted the journal under it", () => {
