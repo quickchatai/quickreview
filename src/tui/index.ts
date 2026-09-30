@@ -310,6 +310,28 @@ async function settledWithin(p: Promise<unknown>, ms: number): Promise<boolean> 
   return settled;
 }
 
+/**
+ * Clean quit stops the container (conversation + auth survive on volumes).
+ * The question is whether THIS start put a container up — true from the
+ * moment `ensureUp` returns, not only once the rollover and the pi spawn
+ * behind it finished: a quit whose bring-up grace ran out mid-rollover would
+ * otherwise leave a freshly started container running. A failed stop is
+ * swallowed — leaving it running is harmless, the next start adopts it.
+ */
+export async function stopCompanionOnQuit(opts: {
+  containerStarted: boolean;
+  stop: () => Promise<void>;
+  write: (line: string) => void;
+}): Promise<void> {
+  if (!opts.containerStarted) return;
+  opts.write("qcr tui: stopping the companion container…\n");
+  try {
+    await opts.stop();
+  } catch {
+    /* leaving it running is harmless: the next start adopts */
+  }
+}
+
 export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}): Promise<void> {
   const args = parseTuiArgs(typeof argv === "string" ? [argv] : argv);
   if (args.help) {
@@ -441,6 +463,9 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   const CONFIG_MIRROR_EVERY_MS = 30_000;
   const companionOn = args.companion && full.companion.enabled;
   let companionUp = false;
+  /** `ensureUp` returned: a container is running on this start's account,
+   * whether or not the rollover and pi spawn behind it ever finish. */
+  let companionContainerStarted = false;
   let companionError: string | undefined;
   // The column exists in EVERY configuration (2026-09-02): `--no-companion`
   // and `[companion] enabled = false` decide what runs and what the column
@@ -821,6 +846,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
         progress.note("container", line);
         app.notice(`companion: ${line}`);
       });
+      companionContainerStarted = true;
       progress.done("container");
       // daily rollover — strictly between "container is up" and
       // "pi is spawned": on the first start of a new ops day it archives
@@ -1187,14 +1213,11 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   // the container's PID 1 ignored SIGTERM (fixed that in the
   // entrypoint). Say what is happening regardless: a slow docker, or a
   // container built before that fix, must not look like a hang.
-  if (companionUp) {
-    out.write("qcr tui: stopping the companion container…\n");
-    try {
-      await companion.gracefulStop();
-    } catch {
-      /* leaving it running is harmless: the next start adopts */
-    }
-  }
+  await stopCompanionOnQuit({
+    containerStarted: companionContainerStarted || companionUp,
+    stop: () => companion.gracefulStop(),
+    write: (line) => out.write(line),
+  });
   // Exit explicitly. Anything still holding the event loop — a docker exec
   // that never returned, an ssh master, a socket — would otherwise keep the
   // process alive with the terminal already restored, which is exactly the

@@ -204,6 +204,12 @@ export class App {
    * instantly on selection, refresh over ssh behind it. */
   private readonly detailCache = new Map<number, { payload: WhyPayload; fetched_at: number }>();
   private static readonly DETAIL_TTL_MS = 60_000;
+  /** The newest `why` read started per PR (its detailSeq), until it settles.
+   * Only that read may write the PR's cache entry — an older one resolving
+   * late must not stamp its older payload fresh — and while it is pending a
+   * poll does not stack another. Invalidation drops it, so a read begun
+   * before the invalidation cannot repopulate the cache either. */
+  private readonly detailPending = new Map<number, number>();
   private quitResolve: (() => void) | undefined;
   private suspended = false;
   private readonly onData = (buf: Buffer): void => this.handleInput(buf);
@@ -526,7 +532,7 @@ export class App {
       for (const pr of snap.prs) {
         const c = this.detailCache.get(pr.number);
         if (c && (c.payload.head_sha !== pr.head_sha || c.payload.state !== pr.state))
-          this.detailCache.delete(pr.number);
+          this.invalidateDetail(pr.number);
       }
       this.view.snapshot = snap;
       this.view.dryRun = snap.dry_run;
@@ -536,7 +542,7 @@ export class App {
     }
     this.view.health = this.poller.health();
     void this.refreshEvents();
-    if (this.view.detail?.pr !== this.selectedPr) void this.refreshDetail();
+    if (this.detailWanted()) void this.refreshDetail();
     // Live progress is a cheap host-volume read, separate from `why` because
     // refreshing the enriched detail would call GitHub on every poll.
     if (this.tab === "board" && !this.suspended) void this.refreshProgress();
@@ -577,6 +583,19 @@ export class App {
     return lines;
   }
 
+  /** A poll refreshes the detail when the selection moved, or when the
+   * selected PR's cache entry is gone (invalidated) or past its TTL and no
+   * read for it is already in flight — a PR that stays selected must follow
+   * its new rounds without the operator moving away or pressing `r`. */
+  private detailWanted(): boolean {
+    const pr = this.selectedPr;
+    if (pr === undefined) return false;
+    if (this.view.detail?.pr !== pr) return true;
+    if (this.detailPending.has(pr)) return false;
+    const c = this.detailCache.get(pr);
+    return !c || Date.now() - c.fetched_at >= App.DETAIL_TTL_MS;
+  }
+
   async refreshDetail(): Promise<void> {
     const pr = this.selectedPr;
     if (pr === undefined) return;
@@ -589,11 +608,17 @@ export class App {
       if (now - cached.fetched_at < App.DETAIL_TTL_MS) return;
     }
     const seq = ++this.detailSeq;
+    this.detailPending.set(pr, seq);
     const res = await this.ssh(this.cfg.ssh_host, whyArgv(this.cfg, pr));
+    // Superseded (a newer read for this PR started) or invalidated meanwhile:
+    // this payload may be older than what the cache should hold.
+    const newest = this.detailPending.get(pr) === seq;
+    if (newest) this.detailPending.delete(pr);
     if (!res.ok) return;
     try {
       const payload = JSON.parse(res.stdout) as WhyPayload;
-      this.detailCache.set(payload.pr, { payload, fetched_at: Date.now() });
+      if (newest && payload.pr === pr)
+        this.detailCache.set(payload.pr, { payload, fetched_at: Date.now() });
       if (seq !== this.detailSeq || payload.pr !== this.selectedPr) return;
       this.view.detail = payload;
       this.repaint();
@@ -623,6 +648,7 @@ export class App {
   /** Drop a PR's cached detail (a new verdict/round event makes it stale). */
   invalidateDetail(pr: number): void {
     this.detailCache.delete(pr);
+    this.detailPending.delete(pr);
   }
 
   // ---- input -------------------------------------------------------------
