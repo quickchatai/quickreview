@@ -328,7 +328,7 @@ export function renderDirectiveEscalationNote(order: RoundOrder): string {
     "**FIRST-PARTY DIRECTIVES — concrete evidence decides.** This PR edits",
     "first-party agent-directive files of the reviewed repo:",
     "",
-    ...fpd.files.map((f) => `- \`${f}\``),
+    ...fpd.files.map((f) => `- ${codePath(f)}`),
     "",
     "Routine directive text is the file doing its job and produces NO injection",
     "finding. If — and only if — a candidate survives by proving an",

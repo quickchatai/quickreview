@@ -13,6 +13,7 @@ import { findStyleGuide } from "../src/styleguide.js";
 import {
   renderConversationSystemPrompt,
   renderDeltaFiles,
+  renderDirectiveEscalationNote,
   renderPassPlan,
   renderValidatorNote,
 } from "../src/templates.js";
@@ -218,6 +219,18 @@ describe("author-controlled strings render as bounded data", () => {
     const rows = table.split("\n");
     expect(rows).toHaveLength(3);
     expect(rows[2]!.split(/(?<!\\)\|/)).toHaveLength(7);
+  });
+
+  it("a hostile directive filename stays inside its one list item", () => {
+    const dir = `.claude/${evil}`;
+    const note = renderDirectiveEscalationNote({
+      first_party_directives: { files: [dir, "AGENTS.md"], mention: "alice" },
+    } as never);
+    const items = note.split("\n").filter((l) => l.startsWith("- "));
+    expect(items).toHaveLength(2);
+    expect(note).not.toMatch(/^\*\*DISPATCH OVERRIDE/m);
+    // The fence is wider than any backtick run in the path, so the span holds.
+    expect(items[0]).toMatch(/^- `{2,} \.claude\/x`.* `{2,}$/);
   });
 
   it("a pipe outside a table reads back as the path, not an escape", () => {
