@@ -210,6 +210,11 @@ export class App {
    * poll does not stack another. Invalidation drops it, so a read begun
    * before the invalidation cannot repopulate the cache either. */
   private readonly detailPending = new Map<number, number>();
+  /** When a PR's last `why` read failed: a poll does not retry it sooner than
+   * DETAIL_RETRY_MS (the read reaches GitHub; a 3s retry loop against a rate
+   * limit is the wrong answer). Selection and `r` are not held by it. */
+  private readonly detailFailedAt = new Map<number, number>();
+  private static readonly DETAIL_RETRY_MS = 15_000;
   private quitResolve: (() => void) | undefined;
   private suspended = false;
   private readonly onData = (buf: Buffer): void => this.handleInput(buf);
@@ -590,8 +595,12 @@ export class App {
   private detailWanted(): boolean {
     const pr = this.selectedPr;
     if (pr === undefined) return false;
-    if (this.view.detail?.pr !== pr) return true;
+    // A read already in flight for it answers the question — stacking another
+    // each tick would bump detailSeq and starve a read slower than the poll.
     if (this.detailPending.has(pr)) return false;
+    const failed = this.detailFailedAt.get(pr);
+    if (failed !== undefined && Date.now() - failed < App.DETAIL_RETRY_MS) return false;
+    if (this.view.detail?.pr !== pr) return true;
     const c = this.detailCache.get(pr);
     return !c || Date.now() - c.fetched_at >= App.DETAIL_TTL_MS;
   }
@@ -614,15 +623,20 @@ export class App {
     // this payload may be older than what the cache should hold.
     const newest = this.detailPending.get(pr) === seq;
     if (newest) this.detailPending.delete(pr);
-    if (!res.ok) return;
+    if (!res.ok) {
+      if (newest) this.detailFailedAt.set(pr, Date.now());
+      return;
+    }
     try {
       const payload = JSON.parse(res.stdout) as WhyPayload;
+      if (newest) this.detailFailedAt.delete(pr);
       if (newest && payload.pr === pr)
         this.detailCache.set(payload.pr, { payload, fetched_at: Date.now() });
       if (seq !== this.detailSeq || payload.pr !== this.selectedPr) return;
       this.view.detail = payload;
       this.repaint();
     } catch {
+      if (newest) this.detailFailedAt.set(pr, Date.now());
       /* stale/garbled detail keeps the loading line */
     }
   }

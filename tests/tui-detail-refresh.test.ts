@@ -25,7 +25,7 @@ function why(pr: number, head: string, tag: string, state = "reviewing"): string
   return JSON.stringify({ pr, head_sha: head, state, title: tag, rounds: [], ledger: [] });
 }
 
-type Pending = { pr: number; resolve: (stdout: string) => void };
+type Pending = { pr: number; resolve: (stdout: string) => void; fail: () => void };
 
 function harness() {
   const out = new EventEmitter() as unknown as NodeJS.WriteStream;
@@ -39,7 +39,11 @@ function harness() {
     if (i < 0) return Promise.resolve({ ok: false, stdout: "", stderr: "", code: 1 });
     const pr = Number(argv[i + 1]);
     return new Promise((res) =>
-      whys.push({ pr, resolve: (stdout) => res({ ok: true, stdout, stderr: "", code: 0 }) }),
+      whys.push({
+        pr,
+        resolve: (stdout) => res({ ok: true, stdout, stderr: "", code: 0 }),
+        fail: () => res({ ok: false, stdout: "", stderr: "boom", code: 1 }),
+      }),
     );
   };
   const app = new App(TUI_DEFAULTS, ssh, out, input);
@@ -111,5 +115,35 @@ describe("App detail refresh", () => {
     h.app.selectPr(5013);
     h.app.selectPr(5012);
     expect(h.app.view.detail?.title).toBe("newer");
+  });
+
+  it("a first read slower than the poll is not superseded by a new read every tick", async () => {
+    const h = harness();
+    h.poll(snap("aaa"));
+    h.poll(snap("aaa"));
+    h.poll(snap("aaa"));
+    expect(h.whys.length).toBe(1);
+    h.whys[0]!.resolve(why(5012, "aaa", "slow"));
+    await flush();
+    expect(h.app.view.detail?.title).toBe("slow");
+  });
+
+  it("a failed read is retried by the poll only after a backoff, not every tick", async () => {
+    const h = harness();
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    h.poll(snap("aaa"));
+    h.whys[0]!.resolve(why(5012, "aaa", "round-1"));
+    await flush();
+    h.poll(snap("bbb")); // invalidated → refetch
+    expect(h.whys.length).toBe(2);
+    h.whys[1]!.fail();
+    await flush();
+    now += 3_000;
+    h.poll(snap("bbb"));
+    expect(h.whys.length).toBe(2);
+    now += 15_000;
+    h.poll(snap("bbb"));
+    expect(h.whys.length).toBe(3);
   });
 });
