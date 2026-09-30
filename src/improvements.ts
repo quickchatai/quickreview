@@ -383,6 +383,23 @@ export function botBranchFor(slug: string): string {
 // ---- the improvement-PR pipeline ------------------------------------------
 
 /**
+ * One filing of a kind at a time, process-wide. The cap is checked before, and
+ * recorded after, a run of git and network awaits; every command watcher
+ * (commands/, commands/operator/, commands/slack/) serialises only its own
+ * queue, so without this two overlapping filings both read the last slot as
+ * free. A failing filing never wedges the next: the chain swallows it.
+ */
+const filingChains = new Map<"improvement_pr" | "issue", Promise<unknown>>();
+function oneFilingAtATime<T>(kind: "improvement_pr" | "issue", fn: () => Promise<T>): Promise<T> {
+  const next = (filingChains.get(kind) ?? Promise.resolve()).then(fn, fn);
+  filingChains.set(
+    kind,
+    next.catch(() => undefined),
+  );
+  return next;
+}
+
+/**
  * file-improvement-pr: in the reviewed repo's base clone — fetch the fresh base
  * branch → confirm the session-prepared branch exists as a LOCAL branch there
  * → daemon diffstat + rate caps → push bot/improve-<slug> (gated) → open PR +
@@ -390,7 +407,14 @@ export function botBranchFor(slug: string): string {
  * back with a reason the command executor writes into the result file for the
  * overseer.
  */
-export async function fileImprovementPr(
+export function fileImprovementPr(
+  payload: ImprovementPayload,
+  ctx: ImprovementContext,
+): Promise<FileOutcome> {
+  return oneFilingAtATime("improvement_pr", () => fileImprovementPrNow(payload, ctx));
+}
+
+async function fileImprovementPrNow(
   payload: ImprovementPayload,
   ctx: ImprovementContext,
 ): Promise<FileOutcome> {
@@ -518,7 +542,11 @@ export interface IssueContext {
 }
 
 /** file-issue: dedup against open bot-filed issues, day cap, label, record. */
-export async function fileIssue(payload: IssuePayload, ctx: IssueContext): Promise<FileOutcome> {
+export function fileIssue(payload: IssuePayload, ctx: IssueContext): Promise<FileOutcome> {
+  return oneFilingAtATime("issue", () => fileIssueNow(payload, ctx));
+}
+
+async function fileIssueNow(payload: IssuePayload, ctx: IssueContext): Promise<FileOutcome> {
   const now = (ctx.now ?? (() => new Date()))();
   const pr = payload.pr ?? null;
   const reject = (reason: string, extra: Record<string, unknown> = {}): FileOutcome => {

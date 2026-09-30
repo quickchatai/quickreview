@@ -581,6 +581,33 @@ describe("fileImprovementPr / fileIssue (dry-run)", () => {
     expect(botBranchFor("ok-slug")).toBe("bot/improve-ok-slug");
   });
 
+  it("the caps hold across CONCURRENT filings — two watchers sharing one slot file once", async () => {
+    // commands/, commands/operator/ and commands/slack/ are separate watchers
+    // over the same handlers; each serialises only its own queue. The cap
+    // check and the record straddle git + network awaits, so two filings
+    // that overlap must not both read the last slot as free.
+    const { run } = runner(numstat([[2, 0, "docs/readme.md"]]));
+    const outs = await Promise.all(
+      ["one", "two"].map((slug) =>
+        fileImprovementPr({ branch: `wip/${slug}`, title: slug, body: "b", slug }, ctx(run)),
+      ),
+    );
+    // MUTATION: drop the filing lock — both filings pass the 1/day cap.
+    expect(outs.map((o) => o.ok)).toEqual([true, false]);
+    expect(outs[1]!.reason).toContain("cap");
+    expect(store.filedSince("improvement_pr", "1970-01-01T00:00:00.000Z")).toBe(1);
+
+    store.recordFiledItem("issue", "a", null);
+    store.recordFiledItem("issue", "b", null);
+    const issues = await Promise.all(
+      ["Alpha retry loop jitter", "Webhook dedupe ordering"].map((title) =>
+        fileIssue({ title, body: "e" }, { cfg, adapter, gate, store }),
+      ),
+    );
+    expect(issues.map((o) => o.ok)).toEqual([true, false]);
+    expect(store.filedSince("issue", "1970-01-01T00:00:00.000Z")).toBe(3);
+  });
+
   it("files an issue in dry-run with the bot-filed label and records it", async () => {
     const out = await fileIssue(
       { title: "Retry loop misses jitter", body: "evidence" },
