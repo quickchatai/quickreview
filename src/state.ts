@@ -2817,6 +2817,16 @@ export class StateStore {
     return this.db.prepare("DELETE FROM pending_wakes WHERE pr = ?").run(pr).changes;
   }
 
+  /** Rounds whose `started_at` falls in [startIso, endIso) — both UTC ISO
+   * instants, which compare correctly as strings (every writer uses
+   * `toISOString()`). The zone-local-day reader: `roundsOn` buckets by the
+   * UTC date prefix. */
+  roundsStartedBetween(startIso: string, endIso: string): RoundRow[] {
+    return this.db
+      .prepare("SELECT * FROM rounds WHERE started_at >= ? AND started_at < ? ORDER BY started_at")
+      .all(startIso, endIso) as RoundRow[];
+  }
+
   roundsOn(dateIso: string): RoundRow[] {
     return this.db
       .prepare("SELECT * FROM rounds WHERE started_at LIKE ? ORDER BY started_at")

@@ -4,6 +4,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { sandboxRoot } from "./config.js";
+import { localWallClockToInstant } from "./eod.js";
 import {
   cancelCauseLabel,
   isLoudCancelCause,
@@ -123,9 +124,15 @@ export interface DailyCancellations {
  * that volume is the boot orphan sweep after a redeploy, and a total that
  * lumps it in with a round that stopped dead says nothing.
  */
-export function dailyCancellations(store: StateStore, date: string): DailyCancellations {
+export function dailyCancellations(
+  store: StateStore,
+  date: string,
+  /** Read `date` as a calendar day in this zone (the EOD timer's). Absent ⇒
+   * the UTC date prefix, as every other `roundsOn` reader does. */
+  timeZone?: string,
+): DailyCancellations {
   const counts = new Map<string, number>();
-  for (const r of store.roundsOn(date)) {
+  for (const r of roundsOnDay(store, date, timeZone)) {
     if (r.status !== "cancelled") continue;
     const cause = r.cancel_cause ?? "unknown";
     counts.set(cause, (counts.get(cause) ?? 0) + 1);
@@ -146,6 +153,25 @@ export function dailyCancellations(store: StateStore, date: string): DailyCancel
     loud: byCause.filter((c) => c.loud).reduce((n, c) => n + c.count, 0),
     by_cause: byCause,
   };
+}
+
+/** The rounds started on `date` — a zone-local calendar day when `timeZone`
+ * is given (midnight to midnight on that zone's wall clock, DST-correct). */
+function roundsOnDay(store: StateStore, date: string, timeZone?: string) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (!timeZone || !m) return store.roundsOn(date);
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const next = new Date(Date.UTC(y, mo - 1, d + 1));
+  const start = localWallClockToInstant(y, mo, d, 0, 0, timeZone);
+  const end = localWallClockToInstant(
+    next.getUTCFullYear(),
+    next.getUTCMonth() + 1,
+    next.getUTCDate(),
+    0,
+    0,
+    timeZone,
+  );
+  return store.roundsStartedBetween(start.toISOString(), end.toISOString());
 }
 
 /**
@@ -175,6 +201,8 @@ export function cancellationSummaryLine(c: DailyCancellations): string {
  * two helpers above were dead code and the digest never mentioned
  * cancellations at all (the gap, reopened).
  */
-export function eodDigestContext(store: StateStore, date: string): string {
-  return cancellationSummaryLine(dailyCancellations(store, date));
+export function eodDigestContext(store: StateStore, date: string, timeZone?: string): string {
+  // The EOD timer names a ZONE-LOCAL date; `timeZone` makes the selection
+  // window that same day, not the UTC date prefix.
+  return cancellationSummaryLine(dailyCancellations(store, date, timeZone));
 }

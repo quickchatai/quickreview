@@ -127,9 +127,10 @@ export interface DaemonDeps {
   listen?: boolean;
   /** Latest digest headline for status.json (B5's digest module). */
   digestHeadline?: () => string | undefined;
-  /** pi's session-JSONL root for the passive auth-failure watch
-   * (src/authwatch.ts). Absent (tests, stubs) ⇒ the watch never runs. */
-  piSessionsDir?: string;
+  /** pi's session-JSONL root(s) for the passive auth-failure watch
+   * (src/authwatch.ts) — production passes `piAuthWatchDirs` (wire.ts).
+   * Absent (tests, stubs) ⇒ the watch never runs. */
+  piSessionsDir?: string | readonly string[];
   /**
    * The supervised OpenViking server's heartbeat block. A CACHED,
    * synchronous read — wire.ts hands the supervisor's `status()` here. Absent
@@ -704,7 +705,27 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       // dead session immediately (boot after a deploy restart), and the
       // respawn path needs the title resolver wired in onStart. Live failure
       // 2026-08-19: "no live session pr-5290" thrown by the boot sweep.
-      if (deps.onStart) await guard("onStart", async () => deps.onStart!(this));
+      //
+      // FATAL, not guarded: onStart assembles the command watchers, the EOD
+      // timer and the Slack concierge, and refuses loudly on what must not
+      // run half-built (Slack auth.test, a malformed profile pack). Swallowing
+      // the throw left a daemon that reviewed PRs while serving no overseer or
+      // operator command and running no sweep, with one log line to say so.
+      // The caller (wire.ts main) stops and exits non-zero; the container
+      // restart is the retry.
+      if (deps.onStart) {
+        try {
+          await deps.onStart(this);
+        } catch (err) {
+          log("onStart failed — refusing to run a half-assembled daemon", err);
+          store.logEvent("daemon_error", null, {
+            what: "onStart",
+            error: String(err),
+            fatal: true,
+          });
+          throw err;
+        }
+      }
       await reconcile();
 
       every(cfg.daemon.poll_interval_s, () => void reconcile());

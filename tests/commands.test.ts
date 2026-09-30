@@ -425,6 +425,36 @@ describe("CommandWatcher", () => {
     expect(deps.flagOwner).toHaveBeenCalledWith("hello");
   });
 
+  it("a file written WHILE the startup sweep's handler is in flight is still served", async () => {
+    writeFileSync(join(cmdDir(), "a-slow.json"), JSON.stringify({ command: "rerun-round", pr: 5 }));
+    const deps = makeDeps();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let entered!: () => void;
+    const inHandler = new Promise<void>((r) => (entered = r));
+    deps.rerunRound = vi.fn(async () => {
+      entered();
+      await gate;
+      return true;
+    }) as any;
+    const w = watcher(deps);
+    const started = w.start();
+    await inHandler; // the sweep has snapshotted the directory and is awaiting
+    writeFileSync(
+      join(cmdDir(), "b-live.json"),
+      JSON.stringify({ command: "flag-owner", message: "mid-sweep" }),
+    );
+    await new Promise((r) => setTimeout(r, 50)); // let the watch event land
+    release();
+    await started;
+    for (let i = 0; i < 50 && deps.flagOwner.mock.calls.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    w.stop();
+    expect(deps.flagOwner).toHaveBeenCalledWith("mid-sweep");
+    expect(deps.rerunRound).toHaveBeenCalledTimes(1);
+  });
+
   // ---- tier enforcement (S3) --------------------------------------
 
   const origin = (over: Partial<OriginRecord> = {}): OriginRecord => ({

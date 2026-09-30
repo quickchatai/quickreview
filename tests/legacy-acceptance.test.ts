@@ -84,8 +84,11 @@ describe("tier fold: 'owner_legacy' → 'owner'", () => {
         }),
       );
       const origins = new OriginStore(dir);
-      expect(origins.latest()).toMatchObject({ tier: "owner", source: "local" });
-      expect(origins.latestAny()).toMatchObject({ tier: "owner" });
+      // The audit view reads it in the new vocabulary. (A record read off disk
+      // is never AUTHORITY — only the records this process wrote are — so the
+      // fold is pinned here, on the read path that still consumes old files.)
+      expect(origins.onDisk()[0]).toMatchObject({ tier: "owner", source: "local" });
+      expect(origins.latest()).toBeNull();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

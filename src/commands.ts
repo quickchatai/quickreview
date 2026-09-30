@@ -845,8 +845,16 @@ export class CommandWatcher {
    * timer re-tries the attach as a belt. */
   async start(): Promise<void> {
     this.ensureDirs();
-    await this.sweep();
+    // Watch FIRST, then sweep on the same queue the watch feeds: the sweep
+    // snapshots the directory and then awaits each handler, so a file a live
+    // session writes after the snapshot must already have a watcher to see
+    // it — attaching after the sweep left that file unserved until a restart
+    // (a session dir has no periodic sweep). A file seen by both is handled
+    // once: the second visit finds it archived.
     if (!this.opts.operator) this.attachDirWatch();
+    const initial = this.queue.then(() => this.sweep());
+    this.queue = initial.catch((err) => this.log(`[commands] sweep failed: ${String(err)}`));
+    await initial;
     const interval = this.opts.sweepIntervalMs ?? 15_000;
     if (this.opts.operator && interval > 0) {
       this.sweepTimer = setInterval(() => void this.enqueueSweep(), interval);

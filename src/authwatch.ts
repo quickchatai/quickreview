@@ -136,17 +136,23 @@ export class PiAuthWatch {
    * old one the tail still holds. */
   private readonly seen = new Map<string, number>();
 
+  private readonly sessionsDirs: readonly string[];
+
   constructor(
-    private readonly sessionsDir: string,
+    /** One root, or several: each is scanned the same way (dir + one sublevel). */
+    sessionsDirs: string | readonly string[],
     private readonly now: () => Date = () => new Date(),
   ) {
+    this.sessionsDirs = typeof sessionsDirs === "string" ? [sessionsDirs] : [...sessionsDirs];
     this.sinceMs = this.now().getTime() - 10 * 60 * 1000;
   }
 
   /** Returns the NEW hits found this scan (empty array when quiet). */
   scan(): AuthScanHit[] {
     const started = this.now().getTime();
-    const hits = scanPiAuthErrors(this.sessionsDir, this.sinceMs, this.seen);
+    const hits = this.sessionsDirs.flatMap((dir) =>
+      scanPiAuthErrors(dir, this.sinceMs, this.seen),
+    );
     // Next scan starts at this scan's start, minus a minute of overlap so a
     // write racing the scan is never missed; the per-file offsets keep the
     // overlap from re-reading (and re-counting) bytes already scanned.

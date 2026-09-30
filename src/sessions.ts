@@ -280,8 +280,13 @@ export class PiSessionManager implements SessionHooks {
     return join(this.root, "state", "session-prompts", `${session}.md`);
   }
 
+  /** Where every session's `--session-dir` lives (one subdir per session). */
+  sessionsRoot(): string {
+    return join(this.root, this.cfg.pi.session_dir);
+  }
+
   sessionDir(session: string): string {
-    return join(this.root, this.cfg.pi.session_dir, session);
+    return join(this.sessionsRoot(), session);
   }
 
   ledgerPath(session: string): string {

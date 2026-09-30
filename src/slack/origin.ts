@@ -3,9 +3,21 @@
 //
 // The overseer reads a Slack message as *text*, and text is attacker-controlled:
 // nothing the model repeats back to the daemon can be trusted to carry rights.
-// So the router writes the rights DOWN, next to the inject file it just dropped,
-// and the command path reads them from disk. The inject body's `tier` line is
-// decoration for the model; THIS file is what the gate consults.
+// So the router writes the rights DOWN, next to the inject file it just dropped.
+// The inject body's `tier` line is decoration for the model; the record is what
+// the gate consults.
+//
+// PROVENANCE: the gate consults the record THIS PROCESS wrote, held in memory —
+// never whatever parses in the directory. The daemon runs as the same uid as
+// every pi session, so `state/slack/origin/` is session-writable: a persuaded
+// overseer could otherwise drop a far-future `source: "local", tier: "system"`
+// file and sort itself to the top (the problem, which the operator
+// channel solved with a root seal; here the daemon itself is the writer, so the
+// seal is its own memory). The files are the AUDIT trail — forensically joined
+// to the inject they sit beside, read back by `onDisk()` — and grant nothing.
+// Across a restart the memory is empty: the Slack dir fails closed (no live
+// origin), and the legacy belt is seeded from disk only when that can RESTRICT
+// (`bootCause`) — a forged record at boot can switch the belt on, never off.
 //
 // Attribution (ratified D5): a command in `commands/slack/` is attributed to
 // the most recent UNEXPIRED origin. The window is short by design — an origin
@@ -98,22 +110,36 @@ export function parseOriginRecord(raw: unknown): OriginRecord | null {
 
 /**
  * `state/slack/origin/<inject-file-basename>.json`, written atomically
- * (tmp+rename, exactly like PiSessionManager.writeAtomic) so a command watcher
- * can never read a half-written grant.
+ * (tmp+rename, exactly like PiSessionManager.writeAtomic) so an auditor can
+ * never read a half-written record. The file is the audit copy; the grant the
+ * gate consults is the in-memory one (see PROVENANCE at the top).
  *
  * The file NAME is the inject file the router dropped, which is what makes the
  * record auditable against the overseer's transcript. Lookup, however, is
  * time-ordered, not name-keyed: `latest()` returns the most recent unexpired
- * record, because the overseer's command file carries no back-reference to the
+ * record this process wrote, because the overseer's command file carries no back-reference to the
  * inject that prompted it.
  */
 export class OriginStore {
   private seq = 0;
+  /** The records THIS process wrote, keyed by file path — the only authority. */
+  private readonly authority = new Map<string, { rec: OriginRecord; seq: number }>();
+  /**
+   * The belt's answer before this process has written anything: the newest
+   * record left on disk by a previous run, kept ONLY when it restricts (a
+   * Slack-caused turn from a non-owner). Anything that would lift the belt is
+   * already what "no record" means, so it is never trusted from disk.
+   */
+  private readonly bootCause: OriginRecord | null;
 
   constructor(
     private readonly dir: string,
     private readonly now: () => Date = () => new Date(),
-  ) {}
+  ) {
+    const newest = this.onDisk()[0] ?? null;
+    this.bootCause =
+      newest && newest.source === "slack" && newest.tier !== "owner" ? newest : null;
+  }
 
   /** Absolute path of the record for an inject basename. */
   path(injectBasename: string): string {
@@ -164,9 +190,11 @@ export class OriginStore {
     };
     const path = this.path(basename);
     mkdirSync(this.dir, { recursive: true });
-    const tmp = `${path}.tmp-${process.pid}-${this.seq++}`;
+    const seq = this.seq++;
+    const tmp = `${path}.tmp-${process.pid}-${seq}`;
     writeFileSync(tmp, `${JSON.stringify(full, null, 2)}\n`);
     renameSync(tmp, path);
+    this.authority.set(path, { rec: full, seq });
     this.prune();
     return full;
   }
@@ -181,20 +209,27 @@ export class OriginStore {
       renameSync(from, to);
     } catch {
       /* best effort — the record under the old name still carries the rights */
+      return;
+    }
+    const held = this.authority.get(from);
+    if (held) {
+      this.authority.delete(from);
+      this.authority.set(to, held);
     }
   }
 
   /** Drop a record (the inject it was written for never landed). */
   remove(basename: string): void {
-    rmSync(this.path(basename), { force: true });
+    const path = this.path(basename);
+    this.authority.delete(path);
+    rmSync(path, { force: true });
   }
 
-  /** Every unexpired record, newest first. */
+  /** Every unexpired record this process wrote, newest first. */
   all(): OriginRecord[] {
     const now = this.now().getTime();
-    return this.scan()
-      .filter((o) => Date.parse(o.rec.expires_at) > now)
-      .map((o) => o.rec);
+    return this.held()
+      .filter((rec) => Date.parse(rec.expires_at) > now);
   }
 
   /** The most recent unexpired origin, or null when no Slack turn is live. */
@@ -209,7 +244,26 @@ export class OriginStore {
    * daemon wake (a `local` record) supersedes it.
    */
   latestAny(): OriginRecord | null {
-    return this.scan()[0]?.rec ?? null;
+    return this.held()[0] ?? this.bootCause;
+  }
+
+  /**
+   * Every parseable record in the directory, newest first — the AUDIT view.
+   * It includes whatever a session may have planted there, which is exactly
+   * why nothing that authorises reads it.
+   */
+  onDisk(): OriginRecord[] {
+    return this.scan().map((o) => o.rec);
+  }
+
+  /** The in-memory records, newest first (expiry, then write order). */
+  private held(): OriginRecord[] {
+    return [...this.authority.values()]
+      .sort((a, b) => {
+        const e = Date.parse(b.rec.expires_at) - Date.parse(a.rec.expires_at);
+        return e !== 0 ? e : b.seq - a.seq;
+      })
+      .map((h) => h.rec);
   }
 
   /** Newest-first scan of every parseable record on disk. */
@@ -253,8 +307,20 @@ export class OriginStore {
    * silently release the belt — patience would once again buy rights.
    */
   prune(): void {
-    if (!existsSync(this.dir)) return;
     const now = this.now().getTime();
+    // Memory first: the newest held record stays (it is the belt's answer).
+    let newestHeld: string | null = null;
+    let newestSeq = -1;
+    for (const [path, h] of this.authority) {
+      if (h.seq > newestSeq) {
+        newestSeq = h.seq;
+        newestHeld = path;
+      }
+    }
+    for (const [path, h] of [...this.authority]) {
+      if (path !== newestHeld && Date.parse(h.rec.expires_at) <= now) this.authority.delete(path);
+    }
+    if (!existsSync(this.dir)) return;
     const keep = this.scan()[0]?.name;
     for (const entry of readdirSync(this.dir, { withFileTypes: true })) {
       if (!entry.isFile()) continue;

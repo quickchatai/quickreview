@@ -116,6 +116,38 @@ describe("daemon wiring", () => {
     }
   });
 
+  // A throw in onStart (Slack auth.test refusing, a malformed profile pack,
+  // tmux preflight) used to be logged and swallowed: reconcile and the pump
+  // ran on while the command watchers and the EOD timer — built later in the
+  // same onStart — never existed. A half-assembled daemon must not start.
+  it("an onStart failure fails start() — no reconcile, no half-assembled daemon", async () => {
+    const order: string[] = [];
+    const recorded: string[] = [];
+    const adapter = fakeAdapter(recorded, join(root, "state", "dryrun"));
+    const listPrs = adapter.listOpenPrs.bind(adapter);
+    adapter.listOpenPrs = async (...a: Parameters<typeof listPrs>) => {
+      order.push("reconcile");
+      return listPrs(...a);
+    };
+    const daemon = createDaemon({
+      cfg: { ...loadConfig(join(process.cwd(), "tests/fixtures/config.toml")), dry_run: true },
+      root,
+      store,
+      adapter,
+      listen: false,
+      log: () => {},
+      onStart: () => {
+        throw new Error("slack: auth.test failed — refusing to start");
+      },
+    });
+    try {
+      await expect(daemon.start()).rejects.toThrow(/auth\.test failed/);
+      expect(order).not.toContain("reconcile");
+    } finally {
+      await daemon.stop();
+    }
+  });
+
   it("runs reconcile → dispatch → verdict apply end to end in dry-run", async () => {
     const recorded: string[] = [];
     const daemon = createDaemon({

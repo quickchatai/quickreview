@@ -39,7 +39,8 @@ import { roundPromptMarker } from "../src/types.js";
 import type { RoundOrder } from "../src/types.js";
 import { flushHeldWakes } from "../src/wakes.js";
 import { WorktreeManager } from "../src/worktrees.js";
-import { daemonOriginWakes } from "../src/wire.js";
+import { daemonOriginWakes, piAuthWatchDirs } from "../src/wire.js";
+import { PiAuthWatch } from "../src/authwatch.js";
 
 let root: string;
 let secrets: string;
@@ -1656,6 +1657,24 @@ describe("durable command ownership", () => {
     } finally {
       store.close();
     }
+  });
+});
+
+describe("pi auth watch coverage", () => {
+  it("watches the --session-dir every PR and overseer session actually writes", () => {
+    const m = manager();
+    const watch = new PiAuthWatch(piAuthWatchDirs(m), () => new Date());
+    for (const session of ["pr-4242", "overseer"]) {
+      const dir = m.sessionDir(session);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, `2026-08-13T10-00-00_${session}.jsonl`),
+        '{"errorMessage":"Provided authentication token is expired."}\n',
+      );
+    }
+    const hits = watch.scan().map((h) => h.file);
+    expect(hits.some((f) => f.startsWith(m.sessionDir("pr-4242")))).toBe(true);
+    expect(hits.some((f) => f.startsWith(m.sessionDir("overseer")))).toBe(true);
   });
 });
 

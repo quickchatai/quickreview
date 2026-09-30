@@ -503,6 +503,18 @@ export function daemonOriginWakes(opts: {
   };
 }
 
+/**
+ * Where the passive auth watch looks. PR and overseer sessions are spawned
+ * with `--session-dir <root>/<pi.session_dir>/<session>`, so THAT is where
+ * their expired-token errors land — watching pi's default store alone left
+ * the watch blind to every reviewer session. The default store under the
+ * container user's home (the pihome volume) stays covered for anything spawned
+ * without an explicit dir.
+ */
+export function piAuthWatchDirs(sessions: Pick<PiSessionManager, "sessionsRoot">): string[] {
+  return [sessions.sessionsRoot(), join(homedir(), ".pi", "agent", "sessions")];
+}
+
 export function createProductionDaemon(parts: ProductionParts = buildParts()): Daemon {
   const { cfg, root, gate, adapter, sessions } = parts;
   const log = (msg: string, extra?: unknown) => console.log(`[quickreviewd] ${msg}`, extra ?? "");
@@ -655,9 +667,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     // never see an announcer.
     announce: () => slack?.announcer,
     digestHeadline: () => latestDigestHeadline(join(root, "digest")),
-    // Passive pi auth-failure watch: pi's session JSONLs under the container
-    // user's home (the pihome volume).
-    piSessionsDir: join(homedir(), ".pi", "agent", "sessions"),
+    // Passive pi auth-failure watch: the JSONLs pi actually writes.
+    piSessionsDir: piAuthWatchDirs(sessions),
     // The memory engine's heartbeat block — a cached, synchronous
     // read of the supervisor's last health + /proc sample.
     openvikingStatus: () => {
@@ -1020,7 +1031,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         // the day's cancellation summary rides the sweep prompt so
         // the digest actually mentions cancellations (grouped, loud first,
         // "none" explicit).
-        dayContext: (date) => eodDigestContext(d.store, date),
+        dayContext: (date) => eodDigestContext(d.store, date, cfg.eod.timezone),
         // Deploy-window drain: the sweep does not fire into a board being
         // drained for a deploy — skipped for the day, loudly.
         shouldHold: () => d.store.drainState().draining,
@@ -1132,7 +1143,16 @@ async function main(): Promise<void> {
   };
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
-  await daemon.start();
+  try {
+    await daemon.start();
+  } catch (err) {
+    // A failed boot (onStart is fatal — daemon.ts) exits NON-ZERO after an
+    // orderly stop, so the container's restart policy retries it rather than
+    // leaving a half-assembled daemon serving reviews without its watchers.
+    console.error("[quickreviewd] startup failed — exiting", err);
+    await daemon.stop().catch(() => {});
+    process.exit(1);
+  }
 }
 
 if (process.argv[1]?.endsWith("wire.js")) {

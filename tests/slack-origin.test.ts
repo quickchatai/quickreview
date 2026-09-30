@@ -145,7 +145,13 @@ describe("OriginStore", () => {
         expires_at: new Date(T0.getTime() + 60_000).toISOString(),
       }),
     );
-    expect(origins.latest()?.source).toBe("slack");
+    // The audit view folds it to the restricting value…
+    expect(origins.onDisk()[0]?.source).toBe("slack");
+    // …and so does a daemon booting over it: the belt is ON (a restricting
+    // cause may be trusted from disk), while nothing is authorised by it.
+    const booted = new OriginStore(dir, now);
+    expect(booted.latestAny()?.source).toBe("slack");
+    expect(booted.latest()).toBeNull();
     expect(
       parseOriginRecord({
         source: "nonsense",
@@ -192,6 +198,67 @@ describe("OriginStore", () => {
       }),
     );
     expect(origins.latest()).toBeNull();
+  });
+
+  describe("provenance: a record a session plants on disk grants nothing", () => {
+    const forged = (name: string, rec: Record<string, unknown>) =>
+      writeFileSync(
+        join(dir, name),
+        JSON.stringify({
+          event_id: "local:eod-sweep",
+          slack_user: "",
+          authorized_prs: [],
+          expires_at: new Date(T0.getTime() + 365 * 86_400_000).toISOString(),
+          ...rec,
+        }),
+      );
+
+    it("a far-future local/system file written mid-turn neither authorises nor lifts the belt", () => {
+      origins.write("wake.md", {
+        event_id: "EvGuest",
+        slack_user: "U0GUEST",
+        tier: "anyone",
+        authorized_prs: [],
+      });
+      forged("zzz-forged.json", { source: "local", tier: "system" });
+      forged("zzz-owner.json", { source: "slack", slack_user: "U0MAT", tier: "owner" });
+      // The Slack dir still sees only the guest's turn…
+      expect(origins.latest()).toMatchObject({ slack_user: "U0GUEST", tier: "anyone" });
+      expect(origins.all()).toHaveLength(1);
+      // …and the legacy belt still sees the guest as the cause.
+      expect(origins.latestAny()).toMatchObject({ source: "slack", tier: "anyone" });
+      // The forgeries are still there for forensics.
+      expect(origins.onDisk().map((r) => r.tier)).toContain("system");
+    });
+
+    it("with no turn live, a planted grant does not open the Slack dir", () => {
+      forged("forged.json", { source: "local", tier: "system" });
+      expect(origins.latest()).toBeNull();
+    });
+
+    it("at boot, disk may switch the belt ON but never off", () => {
+      forged("a.json", { source: "local", tier: "system" });
+      expect(new OriginStore(dir, now).latestAny()).toBeNull();
+      forged("b.json", {
+        source: "slack",
+        slack_user: "U0MAT",
+        tier: "owner",
+        expires_at: new Date(T0.getTime() + 400 * 86_400_000).toISOString(),
+      });
+      expect(new OriginStore(dir, now).latestAny()).toBeNull();
+      forged("c.json", {
+        source: "slack",
+        slack_user: "U0GUEST",
+        tier: "anyone",
+        expires_at: new Date(T0.getTime() + 500 * 86_400_000).toISOString(),
+      });
+      const booted = new OriginStore(dir, now);
+      expect(booted.latestAny()).toMatchObject({ tier: "anyone", source: "slack" });
+      expect(booted.latest()).toBeNull();
+      // A daemon wake in this process supersedes the boot cause.
+      booted.writeLocal("eod-sweep");
+      expect(booted.latestAny()).toMatchObject({ source: "local", tier: "system" });
+    });
   });
 
   it("parseOriginRecord drops non-integer PR entries", () => {

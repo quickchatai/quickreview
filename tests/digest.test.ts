@@ -176,6 +176,24 @@ describe("dailyCancellations / cancellationSummaryLine", () => {
     }
   });
 
+  it("the EOD line counts the ZONE-LOCAL day the timer names, not its UTC prefix", async () => {
+    const { eodDigestContext } = await import("../src/digest.js");
+    const { StateStore } = await import("../src/state.js");
+    let clock = new Date("2026-08-13T22:30:00.000Z"); // 00:30 on Aug 14 in Warsaw
+    const store = new StateStore(":memory:", () => clock);
+    try {
+      store.markRoundCancelled(store.startRound(1, "first", [], 45), "x", "deadline_overrun");
+      clock = new Date("2026-08-14T22:30:00.000Z"); // 00:30 on Aug 15 in Warsaw
+      store.markRoundCancelled(store.startRound(2, "first", [], 45), "y", "orphan_sweep");
+      expect(eodDigestContext(store, "2026-08-14", "Europe/Warsaw")).toBe(
+        "cancelled: 1 round — stopped dead 1 ⚑ " +
+          "(1 stopped dead — worth a look; the orphan sweep is a redeploy artefact and is not)",
+      );
+    } finally {
+      store.close();
+    }
+  });
+
   it("renderEodPrompt appends the day context so the sweep carries it into the digest", async () => {
     const { renderEodPrompt } = await import("../src/eod.js");
     const bare = renderEodPrompt("sweep {{date}}", "2026-08-21");
