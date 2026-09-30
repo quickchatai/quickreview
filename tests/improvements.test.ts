@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
 import { MutationGate } from "../src/gate.js";
-import { GitHubAdapter } from "../src/github.js";
+import { GitHubAdapter, GitHubRequestError } from "../src/github.js";
 import type { TokenMinter } from "../src/githubAuth.js";
 import { StateStore } from "../src/state.js";
 import {
@@ -815,6 +815,85 @@ describe("fileImprovementPr — the push goes through the gate in live mode", ()
     expect(
       store.eventsOn(new Date().toISOString().slice(0, 10)).some((e) => e.kind === "improvement_pr_label_failed"),
     ).toBe(true);
+  });
+
+  // selfscan 336e43a6: a POST GitHub may have carried out — a 5xx, a dropped
+  // connection, an undecodable body — throws before the ledger row. Freeing
+  // the slot let a second slug open a second PR the same day. An ambiguous
+  // creation keeps its cap charge; only a definite 4xx refusal frees it.
+  const liveWith = (fail: (kind: string) => Error | null): void => {
+    gate = new MutationGate(false, join(dir, "dryrun"), async (i) => {
+      const err = fail(i.kind);
+      if (err) throw err;
+      return { number: 4242 };
+    });
+    adapter = new GitHubAdapter(cfg, fakeMinter, gate, (async () => {
+      throw new Error("no direct fetch expected");
+    }) as unknown as typeof fetch);
+    vi.spyOn(adapter, "listOpenBotIssues").mockResolvedValue([]);
+  };
+  const today = "1970-01-01T00:00:00.000Z";
+
+  for (const [label, err] of [
+    ["a 5xx", new GitHubRequestError("POST", "/repos/o/r/pulls", 502, "bad gateway")],
+    ["a dropped connection", new TypeError("fetch failed")],
+    ["an undecodable body", new SyntaxError("Unexpected end of JSON input")],
+  ] as const) {
+    it(`an ambiguous create_pull failure (${label}) keeps the cap slot charged`, async () => {
+      liveWith((k) => (k === "create_pull" ? err : null));
+      const { run } = liveRunner();
+      const out = await fileImprovementPr(
+        {
+          branch: "wip/docs",
+          title: "Docs: clarify retry",
+          body: "rationale",
+          slug: "clarify-retry",
+        },
+        ctx(run),
+      );
+      expect(out.ok).toBe(false);
+      expect(String(out.reason)).toContain("outcome unknown");
+      expect(store.filedSince("improvement_pr", today)).toBe(1);
+      expect(improvementRateReason(store, cfg.caps, new Date())).toContain("day cap");
+    });
+
+    it(`an ambiguous create_issue failure (${label}) keeps the cap slot charged`, async () => {
+      liveWith((k) => (k === "create_issue" ? err : null));
+      const out = await fileIssue(
+        { title: "Retry loop misses jitter", body: "e" },
+        { cfg, adapter, gate, store },
+      );
+      expect(out.ok).toBe(false);
+      expect(String(out.reason)).toContain("outcome unknown");
+      expect(store.filedSince("issue", today)).toBe(1);
+    });
+  }
+
+  it("a definite 4xx refusal of create_pull / create_issue frees the slot — nothing was created", async () => {
+    liveWith((k) =>
+      k === "create_pull" || k === "create_issue"
+        ? new GitHubRequestError("POST", "/repos/o/r/x", 422, "Validation Failed")
+        : null,
+    );
+    const { run } = liveRunner();
+    const pr = await fileImprovementPr(
+      {
+        branch: "wip/docs",
+        title: "Docs: clarify retry",
+        body: "rationale",
+        slug: "clarify-retry",
+      },
+      ctx(run),
+    );
+    expect(pr.ok).toBe(false);
+    expect(store.filedSince("improvement_pr", today)).toBe(0);
+    const issue = await fileIssue(
+      { title: "Retry loop misses jitter", body: "e" },
+      { cfg, adapter, gate, store },
+    );
+    expect(issue.ok).toBe(false);
+    expect(String(issue.reason)).toContain("422");
+    expect(store.filedSince("issue", today)).toBe(0);
   });
 
   it("a guard refusal stops the push AND the PR — no branch, no pull", async () => {

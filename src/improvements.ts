@@ -25,7 +25,7 @@
 // working tree is never touched either — the base fetch lands in
 // `refs/remotes/`, and the branch is addressed by ref, never checked out.
 import { IMPROVEMENT_DENY_PREFIXES_DEFAULT, type Config } from "./config.js";
-import type { GitHubAdapter } from "./github.js";
+import { GitHubRequestError, type GitHubAdapter } from "./github.js";
 import type { MutationGate } from "./gate.js";
 import type { StateStore } from "./state.js";
 import { runOrThrow, type ExecFn } from "./tmux.js";
@@ -506,7 +506,17 @@ async function fileImprovementPrNow(
       return reject(`gate refused the branch push: ${pushResult.blocked}`, { branch: botBranch });
     const pushed = pushResult.executed;
 
-    const pull = await ctx.adapter.createPull(botBranch, base, payload.title, payload.body);
+    let pull: Awaited<ReturnType<GitHubAdapter["createPull"]>>;
+    try {
+      pull = await ctx.adapter.createPull(botBranch, base, payload.title, payload.body);
+    } catch (err) {
+      if (!creationMayHaveHappened(err)) throw err;
+      ctx.store.recordFiledItem("improvement_pr", payload.title, botBranch);
+      return reject(
+        `create_pull outcome unknown — the cap slot stays charged: ${(err as Error).message}`,
+        { branch: botBranch },
+      );
+    }
     const prNumber = (pull.response as { number?: number } | undefined)?.number ?? 0;
     // The PR now exists: record it BEFORE anything else can throw, so the
     // 1/day + 3/week caps (counted from filed_items alone) see the slot spent.
@@ -546,6 +556,18 @@ async function fileImprovementPrNow(
   } catch (err) {
     return reject(`improvement-PR pipeline failed: ${(err as Error).message}`);
   }
+}
+
+/**
+ * Whether a create call that THREW may still have created the thing on GitHub.
+ * Only a definite 4xx answer proves it did not (validation, permission, an
+ * existing head); a 5xx, a dropped connection or an undecodable body can all
+ * follow a creation GitHub carried out. The caps count `filed_items` alone, so
+ * an ambiguous creation keeps its slot charged — freeing it would let a second
+ * slug file a second PR the same day.
+ */
+export function creationMayHaveHappened(err: unknown): boolean {
+  return !(err instanceof GitHubRequestError && err.status >= 400 && err.status < 500);
 }
 
 export interface IssueContext {
@@ -601,9 +623,17 @@ async function fileIssueNow(payload: IssuePayload, ctx: IssueContext): Promise<F
     );
   }
 
-  const result = await ctx.adapter.createIssue(payload.title, payload.body, [
-    ctx.cfg.github.issue_label,
-  ]);
+  let result: Awaited<ReturnType<GitHubAdapter["createIssue"]>>;
+  try {
+    result = await ctx.adapter.createIssue(payload.title, payload.body, [
+      ctx.cfg.github.issue_label,
+    ]);
+  } catch (err) {
+    const message = (err as Error).message;
+    if (!creationMayHaveHappened(err)) return reject(`create_issue refused: ${message}`);
+    ctx.store.recordFiledItem("issue", payload.title, null);
+    return reject(`create_issue outcome unknown — the cap slot stays charged: ${message}`);
+  }
   const issueNumber = (result.response as { number?: number } | undefined)?.number ?? 0;
   const ref = issueNumber > 0 ? `#${issueNumber}` : null;
   ctx.store.recordFiledItem("issue", payload.title, ref);
