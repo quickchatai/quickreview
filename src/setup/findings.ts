@@ -38,6 +38,23 @@
 //     and, once a re-scan found it fixed, when that ticket was closed. The
 //     ticket record is what makes a finding never filed twice: it survives a
 //     match (the new fingerprint inherits it), a fix and a return.
+//   * NEAR-DUPLICATES COLLAPSE (scan-loop). The fingerprint hashes the lens
+//     and the anchored code, so one defect raised by two lenses — or by two
+//     rows of one lens anchored a few lines apart — arrives under two
+//     fingerprints. A fresh finding (no exact or alias match) that is the
+//     same file, the same kind, within NEAR_LINES of a live finding the SAME
+//     run sighted and says the same thing (`nearDuplicate`: same subject, stemmed token
+//     overlap at CLAIM_SIMILARITY) is folded into it: the stored one keeps
+//     its identity, wording and triage, takes the higher severity, lists the
+//     lens in `lenses`, the absorbed sighting in `merged`, and its
+//     fingerprint in `aliases` — so the next run's exact match, triage by
+//     fingerprint and ticket stamps all still find it. Deterministic and
+//     deliberately under-merging: different kinds, far ranges, different
+//     subjects, a fixed finding or one the match question holds never fold,
+//     and a later run's look-alike of an older sighting is the companion's
+//     match question, never a fold. `reconcile` runs the same fold once more
+//     over the run's fresh findings (`collapseRun`), for a duplicate whose
+//     case ran before the sighting it duplicates.
 //
 // Persistence: `<state home>/scan/findings.json`. An unreadable store is
 // reported and refuses writes, like the ledger and the unit cut.
@@ -102,12 +119,27 @@ export interface ScanFinding {
   /** Set while (and only while) the state is `fixed`. */
   fixed?: FixedMark | null;
   /** Fingerprints this finding carried before the companion matched it to
-   * a moved or reworded sighting — a ticket stamped with one still finds it. */
+   * a moved or reworded sighting, and those of near-duplicates collapsed
+   * into it — a ticket stamped with one still finds it. */
   aliases?: string[];
+  /** Every lens that raised it, its own first — set once a near-duplicate
+   * from another report was collapsed into it (absent: just `lens`). */
+  lenses?: string[];
+  /** The near-duplicate sightings collapsed into it, as last reported. */
+  merged?: MergedSighting[];
   /** Why the operator dismissed it; kept after a later promote. */
   dismissal?: Dismissal | null;
   /** Where it was filed when promoted. */
   ticket?: FindingTicket | null;
+}
+
+export interface MergedSighting {
+  fingerprint: string;
+  lens: string;
+  start: number;
+  end: number;
+  severity: ScanSeverity;
+  claim: string;
 }
 
 export interface Dismissal {
@@ -131,8 +163,125 @@ export interface FindingTicket {
 /** What a scan reports — a finding before the store gives it a history. */
 export type ReportedFinding = Omit<
   ScanFinding,
-  "state" | "first_seen" | "last_seen" | "seen" | "fixed" | "aliases" | "dismissal" | "ticket"
+  "state" | "first_seen" | "last_seen" | "seen" | "fixed" | "aliases" | "lenses" | "merged" | "dismissal" | "ticket"
 >;
+
+// ---- near-duplicate collapse ----------------------------------------------------------
+
+/** How far apart (lines between the two ranges) two sightings of one defect
+ * may be anchored — selfscan stage 2 put one pair 81 lines apart. */
+export const NEAR_LINES = 100;
+/** The stemmed-token Jaccard two claims must reach to be one defect. */
+export const CLAIM_SIMILARITY = 0.4;
+
+const STOPWORDS = new Set(
+  (
+    "the a an of to in on at is are be by for and or not than rather but its it this that with from as into instead " +
+    "being has have was were can could may when which while every only their them then there these those does did do"
+  ).split(" "),
+);
+
+/** A claim's content tokens, in order: lower-cased words of 3+ characters,
+ * stopwords out, each stemmed to its first five characters (so
+ * authorization/authority, read/reads, omit/omits agree). */
+function claimStems(claim: string): string[] {
+  return (claim.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter((w) => w.length >= 3 && !STOPWORDS.has(w)).map((w) => w.slice(0, 5));
+}
+
+const SEVERITY_ORDER: readonly ScanSeverity[] = ["P0", "P1", "P2", "P3", "nit"];
+const higher = (a: ScanSeverity, b: ScanSeverity): ScanSeverity => (SEVERITY_ORDER.indexOf(b) < SEVERITY_ORDER.indexOf(a) ? b : a);
+
+/**
+ * Are `a` and `b` the same defect reported twice? Same file, same kind,
+ * ranges overlapping or at most NEAR_LINES apart, the same subject (first
+ * content stem — "Inline-comment reads…" and "Issue-comment reads…" are one
+ * pattern in two places, not one defect) and claims whose stemmed tokens
+ * overlap at CLAIM_SIMILARITY or more. Pure; symmetric.
+ */
+export function nearDuplicate(
+  a: Pick<ScanFinding, "path" | "kind" | "start" | "end" | "claim">,
+  b: Pick<ScanFinding, "path" | "kind" | "start" | "end" | "claim">,
+): boolean {
+  if (a.path !== b.path || a.kind !== b.kind) return false;
+  const gap = Math.max(a.start, b.start) - Math.min(a.end, b.end);
+  if (gap > NEAR_LINES) return false;
+  const sa = claimStems(a.claim);
+  const sb = claimStems(b.claim);
+  if (sa.length === 0 || sb.length === 0 || sa[0] !== sb[0]) return false;
+  const A = new Set(sa);
+  const B = new Set(sb);
+  let common = 0;
+  for (const t of A) if (B.has(t)) common++;
+  return common / (A.size + B.size - common) >= CLAIM_SIMILARITY;
+}
+
+/** A validated survivor with no doubt, of the two, clears the flag. */
+function combinedDoubt(a: ReportedFinding | ScanFinding, b: ReportedFinding): ScanFinding["doubt"] {
+  if ((a.validated && a.doubt === null) || (b.validated && b.doubt === null)) return null;
+  return a.doubt ?? b.doubt;
+}
+
+/** Can a fresh near-duplicate fold into `f`? Only a live finding this very
+ * run has sighted — a sighting in a LATER run that merely resembles an old
+ * one is the companion's match question, never a silent fold —
+ * and never one the pending question holds. */
+function collapsible(f: ScanFinding, run: string, held: ReadonlySet<string>): boolean {
+  return f.state !== "fixed" && f.last_seen.run === run && !held.has(f.fingerprint);
+}
+
+/** Fold stored finding `f` (fresh this run) into `into`, its own collapsed
+ * sightings and aliases with it. */
+function absorbFinding(into: ScanFinding, f: ScanFinding): ScanFinding {
+  const once = absorb(into, f);
+  return {
+    ...once,
+    lenses: [...new Set([...once.lenses!, ...(f.lenses ?? [])])],
+    merged: [...once.merged!, ...(f.merged ?? []).filter((m) => !once.merged!.some((x) => x.fingerprint === m.fingerprint))],
+    aliases: [...new Set([...once.aliases!, ...(f.aliases ?? [])])],
+  };
+}
+
+/**
+ * The end-of-run pass: a finding first seen this run, untriaged, that is a
+ * near-duplicate of another finding this run sighted folds into it — what
+ * report-time collapse misses when the duplicate's case ran before the
+ * sighting it duplicates. Mutates `byFp`; returns how many folded.
+ */
+function collapseRun(byFp: Map<string, ScanFinding>, run: string, held: ReadonlySet<string>): number {
+  let folded = 0;
+  const all = [...byFp.values()];
+  for (const f of all) {
+    if (!byFp.has(f.fingerprint)) continue;
+    const fresh = f.state === "new" && f.first_seen.run === run && !f.ticket && !f.dismissal && !held.has(f.fingerprint);
+    if (!fresh) continue;
+    const into = [...byFp.values()].find((o) => o.fingerprint !== f.fingerprint && collapsible(o, run, held) && nearDuplicate(o, f));
+    if (!into) continue;
+    const cur = byFp.get(f.fingerprint)!;
+    byFp.delete(f.fingerprint);
+    byFp.set(into.fingerprint, absorbFinding(into, cur));
+    folded++;
+  }
+  return folded;
+}
+
+function sightingOf(r: ReportedFinding): MergedSighting {
+  return { fingerprint: r.fingerprint, lens: r.lens, start: r.start, end: r.end, severity: r.severity, claim: r.claim };
+}
+
+/** Fold reported near-duplicate `r` into stored `into`. */
+function absorb(into: ScanFinding, r: ReportedFinding): ScanFinding {
+  const lenses = [...new Set([...(into.lenses ?? [into.lens]), r.lens])];
+  const merged = [...(into.merged ?? []).filter((m) => m.fingerprint !== r.fingerprint), sightingOf(r)];
+  return {
+    ...into,
+    severity: higher(into.severity, r.severity),
+    validated: into.validated || r.validated,
+    doubt: combinedDoubt(into, r),
+    lenses,
+    merged,
+    aliases: [...new Set([...(into.aliases ?? []), r.fingerprint])],
+  };
+}
 
 /** The companion's pending sameness call: stored findings a re-scan no
  * longer reports exactly, and the fresh findings any of them might be. */
@@ -295,34 +444,50 @@ export class FindingsStore {
    * Record what one case reported. Exact fingerprint match first: a known
    * finding keeps its state and first sighting; an unknown one is `new`.
    * A known finding the pending match question held as unreported has been
-   * reported again, so it leaves the question. Returns how many were new and
-   * how many matched. Throws when the stored file cannot be read — never
+   * reported again, so it leaves the question. An unknown one that is a
+   * near-duplicate of a stored live finding is collapsed into it
+   * (`nearDuplicate`). Returns how many were new, how many matched (by
+   * fingerprint or alias) and how many were collapsed. Throws when the stored file cannot be read — never
    * writes over it.
    */
-  report(reported: readonly ReportedFinding[], seen: Sighting): { added: number; matched: number } {
+  report(reported: readonly ReportedFinding[], seen: Sighting): { added: number; matched: number; merged: number } {
     const { file, error } = this.loadFile();
     if (error !== null) throw new Error(error);
     const byFp = new Map(file.findings.map((f) => [f.fingerprint, f]));
+    // An absorbed near-duplicate's fingerprint names the finding it joined.
+    const aliasOf = new Map<string, string>();
+    for (const f of file.findings) for (const a of f.merged ?? []) aliasOf.set(a.fingerprint, f.fingerprint);
+    const held = new Set(file.question?.unreported ?? []);
     let added = 0;
     let matched = 0;
+    let merged = 0;
     const back = new Set<string>();
     for (const r of reported) {
-      const known = byFp.get(r.fingerprint);
-      if (known) {
+      const ownFp = byFp.has(r.fingerprint) ? r.fingerprint : aliasOf.get(r.fingerprint);
+      const known = ownFp === undefined ? undefined : byFp.get(ownFp);
+      if (known && ownFp !== undefined) {
         // The same sighting twice (one case reporting a duplicate) counts once.
         const again = known.last_seen.run === seen.run && known.last_seen.sha === seen.sha;
         const state: FindingState = known.state === "fixed" ? returnedState(known) : known.state;
-        byFp.set(r.fingerprint, {
-          ...known,
-          ...r,
-          state,
-          fixed: null,
-          first_seen: known.first_seen,
-          last_seen: seen,
-          seen: again ? known.seen : known.seen + 1,
-        });
-        back.add(r.fingerprint);
+        const history = { state, fixed: null, first_seen: known.first_seen, last_seen: seen, seen: again ? known.seen : known.seen + 1 };
+        if (ownFp === r.fingerprint) {
+          // A collapsed finding keeps the highest severity any of its lenses gave.
+          const severity = known.merged?.length ? higher(known.severity, r.severity) : r.severity;
+          byFp.set(ownFp, { ...known, ...r, severity, ...history });
+        } else {
+          // A sighting of an absorbed near-duplicate: the finding keeps its own
+          // wording and position; the alias's record and the severity move.
+          byFp.set(ownFp, { ...absorb(known, r), ...history });
+        }
+        back.add(ownFp);
         matched++;
+        continue;
+      }
+      const twin = [...byFp.values()].find((f) => collapsible(f, seen.run, held) && nearDuplicate(f, r));
+      if (twin) {
+        byFp.set(twin.fingerprint, absorb(twin, r));
+        aliasOf.set(r.fingerprint, twin.fingerprint);
+        merged++;
       } else {
         byFp.set(r.fingerprint, { ...r, state: "new", first_seen: seen, last_seen: seen, seen: 1 });
         added++;
@@ -339,7 +504,7 @@ export class FindingsStore {
       ).question;
     }
     this.write(byFp.values(), question);
-    return { added, matched };
+    return { added, matched, merged };
   }
 
   /**
@@ -363,6 +528,7 @@ export class FindingsStore {
       if (!had || r.at >= had.at) newest.set(k, r);
     }
     const prior = file.question ?? null;
+    collapseRun(byFp, args.run.run, new Set([...(prior?.unreported ?? []), ...(prior?.fresh ?? [])]));
     const pending = new Set(prior?.unreported ?? []);
     const rereadBy = new Set<string>([args.run.run]);
     const unreported: string[] = [];
@@ -456,6 +622,8 @@ export class FindingsStore {
         first_seen: o.first_seen,
         seen: o.seen + n.seen,
         aliases: [...new Set([...(o.aliases ?? []), old, ...(n.aliases ?? [])])],
+        ...(o.lenses || n.lenses ? { lenses: [...new Set([...(o.lenses ?? [o.lens]), ...(n.lenses ?? [n.lens])])] } : {}),
+        ...(o.merged || n.merged ? { merged: [...(o.merged ?? []), ...(n.merged ?? [])] } : {}),
         // The triage travels with the finding: a matched promoted finding
         // keeps its ticket (never filed twice), a dismissed one its reason.
         dismissal: o.dismissal ?? null,
@@ -484,7 +652,7 @@ export class FindingsStore {
       .filter(
         (f) =>
           (filter.state === undefined || f.state === filter.state) &&
-          (filter.lens === undefined || f.lens === filter.lens) &&
+          (filter.lens === undefined || f.lens === filter.lens || (f.lenses ?? []).includes(filter.lens)) &&
           (filter.unit === undefined || f.unit === filter.unit) &&
           (filter.severity === undefined || f.severity === filter.severity) &&
           (filter.doubted === undefined || (f.doubt !== null) === filter.doubted),

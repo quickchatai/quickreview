@@ -109,7 +109,7 @@ const hasFilter = (f: ScanFilter): boolean => filterLabel(f) !== "";
 
 export function matchesFilter(f: ScanFilter, x: ScanFinding): boolean {
   if (f.state && x.state !== f.state) return false;
-  if (f.lens && x.lens !== f.lens && x.lens !== `pass-${f.lens}`) return false;
+  if (f.lens && ![x.lens, ...(x.lenses ?? [])].some((l) => l === f.lens || l === `pass-${f.lens}`)) return false;
   if (f.severity && x.severity !== f.severity) return false;
   if (f.doubted !== undefined && (x.doubt !== null && x.doubt !== undefined) !== f.doubted) return false;
   return true;
@@ -244,7 +244,7 @@ const MAX_ASK_LINES = 40;
 
 function findingLine(f: ScanFinding): string {
   const claim = f.claim.replace(/\s+/g, " ").trim();
-  return `- ${f.fingerprint.slice(0, 12)} ${f.severity} ${f.lens} ${f.path}:${f.start} — ${claim.length > 140 ? `${claim.slice(0, 139)}…` : claim}`;
+  return `- ${f.fingerprint.slice(0, 12)} ${f.severity} ${(f.lenses?.length ?? 0) > 1 ? f.lenses!.join("+") : f.lens} ${f.path}:${f.start} — ${claim.length > 140 ? `${claim.slice(0, 139)}…` : claim}`;
 }
 
 function listed(fs: readonly ScanFinding[]): string[] {

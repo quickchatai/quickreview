@@ -95,7 +95,7 @@ export function findingTicket(f: ScanFinding, effort: string, extra: { title?: s
   const body = [
     "## Scan finding",
     "",
-    `A whole-repo scan (lens \`${f.lens}\`, unit \`${f.unit}\`) reported this at \`${where(f)}\`, ` +
+    `A whole-repo scan (${(f.lenses?.length ?? 0) > 1 ? `lenses ${f.lenses!.map((l) => `\`${l}\``).join(", ")}` : `lens \`${f.lens}\``}, unit \`${f.unit}\`) reported this at \`${where(f)}\`, ` +
       `first at ${f.first_seen.sha.slice(0, 12)}, last at ${f.last_seen.sha.slice(0, 12)} (${f.seen} scan(s)). ` +
       "The companion promoted it; a re-scan that no longer reports it closes this ticket with its sha.",
     "",

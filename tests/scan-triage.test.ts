@@ -166,7 +166,12 @@ describe("dismissal writes an unpinned memory note", () => {
 
   it("refuses without a reason, an unknown or ambiguous fingerprint, a promoted and a fixed finding", async () => {
     const { findings, triage } = setup();
-    findings.report([reported(FP("a")), reported(`${"b".repeat(12)}${"0".repeat(52)}`), reported(`${"b".repeat(12)}${"1".repeat(52)}`)], {
+    // Three different defects (identical claims would collapse into one finding).
+    findings.report([
+      reported(FP("a")),
+      reported(`${"b".repeat(12)}${"0".repeat(52)}`, { claim: "the refund total is rounded twice" }),
+      reported(`${"b".repeat(12)}${"1".repeat(52)}`, { claim: "a cancelled order keeps its stock reservation" }),
+    ], {
       run: "scan-1", sha: SHA1, at: "t",
     });
     expect(await triage.dismiss({ fingerprint: FP("a"), reason: "  " })).toMatchObject({ ok: false, errors: [expect.stringMatching(/reason/)] });
