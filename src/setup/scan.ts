@@ -14,11 +14,13 @@
 // content hash for `pass-scan` is not read again: that is how an interrupted
 // scan resumes, and why a finished one costs nothing to "re-run".
 //
-// A DELTA re-scan is stage 1 over only the files whose content
-// CHANGED since the last scan: read by the ledger at another content, or new
-// or different against the tree the last scan read. A file the last scan
-// simply never reached (a capped or stopped run) is not a change — that is
-// the rest of the scan, and an ordinary preview prices it.
+// A DELTA re-scan is stage 1 over the files whose content CHANGED
+// since the last scan (read by the ledger at another content, or new or
+// different against the tree the last scan read) AND every file no complete
+// reading covers at its content — never read (a capped or stopped run's
+// tail; unreadable then, readable now) or cut short between ranges. Those
+// are OWED, not skipped: a delta that left them out would leave a file no
+// lens ever read out of every delta for as long as it stays unchanged.
 import { createHash } from "node:crypto";
 import { ALL_PASSES } from "../dispatch.js";
 import { globMatcher } from "../glob.js";
@@ -261,7 +263,8 @@ export function readTier(f: { path: string; blob: string }, history: ReadonlyMap
 export const coverKey = (path: string, blob: string): string => `${path}\0${blob}`;
 
 /** Stage 1 over the saved cut at one tree: every readable, uncovered,
- * non-excluded file, one case per
+ * non-excluded file (a delta the same set, counting what it owes unchanged
+ * as `owed`), one case per
  * unit, split to fit — ordered coverage-first by `history` (readTier).
  * Deterministic. */
 export function planStage1(input: PlanInput): Stage1Plan {
@@ -361,7 +364,7 @@ export function planStage1(input: PlanInput): Stage1Plan {
     ranked.sort((x, y) => x.t - y.t || (x.at < y.at ? -1 : x.at > y.at ? 1 : 0) || x.i - y.i);
     cases.splice(0, cases.length, ...ranked.map((r) => r.c));
   }
-    const owed = new Set(cases.flatMap((c) => c.files.map((f) => f.path)).filter((p) => unchangedPaths.has(p))).size;
+  const owed = new Set(cases.flatMap((c) => c.files.map((f) => f.path)).filter((p) => unchangedPaths.has(p))).size;
   return { cases, excluded, covered, unassigned: a.unassigned, unreadable, skipped, owed };
 }
 
