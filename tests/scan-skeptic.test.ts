@@ -248,7 +248,9 @@ interface Call {
   id: string;
 }
 
-function ports(opts: { scan?: Partial<ScanConfig>; validator?: (id: string) => CaseOutcome; files?: Record<string, string> } = {}) {
+function ports(
+  opts: { scan?: Partial<ScanConfig>; validator?: (id: string) => CaseOutcome; files?: Record<string, string>; lens?: (id: string, path: string) => string } = {},
+) {
   const files = opts.files ?? FILES;
   const calls: Call[] = [];
   let tick = 0;
@@ -260,7 +262,7 @@ function ports(opts: { scan?: Partial<ScanConfig>; validator?: (id: string) => C
       run: async (spec) => {
         calls.push({ agent: spec.agent, id: spec.id });
         if (spec.agent.startsWith("pass-validate")) return opts.validator?.(spec.id) ?? { ok: true, output: skepticAnswer(spec.id), cost_usd: 0.03 };
-        return { ok: true, output: lensAnswer(spec.id, spec.files[0]!), cost_usd: 0.01 };
+        return { ok: true, output: (opts.lens ?? lensAnswer)(spec.id, spec.files[0]!), cost_usd: 0.01 };
       },
     },
     source: {
@@ -325,6 +327,41 @@ describe("the engine sorts every finding into a tier and drops none", () => {
     expect(at(11)).toMatchObject({ validity: "doubtful", doubt: { word: "not-upheld", reason: UNMENTIONED_REASON } });
     const app = s.status().run!.cases.find((c) => c.unit === "app")!;
     expect([app.findings, app.confirmed, app.likely, app.doubted]).toEqual([6, 1, 1, 4]);
+  });
+
+  it("review fix: one survivor stands for ONE candidate — a duplicate on the same lines is kept doubtful, never dropped, and the upheld one stays confirmed", async () => {
+    // Two candidates on line 1 (different kinds → two fingerprints) and one on
+    // lines 2-4 of a third kind. The skeptic upholds the bug, doubts a
+    // duplicate at line 1, and names a single survivor at line 3 for the io
+    // candidate only — so an overlapping survivor must not swallow the rest.
+    const item = (line: number, kind: string, claim: string, end?: number) =>
+      [`- path: app/a.py`, `  line: ${line}${end ? `-${end}` : ""}`, `  kind: ${kind}`, "  severity: P1", "  confidence: 0.8", `  claim: ${claim}`].join("\n");
+    const lens = (id: string, path: string) =>
+      path !== "app/a.py"
+        ? "NONE\n\nSUGGEST NONE\n"
+        : `FINDINGS pass-scan SCAN ${id} @${SHA}\n${[item(1, "bug", CLAIMS[0]!), item(1, "data", CLAIMS[1]!), item(2, "io", CLAIMS[2]!, 4)].join("\n")}\n\nSUGGEST NONE\n`;
+    const answer = (id: string) =>
+      [
+        `FINDINGS pass-validate SCAN ${id} @${SHA}`,
+        "- path: app/a.py",
+        "  line: 1",
+        "  kind: bug",
+        "  severity: P1",
+        "  validity: confirmed",
+        "  scenario: POST /refund → line 1",
+        `  claim: ${CLAIMS[0]}`,
+        "",
+        "DOUBTED",
+        "- pass-scan app/a.py:1 — duplicate: the same defect as the bug at line 1",
+      ].join("\n");
+    const { ports: p, state } = ports({ lens, validator: (id) => ({ ok: true, output: answer(id), cost_usd: 0.01 }) });
+    await runOnce(new ScanRunner(p));
+    const { findings } = new FindingsStore(state).list();
+    expect(findings).toHaveLength(3);
+    const byKind = (k: string) => findings.find((f) => f.kind === k)!;
+    expect(byKind("bug")).toMatchObject({ validity: "confirmed", doubt: null });
+    expect(byKind("data")).toMatchObject({ validity: "doubtful", doubt: { word: "duplicate" } });
+    expect(byKind("io")).toMatchObject({ validity: "doubtful", doubt: { word: "not-upheld" } });
   });
 
   it("a validator that answers NONE upholds nothing — every candidate is kept doubtful", async () => {
@@ -411,6 +448,30 @@ describe("the findings store keeps the tier", () => {
     const [one] = store.list().findings;
     expect(store.list().findings).toHaveLength(1);
     expect(one).toMatchObject({ fingerprint: FP("a"), validity: "confirmed", doubt: null, aliases: [FP("b")] });
+  });
+
+  it("review fix: an UNJUDGED re-sighting of the same code keeps the judgement it has (the skeptic off or failed says nothing)", () => {
+    const store = new FindingsStore(stateHomeFs(join(dir, "state")));
+    store.report([reported(FP("e"), { validity: "confirmed", scenario: "s" })], { run: "r1", sha: SHA, at: "t1" });
+    store.report([reported(FP("e"), { validated: false, validity: null, scenario: null })], { run: "r2", sha: SHA, at: "t2" });
+    expect(store.list().findings[0]).toMatchObject({ validity: "confirmed", scenario: "s", validated: true, seen: 2 });
+    // A judged one still replaces it — the latest judgement wins.
+    store.report([reported(FP("e"), { validity: "doubtful", doubt: { word: "refuted", reason: "r", class: null } })], { run: "r3", sha: SHA, at: "t3" });
+    expect(store.list().findings[0]).toMatchObject({ validity: "doubtful", doubt: { word: "refuted" } });
+  });
+
+  it("review fix: a fold's doubt follows the tier it chose — never doubtful with no reason, never confirmed yet flagged", () => {
+    const store = new FindingsStore(stateHomeFs(join(dir, "state")));
+    // A pre-tier finding (validated, no doubt, no tier) and a doubtful near-duplicate in the same run.
+    const { validity: _v, scenario: _s, ...legacy } = reported(FP("f"));
+    store.report([legacy as ReportedFinding], { run: "r1", sha: SHA, at: "t1" });
+    store.report(
+      [reported(FP("g"), { lens: "pass-security", start: 11, validity: "doubtful", doubt: { word: "refuted", reason: "x", class: "unreachable" } })],
+      { run: "r1", sha: SHA, at: "t2" },
+    );
+    const [one] = store.list().findings;
+    expect(store.list().findings).toHaveLength(1);
+    expect(one).toMatchObject({ validity: "doubtful", doubt: { word: "refuted", class: "unreachable" } });
   });
 
   it("a finding stored before the tiers reads UNKNOWN, and the filter finds it as such", () => {

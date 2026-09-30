@@ -47,9 +47,11 @@
 //     finding no skeptic judged — the validator off or failed, or stored
 //     before tiers existed — has none and reads as UNKNOWN (scanreport.ts
 //     `validityOf`), never a guessed tier. The tier travels with the finding
-//     through an exact match (the latest judgement wins), an alias and a
-//     near-duplicate fold (the best-supported sighting wins, as the doubt
-//     flag does).
+//     through an exact match (the latest JUDGED sighting wins — an unjudged
+//     re-sighting of the same code keeps the judgement it has), an alias and
+//     a near-duplicate fold (the best-supported sighting wins, and the doubt
+//     follows the tier it chose, so a finding never reads doubtful with no
+//     reason nor confirmed while flagged "may not be valid").
 //   * Individual findings never become memory (spec "Scan memory") — this
 //     store is the PC-side record, in the state home, never shipped.
 //   * TRIAGE (triage.ts drives it): a DISMISSED finding carries its
@@ -283,6 +285,31 @@ function combinedValidity(a: ReportedFinding | ScanFinding, b: ReportedFinding):
   return { validity: v === "unknown" ? null : v, scenario: best.scenario ?? null };
 }
 
+/** The doubt and tier of two sightings, told as ONE story: when either was
+ * tiered, the tier decides and the doubt follows it (a doubtful tier keeps
+ * its doubt, a confirmed/likely one clears it) — so a finding never reads
+ * doubtful with no reason, nor confirmed while flagged "may not be valid".
+ * With no tier on either side, the pre-tier doubt rule stands. */
+function combinedJudgement(a: ReportedFinding | ScanFinding, b: ReportedFinding): Pick<ScanFinding, "doubt" | "validity" | "scenario"> {
+  const tiered = combinedValidity(a, b);
+  if (tiered.validity === null || tiered.validity === undefined) return { doubt: combinedDoubt(a, b), ...tiered };
+  if (tiered.validity !== "doubtful") return { doubt: null, ...tiered };
+  // Neither side ranks above doubtful here, so at least one IS doubtful.
+  const src = validityOf(b) === "doubtful" ? b : a;
+  return { doubt: src.doubt ?? a.doubt ?? b.doubt, ...tiered };
+}
+
+/** A sighting nobody judged (the skeptic off or failed) says nothing about
+ * the finding's validity: an exact re-sighting of the SAME code keeps the
+ * judgement it already has rather than dropping a confirmed tier — or a
+ * doubt — to unknown. Any judged sighting replaces it (the latest wins). */
+function judgementOf(known: ScanFinding, r: ReportedFinding): Pick<ScanFinding, "validated" | "doubt" | "validity" | "scenario"> {
+  if (r.validated || validityOf(r) !== "unknown") {
+    return { validated: r.validated, doubt: r.doubt, validity: r.validity ?? null, scenario: r.scenario ?? null };
+  }
+  return { validated: known.validated, doubt: known.doubt, validity: known.validity ?? null, scenario: known.scenario ?? null };
+}
+
 /** Can a fresh near-duplicate fold into `f`? Only a live finding this very
  * run has sighted — a sighting in a LATER run that merely resembles an old
  * one is the companion's match question, never a silent fold —
@@ -350,8 +377,7 @@ function absorb(into: ScanFinding, r: ReportedFinding): ScanFinding {
     own_severity: own,
     severity: aggregateSeverity(own, merged),
     validated: into.validated || r.validated,
-    doubt: combinedDoubt(into, r),
-    ...combinedValidity(into, r),
+    ...combinedJudgement(into, r),
     lenses,
     merged,
     aliases: [...new Set([...(into.aliases ?? []), r.fingerprint])],
@@ -590,7 +616,7 @@ export class FindingsStore {
           // give — its own latest and each absorbed one's latest, never a
           // stale maximum a re-scan has since lowered.
           const severity = aggregateSeverity(r.severity, known.merged ?? []);
-          byFp.set(ownFp, { ...known, ...r, severity, ...(known.merged ? { own_severity: r.severity } : {}), ...history });
+          byFp.set(ownFp, { ...known, ...r, ...judgementOf(known, r), severity, ...(known.merged ? { own_severity: r.severity } : {}), ...history });
         } else {
           // A sighting of an absorbed near-duplicate: the finding keeps its own
           // wording and position; the alias's record and the severity move.

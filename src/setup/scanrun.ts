@@ -1256,8 +1256,16 @@ export class ScanRunner {
       } else {
         validated = true;
         const judged: KeptFinding[] = [];
-        // Candidates a survivor stands for: the same file, overlapping lines.
+        // The candidate each survivor stands for — ONE per survivor: the same
+        // file and overlapping lines, the same kind first. One survivor must
+        // never stand for two candidates, or the one it did not mean (a
+        // duplicate on the same lines, a neighbour of another kind) would be
+        // neither upheld nor unmentioned — silently dropped, a kill.
         const upheld = new Set<ScanCandidate>();
+        const standsFor = (s: ScanCandidate): ScanCandidate | undefined => {
+          const open = anchored.filter((a) => !upheld.has(a.cand) && a.cand.path === s.path && a.cand.start <= s.end && s.start <= a.cand.end);
+          return (open.find((a) => a.cand.kind === s.kind) ?? open[0])?.cand;
+        };
         for (const s of read.survivors) {
           if (outside(s)) {
             dropped++;
@@ -1269,7 +1277,8 @@ export class ScanRunner {
             dropped++;
             continue;
           }
-          for (const a of anchored) if (a.cand.path === s.path && a.cand.start <= s.end && s.start <= a.cand.end) upheld.add(a.cand);
+          const meant = standsFor(s);
+          if (meant) upheld.add(meant);
           judged.push({
             cand: s,
             code: normalizeCode(lines),
@@ -1282,9 +1291,14 @@ export class ScanRunner {
         // A doubt — or, in a scan, a kill — marks the candidate it names.
         const doubted = new Set<ScanCandidate>();
         for (const d of [...read.doubted, ...read.killed]) {
-          const hit = anchored.find(
-            (a) => a.cand.path === d.path && (d.line === null || (d.line >= a.cand.start && d.line <= a.cand.end)) && !doubted.has(a.cand),
-          );
+          const names = (a: (typeof anchored)[number]): boolean =>
+            a.cand.path === d.path && (d.line === null || (d.line >= a.cand.start && d.line <= a.cand.end)) && !doubted.has(a.cand);
+          // A candidate no survivor stands for first: two candidates on the
+          // same lines (a duplicate the skeptic doubts beside the one it
+          // upholds) must not have the doubt land on the upheld one — its
+          // fingerprint would then turn the confirmed survivor doubtful and
+          // leave the duplicate standing as "upheld".
+          const hit = anchored.find((a) => names(a) && !upheld.has(a.cand)) ?? anchored.find(names);
           if (!hit) continue;
           doubted.add(hit.cand);
           judged.push({ ...hit, validity: "doubtful", scenario: null, doubt: { word: d.word, reason: d.reason, class: d.class } });
