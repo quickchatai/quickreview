@@ -355,6 +355,18 @@ describe("TuiMemoryStore — both user trees", () => {
     );
     expect(defectEntries(await store.read())).toHaveLength(2);
   });
+
+  it("a `#bug` QUOTED inside feedback prose is data, not a defect flag — header tags only", async () => {
+    server.seed(
+      "reviewer",
+      "20260820T140000-ffff6666.md",
+      '#feedback kind=feedback pr=5312 signal=comment "please drop the #bug nit"',
+    );
+    const store = wire(server);
+    expect(defectEntries(await store.read()).map((e) => e.text)).toEqual([
+      "#bug #operations guard 2 suppressed a same-head substantive review.",
+    ]);
+  });
 });
 
 describe("TuiMemoryStore — unreachable is not empty", () => {
@@ -392,6 +404,18 @@ describe("TuiMemoryStore — unreachable is not empty", () => {
     const health = store.health();
     expect(health.error).toContain("OPENVIKING_REVIEWER_KEY");
     expect(health.error).toContain("openviking-keys.env");
+  });
+
+  it("a missing key STAYS an error on every refresh — the client's once-only gap never turns into a healthy empty store", async () => {
+    const store = wire(server, {});
+    // Startup namespace preparation can spend the client's single no_key gap.
+    await store.ensureNamespaces();
+    for (let i = 0; i < 3; i++) {
+      expect(await store.read()).toEqual([]);
+      const health = store.health();
+      expect(health.ok).toBe(false);
+      expect(health.error).toContain("OPENVIKING_REVIEWER_KEY");
+    }
   });
 
   it("one tree down = a WARNING beside the other tree's entries, never a wiped timeline", async () => {

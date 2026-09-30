@@ -166,14 +166,27 @@ export function shortSha(sha: string): string {
  * mark one as reverted, because a revert of a listed change may itself be an
  * ordinary commit.
  */
-export function buildEntries(commits: ChangeCommit[], now: string): ChangeEntry[] {
-  const reverts = new Map<string, { by: string; at: string }>();
+export type RevertIndex = Map<string, { by: string; at: string }>;
+
+/** Every revert the scan saw, keyed by the sha (or abbreviation) it undoes. */
+export function revertsIn(commits: ChangeCommit[]): RevertIndex {
+  const reverts: RevertIndex = new Map();
   for (const c of commits) {
     const target = revertedSha(c.body);
     if (!target) continue;
     // Newest first, so the FIRST revert seen for a target is the latest one.
     if (!reverts.has(target)) reverts.set(target, { by: shortSha(c.sha), at: c.at });
   }
+  return reverts;
+}
+
+/** The revert of `sha` in the index — full sha or an abbreviation of it. */
+function revertOf(reverts: RevertIndex, sha: string): { by: string; at: string } | undefined {
+  return reverts.get(sha) ?? [...reverts.entries()].find(([k]) => sha.startsWith(k))?.[1];
+}
+
+export function buildEntries(commits: ChangeCommit[], now: string): ChangeEntry[] {
+  const reverts = revertsIn(commits);
   const entries: ChangeEntry[] = [];
   for (const c of commits) {
     const t = messageTrailers(c.body);
@@ -191,8 +204,7 @@ export function buildEntries(commits: ChangeCommit[], now: string): ChangeEntry[
     if (t[TRAILER_FEEDBACK]) entry.feedback_pr = t[TRAILER_FEEDBACK];
     if (t[TRAILER_ADJUDICATION]) entry.adjudication = t[TRAILER_ADJUDICATION];
     // A revert can be recorded against the full sha or an abbreviation.
-    const rev =
-      reverts.get(c.sha) ?? [...reverts.entries()].find(([k]) => c.sha.startsWith(k))?.[1];
+    const rev = revertOf(reverts, c.sha);
     if (rev) entry.reverted = rev;
     entries.push(entry);
   }
@@ -208,15 +220,27 @@ export function buildEntries(commits: ChangeCommit[], now: string): ChangeEntry[
  *    checkout that does not carry it) is KEPT. Nothing here removes a row; a
  *    list that quietly forgets a change is worse than no list, because the
  *    whole point is reading the drift in one place.
+ *
+ * A kept row is not frozen, though: a revert the scan DID reach (`reverts`)
+ * marks it, because the target of a recent revert may itself be older than the
+ * window — and a row still offered for revert after it was reverted is a lie.
  */
-export function mergeRegister(previous: ChangeEntry[], fresh: ChangeEntry[]): ChangeEntry[] {
+export function mergeRegister(
+  previous: ChangeEntry[],
+  fresh: ChangeEntry[],
+  reverts: RevertIndex = new Map(),
+): ChangeEntry[] {
   const byShaOld = new Map(previous.map((e) => [e.sha, e]));
   const merged: ChangeEntry[] = fresh.map((e) => {
     const old = byShaOld.get(e.sha);
     return old ? { ...e, first_seen: old.first_seen } : e;
   });
   const seen = new Set(merged.map((e) => e.sha));
-  for (const old of previous) if (!seen.has(old.sha)) merged.push(old);
+  for (const old of previous) {
+    if (seen.has(old.sha)) continue;
+    const rev = old.reverted ? undefined : revertOf(reverts, old.sha);
+    merged.push(rev ? { ...old, reverted: rev } : old);
+  }
   // Newest first by author date, sha as the tiebreak so the order is stable.
   return merged.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : a.sha < b.sha ? 1 : -1));
 }
@@ -377,7 +401,7 @@ export class ChangeLog {
       const register: ChangeRegister = {
         version: 1,
         updated_at: now,
-        entries: mergeRegister(previous, buildEntries(commits, now)),
+        entries: mergeRegister(previous, buildEntries(commits, now), revertsIn(commits)),
         scanned: commits.length,
       };
       try {

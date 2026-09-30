@@ -101,6 +101,12 @@ describe("gh improvements read (still remote — the ONLY ssh this module produc
     expect(s).toContain("--label bot-filed");
   });
 
+  it("lists issues by the CONFIGURED github.issue_label — the one the writer files with — quoted for sh", () => {
+    const s = improvementsArgv(cfg, "exampleorg/example-app", "qcr bot's").join(" ");
+    expect(s).toContain(`--label 'qcr bot'\\''s'`);
+    expect(s).not.toContain("--label bot-filed");
+  });
+
   it("parses the two gh JSON lists around the --- separator", () => {
     const out = `[{"number":12,"title":"docs: fix typo","state":"MERGED"}]\n---\n[{"number":9,"title":"flaky test","state":"OPEN"}]`;
     expect(parseImprovements(out)).toEqual({

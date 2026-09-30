@@ -313,6 +313,39 @@ describe("the revert, and everything it refuses", () => {
   });
 });
 
+describe("a revert of a change OLDER than the scan window", () => {
+  let dir = "";
+  beforeEach(() => (dir = mkdtempSync(join(tmpdir(), "qcr-changes-"))));
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("still marks the retained row reverted, and the revert is not offered again", async () => {
+    const target = "a".repeat(40);
+    let log = landed(target, "2026-08-25T09:00:00Z", "severity change");
+    const calls: string[][] = [];
+    const cl = new ChangeLog(new ChangeRegisterStore(dir), async (argv) => {
+      calls.push(argv);
+      return argv[1] === "log"
+        ? { ok: true, stdout: log, stderr: "", code: 0 }
+        : { ok: true, stdout: "", stderr: "", code: 0 };
+    });
+    await cl.refresh();
+    // The target has since fallen off SCAN_LIMIT; only its revert is in reach.
+    log = record(
+      "d".repeat(40),
+      "2026-09-30T12:00:00Z",
+      "mat",
+      "Revert",
+      `Revert\n\nThis reverts commit ${target}.\n`,
+    );
+    await cl.refresh();
+    const res = await cl.revert(target);
+    expect(res.ok).toBe(false);
+    expect(calls.some((a) => a[1] === "revert")).toBe(false);
+    const stored = JSON.parse(readFileSync(join(dir, "change-register.json"), "utf8"));
+    expect(stored.entries[0].reverted).toEqual({ by: "ddddddd", at: "2026-09-30T12:00:00Z" });
+  });
+});
+
 describe("the companion is told to stamp it", () => {
   it("prompts/companion.md documents the trailer block, the never-omitted key, and the surface that reads it", () => {
     const prompt = readFileSync(join(process.cwd(), "prompts/companion.md"), "utf8");

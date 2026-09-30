@@ -81,6 +81,10 @@ export interface LearningDeps {
    * (wayfinder tracker, gated github command channel, or none). Absent ⇒
    * auto-filing is off, exactly like kind "none". */
   sink?: IssueSink;
+  /** `github.issue_label` — the label the gh issue read filters on, so the
+   * feedback tab lists the issues this reviewer actually files. Absent = the
+   * shipped default. */
+  issueLabel?: string;
   /** Read-only tracker-ticket projection for the configured effort (:
    * the effort is config, not a literal — index.ts wires this from
    * `ticketProjection`). Absent ⇒ no tracker is configured, and the tickets
@@ -342,7 +346,7 @@ export class LearningStore {
     let improvements: ImprovementItem[] | undefined;
     let improvementsFailed: Array<"pr" | "issue"> = [];
     if (repo) {
-      const res = await app.ssh(app.cfg.ssh_host, improvementsArgv(app.cfg, repo), {
+      const res = await app.ssh(app.cfg.ssh_host, improvementsArgv(app.cfg, repo, this.deps.issueLabel), {
         timeoutMs: 20_000,
       });
       if (res.ok) {

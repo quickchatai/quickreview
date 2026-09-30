@@ -54,6 +54,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import type { TuiConfig } from "../config.js";
+import { shellQuote } from "./remote.js";
 
 export interface RubricProposal {
   slug: string;
@@ -136,15 +137,23 @@ export const IMPROVEMENTS_FAILED = "QCR_GH_READ_FAILED";
 /** Bot-filed improvement PRs + issues, one in-container gh read. A failing gh
  * call is caught PER LIST (a missing label must not blank the other list),
  * but it prints the failure sentinel, never `[]`: "could not ask" is not
- * "there are none". */
-export function improvementsArgv(cfg: TuiConfig, repo: string): string[] {
+ * "there are none".
+ *
+ * `issueLabel` is `github.issue_label` — the label `fileIssue` files with and
+ * the daemon's own open-issue query reads, so all three agree on a
+ * non-default install. Shell-quoted: it is config text inside an `sh -c`. */
+export function improvementsArgv(
+  cfg: TuiConfig,
+  repo: string,
+  issueLabel: string = "bot-filed",
+): string[] {
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error(`bad repo '${repo}'`);
   const gh = `GH_TOKEN="$(bash scripts/mint-token.sh)"`;
   return dockerSh(
     cfg,
     `cd '${cfg.remote_sandbox_root}' && ` +
       `{ ${gh} gh pr list -R '${repo}' --state all --limit 30 --search 'head:bot/improve' --json number,title,state 2>/dev/null || echo '${IMPROVEMENTS_FAILED}'; } && echo '---' && ` +
-      `{ ${gh} gh issue list -R '${repo}' --state all --limit 30 --label bot-filed --json number,title,state 2>/dev/null || echo '${IMPROVEMENTS_FAILED}'; }`,
+      `{ ${gh} gh issue list -R '${repo}' --state all --limit 30 --label ${shellQuote(issueLabel)} --json number,title,state 2>/dev/null || echo '${IMPROVEMENTS_FAILED}'; }`,
   );
 }
 

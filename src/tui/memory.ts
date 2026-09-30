@@ -35,7 +35,7 @@
 // the address of a verb (see `MemoryStore` for why every addressed op carries
 // the content it expects to find).
 import { readFileSync } from "node:fs";
-import { parseEventTags } from "../memory/eventtags.js";
+import { parseEventTags, parseHashTags } from "../memory/eventtags.js";
 import {
   matchesQuery,
   type MemoryEntry,
@@ -100,7 +100,10 @@ export const DEFECT_TAG = "bug";
  * an entry that merely mentions a bug is not a defect flag.
  */
 export function isDefect(e: MemoryEntry): boolean {
-  if (e.tags.some((t) => t.replace(/^#+/, "").toLowerCase() === DEFECT_TAG)) return true;
+  // Header-only (`parseHashTags`), NOT `e.tags`: the store's tag list is a
+  // full-text scan, so a `#bug` quoted inside a feedback comment would
+  // otherwise authorize an automatic filing.
+  if (parseHashTags(e.text).includes(DEFECT_TAG)) return true;
   return parseEventTags(e.text)["kind"] === DEFECT_TAG;
 }
 
@@ -245,6 +248,11 @@ interface Namespace {
    * reset. */
   busy: number;
   health: NamespaceHealth;
+  /** The key this namespace's client would send, read the same lazy way.
+   * The client reports `no_key` only ONCE per lifetime, while every sweep
+   * clears `gaps` — so without this a second read of a keyless namespace
+   * would settle as a healthy empty store. Absent for injected fakes. */
+  apiKey?: () => string | null;
 }
 
 export interface TuiMemoryOptions {
@@ -268,6 +276,17 @@ export interface TuiMemoryOptions {
 }
 
 const DEFAULT_TIMEOUT_MS = 15_000;
+
+/** The first key present for `user`, read lazily on every call. */
+function userKey(user: MemoryUser, key: (name: string) => string | null): () => string | null {
+  return () => {
+    for (const name of USER_KEY_ENV[user]) {
+      const value = key(name);
+      if (value) return value;
+    }
+    return null;
+  };
+}
 
 /**
  * The store the TUI runs against: BOTH user trees, merged into one timeline,
@@ -293,12 +312,16 @@ export class TuiMemoryStore implements HealthyMemoryStore {
     this.keysFile = opts.keysFile ?? keysFilePath(env);
     this.writeUser = opts.writeUser ?? "reviewer";
     const key = opts.key ?? keysFileReader(this.keysFile);
-    const built =
+    const built: Array<{ user: MemoryUser; store: MemoryStore; apiKey?: () => string | null }> =
       opts.namespaces ??
-      MEMORY_USERS.map((user) => ({ user, store: this.buildStore(user, key, opts) }));
-    this.ns = built.map(({ user, store }) => ({
+      MEMORY_USERS.map((user) => {
+        const apiKey = userKey(user, key);
+        return { user, store: this.buildStore(user, apiKey, opts), apiKey };
+      });
+    this.ns = built.map(({ user, store, apiKey }) => ({
       user,
       store,
+      ...(apiKey ? { apiKey } : {}),
       gaps: [],
       busy: 0,
       health: { user, ok: true, unreadable: 0 },
@@ -307,19 +330,13 @@ export class TuiMemoryStore implements HealthyMemoryStore {
 
   private buildStore(
     user: MemoryUser,
-    key: (name: string) => string | null,
+    apiKey: () => string | null,
     opts: TuiMemoryOptions,
   ): MemoryStore {
     const client = new OpenVikingClient({
       baseUrl: this.baseUrl,
       // Read lazily on every request, so a keys file that lands later works.
-      apiKey: () => {
-        for (const name of USER_KEY_ENV[user]) {
-          const value = key(name);
-          if (value) return value;
-        }
-        return null;
-      },
+      apiKey,
       user,
       timeoutMs: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       ...(opts.fetchFn ? { fetchFn: opts.fetchFn } : {}),
@@ -347,6 +364,7 @@ export class TuiMemoryStore implements HealthyMemoryStore {
     await Promise.all(
       this.ns.map(async (n) => {
         if (n.busy === 0) n.gaps = [];
+        this.noteMissingKey(n, "ls");
         n.busy += 1;
         let entries: MemoryEntry[] = [];
         try {
@@ -428,6 +446,7 @@ export class TuiMemoryStore implements HealthyMemoryStore {
 
   private async applyIn(n: Namespace, op: MemoryOp): Promise<MemoryWriteResult> {
     if (n.busy === 0) n.gaps = [];
+    this.noteMissingKey(n, op.op);
     n.busy += 1;
     let res: MemoryWriteResult;
     try {
@@ -442,6 +461,14 @@ export class TuiMemoryStore implements HealthyMemoryStore {
       n.health = { user: n.user, ok: false, reason: this.describe(n.user, fatal), unreadable: 0 };
     }
     return res;
+  }
+
+  /** A keyless namespace is down on EVERY sweep, not only the one that
+   * happened to receive the client's once-only `no_key` gap. */
+  private noteMissingKey(n: Namespace, op: string): void {
+    if (!n.apiKey || n.apiKey()) return;
+    if (n.gaps.some((g) => g.code === "no_key")) return;
+    n.gaps.push({ op, status: 0, code: "no_key", message: "no OpenViking key configured" });
   }
 
   /** Classify this namespace's sweep: down, degraded, or clean. */

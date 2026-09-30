@@ -598,6 +598,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     repoRoot: sandboxRoot(),
     configPath: liveConfigPath(),
     sink: buildIssueSink(full, app.ssh, memStore),
+    issueLabel: full.github.issue_label,
     changes: new ChangeLog(
       new ChangeRegisterStore(join(sandboxRoot(), "state", "changes")),
       localRunner,
