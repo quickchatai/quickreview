@@ -1922,9 +1922,26 @@ describe("selfscan2: the version a file actually runs against", () => {
       'type = "legacy"',
       'url = "https://private.example/simple"',
     ].join("\n");
+    // Pipfile.lock: an entry's `index` names a `_meta.sources` entry; one with
+    // no `index` comes from the first (default) source.
+    const pipfile = JSON.stringify({
+      _meta: {
+        sources: [
+          { name: "private", url: "https://pkgs.internal/simple", verify_ssl: true },
+          { name: "pypi", url: "https://pypi.org/simple", verify_ssl: true },
+        ],
+      },
+      default: {
+        "acme-utils": { index: "private", version: "==2.1.0" },
+        "defaulted": { version: "==1.0.0" },
+        "ghost": { index: "nowhere", version: "==1.0.0" },
+        "httpx": { index: "pypi", version: "==0.27.0" },
+      },
+    });
     for (const [lockName, lock, names] of [
       ["uv.lock", uv, ["requests", "internal-lib"]],
       ["poetry.lock", poetry, ["forked", "privy"]],
+      ["Pipfile.lock", pipfile, ["acme-utils", "defaulted", "ghost"]],
     ] as const) {
       const imports = names.map((n) => `import ${n.replace("-", "_")}\n`).join("");
       const root = tree({ [lockName]: lock, "svc/app.py": imports });
@@ -1940,6 +1957,11 @@ describe("selfscan2: the version a file actually runs against", () => {
     }
     // The PyPI-sourced pin is still a pin.
     expect(parsePythonLock(uv).get("httpx")).toBe("0.27.0");
+    expect(parsePipfileLock(pipfile).get("httpx")).toBe("0.27.0");
+    // No `_meta.sources` at all: plain PyPI, as before.
+    expect(
+      parsePipfileLock(JSON.stringify({ default: { httpx: { version: "==0.27.0" } } })).get("httpx"),
+    ).toBe("0.27.0");
   });
 
   it("pypi: an unpinned range never lands on a release whose files are all yanked", async () => {

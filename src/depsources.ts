@@ -942,7 +942,13 @@ export function parsePythonLock(text: string): Map<string, string> {
   return out;
 }
 
-/** Pipfile.lock: `default`/`develop` → `{ name: { version: "==1.2.3" } }`. */
+/**
+ * Pipfile.lock: `default`/`develop` → `{ name: { version: "==1.2.3" } }`. An
+ * entry's `index` names one of `_meta.sources` (none = the first, pipenv's
+ * default); a package from any index other than public PyPI — or from an
+ * index the lock does not declare — maps to `@ index source`
+ * (PY_FOREIGN_PIN_PREFIX), exactly as parsePythonLock does for uv/poetry.
+ */
 export function parsePipfileLock(text: string): Map<string, string> {
   const out = new Map<string, string>();
   let doc: unknown;
@@ -952,12 +958,30 @@ export function parsePipfileLock(text: string): Map<string, string> {
     return out;
   }
   if (!isObj(doc)) return out;
+  const indexUrl = new Map<string, string>();
+  let defaultIndex: string | undefined;
+  const meta = doc._meta;
+  if (isObj(meta) && Array.isArray(meta.sources)) {
+    for (const src of meta.sources) {
+      const n = isObj(src) ? str(src.name) : undefined;
+      if (n === undefined || !isObj(src)) continue;
+      defaultIndex ??= n;
+      if (!indexUrl.has(n)) indexUrl.set(n, str(src.url) ?? "");
+    }
+  }
+  const isPypi = (index: string | undefined): boolean => {
+    if (index === undefined) return true; // no sources declared: pipenv's PyPI default
+    return /^https:\/\/pypi\.org\/simple\/?$/.test(indexUrl.get(index) ?? "");
+  };
   for (const section of ["default", "develop"]) {
     const sec = doc[section];
     if (!isObj(sec)) continue;
     for (const [name, val] of Object.entries(sec)) {
-      const v = isObj(val) ? str(val.version) : undefined;
-      if (v?.startsWith("==")) out.set(normPy(name), v.slice(2));
+      if (!isObj(val)) continue;
+      const v = str(val.version);
+      if (!v?.startsWith("==")) continue;
+      const index = str(val.index) ?? defaultIndex;
+      out.set(normPy(name), isPypi(index) ? v.slice(2) : `${PY_FOREIGN_PIN_PREFIX}index source`);
     }
   }
   return out;
