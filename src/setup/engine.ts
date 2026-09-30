@@ -132,9 +132,10 @@ export type CaseOutcome =
       ok: true;
       output: string;
       cost_usd: number | null;
-      /** The paths the case's file-read tool calls named (`read`, and `grep`
-       * given a `path`), in call order, exactly as the model spelled them —
-       * `[]` when it read nothing. ABSENT when the runner cannot tell, which
+      /** The files the case's file-read tool calls opened (`read`, and
+       * `grep` given a `path`), in call order, each RESOLVED to the absolute
+       * path the call opened (against the case's working directory, which is
+       * not the scanned tree) — `[]` when it read nothing. ABSENT when the runner cannot tell, which
        * is unknown, never "read nothing". The scan judges a lens that read
        * none of its focus files as no reading at all (scan-loop round 7). */
       reads?: string[];

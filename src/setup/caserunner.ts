@@ -10,8 +10,8 @@
 // unchanged: no new session kind, nothing on the VM).
 import { spawn as nodeSpawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join, posix, resolve } from "node:path";
 import type { CaseOutcome, CaseRunner, CaseSpec } from "./engine.js";
 
 /** An agent file of the companion set: `name`/`tools`/`model` frontmatter
@@ -128,6 +128,24 @@ export function readPathOf(event: { type?: string; toolName?: unknown; args?: un
   return typeof path === "string" && path.trim() !== "" ? path : null;
 }
 
+/** The file a read of `raw` opened, for a child running in `cwd` — pi's own
+ * resolution (`resolveToCwd`): one leading `@` stripped, `~` expanded, a
+ * relative path taken against the CHILD's cwd, `.`/`..` collapsed. The scan
+ * judges what the lens opened, not how it spelled it: the child runs in the
+ * app root, not the scanned tree, so a relative `api/x.py` opened the app
+ * root's copy — another repository, or this checkout at HEAD — and must not
+ * pass for a read of the tree (scan-loop).
+ * VERIFY-ON-PIN (read from 0.99.1's dist/core/tools/path-utils.js
+ * `resolveToCwd` → utils/paths `resolvePath` with `stripAtPrefix`): the macOS
+ * filename variants its `resolveReadPath` also tries are not modelled — they
+ * only differ for a path that does not exist as spelled. */
+export function resolvedReadPath(raw: string, cwd: string, home: string = homedir()): string {
+  let p = raw.startsWith("@") ? raw.slice(1) : raw;
+  if (p === "~") p = home;
+  else if (p.startsWith("~/")) p = `${home}${p.slice(1)}`;
+  return posix.resolve(cwd, p);
+}
+
 /**
  * Runs a case as ONE background pi subagent, the way pi's own subagent
  * extension runs a child: `pi --mode json -p --no-session` with the agent's
@@ -140,8 +158,10 @@ export function readPathOf(event: { type?: string; toolName?: unknown; args?: un
  *
  * The answer is the last assistant message's text; the cost is pi's own
  * per-message accounting summed (null when it reported none); `reads` is
- * every path its `read`/`grep` calls named (`readPathOf`) — the scan's
- * evidence that the lens opened its files at all. An abort kills
+ * every path its `read`/`grep` calls named (`readPathOf`), resolved to the
+ * file that call opened (`resolvedReadPath`, against `cwd`) — the scan's
+ * evidence that the lens opened ITS files at all. The task string names
+ * every file by its absolute tree path for the same reason. An abort kills
  * the child (TERM, then KILL). Every outcome resolves.
  *
  * VERIFY-ON-PIN (0.87.1, re-read at 0.99.1: examples/extensions/subagent byte-identical, CLI flag set identical; read from the published examples/extensions/subagent
@@ -192,7 +212,7 @@ export function piCaseRunner(opts: {
               return;
             }
             const read = readPathOf(event);
-            if (read !== null) reads.push(read);
+            if (read !== null) reads.push(resolvedReadPath(read, opts.cwd));
             const msg = event.message;
             if (event.type !== "message_end" || !msg || msg.role !== "assistant") return;
             const usage = msg.usage as { cost?: { total?: unknown } } | undefined;

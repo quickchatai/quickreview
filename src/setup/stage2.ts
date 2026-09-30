@@ -55,6 +55,7 @@ import {
   cutRanges,
   focusLine,
   rangeNote,
+  TREE_PATHS_NOTE,
   rangesCover,
   SCAN_DEEP_LENSES,
   type FileRange,
@@ -542,13 +543,13 @@ export function stage2Cases(row: Stage2Row): Array<{ id: string; part: number; p
 /** The stage-2 task string for one row — or, for a ranged row, for the one
  * case whose `files` (from `stage2Cases`) are given. */
 export function stage2CasePrompt(row: Stage2Row, ctx: PromptContext, caseFiles?: readonly ScanCaseFile[]): string {
-  const list = (fs: readonly ScanCaseFile[]): string => fs.map(focusLine).join("\n");
+  const list = (fs: readonly ScanCaseFile[]): string => fs.map((f) => focusLine(f, ctx.root)).join("\n");
   const code = caseFiles ? caseFiles.slice(0, row.files.length) : row.files;
   return [
     `SCAN CASE ${ctx.caseId} — stage 2, ${row.id}: ${row.lens}${row.units.length > 1 ? ` across units ${row.units.join(", ")}` : ` in unit ${row.units[0]}`}.`,
     `Scan sha: ${ctx.sha}`,
     `Tree root (the repository at the scan sha, read-only): ${ctx.root}`,
-    "Every path below and in your answer is relative to the tree root.",
+    TREE_PATHS_NOTE,
     "",
     `Why this case: ${row.reason}`,
     "",

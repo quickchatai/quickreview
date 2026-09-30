@@ -129,10 +129,14 @@ import {
  *
  * `reads` is what the case runner saw the lens's file-read calls name
  * (`CaseOutcome.reads`); absent means the runner cannot tell, and unknown is
- * never judged as zero. A reading needs at least one focus file opened by its
- * path under the tree root — the lens runs outside the tree (first-party
- * cwd), so a relative path resolves against THAT, not the tree, and a read of
- * some other file (a CLAUDE.md, a caller) is context, not the case. Pure.
+ * never judged as zero. A reading needs at least one focus file opened at
+ * its path under the tree root. The runner reports each read resolved to the
+ * file it opened, so a relative read counts exactly when it resolved inside
+ * the tree: the lens runs outside the tree (first-party cwd), and a relative
+ * `api/x.py` opened the app root's copy — another repository — which is no
+ * reading of the case. A read left relative (a runner that cannot resolve)
+ * is never credited, and a read of some other file (a CLAUDE.md, a caller)
+ * is context, not the case. Pure.
  */
 export function unreadFocus(reads: readonly string[] | undefined, focus: readonly string[], root: string): string | null {
   if (reads === undefined) return null;

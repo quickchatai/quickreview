@@ -22,6 +22,7 @@
 // are OWED, not skipped: a delta that left them out would leave a file no
 // lens ever read out of every delta for as long as it stays unchanged.
 import { createHash } from "node:crypto";
+import { posix } from "node:path";
 import { ALL_PASSES } from "../dispatch.js";
 import { globMatcher } from "../glob.js";
 import { isSweepSkipped, isTestFile } from "../heuristics.js";
@@ -416,11 +417,25 @@ export interface PromptContext {
   caseId: string;
 }
 
-/** One focus file as a task names it: its size, or its range. */
-export function focusLine(f: ScanCaseFile): string {
+/** Where a lens opens a tree file: its absolute path under the root. */
+export function treePath(root: string, path: string): string {
+  return posix.join(root, path);
+}
+
+/** The line every scan task carries about paths: the lens runs OUTSIDE the
+ * tree (first-party cwd — the case runner), so a relative path it opens is
+ * some other checkout's file, never the scanned one (scan-loop). */
+export const TREE_PATHS_NOTE =
+  "Your working directory is NOT the tree: a relative path opens some other checkout's file. Open every file — focus files, callers, tests — by its absolute path under the tree root (each focus file below says where). Paths in your answer are relative to the tree root.";
+
+/** One focus file as a task names it: its repo-relative path (what an
+ * answer anchors to), its size or range, and — given the tree root — the
+ * absolute path to open it by. */
+export function focusLine(f: ScanCaseFile, root?: string): string {
+  const open = root === undefined ? "" : ` — open ${treePath(root, f.path)}`;
   return f.range
-    ? `- ${f.path} (lines ${f.range.start}-${f.range.end} of ${f.range.total} — read the whole file, report only inside lines ${f.range.start}-${f.range.end})`
-    : `- ${f.path} (${f.lines} lines)`;
+    ? `- ${f.path} (lines ${f.range.start}-${f.range.end} of ${f.range.total} — read the whole file, report only inside lines ${f.range.start}-${f.range.end})${open}`
+    : `- ${f.path} (${f.lines} lines)${open}`;
 }
 
 /** The note a case with a ranged file carries, or none. */
@@ -436,8 +451,8 @@ export function rangeNote(files: readonly ScanCaseFile[]): string[] {
   ];
 }
 
-function fileList(c: ScanCasePlan): string {
-  return c.files.map(focusLine).join("\n");
+function fileList(c: ScanCasePlan, root: string): string {
+  return c.files.map((f) => focusLine(f, root)).join("\n");
 }
 
 /** The stage-1 task string for one case. */
@@ -447,10 +462,10 @@ export function scanCasePrompt(c: ScanCasePlan, ctx: PromptContext, deepLenses: 
     `SCAN CASE ${ctx.caseId} — stage 1, unit ${c.unit}${part}.`,
     `Scan sha: ${ctx.sha}`,
     `Tree root (the repository at the scan sha, read-only): ${ctx.root}`,
-    "Every path below and in your answer is relative to the tree root.",
+    TREE_PATHS_NOTE,
     "",
     `Focus files (${c.files.length}, ${c.lines} lines — read each in full):`,
-    fileList(c),
+    fileList(c, ctx.root),
     ...rangeNote(c.files),
     "",
     `Deep lenses you may name in SUGGEST: ${deepLenses.join(", ")}.`,
@@ -492,9 +507,10 @@ export function scanValidatorPrompt(
     `SCAN VALIDATION ${ctx.caseId} — ${label}.`,
     `Scan sha: ${ctx.sha}`,
     `Tree root (read-only): ${ctx.root}`,
+    TREE_PATHS_NOTE,
     "",
     `The ${lens} lens read these files:`,
-    fileList(c),
+    fileList(c, ctx.root),
     "",
     `Its ${candidates.length} candidate finding(s):`,
     `FINDINGS ${lens} SCAN ${ctx.caseId} @${ctx.sha}`,
