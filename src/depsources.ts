@@ -970,8 +970,12 @@ export function parsePipfileLock(text: string): Map<string, string> {
     }
   }
   const isPypi = (index: string | undefined): boolean => {
-    if (index === undefined) return true; // no sources declared: pipenv's PyPI default
-    return /^https:\/\/pypi\.org\/simple\/?$/.test(indexUrl.get(index) ?? "");
+    // No sources declared: pipenv's default source, named "pypi", is PyPI.
+    if (indexUrl.size === 0) return index === undefined || index === "pypi";
+    // pypi.python.org is PyPI's legacy host — older Pipfiles still name it.
+    return /^https:\/\/pypi\.(?:python\.)?org\/simple\/?$/i.test(
+      (index === undefined ? undefined : indexUrl.get(index)) ?? "",
+    );
   };
   for (const section of ["default", "develop"]) {
     const sec = doc[section];

@@ -1962,6 +1962,21 @@ describe("selfscan2: the version a file actually runs against", () => {
     expect(
       parsePipfileLock(JSON.stringify({ default: { httpx: { version: "==0.27.0" } } })).get("httpx"),
     ).toBe("0.27.0");
+    // Pipenv's own default, named without `_meta.sources`, and PyPI's legacy
+    // host that older Pipfiles still spell: both are PyPI.
+    expect(
+      parsePipfileLock(
+        JSON.stringify({ default: { httpx: { index: "pypi", version: "==0.27.0" } } }),
+      ).get("httpx"),
+    ).toBe("0.27.0");
+    expect(
+      parsePipfileLock(
+        JSON.stringify({
+          _meta: { sources: [{ name: "pypi", url: "https://pypi.python.org/simple" }] },
+          default: { httpx: { index: "pypi", version: "==0.27.0" } },
+        }),
+      ).get("httpx"),
+    ).toBe("0.27.0");
   });
 
   it("pypi: an unpinned range never lands on a release whose files are all yanked", async () => {
