@@ -3,6 +3,7 @@ import diagnosticsChannel from "node:diagnostics_channel";
 import {
   SlackSocketClient,
   bridgeNativeWebSocketPings,
+  trackBridgedSocket,
   type SlackWebSocketLike,
 } from "../src/slack/socket.js";
 import type { SlackFetchFn, SlackInboundEvent } from "../src/slack/types.js";
@@ -294,6 +295,20 @@ describe("server-ping watchdog — protocol-level pings (selfscan 3dc7955f)", ()
     ch.publish({ websocket: wsA, payload: Buffer.alloc(0) });
     ch.publish({ websocket: {}, payload: Buffer.alloc(0) }); // no hook: ignored
     expect(a).toBe(1);
+  });
+
+  it("a ping naming no socket (undici 6 / Node 22) reaches every live bridged socket", () => {
+    bridgeNativeWebSocketPings();
+    let b = 0;
+    const wsB = new FakeWs("wss://fake/b");
+    wsB.onping = () => void (b += 1);
+    trackBridgedSocket(wsB);
+    const ch = diagnosticsChannel.channel("undici:websocket:ping");
+    ch.publish({ payload: Buffer.alloc(0) }); // Node 22's message shape
+    expect(b).toBe(1);
+    wsB.onping = null; // torn down
+    ch.publish({ payload: Buffer.alloc(0) });
+    expect(b).toBe(1);
   });
 });
 

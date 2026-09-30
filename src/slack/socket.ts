@@ -22,23 +22,42 @@ export interface SlackWebSocketLike {
 }
 
 let pingBridgeInstalled = false;
+/** Sockets built by the native factory, for undici builds whose ping message
+ * does not say which socket it came from. */
+const bridgedSockets = new Set<SlackWebSocketLike>();
 
 /**
  * Node's global WebSocket (undici) answers server pings itself and exposes
- * them only on the `undici:websocket:ping` diagnostics channel, carrying the
- * socket object. Route each to that socket's `onping`. Idempotent.
+ * them only on the `undici:websocket:ping` diagnostics channel. Newer undici
+ * (7+, Node 24+) carries the socket object; undici 6 — Node 22, the daemon's
+ * runtime — carries ONLY the payload. So: a ping naming its socket reaches
+ * that socket's `onping`; a ping naming none reaches every live bridged
+ * socket (the Slack client is the process's only WebSocket user, so in
+ * practice that is exactly one). Idempotent.
  */
 export function bridgeNativeWebSocketPings(): void {
   if (pingBridgeInstalled) return;
   pingBridgeInstalled = true;
   diagnosticsChannel.subscribe("undici:websocket:ping", (msg) => {
-    const ws = (msg as { websocket?: { onping?: (() => void) | null } } | null)?.websocket;
-    try {
-      ws?.onping?.();
-    } catch {
-      /* never let a hook throw into undici */
+    const named = (msg as { websocket?: SlackWebSocketLike } | null)?.websocket;
+    const targets = named ? [named] : [...bridgedSockets];
+    for (const ws of targets) {
+      if (!ws.onping) {
+        bridgedSockets.delete(ws); // torn down: onping is nulled on close
+        continue;
+      }
+      try {
+        ws.onping();
+      } catch {
+        /* never let a hook throw into undici */
+      }
     }
   });
+}
+
+/** Register a natively-built socket with the ping bridge (see above). */
+export function trackBridgedSocket(ws: SlackWebSocketLike): void {
+  bridgedSockets.add(ws);
 }
 
 export type SlackWebSocketFactory = (url: string) => SlackWebSocketLike;
@@ -95,7 +114,9 @@ export class SlackSocketClient implements SlackSocket {
       opts.webSocketFactory ??
       ((url: string) => {
         bridgeNativeWebSocketPings();
-        return new WebSocket(url) as unknown as SlackWebSocketLike;
+        const ws = new WebSocket(url) as unknown as SlackWebSocketLike;
+        trackBridgedSocket(ws);
+        return ws;
       });
     this.backoff = opts.backoffMs?.length ? [...opts.backoffMs] : [...DEFAULT_BACKOFF_MS];
     this.pingTimeoutMs = opts.serverPingTimeoutMs ?? DEFAULT_SERVER_PING_TIMEOUT_MS;
@@ -169,9 +190,12 @@ export class SlackSocketClient implements SlackSocket {
       this.armWatchdog();
     };
     ws.onmessage = (ev) => this.onFrame(ev?.data);
-    ws.onping = () => this.armWatchdog(); // a server ping is liveness too
+    ws.onping = () => {
+      if (this.ws === ws) this.armWatchdog(); // a server ping is liveness too
+    };
     ws.onerror = (err) => this.log("slack.socket.error", { error: String(err) });
     ws.onclose = () => {
+      ws.onping = null; // closed: no ping may count as liveness any more
       if (this.ws !== ws) return; // a stale socket we already replaced
       this.ws = null;
       this.clearTimer("watchdogTimer");
