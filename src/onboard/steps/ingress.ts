@@ -263,16 +263,20 @@ export function setTomlKey(
   key: string,
   value: string,
 ): string | null {
-  const header = new RegExp(`^\\[${section}\\][^\\n]*\\n`, "m").exec(toml);
+  // Indentation is accepted exactly as readTomlKey accepts it: a key this
+  // misses would be written a second time, and the loader rejects duplicates.
+  const header = new RegExp(`^[ \\t]*\\[${section}\\][^\\n]*\\n`, "m").exec(toml);
   if (header?.index === undefined) return null;
   const bodyStart = header.index + header[0].length;
   const rest = toml.slice(bodyStart);
-  const nextTable = /^\[[^\n]*\]/m.exec(rest);
+  const nextTable = /^[ \t]*\[[^\n]*\]/m.exec(rest);
   const bodyEnd = bodyStart + (nextTable?.index ?? rest.length);
   const body = toml.slice(bodyStart, bodyEnd);
-  const line = new RegExp(`^${key}\\s*=\\s*[^\\n]*$`, "m");
+  const line = new RegExp(`^([ \\t]*)${key}\\s*=\\s*[^\\n]*$`, "m");
   const replacement = `${key} = ${JSON.stringify(value)}`;
-  const patched = line.test(body) ? body.replace(line, replacement) : `${replacement}\n${body}`;
+  const patched = line.test(body)
+    ? body.replace(line, (_m, indent: string) => `${indent}${replacement}`)
+    : `${replacement}\n${body}`;
   return `${toml.slice(0, bodyStart)}${patched}${toml.slice(bodyEnd)}`;
 }
 
