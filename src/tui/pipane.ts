@@ -249,7 +249,7 @@ export const PANE_ESCAPE = 0x11;
  * Why groups and not one flat argv: `send-keys -l` is a flag of the *command*,
  * not of an argument, so literal text and named keys cannot share one
  * invocation. Runs of printable characters coalesce into a single
- * `["-l", "<text>"]` group (so typing a word — or pasting a paragraph — is one
+ * `["-l", "--", "<text>"]` group (so typing a word — or pasting a paragraph — is one
  * round trip), runs of specials coalesce into a single group of key names, and
  * a chunk that is purely one or the other (the overwhelmingly common case) is
  * exactly one invocation.
@@ -263,7 +263,9 @@ export function keysToTmux(buf: Buffer): string[][] {
   let names: string[] = [];
   const flushLiteral = (): void => {
     if (literal.length === 0) return;
-    groups.push(["-l", literal]);
+    // `--` ends tmux's options: a literal that begins with `-` (a pasted
+    // markdown list item, a `--flag`) is text for pi, never flags for tmux.
+    groups.push(["-l", "--", literal]);
     literal = "";
   };
   const flushNames = (): void => {

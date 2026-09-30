@@ -205,7 +205,7 @@ export function captureArgv(
 /**
  * Type into a live pi session without attaching to it — the board's mirror pane
  * is an embedded terminal, not a photograph. `parts` comes from `keysToTmux`
- * (pipane.ts): either `["-l", "<literal text>"]` or a run of tmux key names
+ * (pipane.ts): either `["-l", "--", "<literal text>"]` or a run of tmux key names
  * (`Enter`, `Up`, `C-c`, …).
  *
  * This is the one write the TUI makes against a VM tmux session. It touches

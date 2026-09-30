@@ -638,7 +638,12 @@ export function drainManualSshCommand(tui: TuiConfig, on: boolean, now: Date): s
   // a re-used name (an operator editing an old line) still executes — the
   // fresh name is what keeps its result readable.
   const name = `${now.toISOString().replace(/[:.]/g, "-")}-manual-drain.json`;
-  const script = operatorCommandWriteScript(tui, name).replace(/'/g, "'\\''");
+  // Single quotes for the remote `sh -c`, then backslash, dollar, double quote
+  // and backtick for the LOCAL double-quoted ssh argument, which would
+  // otherwise expand them on the operator's machine.
+  const script = operatorCommandWriteScript(tui, name)
+    .replace(/'/g, "'\\''")
+    .replace(/[\\$"`]/g, "\\$&");
   return (
     `printf '%s' '${JSON.stringify({ command: "drain", on })}' | ` +
     `ssh ${tui.ssh_host} "${docker} sh -c '${script}'"`

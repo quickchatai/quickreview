@@ -260,6 +260,17 @@ export class MemoryForward {
         );
       }
       this.handle = handle;
+      // A bound socket is not memory: the relay only reaches upstream when a
+      // connection arrives, so ssh auth, the VM container and OpenViking are
+      // all still unproven. Probe THROUGH it, exactly as a re-check of an owned
+      // forward does. On failure the listener stays ours — the next `r` probes
+      // through it again, and stop() still closes it.
+      if (!(await this.deps.probe(this.deps.baseUrl, this.deps.probeTimeoutMs))) {
+        return this.settle(
+          "failed",
+          "the forward we started is listening but upstream is not answering (ssh, VM container or OpenViking) — r retries",
+        );
+      }
       return this.settle("owned", this.ownedDetail(bound, cfg.binds.length));
     } catch (err) {
       return this.settle("failed", `forward failed to start: ${errText(err)}`);

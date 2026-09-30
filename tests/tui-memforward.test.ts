@@ -88,9 +88,28 @@ describe("MemoryForward", () => {
   });
 
   it("starts one when nothing answers, and closes exactly that one on stop", async () => {
-    const { fwd, f } = build([false]);
+    // probe: false (nothing there) -> bind -> probe THROUGH it: answers.
+    const { fwd, f } = build([false, true]);
     const st = await fwd.ensure();
     expect(st.state).toBe("owned");
+    expect(f.created()).toBe(1);
+    fwd.stop();
+    expect(f.closed()).toBe(1);
+  });
+
+  it("a forward that binds but reaches no upstream is NOT up — a socket is not memory", async () => {
+    // ssh auth broken, the VM container down: the local listener binds fine
+    // and every request through it fails. Reporting `owned` there would paint
+    // memory ok and offer the studio link from no evidence at all.
+    const { fwd, f } = build([false, false]);
+    const st = await fwd.ensure();
+    expect(st.state).toBe("failed");
+    expect(st.detail).toMatch(/not answering/);
+    expect(fwd.up).toBe(false);
+    // The listener stays ours (it is what a retry probes through) and is
+    // still closed on stop — and a later ensure re-probes, never re-binds.
+    expect(f.closed()).toBe(0);
+    await fwd.ensure();
     expect(f.created()).toBe(1);
     fwd.stop();
     expect(f.closed()).toBe(1);
@@ -160,7 +179,7 @@ describe("MemoryForward", () => {
   });
 
   it("re-probing an owned forward that died reports failure rather than lying", async () => {
-    const { fwd } = build([false, false]);
+    const { fwd } = build([false, true, false]);
     expect((await fwd.ensure()).state).toBe("owned");
     // Second ensure() re-probes the forward we own; it does not answer.
     const again = await fwd.ensure();
@@ -169,7 +188,7 @@ describe("MemoryForward", () => {
   });
 
   it("says so when only some binds came up — the TUI still works", async () => {
-    const { fwd } = build([false], fakeModule({ bound: 1 }));
+    const { fwd } = build([false, true], fakeModule({ bound: 1 }));
     const st = await fwd.ensure();
     expect(st.state).toBe("owned");
     expect(st.detail).toMatch(/bound 1\/2/);

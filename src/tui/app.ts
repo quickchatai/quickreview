@@ -289,15 +289,21 @@ export class App {
       this.syncPiPane();
       this.repaint();
     }
-    void (async () => {
-      for (const parts of groups) {
-        await this.ssh(this.cfg.ssh_host, sendKeysArgv(this.cfg, `pr-${pr}`, parts), {
-          timeoutMs: 5_000,
-        });
-      }
-      await this.pi.refresh(pr);
-    })();
+    // One queue for every keystroke into a pane: each chunk is its own ssh
+    // round trip, and unqueued a slow "a" lets the Enter typed after it reach
+    // tmux first and submit pi's input without it.
+    this.paneSendTail = this.paneSendTail
+      .then(async () => {
+        for (const parts of groups) {
+          await this.ssh(this.cfg.ssh_host, sendKeysArgv(this.cfg, `pr-${pr}`, parts), {
+            timeoutMs: 5_000,
+          });
+        }
+        void this.pi.refresh(pr);
+      })
+      .catch(() => undefined);
   }
+  private paneSendTail: Promise<void> = Promise.resolve();
 
   /** Wheel over the pane: move its scrollback window, re-capture with history.
    * Wheeling back to the bottom returns it to the live tail. */

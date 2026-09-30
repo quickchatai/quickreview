@@ -339,9 +339,58 @@ describe("CompanionSidebar", () => {
     await sb.sendKeys(Buffer.from("ab\x1b[A\r"));
     const sends = calls.filter((c) => c[3] === "send-keys").map((c) => c.slice(6));
     expect(sends).toEqual([
-      ["-l", "ab"],
+      ["-l", "--", "ab"],
       ["Up", "Enter"],
     ]);
+    sb.stop();
+  });
+
+  it("delivers keystrokes in arrival order even when an earlier send is slower", async () => {
+    // Each stdin event fires its own send, un-awaited (app.ts). Unqueued, a
+    // slow `docker exec` for "a" lets the Enter behind it reach tmux first and
+    // submit pi's input without it.
+    const arrived: string[][] = [];
+    let first = true;
+    const runner: DockerRunner = async (argv) => {
+      if (argv[3] === "send-keys") {
+        const delay = first ? 30 : 0;
+        first = false;
+        await new Promise((r) => setTimeout(r, delay));
+        arrived.push(argv.slice(6));
+      }
+      return OK;
+    };
+    const sb = new CompanionSidebar(CFG, runner);
+    const a = sb.sendKeys(Buffer.from("a"));
+    const b = sb.sendKeys(Buffer.from("\r"));
+    await Promise.all([a, b]);
+    expect(arrived).toEqual([["-l", "--", "a"], ["Enter"]]);
+    sb.stop();
+  });
+
+  it("a failed send does not wedge the queue for the next keystroke", async () => {
+    let n = 0;
+    const runner: DockerRunner = async (argv) => (argv[3] === "send-keys" && n++ === 0 ? FAIL : OK);
+    const sb = new CompanionSidebar(CFG, runner);
+    await expect(sb.sendKeys(Buffer.from("a"))).rejects.toThrow(/no server running/);
+    await expect(sb.sendKeys(Buffer.from("b"))).resolves.toBeUndefined();
+    sb.stop();
+  });
+
+  it("serializes overlapping refreshes — an older capture never overwrites a newer one", async () => {
+    const answers = [
+      { delay: 30, out: "older\n" },
+      { delay: 0, out: "newer\n" },
+    ];
+    const runner: DockerRunner = async (argv) => {
+      if (!argv.includes("capture-pane")) return OK;
+      const next = answers.shift() ?? { delay: 0, out: "newer\n" };
+      await new Promise((r) => setTimeout(r, next.delay));
+      return { ...OK, stdout: next.out };
+    };
+    const sb = new CompanionSidebar(CFG, runner);
+    await Promise.all([sb.refresh(), sb.refresh()]);
+    expect(sb.view().lines.filter((l) => l.trim() !== "")).toEqual(["newer"]);
     sb.stop();
   });
 

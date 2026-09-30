@@ -23,6 +23,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -1218,13 +1219,13 @@ describe("qcr drain — the operator channel", () => {
       cfg.tui.container,
     ]);
     expect(writes[0]![writes[0]!.length - 1]).toContain(
-      `${cfg.tui.remote_sandbox_root}/commands/operator/`,
+      `cd -P '${cfg.tui.remote_sandbox_root}/commands/operator'`,
     );
     expect(lines.join("\n")).not.toContain("NOT an operator drain");
     const manual = drainManualSshCommand(cfg.tui, true, new Date("2026-08-31T12:00:00Z"));
     expect(manual).toContain("docker exec -i -u 0");
     expect(manual).toContain("2026-08-31T12-00-00-000Z-manual-drain.json");
-    expect(manual).toContain("/commands/operator/");
+    expect(manual).toContain("/commands/operator'");
   });
 
   it("says so, loudly, when the daemon bounded the drain because the channel was unsealed", async () => {
@@ -1265,6 +1266,7 @@ describe("operatorCommandWriteScript under sh", () => {
     root: string,
     name: string,
     payload: string,
+    chownHook = "",
   ): { code: number; stderr: string; chown: string[] } {
     const log = join(fakebin, "chown.log");
     rmSync(log, { force: true });
@@ -1272,7 +1274,12 @@ describe("operatorCommandWriteScript under sh", () => {
     const res = spawnSync("sh", ["-c", script], {
       input: payload,
       encoding: "utf8",
-      env: { ...process.env, PATH: `${fakebin}:${process.env["PATH"] ?? ""}`, CHOWN_LOG: log },
+      env: {
+        ...process.env,
+        PATH: `${fakebin}:${process.env["PATH"] ?? ""}`,
+        CHOWN_LOG: log,
+        CHOWN_HOOK: chownHook,
+      },
     });
     const chown = existsSync(log)
       ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean)
@@ -1281,10 +1288,18 @@ describe("operatorCommandWriteScript under sh", () => {
   }
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), "qcr-opscript-"));
+    // Physical path: the script compares its working directory to the
+    // configured one, and a symlinked TMPDIR would read as a swapped directory.
+    tmp = realpathSync(mkdtempSync(join(tmpdir(), "qcr-opscript-")));
     fakebin = join(tmp, "bin");
     mkdirSync(fakebin);
-    writeFileSync(join(fakebin, "chown"), '#!/bin/sh\necho "$@" >> "$CHOWN_LOG"\n');
+    // The shim logs what it was asked AND where it stood (the script works
+    // relative to the directory it verified), then runs an optional hook — the
+    // racing session, acting in the window between two root operations.
+    writeFileSync(
+      join(fakebin, "chown"),
+      '#!/bin/sh\necho "$@ @ $(pwd -P)" >> "$CHOWN_LOG"\n[ -z "$CHOWN_HOOK" ] || sh -c "$CHOWN_HOOK"\n',
+    );
     chmodSync(join(fakebin, "chown"), 0o755);
   });
   afterEach(() => rmSync(tmp, { recursive: true, force: true }));
@@ -1322,7 +1337,7 @@ describe("operatorCommandWriteScript under sh", () => {
     const dir = join(root, "commands", "operator");
     // MUTATION: drop `chown -h 0:0` from the script — the first line fails;
     // drop `chmod 0644` — the mode line fails (the shell's umask decides).
-    expect(r.chown).toEqual([`-h 0:0 ${dir}`]);
+    expect(r.chown).toEqual([`-h 0:0 . @ ${dir}`]);
     expect(statSync(dir).mode & 0o777).toBe(0o755);
     expect(readFileSync(join(dir, "c.json"), "utf8")).toBe('{"command":"drain","on":true}');
     expect(statSync(join(dir, "c.json")).mode & 0o777).toBe(0o644);
@@ -1336,9 +1351,73 @@ describe("operatorCommandWriteScript under sh", () => {
     chmodSync(dir, 0o777);
     const r = runScript(root, "d.json", "{}");
     expect(r.code).toBe(0);
-    expect(r.chown).toEqual([`-h 0:0 ${dir}`]);
+    expect(r.chown).toEqual([`-h 0:0 . @ ${dir}`]);
     expect(statSync(dir).mode & 0o777).toBe(0o755);
     expect(existsSync(join(dir, "d.json"))).toBe(true);
+  });
+
+  it("a session swapping operator/ for a symlink MID-SCRIPT gets neither the chmod nor the write", () => {
+    // commands/ is the session uid's, so it can rename the directory the
+    // script just checked and put a link in its place. The script is bound to
+    // the directory it verified, so root's chmod and write never follow.
+    const root = join(tmp, "sandbox");
+    const cmds = join(root, "commands");
+    const dir = join(cmds, "operator");
+    const target = join(tmp, "elsewhere");
+    mkdirSync(cmds, { recursive: true });
+    mkdirSync(target);
+    chmodSync(target, 0o700);
+    const swap = `mv '${dir}' '${cmds}/moved' && ln -s '${target}' '${dir}'`;
+    runScript(root, "f.json", "{}", swap);
+    expect(statSync(target).mode & 0o777).toBe(0o700);
+    expect(existsSync(join(target, "f.json"))).toBe(false);
+    expect(existsSync(join(target, ".f.json.tmp"))).toBe(false);
+  });
+
+  it("a symlink pre-planted at the temp-file name is never written through", () => {
+    // A session pre-makes operator/ holding `.<name>.tmp` -> a root-writable
+    // file. Taking the directory over keeps its entries, so the script must
+    // not open that name before clearing it.
+    const root = join(tmp, "sandbox");
+    const dir = join(root, "commands", "operator");
+    mkdirSync(dir, { recursive: true });
+    const victim = join(tmp, "victim");
+    writeFileSync(victim, "precious");
+    symlinkSync(victim, join(dir, ".g.json.tmp"));
+    const r = runScript(root, "g.json", '{"command":"drain","on":false}');
+    expect(r.code).toBe(0);
+    expect(readFileSync(victim, "utf8")).toBe("precious");
+    expect(lstatSync(join(dir, "g.json")).isFile()).toBe(true);
+    expect(readFileSync(join(dir, "g.json"), "utf8")).toBe('{"command":"drain","on":false}');
+  });
+
+  it("the printed manual ssh fallback runs the same script intact through both shells", () => {
+    // The fallback wraps the script in a local double-quoted string, so every
+    // `$`, `"` and backslash in it must survive the LOCAL shell untouched.
+    const root = join(tmp, "sandbox");
+    mkdirSync(join(root, "commands"), { recursive: true });
+    writeFileSync(join(fakebin, "ssh"), '#!/bin/sh\nshift\nexec sh -c "$*"\n');
+    writeFileSync(
+      join(fakebin, "docker"),
+      '#!/bin/sh\nwhile [ "$1" != sh ]; do shift; done\nexec "$@"\n',
+    );
+    chmodSync(join(fakebin, "ssh"), 0o755);
+    chmodSync(join(fakebin, "docker"), 0o755);
+    const tui = { ...cfg.tui, sudo_docker: false, remote_sandbox_root: root };
+    const manual = drainManualSshCommand(tui, true, new Date("2026-08-31T12:00:00Z"));
+    const res = spawnSync("sh", ["-c", manual], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakebin}:${process.env["PATH"] ?? ""}`,
+        CHOWN_LOG: join(fakebin, "chown.log"),
+        CHOWN_HOOK: "",
+      },
+    });
+    expect(res.stderr).toBe("");
+    expect(res.status).toBe(0);
+    const file = join(root, "commands", "operator", "2026-08-31T12-00-00-000Z-manual-drain.json");
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ command: "drain", on: true });
   });
 });
 

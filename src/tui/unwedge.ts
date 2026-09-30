@@ -63,29 +63,41 @@ export function commandFileName(now: Date, seq: number): string {
  * as root would leave the daemon unable to write its own results, and a
  * daemon that has never booted cannot answer anyway) and when the operator
  * directory is a SYMLINK: `commands/` itself is the daemon's, so a session
- * could plant `operator` there ahead of the operator, and a root `chown` that
- * followed the link would hand root a directory the daemon needs. The check
- * runs AFTER `mkdir -p` (which passes silently over a link to a directory),
- * so nothing sits between it and the chown, and the chown itself is `-h` —
- * it never dereferences, so a link swapped in after the check is still not
- * followed. A real directory a session pre-made is simply taken over —
- * `chown 0:0` + `0755` is what makes it the operator's, whoever created it —
- * and the file's own mode is set explicitly rather than left to the exec's
- * umask, because the daemon's seal check (`operatorSealVerdict`) reads both;
- * that check also `lstat`s the directory, so a link the script did not catch
- * is still no seal on the daemon's side.
+ * could plant `operator` there ahead of the operator.
+ *
+ * A path check alone is not enough, because `commands/` is writable by every
+ * session: it can rename the checked directory away and put a link in its
+ * place between any two root commands, and every later command that names
+ * the PATH would follow it (`chmod` does; only `chown -h` does not). So the
+ * script `cd`s in, proves the directory it is standing in IS the configured
+ * one (`pwd -P`, which resolves the directory it holds, not the name), and
+ * from then on names only `.` and bare entries — a rename or a swap after
+ * that moves nothing root touches. A real directory a session pre-made is
+ * taken over (`chown 0:0` + `0755` is what makes it the operator's, whoever
+ * created it), but it keeps its entries: a link planted at the temp name
+ * would carry root's write anywhere, so that name is removed first — after
+ * the takeover, when no session can put it back. The file's own mode is set
+ * explicitly rather than left to the exec's umask, because the daemon's seal
+ * check (`operatorSealVerdict`) reads both; that check also `lstat`s the
+ * directory, so a link the script did not catch is still no seal there.
+ *
+ * `drainManualSshCommand` (cli.ts) prints this script inside a double-quoted
+ * ssh argument and escapes it for that; run it, don't only read it
+ * (`tests/levers.test.ts`).
  */
 export function operatorCommandWriteScript(cfg: TuiConfig, name: string): string {
   const root = commandDirFor(cfg);
   const dir = operatorCommandDirFor(cfg);
-  const tmp = `${dir}/.${name}.tmp`;
+  const tmp = `.${name}.tmp`;
   return (
     `[ -d '${root}' ] || { echo 'daemon commands dir ${root} missing - is the daemon running?' >&2; exit 1; }; ` +
     `mkdir -p '${dir}' || exit 1; ` +
     `[ ! -L '${dir}' ] || { echo '${dir} is a symlink - refusing to write the operator command' >&2; exit 1; }; ` +
-    `chown -h 0:0 '${dir}' && chmod 0755 '${dir}' || exit 1; ` +
-    `find '${dir}' -maxdepth 1 -name '*.json' -mmin +1440 -delete 2>/dev/null; ` +
-    `cat > '${tmp}' && chmod 0644 '${tmp}' && mv '${tmp}' '${dir}/${name}'`
+    `cd -P '${dir}' || exit 1; ` +
+    `[ "$(pwd -P)" = '${dir}' ] || { echo '${dir} was replaced while writing - refusing to write the operator command' >&2; exit 1; }; ` +
+    `chown -h 0:0 . && chmod 0755 . || exit 1; ` +
+    `find . -maxdepth 1 -name '*.json' -mmin +1440 -delete 2>/dev/null; ` +
+    `rm -f '${tmp}' && cat > '${tmp}' && chmod 0644 '${tmp}' && mv '${tmp}' '${name}'`
   );
 }
 

@@ -166,7 +166,7 @@ describe("github sink", () => {
     // tmp+mv into the OPERATOR command dir (FT-0395) — the unwedge write
     // idiom: this is the TUI filing on the operator's behalf, not a session.
     const script = write.argv[write.argv.length - 1]!;
-    expect(script).toContain("/opt/quickreview/sandbox/commands/operator/.");
+    expect(script).toContain("cd -P '/opt/quickreview/sandbox/commands/operator'");
     expect(script).toContain(".tmp' && mv ");
   });
 

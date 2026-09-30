@@ -368,6 +368,11 @@ export class CompanionSidebar {
   private off: string | undefined;
 
   private captureOk = false;
+  /** Refresh generations: started, and the newest one that published. */
+  private refreshStarted = 0;
+  private refreshPublished = 0;
+  /** The tail of the in-order send queue (`inOrder`). */
+  private sendTail: Promise<void> = Promise.resolve();
   /** The mirror has held content at least once — see SidebarView.mirrored. */
   private mirrored = false;
   private patch: Partial<SidebarHeader> = {};
@@ -455,6 +460,10 @@ export class CompanionSidebar {
    * so capture can never race an asynchronous resize. */
   async refresh(): Promise<void> {
     if (!this.available()) return;
+    // Refreshes start from several places (poll, focus, scroll, afterWrite)
+    // and overlap; only the newest capture to land may publish, so a slow
+    // older one can never rewind the mirror past a newer one.
+    const seq = ++this.refreshStarted;
     const offset = this.offset;
     const argv = ["exec", this.cfg.container_name, "tmux"];
     if (this.paneSize) {
@@ -474,6 +483,8 @@ export class CompanionSidebar {
     if (offset > 0) argv.push("-S", `-${offset + SCROLL_PAD}`);
     argv.push("-t", this.cfg.session);
     const res = await this.docker(argv, { timeoutMs: 5_000 });
+    if (seq < this.refreshPublished) return;
+    this.refreshPublished = seq;
     if (!res.ok) {
       // Keep the last good mirror — the poller retries; a blank panel would
       // read as "the companion died" on every transient docker stall.
@@ -495,8 +506,10 @@ export class CompanionSidebar {
   /** Literal text (`send-keys -l`) then Enter — two invocations, because `-l`
    * is a flag of the command and Enter must arrive as a named key. */
   async send(text: string): Promise<void> {
-    await this.tmux(["-l", "--", sidebarInputText(text)]);
-    await this.tmux(["Enter"]);
+    await this.inOrder(async () => {
+      await this.tmux(["-l", "--", sidebarInputText(text)]);
+      await this.tmux(["Enter"]);
+    });
     this.offset = 0; // a send always returns the mirror to the live tail
     this.afterWrite();
   }
@@ -505,9 +518,21 @@ export class CompanionSidebar {
   async sendKeys(buf: Buffer): Promise<void> {
     const groups = keysToTmux(buf);
     if (groups.length === 0) return;
-    for (const g of groups) await this.tmux(g);
+    await this.inOrder(async () => {
+      for (const g of groups) await this.tmux(g);
+    });
     this.offset = 0;
     this.afterWrite();
+  }
+
+  /** Every write into pi's input line runs after the one before it has
+   * landed. Callers fire one send per stdin event without awaiting, and each
+   * is its own `docker exec` — unqueued, a slow "a" lets the Enter typed
+   * after it reach tmux first. A failed send rejects its own caller only. */
+  private inOrder(job: () => Promise<void>): Promise<void> {
+    const run = this.sendTail.then(job, job);
+    this.sendTail = run.catch(() => undefined);
+    return run;
   }
 
   /** Take the keyboard (optionally seeded with the char that focused us). */

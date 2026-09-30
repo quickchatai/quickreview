@@ -87,7 +87,7 @@ describe("the unwedge command channel", () => {
     // tmp+mv, so the watcher never sees a half-written file — into the
     // OPERATOR directory, never the session dir beside it.
     const script = write.argv[write.argv.length - 1]!;
-    expect(script).toContain("/opt/quickreview/sandbox/commands/operator/.");
+    expect(script).toContain("cd -P '/opt/quickreview/sandbox/commands/operator'");
     expect(script).not.toContain("/opt/quickreview/sandbox/commands/.");
     expect(script).toContain(".tmp' && mv ");
   });

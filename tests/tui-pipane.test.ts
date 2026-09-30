@@ -96,7 +96,7 @@ describe("keysToTmux", () => {
   const t = (s: string): string[][] => keysToTmux(Buffer.from(s, "utf8"));
 
   it("batches a printable run into one literal send-keys", () => {
-    expect(t("hello world")).toEqual([["-l", "hello world"]]);
+    expect(t("hello world")).toEqual([["-l", "--", "hello world"]]);
     expect(t("")).toEqual([]);
   });
 
@@ -124,16 +124,24 @@ describe("keysToTmux", () => {
 
   it("never translates Ctrl-q — the focus chord belongs to the board", () => {
     expect(t("\x11")).toEqual([]);
-    expect(t("a\x11b")).toEqual([["-l", "ab"]]);
+    expect(t("a\x11b")).toEqual([["-l", "--", "ab"]]);
   });
 
   it("splits literal runs from named keys (send-keys -l is per invocation)", () => {
-    expect(t("hi\r")).toEqual([["-l", "hi"], ["Enter"]]);
-    expect(t("\x1b[Aabc\rz")).toEqual([["Up"], ["-l", "abc"], ["Enter"], ["-l", "z"]]);
+    expect(t("hi\r")).toEqual([["-l", "--", "hi"], ["Enter"]]);
+    expect(t("\x1b[Aabc\rz")).toEqual([["Up"], ["-l", "--", "abc"], ["Enter"], ["-l", "--", "z"]]);
+  });
+
+  it("ends options before every literal, so text starting with '-' reaches pi as text", () => {
+    // Without `--`, tmux parses a pasted markdown list item or a `--flag` as
+    // its own options and refuses the send — the text never reaches pi.
+    expect(t("- item")).toEqual([["-l", "--", "- item"]]);
+    expect(t("--flag")).toEqual([["-l", "--", "--flag"]]);
+    expect(t("a\r- b")).toEqual([["-l", "--", "a"], ["Enter"], ["-l", "--", "- b"]]);
   });
 
   it("keeps a pasted multi-line block to one invocation per run", () => {
-    expect(t("line one\nline two")).toEqual([["-l", "line one"], ["Enter"], ["-l", "line two"]]);
+    expect(t("line one\nline two")).toEqual([["-l", "--", "line one"], ["Enter"], ["-l", "--", "line two"]]);
   });
 });
 
@@ -377,10 +385,11 @@ function fakeStreams() {
   };
 }
 
-function appWith(opts: { liveSessions?: number[] } = {}) {
+function appWith(opts: { liveSessions?: number[]; sendLatencyMs?: (n: number) => number } = {}) {
   const captures: number[] = [];
   const captureArgvs: string[][] = [];
   const sendKeys: string[][] = [];
+  let sendsStarted = 0;
   const ssh: SshRunner = async (_h, argv) => {
     if (argv.includes("capture-pane")) {
       const pr = Number(/pr-(\d+)/.exec(argv.join(" "))?.[1]);
@@ -393,6 +402,10 @@ function appWith(opts: { liveSessions?: number[] } = {}) {
       return ok(`${above}pane of pr-${pr}`);
     }
     if (argv.includes("send-keys")) {
+      // Recorded on ARRIVAL, after the simulated ssh latency, so a test can
+      // see the order keystrokes actually reach tmux in.
+      const delay = opts.sendLatencyMs?.(sendsStarted++) ?? 0;
+      if (delay > 0) await new Promise((r) => setTimeout(r, delay));
       sendKeys.push(argv);
       return ok("");
     }
@@ -504,12 +517,28 @@ describe("focused pi pane — keys go to the session", () => {
         "-t",
         "pr-5012",
         "-l",
+        "--",
         "hello",
       ],
     ]);
     expect(captureArgvs.length).toBeGreaterThan(0); // echo lands now, not next tick
     app.quit();
     await running;
+  });
+
+  it("keystrokes reach tmux in the order they were typed, whatever each ssh costs", async () => {
+    const h = appWith({ sendLatencyMs: (n) => (n === 0 ? 30 : 0) });
+    h.app.repaint();
+    h.streams.type(CLICK_IN_PANE);
+    await settle();
+    h.sendKeys.length = 0;
+    h.streams.type("a");
+    h.streams.type("\r");
+    await new Promise((r) => setTimeout(r, 60));
+    await settle();
+    expect(h.sendKeys.map((a) => a.slice(8))).toEqual([["-l", "--", "a"], ["Enter"]]);
+    h.app.quit();
+    await h.running;
   });
 
   it("board bindings are just text while focused — j/k/q/1-5 never act", async () => {
@@ -521,12 +550,12 @@ describe("focused pi pane — keys go to the session", () => {
     streams.type("5");
     streams.type("?");
     await settle();
-    expect(sendKeys.map((a) => a.slice(-2))).toEqual([
-      ["-l", "j"],
-      ["-l", "k"],
-      ["-l", "q"],
-      ["-l", "5"],
-      ["-l", "?"],
+    expect(sendKeys.map((a) => a.slice(-3))).toEqual([
+      ["-l", "--", "j"],
+      ["-l", "--", "k"],
+      ["-l", "--", "q"],
+      ["-l", "--", "5"],
+      ["-l", "--", "?"],
     ]);
     expect(app.view.selected).toBe(before);
     expect(app.tab).toBe("board");
