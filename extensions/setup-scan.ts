@@ -38,7 +38,7 @@ import { piCaseRunner } from "../src/setup/caserunner.js";
 import type { Refusal, SetupEngine } from "../src/setup/engine.js";
 import type { FindingsFilter, FindingState, MatchQuestionView, ScanFinding, ValidityView } from "../src/setup/findings.js";
 import { VALIDITY_ORDER, validityOf } from "../src/setup/scanreport.js";
-import { FindingsStore } from "../src/setup/findings.js";
+import { FindingsStore, dismissedLookalike, lookalikeRank } from "../src/setup/findings.js";
 import { stateHomeFs } from "../src/setup/adapters.js";
 import { SEVERITIES, type ScanSeverity } from "../src/setup/scan.js";
 import { lensTiers, stage2Lenses, MAX_STAGE2_ROWS } from "../src/setup/stage2.js";
@@ -193,9 +193,20 @@ export function renderStatus(s: ScanStatus): string {
 }
 
 /** Findings in validity order — confirmed, likely, doubtful, unknown — the
- * store's order (most severe first) kept inside each tier. */
+ * store's order (most severe first) kept inside each tier, a finding that
+ * looks like a dismissed one below the rest of its tier. */
 export function byValidity(fs: readonly ScanFinding[]): ScanFinding[] {
-  return VALIDITY_ORDER.flatMap((v) => fs.filter((f) => validityOf(f) === v));
+  return VALIDITY_ORDER.flatMap((v) => {
+    const tier = fs.filter((f) => validityOf(f) === v);
+    return [...tier.filter((f) => lookalikeRank(f) === 0), ...tier.filter((f) => lookalikeRank(f) === 1)];
+  });
+}
+
+/** A new finding that resembles one the operator dismissed: which, and why
+ * — flagged for triage, never dismissed by the scan. */
+function lookalikeNote(f: ScanFinding): string {
+  const d = dismissedLookalike(f);
+  return d ? `, LOOKS LIKE DISMISSED ${d.fingerprint.slice(0, 12)}: ${d.reason} — not auto-dismissed` : "";
 }
 
 function validityNote(f: ScanFinding): string {
@@ -215,7 +226,8 @@ export function renderFindings(fs: readonly ScanFinding[], total: number): strin
       `${f.anchor_quoted === false ? ", ANCHOR NOT QUOTED — the lines may not be the defect's" : ""}` +
       `${f.fixed ? ` at ${f.fixed.sha.slice(0, 12)}, was ${f.fixed.from}` : ""}` +
       `${f.state === "dismissed" && f.unreported ? `, no longer reported at ${f.unreported.sha.slice(0, 12)} — kept dismissed` : ""}` +
-      `${f.not_reproduced ? `, NOT REPRODUCED by ${f.not_reproduced.count} re-read(s) of unchanged code, latest ${f.not_reproduced.run}` : ""}) ` +
+      `${f.not_reproduced ? `, NOT REPRODUCED by ${f.not_reproduced.count} re-read(s) of unchanged code, latest ${f.not_reproduced.run}` : ""}` +
+      `${lookalikeNote(f)}) ` +
       `${f.claim} [${f.fingerprint.slice(0, 12)}]`,
   );
   if (total > fs.length) rows.push(`… ${total - fs.length} more — narrow the filter.`);
@@ -226,7 +238,7 @@ export function renderQuestion(q: MatchQuestionView | null): string {
   if (q === null) return "No match question is pending: every finding a re-scan stopped reporting has been settled.";
   const row = (f: ScanFinding): string =>
     `  - ${f.fingerprint} [${f.severity}] ${f.path}:${f.start === f.end ? f.start : `${f.start}-${f.end}`} (${f.unit}, ${f.lens}, ${f.kind}` +
-    `${f.state === "new" ? "" : `, ${f.state}`}) ${f.claim}`;
+    `${f.state === "new" ? "" : `, ${f.state}`}${lookalikeNote(f)}) ${f.claim}`;
   return [
     `MATCH QUESTION ${q.key} (re-scan ${q.run} at ${q.sha.slice(0, 12)}).`,
     `No longer reported exactly (${q.unreported.length}):`,
@@ -383,7 +395,9 @@ export function scanToolDefinitions(
     label: "Scan findings",
     description:
       "The stored scan findings, grouped by the skeptic's validity tier — confirmed, then likely, then doubtful, then unknown (never " +
-      "judged) — most severe first inside each, each with its fingerprint. Filter by validity (confirmed/likely/doubtful/unknown), state " +
+      "judged) — most severe first inside each, each with its fingerprint. A new finding marked LOOKS LIKE DISMISSED resembles one the " +
+      "operator dismissed (named, with the reason) and sorts below its tier: it is NOT dismissed — put the resemblance to him, never " +
+      "dismiss it on his behalf. Filter by validity (confirmed/likely/doubtful/unknown), state " +
       "(new/promoted/dismissed/fixed), lens, unit, severity, or doubted (true: only those marked 'may not be valid').",
     promptSnippet: "List stored scan findings",
     parameters: {

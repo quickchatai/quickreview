@@ -21,7 +21,7 @@
 // answered once and never replayed onto a later run.
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { FindingsFile, MatchQuestion, ScanFinding } from "./findings.js";
+import type { FindingsFile, MatchQuestion, ResemblesDismissed, ScanFinding } from "./findings.js";
 import type { RunFile, ScanRun, ScanRunSummary } from "./scanrun.js";
 
 export type { FindingState, ScanFinding } from "./findings.js";
@@ -57,6 +57,18 @@ export function validityOf(f: { validity?: Validity | null }): ValidityView {
 const clean = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 // ---- the two records ---------------------------------------------------------------
+
+/** A finding's resemblance to a DISMISSED one (findings.ts sets it when it
+ * stores the finding), as a reader shows it: only on a finding still
+ * untriaged (`new`) — once the operator promotes or dismisses it, the
+ * resemblance is answered. */
+export function dismissedLookalike(f: Pick<ScanFinding, "state" | "resembles_dismissed">): ResemblesDismissed | null {
+  return f.state === "new" ? (f.resembles_dismissed ?? null) : null;
+}
+
+/** 1 for a finding flagged as resembling a dismissed one, else 0 — the sort
+ * key that puts it below the unflagged findings of its tier. */
+export const lookalikeRank = (f: Pick<ScanFinding, "state" | "resembles_dismissed">): number => (dismissedLookalike(f) ? 1 : 0);
 
 /** Parse the run record; throws on anything this version does not read. */
 export function parseRunFile(text: string): RunFile {

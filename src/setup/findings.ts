@@ -95,9 +95,9 @@ import type { StateFs } from "./engine.js";
 import { readings, type LedgerEntry, type Reading } from "./ledger.js";
 import type { ScanSeverity } from "./scan.js";
 import type { Reachability } from "../severity.js";
-import { FINDINGS_FILE, FINDINGS_VERSION, parseFindingsFile, validityOf, type Validity, type ValidityView } from "./scanreport.js";
+import { FINDINGS_FILE, FINDINGS_VERSION, dismissedLookalike, lookalikeRank, parseFindingsFile, validityOf, type Validity, type ValidityView } from "./scanreport.js";
 
-export { FINDINGS_FILE, FINDINGS_VERSION };
+export { FINDINGS_FILE, FINDINGS_VERSION, dismissedLookalike, lookalikeRank };
 export type { Validity, ValidityView };
 
 export type FindingState = "new" | "promoted" | "dismissed" | "fixed";
@@ -187,6 +187,16 @@ export interface ScanFinding {
   dismissal?: Dismissal | null;
   /** Where it was filed when promoted. */
   ticket?: FindingTicket | null;
+  /** It resembles (`nearDuplicate`) a finding the operator DISMISSED: that
+   * finding and its dismissal's reason (scan-loop). A flag only — it stays
+   * `new` for the operator to triage; read through `dismissedLookalike`.
+   * Absent or null: it resembles none. */
+  resembles_dismissed?: ResemblesDismissed | null;
+}
+
+export interface ResemblesDismissed {
+  fingerprint: string;
+  reason: string;
 }
 
 export interface FindingDoubt {
@@ -229,7 +239,7 @@ export interface FindingTicket {
 /** What a scan reports — a finding before the store gives it a history. */
 export type ReportedFinding = Omit<
   ScanFinding,
-  "state" | "first_seen" | "last_seen" | "seen" | "fixed" | "unreported" | "not_reproduced" | "aliases" | "lenses" | "merged" | "own_severity" | "dismissal" | "ticket"
+  "state" | "first_seen" | "last_seen" | "seen" | "fixed" | "unreported" | "not_reproduced" | "aliases" | "lenses" | "merged" | "own_severity" | "dismissal" | "ticket" | "resembles_dismissed"
 >;
 
 // ---- near-duplicate collapse ----------------------------------------------------------
@@ -279,6 +289,25 @@ export function nearDuplicate(
   let common = 0;
   for (const t of A) if (B.has(t)) common++;
   return common / (A.size + B.size - common) >= CLAIM_SIMILARITY;
+}
+
+/**
+ * The dismissed finding `r` resembles, and why it was dismissed — or null.
+ * The dedup's own test (`nearDuplicate`) against every DISMISSED finding,
+ * its own sighting and each near-duplicate collapsed into it, first in
+ * store order. A new finding's wording can shift between runs, so an exact
+ * fingerprint never catches a re-raise of what the operator already
+ * dismissed; this says so. It decides nothing: the caller only flags.
+ */
+function resemblingDismissal(stored: Iterable<ScanFinding>, r: Pick<ScanFinding, "fingerprint" | "path" | "kind" | "start" | "end" | "claim">): ResemblesDismissed | null {
+  for (const d of stored) {
+    if (d.state !== "dismissed" || d.fingerprint === r.fingerprint) continue;
+    const sightings = [d, ...(d.merged ?? []).map((m) => ({ ...m, path: d.path, kind: d.kind }))];
+    if (sightings.some((s) => nearDuplicate(s, r))) {
+      return { fingerprint: d.fingerprint, reason: d.dismissal?.reason ?? "(no reason recorded)" };
+    }
+  }
+  return null;
 }
 
 /** A validated survivor with no doubt, of the two, clears the flag. */
@@ -654,6 +683,14 @@ export class FindingsStore {
           // wording and position; the alias's record and the severity move.
           byFp.set(ownFp, { ...absorb(known, r), ...history });
         }
+        // An untriaged finding's resemblance is re-read at every sighting: a
+        // dismissal made (or undone) since is reflected, never a stale flag.
+        const now = byFp.get(ownFp)!;
+        if (now.state === "new") {
+          const { resembles_dismissed: _was, ...rest } = now;
+          const lookalike = resemblingDismissal(byFp.values(), now);
+          byFp.set(ownFp, lookalike ? { ...rest, resembles_dismissed: lookalike } : rest);
+        }
         back.add(ownFp);
         matched++;
         continue;
@@ -664,7 +701,8 @@ export class FindingsStore {
         aliasOf.set(r.fingerprint, twin.fingerprint);
         merged++;
       } else {
-        byFp.set(r.fingerprint, { ...r, state: "new", first_seen: seen, last_seen: seen, seen: 1 });
+        const lookalike = resemblingDismissal(byFp.values(), r);
+        byFp.set(r.fingerprint, { ...r, state: "new", first_seen: seen, last_seen: seen, seen: 1, ...(lookalike ? { resembles_dismissed: lookalike } : {}) });
         added++;
       }
     }
@@ -882,7 +920,9 @@ export class FindingsStore {
     return { ok: true, matched, fixed, new: q.fresh.filter((fp) => !usedNew.has(fp)).length, dismissed_unreported: dismissed };
   }
 
-  /** The stored findings the filter keeps, most severe first, then by file. */
+  /** The stored findings the filter keeps, most severe first — a finding
+   * flagged as resembling a dismissed one below the rest of its severity —
+   * then by file. */
   list(filter: FindingsFilter = {}): { findings: ScanFinding[]; error: string | null } {
     const { findings, error } = this.load();
     const rank = (s: ScanSeverity): number => ["P0", "P1", "P2", "P3", "nit"].indexOf(s);
@@ -896,7 +936,7 @@ export class FindingsStore {
           (filter.doubted === undefined || (f.doubt !== null) === filter.doubted) &&
           (filter.validity === undefined || validityOf(f) === filter.validity),
       )
-      .sort((a, b) => rank(a.severity) - rank(b.severity) || (a.path < b.path ? -1 : a.path > b.path ? 1 : a.start - b.start));
+      .sort((a, b) => rank(a.severity) - rank(b.severity) || lookalikeRank(a) - lookalikeRank(b) || (a.path < b.path ? -1 : a.path > b.path ? 1 : a.start - b.start));
     return { findings: kept, error };
   }
 

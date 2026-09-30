@@ -44,6 +44,8 @@ import { Frame, rule, sanitizeText, truncate, wrap } from "./paint.js";
 import { paintSplit, splitWidths, windowStart, zonedRow, type RowChunk, type ZonedRow } from "./panes.js";
 import {
   clickStopScan,
+  dismissedLookalike,
+  lookalikeRank,
   readScanFindings,
   readScanRuns,
   scanStopOutcome,
@@ -202,6 +204,9 @@ export function reportItems(findings: readonly ScanFinding[]): ReportItem[] {
   return items.sort((a, b) => {
     const t = tierRank(itemValidity(a)) - tierRank(itemValidity(b));
     if (t !== 0) return t;
+    // A finding that looks like a dismissed one goes below the rest of its tier.
+    const l = (a.t === "finding" ? lookalikeRank(a.finding) : 0) - (b.t === "finding" ? lookalikeRank(b.finding) : 0);
+    if (l !== 0) return l;
     const s = sevRank(sevOf(a)) - sevRank(sevOf(b));
     if (s !== 0) return s;
     const [pa, la] = where(a);
@@ -528,7 +533,7 @@ function headerLines(deps: ScanTabDeps, repo: string | undefined): string[] {
 }
 
 function findingTitle(f: ScanFinding): string {
-  return `${STATE_GLYPH[f.state] ?? "?"} ${f.severity} ${f.lens.replace(/^pass-/, "")}  ${f.path}:${f.start}${f.doubt ? "  ?" : ""}${f.not_reproduced ? "  ↺" : ""}`;
+  return `${STATE_GLYPH[f.state] ?? "?"} ${f.severity} ${f.lens.replace(/^pass-/, "")}  ${f.path}:${f.start}${f.doubt ? "  ?" : ""}${f.not_reproduced ? "  ↺" : ""}${dismissedLookalike(f) ? "  ≈" : ""}`;
 }
 
 const TIER_TITLE: Record<ValidityView, string> = {
@@ -594,6 +599,18 @@ function detailLines(i: ReportItem | undefined, width: number): string[] {
         sanitizeText(
           `↺ not reproduced: ${n.count} re-read(s) of the unchanged code did not report it again (latest ${n.run} at ${short(n.sha)}) — ` +
             "kept open, since only changed code is fixed; d dismisses it if it was noise",
+        ),
+        width,
+      ).map((l) => `${WARN}${l}${RESET}`),
+    );
+  }
+  const lookalike = dismissedLookalike(f);
+  if (lookalike) {
+    out.push(
+      ...wrap(
+        sanitizeText(
+          `≈ looks like a finding you dismissed: ${lookalike.reason} (${lookalike.fingerprint.slice(0, 12)}) — ` +
+            "flagged, not dismissed; d dismisses it too if it is the same",
         ),
         width,
       ).map((l) => `${WARN}${l}${RESET}`),

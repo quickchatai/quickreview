@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PiToolDefinition } from "@earendil-works/pi-coding-agent";
-import { renderFindings, scanToolDefinitions, watchTuiRequests } from "../extensions/setup-scan.js";
+import { byValidity, renderFindings, scanToolDefinitions, watchTuiRequests } from "../extensions/setup-scan.js";
 import { SCAN_DEFAULTS } from "../src/config.js";
 import { stateHomeFs } from "../src/setup/adapters.js";
 import { FindingsStore } from "../src/setup/findings.js";
@@ -242,6 +242,17 @@ describe("renderFindings — the quality marks (scan-loop)", () => {
   it("names a finding a re-read of unchanged code did not reproduce — still open", () => {
     const out = renderFindings([{ ...base, not_reproduced: { count: 3, run: "scan-7", sha: SHA, at: "t" } }], 1);
     expect(out).toContain("new, unvalidated, NOT REPRODUCED by 3 re-read(s) of unchanged code, latest scan-7) c");
+  });
+
+  it("names a new finding that looks like a dismissed one, with the dismissal's reason; it sorts below its tier (scan-loop)", () => {
+    const flag = { fingerprint: "7f".repeat(32), reason: "by design" };
+    const out = renderFindings([{ ...base, resembles_dismissed: flag }], 1);
+    expect(out).toContain(`unvalidated, LOOKS LIKE DISMISSED ${"7f".repeat(6)}: by design — not auto-dismissed) c`);
+    // Triaged: the resemblance is answered, and no longer shown.
+    expect(renderFindings([{ ...base, state: "promoted" as const, resembles_dismissed: flag }], 1)).not.toContain("LOOKS LIKE");
+    const a = { ...base, fingerprint: "a".repeat(64), resembles_dismissed: flag };
+    const b = { ...base, fingerprint: "b".repeat(64) };
+    expect(byValidity([a, b]).map((f) => f.fingerprint)).toEqual([b.fingerprint, a.fingerprint]);
   });
 
   it("names a dismissed finding a re-scan no longer reports — kept dismissed (scan-loop)", () => {

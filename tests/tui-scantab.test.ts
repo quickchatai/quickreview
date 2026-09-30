@@ -113,6 +113,22 @@ describe("the report", () => {
     expect(text).toContain("scan-9 at 9999999");
   });
 
+  it("a new finding resembling a dismissed one is marked ≈, says so in its detail, and sorts below its tier (scan-loop)", async () => {
+    const flagged = scanFinding({
+      fingerprint: "fb".padEnd(64, "0"),
+      path: "billing/a.py",
+      resembles_dismissed: { fingerprint: "7f".repeat(32), reason: "by design — the engine drops it" },
+    });
+    const plain = scanFinding({ fingerprint: "fc".padEnd(64, "0"), path: "billing/z.py" });
+    expect(reportItems([flagged, plain]).map((i) => (i.t === "finding" ? i.finding.fingerprint : ""))).toEqual([plain.fingerprint, flagged.fingerprint]);
+    const { app, screen, type } = rig({ findings: [flagged, plain] });
+    expect(screen()).toMatch(/billing\/a\.py:88 {2}≈/);
+    await driving(app, () => {
+      type("j");
+      expect(screen()).toContain("≈ looks like a finding you dismissed: by design — the engine drops it");
+    });
+  });
+
   it("a dismissed finding a re-scan no longer reports says so, and still reads dismissed (scan-loop: a dismissal is sticky)", () => {
     const f = scanFinding({
       fingerprint: "fb".padEnd(64, "0"),
