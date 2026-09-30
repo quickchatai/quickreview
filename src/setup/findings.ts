@@ -9,8 +9,7 @@
 //     same finding: its last sighting and wording are refreshed, and its
 //     state — `new`, `promoted`, `dismissed` — is kept, so nothing is ever
 //     triaged twice. (A `fixed` finding seen again has come back: it is
-//     `new` again — or `dismissed` again, if that is what it was fixed from,
-//     because the operator already said it is not a problem.)
+//     `new` again — or still `promoted` while its ticket is open.)
 //   * THE COMPANION JUDGES THE REST. After a run, `reconcile` finds the
 //     stored findings the re-scan no longer reports: their file was read
 //     again at other content — the content the run's tree holds (the ledger
@@ -24,6 +23,14 @@
 //     position and fingerprint (the old fingerprint kept as an alias) — and
 //     every old finding it did not pair is `fixed`. Nothing is ever fixed on
 //     a guess, and nothing waits on the companion that an exact rule settles.
+//   * A DISMISSAL IS STICKY (scan-loop). The operator's triage is never
+//     overwritten by a scan: a dismissed finding every rule above would fix
+//     stays `dismissed`, stamped `unreported` (the run and sha) for audit, and
+//     is out of play until a scan reports it again — which clears the stamp
+//     and keeps the dismissal (no scan reopens it; the operator's promote is
+//     the only way out). One settle, `settleUnreported`, serves every path.
+//     A store written before this, with a finding fixed FROM dismissed, reads
+//     back as dismissed (scanreport.ts `parseFindingsFile`).
 //   * `fixed` NEEDS CHANGED CONTENT (scan-loop). Only a re-read of OTHER
 //     content can settle a finding fixed. A later reading of the SAME content
 //     it was last seen at that does not report it again (a narrower stage-2
@@ -152,6 +159,12 @@ export interface ScanFinding {
   seen: number;
   /** Set while (and only while) the state is `fixed`. */
   fixed?: FixedMark | null;
+  /** A DISMISSED finding a re-scan settled as no longer reported (its file
+   * re-read at other content, or gone, and nothing paired it): where — the
+   * audit of what would otherwise have been `fixed`. The state stays
+   * `dismissed` (the operator's triage is never overwritten by a scan);
+   * cleared when a scan reports it again. Absent: never so settled. */
+  unreported?: Sighting | null;
   /** Re-reads of the unchanged content it was last seen at that did not
    * report it again — the latest, and how many since its last sighting.
    * The finding stays open; cleared when a scan reports it again. */
@@ -216,7 +229,7 @@ export interface FindingTicket {
 /** What a scan reports — a finding before the store gives it a history. */
 export type ReportedFinding = Omit<
   ScanFinding,
-  "state" | "first_seen" | "last_seen" | "seen" | "fixed" | "not_reproduced" | "aliases" | "lenses" | "merged" | "own_severity" | "dismissal" | "ticket"
+  "state" | "first_seen" | "last_seen" | "seen" | "fixed" | "unreported" | "not_reproduced" | "aliases" | "lenses" | "merged" | "own_severity" | "dismissal" | "ticket"
 >;
 
 // ---- near-duplicate collapse ----------------------------------------------------------
@@ -424,6 +437,9 @@ export interface ReconcileResult {
   /** Open findings a re-read of their UNCHANGED content did not report
    * again — kept open, stamped `not_reproduced`, never fixed. */
   not_reproduced: number;
+  /** Dismissed findings settled as no longer reported: they stay
+   * `dismissed`, stamped `unreported` for audit — never counted as fixed. */
+  dismissed_unreported: number;
 }
 
 export interface MatchPair {
@@ -434,7 +450,7 @@ export interface MatchPair {
 }
 
 export type MatchResult =
-  | { ok: true; matched: number; fixed: number; new: number }
+  | { ok: true; matched: number; fixed: number; new: number; dismissed_unreported: number }
   | { ok: false; errors: string[] };
 
 /** The question, both sides expanded, for the companion to judge. */
@@ -463,20 +479,33 @@ function mightBe(o: ScanFinding, n: ScanFinding): boolean {
   return shareLens(o, n) && (o.unit === n.unit || o.kind === n.kind);
 }
 
-/** The state a `fixed` finding takes when a scan reports it again: dismissed
- * stays dismissed (the operator already said it is not a problem); promoted
+/** The state a `fixed` finding takes when a scan reports it again: promoted
  * stays promoted while its ticket is still open (nothing closed it
  * yet); anything else, including a promoted one whose ticket was closed, is
- * `new` again — the ticket record stays, so a re-promote never files twice. */
+ * `new` again — the ticket record stays, so a re-promote never files twice.
+ * (A dismissed finding is never fixed at all — `settleUnreported`.) */
 function returnedState(f: ScanFinding): FindingState {
-  if (f.fixed?.from === "dismissed") return "dismissed";
   if (f.fixed?.from === "promoted" && f.ticket && !f.ticket.closed) return "promoted";
   return "new";
 }
 
-function fixIt(f: ScanFinding, at: Sighting): ScanFinding {
-  if (f.state === "fixed") return f;
-  return { ...f, state: "fixed", fixed: { run: at.run, sha: at.sha, at: at.at, from: f.state }, not_reproduced: null };
+/** Is `f` already settled — fixed, or dismissed and stamped unreported? A
+ * settled finding is out of play until a scan reports it again. */
+const settled = (f: ScanFinding): boolean => f.state === "fixed" || (f.state === "dismissed" && f.unreported != null);
+
+/**
+ * Settle a finding a re-scan no longer reports — the ONE place every path
+ * (reconcile, a report that shrinks the question, the companion's match)
+ * settles one. A DISMISSED finding stays dismissed (scan-loop: a re-scan
+ * never overwrites the operator's triage), stamped `unreported` for audit;
+ * any other becomes `fixed` (a promoted one's ticket then closes).
+ * `null` when there was nothing to settle.
+ */
+function settleUnreported(f: ScanFinding, at: Sighting): { finding: ScanFinding; as: "fixed" | "dismissed" } | null {
+  if (f.state === "fixed" || settled(f)) return null;
+  const where: Sighting = { run: at.run, sha: at.sha, at: at.at };
+  if (f.state === "dismissed") return { finding: { ...f, unreported: where, not_reproduced: null }, as: "dismissed" };
+  return { finding: { ...f, state: "fixed", fixed: { ...where, from: f.state }, unreported: null, not_reproduced: null }, as: "fixed" };
 }
 
 /** The question over `unreported` × `fresh`, or null when nothing waits. */
@@ -499,10 +528,10 @@ function settleQuestion(
   unreported: readonly string[],
   fresh: readonly string[],
   at: Sighting,
-): { question: MatchQuestion | null; fixed: number } {
+): { question: MatchQuestion | null; fixed: number; dismissed: number } {
   const live = (fp: string): ScanFinding | null => {
     const f = byFp.get(fp);
-    return f && f.state !== "fixed" ? f : null;
+    return f && !settled(f) ? f : null;
   };
   const olds = [...new Set(unreported)].map(live).filter((f): f is ScanFinding => f !== null);
   const oldSet = new Set(olds.map((f) => f.fingerprint));
@@ -510,17 +539,20 @@ function settleQuestion(
     .map(live)
     .filter((f): f is ScanFinding => f !== null && !oldSet.has(f.fingerprint));
   let fixed = 0;
+  let dismissed = 0;
   const waiting: string[] = [];
   for (const o of olds) {
     if (news.some((n) => mightBe(o, n))) waiting.push(o.fingerprint);
     else {
-      byFp.set(o.fingerprint, fixIt(o, at));
-      fixed++;
+      const s = settleUnreported(o, at)!;
+      byFp.set(o.fingerprint, s.finding);
+      if (s.as === "fixed") fixed++;
+      else dismissed++;
     }
   }
   const held = olds.filter((o) => waiting.includes(o.fingerprint));
   const candidates = news.filter((n) => held.some((o) => mightBe(o, n))).map((n) => n.fingerprint);
-  return { question: questionOf(waiting, candidates, at), fixed };
+  return { question: questionOf(waiting, candidates, at), fixed, dismissed };
 }
 
 /**
@@ -610,7 +642,7 @@ export class FindingsStore {
         // The same sighting twice (one case reporting a duplicate) counts once.
         const again = known.last_seen.run === seen.run && known.last_seen.sha === seen.sha;
         const state: FindingState = known.state === "fixed" ? returnedState(known) : known.state;
-        const history = { state, fixed: null, not_reproduced: null, first_seen: known.first_seen, last_seen: seen, seen: again ? known.seen : known.seen + 1 };
+        const history = { state, fixed: null, unreported: null, not_reproduced: null, first_seen: known.first_seen, last_seen: seen, seen: again ? known.seen : known.seen + 1 };
         if (ownFp === r.fingerprint) {
           // A collapsed finding carries the highest severity its sightings now
           // give — its own latest and each absorbed one's latest, never a
@@ -686,7 +718,7 @@ export class FindingsStore {
     const unreported: string[] = [];
     let notReproduced = 0;
     for (const f of [...byFp.values()]) {
-      if (f.state === "fixed" || pending.has(f.fingerprint)) continue;
+      if (settled(f) || pending.has(f.fingerprint)) continue;
       if (!args.tree.has(f.path)) {
         unreported.push(f.fingerprint);
         // Wherever it moved may have been read by a run the companion never
@@ -738,16 +770,21 @@ export class FindingsStore {
       .filter((f) => f.state !== "fixed" && rereadBy.has(f.first_seen.run))
       .map((f) => f.fingerprint);
     const at: Sighting = args.run;
-    const settled = settleQuestion(byFp, [...pending, ...unreported], [...(prior?.fresh ?? []), ...fresh], at);
+    const settledNow = settleQuestion(byFp, [...pending, ...unreported], [...(prior?.fresh ?? []), ...fresh], at);
     // A run that changed nothing about the question leaves it as it was: its
     // key must not move under a companion that is judging it right now.
     const same = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && a.every((x, i) => x === b[i]);
     const question =
-      prior !== null && settled.question !== null && same(settled.question.unreported, prior.unreported) && same(settled.question.fresh, prior.fresh)
+      prior !== null && settledNow.question !== null && same(settledNow.question.unreported, prior.unreported) && same(settledNow.question.fresh, prior.fresh)
         ? prior
-        : settled.question;
+        : settledNow.question;
     this.write(byFp.values(), question);
-    return { fixed: settled.fixed, pending: settled.question?.unreported.length ?? 0, not_reproduced: notReproduced };
+    return {
+      fixed: settledNow.fixed,
+      pending: settledNow.question?.unreported.length ?? 0,
+      not_reproduced: notReproduced,
+      dismissed_unreported: settledNow.dismissed,
+    };
   }
 
   /** The pending match question with both sides expanded, or null. */
@@ -830,16 +867,19 @@ export class FindingsStore {
       matched++;
     }
     let fixed = 0;
+    let dismissed = 0;
     for (const fp of q.unreported) {
       if (usedOld.has(fp)) continue;
       const f = byFp.get(fp);
-      if (f && f.state !== "fixed") {
-        byFp.set(fp, fixIt(f, at));
-        fixed++;
+      const s = f ? settleUnreported(f, at) : null;
+      if (s) {
+        byFp.set(fp, s.finding);
+        if (s.as === "fixed") fixed++;
+        else dismissed++;
       }
     }
     this.write(byFp.values(), null);
-    return { ok: true, matched, fixed, new: q.fresh.filter((fp) => !usedNew.has(fp)).length };
+    return { ok: true, matched, fixed, new: q.fresh.filter((fp) => !usedNew.has(fp)).length, dismissed_unreported: dismissed };
   }
 
   /** The stored findings the filter keeps, most severe first, then by file. */

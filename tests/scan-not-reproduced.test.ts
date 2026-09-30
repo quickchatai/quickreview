@@ -68,6 +68,7 @@ describe("a re-read of UNCHANGED content that does not report a finding", () => 
       fixed: 0,
       pending: 0,
       not_reproduced: 1,
+      dismissed_unreported: 0,
     });
     expect(only(st)).toMatchObject({ state: "new", not_reproduced: { count: 1, run: "r2", sha: "sha-r2" } });
     expect(only(st).fixed ?? null).toBeNull();
@@ -79,7 +80,7 @@ describe("a re-read of UNCHANGED content that does not report a finding", () => 
     st.report([reported()], S("r1", "2026-09-30T10:00:00Z"));
     const rows = [row({ blob: "b1", run: "r2", at: "2026-09-30T11:00:00Z" })];
     st.reconcile({ rows, tree, blobs: at("b1"), run: S("r2", "2026-09-30T11:00:01Z") });
-    expect(st.reconcile({ rows, tree, blobs: at("b1"), run: S("r3", "2026-09-30T12:00:00Z") })).toEqual({ fixed: 0, pending: 0, not_reproduced: 0 });
+    expect(st.reconcile({ rows, tree, blobs: at("b1"), run: S("r3", "2026-09-30T12:00:00Z") })).toEqual({ fixed: 0, pending: 0, not_reproduced: 0, dismissed_unreported: 0 });
     expect(only(st).not_reproduced).toMatchObject({ count: 1, run: "r2" });
     // A second silent re-read of the same content counts.
     const more = [...rows, row({ blob: "b1", run: "r4", at: "2026-09-30T13:00:00Z" })];
@@ -94,7 +95,7 @@ describe("a re-read of UNCHANGED content that does not report a finding", () => 
       row({ blob: "b1", run: "r1", at: "2026-09-30T10:00:01Z" }),
       row({ blob: "b1", run: "r2", at: "2026-09-30T11:00:00Z", range: { start: 20, end: 40, total: 40 } }),
     ];
-    expect(st.reconcile({ rows, tree, blobs: at("b1"), run: S("r2", "2026-09-30T11:00:01Z") })).toEqual({ fixed: 0, pending: 0, not_reproduced: 0 });
+    expect(st.reconcile({ rows, tree, blobs: at("b1"), run: S("r2", "2026-09-30T11:00:01Z") })).toEqual({ fixed: 0, pending: 0, not_reproduced: 0, dismissed_unreported: 0 });
     expect(only(st).not_reproduced ?? null).toBeNull();
     // A range that holds lines 10-12 does count.
     const holds = [...rows, row({ blob: "b1", run: "r3", at: "2026-09-30T12:00:00Z", range: { start: 1, end: 25, total: 40 } })];
@@ -108,7 +109,7 @@ describe("a re-read of UNCHANGED content that does not report a finding", () => 
     raw.findings[0]!.state = "dismissed";
     writeFileSync(join(dir, "scan/findings.json"), JSON.stringify(raw));
     const rows = [row({ blob: "b1", run: "r2", at: "2026-09-30T11:00:00Z" })];
-    expect(st.reconcile({ rows, tree, blobs: at("b1"), run: S("r2", "2026-09-30T11:00:01Z") })).toEqual({ fixed: 0, pending: 0, not_reproduced: 0 });
+    expect(st.reconcile({ rows, tree, blobs: at("b1"), run: S("r2", "2026-09-30T11:00:01Z") })).toEqual({ fixed: 0, pending: 0, not_reproduced: 0, dismissed_unreported: 0 });
     expect(only(st)).toMatchObject({ state: "dismissed" });
     expect(only(st).not_reproduced ?? null).toBeNull();
   });
@@ -128,7 +129,7 @@ describe("a re-read of CHANGED content that does not report a finding", () => {
     const st = new FindingsStore(stateHomeFs(dir));
     st.report([reported()], S("r1", "2026-09-30T10:00:00Z"));
     const rows = [row({ blob: "b2", run: "r2", at: "2026-09-30T11:00:00Z" })];
-    expect(st.reconcile({ rows, tree, blobs: at("b2"), run: S("r2", "2026-09-30T11:00:01Z") })).toEqual({ fixed: 1, pending: 0, not_reproduced: 0 });
+    expect(st.reconcile({ rows, tree, blobs: at("b2"), run: S("r2", "2026-09-30T11:00:01Z") })).toEqual({ fixed: 1, pending: 0, not_reproduced: 0, dismissed_unreported: 0 });
     expect(only(st)).toMatchObject({ state: "fixed", fixed: { run: "r2", from: "new" } });
   });
 

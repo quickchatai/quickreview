@@ -581,6 +581,7 @@ function detailLines(i: ReportItem | undefined, width: number): string[] {
   if (f.state === "dismissed" && f.dismissal) state += ` — "${f.dismissal.reason}"`;
   if (f.ticket) state += ` · ticket ${f.ticket.ref}${f.ticket.closed ? ` (closed at ${short(f.ticket.closed.sha)})` : ""}`;
   if (f.state === "fixed" && f.fixed) state += ` at ${short(f.fixed.sha)}`;
+  if (f.state === "dismissed" && f.unreported) state += ` · no longer reported at ${short(f.unreported.sha)}`;
   out.push(...wrap(sanitizeText(state), width));
   out.push(...validityLines(f, width));
   if (f.not_reproduced) {

@@ -112,6 +112,17 @@ describe("the report", () => {
     expect(text).toContain("scan-9 at 9999999");
   });
 
+  it("a dismissed finding a re-scan no longer reports says so, and still reads dismissed (scan-loop: a dismissal is sticky)", () => {
+    const f = scanFinding({
+      fingerprint: "fb".padEnd(64, "0"),
+      state: "dismissed",
+      dismissal: { reason: "by design", at: "t", memory: "written" },
+      unreported: { run: "scan-9", sha: "8".repeat(40), at: "2026-09-30T10:00:00Z" },
+    });
+    const { screen } = rig({ findings: [f] });
+    expect(screen()).toContain(`state: dismissed — "by design" · no longer reported at 8888888`);
+  });
+
   it("a style group's detail carries the rule, the count and examples", () => {
     const f = SCAN_FINDINGS[2]!;
     expect(styleRule(f)).toBe("rule 4.2");

@@ -158,6 +158,11 @@ export function renderStatus(s: ScanStatus): string {
           (r.matching.pending > 0 ? `, ${r.matching.pending} waiting on your match (scan_matches)` : ""),
       );
     }
+    // A dismissal is sticky (scan-loop): what would have been fixed is only stamped.
+    const dismissedGone = r.matching?.dismissed_unreported ?? 0;
+    if (dismissedGone > 0) {
+      out.push(`Dismissed and no longer reported: ${dismissedGone} — kept dismissed (a scan never overwrites the operator's triage), stamped for audit.`);
+    }
     // A record written before the stamp existed has no count: nothing to say.
     const notReproduced = r.matching?.not_reproduced ?? 0;
     if (notReproduced > 0) {
@@ -199,6 +204,7 @@ export function renderFindings(fs: readonly ScanFinding[], total: number): strin
       `${f.capped_from ? `, ${f.capped_from}→${f.severity}: ${f.reachability}` : ""}` +
       `${f.anchor_quoted === false ? ", ANCHOR NOT QUOTED — the lines may not be the defect's" : ""}` +
       `${f.fixed ? ` at ${f.fixed.sha.slice(0, 12)}, was ${f.fixed.from}` : ""}` +
+      `${f.state === "dismissed" && f.unreported ? `, no longer reported at ${f.unreported.sha.slice(0, 12)} — kept dismissed` : ""}` +
       `${f.not_reproduced ? `, NOT REPRODUCED by ${f.not_reproduced.count} re-read(s) of unchanged code, latest ${f.not_reproduced.run}` : ""}) ` +
       `${f.claim} [${f.fingerprint.slice(0, 12)}]`,
   );
@@ -439,7 +445,11 @@ export function scanToolDefinitions(
     execute: async (_id, params) => {
       const r = findings.match({ key: params?.key, pairs: params?.pairs ?? [] });
       if (!r.ok) return refused("Match", r);
-      const out = [`Settled: ${r.matched} matched (state kept), ${r.fixed} fixed, ${r.new} new.`];
+      const out = [
+        `Settled: ${r.matched} matched (state kept), ${r.fixed} fixed, ${r.new} new` +
+          (r.dismissed_unreported > 0 ? `, ${r.dismissed_unreported} dismissed kept dismissed (stamped no longer reported)` : "") +
+          ".",
+      ];
       let tickets: CloseFixedResult | null = null;
       if (afterMatch && r.fixed > 0) {
         tickets = await afterMatch();

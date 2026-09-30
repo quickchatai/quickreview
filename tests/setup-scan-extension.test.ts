@@ -243,4 +243,9 @@ describe("renderFindings — the quality marks (scan-loop)", () => {
     const out = renderFindings([{ ...base, not_reproduced: { count: 3, run: "scan-7", sha: SHA, at: "t" } }], 1);
     expect(out).toContain("new, unvalidated, NOT REPRODUCED by 3 re-read(s) of unchanged code, latest scan-7) c");
   });
+
+  it("names a dismissed finding a re-scan no longer reports — kept dismissed (scan-loop)", () => {
+    const out = renderFindings([{ ...base, state: "dismissed" as const, unreported: { run: "scan-8", sha: SHA, at: "t" } }], 1);
+    expect(out).toContain(`dismissed, unvalidated, no longer reported at ${SHA.slice(0, 12)} — kept dismissed) c`);
+  });
 });

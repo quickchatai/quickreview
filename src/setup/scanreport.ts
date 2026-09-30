@@ -84,7 +84,17 @@ export function parseFindingsFile(text: string): FindingsFile {
   if (q !== null && (typeof q.key !== "string" || !Array.isArray(q.unreported) || !Array.isArray(q.fresh))) {
     throw new Error("the pending match question is malformed");
   }
-  return { version: FINDINGS_VERSION, findings: raw.findings, question: q };
+  return { version: FINDINGS_VERSION, findings: raw.findings.map(stickyDismissal), question: q };
+}
+
+/** A finding a store written before the dismissal was sticky (scan-loop)
+ * had flipped from `dismissed` to `fixed`: it reads back as the dismissal it
+ * is, its fix kept as the `unreported` audit stamp (findings.ts). Every
+ * other finding is returned as it is. */
+function stickyDismissal(f: ScanFinding): ScanFinding {
+  if (f.state !== "fixed" || f.fixed?.from !== "dismissed") return f;
+  const { run, sha, at } = f.fixed;
+  return { ...f, state: "dismissed", fixed: null, unreported: { run, sha, at } };
 }
 
 /** One record file: absent, read, or why it could not be. */

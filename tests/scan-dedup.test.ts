@@ -169,7 +169,7 @@ describe("the end-of-run fold, and what stays the companion's", () => {
     const moved = { ...A932, fingerprint: "cd".repeat(32), blob: "b2", start: 950, end: 950 };
     expect(st.report([moved], S("r2", "2026-09-30T11:00:00Z"))).toEqual({ added: 1, matched: 0, merged: 0 });
     const rows = [{ ...rowAt("r2", "2026-09-30T11:00:01Z")[0]!, blob: "b2" }];
-    expect(st.reconcile({ rows, tree: new Set([A932.path]), run: S("r2", "2026-09-30T11:00:02Z") })).toEqual({ fixed: 0, pending: 1, not_reproduced: 0 });
+    expect(st.reconcile({ rows, tree: new Set([A932.path]), run: S("r2", "2026-09-30T11:00:02Z") })).toEqual({ fixed: 0, pending: 1, not_reproduced: 0, dismissed_unreported: 0 });
     expect(st.load().findings).toHaveLength(2);
   });
 });
@@ -191,11 +191,11 @@ describe("review fixes: a collapsed finding's severity and fix judgement", () =>
       path: A932.path, blob: "b2", lens, tier: "t", effort: "low", validator: false, sha: `sha-${run}`, lines: 9, cost_usd: 0, run, case: "u", at,
     });
     // r2 runs pass-security alone on changed content and reports nothing.
-    expect(st.reconcile({ rows: [row("pass-security", "r2", "2026-09-30T11:00:00Z")], tree: new Set([A932.path]), run: S("r2", "2026-09-30T11:00:01Z") })).toEqual({ fixed: 0, pending: 0, not_reproduced: 0 });
+    expect(st.reconcile({ rows: [row("pass-security", "r2", "2026-09-30T11:00:00Z")], tree: new Set([A932.path]), run: S("r2", "2026-09-30T11:00:01Z") })).toEqual({ fixed: 0, pending: 0, not_reproduced: 0, dismissed_unreported: 0 });
     expect(st.load().findings[0]!.state).toBe("new");
     // r3: both lenses re-read it and neither reports it — now it is fixed.
     const rows = [row("pass-security", "r3", "2026-09-30T12:00:00Z"), row("pass-data-safety", "r3", "2026-09-30T12:00:01Z")];
-    expect(st.reconcile({ rows, tree: new Set([A932.path]), run: S("r3", "2026-09-30T12:00:02Z") })).toEqual({ fixed: 1, pending: 0, not_reproduced: 0 });
+    expect(st.reconcile({ rows, tree: new Set([A932.path]), run: S("r3", "2026-09-30T12:00:02Z") })).toEqual({ fixed: 1, pending: 0, not_reproduced: 0, dismissed_unreported: 0 });
   });
 });
 

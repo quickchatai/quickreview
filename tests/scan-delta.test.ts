@@ -270,7 +270,7 @@ describe("exact match first, then the companion, then fixed", () => {
       ]);
     }
     // The app finding is neither fixed nor matched: it waits on the companion.
-    expect(done.matching).toEqual({ fixed: 2, pending: 1, not_reproduced: 0 });
+    expect(done.matching).toEqual({ fixed: 2, pending: 1, not_reproduced: 0, dismissed_unreported: 0 });
   });
 
   it("hands the companion only what an exact match missed", async () => {
@@ -287,7 +287,7 @@ describe("exact match first, then the companion, then fixed", () => {
     const { done, oldApp } = await rescan();
     const { question } = store().question();
     const r = store().match({ key: question!.key, pairs: samePathJudge(question!) });
-    expect(r).toEqual({ ok: true, matched: 1, fixed: 0, new: 0 });
+    expect(r).toEqual({ ok: true, matched: 1, fixed: 0, new: 0, dismissed_unreported: 0 });
     const app = byPath("app/models.py");
     expect(app).toHaveLength(1);
     expect(app[0]).toMatchObject({ state: "promoted", kind: "design", seen: 2, aliases: [oldApp] });
@@ -299,7 +299,7 @@ describe("exact match first, then the companion, then fixed", () => {
   it("an old finding the judge pairs with nothing is fixed; the fresh one stays new", async () => {
     const { oldApp } = await rescan();
     const { question } = store().question();
-    expect(store().match({ key: question!.key, pairs: [] })).toEqual({ ok: true, matched: 0, fixed: 1, new: 1 });
+    expect(store().match({ key: question!.key, pairs: [] })).toEqual({ ok: true, matched: 0, fixed: 1, new: 1, dismissed_unreported: 0 });
     const app = byPath("app/models.py");
     expect(app.find((f) => f.fingerprint === oldApp)).toMatchObject({ state: "fixed", fixed: expect.objectContaining({ sha: SHA2, from: "promoted" }) });
     expect(app.find((f) => f.fingerprint !== oldApp)).toMatchObject({ state: "new", kind: "design" });
@@ -424,15 +424,16 @@ function row(path: string, blobHash: string, run: string, at: string): LedgerEnt
 }
 
 describe("the findings store's lifecycle", () => {
-  it("a fixed finding that comes back is new again — or dismissed again, if the operator already said so", () => {
+  it("a fixed finding that comes back is new again; a dismissed one is never fixed and comes back dismissed", () => {
     const st = store();
     st.report([reported("a/x.py", "fa"), reported("a/y.py", "fb")], S("r1", "s1", "2026-09-29T10:00:00Z"));
     const file = join(stateDir, FINDINGS_FILE);
     const raw = JSON.parse(readFileSync(file, "utf8")) as FindingsFile;
     raw.findings.find((f) => f.fingerprint === "fb")!.state = "dismissed";
     writeFileSync(file, JSON.stringify(raw));
-    // Both files gone at s2: fixed.
-    expect(st.reconcile({ rows: [], tree: new Set(), run: S("r2", "s2", "2026-09-29T11:00:00Z") })).toEqual({ fixed: 2, pending: 0, not_reproduced: 0 });
+    // Both files gone at s2: the untriaged one fixed, the dismissed one kept
+    // dismissed and stamped (scan-loop: a scan never overwrites a dismissal).
+    expect(st.reconcile({ rows: [], tree: new Set(), run: S("r2", "s2", "2026-09-29T11:00:00Z") })).toEqual({ fixed: 1, pending: 0, not_reproduced: 0, dismissed_unreported: 1 });
     st.report([reported("a/x.py", "fa"), reported("a/y.py", "fb")], S("r3", "s3", "2026-09-29T12:00:00Z"));
     const got = new Map(st.load().findings.map((f) => [f.fingerprint, f]));
     expect(got.get("fa")).toMatchObject({ state: "new", fixed: null, seen: 2 });
@@ -444,7 +445,7 @@ describe("the findings store's lifecycle", () => {
     st.report([reported("a/x.py", "fa")], S("r1", "s1", "2026-09-29T10:00:00Z"));
     // r2 read a/x.py at new content and was interrupted before its end.
     const rows = [row("a/x.py", "b1-a/x.py", "r1", "2026-09-29T10:00:01Z"), row("a/x.py", "b2", "r2", "2026-09-29T11:00:00Z")];
-    expect(st.reconcile({ rows, tree: new Set(["a/x.py"]), run: S("r3", "s3", "2026-09-29T12:00:00Z") })).toEqual({ fixed: 1, pending: 0, not_reproduced: 0 });
+    expect(st.reconcile({ rows, tree: new Set(["a/x.py"]), run: S("r3", "s3", "2026-09-29T12:00:00Z") })).toEqual({ fixed: 1, pending: 0, not_reproduced: 0, dismissed_unreported: 0 });
     expect(st.load().findings[0]).toMatchObject({ state: "fixed", fixed: { run: "r3", sha: "s3", from: "new" } });
   });
 
@@ -452,7 +453,7 @@ describe("the findings store's lifecycle", () => {
     const st = store();
     st.report([reported("a/x.py", "fa"), reported("b/y.py", "fb")], S("r1", "s1", "2026-09-29T10:00:00Z"));
     const rows = [row("a/x.py", "b1-a/x.py", "r1", "2026-09-29T10:00:01Z")];
-    expect(st.reconcile({ rows, tree: new Set(["a/x.py", "b/y.py"]), run: S("r1", "s1", "2026-09-29T10:00:02Z") })).toEqual({ fixed: 0, pending: 0, not_reproduced: 0 });
+    expect(st.reconcile({ rows, tree: new Set(["a/x.py", "b/y.py"]), run: S("r1", "s1", "2026-09-29T10:00:02Z") })).toEqual({ fixed: 0, pending: 0, not_reproduced: 0, dismissed_unreported: 0 });
     expect(st.load().findings.every((f) => f.state === "new")).toBe(true);
   });
 
@@ -464,7 +465,7 @@ describe("the findings store's lifecycle", () => {
     st.reconcile({ rows, tree: new Set(["a/x.py"]), run: S("r2", "s2", "2026-09-29T11:00:02Z") });
     const before = st.question().question!;
     // r3 read nothing new: the companion's answer to the key it read still lands.
-    expect(st.reconcile({ rows, tree: new Set(["a/x.py"]), run: S("r3", "s3", "2026-09-29T12:00:00Z") })).toEqual({ fixed: 0, pending: 1, not_reproduced: 0 });
+    expect(st.reconcile({ rows, tree: new Set(["a/x.py"]), run: S("r3", "s3", "2026-09-29T12:00:00Z") })).toEqual({ fixed: 0, pending: 1, not_reproduced: 0, dismissed_unreported: 0 });
     expect(st.question().question).toMatchObject({ key: before.key, run: "r2", sha: "s2" });
     expect(st.match({ key: before.key, pairs: [{ old: "old", new: "fresh" }] })).toMatchObject({ ok: true, matched: 1 });
   });
@@ -474,7 +475,7 @@ describe("the findings store's lifecycle", () => {
     st.report([reported("a/x.py", "old")], S("r1", "s1", "2026-09-29T10:00:00Z"));
     st.report([reported("a/x.py", "fresh", { blob: "b2" })], S("r2", "s2", "2026-09-29T11:00:00Z"));
     const rows = [row("a/x.py", "b2", "r2", "2026-09-29T11:00:01Z")];
-    expect(st.reconcile({ rows, tree: new Set(["a/x.py"]), run: S("r2", "s2", "2026-09-29T11:00:02Z") })).toEqual({ fixed: 0, pending: 1, not_reproduced: 0 });
+    expect(st.reconcile({ rows, tree: new Set(["a/x.py"]), run: S("r2", "s2", "2026-09-29T11:00:02Z") })).toEqual({ fixed: 0, pending: 1, not_reproduced: 0, dismissed_unreported: 0 });
     // The old one comes back exactly at s3: nothing left to judge.
     st.report([reported("a/x.py", "old", { blob: "b3" })], S("r3", "s3", "2026-09-29T12:00:00Z"));
     expect(st.question().question).toBeNull();
