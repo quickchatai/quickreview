@@ -283,7 +283,10 @@ the seam's address maps exactly:
 `read()` returns every entry oldest-first with `#retired` filtered out, and
 the same sweep keeps those files' URIs (`retiredUris()`) so the round's context
 search passes them as `exclude_uris` — the retired file stays in the indexed
-root, so both halves are what makes retire behave like retire. `read()` yields `[]` for both an empty
+root, so both halves are what makes retire behave like retire. The search reads
+that list from the last completed sweep (plus this store's own retires since)
+rather than waiting for a fresh one, so it never runs in series behind a sweep
+inside the round's memory deadline. `read()` yields `[]` for both an empty
 store and an unreadable one, the right answer for a timeline. `sweep()` is the
 same pass with the parts it could **not** read kept beside the entries
 (`MemorySweep.unread`); a directory the server 404s is recorded as absent, not

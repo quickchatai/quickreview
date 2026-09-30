@@ -249,6 +249,10 @@ export class OpenVikingStore implements MemoryStore {
   /** Bumped by every write: a sweep started before it may have read the old
    * bytes, so it neither fills the cache nor serves a later reader. */
   private generation = 0;
+  /** Retired URIs from the last sweep that completed un-raced by a write,
+   * plus every retire this store has written since. Never expires — see
+   * `retiredUris`. Null until one sweep has finished. */
+  private knownRetired: string[] | null = null;
 
   constructor(opts: OpenVikingStoreOptions) {
     this.client = opts.client;
@@ -326,14 +330,22 @@ export class OpenVikingStore implements MemoryStore {
   }
 
   /**
-   * The URIs of every retired entry the last sweep saw — the same cached,
-   * single-flight sweep. `read()` hides a retirement by filtering, but the
-   * file stays under the indexed memories root, so a semantic search would
-   * still recall it; the round's context search passes these as
-   * `excludeUris` so retire behaves like retire there too.
+   * The URIs of every retired entry, for the round's context search to pass
+   * as `excludeUris`. `read()` hides a retirement by filtering, but the file
+   * stays under the indexed memories root, so a semantic search would still
+   * recall it.
+   *
+   * Answers from the LAST COMPLETED sweep whatever its age, and waits for a
+   * sweep only when none has ever completed. The round fetches the pinned head
+   * (a sweep) and the context block concurrently under one deadline, and the
+   * cache is nearly always cold at a round; waiting here would put a whole
+   * store sweep in series in front of the search. Retirements are rare and
+   * this store records its own the moment they land, so a list one round old
+   * costs at most one round's recall of an entry retired elsewhere.
    */
   async retiredUris(): Promise<string[]> {
-    return (await this.sweepRun()).retired;
+    if (this.knownRetired !== null) return [...this.knownRetired];
+    return [...(await this.sweepRun()).retired];
   }
 
   private async sweepRun(): Promise<SweepRun> {
@@ -388,7 +400,10 @@ export class OpenVikingStore implements MemoryStore {
     );
     retired.sort();
     const run: SweepRun = { sweep: { entries, unread }, retired };
-    if (gen === this.generation) this.cache = { at: this.now().getTime(), run };
+    if (gen === this.generation) {
+      this.cache = { at: this.now().getTime(), run };
+      this.knownRetired = [...retired];
+    }
     return run;
   }
 
@@ -497,7 +512,12 @@ export class OpenVikingStore implements MemoryStore {
           ok: false,
           message: "refused: an edit may not empty an entry — retire it instead",
         };
-      return await this.replace(op.id, next, op.expect);
+      const res = await this.replace(op.id, next, op.expect);
+      if (res.ok && op.op === "retire" && this.knownRetired !== null) {
+        const uri = this.uriOf(op.id);
+        if (!this.knownRetired.includes(uri)) this.knownRetired = [...this.knownRetired, uri].sort();
+      }
+      return res;
     } catch (err) {
       // The client is total, but a caller-supplied seam is not, and a write
       // that throws would break the one promise the whole phase rests on.

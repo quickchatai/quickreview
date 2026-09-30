@@ -677,6 +677,21 @@ describe("context search", () => {
     });
     expect(block.status === "read" && block.text).not.toContain("stale advice");
   });
+
+  it("the context search never waits on a store sweep once one has completed (no serial sweep in the round's deadline)", async () => {
+    const server = new FakeOpenViking();
+    const { store, assembler } = wire(server); // cacheTtlMs: 0 — the cache is always cold
+    await store.apply({ op: "note", text: "#feedback renumber stale advice: always squash migrations" });
+    const stale = (await store.read()).find((e) => e.text.includes("stale advice"))!;
+    expect((await store.apply({ op: "retire", ...refOf(stale) })).ok).toBe(true);
+
+    const before = server.calls.length;
+    const block = await assembler.contextBlock("renumber", { maxTokens: 800 });
+    // One request: the search. No listing, no reads in front of it — and the
+    // retire this store wrote after its last sweep is still excluded.
+    expect(server.calls.slice(before).map((c) => c.path)).toEqual(["/api/v1/search/search"]);
+    expect(block.status === "read" && block.text).not.toContain("stale advice");
+  });
 });
 
 // ---- sessions ---------------------------------------------------------------

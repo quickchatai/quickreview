@@ -115,8 +115,9 @@ export class OpenVikingContextAssembler implements ContextAssembler {
     try {
       // A retirement is a header tag on a file that stays in the indexed root,
       // so the search is told to skip it; `read()` filtering it is not enough.
-      // Same cached sweep the pinned head uses — no extra server load. A sweep
-      // that fails yields no exclusions rather than no block.
+      // Answered from the last completed sweep (the pinned head's), so the
+      // search is never queued behind a sweep inside the round's deadline. A
+      // sweep that fails yields no exclusions rather than no block.
       const excludeUris = await this.store.retiredUris().catch(() => [] as string[]);
       const search: ContextSearchOptions = {
         maxTokens: opts.maxTokens,
