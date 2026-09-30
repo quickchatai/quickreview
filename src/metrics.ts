@@ -282,11 +282,14 @@ function isBackfilled(r: RoundRow): boolean {
 /** Time-to-first-verdict per PR: trigger (or, absent a recorded trigger, the
  * round start) -> the first finished round. The first round is picked from
  * the PR's WHOLE history and only then windowed on its own landing: picking
- * it from the windowed rounds would report a later round as the "first". */
+ * it from the windowed rounds would report a later round as the "first".
+ * Only a `done` round delivered a verdict: a cancelled, overdue or expired
+ * round also carries a `finished_at`, but that is when it died, not when the
+ * PR got its answer. */
 function ttfvByPr(allRounds: RoundRow[], since: string | null): Map<number, number> {
   const first = new Map<number, RoundRow>();
   for (const r of allRounds) {
-    if (!r.finished_at) continue;
+    if (!r.finished_at || r.status !== "done") continue;
     const seen = first.get(r.pr);
     if (!seen || r.round_no < seen.round_no) first.set(r.pr, r);
   }

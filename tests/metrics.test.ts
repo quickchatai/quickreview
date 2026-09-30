@@ -458,6 +458,37 @@ describe("computeMetrics", () => {
     }
   });
 
+  it.each(["cancelled", "overdue", "expired"])(
+    "time-to-first-verdict skips a first round that ended %s without a verdict",
+    (status) => {
+      const s = new StateStore(":memory:", now);
+      try {
+        // Round 1 died five minutes in; round 2 delivered the verdict at 45m.
+        insertRound(s, {
+          pr: 310,
+          round_no: 1,
+          trigger_ts: "2026-08-14T09:00:00.000Z",
+          started_at: "2026-08-14T09:01:00.000Z",
+          finished_at: "2026-08-14T09:05:00.000Z",
+          status,
+        });
+        insertRound(s, {
+          pr: 310,
+          round_no: 2,
+          trigger_ts: "2026-08-14T09:00:00.000Z",
+          started_at: "2026-08-14T09:06:00.000Z",
+          finished_at: "2026-08-14T09:45:00.000Z",
+          verdict: "APPROVE",
+        });
+        const m = computeMetrics(s, { now });
+        expect(m.windows.all.ttfv.n).toBe(1);
+        expect(m.windows.all.ttfv.median).toBe(2700);
+      } finally {
+        s.close();
+      }
+    },
+  );
+
   it("time-to-first-verdict is the PR's FIRST round across all history, not the first inside the window", () => {
     const s = new StateStore(":memory:", now);
     try {
