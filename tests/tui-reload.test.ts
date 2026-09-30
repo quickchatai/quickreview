@@ -207,6 +207,15 @@ describe("resume state", () => {
     expect(readResumeState(handed[1]!)?.tab).toBe("memory");
   });
 
+  it("the TUI writes its snapshot to THIS process's path, never a shared name", () => {
+    // Pins the wiring, not just the helper: a revert of index.ts to one fixed
+    // state/tui-resume.json would pass the helper test above.
+    expect(resumeStatePath("/r")).toBe(`/r/state/tui-resume-${process.pid}.json`);
+    const src = readFileSync(join(process.cwd(), "src", "tui", "index.ts"), "utf8");
+    expect(src).toContain("resumeStatePath(sandboxRoot())");
+    expect(src).not.toMatch(/["'`]tui-resume\.json["'`]/);
+  });
+
   it("survives a garbled or missing file", () => {
     const p = join(dir, "bad.json");
     writeFileSync(p, "{not json");
