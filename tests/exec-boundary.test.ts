@@ -732,6 +732,16 @@ describe("— the post-hoc audit is no longer blind to the corpus", () => {
     expect(kindOf(bashLine(`cat /tmp/evil > con"fig".toml`))).toBe("policy_surface_write");
     expect(kindOf(bashLine("cat p >&.git/config"))).toBe("git_config_surface_write");
     expect(kindOf(writeLine("state/agents/pass-validate.md"))).toBe("policy_surface_write");
+    // The agent-context files the guard's POLICY_SURFACE_FILES protects: a
+    // write lands in the instructions the next session loads.
+    for (const f of ["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"]) {
+      expect(kindOf(writeLine(`/opt/quickreview/${f}`))).toBe("policy_surface_write");
+      expect(kindOf(bashLine(`printf x > ${f}`))).toBe("policy_surface_write");
+    }
+    // An explicit non-GET method still wins over a body flag, as in the guard.
+    expect(kindOf(bashLine("gh api repos/o/n/pulls/5/reviews --method GET -X POST -f a=b"))).toBe(
+      "github_write",
+    );
     expect(kindOf(bashLine("python3 manage.py test"))).toBe("interpreter");
   });
 
@@ -749,6 +759,10 @@ describe("— the post-hoc audit is no longer blind to the corpus", () => {
       "gh pr checks 5249",
       "gh api repos/o/n/pulls/5/reviews",
       "gh api repos/o/n/pulls/5/files --paginate",
+      // An explicit GET wins over a body flag — the guard lets these run.
+      "gh api search/issues --method GET -f q=repo:o/n",
+      "gh api repos/o/n/search -XGET -fevent=APPROVE",
+      "gh api repos/o/n/pulls --method=GET --input q.json",
       "gh search prs --repo o/n",
       "gh run list --limit 5",
       "rg -n 'gitconfig' src/",

@@ -398,7 +398,9 @@ export function computeWindow(input: WindowInput): MetricsWindow {
       const q = seconds(r.trigger_ts, r.started_at);
       if (Number.isFinite(q) && q >= 0) queue.push(q);
     }
-    if (r.finished_at) {
+    // An expired round's finished_at is the expiry sweep's clock, not a real
+    // end — the same reason `finishedLive` leaves it out of duration.
+    if (r.finished_at && r.status !== "expired") {
       const v = seconds(r.started_at, r.finished_at);
       if (Number.isFinite(v) && v >= 0) review.push(v);
     }
@@ -436,16 +438,20 @@ export function computeWindow(input: WindowInput): MetricsWindow {
     const spend = r.est_usd ?? 0;
     if (spend === 0) continue;
     perPr.set(r.pr, (perPr.get(r.pr) ?? 0) + spend);
-    byRoundType[r.round_type] = round2((byRoundType[r.round_type] ?? 0) + spend);
+    // Accumulated at full precision and rounded once below, like `perPr` —
+    // rounding every step drifts a bucket off the header's total.
+    byRoundType[r.round_type] = (byRoundType[r.round_type] ?? 0) + spend;
     for (const lens of r.lenses
       .split(",")
       .map((l) => l.trim())
       .filter(Boolean)) {
       // A round's cost is not divisible across its lenses — each lens is
       // credited with the full cost of the rounds it took part in.
-      byLens[lens] = round2((byLens[lens] ?? 0) + spend);
+      byLens[lens] = (byLens[lens] ?? 0) + spend;
     }
   }
+  for (const k of Object.keys(byRoundType)) byRoundType[k] = round2(byRoundType[k]!);
+  for (const k of Object.keys(byLens)) byLens[k] = round2(byLens[k]!);
   const perPrValues = [...perPr.values()].map(round2);
   const spendTotal = round2(live.reduce((n, r) => n + (r.est_usd ?? 0), 0));
 

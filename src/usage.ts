@@ -365,6 +365,22 @@ const EXEC_VIOLATION_RE =
 const GH_API_WRITE_RE =
   /\bgh\s+(?:-\S+\s+)*api\b[^\n]*?(?:-X\s*(?:POST|PATCH|PUT|DELETE)|--method[=\s]+(?:POST|PATCH|PUT|DELETE)|--input\b|--input=|--field\b|--field=|--raw-field\b|--raw-field=|(?:^|\s)-[A-Za-z]*[fF](?:\s|=|[A-Za-z_]+=))/i;
 
+/** An explicit `-X`/`--method` on a `gh api` call. As in the guard's
+ * `ghApiEffectiveMethod`, the explicit method WINS — a body flag only promotes
+ * gh's default GET — so `gh api search/issues --method GET -f q=…` is a read,
+ * and the LAST explicit method is the one gh sends. */
+const GH_API_EXPLICIT_METHOD_RE = /(?:^|\s)(?:-X\s*|--method[=\s]+)([A-Za-z]+)/gi;
+
+/** Does this `gh api` segment send something other than GET/HEAD? */
+function ghApiWrites(segment: string): boolean {
+  if (!GH_API_WRITE_RE.test(segment)) return false;
+  const api = /\bgh\s+(?:-\S+\s+)*api\b/.exec(segment);
+  const args = api ? segment.slice(api.index + api[0].length) : segment;
+  let explicit: string | null = null;
+  for (const m of args.matchAll(GH_API_EXPLICIT_METHOD_RE)) explicit = m[1]!.toUpperCase();
+  return explicit === null || (explicit !== "GET" && explicit !== "HEAD");
+}
+
 /** A `gh` subcommand that is not one of the read verbs. Expressed as the
  * complement of the read set rather than as a list of write verbs, so a verb
  * `gh` grows tomorrow is audited by default instead of being invisible until
@@ -422,12 +438,14 @@ const GIT_CONFIG_SURFACE_WRITE_RE =
 /**
  * A write landing on THIS system's own policy surface — the same
  * SHAPE as `GIT_CONFIG_SURFACE_WRITE_RE`, one level out: a redirection or a
- * `sed -i` whose target is `config.toml`, `scripts/`, `dist/`, `extensions/`
+ * `sed -i` whose target is `config.toml`, an agent-context file
+ * (`AGENTS.md`/`AGENTS.override.md`/`CLAUDE.md` and their `.MD` spellings —
+ * the guard's `POLICY_SURFACE_FILES`), `scripts/`, `dist/`, `extensions/`
  * or a frozen-seed dir. A bare mention is not enough — a review session greps
  * and reads these paths all day, and auditing a read would be the routine false
  * line that teaches an operator to skip the event. Mirrors `isPolicySurface` in
  * the guard, kept an independent implementation on purpose. */
-const POLICY_SURFACE_TARGET = String.raw`(?:\S*\/)?(?:config\.toml|(?:scripts|dist|extensions|prompts|agents|seeds|\.pi)\/\S+)`;
+const POLICY_SURFACE_TARGET = String.raw`(?:\S*\/)?(?:(?:config\.toml|AGENTS\.override\.md|AGENTS\.MD|AGENTS\.md|CLAUDE\.MD|CLAUDE\.md)|(?:scripts|dist|extensions|prompts|agents|seeds|\.pi)\/\S+)`;
 const POLICY_SURFACE_WRITE_RE = new RegExp(
   String.raw`(?:>>?\s*` +
     POLICY_SURFACE_TARGET +
@@ -437,10 +455,10 @@ const POLICY_SURFACE_WRITE_RE = new RegExp(
 );
 
 /** The same policy surface as a WRITE-TOOL target path: `config.toml`
- * at any depth, or anything under scripts/dist/extensions/prompts/agents/seeds/.pi
+ * or an agent-context file at any depth, or anything under scripts/dist/extensions/prompts/agents/seeds/.pi
  * (the built `state/agents/…` included — `agents/` follows a slash). */
 const POLICY_SURFACE_PATH_RE =
-  /(?:^|\/)config\.toml$|(?:^|\/)(?:scripts|dist|extensions|prompts|agents|seeds|\.pi)\//;
+  /(?:^|\/)(?:config\.toml|AGENTS\.override\.md|AGENTS\.MD|AGENTS\.md|CLAUDE\.MD|CLAUDE\.md)$|(?:^|\/)(?:scripts|dist|extensions|prompts|agents|seeds|\.pi)\//;
 
 /** A session env-prefix that relocates this system's own policy inputs — the
  * `QCR_` inputs the guard refuses in `POLICY_RELOCATING_ENV` (`QCR_INSTALL`
@@ -581,7 +599,7 @@ function segmentViolationKind(segment: string): ExecViolationKind | null {
   // it, but a `bash -c '… ; QCR_CONFIG=… script'` (prog is `bash`, not a
   // reader) still does. This is what makes door 4 visible to the audit.
   if (POLICY_RELOCATION_RE.test(segment)) return "policy_relocation";
-  if (GH_API_WRITE_RE.test(segment) || GITHUB_DIRECT_WRITE_RE.test(segment)) return "github_write";
+  if (ghApiWrites(segment) || GITHUB_DIRECT_WRITE_RE.test(segment)) return "github_write";
   const gh = GH_SUBCOMMAND_RE.exec(segment);
   if (gh) {
     const ns = gh[1]!;

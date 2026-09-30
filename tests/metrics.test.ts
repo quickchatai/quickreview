@@ -928,6 +928,47 @@ describe("ops", () => {
       expect(before.duration.n).toBe(after.duration.n);
       expect(before.header.overruns).toBe(after.header.overruns);
     });
+
+    it("keeps them OUT of the review leg of time-to-first-verdict too", () => {
+      // One real 10-minute round beside two expired ones whose finished_at is
+      // the sweep's clock: the review leg must read only the real one.
+      store.db.prepare("DELETE FROM rounds WHERE pr <> 400").run();
+      insertRound(store, {
+        pr: 400,
+        round_no: 2,
+        spend_usd: 1,
+        started_at: "2026-08-14T09:00:00.000Z",
+        deadline_at: "2026-08-14T09:45:00.000Z",
+        finished_at: "2026-08-14T20:00:00.000Z",
+        status: "expired",
+      });
+      insertRound(store, {
+        pr: 401,
+        round_no: 1,
+        started_at: "2026-08-14T10:00:00.000Z",
+        finished_at: "2026-08-14T10:10:00.000Z",
+      });
+      expect(computeMetrics(store, { now }).windows.d7.ttfv.review_median_s).toBe(600);
+    });
+  });
+
+  it("attributes spend at full precision, rounding only the reported bucket", () => {
+    // Fractional-cent costs are what production stores (pi's usage.cost.total).
+    // Rounding every accumulation step drifts the buckets away from the header.
+    store.db.prepare("DELETE FROM rounds").run();
+    for (const round_no of [1, 2])
+      insertRound(store, {
+        pr: 500,
+        round_no,
+        lenses: "pass-baseline",
+        spend_usd: 0.077,
+        started_at: "2026-08-14T08:00:00.000Z",
+        finished_at: "2026-08-14T08:10:00.000Z",
+      });
+    const w = computeMetrics(store, { now }).windows.d7;
+    expect(w.header.spend_usd).toBe(0.15);
+    expect(w.spend.by_round_type).toEqual({ first: 0.15 });
+    expect(w.spend.by_lens).toEqual({ "pass-baseline": 0.15 });
   });
 
   it("renderMetrics surfaces the daemon line and the window's event traffic", () => {
