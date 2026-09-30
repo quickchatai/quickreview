@@ -51,7 +51,7 @@
 // is built at review time, and `claude-rebuild` rebuilds it for a finished run
 // without re-reviewing anything.
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { safeId, selectCases, type BenchCase, type CaseSet, type PrefetchMeta } from "./aacr.js";
@@ -804,6 +804,7 @@ export interface ClaudeRebuildCase {
 export async function claudeRebuildRun(o: ClaudeRebuildCommand): Promise<ClaudeRebuildCase[]> {
   const out: ClaudeRebuildCase[] = [];
   let missing = 0;
+  let changed = 0;
   for (const c of selectCases(o.set, o.only)) {
     const safe = safeId(c.instance_id);
     const resultFile = join(o.outDir, "results", "all", `${safe}.json`);
@@ -823,7 +824,9 @@ export async function claudeRebuildRun(o: ClaudeRebuildCommand): Promise<ClaudeR
     }
     const md = join(o.outDir, "cases", safe, "review.md");
     const next = withClaudeView(result, files, existsSync(md) ? readFileSync(md, "utf8") : undefined);
-    writeFileSync(resultFile, JSON.stringify(next, null, 2) + "\n");
+    const text = JSON.stringify(next, null, 2) + "\n";
+    if (readFileSync(resultFile, "utf8") !== text) changed++;
+    writeFileSync(resultFile, text);
     const view = claudeViewOf(next)!;
     const bench = next["bench"] as Obj;
     const prose = bench["claude_prose_parsed"] as ClaudeProseMarker | undefined;
@@ -843,6 +846,17 @@ export async function claudeRebuildRun(o: ClaudeRebuildCommand): Promise<ClaudeR
             : `, paths ${prose.paths_matched}/${prose.findings} matched to ${prose.changed_files} changed file(s)`
           : ""),
     );
+  }
+  // The harness scored the result files as they were; a rewritten one makes
+  // every metrics file beside them a score of findings that no longer exist.
+  // They go (as the eval step's own `rm -f metrics_*.json` does), so a report
+  // before the next eval shows no score rather than a stale one.
+  if (changed > 0) {
+    const all = join(o.outDir, "results", "all");
+    const stale = readdirSync(all).filter((n) => n.startsWith("metrics_") && n.endsWith(".json"));
+    for (const f of stale) rmSync(join(all, f), { force: true });
+    if (stale.length)
+      o.log(`claude-rebuild: ${stale.length} metrics file(s) scored the old results — removed; re-run eval to score the rebuilt view`);
   }
   const n = out.reduce((a, x) => a + x.comments, 0);
   o.log(

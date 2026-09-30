@@ -804,6 +804,22 @@ describe("claudeRebuildRun: the view for a finished run, no model and no network
     expect(readFileSync(join(out, "results", "all", `${id}.json`), "utf8")).toBe(before);
   });
 
+  it("a rebuild that changes a result drops the run's metrics — old scores never sit beside new findings", async () => {
+    const t = mkdtempSync(join(tmpdir(), "qcr-claude-rebuild-"));
+    const { set, out, files } = finishedRun(t, rawResult());
+    const all = join(out, "results", "all");
+    writeFileSync(join(all, "metrics_ocr_round_1.json"), JSON.stringify({ summary: { semantic_f1: 0.5 } }));
+    writeFileSync(join(all, "metrics_ocr_average.json"), JSON.stringify({ summary: { semantic_f1: 0.5 } }));
+    const lines: string[] = [];
+    await claudeRebuildRun({ set, outDir: out, filesDir: files, log: (l) => lines.push(l) });
+    expect(readdirSync(all).filter((n) => n.startsWith("metrics_"))).toEqual([]);
+    expect(lines.join("\n")).toMatch(/metrics.*re-run eval/i);
+    // a no-op rebuild leaves fresh metrics alone
+    writeFileSync(join(all, "metrics_ocr_round_1.json"), JSON.stringify({ summary: { semantic_f1: 0.6 } }));
+    await claudeRebuildRun({ set, outDir: out, filesDir: files, log: () => {} });
+    expect(existsSync(join(all, "metrics_ocr_round_1.json"))).toBe(true);
+  });
+
   it("reads the changed files from the prefetched store, never writing into it", async () => {
     const t = mkdtempSync(join(tmpdir(), "qcr-claude-rebuild-"));
     const { c, meta, store } = scratchCase(t);

@@ -78,11 +78,17 @@ export async function codexCommand(cmd: string, d: CodexCliDeps): Promise<number
   const previous = existsSync(runFile)
     ? (JSON.parse(readFileSync(runFile, "utf8")) as Record<string, unknown>)
     : null;
-  if (!resume) {
-    for (const c of cases) {
-      rmSync(join(outDir, "cases", safeId(c.instance_id), "case-summary.json"), { force: true });
-      rmSync(join(outDir, "results", "all", `${safeId(c.instance_id)}.json`), { force: true });
-    }
+  // run.json is about to carry THIS configuration, so no case reviewed under
+  // another may stay a result of the run: without --resume every case goes;
+  // with it, every case whose fingerprint differs goes now, not when the loop
+  // reaches it — a stop partway (AuthExpiring) must leave those cases
+  // incomplete, never scored under the new model/effort label.
+  for (const c of cases) {
+    const prior = resume ? readCodexSummary(outDir, c) : null;
+    if (resume && (!prior || JSON.stringify(prior.fingerprint) === JSON.stringify(fingerprint))) continue;
+    if (prior) d.log(`codex: ${c.instance_id} was reviewed by a different Codex/model/effort — its result is dropped`);
+    rmSync(join(outDir, "cases", safeId(c.instance_id), "case-summary.json"), { force: true });
+    rmSync(join(outDir, "results", "all", `${safeId(c.instance_id)}.json`), { force: true });
   }
   const runRecord = {
     reviewer: "codex",
@@ -110,13 +116,11 @@ export async function codexCommand(cmd: string, d: CodexCliDeps): Promise<number
   let stopped: string | null = null;
   for (const c of cases) {
     const prior = readCodexSummary(outDir, c);
+    // (a prior summary here carries this run's fingerprint — the others went above)
     if (resume && prior && prior.status === "ok") {
-      if (JSON.stringify(prior.fingerprint) === JSON.stringify(fingerprint)) {
-        d.log(`codex: ${c.instance_id} already done — skipped (--resume)`);
-        summaries.push(prior);
-        continue;
-      }
-      d.log(`codex: ${c.instance_id} was reviewed by a different Codex/model/effort — re-running`);
+      d.log(`codex: ${c.instance_id} already done — skipped (--resume)`);
+      summaries.push(prior);
+      continue;
     }
     try {
       syncBenchAuth({

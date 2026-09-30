@@ -468,3 +468,61 @@ exit 0
     expect(existsSync(join(runs, "cx-fresh10", "run.json"))).toBe(true);
   });
 });
+
+describe("codex-review --resume with a changed configuration", () => {
+  it("a stop before every stale case re-ran leaves those cases incomplete, never scoreable under the new label", async () => {
+    const { codexCommand } = await import("../src/bench/codexcli.js");
+    const bin = join(t, "bin");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "codex"), "#!/bin/sh\necho 'codex-cli 9.9.9'\n");
+    chmodSync(join(bin, "codex"), 0o755);
+    const fresh: BenchCase = { ...CASE, instance_id: "o__r@1111111" };
+    const stale: BenchCase = { ...CASE, instance_id: "o__r@2222222" };
+    const out = join(t, "run");
+    const fp = (model: string) => ({ qcr_commit: "c1", codex_version: "9.9.9", model, effort: "medium", timeout_min: 30 });
+    mkdirSync(join(out, "results", "all"), { recursive: true });
+    writeFileSync(join(out, "run.json"), JSON.stringify({ reviewer: "codex", model: "old" }));
+    for (const [c, model] of [[fresh, "new"], [stale, "old"]] as const) {
+      mkdirSync(join(out, "cases", c.instance_id), { recursive: true });
+      writeFileSync(
+        join(out, "cases", c.instance_id, "case-summary.json"),
+        JSON.stringify({ instance_id: c.instance_id, arm: "codex", status: "ok", fingerprint: fp(model), comments: 1 }),
+      );
+      writeFileSync(join(out, "results", "all", `${c.instance_id}.json`), "{}");
+    }
+    const flags: Record<string, string> = { "--out": out, "--model": "new", "--effort": "medium", "--timeout-min": "30" };
+    const env = { PATH: process.env.PATH, QCR_BENCH_COMMIT: process.env.QCR_BENCH_COMMIT };
+    process.env.PATH = `${bin}:${process.env.PATH}`;
+    process.env.QCR_BENCH_COMMIT = "c1";
+    const lines: string[] = [];
+    let code: number;
+    try {
+      code = await codexCommand("codex-review", {
+        root: t,
+        store: join(t, "store"),
+        authSrc: join(t, "no-login"), // no auth.json: AuthExpiring on the first case that needs a review
+        agentDir: join(t, "agent"),
+        get: (k) => flags[k],
+        has: (k) => k === "--resume",
+        loadSet: () => ({ name: "t", dataset: { source: "s", commit: "c", file: "f", sha256: "x" }, rule: "r", references: 2, cases: [fresh, stale], backups: [] }),
+        only: undefined,
+        readMeta: () => {
+          throw new Error("unreached");
+        },
+        log: (l) => lines.push(l),
+      });
+    } finally {
+      process.env.PATH = env.PATH;
+      if (env.QCR_BENCH_COMMIT === undefined) delete process.env.QCR_BENCH_COMMIT;
+      else process.env.QCR_BENCH_COMMIT = env.QCR_BENCH_COMMIT;
+    }
+    expect(code).toBe(1);
+    expect(lines.join("\n")).toMatch(/STOPPED/);
+    // the case already done under this configuration is kept
+    expect(existsSync(join(out, "cases", fresh.instance_id, "case-summary.json"))).toBe(true);
+    expect(existsSync(join(out, "results", "all", `${fresh.instance_id}.json`))).toBe(true);
+    // the old-configuration case is no longer a result of this run
+    expect(existsSync(join(out, "cases", stale.instance_id, "case-summary.json"))).toBe(false);
+    expect(existsSync(join(out, "results", "all", `${stale.instance_id}.json`))).toBe(false);
+  });
+});
