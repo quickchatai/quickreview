@@ -43,9 +43,15 @@ describe("isBinaryContent", () => {
     expect(isBinaryContent(text, "p.ts")).toBe(false);
   });
 
-  it("a known-binary extension decides whatever the bytes", () => {
+  it("a known-binary extension corroborates a NUL — and never overrules a NUL-free file (git's answer, unchanged)", () => {
     expect(isBinaryPath("img/logo.PNG")).toBe(true);
-    expect(isBinaryContent(Buffer.from("not really"), "a.woff2")).toBe(true);
+    expect(isBinaryContent(Buffer.from("a\0b"), "a.woff2")).toBe(true);
+    expect(isBinaryContent(Buffer.from("a\0b"), "a.ts")).toBe(false);
+    // A NUL-free file is text whatever its name: a text fixture named .bin,
+    // a Wavefront .obj — read before this sniff existed, still read.
+    expect(isBinaryContent(Buffer.from("not really\n"), "a.bin")).toBe(false);
+    expect(isBinaryContent(Buffer.from("v 0 0 0\nf 1 2 3\n"), "mesh.obj")).toBe(false);
+    expect(isBinaryPath("mesh.obj")).toBe(false);
     expect(isBinaryPath("src/a.ts")).toBe(false);
   });
 });

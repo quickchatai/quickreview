@@ -20,10 +20,13 @@ export const SNIFF_BYTES = 8000;
  * binary. Uniformly random bytes carry ~11%; source text carries ~0. */
 const CONTROL_SHARE = 0.05;
 
-/** Extensions that are binary whatever their bytes look like. Deliberately
- * narrow: a name here is never read, so a text format must never be in it. */
+/** Extensions that corroborate a NUL: a NUL-bearing file under one of these
+ * names is binary without further evidence. Consulted ONLY once the NUL probe
+ * fires, so a NUL-free file stays text whatever its name — exactly git's
+ * answer, and the answer before this sniff existed (a text `.bin` fixture or
+ * a Wavefront `.obj` is never silently dropped). */
 const BINARY_EXT_RE =
-  /\.(png|jpe?g|gif|bmp|ico|webp|avif|tiff?|pdf|zip|gz|tgz|bz2|xz|zst|7z|rar|jar|war|whl|egg|so|dylib|dll|exe|o|a|lib|obj|class|pyc|pyo|wasm|woff2?|ttf|otf|eot|mp3|mp4|m4a|wav|ogg|flac|webm|mov|avi|sqlite3?|db|bin)$/i;
+  /\.(png|jpe?g|gif|bmp|ico|webp|avif|tiff?|pdf|zip|gz|tgz|bz2|xz|zst|7z|rar|jar|war|whl|egg|so|dylib|dll|exe|o|a|lib|class|pyc|pyo|wasm|woff2?|ttf|otf|eot|mp3|mp4|m4a|wav|ogg|flac|webm|mov|avi|sqlite3?|db|bin)$/i;
 
 export function isBinaryPath(path: string): boolean {
   return BINARY_EXT_RE.test(path);
@@ -51,11 +54,13 @@ function isUtf8(window: Buffer, truncated: boolean): boolean {
   return false;
 }
 
-/** Binary? `path` (repo-relative) lets a known-binary extension decide. */
+/** Binary? No NUL in git's window is text, as git says. A NUL is binary only
+ * when corroborated: a known-binary extension of `path` (repo-relative), a
+ * high share of control bytes, or a window that is not UTF-8. */
 export function isBinaryContent(buf: Buffer, path = ""): boolean {
-  if (path !== "" && isBinaryPath(path)) return true;
   const window = buf.subarray(0, SNIFF_BYTES);
   if (!window.includes(0)) return false;
+  if (path !== "" && isBinaryPath(path)) return true;
   let control = 0;
   for (const b of window) if (isControl(b)) control++;
   if (control > 1 && control / window.length > CONTROL_SHARE) return true;
