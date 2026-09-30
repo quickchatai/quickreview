@@ -172,6 +172,8 @@ describe("enforceLedgerFreshness", () => {
     expect(injects).toEqual([]);
     expect(store.heldWakes(7)).toEqual([]);
     expect(store.ledgerNudgeSent(7, "round-1")).toBe(false);
+    // The miss itself stays on the durable anomaly record.
+    expect(anomalyKinds()).toEqual(["ledger_stale"]);
     // Round 2's own check is untouched by the superseded one.
     expect(
       await enforceLedgerFreshness(deps(injects), { pr: 7, roundNo: 2, headSha: "b".repeat(40) }),
