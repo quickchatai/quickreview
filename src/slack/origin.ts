@@ -17,7 +17,11 @@
 // to the inject they sit beside, read back by `onDisk()` — and grant nothing.
 // Across a restart the memory is empty: the Slack dir fails closed (no live
 // origin), and the legacy belt is seeded from disk only when that can RESTRICT
-// (`bootCause`) — a forged record at boot can switch the belt on, never off.
+// (`bootCause`): a planted Slack record can switch the belt on. What disk
+// cannot do is grant — a planted local/owner record reads as "no boot cause",
+// which is exactly what an empty directory reads as (it can mask an older real
+// Slack record at boot, but no Slack turn survives a restart for the belt to
+// hold anyway: the container restart takes the overseer's turn with it).
 //
 // Attribution (ratified D5): a command in `commands/slack/` is attributed to
 // the most recent UNEXPIRED origin. The window is short by design — an origin
