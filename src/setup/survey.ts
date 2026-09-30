@@ -37,8 +37,8 @@ export const SURVEY_TAG = "survey";
 export const REPO_SCOPE = "@repo";
 
 /** How much of one unit the sample may read: at most `perCategory` files per
- * reason, `maxFiles` in all, and no more than `maxLines` lines unless a
- * single file is all the unit offers. A survey is meant to cost a fraction of
+ * reason, `maxFiles` in all, and no more than `maxLines` lines unless no
+ * candidate fits the cap at all (then its first one is read whole). A survey is meant to cost a fraction of
  * a scan — this cap is what makes it so. */
 export interface SampleLimits {
   perCategory: number;
