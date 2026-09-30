@@ -756,6 +756,9 @@ export function unprefetchedClaudeCase(
     warnings: [],
   };
   writeClaudeSummary(outDir, s);
+  // An earlier attempt's body must not outlive it: the defect judge and
+  // claude-rebuild read review.md whatever this case's status.
+  rmSync(join(outDir, "cases", safeId(c.instance_id), "review.md"), { force: true });
   const dir = join(outDir, "results", "all");
   mkdirSync(dir, { recursive: true });
   writeFileSync(

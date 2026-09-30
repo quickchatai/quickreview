@@ -526,6 +526,30 @@ describe("claudeReviewRun: one case at a time, through the driver", () => {
     expect(readClaudeSummary(out, c)!.status).not.toBe("ok");
     expect(existsSync(join(caseDir, "review.md"))).toBe(false);
     expect(reviewForJudge(out, c.instance_id)).toMatchObject({ body: null, comments: [] });
+    // Nor a rerun whose prefetched store has gone missing: the case fails
+    // before any attempt, and the earlier body must go with it.
+    writeFileSync(join(caseDir, "review.md"), "## Findings\n\n- a.ts:1 — stale finding\n");
+    const unprefetched = await claudeReviewRun({
+      set,
+      outDir: out,
+      store,
+      workRoot: join(t, "work"),
+      homeRoot: join(t, "homes"),
+      python: "python3",
+      driver: join(t, "no-such-driver.py"),
+      timeoutMin: 30,
+      resume: false,
+      keepTree: false,
+      env: { PATH: process.env.PATH, CLAUDE_CODE_OAUTH_TOKEN: "tok-123" },
+      readMeta: () => {
+        throw new Error("no bench-meta.json");
+      },
+      log: () => {},
+    });
+    expect(unprefetched).not.toBe(0);
+    expect(readClaudeSummary(out, c)!.status).toBe("failed");
+    expect(existsSync(join(caseDir, "review.md"))).toBe(false);
+    expect(reviewForJudge(out, c.instance_id)).toMatchObject({ body: null, comments: [] });
   });
 
   it("a raw-text answer gets its view from the prose parser, paths checked against the tree's diff", async () => {
