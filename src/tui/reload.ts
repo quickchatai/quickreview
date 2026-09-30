@@ -25,7 +25,7 @@ import {
   writeFileSync,
   type FSWatcher,
 } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 
 export interface ReloadState {
   tab: string;
@@ -114,6 +114,15 @@ export class HotReloader {
     this.opts.writeState(this.opts.stateFile, `${JSON.stringify(state, null, 2)}\n`);
     this.opts.reexec(this.opts.stateFile);
   }
+}
+
+/** Where THIS process writes its hot-reload snapshot. Per pid, never one
+ * shared name: two TUIs on one install watch the same dist/ and reload within
+ * ms of each other on one tsc emit, so a shared file let one clobber the
+ * other's view and the first reader consume it. The path reaches the new
+ * build through `--resume-state`, which deletes it on read. */
+export function resumeStatePath(root: string, pid: number = process.pid): string {
+  return join(root, "state", `tui-resume-${pid}.json`);
 }
 
 /** `--resume-state <path>` out of an argv, plus the argv with it removed. */

@@ -193,7 +193,7 @@ losing the review record, except `state.db` itself.
 | `state/ingress/hostname` | one bare hostname | the tunnel sidecar | default path from `ingressHostnameFile` (`src/config.ts`) when `[ingress] hostname_file` is empty |
 | `state/onboarding/` | `checklist.json`, `config.candidate.toml`, `pi-sessions/` | `src/onboard/` | the wizard's own state |
 | `state/changes/` | `change-register.json` | `src/tui/index.ts` | the TUI change log |
-| `state/tui-deploy-runs/`, `state/tui-deploy-ceremony.json`, `state/tui-resume.json`, `state/tui-help-shown` | JSON / markers | the TUI | deploy run logs and small per-operator markers |
+| `state/tui-deploy-runs/`, `state/tui-deploy-ceremony.json`, `state/tui-resume-<pid>.json`, `state/tui-help-shown` | JSON / markers | the TUI | deploy run logs and small per-operator markers |
 | `state/tsc-watch.log` | text | `npm run dev` | the TypeScript watcher's output, kept off-screen so a stray compiler line cannot corrupt the alt-screen frame |
 
 ---

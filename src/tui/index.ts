@@ -14,7 +14,13 @@ import { visiblePrs } from "./filters.js";
 import { memoryOrder } from "./memtab.js";
 import { reselect } from "./model.js";
 import { isTab } from "./tabs.js";
-import { HotReloader, parseResumeArg, readResumeState, realReexec } from "./reload.js";
+import {
+  HotReloader,
+  parseResumeArg,
+  readResumeState,
+  realReexec,
+  resumeStatePath,
+} from "./reload.js";
 import { killInFlightSsh, runnerFor, transportOf } from "./remote.js";
 import { chainOnPoll } from "./poll-hooks.js";
 import type { ConnectionDiagnosis } from "./sshtriage.js";
@@ -1130,7 +1136,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   }
 
   // Hot-reload: watch our own dist/ and re-exec when a new build lands.
-  const reloadState = join(sandboxRoot(), "state", "tui-resume.json");
+  const reloadState = resumeStatePath(sandboxRoot());
   const reloader = args.reload
     ? new HotReloader({
         distDir: join(sandboxRoot(), "dist"),

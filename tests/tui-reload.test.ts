@@ -7,6 +7,7 @@ import {
   parseResumeArg,
   readResumeState,
   reexecArgv,
+  resumeStatePath,
   type ReloaderOptions,
   type ReloadState,
   type WatchFn,
@@ -167,6 +168,43 @@ describe("resume state", () => {
     const restored = readResumeState(p);
     expect(restored).toMatchObject({ tab: "digest", pr: 5012, eventsScroll: 3, sidebarWidth: 52 });
     expect(readResumeState(p)).toBeUndefined(); // consumed
+  });
+
+  it("two TUIs on one install reloading together each resume their OWN view", () => {
+    // Both watch the same dist/ and fire within ms of each other on one tsc
+    // emit. With one shared file the second write clobbered the first, A's
+    // new process read B's view and deleted it, and B came back on defaults.
+    const pathA = resumeStatePath(dir, 1111);
+    const pathB = resumeStatePath(dir, 2222);
+    expect(pathA).not.toBe(pathB);
+    expect(pathA.startsWith(join(dir, "state"))).toBe(true);
+    const handed: string[] = [];
+    const mk = (stateFile: string, tab: string) => {
+      const w = fakeWatch();
+      const r = new HotReloader({
+        distDir: join(dir, "dist"),
+        stateFile,
+        snapshot: () => ({ ...SNAP, tab }),
+        reexec: (f) => handed.push(f),
+        watch: w.watch,
+        debounceMs: 0,
+      });
+      r.start();
+      return w;
+    };
+    vi.useFakeTimers();
+    try {
+      const a = mk(pathA, "digest");
+      const b = mk(pathB, "memory");
+      a.fire();
+      b.fire();
+      vi.advanceTimersByTime(10);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(handed).toEqual([pathA, pathB]);
+    expect(readResumeState(handed[0]!)?.tab).toBe("digest");
+    expect(readResumeState(handed[1]!)?.tab).toBe("memory");
   });
 
   it("survives a garbled or missing file", () => {
