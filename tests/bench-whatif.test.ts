@@ -343,6 +343,35 @@ describe("the variants", () => {
     ]);
   });
 
+  it("dedupe never drops the one duplicate the record anchors", () => {
+    // Two lenses, the same lineless claim; the record links only the second.
+    const base = { ...WHO, index: 0, path: "a.ts", side: "RIGHT" as const, severity: "P2" };
+    const extras = allCandidateExtras(
+      [
+        { ...base, claim: "same" },
+        { ...base, claim: "same", lens: "pass-intent" },
+      ],
+      [
+        {
+          record: {
+            id: "F1",
+            disposition: "posted",
+            lenses: ["pass-intent"],
+            path: "a.ts",
+            line: 7,
+            severity: "P2",
+          },
+          candidate: 1,
+          how: "lens+text",
+        },
+      ],
+    );
+    expect(extras.map((x) => `${x.line}:${x.prov.anchor}:${x.content}`)).toEqual([
+      "7:record:same",
+    ]);
+    expect(toOcrComments(extras).excluded.no_line).toBe(0);
+  });
+
   it("a lineless lens candidate takes the line the session gave its record row", () => {
     const built = buildWhatifCase(
       FIX,

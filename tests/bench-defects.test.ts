@@ -17,6 +17,7 @@ import {
   parseJudgement,
   renderDefectReport,
   reviewForJudge,
+  reviewHash,
   scoreRun,
   scoreExitCode,
   type CaseJudgement,
@@ -362,6 +363,43 @@ describe("scoring", () => {
     expect(scoreExitCode({ ...full, errors: 1 }, false)).toBe(1);
   });
 
+  it("a round that judged a different review is stale: never scored, and the run exits 1", () => {
+    // `review --resume` rewrote the case's review, then `defect-report` ran
+    // without re-judging: the old verdicts must not attach to the new comments
+    // by their stable ids.
+    const fresh = J(1, "found", "correct-minor", { review_hash: reviewHash(REVIEW) });
+    const old = J(2, "missed", "incorrect", { review_hash: "0".repeat(64) });
+    const s = scoreRun(
+      set,
+      ["o__r@1234567"],
+      { "o__r@1234567": [fresh, old] },
+      { "o__r@1234567": REVIEW },
+    );
+    expect(s.stale).toBe(1);
+    expect(s.judged).toBe(1);
+    expect(s.by_severity.high.credit).toBe(1);
+    expect(scoreExitCode(s, false)).toBe(1);
+    expect(renderDefectReport("t", set, s, {})).toMatch(/1 stale round/);
+    // A legacy round (no stamp) stands while it judged exactly these comment ids.
+    const { review_hash: _h, ...legacy } = fresh;
+    const l = scoreRun(
+      set,
+      ["o__r@1234567"],
+      { "o__r@1234567": [legacy] },
+      { "o__r@1234567": REVIEW },
+    );
+    expect(l.stale).toBe(0);
+    expect(l.judged).toBe(1);
+    const gone = scoreRun(
+      set,
+      ["o__r@1234567"],
+      { "o__r@1234567": [legacy] },
+      { "o__r@1234567": { ...REVIEW, comments: [REVIEW.comments[0]!] } },
+    );
+    expect(gone.stale).toBe(1);
+    expect(gone.judged).toBe(0);
+  });
+
   it("counts wrong blockers, approvals over a missed high defect, and new-defect candidates once", () => {
     const s = scoreRun(
       set,
@@ -486,6 +524,71 @@ describe("the judge session", () => {
       resume: true,
     });
     expect(readFileSync(counter, "utf8").trim()).toBe("7");
+  });
+});
+
+describe("a re-judged round", () => {
+  it("never reads an earlier attempt's answer out of the events file", async () => {
+    // Round 1 was judged (review A) and answered well; `review --resume`
+    // rewrote the review, and the re-judge's pi dies with no assistant text.
+    const dir = mkdtempSync(join(tmpdir(), "defects-rejudge-"));
+    const out = join(dir, "judge");
+    mkdirSync(out, { recursive: true });
+    const answer = JSON.stringify({
+      defects: [
+        { id: "D1", verdict: "found", comments: ["C1"], why: "x" },
+        { id: "D2", verdict: "missed", comments: [], why: "y" },
+      ],
+      comments: [
+        { id: "C1", defect: "D1", verdict: "correct-valuable", new_defect: false, why: "z" },
+        { id: "C2", defect: null, verdict: "correct-minor", new_defect: false, why: "w" },
+      ],
+    });
+    writeFileSync(
+      join(out, "o__r@1234567.r1.events.jsonl"),
+      JSON.stringify({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: answer }],
+          usage: { input: 100, output: 50, cacheRead: 0 },
+        },
+      }) + "\n",
+    );
+    writeFileSync(
+      join(out, "o__r@1234567.r1.json"),
+      JSON.stringify({
+        instance_id: "o__r@1234567",
+        round: 1,
+        defect_set_version: "1",
+        model: "m",
+        defects: [],
+        comments: [],
+        review_hash: "0".repeat(64),
+      }),
+    );
+    mkdirSync(join(dir, "bin"));
+    writeFileSync(join(dir, "bin", "pi"), "#!/bin/sh\ncat >/dev/null\nexit 1\n");
+    chmodSync(join(dir, "bin", "pi"), 0o755);
+    const [j] = await judgeCase({
+      pr: { instance_id: "o__r@1234567", repo: "o/r", title: "T", merge_base: "mb", head: "hd" },
+      defects: SET.cases["o__r@1234567"].defects,
+      review: REVIEW,
+      outDir: out,
+      defectSetVersion: "1",
+      rounds: 1,
+      resume: true,
+      log: () => {},
+      pi: {
+        root: "/x",
+        cwd: dir,
+        model: "m",
+        env: { PATH: `${join(dir, "bin")}:${process.env.PATH ?? ""}` },
+        timeoutMs: 10_000,
+      },
+    });
+    expect(j!.error).toBeDefined();
+    expect(j!.usage).toEqual({ input: 0, output: 0, cacheRead: 0 });
   });
 });
 

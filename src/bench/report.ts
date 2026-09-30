@@ -76,7 +76,9 @@ export function recallByQuality(
 ): { cls: QualityClass; total: number; matched: number }[] | null {
   if (!existsSync(dir)) return null;
   const rounds = readdirSync(dir)
-    .filter((f) => /^metrics_ocr_.*_round_\d+\.json$/.test(f))
+    // One file per round: `_round_<r>` when the eval ran several, bare when
+    // it ran one (eval_shards.py); the average file is not a round.
+    .filter((f) => /^metrics_ocr_.*\.json$/.test(f) && !f.includes("average"))
     .map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")) as RoundFile);
   if (!rounds.length) return null;
   const total = new Map<QualityClass, number>();

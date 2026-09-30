@@ -621,18 +621,24 @@ export function allCandidateExtras(
     if (l.candidate === null || l.record.line === undefined) continue;
     if (candidates[l.candidate]?.path === l.record.path) recordLine.set(l.candidate, l.record.line);
   }
-  const seen = new Set<string>();
+  const seen = new Map<string, number>();
   const out: ExtraCandidate[] = [];
   candidates.forEach((c, i) => {
     const key = `${c.path}\0${c.line ?? ""}\0${c.claim}`;
-    if (seen.has(key)) return;
-    seen.add(key);
     const x = candidateExtra(c, "candidate");
     const fromRecord = x.line === undefined ? recordLine.get(i) : undefined;
     if (fromRecord !== undefined) {
       x.line = fromRecord;
       x.prov.anchor = "record";
     }
+    const at = seen.get(key);
+    // A duplicate is dropped — unless it carries the record anchor the kept
+    // one lacks: the lineless copy would be excluded, losing the finding.
+    if (at !== undefined) {
+      if (out[at]!.line === undefined && x.line !== undefined) out[at] = x;
+      return;
+    }
+    seen.set(key, out.length);
     out.push(x);
   });
   return out;

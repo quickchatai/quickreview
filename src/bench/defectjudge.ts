@@ -7,12 +7,13 @@
 // against a newer defect set without touching the old verdicts, and re-scored
 // (`defect-report`) with no model call at all.
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { runJudgeSession } from "./runner.js";
 import {
   judgePrompt,
+  judgedReview,
   parseJudgement,
+  reviewHash as hashReview,
   type CaseJudgement,
   type Defect,
   type ExcludedClaim,
@@ -97,35 +98,20 @@ export function roundFile(outDir: string, instanceId: string, round: number): st
   return join(outDir, `${instanceId}.r${round}.json`);
 }
 
-function sameIds(a: readonly string[], b: readonly string[]): boolean {
-  const x = [...a].sort();
-  const y = [...b].sort();
-  return x.length === y.length && x.every((id, i) => id === y[i]);
-}
-
 /** Judge one case for `rounds` rounds; every round is written, errors included. */
 export async function judgeCase(o: JudgeCaseOptions): Promise<CaseJudgement[]> {
   mkdirSync(o.outDir, { recursive: true });
   const prompt = judgePrompt(o.pr, o.defects, o.review, o.excluded ?? []);
-  const reviewHash = createHash("sha256").update(JSON.stringify(o.review)).digest("hex");
+  const reviewHash = hashReview(o.review);
   const out: CaseJudgement[] = [];
   for (let k = 1; k <= o.rounds; k++) {
     const file = roundFile(o.outDir, o.pr.instance_id, k);
     if (o.resume && existsSync(file)) {
       const prior = JSON.parse(readFileSync(file, "utf8")) as CaseJudgement;
-      // A round kept on resume must have judged THIS review: `review --resume`
-      // rewrites a failed case's review in the same run dir. A round written
-      // before the stamp existed is kept only while it judged exactly this
-      // review's comment ids (a clean answer covers every one, parseJudgement)
-      // — re-paying every legacy round on resume would be a silent spend.
-      const judgedThis =
-        prior.review_hash !== undefined
-          ? prior.review_hash === reviewHash
-          : sameIds(
-              prior.comments.map((c) => c.id),
-              o.review.comments.map((c) => c.id),
-            );
-      if (!prior.error && judgedThis) {
+      // A round kept on resume must have judged THIS review (judgedReview);
+      // a legacy unstamped round is kept on matching ids — re-paying every
+      // legacy round on resume would be a silent spend.
+      if (!prior.error && judgedReview(prior, o.review)) {
         out.push(prior);
         continue;
       }
@@ -145,10 +131,12 @@ export async function judgeCase(o: JudgeCaseOptions): Promise<CaseJudgement[]> {
       writeFileSync(file, JSON.stringify(base, null, 2) + "\n");
       continue;
     }
-    const r = await runJudgePi(prompt, {
-      ...o.pi,
-      eventsPath: join(o.outDir, `${o.pr.instance_id}.r${k}.events.jsonl`),
-    });
+    // runPi APPENDS to the events file and readJudgeEvents takes the last
+    // answer in it: a re-judged round starts from an empty file, or a pi that
+    // dies without answering would inherit the previous attempt's answer.
+    const eventsPath = join(o.outDir, `${o.pr.instance_id}.r${k}.events.jsonl`);
+    rmSync(eventsPath, { force: true });
+    const r = await runJudgePi(prompt, { ...o.pi, eventsPath });
     let j: CaseJudgement;
     try {
       if (r.timedOut) throw new Error("judge timed out");

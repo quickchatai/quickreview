@@ -24,6 +24,7 @@
 // shape, the review as the author received it, the prompt, the strict parse
 // of the judge's answer, and the scoring. Old runs are re-judged from their
 // run dir alone — nothing here needs the review to be re-run.
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { claudeRowsForJudge } from "./claudeshape.js";
@@ -385,6 +386,33 @@ export interface CaseJudgement {
   review_hash?: string;
 }
 
+/** The stamp a judged round carries for the review it judged. */
+export function reviewHash(review: ReviewForJudge): string {
+  return createHash("sha256").update(JSON.stringify(review)).digest("hex");
+}
+
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  const x = [...a].sort();
+  const y = [...b].sort();
+  return x.length === y.length && x.every((id, i) => id === y[i]);
+}
+
+/**
+ * Did this saved round judge THIS review? `review --resume` rewrites a case's
+ * review in the same run dir, and comment ids (C1, …) are stable across the
+ * rewrite, so an old round's verdicts would attach to new text. A round written
+ * before the stamp existed stands while it judged exactly this review's comment
+ * ids (a clean answer covers every one, parseJudgement).
+ */
+export function judgedReview(j: CaseJudgement, review: ReviewForJudge): boolean {
+  return j.review_hash !== undefined
+    ? j.review_hash === reviewHash(review)
+    : sameIds(
+        j.comments.map((c) => c.id),
+        review.comments.map((c) => c.id),
+      );
+}
+
 /** The last balanced top-level JSON object in `text` (fences allowed). */
 export function lastJsonObject(text: string): unknown {
   const s = text.replace(/```(?:json)?/g, "");
@@ -483,6 +511,8 @@ export interface RunScore {
   cases: number;
   judged: number;
   errors: number;
+  /** Error-free rounds that judged a different review (never scored). */
+  stale: number;
   rounds: number;
   defects: { total: number; found: number; partial: number; missed: number; recall: number };
   by_severity: Record<Severity, { total: number; credit: number; recall: number }>;
@@ -500,14 +530,14 @@ export interface RunScore {
 }
 
 /** The exit code of a defect-judge/-report run: 1 whenever the measurement is
- * incomplete — a judge error, a case defect-judge could not judge, or a case
+ * incomplete — a judge error, a stale round, a case defect-judge could not judge, or a case
  * with no usable round on disk (a bare defect-report over a partial judge
  * dir). The report still discloses it ("judged k/N"); the exit code must too. */
 export function scoreExitCode(
-  score: Pick<RunScore, "cases" | "judged" | "errors">,
+  score: Pick<RunScore, "cases" | "judged" | "errors" | "stale">,
   judgeIncomplete: boolean,
 ): 0 | 1 {
-  return score.errors || judgeIncomplete || score.judged < score.cases ? 1 : 0;
+  return score.errors || score.stale || judgeIncomplete || score.judged < score.cases ? 1 : 0;
 }
 
 /**
@@ -539,14 +569,17 @@ export function scoreRun(
     wrongBlockers = 0,
     judged = 0,
     errors = 0,
+    stale = 0,
     rounds = 0;
   const candidates: RunScore["new_defect_candidates"] = [];
   const approvedOverMissed: string[] = [];
   for (const iid of instanceIds) {
     const defects = set.cases[iid]?.defects ?? [];
     const review = reviews[iid] ?? { verdict: null, body: null, comments: [] };
-    const ok = (judgements[iid] ?? []).filter((j) => !j.error);
-    errors += (judgements[iid] ?? []).length - ok.length;
+    const clean = (judgements[iid] ?? []).filter((j) => !j.error);
+    errors += (judgements[iid] ?? []).length - clean.length;
+    const ok = clean.filter((j) => judgedReview(j, review));
+    stale += clean.length - ok.length;
     rounds = Math.max(rounds, (judgements[iid] ?? []).length);
     if (ok.length) judged++;
     const n = ok.length || 1;
@@ -604,6 +637,7 @@ export function scoreRun(
     cases: instanceIds.length,
     judged,
     errors,
+    stale,
     rounds,
     defects: { total, found, partial, missed, recall: total ? (found + 0.5 * partial) / total : 0 },
     by_severity: sev,
@@ -655,7 +689,7 @@ export function renderDefectReport(
     DEFECT_REPORT_PREAMBLE,
     "",
     `- Ground truth: \`${set.set}\` defect set, version \`${set.version}\` — ${set.method || "verified real defects"}`,
-    `- Judged ${s.judged}/${s.cases} cases, ${s.rounds} round(s)${s.errors ? `, ${s.errors} judge error(s) (counted as missed / unverifiable)` : ""}`,
+    `- Judged ${s.judged}/${s.cases} cases, ${s.rounds} round(s)${s.errors ? `, ${s.errors} judge error(s) (counted as missed / unverifiable)` : ""}${s.stale ? `, ${s.stale} stale round(s) that judged an earlier review (not scored — re-run defect-judge --resume)` : ""}`,
     "",
     "## Did the review find the real defects?",
     "",

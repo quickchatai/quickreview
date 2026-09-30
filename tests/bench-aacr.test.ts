@@ -218,6 +218,32 @@ describe("case sets", () => {
     rmSync(out, { recursive: true, force: true });
   });
 
+  it("reads a one-round eval, whose metrics file carries no _round_ suffix", () => {
+    // eval_shards.py writes `metrics_ocr_<ts>.json` when rounds == 1.
+    const dir = mkdtempSync(join(tmpdir(), "bench-quality1-"));
+    writeFileSync(
+      join(dir, "metrics_ocr_20260930.json"),
+      JSON.stringify({
+        eval_res: [
+          {
+            instance_id: "a__b@1234567",
+            comments: [{ path: "x.py", from_line: 3, semantic_match: true }],
+          },
+        ],
+      }),
+    );
+    const labels = parseReferenceLabels({
+      source: "test",
+      labels: {
+        "a__b@1234567": [{ reality: "real-defect", value: "high", path: "x.py", from_line: 3 }],
+      },
+    });
+    expect(recallByQuality(dir, labels, ["a__b@1234567"])).toEqual([
+      { cls: "real, high/medium value", total: 1, matched: 1 },
+    ]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("safeId is the scorer's own rule", () => {
     expect(safeId("a__b@1234567")).toBe("a__b@1234567");
     expect(safeId("a/b@1")).toBe("a__b@1");
