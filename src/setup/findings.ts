@@ -728,7 +728,7 @@ export class FindingsStore {
       // Each side's ticket is a filed work item: a pair that would keep only
       // one of two different tickets would orphan the other.
       else if (of?.ticket && nf?.ticket && of.ticket.ref !== nf.ticket.ref) {
-        errors.push(`${o.slice(0, 12)} (${of.ticket.ref}) and ${n.slice(0, 12)} (${nf.ticket.ref}) both carry a ticket — settle one on its ticket before pairing them`);
+        errors.push(`${o.slice(0, 12)} (${of.ticket.ref}) and ${n.slice(0, 12)} (${nf.ticket.ref}) each carry their own ticket — pairing would orphan one; leave them unpaired (the old one then settles as fixed and its ticket closes, the fresh one keeps its own)`);
       }
       usedOld.add(o);
       usedNew.add(n);

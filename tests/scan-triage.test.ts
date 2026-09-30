@@ -260,6 +260,16 @@ describe("a match never drops a ticket the fresh side already carries (selfscan 
     expect((sink as FakeSink).filed).toHaveLength(1);
   });
 
+  it("a fresh finding dismissed while the question waits keeps its dismissal when paired with an untriaged old one", async () => {
+    const { state, findings, triage } = setup();
+    findings.report([reported(FP("a"))], { run: "scan-1", sha: SHA1, at: "t1" });
+    findings.report([reported(FP("d"), { start: 9, end: 10 })], { run: "scan-2", sha: SHA2, at: "t2" });
+    ask(state, FP("a"), FP("d"));
+    expect(await triage.dismiss({ fingerprint: FP("d"), reason: "intended" })).toMatchObject({ ok: true });
+    expect(findings.match({ key: "k1", pairs: [{ old: FP("a"), new: FP("d") }] })).toMatchObject({ ok: true, matched: 1 });
+    expect(one(findings, FP("d"))).toMatchObject({ state: "dismissed", dismissal: { reason: "intended" }, ticket: null });
+  });
+
   it("a pair whose both sides carry different tickets is refused, never silently dropping one", async () => {
     const { state, findings, sink, triage } = setup();
     findings.report([reported(FP("a"))], { run: "scan-1", sha: SHA1, at: "t1" });
@@ -270,7 +280,7 @@ describe("a match never drops a ticket the fresh side already carries (selfscan 
     expect((sink as FakeSink).filed).toHaveLength(2);
     expect(findings.match({ key: "k1", pairs: [{ old: FP("a"), new: FP("d") }] })).toMatchObject({
       ok: false,
-      errors: [expect.stringMatching(/FT-9001.*FT-9002|both/)],
+      errors: [expect.stringMatching(/FT-9001.*FT-9002.*unpaired/)],
     });
     expect(one(findings, FP("a"))).toMatchObject({ ticket: { ref: "FT-9001" } });
     expect(one(findings, FP("d"))).toMatchObject({ ticket: { ref: "FT-9002" } });
