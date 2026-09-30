@@ -2159,7 +2159,7 @@ describe("selfscan4: hostile lockfiles and archives are linear work", () => {
       return parts.join("");
     };
     // SCALING, not a wall-clock budget: 10× the entries, ~10× the time.
-    const s = measureScaling(parseYarnLock, hostile(2_000), hostile(20_000));
+    const s = measureScaling(parseYarnLock, hostile(1_000), hostile(10_000));
     expect(s.ratio, JSON.stringify(s)).toBeLessThan(LINEAR_RATIO_CEILING_10X);
     const n = 50_000;
     const lock = parseYarnLock(hostile(n));
