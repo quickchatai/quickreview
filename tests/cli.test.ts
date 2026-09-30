@@ -94,6 +94,26 @@ describe("renderStatus", () => {
     expect(out).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
     expect(lines[5]).toContain("Fix [2J [31m widget row 2Kend");
   });
+
+  it("strips control bytes (incl. C1) from a session's pause reason", () => {
+    const out = renderStatus({
+      ...snapshot,
+      prs: [
+        {
+          ...snapshot.prs[0]!,
+          paused: 1,
+          pause: {
+            issuer: "session",
+            reason: "flaky\x1b[2J CI\n\x9b2Kdone",
+            since: null,
+            expires_at: null,
+          },
+        },
+      ],
+    });
+    expect(out).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
+    expect(out).toContain("#1421 paused by a session — flaky [2J CI 2Kdone");
+  });
 });
 
 describe("whyHeaderLine", () => {
