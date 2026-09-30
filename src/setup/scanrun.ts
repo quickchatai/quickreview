@@ -23,8 +23,8 @@
 //     failures can never carry a run past the cap. What it did not read stays
 //     out of the ledger, so the next preview prices exactly the rest — and
 //     runs it FIRST: stage-1 and delta cases are ordered coverage-first
-//     (scan.ts readTier: never read or cut short, then changed, then the
-//     rest), so the stop never starves the same tail run after run. Stage-2
+//     (scan.ts readTier: never read or cut short, then changed — stalest
+//     reading first — then the rest), so the stop never starves the same tail run after run. Stage-2
 //     rows keep the proposal's order.
 //   * STOP AND RESUME BY THE LEDGER. `stop` aborts in-flight cases and starts
 //     no more. A run the companion was not there to finish (a TUI quit, an
@@ -449,7 +449,7 @@ export class ScanRunner {
       partial: partialRanges(entries, SCAN_PASS),
       // Coverage first: never-read and cut-short files run before changed
       // ones, so the hard stop never starves the same tail run after run.
-      history: readings(entries, SCAN_PASS),
+      history: new Map([...readings(entries, SCAN_PASS)].map(([path, r]) => [path, { blob: r.blob, complete: r.complete, at: r.newest.at }])),
       textOf: (p) => tree.read(p),
       exclude: cfg.exclude,
       budget: { maxFiles: cfg.case_max_files, maxLines: cfg.case_max_lines },

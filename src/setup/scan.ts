@@ -222,6 +222,9 @@ export interface PriorReading {
   blob: string;
   /** Whole file, or ranges covering every line. */
   complete: boolean;
+  /** When that reading's newest row was written (ISO): among changed files
+   * the stalest reading runs first. */
+  at: string;
 }
 
 /**
@@ -322,9 +325,19 @@ export function planStage1(input: PlanInput): Stage1Plan {
   }
   const history = input.history;
   if (history !== undefined) {
-    const tier = (c: ScanCasePlan): number => Math.min(...c.files.map((f) => readTier(f, history)));
-    const ranked = cases.map((c, i) => ({ c, i, t: tier(c) }));
-    ranked.sort((x, y) => x.t - y.t || x.i - y.i);
+    const rank = (c: ScanCasePlan, i: number) => {
+      const tiers = c.files.map((f) => readTier(f, history));
+      const t = Math.min(...tiers);
+      // The stalest tier-1 reading of the case ("" sorts first; tier 0/2 unused).
+      let at = "";
+      if (t === 1) {
+        const stamps = c.files.filter((_, k) => tiers[k] === 1).map((f) => history.get(f.path)!.at);
+        at = stamps.reduce((m, x) => (x < m ? x : m));
+      }
+      return { c, i, t, at };
+    };
+    const ranked = cases.map(rank);
+    ranked.sort((x, y) => x.t - y.t || (x.at < y.at ? -1 : x.at > y.at ? 1 : 0) || x.i - y.i);
     cases.splice(0, cases.length, ...ranked.map((r) => r.c));
   }
   return { cases, excluded, covered, unassigned: a.unassigned, unreadable, unchanged };

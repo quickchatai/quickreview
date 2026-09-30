@@ -54,14 +54,29 @@ describe("planStage1 orders cases by what the ledger has read", () => {
       // reading, at older content, stopped between ranges. f: read in ranges
       // at THIS content, cut short — the rest is still due.
       history: new Map([
-        ["a/x.py", { blob: "old-a", complete: true }],
-        ["c/x.py", { blob: "old-c", complete: true }],
-        ["d/x.py", { blob: "old-d", complete: false }],
-        ["f/big.py", { blob: blob(TREE["f/big.py"]!), complete: false }],
+        ["a/x.py", { blob: "old-a", complete: true, at: "2026-09-01T00:00:00Z" }],
+        ["c/x.py", { blob: "old-c", complete: true, at: "2026-09-01T00:00:00Z" }],
+        ["d/x.py", { blob: "old-d", complete: false, at: "2026-09-01T00:00:00Z" }],
+        ["f/big.py", { blob: blob(TREE["f/big.py"]!), complete: false, at: "2026-09-01T00:00:00Z" }],
       ]),
       partial: new Map([[`f/big.py\0${blob(TREE["f/big.py"]!)}`, [{ start: 1, end: 40 }]]]),
     });
     expect(plan.cases.map((c) => c.id)).toEqual(["b", "d", "e", "f#1", "f#2", "a", "c"]);
+  });
+
+  it("among changed files the stalest reading runs first, equal stamps in the plan's order", () => {
+    const plan = planStage1({
+      ...base,
+      files: files.filter((f) => !f.path.startsWith("f/")),
+      history: new Map([
+        ["a/x.py", { blob: "old-a", complete: true, at: "2026-09-03T00:00:00Z" }],
+        ["b/x.py", { blob: "old-b", complete: true, at: "2026-09-01T00:00:00Z" }],
+        ["c/x.py", { blob: "old-c", complete: true, at: "2026-09-02T00:00:00Z" }],
+        ["d/x.py", { blob: "old-d", complete: true, at: "2026-09-01T00:00:00Z" }],
+      ]),
+    });
+    // e never read: first. Then b and d (oldest, plan order), c, a.
+    expect(plan.cases.map((c) => c.id)).toEqual(["e", "b", "d", "c", "a"]);
   });
 
   it("with no reading history the plan's own order stands", () => {
@@ -75,8 +90,8 @@ describe("planStage1 orders cases by what the ledger has read", () => {
       cut: { units: [{ name: "ab", roots: ["a", "b"], kind: "directory", note: "" }, ...cutOf(["c"]).units], ignored: [] },
       files: files.filter((f) => /^[abc]\//.test(f.path)),
       history: new Map([
-        ["a/x.py", { blob: "old-a", complete: true }],
-        ["c/x.py", { blob: "old-c", complete: true }],
+        ["a/x.py", { blob: "old-a", complete: true, at: "2026-09-01T00:00:00Z" }],
+        ["c/x.py", { blob: "old-c", complete: true, at: "2026-09-01T00:00:00Z" }],
       ]),
     });
     // Put "c" ahead in the cut: the unread b/x.py still lifts "ab" over it.
@@ -85,8 +100,8 @@ describe("planStage1 orders cases by what the ledger has read", () => {
       cut: { units: [...cutOf(["c"]).units, { name: "ab", roots: ["a", "b"], kind: "directory", note: "" }], ignored: [] },
       files: files.filter((f) => /^[abc]\//.test(f.path)),
       history: new Map([
-        ["a/x.py", { blob: "old-a", complete: true }],
-        ["c/x.py", { blob: "old-c", complete: true }],
+        ["a/x.py", { blob: "old-a", complete: true, at: "2026-09-01T00:00:00Z" }],
+        ["c/x.py", { blob: "old-c", complete: true, at: "2026-09-01T00:00:00Z" }],
       ]),
     });
     expect(plan.cases.map((c) => c.id)).toEqual(["ab", "c"]);
@@ -104,7 +119,7 @@ afterEach(() => rmSync(stateDir, { recursive: true, force: true }));
 
 const OLD = ["u1", "u2", "u3"];
 const NEW = ["u4", "u5", "u6"];
-const CUT = cutOf([...OLD, ...NEW]);
+let CUT = cutOf([...OLD, ...NEW]);
 
 /** Round `r`'s tree: u1-u3 always, their content new every round; u4-u6
  * (sat LAST in the cut, like the self-scan's starved tail) from round 1. */
@@ -208,11 +223,31 @@ describe("capped runs converge to full coverage instead of starving the same tai
 
     const r2 = await runOnce(s, shaOf(2));
     expect(r2.run.state).toBe("capped");
-    // Everything changed again; nothing is unread any more, so the plan's
-    // order stands — and the OLD half, starved last round, is read first
+    // Everything changed again; nothing is unread any more, so the stalest
+    // reading runs first — the OLD half, starved last round, is read first
     // (the rate now counts round 1's dearer cases, so a little more fits).
     expect(r2.run.cases.filter((c) => c.status === "done").map((c) => c.id).slice(0, 3)).toEqual(OLD);
     expect([...readPaths()].sort()).toEqual([...OLD, ...NEW].map((u) => `${u}/m.py`).sort());
+  });
+});
+
+describe("changed files the last capped run starved run first next time", () => {
+  it("does not depend on the cut putting the starved half first", async () => {
+    // NEW first in the cut: round 2's changed files would, in plain plan
+    // order, re-read NEW and starve OLD (read at round 0) a second time.
+    CUT = cutOf([...NEW, ...OLD]);
+    try {
+      const s = await calibrated(2);
+      const r1 = await runOnce(s, shaOf(1));
+      expect(r1.run.state).toBe("capped");
+      expect(r1.run.cases.filter((c) => c.status === "done").map((c) => c.id)).toEqual(NEW);
+      const r2 = await runOnce(s, shaOf(2));
+      expect(r2.run.state).toBe("capped");
+      expect(r2.preview.cases.map((c) => c.id)).toEqual([...OLD, ...NEW]);
+      expect(r2.run.cases.filter((c) => c.status === "done").map((c) => c.id).slice(0, 3)).toEqual(OLD);
+    } finally {
+      CUT = cutOf([...OLD, ...NEW]);
+    }
   });
 });
 
