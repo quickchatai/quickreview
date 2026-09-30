@@ -533,7 +533,12 @@ export function classifyThreadDecisionError(error: unknown): ThreadDecisionFailu
 }
 
 export interface ThreadDecisionDeps extends ReplyDeps {
-  adapter: Pick<GitHubAdapter, "createReviewCommentReply" | "resolveOwnReviewThread">;
+  adapter: Pick<GitHubAdapter, "createReviewCommentReply" | "resolveOwnReviewThread"> &
+    Partial<Pick<GitHubAdapter, "listRecentReviewComments">>;
+  /** The App's own comment login (`[github] bot_login`). With the read above
+   * it lets a RETRY learn whether the previous attempt's reply landed on
+   * GitHub although its response was lost; without either, a retry posts. */
+  botLogin?: string;
   store: ReplyDeps["store"] & Partial<Pick<StateStore, "logAnomaly">>;
   verdictDir: string;
   onHumanRequested?: (decision: ThreadDecision) => void | Promise<void>;
@@ -939,7 +944,24 @@ export class ThreadDecisionWatcher {
       const progress = this.deps.ledger.decisionProgress(d.comment_id);
       if (!progress.reply_posted) {
         if (this.deps.isDraining?.()) return false;
-        if (d.reply.trim()) {
+        const landed =
+          d.reply.trim() && retry.attempts > 0
+            ? await this.findLandedReply(d.pr, d.thread_id, d.comment_id, d.reply.trim())
+            : undefined;
+        if (landed !== undefined) {
+          // The earlier attempt's POST reached GitHub but its answer never
+          // came back. Account for it exactly as a posted reply, and do NOT
+          // post it again: a second copy is a duplicate on the thread and one
+          // reply past the exchange cap.
+          const exchanges = this.deps.ledger.recordExchange(d.thread_id, d.pr);
+          this.deps.store.registerBotComment(landed, d.pr, "review_comment");
+          this.deps.store.logEvent("pingpong_reply_recovered", d.pr, {
+            thread_id: d.thread_id,
+            comment_id: d.comment_id,
+            reply_id: landed,
+            exchanges,
+          });
+        } else if (d.reply.trim()) {
           this.lastGitHubStart = now.getTime();
           const out = await postReply(this.deps, {
             pr: d.pr,
@@ -1039,6 +1061,34 @@ export class ThreadDecisionWatcher {
     } finally {
       this.inFlight.delete(name);
       this.processing = false;
+    }
+  }
+
+  /** On a retry: the id of this decision's reply if an earlier attempt
+   * already posted it (same thread, the bot's login, the exact body, newer
+   * than the author message it answers — GitHub ids are monotonic), else
+   * undefined. A failed or unavailable read answers undefined and the retry
+   * posts, which is the old behaviour. */
+  private async findLandedReply(
+    pr: number,
+    threadId: number,
+    commentId: number,
+    body: string,
+  ): Promise<number | undefined> {
+    const list = this.deps.adapter.listRecentReviewComments;
+    if (!list || !this.deps.botLogin) return undefined;
+    try {
+      const comments = await list.call(this.deps.adapter, pr);
+      return comments.find(
+        (c) =>
+          c.in_reply_to_id === threadId &&
+          c.user === this.deps.botLogin &&
+          c.id > commentId &&
+          c.body.trim() === body,
+      )?.id;
+    } catch (err) {
+      this.deps.log?.(`pingpong: could not check #${pr} thread ${threadId} for a landed reply`, err);
+      return undefined;
     }
   }
 

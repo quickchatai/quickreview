@@ -95,6 +95,20 @@ export interface ReviewCommentFull {
   created_at?: string | null;
 }
 
+function toReviewCommentFull(c: any): ReviewCommentFull {
+  return {
+    id: c.id,
+    user: c.user?.login ?? "",
+    user_type: c.user?.type ?? "User",
+    body: c.body ?? "",
+    path: c.path ?? "",
+    line: c.line ?? c.original_line ?? null,
+    pull_request_review_id: c.pull_request_review_id ?? null,
+    in_reply_to_id: c.in_reply_to_id ?? null,
+    created_at: c.created_at ?? null,
+  };
+}
+
 /** One top-level PR conversation comment (the issues API). Read-only, added
  * for the capture sweep. */
 export interface IssueCommentFull {
@@ -824,17 +838,19 @@ export class GitHubAdapter {
     const { rows: res } = await this.pagedArray<any>(
       `/repos/${this.owner}/${this.repo}/pulls/${n}/comments?per_page=100`,
     );
-    return res.map((c) => ({
-      id: c.id,
-      user: c.user?.login ?? "",
-      user_type: c.user?.type ?? "User",
-      body: c.body ?? "",
-      path: c.path ?? "",
-      line: c.line ?? c.original_line ?? null,
-      pull_request_review_id: c.pull_request_review_id ?? null,
-      in_reply_to_id: c.in_reply_to_id ?? null,
-      created_at: c.created_at ?? null,
-    }));
+    return res.map(toReviewCommentFull);
+  }
+
+  /** The NEWEST inline review comments, newest first — read-only. The
+   * ping-pong retry path reads this to learn whether a reply whose POST
+   * response was lost actually landed; the plain listing above returns the
+   * OLDEST page, which on a busy PR never reaches a just-posted reply. */
+  async listRecentReviewComments(n: number): Promise<ReviewCommentFull[]> {
+    const res = await this.request<any[]>(
+      "GET",
+      `/repos/${this.owner}/${this.repo}/pulls/${n}/comments?sort=created&direction=desc&per_page=100`,
+    );
+    return res.map(toReviewCommentFull);
   }
 
   /** Review comments the bot authored on a PR — the registry backfill source. */

@@ -1350,6 +1350,11 @@ describe("delivery", () => {
     );
     expect(adapter.order).toEqual(["comment", "request"]);
     expect(outcomes[0]).toMatchObject({ comment_executed: true, review_requested: false });
+    // The note was posted BEFORE the request failed, so it must not have
+    // promised a queue entry that never arrived (selfscan d5a5ee72).
+    const posted = (adapter.reviews[0]!.payload as { body: string }).body;
+    expect(posted).not.toContain("You will also see");
+    expect(posted).toContain("review-requested queue");
     expect(store.escalationCount(14)).toBe(1);
     const again = fakeAdapter();
     const second = await deliverEscalations(

@@ -325,6 +325,94 @@ describe("structured thread decision", () => {
     expect(ledger.discipline(4000).exchanges).toBe(1);
   });
 
+  it("a retry after a lost reply response finds the landed reply and does not post it again", async () => {
+    // selfscan d8e53a98: GitHub committed the POST but the answer was lost.
+    // Reposting would be a duplicate on the thread and one past the cap.
+    ledger.claimAuthorMessage(event);
+    ledger.recordExchange(4000, 77);
+    ledger.recordExchange(4000, 77);
+    let now = new Date("2026-08-26T09:00:00Z");
+    const createReviewCommentReply = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("fetch failed: socket hang up"))
+      .mockResolvedValue({ executed: true, response: { id: 6002 } });
+    const resolveOwnReviewThread = vi.fn().mockResolvedValue({ skipped: null });
+    const listRecentReviewComments = vi.fn().mockResolvedValue([
+      { id: 6001, user: "qc-bot[bot]", body: "That addresses it.", in_reply_to_id: 4000 },
+      { id: 5001, user: "some-dev", body: event.body, in_reply_to_id: 4000 },
+    ]);
+    const store = { registerBotComment: vi.fn(), logEvent: vi.fn(), logAnomaly: vi.fn() };
+    const watcher = new ThreadDecisionWatcher({
+      adapter: { createReviewCommentReply, resolveOwnReviewThread, listRecentReviewComments },
+      botLogin: "qc-bot[bot]",
+      store,
+      ledger,
+      verdictDir: root,
+      now: () => now,
+    });
+    const name = "pr-77-thread-4000-comment-5001.json";
+    writeFileSync(
+      join(root, name),
+      JSON.stringify({
+        pr: 77,
+        thread_id: 4000,
+        comment_id: 5001,
+        resolution: "resolve",
+        reply: "That addresses it.",
+      }),
+    );
+
+    expect(await watcher.handleFile(name)).toBe(false);
+    // The first attempt did not read: a fresh decision posts without a GET.
+    expect(listRecentReviewComments).not.toHaveBeenCalled();
+    now = new Date("2026-08-26T09:00:31Z");
+    expect(await watcher.handleFile(name)).toBe(true);
+    expect(createReviewCommentReply).toHaveBeenCalledTimes(1);
+    expect(ledger.discipline(4000).exchanges).toBe(3);
+    expect(store.registerBotComment).toHaveBeenCalledWith(6001, 77, "review_comment");
+    expect(resolveOwnReviewThread).toHaveBeenCalledTimes(1);
+  });
+
+  it("a retry whose earlier reply never landed posts it (a stale bot reply to an OLDER message does not count)", async () => {
+    ledger.claimAuthorMessage(event);
+    let now = new Date("2026-08-26T09:00:00Z");
+    const createReviewCommentReply = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("fetch failed"))
+      .mockResolvedValue({ executed: true, response: { id: 6002 } });
+    const resolveOwnReviewThread = vi.fn().mockResolvedValue({ skipped: null });
+    const listRecentReviewComments = vi.fn().mockResolvedValue([
+      // Same body, but it answers an earlier author message (id < 5001).
+      { id: 4500, user: "qc-bot[bot]", body: "That addresses it.", in_reply_to_id: 4000 },
+    ]);
+    const store = { registerBotComment: vi.fn(), logEvent: vi.fn(), logAnomaly: vi.fn() };
+    const watcher = new ThreadDecisionWatcher({
+      adapter: { createReviewCommentReply, resolveOwnReviewThread, listRecentReviewComments },
+      botLogin: "qc-bot[bot]",
+      store,
+      ledger,
+      verdictDir: root,
+      now: () => now,
+    });
+    const name = "pr-77-thread-4000-comment-5001.json";
+    writeFileSync(
+      join(root, name),
+      JSON.stringify({
+        pr: 77,
+        thread_id: 4000,
+        comment_id: 5001,
+        resolution: "keep_open",
+        reply: "That addresses it.",
+      }),
+    );
+    expect(await watcher.handleFile(name)).toBe(false);
+    now = new Date("2026-08-26T09:00:31Z");
+    expect(await watcher.handleFile(name)).toBe(true);
+    expect(listRecentReviewComments).toHaveBeenCalledTimes(1);
+    expect(createReviewCommentReply).toHaveBeenCalledTimes(2);
+    expect(ledger.discipline(4000).exchanges).toBe(1);
+  });
+
   it("does not duplicate the reply when thread resolution retries", async () => {
     ledger.claimAuthorMessage(event);
     let now = new Date("2026-08-26T09:00:00Z");

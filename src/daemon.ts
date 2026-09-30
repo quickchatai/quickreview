@@ -271,6 +271,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     verdictDir,
     log,
     isDraining: () => store.drainState().draining,
+    botLogin: cfg.github.bot_login,
     ownerActorAlias:
       cfg.github.bot_login === `${cfg.github.app_slug}[bot]` ? cfg.github.app_slug : undefined,
     // The author asked for a person on a review thread.
