@@ -27,6 +27,9 @@ class FakeSlack implements SlackWebApi {
   failNext = false;
   throwNext = false;
   pinResult: SlackPostResult = { ok: true };
+  /** Refuse (ok:false, the way SlackApiClient reports a dropped call) this
+   * many updateMessage calls before accepting again. */
+  refuseUpdates = 0;
   /** When set, every postMessage waits on this gate (a slow, queued call). */
   gate: Promise<void> | null = null;
   private seq = 0;
@@ -53,6 +56,10 @@ class FakeSlack implements SlackWebApi {
     ts: string;
     text: string;
   }): Promise<SlackPostResult> {
+    if (this.refuseUpdates > 0) {
+      this.refuseUpdates--;
+      return { ok: false, error: "ratelimited" };
+    }
     this.updates.push({ ts: args.ts, text: args.text });
     return { ok: true, ts: args.ts };
   }
@@ -508,6 +515,73 @@ describe("pinned heartbeat", () => {
     expect(slack.updates).toContainEqual({
       ts: incidentTs2,
       text: expect.stringContaining("recovered via operator-rerun"),
+    });
+  });
+
+  describe("a recovered incident's correction (selfscan 3087bc73 / 89309b74)", () => {
+    async function recoveredIncident(a: SlackAnnouncer): Promise<string> {
+      store.upsertPr({
+        number: 5410,
+        state: "reviewing",
+        head_sha: "abc",
+        title: "PR",
+        author: "alice",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
+      const roundId = store.startRound(5410, "first", ["pass-baseline"], 75);
+      store.openReviewFailure({
+        pr: 5410,
+        command_id: "cmd-5410",
+        round_id: roundId,
+        round_no: 1,
+        head_sha: "abc",
+        stage: "command_start",
+        detail: "no start",
+        attempts: 2,
+        retry_cap: 2,
+      });
+      await a.anomaly({
+        pr: 5410,
+        round_no: 1,
+        kind: "failed_loud",
+        deadline_min: 75,
+        incident_id: "review-failure:cmd-5410",
+      });
+      store.recoverReviewFailure(5410, "operator-rerun");
+      return store.slackPost("review-failure:cmd-5410")!.ts!;
+    }
+    const corrections = (ts: string) =>
+      slack.updates.filter((u) => u.ts === ts && u.text.includes("recovered via"));
+
+    it("reaches the incident message on a long heartbeat interval", async () => {
+      cfg.slack.policy.heartbeat_interval_min = 15;
+      const a = announcer();
+      await a.heartbeat(); // 09:00 tick, before the failure
+      at("2026-08-17T09:01:00.000Z");
+      const ts = await recoveredIncident(a);
+      at("2026-08-17T09:15:00.000Z"); // the next tick: 14 min after the recovery
+      await a.heartbeat();
+      expect(corrections(ts)).toHaveLength(1);
+    });
+
+    it("keeps retrying a refused correction until Slack accepts it, and logs the refusal", async () => {
+      const logs: string[] = [];
+      const a = announcer({ log: (m: string) => logs.push(m) });
+      const ts = await recoveredIncident(a);
+      slack.refuseUpdates = 3; // both ticks' corrections + the second heartbeat edit refused
+      await a.heartbeat();
+      at("2026-08-17T09:05:00.000Z");
+      await a.heartbeat();
+      expect(corrections(ts)).toHaveLength(0);
+      expect(logs.some((m) => m.includes("failure recovery update failed"))).toBe(true);
+      at("2026-08-17T09:30:00.000Z"); // well past the old 10-minute window
+      await a.heartbeat();
+      expect(corrections(ts)).toHaveLength(1);
+      at("2026-08-17T09:35:00.000Z");
+      await a.heartbeat(); // delivered once — never re-edited every tick
+      expect(corrections(ts)).toHaveLength(1);
     });
   });
 

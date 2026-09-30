@@ -60,6 +60,10 @@ export const LIFECYCLE_CAUSES = {
 
 /** Fixed ledger key for the pinned heartbeat: one message, updated forever. */
 export const HEARTBEAT_IDEM_KEY = "daemon.heartbeat";
+/** How long after a recovery the pinned heartbeat still names it. */
+const RECOVERY_BANNER_WINDOW_MS = 10 * 60_000;
+/** How long a recovered incident's message correction is retried for. */
+const RECOVERY_CORRECTION_WINDOW_MS = 24 * 60 * 60_000;
 
 export interface RoundAnnouncement {
   pr: number;
@@ -203,6 +207,10 @@ export function scanNotPickedUp(
 export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
   private heartbeatTimer: unknown = null;
   private lastConnections = 1;
+  /** Incident ids whose recovery correction Slack has ACCEPTED in this
+   * process. A refused edit stays out and is retried on the next tick; a
+   * restart forgets the set and re-applies the (identical) edit once. */
+  private readonly correctedIncidents = new Set<string>();
   /** Tail of each posting lane (one per PR, else one per idem key). */
   private readonly lanes = new Map<string, Promise<unknown>>();
   private readonly setTimeoutFn: (fn: () => void, ms: number) => unknown;
@@ -600,18 +608,30 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     if (!this.enabled) return undefined;
     const { store, cfg, slack } = this.deps;
     const refreshedAt = this.now();
+    // The banner names only a JUST-recovered incident; the incident message's
+    // correction is owed until Slack accepts it, whatever the tick cadence —
+    // so it reads a day-long window and retries a refusal (selfscan 3087bc73).
     const recoveries = store.recentReviewRecoveries(
-      new Date(refreshedAt.getTime() - 10 * 60_000).toISOString(),
+      new Date(refreshedAt.getTime() - RECOVERY_BANNER_WINDOW_MS).toISOString(),
     );
-    for (const recovered of recoveries) {
+    const owed = store.recentReviewRecoveries(
+      new Date(refreshedAt.getTime() - RECOVERY_CORRECTION_WINDOW_MS).toISOString(),
+    );
+    const stillOwed = new Set(owed.map((r) => r.incident_id));
+    for (const id of this.correctedIncidents)
+      if (!stillOwed.has(id)) this.correctedIncidents.delete(id);
+    for (const recovered of owed) {
+      if (this.correctedIncidents.has(recovered.incident_id)) continue;
       const incidentPost = store.slackPost(recovered.incident_id);
       if (!incidentPost?.ts) continue;
       try {
-        await slack.updateMessage({
+        const res = await slack.updateMessage({
           channel: cfg.slack.channel,
           ts: incidentPost.ts,
           text: `✓ #${recovered.pr} review failure recovered via ${recovered.recovery ?? "operator action"} — ${recovered.incident_id}`,
         });
+        if (res.ok) this.correctedIncidents.add(recovered.incident_id);
+        else this.log("slack: failure recovery update failed", res.error);
       } catch (err) {
         this.log("slack: failure recovery update threw", err);
       }
