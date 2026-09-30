@@ -279,6 +279,22 @@ describe("the two sides resolve the way the daemon resolves a profile", () => {
     expect(r.sides.new.cfg.lenses?.["pass-tests"]).toEqual({ enabled: false });
   });
 
+  it("…nor through a linked profiles/ directory as a whole", () => {
+    const linked = join(dir, "dotfiles", "profiles");
+    mkdirSync(linked, { recursive: true });
+    mkdirSync(configHome(env), { recursive: true });
+    symlinkSync(linked, join(configHome(env), "profiles"));
+    tune({ security: "critical" });
+    tune({ security: "critical", tests: "ignore" });
+    const live = readFileSync(join(linked, "acme", "profile.toml"), "utf8");
+    expect(live).toContain("[lenses.pass-tests]");
+    const r = sides();
+    if (!r.ok) throw new Error(r.errors.join("; "));
+    expect(r.sides.old.cfg.lenses?.["pass-tests"]).toBeUndefined();
+    expect(readFileSync(join(linked, "acme", "profile.toml"), "utf8")).toBe(live);
+    expect(r.sides.new.cfg.lenses?.["pass-tests"]).toEqual({ enabled: false });
+  });
+
   it("a write that created the profile compares against what the config named then — here, none", () => {
     const first = tune({ security: "critical" });
     const r = sides();
