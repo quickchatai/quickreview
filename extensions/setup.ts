@@ -236,6 +236,12 @@ export function renderSurveyPreview(p: SurveyPreview): string {
     ...rows,
   ];
   if (p.unsampled.length > 0) out.push(`Not surveyed (no code to sample outside tests and migrations): ${p.unsampled.join(", ")}`);
+  if (p.unassigned.length > 0) {
+    out.push(
+      `Not surveyed: ${p.unassigned.length} file(s) belong to no unit of the saved cut: ${p.unassigned.slice(0, 10).join(", ")}` +
+        `${p.unassigned.length > 10 ? ", …" : ""} — adjust and save the cut to cover them.`,
+    );
+  }
   out.push(
     p.existing_entries === null
       ? "Existing #survey memory: UNKNOWN (memory could not be read)."

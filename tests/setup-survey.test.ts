@@ -36,6 +36,7 @@ import {
   surveyMemoryText,
 } from "../src/setup/survey.js";
 import { SURVEY_FILE, type SurveyFile } from "../src/setup/surveyrun.js";
+import { renderSurveyPreview } from "../extensions/setup.js";
 
 // ---- fakes -------------------------------------------------------------------
 
@@ -291,11 +292,14 @@ describe("the plan", () => {
     expect(plan.cases.filter((c) => c.stage === "repo").every((c) => c.unit === REPO_SCOPE)).toBe(true);
   });
 
-  it("the preview key names the plan AND the head", () => {
+  it("the preview key names the plan, the head AND the price", () => {
     const plan = planSurvey(input);
-    expect(planKey(plan, "a")).toBe(planKey(planSurvey(input), "a"));
-    expect(planKey(plan, "a")).not.toBe(planKey(plan, "b"));
-    expect(planKey(plan, "a")).not.toBe(planKey(planSurvey({ ...input, guides: ["README.md"] }), "a"));
+    const R = REFERENCE_RATE;
+    expect(planKey(plan, "a", R)).toBe(planKey(planSurvey(input), "a", R));
+    expect(planKey(plan, "a", R)).not.toBe(planKey(plan, "b", R));
+    expect(planKey(plan, "a", R)).not.toBe(planKey(planSurvey({ ...input, guides: ["README.md"] }), "a", R));
+    expect(planKey(plan, "a", R)).not.toBe(planKey(plan, "a", { ...R, usd_per_kline: R.usd_per_kline * 2 }));
+    expect(planKey(plan, "a", R)).not.toBe(planKey(plan, "a", { ...R, usd_per_case: 0 }));
   });
 });
 
@@ -385,6 +389,41 @@ describe("the cost preview gates every start", () => {
     const stale = await engine.surveyStart({ key: p.key });
     expect(stale).toEqual({ ok: false, errors: [expect.stringMatching(/the plan changed since that preview/)] });
     expect((cases as FakeCases).specs).toEqual([]);
+  });
+
+  it("the key binds the price: a rate measured by a partial run invalidates the preview taken at the old one", async () => {
+    // One unit fails, so the run settles partial (no re-survey flag needed),
+    // but the finished cases carry a cost and settle replaces the rate.
+    const fake = new FakeCases((spec) => (spec.unit === "web" ? answer("the tool errored") : answer("NONE", 0.5)));
+    const { engine } = setup({ cases: fake });
+    const r = await engine.surveyPreview();
+    if (!r.ok) throw new Error(r.errors.join("; "));
+    expect(r.preview.rate).toEqual(REFERENCE_RATE);
+    expect((await engine.surveyStart({ key: r.preview.key })).ok).toBe(true);
+    await engine.surveyIdle();
+    expect(engine.surveyStatus().run!.state).toBe("partial");
+    expect(onDisk().rate).not.toBeNull();
+    const again = await engine.surveyStart({ key: r.preview.key });
+    expect(again).toEqual({ ok: false, errors: [expect.stringMatching(/the plan changed since that preview/)] });
+    const fresh = await engine.surveyPreview();
+    if (!fresh.ok) throw new Error(fresh.errors.join("; "));
+    expect(fresh.preview.key).not.toBe(r.preview.key);
+    expect((await engine.surveyStart({ key: fresh.preview.key })).ok).toBe(true);
+    await engine.surveyIdle();
+  });
+
+  it("files the saved cut no longer covers are listed in the preview and the run, never silently skipped", async () => {
+    const { engine, repo } = setup();
+    repo.files = { ...repo.files, "services/api.ts": lines(40) };
+    const r = await engine.surveyPreview();
+    if (!r.ok) throw new Error(r.errors.join("; "));
+    expect(r.preview.unassigned).toEqual(["services/api.ts"]);
+    expect(renderSurveyPreview(r.preview)).toMatch(/belong to no unit.*services\/api\.ts/);
+    const st = await engine.surveyStart({ key: r.preview.key });
+    if (!st.ok) throw new Error(st.errors.join("; "));
+    expect(st.run.unassigned).toEqual(["services/api.ts"]);
+    engine.surveyStop();
+    await engine.surveyIdle();
   });
 
   it("with no memory the preview says so and a start is refused — the survey exists to write memory", async () => {

@@ -85,6 +85,9 @@ export interface SurveyPlan {
   /** Units with nothing to sample (no code files outside tests and
    * migrations) — reported, never silently dropped. */
   unsampled: string[];
+  /** Files the saved cut gives to no unit (the repo grew past it): no unit
+   * case samples them — reported, never silently dropped. */
+  unassigned: string[];
   lines: number;
 }
 
@@ -207,15 +210,17 @@ export function planSurvey(input: PlanInput): SurveyPlan {
       lines: sample.reduce((n, f) => n + f.lines, 0),
     });
   }
-  return { cases, unsampled, lines: cases.reduce((n, c) => n + c.lines, 0) };
+  return { cases, unsampled, unassigned: a.unassigned, lines: cases.reduce((n, c) => n + c.lines, 0) };
 }
 
-/** A short key naming exactly this plan at this head: the preview hands it
- * out and a start must quote it back, so nothing starts on a plan (or a
- * price) the operator was not shown. */
-export function planKey(plan: SurveyPlan, head: string | null): string {
+/** A short key naming exactly this plan at this head at this rate: the
+ * preview hands it out and a start must quote it back, so nothing starts on a
+ * plan (or a price, or a coverage gap) the operator was not shown — a run
+ * that settles with a measured rate invalidates every key priced before it. */
+export function planKey(plan: SurveyPlan, head: string | null, rate: SurveyRate): string {
   const shape = plan.cases.map((c) => [c.id, c.files.map((f) => [f.path, f.lines])]);
-  return createHash("sha256").update(JSON.stringify([head, shape])).digest("hex").slice(0, 12);
+  const price = [rate.usd_per_case, rate.usd_per_kline];
+  return createHash("sha256").update(JSON.stringify([head, shape, plan.unassigned, price])).digest("hex").slice(0, 12);
 }
 
 // ---- the price ------------------------------------------------------------------

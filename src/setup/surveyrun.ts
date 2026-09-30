@@ -96,6 +96,9 @@ export interface SurveyRun {
   state: RunState;
   cases: SurveyCaseState[];
   unsampled: string[];
+  /** Files the saved cut gives to no unit — not sampled by this run. Absent
+   * on a record written before it was kept. */
+  unassigned?: string[];
   /** Earlier `#survey` entries this run retired. */
   superseded: number;
   problems: string[];
@@ -121,6 +124,8 @@ export interface SurveyPreview {
   head: string | null;
   cases: Array<SurveyCasePlan & { estimate_usd: number }>;
   unsampled: string[];
+  /** Files the saved cut gives to no unit: no unit case will sample them. */
+  unassigned: string[];
   lines: number;
   estimate_usd: number;
   rate: SurveyRate;
@@ -269,10 +274,11 @@ export class SurveyRunner {
     return {
       ok: true,
       preview: {
-        key: planKey(p.plan, p.head),
+        key: planKey(p.plan, p.head, rate),
         head: p.head,
         cases: p.plan.cases.map((c) => ({ ...c, estimate_usd: caseEstimate(c.lines, rate) })),
         unsampled: p.plan.unsampled,
+        unassigned: p.plan.unassigned,
         lines: p.plan.lines,
         estimate_usd: planEstimate(p.plan, rate),
         rate,
@@ -298,17 +304,6 @@ export class SurveyRunner {
     if (memory === null) return { ok: false, errors: [noMemory()] };
     const p = this.plan();
     if (!p.ok) return p;
-    const key = planKey(p.plan, p.head);
-    if (typeof args.key !== "string" || args.key === "") {
-      return { ok: false, errors: ["no preview key — run the survey preview, show the operator the cost, then start with its key"] };
-    }
-    if (args.key !== key) {
-      return {
-        ok: false,
-        errors: [`the plan changed since that preview (key ${args.key}, now ${key}) — preview again and show the operator the new cost`],
-      };
-    }
-    if (p.plan.cases.length === 0) return { ok: false, errors: ["there is nothing to survey"] };
     const { file, error } = this.load();
     if (error !== null) return { ok: false, errors: [error] };
     const resurvey = args.resurvey === true;
@@ -321,6 +316,20 @@ export class SurveyRunner {
         ],
       };
     }
+    // The key binds the price as well as the plan: the rate is the one the
+    // preview would show now, and the one this run's estimate is recorded at.
+    const rate = file.rate ?? REFERENCE_RATE;
+    const key = planKey(p.plan, p.head, rate);
+    if (typeof args.key !== "string" || args.key === "") {
+      return { ok: false, errors: ["no preview key — run the survey preview, show the operator the cost, then start with its key"] };
+    }
+    if (args.key !== key) {
+      return {
+        ok: false,
+        errors: [`the plan changed since that preview (key ${args.key}, now ${key}) — preview again and show the operator the new cost`],
+      };
+    }
+    if (p.plan.cases.length === 0) return { ok: false, errors: ["there is nothing to survey"] };
     if (memory.ensureWritable) {
       // The slot is reserved across the await: a second start arriving while
       // this one waits on memory would otherwise pass the `active` check too
@@ -335,7 +344,6 @@ export class SurveyRunner {
     }
 
     const now = this.ports.clock();
-    const rate = file.rate ?? REFERENCE_RATE;
     const run: SurveyRun = {
       id: `survey-${now.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}`,
       started_at: now.toISOString(),
@@ -364,6 +372,7 @@ export class SurveyRunner {
         finished_at: null,
       })),
       unsampled: p.plan.unsampled,
+      unassigned: p.plan.unassigned,
       superseded: 0,
       problems: [],
     };
