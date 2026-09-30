@@ -61,6 +61,38 @@ export function roundTemplateFile(roundType: RoundType): string {
  * plans no passes and asks one question. */
 export const RECHECK_TEMPLATE_FILE = "round-recheck.md";
 
+/**
+ * A repository path as an inline code span that stays DATA. Git paths may hold
+ * backticks, pipes and newlines, and they are author-controlled: rendered raw
+ * they could close the span, split a plan-table row, or open a new line of
+ * daemon-authored prompt text. Control characters are shown as `\uXXXX`,
+ * pipes are table-escaped, and the fence is one backtick longer than any run
+ * inside the name (CommonMark), so the name reads back exactly otherwise.
+ */
+export function codePath(path: string): string {
+  const flat = path
+    .replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`)
+    .replace(/\|/g, "\\|");
+  const longest = Math.max(0, ...(flat.match(/`+/g) ?? []).map((r) => r.length));
+  if (longest === 0) return `\`${flat}\``;
+  const fence = "`".repeat(longest + 1);
+  return `${fence} ${flat} ${fence}`;
+}
+
+/**
+ * A PR title quoted inside daemon-authored prompt text (`("{{title}}")` in the
+ * conversation system prompt and the round templates). The title is the
+ * author's, so it must not be able to close that quotation or start a new
+ * line of instructions: control characters collapse to a space and a double
+ * quote becomes a single one. GitHub caps titles at 256 characters; so do we.
+ */
+export function promptTitle(title: string): string {
+  return title
+    .replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, " ")
+    .replace(/"/g, "'")
+    .slice(0, 256);
+}
+
 /** Markdown list of the delta, trivial classifications included so the session
  * can see what the daemon already ruled out and why. */
 export function renderDeltaFiles(files: readonly FileClass[]): string {
@@ -68,8 +100,8 @@ export function renderDeltaFiles(files: readonly FileClass[]): string {
   return files
     .map((f) =>
       f.class === "significant"
-        ? `- \`${f.filename}\` — **review this**`
-        : `- \`${f.filename}\` — trivial (${f.reason}), already ruled out`,
+        ? `- ${codePath(f.filename)} — **review this**`
+        : `- ${codePath(f.filename)} — trivial (${f.reason}), already ruled out`,
     )
     .join("\n");
 }
@@ -84,7 +116,7 @@ export function recheckVars(
   return {
     ...identity,
     n: String(order.pr),
-    title: order.title,
+    title: promptTitle(order.title),
     worktree: order.worktree,
     trigger: order.trigger,
     standing_verdict: order.standing_verdict,
@@ -322,7 +354,7 @@ export function renderPassPlan(plan: PassPlanEntry[], unswept: string[] = []): s
     if (notes)
       cells.push(
         p.focus !== undefined
-          ? `files: ${p.focus.map((f) => `\`${f}\``).join(", ")}`
+          ? `files: ${p.focus.map(codePath).join(", ")}`
           : p.why !== undefined
             ? `because ${p.why}`
             : "",
@@ -339,7 +371,7 @@ export function renderPassPlan(plan: PassPlanEntry[], unswept: string[] = []): s
     unswept.length > 0
       ? [
           "",
-          `Not swept (over the per-round sweep cap): ${unswept.map((f) => `\`${f}\``).join(", ")}.`,
+          `Not swept (over the per-round sweep cap): ${unswept.map(codePath).join(", ")}.`,
         ]
       : [];
   return [...head, ...rows, ...tail].join("\n");
@@ -377,8 +409,10 @@ export function renderValidatorNote(order: Pick<RoundOrder, "pass_plan">): strin
     "`pass-validate` entry, and the findings record has no `doubted` rows.",
     "The filters and caps the validator would have applied are still yours to",
     "apply before posting — none of them is switched off with it: drop a candidate",
-    "that re-raises a SETTLED thread (`killed`, `settled:<thread-id>`) and a new",
-    "nit outside the delta while a NIT SCOPE block is armed (`nit-out-of-delta`),",
+    "that re-raises a SETTLED thread (`killed`, `settled:<thread-id>`) unless its",
+    "lens marked it `contests-settled:<thread-id>` — a contest is yours to judge",
+    "on its evidence, never an automatic drop — and a new nit outside the delta",
+    "while a NIT SCOPE block is armed (`nit-out-of-delta`),",
     "and hold every lens to its own severity cap — the one its instructions set,",
     "and any ceiling this repo's profile sets for it.",
   ].join("\n");
@@ -442,7 +476,7 @@ export function roundVars(
     pinned_head: renderPinnedHeadSection(memory, ownerName),
     context_block: renderContextBlockSection(memory),
     n: String(order.pr),
-    title: order.title,
+    title: promptTitle(order.title),
     worktree: order.worktree,
     head_sha: order.head_sha,
     round_type: order.round_type,
@@ -516,7 +550,7 @@ export function renderConversationSystemPrompt(
   return render(templateText, {
     ...identity,
     n: String(vars.pr),
-    title: vars.title,
+    title: promptTitle(vars.title),
     worktree: vars.worktree,
   });
 }

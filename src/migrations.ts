@@ -64,6 +64,9 @@ export interface MigrationCollision {
   /** Follow-ups only: false when the file keeps its number and only its
    * `dependencies` entry moves. */
   renumber?: boolean;
+  /** Follow-ups only, and only when the renamed dependency lives in ANOTHER
+   * app: that app's label, which the stale tuple names. Absent ⇒ `app_label`. */
+  dependency_app_label?: string;
 }
 
 const MIGRATION_PATH = /^(?:(.*)\/)?migrations\/(\d{2,})_([^/]+)\.py$/;
@@ -113,6 +116,20 @@ function referencesMigration(patch: string | undefined, name: string): boolean {
   return new RegExp(`["']${escapeRe(name)}["']`).test(patch);
 }
 
+/** Does this file's diff name `(app_label, name)` as a `dependencies` tuple?
+ * A cross-app reference must carry the label — a bare `"0001_initial"` in
+ * another app is that app's own migration. */
+function referencesAppMigration(
+  patch: string | undefined,
+  appLabel: string,
+  name: string,
+): boolean {
+  if (!patch || !name || !appLabel) return false;
+  return new RegExp(
+    `\\(\\s*["']${escapeRe(appLabel)}["']\\s*,\\s*["']${escapeRe(name)}["']\\s*\\)`,
+  ).test(patch);
+}
+
 /**
  * Migration numbers this PR claims that the base branch already occupies.
  *
@@ -124,12 +141,17 @@ function referencesMigration(patch: string | undefined, name: string): boolean {
  */
 export function detectMigrationCollisions(input: CollisionInput): MigrationCollision[] {
   const baseByApp = new Map<string, Map<number, MigrationRef>>();
+  // Every base migration path. Django names a migration by app + full name, so
+  // a merged graph can legitimately hold 0042_a AND 0042_b; a PR editing
+  // either one edits an existing file and collides with nothing.
+  const basePaths = new Set<string>();
   for (const path of input.baseFiles) {
     const ref = parseMigrationPath(path);
     if (!ref) continue;
+    basePaths.add(ref.path);
     const byNumber = baseByApp.get(ref.app) ?? new Map<number, MigrationRef>();
-    // A base tree cannot legitimately hold two migrations on one number; if it
-    // somehow does, the higher path wins deterministically.
+    // Two base migrations on one number (branched history + a merge
+    // migration): the higher path is the occupant a NEW file is told about.
     const prev = byNumber.get(ref.number);
     if (!prev || prev.path < ref.path) byNumber.set(ref.number, ref);
     baseByApp.set(ref.app, byNumber);
@@ -147,6 +169,10 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
   }
 
   const out: MigrationCollision[] = [];
+  // Every rename the remedy prescribes, per app, for the cross-app follow-up
+  // pass below.
+  const renamedByApp = new Map<string, { app_label: string; renamed: Map<string, { name: string; number: number }> }>();
+  const handled = new Set<string>();
   for (const [app, entries] of [...prByApp].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
     const base = baseByApp.get(app) ?? new Map<number, MigrationRef>();
     const ordered = [...entries].sort(
@@ -154,7 +180,7 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
     );
     const colliding = ordered.filter(({ ref: r }) => {
       const occupant = base.get(r.number);
-      return occupant !== undefined && occupant.path !== r.path;
+      return occupant !== undefined && !basePaths.has(r.path);
     });
     if (colliding.length === 0) continue;
 
@@ -230,6 +256,49 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
       if (mustRenumber)
         renamed.set(`${ref.digits}_${ref.name}`, { name: target.name, number: targetNumber });
     }
+    for (const c of out) handled.add(c.pr_path);
+    renamedByApp.set(app, { app_label: colliding[0]!.ref.app_label, renamed });
+  }
+
+  // Cross-app follow-ups: a PR migration in ANOTHER app whose `dependencies`
+  // name a migration the remedy renames. Numbers are per app, so it never
+  // renumbers — only its dependency tuple moves.
+  if (renamedByApp.size > 0) {
+    for (const [app, entries] of [...prByApp].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+      const ordered = [...entries].sort(
+        (a, b) => a.ref.number - b.ref.number || (a.ref.path < b.ref.path ? -1 : 1),
+      );
+      for (const { ref, patch } of ordered) {
+        if (handled.has(ref.path)) continue;
+        let hit: { label: string; stale: string; dep: { name: string } } | undefined;
+        for (const [otherApp, { app_label, renamed }] of renamedByApp) {
+          if (otherApp === app) continue;
+          const stale = [...renamed.keys()].find((old) =>
+            referencesAppMigration(patch, app_label, old),
+          );
+          if (stale !== undefined) {
+            hit = { label: app_label, stale, dep: renamed.get(stale)! };
+            break;
+          }
+        }
+        if (!hit) continue;
+        out.push({
+          app,
+          app_label: ref.app_label,
+          pr_path: ref.path,
+          number: ref.number,
+          base_path: "",
+          target_number: ref.number,
+          target_path: ref.path,
+          dependency_name: hit.dep.name,
+          dependency: `("${hit.label}", "${hit.dep.name}")`,
+          kind: "renamed-dependency",
+          stale_dependency: hit.stale,
+          renumber: false,
+          dependency_app_label: hit.label,
+        });
+      }
+    }
   }
   return out;
 }
@@ -272,7 +341,7 @@ export function renderMigrationCollisionComment(input: CollisionCommentInput): s
     if (c.kind === "renamed-dependency") {
       lines.push(
         `- \`${c.pr_path}\` — its \`dependencies\` reference \`"${c.stale_dependency ?? ""}"\`, which the renumber above moves to \`${c.dependency_name}\`.`,
-        `  - in its \`dependencies\`, replace \`("${c.app_label}", "${c.stale_dependency ?? ""}")\` with \`${c.dependency}\` — keep every other entry`,
+        `  - in its \`dependencies\`, replace \`("${c.dependency_app_label ?? c.app_label}", "${c.stale_dependency ?? ""}")\` with \`${c.dependency}\` — keep every other entry`,
       );
       if (c.renumber)
         lines.push(

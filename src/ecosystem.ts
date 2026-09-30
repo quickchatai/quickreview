@@ -107,7 +107,15 @@ export interface EcosystemPreCheckIo {
  */
 export type EcosystemPreCheckOutcome =
   | { status: "off" }
-  | { status: "checked"; collisions: MigrationCollision[]; comment_withheld?: true }
+  | {
+      status: "checked";
+      collisions: MigrationCollision[];
+      comment_withheld?: true;
+      /** The collisions' COMMENT is not known to be on the PR: withheld,
+       * guard-refused, or the gated call threw. The gate note then hands the
+       * remedy to the session instead of claiming it was posted. */
+      comment_undelivered?: true;
+    }
   | { status: "degraded" };
 
 /** The slice of a RoundOrder the gate note renders from — structural, so a
@@ -116,6 +124,7 @@ export interface GateNoteFacts {
   migration_gate: boolean;
   migration_precheck_degraded?: boolean;
   migration_collisions?: MigrationCollision[] | undefined;
+  migration_collisions_undelivered?: boolean | undefined;
 }
 
 export interface Ecosystem {
@@ -175,17 +184,31 @@ const MISSING_MIGRATION_NOTE =
  * correct, the verdict was wrong. So the note is imperative — the collision is
  * settled mechanics, it is not a finding, and it never moves the verdict.
  */
-export function renderMigrationCollisionsNote(collisions: readonly MigrationCollision[]): string {
+export function renderMigrationCollisionsNote(
+  collisions: readonly MigrationCollision[],
+  undelivered = false,
+): string {
   if (collisions.length === 0) return "";
-  const lines = [
-    "",
-    "",
-    "MIGRATION NUMBERING — ALREADY HANDLED, DO NOT RAISE IT. The daemon checked",
-    "this PR's migration numbers against the base branch at the pinned base sha",
-    "before this round was ordered, found the collision(s) below, and has already",
-    "posted the exact remedy to the PR as a COMMENT:",
-    "",
-  ];
+  const lines = undelivered
+    ? [
+        "",
+        "",
+        "MIGRATION NUMBERING — REMEDY NOT DELIVERED, CARRY IT IN YOUR REVIEW. The",
+        "daemon checked this PR's migration numbers against the base branch at the",
+        "pinned base sha before this round was ordered and found the collision(s)",
+        "below, but its COMMENT with the remedy was NOT delivered to the PR this",
+        "round (withheld, refused by a posting guard, or the call failed):",
+        "",
+      ]
+    : [
+        "",
+        "",
+        "MIGRATION NUMBERING — ALREADY HANDLED, DO NOT RAISE IT. The daemon checked",
+        "this PR's migration numbers against the base branch at the pinned base sha",
+        "before this round was ordered, found the collision(s) below, and has already",
+        "posted the exact remedy to the PR as a COMMENT:",
+        "",
+      ];
   for (const c of collisions) {
     if (c.kind === "renamed-dependency") {
       lines.push(
@@ -197,6 +220,19 @@ export function renderMigrationCollisionsNote(collisions: readonly MigrationColl
     lines.push(
       `- \`${c.pr_path}\` collides with \`${c.base_path}\` → rename to \`${c.target_path}\`, dependencies \`[${c.dependency}]\``,
     );
+  }
+  if (undelivered) {
+    lines.push(
+      "",
+      "So the author has not been told. Put this remedy in your review body, once,",
+      "in a short \"Migration numbering (mechanics, not a blocker)\" paragraph that",
+      "states each rename and `dependencies` entry above. It is still mechanics:",
+      "it is not a finding, not a blocker, never inline, and it never moves the",
+      "verdict — a PR whose only migration problem is this numbering collision is",
+      "still APPROVE-able on its merits. Everything else about these migrations is",
+      "judged exactly as it always was.",
+    );
+    return lines.join("\n");
   }
   lines.push(
     "",
@@ -324,8 +360,9 @@ async function djangoPreCheck(
       fingerprint,
       reason: "unreadable_comment_row",
     });
-    return { status: "checked", collisions, comment_withheld: true };
+    return { status: "checked", collisions, comment_withheld: true, comment_undelivered: true };
   }
+  let delivered = false;
   try {
     const body = renderMigrationCollisionComment({
       collisions,
@@ -352,6 +389,7 @@ async function djangoPreCheck(
         reason: result.blocked ?? "not_executed",
       });
     } else {
+      delivered = true;
       io.logEvent("migration_collision_comment", round.pr, {
         head_sha: round.head_sha,
         fingerprint,
@@ -372,7 +410,9 @@ async function djangoPreCheck(
       error: String(err),
     });
   }
-  return { status: "checked", collisions };
+  return delivered
+    ? { status: "checked", collisions }
+    : { status: "checked", collisions, comment_undelivered: true };
 }
 
 export const DJANGO_ECOSYSTEM: Ecosystem = {
@@ -384,7 +424,10 @@ export const DJANGO_ECOSYSTEM: Ecosystem = {
     (facts.migration_gate ? GATE_ON : GATE_OFF) +
     (facts.migration_precheck_degraded
       ? renderMigrationPrecheckDegradedNote()
-      : renderMigrationCollisionsNote(facts.migration_collisions ?? [])),
+      : renderMigrationCollisionsNote(
+          facts.migration_collisions ?? [],
+          facts.migration_collisions_undelivered === true,
+        )),
 };
 
 /**

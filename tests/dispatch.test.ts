@@ -1890,3 +1890,84 @@ describe("round-memory seeding", () => {
     expect(memoryEvents(77)).toEqual([]);
   });
 });
+
+// ---- selfscan-2: dispatch decides on a snapshot the webhook can move --------
+
+describe("a newer push/re-request during trigger consumption is never settled away", () => {
+  /** An adapter whose team-request DELETE lets a webhook land first: the
+   * author pushes H2 and re-requests review while dispatch awaits GitHub. */
+  class RacingAdapter extends FakeAdapter {
+    onDelete: (() => void) | undefined;
+    override async deleteTeamReviewRequest(n: number): Promise<GateResult> {
+      this.onDelete?.();
+      this.onDelete = undefined;
+      return super.deleteTeamReviewRequest(n);
+    }
+  }
+  const moveTo = (pr: number, head: string, ts: string) => () =>
+    store.upsertPr({
+      number: pr,
+      state: "queued",
+      head_sha: head,
+      title: `PR ${pr}`,
+      author: "alice",
+      trigger_ts: ts,
+      trigger_provenance: "human",
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+
+  it("no-new-evidence skip: the PR stays queued at the new head with its trigger", async () => {
+    queue(91, "2026-09-30T09:00:00Z", { head: "h1" });
+    store.recordReviewedHead(91, { head_sha: "h1", verdict: "REQUEST_CHANGES", round_no: 1 });
+    const racing = new RacingAdapter();
+    racing.onDelete = moveTo(91, "h2", "2026-09-30T09:00:05Z");
+    const { hooks } = recordingHooks();
+
+    await dispatchOnce({ cfg: baseCfg, store, adapter: racing, hooks });
+
+    const row = store.getPr(91)!;
+    expect(row.state).toBe("queued");
+    expect(row.head_sha).toBe("h2");
+    expect(row.trigger_ts).toBe("2026-09-30T09:00:05Z");
+  });
+
+  it("system short-circuit: the PR stays queued at the new head with its trigger", async () => {
+    const cfg: Config = { ...baseCfg, guards: { ...baseCfg.guards, skip_unchanged_head: false } };
+    queue(92, "2026-09-30T09:00:00Z", { head: "h1", provenance: "system" });
+    const id = store.startRound(92, "first", ["pass-baseline"], 60);
+    store.finishRound(id, "APPROVE", null);
+    store.recordReviewedHead(92, { head_sha: "h1", verdict: "APPROVE", round_no: 1 });
+    const racing = new RacingAdapter();
+    racing.onDelete = moveTo(92, "h2", "2026-09-30T09:00:05Z");
+    const { hooks } = recordingHooks();
+
+    await dispatchOnce({ cfg, store, adapter: racing, hooks });
+
+    const row = store.getPr(92)!;
+    expect(row.state).toBe("queued");
+    expect(row.head_sha).toBe("h2");
+    expect(row.trigger_ts).toBe("2026-09-30T09:00:05Z");
+  });
+});
+
+describe("the round's file facts describe the prepared head", () => {
+  it("a push landing before the worktree fetch is planned from the prepared head's files", async () => {
+    queue(93, "2026-09-30T09:00:00Z", { head: "h1" });
+    adapter.files.set(93, [file("src/views.py")]);
+    const { hooks } = recordingHooks();
+    const [order] = await dispatchOnce({
+      cfg: baseCfg,
+      store,
+      adapter,
+      hooks,
+      // The push adds a migration; the worktree fetch sees it.
+      prepareWorktree: async () => {
+        adapter.files.set(93, [file("src/views.py"), file("app/migrations/0042_x.py")]);
+        return { head_sha: "h2", base_ref: "master", base_sha: "b", merge_base: "m" };
+      },
+    });
+    expect(order!.head_sha).toBe("h2");
+    expect(order!.migration_gate).toBe(true);
+  });
+});

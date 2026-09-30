@@ -162,6 +162,14 @@ export interface RoundOrder {
    */
   migration_collisions?: MigrationCollision[];
   /**
+   * True when those collisions' COMMENT did NOT reach the PR this round
+   * (withheld over an unreadable ledger row, refused by a posting guard, or
+   * the gated call failed). The gate note then tells the session to carry the
+   * remedy in its review body — still mechanics, never a blocker — instead of
+   * claiming it was posted. Absent ⇒ delivered (or no collisions).
+   */
+  migration_collisions_undelivered?: boolean;
+  /**
    * True when this PR touches migrations and the collision pre-check could
    * NOT run this round (no base reader, no base sha, or the base read threw).
    * The prompt then tells the session the pre-check did not run and that IT

@@ -592,9 +592,13 @@ describe("migration collision pre-check", () => {
     });
 
     // The collisions were computed and logged — they are not thrown away with
-    // the failed COMMENT: the session's gate note still carries them.
+    // the failed COMMENT: the session's gate note still carries them. And it
+    // does NOT claim the remedy was posted: nobody told the author, so the
+    // session carries it this round (selfscan-2, "never quieter").
     expect(orders[0]?.migration_collisions).toHaveLength(1);
-    expect(prompts[0]).toContain("ALREADY HANDLED, DO NOT RAISE IT");
+    expect(orders[0]?.migration_collisions_undelivered).toBe(true);
+    expect(prompts[0]).not.toContain("ALREADY HANDLED, DO NOT RAISE IT");
+    expect(prompts[0]).toContain("REMEDY NOT DELIVERED, CARRY IT IN YOUR REVIEW");
     expect(prompts[0]).toContain("backend/chat/migrations/0043_x.py");
     expect(prompts[0]).not.toContain("MIGRATION PRE-CHECK DID NOT RUN");
     expect(events("migration_precheck_failed", 52)).toHaveLength(1);

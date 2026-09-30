@@ -33,7 +33,7 @@
 // enforces is CI's job, and the review reads CI, it never re-runs it.
 // Total: an unreadable tree is "no guide", never an error.
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 
 export const GUIDE_MIN_LINES = 15;
 export const SECTION_MIN_LINES = 8;
@@ -197,6 +197,25 @@ export function styleGuideRefsIn(
  */
 export function findStyleGuide(root: string): string[] {
   if (!existsSync(root)) return [];
+  // Every path read here must RESOLVE inside the checkout: the tree is the
+  // PR's, and a guide symlinked (or reached through a symlinked docs/) to a
+  // file outside it — a secret the container can read — would be named in
+  // the plan and read in full by pass-style. A link that stays inside is fine.
+  let realRoot: string;
+  try {
+    realRoot = realpathSync(root);
+  } catch {
+    return [];
+  }
+  const inside = (rel: string): string | null => {
+    try {
+      const real = realpathSync(join(root, rel));
+      const r = relative(realRoot, real);
+      return r === "" || r.split(sep)[0] === ".." || isAbsolute(r) ? null : real;
+    } catch {
+      return null;
+    }
+  };
   const listing: string[] = [];
   for (const d of ["", "docs", "doc", ".github", ".github/instructions"]) {
     for (const name of list(join(root, d))) listing.push(relative(root, join(root, d, name)));
@@ -217,13 +236,10 @@ export function findStyleGuide(root: string): string[] {
   }
   return styleGuideRefsIn(
     listing,
-    (rel) => read(join(root, rel)),
     (rel) => {
-      try {
-        return realpathSync(join(root, rel));
-      } catch {
-        return null;
-      }
+      const real = inside(rel);
+      return real === null ? null : read(real);
     },
+    inside,
   );
 }

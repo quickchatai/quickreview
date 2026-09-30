@@ -282,7 +282,12 @@ async function ecosystemPreCheck(
     base_ref: string;
     base_sha: string;
   },
-): Promise<{ collisions: MigrationCollision[]; degraded: boolean; commentWithheld: boolean }> {
+): Promise<{
+  collisions: MigrationCollision[];
+  degraded: boolean;
+  commentWithheld: boolean;
+  commentUndelivered: boolean;
+}> {
   const outcome = await eco.preCheck(
     {
       logEvent: (kind, pr, payload) => deps.store.logEvent(kind, pr, payload),
@@ -309,6 +314,7 @@ async function ecosystemPreCheck(
     collisions: outcome.status === "checked" ? outcome.collisions : [],
     degraded: outcome.status === "degraded",
     commentWithheld: outcome.status === "checked" && outcome.comment_withheld === true,
+    commentUndelivered: outcome.status === "checked" && outcome.comment_undelivered === true,
   };
 }
 
@@ -604,6 +610,48 @@ async function consumeTriggers(
   return consumed;
 }
 
+/**
+ * Did a webhook move this PR while dispatch awaited GitHub? The skip paths
+ * decide from the row they read, then await trigger consumption (two GitHub
+ * round-trips) before settling the PR back onto its standing verdict. A push
+ * or a fresh review request applied in that window updates the QUEUED row —
+ * nothing records a successor for a row that is not `reviewing` — and
+ * settling it would erase that newer review debt: the stale standing verdict
+ * replayed, the new trigger cleared. So a moved row is left queued for the
+ * next pump, which decides again from what it now says. Returns the reason,
+ * or null when the row still says what the decision read.
+ */
+function movedDuringConsume(
+  store: DispatchDeps["store"],
+  row: { number: number; head_sha: string; trigger_ts: string | null },
+): string | null {
+  const now = store.getPr(row.number);
+  if (!now) return null;
+  if (now.head_sha !== row.head_sha) return "head_moved";
+  if (now.trigger_ts !== row.trigger_ts) return "retriggered";
+  return null;
+}
+
+function logSupersededSettlement(
+  deps: DispatchDeps,
+  row: { number: number; head_sha: string; trigger_ts: string | null },
+  path: string,
+  reason: string,
+): void {
+  const now = deps.store.getPr(row.number);
+  deps.store.logEvent("dispatch_settlement_superseded", row.number, {
+    path,
+    reason,
+    decided_head_sha: row.head_sha,
+    decided_trigger_ts: row.trigger_ts,
+    head_sha: now?.head_sha ?? null,
+    trigger_ts: now?.trigger_ts ?? null,
+  });
+  deps.log?.(
+    `dispatch: #${row.number} ${path} not settled — the PR moved while its triggers were consumed (${reason}); left queued`,
+  );
+}
+
 export { ALL_PASSES } from "./passes.js";
 
 /** raisable_to lists the higher rungs only — a session may raise a pass, never
@@ -808,8 +856,12 @@ export function buildRoundOrder(args: {
    * no worktree seam (the stub-wired daemon core and unit tests), which fall
    * back to the PR row's sha and an unknown base. */
   tree?: { head_sha: string; base_ref: string; base_sha: string; merge_base: string };
-  /** Collisions the pre-check already delivered as a COMMENT. */
+  /** Collisions the pre-check found — delivered as a COMMENT unless
+   * `migrationCollisionsUndelivered` says the COMMENT did not reach the PR. */
   migrationCollisions?: MigrationCollision[];
+  /** True when the collisions' COMMENT was withheld, refused or failed: the
+   * gate note then hands the remedy to the session. */
+  migrationCollisionsUndelivered?: boolean;
   /** True when the PR touches migrations and the pre-check could NOT run —
    * the prompt must tell the session to check collisions itself. */
   migrationPrecheckDegraded?: boolean;
@@ -868,6 +920,9 @@ export function buildRoundOrder(args: {
     ...(args.cfg.review.nits === "open" ? { nit_policy: "open" as const } : {}),
     migration_gate: eco.migrationGate(args.files),
     migration_collisions: args.migrationCollisions ?? [],
+    ...(args.migrationCollisionsUndelivered && (args.migrationCollisions ?? []).length > 0
+      ? { migration_collisions_undelivered: true }
+      : {}),
     migration_precheck_degraded: args.migrationPrecheckDegraded ?? false,
     ...(args.firstPartyDirectives !== undefined
       ? { first_party_directives: args.firstPartyDirectives }
@@ -1016,6 +1071,11 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           mark: snapshotMark(mark!),
         };
         await consumeTriggers(deps, row.number, { markInProgress: false });
+        const movedSkip = movedDuringConsume(store, row);
+        if (movedSkip) {
+          logSupersededSettlement(deps, row, "no-new-evidence skip", movedSkip);
+          continue;
+        }
         store.logEvent("round_skipped_no_new_evidence", row.number, decision);
         if (standingInfo.kind === "unknown") {
           store.logAnomaly(
@@ -1054,6 +1114,11 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         const sc = await classifySystemRetrigger(deps, row, mark);
         if (sc.skip) {
           await consumeTriggers(deps, row.number, { markInProgress: false });
+          const movedShort = movedDuringConsume(store, row);
+          if (movedShort) {
+            logSupersededSettlement(deps, row, "system short-circuit", movedShort);
+            continue;
+          }
           if (row.head_sha !== mark.head_sha) {
             // The uphold semantics of amendment ③, daemon-side: a
             // never-posted approval follows the head on a trivial/empty delta.
@@ -1131,6 +1196,24 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         log(`dispatch: base ref lookup failed on #${row.number}`, err);
       }
 
+      // Prepare the tree BEFORE building the order, so the prompt cites the sha
+      // the passes will actually read. The old sequence built the order from
+      // `row.head_sha` (a webhook/reconcile snapshot) and only then fetched, so
+      // a push landing in between made the prompt quietly wrong — passes cited
+      // one sha while reading another tree, and their anchors were computed
+      // against a diff the review was not about.
+      //
+      // And BEFORE the changed-files read: every file-derived fact of the round
+      // — the migration gate, the pass plan and sweep focus, the collision
+      // pre-check, the diffstat — must describe the head the tree holds. Read
+      // first, a push landing before the fetch left the round reviewing the
+      // new head with the old head's files (a migration the push added got no
+      // gate and no collision check). The files API is by PR number, so read
+      // after the fetch it lists at least the prepared head.
+      const tree = deps.prepareWorktree
+        ? await deps.prepareWorktree(row.number, baseRef)
+        : undefined;
+
       const files = await deps.adapter.listPrFiles(row.number);
       const gate = eco.migrationGate(files);
       // The plan is pure and deterministic in `files` + the PR body, so
@@ -1180,15 +1263,6 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         }
       ).round_no;
 
-      // Prepare the tree BEFORE building the order, so the prompt cites the sha
-      // the passes will actually read. The old sequence built the order from
-      // `row.head_sha` (a webhook/reconcile snapshot) and only then fetched, so
-      // a push landing in between made the prompt quietly wrong — passes cited
-      // one sha while reading another tree, and their anchors were computed
-      // against a diff the review was not about.
-      const tree = deps.prepareWorktree
-        ? await deps.prepareWorktree(row.number, baseRef)
-        : undefined;
       if (tree && row.head_sha && tree.head_sha !== row.head_sha) {
         log(`dispatch: #${row.number} head drift ${row.head_sha} → ${tree.head_sha}`);
         store.logEvent("head_drift", row.number, {
@@ -1348,6 +1422,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         ...(dependencyNote ? { dependencyNote } : {}),
         ...(recovery ? { recovery } : {}),
         migrationCollisions,
+        ...(precheck.commentUndelivered ? { migrationCollisionsUndelivered: true } : {}),
         migrationPrecheckDegraded: precheck.degraded,
         ...(firstPartyDirectives !== undefined ? { firstPartyDirectives } : {}),
         cfg,
