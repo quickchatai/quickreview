@@ -137,7 +137,10 @@ describe("the listener contract is transport-independent", () => {
     );
     expect(back).toBe("HTTP/1.1 200 OK\n");
     client.destroy();
-    await new Promise((r) => setTimeout(r, 20));
+    // Until the teardown lands, by deadline: a fixed 20ms sleep lost the race
+    // to the socket close on a loaded machine.
+    const deadline = Date.now() + 4_000;
+    while (!relay.killed && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
     expect(relay.killed).toBe(true);
     fwd.close();
   });

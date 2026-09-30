@@ -75,7 +75,8 @@
     under the burner, and did not stop a single timeout.
   - Load also breaks tests that are not timeouts. A wait loop is a DEADLINE
     inside the test's timeout (`pollUntil` in `tui-startup`), never a count of
-    ticks — 100 x 20ms is a hidden 2s budget. A scratch repo whose `.git` is
+    ticks — 100 x 20ms is a hidden 2s budget — and a wait for a real socket
+    or child effect is a deadline loop, never a fixed `setTimeout(r, 20)`. A scratch repo whose `.git` is
     copied disables auto-maintenance (`-c maintenance.auto=false -c
     gc.auto=0`): a detached `git maintenance run --auto` was still writing
     into it when `cp -r` walked it. A fake binary fed on stdin reads its stdin
