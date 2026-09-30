@@ -327,6 +327,53 @@ describe("the ping layer", () => {
     );
   });
 
+  it("an accepted ping does not certify the CURRENT path when newer deliveries failed — it redelivers the ping", async () => {
+    // The ingress broke after the webhook was configured: GitHub sends no new
+    // ping, but the real deliveries since then are all failing.
+    const h = harness({
+      deliveries: [
+        { ...ping(), id: 12, event: "pull_request", status: "timed out", status_code: 0 },
+        { ...ping(), id: 11, event: "issue_comment", status: "Bad Gateway", status_code: 502 },
+        ping({ id: 5, delivered_at: "2026-08-29T09:00:00Z" }),
+      ],
+      afterRedelivery: [
+        { ...ping(), id: 12, event: "pull_request", status: "timed out", status_code: 0 },
+        ping({ id: 5, delivered_at: "2026-08-29T09:00:00Z" }),
+      ],
+    });
+    const result = await h.engine.runStep(VERIFY_STACK_STEP_ID);
+    expect(result.ok).toBe(false);
+    expect(h.urls).toContain(`POST ${API}/app/hook/deliveries/5/attempts`);
+    const detail = result.checks.find((c) => c.name === "ping-delivery")!.detail;
+    expect(detail).not.toMatch(/proven end to end/);
+    expect(detail).toMatch(/pull_request/);
+  });
+
+  it("an accepted ping stays proof when the newer deliveries were accepted too", async () => {
+    const h = harness({
+      deliveries: [{ ...ping(), id: 12, event: "pull_request" }, ping({ id: 5 })],
+    });
+    const result = await h.engine.runStep(VERIFY_STACK_STEP_ID);
+    expect(result.ok).toBe(true);
+    expect(h.urls.filter((u) => u.startsWith("POST"))).toEqual([]);
+  });
+
+  it("goes green once the redelivered ping lands after newer deliveries had failed", async () => {
+    const h = harness({
+      deliveries: [{ ...ping(), id: 12, event: "pull_request", status_code: 502 }, ping({ id: 5 })],
+      afterRedelivery: [
+        ping({ id: 13, redelivery: true }),
+        { ...ping(), id: 12, event: "pull_request", status_code: 502 },
+        ping({ id: 5 }),
+      ],
+    });
+    const result = await h.engine.runStep(VERIFY_STACK_STEP_ID);
+    expect(result.ok).toBe(true);
+    expect(result.checks.find((c) => c.name === "ping-delivery")!.detail).toMatch(
+      /redelivered ping was accepted/,
+    );
+  });
+
   it("a ping that keeps failing is red with the three fixes worth trying, in order", async () => {
     const h = harness({
       deliveries: [ping({ id: 7, status_code: 502 })],

@@ -16,6 +16,7 @@
 // The provisioning and matrix modules under test are the REAL scripts — this
 // suite drives them through a fake server rather than reimplementing them.
 import {
+  chmodSync,
   existsSync,
   mkdtempSync,
   readFileSync,
@@ -492,6 +493,50 @@ describe("placement rules", () => {
     expect(existsSync(join(secretsDir, "keys.env"))).toBe(false);
     expect(existsSync(join(secretsDir, ROOT_KEY_FILE))).toBe(false);
   });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "an existing key it cannot READ is never treated as missing — nothing is minted or written over it",
+    async () => {
+      mkdirSync(secretsDir, { recursive: true });
+      const rootPath = join(secretsDir, ROOT_KEY_FILE);
+      writeFileSync(rootPath, "EXISTING-ROOT\n", { mode: 0o600 });
+      chmodSync(rootPath, 0o000);
+      try {
+        const server = fakeServer();
+        const result = await runStep(engineWith(server.fetchFn));
+        expect(result.ok).toBe(false);
+        expect(detailOf(result, "root-key")?.detail).toMatch(/cannot be read/);
+      } finally {
+        chmodSync(rootPath, 0o600);
+      }
+      expect(readFileSync(rootPath, "utf8")).toBe("EXISTING-ROOT\n");
+
+      // The same at placement: an unreadable reviewer key and key file are
+      // left exactly as they were, and the step says why.
+      const reviewerPath = join(secretsDir, REVIEWER_KEY_FILE);
+      writeFileSync(reviewerPath, "OLD-REV\n", { mode: 0o600 });
+      mkdirSync(dirname(keysFile), { recursive: true });
+      writeFileSync(keysFile, "SOMETHING_ELSE=keep-me\n", { mode: 0o600 });
+      chmodSync(reviewerPath, 0o000);
+      chmodSync(keysFile, 0o000);
+      try {
+        const checks = placeKeys({
+          secretsDir,
+          keysFile,
+          rootKey: "",
+          reviewerKey: "REV",
+          companionKey: "COMP",
+        });
+        expect(checks.find((c) => c.name === "reviewer-key-placed")?.ok).toBe(false);
+        expect(checks.find((c) => c.name === "key-file")?.detail).toMatch(/cannot be read/);
+      } finally {
+        chmodSync(reviewerPath, 0o600);
+        chmodSync(keysFile, 0o600);
+      }
+      expect(readFileSync(reviewerPath, "utf8")).toBe("OLD-REV\n");
+      expect(readFileSync(keysFile, "utf8")).toBe("SOMETHING_ELSE=keep-me\n");
+    },
+  );
 
   it("preserves unrelated variables in the key file and never replaces a value", () => {
     const merged = renderKeysFile(

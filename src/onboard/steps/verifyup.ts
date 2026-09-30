@@ -103,6 +103,19 @@ export function pings(deliveries: readonly HookDelivery[]): HookDelivery[] {
   return deliveries.filter((d) => d.event === "ping").sort((a, b) => b.id - a.id);
 }
 
+/** The newest delivery of ANY event that is newer than `ping` and was NOT
+ * accepted, or undefined. GitHub pings only when the webhook is (re)configured,
+ * so an accepted ping can be long stale: if the ingress stopped reaching the
+ * daemon since, the deliveries after it say so and the ping must not speak
+ * for the path as it is now. */
+export function newerFailure(
+  deliveries: readonly HookDelivery[],
+  ping: HookDelivery,
+): HookDelivery | undefined {
+  const newest = [...deliveries].sort((a, b) => b.id - a.id)[0];
+  return newest && newest.id > ping.id && !deliverySucceeded(newest) ? newest : undefined;
+}
+
 // ---- the step ----------------------------------------------------------------
 
 interface ApiAnswer {
@@ -200,7 +213,10 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
     }
     let candidates = pings(rows);
     const good = candidates[0];
-    if (good && deliverySucceeded(good)) {
+    const stale = good && deliverySucceeded(good) ? newerFailure(rows, good) : undefined;
+    const pingDetail = (d: HookDelivery): string =>
+      stale && deliverySucceeded(d) ? stalePingDetail(d, stale) : failedPingDetail(d);
+    if (good && deliverySucceeded(good) && !stale) {
       checks.push({
         name: "ping-delivery",
         ok: true,
@@ -222,13 +238,17 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
       return checks;
     }
 
+    // The newest ping failed — or it was accepted, but deliveries since then
+    // were not (`stale`). Either way, a fresh delivery of it is the proof.
     const failed = candidates[0]!;
     if (!redeliver) {
-      checks.push({ name: "ping-delivery", ok: false, detail: failedPingDetail(failed) });
+      checks.push({ name: "ping-delivery", ok: false, detail: pingDetail(failed) });
       return checks;
     }
     ctx.adapters.log?.(
-      `${VERIFY_STACK_STEP_ID}: the last ping was not delivered (HTTP ${failed.status_code}) — asking GitHub to redeliver it`,
+      stale
+        ? `${VERIFY_STACK_STEP_ID}: the last ping was accepted, but a newer ${stale.event} delivery was not (HTTP ${stale.status_code}) — asking GitHub to redeliver the ping`
+        : `${VERIFY_STACK_STEP_ID}: the last ping was not delivered (HTTP ${failed.status_code}) — asking GitHub to redeliver it`,
     );
     const attempt = await api(ctx, `${apiBase}/app/hook/deliveries/${failed.id}/attempts`, jwt, {
       method: "POST",
@@ -237,7 +257,7 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
       checks.push({
         name: "ping-delivery",
         ok: false,
-        detail: `${failedPingDetail(failed)} The redelivery request itself answered HTTP ${attempt.status}, so nothing was retried.`,
+        detail: `${pingDetail(failed)} The redelivery request itself answered HTTP ${attempt.status}, so nothing was retried.`,
       });
       return checks;
     }
@@ -247,7 +267,8 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
       if (problem) break;
       candidates = pings(rows);
       const good = candidates[0];
-      if (good && deliverySucceeded(good)) {
+      // Only a ping NEWER than the one redelivered answers for the path now.
+      if (good && good.id > failed.id && deliverySucceeded(good)) {
         checks.push({
           name: "ping-delivery",
           ok: true,
@@ -264,14 +285,27 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
     checks.push({
       name: "ping-delivery",
       ok: false,
-      detail: failedPingDetail(candidates[0] ?? failed),
+      detail: pingDetail(candidates[0] ?? failed),
     });
     return checks;
   }
 
-  function failedPingDetail(d: HookDelivery): string {
+  function stalePingDetail(ping: HookDelivery, newer: HookDelivery): string {
     return (
-      `GitHub could not deliver its ping: HTTP ${d.status_code}${d.status ? ` (${d.status})` : ""}. Fix, in the order worth trying: ` +
+      `the last ping was accepted (HTTP ${ping.status_code} at ${ping.delivered_at || "an unrecorded time"}), but a newer ` +
+      `${newer.event} delivery was not (HTTP ${newer.status_code}${newer.status ? `, ${newer.status}` : ""} at ` +
+      `${newer.delivered_at || "an unrecorded time"}) and no fresh ping got through — so the path is NOT proven as it is now. ` +
+      pingFixes()
+    );
+  }
+
+  function failedPingDetail(d: HookDelivery): string {
+    return `GitHub could not deliver its ping: HTTP ${d.status_code}${d.status ? ` (${d.status})` : ""}. ${pingFixes()}`;
+  }
+
+  function pingFixes(): string {
+    return (
+      "Fix, in the order worth trying: " +
       "① the webhook URL above must be the public address of THIS daemon — on a rotating tunnel the daemon re-points it itself, " +
       "so give it a few seconds after bring-up and run this step again; ② a 401/403 means the webhook secret on GitHub is not the " +
       "one in your secrets dir (re-run the github_app step to re-create the App with a fresh pair); ③ a timeout means the tunnel " +

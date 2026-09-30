@@ -52,6 +52,9 @@ import type {
   StepContext,
   StepReport,
 } from "../engine.js";
+import { sshArgv } from "./ssh.js";
+import { topologyOf } from "./topology.js";
+import { remoteFactsFor } from "./transport.js";
 
 export const LLM_AUTH_STEP_ID = "llm_auth";
 /** The choice key later steps read the route from. */
@@ -307,7 +310,28 @@ export function writeKeyFile(secretsDir: string, value: string): string {
 
 // ---- container login verification -------------------------------------------
 
-export type LoginState = "absent" | "no-pi-volume" | "stopped" | "no-auth" | "ok" | "undetectable";
+export type LoginState =
+  | "absent"
+  | "no-pi-volume"
+  | "stopped"
+  | "no-auth"
+  | "wrong-provider"
+  | "ok"
+  | "undetectable";
+
+/**
+ * The in-container login check: the same question `hostHasOAuthLogin` asks of
+ * the host — is there an `openai-codex` entry of type `oauth`? — asked by the
+ * container's own node, so only an exit code ever leaves it (never a token,
+ * which on the VM route would otherwise cross ssh). Exit 0 = logged in,
+ * 3 = no auth.json / empty, 4 = an auth.json without that login (`{}`, or
+ * another provider picked at pi's /login menu). Anything else (no node) is
+ * undetectable, never a pass.
+ */
+export const CONTAINER_LOGIN_SCRIPT =
+  "const fs=require('fs');let t='';try{t=fs.readFileSync(process.argv[1],'utf8')}catch{process.exit(3)}" +
+  "if(!t.trim())process.exit(3);let a;try{a=JSON.parse(t)}catch{process.exit(4)}" +
+  `const c=a&&a[${JSON.stringify(OAUTH_PROVIDER)}];process.exit(c&&typeof c==='object'&&c.type==='oauth'?0:4)`;
 
 export interface LoginProbe {
   state: LoginState;
@@ -365,11 +389,20 @@ export async function probeContainerLogin(
   const auth = await runner.run("docker", [
     "exec",
     container,
-    "sh",
-    "-c",
-    `test -s '${destination}/agent/auth.json'`,
+    "node",
+    "-e",
+    CONTAINER_LOGIN_SCRIPT,
+    `${destination}/agent/auth.json`,
   ]);
-  return { state: auth.code === 0 ? "ok" : "no-auth", destination, mount };
+  const state: LoginState =
+    auth.code === 0
+      ? "ok"
+      : auth.code === 3
+        ? "no-auth"
+        : auth.code === 4
+          ? "wrong-provider"
+          : "undetectable";
+  return { state, destination, mount };
 }
 
 function loginCheck(
@@ -393,6 +426,15 @@ function loginCheck(
           `${label}: no auth.json on the pi home (${probe.mount}). Attach and log in: ` +
           `docker exec -it ${container} tmux attach -t overseer → /login → detach (Ctrl-b d). ` +
           "Host tokens do not transfer — this container needs its own login.",
+      };
+    case "wrong-provider":
+      return {
+        name,
+        ok: false,
+        detail:
+          `${label}: auth.json on the pi home (${probe.mount}) holds no ChatGPT (${OAUTH_PROVIDER}) OAuth login — ` +
+          "a /login to another provider does not count. Attach and log in with the ChatGPT option: " +
+          `docker exec -it ${container} tmux attach -t overseer → /login → detach (Ctrl-b d).`,
       };
     case "no-pi-volume":
       return {
@@ -644,14 +686,29 @@ async function oauthLoginChecks(
         },
   );
   const runner = ctx.adapters.runner;
-  const daemon = daemonContainerName(configText);
   const companion = companionContainerName(configText);
+  // The daemon runs where the topology says: on the VM route its container is
+  // on the review host, so the probe goes there over ssh (the transport's own
+  // facts: alias, container, sudo). The companion is always this machine's.
+  let daemon = daemonContainerName(configText);
+  let daemonRunner: ProcessRunner = runner;
+  if (topologyOf(ctx.choices) === "vm") {
+    const facts = remoteFactsFor(ctx.adapters, ctx.choices);
+    daemon = facts.container;
+    const prefix = facts.sudo ? ["sudo"] : [];
+    daemonRunner =
+      facts.alias === ""
+        ? { run: async () => ({ code: 1, stdout: "", stderr: "no ssh alias recorded" }) }
+        : {
+            run: (cmd, args) => runner.run("ssh", sshArgv(facts.alias, [...prefix, cmd, ...args])),
+          };
+  }
   checks.push(
     loginCheck(
       "daemon_login",
       "daemon container",
       daemon,
-      await probeContainerLogin(runner, daemon),
+      await probeContainerLogin(daemonRunner, daemon),
     ),
   );
   checks.push(

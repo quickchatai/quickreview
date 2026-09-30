@@ -303,6 +303,30 @@ export function readSecretFile(path: string): string {
   }
 }
 
+/** Why a file that EXISTS could not be read (its errno code), or null when it
+ * is absent or readable. The readers above fold both into "empty" — right for
+ * reporting, wrong before a write: an unreadable key is not a missing one, and
+ * replacing it would rotate a key (or drop variables) we could not even see. */
+export function unreadableReason(path: string): string | null {
+  try {
+    readFileSync(path);
+    return null;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return code === "ENOENT" ? null : (code ?? String(err));
+  }
+}
+
+function unreadableCheck(name: string, path: string, why: string): CheckResult {
+  return {
+    name,
+    ok: false,
+    detail:
+      `${path} exists but cannot be read (${why}) — left untouched: writing over it would rotate or drop keys that are ` +
+      "already in use. Fix its ownership/permissions and run this step again.",
+  };
+}
+
 /** `KEY=value` lines → map. Mirrors `readKeys` in the forward script. */
 export function parseKeysFile(text: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -501,7 +525,10 @@ export function placeKeys(args: {
     if (!value) continue;
     const path = join(secretsDir, file);
     const existing = readSecretFile(path);
-    if (existing === "") {
+    const unreadable = existing === "" ? unreadableReason(path) : null;
+    if (unreadable !== null) {
+      checks.push(unreadableCheck(`${name}-key-placed`, path, unreadable));
+    } else if (existing === "") {
       writePrivate(path, `${value}\n`);
       checks.push({
         name: `${name}-key-placed`,
@@ -535,6 +562,11 @@ export function placeKeys(args: {
         `refusing to write the key file at ${keysFile}: it is inside the daemon-side secrets dir (${secretsDir}), which the ` +
         "container mounts read-only — a review session could read the companion key. Point QCR_OPENVIKING_KEYS outside it.",
     });
+    return checks;
+  }
+  const keysUnreadable = unreadableReason(keysFile);
+  if (keysUnreadable !== null) {
+    checks.push(unreadableCheck("key-file", keysFile, keysUnreadable));
     return checks;
   }
   const existingKeys = readKeysFile(keysFile);
@@ -638,6 +670,11 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
           ok: false,
           detail: `could not load scripts/openviking-provision.mjs: ${String(err)}`,
         });
+        return { ok: false, checks };
+      }
+      const rootUnreadable = rootKey === "" ? unreadableReason(rootPath) : null;
+      if (rootUnreadable !== null) {
+        checks.push(unreadableCheck("root-key", rootPath, rootUnreadable));
         return { ok: false, checks };
       }
       if (rootKey === "") {

@@ -12,6 +12,7 @@
 //   - OAuth verification proves the token landed on the container's persistent
 //     pi home, not merely that a login happened;
 //   - NO credential value ever reaches an argv, the checklist, or a message.
+import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -25,6 +26,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CHOICE_KEYS } from "../src/onboard/choices.js";
 import {
   OnboardingEngine,
   readChecklist,
@@ -129,13 +131,46 @@ interface FakeContainer {
   mountType?: string;
   mountName?: string;
   running?: boolean;
-  auth?: boolean;
+  /** true = a ChatGPT (openai-codex) OAuth login; a string = auth.json's exact
+   * bytes; false/absent = no auth.json at all. */
+  auth?: boolean | string;
 }
 
 interface World {
   containers?: Record<string, FakeContainer>;
+  /** Containers on the review HOST, reachable only through `ssh <alias>`. */
+  remote?: { alias: string; containers: Record<string, FakeContainer> };
   /** docker itself unavailable. */
   noDocker?: boolean;
+}
+
+const CODEX_LOGIN = JSON.stringify({
+  "openai-codex": { type: "oauth", access: "a", refresh: "r", expires: 1 },
+});
+
+/** Undo `shellQuote` (src/tui/remote.ts) on the ssh remote command string. */
+function unquoteRemote(cmd: string): string[] {
+  const out: string[] = [];
+  const re = /'((?:[^']|'\\'')*)'|(\S+)/g;
+  for (let m = re.exec(cmd); m; m = re.exec(cmd)) {
+    out.push(m[1] !== undefined ? m[1].replaceAll("'\\''", "'") : m[2]!);
+  }
+  return out;
+}
+
+/** Run the probe's REAL in-container script with this machine's node against
+ * a scratch copy of the fake auth.json — the fake emulates docker, never the
+ * check itself. */
+function runLoginScript(args: string[], auth: FakeContainer["auth"]): ProcessResult {
+  const [node, flag, script] = args;
+  if (node !== "node" || flag !== "-e" || script === undefined)
+    return { code: 1, stdout: "", stderr: "unexpected exec" };
+  const file = join(root, `auth-${Math.random().toString(36).slice(2)}.json`);
+  if (auth !== undefined && auth !== false)
+    writeFileSync(file, auth === true ? CODEX_LOGIN : auth);
+  const r = spawnSync(process.execPath, ["-e", script, file], { encoding: "utf8" });
+  rmSync(file, { force: true });
+  return { code: r.status ?? 1, stdout: r.stdout, stderr: r.stderr };
 }
 
 function fakeAdapters(
@@ -143,14 +178,25 @@ function fakeAdapters(
   calls: string[][] = [],
   answers: string[] = [],
 ): OnboardAdapters {
-  const containers = world.containers ?? {};
+  const localContainers = world.containers ?? {};
   const adapters: OnboardAdapters = {
     fetch: (() => {
       throw new Error("no network in tests");
     }) as unknown as typeof fetch,
     runner: {
-      run: async (cmd, args): Promise<ProcessResult> => {
-        calls.push([cmd, ...args]);
+      run: async (cmd0, args0): Promise<ProcessResult> => {
+        calls.push([cmd0, ...args0]);
+        let cmd = cmd0;
+        let args = args0;
+        let containers = localContainers;
+        if (cmd0 === "ssh" && world.remote) {
+          const remote = unquoteRemote(args0.at(-1) ?? "");
+          if (!args0.includes(world.remote.alias))
+            return { code: 255, stdout: "", stderr: "ssh: unknown host" };
+          if (remote[0] === "sudo") remote.shift();
+          [cmd, ...args] = remote as [string, ...string[]];
+          containers = world.remote.containers;
+        }
         if (world.noDocker) return { code: 127, stdout: "", stderr: "docker: command not found" };
         if (cmd !== "docker") return { code: 127, stdout: "", stderr: `${cmd}: not found` };
         const name = args[args.length - 1] ?? "";
@@ -175,9 +221,7 @@ function fakeAdapters(
         }
         if (args[0] === "exec") {
           const c = containers[args[1] ?? ""];
-          return c?.auth
-            ? { code: 0, stdout: "", stderr: "" }
-            : { code: 1, stdout: "", stderr: "" };
+          return runLoginScript(args.slice(2), c?.auth);
         }
         return { code: 1, stdout: "", stderr: "unexpected docker args" };
       },
@@ -450,8 +494,77 @@ describe("OAuth route", () => {
     const probe = await probeContainerLogin(adapters.runner, "c1");
     expect(probe.state).toBe("ok");
     const exec = calls.find((c) => c[1] === "exec");
-    expect(exec?.join(" ")).toContain("test -s '/home/review/.pi/agent/auth.json'");
+    expect(exec?.at(-1)).toBe("/home/review/.pi/agent/auth.json");
     expect(exec?.join(" ")).not.toContain("$HOME");
+  });
+
+  it("probeContainerLogin demands a ChatGPT (openai-codex) OAuth login — an empty store or another provider is not one", async () => {
+    for (const [auth, state] of [
+      [true, "ok"],
+      ["{}", "wrong-provider"],
+      ['{"anthropic":{"type":"oauth","access":"x","refresh":"y","expires":1}}', "wrong-provider"],
+      ['{"openai-codex":{"type":"api_key","key":"k"}}', "wrong-provider"],
+      ["", "no-auth"],
+      [false, "no-auth"],
+    ] as const) {
+      const adapters = fakeAdapters({
+        containers: { c1: { piHome: "/home/review/.pi", auth } },
+      });
+      expect((await probeContainerLogin(adapters.runner, "c1")).state, String(auth)).toBe(state);
+    }
+  });
+
+  it("verify: a container whose /login went to ANOTHER provider is red, not 'logged in'", async () => {
+    hostLogin();
+    await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
+    const report = await engine({
+      containers: {
+        "quickreview-sandbox": {
+          piHome: "/home/review/.pi",
+          auth: '{"anthropic":{"type":"oauth","access":"x","refresh":"y","expires":1}}',
+        },
+      },
+    }).verifyAll();
+    expect(report.ok).toBe(false);
+    expect(report.results[0]?.failures.join(" ")).toMatch(/no ChatGPT \(openai-codex\) OAuth login/);
+  });
+
+  it("verify on the VM route probes the daemon container ON THE REVIEW HOST, over ssh — the companion stays local", async () => {
+    hostLogin();
+    await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
+    const file = readChecklist(stateDir)!;
+    file.choices[CHOICE_KEYS.topology] = "vm";
+    file.choices[CHOICE_KEYS.sshAlias] = "review-vm";
+    writeFileSync(join(stateDir, "onboarding", "checklist.json"), JSON.stringify(file));
+
+    // The daemon's login is lost on the VM; there is no local daemon at all.
+    const calls: string[][] = [];
+    const report = await engine(
+      {
+        containers: {},
+        remote: {
+          alias: "review-vm",
+          containers: { "quickreview-sandbox": { piHome: "/home/review/.pi", auth: false } },
+        },
+      },
+      calls,
+    ).verifyAll();
+    expect(report.ok).toBe(false);
+    expect(report.results[0]?.failures.join(" ")).toMatch(/daemon container: no auth\.json/);
+    expect(calls.some((c) => c[0] === "ssh" && c.includes("review-vm"))).toBe(true);
+    // The companion is this machine's: never probed over ssh.
+    expect(
+      calls.filter((c) => c[0] === "ssh").some((c) => (c.at(-1) ?? "").includes("qcr-companion")),
+    ).toBe(false);
+
+    // And a VM daemon that IS logged in is green.
+    const green = await engine({
+      remote: {
+        alias: "review-vm",
+        containers: { "quickreview-sandbox": { piHome: "/home/review/.pi", auth: true } },
+      },
+    }).verifyAll();
+    expect(green.ok).toBe(true);
   });
 });
 

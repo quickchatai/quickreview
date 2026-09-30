@@ -15,6 +15,7 @@
 //     config with dry_run false — nor flip an owner's false back to true.
 import { locateSecrets } from "../src/install.js";
 import {
+  chmodSync,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -26,6 +27,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parse as parseToml } from "smol-toml";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadConfig, type Config } from "../src/config.js";
 import { OnboardingEngine, type OnboardAdapters, type StepContext } from "../src/onboard/engine.js";
@@ -376,6 +378,25 @@ describe("dry_run (rule 1)", () => {
     expect(() => patchAll([{ section: "", key: "dry_run", value: "false" }])).toThrow(/rule 1/);
   });
 
+  it.skipIf(process.getuid?.() === 0)(
+    "refuses — writing nothing — when a config exists but cannot be read, never re-seeding it from the template",
+    async () => {
+      const live = TEMPLATE.replace("dry_run = true", "dry_run = false");
+      const path = join(root, "config.toml");
+      writeFileSync(path, live);
+      chmodSync(path, 0o000);
+      try {
+        const { report } = await runStep();
+        expect(report.ok).toBe(false);
+        expect(failed(report)).toMatch(/cannot be read/);
+        chmodSync(path, 0o600);
+        expect(readFileSync(path, "utf8")).toBe(live);
+      } finally {
+        chmodSync(path, 0o600);
+      }
+    },
+  );
+
   it("never flips an owner's ratified dry_run = false back to true", async () => {
     const live = TEMPLATE.replace("dry_run = true", "dry_run = false");
     writeFileSync(join(root, "config.toml"), live);
@@ -484,6 +505,19 @@ describe("comment-preserving patch", () => {
     expect(out).toContain('app_slug = "s"');
     expect(out).toContain("[owner]");
     expect(out).toContain('name = "Dana"');
+  });
+
+  it("recognises a table header carrying a trailing comment — never appends a duplicate table", () => {
+    // `[tui] # mine` is legal TOML and the ingress reader already accepts it;
+    // a second [tui] would make the whole file unloadable.
+    const out = patchToml('[tui] # mine\ntarget = "local"\n\n[server] # port\nport = 8787\n', [
+      { section: "tui", key: "target", value: tomlString("ssh") },
+      { section: "tui", key: "ssh_host", value: tomlString("review-vm") },
+    ]);
+    expect(out.split("\n").filter((l) => l.includes("[tui]"))).toEqual(["[tui] # mine"]);
+    const parsed = parseToml(out) as { tui: Record<string, unknown>; server: Record<string, unknown> };
+    expect(parsed.tui).toEqual({ target: "ssh", ssh_host: "review-vm" });
+    expect(parsed.server).toEqual({ port: 8787 });
   });
 
   it("splits a trailing comment only outside quotes", () => {

@@ -68,7 +68,9 @@ export interface TomlEdit {
   value: string;
 }
 
-const HEADER_RE = /^\s*\[([^\]]+)\]\s*$/;
+// A header may carry a trailing comment (`[tui] # mine` is legal TOML, and the
+// ingress reader accepts it) — missing one would append a duplicate table.
+const HEADER_RE = /^\s*\[([^\]]+)\]\s*(?:#.*)?$/;
 
 /** A TOML basic string. JSON's escape set is a subset of TOML's, so a hostile
  * answer (quotes, backslashes, newlines) can never break out of the value. */
@@ -677,6 +679,19 @@ function readIfPresent(path: string): string | null {
   }
 }
 
+/** Like `readIfPresent`, but only ABSENCE is null: a file that exists and
+ * cannot be read is an error, never "no config" — the template must not be
+ * renamed over an operator's file (and its dry_run) we could not even see. */
+function readExisting(path: string): { text: string | null; error: string | null } {
+  try {
+    return { text: readFileSync(path, "utf8"), error: null };
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return { text: null, error: null };
+    return { text: null, error: code ?? String(err) };
+  }
+}
+
 /** The current config, when there is one that parses. A config that does NOT
  * parse is not an error here — it is exactly what this step is for — but its
  * values cannot be offered as defaults, so the answers fall back to asking. */
@@ -907,7 +922,22 @@ export function configFillStep(): OnboardingStep {
       const root = rootFromStateDir(ctx.adapters.paths.stateDir);
       const configPath = ctx.adapters.paths.configPath;
       const templatePath = templatePathFor(root);
-      const existing = readIfPresent(configPath);
+      const current = readExisting(configPath);
+      if (current.error !== null) {
+        return {
+          ok: false,
+          checks: [
+            {
+              name: "config",
+              ok: false,
+              detail:
+                `${configPath} exists but cannot be read (${current.error}) — nothing was written: replacing it from the ` +
+                "template would lose every setting in it. Fix its ownership/permissions and run this step again",
+            },
+          ],
+        };
+      }
+      const existing = current.text;
       const source = existing ?? readIfPresent(templatePath);
       if (source === null) {
         return {

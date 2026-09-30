@@ -23,12 +23,14 @@
 // writes.
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { parse as parseToml } from "smol-toml";
 import {
   EMBEDDING_PROVIDERS,
   HOSTED_EMBEDDING,
   LOCAL_EMBEDDING,
   OPENVIKING_DEFAULTS,
   parseConfig,
+  parseOpenViking,
   type EmbeddingProvider,
 } from "../../config.js";
 import { CHOICE_KEYS } from "../choices.js";
@@ -56,6 +58,28 @@ export interface DeclaredEmbedder {
  * not as "unknown".
  */
 export function declaredEmbedderOf(configText: string): DeclaredEmbedder {
+  // The loader's own reading first: parse the document and hand the block to
+  // the loader's own [openviking] parser, so a hosted opt-in that omits its
+  // model/dimension resolves to the HOSTED defaults and `1_536` reads as 1536
+  // — exactly what the daemon will run. Only a text that does not parse (or a
+  // block the loader refuses) falls back to the tolerant line reader below.
+  try {
+    const doc = parseToml(configText) as Record<string, unknown>;
+    const block = doc.openviking;
+    const ov = parseOpenViking(
+      typeof block === "object" && block !== null && !Array.isArray(block)
+        ? (block as Record<string, unknown>)
+        : {},
+    );
+    return {
+      provider: ov.embedding_provider,
+      model: ov.embedding_model,
+      dimension: ov.embedding_dimension,
+      keyFile: ov.embedding_key_file,
+    };
+  } catch {
+    /* fall through to the tolerant reader */
+  }
   const get = (key: string): string | null =>
     readTomlKey(configText, "openviking", key)?.trim() ?? null;
   const dimensionRaw = get("embedding_dimension");
