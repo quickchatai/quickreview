@@ -593,6 +593,12 @@ describe("a lens that read none of its focus files is not a reading (scan-loop r
     expect(run.cases.filter((c) => c.unit !== "app").every((c) => c.status === "done")).toBe(true);
   });
 
+  it("an `@`-prefixed absolute path is the path pi opened (it strips the `@`)", async () => {
+    const reads = (spec: CaseSpec): string[] => [`@${ROOT}/${spec.files[0]!}`];
+    const { run } = await runToEnd(new ScanRunner(ports(runner({ answer: none, reads }))));
+    expect(run.cases.every((c) => c.status === "done")).toBe(true);
+  });
+
   it("a runner that cannot tell (no `reads`) is not judged — unknown is never read as zero", async () => {
     const { run } = await runToEnd(new ScanRunner(ports(runner({ answer: none }))));
     expect(run.cases.every((c) => c.status === "done")).toBe(true);

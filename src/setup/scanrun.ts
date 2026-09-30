@@ -139,6 +139,9 @@ export function unreadFocus(reads: readonly string[] | undefined, focus: readonl
   const base = posix.normalize(`${root}/`);
   const opened = new Set(
     reads
+      // pi strips one leading `@` from a path argument (its `stripAtPrefix`),
+      // so `@/tree/x.py` opened `/tree/x.py`.
+      .map((r) => (r.startsWith("@") ? r.slice(1) : r))
       .filter((r) => r.startsWith("/"))
       .map((r) => posix.normalize(r))
       .filter((r) => r.startsWith(base))
