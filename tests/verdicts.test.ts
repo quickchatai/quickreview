@@ -767,6 +767,50 @@ describe("confirmed round posting receipts", () => {
     expect(roundId).toBe(store.roundsFor(180)[0]?.id);
   });
 
+  // Selfscan 152c429f: a merits verdict for a round that is already DONE (an
+  // archive that failed and left the file in verdict/, or a session re-emitting
+  // an old round's file) re-applied everything — labels, the lifecycle
+  // transition, and the old head stamped over a newer reviewed-head mark.
+  it("a replayed verdict for a round already done is inert", async () => {
+    reviewingRound(184);
+    const { key } = stampPosting(184, 1);
+    writePostingReceipt(184, 1, key, "REQUEST_CHANGES");
+    const w = watcher();
+    expect(await w.handleFile(write(184, 1, verdictFile({ pr: 184 })))).toBe(true);
+    // The PR moved on: a newer head was reviewed and a fresh trigger is queued.
+    store.recordReviewedHead(184, { head_sha: "def456", verdict: "APPROVE", round_no: 2 });
+    store.upsertPr({ ...store.getPr(184)!, state: "queued", head_sha: "def456" });
+    const callsBefore = adapter.calls.length;
+
+    expect(await w.handleFile(write(184, 1, verdictFile({ pr: 184 })))).toBe(true);
+
+    expect(store.reviewedHead(184)).toMatchObject({ head_sha: "def456", verdict: "APPROVE" });
+    expect(store.getPr(184)).toMatchObject({ state: "queued", head_sha: "def456" });
+    expect(adapter.calls.length).toBe(callsBefore);
+    const applied = store.db
+      .prepare("SELECT COUNT(*) AS c FROM events WHERE pr = ? AND kind = 'verdict_applied'")
+      .get(184) as { c: number };
+    expect(applied.c).toBe(1);
+  });
+
+  // Selfscan 4866a7cc: the payload's identity was never compared with the
+  // filename's, so pr-185-round-1.json naming PR 186 was applied to PR 186.
+  it("a verdict whose payload names another PR or round than its filename is not applied", async () => {
+    reviewingRound(185);
+    reviewingRound(186);
+    const name = write(185, 1, verdictFile({ pr: 186, round_no: 1 }));
+
+    expect(await watcher().handleFile(name)).toBe(true);
+
+    expect(store.roundsFor(186)[0]?.status).toBe("running");
+    expect(store.getPr(186)?.state).toBe("reviewing");
+    expect(store.reviewedHead(186)).toBeUndefined();
+    expect(adapter.calls.filter((c) => c.includes(":186:"))).toEqual([]);
+    // The filename's own round got a verdict it cannot use: the malformed path.
+    expect(store.roundsFor(185)[0]?.status).not.toBe("done");
+    expect(existsSync(join(dir, name))).toBe(false);
+  });
+
   it("holds a verdict file while the post/local-persistence window is still ambiguous", async () => {
     reviewingRound(181);
     stampPosting(181, 1);

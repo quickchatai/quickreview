@@ -472,6 +472,21 @@ export class VerdictWatcher {
         this.archive(name);
         return true;
       }
+      // The payload must be the file's own round (selfscan 4866a7cc) — the
+      // same binding RecheckDecisionWatcher enforces on its filenames. A
+      // payload naming another PR or round would otherwise act on that other
+      // lifecycle while this round never gets its verdict; it is this round's
+      // malformed verdict instead.
+      if (parsed.verdict.pr !== pr || parsed.verdict.round_no !== roundNo) {
+        await this.handleAnomaly(
+          pr,
+          roundNo,
+          `malformed verdict file ${name}: payload names PR #${parsed.verdict.pr} round ${parsed.verdict.round_no}, not the filename's`,
+          "malformed",
+        );
+        this.archive(name);
+        return true;
+      }
       if (parsed.passes_note) this.log(`verdicts: ${name} passes telemetry: ${parsed.passes_note}`);
       const applied = await this.apply(parsed.verdict, name);
       if (applied === "waiting") return false;
@@ -925,6 +940,24 @@ export class VerdictWatcher {
         );
         return "applied";
       }
+    }
+
+    // A round already DONE has had its verdict applied (selfscan 152c429f):
+    // this file is a replay — an archive that failed and left it in verdict/,
+    // or a session re-emitting an old round's file. Applying it again would
+    // re-run every side effect below and stamp the old head over a newer
+    // reviewed-head mark. Inert, exactly like the guarded-noop replay.
+    if (round && round.round_no === v.round_no && round.status === "done") {
+      store.logEvent("verdict_replay_ignored", v.pr, {
+        round_id: round.id,
+        round_no: v.round_no,
+        head_sha: v.head_sha,
+        file: name,
+      });
+      this.log(
+        `verdicts: #${v.pr} round ${v.round_no} is already done — ${name} replays inertly`,
+      );
+      return "applied";
     }
 
     if (round) {
