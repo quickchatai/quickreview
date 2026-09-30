@@ -327,6 +327,11 @@ export interface ScanTabState {
   planOff: { key: string; rows: string[] };
   /** Request ids the companion has not answered yet. */
   pending: Array<{ kind: "stage2" | "stop"; id: string }>;
+  /** Lines the mouse wheel has scrolled into the selected finding's detail
+   * (the tickets tab's idiom: the wheel reads, j/k and the arrows choose). */
+  scroll: number;
+  /** The furthest `scroll` the LAST PAINT could use — written by the frame. */
+  scrollMax: number;
 }
 
 export interface ScanTabDeps {
@@ -615,8 +620,16 @@ export function renderScanTab(deps: ScanTabDeps, st: ScanTabState, app: { dryRun
     });
     if (v.item) {
       row([{ text: `${MUTED}${"─".repeat(Math.max(0, rightW - 3))}${RESET}` }]);
-      for (const l of detailLines(v.item, rightW - 3).slice(0, Math.max(0, bodyRows - right.length))) row([{ text: truncate(l, rightW - 3) }]);
-    }
+      // The detail scrolls rather than clipping: a long evidence field must
+      // never push the state/ticket/validation lines out of reach.
+      const lines = detailLines(v.item, rightW - 3);
+      const room = Math.max(0, bodyRows - right.length);
+      const cap = lines.length > room ? Math.max(0, room - 1) : room;
+      st.scrollMax = Math.max(0, lines.length - cap);
+      const from = Math.min(st.scroll, st.scrollMax);
+      for (const l of lines.slice(from, from + cap)) row([{ text: truncate(l, rightW - 3) }]);
+      if (from + cap < lines.length) row([{ text: `${MUTED}… ${lines.length - from - cap} more lines — the wheel scrolls${RESET}` }]);
+    } else st.scrollMax = 0;
   }
 
   paintSplit(frame, { left, leftActions, right, leftW, rightW, top, bodyRows });
@@ -636,6 +649,8 @@ export function installScanTab(app: App, deps: ScanTabDeps): ScanTabState {
     planSel: 0,
     planOff: { key: "", rows: [] },
     pending: [],
+    scroll: 0,
+    scrollMax: 0,
   };
   const now = (): Date => deps.now?.() ?? new Date();
   let lastZones: Zone<ScanAction>[] = [];
@@ -686,8 +701,11 @@ export function installScanTab(app: App, deps: ScanTabDeps): ScanTabState {
       if (a.t === "unit") {
         st.unit = a.i;
         st.item = 0;
-      } else if (a.t === "item") st.item = a.i;
-      else st.planSel = a.i;
+        st.scroll = 0;
+      } else if (a.t === "item") {
+        st.item = a.i;
+        st.scroll = 0;
+      } else st.planSel = a.i;
       theApp.repaint();
       return true;
     },
@@ -703,7 +721,11 @@ export function installScanTab(app: App, deps: ScanTabDeps): ScanTabState {
           if (st.pane === "plan") {
             const n = proposalOf(deps)?.rows.length ?? 0;
             st.planSel = Math.max(0, Math.min(st.planSel + d, Math.max(0, n - 1)));
-          } else st.item = Math.max(0, Math.min(st.item + d, Math.max(0, v.items.length - 1)));
+          } else if (key.wheel) st.scroll = Math.max(0, Math.min(st.scroll + d * 3, st.scrollMax));
+          else {
+            st.item = Math.max(0, Math.min(st.item + d, Math.max(0, v.items.length - 1)));
+            st.scroll = 0;
+          }
           theApp.repaint();
           return true;
         }
@@ -712,6 +734,7 @@ export function installScanTab(app: App, deps: ScanTabDeps): ScanTabState {
           if (!offered(key.kind === "older" ? "[" : "]")) return false;
           st.unit = Math.max(0, Math.min(st.unit + (key.kind === "older" ? -1 : 1), v.units.length - 1));
           st.item = 0;
+          st.scroll = 0;
           theApp.repaint();
           return true;
         case "refresh":
@@ -794,11 +817,13 @@ export function installScanTab(app: App, deps: ScanTabDeps): ScanTabState {
             st.filter = r.filter;
             st.unit = 0;
             st.item = 0;
+            st.scroll = 0;
           });
           return true;
         case "F":
           st.filter = {};
           st.item = 0;
+          st.scroll = 0;
           theApp.repaint();
           return true;
         default:

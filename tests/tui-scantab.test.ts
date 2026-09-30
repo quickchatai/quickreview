@@ -367,3 +367,25 @@ describe("scratch hygiene — a scan rig's temp home never outlives its test", (
     expect(existsSync(home)).toBe(false);
   });
 });
+
+describe("a long finding's detail is never clipped out of reach (selfscan 9d631900)", () => {
+  it("the wheel scrolls the selected finding's detail down to its state and seen lines, and says how much is left", () => {
+    const long = scanFinding({
+      fingerprint: "long".padEnd(64, "0"),
+      evidence: Array.from({ length: 80 }, (_, i) => `evidence sentence ${i} names another line of the trace.`).join(" "),
+      fix: "take the lock",
+    });
+    const { app, screen } = rig({ findings: [long] });
+    const first = screen();
+    expect(first).not.toContain("seen in 1 scan(s)");
+    expect(first).toMatch(/… \d+ more lines/);
+    for (let i = 0; i < 200; i++) app.hooks.tabs.scan!.key(app, { kind: "down", wheel: true });
+    const scrolled = screen();
+    expect(scrolled).toContain("state: new");
+    expect(scrolled).toContain("seen in 1 scan(s)");
+    expect(scrolled).not.toMatch(/… \d+ more lines/);
+    // choosing another finding starts its detail from the top
+    app.hooks.tabs.scan!.key(app, { kind: "up", wheel: false });
+    expect(screen()).toContain("P1 data-safety · billing/models.py:88");
+  });
+});
