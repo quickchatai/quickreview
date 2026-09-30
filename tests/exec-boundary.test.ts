@@ -763,6 +763,7 @@ describe("— the post-hoc audit is no longer blind to the corpus", () => {
       "gh api search/issues --method GET -f q=repo:o/n",
       "gh api repos/o/n/search -XGET -fevent=APPROVE",
       "gh api repos/o/n/pulls --method=GET --input q.json",
+      `gh api search/issues --method "GET" -f q=repo:o/n`,
       "gh search prs --repo o/n",
       "gh run list --limit 5",
       "rg -n 'gitconfig' src/",

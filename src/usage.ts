@@ -368,8 +368,9 @@ const GH_API_WRITE_RE =
 /** An explicit `-X`/`--method` on a `gh api` call. As in the guard's
  * `ghApiEffectiveMethod`, the explicit method WINS — a body flag only promotes
  * gh's default GET — so `gh api search/issues --method GET -f q=…` is a read,
- * and the LAST explicit method is the one gh sends. */
-const GH_API_EXPLICIT_METHOD_RE = /(?:^|\s)(?:-X\s*|--method[=\s]+)([A-Za-z]+)/gi;
+ * and the LAST explicit method is the one gh sends. A quoted method
+ * (`--method "GET"`) is the same token to the guard's tokenizer. */
+const GH_API_EXPLICIT_METHOD_RE = /(?:^|\s)(?:-X\s*|--method[=\s]+)['"]?([A-Za-z]+)/gi;
 
 /** Does this `gh api` segment send something other than GET/HEAD? */
 function ghApiWrites(segment: string): boolean {
