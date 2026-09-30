@@ -27,15 +27,17 @@
 import {
   cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import type { ScanConfig } from "../config.js";
 import {
@@ -356,12 +358,16 @@ export function checkStaged(home: ProfileHome, name: string, files: ProfileFiles
   const scratch = mkdtempSync(join(tmpdir(), "qcr-profile-check-"));
   try {
     const src = join(realHome, PROFILES_DIR);
-    // Dereferenced: a copied symlink would still point into the LIVE tree
-    // (cpSync even rewrites a relative target to an absolute one), and the
-    // candidate write below would follow it and overwrite the real file.
-    if (existsSync(src)) cpSync(src, join(scratch, PROFILES_DIR), { recursive: true, dereference: true });
-    const dir = join(scratch, PROFILES_DIR, assertPathSegment("profile", name));
+    // A plain copy (a dangling link or a loop elsewhere under profiles/ must
+    // not break staging), from the resolved root so profiles/ itself is never
+    // a link. A copied symlink still points into the LIVE tree (cpSync even
+    // rewrites a relative target to an absolute one), so every link on the
+    // path of a candidate write is cut first — see `unlinkWritePath`.
+    if (existsSync(src)) cpSync(realpathSync(src), join(scratch, PROFILES_DIR), { recursive: true });
+    const root = join(scratch, PROFILES_DIR);
+    const dir = join(root, assertPathSegment("profile", name));
     for (const [rel, text] of Object.entries(files)) {
+      unlinkWritePath(root, relative(root, join(dir, rel)));
       mkdirSync(dirname(join(dir, rel)), { recursive: true });
       writeFileSync(join(dir, rel), text);
     }
@@ -373,6 +379,36 @@ export function checkStaged(home: ProfileHome, name: string, files: ProfileFiles
     return { ok: false, errors: r.errors.map((e) => e.split(scratch).join(realHome)) };
   } finally {
     rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Make writing `rel` under the scratch `root` unable to reach the live tree:
+ * a symlinked directory on the way is replaced by a plain copy of what it
+ * points at (its other files still load), a symlinked file at the end is
+ * removed (the write replaces it anyway). A dangling directory link is
+ * removed and the write creates a real directory in its place.
+ */
+function unlinkWritePath(root: string, rel: string): void {
+  const parts = rel.split(sep).filter((p) => p !== "");
+  let at = root;
+  for (let i = 0; i < parts.length; i++) {
+    at = join(at, parts[i]!);
+    let isLink: boolean;
+    try {
+      isLink = lstatSync(at).isSymbolicLink();
+    } catch {
+      return; // nothing here yet: the rest of the path is created fresh
+    }
+    if (!isLink) continue;
+    let target: string | null = null;
+    try {
+      target = realpathSync(at);
+    } catch {
+      target = null;
+    }
+    rmSync(at, { force: true });
+    if (i < parts.length - 1 && target !== null) cpSync(target, at, { recursive: true });
   }
 }
 

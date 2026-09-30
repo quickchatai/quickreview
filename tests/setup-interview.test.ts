@@ -367,6 +367,15 @@ describe("profile write tools: validate, diff, commit", () => {
     expect(readFileSync(join(dir, "dotfiles", "acme", "profile.toml"), "utf8")).toBe(original);
   });
 
+  it("a dangling link or a link loop elsewhere under profiles/ does not break a preview", () => {
+    liveConfig("acme");
+    mkdirSync(profileDir("other"), { recursive: true });
+    symlinkSync(join(dir, "nowhere"), join(profileDir("other"), ".#profile.toml")); // an editor lock file
+    symlinkSync("..", join(profileDir("other"), "loop"));
+    const r = applied(engine().profileApply({ priorities: { security: "critical" } }));
+    expect(r.written).toBe(false);
+  });
+
   it("two changing writes in the same instant ask for two commits, never one reused id", () => {
     liveConfig("acme");
     const a = applied(engine().profileApply({ priorities: answers({ security: "critical" }), goals: "g", write: true }));
