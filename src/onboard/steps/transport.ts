@@ -276,6 +276,41 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
                   `\`${sshCommandLine(facts.alias, ["journalctl", "-u", "cloudflared", "-n", "50"])}\` if it will not stay up`,
               },
         );
+      } else if (ingress?.id === "polling") {
+        // Polling promises nothing exposed, but a downgrade from the named
+        // tunnel never stops cloudflared: the playbook skips every cloudflared
+        // task once it is disabled and has no stop task. So say what is live.
+        // A warning, never a failure and never a stop: on a shared box the
+        // service may be someone else's tunnel, which this wizard must not
+        // touch (the playbook's foreign-cloudflared caution).
+        const unit = await remote(["systemctl", "is-active", "cloudflared"]);
+        const status = (unit.stdout || unit.stderr).trim();
+        checks.push(
+          unit.code === 0 && status.startsWith("active")
+            ? {
+                name: "ingress-sidecar",
+                ok: true,
+                detail:
+                  `WARNING: you chose polling, but cloudflared on ${facts.alias} is ${status}. If it is the tunnel an earlier ` +
+                  "named-ingress deploy installed, it still forwards that hostname to this daemon, so the daemon is NOT " +
+                  "unexposed — the deploy does not stop it. Stop it with " +
+                  `\`${sshCommandLine(facts.alias, ["sudo", "systemctl", "disable", "--now", "cloudflared"])}\`. ` +
+                  "If it serves someone else's tunnel on a shared box, leave it alone.",
+              }
+            : /^(inactive|failed|unknown)/.test(status)
+              ? {
+                  name: "ingress-sidecar",
+                  ok: true,
+                  detail: `no cloudflared service is active on ${facts.alias} (${status}) — polling, nothing exposed`,
+                }
+              : {
+                  name: "ingress-sidecar",
+                  ok: true,
+                  detail:
+                    `could not tell whether cloudflared runs on ${facts.alias} (${status || `exit ${unit.code}`}) — ` +
+                    `check by hand: \`${sshCommandLine(facts.alias, ["systemctl", "is-active", "cloudflared"])}\``,
+                },
+        );
       }
       return checks;
     },

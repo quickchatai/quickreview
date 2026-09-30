@@ -75,8 +75,8 @@ topology chose.
 | 35 | interview and `config.toml` | both |
 | 36 | escalation (optional, off by default) | both |
 | 38 | memory embeddings: local by default | both |
+| 39 | webhook ingress | both |
 | 40 | GitHub App: create, install, label | both |
-| 50 | webhook ingress | both |
 | 60 | memory keys, phase A | both |
 | 65 | reconcile the App's real slug | both |
 | 68 | deploy inventory | server |
@@ -308,6 +308,78 @@ namespace is yours to rebuild from your PC with `qcr memory reembed`. The
 memory text is never touched. [docs/memory-embeddings.md](memory-embeddings.md)
 has the whole shape, the journal, and the rehearsal recipe.
 
+### 39 — Webhook ingress
+
+GitHub delivers webhooks to an HTTPS URL, so your daemon needs one. Four shapes,
+with their real trade-offs. The recommendation follows your topology: the quick
+tunnel on this computer, the named tunnel on a server.
+
+**`quick` — Cloudflare quick tunnel. No account, nothing to sign up for.**
+
+- No account, no credential, no DNS: it works within seconds of `docker compose
+  up`.
+- The `*.trycloudflare.com` hostname **rotates** on every tunnel restart — and
+  the daemon re-points the App's webhook URL itself, so this costs you nothing
+  to operate.
+- No SLA and no support: Cloudflare can drop a quick tunnel at any time. The
+  reconcile poll still triggers every review, so an outage costs webhook
+  latency, not correctness.
+- Not for a permanent installation you advertise — for that, pick the named
+  tunnel.
+
+**`ngrok` — a stable hostname, at the price of an account.**
+
+- Needs an ngrok account and an authtoken; with a reserved domain the hostname
+  never changes.
+- Free-tier caps: roughly 20,000 requests a month and 1 GB of transfer, one
+  online agent, and rate limits around 120 requests a minute. A busy repo can
+  exhaust that; the paid tier lifts it.
+- Without a reserved domain the hostname still rotates, and the same self-heal
+  covers it.
+- The authtoken lives in a *file* in your secrets dir, never on a command line:
+  `<secrets>/ngrok_authtoken`.
+
+**`named` — your own Cloudflare tunnel, on your own domain.**
+
+- A permanent hostname on a domain you own, with Cloudflare's SLA behind it.
+- Needs a Cloudflare account, a zone, and a tunnel connector token (the secrets
+  wizard collects it as `tunnel_token`).
+- No rotation, so no webhook self-heal is needed or enabled.
+- The same token works on either topology: as the compose sidecar here, or as
+  the cloudflared service the Ansible playbook installs on the server.
+
+**`polling` — no tunnel, nothing exposed.**
+
+- Nothing to install, nothing reachable from the internet: the daemon only makes
+  outbound calls.
+- The reconcile poll becomes the *only* trigger path, so a review starts up to
+  one poll interval late (`[daemon] poll_interval_s`, 300s by default).
+- What degrades, plainly: author replies do not route to the PR's session (the
+  ping-pong path is webhook-driven), the `[feedback]` tuning loop never sees a
+  comment, and the CI-completed retry of a withheld approval waits for the next
+  sweep.
+- It is not a dead end — re-run this step later and pick a tunnel; nothing else
+  has to change.
+- Switching a server that already ran the named tunnel to polling does not stop
+  its `cloudflared` service — the deploy never stops one. The verify step warns
+  when it is still active; stop it yourself with
+  `sudo systemctl disable --now cloudflared` if it is yours.
+
+The step writes the `[ingress]` block in `config.toml`, `[server] hostname` when
+you gave one, and `COMPOSE_PROFILES` in the project's `.env`. It never accepts a
+token as an argument: for `ngrok` and `named` it checks the secrets file exists
+and tells you the `umask 077` line (or `deploy/collect-secrets.sh`) to create it.
+
+Note that re-running this step replaces the whole `[ingress]` section body, so
+hand-tuned `debounce_ms` / `sweep_interval_s` values go back to their defaults.
+
+It runs before the App step on purpose: a hostname you give here (`named`, or
+`ngrok` with a reserved domain) is written into the App's manifest when step 40
+creates the App, so GitHub delivers to it from the first event. That happens
+once. If the App already exists when you pick or change a fixed hostname, the
+step says so, and you set the webhook URL on the App's settings page yourself
+— only a rotating tunnel is re-pointed by the daemon.
+
 ### 40 — GitHub App: create, install, label
 
 One click, no transcription. See
@@ -360,67 +432,6 @@ Re-running the step never creates a second App: with valid credentials already
 in place it verifies the existing one instead. The only repository write it ever
 makes is creating those label *definitions* — it never applies a label to a PR,
 never posts a review, never pushes a branch.
-
-### 50 — Webhook ingress
-
-GitHub delivers webhooks to an HTTPS URL, so your daemon needs one. Four shapes,
-with their real trade-offs. The recommendation follows your topology: the quick
-tunnel on this computer, the named tunnel on a server.
-
-**`quick` — Cloudflare quick tunnel. No account, nothing to sign up for.**
-
-- No account, no credential, no DNS: it works within seconds of `docker compose
-  up`.
-- The `*.trycloudflare.com` hostname **rotates** on every tunnel restart — and
-  the daemon re-points the App's webhook URL itself, so this costs you nothing
-  to operate.
-- No SLA and no support: Cloudflare can drop a quick tunnel at any time. The
-  reconcile poll still triggers every review, so an outage costs webhook
-  latency, not correctness.
-- Not for a permanent installation you advertise — for that, pick the named
-  tunnel.
-
-**`ngrok` — a stable hostname, at the price of an account.**
-
-- Needs an ngrok account and an authtoken; with a reserved domain the hostname
-  never changes.
-- Free-tier caps: roughly 20,000 requests a month and 1 GB of transfer, one
-  online agent, and rate limits around 120 requests a minute. A busy repo can
-  exhaust that; the paid tier lifts it.
-- Without a reserved domain the hostname still rotates, and the same self-heal
-  covers it.
-- The authtoken lives in a *file* in your secrets dir, never on a command line:
-  `<secrets>/ngrok_authtoken`.
-
-**`named` — your own Cloudflare tunnel, on your own domain.**
-
-- A permanent hostname on a domain you own, with Cloudflare's SLA behind it.
-- Needs a Cloudflare account, a zone, and a tunnel connector token (the secrets
-  wizard collects it as `tunnel_token`).
-- No rotation, so no webhook self-heal is needed or enabled.
-- The same token works on either topology: as the compose sidecar here, or as
-  the cloudflared service the Ansible playbook installs on the server.
-
-**`polling` — no tunnel, nothing exposed.**
-
-- Nothing to install, nothing reachable from the internet: the daemon only makes
-  outbound calls.
-- The reconcile poll becomes the *only* trigger path, so a review starts up to
-  one poll interval late (`[daemon] poll_interval_s`, 300s by default).
-- What degrades, plainly: author replies do not route to the PR's session (the
-  ping-pong path is webhook-driven), the `[feedback]` tuning loop never sees a
-  comment, and the CI-completed retry of a withheld approval waits for the next
-  sweep.
-- It is not a dead end — re-run this step later and pick a tunnel; nothing else
-  has to change.
-
-The step writes the `[ingress]` block in `config.toml`, `[server] hostname` when
-you gave one, and `COMPOSE_PROFILES` in the project's `.env`. It never accepts a
-token as an argument: for `ngrok` and `named` it checks the secrets file exists
-and tells you the `umask 077` line (or `deploy/collect-secrets.sh`) to create it.
-
-Note that re-running this step replaces the whole `[ingress]` section body, so
-hand-tuned `debounce_ms` / `sweep_interval_s` values go back to their defaults.
 
 ### 60 and 72 — Memory, in two phases
 

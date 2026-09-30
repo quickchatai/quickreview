@@ -280,6 +280,32 @@ describe("choosing a shape", () => {
     expect(f.engine.choices()[INGRESS_HOSTNAME_KEY]).toBe("review.example.com");
   });
 
+  it("named over an App that already exists: the new URL cannot reach it, so the step says to set it by hand", async () => {
+    // The App step writes the webhook URL into the manifest once, at creation;
+    // a named hostname has no self-heal. Picking one after the App exists
+    // records a URL nothing will ever deliver to the App.
+    writeFileSync(join(secretsDir, "tunnel_token"), "connector-token\n");
+    writeFileSync(join(secretsDir, "app_id"), "4242\n");
+    const f = fake();
+    const r = await f.engine.runStep(INGRESS_STEP_ID, {
+      choice: "named",
+      hostname: "review.example.com",
+    });
+    const said = r.checks.find((c) => c.name === "app-webhook-url");
+    expect(said, "no word that the existing App keeps its old webhook URL").toBeDefined();
+    expect(said!.detail).toMatch(/https:\/\/review\.example\.com\/webhook/);
+    expect(said!.detail).toMatch(/App's settings page/);
+  });
+
+  it("named before the App exists: nothing to say, the App step reads the URL", async () => {
+    writeFileSync(join(secretsDir, "tunnel_token"), "connector-token\n");
+    const r = await fake().engine.runStep(INGRESS_STEP_ID, {
+      choice: "named",
+      hostname: "review.example.com",
+    });
+    expect(r.checks.some((c) => c.name === "app-webhook-url")).toBe(false);
+  });
+
   it("polling: no sidecar, no self-heal — and the cost is spelled out in the result", async () => {
     const f = fake();
     const result = await f.engine.runStep(INGRESS_STEP_ID, { choice: "polling" });

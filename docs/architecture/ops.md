@@ -141,8 +141,8 @@ Registered in `defaultSteps()` (`src/onboard/steps/index.ts`), executed in
 | 35 | `config_fill` | `configfill.ts` | The interview → a comment-preserving patch of `config.toml`. `QUESTIONS` is what a human must answer; `DERIVABLES` is the closed set the step computes instead of asking |
 | 36 | `escalation` | `escalation.ts` | The optional escalation feature: targets and triggers, or left off. Enforces the same completeness rules `parseEscalation` enforces at load |
 | 38 | `embeddings` | `embeddings.ts` | Which embedder memory uses; local is the default and needs no key. Refuses a config that disagrees with what the boot will render |
+| 39 | `ingress` | `ingress.ts` | The webhook shape, the `[ingress]` config it needs, and the `COMPOSE_PROFILES` line — then verifies the **running** shape, not the recorded one |
 | 40 | `github_app` | `githubapp.ts` | App created from the manifest, credentials landed, install verified against the App's own installation listing, trigger labels created idempotently |
-| 50 | `ingress` | `ingress.ts` | The webhook shape, the `[ingress]` config it needs, and the `COMPOSE_PROFILES` line — then verifies the **running** shape, not the recorded one |
 | 60 | `memory` | `memory.ts` | Memory phase A: the server's root key on disk before the daemon boots, and where each of the three keys may live |
 | 65 | `app_slug_reconcile` | `appslug.ts` | Asks `GET /app` with the App JWT and reconciles the real slug into `[github] app_slug` / `bot_login`; the live answer wins over file and checklist |
 | 68 | `vm_inventory` | `inventory.ts` | *(vm only)* writes `deploy/ansible/inventory.ini` — the file the manual route already reads — carrying route answers as **host vars**, so no tracked file is dirtied |
@@ -251,7 +251,7 @@ nothing else in the system checks it.
 
 ## Webhook ingress and the self-heal
 
-Four shapes, chosen at order 50 (`src/onboard/steps/ingress.ts`), three of them
+Four shapes, chosen at order 39 (`src/onboard/steps/ingress.ts`), three of them
 a compose profile in `docker-compose.yml` running the same wrapper
 (`docker/tunnel/sidecar.mjs`) around a vendor binary; no profile means no
 sidecar, which is the polling-only shape.

@@ -57,8 +57,10 @@ export function defaultSteps(): OnboardingStep[] {
     configFillStep(),
     escalationStep(),
     embeddingsStep(),
-    githubAppStep(),
+    // ingress (39) before the App (40): the App step writes the webhook URL
+    // the ingress step records into the manifest, once, at creation.
     ingressStep(),
+    githubAppStep(),
     memoryStep(),
     appSlugStep(),
     vmInventoryStep(),

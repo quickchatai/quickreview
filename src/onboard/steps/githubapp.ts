@@ -1111,7 +1111,8 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
       if (!webhookUrl)
         log(
           ctx,
-          `the webhook URL is still the manifest placeholder (${manifest.hook_attributes.url}) — the tunnel step points it at your real endpoint.`,
+          `the webhook URL is the manifest placeholder (${manifest.hook_attributes.url}) — no fixed hostname was recorded by the ingress step. ` +
+            "A rotating tunnel's daemon re-points it itself; under polling nothing is delivered; for any other endpoint, set it on the App's settings page.",
         );
       if (opts.openBrowser) {
         const opener = process.platform === "darwin" ? "open" : "xdg-open";
@@ -1238,8 +1239,9 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
       "them 0600 in your secrets dir: no credential ever passes through your clipboard. Then you click Install on your repo, the " +
       "wizard verifies the installation through the App's own listing, and creates the trigger labels. If the App already exists " +
       "and is installed, running this again just verifies it.",
-    // 40: after preflight (10) and the topology/auth questions (20/30) that
-    // later slices register; before the tunnel and bring-up steps.
+    // 40: after preflight (10), the topology/auth questions (20/30) and the
+    // ingress step (39), whose recorded webhook URL goes into the manifest;
+    // before the bring-up steps.
     order: 40,
     // The reviewed repo is NOT a parameter: it is the interview's answer, read
     // from the checklist (CHOICE_KEYS.repo). The only thing the operator may

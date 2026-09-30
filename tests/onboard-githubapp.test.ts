@@ -539,7 +539,8 @@ describe("happy path: one click to a credentialed, installed, labelled App", () 
     const lines: string[] = [];
     const without = fakeServer({ code: "c" });
     await runStep(ghState(), without.factory, {}, {}, { log: (l) => lines.push(l) });
-    expect(lines.join("\n")).toMatch(/tunnel step points it at your real endpoint/);
+    expect(lines.join("\n")).toMatch(/no fixed hostname was recorded by the ingress step/);
+    expect(lines.join("\n")).toMatch(/set it on the App.s settings page/);
   });
 });
 

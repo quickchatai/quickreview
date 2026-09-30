@@ -440,12 +440,24 @@ describe("the registered steps hand their choices to each other", () => {
     expect(questionAsked(webhookQuestion, {})).toBe(false);
     expect(questionAsked(webhookQuestion, engine.choices())).toBe(true);
 
-    // The interview runs at order 35 and the ingress step at 50, so the ingress
+    // The interview runs at order 35 and the ingress step at 39, so the ingress
     // choice reaches the fill on its RE-RUN — the same second pass that picks
     // up the App slug. Its shape line is where the value lands.
     const rerun = await engine.runStep("config_fill");
     expect(rerun.ok, rerun.failures.join("; ")).toBe(true);
     expect(rerun.checks.find((c) => c.name === "shape")!.detail).toContain("ingress named");
+  });
+
+  it("HANDOFF 4c — the named hostname is recorded BEFORE the App step reads it into the manifest", async () => {
+    // The App step's createApp reads CHOICE_KEYS.webhookUrl once, when it
+    // renders the manifest; a re-run with credentials present only verifies.
+    // So the ingress step (its one producer) must run first, or a named
+    // hostname — which has no self-heal — never reaches the App, and every
+    // delivery goes to the manifest placeholder.
+    const engine = new OnboardingEngine(defaultSteps(), adapters());
+    const d = await drive(engine, LAPTOP_INPUTS, GITHUB_APP_STEP_ID, SKIP);
+    expect(d.results.has("ingress"), "ingress had not run when the App step did").toBe(true);
+    expect(engine.choices()[CHOICE_KEYS.webhookUrl]).toBe(`https://${HOSTNAME}/webhook`);
   });
 
   it("HANDOFF 4b — a re-run of the interview takes the hostname from the ingress step, not the operator", async () => {

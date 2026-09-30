@@ -638,9 +638,14 @@ describe("the layered verification runs over ssh, unchanged", () => {
   }
 
   function layered(
-    o: { containerState?: string; cloudflared?: string; health?: ProcessResult } = {},
+    o: {
+      containerState?: string;
+      cloudflared?: string;
+      health?: ProcessResult;
+      ingress?: string;
+    } = {},
   ): Layered {
-    seedChoices({ ...VM_CHOICES, [INGRESS_CHOICE_KEY]: "named" });
+    seedChoices({ ...VM_CHOICES, [INGRESS_CHOICE_KEY]: o.ingress ?? "named" });
     const calls: string[][] = [];
     const runner = {
       run: async (cmd: string, args: string[]): Promise<ProcessResult> => {
@@ -728,6 +733,30 @@ describe("the layered verification runs over ssh, unchanged", () => {
     const said = result.checks.find((c) => c.name === "ingress-sidecar")!.detail;
     expect(said).toMatch(/cloudflared on review-box is inactive/);
     expect(said).toMatch(/systemctl restart cloudflared/);
+  });
+
+  it("polling over a cloudflared service that is still active says so — the downgrade never stops it", async () => {
+    // A server that ran the named tunnel, re-onboarded to polling: the playbook
+    // skips every cloudflared task when disabled and has no stop task, so the
+    // service keeps forwarding the old hostname. "Nothing exposed" must not be
+    // reported over it. It is a warning, not a failure: the service may be a
+    // foreign tunnel on a shared box, which this wizard must never touch.
+    const h = layered({ ingress: "polling", cloudflared: "active" });
+    const result = await h.engine.runStep(VERIFY_STACK_STEP_ID);
+    const said = result.checks.find((c) => c.name === "ingress-sidecar");
+    expect(said, "polling reported nothing about a live cloudflared").toBeDefined();
+    expect(said!.detail).toMatch(/cloudflared on review-box is active/);
+    expect(said!.detail).toMatch(/systemctl disable --now cloudflared/);
+    expect(result.checks.find((c) => c.name === "ping-delivery")!.detail).toMatch(/polling/);
+  });
+
+  it("polling with no cloudflared service running reports that nothing is exposed", async () => {
+    const h = layered({ ingress: "polling", cloudflared: "inactive" });
+    const result = await h.engine.runStep(VERIFY_STACK_STEP_ID);
+    expect(result.ok).toBe(true);
+    expect(result.checks.find((c) => c.name === "ingress-sidecar")!.detail).toMatch(
+      /no cloudflared service is active on review-box/,
+    );
   });
 
   it("a health endpoint that answers nothing says where to look, over ssh", async () => {

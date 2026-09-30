@@ -428,7 +428,11 @@ export function ingressStep(): OnboardingStep {
       "answer depends on where the reviewer lives: the quick tunnel on this computer, the named tunnel on a server (the " +
       "deploy installs cloudflared there). Call the tool with no arguments first to read the options out, then again with " +
       "the operator's pick.",
-    order: 50,
+    // 39: after the interview (35) that seeds config.toml, and BEFORE the App
+    // step (40) — the App step reads the webhook URL this step records into the
+    // manifest exactly once, at creation, and a named hostname has no self-heal
+    // to fix a placeholder afterwards.
+    order: 39,
     parameters: {
       type: "object",
       properties: {
@@ -546,7 +550,27 @@ export function ingressStep(): OnboardingStep {
         // in the manifest instead of the artifact's placeholder. Only a
         // hostname the operator owns is stable enough to record — a rotating
         // tunnel's URL is the daemon's own self-heal to keep current.
-        ctx.recordChoice(CHOICE_KEYS.webhookUrl, `https://${hostname}${WEBHOOK_PATH}`);
+        const url = `https://${hostname}${WEBHOOK_PATH}`;
+        // The App step reads it ONCE, at creation. An App that already exists
+        // was created with whatever was recorded then, and a fixed hostname
+        // has no self-heal — so a new URL here never reaches it on its own.
+        const appId = join(secretsDir, "app_id");
+        const appExists = existsSync(appId) && readFileSync(appId, "utf8").trim() !== "";
+        if (appExists && ctx.choices[CHOICE_KEYS.webhookUrl] !== url) {
+          const page =
+            typeof ctx.choices[CHOICE_KEYS.appHtmlUrl] === "string"
+              ? ` (${ctx.choices[CHOICE_KEYS.appHtmlUrl] as string})`
+              : "";
+          checks.push({
+            name: "app-webhook-url",
+            ok: true,
+            detail:
+              `your GitHub App already exists, and it keeps the webhook URL it was created with — nothing re-points a ` +
+              `fixed hostname. Set its Webhook URL to ${url} on the App's settings page${page} (General → Webhook), ` +
+              "then the verify step's ping-delivery layer proves it.",
+          });
+        }
+        ctx.recordChoice(CHOICE_KEYS.webhookUrl, url);
       }
       return {
         ok: checks.every((c) => c.ok),

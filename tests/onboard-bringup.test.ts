@@ -158,8 +158,10 @@ describe("the registered sequence (tail)", () => {
       // the embedder — local by default, so calling it with no answer
       // confirms the default; a hosted opt-in is the only thing it asks about.
       "embeddings",
-      "github_app",
+      // The ingress step before the App: its fixed hostname goes into the
+      // App's manifest, which is read once, at creation.
       "ingress",
+      "github_app",
       "memory",
       "app_slug_reconcile",
       "vm_inventory",
