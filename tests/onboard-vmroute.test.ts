@@ -413,7 +413,7 @@ describe("the deploy composes the real script, at full strictness", () => {
     const second = deployHarness({
       choices: {
         ...VM_CHOICES,
-        [VM_DEPLOY_CHOICE_KEY]: { mode: "rebuild", at: "2026-08-30T10:00:00Z" },
+        [VM_DEPLOY_CHOICE_KEY]: { mode: "rebuild", at: "2026-08-30T10:00:00Z", host: ALIAS },
       },
     });
     await second.engine.runStep(VM_DEPLOY_STEP_ID);
@@ -422,11 +422,40 @@ describe("the deploy composes the real script, at full strictness", () => {
     const asked = deployHarness({
       choices: {
         ...VM_CHOICES,
-        [VM_DEPLOY_CHOICE_KEY]: { mode: "sync", at: "2026-08-30T10:00:00Z" },
+        [VM_DEPLOY_CHOICE_KEY]: { mode: "sync", at: "2026-08-30T10:00:00Z", host: ALIAS },
       },
     });
     await asked.engine.runStep(VM_DEPLOY_STEP_ID, { mode: "rebuild" });
     expect(asked.runs.map((r) => r.at(-1))).toEqual(["rebuild", "rebuild"]);
+  });
+
+  it("a deploy recorded for another host does not make a fresh host's first deploy a sync", async () => {
+    writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS}\n`);
+    for (const record of [
+      { mode: "rebuild", at: "2026-08-30T10:00:00Z", host: "old-box" },
+      // A record from before deploys were scoped names no host: not trusted.
+      { mode: "rebuild", at: "2026-08-30T10:00:00Z" },
+    ]) {
+      const moved = deployHarness({ choices: { ...VM_CHOICES, [VM_DEPLOY_CHOICE_KEY]: record } });
+      const result = await moved.engine.runStep(VM_DEPLOY_STEP_ID);
+      expect(result.ok).toBe(true);
+      expect(moved.runs.map((r) => r.at(-1))).toEqual(["rebuild", "rebuild"]);
+      expect(moved.engine.choices()[VM_DEPLOY_CHOICE_KEY]).toMatchObject({
+        mode: "rebuild",
+        host: ALIAS,
+      });
+    }
+  });
+
+  it("refuses when the inventory targets a host other than the recorded alias — nothing runs", async () => {
+    writeFileSync(inventoryPath(root), "[quickreview]\nold-box\n");
+    const h = deployHarness();
+    const result = await h.engine.runStep(VM_DEPLOY_STEP_ID);
+    expect(result.ok).toBe(false);
+    expect(result.failures.join(" ")).toMatch(
+      /targets "old-box", not the recorded alias "review-box"/,
+    );
+    expect(h.runs).toEqual([]);
   });
 
   it("a refusal at plan time is quoted verbatim and STOPS — the real deploy never runs", async () => {
@@ -497,7 +526,7 @@ describe("the deploy composes the real script, at full strictness", () => {
     const h = deployHarness({
       choices: {
         ...VM_CHOICES,
-        [VM_DEPLOY_CHOICE_KEY]: { mode: "sync", at: "2026-08-30T10:00:00Z" },
+        [VM_DEPLOY_CHOICE_KEY]: { mode: "sync", at: "2026-08-30T10:00:00Z", host: ALIAS },
       },
     });
     const report = await h.engine.verifyAll();
@@ -507,7 +536,7 @@ describe("the deploy composes the real script, at full strictness", () => {
     const down = deployHarness({
       choices: {
         ...VM_CHOICES,
-        [VM_DEPLOY_CHOICE_KEY]: { mode: "sync", at: "2026-08-30T10:00:00Z" },
+        [VM_DEPLOY_CHOICE_KEY]: { mode: "sync", at: "2026-08-30T10:00:00Z", host: ALIAS },
       },
       containerState: "exited",
     });
@@ -707,8 +736,9 @@ describe("the go-live flip on the server route", () => {
     review_shown: true,
   };
 
-  function golive(): { engine: OnboardingEngine; deploys: string[][] } {
+  function golive(inventoryHost = ALIAS): { engine: OnboardingEngine; deploys: string[][] } {
     seedChoices({ ...VM_CHOICES, [PROOF_CHOICE_KEY]: PROOF });
+    writeFileSync(inventoryPath(root), `[quickreview]\n${inventoryHost}\n`);
     const deploys: string[][] = [];
     const runner = {
       run: async (cmd: string, args: string[]): Promise<ProcessResult> => {
@@ -756,6 +786,18 @@ describe("the go-live flip on the server route", () => {
     expect(result.checks.find((c) => c.name === "daemon-restart")!.detail).toMatch(
       /scripts\/deploy\.sh sync/,
     );
+  });
+
+  it("never ships through an inventory that targets another host than the one it checked", async () => {
+    const h = golive("old-box");
+    const result = await h.engine.runStep(GO_LIVE_STEP_ID, {
+      decision: "go_live",
+      confirm: GO_LIVE_CONFIRMATION,
+    });
+    expect(h.deploys).toEqual([]);
+    const restart = result.checks.find((c) => c.name === "daemon-restart")!;
+    expect(restart.ok).toBe(false);
+    expect(restart.detail).toMatch(/targets "old-box", not the recorded alias "review-box"/);
   });
 
   it("declining is still a first-class outcome, and ships nothing", async () => {

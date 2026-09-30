@@ -433,8 +433,24 @@ export const nodeCallbackServer: CallbackServerFactory = async (o) => {
   };
 
   let html = "";
+  // The authorities this listener answers to, set once it is bound. Anything
+  // else is a rebound hostname (DNS rebinding) that must never see the page,
+  // which carries the state token, nor reach the callback.
+  let allowedHosts = new Set<string>();
   const handler = (req: IncomingMessage, res: ServerResponse): void => {
-    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    if (!allowedHosts.has((req.headers.host ?? "").toLowerCase())) {
+      res.writeHead(421, { "content-type": "text/plain; charset=utf-8" });
+      res.end("misdirected request\n");
+      return;
+    }
+    let url: URL;
+    try {
+      url = new URL(req.url ?? "/", "http://127.0.0.1");
+    } catch {
+      res.writeHead(400, { "content-type": "text/plain; charset=utf-8" });
+      res.end("bad request\n");
+      return;
+    }
     if (url.pathname === CALLBACK_PATH) {
       const code = url.searchParams.get("code");
       const state = url.searchParams.get("state");
@@ -497,6 +513,7 @@ export const nodeCallbackServer: CallbackServerFactory = async (o) => {
     port = await listen(0); // preferred port busy — any loopback port will do
   }
 
+  allowedHosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
   const url = `http://127.0.0.1:${port}/`;
   const redirectUrl = `http://127.0.0.1:${port}${CALLBACK_PATH}`;
   html = o.page({ url, redirectUrl });

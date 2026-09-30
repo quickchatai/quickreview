@@ -37,18 +37,21 @@ import { existsSync } from "node:fs";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 import { nodeStreamRunner, rootOf, type StreamRunner } from "./compose.js";
 import { deployArgv, deployCommandLine, deployScriptPath, type DeployMode } from "./deploysh.js";
-import { inventoryPath, VM_INVENTORY_STEP_ID } from "./inventory.js";
+import { inventoryTargetMismatch } from "./inventory.js";
 import { SSH_PREFLIGHT_STEP_ID } from "./ssh.js";
 import { SSH_ALIAS_RE, TOPOLOGY_STEP_ID, sshAliasOf, topologyOf } from "./topology.js";
 import { stackTransportFor } from "./transport.js";
 
 export const VM_DEPLOY_STEP_ID = "vm_deploy";
-/** Recorded once a deploy has actually succeeded (mode + when). */
+/** Recorded once a deploy has actually succeeded (mode + when + where). */
 export const VM_DEPLOY_CHOICE_KEY = "vm_deployed";
 
 export interface VmDeployRecord {
   mode: DeployMode;
   at: string;
+  /** The ssh alias it deployed to. `null` on a record written before deploys
+   * were scoped to a host — never trusted as "this host was deployed". */
+  host: string | null;
 }
 
 export function parseDeployRecord(value: unknown): VmDeployRecord | null {
@@ -57,7 +60,14 @@ export function parseDeployRecord(value: unknown): VmDeployRecord | null {
   const mode = r.mode;
   if (mode !== "sync" && mode !== "rebuild") return null;
   if (typeof r.at !== "string" || r.at === "") return null;
-  return { mode, at: r.at };
+  return { mode, at: r.at, host: typeof r.host === "string" && r.host !== "" ? r.host : null };
+}
+
+/** The deploy recorded for THIS alias, or null: a sync only makes sense on a
+ * host that has already had its first (rebuild) install. */
+export function deployRecordFor(value: unknown, alias: string): VmDeployRecord | null {
+  const record = parseDeployRecord(value);
+  return record !== null && record.host === alias ? record : null;
 }
 
 /** The warning, before the wait — the same promise the compose route makes.
@@ -114,13 +124,8 @@ export function vmDeployStep(opts: VmDeployStepOptions = {}): OnboardingStep {
       });
       return checks;
     }
-    if (!existsSync(inventoryPath(root))) {
-      checks.push({
-        name: "inventory",
-        ok: false,
-        detail: `${inventoryPath(root)} does not exist — Fix: run the ${VM_INVENTORY_STEP_ID} step; the deploy has nothing to target without it`,
-      });
-    }
+    const mismatch = inventoryTargetMismatch(root, alias);
+    if (mismatch !== null) checks.push({ name: "inventory", ok: false, detail: mismatch });
     return checks;
   }
 
@@ -176,7 +181,8 @@ export function vmDeployStep(opts: VmDeployStepOptions = {}): OnboardingStep {
       const checks = preconditions(ctx, root);
       if (!checks.every((c) => c.ok)) return { ok: false, checks };
 
-      const previous = parseDeployRecord(ctx.choices[VM_DEPLOY_CHOICE_KEY]);
+      const alias = sshAliasOf(ctx.choices);
+      const previous = deployRecordFor(ctx.choices[VM_DEPLOY_CHOICE_KEY], alias);
       const mode: DeployMode = modeOf(ctx.input) ?? (previous === null ? "rebuild" : "sync");
       checks.push({
         name: "mode",
@@ -244,7 +250,7 @@ export function vmDeployStep(opts: VmDeployStepOptions = {}): OnboardingStep {
       checks.push(...(await transport.containerChecks(null)));
 
       const ok = checks.every((c) => c.ok);
-      const record: VmDeployRecord = { mode, at: ctx.adapters.clock().toISOString() };
+      const record: VmDeployRecord = { mode, at: ctx.adapters.clock().toISOString(), host: alias };
       if (ok) ctx.recordChoice(VM_DEPLOY_CHOICE_KEY, record);
       return { ok, checks, data: { deploy: record } };
     },
@@ -256,13 +262,14 @@ export function vmDeployStep(opts: VmDeployStepOptions = {}): OnboardingStep {
       const root = rootOf(ctx.adapters);
       const checks = preconditions(ctx, root);
       if (!checks.every((c) => c.ok)) return { ok: false, checks };
-      const record = parseDeployRecord(ctx.choices[VM_DEPLOY_CHOICE_KEY]);
+      const alias = sshAliasOf(ctx.choices);
+      const record = deployRecordFor(ctx.choices[VM_DEPLOY_CHOICE_KEY], alias);
       checks.push(
         record === null
           ? {
               name: "deploy",
               ok: false,
-              detail: `no deploy recorded yet — run the ${VM_DEPLOY_STEP_ID} step`,
+              detail: `no deploy recorded yet to ${alias} — run the ${VM_DEPLOY_STEP_ID} step`,
             }
           : {
               name: "deploy",

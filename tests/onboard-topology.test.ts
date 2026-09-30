@@ -113,7 +113,13 @@ describe("recording the choice", () => {
   });
 
   it("a URL or user@host is not an alias, and is refused rather than recorded", async () => {
-    for (const bad of ["https://vm.example.com", "me@vm.example.com", "vm.example.com:2222"]) {
+    for (const bad of [
+      "https://vm.example.com",
+      "me@vm.example.com",
+      "vm.example.com:2222",
+      "-V",
+      "-oProxyCommand=x",
+    ]) {
       const result = await engine().runStep(TOPOLOGY_STEP_ID, { choice: "vm", ssh_host: bad });
       expect(result.ok, bad).toBe(false);
       expect(result.failures.join(" ")).toMatch(/not an ssh alias/);

@@ -68,8 +68,9 @@ export function sshAliasOf(choices: Readonly<Record<string, unknown>>): string {
   return typeof raw === "string" ? raw.trim() : "";
 }
 
-/** An ssh alias as it appears in ~/.ssh/config — a Host name, not a URL. */
-export const SSH_ALIAS_RE = /^[A-Za-z0-9._-]+$/;
+/** An ssh alias as it appears in ~/.ssh/config — a Host name, not a URL.
+ * Never a leading dash: ssh would read it as an option, not the destination. */
+export const SSH_ALIAS_RE = /^[A-Za-z0-9._][A-Za-z0-9._-]*$/;
 
 export interface TopologyOption {
   id: Topology;

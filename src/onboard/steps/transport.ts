@@ -49,6 +49,7 @@ import {
 } from "./compose.js";
 import { deployArgv, deployCommandLine } from "./deploysh.js";
 import { readTomlKey, type IngressOption } from "./ingress.js";
+import { inventoryTargetMismatch } from "./inventory.js";
 import { sshArgv, sshCommandLine } from "./ssh.js";
 import { sshAliasOf, topologyOf } from "./topology.js";
 
@@ -363,6 +364,16 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
           ok: true,
           detail:
             "nothing is deployed on the server yet, so there is nothing to restart — the deploy step ships this config when you run it",
+        };
+      }
+      // The deploy ships to whatever the inventory names; everything above
+      // checked facts.alias. Refuse rather than ship to a host never looked at.
+      const mismatch = inventoryTargetMismatch(root, facts.alias);
+      if (mismatch !== null) {
+        return {
+          name: "daemon-restart",
+          ok: false,
+          detail: `not shipping: ${mismatch}. The file on disk here is already correct; it reaches the server with the next deploy`,
         };
       }
       log(

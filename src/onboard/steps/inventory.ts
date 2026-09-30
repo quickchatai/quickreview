@@ -113,6 +113,25 @@ export function parseInventoryHost(text: string): string {
   return "";
 }
 
+/**
+ * Whether the inventory deploy.sh will run against targets the recorded alias.
+ * Every deploy consults this BEFORE mutating: the wizard checks and verifies
+ * the recorded alias over ssh, so an inventory still naming another host would
+ * ship to a machine the wizard never looked at. `null` when it does.
+ */
+export function inventoryTargetMismatch(root: string, alias: string): string | null {
+  const path = inventoryPath(root);
+  const existing = readTextOrNull(path);
+  if (existing === null) {
+    return `${path} does not exist — Fix: run the ${VM_INVENTORY_STEP_ID} step; the deploy has nothing to target without it`;
+  }
+  const host = parseInventoryHost(existing);
+  return host === alias
+    ? null
+    : `${path} targets "${host || "(nothing)"}", not the recorded alias "${alias}" — Fix: run the ` +
+        `${VM_INVENTORY_STEP_ID} step, or edit the file if the inventory is right and the alias is wrong`;
+}
+
 /** Host vars on that first host line, as written above. */
 export function parseInventoryHostVars(text: string): Record<string, string> {
   const out: Record<string, string> = {};

@@ -26,6 +26,7 @@ import {
   writeFileSync,
   mkdirSync,
 } from "node:fs";
+import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -861,5 +862,72 @@ describe("the loopback callback listener (real, on an ephemeral port)", () => {
     }
     // Closed deterministically: the port no longer answers.
     await expect(fetch(listener.url)).rejects.toBeTruthy();
+  });
+  const rawRequest = (port: number, text: string): Promise<string> =>
+    new Promise((resolveRaw, rejectRaw) => {
+      const sock = connect(port, "127.0.0.1", () => sock.write(text));
+      let out = "";
+      sock.setEncoding("utf8");
+      sock.on("data", (d) => {
+        out += d;
+      });
+      sock.on("end", () => resolveRaw(out));
+      sock.on("close", () => resolveRaw(out));
+      sock.on("error", rejectRaw);
+    });
+
+  const hostListener = () =>
+    nodeCallbackServer({
+      state: "state-token",
+      port: 0,
+      timeoutMs: 5_000,
+      page: () => "<html>state-token</html>",
+    });
+
+  it("refuses a foreign Host (DNS rebinding): no page, no state, no callback", async () => {
+    const listener = await hostListener();
+    try {
+      const port = Number(new URL(listener.url).port);
+      const page = await rawRequest(
+        port,
+        "GET / HTTP/1.1\r\nHost: attacker.example:" + port + "\r\nConnection: close\r\n\r\n",
+      );
+      expect(page).toMatch(/^HTTP\/1\.1 421/);
+      expect(page).not.toContain("state-token");
+      const cb = await rawRequest(
+        port,
+        `GET ${CALLBACK_PATH}?code=evil&state=state-token HTTP/1.1\r\nHost: attacker.example:${port}\r\nConnection: close\r\n\r\n`,
+      );
+      expect(cb).toMatch(/^HTTP\/1\.1 421/);
+      // localhost is still the operator's own browser.
+      const local = await rawRequest(
+        port,
+        `GET / HTTP/1.1\r\nHost: localhost:${port}\r\nConnection: close\r\n\r\n`,
+      );
+      expect(local).toMatch(/^HTTP\/1\.1 200/);
+      const good = await fetch(
+        `${listener.url.replace(/\/$/, "")}${CALLBACK_PATH}?code=real-code&state=state-token`,
+      );
+      expect(good.status).toBe(200);
+      await expect(listener.waitForCode()).resolves.toMatchObject({ code: "real-code" });
+    } finally {
+      await listener.close();
+    }
+  });
+
+  it("a malformed request target is a 400, not a crash of the wizard", async () => {
+    const listener = await hostListener();
+    try {
+      const port = Number(new URL(listener.url).port);
+      const bad = await rawRequest(
+        port,
+        `GET //[ HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: close\r\n\r\n`,
+      );
+      expect(bad).toMatch(/^HTTP\/1\.1 400/);
+      const page = await fetch(listener.url);
+      expect(page.status).toBe(200);
+    } finally {
+      await listener.close();
+    }
   });
 });
