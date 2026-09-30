@@ -17,8 +17,8 @@ whose limits are unstated is a boundary people trust further than it goes.
 | The one mutation gate | `src/gate.ts` | `tests/gate.test.ts`, `tests/fences-gate.test.ts` |
 | Posting-time guards 1–5 | `src/guards.ts` | `tests/guards.test.ts`, `tests/fences-guards.test.ts` |
 | The CI gate | `src/cigate.ts` | `tests/cigate.test.ts`, `tests/fences-cigate.test.ts` |
-| Shell mirror of the guards | `scripts/guards.sh` | `tests/guards-shell.test.ts` |
-| Session posting routes | `scripts/post-review.sh`, `scripts/approve-pr.sh`, `scripts/reply-thread.sh` | `tests/guards-shell.test.ts` |
+| Shell mirror of the guards | `scripts/guards.sh` | `tests/guards-shell-*.test.ts` |
+| Session posting routes | `scripts/post-review.sh`, `scripts/approve-pr.sh`, `scripts/reply-thread.sh` | `tests/guards-shell-*.test.ts` |
 | Exec boundary (5 layers) | `extensions/bash-guard.ts`, `src/execboundary.ts` | `tests/bash-guard.test.ts`, `tests/exec-boundary.test.ts` |
 | Migration collision pre-check | `src/migrations.ts`, `src/dispatch.ts` | `tests/migrations.test.ts`, `tests/migration-precheck.test.ts` |
 | Severity → tag, reachability gate | `src/severity.ts` | `tests/severity.test.ts`, `tests/fences-severity.test.ts` |
@@ -296,7 +296,7 @@ Behavioural differences from the gate route, all deliberate:
 - **`guard_stamp_reviewed_head`** writes the mark the gate's after-step writes,
   and only after a post that really reached GitHub.
 
-`tests/guards-shell.test.ts` runs the real scripts against a loopback stub over
+`tests/guards-shell-*.test.ts` runs the real scripts against a loopback stub over
 the same cases `tests/guards.test.ts` runs the real gate, so the two halves
 stay behaviourally identical rather than claimed identical.
 

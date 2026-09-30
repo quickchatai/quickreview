@@ -21,7 +21,7 @@ stay behaviourally identical to the TS side:
   a lost POST. The record is never written over an attempted post and an
   attempt is never written over it; a legacy round (no `QCR_ROUND_NO`)
   records nothing and refuses exactly as before.
-- Parity is test-enforced: `tests/guards-shell.test.ts` runs the real scripts
+- Parity is test-enforced: `tests/guards-shell-*.test.ts` runs the real scripts
   against a loopback stub over the same cases as `tests/guards.test.ts` runs
   the gate. Change a guard on one side → change it on both + both tests.
 - `mint-token.sh` is the only credential source (App JWT → installation

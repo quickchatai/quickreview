@@ -38,7 +38,7 @@
 // carries ALL THREE, together with the reviewed-head stamp that the gate's
 // after-step makes on its own route. The two halves are deliberately kept
 // behaviourally identical: tests/guards.test.ts drives the real gate and
-// tests/guards-shell.test.ts runs the real scripts, over the same cases.
+// tests/guards-shell-*.test.ts runs the real scripts, over the same cases.
 // Guard coverage per shell route: post-review.sh 1+2+3 (it hard-rejects
 // APPROVE, so guard 4 has nothing to say there), approve-pr.sh 3+4 — guards 1
 // and 2 do not apply to it (an approval is not softened for a human approval,

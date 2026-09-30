@@ -26,13 +26,17 @@
   checkout's own objects. Other tests
   that spawn a real local subprocess do so for a shell script or a CLI of
   this repo, never for a network or a VM —
-  `guards-shell.test.ts` (the real scripts against a loopback HTTP stub — the
-  shell/gate parity proof, same cases as `guards.test.ts`), `pr-self-shell`,
+  `guards-shell-*.test.ts` (the real scripts against a loopback HTTP stub — the
+  shell/gate parity proof, same cases as `guards.test.ts`; seven files by area —
+  `closed`, `cigate`, `post`, `parity`, `drift`, `receipts`, `noop` — so they run in
+  parallel instead of one file setting the suite's wall time, each with its
+  own stub from `helpers/guards-shell-rig.ts`), `pr-self-shell`,
   `fences-gate`/`fences-cigate`, `shellquote`, `collect-secrets`, `deploy`
   (the preflight, the playbook's rsync filters over temp dirs and
   `config-fingerprint.sh` — never a deploy), `publishability`/`publish-snapshot`, and
   several TUI suites over stub binaries. The list drifts; find the current
-  one with `grep -l child_process tests/*.test.ts`.
+  one with `grep -l child_process tests/*.test.ts tests/helpers/*.ts` (the
+  guards-shell files spawn through their rig, not by importing it).
 - **Timeouts under load.** The dev PC runs benchmark containers, so the suite
   has to stay green at a load average of 15-45 without hiding a real hang.
   The rule, pinned by `suite-timeouts.test.ts` (constants in

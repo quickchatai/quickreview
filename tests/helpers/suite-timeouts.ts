@@ -32,6 +32,8 @@ export const TYPECHECK_TIMEOUT_MS = 600_000;
  * code under test and were found by tracing ChildProcess.prototype.spawn and
  * the *Sync variants across a full run:
  *   bench-defects, bench-runpi-flush — the bench's runPi over a fake `pi`;
+ *   guards-shell-* — the real posting scripts, spawned by their shared rig
+ *     (tests/helpers/guards-shell-rig.ts);
  *   companion-memory — the forward's ssh probe (fails fast, no VM);
  *   tui-deploy-process — a node child under the deploy tab's runner;
  *   tui-openurl — a launcher that does not exist.
@@ -53,7 +55,13 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/docker-daemon.test.ts",
   "tests/fences-cigate.test.ts",
   "tests/fences-gate.test.ts",
-  "tests/guards-shell.test.ts",
+  "tests/guards-shell-cigate.test.ts",
+  "tests/guards-shell-closed.test.ts",
+  "tests/guards-shell-drift.test.ts",
+  "tests/guards-shell-noop.test.ts",
+  "tests/guards-shell-parity.test.ts",
+  "tests/guards-shell-post.test.ts",
+  "tests/guards-shell-receipts.test.ts",
   "tests/improvements-e2e.test.ts",
   "tests/install-shell.test.ts",
   "tests/levers.test.ts",

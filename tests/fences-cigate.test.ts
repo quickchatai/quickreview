@@ -3,7 +3,7 @@
 // `scripts/guards.sh`'s `guard_ci_state` is a hand-rolled jq reimplementation
 // of `classifyCi` in `src/cigate.ts`, and both file headers claim the two are
 // behaviourally identical. Nothing checked that. They are asserted separately
-// — `tests/cigate.test.ts` drives the TypeScript, `tests/guards-shell.test.ts`
+// — `tests/cigate.test.ts` drives the TypeScript, `tests/guards-shell-cigate.test.ts`
 // drives the script — over different inputs, with no shared fixture set and no
 // agreement assertion.
 //
@@ -466,7 +466,7 @@ describe("the shell CI classifier agrees with classifyCi", () => {
     if (dieArm.includes("unknown")) {
       throw new Error(
         "guard 4 now REFUSES on an unreadable check list — the MC-15 fail-open is fixed. Delete this record and " +
-          "assert the closed behaviour directly; `tests/guards-shell.test.ts` is where the live case belongs.",
+          "assert the closed behaviour directly; `tests/guards-shell-cigate.test.ts` is where the live case belongs.",
       );
     }
 

@@ -208,7 +208,7 @@ suggesting dismissal; `tests/gate.test.ts` pins the two closed sets by deep
 equality. If the new kind posts to GitHub from a session, its shell script must
 source `scripts/guards.sh` and call the guards its route needs —
 `tests/fences-guards.test.ts` derives that coverage from the call sites, and
-`tests/guards-shell.test.ts` runs the real scripts against a loopback stub over
+`tests/guards-shell-*.test.ts` runs the real scripts against a loopback stub over
 the same cases the gate suite runs in TypeScript.
 
 ## Two more things to know

@@ -6,7 +6,7 @@
 # through the gate. This file is the mirror for that route, exactly as those
 # scripts already mirror the dry-run gate — so no posting route reaches GitHub
 # around a guard. The two halves are kept behaviourally identical on purpose;
-# tests/guards-shell.test.ts runs the real scripts against a loopback stub, and
+# tests/guards-shell-*.test.ts runs the real scripts against a loopback stub, and
 # tests/guards.test.ts runs the real gate, over the same cases.
 #
 #   1. A non-author human APPROVED at this head ⇒ REQUEST_CHANGES becomes

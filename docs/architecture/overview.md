@@ -137,7 +137,7 @@ property rather than a prompt instruction.
 
 The session-side posting scripts are the other half of that boundary and carry
 a behaviourally identical shell mirror of the guards; parity is test-enforced
-(`tests/guards-shell.test.ts` runs the real scripts against the same cases
+(`tests/guards-shell-*.test.ts` runs the real scripts against the same cases
 `tests/guards.test.ts` runs the gate).
 
 What the sessions may and may not execute is a separate, five-layer boundary
