@@ -1,7 +1,7 @@
 # tests/ — conventions
 
-- Run the full suite as `timeout 900 npm test` (6,500+ tests, ~100s on the
-  dev PC, the length of `guards-shell`; several minutes under heavy load —
+- Run the full suite as `timeout 900 npm test` (6,500+ tests, ~70-80s on the
+  dev PC with the benchmark running — no single file sets it any more; several minutes under heavy load —
   see "Timeouts under load"); a single file as `timeout 120 npx vitest run tests/<file>.test.ts`.
   Never `--reporter=basic`.
 - Everything mocks I/O: fake fetch/adapters, `StateStore(":memory:")`, temp
