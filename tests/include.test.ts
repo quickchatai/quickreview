@@ -1798,8 +1798,10 @@ describe.skipIf(!HAS_QC_PACK)(
         "unreasoned-output-validate",
         "concrete-injection-evidence",
         "concrete-injection-evidence-validate",
-        // composed only in the companion's scan build (`mode: "scan"`),
-        // so a PR build's bytes are unchanged by it.
+        // and scan-loop: composed only in the companion's scan build
+        // (`mode: "scan"`), so a PR build's bytes are unchanged by either
+        // (tests/scan-precision.test.ts proves it byte for byte).
+        "scan-precision",
         "scan-mode-anchor",
       ]);
       // The quickchat pack composes AFTER every generic entry, in filename

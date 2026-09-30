@@ -834,6 +834,45 @@ export const SCAN_MODE_ANCHOR_ADDENDUM =
   "You post nothing, and you read nothing outside the tree root. Your findings block is headed `FINDINGS <lens> SCAN <case id> @<scan sha>`.\n\n" +
   "Validator: verify an anchor by opening the file under the tree root, never against a diff — a finding whose lines do not show the code it describes is `bad-anchor`.\n";
 
+// scan-loop (2026-09-30): the scan's precision checklist. Three self-scan
+// rounds put every finding in front of an adversarial skeptic; 162 were
+// refuted (~19% of stage 1's, ~50-56% of the four deep lenses'). The refuted
+// set falls into ten recurring classes (plus stale snapshots and duplicates,
+// which no prompt fixes) — the analysis, with counts and examples, is on the
+// issue tracker: efforts/scan-and-setup/assets/improvement-loop/
+// false-positive-classes.md. This entry names each class and makes the three
+// checks that would have caught them mandatory BEFORE a finding is reported.
+// It only DOWNGRADES (P3, `contrived`): dropping a finding would change what
+// the scan reports at all, a policy call this entry does not make. Scan mode
+// only, and only the five lenses the evidence came from — a PR build is
+// byte-identical with or without it (tests/scan-precision.test.ts).
+export const SCAN_PRECISION_LENSES = [
+  "pass-scan",
+  "pass-contracts",
+  "pass-data-safety",
+  "pass-security",
+  "pass-concurrency",
+] as const;
+
+export const SCAN_PRECISION_ADDENDUM =
+  "\n## Scan precision — three checks before a finding is reported (sandbox rule)\n" +
+  "A scan reviews code that is already running, and most of it has already been reviewed. When earlier scans' findings were checked against the code, most of the wrong ones were not misread lines: the line said what the finding said, but the finding had not asked whether the state could arise, whether something else already handles it, or whether it was meant. Before you report a finding, do all three checks and put what you found in `evidence`:\n\n" +
+  "1. **A concrete triggering path from an entry point.** Name the entry point (a request handler, webhook, CLI command, timer, scheduled job, file the system reads) and the input or state that travels from it to the anchored line. A missing check matters only where the unchecked value can arrive; grep for the callers and name the one that passes it.\n" +
+  "2. **Guards in the callers and at the gate or validator.** Read the callers of the anchored function, the helper it calls, and any central gate, validator, parser, supervisor or reconcile loop the value passes through. A precondition enforced one frame up — or a later mechanism that heals the state — is a guard; name it or say you looked and found none.\n" +
+  "3. **The repository's recorded decisions.** Before calling behaviour a defect, read what the repository says it intends: the agent-directive files (`CLAUDE.md`, `AGENTS.md` and kin, above all their ratified or recorded decisions), the function's own docstring or comment, and the tests that pin the behaviour. Behaviour a ratified decision, a docstring or a pinning test states on purpose is not a defect because you would have chosen differently.\n\n" +
+  "The false-positive classes these checks exist to catch, by name — test each finding against every one:\n\n" +
+  "- **Guarded elsewhere** — the missing check is made by a caller, a helper, the gate, the validator, or a supervising or reconcile mechanism that owns the case.\n" +
+  "- **Unreachable in production** — the code or branch has no production caller (only tests reach it), or production wiring always supplies the value whose absence the finding needs.\n" +
+  "- **Intended behaviour** — a ratified decision, the docstring or a pinning test states the behaviour deliberately (a documented subset, at-most-once semantics, a start-cohort metric, a dry-run contract).\n" +
+  "- **Same-principal input** — the \"untrusted\" input is written by the operator, by this system's own first-party code, or by an actor that already holds the capability the finding says it could gain (a path in the operator's own config, a symlink only the owner of that directory could plant, a container reading its own files). No trust boundary is crossed, so it is hardening, not a vulnerability.\n" +
+  "- **Self-written state** — a persisted file or row whose only writer is this code, always written whole; a malformed shape needs a hand edit or disk corruption, not an input.\n" +
+  "- **Contrived concurrency** — the \"race\" is between consecutive synchronous statements with no `await` between them on a single-threaded runtime, between two copies of a single-operator tool started in the same millisecond, or inside a window a lease, redelivery or reconcile pass already heals.\n" +
+  "- **Contrived fault or input** — the trigger is a disk filling or a write failing between two adjacent lines, a permission error on a directory the same user created, or an input shape nobody produces (an exhausted id space thousands of records away, a version syntax the ecosystem never uses, a base branch that is already broken).\n" +
+  "- **No observable consequence** — the mechanism is real but nothing reads the value it leaves wrong, or the process exits before the leaked resource could matter.\n" +
+  "- **Scale without cardinality** — an \"unbounded backlog\" or \"no batch cap\" claim without the real row or item count, where that count is bounded by construction (one open row per PR, idempotent updates that match nothing after the first run).\n" +
+  "- **External semantics** — a claim about what a platform, API, runtime or library does (which sha a field records, whether a request can hang forever) made from memory; state it only if you can cite the behaviour, otherwise it is an assumption.\n\n" +
+  "**Downgrade, never drop.** These checks decide a finding's severity and reachability, not whether it is reported: never leave a finding out because of them. When a check matches a class above, or you could not complete it, report the finding at `P3` as a question, with `reachability: contrived` (or `plausible` when one realistic coincidence reaches it) and a lowered `confidence`, and say in `evidence` which class it matched, which guard or decision you found, or which check you could not finish. When all three checks come back clean — a named entry point reaches the line, no guard stands in the way, no recorded decision intends it — report it at the severity it deserves, exactly as before.\n";
+
 /**
  * The composed addendum set, in composition order.
  *
@@ -978,6 +1017,8 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
     scope: [VALIDATE_PASS],
     text: CONCRETE_INJECTION_EVIDENCE_VALIDATE_ADDENDUM,
   },
+  // scan-loop: scan mode only, the five lenses the refuted findings came from.
+  { id: "scan-precision", scope: SCAN_PRECISION_LENSES, mode: "scan", text: SCAN_PRECISION_ADDENDUM },
   // last, so it is the final word on anchoring in a scan build — and
   // composed in no other build.
   { id: "scan-mode-anchor", scope: "all", mode: "scan", text: SCAN_MODE_ANCHOR_ADDENDUM },
