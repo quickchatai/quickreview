@@ -58,6 +58,14 @@ function openStore(): StateStore {
   return new StateStore(join(stateDir(), "state.db"));
 }
 
+/** Foreign free text (a PR title, a session's pause reason) headed for the
+ * operator's terminal: one line, no C0/C1 control bytes — the board's
+ * sanitizeText does the same, so an ESC/CSI in a title cannot drive the
+ * terminal. */
+function oneLine(s: string): string {
+  return s.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").trim();
+}
+
 export function renderStatus(snapshot: StatusSnapshot): string {
   const lines: string[] = [];
   const mode = snapshot.dry_run ? "DRY-RUN" : "LIVE";
@@ -80,7 +88,7 @@ export function renderStatus(snapshot: StatusSnapshot): string {
     lines.push("PR     state             stale  head        title");
     for (const pr of snapshot.prs) {
       lines.push(
-        `#${String(pr.number).padEnd(5)} ${pr.state.padEnd(17)} ${(pr.stale_recheck ? "yes" : "-").padEnd(6)} ${pr.head_sha.slice(0, 10).padEnd(11)} ${pr.title.slice(0, 60)}`,
+        `#${String(pr.number).padEnd(5)} ${pr.state.padEnd(17)} ${(pr.stale_recheck ? "yes" : "-").padEnd(6)} ${pr.head_sha.slice(0, 10).padEnd(11)} ${oneLine(pr.title).slice(0, 60)}`,
       );
     }
     // every held PR says who holds it and when the hold lapses.
@@ -94,9 +102,8 @@ export function renderStatus(snapshot: StatusSnapshot): string {
             ? "paused by the operator until resumed"
             : `paused by a session${hold.expires_at ? `, lapses ${hold.expires_at}` : ""}`
           : "paused (holder unknown — older daemon)";
-        // The reason is a SESSION's free text headed for a terminal: one line,
-        // no control bytes (the board's sanitizeText does the same).
-        const reason = hold?.reason?.replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
+        // The reason is a SESSION's free text headed for a terminal.
+        const reason = hold?.reason ? oneLine(hold.reason) : undefined;
         lines.push(`#${pr.number} ${who}${reason ? ` — ${reason}` : ""}`);
       }
     }
@@ -392,15 +399,20 @@ export function todayCancellationLine(tallies: CancellationTally[]): string {
   return `cancelled: ${total} — ${parts.join(", ")}${loud > 0 ? `  (${loud} needing a look)` : ""}`;
 }
 
+/** `qcr why`'s first line; the title is the author's text, so one line. */
+export function whyHeaderLine(
+  n: number,
+  pr: { state: string; head_sha: string; stale_recheck: number; title: string },
+): string {
+  return `#${n} state=${pr.state} head=${pr.head_sha.slice(0, 10)} stale=${pr.stale_recheck} "${oneLine(pr.title)}"`;
+}
+
 function cmdWhy(n: number): void {
   const archiveDir = join(sandboxRoot(), "archive", `pr-${n}`);
   const store = openStore();
   try {
     const pr = store.getPr(n);
-    if (pr)
-      console.log(
-        `#${n} state=${pr.state} head=${pr.head_sha.slice(0, 10)} stale=${pr.stale_recheck} "${pr.title}"`,
-      );
+    if (pr) console.log(whyHeaderLine(n, pr));
     const rounds = store.db
       .prepare("SELECT * FROM rounds WHERE pr = ? ORDER BY round_no")
       .all(n) as any[];

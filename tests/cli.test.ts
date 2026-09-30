@@ -4,6 +4,7 @@ import {
   renderStatus,
   todayCancellationLine,
   todayJson,
+  whyHeaderLine,
   whyJson,
 } from "../src/cli.js";
 import { StateStore, type StatusSnapshot } from "../src/state.js";
@@ -81,6 +82,29 @@ describe("renderStatus", () => {
     const out = renderStatus({ ...snapshot, prs: [{ ...snapshot.prs[0]!, title: long }] });
     expect(out).toContain("x".repeat(60));
     expect(out).not.toContain("x".repeat(61));
+  });
+
+  // selfscan: a PR title is an author's text headed for the operator's
+  // terminal — same one-line, no-control-bytes treatment as a pause reason.
+  it("strips control bytes (ESC/CSI, CR, LF, C1) from a PR title", () => {
+    const title = "Fix\x1b[2J\x1b[31m widget\r\nrow\x9b2Kend";
+    const out = renderStatus({ ...snapshot, prs: [{ ...snapshot.prs[0]!, title }] });
+    const lines = out.split("\n");
+    expect(lines.slice(5)).toHaveLength(1);
+    expect(out).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
+    expect(lines[5]).toContain("Fix [2J [31m widget row 2Kend");
+  });
+});
+
+describe("whyHeaderLine", () => {
+  it("renders the PR header with its title stripped of control bytes", () => {
+    const line = whyHeaderLine(7, {
+      state: "reviewing",
+      head_sha: "0123456789abcdef",
+      stale_recheck: 0,
+      title: "evil\x1b]0;pwned\x07\ntitle",
+    });
+    expect(line).toBe('#7 state=reviewing head=0123456789 stale=0 "evil ]0;pwned title"');
   });
 });
 
