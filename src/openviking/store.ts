@@ -143,13 +143,18 @@ export function withTag(text: string, tag: string): string {
 }
 
 /** Remove every occurrence of a tag token. Idempotent, never touches other
- * tags — the same spelling `import.ts` uses to unpin. */
+ * tags — the same spelling `import.ts` uses to unpin.
+ *
+ * Only the gap the token leaves is closed (the token takes its trailing
+ * spaces with it): the rest of the body — code indentation, aligned columns —
+ * is the owner's bytes, and an unpin must hand them back as `withTag` found
+ * them. */
 export function withoutTag(text: string, tag: string): string {
-  const token = new RegExp(`(^|\\s)#${tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=\\s|$)`, "gi");
-  return `${text
-    .replace(token, "$1")
-    .replace(/[ \t]{2,}/g, " ")
-    .trim()}\n`;
+  const token = new RegExp(
+    `(?<=^|\\s)#${tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?!\\S)[ \t]*`,
+    "gi",
+  );
+  return `${text.replace(token, "").trim()}\n`;
 }
 
 /** Parse one stored file into an entry. Total: a file we cannot date still
@@ -200,6 +205,14 @@ export interface MemorySweep {
   unread: string[];
 }
 
+/** One sweep plus the retired entries' URIs it filtered out — kept beside the
+ * public `MemorySweep` rather than in it, because only the context search
+ * needs them. */
+interface SweepRun {
+  sweep: MemorySweep;
+  retired: string[];
+}
+
 export interface OpenVikingStoreOptions {
   client: OpenVikingClient;
   /** Defaults to the client's own `user/<user>/memories` root. */
@@ -231,8 +244,8 @@ export class OpenVikingStore implements MemoryStore {
   private readonly concurrency: number;
   private readonly cacheTtlMs: number;
 
-  private cache: { at: number; sweep: MemorySweep } | null = null;
-  private inFlight: { gen: number; sweep: Promise<MemorySweep> } | null = null;
+  private cache: { at: number; run: SweepRun } | null = null;
+  private inFlight: { gen: number; run: Promise<SweepRun> } | null = null;
   /** Bumped by every write: a sweep started before it may have read the old
    * bytes, so it neither fills the cache nor serves a later reader. */
   private generation = 0;
@@ -309,20 +322,36 @@ export class OpenVikingStore implements MemoryStore {
    * so the round path and the TUI poll never double the server's load.
    */
   async sweep(): Promise<MemorySweep> {
-    const fresh = this.cache && this.now().getTime() - this.cache.at < this.cacheTtlMs;
-    if (fresh && this.cache) return this.cache.sweep;
-    // One sweep at a time: the round path and the TUI poll can both land here.
-    if (this.inFlight && this.inFlight.gen === this.generation) return this.inFlight.sweep;
-    const gen = this.generation;
-    const sweep = this.runSweep(gen).finally(() => {
-      if (this.inFlight?.sweep === sweep) this.inFlight = null;
-    });
-    this.inFlight = { gen, sweep };
-    return sweep;
+    return (await this.sweepRun()).sweep;
   }
 
-  private async runSweep(gen: number): Promise<MemorySweep> {
+  /**
+   * The URIs of every retired entry the last sweep saw — the same cached,
+   * single-flight sweep. `read()` hides a retirement by filtering, but the
+   * file stays under the indexed memories root, so a semantic search would
+   * still recall it; the round's context search passes these as
+   * `excludeUris` so retire behaves like retire there too.
+   */
+  async retiredUris(): Promise<string[]> {
+    return (await this.sweepRun()).retired;
+  }
+
+  private async sweepRun(): Promise<SweepRun> {
+    const fresh = this.cache && this.now().getTime() - this.cache.at < this.cacheTtlMs;
+    if (fresh && this.cache) return this.cache.run;
+    // One sweep at a time: the round path and the TUI poll can both land here.
+    if (this.inFlight && this.inFlight.gen === this.generation) return this.inFlight.run;
+    const gen = this.generation;
+    const run = this.runSweep(gen).finally(() => {
+      if (this.inFlight?.run === run) this.inFlight = null;
+    });
+    this.inFlight = { gen, run };
+    return run;
+  }
+
+  private async runSweep(gen: number): Promise<SweepRun> {
     const unread: string[] = [];
+    const retired: string[] = [];
     const files = await this.listFiles(unread);
     const entries: MemoryEntry[] = [];
     let vanished = 0;
@@ -338,7 +367,10 @@ export class OpenVikingStore implements MemoryStore {
       if (entry.text === "") return;
       // Header-only, like `pinned`: a [feedback] entry quoting "#retired"
       // must not vanish from every read. `retire` writes the tag at the head.
-      if (parseHashTags(entry.text).includes(RETIRED_TAG)) return;
+      if (parseHashTags(entry.text).includes(RETIRED_TAG)) {
+        retired.push(uri);
+        return;
+      }
       entries.push(entry);
     });
     // One file gone between the listing and the read is a race (the companion
@@ -354,9 +386,10 @@ export class OpenVikingStore implements MemoryStore {
     entries.sort((a, b) =>
       a.ts !== b.ts ? (a.ts < b.ts ? -1 : 1) : a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
     );
-    const sweep: MemorySweep = { entries, unread };
-    if (gen === this.generation) this.cache = { at: this.now().getTime(), sweep };
-    return sweep;
+    retired.sort();
+    const run: SweepRun = { sweep: { entries, unread }, retired };
+    if (gen === this.generation) this.cache = { at: this.now().getTime(), run };
+    return run;
   }
 
   /**

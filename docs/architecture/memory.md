@@ -280,8 +280,10 @@ the seam's address maps exactly:
 | `block` | always `0` — one entry per file, nothing to index into |
 | `hash` | `sha256:<hex>` of the stored bytes, the token `replace_if_hash` wants |
 
-`read()` returns every entry oldest-first with `#retired` filtered out — which
-is what makes retire behave like retire — and yields `[]` for both an empty
+`read()` returns every entry oldest-first with `#retired` filtered out, and
+the same sweep keeps those files' URIs (`retiredUris()`) so the round's context
+search passes them as `exclude_uris` — the retired file stays in the indexed
+root, so both halves are what makes retire behave like retire. `read()` yields `[]` for both an empty
 store and an unreadable one, the right answer for a timeline. `sweep()` is the
 same pass with the parts it could **not** read kept beside the entries
 (`MemorySweep.unread`); a directory the server 404s is recorded as absent, not

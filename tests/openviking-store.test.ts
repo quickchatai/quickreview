@@ -100,7 +100,8 @@ class FakeOpenViking {
       this.tags.set(req.uri, req.tags);
       return json(200, { status: "ok", result: {} });
     }
-    if (path === "/api/v1/search/search") return this.search(body as { query: string });
+    if (path === "/api/v1/search/search")
+      return this.search(body as { query: string; exclude_uris?: string[] });
     if (path === "/api/v1/sessions" && init.method === "POST") {
       const req = body as { session_id: string; memory_policy?: unknown };
       this.sessions.set(req.session_id, req.memory_policy);
@@ -254,10 +255,11 @@ class FakeOpenViking {
 
   /** Enough of `mode: "context"` to prove the plumbing: substring relevance,
    * a rendered block and usage stats. */
-  private search(req: { query: string }): Promise<HttpResponseLike> {
+  private search(req: { query: string; exclude_uris?: string[] }): Promise<HttpResponseLike> {
     const q = req.query.toLowerCase();
+    const excluded = new Set(req.exclude_uris ?? []);
     const entries = [...this.files.entries()]
-      .filter(([, text]) => q !== "" && text.toLowerCase().includes(q))
+      .filter(([uri, text]) => !excluded.has(uri) && q !== "" && text.toLowerCase().includes(q))
       .map(([uri, text]) => ({
         uri,
         category: "experiences",
@@ -658,6 +660,22 @@ describe("context search", () => {
       text: expect.stringContaining("migration renumber collision"),
     });
     expect(assembler.lastSearch?.stats["used_tokens"]).toBeGreaterThan(0);
+  });
+
+  it("a RETIRED entry is excluded from the round's context block, not only from read()", async () => {
+    const server = new FakeOpenViking();
+    const { store, assembler } = wire(server);
+    await store.apply({ op: "note", text: "#feedback renumber stale advice: always squash migrations" });
+    await store.apply({ op: "note", text: "#feedback renumber current advice: renumber at the base sha" });
+    const stale = (await store.read()).find((e) => e.text.includes("stale advice"))!;
+    expect((await store.apply({ op: "retire", ...refOf(stale) })).ok).toBe(true);
+
+    const block = await assembler.contextBlock("renumber", { maxTokens: 800 });
+    expect(block).toMatchObject({
+      status: "read",
+      text: expect.stringContaining("current advice"),
+    });
+    expect(block.status === "read" && block.text).not.toContain("stale advice");
   });
 });
 
@@ -1209,6 +1227,15 @@ describe("entry naming and tag helpers", () => {
     expect(withTag("#feedback x", "pinned")).toBe("#pinned #feedback x\n");
     expect(withoutTag("#pinned #feedback x", "pinned")).toBe("#feedback x\n");
     expect(withoutTag("#feedback x", "pinned")).toBe("#feedback x\n");
+    // Only the gap the token leaves is closed: indentation and aligned
+    // columns elsewhere in the body survive an unpin byte for byte.
+    const body = "#pinned #repo-gotcha steps:\n    return x\n\tindented\na  b";
+    expect(withoutTag(body, "pinned")).toBe(
+      "#repo-gotcha steps:\n    return x\n\tindented\na  b\n",
+    );
+    expect(withoutTag("#feedback #pinned x", "pinned")).toBe("#feedback x\n");
+    expect(withoutTag("#pinned #pinned x", "pinned")).toBe("x\n");
+    expect(withoutTag(withTag("  code:\n    y = 1", "pinned"), "pinned")).toBe("code:\n    y = 1\n");
   });
 });
 

@@ -113,11 +113,17 @@ export class OpenVikingContextAssembler implements ContextAssembler {
    */
   async contextBlock(query: string, opts: { maxTokens: number }): Promise<MemoryRead> {
     try {
+      // A retirement is a header tag on a file that stays in the indexed root,
+      // so the search is told to skip it; `read()` filtering it is not enough.
+      // Same cached sweep the pinned head uses — no extra server load. A sweep
+      // that fails yields no exclusions rather than no block.
+      const excludeUris = await this.store.retiredUris().catch(() => [] as string[]);
       const search: ContextSearchOptions = {
         maxTokens: opts.maxTokens,
         purpose: "coding",
         timeoutMs: this.searchTimeoutMs,
         ...(this.quotas ? { quotas: this.quotas } : {}),
+        ...(excludeUris.length > 0 ? { excludeUris } : {}),
       };
       const res = await this.client.searchContext(query, search);
       if (!res.ok) {
