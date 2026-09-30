@@ -98,6 +98,19 @@ describe("the report", () => {
     });
   });
 
+  it("a not-reproduced finding is marked ↺ and counted, and its detail says it stays open for triage (scan-loop)", () => {
+    const f = scanFinding({
+      fingerprint: "fa".padEnd(64, "0"),
+      not_reproduced: { count: 2, run: "scan-9", sha: "9".repeat(40), at: "2026-09-30T10:00:00Z" },
+    });
+    const { screen } = rig({ findings: [f] });
+    const text = screen();
+    expect(text).toContain("1 findings · 0 doubted · 1 not reproduced");
+    expect(text).toMatch(/billing\/models\.py:88 {2}↺/);
+    expect(text).toContain("↺ not reproduced: 2 re-read(s) of the unchanged code");
+    expect(text).toContain("scan-9 at 9999999");
+  });
+
   it("a style group's detail carries the rule, the count and examples", () => {
     const f = SCAN_FINDINGS[2]!;
     expect(styleRule(f)).toBe("rule 4.2");

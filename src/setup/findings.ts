@@ -24,6 +24,13 @@
 //     position and fingerprint (the old fingerprint kept as an alias) — and
 //     every old finding it did not pair is `fixed`. Nothing is ever fixed on
 //     a guess, and nothing waits on the companion that an exact rule settles.
+//   * `fixed` NEEDS CHANGED CONTENT (scan-loop). Only a re-read of OTHER
+//     content can settle a finding fixed. A later reading of the SAME content
+//     it was last seen at that does not report it again (a narrower stage-2
+//     row, a re-run — model variance) leaves it open and stamps
+//     `not_reproduced`: how many such readings, and the latest — once per
+//     reading, cleared by the next sighting. Triage can still dismiss it; a
+//     promoted one's ticket stays open, because only `fixed` closes one.
 //   * `fixed` RECORDS WHERE. The run and sha that stopped reporting it, and
 //     the state it was fixed from — what a promoted finding's ticket is
 //     closed with.
@@ -122,6 +129,10 @@ export interface ScanFinding {
   seen: number;
   /** Set while (and only while) the state is `fixed`. */
   fixed?: FixedMark | null;
+  /** Re-reads of the unchanged content it was last seen at that did not
+   * report it again — the latest, and how many since its last sighting.
+   * The finding stays open; cleared when a scan reports it again. */
+  not_reproduced?: NotReproduced | null;
   /** Fingerprints this finding carried before the companion matched it to
    * a moved or reworded sighting, and those of near-duplicates collapsed
    * into it — a ticket stamped with one still finds it. */
@@ -140,6 +151,10 @@ export interface ScanFinding {
   dismissal?: Dismissal | null;
   /** Where it was filed when promoted. */
   ticket?: FindingTicket | null;
+}
+
+export interface NotReproduced extends Sighting {
+  count: number;
 }
 
 export interface MergedSighting {
@@ -172,7 +187,7 @@ export interface FindingTicket {
 /** What a scan reports — a finding before the store gives it a history. */
 export type ReportedFinding = Omit<
   ScanFinding,
-  "state" | "first_seen" | "last_seen" | "seen" | "fixed" | "aliases" | "lenses" | "merged" | "own_severity" | "dismissal" | "ticket"
+  "state" | "first_seen" | "last_seen" | "seen" | "fixed" | "not_reproduced" | "aliases" | "lenses" | "merged" | "own_severity" | "dismissal" | "ticket"
 >;
 
 // ---- near-duplicate collapse ----------------------------------------------------------
@@ -339,6 +354,9 @@ export interface ReconcileResult {
   fixed: number;
   /** Unreported findings waiting on the companion's match. */
   pending: number;
+  /** Open findings a re-read of their UNCHANGED content did not report
+   * again — kept open, stamped `not_reproduced`, never fixed. */
+  not_reproduced: number;
 }
 
 export interface MatchPair {
@@ -391,7 +409,7 @@ function returnedState(f: ScanFinding): FindingState {
 
 function fixIt(f: ScanFinding, at: Sighting): ScanFinding {
   if (f.state === "fixed") return f;
-  return { ...f, state: "fixed", fixed: { run: at.run, sha: at.sha, at: at.at, from: f.state } };
+  return { ...f, state: "fixed", fixed: { run: at.run, sha: at.sha, at: at.at, from: f.state }, not_reproduced: null };
 }
 
 /** The question over `unreported` × `fresh`, or null when nothing waits. */
@@ -436,6 +454,30 @@ function settleQuestion(
   const held = olds.filter((o) => waiting.includes(o.fingerprint));
   const candidates = news.filter((n) => held.some((o) => mightBe(o, n))).map((n) => n.fingerprint);
   return { question: questionOf(waiting, candidates, at), fixed };
+}
+
+/**
+ * The latest reading that re-read `f`'s lines at the very content it was
+ * last seen at, by another run since, with EVERY lens that raised it — and
+ * did not report it (a reading that did would have moved its last sighting).
+ * Null when some lens has no such row. A ranged row counts only when its
+ * range holds the finding's lines.
+ */
+function silentReread(f: ScanFinding, rows: readonly LedgerEntry[], current: string | undefined): LedgerEntry | null {
+  if (f.blob == null || (current !== undefined && current !== f.blob)) return null;
+  let latest: LedgerEntry | null = null;
+  for (const lens of lensesOf(f)) {
+    let best: LedgerEntry | null = null;
+    for (const r of rows) {
+      if (r.lens !== lens || r.path !== f.path || r.blob !== f.blob) continue;
+      if (r.run === f.last_seen.run || r.at < f.last_seen.at) continue;
+      if (r.range && (r.range.start > f.start || r.range.end < f.end)) continue;
+      if (best === null || r.at > best.at) best = r;
+    }
+    if (best === null) return null;
+    if (latest === null || best.at > latest.at) latest = best;
+  }
+  return latest;
 }
 
 export class FindingsStore {
@@ -501,7 +543,7 @@ export class FindingsStore {
         // The same sighting twice (one case reporting a duplicate) counts once.
         const again = known.last_seen.run === seen.run && known.last_seen.sha === seen.sha;
         const state: FindingState = known.state === "fixed" ? returnedState(known) : known.state;
-        const history = { state, fixed: null, first_seen: known.first_seen, last_seen: seen, seen: again ? known.seen : known.seen + 1 };
+        const history = { state, fixed: null, not_reproduced: null, first_seen: known.first_seen, last_seen: seen, seen: again ? known.seen : known.seen + 1 };
         if (ownFp === r.fingerprint) {
           // A collapsed finding carries the highest severity its sightings now
           // give — its own latest and each absorbed one's latest, never a
@@ -575,7 +617,8 @@ export class FindingsStore {
     const pending = new Set(prior?.unreported ?? []);
     const rereadBy = new Set<string>([args.run.run]);
     const unreported: string[] = [];
-    for (const f of byFp.values()) {
+    let notReproduced = 0;
+    for (const f of [...byFp.values()]) {
       if (f.state === "fixed" || pending.has(f.fingerprint)) continue;
       if (!args.tree.has(f.path)) {
         unreported.push(f.fingerprint);
@@ -603,7 +646,21 @@ export class FindingsStore {
           (current === undefined || row.blob === current)
         );
       });
-      if (!reread) continue;
+      if (!reread) {
+        // Only OTHER content can have fixed it (scan-loop): a later reading of
+        // the content it was last seen at, over its lines, that did not
+        // report it again is not a fix — it stays open, stamped, once per
+        // reading.
+        const silent = silentReread(f, args.rows, current);
+        if (silent !== null && !(f.not_reproduced && f.not_reproduced.at >= silent.at)) {
+          byFp.set(f.fingerprint, {
+            ...f,
+            not_reproduced: { run: silent.run, sha: silent.sha, at: silent.at, count: (f.not_reproduced?.count ?? 0) + 1 },
+          });
+          notReproduced++;
+        }
+        continue;
+      }
       unreported.push(f.fingerprint);
       // Every run of each reading re-read the file: a ranged reading finished
       // by a later run keeps the earlier run's findings as candidates.
@@ -622,7 +679,7 @@ export class FindingsStore {
         ? prior
         : settled.question;
     this.write(byFp.values(), question);
-    return { fixed: settled.fixed, pending: settled.question?.unreported.length ?? 0 };
+    return { fixed: settled.fixed, pending: settled.question?.unreported.length ?? 0, not_reproduced: notReproduced };
   }
 
   /** The pending match question with both sides expanded, or null. */

@@ -82,8 +82,11 @@ describe("a collapsed finding after an alias sighting", () => {
       row({ lens, run: "r2", at: "2026-09-30T11:00:01Z", range: first }),
       row({ lens, run: "r3", at: "2026-09-30T12:00:00Z", range: second }),
     ]);
-    // r3 finishes the ranges without another report: r2 already saw it at b2.
-    expect(st.reconcile({ rows, tree: new Set([CANON.path]), run: S("r3", "2026-09-30T12:00:01Z") })).toEqual({ fixed: 0, pending: 0 });
+    // r3 finishes the ranges without another report: r2 already saw it at b2,
+    // so it is not other content. r3's range does hold the finding's lines
+    // and stayed silent — at the same content that is a re-read that did not
+    // reproduce it, stamped, never a fix (scan-loop).
+    expect(st.reconcile({ rows, tree: new Set([CANON.path]), run: S("r3", "2026-09-30T12:00:01Z") })).toEqual({ fixed: 0, pending: 0, not_reproduced: 1 });
     expect(st.load().findings[0]!.state).toBe("new");
   });
 
@@ -95,7 +98,7 @@ describe("a collapsed finding after an alias sighting", () => {
     const moved = reported("cc".repeat(32), { ...ALIAS, fingerprint: "cc".repeat(32), blob: "b2", start: 40, end: 41 });
     st.report([moved], S("r2", "2026-09-30T11:00:00Z"));
     const rows = [row({ lens: "pass-security", run: "r2", at: "2026-09-30T11:00:01Z" }), row({ lens: "pass-data-safety", run: "r2", at: "2026-09-30T11:00:02Z" })];
-    expect(st.reconcile({ rows, tree: new Set([CANON.path]), run: S("r2", "2026-09-30T11:00:03Z") })).toEqual({ fixed: 0, pending: 1 });
+    expect(st.reconcile({ rows, tree: new Set([CANON.path]), run: S("r2", "2026-09-30T11:00:03Z") })).toEqual({ fixed: 0, pending: 1, not_reproduced: 0 });
     const q = st.question().question!;
     expect(q.fresh.map((f) => f.fingerprint)).toEqual([moved.fingerprint]);
     expect(st.match({ key: q.key, pairs: [{ old: CANON.fingerprint, new: moved.fingerprint }] })).toMatchObject({ ok: true, matched: 1, fixed: 0 });
@@ -111,10 +114,10 @@ describe("reconcile settles only against the content the run's tree holds", () =
     const rows = [row({ lens: "pass-security", run: "r2", at: "2026-09-30T11:00:00Z" })];
     const tree = new Set([CANON.path]);
     const blobs = new Map([[CANON.path, "b1"]]);
-    expect(st.reconcile({ rows, tree, blobs, run: S("r3", "2026-09-30T12:00:00Z") })).toEqual({ fixed: 0, pending: 0 });
+    expect(st.reconcile({ rows, tree, blobs, run: S("r3", "2026-09-30T12:00:00Z") })).toEqual({ fixed: 0, pending: 0, not_reproduced: 0 });
     expect(st.load().findings[0]!.state).toBe("new");
     // At b2 in the tree, the same reading does settle it.
-    expect(st.reconcile({ rows, tree, blobs: new Map([[CANON.path, "b2"]]), run: S("r4", "2026-09-30T13:00:00Z") })).toEqual({ fixed: 1, pending: 0 });
+    expect(st.reconcile({ rows, tree, blobs: new Map([[CANON.path, "b2"]]), run: S("r4", "2026-09-30T13:00:00Z") })).toEqual({ fixed: 1, pending: 0, not_reproduced: 0 });
   });
 
   it("a deleted path's finding keeps an interrupted earlier run's moved sighting as a candidate (60299a8b)", () => {
@@ -125,7 +128,7 @@ describe("reconcile settles only against the content the run's tree holds", () =
     st.report([moved], S("r2", "2026-09-30T11:00:00Z"));
     const rows = [row({ lens: "pass-security", path: "src/operator.ts", blob: "q1", run: "r2", at: "2026-09-30T11:00:01Z" })];
     // r3: the old path is gone; nothing re-reads the new one.
-    expect(st.reconcile({ rows, tree: new Set(["src/operator.ts"]), run: S("r3", "2026-09-30T12:00:00Z") })).toEqual({ fixed: 0, pending: 1 });
+    expect(st.reconcile({ rows, tree: new Set(["src/operator.ts"]), run: S("r3", "2026-09-30T12:00:00Z") })).toEqual({ fixed: 0, pending: 1, not_reproduced: 0 });
     expect(st.question().question!.fresh.map((f) => f.fingerprint)).toEqual([moved.fingerprint]);
   });
 });

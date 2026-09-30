@@ -455,15 +455,19 @@ function headerLines(deps: ScanTabDeps, repo: string | undefined): string[] {
   else {
     const live = fs.kind === "read" ? fs.value.findings.filter((f) => f.state !== "fixed") : [];
     const doubted = live.filter((f) => f.doubt).length;
+    const notReproduced = live.filter((f) => f.not_reproduced).length;
     const q = fs.kind === "read" ? fs.value.question : null;
-    counts = `${live.length} findings · ${doubted} doubted${q ? ` · ${q.unreported.length} awaiting the companion's match` : ""}`;
+    counts =
+      `${live.length} findings · ${doubted} doubted` +
+      `${notReproduced > 0 ? ` · ${notReproduced} not reproduced` : ""}` +
+      `${q ? ` · ${q.unreported.length} awaiting the companion's match` : ""}`;
   }
   const spend = `spend ${usd(run.spent_usd)} / ${usd(run.cap_usd)} hard stop${run.unpriced_cases > 0 ? ` (${run.unpriced_cases} unpriced, counted at estimate)` : ""}`;
   return [line1, `${spend}  ·  ${counts}`];
 }
 
 function findingTitle(f: ScanFinding): string {
-  return `${STATE_GLYPH[f.state] ?? "?"} ${f.severity} ${f.lens.replace(/^pass-/, "")}  ${f.path}:${f.start}${f.doubt ? "  ?" : ""}`;
+  return `${STATE_GLYPH[f.state] ?? "?"} ${f.severity} ${f.lens.replace(/^pass-/, "")}  ${f.path}:${f.start}${f.doubt ? "  ?" : ""}${f.not_reproduced ? "  ↺" : ""}`;
 }
 
 function itemLabel(i: ReportItem): string {
@@ -499,6 +503,18 @@ function detailLines(i: ReportItem | undefined, width: number): string[] {
   out.push(...wrap(sanitizeText(state), width));
   if (f.doubt) out.push(...wrap(sanitizeText(`? may not be valid — ${f.doubt.word}: ${f.doubt.reason}`), width).map((l) => `${WARN}${l}${RESET}`));
   else if (!f.validated) out.push(`${MUTED}not validated — no validator read it${RESET}`);
+  if (f.not_reproduced) {
+    const n = f.not_reproduced;
+    out.push(
+      ...wrap(
+        sanitizeText(
+          `↺ not reproduced: ${n.count} re-read(s) of the unchanged code did not report it again (latest ${n.run} at ${short(n.sha)}) — ` +
+            "kept open, since only changed code is fixed; d dismisses it if it was noise",
+        ),
+        width,
+      ).map((l) => `${WARN}${l}${RESET}`),
+    );
+  }
   out.push(`${MUTED}seen in ${f.seen} scan(s) · first ${short(f.first_seen.sha)} · last ${short(f.last_seen.sha)}${RESET}`);
   return out;
 }

@@ -145,6 +145,14 @@ export function renderStatus(s: ScanStatus): string {
           (r.matching.pending > 0 ? `, ${r.matching.pending} waiting on your match (scan_matches)` : ""),
       );
     }
+    // A record written before the stamp existed has no count: nothing to say.
+    const notReproduced = r.matching?.not_reproduced ?? 0;
+    if (notReproduced > 0) {
+      out.push(
+        `Not reproduced: ${notReproduced} open finding(s) re-read at UNCHANGED content without being reported again — ` +
+          "kept open (only changed code is fixed); dismiss any that were noise.",
+      );
+    }
   }
   if (s.ledger) {
     out.push(
@@ -164,7 +172,9 @@ export function renderFindings(fs: readonly ScanFinding[], total: number): strin
       `${f.doubt ? `, MAY NOT BE VALID — ${f.doubt.word}` : f.validated ? "" : ", unvalidated"}` +
       `${f.capped_from ? `, ${f.capped_from}→${f.severity}: ${f.reachability}` : ""}` +
       `${f.anchor_quoted === false ? ", ANCHOR NOT QUOTED — the lines may not be the defect's" : ""}` +
-      `${f.fixed ? ` at ${f.fixed.sha.slice(0, 12)}, was ${f.fixed.from}` : ""}) ${f.claim} [${f.fingerprint.slice(0, 12)}]`,
+      `${f.fixed ? ` at ${f.fixed.sha.slice(0, 12)}, was ${f.fixed.from}` : ""}` +
+      `${f.not_reproduced ? `, NOT REPRODUCED by ${f.not_reproduced.count} re-read(s) of unchanged code, latest ${f.not_reproduced.run}` : ""}) ` +
+      `${f.claim} [${f.fingerprint.slice(0, 12)}]`,
   );
   if (total > fs.length) rows.push(`… ${total - fs.length} more — narrow the filter.`);
   return rows.join("\n");

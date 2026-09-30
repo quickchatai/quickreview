@@ -136,10 +136,12 @@ deploy time or the log could not be read.
 ### scan
 
 The run on top (sha, mode, state, cases done, spend against the hard stop,
-finding and doubted counts), the units on the left (the count under the
+finding, doubted and not-reproduced counts), the units on the left (the count under the
 filter, `▲` the hotspot, the run's mark per unit), and on the right the
 selected unit's findings — most severe first, style findings grouped per
-rule with a count (`?` = may not be valid) — over the selected one's detail,
+rule with a count (`?` = may not be valid, `↺` = not reproduced: a re-read
+of its unchanged code did not report it again, so it stays open for triage
+— only changed code is ever settled `fixed`) — over the selected one's detail,
 which the mouse wheel scrolls when it is longer than the pane (j/k and the
 arrows choose the finding). The tab reads the state home; a run the record calls running while the
 companion is down shows as interrupted, never as "no scan".

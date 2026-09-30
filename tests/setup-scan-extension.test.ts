@@ -238,4 +238,9 @@ describe("renderFindings — the quality marks (scan-loop)", () => {
     expect(out).toContain("ANCHOR NOT QUOTED");
     expect(renderFindings([base], 1)).toBe(`- [P3] app/a.py:5 (app, bug, new, unvalidated) c [${"f".repeat(12)}]`);
   });
+
+  it("names a finding a re-read of unchanged code did not reproduce — still open", () => {
+    const out = renderFindings([{ ...base, not_reproduced: { count: 3, run: "scan-7", sha: SHA, at: "t" } }], 1);
+    expect(out).toContain("new, unvalidated, NOT REPRODUCED by 3 re-read(s) of unchanged code, latest scan-7) c");
+  });
 });
