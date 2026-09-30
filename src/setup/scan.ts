@@ -245,7 +245,9 @@ export function planStage1(input: PlanInput): Stage1Plan {
       covered++;
       continue;
     }
-    if (input.delta !== undefined && !changedSince(f, input.delta)) {
+    // A file whose newest reading stopped between line ranges is not
+    // "unchanged" — its content was never read whole; the rest is still due.
+    if (input.delta !== undefined && !changedSince(f, input.delta) && !input.partial?.has(coverKey(f.path, f.blob))) {
       unchanged++;
       continue;
     }

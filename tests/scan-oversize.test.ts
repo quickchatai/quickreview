@@ -352,3 +352,57 @@ describe("stage 2 over a file bigger than one case", () => {
     expect(!r.ok && r.errors[0]).toMatch(/core\/state\.ts .*alone/);
   });
 });
+
+describe("a ranged reading cut short across runs", () => {
+  /** A 6,000-line module whose every line (so every finding's anchored code)
+   * differs from `bigModule`'s. */
+  function otherModule(): string {
+    const out: string[] = [];
+    for (let i = 0; i < 6000; i++) out.push(i % 100 === 0 ? `export function g${i}() {` : `  let y${i} = ${i * 7};`);
+    return `${out.join("\n")}\n`;
+  }
+
+  async function cutShort() {
+    let head = SHA1;
+    const TREE2 = { ...TREE1, "core/state.ts": otherModule() };
+    const cases = runner();
+    const s = new ScanRunner(ports(cases, fakeSource({ [SHA1]: TREE1, [SHA2]: TREE2 }, () => head)));
+    await runOnce(s);
+    await runOnce(s);
+    head = SHA2;
+    let seen = 0;
+    const real = cases.run;
+    cases.run = async (spec, signal, onCost) => {
+      if (spec.files.includes("core/state.ts") && seen++ > 0) return { ok: false, reason: "boom", cost_usd: 0 };
+      return real(spec, signal, onCost);
+    };
+    const x = await runOnce(s, { delta: true });
+    expect(x.run.state).toBe("partial");
+    cases.run = real;
+    return { s, cases, TREE2, x };
+  }
+
+  it("the next delta re-scan reads the ranges still unread — the file is not 'unchanged' while half-read", async () => {
+    const { s, cases, TREE2 } = await cutShort();
+    const before = cases.specs.length;
+    const y = await runOnce(s, { delta: true });
+    const core = y.preview.cases.filter((c) => c.unit === "core");
+    expect(core.length).toBeGreaterThanOrEqual(1);
+    expect(cases.specs.slice(before).some((c) => c.files.includes("core/state.ts"))).toBe(true);
+    expect(coveredBy(ledger().entries, "pass-scan").has(`core/state.ts\0${blob(TREE2["core/state.ts"])}`)).toBe(true);
+  });
+
+  it("findings first seen by the run that read the earlier ranges are candidates when the reading completes", async () => {
+    const { s, x } = await cutShort();
+    const store = new FindingsStore(stateHomeFs(stateDir));
+    const fromX = store.load().findings.filter((f) => f.path === "core/state.ts" && f.first_seen.run === x.run.id);
+    expect(fromX.length).toBeGreaterThanOrEqual(1);
+    await runOnce(s, { delta: true });
+    // The old range-1 finding may be the one run X saw again at new content:
+    // X's findings are fresh candidates for it, not left out because a later
+    // run finished the reading.
+    const q = store.question().question;
+    const fresh = new Set((q?.fresh ?? []).map((f) => f.fingerprint));
+    for (const f of fromX) expect(fresh.has(f.fingerprint)).toBe(true);
+  });
+});

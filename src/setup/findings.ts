@@ -63,7 +63,7 @@
 // reported and refuses writes, like the ledger and the unit cut.
 import { createHash } from "node:crypto";
 import type { StateFs } from "./engine.js";
-import { readings, type LedgerEntry } from "./ledger.js";
+import { readings, type LedgerEntry, type Reading } from "./ledger.js";
 import type { ScanSeverity } from "./scan.js";
 import type { Reachability } from "../severity.js";
 import { FINDINGS_FILE, FINDINGS_VERSION, parseFindingsFile } from "./scanreport.js";
@@ -529,9 +529,9 @@ export class FindingsStore {
     // Each file's newest reading per lens — only a COMPLETE one: a file read
     // in line ranges whose ranges are not all back yet has not been re-read,
     // and the findings in its unread ranges must not read as fixed.
-    const newest = new Map<string, LedgerEntry>();
+    const newest = new Map<string, Reading>();
     for (const lens of new Set(args.rows.map((r) => r.lens))) {
-      for (const [path, r] of readings(args.rows, lens)) if (r.complete) newest.set(`${lens}\0${path}`, r.newest);
+      for (const [path, r] of readings(args.rows, lens)) if (r.complete) newest.set(`${lens}\0${path}`, r);
     }
     const prior = file.question ?? null;
     collapseRun(byFp, args.run.run, new Set([...(prior?.unreported ?? []), ...(prior?.fresh ?? [])]));
@@ -547,11 +547,16 @@ export class FindingsStore {
       // A collapsed finding is unreported only when EVERY lens that raised
       // it has re-read other content since — one lens's silence is not the
       // other's, and a single-lens run must not settle what it never read.
-      const rows = (f.lenses ?? [f.lens]).map((l) => newest.get(`${l}\0${f.path}`));
-      const reread = rows.every((row) => row !== undefined && row.run !== f.last_seen.run && row.at >= f.last_seen.at && !(f.blob != null && row.blob === f.blob));
+      const readingsOf = (f.lenses ?? [f.lens]).map((l) => newest.get(`${l}\0${f.path}`));
+      const reread = readingsOf.every((reading) => {
+        const row = reading?.newest;
+        return row !== undefined && row.run !== f.last_seen.run && row.at >= f.last_seen.at && !(f.blob != null && row.blob === f.blob);
+      });
       if (!reread) continue;
       unreported.push(f.fingerprint);
-      for (const row of rows) rereadBy.add(row!.run);
+      // Every run of each reading re-read the file: a ranged reading finished
+      // by a later run keeps the earlier run's findings as candidates.
+      for (const reading of readingsOf) for (const r of reading!.runs) rereadBy.add(r);
     }
     const fresh = [...byFp.values()]
       .filter((f) => f.state !== "fixed" && rereadBy.has(f.first_seen.run))

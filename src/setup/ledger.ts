@@ -137,6 +137,9 @@ export interface Reading {
   complete: boolean;
   /** The ranges read so far (empty when a whole-file row stands). */
   ranges: FileRange[];
+  /** Every run that wrote a row of this reading — a ranged reading cut short
+   * is finished by a later run, and both re-read the file. */
+  runs: string[];
 }
 
 /** Every path's newest reading by `lens`. */
@@ -158,7 +161,7 @@ export function readings(entries: readonly LedgerEntry[], lens: string): Map<str
     const whole = streak.some((e) => !e.range);
     const ranges = streak.filter((e) => e.range).map((e) => e.range!);
     const total = ranges[0]?.total ?? 0;
-    out.set(path, { blob: newest.blob, newest, complete: whole || (ranges.length > 0 && rangesCover(ranges, 1, total)), ranges: whole ? [] : ranges });
+    out.set(path, { blob: newest.blob, newest, complete: whole || (ranges.length > 0 && rangesCover(ranges, 1, total)), ranges: whole ? [] : ranges, runs: [...new Set(streak.map((e) => e.run))] });
   }
   return out;
 }
