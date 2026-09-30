@@ -12,6 +12,7 @@ import { spawn as nodeSpawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, posix, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { CaseOutcome, CaseRunner, CaseSpec } from "./engine.js";
 
 /** An agent file of the companion set: `name`/`tools`/`model` frontmatter
@@ -136,13 +137,25 @@ export function readPathOf(event: { type?: string; toolName?: unknown; args?: un
  * root's copy — another repository, or this checkout at HEAD — and must not
  * pass for a read of the tree (scan-loop).
  * VERIFY-ON-PIN (read from 0.99.1's dist/core/tools/path-utils.js
- * `resolveToCwd` → utils/paths `resolvePath` with `stripAtPrefix`): the macOS
+ * `resolveToCwd` → utils/paths `resolvePath` with `stripAtPrefix` and
+ * `normalizeUnicodeSpaces`, `file://` URLs included): the macOS
  * filename variants its `resolveReadPath` also tries are not modelled — they
  * only differ for a path that does not exist as spelled. */
 export function resolvedReadPath(raw: string, cwd: string, home: string = homedir()): string {
-  let p = raw.startsWith("@") ? raw.slice(1) : raw;
+  // pi's `normalizePath` order: unicode spaces → ASCII space, one `@`
+  // stripped, `~` expanded, a `file://` URL taken as its path.
+  let p = raw.replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " ");
+  if (p.startsWith("@")) p = p.slice(1);
   if (p === "~") p = home;
   else if (p.startsWith("~/")) p = `${home}${p.slice(1)}`;
+  else if (/^file:\/\//.test(p)) {
+    try {
+      p = fileURLToPath(p);
+    } catch {
+      // pi would throw on it and open nothing; left as spelled, it resolves
+      // to no focus file and is never credited.
+    }
+  }
   return posix.resolve(cwd, p);
 }
 

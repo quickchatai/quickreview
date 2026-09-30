@@ -124,3 +124,11 @@ describe("the task string names where to open each file", () => {
     expect(SCAN_MODE_ANCHOR_ADDENDUM).toMatch(/absolute path under the tree root/);
   });
 });
+
+describe("the rest of pi's path normalisation", () => {
+  it("a `file://` URL opens its path, and a unicode space reads as a space — pi's `normalizePath`", () => {
+    expect(resolvedReadPath(`file://${TREE}/api/models.py`, APP)).toBe(`${TREE}/api/models.py`);
+    expect(unreadFocus([resolvedReadPath(`file://${TREE}/api/models.py`, APP)], ["api/models.py"], TREE)).toBeNull();
+    expect(resolvedReadPath(`${TREE}/api/my file.py`, APP)).toBe(`${TREE}/api/my file.py`);
+  });
+});
