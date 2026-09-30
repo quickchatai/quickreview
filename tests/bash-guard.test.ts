@@ -959,3 +959,31 @@ describe("awk is not a read-only program (round 3)", () => {
       allow(cmd);
   });
 });
+
+describe("checkBashCommand — a regression replay session runs no sandbox script", () => {
+  // selfscan2: `cd` is allowed and scripts are sanctioned by their relative
+  // spelling, so a replay could `cd` to the sandbox root and reach the live
+  // posting route. The replay's pi runs with QCR_REPLAY=1; there, NO script is
+  // sanctioned in any spelling.
+  const withReplay = (fn: () => void): void => {
+    const before = process.env.QCR_REPLAY;
+    process.env.QCR_REPLAY = "1";
+    try {
+      fn();
+    } finally {
+      if (before === undefined) delete process.env.QCR_REPLAY;
+      else process.env.QCR_REPLAY = before;
+    }
+  };
+
+  it("blocks cd-then-post and every other sanctioned script", () => {
+    allow("cd /opt/quickreview && bash scripts/post-review.sh 5 COMMENT /tmp/b.md");
+    withReplay(() => {
+      block("cd /opt/quickreview && bash scripts/post-review.sh 5 COMMENT /tmp/b.md", "replay");
+      block("cd /opt/quickreview && scripts/approve-pr.sh 5 body.md", "replay");
+      block("bash ./scripts/reply-thread.sh 5 1 b.md", "replay");
+      block('GH_TOKEN="$(scripts/mint-token.sh)" gh pr view 5', "replay");
+      allow("cd src && git log --oneline -3");
+    });
+  });
+});

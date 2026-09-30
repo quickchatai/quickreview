@@ -14,7 +14,8 @@
 //      against whatever the PR ref points at today;
 //   5. the session is always killed and the scratch tree always removed.
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import { parseConfig, type Config } from "../src/config.js";
@@ -31,6 +32,7 @@ import {
   ReplayUnavailable,
   ScratchReplay,
   assertScratchIsolation,
+  nodeReplayIo,
   parseRegressionArgs,
   parseReplayFindings,
   replayOrder,
@@ -72,6 +74,7 @@ function fakeIo(
     hasClone?: boolean;
     mergeBase?: string;
     diff?: string;
+    worktreeAddFails?: boolean;
   } = {},
 ): FakeIo {
   const files = new Map<string, string>();
@@ -89,6 +92,8 @@ function fakeIo(
     async exec(bin, args): Promise<ExecOut> {
       calls.push([bin, ...args].join(" "));
       if (args[0] === "cat-file") return { code: opts.missingHead ? 1 : 0, stdout: "", stderr: "" };
+      if (args[0] === "worktree" && args[1] === "add" && opts.worktreeAddFails)
+        return { code: 128, stdout: "", stderr: "fatal: No space left on device" };
       if (args[0] === "merge-base")
         return { code: 0, stdout: `${opts.mergeBase ?? "basesha"}\n`, stderr: "" };
       if (args[0] === "diff")
@@ -100,7 +105,7 @@ function fakeIo(
       // The session "answers" the moment it is spawned, if it answers at all.
       if (opts.answer !== undefined)
         files.set(
-          join(SCRATCH, `pr-${set.cases[0]!.pr}`, FINDINGS_FILE),
+          join(SCRATCH, "run-t1", `pr-${set.cases[0]!.pr}`, FINDINGS_FILE),
           JSON.stringify(opts.answer),
         );
     },
@@ -297,7 +302,7 @@ describe("one case, end to end", () => {
   it("marks the diff degraded when the recorded head is already merged into today's base", async () => {
     const io = fakeIo({ answer: { findings: [] }, mergeBase: c().headSha, diff: "" });
     await replayer(io, { baseClone: REPO }).replay(c());
-    const order = io.files.get(join(SCRATCH, `pr-${c().pr}`, "order.md"))!;
+    const order = io.files.get(join(SCRATCH, "run-t1", `pr-${c().pr}`, "order.md"))!;
     expect(order).toContain("could not be resolved");
     expect(order).not.toContain("0 file(s)");
   });
@@ -359,6 +364,56 @@ describe("one case, end to end", () => {
     // prepareTree's own pre-add cleanup).
     expect(io.killed).toEqual([r.sessionName(c().pr)]);
     expect(io.calls.filter((k) => k.startsWith("git worktree remove")).length).toBe(2);
+  });
+});
+
+describe("selfscan2: replay harness faults and isolation", () => {
+  const c = () => set.cases[0]!;
+
+  it("a failed scratch checkout is a harness fault: no session is asked to review a missing tree", async () => {
+    const io = fakeIo({
+      worktreeAddFails: true,
+      answer: { findings: [{ path: "a.py", text: "x" }] },
+    });
+    const lines: string[] = [];
+    const r = replayer(io, { baseClone: REPO, log: (l) => lines.push(l) });
+    const out = await r.replay(c());
+    expect(out).toEqual([]); // scored VACUOUS, which the report reads as a harness fault
+    expect(io.spawned).toEqual([]);
+    expect(lines.join("\n")).toMatch(/worktree add failed/);
+    // teardown still ran
+    expect(io.calls.filter((k) => k.startsWith("git worktree remove")).length).toBe(2);
+  });
+
+  it("two runs never share a case's tree, order or findings file", () => {
+    const a = replayer(fakeIo(), { runId: "a" });
+    const b = replayer(fakeIo(), { runId: "b" });
+    expect(a.caseDir(c().pr)).not.toBe(b.caseDir(c().pr));
+    expect(a.treePath(c().pr)).not.toBe(b.treePath(c().pr));
+    expect(a.caseDir(c().pr).startsWith(`${SCRATCH}/`)).toBe(true);
+  });
+
+  it("the replay's pi loads no memory extension and runs with QCR_REPLAY=1", async () => {
+    const base = mkdtempSync(join(tmpdir(), "qcr-replay-io-"));
+    try {
+      const argvs: string[][] = [];
+      const io = await nodeReplayIo({
+        cfg,
+        sandboxRoot: join(base, "sandbox"),
+        scratchRoot: join(base, "scratch"),
+        exec: async (cmd, args) => {
+          if (cmd === "tmux" && args[0] === "new-session") argvs.push(args);
+          return { code: 0, stdout: "", stderr: "" };
+        },
+      });
+      await io.spawnSession("replay-t1-pr-1", "prompt", "m");
+      const argv = argvs[0] ?? [];
+      expect(argv.some((a) => a.endsWith("inject-bridge.ts"))).toBe(true);
+      expect(argv.some((a) => a.includes("openviking-pi"))).toBe(false);
+      expect(argv).toContain("QCR_REPLAY=1");
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 });
 

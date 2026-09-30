@@ -182,11 +182,23 @@ function block(reason: string): BashCheck {
   return { allowed: false, reason };
 }
 
+/** A regression replay session (src/replay.ts) — spawned with
+ * `QCR_REPLAY=1` on its pi's own environment, which no bash command can
+ * change. It posts nothing and reads nothing from GitHub, so no sandbox script
+ * is sanctioned in it at all: the relative-spelling rule alone was reachable by
+ * `cd <sandbox root> && bash scripts/post-review.sh …`. */
+function inReplaySession(): boolean {
+  return process.env.QCR_REPLAY === "1";
+}
+
 function sanctionedScript(token: string): { sanctioned: boolean; name?: string } {
   const m = SCRIPT_PATH_RE.exec(token);
   if (!m) return { sanctioned: false };
-  return { sanctioned: SANCTIONED_SCRIPTS.has(m[1]!), name: m[1]! };
+  return { sanctioned: !inReplaySession() && SANCTIONED_SCRIPTS.has(m[1]!), name: m[1]! };
 }
+
+const REPLAY_NO_SCRIPTS =
+  "exec policy: a regression replay session runs no sandbox script — it reads the tree and writes one findings file";
 
 /**
  * `gh` is READ-ONLY. It used to be a blocklist of three verbs —
@@ -914,7 +926,11 @@ function checkProgram(
   if (direct.name !== undefined || /(^|\/)scripts\//.test(prog)) {
     return direct.sanctioned
       ? { allowed: true }
-      : block(`exec policy: '${prog}' is not a sanctioned script`);
+      : block(
+          inReplaySession()
+            ? REPLAY_NO_SCRIPTS
+            : `exec policy: '${prog}' is not a sanctioned script`,
+        );
   }
   const base = prog.slice(prog.lastIndexOf("/") + 1);
   if (base === "cd") return { allowed: true }; // builtin, argument is a path not a program
@@ -939,7 +955,11 @@ function checkProgram(
       if (!a.startsWith("-")) {
         return sanctionedScript(a).sanctioned
           ? { allowed: true }
-          : block(`exec policy: 'bash ${a}' is not a sanctioned scripts/*.sh`);
+          : block(
+              inReplaySession()
+                ? REPLAY_NO_SCRIPTS
+                : `exec policy: 'bash ${a}' is not a sanctioned scripts/*.sh`,
+            );
       }
       if (/^-[A-Za-z]*c/.test(a)) {
         return block(

@@ -146,6 +146,12 @@ const METADATA_MAX_BYTES = 32 * MiB;
  */
 const MAX_EXPANDED_ARCHIVE_BYTES = 256 * MiB;
 const MAX_KEPT_FILE_BYTES = 2 * MiB;
+/** Kept files per package: bytes alone let an archive of empty files spend
+ * inodes without limit. Generous — a real package's sources are far fewer. */
+const MAX_KEPT_FILES = 50_000;
+/** What the cache cap charges per kept file on top of its bytes (a block and
+ * an inode), so an entry of many tiny files is sized by what it occupies. */
+const CACHE_FILE_OVERHEAD_BYTES = 4096;
 const MAX_CHANGED_FILES = 300;
 const MAX_SOURCE_FILE_BYTES = 1_000_000;
 /** package-lock.json in a large monorepo is routinely several MB. */
@@ -296,8 +302,19 @@ const NODE_BUILTINS = new Set([
 // `import('x')`. Deliberately a regex scan, not a parser: a false positive
 // costs nothing (an npm import must still be DECLARED in a manifest or
 // lockfile to be requested), a missed import costs one library.
+//
+// The `… from 'x'` form is NOT one regex: an `import … from` pattern needs an
+// unbounded gap, and a lazy gap re-scans the whole suffix at every `import`
+// token that no `from` follows — quadratic on a PR author's file, on the
+// daemon's event loop, before the preparation deadline exists. Instead each
+// `from 'x'` is found once and the text back to the previous `;` or quote is
+// checked for an `import`/`export` head: the segments are disjoint, so the
+// scan is linear.
+// The specifier admits no whitespace (no package name has any), so a quoted
+// `'from'` in ordinary code cannot swallow the next real `from '…'` as its spec.
+const JS_FROM_RE = /\bfrom\s*(['"`])([^'"`\s]+)\1/g;
+const JS_FROM_HEAD_RE = /(?:^|[^\w$.])(?:import|export)\s/;
 const JS_IMPORT_RES: readonly RegExp[] = [
-  /(?:^|[^\w$.])(?:import|export)\s[^;'"`]*?\bfrom\s*(['"`])([^'"`\n]+)\1/g,
   /(?:^|[^\w$.])import\s*(['"`])([^'"`\n]+)\1/g,
   /(?:^|[^\w$.])(?:require|import)\s*\(\s*(['"`])([^'"`\n]+)\1\s*\)/g,
 ];
@@ -316,15 +333,18 @@ export function extractJsImports(src: string): string[] {
     .join("\n");
   const out: string[] = [];
   const seen = new Set<string>();
-  for (const re of JS_IMPORT_RES) {
-    for (const m of text.matchAll(re)) {
-      const spec = m[2];
-      if (spec !== undefined && !seen.has(spec)) {
-        seen.add(spec);
-        out.push(spec);
-      }
+  const add = (spec: string | undefined): void => {
+    if (spec !== undefined && !seen.has(spec)) {
+      seen.add(spec);
+      out.push(spec);
     }
+  };
+  for (const m of text.matchAll(JS_FROM_RE)) {
+    let start = m.index;
+    while (start > 0 && !";'\"`".includes(text[start - 1] ?? "")) start--;
+    if (JS_FROM_HEAD_RE.test(text.slice(start, m.index))) add(m[2]);
   }
+  for (const re of JS_IMPORT_RES) for (const m of text.matchAll(re)) add(m[2]);
   return out;
 }
 
@@ -602,9 +622,11 @@ export function extractPythonImports(src: string): PyImport[] {
 
 export interface LockEntry {
   version: string;
-  /** yarn: the header specs (ranges) this entry satisfies. */
+  /** yarn: the header specs (ranges) this entry satisfies; pnpm: the
+   * importer's `specifier`. */
   specs?: string[];
-  /** package-lock: a workspace dir whose own node_modules holds this copy. */
+  /** package-lock: a workspace dir whose own node_modules holds this copy;
+   * pnpm: the (non-root) importer that pins it. */
   scope?: string;
 }
 
@@ -620,7 +642,9 @@ function emptyLock(): NpmLock {
 
 function addLock(lock: NpmLock, name: string, entry: LockEntry): void {
   const list = lock.entries.get(name) ?? [];
-  if (!list.some((e) => e.version === entry.version && e.scope === entry.scope)) list.push(entry);
+  const have = list.find((e) => e.version === entry.version && e.scope === entry.scope);
+  if (!have) list.push(entry);
+  else if (entry.specs?.length) have.specs = [...new Set([...(have.specs ?? []), ...entry.specs])];
   lock.entries.set(name, list);
 }
 
@@ -727,42 +751,136 @@ function splitPnpmKey(key: string): { name: string; version: string } | null {
   return { name: key.slice(0, at), version: key.slice(at + 1) };
 }
 
-/** pnpm-lock.yaml — the `packages:` (and v9 `snapshots:`) keys. */
+/**
+ * pnpm-lock.yaml — the `packages:` (and v9 `snapshots:`) keys are the whole
+ * inventory, but the version a DIRECT dependency resolves to is the importer's
+ * own pin (`importers:` in v6+/workspaces, the top-level `dependencies:` of a
+ * v5 single project). Those pins are recorded with their specifier (and the
+ * importer dir as scope), so pickLocked takes the importer's resolution rather
+ * than the newest copy some transitive dependency pulled in.
+ */
 export function parsePnpmLock(text: string): NpmLock {
   const lock = emptyLock();
-  let inPackages = false;
+  let section: "packages" | "importers" | "root" | "other" = "other";
+  let rootGroup: "deps" | "specs" = "deps";
+  let importer = ".";
+  let group: "deps" | "specs" | null = null;
+  let dep: string | null = null;
+  // importer → name → { spec, version }
+  const pins = new Map<string, Map<string, { spec?: string; version?: string }>>();
+  const pin = (imp: string, name: string): { spec?: string; version?: string } => {
+    const m = pins.get(imp) ?? new Map<string, { spec?: string; version?: string }>();
+    pins.set(imp, m);
+    const p = m.get(name) ?? {};
+    m.set(name, p);
+    return p;
+  };
+  const unquote = (x: string): string => x.trim().replace(/^['"]|['"]$/g, "");
+  const DEP_GROUP = /^(dependencies|devDependencies|optionalDependencies|specifiers):\s*$/;
   for (const raw of text.split(/\r?\n/)) {
     if (/^\S/.test(raw)) {
-      inPackages = /^(packages|snapshots):\s*$/.test(raw);
+      const g = DEP_GROUP.exec(raw);
+      section = /^(packages|snapshots):\s*$/.test(raw)
+        ? "packages"
+        : /^importers:\s*$/.test(raw)
+          ? "importers"
+          : g
+            ? "root"
+            : "other";
+      if (g) rootGroup = g[1] === "specifiers" ? "specs" : "deps";
       continue;
     }
-    if (!inPackages) continue;
-    const m = /^ {2}(\S.*?):\s*$/.exec(raw);
-    if (!m) continue;
-    let key = (m[1] ?? "").replace(/^['"]|['"]$/g, "");
-    if (key.startsWith("/")) key = key.slice(1);
-    const paren = key.indexOf("(");
-    if (paren > 0) key = key.slice(0, paren);
-    const nv = splitPnpmKey(key);
-    if (nv && nv.name && VERSION_LIKE.test(nv.version))
-      addLock(lock, nv.name, { version: nv.version });
+    if (section === "packages") {
+      const m = /^ {2}(\S.*?):\s*$/.exec(raw);
+      if (!m) continue;
+      let key = unquote(m[1] ?? "");
+      if (key.startsWith("/")) key = key.slice(1);
+      const paren = key.indexOf("(");
+      if (paren > 0) key = key.slice(0, paren);
+      const nv = splitPnpmKey(key);
+      if (nv && nv.name && VERSION_LIKE.test(nv.version))
+        addLock(lock, nv.name, { version: nv.version });
+    } else if (section === "root") {
+      // v5 single project: `  name: value` directly under the section.
+      const m = /^ {2}(\S.*?):\s+(\S.*?)\s*$/.exec(raw);
+      if (!m) continue;
+      const p = pin(".", unquote(m[1] ?? ""));
+      if (rootGroup === "specs") p.spec = unquote(m[2] ?? "");
+      else p.version = unquote(m[2] ?? "");
+    } else if (section === "importers") {
+      const imp = /^ {2}(\S.*?):\s*$/.exec(raw);
+      if (imp) {
+        importer = unquote(imp[1] ?? ".");
+        group = null;
+        dep = null;
+        continue;
+      }
+      const g = /^ {4}(\S+):\s*$/.exec(raw);
+      if (g) {
+        const k = DEP_GROUP.exec(g[1] + ":");
+        group = k ? (k[1] === "specifiers" ? "specs" : "deps") : null;
+        dep = null;
+        continue;
+      }
+      if (!group) continue;
+      const d = /^ {6}(\S.*?):\s*(.*?)\s*$/.exec(raw);
+      if (d) {
+        const name = unquote(d[1] ?? "");
+        const inline = unquote(d[2] ?? "");
+        dep = inline ? null : name;
+        if (inline) {
+          // v5 workspace form: `      name: 1.2.3` / specifiers `      name: ^1`.
+          const p = pin(importer, name);
+          if (group === "specs") p.spec = inline;
+          else p.version = inline;
+        }
+        continue;
+      }
+      const kv = /^ {8}(specifier|version):\s*(.*?)\s*$/.exec(raw);
+      if (kv && dep && group === "deps") {
+        const p = pin(importer, dep);
+        if (kv[1] === "specifier") p.spec = unquote(kv[2] ?? "");
+        else p.version = unquote(kv[2] ?? "");
+      }
+    }
+  }
+  for (const [imp, deps] of pins) {
+    for (const [name, p] of deps) {
+      // `1.2.0(react@18)` (v6+) / `1.2.0_react@18` (v5): the peer suffix is not the version.
+      const version = (p.version ?? "").replace(/[(_].*$/, "");
+      if (!VERSION_LIKE.test(version)) continue;
+      const entry: LockEntry = { version };
+      if (p.spec) entry.specs = [p.spec];
+      const scope = imp.replace(/^\.\//, "").replace(/\/$/, "");
+      if (scope && scope !== ".") entry.scope = scope;
+      addLock(lock, name, entry);
+    }
   }
   return lock;
 }
+
+/** The value parsePythonLock records for a package locked to a source other
+ * than public PyPI: `@ <kind> source` — spelled as a PEP 508 direct reference,
+ * so the resolver hands it on as a non-registry range and preparation SKIPS
+ * it, instead of fetching PyPI's same-named release and calling it the lock. */
+const PY_FOREIGN_PIN_PREFIX = "@ ";
 
 /**
  * uv.lock / poetry.lock: `[[package]]` blocks with `name` and `version`. A
  * line scanner, not a TOML parser — only the block's own top-level keys are
  * read, and local (editable / virtual / directory) packages are first-party.
+ * A package from git, a URL or a non-PyPI index maps to `@ <kind> source`
+ * (PY_FOREIGN_PIN_PREFIX), never to its bare version.
  */
 export function parsePythonLock(text: string): Map<string, string> {
   const out = new Map<string, string>();
-  let cur: { name?: string; version?: string; local?: boolean } | null = null;
+  let cur: { name?: string; version?: string; local?: boolean; foreign?: string } | null = null;
   let where: "top" | "source" | "other" = "other";
   const flush = (): void => {
     if (cur?.name && cur.version && !cur.local) {
       const n = normPy(cur.name);
-      if (!out.has(n)) out.set(n, cur.version);
+      if (!out.has(n))
+        out.set(n, cur.foreign ? `${PY_FOREIGN_PIN_PREFIX}${cur.foreign} source` : cur.version);
     }
   };
   for (const raw of text.split(/\r?\n/)) {
@@ -787,8 +905,22 @@ export function parsePythonLock(text: string): Map<string, string> {
       if (kv) cur[kv[1] as "name" | "version"] = kv[2] ?? "";
       if (/^source\s*=\s*\{[^}]*\b(editable|virtual|directory|path)\s*=/.test(line))
         cur.local = true;
-    } else if (where === "source" && /^type\s*=\s*"(directory|file)"/.test(line)) {
-      cur.local = true;
+      else {
+        // uv: `source = { registry = "…" }` is PyPI only at pypi.org; git /
+        // url / any other index is a different artifact under the same name.
+        const src = /^source\s*=\s*\{\s*(\w+)\s*=\s*"([^"]*)"/.exec(line);
+        if (
+          src &&
+          !(src[1] === "registry" && /^https:\/\/pypi\.org\/simple\/?$/.test(src[2] ?? ""))
+        )
+          cur.foreign = src[1] ?? "other";
+      }
+    } else if (where === "source") {
+      // poetry: a `[package.source]` block at all means not-PyPI (PyPI
+      // packages carry none); directory/file are local, the rest foreign.
+      const t = /^type\s*=\s*"([^"]*)"/.exec(line);
+      if (t && /^(directory|file)$/.test(t[1] ?? "")) cur.local = true;
+      else if (t) cur.foreign = t[1] || "other";
     }
   }
   flush();
@@ -1331,9 +1463,13 @@ function pickLocked(
   range: string | undefined,
   relInLockDir: string,
 ): string | null {
-  const scoped = entries.filter(
+  const inScope = entries.filter(
     (e) => e.scope && (relInLockDir === e.scope || relInLockDir.startsWith(`${e.scope}/`)),
   );
+  // Node resolves from the NEAREST node_modules: only the deepest enclosing
+  // workspace's copies count, never a max across its ancestors.
+  const depth = Math.max(0, ...inScope.map((e) => e.scope?.length ?? 0));
+  const scoped = inScope.filter((e) => (e.scope?.length ?? 0) === depth);
   const hoisted = entries.filter((e) => !e.scope);
   const pool = scoped.length ? scoped : hoisted.length ? hoisted : entries;
   if (pool.length === 1) return pool[0]?.version ?? null;
@@ -1648,6 +1784,9 @@ class Resolver {
       decl ??= info.pyDecl.get(dist);
     }
     if (decl && isLocalRange(decl.range)) return "first-party";
+    // Locked to git / a URL / a private index: a non-registry range, so
+    // preparation skips it rather than substituting PyPI's release.
+    if (pin?.startsWith(PY_FOREIGN_PIN_PREFIX)) return { name: dist, version: null, range: pin };
     if (pin === undefined && !decl) return null;
     const version = pin ?? decl?.pin ?? null;
     return decl ? { name: dist, version, range: decl.range } : { name: dist, version };
@@ -2014,6 +2153,11 @@ export function parseZip(buf: Buffer): ArchiveEntry[] {
   if (cdOff + cdSize > buf.length)
     throw new Error("corrupt zip archive (central directory out of bounds)");
   const out: ArchiveEntry[] = [];
+  // Entries of a real zip occupy disjoint ranges, so the compressed bytes read
+  // across all of them never exceed the archive. Central-directory entries that
+  // point at one shared payload would multiply the inflate work per name —
+  // unbounded, synchronous CPU no output cap sees — so that is refused.
+  let consumed = 0;
   let p = cdOff;
   for (let i = 0; i < total; i++) {
     if (p + 46 > buf.length || buf.readUInt32LE(p) !== 0x02014b50)
@@ -2044,7 +2188,12 @@ export function parseZip(buf: Buffer): ArchiveEntry[] {
       path,
       kind,
       size: usize,
-      read: () => readZipEntry(buf, local, method, csize, usize, crc),
+      read: () => {
+        consumed += csize;
+        if (consumed > buf.length)
+          throw new Error("corrupt zip archive (entries overlap one another)");
+        return readZipEntry(buf, local, method, csize, usize, crc);
+      },
     });
   }
   return out;
@@ -2102,6 +2251,8 @@ export interface UnpackOptions {
   /** "first": npm's `package/` (npm strips the first component, whatever its name); "common-top": an sdist's single top dir; "none": wheels. */
   strip: "first" | "common-top" | "none";
   maxUnpackedBytes: number;
+  /** Kept-file ceiling (default MAX_KEPT_FILES); past it the unpack throws. */
+  maxFiles?: number;
 }
 
 export interface UnpackResult {
@@ -2149,7 +2300,9 @@ export function unpackEntries(
   }
   let files = 0;
   let bytes = 0;
+  const maxFiles = opts.maxFiles ?? MAX_KEPT_FILES;
   for (const [rel, e] of chosen) {
+    if (files >= maxFiles) throw new SkipError(`archive holds more than ${maxFiles} files`);
     const dest = resolve(target, rel);
     if (!dest.startsWith(target + sep)) {
       rejected++;
@@ -2197,7 +2350,9 @@ interface CacheMarker {
 
 const SAFE_VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z.+_-]*$/;
 
-/** `<root>/<eco>/<name, scope slash → __>@<version>`, or null when either part is unsafe as a path. */
+/** `<root>/<eco>/<name, scope slash → +>@<version>`, or null when either part is unsafe as a path.
+ * `+` is in neither npm's nor PyPI's name alphabet, so the mapping is
+ * one-to-one (`__` was not: `@a/b__c` and `@a__b/c` shared a directory). */
 function cacheDirFor(
   root: string,
   eco: DepEcosystem,
@@ -2205,8 +2360,9 @@ function cacheDirFor(
   version: string,
 ): string | null {
   if (!SAFE_VERSION_RE.test(version) || version.includes("..")) return null;
-  const flat = name.replace("/", "__");
-  if (!/^@?[A-Za-z0-9][A-Za-z0-9._~-]*$/.test(flat) || flat.includes("..")) return null;
+  const flat = name.replace("/", "+");
+  if (!/^@?[A-Za-z0-9][A-Za-z0-9._~-]*(?:\+[A-Za-z0-9._~-]+)?$/.test(flat) || flat.includes(".."))
+    return null;
   return join(root, eco, `${flat}@${version}`);
 }
 
@@ -2609,7 +2765,11 @@ async function preparePypi(req: DepRequest, ctx: PrepCtx): Promise<Outcome> {
       version = latest;
       files = pyFiles(doc.urls);
     } else {
-      const usable = Object.keys(releases).filter((k) => pyFiles(releases[k]).length > 0);
+      // A release whose every file is yanked is withdrawn: a range never picks
+      // it (only an explicit pin may still fetch a yanked file).
+      const usable = Object.keys(releases).filter((k) =>
+        pyFiles(releases[k]).some((f) => !f.yanked),
+      );
       const picked = maxPyVersion(usable, range);
       if (!picked) throw new SkipError(`no release matches ${clip(range, 40)}`);
       version = picked;
@@ -2761,7 +2921,7 @@ export async function prepareDependencySources(
 
 /**
  * Keep the cache under `maxBytes`: complete entries are sized from their
- * marker and aged by its mtime (a hit touches it), and the oldest are removed
+ * marker (bytes plus a per-file charge) and aged by its mtime (a hit touches it), and the oldest are removed
  * until the rest fit. Incomplete dirs are the stale-tmp sweep's business, not
  * this one's. Returns the number of entries removed. Never throws on one bad
  * entry.
@@ -2790,7 +2950,11 @@ export function pruneDependencyCache(
       const marker = readMarker(dir);
       if (!marker) continue;
       try {
-        entries.push({ dir, bytes: marker.bytes, mtimeMs: statSync(join(dir, MARKER)).mtimeMs });
+        entries.push({
+          dir,
+          bytes: marker.bytes + marker.files * CACHE_FILE_OVERHEAD_BYTES,
+          mtimeMs: statSync(join(dir, MARKER)).mtimeMs,
+        });
       } catch {
         // vanished between the listing and the stat
       }

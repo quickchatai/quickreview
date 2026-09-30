@@ -1326,7 +1326,7 @@ describe("prepareDependencySources", () => {
       version: "2.1.0",
       range: "^2.0.0",
       files: 2,
-      path: join(cacheDir, "npm", "@scope__lib@2.1.0"),
+      path: join(cacheDir, "npm", "@scope+lib@2.1.0"),
     });
     expect(calls[0]).toEqual({
       url: "https://registry.npmjs.org/@scope%2Flib",
@@ -1642,17 +1642,18 @@ describe("pruneDependencyCache — the cache's size cap", () => {
   it("evicts least recently used complete entries until the rest fit", () => {
     const root = mkdtempSync(join(tmpdir(), "qcr-depcache-"));
     try {
-      const old = entry(root, "npm", "old@1.0.0", 600, 3_000);
-      const mid = entry(root, "npm", "mid@1.0.0", 600, 2_000);
-      const fresh = entry(root, "pypi", "fresh@1.0.0", 600, 1_000);
+      // Each entry is charged its bytes plus 4 KiB per file (one file here).
+      const old = entry(root, "npm", "old@1.0.0", 60_000, 3_000);
+      const mid = entry(root, "npm", "mid@1.0.0", 60_000, 2_000);
+      const fresh = entry(root, "pypi", "fresh@1.0.0", 60_000, 1_000);
       mkdirSync(join(root, "npm", "partial@1.0.0.tmp-x"), { recursive: true });
-      expect(pruneDependencyCache(root, 1_300)).toBe(1);
+      expect(pruneDependencyCache(root, 130_000)).toBe(1);
       expect(existsSync(old)).toBe(false);
       expect(existsSync(mid)).toBe(true);
       expect(existsSync(fresh)).toBe(true);
       // an incomplete dir is not the cap's to touch
       expect(existsSync(join(root, "npm", "partial@1.0.0.tmp-x"))).toBe(true);
-      expect(pruneDependencyCache(root, 1_300)).toBe(0);
+      expect(pruneDependencyCache(root, 130_000)).toBe(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -1660,5 +1661,321 @@ describe("pruneDependencyCache — the cache's size cap", () => {
 
   it("is a no-op on a missing cache", () => {
     expect(pruneDependencyCache(join(tmpdir(), "qcr-no-such-cache-x"), 1)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// selfscan2 (depsources-replay unit): bounded work, provenance, nearest pins
+// ---------------------------------------------------------------------------
+
+describe("selfscan2: bounded scanning and archive work", () => {
+  it("import scanning is linear: a megabyte of dangling `import ` tokens is not a daemon stall", () => {
+    // Quadratic before: the lazy `[^;'"`]*?` gap re-scanned the whole suffix
+    // at every `import` token (~30s at the 1MB source cap, on the event loop).
+    const hostile = "import ".repeat(140_000);
+    const t0 = Date.now();
+    expect(extractJsImports(hostile)).toEqual([]);
+    expect(Date.now() - t0).toBeLessThan(2_000);
+    // …and the forms it exists for still resolve.
+    expect(
+      extractJsImports(
+        "import {\n  a,\n  b,\n} from 'multi';\nexport * from \"re\";\nimport def, { x } from `tpl`;\nconst from = 1; foo('from'); import y from 'late';\n",
+      ),
+    ).toEqual(["multi", "re", "tpl", "late"]);
+  });
+
+  it("zip: entries that replay one compressed range are refused before the inflate work multiplies", () => {
+    const payload = Buffer.from("x = 1  # " + "0123456789abcdef".repeat(200) + "\n");
+    const names = ["a.py", "b.py", "c.py", "d.py"];
+    const lname = Buffer.from(names[0]!);
+    const lh = Buffer.alloc(30);
+    lh.writeUInt32LE(0x04034b50, 0);
+    lh.writeUInt16LE(20, 4);
+    lh.writeUInt32LE(crc32(payload), 14);
+    lh.writeUInt32LE(payload.length, 18);
+    lh.writeUInt32LE(payload.length, 22);
+    lh.writeUInt16LE(lname.length, 26);
+    const local = Buffer.concat([lh, lname, payload]);
+    const centrals = names.map((n) => {
+      const name = Buffer.from(n);
+      const ch = Buffer.alloc(46);
+      ch.writeUInt32LE(0x02014b50, 0);
+      ch.writeUInt16LE((3 << 8) | 20, 4);
+      ch.writeUInt16LE(20, 6);
+      ch.writeUInt32LE(crc32(payload), 16);
+      ch.writeUInt32LE(payload.length, 20);
+      ch.writeUInt32LE(payload.length, 24);
+      ch.writeUInt16LE(name.length, 28);
+      ch.writeUInt32LE((0o100644 << 16) >>> 0, 38);
+      ch.writeUInt32LE(0, 42); // every entry points at the ONE local record
+      return Buffer.concat([ch, name]);
+    });
+    const cd = Buffer.concat(centrals);
+    const eocd = Buffer.alloc(22);
+    eocd.writeUInt32LE(0x06054b50, 0);
+    eocd.writeUInt16LE(names.length, 8);
+    eocd.writeUInt16LE(names.length, 10);
+    eocd.writeUInt32LE(cd.length, 12);
+    eocd.writeUInt32LE(local.length, 16);
+    const parsed = parseZip(Buffer.concat([local, cd, eocd]));
+    expect(parsed[0]?.read().equals(payload)).toBe(true);
+    expect(() => {
+      for (const e of parsed) e.read();
+    }).toThrow(/overlap/);
+  });
+
+  it("unpack caps the NUMBER of files, not only their bytes", () => {
+    const target = tmp();
+    const entries: ArchiveEntry[] = ["a.js", "b.js", "c.js", "d.js"].map((path) => ({
+      path,
+      kind: "file",
+      size: 0,
+      read: () => Buffer.alloc(0),
+    }));
+    expect(() =>
+      unpackEntries(entries, target, { strip: "none", maxUnpackedBytes: 1 << 20, maxFiles: 3 }),
+    ).toThrow(/more than 3 files/);
+    expect(
+      unpackEntries(entries, tmp(), { strip: "none", maxUnpackedBytes: 1 << 20, maxFiles: 4 })
+        .files,
+    ).toBe(4);
+  });
+
+  it("the cache cap charges every file, so a zero-byte entry of many files is still evictable", () => {
+    const root = mkdtempSync(join(tmpdir(), "qcr-depcache-"));
+    try {
+      const dir = join(root, "npm", "many@1.0.0");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, ".qcr-complete"),
+        JSON.stringify({
+          name: "many",
+          version: "1.0.0",
+          url: "",
+          sha256: "",
+          files: 200_000,
+          bytes: 0,
+        }),
+      );
+      expect(pruneDependencyCache(root, 64 * 1024 * 1024)).toBe(1);
+      expect(existsSync(dir)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("selfscan2: the version a file actually runs against", () => {
+  it("pnpm: an importer's own pin wins over another copy of the package in the inventory", () => {
+    const lock = [
+      "lockfileVersion: '9.0'",
+      "",
+      "importers:",
+      "",
+      "  .:",
+      "    dependencies:",
+      "      x:",
+      "        specifier: ^1.0.0",
+      "        version: 1.0.0",
+      "",
+      "  packages/web:",
+      "    dependencies:",
+      "      x:",
+      "        specifier: ^1.0.0",
+      "        version: 1.2.0(react@18.0.0)",
+      "",
+      "packages:",
+      "",
+      "  x@1.0.0:",
+      "    resolution: {}",
+      "",
+      "  x@1.2.0:",
+      "    resolution: {}",
+      "",
+      "snapshots:",
+      "",
+      "  x@1.0.0: {}",
+      "  x@1.2.0: {}",
+    ].join("\n");
+    const root = tree({
+      "package.json": JSON.stringify({ dependencies: { x: "^1.0.0" } }),
+      "packages/web/package.json": JSON.stringify({ name: "web", dependencies: { x: "^1.0.0" } }),
+      "pnpm-lock.yaml": lock,
+      "src/a.js": "import x from 'x';\n",
+      "packages/web/src/b.js": "import x from 'x';\n",
+    });
+    expect(planDependencyRequests(root, [{ filename: "src/a.js" }])[0]).toMatchObject({
+      name: "x",
+      version: "1.0.0",
+    });
+    expect(planDependencyRequests(root, [{ filename: "packages/web/src/b.js" }])[0]).toMatchObject({
+      name: "x",
+      version: "1.2.0",
+    });
+  });
+
+  it("pnpm v5: the single-project dependencies section pins the direct dependency", () => {
+    const lock = [
+      "lockfileVersion: 5.4",
+      "",
+      "specifiers:",
+      "  x: ^1.0.0",
+      "",
+      "dependencies:",
+      "  x: 1.0.0",
+      "",
+      "packages:",
+      "",
+      "  /x/1.0.0:",
+      "    dev: false",
+      "",
+      "  /x/1.2.0:",
+      "    dev: false",
+    ].join("\n");
+    const root = tree({
+      "package.json": JSON.stringify({ dependencies: { x: "^1.0.0" } }),
+      "pnpm-lock.yaml": lock,
+      "a.js": "require('x')",
+    });
+    expect(planDependencyRequests(root, [{ filename: "a.js" }])[0]).toMatchObject({
+      version: "1.0.0",
+    });
+  });
+
+  it("package-lock: the NEAREST workspace's own copy wins, not the max over ancestors", () => {
+    const root = tree({
+      "package.json": JSON.stringify({ dependencies: {} }),
+      "packages/web/sub/package.json": JSON.stringify({ name: "sub", dependencies: { x: "*" } }),
+      "package-lock.json": JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "": {},
+          "packages/web/node_modules/x": { version: "2.0.0" },
+          "packages/web/sub/node_modules/x": { version: "1.0.0" },
+        },
+      }),
+      "packages/web/sub/src/a.js": "import x from 'x';\n",
+    });
+    expect(
+      planDependencyRequests(root, [{ filename: "packages/web/sub/src/a.js" }])[0],
+    ).toMatchObject({ name: "x", version: "1.0.0" });
+  });
+
+  it("python: a package locked to a git or non-PyPI source is skipped, never swapped for PyPI's", async () => {
+    const uv = [
+      "[[package]]",
+      'name = "requests"',
+      'version = "2.31.0"',
+      'source = { git = "https://github.com/me/requests?rev=abc#abc" }',
+      "",
+      "[[package]]",
+      'name = "internal-lib"',
+      'version = "1.0.0"',
+      'source = { registry = "https://private.example/simple" }',
+      "",
+      "[[package]]",
+      'name = "httpx"',
+      'version = "0.27.0"',
+      'source = { registry = "https://pypi.org/simple" }',
+    ].join("\n");
+    const poetry = [
+      "[[package]]",
+      'name = "forked"',
+      'version = "3.0.0"',
+      "",
+      "[package.source]",
+      'type = "git"',
+      'url = "https://github.com/me/forked.git"',
+      "",
+      "[[package]]",
+      'name = "privy"',
+      'version = "0.1.0"',
+      "",
+      "[package.source]",
+      'type = "legacy"',
+      'url = "https://private.example/simple"',
+    ].join("\n");
+    for (const [lockName, lock, names] of [
+      ["uv.lock", uv, ["requests", "internal-lib"]],
+      ["poetry.lock", poetry, ["forked", "privy"]],
+    ] as const) {
+      const imports = names.map((n) => `import ${n.replace("-", "_")}\n`).join("");
+      const root = tree({ [lockName]: lock, "svc/app.py": imports });
+      const { fetch, calls } = fakeFetch({});
+      const m = await prepareDependencySources(root, [{ filename: "svc/app.py" }], {
+        cacheDir: tmp(),
+        fetch,
+      });
+      expect(m.sources).toEqual([]);
+      expect(m.skipped.map((s) => s.name).sort()).toEqual([...names].sort());
+      for (const s of m.skipped) expect(s.reason).toMatch(/not a registry version/);
+      expect(calls).toEqual([]);
+    }
+    // The PyPI-sourced pin is still a pin.
+    expect(parsePythonLock(uv).get("httpx")).toBe("0.27.0");
+  });
+
+  it("pypi: an unpinned range never lands on a release whose files are all yanked", async () => {
+    const sdist = gzipSync(tarball(tarEntry("somepkg-1.8/somepkg/__init__.py", "V = '1.8'\n")));
+    const live = "https://files.pythonhosted.org/packages/aa/somepkg-1.8.tar.gz";
+    const { fetch } = fakeFetch({
+      "https://pypi.org/pypi/somepkg/json": () =>
+        json({
+          info: { version: "2.0" },
+          urls: [],
+          releases: {
+            "1.8": [
+              { filename: "somepkg-1.8.tar.gz", url: live, digests: { sha256: sha256(sdist) } },
+            ],
+            "1.9": [
+              {
+                filename: "somepkg-1.9.tar.gz",
+                url: "https://files.pythonhosted.org/packages/bb/somepkg-1.9.tar.gz",
+                yanked: true,
+              },
+            ],
+            "2.0": [],
+          },
+        }),
+      [live]: () => bytes(sdist),
+    });
+    const root = tree({ "requirements.in": "somepkg>=1,<2\n", "tool.py": "import somepkg\n" });
+    const m = await prepareDependencySources(root, [{ filename: "tool.py" }], {
+      cacheDir: tmp(),
+      fetch,
+    });
+    expect(m.skipped).toEqual([]);
+    expect(m.sources[0]).toMatchObject({ name: "somepkg", version: "1.8" });
+  });
+
+  it("the cache path is unique per scoped name: @a/b__c and @a__b/c never share a directory", async () => {
+    const pkg = (name: string, body: string) => {
+      const tgz = gzipSync(tarball(tarEntry("package/index.js", body)));
+      const enc = `@${encodeURIComponent(name.slice(1))}`;
+      const url = `https://registry.npmjs.org/${name}/-/pkg-1.0.0.tgz`;
+      return {
+        [`https://registry.npmjs.org/${enc}`]: () =>
+          json({ versions: { "1.0.0": { dist: { tarball: url, integrity: sri(tgz) } } } }),
+        [url]: () => bytes(tgz),
+      };
+    };
+    const { fetch } = fakeFetch({
+      ...pkg("@a/b__c", "export const who = 'first';\n"),
+      ...pkg("@a__b/c", "export const who = 'second';\n"),
+    });
+    const cacheDir = tmp();
+    const run = async (name: string) =>
+      prepareDependencySources(
+        tree({
+          "package.json": JSON.stringify({ dependencies: { [name]: "1.0.0" } }),
+          "a.js": `import w from '${name}';\n`,
+        }),
+        [{ filename: "a.js" }],
+        { cacheDir, fetch },
+      );
+    const first = await run("@a/b__c");
+    const second = await run("@a__b/c");
+    expect(first.sources[0]?.path).not.toBe(second.sources[0]?.path);
+    expect(readFileSync(join(second.sources[0]!.path, "index.js"), "utf8")).toContain("second");
   });
 });

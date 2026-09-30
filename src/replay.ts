@@ -39,16 +39,19 @@
 //   3. **The scratch tree is never the daemon's.** `assertScratchIsolation`
 //      refuses a scratch root that is the sandbox root or lives under `wt/`, so
 //      a replay can never reset a worktree a live round is reading.
-//   4. **The session's cwd carries no `scripts/`.** The sanctioned posting
-//      route is `scripts/post-review.sh` / `approve-pr.sh`, and the no-exec
-//      guard (`extensions/bash-guard.ts`) sanctions those scripts ONLY in the
-//      relative `scripts/<name>.sh` spelling. The scratch root symlinks in
-//      `extensions/` and `state/agents` (the passes must still resolve) and
-//      deliberately does NOT symlink `scripts/`: the relative form finds no
-//      file, and the absolute form is not sanctioned, so the guard blocks it.
+//   4. **No sandbox script runs in a replay session.** The sanctioned posting
+//      route is `scripts/post-review.sh` / `approve-pr.sh`. The replay's pi
+//      is spawned with `QCR_REPLAY=1`, and under it the no-exec guard
+//      (`extensions/bash-guard.ts`) sanctions NO script in any spelling — so
+//      `cd <sandbox root> && bash scripts/post-review.sh …`, which a missing
+//      `scripts/` symlink alone never stopped (`cd` is allowed), is blocked.
+//      The scratch root still symlinks in only `extensions/` and
+//      `state/agents` (the passes must resolve), never `scripts/`.
 //   5. **No credential reaches the session.** `GH_TOKEN` is never set (rule 3),
 //      and `scripts/mint-token.sh` is unreachable for the same reason as (4),
-//      so bare `gh` is unauthenticated and any write fails at GitHub.
+//      so bare `gh` is unauthenticated and any write fails at GitHub. Nor does
+//      the reviewer MEMORY: the replay's pi loads no OpenViking extension, so
+//      there is no `viking_write` into the live reviewer namespace.
 //
 // Layers 4–5 are honest about their own strength: they are environmental, not
 // structural, and they are the reason the replay prompt still says in words
@@ -69,6 +72,7 @@ import { buildPassPlan } from "./dispatch.js";
 // Type-only, erased at build: `buildPassPlan` takes the file list shape the
 // files API returns, and this module builds one out of `git diff --numstat`.
 import type { PrFileEntry } from "./github.js";
+import type { ExecFn } from "./tmux.js";
 import {
   assertReplaySafe,
   parseCaseSet,
@@ -318,13 +322,15 @@ export class ScratchReplay {
       model: opts.model ?? opts.cfg.models.conversation,
       timeoutMs: opts.timeoutMs ?? DEFAULTS.timeoutMs,
       pollMs: opts.pollMs ?? DEFAULTS.pollMs,
-      runId: opts.runId ?? String(Date.now()),
+      runId: opts.runId ?? `${Date.now()}-${process.pid}`,
       log: opts.log ?? (() => {}),
     };
   }
 
+  /** Per RUN as well as per PR: two `qcr regression` invocations over one
+   * case set must not clear each other's findings or remove each other's tree. */
   caseDir(pr: number): string {
-    return join(this.o.scratchRoot, `pr-${pr}`);
+    return join(this.o.scratchRoot, `run-${this.o.runId}`, `pr-${pr}`);
   }
 
   treePath(pr: number): string {
@@ -360,9 +366,14 @@ export class ScratchReplay {
    * whatever `refs/pull/<n>/head` points at today. Replaying a different tree
    * than the human reviewed would silently turn every score into noise.
    */
-  private async prepareTree(
-    c: RegressionCase,
-  ): Promise<{ tree: string; baseSha: string; files: PrFileEntry[]; degraded: boolean }> {
+  private async prepareTree(c: RegressionCase): Promise<{
+    tree: string;
+    baseSha: string;
+    files: PrFileEntry[];
+    degraded: boolean;
+    /** Why the scratch checkout failed; a session is never asked to review it. */
+    checkoutFailed?: string;
+  }> {
     const { io, baseClone, baseBranch } = this.o;
     if (!existsSync(join(baseClone, ".git"))) {
       throw new ReplayUnavailable(
@@ -390,7 +401,17 @@ export class ScratchReplay {
     const tree = this.treePath(c.pr);
     io.mkdirp(dirname(tree));
     await this.git(["worktree", "remove", "--force", tree], baseClone);
-    await this.git(["worktree", "add", "--detach", tree, c.headSha], baseClone);
+    const added = await this.git(["worktree", "add", "--detach", tree, c.headSha], baseClone);
+    if (added.code !== 0) {
+      return {
+        tree,
+        baseSha: "",
+        files: [],
+        degraded: true,
+        checkoutFailed:
+          (added.stderr || added.stdout).trim().split("\n")[0] || `exit ${added.code}`,
+      };
+    }
 
     let baseSha = "";
     let degraded = true;
@@ -456,6 +477,14 @@ export class ScratchReplay {
     // IMMEDIATELY, or a throw in the order build/write (e.g. a full disk)
     // skips teardown and leaks the worktree registration.
     try {
+      if (prepared.checkoutFailed !== undefined) {
+        // A missing or stale tree reviewed as if it were the head would score
+        // as reviewer recall; an empty result is read as the harness fault it is.
+        log(
+          `replay: ${c.id} worktree add failed (${prepared.checkoutFailed}) — scored VACUOUS, no session spawned`,
+        );
+        return [];
+      }
       const { pass_plan } = buildPassPlan(this.o.cfg, prepared.files);
       const lenses = pass_plan.map((p) => p.lens);
       const order = replayOrder({
@@ -509,18 +538,32 @@ export async function nodeReplayIo(opts: {
   cfg: Config;
   sandboxRoot: string;
   scratchRoot: string;
+  /** Test seam: the process runner for git and tmux (default `nodeExec`). */
+  exec?: ExecFn;
 }): Promise<ReplayIo> {
-  const { nodeExec } = await import("./tmux.js");
+  const { nodeExec, Tmux } = await import("./tmux.js");
   const { PiSessionManager } = await import("./sessions.js");
-  const mgr = new PiSessionManager({
+  const run: ExecFn = opts.exec ?? nodeExec;
+  // Layer 5: the throwaway session gets no memory surface. The OpenViking
+  // extension would register `viking_write` under the reviewer key — the same
+  // namespace live reviews read — and nothing else would stop a replay's
+  // "lesson" persisting past teardown.
+  class ReplaySessionManager extends PiSessionManager {
+    override extensionPaths(): string[] {
+      return super.extensionPaths().filter((p) => !p.split(/[\\/]/).includes("openviking-pi"));
+    }
+  }
+  const mgr = new ReplaySessionManager({
     cfg: opts.cfg,
     root: opts.scratchRoot,
     piHome: join(opts.sandboxRoot, "pihome"),
+    tmux: new Tmux({ exec: run }),
   });
   return {
-    exec: (bin, args, o) => nodeExec(bin, args, o),
+    exec: (bin, args, o) => run(bin, args, o),
     spawnSession: async (name, prompt, model) => {
-      await mgr.spawnSession(name, prompt, model);
+      // Layer 4: under QCR_REPLAY the exec guard sanctions no sandbox script.
+      await mgr.spawnSession(name, prompt, model, { QCR_REPLAY: "1" });
     },
     injectOrder: async (name, body) => {
       mgr.injectFile(name, body);
