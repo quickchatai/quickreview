@@ -45,3 +45,10 @@ deploy/ansible/inventory.ini
 # chosen ingress profile (COMPOSE_PROFILES) here, and operators add their own
 # QCR_* overrides beside it. Operator-local, never committed.
 /.env
+
+# Worktree build artifacts: agents symlink node_modules into a worktree (a symlink is
+# not matched by `node_modules/`) and keep an incremental tsbuildinfo beside it.
+node_modules
+.cache/
+*.tsbuildinfo
+.tsbuildinfo*
