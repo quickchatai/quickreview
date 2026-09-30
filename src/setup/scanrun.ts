@@ -1375,6 +1375,7 @@ export class ScanRunner {
       run.matching = this.findings.reconcile({
         rows: entries,
         tree: new Set(tree.files.map((f) => f.path)),
+        blobs: new Map(tree.files.map((f) => [f.path, f.blob])),
         run: { run: run.id, sha: run.sha, at: this.ports.clock().toISOString() },
       });
     } catch (err) {

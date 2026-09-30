@@ -13,9 +13,10 @@
 //     because the operator already said it is not a problem.)
 //   * THE COMPANION JUDGES THE REST. After a run, `reconcile` finds the
 //     stored findings the re-scan no longer reports: their file was read
-//     again at other content (the ledger says so) and no exact match came
-//     back, or their file is gone from the tree. One that no fresh finding of
-//     the same lens (in its unit, or of its kind) could possibly be is
+//     again at other content — the content the run's tree holds (the ledger
+//     says so) — and no exact match came back, or their file is gone from
+//     the tree. One that no fresh finding of a lens that raised it (in its
+//     unit, or of its kind) could possibly be is
 //     `fixed` at once. The rest are held with those fresh candidates in ONE
 //     pending MATCH QUESTION, which the companion answers whole (`match`,
 //     quoting the question's key): the pairs it names are the same finding —
@@ -130,6 +131,11 @@ export interface ScanFinding {
   lenses?: string[];
   /** The near-duplicate sightings collapsed into it, as last reported. */
   merged?: MergedSighting[];
+  /** Its OWN fingerprint's latest severity, kept once near-duplicates
+   * collapsed into it (`severity` is then the highest of this and each
+   * merged sighting's) — so the aggregate is recomputed from the latest
+   * reports whichever sighting reports last. */
+  own_severity?: ScanSeverity;
   /** Why the operator dismissed it; kept after a later promote. */
   dismissal?: Dismissal | null;
   /** Where it was filed when promoted. */
@@ -166,7 +172,7 @@ export interface FindingTicket {
 /** What a scan reports — a finding before the store gives it a history. */
 export type ReportedFinding = Omit<
   ScanFinding,
-  "state" | "first_seen" | "last_seen" | "seen" | "fixed" | "aliases" | "lenses" | "merged" | "dismissal" | "ticket"
+  "state" | "first_seen" | "last_seen" | "seen" | "fixed" | "aliases" | "lenses" | "merged" | "own_severity" | "dismissal" | "ticket"
 >;
 
 // ---- near-duplicate collapse ----------------------------------------------------------
@@ -271,13 +277,25 @@ function sightingOf(r: ReportedFinding): MergedSighting {
   return { fingerprint: r.fingerprint, lens: r.lens, start: r.start, end: r.end, severity: r.severity, claim: r.claim };
 }
 
-/** Fold reported near-duplicate `r` into stored `into`. */
+/** The highest of a finding's own latest severity and each merged
+ * sighting's latest. */
+function aggregateSeverity(own: ScanSeverity, merged: readonly MergedSighting[]): ScanSeverity {
+  return merged.reduce((s, m) => higher(s, m.severity), own);
+}
+
+/** Fold reported near-duplicate `r` into stored `into`. It is a sighting at
+ * the content `r` read, so the content hash moves with it. */
 function absorb(into: ScanFinding, r: ReportedFinding): ScanFinding {
   const lenses = [...new Set([...(into.lenses ?? [into.lens]), r.lens])];
   const merged = [...(into.merged ?? []).filter((m) => m.fingerprint !== r.fingerprint), sightingOf(r)];
+  // Before anything collapsed into it, its severity IS its own; a record
+  // stored before `own_severity` existed falls back to its aggregate.
+  const own = into.own_severity ?? into.severity;
   return {
     ...into,
-    severity: higher(into.severity, r.severity),
+    ...(r.blob !== undefined ? { blob: r.blob } : {}),
+    own_severity: own,
+    severity: aggregateSeverity(own, merged),
     validated: into.validated || r.validated,
     doubt: combinedDoubt(into, r),
     lenses,
@@ -343,10 +361,21 @@ export interface MatchQuestionView {
   fresh: ScanFinding[];
 }
 
-/** Could fresh finding `n` be old finding `o`, moved or reworded? Same lens,
- * and the same unit or the same kind. */
+/** Every lens that raised `f` — a collapsed finding's all of them. */
+const lensesOf = (f: ScanFinding): string[] => f.lenses ?? [f.lens];
+
+/** Do `a` and `b` share a lens that raised them? */
+function shareLens(a: ScanFinding, b: ScanFinding): boolean {
+  const la = lensesOf(a);
+  return lensesOf(b).some((l) => la.includes(l));
+}
+
+/** Could fresh finding `n` be old finding `o`, moved or reworded? A lens in
+ * common (any lens a collapsed finding holds — its silent primary lens is
+ * not the only one that can report it again), and the same unit or the
+ * same kind. */
 function mightBe(o: ScanFinding, n: ScanFinding): boolean {
-  return o.lens === n.lens && (o.unit === n.unit || o.kind === n.kind);
+  return shareLens(o, n) && (o.unit === n.unit || o.kind === n.kind);
 }
 
 /** The state a `fixed` finding takes when a scan reports it again: dismissed
@@ -477,8 +506,8 @@ export class FindingsStore {
           // A collapsed finding carries the highest severity its sightings now
           // give — its own latest and each absorbed one's latest, never a
           // stale maximum a re-scan has since lowered.
-          const severity = (known.merged ?? []).reduce((s, m) => higher(s, m.severity), r.severity);
-          byFp.set(ownFp, { ...known, ...r, severity, ...history });
+          const severity = aggregateSeverity(r.severity, known.merged ?? []);
+          byFp.set(ownFp, { ...known, ...r, severity, ...(known.merged ? { own_severity: r.severity } : {}), ...history });
         } else {
           // A sighting of an absorbed near-duplicate: the finding keeps its own
           // wording and position; the alias's record and the severity move.
@@ -522,7 +551,15 @@ export class FindingsStore {
    * the one pending match question, with the fresh findings (first seen by
    * the runs that re-read those files) that might be them.
    */
-  reconcile(args: { rows: readonly LedgerEntry[]; tree: ReadonlySet<string>; run: Sighting }): ReconcileResult {
+  reconcile(args: {
+    rows: readonly LedgerEntry[];
+    tree: ReadonlySet<string>;
+    /** The run's tree's content hash per path: when given, only a reading
+     * of THAT content settles a finding — a newer reading of other content
+     * says nothing about a tree that has since gone back. */
+    blobs?: ReadonlyMap<string, string>;
+    run: Sighting;
+  }): ReconcileResult {
     const { file, error } = this.loadFile();
     if (error !== null) throw new Error(error);
     const byFp = new Map(file.findings.map((f) => [f.fingerprint, f]));
@@ -542,15 +579,29 @@ export class FindingsStore {
       if (f.state === "fixed" || pending.has(f.fingerprint)) continue;
       if (!args.tree.has(f.path)) {
         unreported.push(f.fingerprint);
+        // Wherever it moved may have been read by a run the companion never
+        // finished: every run of its lenses since its last sighting is one
+        // whose fresh findings might be it.
+        const lenses = lensesOf(f);
+        for (const r of args.rows) {
+          if (r.run !== f.last_seen.run && r.at >= f.last_seen.at && lenses.includes(r.lens)) rereadBy.add(r.run);
+        }
         continue;
       }
+      const current = args.blobs?.get(f.path);
       // A collapsed finding is unreported only when EVERY lens that raised
       // it has re-read other content since — one lens's silence is not the
       // other's, and a single-lens run must not settle what it never read.
-      const readingsOf = (f.lenses ?? [f.lens]).map((l) => newest.get(`${l}\0${f.path}`));
+      const readingsOf = lensesOf(f).map((l) => newest.get(`${l}\0${f.path}`));
       const reread = readingsOf.every((reading) => {
         const row = reading?.newest;
-        return row !== undefined && row.run !== f.last_seen.run && row.at >= f.last_seen.at && !(f.blob != null && row.blob === f.blob);
+        return (
+          row !== undefined &&
+          row.run !== f.last_seen.run &&
+          row.at >= f.last_seen.at &&
+          !(f.blob != null && row.blob === f.blob) &&
+          (current === undefined || row.blob === current)
+        );
       });
       if (!reread) continue;
       unreported.push(f.fingerprint);
@@ -586,7 +637,7 @@ export class FindingsStore {
 
   /**
    * The companion's answer to the pending question, whole: `pairs` are the
-   * same finding (one-to-one, same lens); every unreported finding it does
+   * same finding (one-to-one, a lens in common); every unreported finding it does
    * not pair is fixed; every fresh one it does not pair stays new. Refused —
    * all of it — on a stale key, an unknown fingerprint, a reused one or a
    * lens mismatch.
@@ -615,7 +666,7 @@ export class FindingsStore {
       else if (usedNew.has(n)) errors.push(`${n.slice(0, 12)} is paired twice`);
       const of = byFp.get(o);
       const nf = byFp.get(n);
-      if (of && nf && of.lens !== nf.lens) errors.push(`${o.slice(0, 12)} and ${n.slice(0, 12)} are different lenses' findings`);
+      if (of && nf && !shareLens(of, nf)) errors.push(`${o.slice(0, 12)} and ${n.slice(0, 12)} are different lenses' findings`);
       usedOld.add(o);
       usedNew.add(n);
       pairs.push({ old: o, new: n });
