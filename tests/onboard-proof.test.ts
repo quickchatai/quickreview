@@ -393,6 +393,55 @@ describe("the two paths that actually happen", () => {
     expect(h.engine.choices()[PROOF_CHOICE_KEY]).toBeUndefined();
   });
 
+  it("a review recorded BEFORE the finished round started is not shown as that round's output", async () => {
+    // Round 1 posted a dry-run review at 11:58; the operator re-ran the step and
+    // round 2 (started 12:10) finished without recording one. The 11:58 review
+    // belongs to round 1 and must not certify round 2.
+    const h = harness({
+      whyRounds: [
+        [
+          {
+            round_no: 1,
+            status: "done",
+            verdict: "REQUEST_CHANGES",
+            started_at: "2026-08-30T11:55:00.000Z",
+          },
+          {
+            round_no: 2,
+            status: "done",
+            verdict: "APPROVE",
+            started_at: "2026-08-30T12:10:00.000Z",
+          },
+        ],
+      ],
+    });
+    const result = await h.engine.runStep(PROOF_STEP_ID, { pr: 17 });
+    expect(result.ok).toBe(false);
+    expect(result.failures.join(" ")).toMatch(/no recorded review for #17/);
+    expect(h.engine.choices()[PROOF_CHOICE_KEY]).toBeUndefined();
+  });
+
+  it("a review recorded during the finished round is shown and certifies it", async () => {
+    const h = harness({
+      whyRounds: [
+        [
+          {
+            round_no: 1,
+            status: "done",
+            verdict: "REQUEST_CHANGES",
+            started_at: "2026-08-30T11:55:00.000Z",
+          },
+        ],
+      ],
+    });
+    const result = await h.engine.runStep(PROOF_STEP_ID, { pr: 17 });
+    expect(result.ok).toBe(true);
+    // Only the round's own intents are counted (the 11:50 label predates it).
+    expect(result.checks.find((c) => c.name === "nothing-posted")!.detail).toMatch(
+      /^1 would-be GitHub call were recorded/,
+    );
+  });
+
   it("a missing dry-run directory is explained rather than crashed on", async () => {
     const h = harness({ dryrunListCode: 1 });
     const result = await h.engine.runStep(PROOF_STEP_ID, { pr: 17 });

@@ -90,3 +90,66 @@ describe("escalation step: a re-run never eats a hand-written rule", () => {
     expect(cfg.escalation.rules.map((r) => r.name).sort()).toEqual(["hand", "onboarding:alice"]);
   });
 });
+
+async function runStep(input: Record<string, unknown>) {
+  const engine = new OnboardingEngine([escalationStep()], adapters());
+  const result = await engine.runStep(ESCALATION_STEP_ID, input);
+  expect(result.ok, result.failures.join("; ")).toBe(true);
+  return { result, cfg: parseConfig(readFileSync(configPath, "utf8")) };
+}
+
+describe("escalation step: every target it promises to tell can actually be told", () => {
+  it("writes a per-PR cap that covers one delivery per interview target", async () => {
+    writeFileSync(configPath, EXAMPLE);
+    const { cfg } = await runStep({
+      enable: "yes",
+      targets: "alice, bob, carol",
+      why: "owns the schema",
+      paths: "migrations/**",
+    });
+    const rules = cfg.escalation.rules.filter((r) => r.name.startsWith("onboarding:"));
+    expect(rules).toHaveLength(3);
+    // deliverEscalations refuses once escalationCount(pr) >= max_per_pr, and
+    // all three rules fire on the same PR — a cap of 2 silently drops carol.
+    expect(cfg.escalation.max_per_pr).toBeGreaterThanOrEqual(3);
+  });
+
+  it("keeps the single-target default cap of 2", async () => {
+    writeFileSync(configPath, EXAMPLE);
+    const { cfg } = await runStep({
+      enable: "yes",
+      targets: "alice",
+      why: "owns the schema",
+      paths: "migrations/**",
+    });
+    expect(cfg.escalation.max_per_pr).toBe(2);
+  });
+});
+
+describe("escalation step: a hand-written rule's recipient survives a re-run", () => {
+  it("keeps a hand rule to a login the interview did not name, and keeps it reachable", async () => {
+    writeFileSync(
+      configPath,
+      withHandRule(
+        [
+          "[[escalation.rules]]",
+          'name = "hand"',
+          'to = "bob"',
+          'why = "he wrote the billing module"',
+          'paths = ["billing/**"]',
+          "",
+        ].join("\n"),
+      ),
+    );
+    const { cfg } = await runStep({
+      enable: "yes",
+      targets: "alice",
+      why: "owns the schema",
+      paths: "db/**",
+    });
+    expect(cfg.escalation.rules.map((r) => r.name).sort()).toEqual(["hand", "onboarding:alice"]);
+    expect([...cfg.escalation.targets].sort()).toEqual(["alice", "bob"]);
+    // bob is reachable by his own rule only — the interview mints no rule for him.
+    expect(cfg.escalation.rules.some((r) => r.name === "onboarding:bob")).toBe(false);
+  });
+});

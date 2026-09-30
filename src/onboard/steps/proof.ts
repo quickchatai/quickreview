@@ -441,7 +441,9 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
           `${round.summary ? `\nThe session's own summary: ${round.summary}` : ""}`,
       },
     ];
-    const { records, problem } = await readContainerDryrun(transport, dryrunLimit);
+    const read = await readContainerDryrun(transport, dryrunLimit);
+    const { problem } = read;
+    const records = roundRecords(read.records, round);
     const review = problem ? null : sandboxReviewFrom(records, pr);
     if (!review) {
       checks.push({
@@ -475,6 +477,22 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
     ctx.recordChoice(CHOICE_KEYS.proof, record);
     return { ok: true, checks, data: { proof: record } };
   }
+}
+
+/**
+ * The dry-run records that belong to THIS round: recorded at or after it
+ * started. The dry-run dir is cumulative, so without this a re-run whose round
+ * recorded no review would show — and certify — an earlier round's review.
+ * A round whose start the daemon did not report cannot be bound, and keeps
+ * every record (the pre-binding behaviour) rather than refusing outright.
+ */
+export function roundRecords(records: DryrunRecord[], round: ObservedRound): DryrunRecord[] {
+  const start = Date.parse(round.started_at);
+  if (Number.isNaN(start)) return records;
+  return records.filter((r) => {
+    const at = Date.parse(r.recorded_at ?? "");
+    return !Number.isNaN(at) && at >= start;
+  });
 }
 
 function roundFailedCheck(

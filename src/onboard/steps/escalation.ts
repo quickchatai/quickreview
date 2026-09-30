@@ -163,6 +163,28 @@ export function foreignRuleBlocks(toml: string): string[] {
   return out;
 }
 
+/** The `to` login of each hand-written rule block, in order, deduplicated.
+ * They join the `targets` this step writes: `parseEscalation` refuses a rule
+ * pointing outside `targets`, so a re-run that regenerated `targets` from the
+ * interview alone would make a kept hand rule unloadable. */
+export function foreignRuleTargets(foreign: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const block of foreign) {
+    const to = /^\s*to\s*=\s*"([^"]*)"/m.exec(block)?.[1];
+    if (to && !out.includes(to)) out.push(to);
+  }
+  return out;
+}
+
+/** The per-PR delivery cap this step writes: one delivery for every rule that
+ * can fire on the same PR (each interview rule, each hand rule) plus one spare
+ * for a session escalation — never below the shipped default of 2. A flat 2
+ * with three interview targets meant the third was always refused as capped. */
+export function interviewMaxPerPr(a: EscalationAnswers, foreign: readonly string[]): number {
+  const rules = (a.enabled ? a.targets.length : 0) + foreign.length;
+  return Math.max(2, rules + 1);
+}
+
 function tomlList(values: readonly string[]): string {
   return `[${values.map((v) => JSON.stringify(v)).join(", ")}]`;
 }
@@ -185,6 +207,8 @@ export function renderEscalationSection(
   a: EscalationAnswers,
   foreign: readonly string[] = [],
 ): string {
+  const targets = [...a.targets];
+  for (const t of foreignRuleTargets(foreign)) if (!targets.includes(t)) targets.push(t);
   const head = [
     "[escalation]",
     "# Optional escalation. The reviewer ALWAYS decides on the merits and",
@@ -195,9 +219,11 @@ export function renderEscalationSection(
     `shape = ${JSON.stringify(a.shape)}`,
     "# The closed set of logins any escalation may reach. A reviewer session that",
     "# names anyone else is dropped by the daemon.",
-    `targets = ${tomlList(a.targets)}`,
+    "# (Includes the recipient of every hand-written rule below.)",
+    `targets = ${tomlList(targets)}`,
     `session_judgement = ${a.session_judgement}`,
-    "max_per_pr = 2",
+    "# One delivery per rule that can fire on a PR, plus one spare.",
+    `max_per_pr = ${interviewMaxPerPr(a, foreign)}`,
     "",
   ];
   if (a.enabled) {
@@ -377,10 +403,11 @@ export function escalationStep(): OnboardingStep {
           ],
         };
       }
-      const patched = patchEscalationSection(
-        toml,
-        renderEscalationSection(answers, foreignRuleBlocks(toml)),
-      );
+      const foreign = foreignRuleBlocks(toml);
+      const handTargets = foreignRuleTargets(foreign).filter((t) => !answers.targets.includes(t));
+      const allTargets = [...answers.targets, ...handTargets];
+      const maxPerPr = interviewMaxPerPr(answers, foreign);
+      const patched = patchEscalationSection(toml, renderEscalationSection(answers, foreign));
       // Parse BEFORE writing: `parseEscalation` is the same lock the loader
       // uses, so a config this step writes can always be booted.
       try {
@@ -407,7 +434,11 @@ export function escalationStep(): OnboardingStep {
             ? `on, shape "${answers.shape}" — ${answers.targets.length} rule(s), one per target: ` +
               answers.targets.map((t) => `@${t} (rule ${interviewRuleName(t)})`).join(", ") +
               ". Each of them is told about the same triggers below; escalation names one person per note, so" +
-              " listing more than one login means more than one person is told."
+              " listing more than one login means more than one person is told." +
+              ` At most ${maxPerPr} escalations are delivered per PR (max_per_pr) — one per rule plus one spare.` +
+              (handTargets.length
+                ? ` ${handTargets.map((t) => `@${t}`).join(", ")} stay${handTargets.length === 1 ? "s" : ""} in targets for your hand-written rule(s), which were kept as they are.`
+                : "")
             : "off — the reviewer decides every PR and posts its verdict, and nobody is @-mentioned. You can turn this on later by re-running this step.",
         },
         { name: "config.toml", ok: true, detail: `[escalation] written to ${path} and it parses` },
@@ -433,7 +464,7 @@ export function escalationStep(): OnboardingStep {
           checks.push({
             name: "session judgement",
             ok: true,
-            detail: `the reviewer may also escalate on its own judgement, and ONLY to ${answers.targets.map((t) => `@${t}`).join(", ")} — anything else is dropped by the daemon`,
+            detail: `the reviewer may also escalate on its own judgement, and ONLY to ${allTargets.map((t) => `@${t}`).join(", ")} — anything else is dropped by the daemon`,
           });
         }
       }
@@ -443,7 +474,7 @@ export function escalationStep(): OnboardingStep {
         data: {
           enabled: enable,
           shape: answers.shape,
-          targets: answers.targets,
+          targets: allTargets,
           config_path: path,
         },
       };
