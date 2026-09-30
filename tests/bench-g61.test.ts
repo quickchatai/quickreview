@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { caseCostUsd, ratesFor } from "../src/bench/cost.js";
-import { nativeModelEntry, opencodeConfig } from "../src/bench/opencode.js";
+import { nativeModelEntry, opencodeConfig, opencodeModels } from "../src/bench/opencode.js";
 import { piHasBuiltins, pireviewPiSettings, PIREVIEW_PI_SETTINGS } from "../src/bench/pireview.js";
 import { PI_DISABLED_BUILTINS } from "../src/pibuiltins.js";
 
@@ -110,6 +110,19 @@ describe("OpenCode native: a model its bundled catalog lacks is declared on the 
     expect(Object.keys((c["provider"] as Record<string, Record<string, unknown>>)["openai"]!)).toEqual([
       "models",
     ]);
+  });
+
+  it("counts the store's assistant messages by provider/model", () => {
+    expect(
+      opencodeModels(
+        JSON.stringify([
+          { provider: "openai", model: "gpt-6.1-sol", n: 7 },
+          { provider: null, model: null, n: 1 },
+        ]),
+      ),
+    ).toEqual({ "openai/gpt-6.1-sol": 7, "?/?": 1 });
+    expect(opencodeModels("not json")).toBeNull();
+    expect(opencodeModels("{}")).toBeNull();
   });
 
   it("gpt-6-sol (the published native runs): no provider block at all", () => {

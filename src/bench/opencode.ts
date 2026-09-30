@@ -369,6 +369,31 @@ export const USAGE_SQL =
   "json_extract(data,'$.tokens.reasoning') AS reasoning, json_extract(data,'$.tokens.cache.read') AS cache_read, " +
   "json_extract(data,'$.tokens.cache.write') AS cache_write FROM part WHERE json_extract(data,'$.type')='step-finish'";
 
+/** Every assistant message's provider and model (OpenCode records the pair
+ * on the message; a later layout nests it under `model`). */
+export const MODELS_SQL =
+  "SELECT coalesce(json_extract(data,'$.providerID'), json_extract(data,'$.model.providerID')) AS provider, " +
+  "coalesce(json_extract(data,'$.modelID'), json_extract(data,'$.model.modelID')) AS model, count(*) AS n " +
+  "FROM message WHERE json_extract(data,'$.role')='assistant' GROUP BY 1, 2";
+
+/** MODELS_SQL's rows → `{ "provider/model": count }`; null for anything but
+ * a JSON array. */
+export function opencodeModels(rowsJson: string): Record<string, number> | null {
+  let rows: unknown;
+  try {
+    rows = JSON.parse(rowsJson);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(rows)) return null;
+  const out: Record<string, number> = {};
+  for (const r of rows as Array<Record<string, unknown>>) {
+    const key = `${String(r?.["provider"] ?? "?")}/${String(r?.["model"] ?? "?")}`;
+    out[key] = (out[key] ?? 0) + num(r?.["n"]);
+  }
+  return out;
+}
+
 /**
  * OpenCode's own per-step tokens, summed into the bridge's shape (what
  * compare.py and the defect judge's cost line price). OpenCode's `input`
@@ -702,6 +727,10 @@ export interface OpencodeCaseSummary {
    * shape (`usage_source`). */
   bridge: BridgeUsage | null;
   usage_source?: "bridge" | "opencode-db";
+  /** Native only: every assistant message in OpenCode's own store (the
+   * subtask's included), counted by the `provider/model` it was sent to —
+   * the evidence that each call went to the configured model. */
+  models?: Record<string, number>;
   /** With the PR-text switch on: whether this case's title/body reached OpenCode. */
   pr_text?: boolean;
   /** Bridge tokens in the shape the defect judge's cost line reads:
@@ -901,6 +930,10 @@ export async function reviewCaseOpencode(
       summary.usage_source = "opencode-db";
       if (!summary.bridge)
         summary.warnings.push(`opencode db: no token totals (${db.stderr.trim().slice(0, 200)})`);
+      const models = await exec(o.opencodeBin, ["db", MODELS_SQL, "--format", "json"], { cwd: tree, env });
+      const m = models.code === 0 ? opencodeModels(models.stdout) : null;
+      if (m) summary.models = m;
+      else summary.warnings.push(`opencode db: no model counts (${models.stderr.trim().slice(0, 200)})`);
     } else {
       const after = (await bridgeCall(o, "/stats")) as BridgeStats | null;
       await bridgeCall(o, "/label", { label: "" });
