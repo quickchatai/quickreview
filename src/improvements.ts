@@ -422,7 +422,6 @@ export async function fileImprovementPr(
   // existence check, and neither argument can ever begin with `-`.
   const baseRef = `refs/remotes/origin/${base}`;
   const branchRef = `refs/heads/${payload.branch}`;
-  const refspec = `${branchRef}:refs/heads/${botBranch}`;
 
   try {
     const repoDir = await ctx.ensureRepoDir();
@@ -432,19 +431,26 @@ export async function fileImprovementPr(
     await ctx.run(["fetch", "origin", `+refs/heads/${base}:${baseRef}`], repoDir);
     // `for-each-ref` with an exact ref prints that ref or nothing (a branch
     // cannot coexist with a branch nested under its name) — total, no exit
-    // code to interpret.
-    const found = await ctx.run(["for-each-ref", "--format=%(refname)", branchRef], repoDir);
-    if (found.trim() !== branchRef) {
+    // code to interpret. It also PINS the branch: the commit it names now is
+    // the one validated below AND the one pushed, so a session that moves
+    // its branch after submitting cannot ship a tip the caps never saw.
+    const found = (
+      await ctx.run(["for-each-ref", "--format=%(objectname) %(refname)", branchRef], repoDir)
+    ).trim();
+    const sep = found.indexOf(" ");
+    const commit = sep > 0 ? found.slice(0, sep) : "";
+    if (found.slice(sep + 1) !== branchRef || !/^[0-9a-f]{40,64}$/.test(commit)) {
       return reject(
         `branch '${payload.branch}' does not exist in the reviewed repo's clone — the session never prepared it`,
       );
     }
+    const refspec = `${commit}:refs/heads/${botBranch}`;
 
     const numstat = await ctx.run(
       // -z: raw paths (no quotePath quoting, no rename display string);
       // --no-renames: a move is a delete + an add, so BOTH sides reach the
       // denylist and the line cap — whatever diff.renames the clone carries.
-      ["diff", "--numstat", "-z", "--no-renames", `${baseRef}...${branchRef}`],
+      ["diff", "--numstat", "-z", "--no-renames", `${baseRef}...${commit}`],
       repoDir,
     );
     const entries = parseNumstat(numstat);
@@ -456,7 +462,7 @@ export async function fileImprovementPr(
       kind: "push_branch" as const,
       method: "git" as const,
       path: `git push origin ${refspec}`,
-      body: { remote: "origin", source: branchRef, target: botBranch },
+      body: { remote: "origin", source: branchRef, commit, target: botBranch },
       note: `push ${botBranch} (${verdict.files} files, ${verdict.lines} lines)`,
     };
     // the push goes through the gate in BOTH modes. It used to consult

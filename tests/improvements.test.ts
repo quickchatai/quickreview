@@ -276,6 +276,8 @@ describe("issue dedup — normalized-token Jaccard", () => {
  * remote, and the suite stayed green over a push that could never succeed.
  */
 const REPO_DIR = "/srv/sandbox/example-app";
+/** The commit the fake clone reports the prepared branch at. */
+const TIP = "a".repeat(40);
 
 /** A recording fake `Run`: what was asked, and WHERE. */
 interface FakeRunner {
@@ -335,7 +337,7 @@ describe("fileImprovementPr / fileIssue (dry-run)", () => {
     const run: Run = async (args, cwd) => {
       calls.push(args);
       cwds.push(cwd);
-      if (args[0] === "for-each-ref") return `${args[2]}\n`; // the branch exists
+      if (args[0] === "for-each-ref") return `${TIP} ${args[2]}\n`; // the branch exists
       if (args[0] === "diff") return diff;
       if (args[0] === "push") throw new Error("must not push in dry-run");
       return "";
@@ -388,9 +390,11 @@ describe("fileImprovementPr / fileIssue (dry-run)", () => {
     expect(cwds).toEqual([REPO_DIR, REPO_DIR, REPO_DIR]);
     // The push intent names the branch as the LOCAL ref it is pushed from.
     expect(push.path).toBe(
-      "git push origin refs/heads/wip/docs:refs/heads/bot/improve-clarify-retry",
+      `git push origin ${TIP}:refs/heads/bot/improve-clarify-retry`,
     );
     expect(push.body.source).toBe("refs/heads/wip/docs");
+    // …pinned to the commit the diffstat validated, never re-resolved by name.
+    expect(push.body.commit).toBe(TIP);
   });
 
   it("the git steps run in the reviewed repo's base clone, resolved once, before the first git call", async () => {
@@ -418,13 +422,17 @@ describe("fileImprovementPr / fileIssue (dry-run)", () => {
     // Both sides fully qualified: the session's branch is addressed as a LOCAL
     // branch (`refs/heads/`), so a remote-tracking name, a tag or a sha is not
     // "the branch the session prepared", and no argument can start with `-`.
-    expect(calls[1]).toEqual(["for-each-ref", "--format=%(refname)", "refs/heads/wip/docs"]);
+    expect(calls[1]).toEqual([
+      "for-each-ref",
+      "--format=%(objectname) %(refname)",
+      "refs/heads/wip/docs",
+    ]);
     expect(calls[2]).toEqual([
       "diff",
       "--numstat",
       "-z",
       "--no-renames",
-      `refs/remotes/origin/${cfg.github.base_branch}...refs/heads/wip/docs`,
+      `refs/remotes/origin/${cfg.github.base_branch}...${TIP}`,
     ]);
     expect(new Set(cwds)).toEqual(new Set([REPO_DIR]));
     expect(cwds).toHaveLength(calls.length);
@@ -711,7 +719,7 @@ describe("fileImprovementPr — the push goes through the gate in live mode", ()
     const run: Run = async (args, cwd) => {
       calls.push(args);
       cwds.push(cwd);
-      if (args[0] === "for-each-ref") return `${args[2]}\n`;
+      if (args[0] === "for-each-ref") return `${TIP} ${args[2]}\n`;
       if (args[0] === "diff") return numstat([[3, 1, "docs/readme.md"]]);
       return "";
     };
@@ -747,7 +755,7 @@ describe("fileImprovementPr — the push goes through the gate in live mode", ()
     expect(push).toEqual([
       "push",
       "origin",
-      "refs/heads/wip/docs:refs/heads/bot/improve-clarify-retry",
+      `${TIP}:refs/heads/bot/improve-clarify-retry`,
     ]);
     // the push, like every other step, runs where `origin` IS the
     // reviewed repo. Before, it ran with no cwd at all.

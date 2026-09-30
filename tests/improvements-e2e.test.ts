@@ -182,10 +182,11 @@ describe("improvement channel end to end — real git, a repo with a remote", ()
     expect(intents.map((i) => i.kind)).toEqual(["push_branch", "create_pull", "add_label"]);
     expect(intents[0]).toMatchObject({
       method: "git",
-      path: "git push origin refs/heads/wip/docs:refs/heads/bot/improve-clarify-retry",
+      path: `git push origin ${sha}:refs/heads/bot/improve-clarify-retry`,
       body: {
         remote: "origin",
         source: "refs/heads/wip/docs",
+        commit: sha,
         target: "bot/improve-clarify-retry",
       },
     });
@@ -285,6 +286,35 @@ describe("improvement channel end to end — real git, a repo with a remote", ()
     const kinds = store.eventsOn(new Date().toISOString().slice(0, 10)).map((e) => e.kind);
     expect(kinds).toContain("branch_pushed");
     expect(kinds).toContain("improvement_pr_filed");
+  });
+
+  it("LIVE: the pushed commit is the VALIDATED one — a branch advanced after the diffstat does not ride the push", async () => {
+    // The session that prepared the branch shares the clone. If it moves the
+    // branch after the daemon's diffstat passed, re-resolving the name at push
+    // time would ship a tip the caps and the denylist never saw.
+    const bigSha = prepareBranch("wip/big", "src/big.ts", 200);
+    const sha = prepareBranch("wip/docs", "docs/readme.md", 10);
+    const gate = new MutationGate(false, join(tmp, "state", "dryrun"), async () => ({
+      number: 79,
+    }));
+    gate.setGuard({
+      before: async (i) => {
+        if (i.kind === "push_branch") git(clone, "update-ref", "refs/heads/wip/docs", bigSha);
+        return {};
+      },
+    });
+    const adapter = new GitHubAdapter(cfg, fakeMinter, gate, (async () => {
+      throw new Error("no direct fetch expected");
+    }) as unknown as typeof fetch);
+
+    const out = await fileImprovementPr(
+      { branch: "wip/docs", title: "t", body: "b", slug: "pinned" },
+      context(gate, adapter),
+    );
+
+    expect(out).toMatchObject({ ok: true, pushed: true, lines: 10 });
+    // MUTATION: push `refs/heads/<branch>` by name again — this fails with bigSha.
+    expect(remoteHeads()["refs/heads/bot/improve-pinned"]).toBe(sha);
   });
 
   it("LIVE: a push the remote refuses is a loud rejection — no branch_pushed, no PR, nothing filed", async () => {
