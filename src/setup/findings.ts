@@ -63,7 +63,7 @@
 // reported and refuses writes, like the ledger and the unit cut.
 import { createHash } from "node:crypto";
 import type { StateFs } from "./engine.js";
-import type { LedgerEntry } from "./ledger.js";
+import { readings, type LedgerEntry } from "./ledger.js";
 import type { ScanSeverity } from "./scan.js";
 import type { Reachability } from "../severity.js";
 import { FINDINGS_FILE, FINDINGS_VERSION, parseFindingsFile } from "./scanreport.js";
@@ -526,11 +526,12 @@ export class FindingsStore {
     const { file, error } = this.loadFile();
     if (error !== null) throw new Error(error);
     const byFp = new Map(file.findings.map((f) => [f.fingerprint, f]));
+    // Each file's newest reading per lens — only a COMPLETE one: a file read
+    // in line ranges whose ranges are not all back yet has not been re-read,
+    // and the findings in its unread ranges must not read as fixed.
     const newest = new Map<string, LedgerEntry>();
-    for (const r of args.rows) {
-      const k = `${r.lens}\0${r.path}`;
-      const had = newest.get(k);
-      if (!had || r.at >= had.at) newest.set(k, r);
+    for (const lens of new Set(args.rows.map((r) => r.lens))) {
+      for (const [path, r] of readings(args.rows, lens)) if (r.complete) newest.set(`${lens}\0${path}`, r.newest);
     }
     const prior = file.question ?? null;
     collapseRun(byFp, args.run.run, new Set([...(prior?.unreported ?? []), ...(prior?.fresh ?? [])]));

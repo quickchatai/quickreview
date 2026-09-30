@@ -384,8 +384,9 @@ export interface CasePlan {
   parts: number;
   files: string[];
   lines: number;
-  /** One file alone over the budget: it is its own case, whole — a file is
-   * never cut in half. */
+  /** One file alone over the budget: it is its own case here — this split
+   * never cuts a file. The SCAN then reads such a file in line ranges, one
+   * case per range under the unit's name (scan.ts cutRanges). */
   over_budget: boolean;
 }
 

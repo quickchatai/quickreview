@@ -277,11 +277,15 @@ describe("a stage 2 proposal", () => {
     expect(p.rows[0]!.lines).toBe(20 + 30 + 8);
   });
 
-  it("refuses a row bigger than one case, paired tests included in the count", async () => {
+  it("refuses a row of several files bigger than one case, paired tests included in the count", async () => {
     const s = new ScanRunner(ports(runner(), { scan: { case_max_lines: 40 } }));
     await calibrate(s);
-    const r = await s.proposeStage2({ rows: [{ lens: "pass-security", files: ["lib/big.py"], reason: "big" }] });
+    const r = await s.proposeStage2({ rows: [{ lens: "pass-security", files: ["app/views.py", "lib/util.py"], reason: "two" }] });
     expect(!r.ok && r.errors[0]).toMatch(/over one case .* split it/);
+    // ONE file over one case is not refused: it is cut into line ranges
+    // (tests/scan-oversize.test.ts).
+    const big = await propose(s, [{ lens: "pass-security", files: ["lib/big.py"], reason: "big" }]);
+    expect(big.rows[0]!.ranges!.length).toBeGreaterThanOrEqual(2);
     // A row that fits without its test keeps the code and names the test it could not pair.
     const p = await propose(s, [{ lens: "pass-security", files: ["lib/util.py"], reason: "util" }]);
     expect(p.rows[0]!.tests).toEqual([]);

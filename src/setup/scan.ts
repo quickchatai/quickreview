@@ -5,7 +5,8 @@
 // ledger.ts and findings.ts, every effect through a port.
 //
 // Stage 1 is `pass-scan` over every unit of the SAVED unit cut, one case per
-// unit (an oversized unit splits, its name kept), at the `[scan]` tier and
+// unit (an oversized unit splits, its name kept; a single FILE over one case
+// is read in overlapping line ranges, one case each — `cutRanges`), at the `[scan]` tier and
 // effort. It never reads tests or migrations (they enter only in stage 2,
 // paired with their code), nor what no pass reads (lockfiles, generated
 // output, binaries, prose — `isSweepSkipped`), nor the operator's `[scan]
@@ -76,7 +77,79 @@ export interface TreeFile {
 export interface ScanCaseFile {
   path: string;
   blob: string;
+  /** Lines this case READS of the file for sizing and price: the whole file,
+   * or its `range`'s length. */
   lines: number;
+  /** A file over one case is cut into line ranges (`cutRanges`): this case
+   * reads the whole file for context but reports only inside `range`. */
+  range?: FileRange;
+}
+
+/** One line range of a file too big for one case — 1-based, inclusive, and
+ * `total` the file's own line count (what the ledger's coverage needs). */
+export interface FileRange {
+  start: number;
+  end: number;
+  total: number;
+}
+
+/** Neighbouring ranges overlap by this many lines at most (a tenth of the
+ * window below that), so a finding straddling a cut sits whole in one. */
+export const RANGE_OVERLAP_MAX = 40;
+
+/** A top-level declaration: a line a cut may fall just before. */
+const DECL_RE =
+  /^(export\s+(default\s+)?)?(declare\s+)?(abstract\s+)?(async\s+)?(pub(\([a-z]+\))?\s+)?(def|class|function\*?|interface|type|enum|const|let|var|namespace|module|fn|func|impl|struct|trait|object)\b/;
+/** Lines that belong to the declaration below them (decorators, comments). */
+const LEAD_RE = /^(@\w|#|\/\/|\/\*|\s\*)/;
+
+/**
+ * Cut a file of `total` lines into windows of at most `maxLines`: each
+ * window ends just before a top-level declaration found in its second half
+ * when the text is at hand (pulled above that declaration's decorators and
+ * comments), else at the limit; the next starts a few lines earlier
+ * (`RANGE_OVERLAP_MAX`), so neighbours overlap and nothing falls between
+ * them. A file that fits is one window. Deterministic.
+ */
+export function cutRanges(total: number, maxLines: number, text: string | null): FileRange[] {
+  const n = Math.max(0, Math.floor(total));
+  const w = Math.max(1, Math.floor(maxLines));
+  if (n <= w) return [{ start: 1, end: Math.max(n, 1), total: n }];
+  const overlap = Math.min(RANGE_OVERLAP_MAX, Math.floor(w / 10));
+  const lines = text === null ? null : text.split("\n");
+  const at = (l: number): string => (lines === null ? "" : (lines[l - 1] ?? ""));
+  const out: FileRange[] = [];
+  let s = 1;
+  for (;;) {
+    if (n - s + 1 <= w) {
+      out.push({ start: s, end: n, total: n });
+      return out;
+    }
+    let end = s + w - 1;
+    if (lines !== null) {
+      const floor = s + Math.ceil(w / 2);
+      for (let l = end + 1; l > floor; l--) {
+        if (!DECL_RE.test(at(l))) continue;
+        let first = l;
+        while (first - 1 > floor && LEAD_RE.test(at(first - 1))) first--;
+        end = first - 1;
+        break;
+      }
+    }
+    out.push({ start: s, end, total: n });
+    s = Math.max(end + 1 - overlap, s + 1);
+  }
+}
+
+/** Does the union of `ranges` cover every line of `start..end`? */
+export function rangesCover(ranges: readonly { start: number; end: number }[], start: number, end: number): boolean {
+  let reach = start - 1;
+  for (const r of [...ranges].sort((a, b) => a.start - b.start)) {
+    if (r.start > reach + 1) break;
+    reach = Math.max(reach, r.end);
+    if (reach >= end) return true;
+  }
+  return reach >= end;
 }
 
 export interface ScanCasePlan {
@@ -133,6 +206,12 @@ export interface PlanInput {
   budget: CaseBudget;
   /** A delta re-scan: only files changed since the last scan. */
   delta?: DeltaBasis;
+  /** A file's text, where a range cut looks for declaration boundaries;
+   * absent (or null) = fixed windows. */
+  textOf?: (path: string) => string | null;
+  /** `path\0blob` → the line ranges the ledger's newest, still-incomplete
+   * reading holds for `pass-scan`: a range inside them is not read again. */
+  partial?: ReadonlyMap<string, readonly { start: number; end: number }[]>;
 }
 
 export const coverKey = (path: string, blob: string): string => `${path}\0${blob}`;
@@ -149,6 +228,8 @@ export function planStage1(input: PlanInput): Stage1Plan {
   let unreadable = 0;
   let unchanged = 0;
   const readable: string[] = [];
+  // Files over one case: the ranges still to read, cut up front.
+  const ranged = new Map<string, FileRange[]>();
   for (const f of [...input.files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))) {
     const why = stage1Exclusion(f.path, excludedGlob);
     if (why !== null) {
@@ -168,6 +249,17 @@ export function planStage1(input: PlanInput): Stage1Plan {
       unchanged++;
       continue;
     }
+    if (n > input.budget.maxLines) {
+      const done = input.partial?.get(coverKey(f.path, f.blob)) ?? [];
+      const todo = cutRanges(n, input.budget.maxLines, input.textOf?.(f.path) ?? null).filter(
+        (r) => !rangesCover(done, r.start, r.end),
+      );
+      if (todo.length === 0) {
+        covered++;
+        continue;
+      }
+      ranged.set(f.path, todo);
+    }
     lines.set(f.path, n);
     readable.push(f.path);
   }
@@ -176,16 +268,30 @@ export function planStage1(input: PlanInput): Stage1Plan {
   for (const u of input.cut.units) {
     const owned = a.byUnit.get(u.name) ?? [];
     if (owned.length === 0) continue;
+    // A file over one case is alone in its split case; it becomes one case
+    // per range. Parts are numbered over the unit's final list.
+    const parts: Array<{ files: ScanCaseFile[]; lines: number }> = [];
     for (const c of splitUnit(u.name, owned, (p) => lines.get(p) ?? 0, input.budget)) {
-      cases.push({
-        unit: c.unit,
-        id: c.id,
-        part: c.part,
-        parts: c.parts,
-        files: c.files.map((p) => ({ path: p, blob: blobs.get(p)!, lines: lines.get(p) ?? 0 })),
-        lines: c.lines,
-      });
+      const only = c.files.length === 1 ? ranged.get(c.files[0]!) : undefined;
+      if (only !== undefined) {
+        const p = c.files[0]!;
+        for (const r of only) {
+          parts.push({ files: [{ path: p, blob: blobs.get(p)!, lines: r.end - r.start + 1, range: r }], lines: r.end - r.start + 1 });
+        }
+        continue;
+      }
+      parts.push({ files: c.files.map((p) => ({ path: p, blob: blobs.get(p)!, lines: lines.get(p) ?? 0 })), lines: c.lines });
     }
+    parts.forEach((p, i) => {
+      cases.push({
+        unit: u.name,
+        id: parts.length === 1 ? u.name : `${u.name}#${i + 1}`,
+        part: i + 1,
+        parts: parts.length,
+        files: p.files,
+        lines: p.lines,
+      });
+    });
   }
   return { cases, excluded, covered, unassigned: a.unassigned, unreadable, unchanged };
 }
@@ -238,8 +344,28 @@ export interface PromptContext {
   caseId: string;
 }
 
+/** One focus file as a task names it: its size, or its range. */
+export function focusLine(f: ScanCaseFile): string {
+  return f.range
+    ? `- ${f.path} (lines ${f.range.start}-${f.range.end} of ${f.range.total} — read the whole file, report only inside lines ${f.range.start}-${f.range.end})`
+    : `- ${f.path} (${f.lines} lines)`;
+}
+
+/** The note a case with a ranged file carries, or none. */
+export function rangeNote(files: readonly ScanCaseFile[]): string[] {
+  const ranged = files.filter((f) => f.range);
+  if (ranged.length === 0) return [];
+  return [
+    "",
+    ...ranged.map(
+      (f) =>
+        `Focus range: ${f.path} lines ${f.range!.start}-${f.range!.end} of ${f.range!.total}. The file is larger than one case, so it is cut into line ranges and the other ranges are other cases: read the whole file for context, but report only findings anchored inside lines ${f.range!.start}-${f.range!.end} — anything outside it is dropped.`,
+    ),
+  ];
+}
+
 function fileList(c: ScanCasePlan): string {
-  return c.files.map((f) => `- ${f.path} (${f.lines} lines)`).join("\n");
+  return c.files.map(focusLine).join("\n");
 }
 
 /** The stage-1 task string for one case. */
@@ -253,6 +379,7 @@ export function scanCasePrompt(c: ScanCasePlan, ctx: PromptContext, deepLenses: 
     "",
     `Focus files (${c.files.length}, ${c.lines} lines — read each in full):`,
     fileList(c),
+    ...rangeNote(c.files),
     "",
     `Deep lenses you may name in SUGGEST: ${deepLenses.join(", ")}.`,
     "",

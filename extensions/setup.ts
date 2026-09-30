@@ -146,7 +146,7 @@ export function renderCut(title: string, v: CutView): string {
       u.cases.length > 1
         ? ` — split into ${u.cases.length} cases (${u.cases.map((c) => `${c.id}: ${c.files}f/${c.lines}l`).join(", ")})`
         : "";
-    const over = u.cases.some((c) => c.over_budget) ? " [a file alone exceeds one case]" : "";
+    const over = u.cases.some((c) => c.over_budget) ? " [a file alone exceeds one case — a scan reads it in line ranges]" : "";
     return `  - ${u.name} [${u.kind}] ${u.roots.map((r) => r || "(repo root)").join(", ")}: ${u.files} files, ${u.reviewable} reviewable, ${u.lines} lines${split}${over}${u.note ? ` — ${u.note}` : ""}`;
   });
   const lines = [`${title}:`, ...rows];

@@ -44,7 +44,12 @@ import { PASS_TIER_ORDER, type PassTier } from "../types.js";
 import {
   caseEstimate,
   coverKey,
+  cutRanges,
+  focusLine,
+  rangeNote,
+  rangesCover,
   SCAN_DEEP_LENSES,
+  type FileRange,
   SCAN_PASS,
   type PromptContext,
   type ScanCaseFile,
@@ -100,6 +105,13 @@ export interface Stage2Row {
   tests: ScanCaseFile[];
   /** Tests that would have paired but did not fit the case budget. */
   unpaired: string[];
+  /** A row naming ONE file too big for one case is cut into line ranges
+   * (scan.ts cutRanges): one case per range still to read, each reading the
+   * whole file (and the paired tests) but reporting only inside its range.
+   * The named file's `lines` stays the file's; the row's is what the cases
+   * read. Absent for an ordinary row. */
+  ranges?: FileRange[];
+  /** What the row's cases read in all — the price's basis. */
   lines: number;
   estimate_usd: number;
   price: RowPrice;
@@ -111,6 +123,8 @@ export interface Stage2PlanInput {
   cut: UnitCut;
   files: readonly TreeFile[];
   linesOf: (path: string) => number | null;
+  /** A file's text, where a range cut looks for declaration boundaries. */
+  textOf?: (path: string) => string | null;
   exclude: readonly string[];
   budget: CaseBudget;
   lenses?: LensTuningMap;
@@ -119,6 +133,8 @@ export interface Stage2PlanInput {
   defaultTier: PassTier;
   /** `coverKey`s the ledger holds for `lens`. */
   covered: (lens: string) => ReadonlySet<string>;
+  /** `path\0blob` → the ranges a still-incomplete reading by `lens` holds. */
+  partial?: (lens: string) => ReadonlyMap<string, readonly { start: number; end: number }[]>;
   /** The price of a lens at a tier and effort, or null when nothing measured
    * can price it. */
   price: (lens: string, tier: PassTier, effort: string) => RowPrice | null;
@@ -299,12 +315,23 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
     seen.add(dedupe);
 
     let rowLines = sorted.reduce((n, p) => n + lines.get(p)!, 0);
-    if (sorted.length > input.budget.maxFiles || rowLines > input.budget.maxLines) {
+    // One file too big for one case is cut into line ranges; anywhere else a
+    // row over one case is refused.
+    const oversize = sorted.length === 1 && lines.get(sorted[0]!)! > input.budget.maxLines;
+    if (!oversize && (sorted.length > input.budget.maxFiles || rowLines > input.budget.maxLines)) {
+      const big = sorted.filter((p) => lines.get(p)! > input.budget.maxLines);
       return bad(
-        `${sorted.length} files, ${rowLines} lines — over one case (${input.budget.maxFiles} files, ${input.budget.maxLines} lines); split it into narrower rows`,
+        `${sorted.length} files, ${rowLines} lines — over one case (${input.budget.maxFiles} files, ${input.budget.maxLines} lines); split it into narrower rows` +
+          (big.length > 0
+            ? ` (${big.join(", ")} ${big.length === 1 ? "is" : "are"} over one case alone — name ${big.length === 1 ? "it" : "each"} alone in a row and it is cut into line ranges)`
+            : ""),
       );
     }
-    // Pair the tests, nearest first, while the case budget holds.
+    // Pair the tests, nearest first, while the case budget holds. A ranged
+    // row's tests ride in EVERY range case, so they get at most half a case.
+    const testFiles = oversize ? input.budget.maxFiles - 1 : input.budget.maxFiles - sorted.length;
+    const testLines = oversize ? Math.floor(input.budget.maxLines / 2) : input.budget.maxLines - rowLines;
+    let pairedLines = 0;
     const tests: ScanCaseFile[] = [];
     const unpaired: string[] = [];
     const taken = new Set(sorted);
@@ -316,13 +343,24 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
         if (excluded(t)) continue;
         const n = input.linesOf(t);
         if (n === null) continue;
-        if (sorted.length + tests.length + 1 > input.budget.maxFiles || rowLines + n > input.budget.maxLines) {
+        if (tests.length + 1 > testFiles || pairedLines + n > testLines) {
           unpaired.push(t);
           continue;
         }
         tests.push({ path: t, blob: blobs.get(t)!, lines: n });
-        rowLines += n;
+        pairedLines += n;
       }
+    }
+    let ranges: FileRange[] | undefined;
+    if (oversize) {
+      const p = sorted[0]!;
+      const done = input.partial?.(lens).get(coverKey(p, blobs.get(p)!)) ?? [];
+      ranges = cutRanges(lines.get(p)!, input.budget.maxLines - pairedLines, input.textOf?.(p) ?? null).filter(
+        (r) => !rangesCover(done, r.start, r.end),
+      );
+      rowLines = ranges.reduce((n, r) => n + (r.end - r.start + 1) + pairedLines, 0);
+    } else {
+      rowLines += pairedLines;
     }
     const effort = lensEffort(input.lenses, lens);
     const price = input.price(lens, tier, effort);
@@ -332,7 +370,7 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
     const files = sorted.map((p) => ({ path: p, blob: blobs.get(p)!, lines: lines.get(p)! }));
     const cover = input.covered(lens);
     const all = [...files, ...tests];
-    const isCovered = all.every((f) => cover.has(coverKey(f.path, f.blob)));
+    const isCovered = all.every((f) => cover.has(coverKey(f.path, f.blob))) || (ranges !== undefined && ranges.length === 0);
     rows.push({
       id,
       lens,
@@ -343,8 +381,13 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
       files,
       tests,
       unpaired,
+      ...(ranges !== undefined ? { ranges } : {}),
       lines: rowLines,
-      estimate_usd: isCovered ? 0 : caseEstimate(rowLines, price.rate),
+      estimate_usd: isCovered
+        ? 0
+        : ranges !== undefined
+          ? ranges.reduce((n, r) => n + caseEstimate(r.end - r.start + 1 + pairedLines, price.rate), 0)
+          : caseEstimate(rowLines, price.rate),
       price,
       status: isCovered ? "covered" : "run",
     });
@@ -375,9 +418,27 @@ export function unitOwner(cut: UnitCut, paths: readonly string[]): (path: string
 
 // ---- the prompt ----------------------------------------------------------------
 
-/** The stage-2 task string for one row. */
-export function stage2CasePrompt(row: Stage2Row, ctx: PromptContext): string {
-  const list = (fs: readonly ScanCaseFile[]): string => fs.map((f) => `- ${f.path} (${f.lines} lines)`).join("\n");
+/** The cases one row runs as: the row itself, or — a row over a file too
+ * big for one case — one per range, `<row>#<i>`, each the ranged file plus
+ * the paired tests. */
+export function stage2Cases(row: Stage2Row): Array<{ id: string; part: number; parts: number; files: ScanCaseFile[]; lines: number }> {
+  if (row.ranges === undefined) return [{ id: row.id, part: 1, parts: 1, files: [...row.files, ...row.tests], lines: row.lines }];
+  const code = row.files[0]!;
+  const tests = row.tests.reduce((n, t) => n + t.lines, 0);
+  return row.ranges.map((r, i) => ({
+    id: `${row.id}#${i + 1}`,
+    part: i + 1,
+    parts: row.ranges!.length,
+    files: [{ ...code, lines: r.end - r.start + 1, range: r }, ...row.tests],
+    lines: r.end - r.start + 1 + tests,
+  }));
+}
+
+/** The stage-2 task string for one row — or, for a ranged row, for the one
+ * case whose `files` (from `stage2Cases`) are given. */
+export function stage2CasePrompt(row: Stage2Row, ctx: PromptContext, caseFiles?: readonly ScanCaseFile[]): string {
+  const list = (fs: readonly ScanCaseFile[]): string => fs.map(focusLine).join("\n");
+  const code = caseFiles ? caseFiles.slice(0, row.files.length) : row.files;
   return [
     `SCAN CASE ${ctx.caseId} — stage 2, ${row.id}: ${row.lens}${row.units.length > 1 ? ` across units ${row.units.join(", ")}` : ` in unit ${row.units[0]}`}.`,
     `Scan sha: ${ctx.sha}`,
@@ -386,8 +447,9 @@ export function stage2CasePrompt(row: Stage2Row, ctx: PromptContext): string {
     "",
     `Why this case: ${row.reason}`,
     "",
-    `Focus files (${row.files.length} — read each in full; they are one case because the problem may live between them):`,
-    list(row.files),
+    `Focus files (${code.length} — read each in full; they are one case because the problem may live between them):`,
+    list(code),
+    ...rangeNote(code),
     ...(row.tests.length > 0
       ? ["", `Their tests (${row.tests.length} — read them for the contract the code is held to; a missing test is not a finding):`, list(row.tests)]
       : []),

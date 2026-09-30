@@ -62,7 +62,7 @@ import { PASS_TIER_ORDER, type PassTier } from "../types.js";
 import type { ScanConfig } from "../config.js";
 import type { CaseOutcome, CaseRunner, Refusal, StateFs } from "./engine.js";
 import { FindingsStore, type ReconcileResult, type ReportedFinding } from "./findings.js";
-import { casesFor, coveredBy, lastScanned, Ledger, measuredRate, newestRead, rateWhere, type LedgerEntry, type RateKey } from "./ledger.js";
+import { casesFor, coveredBy, lastScanned, Ledger, measuredRate, newestRead, partialRanges, rateWhere, type LedgerEntry, type RateKey } from "./ledger.js";
 import {
   anchoredLines,
   calibrationCases,
@@ -85,7 +85,7 @@ import {
   type ScanSuggestion,
   type TreeFile,
 } from "./scan.js";
-import { planStage2, stage2CasePrompt, stage2Key, unitOwner, type RowPrice, type Stage2Row, type Stage2RowRequest } from "./stage2.js";
+import { planStage2, stage2Cases, stage2CasePrompt, stage2Key, unitOwner, type RowPrice, type Stage2Row, type Stage2RowRequest } from "./stage2.js";
 import {
   keptRows,
   parseStage2File,
@@ -181,6 +181,8 @@ export interface ScanCaseState {
   part: number;
   parts: number;
   files: string[];
+  /** A file read in line ranges: the range this case reports inside. */
+  ranges?: Array<{ path: string; start: number; end: number; total: number }>;
   lines: number;
   estimate_usd: number | null;
   status: ScanCaseStatus;
@@ -440,6 +442,8 @@ export class ScanRunner {
       files: tree.files,
       linesOf: (p) => tree.lines(p),
       covered: coveredBy(entries, SCAN_PASS),
+      partial: partialRanges(entries, SCAN_PASS),
+      textOf: (p) => tree.read(p),
       exclude: cfg.exclude,
       budget: { maxFiles: cfg.case_max_files, maxLines: cfg.case_max_lines },
       ...(basis ? { delta: basis } : {}),
@@ -501,7 +505,7 @@ export class ScanRunner {
       key: planKey({
         mode,
         sha,
-        cases: cases.map((c) => [c.id, c.files.map((f) => `${f.path}@${f.blob}`)]),
+        cases: cases.map((c) => [c.id, c.files.map((f) => `${f.path}@${f.blob}${f.range ? `:${f.range.start}-${f.range.end}` : ""}`)]),
         settings: runSettings,
         cap: Math.round(cap * 1e6),
       }),
@@ -620,6 +624,9 @@ export class ScanRunner {
         part: c.part,
         parts: c.parts,
         files: c.files.map((f) => f.path),
+        ...(c.files.some((f) => f.range)
+          ? { ranges: c.files.filter((f) => f.range).map((f) => ({ path: f.path, ...f.range! })) }
+          : {}),
         lines: c.lines,
         estimate_usd: c.estimate_usd,
         status: "pending" as const,
@@ -769,12 +776,14 @@ export class ScanRunner {
       cut: cut.cut,
       files: tree.files,
       linesOf: (p) => tree.lines(p),
+      textOf: (p) => tree.read(p),
       exclude: cfg.exclude,
       budget: { maxFiles: cfg.case_max_files, maxLines: cfg.case_max_lines },
       lenses: settings.lenses,
       riskPasses: settings.riskPasses ?? [],
       defaultTier: cfg.tier,
       covered: (lens) => coveredBy(entries, lens),
+      partial: (lens) => partialRanges(entries, lens),
       price: (lens, tier, effort) => this.priceRow(entries, cfg, lens, tier, effort),
       budgetUsd,
     });
@@ -783,7 +792,14 @@ export class ScanRunner {
     const runnable = plan.rows.filter((r) => r.status === "run");
     const key = stage2Key({
       sha,
-      rows: runnable.map((r) => [r.id, r.lens, r.tier, r.effort, [...r.files, ...r.tests].map((f) => `${f.path}@${f.blob}`)]),
+      rows: runnable.map((r) => [
+        r.id,
+        r.lens,
+        r.tier,
+        r.effort,
+        [...r.files, ...r.tests].map((f) => `${f.path}@${f.blob}`),
+        ...(r.ranges ? [r.ranges.map((x) => `${x.start}-${x.end}`)] : []),
+      ]),
       validator: cfg.validator,
       validate_tier: validateTier,
       cap: Math.round(plan.total_usd * 1e6),
@@ -895,26 +911,30 @@ export class ScanRunner {
     const built = this.ports.buildAgents(p.settings);
     if (!built.ok) return { ok: false, errors: built.errors.map((e) => `the scan agents could not be built: ${e}`) };
     const unitOf = unitOwner(p.cut, p.tree.files.map((f) => f.path));
-    const jobs: CaseJob[] = rows.map((row: Stage2Row) => ({
-      plan: {
-        unit: row.units.join("+"),
-        id: row.id,
-        part: 1,
-        parts: 1,
-        files: [...row.files, ...row.tests],
-        lines: row.lines,
-        estimate_usd: row.estimate_usd,
-      },
-      lens: row.lens,
-      tier: row.tier,
-      effort: row.effort,
-      prompt: (ctx) => stage2CasePrompt(row, ctx),
-      label: `stage 2, ${row.id} (${row.lens})`,
-      unitOf,
-      suggestions: false,
-      reason: row.reason,
-      units: row.units,
-    }));
+    // One case per row — or, for a row over a file too big for one case, one
+    // per line range (`<row>#<i>`), its estimate the range's share.
+    const jobs: CaseJob[] = rows.flatMap((row: Stage2Row) =>
+      stage2Cases(row).map((c) => ({
+        plan: {
+          unit: row.units.join("+"),
+          id: c.id,
+          part: c.part,
+          parts: c.parts,
+          files: c.files,
+          lines: c.lines,
+          estimate_usd: row.lines > 0 ? (row.estimate_usd * c.lines) / row.lines : row.estimate_usd,
+        },
+        lens: row.lens,
+        tier: row.tier,
+        effort: row.effort,
+        prompt: (ctx: PromptContext) => stage2CasePrompt(row, ctx, c.files),
+        label: `stage 2, ${c.id} (${row.lens})`,
+        unitOf,
+        suggestions: false,
+        reason: row.reason,
+        units: row.units,
+      })),
+    );
     const cfg = p.settings.scan;
     const top = rows.reduce<PassTier>((t, r) => (PASS_TIER_ORDER.indexOf(r.tier) > PASS_TIER_ORDER.indexOf(t) ? r.tier : t), rows[0]!.tier);
     const run = this.launch(
@@ -1150,10 +1170,21 @@ export class ScanRunner {
     if (!outcome.ok) return finish(signal.aborted ? "stopped" : "failed", outcome.reason);
 
     const inTree = new Set(tree.files.map((f) => f.path));
+    // A file read in line ranges: this case reports only inside its range —
+    // the neighbouring ranges are other cases' (scan.ts cutRanges).
+    const rangeOf = new Map(plan.files.filter((f) => f.range).map((f) => [f.path, f.range!]));
+    const outside = (cand: ScanCandidate): boolean => {
+      const r = rangeOf.get(cand.path);
+      return r !== undefined && (cand.end < r.start || cand.start > r.end);
+    };
     const answer = parseScanAnswer(outcome.output, { root: tree.root });
     let dropped = answer.dropped + answer.suggestions_dropped;
     const anchored: Array<{ cand: ScanCandidate; code: string; quoted: boolean }> = [];
     for (const cand of answer.candidates) {
+      if (outside(cand)) {
+        dropped++;
+        continue;
+      }
       const text = inTree.has(cand.path) ? tree.read(cand.path) : null;
       const lines = text === null ? null : anchoredLines(text, cand.start, cand.end);
       if (lines === null) {
@@ -1189,6 +1220,10 @@ export class ScanRunner {
         const read = parseValidatorAnswer(v.output, tree.root);
         const survivors: typeof anchored = [];
         for (const s of read.survivors) {
+          if (outside(s)) {
+            dropped++;
+            continue;
+          }
           const text = inTree.has(s.path) ? tree.read(s.path) : null;
           const lines = text === null ? null : anchoredLines(text, s.start, s.end);
           if (lines === null) dropped++;
@@ -1263,6 +1298,7 @@ export class ScanRunner {
       path: f.path,
       blob: f.blob,
       lens: job.lens,
+      ...(f.range ? { range: f.range } : {}),
       tier: job.tier,
       effort: job.effort,
       validator: settings.scan.validator,
