@@ -44,6 +44,7 @@ import {
   withoutTag,
 } from "../src/openviking/store.js";
 import { refOf } from "../src/memory/store.js";
+import { readPinnedFromSweep } from "../src/eodpinwatch.js";
 import type { ContextAssembler } from "../src/memory/context.js";
 
 const KEY =
@@ -1441,5 +1442,39 @@ describe("the lazy memory root is ensured only by a mkdir that succeeded", () =>
     expect((await other.apply({ op: "note", text: "third" })).ok).toBe(false);
     expect((await other.ensureWritable()).ok).toBe(true);
     expect(server.dirs.size).toBe(1);
+  });
+});
+
+// ---- the EOD pinned-area watchdog over the SHARED store ---------------------
+
+// selfscan c067a756: production hands ONE store (15s sweep cache) to both the
+// round path and the watchdog. The curator writes through the vendored pi
+// extension, straight over HTTP, so none of its writes invalidate that cache.
+// A round's sweep just before the curator edits a pin must not let the
+// watchdog's closing read return the pre-edit pin and judge "unchanged".
+describe("the pinned watchdog reads fresh through a shared, cached store", () => {
+  it("an out-of-band pin edit inside the cache TTL is seen by the watchdog's read", async () => {
+    const server = new FakeOpenViking();
+    const client = new OpenVikingClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      user: "reviewer",
+      fetchFn: server.fetch,
+    });
+    const store = new OpenVikingStore({ client, now: () => NOW, cacheTtlMs: 15_000 });
+    expect((await store.apply({ op: "note", text: "#pinned never dismiss an approval" })).ok).toBe(
+      true,
+    );
+    // A round's pinned head fills the shared cache.
+    const warm = await store.sweep();
+    expect(warm.entries.map((e) => e.text)).toEqual(["#pinned never dismiss an approval"]);
+    // The curator rewrites the pin out of band (not through this store).
+    const [uri] = [...server.files.keys()];
+    server.files.set(uri!, server.files.get(uri!)!.replace("never dismiss", "always dismiss"));
+    const pinned = await readPinnedFromSweep(store)();
+    // The watchdog compares content hashes: the closing read must carry the
+    // edited pin's hash, never the cached pre-edit one.
+    expect(pinned).toHaveLength(1);
+    expect(pinned[0]!.hash).not.toBe(warm.entries[0]!.hash);
   });
 });
