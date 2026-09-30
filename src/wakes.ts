@@ -30,26 +30,55 @@ export async function wakeOrHold(
   pr: number,
   message: string,
   reason: string,
+  opts: {
+    /** Hold the wake when injection fails, instead of rethrowing. For a
+     * caller that has already claimed the obligation durably (the author-reply
+     * path claims the message before waking), a rethrow loses it: the claim
+     * refuses every redelivery. The held wake is retried by the flush paths.
+     * Callers that release their own claim on failure leave this off. */
+    holdOnFailure?: boolean;
+  } = {},
 ): Promise<WakeDisposition> {
   const { store } = deps;
   const log = deps.log ?? ((): void => {});
   if (!store.hasRunningRound(pr) && !store.blockingSessionCommand(`pr-${pr}`)) {
+    // An existing backlog goes first (arrival order): queue behind it and
+    // flush oldest-first, rather than letting this wake take the slot ahead of
+    // wakes still waiting for the stranded-wake sweep.
+    if (store.hasHeldWakes(pr)) {
+      hold(deps, pr, message, reason);
+      await flushHeldWakes(deps, pr);
+      return "held";
+    }
     try {
       await deps.inject(pr, message);
       return "injected";
     } catch (err) {
       // Another path may have won the partial-UNIQUE slot after our check.
       // Once durable ownership exists, this wake becomes the ordered backlog;
-      // any other injection error still propagates normally.
+      // any other injection error propagates unless the caller asked to hold.
       const raced = store.blockingSessionCommand(`pr-${pr}`);
-      if (!raced) throw err;
-      store.logEvent("wake_slot_raced", pr, {
-        reason,
-        active_command: raced.id,
-        error: String(err),
-      });
+      if (raced) {
+        store.logEvent("wake_slot_raced", pr, {
+          reason,
+          active_command: raced.id,
+          error: String(err),
+        });
+      } else if (opts.holdOnFailure) {
+        log(`wakes: #${pr} ${reason} wake failed to inject — held for retry`, err);
+        store.logEvent("wake_inject_failed_held", pr, { reason, error: String(err) });
+      } else {
+        throw err;
+      }
     }
   }
+  hold(deps, pr, message, reason);
+  return "held";
+}
+
+function hold(deps: WakeDeps, pr: number, message: string, reason: string): void {
+  const { store } = deps;
+  const log = deps.log ?? ((): void => {});
   const dropped = store.holdWake(pr, message, reason);
   store.logEvent("wake_held", pr, {
     reason,
@@ -60,7 +89,6 @@ export async function wakeOrHold(
     log(`wakes: #${pr} dropped ${dropped.length} held wake(s) over the cap`);
     store.logEvent("wake_dropped", pr, { reason, ids: dropped });
   }
-  return "held";
 }
 
 const AUTHOR_REPLY_HEADING = "# Author reply — PR #";

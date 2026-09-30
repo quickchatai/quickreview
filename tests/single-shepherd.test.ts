@@ -191,7 +191,15 @@ describe("daemon topology", () => {
     // store, and asks for a stop). Each leaf may reach the rest of
     // src/setup/ by TYPE only (erased at build), so no exception can ever
     // carry the case runner along with it.
-    const setupLeaves = ["history.js", "stage2request.js", "pins.js", "configcommit.js", "profile.js", "retunelog.js", "scanreport.js"];
+    const setupLeaves = [
+      "history.js",
+      "stage2request.js",
+      "pins.js",
+      "configcommit.js",
+      "profile.js",
+      "retunelog.js",
+      "scanreport.js",
+    ];
     const reachesSetup = srcFiles(src)
       .filter((f) => !f.includes("/src/setup/"))
       .filter((f) =>
@@ -204,7 +212,9 @@ describe("daemon topology", () => {
       const body = readFileSync(join(src, "setup", leaf.replace(/\.js$/, ".ts")), "utf8");
       const runtimeSibling = body
         .split("\n")
-        .filter((l) => /^import\s/.test(l) && !/^import\s+type\s/.test(l) && /from\s+["']\.\//.test(l));
+        .filter(
+          (l) => /^import\s/.test(l) && !/^import\s+type\s/.test(l) && /from\s+["']\.\//.test(l),
+        );
       expect(runtimeSibling, `setup/${leaf} must reach its siblings by type only`).toEqual([]);
     }
   });
@@ -221,6 +231,9 @@ describe("S4: every PR-session wake goes through wakes.ts", () => {
     const block = text.slice(start, end);
     expect(block).toContain("wakeOrHold(");
     expect(block).not.toMatch(/await\s+hooks\.inject\(/);
+    // The reply is claimed before the wake: a failed injection must hold it,
+    // never drop it (selfscan 0df49200).
+    expect(block).toContain("holdOnFailure: true");
   });
 
   it("no other module wakes a PR session behind wakes.ts's back", () => {
@@ -554,6 +567,68 @@ describe("wakeOrHold / flushHeldWakes", () => {
     };
     expect(await wakeOrHold(racing, 7, "do not lose me", "author_reply")).toBe("held");
     expect(store.heldWakes(7).map((w) => w.payload)).toEqual(["do not lose me"]);
+  });
+
+  // Selfscan fce511c3: with no round and no command, a NEW wake injected
+  // straight past older held wakes still waiting for the stranded sweep.
+  it("a new wake never overtakes an existing held backlog", async () => {
+    const id = store.startRound(7, "first", ["pass-baseline"], 75);
+    await wakeOrHold(deps(), 7, "older reply", "author_reply");
+    store.finishRound(id, "APPROVE", null, null);
+    // The round is over, the backlog not yet flushed; a newer reply arrives.
+    await wakeOrHold(deps(), 7, "newer reply", "author_reply");
+
+    // Both go out oldest-first as one burst — never the newer one alone.
+    expect(injected).toHaveLength(1);
+    const burst = injected[0]!.message;
+    expect(burst.indexOf("older reply")).toBeGreaterThan(-1);
+    expect(burst.indexOf("older reply")).toBeLessThan(burst.indexOf("newer reply"));
+    expect(store.heldWakes(7)).toHaveLength(0);
+  });
+
+  it("a new wake behind a backlog it cannot yet deliver stays held after it", async () => {
+    const id = store.startRound(7, "first", ["pass-baseline"], 75);
+    await wakeOrHold(deps(), 7, "older reply", "ledger_stale");
+    store.finishRound(id, "APPROVE", null, null);
+    const blocking = {
+      store,
+      inject: async (pr: number, message: string) => {
+        injected.push({ pr, message });
+        store.createSessionCommand({
+          id: "cmd-older",
+          pr,
+          session: `pr-${pr}`,
+          kind: "wake",
+          round_no: null,
+          payload_sha256: "c".repeat(64),
+          payload_path: "/state/cmd-older.md",
+          inject_path: `/inject/pr-${pr}/cmd-older.md`,
+          next_check_at: new Date(Date.now() + 120_000).toISOString(),
+        });
+      },
+    };
+    expect(await wakeOrHold(blocking, 7, "newer reply", "author_reply")).toBe("held");
+    expect(injected.map((w) => w.message)).toEqual(["older reply"]);
+    expect(store.heldWakes(7).map((w) => w.payload)).toEqual(["newer reply"]);
+  });
+
+  // Selfscan 0df49200: the daemon claims an author message BEFORE waking; an
+  // injection that failed before any command existed threw the wake away and
+  // the claim refused every redelivery — the reply was never answered.
+  it("holdOnFailure turns an injection failure into a durable hold", async () => {
+    const failing = {
+      store,
+      inject: async () => {
+        throw new Error("session pr-7 failed to spawn");
+      },
+    };
+    expect(await wakeOrHold(failing, 7, "answer me", "author_reply", { holdOnFailure: true })).toBe(
+      "held",
+    );
+    expect(store.heldWakes(7).map((w) => w.payload)).toEqual(["answer me"]);
+    // Without the option the error still propagates (callers that release
+    // their own claim on failure depend on it).
+    await expect(wakeOrHold(failing, 8, "x", "recheck")).rejects.toThrow(/failed to spawn/);
   });
 
   it("does not hold a wake for a different PR's round", async () => {

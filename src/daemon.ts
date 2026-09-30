@@ -397,8 +397,12 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
               pingpong.discipline(reply.in_reply_to_id),
             ),
             "author_reply",
+            // The message is already claimed: a failed injection must hold
+            // the wake, or no redelivery can ever answer it (selfscan 0df49200).
+            { holdOnFailure: true },
           );
-          if (disposition === "held") log(`pingpong: #${reply.pr} reply held — round in flight`);
+          if (disposition === "held")
+            log(`pingpong: #${reply.pr} reply held — round in flight, backlog or failed inject`);
         },
         onClosed: async (pr) => {
           await hooks.archiveAndClose(pr);

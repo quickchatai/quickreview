@@ -954,9 +954,7 @@ export class VerdictWatcher {
         head_sha: v.head_sha,
         file: name,
       });
-      this.log(
-        `verdicts: #${v.pr} round ${v.round_no} is already done — ${name} replays inertly`,
-      );
+      this.log(`verdicts: #${v.pr} round ${v.round_no} is already done — ${name} replays inertly`);
       return "applied";
     }
 
