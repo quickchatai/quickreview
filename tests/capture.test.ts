@@ -741,6 +741,37 @@ describe("the reconcile capture sweep (§6)", () => {
     store.close();
   });
 
+  it("a posting marker counts only with a key the daemon issued for this PR (selfscan 6475bc58)", async () => {
+    const store = trackedStore();
+    const roundId = store.startRound(PR, "review", [], 75);
+    store.stampPostingKey(roundId, `v1:${PR}:1:sha4242`);
+    const gh = new SweepGitHub();
+    gh.open = [ref(PR)];
+    const approve = (id: number, body: string) => ({
+      id,
+      user: BOT,
+      user_type: "Bot",
+      state: "APPROVED",
+      body,
+      commit_id: "sha4242",
+      submitted_at: null,
+    });
+    gh.reviews.set(PR, [
+      approve(803, `LGTM\n\n<!-- qcr-post:v1:${PR}:1:sha4242 -->`), // the sanctioned route
+      approve(804, "LGTM <!-- qcr-post:x -->"), // a forged marker
+    ]);
+
+    await reconcileOnce({ cfg, store, adapter: gh, hooks: hooks() });
+    const ev = store.db
+      .prepare("SELECT payload FROM events WHERE kind = 'ungated_review_detected'")
+      .get() as { payload: string } | undefined;
+    expect(ev).toBeTruthy();
+    expect(JSON.parse(ev!.payload).reviews).toEqual([
+      expect.objectContaining({ review_id: 804, state: "APPROVED" }),
+    ]);
+    store.close();
+  });
+
   it("is skippable and survives an adapter that cannot read comments", async () => {
     const store = trackedStore();
     const gh = new SweepGitHub();

@@ -179,6 +179,30 @@ describe("handleDelivery", () => {
     store.close();
   });
 
+  it("drops an event from another repository the App is installed on (selfscan b448dc04)", () => {
+    // The App's installation spans many repos and every one of them delivers
+    // here. A PR closed elsewhere whose NUMBER matches a tracked PR used to
+    // drive this repo's closed transition and archive its live session.
+    const store = new StateStore(":memory:");
+    const foreignClose = { ...closedPayload(false), repository: { full_name: "example-org/other" } };
+    const res = delivery(store, foreignClose, "pull_request", "g-foreign-1");
+    expect(res.status).toBe(200);
+    expect(res.reason).toBe("foreign-repository");
+    expect(res.interpretation).toBeUndefined();
+    const foreignTrigger = {
+      ...labeledPayload(cfg.github.trigger_label),
+      repository: { full_name: "example-org/other" },
+    };
+    expect(delivery(store, foreignTrigger, "pull_request", "g-foreign-2").interpretation).toBeUndefined();
+    // Our own repo, in any letter case GitHub chooses to send, still lands.
+    const ours = {
+      ...labeledPayload(cfg.github.trigger_label),
+      repository: { full_name: cfg.github.repo.toUpperCase() },
+    };
+    expect(delivery(store, ours, "pull_request", "g-foreign-3").interpretation?.kind).toBe("trigger");
+    store.close();
+  });
+
   it("dedupes a redelivered guid", () => {
     const store = new StateStore(":memory:");
     const first = delivery(store, labeledPayload(cfg.github.trigger_label), "pull_request", "g2");

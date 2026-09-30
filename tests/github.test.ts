@@ -735,3 +735,211 @@ describe("the App's own webhook config (app-self-config class)", () => {
     expect(seen[0]).toContain("https://new.trycloudflare.com/webhook");
   });
 });
+
+// ---- selfscan 2026-09-30: list reads that stopped at page one ------------
+// Each of these used to read ONE page (or a fixed ten) and hand the truncated
+// list on as the whole. The stub serves `total` rows, 100 per page, and the
+// assertion is that every row arrives.
+
+function pageOf(url: string): number {
+  return Number(new URL(url).searchParams.get("page") ?? "1");
+}
+
+/** Rows `from..to` of a list that is `total` long, in 100-row pages. */
+function page<T>(url: string, total: number, row: (i: number) => T): T[] {
+  const start = (pageOf(url) - 1) * 100;
+  return Array.from({ length: Math.max(0, Math.min(100, total - start)) }, (_, k) => row(start + k));
+}
+
+describe("list reads are paginated", () => {
+  it("the triggered-set search reads past the first 100 hits (f904ff07)", async () => {
+    const { adapter } = build((url) => ({ items: page(url, 130, (i) => ({ number: i + 1 })) }));
+    expect(await adapter.searchLabelTriggered()).toHaveLength(130);
+    expect(await adapter.searchTeamTriggered()).toHaveLength(130);
+  });
+
+  it("listOpenPrs reads every open PR, not only the newest 100 (c9663a36)", async () => {
+    const { adapter } = build((url) =>
+      page(url, 250, (i) => ({
+        number: i + 1,
+        title: "t",
+        user: { login: "alice" },
+        head: { sha: `sha${i}` },
+        state: "open",
+        updated_at: "2026-09-01T00:00:00Z",
+      })),
+    );
+    const prs = await adapter.listOpenPrs();
+    expect(prs).toHaveLength(250);
+    expect(prs.at(-1)!.number).toBe(250);
+  });
+
+  it("listPrFiles reads every file GitHub serves — up to its 3,000, not 1,000 (a78c7cba)", async () => {
+    const { adapter } = build((url) =>
+      page(url, 1_234, (i) => ({ filename: `f${i}.py`, additions: 1, deletions: 0, status: "modified" })),
+    );
+    const files = await adapter.listPrFiles(7);
+    expect(files).toHaveLength(1_234);
+    expect(files.at(-1)!.filename).toBe("f1233.py");
+  });
+
+  it("listReviews reads every page — a human approval on page 2 still counts for guard 1 (91382fae)", async () => {
+    const { adapter } = build((url) =>
+      page(url, 140, (i) => ({
+        id: i,
+        user: { login: i === 139 ? "alex" : "example-review[bot]" },
+        state: i === 139 ? "APPROVED" : "COMMENTED",
+        commit_id: "head",
+      })),
+    );
+    const reviews = await adapter.listReviews(7);
+    expect(reviews).toHaveLength(140);
+    expect(reviews.at(-1)).toMatchObject({ user: "alex", state: "APPROVED" });
+  });
+
+  it("the comment sweep's issue and inline reads cover every page (cfaf62bf)", async () => {
+    const { adapter } = build((url) =>
+      page(url, 205, (i) => ({ id: i, user: { login: "alice", type: "User" }, body: `c${i}` })),
+    );
+    expect(await adapter.listIssueComments(7)).toHaveLength(205);
+    expect(await adapter.listReviewCommentsFull(7)).toHaveLength(205);
+  });
+
+  it("the registry backfill sees the bot's newest inline comments too (6796b994)", async () => {
+    const { adapter } = build((url) =>
+      page(url, 150, (i) => ({ id: i, user: { login: i >= 100 ? "example-review[bot]" : "alice" } })),
+    );
+    expect(await adapter.listBotReviewComments(7)).toHaveLength(50);
+  });
+});
+
+describe("compareFiles says when GitHub truncated the delta (5bd5d43c)", () => {
+  // The compare endpoint serves files on page 1 only, capped at 300: a delta
+  // that size is a floor, not the delta.
+  it("a 300-file compare is flagged truncated", async () => {
+    const files = Array.from({ length: 300 }, (_, i) => ({
+      filename: `f${i}`,
+      additions: 1,
+      deletions: 0,
+      status: "modified",
+    }));
+    const { adapter } = build((url) => ({ files: pageOf(url) === 1 ? files : [] }));
+    const delta = await adapter.compareFiles("a", "b");
+    expect(delta).toHaveLength(300);
+    expect(delta.truncated).toBe(true);
+  });
+
+  it("a small compare is not", async () => {
+    const { adapter } = build(() => ({
+      files: [{ filename: "x", additions: 1, deletions: 0, status: "modified" }],
+    }));
+    const delta = await adapter.compareFiles("a", "b");
+    expect(delta).toHaveLength(1);
+    expect(delta.truncated).toBeFalsy();
+  });
+});
+
+describe("prConversation shows the NEWEST comments (0f257255)", () => {
+  // The per-issue comments endpoint ignores sort/direction: it is always
+  // oldest-first, so the newest N live on the LAST page.
+  it("reads the last page and returns the newest N, oldest-first", async () => {
+    const all = Array.from({ length: 250 }, (_, i) => ({
+      user: { login: "alice" },
+      body: `c${i}`,
+      created_at: `t${String(i).padStart(3, "0")}`,
+    }));
+    const { adapter } = build((url) => {
+      if (url.includes("/issues/7/comments")) {
+        const u = new URL(url);
+        const per = Number(u.searchParams.get("per_page") ?? "30");
+        const p = Number(u.searchParams.get("page") ?? "1");
+        return all.slice((p - 1) * per, p * per);
+      }
+      return { body: "b", labels: [], comments: 250 };
+    });
+    const conv = await adapter.prConversation(7, 3);
+    expect(conv.comments.map((c) => c.body)).toEqual(["c247", "c248", "c249"]);
+  });
+
+  it("straddles a page boundary when the last page is short", async () => {
+    const all = Array.from({ length: 201 }, (_, i) => ({ user: { login: "a" }, body: `c${i}` }));
+    const { adapter } = build((url) => {
+      if (url.includes("/issues/7/comments")) {
+        const u = new URL(url);
+        const per = Number(u.searchParams.get("per_page") ?? "30");
+        const p = Number(u.searchParams.get("page") ?? "1");
+        return all.slice((p - 1) * per, p * per);
+      }
+      return { body: "", labels: [], comments: 201 };
+    });
+    const conv = await adapter.prConversation(7, 3);
+    expect(conv.comments.map((c) => c.body)).toEqual(["c198", "c199", "c200"]);
+  });
+});
+
+describe("the history GraphQL reads follow pageInfo (990c4c6a, 47b3d525)", () => {
+  function graphqlPages(handler: (query: string, vars: Record<string, unknown>) => unknown) {
+    return build((_url, init) => {
+      const body = JSON.parse(String(init.body)) as { query: string; variables: Record<string, unknown> };
+      return { data: handler(body.query, body.variables) };
+    });
+  }
+
+  it("prReviewHistory reads every bot review and every timeline item", async () => {
+    const { adapter } = graphqlPages((query, vars) => {
+      const reviewsPage = (after: unknown) =>
+        after === "r1"
+          ? { pageInfo: { hasNextPage: false, endCursor: "r2" }, nodes: [{ databaseId: 2, state: "APPROVED" }] }
+          : { pageInfo: { hasNextPage: true, endCursor: "r1" }, nodes: [{ databaseId: 1, state: "COMMENTED" }] };
+      const timelinePage = (after: unknown) =>
+        after === "t1"
+          ? { pageInfo: { hasNextPage: false, endCursor: "t2" }, nodes: [{ __typename: "LabeledEvent", createdAt: "2" }] }
+          : { pageInfo: { hasNextPage: true, endCursor: "t1" }, nodes: [{ __typename: "LabeledEvent", createdAt: "1" }] };
+      const pr: Record<string, unknown> = { number: 7 };
+      if (/reviews\(/.test(query)) pr.reviews = reviewsPage(vars.reviewsAfter ?? vars.after);
+      if (/timelineItems\(/.test(query)) pr.timelineItems = timelinePage(vars.timelineAfter ?? vars.after);
+      return { repository: { pullRequest: pr } };
+    });
+    const h = await adapter.prReviewHistory(7, "bot");
+    expect(h!.reviews.map((r) => r.database_id)).toEqual([1, 2]);
+    expect(h!.timeline.map((t) => t.created_at)).toEqual(["1", "2"]);
+  });
+
+  it("prReviews reads every review, and every inline comment of a long review", async () => {
+    const { adapter } = graphqlPages((query, vars) => {
+      if (/node\(id:/.test(query)) {
+        return {
+          node: {
+            comments: { pageInfo: { hasNextPage: false, endCursor: "c2" }, nodes: [{ body: "second" }] },
+          },
+        };
+      }
+      const pr =
+        vars.after === "r1"
+          ? {
+              reviews: {
+                pageInfo: { hasNextPage: false, endCursor: "r2" },
+                nodes: [{ id: "R2", state: "APPROVED", body: "newest", comments: { nodes: [] } }],
+              },
+            }
+          : {
+              number: 7,
+              reviews: {
+                pageInfo: { hasNextPage: true, endCursor: "r1" },
+                nodes: [
+                  {
+                    id: "R1",
+                    state: "COMMENTED",
+                    body: "oldest",
+                    comments: { pageInfo: { hasNextPage: true, endCursor: "c1" }, nodes: [{ body: "first" }] },
+                  },
+                ],
+              },
+            };
+      return { repository: { pullRequest: pr } };
+    });
+    const r = await adapter.prReviews(7);
+    expect(r!.reviews.map((x) => x.body)).toEqual(["oldest", "newest"]);
+    expect(r!.reviews[0]!.comments.map((c) => c.body)).toEqual(["first", "second"]);
+  });
+});

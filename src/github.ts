@@ -152,6 +152,63 @@ interface RawTimelineNode {
   requestedReviewer?: { slug?: string; login?: string } | null;
 }
 
+/** A GraphQL connection as the history queries request it: nodes plus the
+ * cursor to continue from. */
+interface Connection<N> {
+  nodes?: Array<N | null>;
+  pageInfo?: { hasNextPage?: boolean; endCursor?: string | null } | null;
+}
+
+/** Hard stop for a connection walk — a server that keeps answering
+ * hasNextPage with a cursor that never ends cannot loop forever. */
+const MAX_CONNECTION_PAGES = 50;
+
+/** Every node of a connection: the first page as already fetched, then each
+ * `next(cursor)` until GitHub says there is no next page. */
+async function walkConnection<N>(
+  first: Connection<N> | null | undefined,
+  next: (after: string) => Promise<Connection<N> | null | undefined>,
+): Promise<N[]> {
+  const out: N[] = [];
+  let conn = first;
+  for (let page = 0; conn && page < MAX_CONNECTION_PAGES; page++) {
+    out.push(...(conn.nodes ?? []).filter((n): n is N => n !== null && n !== undefined));
+    const info = conn.pageInfo;
+    if (!info?.hasNextPage || !info.endCursor) break;
+    conn = await next(info.endCursor);
+  }
+  return out;
+}
+
+/** Selection sets shared by a history query's first page and its follow-ups,
+ * so the two can never request different fields. */
+const HISTORY_REVIEWS_BODY =
+  "pageInfo { hasNextPage endCursor } nodes { databaseId state submittedAt body commit { oid } }";
+const HISTORY_TIMELINE_BODY = `pageInfo { hasNextPage endCursor }
+              nodes {
+                __typename
+                ... on LabeledEvent { createdAt label { name } actor { login } }
+                ... on ReviewRequestedEvent { createdAt requestedReviewer { ... on Team { slug } ... on User { login } } }
+                ... on HeadRefForcePushedEvent { createdAt }
+              }`;
+const DIGEST_COMMENTS_BODY =
+  "pageInfo { hasNextPage endCursor } nodes { author { __typename login } path body }";
+const DIGEST_REVIEWS_BODY = `pageInfo { hasNextPage endCursor }
+              nodes {
+                id author { __typename login } state submittedAt body
+                comments(first: 100) { ${DIGEST_COMMENTS_BODY} }
+              }`;
+
+/** GitHub serves a compare's changed files on its first page only, capped at
+ * this many. A list that long is a floor, not the delta. */
+export const COMPARE_FILES_CAP = 300;
+
+/** GitHub serves at most this many pages of 100 from `pulls/<n>/files`. */
+const PR_FILES_MAX_PAGES = 30;
+
+/** A file list that may have been cut short by GitHub's own cap. */
+export type FileList = PrFileEntry[] & { truncated?: boolean };
+
 interface RawPrHistory {
   number?: number;
   title?: string;
@@ -160,8 +217,8 @@ interface RawPrHistory {
   mergedAt?: string | null;
   merged?: boolean;
   author?: { login?: string } | null;
-  reviews?: { nodes?: Array<RawReviewNode | null> } | null;
-  timelineItems?: { nodes?: Array<RawTimelineNode | null> } | null;
+  reviews?: Connection<RawReviewNode> | null;
+  timelineItems?: Connection<RawTimelineNode> | null;
 }
 
 export type PrDisposition = { kind: "open" | "closed"; head_sha: string } | { kind: "absent" };
@@ -288,12 +345,27 @@ export class GitHubAdapter {
 
   // ---- triggered-set queries (reads) -------------------------------------
 
+  /** Every hit, not the first 100: the reconcile pass reads a PR missing from
+   * this list as trigger-ABSENT, so a truncated page would fake an absent →
+   * present edge the moment search order reshuffled it back in. */
   private async searchIssues(q: string): Promise<SearchIssueItem[]> {
-    const res = await this.request<{ items: SearchIssueItem[] }>(
-      "GET",
-      `/search/issues?q=${encodeURIComponent(q)}&per_page=100`,
-    );
-    return res.items;
+    return this.searchIssuesPaged(q);
+  }
+
+  /** Every page of a list endpoint that answers a bare JSON array. `path`
+   * carries `per_page=100`; a short page ends the read and `maxPages` bounds
+   * it — `truncated` says the bound, not the list, ended it. */
+  private async pagedArray<T = any>(
+    path: string,
+    maxPages = 30,
+  ): Promise<{ rows: T[]; truncated: boolean }> {
+    const rows: T[] = [];
+    for (let page = 1; page <= maxPages; page++) {
+      const batch = await this.request<T[]>("GET", `${path}&page=${page}`);
+      rows.push(...batch);
+      if (batch.length < 100) return { rows, truncated: false };
+    }
+    return { rows, truncated: true };
   }
 
   /** Paginated issue search — read-only, used by the history importer (M2).
@@ -322,17 +394,8 @@ export class GitHubAdapter {
           pullRequest(number: $number) {
             number title createdAt closedAt mergedAt merged
             author { login }
-            reviews(author: $author, first: 100) {
-              nodes { databaseId state submittedAt body commit { oid } }
-            }
-            timelineItems(itemTypes: [LABELED_EVENT, REVIEW_REQUESTED_EVENT, HEAD_REF_FORCE_PUSHED_EVENT], first: 100) {
-              nodes {
-                __typename
-                ... on LabeledEvent { createdAt label { name } actor { login } }
-                ... on ReviewRequestedEvent { createdAt requestedReviewer { ... on Team { slug } ... on User { login } } }
-                ... on HeadRefForcePushedEvent { createdAt }
-              }
-            }
+            reviews(author: $author, first: 100) { ${HISTORY_REVIEWS_BODY} }
+            timelineItems(itemTypes: [LABELED_EVENT, REVIEW_REQUESTED_EVENT, HEAD_REF_FORCE_PUSHED_EVENT], first: 100) { ${HISTORY_TIMELINE_BODY} }
           }
         }
       }`,
@@ -340,6 +403,35 @@ export class GitHubAdapter {
     );
     const pr = data.repository?.pullRequest;
     if (!pr) return null;
+    // A long PR's bot reviews run past 100 (every thread reply is a review):
+    // follow the cursors, or the importer silently loses the NEWEST ones.
+    const vars = { owner: this.owner, repo: this.repo, number: n, author };
+    const reviews = await walkConnection(pr.reviews, async (after) => {
+      const d = await this.graphql<{ repository?: { pullRequest?: RawPrHistory | null } | null }>(
+        `query ($owner: String!, $repo: String!, $number: Int!, $author: String!, $after: String!) {
+          repository(owner: $owner, name: $repo) {
+            pullRequest(number: $number) {
+              reviews(author: $author, first: 100, after: $after) { ${HISTORY_REVIEWS_BODY} }
+            }
+          }
+        }`,
+        { ...vars, after },
+      );
+      return d.repository?.pullRequest?.reviews;
+    });
+    const timeline = await walkConnection(pr.timelineItems, async (after) => {
+      const d = await this.graphql<{ repository?: { pullRequest?: RawPrHistory | null } | null }>(
+        `query ($owner: String!, $repo: String!, $number: Int!, $after: String!) {
+          repository(owner: $owner, name: $repo) {
+            pullRequest(number: $number) {
+              timelineItems(itemTypes: [LABELED_EVENT, REVIEW_REQUESTED_EVENT, HEAD_REF_FORCE_PUSHED_EVENT], first: 100, after: $after) { ${HISTORY_TIMELINE_BODY} }
+            }
+          }
+        }`,
+        { owner: this.owner, repo: this.repo, number: n, after },
+      );
+      return d.repository?.pullRequest?.timelineItems;
+    });
     return {
       number: pr.number ?? n,
       title: pr.title ?? "",
@@ -348,17 +440,15 @@ export class GitHubAdapter {
       closed_at: pr.closedAt ?? null,
       merged_at: pr.mergedAt ?? null,
       merged: Boolean(pr.merged),
-      reviews: (pr.reviews?.nodes ?? [])
-        .filter((r): r is RawReviewNode => Boolean(r))
-        .map((r) => ({
+      reviews: reviews.map((r) => ({
           database_id: r.databaseId ?? 0,
           state: r.state ?? "",
           submitted_at: r.submittedAt ?? null,
           body: r.body ?? "",
           commit_oid: r.commit?.oid ?? null,
         })),
-      timeline: (pr.timelineItems?.nodes ?? [])
-        .filter((t): t is RawTimelineNode => Boolean(t?.createdAt))
+      timeline: timeline
+        .filter((t) => Boolean(t.createdAt))
         .map((t) => ({
           type: t.__typename ?? "",
           created_at: t.createdAt!,
@@ -379,20 +469,25 @@ export class GitHubAdapter {
       __typename?: string;
       login?: string;
     }
+    interface RawComment {
+      author?: RawAuthor | null;
+      path?: string | null;
+      body?: string;
+    }
+    interface RawReview {
+      id?: string;
+      author?: RawAuthor | null;
+      state?: string;
+      submittedAt?: string | null;
+      body?: string;
+      comments?: Connection<RawComment> | null;
+    }
     interface RawPr {
       number?: number;
       title?: string;
       mergedAt?: string | null;
       author?: { login?: string } | null;
-      reviews?: {
-        nodes?: Array<{
-          author?: RawAuthor | null;
-          state?: string;
-          submittedAt?: string | null;
-          body?: string;
-          comments?: { nodes?: Array<{ author?: RawAuthor | null; path?: string | null; body?: string } | null> } | null;
-        } | null>;
-      } | null;
+      reviews?: Connection<RawReview> | null;
     }
     const data = await this.graphql<{ repository?: { pullRequest?: RawPr | null } | null }>(
       `query ($owner: String!, $repo: String!, $number: Int!) {
@@ -400,12 +495,7 @@ export class GitHubAdapter {
           pullRequest(number: $number) {
             number title mergedAt
             author { login }
-            reviews(first: 100) {
-              nodes {
-                author { __typename login } state submittedAt body
-                comments(first: 100) { nodes { author { __typename login } path body } }
-              }
-            }
+            reviews(first: 100) { ${DIGEST_REVIEWS_BODY} }
           }
         }
       }`,
@@ -413,6 +503,34 @@ export class GitHubAdapter {
     );
     const pr = data.repository?.pullRequest;
     if (!pr) return null;
+    // Reviews come oldest-first, so a truncated read drops the NEWEST human
+    // feedback — follow the cursors, and each long review's comment cursor.
+    const rawReviews = await walkConnection(pr.reviews, async (after) => {
+      const d = await this.graphql<{ repository?: { pullRequest?: RawPr | null } | null }>(
+        `query ($owner: String!, $repo: String!, $number: Int!, $after: String!) {
+          repository(owner: $owner, name: $repo) {
+            pullRequest(number: $number) {
+              reviews(first: 100, after: $after) { ${DIGEST_REVIEWS_BODY} }
+            }
+          }
+        }`,
+        { owner: this.owner, repo: this.repo, number: n, after },
+      );
+      return d.repository?.pullRequest?.reviews;
+    });
+    const commentsOf = (r: RawReview): Promise<RawComment[]> =>
+      walkConnection(r.comments, async (after) => {
+        if (!r.id) return null;
+        const d = await this.graphql<{ node?: { comments?: Connection<RawComment> | null } | null }>(
+          `query ($id: ID!, $after: String!) {
+            node(id: $id) { ... on PullRequestReview { comments(first: 100, after: $after) { ${DIGEST_COMMENTS_BODY} } } }
+          }`,
+          { id: r.id, after },
+        );
+        return d.node?.comments;
+      });
+    const reviews: Array<{ r: RawReview; comments: RawComment[] }> = [];
+    for (const r of rawReviews) reviews.push({ r, comments: await commentsOf(r) });
     const author = (a: RawAuthor | null | undefined): { login: string; type: string } | null =>
       a ? { login: a.login ?? "", type: a.__typename ?? "" } : null;
     return {
@@ -420,17 +538,17 @@ export class GitHubAdapter {
       title: pr.title ?? "",
       author: pr.author?.login ?? "",
       merged_at: pr.mergedAt ?? null,
-      reviews: (pr.reviews?.nodes ?? [])
-        .filter((r): r is NonNullable<typeof r> => Boolean(r))
-        .map((r) => ({
-          author: author(r.author),
-          state: r.state ?? "",
-          submitted_at: r.submittedAt ?? null,
-          body: r.body ?? "",
-          comments: (r.comments?.nodes ?? [])
-            .filter((c): c is NonNullable<typeof c> => Boolean(c))
-            .map((c) => ({ author: author(c.author), path: c.path ?? null, body: c.body ?? "" })),
+      reviews: reviews.map(({ r, comments }) => ({
+        author: author(r.author),
+        state: r.state ?? "",
+        submitted_at: r.submittedAt ?? null,
+        body: r.body ?? "",
+        comments: comments.map((c) => ({
+          author: author(c.author),
+          path: c.path ?? null,
+          body: c.body ?? "",
         })),
+      })),
     };
   }
 
@@ -515,29 +633,39 @@ export class GitHubAdapter {
   }
 
   /** Read-only conversation surface for the TUI detail pane (QOL):
-   * PR description, labels, and the newest issue comments, oldest-first. */
+   * PR description, labels, and the newest issue comments, oldest-first.
+   *
+   * The per-issue comments endpoint ignores `sort`/`direction` (those belong
+   * to the repo-wide listing) and always answers oldest-first, so the newest
+   * comments are on the LAST page: its index comes off the PR's own comment
+   * count, and the page before it is read too when the last one is short. */
   async prConversation(n: number, commentCount = 3): Promise<PrConversation> {
     const pr = await this.request<any>("GET", `/repos/${this.owner}/${this.repo}/pulls/${n}`);
-    const comments = await this.request<any[]>(
-      "GET",
-      `/repos/${this.owner}/${this.repo}/issues/${n}/comments?per_page=${commentCount}&sort=created&direction=desc`,
-    );
+    const path = `/repos/${this.owner}/${this.repo}/issues/${n}/comments?per_page=100`;
+    let comments: any[];
+    if (typeof pr.comments === "number") {
+      const last = Math.max(1, Math.ceil(pr.comments / 100));
+      comments = await this.request<any[]>("GET", `${path}&page=${last}`);
+      if (comments.length < commentCount && last > 1)
+        comments = [...(await this.request<any[]>("GET", `${path}&page=${last - 1}`)), ...comments];
+    } else {
+      comments = (await this.pagedArray(path)).rows;
+    }
     return {
       body: pr.body ?? "",
       labels: (pr.labels ?? []).map((l: { name: string }) => l.name),
-      comments: comments
-        .map((c) => ({
-          author: c.user?.login ?? "?",
-          body: c.body ?? "",
-          created_at: c.created_at ?? "",
-        }))
-        .reverse(),
+      comments: comments.slice(-commentCount).map((c) => ({
+        author: c.user?.login ?? "?",
+        body: c.body ?? "",
+        created_at: c.created_at ?? "",
+      })),
     };
   }
 
+  /** EVERY open PR: the list is newest-first, so a first-page read drops the
+   * oldest tracked PRs out of reconcile step 1 entirely. */
   async listOpenPrs(): Promise<PrRef[]> {
-    const prs = await this.request<any[]>(
-      "GET",
+    const { rows: prs } = await this.pagedArray<any>(
       `/repos/${this.owner}/${this.repo}/pulls?state=open&per_page=100`,
     );
     return prs.map((pr) => ({
@@ -563,36 +691,34 @@ export class GitHubAdapter {
     return { users: res.users.map((u) => u.login), teams: res.teams.map((t) => t.slug) };
   }
 
-  async listPrFiles(n: number): Promise<PrFileEntry[]> {
-    const out: PrFileEntry[] = [];
-    for (let page = 1; page <= 10; page++) {
-      const batch = await this.request<any[]>(
-        "GET",
-        `/repos/${this.owner}/${this.repo}/pulls/${n}/files?per_page=100&page=${page}`,
-      );
-      out.push(...batch.map(fileEntry));
-      if (batch.length < 100) break;
-    }
+  /** Every file GitHub will list for the PR (it serves 3,000 at most). A list
+   * that reaches that cap is flagged `truncated`: it is a floor, and ownership
+   * decisions made off it must not treat a missing file as not-the-PR's. */
+  async listPrFiles(n: number): Promise<FileList> {
+    const { rows, truncated } = await this.pagedArray<any>(
+      `/repos/${this.owner}/${this.repo}/pulls/${n}/files?per_page=100`,
+      PR_FILES_MAX_PAGES,
+    );
+    const out: FileList = rows.map(fileEntry);
+    if (truncated) out.truncated = true;
     return out;
   }
 
   /**
    * Files a commit range changed (`GET /compare/<base>...<head>`) — the delta
-   * source for the post-approval recheck. Read-only, and paginated
-   * the same way listPrFiles is; GitHub caps a compare at 300 files, which is
-   * far past the point where a delta is "significant" anyway.
+   * source for the post-approval recheck. Read-only. GitHub serves
+   * the files on the FIRST page only (later pages page the commits) and caps
+   * them at COMPARE_FILES_CAP, so a list that long is flagged `truncated`: the
+   * classifier must not read an unseen remainder as "nothing PR-owned".
    */
-  async compareFiles(base: string, head: string): Promise<PrFileEntry[]> {
-    const out: PrFileEntry[] = [];
-    for (let page = 1; page <= 10; page++) {
-      const res = await this.request<{ files?: any[] }>(
-        "GET",
-        `/repos/${this.owner}/${this.repo}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}?per_page=100&page=${page}`,
-      );
-      const batch = res.files ?? [];
-      out.push(...batch.map(fileEntry));
-      if (batch.length < 100) break;
-    }
+  async compareFiles(base: string, head: string): Promise<FileList> {
+    const res = await this.request<{ files?: any[] }>(
+      "GET",
+      `/repos/${this.owner}/${this.repo}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}?per_page=100&page=1`,
+    );
+    const files = res.files ?? [];
+    const out: FileList = files.map(fileEntry);
+    if (files.length >= COMPARE_FILES_CAP) out.truncated = true;
     return out;
   }
 
@@ -645,11 +771,13 @@ export class GitHubAdapter {
   async listReviews(
     n: number,
   ): Promise<Array<{ id: number; user: string; state: string; commit_id: string }>> {
-    const res = await this.request<any[]>(
-      "GET",
+    // Every page: reviews are oldest-first and every thread reply is one, so
+    // on a long PR the human approval at the head is exactly what page one
+    // misses — and guard 1 would then not soften over it.
+    const { rows } = await this.pagedArray<any>(
       `/repos/${this.owner}/${this.repo}/pulls/${n}/reviews?per_page=100`,
     );
-    return res.map((r) => ({
+    return rows.map((r) => ({
       id: r.id,
       user: r.user?.login ?? "",
       state: r.state,
@@ -661,33 +789,25 @@ export class GitHubAdapter {
    * posting-marker reconciliation. Paginated so long-lived PRs cannot hide the
    * accepted review beyond the first 100 rows. */
   async listReviewsFull(n: number): Promise<ReviewFull[]> {
-    const out: ReviewFull[] = [];
-    for (let page = 1; ; page++) {
-      const res = await this.request<any[]>(
-        "GET",
-        `/repos/${this.owner}/${this.repo}/pulls/${n}/reviews?per_page=100&page=${page}`,
-      );
-      out.push(
-        ...res.map((r) => ({
-          id: r.id,
-          user: r.user?.login ?? "",
-          user_type: r.user?.type ?? "User",
-          state: r.state,
-          body: r.body ?? "",
-          commit_id: r.commit_id,
-          submitted_at: r.submitted_at ?? null,
-        })),
-      );
-      if (res.length < 100) break;
-    }
-    return out;
+    const { rows } = await this.pagedArray<any>(
+      `/repos/${this.owner}/${this.repo}/pulls/${n}/reviews?per_page=100`,
+      Number.POSITIVE_INFINITY,
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      user: r.user?.login ?? "",
+      user_type: r.user?.type ?? "User",
+      state: r.state,
+      body: r.body ?? "",
+      commit_id: r.commit_id,
+      submitted_at: r.submitted_at ?? null,
+    }));
   }
 
   /** Top-level PR conversation comments — read-only, the sweep's
    * third source (the issues API is where GitHub keeps them). */
   async listIssueComments(n: number): Promise<IssueCommentFull[]> {
-    const res = await this.request<any[]>(
-      "GET",
+    const { rows: res } = await this.pagedArray<any>(
       `/repos/${this.owner}/${this.repo}/issues/${n}/comments?per_page=100`,
     );
     return res.map((c) => ({
@@ -701,8 +821,7 @@ export class GitHubAdapter {
 
   /** Full inline review comments — read-only, for the compare harness. */
   async listReviewCommentsFull(n: number): Promise<ReviewCommentFull[]> {
-    const res = await this.request<any[]>(
-      "GET",
+    const { rows: res } = await this.pagedArray<any>(
       `/repos/${this.owner}/${this.repo}/pulls/${n}/comments?per_page=100`,
     );
     return res.map((c) => ({
@@ -720,8 +839,7 @@ export class GitHubAdapter {
 
   /** Review comments the bot authored on a PR — the registry backfill source. */
   async listBotReviewComments(n: number): Promise<number[]> {
-    const res = await this.request<any[]>(
-      "GET",
+    const { rows: res } = await this.pagedArray<any>(
       `/repos/${this.owner}/${this.repo}/pulls/${n}/comments?per_page=100`,
     );
     return res.filter((c) => c.user?.login === this.cfg.github.bot_login).map((c) => c.id);

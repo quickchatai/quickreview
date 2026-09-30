@@ -471,6 +471,7 @@ describe("— the layer that was NOT told about them", () => {
     reviewIds: new Set<number>(),
     reviewedHead: undefined,
     migrationPrecheck: false,
+    postingKeys: new Set<string>(),
   };
 
   it("catches an approval the daemon never recorded, whatever posted it", () => {
@@ -507,13 +508,44 @@ describe("— the layer that was NOT told about them", () => {
     expect(hasUngatedApproval(found)).toBe(false); // reported, but not a wake
   });
 
+  it("a posting marker the daemon never issued is not a trace — the format is public", () => {
+    // Selfscan 6475bc58: the marker used to be matched on its PREFIX alone, so
+    // an out-of-gate APPROVE that typed `<!-- qcr-post:x -->` into its body
+    // read as sanctioned and no ungated_approval fired.
+    const forged = auditUngatedReviews(
+      [review({ body: "LGTM <!-- qcr-post:x -->" })],
+      HEAD,
+      noTraces,
+      bot,
+    );
+    expect(hasUngatedApproval(forged)).toBe(true);
+    // A well-formed key the daemon never issued for this PR is no better…
+    expect(
+      auditUngatedReviews(
+        [review({ body: "<!-- qcr-post:v1:5249:2:abc1234def5678 -->" })],
+        HEAD,
+        { ...noTraces, postingKeys: new Set(["v1:5249:1:abc1234def5678"]) },
+        bot,
+      ),
+    ).toHaveLength(1);
+    // …nor is an issued key for a DIFFERENT head, reused at this one.
+    expect(
+      auditUngatedReviews(
+        [review({ body: "<!-- qcr-post:v1:5249:1:0ldhead0 -->" })],
+        HEAD,
+        { ...noTraces, postingKeys: new Set(["v1:5249:1:0ldhead0"]) },
+        bot,
+      ),
+    ).toHaveLength(1);
+  });
+
   it("does NOT flag the legitimate routes — a detector that cries wolf is traded away", () => {
     // 1. the sanctioned shell route (posting marker in the body)
     expect(
       auditUngatedReviews(
         [review({ body: "LGTM\n\n<!-- qcr-post:v1:5249:2:abc1234def5678 -->" })],
         HEAD,
-        noTraces,
+        { ...noTraces, postingKeys: new Set(["v1:5249:2:abc1234def5678"]) },
         bot,
       ),
     ).toHaveLength(0);
@@ -1067,6 +1099,9 @@ describe("— the write class that no command string can show (round 2)", () => 
     expect(paths).toContain("/clone/.git/hooks");
     expect(paths).toContain("/wt/pr-42/.git"); // the gitdir POINTER
     expect(paths).toContain("/clone/.git/worktrees/pr-42/config.worktree");
+    // The admin dir's commondir pointer relocates the shared config and hooks
+    // (selfscan 4e2fd68c) — watched exactly as the `.git` pointer is.
+    expect(paths).toContain("/clone/.git/worktrees/pr-42/commondir");
     // Deliberately NOT the whole worktrees dir: other PRs' rounds add and
     // prune siblings concurrently, and every one would be a false alarm.
     expect(paths).not.toContain("/clone/.git/worktrees");
@@ -1089,6 +1124,26 @@ describe("— the write class that no command string can show (round 2)", () => 
     ).toEqual([]);
     const fp = fingerprintRoundIntegrity(opts, fs);
     expect(fp.files["/clone/.git/config"]).toMatch(/^sha256:/);
+    expect(fp.files["/clone/.git/config.worktree"]).toBe("absent");
+  });
+
+  it("an unreadable path is recorded as unreadable, never folded into absent", () => {
+    // Selfscan 8aeea355: every error used to read as "absent", so the header's
+    // "unreadable is recorded distinctly" was only true of the docstring.
+    const denied = Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+    const missing = Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    const fs = {
+      readFile: (p: string) => {
+        throw p === "/clone/.git/config" ? denied : missing;
+      },
+      readDir: (p: string) => {
+        throw p === "/clone/.git/hooks" ? denied : missing;
+      },
+      sha256: sha,
+    };
+    const fp = fingerprintRoundIntegrity({ clonePath: "/clone" }, fs);
+    expect(fp.files["/clone/.git/config"]).toBe("unreadable:EACCES");
+    expect(fp.files["/clone/.git/hooks"]).toBe("unreadable:EACCES");
     expect(fp.files["/clone/.git/config.worktree"]).toBe("absent");
   });
 });

@@ -103,8 +103,10 @@ beforeEach(async () => {
       req.url?.startsWith("/repos/") &&
       req.url.includes("/pulls/5180/reviews")
     ) {
+      // Paged like GitHub: 100 a page, `page` defaulting to 1.
+      const page = Number(new URL(req.url, "http://stub").searchParams.get("page") ?? "1");
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify(reviews));
+      res.end(JSON.stringify(reviews.slice((page - 1) * 100, page * 100)));
       return;
     }
     if (req.method === "GET" && req.url?.endsWith("/pulls/5180")) {
@@ -604,6 +606,24 @@ describe("scripts/post-review.sh — guard 1 (human approval at this head)", () 
     const res = await run("post-review.sh", ["5180", "REQUEST_CHANGES", bodyFile()]);
     expect(res.ok).toBe(true);
     expect(record().body.event).toBe("REQUEST_CHANGES");
+  });
+
+  it("sees a human approval past the first 100 reviews (selfscan 91382fae)", async () => {
+    // Reviews are oldest-first and every bot thread reply is one, so on a long
+    // PR the approval at the current head lives on page 2 or later.
+    reviews = [
+      ...Array.from({ length: 120 }, (_, i) => ({
+        id: i + 1,
+        user: { login: "example-review[bot]" },
+        state: "COMMENTED",
+        commit_id: "0ldhead",
+      })),
+      { id: 500, user: { login: "mhale" }, state: "APPROVED", commit_id: HEAD },
+    ];
+    const res = await run("post-review.sh", ["5180", "REQUEST_CHANGES", bodyFile()]);
+    expect(res.ok).toBe(true);
+    expect(record().body.event).toBe("COMMENT");
+    expect(record().body.body).toContain("@mhale");
   });
 
   it("ignores an approval the same human has since retired", async () => {

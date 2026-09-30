@@ -457,6 +457,34 @@ describe("runRecheck", () => {
     expect(h.store.getPr(PR)?.state).toBe("tracked");
   });
 
+  // Selfscan 5bd5d43c: GitHub caps a compare at 300 files. A 300+ file base
+  // merge with a PR-owned edit past file 300 came back all base-merge, so the
+  // recheck no-op'd and CLAIMED the head — an approval standing over code no
+  // one read. A truncated delta is significant by construction.
+  it("a delta GitHub truncated is significant, whatever the visible files say", async () => {
+    const h = harness();
+    const visible = Array.from({ length: 300 }, (_, i) =>
+      file({ filename: `vendor/base_${i}.py`, additions: 1, deletions: 1 }),
+    );
+    h.adapter.delta = Object.assign(visible, { truncated: true });
+    h.adapter.own = [file({ filename: "src/app.ts" })];
+    const out = await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
+    expect(out).toMatchObject({ action: "recheck", class: "significant" });
+    expect(out.order?.evidence).toMatch(/truncated/);
+    expect(h.injected).toHaveLength(1);
+    expect(h.store.rechecksFor(PR)[0]?.reason ?? "").not.toMatch(/^noop:/);
+  });
+
+  // Selfscan a78c7cba: an incomplete PR file list is not an ownership answer —
+  // a PR-owned file missing from it would read as base-merge, i.e. trivial.
+  it("a truncated PR file list is not used to call a delta file base-merge", async () => {
+    const h = harness();
+    h.adapter.delta = [file({ filename: "src/owned_past_the_cap.py", additions: 5, deletions: 5 })];
+    h.adapter.own = Object.assign([file({ filename: "src/app.ts" })], { truncated: true });
+    const out = await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
+    expect(out).toMatchObject({ action: "recheck", class: "significant" });
+  });
+
   // The owner, 2026-08-19 (amendment): a hand-resolved conflict is
   // never trivial — the resolved file escapes the base-merge ownership rule
   // and the session is asked to audit it against both merge parents.

@@ -1394,6 +1394,32 @@ describe("system re-trigger short-circuit", () => {
     expect(store.hasRecheck(42, recheckFingerprint({ trigger: "push" }, NEW))).toBe(true);
   });
 
+  // Selfscan 5bd5d43c / a78c7cba: a compare GitHub truncated at 300 files,
+  // or a PR file list cut at its cap, is not evidence of "base-merge only".
+  it("a truncated compare or PR file list never short-circuits the round", async () => {
+    queue(46, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
+    reviewed(46, OLD, "APPROVE");
+    adapter.files.set(46, [file("mine.ts")]);
+    adapter.compares.set(
+      `${OLD}..${NEW}`,
+      Object.assign(
+        Array.from({ length: 300 }, (_, i) => file(`base/f${i}.py`, 1, 1)),
+        { truncated: true },
+      ),
+    );
+    const { hooks, orders } = recordingHooks();
+    expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toHaveLength(1);
+    expect(orders).toHaveLength(1);
+    expect(shortCircuitEvents(46)).toEqual([]);
+
+    queue(47, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
+    reviewed(47, OLD, "APPROVE");
+    adapter.files.set(47, Object.assign([file("mine.ts")], { truncated: true }));
+    adapter.compares.set(`${OLD}..${NEW}`, [file("owned_past_the_cap.py", 30, 4)]);
+    expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toHaveLength(1);
+    expect(shortCircuitEvents(47)).toEqual([]);
+  });
+
   it("a significant delta dispatches the full round as today", async () => {
     queue(43, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
     reviewed(43, OLD, "APPROVE");

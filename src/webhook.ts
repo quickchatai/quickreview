@@ -448,6 +448,24 @@ export function handleDelivery(
     return { status: 200, reason: "duplicate" };
   }
 
+  // One App installation spans many repositories and every one of them
+  // delivers here. PR numbers are per-repo, so a foreign event interpreted as
+  // ours would close, trigger or capture on whichever tracked PR shares its
+  // number. A payload with no repository (ping, installation) is not
+  // repo-scoped and passes through.
+  const fullName: unknown = payload?.repository?.full_name;
+  if (typeof fullName === "string" && fullName.toLowerCase() !== deps.cfg.github.repo.toLowerCase()) {
+    deps.store.logEvent("webhook_event", null, {
+      guid,
+      event,
+      action,
+      interpretation: "ignored",
+      reason: "foreign-repository",
+      repository: fullName,
+    });
+    return { status: 200, reason: "foreign-repository" };
+  }
+
   const interpretation = interpretEvent(event, action, payload, {
     botLogin: deps.cfg.github.bot_login,
     triggerLabel: deps.cfg.github.trigger_label,

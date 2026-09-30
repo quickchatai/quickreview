@@ -196,12 +196,30 @@ PY
 
 # ---- guard 1: a human already approved this head ---------------------------
 
+guard_array_pages() { # guard_array_pages <path?per_page=100> — every page of a bare-array list as ONE JSON array, "" when unreadable
+  # Mirrors pagedArray in src/github.ts: a short page ends it, 30 pages bound
+  # it, and any page that is not an array makes the whole read unreadable —
+  # a truncated list is never passed off as the list.
+  local path="$1" page body rows="" n
+  for ((page = 1; page <= 30; page++)); do
+    body="$(guard_api_get "${path}&page=${page}")"
+    body="$(printf '%s' "$body" | jq -c 'select(type == "array")' 2>/dev/null)" || body=""
+    [[ -n "$body" ]] || return 0
+    rows+="$body"$'\n'
+    n="$(printf '%s' "$body" | jq 'length')"
+    if ((n < 100)); then break; fi
+  done
+  printf '%s' "$rows" | jq -cs 'add'
+}
+
 guard_human_approver() { # guard_human_approver <head-sha> <pr-author> — login or ""
   local head="${1:-}" author="${2:-}" bot
   guard_enabled downgrade_on_human_approval || return 0
   [[ -n "$head" ]] || return 0
   bot="$(cfg github bot_login 2>/dev/null || true)"
-  guard_api_get "/repos/$REPO/pulls/$PR/reviews?per_page=100" | python3 -c '
+  # Every page: reviews are oldest-first, so on a long PR the human approval
+  # at this head is exactly what a first-page read misses (listReviews twin).
+  guard_array_pages "/repos/$REPO/pulls/$PR/reviews?per_page=100" | python3 -c '
 import json, sys
 head, author, bot = sys.argv[1], sys.argv[2], sys.argv[3]
 try:

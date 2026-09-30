@@ -50,9 +50,10 @@ import {
 import {
   carryWithheldMark,
   classifyDelta,
+  ownershipSet,
   recheckFingerprint,
   type DeltaClass,
-  type DeltaFile,
+  type DeltaList,
 } from "./recheck.js";
 import { roundPostingKey } from "./posting-receipt.js";
 import { findStyleGuide } from "./styleguide.js";
@@ -75,7 +76,7 @@ import type {
 /** The slice of GitHubAdapter dispatch needs — all mutations are gated inside
  * the adapter, so this module never touches GitHub directly. */
 export interface DispatchAdapter {
-  listPrFiles(n: number): Promise<PrFileEntry[]>;
+  listPrFiles(n: number): Promise<PrFileEntry[] & { truncated?: boolean }>;
   /** Read-only; dispatch needs `base_ref` to keep the base branch fresh, and
    * `body` as pass-intent's artifact + substance-bar input. `body`
    * stays optional so legacy fakes and adapters remain valid — absent
@@ -100,7 +101,7 @@ export interface DispatchAdapter {
    * delta source. Optional: an adapter without it (stub-wired core, legacy
    * fakes) simply never short-circuits — every re-trigger pays a full round,
    * exactly the prior behaviour. */
-  compareFiles?(base: string, head: string): Promise<DeltaFile[]>;
+  compareFiles?(base: string, head: string): Promise<DeltaList>;
 }
 
 export interface DispatchDeps {
@@ -520,12 +521,7 @@ async function classifySystemRetrigger(
   if (!deps.adapter.compareFiles) return { skip: false };
   try {
     const delta = await deps.adapter.compareFiles(mark.head_sha, row.head_sha);
-    const own = await deps.adapter.listPrFiles(row.number);
-    const prFiles = new Set(
-      own.flatMap((f: DeltaFile) =>
-        f.previous_filename ? [f.filename, f.previous_filename] : [f.filename],
-      ),
-    );
+    const prFiles = ownershipSet(await deps.adapter.listPrFiles(row.number));
     let resolvedFiles: Set<string> | undefined;
     if (deps.resolvedFilesInMerges) {
       const res = await deps.resolvedFilesInMerges(mark.head_sha, row.head_sha, row.number);
@@ -546,7 +542,10 @@ async function classifySystemRetrigger(
         );
       }
     }
-    const cls = classifyDelta(delta, { prFiles, ...(resolvedFiles ? { resolvedFiles } : {}) });
+    const cls = classifyDelta(delta, {
+      ...(prFiles ? { prFiles } : {}),
+      ...(resolvedFiles ? { resolvedFiles } : {}),
+    });
     if (cls.class === "significant") return { skip: false };
     return {
       skip: true,

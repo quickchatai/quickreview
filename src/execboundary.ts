@@ -120,7 +120,7 @@ import { configHome, locateConfig, PROFILES_DIR, type InstallEnv } from "./insta
 export interface IntegrityFingerprint {
   digest: string;
   /** watched path → `sha256:<hex>` (a file) | `dir:<hex>` (a directory, hashed
-   * recursively by content) | "absent" */
+   * recursively by content) | "absent" | `unreadable:<errno>` */
   files: Record<string, string>;
 }
 
@@ -160,7 +160,13 @@ export function gitConfigWatchPaths(opts: {
     // A linked worktree's `.git` is a FILE pointing at the admin dir — swapping
     // that pointer relocates the whole repo scope, so the pointer is watched too.
     paths.push(`${opts.worktreePath}/.git`);
-    if (name) paths.push(`${opts.clonePath}/.git/worktrees/${name}/config.worktree`);
+    if (name) {
+      paths.push(`${opts.clonePath}/.git/worktrees/${name}/config.worktree`);
+      // The admin dir's `commondir` names the COMMON dir git reads the shared
+      // config and hooks from — rewriting it relocates both without touching
+      // any other watched file, the same shape as the `.git` pointer above.
+      paths.push(`${opts.clonePath}/.git/worktrees/${name}/commondir`);
+    }
   }
   if (opts.piHome !== undefined && opts.piHome.length > 0) paths.push(`${opts.piHome}/.gitconfig`);
   return paths;
@@ -221,16 +227,32 @@ function hashPath(path: string, fs: FingerprintFs, depth: number): string {
   try {
     const raw = fs.readFile(path);
     return `sha256:${fs.sha256(typeof raw === "string" ? raw : raw.toString("utf8"))}`;
-  } catch {
+  } catch (fileErr) {
+    // A permissions (or any other) failure is NOT absence: folding it into
+    // "absent" would let a chmod-then-restore read as no change at all.
+    const fileCode = errnoCode(fileErr);
+    if (!isMissing(fileCode) && fileCode !== "EISDIR") return `unreadable:${fileCode}`;
     // Not a readable file — a directory, or nothing.
     try {
       const names = fs.readDir(path).sort();
       if (depth <= 0) return `dir:${fs.sha256(names.join("\n"))}`;
       return `dir:${fs.sha256(names.map((n) => `${n}=${hashPath(`${path}/${n}`, fs, depth - 1)}`).join("\n"))}`;
-    } catch {
-      return "absent";
+    } catch (dirErr) {
+      const dirCode = errnoCode(dirErr);
+      return isMissing(dirCode) ? "absent" : `unreadable:${dirCode}`;
     }
   }
+}
+
+function errnoCode(err: unknown): string | undefined {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === "string" ? code : undefined;
+}
+
+/** Nothing at the path. An error with no errno code (a test double's bare
+ * `Error`) keeps the historical reading, absent. */
+function isMissing(code: string | undefined): boolean {
+  return code === undefined || code === "ENOENT" || code === "ENOTDIR";
 }
 
 /** Hash every watched path. Total: a missing or unreadable path is a RECORDED
@@ -420,6 +442,11 @@ export interface PostingTraces {
    * gate. That route deliberately does NOT stamp `reviewed_heads`, so
    * it needs its own trace. */
   migrationPrecheck: boolean;
+  /** Every `rounds.posting_key` the daemon ISSUED for this PR. A posting marker
+   * in a review body excuses it only when it carries one of these keys — the
+   * marker format is public, so an unverified marker is a string anyone who
+   * already got past layer 2 can type. */
+  postingKeys: ReadonlySet<string>;
 }
 
 export interface UngatedReview {
@@ -429,10 +456,22 @@ export interface UngatedReview {
   submitted_at: string | null;
 }
 
-/** The posting receipt marker: `<!-- qcr-post:v1:<pr>:<round>:<head> -->`.
- * Matched loosely on the prefix — the exact key is verified elsewhere, and a
- * malformed key is not evidence that the sanctioned route was NOT used. */
-const POSTING_MARKER_RE = /<!--\s*qcr-post:/;
+/** The posting receipt marker: `<!-- qcr-post:v1:<pr>:<round>:<head> -->`. */
+const POSTING_MARKER_RE = /<!--\s*qcr-post:(\S+?)\s*-->/g;
+
+/** The body carries a marker whose key the daemon issued for this PR AT this
+ * review's commit. The key names its head, and both shell routes pin the
+ * review's `commit_id` to the round's head, so a legitimate marker always
+ * agrees with it; a key from another PR, another head or no round at all is
+ * not a trace. */
+function hasIssuedMarker(body: string, commitId: string, issued: ReadonlySet<string>): boolean {
+  for (const m of body.matchAll(POSTING_MARKER_RE)) {
+    const key = m[1]!;
+    if (!issued.has(key)) continue;
+    if (key.split(":").slice(3).join(":").toLowerCase() === commitId.toLowerCase()) return true;
+  }
+  return false;
+}
 
 /** Authored by THIS reviewer — by its identities, never by the account type:
  * every GitHub App posts as a `Bot`, and another installed review bot has no
@@ -473,7 +512,7 @@ export function auditUngatedReviews(
     const state = (r.state ?? "").toUpperCase();
     if (state === "PENDING" || state === "DISMISSED") continue;
     if ((r.commit_id ?? "").toLowerCase() !== head) continue;
-    if (POSTING_MARKER_RE.test(r.body ?? "")) continue;
+    if (hasIssuedMarker(r.body ?? "", r.commit_id ?? "", traces.postingKeys)) continue;
     if (traces.reviewIds.has(r.id)) continue;
     // The shell route's mark. For an APPROVE the mark must ALSO say APPROVE:
     // an approval is the one outcome the whole gate exists to control, and

@@ -67,6 +67,11 @@ export type RecheckTrigger = "push" | "ci" | "base_advance" | "author_reply";
 /** A changed file as the compare/files APIs report it. */
 export type DeltaFile = PrFileEntry & { previous_filename?: string };
 
+/** A file list as the adapter hands it over. `truncated` means GitHub's own
+ * cap cut it short (a compare's 300 files, a PR's 3,000): the list is a
+ * floor, and nothing may be concluded from a file's ABSENCE from it. */
+export type DeltaList = readonly DeltaFile[] & { truncated?: boolean };
+
 // ---- the ONE trivial-delta classifier ------------------------------------
 
 /** Why a file was judged not worth re-reviewing. */
@@ -92,6 +97,8 @@ export interface DeltaClassification {
   files: FileClass[];
   /** The subset the session is actually asked to look at. */
   significant: FileClass[];
+  /** The delta was cut short by GitHub — significant whatever it shows. */
+  truncated?: true;
 }
 
 /** Dependency-manifest lockfiles: generated, never reviewed on their content. */
@@ -247,6 +254,14 @@ export interface ClassifyOpts {
   resolvedFiles?: ReadonlySet<string>;
 }
 
+/** The PR's own files as an ownership set — or undefined, "ownership not
+ * consulted", when the list was truncated: a PR-owned file past GitHub's cap
+ * would otherwise read as a base-merge file, which is trivial. */
+export function ownershipSet(own: DeltaList): Set<string> | undefined {
+  if (own.truncated) return undefined;
+  return new Set(own.flatMap((f) => (f.previous_filename ? [f.filename, f.previous_filename] : [f.filename])));
+}
+
 /** Classify one file. The rules are deliberately narrow: anything a rule does
  * not positively recognise is significant. */
 export function classifyFile(file: DeltaFile, opts: ClassifyOpts = {}): FileClass {
@@ -294,10 +309,7 @@ export function classifyFile(file: DeltaFile, opts: ClassifyOpts = {}): FileClas
  * content edit comes back as a delete + an add. That pair is a renumber only
  * when its content, too, differs by migration numbers alone (`digitsOnly`).
  */
-export function classifyDelta(
-  files: readonly DeltaFile[],
-  opts: ClassifyOpts = {},
-): DeltaClassification {
+export function classifyDelta(files: DeltaList, opts: ClassifyOpts = {}): DeltaClassification {
   const removedMigrations = new Map<string, DeltaFile>();
   for (const f of files) {
     if (f.status !== "removed") continue;
@@ -342,6 +354,10 @@ export function classifyDelta(
     return classifyFile(f, opts);
   });
   const significant = classified.filter((f) => f.class === "significant");
+  // A truncated delta is significant by construction: the files GitHub did not
+  // return may be exactly the PR-owned edit, and "all visible files trivial"
+  // says nothing about them.
+  if (files.truncated) return { class: "significant", files: classified, significant, truncated: true };
   const cls: DeltaClass =
     classified.length === 0 ? "empty" : significant.length > 0 ? "significant" : "trivial";
   return { class: cls, files: classified, significant };
@@ -371,7 +387,7 @@ export interface RecheckPlanInput {
   standing: string | null | undefined;
   last_reviewed_sha: string;
   head_sha: string;
-  delta: readonly DeltaFile[];
+  delta: DeltaList;
   /** The PR's own changed files (ownership, see ClassifyOpts.prFiles). */
   prFiles?: readonly string[];
   /** Hand-resolved merge files (see ClassifyOpts.resolvedFiles). */
@@ -466,7 +482,9 @@ export function planRecheck(input: RecheckPlanInput): RecheckPlan {
   return {
     action: "recheck",
     class: classification.class,
-    evidence: `${classification.significant.length} changed file(s) this review has not seen`,
+    evidence: classification.truncated
+      ? `GitHub truncated the delta at ${classification.files.length} file(s) — the unseen remainder may hold changes this review has not seen`
+      : `${classification.significant.length} changed file(s) this review has not seen`,
     classification,
   };
 }
@@ -536,9 +554,9 @@ export interface RecheckAdapter {
     merged: boolean;
     title?: string;
   }>;
-  listPrFiles(n: number): Promise<DeltaFile[]>;
+  listPrFiles(n: number): Promise<DeltaList>;
   /** `GET /compare/<base>...<head>` — the files a range changed. */
-  compareFiles(base: string, head: string): Promise<DeltaFile[]>;
+  compareFiles(base: string, head: string): Promise<DeltaList>;
 }
 
 export interface RecheckDeps {
@@ -629,17 +647,15 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
   if (!deps.adapter.compareFiles || !deps.adapter.listPrFiles)
     return done({ action: "noop", reason: "no-delta-source", class: "empty" });
 
-  let delta: DeltaFile[];
-  let prFiles: string[];
+  let delta: DeltaList;
+  let prFiles: string[] | undefined;
   try {
     delta =
       req.trigger === "base_advance" && req.base
         ? await deps.adapter.compareFiles(req.base.before, req.base.after)
         : await deps.adapter.compareFiles(lastReviewed, head);
-    const own = await deps.adapter.listPrFiles(req.pr);
-    prFiles = own.flatMap((f) =>
-      f.previous_filename ? [f.filename, f.previous_filename] : [f.filename],
-    );
+    const ownership = ownershipSet(await deps.adapter.listPrFiles(req.pr));
+    prFiles = ownership ? [...ownership] : undefined;
   } catch (err) {
     // A read failure is not evidence of anything. Uphold and log: the reconcile
     // poll and the next trigger both come round again.
@@ -684,7 +700,7 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     last_reviewed_sha: lastReviewed,
     head_sha: head,
     delta,
-    prFiles,
+    ...(prFiles ? { prFiles } : {}),
     resolvedFiles,
     ...(req.ci ? { ci: req.ci } : {}),
   });

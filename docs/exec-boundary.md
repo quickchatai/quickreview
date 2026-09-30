@@ -297,7 +297,8 @@ that consults them never runs. *Falsify it by* executing a payload from
 
 **G3 — an approval the daemon did not make is visible within one reconcile
 poll.** A bot-authored `APPROVED` review at a PR's current head with no local
-trace (posting marker, `rounds.gh_review_id`, the `reviewed_heads` mark,
+trace (an posting marker carrying a key the daemon issued for that PR at
+that head, `rounds.gh_review_id`, the `reviewed_heads` mark,
 or a migration-precheck event) raises an `ungated_approval` anomaly.
 *Falsify it by* posting a bot review at the current head that acquires one of
 those traces without going through the gate or the sanctioned scripts.
@@ -369,6 +370,13 @@ the write tool, a redirection, or a `bash -c` payload — and getting an
   so a legitimate marker-less APPROVE at head H followed by any later
   `post-review.sh` COMMENT at the same H overwrites `posted_event` and the
   approval loses its trace.
+- **G3's marker trace is bounded to ISSUED keys, not to the sanctioned route.**
+  A marker counts only when its key is a `rounds.posting_key` the daemon
+  issued for that PR and names the review's own commit, so a typed-in marker
+  (the format is public in `scripts/post-review.sh`) is no trace. But the
+  round's session is handed its own key (`QCR_POSTING_KEY`), so a session that
+  is already past layer 2 can still stamp that one key onto an out-of-gate
+  review at its own round's head.
 - **G3 is weakened by the migration-precheck excuse.** `migrationPrecheck` is
   `lastEventAt(…) !== undefined` with no time bound, so a PR that has ever had
   a migration-collision comment excuses an unaccounted COMMENT review at its

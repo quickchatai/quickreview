@@ -707,6 +707,9 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
               reviewIds: store.postedReviewIds(n),
               reviewedHead: store.reviewedHead(n) ?? undefined,
               migrationPrecheck: store.lastEventAt("migration_collision_comment", n) !== undefined,
+              postingKeys: new Set(
+                store.roundsFor(n).flatMap((r) => (r.posting_key ? [r.posting_key] : [])),
+              ),
             },
             { botLogin, appSlug: cfg.github.app_slug },
           );
