@@ -196,6 +196,30 @@ export function histogramLines(dist: Dist, width: number, color: string = FG.acc
 }
 
 /**
+ * The column chart's geometry, shared with its day axis so the two can never
+ * disagree: `slot` cells per column (bar + one-space gap; widens with the
+ * terminal, up to 5 cells of bar, so a wide pane fills instead of showing thin
+ * threads) and `n` columns — fewer than `len` when the series is
+ * bucket-averaged to fit. A gapless slot-1 column needs no trailing gap.
+ */
+function columnGeometry(len: number, width: number): { slot: number; n: number } {
+  const w = Math.max(1, Math.floor(width));
+  const slot = Math.max(1, Math.min(6, Math.floor((w + 1) / len)));
+  const n = Math.min(len, Math.max(1, Math.floor((w + (slot > 1 ? 1 : 0)) / slot)));
+  return { slot, n };
+}
+
+/** The bucket `bucketize(len → n)` averages series index `i` into. */
+function bucketOf(i: number, len: number, n: number): number {
+  if (len <= n) return i;
+  const per = len / n;
+  let b = Math.min(n - 1, Math.floor(i / per));
+  while (b + 1 < n && Math.floor((b + 1) * per) <= i) b++;
+  while (b > 0 && Math.floor(b * per) > i) b--;
+  return b;
+}
+
+/**
  * Multi-row column chart (tall terminals): block glyphs stacked per column,
  * full `█` rows plus a fractional top glyph, single hue, dim `·` baseline for
  * a zero day. Series longer than the width are bucket-averaged.
@@ -209,11 +233,8 @@ export function columnChart(
   const w = Math.max(1, Math.floor(width));
   const h = Math.max(1, Math.floor(height));
   if (values.length === 0) return [];
-  // Columns widen with the terminal — up to 5 cells of bar per value plus a
-  // one-space gap, so a wide pane fills instead of showing thin threads.
-  const slot = Math.max(1, Math.min(6, Math.floor((w + 1) / values.length)));
+  const { slot, n } = columnGeometry(values.length, w);
   const cell = Math.max(1, slot - 1);
-  const n = Math.min(values.length, Math.max(1, Math.floor((w + 1) / slot)));
   const vals = bucketize(values, n);
   const max = Math.max(...vals, 0);
   const gap = slot > 1 ? " " : "";
@@ -231,12 +252,17 @@ export function columnChart(
   return rows;
 }
 
-/** Sparse day axis under a column chart: first, last, and weekly ticks. */
-export function dayAxis(days: string[], width: number, slot: number): string {
+/**
+ * Sparse day axis under a `columnChart` of the same series and width: first,
+ * last, and weekly ticks, each at the column its day was bucketed into.
+ */
+export function dayAxis(days: string[], width: number): string {
   const w = Math.max(0, Math.floor(width));
   const buf = new Array<string>(w).fill(" ");
+  const { slot, n } = columnGeometry(Math.max(1, days.length), w);
   const put = (idx: number, text: string): void => {
-    const start = Math.min(Math.max(0, idx * slot), w - text.length);
+    const col = bucketOf(idx, days.length, n) * slot;
+    const start = Math.min(Math.max(0, col), w - text.length);
     if (start < 0) return;
     for (let i = start - 1; i <= start + text.length; i++)
       if (i >= 0 && i < w && buf[i] !== " ") return;
@@ -519,15 +545,14 @@ export function metricsCards(
         const spend = daily.map((d) => d.spend_usd);
         const days = daily.map((d) => d.day);
         if (chartH > 0) {
-          const slot = Math.max(1, Math.min(6, Math.floor((w + 1) / days.length)));
           return [
             dim(`rounds/day · max ${Math.max(...rounds)}`),
             ...columnChart(rounds, w, chartH, ACCENTS.blue),
-            dayAxis(days, w, slot),
+            dayAxis(days, w),
             "",
             dim(`spend/day · max ${usd(Math.max(...spend))}`),
             ...columnChart(spend, w, chartH, ACCENTS.yellow),
-            dayAxis(days, w, slot),
+            dayAxis(days, w),
           ];
         }
         const sparkW = Math.max(8, w - 14);

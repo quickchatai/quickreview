@@ -336,12 +336,25 @@ describe("chart primitives", () => {
 
   it("dayAxis labels first, last and weekly ticks without collisions", () => {
     const days = Array.from({ length: 15 }, (_, i) => `2026-07-${String(i + 1).padStart(2, "0")}`);
-    const axis = stripAnsi(dayAxis(days, 40, 2));
+    const axis = stripAnsi(dayAxis(days, 40));
     expect(axis.startsWith("07-01")).toBe(true);
     expect(axis).toContain("07-08");
     expect(axis.trimEnd().endsWith("07-15")).toBe(true);
     expect(displayWidth(axis)).toBeLessThanOrEqual(40);
-    expect(dayAxis([], 40, 2)).toBe("");
+    expect(dayAxis([], 40)).toBe("");
+  });
+
+  it("dayAxis ticks sit over the bucket their day was averaged into on a narrow pane", () => {
+    // 30 days into 25 columns: the chart bucket-averages, so the axis must use
+    // the same day -> column mapping or its labels drift off their bars.
+    const days = Array.from({ length: 30 }, (_, i) => `2026-07-${String(i + 1).padStart(2, "0")}`);
+    const values = days.map((_, i) => (i === 14 ? 1 : 0));
+    const bars = stripAnsi(columnChart(values, 25, 1, ACCENTS.blue)[0]!);
+    const axis = stripAnsi(dayAxis(days, 25));
+    expect(displayWidth(bars)).toBe(25);
+    expect(axis.indexOf("07-15")).toBe(bars.indexOf("█"));
+    expect(axis.startsWith("07-01")).toBe(true);
+    expect(axis.trimEnd().endsWith("07-30")).toBe(true);
   });
 
   it("activityChartHeight only grows the card on a tall terminal", () => {
