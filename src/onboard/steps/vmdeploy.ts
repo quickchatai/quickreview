@@ -264,12 +264,17 @@ export function vmDeployStep(opts: VmDeployStepOptions = {}): OnboardingStep {
       if (!checks.every((c) => c.ok)) return { ok: false, checks };
       const alias = sshAliasOf(ctx.choices);
       const record = deployRecordFor(ctx.choices[VM_DEPLOY_CHOICE_KEY], alias);
+      const other = parseDeployRecord(ctx.choices[VM_DEPLOY_CHOICE_KEY]);
       checks.push(
         record === null
           ? {
               name: "deploy",
               ok: false,
-              detail: `no deploy recorded yet to ${alias} — run the ${VM_DEPLOY_STEP_ID} step`,
+              detail:
+                other === null
+                  ? `no deploy recorded yet to ${alias} — run the ${VM_DEPLOY_STEP_ID} step`
+                  : `the recorded deploy (${other.at}) was to ${other.host === null ? "an unrecorded host" : `"${other.host}"`}, ` +
+                    `not ${alias} — run the ${VM_DEPLOY_STEP_ID} step (it defaults to a full rebuild for a host with no deploy on record)`,
             }
           : {
               name: "deploy",
