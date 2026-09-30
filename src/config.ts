@@ -1383,8 +1383,10 @@ export interface ScanConfig {
   case_max_files: number;
   case_max_lines: number;
   /** Stage 2: a deep lens never measured at a row's tier, effort
-   * and validator setting — and no other lens measured there either — is
-   * priced at stage 1's measured rate times this. A conservative stand-in
+   * and validator setting — no other lens measured there either, and no
+   * factor learnable from a stage-2 measurement with the validator the other
+   * way (stage2.ts `priceStage2Row`) — is priced at stage 1's measured rate
+   * times this. A conservative stand-in
    * until the first stage-2 run measures the real one; the hard stop holds
    * whatever it says. */
   unmeasured_rate_factor: number;

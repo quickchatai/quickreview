@@ -60,6 +60,8 @@ import {
 import {
   clickStartStage2,
   keptRows,
+  priceIsMeasured,
+  priceLabel,
   readStage2Proposal,
   stage2ClickOutcome,
   type StoredStage2Proposal,
@@ -626,7 +628,11 @@ function planRows(deps: ScanTabDeps, st: ScanTabState, rightW: number, bodyRows:
     const i = start + k;
     const mark = r.status !== "run" ? "–" : off.includes(r.id) ? " " : "✓";
     const what =
-      r.status === "covered" ? `${MUTED}covered — free, not run again${RESET}` : r.status === "over-budget" ? `${WARN}over the budget — left out${RESET}` : usd(r.estimate_usd);
+      r.status === "covered"
+        ? `${MUTED}covered — free, not run again${RESET}`
+        : r.status === "over-budget"
+          ? `${WARN}over the budget — left out${RESET}`
+          : `${usd(r.estimate_usd)} ${priceIsMeasured(r.price) ? "meas" : `${MUTED}est${RESET}`}`;
     const files = [...r.files, ...r.tests].length;
     const text = truncate(
       `[${mark}] ${r.id} ${r.lens.replace(/^pass-/, "")}  ${r.tier}${r.effort !== "tier" ? `/${r.effort}` : ""}  ${r.units.join("+")} (${files} files)  ${what}`,
@@ -649,6 +655,7 @@ function planRows(deps: ScanTabDeps, st: ScanTabState, rightW: number, bodyRows:
   if (sel) {
     row([{ text: "" }]);
     for (const l of wrap(sanitizeText(`${sel.id}: ${sel.reason}`), rightW - 3).slice(0, 3)) row([{ text: l }]);
+    if (sel.status !== "covered") row([{ text: truncate(`${MUTED}price: ${priceLabel(sel.price)}${RESET}`, rightW - 3) }]);
     const names = [...sel.files, ...sel.tests].map((f) => f.path);
     row([{ text: truncate(`${MUTED}${names.join(", ")}${RESET}`, rightW - 3) }]);
   }

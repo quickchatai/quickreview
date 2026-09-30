@@ -15,7 +15,8 @@ import type { LensTuningMap } from "../src/lenstuning.js";
 import { stateHomeFs } from "../src/setup/adapters.js";
 import type { CaseOutcome, CaseSpec } from "../src/setup/engine.js";
 import { FindingsStore } from "../src/setup/findings.js";
-import { LEDGER_FILE, type LedgerFile } from "../src/setup/ledger.js";
+import { Ledger, LEDGER_FILE, type LedgerEntry, type LedgerFile } from "../src/setup/ledger.js";
+import { renderProposal } from "../extensions/setup-scan.js";
 import { ScanRunner, type ScanPorts, type ScanSource, type ScanTree } from "../src/setup/scanrun.js";
 import { pairTests, type Stage2RowRequest } from "../src/setup/stage2.js";
 import {
@@ -147,6 +148,12 @@ async function calibrate(s: ScanRunner): Promise<void> {
 }
 
 const STAGE1_RATE = (0.05 / 150) * 1000;
+
+function storedProposal() {
+  const r = readStage2Proposal(stateDir);
+  if (!r.ok || r.proposal === null) throw new Error("no stored proposal");
+  return r.proposal;
+}
 
 const CROSS: Stage2RowRequest = {
   lens: "pass-security",
@@ -369,6 +376,39 @@ describe("starting stage 2 on the operator's word", () => {
     const only = await propose(s, [CROSS]);
     expect(only.runnable).toBe(0);
     expect(await s.startStage2({ key: only.key })).toMatchObject({ ok: false, errors: [expect.stringMatching(/nothing to run/)] });
+  });
+
+  it("an unmeasured row is priced from a factor LEARNED at the other validator setting; the run keeps its approved price, the NEXT proposal is measured", async () => {
+    const s = new ScanRunner(ports(runner()));
+    await calibrate(s);
+    // Earlier runs with the skeptic ON: stage 1 at $0.10/kline, pass-security
+    // at $0.30/kline — stage 2 cost 3× stage 1 there.
+    const past = (lens: string, tier: string, effort: string, usd: number, i: number): LedgerEntry => ({
+      path: `old/${lens}-${i}.py`, blob: `b${i}`, lens, tier, effort, validator: true, sha: SHA,
+      lines: 1000, cost_usd: usd, run: "scan-old", case: `c${i}`, at: "2026-09-01T00:00:00Z",
+    });
+    new Ledger(stateHomeFs(stateDir)).record([
+      past("pass-scan", SCAN_DEFAULTS.tier, SCAN_DEFAULTS.effort, 0.1, 1),
+      past("pass-security", "sol-med", "tier", 0.3, 2),
+    ]);
+    const p = await propose(s, [CROSS]);
+    const row = p.rows[0]!;
+    expect(row.price).toMatchObject({ basis: "learned", from: "pass-security", learned: { validator: true } });
+    expect(row.estimate_usd).toBeCloseTo((70 / 1000) * STAGE1_RATE * 3, 9);
+    expect(row.estimate_usd).toBeLessThan((70 / 1000) * STAGE1_RATE * SCAN_DEFAULTS.unmeasured_rate_factor);
+    const shown = renderProposal(storedProposal());
+    expect(shown).toMatch(/row-1: .*\(estimate: learned from pass-security with the validator on \(×3\.00 stage 1\)/);
+    expect(shown).toMatch(/Priced by measurement: 0 row\(s\); by estimate: 1 row\(s\)\./);
+
+    await s.startStage2({ key: p.key });
+    await s.idle();
+    // The approved plan stood: its hard stop is the learned estimate, whatever the case measured.
+    expect(s.status().run).toMatchObject({ mode: "stage2", state: "complete", cap_usd: p.cap_usd });
+
+    const next = await propose(s, [{ lens: "pass-security", files: ["web/index.ts"], reason: "the client token" }]);
+    expect(next.rows[0]!.price.basis).toBe("measured");
+    expect(next.rows[0]!.price.rate.usd_per_kline).toBeCloseTo((0.04 / 70) * 1000, 9);
+    expect(renderProposal(storedProposal())).toMatch(/Priced by measurement: 1 row\(s\); by estimate: 0 row\(s\)\./);
   });
 
   it("refuses no key, a key that is not the latest proposal, and a proposal whose price moved since it was shown", async () => {

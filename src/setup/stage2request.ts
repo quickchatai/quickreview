@@ -36,7 +36,7 @@
 // `scan/stage2-start-result.json` (the engine's answer).
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { Stage2Row, Stage2RowRequest } from "./stage2.js";
+import type { RowPrice, Stage2Row, Stage2RowRequest } from "./stage2.js";
 
 export const STAGE2_FILE = "scan/stage2.json";
 export const STAGE2_START_FILE = "scan/stage2-start.json";
@@ -251,4 +251,31 @@ export function stage2ClickOutcome(home: string, request: string): string | null
   const r = readStage2StartResult(home, request);
   if (r === null) return null;
   return r.ok ? `stage 2 started: ${r.run}` : `stage 2 refused: ${r.errors.join("; ")}`;
+}
+
+// ---- a row's price, as the preview names it -------------------------------------
+
+/** Whether a row's price is a measurement of the row's own lens at its own
+ * settings — every other basis is an estimate. */
+export function priceIsMeasured(p: RowPrice): boolean {
+  return p.basis === "measured";
+}
+
+/** What the preview says a row's price stands on: `measured`, or
+ * `estimate: …` and how it was made. */
+export function priceLabel(p: RowPrice): string {
+  const onOff = (v: boolean): string => (v ? "on" : "off");
+  switch (p.basis) {
+    case "measured":
+      return "measured";
+    case "borrowed":
+      return `estimate: borrowed from ${p.from}`;
+    case "learned":
+      return p.learned
+        ? `estimate: learned from ${p.from} with the validator ${onOff(p.learned.validator)} (×${p.learned.factor.toFixed(2)} stage 1), ` +
+            `stage 1 validator ${onOff(!p.learned.validator)}/${onOff(p.learned.validator)} ×${p.learned.skeptic.toFixed(2)}`
+        : `estimate: learned from ${p.from}`;
+    default:
+      return `estimate: extrapolated from ${p.from}${p.factor !== undefined ? ` (×${p.factor})` : ""}`;
+  }
 }

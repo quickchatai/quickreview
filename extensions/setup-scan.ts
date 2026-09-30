@@ -41,7 +41,7 @@ import { FindingsStore } from "../src/setup/findings.js";
 import { stateHomeFs } from "../src/setup/adapters.js";
 import { SEVERITIES, type ScanSeverity } from "../src/setup/scan.js";
 import { lensTiers, stage2Lenses, MAX_STAGE2_ROWS } from "../src/setup/stage2.js";
-import type { StoredStage2Proposal } from "../src/setup/stage2request.js";
+import { priceIsMeasured, priceLabel, type StoredStage2Proposal } from "../src/setup/stage2request.js";
 import { buildScanAgents, loadScanConfig, scanSettings, SCAN_AGENTS_DIR } from "../src/setup/scanbuild.js";
 import { escapeControls } from "../src/setup/textsniff.js";
 import { ScanRunner, type ScanPreview, type ScanSettings, type ScanStatus, type StoredSuggestion } from "../src/setup/scanrun.js";
@@ -269,7 +269,7 @@ export function renderProposal(p: StoredStage2Proposal): string {
   );
   const rows = p.rows.map((r) => {
     const mark = r.status === "run" ? "" : r.status === "covered" ? " — COVERED (already read at this content, free)" : ` — OVER BUDGET (${usd(r.estimate_usd)}, left out)`;
-    const price = r.price.basis === "measured" ? "measured" : r.price.basis === "borrowed" ? `borrowed from ${r.price.from}` : `extrapolated from ${r.price.from}`;
+    const price = priceLabel(r.price);
     return [
       `  ${r.id}: ${r.lens} at ${r.tier} over ${r.units.join(" + ")}${r.units.length > 1 ? " (cross-module)" : ""} — ${r.files.length} file(s)` +
         (r.tests.length ? ` + ${r.tests.length} paired test(s)` : "") +
@@ -281,6 +281,14 @@ export function renderProposal(p: StoredStage2Proposal): string {
     ].join("\n");
   });
   out.push(rows.join("\n"));
+  const priced = p.rows.filter((r) => r.status !== "covered");
+  const measured = priced.filter((r) => priceIsMeasured(r.price)).length;
+  if (priced.length > 0) {
+    out.push(
+      `Priced by measurement: ${measured} row(s); by estimate: ${priced.length - measured} row(s).` +
+        (measured < priced.length ? " An estimate stands for this run once approved; the next proposal is priced from what the run measures." : ""),
+    );
+  }
   if (p.over_budget_usd > 0) out.push(`Left out by the budget: ${usd(p.over_budget_usd)} of rows.`);
   if (p.runnable > 0) {
     out.push(

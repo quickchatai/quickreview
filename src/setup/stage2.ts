@@ -24,13 +24,21 @@
 //     or a PR body (`DIFF_ONLY_LENSES`), a lens the repo's profile switched
 //     off, and a tier below the lens's `min_tier` (or other than `sol-high`
 //     for a risk pass) are refused.
-//   * PRICED FROM THE LEDGER. A row's price is its lines at a measured
-//     $/kline: this lens at these settings when the ledger has it; else
-//     another DEEP lens measured at the same tier, effort and validator
+//   * PRICED FROM THE LEDGER (`priceStage2Row`). A row's price is its lines
+//     at a $/kline: this lens measured at these settings when the ledger has
+//     it ("measured" — the only price the preview calls a measurement);
+//     else another DEEP lens measured at the same tier, effort and validator
 //     setting ("borrowed" — never pass-scan, whose cheap wide rate reaches a
-//     row only through the factor); else stage 1's own measured rate scaled by `[scan]
+//     row only through a factor); else LEARNED: stage 1's measured rate at
+//     the row's validator setting × the stage-2/stage-1 factor a deep lens
+//     (this one first) showed at the same tier and effort with the validator
+//     the OTHER way — stage 1 measured both ways is what carries the
+//     skeptic's share across; else stage 1's rate scaled by `[scan]
 //     unmeasured_rate_factor` ("extrapolated"). With no measured rate at all
 //     there is no estimate, and the proposal is refused: run stage 1 first.
+//     A price is fixed when the operator approves it: a run's own finished
+//     cases never re-price that run (its hard stop stands) — the ledger rows
+//     they write are what the NEXT proposal is priced from.
 //   * FITTED TO A BUDGET, WHEN GIVEN ONE. Rows are kept in the companion's
 //     order (most valuable first) while they fit; a row that does not fit is
 //     left out and named, and a later, cheaper row may still fit. A row whose
@@ -57,6 +65,7 @@ import {
   type TreeFile,
   type UnreadableReason,
 } from "./scan.js";
+import { measuredRate, rateWhere, type LedgerEntry } from "./ledger.js";
 import { assign, type CaseBudget, type UnitCut } from "./unitcut.js";
 
 /** At most this many rows in one proposal. */
@@ -77,13 +86,77 @@ export interface Stage2RowRequest {
   reason: string;
 }
 
-export type PriceBasis = "measured" | "borrowed" | "extrapolated";
+export type PriceBasis = "measured" | "borrowed" | "learned" | "extrapolated";
 
 export interface RowPrice {
   rate: ScanRate;
   basis: PriceBasis;
-  /** The lens whose measured cost it is (this row's own when `measured`). */
+  /** The lens whose measured cost it is (this row's own when `measured`;
+   * the lens the factor was learned from when `learned`). */
   from: string;
+  /** `learned` only: the validator setting the stage-2 measurement was at,
+   * its rate over stage 1's at that setting, and stage 1's rate at the row's
+   * setting over that one (the skeptic's measured share, as a multiplier). */
+  learned?: { validator: boolean; factor: number; skeptic: number };
+  /** `extrapolated` only: the `[scan] unmeasured_rate_factor` applied. */
+  factor?: number;
+}
+
+/** The scan settings a stage-2 price reads. */
+export type PriceSettings = { tier: string; effort: string; validator: boolean; unmeasured_rate_factor: number };
+
+/**
+ * A stage-2 row's price at `lens`/`tier`/`effort` from the ledger (header
+ * "PRICED FROM THE LEDGER"), or null when stage 1 has measured nothing.
+ */
+export function priceStage2Row(entries: readonly LedgerEntry[], cfg: PriceSettings, lens: string, tier: string, effort: string): RowPrice | null {
+  const validator = cfg.validator;
+  const own = measuredRate(entries, { lens, tier, effort, validator });
+  if (own) return { rate: own, basis: "measured", from: lens };
+  // Borrowed only from another DEEP lens: pass-scan is the cheap wide pass,
+  // and its rate at a matching tier/effort (a profile giving a deep lens
+  // `effort = "low"` at `[scan] tier`) would price a deep row at stage 1's
+  // cost unscaled — stage 1's rate reaches a row only through a factor.
+  const deepAt = (v: boolean, same: boolean) => (e: LedgerEntry): boolean =>
+    (same ? e.lens === lens : e.lens !== lens && e.lens !== SCAN_PASS) && e.tier === tier && e.effort === effort && e.validator === v;
+  const lensesOf = (keep: (e: LedgerEntry) => boolean): string =>
+    [...new Set(entries.filter((e) => keep(e) && e.cost_usd !== null).map((e) => e.lens))].sort().join(", ");
+  const borrowed = rateWhere(entries, deepAt(validator, false));
+  if (borrowed) return { rate: borrowed, basis: "borrowed", from: lensesOf(deepAt(validator, false)) };
+  // Stage 1 at a validator setting: at `[scan]`'s tier and effort, else at
+  // any (the same fallback the extrapolation has always used).
+  const stage1At = (v: boolean): ScanRate | null =>
+    measuredRate(entries, { lens: SCAN_PASS, tier: cfg.tier, effort: cfg.effort, validator: v }) ??
+    rateWhere(entries, (e) => e.lens === SCAN_PASS && e.validator === v);
+  // Learned: a stage-2 measurement at the same tier and effort with the
+  // validator the other way, as a factor over stage 1 at that setting,
+  // applied to stage 1 at the row's setting. Both stage-1 rates must be
+  // measured — their ratio IS the skeptic's measured share; without it
+  // there is nothing to carry the measurement across.
+  const other = !validator;
+  const s1Row = stage1At(validator);
+  const s1Other = stage1At(other);
+  if (s1Row && s1Other && s1Other.usd_per_kline > 0) {
+    for (const same of [true, false]) {
+      const s2 = rateWhere(entries, deepAt(other, same));
+      if (!s2) continue;
+      const factor = s2.usd_per_kline / s1Other.usd_per_kline;
+      return {
+        rate: { ...s2, usd_per_kline: s1Row.usd_per_kline * factor },
+        basis: "learned",
+        from: lensesOf(deepAt(other, same)),
+        learned: { validator: other, factor, skeptic: s1Row.usd_per_kline / s1Other.usd_per_kline },
+      };
+    }
+  }
+  const stage1 = s1Row ?? rateWhere(entries, (e) => e.lens === SCAN_PASS);
+  if (!stage1) return null;
+  return {
+    rate: { ...stage1, usd_per_kline: stage1.usd_per_kline * cfg.unmeasured_rate_factor },
+    basis: "extrapolated",
+    from: SCAN_PASS,
+    factor: cfg.unmeasured_rate_factor,
+  };
 }
 
 export type Stage2RowStatus = "run" | "covered" | "over-budget";

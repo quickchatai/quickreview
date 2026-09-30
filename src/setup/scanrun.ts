@@ -66,7 +66,7 @@ import { PASS_TIER_ORDER, type PassTier } from "../types.js";
 import type { ScanConfig } from "../config.js";
 import type { CaseOutcome, CaseRunner, Refusal, StateFs } from "./engine.js";
 import { FindingsStore, type FindingDoubt, type ReconcileResult, type ReportedFinding, type Validity } from "./findings.js";
-import { casesFor, coveredBy, lastScanned, Ledger, measuredRate, newestRead, partialRanges, rateWhere, readings, type LedgerEntry, type RateKey } from "./ledger.js";
+import { casesFor, coveredBy, lastScanned, Ledger, measuredRate, newestRead, partialRanges, readings, type LedgerEntry, type RateKey } from "./ledger.js";
 import {
   anchoredLines,
   calibrationCases,
@@ -91,7 +91,7 @@ import {
   type TreeFile,
   type UnreadableReason,
 } from "./scan.js";
-import { planStage2, stage2Cases, stage2CasePrompt, stage2Key, unitOwner, type RowPrice, type Stage2Row, type Stage2RowRequest } from "./stage2.js";
+import { planStage2, priceStage2Row, stage2Cases, stage2CasePrompt, stage2Key, unitOwner, type Stage2Row, type Stage2RowRequest } from "./stage2.js";
 import {
   keptRows,
   parseStage2File,
@@ -764,34 +764,6 @@ export class ScanRunner {
     }
   }
 
-  /** A row's price at `lens`/`tier`/`effort` from the ledger (stage2.ts
-   * "PRICED FROM THE LEDGER"). */
-  private priceRow(entries: readonly LedgerEntry[], cfg: ScanConfig, lens: string, tier: PassTier, effort: string): RowPrice | null {
-    const validator = cfg.validator;
-    const own = measuredRate(entries, { lens, tier, effort, validator });
-    if (own) return { rate: own, basis: "measured", from: lens };
-    // Borrowed only from another DEEP lens: pass-scan is the cheap wide pass,
-    // and its rate at a matching tier/effort (a profile giving a deep lens
-    // `effort = "low"` at `[scan] tier`) would price a deep row at stage 1's
-    // cost unscaled — stage 1's rate reaches a row only through the factor.
-    const others = (e: LedgerEntry): boolean =>
-      e.lens !== lens && e.lens !== SCAN_PASS && e.tier === tier && e.effort === effort && e.validator === validator;
-    const borrowed = rateWhere(entries, others);
-    if (borrowed) {
-      const from = [...new Set(entries.filter((e) => others(e) && e.cost_usd !== null).map((e) => e.lens))].sort().join(", ");
-      return { rate: borrowed, basis: "borrowed", from };
-    }
-    const stage1 =
-      measuredRate(entries, { lens: SCAN_PASS, tier: cfg.tier, effort: cfg.effort, validator }) ??
-      rateWhere(entries, (e) => e.lens === SCAN_PASS);
-    if (!stage1) return null;
-    return {
-      rate: { ...stage1, usd_per_kline: stage1.usd_per_kline * cfg.unmeasured_rate_factor },
-      basis: "extrapolated",
-      from: SCAN_PASS,
-    };
-  }
-
   private async planStage2(request: Stage2RowRequest[], budgetUsd: number | null, ref: string | undefined): Promise<Stage2Planned> {
     const s = this.ports.settings();
     if (!s.ok) return s;
@@ -821,7 +793,7 @@ export class ScanRunner {
       defaultTier: cfg.tier,
       covered: (lens) => coveredBy(entries, lens),
       partial: (lens) => partialRanges(entries, lens),
-      price: (lens, tier, effort) => this.priceRow(entries, cfg, lens, tier, effort),
+      price: (lens, tier, effort) => priceStage2Row(entries, cfg, lens, tier, effort),
       budgetUsd,
     });
     if (!plan.ok) return { ok: false, errors: plan.errors };
