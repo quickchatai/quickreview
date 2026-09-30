@@ -174,7 +174,6 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
   // Every rename the remedy prescribes, per app, for the cross-app follow-up
   // pass below.
   const renamedByApp = new Map<string, { app_label: string; renamed: Map<string, { name: string; number: number }> }>();
-  const handled = new Set<string>();
   for (const [app, entries] of [...prByApp].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
     const base = baseByApp.get(app) ?? new Map<number, MigrationRef>();
     const ordered = [...entries].sort(
@@ -229,36 +228,46 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
     // order and the `renamed` map growing as it goes).
     for (const { ref, patch } of ordered) {
       if (collidingPaths.has(ref.path)) continue;
-      const stale = [...renamed.keys()].find((old) => referencesMigration(patch, old));
-      if (stale === undefined) continue;
-      const dep = renamed.get(stale) as { name: string; number: number };
+      // Same-app dependencies are `(app_label, name)` tuples too; matching the
+      // bare name would take another app's identically named migration.
+      const stales = [...renamed.keys()].filter((old) =>
+        ref.app_label
+          ? referencesAppMigration(patch, ref.app_label, old)
+          : referencesMigration(patch, old),
+      );
+      if (stales.length === 0) continue;
+      const deps = stales.map((stale) => renamed.get(stale) as { name: string; number: number });
       // With the free-number policy above (targets sit above every number
       // either side uses) a follow-up is always at or below its renumbered
       // dependency, so today this is always true; the conditional keeps the
       // remedy correct if the target policy ever tightens.
-      const mustRenumber = ref.number <= dep.number;
+      const mustRenumber = deps.some((dep) => ref.number <= dep.number);
       const targetNumber = mustRenumber ? next++ : ref.number;
       const target = mustRenumber
         ? renamedTo(ref, targetNumber)
         : { name: `${ref.digits}_${ref.name}`, path: ref.path };
-      out.push({
-        app,
-        app_label: ref.app_label,
-        pr_path: ref.path,
-        number: ref.number,
-        base_path: "",
-        target_number: targetNumber,
-        target_path: target.path,
-        dependency_name: dep.name,
-        dependency: `("${ref.app_label}", "${dep.name}")`,
-        kind: "renamed-dependency",
-        stale_dependency: stale,
-        renumber: mustRenumber,
+      // One entry per stale dependency, so every stale tuple gets its own
+      // replacement; the rename rides the first entry only.
+      stales.forEach((stale, i) => {
+        const dep = deps[i] as { name: string; number: number };
+        out.push({
+          app,
+          app_label: ref.app_label,
+          pr_path: ref.path,
+          number: ref.number,
+          base_path: "",
+          target_number: targetNumber,
+          target_path: target.path,
+          dependency_name: dep.name,
+          dependency: `("${ref.app_label}", "${dep.name}")`,
+          kind: "renamed-dependency",
+          stale_dependency: stale,
+          renumber: mustRenumber && i === 0,
+        });
       });
       if (mustRenumber)
         renamed.set(`${ref.digits}_${ref.name}`, { name: target.name, number: targetNumber });
     }
-    for (const c of out) handled.add(c.pr_path);
     renamedByApp.set(app, { app_label: colliding[0]!.ref.app_label, renamed });
   }
 
@@ -270,35 +279,31 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
       const ordered = [...entries].sort(
         (a, b) => a.ref.number - b.ref.number || (a.ref.path < b.ref.path ? -1 : 1),
       );
+      // Every PR file, including one the same-app pass already remedied: its
+      // own-app entry moving says nothing about a stale tuple naming another
+      // app. One entry per stale tuple, across every renamed app.
       for (const { ref, patch } of ordered) {
-        if (handled.has(ref.path)) continue;
-        let hit: { label: string; stale: string; dep: { name: string } } | undefined;
         for (const [otherApp, { app_label, renamed }] of renamedByApp) {
           if (otherApp === app) continue;
-          const stale = [...renamed.keys()].find((old) =>
-            referencesAppMigration(patch, app_label, old),
-          );
-          if (stale !== undefined) {
-            hit = { label: app_label, stale, dep: renamed.get(stale)! };
-            break;
+          for (const [stale, dep] of renamed) {
+            if (!referencesAppMigration(patch, app_label, stale)) continue;
+            out.push({
+              app,
+              app_label: ref.app_label,
+              pr_path: ref.path,
+              number: ref.number,
+              base_path: "",
+              target_number: ref.number,
+              target_path: ref.path,
+              dependency_name: dep.name,
+              dependency: `("${app_label}", "${dep.name}")`,
+              kind: "renamed-dependency",
+              stale_dependency: stale,
+              renumber: false,
+              dependency_app_label: app_label,
+            });
           }
         }
-        if (!hit) continue;
-        out.push({
-          app,
-          app_label: ref.app_label,
-          pr_path: ref.path,
-          number: ref.number,
-          base_path: "",
-          target_number: ref.number,
-          target_path: ref.path,
-          dependency_name: hit.dep.name,
-          dependency: `("${hit.label}", "${hit.dep.name}")`,
-          kind: "renamed-dependency",
-          stale_dependency: hit.stale,
-          renumber: false,
-          dependency_app_label: hit.label,
-        });
       }
     }
   }

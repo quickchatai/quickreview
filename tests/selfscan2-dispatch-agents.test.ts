@@ -96,6 +96,90 @@ describe("migration collisions: a cross-app dependency on a renamed migration", 
   });
 });
 
+describe("migration collisions: follow-ups match the dependency's app, and every stale entry", () => {
+  const body = (out: ReturnType<typeof detectMigrationCollisions>) =>
+    renderMigrationCollisionComment({ collisions: out, base_ref: "master", base_sha: "" });
+
+  it("a same-app follow-up ignores another app's identically named migration", () => {
+    const out = detectMigrationCollisions({
+      files: [
+        { filename: "backend/chat/migrations/0042_a.py", status: "added" },
+        {
+          filename: "backend/chat/migrations/0043_b.py",
+          status: "added",
+          patch: '+    dependencies = [("chat", "0042_existing"), ("billing", "0042_a")]',
+        },
+      ],
+      baseFiles: ["backend/chat/migrations/0042_existing.py", "backend/billing/migrations/0042_a.py"],
+    });
+    expect(out.map((c) => c.pr_path)).toEqual(["backend/chat/migrations/0042_a.py"]);
+    expect(body(out)).not.toContain('("chat", "0042_a")` with');
+  });
+
+  it("a file with its own base collision still gets its cross-app dependency moved", () => {
+    const out = detectMigrationCollisions({
+      files: [
+        { filename: "backend/chat/migrations/0042_a.py", status: "added" },
+        {
+          filename: "backend/billing/migrations/0007_link.py",
+          status: "added",
+          patch: '+    dependencies = [("billing", "0006_x"), ("chat", "0042_a")]',
+        },
+      ],
+      baseFiles: [
+        "backend/chat/migrations/0042_existing.py",
+        "backend/billing/migrations/0006_x.py",
+        "backend/billing/migrations/0007_existing.py",
+      ],
+    });
+    const link = out.filter((c) => c.pr_path === "backend/billing/migrations/0007_link.py");
+    expect(link.map((c) => c.kind)).toEqual(["base-collision", "renamed-dependency"]);
+    expect(link[1]).toMatchObject({ stale_dependency: "0042_a", dependency: '("chat", "0043_a")' });
+    expect(body(out)).toContain('replace `("chat", "0042_a")` with `("chat", "0043_a")`');
+  });
+
+  it("a file depending on renamed migrations of two apps gets both replacements", () => {
+    const out = detectMigrationCollisions({
+      files: [
+        { filename: "backend/billing/migrations/0007_a.py", status: "added" },
+        { filename: "backend/chat/migrations/0042_a.py", status: "added" },
+        {
+          filename: "backend/reports/migrations/0002_link.py",
+          status: "added",
+          patch: '+    dependencies = [("billing", "0007_a"), ("chat", "0042_a")]',
+        },
+      ],
+      baseFiles: [
+        "backend/billing/migrations/0007_existing.py",
+        "backend/chat/migrations/0042_existing.py",
+        "backend/reports/migrations/0001_initial.py",
+      ],
+    });
+    const text = body(out);
+    expect(text).toContain('replace `("billing", "0007_a")` with `("billing", "0008_a")`');
+    expect(text).toContain('replace `("chat", "0042_a")` with `("chat", "0043_a")`');
+  });
+
+  it("a same-app file depending on two renamed migrations gets both, and renames once", () => {
+    const out = detectMigrationCollisions({
+      files: [
+        { filename: "backend/chat/migrations/0042_a.py", status: "added" },
+        { filename: "backend/chat/migrations/0042_b.py", status: "added" },
+        {
+          filename: "backend/chat/migrations/0043_merge.py",
+          status: "added",
+          patch: '+    dependencies = [("chat", "0042_a"), ("chat", "0042_b")]',
+        },
+      ],
+      baseFiles: ["backend/chat/migrations/0042_existing.py"],
+    });
+    const text = body(out);
+    expect(text).toContain('replace `("chat", "0042_a")` with `("chat", "0044_a")`');
+    expect(text).toContain('replace `("chat", "0042_b")` with `("chat", "0045_b")`');
+    expect(text.match(/rename it to `backend\/chat\/migrations\/0046_merge\.py`/g)).toHaveLength(1);
+  });
+});
+
 describe("the collision gate note says whether the remedy was actually delivered", () => {
   const round = {
     pr: 9,
