@@ -147,6 +147,40 @@ describe("enforceLedgerFreshness", () => {
     expect(held[0]?.payload).toBe(ledgerRewriteWake(7, HEAD));
   });
 
+  it("a delayed check for round N never queues a rewrite once round N+1 has started", async () => {
+    // The tail timer fires ~90s after round 1's verdict; by then the
+    // fresh-head successor (round 2, head B) is already running. A wake held
+    // now would be flushed after round 2 and demand the OLD head's header over
+    // the ledger round 2 just wrote — so the superseded check records the miss
+    // and nudges nothing; round 2's own check owns the ledger now.
+    store.upsertPr({
+      number: 7,
+      state: "reviewing",
+      head_sha: "b".repeat(40),
+      title: "t",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    store.startRound(7, "first", ["pass-baseline"], 60);
+    store.startRound(7, "re-review", ["pass-baseline"], 60);
+    const injects: string[] = [];
+    expect(await enforceLedgerFreshness(deps(injects), { pr: 7, roundNo: 1, headSha: HEAD })).toBe(
+      "superseded",
+    );
+    expect(injects).toEqual([]);
+    expect(store.heldWakes(7)).toEqual([]);
+    expect(store.ledgerNudgeSent(7, "round-1")).toBe(false);
+    // Round 2's own check is untouched by the superseded one.
+    expect(
+      await enforceLedgerFreshness(deps(injects), { pr: 7, roundNo: 2, headSha: "b".repeat(40) }),
+    ).toBe("nudged");
+    expect(store.heldWakes(7).map((w) => w.payload)).toEqual([
+      ledgerRewriteWake(7, "b".repeat(40)),
+    ]);
+  });
+
   it("round-less (recheck) checks key the once-cap by head", async () => {
     const injects: string[] = [];
     const d = deps(injects);

@@ -75,12 +75,13 @@ export interface LedgerCheckTarget {
   headSha: string;
 }
 
-export type LedgerCheckResult = "fresh" | "nudged" | "already_nudged";
+export type LedgerCheckResult = "fresh" | "nudged" | "already_nudged" | "superseded";
 
 /**
  * The enforcement step. Fresh ⇒ nothing. Otherwise: logAnomaly("ledger_stale")
  * every time, plus at most ONE nudge per round (per head on the round-less
- * recheck path). Read failures are treated as "missing" — enforcement, not
+ * recheck path). A round-keyed check that a later round has already
+ * overtaken is "superseded": event only, no anomaly, no nudge. Read failures are treated as "missing" — enforcement, not
  * crash — and the caller additionally wraps this in its own safe().
  */
 export async function enforceLedgerFreshness(
@@ -104,6 +105,21 @@ export async function enforceLedgerFreshness(
     path,
     head_sha: headSha,
   });
+
+  // Superseded: the check runs on a settle delay, and by then the PR's next
+  // round may already have started (a fresh-head successor is promoted at
+  // verdict time). That round owns the ledger now and has its own check; a
+  // rewrite wake for THIS round would be held behind it and delivered after
+  // it, demanding the older head's header over the newer snapshot. Keep the
+  // miss on record, nudge nothing.
+  if (roundNo !== null && store.roundsFor(pr).some((r) => r.round_no > roundNo)) {
+    store.logEvent("ledger_check_superseded", pr, {
+      round_no: roundNo,
+      head_sha: headSha,
+      freshness,
+    });
+    return "superseded";
+  }
 
   // Once-per-round cap: the mark is stamped BEFORE the inject, so no failure
   // mode ever nudges twice — the safety direction is "never a loop", and the
