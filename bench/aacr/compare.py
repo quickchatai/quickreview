@@ -38,8 +38,13 @@ import argparse, collections, glob, hashlib, json, os, re, statistics, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 W = {"high": 3, "medium": 2, "low": 1}
-# src/bench/cost.ts GPT6_SOL_USD_PER_MTOK — $ per million tokens, pi's price list.
-GPT6_SOL = {"input": 2, "cacheRead": 0.2, "output": 10}
+# src/bench/cost.ts CODEX_USD_PER_MTOK — $ per million tokens, pi's price list,
+# per model (a summary naming no model predates per-model pricing: gpt-6-sol).
+CODEX_RATES = {
+    "gpt-6-sol": {"input": 2, "cacheRead": 0.2, "output": 10},
+    "gpt-6.1-sol": {"input": 2, "cacheRead": 0.1, "output": 10},
+}
+GPT6_SOL = CODEX_RATES["gpt-6-sol"]
 LEVERS16 = {
     "smoke10": "cline__cline@7d18fb9 linera-io__linera-protocol@3535ddb lvgl__lvgl@4a57db3 ollama__ollama@b6002f6 dbeaver__dbeaver@bc3ac7b mrdoob__three.js@96ab072",
     "dev10": "CherryHQ__cherry-studio@83a2594 bluewave-labs__Checkmate@29e03a6 mpv-player__mpv@0729afe FreeCAD__FreeCAD@699b45c openai__codex@8c952af alibaba__spring-ai-alibaba@4bc7305",
@@ -96,11 +101,14 @@ def usd_and_minutes(case_dir):
     summary = json.load(open(s)) if os.path.exists(s) else {}
     b = summary.get("bridge")
     if not os.path.exists(ev) and b:
-        # The OCR arm does not run through pi: its bridge's tokens at pi's
-        # gpt-6-sol rates, exactly as src/bench/cost.ts prices them.
+        # The bridge arms (OCR, OpenCode, PR-Agent) do not run through pi: their
+        # bridge's tokens at pi's rates for the case's model, exactly as
+        # src/bench/cost.ts prices them. An unknown model is unpriced (None).
+        model = summary.get("model") or (summary.get("fingerprint") or {}).get("model") or "gpt-6-sol"
+        r = CODEX_RATES.get(model)
         inp = b.get("input_tokens") or 0
         cached = min(b.get("cached_tokens") or 0, inp)
-        usd = ((inp - cached) * GPT6_SOL["input"] + cached * GPT6_SOL["cacheRead"] + (b.get("output_tokens") or 0) * GPT6_SOL["output"]) / 1e6
+        usd = None if r is None else ((inp - cached) * r["input"] + cached * r["cacheRead"] + (b.get("output_tokens") or 0) * r["output"]) / 1e6
     if not os.path.exists(ev) and summary.get("arm") == "claude" and summary.get("cost_usd") is not None:
         # The Claude Code arm: its own total_cost_usd (API-price equivalent).
         usd = summary["cost_usd"]
@@ -170,7 +178,8 @@ def score(runs_dir, runs, cases, judge_model):
             for c in j["comments"]:
                 comments[c["verdict"]] += 1
             u, m = usd_and_minutes(os.path.join(runs_dir, run, "cases", iid))
-            usd.append(u)
+            if u is not None:
+                usd.append(u)
             if m:
                 mins.append(m)
             break

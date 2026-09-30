@@ -43,6 +43,11 @@
 //                   [--timeout-min 30] [--thinking medium] [--model openai-codex/gpt-6-sol]
 //                   [--work /work] [--pireview-bin pi-review]      cases run ONE AT A TIME
 //   pireview-report --set <file> --out DIR
+// The PR-Agent arm (src/bench/pragent.ts; image target `pragent`):
+//   pragent-review --set <file> --out DIR [--only id,id] [--store DIR] [--resume] [--keep-tree]
+//                  [--timeout-min 30] [--bridge URL] [--no-pr-text] [--python PATH] [--driver PATH]
+//                  PR-Agent's /describe, /review, /improve per case, cases run ONE AT A TIME
+//   pragent-report --set <file> --out DIR
 //
 // The defect benchmark (src/bench/defects.ts; any run dir, either arm):
 //   defect-judge  --set <file> --defects <file> --out RUN_DIR [--only id,id] [--rounds 1]
@@ -86,6 +91,7 @@ import {
   renderClaudeReport,
 } from "./claudecode.js";
 import { PIREVIEW_DEFAULTS, renderPireviewReport, runPireviewReview } from "./pireview.js";
+import { PRAGENT_DEFAULTS, renderPragentReport, runPragentReview } from "./pragent.js";
 import { run as runCmd } from "./exec.js";
 import { renderWhatifReport, writeWhatifRun } from "./whatifrun.js";
 import {
@@ -110,7 +116,7 @@ import {
 } from "./defects.js";
 import { clearJudgeCase, judgeCase, judgeLabel, loadJudgements } from "./defectjudge.js";
 import { codexCommand } from "./codexcli.js";
-import { caseCostUsd } from "./cost.js";
+import { caseCostUsd, ratesFor } from "./cost.js";
 
 const DEFAULTS = {
   root: "/opt/quickreview/sandbox",
@@ -192,6 +198,7 @@ const ARM_NAMES = {
   opencode: "an OpenCode",
   claude: "a Claude Code",
   pireview: "a pi-review",
+  pragent: "a PR-Agent",
 } as const;
 function assertArm(outDir: string, arm: keyof typeof ARM_NAMES): void {
   const found = runArmOf(outDir);
@@ -823,6 +830,62 @@ async function main(): Promise<number> {
     });
   }
 
+  // ---- the PR-Agent arm (src/bench/pragent.ts) ------------------------------------
+  if (f.cmd === "pragent-review") {
+    const set = loadSet(f.get("--set"));
+    if (!f.get("--out")) throw new Error("--out <dir> is required");
+    const outDir = resolve(f.get("--out")!);
+    assertArm(outDir, "pragent");
+    const bridgeUrl = f.get("--bridge") ?? "http://127.0.0.1:8766";
+    const timeoutMin = Number(f.get("--timeout-min") ?? PRAGENT_DEFAULTS.timeoutMin);
+    if (!Number.isInteger(timeoutMin) || timeoutMin < 1)
+      throw new Error("pragent-review: --timeout-min must be a positive integer");
+    // What the model IS comes from the bridge that serves it, never a flag.
+    let health: Record<string, unknown>;
+    try {
+      const res = await fetch(`${bridgeUrl}/health`, { signal: AbortSignal.timeout(10_000) });
+      health = (await res.json()) as Record<string, unknown>;
+    } catch (err) {
+      throw new Error(`pragent-review: the Codex bridge at ${bridgeUrl} is not answering (${String(err)})`, {
+        cause: err,
+      });
+    }
+    const model = typeof health["model"] === "string" ? health["model"] : "";
+    if (!model) throw new Error("pragent-review: the bridge reported no model");
+    return runPragentReview({
+      set,
+      cases: selectCases(set, only(f)),
+      outDir,
+      root,
+      store,
+      authSrc: f.get("--auth-src") ?? DEFAULTS.authSrc,
+      agentDir: f.get("--agent-dir") ?? DEFAULTS.agentDir,
+      python: f.get("--python") ?? "/opt/pragent-venv/bin/python",
+      driver: f.get("--driver") ?? "/opt/quickreview/bench/pragent_driver.py",
+      pragentVersion: process.env.QCR_PRAGENT_VERSION || "unknown",
+      bridgeUrl,
+      model,
+      effort: typeof health["effort"] === "string" ? health["effort"] : "",
+      verbosity: typeof health["verbosity"] === "string" ? health["verbosity"] : null,
+      timeoutMin,
+      prText: !f.has("--no-pr-text"),
+      qcrCommit: process.env.QCR_BENCH_COMMIT ?? "unknown",
+      resume: f.has("--resume"),
+      keepTree: f.has("--keep-tree"),
+      readMeta: (c) => readMeta(store, c),
+      log,
+    });
+  }
+
+  if (f.cmd === "pragent-report") {
+    const set = loadSet(f.get("--set"));
+    const outDir = resolve(f.get("--out") ?? "");
+    assertArm(outDir, "pragent");
+    writeFileSync(join(outDir, "report.md"), renderPragentReport(set, outDir, selectCases(set, only(f))));
+    log(`report: ${join(outDir, "report.md")}`);
+    return 0;
+  }
+
   if (f.cmd === "pireview-report") {
     const set = loadSet(f.get("--set"));
     const outDir = resolve(f.get("--out") ?? "");
@@ -1051,17 +1114,27 @@ async function main(): Promise<number> {
     }
     secs.sort((a, b) => a - b);
     // Dollars the way pi prices them (src/bench/cost.ts): summed per call for
-    // our arm, the bridge's tokens at pi's gpt-6-sol rates for the OCR arm.
+    // our arm, the bridge's tokens at pi's rates for the case's model for the
+    // bridge arms (OCR, OpenCode, PR-Agent).
     let usd = 0,
       priced = 0;
     const sources = new Set<string>();
+    const pricedAs = new Set<string>();
     for (const c of cases) {
       const k = caseCostUsd(join(outDir, "cases", safeId(c.instance_id)));
       if (!k) continue;
       usd += k.usd;
       priced++;
       sources.add(k.source);
+      if (k.model) pricedAs.add(k.model);
     }
+    const rates = [...pricedAs]
+      .sort()
+      .map((m) => {
+        const r = ratesFor(m)!;
+        return `${m}: $${r.input} input, $${r.cacheRead.toFixed(2)} cache read, $${r.output} output per million`;
+      })
+      .join("; ");
     const extra = secs.length
       ? {
           tokensInPerPr: tin / secs.length,
@@ -1072,7 +1145,7 @@ async function main(): Promise<number> {
                 usdPerPr: usd / priced,
                 usdTotal: usd,
                 usdSource: sources.has("priced")
-                  ? "Cost: tokens priced at pi's gpt-6-sol rates ($2 input, $0.20 cache read, $10 output per million) — this arm does not run through pi."
+                  ? `Cost: tokens priced at pi's rates (${rates}) — this arm does not run through pi.`
                   : "Cost: pi's own per-call prices, summed over the main session and every lens pass.",
               }
             : {}),

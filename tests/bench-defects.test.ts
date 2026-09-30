@@ -730,7 +730,7 @@ describe("dollar cost, as pi prices it", () => {
       }),
     );
     // 0.5M uncached × $2 + 0.5M cached × $0.20 + 0.1M output × $10
-    expect(caseCostUsd(dir)).toEqual({ usd: 1 + 0.1 + 1, source: "priced" });
+    expect(caseCostUsd(dir)).toEqual({ usd: 1 + 0.1 + 1, source: "priced", model: "gpt-6-sol" });
     expect(caseCostUsd(join(dir, "nope"))).toBeNull();
   });
 });

@@ -193,6 +193,22 @@ describe("arm.sh", () => {
     expect(rec.image_id).toBe("sha256:img-qcr-bench-ocr:x");
   });
 
+  it("the PR-Agent arm reviews in its own image, one container per set, and is judged in the quickreviewd image", async () => {
+    const r = await arm(["--prefix", "pa", "--arm", "pragent", "--cases", `fresh10:${A},${B}`], {
+      QCR_BENCH_PRAGENT_IMAGE: "qcr-bench-pragent:x",
+    });
+    expect(r.code).toBe(0);
+    const c = calls();
+    const reviews = c.filter((x) => x.includes(" review "));
+    expect(reviews).toHaveLength(1);
+    expect(reviews[0]).toContain("--arm pragent --run pa-fresh10 --set fresh10");
+    expect(reviews[0]).not.toContain("--phase");
+    for (const j of c.filter((x) => x.includes(" judge "))) expect(j.startsWith("IMG=qcr-bench:x ")).toBe(true);
+    const rec = JSON.parse(readFileSync(join(runs, "pa-fresh10.arm.json"), "utf8")) as Record<string, string>;
+    expect(rec.arm).toBe("pragent");
+    expect(rec.image).toBe("qcr-bench-pragent:x");
+  });
+
   it("a full run is judged against every defect set it overlaps, never as `full`", async () => {
     const r = await arm(["--prefix", "f", "--cases", "full"]);
     expect(r.code).toBe(0);
@@ -369,6 +385,25 @@ describe("compare.py", () => {
     }
     // 0.5M × $2 + 0.5M × $0.20 + 0.1M × $10 = $2.10
     expect(await compare("o=o")).toContain("| $2.10 | 1.0 | 2/2 |");
+  });
+
+  it("a gpt-6.1-sol bridge arm (PR-Agent) is priced at ITS model's rates", async () => {
+    judgement("g", A, found(["D1"]));
+    judgement("g", B, found([]));
+    for (const id of [A, B]) {
+      mkdirSync(join(runs, "g", "cases", id), { recursive: true });
+      writeFileSync(
+        join(runs, "g", "cases", id, "case-summary.json"),
+        JSON.stringify({
+          arm: "pragent",
+          model: "gpt-6.1-sol",
+          duration_seconds: 60,
+          bridge: { input_tokens: 1_000_000, cached_tokens: 500_000, output_tokens: 100_000 },
+        }),
+      );
+    }
+    // 0.5M × $2 + 0.5M × $0.10 + 0.1M × $10 = $2.05
+    expect(await compare("g=g")).toContain("| $2.05 | 1.0 | 2/2 |");
   });
 
   // The harness's per-round file: every reference of a PR with its match

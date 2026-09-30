@@ -617,7 +617,7 @@ describe("the sandbox wiring", () => {
     expect(sh).toContain("REVIEW_ENTRY=pireview-review");
     expect(sh).toContain("oe+=(--mount type=volume,dst=/work)");
     expect(inContainer).toContain("pireview-review)");
-    expect(arm).toContain('"$ARM" == pireview ]]; then');
+    expect(arm).toContain('"$ARM" == pireview || "$ARM" == pragent ]]; then');
     const cli = readFileSync(join(ROOT, "src", "bench", "cli.ts"), "utf8");
     for (const cmd of ["pireview-review", "pireview-report"]) {
       const at = cli.indexOf(`if (f.cmd === "${cmd}")`);
