@@ -2,8 +2,8 @@
 // scan has read — one row per file + content hash + lens, with the tier,
 // effort, validator setting, scan sha and cost it was read at. Two jobs:
 //
-//   * the RESUME GRAIN — stage 1 never re-reads a file the ledger holds at
-//     the same content hash for the same lens, so an interrupted scan (a TUI
+//   * the RESUME GRAIN — stage 1 never re-reads a file whose NEWEST ledger
+//     row for the lens is at the same content hash, so an interrupted scan (a TUI
 //     quit, an expired login, a stop, the hard stop) continues where it
 //     stopped and a finished one costs nothing to start again;
 //   * the PRICE — after the first-scan calibration run, every cost preview is
@@ -105,9 +105,19 @@ export class Ledger {
   }
 }
 
-/** `path\0blob` of every file the ledger holds for `lens`. */
+/** `path\0blob` of each file's NEWEST reading by `lens` — the same newest
+ * row `FindingsStore.reconcile` settles findings against. An older reading a
+ * later one superseded covers nothing: its findings may since have been
+ * settled `fixed`, so content that comes back to it (a revert) must be read
+ * again for them to come back too. */
 export function coveredBy(entries: readonly LedgerEntry[], lens: string): Set<string> {
-  return new Set(entries.filter((e) => e.lens === lens).map((e) => coverKey(e.path, e.blob)));
+  const newest = new Map<string, LedgerEntry>();
+  for (const e of entries) {
+    if (e.lens !== lens) continue;
+    const had = newest.get(e.path);
+    if (!had || e.at >= had.at) newest.set(e.path, e);
+  }
+  return new Set([...newest.values()].map((e) => coverKey(e.path, e.blob)));
 }
 
 /** Rows written for `key` at all, and how many of their cases were priced —

@@ -318,6 +318,39 @@ describe("exact match first, then the companion, then fixed", () => {
   });
 });
 
+describe("content read before, superseded, then back: read again (selfscan def42498)", () => {
+  // tools/x.py read at A (a finding), re-read at B (none: fixed), then
+  // reverted to A. Coverage is the NEWEST reading per file, not every reading
+  // ever — else A counts as covered, nothing re-reads it, and the finding
+  // stays `fixed` while the defect is back in the tree.
+  const SHA4 = "4".repeat(40);
+  const TREE4: Record<string, string> = { ...TREE2, "tools/x.py": TREE["tools/x.py"]! };
+  const trees = { [SHA1]: TREE, [SHA2]: TREE2, [SHA4]: TREE4 };
+
+  it("a delta re-reads the reverted file and the fixed finding comes back", async () => {
+    const first = new ScanRunner(ports(runner(), trees));
+    await run(first, SHA1);
+    await run(first, SHA1);
+    await run(new ScanRunner(ports(runner(rescanAnswer), trees)), SHA2, true);
+    expect(byPath("tools/x.py")).toEqual([expect.objectContaining({ state: "fixed" })]);
+
+    const r = runner();
+    const { preview } = await run(new ScanRunner(ports(r, trees)), SHA4, true);
+    expect(preview.cases.flatMap((c) => c.files.map((f) => f.path))).toEqual(["tools/x.py"]);
+    expect(byPath("tools/x.py")).toEqual([expect.objectContaining({ state: "new", fixed: null })]);
+  });
+
+  it("a full preview offers it too; the newest reading of a file still covers it", async () => {
+    const first = new ScanRunner(ports(runner(), trees));
+    await run(first, SHA1);
+    await run(first, SHA1);
+    await run(new ScanRunner(ports(runner(rescanAnswer), trees)), SHA2, true);
+    const p = await new ScanRunner(ports(runner(), trees)).preview({ sha: SHA4 });
+    if (!p.ok) throw new Error(p.errors.join("; "));
+    expect(p.preview.cases.flatMap((c) => c.files.map((f) => f.path))).toEqual(["tools/x.py"]);
+  });
+});
+
 // ---- the store alone ------------------------------------------------------------
 
 const S = (run: string, sha: string, at: string) => ({ run, sha, at });

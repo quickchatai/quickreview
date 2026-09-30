@@ -127,7 +127,7 @@ export interface PlanInput {
   cut: UnitCut;
   files: readonly TreeFile[];
   linesOf: (path: string) => number | null;
-  /** `path\0blob` of every file the ledger holds for `pass-scan`. */
+  /** `path\0blob` of each file's newest ledger reading for `pass-scan`. */
   covered: ReadonlySet<string>;
   exclude: readonly string[];
   budget: CaseBudget;
