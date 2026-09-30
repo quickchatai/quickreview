@@ -1139,6 +1139,12 @@ export class PiSessionManager implements SessionHooks {
       (command.kind === "round" && command.started_at !== null)
     )
       return "retry_failed";
+    // A closed PR is never reborn for an ordinary wake (selfscan 666a2356):
+    // settle the row instead of replaying it into a respawned session.
+    if (command.kind !== "round" && this.prClosed(command.pr)) {
+      store.cancelSessionCommandsForClosedPr(command.pr);
+      return "settled";
+    }
 
     let payload: Buffer;
     try {
@@ -1258,6 +1264,9 @@ export class PiSessionManager implements SessionHooks {
   private async ensureSessionForWake(pr: number): Promise<void> {
     const session = prSessionName(pr);
     if ((await this.tmux.hasSession(session)) && this.currentBridgeReady(session)) return;
+    if (this.prClosed(pr)) {
+      throw new Error(`PR #${pr} is closed — refusing to respawn ${session} for a wake`);
+    }
     const title = this.titleResolver?.(pr);
     if (title === undefined) {
       throw new Error(`no live session ${session} — dispatch a round to birth it first`);
@@ -1440,8 +1449,16 @@ export class PiSessionManager implements SessionHooks {
     }
   }
 
+  /** True only when the registry says the PR is closed; unknown is not closed. */
+  private prClosed(pr: number): boolean {
+    return this.commandStore?.getPr(pr)?.state === "closed";
+  }
+
   async archiveAndClose(pr: number): Promise<void> {
     const session = prSessionName(pr);
+    // Terminalize outstanding ordinary wakes FIRST, so no recovery sweep can
+    // replay one into a session reborn after the kill below (selfscan 666a2356).
+    this.commandStore?.cancelSessionCommandsForClosedPr(pr);
     this.archiveSession(session, this.archiveDir(session));
     await this.worktrees.remove(pr);
     await this.tmux.killSession(session);

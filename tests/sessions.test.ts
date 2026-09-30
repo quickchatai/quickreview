@@ -1462,6 +1462,89 @@ describe("durable command ownership", () => {
     }
   });
 
+  it("closing a PR terminalizes its live ordinary wake, so recovery never reborns it (selfscan 666a2356)", async () => {
+    // A ping-pong wake was mid-turn when the author merged: archiveAndClose
+    // killed pr-42, but the row stayed 'running' and the running-bound
+    // recovery respawned a session (and worktree) for a merged PR.
+    const store = new StateStore(
+      join(root, "state", "state.db"),
+      () => new Date("2026-08-13T10:00:00Z"),
+    );
+    try {
+      const m = manager(undefined, store);
+      m.setTitleResolver((pr) => (pr === 42 ? order.title : undefined));
+      store.upsertPr({
+        number: 42,
+        state: "tracked",
+        head_sha: "abc123",
+        title: order.title,
+        author: "alice",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
+      markExistingSessionReady(m, "pr-42");
+      await m.inject(42, "author replied");
+      const wake = store.activeSessionCommand("pr-42")!;
+      store.claimSessionCommand(wake.id, "bridge-old", "2026-08-13T10:02:00Z");
+      store.markSessionCommandStarted(wake.id, "bridge-old", "2026-08-13T10:45:00Z");
+
+      await m.archiveAndClose(42);
+
+      expect(store.getSessionCommand(wake.id)?.status).toBe("cancelled");
+      expect(store.blockingSessionCommand("pr-42")).toBeUndefined();
+      expect(store.dueSessionCommands("2099-01-01T00:00:00Z")).toEqual([]);
+      const births = tmuxArgs().filter((a) => a[0] === "new-session").length;
+      expect(await m.retrySessionCommand(wake.id, "running bound expired")).not.toBe("retried");
+      expect(tmuxArgs().filter((a) => a[0] === "new-session").length).toBe(births);
+      expect(liveSessions.has("pr-42")).toBe(false);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("a recovery that races a close refuses to reborn the closed PR's session (selfscan 666a2356)", async () => {
+    // Belt for the window between the registry flipping to closed and the
+    // close hook terminalizing the row (or a close hook that failed).
+    const store = new StateStore(
+      join(root, "state", "state.db"),
+      () => new Date("2026-08-13T10:00:00Z"),
+    );
+    try {
+      const m = manager(undefined, store);
+      m.setTitleResolver((pr) => (pr === 42 ? order.title : undefined));
+      const pr = {
+        number: 42,
+        head_sha: "abc123",
+        title: order.title,
+        author: "alice",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      };
+      store.upsertPr({ ...pr, state: "tracked" });
+      markExistingSessionReady(m, "pr-42");
+      await m.inject(42, "author replied");
+      const wake = store.activeSessionCommand("pr-42")!;
+      store.claimSessionCommand(wake.id, "bridge-old", "2026-08-13T10:02:00Z");
+      store.markSessionCommandStarted(wake.id, "bridge-old", "2026-08-13T10:45:00Z");
+      store.upsertPr({ ...pr, state: "closed" });
+      const births = tmuxArgs().filter((a) => a[0] === "new-session").length;
+
+      expect(await m.retrySessionCommand(wake.id, "running bound expired")).toBe("settled");
+
+      expect(tmuxArgs().filter((a) => a[0] === "new-session").length).toBe(births);
+      expect(store.getSessionCommand(wake.id)?.status).toBe("cancelled");
+      // Once the close hook's kill has landed, a late wake is refused rather
+      // than respawning pr-42.
+      liveSessions.delete("pr-42");
+      await expect(m.inject(42, "late wake")).rejects.toThrow(/closed/);
+      expect(tmuxArgs().filter((a) => a[0] === "new-session").length).toBe(births);
+    } finally {
+      store.close();
+    }
+  });
+
   it("does not replay an ordinary wake whose settlement wins during the fence", async () => {
     const store = new StateStore(
       join(root, "state", "state.db"),

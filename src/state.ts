@@ -2324,6 +2324,40 @@ export class StateStore {
     return result;
   }
 
+  /**
+   * A closed PR owes its session nothing more: terminalize every outstanding
+   * ordinary (non-round) command so the bounded recovery sweep can never
+   * replay one into a respawned pr-<n> after the close hook killed it
+   * (selfscan 666a2356). Round commands keep their own lifecycle — recovery
+   * already refuses one whose round is no longer running.
+   */
+  cancelSessionCommandsForClosedPr(pr: number): string[] {
+    const ts = this.ts();
+    const ids = this.db.transaction(() => {
+      const rows = this.db
+        .prepare(
+          `SELECT id FROM session_commands
+            WHERE pr=@pr AND session=@session AND kind!='round'
+              AND status IN ('pending', 'running', 'failed')`,
+        )
+        .all({ pr, session: `pr-${pr}` }) as Array<{ id: string }>;
+      this.db
+        .prepare(
+          `UPDATE session_commands
+            SET status='cancelled', owner_token=NULL, updated_at=@ts,
+                next_check_at=@ts, failure='pr closed'
+          WHERE pr=@pr AND session=@session AND kind!='round'
+            AND status IN ('pending', 'running', 'failed')`,
+        )
+        .run({ pr, session: `pr-${pr}`, ts });
+      return rows.map((row) => row.id);
+    })();
+    if (ids.length > 0) {
+      this.logEvent("session_commands_closed_cancelled", pr, { cancelled_command_ids: ids });
+    }
+    return ids;
+  }
+
   activeSessionCommands(): SessionCommandRow[] {
     return this.db
       .prepare(
