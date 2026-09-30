@@ -283,6 +283,9 @@ export function setTomlKey(
   return `${toml.slice(0, bodyStart)}${patched}${toml.slice(bodyEnd)}`;
 }
 
+/** The .env key docker-compose.yml hands the ngrok sidecar as its reserved domain. */
+const NGROK_DOMAIN_ENV = "QCR_NGROK_DOMAIN";
+
 /** `KEY=value` in a dotenv file: replace the line or append it. */
 export function setEnvKey(text: string, key: string, value: string): string {
   const line = new RegExp(`^${key}=.*$`, "m");
@@ -533,7 +536,15 @@ export function ingressStep(): OnboardingStep {
       // 4. the compose profile — which sidecar (if any) comes up with the stack.
       const envPath = join(root, ".env");
       const envText = readFileOrNull(envPath) ?? "";
-      writeAtomic(envPath, setEnvKey(envText, "COMPOSE_PROFILES", option.profile));
+      let nextEnv = setEnvKey(envText, "COMPOSE_PROFILES", option.profile);
+      // ngrok's reserved domain: the sidecar passes --domain only from
+      // QCR_NGROK_DOMAIN (docker-compose.yml → QCR_TUNNEL_DOMAIN), and the
+      // App's webhook URL below points at this hostname — so it must reach the
+      // tunnel. Without a hostname, an operator's own value is left alone.
+      if (option.id === "ngrok" && hostname !== null) {
+        nextEnv = setEnvKey(nextEnv, NGROK_DOMAIN_ENV, hostname);
+      }
+      writeAtomic(envPath, nextEnv);
       checks.push({
         name: "compose-profile",
         ok: true,
@@ -542,6 +553,13 @@ export function ingressStep(): OnboardingStep {
             ? `${envPath}: COMPOSE_PROFILES= (empty) — \`docker compose up\` brings up the daemon alone, no sidecar`
             : `${envPath}: COMPOSE_PROFILES=${option.profile} — \`docker compose up\` also starts the ${option.service} sidecar`,
       });
+      if (option.id === "ngrok" && hostname !== null) {
+        checks.push({
+          name: "ngrok-domain",
+          ok: true,
+          detail: `${envPath}: ${NGROK_DOMAIN_ENV}=${hostname} — the ngrok sidecar serves your reserved domain`,
+        });
+      }
 
       ctx.recordChoice(CHOICE_KEYS.ingress, choice);
       if (hostname !== null) {
@@ -671,6 +689,18 @@ export function ingressStep(): OnboardingStep {
                 detail: `.env has COMPOSE_PROFILES=${JSON.stringify(profile)} but the ${option.id} shape needs ${JSON.stringify(option.profile)} — re-run the ingress step`,
               },
         );
+        if (option.id === "ngrok" && hostname !== null) {
+          const domain = readEnvKey(envText, NGROK_DOMAIN_ENV) ?? "";
+          checks.push(
+            domain === hostname
+              ? { name: "ngrok-domain", ok: true, detail: `${NGROK_DOMAIN_ENV}=${domain}` }
+              : {
+                  name: "ngrok-domain",
+                  ok: false,
+                  detail: `.env has ${NGROK_DOMAIN_ENV}=${JSON.stringify(domain)} but the recorded ngrok hostname is ${JSON.stringify(hostname)} — the tunnel would not serve the App's webhook URL; re-run the ingress step`,
+                },
+          );
+        }
         checks.push(...(await runningShapeChecks(ctx, root, option)));
       }
 

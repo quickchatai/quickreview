@@ -386,6 +386,32 @@ describe("resume and verify", () => {
     );
   });
 
+  it("ngrok with a reserved hostname hands that domain to the sidecar, and keeps a hand-set one without it", async () => {
+    writeFileSync(join(secretsDir, "ngrok_authtoken"), "2abc_token\n");
+    writeFileSync(join(root, ".env"), "QCR_NGROK_DOMAIN=mine.ngrok.app\n");
+    const f = fake();
+    // No hostname: the operator's own .env value is not the step's to clear.
+    await f.engine.runStep(INGRESS_STEP_ID, { choice: "ngrok" });
+    expect(readEnvKey(envText(), "QCR_NGROK_DOMAIN")).toBe("mine.ngrok.app");
+    // A hostname: the sidecar's --domain (docker-compose.yml QCR_TUNNEL_DOMAIN) is that hostname,
+    // the same one the App manifest's webhook URL points at.
+    const green = await f.engine.runStep(INGRESS_STEP_ID, {
+      choice: "ngrok",
+      hostname: "reviews.example.com",
+    });
+    expect(green.ok).toBe(true);
+    expect(readEnvKey(envText(), "QCR_NGROK_DOMAIN")).toBe("reviews.example.com");
+    expect(envText().match(/^QCR_NGROK_DOMAIN=/gm)).toHaveLength(1);
+  });
+
+  it("an ngrok domain edited away from the recorded hostname demotes the step", async () => {
+    writeFileSync(join(secretsDir, "ngrok_authtoken"), "2abc_token\n");
+    await fake().engine.runStep(INGRESS_STEP_ID, { choice: "ngrok", hostname: "reviews.example.com" });
+    writeFileSync(join(root, ".env"), "COMPOSE_PROFILES=ngrok\n");
+    const report = await fake().engine.reconcile();
+    expect(report.demoted[0]?.failures.join(" ")).toMatch(/QCR_NGROK_DOMAIN="" but .*reviews\.example\.com/);
+  });
+
   it("a compose profile edited away demotes it too", async () => {
     await fake().engine.runStep(INGRESS_STEP_ID, { choice: "quick" });
     writeFileSync(join(root, ".env"), "COMPOSE_PROFILES=\n");
