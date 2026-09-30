@@ -57,7 +57,8 @@
 #              `describe`, `review`, `improve` (the GitHub App default) on its local git provider over base...head, the PR's title and
 #              description as its GitHub provider gives them, gpt-6.1-sol through the loopback Codex
 #              bridge; one case at a time; `eval` scores `all`. QCR_BENCH_PRAGENT_EFFORT=L the bridge's
-#              reasoning effort (default medium = PR-Agent's own default); QCR_BENCH_PRAGENT_NO_PR_TEXT=1
+#              reasoning effort (default medium = PR-Agent's own default); QCR_BENCH_PRAGENT_MODEL=ID the
+#              model the bridge serves (default gpt-6.1-sol; gpt-6-sol for parity); QCR_BENCH_PRAGENT_NO_PR_TEXT=1
 #              withholds the title/description (the local provider's own stand-ins instead)
 #   --arm ocr  (build, review, eval, report, shell, smoke): the open-code-review
 #              baseline — image qcr-bench-ocr (the same runtime + OCR 1.3.1 + the
@@ -407,6 +408,10 @@ case "$cmd" in
     # root, whose AGENTS.md/CLAUDE.md pi would load from every ancestor dir.
     if [[ "$ARM" == pragent ]]; then
       [[ -n "${QCR_BENCH_PRAGENT_EFFORT:-}" ]] && oe+=(-e "PRAGENT_BRIDGE_EFFORT=$QCR_BENCH_PRAGENT_EFFORT")
+      if [[ -n "${QCR_BENCH_PRAGENT_MODEL:-}" ]]; then
+        [[ "$QCR_BENCH_PRAGENT_MODEL" =~ ^gpt-[A-Za-z0-9.-]+$ ]] || die "QCR_BENCH_PRAGENT_MODEL must be a Codex model id (e.g. gpt-6-sol)"
+        oe+=(-e "PRAGENT_BRIDGE_MODEL=$QCR_BENCH_PRAGENT_MODEL")
+      fi
       [[ "${QCR_BENCH_PRAGENT_NO_PR_TEXT:-}" == 1 ]] && EXTRA+=(--no-pr-text)
     fi
     if [[ "$ARM" == pireview ]]; then

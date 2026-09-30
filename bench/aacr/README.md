@@ -857,7 +857,9 @@ python pragent_driver.py --command improve  … → python -m pr_agent.cli --pr_
   import and overridden key by key — recorded as a warning when present).
 - **The model**: `gpt-6.1-sol`, reasoning effort `medium` (PR-Agent's default
   `reasoning_effort`, and the bridge forces it whatever arrives;
-  `QCR_BENCH_PRAGENT_EFFORT` changes the bridge's), through the same loopback
+  `QCR_BENCH_PRAGENT_EFFORT` changes the bridge's; `QCR_BENCH_PRAGENT_MODEL=gpt-6-sol`
+  runs it on the model the other third-party arms ran, for parity — the run
+  records and prices whichever model the bridge served), through the same loopback
   `codex_bridge.py` as the OCR and OpenCode arms (PR-Agent sends
   non-streaming Chat Completions). The bridge takes the model id as given; it
   does not depend on pi's catalog. PR-Agent holds only a dummy key; the token

@@ -571,6 +571,8 @@ describe("the sandbox wiring", () => {
     expect(sh).toContain('pragent) IMAGE="${QCR_BENCH_PRAGENT_IMAGE:-qcr-bench-pragent:latest}"; TARGET=pragent');
     expect(sh).toContain("REVIEW_ENTRY=pragent-review");
     expect(sh).toContain("bench/aacr/pragent_driver.py");
+    // The served model is a bench.sh knob (gpt-6-sol for parity with the other arms).
+    expect(sh).toContain('oe+=(-e "PRAGENT_BRIDGE_MODEL=$QCR_BENCH_PRAGENT_MODEL")');
     expect(inContainer).toContain("pragent-review)");
     expect(inContainer).toContain('--model "${PRAGENT_BRIDGE_MODEL:-gpt-6.1-sol}" --effort "${PRAGENT_BRIDGE_EFFORT:-medium}"');
     expect(inContainer).toContain('[[ "$arm" != qcr ]] && { variants="all"; report_cmd="$arm-report"; }');
