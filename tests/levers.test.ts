@@ -1374,6 +1374,31 @@ describe("operatorCommandWriteScript under sh", () => {
     expect(existsSync(join(target, ".f.json.tmp"))).toBe(false);
   });
 
+  it("a symlink pre-planted at the FINAL name never carries the file into another directory", () => {
+    // `mv tmp name` onto a link to a directory moves the file INTO it.
+    const root = join(tmp, "sandbox");
+    const dir = join(root, "commands", "operator");
+    mkdirSync(dir, { recursive: true });
+    const target = join(tmp, "elsewhere");
+    mkdirSync(target);
+    symlinkSync(target, join(dir, "h.json"));
+    const r = runScript(root, "h.json", "{}");
+    expect(r.code).toBe(0);
+    expect(existsSync(join(target, ".h.json.tmp"))).toBe(false);
+    expect(lstatSync(join(dir, "h.json")).isFile()).toBe(true);
+  });
+
+  it("an install whose sandbox root sits behind a symlink still writes", () => {
+    const real = join(tmp, "real-sandbox");
+    mkdirSync(join(real, "commands"), { recursive: true });
+    const root = join(tmp, "sandbox");
+    symlinkSync(real, root);
+    const r = runScript(root, "i.json", "{}");
+    expect(r.stderr).toBe("");
+    expect(r.code).toBe(0);
+    expect(existsSync(join(real, "commands", "operator", "i.json"))).toBe(true);
+  });
+
   it("a symlink pre-planted at the temp-file name is never written through", () => {
     // A session pre-makes operator/ holding `.<name>.tmp` -> a root-writable
     // file. Taking the directory over keeps its entries, so the script must

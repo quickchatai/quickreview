@@ -75,8 +75,12 @@ export function commandFileName(now: Date, seq: number): string {
  * that moves nothing root touches. A real directory a session pre-made is
  * taken over (`chown 0:0` + `0755` is what makes it the operator's, whoever
  * created it), but it keeps its entries: a link planted at the temp name
- * would carry root's write anywhere, so that name is removed first — after
- * the takeover, when no session can put it back. The file's own mode is set
+ * would carry root's write anywhere, and a link planted at the final name
+ * to a directory would make `mv` move the file INTO that directory, so both
+ * names are removed first — after the takeover, when no session can put
+ * either back. The expected directory is the PHYSICAL `commands/` (resolved
+ * once, up front) plus `/operator`, so an install whose sandbox root sits
+ * behind a symlink still writes, while a swapped `operator/` still refuses. The file's own mode is set
  * explicitly rather than left to the exec's umask, because the daemon's seal
  * check (`operatorSealVerdict`) reads both; that check also `lstat`s the
  * directory, so a link the script did not catch is still no seal there.
@@ -93,11 +97,12 @@ export function operatorCommandWriteScript(cfg: TuiConfig, name: string): string
     `[ -d '${root}' ] || { echo 'daemon commands dir ${root} missing - is the daemon running?' >&2; exit 1; }; ` +
     `mkdir -p '${dir}' || exit 1; ` +
     `[ ! -L '${dir}' ] || { echo '${dir} is a symlink - refusing to write the operator command' >&2; exit 1; }; ` +
+    `R=$(cd -P '${root}' && pwd -P) || exit 1; ` +
     `cd -P '${dir}' || exit 1; ` +
-    `[ "$(pwd -P)" = '${dir}' ] || { echo '${dir} was replaced while writing - refusing to write the operator command' >&2; exit 1; }; ` +
+    `[ "$(pwd -P)" = "$R/operator" ] || { echo '${dir} was replaced while writing - refusing to write the operator command' >&2; exit 1; }; ` +
     `chown -h 0:0 . && chmod 0755 . || exit 1; ` +
     `find . -maxdepth 1 -name '*.json' -mmin +1440 -delete 2>/dev/null; ` +
-    `rm -f '${tmp}' && cat > '${tmp}' && chmod 0644 '${tmp}' && mv '${tmp}' '${name}'`
+    `rm -f '${tmp}' '${name}' && cat > '${tmp}' && chmod 0644 '${tmp}' && mv '${tmp}' '${name}'`
   );
 }
 
