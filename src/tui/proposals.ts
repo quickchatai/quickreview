@@ -40,7 +40,9 @@
 //     renamed away (`patchRemovals`);
 //   * the POST-IMAGE — git applies the patch to a throwaway copy first and
 //     the result is judged (`postImageViolation`): every fence byte-identical,
-//     and a config patch leaves the PARSED root `dry_run` unchanged. The
+//     and a config patch leaves the PARSED root `dry_run` unchanged, git
+//     writes no path beyond the vetted targets (its -p1 strip), and a target
+//     that changed after the shadow copy is refused before the real apply. The
 //     header-coordinate checks are the fast refusal; this is the proof,
 //     because git places a hunk by its context, not its header;
 //   * the shared checkout (rule 11) — a target with uncommitted edits is
@@ -628,7 +630,25 @@ export async function acceptProposal(
   if ("message" in shadow) return { ok: false, message: shadow.message };
   const post = postImageViolation(files, shadow.before, shadow.after, kind);
   if (post !== null) return { ok: false, message: post };
+  // The verdict above is about the bytes the shadow copied. A target changed
+  // since (the companion commits live in this checkout) is not what was
+  // judged — git could place the same hunk elsewhere in it.
+  const unchanged = (): boolean =>
+    files.every((rel) => {
+      let now: string | null;
+      try {
+        now = readFileSync(join(sourceDir, rel), "utf8");
+      } catch {
+        now = null;
+      }
+      return now === (shadow.before.get(rel) ?? null);
+    });
+  const changedSince = {
+    ok: false,
+    message: "refused: a target changed while the patch was being judged — press A again",
+  };
   if (target.kind === "home") {
+    if (!unchanged()) return changedSince;
     // The config home is not this repo: applied in place, nothing to commit.
     try {
       await deps.git.run("git", [...applyArgs, "-"], patch);
@@ -678,6 +698,7 @@ export async function acceptProposal(
       message: `refused: cannot read the checkout's status: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`,
     };
   }
+  if (!unchanged()) return changedSince;
   try {
     await deps.git.run("git", ["apply", "-"], patch);
     // config.toml is never a seeded file, so ratification bookkeeping is a
@@ -735,7 +756,14 @@ async function shadowApply(
       return null;
     }
   };
-  const shadow = mkdtempSync(join(tmpdir(), "qcr-proposal-"));
+  let shadow: string;
+  try {
+    shadow = mkdtempSync(join(tmpdir(), "qcr-proposal-"));
+  } catch (err) {
+    return {
+      message: `refused: cannot make a scratch copy to judge the patch: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`,
+    };
+  }
   try {
     const before = new Map<string, string | null>();
     for (const rel of files) {
@@ -753,12 +781,34 @@ async function shadowApply(
         message: `patch does not apply cleanly: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`,
       };
     }
+    // Every path git wrote must be one we vetted. `patchTargets` reads the
+    // names as SPELLED; git strips one component (-p1) from them, so an
+    // unprefixed `+++ prompts/src/tui/x.ts` passes the allowlist as
+    // prompts/… and lands as src/tui/x.ts. The shadow holds nothing but the
+    // vetted targets, so anything else in it is git's placement, refused.
+    const vetted = new Set(files);
+    const stray = walkFiles(shadow).filter((rel) => !vetted.has(rel));
+    if (stray.length > 0)
+      return {
+        message: `refused: git would write ${stray.slice(0, 3).join(", ")} — not a path the patch names (git strips one path component)`,
+      };
     const after = new Map<string, string | null>();
     for (const rel of files) after.set(rel, read(shadow, rel));
     return { before, after };
   } finally {
     rmSync(shadow, { recursive: true, force: true });
   }
+}
+
+/** Every non-directory under `dir`, as `/`-joined paths relative to it. */
+function walkFiles(dir: string, prefix = ""): string[] {
+  const out: string[] = [];
+  for (const ent of readdirSync(join(dir, prefix), { withFileTypes: true })) {
+    const rel = prefix ? `${prefix}/${ent.name}` : ent.name;
+    if (ent.isDirectory()) out.push(...walkFiles(dir, rel));
+    else out.push(rel);
+  }
+  return out;
 }
 
 /** The accepted proposal's dir is removed; a failed removal is said, not fatal. */

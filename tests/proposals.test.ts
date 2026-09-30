@@ -810,6 +810,32 @@ describe("acceptProposal against a real scratch checkout (selfscan2)", () => {
     expect(sh(["status", "--porcelain"])).toBe("");
   });
 
+  it("an unprefixed path that git strips out of prompts/ into src/ is refused, nothing written", async () => {
+    // patchTargets reads `prompts/src/tui/evil.ts` (allowed); git -p1 strips
+    // the first component and would create src/tui/evil.ts.
+    propose(
+      "strip-escape",
+      `--- /dev/null\n+++ prompts/src/tui/evil.ts\n@@ -0,0 +1 @@\n+export const pwned = 1;\n`,
+    );
+    const res = await acceptProposal(deps(), "strip-escape");
+    expect(res.ok).toBe(false);
+    expect(res.message).toMatch(/src\/tui\/evil\.ts/);
+    expect(existsSync(join(root, "src/tui/evil.ts"))).toBe(false);
+    expect(sh(["status", "--porcelain"])).toBe("");
+  });
+
+  it("a mode-only section on an allowed target is refused at accept, nothing changed", async () => {
+    propose(
+      "chmod",
+      "diff --git a/prompts/round-next.md b/prompts/round-next.md\nold mode 100644\nnew mode 100755\n",
+    );
+    const res = await acceptProposal(deps(), "chmod");
+    expect(res.ok).toBe(false);
+    expect(res.message).toMatch(/mode/);
+    expect(sh(["status", "--porcelain"])).toBe("");
+    expect(sh(["log", "--format=%s"]).trim()).toBe("init");
+  });
+
   it("refuses binary and mode-only sections even on an allowed target", () => {
     expect(
       patchShapeViolation(

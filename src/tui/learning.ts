@@ -450,20 +450,28 @@ export class LearningStore {
         message: `an accept is already running — '${slug}' not started; press A again once it answers`,
       });
     this.accepting = true;
-    const run = this.deps.accept
-      ? this.deps.accept(this.app, slug)
-      : acceptProposal(
-          {
-            git: { run: this.deps.gitRun ?? failingGit },
-            repoRoot: this.deps.repoRoot ?? process.cwd(),
-            today: () => this.now().toISOString().slice(0, 10),
-            ...(this.deps.configPath ? { configPath: this.deps.configPath } : {}),
-          },
-          slug,
-        );
-    return run.finally(() => {
-      this.accepting = false;
-    });
+    // Async so a synchronous throw still reaches `.finally` — a latch that
+    // never clears would refuse every accept for the rest of the session.
+    const run = (async () =>
+      this.deps.accept
+        ? this.deps.accept(this.app, slug)
+        : acceptProposal(
+            {
+              git: { run: this.deps.gitRun ?? failingGit },
+              repoRoot: this.deps.repoRoot ?? process.cwd(),
+              today: () => this.now().toISOString().slice(0, 10),
+              ...(this.deps.configPath ? { configPath: this.deps.configPath } : {}),
+            },
+            slug,
+          ))();
+    return run
+      .catch((err: unknown) => ({
+        ok: false,
+        message: `accept failed: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`,
+      }))
+      .finally(() => {
+        this.accepting = false;
+      });
   }
 
   async reject(slug: string, reason: string): Promise<{ ok: boolean; message: string }> {
