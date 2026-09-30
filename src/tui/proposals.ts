@@ -55,6 +55,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import type { TuiConfig } from "../config.js";
 import { shellQuote } from "./remote.js";
+import { TRAILER_RATIFIED } from "./changelog-store.js";
 
 export interface RubricProposal {
   slug: string;
@@ -727,9 +728,22 @@ export async function acceptProposal(
       kind === "config"
         ? `config: accept '${slug}' — applied by the owner via TUI`
         : `rubric: accept '${slug}' — ratified by the owner via TUI`;
+    // The press of A IS the ratification, so the commit carries the
+    // change register's key — without it the accept never shows in
+    // [7] feedback's CHANGED pane and cannot be reverted from there.
+    const trailer = `${TRAILER_RATIFIED}: owner TUI accept of '${slug}' (${deps.today()})`;
     // `--only` with the paths: the commit is exactly this proposal. Anything
     // else already staged in the shared checkout stays staged, uncommitted.
-    await deps.git.run("git", ["commit", "-m", subject, "--only", "--", ...toAdd]);
+    await deps.git.run("git", [
+      "commit",
+      "-m",
+      subject,
+      "-m",
+      trailer,
+      "--only",
+      "--",
+      ...toAdd,
+    ]);
   } catch (err) {
     return {
       ok: false,

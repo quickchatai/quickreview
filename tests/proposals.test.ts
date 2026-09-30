@@ -30,6 +30,13 @@ import {
   validSlug,
   type FenceSource,
 } from "../src/tui/proposals.js";
+import {
+  buildEntries,
+  changeLogArgv,
+  messageTrailers,
+  parseGitLog,
+  TRAILER_RATIFIED,
+} from "../src/tui/changelog-store.js";
 
 const cfg = {
   ssh_host: "my-vm",
@@ -550,6 +557,10 @@ describe("acceptProposal (local dirs, fake git)", () => {
     expect(gitCalls[4]).toContain("config.toml");
     expect(gitCalls[4]).not.toContain("tests/fixtures/seed-manifest.json");
     expect(gitCalls[5]!.join(" ")).toContain("config: accept 'calibrate-mention'");
+    // …and carries the register's key, so the change is listed and revertable.
+    const commit = gitCalls[5]!;
+    const messages = commit.flatMap((a, i) => (commit[i - 1] === "-m" ? [a] : []));
+    expect(messageTrailers(messages.join("\n\n"))[TRAILER_RATIFIED]).toMatch(/calibrate-mention/);
     // config.toml is not a seed: the divergence registry is untouched.
     const div = JSON.parse(
       readFileSync(join(root, "tests/fixtures/ratified-divergence.json"), "utf8"),
@@ -921,5 +932,16 @@ describe("acceptProposal against a real scratch checkout (selfscan2)", () => {
       "tests/fixtures/seed-manifest.json",
     ]);
     expect(sh(["status", "--porcelain"])).toBe("");
+  });
+
+  it("an accepted rubric patch joins the change register — the commit carries Ratified-in-session", async () => {
+    propose("seed-edit", PATCH);
+    const res = await acceptProposal(deps(), "seed-edit");
+    expect(res.ok).toBe(true);
+    const entries = buildEntries(parseGitLog(sh(changeLogArgv().slice(1))), "2026-08-30T00:00:00Z");
+    expect(entries.map((e) => e.subject)).toEqual([
+      "rubric: accept 'seed-edit' — ratified by the owner via TUI",
+    ]);
+    expect(entries[0]!.ratified).toMatch(/seed-edit/);
   });
 });
