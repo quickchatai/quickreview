@@ -21,10 +21,11 @@
 //     key every review session holds; the server confines it to the
 //     reviewer's namespace (a 403 for any other, verified live), so no root
 //     or admin credential exists on this path.
-//   * HONEST STATUS. `status()` is synchronous, cached and total. The journal
-//     state it reports comes from the script's own `journalStatus`; when the
-//     script cannot be loaded or read the state is `unknown`, never `none` —
-//     "could not read" is not "nothing there".
+//   * HONEST STATUS. `status()` is synchronous and total, and re-reads the
+//     journal on every call (an operator's `settle` lands with no timer
+//     armed). The journal state it reports comes from the script's own
+//     `journalStatus`; when the script cannot be loaded or read the state is
+//     `unknown`, never `none` — "could not read" is not "nothing there".
 //
 // It also carries the one check that makes `[openviking] embedding_*` in
 // config.toml mean something: the ENTRYPOINT renders the embedder (group_vars

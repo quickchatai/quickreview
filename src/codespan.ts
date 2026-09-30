@@ -35,16 +35,22 @@ export function codePath(path: string, opts: { table?: boolean } = {}): string {
 }
 
 /**
+ * Author-derived text quoted inside a daemon-authored `("…")` in prompt text.
+ * It must not be able to close that quotation or start a new line of
+ * instructions: control characters collapse to a space and a double quote
+ * becomes a single one. No length cap — the caller owns the length (the round
+ * memory query is clamped at its own 600-character budget, and quoting it
+ * must not silently cut what the daemon actually asked).
+ */
+export function promptQuoted(text: string): string {
+  return text.replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, " ").replace(/"/g, "'");
+}
+
+/**
  * A PR title quoted inside daemon-authored prompt text (`("{{title}}")` in the
- * conversation system prompt and the round templates, and the memory query
- * built from it). The title is the author's, so it must not be able to close
- * that quotation or start a new line of instructions: control characters
- * collapse to a space and a double quote becomes a single one. GitHub caps
- * titles at 256 characters; so do we.
+ * conversation system prompt and the round templates): `promptQuoted`, capped
+ * at 256 characters as GitHub caps titles.
  */
 export function promptTitle(title: string): string {
-  return title
-    .replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, " ")
-    .replace(/"/g, "'")
-    .slice(0, 256);
+  return promptQuoted(title).slice(0, 256);
 }

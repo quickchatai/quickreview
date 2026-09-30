@@ -385,6 +385,15 @@ describe("memory sections in the round prompt", () => {
   });
 });
 
+describe("the quoted memory query is escaped, never cut (selfscan review)", () => {
+  it("a query past the 256-character title cap renders whole", () => {
+    const query = "q".repeat(400);
+    for (const mem of [seeded({ query, block: "" }), seeded({ query })]) {
+      expect(renderContextBlockSection(mem)).toContain(`("${query}"`);
+    }
+  });
+});
+
 describe("the pinned head is guaranteed", () => {
   it("prepends the head to a template that forgot the placeholder", () => {
     const mem = seeded();

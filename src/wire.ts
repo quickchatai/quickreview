@@ -670,7 +670,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     // Passive pi auth-failure watch: the JSONLs pi actually writes.
     piSessionsDir: piAuthWatchDirs(sessions),
     // The memory engine's heartbeat block — a cached, synchronous
-    // read of the supervisor's last health + /proc sample.
+    // read of the supervisor's last health + /proc sample, plus the reembed
+    // journal (one small synchronous file read per heartbeat).
     openvikingStatus: () => {
       const status = openviking?.status();
       return status && reembed ? { ...status, reembed: reembed.status() } : status;
