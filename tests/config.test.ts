@@ -317,6 +317,15 @@ describe("[models] tiered pass scheme", () => {
     expect(cfg2.models.pricing).toEqual({});
   });
 
+  it("refuses a validate_tier outside the tier ladder (selfscan)", () => {
+    const typo = readFileSync(configPath, "utf8").replace(
+      /^validate_tier = .*$/m,
+      'validate_tier = "sol-hig"',
+    );
+    expect(typo).toContain('validate_tier = "sol-hig"');
+    expect(() => parseConfig(typo)).toThrow(/validate_tier/);
+  });
+
   it("parses [models.pricing] entries keyed by bare model id", () => {
     const withPricing = readFileSync(configPath, "utf8").replace(
       "[models.pricing]",

@@ -13,10 +13,12 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   EMBEDDING_PROVIDERS,
+  HOSTED_EMBEDDING,
   LOCAL_EMBEDDING,
   OPENVIKING_DEFAULTS,
   openVikingBaseUrl,
   parseConfig,
+  parseOpenViking,
   resolveOpenVikingPaths,
 } from "../src/config.js";
 
@@ -177,6 +179,27 @@ describe("triple-mirror version pin (config.toml ↔ group_vars ↔ Dockerfile)"
       .replace(/^embedding_model = .*$/m, 'embedding_model = "text-embedding-3-small"')
       .replace(/^embedding_dimension = .*$/m, "embedding_dimension = 1536");
     expect(parseConfig(hosted).openviking.embedding_provider).toBe("openai");
+  });
+});
+
+describe("a hosted opt-in never inherits the local embedder (selfscan)", () => {
+  it("provider alone resolves to the hosted model at its dimension", () => {
+    const c = parseOpenViking({ embedding_provider: "openai" });
+    expect(c.embedding_model).toBe(HOSTED_EMBEDDING.model);
+    expect(c.embedding_dimension).toBe(HOSTED_EMBEDDING.dimension);
+  });
+
+  it("a named hosted model with no dimension is refused, not given 512 or 1536", () => {
+    expect(() =>
+      parseOpenViking({ embedding_provider: "openai", embedding_model: "text-embedding-3-large" }),
+    ).toThrow(/embedding_dimension/);
+    expect(
+      parseOpenViking({
+        embedding_provider: "openai",
+        embedding_model: "text-embedding-3-large",
+        embedding_dimension: 3072,
+      }).embedding_dimension,
+    ).toBe(3072);
   });
 });
 

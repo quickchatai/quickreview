@@ -23,8 +23,13 @@ function dryGateResult(): GateResult {
 
 /** Offline push-with-old-approval simulation: the real reconcile and dispatch
  * paths run against a moved head and must stay quiet without an explicit
- * label/team review re-request. */
-function stalenessSimulation(cfg: Config) {
+ * label/team review re-request. The fixture is a TRACKED PR whose approved
+ * head is the old sha — an untracked PR is skipped by reconcile outright, and
+ * a probe over one would pass without exercising anything. */
+export function stalenessSimulation(
+  cfg: Config,
+  hooksRoot: string = join(sandboxRoot(), "state", "checklist-sim"),
+) {
   const store = new StateStore(":memory:");
   const issued: RoundOrder[] = [];
   const fixture = {
@@ -68,14 +73,35 @@ function stalenessSimulation(cfg: Config) {
     createReview: async () => dryGateResult(),
   };
   const hooks = {
-    ...stubSessionHooks(join(sandboxRoot(), "state", "checklist-sim")),
+    ...stubSessionHooks(hooksRoot),
     async dispatchRound(order: RoundOrder) {
       issued.push(order);
     },
   };
   return {
     fixture,
-    injectStalePr: () => {},
+    store,
+    injectStalePr: (f: typeof fixture) => {
+      // Reviewed and approved at the old head, one finished round behind it.
+      store.upsertPr({
+        number: f.number,
+        state: "tracked",
+        head_sha: f.approved_sha,
+        title: prRef.title,
+        author: prRef.author,
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
+      const round = store.startRound(f.number, "first", [], 60);
+      store.finishRound(round, "APPROVE", null);
+      store.recordReviewedHead(f.number, {
+        head_sha: f.approved_sha,
+        verdict: "APPROVE",
+        posted_event: "APPROVE",
+        round_no: 1,
+      });
+    },
     runStalenessReconcile: async () => {
       await reconcileOnce({ cfg, store, adapter, hooks, log: () => {} });
       await dispatchOnce({ cfg, store, adapter, hooks, log: () => {} });
@@ -136,6 +162,19 @@ function pingPongSimulation(cfg: Config, root: string) {
   };
 }
 
+/** ② The daemon's side of the queue comparison: the PRs still OWED a trigger
+ * consumption. Live, dispatch consumes the label and team request as the round
+ * starts, so a `reviewing` row no longer shows in the manual searches; in
+ * dry-run nothing is consumed, so it still does. */
+export function derivedQueueOf(
+  rows: ReadonlyArray<{ number: number; state: string }>,
+  dryRun: boolean,
+): number[] {
+  return rows
+    .filter((r) => r.state === "queued" || (dryRun && r.state === "reviewing"))
+    .map((r) => r.number);
+}
+
 export async function cmdChecklist(parts?: ProductionParts): Promise<number> {
   const root = sandboxRoot();
   const cfg = loadConfig();
@@ -160,11 +199,7 @@ export async function cmdChecklist(parts?: ProductionParts): Promise<number> {
     queue: {
       labelTriggered: async () => (await p.adapter.searchLabelTriggered()).map((i) => i.number),
       teamTriggered: async () => (await p.adapter.searchTeamTriggered()).map((i) => i.number),
-      derivedQueue: () =>
-        store
-          .allPrs()
-          .filter((r) => r.state === "queued" || r.state === "reviewing")
-          .map((r) => r.number),
+      derivedQueue: () => derivedQueueOf(store.allPrs(), cfg.dry_run),
     },
     staleness: stalenessSimulation(cfg),
     pingPong: pingPongSimulation(cfg, root),

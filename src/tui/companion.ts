@@ -57,6 +57,17 @@ export interface ContainerStatus {
   /** `dest -> source` for every mount the container was CREATED with; empty
    * when it does not exist or docker could not be asked. */
   mounts: Map<string, string>;
+  /** Set when docker could not be ASKED (daemon down, permission denied):
+   * `exists`/`running` are then false by default, not by observation. Absent
+   * when the inspect succeeded or docker said the container does not exist. */
+  unknown?: string;
+}
+
+/** The one word `qcr companion status` prints — "unknown — <why>" when docker
+ * could not be asked, so a failed inspect never reads as a confirmed absence. */
+export function companionStateWord(st: ContainerStatus): string {
+  if (st.unknown !== undefined) return `unknown — docker inspect failed: ${st.unknown}`;
+  return st.running ? "running" : st.exists ? "stopped" : "absent";
 }
 
 /**
@@ -690,7 +701,10 @@ export class CompanionLifecycle {
       "{{.State.Running}}\n{{range .Mounts}}{{.Destination}}={{if .Name}}{{.Name}}{{else}}{{.Source}}{{end}}\n{{end}}",
       this.cfg.container_name,
     ]);
-    if (!res.ok) return { exists: false, running: false, mounts: new Map() };
+    if (!res.ok) {
+      const none = { exists: false, running: false, mounts: new Map<string, string>() };
+      return /no such (object|container)/i.test(res.stderr) ? none : { ...none, unknown: errText(res) };
+    }
     const [first = "", ...rest] = res.stdout.split("\n");
     const mounts = new Map<string, string>();
     for (const line of rest) {

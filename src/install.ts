@@ -43,10 +43,12 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmdirSync,
   rmSync,
   statSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -237,13 +239,22 @@ export function migrateConfig(opts: { root: string; env?: InstallEnv }): Migrate
     return { kind: "deduplicated", from, to };
   }
   mkdirSync(dirname(to), { recursive: true, mode: 0o700 });
-  try {
-    renameSync(from, to);
-  } catch (err) {
-    // A checkout and ~/.config on different filesystems: copy, then remove.
-    if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
+  // A symlinked config (often relative, `-> ./operator.toml`) would be renamed
+  // as a link and resolve against the config home, where its target is not:
+  // copy the bytes it points at instead, then drop the link.
+  const copyThenRemove = (): void => {
     copyFileSync(from, to);
     unlinkSync(from);
+  };
+  if (lstatSync(from).isSymbolicLink()) copyThenRemove();
+  else {
+    try {
+      renameSync(from, to);
+    } catch (err) {
+      // A checkout and ~/.config on different filesystems: copy, then remove.
+      if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
+      copyThenRemove();
+    }
   }
   return { kind: "moved", from, to };
 }
@@ -430,6 +441,9 @@ export type ProfileMigrateOutcome =
   | { kind: "moved"; name: string; from: string; to: string }
   | { kind: "deduplicated"; name: string; from: string; to: string }
   | { kind: "conflict"; name: string; from: string; to: string }
+  /** The home's entry IS the checkout's (a symlink to it, or the reverse):
+   * one copy, already read from the home — nothing moved, nothing removed. */
+  | { kind: "aliased"; name: string; from: string; to: string }
   /** `$QCR_CONFIG` is set: nothing moves (see migrateProfiles). */
   | { kind: "override"; name: string; path: string };
 
@@ -482,7 +496,13 @@ export function migrateProfiles(opts: { root: string; env?: InstallEnv }): Profi
   if (samePath(fromBase, toBase)) return [];
   const outcomes: ProfileMigrateOutcome[] = [];
   const names = readdirSync(fromBase, { withFileTypes: true })
-    .filter((e) => e.isDirectory() && !EXAMPLE_PROFILES.includes(e.name))
+    // A symlinked profile dir counts: strandedCheckoutProfile (stat-based)
+    // names it, so migrate must have an outcome for it.
+    .filter(
+      (e) =>
+        (e.isDirectory() || (e.isSymbolicLink() && isDirectory(join(fromBase, e.name)))) &&
+        !EXAMPLE_PROFILES.includes(e.name),
+    )
     .map((e) => e.name)
     .sort();
   const override = (env.QCR_CONFIG ?? "").trim();
@@ -493,6 +513,12 @@ export function migrateProfiles(opts: { root: string; env?: InstallEnv }): Profi
     const from = join(fromBase, name);
     const to = join(toBase, name);
     if (existsSync(to)) {
+      // Per-name identity: the base-dir check does not see a home profile
+      // linked to the checkout's, and "deduplicating" that deletes the only copy.
+      if (samePath(from, to)) {
+        outcomes.push({ kind: "aliased", name, from, to });
+        continue;
+      }
       if (!isDirectory(to) || !sameTree(from, to)) {
         outcomes.push({ kind: "conflict", name, from, to });
         continue;
@@ -502,11 +528,21 @@ export function migrateProfiles(opts: { root: string; env?: InstallEnv }): Profi
       continue;
     }
     mkdirSync(toBase, { recursive: true, mode: 0o700 });
+    if (lstatSync(from).isSymbolicLink()) {
+      // A linked pack stays linked: re-point from the home at its real target
+      // (a relative link renamed as-is would resolve against the home).
+      symlinkSync(realpathSync(from), to);
+      unlinkSync(from);
+      outcomes.push({ kind: "moved", name, from, to });
+      continue;
+    }
     try {
       renameSync(from, to);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
-      cpSync(from, to, { recursive: true });
+      // verbatimSymlinks: a relative link inside the profile keeps pointing
+      // inside the COPY, not back into the source tree removed next.
+      cpSync(from, to, { recursive: true, verbatimSymlinks: true });
       rmSync(from, { recursive: true });
     }
     outcomes.push({ kind: "moved", name, from, to });
@@ -531,6 +567,11 @@ export function profileMigrateReport(outcomes: ProfileMigrateOutcome[]): {
         break;
       case "deduplicated":
         lines.push(`profile ${o.name}: ${o.to} already held the same files — removed ${o.from}`);
+        break;
+      case "aliased":
+        lines.push(
+          `profile ${o.name}: ${o.to} is a link to ${o.from} (or the reverse) — one copy, already read from the home; nothing moved or removed`,
+        );
         break;
       case "override":
         lines.push(
@@ -804,6 +845,12 @@ export function migrateSecrets(opts: { env?: InstallEnv & { QCR_OPENVIKING_KEYS?
       continue;
     }
     if (existsSync(dest)) {
+      // A home dir linked to the legacy one reads the SAME file here: the byte
+      // compare would pass and the unlink below would delete the only copy.
+      if (samePath(src, dest)) {
+        files.push({ name, to: dest, outcome: "skipped", why: `${dest} is the same file (a link) — nothing to move` });
+        continue;
+      }
       if (!readFileSync(src).equals(readFileSync(dest))) {
         files.push({ name, to: dest, outcome: "conflict" });
         continue;
@@ -873,7 +920,10 @@ export function secretsMigrateReport(m: SecretsMigration): { code: number; lines
 
 export type ComposeEnvRepoint =
   | { kind: "none" }
-  | { kind: "repointed"; file: string; from: string; to: string };
+  | { kind: "repointed"; file: string; from: string; to: string }
+  /** The legacy dir still holds files the home lacks (migrate moved nothing,
+   * or not everything): the working mount is kept. */
+  | { kind: "held"; file: string; from: string; to: string; missing: string[] };
 
 export function repointComposeSecrets(opts: { root: string; env?: InstallEnv }): ComposeEnvRepoint {
   const env = opts.env ?? process.env;
@@ -890,6 +940,17 @@ export function repointComposeSecrets(opts: { root: string; env?: InstallEnv }):
   if (value === "" || !isLegacySecretsSpelling(value, env)) return { kind: "none" };
   const to = secretsHome(env);
   if (!existsSync(to)) return { kind: "none" };
+  // Repoint only onto a home that holds everything the mounted dir still
+  // does — never swap a working mount for an empty or partial one. The key
+  // file is exempt: it goes to the operator home, never into the mount.
+  let legacyNames: string[] = [];
+  try {
+    legacyNames = readdirSync(legacySecretsDir(env));
+  } catch {
+    // Gone: migrate moved everything and removed it.
+  }
+  const missing = legacyNames.filter((n) => n !== KEYS_FILE && !existsSync(join(to, n))).sort();
+  if (missing.length > 0) return { kind: "held", file, from: value, to, missing };
   const next = text.replace(/^QCR_SECRETS_DIR=.*$/m, `QCR_SECRETS_DIR=${to}`);
   const mode = statSync(file).mode & 0o7777;
   const tmp = join(opts.root, ".env.qcr-migrate.tmp");
@@ -900,6 +961,11 @@ export function repointComposeSecrets(opts: { root: string; env?: InstallEnv }):
 }
 
 export function composeRepointReport(r: ComposeEnvRepoint): string[] {
+  if (r.kind === "held")
+    return [
+      `secrets: ${r.file} still mounts ${r.from} (QCR_SECRETS_DIR) — left as is: ${r.to} lacks ${r.missing.join(", ")}; ` +
+        "move them there, then re-run migrate",
+    ];
   return r.kind === "none"
     ? []
     : [

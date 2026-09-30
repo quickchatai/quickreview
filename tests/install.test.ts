@@ -230,6 +230,15 @@ describe("migrateConfig", () => {
     expect(readFileSync(prof, "utf8")).toBe("p = 1\n");
   });
 
+  it("a checkout config.toml that is a RELATIVE symlink lands readable in the home (selfscan)", () => {
+    put(join(root, "operator.toml"), "linked = 1\n");
+    symlinkSync("operator.toml", join(root, "config.toml"));
+    const to = join(configHome(env), "config.toml");
+    expect(migrateConfig({ root, env })).toMatchObject({ kind: "moved", to });
+    expect(readFileSync(to, "utf8")).toBe("linked = 1\n");
+    expect(existsSync(join(root, "config.toml"))).toBe(false);
+  });
+
   it("nothing to move is reported, and QCR_CONFIG makes migrate refuse to guess", () => {
     expect(migrateConfig({ root, env }).kind).toBe("nothing");
     put(join(root, "config.toml"));
@@ -448,6 +457,36 @@ describe("migrateProfiles", () => {
     rmSync(join(root, "profiles", "house"), { recursive: true });
     putProfile(root, "house", "same\n");
     expect(migrateProfiles({ root, env }).map((o) => o.kind)).toEqual(["conflict"]);
+  });
+
+  it("a home profile that is a link to the checkout's is never 'deduplicated' away (selfscan)", () => {
+    const from = putProfile(root, "house", "only copy\n");
+    mkdirSync(join(configHome(env), "profiles"), { recursive: true });
+    const to = join(configHome(env), "profiles", "house");
+    symlinkSync(from, to);
+    const [o] = migrateProfiles({ root, env });
+    expect(o).toMatchObject({ kind: "aliased", name: "house", from, to });
+    expect(readFileSync(join(from, "addenda", "10-rule.md"), "utf8")).toBe("only copy\n");
+    expect(readFileSync(join(to, "addenda", "10-rule.md"), "utf8")).toBe("only copy\n");
+    const report = profileMigrateReport([o!]);
+    expect(report.code).toBe(0);
+    expect(report.lines.join("\n")).toMatch(/link/);
+  });
+
+  it("a checkout profile that is a symlink to an external pack migrates too (selfscan)", () => {
+    const pack = join(dir, "packs", "house");
+    put(join(pack, "addenda", "10-rule.md"), "pack\n");
+    mkdirSync(join(root, "profiles"), { recursive: true });
+    symlinkSync(join("..", "..", "packs", "house"), join(root, "profiles", "house"));
+    expect(strandedCheckoutProfiles({ root, env })).toEqual([join(root, "profiles", "house")]);
+    const to = join(configHome(env), "profiles", "house");
+    expect(migrateProfiles({ root, env })).toEqual([
+      { kind: "moved", name: "house", from: join(root, "profiles", "house"), to },
+    ]);
+    expect(readFileSync(join(to, "addenda", "10-rule.md"), "utf8")).toBe("pack\n");
+    expect(readFileSync(join(pack, "addenda", "10-rule.md"), "utf8")).toBe("pack\n");
+    expect(existsSync(join(root, "profiles", "house"))).toBe(false);
+    expect(strandedCheckoutProfiles({ root, env })).toEqual([]);
   });
 
   it("moves nothing while QCR_CONFIG names the config — compose mounts THAT file's dir, not the home", () => {
@@ -763,6 +802,19 @@ describe("migrateSecrets", () => {
     expect(existsSync(join(target, "app_id"))).toBe(true);
   });
 
+  it("a secrets home that is a link to the legacy dir never deletes a credential (selfscan)", () => {
+    put600("app.pem", "PEM\n");
+    put600("webhook_secret", "s\n");
+    mkdirSync(dirname(secretsHome(env)), { recursive: true });
+    symlinkSync(legacy(), secretsHome(env));
+    const m = migrateSecrets({ env });
+    if (m.kind !== "done") throw new Error(m.kind);
+    expect(m.files.map((f) => f.outcome)).toEqual(["skipped", "skipped"]);
+    expect(readFileSync(join(secretsHome(env), "app.pem"), "utf8")).toBe("PEM\n");
+    expect(readFileSync(join(legacy(), "webhook_secret"), "utf8")).toBe("s\n");
+    expect(secretsMigrateReport(m).lines.join("\n")).toMatch(/same file/);
+  });
+
   it("`qcr install migrate` moves config and secrets; `where` names both", async () => {
     const { cmdInstall } = await import("../src/cli.js");
     put(join(root, "config.toml"), "x = 1\n");
@@ -810,6 +862,25 @@ describe("migrate repoints the compose .env (review)", () => {
     writeFileSync(envFile, "QCR_SECRETS_DIR=/srv/my-secrets\n");
     expect(repointComposeSecrets({ root, env }).kind).toBe("none");
     expect(readFileSync(envFile, "utf8")).toBe("QCR_SECRETS_DIR=/srv/my-secrets\n");
+  });
+
+  it("leaves a working mount alone when the legacy dir still holds what the home lacks (selfscan)", async () => {
+    const { cmdInstall } = await import("../src/cli.js");
+    // A symlinked legacy dir: migrate moves nothing; the home exists but is empty.
+    const target = join(dir, "real-secrets");
+    mkdirSync(target);
+    writeFileSync(join(target, "app.pem"), "PEM\n");
+    mkdirSync(dirname(legacy()), { recursive: true });
+    symlinkSync(target, legacy());
+    mkdirSync(secretsHome(env), { recursive: true });
+    const envFile = join(root, ".env");
+    writeFileSync(envFile, `QCR_SECRETS_DIR=${legacy()}\n`);
+    const out: string[] = [];
+    cmdInstall(["migrate"], { root, env, log: (l) => out.push(l) });
+    expect(readFileSync(envFile, "utf8")).toBe(`QCR_SECRETS_DIR=${legacy()}\n`);
+    expect(repointComposeSecrets({ root, env })).toMatchObject({ kind: "held", missing: ["app.pem"] });
+    expect(out.join("\n")).toMatch(/app\.pem/);
+    expect(out.join("\n")).not.toMatch(/docker compose up -d/);
   });
 
   it("leaves the line while the home does not exist yet (nothing was moved)", () => {

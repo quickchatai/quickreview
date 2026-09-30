@@ -156,6 +156,53 @@ describe("④ push does not review", () => {
   });
 });
 
+describe("④ push does not review — any unsolicited round, and a REAL fixture (selfscan)", () => {
+  const fixture = { number: 4242, head_sha: "beef0000", approved_sha: "cafe1111" };
+
+  it("fails on an unsolicited first or re-review round too, not only one spelled staleness", async () => {
+    for (const round_type of ["first", "re-review"]) {
+      const r = await probeStalenessWake({
+        fixture,
+        injectStalePr: () => {},
+        runStalenessReconcile: async () => {},
+        issuedOrders: () => [{ pr: fixture.number, round_type }],
+      });
+      expect(r.pass, round_type).toBe(false);
+      expect(r.detail).toContain(round_type);
+    }
+  });
+
+  it("the offline simulation tracks an APPROVED PR at the old head, so reconcile really sees a push", async () => {
+    const { stalenessSimulation } = await import("../src/cliops.js");
+    const { parseConfig } = await import("../src/config.js");
+    const { readFileSync } = await import("node:fs");
+    const cfg = parseConfig(readFileSync(join(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
+    const sim = stalenessSimulation(cfg, scratch());
+    const r = await probeStalenessWake(sim);
+    expect(r.pass).toBe(true);
+    const row = sim.store.getPr(sim.fixture.number);
+    expect(row).toMatchObject({ head_sha: sim.fixture.head_sha });
+    expect(sim.store.reviewedHead(sim.fixture.number)).toMatchObject({
+      head_sha: sim.fixture.approved_sha,
+      verdict: "APPROVE",
+    });
+    expect(sim.store.priorRoundCount(sim.fixture.number)).toBe(1);
+  });
+});
+
+describe("② derived queue (selfscan)", () => {
+  it("live: a reviewing PR already had its trigger consumed, so it is not owed; dry-run keeps it", async () => {
+    const { derivedQueueOf } = await import("../src/cliops.js");
+    const rows = [
+      { number: 1, state: "queued" },
+      { number: 2, state: "reviewing" },
+      { number: 3, state: "tracked" },
+    ] as const;
+    expect(derivedQueueOf(rows, false)).toEqual([1]);
+    expect(derivedQueueOf(rows, true)).toEqual([1, 2]);
+  });
+});
+
 describe("⑤ ping-pong", () => {
   it("passes when the interpreter drops an inject file", async () => {
     const dir = scratch();

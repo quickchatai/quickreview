@@ -813,7 +813,9 @@ function cmdEvents(tail: number, json: boolean): void {
 
 /** `qcr companion up|down|status` — thin over CompanionLifecycle. */
 export async function cmdCompanion(sub: string | undefined): Promise<void> {
-  const { CompanionLifecycle, realDockerRunner } = await import("./tui/companion.js");
+  const { CompanionLifecycle, companionStateWord, realDockerRunner } = await import(
+    "./tui/companion.js"
+  );
   const cfg = loadConfig().companion;
   const lc = new CompanionLifecycle(cfg, realDockerRunner);
   switch (sub) {
@@ -850,9 +852,12 @@ export async function cmdCompanion(sub: string | undefined): Promise<void> {
       const st = await lc.status();
       const pi = st.running ? await lc.piRunning() : false;
       console.log(
-        `companion ${cfg.container_name}: ${st.running ? "running" : st.exists ? "stopped" : "absent"}` +
+        `companion ${cfg.container_name}: ${companionStateWord(st)}` +
           `${st.running ? ` · pi session ${pi ? "live" : "down"}` : ""}`,
       );
+      // Unknown is not an answer: a script reading the exit code must not
+      // take "docker could not be asked" for "no container".
+      if (st.unknown !== undefined) process.exitCode = 1;
       return;
     }
     case "rebuild": {

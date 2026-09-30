@@ -816,6 +816,29 @@ describe("CompanionLifecycle state machine", () => {
   });
 });
 
+describe("companion status when docker cannot be asked (selfscan)", () => {
+  it("an inspect that fails for any reason but 'no such' is UNKNOWN, never absent", async () => {
+    const { companionStateWord } = await import("../src/tui/companion.js");
+    const denied = (argv: string[]) =>
+      argv[0] === "inspect"
+        ? {
+            ok: false,
+            stdout: "",
+            stderr: "permission denied while trying to connect to the Docker daemon socket",
+            code: 1,
+          }
+        : undefined;
+    const st = await lifecycle([denied]).lc.status();
+    expect(st).toMatchObject({ exists: false, running: false });
+    expect(st.unknown).toMatch(/permission denied/);
+    expect(companionStateWord(st)).toMatch(/^unknown — .*permission denied/);
+    const absent = await lifecycle([inspect("absent")]).lc.status();
+    expect(companionStateWord(absent)).toBe("absent");
+    expect(companionStateWord(await lifecycle([inspect(true)]).lc.status())).toBe("running");
+    expect(companionStateWord(await lifecycle([inspect(false)]).lc.status())).toBe("stopped");
+  });
+});
+
 describe("qcr tui args", () => {
   it("defaults to companion on + reload on with no target", async () => {
     const { parseTuiArgs } = await import("../src/tui/index.js");

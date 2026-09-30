@@ -1106,6 +1106,22 @@ export const OPENVIKING_DEFAULTS: OpenVikingConfig = {
  */
 export function parseOpenViking(raw: Record<string, unknown>): OpenVikingConfig {
   const merged = { ...OPENVIKING_DEFAULTS, ...(raw as Partial<OpenVikingConfig>) };
+  // The defaults are the LOCAL embedder: a hosted opt-in that omits the model
+  // runs HOSTED_EMBEDDING, never bge-small at 512 (which no hosted API serves).
+  // A named hosted model with no dimension has no default to fall back on.
+  if (merged.embedding_provider !== "local") {
+    if (raw.embedding_model === undefined) {
+      merged.embedding_model = HOSTED_EMBEDDING.model;
+      if (raw.embedding_dimension === undefined)
+        merged.embedding_dimension = HOSTED_EMBEDDING.dimension;
+    } else if (raw.embedding_dimension === undefined) {
+      if (merged.embedding_model !== HOSTED_EMBEDDING.model)
+        throw new Error(
+          `config.toml: [openviking] embedding_model = "${String(merged.embedding_model)}" needs its embedding_dimension set too`,
+        );
+      merged.embedding_dimension = HOSTED_EMBEDDING.dimension;
+    }
+  }
   if (!(EMBEDDING_PROVIDERS as readonly string[]).includes(merged.embedding_provider)) {
     throw new Error(
       `config.toml: [openviking] embedding_provider must be one of ${EMBEDDING_PROVIDERS.join(", ")} (got '${String(merged.embedding_provider)}')`,
@@ -2087,6 +2103,10 @@ export function validateLensKnobs(cfg: Pick<Config, "review" | "models">): void 
   )
     throw new Error(
       `config.toml [review] validate_consequence_rule must be true or false (got ${JSON.stringify(cfg.review.validate_consequence_rule)})`,
+    );
+  if (!(PASS_TIER_ORDER as readonly unknown[]).includes(cfg.models.validate_tier))
+    throw new Error(
+      `config.toml [models] validate_tier: unknown tier ${JSON.stringify(cfg.models.validate_tier)} (one of ${PASS_TIER_ORDER.join(", ")})`,
     );
   const pins: unknown = cfg.models.pass_tiers ?? {};
   if (typeof pins !== "object" || pins === null || Array.isArray(pins))

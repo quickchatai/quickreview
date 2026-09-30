@@ -66,23 +66,26 @@ export async function main(): Promise<number> {
   const mgr = new PiSessionManager({ cfg, root });
   console.log(`[smoke] spawning tmux session ${session} (model ${cfg.models.conversation})`);
   await mgr.spawnSession(session, SYSTEM_PROMPT, cfg.models.conversation);
-  const injected = mgr.injectFile(session, `Hello from the smoke test. Reply with the marker.\n`);
-  console.log(`[smoke] injected ${injected}`);
-
-  const deadline = Date.now() + TIMEOUT_MS;
   let found = false;
-  let jsonl: string | undefined;
-  while (Date.now() < deadline && !found) {
-    await sleep(POLL_MS);
-    jsonl = mgr.newestSessionFile(session);
-    if (jsonl && existsSync(jsonl)) found = readFileSync(jsonl, "utf8").includes(MARKER);
-  }
+  try {
+    const injected = mgr.injectFile(session, `Hello from the smoke test. Reply with the marker.\n`);
+    console.log(`[smoke] injected ${injected}`);
 
-  console.log(`[smoke] session file: ${jsonl ?? "(none found)"}`);
-  await mgr.tmux.killSession(session);
-  rmSync(mgr.sessionDir(session), { recursive: true, force: true });
-  rmSync(mgr.injectDir(session), { recursive: true, force: true });
-  rmSync(mgr.promptPath(session), { force: true });
+    const deadline = Date.now() + TIMEOUT_MS;
+    let jsonl: string | undefined;
+    while (Date.now() < deadline && !found) {
+      await sleep(POLL_MS);
+      jsonl = mgr.newestSessionFile(session);
+      if (jsonl && existsSync(jsonl)) found = readFileSync(jsonl, "utf8").includes(MARKER);
+    }
+    console.log(`[smoke] session file: ${jsonl ?? "(none found)"}`);
+  } finally {
+    // Always: a throw between spawn and here must not leave a smoke-* pi alive.
+    await mgr.tmux.killSession(session);
+    rmSync(mgr.sessionDir(session), { recursive: true, force: true });
+    rmSync(mgr.injectDir(session), { recursive: true, force: true });
+    rmSync(mgr.promptPath(session), { force: true });
+  }
 
   if (!found) {
     console.error(

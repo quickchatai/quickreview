@@ -181,9 +181,11 @@ export async function probeStalenessWake(deps: StalenessProbeDeps): Promise<Prob
   await deps.injectStalePr(deps.fixture);
   await deps.runStalenessReconcile();
   const orders = await deps.issuedOrders();
-  const hit = orders.find((o) => o.pr === deps.fixture.number && o.round_type === "staleness");
+  // ANY round for the fixture is unsolicited — a regression may spell it
+  // first or re-review as readily as staleness.
+  const hit = orders.find((o) => o.pr === deps.fixture.number);
   const detail = hit
-    ? `#${deps.fixture.number}: unsolicited staleness round issued after push`
+    ? `#${deps.fixture.number}: unsolicited ${hit.round_type} round issued after push`
     : `#${deps.fixture.number}: push stayed quiet (approved ${deps.fixture.approved_sha.slice(0, 7)} -> head ${deps.fixture.head_sha.slice(0, 7)})`;
   return hit ? bad(item, name, detail) : ok(item, name, detail);
 }
