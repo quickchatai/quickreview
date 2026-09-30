@@ -302,8 +302,10 @@ export type CommandStatus = "ok" | "failed" | "timeout" | "not-run";
 
 /** One command's outcome. PR-Agent exits 0 even when the model call failed (it
  * publishes "Failed to review PR" instead), so success is what it PRODUCED:
- * /review a structured review; /improve its suggestions or its explicit
- * "no suggestions" answer. */
+ * /review a structured review; /improve its published suggestions list — EMPTY
+ * included: with no suggestions it publishes an empty artifact (the local
+ * provider's "No code suggestions found for the PR.") — or an explicit "no
+ * suggestions" comment. */
 export function commandStatus(
   command: PragentCommand,
   r: { code: number; timedOut: boolean } | null,
@@ -313,7 +315,7 @@ export function commandStatus(
   if (r.timedOut) return "timeout";
   if (r.code !== 0 || !cap || cap.error) return "failed";
   if (command === "review") return cap.structured_review?.review ? "ok" : "failed";
-  if ((cap.suggestions ?? []).length) return "ok";
+  if (Array.isArray(cap.suggestions)) return "ok";
   return (cap.comments ?? []).some((c) => /no (code )?suggestions/i.test(c)) ? "ok" : "failed";
 }
 

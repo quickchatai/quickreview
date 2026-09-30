@@ -263,6 +263,8 @@ describe("output → findings: key issues and suggestions with lines are comment
     expect(commandStatus("review", ok, { ...REVIEW_CAP, error: "boom" })).toBe("failed");
     expect(commandStatus("improve", ok, IMPROVE_CAP)).toBe("ok");
     expect(commandStatus("improve", ok, { comments: ["No suggestions found to improve this PR."] })).toBe("ok");
+    // No suggestions: PR-Agent publishes an EMPTY artifact (smoke, immich-app__immich@7e2009f).
+    expect(commandStatus("improve", ok, { suggestions: [] })).toBe("ok");
     expect(commandStatus("improve", ok, { comments: ["Failed to generate code suggestions for PR"] })).toBe("failed");
     expect(commandStatus("improve", null, null)).toBe("not-run");
   });
