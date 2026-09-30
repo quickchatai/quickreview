@@ -150,6 +150,9 @@ export async function prefetchCase(c: BenchCase, o: PrefetchOptions): Promise<Pr
     if (
       meta &&
       meta.head_commit === c.head_commit &&
+      // The exact base, not merely one with the same merge-base: prepareTree
+      // installs meta.base_commit as origin/<base_ref>.
+      meta.base_commit === c.base_commit &&
       (await mergeBase(dir, c)) === meta.merge_base
     ) {
       // A store fetched while the API was unavailable keeps working, but its

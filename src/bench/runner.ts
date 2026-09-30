@@ -860,6 +860,9 @@ export async function reviewCase(
         : {}),
     };
     const sessionDir = join(caseDir, "session");
+    // This attempt's session only: an earlier attempt's JSONL left here would
+    // make `resumable` true and `--continue` would resume THAT conversation.
+    rmSync(sessionDir, { recursive: true, force: true });
     const base = [
       "--approve",
       "--model",
