@@ -557,7 +557,9 @@ here and says what to do: nothing later would mean anything until it is fixed.
    loopback-only there.
 3. **Ping delivery** — GitHub's own delivery log shows a ping your daemon
    accepted. This proves the whole path from GitHub through your ingress into
-   the daemon, end to end.
+   the daemon, end to end. Under the polling shape this layer is skipped and
+   reported as not checked: nothing is exposed, so no ping can arrive, and the
+   reconcile poll is the only trigger path.
 
 If the last ping failed, the wizard redelivers it once and watches for about
 thirty seconds. If it still fails, the three things to check are: the webhook
