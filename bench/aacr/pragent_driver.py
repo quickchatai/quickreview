@@ -123,8 +123,10 @@ def effective_settings(settings: Any, model: str) -> Dict[str, Any]:
             out[section.lower()] = _plain(dict(settings.get(section) or {}))
         except Exception as e:  # noqa: BLE001
             out[section.lower()] = f"unreadable: {e}"
-    if isinstance(out.get("openai"), dict) and out["openai"].get("key"):
-        out["openai"]["key"] = "<dummy loopback key>"
+    if isinstance(out.get("openai"), dict):
+        for k in list(out["openai"]):
+            if k.lower() == "key":
+                out["openai"][k] = "<dummy loopback key>"
     try:
         from pr_agent.algo.token_budget import get_max_tokens
         out["resolved_max_tokens"] = get_max_tokens(f"openai/{model}")
