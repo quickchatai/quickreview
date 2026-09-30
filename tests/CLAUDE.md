@@ -72,12 +72,12 @@
     first or those files start last and set the wall time.
   - Worker count stays vitest's default: capping it (tried `--maxWorkers=8`)
     only cut the suite's share of a loaded CPU, from 378s to 535s of wall time
-    under the burner, and did not stop a single timeout.
+    under the burner, and the timeouts stayed.
   - Load also breaks tests that are not timeouts. A wait loop is a DEADLINE
     inside the test's timeout (`pollUntil` in `tui-startup`), never a count of
     ticks — 100 x 20ms is a hidden 2s budget — and a wait for a real socket
-    or child effect is a deadline loop, never a fixed `setTimeout(r, 20)`. A scratch repo whose `.git` is
-    copied disables auto-maintenance (`-c maintenance.auto=false -c
+    or child effect is a deadline loop, never a fixed `setTimeout(r, 20)`.
+    A scratch repo whose `.git` is copied disables auto-maintenance (`-c maintenance.auto=false -c
     gc.auto=0`): a detached `git maintenance run --auto` was still writing
     into it when `cp -r` walked it. A fake binary fed on stdin reads its stdin
     before exiting, or the writer's EPIPE races the case under test.
