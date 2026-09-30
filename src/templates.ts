@@ -11,7 +11,7 @@ import {
   renderPinnedHeadSection,
   type RoundMemory,
 } from "./memory/context.js";
-import { codePath, flatControls } from "./codespan.js";
+import { codePath, flatControls, promptTitle } from "./codespan.js";
 import { renderEscalationPromptNote } from "./escalation.js";
 import { NEUTRAL_IDENTITY_VARS } from "./include.js";
 import type { FileClass, RecheckOrder } from "./recheck.js";
@@ -64,19 +64,7 @@ export const RECHECK_TEMPLATE_FILE = "round-recheck.md";
 
 export { codePath };
 
-/**
- * A PR title quoted inside daemon-authored prompt text (`("{{title}}")` in the
- * conversation system prompt and the round templates). The title is the
- * author's, so it must not be able to close that quotation or start a new
- * line of instructions: control characters collapse to a space and a double
- * quote becomes a single one. GitHub caps titles at 256 characters; so do we.
- */
-export function promptTitle(title: string): string {
-  return title
-    .replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, " ")
-    .replace(/"/g, "'")
-    .slice(0, 256);
-}
+export { promptTitle };
 
 /** Markdown list of the delta, trivial classifications included so the session
  * can see what the daemon already ruled out and why. */

@@ -239,6 +239,34 @@ describe("honest status", () => {
     expect(lines.join("\n")).toContain("cannot be parsed");
   });
 
+  it("an operator's `settle` after completion reaches the heartbeat without a restart (selfscan bfd61967)", async () => {
+    const state: FakeState = {
+      journal: { state: "pending", awaiting_operator: ["companion"], namespaces: { reviewer: { state: "pending" } } },
+      resumes: [],
+      outcomes: [{ state: "completed", detail: "14 records" }],
+    };
+    const { d, clock } = await started(state);
+    await clock.fire();
+    expect(d.status()).toMatchObject({ state: "completed", awaiting_operator: ["companion"] });
+    expect(clock.live()).toHaveLength(0);
+    // `openviking-reembed.mjs settle --user companion` rewrites the journal on
+    // disk; no timer is armed any more, so only the read behind status() sees it.
+    state.journal = { state: "completed", namespaces: { reviewer: { state: "completed" } } };
+    expect(d.status().awaiting_operator).toBeUndefined();
+  });
+
+  it("a journal that stops reading after boot is `unknown` in the next status, logged once", async () => {
+    const lines: string[] = [];
+    const mod = fakeModule({ journal: { state: "none" }, resumes: [], outcomes: [] });
+    const { d } = await started({ journal: { state: "none" }, resumes: [], outcomes: [] }, { load: async () => mod, log: lines });
+    mod.journalStatus = () => {
+      throw new Error("disk on fire");
+    };
+    expect(d.status()).toMatchObject({ state: "unknown", last_error: expect.stringContaining("disk on fire") });
+    d.status();
+    expect(lines.filter((l) => l.includes("disk on fire"))).toHaveLength(1);
+  });
+
   it("a journalStatus that throws is `unknown`, not a crash", async () => {
     const mod = fakeModule({ journal: { state: "none" }, resumes: [], outcomes: [] });
     mod.journalStatus = () => {

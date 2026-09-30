@@ -33,3 +33,18 @@ export function codePath(path: string, opts: { table?: boolean } = {}): string {
   const fence = "`".repeat(longest + 1);
   return `${fence} ${flat} ${fence}`;
 }
+
+/**
+ * A PR title quoted inside daemon-authored prompt text (`("{{title}}")` in the
+ * conversation system prompt and the round templates, and the memory query
+ * built from it). The title is the author's, so it must not be able to close
+ * that quotation or start a new line of instructions: control characters
+ * collapse to a space and a double quote becomes a single one. GitHub caps
+ * titles at 256 characters; so do we.
+ */
+export function promptTitle(title: string): string {
+  return title
+    .replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, " ")
+    .replace(/"/g, "'")
+    .slice(0, 256);
+}

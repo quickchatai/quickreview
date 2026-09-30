@@ -213,7 +213,8 @@ export class ReembedDriver {
   }
 
   /** Re-read the journal through the script. False when it could not be read
-   * at all (the status then says `unknown`). */
+   * at all (the status then says `unknown`, not the last state it read). A
+   * failure is logged when it starts or changes, not on every heartbeat. */
   private refresh(): boolean {
     if (!this.module) return false;
     try {
@@ -221,8 +222,10 @@ export class ReembedDriver {
       this.unknownWhy = undefined;
       return true;
     } catch (err) {
-      this.unknownWhy = `journal read failed: ${err instanceof Error ? err.message : String(err)}`;
-      this.deps.log(`openviking: reembed ${this.unknownWhy}`);
+      const why = `journal read failed: ${err instanceof Error ? err.message : String(err)}`;
+      this.journal = null;
+      if (why !== this.unknownWhy) this.deps.log(`openviking: reembed ${why}`);
+      this.unknownWhy = why;
       return false;
     }
   }
@@ -280,10 +283,14 @@ export class ReembedDriver {
     if (after === "pending" || after === "failed") this.arm(this.deps.retryMs ?? REEMBED_RETRY_MS);
   }
 
-  /** The `reembed` block of the heartbeat's `openviking` entry. Total. */
+  /** The `reembed` block of the heartbeat's `openviking` entry. Total.
+   * Re-reads the journal: once the reviewer's run completes no timer is
+   * armed, and an operator's `settle` for another namespace must still reach
+   * the heartbeat without a daemon restart. */
   status(): ReembedStatus {
     const base: ReembedStatus = { state: "unknown", attempts: this.attempts };
     try {
+      this.refresh();
       const j = this.journal;
       return {
         ...base,
