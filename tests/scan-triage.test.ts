@@ -242,6 +242,41 @@ describe("promotion files one ticket, never twice", () => {
   });
 });
 
+describe("a match never drops a ticket the fresh side already carries (selfscan 94faac13)", () => {
+  const ask = (state: ReturnType<typeof setup>["state"], old: string, fresh: string): void => {
+    const file = JSON.parse(state.read(FINDINGS_FILE)!) as FindingsFile;
+    file.question = { key: "k1", run: "scan-2", sha: SHA2, at: "t2", unreported: [old], fresh: [fresh] };
+    writeFileSync(join(dir, "state", FINDINGS_FILE), JSON.stringify(file));
+  };
+
+  it("a fresh finding promoted while the question waits keeps its ticket and state when paired with an unticketed old one", async () => {
+    const { state, findings, sink, triage } = setup();
+    findings.report([reported(FP("a"))], { run: "scan-1", sha: SHA1, at: "t1" });
+    findings.report([reported(FP("d"), { start: 9, end: 10 })], { run: "scan-2", sha: SHA2, at: "t2" });
+    ask(state, FP("a"), FP("d"));
+    await triage.promote({ fingerprint: FP("d"), effort: "billing" });
+    expect(findings.match({ key: "k1", pairs: [{ old: FP("a"), new: FP("d") }] })).toMatchObject({ ok: true, matched: 1 });
+    expect(one(findings, FP("d"))).toMatchObject({ state: "promoted", ticket: { ref: "FT-9001" }, aliases: [FP("a")] });
+    expect((sink as FakeSink).filed).toHaveLength(1);
+  });
+
+  it("a pair whose both sides carry different tickets is refused, never silently dropping one", async () => {
+    const { state, findings, sink, triage } = setup();
+    findings.report([reported(FP("a"))], { run: "scan-1", sha: SHA1, at: "t1" });
+    await triage.promote({ fingerprint: FP("a"), effort: "billing" });
+    findings.report([reported(FP("d"), { start: 9, end: 10 })], { run: "scan-2", sha: SHA2, at: "t2" });
+    ask(state, FP("a"), FP("d"));
+    await triage.promote({ fingerprint: FP("d"), effort: "billing" });
+    expect((sink as FakeSink).filed).toHaveLength(2);
+    expect(findings.match({ key: "k1", pairs: [{ old: FP("a"), new: FP("d") }] })).toMatchObject({
+      ok: false,
+      errors: [expect.stringMatching(/FT-9001.*FT-9002|both/)],
+    });
+    expect(one(findings, FP("a"))).toMatchObject({ ticket: { ref: "FT-9001" } });
+    expect(one(findings, FP("d"))).toMatchObject({ ticket: { ref: "FT-9002" } });
+  });
+});
+
 describe("a fixed finding's ticket closes with the scan sha", () => {
   it("closes it once, with the sha and run in the note; a second pass closes nothing", async () => {
     const { findings, sink, triage } = setup();

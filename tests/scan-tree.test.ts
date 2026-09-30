@@ -69,6 +69,21 @@ describe("gitScanSource", () => {
     expect(existsSync(join(state, SCAN_TREES_DIR, first))).toBe(false);
   });
 
+  it("materialises and reads a tracked top-level name that merely begins with two dots (selfscan 7057767c)", () => {
+    mkdirSync(join(repo, "..fixtures"), { recursive: true });
+    writeFileSync(join(repo, "..fixtures/a.ts"), "export const a = 1;\n");
+    git("add", "-A");
+    git("commit", "-qm", "dots");
+    const sha = git("rev-parse", "HEAD");
+    const opened = gitScanSource(repo, state).open(sha, []);
+    if (!opened.ok) throw new Error(opened.reason);
+    expect(opened.tree.files.map((f) => f.path)).toContain("..fixtures/a.ts");
+    expect(existsSync(join(state, SCAN_TREES_DIR, sha, "..fixtures/a.ts"))).toBe(true);
+    expect(opened.tree.read("..fixtures/a.ts")).toBe("export const a = 1;\n");
+    expect(opened.tree.read("../repo/src/a.py")).toBeNull();
+    expect(opened.tree.read("..")).toBeNull();
+  });
+
   it("lists a sha's files and blob hashes without materialising anything — a delta's baseline", () => {
     const first = git("rev-parse", "HEAD");
     const src = gitScanSource(repo, state);

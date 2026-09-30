@@ -21,7 +21,7 @@
 // the commit can occupy.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, normalize, relative } from "node:path";
+import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
 import { MAX_READ_BYTES } from "./adapters.js";
 import type { ScanSource, ScanTree } from "./scanrun.js";
 import type { TreeFile } from "./scan.js";
@@ -106,7 +106,7 @@ export function gitScanSource(repoRoot: string, stateRoot: string, opts: { trees
         for (const rel of pathsOf.get(blob)!) {
           const full = normalize(join(root, rel));
           const back = relative(root, full);
-          if (isAbsolute(rel) || back === "" || back.startsWith("..")) continue;
+          if (isAbsolute(rel) || !inRoot(back)) continue;
           mkdirSync(dirname(full), { recursive: true });
           writeFileSync(full, body);
         }
@@ -163,6 +163,13 @@ export function gitScanSource(repoRoot: string, stateRoot: string, opts: { trees
   };
 }
 
+/** Does `back` (a `relative(root, …)`) stay under the root? A parent
+ * traversal is the `..` COMPONENT, never a name that merely begins with two
+ * dots — a tracked `..fixtures/a.ts` is an ordinary in-root file. */
+function inRoot(back: string): boolean {
+  return back !== "" && back !== ".." && !back.startsWith(".." + sep) && !isAbsolute(back);
+}
+
 /** A materialised tree as the runner reads it: text within the reader's
  * size cap, never a binary, never a path that leaves the root. */
 export function treeAt(sha: string, root: string, files: TreeFile[]): ScanTree {
@@ -170,7 +177,7 @@ export function treeAt(sha: string, root: string, files: TreeFile[]): ScanTree {
     if (isAbsolute(rel)) return null;
     const full = normalize(join(root, rel));
     const back = relative(root, full);
-    if (back === "" || back.startsWith("..")) return null;
+    if (!inRoot(back)) return null;
     try {
       const st = statSync(full);
       if (!st.isFile() || st.size > MAX_READ_BYTES) return null;

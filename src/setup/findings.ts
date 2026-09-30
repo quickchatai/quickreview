@@ -697,8 +697,8 @@ export class FindingsStore {
    * The companion's answer to the pending question, whole: `pairs` are the
    * same finding (one-to-one, a lens in common); every unreported finding it does
    * not pair is fixed; every fresh one it does not pair stays new. Refused —
-   * all of it — on a stale key, an unknown fingerprint, a reused one or a
-   * lens mismatch.
+   * all of it — on a stale key, an unknown fingerprint, a reused one, a
+   * lens mismatch, or a pair whose two sides carry different tickets.
    */
   match(args: { key?: unknown; pairs?: unknown }): MatchResult {
     const { file, error } = this.loadFile();
@@ -725,6 +725,11 @@ export class FindingsStore {
       const of = byFp.get(o);
       const nf = byFp.get(n);
       if (of && nf && !shareLens(of, nf)) errors.push(`${o.slice(0, 12)} and ${n.slice(0, 12)} are different lenses' findings`);
+      // Each side's ticket is a filed work item: a pair that would keep only
+      // one of two different tickets would orphan the other.
+      else if (of?.ticket && nf?.ticket && of.ticket.ref !== nf.ticket.ref) {
+        errors.push(`${o.slice(0, 12)} (${of.ticket.ref}) and ${n.slice(0, 12)} (${nf.ticket.ref}) both carry a ticket — settle one on its ticket before pairing them`);
+      }
       usedOld.add(o);
       usedNew.add(n);
       pairs.push({ old: o, new: n });
@@ -738,19 +743,22 @@ export class FindingsStore {
       const n = byFp.get(nfp);
       if (!o || !n) continue;
       byFp.delete(old);
+      // The triage travels with the finding: a matched promoted finding
+      // keeps its ticket (never filed twice), a dismissed one its reason —
+      // and a fresh one promoted or dismissed while the question waited
+      // keeps its own when the old side has none.
+      const triaged = o.ticket ? o : n.ticket ? n : o.dismissal ? o : n.dismissal ? n : o;
       byFp.set(nfp, {
         ...n,
-        state: o.state,
+        state: triaged.state,
         fixed: null,
         first_seen: o.first_seen,
         seen: o.seen + n.seen,
         aliases: [...new Set([...(o.aliases ?? []), old, ...(n.aliases ?? [])])],
         ...(o.lenses || n.lenses ? { lenses: [...new Set([...(o.lenses ?? [o.lens]), ...(n.lenses ?? [n.lens])])] } : {}),
         ...(o.merged || n.merged ? { merged: [...(o.merged ?? []), ...(n.merged ?? [])] } : {}),
-        // The triage travels with the finding: a matched promoted finding
-        // keeps its ticket (never filed twice), a dismissed one its reason.
-        dismissal: o.dismissal ?? null,
-        ticket: o.ticket ?? null,
+        dismissal: o.dismissal ?? n.dismissal ?? null,
+        ticket: triaged.ticket ?? null,
       });
       matched++;
     }
