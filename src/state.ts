@@ -2329,7 +2329,10 @@ export class StateStore {
    * ordinary (non-round) command so the bounded recovery sweep can never
    * replay one into a respawned pr-<n> after the close hook killed it
    * (selfscan 666a2356). Round commands keep their own lifecycle — recovery
-   * already refuses one whose round is no longer running.
+   * already refuses one whose round is no longer running. A failed command
+   * that already carries owed operator debt is left alone: it is never
+   * replayed (dueSessionCommands excludes it) and `u` resolves that debt
+   * only against a command still in 'failed'.
    */
   cancelSessionCommandsForClosedPr(pr: number): string[] {
     const ts = this.ts();
@@ -2338,7 +2341,11 @@ export class StateStore {
         .prepare(
           `SELECT id FROM session_commands
             WHERE pr=@pr AND session=@session AND kind!='round'
-              AND status IN ('pending', 'running', 'failed')`,
+              AND status IN ('pending', 'running', 'failed')
+              AND NOT EXISTS (
+                SELECT 1 FROM review_failures f
+                 WHERE f.command_id=session_commands.id AND f.work_owed=1
+              )`,
         )
         .all({ pr, session: `pr-${pr}` }) as Array<{ id: string }>;
       this.db
@@ -2347,7 +2354,11 @@ export class StateStore {
             SET status='cancelled', owner_token=NULL, updated_at=@ts,
                 next_check_at=@ts, failure='pr closed'
           WHERE pr=@pr AND session=@session AND kind!='round'
-            AND status IN ('pending', 'running', 'failed')`,
+            AND status IN ('pending', 'running', 'failed')
+            AND NOT EXISTS (
+              SELECT 1 FROM review_failures f
+               WHERE f.command_id=session_commands.id AND f.work_owed=1
+            )`,
         )
         .run({ pr, session: `pr-${pr}`, ts });
       return rows.map((row) => row.id);

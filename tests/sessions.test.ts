@@ -1503,6 +1503,49 @@ describe("durable command ownership", () => {
     }
   });
 
+  it("closing a PR leaves a failed wake that carries owed operator debt resolvable (selfscan 666a2356)", async () => {
+    // `u` resolves debt only against a command still in 'failed'; the close
+    // sweep must not strand that debt by cancelling its command underneath.
+    const store = new StateStore(
+      join(root, "state", "state.db"),
+      () => new Date("2026-08-13T10:00:00Z"),
+    );
+    try {
+      const m = manager(undefined, store);
+      m.setTitleResolver((pr) => (pr === 42 ? order.title : undefined));
+      store.upsertPr({
+        number: 42,
+        state: "tracked",
+        head_sha: "abc123",
+        title: order.title,
+        author: "alice",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
+      markExistingSessionReady(m, "pr-42");
+      await m.inject(42, "author replied");
+      const wake = store.activeSessionCommand("pr-42")!;
+      expect(store.failPendingSessionCommand(wake.id, "exhausted")).toBe(true);
+      store.openReviewFailure({
+        pr: 42,
+        command_id: wake.id,
+        head_sha: "abc123",
+        stage: "command_start",
+        detail: "exhausted",
+        attempts: 3,
+        retry_cap: 3,
+      });
+
+      await m.archiveAndClose(42);
+
+      expect(store.getSessionCommand(wake.id)?.status).toBe("failed");
+      expect(store.openReviewFailure(42)?.command_id).toBe(wake.id);
+    } finally {
+      store.close();
+    }
+  });
+
   it("a recovery that races a close refuses to reborn the closed PR's session (selfscan 666a2356)", async () => {
     // Belt for the window between the registry flipping to closed and the
     // close hook terminalizing the row (or a close hook that failed).
