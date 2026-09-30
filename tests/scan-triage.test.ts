@@ -290,6 +290,45 @@ describe("a fixed finding's ticket closes with the scan sha", () => {
     expect((sink as FakeSink).filed).toHaveLength(1);
   });
 
+  it("a re-promotion after a closed ticket reopens its record: the next fix closes it again (selfscan d5ade550)", async () => {
+    const { findings, sink, triage } = setup();
+    findings.report([reported(FP("a"))], { run: "scan-1", sha: SHA1, at: "t1" });
+    await triage.promote({ fingerprint: FP("a"), effort: "billing" });
+    findings.reconcile({ rows: [], tree: new Set(), run: { run: "scan-2", sha: SHA2, at: "t2" } });
+    await triage.closeFixed();
+    findings.report([reported(FP("a"))], { run: "scan-3", sha: SHA1, at: "t3" });
+    // The operator re-promotes (and reopens the ticket by hand).
+    await triage.promote({ fingerprint: FP("a"), effort: "billing" });
+    expect(one(findings, FP("a"))).toMatchObject({ state: "promoted", ticket: { ref: "FT-9001", closed: null } });
+    findings.reconcile({ rows: [], tree: new Set(), run: { run: "scan-4", sha: SHA2, at: "t4" } });
+    expect((await triage.closeFixed()).closed).toEqual([{ fingerprint: FP("a"), ref: "FT-9001", sha: SHA2 }]);
+    expect((sink as FakeSink).closes).toHaveLength(2);
+  });
+
+  it("a finding reported again while an earlier ticket's close is awaited is never closed on the stale snapshot (selfscan 43b64cf3)", async () => {
+    const sink = new (class extends FakeSink {
+      onClose: (() => void) | null = null;
+      override async close(ref: string, note: string): Promise<SinkResult> {
+        const hook = this.onClose;
+        this.onClose = null;
+        hook?.();
+        return super.close(ref, note);
+      }
+    })();
+    const { findings, triage: t } = setup({ sink });
+    const b = reported(FP("b"), { path: "lib/x.py", unit: "lib" });
+    findings.report([reported(FP("a")), b], { run: "scan-1", sha: SHA1, at: "t1" });
+    await t.promote({ fingerprint: FP("a"), effort: "billing" });
+    await t.promote({ fingerprint: FP("b"), effort: "billing" });
+    findings.reconcile({ rows: [], tree: new Set(), run: { run: "scan-2", sha: SHA2, at: "t2" } });
+    // While a's close is awaited, a background scan reports b again.
+    sink.onClose = () => void findings.report([b], { run: "scan-3", sha: SHA1, at: "t3" });
+    const r = await t.closeFixed();
+    expect(r.closed.map((c) => c.fingerprint)).toEqual([FP("a")]);
+    expect(sink.closes.map((c) => c.ref)).toEqual(["FT-9001"]);
+    expect(one(findings, FP("b"))).toMatchObject({ state: "promoted", ticket: { ref: "FT-9002", closed: null } });
+  });
+
   it("a ticket filed on a sink this companion lacks is reported, never closed elsewhere", async () => {
     const { findings, triage } = setup({ sink: markdownFindingSink(stateHomeFs(join(dir, "state")), clock) });
     findings.report([reported(FP("a"))], { run: "scan-1", sha: SHA1, at: "t1" });

@@ -279,7 +279,12 @@ export class ScanTriage {
     if (f.ticket) {
       // Never twice: back onto the ticket it already has.
       const ticket = f.ticket;
-      const saved = this.ports.findings.update(f.fingerprint, (cur) => (cur.state === "fixed" ? "it became fixed meanwhile" : { ...cur, state: "promoted" }));
+      // A ticket closed as fixed that the operator promotes again is this
+      // episode's ticket again (reopened by hand): its closure is history,
+      // or the next fix would never close it.
+      const saved = this.ports.findings.update(f.fingerprint, (cur) =>
+        cur.state === "fixed" ? "it became fixed meanwhile" : { ...cur, state: "promoted", ...(cur.ticket ? { ticket: { ...cur.ticket, closed: null } } : {}) },
+      );
       if (!saved.ok) return saved;
       return { ok: true, finding: saved.finding, ref: ticket.ref, sink: ticket.sink, existing: true, closed: ticket.closed ?? null };
     }
@@ -308,9 +313,21 @@ export class ScanTriage {
     const out: CloseFixedResult = { closed: [], problems: [] };
     const { findings, error } = this.ports.findings.load();
     if (error !== null) return { closed: [], problems: [error] };
+    // Still the finding the snapshot showed: fixed from promoted by the same
+    // run, its ticket the same and open. A background scan may report it
+    // again while an earlier close is awaited.
+    const stillFixed = (cur: ScanFinding | undefined, f: ScanFinding): boolean =>
+      cur !== undefined &&
+      cur.state === "fixed" &&
+      cur.fixed?.from === "promoted" &&
+      cur.fixed.run === f.fixed?.run &&
+      cur.ticket?.ref === f.ticket?.ref &&
+      !cur.ticket?.closed;
     for (const f of findings) {
       const t = f.ticket;
       if (f.state !== "fixed" || f.fixed?.from !== "promoted" || !t || t.closed) continue;
+      const now = this.ports.findings.load();
+      if (now.error !== null || !stillFixed(now.findings.find((x) => x.fingerprint === f.fingerprint), f)) continue;
       if (t.sink !== this.ports.tracker.kind) {
         out.problems.push(`${t.ref} was filed on the ${t.sink} sink, which this companion does not have — close it by hand`);
         continue;
@@ -325,7 +342,9 @@ export class ScanTriage {
         continue;
       }
       const closed = { at: this.ports.clock().toISOString(), sha: fixed.sha, run: fixed.run };
-      const saved = this.ports.findings.update(f.fingerprint, (cur) => (cur.ticket ? { ...cur, ticket: { ...cur.ticket, closed } } : "its ticket record is gone"));
+      const saved = this.ports.findings.update(f.fingerprint, (cur) =>
+        stillFixed(cur, f) ? { ...cur, ticket: { ...cur.ticket!, closed } } : "it was reported again while its ticket closed — reopen the ticket by hand",
+      );
       if (!saved.ok) out.problems.push(`${t.ref} was closed but not recorded: ${saved.errors.join("; ")}`);
       else out.closed.push({ fingerprint: f.fingerprint, ref: t.ref, sha: fixed.sha });
     }
