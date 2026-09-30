@@ -25,11 +25,15 @@
 // short-term state only; a real operator message or alert is a separate path.
 import {
   appendFileSync,
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  readSync,
   rmSync,
   renameSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { randomBytes } from "node:crypto";
@@ -313,6 +317,11 @@ export class FeedWriter {
   private seen = new Set<string>();
   private eventLines = 0;
   private started = false;
+  /** The journal as this writer last saw it (inode + byte length), so rows a
+   * second concurrent TUI appended — or a compaction it ran — are folded into
+   * `seen` before we append, instead of being re-journaled. */
+  private journalIno = -1;
+  private journalBytes = 0;
 
   constructor(readonly dir: string) {}
 
@@ -374,6 +383,12 @@ export class FeedWriter {
       this.writeAtomic(this.eventsPath, lines.join("\n") + "\n");
     }
     this.eventLines = lines.length;
+    this.seen.clear();
+    this.seedSeen(lines);
+    this.noteJournal();
+  }
+
+  private seedSeen(lines: string[]): void {
     for (const line of lines) {
       try {
         this.seen.add(eventKey(JSON.parse(line) as FeedEvent));
@@ -383,11 +398,67 @@ export class FeedWriter {
     }
   }
 
+  /** Record the journal's identity + length as this writer leaves it. */
+  private noteJournal(): void {
+    try {
+      const st = statSync(this.eventsPath);
+      this.journalIno = st.ino;
+      this.journalBytes = st.size;
+    } catch {
+      this.journalIno = -1;
+      this.journalBytes = 0;
+    }
+  }
+
+  /**
+   * Two TUIs may share one feed dir (companion.ts). Before appending, fold in
+   * whatever the other one wrote since we last looked: new bytes on the same
+   * inode are its appends; a new inode or a shorter file is its compaction (or
+   * a restart's trim), which re-seeds from the whole retained tail.
+   */
+  private syncJournal(): void {
+    let ino: number;
+    let size: number;
+    try {
+      const st = statSync(this.eventsPath);
+      ino = st.ino;
+      size = st.size;
+    } catch {
+      return; // no journal yet: nothing anyone else wrote
+    }
+    if (ino === this.journalIno && size === this.journalBytes) return;
+    if (ino !== this.journalIno || size < this.journalBytes) {
+      const lines = readFileSync(this.eventsPath, "utf8")
+        .split("\n")
+        .filter((line) => line.trim() !== "");
+      this.eventLines = lines.length;
+      this.seen.clear();
+      this.seedSeen(lines);
+    } else {
+      const buf = Buffer.alloc(size - this.journalBytes);
+      const fd = openSync(this.eventsPath, "r");
+      try {
+        readSync(fd, buf, 0, buf.length, this.journalBytes);
+      } finally {
+        closeSync(fd);
+      }
+      const lines = buf
+        .toString("utf8")
+        .split("\n")
+        .filter((line) => line.trim() !== "");
+      this.eventLines += lines.length;
+      this.seedSeen(lines);
+    }
+    this.journalIno = ino;
+    this.journalBytes = size;
+  }
+
   write(snapshot: StatusSnapshot, events: FeedEvent[], _health: FeedHealth): FeedWriteResult {
     this.start();
     this.writeAtomic(this.snapshotPath, JSON.stringify(snapshot, null, 2));
 
     // Events: oldest first on disk (the TUI holds them newest-first).
+    this.syncJournal();
     const fresh = [...events]
       .sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0))
       .filter((e) => !this.seen.has(eventKey(e)));
@@ -396,6 +467,7 @@ export class FeedWriter {
       this.eventLines += fresh.length;
       for (const e of fresh) this.seen.add(eventKey(e));
       if (this.eventLines > EVENT_TAIL_CAP) this.compactEvents();
+      else this.noteJournal();
     }
     return { appended: fresh.length };
   }
@@ -408,13 +480,8 @@ export class FeedWriter {
     this.writeAtomic(this.eventsPath, lines.join("\n") + (lines.length > 0 ? "\n" : ""));
     this.eventLines = lines.length;
     this.seen.clear();
-    for (const line of lines) {
-      try {
-        this.seen.add(eventKey(JSON.parse(line) as FeedEvent));
-      } catch {
-        /* retain the line but do not let it poison dedupe */
-      }
-    }
+    this.seedSeen(lines);
+    this.noteJournal();
   }
 
   /** Stage-then-rename. The staging name is unique per process AND per

@@ -119,6 +119,36 @@ describe("FeedWriter", () => {
     expect(readFileSync(restarted.eventsPath, "utf8").trim().split("\n")).toHaveLength(1);
   });
 
+  it("two concurrent TUIs on one feed dir journal each event once", () => {
+    // Both started before either appended: each seen-set was seeded from the
+    // same (empty) tail, so an in-process set alone lets B re-append A's rows.
+    const a = new FeedWriter(dir);
+    const b = new FeedWriter(dir);
+    a.start();
+    b.start();
+    const v = ev("2026-08-14T10:00:00Z", "verdict");
+    expect(a.write(snap(), [v], "ok").appended).toBe(1);
+    expect(b.write(snap(), [v, ev("2026-08-14T10:00:01Z")], "ok").appended).toBe(1);
+    expect(a.write(snap(), [v, ev("2026-08-14T10:00:01Z")], "ok").appended).toBe(0);
+    const lines = readFileSync(a.eventsPath, "utf8").trim().split("\n");
+    expect(lines).toHaveLength(2);
+  });
+
+  it("re-seeds after another TUI compacted the journal under it", () => {
+    const a = new FeedWriter(dir);
+    const b = new FeedWriter(dir);
+    a.start();
+    b.start();
+    const bulk = Array.from({ length: EVENT_TAIL_CAP + 1 }, (_, i) =>
+      ev(`2026-08-14T10:${String(i).padStart(6, "0")}Z`),
+    );
+    a.write(snap(), bulk, "ok"); // appends then compacts to the kept tail
+    const kept = readFileSync(a.eventsPath, "utf8").trim().split("\n");
+    const last = bulk[bulk.length - 1]!;
+    expect(b.write(snap(), [last], "ok").appended).toBe(0);
+    expect(readFileSync(a.eventsPath, "utf8").trim().split("\n")).toEqual(kept);
+  });
+
   it("stores state changes and events without ever creating a chat wake", () => {
     const w = new FeedWriter(dir);
     // Remove a marker left by the retired implementation; start() must clean it.
