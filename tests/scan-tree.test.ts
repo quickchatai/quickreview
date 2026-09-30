@@ -3,7 +3,7 @@
 // scan that must be proven on git itself: "the tree AT the chosen sha", with
 // git's own blob hashes as the ledger's content hash.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -76,5 +76,41 @@ describe("gitScanSource", () => {
     expect(existsSync(join(state, SCAN_TREES_DIR, first))).toBe(false);
     expect(src.list("f".repeat(40))).toBeNull();
     expect(src.list("HEAD")).toBeNull();
+  });
+});
+
+describe("gitScanSource materialisation is the listed blobs, byte for byte (selfscan)", () => {
+  it("never writes through a repository-controlled completion-marker symlink", () => {
+    // A commit tracking the completion marker's name as a symlink to a file
+    // outside the tree: the marker write must never follow it.
+    const victim = join(dir, "victim.txt");
+    writeFileSync(victim, "precious\n");
+    symlinkSync(victim, join(repo, ".qcr-tree-complete"));
+    git("add", "-A");
+    git("commit", "-qm", "marker link");
+    const sha = git("rev-parse", "HEAD");
+    const opened = gitScanSource(repo, state).open(sha, []);
+    if (!opened.ok) throw new Error(opened.reason);
+    expect(readFileSync(victim, "utf8")).toBe("precious\n");
+    // And the tree is still recognised as complete on the next open.
+    const again = gitScanSource(repo, state).open(sha, []);
+    expect(again.ok).toBe(true);
+    expect(readFileSync(victim, "utf8")).toBe("precious\n");
+  });
+
+  it("ignores in-tree export-ignore / export-subst attributes: every listed file reads as its blob", () => {
+    writeFileSync(join(repo, ".gitattributes"), "src/hidden.py export-ignore\nsrc/subst.py export-subst\n");
+    writeFileSync(join(repo, "src/hidden.py"), "hidden\n");
+    writeFileSync(join(repo, "src/subst.py"), "v = '$Format:%H$'\n");
+    git("add", "-A");
+    git("commit", "-qm", "attrs");
+    const sha = git("rev-parse", "HEAD");
+    const opened = gitScanSource(repo, state).open(sha, []);
+    if (!opened.ok) throw new Error(opened.reason);
+    expect(opened.tree.read("src/hidden.py")).toBe("hidden\n");
+    expect(opened.tree.read("src/subst.py")).toBe("v = '$Format:%H$'\n");
+    for (const f of opened.tree.files) {
+      expect(git("hash-object", join(opened.tree.root, f.path))).toBe(f.blob);
+    }
   });
 });

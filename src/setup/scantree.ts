@@ -4,25 +4,33 @@
 // "Scan my local checkout at a sha I choose" means the tree AT THAT SHA, not
 // whatever the working copy holds: the file list and every content hash come
 // from git's own objects (`ls-tree` — the blob hash IS the ledger's content
-// hash), and the files the lenses read are materialised from the commit
-// (`git archive` → `tar -x`) into `<state home>/scan/tree/<sha>/`. The
+// hash), and the files the lenses read are materialised from exactly those
+// blobs (`git cat-file --batch`, raw bytes) into
+// `<state home>/scan/tree/<sha>/`. Not `git archive`: it honours in-tree
+// `export-ignore`/`export-subst`, so a listed file could be missing or read
+// as bytes its blob hash never named; and it extracts symlinks. Only the
+// listed regular files are written, so nothing in the tree is a link. The
 // checkout itself is never written — the companion mounts it `:ro` — and no
 // credential is involved: the objects are local.
 //
 // One materialised tree is kept per sha; opening another removes the earlier
 // ones except those `keep` names (the one a running scan is reading). A tree
 // is complete only once its marker is written, so an extraction cut short is
-// redone rather than trusted.
+// redone rather than trusted. The marker is a SIBLING of the tree
+// (`<sha>.complete`), never a path inside it: a name inside the tree is one
+// the commit can occupy.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, normalize, relative } from "node:path";
+import { dirname, isAbsolute, join, normalize, relative } from "node:path";
 import { MAX_READ_BYTES } from "./adapters.js";
 import type { ScanSource, ScanTree } from "./scanrun.js";
 import type { TreeFile } from "./scan.js";
 
 /** Where materialised trees live, under the state home. */
 export const SCAN_TREES_DIR = "scan/tree";
-const COMPLETE_MARKER = ".qcr-tree-complete";
+const COMPLETE_SUFFIX = ".complete";
+/** Blobs per `cat-file --batch` call — bounds one call's output buffer. */
+const BLOBS_PER_BATCH = 256;
 const SHA_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 
 /** `treesDir` (relative to the state home) is where this source keeps its
@@ -39,6 +47,48 @@ export function gitScanSource(repoRoot: string, stateRoot: string, opts: { trees
     } catch {
       return null;
     }
+  };
+  const gitBytes = (args: string[], input: string): Buffer | null => {
+    try {
+      return execFileSync("git", ["-c", `safe.directory=${repoRoot}`, "-C", repoRoot, ...args], {
+        input,
+        maxBuffer: 1024 * 1024 * 1024,
+        stdio: ["pipe", "pipe", "ignore"],
+      });
+    } catch {
+      return null;
+    }
+  };
+  /** Write every listed file's blob, raw, under `root`. False when git
+   * cannot produce one — the tree is then not complete. */
+  const materialise = (root: string, files: TreeFile[]): boolean => {
+    const pathsOf = new Map<string, string[]>();
+    for (const f of files) pathsOf.set(f.blob, [...(pathsOf.get(f.blob) ?? []), f.path]);
+    const blobs = [...pathsOf.keys()];
+    for (let i = 0; i < blobs.length; i += BLOBS_PER_BATCH) {
+      const chunk = blobs.slice(i, i + BLOBS_PER_BATCH);
+      const out = gitBytes(["cat-file", "--batch"], chunk.join("\n") + "\n");
+      if (out === null) return false;
+      let at = 0;
+      for (const blob of chunk) {
+        const nl = out.indexOf(10, at);
+        if (nl < 0) return false;
+        const m = /^([0-9a-f]+) blob (\d+)$/.exec(out.subarray(at, nl).toString("utf8"));
+        if (!m || m[1] !== blob) return false;
+        const size = Number(m[2]);
+        const body = out.subarray(nl + 1, nl + 1 + size);
+        if (body.length !== size) return false;
+        at = nl + 1 + size + 1;
+        for (const rel of pathsOf.get(blob)!) {
+          const full = normalize(join(root, rel));
+          const back = relative(root, full);
+          if (isAbsolute(rel) || back === "" || back.startsWith("..")) continue;
+          mkdirSync(dirname(full), { recursive: true });
+          writeFileSync(full, body);
+        }
+      }
+    }
+    return true;
   };
   const treesDir = join(stateRoot, opts.treesDir ?? SCAN_TREES_DIR);
   const list = (sha: string): TreeFile[] | null => {
@@ -67,24 +117,18 @@ export function gitScanSource(repoRoot: string, stateRoot: string, opts: { trees
       const files = list(sha);
       if (files === null) return { ok: false, reason: "git cannot list that commit's tree" };
       const root = join(treesDir, sha);
+      const marker = `${root}${COMPLETE_SUFFIX}`;
       try {
         mkdirSync(treesDir, { recursive: true });
         for (const other of readdirSync(treesDir)) {
-          if (other !== sha && !keep.includes(other)) rmSync(join(treesDir, other), { recursive: true, force: true });
+          const owner = other.endsWith(COMPLETE_SUFFIX) ? other.slice(0, -COMPLETE_SUFFIX.length) : other;
+          if (owner !== sha && !keep.includes(owner)) rmSync(join(treesDir, other), { recursive: true, force: true });
         }
-        if (!existsSync(join(root, COMPLETE_MARKER))) {
+        if (!existsSync(marker)) {
           rmSync(root, { recursive: true, force: true });
           mkdirSync(root, { recursive: true });
-          const tar = join(treesDir, `.${sha}.tar`);
-          if (git(["archive", "--format=tar", "-o", tar, sha]) === null) {
-            return { ok: false, reason: "git archive failed" };
-          }
-          try {
-            execFileSync("tar", ["-xf", tar, "-C", root], { stdio: ["ignore", "ignore", "pipe"] });
-          } finally {
-            rmSync(tar, { force: true });
-          }
-          writeFileSync(join(root, COMPLETE_MARKER), `${sha}\n`);
+          if (!materialise(root, files)) return { ok: false, reason: "git cannot read that commit's blobs" };
+          writeFileSync(marker, `${sha}\n`);
         }
       } catch (err) {
         return { ok: false, reason: `cannot materialise the tree: ${err instanceof Error ? err.message : String(err)}` };
