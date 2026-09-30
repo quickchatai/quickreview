@@ -98,6 +98,19 @@ it is not a defect count, for three reasons we measured:
    reference, never reaches the judge; a reviewer that comments on line
    RANGES gets more candidate pairs than one that anchors single lines.
 
+A fourth problem is where the references came from. The dataset marks
+26% of them human, rewritten by an LLM. On our 185 PRs at least 80 of those
+362 "human" references (22%) are rewrites of comments an AI review bot
+posted on the original PR: GitHub Copilot 23, CodeRabbit 20, cubic 20,
+Sourcery 5, LlamaPReview 4, Gemini Code Assist 4, Ellipsis 3, Cursor Bugbot 1
+(`bot_references.json`). On this metric such a bot is credited for
+repeating its own earlier comment. Removing the 80 moves each reviewer's
+F1 by at most 1.4 points and leaves the top of the ranking as it was: `compare.py --exclude-refs
+bot_references.json`, and Table 3a in `FULL-BENCHMARK.md`. 19 of our 520
+defects cite one of them; each was checked against the code (17 were also
+found by the blind hunt), and they carry an unscored `bot_derived_reference`
+note.
+
 On three PRs every reviewer we ran scored 1 of 7 references (14%) while the
 defect table separated them by 3–4 real defects. When the benchmark's
 references carry hand labels (smoke10, dev10, holdout10), the per-run AACR

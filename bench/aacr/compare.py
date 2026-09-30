@@ -27,6 +27,12 @@ defects graded high/medium/low). The second, printed whenever an arm has a
 recall/precision/F1, and recall by the benchmark's own labels — category and
 context, from references.json (reference_index.py) — since its references
 carry no severity. Both are restricted to the --cases PRs.
+
+--exclude-refs FILE adds a third table: the AACR metric before → after
+removing those references (bot_references.json: the 80 "human" references
+that are rewritten review-bot comments), from the same round files
+— recall over the kept references, and precision with a comment whose only
+match was a removed reference counted as unmatched / dropped from the count.
 """
 import argparse, collections, glob, hashlib, json, os, re, statistics, sys
 
@@ -209,27 +215,38 @@ def note_key(path, start, end, note):
     return f"{path}:{start}-{end}:{h}"
 
 
-def aacr(runs_dir, runs, cases):
+def aacr(runs_dir, runs, cases, exclude=frozenset()):
     """AACR-Bench's own metric for one repeat, from the harness's per-round
     files of the `all` variant, restricted to --cases: per reference, the
     share of judge rounds that semantically matched it; per PR, the comments
-    the harness scored (for precision). Also the judge line each eval wrote."""
+    the harness scored (for precision). Also the judge line each eval wrote,
+    and — for --exclude-refs — the review comments whose only semantic match
+    was an excluded reference (per PR, averaged over judge rounds; a comment
+    is known by the `matched_note` the harness records on the reference)."""
     refs, generated, scored, judges = {}, 0, set(), set()
+    only_excluded = 0.0
     for run in runs:
         d = os.path.join(runs_dir, run, "results", "all")
         # metrics_<reader>_*: ocr for every arm (a Claude Code run scored before its
         # `review` view existed has metrics_claude_*; its next eval clears them).
         rounds = [f for f in sorted(glob.glob(os.path.join(d, "metrics_*_*.json"))) if "average" not in f]
         per = collections.defaultdict(list)
+        lone = collections.defaultdict(list)  # iid -> per round: comments matching only excluded refs
         for f in rounds:
             m = json.load(open(f))
             for inst in m.get("eval_res") or []:
                 iid = inst["instance_id"]
                 if iid not in cases or iid in scored:
                     continue
+                kept, dropped = set(), set()
                 for c in inst.get("comments") or []:
-                    per[(iid, note_key(c["path"], c["from_line"], c["to_line"], c["note"]))].append(1 if c.get("semantic_match") else 0)
+                    key = note_key(c["path"], c["from_line"], c["to_line"], c["note"])
+                    per[(iid, key)].append(1 if c.get("semantic_match") else 0)
+                    if c.get("semantic_match"):
+                        (dropped if (iid, key) in exclude else kept).add(" ".join(str(c.get("matched_note") or "").split()))
+                lone[iid].append(len(dropped - kept))
         got = {k[0] for k in per}
+        only_excluded += sum(sum(v) / len(v) for v in lone.values() if v)
         for k, v in per.items():
             refs[k] = sum(v) / len(v)
         for iid in got:
@@ -246,6 +263,8 @@ def aacr(runs_dir, runs, cases):
             j = os.path.join(runs_dir, run, "judge.txt")
             judges.add(open(j).readline().strip() if os.path.exists(j) else "(no judge.txt)")
         scored |= got
+    if exclude:
+        return refs, generated, scored, judges, only_excluded
     return refs, generated, scored, judges
 
 
@@ -269,12 +288,43 @@ def aacr_row(refs, generated, scored, cases):
             f"{len(scored)}/{len(cases)}{incomplete}")
 
 
+def excluded_refs(path):
+    """--exclude-refs: {"references": {iid: {key: ...}}} (bot_references.json)
+    -> the set of (iid, key)."""
+    d = json.load(open(path))
+    return frozenset((iid, k) for iid, v in d["references"].items() for k in v)
+
+
+def prf(found, total, generated):
+    p, r = found / max(generated, 1), found / max(total, 1)
+    return r, p, (2 * p * r / (p + r) if p + r else 0)
+
+
+def aacr_clean_row(refs, generated, only_excluded, cases, exclude):
+    """Before / after removing the excluded references. After: recall over the
+    kept references; precision two ways — the comments that matched only an
+    excluded reference counted as unmatched (denominator unchanged), or
+    dropped from the denominator (as if never written)."""
+    labels = ref_labels()
+    total = sum(len(labels.get(iid, {})) for iid in cases) or len(refs)
+    gone = sum(1 for iid in cases for k in labels.get(iid, {}) if (iid, k) in exclude)
+    found = sum(refs.values())
+    kept = sum(v for k, v in refs.items() if k not in exclude)
+    r0, p0, f0 = prf(found, total, generated)
+    r1, p1, f1 = prf(kept, total - gone, generated)
+    _, p2, f2 = prf(kept, total - gone, generated - only_excluded)
+    return (f"{found:.1f}/{total} → {kept:.1f}/{total - gone} | {r0:.1%} → {r1:.1%} | "
+            f"{p0:.1%} → {p1:.1%} / {p2:.1%} ({only_excluded:.1f} comments matched only a removed reference) | "
+            f"{f0:.1%} → {f1:.1%} / {f2:.1%}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--cases", required=True, help="arm.sh --cases syntax: groups joined by +, each a set, set:id,id, levers16 or all30")
     ap.add_argument("--judge-model", default="gpt-6-sol-high", help="the judge label's model part")
     ap.add_argument("--runs-dir", default=os.environ.get("QCR_BENCH_RUNS_DIR", os.path.join(HERE, "runs")))
     ap.add_argument("--aacr", action="store_true", help="print the AACR-Bench table even when no arm has been evaluated (it prints by itself when one has)")
+    ap.add_argument("--exclude-refs", metavar="FILE", help="also print the AACR table with these references removed (bot_references.json: the bot-derived ones)")
     ap.add_argument("arms", nargs="+", help="NAME=run[,run...]")
     a = ap.parse_args()
     cases = cases_for(a.cases)
@@ -329,6 +379,20 @@ def main():
             notes.append("NOT COMPARABLE — the AACR evals used different judges: " + " / ".join(sorted(judges)))
         elif judges:
             notes.append(f"AACR judge: {judges.pop()}")
+    if a.exclude_refs:
+        exclude = excluded_refs(a.exclude_refs)
+        gone = sum(1 for iid, k in exclude if iid in cases)
+        print(f"\nAACR-Bench with {gone} references removed ({os.path.basename(a.exclude_refs)}); before → after. "
+              "Precision and F1 after: a comment that matched only a removed reference counted as unmatched / dropped from the count\n")
+        print("| Arm | References found | Recall | Precision | F1 |")
+        print("|---|---|---|---|---|")
+        for arm in a.arms:
+            name, _, spec = arm.partition("=")
+            repeats = [r.split(",") for r in spec.split("+")]
+            for k, runs in enumerate(repeats, 1):
+                refs, gen, scored, _, lone = aacr(a.runs_dir, runs, cases, exclude)
+                label = name if len(repeats) == 1 else f"{name} (run {k})"
+                print(f"| {label} | {aacr_clean_row(refs, gen, lone, cases, exclude) if scored else 'not evaluated | | | '} |")
     notes.append("How to read these tables, and why they can disagree: bench/aacr/METRICS.md")
     print()
     for n in notes:

@@ -395,6 +395,28 @@ documented in `../README.md`.
     defect.
   - On the 30 PRs whose references were hand-labelled, about 11% are real
     defects and about 8% real maintainability issues.
+- **The "human" references are partly bot output.** AACR marks 362 of the
+  references on our 185 PRs as human comments rewritten by an LLM. At
+  least 80 of those 362 (22%) are rewrites of comments an AI review bot
+  posted on the original PR: GitHub Copilot 23, CodeRabbit 20, cubic 20,
+  Sourcery 5, LlamaPReview 4, Gemini Code Assist 4, Ellipsis 3, Cursor
+  Bugbot 1. This is a lower bound: only inline comments on the 46
+  PRs where a bot reviewed were checked.
+  - *Effect on AACR's metric.* A bot that wrote a reference is credited for
+    repeating its own earlier comment, so any AACR comparison that includes
+    those products is tilted towards them on those PRs. For our reviewers
+    we re-scored the published evaluation with the 80 removed, from the
+    harness's own per-reference match records, with no model calls
+    (`compare.py --exclude-refs bot_references.json`; a comment that
+    matched only a removed reference counts as unmatched). F1 falls by 0.1
+    to 1.4 points per reviewer (default 12.6% → 11.2%, OCR 14.0% → 13.0%).
+    Default keeps the highest recall and OCR the highest precision and F1;
+    the only swaps are under half a point at the bottom (Claude Code passes
+    pi-review on F1). Table 3a in `FULL-BENCHMARK.md`.
+  - *Effect on our key.* 19 of the 520 defects cite such a reference in
+    their provenance. 17 of them were also found by the blind hunt, and
+    every one was checked against the code, so the defects stand. They
+    carry an unscored `bot_derived_reference` note.
 - **Line gate.** A comment is scored only if it lands within ±1 line of a
   reference. That favours tools that comment on line ranges (OCR, Codex,
   pi-review) over tools that comment on single lines (ours).

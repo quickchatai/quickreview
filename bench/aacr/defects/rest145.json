@@ -1973,6 +1973,19 @@
        "N2",
        "N3"
       ]
+     },
+     "bot_derived_reference": {
+      "bots": [
+       "GitHub Copilot"
+      ],
+      "dataset_refs": [
+       "R1"
+      ],
+      "references": [
+       "internal/execute/watch.go:45-48:87c0143b1c1b"
+      ],
+      "hunt": true,
+      "note": "Not scored. The cited AACR reference is a reworded review-bot comment from the original PR; the defect itself was checked against the code."
      }
     }
    ],
@@ -2320,6 +2333,19 @@
        "N8",
        "N17"
       ]
+     },
+     "bot_derived_reference": {
+      "bots": [
+       "GitHub Copilot"
+      ],
+      "dataset_refs": [
+       "R1"
+      ],
+      "references": [
+       "internal/ls/diagnostics.go:44-44:f38c2509aed2"
+      ],
+      "hunt": true,
+      "note": "Not scored. The cited AACR reference is a reworded review-bot comment from the original PR; the defect itself was checked against the code."
      }
     }
    ],
@@ -6170,6 +6196,21 @@
        "N12",
        "N17"
       ]
+     },
+     "bot_derived_reference": {
+      "bots": [
+       "cubic"
+      ],
+      "dataset_refs": [
+       "R10",
+       "R13"
+      ],
+      "references": [
+       "src/others/xml/lv_xml_style.c:293-293:1dcd1d2a8153",
+       "src/others/xml/parsers/lv_xml_obj_parser.c:903-903:fcca13d6cb0c"
+      ],
+      "hunt": true,
+      "note": "Not scored. The cited AACR reference is a reworded review-bot comment from the original PR; the defect itself was checked against the code."
      }
     },
     {
@@ -6250,6 +6291,19 @@
        "C54",
        "N19"
       ]
+     },
+     "bot_derived_reference": {
+      "bots": [
+       "cubic"
+      ],
+      "dataset_refs": [
+       "R24"
+      ],
+      "references": [
+       "src/widgets/span/lv_span.c:212-214:e28b302c8c81"
+      ],
+      "hunt": true,
+      "note": "Not scored. The cited AACR reference is a reworded review-bot comment from the original PR; the defect itself was checked against the code."
      }
     },
     {
@@ -6324,6 +6378,19 @@
        "N24",
        "N19"
       ]
+     },
+     "bot_derived_reference": {
+      "bots": [
+       "cubic"
+      ],
+      "dataset_refs": [
+       "R11"
+      ],
+      "references": [
+       "src/others/xml/lv_xml_style.c:295-295:7af1724605fc"
+      ],
+      "hunt": true,
+      "note": "Not scored. The cited AACR reference is a reworded review-bot comment from the original PR; the defect itself was checked against the code."
      }
     },
     {
@@ -6388,6 +6455,19 @@
        "C12",
        "N4"
       ]
+     },
+     "bot_derived_reference": {
+      "bots": [
+       "cubic"
+      ],
+      "dataset_refs": [
+       "R20"
+      ],
+      "references": [
+       "src/others/xml/parsers/lv_xml_tabview_parser.c:100-100:b7badbdb1330"
+      ],
+      "hunt": true,
+      "note": "Not scored. The cited AACR reference is a reworded review-bot comment from the original PR; the defect itself was checked against the code."
      }
     },
     {
@@ -6416,6 +6496,19 @@
        "C28",
        "C46"
       ]
+     },
+     "bot_derived_reference": {
+      "bots": [
+       "cubic"
+      ],
+      "dataset_refs": [
+       "R17"
+      ],
+      "references": [
+       "src/others/xml/parsers/lv_xml_spangroup_parser.c:101-101:7e0a918c5f48"
+      ],
+      "hunt": true,
+      "note": "Not scored. The cited AACR reference is a reworded review-bot comment from the original PR; the defect itself was checked against the code."
      }
     },
     {
@@ -6446,6 +6539,19 @@
        "R23"
       ],
       "reviewer_comments": []
+     },
+     "bot_derived_reference": {
+      "bots": [
+       "cubic"
+      ],
+      "dataset_refs": [
+       "R23"
+      ],
+      "references": [
+       "src/widgets/label/lv_label.h:100-100:deea0d65f93d"
+      ],
+      "hunt": true,
+      "note": "Not scored. The cited AACR reference is a reworded review-bot comment from the original PR; the defect itself was checked against the code."
      }
     },
     {
@@ -6596,6 +6702,19 @@
        "C26",
        "C58"
       ]
+     },
+     "bot_derived_reference": {
+      "bots": [
+       "cubic"
+      ],
+      "dataset_refs": [
+       "R6"
+      ],
+      "references": [
+       "src/others/observer/lv_observer.h:551-551:1c267c7ee314"
+      ],
+      "hunt": false,
+      "note": "Not scored. The cited AACR reference is a reworded review-bot comment from the original PR; the defect itself was checked against the code."
      }
     }
    ],
@@ -6930,6 +7049,19 @@
        "N11",
        "N12"
       ]
+     },
+     "bot_derived_reference": {
+      "bots": [
+       "GitHub Copilot"
+      ],
+      "dataset_refs": [
+       "R2"
+      ],
+      "references": [
+       "src/core/task/index.ts:1322-1322:4bc9d4c81547"
+      ],
+      "hunt": true,
+      "note": "Not scored. The cited AACR reference is a reworded review-bot comment from the original PR; the defect itself was checked against the code."
      }
     },
     {
@@ -7430,6 +7562,19 @@
        "C4",
        "N4"
       ]
+     },
+     "bot_derived_reference": {
+      "bots": [
+       "GitHub Copilot"
+      ],
+      "dataset_refs": [
+       "R14"
+      ],
+      "references": [
+       "webview-ui/src/components/settings/utils/useApiConfigurationHandlers.ts:22-22:c44b98524269"
+      ],
+      "hunt": true,
+      "note": "Not scored. The cited AACR reference is a reworded review-bot comment from the original PR; the defect itself was checked against the code."
      }
     },
     {
@@ -8137,6 +8282,19 @@
        "N8",
        "N3"
       ]
+     },
+     "bot_derived_reference": {
+      "bots": [
+       "Cursor Bugbot"
+      ],
+      "dataset_refs": [
+       "R1"
+      ],
+      "references": [
+       "browser_use/llm/google/chat.py:202-202:01aa119c67ea"
+      ],
+      "hunt": true,
+      "note": "Not scored. The cited AACR reference is a reworded review-bot comment from the original PR; the defect itself was checked against the code."
      }
     },
     {
@@ -13702,6 +13860,19 @@
        "N8",
        "N12"
       ]
+     },
+     "bot_derived_reference": {
+      "bots": [
+       "cubic"
+      ],
+      "dataset_refs": [
+       "R19"
+      ],
+      "references": [
+       "packages/testing/playwright/tests/ui/user-service.spec.ts:10-10:f417922003eb"
+      ],
+      "hunt": true,
+      "note": "Not scored. The cited AACR reference is a reworded review-bot comment from the original PR; the defect itself was checked against the code."
      }
     },
     {
@@ -24046,6 +24217,19 @@
        "C25",
        "N6"
       ]
+     },
+     "bot_derived_reference": {
+      "bots": [
+       "LlamaPReview"
+      ],
+      "dataset_refs": [
+       "R29"
+      ],
+      "references": [
+       "server/src/service/infrastructure/networkService.js:305-305:144b0dbb55bf"
+      ],
+      "hunt": true,
+      "note": "Not scored. The cited AACR reference is a reworded review-bot comment from the original PR; the defect itself was checked against the code."
      }
     },
     {

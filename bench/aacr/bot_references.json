@@ -1,0 +1,555 @@
+{
+ "source": "(2026-09-30) each is_ai_comment=false reference on the 46 bot-reviewed PRs, paired with the inline comment on the same path within +-5 lines that has the highest content-word overlap; every pair at overlap >= 0.15 read by eye as the same concern reworded. A lower bound: review bodies and issue comments were not fetched.",
+ "rule": "A reference is bot-derived when its best-overlapping inline comment on the original PR was written by an AI review bot (overlap >= 0.15; every such pair here is >= 0.2).",
+ "count": 80,
+ "by_bot": {
+  "Copilot": 23,
+  "coderabbitai[bot]": 20,
+  "cubic-dev-ai[bot]": 20,
+  "sourcery-ai[bot]": 5,
+  "llamapreview[bot]": 4,
+  "gemini-code-assist[bot]": 4,
+  "ellipsis-dev[bot]": 3,
+  "cursor[bot]": 1
+ },
+ "references": {
+  "CherryHQ__cherry-studio@5644b00": {
+   "src/renderer/src/middleware/extractReasoningMiddleware.ts:12-12:8afedfcb2c6c": {
+    "dataset_ref": 4,
+    "bot": "sourcery-ai[bot]",
+    "overlap": 0.39,
+    "set": "rest145"
+   },
+   "src/renderer/src/providers/AiProvider/OpenAIProvider.ts:63-66:5176c62332de": {
+    "dataset_ref": 11,
+    "bot": "sourcery-ai[bot]",
+    "overlap": 0.5,
+    "set": "rest145"
+   }
+  },
+  "CherryHQ__cherry-studio@83a2594": {
+   "src/renderer/src/pages/agents/index.ts:19-19:2956a397d0b4": {
+    "dataset_ref": 6,
+    "bot": "sourcery-ai[bot]",
+    "overlap": 0.62,
+    "set": "dev10"
+   },
+   "src/renderer/src/pages/agents/index.ts:20-25:07d24eca4e1f": {
+    "dataset_ref": 7,
+    "bot": "sourcery-ai[bot]",
+    "overlap": 0.64,
+    "set": "dev10"
+   },
+   "src/renderer/src/store/settings.ts:459-459:12e8c1434ab6": {
+    "dataset_ref": 17,
+    "bot": "sourcery-ai[bot]",
+    "overlap": 0.2,
+    "set": "dev10"
+   }
+  },
+  "alibaba__spring-ai-alibaba@4bc7305": {
+   "spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/dynamic/agent/entity/DynamicAgentEntity.java:47-47:25482dd5c71a": {
+    "dataset_ref": 0,
+    "bot": "Copilot",
+    "overlap": 0.43,
+    "set": "dev10"
+   },
+   "spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/dynamic/agent/service/AgentServiceImpl.java:200-200:ccda3d286ec1": {
+    "dataset_ref": 1,
+    "bot": "Copilot",
+    "overlap": 0.55,
+    "set": "dev10"
+   },
+   "spring-ai-alibaba-jmanus/src/main/java/com/alibaba/cloud/ai/example/manus/tool/browser/actions/InputTextAction.java:73-73:b9edb390e679": {
+    "dataset_ref": 3,
+    "bot": "Copilot",
+    "overlap": 0.77,
+    "set": "dev10"
+   }
+  },
+  "appwrite__appwrite@710b8bd": {
+   "src/Appwrite/Platform/Modules/Proxy/Http/Rules/Redirect/Create.php:87-89:45e62a6ba475": {
+    "dataset_ref": 11,
+    "bot": "coderabbitai[bot]",
+    "overlap": 0.33,
+    "set": "rest145"
+   },
+   "src/Appwrite/Platform/Modules/Proxy/Http/Rules/Site/Create.php:84-86:c73b13a498b0": {
+    "dataset_ref": 13,
+    "bot": "coderabbitai[bot]",
+    "overlap": 0.43,
+    "set": "rest145"
+   },
+   "src/Executor/Executor.php:202-204:f18d84dacd7b": {
+    "dataset_ref": 16,
+    "bot": "coderabbitai[bot]",
+    "overlap": 0.29,
+    "set": "rest145"
+   }
+  },
+  "bluewave-labs__Checkmate@29e03a6": {
+   ".github/scripts/download-translations.js:1-5:ecf16ff87a26": {
+    "dataset_ref": 0,
+    "bot": "coderabbitai[bot]",
+    "overlap": 0.3,
+    "set": "dev10"
+   },
+   ".github/scripts/download-translations.js:10-13:da4a748ceefa": {
+    "dataset_ref": 1,
+    "bot": "coderabbitai[bot]",
+    "overlap": 0.31,
+    "set": "dev10"
+   },
+   ".github/workflows/README.md:25-25:ef424660ad45": {
+    "dataset_ref": 6,
+    "bot": "coderabbitai[bot]",
+    "overlap": 0.29,
+    "set": "dev10"
+   },
+   ".github/workflows/poeditor-sync.yml:60-61:dc5b3f20fd61": {
+    "dataset_ref": 7,
+    "bot": "coderabbitai[bot]",
+    "overlap": 0.6,
+    "set": "dev10"
+   }
+  },
+  "bluewave-labs__Checkmate@32b54dd": {
+   "server/src/service/infrastructure/SuperSimpleQueue/SuperSimpleQueue.js:91-91:530b35abaa1d": {
+    "dataset_ref": 17,
+    "bot": "llamapreview[bot]",
+    "overlap": 0.5,
+    "set": "rest145"
+   },
+   "server/src/service/infrastructure/networkService.js:156-156:3b2a17ee70fb": {
+    "dataset_ref": 23,
+    "bot": "llamapreview[bot]",
+    "overlap": 0.53,
+    "set": "rest145"
+   },
+   "server/src/service/infrastructure/networkService.js:305-305:144b0dbb55bf": {
+    "dataset_ref": 28,
+    "bot": "llamapreview[bot]",
+    "overlap": 0.58,
+    "set": "rest145"
+   },
+   "server/src/service/infrastructure/statusService.js:161-161:b18b56ad6818": {
+    "dataset_ref": 29,
+    "bot": "llamapreview[bot]",
+    "overlap": 0.77,
+    "set": "rest145"
+   }
+  },
+  "browser-use__browser-use@72f1585": {
+   "browser_use/llm/google/chat.py:202-202:01aa119c67ea": {
+    "dataset_ref": 0,
+    "bot": "cursor[bot]",
+    "overlap": 0.71,
+    "set": "rest145"
+   }
+  },
+  "cline__cline@2195a68": {
+   "src/extension.ts:312-312:e466f99d9f4e": {
+    "dataset_ref": 3,
+    "bot": "Copilot",
+    "overlap": 0.56,
+    "set": "fresh10"
+   }
+  },
+  "cline__cline@419534c": {
+   "src/core/task/index.ts:1320-1320:94b8d1306fea": {
+    "dataset_ref": 0,
+    "bot": "Copilot",
+    "overlap": 0.54,
+    "set": "rest145"
+   },
+   "src/core/task/index.ts:1322-1322:4bc9d4c81547": {
+    "dataset_ref": 1,
+    "bot": "Copilot",
+    "overlap": 0.44,
+    "set": "rest145"
+   }
+  },
+  "cline__cline@7d18fb9": {
+   "src/integrations/editor/DiffViewProvider.ts:239-239:ecca6b211ec0": {
+    "dataset_ref": 3,
+    "bot": "ellipsis-dev[bot]",
+    "overlap": 0.77,
+    "set": "smoke10"
+   }
+  },
+  "cline__cline@ca7f02b": {
+   "src/services/browser/BrowserSession.ts:174-174:f63c2add7e82": {
+    "dataset_ref": 4,
+    "bot": "ellipsis-dev[bot]",
+    "overlap": 0.59,
+    "set": "rest145"
+   }
+  },
+  "cline__cline@d0a8db8": {
+   "webview-ui/src/components/settings/utils/useApiConfigurationHandlers.ts:22-22:c44b98524269": {
+    "dataset_ref": 13,
+    "bot": "Copilot",
+    "overlap": 0.54,
+    "set": "rest145"
+   }
+  },
+  "cline__cline@f098af0": {
+   "src/core/task/index.ts:1495-1496:d179a92e8463": {
+    "dataset_ref": 0,
+    "bot": "Copilot",
+    "overlap": 0.43,
+    "set": "rest145"
+   },
+   "src/core/task/index.ts:1575-1575:5241c9ceb3bc": {
+    "dataset_ref": 2,
+    "bot": "Copilot",
+    "overlap": 0.5,
+    "set": "rest145"
+   },
+   "src/services/telemetry/TelemetryService.ts:959-959:7122ce12016b": {
+    "dataset_ref": 6,
+    "bot": "ellipsis-dev[bot]",
+    "overlap": 0.44,
+    "set": "rest145"
+   }
+  },
+  "dotnet__aspnetcore@2f372e8": {
+   "src/SignalR/server/StackExchangeRedis/test/Docker.cs:19-19:c47682ffc67a": {
+    "dataset_ref": 0,
+    "bot": "Copilot",
+    "overlap": 0.53,
+    "set": "rest145"
+   },
+   "src/SignalR/server/StackExchangeRedis/test/Docker.cs:20-20:10674b960bf7": {
+    "dataset_ref": 1,
+    "bot": "Copilot",
+    "overlap": 0.53,
+    "set": "rest145"
+   }
+  },
+  "dotnet__aspnetcore@742f022": {
+   "src/Identity/Extensions.Core/src/PasswordHasher.cs:265-265:420ed21bed63": {
+    "dataset_ref": 3,
+    "bot": "Copilot",
+    "overlap": 0.62,
+    "set": "rest145"
+   }
+  },
+  "google-gemini__gemini-cli@4c150ab": {
+   "packages/cli/src/config/config.ts:372-373:99d5e00fe988": {
+    "dataset_ref": 1,
+    "bot": "gemini-code-assist[bot]",
+    "overlap": 0.45,
+    "set": "fresh10"
+   }
+  },
+  "google-gemini__gemini-cli@c6e6248": {
+   "integration-tests/test-helper.ts:309-312:fc3d324bdb1c": {
+    "dataset_ref": 0,
+    "bot": "gemini-code-assist[bot]",
+    "overlap": 0.6,
+    "set": "holdout10"
+   },
+   "integration-tests/test-helper.ts:309-358:b4eccd55206e": {
+    "dataset_ref": 1,
+    "bot": "gemini-code-assist[bot]",
+    "overlap": 0.52,
+    "set": "holdout10"
+   }
+  },
+  "langflow-ai__langflow@6239290": {
+   "src/backend/base/langflow/components/processing/parser.py:142-145:716a5ed3582c": {
+    "dataset_ref": 4,
+    "bot": "Copilot",
+    "overlap": 0.43,
+    "set": "fresh10"
+   }
+  },
+  "lvgl__lvgl@4a57db3": {
+   "src/draw/lv_draw_label.c:220-221:651c06b62b72": {
+    "dataset_ref": 0,
+    "bot": "Copilot",
+    "overlap": 0.75,
+    "set": "smoke10"
+   },
+   "src/widgets/label/lv_label_private.h:54-56:4c18019e2299": {
+    "dataset_ref": 3,
+    "bot": "Copilot",
+    "overlap": 0.41,
+    "set": "smoke10"
+   }
+  },
+  "lvgl__lvgl@e526b2a": {
+   "docs/src/details/auxiliary-modules/observer/observer.rst:367-367:6653f15e461b": {
+    "dataset_ref": 0,
+    "bot": "cubic-dev-ai[bot]",
+    "overlap": 0.78,
+    "set": "rest145"
+   },
+   "docs/src/details/auxiliary-modules/observer/observer.rst:581-581:71e0aa2b1685": {
+    "dataset_ref": 1,
+    "bot": "cubic-dev-ai[bot]",
+    "overlap": 0.56,
+    "set": "rest145"
+   },
+   "docs/src/details/auxiliary-modules/observer/observer.rst:583-583:2e1aefb93d8f": {
+    "dataset_ref": 2,
+    "bot": "cubic-dev-ai[bot]",
+    "overlap": 1.0,
+    "set": "rest145"
+   },
+   "docs/src/details/auxiliary-modules/observer/observer.rst:584-584:e4bbb39a6dfe": {
+    "dataset_ref": 3,
+    "bot": "cubic-dev-ai[bot]",
+    "overlap": 0.8,
+    "set": "rest145"
+   },
+   "src/others/observer/lv_observer.h:551-551:1c267c7ee314": {
+    "dataset_ref": 5,
+    "bot": "cubic-dev-ai[bot]",
+    "overlap": 0.57,
+    "set": "rest145"
+   },
+   "src/others/observer/lv_observer.h:610-610:23a5f4f13bad": {
+    "dataset_ref": 6,
+    "bot": "cubic-dev-ai[bot]",
+    "overlap": 0.33,
+    "set": "rest145"
+   },
+   "src/others/xml/lv_xml.h:24-24:86e2552a6b4a": {
+    "dataset_ref": 8,
+    "bot": "cubic-dev-ai[bot]",
+    "overlap": 0.78,
+    "set": "rest145"
+   },
+   "src/others/xml/lv_xml_style.c:293-293:1dcd1d2a8153": {
+    "dataset_ref": 9,
+    "bot": "cubic-dev-ai[bot]",
+    "overlap": 0.54,
+    "set": "rest145"
+   },
+   "src/others/xml/lv_xml_style.c:295-295:7af1724605fc": {
+    "dataset_ref": 10,
+    "bot": "cubic-dev-ai[bot]",
+    "overlap": 0.62,
+    "set": "rest145"
+   },
+   "src/others/xml/parsers/lv_xml_obj_parser.c:903-903:fcca13d6cb0c": {
+    "dataset_ref": 12,
+    "bot": "cubic-dev-ai[bot]",
+    "overlap": 0.47,
+    "set": "rest145"
+   },
+   "src/others/xml/parsers/lv_xml_spangroup_parser.c:100-100:8ecfda8cbe6f": {
+    "dataset_ref": 15,
+    "bot": "cubic-dev-ai[bot]",
+    "overlap": 0.41,
+    "set": "rest145"
+   },
+   "src/others/xml/parsers/lv_xml_spangroup_parser.c:101-101:7e0a918c5f48": {
+    "dataset_ref": 16,
+    "bot": "cubic-dev-ai[bot]",
+    "overlap": 0.4,
+    "set": "rest145"
+   },
+   "src/others/xml/parsers/lv_xml_tabview_parser.c:100-100:b7badbdb1330": {
+    "dataset_ref": 19,
+    "bot": "cubic-dev-ai[bot]",
+    "overlap": 0.8,
+    "set": "rest145"
+   },
+   "src/widgets/label/lv_label.h:100-100:deea0d65f93d": {
+    "dataset_ref": 22,
+    "bot": "cubic-dev-ai[bot]",
+    "overlap": 0.67,
+    "set": "rest145"
+   },
+   "src/widgets/span/lv_span.c:212-214:e28b302c8c81": {
+    "dataset_ref": 23,
+    "bot": "cubic-dev-ai[bot]",
+    "overlap": 0.69,
+    "set": "rest145"
+   },
+   "src/widgets/span/lv_span.h:103-103:15fcd6154eaf": {
+    "dataset_ref": 25,
+    "bot": "cubic-dev-ai[bot]",
+    "overlap": 0.5,
+    "set": "rest145"
+   },
+   "src/widgets/span/lv_span.h:139-139:d36a4f0f71d2": {
+    "dataset_ref": 26,
+    "bot": "cubic-dev-ai[bot]",
+    "overlap": 0.73,
+    "set": "rest145"
+   }
+  },
+  "microsoft__PowerToys@c1cedce": {
+   "src/modules/cmdpal/Microsoft.CmdPal.UI.ViewModels/TopLevelViewModel.cs:71-71:b76f22f7a2f7": {
+    "dataset_ref": 0,
+    "bot": "Copilot",
+    "overlap": 0.44,
+    "set": "rest145"
+   },
+   "src/modules/cmdpal/Microsoft.CmdPal.UI/Converters/ContextItemTemplateSelector.cs:42-42:ad6e582d56cd": {
+    "dataset_ref": 2,
+    "bot": "Copilot",
+    "overlap": 0.69,
+    "set": "rest145"
+   }
+  },
+  "microsoft__typescript-go@45c0de9": {
+   "internal/ls/diagnostics.go:44-44:f38c2509aed2": {
+    "dataset_ref": 0,
+    "bot": "Copilot",
+    "overlap": 0.57,
+    "set": "rest145"
+   }
+  },
+  "microsoft__typescript-go@892b4a3": {
+   "internal/fourslash/_scripts/convertFourslash.mts:26-29:423624553409": {
+    "dataset_ref": 0,
+    "bot": "Copilot",
+    "overlap": 0.33,
+    "set": "holdout10"
+   },
+   "internal/fourslash/_scripts/convertFourslash.mts:75-79:a6c0baff3a2a": {
+    "dataset_ref": 5,
+    "bot": "Copilot",
+    "overlap": 0.21,
+    "set": "holdout10"
+   },
+   "internal/fourslash/_scripts/makeManual.mts:12-14:047ac095ce65": {
+    "dataset_ref": 7,
+    "bot": "Copilot",
+    "overlap": 0.29,
+    "set": "holdout10"
+   }
+  },
+  "microsoft__typescript-go@ae447d3": {
+   "internal/execute/watch.go:45-48:87c0143b1c1b": {
+    "dataset_ref": 0,
+    "bot": "Copilot",
+    "overlap": 0.5,
+    "set": "rest145"
+   },
+   "internal/execute/watcher.go:83-83:4542c4ae34c0": {
+    "dataset_ref": 1,
+    "bot": "Copilot",
+    "overlap": 0.45,
+    "set": "rest145"
+   }
+  },
+  "n8n-io__n8n@ebe680f": {
+   "packages/testing/playwright/composables/TestEntryComposer.ts:103-103:235163709abc": {
+    "dataset_ref": 2,
+    "bot": "cubic-dev-ai[bot]",
+    "overlap": 0.62,
+    "set": "rest145"
+   },
+   "packages/testing/playwright/tests/ui/18-user-management.spec.ts:54-54:baed94ad8d18": {
+    "dataset_ref": 16,
+    "bot": "cubic-dev-ai[bot]",
+    "overlap": 0.47,
+    "set": "rest145"
+   },
+   "packages/testing/playwright/tests/ui/user-service.spec.ts:10-10:f417922003eb": {
+    "dataset_ref": 18,
+    "bot": "cubic-dev-ai[bot]",
+    "overlap": 0.5,
+    "set": "rest145"
+   }
+  },
+  "vllm-project__vllm@3fe1893": {
+   "vllm/model_executor/models/qwen2_vl.py:822-823:8337bb70a2b0": {
+    "dataset_ref": 0,
+    "bot": "gemini-code-assist[bot]",
+    "overlap": 0.58,
+    "set": "holdout10"
+   }
+  },
+  "wavetermdev__waveterm@4b7637f": {
+   "pkg/remote/fileshare/s3fs/s3fs.go:703-725:8c1394fc46b7": {
+    "dataset_ref": 11,
+    "bot": "coderabbitai[bot]",
+    "overlap": 0.48,
+    "set": "rest145"
+   }
+  },
+  "wavetermdev__waveterm@61b0fb4": {
+   "cmd/wsh/cmd/wshcmd-connserver.go:232-250:609986371f29": {
+    "dataset_ref": 0,
+    "bot": "coderabbitai[bot]",
+    "overlap": 0.41,
+    "set": "rest145"
+   },
+   "cmd/wsh/cmd/wshcmd-root.go:156-156:481d6a4f7aa9": {
+    "dataset_ref": 2,
+    "bot": "coderabbitai[bot]",
+    "overlap": 0.36,
+    "set": "rest145"
+   },
+   "pkg/blockcontroller/blockcontroller.go:365-365:b5c51155d7cd": {
+    "dataset_ref": 4,
+    "bot": "coderabbitai[bot]",
+    "overlap": 0.6,
+    "set": "rest145"
+   },
+   "pkg/shellexec/shellexec.go:323-324:0f3a9bfc919a": {
+    "dataset_ref": 7,
+    "bot": "coderabbitai[bot]",
+    "overlap": 0.43,
+    "set": "rest145"
+   },
+   "pkg/shellexec/shellexec.go:483-489:4f2ada87fae2": {
+    "dataset_ref": 9,
+    "bot": "coderabbitai[bot]",
+    "overlap": 0.44,
+    "set": "rest145"
+   },
+   "pkg/util/shellutil/shellutil.go:143-146:586f77010886": {
+    "dataset_ref": 11,
+    "bot": "coderabbitai[bot]",
+    "overlap": 0.33,
+    "set": "rest145"
+   },
+   "pkg/util/shellutil/shellutil.go:57-72:36ac9e4dafe8": {
+    "dataset_ref": 10,
+    "bot": "coderabbitai[bot]",
+    "overlap": 0.38,
+    "set": "rest145"
+   },
+   "pkg/wshutil/wshproxy.go:144-145:d970bd50db4b": {
+    "dataset_ref": 17,
+    "bot": "coderabbitai[bot]",
+    "overlap": 0.58,
+    "set": "rest145"
+   },
+   "pkg/wshutil/wshproxy.go:202-207:f9f476b75060": {
+    "dataset_ref": 18,
+    "bot": "coderabbitai[bot]",
+    "overlap": 0.27,
+    "set": "rest145"
+   }
+  },
+  "wavetermdev__waveterm@90a57d5": {
+   "pkg/blockcontroller/blockcontroller.go:149-156:9c29a58300ae": {
+    "dataset_ref": 0,
+    "bot": "coderabbitai[bot]",
+    "overlap": 0.33,
+    "set": "rest145"
+   },
+   "pkg/blockcontroller/blockcontroller.go:285-310:465ed5d08976": {
+    "dataset_ref": 1,
+    "bot": "coderabbitai[bot]",
+    "overlap": 0.44,
+    "set": "rest145"
+   },
+   "pkg/shellexec/shellexec.go:258-263:37aa262e9688": {
+    "dataset_ref": 2,
+    "bot": "coderabbitai[bot]",
+    "overlap": 0.25,
+    "set": "rest145"
+   }
+  }
+ }
+}

@@ -642,7 +642,20 @@
        "R16"
       ]
      },
-     "notes": "To count, a comment must say that runCommand duplicates or copy-pastes run()'s subprocess, spawn or stream handling and should share a helper. A comment claiming that runCommand's missing Podman filter or JSON stderr exclusion breaks the extension test does not count as a separate defect: those filters are irrelevant to extension subcommands, which exit before telemetry or JSON output. Such a comment counts here only if it frames the gap as copy drift."
+     "notes": "To count, a comment must say that runCommand duplicates or copy-pastes run()'s subprocess, spawn or stream handling and should share a helper. A comment claiming that runCommand's missing Podman filter or JSON stderr exclusion breaks the extension test does not count as a separate defect: those filters are irrelevant to extension subcommands, which exit before telemetry or JSON output. Such a comment counts here only if it frames the gap as copy drift.",
+     "bot_derived_reference": {
+      "bots": [
+       "Gemini Code Assist"
+      ],
+      "dataset_refs": [
+       1
+      ],
+      "references": [
+       "integration-tests/test-helper.ts:309-358:b4eccd55206e"
+      ],
+      "hunt": true,
+      "note": "Not scored. The cited AACR reference is a reworded review-bot comment from the original PR; the defect itself was checked against the code."
+     }
     }
    ],
    "excluded": [
@@ -904,7 +917,20 @@
        "R4"
       ]
      },
-     "notes": "To count, a comment must say that the converter's read of manualTests.txt throws (or crashes, or fails) when the file is absent, AND that the file is absent by default: the PR does not add it, or only makemanual creates it. Mentioning that updatefailing, CI or the regeneration workflow breaks is supportive but not required. Near-misses that should not count: generic advice to add try/catch or error handling around file reads with no claim that the file is missing, and comments about the .gitignore of *.txt alone, which is D4."
+     "notes": "To count, a comment must say that the converter's read of manualTests.txt throws (or crashes, or fails) when the file is absent, AND that the file is absent by default: the PR does not add it, or only makemanual creates it. Mentioning that updatefailing, CI or the regeneration workflow breaks is supportive but not required. Near-misses that should not count: generic advice to add try/catch or error handling around file reads with no claim that the file is missing, and comments about the .gitignore of *.txt alone, which is D4.",
+     "bot_derived_reference": {
+      "bots": [
+       "GitHub Copilot"
+      ],
+      "dataset_refs": [
+       0
+      ],
+      "references": [
+       "internal/fourslash/_scripts/convertFourslash.mts:26-29:423624553409"
+      ],
+      "hunt": true,
+      "note": "Not scored. The cited AACR reference is a reworded review-bot comment from the original PR; the defect itself was checked against the code."
+     }
     },
     {
      "id": "D2",

@@ -17,8 +17,27 @@ the PR introduces or newly exposes:
       "kind": "bug|security|data|build|contract|performance|concurrency|resource|compat|incomplete-fix|maintainability",
       "severity": "high|medium|low", "evidence": "file:line + quoted code",
       "notes": "what a finding must say to count; near-misses that must not",
-      "provenance": { "dataset_refs": [0, 3], "hunt": true, "reviewer_comments": ["R4"] } } ] } } }
+      "provenance": { "dataset_refs": [0, 3], "hunt": true, "reviewer_comments": ["R4"] },
+      "benchmark_limitation": "optional, not scored: why a read-only review can only find it by knowing the repo's CI",
+      "bot_derived_reference": { "bots": ["GitHub Copilot"], "dataset_refs": [0],
+        "references": ["path:from-to:<sha1 of the note, 12 hex>"], "hunt": true, "note": "…" } } ] } } }
 ```
+
+Two optional fields are annotations and are **never scored**: the judge prompt
+is built from the named fields above (`src/bench/defects.ts` `parseDefectSet`
+keeps only those, plus `provenance`, which the prompt never shows), so adding
+or changing either does not change the truth and does not bump `version`.
+
+- `benchmark_limitation` — a CI-gate defect (`compare.py` reports it on its own
+  line as well).
+- `bot_derived_reference` — the AACR reference this defect cites is a reworded
+  comment an AI review bot wrote on the original PR (2026-09-30).
+  AACR labels such references human (`is_ai_comment: false`). 19 of the 520
+  defects carry it; 17 of them were also found by the blind hunt, and all were
+  checked against the code, so the defect stands. `dataset_refs` is in the
+  form the defect's own provenance uses (an index, or `R<n>` in rest145);
+  `references` uses the key `reference_index.py` writes, and the full list of the ≥80 bot-derived
+  references is `../bot_references.json`.
 
 **How it was built (version 1).** Per PR: a blind expert hunt from the diff and
 the code alone; then every candidate — the hunt, the AACR references (hand

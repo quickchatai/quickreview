@@ -518,7 +518,20 @@
        "R13"
       ]
      },
-     "notes": "To count, a comment must say that store.getState() is a non-reactive snapshot, so consumers do not update/re-fetch when the URL setting changes, and should use useSelector/useAppSelector. Does NOT count: a comment that only flags the conditional hook calls or hook order (that is D1). A comment that makes both points counts for both."
+     "notes": "To count, a comment must say that store.getState() is a non-reactive snapshot, so consumers do not update/re-fetch when the URL setting changes, and should use useSelector/useAppSelector. Does NOT count: a comment that only flags the conditional hook calls or hook order (that is D1). A comment that makes both points counts for both.",
+     "bot_derived_reference": {
+      "bots": [
+       "Sourcery"
+      ],
+      "dataset_refs": [
+       6
+      ],
+      "references": [
+       "src/renderer/src/pages/agents/index.ts:19-19:2956a397d0b4"
+      ],
+      "hunt": true,
+      "note": "Not scored. The cited AACR reference is a reworded review-bot comment from the original PR; the defect itself was checked against the code."
+     }
     },
     {
      "id": "D7",
@@ -617,7 +630,20 @@
        "R37"
       ]
      },
-     "notes": "To count, a comment must point out the `setefaultAides` typo (missing D) in the action/reducer name. Does NOT count: casing preferences for `defaultaides` / `DefaultaidesSettings` (taste, excluded)."
+     "notes": "To count, a comment must point out the `setefaultAides` typo (missing D) in the action/reducer name. Does NOT count: casing preferences for `defaultaides` / `DefaultaidesSettings` (taste, excluded).",
+     "bot_derived_reference": {
+      "bots": [
+       "Sourcery"
+      ],
+      "dataset_refs": [
+       17
+      ],
+      "references": [
+       "src/renderer/src/store/settings.ts:459-459:12e8c1434ab6"
+      ],
+      "hunt": false,
+      "note": "Not scored. The cited AACR reference is a reworded review-bot comment from the original PR; the defect itself was checked against the code."
+     }
     }
    ],
    "excluded": [
@@ -736,7 +762,22 @@
        "R12"
       ]
      },
-     "notes": "To count, a comment must point out the en-vs-gb language-code mismatch between any two of: the manual input default (tr,en), the scheduled fallback (tr,gb), the script default (tr,en) and the README (tr,gb). Stronger hits add the consequence: the app uses gb.json, so the manual default writes en.json and leaves gb stale, or the nightly run requests an unsupported code. A comment that only says the README contradicts the manual default counts, because it is the same inconsistency. Near-misses that do not count: generic advice to validate language input, or the whitespace-trimming issue (D5)."
+     "notes": "To count, a comment must point out the en-vs-gb language-code mismatch between any two of: the manual input default (tr,en), the scheduled fallback (tr,gb), the script default (tr,en) and the README (tr,gb). Stronger hits add the consequence: the app uses gb.json, so the manual default writes en.json and leaves gb stale, or the nightly run requests an unsupported code. A comment that only says the README contradicts the manual default counts, because it is the same inconsistency. Near-misses that do not count: generic advice to validate language input, or the whitespace-trimming issue (D5).",
+     "bot_derived_reference": {
+      "bots": [
+       "CodeRabbit"
+      ],
+      "dataset_refs": [
+       6,
+       7
+      ],
+      "references": [
+       ".github/workflows/README.md:25-25:ef424660ad45",
+       ".github/workflows/poeditor-sync.yml:60-61:dc5b3f20fd61"
+      ],
+      "hunt": true,
+      "note": "Not scored. The cited AACR reference is a reworded review-bot comment from the original PR; the defect itself was checked against the code."
+     }
     },
     {
      "id": "D2",

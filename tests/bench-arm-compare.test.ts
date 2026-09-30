@@ -433,6 +433,40 @@ describe("compare.py", () => {
     expect(out).toContain("NOT COMPARABLE — the AACR evals used different judges");
   });
 
+  it("--exclude-refs re-scores without those references; a comment matching only one is unmatched, or dropped", async () => {
+    labels();
+    judgement("p", A, found(["D1"]));
+    judgement("p", B, found([]));
+    const d = join(runs, "p", "results", "all");
+    mkdirSync(d, { recursive: true });
+    // A: comment c1 matches refs 1 and 2, comment c2 matches ref 3 only.
+    const hit = { 1: "c1", 2: "c1", 3: "c2" } as Record<number, string>;
+    writeFileSync(
+      join(d, "metrics_ocr_1_round_1.json"),
+      JSON.stringify({
+        summary: {},
+        eval_res: [
+          { instance_id: A, comments: [1, 2, 3].map((n) => ({ ...ref(n), semantic_match: true, matched_note: hit[n] })) },
+          { instance_id: B, comments: [1, 2, 3].map((n) => ({ ...ref(n), semantic_match: false, matched_note: "" })) },
+        ],
+      }),
+    );
+    for (const id of [A, B]) writeFileSync(join(d, `${id}.json`), JSON.stringify({ review: { comments: [{}, {}] } }));
+    const key = (n: number) =>
+      `f.py:${n}-${n}:${createHash("sha1").update(`ref ${n}`).digest("hex").slice(0, 12)}`;
+    const ex = join(t, "exclude.json");
+    writeFileSync(ex, JSON.stringify({ references: { [A]: { [key(2)]: {}, [key(3)]: {} } } }));
+    const plain = await compare("p=p");
+    expect(plain).not.toContain("references removed");
+    const out = await compare("--exclude-refs", ex, "p=p");
+    // The published table is untouched.
+    expect(out).toContain("| p | 3.0/6 | 50.0% | 75.0% (4 comments) | 60.0% |");
+    // After: ref 1 of 4 kept; c2 matched only a removed ref → 1/4 unmatched, 1/3 dropped.
+    expect(out).toContain(
+      "| p | 3.0/6 → 1.0/4 | 50.0% → 25.0% | 75.0% → 25.0% / 33.3% (1.0 comments matched only a removed reference) | 60.0% → 25.0% / 28.6% |",
+    );
+  });
+
   it("scores `set:id,id` cases only — in both tables", async () => {
     labels();
     judgement("s", A, found(["D1"]));
