@@ -784,7 +784,7 @@ describe("resume — journal in, journal out", () => {
       }
       return fetchFn(url, init);
     };
-    await reembed.resume({
+    const r = await reembed.resume({
       home,
       base: BASE,
       key: "k",
@@ -793,6 +793,8 @@ describe("resume — journal in, journal out", () => {
       sleep: noSleep,
     });
     expect(swapped).toBe(true);
+    // The daemon logs `detail`: it must say the outcome was not journalled.
+    expect(r.detail).toMatch(/not journalled/);
     // The rebuild ran against the OLD migration: its outcome must not mark
     // the new one's namespace completed.
     expect(JSON.parse(readFileSync(join(home, "reembed.json"), "utf8"))).toEqual(rearmed);

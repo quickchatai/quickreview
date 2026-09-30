@@ -705,18 +705,16 @@ export async function resume({
   if (!fresh || !freshNs || fresh.reset_at !== journal.reset_at) {
     // The migration this rebuild belonged to is gone or was re-armed: its
     // outcome says nothing about the journal on disk now.
-    log(
-      `openviking: reembed ${run.uri} — ${state}, not journalled: the migration changed underneath`,
-    );
-    return { action: "reindex", state, run, entry };
+    const detail = `${state}, not journalled: the migration changed underneath`;
+    log(`openviking: reembed ${run.uri} — ${detail}`);
+    return { action: "reindex", state, run, entry, detail };
   }
   if (freshNs.state === "completed" && freshNs.settled_by === "operator") {
     // The operator settled this row by their explicit word mid-rebuild; that
     // receipt stands.
-    log(
-      `openviking: reembed ${run.uri} — ${state}, not journalled: settled by the operator meanwhile`,
-    );
-    return { action: "reindex", state, run, entry };
+    const detail = `${state}, not journalled: settled by the operator meanwhile`;
+    log(`openviking: reembed ${run.uri} — ${detail}`);
+    return { action: "reindex", state, run, entry, detail };
   }
   writeJournal(home, { ...fresh, namespaces: { ...fresh.namespaces, [user]: entry } });
   log(`openviking: reembed ${run.uri} — ${state}: ${entry.detail}`);
