@@ -377,6 +377,8 @@ export interface WebhookDeps {
   /** Process liveness stays HTTP-200; the body separately exposes a failed
    * review pipeline so orchestrators do not restart a live reconciler. */
   pipelineHealth?: () => StatusSnapshot["pipeline"];
+  /** Clock for the rejection-row throttle; tests inject one. */
+  now?: () => number;
 }
 
 export interface WebhookHandleResult {
@@ -386,6 +388,59 @@ export interface WebhookHandleResult {
 }
 
 const MAX_BODY = 10 * 1024 * 1024;
+
+// Bad-signature rejections are logged before any dedupe on a public endpoint,
+// so an unauthenticated sender controls their rate and (via the headers)
+// their size. Each row's header values are capped, and at most
+// REJECTION_ROWS_PER_WINDOW rows are written per window; the rest are counted
+// and the next window's first row carries that count as `suppressed_before`,
+// so the audit trail stays honest without growing with the flood (selfscan
+// 4c15a23f).
+const REJECTION_WINDOW_MS = 60_000;
+const REJECTION_ROWS_PER_WINDOW = 10;
+const REJECTION_HEADER_CAP = 128;
+const rejectionThrottle = new WeakMap<
+  StateStore,
+  { windowStart: number; written: number; suppressed: number }
+>();
+
+function capHeader(v: string | undefined): string | null {
+  if (v === undefined) return null;
+  return v.length > REJECTION_HEADER_CAP ? `${v.slice(0, REJECTION_HEADER_CAP)}…` : v;
+}
+
+function logRejection(
+  deps: WebhookDeps,
+  log: (msg: string, extra?: unknown) => void,
+  headers: { guid?: string; event?: string },
+): void {
+  const now = (deps.now ?? Date.now)();
+  let t = rejectionThrottle.get(deps.store);
+  if (!t) {
+    t = { windowStart: now, written: 0, suppressed: 0 };
+    rejectionThrottle.set(deps.store, t);
+  }
+  if (now - t.windowStart >= REJECTION_WINDOW_MS) {
+    t.windowStart = now;
+    t.written = 0;
+  }
+  if (t.written >= REJECTION_ROWS_PER_WINDOW) {
+    t.suppressed++;
+    return;
+  }
+  t.written++;
+  const guid = capHeader(headers.guid);
+  const event = capHeader(headers.event);
+  const suppressed = t.suppressed;
+  t.suppressed = 0;
+  log("webhook: signature rejected", { guid, event, suppressed_before: suppressed });
+  deps.store.logEvent("webhook_rejected", null, {
+    guid,
+    event,
+    reason: "bad-signature",
+    ...(suppressed > 0 ? { suppressed_before: suppressed } : {}),
+  });
+}
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
@@ -409,12 +464,7 @@ export function handleDelivery(
 ): WebhookHandleResult {
   const log = deps.log ?? (() => {});
   if (!verifySignature(raw, headers.signature, deps.secret)) {
-    log("webhook: signature rejected", { guid: headers.guid, event: headers.event });
-    deps.store.logEvent("webhook_rejected", null, {
-      guid: headers.guid ?? null,
-      event: headers.event ?? null,
-      reason: "bad-signature",
-    });
+    logRejection(deps, log, headers);
     return { status: 403, reason: "bad-signature" };
   }
   const guid = headers.guid;

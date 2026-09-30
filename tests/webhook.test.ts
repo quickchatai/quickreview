@@ -179,6 +179,40 @@ describe("handleDelivery", () => {
     store.close();
   });
 
+  it("caps and throttles bad-signature rows so an unauthenticated flood cannot fill the state volume (selfscan 4c15a23f)", () => {
+    // The endpoint is public through the tunnel and a rejection is logged
+    // before any dedupe. Uncapped header values and one row per request let a
+    // sender without the secret write ~8KB rows at line rate, forever.
+    const store = new StateStore(":memory:");
+    let t = 1_000_000;
+    const deps = { cfg, store, secret: SECRET, onInterpretation: () => {}, now: () => t };
+    const raw = Buffer.from("{}");
+    const huge = "x".repeat(8192);
+    for (let i = 0; i < 500; i++) {
+      const res = handleDelivery(deps, { signature: "sha256=bad", guid: huge, event: huge }, raw);
+      expect(res.status).toBe(403);
+    }
+    const rows = () =>
+      (
+        store.db
+          .prepare("SELECT payload FROM events WHERE kind = 'webhook_rejected' ORDER BY id")
+          .all() as Array<{ payload: string }>
+      ).map((r) => ({ len: r.payload.length, p: JSON.parse(r.payload) }));
+    const first = rows();
+    expect(first.length).toBeGreaterThan(0);
+    expect(first.length).toBeLessThanOrEqual(20);
+    for (const r of first) expect(r.len).toBeLessThan(1024);
+    // The audit trail survives: the next window's first row says how many
+    // were folded away rather than silently dropping them.
+    t += 61_000;
+    handleDelivery(deps, { signature: "sha256=bad", guid: "g", event: "push" }, raw);
+    const after = rows();
+    const last = after[after.length - 1]!.p;
+    expect(last.guid).toBe("g");
+    expect(last.suppressed_before).toBe(500 - first.length);
+    store.close();
+  });
+
   it("drops an event from another repository the App is installed on (selfscan b448dc04)", () => {
     // The App's installation spans many repos and every one of them delivers
     // here. A PR closed elsewhere whose NUMBER matches a tracked PR used to
