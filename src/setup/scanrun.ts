@@ -62,7 +62,7 @@ import { PASS_TIER_ORDER, type PassTier } from "../types.js";
 import type { ScanConfig } from "../config.js";
 import type { CaseOutcome, CaseRunner, Refusal, StateFs } from "./engine.js";
 import { FindingsStore, type ReconcileResult, type ReportedFinding } from "./findings.js";
-import { blobsRead, casesFor, coveredBy, lastScanned, Ledger, measuredRate, rateWhere, type LedgerEntry, type RateKey } from "./ledger.js";
+import { casesFor, coveredBy, lastScanned, Ledger, measuredRate, newestRead, rateWhere, type LedgerEntry, type RateKey } from "./ledger.js";
 import {
   anchoredLines,
   calibrationCases,
@@ -423,9 +423,9 @@ export class ScanRunner {
     if (error !== null) return { ok: false, errors: [error] };
     const settings = s.settings;
     const cfg = settings.scan;
-    // A delta compares against the last scan: every content the ledger read
-    // per file, and the tree that scan read (listed, not materialised).
-    let basis: { since: string; read: Map<string, Set<string>>; baseline: Map<string, string> } | null = null;
+    // A delta compares against the last scan: each file's newest content the
+    // ledger read, and the tree that scan read (listed, not materialised).
+    let basis: { since: string; read: Map<string, string>; baseline: Map<string, string> } | null = null;
     if (delta) {
       const last = lastScanned(entries, SCAN_PASS);
       if (last === null) return { ok: false, errors: ["no stage-1 scan to re-scan against — preview and run a full scan first"] };
@@ -433,7 +433,7 @@ export class ScanRunner {
       if (listed === null) {
         return { ok: false, errors: [`cannot list the tree the last scan read (${last.sha.slice(0, 12)}) — a delta cannot tell which files are new`] };
       }
-      basis = { since: last.sha, read: blobsRead(entries, SCAN_PASS), baseline: new Map(listed.map((f) => [f.path, f.blob])) };
+      basis = { since: last.sha, read: newestRead(entries, SCAN_PASS), baseline: new Map(listed.map((f) => [f.path, f.blob])) };
     }
     const plan = planStage1({
       cut: cut.cut,

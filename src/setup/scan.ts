@@ -108,17 +108,17 @@ export interface Stage1Plan {
 
 /** What a delta re-scan compares against. */
 export interface DeltaBasis {
-  /** Every content hash the ledger holds per path for `pass-scan`. */
-  read: ReadonlyMap<string, ReadonlySet<string>>;
+  /** Each path's newest content hash in the ledger for `pass-scan`. */
+  read: ReadonlyMap<string, string>;
   /** The tree the last scan read: path → blob. */
   baseline: ReadonlyMap<string, string>;
 }
 
-/** Has `f`'s content changed since the last scan? Read at another content
- * by the ledger, or absent from / different in the last scan's tree. */
+/** Has `f`'s content changed since the last scan? Newest read by the ledger
+ * at another content, or absent from / different in the last scan's tree. */
 export function changedSince(f: TreeFile, basis: DeltaBasis): boolean {
   const read = basis.read.get(f.path);
-  if (read !== undefined && !read.has(f.blob)) return true;
+  if (read !== undefined && read !== f.blob) return true;
   const was = basis.baseline.get(f.path);
   return was === undefined || was !== f.blob;
 }

@@ -111,13 +111,7 @@ export class Ledger {
  * settled `fixed`, so content that comes back to it (a revert) must be read
  * again for them to come back too. */
 export function coveredBy(entries: readonly LedgerEntry[], lens: string): Set<string> {
-  const newest = new Map<string, LedgerEntry>();
-  for (const e of entries) {
-    if (e.lens !== lens) continue;
-    const had = newest.get(e.path);
-    if (!had || e.at >= had.at) newest.set(e.path, e);
-  }
-  return new Set([...newest.values()].map((e) => coverKey(e.path, e.blob)));
+  return new Set([...newestRead(entries, lens)].map(([path, blob]) => coverKey(path, blob)));
 }
 
 /** Rows written for `key` at all, and how many of their cases were priced —
@@ -163,17 +157,18 @@ export function rateWhere(entries: readonly LedgerEntry[], keep: (e: LedgerEntry
 
 // ---- the delta's basis --------------------------------------------------
 
-/** Every content hash the ledger holds per path for `lens` — a path read at
- * none of them now has CHANGED since it was scanned. */
-export function blobsRead(entries: readonly LedgerEntry[], lens: string): Map<string, Set<string>> {
-  const out = new Map<string, Set<string>>();
+/** Each path's NEWEST content hash read by `lens` — the reading findings
+ * are settled against. A path whose content is not that one has CHANGED
+ * since it was scanned, even when an older, superseded reading saw exactly
+ * this content (a revert): that reading's findings may since be `fixed`. */
+export function newestRead(entries: readonly LedgerEntry[], lens: string): Map<string, string> {
+  const newest = new Map<string, LedgerEntry>();
   for (const e of entries) {
     if (e.lens !== lens) continue;
-    const s = out.get(e.path) ?? new Set<string>();
-    s.add(e.blob);
-    out.set(e.path, s);
+    const had = newest.get(e.path);
+    if (!had || e.at >= had.at) newest.set(e.path, e);
   }
-  return out;
+  return new Map([...newest].map(([path, e]) => [path, e.blob]));
 }
 
 /** The sha of the LAST scan by `lens` — its newest row's — or null when the

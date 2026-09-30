@@ -349,6 +349,35 @@ describe("content read before, superseded, then back: read again (selfscan def42
     if (!p.ok) throw new Error(p.errors.join("; "));
     expect(p.preview.cases.flatMap((c) => c.files.map((f) => f.path))).toEqual(["tools/x.py"]);
   });
+
+  it("a delta cut short before the reverted file keeps it owed: the next delta still reads it", async () => {
+    // The revert lands beside another change; the delta finishes lib but the
+    // tools case fails. The last scan is now SHA5 — whose tree holds the
+    // reverted content, and the ledger read that content once, long ago.
+    const SHA5 = "5".repeat(40);
+    const TREE5: Record<string, string> = { ...TREE4, "lib/util.py": `${lines(30, "util")}util_extra = 1\n` };
+    const all = { ...trees, [SHA5]: TREE5 };
+    const first = new ScanRunner(ports(runner(), all));
+    await run(first, SHA1);
+    await run(first, SHA1);
+    await run(new ScanRunner(ports(runner(rescanAnswer), all)), SHA2, true);
+    const failTools: FakeRunner = {
+      specs: [],
+      run: async (spec) =>
+        spec.unit === "tools" ? { ok: false, reason: "pi exited 1", cost_usd: 0 } : { ok: true, output: finding(spec), cost_usd: 0.01 * spec.files.length },
+    };
+    const cut = await new ScanRunner(ports(failTools, all)).preview({ sha: SHA5, delta: true });
+    if (!cut.ok) throw new Error(cut.errors.join("; "));
+    expect(cut.preview.cases.flatMap((c) => c.files.map((f) => f.path)).sort()).toEqual(["lib/util.py", "tools/x.py"]);
+    const s = new ScanRunner(ports(failTools, all));
+    const started = await s.start({ key: cut.preview.key, sha: SHA5, delta: true });
+    if (!started.ok) throw new Error(started.errors.join("; "));
+    await s.idle();
+
+    const again = await new ScanRunner(ports(runner(), all)).preview({ sha: SHA5, delta: true });
+    if (!again.ok) throw new Error(again.errors.join("; "));
+    expect(again.preview.cases.flatMap((c) => c.files.map((f) => f.path))).toEqual(["tools/x.py"]);
+  });
 });
 
 // ---- the store alone ------------------------------------------------------------
