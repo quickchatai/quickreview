@@ -1842,6 +1842,33 @@ describe("selfscan2: the version a file actually runs against", () => {
     });
   });
 
+  it("pnpm v6: the single-project specifier/version pairs pin the direct dependency", () => {
+    const lock = [
+      "lockfileVersion: '6.0'",
+      "",
+      "dependencies:",
+      "  x:",
+      "    specifier: ^1.0.0",
+      "    version: 1.0.0",
+      "",
+      "packages:",
+      "",
+      "  /x@1.0.0:",
+      "    dev: false",
+      "",
+      "  /x@1.2.0:",
+      "    dev: false",
+    ].join("\n");
+    const root = tree({
+      "package.json": JSON.stringify({ dependencies: { x: "^1.0.0" } }),
+      "pnpm-lock.yaml": lock,
+      "a.js": "require('x')",
+    });
+    expect(planDependencyRequests(root, [{ filename: "a.js" }])[0]).toMatchObject({
+      version: "1.0.0",
+    });
+  });
+
   it("package-lock: the NEAREST workspace's own copy wins, not the max over ancestors", () => {
     const root = tree({
       "package.json": JSON.stringify({ dependencies: {} }),

@@ -788,6 +788,7 @@ export function parsePnpmLock(text: string): NpmLock {
             ? "root"
             : "other";
       if (g) rootGroup = g[1] === "specifiers" ? "specs" : "deps";
+      dep = null;
       continue;
     }
     if (section === "packages") {
@@ -801,12 +802,26 @@ export function parsePnpmLock(text: string): NpmLock {
       if (nv && nv.name && VERSION_LIKE.test(nv.version))
         addLock(lock, nv.name, { version: nv.version });
     } else if (section === "root") {
-      // v5 single project: `  name: value` directly under the section.
-      const m = /^ {2}(\S.*?):\s+(\S.*?)\s*$/.exec(raw);
-      if (!m) continue;
-      const p = pin(".", unquote(m[1] ?? ""));
-      if (rootGroup === "specs") p.spec = unquote(m[2] ?? "");
-      else p.version = unquote(m[2] ?? "");
+      // v5 single project: `  name: value` directly under the section;
+      // v6 single project: `  name:` then `    specifier:` / `    version:`.
+      const head = /^ {2}(\S.*?):\s*(.*?)\s*$/.exec(raw);
+      if (head) {
+        const name = unquote(head[1] ?? "");
+        const inline = unquote(head[2] ?? "");
+        dep = inline ? null : name;
+        if (inline) {
+          const p = pin(".", name);
+          if (rootGroup === "specs") p.spec = inline;
+          else p.version = inline;
+        }
+        continue;
+      }
+      const kv = /^ {4}(specifier|version):\s*(.*?)\s*$/.exec(raw);
+      if (kv && dep && rootGroup === "deps") {
+        const p = pin(".", dep);
+        if (kv[1] === "specifier") p.spec = unquote(kv[2] ?? "");
+        else p.version = unquote(kv[2] ?? "");
+      }
     } else if (section === "importers") {
       const imp = /^ {2}(\S.*?):\s*$/.exec(raw);
       if (imp) {
@@ -2360,6 +2375,8 @@ function cacheDirFor(
   version: string,
 ): string | null {
   if (!SAFE_VERSION_RE.test(version) || version.includes("..")) return null;
+  // A literal `+` would let `@a+b` alias `@a/b`; neither registry allows one.
+  if (name.includes("+")) return null;
   const flat = name.replace("/", "+");
   if (!/^@?[A-Za-z0-9][A-Za-z0-9._~-]*(?:\+[A-Za-z0-9._~-]+)?$/.test(flat) || flat.includes(".."))
     return null;
