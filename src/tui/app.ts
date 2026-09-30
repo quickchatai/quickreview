@@ -1561,7 +1561,11 @@ export class App {
       this.out.write(frame.render());
       this.notifyRepaint();
     };
-    if (this.tab !== "board") {
+    // `?` is a global key advertised on every tab's bar, and the KEYS overlay
+    // (renderBoard's help branch) is the only thing that paints it — so while
+    // help is up, every tab shows it. A tab screen here would leave the flag
+    // set with nothing on screen, and the next keystroke silently eaten.
+    if (this.tab !== "board" && !this.view.help) {
       paint(
         this.tabHooks()?.screen(this, inner, rows),
         `${this.tab} tab not wired — [1] back to board`,

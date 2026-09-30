@@ -422,3 +422,30 @@ describe("digest tab", () => {
     expect(stripAnsi(tab.screen(rig.app, 100, 24).render())).toContain("digest 2026-08-20");
   });
 });
+
+// ---- `?` help on a non-board tab ---------------------------------------------
+
+describe("? help on a non-board tab", () => {
+  const framePlain = (app: App): string =>
+    ((app as unknown as { lastFrame?: { lines: string[] } }).lastFrame?.lines ?? [])
+      .map(stripAnsi)
+      .join("\n");
+
+  it("paints the KEYS overlay on [3] digest, and the key that dismisses it is the one it swallows", async () => {
+    const rig = learningRig();
+    const running = rig.app.run();
+    rig.streams.type("3");
+    expect(rig.app.tab).toBe("digest");
+    expect(framePlain(rig.app)).not.toContain("KEYS");
+    rig.streams.type("?");
+    expect(rig.app.view.help).toBe(true);
+    // The bar advertises `? help` on every tab; pressing it must SHOW help —
+    // a flag set with nothing painted made the next keystroke vanish unseen.
+    expect(framePlain(rig.app)).toContain("KEYS");
+    rig.streams.type("j");
+    expect(rig.app.view.help).toBe(false);
+    expect(framePlain(rig.app)).not.toContain("KEYS");
+    rig.app.quit();
+    await running;
+  });
+});
