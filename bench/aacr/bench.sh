@@ -78,6 +78,9 @@
 #              (the same runtime + @openai/codex, pinned), `review` runs the AACR harness's own
 #              reviewers/codex.py (one case at a time; --timeout-min = its 30), `eval` scores
 #              the `all` variant. QCR_BENCH_CODEX_EFFORT=L sets the reasoning effort (medium).
+#              QCR_BENCH_CODEX_VERSION + QCR_BENCH_CODEX_SHA256 (the linux-x64 binary's) build another
+#              Codex CLI — gpt-6.1-sol needs >= 0.159 (0.158.0's requests for it are refused by the
+#              ChatGPT backend: "not supported when using Codex with a ChatGPT account")
 #   --arm claude (build, review, eval, report, judge): Claude Code as a BENCHMARKED
 #              REVIEWER — root CLAUDE.md rule 5's one ratified exception; `claude` exists
 #              only in image qcr-bench-claude and runs only in its review container.
@@ -155,7 +158,8 @@ case "$ARM" in
   ocr) IMAGE="${QCR_BENCH_OCR_IMAGE:-qcr-bench-ocr:latest}"; TARGET=ocr
        BASE_ARGS=(--build-arg RUNTIME_BASE=node:22-trixie); REVIEW_ENTRY=ocr-review ;;
   # Codex CLI arm: the harness's own reviewers/codex.py (Dockerfile target `codex`).
-  codex) IMAGE="${QCR_BENCH_CODEX_IMAGE:-qcr-bench-codex:latest}"; TARGET=codex; BASE_ARGS=(); REVIEW_ENTRY=codex-review ;;
+  codex) IMAGE="${QCR_BENCH_CODEX_IMAGE:-qcr-bench-codex:latest}"; TARGET=codex; BASE_ARGS=(); REVIEW_ENTRY=codex-review
+       [[ -n "${QCR_BENCH_CODEX_VERSION:-}" ]] && BASE_ARGS=(--build-arg "CODEX_VERSION=$QCR_BENCH_CODEX_VERSION" --build-arg "CODEX_SHA256_LINUX_X64=${QCR_BENCH_CODEX_SHA256:?set QCR_BENCH_CODEX_SHA256 with QCR_BENCH_CODEX_VERSION}") ;;
   # OpenCode: its own target on the same runtime (OPENCODE_VERSION build arg, Dockerfile).
   opencode) IMAGE="${QCR_BENCH_OPENCODE_IMAGE:-qcr-bench-opencode:latest}"; TARGET=opencode
        BASE_ARGS=(); REVIEW_ENTRY=opencode-review

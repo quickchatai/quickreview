@@ -70,6 +70,14 @@ describe("bench.sh: QCR_BENCH_<ARM>_MODEL", () => {
     });
   }
 
+  it("codex: QCR_BENCH_CODEX_VERSION builds another Codex CLI, only with its sha256", () => {
+    const sh = readFileSync(join(B, "bench.sh"), "utf8");
+    expect(sh).toContain('--build-arg "CODEX_VERSION=$QCR_BENCH_CODEX_VERSION"');
+    expect(sh).toContain(
+      '--build-arg "CODEX_SHA256_LINUX_X64=${QCR_BENCH_CODEX_SHA256:?set QCR_BENCH_CODEX_SHA256 with QCR_BENCH_CODEX_VERSION}"',
+    );
+  });
+
   it("refuses a value that is not a Codex model id", () => {
     const r = review("codex", { QCR_BENCH_CODEX_MODEL: "gpt-6.1-sol; rm -rf /" });
     expect(r.status).not.toBe(0);
