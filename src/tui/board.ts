@@ -9,6 +9,7 @@ import type { AlertBadge } from "./alerts.js";
 import { barHeight, paintCmdBar, type BarButton, type LiveKeys } from "./cmdbar.js";
 import { filterLabel, visiblePrs, type BoardFilter } from "./filters.js";
 import { glyphFor, type EventLine, type SnapshotPr } from "./model.js";
+import { windowStart } from "./panes.js";
 import {
   ACCENT,
   ACCENT_BG,
@@ -978,16 +979,22 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
         section("PRS (?)", "unknown — the daemon has not answered"),
         ...unknownSourceLines(view.connection, listW - 1),
       ];
-  sorted.forEach((pr, i) => {
+  // The list scrolls with the selection: the verbs act on the selected PR, so
+  // it must never sit off-screen (`windowStart`, the tabs' shared rule). The
+  // header stays put; the last body row is the legend, painted over whatever
+  // would sit there, so the PR slots are the rows between the two.
+  const prSlots = Math.max(1, bodyRows - 1 - listLines.length);
+  const start = windowStart(view.selected, sorted.length, prSlots);
+  sorted.slice(start, start + prSlots).forEach((pr, offset) => {
+    const i = start + offset;
     listLines.push(styledRow(pr, i === view.selected, listW - 1, now, view.repo));
     const y = 1 + listLines.length - 1 + 1; // frame row of this PR line (below top bar)
     // Only PAINTED rows get zones: with a long list, off-screen rows would
     // otherwise leave phantom click targets over the pi region and the
     // bar-row gaps — a click there could select (or double-click into the
-    // pi pane of) an invisible PR.
-    // The last body row is the legend, painted over whatever PR would sit
-    // there — so the last PR that is actually visible is index bodyRows - 3.
-    if (i >= bodyRows - 2) return;
+    // pi pane of) an invisible PR. The slice above holds only painted rows,
+    // but a body too short for even one slot must still declare nothing.
+    if (listLines.length > bodyRows - 1) return;
     frame.zones.push({
       x1: 2,
       y1: y,

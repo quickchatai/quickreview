@@ -405,10 +405,9 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     durableDeploy.startOrAttach(runId, onData, onExit);
   app.view.repo = full.github.repo;
   const { spawn } = await import("node:child_process");
+  const { openUrlDetached } = await import("./openurl.js");
   const { existsSync, mkdirSync, readFileSync, writeFileSync } = await import("node:fs");
-  app.hooks.openUrl = (url) => {
-    spawn("xdg-open", [url], { detached: true, stdio: "ignore" }).unref();
-  };
+  app.hooks.openUrl = (url) => openUrlDetached(url, (line) => app.notice(line));
   const marker = join(sandboxRoot(), "state", "tui-help-shown");
   app.hooks.helpSeen = {
     get: () => existsSync(marker),

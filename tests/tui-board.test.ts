@@ -771,6 +771,34 @@ describe("renderBoard", () => {
     }
   });
 
+  it("scrolls the PR list so the selected row stays painted and clickable", () => {
+    // `j` walks the whole sorted list; a list painted from index 0 lost the
+    // highlight (and its click target) once the selection passed the visible
+    // rows — while m/u/g still acted on that invisible PR.
+    const prs = Array.from({ length: 40 }, (_, i) => ({
+      number: 6000 + i,
+      state: "reviewing" as const,
+      title: `pr ${i}`,
+      head_sha: "a2e380ff11",
+      stale_recheck: 0,
+    }));
+    for (const selected of [0, 20, 39]) {
+      const frame = renderBoard(view({ snapshot: { ...snapshot, prs }, selected }), 140, 40);
+      const bodyRows = frame.meta["bodyRows"]!;
+      const legendY = 1 + (bodyRows - 1) + 1;
+      const pr = 6000 + selected;
+      const zone = frame.zones.find(
+        (z) => (z.action as { t: string; pr?: number }).t === "select-pr" &&
+          (z.action as { pr: number }).pr === pr,
+      );
+      expect(zone, `selected #${pr} has a click target`).toBeDefined();
+      expect(zone!.y1).toBeLessThan(legendY);
+      const text = frame.lines.map(stripAnsi);
+      expect(text[zone!.y1 - 1]).toContain(String(pr));
+      expect(text.join("\n")).toContain("PRS (40)"); // the header never scrolls away
+    }
+  });
+
   it("the events overlay is opaque: nothing it covers stays clickable", () => {
     const events = [
       { ts: "t0", text: "10:00:00 verdict_applied #5049", anomaly: false },
