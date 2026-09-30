@@ -25,6 +25,7 @@
 //                       session that is genuinely wedged rather than idle.
 import type { TuiConfig } from "../config.js";
 import type { App } from "./app.js";
+import { sanitizeText } from "./paint.js";
 import type { SshRunner } from "./remote.js";
 
 /** The commands this channel may produce. Deliberately a closed set: the
@@ -212,10 +213,13 @@ export class CommandFileSender implements UnwedgeSender {
         );
         return;
       }
-      onState(
-        "failed",
-        `✖ ${command} #${pr} refused (${String(result.reason ?? "no reason given")})`,
-      );
+      // The result file lives in the session-writable results dir, so the
+      // reason is untrusted: no control byte may reach the terminal, and no
+      // newline may split the one-line notice.
+      const reason = sanitizeText(String(result.reason ?? "no reason given"))
+        .replace(/\s+/g, " ")
+        .trim();
+      onState("failed", `✖ ${command} #${pr} refused (${reason})`);
       return;
     }
     onState("failed", `✖ ${command} #${pr} — no result (daemon down?)`);

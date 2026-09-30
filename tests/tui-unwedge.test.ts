@@ -102,6 +102,24 @@ describe("the unwedge command channel", () => {
     expect(t.states[1]![1]).toContain("tier: refused");
   });
 
+  it("strips terminal control bytes from the daemon's reason before it reaches the notice line", async () => {
+    // The result file sits in the session-writable results dir, so its
+    // reason is untrusted text: an ESC/CSI/OSC sequence must never reach the
+    // operator's terminal as live control output, nor a newline split the
+    // one-line notice.
+    const hostile = JSON.stringify({
+      ok: false,
+      reason: "tier\u001b[2J\u001b[H\u001b]0;pwned\u0007\nrefused\u009b",
+    });
+    const { ssh } = runner([hostile]);
+    const t = track();
+    await sender(ssh).send("rerun-round", 77, t.on);
+
+    const label = t.states[1]![1];
+    expect(label).not.toMatch(/[\x00-\x1f\x7f-\x9f]/);
+    expect(label).toContain("refused (tier[2J[H]0;pwned refused)");
+  });
+
   it("surfaces how many rounds the daemon actually cancelled", async () => {
     const { ssh } = runner(['{"ok":true,"requeued":5362,"cancelled_rounds":[851]}']);
     const t = track();
