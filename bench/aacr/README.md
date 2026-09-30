@@ -32,7 +32,9 @@ verdict on 98.7% of reviewer-defect pairs, so the grading does not depend on
 which family judges; the answer key rests on its own verification. Numbers,
 method and caveats are in
 [`FULL-BENCHMARK.md`](FULL-BENCHMARK.md); how to read the two metrics is in
-[`METRICS.md`](METRICS.md). Charts, all in `charts/`:
+[`METRICS.md`](METRICS.md). How quickreviewd does on other base models
+(gpt-6.1-sol, gpt-6-luna, Claude Opus 5.5) is in the Base model section of FULL-BENCHMARK.
+Charts, all in `charts/`:
 
 | Chart | Shows |
 |---|---|
