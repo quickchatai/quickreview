@@ -156,6 +156,9 @@ export function pickSample(
       order: [...pool].sort((a, b) => linesOf(b) - linesOf(a) || byPath(a, b)),
     },
   ];
+  // The over-the-cap exception belongs to a unit with nothing that fits —
+  // never to whichever oversized file happens to lead its category.
+  const anyFits = pool.some((p) => Math.max(0, linesOf(p)) <= limits.maxLines);
   const chosen: PlannedFile[] = [];
   let lines = 0;
   for (const cat of categories) {
@@ -164,7 +167,7 @@ export function pickSample(
       if (taken >= limits.perCategory || chosen.length >= limits.maxFiles) break;
       if (chosen.some((c) => c.path === p)) continue;
       const n = Math.max(0, linesOf(p));
-      if (lines + n > limits.maxLines && chosen.length > 0) continue;
+      if (lines + n > limits.maxLines && (anyFits || chosen.length > 0)) continue;
       chosen.push({ path: p, lines: n, reason: cat.reason(p) });
       lines += n;
       taken++;

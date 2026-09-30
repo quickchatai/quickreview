@@ -250,6 +250,17 @@ describe("the sample", () => {
     expect(alone.map((f) => f.path)).toEqual(["web/src/big.ts"]);
   });
 
+  it("an oversized file leading its category never crowds out one that fits", () => {
+    const sizes: Record<string, number> = { "web/src/a.ts": 3000, "web/src/b.ts": 100 };
+    const s = pickSample(Object.keys(sizes), (p) => sizes[p] ?? 0, null);
+    // Only "largest" has candidates, and a.ts leads it: the cap still holds,
+    // because b.ts fits — the oversized exception is for a unit with nothing that does.
+    expect(s.map((f) => f.path)).toEqual(["web/src/b.ts"]);
+    const lines: Record<string, number> = { "web/src/api.ts": 900, "web/src/util.ts": 40 };
+    const e = pickSample(Object.keys(lines), (p) => lines[p] ?? 0, null, { perCategory: 2, maxFiles: 8, maxLines: 500 });
+    expect(e.map((f) => f.path)).toEqual(["web/src/util.ts"]);
+  });
+
   it("an unreadable history only empties the most-changed reason", () => {
     const s = pickSample(["web/src/api.ts", "web/src/big.ts"], linesOf, null);
     expect(s.map((f) => f.reason)).toEqual(["entry point", "largest (700 lines)"]);
