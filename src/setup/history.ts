@@ -21,6 +21,7 @@
 // `#history` entries and writes the new ones, so a re-run supersedes rather
 // than piles up (the survey's rule); a pinned or `#manual` one is the
 // operator's and is left alone.
+import { parseHashTags } from "../memory/eventtags.js";
 import { refOf, type MemoryStore } from "../memory/store.js";
 import { parseDigest, type ReviewHistoryDigest } from "../reviewhistory.js";
 import type { StateFs } from "./engine.js";
@@ -318,6 +319,10 @@ export async function saveHistoryThemes(deps: SaveThemesDeps, raw: unknown): Pro
   try {
     const old = await deps.memory.search("", { tag: HISTORY_TAG });
     for (const e of old) {
+      // The store's `tags` scan the whole text (search wants a quoted `#tag`),
+      // but only the HEADER says what an entry is: a feedback comment reading
+      // "keep #history out of billing" is not an earlier theme to retire.
+      if (!parseHashTags(e.text).includes(HISTORY_TAG)) continue;
       if (e.pinned || e.tags.some((t) => t.toLowerCase() === "manual")) continue;
       const r = await deps.memory.apply({ op: "retire", ...refOf(e) });
       if (r.ok) memory.retired++;

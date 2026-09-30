@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { MemoryEntry, MemoryOp, MemoryStore, MemoryWriteResult } from "../src/memory/store.js";
 import { matchesQuery } from "../src/memory/store.js";
 import { parseHashTags, parseEventTags } from "../src/memory/eventtags.js";
+import { tagsOf } from "../src/openviking/store.js";
 import { DIGEST_KIND, DIGEST_VERSION, type ReviewHistoryDigest } from "../src/reviewhistory.js";
 import { SetupEngine } from "../src/setup/engine.js";
 import { notYetTrackerSink, reviewerMemoryFromEnv, stateHomeFs } from "../src/setup/adapters.js";
@@ -33,7 +34,8 @@ afterEach(() => {
 });
 
 /** A tiny MemoryStore: entries in an array, tags read the way the real store
- * reads them (the header only), retire removes. */
+ * reads them (OpenVikingStore's `tagsOf` — the WHOLE text, so a `#tag` quoted
+ * in a body is searchable; only `pinned` is header-only), retire removes. */
 class MemFake implements MemoryStore {
   entries: MemoryEntry[] = [];
   ops: MemoryOp[] = [];
@@ -42,7 +44,7 @@ class MemFake implements MemoryStore {
     this.n++;
     this.entries.push({
       id: `e${this.n}`, ts: "2026-09-29 12:00:00", day: "2026-09-29", block: 0, text,
-      tags: parseHashTags(text), links: [], pinned, hash: `h${this.n}`,
+      tags: tagsOf(text), links: [], pinned, hash: `h${this.n}`,
     });
   }
   async read(): Promise<MemoryEntry[]> {
@@ -219,6 +221,22 @@ describe("saving themes", () => {
     const f = readHistoryThemes(state)!;
     expect(f.themes).toEqual([GOOD[0]]);
     expect(f.previous?.themes).toEqual(GOOD);
+  });
+
+  it("never retires an entry that only MENTIONS #history in its body — the tag is the header's", async () => {
+    const mem = new MemFake();
+    const quoted = "#feedback kind=comment pr=7 [feedback] keep #history out of billing";
+    mem.add(quoted);
+    mem.add("#eod the sweep noted a #history theme drifting");
+    const { e, put } = engine(mem);
+    put(digest());
+    const r = await e.saveHistoryThemes([GOOD[0]]);
+    expect(r).toMatchObject({ ok: true, memory: { written: 1, retired: 0, problems: [] } });
+    expect(mem.entries.map((x) => x.text)).toEqual([
+      quoted,
+      "#eod the sweep noted a #history theme drifting",
+      themeEntryText(GOOD[0] as never),
+    ]);
   });
 
   it("works for a repo with no rounds: the empty history summarises as empty and saves an empty theme list", async () => {

@@ -22,8 +22,8 @@
 // Builds land in `<state home>/replay/agents/<side>/`, the old side's config
 // home in `<state home>/replay/home/old/`; both are rebuilt on every preview
 // and start, so a replay always reads the profiles as they are.
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { parseConfig, type Config } from "../config.js";
 import { ecosystemFor, type Ecosystem } from "../ecosystem.js";
 import type { HeuristicsExtension } from "../heuristics.js";
@@ -39,7 +39,7 @@ import {
 } from "../profiles.js";
 import { latestBaseline, readBaselines, type ProfileBaseline } from "./baselines.js";
 import type { Refusal, StateFs } from "./engine.js";
-import { checkProfile } from "./profile.js";
+import { checkProfile, unlinkWritePath } from "./profile.js";
 import type { SideName } from "./replay.js";
 import { profileStatus } from "./tuning.js";
 
@@ -192,9 +192,14 @@ function restoreBaseline(deps: SidesDeps, b: ProfileBaseline, unwind: readonly P
     assertPathSegment("profile", b.profile);
     rmSync(out, { recursive: true, force: true });
     mkdirSync(out, { recursive: true });
+    // The copy keeps links, and a copied link still points into the LIVE
+    // tree (a profile directory linked into the operator's dotfiles), so
+    // every link on the path of a restoring write is cut first — the same
+    // hazard, and the same guard, as `checkStaged`.
     const real = join(configHome(deps.env), PROFILES_DIR);
-    if (existsSync(real)) cpSync(real, join(out, PROFILES_DIR), { recursive: true });
-    const dir = join(out, PROFILES_DIR, b.profile);
+    const root = join(out, PROFILES_DIR);
+    if (existsSync(real)) cpSync(realpathSync(real), root, { recursive: true });
+    const dir = join(root, b.profile);
     for (const w of unwind) {
       if (!w.existed) {
         rmSync(dir, { recursive: true, force: true });
@@ -202,6 +207,7 @@ function restoreBaseline(deps: SidesDeps, b: ProfileBaseline, unwind: readonly P
       }
       for (const [rel, text] of Object.entries(w.files)) {
         const full = join(dir, assertPathSegment("profile file", rel));
+        unlinkWritePath(root, relative(root, full));
         if (text === null) rmSync(full, { force: true });
         else {
           mkdirSync(dirname(full), { recursive: true });

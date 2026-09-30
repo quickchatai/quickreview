@@ -422,6 +422,42 @@ describe("the post-scan re-tune", () => {
     expect(r.changes[0]!.effects).toEqual(['pass-security: emphasis "Inherited words." → "New words."']);
   });
 
+  it("refuses to 'drop' a drafted guide the profile only inherits — the report never claims a removal that did not happen", () => {
+    const e = engine();
+    write(join(home(), "profiles/strict/profile.toml"), `extends = "default"\n\n[lenses.pass-style]\nguide = "style-guide.md"\n`);
+    write(join(home(), "profiles/strict/style-guide.md"), "- no abbreviations\n");
+    write(join(home(), "config.toml"), `dry_run = true\n\n[review]\nprofile = "acme"\n`);
+    write(join(home(), "profiles/acme/profile.toml"), `extends = "strict"\n`);
+    const set = e.profileApply({ priorities: answers({ security: "important" }), goals: "g", write: true });
+    if (!set.ok) throw new Error(set.errors.join("; "));
+    finishedScan();
+    expect(tuned("acme").lenses?.["pass-style"]?.guide?.text).toBe("- no abbreviations\n");
+    const profile = readFileSync(join(home(), "profiles/acme/profile.toml"), "utf8");
+    expect(refusal(e.retune({ drop_style_guide: true, reasons: { style_guide: "scan says so" }, write: true }))).toMatch(
+      /inherited from the profile's base/,
+    );
+    expect(readFileSync(join(home(), "profiles/acme/profile.toml"), "utf8")).toBe(profile);
+    expect(existsSync(join(stateDir(), RETUNES_FILE))).toBe(false);
+    expect(tuned("acme").lenses?.["pass-style"]?.guide?.text).toBe("- no abbreviations\n");
+  });
+
+  it("an emphasis-only re-tune leaves the operator's direct edit of a priority setting alone", () => {
+    const e = engine();
+    setUp(e);
+    finishedScan();
+    const path = join(home(), "profiles/acme/profile.toml");
+    const text = readFileSync(path, "utf8");
+    const edited = text.replace(/(\[lenses\.pass-security\][^[]*?effort = )"medium"/, '$1"high"');
+    expect(edited).not.toBe(text);
+    write(path, edited); // "Direct edits are his right."
+    expect(tuned("acme").lenses?.["pass-security"]).toMatchObject({ effort: "high" });
+    const r = done(e.retune({ emphasis: { "pass-concurrency": "Watch the ledger locks." }, reasons: { "pass-concurrency": REASON }, write: true }));
+    // Only the emphasis moved — in the profile, the report and the log alike.
+    expect(tuned("acme").lenses?.["pass-security"]).toMatchObject({ effort: "high" });
+    expect(r.changes.map((c) => c.effects)).toEqual([['pass-concurrency: emphasis (unset) → "Watch the ledger locks."']]);
+    expect(r.diff.flatMap((d) => d.lines).filter((l) => /^[-+]/.test(l)).some((l) => l.includes("effort"))).toBe(false);
+  });
+
   it("refuses to write over a re-tune log it cannot read", () => {
     const e = engine();
     setUp(e);

@@ -183,23 +183,34 @@ export function retune(deps: RetuneDeps, input: RetuneInput): RetuneResult | Ref
     emphasis: em.emphasis,
     ...(guide !== undefined ? { style_guide: guide } : {}),
   };
-  const opts = { message: `qcr setup: re-tune profile ${profile} after scan ${run.id} (${changes.map((c) => `${c.input} ${c.to}`).join(", ")})` };
+  // Only the lenses a CHANGED priority names are re-decided: the recorded
+  // answers are re-applied to nothing else, so an operator's direct edit of
+  // another lens's setting is neither reset nor left out of the report.
+  const decide = new Set(
+    changes.filter((c) => c.input.startsWith("priority ")).flatMap((c) => CONCERNS.find((x) => x.name === c.key)?.lenses ?? []),
+  );
+  const opts = { message: `qcr setup: re-tune profile ${profile} after scan ${run.id} (${changes.map((c) => `${c.input} ${c.to}`).join(", ")})`, decide };
   // Staged first, whatever `write` says: an emphasis "removed" that the
   // profile only INHERITS (from its base) stays resolved after the write, so
   // the report would claim a change that never happened. Refused before
   // anything lands.
   const staged = profileApply(deps, { ...applyInput, write: false }, opts);
   if (!staged.ok) return staged;
+  // The same holds for dropping a drafted guide the profile inherits: the
+  // child's own key goes, the base's guide still resolves.
   const phantom = changes.filter(
     (c) =>
-      c.input.startsWith("emphasis ") &&
-      lensEffects(c.key, before.summary.lenses[c.key] ?? {}, staged.summary.lenses[c.key] ?? {}, ["emphasis"]).length === 0,
+      (c.input.startsWith("emphasis ") &&
+        lensEffects(c.key, before.summary.lenses[c.key] ?? {}, staged.summary.lenses[c.key] ?? {}, ["emphasis"]).length === 0) ||
+      (c.key === GUIDE_REASON && guide === null && staged.summary.lenses[STYLE_LENS]?.guide === DRAFTED_GUIDE_FILE),
   );
   if (phantom.length > 0) {
     return {
       ok: false,
-      errors: phantom.map(
-        (c) => `${c.input}: ${c.from} → ${c.to} would not change what the reviewer resolves — that emphasis is inherited from the profile's base, which a re-tune does not edit; give replacement text instead`,
+      errors: phantom.map((c) =>
+        c.key === GUIDE_REASON
+          ? `${c.input}: ${c.from} → ${c.to} would not change what the reviewer resolves — that guide is inherited from the profile's base, which a re-tune does not edit; give a replacement guide instead`
+          : `${c.input}: ${c.from} → ${c.to} would not change what the reviewer resolves — that emphasis is inherited from the profile's base, which a re-tune does not edit; give replacement text instead`,
       ),
     };
   }

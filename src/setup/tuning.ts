@@ -251,8 +251,15 @@ export function parseEmphasis(raw: unknown): { ok: true; emphasis: Record<string
  * changed — a commit is requested for the operator's machine to carry out.
  * `opts.message` is the commit message a caller other than the interview
  * asks for (a post-scan re-tune, retune.ts) — never a tool parameter.
+ * `opts.decide`, when given, limits the table's settings to those lenses: a
+ * re-tune re-decides only what its changed priorities name, so an operator's
+ * direct edit of any other lens survives it (also never a tool parameter).
  */
-export function profileApply(deps: TuningDeps, input: ApplyInput, opts: { message?: string } = {}): ApplyResult | Refusal {
+export function profileApply(
+  deps: TuningDeps,
+  input: ApplyInput,
+  opts: { message?: string; decide?: ReadonlySet<string> } = {},
+): ApplyResult | Refusal {
   if (!deps.profiles) return { ok: false, errors: ["this assembly has no config home to write profiles to"] };
   const home = deps.profiles;
   const write = input.write === true;
@@ -304,6 +311,7 @@ export function profileApply(deps: TuningDeps, input: ApplyInput, opts: { messag
   const decisions = lensDecisions(priorities);
   const changes: LensChanges = {};
   for (const d of decisions) {
+    if (opts.decide && !opts.decide.has(d.lens)) continue;
     const keys: Record<string, string | boolean | null> = {};
     for (const k of TABLE_KEYS) keys[k] = d.settings[k] ?? null;
     changes[d.lens] = keys;

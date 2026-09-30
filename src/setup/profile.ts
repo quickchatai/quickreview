@@ -389,7 +389,7 @@ export function checkStaged(home: ProfileHome, name: string, files: ProfileFiles
  * removed (the write replaces it anyway). A dangling directory link is
  * removed and the write creates a real directory in its place.
  */
-function unlinkWritePath(root: string, rel: string): void {
+export function unlinkWritePath(root: string, rel: string): void {
   const parts = rel.split(sep).filter((p) => p !== "");
   let at = root;
   for (let i = 0; i < parts.length; i++) {

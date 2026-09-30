@@ -10,7 +10,7 @@
 // PR source and a fake case runner. The source's real git half is proven
 // against a scratch repo at the end (git is the thing under test there).
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -258,6 +258,25 @@ describe("the two sides resolve the way the daemon resolves a profile", () => {
     expect(r.sides.new.cfg.lenses?.["pass-tests"]).toEqual({ enabled: false });
     // The real profile is untouched by putting the old one back together.
     expect(readFileSync(join(configHome(env), "profiles/acme/profile.toml"), "utf8")).toContain("[lenses.pass-tests]");
+  });
+
+  it("putting the old profile back never writes through a linked profile directory into the live target", () => {
+    // profiles/acme is a link into the operator's dotfiles (supported — see
+    // setup-interview.test.ts); the writes land in dotfiles/acme.
+    const linked = join(dir, "dotfiles", "acme");
+    mkdirSync(linked, { recursive: true });
+    mkdirSync(join(configHome(env), "profiles"), { recursive: true });
+    symlinkSync(linked, join(configHome(env), "profiles", "acme"));
+    tune({ security: "critical" });
+    tune({ security: "critical", tests: "ignore" });
+    const live = readFileSync(join(linked, "profile.toml"), "utf8");
+    expect(live).toContain("[lenses.pass-tests]");
+    const r = sides();
+    if (!r.ok) throw new Error(r.errors.join("; "));
+    expect(r.sides.old.cfg.lenses?.["pass-tests"]).toBeUndefined();
+    // The live profile is untouched, and the new side still reads it.
+    expect(readFileSync(join(linked, "profile.toml"), "utf8")).toBe(live);
+    expect(r.sides.new.cfg.lenses?.["pass-tests"]).toEqual({ enabled: false });
   });
 
   it("a write that created the profile compares against what the config named then — here, none", () => {
