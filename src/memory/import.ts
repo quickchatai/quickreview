@@ -521,7 +521,8 @@ const octal = (mode: number): string => `0${(mode & 0o777).toString(8)}`;
 /**
  * Leave the legacy memory file exactly where it is, read-only: every write
  * bit cleared, the read bits exactly as they were (0600 → 0400, 0644 →
- * 0444) — archiving takes write away and never widens who may read. It is
+ * 0444; owner read always kept) — archiving takes write away and never
+ * widens who else may read. It is
  * never deleted or moved: after the engine cutover it is the historical
  * record, and a stray writer finding it writable would silently fork memory.
  * Failure is reported, never thrown — the import has no abort path.
@@ -532,7 +533,9 @@ export async function archiveReadOnly(path: string, fs: ArchiveFs = nodeArchiveF
     if ((before.mode & 0o222) === 0) {
       return { ok: true, path, was: octal(before.mode), now: octal(before.mode), message: `${path} already read-only (${octal(before.mode)})` };
     }
-    const after = before.mode & ~0o222 & 0o777;
+    // Owner read is kept (added if missing): the archive is the historical
+    // record, and 0200 → 0000 would lock its own owner out of reading it.
+    const after = (before.mode & ~0o222 & 0o777) | 0o400;
     await fs.chmod(path, after);
     return { ok: true, path, was: octal(before.mode), now: octal(after), message: `${path} left in place, ${octal(before.mode)} → ${octal(after)} (read-only)` };
   } catch (err) {

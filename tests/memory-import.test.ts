@@ -471,6 +471,13 @@ describe("archiveReadOnly", () => {
     expect(res.now).toBe("0444");
   });
 
+  it("keeps the owner able to read the archive (0200 → 0400, never 0000)", async () => {
+    const fs = fakeFs(0o100200);
+    const res = await archiveReadOnly("/m.md", fs);
+    expect(fs.chmodded).toEqual([{ path: "/m.md", mode: 0o400 }]);
+    expect(res.now).toBe("0400");
+  });
+
   it("an already read-only file is left alone", async () => {
     const fs = fakeFs(0o100444);
     const res = await archiveReadOnly("/m.md", fs);
