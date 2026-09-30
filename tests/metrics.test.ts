@@ -489,6 +489,36 @@ describe("computeMetrics", () => {
     },
   );
 
+  it.each(["cancelled", "overdue", "expired"])(
+    "a PR whose only round ended %s is not counted as reviewed",
+    (status) => {
+      const s = new StateStore(":memory:", now);
+      try {
+        insertRound(s, {
+          pr: 320,
+          round_no: 1,
+          trigger_ts: "2026-08-14T09:00:00.000Z",
+          started_at: "2026-08-14T09:01:00.000Z",
+          finished_at: "2026-08-14T09:05:00.000Z",
+          status,
+        });
+        insertRound(s, {
+          pr: 321,
+          round_no: 1,
+          trigger_ts: "2026-08-14T09:00:00.000Z",
+          started_at: "2026-08-14T09:06:00.000Z",
+          finished_at: "2026-08-14T09:45:00.000Z",
+          verdict: "APPROVE",
+        });
+        const header = computeMetrics(s, { now }).windows.all.header;
+        expect(header.rounds).toBe(2);
+        expect(header.prs_reviewed).toBe(1);
+      } finally {
+        s.close();
+      }
+    },
+  );
+
   it("time-to-first-verdict is the PR's FIRST round across all history, not the first inside the window", () => {
     const s = new StateStore(":memory:", now);
     try {

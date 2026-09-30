@@ -552,7 +552,11 @@ export function computeWindow(input: WindowInput): MetricsWindow {
   return {
     header: {
       prs_triggered: triggeredPrs.size,
-      prs_reviewed: new Set(rounds.filter((r) => r.finished_at).map((r) => r.pr)).size,
+      // Only a `done` round delivered a review: cancelled, overdue and expired
+      // rounds carry a `finished_at` too, but that is when they died.
+      prs_reviewed: new Set(
+        rounds.filter((r) => r.finished_at && r.status === "done").map((r) => r.pr),
+      ).size,
       approvals: rounds.filter((r) => r.verdict === "APPROVE").length,
       request_changes: rounds.filter((r) => r.verdict === "REQUEST_CHANGES").length,
       rounds: rounds.length,
