@@ -759,8 +759,12 @@ export interface DoubtLine {
 export const SCAN_FALSE_POSITIVE_SLUGS: readonly string[] = SCAN_FALSE_POSITIVE_CLASSES.map((c) => c.slug);
 
 /** A `path:line` reference — a file with an extension, a colon, a line
- * (`src/tui/app.ts:369`, `webhook.ts:88`, `a.py:3-7`). */
-const PATH_LINE = /[A-Za-z0-9_][\w./-]*\.[A-Za-z][A-Za-z0-9]*:\d+/;
+ * (`src/tui/app.ts:369`, `webhook.ts:88`, `a.py:3-7`); or an extensionless
+ * file named with its directory (`scripts/qcr:12`) or by one of the common
+ * extensionless build/CI names (`Dockerfile:5`, `Makefile:30`) — a scan
+ * reviews any repo, and those files are anchored like any other. */
+const PATH_LINE =
+  /(?:[A-Za-z0-9_][\w./-]*\.[A-Za-z][A-Za-z0-9]*|[A-Za-z0-9_.][\w.-]*(?:\/[\w.-]+)+|\b(?:Dockerfile|Containerfile|Makefile|GNUmakefile|Jenkinsfile|Procfile|Gemfile|Rakefile|Vagrantfile|Brewfile|Justfile|justfile|Earthfile|Tiltfile))(?:\.[\w-]+)?:\d+/;
 
 /**
  * Whether a skeptic's scenario is ANCHORED: it cites at least one `path:line`

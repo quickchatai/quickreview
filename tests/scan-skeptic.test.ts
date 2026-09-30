@@ -218,6 +218,11 @@ describe("parseValidatorAnswer reads tiers, classes and kills", () => {
     expect(one("runTui src/tui/index.ts:1177 → app.run src/tui/app.ts:369").validity).toBe("confirmed");
     expect(one("dispatch (`src/dispatch.ts:1470-1472`) → spawnSession").validity).toBe("confirmed");
     expect(one("the webhook in webhook.ts:88 passes the header").validity).toBe("confirmed");
+    // Extensionless files are anchored too: a scan reviews any repo.
+    expect(one("the build at Dockerfile:12 copies the secret → image layer").validity).toBe("confirmed");
+    expect(one("the wrapper scripts/qcr:40 passes argv unquoted").validity).toBe("confirmed");
+    // Neither a time, a ratio nor a bare host:port is a path:line.
+    expect(one("at 12:30 the job runs; ratio 1.5:1; localhost:8787 answers").validity).toBe("likely");
   });
 
   it("a doubt names its class only when it is one of the ten; KILLED lines are read in the same shape", () => {
