@@ -1505,25 +1505,31 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         recovery: order.recovery ?? null,
       });
       // Slack (S4): the PR's thread root on the first round we see, a
-      // 🔄 line in-thread on later ones. The announcer swallows its own
-      // failures; the try/catch here is belt-and-braces — a Slack outage must
-      // never stall the pump or leave a dispatched round unrecorded.
+      // 🔄 line in-thread on later ones. Fire-and-forget: a slow or
+      // blackholed Slack (bounded retries, capped Retry-After, one shared
+      // post queue) must never stall the pump behind it — the announcer's
+      // per-PR lane is claimed synchronously on the call, so thread order
+      // still holds. The announcer swallows its own failures; the catches
+      // here are belt-and-braces, and the round is recorded above already.
       if (deps.announce) {
+        const pr = row.number;
         try {
-          await deps.announce.roundStarted({
-            pr: row.number,
-            title: row.title,
-            author: row.author,
-            head_sha: order.head_sha,
-            round_no: roundNo,
-            round_type: roundType,
-            lenses: order.lenses,
-            additions: diffstat.additions,
-            deletions: diffstat.deletions,
-            changed_files: diffstat.changed_files,
-          });
+          void deps.announce
+            .roundStarted({
+              pr: row.number,
+              title: row.title,
+              author: row.author,
+              head_sha: order.head_sha,
+              round_no: roundNo,
+              round_type: roundType,
+              lenses: order.lenses,
+              additions: diffstat.additions,
+              deletions: diffstat.deletions,
+              changed_files: diffstat.changed_files,
+            })
+            .catch((err: unknown) => log(`dispatch: slack announcement failed on #${pr}`, err));
         } catch (err) {
-          log(`dispatch: slack announcement failed on #${row.number}`, err);
+          log(`dispatch: slack announcement failed on #${pr}`, err);
         }
       }
       provisionalRoundId = undefined;

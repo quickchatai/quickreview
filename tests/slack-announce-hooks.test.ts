@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { readFileSync } from "node:fs";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
 import { dispatchOnce, type DispatchAdapter } from "../src/dispatch.js";
 import type { GateResult } from "../src/gate.js";
@@ -20,12 +20,15 @@ import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
 class FakeSlack implements SlackWebApi {
   posts: Array<{ text: string; thread_ts?: string }> = [];
   throwAlways = false;
+  /** Set ⇒ every post waits on it: a blackholed / backed-up Slack queue. */
+  hold: Promise<void> | undefined;
   private seq = 0;
   async postMessage(args: {
     channel: string;
     text: string;
     thread_ts?: string;
   }): Promise<SlackPostResult> {
+    if (this.hold) await this.hold;
     if (this.throwAlways) throw new Error("slack is down");
     this.posts.push({ text: args.text, thread_ts: args.thread_ts });
     return { ok: true, ts: `17000000${++this.seq}.0001` };
@@ -143,7 +146,7 @@ describe("dispatch hook", () => {
       now,
     });
     expect(orders).toHaveLength(1);
-    expect(slack.posts).toHaveLength(1);
+    await vi.waitFor(() => expect(slack.posts).toHaveLength(1));
     expect(slack.posts[0]!.text.split("\n")[0]).toBe(
       "👀 *<https://github.com/exampleorg/example-app/pull/5263|#5263 Add rate limiting>* — review started for <@U_ALICE>",
     );
@@ -179,7 +182,31 @@ describe("dispatch hook", () => {
     });
     expect(orders).toHaveLength(1);
     expect(store.runningRounds()).toHaveLength(1);
-    expect(store.slackPost("pickup:5263")).toMatchObject({ ok: 0 });
+    await vi.waitFor(() => expect(store.slackPost("pickup:5263")).toMatchObject({ ok: 0 }));
+  });
+
+  it("a slow Slack never holds the pump — later PRs dispatch before the pickup lands", async () => {
+    // A blackholed or rate-limited Slack takes tens of seconds per post
+    // (bounded retries + Retry-After). The announcement is fire-and-forget:
+    // the per-PR lane keeps its order, the pump never waits on it.
+    let release!: () => void;
+    slack.hold = new Promise<void>((r) => (release = r));
+    queuedPr(5263);
+    queuedPr(5264);
+    const orders = await dispatchOnce({
+      cfg,
+      store,
+      adapter: new FakeDispatchAdapter(),
+      hooks,
+      announce: announcer(),
+      now,
+    });
+    expect(orders.map((o) => o.pr).sort()).toEqual([5263, 5264]);
+    expect(slack.posts).toHaveLength(0);
+    release();
+    await vi.waitFor(() => expect(slack.posts).toHaveLength(2));
+    expect(store.slackThreadForPr(5263)).toBeDefined();
+    expect(store.slackThreadForPr(5264)).toBeDefined();
   });
 });
 
