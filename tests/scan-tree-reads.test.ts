@@ -4,7 +4,7 @@
 // `.pi/settings.json` tuning and reviewer context ride that cwd, and a
 // reviewed tree's `.pi/` must never load — extensions/subagents.ts reason 3),
 // NOT in the materialised tree. So a relative path the lens names opens the
-// app root's copy — the wrong repository on a example-app scan, HEAD
+// app root's copy — the wrong repository on a scan of another repository, HEAD
 // instead of the scan sha on a self-scan. Three halves:
 //  - the runner reports every read RESOLVED the way pi resolves it (against
 //    the child's cwd, one `@` stripped, `~` expanded), so the read-count guard
