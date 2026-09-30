@@ -116,6 +116,26 @@ describe("migration collisions: follow-ups match the dependency's app, and every
     expect(body(out)).not.toContain('("chat", "0042_a")` with');
   });
 
+  it("a same-app follow-up whose label is not its directory name is still caught", () => {
+    // Django's app label can differ from the directory; the name-only match
+    // flagged this before, and the app-aware one must not go quieter.
+    const out = detectMigrationCollisions({
+      files: [
+        { filename: "backend/chat/migrations/0042_a.py", status: "added" },
+        {
+          filename: "backend/chat/migrations/0043_b.py",
+          status: "added",
+          patch: '+    dependencies = [("qc_chat", "0042_a")]',
+        },
+      ],
+      baseFiles: ["backend/chat/migrations/0042_existing.py"],
+    });
+    expect(out.map((c) => [c.pr_path, c.kind])).toEqual([
+      ["backend/chat/migrations/0042_a.py", "base-collision"],
+      ["backend/chat/migrations/0043_b.py", "renamed-dependency"],
+    ]);
+  });
+
   it("a file with its own base collision still gets its cross-app dependency moved", () => {
     const out = detectMigrationCollisions({
       files: [

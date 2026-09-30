@@ -111,13 +111,6 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** Does this file's diff reference migration `name` the way a `dependencies`
- * tuple does — as a quoted string? */
-function referencesMigration(patch: string | undefined, name: string): boolean {
-  if (!patch || !name) return false;
-  return new RegExp(`["']${escapeRe(name)}["']`).test(patch);
-}
-
 /** Does this file's diff name `(app_label, name)` as a `dependencies` tuple?
  * A cross-app reference must carry the label — a bare `"0001_initial"` in
  * another app is that app's own migration. */
@@ -130,6 +123,31 @@ function referencesAppMigration(
   return new RegExp(
     `\\(\\s*["']${escapeRe(appLabel)}["']\\s*,\\s*["']${escapeRe(name)}["']\\s*\\)`,
   ).test(patch);
+}
+
+/** Same-app follow-up match. A same-app dependency is an `(app_label, name)`
+ * tuple, but the label is inferred from the directory and Django's label can
+ * differ, and a tuple split across diff lines carries a `+` between its halves
+ * — so a bare quoted `name` still counts (the check never gets quieter than
+ * the name-only match it replaced), EXCEPT an occurrence that is the second
+ * half of a tuple naming another app this PR or the base branch holds: that
+ * one is that app's identically named migration. */
+function referencesOwnMigration(
+  patch: string | undefined,
+  ownLabel: string,
+  name: string,
+  knownLabels: ReadonlySet<string>,
+): boolean {
+  if (!patch || !name) return false;
+  if (referencesAppMigration(patch, ownLabel, name)) return true;
+  const re = new RegExp(`["']${escapeRe(name)}["']`, "g");
+  const tupleHead = /\(\s*["']([^"'\n]*)["']\s*,\s*$/;
+  for (let m = re.exec(patch); m !== null; m = re.exec(patch)) {
+    const head = tupleHead.exec(patch.slice(Math.max(0, m.index - 200), m.index));
+    if (head && head[1] !== ownLabel && knownLabels.has(head[1] as string)) continue;
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -169,6 +187,13 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
       { ref, ...(f.patch !== undefined ? { patch: f.patch } : {}) },
     ]);
   }
+
+  // Every app label either side holds — what tells a same-app bare-name match
+  // apart from another app's identically named migration.
+  const knownLabels = new Set<string>();
+  for (const path of basePaths) knownLabels.add(parseMigrationPath(path)!.app_label);
+  for (const entries of prByApp.values()) for (const { ref } of entries) knownLabels.add(ref.app_label);
+  knownLabels.delete("");
 
   const out: MigrationCollision[] = [];
   // Every rename the remedy prescribes, per app, for the cross-app follow-up
@@ -228,12 +253,10 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
     // order and the `renamed` map growing as it goes).
     for (const { ref, patch } of ordered) {
       if (collidingPaths.has(ref.path)) continue;
-      // Same-app dependencies are `(app_label, name)` tuples too; matching the
-      // bare name would take another app's identically named migration.
+      // Same-app dependencies are `(app_label, name)` tuples too; a bare-name
+      // match must not take another app's identically named migration.
       const stales = [...renamed.keys()].filter((old) =>
-        ref.app_label
-          ? referencesAppMigration(patch, ref.app_label, old)
-          : referencesMigration(patch, old),
+        referencesOwnMigration(patch, ref.app_label, old, knownLabels),
       );
       if (stales.length === 0) continue;
       const deps = stales.map((stale) => renamed.get(stale) as { name: string; number: number });
