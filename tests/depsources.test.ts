@@ -1981,6 +1981,64 @@ describe("selfscan2: the version a file actually runs against", () => {
     ).toBe("0.27.0");
   });
 
+  it("npm: a package-lock entry resolved from a private registry or git is skipped, never swapped for npmjs's", async () => {
+    const v3 = JSON.stringify({
+      lockfileVersion: 3,
+      packages: {
+        "": { name: "app" },
+        "node_modules/@acme/x": {
+          version: "1.2.3",
+          resolved: "https://npm.acme.internal/@acme/x/-/x-1.2.3.tgz",
+        },
+        "node_modules/forked": {
+          version: "2.0.0",
+          resolved: "git+ssh://git@github.com/me/forked.git#abc",
+        },
+      },
+    });
+    const v1 = JSON.stringify({
+      lockfileVersion: 1,
+      dependencies: {
+        "@acme/x": { version: "1.2.3", resolved: "https://npm.acme.internal/x-1.2.3.tgz" },
+        forked: { version: "2.0.0", resolved: "git+ssh://git@github.com/me/forked.git#abc" },
+      },
+    });
+    for (const lock of [v3, v1]) {
+      const root = tree({
+        "package.json": JSON.stringify({
+          name: "app",
+          dependencies: { "@acme/x": "^1.2.0", forked: "^2.0.0" },
+        }),
+        "package-lock.json": lock,
+        "src/a.ts": `import x from "@acme/x";\nimport f from "forked";\n`,
+      });
+      const { fetch, calls } = fakeFetch({});
+      const m = await prepareDependencySources(root, [{ filename: "src/a.ts" }], {
+        cacheDir: tmp(),
+        fetch,
+      });
+      expect(m.sources).toEqual([]);
+      expect(m.skipped.map((s) => s.name).sort()).toEqual(["@acme/x", "forked"]);
+      for (const s of m.skipped) expect(s.reason).toMatch(/not a registry version/);
+      expect(calls).toEqual([]);
+    }
+    // The public registry (and an entry with no `resolved` at all) still pins.
+    const pub = parsePackageLock(
+      JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "node_modules/a": {
+            version: "1.0.0",
+            resolved: "https://registry.npmjs.org/a/-/a-1.0.0.tgz",
+          },
+          "node_modules/b": { version: "2.0.0" },
+        },
+      }),
+    );
+    expect(pub?.entries.get("a")).toEqual([{ version: "1.0.0" }]);
+    expect(pub?.entries.get("b")).toEqual([{ version: "2.0.0" }]);
+  });
+
   it("pypi: an unpinned range never lands on a release whose files are all yanked", async () => {
     const sdist = gzipSync(tarball(tarEntry("somepkg-1.8/somepkg/__init__.py", "V = '1.8'\n")));
     const live = "https://files.pythonhosted.org/packages/aa/somepkg-1.8.tar.gz";

@@ -637,6 +637,10 @@ export interface LockEntry {
   /** package-lock: a workspace dir whose own node_modules holds this copy;
    * pnpm: the (non-root) importer that pins it. */
   scope?: string;
+  /** package-lock: `resolved` names a source other than the public npm
+   * registry (a private registry, git, a tarball URL) — the same-named
+   * registry.npmjs.org release is not what the PR runs. */
+  foreign?: true;
 }
 
 export interface NpmLock {
@@ -677,6 +681,26 @@ function addLock(lock: NpmLock, name: string, entry: LockEntry): void {
 
 const VERSION_LIKE = /^\d+\.\d+\.\d+/;
 
+/** The value the resolver hands on as the range of an npm package locked to a
+ * non-npmjs source: spelled like the Python foreign pin, so it is a
+ * non-registry range and preparation SKIPS it. */
+const NPM_FOREIGN_PIN = "@ non-npmjs source";
+
+/** A package-lock `resolved` that is not the public registry. Absent means
+ * the registry (npm omits it in some lock shapes). */
+function isForeignResolved(resolved: unknown): boolean {
+  if (typeof resolved !== "string" || resolved === "") return false;
+  try {
+    const u = new URL(resolved);
+    return !(
+      u.protocol === "https:" &&
+      (u.hostname === "registry.npmjs.org" || u.hostname === "registry.yarnpkg.com")
+    );
+  } catch {
+    return true;
+  }
+}
+
 /** package-lock.json / npm-shrinkwrap.json, lockfileVersion 1, 2 and 3. */
 export function parsePackageLock(text: string): NpmLock | null {
   let doc: unknown;
@@ -705,11 +729,12 @@ export function parsePackageLock(text: string): NpmLock | null {
       }
       const version = str(val.version);
       if (!version || !VERSION_LIKE.test(version)) continue;
-      if (prefix === "") addLock(lock, name, { version });
+      const foreign = isForeignResolved(val.resolved) ? { foreign: true as const } : {};
+      if (prefix === "") addLock(lock, name, { version, ...foreign });
       // Nested under a WORKSPACE (not under another package): that
       // workspace's own copy, which beats the hoisted one for its files.
       else if (!prefix.includes("node_modules/"))
-        addLock(lock, name, { version, scope: prefix.replace(/\/$/, "") });
+        addLock(lock, name, { version, scope: prefix.replace(/\/$/, ""), ...foreign });
     }
   } else if (isObj(doc.dependencies)) {
     for (const [name, val] of Object.entries(doc.dependencies)) {
@@ -717,7 +742,12 @@ export function parsePackageLock(text: string): NpmLock | null {
       const version = str(val.version);
       if (!version) continue;
       if (/^(file|link):/.test(version)) lock.links.add(name);
-      else if (VERSION_LIKE.test(version)) addLock(lock, name, { version });
+      else if (VERSION_LIKE.test(version))
+        addLock(
+          lock,
+          name,
+          isForeignResolved(val.resolved) ? { version, foreign: true } : { version },
+        );
     }
   }
   return lock;
@@ -1836,6 +1866,10 @@ class Resolver {
     if (locked) {
       const rel = locked.dir ? posix.relative(locked.dir, relFile) : relFile;
       const version = pickLocked(locked.entries, range, rel);
+      // Locked to a private registry / git / URL: skip rather than hand the
+      // reviewer npmjs's same-named release as the PR's locked source.
+      if (version && locked.entries.some((e) => e.version === version && e.foreign))
+        return { name, version: null, range: NPM_FOREIGN_PIN };
       if (version) return range !== undefined ? { name, version, range } : { name, version };
     }
     if (range !== undefined) return { name, version: null, range };
