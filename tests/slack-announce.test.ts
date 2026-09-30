@@ -583,6 +583,31 @@ describe("pinned heartbeat", () => {
       await a.heartbeat(); // delivered once — never re-edited every tick
       expect(corrections(ts)).toHaveLength(1);
     });
+
+    it("owes a fresh correction when the incident reopens and recovers again", async () => {
+      const a = announcer();
+      const ts = await recoveredIncident(a);
+      await a.heartbeat();
+      expect(corrections(ts)).toHaveLength(1);
+      at("2026-08-17T09:02:00.000Z");
+      store.openReviewFailure({
+        pr: 5410,
+        command_id: "cmd-5410",
+        round_id: null,
+        round_no: 1,
+        head_sha: "abc",
+        stage: "command_start",
+        detail: "again",
+        attempts: 2,
+        retry_cap: 2,
+      });
+      at("2026-08-17T09:03:00.000Z");
+      store.recoverReviewFailure(5410, "operator-unwedge");
+      at("2026-08-17T09:05:00.000Z");
+      await a.heartbeat();
+      expect(corrections(ts)).toHaveLength(2);
+      expect(corrections(ts)[1]!.text).toContain("operator-unwedge");
+    });
   });
 
   it("ignores a refused pin (no_permission — the owner may pin by hand)", async () => {

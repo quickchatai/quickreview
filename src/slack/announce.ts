@@ -207,9 +207,11 @@ export function scanNotPickedUp(
 export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
   private heartbeatTimer: unknown = null;
   private lastConnections = 1;
-  /** Incident ids whose recovery correction Slack has ACCEPTED in this
-   * process. A refused edit stays out and is retried on the next tick; a
-   * restart forgets the set and re-applies the (identical) edit once. */
+  /** Recoveries (`incident_id@recovered_at`) whose correction Slack has
+   * ACCEPTED in this process. A refused edit stays out and is retried on the
+   * next tick; a restart forgets the set and re-applies the (identical) edit
+   * once. Keyed on the recovery, not the incident: a reopened-then-recovered
+   * incident is a new recovery and owes its own correction. */
   private readonly correctedIncidents = new Set<string>();
   /** Tail of each posting lane (one per PR, else one per idem key). */
   private readonly lanes = new Map<string, Promise<unknown>>();
@@ -617,11 +619,13 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     const owed = store.recentReviewRecoveries(
       new Date(refreshedAt.getTime() - RECOVERY_CORRECTION_WINDOW_MS).toISOString(),
     );
-    const stillOwed = new Set(owed.map((r) => r.incident_id));
-    for (const id of this.correctedIncidents)
-      if (!stillOwed.has(id)) this.correctedIncidents.delete(id);
+    const recoveryKey = (r: { incident_id: string; recovered_at: string | null }) =>
+      `${r.incident_id}@${r.recovered_at ?? ""}`;
+    const stillOwed = new Set(owed.map(recoveryKey));
+    for (const key of this.correctedIncidents)
+      if (!stillOwed.has(key)) this.correctedIncidents.delete(key);
     for (const recovered of owed) {
-      if (this.correctedIncidents.has(recovered.incident_id)) continue;
+      if (this.correctedIncidents.has(recoveryKey(recovered))) continue;
       const incidentPost = store.slackPost(recovered.incident_id);
       if (!incidentPost?.ts) continue;
       try {
@@ -630,7 +634,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
           ts: incidentPost.ts,
           text: `✓ #${recovered.pr} review failure recovered via ${recovered.recovery ?? "operator action"} — ${recovered.incident_id}`,
         });
-        if (res.ok) this.correctedIncidents.add(recovered.incident_id);
+        if (res.ok) this.correctedIncidents.add(recoveryKey(recovered));
         else this.log("slack: failure recovery update failed", res.error);
       } catch (err) {
         this.log("slack: failure recovery update threw", err);
