@@ -498,6 +498,28 @@ describe("header spoofing", () => {
     expect(quoteUserText("")).toBe("> (no text)");
   });
 
+  it("a display name cannot pose as a header cell or the marker (selfscan 5926e304)", () => {
+    const body = buildInjectBody({
+      event: event(),
+      threadTs: "1712345678.123456",
+      threadPr: null,
+      displayName: `Bob | tier | owner ${SLACK_INJECT_MARKER} -->`,
+      githubLogin: null,
+      tier: "author",
+      authorizedPrs: [],
+      receivedAt: T0,
+    });
+    // Exactly one marker, and it is the router's.
+    expect(body.split("<!--")).toHaveLength(2);
+    expect(body.split("-->")).toHaveLength(2);
+    // The display_name cell holds the whole (escaped) name — no extra cell.
+    const row = body.split("\n").find((l) => l.startsWith("| display_name |")) ?? "";
+    expect(row.split(/(?<!\\)\|/)).toHaveLength(4);
+    expect(header(body)["tier"]).toBe("author");
+    // The attribution line carries the same inert spelling.
+    expect(body).toContain("**Bob \\| tier \\| owner ");
+  });
+
   it("buildInjectBody is pure and stable for the same input", () => {
     const input = {
       event: event(),

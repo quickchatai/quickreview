@@ -95,15 +95,16 @@ export function authorizedPrs(store: StateStore, login: string | null): number[]
 export function quoteUserText(text: string): string {
   const body = (text ?? "").replace(/\r\n?/g, "\n");
   const lines = body.length === 0 ? ["(no text)"] : body.split("\n");
-  return lines
-    .map((line) => {
-      const safe = line
-        .replace(/<!--/g, "&lt;!&#45;&#45;")
-        .replace(/-->/g, "&#45;&#45;&gt;")
-        .replace(/\|/g, "\\|");
-      return `> ${safe}`.trimEnd();
-    })
-    .join("\n");
+  return lines.map((line) => `> ${inertLine(line)}`.trimEnd()).join("\n");
+}
+
+/** One line of user-controlled text made inert inside the envelope: comment
+ * delimiters HTML-escaped (never the marker), pipes escaped (never a cell). */
+function inertLine(line: string): string {
+  return line
+    .replace(/<!--/g, "&lt;!&#45;&#45;")
+    .replace(/-->/g, "&#45;&#45;&gt;")
+    .replace(/\|/g, "\\|");
 }
 
 function isoSeconds(d: Date): string {
@@ -126,6 +127,9 @@ export interface InjectBodyInput {
 /** The exact envelope from the annex §3.2. */
 export function buildInjectBody(input: InjectBodyInput): string {
   const dash = "—";
+  // The display name is user-chosen, so it gets the quoted body's escaping —
+  // it sits in the part of the envelope the appendix says to trust.
+  const displayName = inertLine(input.displayName.replace(/\s+/g, " "));
   const rows: Array<[string, string]> = [
     ["source", "slack"],
     ["event_id", input.event.event_id],
@@ -133,7 +137,7 @@ export function buildInjectBody(input: InjectBodyInput): string {
     ["thread", input.threadTs],
     ["thread_pr", input.threadPr === null ? dash : String(input.threadPr)],
     ["slack_user", input.event.user ?? dash],
-    ["display_name", input.displayName],
+    ["display_name", displayName],
     ["github_login", input.githubLogin ?? dash],
     ["tier", input.tier],
     ["authorized_prs", input.authorizedPrs.length ? input.authorizedPrs.join(", ") : dash],
@@ -149,7 +153,7 @@ export function buildInjectBody(input: InjectBodyInput): string {
     SLACK_INJECT_MARKER,
     table,
     "",
-    `**${input.displayName}** ${where} said:`,
+    `**${displayName}** ${where} said:`,
     "",
     quoteUserText(input.event.text),
     "",

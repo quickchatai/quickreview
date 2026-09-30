@@ -27,6 +27,8 @@ class FakeSlack implements SlackWebApi {
   failNext = false;
   throwNext = false;
   pinResult: SlackPostResult = { ok: true };
+  /** When set, every postMessage waits on this gate (a slow, queued call). */
+  gate: Promise<void> | null = null;
   private seq = 0;
 
   async postMessage(args: {
@@ -34,6 +36,7 @@ class FakeSlack implements SlackWebApi {
     text: string;
     thread_ts?: string;
   }): Promise<SlackPostResult> {
+    if (this.gate) await this.gate;
     if (this.throwNext) {
       this.throwNext = false;
       throw new Error("socket hang up");
@@ -576,5 +579,52 @@ describe("duplicate socket consumers", () => {
     a.noteConnections(2, { deployWindow: true });
     a.noteConnections(1);
     expect(seen).toEqual([]);
+  });
+});
+
+function holdSlack(): () => void {
+  let release!: () => void;
+  slack.gate = new Promise<void>((r) => (release = r));
+  return () => {
+    slack.gate = null;
+    release();
+  };
+}
+
+describe("concurrent posts", () => {
+  it("a not-picked-up notice and the pickup racing for one PR open ONE root (selfscan c3075124)", async () => {
+    queuedPr(5263, "2026-08-17T08:00:00.000Z");
+    const a = announcer();
+    const release = holdSlack();
+    const sweep = a.announceNotPickedUp(); // in flight, waiting on Slack
+    await Promise.resolve();
+    const pickup = a.roundStarted(round); // dispatch picks the PR up meanwhile
+    await Promise.resolve();
+    release();
+    await Promise.all([sweep, pickup]);
+
+    expect(slack.posts).toHaveLength(2);
+    expect(slack.posts[0]!.thread_ts).toBeUndefined();
+    const root = store.slackThreadForPr(5263)!.root_ts;
+    expect(slack.posts[1]!.thread_ts).toBe(root);
+    expect(root).toBe("1700000001.0001");
+  });
+
+  it("two heartbeat ticks retrying a failed first post deliver ONE message (selfscan 0bfd2673)", async () => {
+    slack.failNext = true;
+    const a = announcer();
+    expect(await a.heartbeat()).toBeUndefined();
+    expect(store.slackPost(HEARTBEAT_IDEM_KEY)).toMatchObject({ ok: 0 });
+
+    const release = holdSlack();
+    const tickB = a.heartbeat();
+    await Promise.resolve();
+    const tickC = a.heartbeat();
+    await Promise.resolve();
+    release();
+    await Promise.all([tickB, tickC]);
+
+    expect(slack.posts).toHaveLength(1);
+    expect(slack.pins).toHaveLength(1);
   });
 });

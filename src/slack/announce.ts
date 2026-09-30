@@ -203,6 +203,8 @@ export function scanNotPickedUp(
 export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
   private heartbeatTimer: unknown = null;
   private lastConnections = 1;
+  /** Tail of each posting lane (one per PR, else one per idem key). */
+  private readonly lanes = new Map<string, Promise<unknown>>();
   private readonly setTimeoutFn: (fn: () => void, ms: number) => unknown;
   private readonly clearTimeoutFn: (handle: unknown) => void;
   private readonly setIntervalFn: (fn: () => void, ms: number) => unknown;
@@ -237,8 +239,25 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
    * refusal or failure. The ONLY place this module talks to Slack.
    */
   private async post(req: PostRequest): Promise<string | undefined> {
+    if (!this.deps.cfg.slack.enabled) return undefined;
+    // Posts on one lane run one at a time, so each reads the thread root and
+    // the idem row only after the previous one settled: two causes racing on
+    // a threadless PR cannot both open a root, and two retries of one failed
+    // row (heartbeat ticks are unawaited) cannot both deliver. Every Slack call
+    // is bounded (api.ts), so a lane cannot wedge.
+    const lane = req.pr === undefined ? `key:${req.idemKey}` : `pr:${req.pr}`;
+    const prev = this.lanes.get(lane) ?? Promise.resolve();
+    const run = prev.then(() => this.postNow(req));
+    const tail = run.catch(() => undefined);
+    this.lanes.set(lane, tail);
+    void tail.then(() => {
+      if (this.lanes.get(lane) === tail) this.lanes.delete(lane);
+    });
+    return run;
+  }
+
+  private async postNow(req: PostRequest): Promise<string | undefined> {
     const { cfg, store, slack } = this.deps;
-    if (!cfg.slack.enabled) return undefined;
 
     const thread = req.pr === undefined ? undefined : store.slackThreadForPr(req.pr);
     // Root-on-first-event: with no recorded root, this post BECOMES the root.

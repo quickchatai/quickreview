@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SlackSocketClient, type SlackWebSocketLike } from "../src/slack/socket.js";
+import diagnosticsChannel from "node:diagnostics_channel";
+import {
+  SlackSocketClient,
+  bridgeNativeWebSocketPings,
+  type SlackWebSocketLike,
+} from "../src/slack/socket.js";
 import type { SlackFetchFn, SlackInboundEvent } from "../src/slack/types.js";
 
 /** A scriptable WebSocket: the test pushes frames, the client pushes acks. */
@@ -8,6 +13,7 @@ class FakeWs implements SlackWebSocketLike {
   onmessage: ((ev: { data: unknown }) => void) | null = null;
   onclose: ((ev: unknown) => void) | null = null;
   onerror: ((ev: unknown) => void) | null = null;
+  onping: (() => void) | null = null;
   readonly sent: string[] = [];
   closed = false;
 
@@ -23,6 +29,10 @@ class FakeWs implements SlackWebSocketLike {
   /** Deliver a server frame. */
   push(frame: unknown): void {
     this.onmessage?.({ data: JSON.stringify(frame) });
+  }
+  /** A WebSocket-level ping frame: never reaches onmessage. */
+  ping(): void {
+    this.onping?.();
   }
   acks(): string[] {
     return this.sent.map((s) => (JSON.parse(s) as { envelope_id?: string }).envelope_id ?? "");
@@ -258,5 +268,65 @@ describe("server-ping watchdog", () => {
     expect(h.sockets[0]!.closed).toBe(false);
     expect(h.openCalls).toHaveLength(1);
     await h.client.stopSocket();
+  });
+});
+
+describe("server-ping watchdog — protocol-level pings (selfscan 3dc7955f)", () => {
+  it("WebSocket ping frames alone keep a quiet connection alive", async () => {
+    const h = harness({ pingTimeoutMs: 5000 });
+    await h.client.startSocket(() => {});
+    h.sockets[0]!.onopen?.({});
+    for (let i = 0; i < 6; i += 1) {
+      await vi.advanceTimersByTimeAsync(4000);
+      h.sockets[0]!.ping(); // no JSON frame at all — a quiet channel
+    }
+    expect(h.sockets[0]!.closed).toBe(false);
+    expect(h.openCalls).toHaveLength(1);
+    await h.client.stopSocket();
+  });
+
+  it("the native bridge routes undici's ping channel to that socket's onping", () => {
+    bridgeNativeWebSocketPings();
+    bridgeNativeWebSocketPings(); // idempotent: one subscription
+    let a = 0;
+    const wsA = { onping: () => void (a += 1) };
+    const ch = diagnosticsChannel.channel("undici:websocket:ping");
+    ch.publish({ websocket: wsA, payload: Buffer.alloc(0) });
+    ch.publish({ websocket: {}, payload: Buffer.alloc(0) }); // no hook: ignored
+    expect(a).toBe(1);
+  });
+});
+
+describe("stop during apps.connections.open (selfscan bd41fe9a)", () => {
+  it("a socket whose open resolves after stopSocket is never built", async () => {
+    let release: (() => void) | null = null;
+    const sockets: FakeWs[] = [];
+    const fetchFn = (async () => {
+      await new Promise<void>((r) => (release = r));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true, url: "wss://fake/late" }),
+      } as unknown as Response;
+    }) as unknown as SlackFetchFn;
+    const client = new SlackSocketClient({
+      appToken: "xapp-test",
+      fetchFn,
+      apiBase: "https://slack.test/api",
+      webSocketFactory: (url) => {
+        const ws = new FakeWs(url);
+        sockets.push(ws);
+        return ws;
+      },
+      backoffMs: [1000],
+      random: () => 1,
+    });
+    const started = client.startSocket(() => {});
+    await vi.advanceTimersByTimeAsync(1);
+    await client.stopSocket();
+    release!();
+    await started;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sockets).toHaveLength(0);
   });
 });

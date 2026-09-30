@@ -4,6 +4,7 @@
 //
 // This file is PURE TRANSPORT. It acks, it reconnects, it normalizes — it does
 // not filter, dedupe or tier. That is the router's job (S3).
+import diagnosticsChannel from "node:diagnostics_channel";
 import type { SlackFetchFn, SlackInboundEvent, SlackInboundHandler, SlackSocket } from "./types.js";
 
 /** The slice of the WebSocket API we use — global WebSocket satisfies it. */
@@ -14,6 +15,30 @@ export interface SlackWebSocketLike {
   onmessage: ((ev: { data: unknown }) => void) | null;
   onclose: ((ev: unknown) => void) | null;
   onerror: ((ev: unknown) => void) | null;
+  /** A WebSocket-level ping frame arrived. Slack keeps a quiet connection
+   * alive with these, and they never reach `onmessage` — the global WebSocket
+   * answers them internally; `bridgeNativeWebSocketPings` surfaces them. */
+  onping?: (() => void) | null;
+}
+
+let pingBridgeInstalled = false;
+
+/**
+ * Node's global WebSocket (undici) answers server pings itself and exposes
+ * them only on the `undici:websocket:ping` diagnostics channel, carrying the
+ * socket object. Route each to that socket's `onping`. Idempotent.
+ */
+export function bridgeNativeWebSocketPings(): void {
+  if (pingBridgeInstalled) return;
+  pingBridgeInstalled = true;
+  diagnosticsChannel.subscribe("undici:websocket:ping", (msg) => {
+    const ws = (msg as { websocket?: { onping?: (() => void) | null } } | null)?.websocket;
+    try {
+      ws?.onping?.();
+    } catch {
+      /* never let a hook throw into undici */
+    }
+  });
 }
 
 export type SlackWebSocketFactory = (url: string) => SlackWebSocketLike;
@@ -27,7 +52,7 @@ export interface SlackSocketOptions {
   webSocketFactory?: SlackWebSocketFactory;
   /** Jittered reconnect ladder in ms. */
   backoffMs?: number[];
-  /** Tear down + reconnect when no frame arrives for this long. */
+  /** Tear down + reconnect when neither a frame nor a ping arrives for this long. */
   serverPingTimeoutMs?: number;
   /** Web API base (override in tests). */
   apiBase?: string;
@@ -68,7 +93,10 @@ export class SlackSocketClient implements SlackSocket {
     this.fetchFn = opts.fetchFn ?? fetch;
     this.wsFactory =
       opts.webSocketFactory ??
-      ((url: string) => new WebSocket(url) as unknown as SlackWebSocketLike);
+      ((url: string) => {
+        bridgeNativeWebSocketPings();
+        return new WebSocket(url) as unknown as SlackWebSocketLike;
+      });
     this.backoff = opts.backoffMs?.length ? [...opts.backoffMs] : [...DEFAULT_BACKOFF_MS];
     this.pingTimeoutMs = opts.serverPingTimeoutMs ?? DEFAULT_SERVER_PING_TIMEOUT_MS;
     this.apiBase = opts.apiBase ?? "https://slack.com/api";
@@ -118,6 +146,9 @@ export class SlackSocketClient implements SlackSocket {
     } catch (err) {
       this.log("slack.socket.open_threw", { error: String(err) });
     }
+    // stopSocket may have run while the open was in flight: it found no socket
+    // to close, so building one now would leak it onto a stopped client.
+    if (!this.running) return;
     if (!url) {
       this.scheduleReconnect();
       return;
@@ -138,6 +169,7 @@ export class SlackSocketClient implements SlackSocket {
       this.armWatchdog();
     };
     ws.onmessage = (ev) => this.onFrame(ev?.data);
+    ws.onping = () => this.armWatchdog(); // a server ping is liveness too
     ws.onerror = (err) => this.log("slack.socket.error", { error: String(err) });
     ws.onclose = () => {
       if (this.ws !== ws) return; // a stale socket we already replaced
@@ -156,6 +188,7 @@ export class SlackSocketClient implements SlackSocket {
     ws.onmessage = null;
     ws.onclose = null;
     ws.onerror = null;
+    ws.onping = null;
     try {
       ws.close();
     } catch {
