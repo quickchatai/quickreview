@@ -51,6 +51,14 @@
 #              `git diff base...head` attached as @file, gpt-6-sol through pi's openai-codex
 #              provider on the refresh-disabled login copy; one case at a time; `eval` scores
 #              `all`. QCR_BENCH_PIREVIEW_THINKING=L its --thinking (default medium)
+#   --arm pragent (build, review, eval, report, shell, smoke): PR-Agent (qodo-ai/pr-agent; image
+#              qcr-bench-pragent, pip `pr-agent` pinned by PRAGENT_VERSION + the wheel's sha256 in the
+#              Dockerfile; QCR_BENCH_PRAGENT_VERSION + QCR_BENCH_PRAGENT_SHA256 build another) — its CLI
+#              `review` then `improve` on its local git provider over base...head, the PR's title and
+#              description as its GitHub provider gives them, gpt-6.1-sol through the loopback Codex
+#              bridge; one case at a time; `eval` scores `all`. QCR_BENCH_PRAGENT_EFFORT=L the bridge's
+#              reasoning effort (default medium = PR-Agent's own default); QCR_BENCH_PRAGENT_NO_PR_TEXT=1
+#              withholds the title/description (the local provider's own stand-ins instead)
 #   --arm ocr  (build, review, eval, report, shell, smoke): the open-code-review
 #              baseline — image qcr-bench-ocr (the same runtime + OCR 1.3.1 + the
 #              loopback Codex bridge), `review` runs OCR the way the AACR harness
@@ -150,7 +158,12 @@ case "$ARM" in
   pireview) IMAGE="${QCR_BENCH_PIREVIEW_IMAGE:-qcr-bench-pireview:latest}"; TARGET=pireview
        BASE_ARGS=(); REVIEW_ENTRY=pireview-review
        [[ -n "${QCR_BENCH_PIREVIEW_VERSION:-}" ]] && BASE_ARGS=(--build-arg "PIREVIEW_VERSION=$QCR_BENCH_PIREVIEW_VERSION" --build-arg "PIREVIEW_SHA512=${QCR_BENCH_PIREVIEW_SHA512:?set QCR_BENCH_PIREVIEW_SHA512 with QCR_BENCH_PIREVIEW_VERSION}") ;;
-  *) die "--arm must be qcr | ocr | codex | opencode | pireview | claude" ;;
+  # PR-Agent: its own target; pr-agent needs Python >= 3.12, so the runtime is trixie's (3.13),
+  # as for ocr/claude (the classic builder builds every stage above the target on that base).
+  pragent) IMAGE="${QCR_BENCH_PRAGENT_IMAGE:-qcr-bench-pragent:latest}"; TARGET=pragent
+       BASE_ARGS=(--build-arg RUNTIME_BASE=node:22-trixie); REVIEW_ENTRY=pragent-review
+       [[ -n "${QCR_BENCH_PRAGENT_VERSION:-}" ]] && BASE_ARGS+=(--build-arg "PRAGENT_VERSION=$QCR_BENCH_PRAGENT_VERSION" --build-arg "PRAGENT_SHA256=${QCR_BENCH_PRAGENT_SHA256:?set QCR_BENCH_PRAGENT_SHA256 with QCR_BENCH_PRAGENT_VERSION}") ;;
+  *) die "--arm must be qcr | ocr | codex | opencode | pireview | pragent | claude" ;;
 esac
 # The Claude Code arm's own credential file (never the host's interactive login).
 CLAUDE_ENV="${QCR_BENCH_CLAUDE_ENV:-$HERE/claude.env}"
@@ -301,7 +314,7 @@ case "$cmd" in
         bench/aacr/Dockerfile bench/aacr/sets bench/aacr/defects bench/aacr/judge_shim.py \
         bench/aacr/in-container.sh bench/aacr/codex_bridge.py bench/aacr/eval_shards.py \
         bench/aacr/codex_arm.py \
-        bench/aacr/claude_driver.py \
+        bench/aacr/claude_driver.py bench/aacr/pragent_driver.py \
         deploy/reviewer/AGENTS.override.md ) \
       | tar -xf - -C "$ctx"
     # The production config is the operator's live one, wherever the install
@@ -392,6 +405,10 @@ case "$cmd" in
     [[ "$ARM" == opencode && -n "${QCR_BENCH_OPENCODE_EFFORT:-}" ]] && oe+=(-e "OPENCODE_BRIDGE_EFFORT=$QCR_BENCH_OPENCODE_EFFORT")
     # pi-review: a disk-backed /work for the case trees — NOT under the sandbox
     # root, whose AGENTS.md/CLAUDE.md pi would load from every ancestor dir.
+    if [[ "$ARM" == pragent ]]; then
+      [[ -n "${QCR_BENCH_PRAGENT_EFFORT:-}" ]] && oe+=(-e "PRAGENT_BRIDGE_EFFORT=$QCR_BENCH_PRAGENT_EFFORT")
+      [[ "${QCR_BENCH_PRAGENT_NO_PR_TEXT:-}" == 1 ]] && EXTRA+=(--no-pr-text)
+    fi
     if [[ "$ARM" == pireview ]]; then
       oe+=(--mount type=volume,dst=/work)
       [[ -n "${QCR_BENCH_PIREVIEW_THINKING:-}" ]] && oe+=(-e "QCR_PIREVIEW_THINKING=$QCR_BENCH_PIREVIEW_THINKING")
@@ -527,5 +544,5 @@ case "$cmd" in
       --mount "type=bind,src=$d,dst=/bench-out" "$IMAGE" shell
     ;;
 
-  *) sed -n '2,52p' "$0"; exit 2 ;;
+  *) sed -n '2,60p' "$0"; exit 2 ;;
 esac

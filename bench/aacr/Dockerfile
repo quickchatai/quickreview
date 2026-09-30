@@ -10,6 +10,8 @@
 #                -t qcr-bench-claude -f bench/aacr/Dockerfile .               (bench.sh build --arm claude)
 #   docker build --target pireview -t qcr-bench-pireview -f bench/aacr/Dockerfile .
 #                                                                        (bench.sh build --arm pireview)
+#   docker build --target pragent --build-arg RUNTIME_BASE=node:22-trixie \
+#                -t qcr-bench-pragent -f bench/aacr/Dockerfile .              (bench.sh build --arm pragent)
 #
 # One image, three uses, each run by bench.sh with its own minimal mounts:
 #   prefetch  git over https to github.com (anonymous) → the repos volume
@@ -41,6 +43,8 @@
 #                                        linux-x64 native binary's sha256 is pinned
 #   @zephyrdeng/pi-review 0.18.0       = the npm tarball's sha512 (= the registry's
 #     (pireview only)                    dist.integrity) is pinned; runs on the pi above
+#   pr-agent 0.46.0 (pragent only)     = qodo-ai/pr-agent's PyPI wheel, its sha256 pinned
+#                                        (= PyPI's digest); Python 3.13 (trixie)
 
 ARG RUNTIME_BASE=node:22-bookworm
 
@@ -279,3 +283,42 @@ RUN HOME=/tmp/cc-build /opt/aacr-venv/bin/python /opt/quickreview/bench/claude_d
     && mkdir -p /work && chmod 1777 /work \
     && ! test -e scripts && ! command -v gh
 ENV QCR_CLAUDE_VERSION=${CLAUDE_CODE_VERSION}
+
+# ---- pragent: PR-Agent (qodo-ai/pr-agent, MIT) --------------------------------------
+# Last, on the trixie runtime (RUNTIME_BASE=node:22-trixie, as for ocr/claude):
+# pr-agent requires Python >= 3.12 and bookworm ships 3.11. Built on `runtime`,
+# so the scorer, the dataset, pi and the judge shim are the ones every other arm
+# is scored with. The PyPI WHEEL is downloaded alone (--no-deps), checked against
+# the sha256 recorded HERE (PyPI's own digest for that file), then installed into
+# its own venv; its dependencies resolve from PyPI under pr-agent's own pins
+# (litellm==1.101.0 and most others are exact), and the resolved set is frozen
+# into /opt/pragent-venv/freeze.txt for the record. The run is
+# bench/aacr/pragent_driver.py → pr_agent.cli (review, improve) on the local git
+# provider; the model through the loopback Codex bridge.
+# To bump: `curl -s https://pypi.org/pypi/pr-agent/<v>/json` → the wheel's
+# `digests.sha256`, set both ARGs (or pass QCR_BENCH_PRAGENT_VERSION +
+# QCR_BENCH_PRAGENT_SHA256 to `bench.sh build --arm pragent`), re-read the local
+# provider, the reviewer's structured-review hook and /improve's artifact path
+# (pragent_driver.py relies on all three), and re-run the smoke test.
+FROM runtime AS pragent
+ARG PRAGENT_VERSION=0.46.0
+ARG PRAGENT_SHA256=6a37f507cc3bf0cb00be79b8b96e7885bf35b27a905adb1926965af839f247f5
+RUN python3 -c 'import sys; assert sys.version_info >= (3, 12), sys.version' \
+    && python3 -m venv /opt/pragent-venv \
+    && mkdir -p /tmp/pa \
+    && /opt/pragent-venv/bin/pip download --quiet --no-cache-dir --no-deps --only-binary=:all: \
+         -d /tmp/pa "pr-agent==${PRAGENT_VERSION}" \
+    && echo "${PRAGENT_SHA256}  /tmp/pa/pr_agent-${PRAGENT_VERSION}-py3-none-any.whl" | sha256sum -c - \
+    && /opt/pragent-venv/bin/pip install --quiet --no-cache-dir "/tmp/pa/pr_agent-${PRAGENT_VERSION}-py3-none-any.whl" \
+    && /opt/pragent-venv/bin/pip freeze > /opt/pragent-venv/freeze.txt \
+    && test "$(/opt/pragent-venv/bin/python -c 'import importlib.metadata as m; print(m.version("pr-agent"))')" = "${PRAGENT_VERSION}" \
+    && rm -rf /tmp/pa /root/.cache
+COPY bench/aacr/codex_bridge.py bench/aacr/pragent_driver.py /opt/quickreview/bench/
+# The driver end to end — PR-Agent's CLI, both commands, the bench provider —
+# against an in-process stub endpoint on a scratch repo (no network).
+RUN python3 /opt/quickreview/bench/codex_bridge.py --self-test \
+    && HOME=/tmp/pa-home LITELLM_LOCAL_MODEL_COST_MAP=True \
+       /opt/pragent-venv/bin/python /opt/quickreview/bench/pragent_driver.py --self-test \
+    && rm -rf /tmp/pa-home /tmp/pragent-selftest-* \
+    && ! test -e scripts && ! command -v gh
+ENV QCR_PRAGENT_VERSION=${PRAGENT_VERSION} LITELLM_LOCAL_MODEL_COST_MAP=True

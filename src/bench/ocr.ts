@@ -519,7 +519,9 @@ export function readOcrSummary(outDir: string, c: BenchCase): OcrCaseSummary | n
 /** The arm a run dir holds, from its run.json (`reviewer: "ocr"` / `"codex"` /
  * `"opencode"` / `"claude"` / `"pireview"`; a quickreviewd run carries no `reviewer`); `null` when there is
  * no readable run.json yet. */
-export function runArmOf(outDir: string): "qcr" | "ocr" | "codex" | "opencode" | "claude" | "pireview" | null {
+export function runArmOf(
+  outDir: string,
+): "qcr" | "ocr" | "codex" | "opencode" | "claude" | "pireview" | "pragent" | null {
   const p = join(outDir, "run.json");
   if (!existsSync(p)) return null;
   try {
@@ -527,6 +529,7 @@ export function runArmOf(outDir: string): "qcr" | "ocr" | "codex" | "opencode" |
     if (r["reviewer"] === "claude") return "claude";
     if (r["reviewer"] === "opencode") return "opencode";
     if (r["reviewer"] === "pireview") return "pireview";
+    if (r["reviewer"] === "pragent") return "pragent";
     return r["reviewer"] === "ocr" ? "ocr" : r["reviewer"] === "codex" ? "codex" : "qcr";
   } catch {
     return null;
