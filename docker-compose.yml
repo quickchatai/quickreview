@@ -124,6 +124,11 @@ services:
       # In-container bind must be 0.0.0.0 — the published port targets the
       # container's eth0; host exposure stays loopback-only above.
       QC_BIND_HOST: "0.0.0.0"
+      # The secrets mount, named to the install locator on the CONTAINER (the
+      # entrypoint exports it too): a set [github] secrets_dir in the shared
+      # config.toml names a HOST path, and a `docker exec` process (the TUI's
+      # in-container mint-token.sh read) never inherits the entrypoint's env.
+      QCR_SECRETS_MOUNT: /opt/quickreview/secrets
 
   # ---- webhook ingress sidecars ---------------------------------
   # All three run the same wrapper (docker/tunnel/sidecar.mjs) around an

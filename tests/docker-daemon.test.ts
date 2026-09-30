@@ -484,6 +484,11 @@ describe("entrypoint secrets link", () => {
       expect(text).toMatch(/^export QCR_SECRETS_MOUNT="\$SECRETS"$/m);
     });
   }
+  it("docker-compose.yml names the mount on the container, for `docker exec` processes too", () => {
+    const compose = readFileSync(resolve(root, "docker-compose.yml"), "utf8");
+    expect(compose).toMatch(/^\s+QCR_SECRETS_MOUNT: \/opt\/quickreview\/secrets$/m);
+    expect(compose).toContain(":/opt/quickreview/secrets:ro");
+  });
   for (const rel of ["docker/daemon/entrypoint.sh", "deploy/ansible/templates/entrypoint.sh.j2"]) {
     it(`${rel} links <config home>/secrets to the mount, where the locator looks`, async () => {
       const { locateSecrets } = await import("../src/install.js");
