@@ -18,6 +18,7 @@ import {
 import { renderCodexReport } from "./codexreport.js";
 import { run } from "./exec.js";
 import { runArmOf } from "./ocr.js";
+import { prTextEnabled } from "./prtext.js";
 
 export interface CodexCliDeps {
   root: string;
@@ -64,12 +65,14 @@ export async function codexCommand(cmd: string, d: CodexCliDeps): Promise<number
   const v = await run("codex", ["--version"], { env: { ...process.env } });
   const codexVersion =
     /codex-cli\s+(\S+)/.exec(v.stdout)?.[1] ?? process.env.QCR_CODEX_VERSION ?? "unknown";
+  const prText = prTextEnabled();
   const fingerprint: CodexFingerprint = {
     qcr_commit: process.env.QCR_BENCH_COMMIT ?? "unknown",
     codex_version: codexVersion,
     model,
     effort,
     timeout_min: timeoutMin,
+    ...(prText ? { pr_text: true as const } : {}),
   };
   const resume = d.has("--resume");
   mkdirSync(outDir, { recursive: true });
@@ -100,6 +103,9 @@ export async function codexCommand(cmd: string, d: CodexCliDeps): Promise<number
     timeout_min: timeoutMin,
     endpoint: "ChatGPT Codex backend, Codex's native ChatGPT auth (refresh-disabled token copy)",
     runner: "AACR harness evaluation/reviewers/codex.py (via bench/aacr/codex_arm.py)",
+    // The equal-inputs switch (src/bench/prtext.ts): the PR title/body appended
+    // to the harness's /review instructions.
+    pr_text: prText,
     qcr_commit: fingerprint.qcr_commit,
     cases: cases.map((c) => c.instance_id),
     started_at:
@@ -160,6 +166,7 @@ export async function codexCommand(cmd: string, d: CodexCliDeps): Promise<number
         fingerprint,
         keepTree: d.has("--keep-tree"),
         log: d.log,
+        prText,
       }),
     );
   }

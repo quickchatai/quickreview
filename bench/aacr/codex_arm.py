@@ -91,6 +91,16 @@ def check_auth(path: Path) -> None:
         raise SystemExit(f"{path}: carries an API key — refusing it")
 
 
+def with_pr_text(build, pr_text: str):
+    """The harness's prompt builder with the PR text appended after it."""
+    text = pr_text.strip()
+
+    def build_with_pr_text(base_commit: str, head_commit: str) -> str:
+        return f"{build(base_commit, head_commit)}\n\n{text}"
+
+    return build_with_pr_text
+
+
 def load_instance(schema, dataset: Path, instance_id: str):
     for inst in schema.load_instances(dataset):
         if inst.instance_id == instance_id:
@@ -138,6 +148,12 @@ def review(a: argparse.Namespace) -> int:
             return proc
 
         cx.run_codex_review = run_and_capture
+        if a.pr_text:
+            # The equal-inputs switch (src/bench/prtext.ts): the PR's title and
+            # body appended to the harness's own /review instructions — Codex's
+            # custom-review-instructions channel. Without --pr-text the prompt
+            # is the harness's, untouched.
+            cx.build_findings_prompt = with_pr_text(cx.build_findings_prompt, Path(a.pr_text).read_text(encoding="utf-8"))
         summary = cx.review_instance(
             instance=instance,
             repo_dir=tree.parent,
@@ -221,6 +237,9 @@ def self_test() -> None:
     assert cmd[:7] == ["codex", "--sandbox", "workspace-write", "exec", "review", "--json", "--skip-git-repo-check"], cmd
     assert cmd[7].startswith(f"/review {'b' * 40}...{'h' * 40} (You have an MCP tool named `report`."), cmd[7][:120]
     assert seen["kw"]["timeout"] == 30 * 60 + 60
+    wrapped = with_pr_text(cx.build_findings_prompt, "  Title: T\n\nbody  ")("b" * 40, "h" * 40)
+    assert wrapped.startswith(f"/review {'b' * 40}...{'h' * 40} (You have an MCP tool named `report`."), wrapped[:80]
+    assert wrapped.endswith(")\n\nTitle: T\n\nbody"), wrapped[-40:]
     prelude = config_prelude("medium")
     assert "[" not in prelude, "the prelude must hold top-level keys only"
     print("codex_arm self-test ok")
@@ -240,6 +259,7 @@ def main() -> int:
     ap.add_argument("--timeout-min", type=int, default=30)
     ap.add_argument("--model", default="gpt-6-sol")
     ap.add_argument("--effort", default="medium")
+    ap.add_argument("--pr-text", help="a file whose text is appended to the /review instructions")
     a = ap.parse_args()
     if a.self_test:
         self_test()

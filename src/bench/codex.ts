@@ -33,6 +33,7 @@ import { join } from "node:path";
 import { safeId, type BenchCase, type PrefetchMeta } from "./aacr.js";
 import { DISABLED_REFRESH } from "./auth.js";
 import { run } from "./exec.js";
+import { prTextFor } from "./prtext.js";
 import { prepareTree } from "./runner.js";
 
 /** pipeline.py `apply_defaults`: timeout None → 30 minutes; reviewers/codex.py
@@ -50,7 +51,7 @@ export const REFRESH_BLACKHOLE = "http://127.0.0.1:9/bench-refresh-disabled";
 /** The ChatGPT account id from the access token's claims: the auth claim
  * object is the one carrying `chatgpt_account_id` (its key is a namespaced
  * URL, which is not needed to find it). */
-function jwtAccount(token: string): string | null {
+export function jwtAccount(token: string): string | null {
   const part = token.split(".")[1];
   if (!part) return null;
   try {
@@ -143,10 +144,14 @@ export interface CodexDriverPaths {
   authJson: string;
 }
 
+/** The driver's argv. `prTextFile` (the equal-inputs switch, src/bench/
+ * prtext.ts) makes codex_arm.py append the PR title/body to the harness's own
+ * `/review <base>...<head> (…)` instructions — Codex's custom-review-
+ * instructions channel; absent, the argv is exactly the published one. */
 export function codexDriverArgv(
   c: BenchCase,
   p: CodexDriverPaths,
-  o: { timeoutMin: number; model: string; effort: string },
+  o: { timeoutMin: number; model: string; effort: string; prTextFile?: string | null },
 ): string[] {
   return [
     p.driver,
@@ -170,6 +175,7 @@ export function codexDriverArgv(
     o.model,
     "--effort",
     o.effort,
+    ...(o.prTextFile ? ["--pr-text", o.prTextFile] : []),
   ];
 }
 
@@ -295,6 +301,8 @@ export interface CodexFingerprint {
   model: string;
   effort: string;
   timeout_min: number;
+  /** Present only when the PR text was handed over (QCR_BENCH_PR_TEXT=1). */
+  pr_text?: true;
 }
 
 export interface CodexCaseSummary {
@@ -324,6 +332,8 @@ export interface CodexCaseSummary {
   } | null;
   merge_base_ok: boolean;
   warnings: string[];
+  /** With the PR-text switch on: whether this case's title/body reached Codex. */
+  pr_text?: boolean;
 }
 
 export function summarizeCodexRun(a: {
@@ -380,6 +390,8 @@ export interface CodexRunnerOptions {
   fingerprint: CodexFingerprint;
   keepTree?: boolean;
   log?: (line: string) => void;
+  /** Hand Codex the PR title/body in its review instructions (src/bench/prtext.ts). */
+  prText?: boolean;
 }
 
 function resultPath(outDir: string, c: BenchCase): string {
@@ -450,6 +462,10 @@ export async function reviewCaseCodex(
     // The harness's result file is written by the driver; a stale one from an
     // earlier attempt must never be read as this attempt's.
     rmSync(resultPath(o.outDir, c), { force: true });
+    const prText = prTextFor(meta, o.prText === true);
+    if (o.prText) summary.pr_text = prText !== null;
+    const prTextFile = prText === null ? null : join(tmpDir, "pr-text.md");
+    if (prTextFile !== null) writeFileSync(prTextFile, prText + "\n");
     const argv = codexDriverArgv(
       c,
       {
@@ -462,7 +478,7 @@ export async function reviewCaseCodex(
         homeBase,
         authJson: o.codexAuthFile,
       },
-      { timeoutMin: o.timeoutMin, model: o.model, effort: o.effort },
+      { timeoutMin: o.timeoutMin, model: o.model, effort: o.effort, prTextFile },
     );
     log(
       `codex: ${c.instance_id} — ${meta.diff.files} files, codex exec review via reviewers/codex.py …`,
