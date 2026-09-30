@@ -694,8 +694,31 @@ export async function resume({
           : `partial: ${run.failed_records} of ${run.scanned_records} sources failed — will retry`
         : run.detail,
   };
-  const next = { ...journal, namespaces: { ...journal.namespaces, [user]: entry } };
-  writeJournal(home, next);
+  // The rebuild above can run for its whole deadline, and `settle` writes this
+  // same file from another process meanwhile. So the outcome is merged into
+  // the journal as it stands NOW, touching only this host's own row — never
+  // written back over the snapshot read before the rebuild, which would
+  // silently undo an operator's receipt. (Read and write are synchronous: no
+  // turn of this process can interleave between them.)
+  const fresh = readJournal(home).journal;
+  const freshNs = fresh?.namespaces?.[user];
+  if (!fresh || !freshNs || fresh.reset_at !== journal.reset_at) {
+    // The migration this rebuild belonged to is gone or was re-armed: its
+    // outcome says nothing about the journal on disk now.
+    log(
+      `openviking: reembed ${run.uri} — ${state}, not journalled: the migration changed underneath`,
+    );
+    return { action: "reindex", state, run, entry };
+  }
+  if (freshNs.state === "completed" && freshNs.settled_by === "operator") {
+    // The operator settled this row by their explicit word mid-rebuild; that
+    // receipt stands.
+    log(
+      `openviking: reembed ${run.uri} — ${state}, not journalled: settled by the operator meanwhile`,
+    );
+    return { action: "reindex", state, run, entry };
+  }
+  writeJournal(home, { ...fresh, namespaces: { ...fresh.namespaces, [user]: entry } });
   log(`openviking: reembed ${run.uri} — ${state}: ${entry.detail}`);
   return { action: "reindex", state, run, entry };
 }

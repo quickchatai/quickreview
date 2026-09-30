@@ -710,6 +710,94 @@ describe("resume — journal in, journal out", () => {
     });
   });
 
+  it("an operator's settle that lands WHILE the rebuild runs survives resume's write", async () => {
+    // resume reads the journal, then awaits the rebuild for up to its
+    // deadline; the documented `settle` runs in another process meanwhile.
+    // resume must merge its own row into the journal as it stands at write
+    // time, never write back the snapshot it read before the rebuild.
+    reembed.writeJournal(home, journal("pending"));
+    const { fetchFn } = completedServer();
+    let settled = false;
+    const racing = async (url: string, init?: { method?: string }) => {
+      if (!settled && TASK.test(url)) {
+        settled = true;
+        expect(reembed.settle({ home, user: "companion" }).ok).toBe(true);
+      }
+      return fetchFn(url, init);
+    };
+    const r = await reembed.resume({
+      home,
+      base: BASE,
+      key: "k",
+      user: "reviewer",
+      fetchFn: racing,
+      sleep: noSleep,
+    });
+    expect(settled).toBe(true);
+    expect(r.state).toBe("completed");
+    const after = JSON.parse(readFileSync(join(home, "reembed.json"), "utf8"));
+    expect(after.namespaces.reviewer.state).toBe("completed");
+    expect(after.namespaces.companion).toMatchObject({
+      state: "completed",
+      settled_by: "operator",
+    });
+    expect(reembed.journalStatus(home)).toMatchObject({
+      state: "completed",
+      awaiting_operator: [],
+    });
+  });
+
+  it("an operator's settle of this host's OWN row mid-rebuild is not overwritten by a failed run", async () => {
+    reembed.writeJournal(home, journal("pending"));
+    let settled = false;
+    const fetchFn = async (url: string) => {
+      if (!settled) {
+        settled = true;
+        expect(reembed.settle({ home, user: "reviewer", detail: "by hand" }).ok).toBe(true);
+      }
+      void url;
+      return { status: 500, json: async () => ({ status: "error" }) };
+    };
+    const r = await reembed.resume({
+      home,
+      base: BASE,
+      key: "k",
+      user: "reviewer",
+      fetchFn,
+      sleep: noSleep,
+    });
+    expect(settled).toBe(true);
+    expect(r.state).toBe("failed");
+    const after = JSON.parse(readFileSync(join(home, "reembed.json"), "utf8"));
+    expect(after.namespaces.reviewer).toMatchObject({ state: "completed", settled_by: "operator" });
+  });
+
+  it("a migration re-armed WHILE the rebuild runs is not overwritten with the old outcome", async () => {
+    reembed.writeJournal(home, journal("pending"));
+    const { fetchFn } = completedServer();
+    const rearmed = { ...journal("pending"), reset_at: "2026-09-02T15:45:00.000Z" };
+    let swapped = false;
+    const racing = async (url: string, init?: { method?: string }) => {
+      if (!swapped && TASK.test(url)) {
+        swapped = true;
+        reembed.writeJournal(home, rearmed);
+      }
+      return fetchFn(url, init);
+    };
+    await reembed.resume({
+      home,
+      base: BASE,
+      key: "k",
+      user: "reviewer",
+      fetchFn: racing,
+      sleep: noSleep,
+    });
+    expect(swapped).toBe(true);
+    // The rebuild ran against the OLD migration: its outcome must not mark
+    // the new one's namespace completed.
+    expect(JSON.parse(readFileSync(join(home, "reembed.json"), "utf8"))).toEqual(rearmed);
+  });
+
   it("an operator namespace is never resumed from this host, even with a key", async () => {
     reembed.writeJournal(home, journal("completed"));
     const { fetchFn, calls } = completedServer();
