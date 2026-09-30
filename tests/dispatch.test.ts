@@ -1420,6 +1420,22 @@ describe("system re-trigger short-circuit", () => {
     expect(shortCircuitEvents(47)).toEqual([]);
   });
 
+  // Selfscan 8dd186e2 (the dispatch copy): a push restoring a reviewed file
+  // to its base content drops it from the CURRENT diff; ownership read only
+  // there called the reversion a base merge and skipped the round.
+  it("a push reverting a reviewed file is never a base-merge short-circuit", async () => {
+    queue(47, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
+    reviewed(47, OLD, "APPROVE");
+    adapter.files.set(47, [file("api.py")]);
+    adapter.compares.set(`master..${OLD}`, [file("auth.py"), file("api.py")]);
+    adapter.compares.set(`${OLD}..${NEW}`, [file("auth.py", 0, 2)]);
+    const { hooks, orders } = recordingHooks();
+
+    expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toHaveLength(1);
+    expect(orders).toHaveLength(1);
+    expect(shortCircuitEvents(47)).toEqual([]);
+  });
+
   it("a significant delta dispatches the full round as today", async () => {
     queue(43, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
     reviewed(43, OLD, "APPROVE");

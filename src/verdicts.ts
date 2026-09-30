@@ -423,6 +423,17 @@ export class VerdictWatcher {
       .get(pr) as RoundRow | undefined;
   }
 
+  /** Whether the apply of this round's verdict ran to its last durable step. */
+  private verdictSettled(pr: number, roundId: number): boolean {
+    return (
+      this.deps.store.db
+        .prepare(
+          "SELECT 1 FROM events WHERE kind = 'verdict_settled' AND pr = ? AND json_extract(payload, '$.round_id') = ? LIMIT 1",
+        )
+        .get(pr, roundId) !== undefined
+    );
+  }
+
   private archive(name: string): void {
     mkdirSync(this.processedDir, { recursive: true });
     try {
@@ -947,7 +958,20 @@ export class VerdictWatcher {
     // or a session re-emitting an old round's file. Applying it again would
     // re-run every side effect below and stamp the old head over a newer
     // reviewed-head mark. Inert, exactly like the guarded-noop replay.
-    if (round && round.round_no === v.round_no && round.status === "done") {
+    //
+    // "Done" alone is not proof: finishRound runs BEFORE the rest of the
+    // apply (the transition, the reviewed-head and withheld marks, the
+    // successor), across several awaits. A daemon killed in that window leaves
+    // a done round with the file still in verdict/, and resuming it is the only
+    // way the rest ever lands. So the replay is inert only once the apply
+    // recorded that it SETTLED (`verdict_settled`, written after the last
+    // durable step); a done round without it resumes as before.
+    if (
+      round &&
+      round.round_no === v.round_no &&
+      round.status === "done" &&
+      this.verdictSettled(v.pr, round.id)
+    ) {
       store.logEvent("verdict_replay_ignored", v.pr, {
         round_id: round.id,
         round_no: v.round_no,
@@ -1096,6 +1120,9 @@ export class VerdictWatcher {
     if (successorPromoted) {
       this.log(`verdicts: #${v.pr} preserved fresh-head successor after round ${v.round_no}`);
     }
+    // Every durable step of the apply has landed: from here a replay of this
+    // file is inert (the done-round guard above reads this).
+    if (round) store.logEvent("verdict_settled", v.pr, { round_id: round.id, round_no: v.round_no });
     if (round) this.measureUsage(v.pr, round.id, round.started_at, this.now().toISOString());
     // Escalation — OFF unless the operator switched it on, and it
     // runs HERE, after the verdict has been applied, the label moved and the

@@ -49,6 +49,7 @@ import {
 } from "./memory/context.js";
 import {
   carryWithheldMark,
+  reviewedOwnership,
   classifyDelta,
   ownershipSet,
   recheckFingerprint,
@@ -521,7 +522,16 @@ async function classifySystemRetrigger(
   if (!deps.adapter.compareFiles) return { skip: false };
   try {
     const delta = await deps.adapter.compareFiles(mark.head_sha, row.head_sha);
-    const prFiles = ownershipSet(await deps.adapter.listPrFiles(row.number));
+    // The union with the reviewed head's ownership (selfscan 8dd186e2): a
+    // push reverting a reviewed file is the PR's own change, not a base merge.
+    // A truncated listing leaves ownership unknown (undefined).
+    const prFiles = await reviewedOwnership(
+      deps.adapter,
+      row.number,
+      mark.head_sha,
+      delta,
+      ownershipSet(await deps.adapter.listPrFiles(row.number)),
+    );
     let resolvedFiles: Set<string> | undefined;
     if (deps.resolvedFilesInMerges) {
       const res = await deps.resolvedFilesInMerges(mark.head_sha, row.head_sha, row.number);

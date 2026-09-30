@@ -793,6 +793,26 @@ describe("confirmed round posting receipts", () => {
     expect(applied.c).toBe(1);
   });
 
+  // The replay guard must not strand a CRASHED apply: finishRound marks the
+  // round done before the transition and the reviewed-head mark land, across
+  // awaits. A done round with no `verdict_settled` record is resumed.
+  it("a done round whose apply never settled (daemon killed mid-apply) is resumed", async () => {
+    reviewingRound(187);
+    const { key } = stampPosting(187, 1);
+    writePostingReceipt(187, 1, key, "REQUEST_CHANGES");
+    // The kill landed right after finishRound: nothing past it happened.
+    const round = store.roundsFor(187)[0]!;
+    store.finishRound(round.id, "REQUEST_CHANGES", null, null);
+
+    expect(await watcher().handleFile(write(187, 1, verdictFile({ pr: 187 })))).toBe(true);
+
+    expect(store.reviewedHead(187)).toMatchObject({ verdict: "REQUEST_CHANGES" });
+    const settled = store.db
+      .prepare("SELECT COUNT(*) AS c FROM events WHERE pr = ? AND kind = 'verdict_settled'")
+      .get(187) as { c: number };
+    expect(settled.c).toBe(1);
+  });
+
   // Selfscan 4866a7cc: the payload's identity was never compared with the
   // filename's, so pr-185-round-1.json naming PR 186 was applied to PR 186.
   it("a verdict whose payload names another PR or round than its filename is not applied", async () => {

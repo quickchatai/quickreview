@@ -628,6 +628,37 @@ export type RecheckOutcome = RecheckPlan & {
 };
 
 /**
+ * The files the PR owns for delta classification: what it owns at the current
+ * head PLUS what it owned at the REVIEWED head (selfscan 8dd186e2). A push that
+ * restores a reviewed file to its base content drops it from the current diff,
+ * yet that is the PR undoing its own reviewed change, not a base merge. The
+ * second read happens only when a delta file falls outside today's ownership:
+ * `<base_ref>...<reviewed>` is the PR's own diff at the reviewed head. Throws
+ * on a read failure — every caller already treats that as "not trivial".
+ */
+export async function reviewedOwnership(
+  adapter: {
+    getPr?(n: number): Promise<{ base_ref: string }>;
+    compareFiles?(base: string, head: string): Promise<DeltaList>;
+  },
+  pr: number,
+  reviewedHead: string,
+  delta: readonly DeltaFile[],
+  ownedNow: ReadonlySet<string> | undefined,
+): Promise<Set<string> | undefined> {
+  // Unknown ownership (a truncated listing) stays unknown.
+  if (!ownedNow) return undefined;
+  const unowned = delta.some(
+    (f) => !ownedNow.has(f.filename) && !(f.previous_filename && ownedNow.has(f.previous_filename)),
+  );
+  if (!unowned || !adapter.getPr || !adapter.compareFiles) return new Set(ownedNow);
+  const { base_ref } = await adapter.getPr(pr);
+  if (!base_ref) return new Set(ownedNow);
+  const then = ownershipSet(await adapter.compareFiles(base_ref, reviewedHead));
+  return then ? new Set([...ownedNow, ...then]) : undefined;
+}
+
+/**
  * One trigger, start to finish. Returns the plan so callers (and tests) can see
  * exactly why a trigger cost nothing.
  */
@@ -679,37 +710,20 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     return done({ action: "noop", reason: "no-delta-source", class: "empty" });
 
   let delta: DeltaList;
-  let prFiles: string[] | undefined;
+  let prFiles: Set<string> | undefined;
   try {
     delta =
       req.trigger === "base_advance" && req.base
         ? await deps.adapter.compareFiles(req.base.before, req.base.after)
         : await deps.adapter.compareFiles(lastReviewed, head);
-    const ownership = ownershipSet(await deps.adapter.listPrFiles(req.pr));
-    prFiles = ownership ? [...ownership] : undefined;
-    // Ownership is the union of what the PR owned at the REVIEWED head and at
-    // the current one (selfscan 8dd186e2). A push that restores a reviewed
-    // file to its base content drops it from the current diff, yet it is the
-    // PR undoing its own reviewed change, not a base merge. Read only when a
-    // delta file falls outside today's ownership: `<base_ref>...<reviewed>`
-    // is the PR's own diff at the reviewed head. A base advance leaves the
+    prFiles = ownershipSet(await deps.adapter.listPrFiles(req.pr));
+    // Ownership is the union of the reviewed head's and the current head's
+    // (selfscan 8dd186e2) — see reviewedOwnership. A base advance leaves the
     // head where it was reviewed, so there is nothing to revert. A truncated
-    // listing on either side leaves ownership unknown (undefined): every
-    // delta file is then significant.
-    if (ownership) {
-      const unowned = delta.some(
-        (f) =>
-          !ownership.has(f.filename) &&
-          !(f.previous_filename && ownership.has(f.previous_filename)),
-      );
-      if (req.trigger !== "base_advance" && unowned && deps.adapter.getPr) {
-        const { base_ref } = await deps.adapter.getPr(req.pr);
-        if (base_ref) {
-          const ownedThen = ownershipSet(await deps.adapter.compareFiles(base_ref, lastReviewed));
-          prFiles = ownedThen ? [...ownership, ...ownedThen] : undefined;
-        }
-      }
-    }
+    // listing leaves ownership unknown (undefined): every delta file is then
+    // significant.
+    if (req.trigger !== "base_advance")
+      prFiles = await reviewedOwnership(deps.adapter, req.pr, lastReviewed, delta, prFiles);
   } catch (err) {
     // A read failure is not evidence of anything. Uphold and log: the reconcile
     // poll and the next trigger both come round again.
@@ -754,7 +768,7 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     last_reviewed_sha: lastReviewed,
     head_sha: head,
     delta,
-    ...(prFiles ? { prFiles } : {}),
+    ...(prFiles ? { prFiles: [...prFiles] } : {}),
     resolvedFiles,
     ...(req.ci ? { ci: req.ci } : {}),
   });
