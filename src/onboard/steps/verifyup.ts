@@ -308,6 +308,19 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
       });
       return { ok: false, checks };
     }
+    // Layer 3 exists only where GitHub can deliver. The polling topology
+    // deliberately exposes nothing, so a ping can never land there — requiring
+    // one would keep this step (and so onboarding's finish) red forever.
+    if (ingressOptionOf(ctx.choices)?.id === "polling") {
+      checks.push({
+        name: "ping-delivery",
+        ok: true,
+        detail:
+          "not checked — you chose polling, which exposes no webhook endpoint, so webhook delivery is not expected; " +
+          "the reconcile poll is the only trigger path",
+      });
+      return { ok: checks.every((c) => c.ok), checks };
+    }
     checks.push(...(await pingLayer(ctx)));
     return { ok: checks.every((c) => c.ok), checks };
   }
@@ -318,7 +331,7 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
     explain:
       "Checks that the system is really up, in three layers, each one meaningful only if the one before it holds: the " +
       "containers are running, the daemon answers its health endpoint, and GitHub's own delivery log shows a webhook ping " +
-      "arriving. A red layer stops here and says exactly what to do about it — nothing later would mean anything until it is " +
+      "arriving (not under polling, which exposes no webhook endpoint). A red layer stops here and says exactly what to do about it — nothing later would mean anything until it is " +
       "fixed. Safe to run as often as you like; it changes nothing except asking GitHub to redeliver a ping that failed.",
     order: 74,
 

@@ -216,6 +216,20 @@ describe("all three layers green", () => {
   });
 });
 
+describe("the polling topology", () => {
+  it("finishes without a webhook ping — polling exposes no endpoint, so none is required or redelivered", async () => {
+    seedChoices({ [INGRESS_CHOICE_KEY]: "polling" });
+    // The App's log holds only failed pings: under polling nothing can reach
+    // the daemon, and that must not keep the step red forever.
+    const h = harness({ deliveries: [ping({ status_code: 502, status: "Bad Gateway" })] });
+    const result = await h.engine.runStep(VERIFY_STACK_STEP_ID);
+    expect(result.ok).toBe(true);
+    expect(result.checks.map((c) => c.name)).toEqual(["containers", "health", "ping-delivery"]);
+    expect(result.checks.find((c) => c.name === "ping-delivery")!.detail).toMatch(/polling/);
+    expect(h.urls.filter((u) => u.includes(API))).toEqual([]);
+  });
+});
+
 describe("a red layer blocks progress plainly", () => {
   it("a dead container stops the step — the later layers are not even attempted", async () => {
     const h = harness({ services: [{ Service: "daemon", State: "exited (1)" }] });
