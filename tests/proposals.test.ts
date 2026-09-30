@@ -3,6 +3,7 @@
 // list/read/remove, gh parsing, patch vetting incl. the RATIFIED-fence
 // refusal, and accept = merge + auto-ratify against a temp repo-root with a
 // fake git.
+import { execFile, execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,6 +19,7 @@ import {
   listRubricProposals,
   parseImprovements,
   patchFenceViolation,
+  patchShapeViolation,
   patchTargets,
   proposalKind,
   readRubricFile,
@@ -384,16 +386,20 @@ describe("acceptProposal (local dirs, fake git)", () => {
       "fix-mergebase",
     );
     expect(res.ok).toBe(true);
+    // --check, the shadow apply (post-image fences), the dirty-target status,
+    // the real apply, add, commit.
     expect(gitCalls.map((c) => c.slice(0, 2).join(" "))).toEqual([
       "git apply",
+      "git apply",
+      "git status",
       "git apply",
       "git add",
       "git commit",
     ]);
     // The refreshed canonical copy rides the same commit as the reseed.
-    expect(gitCalls[2]).toContain("seeds/agents/pass-baseline.md");
+    expect(gitCalls[4]).toContain("seeds/agents/pass-baseline.md");
     // role wording, old spelling grandfathered (history never rewrites).
-    expect(gitCalls[3]!.join(" ")).toMatch(/ratified by (?:the owner|the owner) via TUI/);
+    expect(gitCalls[5]!.join(" ")).toMatch(/ratified by (?:the owner|the owner) via TUI/);
     const div = JSON.parse(
       readFileSync(join(root, "tests/fixtures/ratified-divergence.json"), "utf8"),
     );
@@ -525,15 +531,19 @@ describe("acceptProposal (local dirs, fake git)", () => {
       "calibrate-mention",
     );
     expect(res.ok).toBe(true);
+    // --check, the shadow apply (post-image fences), the dirty-target status,
+    // the real apply, add, commit.
     expect(gitCalls.map((c) => c.slice(0, 2).join(" "))).toEqual([
       "git apply",
+      "git apply",
+      "git status",
       "git apply",
       "git add",
       "git commit",
     ]);
-    expect(gitCalls[2]).toContain("config.toml");
-    expect(gitCalls[2]).not.toContain("tests/fixtures/seed-manifest.json");
-    expect(gitCalls[3]!.join(" ")).toContain("config: accept 'calibrate-mention'");
+    expect(gitCalls[4]).toContain("config.toml");
+    expect(gitCalls[4]).not.toContain("tests/fixtures/seed-manifest.json");
+    expect(gitCalls[5]!.join(" ")).toContain("config: accept 'calibrate-mention'");
     // config.toml is not a seed: the divergence registry is untouched.
     const div = JSON.parse(
       readFileSync(join(root, "tests/fixtures/ratified-divergence.json"), "utf8"),
@@ -565,11 +575,19 @@ describe("acceptProposal (local dirs, fake git)", () => {
       "calibrate-mention",
     );
     expect(res.ok).toBe(true);
-    expect(gitCalls.map((c) => c.slice(0, 2).join(" "))).toEqual(["git apply", "git apply"]);
-    for (const call of gitCalls) {
+    // --check and the real apply target the home; between them the shadow
+    // apply (post-image fences + parsed dry_run) targets a throwaway copy.
+    expect(gitCalls.map((c) => c.slice(0, 2).join(" "))).toEqual([
+      "git apply",
+      "git apply",
+      "git apply",
+    ]);
+    for (const call of [gitCalls[0]!, gitCalls[2]!]) {
       expect(call).toContain("--unsafe-paths");
       expect(call).toContain(`--directory=${home}`);
     }
+    expect(gitCalls[1]).toContain("--unsafe-paths");
+    expect(gitCalls[1]!.join(" ")).toMatch(/--directory=\S*qcr-proposal-/);
     expect(res.message).toContain(join(home, "config.toml"));
     expect(existsSync(join(root, "state/rubric/calibrate-mention"))).toBe(false);
 
@@ -673,5 +691,203 @@ describe("acceptProposal (local dirs, fake git)", () => {
     );
     expect(res.ok).toBe(false);
     expect(res.message).toContain("does not apply cleanly");
+  });
+});
+
+// ---- selfscan2 (tui-learning): the accept path against a REAL git checkout.
+// The fake-git suite above cannot see what `git apply` actually does — where
+// it relocates a hunk, which sections it honours, what `git commit` sweeps
+// up — and every defect below lived exactly there. A scratch repo in a temp
+// dir, no network, no remote.
+describe("acceptProposal against a real scratch checkout (selfscan2)", () => {
+  let root: string;
+  const gitEnv = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_AUTHOR_NAME: "t",
+    GIT_AUTHOR_EMAIL: "t@example.invalid",
+    GIT_COMMITTER_NAME: "t",
+    GIT_COMMITTER_EMAIL: "t@example.invalid",
+  };
+  const run = (cmd: string, args: string[], stdin?: string): Promise<string> =>
+    new Promise((res, rej) => {
+      const child = execFile(cmd, args, { cwd: root, env: gitEnv }, (err, stdout, stderr) =>
+        err ? rej(new Error(`${err.message}\n${stderr}`)) : res(stdout),
+      );
+      if (stdin !== undefined) child.stdin?.end(stdin);
+    });
+  const sh = (args: string[]): string =>
+    execFileSync("git", args, { cwd: root, env: gitEnv, encoding: "utf8" });
+  const deps = (): Parameters<typeof acceptProposal>[0] => ({
+    git: { run },
+    repoRoot: root,
+    today: () => "2026-09-30",
+  });
+  const propose = (slug: string, patch: string): void => {
+    mkdirSync(join(root, "state/rubric", slug), { recursive: true });
+    writeFileSync(join(root, "state/rubric", slug, "PROPOSAL.md"), "## Rationale\n");
+    writeFileSync(join(root, "state/rubric", slug, "changes.patch"), patch);
+  };
+  // A fenced prompt with enough tail that a shifted header lands outside it.
+  const FENCED_LONG = [
+    ...FENCED.split("\n").slice(0, 7),
+    ...Array.from({ length: 20 }, (_, i) => `tail line ${i}`),
+    "",
+  ].join("\n");
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "accept-real-"));
+    mkdirSync(join(root, "tests/fixtures"), { recursive: true });
+    mkdirSync(join(root, "agents"), { recursive: true });
+    mkdirSync(join(root, "prompts"), { recursive: true });
+    mkdirSync(join(root, "src"), { recursive: true });
+    writeFileSync(join(root, "agents/pass-baseline.md"), "line one\nline two\n");
+    writeFileSync(join(root, "prompts/round-first.md"), FENCED_LONG);
+    writeFileSync(join(root, "prompts/round-next.md"), "alpha\nbeta\ngamma\ndelta\nepsilon\n");
+    writeFileSync(join(root, "src/gate.ts"), "export const gate = 1;\n");
+    writeFileSync(join(root, "config.toml"), "dry_run = true\n\n[ops]\nx = 1\n");
+    writeFileSync(
+      join(root, "tests/fixtures/seed-manifest.json"),
+      JSON.stringify({ files: { "agents/pass-baseline.md": "old" } }),
+    );
+    writeFileSync(
+      join(root, "tests/fixtures/ratified-divergence.json"),
+      JSON.stringify({ files: {} }),
+    );
+    writeFileSync(join(root, ".gitignore"), "state/\n");
+    sh(["init", "-q", "-b", "master"]);
+    sh(["add", "-A"]);
+    sh(["commit", "-q", "-m", "init"]);
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  it("a hunk whose header is shifted off a RATIFIED fence is refused where git would APPLY it", async () => {
+    // Real context from lines 3..5, declared at 20: the header-coordinate
+    // check sees an edit at line 21 (outside the fence); git relocates it.
+    propose(
+      "shifted",
+      `--- a/prompts/round-first.md\n+++ b/prompts/round-first.md\n@@ -20,3 +20,3 @@\n <!-- RATIFIED ci-gate — do not edit; owner only -->\n-ratified line A\n+quietly weakened line A\n ratified line B\n`,
+    );
+    const res = await acceptProposal(deps(), "shifted");
+    expect(res.ok).toBe(false);
+    expect(res.message).toMatch(/RATIFIED fence/);
+    expect(readFileSync(join(root, "prompts/round-first.md"), "utf8")).toBe(FENCED_LONG);
+    expect(sh(["log", "--format=%s"]).trim()).toBe("init");
+  });
+
+  it("a config patch that moves the root dry_run into a table is refused (parsed, not grepped)", async () => {
+    propose(
+      "rescope",
+      `--- a/config.toml\n+++ b/config.toml\n@@ -1,1 +1,3 @@\n+"dry\\u005frun" = false\n+[calibration]\n dry_run = true\n`,
+    );
+    const res = await acceptProposal(deps(), "rescope");
+    expect(res.ok).toBe(false);
+    expect(res.message).toMatch(/dry_run/);
+    expect(readFileSync(join(root, "config.toml"), "utf8")).toBe(
+      "dry_run = true\n\n[ops]\nx = 1\n",
+    );
+  });
+
+  it("a binary section naming src/ only in its diff --git header is refused, nothing applied", async () => {
+    const binary = [
+      "diff --git a/src/gate.ts b/src/gate.ts",
+      "index 0000000000000000000000000000000000000000..1111111111111111111111111111111111111111 100644",
+      "GIT binary patch",
+      "literal 4",
+      "LcmZ?wbYcJi0000",
+      "",
+      "literal 0",
+      "HcmV?d00001",
+      "",
+    ].join("\n");
+    const rubric = `diff --git a/prompts/round-next.md b/prompts/round-next.md\n--- a/prompts/round-next.md\n+++ b/prompts/round-next.md\n@@ -1,2 +1,3 @@\n alpha\n+alpha and a half\n beta\n`;
+    expect(patchTargets(binary + rubric)).toContain("src/gate.ts");
+    propose("binary-ride", binary + rubric);
+    const res = await acceptProposal(deps(), "binary-ride");
+    expect(res.ok).toBe(false);
+    expect(readFileSync(join(root, "src/gate.ts"), "utf8")).toBe("export const gate = 1;\n");
+    expect(sh(["status", "--porcelain"])).toBe("");
+  });
+
+  it("refuses binary and mode-only sections even on an allowed target", () => {
+    expect(
+      patchShapeViolation(
+        "diff --git a/prompts/round-next.md b/prompts/round-next.md\nold mode 100644\nnew mode 100755\n",
+      ),
+    ).toMatch(/mode/);
+    expect(
+      patchShapeViolation(
+        "diff --git a/agents/x.md b/agents/x.md\nnew file mode 120000\n--- /dev/null\n+++ b/agents/x.md\n@@ -0,0 +1 @@\n+../src/gate.ts\n",
+      ),
+    ).toMatch(/mode/);
+    expect(
+      patchShapeViolation(
+        "diff --git a/agents/x.md b/agents/x.md\nGIT binary patch\nliteral 0\nHcmV?d00001\n",
+      ),
+    ).toMatch(/binary/);
+    expect(patchShapeViolation(PATCH)).toBeNull();
+    expect(
+      patchShapeViolation(
+        "diff --git a/agents/n.md b/agents/n.md\nnew file mode 100644\n--- /dev/null\n+++ b/agents/n.md\n@@ -0,0 +1 @@\n+x\n",
+      ),
+    ).toBeNull();
+  });
+
+  it("commits ONLY the proposal — someone else's staged work stays staged and uncommitted", async () => {
+    writeFileSync(join(root, "src/gate.ts"), "export const gate = 2; // companion, mid-commit\n");
+    sh(["add", "src/gate.ts"]);
+    propose(
+      "clean-edit",
+      `--- a/prompts/round-next.md\n+++ b/prompts/round-next.md\n@@ -1,2 +1,3 @@\n alpha\n+alpha and a half\n beta\n`,
+    );
+    const res = await acceptProposal(deps(), "clean-edit");
+    expect(res.ok).toBe(true);
+    expect(sh(["show", "--name-only", "--format=", "HEAD"]).trim()).toBe("prompts/round-next.md");
+    expect(sh(["diff", "--cached", "--name-only"]).trim()).toBe("src/gate.ts");
+  });
+
+  it("refuses a target with uncommitted edits — they would ride the acceptance commit", async () => {
+    writeFileSync(
+      join(root, "prompts/round-next.md"),
+      "alpha\nbeta\ngamma\ndelta\nepsilon — the companion's in-flight edit\n",
+    );
+    propose(
+      "dirty-target",
+      `--- a/prompts/round-next.md\n+++ b/prompts/round-next.md\n@@ -1,2 +1,3 @@\n alpha\n+alpha and a half\n beta\n`,
+    );
+    const res = await acceptProposal(deps(), "dirty-target");
+    expect(res.ok).toBe(false);
+    expect(res.message).toMatch(/uncommitted/);
+    expect(readFileSync(join(root, "prompts/round-next.md"), "utf8")).toBe(
+      "alpha\nbeta\ngamma\ndelta\nepsilon — the companion's in-flight edit\n",
+    );
+    expect(sh(["log", "--format=%s"]).trim()).toBe("init");
+    expect(existsSync(join(root, "state/rubric/dirty-target"))).toBe(true);
+  });
+
+  it("refuses deleting a seeded file before git ever sees it", async () => {
+    propose(
+      "drop-seed",
+      `diff --git a/agents/pass-baseline.md b/agents/pass-baseline.md\ndeleted file mode 100644\n--- a/agents/pass-baseline.md\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-line one\n-line two\n`,
+    );
+    const res = await acceptProposal(deps(), "drop-seed");
+    expect(res.ok).toBe(false);
+    expect(res.message).toMatch(/seeded/);
+    expect(existsSync(join(root, "agents/pass-baseline.md"))).toBe(true);
+    expect(sh(["status", "--porcelain"])).toBe("");
+  });
+
+  it("a clean rubric patch still lands: applied, ratified, committed, dir removed", async () => {
+    propose("seed-edit", PATCH);
+    const res = await acceptProposal(deps(), "seed-edit");
+    expect(res.ok).toBe(true);
+    expect(sh(["show", "--name-only", "--format=", "HEAD"]).trim().split("\n").sort()).toEqual([
+      "agents/pass-baseline.md",
+      "seeds/agents/pass-baseline.md",
+      "tests/fixtures/ratified-divergence.json",
+      "tests/fixtures/seed-manifest.json",
+    ]);
+    expect(sh(["status", "--porcelain"])).toBe("");
   });
 });

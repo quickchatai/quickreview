@@ -303,6 +303,28 @@ describe("proposals", () => {
     );
   });
 
+  // selfscan2: each accept is several awaited git subprocesses in ONE shared
+  // checkout; a second A while the first is running would interleave them
+  // (the first commit sweeping up both staged sets).
+  it("a second A while an accept is still running does not start another", async () => {
+    let finish: (v: { ok: boolean; message: string }) => void = () => undefined;
+    const accept = vi.fn(
+      () => new Promise<{ ok: boolean; message: string }>((res) => (finish = res)),
+    );
+    const rig = await loaded({ accept });
+    key(rig, { kind: "char", ch: "t" }); // focus proposed
+    key(rig, { kind: "char", ch: "A" });
+    key(rig, { kind: "char", ch: "A" });
+    await settle();
+    expect(accept).toHaveBeenCalledTimes(1);
+    expect(rig.learning.store.status).toMatch(/already running/);
+    finish({ ok: true, message: "accepted" });
+    await settle();
+    key(rig, { kind: "char", ch: "A" });
+    await settle();
+    expect(accept).toHaveBeenCalledTimes(2);
+  });
+
   it("the [A accept] button fires accept on the clicked proposal, focusing its pane", async () => {
     const accept = vi.fn().mockResolvedValue({ ok: true, message: "accepted" });
     const rig = await loaded({ accept });

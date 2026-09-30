@@ -35,9 +35,22 @@
 //     (`patchFenceViolation`). Rule 6's ratified passages are the owner's; the
 //     accept click ratifies the proposal's OWN diff, never a fence rewrite
 //     smuggled inside it.
+//   * text only — binary, mode-change and non-100644 file sections are
+//     refused (`patchShapeViolation`), and a seed is never deleted or
+//     renamed away (`patchRemovals`);
+//   * the POST-IMAGE — git applies the patch to a throwaway copy first and
+//     the result is judged (`postImageViolation`): every fence byte-identical,
+//     and a config patch leaves the PARSED root `dry_run` unchanged. The
+//     header-coordinate checks are the fast refusal; this is the proof,
+//     because git places a hunk by its context, not its header;
+//   * the shared checkout (rule 11) — a target with uncommitted edits is
+//     refused, and the commit is `--only` the proposal's paths, so neither
+//     the companion's in-flight edits nor its staged work ride along.
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { parse as parseToml } from "smol-toml";
 import type { TuiConfig } from "../config.js";
 
 export interface RubricProposal {
@@ -170,17 +183,69 @@ export interface LocalGit {
   run(cmd: string, args: string[], stdin?: string): Promise<string>;
 }
 
-/** EVERY path a rubric patch touches — both diff sides plus rename/copy
- * headers, so a deletion (`+++ /dev/null` with a `---` victim) or a rename
- * cannot smuggle a target past the allowlist. The patch is LLM output; this
- * list is the containment. */
+/** EVERY path a rubric patch touches — both diff sides, rename/copy headers
+ * AND the `diff --git` headers, so a deletion (`+++ /dev/null` with a `---`
+ * victim), a rename, or a section git applies with no ---/+++ lines at all
+ * (a binary patch, a mode change) cannot smuggle a target past the
+ * allowlist. A `diff --git` header this cannot split cleanly contributes its
+ * raw text, which no allowlist admits — fail closed. The patch is LLM
+ * output; this list is the containment. */
 export function patchTargets(patch: string): string[] {
   const files = new Set<string>();
   for (const m of patch.matchAll(/^(?:\+\+\+|---) (?:[ab]\/)?(\S+)/gm)) {
     if (m[1] !== "/dev/null") files.add(m[1]!);
   }
   for (const m of patch.matchAll(/^(?:rename|copy) (?:from|to) (\S+)/gm)) files.add(m[1]!);
+  for (const m of patch.matchAll(/^diff --git (.*)$/gm)) {
+    const h = /^a\/(\S+) b\/(\S+)$/.exec(m[1]!);
+    if (h) {
+      files.add(h[1]!);
+      files.add(h[2]!);
+    } else files.add(m[1]!);
+  }
   return [...files].sort();
+}
+
+/**
+ * A proposal is a TEXT edit: every guard below reads hunks. A section git
+ * applies without one — a binary patch, a mode change, a new file that is a
+ * symlink or executable — is invisible to the fence and dry_run checks, so
+ * it is refused outright. Returns the refusal message, or null when clean.
+ */
+export function patchShapeViolation(patch: string): string | null {
+  if (/^(?:GIT binary patch|Binary files )/m.test(patch))
+    return "refused: patch carries a binary section — a proposal is a text edit";
+  if (/^(?:old|new) mode /m.test(patch))
+    return "refused: patch changes a file mode — a proposal is a text edit";
+  const fileMode = /^(?:new|deleted) file mode (\d+)/gm;
+  for (const m of patch.matchAll(fileMode)) {
+    if (m[1] !== "100644")
+      return `refused: patch creates or deletes a file with mode ${m[1]} — a proposal is a plain text file`;
+  }
+  return null;
+}
+
+/** Paths a patch REMOVES — deletions (`+++ /dev/null`, `deleted file mode`)
+ * and rename sources. */
+export function patchRemovals(patch: string): string[] {
+  const out = new Set<string>();
+  let gitOld: string | null = null;
+  let minus: string | null = null;
+  for (const line of patch.split("\n")) {
+    const g = /^diff --git a\/(\S+) b\/\S+$/.exec(line);
+    if (g) {
+      gitOld = g[1]!;
+      minus = null;
+      continue;
+    }
+    if (line.startsWith("deleted file mode ") && gitOld !== null) out.add(gitOld);
+    const r = /^rename from (\S+)/.exec(line);
+    if (r) out.add(r[1]!);
+    const mm = /^--- (?:a\/)?(\S+)/.exec(line);
+    if (mm) minus = mm[1] === "/dev/null" ? null : mm[1]!;
+    if (/^\+\+\+ \/dev\/null/.test(line) && minus !== null) out.add(minus);
+  }
+  return [...out].sort();
 }
 
 /** Pass rubrics and prompts only — never src/, scripts/, or a traversal. */
@@ -267,6 +332,58 @@ export function fenceRanges(content: string): Array<{ start: number; end: number
   }
   if (start !== null) out.push({ start, end: lines.length });
   return out;
+}
+
+/** The TEXT of each fence, markers included, in order — the invariant a
+ * post-image must preserve byte for byte. */
+export function fenceBlocks(content: string): string[] {
+  const lines = content.split("\n");
+  return fenceRanges(content).map((r) => lines.slice(r.start - 1, r.end).join("\n"));
+}
+
+/**
+ * The post-image half of rule 6 (and rule 1 for config): `patchFenceViolation`
+ * reads the hunk HEADERS, but git places a hunk by its context and will
+ * relocate one whose header lies (or is merely stale) — onto a fence. So the
+ * patch is also applied, by git itself, to a SHADOW copy of its targets, and
+ * the result is judged: every fence must survive byte for byte, and a config
+ * patch must leave the PARSED root `dry_run` exactly as it was (a quoted or
+ * escaped key, or an edit that moves the assignment into a table, changes
+ * what the daemon loads without any changed line saying `dry_run`).
+ * Returns the refusal message, or null when clean.
+ */
+export function postImageViolation(
+  files: string[],
+  before: Map<string, string | null>,
+  after: Map<string, string | null>,
+  kind: ProposalKind,
+): string | null {
+  for (const rel of files) {
+    const pre = before.get(rel) ?? null;
+    const post = after.get(rel) ?? null;
+    const a = pre === null ? [] : fenceBlocks(pre);
+    const b = post === null ? [] : fenceBlocks(post);
+    if (JSON.stringify(a) !== JSON.stringify(b)) {
+      return `refused: applying the patch changes a RATIFIED fence in ${rel} (git places hunks by context, not by header) — propose the change to the owner instead`;
+    }
+  }
+  if (kind === "config") {
+    const rootDryRun = (text: string | null): { ok: boolean; value: unknown } => {
+      if (text === null) return { ok: true, value: undefined };
+      try {
+        return { ok: true, value: (parseToml(text) as Record<string, unknown>)["dry_run"] };
+      } catch {
+        return { ok: false, value: undefined };
+      }
+    };
+    const pre = rootDryRun(before.get("config.toml") ?? null);
+    const post = rootDryRun(after.get("config.toml") ?? null);
+    if (!pre.ok || !post.ok)
+      return "refused: config.toml does not parse before or after the patch — cannot prove dry_run is untouched (rule 1)";
+    if (JSON.stringify(pre.value) !== JSON.stringify(post.value))
+      return "refused: config proposal changes the effective dry_run — rule 1: the flag is the owner's alone, never a proposal";
+  }
+  return null;
 }
 
 /**
@@ -454,6 +571,32 @@ export async function acceptProposal(
       ok: false,
       message: `refused: patch touches non-proposal paths (${files.join(", ") || "none"})`,
     };
+  const shape = patchShapeViolation(patch);
+  if (shape !== null) return { ok: false, message: shape };
+  if (kind === "rubric") {
+    // A seed cannot be deleted or renamed away: ratification re-pins the
+    // file's bytes, and there are none to pin (it used to throw mid-accept,
+    // leaving the deletion uncommitted in the shared checkout).
+    let seeded: Record<string, string>;
+    try {
+      seeded = (
+        JSON.parse(
+          readFileSync(join(deps.repoRoot, "tests/fixtures/seed-manifest.json"), "utf8"),
+        ) as { files: Record<string, string> }
+      ).files;
+    } catch (err) {
+      return {
+        ok: false,
+        message: `refused: cannot read the seed manifest (${String(err instanceof Error ? err.message : err).slice(0, 120)})`,
+      };
+    }
+    const gone = patchRemovals(patch).filter((rel) => rel in seeded);
+    if (gone.length > 0)
+      return {
+        ok: false,
+        message: `refused: patch deletes or renames seeded ${gone.join(", ")} — a seed is edited in place, never removed`,
+      };
+  }
   if (kind === "config") {
     const cfgViolation = configPatchViolation(patch);
     if (cfgViolation !== null) return { ok: false, message: cfgViolation };
@@ -470,6 +613,7 @@ export async function acceptProposal(
     fenceSourceFrom(target.kind === "home" ? target.dir : deps.repoRoot, rel),
   );
   if (fence !== null) return { ok: false, message: fence };
+  const sourceDir = target.kind === "home" ? target.dir : deps.repoRoot;
   const applyArgs =
     target.kind === "home" ? ["apply", "--unsafe-paths", `--directory=${target.dir}`] : ["apply"];
   try {
@@ -480,6 +624,10 @@ export async function acceptProposal(
       message: `patch does not apply cleanly: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`,
     };
   }
+  const shadow = await shadowApply(deps.git, patch, files, sourceDir);
+  if ("message" in shadow) return { ok: false, message: shadow.message };
+  const post = postImageViolation(files, shadow.before, shadow.after, kind);
+  if (post !== null) return { ok: false, message: post };
   if (target.kind === "home") {
     // The config home is not this repo: applied in place, nothing to commit.
     try {
@@ -495,6 +643,40 @@ export async function acceptProposal(
       slug,
       `accepted '${slug}': applied to ${target.path} (the install's config home — not committed)`,
     );
+  }
+  // The shared checkout is the companion's desk (rule 11): a target, or a
+  // bookkeeping file, with uncommitted edits would have those edits folded
+  // into this commit — and, for a seed, hashed into the ratification.
+  const touches = [
+    ...files,
+    ...(kind === "rubric"
+      ? [
+          ...files.map((rel) => `seeds/${rel}`),
+          "tests/fixtures/seed-manifest.json",
+          "tests/fixtures/ratified-divergence.json",
+        ]
+      : []),
+  ];
+  try {
+    const dirty = (
+      await deps.git.run("git", [
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+        "--",
+        ...touches,
+      ])
+    ).trim();
+    if (dirty.length > 0)
+      return {
+        ok: false,
+        message: `refused: uncommitted changes in the proposal's files — commit or wait for them first: ${dirty.split("\n").join("; ").slice(0, 200)}`,
+      };
+  } catch (err) {
+    return {
+      ok: false,
+      message: `refused: cannot read the checkout's status: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`,
+    };
   }
   try {
     await deps.git.run("git", ["apply", "-"], patch);
@@ -515,7 +697,9 @@ export async function acceptProposal(
       kind === "config"
         ? `config: accept '${slug}' — applied by the owner via TUI`
         : `rubric: accept '${slug}' — ratified by the owner via TUI`;
-    await deps.git.run("git", ["commit", "-m", subject]);
+    // `--only` with the paths: the commit is exactly this proposal. Anything
+    // else already staged in the shared checkout stays staged, uncommitted.
+    await deps.git.run("git", ["commit", "-m", subject, "--only", "--", ...toAdd]);
   } catch (err) {
     return {
       ok: false,
@@ -527,6 +711,54 @@ export async function acceptProposal(
     slug,
     `accepted '${slug}': ${files.join(", ")} — committed locally; deploy to ship`,
   );
+}
+
+/**
+ * Apply the patch with git to a throwaway copy of its targets and return both
+ * images — git's own placement, never a re-implementation of it. The copy
+ * lives in the OS temp dir and is always removed. A patch that does not apply
+ * to the copy is refused (it passed `--check` against the same bytes, so this
+ * is a race with a concurrent edit).
+ */
+async function shadowApply(
+  git: LocalGit,
+  patch: string,
+  files: string[],
+  sourceDir: string,
+): Promise<
+  { before: Map<string, string | null>; after: Map<string, string | null> } | { message: string }
+> {
+  const read = (dir: string, rel: string): string | null => {
+    try {
+      return readFileSync(join(dir, rel), "utf8");
+    } catch {
+      return null;
+    }
+  };
+  const shadow = mkdtempSync(join(tmpdir(), "qcr-proposal-"));
+  try {
+    const before = new Map<string, string | null>();
+    for (const rel of files) {
+      const content = read(sourceDir, rel);
+      before.set(rel, content);
+      if (content !== null) {
+        mkdirSync(dirname(join(shadow, rel)), { recursive: true });
+        writeFileSync(join(shadow, rel), content);
+      }
+    }
+    try {
+      await git.run("git", ["apply", "--unsafe-paths", `--directory=${shadow}`, "-"], patch);
+    } catch (err) {
+      return {
+        message: `patch does not apply cleanly: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`,
+      };
+    }
+    const after = new Map<string, string | null>();
+    for (const rel of files) after.set(rel, read(shadow, rel));
+    return { before, after };
+  } finally {
+    rmSync(shadow, { recursive: true, force: true });
+  }
 }
 
 /** The accepted proposal's dir is removed; a failed removal is said, not fatal. */

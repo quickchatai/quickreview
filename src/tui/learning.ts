@@ -437,17 +437,33 @@ export class LearningStore {
     });
   }
 
+  /** One accept at a time: each is several awaited git subprocesses in the
+   * ONE shared checkout, and two interleaved would commit each other's
+   * staged files. A second request while one runs is refused, not queued —
+   * the operator presses A again once the first has answered. */
+  private accepting = false;
+
   accept(slug: string): Promise<{ ok: boolean; message: string }> {
-    if (this.deps.accept) return this.deps.accept(this.app, slug);
-    return acceptProposal(
-      {
-        git: { run: this.deps.gitRun ?? failingGit },
-        repoRoot: this.deps.repoRoot ?? process.cwd(),
-        today: () => this.now().toISOString().slice(0, 10),
-        ...(this.deps.configPath ? { configPath: this.deps.configPath } : {}),
-      },
-      slug,
-    );
+    if (this.accepting)
+      return Promise.resolve({
+        ok: false,
+        message: `an accept is already running — '${slug}' not started; press A again once it answers`,
+      });
+    this.accepting = true;
+    const run = this.deps.accept
+      ? this.deps.accept(this.app, slug)
+      : acceptProposal(
+          {
+            git: { run: this.deps.gitRun ?? failingGit },
+            repoRoot: this.deps.repoRoot ?? process.cwd(),
+            today: () => this.now().toISOString().slice(0, 10),
+            ...(this.deps.configPath ? { configPath: this.deps.configPath } : {}),
+          },
+          slug,
+        );
+    return run.finally(() => {
+      this.accepting = false;
+    });
   }
 
   async reject(slug: string, reason: string): Promise<{ ok: boolean; message: string }> {

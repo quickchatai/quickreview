@@ -8,7 +8,10 @@
   (scratch git repo subprocesses) and `improvements-e2e.test.ts` (:
   the improvement channel against a scratch clone with a bare "remote" — the
   push, the caps and the dry-run suppression observed on the remote, through
-  the production git runner; no network). Five more shell out to git on the
+  the production git runner; no network). `proposals.test.ts` has one
+  scratch-repo block too: the rubric/config accept path against real `git
+  apply`/`commit` (selfscan2 — hunk relocation, binary sections, the `--only`
+  commit are only observable there). Five more shell out to git on the
   way to something else: `deploy.test.ts` and `publish-snapshot.test.ts`
   `init` a scratch repo for the script under test, `publishability.test.ts`
   runs `ls-files` on this checkout to enumerate what it lints, and
