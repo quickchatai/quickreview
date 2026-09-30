@@ -263,12 +263,15 @@ export function replayReads(
   tree: Pick<ReplayTree, "root" | "diffPath">,
 ): { pr: string[]; elsewhere: string[] } {
   const base = posix.normalize(`${tree.root}/`);
+  // The worktree itself counts: `grep` over the whole tree names its root
+  // (resolved without the trailing slash), and that search reads the PR.
+  const top = posix.normalize(tree.root).replace(/\/+$/, "");
   const diff = posix.normalize(tree.diffPath);
   const pr: string[] = [];
   const elsewhere: string[] = [];
   for (const r of reads) {
     const n = r.startsWith("/") ? posix.normalize(r) : null;
-    if (n !== null && (n.startsWith(base) || n === diff)) pr.push(r);
+    if (n !== null && (n.startsWith(base) || n === top || n === diff)) pr.push(r);
     else elsewhere.push(r);
   }
   return { pr, elsewhere };

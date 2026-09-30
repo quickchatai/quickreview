@@ -81,6 +81,13 @@ describe("a read counts as reading the PR only when it resolved inside its workt
     expect(replayReads(reads, tree)).toEqual({ pr: reads, elsewhere: [] });
   });
 
+  it("a grep over the whole worktree (its root, with or without the slash) reads the PR", () => {
+    const reads = [resolvedReadPath(ROOT, APP), resolvedReadPath(`${ROOT}/`, APP), resolvedReadPath(".", ROOT)];
+    expect(replayReads(reads, tree)).toEqual({ pr: reads, elsewhere: [] });
+    // …but a grep over the app root is not.
+    expect(replayReads([resolvedReadPath(".", APP)], tree)).toEqual({ pr: [], elsewhere: [APP] });
+  });
+
   it("a read that climbs out, or a sibling tree sharing the prefix, is not the PR", () => {
     const out = [resolvedReadPath(`${ROOT}/../other/svc/x.py`, APP), `${ROOT}-other/svc/x.py`];
     expect(replayReads(out, tree)).toEqual({ pr: [], elsewhere: out });
