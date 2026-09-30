@@ -397,6 +397,49 @@ describe("the cost preview gates every start", () => {
   });
 });
 
+describe("two overlapping starts", () => {
+  it("admit ONE survey: the second is refused even while the first still awaits memory readiness", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const mem = new FakeMemory();
+    let readies = 0;
+    (mem as MemoryStore).ensureWritable = async () => {
+      readies++;
+      await gate;
+      return { ok: true, message: "ready" };
+    };
+    const fake = new FakeCases();
+    const { engine } = setup({ memory: mem, cases: fake });
+    const r = await engine.surveyPreview();
+    if (!r.ok) throw new Error(r.errors.join("; "));
+    const a = engine.surveyStart({ key: r.preview.key });
+    const b = engine.surveyStart({ key: r.preview.key });
+    release();
+    const [ra, rb] = await Promise.all([a, b]);
+    expect(ra.ok).toBe(true);
+    expect(rb).toEqual({ ok: false, errors: [expect.stringMatching(/already (starting|running)/)] });
+    expect(readies).toBe(1);
+    await until(() => fake.pending().length === 1);
+    expect(fake.specs.length).toBe(1);
+    engine.surveyStop();
+    await engine.surveyIdle();
+  });
+
+  it("a start refused at memory readiness frees the slot for the next one", async () => {
+    const mem = new FakeMemory();
+    let ok = false;
+    (mem as MemoryStore).ensureWritable = async () => (ok ? { ok: true, message: "ready" } : { ok: false, message: "down" });
+    const fake = new FakeCases(() => answer("NONE"));
+    const { engine } = setup({ memory: mem, cases: fake });
+    const r = await engine.surveyPreview();
+    if (!r.ok) throw new Error(r.errors.join("; "));
+    expect(await engine.surveyStart({ key: r.preview.key })).toEqual({ ok: false, errors: [expect.stringMatching(/not writable: down/)] });
+    ok = true;
+    expect((await engine.surveyStart({ key: r.preview.key })).ok).toBe(true);
+    await engine.surveyIdle();
+  });
+});
+
 describe("a survey run", () => {
   async function started(opts: Parameters<typeof setup>[0] = {}) {
     const s = setup(opts);

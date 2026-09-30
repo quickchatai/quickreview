@@ -165,6 +165,8 @@ const clean = (err: unknown): string => (err instanceof Error ? err.message : St
 
 export class SurveyRunner {
   private active: { id: string; abort: AbortController; done: Promise<void> } | null = null;
+  /** A start is past admission and awaiting memory readiness. */
+  private starting = false;
   private readonly concurrency: number;
 
   constructor(
@@ -291,6 +293,7 @@ export class SurveyRunner {
    */
   async start(args: { key?: unknown; resurvey?: unknown }): Promise<{ ok: true; run: SurveyRun } | Refusal> {
     if (this.active) return { ok: false, errors: [`survey ${this.active.id} is still running — stop it or wait for it`] };
+    if (this.starting) return { ok: false, errors: ["a survey is already starting — wait for it"] };
     const memory = this.ports.memory;
     if (memory === null) return { ok: false, errors: [noMemory()] };
     const p = this.plan();
@@ -319,8 +322,16 @@ export class SurveyRunner {
       };
     }
     if (memory.ensureWritable) {
-      const ready = await memory.ensureWritable();
-      if (!ready.ok) return { ok: false, errors: [`reviewer memory is not writable: ${ready.message}`] };
+      // The slot is reserved across the await: a second start arriving while
+      // this one waits on memory would otherwise pass the `active` check too
+      // and launch a second drive over the same survey.json.
+      this.starting = true;
+      try {
+        const ready = await memory.ensureWritable();
+        if (!ready.ok) return { ok: false, errors: [`reviewer memory is not writable: ${ready.message}`] };
+      } finally {
+        this.starting = false;
+      }
     }
 
     const now = this.ports.clock();

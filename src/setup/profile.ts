@@ -356,7 +356,10 @@ export function checkStaged(home: ProfileHome, name: string, files: ProfileFiles
   const scratch = mkdtempSync(join(tmpdir(), "qcr-profile-check-"));
   try {
     const src = join(realHome, PROFILES_DIR);
-    if (existsSync(src)) cpSync(src, join(scratch, PROFILES_DIR), { recursive: true });
+    // Dereferenced: a copied symlink would still point into the LIVE tree
+    // (cpSync even rewrites a relative target to an absolute one), and the
+    // candidate write below would follow it and overwrite the real file.
+    if (existsSync(src)) cpSync(src, join(scratch, PROFILES_DIR), { recursive: true, dereference: true });
     const dir = join(scratch, PROFILES_DIR, assertPathSegment("profile", name));
     for (const [rel, text] of Object.entries(files)) {
       mkdirSync(dirname(join(dir, rel)), { recursive: true });

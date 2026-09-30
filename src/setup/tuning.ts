@@ -347,7 +347,13 @@ export function profileApply(deps: TuningDeps, input: ApplyInput, opts: { messag
       // what the write is about to replace, kept for the replay's
       // "old" side — BEFORE the files change, so a crash in between leaves a
       // baseline of the profile still on disk, never a missing one.
-      const id = commitId(now, profile);
+      const id = commitId(now, profile, (candidate) => {
+        try {
+          return deps.state.read(requestFile(candidate)) !== null || deps.state.read(resultFile(candidate)) !== null;
+        } catch {
+          return true; // unreadable: it exists, so it is taken
+        }
+      });
       try {
         recordBaseline(deps.state, {
           id,

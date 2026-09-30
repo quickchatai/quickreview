@@ -22,7 +22,7 @@
 // answer ("not-a-repo"), not a failure: a config home is a git repo only if
 // the operator made it one.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { PROFILES_DIR } from "../install.js";
 
@@ -52,9 +52,17 @@ export interface CommitResult {
 export const requestFile = (id: string): string => `${COMMITS_DIR}/${id}.request.json`;
 export const resultFile = (id: string): string => `${COMMITS_DIR}/${id}.result.json`;
 
-/** A commit id: a plain, sortable token (it names two files). */
-export function commitId(now: Date, profile: string): string {
-  return `${now.toISOString().replace(/[-:.]/g, "").replace("T", "-").slice(0, 15)}-${profile}`;
+/** A commit id: a plain, sortable token (it names two files and a replay
+ * baseline). Millisecond resolution, and `taken` — does a request or result
+ * already carry this id? — moves a same-instant write to `_2`, `_3`, … so two
+ * writes never share one id (a shared id replaced the first write's baseline
+ * and let the second be skipped as already answered). */
+export function commitId(now: Date, profile: string, taken: (id: string) => boolean = () => false): string {
+  const stamp = now.toISOString().replace(/[-:.]/g, "").replace("T", "-").slice(0, 18);
+  for (let n = 1; ; n++) {
+    const id = `${stamp}${n === 1 ? "" : `_${n}`}-${profile}`;
+    if (!taken(id)) return id;
+  }
 }
 
 /** Why a requested path is not one this may commit, or null when it is. */
@@ -147,10 +155,47 @@ export function processProfileCommits(opts: {
   } catch {
     return [];
   }
+  // One processor at a time (the TUI's mirror timer and `qcr setup commit`
+  // both run this): a second pass would re-answer a request the first just
+  // committed and publish "nothing-to-commit" over its sha. A lock older than
+  // PROCESS_LOCK_STALE_MS is a dead holder's and is taken over.
+  const lock = join(dir, PROCESS_LOCK);
+  if (!takeLock(lock, clock())) return [];
+  try {
+    return processLocked(dir, names, opts.stateHome, opts.configHome, git, clock);
+  } finally {
+    rmSync(lock, { force: true });
+  }
+}
+
+const PROCESS_LOCK = ".processing.lock";
+const PROCESS_LOCK_STALE_MS = 10 * 60 * 1000;
+
+function takeLock(path: string, now: Date): boolean {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      writeFileSync(path, `${process.pid} ${now.toISOString()}\n`, { flag: "wx" });
+      return true;
+    } catch {
+      let age: number;
+      try {
+        age = Date.now() - statSync(path).mtimeMs;
+      } catch {
+        continue; // released between the two calls: try again
+      }
+      if (age < PROCESS_LOCK_STALE_MS) return false;
+      rmSync(path, { force: true });
+    }
+  }
+  return false;
+}
+
+function processLocked(dir: string, names: string[], stateHome: string, configHome: string, git: GitRun, clock: () => Date): CommitResult[] {
   const done: CommitResult[] = [];
   for (const name of names.filter((n) => n.endsWith(".request.json")).sort()) {
     const id = name.slice(0, -".request.json".length);
-    if (names.includes(`${id}.result.json`)) continue;
+    // Re-read, not the listing: a result may have landed since it was taken.
+    if (names.includes(`${id}.result.json`) || existsSync(join(dir, `${id}.result.json`))) continue;
     let text: string;
     try {
       text = readFileSync(join(dir, name), "utf8");
@@ -163,12 +208,13 @@ export function processProfileCommits(opts: {
         ? { state: "refused" as const, detail: req }
         : req.id !== id
           ? { state: "refused" as const, detail: `the request's id ${JSON.stringify(req.id)} is not its file's` }
-          : commitOne(req, opts.configHome, git);
+          : commitOne(req, configHome, git);
     const result: CommitResult = { id, at: clock().toISOString(), ...outcome };
-    const target = join(opts.stateHome, resultFile(id));
+    const target = join(stateHome, resultFile(id));
     mkdirSync(dirname(target), { recursive: true });
-    writeFileSync(`${target}.tmp`, `${JSON.stringify(result, null, 2)}\n`);
-    renameSync(`${target}.tmp`, target);
+    const tmp = `${target}.${process.pid}.tmp`;
+    writeFileSync(tmp, `${JSON.stringify(result, null, 2)}\n`);
+    renameSync(tmp, target);
     done.push(result);
   }
   return done;

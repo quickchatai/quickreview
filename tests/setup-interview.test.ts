@@ -10,9 +10,9 @@
 // git repo (`processProfileCommits`) is a scratch repo, git being the thing
 // under test there.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
 import { ALL_PASSES, buildPassPlan } from "../src/dispatch.js";
@@ -348,6 +348,39 @@ describe("profile write tools: validate, diff, commit", () => {
     expect(torn.unanswered).toBeNull();
   });
 
+  it("a preview never writes through a symlinked profile file or profile directory into the live target", () => {
+    liveConfig("acme");
+    const original = 'extends = "default"\n';
+    // profile.toml is a link into the operator's dotfiles
+    write(join(dir, "dotfiles", "profile.toml"), original);
+    mkdirSync(profileDir("acme"), { recursive: true });
+    symlinkSync(join(dir, "dotfiles", "profile.toml"), join(profileDir("acme"), "profile.toml"));
+    const r = applied(engine().profileApply({ priorities: { security: "critical" } }));
+    expect(r.written).toBe(false);
+    expect(readFileSync(join(dir, "dotfiles", "profile.toml"), "utf8")).toBe(original);
+    // the whole profile directory is a link (a relative one)
+    rmSync(profileDir("acme"), { recursive: true, force: true });
+    write(join(dir, "dotfiles", "acme", "profile.toml"), original);
+    symlinkSync(relative(dirname(profileDir("acme")), join(dir, "dotfiles", "acme")), profileDir("acme"));
+    expect(readFileSync(join(profileDir("acme"), "profile.toml"), "utf8")).toBe(original);
+    applied(engine().profileApply({ priorities: { security: "critical" } }));
+    expect(readFileSync(join(dir, "dotfiles", "acme", "profile.toml"), "utf8")).toBe(original);
+  });
+
+  it("two changing writes in the same instant ask for two commits, never one reused id", () => {
+    liveConfig("acme");
+    const a = applied(engine().profileApply({ priorities: answers({ security: "critical" }), goals: "g", write: true }));
+    const b = applied(engine().profileApply({ priorities: { security: "important" }, write: true }));
+    expect(a.commit).not.toBeNull();
+    expect(b.commit).not.toBeNull();
+    expect(b.commit!.id).not.toBe(a.commit!.id);
+    const names = readdirSync(join(dir, "state", "setup", "commits")).filter((n) => n.endsWith(".request.json")).sort();
+    expect(names).toEqual([`${a.commit!.id}.request.json`, `${b.commit!.id}.request.json`]);
+    const s = engine().profileStatus();
+    if (!("commits" in s)) throw new Error("refused");
+    expect(s.commits.map((c) => c.id)).toEqual([a.commit!.id, b.commit!.id]);
+  });
+
   it("a write asks for a commit of exactly the profile's files; the operator's machine carries it out", () => {
     liveConfig("acme");
     const r = applied(engine().profileApply({ priorities: answers({ security: "critical" }), goals: "g", style_guide: "# s\n", write: true }));
@@ -421,6 +454,38 @@ describe("the commit hand-off (processProfileCommits)", () => {
     now = new Date("2026-09-29T11:00:00Z");
     applied(engine().profileApply({ priorities: { security: "important" }, write: true }));
   }
+
+  it("two host processors never both answer one request: a pass that holds the lock is left alone, a result another wrote is kept", () => {
+    const stateHome = join(dir, "state");
+    const commits = join(stateHome, "setup", "commits");
+    write(join(commits, "a.request.json"), JSON.stringify({ id: "a", message: "m", paths: ["profiles/acme/profile.toml"] }));
+    write(join(commits, "b.request.json"), JSON.stringify({ id: "b", message: "m", paths: ["profiles/acme/profile.toml"] }));
+    const theirs = { id: "b", at: "t", state: "committed", sha: "abc", detail: "theirs" };
+    // while A is being processed, another processor answers B
+    const racing: GitRun = (args) => {
+      if (args[0] === "add" && !existsSync(join(commits, "b.result.json"))) write(join(commits, "b.result.json"), JSON.stringify(theirs));
+      if (args[0] === "rev-parse" && args[1] === "--show-toplevel") return { code: 0, stdout: home(), stderr: "" };
+      if (args[0] === "diff") return { code: 1, stdout: "", stderr: "" };
+      return { code: 0, stdout: "sha1\n", stderr: "" };
+    };
+    mkdirSync(home(), { recursive: true });
+    const done = processProfileCommits({ stateHome, configHome: home(), git: racing });
+    expect(done.map((r) => r.id)).toEqual(["a"]);
+    expect(JSON.parse(readFileSync(join(commits, "b.result.json"), "utf8"))).toEqual(theirs);
+
+    // a live lock held by another pass: this one does nothing
+    write(join(commits, "c.request.json"), JSON.stringify({ id: "c", message: "m", paths: ["profiles/acme/profile.toml"] }));
+    write(join(commits, ".processing.lock"), "other\n");
+    const calls: string[][] = [];
+    const counting: GitRun = (args, cwd) => (calls.push(args), racing(args, cwd));
+    expect(processProfileCommits({ stateHome, configHome: home(), git: counting })).toEqual([]);
+    expect(calls).toEqual([]);
+    // a stale lock (its holder died) is taken over
+    const old = new Date(Date.now() - 60 * 60 * 1000);
+    utimesSync(join(commits, ".processing.lock"), old, old);
+    expect(processProfileCommits({ stateHome, configHome: home(), git: counting }).map((r) => r.id)).toEqual(["c"]);
+    expect(existsSync(join(commits, ".processing.lock"))).toBe(false);
+  });
 
   it("a request naming anything outside profiles/ is refused before git sees it", () => {
     expect(refusePath("profiles/acme/profile.toml")).toBeNull();
