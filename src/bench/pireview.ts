@@ -75,6 +75,7 @@ import { join } from "node:path";
 import { safeId, type BenchCase, type CaseSet, type PrefetchMeta } from "./aacr.js";
 import { AuthExpiring, syncBenchAuth } from "./auth.js";
 import { run } from "./exec.js";
+import { PI_DISABLED_BUILTINS } from "../pibuiltins.js";
 import { prTextFor } from "./prtext.js";
 import { roundMetrics } from "./report.js";
 import { prepareTree } from "./runner.js";
@@ -178,6 +179,30 @@ export function pireviewEnv(o: {
 /** The pi global settings for this arm: only what keeps a non-interactive run
  * from stalling — no extensions, no quickreviewd bash-guard. */
 export const PIREVIEW_PI_SETTINGS = { defaultProjectTrust: "always" } as const;
+
+/** pi from 0.99.0 on ships built-in extensions loaded by default (mcp,
+ * codemode, tool-search, llama.cpp — src/pibuiltins.ts), and pi-review runs
+ * with its cwd INSIDE the reviewed checkout, whose own `.pi/mcp.json` a
+ * built-in mcp would read. pi-review's children already run
+ * `--no-extensions` (which drops built-ins from the final set in 0.99.1,
+ * resource-loader.js), so this is the belt: the documented `-builtin:<name>`
+ * switch in the global settings too. On an older pi (the published arms ran
+ * 0.87.1) the settings stay exactly PIREVIEW_PI_SETTINGS, so a re-run of a
+ * published configuration writes the same file. */
+export function pireviewPiSettings(piVersion: string): Record<string, unknown> {
+  return piHasBuiltins(piVersion)
+    ? { ...PIREVIEW_PI_SETTINGS, extensions: [...PI_DISABLED_BUILTINS] }
+    : { ...PIREVIEW_PI_SETTINGS };
+}
+
+/** pi >= 0.99.0 (the release that started loading built-in extensions). An
+ * unreadable version is treated as having them — disabling is harmless. */
+export function piHasBuiltins(piVersion: string): boolean {
+  const m = /^(\d+)\.(\d+)\./.exec(piVersion);
+  if (!m) return true;
+  const [maj, min] = [Number(m[1]), Number(m[2])];
+  return maj > 0 || min >= 99;
+}
 
 // ---- reading what pi-review did ------------------------------------------------------
 
@@ -825,6 +850,7 @@ export async function runPireviewReview(r: PireviewReviewRun): Promise<number> {
     ...(r.panel ? { panel: r.panel } : {}),
     ...(r.prText ? { pr_text: true as const } : {}),
   };
+  const piSettings = pireviewPiSettings(r.piVersion);
   mkdirSync(r.outDir, { recursive: true });
   const runFile = join(r.outDir, "run.json");
   const previous = existsSync(runFile)
@@ -857,6 +883,9 @@ export async function runPireviewReview(r: PireviewReviewRun): Promise<number> {
     // The equal-inputs switch (src/bench/prtext.ts): the PR title/body in the target.
     pr_text: r.prText === true,
     flags: { timeout_min: r.timeoutMin },
+    // The child pi's global settings (pireviewPiSettings): on pi >= 0.99 they
+    // switch its built-in extensions off.
+    pi_settings: piSettings,
     qcr_commit: r.qcrCommit,
     cases: r.cases.map((c) => c.instance_id),
     started_at:
@@ -889,7 +918,7 @@ export async function runPireviewReview(r: PireviewReviewRun): Promise<number> {
       });
       // …and pi-review's child gets pi's defaults, not the quickreviewd sandbox's
       // global settings (bash-guard registered for OUR sessions).
-      writeFileSync(join(r.agentDir, "settings.json"), JSON.stringify(PIREVIEW_PI_SETTINGS, null, 2) + "\n");
+      writeFileSync(join(r.agentDir, "settings.json"), JSON.stringify(piSettings, null, 2) + "\n");
     } catch (err) {
       if (!(err instanceof AuthExpiring)) throw err;
       stopped = err.message;
