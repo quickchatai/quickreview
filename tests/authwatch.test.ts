@@ -45,7 +45,7 @@ function jsonl(rel: string, content: string, mtime?: Date): string {
 describe("scanPiAuthErrors", () => {
   it("matches the live error signature, in nested per-cwd dirs, tail-only", () => {
     expect(PI_AUTH_ERROR_RE.test(ERR)).toBe(true);
-    jsonl("--opt-quickreview-sandbox--/a.jsonl", "x".repeat(200) + ERR);
+    jsonl("--opt-quickreview-sandbox--/a.jsonl", JSON.stringify({ pad: "x".repeat(200) }) + "\n" + ERR);
     // A file larger than the tail window with the error OUTSIDE the tail is
     // (deliberately) not matched — live failures sit at the end of the file.
     jsonl("--opt-quickreview-sandbox--/old-error.jsonl", ERR + "y".repeat(AUTH_TAIL_BYTES + 1024));
@@ -53,6 +53,32 @@ describe("scanPiAuthErrors", () => {
     jsonl("not-a-session.txt", ERR);
     const hits = scanPiAuthErrors(dir, 0);
     expect(hits.map((h) => h.file.split("/").pop())).toEqual(["a.jsonl"]);
+  });
+
+  it("quoted text is not an auth failure: only a record's errorMessage field counts", () => {
+    // A reviewer session reads a PR touching OAuth code: the tool result
+    // carries the signature as TEXT — even spelled as a JSON errorMessage.
+    const toolResult = JSON.stringify({
+      type: "message",
+      message: {
+        role: "toolResult",
+        content: [
+          {
+            type: "text",
+            text: 'raise OAuthError("invalid_grant")  # 401 Unauthorized\n{"errorMessage":"Provided authentication token is expired."}',
+          },
+        ],
+      },
+    });
+    jsonl("--opt-quickreview-sandbox--/quoted.jsonl", toolResult + "\n" + "not json: invalid_grant\n");
+    // The live shape: an assistant message pi stopped with an error.
+    const real = JSON.stringify({
+      type: "message",
+      message: { role: "assistant", stopReason: "error", errorMessage: "Provided authentication token is expired." },
+    });
+    jsonl("--opt-quickreview-sandbox--/real.jsonl", real + "\n");
+    const hits = scanPiAuthErrors(dir, 0);
+    expect(hits.map((h) => h.file.split("/").pop())).toEqual(["real.jsonl"]);
   });
 
   it("ignores files older than sinceMs", () => {

@@ -5,10 +5,36 @@
 // The scanner tail-reads recently-modified *.jsonl under the pi sessions dir
 // (one nesting level: pi groups sessions by cwd) — cheap enough for a 60s
 // tick, and entirely observational: it never talks to any API.
+// Only a record's own `errorMessage` FIELD is tested — never the raw line:
+// reviewer sessions store tool results verbatim (diffs, file reads, CI logs),
+// and a PR touching OAuth code puts "invalid_grant" in them as plain text.
 import { closeSync, openSync, readSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 export const PI_AUTH_ERROR_RE = /authentication token is expired|invalid_grant|401 unauthorized/i;
+
+/** True when a JSONL line is a record carrying an auth-failure `errorMessage`
+ * field — at any depth, since a subagent's failed message arrives nested in
+ * its tool result. Text inside string values (tool output, quoted JSON) never
+ * matches: it is data, not a key. Non-JSON lines never match. */
+export function lineHasAuthError(line: string): boolean {
+  if (!line.includes("errorMessage")) return false;
+  let record: unknown;
+  try {
+    record = JSON.parse(line);
+  } catch {
+    return false;
+  }
+  const visit = (x: unknown, depth: number): boolean => {
+    if (depth > 12 || typeof x !== "object" || x === null) return false;
+    if (Array.isArray(x)) return x.some((y) => visit(y, depth + 1));
+    const r = x as Record<string, unknown>;
+    const msg = r["errorMessage"];
+    if (typeof msg === "string" && PI_AUTH_ERROR_RE.test(msg)) return true;
+    return Object.values(r).some((v) => visit(v, depth + 1));
+  };
+  return visit(record, 0);
+}
 
 /** Only the tail is read: session JSONLs grow large, and a live auth failure
  * is by definition near the end of the file. */
@@ -78,7 +104,7 @@ export function scanPiAuthErrors(
       try {
         const { text, next } = readFrom(path, seen?.get(path) ?? 0, AUTH_TAIL_BYTES);
         seen?.set(path, next);
-        if (PI_AUTH_ERROR_RE.test(text)) hits.push({ file: path, mtimeMs: st.mtimeMs });
+        if (text.split("\n").some(lineHasAuthError)) hits.push({ file: path, mtimeMs: st.mtimeMs });
       } catch {
         // skip
       }
