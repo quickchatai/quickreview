@@ -366,7 +366,7 @@ describe("the scripts that wire the Codex arm", () => {
   it("bench.sh builds and runs the codex target hardened; only its review loosens seccomp", () => {
     const sh = read("bench", "aacr", "bench.sh");
     expect(sh).toContain(
-      'codex) IMAGE="${QCR_BENCH_CODEX_IMAGE:-qcr-bench-codex:latest}"; TARGET=codex; BASE_ARGS=(); REVIEW_ENTRY=codex-review ;;',
+      'codex) IMAGE="${QCR_BENCH_CODEX_IMAGE:-qcr-bench-codex:latest}"; TARGET=codex; BASE_ARGS=(); REVIEW_ENTRY=codex-review\n',
     );
     const tarList = sh.slice(sh.indexOf("tar -cf -"), sh.indexOf("| tar -xf -"));
     expect(tarList).toContain("bench/aacr/codex_arm.py");
