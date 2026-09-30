@@ -51,6 +51,7 @@ import {
   REPLAY_FILE,
   REPLAY_VERSION,
   replayLensPrompt,
+  replayReads,
   replayValidatorPrompt,
   SIDES,
   type ComparedPair,
@@ -126,6 +127,11 @@ export interface ReplayCaseState {
   started_at: string | null;
   finished_at: string | null;
   kind: "lens" | "validate";
+  /** How many of its file reads opened the PR (inside its worktree, or its
+   * diff file) and how many opened something else — a relative read resolves
+   * against the app root, the wrong repository. Absent when the runner did
+   * not report reads. */
+  reads?: { pr: number; elsewhere: number };
   /** A validation's findings split: survivors kept, doubted kept and marked,
    * killed dropped. */
   kept?: number;
@@ -226,6 +232,7 @@ interface CaseJob {
   /** For a validation: the lens cases whose findings it reads, per side. */
   reads?: string[];
   root: string;
+  diffPath: string;
   /** What the preview's key covers of it: the built agent and its task. */
   fingerprint: string;
 }
@@ -392,6 +399,7 @@ export class ReplayRunner {
               agentsDir: s.agentsDir,
               prompt: () => prompt,
               root: tree.root,
+              diffPath: tree.diffPath,
               fingerprint: key,
             };
             byKey.set(key, job);
@@ -445,6 +453,7 @@ export class ReplayRunner {
             prompt: (candidates) => replayValidatorPrompt(pr, tree, VALIDATE_PASS, candidates),
             reads: read[side],
             root: tree.root,
+            diffPath: tree.diffPath,
             fingerprint: caseKey(v.text, read[side].join(",")),
           };
           jobs.push(job);
@@ -712,6 +721,17 @@ export class ReplayRunner {
       c.status = signal.aborted ? "stopped" : "failed";
       c.error = outcome.reason;
       return spent;
+    }
+    if (outcome.reads !== undefined) {
+      const r = replayReads(outcome.reads, { root: job.root, diffPath: job.diffPath });
+      c.reads = { pr: r.pr.length, elsewhere: r.elsewhere.length };
+      if (r.elsewhere.length > 0) {
+        const n = r.elsewhere.length;
+        const shown = r.elsewhere.slice(0, 3).join(", ") + (n > 3 ? ", …" : "");
+        run.problems.push(
+          `${c.id}: ${c.lens} — ${r.pr.length === 0 ? `read none of PR #${c.pr}'s files: ` : ""}${n} file read${n === 1 ? "" : "s"} opened outside PR #${c.pr}'s worktree (${shown}) — not the PR's code`,
+        );
+      }
     }
     if (c.kind === "lens") {
       const answer = parseScanAnswer(outcome.output, { root: job.root, deepLenses: [] });

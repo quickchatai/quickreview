@@ -509,6 +509,40 @@ describe("replay: cost first, subagents, side by side", () => {
     expect(aborted).toEqual([true]);
   });
 
+  it("a lens's relative read that opened the APP's file is not credited as reading the PR — and is said", async () => {
+    const calls: Call[] = [];
+    const base = fakeRunner(calls);
+    const rr = new ReplayRunner({
+      state: stateHomeFs(stateRoot()),
+      clock: () => now,
+      source: { pr: async (n) => ({ ok: true, pr: pr(n) }), open: () => ({ ok: true, tree: tree() }) },
+      sides: (req) => replaySides({ root: sandbox, env, stateRoot: stateRoot(), state: stateHomeFs(stateRoot()), clock: () => now }, req),
+      cases: (agentsDir) => ({
+        run: async (spec, signal, onCost) => {
+          const out = await base(agentsDir).run(spec, signal, onCost);
+          if (!out.ok) return out;
+          // The runner reports reads RESOLVED against its cwd (the app root):
+          // the baseline lens named `svc/auth/token.py` relatively, so it
+          // opened the app's copy; every other lens opened the worktree's.
+          const reads = spec.agent.startsWith("pass-baseline--")
+            ? ["/workspace/svc/auth/token.py"]
+            : [join(dir, "tree", FILE), join(dir, "pr.diff")];
+          return { ...out, reads };
+        },
+      }),
+      styleGuide: () => [],
+      concurrency: 2,
+    });
+    const run = await ran(rr, previewOf(await rr.preview({ prs: [7], old: "none" })).key);
+    const baseline = run.cases.find((c) => c.agent.startsWith("pass-baseline--"))!;
+    expect(baseline.reads).toEqual({ pr: 0, elsewhere: 1 });
+    const other = run.cases.find((c) => c.kind === "lens" && !c.agent.startsWith("pass-baseline--"))!;
+    expect(other.reads).toEqual({ pr: 2, elsewhere: 0 });
+    expect(run.problems.filter((p) => p.includes("outside PR #7's worktree"))).toEqual([
+      expect.stringMatching(/pass-baseline — read none of PR #7's files: 1 file read opened outside PR #7's worktree \(\/workspace\/svc\/auth\/token\.py\)/),
+    ]);
+  });
+
   it("a finished replay prices the next preview from what it measured", async () => {
     const rr = runner([], () => 0.5);
     const p = previewOf(await rr.preview({ prs: [7], old: "none" }));
