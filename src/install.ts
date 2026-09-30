@@ -65,6 +65,12 @@ export interface InstallEnv {
    * host, where the XDG derivation below is the answer. */
   QCR_CONFIG_HOME?: string;
   QCR_STATE_HOME?: string;
+  /** A daemon container's secrets mount (absolute paths only): both
+   * entrypoints export their read-only `/opt/quickreview/secrets`. config.toml
+   * is shared with the host, so a set `[github] secrets_dir` names a HOST
+   * path the container cannot see; inside one, the mount is the answer.
+   * Unset on a host. */
+  QCR_SECRETS_MOUNT?: string;
   QCR_INSTALL?: string;
   XDG_CONFIG_HOME?: string;
   XDG_STATE_HOME?: string;
@@ -667,13 +673,16 @@ export function isLegacySecretsSpelling(value: string, env: InstallEnv = process
 
 /**
  * Where the secrets came from:
+ *   mount      — `$QCR_SECRETS_MOUNT`: inside a daemon container the mount is
+ *                the only place the secrets are, whatever the shared config
+ *                names (that is a host path)
  *   configured — `[github] secrets_dir`, set to something other than the old
  *                default: the operator named it, it is taken as given
  *   override   — the caller's env override (`$QC_SECRETS_DIR`, the wizards')
  *   home       — `<config home>/secrets`, whether or not it exists yet (that
  *                is where new secrets are written)
  */
-export type SecretsSource = "configured" | "override" | "home";
+export type SecretsSource = "mount" | "configured" | "override" | "home";
 
 export interface LocatedSecrets {
   path: string;
@@ -693,6 +702,8 @@ export interface LocateSecretsOptions {
 export function locateSecrets(opts: LocateSecretsOptions = {}): LocatedSecrets {
   const env = opts.env ?? process.env;
   const home = secretsHome(env);
+  const mount = (env.QCR_SECRETS_MOUNT ?? "").trim();
+  if (isAbsolute(mount)) return { path: mount, source: "mount", home };
   const configured = (opts.configured ?? "").trim();
   if (configured !== "" && !isLegacySecretsSpelling(configured, env))
     return { path: expandHomeIn(configured, env), source: "configured", home };

@@ -23,8 +23,9 @@
 // The compose route mounts the WHOLE secrets dir into the container read-only,
 // so the key file must never sit inside it. Its documented home is the
 // operator home, outside every mounted dir; `resolveKeysFile`
-// refuses any layout that would put it inside the secrets dir or the config
-// home anyway, rather than writing a key into a mounted directory. (The old
+// refuses any layout that would put it inside a dir the container mounts
+// anyway (the secrets dir, the config home, the live config's directory, the
+// checkout — `keysFileConfinement`), rather than writing a key into a mounted directory. (The old
 // relocation out of the old secrets dir went with that dir,.)
 //
 // IDEMPOTENT BY CONSTRUCTION. An existing key is left exactly alone: minting
@@ -60,6 +61,7 @@
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -77,6 +79,7 @@ import {
   locateSecrets,
 } from "../../install.js";
 import { CHOICE_KEYS, type MemoryChoice } from "../choices.js";
+import { configMountOf } from "./bringup.js";
 import { readTomlKey } from "./ingress.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 
@@ -225,32 +228,59 @@ export function resolveKeysFile(
   secretsDir: string,
   env: NodeJS.ProcessEnv,
   home: string,
+  mounted: readonly string[] = [],
 ): KeysFileChoice {
   const pinned = (env.QCR_OPENVIKING_KEYS ?? "").trim() !== "";
   const candidate = documentedKeysFile(env, home);
-  // the install's config home is mounted read-only into the daemon
-  // container too (the compose route), so a key file pinned inside
-  // it is exactly as readable by a review session as one in the secrets dir.
-  const cfgHome = configHome({ ...env, HOME: home });
-  if (pinned && isInside(cfgHome, candidate)) {
+  return keysFileConfinement(candidate, secretsDir, env, home, mounted, pinned);
+}
+
+/**
+ * Is a key file at `path` confined — outside EVERY directory the daemon
+ * container mounts? Those are the secrets dir, the install's config home
+ *, and whatever the caller adds: bring-up mounts the directory of
+ * the live config.toml (wherever `QCR_CONFIG` points, `configMountOf`) and the
+ * whole checkout (read-write, at /opt/quickreview/sandbox). A key file inside
+ * any of them is one `cat` away from every review session.
+ */
+export function keysFileConfinement(
+  path: string,
+  secretsDir: string,
+  env: NodeJS.ProcessEnv,
+  home: string,
+  mounted: readonly string[] = [],
+  pinned = true,
+): KeysFileChoice {
+  const fix = pinned
+    ? "Point it at a path outside that directory and run this step again."
+    : "Point the secrets dir elsewhere, or set QCR_OPENVIKING_KEYS to a path outside it, and run this step again.";
+  const what = pinned ? "QCR_OPENVIKING_KEYS points" : `the key file's home ${path} sits`;
+  if (isInside(secretsDir, path)) {
     return {
-      path: candidate,
+      path,
       unsafe: true,
       note:
-        `QCR_OPENVIKING_KEYS points inside the install's config home (${cfgHome}), which the container mounts read-only — ` +
-        "a review session could read the companion key there. Point it at a path outside that directory and run this step again.",
+        `${what} inside the daemon-side secrets dir (${secretsDir}), which the container mounts read-only — ` +
+        `a review session could read the companion key there. ${fix}`,
     };
   }
-  if (!isInside(secretsDir, candidate)) return { path: candidate, unsafe: false, note: "" };
-  return {
-    path: candidate,
-    unsafe: true,
-    note: pinned
-      ? `QCR_OPENVIKING_KEYS points inside the daemon-side secrets dir (${secretsDir}), which the container mounts read-only — ` +
-        "a review session could read the companion key there. Point it at a path outside that directory and run this step again."
-      : `the key file's home ${candidate} sits inside the daemon-side secrets dir (${secretsDir}), which the container mounts read-only — ` +
-        "a review session could read the companion key there. Point the secrets dir elsewhere, or set QCR_OPENVIKING_KEYS to a path outside it, and run this step again.",
-  };
+  const cfgHome = configHome({ ...env, HOME: home });
+  const places: Array<[string, string]> = [
+    [cfgHome, `the install's config home (${cfgHome}), which the container mounts read-only`],
+    ...mounted.map(
+      (dir): [string, string] => [dir, `${dir}, which the daemon container mounts`],
+    ),
+  ];
+  for (const [dir, label] of places) {
+    if (isInside(dir, path)) {
+      return {
+        path,
+        unsafe: true,
+        note: `${what} inside ${label} — a review session could read the companion key there. ${fix}`,
+      };
+    }
+  }
+  return { path, unsafe: false, note: "" };
 }
 
 // ---- small file helpers (0600 everywhere) -----------------------------------
@@ -315,26 +345,35 @@ export function renderKeysFile(
   return `${[...head, ...body].join("\n")}\n`;
 }
 
-/** Every file directly under `dir` whose contents contain `value`. The
- * companion-key negative assertion runs through this. */
+/** Every file under `dir`, at any depth (the whole tree is bind-mounted),
+ * whose contents contain `value`. The companion-key negative assertion runs
+ * through this. A symlinked directory is not descended: its target is not
+ * part of the mount. */
 export function filesContaining(dir: string, value: string): string[] {
   if (!value || !existsSync(dir)) return [];
   const hits: string[] = [];
-  let names: string[];
-  try {
-    names = readdirSync(dir);
-  } catch {
-    return [];
-  }
-  for (const name of names) {
-    const path = join(dir, name);
+  const walk = (at: string): void => {
+    let names: string[];
     try {
-      if (!statSync(path).isFile()) continue;
-      if (readFileSync(path, "utf8").includes(value)) hits.push(path);
+      names = readdirSync(at);
     } catch {
-      /* unreadable file — cannot leak what we cannot read here either */
+      return;
     }
-  }
+    for (const name of names) {
+      const path = join(at, name);
+      try {
+        if (lstatSync(path).isDirectory()) {
+          walk(path);
+          continue;
+        }
+        if (!statSync(path).isFile()) continue;
+        if (readFileSync(path, "utf8").includes(value)) hits.push(path);
+      } catch {
+        /* unreadable file — cannot leak what we cannot read here either */
+      }
+    }
+  };
+  walk(dir);
   return hits;
 }
 
@@ -410,6 +449,8 @@ interface Resolved {
   base: string;
   account: string;
   env: NodeJS.ProcessEnv;
+  home: string;
+  mounted: string[];
 }
 
 function resolvePaths(opts: MemoryStepOptions, ctx: StepContext): Resolved {
@@ -418,20 +459,24 @@ function resolvePaths(opts: MemoryStepOptions, ctx: StepContext): Resolved {
   const secretsDir = opts.secretsDir
     ? resolve(opts.secretsDir)
     : resolveSecretsDir(env, home, configuredSecretsDir(ctx.adapters.paths.configPath));
+  const mounted = daemonMounts(ctx);
   const keys = opts.keysFile
-    ? {
-        path: resolve(opts.keysFile),
-        unsafe: isInside(secretsDir, opts.keysFile),
-        note: "",
-      }
-    : resolveKeysFile(secretsDir, env, home);
+    ? keysFileConfinement(resolve(opts.keysFile), secretsDir, env, home, mounted)
+    : resolveKeysFile(secretsDir, env, home, mounted);
   // The endpoint is the memory forward's loopback listener (the VM route) or
   // the local server (the laptop route) — same address either way, which is
   // why the forward binds 127.0.0.1 as well as the docker bridge.
   const base =
     opts.base ?? ((env.QCR_OV_BASE ?? "").trim() || `http://127.0.0.1:${OPENVIKING_DEFAULTS.port}`);
   const account = opts.account ?? ((env.QCR_OV_ADMIN_ACCOUNT ?? "").trim() || "default");
-  return { secretsDir, keys, base, account, env };
+  return { secretsDir, keys, base, account, env, home, mounted };
+}
+
+/** The host dirs bring-up mounts into the daemon container besides the
+ * secrets dir and the config home: the live config's directory
+ * (`configMountOf`) and the checkout. */
+function daemonMounts(ctx: StepContext): string[] {
+  return [configMountOf(ctx.adapters.paths.configPath).dir, repoRootFrom(ctx.adapters.paths.stateDir)];
 }
 
 /** Placement: root + reviewer daemon-side, both USER keys operator-side, the
@@ -680,8 +725,11 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
       if (ctx.choices[MEMORY_CHOICE_KEY] === "declined" || ctx.data.declined === true) {
         return { ok: true, checks: [...DECLINED_CHECKS] };
       }
-      const { secretsDir, keys, base } = resolvePaths(opts, ctx);
+      const { secretsDir, keys, base, env, home, mounted } = resolvePaths(opts, ctx);
       const keysPath = typeof ctx.data.keys_file === "string" ? ctx.data.keys_file : keys.path;
+      // Confinement against the CURRENT mounts: the layout may have moved
+      // since this step placed the file (a new config location, a new pin).
+      const placement = keysFileConfinement(keysPath, secretsDir, env, home, mounted);
       const checks: CheckResult[] = [];
 
       const rootPath = join(secretsDir, ROOT_KEY_FILE);
@@ -721,13 +769,23 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
         ...(companionKey ? filesContaining(secretsDir, companionKey) : []),
         ...(isInside(secretsDir, keysPath) ? [keysPath] : []),
       ];
+      // The recorded file (its secrets-dir case is already in `leaked`), then
+      // the file the locator names NOW, which is what the TUI and companion read.
+      const misplaced =
+        placement.unsafe && !isInside(secretsDir, keysPath)
+          ? placement
+          : keys.unsafe && resolve(keys.path) !== resolve(keysPath)
+            ? keys
+            : undefined;
       checks.push({
         name: "companion-key-confinement",
-        ok: leaked.length === 0,
+        ok: leaked.length === 0 && misplaced === undefined,
         detail:
-          leaked.length === 0
-            ? `no companion key under ${secretsDir} — review sessions cannot reach companion memory through the secrets mount`
-            : `the companion key is reachable from the daemon-side secrets dir (${leaked.join(", ")}) — remove it and re-run this step`,
+          leaked.length > 0
+            ? `the companion key is reachable from the daemon-side secrets dir (${leaked.join(", ")}) — remove it and re-run this step`
+            : misplaced !== undefined
+              ? `the key file ${misplaced.path} is no longer confined: ${misplaced.note}`
+              : `no companion key under ${secretsDir}, and the key file sits outside every directory the daemon container mounts`,
       });
 
       if (!companionKey || !reviewerKey) {

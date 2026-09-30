@@ -145,6 +145,26 @@ export function bringUpStep(opts: BringUpStepOptions = {}): OnboardingStep {
         return { ok: false, checks };
       }
 
+      // The two host dirs the compose file bind-mounts from .env values.
+      // Compose interpolates `$VAR` in an unquoted .env value, so a path
+      // carrying a `$` would mount a DIFFERENT directory than this one
+      // (`/srv/$TEAM` → `/srv/` with TEAM unset) — refused before anything
+      // is created or written.
+      const mount = configMountOf(ctx.adapters.paths.configPath);
+      const secretsDir = secretsDirFor(ctx.adapters, ctx.choices);
+      const uninterpolable = [mount.dir, mount.name, secretsDir].filter((p) => /[$\n]/.test(p));
+      if (uninterpolable.length > 0) {
+        checks.push({
+          name: "mount-paths",
+          ok: false,
+          detail:
+            `${uninterpolable.join(", ")} cannot be passed to Docker Compose through .env: Compose expands \`$\` in it, ` +
+            "so it would mount a different directory than the one you chose — Fix: move it to a path without `$` " +
+            "(the config's [github] secrets_dir, or where QCR_CONFIG points) and run this step again",
+        });
+        return { ok: false, checks };
+      }
+
       // The project .env: the uid for the image build, and the ingress profile
       // the ingress step chose (re-asserted here so a hand-edited .env cannot
       // silently bring up a different shape than the checklist recorded).
@@ -163,7 +183,6 @@ export function bringUpStep(opts: BringUpStepOptions = {}): OnboardingStep {
       // container's config home — the one holding the config the install
       // locator found — the only config the container reads. Created here so
       // Docker never creates it, owned by root.
-      const mount = configMountOf(ctx.adapters.paths.configPath);
       mkdirSync(mount.dir, { recursive: true, mode: 0o700 });
       next = setEnvKey(next, "QCR_CONFIG_HOME", mount.dir);
       next = setEnvKey(next, "QCR_CONFIG_NAME", mount.name);
@@ -172,7 +191,6 @@ export function bringUpStep(opts: BringUpStepOptions = {}): OnboardingStep {
       // the daemon's loader reaches (the compose default is only the default
       // install's, for a stack started by hand before this step ran). Created here
       // for the same reason as the config home: never by Docker, as root.
-      const secretsDir = secretsDirFor(ctx.adapters, ctx.choices);
       mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
       next = setEnvKey(next, "QCR_SECRETS_DIR", secretsDir);
       if (next !== envText) writeAtomic(`${root}/.env`, next);

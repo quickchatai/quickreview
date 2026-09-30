@@ -475,6 +475,15 @@ describe("ansible decoupling", () => {
 // legacy-default `secrets_dir`) resolves to the mount through the HOME rule,
 // not the legacy fallback. The real lines, run in a real bash, temp HOME only.
 describe("entrypoint secrets link", () => {
+  // A configured [github] secrets_dir names a HOST path; the container sees
+  // the secrets only at the mount. The entrypoint names the mount to the
+  // locator, which the daemon, its sessions and mint-token.sh all inherit.
+  for (const rel of ["docker/daemon/entrypoint.sh", "deploy/ansible/templates/entrypoint.sh.j2"]) {
+    it(`${rel} names the secrets mount to the install locator`, () => {
+      const text = readFileSync(resolve(root, rel), "utf8");
+      expect(text).toMatch(/^export QCR_SECRETS_MOUNT="\$SECRETS"$/m);
+    });
+  }
   for (const rel of ["docker/daemon/entrypoint.sh", "deploy/ansible/templates/entrypoint.sh.j2"]) {
     it(`${rel} links <config home>/secrets to the mount, where the locator looks`, async () => {
       const { locateSecrets } = await import("../src/install.js");

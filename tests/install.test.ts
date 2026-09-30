@@ -678,6 +678,24 @@ describe("locateSecrets", () => {
     });
   });
 
+  // config.toml names HOST paths, and a container sees its secrets only at
+  // the mount — so inside one, the mount the entrypoint names is the answer,
+  // whatever the (shared) config says. On a host the knob is never set.
+  it("inside a container the secrets mount wins over a configured host path", () => {
+    const inContainer = { ...env, QCR_SECRETS_MOUNT: "/opt/quickreview/secrets" };
+    for (const configured of ["/srv/qcr-secrets", "~/keys", "", null]) {
+      expect(locateSecrets({ configured, override: "/over", env: inContainer })).toMatchObject({
+        path: "/opt/quickreview/secrets",
+        source: "mount",
+      });
+    }
+    // Only an absolute mount is honoured; a relative one names no mount.
+    expect(
+      locateSecrets({ configured: "/srv/x", env: { ...env, QCR_SECRETS_MOUNT: "rel/secrets" } })
+        .path,
+    ).toBe("/srv/x");
+  });
+
   it("with nothing anywhere, the answer is the home — where new secrets belong", () => {
     expect(locateSecrets({ env })).toMatchObject({ path: secretsHome(env), source: "home" });
   });

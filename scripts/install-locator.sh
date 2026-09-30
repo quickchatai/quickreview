@@ -153,6 +153,8 @@ qcr_profile_dir() { # qcr_profile_dir <checkout-root> <name>
 #   SECRETS_DIR="$(qcr_locate_secrets "$configured" "${QC_SECRETS_DIR:-}")" || exit 1
 #
 # The rule, in order (src/install.ts `locateSecrets`):
+#   0. inside a daemon container, $QCR_SECRETS_MOUNT (absolute; both
+#      entrypoints export it) — the shared config names a HOST path
 #   1. the configured [github] secrets_dir, unless empty or the old default
 #      spelling (~/.config/quickreview-bot) — taken as given, ~ expanded
 #   2. the caller's override (the wizards' $QC_SECRETS_DIR), ~ expanded
@@ -188,7 +190,12 @@ _qcr_trim() { # _qcr_trim <text>
 _qcr_old_secrets_dir() { printf '%s\n' "$(_qcr_home_dir)/.config/quickreview-bot"; }
 
 qcr_locate_secrets() { # qcr_locate_secrets [configured] [override]
-  local configured override home stripped
+  local configured override home stripped mount
+  mount="$(_qcr_trim "${QCR_SECRETS_MOUNT:-}")"
+  if [[ "$mount" == /* ]]; then
+    printf '%s\n' "$mount"
+    return 0
+  fi
   configured="$(_qcr_trim "${1:-}")"
   override="$(_qcr_trim "${2:-}")"
   if [[ -n "$configured" ]]; then

@@ -205,8 +205,53 @@ export function readTomlKey(toml: string, section: string, key: string): string 
   const body = rest.slice(0, nextTable?.index ?? rest.length);
   const line = new RegExp(`^[ \\t]*${key}\\s*=\\s*(.+)$`, "m").exec(body);
   if (!line?.[1]) return null;
-  const raw = line[1].replace(/\s*#.*$/, "").trim();
-  return raw.replace(/^"(.*)"$/, "$1").replace(/^'(.*)'$/, "$1");
+  return tomlScalarText(line[1]);
+}
+
+const TOML_ESCAPES: Readonly<Record<string, string>> = {
+  b: "\b",
+  t: "\t",
+  n: "\n",
+  f: "\f",
+  r: "\r",
+  e: "\u001b",
+  '"': '"',
+  "\\": "\\",
+};
+
+/** One value's text as the loader reads it: a quoted string ends at its
+ * closing quote (a `#` inside it is part of the value, not a comment), a
+ * basic string's escapes are decoded, and only a bare scalar has a trailing
+ * comment stripped. */
+function tomlScalarText(value: string): string {
+  const v = value.trim();
+  if (v.startsWith("'") && !v.startsWith("'''")) {
+    const end = v.indexOf("'", 1);
+    return end === -1 ? v.slice(1) : v.slice(1, end);
+  }
+  if (v.startsWith('"') && !v.startsWith('"""')) {
+    let out = "";
+    for (let i = 1; i < v.length; i++) {
+      const c = v[i]!;
+      if (c === '"') return out;
+      if (c !== "\\") {
+        out += c;
+        continue;
+      }
+      const esc = v[i + 1] ?? "";
+      const width = esc === "u" ? 4 : esc === "U" ? 8 : 0;
+      if (width > 0) {
+        const code = Number.parseInt(v.slice(i + 2, i + 2 + width), 16);
+        out += Number.isNaN(code) ? "" : String.fromCodePoint(code);
+        i += 1 + width;
+      } else {
+        out += TOML_ESCAPES[esc] ?? esc;
+        i += 1;
+      }
+    }
+    return out;
+  }
+  return v.replace(/\s*#.*$/, "").trim();
 }
 
 /** Set `key = "value"` inside an existing table, preserving everything else.

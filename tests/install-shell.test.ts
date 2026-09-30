@@ -380,6 +380,22 @@ describe("qcr_locate_secrets / qcr_locate_keys_file ≡ src/install.ts", () => {
     ],
     ["an override below it", () => ({ env: base(), configured: "", override: "~/over" })],
     [
+      "inside a container the secrets mount wins over a configured host path",
+      () => ({
+        env: { ...base(), QCR_SECRETS_MOUNT: "/opt/quickreview/secrets" },
+        configured: "/srv/qcr-secrets",
+        override: "/over",
+      }),
+    ],
+    [
+      "a relative secrets mount is ignored",
+      () => ({
+        env: { ...base(), QCR_SECRETS_MOUNT: "rel/secrets" },
+        configured: "/srv/qcr-secrets",
+        override: "",
+      }),
+    ],
+    [
       "QCR_OPENVIKING_KEYS and a named install",
       () => ({
         env: { ...base(), QCR_OPENVIKING_KEYS: "/pinned.env", QCR_INSTALL: "second" },

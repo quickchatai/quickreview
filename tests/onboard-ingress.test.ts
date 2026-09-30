@@ -122,6 +122,23 @@ describe("deterministic file surgery", () => {
     expect(setTomlKey(exampleConfig, "no_such_table", "k", "v")).toBeNull();
   });
 
+  it("readTomlKey reads a string value the way the loader (smol-toml) does", async () => {
+    const { parse } = await import("smol-toml");
+    const cases = [
+      `[github]\nsecrets_dir = '/srv/secrets#prod'\n`,
+      `[github]\nsecrets_dir = "/srv/secrets#prod" # the prod keys\n`,
+      `[github]\nsecrets_dir = "/srv/a\\\\b\\u0041\\"q"\n`,
+      `[github]\nsecrets_dir = '/srv/x' # 'quoted' comment\n`,
+      `[github]\nsecrets_dir = "/srv/plain"\n`,
+    ];
+    for (const text of cases) {
+      const loader = (parse(text) as { github: { secrets_dir: string } }).github.secrets_dir;
+      expect([text, readTomlKey(text, "github", "secrets_dir")]).toEqual([text, loader]);
+    }
+    // Bare scalars still read as their text, a trailing comment stripped.
+    expect(readTomlKey("[server]\nport = 8787 # the port\n", "server", "port")).toBe("8787");
+  });
+
   it("setEnvKey adds then replaces; readEnvKey reads back, empty included", () => {
     const first = setEnvKey("", "COMPOSE_PROFILES", "quick-tunnel");
     expect(first).toBe("COMPOSE_PROFILES=quick-tunnel\n");

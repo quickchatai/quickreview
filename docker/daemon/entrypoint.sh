@@ -81,6 +81,10 @@ XDG_BASE="${XDG_CONFIG_HOME:-}"
 SECRETS_HOME="$XDG_BASE/qcr/${QCR_INSTALL:-default}/secrets"
 mkdir -p "$(dirname "$SECRETS_HOME")"
 [[ -L "$SECRETS_HOME" ]] || ln -sfn "$SECRETS" "$SECRETS_HOME"
+# …and a SET [github] secrets_dir names a host path this container cannot
+# see: the locator answers the mount instead, for the daemon, every session
+# it spawns and mint-token.sh alike (they all inherit this).
+export QCR_SECRETS_MOUNT="$SECRETS"
 
 # OpenAI auth for pi — native, two routes (findings):
 #   1. API key: exported here so the tmux server and every pi process inherit it.

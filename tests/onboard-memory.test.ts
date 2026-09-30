@@ -73,7 +73,9 @@ let keysFile: string;
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "qcr-mem-step-"));
-  stateDir = join(root, "state");
+  // The checkout (and the config.toml beside it) under its own dir: both are
+  // mounted into the daemon container, so the operator key file lives apart.
+  stateDir = join(root, "checkout", "state");
   secretsDir = join(root, "secrets");
   keysFile = join(root, "operator", "openviking-keys.env");
   mkdirSync(stateDir, { recursive: true });
@@ -613,6 +615,63 @@ describe("degraded modes stay legal and loud", () => {
     const done = await runStep(engineWith(up.fetchFn));
     expect(done.ok).toBe(true);
     expect(readFileSync(join(secretsDir, ROOT_KEY_FILE), "utf8").trim()).toBe(rootKey);
+  });
+
+  // Every directory the compose route mounts into the daemon container is
+  // readable by a review session: the secrets dir, the config home, the
+  // directory of the live config.toml (bring-up mounts THAT, wherever
+  // QCR_CONFIG points) and the checkout itself (rw at /opt/quickreview/sandbox).
+  // A pinned key file inside any of them is refused before anything is written.
+  it("refuses a pinned key file inside the live config's directory or the checkout", async () => {
+    const checkout = dirname(stateDir);
+    for (const pin of [join(checkout, "keys.env"), join(checkout, "sub", "keys.env")]) {
+      const result = await runStep(
+        engineWith(fakeServer().fetchFn, {
+          keysFile: undefined,
+          env: { QCR_OPENVIKING_KEYS: pin },
+        }),
+      );
+      expect([pin, result.ok]).toEqual([pin, false]);
+      expect(detailOf(result, "key-file-location")?.detail).toMatch(
+        /review session could read the companion key/,
+      );
+      expect(existsSync(pin)).toBe(false);
+      expect(existsSync(join(secretsDir, ROOT_KEY_FILE))).toBe(false);
+    }
+    const cfgDir = join(root, "custom");
+    const unsafe = resolveKeysFile(
+      secretsDir,
+      { QCR_OPENVIKING_KEYS: join(cfgDir, "keys.env") },
+      join(root, "home"),
+      [cfgDir],
+    );
+    expect(unsafe.unsafe).toBe(true);
+    expect(unsafe.note).toContain(cfgDir);
+  });
+
+  it("verify re-checks confinement against the CURRENT mounts, not only the secrets dir", async () => {
+    const done = await runStep(engineWith(fakeServer().fetchFn));
+    expect(done.ok).toBe(true);
+    // The layout changes after onboarding: the live config now sits beside the
+    // operator key file, so bring-up would mount the key file's directory.
+    const moved = join(dirname(keysFile), "config.toml");
+    writeFileSync(moved, '[github]\nrepo = "acme/widgets"\n');
+    const engine = new OnboardingEngine([memoryStep(stepOptions())], {
+      ...adapters(fakeServer().fetchFn),
+      paths: { stateDir, configPath: moved },
+    });
+    const verified = await engine.verifyAll();
+    const failures = verified.results.find((r) => r.id === MEMORY_STEP_ID)?.failures ?? [];
+    expect(failures.join(" ")).toMatch(/companion-key-confinement|review session/);
+  });
+
+  it("the negative assertion reaches nested files under the secrets mount", () => {
+    mkdirSync(join(secretsDir, "backup", "deeper"), { recursive: true });
+    writeFileSync(join(secretsDir, "backup", "deeper", "keys.env"), "OPENVIKING_API_KEY=COMP\n");
+    writeFileSync(join(secretsDir, "top"), "COMP\n");
+    expect(filesContaining(secretsDir, "COMP").sort()).toEqual(
+      [join(secretsDir, "backup", "deeper", "keys.env"), join(secretsDir, "top")].sort(),
+    );
   });
 
   it("never throws when the key file or secrets dir is unreadable garbage", () => {

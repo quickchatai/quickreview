@@ -285,6 +285,43 @@ describe("bring-up, happy path", () => {
     }
   });
 
+  // Compose interpolates `$VAR` in an unquoted .env value, so a mount source
+  // spelled with a `$` would bind a DIFFERENT host directory than the one the
+  // operator chose (`/srv/$TEAM` → `/srv/` with TEAM unset). Refused, before
+  // anything is created, written or built.
+  it("refuses a secrets dir or config home whose path Compose would interpolate", async () => {
+    const chosen = join(root, "..", `${root.split("/").pop()}-$TEAM`);
+    const cfg = join(root, "config.toml");
+    writeFileSync(cfg, setTomlKey(readFileSync(cfg, "utf8"), "github", "secrets_dir", chosen)!);
+    try {
+      let h = harness();
+      let result = await h.engine.runStep(BRINGUP_STEP_ID);
+      expect(result.ok).toBe(false);
+      expect(result.checks.find((c) => c.name === "mount-paths")?.detail).toMatch(/\$/);
+      expect(existsSync(chosen)).toBe(false);
+      expect(existsSync(join(root, ".env"))).toBe(false);
+      expect(h.streamed).toEqual([]);
+
+      const home = join(root, "..", `${root.split("/").pop()}-cfg$HOME`);
+      mkdirSync(home, { recursive: true });
+      try {
+        writeFileSync(
+          join(home, "config.toml"),
+          setTomlKey(exampleConfig, "github", "repo", "acme/web")!,
+        );
+        h = harness({ configPath: join(home, "config.toml") });
+        result = await h.engine.runStep(BRINGUP_STEP_ID);
+        expect(result.ok).toBe(false);
+        expect(result.checks.find((c) => c.name === "mount-paths")?.detail).toContain(home);
+        expect(h.streamed).toEqual([]);
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
+    } finally {
+      rmSync(chosen, { recursive: true, force: true });
+    }
+  });
+
   it("falls back to the live host uid when preflight recorded none", async () => {
     const h = harness({ uid: 501 });
     expect((await h.engine.runStep(BRINGUP_STEP_ID)).ok).toBe(true);
@@ -495,7 +532,9 @@ describe("memory phase B — driven, never duplicated", () => {
     // No fake inner: the genuine memory step, with no server answering.
     const step = memoryUserKeysStep({
       secretsDir: join(root, "secrets"),
-      keysFile: join(root, "keys.env"),
+      // Outside the checkout and the config's directory — both are mounted
+      // into the container, so the companion key file may live in neither.
+      keysFile: `${root}-operator/keys.env`,
       base: "http://127.0.0.1:1",
       loadProvision: async () => ({
         mintRootKey: () => "root-key-value",
