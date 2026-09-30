@@ -121,9 +121,17 @@ describe("the report", () => {
     });
     const plain = scanFinding({ fingerprint: "fc".padEnd(64, "0"), path: "billing/z.py" });
     expect(reportItems([flagged, plain]).map((i) => (i.t === "finding" ? i.finding.fingerprint : ""))).toEqual([plain.fingerprint, flagged.fingerprint]);
-    const { app, screen, type } = rig({ findings: [flagged, plain] });
+    // The flag is re-read against the store at load: the dismissal it names must be there.
+    const gone = scanFinding({
+      fingerprint: "7f".repeat(32),
+      path: "billing/old.py",
+      state: "dismissed",
+      dismissal: { reason: "by design — the engine drops it", at: "t", memory: "written" },
+    });
+    const { app, screen, type } = rig({ findings: [flagged, plain, gone] });
     expect(screen()).toMatch(/billing\/a\.py:88 {2}≈/);
     await driving(app, () => {
+      type("j");
       type("j");
       expect(screen()).toContain("≈ looks like a finding you dismissed: by design — the engine drops it");
     });

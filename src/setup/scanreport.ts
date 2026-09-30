@@ -96,7 +96,30 @@ export function parseFindingsFile(text: string): FindingsFile {
   if (q !== null && (typeof q.key !== "string" || !Array.isArray(q.unreported) || !Array.isArray(q.fresh))) {
     throw new Error("the pending match question is malformed");
   }
-  return { version: FINDINGS_VERSION, findings: raw.findings.map(stickyDismissal), question: q };
+  return { version: FINDINGS_VERSION, findings: currentLookalikes(raw.findings.map(stickyDismissal)), question: q };
+}
+
+/** A `resembles_dismissed` flag is written when a finding is stored; the
+ * dismissal it names can change after that — re-dismissed with another
+ * reason, promoted (the operator changed his mind), or folded into a fresh
+ * finding by a match answer. Every reader goes through this parse, so the
+ * flag is re-read against the store here: it names the finding that now
+ * carries that fingerprint (itself, or the one it became an alias of) and
+ * that finding's CURRENT reason while it is still dismissed, and it is
+ * dropped otherwise — a stale "looks like a finding you dismissed" never
+ * reaches the operator. */
+function currentLookalikes(findings: ScanFinding[]): ScanFinding[] {
+  if (!findings.some((f) => f.resembles_dismissed)) return findings;
+  const owner = new Map<string, ScanFinding>();
+  for (const f of findings) for (const a of f.aliases ?? []) owner.set(a, f);
+  for (const f of findings) owner.set(f.fingerprint, f);
+  return findings.map((f) => {
+    if (!f.resembles_dismissed) return f;
+    const { resembles_dismissed: flag, ...rest } = f;
+    const d = owner.get(flag.fingerprint);
+    if (!d || d.state !== "dismissed" || d.fingerprint === f.fingerprint) return rest;
+    return { ...rest, resembles_dismissed: { fingerprint: d.fingerprint, reason: d.dismissal?.reason ?? flag.reason } };
+  });
 }
 
 /** A finding a store written before the dismissal was sticky (scan-loop)

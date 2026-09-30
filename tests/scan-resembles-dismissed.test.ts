@@ -121,6 +121,17 @@ describe("a new finding resembling a dismissed one is flagged, never dismissed",
     expect(st.load().findings.find((f) => f.fingerprint === REWORDED.fingerprint)!.resembles_dismissed ?? null).toBeNull();
   });
 
+  it("the flag is re-read against the store on every load: a new reason shows, an undone dismissal drops it — no re-sighting needed", () => {
+    const st = dismissedOld();
+    st.report([REWORDED], S("r2", "2026-09-30T11:00:00Z"));
+    st.update(OLD.fingerprint, (f) => ({ ...f, dismissal: { reason: "second thoughts", at: "t2", memory: "written" } }));
+    const fresh = () => st.load().findings.find((f) => f.fingerprint === REWORDED.fingerprint)!;
+    expect(dismissedLookalike(fresh())).toEqual({ fingerprint: OLD.fingerprint, reason: "second thoughts" });
+    st.update(OLD.fingerprint, (f) => ({ ...f, state: "promoted" }));
+    expect(dismissedLookalike(fresh())).toBeNull();
+    expect(fresh().state).toBe("new");
+  });
+
   it("the flag is only read on an untriaged finding — once the operator promotes or dismisses it, it is answered", () => {
     const st = dismissedOld();
     st.report([REWORDED], S("r2", "2026-09-30T11:00:00Z"));
