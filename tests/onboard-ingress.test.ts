@@ -135,6 +135,17 @@ describe("deterministic file surgery", () => {
     expect(parse(nested!)).toEqual({ server: { hostname: "h", port: 1 }, github: { hostname: "g" } });
   });
 
+  it("patchTomlSection replaces an indented section and stops at an indented next table", async () => {
+    const { parse } = await import("smol-toml");
+    const text = `[server]\nport = 1\n  [ingress]\n  shape = "none"\n  [daemon]\n  x = 2\n`;
+    const patched = patchTomlSection(text, "ingress", '[ingress]\nshape = "tunnel-file"\n');
+    expect(parse(patched)).toEqual({
+      server: { port: 1 },
+      ingress: { shape: "tunnel-file" },
+      daemon: { x: 2 },
+    });
+  });
+
   it("readTomlKey reads a string value the way the loader (smol-toml) does", async () => {
     const { parse } = await import("smol-toml");
     const cases = [

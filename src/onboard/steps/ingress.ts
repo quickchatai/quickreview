@@ -178,12 +178,15 @@ export function ingressBlock(option: IngressOption): string {
  * anchor (or append) when the section does not exist. Commented-out template
  * blocks (`#[ingress]`) are left exactly as they are — they are documentation. */
 export function patchTomlSection(toml: string, section: string, body: string): string {
-  const header = new RegExp(`^\\[${section}\\][^\\n]*\\n`, "m");
+  // Indented headers are found the way readTomlKey finds them: a missed
+  // `  [ingress]` would be appended a second time (a duplicate table the
+  // loader rejects), and a missed `  [next]` boundary would be overwritten.
+  const header = new RegExp(`^[ \\t]*\\[${section}\\][^\\n]*\\n`, "m");
   const start = header.exec(toml);
   if (start?.index !== undefined) {
     const from = start.index;
     const rest = toml.slice(from + start[0].length);
-    const nextTable = /^\[[^\n]*\]/m.exec(rest);
+    const nextTable = /^[ \t]*\[[^\n]*\]/m.exec(rest);
     const to = from + start[0].length + (nextTable?.index ?? rest.length);
     return `${toml.slice(0, from)}${body}${toml.slice(to)}`;
   }
