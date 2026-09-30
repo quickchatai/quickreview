@@ -25,6 +25,7 @@ import {
   loadProfileEcosystem,
   loadProfileHeuristics,
 } from "../src/profiles.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const sandbox = join(import.meta.dirname, "..");
 const cfg: Config = parseConfig(
@@ -134,7 +135,7 @@ describe("the default profile", () => {
     expect(r.ecosystem.name).toBe("none");
   });
 
-  it("an empty child of it reviews exactly as no profile does — plan and built agents", () => {
+  it("an empty child of it reviews exactly as no profile does — plan and built agents", { timeout: HEAVY_TIMEOUT_MS }, () => {
     profile("house", { toml: 'extends = "default"\n' }); // no addenda/, no heuristics
     for (const files of CORPUS) {
       expect(plan("house", files), files[0]!.filename).toEqual(plan("", files));

@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.js";
 import { OnboardingEngine, type OnboardAdapters } from "../src/onboard/engine.js";
 import { ESCALATION_STEP_ID, escalationStep } from "../src/onboard/steps/escalation.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const EXAMPLE = readFileSync(join(repoRoot, "config.example.toml"), "utf8");
@@ -61,7 +62,7 @@ async function rerun(rule: string) {
 }
 
 describe("escalation step: a re-run never eats a hand-written rule", () => {
-  it("keeps a rule whose header is indented (valid TOML)", async () => {
+  it("keeps a rule whose header is indented (valid TOML)", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const cfg = await rerun(
       [
         "  [[escalation.rules]]",

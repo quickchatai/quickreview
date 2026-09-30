@@ -32,6 +32,7 @@ import {
 } from "../src/profiles.js";
 import { PROFILE_EXTENDABLE_LENSES } from "../src/heuristics.js";
 import { SCAN_PASS } from "../src/setup/scan.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const sandbox = join(import.meta.dirname, "..");
 /** A fixture profile in `<root>/profiles/` — found because `at(root)` names a
@@ -288,6 +289,7 @@ describe("quickchat extraction is byte-preserving", () => {
 
   it.skipIf(!HAS_QC)(
     "building with the quickchat pack reproduces the compiled-in constants' output byte-for-byte",
+    { timeout: HEAVY_TIMEOUT_MS },
     () => {
       // The six at the tail as before;'s stack rules after them.
       const pack = loadProfileAddenda(sandbox, "quickchat");
@@ -300,7 +302,7 @@ describe("quickchat extraction is byte-preserving", () => {
     },
   );
 
-  it("no profile (and the minimal profile) build exactly the generic addenda set", () => {
+  it("no profile (and the minimal profile) build exactly the generic addenda set", { timeout: HEAVY_TIMEOUT_MS }, () => {
     const bare = build(PASS_ADDENDA);
     const minimal = build([...PASS_ADDENDA, ...loadProfileAddenda(sandbox, "minimal")]);
     expect([...minimal.keys()].sort()).toEqual([...bare.keys()].sort());

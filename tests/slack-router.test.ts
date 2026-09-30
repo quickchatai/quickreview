@@ -17,6 +17,7 @@ import {
 } from "../src/slack/router.js";
 import type { SlackInboundEvent } from "../src/slack/types.js";
 import type { TurnDecision } from "../src/slack/policy.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const shipped = readFileSync(join(root, "tests/fixtures/config.toml"), "utf8");
@@ -110,7 +111,7 @@ function header(body: string): Record<string, string> {
 }
 
 describe("computeTier / authorizedPrs", () => {
-  it("maps the owner, mapped authors and everyone else", () => {
+  it("maps the owner, mapped authors and everyone else", { timeout: HEAVY_TIMEOUT_MS }, () => {
     expect(computeTier(cfg, OWNER)).toBe("owner");
     expect(computeTier(cfg, ALICE)).toBe("author");
     expect(computeTier(cfg, "U0STRANGER")).toBe("anyone");

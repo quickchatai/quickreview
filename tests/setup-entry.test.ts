@@ -17,6 +17,7 @@ import { entryLine } from "../src/tui/memtab.js";
 import { stripAnsi } from "../src/tui/paint.js";
 import { requestSetup, SETUP_REQUEST_TEXT, setupRequestName } from "../src/tui/setupentry.js";
 import type { MemoryEntry } from "../src/memory/store.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 let dir: string;
 beforeEach(() => {
@@ -111,7 +112,7 @@ describe("qcr setup validate — the direct edit's check", () => {
     write(join(cfgHome, "profiles", "acme", "profile.toml"), profileToml);
   }
 
-  it("passes a profile the daemon would boot with, naming its chain", async () => {
+  it("passes a profile the daemon would boot with, naming its chain", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     home('extends = "default"\n[lenses.pass-security]\neffort = "high"\n');
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     try {

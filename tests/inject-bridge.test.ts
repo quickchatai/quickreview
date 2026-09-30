@@ -20,6 +20,7 @@ import type { Pi } from "@earendil-works/pi-coding-agent";
 import activate, { RETRY_BASE_MS, START_ACK_TIMEOUT_MS } from "../extensions/inject-bridge.js";
 import { readSessionBridgeState } from "../src/session-bridge.js";
 import { StateStore } from "../src/state.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 let dir: string;
 let handlers: Map<string, Array<(...args: unknown[]) => unknown>>;
@@ -286,7 +287,7 @@ describe("inject-bridge — start-acknowledged single flight", () => {
     await vi.waitFor(() => expect(sends).toHaveLength(1));
   });
 
-  it("never overrides an active run merely because the old 15-minute hold elapsed", async () => {
+  it("never overrides an active run merely because the old 15-minute hold elapsed", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const t0 = Date.now();
     const now = vi.spyOn(Date, "now").mockReturnValue(t0);
     activate(fakePi());

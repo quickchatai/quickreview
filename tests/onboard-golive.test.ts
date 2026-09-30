@@ -34,6 +34,7 @@ import {
 } from "../src/onboard/steps/golive.js";
 import { PROOF_CHOICE_KEY } from "../src/onboard/steps/proof.js";
 import type { ProofRecord } from "../src/onboard/steps/proof.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const exampleConfig = readFileSync(join(repoRoot, "config.example.toml"), "utf8");
@@ -146,7 +147,7 @@ describe("flipDryRunToFalse — the ONE writer of the flag", () => {
     ).toThrow(/no dry_run key/);
   });
 
-  it("flips exactly one key, and leaves the rest of the file alone", () => {
+  it("flips exactly one key, and leaves the rest of the file alone", { timeout: HEAVY_TIMEOUT_MS }, () => {
     const after = flipDryRunToFalse(exampleConfig, {
       confirmation: GO_LIVE_CONFIRMATION,
       proof: PROOF,

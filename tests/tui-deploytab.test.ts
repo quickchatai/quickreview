@@ -26,6 +26,7 @@ import { stripAnsi } from "../src/tui/paint.js";
 import { MemoryDeployCeremonyStore } from "../src/tui/deploy-ceremony.js";
 import { configDrift, configDriftText, parseConfigFingerprint } from "../src/tui/confighome.js";
 import type { RemoteResult } from "../src/tui/remote.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const ok = (stdout: string): RemoteResult => ({ ok: true, stdout, stderr: "", code: 0 });
 const fail = (stderr = ""): RemoteResult => ({ ok: false, stdout: "", stderr, code: 1 });
@@ -360,7 +361,7 @@ function quietDrain(rounds = 0): DeployDrainSender {
 }
 
 describe("deploy tab drain orchestration", () => {
-  it("engages drain, visibly waits through running rounds, then deploys exactly once at zero", async () => {
+  it("engages drain, visibly waits through running rounds, then deploys exactly once at zero", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     const drainCalls: boolean[] = [];

@@ -39,6 +39,7 @@ import {
 } from "../src/execboundary.js";
 import { auditExecViolationDetails } from "../src/usage.js";
 import { sessionGitConfigPins } from "../src/sessions.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 /**
  * Every chain verified as EXECUTING or POSTING, plus the fifth this
@@ -421,7 +422,7 @@ describe("— the four proven bypasses, replayed against the COMPILED guard", ()
     ).not.toThrow();
   });
 
-  it("blocks every bash chain, in the build the container actually loads", async () => {
+  it("blocks every bash chain, in the build the container actually loads", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const compiled = (await import(distPath)) as {
       checkBashCommand: (c: string) => { allowed: boolean; reason?: string };
       checkWritePath: (p: string) => { allowed: boolean; reason?: string };

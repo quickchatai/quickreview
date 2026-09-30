@@ -41,6 +41,7 @@ import { flushHeldWakes } from "../src/wakes.js";
 import { WorktreeManager } from "../src/worktrees.js";
 import { daemonOriginWakes, piAuthWatchDirs } from "../src/wire.js";
 import { PiAuthWatch } from "../src/authwatch.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 let root: string;
 let secrets: string;
@@ -726,7 +727,7 @@ describe("injection", () => {
       symlinkSync(target, join(dir, name));
     };
 
-    it("returns null, not false, when an in-scope file cannot be read", async () => {
+    it("returns null, not false, when an in-scope file cannot be read", { timeout: HEAVY_TIMEOUT_MS }, async () => {
       const store = new StateStore(":memory:");
       const m = manager(() => new Date("2026-08-13T10:00:00Z"), store);
       await m.dispatchRound(order, "ROUND PROMPT BODY");
@@ -1075,7 +1076,7 @@ describe("durable command ownership", () => {
     }
   });
 
-  it("composes #5454 through wire, supervisor, manager, and the real failing bridge", async () => {
+  it("composes #5454 through wire, supervisor, manager, and the real failing bridge", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const dbPath = join(root, "state", "state.db");
     let clock = new Date("2026-09-01T08:08:00.000Z");
     const store = new StateStore(dbPath, () => clock);

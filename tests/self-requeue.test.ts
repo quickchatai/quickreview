@@ -19,6 +19,7 @@ import { roundPromptMarker } from "../src/types.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
 import { AnomalyWakePolicy } from "../src/anomalies.js";
 import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const baseCfg: Config = parseConfig(
   readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
@@ -529,7 +530,7 @@ function dispatchHooks(): { hooks: SessionHooks; orders: RoundOrder[] } {
 }
 
 describe("self-requeued rounds do not age the PR", () => {
-  it("priorRoundCount ignores the cancelled round; the fresh dispatch is still round_type 'first', review_no 1", async () => {
+  it("priorRoundCount ignores the cancelled round; the fresh dispatch is still round_type 'first', review_no 1", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     reviewingRound(320);
     pastDeadline();
     const { hooks } = hooksWith(false);
@@ -553,7 +554,7 @@ describe("self-requeued rounds do not age the PR", () => {
 });
 
 describe("idempotency against the restart orphan-requeue", () => {
-  it("self-requeue first: the orphan sweep finds nothing running and dispatch runs exactly once", async () => {
+  it("self-requeue first: the orphan sweep finds nothing running and dispatch runs exactly once", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     reviewingRound(330);
     pastDeadline();
     const { hooks } = hooksWith(false);
@@ -576,7 +577,7 @@ describe("idempotency against the restart orphan-requeue", () => {
     expect(store.runningRounds()).toHaveLength(1);
   });
 
-  it("orphan-requeue first: the deadline checker has nothing left to self-requeue", async () => {
+  it("orphan-requeue first: the deadline checker has nothing left to self-requeue", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     reviewingRound(331);
     pastDeadline();
     const report = reconcileOrphanedRounds(store, [], { botLogin: "bot[bot]", now: () => clock });
@@ -596,7 +597,7 @@ describe("idempotency against the restart orphan-requeue", () => {
     expect(orders).toHaveLength(1);
   });
 
-  it("a requeued PR whose replacement round is already running is not dispatched again", async () => {
+  it("a requeued PR whose replacement round is already running is not dispatched again", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     // The queued-while-running guard in dispatch: requeue raced a running round.
     reviewingRound(332);
     store.upsertPr({ ...store.getPr(332)!, state: "queued", trigger_ts: clock.toISOString() });

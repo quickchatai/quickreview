@@ -16,6 +16,7 @@ import type { SlackPostResult, SlackWebApi } from "../src/slack/types.js";
 import { StateStore } from "../src/state.js";
 import type { SessionHooks } from "../src/types.js";
 import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 class FakeSlack implements SlackWebApi {
   posts: Array<{ text: string; thread_ts?: string }> = [];
@@ -135,7 +136,7 @@ afterEach(() => {
 });
 
 describe("dispatch hook", () => {
-  it("posts the pickup root for a dispatched round", async () => {
+  it("posts the pickup root for a dispatched round", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queuedPr(5263);
     const orders = await dispatchOnce({
       cfg,
@@ -156,7 +157,7 @@ describe("dispatch hook", () => {
     expect(store.slackThreadForPr(5263)).toBeDefined();
   });
 
-  it("dispatches exactly as before when no announcer is wired", async () => {
+  it("dispatches exactly as before when no announcer is wired", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queuedPr(5263);
     const orders = await dispatchOnce({
       cfg,
@@ -169,7 +170,7 @@ describe("dispatch hook", () => {
     expect(store.allSlackThreads()).toEqual([]);
   });
 
-  it("a Slack outage never stalls the pump — the round still dispatches", async () => {
+  it("a Slack outage never stalls the pump — the round still dispatches", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     slack.throwAlways = true;
     queuedPr(5263);
     const orders = await dispatchOnce({
@@ -185,7 +186,7 @@ describe("dispatch hook", () => {
     await vi.waitFor(() => expect(store.slackPost("pickup:5263")).toMatchObject({ ok: 0 }));
   });
 
-  it("a slow Slack never holds the pump — later PRs dispatch before the pickup lands", async () => {
+  it("a slow Slack never holds the pump — later PRs dispatch before the pickup lands", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     // A blackholed or rate-limited Slack takes tens of seconds per post
     // (bounded retries + Retry-After). The announcement is fire-and-forget:
     // the per-PR lane keeps its order, the pump never waits on it.

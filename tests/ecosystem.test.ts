@@ -26,6 +26,7 @@ import { StateStore } from "../src/state.js";
 import { renderRoundPrompt, roundVars } from "../src/templates.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
 import { stageFixtureProfile } from "./helpers/tracked-profiles.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const cfg: Config = parseConfig(
   readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
@@ -368,7 +369,7 @@ const tree = async () => ({
 });
 
 describe("dispatch with ecosystem none — clean configured-off", () => {
-  it("runs no pre-check, posts nothing, logs nothing, never reads the base, and un-forces the gate", async () => {
+  it("runs no pre-check, posts nothing, logs nothing, never reads the base, and un-forces the gate", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     adapter.files = [
       {
         filename: "backend/chat/migrations/0042_x.py",
@@ -422,7 +423,7 @@ describe("dispatch with ecosystem none — clean configured-off", () => {
     expect(prompts[0]).not.toContain("ALREADY HANDLED");
   });
 
-  it("stays silent even in the exact setup where django degrades (no base reader)", async () => {
+  it("stays silent even in the exact setup where django degrades (no base reader)", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     adapter.files = [
       {
         filename: "backend/chat/migrations/0042_x.py",
@@ -455,7 +456,7 @@ describe("dispatch with ecosystem none — clean configured-off", () => {
     expect(store.recentEvents(200).filter((e) => e.kind.startsWith("migration_"))).toEqual([]);
   });
 
-  it("an explicitly-passed django ecosystem still degrades loudly in that setup — the distinction is the wiring, not luck", async () => {
+  it("an explicitly-passed django ecosystem still degrades loudly in that setup — the distinction is the wiring, not luck", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     adapter.files = [
       {
         filename: "backend/chat/migrations/0042_x.py",

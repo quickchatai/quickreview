@@ -32,6 +32,7 @@ import {
 } from "../src/tui/metricstab.js";
 import { displayWidth, stripAnsi } from "../src/tui/paint.js";
 import { metricsArgv, metricsPrArgv, type RemoteResult } from "../src/tui/remote.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const NOW = new Date("2026-08-14T12:00:00Z");
 
@@ -609,7 +610,7 @@ describe("metrics dashboard", () => {
     expect(failed).toContain("metrics unavailable: ssh: connect timed out");
   });
 
-  it("never overflows the pane at any width or height (the width-30 lesson)", () => {
+  it("never overflows the pane at any width or height (the width-30 lesson)", { timeout: HEAVY_TIMEOUT_MS }, () => {
     for (const cols of [30, 40, 60, 80, 100, 120, 160, 170, 200, 220]) {
       for (const rows of [24, 30, 44, 130]) {
         for (const view of [
@@ -881,7 +882,7 @@ describe("metrics tab wiring", () => {
     ]);
   });
 
-  it("opens on 6, switches windows on w/m/a, drills in with # <pr> ⏎ and Esc goes back", async () => {
+  it("opens on 6, switches windows on w/m/a, drills in with # <pr> ⏎ and Esc goes back", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let overallCalls = 0;

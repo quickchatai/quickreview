@@ -24,6 +24,7 @@ import {
 import { ReembedDriver, reembedNamespaces, type ReembedModule } from "../src/openviking/reembed.js";
 import { StateStore, buildStatusSnapshot } from "../src/state.js";
 import * as realModule from "../scripts/openviking-reembed.mjs";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 let home: string;
 beforeEach(() => {
@@ -346,7 +347,7 @@ describe("the real scripts/openviking-reembed.mjs satisfies the driver's contrac
   const REINDEX = /\/api\/v1\/content\/reindex$/;
   const TASK = /\/api\/v1\/tasks\/task-9$/;
 
-  it("a journalled pending reviewer namespace is re-embedded through the script with a Bearer reviewer key and no actor-peer header", async () => {
+  it("a journalled pending reviewer namespace is re-embedded through the script with a Bearer reviewer key and no actor-peer header", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const mod: ReembedModule = realModule;
     mod.journalStatus(home); // the module's own reader, on an empty home
     realModule.writeJournal(home, {
@@ -403,8 +404,12 @@ describe("the real scripts/openviking-reembed.mjs satisfies the driver's contrac
     await flush();
     expect(d.status().state).toBe("pending");
     await clock.fire();
-    // The script polls the task on a real 2s sleep; wait for it to settle.
-    for (let i = 0; i < 100 && d.status().state !== "completed"; i++)
+    // The script polls the task on a real 2s sleep; wait for it to settle —
+    // by deadline, not by a count of ticks, which was a 5s budget around a 2s
+    // sleep and too tight on a loaded machine. The deadline sits inside the
+    // test's timeout, so a miss still fails on the assertion below.
+    const deadline = Date.now() + 45_000;
+    while (d.status().state !== "completed" && Date.now() < deadline)
       await new Promise((r) => setTimeout(r, 50));
     expect(d.status()).toMatchObject({
       state: "completed",
@@ -426,7 +431,7 @@ describe("the real scripts/openviking-reembed.mjs satisfies the driver's contrac
       task_id: "task-9",
     });
     expect(journal.namespaces.companion).toEqual({ state: "operator" });
-  }, 15_000);
+  });
 });
 
 // ---- the operator's side ----------------------------------------------------------

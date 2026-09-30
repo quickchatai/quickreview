@@ -25,6 +25,7 @@ import {
 } from "../src/include.js";
 import type { InstallEnv } from "../src/install.js";
 import { buildScanAgents } from "../src/setup/scanbuild.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const sandbox = join(import.meta.dirname, "..");
 const fixture: Config = parseConfig(readFileSync(resolve(sandbox, "tests/fixtures/config.toml"), "utf8"));
@@ -85,7 +86,7 @@ describe("the scan precision addendum is a scan-mode registry entry", () => {
 
 describe("the PR build does not change", () => {
   for (const ecosystem of ["django", "none"] as const) {
-    it(`is byte-identical with and without the entry (${ecosystem})`, () => {
+    it(`is byte-identical with and without the entry (${ecosystem})`, { timeout: HEAVY_TIMEOUT_MS }, () => {
       const withEntry = prBuild("with", PASS_ADDENDA, ecosystem);
       const without = prBuild(
         "without",

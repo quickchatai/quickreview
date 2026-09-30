@@ -21,6 +21,7 @@ import { StateStore } from "../src/state.js";
 import { buildAgents } from "../src/include.js";
 import { assembleReview, approvalActions, submitReview, type Finding } from "../src/posting.js";
 import { selectLenses } from "../src/heuristics.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const SANDBOX = join(import.meta.dirname, "..");
 
@@ -129,7 +130,7 @@ describe("dry-run fixture round", () => {
   // is the owner's (rule 1) and deploy.sh's plan shows the value it ships
   // without ever changing it. What this file CAN pin is its own premise: the
   // fixture round it drives is a DRY-RUN round.
-  it("runs on a dry-run fixture config — the round never reaches GitHub", () => {
+  it("runs on a dry-run fixture config — the round never reaches GitHub", { timeout: HEAVY_TIMEOUT_MS }, () => {
     expect(harness().cfg.dry_run).toBe(true);
   });
 

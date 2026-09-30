@@ -16,6 +16,7 @@ import { AnomalyWakePolicy } from "../src/anomalies.js";
 import { StateStore } from "../src/state.js";
 import { renderRoundPrompt } from "../src/templates.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const cfg: Config = parseConfig(
   readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
@@ -156,7 +157,7 @@ beforeEach(() => {
 });
 
 describe("migration collision pre-check", () => {
-  it("posts a COMMENT naming the target number and dependencies, and consumes no verdict", async () => {
+  it("posts a COMMENT naming the target number and dependencies, and consumes no verdict", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(41);
     adapter.files = [
       file("backend/chat/migrations/0042_add_rate_limit.py"),
@@ -188,7 +189,7 @@ describe("migration collision pre-check", () => {
     });
   });
 
-  it("routes the comment through the MutationGate as a create_review intent", async () => {
+  it("routes the comment through the MutationGate as a create_review intent", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(42);
     adapter.files = [file("backend/chat/migrations/0042_x.py")];
 
@@ -209,7 +210,7 @@ describe("migration collision pre-check", () => {
     expect(intent?.reviewPurpose).toBe("migration_precheck");
   });
 
-  it("carries the collisions on the round order, as mechanics not findings", async () => {
+  it("carries the collisions on the round order, as mechanics not findings", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(43);
     adapter.files = [file("backend/chat/migrations/0042_x.py")];
 
@@ -236,7 +237,7 @@ describe("migration collision pre-check", () => {
   // is posted anyway — the merge gate consumed, the re-review round owed. So
   // the pre-check's result must arrive in the prompt the session is actually
   // injected with (the round template rendered through src/templates.ts).
-  it("tells the session, in the real rendered prompt, that the collision is already handled", async () => {
+  it("tells the session, in the real rendered prompt, that the collision is already handled", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(49);
     adapter.files = [file("backend/chat/migrations/0042_x.py")];
     const prompts: string[] = [];
@@ -268,7 +269,7 @@ describe("migration collision pre-check", () => {
     expect(prompt).not.toContain("MIGRATION PRE-CHECK DID NOT RUN");
   });
 
-  it("leaves the gate note alone when there is no collision", async () => {
+  it("leaves the gate note alone when there is no collision", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(50);
     adapter.files = [file("backend/chat/migrations/0043_free.py")];
     const prompts: string[] = [];
@@ -324,7 +325,7 @@ describe("migration collision pre-check", () => {
     expect(store.migrationCollisionCommented(57, "fp")).toBe("unknown");
   });
 
-  it("a corrupt comment row can never cause the GitHub write a readable one would have suppressed", async () => {
+  it("a corrupt comment row can never cause the GitHub write a readable one would have suppressed", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(56);
     adapter.files = [file("backend/chat/migrations/0042_x.py")];
     store.db
@@ -356,7 +357,7 @@ describe("migration collision pre-check", () => {
   // A withheld comment is QUIETER than a posted one, and the torn row stays
   // torn on every later round — so the operator hears about it through the
   // same channel a degraded pre-check uses: a durable anomaly + overseer wake.
-  it("a withheld collision comment raises an overseer anomaly that names the torn row", async () => {
+  it("a withheld collision comment raises an overseer anomaly that names the torn row", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(58);
     adapter.files = [file("backend/chat/migrations/0042_x.py")];
     store.db
@@ -395,7 +396,7 @@ describe("migration collision pre-check", () => {
     expect(wake).toContain("pr = 58");
   });
 
-  it("…once per PR: a PR already told stays told, while another anomaly kind on it does not count", async () => {
+  it("…once per PR: a PR already told stays told, while another anomaly kind on it does not count", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(59);
     adapter.files = [file("backend/chat/migrations/0042_x.py")];
     store.db
@@ -431,7 +432,7 @@ describe("migration collision pre-check", () => {
     ).toHaveLength(1);
   });
 
-  it("says nothing when the PR's migration number is free", async () => {
+  it("says nothing when the PR's migration number is free", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(44);
     adapter.files = [file("backend/chat/migrations/0043_free.py")];
 
@@ -449,7 +450,7 @@ describe("migration collision pre-check", () => {
     expect(events("migration_collision_detected", 44)).toEqual([]);
   });
 
-  it("says nothing for a PR with no migrations at all", async () => {
+  it("says nothing for a PR with no migrations at all", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(45);
     adapter.files = [file("backend/chat/views.py", "modified")];
     let asked = 0;
@@ -471,7 +472,7 @@ describe("migration collision pre-check", () => {
     expect(asked).toBe(1); // the check runs regardless; it simply finds nothing
   });
 
-  it("does not repost the same collision at the same head (staleness re-round)", async () => {
+  it("does not repost the same collision at the same head (staleness re-round)", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(46);
     adapter.files = [file("backend/chat/migrations/0042_x.py")];
     const args = {
@@ -497,7 +498,7 @@ describe("migration collision pre-check", () => {
 
   // A guard refusal returns without throwing; it is not a delivered comment,
   // so it must not consume the fingerprint the staleness dedupe keys on.
-  it("a guard-refused COMMENT is not ledgered as commented, and the next round posts it", async () => {
+  it("a guard-refused COMMENT is not ledgered as commented, and the next round posts it", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(60);
     adapter.files = [file("backend/chat/migrations/0042_x.py")];
     adapter.refuseReview = "pr-unreadable";
@@ -527,7 +528,7 @@ describe("migration collision pre-check", () => {
 
   // A dry-run record is the would-be comment, not a posted one: it dedupes
   // dry-run re-rounds, but after the flip to live the same head still posts.
-  it("a dry-run comment record does not suppress the live post at the same head", async () => {
+  it("a dry-run comment record does not suppress the live post at the same head", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(61);
     adapter.files = [file("backend/chat/migrations/0042_x.py")];
     const dry = new GatedAdapter(mkdtempSync(join(tmpdir(), "qcr-precheck-")), true);
@@ -552,7 +553,7 @@ describe("migration collision pre-check", () => {
     expect(adapter.reviews).toHaveLength(1);
   });
 
-  it("logs a skip (never a silent pass) when there is no base reader", async () => {
+  it("logs a skip (never a silent pass) when there is no base reader", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(47);
     adapter.files = [file("backend/chat/migrations/0042_x.py")];
 
@@ -566,7 +567,7 @@ describe("migration collision pre-check", () => {
   // acceptance: "more reliable, never quieter". The three degraded
   // paths must each leave SOMEBODY holding the collision class — the gate note
   // when detection ran, the session itself when it did not.
-  it("still renders the collisions into the gate note when the COMMENT fails", async () => {
+  it("still renders the collisions into the gate note when the COMMENT fails", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(52);
     adapter.files = [file("backend/chat/migrations/0042_x.py")];
     adapter.failCreateReview = true;
@@ -606,7 +607,7 @@ describe("migration collision pre-check", () => {
     expect(adapter.reviews).toHaveLength(0);
   });
 
-  it("tells the session to check collisions itself when the pre-check cannot run", async () => {
+  it("tells the session to check collisions itself when the pre-check cannot run", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(53);
     adapter.files = [file("backend/chat/migrations/0042_x.py")];
     const prompts: string[] = [];
@@ -658,7 +659,7 @@ describe("migration collision pre-check", () => {
     expect(orders).toHaveLength(1);
   });
 
-  it("degrades the same way when the base read throws", async () => {
+  it("degrades the same way when the base read throws", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(54);
     adapter.files = [file("backend/chat/migrations/0042_x.py")];
     const prompts: string[] = [];
@@ -689,7 +690,7 @@ describe("migration collision pre-check", () => {
     expect(events("migration_precheck_failed", 54)).toHaveLength(1);
   });
 
-  it("says nothing about a degraded pre-check on a PR with no migrations", async () => {
+  it("says nothing about a degraded pre-check on a PR with no migrations", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(55);
     adapter.files = [file("backend/chat/views.py", "modified")];
     const prompts: string[] = [];
@@ -729,7 +730,7 @@ describe("migration collision pre-check", () => {
     expect(overseer).toEqual([]);
   });
 
-  it("never loses a round to a failing pre-check", async () => {
+  it("never loses a round to a failing pre-check", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(48);
     adapter.files = [file("backend/chat/migrations/0042_x.py")];
     adapter.failCreateReview = true;

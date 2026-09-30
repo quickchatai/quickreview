@@ -29,6 +29,7 @@ import {
   startSlack,
   type SlackRuntime,
 } from "../src/wire.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const shipped = readFileSync(join(root, "tests/fixtures/config.toml"), "utf8");
@@ -135,7 +136,7 @@ afterEach(() => {
 });
 
 describe("slack off", () => {
-  it("constructs nothing, reads no secret and builds no transport", async () => {
+  it("constructs nothing, reads no secret and builds no transport", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     cfg.slack.enabled = false;
     const readSecret = vi.fn(() => "xoxb-should-never-be-read");
     const makeTransport = vi.fn(() => fakeTransport());

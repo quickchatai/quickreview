@@ -15,6 +15,7 @@ import {
 import { applyEvent } from "../src/statemachine.js";
 import { StateStore, type PrLifecycleState } from "../src/state.js";
 import type { SessionHooks } from "../src/types.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const cfg: Config = parseConfig(
   readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
@@ -142,7 +143,7 @@ const corrections = (s: StateStore) =>
   ).map((r) => ({ pr: r.pr, ...JSON.parse(r.payload) }));
 
 describe("reconcileOnce", () => {
-  it("adopts a hand-edited divergent pr_state from GitHub truth", async () => {
+  it("adopts a hand-edited divergent pr_state from GitHub truth", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     // Local state says #1 is merely tracked and #2 is queued; GitHub says both
     // carry a live trigger, #3 has an outdated approval and #4 is closed.
     // The outdated approval is metadata only: commits never queue reviews.

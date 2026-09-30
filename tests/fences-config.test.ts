@@ -36,6 +36,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const ROOT = join(import.meta.dirname, "..");
 
@@ -133,7 +134,7 @@ describe("[T4] every config knob has a reader, not just a parser", () => {
     ).toBeGreaterThan(100);
   });
 
-  it("only the recorded knobs are parsed and never consumed", () => {
+  it("only the recorded knobs are parsed and never consumed", { timeout: HEAVY_TIMEOUT_MS }, () => {
     const hay = consumerText();
     const unread = declaredKnobs()
       .filter((n) => !new RegExp(`\\b${n}\\b`).test(hay))

@@ -13,6 +13,7 @@ import {
   verifySignature,
   type Interpretation,
 } from "../src/webhook.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const cfg: Config = parseConfig(
   readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
@@ -179,7 +180,7 @@ describe("handleDelivery", () => {
     store.close();
   });
 
-  it("caps and throttles bad-signature rows so an unauthenticated flood cannot fill the state volume (selfscan 4c15a23f)", () => {
+  it("caps and throttles bad-signature rows so an unauthenticated flood cannot fill the state volume (selfscan 4c15a23f)", { timeout: HEAVY_TIMEOUT_MS }, () => {
     // The endpoint is public through the tunnel and a rejection is logged
     // before any dedupe. Uncapped header values and one row per request let a
     // sender without the secret write ~8KB rows at line rate, forever.

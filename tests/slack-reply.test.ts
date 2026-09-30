@@ -13,6 +13,7 @@ import {
 } from "../src/slack/reply.js";
 import * as replyModule from "../src/slack/reply.js";
 import type { SlackPostResult } from "../src/slack/types.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const shipped = readFileSync(join(root, "tests/fixtures/config.toml"), "utf8");
@@ -81,7 +82,7 @@ beforeEach(() => {
 afterEach(() => store.close());
 
 describe("slack_reply execution", () => {
-  it("posts into the configured channel and thread, and never takes a channel from the caller", async () => {
+  it("posts into the configured channel and thread, and never takes a channel from the caller", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     seenInbound();
     const out = await reply()({ thread: THREAD, text: "on it", file: "cmd-1" });
     expect(out).toMatchObject({ ok: true, ts: "1755431234.001900", truncated: false });

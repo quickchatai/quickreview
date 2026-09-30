@@ -1,7 +1,8 @@
 # tests/ — conventions
 
-- Run the full suite as `timeout 900 npm test` (4,500+ tests, well under a
-  minute); a single file as `timeout 120 npx vitest run tests/<file>.test.ts`.
+- Run the full suite as `timeout 900 npm test` (6,500+ tests, ~100s on the
+  dev PC, the length of `guards-shell`; several minutes under heavy load —
+  see "Timeouts under load"); a single file as `timeout 120 npx vitest run tests/<file>.test.ts`.
   Never `--reporter=basic`.
 - Everything mocks I/O: fake fetch/adapters, `StateStore(":memory:")`, temp
   dirs. Two exercise git as the THING UNDER TEST: `worktrees.test.ts`
@@ -32,6 +33,56 @@
   `config-fingerprint.sh` — never a deploy), `publishability`/`publish-snapshot`, and
   several TUI suites over stub binaries. The list drifts; find the current
   one with `grep -l child_process tests/*.test.ts`.
+- **Timeouts under load.** The dev PC runs benchmark containers, so the suite
+  has to stay green at a load average of 15-45 without hiding a real hang.
+  The rule, pinned by `suite-timeouts.test.ts` (constants in
+  `helpers/suite-timeouts.ts`):
+  - A file that **spawns real processes** (shell scripts, git, tsc, node
+    children, stub binaries) is listed in `PROCESS_SUITES` and runs in the
+    `spawning` vitest project with `PROCESS_TIMEOUT_MS` (60s) per test and
+    per hook: a child's wall time belongs to the scheduler. Every file that
+    imports `node:child_process` must be listed (the fence fails otherwise);
+    the few that spawn only through the code under test are listed by hand,
+    with the reason, in the helper. Measured 2026-09-30 with the benchmark
+    running plus a 2x-cores CPU burner: the slowest such test took 22s, the
+    guards-shell cases 5-18s each.
+  - **Everything else keeps vitest's 5s default**, so an in-process hang still
+    fails in five seconds. Never raise it for a whole file (`vi.setConfig`
+    with a timeout is refused in a unit file). The handful of in-process
+    tests that do a lot of work in one test — a sweep over every key or width,
+    a mid-test import of a large module graph (`tui-surfaces`, `cmdbar`,
+    `checklist`, `tui-metrics`, `tui-companion`'s args, `fences`' compiled
+    checks, `fences-tui`, `fences-config`, `daemon`, …) — carry
+    `{ timeout: HEAVY_TIMEOUT_MS }` (60s) on the test itself; the bar for
+    adding one is a measured duration of 250ms+ on an ordinary run, or 2.5s+
+    under the burner: there a 250ms test was seen at 6s (a ~20x stall), and
+    the worst, a 5.8s key sweep, took 30s. The list was cut from two ordinary
+    runs on 2026-09-30; a new test past the bar needs the option added. Prefer a
+    static import to `await import()` inside a test: a mid-test import puts
+    the module transform on the test's clock. **Every test that calls `dispatchOnce`** carries it too,
+    by rule rather than by measurement (the fence checks it): the pump builds
+    a whole round order, and with every other class covered it was the one
+    that still crossed 5s under the burner — a different pump test each run.
+    Scaling tests keep their own `LINEAR_HANG_GUARD_MS`.
+  - The one full-`tsc` test (`fences-gate` [T6]) has `TYPECHECK_TIMEOUT_MS`
+    and runs tsc incrementally, its build info per checkout in
+    `node_modules/.cache/` (87s cold beside the suite, a few seconds warm).
+  - The project NAMES are load-bearing: vitest queues whole projects
+    alphabetically, and `spawning` holds the longest files, so it must sort
+    first or those files start last and set the wall time.
+  - Worker count stays vitest's default: capping it (tried `--maxWorkers=8`)
+    only cut the suite's share of a loaded CPU, from 378s to 535s of wall time
+    under the burner, and did not stop a single timeout.
+  - Load also breaks tests that are not timeouts. A wait loop is a DEADLINE
+    inside the test's timeout (`pollUntil` in `tui-startup`), never a count of
+    ticks — 100 x 20ms is a hidden 2s budget. A scratch repo whose `.git` is
+    copied disables auto-maintenance (`-c maintenance.auto=false -c
+    gc.auto=0`): a detached `git maintenance run --auto` was still writing
+    into it when `cp -r` walked it. A fake binary fed on stdin reads its stdin
+    before exiting, or the writer's EPIPE races the case under test.
+  - To re-measure: run the suite with `--reporter=json --outputFile=…` beside
+    `for i in $(seq $(( $(nproc)*2 ))); do timeout 900 sh -c 'while :; do :; done' & done`,
+    once with `--testTimeout=600000` to see true durations.
 - `seed-integrity.test.ts` enforces root rule 6 (sha256 manifest over the
   frozen `agents/`+`prompts/` seeds, `RATIFIED_DIVERGENCE` for ratified
   reseeds, `NON_SEEDED` for ours-to-edit files). A failure here means you

@@ -48,6 +48,7 @@ import {
 import { refOf } from "../src/memory/store.js";
 import { readPinnedFromSweep } from "../src/eodpinwatch.js";
 import type { ContextAssembler } from "../src/memory/context.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const KEY =
   "cWNy.cmV2aWV3ZXI.a2V5LWZvci10ZXN0cy1vbmx5LW5vdC1hLXJlYWwta2V5";
@@ -681,7 +682,7 @@ describe("context search", () => {
     expect(block.status === "read" && block.text).not.toContain("stale advice");
   });
 
-  it("past the exclusion cap, a retired entry still never reaches the round's context block", async () => {
+  it("past the exclusion cap, a retired entry still never reaches the round's context block", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     // The request carries at most EXCLUDE_URIS_CAP exclusions. Retired entries
     // past the cap in URI order used to come back from the search and be
     // pasted into the session prompt verbatim.

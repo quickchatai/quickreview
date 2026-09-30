@@ -46,6 +46,7 @@ import {
   type InstallEnv,
 } from "../src/install.js";
 import { loadConfig, parseConfig } from "../src/config.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 let dir: string;
 let root: string;
@@ -269,7 +270,7 @@ describe("qcr install", () => {
     expect(conflict.lines.join("\n")).toMatch(/differ/);
   });
 
-  it("the CLI's migrate moves the checkout config and is idempotent", async () => {
+  it("the CLI's migrate moves the checkout config and is idempotent", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const { cmdInstall } = await import("../src/cli.js");
     put(join(root, "config.toml"), "x = 1\n");
     const out: string[] = [];
@@ -589,7 +590,7 @@ describe("the checkout's profiles/ holds the generic examples", () => {
     for (const example of EXAMPLE_PROFILES) expect(dirs).toContain(example);
   });
 
-  it("no TypeScript module but the locator builds a profiles/ path", () => {
+  it("no TypeScript module but the locator builds a profiles/ path", { timeout: HEAVY_TIMEOUT_MS }, () => {
     const offenders: string[] = [];
     const walk = (rel: string): void => {
       for (const entry of readdirSync(join(repo, rel), { withFileTypes: true })) {

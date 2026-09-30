@@ -21,6 +21,7 @@ import { PASS_TIER_ORDER } from "../src/types.js";
 import { renderRoundPrompt, roundTemplateFile } from "../src/templates.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
 import type { ContextAssembler, MemoryRead } from "../src/memory/context.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const baseCfg: Config = parseConfig(
   readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
@@ -131,7 +132,7 @@ function queue(
 }
 
 describe("queue ordering and capacity", () => {
-  it("is FIFO by trigger_ts, nulls last, PR number as tiebreak", () => {
+  it("is FIFO by trigger_ts, nulls last, PR number as tiebreak", { timeout: HEAVY_TIMEOUT_MS }, () => {
     queue(3, "2026-08-13T10:00:00Z");
     queue(1, "2026-08-13T09:00:00Z");
     queue(2, null);
@@ -166,7 +167,7 @@ describe("roundTypeFor", () => {
 });
 
 describe("pre-fanout recovery dispatch", () => {
-  it("binds one daemon recovery instruction to the exact ordinary successor order", async () => {
+  it("binds one daemon recovery instruction to the exact ordinary successor order", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(5467, "2026-09-02T15:00:00Z", { head: "recovery-head" });
     const completed = store.startRound(5467, "first", ["pass-baseline"], 75);
     store.finishRound(completed, "REQUEST_CHANGES", null);
@@ -224,7 +225,7 @@ describe("pre-fanout recovery dispatch", () => {
     expect(orders[0]!.prompt).toContain("launch every planned discovery pass");
   });
 
-  it("never applies an orphaned recovery instruction to a newer prepared head", async () => {
+  it("never applies an orphaned recovery instruction to a newer prepared head", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(5468, "2026-09-02T15:00:00Z", { head: "old-head" });
     const prior = store.startRound(5468, "first", ["pass-baseline"], 75);
     store.createSessionCommand({
@@ -273,7 +274,7 @@ describe("pre-fanout recovery dispatch", () => {
 });
 
 describe("recording at round start", () => {
-  it("stamps the diffstat off the files list and the pr_state trigger_ts", async () => {
+  it("stamps the diffstat off the files list and the pr_state trigger_ts", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(21, "2026-08-13T09:00:00Z");
     adapter.files.set(21, [file("a.ts", 12, 3), file("b.ts", 4, 40)]);
     const { hooks } = recordingHooks();
@@ -294,7 +295,7 @@ describe("recording at round start", () => {
   // into the round row, so deleting dispatch's call left the suite green while
   // the integrity check silently never ran for any real round. A layer nobody
   // calls is precisely the failure mode this ticket is about.
-  it("takes the git-config fingerprint when the round starts", async () => {
+  it("takes the git-config fingerprint when the round starts", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(29, "2026-08-13T09:00:00Z");
     adapter.files.set(29, [file("a.ts", 1, 1)]);
     const { hooks } = recordingHooks();
@@ -321,7 +322,7 @@ describe("recording at round start", () => {
   });
 
   // the audit trail — which tier held the veto in this round.
-  it("records the validator's tier on the round row and the dispatch event", async () => {
+  it("records the validator's tier on the round row and the dispatch event", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(23, "2026-08-13T09:00:00Z");
     adapter.files.set(23, [file("auth/permissions.py", 10, 2)]);
     const { hooks, orders } = recordingHooks();
@@ -348,7 +349,7 @@ describe("recording at round start", () => {
   // validator, so the round row must not claim one ran at the configured tier.
   // MUTATION: restore `?? cfg.models.validate_tier` on dispatch's validateTier
   // and this fails.
-  it("records a NULL validator tier when the profile switched the validator off", async () => {
+  it("records a NULL validator tier when the profile switched the validator off", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(24, "2026-08-13T09:00:00Z");
     adapter.files.set(24, [file("auth/permissions.py", 10, 2)]);
     const { hooks, orders } = recordingHooks();
@@ -363,7 +364,7 @@ describe("recording at round start", () => {
     expect(JSON.parse(dispatched.payload ?? "{}").validate_tier).toBeNull();
   });
 
-  it("counts only daemon-run rounds when choosing first vs re-review", async () => {
+  it("counts only daemon-run rounds when choosing first vs re-review", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     // A backfilled (imported) round must not flip the next live round to
     // "re-review" — its template references a settled digest that never existed.
     store.db
@@ -387,7 +388,7 @@ describe("recording at round start", () => {
     expect(orders[1]!.order.round_type).toBe("re-review");
   });
 
-  it("a failed (cancelled, verdict-less) round does not age the PR — next round is still 'first' with review_no 1", async () => {
+  it("a failed (cancelled, verdict-less) round does not age the PR — next round is still 'first' with review_no 1", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     // Live 2026-08-18, #5313: two rounds died before posting anything and the
     // PR was dispatched as "round 3 (re-review)" with the nit cap active,
     // despite zero posted reviews. Failed rounds advance round_no (the audit
@@ -731,7 +732,7 @@ describe("buildPassPlan", () => {
 });
 
 describe("dispatchOnce", () => {
-  it("dispatches in FIFO order and stops at the concurrency cap", async () => {
+  it("dispatches in FIFO order and stops at the concurrency cap", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const cfg = { ...baseCfg, daemon: { ...baseCfg.daemon, max_concurrent_rounds: 2 } };
     queue(11, "2026-08-13T09:00:00Z");
     queue(12, "2026-08-13T09:30:00Z");
@@ -752,7 +753,7 @@ describe("dispatchOnce", () => {
     expect(next.map((o) => o.pr)).toEqual([13]);
   });
 
-  it("consumes both triggers and flags the round in progress", async () => {
+  it("consumes both triggers and flags the round in progress", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(21, "2026-08-13T09:00:00Z");
     const { hooks } = recordingHooks();
     await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
@@ -765,7 +766,7 @@ describe("dispatchOnce", () => {
     ]);
   });
 
-  it("still dispatches when trigger consumption partially fails", async () => {
+  it("still dispatches when trigger consumption partially fails", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(22, "2026-08-13T09:00:00Z");
     adapter.failLabelOn.add(22);
     const { hooks, orders } = recordingHooks();
@@ -778,7 +779,7 @@ describe("dispatchOnce", () => {
     expect(JSON.parse(logged[0]!.payload).which).toBe("label");
   });
 
-  it("treats a GitHub 404 on label removal as already-consumed, not a failure", async () => {
+  it("treats a GitHub 404 on label removal as already-consumed, not a failure", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(23, "2026-08-13T09:00:00Z");
     adapter.goneLabelOn.add(23);
     const { hooks, orders } = recordingHooks();
@@ -800,7 +801,7 @@ describe("dispatchOnce", () => {
     expect(JSON.parse(round.payload).triggers_consumed).toContain("label");
   });
 
-  it("never dispatches a PR that already has a running round (one worktree, one round)", async () => {
+  it("never dispatches a PR that already has a running round (one worktree, one round)", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(24, "2026-08-13T09:00:00Z");
     queue(25, "2026-08-13T09:01:00Z");
     store.startRound(24, "first", ["pass-baseline"], 45); // round in flight, PR requeued behind it
@@ -811,7 +812,7 @@ describe("dispatchOnce", () => {
     expect(adapter.calls.filter((c) => c.pr === 24)).toHaveLength(0);
   });
 
-  it("never dispatches a round behind an active ordinary session command", async () => {
+  it("never dispatches a round behind an active ordinary session command", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(26, "2026-08-13T09:00:00Z");
     queue(27, "2026-08-13T09:01:00Z");
     store.createSessionCommand({
@@ -832,7 +833,7 @@ describe("dispatchOnce", () => {
     expect(adapter.calls.filter((c) => c.pr === 26)).toHaveLength(0);
   });
 
-  it("never dispatches a round ahead of an older held conversational wake", async () => {
+  it("never dispatches a round ahead of an older held conversational wake", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(28, "2026-08-13T09:00:00Z");
     queue(29, "2026-08-13T09:01:00Z");
     store.holdWake(28, "operator-recovered author reply", "operator_recovered:wake:cmd-28");
@@ -846,7 +847,7 @@ describe("dispatchOnce", () => {
     expect(adapter.calls.filter((c) => c.pr === 28)).toHaveLength(0);
   });
 
-  it("builds the round order from the files API: lenses and the migration gate", async () => {
+  it("builds the round order from the files API: lenses and the migration gate", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(31, "2026-08-13T09:00:00Z", { title: "Terraform the ingest cluster", head: "abc123" });
     adapter.files.set(31, [
       file("infra/main.tf", 120, 5),
@@ -883,7 +884,7 @@ describe("dispatchOnce", () => {
     expect(orders[0]!.prompt).toContain('"pr": 31'); // default renderer = JSON
   });
 
-  it("leaves a small tidy PR ungated", async () => {
+  it("leaves a small tidy PR ungated", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(32, "2026-08-13T09:00:00Z");
     adapter.files.set(32, [file("README.md", 3, 1)]);
     const { hooks } = recordingHooks();
@@ -901,7 +902,7 @@ describe("dispatchOnce", () => {
 
   // ---- worktree facts in the order (2026-08-18) ---------------------------
 
-  it("carries the prepared tree's base facts into the order", async () => {
+  it("carries the prepared tree's base facts into the order", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(60, "2026-08-13T09:00:00Z", { head: "snapshot-sha" });
     adapter.baseRefs.set(60, "release/2026-08");
     const asked: Array<[number, string]> = [];
@@ -928,7 +929,7 @@ describe("dispatchOnce", () => {
     expect(order!.merge_base).toBe("fork-point");
   });
 
-  it("prefers the tree's real sha over the PR row snapshot and logs the drift", async () => {
+  it("prefers the tree's real sha over the PR row snapshot and logs the drift", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(61, "2026-08-13T09:00:00Z", { head: "stale-snapshot" });
     const { hooks } = recordingHooks();
     const [order] = await dispatchOnce({
@@ -955,7 +956,7 @@ describe("dispatchOnce", () => {
     });
   });
 
-  it("logs no drift when the tree matches the snapshot", async () => {
+  it("logs no drift when the tree matches the snapshot", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(62, "2026-08-13T09:00:00Z", { head: "same-sha" });
     const { hooks } = recordingHooks();
     await dispatchOnce({
@@ -975,7 +976,7 @@ describe("dispatchOnce", () => {
     ).toMatchObject({ c: 0 });
   });
 
-  it("still dispatches when the base-ref lookup fails — degraded, not blocked", async () => {
+  it("still dispatches when the base-ref lookup fails — degraded, not blocked", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(63, "2026-08-13T09:00:00Z", { head: "abc" });
     adapter.failGetPrOn.add(63);
     const { hooks } = recordingHooks();
@@ -995,7 +996,7 @@ describe("dispatchOnce", () => {
     expect(order!.base_ref).toBe("");
   });
 
-  it("falls back to the row sha with empty base facts when there is no worktree seam", async () => {
+  it("falls back to the row sha with empty base facts when there is no worktree seam", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(64, "2026-08-13T09:00:00Z", { head: "row-sha" });
     const { hooks } = recordingHooks();
     const [order] = await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
@@ -1004,7 +1005,7 @@ describe("dispatchOnce", () => {
     expect(order!.merge_base).toBe("");
   });
 
-  it("uses the injected prompt renderer and settled digest", async () => {
+  it("uses the injected prompt renderer and settled digest", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(33, "2026-08-13T09:00:00Z");
     const { hooks, orders } = recordingHooks();
     await dispatchOnce({
@@ -1023,7 +1024,7 @@ describe("dispatchOnce", () => {
   // their task strings, and passes are blank slates — so the dispatched round
   // prompt itself must carry the verbatim NIT SCOPE block from round 3 onward,
   // rendered through the REAL shipped templates.
-  it("arms the NIT SCOPE task-string block in the dispatched prompt from round 3, not before", async () => {
+  it("arms the NIT SCOPE task-string block in the dispatched prompt from round 3, not before", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const templates = new Map(
       (["first", "re-review", "staleness"] as const).map((rt) => [
         rt,
@@ -1058,7 +1059,7 @@ describe("dispatchOnce", () => {
     expect(p3).toContain("running non-blocking thread");
   });
 
-  it("numbers rounds per PR and marks a stale recheck", async () => {
+  it("numbers rounds per PR and marks a stale recheck", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(41, "2026-08-13T09:00:00Z");
     const { hooks } = recordingHooks();
     await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
@@ -1073,7 +1074,7 @@ describe("dispatchOnce", () => {
     expect(store.getPr(41)!.stale_recheck).toBe(0);
   });
 
-  it("never dispatches a PR that is not queued", async () => {
+  it("never dispatches a PR that is not queued", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     store.upsertPr({
       number: 51,
       state: "awaiting_author",
@@ -1089,7 +1090,7 @@ describe("dispatchOnce", () => {
     expect(adapter.calls).toHaveLength(0);
   });
 
-  it("serializes concurrent pumps so one PR gets one round and the cap holds", async () => {
+  it("serializes concurrent pumps so one PR gets one round and the cap holds", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const cfg = { ...baseCfg, daemon: { ...baseCfg.daemon, max_concurrent_rounds: 1 } };
     queue(58, "2026-08-13T09:00:00Z");
     queue(59, "2026-08-13T09:01:00Z");
@@ -1115,7 +1116,7 @@ describe("dispatchOnce", () => {
     expect(adapter.calls.filter((c) => c.fn === "removeLabel" && c.pr === 58)).toHaveLength(1);
   });
 
-  it("discards a provisional round and leaves the PR queued when session dispatch fails", async () => {
+  it("discards a provisional round and leaves the PR queued when session dispatch fails", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(60, "2026-08-13T09:00:00Z");
     const hooks = recordingHooks().hooks;
     hooks.dispatchRound = async () => {
@@ -1137,7 +1138,7 @@ describe("dispatchOnce", () => {
     });
   });
 
-  it("retains the round when a durable command exists before bookkeeping fails", async () => {
+  it("retains the round when a durable command exists before bookkeeping fails", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(63, "2026-08-13T09:00:00Z");
     const hooks = recordingHooks().hooks;
     hooks.dispatchRound = async (order) => {
@@ -1165,7 +1166,7 @@ describe("dispatchOnce", () => {
     expect(JSON.parse(failure.payload)).toMatchObject({ retained_command: true });
   });
 
-  it("one failing PR does not stall the pump", async () => {
+  it("one failing PR does not stall the pump", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(61, "2026-08-13T09:00:00Z");
     queue(62, "2026-08-13T09:30:00Z");
     const bad = new (class extends FakeAdapter {
@@ -1191,7 +1192,7 @@ describe("first-party directive escalation pick", () => {
     merge_base: "forkpoint",
   };
 
-  it("puts the directive files and the git-picked mention on the order, deterministically and logged", async () => {
+  it("puts the directive files and the git-picked mention on the order, deterministically and logged", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(70, "2026-08-13T10:00:00Z", { head: "sha70" });
     adapter.files.set(70, [file(".claude/skills/uja/SKILL.md"), file("src/app.py")]);
     const { hooks, orders } = recordingHooks();
@@ -1224,7 +1225,7 @@ describe("first-party directive escalation pick", () => {
     });
   });
 
-  it("falls back to config [review].escalation_mention_default when git yields no login", async () => {
+  it("falls back to config [review].escalation_mention_default when git yields no login", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(71, "2026-08-13T10:00:00Z", { head: "sha70" });
     adapter.files.set(71, [file("CLAUDE.md")]);
     const { hooks, orders } = recordingHooks();
@@ -1246,7 +1247,7 @@ describe("first-party directive escalation pick", () => {
     expect(JSON.parse(ev.payload)).toMatchObject({ source: "config-default" });
   });
 
-  it("falls back to [owner] github_login when the [review] knob is unset", async () => {
+  it("falls back to [owner] github_login when the [review] knob is unset", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const cfg = structuredClone(baseCfg);
     cfg.review.escalation_mention_default = "";
     queue(74, "2026-08-13T10:00:00Z", { head: "sha70" });
@@ -1266,7 +1267,7 @@ describe("first-party directive escalation pick", () => {
     });
   });
 
-  it("degrades to the fallback — never a lost round — when the author lookup throws or is absent", async () => {
+  it("degrades to the fallback — never a lost round — when the author lookup throws or is absent", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(72, "2026-08-13T10:00:00Z", { head: "sha70" });
     adapter.files.set(72, [file("prompts/system.md")]);
     const { hooks, orders } = recordingHooks();
@@ -1295,7 +1296,7 @@ describe("first-party directive escalation pick", () => {
     );
   });
 
-  it("a PR touching no directive file carries no field and logs no pick", async () => {
+  it("a PR touching no directive file carries no field and logs no pick", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(74, "2026-08-13T10:00:00Z", { head: "sha70" });
     adapter.files.set(74, [
       file("src/app.py"),
@@ -1348,7 +1349,7 @@ describe("system re-trigger short-circuit", () => {
     );
   }
 
-  it("unchanged-head system re-trigger short-circuits — the #5308 r2 case", async () => {
+  it("unchanged-head system re-trigger short-circuits — the #5308 r2 case", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(41, "2026-08-19T10:00:00Z", { head: OLD, provenance: "system" });
     reviewed(41, OLD, "APPROVE");
     const { hooks, orders } = recordingHooks();
@@ -1368,7 +1369,7 @@ describe("system re-trigger short-circuit", () => {
     expect(adapter.calls.filter((c) => c.fn === "addLabel")).toEqual([]);
   });
 
-  it("a clean base merge touching no PR-owned files short-circuits — the #5308 r6 case", async () => {
+  it("a clean base merge touching no PR-owned files short-circuits — the #5308 r6 case", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(42, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
     reviewed(42, OLD, "APPROVE");
     adapter.files.set(42, [file("mine.ts")]);
@@ -1396,7 +1397,7 @@ describe("system re-trigger short-circuit", () => {
 
   // Selfscan 5bd5d43c / a78c7cba: a compare GitHub truncated at 300 files,
   // or a PR file list cut at its cap, is not evidence of "base-merge only".
-  it("a truncated compare or PR file list never short-circuits the round", async () => {
+  it("a truncated compare or PR file list never short-circuits the round", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(46, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
     reviewed(46, OLD, "APPROVE");
     adapter.files.set(46, [file("mine.ts")]);
@@ -1423,7 +1424,7 @@ describe("system re-trigger short-circuit", () => {
   // Selfscan 8dd186e2 (the dispatch copy): a push restoring a reviewed file
   // to its base content drops it from the CURRENT diff; ownership read only
   // there called the reversion a base merge and skipped the round.
-  it("a push reverting a reviewed file is never a base-merge short-circuit", async () => {
+  it("a push reverting a reviewed file is never a base-merge short-circuit", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(47, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
     reviewed(47, OLD, "APPROVE");
     adapter.files.set(47, [file("api.py")]);
@@ -1436,7 +1437,7 @@ describe("system re-trigger short-circuit", () => {
     expect(shortCircuitEvents(47)).toEqual([]);
   });
 
-  it("a significant delta dispatches the full round as today", async () => {
+  it("a significant delta dispatches the full round as today", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(43, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
     reviewed(43, OLD, "APPROVE");
     adapter.files.set(43, [file("mine.ts")]);
@@ -1448,7 +1449,7 @@ describe("system re-trigger short-circuit", () => {
     expect(shortCircuitEvents(43)).toEqual([]);
   });
 
-  it("human provenance never short-circuits, even on an empty delta", async () => {
+  it("human provenance never short-circuits, even on an empty delta", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(44, "2026-08-19T10:00:00Z", { head: NEW, provenance: "human" });
     reviewed(44, OLD, "APPROVE");
     const { hooks } = recordingHooks();
@@ -1456,21 +1457,21 @@ describe("system re-trigger short-circuit", () => {
     expect(shortCircuitEvents(44)).toEqual([]);
   });
 
-  it("legacy null provenance never short-circuits (full round is the safe default)", async () => {
+  it("legacy null provenance never short-circuits (full round is the safe default)", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(45, "2026-08-19T10:00:00Z", { head: NEW, provenance: null });
     reviewed(45, OLD, "APPROVE");
     const { hooks } = recordingHooks();
     expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toHaveLength(1);
   });
 
-  it("first reviews never short-circuit", async () => {
+  it("first reviews never short-circuit", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(46, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
     const { hooks } = recordingHooks();
     expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toHaveLength(1);
     expect(shortCircuitEvents(46)).toEqual([]);
   });
 
-  it("a withheld approval at this head still dispatches —'s retry must post", async () => {
+  it("a withheld approval at this head still dispatches —'s retry must post", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(47, "2026-08-19T10:00:00Z", { head: OLD, provenance: "system" });
     reviewed(47, OLD, "APPROVE");
     store.recordApprovalWithheld(47, { head_sha: OLD });
@@ -1479,7 +1480,7 @@ describe("system re-trigger short-circuit", () => {
     expect(shortCircuitEvents(47)).toEqual([]);
   });
 
-  it("an author reply pending on the mark blocks the unchanged-head skip", async () => {
+  it("an author reply pending on the mark blocks the unchanged-head skip", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(48, "2026-08-19T10:00:00Z", { head: OLD, provenance: "system" });
     reviewed(48, OLD, "APPROVE");
     store.noteAuthorReply(48, "2099-01-01T00:00:00.000Z");
@@ -1488,7 +1489,7 @@ describe("system re-trigger short-circuit", () => {
     expect(shortCircuitEvents(48)).toEqual([]);
   });
 
-  it("standing REQUEST_CHANGES short-circuits back to awaiting_author and claims no recheck", async () => {
+  it("standing REQUEST_CHANGES short-circuits back to awaiting_author and claims no recheck", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(49, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
     reviewed(49, OLD, "REQUEST_CHANGES");
     const { hooks } = recordingHooks();
@@ -1502,7 +1503,7 @@ describe("system re-trigger short-circuit", () => {
     expect(store.rechecksFor(49)).toEqual([]);
   });
 
-  it("carries a withheld approval to the new head on a trivial short-circuit (amendment 3)", async () => {
+  it("carries a withheld approval to the new head on a trivial short-circuit (amendment 3)", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(50, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
     reviewed(50, OLD, "APPROVE");
     store.recordApprovalWithheld(50, { head_sha: OLD, ci_state: "red", reason: "red-ci" });
@@ -1519,7 +1520,7 @@ describe("system re-trigger short-circuit", () => {
     ).toEqual({ c: 1 });
   });
 
-  it("an existing recheck claim is left untouched — no double-claim against", async () => {
+  it("an existing recheck claim is left untouched — no double-claim against", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(51, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
     reviewed(51, OLD, "APPROVE");
     const fp = recheckFingerprint({ trigger: "push" }, NEW);
@@ -1532,7 +1533,7 @@ describe("system re-trigger short-circuit", () => {
     expect(claims[0]).toMatchObject({ fingerprint: fp, reason: "real-recheck" });
   });
 
-  it("a failed compare read falls back to the full round", async () => {
+  it("a failed compare read falls back to the full round", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(52, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
     reviewed(52, OLD, "APPROVE");
     adapter.failCompare = true;
@@ -1549,7 +1550,7 @@ describe("system re-trigger short-circuit", () => {
     ).toEqual({ c: 1 });
   });
 
-  it("an adapter without the compare seam never short-circuits a moved head", async () => {
+  it("an adapter without the compare seam never short-circuits a moved head", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(53, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
     reviewed(53, OLD, "APPROVE");
     const legacy = new FakeAdapter();
@@ -1560,7 +1561,7 @@ describe("system re-trigger short-circuit", () => {
     expect(shortCircuitEvents(53)).toEqual([]);
   });
 
-  it("a hand-resolved merge conflict in the delta classifies significant — full round", async () => {
+  it("a hand-resolved merge conflict in the delta classifies significant — full round", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(54, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
     reviewed(54, OLD, "APPROVE");
     adapter.files.set(54, [file("mine.ts")]);
@@ -1578,7 +1579,7 @@ describe("system re-trigger short-circuit", () => {
     expect(shortCircuitEvents(54)).toEqual([]);
   });
 
-  it("a degraded merge-verify keeps the delta-only classification but is never quiet", async () => {
+  it("a degraded merge-verify keeps the delta-only classification but is never quiet", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(55, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
     reviewed(55, OLD, "APPROVE");
     adapter.files.set(55, [file("mine.ts")]);
@@ -1648,7 +1649,7 @@ describe("round-memory seeding", () => {
     ).map((r) => JSON.parse(r.payload) as Record<string, unknown>);
   }
 
-  it("seeds the dispatched prompt with the head and the block, through the real template", async () => {
+  it("seeds the dispatched prompt with the head and the block, through the real template", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(70, "2026-08-20T09:00:00Z", { title: "Cap the retry budget" });
     adapter.files.set(70, [file("api/retries.py")]);
     const assembler = new Assembler();
@@ -1676,7 +1677,7 @@ describe("round-memory seeding", () => {
     ]);
   });
 
-  it("makes EXACTLY one context call per round — never one per pass, never two per round", async () => {
+  it("makes EXACTLY one context call per round — never one per pass, never two per round", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(71, "2026-08-20T09:00:00Z");
     queue(72, "2026-08-20T09:30:00Z");
     adapter.files.set(71, [
@@ -1700,7 +1701,7 @@ describe("round-memory seeding", () => {
 
   // The acceptance criterion: with the store unreachable the round still
   // renders and dispatches, memory-less, and it is not delayed while it waits.
-  it("dispatches memory-less and on time when the store never answers", async () => {
+  it("dispatches memory-less and on time when the store never answers", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(73, "2026-08-20T09:00:00Z");
     adapter.files.set(73, [file("a.ts")]);
     const hung: ContextAssembler = {
@@ -1736,7 +1737,7 @@ describe("round-memory seeding", () => {
     expect(JSON.parse(anomaly.payload).kind).toBe("round_memory_degraded");
   });
 
-  it("a store that breaks its contract and throws still costs nothing but memory", async () => {
+  it("a store that breaks its contract and throws still costs nothing but memory", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(74, "2026-08-20T09:00:00Z");
     adapter.files.set(74, [file("a.ts")]);
     const broken: ContextAssembler = {
@@ -1755,7 +1756,7 @@ describe("round-memory seeding", () => {
   // the path every adopter takes first: a healthy store with nothing
   // pinned yet. The round is seeded normally, told memory had nothing to add,
   // and the operator hears nothing — EMPTY IS NOT DEGRADED.
-  it("a fresh install (healthy store, nothing pinned) is NOT degraded: no unavailable note, no anomaly", async () => {
+  it("a fresh install (healthy store, nothing pinned) is NOT degraded: no unavailable note, no anomaly", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(78, "2026-08-20T09:00:00Z");
     adapter.files.set(78, [file("a.ts")]);
     const fresh = new Assembler(read(""), read(""));
@@ -1786,7 +1787,7 @@ describe("round-memory seeding", () => {
   // round carried standing instructions (a container recreated without its
   // volume). The transition itself gets ONE anomaly; a fresh install never
   // sees it, and it never repeats.
-  it("populated → empty with the store readable raises pinned_head_emptied exactly once", async () => {
+  it("populated → empty with the store readable raises pinned_head_emptied exactly once", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const tpl = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile("first")), "utf8");
     const { hooks, orders } = recordingHooks();
     const injected: string[] = [];
@@ -1824,7 +1825,7 @@ describe("round-memory seeding", () => {
     expect(injected).toHaveLength(1);
   });
 
-  it("an unreadable round between the two does not hide the transition — the baseline is the last READ head", async () => {
+  it("an unreadable round between the two does not hide the transition — the baseline is the last READ head", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const { hooks } = recordingHooks();
     const run = async (pr: number, ts: string, assembler: ContextAssembler) => {
       queue(pr, ts);
@@ -1842,7 +1843,7 @@ describe("round-memory seeding", () => {
     expect(anomalies(85)).toEqual(["pinned_head_emptied"]);
   });
 
-  it("an UNREADABLE store still degrades, still alerts the operator, and names what is missing", async () => {
+  it("an UNREADABLE store still degrades, still alerts the operator, and names what is missing", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(79, "2026-08-20T09:00:00Z");
     adapter.files.set(79, [file("a.ts")]);
     const dead = new Assembler(
@@ -1883,7 +1884,7 @@ describe("round-memory seeding", () => {
     expect(injected[0]).toContain("ECONNREFUSED");
   });
 
-  it("keeps alerting bounded while the store stays down — the per-round record does not thin", async () => {
+  it("keeps alerting bounded while the store stays down — the per-round record does not thin", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const down = new Assembler(
       unreadable("connect ECONNREFUSED"),
       unreadable("connect ECONNREFUSED"),
@@ -1912,7 +1913,7 @@ describe("round-memory seeding", () => {
     ).toEqual({ c: 1 });
   });
 
-  it("with no memory wired at all, dispatch behaves exactly as before", async () => {
+  it("with no memory wired at all, dispatch behaves exactly as before", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(77, "2026-08-20T09:00:00Z");
     adapter.files.set(77, [file("a.ts")]);
     const { hooks, orders } = recordingHooks();
@@ -1959,7 +1960,7 @@ describe("a newer push/re-request during trigger consumption is never settled aw
       migration_gate: 0,
     });
 
-  it("no-new-evidence skip: the PR stays queued at the new head with its trigger", async () => {
+  it("no-new-evidence skip: the PR stays queued at the new head with its trigger", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(91, "2026-09-30T09:00:00Z", { head: "h1" });
     store.recordReviewedHead(91, { head_sha: "h1", verdict: "REQUEST_CHANGES", round_no: 1 });
     const racing = new RacingAdapter();
@@ -1974,7 +1975,7 @@ describe("a newer push/re-request during trigger consumption is never settled aw
     expect(row.trigger_ts).toBe("2026-09-30T09:00:05Z");
   });
 
-  it("system short-circuit: the PR stays queued at the new head with its trigger", async () => {
+  it("system short-circuit: the PR stays queued at the new head with its trigger", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const cfg: Config = { ...baseCfg, guards: { ...baseCfg.guards, skip_unchanged_head: false } };
     queue(92, "2026-09-30T09:00:00Z", { head: "h1", provenance: "system" });
     const id = store.startRound(92, "first", ["pass-baseline"], 60);
@@ -1994,7 +1995,7 @@ describe("a newer push/re-request during trigger consumption is never settled aw
 });
 
 describe("the round's file facts describe the prepared head", () => {
-  it("a push landing before the worktree fetch is planned from the prepared head's files", async () => {
+  it("a push landing before the worktree fetch is planned from the prepared head's files", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(93, "2026-09-30T09:00:00Z", { head: "h1" });
     adapter.files.set(93, [file("src/views.py")]);
     const { hooks } = recordingHooks();

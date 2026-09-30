@@ -25,6 +25,7 @@ import { Tmux } from "../src/tmux.js";
 import type { ExecFn } from "../src/tmux.js";
 import { flushHeldWakes, wakeOrHold } from "../src/wakes.js";
 import { WorktreeManager } from "../src/worktrees.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 // ---- S1/S2: the daemon spawns two session kinds and launches no agent ------
 
@@ -274,7 +275,7 @@ describe("S4: every PR-session wake goes through wakes.ts", () => {
    * *invisible* to the suite, and an invisible exception is indistinguishable
    * from an oversight. Now it is written down, with what makes it legal.
    */
-  it("only the sanctioned writers construct a session's inject drop-box path", () => {
+  it("only the sanctioned writers construct a session's inject drop-box path", { timeout: HEAVY_TIMEOUT_MS }, () => {
     /**
      * An EXHAUSTIVE registry, checked by SET EQUALITY in both directions.
      *
@@ -571,7 +572,7 @@ describe("wakeOrHold / flushHeldWakes", () => {
 
   // Selfscan fce511c3: with no round and no command, a NEW wake injected
   // straight past older held wakes still waiting for the stranded sweep.
-  it("a new wake never overtakes an existing held backlog", async () => {
+  it("a new wake never overtakes an existing held backlog", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const id = store.startRound(7, "first", ["pass-baseline"], 75);
     await wakeOrHold(deps(), 7, "older reply", "author_reply");
     store.finishRound(id, "APPROVE", null, null);

@@ -37,6 +37,7 @@ import {
   type DockerResult,
   type DockerRunner,
 } from "../src/tui/companion.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -840,7 +841,7 @@ describe("companion status when docker cannot be asked (selfscan)", () => {
 });
 
 describe("qcr tui args", () => {
-  it("defaults to companion on + reload on with no target", async () => {
+  it("defaults to companion on + reload on with no target", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const { parseTuiArgs } = await import("../src/tui/index.js");
     expect(parseTuiArgs([])).toEqual({
       target: undefined,
@@ -851,7 +852,7 @@ describe("qcr tui args", () => {
     });
   });
 
-  it("separates flags from the deep-link target", async () => {
+  it("separates flags from the deep-link target", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const { parseTuiArgs } = await import("../src/tui/index.js");
     expect(parseTuiArgs(["5012", "--no-companion"])).toMatchObject({
       target: "5012",

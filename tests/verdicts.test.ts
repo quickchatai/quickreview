@@ -19,6 +19,7 @@ import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
 import type { SessionHooks, VerdictFile } from "../src/types.js";
 import { AnomalyWakePolicy } from "../src/anomalies.js";
 import { validateVerdict, VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const cfg: Config = parseConfig(
   readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
@@ -228,7 +229,7 @@ function watcher(
 }
 
 describe("validateVerdict", () => {
-  it("accepts and caps an optional summary; rejects non-strings", () => {
+  it("accepts and caps an optional summary; rejects non-strings", { timeout: HEAVY_TIMEOUT_MS }, () => {
     const ok = validateVerdict({
       ...verdictFile(),
       summary: "  Adds retry to the CRM send. Round found two nits. Awaiting author. ",

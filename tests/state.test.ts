@@ -8,6 +8,7 @@ import {
   writeStatusJson,
   type StatusSnapshot,
 } from "../src/state.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const T0 = new Date("2026-08-13T09:00:00.000Z");
 let clock = T0;
@@ -36,7 +37,7 @@ const prRow = (number: number, over: Partial<Parameters<StateStore["upsertPr"]>[
 });
 
 describe("pr_state", () => {
-  it("inserts, updates in place, and stamps updated_at", () => {
+  it("inserts, updates in place, and stamps updated_at", { timeout: HEAVY_TIMEOUT_MS }, () => {
     store.upsertPr(prRow(10));
     expect(store.getPr(10)).toMatchObject({
       number: 10,
@@ -617,7 +618,7 @@ describe("cancellation causes", () => {
     expect(store.loudCancellations(clock.toISOString()).map((r) => r.pr)).toEqual([21]);
   });
 
-  it("classifies the historical prose exactly once, at boot", () => {
+  it("classifies the historical prose exactly once, at boot", { timeout: HEAVY_TIMEOUT_MS }, () => {
     const dir = mkdtempSync(join(tmpdir(), "qcr-state-"));
     try {
       const path = join(dir, "state.db");
@@ -921,7 +922,7 @@ describe("durable FAILED_LOUD review obligations", () => {
     expect(store.selfRequeueCount(5467, "same-head")).toBe(1);
   });
 
-  it("keeps permanent same-head failure on finite exponential backoff capped at six hours", () => {
+  it("keeps permanent same-head failure on finite exponential backoff capped at six hours", { timeout: HEAVY_TIMEOUT_MS }, () => {
     const delays = [15, 30, 60, 120, 240, 360, 360, 360];
     for (const [epoch, delay] of delays.entries()) {
       const pr = 5600 + epoch;
@@ -978,7 +979,7 @@ describe("durable FAILED_LOUD review obligations", () => {
     );
   });
 
-  it("reconstructs due pre-fanout retry debt after a process restart", () => {
+  it("reconstructs due pre-fanout retry debt after a process restart", { timeout: HEAVY_TIMEOUT_MS }, () => {
     const root = mkdtempSync(join(tmpdir(), "qcr-ft0406-restart-"));
     const db = join(root, "state.db");
     const first = new StateStore(db, now);

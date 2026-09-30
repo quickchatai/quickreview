@@ -21,6 +21,7 @@ import { Frame, stripAnsi } from "../src/tui/paint.js";
 import { CompanionSidebar, sidebarWidth } from "../src/tui/sidebar.js";
 import { TABS } from "../src/tui/tabs.js";
 import type { DockerRunner } from "../src/tui/companion.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const NAV: Array<[string, string]> = TABS.map((t, i) => [String(i + 1), `${i + 1} ${t}`]);
 const GLOBALS: Array<[string, string]> = [
@@ -112,7 +113,7 @@ describe("the bar wraps instead of dropping buttons (→)", () => {
     return out;
   }
 
-  it("at EVERY width, every nav slot, global and command is painted whole and hits back to its key", () => {
+  it("at EVERY width, every nav slot, global and command is painted whole and hits back to its key", { timeout: HEAVY_TIMEOUT_MS }, () => {
     const rows = 40;
     for (let cols = 16; cols <= 240; cols++) {
       const commands = TAB_VOCABULARY.board;

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { StateStore } from "../src/state.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const T0 = "2026-08-27T20:00:00.000Z";
 
@@ -33,7 +34,7 @@ describe("durable PR-session command slot", () => {
     return store;
   };
 
-  it("persists one finite pending slot with exact command identity and payload evidence", () => {
+  it("persists one finite pending slot with exact command identity and payload evidence", { timeout: HEAVY_TIMEOUT_MS }, () => {
     const store = open();
     const row = store.createSessionCommand(input("cmd-a"));
 

@@ -3,7 +3,7 @@
 // throwaway temp dirs.
 import { afterEach, describe, expect, it } from "vitest";
 import { createHmac } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -26,6 +26,12 @@ import {
   type HttpPost,
   type ProbeResult,
 } from "../src/checklist.js";
+// Static, not `await import()` inside the tests: cliops pulls in a large
+// graph, and a mid-test import puts its transform on the test's clock — the
+// one step that stretches without bound when the machine is loaded.
+import { derivedQueueOf, stalenessSimulation } from "../src/cliops.js";
+import { parseConfig } from "../src/config.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const tmpDirs: string[] = [];
 function scratch(): string {
@@ -172,10 +178,7 @@ describe("④ push does not review — any unsolicited round, and a REAL fixture
     }
   });
 
-  it("the offline simulation tracks an APPROVED PR at the old head, so reconcile really sees a push", async () => {
-    const { stalenessSimulation } = await import("../src/cliops.js");
-    const { parseConfig } = await import("../src/config.js");
-    const { readFileSync } = await import("node:fs");
+  it("the offline simulation tracks an APPROVED PR at the old head, so reconcile really sees a push", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const cfg = parseConfig(readFileSync(join(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
     const sim = stalenessSimulation(cfg, scratch());
     const r = await probeStalenessWake(sim);
@@ -192,7 +195,6 @@ describe("④ push does not review — any unsolicited round, and a REAL fixture
 
 describe("② derived queue (selfscan)", () => {
   it("live: a reviewing PR already had its trigger consumed, so it is not owed; dry-run keeps it", async () => {
-    const { derivedQueueOf } = await import("../src/cliops.js");
     const rows = [
       { number: 1, state: "queued" },
       { number: 2, state: "reviewing" },

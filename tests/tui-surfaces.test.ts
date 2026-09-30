@@ -35,6 +35,7 @@ import { installDeployHooks } from "../src/tui/deploytab.js";
 import { installMetricsHooks } from "../src/tui/metricstab.js";
 import { installMessageHooks } from "../src/tui/msg.js";
 import { FakeChanges, changeEntry, installScanRig, learningRig, settle, type Rig } from "./helpers/tui-rig.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const ROOT = join(import.meta.dirname, "..");
 const TUI = join(ROOT, "src", "tui");
@@ -145,7 +146,7 @@ describe("eight surfaces, one vocabulary", () => {
     }
   });
 
-  it("every installed surface paints its own name in the title bar and lights its own nav slot", async () => {
+  it("every installed surface paints its own name in the title bar and lights its own nav slot", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const rig = fullRig();
     for (const tab of TABS) {
       await settled(rig, tab);
@@ -257,7 +258,7 @@ describe("the key law: painted ⇔ registered ⇔ answers", () => {
    * read the same function), which is the point; instead paint an extra
    * `[Z zap]` on any tab's bar and this fails for that tab.
    */
-  it("every surface paints exactly the bar its live keys declare, drawn from its vocabulary", async () => {
+  it("every surface paints exactly the bar its live keys declare, drawn from its vocabulary", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const rig = fullRig();
     for (const tab of TABS) {
       await settled(rig, tab);
@@ -290,7 +291,7 @@ describe("the key law: painted ⇔ registered ⇔ answers", () => {
    * MUTATION: make the memory tab's key handler `return true` for
    * `key.kind === "char" && key.ch === "z"` — this fails naming `z` on memory.
    */
-  it("every printable a surface does not register focuses the companion column, seeded, and moves nothing else", async () => {
+  it("every printable a surface does not register focuses the companion column, seeded, and moves nothing else", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     for (const tab of TABS) {
       const rig = fullRig();
       await settled(rig, tab);
@@ -339,7 +340,7 @@ describe("the board's verbs are the board's", () => {
    * [T1]; everywhere else the letter must move nothing at all — never the
    * board's verb behind the operator's back, never the selection.
    */
-  it("u, e, m, g and a do nothing off the board with no column to hand them to", async () => {
+  it("u, e, m, g and a do nothing off the board with no column to hand them to", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const rig = fullRig();
     rig.app.sidebar = undefined;
     let unwedged = 0;

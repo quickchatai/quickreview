@@ -26,6 +26,7 @@ import {
   type SupervisedChild,
 } from "../src/openviking/index.js";
 import { StateStore, buildStatusSnapshot } from "../src/state.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const cfg = (over: Partial<OpenVikingConfig> = {}): OpenVikingConfig =>
   resolveOpenVikingPaths({ ...OPENVIKING_DEFAULTS, ...over });
@@ -559,7 +560,7 @@ describe("OpenVikingSupervisor", () => {
 // ---- the heartbeat block -------------------------------------------------
 
 describe("status.json openviking block", () => {
-  it("reaches the heartbeat, and a throwing status read never breaks it", async () => {
+  it("reaches the heartbeat, and a throwing status read never breaks it", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const root = mkdtempSync(join(tmpdir(), "qcr-ov-"));
     const store = new StateStore(":memory:");
     try {

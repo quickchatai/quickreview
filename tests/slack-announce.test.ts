@@ -13,6 +13,7 @@ import {
 } from "../src/slack/announce.js";
 import type { SlackPostResult, SlackWebApi } from "../src/slack/types.js";
 import { StateStore } from "../src/state.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 interface Posted {
   channel: string;
@@ -134,7 +135,7 @@ beforeEach(() => {
 afterEach(() => store.close());
 
 describe("disabled Slack", () => {
-  it("posts nothing and writes no state at all", async () => {
+  it("posts nothing and writes no state at all", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     cfg.slack.enabled = false;
     const a = announcer();
     await a.roundStarted(round);

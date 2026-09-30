@@ -34,6 +34,7 @@ import { topBar, type BoardView } from "../src/tui/board.js";
 import { stripAnsi } from "../src/tui/paint.js";
 import type { RemoteResult } from "../src/tui/remote.js";
 import { handleDelivery, signBody } from "../src/webhook.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const cfg: Config = parseConfig(
   readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
@@ -55,7 +56,7 @@ describe("drain state row", () => {
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  it("survives a simulated restart (new StateStore over the same file)", () => {
+  it("survives a simulated restart (new StateStore over the same file)", { timeout: HEAVY_TIMEOUT_MS }, () => {
     const dbPath = join(dir, "state.db");
     const first = new StateStore(dbPath);
     expect(first.drainState()).toEqual({ draining: false, drained_deliveries: 0 });
@@ -199,7 +200,7 @@ class PumpAdapter implements DispatchAdapter {
 }
 
 describe("dispatch pump while draining", () => {
-  it("starts nothing; the queued PR dispatches after the lift", async () => {
+  it("starts nothing; the queued PR dispatches after the lift", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const store = new StateStore(":memory:");
     store.upsertPr({
       number: 7,

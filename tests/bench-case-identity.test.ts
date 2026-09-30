@@ -166,12 +166,16 @@ describe("a retried case's continuation", () => {
     // Attempt 1 persisted a session and failed.
     mkdirSync(join(caseDir, "session"), { recursive: true });
     writeFileSync(join(caseDir, "session", "attempt-1.jsonl"), '{"type":"session"}\n');
-    // Attempt 2's pi dies before its first assistant message.
+    // Attempt 2's pi dies before its first assistant message. It reads its
+    // prompt first, as a real pi does before calling the model: a fake that
+    // exits without reading races runPi's stdin write, and on a loaded machine
+    // loses it — an EPIPE the runner rightly reports as a failed prompt
+    // delivery, which is a different case from the one this test is about.
     const calls = join(tmp, "pi-calls.log");
     const piBin = join(tmp, "fake-pi");
     writeFileSync(
       piBin,
-      `#!/bin/sh\necho "$*" >> ${JSON.stringify(calls)}\necho "429 rate limit" >&2\nexit 1\n`,
+      `#!/bin/sh\ncat >/dev/null\necho "$*" >> ${JSON.stringify(calls)}\necho "429 rate limit" >&2\nexit 1\n`,
     );
     chmodSync(piBin, 0o755);
     const s = await reviewCase(

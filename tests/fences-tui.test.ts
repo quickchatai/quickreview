@@ -24,6 +24,7 @@ import { installMetricsHooks } from "../src/tui/metricstab.js";
 import { installMessageHooks } from "../src/tui/msg.js";
 import { TABS, tabDigit } from "../src/tui/tabs.js";
 import { FakeChanges, changeEntry, installScanRig, learningRig } from "./helpers/tui-rig.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const ROOT = join(import.meta.dirname, "..");
 
@@ -383,7 +384,7 @@ describe("[T1] every registered key is answerable", () => {
   };
 
   for (const tab of TABS) {
-    it(`${tab}: no registered key is swallowed`, async () => {
+    it(`${tab}: no registered key is swallowed`, { timeout: HEAVY_TIMEOUT_MS }, async () => {
       const dead: string[] = [];
       // The registered set is a function of the settled state, so it is read
       // from a settled rig — the same one every key below is pressed on.

@@ -9,6 +9,7 @@ import {
   startHeartbeat,
 } from "../src/anomalies.js";
 import { StateStore } from "../src/state.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const TZ = "Europe/Warsaw";
 
@@ -224,7 +225,7 @@ describe("renderHeartbeatMessage", () => {
 });
 
 describe("startHeartbeat — daily fire", () => {
-  it("boot before 09:00 Warsaw: no catch-up, fires at 09:00, then once per following day", async () => {
+  it("boot before 09:00 Warsaw: no catch-up, fires at 09:00, then once per following day", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     // 2026-08-19 06:00Z = 08:00 Warsaw (CEST).
     const h = heartbeatHarness("2026-08-19T06:00:00Z");
     const hb = h.start();
@@ -278,7 +279,7 @@ describe("startHeartbeat — daily fire", () => {
     hb.stop();
   });
 
-  it("fires once per Warsaw day across spring-forward (2026-03-29), offset flipping", async () => {
+  it("fires once per Warsaw day across spring-forward (2026-03-29), offset flipping", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const h = heartbeatHarness("2026-03-28T00:00:00Z");
     const hb = h.start();
     await hb.booted;

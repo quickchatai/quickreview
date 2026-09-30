@@ -48,6 +48,7 @@ import {
   type FillFacts,
 } from "../src/onboard/steps/configfill.js";
 import { defaultSteps } from "../src/onboard/steps/index.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const TEMPLATE = readFileSync(join(REPO_ROOT, "config.example.toml"), "utf8");
@@ -180,7 +181,7 @@ function failed(report: { checks: Array<{ ok: boolean; name: string; detail: str
 // ---- the full interview -----------------------------------------------------
 
 describe("the config file is the install locator's", () => {
-  it("fills the config where the adapters say — a config home that does not exist yet — and never the checkout", async () => {
+  it("fills the config where the adapters say — a config home that does not exist yet — and never the checkout", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const home = join(root, "xdg-config", "qcr", "default", "config.toml");
     const { report, choices } = await runStep({ configPath: home });
     expect(failed(report)).toBe("");
@@ -558,7 +559,7 @@ describe("re-run", () => {
     ).toBe(true);
   });
 
-  it("offers targeted edits — one changed answer touches one key and no other", async () => {
+  it("offers targeted edits — one changed answer touches one key and no other", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     await runStep();
     const before = readFileSync(join(root, "config.toml"), "utf8");
 

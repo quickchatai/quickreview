@@ -9,6 +9,7 @@ import {
   latestDigestHeadline,
   writeDigest,
 } from "../src/digest.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 describe("digestHeadline", () => {
   it("skips headings and blank lines", () => {
@@ -61,7 +62,7 @@ describe("writeDigest / latestDigestHeadline", () => {
 });
 
 describe("dailyUsage / usageSummaryLine", () => {
-  it("aggregates the day's rounds, preferring est_usd over legacy spend_usd", async () => {
+  it("aggregates the day's rounds, preferring est_usd over legacy spend_usd", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const { StateStore } = await import("../src/state.js");
     const { dailyUsage, usageSummaryLine } = await import("../src/digest.js");
     const store = new StateStore(":memory:");

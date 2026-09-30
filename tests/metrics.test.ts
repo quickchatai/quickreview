@@ -17,6 +17,7 @@ import {
   renderMetrics,
   renderTimeline,
 } from "../src/metrics.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const NOW = new Date("2026-08-14T12:00:00.000Z");
 const now = () => NOW;
@@ -245,7 +246,7 @@ function seed(s: StateStore): void {
 // ---- statistics ------------------------------------------------------------
 
 describe("statistics", () => {
-  it("takes nearest-rank percentiles", () => {
+  it("takes nearest-rank percentiles", { timeout: HEAVY_TIMEOUT_MS }, () => {
     expect(percentile([], 0.5)).toBeNull();
     expect(percentile([5], 0.9)).toBe(5);
     expect(percentile([1, 2, 3, 4], 0.5)).toBe(2); // ceil(0.5*4) = 2nd value
@@ -623,7 +624,7 @@ describe("schema migrations", () => {
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  it("adds the metrics columns once and re-opens idempotently", () => {
+  it("adds the metrics columns once and re-opens idempotently", { timeout: HEAVY_TIMEOUT_MS }, () => {
     const path = join(dir, "state.db");
     for (let i = 0; i < 3; i++) {
       const s = new StateStore(path, now);

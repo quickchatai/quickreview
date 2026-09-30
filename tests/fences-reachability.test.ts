@@ -19,6 +19,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const ROOT = join(import.meta.dirname, "..");
 
@@ -85,7 +86,7 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
     },
   ];
 
-  it("only the recorded modules are unreachable from wire.ts, cli.ts or an extension", () => {
+  it("only the recorded modules are unreachable from wire.ts, cli.ts or an extension", { timeout: HEAVY_TIMEOUT_MS }, () => {
     const files = tsFiles(join(ROOT, "src"));
     const importsOf = (f: string): string[] =>
       [...stripComments(readFileSync(f, "utf8")).matchAll(/["'](\.[^"']+)\.js["']/g)]

@@ -49,6 +49,7 @@ import type { GateResult } from "../src/gate.js";
 import type { SessionHooks, VerdictFile } from "../src/types.js";
 import { AnomalyWakePolicy } from "../src/anomalies.js";
 import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const repoRoot = resolve(process.cwd());
 const cfg: Config = parseConfig(readFileSync(join(repoRoot, "tests/fixtures/config.toml"), "utf8"));
@@ -202,7 +203,7 @@ describe("INVARIANT 1 — the reviewer still decides; escalation rides beside th
     ]);
   });
 
-  it("BEHAVIOURAL: the verdict a round lands is IDENTICAL with escalation on and off", async () => {
+  it("BEHAVIOURAL: the verdict a round lands is IDENTICAL with escalation on and off", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     // Same round, same verdict file, same everything — driven twice through
     // the real VerdictWatcher, once with the feature off and once with it on
     // and actually firing. If escalation could touch the verdict, these two
@@ -2030,7 +2031,7 @@ describe("the verdict path delivers what the rules found", () => {
   // re-review, N6: `roundReviewConfirmed` was unpinned — `return true`
   // passed the whole suite. These two drive the REAL receipt reader through the
   // real verdict path, over the branches that decide the note's wording.
-  it("the note says POSTED when the round's posting receipt confirms it, and not otherwise", async () => {
+  it("the note says POSTED when the round's posting receipt confirms it, and not otherwise", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     async function noteFor(receipt: Record<string, unknown> | null): Promise<string> {
       const s = new StateStore(":memory:");
       const dir = mkdtempSync(join(tmpdir(), "qcr-esc-receipt-"));

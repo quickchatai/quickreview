@@ -8,10 +8,19 @@
 // kind called `retract_review` would have sailed through; and the "no caller"
 // half of it was asserted nowhere at all.
 import { execFileSync } from "node:child_process";
-import { readFileSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+} from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { MUTATION_KINDS } from "../src/gate.js";
+import { TYPECHECK_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const ROOT = join(import.meta.dirname, "..");
 
@@ -201,13 +210,30 @@ describe("[T6] tests/ type-checks", () => {
    * MUTATION: write `const x: number = "s";` into any test file — this fails
    * and prints tsc's own message.
    */
-  it("npm run typecheck:tests is clean", () => {
+  it("npm run typecheck:tests is clean", { timeout: TYPECHECK_TIMEOUT_MS }, () => {
+    // Incremental, with the build info kept per checkout: a cold run of this
+    // tsc was the suite's longest test (87s beside the rest of the suite,
+    // 317s under 2x-cores load), and a warm one re-checks only what changed
+    // and re-reports every error it recorded, so the fence is exactly as
+    // strict. `noEmit` means there is no emitted output for the build info to
+    // go stale against (the one staleness tsconfig.json documents). The run
+    // works on a sibling copy and renames it over the cache, so a killed run
+    // or a second suite in the same checkout never leaves a torn file; the
+    // key is this checkout's path, so worktrees sharing one node_modules never
+    // trade caches. `npm run typecheck:tests` stays a plain cold check.
+    const cacheDir = join(ROOT, "node_modules", ".cache");
+    mkdirSync(cacheDir, { recursive: true });
+    const key = createHash("sha256").update(ROOT).digest("hex").slice(0, 12);
+    const cache = join(cacheDir, `qcr-typecheck-tests-${key}.tsbuildinfo`);
+    // Same directory as the cache: tsc records paths relative to it.
+    const work = `${cache}.${process.pid}.tmp`;
+    if (existsSync(cache)) copyFileSync(cache, work);
     try {
-      execFileSync("npx", ["tsc", "-p", "tsconfig.tests.json"], {
-        cwd: ROOT,
-        encoding: "utf8",
-        stdio: "pipe",
-      });
+      execFileSync(
+        "npx",
+        ["tsc", "-p", "tsconfig.tests.json", "--incremental", "--tsBuildInfoFile", work],
+        { cwd: ROOT, encoding: "utf8", stdio: "pipe" },
+      );
     } catch (e) {
       const err = e as { stdout?: string; stderr?: string };
       throw new Error(
@@ -216,6 +242,8 @@ describe("[T6] tests/ type-checks", () => {
           `${err.stdout ?? ""}${err.stderr ?? ""}`,
         { cause: e },
       );
+    } finally {
+      if (existsSync(work)) renameSync(work, cache);
     }
-  }, 120_000);
+  });
 });

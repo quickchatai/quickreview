@@ -534,7 +534,11 @@ describe("focused pi pane — keys go to the session", () => {
     h.sendKeys.length = 0;
     h.streams.type("a");
     h.streams.type("\r");
-    await new Promise((r) => setTimeout(r, 60));
+    // Until both sends land, by deadline: a fixed 60ms sleep around the 30ms
+    // first send was a race the first send lost on a loaded machine.
+    const deadline = Date.now() + 4_000;
+    while (h.sendKeys.length < 2 && Date.now() < deadline)
+      await new Promise((r) => setTimeout(r, 10));
     await settle();
     expect(h.sendKeys.map((a) => a.slice(8))).toEqual([["-l", "--", "a"], ["Enter"]]);
     h.app.quit();

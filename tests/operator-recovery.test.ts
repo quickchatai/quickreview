@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { recoverPrForOperator } from "../src/operator-recovery.js";
 import { StateStore } from "../src/state.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const T0 = "2026-08-31T08:00:00.000Z";
 const stores: StateStore[] = [];
@@ -121,7 +122,7 @@ function command(
 }
 
 describe("operator PR recovery", () => {
-  it("refuses rerun-round while durable session ownership still blocks dispatch", async () => {
+  it("refuses rerun-round while durable session ownership still blocks dispatch", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const { store, dir, pr } = setup();
     command(store, dir, pr);
     const pump = vi.fn(async () => {});

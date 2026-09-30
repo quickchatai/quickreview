@@ -24,6 +24,7 @@ import type { FetchFn, TokenMinter } from "../src/githubAuth.js";
 import { StateStore } from "../src/state.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
 import { applyInterpretation, interpretEvent } from "../src/webhook.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const cfg: Config = parseConfig(
   readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
@@ -818,7 +819,7 @@ function hooks(): { hooks: SessionHooks; orders: RoundOrder[] } {
 }
 
 describe("dispatch — a withheld approval is new evidence at the same head", () => {
-  it("runs the round the no-new-evidence guard would otherwise have skipped", async () => {
+  it("runs the round the no-new-evidence guard would otherwise have skipped", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     tracked(5180, HEAD);
     store.recordApprovalWithheld(5180, { head_sha: HEAD, ci_state: "red" });
     // The last round decided APPROVE at this very head — guard 2's skip case.
@@ -842,7 +843,7 @@ describe("dispatch — a withheld approval is new evidence at the same head", ()
     ).toEqual({ c: 1 });
   });
 
-  it("still skips an unchanged head with no withholding standing", async () => {
+  it("still skips an unchanged head with no withholding standing", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     tracked(5180, HEAD);
     store.recordReviewedHead(5180, { head_sha: HEAD, verdict: "APPROVE", round_no: 1 });
     store.upsertPr({

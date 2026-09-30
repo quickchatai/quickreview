@@ -16,6 +16,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.js";
 import { StateStore, type StatusSnapshot } from "../src/state.js";
 import { createWebhookServer } from "../src/webhook.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SECRET = "test-webhook-secret";
@@ -73,7 +74,7 @@ const SLACK_PATHS = [
 ];
 
 describe("no Slack HTTP route exists", () => {
-  it("serves the two routes the daemon actually has", async () => {
+  it("serves the two routes the daemon actually has", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const health = await fetch(`${base}/health`);
     expect(health.status).toBe(200);
     expect(await health.json()).toEqual({ ok: true, process: "alive", pipeline });
@@ -105,7 +106,7 @@ describe("no Slack HTTP route exists", () => {
     pipeline = { healthy: true, failed_loud: 0, causes: [] };
   });
 
-  it("404s every plausible Slack path, on GET and on POST", async () => {
+  it("404s every plausible Slack path, on GET and on POST", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     for (const path of SLACK_PATHS) {
       for (const method of ["GET", "POST"] as const) {
         const res = await fetch(`${base}${path}`, {

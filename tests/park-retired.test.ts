@@ -27,6 +27,7 @@ import type { DockerRunner } from "../src/tui/companion.js";
 import type { Tab } from "../src/tui/app.js";
 import { stripAnsi } from "../src/tui/paint.js";
 import { learningRig, type Rig } from "./helpers/tui-rig.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 /** The union's members read out of the SOURCE, not restated here — otherwise
  * adding a writerless member back would pass every test below by simply not
@@ -315,7 +316,7 @@ describe("historical dwell is kept, and reads as history", () => {
 describe("the compiled artifact agrees with the source", () => {
   const distPath = (rel: string): string => resolve(process.cwd(), "dist", rel);
 
-  it("the built glyph table and legend carry no retired state", async () => {
+  it("the built glyph table and legend carry no retired state", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const model = (await import(distPath("src/tui/model.js"))) as {
       STATE_GLYPHS: Record<string, string>;
     };
@@ -326,7 +327,7 @@ describe("the compiled artifact agrees with the source", () => {
     expect(stripAnsi(theme.legendLine())).not.toContain("needs-you");
   });
 
-  it("the built digest view renders no awaiting panel and no zones", async () => {
+  it("the built digest view renders no awaiting panel and no zones", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const dt = (await import(distPath("src/tui/digesttab.js"))) as {
       renderDigestTab: (
         st: unknown,
@@ -347,7 +348,7 @@ describe("the compiled artifact agrees with the source", () => {
     expect(frame.zones).toEqual([]);
   });
 
-  it("the built installDigestHooks twin is gone, not merely unused", async () => {
+  it("the built installDigestHooks twin is gone, not merely unused", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const dt = (await import(distPath("src/tui/digesttab.js"))) as Record<string, unknown>;
     expect(dt["installDigestHooks"]).toBeUndefined();
   });

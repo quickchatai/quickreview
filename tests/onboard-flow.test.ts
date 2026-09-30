@@ -44,6 +44,7 @@ import { optionFor, setTomlKey } from "../src/onboard/steps/ingress.js";
 import { defaultSteps } from "../src/onboard/steps/index.js";
 import { githubAppStep } from "../src/onboard/steps/githubapp.js";
 import { stackTransportFor } from "../src/onboard/steps/transport.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const exampleConfig = readFileSync(join(repoRoot, "config.example.toml"), "utf8");
@@ -286,7 +287,7 @@ const LAPTOP_INPUTS_ESCALATION: Inputs = {
 const SKIP = ["memory"];
 
 describe("the registered steps hand their choices to each other", () => {
-  it("drives preflight → topology → LLM → interview → App → ingress → slug, in order", async () => {
+  it("drives preflight → topology → LLM → interview → App → ingress → slug, in order", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const engine = new OnboardingEngine(defaultSteps(), adapters());
     const d = await drive(engine, LAPTOP_INPUTS, "app_slug_reconcile", SKIP);
     const failed = [...d.results]
@@ -366,7 +367,7 @@ describe("the registered steps hand their choices to each other", () => {
     expect(producedConfig().escalation.enabled).toBe(false);
   });
 
-  it("HANDOFF 1 — the repo the interview records reaches the App step", async () => {
+  it("HANDOFF 1 — the repo the interview records reaches the App step", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const engine = new OnboardingEngine(defaultSteps(), adapters());
     const d = await drive(engine, LAPTOP_INPUTS, GITHUB_APP_STEP_ID, SKIP);
 

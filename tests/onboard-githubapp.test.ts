@@ -67,6 +67,7 @@ import {
   type CallbackListener,
   type CallbackServerFactory,
 } from "../src/onboard/steps/githubapp.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const pinnedManifest = JSON.parse(readFileSync(manifestPath(repoRoot), "utf8")) as AppManifest;
@@ -823,7 +824,7 @@ describe("inputs and credential validation", () => {
 // ---- the real loopback listener --------------------------------------------------
 
 describe("the loopback callback listener (real, on an ephemeral port)", () => {
-  it("serves the page, honours the state token, hands back the code, and closes deterministically", async () => {
+  it("serves the page, honours the state token, hands back the code, and closes deterministically", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const listener = await nodeCallbackServer({
       state: "state-token",
       port: 0,

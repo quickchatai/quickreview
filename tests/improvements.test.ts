@@ -22,6 +22,7 @@ import {
   parseNumstat,
   type Run,
 } from "../src/improvements.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const cfg: Config = parseConfig(
   readFileSync(join(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
@@ -168,7 +169,7 @@ describe("parseNumstat / deniedPath / checkDiffstat", () => {
 });
 
 describe("rate caps from StateStore.filedSince", () => {
-  it("blocks the second improvement PR of the day and the fourth of the week", () => {
+  it("blocks the second improvement PR of the day and the fourth of the week", { timeout: HEAVY_TIMEOUT_MS }, () => {
     const now = new Date("2026-08-13T10:00:00Z");
     const store = new StateStore(":memory:", () => now);
     expect(improvementRateReason(store, cfg.caps, now)).toBe(null);

@@ -51,6 +51,7 @@ import { locateProfile } from "../src/install.js";
 import { stageFixtureProfiles } from "./helpers/tracked-profiles.js";
 import { INITIAL_STATE, transition, type SmEvent } from "../src/statemachine.js";
 import { CANCEL_CAUSES, type PrLifecycleState } from "../src/state.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const ROOT = join(import.meta.dirname, "..");
 
@@ -222,7 +223,7 @@ describe("[T3] union members have producers", () => {
    * MUTATION: delete the `{ type: "dispatched" }` construction from
    * src/dispatch.ts — this fails naming `dispatched`.
    */
-  it("every SmEventType is constructed by a module outside statemachine.ts", () => {
+  it("every SmEventType is constructed by a module outside statemachine.ts", { timeout: HEAVY_TIMEOUT_MS }, () => {
     const declared = unionMembers("src/statemachine.ts", "SmEventType");
     const producers = SRC_FILES.filter((f) => !f.endsWith("/statemachine.ts"))
       .map(codeOf)
@@ -660,7 +661,7 @@ describe("what a built pass is told it may run is exactly what the guard lets th
    * FIRST_PARTY_DIRECTIVE_ADDENDUM — fails on every variant. Put `awk` back
    * into the allowlist sentence — fails on every variant.
    */
-  it("no built pass variant names the park, NEEDS_HUMAN or awk, and each carries the rendered allowlist", () => {
+  it("no built pass variant names the park, NEEDS_HUMAN or awk, and each carries the rendered allowlist", { timeout: HEAVY_TIMEOUT_MS }, () => {
     // Every pack the locator would load (a stranded checkout pack is
     // not one — it is never read, so it composes into nothing): the generic
     // examples, plus the frozen fixture copy of the deployment's pack
@@ -812,7 +813,7 @@ describe("what a built pass is told it may run is exactly what the guard lets th
    * daemon builds `state/agents` from `dist/src/include.js`, so the sentence
    * the VM's passes read is the compiled module's, not the source's.
    */
-  it("the COMPILED execution policy is the source's, and names no awk", async () => {
+  it("the COMPILED execution policy is the source's, and names no awk", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const dist = join(ROOT, "dist", "src", "include.js");
     if (!existsSync(dist)) {
       throw new Error(

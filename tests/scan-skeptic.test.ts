@@ -43,6 +43,7 @@ import { buildScanAgents, scanConfig } from "../src/setup/scanbuild.js";
 import { validityOf } from "../src/setup/scanreport.js";
 import { ScanRunner, UNMENTIONED_REASON, type ScanPorts } from "../src/setup/scanrun.js";
 import { ScanTriage } from "../src/setup/triage.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const sandbox = join(import.meta.dirname, "..");
 const fixtureToml = readFileSync(resolve(sandbox, "tests/fixtures/config.toml"), "utf8");
@@ -74,7 +75,7 @@ describe("the skeptic addendum is a scan-mode registry entry for the validator a
   });
 
   for (const ecosystem of ["django", "none"] as const) {
-    it(`leaves a PR build byte-identical with and without it (${ecosystem})`, () => {
+    it(`leaves a PR build byte-identical with and without it (${ecosystem})`, { timeout: HEAVY_TIMEOUT_MS }, () => {
       const pr = (out: string, addenda: readonly PassAddendum[]): Map<string, string> => {
         buildAgents(join(sandbox, "agents"), join(dir, out), {
           root: sandbox,

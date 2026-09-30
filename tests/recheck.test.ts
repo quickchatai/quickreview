@@ -31,6 +31,7 @@ import {
 } from "../src/recheck.js";
 import { StateStore } from "../src/state.js";
 import { applyInterpretation, interpretEvent, type Interpretation } from "../src/webhook.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const cfg: Config = parseConfig(
   readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
@@ -441,7 +442,7 @@ function harness(over: Partial<RecheckDeps> = {}): Harness {
 }
 
 describe("runRecheck", () => {
-  it("nudges the PR's own session once, and never again for the same trigger", async () => {
+  it("nudges the PR's own session once, and never again for the same trigger", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const h = harness();
     const first = await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
     expect(first).toMatchObject({ action: "recheck", delivered: "injected" });

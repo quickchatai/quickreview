@@ -13,6 +13,7 @@ import type { PrRef } from "../src/github.js";
 import { PingPongLedger } from "../src/pingpong.js";
 import { StateStore } from "../src/state.js";
 import { postingMarker } from "../src/posting-receipt.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const PR = 101;
 
@@ -87,7 +88,7 @@ describe("daemon wiring", () => {
   // Boot-order regression (live, #5290 2026-08-19): the first reconcile can
   // nudge a recheck at a dead session immediately; the respawn path needs the
   // title resolver wired by onStart, so onStart must run BEFORE the sweep.
-  it("runs onStart before the first reconcile", async () => {
+  it("runs onStart before the first reconcile", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const order: string[] = [];
     const recorded: string[] = [];
     const adapter = fakeAdapter(recorded, join(root, "state", "dryrun"));
@@ -148,7 +149,7 @@ describe("daemon wiring", () => {
     }
   });
 
-  it("runs reconcile → dispatch → verdict apply end to end in dry-run", async () => {
+  it("runs reconcile → dispatch → verdict apply end to end in dry-run", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const recorded: string[] = [];
     const daemon = createDaemon({
       cfg: { ...loadConfig(join(process.cwd(), "tests/fixtures/config.toml")), dry_run: true }, // the test exercises dry-run machinery regardless of the shipped flag
@@ -228,7 +229,7 @@ describe("daemon wiring", () => {
     }
   });
 
-  it("complete pre-fanout failure chain self-heals through the daemon without duplicate ownership", async () => {
+  it("complete pre-fanout failure chain self-heals through the daemon without duplicate ownership", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     let clock = new Date("2026-09-02T15:00:00.000Z");
     store.close();
     store = new StateStore(":memory:", () => clock);
@@ -387,7 +388,7 @@ describe("daemon wiring", () => {
     expect(orders).toHaveLength(4);
   });
 
-  it("due retry re-enters the one dispatch pump exactly once", async () => {
+  it("due retry re-enters the one dispatch pump exactly once", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     let clock = new Date("2026-09-02T15:00:00.000Z");
     store.close();
     store = new StateStore(":memory:", () => clock);
@@ -491,7 +492,7 @@ describe("daemon wiring", () => {
    * ruled out; recording it durably (quiet tier — DB + heartbeat, no wake) is
    * the shape chosen. It is still never a handover.
    */
-  it("records an author's request for a human as a durable anomaly, and still never parks", async () => {
+  it("records an author's request for a human as a durable anomaly, and still never parks", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const recorded: string[] = [];
     const daemon = createDaemon({
       cfg: { ...loadConfig(join(process.cwd(), "tests/fixtures/config.toml")), dry_run: true },

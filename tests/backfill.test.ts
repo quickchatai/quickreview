@@ -20,6 +20,7 @@ import {
   triggerForReview,
   verdictForReviewState,
 } from "../src/backfill.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const cfg: Config = parseConfig(readFileSync(join(root, "tests/fixtures/config.toml"), "utf8"));
@@ -213,7 +214,7 @@ describe("trigger reconstruction", () => {
 });
 
 describe("enumeration", () => {
-  it("unions the label search and the reviewed-by search", async () => {
+  it("unions the label search and the reviewed-by search", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const queries = enumerationQueries(cfg);
     expect(queries[0]).toBe('repo:example-org/example-app is:pr label:"Automatic Review"');
     expect(queries[1]).toBe("repo:example-org/example-app is:pr reviewed-by:example-review[bot]");

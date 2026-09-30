@@ -8,6 +8,7 @@ import {
   zoneOffsetMs,
   zonedParts,
 } from "../src/eod.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const TZ = "Europe/Warsaw";
 
@@ -100,7 +101,7 @@ describe("DST: fall back (last Sunday of October 2026 = 10-25)", () => {
     expect(gaps).toEqual([24, 25, 24]);
   });
 
-  it("no local calendar day is skipped or doubled over a full year", () => {
+  it("no local calendar day is skipped or doubled over a full year", { timeout: HEAVY_TIMEOUT_MS }, () => {
     const seen: string[] = [];
     let cursor = new Date("2026-01-01T00:00:00Z");
     for (let i = 0; i < 365; i++) {

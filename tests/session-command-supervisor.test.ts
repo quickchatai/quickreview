@@ -9,6 +9,7 @@ import { StateStore } from "../src/state.js";
 import type { RoundRecoveryDisposition, SessionHooks } from "../src/types.js";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const baseCfg: Config = parseConfig(
   readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
@@ -184,7 +185,7 @@ function supervisor(
 }
 
 describe("bounded round-stage supervision", () => {
-  it("replays a started ordinary wake at its hard bound instead of making it a permanent blocker", async () => {
+  it("replays a started ordinary wake at its hard bound instead of making it a permanent blocker", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const { id, pr } = seedWakeCommand({
       status: "running",
       startedAt: "2026-08-27T19:00:00.000Z",

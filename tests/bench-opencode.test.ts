@@ -324,8 +324,11 @@ describe("one case end to end, OpenCode stubbed", () => {
       // A scratch "prefetched store": a repo with a base and a head commit.
       const src = join(tmp, "src");
       mkdirSync(src);
+      // No auto-maintenance: a commit can leave a detached `git maintenance
+      // run --auto` writing into .git, and on a loaded machine it is still
+      // there when the copy below walks the directory (a vanished lock file).
       const git = (...a: string[]) =>
-        execFileSync("git", ["-C", src, "-c", "user.email=a@b", "-c", "user.name=a", ...a], {
+        execFileSync("git", ["-C", src, "-c", "user.email=a@b", "-c", "user.name=a", "-c", "maintenance.auto=false", "-c", "gc.auto=0", ...a], {
           encoding: "utf8",
           env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
         }).trim();

@@ -36,6 +36,7 @@ import { StateStore } from "../src/state.js";
 import { SLACK_INJECT_MARKER } from "../src/slack/router.js";
 import type { SlackInboundEvent, SlackInboundHandler, SlackTransport } from "../src/slack/types.js";
 import { startSlack, type SlackRuntime } from "../src/wire.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const shipped = readFileSync(join(root, "tests/fixtures/config.toml"), "utf8");
@@ -224,7 +225,7 @@ afterEach(async () => {
 });
 
 describe("the full concierge loop", () => {
-  it("carries one Slack message to one threaded reply, and ledgers it", async () => {
+  it("carries one Slack message to one threaded reply, and ledgers it", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const ev = event();
     await deliver(ev);
 

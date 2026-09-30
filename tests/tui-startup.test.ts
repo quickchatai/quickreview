@@ -310,6 +310,17 @@ async function startTui(
 
 /** The first launch on a machine opens the key map over the board; any key
  * closes it, and the board is what is underneath. */
+/** Poll `step` every 20ms until it returns true or WAIT_MS pass. A deadline,
+ * not a count of ticks: 100 ticks of 20ms is a two-second budget in disguise,
+ * and on a loaded machine it ran out while the TUI was merely slow. WAIT_MS
+ * sits inside the file's test timeout, so a real miss still reaches the
+ * assertion after the loop and fails with its message. */
+const WAIT_MS = 45_000;
+async function pollUntil(step: () => boolean | Promise<boolean>): Promise<void> {
+  const deadline = Date.now() + WAIT_MS;
+  while (!(await step()) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20));
+}
+
 async function board(h: Harness): Promise<string> {
   h.written.length = 0;
   await h.press("\x1b");
@@ -364,7 +375,7 @@ describe("the first frame (ruling 6 — structural, not timed)", () => {
     // into it (rulings 2 and 3).
     expect(frame).toMatch(/VM ssh|memory forward|companion container/);
     await h.stop();
-  }, 40_000);
+  });
 
   it("holds with the hot reload ON — the recursive dist watch comes after the frame too", async () => {
     // The default harness runs `--no-reload`, which makes `reloader` undefined
@@ -379,7 +390,7 @@ describe("the first frame (ruling 6 — structural, not timed)", () => {
     // watch that exists rather than one that was skipped.
     expect(h.log.entries).toContain("fs.watch");
     await h.stop();
-  }, 40_000);
+  });
 
   it("with the companion OFF the column is STILL there, carries the bring-up, and says why it is off", async () => {
     // 2026-09-02: `--no-companion` (and `[companion] enabled = false`) no
@@ -392,13 +403,13 @@ describe("the first frame (ruling 6 — structural, not timed)", () => {
     // once at wiring time, so only a non-`waiting` step proves the live
     // updates reach this surface.
     let frame = "";
-    for (let i = 0; i < 150; i++) {
+    await pollUntil(async () => {
       h.written.length = 0;
       await h.press("\x00"); // a byte nothing is bound to — forces a repaint pass
-      frame = h.frame();
-      if (/[✗✓–] VM ssh/.test(frame)) break;
-      await new Promise((r) => setTimeout(r, 20));
-    }
+      // An empty read is a repaint that has not landed yet, never a frame.
+      frame = h.frame() || frame;
+      return /[✗✓–] VM ssh/.test(frame);
+    });
     const plain = frame.replace(/\x1b\[[0-9;?<]*[a-zA-Z]/g, "");
     expect(plain).toContain("PRS (?)");
     expect(plain, "the bring-up's live state never reached the column").toMatch(/[✗✓–] VM ssh/);
@@ -411,7 +422,7 @@ describe("the first frame (ruling 6 — structural, not timed)", () => {
     // connection triage only, not a second copy of the checklist.
     expect(plain).not.toContain("starting up\n");
     await h.stop();
-  }, 40_000);
+  });
 
   it("triages the connection behind that frame, and `s` re-runs the check", async () => {
     const h = await startTui(tmp);
@@ -419,10 +430,7 @@ describe("the first frame (ruling 6 — structural, not timed)", () => {
     // The bring-up's triage has run by now: every probe is refused by the
     // mocked child_process, so the diagnosis lands on the missing-key class and
     // the board carries the exact command to run.
-    for (let i = 0; i < 100; i++) {
-      if (h.frame().includes("ssh-add")) break;
-      await new Promise((r) => setTimeout(r, 20));
-    }
+    await pollUntil(() => h.frame().includes("ssh-add"));
     expect(h.frame()).toContain("ssh-add");
     // The ssh step must have ENTERED `running` on the startup path, not sat at
     // `waiting` until it failed: it is the slowest step in the bring-up and
@@ -440,14 +448,11 @@ describe("the first frame (ruling 6 — structural, not timed)", () => {
     expect(probesBefore).toBeGreaterThan(0);
     h.written.length = 0;
     await h.press("s");
-    for (let i = 0; i < 100; i++) {
-      if (
+    await pollUntil(
+      () =>
         h.log.entries.filter((e) => e.startsWith("execFile ssh")).length > probesBefore &&
-        h.frame().includes("ssh-add")
-      )
-        break;
-      await new Promise((r) => setTimeout(r, 20));
-    }
+        h.frame().includes("ssh-add"),
+    );
     expect(h.log.entries.filter((e) => e.startsWith("execFile ssh")).length).toBeGreaterThan(
       probesBefore,
     );
@@ -460,7 +465,7 @@ describe("the first frame (ruling 6 — structural, not timed)", () => {
     );
     expect(ran, `the TUI ran a remedy itself: ${ran.join(", ")}`).toEqual([]);
     await h.stop();
-  }, 40_000);
+  });
 });
 
 // ---- ruling 4: three classes, three causes, three remedies -------------------

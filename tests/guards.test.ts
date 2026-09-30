@@ -22,6 +22,7 @@ import { StateStore } from "../src/state.js";
 import { applyEvent } from "../src/statemachine.js";
 import { applyInterpretation } from "../src/webhook.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const cfg: Config = parseConfig(
   readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
@@ -560,7 +561,7 @@ function hooks(): { hooks: SessionHooks; orders: RoundOrder[] } {
 }
 
 describe("dispatch — a tick with no new evidence starts no round", () => {
-  it("consumes the triggers, restores the standing verdict, runs nothing", async () => {
+  it("consumes the triggers, restores the standing verdict, runs nothing", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queued(5180, HEAD);
     store.recordReviewedHead(5180, { head_sha: HEAD, verdict: "REQUEST_CHANGES", round_no: 1 });
     const adapter = new DispatchFake();
@@ -584,7 +585,7 @@ describe("dispatch — a tick with no new evidence starts no round", () => {
     ).toEqual({ c: 1 });
   });
 
-  it("dispatches normally once the head moves", async () => {
+  it("dispatches normally once the head moves", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queued(5180, "cafebabe");
     store.recordReviewedHead(5180, { head_sha: HEAD, verdict: "REQUEST_CHANGES" });
     const h = hooks();
@@ -604,7 +605,7 @@ describe("dispatch — a tick with no new evidence starts no round", () => {
     return JSON.parse(rows[0]!.payload) as Record<string, unknown>;
   };
 
-  it("the #5409 partial mark — posted REQUEST_CHANGES, verdict null — is a standing REQUEST_CHANGES and starts no round", async () => {
+  it("the #5409 partial mark — posted REQUEST_CHANGES, verdict null — is a standing REQUEST_CHANGES and starts no round", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queued(5409, HEAD);
     // Exactly the row the shell route leaves before the watcher enriches it.
     store.recordReviewedHead(5409, { head_sha: HEAD, posted_event: "REQUEST_CHANGES" });
@@ -641,7 +642,7 @@ describe("dispatch — a tick with no new evidence starts no round", () => {
     });
   });
 
-  it("the exact #5409 reproduction — a fresh human review_requested on the partial mark — consumes the trigger and runs nothing", async () => {
+  it("the exact #5409 reproduction — a fresh human review_requested on the partial mark — consumes the trigger and runs nothing", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     // The PR sits awaiting_author on a review posted by round 12; the mark
     // never got its verdict. Then GitHub delivers pull_request.review_requested.
     store.upsertPr({
@@ -697,7 +698,7 @@ describe("dispatch — a tick with no new evidence starts no round", () => {
     });
   });
 
-  it("the symmetric partial APPROVE mark is a standing approval and restores tracked", async () => {
+  it("the symmetric partial APPROVE mark is a standing approval and restores tracked", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queued(5180, HEAD);
     store.recordReviewedHead(5180, { head_sha: HEAD, posted_event: "APPROVE" });
     const h = hooks();
@@ -714,7 +715,7 @@ describe("dispatch — a tick with no new evidence starts no round", () => {
     });
   });
 
-  it("a null-verdict COMMENT mark is never guessed — no round (guard 2 would refuse it), no verdict, tracked with an anomaly", async () => {
+  it("a null-verdict COMMENT mark is never guessed — no round (guard 2 would refuse it), no verdict, tracked with an anomaly", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queued(5180, HEAD);
     store.recordReviewedHead(5180, { head_sha: HEAD, posted_event: "COMMENT" });
     const adapter = new DispatchFake();
@@ -737,7 +738,7 @@ describe("dispatch — a tick with no new evidence starts no round", () => {
     expect(store.reviewedHead(5180)).toMatchObject({ verdict: null, posted_event: "COMMENT" });
   });
 
-  it("a withheld approval at the same head is still its own new evidence, partial mark or not", async () => {
+  it("a withheld approval at the same head is still its own new evidence, partial mark or not", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queued(5180, HEAD);
     store.recordReviewedHead(5180, { head_sha: HEAD, posted_event: "COMMENT" });
     store.recordApprovalWithheld(5180, { head_sha: HEAD, ci_state: "red", reason: "red-ci" });
@@ -749,7 +750,7 @@ describe("dispatch — a tick with no new evidence starts no round", () => {
     expect(h.orders).toHaveLength(1);
   });
 
-  it("an undecided legacy NEEDS_HUMAN mark beside a posted REQUEST_CHANGES still gets its round", async () => {
+  it("an undecided legacy NEEDS_HUMAN mark beside a posted REQUEST_CHANGES still gets its round", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queued(5180, HEAD);
     store.recordReviewedHead(5180, {
       head_sha: HEAD,
@@ -764,7 +765,7 @@ describe("dispatch — a tick with no new evidence starts no round", () => {
     ).toHaveLength(1);
   });
 
-  it("dispatches after an author reply on the same head", async () => {
+  it("dispatches after an author reply on the same head", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queued(5180, HEAD);
     store.recordReviewedHead(5180, { head_sha: HEAD, verdict: "REQUEST_CHANGES" });
     store.noteAuthorReply(5180, "2099-01-01T00:00:00.000Z");

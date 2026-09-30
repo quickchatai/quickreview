@@ -27,6 +27,7 @@ import { RecheckWatcher } from "../src/recheck.js";
 import { StateStore } from "../src/state.js";
 import type { SessionHooks } from "../src/types.js";
 import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const cfg: Config = parseConfig(
   readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
@@ -108,7 +109,7 @@ const RECORD = {
 // ---- schema + parser -------------------------------------------------------
 
 describe("parseFindingsRecord", () => {
-  it("parses the documented shape, keeping lens, axes, word and reason", () => {
+  it("parses the documented shape, keeping lens, axes, word and reason", { timeout: HEAVY_TIMEOUT_MS }, () => {
     const parsed = parseFindingsRecord(RECORD, 7, 2);
     expect(parsed.status).toBe("ok");
     const findings = parsed.record?.findings ?? [];

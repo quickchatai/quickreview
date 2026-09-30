@@ -29,6 +29,7 @@ import { runFingerprint } from "../src/bench/runner.js";
 import { buildParts } from "../src/wire.js";
 import { renderAddableLenses } from "../src/templates.js";
 import type { PrStateRow } from "../src/state.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const sandbox = join(import.meta.dirname, "..");
 const fixture: Config = parseConfig(
@@ -111,7 +112,7 @@ const lensesOf = (cfg: Config, files: PrFileEntry[]) =>
 // ---- untuned is unchanged -----------------------------------------------------
 
 describe("an untuned profile changes nothing", () => {
-  it("no [lenses] ⇒ the same plan and the same built bytes as no profile", () => {
+  it("no [lenses] ⇒ the same plan and the same built bytes as no profile", { timeout: HEAVY_TIMEOUT_MS }, () => {
     profile("plain", 'extends = "default"\n');
     const cfg = tuned("plain");
     expect(cfg.lenses).toEqual({});

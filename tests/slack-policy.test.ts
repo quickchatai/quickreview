@@ -14,6 +14,7 @@ import {
   decideTurn,
   policyWindow,
 } from "../src/slack/policy.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const shipped = readFileSync(join(root, "tests/fixtures/config.toml"), "utf8");
@@ -47,7 +48,7 @@ const inject = (id: string, user: string | null) =>
   });
 
 describe("dayWindow (Warsaw, DST-correct)", () => {
-  it("puts a late-evening UTC instant in the NEXT Warsaw day", () => {
+  it("puts a late-evening UTC instant in the NEXT Warsaw day", { timeout: HEAVY_TIMEOUT_MS }, () => {
     // 22:30Z on the 17th is 00:30 on the 18th in Warsaw (CEST, +2).
     expect(dayWindow(new Date("2026-08-17T22:30:00Z"), "Europe/Warsaw").day).toBe("2026-08-18");
     expect(dayWindow(new Date("2026-08-17T21:30:00Z"), "Europe/Warsaw").day).toBe("2026-08-17");

@@ -18,6 +18,7 @@ import type { GateResult } from "../src/gate.js";
 import type { PrFileEntry } from "../src/github.js";
 import { StateStore } from "../src/state.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
+import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const cfg: Config = parseConfig(
   readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
@@ -26,7 +27,7 @@ const cfg: Config = parseConfig(
 const noop = async (): Promise<GateResult> => ({ executed: false, dryRunFile: "x" });
 
 describe("the persisted round plan includes the repo style guide's pass-style", () => {
-  it("rounds.lenses, pass_plan and addable_passes match the dispatched order", async () => {
+  it("rounds.lenses, pass_plan and addable_passes match the dispatched order", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const store = new StateStore(":memory:");
     store.upsertPr({
       number: 51,
