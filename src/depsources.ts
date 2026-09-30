@@ -114,6 +114,10 @@ export interface DepSourcesOptions {
   /** The whole cache's ceiling, default 2 GiB: before each PR the least
    * recently used entries are removed until it fits. */
   maxCacheBytes?: number;
+  /** Entries used (prepared or hit) within this window are never evicted,
+   * because a round they were advertised to may still be reading them.
+   * Default DEFAULT_CACHE_IN_USE_MS; the cap is soft for that long. */
+  cacheInUseMs?: number;
   log?: (line: string) => void;
 }
 
@@ -137,6 +141,10 @@ const DEFAULT_MAX_ARCHIVE_BYTES = 15 * MiB;
 const DEFAULT_MAX_UNPACKED_BYTES = 40 * MiB;
 const DEFAULT_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_CACHE_BYTES = 2048 * MiB;
+/** Longer than any round lives (`round_deadline_min`, 75 by default): a
+ * source advertised to a running round was touched at its prepare, so it
+ * stays readable until that round is over. */
+const DEFAULT_CACHE_IN_USE_MS = 2 * 60 * 60 * 1000;
 const PER_REQUEST_TIMEOUT_MS = 20_000;
 /** Registry JSON is not an archive, but it is still untrusted and unbounded. */
 const METADATA_MAX_BYTES = 32 * MiB;
@@ -149,8 +157,9 @@ const MAX_KEPT_FILE_BYTES = 2 * MiB;
 /** Kept files per package: bytes alone let an archive of empty files spend
  * inodes without limit. Generous — a real package's sources are far fewer. */
 const MAX_KEPT_FILES = 50_000;
-/** What the cache cap charges per kept file on top of its bytes (a block and
- * an inode), so an entry of many tiny files is sized by what it occupies. */
+/** What the cache cap charges per kept file or created directory on top of
+ * its bytes (a block and an inode), so an entry of many tiny files — or of
+ * deep directory chains — is sized by what it occupies. */
 const CACHE_FILE_OVERHEAD_BYTES = 4096;
 const MAX_CHANGED_FILES = 300;
 const MAX_SOURCE_FILE_BYTES = 1_000_000;
@@ -640,12 +649,30 @@ function emptyLock(): NpmLock {
   return { entries: new Map(), links: new Set() };
 }
 
+/** Per lock: `(name, version, scope)` → its entry plus the spec set, so each
+ * insertion is O(1). A lockfile is PR-controlled and parsed on the event loop
+ * before any deadline exists; a linear find per entry made one package with
+ * 100k versions a daemon stall. */
+const lockIndex = new WeakMap<NpmLock, Map<string, { entry: LockEntry; specs: Set<string> }>>();
+
 function addLock(lock: NpmLock, name: string, entry: LockEntry): void {
-  const list = lock.entries.get(name) ?? [];
-  const have = list.find((e) => e.version === entry.version && e.scope === entry.scope);
-  if (!have) list.push(entry);
-  else if (entry.specs?.length) have.specs = [...new Set([...(have.specs ?? []), ...entry.specs])];
-  lock.entries.set(name, list);
+  let index = lockIndex.get(lock);
+  if (!index) lockIndex.set(lock, (index = new Map()));
+  const key = `${name}\0${entry.version}\0${entry.scope ?? ""}\0${entry.scope === undefined ? 0 : 1}`;
+  const have = index.get(key);
+  if (!have) {
+    const list = lock.entries.get(name) ?? [];
+    if (entry.specs) entry.specs = [...new Set(entry.specs)];
+    list.push(entry);
+    lock.entries.set(name, list);
+    index.set(key, { entry, specs: new Set(entry.specs ?? []) });
+    return;
+  }
+  for (const s of entry.specs ?? []) {
+    if (have.specs.has(s)) continue;
+    have.specs.add(s);
+    (have.entry.specs ??= []).push(s);
+  }
 }
 
 const VERSION_LIKE = /^\d+\.\d+\.\d+/;
@@ -2081,8 +2108,12 @@ function paxRecords(data: Buffer): Map<string, string> {
   while (i < data.length) {
     const sp = data.indexOf(0x20, i);
     if (sp < 0) break;
+    // `<len> <key>=<value>\n`: the length counts its own digits, the space and
+    // the newline, so a shorter one is malformed. Accepting it let a run of
+    // zeroes "advance" one byte per record, re-scanning the rest each time.
+    if (sp - i > 20 || !/^\d+$/.test(data.subarray(i, sp).toString("latin1"))) break;
     const len = parseInt(data.subarray(i, sp).toString("latin1"), 10);
-    if (!Number.isFinite(len) || len <= 0 || i + len > data.length) break;
+    if (!Number.isFinite(len) || len < sp - i + 2 || i + len > data.length) break;
     const rec = data.subarray(sp + 1, i + len - 1).toString("utf8");
     const eq = rec.indexOf("=");
     if (eq > 0) out.set(rec.slice(0, eq), rec.slice(eq + 1));
@@ -2296,11 +2327,18 @@ export interface UnpackOptions {
   maxUnpackedBytes: number;
   /** Kept-file ceiling (default MAX_KEPT_FILES); past it the unpack throws. */
   maxFiles?: number;
+  /** Created-directory ceiling (default MAX_KEPT_FILES); past it the unpack throws. */
+  maxDirs?: number;
+  /** Aggregate bytes inflated for chosen entries, kept or not (default
+   * MAX_EXPANDED_ARCHIVE_BYTES); past it the unpack throws. */
+  maxInflatedBytes?: number;
 }
 
 export interface UnpackResult {
   files: number;
   bytes: number;
+  /** Directories created (implied by the kept files' paths). */
+  dirs: number;
   /** Entries refused for an unsafe path. */
   rejected: number;
 }
@@ -2343,7 +2381,13 @@ export function unpackEntries(
   }
   let files = 0;
   let bytes = 0;
+  let inflated = 0;
   const maxFiles = opts.maxFiles ?? MAX_KEPT_FILES;
+  const maxDirs = opts.maxDirs ?? MAX_KEPT_FILES;
+  const maxInflated = opts.maxInflatedBytes ?? MAX_EXPANDED_ARCHIVE_BYTES;
+  // Every directory a kept path implies is an inode too: counted (and capped)
+  // so a few files under deep, distinct chains cannot spend them unseen.
+  const dirs = new Set<string>();
   for (const [rel, e] of chosen) {
     if (files >= maxFiles) throw new SkipError(`archive holds more than ${maxFiles} files`);
     const dest = resolve(target, rel);
@@ -2351,12 +2395,28 @@ export function unpackEntries(
       rejected++;
       continue;
     }
+    for (let d = posix.dirname(rel); d !== "." && !dirs.has(d); d = posix.dirname(d)) {
+      dirs.add(d);
+      if (dirs.size > maxDirs)
+        throw new SkipError(`archive creates more than ${maxDirs} directories`);
+    }
+    // The directory first: a path that clashes with a kept file fails here,
+    // before its entry is inflated.
+    try {
+      mkdirSync(dirname(dest), { recursive: true });
+    } catch {
+      continue; // a file/dir name clash inside the archive: that one entry is lost
+    }
     const data = e.read();
+    // Charged whether or not the write lands: a failed write must not make
+    // the decompression free.
+    inflated += data.length;
+    if (inflated > maxInflated)
+      throw new SkipError(`archive expands past ${fmtBytes(maxInflated)}`);
     if (data.length > MAX_KEPT_FILE_BYTES) continue;
     if (bytes + data.length > opts.maxUnpackedBytes)
       throw new SkipError(`unpacked source exceeds ${fmtBytes(opts.maxUnpackedBytes)}`);
     try {
-      mkdirSync(dirname(dest), { recursive: true });
       writeFileSync(dest, data, { mode: 0o644 });
       files++;
       bytes += data.length;
@@ -2364,7 +2424,7 @@ export function unpackEntries(
       // A file/dir name clash inside the archive: that one entry is lost.
     }
   }
-  return { files, bytes, rejected };
+  return { files, bytes, dirs: dirs.size, rejected };
 }
 
 function gunzipCapped(buf: Buffer): Buffer {
@@ -2389,6 +2449,9 @@ interface CacheMarker {
   sha256: string;
   files: number;
   bytes: number;
+  /** Directories the unpack created; absent on markers written before it was
+   * recorded (read as 0). Charged by the cache cap like files. */
+  dirs: number;
 }
 
 const SAFE_VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z.+_-]*$/;
@@ -2422,6 +2485,7 @@ function readMarker(dir: string): CacheMarker | null {
         sha256: str(m.sha256) ?? "",
         files: m.files,
         bytes: m.bytes,
+        dirs: typeof m.dirs === "number" ? m.dirs : 0,
       };
     }
   } catch {
@@ -2658,6 +2722,7 @@ function install(
       sha256: sha256hex(archive),
       files: r.files,
       bytes: r.bytes,
+      dirs: r.dirs,
     };
     // The marker is written LAST: its presence is the completeness proof.
     writeFileSync(join(tmp, MARKER), `${JSON.stringify(marker)}\n`);
@@ -2896,7 +2961,9 @@ export async function prepareDependencySources(
   }
   const manifest: DepManifest = { dir: root, sources: [], skipped: [] };
   try {
-    pruneDependencyCache(root, opts.maxCacheBytes ?? DEFAULT_MAX_CACHE_BYTES, log);
+    pruneDependencyCache(root, opts.maxCacheBytes ?? DEFAULT_MAX_CACHE_BYTES, log, {
+      inUseMs: opts.cacheInUseMs ?? DEFAULT_CACHE_IN_USE_MS,
+    });
   } catch (e) {
     log(`depsources: cache prune failed: ${short(e)}`);
   }
@@ -2975,7 +3042,10 @@ export function pruneDependencyCache(
   root: string,
   maxBytes: number,
   log: (line: string) => void = () => {},
+  opts: { inUseMs?: number } = {},
 ): number {
+  const inUseMs = opts.inUseMs ?? 0;
+  const inUseSince = Date.now() - inUseMs;
   const entries: { dir: string; bytes: number; mtimeMs: number }[] = [];
   let ecos: string[] = [];
   try {
@@ -2997,7 +3067,7 @@ export function pruneDependencyCache(
       try {
         entries.push({
           dir,
-          bytes: marker.bytes + marker.files * CACHE_FILE_OVERHEAD_BYTES,
+          bytes: marker.bytes + (marker.files + marker.dirs) * CACHE_FILE_OVERHEAD_BYTES,
           mtimeMs: statSync(join(dir, MARKER)).mtimeMs,
         });
       } catch {
@@ -3011,6 +3081,8 @@ export function pruneDependencyCache(
   let removed = 0;
   for (const e of entries) {
     if (total <= maxBytes) break;
+    // Oldest first, so every entry after this one is in use too.
+    if (inUseMs > 0 && e.mtimeMs > inUseSince) break;
     try {
       rmSync(e.dir, { recursive: true, force: true });
       total -= e.bytes;
@@ -3031,8 +3103,20 @@ export function pruneDependencyCache(
 
 const MAX_RENDERED_SKIPS = 8;
 
+/** Control characters (newlines included) as visible `\uXXXX` escapes — the
+ * same rule as templates.ts' `flatControls`. `why` carries the PR's own file
+ * paths, and git allows a newline in one: raw, it would open a line of
+ * daemon-authored prompt. */
+function flatControls(text: string): string {
+  return text.replace(
+    /[\u0000-\u001f\u007f\u2028\u2029]/g,
+    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
+}
+
 /** The round prompt's block. "" when there is nothing to say at all. */
 export function renderDependencyNote(m: DepManifest): string {
+  const f = flatControls;
   if (!m.sources.length && !m.skipped.length) return "";
   const lines: string[] = [];
   if (m.sources.length) {
@@ -3041,9 +3125,9 @@ export function renderDependencyNote(m: DepManifest): string {
     );
     for (const s of m.sources) {
       const unlocked =
-        s.range !== undefined ? ` (no lockfile pin: newest match for \`${s.range}\`)` : "";
+        s.range !== undefined ? ` (no lockfile pin: newest match for \`${f(s.range)}\`)` : "";
       lines.push(
-        `- ${s.ecosystem} \`${s.name}@${s.version}\`${unlocked} — ${s.why} → \`${s.path}\``,
+        `- ${s.ecosystem} \`${f(s.name)}@${f(s.version)}\`${unlocked} — ${f(s.why)} → \`${f(s.path)}\``,
       );
     }
   } else {
@@ -3052,7 +3136,9 @@ export function renderDependencyNote(m: DepManifest): string {
     );
   }
   if (m.skipped.length) {
-    const shown = m.skipped.slice(0, MAX_RENDERED_SKIPS).map((s) => `\`${s.name}\` (${s.reason})`);
+    const shown = m.skipped
+      .slice(0, MAX_RENDERED_SKIPS)
+      .map((s) => `\`${f(s.name)}\` (${f(s.reason)})`);
     const more = m.skipped.length - shown.length;
     lines.push(`Not available: ${shown.join("; ")}${more > 0 ? `; +${more} more` : ""}.`);
   }
