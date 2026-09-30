@@ -228,6 +228,20 @@ describe("promotion files one ticket, never twice", () => {
     expect(await triage.promote({ fingerprint: FP("a") })).toMatchObject({ ok: true, existing: true });
   });
 
+  it("a dismissal a re-scan no longer reports is not promoted — it used to read fixed; a re-sighting puts it back in play (scan-loop)", async () => {
+    const sink = new FakeSink();
+    const { findings, triage } = setup({ sink });
+    findings.report([reported(FP("a"))], { run: "scan-1", sha: SHA1, at: "t" });
+    await triage.dismiss({ fingerprint: FP("a"), reason: "by design" });
+    findings.reconcile({ rows: [], tree: new Set(), run: { run: "scan-2", sha: SHA2, at: "t2" } });
+    expect(one(findings, FP("a"))).toMatchObject({ state: "dismissed", unreported: { sha: SHA2 } });
+    expect(await triage.promote({ fingerprint: FP("a"), effort: "e" })).toMatchObject({ ok: false, errors: [expect.stringMatching(/no longer reported/)] });
+    expect(sink.filed).toHaveLength(0);
+    expect(one(findings, FP("a")).state).toBe("dismissed");
+    findings.report([reported(FP("a"))], { run: "scan-3", sha: "3".repeat(40), at: "t3" });
+    expect(await triage.promote({ fingerprint: FP("a"), effort: "e" })).toMatchObject({ ok: true, ref: "FT-9001" });
+  });
+
   it("a finding the companion matched to a moved sighting keeps its ticket: promoting the new one files nothing", async () => {
     const { state, findings, sink, triage } = setup();
     findings.report([reported(FP("a"))], { run: "scan-1", sha: SHA1, at: "t1" });

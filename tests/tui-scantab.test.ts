@@ -18,6 +18,7 @@ import {
   matchesFilter,
   nextTier,
   parseScanFilter,
+  promotable,
   reportItems,
   styleRule,
   unitRows,
@@ -121,6 +122,13 @@ describe("the report", () => {
     });
     const { screen } = rig({ findings: [f] });
     expect(screen()).toContain(`state: dismissed — "by design" · no longer reported at 8888888`);
+  });
+
+  it("a dismissed finding a re-scan no longer reports is not a promote target; an unstamped one is (scan-loop)", () => {
+    const gone = scanFinding({ fingerprint: "fc".padEnd(64, "0"), state: "dismissed", unreported: { run: "scan-9", sha: "8".repeat(40), at: "t" } });
+    const kept = scanFinding({ fingerprint: "fd".padEnd(64, "0"), state: "dismissed" });
+    expect(promotable({ t: "finding", finding: gone })).toEqual([]);
+    expect(promotable({ t: "finding", finding: kept })).toEqual([kept]);
   });
 
   it("a style group's detail carries the rule, the count and examples", () => {

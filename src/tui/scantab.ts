@@ -266,7 +266,8 @@ export function unitRows(findings: readonly ScanFinding[], filter: ScanFilter, r
 /** The findings a triage verb applies to: the finding, or the group's
  * members, in a state that verb takes (triage.ts's rules). */
 export function promotable(item: ReportItem | undefined): ScanFinding[] {
-  return members(item).filter((f) => f.state === "new" || f.state === "dismissed");
+  // A dismissal a re-scan no longer reports is out of play (triage.ts refuses it).
+  return members(item).filter((f) => f.state === "new" || (f.state === "dismissed" && f.unreported == null));
 }
 
 /** Promotion DEFAULTS TO CONFIRMED findings (triage.ts): `p` promotes the

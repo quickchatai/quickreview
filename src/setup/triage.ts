@@ -68,6 +68,10 @@ const where = (f: ScanFinding): string => `${f.path}:${f.start === f.end ? f.sta
 
 // ---- memory spellings -------------------------------------------------------------
 
+/** A dismissed finding a re-scan settled as no longer reported (findings.ts
+ * `unreported`): out of play, as a fixed one is, until a scan reports it again. */
+export const goneDismissal = (f: ScanFinding): boolean => f.state === "dismissed" && f.unreported != null;
+
 /** The dismissal note: what was dismissed and why, for PR rounds to read. */
 export function dismissalMemoryText(f: ScanFinding, reason: string): string {
   const tags = { kind: "dismissal", lens: tagValue(f.lens), finding: tagValue(f.kind), unit: tagValue(f.unit) };
@@ -288,6 +292,13 @@ export class ScanTriage {
     if (f.state === "fixed") {
       return { ok: false, errors: [`${f.fingerprint.slice(0, 12)} is fixed (at ${f.fixed?.sha.slice(0, 12) ?? "?"}) — nothing to file`] };
     }
+    // A dismissal a re-scan no longer reports (findings.ts: sticky, stamped
+    // `unreported`) is what used to read `fixed`: nothing to file either —
+    // the ticket would close at the next scan. It is back in play once a
+    // scan reports it again.
+    if (goneDismissal(f)) {
+      return { ok: false, errors: [`${f.fingerprint.slice(0, 12)} is dismissed and no longer reported (at ${f.unreported!.sha.slice(0, 12)}) — nothing to file`] };
+    }
     const validity = validityOf(f);
     if (validity !== "confirmed" && args.unconfirmed !== true) {
       return {
@@ -306,7 +317,9 @@ export class ScanTriage {
       // episode's ticket again (reopened by hand): its closure is history,
       // or the next fix would never close it.
       const saved = this.ports.findings.update(f.fingerprint, (cur) =>
-        cur.state === "fixed" ? "it became fixed meanwhile" : { ...cur, state: "promoted", ...(cur.ticket ? { ticket: { ...cur.ticket, closed: null } } : {}) },
+        cur.state === "fixed" || goneDismissal(cur)
+          ? "it became fixed, or no longer reported, meanwhile"
+          : { ...cur, state: "promoted", ...(cur.ticket ? { ticket: { ...cur.ticket, closed: null } } : {}) },
       );
       if (!saved.ok) return saved;
       return { ok: true, finding: saved.finding, ref: ticket.ref, sink: ticket.sink, existing: true, closed: ticket.closed ?? null };
@@ -321,7 +334,9 @@ export class ScanTriage {
     if (!filed.ok) return { ok: false, errors: [filed.reason] };
     const ticket = { sink: this.ports.tracker.kind, ref: filed.ref, effort, filed_at: at, closed: null };
     const saved = this.ports.findings.update(f.fingerprint, (cur) =>
-      cur.state === "fixed" ? `it became fixed meanwhile — ${filed.ref} was filed; close it by hand` : { ...cur, state: "promoted", ticket },
+      cur.state === "fixed" || goneDismissal(cur)
+        ? `it became fixed, or no longer reported, meanwhile — ${filed.ref} was filed; close it by hand`
+        : { ...cur, state: "promoted", ticket },
     );
     if (!saved.ok) return saved;
     return { ok: true, finding: saved.finding, ref: filed.ref, sink: ticket.sink, existing: filed.existing === true, closed: null };
