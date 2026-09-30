@@ -589,6 +589,29 @@ describe("the sweep and the empty answer", () => {
     expect(second!.coverage.rounds_with_local_record).toBe(3);
   });
 
+  it("an expired round on disk never stands in for a reported round still being copied (selfscan 5ffa98a2)", async () => {
+    // The daemon's snapshot counts rounds that are NOT expired; the manifests
+    // on disk include expired ones. Round 1 (expired) lands first; round 2
+    // (the one the snapshot's `rounds: 1` is about) lands a tick later with no
+    // signature move — it must still be read.
+    const dir = mkdtempSync(join(tmpdir(), "qcr-cand-"));
+    writeManifest(dir, 5181, 1, "expired", null);
+    const store = new CandidateStore(dir);
+    const sweeper = new CandidateSweeper(store, {
+      evidenceDir: dir,
+      now: () => new Date("2026-08-25T09:00:00Z"),
+    });
+    const snap = snapshot([
+      { number: 5181, state: "reviewing", title: "t", head_sha: "abc", stale_recheck: 0, rounds: 1 } as never,
+    ]);
+    const first = await sweeper.sweep(snap);
+    expect(first!.candidates.find((c) => c.pr === 5181)?.headline).toBe("1 round produced no verdict");
+    writeManifest(dir, 5181, 2, "failed", null);
+    const second = await sweeper.sweep(snap); // same signature, the reported round now on disk
+    expect(second!.candidates.find((c) => c.pr === 5181)?.headline).toBe("2 rounds produced no verdict");
+    expect(second!.coverage.rounds_with_local_record).toBe(second!.coverage.rounds_reported);
+  });
+
   it("a sweep is re-entrant-safe and never throws on a bad snapshot", async () => {
     const dir = mkdtempSync(join(tmpdir(), "qcr-cand-"));
     const sweeper = new CandidateSweeper(new CandidateStore(dir), { evidenceDir: dir });

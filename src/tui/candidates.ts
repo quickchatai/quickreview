@@ -821,11 +821,14 @@ export class CandidateSweeper {
       // drains a backlog ROUNDS_PER_SWEEP at a time across ticks with no
       // signature move, so a signature-only key would freeze the shortfall.
       // (A cheap `existsSync` miss for a never-copied PR, a manifest re-read
-      // only while genuinely short.)
+      // only while genuinely short.) Both sides count the same thing: the
+      // snapshot's `rounds` excludes `expired` rounds, so the local side must
+      // too — or an expired manifest stands in for a reported round the
+      // copier has not landed yet, and the shortfall freezes.
       const fresh =
         cached !== undefined &&
         cached.signature === sig &&
-        cached.rounds.length >= (pr.rounds ?? 0);
+        reportedRounds(cached.rounds) >= (pr.rounds ?? 0);
       const rounds = fresh
         ? cached.rounds
         : roundFactsFromEvidence(this.deps.evidenceDir, pr.number);
@@ -842,7 +845,7 @@ export class CandidateSweeper {
         signals: this.deps.signals?.(pr.number) ?? [],
       };
       facts.set(pr.number, f);
-      roundsLocal += rounds.length;
+      roundsLocal += reportedRounds(rounds);
       roundsReported += pr.rounds ?? 0;
       detected.push(...detectCandidates(f));
     }
@@ -879,6 +882,12 @@ export class CandidateSweeper {
     this.lastFingerprint = fingerprint;
     return list;
   }
+}
+
+/** Local rounds counted the way the daemon's snapshot counts them
+ * (`buildStatusSnapshot`: every round that is not `expired`). */
+function reportedRounds(rounds: RoundFact[]): number {
+  return rounds.filter((r) => r.status !== "expired").length;
 }
 
 /** The list's content, timestamps excluded — the "did anything change" key
