@@ -24,6 +24,7 @@
 // re-running the step never destroys rules it did not author (it rewrites only
 // the `onboarding:<login>` family).
 import { readFileSync, writeFileSync } from "node:fs";
+import { parse as parseToml } from "smol-toml";
 import { CHOICE_KEYS } from "../choices.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 import { parseConfig } from "../../config.js";
@@ -170,7 +171,17 @@ export function foreignRuleBlocks(toml: string): string[] {
 export function foreignRuleTargets(foreign: readonly string[]): string[] {
   const out: string[] = [];
   for (const block of foreign) {
-    const to = /^\s*to\s*=\s*"([^"]*)"/m.exec(block)?.[1];
+    // Parsed, not pattern-matched: a literal string (`to = 'bob'`) or an
+    // `@bob` is as valid a spelling as `to = "bob"`, and normalised the way
+    // `parseConfig` normalises it, so the two never disagree on the login.
+    let raw: unknown;
+    try {
+      const doc = parseToml(block) as { escalation?: { rules?: Array<{ to?: unknown }> } };
+      raw = doc.escalation?.rules?.[0]?.to;
+    } catch {
+      continue; // an unparseable block is refused loudly by parseConfig later
+    }
+    const to = typeof raw === "string" ? raw.trim().replace(/^@/, "") : "";
     if (to && !out.includes(to)) out.push(to);
   }
   return out;

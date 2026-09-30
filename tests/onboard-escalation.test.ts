@@ -153,3 +153,28 @@ describe("escalation step: a hand-written rule's recipient survives a re-run", (
     expect(cfg.escalation.rules.some((r) => r.name === "onboarding:bob")).toBe(false);
   });
 });
+
+describe("escalation step: a hand rule's recipient is read in every TOML spelling", () => {
+  it("keeps a literal-string, @-prefixed `to` reachable after a re-run", async () => {
+    writeFileSync(
+      configPath,
+      withHandRule(
+        [
+          "[[escalation.rules]]",
+          "name = 'hand'",
+          "to = '@bob'",
+          "why = 'he wrote the billing module'",
+          "paths = ['billing/**']",
+          "",
+        ].join("\n"),
+      ),
+    );
+    const { cfg } = await runStep({
+      enable: "yes",
+      targets: "alice",
+      why: "owns the schema",
+      paths: "db/**",
+    });
+    expect([...cfg.escalation.targets].sort()).toEqual(["alice", "bob"]);
+  });
+});
