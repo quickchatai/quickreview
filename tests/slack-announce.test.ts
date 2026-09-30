@@ -11,6 +11,7 @@ import {
   makeAnnouncer,
   scanNotPickedUp,
 } from "../src/slack/announce.js";
+import { announcementKey } from "../src/slack/policy.js";
 import type { SlackPostResult, SlackWebApi } from "../src/slack/types.js";
 import { StateStore } from "../src/state.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
@@ -741,6 +742,25 @@ describe("concurrent posts", () => {
 
     expect(slack.posts).toHaveLength(2);
     expect(store.slackPostsSince(new Date(T0.getTime() - 3_600_000).toISOString())).toBe(2);
+  });
+
+  it("a claim-time refusal writes no cooldown — the cause stays free to speak later, exactly like an admission refusal", async () => {
+    cfg.slack.policy.announcements_per_hour = 2;
+    const a = announcer();
+    await a.anomaly({ pr: 5263, round_no: 1, kind: "overdue", deadline_min: 45 });
+    const key = (pr: number) => announcementKey("round.overdue", pr);
+    const before = { 5270: store.slackCooldown(key(5270)), 5271: store.slackCooldown(key(5271)) };
+    expect(before[5270]).toBeUndefined();
+    expect(before[5271]).toBeUndefined();
+
+    await Promise.all([
+      a.anomaly({ pr: 5270, round_no: 1, kind: "overdue", deadline_min: 45 }),
+      a.anomaly({ pr: 5271, round_no: 1, kind: "overdue", deadline_min: 45 }),
+    ]);
+    expect(slack.posts).toHaveLength(2);
+    // Exactly one of the two posted and paid its cooldown; the refused one left none.
+    const stamped = [5270, 5271].filter((pr) => store.slackCooldown(key(pr)) !== undefined);
+    expect(stamped).toHaveLength(1);
   });
 
   it("the claim-time ceiling never gates a lifecycle post (it counts, it is not blocked)", async () => {

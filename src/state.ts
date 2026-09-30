@@ -5562,6 +5562,33 @@ export class StateStore {
       });
   }
 
+  /** Put a cooldown row back exactly as it was before a fire that never
+   * reached the channel (`undefined` = there was no row). Used when an
+   * admitted announcement is refused at claim time by the rolling-hour
+   * ceiling: that refusal must write nothing, like the admission-time one. */
+  restoreSlackCooldown(key: string, prior: SlackCooldownRow | undefined): void {
+    if (prior === undefined) {
+      this.db.prepare("DELETE FROM slack_cooldowns WHERE key = ?").run(key);
+      return;
+    }
+    this.db
+      .prepare(
+        `INSERT INTO slack_cooldowns (key, last_fired_at, warsaw_day, fire_count, fold_count, bypassed)
+         VALUES (@key, @last_fired_at, @warsaw_day, @fire_count, @fold_count, @bypassed)
+         ON CONFLICT(key) DO UPDATE SET
+           last_fired_at=@last_fired_at, warsaw_day=@warsaw_day, fire_count=@fire_count,
+           fold_count=@fold_count, bypassed=@bypassed`,
+      )
+      .run({
+        key,
+        last_fired_at: prior.last_fired_at,
+        warsaw_day: prior.day,
+        fire_count: prior.fire_count,
+        fold_count: prior.fold_count,
+        bypassed: prior.bypassed,
+      });
+  }
+
   /** A repeat swallowed inside the cooldown window; returns the new fold count. */
   foldSlackCooldown(key: string): number {
     this.db

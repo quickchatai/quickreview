@@ -30,7 +30,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import type { Config } from "../config.js";
 import { opsDay } from "../eod.js";
-import type { SlackPostKind, StateStore } from "../state.js";
+import type { SlackCooldownRow, SlackPostKind, StateStore } from "../state.js";
 import type { RoundType } from "../types.js";
 import {
   causeMessage,
@@ -45,7 +45,7 @@ import {
   type ReRoundReason,
   type VerdictName,
 } from "./messages.js";
-import { causePolicy, decideAnnouncement, hourlyCeiling } from "./policy.js";
+import { announcementKey, causePolicy, decideAnnouncement, hourlyCeiling } from "./policy.js";
 import type { SlackWebApi } from "./types.js";
 
 /** Cause keys for the thread-lifecycle posts. They live in the same namespace
@@ -158,17 +158,25 @@ function unref(handle: unknown): void {
   (handle as { unref?: () => void } | undefined)?.unref?.();
 }
 
+/** What admission stamped, so a claim-time refusal can undo it. */
+interface Admission {
+  key: string;
+  prior: SlackCooldownRow | undefined;
+}
+
 interface PostRequest {
   idemKey: string;
   kind: SlackPostKind;
   text: string;
   /** PR-scoped posts thread under the PR's root (or become it). */
   pr?: number;
-  /** Set on every post admitted by `announcementAllowed`: the rolling-hour
-   * ceiling is re-read just before the row is claimed (admission reserves no
-   * slot). Lifecycle posts leave it unset — they count, they are never
-   * blocked (header rule 3). */
-  hourCapped?: true;
+  /** Set on every post admitted by `announcementAllowed` (its return value):
+   * the rolling-hour ceiling is re-read just before the row is claimed
+   * (admission reserves no slot), and a refusal there puts the cooldown row
+   * back as admission found it — an hour-limiter refusal writes nothing
+   * (policy.ts decideAnnouncement). Lifecycle posts leave it unset — they
+   * count, they are never blocked (header rule 3). */
+  hourCapped?: Admission;
 }
 
 /** One `pr.not_picked_up` candidate, as the scan reports it. */
@@ -282,6 +290,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
       const ceiling = hourlyCeiling(store, cfg, this.now());
       if (ceiling.reached) {
         this.log(`slack: announcement suppressed at claim (${req.idemKey}) — ${ceiling.reason}`);
+        store.restoreSlackCooldown(req.hourCapped.key, req.hourCapped.prior);
         return undefined;
       }
     }
@@ -338,16 +347,24 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
   /** Unprompted-cause gate: switch + cooldown + fold + rolling-hour ceiling.
    * Mutates on decide, exactly like AlertPolicy — so a caller can never fire
    * without paying the cooldown. */
-  private announcementAllowed(cause: string, pr?: number | null, escalated?: boolean): boolean {
-    if (!this.enabled) return false;
+  private announcementAllowed(
+    cause: string,
+    pr?: number | null,
+    escalated?: boolean,
+  ): Admission | undefined {
+    if (!this.enabled) return undefined;
+    const prior = this.deps.store.slackCooldown(announcementKey(cause, pr));
     const d = decideAnnouncement(
       this.deps.store,
       this.deps.cfg,
       { cause, pr, escalated },
       this.now(),
     );
-    if (!d.allow) this.log(`slack: announcement '${d.key}' suppressed — ${d.reason ?? d.block}`);
-    return d.allow;
+    if (!d.allow) {
+      this.log(`slack: announcement '${d.key}' suppressed — ${d.reason ?? d.block}`);
+      return undefined;
+    }
+    return { key: d.key, prior };
   }
 
   /** The policy-timezone day token — the shared opsDay (src/eod.ts) over
@@ -468,7 +485,8 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
           ? "review.failed_loud"
           : "round.malformed_verdict";
     // An anomaly is a genuine escalation: it may spend the day's one bypass.
-    if (!this.announcementAllowed(cause, a.pr, true)) return;
+    const admitted = this.announcementAllowed(cause, a.pr, true);
+    if (!admitted) return;
     const text =
       a.kind === "overdue"
         ? causeMessage(this.deps.cfg, {
@@ -487,7 +505,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     await this.post({
       idemKey: a.incident_id ?? `${cause}:${a.pr}:${a.round_no}`,
       kind: "announce",
-      hourCapped: true,
+      hourCapped: admitted,
       pr: a.pr,
       text,
     });
@@ -496,11 +514,12 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
   /** A PR still waiting for a slot. This may be the FIRST event on the PR, in
    * which case it opens the thread (root-on-first-event). */
   async notPickedUp(item: NotPickedUpItem): Promise<void> {
-    if (!this.announcementAllowed("pr.not_picked_up", item.pr)) return;
+    const admitted = this.announcementAllowed("pr.not_picked_up", item.pr);
+    if (!admitted) return;
     await this.post({
       idemKey: `pr.not_picked_up:${item.pr}:${this.hourBucket()}`,
       kind: "announce",
-      hourCapped: true,
+      hourCapped: admitted,
       pr: item.pr,
       text: causeMessage(this.deps.cfg, { cause: "pr.not_picked_up", ...item }),
     });
@@ -521,11 +540,12 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
 
   /** The Slack answer budget ran out — said once a day, never per refusal. */
   async capReached(cap: number): Promise<void> {
-    if (!this.announcementAllowed("slack.cap_reached")) return;
+    const admitted = this.announcementAllowed("slack.cap_reached");
+    if (!admitted) return;
     await this.post({
       idemKey: `slack.cap_reached:${this.policyDay()}`,
       kind: "announce",
-      hourCapped: true,
+      hourCapped: admitted,
       text: causeMessage(this.deps.cfg, { cause: "slack.cap_reached", cap }),
     });
   }
@@ -576,11 +596,12 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     if (last === undefined) return false; // first ever boot: nothing was missed
     const gapMs = this.now().getTime() - Date.parse(last);
     if (gapMs <= this.deps.cfg.slack.policy.downtime_notice_min * 60_000) return false;
-    if (!this.announcementAllowed("daemon.up")) return false;
+    const admitted = this.announcementAllowed("daemon.up");
+    if (!admitted) return false;
     const ts = await this.post({
       idemKey: `daemon.up:${this.minuteBucket()}`,
       kind: "announce",
-      hourCapped: true,
+      hourCapped: admitted,
       text: causeMessage(this.deps.cfg, {
         cause: "daemon.up",
         version: this.deps.version ?? "unknown",
@@ -593,12 +614,13 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
 
   /** Best-effort goodbye, bounded so shutdown can never wait on Slack. */
   async daemonStopping(reason: string): Promise<void> {
-    if (!this.announcementAllowed("daemon.stopping")) return;
+    const admitted = this.announcementAllowed("daemon.stopping");
+    if (!admitted) return;
     const budget = this.deps.stopTimeoutMs ?? 3000;
     const post = this.post({
       idemKey: `daemon.stopping:${this.minuteBucket()}`,
       kind: "announce",
-      hourCapped: true,
+      hourCapped: admitted,
       text: causeMessage(this.deps.cfg, { cause: "daemon.stopping", reason }),
     });
     let timer: unknown;
