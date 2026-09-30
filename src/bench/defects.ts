@@ -398,13 +398,21 @@ function sameIds(a: readonly string[], b: readonly string[]): boolean {
 }
 
 /**
- * Did this saved round judge THIS review? `review --resume` rewrites a case's
- * review in the same run dir, and comment ids (C1, …) are stable across the
- * rewrite, so an old round's verdicts would attach to new text. A round written
- * before the stamp existed stands while it judged exactly this review's comment
- * ids (a clean answer covers every one, parseJudgement).
+ * Did this saved round judge THIS review against THIS ground truth?
+ * `review --resume` rewrites a case's review in the same run dir, and comment
+ * ids (C1, …) are stable across the rewrite, so an old round's verdicts would
+ * attach to new text; likewise an explicit `--label` reuses a judge dir across
+ * a defect-set bump, and defect ids (D1, …) would carry v1 verdicts onto the
+ * revised defects. A round written before the review stamp existed stands while
+ * it judged exactly this review's comment ids (a clean answer covers every one,
+ * parseJudgement).
  */
-export function judgedReview(j: CaseJudgement, review: ReviewForJudge): boolean {
+export function judgedReview(
+  j: CaseJudgement,
+  review: ReviewForJudge,
+  defectSetVersion: string,
+): boolean {
+  if (j.defect_set_version !== defectSetVersion) return false;
   return j.review_hash !== undefined
     ? j.review_hash === reviewHash(review)
     : sameIds(
@@ -578,7 +586,7 @@ export function scoreRun(
     const review = reviews[iid] ?? { verdict: null, body: null, comments: [] };
     const clean = (judgements[iid] ?? []).filter((j) => !j.error);
     errors += (judgements[iid] ?? []).length - clean.length;
-    const ok = clean.filter((j) => judgedReview(j, review));
+    const ok = clean.filter((j) => judgedReview(j, review, set.version));
     stale += clean.length - ok.length;
     rounds = Math.max(rounds, (judgements[iid] ?? []).length);
     if (ok.length) judged++;
@@ -689,7 +697,7 @@ export function renderDefectReport(
     DEFECT_REPORT_PREAMBLE,
     "",
     `- Ground truth: \`${set.set}\` defect set, version \`${set.version}\` — ${set.method || "verified real defects"}`,
-    `- Judged ${s.judged}/${s.cases} cases, ${s.rounds} round(s)${s.errors ? `, ${s.errors} judge error(s) (counted as missed / unverifiable)` : ""}${s.stale ? `, ${s.stale} stale round(s) that judged an earlier review (not scored — re-run defect-judge --resume)` : ""}`,
+    `- Judged ${s.judged}/${s.cases} cases, ${s.rounds} round(s)${s.errors ? `, ${s.errors} judge error(s) (counted as missed / unverifiable)` : ""}${s.stale ? `, ${s.stale} stale round(s) that judged an earlier review or ground-truth version (not scored — re-run defect-judge --resume)` : ""}`,
     "",
     "## Did the review find the real defects?",
     "",

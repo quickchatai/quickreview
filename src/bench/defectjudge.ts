@@ -108,10 +108,11 @@ export async function judgeCase(o: JudgeCaseOptions): Promise<CaseJudgement[]> {
     const file = roundFile(o.outDir, o.pr.instance_id, k);
     if (o.resume && existsSync(file)) {
       const prior = JSON.parse(readFileSync(file, "utf8")) as CaseJudgement;
-      // A round kept on resume must have judged THIS review (judgedReview);
+      // A round kept on resume must have judged THIS review against THIS
+      // defect-set version (judgedReview);
       // a legacy unstamped round is kept on matching ids — re-paying every
       // legacy round on resume would be a silent spend.
-      if (!prior.error && judgedReview(prior, o.review)) {
+      if (!prior.error && judgedReview(prior, o.review, o.defectSetVersion)) {
         out.push(prior);
         continue;
       }

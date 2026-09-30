@@ -400,6 +400,20 @@ describe("scoring", () => {
     expect(gone.judged).toBe(0);
   });
 
+  it("a round that judged an earlier ground-truth version is stale, even over the same review", () => {
+    // `defect-judge --label fresh10` ran against v1; the defect set was bumped
+    // to v2 and `defect-report --label fresh10` reused the dir over the same
+    // review: v1 verdicts must not attach to the revised defects by id.
+    const v1 = J(1, "found", "correct-minor", {
+      review_hash: reviewHash(REVIEW),
+      defect_set_version: "0",
+    });
+    const s = scoreRun(set, ["o__r@1234567"], { "o__r@1234567": [v1] }, { "o__r@1234567": REVIEW });
+    expect(s.stale).toBe(1);
+    expect(s.judged).toBe(0);
+    expect(scoreExitCode(s, false)).toBe(1);
+  });
+
   it("counts wrong blockers, approvals over a missed high defect, and new-defect candidates once", () => {
     const s = scoreRun(
       set,
@@ -524,6 +538,15 @@ describe("the judge session", () => {
       resume: true,
     });
     expect(readFileSync(counter, "utf8").trim()).toBe("7");
+    // The ground truth was bumped under an explicit --label: a round judged
+    // against the old version is re-asked on resume, never kept.
+    writeFileSync(join(dir, "judge", "o__r@1234567.r1.json"), JSON.stringify(again[0]));
+    writeFileSync(
+      join(dir, "judge", "o__r@1234567.r2.json"),
+      JSON.stringify({ ...again[0]!, round: 2 }),
+    );
+    await judgeCase({ ...common, defectSetVersion: "2", rounds: 2, resume: true });
+    expect(readFileSync(counter, "utf8").trim()).toBe("9");
   });
 });
 
