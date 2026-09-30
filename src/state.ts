@@ -5239,9 +5239,14 @@ export class StateStore {
 
   /** Has this exact person already been pointed at this exact thing on this
    * PR? The dedup that makes an escalation a one-time notification rather
-   * than a per-round nag. `key` is `"<target>|<scopeKey>"`. */
+   * than a per-round nag. `key` is `"<target>|<scopeKey>"`, split on the
+   * FIRST `|` only: a target is a login and cannot hold one, but a scope key
+   * embeds a path or decision name that can (JS `split("|", 2)` truncates the
+   * rest instead of keeping it — selfscan 1deeb309). */
   escalationDelivered(pr: number, key: string): boolean {
-    const [target = "", scopeKey = ""] = key.split("|", 2);
+    const bar = key.indexOf("|");
+    const target = bar < 0 ? key : key.slice(0, bar);
+    const scopeKey = bar < 0 ? "" : key.slice(bar + 1);
     const row = this.db
       .prepare(
         "SELECT 1 AS x FROM escalations WHERE pr = ? AND target = ? AND scope_key = ? LIMIT 1",

@@ -1465,6 +1465,32 @@ describe("delivery", () => {
     expect(out[0]!.refused).toBe("already-delivered");
   });
 
+  it("never twice holds when the scope itself contains a '|' (selfscan 1deeb309)", async () => {
+    // The dedup key is `<target>|<scopeKey>`; `split("|", 2)` TRUNCATES in JS
+    // rather than splitting once, so a decision named "use A | B" looked up a
+    // scope_key that was never stored and was re-posted every round.
+    const c = on({ session_judgement: true });
+    const candidate = { ...request(), scope: { kind: "decision" as const, decision: "use A | B" } };
+    const call = (adapter: ReturnType<typeof fakeAdapter>) =>
+      deliverEscalations(
+        { cfg: c, store, adapter },
+        {
+          pr: 21,
+          verdict: "APPROVE",
+          head_sha: HEAD,
+          changed_paths: CHANGED,
+          sessionCandidates: [candidate],
+        },
+      );
+    const first = fakeAdapter();
+    await call(first);
+    expect(first.reviews).toHaveLength(1);
+    const second = fakeAdapter();
+    const out = await call(second);
+    expect(second.reviews).toHaveLength(0);
+    expect(out[0]!.refused).toBe("already-delivered");
+  });
+
   it("max_per_pr caps the rest", async () => {
     const c = on({
       session_judgement: true,
