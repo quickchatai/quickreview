@@ -395,6 +395,23 @@ export function renderPinnedHeadSection(mem: RoundMemory, ownerName?: string): s
  */
 export function renderContextBlockSection(mem: RoundMemory): string {
   if (!mem.asked) return "";
+  // The head and the context block are fetched independently. When only the
+  // head missed and the block arrived, the block still goes in: dropping
+  // recalled precedent because a DIFFERENT read failed would make a partial
+  // outage look total (selfscan ee1e42d4).
+  const contextArrived = !mem.gaps.some((g) => g.part === "context") && mem.block !== "";
+  if (mem.degraded && contextArrived) {
+    return [
+      "**MEMORY PARTLY UNAVAILABLE THIS ROUND.** Part of the context store did not",
+      `answer when the daemon built this round (${describeGaps(mem)}); the recalled`,
+      "context below DID arrive. Nothing else changes: the round is",
+      "not blocked, every gate and posting rule still applies, do not retry memory",
+      "in a loop, and do not mention it in the posted review — the operator is told",
+      "through the daemon's own alert.",
+      "",
+      recalledContextSection(mem),
+    ].join("\n");
+  }
   if (mem.degraded) {
     return [
       "**MEMORY UNAVAILABLE THIS ROUND — review without it.** The context store did",
@@ -411,6 +428,10 @@ export function renderContextBlockSection(mem: RoundMemory): string {
   if (mem.block === "") {
     return `**RECALLED CONTEXT** — memory was queried once for this round ("${mem.query}") and had nothing to add.`;
   }
+  return recalledContextSection(mem);
+}
+
+function recalledContextSection(mem: RoundMemory): string {
   return [
     "**RECALLED CONTEXT — one budgeted block, queried for this PR.** The daemon",
     `asked memory once while building this round ("${mem.query}", budget`,

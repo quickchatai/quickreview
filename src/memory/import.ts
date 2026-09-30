@@ -269,9 +269,34 @@ interface Plan {
 }
 
 /**
+ * The destination's entries — refusing an INCOMPLETE enumeration.
+ *
+ * Dedup reads absence as "not imported yet", so a listing that skipped an
+ * entry it could not read would get that entry written a second time. A
+ * store that can say what it could not read (`sweep()`, the OpenViking
+ * implementation) is asked; one that cannot is taken at its `read()`.
+ */
+async function readDestFully(dest: MemoryStore): Promise<MemoryEntry[]> {
+  const sweepable = dest as MemoryStore & {
+    sweep?: () => Promise<{ entries: MemoryEntry[]; unread: string[] }>;
+  };
+  if (typeof sweepable.sweep !== "function") return dest.read();
+  const { entries, unread } = await sweepable.sweep();
+  if (unread.length > 0) {
+    throw new Error(
+      `memory import: could not read the whole destination, so it cannot tell what is already imported — ` +
+        `nothing written this pass; rerun once it reads cleanly (${unread.join("; ")})`,
+    );
+  }
+  return entries;
+}
+
+/**
  * Run the import. Never throws on a refused or failed write — every outcome
  * lands in the report and in the log. The only way this rejects is a source
- * or destination whose `read()` throws, i.e. no transport at all.
+ * or destination whose `read()` throws, i.e. no transport at all, or a
+ * destination that reports it could not read part of itself (dedup against a
+ * partial listing would duplicate what it missed).
  */
 export async function importMemory(opts: ImportOptions): Promise<ImportReport> {
   const batchSize = Math.max(1, opts.batchSize ?? DEFAULT_BATCH_SIZE);
@@ -291,7 +316,7 @@ export async function importMemory(opts: ImportOptions): Promise<ImportReport> {
   };
 
   const srcEntries = await opts.source.read();
-  const destEntries = await opts.dest.read();
+  const destEntries = await readDestFully(opts.dest);
   report.sourceEntries = srcEntries.length;
   report.destEntriesBefore = destEntries.length;
 
@@ -338,7 +363,7 @@ export async function importMemory(opts: ImportOptions): Promise<ImportReport> {
     // Creation precondition at the seam: re-read right before writing, so an
     // entry another writer (or an interrupted earlier run) has just put there
     // is recognised instead of duplicated.
-    if (i > 0) existing = indexByKey(await opts.dest.read());
+    if (i > 0) existing = indexByKey(await readDestFully(opts.dest));
     let ok = 0;
     let bad = 0;
     for (const plan of batch) {

@@ -288,6 +288,29 @@ describe("importMemory — batching", () => {
     expect(reads.length).toBeGreaterThan(3); // initial + per-batch + pin read-back
   });
 
+  it("a destination sweep that could not read everything is not proof of absence (selfscan e290a572)", async () => {
+    // First run lands everything. On the rerun one imported entry fails a
+    // transient read: the partial listing must not be planned against, or
+    // that entry would be written a second time.
+    const source = recordingMemoryStore(sourceEntries());
+    const inner = recordingMemoryStore();
+    await importMemory({ source, dest: inner });
+    const writes = inner.ops.length;
+    const partial = async () => ({
+      entries: inner.entries.filter((e) => !e.text.includes("merge base")),
+      unread: ["read viking://user/reviewer/memories/x.md: timeout"],
+    });
+    const flaky: MemoryStore & { sweep: typeof partial } = {
+      read: async () => (await partial()).entries,
+      sweep: partial,
+      search: (q, o) => inner.search(q, o),
+      apply: (op) => inner.apply(op),
+    };
+    await expect(importMemory({ source, dest: flaky })).rejects.toThrow(/could not read.*timeout/s);
+    expect(inner.ops.length).toBe(writes);
+    expect(inner.entries.filter((e) => e.text.includes("merge base"))).toHaveLength(1);
+  });
+
   it("an entry another writer lands mid-import is not written twice", async () => {
     const { source, dest } = rig();
     let batch = 0;

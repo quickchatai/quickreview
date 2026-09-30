@@ -261,6 +261,28 @@ describe("the three states of the pinned head", () => {
     expect(renderContextBlockSection(mem)).toContain("ECONNREFUSED");
   });
 
+  it("a head gap does not throw away a context block that DID arrive (selfscan ee1e42d4)", async () => {
+    // The two halves are fetched independently: a sweep that skipped one
+    // entry makes the head unreadable while the search still answered.
+    const mem = await assembleRoundMemory(
+      new CountingAssembler(
+        unreadable("sweep: 1 entry unread"),
+        read("PR #5100: the widget limiter keys on tenant."),
+      ),
+      "q",
+    );
+    expect(mem.degraded).toBe(true);
+    const section = renderContextBlockSection(mem);
+    // The recalled precedent reaches the session…
+    expect(section).toContain("widget limiter keys on tenant");
+    expect(section).toContain("RECALLED CONTEXT");
+    // …the missing half is named, and the prompt never claims it carries no
+    // recalled context when it does.
+    expect(section).toContain("sweep: 1 entry unread");
+    expect(section).not.toContain("carries no recalled context");
+    expect(section).toMatch(/do not mention it in the posted review/);
+  });
+
   it("a timed-out and a throwing head are `unread` too — the state is about arrival, not about text", async () => {
     const hung = await assembleRoundMemory(
       { pinnedHead: () => new Promise(() => {}), contextBlock: async () => read("") },
