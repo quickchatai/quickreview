@@ -113,4 +113,17 @@ describe("gitScanSource materialisation is the listed blobs, byte for byte (self
       expect(git("hash-object", join(opened.tree.root, f.path))).toBe(f.blob);
     }
   });
+
+  it("reads a tree whose blobs span several cat-file calls, by count and by bytes", () => {
+    for (let i = 0; i < 300; i++) writeFileSync(join(repo, `src/f${i}.txt`), `${i}\n`.repeat(i + 1));
+    git("add", "-A");
+    git("commit", "-qm", "many");
+    const sha = git("rev-parse", "HEAD");
+    const opened = gitScanSource(repo, state, { batchBytes: 1000 }).open(sha, []);
+    if (!opened.ok) throw new Error(opened.reason);
+    expect(opened.tree.files.length).toBeGreaterThan(300);
+    const files = opened.tree.files;
+    const hashes = git("hash-object", ...files.map((f) => join(opened.tree.root, f.path))).split("\n");
+    expect(hashes).toEqual(files.map((f) => f.blob));
+  });
 });

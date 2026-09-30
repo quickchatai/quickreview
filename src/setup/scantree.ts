@@ -29,14 +29,18 @@ import type { TreeFile } from "./scan.js";
 /** Where materialised trees live, under the state home. */
 export const SCAN_TREES_DIR = "scan/tree";
 const COMPLETE_SUFFIX = ".complete";
-/** Blobs per `cat-file --batch` call — bounds one call's output buffer. */
+/** Blobs, and their bytes, per `cat-file --batch` call — bound one call's
+ * output buffer (a single larger blob is a call of its own). */
 const BLOBS_PER_BATCH = 256;
+const BYTES_PER_BATCH = 64 * 1024 * 1024;
 const SHA_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 
 /** `treesDir` (relative to the state home) is where this source keeps its
  * trees — the scan's own by default; another reader of trees (the PR
- * replay) passes its own, so neither prunes the other's. */
-export function gitScanSource(repoRoot: string, stateRoot: string, opts: { treesDir?: string } = {}): ScanSource {
+ * replay) passes its own, so neither prunes the other's.
+ * `batchBytes` bounds one `cat-file --batch` call's output (tests shrink it). */
+export function gitScanSource(repoRoot: string, stateRoot: string, opts: { treesDir?: string; batchBytes?: number } = {}): ScanSource {
+  const batchBytes = opts.batchBytes ?? BYTES_PER_BATCH;
   const git = (args: string[], maxBuffer = 64 * 1024 * 1024): string | null => {
     try {
       return execFileSync("git", ["-c", `safe.directory=${repoRoot}`, "-C", repoRoot, ...args], {
@@ -48,11 +52,11 @@ export function gitScanSource(repoRoot: string, stateRoot: string, opts: { trees
       return null;
     }
   };
-  const gitBytes = (args: string[], input: string): Buffer | null => {
+  const gitBytes = (args: string[], input: string, maxBuffer: number): Buffer | null => {
     try {
       return execFileSync("git", ["-c", `safe.directory=${repoRoot}`, "-C", repoRoot, ...args], {
         input,
-        maxBuffer: 1024 * 1024 * 1024,
+        maxBuffer,
         stdio: ["pipe", "pipe", "ignore"],
       });
     } catch {
@@ -65,9 +69,29 @@ export function gitScanSource(repoRoot: string, stateRoot: string, opts: { trees
     const pathsOf = new Map<string, string[]>();
     for (const f of files) pathsOf.set(f.blob, [...(pathsOf.get(f.blob) ?? []), f.path]);
     const blobs = [...pathsOf.keys()];
-    for (let i = 0; i < blobs.length; i += BLOBS_PER_BATCH) {
-      const chunk = blobs.slice(i, i + BLOBS_PER_BATCH);
-      const out = gitBytes(["cat-file", "--batch"], chunk.join("\n") + "\n");
+    if (blobs.length === 0) return true;
+    // Sizes first, so one call's output is bounded by BYTES as well as by
+    // count: a repository of large assets must not need one huge buffer.
+    const checked = gitBytes(["cat-file", "--batch-check"], blobs.join("\n") + "\n", 64 * 1024 * 1024);
+    if (checked === null) return false;
+    const sizeOf = new Map<string, number>();
+    for (const line of checked.toString("utf8").split("\n")) {
+      const m = /^([0-9a-f]+) blob (\d+)$/.exec(line);
+      if (m) sizeOf.set(m[1]!, Number(m[2]));
+    }
+    const chunks: Array<{ blobs: string[]; bytes: number }> = [];
+    for (const blob of blobs) {
+      const size = sizeOf.get(blob);
+      if (size === undefined) return false;
+      const last = chunks[chunks.length - 1];
+      if (last && last.blobs.length < BLOBS_PER_BATCH && last.bytes + size <= batchBytes) {
+        last.blobs.push(blob);
+        last.bytes += size;
+      } else chunks.push({ blobs: [blob], bytes: size });
+    }
+    for (const { blobs: chunk, bytes } of chunks) {
+      // Each blob's header and trailing newline on top of its bytes.
+      const out = gitBytes(["cat-file", "--batch"], chunk.join("\n") + "\n", bytes + chunk.length * 128 + 1024);
       if (out === null) return false;
       let at = 0;
       for (const blob of chunk) {
