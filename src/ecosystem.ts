@@ -39,6 +39,7 @@
 //     implementations hold no state and dispatch keeps owning the store, the
 //     gate-backed adapter and the git seam — nothing here can grow a second
 //     mutation path.
+import { codePath } from "./codespan.js";
 import type { GateResult } from "./gate.js";
 import { migrationGate as djangoMigrationGate, type PrFile } from "./heuristics.js";
 import type { CollisionCommentRecord } from "./state.js";
@@ -183,6 +184,10 @@ const MISSING_MIGRATION_NOTE =
  * blocker, which is exactly what the ticket exists to stop: the finding is
  * correct, the verdict was wrong. So the note is imperative — the collision is
  * settled mechanics, it is not a finding, and it never moves the verdict.
+ *
+ * Every filename-derived field is the PR author's (a migration name is
+ * `[^/]+`, backticks and newlines included), so each renders through
+ * `codePath`: it can never close its span or open a line of GATE NOTES.
  */
 export function renderMigrationCollisionsNote(
   collisions: readonly MigrationCollision[],
@@ -212,13 +217,13 @@ export function renderMigrationCollisionsNote(
   for (const c of collisions) {
     if (c.kind === "renamed-dependency") {
       lines.push(
-        `- \`${c.pr_path}\` references renamed \`"${c.stale_dependency ?? ""}"\` → dependencies \`[${c.dependency}]\`` +
-          (c.renumber ? `, rename to \`${c.target_path}\`` : ""),
+        `- ${codePath(c.pr_path)} references renamed ${codePath(`"${c.stale_dependency ?? ""}"`)} → dependencies ${codePath(`[${c.dependency}]`)}` +
+          (c.renumber ? `, rename to ${codePath(c.target_path)}` : ""),
       );
       continue;
     }
     lines.push(
-      `- \`${c.pr_path}\` collides with \`${c.base_path}\` → rename to \`${c.target_path}\`, dependencies \`[${c.dependency}]\``,
+      `- ${codePath(c.pr_path)} collides with ${codePath(c.base_path)} → rename to ${codePath(c.target_path)}, dependencies ${codePath(`[${c.dependency}]`)}`,
     );
   }
   if (undelivered) {

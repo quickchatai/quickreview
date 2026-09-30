@@ -15,6 +15,8 @@
 // This is NOT a trivial-delta classifier (owns that) — detection and
 // comment text only.
 
+import { codePath, flatControls } from "./codespan.js";
+
 /** One migration file, parsed out of its path. */
 export interface MigrationRef {
   path: string;
@@ -320,7 +322,9 @@ export interface CollisionCommentInput {
 /**
  * The COMMENT body. It states the exact target number and the exact
  * `dependencies` value, and says in plain words that this is mechanics — no
- * blocker, no verdict consumed, no re-review round owed.
+ * blocker, no verdict consumed, no re-review round owed. Filename-derived
+ * fields are the PR author's and render through `codePath` (see
+ * `renderMigrationCollisionsNote`).
  */
 export function renderMigrationCollisionComment(input: CollisionCommentInput): string {
   const branch = input.base_ref || "the base branch";
@@ -339,20 +343,21 @@ export function renderMigrationCollisionComment(input: CollisionCommentInput): s
   ];
   for (const c of input.collisions) {
     if (c.kind === "renamed-dependency") {
+      const stale = c.stale_dependency ?? "";
       lines.push(
-        `- \`${c.pr_path}\` — its \`dependencies\` reference \`"${c.stale_dependency ?? ""}"\`, which the renumber above moves to \`${c.dependency_name}\`.`,
-        `  - in its \`dependencies\`, replace \`("${c.dependency_app_label ?? c.app_label}", "${c.stale_dependency ?? ""}")\` with \`${c.dependency}\` — keep every other entry`,
+        `- ${codePath(c.pr_path)} — its \`dependencies\` reference ${codePath(`"${stale}"`)}, which the renumber above moves to ${codePath(c.dependency_name)}.`,
+        `  - in its \`dependencies\`, replace ${codePath(`("${c.dependency_app_label ?? c.app_label}", "${stale}")`)} with ${codePath(c.dependency)} — keep every other entry`,
       );
       if (c.renumber)
         lines.push(
-          `  - and rename it to \`${c.target_path}\` (number **${String(c.target_number).padStart(4, "0")}**) — its current number would sit below its renumbered dependency`,
+          `  - and rename it to ${codePath(c.target_path)} (number **${String(c.target_number).padStart(4, "0")}**) — its current number would sit below its renumbered dependency`,
         );
       continue;
     }
     lines.push(
-      `- \`${c.pr_path}\` collides with \`${c.base_path}\` on ${branch}.`,
-      `  - rename it to \`${c.target_path}\` (number **${String(c.target_number).padStart(4, "0")}**)`,
-      `  - in its \`dependencies\`, point its \`${c.app_label}\` entry at \`${c.dependency}\` — keep every other entry`,
+      `- ${codePath(c.pr_path)} collides with ${codePath(c.base_path)} on ${flatControls(branch)}.`,
+      `  - rename it to ${codePath(c.target_path)} (number **${String(c.target_number).padStart(4, "0")}**)`,
+      `  - in its \`dependencies\`, point its ${codePath(c.app_label)} entry at ${codePath(c.dependency)} — keep every other entry`,
     );
   }
   lines.push(
