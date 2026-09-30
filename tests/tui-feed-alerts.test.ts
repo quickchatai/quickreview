@@ -682,6 +682,36 @@ describe("companion tab", () => {
     await running;
   });
 
+  it("a retry while the boot start is still in flight JOINS it — never a second start", async () => {
+    // Two overlapping starts each run the day rollover: the loser kills the
+    // winner's fresh conversation and queues a second day-open. The retry
+    // must share the boot start's promise.
+    let starts = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let wired = 0;
+    const start = companionStarter({
+      start: async () => {
+        starts++;
+        await gate;
+      },
+      up: () => true,
+      wire: async () => {
+        wired++;
+      },
+    });
+    const boot = start();
+    const retry = start(); // the operator asks for the companion mid-bring-up
+    release();
+    await Promise.all([boot, retry]);
+    expect(starts).toBe(1);
+    expect(wired).toBe(1);
+    // Once settled, a later retry is a real new start again.
+    await start();
+    expect(starts).toBe(2);
+    expect(wired).toBe(1);
+  });
+
   it("runTui routes BOTH the boot start and the retry through the one wiring starter", () => {
     // The helper above is only half the fix: runTui must hand it to the retry
     // hook (not the bare startCompanion) and must wire channels nowhere else.

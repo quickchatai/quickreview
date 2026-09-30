@@ -28,6 +28,10 @@ export interface CompanionTabDeps {
  * that was: wiring only after a successful BOOT start left a companion healed
  * by retry running with no view feed, no alerts and a dead action channel
  * until the TUI restarted. Wired at most once — every wiring chains pollers.
+ *
+ * A start asked for while another is still in flight JOINS it rather than
+ * starting again: two overlapping starts each run the day rollover, and the
+ * later one kills the conversation the earlier one just spawned.
  */
 export function companionStarter(deps: {
   start: () => Promise<void>;
@@ -35,11 +39,18 @@ export function companionStarter(deps: {
   wire: () => Promise<void>;
 }): () => Promise<void> {
   let wired = false;
-  return async () => {
+  let inFlight: Promise<void> | undefined;
+  const once = async (): Promise<void> => {
     await deps.start();
     if (wired || !deps.up()) return;
     wired = true;
     await deps.wire();
+  };
+  return () => {
+    inFlight ??= once().finally(() => {
+      inFlight = undefined;
+    });
+    return inFlight;
   };
 }
 
