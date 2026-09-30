@@ -1,5 +1,5 @@
 // scripts/pr-self.sh — the sessions' sanctioned READ-ONLY
-// self-verification helper. Tested the way guards-shell.test.ts tests its kin:
+// self-verification helper. Tested the way guards-shell-*.test.ts test its kin:
 // the real script against a loopback HTTP stub, no real GitHub and no real
 // credential (empty secrets dir → mint-token.sh fails → unauthenticated read).
 //
