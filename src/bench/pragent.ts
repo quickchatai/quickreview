@@ -8,14 +8,18 @@
 // the loopback Codex bridge, a result file the harness's OCR reader and the
 // defect judge read unchanged.
 //
-// WHAT RUNS. On a GitHub PR the app runs `pr_commands` = /describe, /review,
-// /improve (its documented default). /describe writes the PR's title/summary
-// and walkthrough — no findings, nothing a reviewer is scored on — so it does
-// not run here. "Its review" is the other two: /review (the "PR Reviewer Guide":
-// up to `num_max_findings` = 3 key issues, each with a file and a line range,
-// plus a security-concerns verdict) and /improve (code suggestions, each with a
-// file and a line range, scored by its self-reflection pass). Both run through
-// PR-Agent's own CLI (`python -m pr_agent.cli --pr_url <target> review|improve`)
+// WHAT RUNS. On a new GitHub PR the app runs its default `pr_commands`
+// (servers/utils.py `_STANDARD_PR_COMMANDS`): /describe, /review, /improve, in
+// that order — and so does this arm. /describe yields no findings, but on
+// GitHub its output REPLACES the PR body (AI summary + the author's original
+// description, `add_original_user_description`), and that body is what the
+// following /review and /improve read as the PR's description; so it runs
+// first and its published body is handed to the other two. The findings are
+// /review's (the "PR Reviewer Guide": up to `num_max_findings` = 3 key issues,
+// each with a file and a line range, plus a security-concerns verdict) and
+// /improve's (code suggestions, each with a file and a line range, scored by
+// its self-reflection pass). All three run through PR-Agent's own CLI
+// (`python -m pr_agent.cli --pr_url <target> describe|review|improve`)
 // on its documented LOCAL git provider — HEAD is the change, the diff is HEAD
 // against merge-base(HEAD, <target>), i.e. `git diff base...head`, with full
 // base/head file contents for its context extension — driven by
@@ -56,9 +60,10 @@ import { prepareTree } from "./runner.js";
  * PR-Agent command. */
 export const PRAGENT_DEFAULTS = { timeoutMin: 30, model: "gpt-6.1-sol" } as const;
 
-/** PR-Agent's commands that make up its review, in the order the GitHub App
- * runs them (`pr_commands`, minus /describe — it produces no findings). */
-export const PRAGENT_COMMANDS = ["review", "improve"] as const;
+/** PR-Agent's commands, in the order the GitHub App runs them on a new PR
+ * (`pr_commands`). /describe produces no findings; its published description
+ * becomes the PR body the other two read, as on GitHub. */
+export const PRAGENT_COMMANDS = ["describe", "review", "improve"] as const;
 export type PragentCommand = (typeof PRAGENT_COMMANDS)[number];
 
 export function pragentProcessTimeoutMs(timeoutMin: number): number {
@@ -151,6 +156,9 @@ export interface PragentCapture {
   repo_pyproject_section?: string | null;
   diff_files?: string[];
   structured_review?: { review?: Record<string, unknown>; usage?: Record<string, unknown> };
+  published_description?: { title?: string | null; body?: string };
+  /** PR-Agent's fully resolved settings after the command ran (the driver's dump). */
+  effective?: Record<string, unknown>;
   suggestions?: Array<Record<string, unknown>>;
   comments?: string[];
 }
@@ -314,6 +322,7 @@ export function commandStatus(
   if (!r) return "not-run";
   if (r.timedOut) return "timeout";
   if (r.code !== 0 || !cap || cap.error) return "failed";
+  if (command === "describe") return typeof cap.published_description?.body === "string" ? "ok" : "failed";
   if (command === "review") return cap.structured_review?.review ? "ok" : "failed";
   if (Array.isArray(cap.suggestions)) return "ok";
   return (cap.comments ?? []).some((c) => /no (code )?suggestions/i.test(c)) ? "ok" : "failed";
@@ -349,6 +358,8 @@ export interface PragentCaseSummary {
   unlocated: number;
   target_branch: string | null;
   pr_text: string | null;
+  /** /review and /improve read /describe's published body (as on GitHub). */
+  described: boolean;
   bridge: BridgeUsage | null;
   /** Bridge tokens in the shape the defect judge's cost line reads. */
   usage: { input: number; output: number; cacheRead: number } | null;
@@ -399,7 +410,7 @@ function emptySummary(c: BenchCase, fingerprint: PragentFingerprint): PragentCas
     status: "failed",
     fingerprint,
     model: fingerprint.model,
-    commands: { review: { ...none }, improve: { ...none } },
+    commands: { describe: { ...none }, review: { ...none }, improve: { ...none } },
     duration_seconds: 0,
     comments: 0,
     review_findings: 0,
@@ -407,6 +418,7 @@ function emptySummary(c: BenchCase, fingerprint: PragentFingerprint): PragentCas
     unlocated: 0,
     target_branch: null,
     pr_text: null,
+    described: false,
     bridge: null,
     usage: null,
     merge_base_ok: false,
@@ -467,7 +479,7 @@ export function readPragentSummary(outDir: string, c: BenchCase): PragentCaseSum
   return s.arm === "pragent" ? (s as PragentCaseSummary) : null;
 }
 
-/** Review one case with PR-Agent (/review then /improve) and write its result
+/** Review one case with PR-Agent (/describe, /review, /improve) and write its result
  * file. Never throws for a case that fails — a failure is a recorded outcome
  * with whatever PR-Agent did produce. */
 export async function reviewCasePragent(
@@ -488,7 +500,7 @@ export async function reviewCasePragent(
   const startedAt = new Date().toISOString();
   const started = Date.now();
   const summary = emptySummary(c, o.fingerprint);
-  const caps: Record<PragentCommand, PragentCapture | null> = { review: null, improve: null };
+  const caps: Record<PragentCommand, PragentCapture | null> = { describe: null, review: null, improve: null };
   try {
     await prepareTree(join(o.store, safe), tree, meta);
     rmSync(scratch, { recursive: true, force: true });
@@ -526,6 +538,7 @@ export async function reviewCasePragent(
     const before = (await bridgeCall(o, "/stats")) as BridgeStats | null;
     log(`pragent: ${c.instance_id} — ${meta.diff.files} files, ${c.base_commit.slice(0, 7)}...${c.head_commit.slice(0, 7)} (target ${target})`);
     const argvs: Record<string, string[]> = {};
+    const describedFile = join(scratch, "body-described.txt");
     for (const command of PRAGENT_COMMANDS) {
       const argv = pragentDriverArgv({
         driver: o.driver,
@@ -536,7 +549,7 @@ export async function reviewCasePragent(
         model: o.model,
         bridgeUrl: o.bridgeUrl,
         titleFile,
-        bodyFile,
+        bodyFile: command !== "describe" && summary.described ? describedFile : bodyFile,
       });
       argvs[command] = [o.python, ...argv];
       const t0 = Date.now();
@@ -554,6 +567,12 @@ export async function reviewCasePragent(
         seconds: Math.round((Date.now() - t0) / 1000),
       };
       if (caps[command]?.error) summary.warnings.push(`${command}: ${caps[command]!.error}`);
+      const described = caps[command]?.published_description?.body;
+      if (command === "describe" && st === "ok" && typeof described === "string") {
+        // On GitHub /describe rewrites the PR body; the next commands read it.
+        writeFileSync(describedFile, described);
+        summary.described = true;
+      }
       if (st !== "ok")
         summary.warnings.push(
           `${command}: ${st}${caps[command]?.comments?.length ? ` — PR-Agent said: ${caps[command]!.comments!.at(-1)!.slice(0, 300)}` : ""}`,
@@ -576,6 +595,8 @@ export async function reviewCasePragent(
         : "failed";
     if (summary.status !== "ok") summary.error = summary.warnings.join(" | ").slice(0, 1500);
     for (const [name, file] of [
+      ["pragent-describe.json", "describe.json"],
+      ["pragent-description.md", "description.md"],
       ["pragent-review.json", "review.json"],
       ["pragent-improve.json", "improve.json"],
       ["pragent-review.md", "review.md"],
@@ -727,7 +748,7 @@ export async function runPragentReview(r: PragentReviewRun): Promise<number> {
     pr_text: r.prText,
     endpoint: "ChatGPT Codex backend via the loopback bridge (bench/aacr/codex_bridge.py)",
     command:
-      "git branch <base_ref> <base>; (in the tree at <head>) python pragent_driver.py --command review|improve → python -m pr_agent.cli --pr_url <base_ref> review|improve (local git provider)",
+      "git branch <base_ref> <base>; (in the tree at <head>) python pragent_driver.py --command describe|review|improve → python -m pr_agent.cli --pr_url <base_ref> describe|review|improve (local git provider; /describe's published body is the description /review and /improve read)",
     commands: [...PRAGENT_COMMANDS],
     flags: { timeout_min: r.timeoutMin },
     qcr_commit: r.qcrCommit,
@@ -822,7 +843,7 @@ export function renderPragentReport(set: CaseSet, outDir: string, cases: BenchCa
     `- Dataset: AACR-Bench v1.0 (\`${set.dataset.commit.slice(0, 7)}\`), ${cases.length} PRs, ${cases.reduce((a, c) => a + c.references, 0)} reference comments`,
   );
   L.push(
-    `- Reviewer: PR-Agent ${String(run["pragent_version"] ?? "?")} — its CLI \`review\` then \`improve\` on the local git provider (base...head), PR title/description ${run["pr_text"] === false ? "withheld (--no-pr-text)" : "as the GitHub provider supplies them"}, PR-Agent's default configuration; timeout ${String((run["flags"] as Record<string, unknown> | undefined)?.["timeout_min"] ?? "?")} min (+60 s) per command`,
+    `- Reviewer: PR-Agent ${String(run["pragent_version"] ?? "?")} — its CLI \`describe\`, \`review\`, \`improve\` (the GitHub App's default pr_commands) on the local git provider (base...head), PR title/description ${run["pr_text"] === false ? "withheld (--no-pr-text)" : "as the GitHub provider supplies them"}, PR-Agent's default configuration; timeout ${String((run["flags"] as Record<string, unknown> | undefined)?.["timeout_min"] ?? "?")} min (+60 s) per command`,
   );
   L.push(
     `- Model: \`${String(run["model"] ?? "?")}\`, reasoning effort \`${String(run["effort"] ?? "?")}\` — the ChatGPT Codex backend through the loopback bridge (bench/aacr/codex_bridge.py, Chat Completions)`,
@@ -844,20 +865,20 @@ export function renderPragentReport(set: CaseSet, outDir: string, cases: BenchCa
   L.push("## Per case");
   L.push("");
   L.push(
-    "| Case | Lang | Refs | Status | Comments | /review (issues) | /improve (suggestions) | Unlocated | Minutes | Model calls (failed) | Tokens in (cached) / out (reasoning) |",
+    "| Case | Lang | Refs | Status | Comments | /describe | /review (issues) | /improve (suggestions) | Unlocated | Minutes | Model calls (failed) | Tokens in (cached) / out (reasoning) |",
   );
-  L.push("|---|---|---|---|---|---|---|---|---|---|---|");
+  L.push("|---|---|---|---|---|---|---|---|---|---|---|---|");
   const warned: Array<{ c: BenchCase; s: PragentCaseSummary }> = [];
   for (const c of cases) {
     const s = readPragentSummary(outDir, c);
     if (!s) {
-      L.push(`| ${c.instance_id} | ${c.language} | ${c.references} | not run | | | | | | | |`);
+      L.push(`| ${c.instance_id} | ${c.language} | ${c.references} | not run | | | | | | | | |`);
       continue;
     }
     if (s.warnings.length || s.error || !s.merge_base_ok) warned.push({ c, s });
     const b = s.bridge;
     L.push(
-      `| ${c.instance_id} | ${c.language} | ${c.references} | ${s.status} | ${s.comments} | ${s.commands.review.status} (${s.review_findings}) | ${s.commands.improve.status} (${s.improve_findings}) | ${s.unlocated} | ${(s.duration_seconds / 60).toFixed(1)} | ${b ? `${b.requests} (${b.errors})` : "?"} | ${b ? `${k(b.input_tokens)} (${k(b.cached_tokens)}) / ${k(b.output_tokens)} (${k(b.reasoning_tokens)})` : "?"} |`,
+      `| ${c.instance_id} | ${c.language} | ${c.references} | ${s.status} | ${s.comments} | ${s.commands.describe?.status ?? "?"} | ${s.commands.review.status} (${s.review_findings}) | ${s.commands.improve.status} (${s.improve_findings}) | ${s.unlocated} | ${(s.duration_seconds / 60).toFixed(1)} | ${b ? `${b.requests} (${b.errors})` : "?"} | ${b ? `${k(b.input_tokens)} (${k(b.cached_tokens)}) / ${k(b.output_tokens)} (${k(b.reasoning_tokens)})` : "?"} |`,
     );
   }
   if (warned.length) {

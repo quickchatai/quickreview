@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""The PR-Agent arm's driver: ONE PR-Agent CLI command on one prepared case.
+"""The PR-Agent arm's driver: ONE PR-Agent CLI command on one prepared case
+(describe, review or improve — the GitHub App's default pr_commands).
 
 PR-Agent (qodo-ai/pr-agent, MIT) reviews a PR from a local checkout through
 its documented LOCAL git provider (`CONFIG__GIT_PROVIDER=local python -m
@@ -107,6 +108,32 @@ def configure(settings: Any, a: argparse.Namespace) -> Dict[str, Any]:
     return fixed
 
 
+EFFECTIVE_SECTIONS = ("CONFIG", "PR_REVIEWER", "PR_CODE_SUGGESTIONS", "PR_DESCRIPTION", "LITELLM", "OPENAI",
+                      "LOCAL", "GITHUB_APP")
+
+
+def effective_settings(settings: Any, model: str) -> Dict[str, Any]:
+    """PR-Agent's FULLY RESOLVED settings for the sections that shape a review,
+    read back from its settings object after the command ran (defaults + the
+    bench's keys + anything a repo file loaded), and the token budget it
+    resolves for the model."""
+    out: Dict[str, Any] = {}
+    for section in EFFECTIVE_SECTIONS:
+        try:
+            out[section.lower()] = _plain(dict(settings.get(section) or {}))
+        except Exception as e:  # noqa: BLE001
+            out[section.lower()] = f"unreadable: {e}"
+    if isinstance(out.get("openai"), dict) and out["openai"].get("key"):
+        out["openai"]["key"] = "<dummy loopback key>"
+    try:
+        from pr_agent.algo.token_budget import get_max_tokens
+        out["resolved_max_tokens"] = get_max_tokens(f"openai/{model}")
+        out["resolved_context_window"] = get_max_tokens(f"openai/{model}", ignore_max_model_tokens=True)
+    except Exception as e:  # noqa: BLE001
+        out["resolved_max_tokens"] = f"unresolved: {e}"
+    return out
+
+
 def repo_pyproject_section(tree: str) -> Optional[str]:
     """Whether the reviewed repo's pyproject.toml carries a [tool.pr-agent]
     section PR-Agent loaded at import (the bench's keys override it)."""
@@ -151,6 +178,12 @@ def make_provider(capture: Dict[str, Any], title: Optional[str], body: Optional[
                 return self.repo.git.show(f"{self.get_repo_context_ref(from_default_branch)}:{file_path}")
             except Exception:  # noqa: BLE001 - absent file: no context, as on GitHub
                 return ""
+
+        def publish_description(self, pr_title: str, pr_body: str):
+            # /describe's output — on GitHub it REPLACES the PR body the later
+            # /review and /improve read (the TS side hands it to them).
+            capture["published_description"] = {"title": pr_title, "body": pr_body}
+            return super().publish_description(pr_title, pr_body)
 
         def publish_structured_review(self, review: dict):
             capture["structured_review"] = review
@@ -208,6 +241,7 @@ def run_command(a: argparse.Namespace) -> int:
         rc = 1
     capture["exit"] = rc
     capture["seconds"] = round(time.time() - started, 2)
+    capture["effective"] = effective_settings(settings, a.model)
     with open(os.path.join(a.out, f"{a.command}.json"), "w", encoding="utf-8") as fh:
         json.dump(capture, fh, indent=2, default=str)
         fh.write("\n")
@@ -263,6 +297,24 @@ code_suggestions:
     possible bug
 ```"""
 
+STUB_DESCRIBE = """```yaml
+type:
+- Bug fix
+description: |
+  Adds a division helper.
+title: |
+  Add division
+changes_diagram: |
+  ""
+pr_files:
+- filename: |
+    calc.py
+  changes_title: |
+    Divide a by b
+  label: |
+    enhancement
+```"""
+
 STUB_REFLECT = """```yaml
 code_suggestions:
 - suggestion_summary: |
@@ -289,6 +341,8 @@ def _stub_server(seen: List[Dict[str, Any]]) -> ThreadingHTTPServer:
             text = json.dumps(req.get("messages") or req.get("input") or "")
             if "suggestion_score" in text:
                 answer = STUB_REFLECT
+            elif "PRDescription" in text:
+                answer = STUB_DESCRIBE
             elif "PRCodeSuggestions" in text:
                 answer = STUB_IMPROVE
             else:
@@ -331,7 +385,7 @@ def self_test() -> None:
         for f, t in (("title.txt", "Add division"), ("body.txt", "Divides a by b.")):
             with open(os.path.join(tmp, f), "w") as fh:
                 fh.write(t)
-        for command in ("review", "improve"):
+        for command in ("describe", "review", "improve"):
             r = subprocess.run([sys.executable, os.path.abspath(__file__), "--tree", tree, "--target-branch", "main",
                                 "--out", out, "--command", command, "--model", "gpt-6.1-sol",
                                 "--api-base", f"http://127.0.0.1:{srv.server_address[1]}/v1",
@@ -340,7 +394,11 @@ def self_test() -> None:
                                env={**env, "LITELLM_LOCAL_MODEL_COST_MAP": "True"}, capture_output=True, text=True,
                                timeout=300)
             assert r.returncode == 0, (command, r.returncode, r.stdout[-3000:], r.stderr[-3000:])
+        described = json.load(open(os.path.join(out, "describe.json")))
+        assert "Adds a division helper" in described["published_description"]["body"], described
         review = json.load(open(os.path.join(out, "review.json")))
+        assert review["effective"]["resolved_max_tokens"] == 32000, review["effective"]
+        assert review["effective"]["pr_reviewer"]["num_max_findings"] == 3, review["effective"]
         issues = review["structured_review"]["review"]["key_issues_to_review"]
         assert review["pr_title"] == "Add division" and review["diff_files"] == ["calc.py"], review
         assert issues[0]["relevant_file"].strip() == "calc.py" and int(issues[0]["start_line"]) == 2, issues
@@ -359,7 +417,7 @@ def main() -> None:
     ap.add_argument("--tree")
     ap.add_argument("--target-branch")
     ap.add_argument("--out")
-    ap.add_argument("--command", choices=("review", "improve"))
+    ap.add_argument("--command", choices=("describe", "review", "improve"))
     ap.add_argument("--model", default="gpt-6.1-sol")
     ap.add_argument("--api-base", default="http://127.0.0.1:8766/v1")
     ap.add_argument("--title-file")

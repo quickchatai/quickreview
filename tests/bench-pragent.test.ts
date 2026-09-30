@@ -175,8 +175,8 @@ describe("invocation: PR-Agent's own CLI per command, on its local git provider"
         bodyFile: null,
       }).slice(-1),
     ).toEqual(["--no-pr-text"]);
-    // /describe writes the PR description — no findings — so it is not part of the run.
-    expect([...PRAGENT_COMMANDS]).toEqual(["review", "improve"]);
+    // The GitHub App's default pr_commands, in its order.
+    expect([...PRAGENT_COMMANDS]).toEqual(["describe", "review", "improve"]);
     expect(pragentProcessTimeoutMs(30)).toBe(1_860_000);
   });
 
@@ -267,6 +267,8 @@ describe("output → findings: key issues and suggestions with lines are comment
     expect(commandStatus("improve", ok, { suggestions: [] })).toBe("ok");
     expect(commandStatus("improve", ok, { comments: ["Failed to generate code suggestions for PR"] })).toBe("failed");
     expect(commandStatus("improve", null, null)).toBe("not-run");
+    expect(commandStatus("describe", ok, { published_description: { title: null, body: "x" } })).toBe("ok");
+    expect(commandStatus("describe", ok, { comments: ["Failed to generate PR description"] })).toBe("failed");
   });
 });
 
@@ -342,7 +344,7 @@ describe("one case end to end, PR-Agent stubbed", () => {
       const root = join(tmp, "root");
       const outDir = join(tmp, "out");
       mkdirSync(join(root, "wt"), { recursive: true });
-      const seen: Array<{ argv: string[]; cwd?: string; env?: NodeJS.ProcessEnv; branches: string; title: string }> = [];
+      const seen: Array<{ argv: string[]; cwd?: string; env?: NodeJS.ProcessEnv; branches: string; title: string; body: string }> = [];
       const runImpl: typeof run = async (bin, args, opts = {}) => {
         if (bin !== "/venv/bin/python") return run(bin, args, opts);
         const at = (k: string) => args[args.indexOf(k) + 1]!;
@@ -350,9 +352,22 @@ describe("one case end to end, PR-Agent stubbed", () => {
         const branches = execFileSync("git", ["-C", tree, "for-each-ref", "refs/heads", "--format=%(refname:short) %(objectname)"], {
           encoding: "utf8",
         }).trim();
-        seen.push({ argv: args, cwd: opts.cwd, env: opts.env, branches, title: readFileSync(at("--title-file"), "utf8") });
+        seen.push({
+          argv: args,
+          cwd: opts.cwd,
+          env: opts.env,
+          branches,
+          title: readFileSync(at("--title-file"), "utf8"),
+          body: readFileSync(at("--body-file"), "utf8"),
+        });
         const cmd = at("--command");
-        writeFileSync(join(at("--out"), `${cmd}.json`), JSON.stringify(cmd === "review" ? REVIEW_CAP : IMPROVE_CAP));
+        const cap =
+          cmd === "describe"
+            ? { command: cmd, exit: 0, published_description: { title: null, body: "<!-- pr-agent-generated -->\nAI summary + Divides a by b." } }
+            : cmd === "review"
+              ? REVIEW_CAP
+              : IMPROVE_CAP;
+        writeFileSync(join(at("--out"), `${cmd}.json`), JSON.stringify(cap));
         writeFileSync(join(at("--out"), `${cmd}.md`), `# ${cmd}\n`);
         return { code: 0, stdout: `pr-agent ${cmd} log`, stderr: "", timedOut: false };
       };
@@ -382,7 +397,14 @@ describe("one case end to end, PR-Agent stubbed", () => {
       expect(s.status).toBe("ok");
       expect(s.merge_base_ok).toBe(true);
       expect(s.target_branch).toBe("main");
-      expect(seen.map((x) => x.argv[x.argv.indexOf("--command") + 1])).toEqual(["review", "improve"]);
+      expect(seen.map((x) => x.argv[x.argv.indexOf("--command") + 1])).toEqual(["describe", "review", "improve"]);
+      // /describe reads the author's body; the next two read what /describe published, as on GitHub.
+      expect(seen.map((x) => x.body)).toEqual([
+        "Divides a by b.",
+        "<!-- pr-agent-generated -->\nAI summary + Divides a by b.",
+        "<!-- pr-agent-generated -->\nAI summary + Divides a by b.",
+      ]);
+      expect(s.described).toBe(true);
       // The local provider's target is a LOCAL branch at the PR's base commit.
       expect(seen[0]!.branches).toBe(`main ${c.base_commit}`);
       expect(seen[0]!.cwd).toContain(join("wt", c.instance_id));
@@ -417,7 +439,7 @@ describe("one case end to end, PR-Agent stubbed", () => {
       // The scratch (PR-Agent's HOME, its outputs) and the tree are gone.
       expect(readdirSync(join(root, "wt"))).toEqual([]);
       const md = renderPragentReport(SET, outDir, [c]);
-      expect(md).toContain("| acme__widget@bbbbbbb | Python | 2 | ok | 3 | ok (3) | ok (2) | 2 |");
+      expect(md).toContain("| acme__widget@bbbbbbb | Python | 2 | ok | 3 | ok | ok (3) | ok (2) | 2 |");
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -434,7 +456,12 @@ describe("one case end to end, PR-Agent stubbed", () => {
         if (bin !== "py") return run(bin, args, opts);
         const at = (k: string) => args[args.indexOf(k) + 1]!;
         const cmd = at("--command");
-        const cap = cmd === "review" ? { command: cmd, exit: 0, comments: ["Failed to review PR"] } : IMPROVE_CAP;
+        const cap =
+          cmd === "describe"
+            ? { command: cmd, exit: 0, published_description: { body: "d" } }
+            : cmd === "review"
+              ? { command: cmd, exit: 0, comments: ["Failed to review PR"] }
+              : IMPROVE_CAP;
         writeFileSync(join(at("--out"), `${cmd}.json`), JSON.stringify(cap));
         return { code: 0, stdout: "", stderr: "", timedOut: false };
       };
@@ -509,7 +536,7 @@ describe("the run", () => {
       expect(code).toBe(1);
       const rec = JSON.parse(readFileSync(join(out, "run.json"), "utf8"));
       expect(rec.reviewer).toBe("pragent");
-      expect(rec.commands).toEqual(["review", "improve"]);
+      expect(rec.commands).toEqual(["describe", "review", "improve"]);
       expect(runArmOf(out)).toBe("pragent");
       const s = JSON.parse(readFileSync(join(out, "cases", CASE.instance_id, "case-summary.json"), "utf8"));
       expect(s.fingerprint.model).toBe("gpt-6.1-sol");

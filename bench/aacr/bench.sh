@@ -54,7 +54,7 @@
 #   --arm pragent (build, review, eval, report, shell, smoke): PR-Agent (qodo-ai/pr-agent; image
 #              qcr-bench-pragent, pip `pr-agent` pinned by PRAGENT_VERSION + the wheel's sha256 in the
 #              Dockerfile; QCR_BENCH_PRAGENT_VERSION + QCR_BENCH_PRAGENT_SHA256 build another) — its CLI
-#              `review` then `improve` on its local git provider over base...head, the PR's title and
+#              `describe`, `review`, `improve` (the GitHub App default) on its local git provider over base...head, the PR's title and
 #              description as its GitHub provider gives them, gpt-6.1-sol through the loopback Codex
 #              bridge; one case at a time; `eval` scores `all`. QCR_BENCH_PRAGENT_EFFORT=L the bridge's
 #              reasoning effort (default medium = PR-Agent's own default); QCR_BENCH_PRAGENT_NO_PR_TEXT=1

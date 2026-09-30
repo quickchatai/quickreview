@@ -46,7 +46,7 @@
 // The PR-Agent arm (src/bench/pragent.ts; image target `pragent`):
 //   pragent-review --set <file> --out DIR [--only id,id] [--store DIR] [--resume] [--keep-tree]
 //                  [--timeout-min 30] [--bridge URL] [--no-pr-text] [--python PATH] [--driver PATH]
-//                  PR-Agent's /review then /improve per case, cases run ONE AT A TIME
+//                  PR-Agent's /describe, /review, /improve per case, cases run ONE AT A TIME
 //   pragent-report --set <file> --out DIR
 //
 // The defect benchmark (src/bench/defects.ts; any run dir, either arm):

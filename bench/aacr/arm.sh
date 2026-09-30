@@ -24,7 +24,7 @@
 #                     set, like ocr
 #   --arm pireview    @zephyrdeng/pi-review (bench.sh --arm pireview), one case at a time in one
 #                     container per set, like ocr
-#   --arm pragent     PR-Agent (bench.sh --arm pragent; /review + /improve on gpt-6.1-sol), one case
+#   --arm pragent     PR-Agent (bench.sh --arm pragent; /describe, /review, /improve on gpt-6.1-sol), one case
 #                     at a time in one container per set, like ocr
 #   --arm claude      Claude Code as a benchmarked reviewer (bench.sh --arm claude; root CLAUDE.md
 #                     rule 5's one ratified exception — inside its sandbox only): the ocr path, one

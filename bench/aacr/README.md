@@ -666,6 +666,131 @@ bench/aacr/bench.sh eval   --arm pragent --run pa-1 --set fresh10 --judge codex 
 bench/aacr/arm.sh --prefix pragent --arm pragent --cases fresh10 --eval 3   # all of it, per set
 ```
 
+**Which commands run.** On a new PR the GitHub App runs its default
+`pr_commands` (`servers/utils.py` `_STANDARD_PR_COMMANDS`): `/describe`,
+`/review`, `/improve`, in that order, sequentially — and so does this arm.
+`/describe` yields no findings, but on GitHub it REWRITES the PR body (its AI
+summary, diagram and file walkthrough, plus the author's original text —
+`add_original_user_description = true`), and that rewritten body is what the
+following `/review` and `/improve` read as the PR's description; so it runs
+first and its published body is handed to the other two. `/review` is the "PR
+Reviewer Guide": up to `num_max_findings` = 3 key issues, each with a file and
+a line range, plus a security-concerns verdict, effort and tests. `/improve`
+is the code suggestions (up to `num_code_suggestions_per_chunk` = 3 per
+32k-token chunk), each with a file and a line range and a score from its
+self-reflection pass, which runs by default (a second model call). The
+default GitHub profile does NOT pass `commitable_code_suggestions` (only the
+Bitbucket profiles do) — the suggestions go to a summary table, which the
+local provider renders as improve.md.
+
+**How it is invoked.** Per case, in the tree checked out at head:
+
+```sh
+git diff <base>...<head> > /work/<id>.pireview/pr.diff        # outside the tree
+cd /work/wt/<id>
+timeout -k 30s 1860s pi-review --model openai-codex/gpt-6-sol --thinking medium \
+  --progress-log <case>/pi-events.jsonl \
+  -- @/work/<id>.pireview/pr.diff \
+  "Review the code changes in the attached diff (git diff <base>...<head>). The working directory is the repository checked out at <head>."
+```
+
+- **The diff rides a documented `@file` attachment** (pi inlines it into the
+  first message): the reviewer has no shell, so it cannot compute a diff
+  itself. Piping it on stdin also works in pi-review's code, but that text is
+  appended to the child's ARGV, and Linux caps one argument at 128 KiB — a
+  large PR would fail to spawn. The one target sentence says what the
+  attachment is and nothing about how to review ("pass the review request as
+  natural language after `--`" is pi-review's own contract). No PR title or
+  description (the harness's CLI runners pass none).
+- **Its defaults**, with ONE departure: `--thinking medium` (its `code`
+  preset says `high`) so gpt-6-sol runs at the same effort in every arm
+  (`QCR_BENCH_PIREVIEW_THINKING` changes it). No findings tool or instruction
+  of ours is added: the output is already structured.
+- **`timeout`** (coreutils) signals its own process GROUP, so the child pi
+  dies with pi-review; the budget is the harness's 30 min + 60 s.
+- **The tree is on `/work`** (a disk-backed volume), NOT under
+  `/opt/quickreview/sandbox`: pi loads `AGENTS.md`/`CLAUDE.md` from every
+  ancestor of its cwd, and the sandbox root carries OUR production reviewer's
+  context files. The reviewed repo's own `AGENTS.md`/`CLAUDE.md` are still
+  read, as pi always does.
+
+**Output → findings.** The last `PI_REVIEW_META_JSON:` line (stdout, via
+`PI_REVIEW_META_STDOUT=1`) is parsed; every finding it reports becomes one
+comment, actionable or not (the review shows them all): `path` =
+`Path` (the tree's absolute prefix, `./` and git's `a/`/`b/` stripped; a
+`:42`/`:42-58` the model wrote into `Path` becomes the line range only when
+pi-review parsed no `Lines`), `start_line`/`end_line` = `location` (a single
+line ends where it starts; no `Lines` → null, scored as it is, like the codex
+and opencode arms' line-less findings), text = summary, then `details`, then
+`Recommendation: …`. A finding with `Side: base` (a deleted/old line) is NOT
+put in the scored file — AACR reads the new side — but in
+`cases/<id>/comments.json` as a LEFT row, which the defect judge shows as
+`path (deleted line)`, exactly as it does for the quickreviewd arm. The result
+file is the harness CLI-runner shape (`reviewer: "pireview"`, `review_output`
+= pi-review's findings verbatim, `token_usage`) plus `review.comments` in the
+OCR reader's shape, so `eval` (`--reviewer ocr`), the defect judge and
+`compare.py` read it unchanged; `review.md` is pi-review's Markdown (the
+defect judge reads it as the review body, as for the Claude Code arm). Tested
+on stub and on real output: `tests/bench-pireview.test.ts`.
+
+- **The model and the credential**: pi's built-in `openai-codex` provider
+  (`gpt-6-sol`), on the benchmark's one ChatGPT login through the
+  refresh-disabled copy `src/bench/auth.ts` takes before EVERY case (the
+  companion's volume is read-only; the copy's refresh token is a sentinel no
+  OAuth server accepts; a token that would expire inside a case's budget
+  stops the run instead). The child's agent dir (`/tmp/pi-agent-pireview`)
+  holds that token and pi's DEFAULT settings (`defaultProjectTrust` only —
+  not the bash-guard the quickreviewd sessions register). HOME is a fresh
+  per-case dir (so `~/.pi/pi-review/config.json` and `~/.claude/rules` are
+  absent: its defaults), deleted with the case.
+- **No phone-home**: `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`,
+  `PI_TELEMETRY=0`; pi-review itself has no update check on the review path,
+  and Jev stays off (no `TYPESAFE_API_KEY`). Container hardening is
+  `bench.sh`'s, unchanged: read-only root, all capabilities dropped,
+  no-new-privileges, non-root, no GitHub credential, no docker socket.
+- **Pin and bump**: `ARG PIREVIEW_VERSION` + `PIREVIEW_SHA512` in the
+  Dockerfile's `pireview` stage. The npm tarball is fetched with `npm pack`,
+  checked against that sha512 (= the registry's `dist.integrity`), and
+  UNPACKED — never `npm install`ed, so no install script runs and its one
+  floating dependency (typebox, used only by the pi-extension half) is not
+  pulled. To bump: `npm view @zephyrdeng/pi-review@<v> dist.integrity`,
+  decode it (`echo <b64> | base64 -d | xxd -p -c 100`), set both (or pass
+  `QCR_BENCH_PIREVIEW_VERSION` + `QCR_BENCH_PIREVIEW_SHA512` to `bench.sh build
+  --arm pireview`), re-read `dist/prompt.js`, `resources/system-prompt.md` and
+  the `PI_REVIEW_META_JSON` shape, and re-run the smoke test. pi itself is the
+  runtime's pin (rule 7) — bump it there, for every arm at once.
+- **Per case**: `cases/<id>/` holds `pireview-argv.json`, `pi-events.jsonl`
+  (the child's pi event stream — `compare.py` prices it like our own
+  sessions'), `pireview-stdout.txt`, `pireview-stderr.log`,
+  `pireview-meta.json`, `review.md`, `comments.json` (base-side findings) and
+  `case-summary.json` (status, verdict, findings/actionable, pi's tokens and
+  cost, tool calls).
+
+**Smoke test (2026-09-28, 2 PRs of `fresh10`)**: `arm.sh --prefix sm-pireview
+--arm pireview --cases fresh10:immich-app__immich@966c3f2,google-gemini__gemini-cli@4c150ab
+--eval 1` — both `ok`, 2 comments each (all actionable, verdict
+`request_changes`), 0.9 / 0.8 min, ~105k tokens in (65k cached) / 1.5k out,
+$0.11 per PR; every comment carries a repo-relative path and a line range
+(3 of 4 inside the diff's hunks, the 4th on an existing test the change
+breaks); defect judge 4/6 found (67%, 3/5 high, 1/1 medium), 100% of comments
+correct; AACR `all` 0/5 references matched (4 comments, line precision 0.5).
+One pi-review session, no subagents, 14–22 read/grep/find calls per PR.
+
+## The PR-Agent arm (`--arm pragent`)
+
+[PR-Agent](https://github.com/qodo-ai/pr-agent) (Qodo, MIT; PyPI `pr-agent`
+**0.46.0**, the wheel's sha256 pinned) as a benchmarked reviewer, on
+**gpt-6.1-sol** (the operator's choice, 2026-09-30). The harness has no PR-Agent runner, so
+`src/bench/pragent.ts` + `bench/aacr/pragent_driver.py` are one:
+
+```sh
+bench/aacr/bench.sh build  --arm pragent                               # image qcr-bench-pragent
+bench/aacr/bench.sh review --arm pragent --run pa-1 --set fresh10      # one case at a time
+bench/aacr/bench.sh judge  --run pa-1 --set fresh10                    # the defect benchmark (QCR_BENCH_IMAGE)
+bench/aacr/bench.sh eval   --arm pragent --run pa-1 --set fresh10 --judge codex --rounds 3
+bench/aacr/arm.sh --prefix pragent --arm pragent --cases fresh10 --eval 3   # all of it, per set
+```
+
 **Which commands are "its review".** On a PR, the GitHub App runs its
 `pr_commands` — `/describe`, `/review`, `/improve` (its documented default).
 `/describe` rewrites the PR's title and summary: no findings, nothing a
@@ -682,8 +807,9 @@ PR's base branch at the base commit:
 
 ```sh
 git branch <base_ref> <base>
-python pragent_driver.py --command review  … → python -m pr_agent.cli --pr_url <base_ref> review
-python pragent_driver.py --command improve … → python -m pr_agent.cli --pr_url <base_ref> improve
+python pragent_driver.py --command describe … → python -m pr_agent.cli --pr_url <base_ref> describe
+python pragent_driver.py --command review   … → python -m pr_agent.cli --pr_url <base_ref> review    (body = /describe's)
+python pragent_driver.py --command improve  … → python -m pr_agent.cli --pr_url <base_ref> improve   (body = /describe's)
 ```
 
 - **The provider.** PR-Agent's own documented local mode
@@ -710,7 +836,12 @@ python pragent_driver.py --command improve … → python -m pr_agent.cli --pr_u
   `num_max_findings = 3`, `max_model_tokens = 32000` (larger diffs are clipped
   as PR-Agent clips them), patch extension, `/improve`'s self-reflection and
   `focus_only_on_problems`, `ai_timeout = 120` s per call, `reasoning_effort =
-  "medium"`. What the bench sets, and why (all in `pragent_driver.py`):
+  "medium"`. Each command's capture carries `effective`: PR-Agent's FULLY
+  RESOLVED settings, read back from its settings object after the run, and
+  the token budget it resolves for the model (`resolved_max_tokens` = 32,000:
+  `max_model_tokens` clamps EVERY model, gpt-5.6's 1.05M included — the
+  shipped default, not an unknown-model fallback). What the bench sets, and
+  why (all in `pragent_driver.py`):
   `config.model = "openai/gpt-6.1-sol"` + `openai.api_base` = the bridge + a
   dummy `openai.key` (PR-Agent's documented OpenAI-compatible route through
   LiteLLM); `fallback_models = []` (the bridge forces one model, so a fallback
@@ -768,9 +899,10 @@ bridge's tokens priced at pi's **gpt-6.1-sol** rates (`src/bench/cost.ts`,
 per model: $2 input, $0.10 cache read, $10 output per million).
 
 - **Per case**: `cases/<id>/` holds `pragent-argv.json`,
-  `pragent-{review,improve}.json` (the driver's capture: the structured review,
-  the suggestions, what PR-Agent published, its settings), `pragent-{review,
-  improve}.md` (PR-Agent's own output files), `pragent-{review,improve}.log`,
+  `pragent-{describe,review,improve}.json` (the driver's capture: the structured review,
+  the suggestions, the published description, what PR-Agent published, its
+  effective settings), `pragent-description.md`, `pragent-{review,improve}.md`
+  (PR-Agent's own output files), `pragent-{describe,review,improve}.log`,
   `review.md` and `case-summary.json` (status per command, findings, the
   bridge's tokens, the model); `bridge.jsonl` one row per model call.
 

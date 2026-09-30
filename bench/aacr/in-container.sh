@@ -40,7 +40,7 @@
 #   BENCH_ARM=pireview: only the `all` variant, the pi-review report.
 # The PR-Agent arm (image target `pragent`):
 #   pragent-review <set> [cli flags…] → the loopback Codex bridge (gpt-6.1-sol) + node cli
-#   pragent-review (PR-Agent's own CLI, /review then /improve on its local git provider,
+#   pragent-review (PR-Agent's own CLI, /describe, /review, /improve on its local git provider,
 #   via pragent_driver.py, one case at a time); eval / report with BENCH_ARM=pragent:
 #   only the `all` variant, the PR-Agent report.
 set -euo pipefail
