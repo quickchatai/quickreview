@@ -760,13 +760,44 @@ function splitYarnSpec(spec: string): { name: string; range: string } | null {
   return { name: spec.slice(0, at), range: spec.slice(at + 1) };
 }
 
-/** yarn.lock — classic v1 (`version "1.2.3"`) and berry (`version: 1.2.3`). */
+/** Record one yarn.lock block: its header specs locked at `version`, foreign
+ * when its `resolved` URL is off the public registry. */
+function addYarnBlock(
+  lock: NpmLock,
+  specs: string[],
+  version: string,
+  resolved: string | null,
+): void {
+  const ranges = new Map<string, string[]>();
+  for (const spec of specs) {
+    const s = splitYarnSpec(spec);
+    if (!s) continue;
+    const range = s.range.startsWith("npm:") ? s.range.slice(4) : s.range;
+    if (/^(workspace|link|portal|file):/.test(range)) {
+      lock.links.add(s.name);
+      continue;
+    }
+    ranges.set(s.name, [...(ranges.get(s.name) ?? []), range]);
+  }
+  if (!VERSION_LIKE.test(version)) return;
+  const foreign = isForeignResolved(resolved) ? { foreign: true as const } : {};
+  for (const [name, rs] of ranges) addLock(lock, name, { version, specs: rs, ...foreign });
+}
+
+/** yarn.lock — classic v1 (`version "1.2.3"`) and berry (`version: 1.2.3`).
+ * A classic entry's `resolved` URL off the public registry marks it foreign
+ * (as in package-lock). Berry carries no registry URL — its registry lives in
+ * .yarnrc — so a berry entry cannot be judged that way. */
 export function parseYarnLock(text: string): NpmLock {
   const lock = emptyLock();
   let specs: string[] | null = null;
+  let version: string | null = null;
+  let resolved: string | null = null;
   for (const raw of text.split(/\r?\n/)) {
     if (!raw.trim() || raw.trimStart().startsWith("#")) continue;
     if (!/^\s/.test(raw)) {
+      if (specs && version !== null) addYarnBlock(lock, specs, version, resolved);
+      version = resolved = null;
       specs = raw.endsWith(":")
         ? raw
             .slice(0, -1)
@@ -778,24 +809,19 @@ export function parseYarnLock(text: string): NpmLock {
       continue;
     }
     if (!specs) continue;
-    const m = /^ {2}version:?\s+"?([^"\s]+)"?\s*$/.exec(raw);
-    if (!m) continue;
-    const version = m[1] ?? "";
-    const ranges = new Map<string, string[]>();
-    for (const spec of specs) {
-      const s = splitYarnSpec(spec);
-      if (!s) continue;
-      const range = s.range.startsWith("npm:") ? s.range.slice(4) : s.range;
-      if (/^(workspace|link|portal|file):/.test(range)) {
-        lock.links.add(s.name);
+    if (version === null) {
+      const m = /^ {2}version:?\s+"?([^"\s]+)"?\s*$/.exec(raw);
+      if (m) {
+        version = m[1] ?? "";
         continue;
       }
-      ranges.set(s.name, [...(ranges.get(s.name) ?? []), range]);
     }
-    if (VERSION_LIKE.test(version))
-      for (const [name, rs] of ranges) addLock(lock, name, { version, specs: rs });
-    specs = null;
+    if (resolved === null) {
+      const r = /^ {2}resolved\s+"?([^"\s]+)"?\s*$/.exec(raw);
+      if (r) resolved = r[1] ?? "";
+    }
   }
+  if (specs && version !== null) addYarnBlock(lock, specs, version, resolved);
   return lock;
 }
 

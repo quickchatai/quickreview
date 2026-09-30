@@ -2039,6 +2039,43 @@ describe("selfscan2: the version a file actually runs against", () => {
     expect(pub?.entries.get("b")).toEqual([{ version: "2.0.0" }]);
   });
 
+  it("npm: a classic yarn.lock entry resolved from a private registry is skipped, never swapped for npmjs's", async () => {
+    const yarn = [
+      "# yarn lockfile v1",
+      "",
+      "left-pad@^1.3.0:",
+      '  version "1.3.0"',
+      '  resolved "https://npm.internal.corp/left-pad/-/left-pad-1.3.0.tgz#abc"',
+      "  integrity sha512-x",
+      "",
+      "is-odd@^3.0.0:",
+      '  version "3.0.1"',
+      '  resolved "https://registry.yarnpkg.com/is-odd/-/is-odd-3.0.1.tgz#def"',
+      "",
+    ].join("\n");
+    const root = tree({
+      "package.json": JSON.stringify({
+        name: "app",
+        dependencies: { "left-pad": "^1.3.0" },
+      }),
+      "yarn.lock": yarn,
+      "src/a.ts": `import lp from "left-pad";\n`,
+    });
+    const { fetch, calls } = fakeFetch({});
+    const m = await prepareDependencySources(root, [{ filename: "src/a.ts" }], {
+      cacheDir: tmp(),
+      fetch,
+    });
+    expect(m.sources).toEqual([]);
+    expect(m.skipped.map((s) => s.name)).toEqual(["left-pad"]);
+    expect(m.skipped[0]?.reason).toMatch(/not a registry version/);
+    expect(calls).toEqual([]);
+    // The public registry still pins.
+    expect(parseYarnLock(yarn).entries.get("is-odd")).toEqual([
+      { version: "3.0.1", specs: ["^3.0.0"] },
+    ]);
+  });
+
   it("pypi: an unpinned range never lands on a release whose files are all yanked", async () => {
     const sdist = gzipSync(tarball(tarEntry("somepkg-1.8/somepkg/__init__.py", "V = '1.8'\n")));
     const live = "https://files.pythonhosted.org/packages/aa/somepkg-1.8.tar.gz";
