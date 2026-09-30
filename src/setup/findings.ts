@@ -650,8 +650,9 @@ export class FindingsStore {
         // Only OTHER content can have fixed it (scan-loop): a later reading of
         // the content it was last seen at, over its lines, that did not
         // report it again is not a fix — it stays open, stamped, once per
-        // reading.
-        const silent = silentReread(f, args.rows, current);
+        // reading. A dismissed one is already triaged: nothing to stamp or
+        // count (the count asks for triage).
+        const silent = f.state === "dismissed" ? null : silentReread(f, args.rows, current);
         if (silent !== null && !(f.not_reproduced && f.not_reproduced.at >= silent.at)) {
           byFp.set(f.fingerprint, {
             ...f,

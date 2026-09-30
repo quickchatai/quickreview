@@ -6,7 +6,7 @@
 // closed. A re-read of CHANGED content that no longer reports it is still
 // `fixed` (FT-0428). Driven at the FindingsStore / ScanTriage seam through
 // the real rooted state port on a temp dir.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -97,6 +97,18 @@ describe("a re-read of UNCHANGED content that does not report a finding", () => 
     // A range that holds lines 10-12 does count.
     const holds = [...rows, row({ blob: "b1", run: "r3", at: "2026-09-30T12:00:00Z", range: { start: 1, end: 25, total: 40 } })];
     expect(st.reconcile({ rows: holds, tree, blobs: at("b1"), run: S("r3", "2026-09-30T12:00:01Z") })).toMatchObject({ not_reproduced: 1 });
+  });
+
+  it("a dismissed finding is neither stamped nor counted — it is already triaged", () => {
+    const st = new FindingsStore(stateHomeFs(dir));
+    st.report([reported()], S("r1", "2026-09-30T10:00:00Z"));
+    const raw = JSON.parse(readFileSync(join(dir, "scan/findings.json"), "utf8")) as { findings: ScanFinding[] };
+    raw.findings[0]!.state = "dismissed";
+    writeFileSync(join(dir, "scan/findings.json"), JSON.stringify(raw));
+    const rows = [row({ blob: "b1", run: "r2", at: "2026-09-30T11:00:00Z" })];
+    expect(st.reconcile({ rows, tree, blobs: at("b1"), run: S("r2", "2026-09-30T11:00:01Z") })).toEqual({ fixed: 0, pending: 0, not_reproduced: 0 });
+    expect(only(st)).toMatchObject({ state: "dismissed" });
+    expect(only(st).not_reproduced ?? null).toBeNull();
   });
 
   it("a later sighting clears the stamp; until then it stays in the open list for triage", () => {
