@@ -26,6 +26,9 @@
 #   bench/aacr/bench.sh judge-report --run ID [--set smoke10] [--label L]   re-score, no model calls
 #   QCR_BENCH_RUNS_DIR=DIR   where runs live (default bench/aacr/runs) — keep them outside worktrees
 #   QCR_BENCH_OCR_EFFORT=L   the OCR arm's reasoning effort (low|medium|high|xhigh|max; default medium)
+#   QCR_BENCH_PR_TEXT=1      hand the PR title/body to the ocr/codex/opencode/pireview arm the way
+#                            that tool takes review context (src/bench/prtext.ts; default off)
+#   QCR_BENCH_PI_VERSION=V   `build`: install pi V in the image instead of the Dockerfile's pin
 #   bench/aacr/bench.sh results  --run ID [--set smoke10]    rebuild scored files from case dirs (no model calls)
 #   bench/aacr/bench.sh smoke    [--run ID] [--judge mock|codex]   build → prefetch → review → eval
 #   bench/aacr/bench.sh shell    --run ID                            a shell in the review sandbox
@@ -44,13 +47,16 @@
 #              base...head, findings through the harness's MCP findings server, the model
 #              through the loopback Codex bridge; one case at a time; `eval` scores `all`.
 #              QCR_BENCH_OPENCODE_EFFORT=L its reasoning effort (default medium)
+#              QCR_BENCH_OPENCODE_PROVIDER=native: OpenCode's OWN ChatGPT provider (no bridge;
+#              its built-in /review as shipped, subtask:true; a refresh-disabled auth.json)
 #   --arm pireview (build, review, eval, report, shell, smoke): @zephyrdeng/pi-review (image
 #              qcr-bench-pireview; the npm tarball pinned by PIREVIEW_VERSION + sha512 in the
 #              Dockerfile; QCR_BENCH_PIREVIEW_VERSION + QCR_BENCH_PIREVIEW_SHA512 build another)
 #              on the image's pi (0.99.1): its CLI, single reviewer, mode code, over
 #              `git diff base...head` attached as @file, gpt-6-sol through pi's openai-codex
 #              provider on the refresh-disabled login copy; one case at a time; `eval` scores
-#              `all`. QCR_BENCH_PIREVIEW_THINKING=L its --thinking (default medium)
+#              `all`. QCR_BENCH_PIREVIEW_THINKING=L its --thinking (default medium);
+#              QCR_BENCH_PIREVIEW_PANEL=code-experts the 3-reviewer panel /rv runs
 #   --arm pragent (build, review, eval, report, shell, smoke): PR-Agent (qodo-ai/pr-agent; image
 #              qcr-bench-pragent, pip `pr-agent` pinned by PRAGENT_VERSION + the wheel's sha256 in the
 #              Dockerfile; QCR_BENCH_PRAGENT_VERSION + QCR_BENCH_PRAGENT_SHA256 build another) — its CLI
@@ -346,6 +352,13 @@ case "$cmd" in
         cp -R "$p" "$ctx/profiles/${p##*/}"
       done
     done
+    # QCR_BENCH_PI_VERSION rebuilds on another pi (the image's reviewer runtime
+    # and eval judge client) — e.g. the pi an earlier run's image carried, so a
+    # re-run differs from it only in what it sets out to change.
+    if [[ -n "${QCR_BENCH_PI_VERSION:-}" ]]; then
+      [[ "$QCR_BENCH_PI_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "QCR_BENCH_PI_VERSION must be x.y.z"
+      BASE_ARGS+=(--build-arg "PI_VERSION=$QCR_BENCH_PI_VERSION")
+    fi
     docker build --target "$TARGET" -t "$IMAGE" ${BASE_ARGS[@]+"${BASE_ARGS[@]}"} \
       --build-arg "QCR_BENCH_COMMIT=$commit" -f "$ctx/bench/aacr/Dockerfile" "$ctx"
     ;;
@@ -404,6 +417,19 @@ case "$cmd" in
       [[ -n "${QCR_BENCH_CODEX_EFFORT:-}" ]] && oe+=(-e "QCR_CODEX_EFFORT=$QCR_BENCH_CODEX_EFFORT")
     fi
     [[ "$ARM" == opencode && -n "${QCR_BENCH_OPENCODE_EFFORT:-}" ]] && oe+=(-e "OPENCODE_BRIDGE_EFFORT=$QCR_BENCH_OPENCODE_EFFORT")
+    # OpenCode on its OWN ChatGPT provider instead of the bridge (src/bench/opencode.ts).
+    if [[ "$ARM" == opencode && -n "${QCR_BENCH_OPENCODE_PROVIDER:-}" ]]; then
+      [[ "$QCR_BENCH_OPENCODE_PROVIDER" == native || "$QCR_BENCH_OPENCODE_PROVIDER" == bridge ]] \
+        || die "QCR_BENCH_OPENCODE_PROVIDER must be native | bridge"
+      oe+=(-e "QCR_OPENCODE_PROVIDER=$QCR_BENCH_OPENCODE_PROVIDER")
+    fi
+    # The equal-inputs switch (src/bench/prtext.ts): the PR title/body to a
+    # third-party CLI arm, the way that tool takes review context. Default off.
+    if [[ "${QCR_BENCH_PR_TEXT:-}" == 1 ]]; then
+      [[ "$ARM" == ocr || "$ARM" == codex || "$ARM" == opencode || "$ARM" == pireview ]] \
+        || die "QCR_BENCH_PR_TEXT=1 is wired for the ocr, codex, opencode and pireview arms (quickreviewd and pragent always read the PR text)"
+      oe+=(-e "QCR_BENCH_PR_TEXT=1")
+    fi
     # pi-review: a disk-backed /work for the case trees — NOT under the sandbox
     # root, whose AGENTS.md/CLAUDE.md pi would load from every ancestor dir.
     if [[ "$ARM" == pragent ]]; then
@@ -417,6 +443,11 @@ case "$cmd" in
     if [[ "$ARM" == pireview ]]; then
       oe+=(--mount type=volume,dst=/work)
       [[ -n "${QCR_BENCH_PIREVIEW_THINKING:-}" ]] && oe+=(-e "QCR_PIREVIEW_THINKING=$QCR_BENCH_PIREVIEW_THINKING")
+      # A named panel preset — `code-experts` is what /rv runs inside Pi.
+      if [[ -n "${QCR_BENCH_PIREVIEW_PANEL:-}" ]]; then
+        [[ "$QCR_BENCH_PIREVIEW_PANEL" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || die "QCR_BENCH_PIREVIEW_PANEL must be a preset name"
+        oe+=(-e "QCR_PIREVIEW_PANEL=$QCR_BENCH_PIREVIEW_PANEL")
+      fi
     fi
     args=("${HARDEN[@]}" "${AUTH[@]}" ${oe[@]+"${oe[@]}"}
       --mount "type=volume,src=$REPOS_VOLUME,dst=/repos,readonly"

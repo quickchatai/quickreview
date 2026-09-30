@@ -102,6 +102,13 @@ case "$cmd" in
   opencode-review)
     set_name="$1"; shift
     command -v opencode >/dev/null || { echo "this image has no OpenCode — build it with: bench.sh build --arm opencode" >&2; exit 2; }
+    if [[ "${QCR_OPENCODE_PROVIDER:-bridge}" == native ]]; then
+      # OpenCode's OWN ChatGPT provider (src/bench/opencode.ts header): no
+      # bridge; each case gets an auth.json built from the refresh-disabled copy.
+      "${CLI[@]}" auth --need-min 40 || { echo "opencode: no usable pi login (see above)" >&2; exit 1; }
+      exec "${CLI[@]}" opencode-review --set "$(set_file "$set_name")" --store /repos --out /bench-out \
+        --provider native --variant "${OPENCODE_BRIDGE_EFFORT:-medium}" "$@"
+    fi
     # The bridge reads the SAME refresh-disabled token copy the review and the
     # judge use (src/bench/auth.ts); `opencode-review` re-takes it before every case.
     "${CLI[@]}" auth --need-min 40 || { echo "opencode: no usable pi login (see above)" >&2; exit 1; }

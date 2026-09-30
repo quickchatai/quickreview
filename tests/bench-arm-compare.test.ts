@@ -209,6 +209,24 @@ describe("arm.sh", () => {
     expect(rec.image).toBe("qcr-bench-pragent:x");
   });
 
+  it("--pr-text: the equal-inputs switch reaches a CLI arm and its arm.json, and is refused for quickreviewd", async () => {
+    const refused = await arm(["--prefix", "q", "--cases", `fresh10:${A}`, "--pr-text"]);
+    expect(refused.code).toBe(2);
+    expect(calls()).toEqual([]);
+    const r = await arm(
+      ["--prefix", "t", "--arm", "ocr", "--cases", `fresh10:${A}`, "--pr-text", "--no-judge"],
+      { QCR_BENCH_OCR_EFFORT: "high" },
+    );
+    expect(r.code).toBe(0);
+    const rec = JSON.parse(readFileSync(join(runs, "t-fresh10.arm.json"), "utf8")) as {
+      env: Record<string, string>;
+    };
+    expect(rec.env).toEqual({ QCR_BENCH_OCR_EFFORT: "high", QCR_BENCH_PR_TEXT: "1" });
+    const plain = await arm(["--prefix", "u", "--arm", "ocr", "--cases", `fresh10:${A}`, "--no-judge"]);
+    expect(plain.code).toBe(0);
+    expect(JSON.parse(readFileSync(join(runs, "u-fresh10.arm.json"), "utf8")).env).toEqual({});
+  });
+
   it("a full run is judged against every defect set it overlaps, never as `full`", async () => {
     const r = await arm(["--prefix", "f", "--cases", "full"]);
     expect(r.code).toBe(0);

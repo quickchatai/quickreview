@@ -90,6 +90,7 @@ import {
   claudeReviewRun,
   renderClaudeReport,
 } from "./claudecode.js";
+import { prTextEnabled } from "./prtext.js";
 import { PIREVIEW_DEFAULTS, renderPireviewReport, runPireviewReview } from "./pireview.js";
 import { PRAGENT_DEFAULTS, renderPragentReport, runPragentReview } from "./pragent.js";
 import { run as runCmd } from "./exec.js";
@@ -562,12 +563,14 @@ async function main(): Promise<number> {
       (version.stdout.trim().split("\n")[0] ?? "").trim() ||
       process.env.QCR_OCR_VERSION ||
       "unknown";
+    const prText = prTextEnabled();
     const fingerprint: OcrFingerprint = {
       qcr_commit: process.env.QCR_BENCH_COMMIT ?? "unknown",
       ocr_version: ocrVersion,
       model,
       effort,
       flags: flagsOcr,
+      ...(prText ? { pr_text: true as const } : {}),
     };
     const resume = f.has("--resume");
     mkdirSync(outDir, { recursive: true });
@@ -596,6 +599,8 @@ async function main(): Promise<number> {
         timeout_min: flagsOcr.timeoutMin,
         max_tools: flagsOcr.maxTools,
       },
+      // The equal-inputs switch (src/bench/prtext.ts): the PR title/body via --background.
+      pr_text: prText,
       qcr_commit: fingerprint.qcr_commit,
       cases: cases.map((c) => c.instance_id),
       started_at:
@@ -664,6 +669,7 @@ async function main(): Promise<number> {
           fingerprint,
           keepTree: f.has("--keep-tree"),
           log,
+          prText,
         }),
       );
     }
@@ -714,18 +720,29 @@ async function main(): Promise<number> {
     const timeoutMin = Number(f.get("--timeout-min") ?? OPENCODE_HARNESS_DEFAULTS.timeoutMin);
     if (!Number.isInteger(timeoutMin) || timeoutMin < 1)
       throw new Error("opencode-review: --timeout-min must be a positive integer");
-    // What the model IS comes from the bridge that serves it, never a flag.
-    let health: Record<string, unknown>;
-    try {
-      const res = await fetch(`${bridgeUrl}/health`, { signal: AbortSignal.timeout(10_000) });
-      health = (await res.json()) as Record<string, unknown>;
-    } catch (err) {
-      throw new Error(
-        `opencode-review: the Codex bridge at ${bridgeUrl} is not answering (${String(err)})`,
-        {
-          cause: err,
-        },
-      );
+    // `native`: OpenCode's own ChatGPT provider (opencode.ts header); default
+    // `bridge`, the published arm.
+    const provider = f.get("--provider") ?? (process.env.QCR_OPENCODE_PROVIDER || "bridge");
+    if (provider !== "bridge" && provider !== "native")
+      throw new Error("opencode-review: --provider must be bridge | native");
+    const variant = f.get("--variant") ?? "medium";
+    // What the model IS comes from the bridge that serves it, never a flag —
+    // except natively, where OpenCode is told the model and the variant.
+    let health: Record<string, unknown> = {};
+    if (provider === "bridge") {
+      try {
+        const res = await fetch(`${bridgeUrl}/health`, { signal: AbortSignal.timeout(10_000) });
+        health = (await res.json()) as Record<string, unknown>;
+      } catch (err) {
+        throw new Error(
+          `opencode-review: the Codex bridge at ${bridgeUrl} is not answering (${String(err)})`,
+          {
+            cause: err,
+          },
+        );
+      }
+    } else {
+      health = { model: f.get("--model") ?? "gpt-6-sol", effort: variant, verbosity: null };
     }
     const model = typeof health["model"] === "string" ? health["model"] : "";
     if (!model) throw new Error("opencode-review: the bridge reported no model");
@@ -751,7 +768,8 @@ async function main(): Promise<number> {
       verbosity: typeof health["verbosity"] === "string" ? health["verbosity"] : null,
       mcpPython: f.get("--mcp-python") ?? "/opt/aacr-venv/bin/python",
       mcpScript: f.get("--mcp-script") ?? "/opt/aacr-bench/evaluation/mcp_codex_finding_server.py",
-      flags: { timeoutMin, variant: f.get("--variant") ?? "medium" },
+      flags: { timeoutMin, variant, provider },
+      prText: prTextEnabled(),
       qcrCommit: process.env.QCR_BENCH_COMMIT ?? "unknown",
       resume: f.has("--resume"),
       keepTree: f.has("--keep-tree"),
@@ -821,6 +839,9 @@ async function main(): Promise<number> {
       model: f.get("--model") ?? PIREVIEW_DEFAULTS.model,
       thinking:
         f.get("--thinking") ?? process.env.QCR_PIREVIEW_THINKING ?? PIREVIEW_DEFAULTS.thinking,
+      // `--panel code-experts` = what /rv runs inside Pi (src/bench/pireview.ts header).
+      panel: f.get("--panel") ?? (process.env.QCR_PIREVIEW_PANEL || null),
+      prText: prTextEnabled(),
       timeoutMin,
       qcrCommit: process.env.QCR_BENCH_COMMIT ?? "unknown",
       resume: f.has("--resume"),

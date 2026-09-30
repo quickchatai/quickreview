@@ -45,6 +45,15 @@
 #   --eval-variants V comma-separated variants to score (default all three; compare.py reads `all`)
 #   --repeat N        N independent runs of the arm, named NAME-r<k>-<set>; compare.py
 #                     scores them as NAME=runs+runs
+#   --pr-text         the equal-inputs switch (QCR_BENCH_PR_TEXT=1): hand the PR title/body to the
+#                     ocr, codex, opencode or pireview arm the way that tool takes review context
+#                     (src/bench/prtext.ts). Default off — the published invocation
+#
+# The third-party arms' other knobs ride the environment (bench.sh header):
+# QCR_BENCH_OCR_EFFORT, QCR_BENCH_CODEX_EFFORT, QCR_BENCH_OPENCODE_EFFORT,
+# QCR_BENCH_OPENCODE_PROVIDER, QCR_BENCH_PIREVIEW_THINKING, QCR_BENCH_PIREVIEW_PANEL,
+# QCR_BENCH_PRAGENT_EFFORT, QCR_BENCH_PRAGENT_MODEL, QCR_BENCH_PRAGENT_NO_PR_TEXT
+# — each one set is recorded in <run>.arm.json (`env`).
 #
 # Scheduling (the quickreviewd arm). Every case of every set and every repeat
 # goes on ONE queue, longest PR first (the set's change_line_count), and each
@@ -103,12 +112,15 @@ while [[ $# -gt 0 ]]; do
     --eval-shards) EVAL_SHARDS="$2"; shift 2 ;;
     --eval-variants) EVAL_VARIANTS="$2"; shift 2 ;;
     --repeat) REPEAT="$2"; shift 2 ;;
+    --pr-text) export QCR_BENCH_PR_TEXT=1; shift ;;
     *) echo "unknown flag $1 (see the header of $0)" >&2; exit 2 ;;
   esac
 done
 [[ -n "$PREFIX" && -n "$CASES" ]] || { echo "--prefix and --cases are required" >&2; exit 2; }
 [[ "$ARM" == qcr || "$ARM" == ocr || "$ARM" == codex || "$ARM" == opencode || "$ARM" == claude || "$ARM" == pireview || "$ARM" == pragent ]] || { echo "--arm must be qcr | ocr | codex | opencode | pireview | pragent | claude" >&2; exit 2; }
 [[ "$ARM" == qcr || -z "$CONFIG" ]] || { echo "--config sets quickreviewd levers; the $ARM arm has none" >&2; exit 2; }
+[[ "${QCR_BENCH_PR_TEXT:-}" != 1 || "$ARM" == ocr || "$ARM" == codex || "$ARM" == opencode || "$ARM" == pireview ]] \
+  || { echo "--pr-text is for the ocr, codex, opencode and pireview arms (quickreviewd and pragent always read the PR text)" >&2; exit 2; }
 [[ "$EVAL" =~ ^[0-9]+$ ]] || { echo "--eval takes a round count" >&2; exit 2; }
 [[ "$PAR" == auto || "$PAR" =~ ^[1-9][0-9]*$ ]] || { echo "--parallel takes a count or auto" >&2; exit 2; }
 [[ "$RETRIES" =~ ^[0-9]+$ && "$JCONC" =~ ^[1-9][0-9]*$ && "$EVAL_SHARDS" =~ ^[1-9][0-9]?$ ]] \
@@ -215,9 +227,16 @@ with_slot() { # cmd...
   done
 }
 
+# The arm knobs that ride the environment, as a JSON object (only those set).
+arm_env_json() {
+  python3 -c 'import json, os, sys; print(json.dumps({k: os.environ[k] for k in sys.argv[1:] if os.environ.get(k)}, sort_keys=True))' \
+    QCR_BENCH_PR_TEXT QCR_BENCH_OCR_EFFORT QCR_BENCH_CODEX_EFFORT QCR_BENCH_OPENCODE_EFFORT \
+    QCR_BENCH_OPENCODE_PROVIDER QCR_BENCH_PIREVIEW_THINKING QCR_BENCH_PIREVIEW_PANEL \
+    QCR_BENCH_PRAGENT_EFFORT QCR_BENCH_PRAGENT_MODEL QCR_BENCH_PRAGENT_NO_PR_TEXT
+}
 record_arm() { # run set ids
-  printf '{"arm":"%s","image":"%s","image_id":"%s","config":"%s","cases":"%s","parallel":"%s","started":"%s"}\n' \
-    "$ARM" "$IMG" "$IMG_ID" "$CONFIG" "$2:$3" "$PAR" "$(date -u +%FT%TZ)" > "$QCR_BENCH_RUNS_DIR/$1.arm.json"
+  printf '{"arm":"%s","image":"%s","image_id":"%s","config":"%s","cases":"%s","parallel":"%s","env":%s,"started":"%s"}\n' \
+    "$ARM" "$IMG" "$IMG_ID" "$CONFIG" "$2:$3" "$PAR" "$(arm_env_json)" "$(date -u +%FT%TZ)" > "$QCR_BENCH_RUNS_DIR/$1.arm.json"
 }
 
 # The cases THIS invocation wrote into a run's run.json: one older than START

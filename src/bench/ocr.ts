@@ -37,6 +37,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 import { safeId, type BenchCase, type PrefetchMeta } from "./aacr.js";
 import { run } from "./exec.js";
+import { prTextFor } from "./prtext.js";
 import { prepareTree } from "./runner.js";
 
 /** The harness's OCR flags: reviewers/ocr.py `review_instance` defaults and
@@ -50,8 +51,13 @@ export interface OcrFlags {
   maxTools: number;
 }
 
-/** reviewers/ocr.py `run_ocr_review`, flag for flag (never `--preview`). */
-export function ocrReviewArgv(o: { repo: string; from: string; to: string } & OcrFlags): string[] {
+/** reviewers/ocr.py `run_ocr_review`, flag for flag (never `--preview`).
+ * `background` (the equal-inputs switch, src/bench/prtext.ts) rides OCR's own
+ * `-b/--background` — "optional requirement/business context for the review";
+ * absent, the argv is exactly the harness's. */
+export function ocrReviewArgv(
+  o: { repo: string; from: string; to: string; background?: string | null } & OcrFlags,
+): string[] {
   return [
     "review",
     "--repo",
@@ -70,6 +76,7 @@ export function ocrReviewArgv(o: { repo: string; from: string; to: string } & Oc
     String(o.timeoutMin),
     "--max-tools",
     String(o.maxTools),
+    ...(o.background ? ["--background", o.background] : []),
   ];
 }
 
@@ -228,6 +235,8 @@ export interface OcrFingerprint {
   model: string;
   effort: string;
   flags: OcrFlags;
+  /** Present only when the PR text was handed over (QCR_BENCH_PR_TEXT=1). */
+  pr_text?: true;
 }
 
 export interface OcrCaseSummary {
@@ -251,6 +260,8 @@ export interface OcrCaseSummary {
   /** merge-base(base_commit, head) in the prepared tree = the prefetched one. */
   merge_base_ok: boolean;
   warnings: string[];
+  /** With the PR-text switch on: whether this case's title/body reached OCR. */
+  pr_text?: boolean;
 }
 
 function str(v: unknown, fallback = ""): string {
@@ -321,6 +332,8 @@ export interface OcrRunnerOptions {
   keepTree?: boolean;
   log?: (line: string) => void;
   fetchImpl?: typeof fetch;
+  /** Hand OCR the PR title/body through `--background` (src/bench/prtext.ts). */
+  prText?: boolean;
 }
 
 async function bridgeCall(
@@ -403,7 +416,15 @@ export async function reviewCaseOcr(
       summary.warnings.push(
         `merge-base(${c.base_commit.slice(0, 7)}, head) = ${mb.stdout.trim() || mb.stderr.trim().slice(0, 200)}, prefetched ${meta.merge_base.slice(0, 7)}`,
       );
-    const argv = ocrReviewArgv({ repo: tree, from: c.base_commit, to: c.head_commit, ...o.flags });
+    const background = prTextFor(meta, o.prText === true);
+    if (o.prText) summary.pr_text = background !== null;
+    const argv = ocrReviewArgv({
+      repo: tree,
+      from: c.base_commit,
+      to: c.head_commit,
+      ...o.flags,
+      background,
+    });
     writeFileSync(
       join(caseDir, "ocr-argv.json"),
       JSON.stringify([o.ocrBin, ...argv], null, 2) + "\n",

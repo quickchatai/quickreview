@@ -53,13 +53,29 @@
 // carries the production reviewer's context files.
 //
 // No PR title or description reaches pi-review — the harness's CLI runners
-// pass none either.
+// pass none either — unless the equal-inputs switch is on (QCR_BENCH_PR_TEXT=1,
+// src/bench/prtext.ts): then they follow the target sentence, in the natural-
+// language request pi-review's contract asks for.
+//
+// The PANEL (fairness audit item A, `--panel code-experts`, QCR_BENCH_PIREVIEW_
+// PANEL): what `/rv` runs inside Pi by default — its `pi_review` tool spawns
+// `pi-review --mode code --panel code-experts -- <target>` when no width or
+// preset is given (extensions/panel-tool.ts, extensions/rv-prompts.ts). Three
+// isolated reviewers (correctness, security, testing), quorum 2; the meta line
+// then carries `confirmedClusters` and `advisories` ("singletons stay visible
+// as advisories"), and its `findings` list only the confirmed clusters without
+// their locations. This arm scores what the panel SHOWS: one comment per
+// cluster, confirmed and advisory alike (as the single-reviewer arm keeps every
+// finding, actionable or not), from the cluster's canonical source finding —
+// the one pi-review itself picks (the first actionable, else the first) — with
+// its path, lines, evidence and recommendation from `sourceFindings`.
 
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeId, type BenchCase, type CaseSet, type PrefetchMeta } from "./aacr.js";
 import { AuthExpiring, syncBenchAuth } from "./auth.js";
 import { run } from "./exec.js";
+import { prTextFor } from "./prtext.js";
 import { roundMetrics } from "./report.js";
 import { prepareTree } from "./runner.js";
 
@@ -79,11 +95,11 @@ export function pireviewProcessTimeoutMs(timeoutMin: number): number {
 
 /** The natural-language review target: WHAT the attached file is, nothing
  * about how to review it (pi-review's own prompts carry that). */
-export function pireviewTarget(base: string, head: string): string {
-  return (
+export function pireviewTarget(base: string, head: string, prText: string | null = null): string {
+  const target =
     `Review the code changes in the attached diff (git diff ${base}...${head}). ` +
-    `The working directory is the repository checked out at ${head}.`
-  );
+    `The working directory is the repository checked out at ${head}.`;
+  return prText ? `${target}\n\n${prText}` : target;
 }
 
 /** `pi-review` argv (single review, mode `code`, streaming — its defaults). */
@@ -94,17 +110,21 @@ export function pireviewArgv(o: {
   diffFile: string;
   base: string;
   head: string;
+  /** A named panel preset (`code-experts` = what /rv runs); absent = one reviewer. */
+  panel?: string | null;
+  prText?: string | null;
 }): string[] {
   return [
     "--model",
     o.model,
     "--thinking",
     o.thinking,
+    ...(o.panel ? ["--panel", o.panel] : []),
     "--progress-log",
     o.progressLog,
     "--",
     `@${o.diffFile}`,
-    pireviewTarget(o.base, o.head),
+    pireviewTarget(o.base, o.head, o.prText ?? null),
   ];
 }
 
@@ -193,6 +213,66 @@ export interface PireviewMeta {
     totalTokens?: number;
     costTotal?: number;
   };
+  /** Panel runs only (pi-review's PanelReviewMeta). */
+  strategy?: string;
+  panelPreset?: string;
+  panelHealth?: string;
+  configuredReviewers?: number;
+  successfulReviewers?: number;
+  confirmedClusters?: PireviewCluster[];
+  advisories?: PireviewCluster[];
+  sourceFindings?: Array<{ id: string; reviewerId: string; finding: PireviewFinding }>;
+}
+
+/** pi-review's FindingCluster (a panel's merged view of one issue). */
+export interface PireviewCluster {
+  id: string;
+  summary: string;
+  severity?: string;
+  path?: string;
+  confirmed: boolean;
+  supportCount?: number;
+  actionableSupportCount?: number;
+  supportingReviewerIds?: string[];
+  sourceFindingIds: string[];
+}
+
+export function isPanelMeta(meta: PireviewMeta): boolean {
+  return meta.strategy === "panel" || Array.isArray(meta.confirmedClusters);
+}
+
+/**
+ * A panel's findings as the benchmark scores them: one per cluster, confirmed
+ * clusters first, then the advisories — each the cluster's canonical source
+ * finding (pi-review's own pick: the first actionable one, else the first),
+ * with the cluster's path when the canonical finding has none and the first
+ * location any of its source findings carries. A cluster whose source findings
+ * are missing from the meta falls back to its own summary/severity/path.
+ */
+export function panelFindings(meta: PireviewMeta): PireviewFinding[] {
+  const byId = new Map((meta.sourceFindings ?? []).map((sf) => [sf.id, sf.finding]));
+  const out: PireviewFinding[] = [];
+  for (const cl of [...(meta.confirmedClusters ?? []), ...(meta.advisories ?? [])]) {
+    const sources = cl.sourceFindingIds
+      .map((id) => byId.get(id))
+      .filter((f): f is PireviewFinding => f !== undefined);
+    const canonical = sources.find((f) => f.actionable) ?? sources[0];
+    const location = canonical?.location ?? sources.find((f) => f.location)?.location;
+    const path = canonical?.path ?? sources.find((f) => f.path)?.path ?? cl.path;
+    out.push({
+      ...(canonical ?? { summary: cl.summary, actionable: cl.confirmed }),
+      ...(canonical?.severity ?? cl.severity ? { severity: canonical?.severity ?? cl.severity } : {}),
+      ...(path ? { path } : {}),
+      ...(location ? { location } : {}),
+      actionable: cl.confirmed,
+    });
+  }
+  return out;
+}
+
+/** What the arm scores from one meta line: a panel's clusters, else the findings. */
+export function scoredFindings(meta: PireviewMeta): PireviewFinding[] {
+  return isPanelMeta(meta) ? panelFindings(meta) : meta.findings;
 }
 
 export const META_PREFIX = "PI_REVIEW_META_JSON:";
@@ -342,6 +422,10 @@ export interface PireviewFingerprint {
   model: string;
   thinking: string;
   timeout_min: number;
+  /** Present only for a panel run (the preset's name). */
+  panel?: string;
+  /** Present only when the PR text was handed over (QCR_BENCH_PR_TEXT=1). */
+  pr_text?: true;
 }
 
 export interface PireviewCaseSummary {
@@ -369,6 +453,16 @@ export interface PireviewCaseSummary {
   tools: Record<string, number>;
   merge_base_ok: boolean;
   warnings: string[];
+  /** Panel runs: the clusters and the reviewers that contributed. */
+  panel?: {
+    confirmed: number;
+    advisories: number;
+    reviewers_ok: number | null;
+    reviewers: number | null;
+    health: string | null;
+  };
+  /** With the PR-text switch on: whether this case's title/body reached pi-review. */
+  pr_text?: boolean;
 }
 
 export function pireviewStatus(a: {
@@ -476,6 +570,10 @@ export interface PireviewRunnerOptions {
   log?: (line: string) => void;
   /** Injected in tests; defaults to the real subprocess runner. */
   runImpl?: typeof run;
+  /** A named panel preset (`code-experts`); absent = the single reviewer. */
+  panel?: string | null;
+  /** Hand pi-review the PR title/body in its target (src/bench/prtext.ts). */
+  prText?: boolean;
 }
 
 /** Review one case with pi-review and write its result file. Never throws for
@@ -497,6 +595,7 @@ export async function reviewCasePireview(
   const progressLog = join(caseDir, "pi-events.jsonl");
   mkdirSync(caseDir, { recursive: true });
   rmSync(progressLog, { force: true });
+  for (const f of reviewerLogs(caseDir)) rmSync(join(caseDir, f), { force: true });
   clearJudgeInputs(caseDir);
   const startedAt = new Date().toISOString();
   const started = Date.now();
@@ -531,6 +630,8 @@ export async function reviewCasePireview(
     if (diff.code !== 0) throw new Error(`git diff failed: ${diff.stderr.trim().slice(0, 400)}`);
     writeFileSync(diffFile, diff.stdout);
     summary.diff_bytes = Buffer.byteLength(diff.stdout);
+    const prText = prTextFor(meta, o.prText === true);
+    if (o.prText) summary.pr_text = prText !== null;
     const argv = pireviewArgv({
       model: o.model,
       thinking: o.thinking,
@@ -538,6 +639,8 @@ export async function reviewCasePireview(
       diffFile,
       base: c.base_commit,
       head: c.head_commit,
+      panel: o.panel ?? null,
+      prText,
     });
     const cmd = pireviewCommand({ bin: o.pireviewBin, timeoutMin: o.timeoutMin, argv });
     writeFileSync(join(caseDir, "pireview-argv.json"), JSON.stringify([cmd.bin, ...cmd.args], null, 2) + "\n");
@@ -561,20 +664,37 @@ export async function reviewCasePireview(
       summary.pireview_status = pmeta.status ?? null;
       summary.verdict_source = pmeta.verdictSource ?? null;
       summary.parse_error = pmeta.parseError ?? null;
-      summary.findings = pmeta.findings.length;
-      summary.actionable = pmeta.findings.filter((f) => f.actionable).length;
+      const scored = scoredFindings(pmeta);
+      summary.findings = scored.length;
+      summary.actionable = scored.filter((f) => f.actionable).length;
+      if (isPanelMeta(pmeta))
+        summary.panel = {
+          confirmed: pmeta.confirmedClusters?.length ?? 0,
+          advisories: pmeta.advisories?.length ?? 0,
+          reviewers_ok: pmeta.successfulReviewers ?? null,
+          reviewers: pmeta.configuredReviewers ?? null,
+          health: pmeta.panelHealth ?? null,
+        };
       const u = pmeta.usage;
       if (u) {
         summary.usage = { input: u.input ?? 0, output: u.output ?? 0, cacheRead: u.cacheRead ?? 0 };
         summary.cost_usd = typeof u.costTotal === "number" ? u.costTotal : null;
       }
-      ({ comments, left } = toComments(pmeta.findings, tree));
+      ({ comments, left } = toComments(scored, tree));
       if (pmeta.parseError) summary.warnings.push(`pi-review: ${pmeta.parseError.slice(0, 600)}`);
     }
     if (summary.status !== "ok")
       summary.error = (pmeta?.parseError || stderr.trim() || stdout.trim()).slice(-1500);
     const text = pireviewText(stdout);
     if (text) writeFileSync(join(caseDir, "review.md"), text + "\n");
+    // A panel logs one progress file per reviewer (<log>.r<id>.jsonl): joined
+    // into the one file the tool counts and compare.py's cost read.
+    const perReviewer = reviewerLogs(caseDir);
+    if (perReviewer.length && !existsSync(progressLog))
+      writeFileSync(
+        progressLog,
+        perReviewer.map((f) => readFileSync(join(caseDir, f), "utf8")).join(""),
+      );
     if (existsSync(progressLog)) summary.tools = toolCounts(readFileSync(progressLog, "utf8"));
   } catch (err) {
     summary.status = "failed";
@@ -615,6 +735,14 @@ export async function reviewCasePireview(
       (summary.usage ? `, ${summary.usage.input} in/${summary.usage.output} out` : ""),
   );
   return summary;
+}
+
+/** A panel's per-reviewer progress logs in a case dir (pi-events.r<id>.jsonl). */
+function reviewerLogs(caseDir: string): string[] {
+  if (!existsSync(caseDir)) return [];
+  return readdirSync(caseDir)
+    .filter((f) => /^pi-events\.r.+\.jsonl$/.test(f))
+    .sort();
 }
 
 /** An earlier attempt's review body and base-side rows must not outlive it:
@@ -678,6 +806,10 @@ export interface PireviewReviewRun {
   readMeta: (c: BenchCase) => PrefetchMeta;
   log: (line: string) => void;
   runImpl?: typeof run;
+  /** A named panel preset (`code-experts`); absent = the single reviewer. */
+  panel?: string | null;
+  /** The equal-inputs switch (src/bench/prtext.ts). */
+  prText?: boolean;
 }
 
 /** Every case, ONE AT A TIME (as the harness runs its CLI reviewers; the
@@ -690,6 +822,8 @@ export async function runPireviewReview(r: PireviewReviewRun): Promise<number> {
     model: r.model,
     thinking: r.thinking,
     timeout_min: r.timeoutMin,
+    ...(r.panel ? { panel: r.panel } : {}),
+    ...(r.prText ? { pr_text: true as const } : {}),
   };
   mkdirSync(r.outDir, { recursive: true });
   const runFile = join(r.outDir, "run.json");
@@ -717,9 +851,11 @@ export async function runPireviewReview(r: PireviewReviewRun): Promise<number> {
     model: r.model,
     thinking: r.thinking,
     endpoint: "pi's built-in openai-codex provider (ChatGPT Codex backend), refresh-disabled login copy",
-    command:
-      "git diff <base>...<head> > pr.diff; pi-review --model <model> --thinking <level> --progress-log <case>/pi-events.jsonl -- @pr.diff '<target>'",
-    target: pireviewTarget("<base>", "<head>"),
+    command: `git diff <base>...<head> > pr.diff; pi-review --model <model> --thinking <level>${r.panel ? ` --panel ${r.panel}` : ""} --progress-log <case>/pi-events.jsonl -- @pr.diff '<target>'`,
+    target: pireviewTarget("<base>", "<head>", r.prText ? "<the PR title and description>" : null),
+    panel: r.panel ?? null,
+    // The equal-inputs switch (src/bench/prtext.ts): the PR title/body in the target.
+    pr_text: r.prText === true,
     flags: { timeout_min: r.timeoutMin },
     qcr_commit: r.qcrCommit,
     cases: r.cases.map((c) => c.instance_id),
@@ -783,6 +919,8 @@ export async function runPireviewReview(r: PireviewReviewRun): Promise<number> {
         keepTree: r.keepTree,
         log: r.log,
         ...(r.runImpl ? { runImpl: r.runImpl } : {}),
+        panel: r.panel ?? null,
+        prText: r.prText === true,
       }),
     );
   }
@@ -813,7 +951,7 @@ export function renderPireviewReport(set: CaseSet, outDir: string, cases: BenchC
     `- Dataset: AACR-Bench v1.0 (\`${set.dataset.commit.slice(0, 7)}\`), ${cases.length} PRs, ${cases.reduce((a, c) => a + c.references, 0)} reference comments`,
   );
   L.push(
-    `- Reviewer: @zephyrdeng/pi-review ${String(runRec["pireview_version"] ?? "?")} on pi ${String(runRec["pi_version"] ?? "?")} — single reviewer, mode \`code\`, its own prompts; the diff \`git diff <base>...<head>\` attached with \`@file\`, the tree checked out at head; findings from its \`PI_REVIEW_META_JSON\` line; timeout ${String((runRec["flags"] as Record<string, unknown> | undefined)?.["timeout_min"] ?? "?")} min (+60 s); no PR title/description`,
+    `- Reviewer: @zephyrdeng/pi-review ${String(runRec["pireview_version"] ?? "?")} on pi ${String(runRec["pi_version"] ?? "?")} — ${typeof runRec["panel"] === "string" ? `panel \`${runRec["panel"]}\` (every cluster scored, confirmed and advisory)` : "single reviewer"}, mode \`code\`, its own prompts; the diff \`git diff <base>...<head>\` attached with \`@file\`, the tree checked out at head; findings from its \`PI_REVIEW_META_JSON\` line; timeout ${String((runRec["flags"] as Record<string, unknown> | undefined)?.["timeout_min"] ?? "?")} min (+60 s); ${runRec["pr_text"] === true ? "PR title/description in the target" : "no PR title/description"}`,
   );
   L.push(
     `- Model: \`${String(runRec["model"] ?? "?")}\`, thinking \`${String(runRec["thinking"] ?? "?")}\` — pi's openai-codex provider on the refresh-disabled ChatGPT login copy`,

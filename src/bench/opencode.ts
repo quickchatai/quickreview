@@ -40,7 +40,36 @@
 // auth.json) is a fresh per-case tmpfs directory.
 //
 // No PR title or description reaches OpenCode — the harness's codex runner
-// passes none either.
+// passes none either — unless the equal-inputs switch is on (QCR_BENCH_PR_TEXT=1,
+// src/bench/prtext.ts): then they follow the target in the `review` command's
+// arguments ($ARGUMENTS — the template's own "Input").
+//
+// THE NATIVE PROVIDER (fairness audit item B; QCR_BENCH_OPENCODE_PROVIDER=native).
+// The bridge above costs OpenCode two things its own path has: reasoning carried
+// between tool turns (encrypted reasoning content) and prompt caching. Native,
+// OpenCode talks to the ChatGPT Codex backend itself, through its OWN built-in
+// ChatGPT Plus/Pro login (the `openai` provider's OAuth loader — an internal
+// default plugin, so OPENCODE_DISABLE_DEFAULT_PLUGINS stays unset on this path),
+// model `openai/<model>`, the built-in `review` command as shipped
+// (`subtask: true` — its duplicate reports are the tool's own behaviour), and
+// `--variant <effort>` (the openai variant: reasoningEffort + reasoningSummary
+// "auto" + include reasoning.encrypted_content). Its credential follows the
+// Codex arm's rule: `opencodeAuthFrom` builds OpenCode's auth.json from the
+// sandbox's refresh-disabled pi copy — the access token, its expiry and account
+// id, with the refresh token the disabled sentinel — in the per-case data dir
+// that dies with the case. OpenCode refreshes only an EXPIRED token
+// (`expires < now`), and syncBenchAuth refuses a case the token would not
+// outlive; were it ever to try, it could only send the sentinel, which no OAuth
+// server accepts, so the companion's grant can never be rotated. OpenCode's
+// token issuer is not configurable (unlike Codex's
+// CODEX_REFRESH_TOKEN_URL_OVERRIDE), which is why the sentinel is the brace.
+// Native default effort: OpenCode sets NO reasoning effort for `gpt-6-sol`
+// without a variant (its "medium" default applies only to ids containing
+// `gpt-5`), so the backend's own default would apply; the arm keeps
+// `--variant medium`, the effort every other OpenAI arm ran at. Tokens come from
+// OpenCode's own session store (every step of every session, the subtask's
+// included — the event stream carries the parent's only), read with
+// `opencode db` before the data dir is removed.
 
 import {
   copyFileSync,
@@ -53,9 +82,11 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { safeId, type BenchCase, type CaseSet, type PrefetchMeta } from "./aacr.js";
-import { AuthExpiring, syncBenchAuth } from "./auth.js";
+import { AuthExpiring, DISABLED_REFRESH, syncBenchAuth } from "./auth.js";
+import { jwtAccount } from "./codex.js";
 import { run } from "./exec.js";
 import { bridgeDelta, type BridgeStats, type BridgeUsage } from "./ocr.js";
+import { prTextFor } from "./prtext.js";
 import { roundMetrics } from "./report.js";
 import { prepareTree } from "./runner.js";
 
@@ -95,8 +126,13 @@ export const INLINE_FINDINGS_PROMPT_FRAGMENT =
 /** reviewers/codex.py `build_findings_prompt` is `/review {base}...{head} ({F})`;
  * with `--command review` OpenCode supplies the `/review` and this is its
  * `$ARGUMENTS`. */
-export function opencodeReviewArguments(base: string, head: string): string {
-  return `${base}...${head} (${INLINE_FINDINGS_PROMPT_FRAGMENT})`;
+export function opencodeReviewArguments(
+  base: string,
+  head: string,
+  prText: string | null = null,
+): string {
+  const args = `${base}...${head} (${INLINE_FINDINGS_PROMPT_FRAGMENT})`;
+  return prText ? `${args}\n\n${prText}` : args;
 }
 
 /**
@@ -115,12 +151,24 @@ export const REVIEW_COMMAND_TEMPLATE: string = "You are a code reviewer. Your jo
 
 /** The provider id and model OpenCode is told to use: `bridge/<model>`. */
 export const BRIDGE_PROVIDER = "bridge";
+/** OpenCode's own OpenAI provider — with an OAuth credential, its ChatGPT login. */
+export const NATIVE_PROVIDER = "openai";
+
+/** `bridge`: the loopback Chat Completions bridge (the published arm);
+ * `native`: OpenCode's own ChatGPT provider (see the header). */
+export type OpencodeProvider = "bridge" | "native";
 
 export interface OpencodeFlags {
   timeoutMin: number;
   /** `--variant` (reasoning effort); the bridge forces its own --effort
-   * whatever arrives, and logs what was asked. */
+   * whatever arrives, and logs what was asked. Native, it IS the effort. */
   variant: string;
+  /** Default `bridge` (the published arm). */
+  provider?: OpencodeProvider;
+}
+
+export function providerId(provider: OpencodeProvider | undefined): string {
+  return provider === "native" ? NATIVE_PROVIDER : BRIDGE_PROVIDER;
 }
 
 /** `opencode run`, non-interactive: JSON events on stdout, the built-in
@@ -131,6 +179,7 @@ export function opencodeRunArgv(o: {
   variant: string;
   title: string;
   arguments: string;
+  provider?: OpencodeProvider;
 }): string[] {
   return [
     "run",
@@ -141,7 +190,7 @@ export function opencodeRunArgv(o: {
     "--dir",
     o.dir,
     "--model",
-    `${BRIDGE_PROVIDER}/${o.model}`,
+    `${providerId(o.provider)}/${o.model}`,
     "--variant",
     o.variant,
     "--title",
@@ -172,7 +221,35 @@ export function opencodeConfig(o: {
   mcpScript: string;
   resultsDir: string;
   instanceId: string;
+  provider?: OpencodeProvider;
 }): Record<string, unknown> {
+  const findingsMcp = {
+    [FINDINGS_SERVER]: {
+      type: "local",
+      command: [o.mcpPython, o.mcpScript],
+      environment: { REVIEW_RESULTS_DIR: o.resultsDir, REVIEW_INSTANCE_ID: o.instanceId },
+      enabled: true,
+      timeout: 30_000,
+    },
+  };
+  const permission = { webfetch: "deny", websearch: "deny", external_directory: "deny" };
+  if (o.provider === "native") {
+    // OpenCode's own ChatGPT provider and its built-in `review` command as
+    // shipped (subtask: true) — no provider block, no command override. The
+    // small model is pinned to the same model: the ChatGPT login serves only
+    // an allow-set of models, and a title/summary call must not pick another.
+    const model = `${NATIVE_PROVIDER}/${o.model}`;
+    return {
+      autoupdate: false,
+      share: "disabled",
+      snapshot: false,
+      model,
+      small_model: model,
+      enabled_providers: [NATIVE_PROVIDER],
+      permission,
+      mcp: findingsMcp,
+    };
+  }
   const model = `${BRIDGE_PROVIDER}/${o.model}`;
   return {
     autoupdate: false,
@@ -201,7 +278,7 @@ export function opencodeConfig(o: {
         },
       },
     },
-    permission: { webfetch: "deny", websearch: "deny", external_directory: "deny" },
+    permission,
     command: {
       review: {
         template: REVIEW_COMMAND_TEMPLATE,
@@ -209,16 +286,95 @@ export function opencodeConfig(o: {
         subtask: false,
       },
     },
-    mcp: {
-      [FINDINGS_SERVER]: {
-        type: "local",
-        command: [o.mcpPython, o.mcpScript],
-        environment: { REVIEW_RESULTS_DIR: o.resultsDir, REVIEW_INSTANCE_ID: o.instanceId },
-        enabled: true,
-        timeout: 30_000,
-      },
-    },
+    mcp: findingsMcp,
   };
+}
+
+/**
+ * OpenCode's `auth.json` (its data dir, keyed by provider id) from the
+ * sandbox's refresh-disabled pi copy: the ChatGPT access token, its expiry and
+ * account id, and the disabled sentinel as the refresh token. Refuses any
+ * source whose refresh token is not the sentinel — only the sandbox copy may
+ * feed OpenCode, never the companion's real login.
+ */
+export function opencodeAuthFrom(benchAuthRaw: string): string {
+  const parsed = JSON.parse(benchAuthRaw) as Record<string, unknown>;
+  const cred = parsed["openai-codex"] as Record<string, unknown> | undefined;
+  if (!cred || cred["type"] !== "oauth" || typeof cred["access"] !== "string" || !cred["access"])
+    throw new Error("no openai-codex OAuth login in the sandbox's token copy");
+  if (cred["refresh"] !== DISABLED_REFRESH)
+    throw new Error(
+      "refusing a pi login whose refresh token is not the disabled sentinel — only the sandbox's refresh-disabled copy (src/bench/auth.ts) may feed OpenCode",
+    );
+  if (typeof cred["expires"] !== "number")
+    throw new Error("the pi login carries no expiry — OpenCode would refresh it at once");
+  const access = cred["access"];
+  const account =
+    (typeof cred["accountId"] === "string" && cred["accountId"]) || jwtAccount(access);
+  if (!account) throw new Error("the pi login carries no ChatGPT account id");
+  return (
+    JSON.stringify(
+      {
+        [NATIVE_PROVIDER]: {
+          type: "oauth",
+          refresh: DISABLED_REFRESH,
+          access,
+          expires: cred["expires"],
+          accountId: account,
+        },
+      },
+      null,
+      2,
+    ) + "\n"
+  );
+}
+
+/** The SQL `opencodeUsage` reads: every model step of every session in the
+ * case's own (fresh) OpenCode database — the subtask's included. */
+export const USAGE_SQL =
+  "SELECT json_extract(data,'$.tokens.input') AS input, json_extract(data,'$.tokens.output') AS output, " +
+  "json_extract(data,'$.tokens.reasoning') AS reasoning, json_extract(data,'$.tokens.cache.read') AS cache_read, " +
+  "json_extract(data,'$.tokens.cache.write') AS cache_write FROM part WHERE json_extract(data,'$.type')='step-finish'";
+
+/**
+ * OpenCode's own per-step tokens, summed into the bridge's shape (what
+ * compare.py and the defect judge's cost line price). OpenCode's `input`
+ * excludes the cached part and its `output` excludes reasoning (checked
+ * against the bridge's own counts on the published run), so the OpenAI-style
+ * totals add them back. Null for anything but a JSON array of rows.
+ */
+export function opencodeUsage(rowsJson: string): BridgeUsage | null {
+  let rows: unknown;
+  try {
+    rows = JSON.parse(rowsJson);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(rows)) return null;
+  const out: BridgeUsage = {
+    requests: 0,
+    ok: 0,
+    errors: 0,
+    upstream_refusals: 0,
+    input_tokens: 0,
+    cached_tokens: 0,
+    output_tokens: 0,
+    reasoning_tokens: 0,
+    by_status: {},
+  };
+  for (const r of rows as Array<Record<string, unknown>>) {
+    const input = num(r?.["input"]);
+    const cacheRead = num(r?.["cache_read"]);
+    const cacheWrite = num(r?.["cache_write"]);
+    const reasoning = num(r?.["reasoning"]);
+    out.requests++;
+    out.ok++;
+    out.input_tokens += input + cacheRead + cacheWrite;
+    out.cached_tokens += cacheRead;
+    out.output_tokens += num(r?.["output"]) + reasoning;
+    out.reasoning_tokens += reasoning;
+  }
+  return out;
 }
 
 /** The environment OpenCode runs with: a fresh HOME and XDG tree per case (its
@@ -230,8 +386,9 @@ export function opencodeEnv(o: {
   home: string;
   tmpDir: string;
   configPath: string;
+  provider?: OpencodeProvider;
 }): NodeJS.ProcessEnv {
-  return {
+  const env: NodeJS.ProcessEnv = {
     PATH: o.path,
     HOME: o.home,
     TMPDIR: o.tmpDir,
@@ -253,6 +410,9 @@ export function opencodeEnv(o: {
     GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_TERMINAL_PROMPT: "0",
   };
+  // The ChatGPT login is an internal DEFAULT plugin: the native path needs it.
+  if (o.provider === "native") delete env["OPENCODE_DISABLE_DEFAULT_PLUGINS"];
+  return env;
 }
 
 // ---- reading what OpenCode did -----------------------------------------------------
@@ -483,6 +643,10 @@ export interface OpencodeFingerprint {
   effort: string;
   variant: string;
   timeout_min: number;
+  /** Present only on the native provider (the published arm is the bridge). */
+  provider?: "native";
+  /** Present only when the PR text was handed over (QCR_BENCH_PR_TEXT=1). */
+  pr_text?: true;
 }
 
 export interface OpencodeCaseSummary {
@@ -500,8 +664,13 @@ export interface OpencodeCaseSummary {
   text_findings: number | null;
   /** OpenCode's own per-step tokens (parent session only). */
   opencode_tokens: OpencodeEvents["tokens"] | null;
-  /** The bridge's count of every call the case made (subtask included). */
+  /** The bridge's count of every call the case made (subtask included) — on
+   * the native provider, OpenCode's own session store summed into the same
+   * shape (`usage_source`). */
   bridge: BridgeUsage | null;
+  usage_source?: "bridge" | "opencode-db";
+  /** With the PR-text switch on: whether this case's title/body reached OpenCode. */
+  pr_text?: boolean;
   /** Bridge tokens in the shape the defect judge's cost line reads:
    * input without the cached part, the cached part, output. */
   usage: { input: number; output: number; cacheRead: number } | null;
@@ -558,6 +727,10 @@ export interface OpencodeRunnerOptions {
   fetchImpl?: typeof fetch;
   /** Injected in tests; defaults to the real subprocess runner. */
   runImpl?: typeof run;
+  /** Native provider only: the sandbox's refresh-disabled pi copy. */
+  benchAuthFile?: string;
+  /** Hand OpenCode the PR title/body in the review arguments (src/bench/prtext.ts). */
+  prText?: boolean;
 }
 
 async function bridgeCall(
@@ -615,6 +788,7 @@ export async function reviewCaseOpencode(
   const home = join(scratch, "home");
   const tmpDir = join(scratch, "tmp");
   const partialDir = join(scratch, "findings");
+  const native = o.flags.provider === "native";
   mkdirSync(caseDir, { recursive: true });
   const startedAt = new Date().toISOString();
   const started = Date.now();
@@ -635,14 +809,25 @@ export async function reviewCaseOpencode(
       mcpScript: o.mcpScript,
       resultsDir: partialDir,
       instanceId: c.instance_id,
+      provider: o.flags.provider ?? "bridge",
     });
     writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
+    if (native) {
+      // OpenCode's own login store, in the per-case data dir (removed below).
+      if (!o.benchAuthFile) throw new Error("the native provider needs the sandbox's token copy");
+      const dataDir = join(home, ".local", "share", "opencode");
+      mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+      writeFileSync(join(dataDir, "auth.json"), opencodeAuthFrom(readFileSync(o.benchAuthFile, "utf8")), {
+        mode: 0o600,
+      });
+    }
     writeFileSync(join(caseDir, "opencode-config.json"), JSON.stringify(config, null, 2) + "\n");
     const env = opencodeEnv({
       path: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
       home,
       tmpDir,
       configPath,
+      provider: o.flags.provider ?? "bridge",
     });
     const mb = await exec("git", ["-C", tree, "merge-base", c.base_commit, c.head_commit], { env });
     summary.merge_base_ok = mb.code === 0 && mb.stdout.trim() === meta.merge_base;
@@ -650,32 +835,45 @@ export async function reviewCaseOpencode(
       summary.warnings.push(
         `merge-base(${c.base_commit.slice(0, 7)}, head) = ${mb.stdout.trim() || mb.stderr.trim().slice(0, 200)}, prefetched ${meta.merge_base.slice(0, 7)}`,
       );
+    const prText = prTextFor(meta, o.prText === true);
+    if (o.prText) summary.pr_text = prText !== null;
     const argv = opencodeRunArgv({
       dir: tree,
       model: o.model,
       variant: o.flags.variant,
       title: c.instance_id,
-      arguments: opencodeReviewArguments(c.base_commit, c.head_commit),
+      arguments: opencodeReviewArguments(c.base_commit, c.head_commit, prText),
+      provider: o.flags.provider ?? "bridge",
     });
     writeFileSync(
       join(caseDir, "opencode-argv.json"),
       JSON.stringify([o.opencodeBin, ...argv], null, 2) + "\n",
     );
-    await bridgeCall(o, "/label", { label: c.instance_id });
-    const before = (await bridgeCall(o, "/stats")) as BridgeStats | null;
+    if (!native) await bridgeCall(o, "/label", { label: c.instance_id });
+    const before = native ? null : ((await bridgeCall(o, "/stats")) as BridgeStats | null);
     log(`opencode: ${c.instance_id} — ${meta.diff.files} files, /review ${c.base_commit.slice(0, 7)}...${c.head_commit.slice(0, 7)}`);
     const r = await exec(o.opencodeBin, argv, {
       cwd: tree,
       env,
       timeoutMs: opencodeProcessTimeoutMs(o.flags.timeoutMin),
     });
-    const after = (await bridgeCall(o, "/stats")) as BridgeStats | null;
-    await bridgeCall(o, "/label", { label: "" });
     stdout = r.stdout;
     stderr = r.stderr;
     exitCode = r.code;
     summary.exit_code = r.code;
-    summary.bridge = bridgeDelta(before, after);
+    if (native) {
+      // Every step of every session (the subtask's too) from OpenCode's own store.
+      const db = await exec(o.opencodeBin, ["db", USAGE_SQL, "--format", "json"], { cwd: tree, env });
+      summary.bridge = db.code === 0 ? opencodeUsage(db.stdout) : null;
+      summary.usage_source = "opencode-db";
+      if (!summary.bridge)
+        summary.warnings.push(`opencode db: no token totals (${db.stderr.trim().slice(0, 200)})`);
+    } else {
+      const after = (await bridgeCall(o, "/stats")) as BridgeStats | null;
+      await bridgeCall(o, "/label", { label: "" });
+      summary.bridge = bridgeDelta(before, after);
+      summary.usage_source = "bridge";
+    }
     const events = parseOpencodeEvents(stdout);
     summary.opencode_tokens = events.tokens;
     summary.tools = events.tools;
@@ -809,6 +1007,8 @@ export interface OpencodeReviewRun {
   keepTree: boolean;
   readMeta: (c: BenchCase) => PrefetchMeta;
   log: (line: string) => void;
+  /** The equal-inputs switch (src/bench/prtext.ts). */
+  prText?: boolean;
 }
 
 /** Every case, ONE AT A TIME (as the harness runs its CLI reviewers, and the
@@ -821,7 +1021,10 @@ export async function runOpencodeReview(r: OpencodeReviewRun): Promise<number> {
     effort: r.effort,
     variant: r.flags.variant,
     timeout_min: r.flags.timeoutMin,
+    ...(r.flags.provider === "native" ? { provider: "native" as const } : {}),
+    ...(r.prText ? { pr_text: true as const } : {}),
   };
+  const native = r.flags.provider === "native";
   mkdirSync(r.outDir, { recursive: true });
   const runFile = join(r.outDir, "run.json");
   const previous = existsSync(runFile)
@@ -842,8 +1045,16 @@ export async function runOpencodeReview(r: OpencodeReviewRun): Promise<number> {
     effort: r.effort,
     verbosity: r.verbosity,
     variant: r.flags.variant,
-    endpoint: "ChatGPT Codex backend via the loopback bridge (bench/aacr/codex_bridge.py)",
-    command: "opencode run --pure --auto --format json --command review '<base>...<head> (<findings fragment>)'",
+    endpoint: native
+      ? "ChatGPT Codex backend through OpenCode's own ChatGPT login (provider openai, refresh-disabled token copy)"
+      : "ChatGPT Codex backend via the loopback bridge (bench/aacr/codex_bridge.py)",
+    provider: native ? "native" : "bridge",
+    // The built-in review command: re-declared with subtask:false on the
+    // bridge (the published arm), as shipped (subtask:true) on the native path.
+    subtask: native,
+    command: `opencode run --pure --auto --format json --model ${providerId(r.flags.provider)}/<model> --variant <effort> --command review '<base>...<head> (<findings fragment>)${r.prText ? "\\n\\n<the PR title and description>" : ""}'`,
+    // The equal-inputs switch (src/bench/prtext.ts).
+    pr_text: r.prText === true,
     flags: { timeout_min: r.flags.timeoutMin },
     qcr_commit: r.qcrCommit,
     cases: r.cases.map((c) => c.instance_id),
@@ -906,6 +1117,8 @@ export async function runOpencodeReview(r: OpencodeReviewRun): Promise<number> {
         fingerprint,
         keepTree: r.keepTree,
         log: r.log,
+        benchAuthFile: join(r.agentDir, "auth.json"),
+        prText: r.prText === true,
       }),
     );
   }
