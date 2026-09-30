@@ -524,6 +524,68 @@ describe("the credential: a refresh-disabled copy, never a refresher", () => {
       rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it("--resume under a new model drops every mismatched result BEFORE the loop, so an auth stop cannot score model A under model B", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "bench-pireview-resume-"));
+    try {
+      const out = join(tmp, "out");
+      const SAME: BenchCase = { ...CASE, instance_id: "acme__widget@ccccccc" };
+      const fpA: PireviewFingerprint = { ...FP, model: "model-A" };
+      const fpB: PireviewFingerprint = { ...FP, model: "model-B" };
+      // Case 0 was reviewed under A; case 1 under B (already matches the resume).
+      const seed = (c: BenchCase, fp: PireviewFingerprint) => {
+        mkdirSync(join(out, "cases", c.instance_id), { recursive: true });
+        writeFileSync(
+          join(out, "cases", c.instance_id, "case-summary.json"),
+          JSON.stringify({ instance_id: c.instance_id, arm: "pireview", status: "ok", fingerprint: fp }),
+        );
+        mkdirSync(join(out, "results", "all"), { recursive: true });
+        writeFileSync(join(out, "results", "all", `${c.instance_id}.json`), "{}");
+      };
+      seed(CASE, fpA);
+      seed(SAME, fpB);
+      const src = join(tmp, "src");
+      mkdirSync(src);
+      writeFileSync(
+        join(src, "auth.json"),
+        JSON.stringify({ "openai-codex": { type: "oauth", access: "a", refresh: "R", expires: Date.now() + 60_000 } }),
+      );
+      const code = await runPireviewReview({
+        set: SET,
+        cases: [SAME, CASE],
+        outDir: out,
+        work: join(tmp, "work"),
+        root: "/opt/quickreview/sandbox",
+        store: join(tmp, "store"),
+        authSrc: src,
+        agentDir: join(tmp, "agent"),
+        pireviewBin: "pi-review",
+        pireviewVersion: fpB.pireview_version,
+        piVersion: fpB.pi_version,
+        model: fpB.model,
+        thinking: fpB.thinking,
+        timeoutMin: fpB.timeout_min,
+        qcrCommit: fpB.qcr_commit,
+        resume: true,
+        keepTree: false,
+        readMeta: () => {
+          throw new Error("x");
+        },
+        log: () => {},
+        runImpl: async () => ({ code: 0, stdout: "", stderr: "", timedOut: false }),
+      });
+      expect(code).toBe(1); // stopped on the expiring login at the mismatched case
+      expect(JSON.parse(readFileSync(join(out, "run.json"), "utf8")).model).toBe("model-B");
+      // Model A's result is gone, not left to be scored under the model-B label…
+      expect(existsSync(join(out, "results", "all", `${CASE.instance_id}.json`))).toBe(false);
+      expect(existsSync(join(out, "cases", CASE.instance_id, "case-summary.json"))).toBe(false);
+      // …while the matching one is kept.
+      expect(existsSync(join(out, "results", "all", `${SAME.instance_id}.json`))).toBe(true);
+      expect(existsSync(join(out, "cases", SAME.instance_id, "case-summary.json"))).toBe(true);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("the sandbox wiring", () => {

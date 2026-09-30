@@ -696,11 +696,17 @@ export async function runPireviewReview(r: PireviewReviewRun): Promise<number> {
   const previous = existsSync(runFile)
     ? (JSON.parse(readFileSync(runFile, "utf8")) as Record<string, unknown>)
     : null;
-  if (!r.resume) {
-    for (const c of r.cases) {
-      rmSync(join(r.outDir, "cases", safeId(c.instance_id), "case-summary.json"), { force: true });
-      rmSync(join(r.outDir, "results", "all", `${safeId(c.instance_id)}.json`), { force: true });
-    }
+  // run.json is about to carry THIS configuration, so no case reviewed under
+  // another may stay a result of the run: without --resume every case goes;
+  // with it, every case whose fingerprint differs goes now, not when the loop
+  // reaches it — a stop partway (AuthExpiring) must leave those cases
+  // incomplete, never scored under the new model/thinking label.
+  for (const c of r.cases) {
+    const prior = r.resume ? readPireviewSummary(r.outDir, c) : null;
+    if (r.resume && (!prior || JSON.stringify(prior.fingerprint) === JSON.stringify(fingerprint))) continue;
+    if (prior) r.log(`pireview: ${c.instance_id} was reviewed by a different pi-review/model/flags — its result is dropped`);
+    rmSync(join(r.outDir, "cases", safeId(c.instance_id), "case-summary.json"), { force: true });
+    rmSync(join(r.outDir, "results", "all", `${safeId(c.instance_id)}.json`), { force: true });
   }
   const runRecord = {
     reviewer: "pireview",
@@ -731,13 +737,11 @@ export async function runPireviewReview(r: PireviewReviewRun): Promise<number> {
   let stopped: string | null = null;
   for (const c of r.cases) {
     const prior = readPireviewSummary(r.outDir, c);
+    // (a prior summary here carries this run's fingerprint — the others went above)
     if (r.resume && prior && prior.status === "ok") {
-      if (JSON.stringify(prior.fingerprint) === JSON.stringify(fingerprint)) {
-        r.log(`pireview: ${c.instance_id} already done — skipped (--resume)`);
-        summaries.push(prior);
-        continue;
-      }
-      r.log(`pireview: ${c.instance_id} was reviewed by a different pi-review/model/flags — re-running`);
+      r.log(`pireview: ${c.instance_id} already done — skipped (--resume)`);
+      summaries.push(prior);
+      continue;
     }
     try {
       // The child pi reads this refresh-disabled copy; re-taken before every case.
