@@ -47,8 +47,9 @@ Charts, all in `charts/`:
 | [`tuned-vs-unseen.jpg`](charts/tuned-vs-unseen.jpg) | the 40 tuning PRs vs the 145 never-seen ones |
 | [`judge-agreement.jpg`](charts/judge-agreement.jpg) | share of defects found under each of the two judges (gpt-6-sol high, Claude Opus 5.5) |
 | [`independent-defects.jpg`](charts/independent-defects.jpg) | share found on all 520 defects vs on the 369 the code hunt or an AACR reference raised (in the key without any reviewer's comment) |
+| [`config-sensitivity.jpg`](charts/config-sensitivity.jpg) | per tool, recall and $/PR of the published configuration vs each variant run on 40 PRs (FULL-BENCHMARK, Best-shot configurations); drawn by `charts.py --sensitivity` |
 
-`numbers.json` holds the headline figures behind the charts.
+`numbers.json` holds the headline figures behind the charts; `config-sensitivity.json` the per-variant figures behind `config-sensitivity.jpg`.
 
 Regenerate after a run. Every number comes from the judge and harness files
 through `compare.py`'s scoring, and adding a reviewer is one more

@@ -14,10 +14,16 @@ Every number comes from the archived judge and harness files through
 compare.py's own scoring (same denominators, same judge label), so a chart can
 never disagree with the tables. An arm is NAME=runs as in compare.py; arms are
 drawn in the order given, the first highlighted. Adding a reviewer is one more
-NAME=runs argument. The "tuned vs unseen" chart splits the cases into the 40
+NAME=runs argument.
+
+`--sensitivity` draws only charts/config-sensitivity.jpg and its data
+(config-sensitivity.json): arms are TOOL|VARIANT=runs, each tool's first
+variant is its published configuration, and the variant the full comparison
+takes forward is picked by `pick_best` (highest recall, ties to comments
+correct). The command behind the published chart is in FULL-BENCHMARK.md. The "tuned vs unseen" chart splits the cases into the 40
 PRs the review was tuned on (all30+fresh10) and the rest (rest145).
 """
-import argparse, collections, json, os, sys
+import argparse, collections, json, os, statistics, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -49,7 +55,7 @@ def arm_stats(runs_dir, runs, cases, judge_model):
     """Per-severity credit, comments-correct share, cost and AACR numbers for one arm."""
     found, total = collections.Counter(), collections.Counter()
     ok_comments = all_comments = 0
-    usd = []
+    usd, mins = [], []
     for iid, (_, sevs, version) in cases.items():
         for sev in sevs.values():
             total[sev] += 1
@@ -63,8 +69,10 @@ def arm_stats(runs_dir, runs, cases, judge_model):
             for c in j["comments"]:
                 all_comments += 1
                 ok_comments += c["verdict"] in ("correct-valuable", "correct-minor")
-            u, _ = compare.usd_and_minutes(os.path.join(runs_dir, run, "cases", iid))
+            u, m = compare.usd_and_minutes(os.path.join(runs_dir, run, "cases", iid))
             usd.append(u)
+            if m is not None:
+                mins.append(m)
             break
     refs, generated, scored, _ = compare.aacr(runs_dir, runs, cases)
     labels = compare.ref_labels()
@@ -74,6 +82,7 @@ def arm_stats(runs_dir, runs, cases, judge_model):
         "found": dict(found), "total": dict(total),
         "correct": ok_comments / max(all_comments, 1),
         "usd": sum(usd) / max(len(usd), 1),
+        "median_min": statistics.median(mins) if mins else 0,
         "aacr_recall": hit / max(n_refs, 1), "aacr_precision": hit / max(generated, 1),
     }
 
@@ -285,6 +294,93 @@ def chart_independent(names, colors, all_r, ind_r, n_all, n_ind, out):
     save(fig, out, "independent-defects.jpg")
 
 
+def pick_best(rows):
+    """The selection rule for the full comparison: highest defect recall; a tie
+    goes to the higher share of correct comments."""
+    return max(rows, key=lambda r: (sum(r[2]["found"].values()), r[2]["correct"]))
+
+
+def chart_sensitivity(groups, reference, out):
+    """Configuration sensitivity: per tool, the published configuration (hollow)
+    and every variant run on the same PRs (filled, stem from the published
+    value), the best by the selection rule in bold; the reference tool's
+    published and best recall as dashed lines across the plot. Right panel:
+    $/PR of the same rows, log scale."""
+    import numpy as np
+    ylabels, ys, y = [], [], 0
+    rows = []  # (y, tool, variant, color, stats, published_stats, is_best)
+    for k, (tool, variants) in enumerate(groups):
+        color = PALETTE[0] if tool == reference else PALETTE[1 + (k % (len(PALETTE) - 1))]
+        ylabels.append((y, tool, True))
+        y += 1
+        pub = variants[0][1]
+        best = pick_best([(v, color, st) for v, st in variants]) if tool != reference else None
+        for v, st in variants:
+            rows.append((y, tool, v, color, st, pub, best is not None and best[0] == v))
+            ylabels.append((y, v, False))
+            y += 1
+        y += 0.4
+    fig, (ax, bx) = plt.subplots(1, 2, figsize=(13, 0.9 + 0.36 * y), sharey=True, gridspec_kw={"width_ratios": [2.1, 1]})
+    ref_rows = [r for r in rows if r[1] == reference]
+    if ref_rows:
+        lines = [(recall(ref_rows[0][4]) * 100, f"{reference} {ref_rows[0][2]}")]
+        top = max(ref_rows, key=lambda r: recall(r[4]))
+        if top is not ref_rows[0]:
+            lines.append((recall(top[4]) * 100, f"{reference} {top[2]}"))
+        for x, lab in lines:
+            ax.axvline(x, color=PALETTE[0], lw=1, ls=(0, (4, 3)), alpha=0.7, zorder=1)
+    for (yy, tool, v, color, st, pub, is_best) in rows:
+        r, r0 = recall(st) * 100, recall(pub) * 100
+        first = st is pub
+        if not first:
+            ax.plot([r0, r], [yy, yy], color=shade(color, 0.45), lw=2.2, zorder=2)
+            ax.scatter([r0], [yy], s=30, facecolor=GROUND, edgecolor=shade(color, 0.4), linewidth=1.2, zorder=3)
+        ax.scatter([r], [yy], s=150 if is_best else 80, facecolor=GROUND if first else color, edgecolor=color,
+                   linewidth=2, zorder=4)
+        dd = round(r) - round(r0)
+        d = "" if first else f"  ({dd:+d})" if dd else "  (±0)"
+        ax.text(r + 1.8, yy, f"{r:.0f}%{d}", va="center", fontsize=10, fontweight="bold" if is_best else None,
+                color=INK if (is_best or first) else MUTED)
+        u = st["usd"]
+        bx.scatter([u], [yy], s=150 if is_best else 80, facecolor=GROUND if first else color, edgecolor=color,
+                   linewidth=2, zorder=4)
+        bx.text(u * 1.18, yy, f"${u:.2f}", va="center", fontsize=9.5, color=INK if is_best else MUTED,
+                fontweight="bold" if is_best else None)
+    ax.set_yticks([p for p, _, _ in ylabels], [lab for _, lab, _ in ylabels])
+    for t, (_, _, head) in zip(ax.get_yticklabels(), ylabels):
+        if head:
+            t.set_fontweight("bold")
+            t.set_fontsize(11.5)
+        else:
+            t.set_color(MUTED)
+            t.set_fontsize(10)
+    ax.tick_params(axis="y", length=0)
+    ax.set_ylim(y - 0.2, -0.8)
+    ax.set_xlim(20, 104)
+    ax.xaxis.set_major_formatter(matplotlib.ticker.PercentFormatter())
+    ax.grid(axis="x", color=GRID)
+    ax.set_axisbelow(True)
+    ax.set_xlabel("share of real defects found")
+    if ref_rows:
+        for j, (x, lab) in enumerate(lines):
+            ax.text(x + (0.6 if j else -0.6), -0.7, f"{lab} {x:.0f}%", ha="left" if j else "right", va="bottom",
+                    fontsize=8.5, color=PALETTE[0])
+    bx.set_xscale("log")
+    bx.set_xlim(0.05, 6)
+    bx.xaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"${v:g}"))
+    bx.grid(axis="x", color=GRID)
+    bx.set_axisbelow(True)
+    bx.tick_params(axis="y", length=0)
+    bx.set_xlabel("model cost per PR, list prices (log scale)")
+    n = sum(rows[0][4]["total"].values())
+    fig.suptitle(f"How much configuration moves each reviewer — {len(CASES)} PRs, {n} defects, one run per configuration",
+                 x=0.01, y=1.0, ha="left", va="bottom", fontweight="bold", fontsize=14)
+    fig.text(0.01, 0.995, "○ published configuration   ● variant (stem from the published value)   "
+             "large ● the best configuration found for that tool", ha="left", va="top", fontsize=10, color=MUTED)
+    fig.tight_layout(rect=(0, 0, 1, 0.975))
+    save(fig, out, "config-sensitivity.jpg")
+
+
 def defect_recall(runs_dir, runs, cases, judge_model, keys):
     v = compare.verdicts(runs_dir, runs, cases, judge_model)
     return sum(v.get(k, 0) for k in keys) / max(len(keys), 1) * 100
@@ -303,10 +399,32 @@ def main():
     ap.add_argument("--second-judge", help="a second judge label (e.g. claude-opus-5-5) for the agreement chart")
     ap.add_argument("--runs-dir", default=os.environ.get("QCR_BENCH_RUNS_DIR", os.path.expanduser("~/qcr-bench-runs/runs") if os.path.isdir(os.path.expanduser("~/qcr-bench-runs/runs")) else os.path.join(HERE, "runs")))
     ap.add_argument("--out", default=os.path.join(HERE, "charts"))
+    ap.add_argument("--sensitivity", action="store_true",
+                    help="draw only config-sensitivity.jpg (+ config-sensitivity.json): arms are TOOL|VARIANT=runs, "
+                         "a tool's first variant is its published configuration")
+    ap.add_argument("--reference", default="QuickReview", help="with --sensitivity: the tool drawn as reference lines")
     ap.add_argument("arms", nargs="+", help="NAME=run[,run...]")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     CASES = compare.cases_for(a.cases)
+    if a.sensitivity:
+        groups = collections.OrderedDict()
+        for spec in a.arms:
+            name, _, runs = spec.partition("=")
+            tool, _, variant = name.partition("|")
+            groups.setdefault(tool, []).append((variant or "published", arm_stats(a.runs_dir, runs.split(","), CASES, a.judge_model)))
+        chart_sensitivity(list(groups.items()), a.reference, a.out)
+        data = {}
+        for tool, variants in groups.items():
+            best = pick_best([(v, None, st) for v, st in variants])[0] if tool != a.reference else None
+            data[tool] = [{"variant": v, "published": i == 0, "selected": v == best, "recall": round(recall(st), 4),
+                           **{k: st[k] for k in ("found", "total", "correct", "usd", "median_min", "aacr_recall", "aacr_precision")}}
+                          for i, (v, st) in enumerate(variants)]
+        path = os.path.join(a.out, "config-sensitivity.json")
+        json.dump({"cases": sorted(CASES), "judge": a.judge_model, "arms": [spec for spec in a.arms], "tools": data},
+                  open(path, "w"), indent=1)
+        print("wrote", os.path.relpath(path))
+        return
     tuned, unseen = compare.cases_for(a.tuned), compare.cases_for(a.unseen)
     arms, split = [], []
     for k, spec in enumerate(a.arms):
