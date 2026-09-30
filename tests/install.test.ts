@@ -914,6 +914,24 @@ describe("migrate repoints the compose .env (review)", () => {
     expect(out.join("\n")).not.toMatch(/docker compose up -d/);
   });
 
+  it("holds the mount when migrate refused a conflict: the home's differing copy is not the working one (selfscan)", async () => {
+    const { cmdInstall } = await import("../src/cli.js");
+    mkdirSync(legacy(), { recursive: true });
+    writeFileSync(join(legacy(), "app.pem"), "RUNNING-PEM\n", { mode: 0o600 });
+    mkdirSync(secretsHome(env), { recursive: true });
+    writeFileSync(join(secretsHome(env), "app.pem"), "OTHER-PEM\n", { mode: 0o600 });
+    const envFile = join(root, ".env");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(envFile, `QCR_SECRETS_DIR=${legacy()}\n`);
+    const out: string[] = [];
+    expect(cmdInstall(["migrate"], { root, env, log: (l) => out.push(l) })).toBe(1);
+    expect(out.join("\n")).toMatch(/both exist and differ/);
+    expect(readFileSync(envFile, "utf8")).toBe(`QCR_SECRETS_DIR=${legacy()}\n`);
+    expect(repointComposeSecrets({ root, env })).toMatchObject({ kind: "held", missing: [], differ: ["app.pem"] });
+    expect(out.join("\n")).not.toMatch(/docker compose up -d/);
+    expect(out.join("\n")).toMatch(/app\.pem/);
+  });
+
   it("leaves the line while the home does not exist yet (nothing was moved)", () => {
     const envFile = join(root, ".env");
     mkdirSync(root, { recursive: true });

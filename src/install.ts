@@ -949,8 +949,9 @@ export type ComposeEnvRepoint =
   | { kind: "none" }
   | { kind: "repointed"; file: string; from: string; to: string }
   /** The legacy dir still holds files the home lacks (migrate moved nothing,
-   * or not everything): the working mount is kept. */
-  | { kind: "held"; file: string; from: string; to: string; missing: string[] };
+   * or not everything) or holds with different bytes (a conflict migrate
+   * refused): the working mount is kept. */
+  | { kind: "held"; file: string; from: string; to: string; missing: string[]; differ: string[] };
 
 export function repointComposeSecrets(opts: { root: string; env?: InstallEnv }): ComposeEnvRepoint {
   const env = opts.env ?? process.env;
@@ -968,16 +969,21 @@ export function repointComposeSecrets(opts: { root: string; env?: InstallEnv }):
   const to = secretsHome(env);
   if (!existsSync(to)) return { kind: "none" };
   // Repoint only onto a home that holds everything the mounted dir still
-  // does — never swap a working mount for an empty or partial one. The key
-  // file is exempt: it goes to the operator home, never into the mount.
+  // does, byte for byte — never swap a working mount for an empty, partial or
+  // DIFFERENT one (a conflict migrate refused leaves the running copy in the
+  // legacy dir and another in the home). The key file is exempt: it goes to
+  // the operator home, never into the mount.
+  const legacyDir = legacySecretsDir(env);
   let legacyNames: string[] = [];
   try {
-    legacyNames = readdirSync(legacySecretsDir(env));
+    legacyNames = readdirSync(legacyDir);
   } catch {
     // Gone: migrate moved everything and removed it.
   }
-  const missing = legacyNames.filter((n) => n !== KEYS_FILE && !existsSync(join(to, n))).sort();
-  if (missing.length > 0) return { kind: "held", file, from: value, to, missing };
+  const mounted = legacyNames.filter((n) => n !== KEYS_FILE).sort();
+  const missing = mounted.filter((n) => !existsSync(join(to, n)));
+  const differ = mounted.filter((n) => existsSync(join(to, n)) && !sameBytes(join(legacyDir, n), join(to, n)));
+  if (missing.length > 0 || differ.length > 0) return { kind: "held", file, from: value, to, missing, differ };
   const next = text.replace(/^QCR_SECRETS_DIR=.*$/m, `QCR_SECRETS_DIR=${to}`);
   const mode = statSync(file).mode & 0o7777;
   const tmp = join(opts.root, ".env.qcr-migrate.tmp");
@@ -987,12 +993,31 @@ export function repointComposeSecrets(opts: { root: string; env?: InstallEnv }):
   return { kind: "repointed", file, from: value, to };
 }
 
+/** Whether the home's entry can stand in for the mounted one: two regular
+ * files must hold identical bytes; two non-files (migrate skips those) pass as
+ * before; a file against a non-file, or anything unreadable, does not. */
+function sameBytes(a: string, b: string): boolean {
+  try {
+    const aFile = statSync(a).isFile();
+    const bFile = statSync(b).isFile();
+    if (!aFile || !bFile) return !aFile && !bFile;
+    return readFileSync(a).equals(readFileSync(b));
+  } catch {
+    return false;
+  }
+}
+
 export function composeRepointReport(r: ComposeEnvRepoint): string[] {
-  if (r.kind === "held")
+  if (r.kind === "held") {
+    const why = [
+      ...(r.missing.length > 0 ? [`${r.to} lacks ${r.missing.join(", ")}`] : []),
+      ...(r.differ.length > 0 ? [`${r.to} holds a different ${r.differ.join(", ")}`] : []),
+    ].join("; ");
     return [
-      `secrets: ${r.file} still mounts ${r.from} (QCR_SECRETS_DIR) — left as is: ${r.to} lacks ${r.missing.join(", ")}; ` +
-        "move them there, then re-run migrate",
+      `secrets: ${r.file} still mounts ${r.from} (QCR_SECRETS_DIR) — left as is: ${why}; ` +
+        "settle them there, then re-run migrate",
     ];
+  }
   return r.kind === "none"
     ? []
     : [
