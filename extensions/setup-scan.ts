@@ -35,7 +35,8 @@ import { sandboxRoot } from "../src/config.js";
 import { stateHome } from "../src/install.js";
 import { piCaseRunner } from "../src/setup/caserunner.js";
 import type { Refusal, SetupEngine } from "../src/setup/engine.js";
-import type { FindingsFilter, FindingState, MatchQuestionView, ScanFinding } from "../src/setup/findings.js";
+import type { FindingsFilter, FindingState, MatchQuestionView, ScanFinding, ValidityView } from "../src/setup/findings.js";
+import { VALIDITY_ORDER, validityOf } from "../src/setup/scanreport.js";
 import { FindingsStore } from "../src/setup/findings.js";
 import { stateHomeFs } from "../src/setup/adapters.js";
 import { SEVERITIES, type ScanSeverity } from "../src/setup/scan.js";
@@ -64,7 +65,7 @@ const usd = (n: number | null): string => (n === null ? "unknown" : `$${n.toFixe
 
 export function renderPreview(p: ScanPreview): string {
   const out: string[] = [];
-  const head = `at ${p.sha.slice(0, 12)} — ${p.settings.tier} at ${p.settings.effort} effort, validator ${p.settings.validator ? `on (${p.settings.validate_tier})` : "off"}`;
+  const head = `at ${p.sha.slice(0, 12)} — ${p.settings.tier} at ${p.settings.effort} effort, skeptic ${p.settings.validator ? `on (at the lens's tier, ${p.settings.validate_tier}; its cost is in the price)` : "off (findings stay unjudged — validity unknown)"}`;
   if (p.mode === "delta") {
     out.push(
       `DELTA re-scan ${head}, against the last scan at ${p.delta?.since.slice(0, 12) ?? "?"}.`,
@@ -110,6 +111,18 @@ export function renderPreview(p: ScanPreview): string {
   return out.join("\n\n");
 }
 
+/** A run's findings by validity tier — `(2 confirmed, 1 likely, 3 doubtful)`
+ * — from the per-case counts; `unknown` for what no skeptic judged (the
+ * validator off or failed, or a case recorded before the tiers). */
+function tierCounts(r: NonNullable<ScanStatus["run"]>, findings: number, doubted: number): string {
+  if (!r.settings.validator) return doubted ? ` (${doubted} may not be valid)` : " (skeptic off — validity unknown)";
+  const confirmed = r.cases.reduce((n, c) => n + (c.confirmed ?? 0), 0);
+  const likely = r.cases.reduce((n, c) => n + (c.likely ?? 0), 0);
+  const unknown = findings - confirmed - likely - doubted;
+  if (findings === 0) return "";
+  return ` (${confirmed} confirmed, ${likely} likely, ${doubted} doubtful${unknown > 0 ? `, ${unknown} unknown` : ""})`;
+}
+
 export function renderStatus(s: ScanStatus): string {
   const out: string[] = [];
   for (const p of s.problems) out.push(`✗ ${p}`);
@@ -122,7 +135,7 @@ export function renderStatus(s: ScanStatus): string {
     const doubted = r.cases.reduce((n, c) => n + c.doubted, 0);
     out.push(
       `${r.id} (${r.mode === "stage2" ? "stage 2" : r.mode}) at ${r.sha.slice(0, 12)}: ${r.display.toUpperCase()} — ${done}/${r.cases.length} cases, ` +
-        `${findings} finding(s)${doubted ? ` (${doubted} may not be valid)` : ""}, spent ${usd(r.spent_usd)} of ${usd(r.cap_usd)}` +
+        `${findings} finding(s)${tierCounts(r, findings, doubted)}, spent ${usd(r.spent_usd)} of ${usd(r.cap_usd)}` +
         (r.unpriced_cases ? ` (${r.unpriced_cases} unpriced case(s) counted at their estimate)` : ""),
     );
     // Stage 2 is re-entered by a new proposal (the rows already read are
@@ -164,12 +177,25 @@ export function renderStatus(s: ScanStatus): string {
   return out.join("\n");
 }
 
+/** Findings in validity order — confirmed, likely, doubtful, unknown — the
+ * store's order (most severe first) kept inside each tier. */
+export function byValidity(fs: readonly ScanFinding[]): ScanFinding[] {
+  return VALIDITY_ORDER.flatMap((v) => fs.filter((f) => validityOf(f) === v));
+}
+
+function validityNote(f: ScanFinding): string {
+  const v = validityOf(f);
+  if (v === "doubtful") return `, DOUBTFUL — ${f.doubt?.word ?? "?"}${f.doubt?.class ? ` [${f.doubt.class}]` : ""}`;
+  if (v === "unknown") return f.doubt ? `, MAY NOT BE VALID — ${f.doubt.word}` : f.validated ? ", validity unknown" : ", unvalidated";
+  return `, ${v.toUpperCase()}`;
+}
+
 export function renderFindings(fs: readonly ScanFinding[], total: number): string {
   if (fs.length === 0) return "No stored scan findings match.";
   const rows = fs.map(
     (f) =>
       `- [${f.severity}] ${f.path}:${f.start === f.end ? f.start : `${f.start}-${f.end}`} (${f.unit}, ${f.kind}, ${f.state}` +
-      `${f.doubt ? `, MAY NOT BE VALID — ${f.doubt.word}` : f.validated ? "" : ", unvalidated"}` +
+      validityNote(f) +
       `${f.capped_from ? `, ${f.capped_from}→${f.severity}: ${f.reachability}` : ""}` +
       `${f.anchor_quoted === false ? ", ANCHOR NOT QUOTED — the lines may not be the defect's" : ""}` +
       `${f.fixed ? ` at ${f.fixed.sha.slice(0, 12)}, was ${f.fixed.from}` : ""}` +
@@ -332,8 +358,9 @@ export function scanToolDefinitions(
     name: "scan_findings",
     label: "Scan findings",
     description:
-      "The stored scan findings, most severe first, each with its fingerprint. Filter by state (new/promoted/dismissed/fixed), lens, " +
-      "unit, severity, or doubted (true: only those the validator marked 'may not be valid').",
+      "The stored scan findings, grouped by the skeptic's validity tier — confirmed, then likely, then doubtful, then unknown (never " +
+      "judged) — most severe first inside each, each with its fingerprint. Filter by validity (confirmed/likely/doubtful/unknown), state " +
+      "(new/promoted/dismissed/fixed), lens, unit, severity, or doubted (true: only those marked 'may not be valid').",
     promptSnippet: "List stored scan findings",
     parameters: {
       type: "object",
@@ -343,6 +370,7 @@ export function scanToolDefinitions(
         unit: { type: "string" },
         severity: { type: "string" },
         doubted: { type: "boolean" },
+        validity: { type: "string", description: "confirmed | likely | doubtful | unknown" },
         limit: { type: "number" },
       },
     },
@@ -360,10 +388,18 @@ export function scanToolDefinitions(
       if (typeof p.lens === "string") filter.lens = p.lens;
       if (typeof p.unit === "string") filter.unit = p.unit;
       if (typeof p.doubted === "boolean") filter.doubted = p.doubted;
-      const { findings: fs, error } = findings.list(filter);
+      if (typeof p.validity === "string") {
+        if (!(VALIDITY_ORDER as readonly string[]).includes(p.validity)) {
+          return text(`Unknown validity ${JSON.stringify(p.validity)} — confirmed, likely, doubtful or unknown.`);
+        }
+        filter.validity = p.validity as ValidityView;
+      }
+      const { findings: listed, error } = findings.list(filter);
       if (error !== null) return text(`✗ ${error}`);
+      const fs = byValidity(listed);
       const limit = typeof p.limit === "number" && p.limit > 0 ? Math.min(200, Math.floor(p.limit)) : 50;
-      return text(renderFindings(fs.slice(0, limit), fs.length), { total: fs.length });
+      const tiers = Object.fromEntries(VALIDITY_ORDER.map((v) => [v, fs.filter((f) => validityOf(f) === v).length]));
+      return text(renderFindings(fs.slice(0, limit), fs.length), { total: fs.length, validity: tiers });
     },
   };
   const matches: PiToolDefinition = {

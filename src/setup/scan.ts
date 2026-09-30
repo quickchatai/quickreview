@@ -23,7 +23,7 @@ import { createHash } from "node:crypto";
 import { ALL_PASSES } from "../dispatch.js";
 import { globMatcher } from "../glob.js";
 import { isSweepSkipped, isTestFile } from "../heuristics.js";
-import { VALIDATE_PASS } from "../include.js";
+import { SCAN_FALSE_POSITIVE_CLASSES, VALIDATE_PASS } from "../include.js";
 import { REACHABILITY_VALUES, reachabilityCappedSeverity, type Reachability } from "../severity.js";
 import { assign, splitUnit, type CaseBudget, type UnitCut } from "./unitcut.js";
 
@@ -475,7 +475,7 @@ export function scanValidatorPrompt(
     `FINDINGS ${lens} SCAN ${ctx.caseId} @${ctx.sha}`,
     block,
     "",
-    `Validate every candidate against the files under the tree root. Return the survivors as a findings block headed \`FINDINGS ${VALIDATE_PASS} SCAN ${ctx.caseId} @${ctx.sha}\` (keep each survivor's path, line, kind and detail), then your DOUBTED and KILLED blocks.`,
+    `Judge every candidate against the files under the tree root, as the scan's skeptic: try to refute each one. Return the survivors as a findings block headed \`FINDINGS ${VALIDATE_PASS} SCAN ${ctx.caseId} @${ctx.sha}\` (keep each survivor's path, line, kind and detail, and add its \`validity:\` — confirmed or likely — and its \`scenario:\`), then your DOUBTED block for every other candidate. Nothing is killed in a scan: write no KILLED block.`,
   ].join("\n");
 }
 
@@ -604,7 +604,16 @@ export function normalizeKind(v: string | undefined): string {
 /** The findings of one block of text (the part before SUGGEST / DOUBTED /
  * KILLED). */
 function readFindings(text: string, root: string | null): { candidates: ScanCandidate[]; dropped: number } {
-  const candidates: ScanCandidate[] = [];
+  const { read, dropped } = readFindingItems(text, root);
+  return { candidates: read.map((r) => r.candidate), dropped };
+}
+
+/** `readFindings`, each candidate beside the raw fields it was read from. */
+function readFindingItems(
+  text: string,
+  root: string | null,
+): { read: Array<{ candidate: ScanCandidate; fields: Map<string, string> }>; dropped: number } {
+  const read: Array<{ candidate: ScanCandidate; fields: Map<string, string> }> = [];
   let dropped = 0;
   for (const f of parseItems(text)) {
     const path = cleanPath(f.get("path") ?? f.get("file") ?? "", root);
@@ -622,7 +631,7 @@ function readFindings(text: string, root: string | null): { candidates: ScanCand
     const said = severityOf(f.get("severity"));
     const reachability = reachabilityOf(f.get("reachability"));
     const severity = reachabilityCappedSeverity(said, reachability);
-    candidates.push({
+    const candidate: ScanCandidate = {
       path,
       ...range,
       kind: normalizeKind(f.get("kind")),
@@ -634,9 +643,10 @@ function readFindings(text: string, root: string | null): { candidates: ScanCand
       evidence: opt("evidence"),
       fix: opt("fix"),
       detail: opt("detail"),
-    });
+    };
+    read.push({ candidate, fields: f });
   }
-  return { candidates, dropped };
+  return { read, dropped };
 }
 
 const BLOCK_RE = /^\s*(SUGGEST|DOUBTED|KILLED)\b.*$/m;
@@ -699,39 +709,78 @@ export interface DoubtLine {
   line: number | null;
   word: string;
   reason: string;
+  /** The false-positive class the skeptic named (`[<slug>]` leading the
+   * reason — a SCAN_FALSE_POSITIVE_CLASSES slug), or null. */
+  class: string | null;
+}
+
+/** The slugs a doubt may name as its class — the ONE class list. */
+export const SCAN_FALSE_POSITIVE_SLUGS: readonly string[] = SCAN_FALSE_POSITIVE_CLASSES.map((c) => c.slug);
+
+/** A survivor as the scan's skeptic sorted it (owner ruling 2026-09-30). */
+export interface SkepticSurvivor extends ScanCandidate {
+  /** `confirmed` only with a written `scenario:` — a demonstration not
+   * written down is not one; anything else that survived is `likely`. */
+  validity: "confirmed" | "likely";
+  scenario: string | null;
+}
+
+/** One `- <lens> <path:line> — <word>: [<class>] <reason>` line per entry of
+ * a DOUBTED or KILLED block; a line that does not parse is skipped. */
+function judgementLines(body: string | null, root: string | null): DoubtLine[] {
+  const out: DoubtLine[] = [];
+  if (body === null) return out;
+  for (const raw of body.split("\n")) {
+    const m = /^\s*-\s+\S+\s+(\S+?)(?::(\d+)(?:-\d+)?)?\s+[—–-]+\s+([a-z-]+):?\s*(.*)$/i.exec(raw);
+    if (!m) continue;
+    let reason = (m[4] ?? "").trim();
+    let cls: string | null = null;
+    const c = /^\[\s*`?([a-z-]+)`?\s*\]\s*(.*)$/i.exec(reason);
+    if (c && SCAN_FALSE_POSITIVE_SLUGS.includes(c[1]!.toLowerCase())) {
+      cls = c[1]!.toLowerCase();
+      reason = (c[2] ?? "").trim();
+    }
+    out.push({
+      path: cleanPath(m[1]!, root),
+      line: m[2] !== undefined ? Number(m[2]) : null,
+      word: m[3]!.toLowerCase(),
+      reason,
+      class: cls,
+    });
+  }
+  return out;
 }
 
 /**
- * Read the validator's answer over a scan case: the survivors (its findings
- * block — they carry the lens's anchors) and its DOUBTED lines,
- * `- <lens> <path:line> — <word>: <reason>`. KILLED is not read: a kill that
- * is not a doubt (a duplicate, below the bar) is the validator's to make.
+ * Read the validator's answer over a scan case — the scan's SKEPTIC
+ * (owner ruling 2026-09-30): the survivors (its findings block — they carry the
+ * lens's anchors), each with its tier (`validity: confirmed` with a
+ * `scenario:`, else `likely`), its DOUBTED lines,
+ * `- <lens> <path:line> — <word>: [<class>] <reason>`, and its KILLED lines
+ * in the same shape. In a scan nothing is killed: the caller stores a KILLED
+ * line as a doubt exactly like a DOUBTED one (the frozen validator's kill
+ * paths — below-bar, restated, duplicate, a confidence under 0.5 — become a
+ * doubtful mark, never a deletion).
  */
 export function parseValidatorAnswer(
   text: string,
   root: string | null,
-): { survivors: ScanCandidate[]; dropped: number; doubted: DoubtLine[]; answered: boolean } {
+): { survivors: SkepticSurvivor[]; dropped: number; doubted: DoubtLine[]; killed: DoubtLine[]; answered: boolean } {
   const head = findingsPart(text);
-  const { candidates, dropped } = readFindings(head, root);
-  const doubted: DoubtLine[] = [];
+  const { read, dropped } = readFindingItems(head, root);
+  const survivors = read.map(({ candidate, fields }): SkepticSurvivor => {
+    const said = (fields.get("validity") ?? "").trim().replace(/[`*]/g, "").toLowerCase();
+    const scenario = fields.get("scenario")?.trim() || null;
+    return { ...candidate, validity: said.startsWith("confirmed") && scenario !== null ? "confirmed" : "likely", scenario };
+  });
   const body = blockBody(text, "DOUBTED");
-  if (body !== null) {
-    for (const raw of body.split("\n")) {
-      const m = /^\s*-\s+\S+\s+(\S+?)(?::(\d+)(?:-\d+)?)?\s+[—–-]+\s+([a-z-]+):?\s*(.*)$/i.exec(raw);
-      if (!m) continue;
-      doubted.push({
-        path: cleanPath(m[1]!, root),
-        line: m[2] !== undefined ? Number(m[2]) : null,
-        word: m[3]!.toLowerCase(),
-        reason: (m[4] ?? "").trim(),
-      });
-    }
-  }
+  const killedBody = blockBody(text, "KILLED");
+  const doubted = judgementLines(body, root);
+  const killed = judgementLines(killedBody, root);
   // A validator's answer: survivors, a NONE, or a DOUBTED/KILLED block.
-  // Prose with none of them (a tool error told in words) kills nothing.
-  const answered =
-    candidates.length > 0 || doubted.length > 0 || /^\s*NONE\s*$/m.test(head) || blockBody(text, "KILLED") !== null || body !== null;
-  return { survivors: candidates, dropped, doubted, answered };
+  // Prose with none of them (a tool error told in words) judges nothing.
+  const answered = survivors.length > 0 || doubted.length > 0 || /^\s*NONE\s*$/m.test(head) || killedBody !== null || body !== null;
+  return { survivors, dropped, doubted, killed, answered };
 }
 
 // ---- identity ----------------------------------------------------------------------

@@ -64,7 +64,9 @@ export function triageToolDefinitions(triage: ScanTriage): PiToolDefinition[] {
       "Promote a scan finding on the operator's word: file ONE ticket for it in the tracker effort its work belongs in (you pick the " +
       "effort that fits; an unknown one is refused with the list). Without an issue tracker it becomes one markdown file in the state " +
       "home. The ticket is stamped with the fingerprint and never filed twice — a finding that has one goes back onto it. Optional: " +
-      "a title (one line) and a note (your context for whoever picks it up). A re-scan that finds it fixed closes the ticket.",
+      "a title (one line) and a note (your context for whoever picks it up). A re-scan that finds it fixed closes the ticket. " +
+      "Promotion defaults to CONFIRMED findings (the scan's skeptic traced a concrete scenario): a likely, doubtful or unjudged one is " +
+      "refused unless you pass `unconfirmed: true` — only when the operator explicitly asked to promote that one.",
     promptSnippet: "File a ticket for a scan finding",
     parameters: {
       type: "object",
@@ -73,11 +75,21 @@ export function triageToolDefinitions(triage: ScanTriage): PiToolDefinition[] {
         effort: { type: "string", description: "The tracker effort the ticket goes in (ignored by the markdown fallback beyond being recorded)." },
         title: { type: "string" },
         note: { type: "string" },
+        unconfirmed: {
+          type: "boolean",
+          description: "true only on the operator's explicit word: promote a finding the skeptic did not confirm (likely, doubtful or unknown).",
+        },
       },
       required: ["fingerprint", "effort"],
     },
     execute: async (_id, params) => {
-      const r = await triage.promote({ fingerprint: params?.fingerprint, effort: params?.effort, title: params?.title, note: params?.note });
+      const r = await triage.promote({
+        fingerprint: params?.fingerprint,
+        effort: params?.effort,
+        title: params?.title,
+        note: params?.note,
+        unconfirmed: params?.unconfirmed,
+      });
       if (!r.ok) return refused("Promote", r);
       const fp = r.finding.fingerprint.slice(0, 12);
       const where = r.sink === "markdown" ? `the markdown file ${r.ref} in the state home` : r.ref;

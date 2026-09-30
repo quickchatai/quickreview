@@ -136,7 +136,7 @@ function ports(cases: FakeRunner, scan: Partial<ScanConfig> = {}, source = fakeS
     cases,
     source,
     savedCut: () => ({ ok: true, cut: CUT }),
-    settings: () => ({ ok: true, settings: { scan: { ...SCAN_DEFAULTS, exclude: ["gen/"], ...scan }, validateTier: "sol-high" } }),
+    settings: () => ({ ok: true, settings: { scan: { ...SCAN_DEFAULTS, validator: false, exclude: ["gen/"], ...scan } } }),
     buildAgents: () => ({ ok: true }),
   };
 }
@@ -459,14 +459,14 @@ describe("findings, fingerprinted", () => {
   });
 });
 
-describe("the validator — off by default, a doubt kept and marked", () => {
+describe("the validator — the skeptic; a profile may switch it off", () => {
   it("off: only pass-scan runs", async () => {
     const r = runner();
     await runToEnd(new ScanRunner(ports(r)));
     expect(new Set(r.specs.map((x) => x.agent))).toEqual(new Set(["pass-scan--sol-med"]));
   });
 
-  it("on: survivors are validated, a DOUBTED finding is kept as 'may not be valid', a kill is gone", async () => {
+  it("on: it runs at the LENS's tier; a DOUBTED finding is kept as 'may not be valid', and so is a KILLED one", async () => {
     const answer = (spec: CaseSpec): string => {
       if (spec.agent.startsWith("pass-validate")) {
         const f = spec.files[0]!;
@@ -478,13 +478,15 @@ describe("the validator — off by default, a doubt kept and marked", () => {
     };
     const r = runner({ answer });
     await runToEnd(new ScanRunner(ports(r, { validator: true })));
-    expect(r.specs.filter((x) => x.agent === "pass-validate--sol-high")).toHaveLength(3);
+    // Never raised: pass-scan runs at sol-med, so its skeptic does too.
+    expect(r.specs.filter((x) => x.agent === "pass-validate--sol-med")).toHaveLength(3);
+    expect(r.specs.some((x) => x.agent === "pass-validate--sol-high")).toBe(false);
     const { findings } = new FindingsStore(stateHomeFs(stateDir)).list();
     const byUnit = new Map(findings.map((f) => [f.unit, f]));
-    expect(byUnit.get("app")).toMatchObject({ validated: true, doubt: { word: "refuted", reason: "the guard on line 1 covers it" } });
-    expect(byUnit.get("lib")).toMatchObject({ validated: true, doubt: null });
-    expect(byUnit.has("web")).toBe(false);
-    expect(new FindingsStore(stateHomeFs(stateDir)).list({ doubted: true }).findings.map((f) => f.unit)).toEqual(["app"]);
+    expect(byUnit.get("app")).toMatchObject({ validated: true, validity: "doubtful", doubt: { word: "refuted", reason: "the guard on line 1 covers it" } });
+    expect(byUnit.get("lib")).toMatchObject({ validated: true, validity: "likely", doubt: null });
+    expect(byUnit.get("web")).toMatchObject({ validated: true, validity: "doubtful", doubt: { word: "below-bar" } });
+    expect(new FindingsStore(stateHomeFs(stateDir)).list({ doubted: true }).findings.map((f) => f.unit).sort()).toEqual(["app", "web"]);
   });
 });
 

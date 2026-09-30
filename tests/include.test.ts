@@ -1802,6 +1802,8 @@ describe.skipIf(!HAS_QC_PACK)(
         // (`mode: "scan"`), so a PR build's bytes are unchanged by either
         // (tests/scan-precision.test.ts proves it byte for byte).
         "scan-precision",
+        // Owner ruling 2026-09-30: the scan validator is the skeptic — scan mode only.
+        "scan-skeptic-validate",
         "scan-mode-anchor",
       ]);
       // The quickchat pack composes AFTER every generic entry, in filename

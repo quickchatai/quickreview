@@ -35,6 +35,25 @@ export const FINDINGS_VERSION = 1;
 export const SCAN_STOP_FILE = "scan/stop.json";
 export const SCAN_STOP_RESULT_FILE = "scan/stop-result.json";
 
+// ---- validity tiers (owner ruling 2026-09-30: the scan validator is the skeptic) -----
+
+/** The skeptic's tier for a stored scan finding: `confirmed` (it traced a
+ * concrete scenario), `likely` (a real mechanism, reachability not fully
+ * traced), `doubtful` (refuted, class-matched, or anything it would have
+ * killed — kept, never dropped). */
+export type Validity = "confirmed" | "likely" | "doubtful";
+export const VALIDITIES: readonly Validity[] = ["confirmed", "likely", "doubtful"];
+/** A tier, or `unknown`: no skeptic judged it (the validator was off or
+ * failed) or it was stored before tiers existed — never guessed. */
+export type ValidityView = Validity | "unknown";
+/** Display order: confirmed first, unknown last. */
+export const VALIDITY_ORDER: readonly ValidityView[] = [...VALIDITIES, "unknown"];
+
+/** A finding's tier as stored — `unknown` when it carries none. */
+export function validityOf(f: { validity?: Validity | null }): ValidityView {
+  return f.validity !== undefined && f.validity !== null && (VALIDITIES as readonly string[]).includes(f.validity) ? f.validity : "unknown";
+}
+
 const clean = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 // ---- the two records ---------------------------------------------------------------

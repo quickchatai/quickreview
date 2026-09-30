@@ -197,6 +197,8 @@ export function scanFinding(over: Partial<ScanFinding> & { fingerprint: string }
     state: "new",
     validated: true,
     doubt: null,
+    validity: "confirmed",
+    scenario: "two refunds posted together both read the old total",
     first_seen: seen,
     last_seen: seen,
     seen: 1,
@@ -218,6 +220,7 @@ export const SCAN_FINDINGS: ScanFinding[] = [
     severity: "P3",
     claim: "the retry belongs in the task wrapper",
     doubt: { word: "unverifiable", reason: "the wrapper is not in the tree" },
+    validity: "doubtful",
   }),
   ...[3, 4, 5].map((n) =>
     scanFinding({

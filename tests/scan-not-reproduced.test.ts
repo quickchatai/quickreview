@@ -44,6 +44,8 @@ function reported(over: Partial<ReportedFinding> = {}): ReportedFinding {
     detail: null,
     validated: true,
     doubt: null,
+    validity: "confirmed",
+    scenario: "a command file written by a session reaches the authorizer",
     ...over,
   };
 }

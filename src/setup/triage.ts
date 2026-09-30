@@ -36,6 +36,7 @@ import { formatEventTags } from "../memory/eventtags.js";
 import type { MemoryStore } from "../memory/store.js";
 import type { Refusal, StateFs, TrackerSink, TrackerTicket } from "./engine.js";
 import type { FindingsStore, ScanFinding } from "./findings.js";
+import { validityOf } from "./scanreport.js";
 
 export const SCAN_TAG = "scan";
 export const SCAN_MEMORY_FILE = "scan/memory.json";
@@ -88,6 +89,14 @@ export function hotspotMemoryText(h: { unit: string; text: string }, sha: string
 
 // ---- the ticket ------------------------------------------------------------------
 
+/** The skeptic's tier as a ticket states it — `unknown` never guessed. */
+function validityLine(f: ScanFinding): string {
+  const v = validityOf(f);
+  if (v === "unknown") return "unknown — no skeptic judged it";
+  if (v === "doubtful") return `doubtful${f.doubt?.class ? ` (${f.doubt.class})` : ""}`;
+  return `${v}${f.scenario ? ` — ${oneLine(f.scenario)}` : ""}`;
+}
+
 /** The ticket a promoted finding becomes. The body is rendered from the
  * stored finding; the companion adds at most a title and a note. */
 export function findingTicket(f: ScanFinding, effort: string, extra: { title?: string; note?: string } = {}): TrackerTicket {
@@ -102,6 +111,7 @@ export function findingTicket(f: ScanFinding, effort: string, extra: { title?: s
     `- **Severity:** ${f.severity}${f.confidence !== null ? ` (confidence ${f.confidence})` : ""}`,
     `- **Kind:** ${f.kind}`,
     `- **Validated:** ${f.doubt ? `MAY NOT BE VALID — ${f.doubt.word}: ${oneLine(f.doubt.reason)}` : f.validated ? "yes" : "no validator looked at it"}`,
+    `- **Validity:** ${validityLine(f)}`,
     "",
     `**Claim.** ${oneLine(f.claim)}`,
     ...(f.evidence ? ["", `**Evidence.** ${f.evidence.trim()}`] : []),
@@ -265,15 +275,28 @@ export class ScanTriage {
    * Promote a finding: file its ticket in `effort` (the companion's pick),
    * unless it has one already — then it is promoted onto that ticket and
    * nothing is filed. Refused for a fixed finding; a dismissed one may be
-   * promoted (the operator changed their mind).
+   * promoted (the operator changed their mind). Promotion DEFAULTS TO
+   * CONFIRMED findings (owner ruling 2026-09-30: the scan validator is the
+   * skeptic): a likely, doubtful or unjudged one is refused unless
+   * `unconfirmed: true` says the operator asked for it explicitly.
    */
-  async promote(args: { fingerprint?: unknown; effort?: unknown; title?: unknown; note?: unknown }): Promise<PromoteResult> {
+  async promote(args: { fingerprint?: unknown; effort?: unknown; title?: unknown; note?: unknown; unconfirmed?: unknown }): Promise<PromoteResult> {
     if (typeof args.fingerprint !== "string") return { ok: false, errors: ["`fingerprint` is required"] };
     const found = this.ports.findings.find(args.fingerprint);
     if (!found.ok) return found;
     const f = found.finding;
     if (f.state === "fixed") {
       return { ok: false, errors: [`${f.fingerprint.slice(0, 12)} is fixed (at ${f.fixed?.sha.slice(0, 12) ?? "?"}) — nothing to file`] };
+    }
+    const validity = validityOf(f);
+    if (validity !== "confirmed" && args.unconfirmed !== true) {
+      return {
+        ok: false,
+        errors: [
+          `${f.fingerprint.slice(0, 12)} is ${validity === "unknown" ? "not judged by the skeptic (validity unknown)" : validity}, not confirmed — ` +
+            "promotion defaults to confirmed findings; promote it only on the operator's explicit word, with `unconfirmed: true`",
+        ],
+      };
     }
     const at = this.ports.clock().toISOString();
     if (f.ticket) {

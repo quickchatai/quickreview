@@ -1,7 +1,10 @@
 // The SCAN AGENT BUILD and the settings a scan runs with.
 //
 // A scan's leaves are the production lenses — `pass-scan` for stage 1, the
-// validator when `[scan] validator` is on, and stage 2's deep lenses (:
+// validator when `[scan] validator` is on (the default — Owner ruling 2026-09-30:
+// the scan validator is the SKEPTIC, composed with the `mode: "scan"`
+// `scan-skeptic-validate` addendum and run at the tier of the lens it
+// judges, so every tier's variant is built), and stage 2's deep lenses (:
 // every suggestible lens the profile leaves on, at the tier its row names) —
 // built by the ONE agent build (`src/include.ts buildAgents`) in
 // `"scan"` mode:
@@ -27,8 +30,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseConfig, withThinking, type Config } from "../config.js";
 import { locateConfig } from "../install.js";
-import { PASS_ADDENDA, buildAgents, configAddenda, identityVars, VALIDATE_PASS, type BuiltAgent } from "../include.js";
-import { flooredTier, lensModelOverrides, lensTuningAddenda, applyProfileTuning } from "../lenstuning.js";
+import { PASS_ADDENDA, buildAgents, configAddenda, identityVars, type BuiltAgent } from "../include.js";
+import { lensModelOverrides, lensTuningAddenda, applyProfileTuning } from "../lenstuning.js";
+import { PASS_TIER_ORDER } from "../types.js";
 import {
   applyProfileScan,
   loadProfileAddenda,
@@ -84,7 +88,6 @@ export function loadScanConfig(root: string, env: NodeJS.ProcessEnv = process.en
 export function scanSettings(cfg: Config): ScanSettings {
   return {
     scan: cfg.scan,
-    validateTier: flooredTier(cfg.lenses, VALIDATE_PASS, cfg.models.validate_tier),
     // Stage 2: which deep lenses run, at which tiers and effort —
     // the same per-lens tuning the build composes.
     lenses: cfg.lenses,
@@ -109,7 +112,10 @@ export function buildScanAgents(root: string, outDir: string, cfg: Config, looku
     extraSrcDirs: [join(root, SCAN_AGENTS_SRC)],
     tiers: cfg.models.tiers,
     riskPasses: cfg.models.risk_passes,
-    validateTier: cfg.models.validate_tier,
+    // The skeptic runs at the tier of the lens it judges — stage 1's
+    // `[scan] tier`, a stage-2 row's own — so every tier keeps a variant
+    // (never `validate_tier`, never floored upward).
+    validateTier: PASS_TIER_ORDER[0],
     vars: identityVars(cfg),
     ecosystem: loadProfileEcosystem(root, cfg.review.profile, lookup),
     models: { ...lensModelOverrides(cfg.models, cfg.lenses), ...scanPassModels(cfg) },

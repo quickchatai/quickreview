@@ -90,6 +90,8 @@ function reported(fp: string, over: Partial<ReportedFinding> = {}): ReportedFind
     detail: null,
     validated: true,
     doubt: null,
+    validity: "confirmed",
+    scenario: "a save with a duplicate key reaches the swallowed IntegrityError",
     ...over,
   };
 }
@@ -508,7 +510,7 @@ describe("end to end: a re-scan fixes a promoted finding and its ticket closes w
         list: (sha) => (TREES[sha] ? listOf(sha) : null),
       },
       savedCut: () => ({ ok: true, cut: { units: ["app", "lib"].map((u) => ({ name: u, roots: [u], kind: "directory", note: "" })), ignored: [] } }),
-      settings: () => ({ ok: true, settings: { scan: SCAN_DEFAULTS, validateTier: "sol-high" } }),
+      settings: () => ({ ok: true, settings: { scan: { ...SCAN_DEFAULTS, validator: false } } }),
       buildAgents: () => ({ ok: true }),
       closeFixedTickets: async () => (triage ? triage.closeFixed() : { closed: [], problems: [] }),
     });
@@ -529,7 +531,8 @@ describe("end to end: a re-scan fixes a promoted finding and its ticket closes w
     };
     await runAt(SHA_A);
     const appFinding = findings.load().findings.find((f) => f.path === "app/a.py")!;
-    const promoted = await triage.promote({ fingerprint: appFinding.fingerprint, effort: "whatever" });
+    // Validator off in this run: the finding is unjudged, promoted explicitly.
+    const promoted = await triage.promote({ fingerprint: appFinding.fingerprint, effort: "whatever", unconfirmed: true });
     expect(promoted).toMatchObject({ ok: true, sink: "markdown" });
     const ref = (promoted as { ref: string }).ref;
     expect(readFileSync(join(dir, "state", ref), "utf8")).toMatch(/^Status: open$/m);

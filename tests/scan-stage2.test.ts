@@ -126,8 +126,7 @@ function ports(
     settings: () => ({
       ok: true,
       settings: {
-        scan: { ...SCAN_DEFAULTS, exclude: ["gen/"], ...opts.scan },
-        validateTier: "sol-high",
+        scan: { ...SCAN_DEFAULTS, validator: false, exclude: ["gen/"], ...opts.scan },
         lenses: opts.lenses,
         riskPasses: opts.riskPasses ?? ["pass-data-safety"],
       },

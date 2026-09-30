@@ -136,7 +136,7 @@ function ports(cases: FakeRunner, trees: Record<string, Record<string, string>> 
     cases,
     source: fakeSource(trees),
     savedCut: () => ({ ok: true, cut: CUT }),
-    settings: () => ({ ok: true, settings: { scan: { ...SCAN_DEFAULTS, ...scan }, validateTier: "sol-high" } }),
+    settings: () => ({ ok: true, settings: { scan: { ...SCAN_DEFAULTS, validator: false, ...scan } } }),
     buildAgents: () => ({ ok: true }),
   };
 }

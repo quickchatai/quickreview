@@ -67,7 +67,7 @@ keys: 1…8 the eight surfaces — board · memory · digest · tickets · deplo
       6 metrics: w/m/a window, # <pr> ⏎ for a PR timeline ·
       7 feedback: t focus · a archived · A/x accept/reject a proposal ·
       R then y reverts a feedback-derived commit (local, never pushed) ·
-      8 scan: [ ] unit · p promote · d dismiss · f/F filter · P plan (space
+      8 scan: [ ] unit · p promote · d dismiss · f/F filter · t tier · P plan (space
       toggles a row, ⏎ approves, Esc back) · x stop · D delta re-scan ·
       companion column on every tab: type any unclaimed key (or /) to talk to
       it — every byte reaches pi · wheel over the column, or PgUp/PgDn while

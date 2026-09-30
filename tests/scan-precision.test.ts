@@ -78,7 +78,8 @@ describe("the scan precision addendum is a scan-mode registry entry", () => {
   it("leaves the scan-mode anchor rule the last word in the registry", () => {
     expect(PASS_ADDENDA.at(-1)?.id).toBe("scan-mode-anchor");
     const ids = PASS_ADDENDA.map((a) => a.id);
-    expect(ids.indexOf("scan-precision")).toBe(ids.length - 2);
+    expect(ids.indexOf("scan-precision")).toBe(ids.length - 3);
+    expect(ids.indexOf("scan-skeptic-validate")).toBe(ids.length - 2);
   });
 });
 

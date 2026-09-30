@@ -60,7 +60,8 @@ const SHA = "a".repeat(40);
 const FP = (c: string): string => c.repeat(64);
 const finding = (fp: string, path = "app/a.py"): ReportedFinding => ({
   fingerprint: fp, unit: "app", path, blob: "b", start: 1, end: 2, lens: "pass-scan", kind: "bug", severity: "P2",
-  confidence: null, claim: "it breaks when the list is empty", evidence: null, fix: null, detail: null, validated: false, doubt: null,
+  confidence: null, claim: "it breaks when the list is empty", evidence: null, fix: null, detail: null, validated: true, doubt: null,
+  validity: "confirmed", scenario: "an empty list from the API reaches it",
 });
 
 function belt() {
@@ -76,7 +77,7 @@ function belt() {
     state, clock: () => new Date(), cases: { run: async () => ({ ok: false, reason: "unused" }) },
     source: { location: "/r", resolve: () => null, open: () => ({ ok: false, reason: "unused" }), list: () => null },
     savedCut: () => ({ ok: false, errors: ["unused"] }),
-    settings: () => ({ ok: true, settings: { scan: SCAN_DEFAULTS, validateTier: "sol-high" } }),
+    settings: () => ({ ok: true, settings: { scan: { ...SCAN_DEFAULTS, validator: false } } }),
     buildAgents: () => ({ ok: true }),
   });
   const defs = [...scanToolDefinitions(scan, findings, () => null, () => triage.closeFixed()), ...triageToolDefinitions(triage)];

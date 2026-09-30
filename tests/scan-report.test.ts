@@ -71,7 +71,7 @@ function ports(cases: ScanPorts["cases"]): ScanPorts {
       list: () => Object.entries(TREE).map(([path, t2]) => ({ path, blob: blob(t2) })),
     },
     savedCut: () => ({ ok: true, cut: CUT }),
-    settings: () => ({ ok: true, settings: { scan: { ...SCAN_DEFAULTS }, validateTier: "sol-high" } }),
+    settings: () => ({ ok: true, settings: { scan: { ...SCAN_DEFAULTS, validator: false } } }),
     buildAgents: () => ({ ok: true }),
   };
 }

@@ -65,7 +65,7 @@ import type { LensTuningMap } from "../lenstuning.js";
 import { PASS_TIER_ORDER, type PassTier } from "../types.js";
 import type { ScanConfig } from "../config.js";
 import type { CaseOutcome, CaseRunner, Refusal, StateFs } from "./engine.js";
-import { FindingsStore, type ReconcileResult, type ReportedFinding } from "./findings.js";
+import { FindingsStore, type FindingDoubt, type ReconcileResult, type ReportedFinding, type Validity } from "./findings.js";
 import { casesFor, coveredBy, lastScanned, Ledger, measuredRate, newestRead, partialRanges, rateWhere, readings, type LedgerEntry, type RateKey } from "./ledger.js";
 import {
   anchoredLines,
@@ -140,10 +140,10 @@ export interface ScanSource {
 }
 
 /** The resolved settings a scan runs with: `config.toml [scan]` under the
- * profile's `[scan]` (the profile wins), and the validator's tier. */
+ * profile's `[scan]` (the profile wins). The validator — the skeptic — has
+ * no tier of its own: it runs at the tier of the lens it judges. */
 export interface ScanSettings {
   scan: ScanConfig;
-  validateTier: PassTier;
   /** The profile's per-lens tuning — which deep lenses stage 2 may run, at
    * which tiers and effort. */
   lenses?: LensTuningMap;
@@ -195,6 +195,10 @@ export interface ScanCaseState {
   findings: number;
   /** Findings the validator doubted — kept, marked "may not be valid". */
   doubted: number;
+  /** Findings the skeptic confirmed / found likely (absent on records
+   * written before the tiers). */
+  confirmed?: number;
+  likely?: number;
   /** Answer items that could not be read or anchored. */
   dropped: number;
   suggestions: ScanSuggestion[];
@@ -304,7 +308,22 @@ export type Stage2Proposal = StoredStage2Proposal;
 
 const EPS = 1e-9;
 const clean = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+/** The validator's variant at the tier of the lens it judges — never raised
+ * (owner ruling 2026-09-30: the scan validator is the skeptic, same tier). */
 const validatorAgent = (tier: PassTier): string => `pass-validate--${tier}`;
+
+/** Why a candidate the skeptic's answer never mentioned is doubtful. */
+export const UNMENTIONED_REASON = "the skeptic listed it neither as a survivor nor under DOUBTED — kept, not upheld";
+
+/** A finding on its way to the store, with the skeptic's judgement. */
+interface KeptFinding {
+  cand: ScanCandidate;
+  code: string;
+  quoted: boolean;
+  validity: Validity | null;
+  scenario: string | null;
+  doubt: FindingDoubt | null;
+}
 
 /** One case of a run, whatever the stage: what it reads, with which lens at
  * which tier and effort, what it is told, and where its findings are filed. */
@@ -506,7 +525,7 @@ export class ScanRunner {
       tier: cfg.tier,
       effort: cfg.effort,
       validator: cfg.validator,
-      validate_tier: cfg.validator ? settings.validateTier : null,
+      validate_tier: cfg.validator ? cfg.tier : null,
     };
     const preview: ScanPreview = {
       key: planKey({
@@ -795,7 +814,6 @@ export class ScanRunner {
       budgetUsd,
     });
     if (!plan.ok) return { ok: false, errors: plan.errors };
-    const validateTier = cfg.validator ? settings.validateTier : null;
     const runnable = plan.rows.filter((r) => r.status === "run");
     const key = stage2Key({
       sha,
@@ -808,7 +826,6 @@ export class ScanRunner {
         ...(r.ranges ? [r.ranges.map((x) => `${x.start}-${x.end}`)] : []),
       ]),
       validator: cfg.validator,
-      validate_tier: validateTier,
       cap: Math.round(plan.total_usd * 1e6),
     });
     const proposal: StoredStage2Proposal = {
@@ -952,7 +969,7 @@ export class ScanRunner {
         plan_key: key,
         cap_usd: cap,
         estimate_usd: cap,
-        settings: { tier: top, effort: "per row", validator: cfg.validator, validate_tier: cfg.validator ? p.settings.validateTier : null },
+        settings: { tier: top, effort: "per row", validator: cfg.validator, validate_tier: cfg.validator ? top : null },
       },
       jobs,
       p.tree,
@@ -1208,17 +1225,22 @@ export class ScanRunner {
       anchored.push({ cand, code: normalizeCode(lines), quoted: evidenceQuotesAnchor(cand.evidence, lines) });
     }
 
-    // The validator, when this scan runs one: survivors are validated, a
-    // doubt is kept and marked, anything else it kills is gone.
+    // The validator, when this scan runs one, is the SKEPTIC (owner ruling
+    // 2026-09-30): at the tier of the lens it judges, it sorts every
+    // candidate into a validity tier — and kills none. A survivor is
+    // `confirmed` (a traced scenario) or `likely`; a DOUBTED line, a KILLED
+    // line and a candidate its answer never mentions are all kept `doubtful`,
+    // so no kill path of the frozen validator can make a finding vanish. A
+    // validator that failed judges nothing: its findings are kept with no
+    // tier (unknown), never a guessed one.
     let validated = false;
-    const doubts = new Map<ScanCandidate, { word: string; reason: string }>();
-    let kept = anchored;
+    let kept: KeptFinding[] = anchored.map((a) => ({ ...a, validity: null, scenario: null, doubt: null }));
     if (settings.scan.validator && anchored.length > 0) {
       const v = await this.runOne(
         {
           id: `${ctx.caseId}/validate`,
           unit: plan.unit,
-          agent: validatorAgent(settings.validateTier),
+          agent: validatorAgent(job.tier),
           files: c.files,
           prompt: scanValidatorPrompt(plan, anchored.map((a) => a.cand), ctx, job.lens, job.label),
         },
@@ -1233,7 +1255,9 @@ export class ScanRunner {
         run.problems.push(`case ${plan.id}: the validator failed (${why}) — its findings are kept unvalidated`);
       } else {
         validated = true;
-        const survivors: typeof anchored = [];
+        const judged: KeptFinding[] = [];
+        // Candidates a survivor stands for: the same file, overlapping lines.
+        const upheld = new Set<ScanCandidate>();
         for (const s of read.survivors) {
           if (outside(s)) {
             dropped++;
@@ -1241,24 +1265,41 @@ export class ScanRunner {
           }
           const text = inTree.has(s.path) ? tree.read(s.path) : null;
           const lines = text === null ? null : anchoredLines(text, s.start, s.end);
-          if (lines === null) dropped++;
-          else survivors.push({ cand: s, code: normalizeCode(lines), quoted: evidenceQuotesAnchor(s.evidence, lines) });
-        }
-        for (const d of read.doubted) {
-          const hit = anchored.find(
-            (a) => a.cand.path === d.path && (d.line === null || (d.line >= a.cand.start && d.line <= a.cand.end)) && !doubts.has(a.cand),
-          );
-          if (hit) {
-            doubts.set(hit.cand, { word: d.word, reason: d.reason });
-            survivors.push(hit);
+          if (lines === null) {
+            dropped++;
+            continue;
           }
+          for (const a of anchored) if (a.cand.path === s.path && a.cand.start <= s.end && s.start <= a.cand.end) upheld.add(a.cand);
+          judged.push({
+            cand: s,
+            code: normalizeCode(lines),
+            quoted: evidenceQuotesAnchor(s.evidence, lines),
+            validity: s.validity,
+            scenario: s.scenario,
+            doubt: null,
+          });
         }
-        kept = survivors;
+        // A doubt — or, in a scan, a kill — marks the candidate it names.
+        const doubted = new Set<ScanCandidate>();
+        for (const d of [...read.doubted, ...read.killed]) {
+          const hit = anchored.find(
+            (a) => a.cand.path === d.path && (d.line === null || (d.line >= a.cand.start && d.line <= a.cand.end)) && !doubted.has(a.cand),
+          );
+          if (!hit) continue;
+          doubted.add(hit.cand);
+          judged.push({ ...hit, validity: "doubtful", scenario: null, doubt: { word: d.word, reason: d.reason, class: d.class } });
+        }
+        // Never mentioned — neither upheld nor doubted: kept, doubtful.
+        for (const a of anchored) {
+          if (upheld.has(a.cand) || doubted.has(a.cand)) continue;
+          judged.push({ ...a, validity: "doubtful", scenario: null, doubt: { word: "not-upheld", reason: UNMENTIONED_REASON, class: null } });
+        }
+        kept = judged;
       }
     }
 
     const blobOf = new Map(tree.files.map((f) => [f.path, f.blob]));
-    const all: ReportedFinding[] = kept.map(({ cand, code, quoted }) => ({
+    const all: ReportedFinding[] = kept.map(({ cand, code, quoted, validity, scenario, doubt }) => ({
       fingerprint: findingFingerprint({ path: cand.path, lens: job.lens, kind: cand.kind, code }),
       unit: job.unitOf(cand.path),
       path: cand.path,
@@ -1277,7 +1318,9 @@ export class ScanRunner {
       fix: cand.fix,
       detail: cand.detail,
       validated,
-      doubt: doubts.get(cand) ?? null,
+      doubt,
+      validity,
+      scenario,
     }));
     // One finding per fingerprint: the validator may list a candidate as a
     // survivor AND doubt it — the doubt wins, and it is counted once.
@@ -1296,6 +1339,8 @@ export class ScanRunner {
     }
     c.findings = reported.length;
     c.doubted = reported.filter((r) => r.doubt !== null).length;
+    c.confirmed = reported.filter((r) => r.validity === "confirmed").length;
+    c.likely = reported.filter((r) => r.validity === "likely").length;
 
     if (job.suggestions) {
       const suggestions = answer.suggestions

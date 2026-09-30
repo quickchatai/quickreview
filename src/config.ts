@@ -1361,9 +1361,13 @@ export interface ScanConfig {
   effort: Exclude<ReviewEffort, "">;
   /** Stage 1's tier — whose model `pass-scan` runs on, at `effort`. */
   tier: PassTier;
-  /** Run `pass-validate` over each stage-1 case's candidates. Off by
-   * default for scans (the spec's cost choice); a doubt it raises is kept
-   * and marked "may not be valid", never dropped. */
+  /** Run the scan's SKEPTIC — `pass-validate` in scan mode — over each
+   * case's candidates, at the tier of the lens that raised them. ON by
+   * default (owner ruling 2026-09-30: the scan validator is the skeptic, on by
+   * default — amending the spec's original cost choice of off); a profile
+   * may switch it off. It sorts every finding into a validity tier —
+   * confirmed / likely / doubtful — and kills none: a refuted finding is
+   * kept, marked doubtful. Its cost is part of every case's measured price. */
   validator: boolean;
   /** Repo-relative globs never scanned (src/glob.ts), on top of tests,
    * migrations and what no pass reads (lockfiles, binaries, prose). */
@@ -1389,7 +1393,7 @@ export interface ScanConfig {
 export const SCAN_DEFAULTS: ScanConfig = {
   effort: "low",
   tier: "sol-med",
-  validator: false,
+  validator: true,
   exclude: [],
   calibration_units: 3,
   calibration_max_usd: 3,

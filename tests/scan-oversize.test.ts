@@ -128,7 +128,7 @@ function ports(cases: FakeRunner, source: ScanSource, scan: Partial<ScanConfig> 
     savedCut: () => ({ ok: true, cut: CUT }),
     settings: () => ({
       ok: true,
-      settings: { scan: { ...SCAN_DEFAULTS, ...scan }, validateTier: "sol-high", riskPasses: ["pass-data-safety"] },
+      settings: { scan: { ...SCAN_DEFAULTS, validator: false, ...scan }, riskPasses: ["pass-data-safety"] },
     }),
     buildAgents: () => ({ ok: true }),
   };

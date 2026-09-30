@@ -14,7 +14,9 @@ import { App } from "../src/tui/app.js";
 import { stripAnsi } from "../src/tui/paint.js";
 import {
   filterLabel,
+  itemValidity,
   matchesFilter,
+  nextTier,
   parseScanFilter,
   reportItems,
   styleRule,
@@ -51,13 +53,13 @@ async function driving<T>(app: App, fn: () => T | Promise<T>): Promise<T> {
 const barLabels = (app: App): string[] => app.liveKeys().bar.map((b) => b.label);
 
 describe("the report", () => {
-  it("shows the run on top — sha, stage, state, cases done, spend against the hard stop, finding and doubted counts", () => {
+  it("shows the run on top — sha, stage, state, cases done, spend against the hard stop, finding counts per validity tier", () => {
     const { screen } = rig();
     const text = screen();
     expect(text).toMatch(/── scan/);
     expect(text).toMatch(/SCAN @27a8a94 {2}stage 1 ▶ running {2}1\/3 cases \(33%\)/);
     expect(text).toContain("spend $41.20 / $55.00 hard stop");
-    expect(text).toContain("7 findings · 1 doubted");
+    expect(text).toContain("7 findings · 6 confirmed · 0 likely · 1 doubtful");
   });
 
   it("groups by unit — all first, worst unit first, the hotspot marked, the run's mark per unit", () => {
@@ -71,12 +73,12 @@ describe("the report", () => {
     expect(text).toMatch(/· widget\s+0/);
   });
 
-  it("lists findings most severe first, style grouped PER RULE with a count, a doubted one marked ?", () => {
+  it("lists findings by validity tier (confirmed first), most severe first inside it, style grouped PER RULE with a count, a doubted one marked ?", () => {
     const items = reportItems(SCAN_FINDINGS.filter((f) => f.unit === "billing"));
     expect(items.map((i) => (i.t === "finding" ? i.finding.fingerprint.slice(0, 2) : `style:${i.rule}×${i.findings.length}`))).toEqual([
       "f1",
-      "f2",
       "style:rule 4.2×3",
+      "f2",
     ]);
     const { screen } = rig();
     const text = screen();
@@ -88,13 +90,12 @@ describe("the report", () => {
   it("the detail pane says what a finding claims, its state and the validator's doubt", async () => {
     const { app, type, screen } = rig();
     await driving(app, () => {
-      type("j"); // f6 — the P2 in auth
-      type("j"); // f7 — the dismissed P3 (auth/ sorts first)
-      type("j"); // f2 — the doubted placement finding
+      // Confirmed first: f1, f6, f7, the style group, f8 — then the doubtful f2.
+      for (let i = 0; i < 5; i++) type("j");
       const text = screen();
       expect(text).toContain("P3 placement · billing/tasks.py:31");
       expect(text).toContain("the retry belongs in the task wrapper");
-      expect(text).toContain("? may not be valid — unverifiable: the wrapper is not in the tree");
+      expect(text).toContain("? doubtful — unverifiable: the wrapper is not in the tree");
     });
   });
 
@@ -105,7 +106,7 @@ describe("the report", () => {
     });
     const { screen } = rig({ findings: [f] });
     const text = screen();
-    expect(text).toContain("1 findings · 0 doubted · 1 not reproduced");
+    expect(text).toContain("1 findings · 1 confirmed · 0 likely · 0 doubtful · 1 not reproduced");
     expect(text).toMatch(/billing\/models\.py:88 {2}↺/);
     expect(text).toContain("↺ not reproduced: 2 re-read(s) of the unchanged code");
     expect(text).toContain("scan-9 at 9999999");
@@ -203,8 +204,7 @@ describe("triage verbs", () => {
   it("p asks the companion to promote — the style group as one ask naming every member", async () => {
     const { app, s, type } = rig();
     await driving(app, () => {
-      type("]"); // billing: f1, f2, the style group
-      type("j");
+      type("]"); // billing: f1, the style group (confirmed), then f2 (doubtful)
       type("j");
       type("p");
       expect(s.asks).toHaveLength(1);
@@ -411,5 +411,94 @@ describe("a finding's detail paragraph reaches the detail pane (selfscan fc1128a
     });
     const { screen } = rig({ findings: [f] });
     expect(screen()).toContain("detail: two workers read the balance");
+  });
+});
+
+describe("validity tiers (owner ruling 2026-09-30: the scan validator is the skeptic)", () => {
+  const tiered = [
+    scanFinding({ fingerprint: "t1".padEnd(64, "0"), severity: "P3", path: "billing/a.py", validity: "confirmed", scenario: "the nightly job passes an empty batch" }),
+    scanFinding({ fingerprint: "t2".padEnd(64, "0"), severity: "P0", path: "billing/b.py", validity: "likely", scenario: "mechanism real; no caller traced" }),
+    scanFinding({
+      fingerprint: "t3".padEnd(64, "0"),
+      severity: "P0",
+      path: "billing/c.py",
+      validity: "doubtful",
+      doubt: { word: "refuted", reason: "the gate refuses it at gate.ts:40", class: "guarded-elsewhere" },
+    }),
+    scanFinding({ fingerprint: "t4".padEnd(64, "0"), severity: "P1", path: "billing/d.py", validity: null, validated: false, scenario: null }),
+  ];
+
+  it("groups the list by tier — confirmed first, whatever the severity — each tier under its own heading", () => {
+    const items = reportItems(tiered);
+    expect(items.map((i) => itemValidity(i))).toEqual(["confirmed", "likely", "doubtful", "unknown"]);
+    const { screen } = rig({ findings: tiered });
+    const text = screen();
+    const order = ["CONFIRMED — the skeptic traced", "billing/a.py", "LIKELY —", "billing/b.py", "DOUBTFUL —", "billing/c.py", "UNKNOWN — no skeptic judged", "billing/d.py"];
+    const at = order.map((o) => text.indexOf(o));
+    expect(at.every((x) => x >= 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    expect(text).toContain("4 findings · 1 confirmed · 1 likely · 1 doubtful · 1 unknown");
+    expect(text).toContain("✔ confirmed — the nightly job passes an empty batch");
+  });
+
+  it("a doubtful finding's detail carries the skeptic's word, class and reason; an unjudged one says unknown", async () => {
+    const { app, type, screen } = rig({ findings: tiered });
+    await driving(app, () => {
+      type("j");
+      type("j");
+      expect(screen()).toContain("? doubtful — refuted [guarded-elsewhere]: the gate refuses it at gate.ts:40");
+      type("j");
+      expect(screen()).toContain("not validated — no validator read it (validity unknown)");
+    });
+  });
+
+  it("the tier filter: `tier=`/bare words in the f box, and t steps all → confirmed → likely → doubtful → unknown → all", async () => {
+    expect(parseScanFilter("tier=likely")).toEqual({ ok: true, filter: { validity: "likely" } });
+    expect(parseScanFilter("doubtful new")).toEqual({ ok: true, filter: { validity: "doubtful", state: "new" } });
+    expect(filterLabel({ validity: "unknown" })).toBe("tier=unknown");
+    expect(matchesFilter({ validity: "unknown" }, tiered[3]!)).toBe(true);
+    expect(matchesFilter({ validity: "unknown" }, tiered[0]!)).toBe(false);
+    expect([undefined, "confirmed", "likely", "doubtful", "unknown"].map((v) => nextTier(v as never))).toEqual([
+      "confirmed",
+      "likely",
+      "doubtful",
+      "unknown",
+      undefined,
+    ]);
+    const { app, type, screen } = rig({ findings: tiered });
+    await driving(app, () => {
+      expect(barLabels(app)).toContain("t tier");
+      type("t");
+      expect(screen()).toContain("FINDINGS (all units) (1) · tier=confirmed (F clears)");
+      type("t");
+      expect(screen()).toContain("· tier=likely (F clears)");
+      type("t");
+      type("t");
+      type("t");
+      expect(screen()).toContain("FINDINGS (all units) (4)");
+    });
+  });
+
+  it("p promotes a confirmed finding at once; an unconfirmed one only after an explicit yes, flagged for the companion", async () => {
+    const { app, s, type } = rig({ findings: tiered });
+    await driving(app, () => {
+      type("p"); // t1, confirmed
+      expect(s.asks).toHaveLength(1);
+      expect(s.asks[0]!.text).not.toContain("unconfirmed: true");
+      type("j"); // t2, likely
+      type("p");
+      expect(s.asks).toHaveLength(1);
+      expect(app.view.inputBox?.target).toMatch(/NOT confirmed by the skeptic \(likely\) — type yes/);
+      type("no");
+      type("\r");
+      expect(s.asks).toHaveLength(1);
+      expect(app.view.noticeLine).toMatch(/not asked — only confirmed findings promote without an explicit yes/);
+      type("p");
+      type("yes");
+      type("\r");
+      expect(s.asks).toHaveLength(2);
+      expect(s.asks[1]!.text).toContain("pass `unconfirmed: true` to `scan_promote`");
+      expect(s.asks[1]!.text).toContain(`- ${"t2".padEnd(12, "0")} P0`);
+    });
   });
 });

@@ -114,6 +114,7 @@ export const TAB_VOCABULARY: Readonly<Record<Tab, readonly BarButton[]>> = {
     { key: "p", label: "p promote" },
     { key: "d", label: "d dismiss" },
     { key: "f", label: "f filter" },
+    { key: "t", label: "t tier" },
     { key: "P", label: "P plan" },
     { key: "x", label: "x stop" },
     { key: "D", label: "D delta" },

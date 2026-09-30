@@ -186,7 +186,7 @@ function ports(cases: FakeRunner, rounds: number, scan: Partial<ScanConfig> = {}
     savedCut: () => ({ ok: true, cut: CUT }),
     settings: () => ({
       ok: true,
-      settings: { scan: { ...SCAN_DEFAULTS, case_max_files: 1, concurrency: 1, calibration_units: 3, ...scan }, validateTier: "sol-high" },
+      settings: { scan: { ...SCAN_DEFAULTS, validator: false, case_max_files: 1, concurrency: 1, calibration_units: 3, ...scan } },
     }),
     buildAgents: () => ({ ok: true }),
   };

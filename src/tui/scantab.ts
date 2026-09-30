@@ -3,11 +3,14 @@
 // board). What a scan found, where, and what the operator decided about it:
 //
 //   header   the run — sha, mode, state, cases done, spend against the hard
-//            stop, finding and doubted counts
+//            stop, finding counts per validity tier
 //   units    one row per unit (count under the filter, ▲ the hotspot, the
 //            run's progress mark), `all` first
-//   right    the selected unit's findings, most severe first — style findings
-//            grouped PER RULE with a count — over the selected one's detail;
+//   right    the selected unit's findings GROUPED BY VALIDITY TIER — confirmed
+//            first, then likely, doubtful and unknown (Owner ruling 2026-09-30:
+//            the scan validator is the skeptic) — most severe first inside
+//            each, style findings grouped PER RULE with a count — over the
+//            selected one's detail; `t` steps the tier filter;
 //            or, after `P`, the stage 2 PLAN: rows, their cost, the kept total
 //            that is the hard stop, ⏎ to approve, space to toggle a row
 //
@@ -50,6 +53,9 @@ import {
   type ScanRun,
   type ScanRunSummary,
   type ScanSeverity,
+  type ValidityView,
+  VALIDITY_ORDER,
+  validityOf,
 } from "../setup/scanreport.js";
 import {
   clickStartStage2,
@@ -73,10 +79,13 @@ export interface ScanFilter {
   severity?: ScanSeverity;
   /** true: only "may not be valid"; false: only the rest. */
   doubted?: boolean;
+  /** Only this validity tier (`unknown`: what no skeptic judged). */
+  validity?: ValidityView;
 }
 
-/** `state=new lens=security sev=P1 doubted` — the words the `f` box takes.
- * Bare words work too (`new`, `P1`, `doubted`, `valid`); `F` clears. */
+/** `state=new lens=security sev=P1 doubted tier=confirmed` — the words the
+ * `f` box takes. Bare words work too (`new`, `P1`, `doubted`, `valid`,
+ * `confirmed`, `likely`, `doubtful`, `unknown`); `F` clears. */
 export function parseScanFilter(text: string): { ok: true; filter: ScanFilter } | { ok: false; error: string } {
   const filter: ScanFilter = {};
   for (const word of text.trim().split(/\s+/).filter((w) => w !== "")) {
@@ -85,12 +94,18 @@ export function parseScanFilter(text: string): { ok: true; filter: ScanFilter } 
     const val = m ? m[2]! : word;
     const sev = SEVERITY_ORDER.find((s) => s.toLowerCase() === val.toLowerCase());
     const state = STATES.find((s) => s === val.toLowerCase());
+    const tier = VALIDITY_ORDER.find((v) => v === val.toLowerCase());
     if ((key === "" || key === "state") && state) filter.state = state;
+    else if ((key === "" || key === "tier" || key === "validity") && tier) filter.validity = tier;
     else if ((key === "" || key === "sev" || key === "severity") && sev) filter.severity = sev;
     else if (key === "lens" && val !== "") filter.lens = val.replace(/^pass-/, "");
     else if ((key === "" && val.toLowerCase() === "doubted") || (key === "doubted" && /^(yes|true)$/i.test(val))) filter.doubted = true;
     else if ((key === "" && val.toLowerCase() === "valid") || (key === "doubted" && /^(no|false)$/i.test(val))) filter.doubted = false;
-    else return { ok: false, error: `"${word}" is not a filter — state=new|promoted|dismissed|fixed · lens=<name> · sev=P0…P3|nit · doubted · valid` };
+    else
+      return {
+        ok: false,
+        error: `"${word}" is not a filter — state=new|promoted|dismissed|fixed · lens=<name> · sev=P0…P3|nit · tier=confirmed|likely|doubtful|unknown · doubted · valid`,
+      };
   }
   return { ok: true, filter };
 }
@@ -102,6 +117,7 @@ export function filterLabel(f: ScanFilter): string {
   if (f.severity) parts.push(`sev=${f.severity}`);
   if (f.doubted === true) parts.push("doubted");
   if (f.doubted === false) parts.push("valid");
+  if (f.validity) parts.push(`tier=${f.validity}`);
   return parts.join(" ");
 }
 
@@ -112,7 +128,16 @@ export function matchesFilter(f: ScanFilter, x: ScanFinding): boolean {
   if (f.lens && ![x.lens, ...(x.lenses ?? [])].some((l) => l === f.lens || l === `pass-${f.lens}`)) return false;
   if (f.severity && x.severity !== f.severity) return false;
   if (f.doubted !== undefined && (x.doubt !== null && x.doubt !== undefined) !== f.doubted) return false;
+  if (f.validity !== undefined && validityOf(x) !== f.validity) return false;
   return true;
+}
+
+/** `t`'s step through the tier filter: all → confirmed → likely → doubtful
+ * → unknown → all. */
+export function nextTier(v: ValidityView | undefined): ValidityView | undefined {
+  if (v === undefined) return VALIDITY_ORDER[0];
+  const i = VALIDITY_ORDER.indexOf(v);
+  return i < 0 || i === VALIDITY_ORDER.length - 1 ? undefined : VALIDITY_ORDER[i + 1];
 }
 
 /** A style finding: the style lens's, or a kind that says so. */
@@ -132,34 +157,49 @@ export function styleRule(x: ScanFinding): string {
 
 export type ReportItem =
   | { t: "finding"; finding: ScanFinding }
-  | { t: "style"; rule: string; severity: ScanSeverity; findings: ScanFinding[] };
+  | { t: "style"; rule: string; severity: ScanSeverity; validity: ValidityView; findings: ScanFinding[] };
+
+/** The tier an item is listed under — a style group's members share one. */
+export function itemValidity(i: ReportItem): ValidityView {
+  return i.t === "finding" ? validityOf(i.finding) : i.validity;
+}
+
+const tierRank = (v: ValidityView): number => VALIDITY_ORDER.indexOf(v);
 
 const sevRank = (s: ScanSeverity): number => {
   const i = SEVERITY_ORDER.indexOf(s);
   return i < 0 ? SEVERITY_ORDER.length : i;
 };
 
-/** The list the right pane shows: findings most severe first (then path and
- * line), style findings folded into one row per rule. */
+/** The list the right pane shows: findings grouped by validity tier —
+ * confirmed, likely, doubtful, unknown — and most severe first inside each
+ * (then path and line), style findings folded into one row per rule and
+ * tier. */
 export function reportItems(findings: readonly ScanFinding[]): ReportItem[] {
   const items: ReportItem[] = [];
-  const groups = new Map<string, ScanFinding[]>();
+  const groups = new Map<string, { rule: string; validity: ValidityView; members: ScanFinding[] }>();
   for (const f of findings) {
     if (!isStyle(f)) {
       items.push({ t: "finding", finding: f });
       continue;
     }
-    const key = styleRule(f);
-    groups.set(key, [...(groups.get(key) ?? []), f]);
+    const rule = styleRule(f);
+    const validity = validityOf(f);
+    const key = `${validity}\0${rule}`;
+    const g = groups.get(key) ?? { rule, validity, members: [] };
+    g.members.push(f);
+    groups.set(key, g);
   }
-  for (const [ruleName, members] of groups) {
+  for (const { rule: ruleName, validity, members } of groups.values()) {
     members.sort((a, b) => a.path.localeCompare(b.path) || a.start - b.start);
     const worst = members.reduce<ScanSeverity>((w, m) => (sevRank(m.severity) < sevRank(w) ? m.severity : w), "nit");
-    items.push({ t: "style", rule: ruleName, severity: worst, findings: members });
+    items.push({ t: "style", rule: ruleName, severity: worst, validity, findings: members });
   }
   const sevOf = (i: ReportItem): ScanSeverity => (i.t === "finding" ? i.finding.severity : i.severity);
   const where = (i: ReportItem): [string, number] => (i.t === "finding" ? [i.finding.path, i.finding.start] : [`~${i.rule}`, 0]);
   return items.sort((a, b) => {
+    const t = tierRank(itemValidity(a)) - tierRank(itemValidity(b));
+    if (t !== 0) return t;
     const s = sevRank(sevOf(a)) - sevRank(sevOf(b));
     if (s !== 0) return s;
     const [pa, la] = where(a);
@@ -229,6 +269,13 @@ export function promotable(item: ReportItem | undefined): ScanFinding[] {
   return members(item).filter((f) => f.state === "new" || f.state === "dismissed");
 }
 
+/** Promotion DEFAULTS TO CONFIRMED findings (triage.ts): `p` promotes the
+ * confirmed ones; the rest need the operator's explicit word. */
+export function promoteTargets(item: ReportItem | undefined): { confirmed: ScanFinding[]; other: ScanFinding[] } {
+  const all = promotable(item);
+  return { confirmed: all.filter((f) => validityOf(f) === "confirmed"), other: all.filter((f) => validityOf(f) !== "confirmed") };
+}
+
 export function dismissable(item: ReportItem | undefined): ScanFinding[] {
   return members(item).filter((f) => f.state === "new" || f.state === "dismissed");
 }
@@ -256,10 +303,16 @@ function listed(fs: readonly ScanFinding[]): string[] {
   return lines;
 }
 
-export function promoteAsk(fs: readonly ScanFinding[]): string {
+export function promoteAsk(fs: readonly ScanFinding[], unconfirmed = false): string {
   return [
     `The owner PROMOTED ${fs.length === 1 ? "this scan finding" : `these ${fs.length} scan findings`} from the TUI's [8] scan tab:`,
     ...listed(fs),
+    ...(unconfirmed
+      ? [
+          "He promoted them EXPLICITLY although the scan's skeptic did not confirm them (likely, doubtful or unjudged) —",
+          "pass `unconfirmed: true` to `scan_promote` for each, and say in the ticket note what tier it was.",
+        ]
+      : []),
     "File each with `scan_promote` (the fingerprint as given) in the tracker effort its work belongs in — one ticket per finding —",
     "then tell him in one line where each went.",
   ].join("\n");
@@ -394,7 +447,10 @@ export function scanKeys(deps: ScanTabDeps, st: ScanTabState): LiveKeys {
   const v = view(deps, st);
   if (deps.ask && promotable(v.item).length > 0) bar.push({ key: "p", label: "p promote" });
   if (deps.ask && dismissable(v.item).length > 0) bar.push({ key: "d", label: "d dismiss" });
-  if (deps.store.findings?.kind === "read" && v.all.length > 0) bar.push({ key: "f", label: "f filter" });
+  if (deps.store.findings?.kind === "read" && v.all.length > 0) {
+    bar.push({ key: "f", label: "f filter" });
+    bar.push({ key: "t", label: "t tier" });
+  }
   bar.push({ key: "P", label: "P plan" });
   if (running) bar.push({ key: "x", label: "x stop" });
   const finished = deps.store.runs?.kind === "read" && (deps.store.runs.value.history.length > 0 || (v.run !== null && v.run.state !== "running"));
@@ -454,11 +510,13 @@ function headerLines(deps: ScanTabDeps, repo: string | undefined): string[] {
   if (fs === undefined || fs.kind === "unreadable") counts = `findings (—)${fs?.kind === "unreadable" ? ` ${WARN}could not read${RESET}` : ""}`;
   else {
     const live = fs.kind === "read" ? fs.value.findings.filter((f) => f.state !== "fixed") : [];
-    const doubted = live.filter((f) => f.doubt).length;
+    const tier = (v: ValidityView): number => live.filter((f) => validityOf(f) === v).length;
+    const unknown = tier("unknown");
     const notReproduced = live.filter((f) => f.not_reproduced).length;
     const q = fs.kind === "read" ? fs.value.question : null;
     counts =
-      `${live.length} findings · ${doubted} doubted` +
+      `${live.length} findings · ${tier("confirmed")} confirmed · ${tier("likely")} likely · ${tier("doubtful")} doubtful` +
+      `${unknown > 0 ? ` · ${unknown} unknown` : ""}` +
       `${notReproduced > 0 ? ` · ${notReproduced} not reproduced` : ""}` +
       `${q ? ` · ${q.unreported.length} awaiting the companion's match` : ""}`;
   }
@@ -468,6 +526,28 @@ function headerLines(deps: ScanTabDeps, repo: string | undefined): string[] {
 
 function findingTitle(f: ScanFinding): string {
   return `${STATE_GLYPH[f.state] ?? "?"} ${f.severity} ${f.lens.replace(/^pass-/, "")}  ${f.path}:${f.start}${f.doubt ? "  ?" : ""}${f.not_reproduced ? "  ↺" : ""}`;
+}
+
+const TIER_TITLE: Record<ValidityView, string> = {
+  confirmed: "CONFIRMED — the skeptic traced a concrete scenario",
+  likely: "LIKELY — a real mechanism, reachability not fully traced",
+  doubtful: "DOUBTFUL — refuted or class-matched; kept, not dropped",
+  unknown: "UNKNOWN — no skeptic judged these",
+};
+
+/** The detail pane's validity line(s). */
+function validityLines(f: ScanFinding, width: number): string[] {
+  const v = validityOf(f);
+  if (v === "confirmed" || v === "likely") {
+    const head = v === "confirmed" ? "✔ confirmed" : "~ likely";
+    return wrap(sanitizeText(f.scenario ? `${head} — ${f.scenario}` : head), width).map((l) => (v === "confirmed" ? `${OK}${l}${RESET}` : l));
+  }
+  if (v === "doubtful" && f.doubt) {
+    const cls = f.doubt.class ? ` [${f.doubt.class}]` : "";
+    return wrap(sanitizeText(`? doubtful — ${f.doubt.word}${cls}: ${f.doubt.reason}`), width).map((l) => `${WARN}${l}${RESET}`);
+  }
+  if (f.doubt) return wrap(sanitizeText(`? may not be valid — ${f.doubt.word}: ${f.doubt.reason}`), width).map((l) => `${WARN}${l}${RESET}`);
+  return [`${MUTED}${f.validated ? "validity unknown — judged before the skeptic's tiers existed" : "not validated — no validator read it (validity unknown)"}${RESET}`];
 }
 
 function itemLabel(i: ReportItem): string {
@@ -502,8 +582,7 @@ function detailLines(i: ReportItem | undefined, width: number): string[] {
   if (f.ticket) state += ` · ticket ${f.ticket.ref}${f.ticket.closed ? ` (closed at ${short(f.ticket.closed.sha)})` : ""}`;
   if (f.state === "fixed" && f.fixed) state += ` at ${short(f.fixed.sha)}`;
   out.push(...wrap(sanitizeText(state), width));
-  if (f.doubt) out.push(...wrap(sanitizeText(`? may not be valid — ${f.doubt.word}: ${f.doubt.reason}`), width).map((l) => `${WARN}${l}${RESET}`));
-  else if (!f.validated) out.push(`${MUTED}not validated — no validator read it${RESET}`);
+  out.push(...validityLines(f, width));
   if (f.not_reproduced) {
     const n = f.not_reproduced;
     out.push(
@@ -632,6 +711,11 @@ export function renderScanTab(deps: ScanTabDeps, st: ScanTabState, app: { dryRun
     const istart = windowStart(st.item, v.items.length, listCap);
     v.items.slice(istart, istart + listCap).forEach((it, k) => {
       const i = istart + k;
+      const tier = itemValidity(it);
+      if (k === 0 || itemValidity(v.items[i - 1]!) !== tier) {
+        const n = v.items.filter((x) => itemValidity(x) === tier).length;
+        row([{ text: truncate(`${MUTED}${TIER_TITLE[tier]} (${n})${RESET}`, rightW - 3) }]);
+      }
       const text = truncate(itemLabel(it), rightW - 3);
       row([{ text: i === st.item ? selectedLine(text) : text, action: { t: "item", i } }]);
     });
@@ -810,9 +894,25 @@ export function installScanTab(app: App, deps: ScanTabDeps): ScanTabState {
           // hand it the keyboard, as the board's `I` does.
           if (ask(theApp, DELTA_ASK, "delta")) theApp.openCompanion();
           return true;
-        case "p":
-          ask(theApp, promoteAsk(promotable(v.item)), "promote");
+        case "p": {
+          const { confirmed, other } = promoteTargets(v.item);
+          if (confirmed.length > 0) {
+            if (ask(theApp, promoteAsk(confirmed), "promote") && other.length > 0) {
+              theApp.notice(`scan promote: asked for ${confirmed.length} confirmed — ${other.length} unconfirmed left out (select one and p to promote it explicitly)`);
+            }
+            return true;
+          }
+          // None confirmed: promotion needs the operator's explicit word.
+          const tiers = [...new Set(other.map((f) => validityOf(f)))].join("/");
+          theApp.promptInput(`${other.length} finding(s) NOT confirmed by the skeptic (${tiers}) — type yes to promote anyway`, "", (answer) => {
+            if (answer.trim().toLowerCase() !== "yes") {
+              theApp.notice("scan promote: not asked — only confirmed findings promote without an explicit yes");
+              return;
+            }
+            ask(theApp, promoteAsk(other, true), "promote");
+          });
           return true;
+        }
         case "d": {
           const targets = dismissable(v.item);
           theApp.promptInput(`dismiss ${targets.length} finding(s) — the reason (it becomes reviewer memory)`, "", (reason) => {
@@ -825,7 +925,7 @@ export function installScanTab(app: App, deps: ScanTabDeps): ScanTabState {
           return true;
         }
         case "f":
-          theApp.promptInput("scan filter — state=new|promoted|dismissed|fixed lens=<name> sev=P0…P3|nit doubted|valid (F clears)", filterLabel(st.filter), (text) => {
+          theApp.promptInput("scan filter — state=new|promoted|dismissed|fixed lens=<name> sev=P0…P3|nit tier=confirmed|likely|doubtful|unknown doubted|valid (F clears)", filterLabel(st.filter), (text) => {
             const r = parseScanFilter(text);
             if (!r.ok) {
               theApp.notice(`✖ ${r.error}`);
@@ -837,6 +937,16 @@ export function installScanTab(app: App, deps: ScanTabDeps): ScanTabState {
             st.scroll = 0;
           });
           return true;
+        case "t": {
+          const next = nextTier(st.filter.validity);
+          const { validity: _was, ...rest } = st.filter;
+          st.filter = next === undefined ? rest : { ...rest, validity: next };
+          st.unit = 0;
+          st.item = 0;
+          st.scroll = 0;
+          theApp.repaint();
+          return true;
+        }
         case "F":
           st.filter = {};
           st.item = 0;

@@ -136,10 +136,14 @@ deploy time or the log could not be read.
 ### scan
 
 The run on top (sha, mode, state, cases done, spend against the hard stop,
-finding, doubted and not-reproduced counts), the units on the left (the count under the
+finding counts per validity tier and not-reproduced), the units on the left (the count under the
 filter, `▲` the hotspot, the run's mark per unit), and on the right the
-selected unit's findings — most severe first, style findings grouped per
-rule with a count (`?` = may not be valid, `↺` = not reproduced: a re-read
+selected unit's findings GROUPED BY THE SKEPTIC'S VALIDITY TIER — confirmed
+first (a traced scenario), then likely (a real mechanism, reachability not
+fully traced), doubtful (refuted or class-matched — kept, never dropped) and
+unknown (no skeptic judged it) — each under its heading, most severe first
+inside a tier, style findings grouped per rule with a count (`?` = may not be
+valid, `↺` = not reproduced: a re-read
 of its unchanged code did not report it again, so it stays open for triage
 — only changed code is ever settled `fixed`) — over the selected one's detail,
 which the mouse wheel scrolls when it is longer than the pane (j/k and the
@@ -149,9 +153,10 @@ companion is down shows as interrupted, never as "no scan".
 | key | does |
 | --- | --- |
 | `[` / `]` | the previous / next unit (`all` first) |
-| `p` | promote the finding (or the style group): the companion files one ticket each, in the effort that fits |
+| `p` | promote the finding (or the style group): the companion files one ticket each, in the effort that fits. Confirmed findings only by default; a likely, doubtful or unknown one asks for an explicit `yes` first |
 | `d` | dismiss it — the reason is typed in the message box and becomes an unpinned reviewer-memory note |
-| `f` | filter: `state=new\|promoted\|dismissed\|fixed` `lens=<name>` `sev=P0…P3\|nit` `doubted` / `valid` |
+| `f` | filter: `state=new\|promoted\|dismissed\|fixed` `lens=<name>` `sev=P0…P3\|nit` `tier=confirmed\|likely\|doubtful\|unknown` `doubted` / `valid` |
+| `t` | step the tier filter: all → confirmed → likely → doubtful → unknown → all |
 | `F` | clear the filter the FINDINGS title is advertising |
 | `P` | swap the right pane to the stage 2 plan: rows, their cost, the kept total that is the hard stop, the budget |
 | `⏎` | in the plan: approve — the companion starts exactly the kept rows, stopped hard at their total |

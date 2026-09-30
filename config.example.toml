@@ -635,7 +635,7 @@ session_pause_budget_min_per_day = 480     # total session-pause minutes per PR 
 [scan]
 effort = "low"                 # stage 1's reasoning level: low | medium | high (= [models] effort_max)
 tier = "sol-med"               # whose model pass-scan runs on ([models.tiers])
-validator = false              # validate each case's candidates; a doubt is kept, marked "may not be valid"
+validator = true               # the skeptic: judges each finding at its lens's tier — confirmed / likely / doubtful, never dropped (its cost is in the price)
 exclude = []                   # repo-relative globs never scanned, e.g. ["generated/", "*.pb.go"]
 calibration_units = 3          # units the first-scan calibration run reads
 calibration_max_usd = 3.0      # the calibration run's hard stop

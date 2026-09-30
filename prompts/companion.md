@@ -266,9 +266,17 @@ run as background subagents here; the records live in `/qcr-state/scan/`.
   A stopped, capped or interrupted scan (a TUI quit ends this container)
   resumes by previewing and starting again: the coverage ledger holds what
   finished, so only the rest is read and paid for.
-- **`scan_findings`** — the stored findings with their fingerprints; a
-  finding the validator doubted is kept and marked "may not be valid", never
-  dropped. Stage 1 also stores deep-lens suggestions for stage 2.
+- **`scan_findings`** — the stored findings with their fingerprints, grouped
+  by the SKEPTIC's validity tier. The scan's validator is a skeptic (on by
+  default, at the tier of the lens it judges; its cost is in the price): it
+  tries to refute every finding and sorts it — **confirmed** (it traced a
+  concrete scenario from an entry point), **likely** (a real mechanism,
+  reachability not fully traced), **doubtful** (refuted or matching a
+  false-positive class — kept, never dropped, with the skeptic's reason and
+  class). A finding no skeptic judged (the validator off or failed) is
+  **unknown** — say so, never guess a tier. Lead with the confirmed ones when
+  you report a scan; filter with `validity`. Stage 1 also stores deep-lens
+  suggestions for stage 2.
 
 ## Re-scanning what changed
 
@@ -327,6 +335,9 @@ judgement alone.
   up. The ticket carries the fingerprint and is never filed twice: a finding
   that already has one goes back onto it. Without an issue tracker it becomes
   a markdown file in `/qcr-state/scan/promoted/` — tell him where.
+  Promotion defaults to CONFIRMED findings: a likely, doubtful or unknown
+  one is refused unless you pass `unconfirmed: true` — only when he asked
+  for that finding explicitly, knowing its tier.
 - **Closing is automatic**: when a re-scan (or your match answer) finds a
   promoted finding fixed, its ticket is closed with the scan's sha. A ticket
   somebody has claimed is left open for them; `scan_close_fixed` retries the

@@ -38,6 +38,18 @@
 //     doubted is stored with its `doubt` (word and reason) and shown as such;
 //     a finding no validator looked at is `validated: false`. Neither is
 //     dropped.
+//   * EVERY JUDGED FINDING HAS A VALIDITY TIER (owner ruling 2026-09-30: the scan
+//     validator is the skeptic). `confirmed` — the skeptic traced a concrete
+//     scenario (kept in `scenario`); `likely` — a real mechanism whose
+//     reachability it could not trace all the way; `doubtful` — refuted,
+//     class-matched, or anything it would have killed, carried in `doubt`
+//     (word, reason, and the false-positive class when one matched). A
+//     finding no skeptic judged — the validator off or failed, or stored
+//     before tiers existed — has none and reads as UNKNOWN (scanreport.ts
+//     `validityOf`), never a guessed tier. The tier travels with the finding
+//     through an exact match (the latest judgement wins), an alias and a
+//     near-duplicate fold (the best-supported sighting wins, as the doubt
+//     flag does).
 //   * Individual findings never become memory (spec "Scan memory") — this
 //     store is the PC-side record, in the state home, never shipped.
 //   * TRIAGE (triage.ts drives it): a DISMISSED finding carries its
@@ -74,9 +86,10 @@ import type { StateFs } from "./engine.js";
 import { readings, type LedgerEntry, type Reading } from "./ledger.js";
 import type { ScanSeverity } from "./scan.js";
 import type { Reachability } from "../severity.js";
-import { FINDINGS_FILE, FINDINGS_VERSION, parseFindingsFile } from "./scanreport.js";
+import { FINDINGS_FILE, FINDINGS_VERSION, parseFindingsFile, validityOf, type Validity, type ValidityView } from "./scanreport.js";
 
 export { FINDINGS_FILE, FINDINGS_VERSION };
+export type { Validity, ValidityView };
 
 export type FindingState = "new" | "promoted" | "dismissed" | "fixed";
 
@@ -121,8 +134,16 @@ export interface ScanFinding {
   state: FindingState;
   /** A validator looked at it (survived, or doubted). */
   validated: boolean;
-  /** "May not be valid": the validator's doubt word and reason. */
-  doubt: { word: string; reason: string } | null;
+  /** "May not be valid": the validator's doubt word and reason — and, from
+   * the scan skeptic, the false-positive class it matched (a
+   * SCAN_FALSE_POSITIVE_CLASSES slug; null or absent when none). */
+  doubt: FindingDoubt | null;
+  /** The skeptic's tier. Null or absent: no skeptic judged it — UNKNOWN. */
+  validity?: Validity | null;
+  /** The skeptic's scenario for a confirmed or likely finding: the traced
+   * path from an entry point (confirmed), or what it could and could not
+   * trace (likely). */
+  scenario?: string | null;
   first_seen: Sighting;
   last_seen: Sighting;
   /** Scans that reported it. */
@@ -151,6 +172,12 @@ export interface ScanFinding {
   dismissal?: Dismissal | null;
   /** Where it was filed when promoted. */
   ticket?: FindingTicket | null;
+}
+
+export interface FindingDoubt {
+  word: string;
+  reason: string;
+  class?: string | null;
 }
 
 export interface NotReproduced extends Sighting {
@@ -245,6 +272,17 @@ function combinedDoubt(a: ReportedFinding | ScanFinding, b: ReportedFinding): Sc
   return a.doubt ?? b.doubt;
 }
 
+const VALIDITY_RANK: Record<ValidityView, number> = { confirmed: 3, likely: 2, doubtful: 1, unknown: 0 };
+
+/** Two sightings of one defect: the best-supported tier wins (a confirmed
+ * sighting outranks a doubt, as a clean survivor clears the doubt flag), and
+ * its scenario with it. Unknown only when neither was judged. */
+function combinedValidity(a: ReportedFinding | ScanFinding, b: ReportedFinding): Pick<ScanFinding, "validity" | "scenario"> {
+  const best = VALIDITY_RANK[validityOf(b)] > VALIDITY_RANK[validityOf(a)] ? b : a;
+  const v = validityOf(best);
+  return { validity: v === "unknown" ? null : v, scenario: best.scenario ?? null };
+}
+
 /** Can a fresh near-duplicate fold into `f`? Only a live finding this very
  * run has sighted — a sighting in a LATER run that merely resembles an old
  * one is the companion's match question, never a silent fold —
@@ -313,6 +351,7 @@ function absorb(into: ScanFinding, r: ReportedFinding): ScanFinding {
     severity: aggregateSeverity(own, merged),
     validated: into.validated || r.validated,
     doubt: combinedDoubt(into, r),
+    ...combinedValidity(into, r),
     lenses,
     merged,
     aliases: [...new Set([...(into.aliases ?? []), r.fingerprint])],
@@ -347,6 +386,8 @@ export interface FindingsFilter {
   severity?: ScanSeverity;
   /** true: only "may not be valid"; false: only the rest. */
   doubted?: boolean;
+  /** Only this tier (`unknown`: the findings no skeptic judged). */
+  validity?: ValidityView;
 }
 
 export interface ReconcileResult {
@@ -786,7 +827,8 @@ export class FindingsStore {
           (filter.lens === undefined || f.lens === filter.lens || (f.lenses ?? []).includes(filter.lens)) &&
           (filter.unit === undefined || f.unit === filter.unit) &&
           (filter.severity === undefined || f.severity === filter.severity) &&
-          (filter.doubted === undefined || (f.doubt !== null) === filter.doubted),
+          (filter.doubted === undefined || (f.doubt !== null) === filter.doubted) &&
+          (filter.validity === undefined || validityOf(f) === filter.validity),
       )
       .sort((a, b) => rank(a.severity) - rank(b.severity) || (a.path < b.path ? -1 : a.path > b.path ? 1 : a.start - b.start));
     return { findings: kept, error };

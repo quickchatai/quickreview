@@ -57,10 +57,10 @@ function belt(trees: Record<string, Record<string, string>> = { [SHA]: FILES }, 
       ok: true,
       cut: { units: ["app", "lib"].map((u) => ({ name: u, roots: [u], kind: "directory", note: "" })), ignored: [] },
     }),
-    settings: () => ({ ok: true, settings: { scan: SCAN_DEFAULTS, validateTier: "sol-high" } }),
+    settings: () => ({ ok: true, settings: { scan: { ...SCAN_DEFAULTS, validator: false } } }),
     buildAgents: () => ({ ok: true }),
   });
-  const settings = { scan: SCAN_DEFAULTS, validateTier: "sol-high" as const, riskPasses: ["pass-data-safety"] };
+  const settings = { scan: { ...SCAN_DEFAULTS, validator: false }, riskPasses: ["pass-data-safety"] };
   return { defs: scanToolDefinitions(scan, new FindingsStore(state), () => settings), scan };
 }
 
@@ -82,7 +82,7 @@ describe("the scan tools", () => {
     expect(await call(defs, "scan_start", { key })).toMatch(/started at aaaaaaaaaaaa: 2 case\(s\), hard stop \$3\.00/);
     await scan.idle();
 
-    expect(await call(defs, "scan_status")).toMatch(/COMPLETE — 2\/2 cases, 2 finding\(s\), spent \$0\.04 of \$3\.00/);
+    expect(await call(defs, "scan_status")).toMatch(/COMPLETE — 2\/2 cases, 2 finding\(s\) \(skeptic off — validity unknown\), spent \$0\.04 of \$3\.00/);
     const findings = await call(defs, "scan_findings", { unit: "app" });
     expect(findings).toMatch(/^- \[P2\] app\/a\.py:1-2 \(app, bug, new, unvalidated\) it breaks \[[0-9a-f]{12}\]$/);
     expect(await call(defs, "scan_findings", { state: "bogus" })).toMatch(/Unknown state/);
