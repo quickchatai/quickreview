@@ -1,6 +1,6 @@
-// The third-party arms on gpt-6.1-sol (the owner, 2026-09-30: "ALL should be run
-// on gpt 6.1"): one model knob per arm, default unchanged (gpt-6-sol, the
-// published runs), and each arm able to actually serve the new id.
+// The third-party arms on gpt-6.1-sol (the operator's order, 2026-09-30: every
+// compared tool on gpt-6.1): one model knob per arm, default unchanged (gpt-6-sol,
+// the published runs), and each arm able to actually serve the new id.
 import { spawnSync } from "node:child_process";
 import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
