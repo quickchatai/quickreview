@@ -96,6 +96,7 @@
 // suppressed in dry-run like everything else, never `forceLive`, never in
 // `APP_SELF_CONFIG_KINDS`.
 import type { EscalationConfig, EscalationRule, EscalationSeverityFloor } from "./config.js";
+import { codePath } from "./codespan.js";
 import type { GateResult } from "./gate.js";
 
 // ---- what to look at ------------------------------------------------------
@@ -133,7 +134,10 @@ export function scopeKey(scope: EscalationScope): string {
   }
 }
 
-/** The scope as one operator-facing phrase — the "Look at:" line. */
+/** The scope as one operator-facing phrase — the "Look at:" line. Paths are
+ * the PR author's file names, so each renders through `codePath`: a name
+ * holding backticks or newlines stays inside its own code span instead of
+ * writing prose (or an @-mention) into a bot-authored comment. */
 export function renderScope(scope: EscalationScope): string {
   switch (scope.kind) {
     case "code": {
@@ -143,15 +147,15 @@ export function renderScope(scope: EscalationScope): string {
           : scope.start_line
             ? `, line ${scope.start_line}`
             : "";
-      return `\`${scope.path}\`${lines}`;
+      return `${codePath(scope.path)}${lines}`;
     }
     case "migration":
       return scope.migration
-        ? `migration \`${scope.migration}\` (\`${scope.path}\`)`
-        : `the migration in \`${scope.path}\``;
+        ? `migration ${codePath(scope.migration)} (${codePath(scope.path)})`
+        : `the migration in ${codePath(scope.path)}`;
     case "decision":
       return scope.path
-        ? `the decision "${scope.decision}" (\`${scope.path}\`)`
+        ? `the decision "${scope.decision}" (${codePath(scope.path)})`
         : `the decision "${scope.decision}"`;
   }
 }

@@ -19,7 +19,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import type Database from "better-sqlite3";
-import type { GitHubAdapter } from "./github.js";
+import { GitHubRequestError, type GitHubAdapter } from "./github.js";
 import type { GateResult } from "./gate.js";
 import type { StateStore } from "./state.js";
 
@@ -521,6 +521,10 @@ export function validateThreadDecision(
 export type ThreadDecisionFailureClass = "rate_limit" | "non_rate";
 
 export function classifyThreadDecisionError(error: unknown): ThreadDecisionFailureClass {
+  // The adapter's own error carries the HTTP status structurally; its message
+  // puts the request path between the method and the status, so the text
+  // heuristics below can miss a REST 429 on a long route.
+  if (error instanceof GitHubRequestError && error.status === 429) return "rate_limit";
   const text = String(error);
   if (
     /(?:graphql|github|http|status)[^\n]{0,24}\b429\b/i.test(text) ||

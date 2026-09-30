@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
+import { GitHubRequestError } from "../src/github.js";
 import Database from "better-sqlite3";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -715,6 +716,23 @@ describe("structured thread decision", () => {
 });
 
 describe("thread decision failure classification", () => {
+  it("classifies the REAL adapter error for a REST 429 by its status, not its wording", () => {
+    // GitHubRequestError puts the request PATH between the method and the
+    // status, so a reply route pushes `429` far past any word the text
+    // heuristic keys on.
+    const err = new GitHubRequestError(
+      "POST",
+      "/repos/exampleorg/example-app/pulls/77/comments/4000/replies",
+      429,
+      "Too Many Requests",
+    );
+    expect(classifyThreadDecisionError(err)).toBe("rate_limit");
+    expect(
+      classifyThreadDecisionError(
+        new GitHubRequestError("POST", "/repos/o/r/pulls/77/comments/4000/replies", 422, "nope"),
+      ),
+    ).toBe("non_rate");
+  });
   it.each([
     ["graphql → 429", "rate_limit"],
     ['graphql errors: [{"type":"RATE_LIMIT","code":"graphql_rate_limit"}]', "rate_limit"],

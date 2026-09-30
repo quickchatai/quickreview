@@ -519,6 +519,33 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
     ).toContain("already decided and posted");
   });
 
+  it("an author-controlled filename stays literal data inside the note (no span break-out)", () => {
+    // A touched file whose NAME carries backticks, markdown and an @-mention
+    // of a login outside [escalation] targets. It is a real path in the diff,
+    // so the rule fires and validation accepts it — the rendering must keep
+    // every byte of it inside one code span.
+    const evil = "billing/x` @outsider **APPROVED** `.py";
+    const c = on({
+      rules: [{ name: "billing", to: "teammate-one", why: "you own billing", paths: ["billing/**"] }],
+    });
+    const out = evaluateEscalationRules(c, facts({ changed_paths: [evil] }));
+    expect(out).toHaveLength(1);
+    const body = renderEscalationComment(out[0]!, { verdict: "APPROVE", review_posted: true });
+    for (const line of body.split("\n").filter((l) => l.includes("outsider"))) {
+      // Strip every code span (CommonMark: a run of N backticks closes only on
+      // a run of exactly N); nothing of the name may survive outside one.
+      const prose = line.replace(/(`+)(?!`)[\s\S]*?(?<!`)\1(?!`)/g, "");
+      expect(prose, line).not.toContain("@outsider");
+      expect(prose, line).not.toContain("APPROVED");
+    }
+    // Control characters in a name cannot open a new line of the note either.
+    const scope = { kind: "code" as const, path: "billing/a\n@outsider.py" };
+    expect(renderScope(scope)).not.toContain("\n");
+    expect(renderScope({ kind: "migration", path: "m/0`1.py", migration: "00`42" })).toBe(
+      "migration `` 00`42 `` (`` m/0`1.py ``)",
+    );
+  });
+
   it("the review-request shape says out loud what GitHub's queue entry does NOT mean", () => {
     const body = renderEscalationComment(request(), { verdict: "APPROVE", review_requested: true });
     expect(body).toContain("review-requested queue");
