@@ -455,6 +455,22 @@ describe("archiveReadOnly", () => {
     expect(res.message).toContain("left in place, 0644 → 0444");
   });
 
+  it("only takes write away — never widens who may read (0600 → 0400)", async () => {
+    const fs = fakeFs(0o100600);
+    const res = await archiveReadOnly("/m.md", fs);
+    expect(res.ok).toBe(true);
+    expect(fs.chmodded).toEqual([{ path: "/m.md", mode: 0o400 }]);
+    expect(res.now).toBe("0400");
+    expect(res.message).toContain("0600 → 0400");
+  });
+
+  it("strips write from group and other too, keeping their read bits as they were", async () => {
+    const fs = fakeFs(0o100664);
+    const res = await archiveReadOnly("/m.md", fs);
+    expect(fs.chmodded).toEqual([{ path: "/m.md", mode: 0o444 }]);
+    expect(res.now).toBe("0444");
+  });
+
   it("an already read-only file is left alone", async () => {
     const fs = fakeFs(0o100444);
     const res = await archiveReadOnly("/m.md", fs);

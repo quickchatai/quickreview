@@ -519,7 +519,9 @@ const nodeArchiveFs: ArchiveFs = {
 const octal = (mode: number): string => `0${(mode & 0o777).toString(8)}`;
 
 /**
- * Leave the legacy memory file exactly where it is, read-only (0444). It is
+ * Leave the legacy memory file exactly where it is, read-only: every write
+ * bit cleared, the read bits exactly as they were (0600 → 0400, 0644 →
+ * 0444) — archiving takes write away and never widens who may read. It is
  * never deleted or moved: after the engine cutover it is the historical
  * record, and a stray writer finding it writable would silently fork memory.
  * Failure is reported, never thrown — the import has no abort path.
@@ -530,8 +532,9 @@ export async function archiveReadOnly(path: string, fs: ArchiveFs = nodeArchiveF
     if ((before.mode & 0o222) === 0) {
       return { ok: true, path, was: octal(before.mode), now: octal(before.mode), message: `${path} already read-only (${octal(before.mode)})` };
     }
-    await fs.chmod(path, 0o444);
-    return { ok: true, path, was: octal(before.mode), now: "0444", message: `${path} left in place, ${octal(before.mode)} → 0444 (read-only)` };
+    const after = before.mode & ~0o222 & 0o777;
+    await fs.chmod(path, after);
+    return { ok: true, path, was: octal(before.mode), now: octal(after), message: `${path} left in place, ${octal(before.mode)} → ${octal(after)} (read-only)` };
   } catch (err) {
     return { ok: false, path, message: `${path} NOT archived: ${err instanceof Error ? err.message : String(err)}` };
   }
