@@ -307,6 +307,42 @@ describe("migration collision renderers keep author-controlled filenames as data
     noInjectedLine(body);
   });
 
+  it("every filename-derived field is contained, in both collision kinds", () => {
+    // Each field carries its own marker, so a renderer that contains only some
+    // of them still fails: a raw field would put its marker at a line start.
+    const bad = (tag: string) => `x\`\n${tag}\n\``;
+    const fields = ["PRPATH", "BASEPATH", "TARGET", "DEPNAME", "DEP", "STALE", "LABEL", "DEPLABEL"];
+    const base = {
+      app: "a",
+      app_label: bad("LABEL"),
+      pr_path: bad("PRPATH"),
+      number: 42,
+      base_path: bad("BASEPATH"),
+      target_number: 43,
+      target_path: bad("TARGET"),
+      dependency_name: bad("DEPNAME"),
+      dependency: bad("DEP"),
+    };
+    const all = [
+      { ...base, kind: "base-collision" as const },
+      {
+        ...base,
+        kind: "renamed-dependency" as const,
+        stale_dependency: bad("STALE"),
+        renumber: true,
+        dependency_app_label: bad("DEPLABEL"),
+      },
+    ];
+    const texts = [
+      renderMigrationCollisionsNote(all, false),
+      renderMigrationCollisionsNote(all, true),
+      renderMigrationCollisionComment({ collisions: all, base_ref: "master", base_sha: "" }),
+    ];
+    for (const text of texts)
+      for (const line of text.split("\n"))
+        for (const f of fields) expect(line.trimStart().startsWith(f)).toBe(false);
+  });
+
   it("an ordinary name renders exactly as before", () => {
     const note = renderMigrationCollisionsNote(
       detectMigrationCollisions({
