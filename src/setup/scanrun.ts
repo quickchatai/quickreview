@@ -63,6 +63,7 @@
 // beside the ledger and the findings store — and the TUI's stop request
 // and its answer (`scan/stop.json`, `scan/stop-result.json`, —
 // scanreport.ts, which also owns the run record's name and parser).
+import { posix } from "node:path";
 import type { LensTuningMap } from "../lenstuning.js";
 import { PASS_TIER_ORDER, type PassTier } from "../types.js";
 import type { ScanConfig } from "../config.js";
@@ -117,6 +118,36 @@ import {
   SCAN_STOP_RESULT_FILE,
   type ScanStopResult,
 } from "./scanreport.js";
+
+// ---- did the lens read? ------------------------------------------------------------
+
+/**
+ * Why a lens's answer is NOT a reading of its case, or null when it is
+ * (scan-loop, self-scan round 7: nine pass-concurrency cases answered NONE in
+ * ~13s without opening a file, and the ledger then recorded those files as
+ * deep-read and priced the lens from them).
+ *
+ * `reads` is what the case runner saw the lens's file-read calls name
+ * (`CaseOutcome.reads`); absent means the runner cannot tell, and unknown is
+ * never judged as zero. A reading needs at least one focus file opened by its
+ * path under the tree root — the lens runs outside the tree (first-party
+ * cwd), so a relative path resolves against THAT, not the tree, and a read of
+ * some other file (a CLAUDE.md, a caller) is context, not the case. Pure.
+ */
+export function unreadFocus(reads: readonly string[] | undefined, focus: readonly string[], root: string): string | null {
+  if (reads === undefined) return null;
+  const base = posix.normalize(`${root}/`);
+  const opened = new Set(
+    reads
+      .filter((r) => r.startsWith("/"))
+      .map((r) => posix.normalize(r))
+      .filter((r) => r.startsWith(base))
+      .map((r) => r.slice(base.length)),
+  );
+  if (focus.some((f) => opened.has(posix.normalize(f)))) return null;
+  const n = focus.length;
+  return `the lens read none of its ${n} focus file${n === 1 ? "" : "s"} (${reads.length} file-read call${reads.length === 1 ? "" : "s"} in all)`;
+}
 
 // ---- ports ---------------------------------------------------------------------
 
@@ -1177,6 +1208,17 @@ export class ScanRunner {
       return cost ?? Math.max(seen, plan.estimate_usd ?? 0);
     };
     if (!outcome.ok) return finish(signal.aborted ? "stopped" : "failed", outcome.reason);
+    // A lens that opened none of its files did not read the case, whatever it
+    // answered: never coverage (no ledger row, so it is read again), never a
+    // price sample (the rate comes from ledger rows), and its findings are
+    // not stored — they were not drawn from the code. Said on the run, the
+    // way a failed validator is, so a cheap empty lens cannot pass as a
+    // quiet one.
+    const unread = unreadFocus(outcome.reads, plan.files.map((f) => f.path), tree.root);
+    if (unread !== null) {
+      run.problems.push(`case ${plan.id}: ${job.lens} — ${unread}; not a reading (not coverage, not a price sample) — it will be read again`);
+      return finish("failed", unread);
+    }
 
     const inTree = new Set(tree.files.map((f) => f.path));
     // A file read in line ranges: this case reports only inside its range —

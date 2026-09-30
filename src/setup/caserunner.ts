@@ -113,6 +113,21 @@ export function piInvocation(
   return { command: "pi", prefix: [] };
 }
 
+/** The tools whose `path` argument names content the model READ. `find` and
+ * `ls` list names and read no content, so they are not reads. */
+export const FILE_READ_TOOLS: readonly string[] = ["read", "grep"];
+
+/** The path a `tool_execution_start` event says the model read, or null.
+ * VERIFY-ON-PIN (read from 0.99.1's dist: the JSON mode passes agent events
+ * through verbatim — `tool_execution_start` carries `toolName` and `args`;
+ * `read` and `grep` both take `path`): the event and argument spelling. */
+export function readPathOf(event: { type?: string; toolName?: unknown; args?: unknown }): string | null {
+  if (event.type !== "tool_execution_start" || typeof event.toolName !== "string") return null;
+  if (!FILE_READ_TOOLS.includes(event.toolName)) return null;
+  const path = (event.args as { path?: unknown } | null | undefined)?.path;
+  return typeof path === "string" && path.trim() !== "" ? path : null;
+}
+
 /**
  * Runs a case as ONE background pi subagent, the way pi's own subagent
  * extension runs a child: `pi --mode json -p --no-session` with the agent's
@@ -124,7 +139,9 @@ export function piInvocation(
  * (extensions/subagents.ts reason 3); it reads the checkout by absolute path.
  *
  * The answer is the last assistant message's text; the cost is pi's own
- * per-message accounting summed (null when it reported none). An abort kills
+ * per-message accounting summed (null when it reported none); `reads` is
+ * every path its `read`/`grep` calls named (`readPathOf`) — the scan's
+ * evidence that the lens opened its files at all. An abort kills
  * the child (TERM, then KILL). Every outcome resolves.
  *
  * VERIFY-ON-PIN (0.87.1, re-read at 0.99.1: examples/extensions/subagent byte-identical, CLI flag set identical; read from the published examples/extensions/subagent
@@ -166,13 +183,16 @@ export function piCaseRunner(opts: {
           let failure: string | null = null;
           let stderr = "";
           let buffer = "";
+          const reads: string[] = [];
           const onLine = (line: string): void => {
-            let event: { type?: string; message?: Record<string, unknown> };
+            let event: { type?: string; message?: Record<string, unknown>; toolName?: unknown; args?: unknown };
             try {
               event = JSON.parse(line) as typeof event;
             } catch {
               return;
             }
+            const read = readPathOf(event);
+            if (read !== null) reads.push(read);
             const msg = event.message;
             if (event.type !== "message_end" || !msg || msg.role !== "assistant") return;
             const usage = msg.usage as { cost?: { total?: unknown } } | undefined;
@@ -235,7 +255,7 @@ export function piCaseRunner(opts: {
             }
             if (failure !== null) return finish({ ok: false, reason: failure, cost_usd: spent() });
             if (final.trim() === "") return finish({ ok: false, reason: "the subagent gave no answer", cost_usd: spent() });
-            finish({ ok: true, output: final, cost_usd: priced ? cost : null });
+            finish({ ok: true, output: final, cost_usd: priced ? cost : null, reads });
           });
         });
       } finally {

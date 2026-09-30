@@ -460,7 +460,8 @@ describe("the pass-survey agent and the case runner", () => {
     const runner = piCaseRunner({ agentsDir: COMPANION_AGENTS_DIR, cwd: "/workspace", spawn: f.spawn, invocation: { command: "pi", prefix: [] } });
     const heard: number[] = [];
     const out = await runner.run(spec, new AbortController().signal, (v) => heard.push(v));
-    expect(out).toEqual({ ok: true, output: "[convention] x", cost_usd: expect.closeTo(0.03) });
+    // It made no tool call, and SAYS so: `reads: []` is "read nothing", never unknown.
+    expect(out).toEqual({ ok: true, output: "[convention] x", cost_usd: expect.closeTo(0.03), reads: [] });
     // the running cost is heard as it grows, so a capped caller can
     // stop a case mid-flight.
     expect(heard).toEqual([expect.closeTo(0.01), expect.closeTo(0.03)]);
@@ -470,6 +471,22 @@ describe("the pass-survey agent and the case runner", () => {
     expect(args.slice(0, 6)).toEqual(["--mode", "json", "-p", "--no-session", "--no-extensions", "--approve"]);
     expect(args).toEqual(expect.arrayContaining(["--model", "openai-codex/gpt-6-sol:low", "--tools", "read,grep,find,ls", "--append-system-prompt"]));
     expect(args.at(-1)).toBe("Task: SURVEY — do it");
+  });
+
+  it("reports the paths its file-read tool calls named — read and grep, in call order; find/ls are not reads (scan-loop)", async () => {
+    const tool = (toolName: string, args: Record<string, unknown>) => ({ type: "tool_execution_start", toolCallId: `c-${toolName}`, toolName, args });
+    const f = fakeSpawn([
+      tool("ls", { path: "/tree/api" }),
+      tool("read", { path: "/tree/api/models.py", offset: 1 }),
+      tool("find", { pattern: "*.py", path: "/tree" }),
+      tool("grep", { pattern: "save", path: "/tree/api/views.py" }),
+      tool("grep", { pattern: "x" }),
+      tool("read", { nope: 1 }),
+      msg("NONE", 0.01),
+    ]);
+    const runner = piCaseRunner({ agentsDir: COMPANION_AGENTS_DIR, cwd: "/w", spawn: f.spawn, invocation: { command: "pi", prefix: [] } });
+    const out = await runner.run(spec, new AbortController().signal);
+    expect(out).toEqual({ ok: true, output: "NONE", cost_usd: expect.closeTo(0.01), reads: ["/tree/api/models.py", "/tree/api/views.py"] });
   });
 
   it("every failure resolves as a refusal — with what it spent: exit code, model error, no answer, unknown agent, abort", async () => {

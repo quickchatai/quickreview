@@ -128,7 +128,17 @@ export interface CaseSpec {
  * it ended (0 when it never started, null or absent when the runner cannot
  * tell) — a caller holding a budget counts it (review). */
 export type CaseOutcome =
-  | { ok: true; output: string; cost_usd: number | null }
+  | {
+      ok: true;
+      output: string;
+      cost_usd: number | null;
+      /** The paths the case's file-read tool calls named (`read`, and `grep`
+       * given a `path`), in call order, exactly as the model spelled them —
+       * `[]` when it read nothing. ABSENT when the runner cannot tell, which
+       * is unknown, never "read nothing". The scan judges a lens that read
+       * none of its focus files as no reading at all (scan-loop round 7). */
+      reads?: string[];
+    }
   | { ok: false; reason: string; cost_usd?: number | null };
 
 /** Runs cases as background subagents (survey, scan). The

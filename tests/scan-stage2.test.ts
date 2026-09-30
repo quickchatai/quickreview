@@ -439,6 +439,34 @@ describe("starting stage 2 on the operator's word", () => {
   });
 });
 
+describe("a deep lens that read nothing is not a reading (scan-loop round 7: pass-concurrency, 13s, NONE)", () => {
+  it("fails its row: no ledger rows for the lens, so it is neither coverage nor a measured price — and the run names it", async () => {
+    const inner = runner();
+    const cases: FakeRunner = {
+      specs: inner.specs,
+      run: async (spec, signal, onCost) => {
+        const out = await inner.run(spec, signal, onCost);
+        if (!out.ok || !spec.agent.startsWith("pass-concurrency--")) return out;
+        return { ok: true, output: `FINDINGS pass-concurrency SCAN ${spec.id} @sha\nNONE\n`, cost_usd: 0.028, reads: [] };
+      },
+    };
+    const s = new ScanRunner(ports(cases));
+    await calibrate(s);
+    const row = { lens: "pass-concurrency", files: ["lib/util.py"], reason: "a read-then-write on the cache" };
+    const p = await propose(s, [row]);
+    expect((await s.startStage2({ key: p.key })).ok).toBe(true);
+    await s.idle();
+    const run = s.status().run!;
+    expect(run.cases[0]).toMatchObject({ lens: "pass-concurrency", status: "failed" });
+    expect(run.problems.some((m) => /pass-concurrency/.test(m) && /not a reading/.test(m))).toBe(true);
+    expect(ledger().entries.some((e) => e.lens === "pass-concurrency")).toBe(false);
+    // Not a price sample: the next proposal still has no measured rate for it.
+    const again = await propose(s, [row]);
+    expect(again.rows[0]!.status).toBe("run");
+    expect(again.rows[0]!.price.basis).not.toBe("measured");
+  });
+});
+
 describe("starting stage 2 from the TUI", () => {
   it("the click asks for the proposal it showed; the companion starts it and answers once", async () => {
     const cases = runner();

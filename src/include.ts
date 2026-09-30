@@ -684,6 +684,19 @@ const MEMORY_READ_ONLY_ADDENDUM =
 const CONCURRENCY_TRIGGER_ADDENDUM =
   "\n## You were added on demand — your task string must NAME THE SHAPE (sandbox rule)\nYou are not a planned lens. No path predicate selects you: you run only when the PR's session, having read the diff, suspects a specific concurrent-write defect and adds you through the round's add protocol. For this lens the protocol is STRICTER than for any other addable lens: the session must **name the read-then-write it suspects** — the call site that reads state, the code that changes it, and the write that puts it back — not merely state a worry that something might race.\n\nRead your task string for that named shape and start from it. If the shape is named, it is your anchor: prove it or kill it, and follow it only as far as its blast radius. If your task string names NO concrete read-then-write — only a general unease, a file name, or \"check for race conditions\" — say so in one line in your output and return `NONE`. Do not substitute a fishing expedition of your own: an unanchored concurrency sweep is precisely how this class produces confident nonsense. Reporting the missing anchor is the correct, useful result — the session can re-add you with the shape named.\n\nThis rule binds THIS lens only. It changes nothing about how any other addable lens is added, and nothing about the one-line reason the add protocol asks of the session everywhere else.\n";
 
+// scan-loop (self-scan round 7): the trigger above is a PR-round rule — it
+// asks the PR's session to name the shape. A SCAN has no session: a stage-2
+// row's reason says why the row was planned ("files this lens has never
+// deep-read"), so the lens obeyed the trigger and answered NONE in ~13s
+// without opening a file, nine cases in a row. In a scan build the trigger is
+// left out (`mode: "pr"`) and this rule makes the case's focus files the
+// anchor instead. It binds this lens alone; seeds untouched (rule 6).
+export const CONCURRENCY_SCAN_ADDENDUM =
+  "\n## Scan mode — the focus files are your anchor (sandbox rule; supersedes the lens's on-demand premise above)\n" +
+  "In a scan there is no session and no diff, so nobody names a shape for you. The lens text's premise — that the PR's session read the diff and named a specific read-then-write for you to start from — does not hold here, and this rule supersedes it. The case's `Why this case` line says why the case was planned (often only that no lens has deep-read these files yet); it is not a named shape, and its lacking one is never a reason to answer `NONE`.\n\n" +
+  "**The focus files are your anchor.** Read every focus file in full, then find the read-then-write shapes in them yourself: each place the code reads state that outlives the statement — a file, a database row, a cache or a map held across an `await`, a callback or a second process — changes it in memory, and writes it back. For each one, name the read, the change and the write, and prove or kill it exactly as the lens above requires (the four parts, falsified first), following it only as far as its blast radius. The search is bounded by those shapes: a finding still names a concrete read-then-write, never an unease.\n\n" +
+  "`NONE` is correct only after that reading: say in one or two lines which read-then-writes you examined and why each holds, or that the files hold none (no shared or persisted state is read and written back). A `NONE` given without opening the files is not a reading — the scan checks which files you opened and discards an answer that opened none of them.\n";
+
 // the ask-your-human lens's TRIGGER + TAG contract, scoped to that
 // lens ALONE — the same containment `concurrency-trigger` uses and for the same
 // reason. The add protocol asks every addable lens for "a one-line stated
@@ -1066,7 +1079,10 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
     text: FINDING_SELF_SUFFICIENCY_VALIDATE_ADDENDUM,
   },
   { id: "memory-read-only", scope: "all", text: MEMORY_READ_ONLY_ADDENDUM },
-  { id: "concurrency-trigger", scope: [CONCURRENCY_PASS], text: CONCURRENCY_TRIGGER_ADDENDUM },
+  // A PR-round rule (the session names the shape); a scan has no session.
+  { id: "concurrency-trigger", scope: [CONCURRENCY_PASS], mode: "pr", text: CONCURRENCY_TRIGGER_ADDENDUM },
+  // scan-loop round 7: in a scan the focus files are the anchor instead.
+  { id: "concurrency-scan", scope: [CONCURRENCY_PASS], mode: "scan", text: CONCURRENCY_SCAN_ADDENDUM },
   { id: "ask-human-trigger", scope: [ASK_HUMAN_PASS], text: ASK_HUMAN_TRIGGER_ADDENDUM },
   {
     id: "ask-human-named-defect-validate",

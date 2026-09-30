@@ -115,14 +115,22 @@ interface FakeRunner {
 
 /** A runner that answers at once, costing `perFile` dollars per focus file
  * (or null: unpriced). */
-function runner(opts: { perFile?: number | null; answer?: (spec: CaseSpec) => string } = {}): FakeRunner {
+function runner(
+  opts: { perFile?: number | null; answer?: (spec: CaseSpec) => string; reads?: (spec: CaseSpec) => string[] | undefined } = {},
+): FakeRunner {
   const specs: CaseSpec[] = [];
   return {
     specs,
     run: async (spec) => {
       specs.push(spec);
       const perFile = opts.perFile === undefined ? 0.01 : opts.perFile;
-      return { ok: true, output: (opts.answer ?? scanAnswer)(spec), cost_usd: perFile === null ? null : perFile * spec.files.length };
+      const reads = opts.reads?.(spec);
+      return {
+        ok: true,
+        output: (opts.answer ?? scanAnswer)(spec),
+        cost_usd: perFile === null ? null : perFile * spec.files.length,
+        ...(reads !== undefined ? { reads } : {}),
+      };
     },
   };
 }
@@ -549,6 +557,45 @@ describe("an answer that is neither findings nor NONE is not a reading (selfscan
     expect(findings).toHaveLength(3);
     expect(findings.every((f) => f.validated === false)).toBe(true);
     expect(run.problems.some((p) => p.includes("validator"))).toBe(true);
+  });
+});
+
+describe("a lens that read none of its focus files is not a reading (scan-loop round 7)", () => {
+  const ROOT = `/state/scan/tree/${SHA1}`;
+  const none = (spec: CaseSpec): string => `FINDINGS pass-scan SCAN ${spec.id} @sha\nNONE\n\nSUGGEST NONE\n`;
+
+  it("a NONE with zero file reads fails its case: no ledger row (not coverage, not a price sample), and the run names it", async () => {
+    const reads = (spec: CaseSpec): string[] => (spec.unit === "app" ? [] : spec.files.map((f) => `${ROOT}/${f}`));
+    const { run } = await runToEnd(new ScanRunner(ports(runner({ answer: none, reads }))));
+    const app = run.cases.filter((c) => c.unit === "app");
+    expect(app.length).toBeGreaterThan(0);
+    expect(app.every((c) => c.status === "failed" && /read none of its \d+ focus file/.test(c.error ?? ""))).toBe(true);
+    expect(ledger().entries.some((e) => e.path.startsWith("app/"))).toBe(false);
+    expect(ledger().entries.some((e) => e.path.startsWith("lib/"))).toBe(true);
+    expect(run.problems.some((p) => p.includes(app[0]!.id) && /not a reading/.test(p))).toBe(true);
+    expect(run.cases.filter((c) => c.unit !== "app").every((c) => c.status === "done")).toBe(true);
+  });
+
+  it("reading only files OUTSIDE the case is still no reading — and its findings are not stored", async () => {
+    const reads = (spec: CaseSpec): string[] => (spec.unit === "app" ? [`${ROOT}/tools/x.py`, `${ROOT}/CLAUDE.md`] : spec.files.map((f) => `${ROOT}/${f}`));
+    const { run } = await runToEnd(new ScanRunner(ports(runner({ reads }))));
+    expect(run.cases.filter((c) => c.unit === "app").every((c) => c.status === "failed")).toBe(true);
+    const { findings } = new FindingsStore(stateHomeFs(stateDir)).list();
+    expect(findings.some((f) => f.path.startsWith("app/"))).toBe(false);
+    expect(findings.some((f) => f.path.startsWith("lib/"))).toBe(true);
+  });
+
+  it("one focus file read by its path under the tree root is a reading — a relative path is not: it resolves against the runner's cwd, not the tree", async () => {
+    const reads = (spec: CaseSpec): string[] =>
+      spec.unit === "app" ? [spec.files[0]!] : [`${ROOT}/nowhere/../${spec.files.at(-1)!}`];
+    const { run } = await runToEnd(new ScanRunner(ports(runner({ answer: none, reads }))));
+    expect(run.cases.filter((c) => c.unit === "app").every((c) => c.status === "failed")).toBe(true);
+    expect(run.cases.filter((c) => c.unit !== "app").every((c) => c.status === "done")).toBe(true);
+  });
+
+  it("a runner that cannot tell (no `reads`) is not judged — unknown is never read as zero", async () => {
+    const { run } = await runToEnd(new ScanRunner(ports(runner({ answer: none }))));
+    expect(run.cases.every((c) => c.status === "done")).toBe(true);
   });
 });
 
