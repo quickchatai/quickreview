@@ -212,13 +212,38 @@ export interface PlanInput {
   /** `path\0blob` → the line ranges the ledger's newest, still-incomplete
    * reading holds for `pass-scan`: a range inside them is not read again. */
   partial?: ReadonlyMap<string, readonly { start: number; end: number }[]>;
+  /** path → the ledger's newest `pass-scan` reading of it (any content):
+   * what orders the cases. Absent: the plan's own (unit) order stands. */
+  history?: ReadonlyMap<string, PriorReading>;
+}
+
+/** A file's newest reading as the plan orders by it (ledger.ts `readings`). */
+export interface PriorReading {
+  blob: string;
+  /** Whole file, or ranges covering every line. */
+  complete: boolean;
+}
+
+/**
+ * Coverage first (scan-loop). The hard stop ends a run whose actuals outrun
+ * its estimate before the plan's tail, so the tail must not be the SAME
+ * cases every run: a file the ledger never read, or whose newest reading was
+ * cut short between ranges, is tier 0; a file read before at other content
+ * is tier 1 (changed); anything else is tier 2. A case takes its best file's
+ * tier; a tier keeps the plan's order.
+ */
+export function readTier(f: { path: string; blob: string }, history: ReadonlyMap<string, PriorReading>): 0 | 1 | 2 {
+  const r = history.get(f.path);
+  if (r === undefined || !r.complete) return 0;
+  return r.blob !== f.blob ? 1 : 2;
 }
 
 export const coverKey = (path: string, blob: string): string => `${path}\0${blob}`;
 
 /** Stage 1 over the saved cut at one tree: every readable, uncovered,
  * non-excluded file (with `delta`, only the changed ones), one case per
- * unit, split to fit. Deterministic. */
+ * unit, split to fit — ordered coverage-first by `history` (readTier).
+ * Deterministic. */
 export function planStage1(input: PlanInput): Stage1Plan {
   const excludedGlob = globMatcher(input.exclude);
   const excluded: Record<ExclusionReason, number> = { test: 0, migration: 0, "unreadable-kind": 0, "excluded-glob": 0 };
@@ -294,6 +319,13 @@ export function planStage1(input: PlanInput): Stage1Plan {
         lines: p.lines,
       });
     });
+  }
+  const history = input.history;
+  if (history !== undefined) {
+    const tier = (c: ScanCasePlan): number => Math.min(...c.files.map((f) => readTier(f, history)));
+    const ranked = cases.map((c, i) => ({ c, i, t: tier(c) }));
+    ranked.sort((x, y) => x.t - y.t || x.i - y.i);
+    cases.splice(0, cases.length, ...ranked.map((r) => r.c));
   }
   return { cases, excluded, covered, unassigned: a.unassigned, unreadable, unchanged };
 }
