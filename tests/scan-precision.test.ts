@@ -156,5 +156,9 @@ describe("the addendum's content", () => {
     expect(SCAN_PRECISION_ADDENDUM).toContain("`reachability: contrived`");
     expect(SCAN_PRECISION_ADDENDUM).toMatch(/never leave (it|a finding) out/i);
     expect(SCAN_PRECISION_ADDENDUM).not.toMatch(/\bdrop (it|the finding)\b/i);
+    // A validator kills below 0.5 confidence, so "lower the confidence" would
+    // be a drop by another route when `[scan] validator` is on.
+    expect(SCAN_PRECISION_ADDENDUM).not.toMatch(/lowered `confidence`/);
+    expect(SCAN_PRECISION_ADDENDUM).toMatch(/Do not lower `confidence` because a class matched/);
   });
 });
