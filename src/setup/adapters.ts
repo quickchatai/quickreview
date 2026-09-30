@@ -23,6 +23,7 @@ import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
 import type { MemoryStore } from "../memory/store.js";
 import { OpenVikingClient } from "../openviking/client.js";
 import { openVikingStore } from "../openviking/store.js";
+import { isBinaryContent } from "./textsniff.js";
 import type {
   GitHubReader,
   RepoReader,
@@ -100,7 +101,7 @@ export function checkoutReader(root: string): RepoReader {
       const st = statSync(full);
       if (!st.isFile() || st.size > MAX_READ_BYTES) return null;
       const buf = readFileSync(full);
-      if (buf.subarray(0, 8000).includes(0)) return null; // binary
+      if (isBinaryContent(buf, rel)) return null; // binary — one stray NUL is not
       return buf.toString("utf8");
     } catch {
       return null;

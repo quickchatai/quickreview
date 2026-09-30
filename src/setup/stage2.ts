@@ -55,6 +55,7 @@ import {
   type ScanCaseFile,
   type ScanRate,
   type TreeFile,
+  type UnreadableReason,
 } from "./scan.js";
 import { assign, type CaseBudget, type UnitCut } from "./unitcut.js";
 
@@ -123,6 +124,8 @@ export interface Stage2PlanInput {
   cut: UnitCut;
   files: readonly TreeFile[];
   linesOf: (path: string) => number | null;
+  /** Why `linesOf` answered null (`binary`, `too-big`), when the tree knows. */
+  whyUnreadable?: (path: string) => UnreadableReason | null;
   /** A file's text, where a range cut looks for declaration boundaries. */
   textOf?: (path: string) => string | null;
   exclude: readonly string[];
@@ -304,7 +307,10 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
       else if (excluded(p)) problems.push(`${p} is excluded from scans by [scan] exclude`);
       else {
         const n = input.linesOf(p);
-        if (n === null) problems.push(`${p} cannot be read as text`);
+        if (n === null) {
+          const why = input.whyUnreadable?.(p) ?? null;
+          problems.push(`${p} cannot be read as text${why === "binary" ? " (skipped: binary)" : why === "too-big" ? " (skipped: over the size cap)" : ""}`);
+        }
         else lines.set(p, n);
       }
     }

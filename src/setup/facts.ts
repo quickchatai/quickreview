@@ -16,6 +16,7 @@
 // which says "no config file found", not "no CI".
 import { DEFAULT_DIRECTIVE_VOCABULARY } from "../severity.js";
 import { styleGuideRefsIn } from "../styleguide.js";
+import { escapeControls } from "./textsniff.js";
 
 export type RepoRead = (rel: string) => string | null;
 
@@ -299,7 +300,10 @@ function ciFacts(files: readonly string[], read: RepoRead): CiFact[] {
     else if (/^\.buildkite\/[^/]+\.ya?ml$/.test(f)) system = "Buildkite";
     if (!system) continue;
     const text = system === "GitHub Actions" ? read(f) : null;
-    const name = text === null ? null : (/^name:\s*["']?(.+?)["']?\s*$/m.exec(text)?.[1] ?? null);
+    // The name reaches the portrait and the companion's prompt: a control
+    // byte in the workflow file (a stray NUL is still text) is escaped.
+    const raw = text === null ? null : (/^name:\s*["']?(.+?)["']?\s*$/m.exec(text)?.[1] ?? null);
+    const name = raw === null ? null : escapeControls(raw);
     out.push({ system, path: f, name });
   }
   return out;

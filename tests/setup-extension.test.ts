@@ -517,10 +517,15 @@ describe("checkoutReader", () => {
 
   it("falls back to a walk without git, and never reads outside the root or a binary", () => {
     const repo = join(dir, "plain");
-    tree(repo, { "x.ts": "x\n", "node_modules/y.js": "y\n", "bin.dat": "a\0b" });
+    tree(repo, { "x.ts": "x\n", "node_modules/y.js": "y\n", "stray.ts": "const k = `a\0b`;\n" });
+    // Real binary bytes (a PNG's signature and header chunk) under a name no
+    // extension rule knows: the content alone decides.
+    writeFileSync(join(repo, "bin.dat"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52, 0, 0, 1, 0, 0, 0, 1, 0, 8, 6, 0, 0, 0, 0x5c, 0x72, 0xa8, 0x66]));
     tree(dir, { "secret.txt": "no" });
     const r = checkoutReader(repo);
-    expect(r.listFiles()?.sort()).toEqual(["bin.dat", "x.ts"]);
+    expect(r.listFiles()?.sort()).toEqual(["bin.dat", "stray.ts", "x.ts"]);
+    // One stray NUL in a source file is still text (selfscan round 6).
+    expect(r.read("stray.ts")).toBe("const k = `a\0b`;\n");
     expect(r.read("../secret.txt")).toBeNull();
     expect(r.read("/etc/passwd")).toBeNull();
     expect(r.read("bin.dat")).toBeNull();

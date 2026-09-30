@@ -87,7 +87,9 @@ import {
   type ScanCasePlan,
   type ScanRate,
   type ScanSuggestion,
+  type SkippedFile,
   type TreeFile,
+  type UnreadableReason,
 } from "./scan.js";
 import { planStage2, stage2Cases, stage2CasePrompt, stage2Key, unitOwner, type RowPrice, type Stage2Row, type Stage2RowRequest } from "./stage2.js";
 import {
@@ -124,6 +126,9 @@ export interface ScanTree {
   files: TreeFile[];
   read(path: string): string | null;
   lines(path: string): number | null;
+  /** Why `read` answers null for a listed file (`binary`, `too-big`), or
+   * null when it reads. Optional: a tree without it reports `unreadable`. */
+  whyUnreadable?(path: string): UnreadableReason | null;
 }
 
 /** The reviewed checkout as a source of trees (READ-ONLY). */
@@ -284,6 +289,9 @@ export interface ScanPreview {
   covered: number;
   unassigned: string[];
   unreadable: number;
+  /** The unreadable files by path and reason — `skipped: binary` is said,
+   * never silently absent. */
+  skipped: SkippedFile[];
   settings: ScanRun["settings"] & { exclude: string[]; concurrency: number };
   /** A delta: the last scan's sha it compares against, and the unchanged
    * files it leaves out that the ledger does not cover (the rest of an
@@ -464,6 +472,7 @@ export class ScanRunner {
       cut: cut.cut,
       files: tree.files,
       linesOf: (p) => tree.lines(p),
+      whyUnreadable: (p) => tree.whyUnreadable?.(p) ?? null,
       covered: coveredBy(entries, SCAN_PASS),
       partial: partialRanges(entries, SCAN_PASS),
       // Coverage first: never-read and cut-short files run before changed
@@ -549,6 +558,7 @@ export class ScanRunner {
       covered: plan.covered,
       unassigned: plan.unassigned,
       unreadable: plan.unreadable,
+      skipped: plan.skipped,
       settings: { ...runSettings, exclude: cfg.exclude, concurrency: cfg.concurrency },
       delta: basis ? { since: basis.since, unchanged: plan.unchanged } : null,
       blockers,
@@ -802,6 +812,7 @@ export class ScanRunner {
       cut: cut.cut,
       files: tree.files,
       linesOf: (p) => tree.lines(p),
+      whyUnreadable: (p) => tree.whyUnreadable?.(p) ?? null,
       textOf: (p) => tree.read(p),
       exclude: cfg.exclude,
       budget: { maxFiles: cfg.case_max_files, maxLines: cfg.case_max_lines },

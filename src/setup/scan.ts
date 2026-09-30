@@ -173,6 +173,9 @@ export interface Stage1Plan {
   unassigned: string[];
   /** Files the tree lists but whose text cannot be read (binary, too big). */
   unreadable: number;
+  /** Each of those files and why (`binary`, `too-big`, `unreadable` when the
+   * tree cannot say) — reported, never silently absent from coverage. */
+  skipped: SkippedFile[];
   /** Delta only: readable files the ledger does not cover that are left out
    * because they have not changed since the last scan — the rest of an
    * unfinished scan, which an ordinary preview prices (0 for a full plan). */
@@ -196,10 +199,20 @@ export function changedSince(f: TreeFile, basis: DeltaBasis): boolean {
   return was === undefined || was !== f.blob;
 }
 
+/** Why a listed file has no text for a lens. */
+export type UnreadableReason = "binary" | "too-big" | "unreadable";
+
+export interface SkippedFile {
+  path: string;
+  why: UnreadableReason;
+}
+
 export interface PlanInput {
   cut: UnitCut;
   files: readonly TreeFile[];
   linesOf: (path: string) => number | null;
+  /** Why `linesOf` answered null; absent = `unreadable` (the reason unknown). */
+  whyUnreadable?: (path: string) => UnreadableReason | null;
   /** `path\0blob` of each file's newest ledger reading for `pass-scan`. */
   covered: ReadonlySet<string>;
   exclude: readonly string[];
@@ -254,6 +267,7 @@ export function planStage1(input: PlanInput): Stage1Plan {
   const lines = new Map<string, number>();
   let covered = 0;
   let unreadable = 0;
+  const skipped: SkippedFile[] = [];
   let unchanged = 0;
   const readable: string[] = [];
   // Files over one case: the ranges still to read, cut up front.
@@ -267,6 +281,7 @@ export function planStage1(input: PlanInput): Stage1Plan {
     const n = input.linesOf(f.path);
     if (n === null) {
       unreadable++;
+      skipped.push({ path: f.path, why: input.whyUnreadable?.(f.path) ?? "unreadable" });
       continue;
     }
     if (input.covered.has(coverKey(f.path, f.blob))) {
@@ -340,7 +355,7 @@ export function planStage1(input: PlanInput): Stage1Plan {
     ranked.sort((x, y) => x.t - y.t || (x.at < y.at ? -1 : x.at > y.at ? 1 : 0) || x.i - y.i);
     cases.splice(0, cases.length, ...ranked.map((r) => r.c));
   }
-  return { cases, excluded, covered, unassigned: a.unassigned, unreadable, unchanged };
+  return { cases, excluded, covered, unassigned: a.unassigned, unreadable, skipped, unchanged };
 }
 
 /**

@@ -43,6 +43,7 @@ import { SEVERITIES, type ScanSeverity } from "../src/setup/scan.js";
 import { lensTiers, stage2Lenses, MAX_STAGE2_ROWS } from "../src/setup/stage2.js";
 import type { StoredStage2Proposal } from "../src/setup/stage2request.js";
 import { buildScanAgents, loadScanConfig, scanSettings, SCAN_AGENTS_DIR } from "../src/setup/scanbuild.js";
+import { escapeControls } from "../src/setup/textsniff.js";
 import { ScanRunner, type ScanPreview, type ScanSettings, type ScanStatus, type StoredSuggestion } from "../src/setup/scanrun.js";
 import { gitScanSource } from "../src/setup/scantree.js";
 import { ScanTriage, type CloseFixedResult } from "../src/setup/triage.js";
@@ -101,6 +102,14 @@ export function renderPreview(p: ScanPreview): string {
     `Not read: ${skipped.length ? skipped.join(", ") : "nothing excluded"}; ${p.covered} already in the ledger at this content; ` +
       `${p.unreadable} unreadable${p.settings.exclude.length ? `; exclude globs ${p.settings.exclude.join(", ")}` : ""}.`,
   );
+  // What the tree lists but no lens can read, by reason and by name — a
+  // binary is REPORTED as skipped, never silently absent from coverage.
+  const skippedBy = new Map<string, string[]>();
+  for (const f of p.skipped ?? []) skippedBy.set(f.why, [...(skippedBy.get(f.why) ?? []), f.path]);
+  for (const [why, paths] of skippedBy) {
+    const label = why === "binary" ? "binary" : why === "too-big" ? "over the size cap" : "unreadable";
+    out.push(`skipped: ${label} — ${paths.length} file(s): ${paths.slice(0, 5).map(escapeControls).join(", ")}${paths.length > 5 ? ", …" : ""}; not read by any lens.`);
+  }
   if (p.unassigned.length > 0) {
     out.push(`! ${p.unassigned.length} file(s) no unit owns at this sha (e.g. ${p.unassigned.slice(0, 3).join(", ")}) — the unit cut may need adjusting; they are not read.`);
   }

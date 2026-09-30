@@ -24,6 +24,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
 import { MAX_READ_BYTES } from "./adapters.js";
 import type { ScanSource, ScanTree } from "./scanrun.js";
+import type { UnreadableReason } from "./scan.js";
+import { isBinaryContent } from "./textsniff.js";
 import type { TreeFile } from "./scan.js";
 
 /** Where materialised trees live, under the state home. */
@@ -171,8 +173,12 @@ function inRoot(back: string): boolean {
 }
 
 /** A materialised tree as the runner reads it: text within the reader's
- * size cap, never a binary, never a path that leaves the root. */
+ * size cap, never a binary (`isBinaryContent` — one stray NUL in a source
+ * file is still text), never a path that leaves the root. What it cannot
+ * read it says why (`whyUnreadable`), so the plan REPORTS a skipped binary
+ * rather than dropping it silently. */
 export function treeAt(sha: string, root: string, files: TreeFile[]): ScanTree {
+  const why = new Map<string, UnreadableReason>();
   const read = (rel: string): string | null => {
     if (isAbsolute(rel)) return null;
     const full = normalize(join(root, rel));
@@ -180,9 +186,16 @@ export function treeAt(sha: string, root: string, files: TreeFile[]): ScanTree {
     if (!inRoot(back)) return null;
     try {
       const st = statSync(full);
-      if (!st.isFile() || st.size > MAX_READ_BYTES) return null;
+      if (!st.isFile()) return null;
+      if (st.size > MAX_READ_BYTES) {
+        why.set(rel, "too-big");
+        return null;
+      }
       const buf = readFileSync(full);
-      if (buf.subarray(0, 8000).includes(0)) return null;
+      if (isBinaryContent(buf, rel)) {
+        why.set(rel, "binary");
+        return null;
+      }
       return buf.toString("utf8");
     } catch {
       return null;
@@ -194,6 +207,10 @@ export function treeAt(sha: string, root: string, files: TreeFile[]): ScanTree {
     root,
     files,
     read,
+    whyUnreadable: (rel) => {
+      if (read(rel) !== null) return null;
+      return why.get(rel) ?? "unreadable";
+    },
     lines: (rel) => {
       if (cache.has(rel)) return cache.get(rel)!;
       const text = read(rel);

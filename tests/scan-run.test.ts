@@ -5,7 +5,8 @@
 // port. What is asserted is what the run WRITES (ledger, findings,
 // suggestions, the run record) and RETURNS (previews, refusals), never how.
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -16,6 +17,8 @@ import { FindingsStore } from "../src/setup/findings.js";
 import { LEDGER_FILE, type LedgerFile } from "../src/setup/ledger.js";
 import { anchoredLines, evidenceQuotesAnchor, findingFingerprint, normalizeCode, parseScanAnswer, scanValidatorPrompt } from "../src/setup/scan.js";
 import { RUN_FILE, ScanRunner, type ScanPorts, type ScanSource, type ScanTree } from "../src/setup/scanrun.js";
+import { gitScanSource } from "../src/setup/scantree.js";
+import { renderPreview } from "../extensions/setup-scan.js";
 import type { UnitCut } from "../src/setup/unitcut.js";
 
 let stateDir: string;
@@ -165,6 +168,42 @@ describe("what stage 1 reads", () => {
     for (const f of ["app/tests/test_views.py", "app/migrations/0001_init.py", "web/package-lock.json", "gen/out.py"]) {
       expect(planned).not.toContain(f);
     }
+  });
+});
+
+describe("a stray NUL is still text; a binary is skipped and SAID (selfscan round 6)", () => {
+  it("plans and reads a .ts with one NUL; reports PNG bytes as skipped: binary", async () => {
+    const repo = join(stateDir, "repo");
+    const put = (p: string, b: string | Buffer) => {
+      mkdirSync(join(repo, p, ".."), { recursive: true });
+      writeFileSync(join(repo, p), b);
+    };
+    put("app/stray.ts", "export const k = (a: string, b: string) => `${a}\0${b}`;\nexport const two = 2;\nexport const three = 3;\n");
+    put("app/models.py", lines(10, "model"));
+    put("app/logo.dat", Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52, 0, 0, 1, 0, 0, 0, 1, 0, 8, 6, 0, 0, 0, 0x5c, 0x72, 0xa8, 0x66]));
+    const git = (...args: string[]) =>
+      execFileSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], { encoding: "utf8" }).trim();
+    git("init", "-q");
+    git("add", "-A");
+    git("commit", "-qm", "init");
+    const r = runner();
+    const s = new ScanRunner(ports(r, {}, { ...gitScanSource(repo, join(stateDir, "state-home")), opened: [] }));
+    const p = await previewOf(s);
+    const planned = p.cases.flatMap((c) => c.files.map((f) => f.path));
+    expect(planned).toContain("app/stray.ts");
+    expect(planned).not.toContain("app/logo.dat");
+    expect(p.unreadable).toBe(1);
+    expect(p.skipped).toEqual([{ path: "app/logo.dat", why: "binary" }]);
+    const text = renderPreview(p);
+    expect(text).toContain("skipped: binary — 1 file(s): app/logo.dat");
+    expect(text).not.toContain("\0");
+    // A lens is handed the file, and the engine reads it to anchor findings.
+    const started = await s.start({ key: p.key });
+    if (!started.ok) throw new Error(started.errors.join("; "));
+    await s.idle();
+    expect(r.specs.flatMap((c) => c.files)).toContain("app/stray.ts");
+    const findings = s.status().run!.cases.reduce((n, c) => n + (c.findings ?? 0), 0);
+    expect(findings).toBeGreaterThan(0);
   });
 });
 
