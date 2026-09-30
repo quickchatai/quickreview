@@ -710,8 +710,9 @@ export interface DoubtLine {
 export function parseValidatorAnswer(
   text: string,
   root: string | null,
-): { survivors: ScanCandidate[]; dropped: number; doubted: DoubtLine[] } {
-  const { candidates, dropped } = readFindings(findingsPart(text), root);
+): { survivors: ScanCandidate[]; dropped: number; doubted: DoubtLine[]; answered: boolean } {
+  const head = findingsPart(text);
+  const { candidates, dropped } = readFindings(head, root);
   const doubted: DoubtLine[] = [];
   const body = blockBody(text, "DOUBTED");
   if (body !== null) {
@@ -726,7 +727,11 @@ export function parseValidatorAnswer(
       });
     }
   }
-  return { survivors: candidates, dropped, doubted };
+  // A validator's answer: survivors, a NONE, or a DOUBTED/KILLED block.
+  // Prose with none of them (a tool error told in words) kills nothing.
+  const answered =
+    candidates.length > 0 || doubted.length > 0 || /^\s*NONE\s*$/m.test(head) || blockBody(text, "KILLED") !== null || body !== null;
+  return { survivors: candidates, dropped, doubted, answered };
 }
 
 // ---- identity ----------------------------------------------------------------------

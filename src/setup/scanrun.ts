@@ -1185,6 +1185,13 @@ export class ScanRunner {
       return r !== undefined && (cand.end < r.start || cand.start > r.end);
     };
     const answer = parseScanAnswer(outcome.output, { root: tree.root });
+    // Only findings or an explicit NONE is a reading. Prose with neither (a
+    // tool error told in words, a broken grammar) is not "nothing found",
+    // and must never enter the ledger as clean coverage — that reading is
+    // what settles earlier findings fixed.
+    if (answer.candidates.length === 0 && !answer.none) {
+      return finish("failed", "the lens answered with no finding and no NONE line");
+    }
     let dropped = answer.dropped + answer.suggestions_dropped;
     const anchored: Array<{ cand: ScanCandidate; code: string; quoted: boolean }> = [];
     for (const cand of answer.candidates) {
@@ -1220,11 +1227,12 @@ export class ScanRunner {
       );
       addCost(v);
       if (!v.ok && signal.aborted) return finish("stopped", v.reason);
-      if (!v.ok) {
-        run.problems.push(`case ${plan.id}: the validator failed (${v.reason}) — its findings are kept unvalidated`);
+      const read = v.ok ? parseValidatorAnswer(v.output, tree.root) : null;
+      if (read === null || !read.answered) {
+        const why = v.ok ? "it answered with no survivor, NONE, DOUBTED or KILLED" : v.reason;
+        run.problems.push(`case ${plan.id}: the validator failed (${why}) — its findings are kept unvalidated`);
       } else {
         validated = true;
-        const read = parseValidatorAnswer(v.output, tree.root);
         const survivors: typeof anchored = [];
         for (const s of read.survivors) {
           if (outside(s)) {

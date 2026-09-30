@@ -488,6 +488,29 @@ describe("the validator — off by default, a doubt kept and marked", () => {
   });
 });
 
+describe("an answer that is neither findings nor NONE is not a reading (selfscan a03e554c)", () => {
+  it("a lens answering in prose fails its case: no ledger row, so nothing is certified clean", async () => {
+    const answer = (spec: CaseSpec): string =>
+      spec.unit === "app" ? "I could not inspect these files — they are too large to open." : scanAnswer(spec);
+    const { run } = await runToEnd(new ScanRunner(ports(runner({ answer }))));
+    const app = run.cases.filter((c) => c.unit === "app");
+    expect(app.length).toBeGreaterThan(0);
+    expect(app.every((c) => c.status === "failed")).toBe(true);
+    expect(ledger().entries.some((e) => e.path.startsWith("app/"))).toBe(false);
+    expect(ledger().entries.some((e) => e.path.startsWith("lib/"))).toBe(true);
+  });
+
+  it("a validator answering in prose is a failed validator: the lens's findings are kept unvalidated", async () => {
+    const answer = (spec: CaseSpec): string =>
+      spec.agent.startsWith("pass-validate") ? "Sorry, I was unable to read the tree." : scanAnswer(spec);
+    const { run } = await runToEnd(new ScanRunner(ports(runner({ answer }), { validator: true })));
+    const { findings } = new FindingsStore(stateHomeFs(stateDir)).list();
+    expect(findings).toHaveLength(3);
+    expect(findings.every((f) => f.validated === false)).toBe(true);
+    expect(run.problems.some((p) => p.includes("validator"))).toBe(true);
+  });
+});
+
 describe("the validator — a survivor it also doubts (review)", () => {
   it("is one finding, doubted, counted once", async () => {
     const answer = (spec: CaseSpec): string => {
