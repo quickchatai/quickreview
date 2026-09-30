@@ -132,6 +132,8 @@ describe("near-duplicate findings collapse into one", () => {
     st.report([moved], S("r2", "2026-09-30T11:00:00Z"));
     const rows = [
       { path: A932.path, blob: "b2", lens: "pass-security", tier: "t", effort: "low", validator: false, sha: "sha-r2", lines: 9, cost_usd: 0, run: "r2", case: "u", at: "2026-09-30T11:00:01Z" },
+      // Both lenses that raised the collapsed finding re-read the file.
+      { path: A932.path, blob: "b2", lens: "pass-data-safety", tier: "t", effort: "low", validator: false, sha: "sha-r2", lines: 9, cost_usd: 0, run: "r2", case: "u2", at: "2026-09-30T11:00:01Z" },
     ];
     st.reconcile({ rows, tree: new Set([A932.path]), run: S("r2", "2026-09-30T11:00:02Z") });
     const q = st.question().question!;
@@ -169,6 +171,31 @@ describe("the end-of-run fold, and what stays the companion's", () => {
     const rows = [{ ...rowAt("r2", "2026-09-30T11:00:01Z")[0]!, blob: "b2" }];
     expect(st.reconcile({ rows, tree: new Set([A932.path]), run: S("r2", "2026-09-30T11:00:02Z") })).toEqual({ fixed: 0, pending: 1 });
     expect(st.load().findings).toHaveLength(2);
+  });
+});
+
+describe("review fixes: a collapsed finding's severity and fix judgement", () => {
+  it("severity follows the sightings' latest reports, not a stale maximum", () => {
+    const st = store();
+    st.report([A932, A986], S("r1", "2026-09-30T10:00:00Z"));
+    expect(st.load().findings[0]!.severity).toBe("P1");
+    // r2: both lenses now rate it lower — the collapsed finding follows.
+    st.report([{ ...A986, severity: "P3" }, { ...A932, severity: "P2" }], S("r2", "2026-09-30T11:00:00Z"));
+    expect(st.load().findings[0]!.severity).toBe("P2");
+  });
+
+  it("is not fixed by one lens's re-read while the other lens that raised it never re-read the file", () => {
+    const st = store();
+    st.report([A932, A986], S("r1", "2026-09-30T10:00:00Z"));
+    const row = (lens: string, run: string, at: string) => ({
+      path: A932.path, blob: "b2", lens, tier: "t", effort: "low", validator: false, sha: `sha-${run}`, lines: 9, cost_usd: 0, run, case: "u", at,
+    });
+    // r2 runs pass-security alone on changed content and reports nothing.
+    expect(st.reconcile({ rows: [row("pass-security", "r2", "2026-09-30T11:00:00Z")], tree: new Set([A932.path]), run: S("r2", "2026-09-30T11:00:01Z") })).toEqual({ fixed: 0, pending: 0 });
+    expect(st.load().findings[0]!.state).toBe("new");
+    // r3: both lenses re-read it and neither reports it — now it is fixed.
+    const rows = [row("pass-security", "r3", "2026-09-30T12:00:00Z"), row("pass-data-safety", "r3", "2026-09-30T12:00:01Z")];
+    expect(st.reconcile({ rows, tree: new Set([A932.path]), run: S("r3", "2026-09-30T12:00:02Z") })).toEqual({ fixed: 1, pending: 0 });
   });
 });
 

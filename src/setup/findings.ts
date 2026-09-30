@@ -54,7 +54,10 @@
 //     and a later run's look-alike of an older sighting is the companion's
 //     match question, never a fold. `reconcile` runs the same fold once more
 //     over the run's fresh findings (`collapseRun`), for a duplicate whose
-//     case ran before the sighting it duplicates.
+//     case ran before the sighting it duplicates. A collapsed finding's
+//     severity is the highest its sightings' LATEST reports give, and it is
+//     unreported (fixed, or put to the match question) only once every lens
+//     that raised it has re-read other content.
 //
 // Persistence: `<state home>/scan/findings.json`. An unreadable store is
 // reported and refuses writes, like the ledger and the unit cut.
@@ -471,8 +474,10 @@ export class FindingsStore {
         const state: FindingState = known.state === "fixed" ? returnedState(known) : known.state;
         const history = { state, fixed: null, first_seen: known.first_seen, last_seen: seen, seen: again ? known.seen : known.seen + 1 };
         if (ownFp === r.fingerprint) {
-          // A collapsed finding keeps the highest severity any of its lenses gave.
-          const severity = known.merged?.length ? higher(known.severity, r.severity) : r.severity;
+          // A collapsed finding carries the highest severity its sightings now
+          // give — its own latest and each absorbed one's latest, never a
+          // stale maximum a re-scan has since lowered.
+          const severity = (known.merged ?? []).reduce((s, m) => higher(s, m.severity), r.severity);
           byFp.set(ownFp, { ...known, ...r, severity, ...history });
         } else {
           // A sighting of an absorbed near-duplicate: the finding keeps its own
@@ -538,11 +543,14 @@ export class FindingsStore {
         unreported.push(f.fingerprint);
         continue;
       }
-      const row = newest.get(`${f.lens}\0${f.path}`);
-      if (!row || row.run === f.last_seen.run || row.at < f.last_seen.at) continue;
-      if (f.blob != null && row.blob === f.blob) continue;
+      // A collapsed finding is unreported only when EVERY lens that raised
+      // it has re-read other content since — one lens's silence is not the
+      // other's, and a single-lens run must not settle what it never read.
+      const rows = (f.lenses ?? [f.lens]).map((l) => newest.get(`${l}\0${f.path}`));
+      const reread = rows.every((row) => row !== undefined && row.run !== f.last_seen.run && row.at >= f.last_seen.at && !(f.blob != null && row.blob === f.blob));
+      if (!reread) continue;
       unreported.push(f.fingerprint);
-      rereadBy.add(row.run);
+      for (const row of rows) rereadBy.add(row!.run);
     }
     const fresh = [...byFp.values()]
       .filter((f) => f.state !== "fixed" && rereadBy.has(f.first_seen.run))
