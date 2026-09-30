@@ -173,6 +173,35 @@ describe("persistence", () => {
     expect(result.ok).toBe(true);
     expect(readChecklist(stateDir)?.steps[PREFLIGHT_STEP_ID]?.status).toBe("done");
   });
+
+  it("a parseable checklist missing the fields the engine reads degrades to fresh — never a wedge", async () => {
+    const gated: OnboardingStep = {
+      id: "gated",
+      title: "gated",
+      explain: "x",
+      order: 20,
+      enabled: (choices) => choices.topology === "vm",
+      run: async () => ({ ok: true, checks: [] }),
+      verify: async () => ({ ok: true, checks: [] }),
+    };
+    mkdirSync(dirname(checklistPath(stateDir)), { recursive: true });
+    for (const bad of [
+      { version: 1, steps: {} },
+      { version: 1, steps: {}, choices: null, completed_at: null },
+      { version: 1, steps: {}, choices: [], completed_at: null },
+      { version: 1, steps: {}, choices: {}, completed_at: 5 },
+      { version: 1, steps: { gated: 7 }, choices: {}, completed_at: null },
+      { version: 1, steps: [], choices: {}, completed_at: null },
+    ]) {
+      writeFileSync(checklistPath(stateDir), JSON.stringify(bad));
+      expect(readChecklist(stateDir)).toBeNull();
+      const e = new OnboardingEngine([preflightStep(), gated], fakeAdapters());
+      expect(e.list().map((l) => l.status)).toEqual(["pending", "disabled"]);
+      expect(e.isComplete()).toBe(false);
+      const result = await e.runStep(PREFLIGHT_STEP_ID);
+      expect(result.ok).toBe(true);
+    }
+  });
 });
 
 describe("kill / resume re-verification", () => {

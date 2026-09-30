@@ -162,6 +162,10 @@ export function firstRunMarkerPath(stateDir: string): string {
   return join(stateDir, "companion", "first-run.json");
 }
 
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
 /** Read the checklist; null when absent or unreadable (both mean "fresh"). */
 export function readChecklist(stateDir: string): ChecklistFile | null {
   const path = checklistPath(stateDir);
@@ -170,8 +174,16 @@ export function readChecklist(stateDir: string): ChecklistFile | null {
     const raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
     if (typeof raw !== "object" || raw === null) return null;
     const file = raw as ChecklistFile;
-    if (typeof file.version !== "number" || typeof file.steps !== "object" || file.steps === null)
-      return null;
+    // Every field the engine dereferences is checked here: a file that parses
+    // but lacks one (hand-edited, foreign) would otherwise throw out of a
+    // step predicate or record() on every call — a wedge, not a fresh start.
+    if (typeof file.version !== "number") return null;
+    if (!isPlainObject(file.choices)) return null;
+    if (file.completed_at !== null && typeof file.completed_at !== "string") return null;
+    if (!isPlainObject(file.steps)) return null;
+    for (const rec of Object.values(file.steps)) {
+      if (!isPlainObject(rec) || !isPlainObject(rec.data)) return null;
+    }
     return file;
   } catch {
     return null;
