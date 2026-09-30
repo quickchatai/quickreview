@@ -367,6 +367,43 @@ describe("judged items return only if the PR moved", () => {
     expect(moved[0]!.returned).toBe(true);
   });
 
+  it("an adjudication OLDER than the candidate never judges it (selfscan d43776b7)", () => {
+    // PR 9 was adjudicated at 08:00 (for some other family); at 09:00 the
+    // sweep detects a long-review candidate on it for the first time. Nobody
+    // has looked at THAT one — it must stay open.
+    const rows = mergeCandidates([], detected, {
+      ...base,
+      adjudications: new Map([[9, "2026-08-25 08:00:00"]]),
+    });
+    expect(rows[0]!.judged).toBeNull();
+    expect(openCandidates(rows)).toHaveLength(1);
+    // A later adjudication still judges it.
+    const judged = mergeCandidates(rows, detected, {
+      ...base,
+      adjudications: new Map([[9, "2026-08-25 10:00:00"]]),
+    });
+    expect(openCandidates(judged)).toHaveLength(0);
+  });
+
+  it("an adjudication observed late, after the PR moved, judges the state it was made against — the row returns (selfscan d43776b7)", () => {
+    const first = mergeCandidates([], detected, { ...base, adjudications: new Map() });
+    // 11:00 — the PR moves to sig-2, with no receipt observed yet.
+    const moved = mergeCandidates(first, detected, {
+      now: "2026-08-25T11:00:00Z",
+      facts: new Map([[9, facts({ pr: 9, signature: "sig-2" })]]),
+      adjudications: new Map(),
+    });
+    // 11:05 — the 10:00 receipt (made while the PR was at sig-1) is observed.
+    const observed = mergeCandidates(moved, detected, {
+      now: "2026-08-25T11:05:00Z",
+      facts: new Map([[9, facts({ pr: 9, signature: "sig-2" })]]),
+      adjudications: new Map([[9, "2026-08-25 10:00:00"]]),
+    });
+    expect(observed[0]!.judged).not.toBeNull();
+    expect(observed[0]!.returned).toBe(true);
+    expect(openCandidates(observed)).toHaveLength(1);
+  });
+
   it("reads #adjudication entries header-only, so quoted prose cannot mint one", () => {
     const map = adjudicationsFrom([
       {

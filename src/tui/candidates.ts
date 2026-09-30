@@ -338,6 +338,10 @@ export interface Candidate {
   last_seen: string;
   /** The PR's signature as of the last sweep — the "did it move" input. */
   signature: string;
+  /** When the sweep first saw `signature`. An adjudication older than this was
+   * made against an earlier state of the PR. Absent on rows written before it
+   * existed, and then read as `first_seen`. */
+  signature_since?: string;
   /** Set when an `#adjudication` memory entry for this PR was observed, with
    * the PR signature at that moment. */
   judged: { at: string; signature: string } | null;
@@ -481,7 +485,6 @@ export function mergeCandidates(
       existing.detail = d.detail;
       existing.last_seen = ctx.now;
       if (f) {
-        existing.signature = f.signature;
         existing.title = f.title;
         existing.author = f.author;
       }
@@ -498,6 +501,7 @@ export function mergeCandidates(
         first_seen: ctx.now,
         last_seen: ctx.now,
         signature: f?.signature ?? "",
+        signature_since: ctx.now,
         judged: null,
         returned: false,
       });
@@ -507,17 +511,44 @@ export function mergeCandidates(
   // A PR whose signature changed but which produced no detection this sweep
   // still gets its signature refreshed — that is what lets a judged row notice
   // its PR moved even when the deviation itself is unchanged.
+  //
+  // An adjudication judges only what existed when it was made: one older than
+  // the row itself is about something else (another family, an earlier state)
+  // and never takes a candidate nobody looked at off the list; one older than
+  // the PR's current signature — a receipt observed late — is bound to the
+  // earlier state it was made against, so the row comes back as `returned`.
   for (const c of byKey.values()) {
     const f = ctx.facts.get(c.pr);
-    if (f) c.signature = f.signature;
+    if (f && f.signature !== c.signature) {
+      c.signature = f.signature;
+      c.signature_since = ctx.now;
+    }
     const adjudicated = ctx.adjudications.get(c.pr);
-    if (adjudicated && (!c.judged || adjudicated > c.judged.at)) {
-      c.judged = { at: adjudicated, signature: c.signature };
+    if (
+      adjudicated &&
+      (!c.judged || adjudicated > c.judged.at) &&
+      instant(adjudicated) >= instant(c.first_seen)
+    ) {
+      const since = c.signature_since ?? c.first_seen;
+      c.judged = {
+        at: adjudicated,
+        signature: instant(adjudicated) >= instant(since) ? c.signature : `(before ${since})`,
+      };
     }
     c.returned = c.judged !== null && c.signature !== c.judged.signature;
   }
 
   return [...byKey.values()];
+}
+
+/** A timestamp as epoch ms. Memory stamps are UTC `YYYY-MM-DD HH:MM:SS`
+ * (no zone), sweep stamps ISO — compared as strings, a space sorts before
+ * `T` and a same-day comparison would lie. Unparseable ⇒ -Infinity, so an
+ * unreadable receipt never judges anything (the safe direction: re-offer). */
+function instant(ts: string): number {
+  const iso = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(ts) ? `${ts.replace(" ", "T")}Z` : ts;
+  const ms = Date.parse(iso);
+  return Number.isNaN(ms) ? -Infinity : ms;
 }
 
 /** Everything still worth offering: never judged, or judged and then moved. */
