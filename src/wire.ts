@@ -59,7 +59,7 @@ import type { ContextAssembler, RoundMemory } from "./memory/context.js";
 import { recoverPrForOperator } from "./operator-recovery.js";
 import { resolveTerminalFailure } from "./terminal-failure.js";
 import type { MemoryStore } from "./memory/store.js";
-import { startEodPinWatch } from "./eodpinwatch.js";
+import { readPinnedFromSweep, startEodPinWatch, type PinnedSweepSource } from "./eodpinwatch.js";
 import { reconcileOrphanedRounds } from "./reconcile.js";
 import { PiSessionManager } from "./sessions.js";
 import { SlackApiClient } from "./slack/api.js";
@@ -512,6 +512,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // assembler and the EOD pinned-area watchdog are constructed before it
   // exists, and both degrade to "no memory" rather than to an error.
   let memoryStore: MemoryStore | null = null;
+  /** The same store, as the sweep that keeps what it could not read (the
+   * pinned watchdog must tell an outage from an empty pinned area). */
+  let memorySweep: PinnedSweepSource | null = null;
   let memoryAssembler: ContextAssembler | null = null;
   const notBuiltYet = {
     status: "unreadable",
@@ -796,6 +799,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         log,
       });
       memoryStore = memory;
+      memorySweep = memory;
       memoryAssembler = openVikingContextAssembler({
         client: memoryClient,
         store: memory,
@@ -987,11 +991,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // watchdog fingerprints the pinned area around the sweep and raises an
       // anomaly on any change. It WRAPS the inject rather than hooking inside
       // the timer, so a broken watchdog can never skip the sweep.
-      const store = memoryStore;
+      const sweepSource = memorySweep;
       pinWatch =
-        cfg.eod.pinned_watchdog && store
+        cfg.eod.pinned_watchdog && sweepSource
           ? startEodPinWatch({
-              readPinned: async () => (await store.read()).filter((e) => e.pinned),
+              readPinned: readPinnedFromSweep(sweepSource),
               logAnomaly: (kind, pr, reason, detail, injectMessage) =>
                 d.store.logAnomaly(kind, pr, reason, detail, injectMessage),
               timeZone: cfg.eod.timezone,

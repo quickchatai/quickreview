@@ -5,6 +5,7 @@ import {
   fingerprintPinned,
   PINNED_DEGRADED_KIND,
   PINNED_MODIFIED_KIND,
+  readPinnedFromSweep,
   renderPinnedModifiedMessage,
   startEodPinWatch,
   type EodPinWatchDeps,
@@ -344,6 +345,39 @@ describe("degradation is 'could not check', never 'changed'", () => {
     expect(h.anomalies).toHaveLength(1);
     expect(h.anomalies[0]!.kind).toBe(PINNED_DEGRADED_KIND);
     expect(h.anomalies[0]!.detail).toContain("after-sweep snapshot");
+  });
+
+  it("a store sweep that could not read everything degrades — never a removal, never 'unchanged'", async () => {
+    // The production reader: `read()` folds a dead server into `[]`, which the
+    // watchdog took as a real, empty pinned area — every pin "removed" when
+    // only the after-read failed, "unchanged" when both did.
+    const pinned = { ...entry("b1", 0, "h1"), pinned: true };
+    const dead = { entries: [], unread: ["ls viking://memories: ECONNREFUSED 127.0.0.1:1933"] };
+    for (const sweeps of [
+      [{ entries: [pinned], unread: [] }, dead],
+      [dead, dead],
+      [
+        { entries: [pinned], unread: [] },
+        { entries: [], unread: ["read x.md: 500"] },
+      ],
+    ]) {
+      let n = 0;
+      const reader = readPinnedFromSweep({ sweep: async () => sweeps[n++]! });
+      const h = harness([() => reader(), () => reader()]);
+      await h.watch.wrapInject(async () => {})("x");
+      h.advance(91 * 60_000);
+      h.tick();
+      await h.watch.settled();
+      expect(h.anomalies.map((a) => a.kind)).toEqual([PINNED_DEGRADED_KIND]);
+    }
+    // A complete sweep is an answer: unpinned entries filtered out, nothing raised.
+    const whole = readPinnedFromSweep({
+      sweep: async () => ({
+        entries: [pinned, { ...entry("b2", 0, "h2"), pinned: false }],
+        unread: [],
+      }),
+    });
+    await expect(whole()).resolves.toEqual([pinned]);
   });
 
   it("degrades on a hung read without ever claiming a change", async () => {
