@@ -61,18 +61,29 @@ export function roundTemplateFile(roundType: RoundType): string {
  * plans no passes and asks one question. */
 export const RECHECK_TEMPLATE_FILE = "round-recheck.md";
 
+/** Control characters (newlines included) as visible `\\uXXXX` escapes, so
+ * author-controlled text can never start a new line of prompt. */
+function flatControls(text: string): string {
+  return text.replace(
+    /[\u0000-\u001f\u007f\u2028\u2029]/g,
+    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
+}
+
 /**
  * A repository path as an inline code span that stays DATA. Git paths may hold
  * backticks, pipes and newlines, and they are author-controlled: rendered raw
  * they could close the span, split a plan-table row, or open a new line of
  * daemon-authored prompt text. Control characters are shown as `\uXXXX`,
- * pipes are table-escaped, and the fence is one backtick longer than any run
- * inside the name (CommonMark), so the name reads back exactly otherwise.
+ * and the fence is one backtick longer than any run inside the name
+ * (CommonMark), so the name reads back exactly otherwise. Pipes are escaped
+ * only for a TABLE cell (`table`): GFM un-escapes `\|` there, even inside a
+ * code span, but everywhere else the backslash would read back as part of
+ * the path.
  */
-export function codePath(path: string): string {
-  const flat = path
-    .replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`)
-    .replace(/\|/g, "\\|");
+export function codePath(path: string, opts: { table?: boolean } = {}): string {
+  let flat = flatControls(path);
+  if (opts.table) flat = flat.replace(/\|/g, "\\|");
   const longest = Math.max(0, ...(flat.match(/`+/g) ?? []).map((r) => r.length));
   if (longest === 0) return `\`${flat}\``;
   const fence = "`".repeat(longest + 1);
@@ -354,9 +365,11 @@ export function renderPassPlan(plan: PassPlanEntry[], unswept: string[] = []): s
     if (notes)
       cells.push(
         p.focus !== undefined
-          ? `files: ${p.focus.map(codePath).join(", ")}`
+          ? `files: ${p.focus.map((f) => codePath(f, { table: true })).join(", ")}`
           : p.why !== undefined
-            ? `because ${p.why}`
+            ? // A sub-lens reason names the file that fired it — author text
+              // in a table cell, so it gets the same containment.
+              `because ${flatControls(p.why).replace(/\|/g, "\\|")}`
             : "",
       );
     return `| ${cells.join(" | ")} |`;
@@ -371,7 +384,7 @@ export function renderPassPlan(plan: PassPlanEntry[], unswept: string[] = []): s
     unswept.length > 0
       ? [
           "",
-          `Not swept (over the per-round sweep cap): ${unswept.map(codePath).join(", ")}.`,
+          `Not swept (over the per-round sweep cap): ${unswept.map((f) => codePath(f)).join(", ")}.`,
         ]
       : [];
   return [...head, ...rows, ...tail].join("\n");

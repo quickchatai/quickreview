@@ -205,6 +205,26 @@ describe("author-controlled strings render as bounded data", () => {
     expect(delta.split("\n")).toHaveLength(1);
   });
 
+  it("a hostile filename inside a sub-lens reason stays inside its one table row", () => {
+    const table = renderPassPlan([
+      {
+        lens: "pass-edge",
+        agent: "pass-edge--sol-med",
+        tier: "sol-med",
+        raisable_to: [],
+        why: `a predicate changes in ${evil}`,
+      } as never,
+    ]);
+    const rows = table.split("\n");
+    expect(rows).toHaveLength(3);
+    expect(rows[2]!.split(/(?<!\\)\|/)).toHaveLength(7);
+  });
+
+  it("a pipe outside a table reads back as the path, not an escape", () => {
+    const delta = renderDeltaFiles([{ filename: "a|b.py", class: "significant" } as never]);
+    expect(delta).toContain("`a|b.py`");
+  });
+
   it("a PR title cannot close the system prompt's quotation", () => {
     const out = renderConversationSystemPrompt('PR #{{n}} ("{{title}}") in {{worktree}}', {
       pr: 7,
