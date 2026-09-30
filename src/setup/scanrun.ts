@@ -31,8 +31,10 @@
 //     expired login) reads as `interrupted`. Either way, only FINISHED cases
 //     wrote ledger rows, so starting again reads only what is left.
 //
-// A DELTA re-scan is the same run over only the files whose
-// content changed since the last scan (scan.ts changedSince): priced from the
+// A DELTA re-scan is the same run over the files whose content
+// changed since the last scan (scan.ts changedSince) AND every file no
+// complete reading covers at its content — never read, cut short, unreadable
+// before (the plan's `owed`, read unread-first): priced from the
 // ledger like any stage-1 preview — so never before calibration — and
 // stopped hard at its estimate. Deep passes never ride a delta; stage 2 runs
 // only when asked. Every run, delta or not, ends by RECONCILING the findings
@@ -293,10 +295,10 @@ export interface ScanPreview {
    * never silently absent. */
   skipped: SkippedFile[];
   settings: ScanRun["settings"] & { exclude: string[]; concurrency: number };
-  /** A delta: the last scan's sha it compares against, and the unchanged
-   * files it leaves out that the ledger does not cover (the rest of an
-   * unfinished scan). Null for a full preview. */
-  delta: { since: string; unchanged: number } | null;
+  /** A delta: the last scan's sha it compares against, and how many of its
+   * files are unchanged since but still owed a complete reading (never read,
+   * cut short, unreadable before). Null for a full preview. */
+  delta: { since: string; owed: number } | null;
   /** Why a start would be refused whatever the key. */
   blockers: string[];
 }
@@ -522,7 +524,7 @@ export class ScanRunner {
       cap = cfg.calibration_max_usd;
     }
     if (cases.length === 0 && delta) {
-      blockers.push(`nothing changed to read at ${sha.slice(0, 12)} since the last scan (${basis!.since.slice(0, 12)})`);
+      blockers.push(`nothing changed to read at ${sha.slice(0, 12)} since the last scan (${basis!.since.slice(0, 12)}), and the ledger covers every other file at its content`);
     } else if (cases.length === 0) {
       blockers.push(
         plan.covered > 0
@@ -560,7 +562,7 @@ export class ScanRunner {
       unreadable: plan.unreadable,
       skipped: plan.skipped,
       settings: { ...runSettings, exclude: cfg.exclude, concurrency: cfg.concurrency },
-      delta: basis ? { since: basis.since, unchanged: plan.unchanged } : null,
+      delta: basis ? { since: basis.since, owed: plan.owed } : null,
       blockers,
     };
     return { ok: true, planned: { preview, tree, settings } };

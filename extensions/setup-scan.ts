@@ -25,7 +25,8 @@
 //     and the [8] scan tab's stop, src/setup/scanreport.ts).
 //
 // A DELTA re-scan is scan_preview / scan_start with `delta: true`: stage 1
-// over only the files whose content changed since the last scan.
+// over the files whose content changed since the last scan, plus any file
+// no complete reading covers yet (never read, cut short, unreadable before).
 //
 // Convention (setup.ts, onboarding.ts): every tool answers a refusal as its
 // result, never a throw.
@@ -70,9 +71,9 @@ export function renderPreview(p: ScanPreview): string {
   if (p.mode === "delta") {
     out.push(
       `DELTA re-scan ${head}, against the last scan at ${p.delta?.since.slice(0, 12) ?? "?"}.`,
-      `Only files whose content changed since: ${p.files} files, ${p.lines} lines in ${p.cases.length} case(s) — ` +
+      `Files whose content changed since, and any not yet read whole: ${p.files} files, ${p.lines} lines in ${p.cases.length} case(s) — ` +
         `${p.covered} already read at this content` +
-        (p.delta && p.delta.unchanged > 0 ? `; ${p.delta.unchanged} unchanged file(s) no scan has reached yet are left for an ordinary preview` : "") +
+        (p.delta && p.delta.owed > 0 ? `; ${p.delta.owed} of the files are unchanged but no reading covers them yet (never read, cut short or unreadable before) — read first` : "") +
         `. Estimate ${usd(p.estimate_usd)}, measured at ` +
         `${usd(p.rate?.usd_per_kline ?? null)}/kline over ${p.rate?.cases ?? 0} finished case(s). The run stops hard at the estimate. ` +
         "No deep pass runs on a delta.",
@@ -303,7 +304,7 @@ export function renderProposal(p: StoredStage2Proposal): string {
 
 const DELTA_PARAM = {
   type: "boolean",
-  description: "A DELTA re-scan: only the files whose content changed since the last scan (priced from the ledger; never before calibration).",
+  description: "A DELTA re-scan: the files whose content changed since the last scan, plus any not yet read whole (priced from the ledger; never before calibration).",
 } as const;
 
 const SHA_PARAM = {

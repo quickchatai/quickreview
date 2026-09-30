@@ -24,6 +24,7 @@ import {
   type ScanFinding,
 } from "../src/setup/findings.js";
 import type { LedgerEntry } from "../src/setup/ledger.js";
+import { planStage1, type PriorReading } from "../src/setup/scan.js";
 import { ScanRunner, type ScanPorts, type ScanSource, type ScanTree } from "../src/setup/scanrun.js";
 import type { UnitCut } from "../src/setup/unitcut.js";
 
@@ -177,7 +178,7 @@ describe("a delta re-scan reads only changed-hash files", () => {
     const { preview, run: done } = await run(s, SHA2, true);
     expect(preview.mode).toBe("delta");
     // app/views.py and lib/util.py: unchanged, and read already.
-    expect(preview.delta).toEqual({ since: SHA1, unchanged: 0 });
+    expect(preview.delta).toEqual({ since: SHA1, owed: 0 });
     expect(preview.covered).toBe(2);
     const read = preview.cases.flatMap((c) => c.files.map((f) => f.path)).sort();
     expect(read).toEqual(["app/models.py", "lib/big.py", "lib/new.py", "tools/x.py"]);
@@ -188,18 +189,15 @@ describe("a delta re-scan reads only changed-hash files", () => {
     expect(done).toMatchObject({ mode: "delta", state: "complete", sha: SHA2 });
   });
 
-  it("the rest of an unfinished scan is not a change: a file the last scan never reached, unchanged, stays out", async () => {
+  it("the rest of an unfinished scan is still owed: a file no scan ever read, unchanged, is in the delta", async () => {
     // Calibration only: app, web and lib read; tools never reached.
     const s = new ScanRunner(ports(runner(), { [SHA1]: TREE, [SHA3]: { ...TREE, "app/models.py": TREE2["app/models.py"]! } }));
     await run(s, SHA1);
     const p = await s.preview({ sha: SHA3, delta: true });
     if (!p.ok) throw new Error(p.errors.join("; "));
-    expect(p.preview.cases.flatMap((c) => c.files.map((f) => f.path))).toEqual(["app/models.py"]);
-    expect(p.preview.delta).toEqual({ since: SHA1, unchanged: 1 });
-    // …while an ordinary preview at the same sha still offers the rest.
-    const full = await s.preview({ sha: SHA3 });
-    if (!full.ok) throw new Error(full.errors.join("; "));
-    expect(full.preview.cases.flatMap((c) => c.files.map((f) => f.path))).toContain("tools/x.py");
+    // Unread first: tools/x.py (never read) ahead of app/models.py (changed).
+    expect(p.preview.cases.flatMap((c) => c.files.map((f) => f.path))).toEqual(["tools/x.py", "app/models.py"]);
+    expect(p.preview.delta).toEqual({ since: SHA1, owed: 1 });
   });
 
   it("a delta and a full preview are different plans: one's key never starts the other", async () => {
@@ -377,6 +375,94 @@ describe("content read before, superseded, then back: read again (selfscan def42
     const again = await new ScanRunner(ports(runner(), all)).preview({ sha: SHA5, delta: true });
     if (!again.ok) throw new Error(again.errors.join("; "));
     expect(again.preview.cases.flatMap((c) => c.files.map((f) => f.path))).toEqual(["tools/x.py"]);
+  });
+});
+
+describe("a delta covers every file changed OR with no complete reading at its content (self-scan round 7)", () => {
+  // src/eodpinwatch.ts had never been read (unreadable until the NUL-as-text
+  // fix) and its content had not changed since the baseline, so the delta
+  // left it out as "unchanged" — a file no lens had ever read.
+  const T: Record<string, string> = { "a/read.py": lines(10, "r"), "a/never.py": lines(10, "n"), "a/changed.py": lines(10, "c") };
+  const files = Object.entries(T).map(([path, text]) => ({ path, blob: blob(text) }));
+  const b = (p: string): string => blob(T[p]!);
+  const at = "2026-09-01T00:00:00Z";
+  const base = {
+    cut: { units: [{ name: "a", roots: ["a"], kind: "directory" as const, note: "" }], ignored: [] },
+    files,
+    linesOf: (p: string) => T[p]!.split("\n").length - 1,
+    exclude: [],
+    budget: { maxFiles: 1, maxLines: 400 },
+    // The last scan's tree held every file at this very content, except the changed one.
+    delta: {
+      read: new Map([["a/read.py", b("a/read.py")], ["a/changed.py", "old-c"]]),
+      baseline: new Map([["a/read.py", b("a/read.py")], ["a/never.py", b("a/never.py")], ["a/changed.py", "old-c"]]),
+    },
+    history: new Map<string, PriorReading>([
+      ["a/read.py", { blob: b("a/read.py"), complete: true, at }],
+      ["a/changed.py", { blob: "old-c", complete: true, at }],
+    ]),
+    covered: new Set([`a/read.py\0${b("a/read.py")}`]),
+  };
+  const planned = (plan: ReturnType<typeof planStage1>) => plan.cases.flatMap((c) => c.files.map((f) => f.path));
+
+  it("an unchanged file never read is in the delta — unread first; an unchanged, fully-read one is not", () => {
+    const plan = planStage1(base);
+    expect(planned(plan)).toEqual(["a/never.py", "a/changed.py"]);
+    expect(plan.covered).toBe(1);
+    expect(plan.owed).toBe(1);
+  });
+
+  it("an unchanged file whose newest reading at this content did not complete is in the delta", () => {
+    const plan = planStage1({
+      ...base,
+      history: new Map([...base.history, ["a/never.py", { blob: b("a/never.py"), complete: false, at }]]),
+    });
+    expect(planned(plan)).toEqual(["a/never.py", "a/changed.py"]);
+  });
+
+  it("a file the last scan skipped as binary, unchanged and text now, is in the delta (engine)", async () => {
+    const withNul = { ...TREE, "tools/x.py": `${lines(15, "tool")}\0tail\n` };
+    const src = fakeSource({ [SHA1]: withNul, [SHA3]: withNul });
+    // At SHA1 the tree could not read tools/x.py (binary); at SHA3 — the same
+    // blob — the NUL-as-text fix reads it.
+    const binaryAt1: ScanSource = {
+      ...src,
+      open: (sha, keep) => {
+        const o = src.open(sha, keep);
+        if (!o.ok || sha !== SHA1) return o;
+        const t = o.tree;
+        return {
+          ok: true,
+          tree: { ...t, lines: (p) => (p === "tools/x.py" ? null : t.lines(p)), whyUnreadable: (p) => (p === "tools/x.py" ? "binary" : null) },
+        };
+      },
+    };
+    const mk = (r: FakeRunner): ScanRunner => new ScanRunner({ ...ports(r), source: binaryAt1 });
+    const first = mk(runner());
+    await run(first, SHA1);
+    let left = await first.preview({ sha: SHA1 });
+    if (left.ok && left.preview.cases.length > 0) {
+      await run(first, SHA1);
+      left = await first.preview({ sha: SHA1 });
+    }
+    if (!left.ok) throw new Error(left.errors.join("; "));
+    expect(left.preview.cases).toEqual([]);
+    expect(left.preview.skipped).toEqual([{ path: "tools/x.py", why: "binary" }]);
+
+    const p = await mk(runner()).preview({ sha: SHA3, delta: true });
+    if (!p.ok) throw new Error(p.errors.join("; "));
+    expect(p.preview.cases.flatMap((c) => c.files.map((f) => f.path))).toEqual(["tools/x.py"]);
+    expect(p.preview.delta).toEqual({ since: SHA1, owed: 1 });
+    expect(p.preview.blockers).toEqual([]);
+  });
+
+  it("nothing changed and everything read whole: the delta is empty", () => {
+    const plan = planStage1({
+      ...base,
+      files: files.filter((f) => f.path === "a/read.py"),
+    });
+    expect(plan.cases).toEqual([]);
+    expect(plan.owed).toBe(0);
   });
 });
 

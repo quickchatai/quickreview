@@ -176,10 +176,11 @@ export interface Stage1Plan {
   /** Each of those files and why (`binary`, `too-big`, `unreadable` when the
    * tree cannot say) — reported, never silently absent from coverage. */
   skipped: SkippedFile[];
-  /** Delta only: readable files the ledger does not cover that are left out
-   * because they have not changed since the last scan — the rest of an
-   * unfinished scan, which an ordinary preview prices (0 for a full plan). */
-  unchanged: number;
+  /** Delta only: planned files whose content has NOT changed since the last
+   * scan but that no complete reading covers at it — never read (the rest of
+   * an unfinished scan, or unreadable then and readable now), or read only in
+   * part. A delta owes them as much as the changed ones (0 for a full plan). */
+  owed: number;
 }
 
 /** What a delta re-scan compares against. */
@@ -191,7 +192,9 @@ export interface DeltaBasis {
 }
 
 /** Has `f`'s content changed since the last scan? Newest read by the ledger
- * at another content, or absent from / different in the last scan's tree. */
+ * at another content, or absent from / different in the last scan's tree.
+ * Not what a delta reads by: an unchanged file with no complete reading at
+ * this content is owed too (planStage1). */
 export function changedSince(f: TreeFile, basis: DeltaBasis): boolean {
   const read = basis.read.get(f.path);
   if (read !== undefined && read !== f.blob) return true;
@@ -217,7 +220,8 @@ export interface PlanInput {
   covered: ReadonlySet<string>;
   exclude: readonly string[];
   budget: CaseBudget;
-  /** A delta re-scan: only files changed since the last scan. */
+  /** A delta re-scan: files changed since the last scan, and every file no
+   * complete reading covers at its content (`covered`, `history`). */
   delta?: DeltaBasis;
   /** A file's text, where a range cut looks for declaration boundaries;
    * absent (or null) = fixed windows. */
@@ -257,7 +261,7 @@ export function readTier(f: { path: string; blob: string }, history: ReadonlyMap
 export const coverKey = (path: string, blob: string): string => `${path}\0${blob}`;
 
 /** Stage 1 over the saved cut at one tree: every readable, uncovered,
- * non-excluded file (with `delta`, only the changed ones), one case per
+ * non-excluded file, one case per
  * unit, split to fit — ordered coverage-first by `history` (readTier).
  * Deterministic. */
 export function planStage1(input: PlanInput): Stage1Plan {
@@ -268,7 +272,7 @@ export function planStage1(input: PlanInput): Stage1Plan {
   let covered = 0;
   let unreadable = 0;
   const skipped: SkippedFile[] = [];
-  let unchanged = 0;
+  const unchangedPaths = new Set<string>();
   const readable: string[] = [];
   // Files over one case: the ranges still to read, cut up front.
   const ranged = new Map<string, FileRange[]>();
@@ -288,12 +292,14 @@ export function planStage1(input: PlanInput): Stage1Plan {
       covered++;
       continue;
     }
-    // A file whose newest reading stopped between line ranges is not
-    // "unchanged" — its content was never read whole; the rest is still due.
-    if (input.delta !== undefined && !changedSince(f, input.delta) && !input.partial?.has(coverKey(f.path, f.blob))) {
-      unchanged++;
-      continue;
-    }
+    // A delta reads what changed since the last scan AND every file no
+    // complete reading covers at this content — never read (the rest of an
+    // unfinished scan; unreadable then, readable now), or cut short between
+    // ranges. Past `covered`, that is every file left: a delta leaves out only
+    // what an ordinary plan leaves out, and says how much it owes unchanged.
+    // (Self-scan round 7: a never-read, unchanged file was skipped as
+    // "unchanged" — no lens had ever read it.)
+    if (input.delta !== undefined && !changedSince(f, input.delta)) unchangedPaths.add(f.path);
     if (n > input.budget.maxLines) {
       const done = input.partial?.get(coverKey(f.path, f.blob)) ?? [];
       const todo = cutRanges(n, input.budget.maxLines, input.textOf?.(f.path) ?? null).filter(
@@ -355,7 +361,8 @@ export function planStage1(input: PlanInput): Stage1Plan {
     ranked.sort((x, y) => x.t - y.t || (x.at < y.at ? -1 : x.at > y.at ? 1 : 0) || x.i - y.i);
     cases.splice(0, cases.length, ...ranked.map((r) => r.c));
   }
-  return { cases, excluded, covered, unassigned: a.unassigned, unreadable, skipped, unchanged };
+    const owed = new Set(cases.flatMap((c) => c.files.map((f) => f.path)).filter((p) => unchangedPaths.has(p))).size;
+  return { cases, excluded, covered, unassigned: a.unassigned, unreadable, skipped, owed };
 }
 
 /**

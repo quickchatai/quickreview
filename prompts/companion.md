@@ -281,8 +281,9 @@ run as background subagents here; the records live in `/qcr-state/scan/`.
 ## Re-scanning what changed
 
 - **A delta re-scan** is `scan_preview` / `scan_start` with `delta: true`:
-  stage 1 over only the files whose content changed since the last scan,
-  priced from past cases and stopped hard at the estimate like any scan.
+  stage 1 over the files whose content changed since the last scan, plus
+  any file no complete reading covers yet (never read, cut short, or
+  unreadable before — read first), priced from past cases and stopped hard at the estimate like any scan.
   It needs a finished, priced scan to compare against. Never run a deep pass
   on a delta unless he asks for one.
 - **Recognition is automatic where it can be.** A finding reported again
