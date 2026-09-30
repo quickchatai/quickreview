@@ -853,6 +853,18 @@ export class PiSessionManager implements SessionHooks {
     const session = prSessionName(pr);
     const blocking = store.blockingSessionCommand(session);
     if (blocking) throw new Error(`session command ${blocking.id} is ${blocking.status}`);
+    // A round's command is born only while its round is still running. The
+    // dispatch that created the round awaited the worktree and the session
+    // before reaching here, and an operator `restart-session` may have
+    // cancelled the round in that window; delivering it anyway would hand the
+    // session a cancelled round that the supervisor then kills, and the
+    // recovery that cancelled it would never see a successor. This check and
+    // the insert below are one synchronous block, so nothing interleaves.
+    if (kind === "round" && roundNo !== null) {
+      const status = store.roundStatus(pr, roundNo);
+      if (status !== undefined && status !== "running")
+        throw new Error(`round ${roundNo} of #${pr} is ${status}; not delivering its prompt`);
+    }
     const id = randomUUID();
     const payload = message.endsWith("\n") ? message : `${message}\n`;
     const payloadPath = this.sessionCommandPayloadPath(id);

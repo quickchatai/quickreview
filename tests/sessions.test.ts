@@ -890,6 +890,37 @@ describe("injection", () => {
 });
 
 describe("durable command ownership", () => {
+  it("never births a command for a round an operator cancelled while dispatch was in flight", async () => {
+    // selfscan 1becb396: dispatch created round 1, then awaited the worktree
+    // fetch; `restart-session` cancelled that provisional round meanwhile.
+    // Delivering it anyway left a live command on a cancelled round.
+    const store = new StateStore(":memory:", () => new Date("2026-08-13T10:00:00Z"));
+    try {
+      const roundId = store.startRound(42, "first", ["pass-baseline"], 75);
+      store.cancelRunningRounds(42, "restart-session");
+      const m = manager(undefined, store);
+      await expect(m.dispatchRound(order, "ROUND PROMPT BODY")).rejects.toThrow(/cancelled/);
+      expect(store.blockingSessionCommand("pr-42")).toBeUndefined();
+      expect(store.sessionCommandForRound(42, 1)).toBeUndefined();
+      expect(store.roundStatus(42, 1)).not.toBe("running");
+      expect(roundId).toBeGreaterThan(0);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("still delivers a round that is running", async () => {
+    const store = new StateStore(":memory:", () => new Date("2026-08-13T10:00:00Z"));
+    try {
+      store.startRound(42, "first", ["pass-baseline"], 75);
+      const m = manager(undefined, store);
+      await m.dispatchRound(order, "ROUND PROMPT BODY");
+      expect(store.sessionCommandForRound(42, 1)).toMatchObject({ kind: "round", round_no: 1 });
+    } finally {
+      store.close();
+    }
+  });
+
   it("records round dispatch and ordinary wakes in the same exact-byte command slot", async () => {
     const dbPath = join(root, "state", "state.db");
     const store = new StateStore(dbPath, () => new Date("2026-08-13T10:00:00Z"));

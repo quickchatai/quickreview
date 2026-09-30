@@ -2163,6 +2163,15 @@ export class StateStore {
     return row.c > 0;
   }
 
+  /** The status of this PR's round `roundNo` (the newest row carrying that
+   * number), or undefined when there is no such row. */
+  roundStatus(pr: number, roundNo: number): string | undefined {
+    const row = this.db
+      .prepare("SELECT status FROM rounds WHERE pr = ? AND round_no = ? ORDER BY id DESC LIMIT 1")
+      .get(pr, roundNo) as { status: string } | undefined;
+    return row?.status;
+  }
+
   runningRounds(): RoundRow[] {
     return this.db
       .prepare("SELECT * FROM rounds WHERE status = 'running' ORDER BY started_at")
