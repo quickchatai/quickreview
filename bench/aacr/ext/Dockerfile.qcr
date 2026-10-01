@@ -1,0 +1,30 @@
+# The external-benchmark OVERLAY on the final comparison's reviewer image.
+#
+#   bench/aacr/ext/ext.sh build      (assembles the context; never run by hand)
+#
+# FROM qcr-bench:pi099 — the image every QuickReview number in FULL-BENCHMARK.md
+# was reviewed with (build b2ce03a, pi 0.99.1). The reviewer is NOT rebuilt:
+# its dist/, prompts, agents, config and pi are the base image's, byte for
+# byte. The overlay replaces exactly two compiled harness files and adds data:
+#
+#   dist/src/bench/aacr.js      parseCaseSet's dataset-pin REGISTRY and the
+#                               external-benchmark case fields (fetch_repo,
+#                               fetch_pr, title/body, expect_merge_base,
+#                               leakproof) — src/bench/aacr.ts
+#   dist/src/bench/prefetch.js  fork fetch, local read-only mirror, PR text from
+#                               the set, the leak-proof store — src/bench/prefetch.ts
+#   bench/sets/martian-*.json, sweprbench-*.json   the external case sets
+#   bench/codex_bridge.py, ext_judge.py            the judge endpoint
+#
+# Neither replaced file is on the review path's prompt or model side: aacr.js's
+# renderers (benchAppendix, the result conversion) are unchanged source, and
+# prefetch.js runs only in the prefetch container. ext.sh build diffs the
+# overlay's aacr.js against the base image's and records the diff.
+ARG BASE=qcr-bench:pi099
+FROM ${BASE}
+COPY dist-bench/aacr.js dist-bench/prefetch.js /opt/quickreview/sandbox/dist/src/bench/
+COPY sets/ /opt/quickreview/bench/sets/
+COPY codex_bridge.py ext_judge.py /opt/quickreview/bench/
+ARG QCR_EXT_COMMIT=unknown
+ENV QCR_BENCH_EXT_OVERLAY=${QCR_EXT_COMMIT}
+LABEL qcr.ext.overlay="${QCR_EXT_COMMIT}" qcr.ext.base="${BASE}"

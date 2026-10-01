@@ -1,0 +1,234 @@
+{
+ "name": "sweprbench-smoke10",
+ "dataset": {
+  "source": "https://huggingface.co/datasets/foundry-ai/swe-prbench",
+  "commit": "b87f5797aef3ed2c3153bb1304ea4d801d36ba6e",
+  "file": "dataset/prs.jsonl",
+  "sha256": "a58e1f713533f6bc260a93f6e234b85acd16a77f55a756893694b96495eb43cd"
+ },
+ "rule": "the 10-PR smoke from eval_100 (DECISIONS-PENDING.md)",
+ "references": 39,
+ "cases": [
+  {
+   "instance_id": "coreos__coreos-assembler@9487667",
+   "repo": "coreos/coreos-assembler",
+   "pr": 4386,
+   "pr_url": "https://github.com/coreos/coreos-assembler/pull/4386",
+   "base_commit": "a104175f8297f19ec4fe4b5b3ab82beaa65fce40",
+   "head_commit": "948766776b2a094d91148e34186fb5aaddc968db",
+   "language": "Go",
+   "pr_category": "Type1_Direct",
+   "change_line_count": 31,
+   "references": 2,
+   "title": "drop automatic-version-prefix req; add python3-dotenv to deps",
+   "body": "see commits below. Basically I'm reworking to drop cruft from our fedora-coreos-config where there's a lot of duplication because we have been supporting both the old style `cosa build` and the new build via container `cosa build-with-buildah` builds.\r\n\r\ncommit 22bb4c2a1c02d3d59ad8a840b31bb376a3271d3f\r\nAuthor: Dusty Mabe <dusty@dustymabe.com>\r\nDate:   Tue Dec 9 16:35:36 2025 -0500\r\n\r\n    add python3-dotenv to deps\r\n    \r\n    We want to use this library to parse build-args.conf which is just\r\n    environment variables in var=val format.\r\n\r\ncommit bc55ead4be4160c0afd7c1231a4b8d891c50f5dc\r\nAuthor: Dusty Mabe <dusty@dustymabe.com>\r\nDate:   Tue Dec 9 16:32:34 2025 -0500\r\n\r\n    move some manifest parsed env vars to cmd-build\r\n    \r\n    These are only used in cmd-build so let's move them there to make\r\n    it more explicit where they are being used.\r\n\r\ncommit ef1b4fbbbd1882aaf6f8b8d0a6bbe059914cfbd1\r\nAuthor: Dusty Mabe <dusty@dustymabe.com>\r\nDate:   Tue Dec 9 15:19:07 2025 -0500\r\n\r\n    cmdlib: drop requirement for automatic-version-prefix in the manifest\r\n    \r\n    We're moving away from most rpm-ostree high level features and this\r\n    is one of them we no longer really need anymore in the build-via-container\r\n    world.\r\n\r\ncommit e90ae1900ae78548d3bcb64347a6e40123120f6a\r\nAuthor: Dusty Mabe <dusty@dustymabe.com>\r\nDate:   Tue Dec 9 14:47:22 2025 -0500\r\n\r\n    cmd-build-with-buildah: trim log statement\r\n    \r\n    I find the `...` on the end of this statement annoying. It makes it\r\n    harder to copy/paste the version if I wanted to and also harder\r\n    for my human brain to process it as well.",
+   "leakproof": {
+    "source_head": "22bb4c2a1c02d3d59ad8a840b31bb376a3271d3f",
+    "source_merge_base": "af6e25e3c4aa3b22c9132f3c1447f71a7954e6ed",
+    "base_tree": "744aa562c0a2068949830a1a06cba8e384d922b9",
+    "head_tree": "579a437558c5f1accd51b427bb7e4dcacf6853c3"
+   },
+   "task_id": "coreos-assembler__4386",
+   "source_base_commit": "af6e25e3c4aa3b22c9132f3c1447f71a7954e6ed"
+  },
+  {
+   "instance_id": "stylelint__stylelint@cf9ed47",
+   "repo": "stylelint/stylelint",
+   "pr": 8953,
+   "pr_url": "https://github.com/stylelint/stylelint/pull/8953",
+   "base_commit": "a4f31c00471e51d510d5eb0f47bf1c272a83ed3f",
+   "head_commit": "cf9ed47f3132d40c3e10def50105871e0bfa51f1",
+   "language": "JavaScript",
+   "pr_category": "Type1_Direct",
+   "change_line_count": 64,
+   "references": 7,
+   "title": "Fix `no-duplicate-selectors` false negatives for matching escaped selectors",
+   "body": "## Summary\n\nFixes #3972\n\nThe `no-duplicate-selectors` rule now correctly detects duplicate class selectors that use different CSS escape sequence formats. For example, `.u-m\\00002b` and `.u-m\\+` are now recognized as duplicates since both represent `.u-m+`.\n\n## Changes\n\n- Added `normalizeNodeEscaping()` helper in `normalizeSelector.mjs` that uses postcss-selector-parser's getter/setter behavior to normalize CSS escaping\n- Added test cases for escaped selector duplicates\n\n## How it works\n\nThe fix leverages postcss-selector-parser's built-in value getter/setter behavior for ClassName nodes. The getter returns the unescaped value, while the setter re-escapes it in a normalized form. By doing `node.value = node.value`, we trigger this normalization, ensuring equivalent selectors compare as equal regardless of their original escape format.\n\nReference: https://github.com/postcss/postcss-selector-parser/blob/1b1e9c3bc10ccc3bc5f07a987caa7f2684c0b52f/src/selectors/className.js#L13-L28",
+   "leakproof": {
+    "source_head": "6a23b3b504ccbc38c8f19dd98346d7abe0ecffd7",
+    "source_merge_base": "bc66fe5bddd9efe0f2076a08760d2ff33ad927e3",
+    "base_tree": "fc71353bcbf63eca2bb1aa4105e1503e7216ae1d",
+    "head_tree": "1e0df42162db9e5710ef230edfc486667b385a34"
+   },
+   "task_id": "stylelint__8953",
+   "source_base_commit": "bc66fe5bddd9efe0f2076a08760d2ff33ad927e3"
+  },
+  {
+   "instance_id": "vitest-dev__vitest@1823d6c",
+   "repo": "vitest-dev/vitest",
+   "pr": 9152,
+   "pr_url": "https://github.com/vitest-dev/vitest/pull/9152",
+   "base_commit": "2aff3c7cbff363730a697a29b2dbdd4cbf844e9a",
+   "head_commit": "1823d6ca42115656700e633c2a4b0348f66be6c7",
+   "language": "TypeScript",
+   "pr_category": "Type2_Contextual",
+   "change_line_count": 99,
+   "references": 2,
+   "title": "fix: apply source maps for external module stack trace",
+   "body": "### Description\r\n\r\n<!-- Please insert your description here and provide especially info about the \"what\" this PR is solving -->\r\n\r\nResolves https://github.com/vitest-dev/vitest/issues/9003 \r\nCloses https://github.com/vitest-dev/vitest/pull/9047 (supersedes)\r\n\r\n<!-- You can also add additional context here -->\r\n\r\n### Please don't delete this checklist! Before submitting the PR, please make sure you do the following:\r\n- [x] It's really useful if your PR references an issue where it is discussed ahead of time. If the feature is substantial or introduces breaking changes without a discussion, PR might be closed.\r\n- [x] Ideally, include a test that fails without this PR but passes with it.\r\n- [ ] Please, don't make changes to `pnpm-lock.yaml` unless you introduce a new test example.\r\n- [ ] Please check [Allow edits by maintainers](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/working-with-forks/allowing-changes-to-a-pull-request-branch-created-from-a-fork) to make review process faster. Note that this option is not available for repositories that are owned by Github organizations.\r\n\r\n### Tests\r\n- [ ] Run the tests with `pnpm test:ci`.\r\n\r\n### Documentation\r\n- [ ] If you introduce new functionality, document it. You can run documentation with `pnpm run docs` command.\r\n\r\n### Changesets\r\n- [x] Changes in changelog are generated from PR name. Please, make sure that it explains your changes in an understandable manner. Please, prefix changeset messages with `feat:`, `fix:`, `perf:`, `docs:`, or `chore:`.\r\n",
+   "leakproof": {
+    "source_head": "d77793c3787c747f7a1abf90f4ee04902feedeb6",
+    "source_merge_base": "090064f97bf1f82ce5ebf1a39e6f4d44ec59980a",
+    "base_tree": "5271619e7a5b928c7d0e2431871d190b07ef9232",
+    "head_tree": "6d259ba02bf925bad7ae97c877bbfe0c8291b22d"
+   },
+   "task_id": "vitest__9152",
+   "source_base_commit": "090064f97bf1f82ce5ebf1a39e6f4d44ec59980a"
+  },
+  {
+   "instance_id": "projectnessie__nessie@5510505",
+   "repo": "projectnessie/nessie",
+   "pr": 11676,
+   "pr_url": "https://github.com/projectnessie/nessie/pull/11676",
+   "base_commit": "c3b81ce4f2b1fb408c3590c631818c456058ce1a",
+   "head_commit": "5510505d6afc6f511dfbd2d5faf8198e88f5b167",
+   "language": "Java",
+   "pr_category": "Type3_Latent_Candidate",
+   "change_line_count": 84,
+   "references": 4,
+   "title": "Add OCI friendly S3 chunked encoding toggle",
+   "body": "Closes #11441\r\n\r\n### Adds OCI-Friendly Chunked Encoding Toggle for Nessie Catalog S3 Clients\r\nThis PR makes the catalog’s S3 client behavior configurable so deployments targeting Oracle Cloud Infrastructure (and other S3-compatible services that reject chunked payload signatures) can disable chunked transfer encoding end-to-end. The option is exposed at the configuration API level, propagated through the catalog implementation, documented in Helm, and covered by tests.\r\n\r\n**Key changes:**\r\n\r\n- Introduces chunked-encoding-enabled on S3BucketOptions, plus helpers, and wires it into S3ClientSupplier so per-bucket overrides reach the AWS SDK S3Configuration.\r\n\r\n- Extends the Helm chart (values.yaml, README, helpers, templates) and Quarkus sample config so both global defaults and per-bucket settings can toggle chunked encoding.\r\n\r\n- Adds unit coverage (TestS3ClientSupplier) verifying default AWS behavior and explicit true/false values, preventing regressions.\r\n\r\n- Updates the changelog to highlight the new configuration hook.\r\n\r\n**Testing:**\r\n\r\n`./gradlew :nessie-catalog-files-impl:test --tests org.projectnessie.catalog.files.s3.TestS3ClientSupplier`",
+   "leakproof": {
+    "source_head": "5867921d2f5dc256f6910e82006661af9b36fb00",
+    "source_merge_base": "2aae2293de89045be4c55372c8112569bf6b98a4",
+    "base_tree": "6556534942ec7b6e46da52605d5779c94fea6f35",
+    "head_tree": "3302c6255aabcc9740b742c722b42eda79203f1d"
+   },
+   "task_id": "nessie__11676",
+   "source_base_commit": "b40ea80a82b3bba120990bf4c7e59782f3b220af"
+  },
+  {
+   "instance_id": "dbcli__mycli@41d0b60",
+   "repo": "dbcli/mycli",
+   "pr": 1517,
+   "pr_url": "https://github.com/dbcli/mycli/pull/1517",
+   "base_commit": "cd1dcb8ca68b7fb68f364474dbbb3d46a0e2820a",
+   "head_commit": "41d0b6098ec22c3ab3b1e29acb5ff5151fbde2cb",
+   "language": "Python",
+   "pr_category": "Type1_Direct",
+   "change_line_count": 31,
+   "references": 1,
+   "title": "Move `ssl_mode` to `[connection]` section",
+   "body": "## Description\r\n * move to new section\r\n * change the name to `default_ssl_mode`\r\n * place with other SSL options\r\n * continue to silently accept the old spelling in `[main]`\r\n\r\n## Checklist\r\n<!--- We appreciate your help and want to give you credit. Place an `x` in the boxes below as you complete them. -->\r\n- [x] I added this contribution to the `changelog.md` file.\r\n- [x] I added my name to the `AUTHORS` file (or it's already there).\r\n- [x] To lint and format the code, I ran\r\n    ```bash\r\n    uv run ruff check && uv run ruff format && uv run mypy --install-types .\r\n    ```\r\n",
+   "leakproof": {
+    "source_head": "5f76d7c24b35134660b90e08284da5e46a843b2e",
+    "source_merge_base": "3cfcb28cae8e5d1e4cc4704de227262d6eb3df3f",
+    "base_tree": "5459f19f1b667be483060c9b502de73a323e263b",
+    "head_tree": "ec1b540d61e7512cd7a4805d28612f81583c1122"
+   },
+   "task_id": "mycli__1517",
+   "source_base_commit": "3cfcb28cae8e5d1e4cc4704de227262d6eb3df3f"
+  },
+  {
+   "instance_id": "falconry__falcon@19bacbd",
+   "repo": "falconry/falcon",
+   "pr": 2572,
+   "pr_url": "https://github.com/falconry/falcon/pull/2572",
+   "base_commit": "2128adaf3a878cf5e89983d43e13aeb4ee2a9e8b",
+   "head_commit": "19bacbd10d73e613b714cbd376e025afaa43cf49",
+   "language": "Python",
+   "pr_category": "Type3_Latent_Candidate",
+   "change_line_count": 35,
+   "references": 6,
+   "title": "feat: deprecate falcon.testing.redirected in favor of contextlib",
+   "body": "# Summary of Changes\r\n\r\nDeprecates `falcon.testing.redirected` in favor of the standard library's `contextlib.redirect_stdout` and `contextlib.redirect_stderr`.\r\n\r\n**Changes:**\r\n- Added deprecation warning to `falcon.testing.redirected` using `falcon.util.deprecated`\r\n- Updated internal test file (`test_cmd_inspect_app.py`) to use `contextlib` alternatives\r\n- Scheduled for removal in Falcon 5.0\r\n\r\n**Rationale:**\r\n- The popular pytest framework already captures and suppresses output from successful tests by default\r\n- The stdlib provides equivalent functionality via `contextlib.redirect_stdout` and `contextlib.redirect_stderr`\r\n- Reduces maintenance burden by removing redundant utility\r\n\r\n# Related Issues\r\n\r\nFixes #2569\r\n\r\n# Pull Request Checklist\r\n\r\nThis is just a reminder about the most common mistakes.  Please make sure that you tick all *appropriate* boxes.  Reading our [contribution guide](https://falcon.readthedocs.io/en/stable/community/contributing.html) at least once will save you a few review cycles!\r\n\r\nIf an item doesn't apply to your pull request, **check it anyway** to make it apparent that there's nothing to do.\r\n\r\n- [x] Applied changes to both WSGI and ASGI code paths and interfaces (where applicable).\r\n- [x] Added **tests** for changed code.\r\n- [x] Performed automated tests and code quality checks by [running `tox`](https://falcon.readthedocs.io/en/stable/community/contributing.html#pull-requests).\r\n- [x] Prefixed code comments with GitHub nick and an appropriate prefix.\r\n- [x] Coding style is consistent with the rest of the framework.\r\n- [x] Updated **documentation** for changed code.\r\n    - [x] Added docstrings for any new classes, functions, or modules.\r\n    - [x] Updated docstrings for any modifications to existing code.\r\n    - [x] Updated both WSGI and ASGI docs (where applicable).\r\n    - [x] Added references to new classes, functions, or modules to the relevant RST file under `docs/`.\r\n    - [x] Updated all relevant supporting documentation files under `docs/`.\r\n    - [x] A copyright notice is included at the top of any new modules (using your own name or the name of your organization).\r\n    - [x] Changed/added classes/methods/functions have appropriate `versionadded`, `versionchanged`, or `deprecated` [directives](http://www.sphinx-doc.org/en/stable/usage/restructuredtext/directives.html?highlight=versionadded#directive-versionadded).\r\n- [x] Changes (and possible deprecations) have [towncrier news fragments](https://falcon.readthedocs.io/en/stable/community/contributing.html#changelog) under `docs/_newsfragments/`, with the file name format `{issue_number}.{fragment_type}.rst`. (Run `tox -e towncrier`, and inspect `docs/_build/html/changes/` in the browser to ensure it renders correctly.)\r\n- [x] LLM output, if any, has been carefully reviewed and tested by a human developer. (See also: [Use of LLMs (\"AI\")](https://falcon.readthedocs.io/en/latest/community/contributing.html#use-of-llms-ai).)\r\n\r\nIf you have *any* questions to *any* of the points above, just **submit and ask**! This checklist is here to *help* you, not to deter you from contributing!\r\n\r\n*PR template inspired by the attrs project.*\r\n",
+   "leakproof": {
+    "source_head": "53f1255e4df770a4b1fee5a796b6cbcd70aad89d",
+    "source_merge_base": "49f0cb1dbca97a9c1a03f981e1961fab9bc5f4d5",
+    "base_tree": "963e95b77ac602b96a7ee4d6b4c34b5705ce041a",
+    "head_tree": "b9ffbc0d53b8f2a145d1e97ac51426246ce3ef62"
+   },
+   "task_id": "falcon__2572",
+   "source_base_commit": "49f0cb1dbca97a9c1a03f981e1961fab9bc5f4d5"
+  },
+  {
+   "instance_id": "pypa__pip@108a4d6",
+   "repo": "pypa/pip",
+   "pr": 13482,
+   "pr_url": "https://github.com/pypa/pip/pull/13482",
+   "base_commit": "f3ce2116fba08f2c3e48ac451ea64e40504e0791",
+   "head_commit": "108a4d60c3dace5158dafbe3fa0167c912001c1f",
+   "language": "Python",
+   "pr_category": "Type2_Contextual",
+   "change_line_count": 38,
+   "references": 4,
+   "title": "Avoid `pip install --dry-run` downloading full wheels",
+   "body": "Closes #12603.\r\n\r\n * Removed \"more preparation\" (downloading) from the resolver to prevent downloading before dry-run validation\r\n * Added distribution caching to `InstallRequirement` with `set_dist()` and `get_dist()` methods to preserve metadata-only distributions\r\n * Set `download_info` during metadata-only fetching to ensure it's available for commands like `pip lock` and `--report` without requiring full downloads\r\n",
+   "leakproof": {
+    "source_head": "afa16f2395bd3cb41b823b741c7287e2f89c48b3",
+    "source_merge_base": "758a1724c42e7f4369106dac09a50dcb0270931d",
+    "base_tree": "75b4ee7bc4736b3f5d70dfc073063fff717f4953",
+    "head_tree": "8ee0a3b23a4402119551f73abe75a62b2a823f12"
+   },
+   "task_id": "pip__13482",
+   "source_base_commit": "758a1724c42e7f4369106dac09a50dcb0270931d"
+  },
+  {
+   "instance_id": "pipecat-ai__pipecat@dd3b4c7",
+   "repo": "pipecat-ai/pipecat",
+   "pr": 3328,
+   "pr_url": "https://github.com/pipecat-ai/pipecat/pull/3328",
+   "base_commit": "9957a2b36058ec426f1e08932c32ff132950c3f8",
+   "head_commit": "dd3b4c7e94a3614f090bc391d12972fe5266a44d",
+   "language": "Python",
+   "pr_category": "Type2_Contextual",
+   "change_line_count": 40,
+   "references": 8,
+   "title": "Update to SpeechmaticsSTTService for `0.0.99`",
+   "body": "## What's Changed\r\n- Fixed `SpeechmaticsSTTService` to listen for `VADUserStoppedSpeakingFrame` in order to finalize transcription.\r\n- Default to `TurnDetectionMode.FIXED` for Pipecat-controlled end of turn detection.\r\n- Only emit VAD + interruption frames if VAD is enabled within the plugin (modes other than `TurnDetectionMode.FIXED` or `TurnDetectionMode.EXTERNAL`).",
+   "leakproof": {
+    "source_head": "3e00a16f0f7a16263e796f41d6f3319ca6dee7aa",
+    "source_merge_base": "2e700c8576b1be3856529f8b43a22cab05a4327e",
+    "base_tree": "ab22d0d665a792c20ac6685d8206ea9950310bd1",
+    "head_tree": "d12c06522f61694ff3cc36c4dac64bf68f267b82"
+   },
+   "task_id": "pipecat__3328",
+   "source_base_commit": "2e700c8576b1be3856529f8b43a22cab05a4327e"
+  },
+  {
+   "instance_id": "espnet__espnet@314a311",
+   "repo": "espnet/espnet",
+   "pr": 6356,
+   "pr_url": "https://github.com/espnet/espnet/pull/6356",
+   "base_commit": "5cd85f9b5c91f5f0f625f37a4068d3de6ef90ce4",
+   "head_commit": "314a31164e71093d06f37d0b4fab2d1f0f3e118c",
+   "language": "Python",
+   "pr_category": "Type1_Direct",
+   "change_line_count": 49,
+   "references": 2,
+   "title": "Fix Whisper tokenizer to use extra_special_tokens for Transformers v5 compatibility",
+   "body": "## What did you change?\r\n\r\nUpdated the Whisper tokenizer logic to use `extra_special_tokens` instead of `additional_special_tokens` when reading/adding special tokens.\r\n\r\n---\r\n\r\n## Why did you make this change?\r\n\r\nTransformers v5 removed `tokenization_utils_fast.py` and unified the tokenizer APIs. espnet/whisper still depended on older GPT2Tokenizer attributes (`additional_special_tokens`), which caused errors with the new API. Switching to `extra_special_tokens` fixes compatibility with v5.\r\n\r\n---\r\n\r\n## Is your PR small enough?\r\n\r\nyes. 2 files, 4 add/deletions\r\n\r\n---\r\n\r\n## Additional Context\r\n\r\nhttps://github.com/huggingface/transformers/blob/main/MIGRATION_GUIDE_V5.md",
+   "leakproof": {
+    "source_head": "06f2e839ca5f67b7bc3fba974fba1398980aeb9a",
+    "source_merge_base": "665c25adcd86bd1a1f9d3835fbda7ef79e2bc897",
+    "base_tree": "c004c687374a1e987ce4bef1cb051385c91fe665",
+    "head_tree": "0d9b550cbf9e9bdd42ee9572aaf4eab78a7bbe50"
+   },
+   "task_id": "espnet__6356",
+   "source_base_commit": "665c25adcd86bd1a1f9d3835fbda7ef79e2bc897"
+  },
+  {
+   "instance_id": "Lightning-AI__litgpt@817c86e",
+   "repo": "Lightning-AI/litgpt",
+   "pr": 2188,
+   "pr_url": "https://github.com/Lightning-AI/litgpt/pull/2188",
+   "base_commit": "dca7e43a161776e9d3a6438f92d3f37547cb1b83",
+   "head_commit": "817c86e00278e9ca436aaf872dbaac7744d4bace",
+   "language": "Python",
+   "pr_category": "Type2_Contextual",
+   "change_line_count": 59,
+   "references": 3,
+   "title": "feat: add generate_strategy option to litgpt serve",
+   "body": "## What does this PR do?\r\nThis PR adds a `generate_strategy` option to the `litgpt serve` command. This allows users to explicitly specify the generation strategy (e.g., `\"sequential\"`, `\"tensor_parallel\"`) when initializing the model for serving.\r\n\r\n## Motivation\r\nPreviously, the `generate_strategy` was hardcoded to `\"sequential\"` in `serve.py` when verifying `devices > 1`, giving users no option to choose alternative strategies like `\"tensor_parallel\"` which might be preferred for certain deployments.\r\n\r\n## Who can review this?\r\n@bhimrazy \r\nAnyone from the community is free to review once the tests are passed.\r\n",
+   "leakproof": {
+    "source_head": "bad42270724cad9c447ff2ed821c2bbca2500cc5",
+    "source_merge_base": "ac816e7729deeb459cfe1d0d00c1fedf2314c46b",
+    "base_tree": "526051316d0730730bd8b19d2f49566c4a8b7c0e",
+    "head_tree": "9f24778ecc52f9b71e841f79099cf7401983e31d"
+   },
+   "task_id": "litgpt__2188",
+   "source_base_commit": "ac816e7729deeb459cfe1d0d00c1fedf2314c46b"
+  }
+ ],
+ "backups": []
+}

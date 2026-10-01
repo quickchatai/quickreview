@@ -1,0 +1,31 @@
+# SWE-PRBench's evaluation harness, unmodified: FoundryHQ-AI/swe-prbench @
+# 379f0bf (`eval_harness/run_eval.py`), with its requirements.txt. Also hosts
+# bench/aacr/ext/replay_server.py — the OpenAI-compatible endpoint that serves
+# QuickReview's finished review as the "agent" answer — because the replay
+# checks the agent system prompt against the harness's own AGENT_SYSTEM_PROMPT.
+#
+# requirements.txt pins floors only (>=); this image resolves them at build
+# time and records `pip freeze` in /opt/swepr-pip-freeze.txt (each run copies
+# it). torch comes from the CPU wheel index (the harness uses it only for the
+# all-mpnet-base-v2 sentence embeddings). The embedding model is NOT baked in:
+# it is mounted read-only from a pre-filled HF cache and loaded with
+# HF_HUB_OFFLINE=1, and ext.sh asserts it loads before the run starts (the
+# harness silently falls back to lexical similarity when it cannot).
+#
+# No credential; at run time the only network is the internal docker network.
+FROM python:3.12-slim
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+ARG SWEPR_REPO=https://github.com/FoundryHQ-AI/swe-prbench.git
+ARG SWEPR_COMMIT=379f0bfd8978a1734cd8399e115d04d4fdceeb89
+RUN git clone --quiet "$SWEPR_REPO" /opt/swepr \
+    && git -C /opt/swepr checkout --quiet "$SWEPR_COMMIT" \
+    && test "$(git -C /opt/swepr rev-parse HEAD)" = "$SWEPR_COMMIT" \
+    && test "$(cat /opt/swepr/pipeline_version.txt)" = "v0.4.1" \
+    && rm -rf /opt/swepr/.git
+RUN pip install --quiet --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch \
+    && pip install --quiet --no-cache-dir -r /opt/swepr/requirements.txt \
+    && pip freeze > /opt/swepr-pip-freeze.txt
+COPY replay_server.py /opt/qcr-ext/replay_server.py
+ENV PYTHONDONTWRITEBYTECODE=1 HOME=/tmp PYTHONPATH=/opt/swepr
+WORKDIR /opt/swepr

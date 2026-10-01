@@ -11,10 +11,30 @@
 // Anonymous only: no token of any kind (root CLAUDE.md rule 3). The public API
 // is used once per case for the PR's title/body/base branch and degrades to
 // "unavailable" under the 60 req/h anonymous limit rather than blocking.
+//
+// External benchmarks (bench/aacr/EXTERNAL-BENCHMARKS.md) add three things,
+// each driven by a field of the case and absent from every AACR-Bench case:
+//   - `fetch_repo`/`fetch_pr`: fetch the commits (and ask the API) from a
+//     public fork rather than `repo` — Martian's benchmark forks;
+//   - `title`/`body` carried by the set: no API call at all;
+//   - `leakproof`: the store holds two SYNTHETIC commits over the real trees of
+//     the PR's merge-base and head (aacr.ts leakproofCommitText) and nothing
+//     else — no PR commit and no commit message (SWE-PRBench's ground truth is
+//     the PR's human review, which later commits and their messages can echo).
+// And an optional read-only local MIRROR (env QCR_BENCH_MIRRORS, set by
+// bench.sh from QCR_BENCH_PREFETCH_MIRROR): bare repos the commits are fetched
+// from first, over file://, before the network. A mirror is only ever mounted
+// into the prefetch container, never into a review.
 
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { parsePrefetchMeta, safeId, type BenchCase, type PrefetchMeta } from "./aacr.js";
+import { isAbsolute, join, normalize } from "node:path";
+import {
+  leakproofCommitText,
+  parsePrefetchMeta,
+  safeId,
+  type BenchCase,
+  type PrefetchMeta,
+} from "./aacr.js";
 import { must, run } from "./exec.js";
 
 export interface PrefetchOptions {
@@ -29,6 +49,12 @@ export interface PrefetchOptions {
   log?: (line: string) => void;
   fetchImpl?: typeof fetch;
   now?: () => Date;
+  /** The network remote of a public repo (default `https://github.com/<repo>.git`;
+   * tests point it at a local path). */
+  remoteFor?: (repo: string) => string;
+  /** Local read-only bare repos to fetch from first, keyed by fetch repo;
+   * default from env QCR_BENCH_MIRRORS (`mirrorsFromEnv`). */
+  mirrors?: ReadonlyMap<string, string>;
 }
 
 const GIT_ENV = {
@@ -44,8 +70,76 @@ export function storeDir(store: string, c: BenchCase): string {
   return join(store, safeId(c.instance_id));
 }
 
+/** The repo a case's commits are fetched from, and the PR the API is asked
+ * about there: `fetch_repo`/`fetch_pr` (a fork's PR, #1 by default) or the
+ * case's own repo and PR. */
+export function fetchRepoOf(c: BenchCase): { repo: string; pr: number } {
+  return c.fetch_repo
+    ? { repo: c.fetch_repo, pr: c.fetch_pr ?? 1 }
+    : { repo: c.repo, pr: c.pr };
+}
+
+/** QCR_BENCH_MIRRORS = `{"root": "/mirrors", "repos": {"owner/name": "rel/path.git"}}`.
+ * Paths are relative to the root and may not climb out of it. A malformed
+ * value throws: a mirror the operator named and the run silently ignored
+ * would turn a local prefetch into hundreds of network fetches. */
+export function mirrorsFromEnv(env: NodeJS.ProcessEnv = process.env): Map<string, string> {
+  const raw = env["QCR_BENCH_MIRRORS"];
+  const out = new Map<string, string>();
+  if (!raw) return out;
+  const j = JSON.parse(raw) as { root?: unknown; repos?: unknown };
+  if (typeof j.root !== "string" || !isAbsolute(j.root) || typeof j.repos !== "object" || !j.repos)
+    throw new Error("QCR_BENCH_MIRRORS: needs an absolute root and a repos map");
+  for (const [repo, rel] of Object.entries(j.repos as Record<string, unknown>)) {
+    if (typeof rel !== "string" || isAbsolute(rel) || normalize(rel).startsWith(".."))
+      throw new Error(`QCR_BENCH_MIRRORS: bad path for ${repo}`);
+    out.set(repo, join(j.root, normalize(rel)));
+  }
+  return out;
+}
+
 async function git(dir: string, args: string[], timeoutMs = 20 * 60_000): Promise<string> {
   return must("git", ["-C", dir, ...args], { env: GIT_ENV, timeoutMs });
+}
+
+const networkRemote = (o: PrefetchOptions, repo: string): string =>
+  (o.remoteFor ?? ((r: string) => `https://github.com/${r}.git`))(repo);
+
+/**
+ * `git fetch <args> <remote> <shas…>` — from the local mirror first when one
+ * is configured for the repo (file://, its upload-pack allowed to serve any
+ * object it holds, since a merge-base is rarely a ref tip), then from the
+ * network for whatever the mirror could not give. Says where it came from.
+ */
+async function fetchShas(
+  dir: string,
+  o: PrefetchOptions,
+  repo: string,
+  args: string[],
+  shas: string[],
+): Promise<"mirror" | "network"> {
+  const mirror = (o.mirrors ?? mirrorsFromEnv()).get(repo);
+  if (mirror && existsSync(mirror)) {
+    const r = await run(
+      "git",
+      [
+        "-C",
+        dir,
+        "fetch",
+        "--upload-pack=git -c uploadpack.allowAnySHA1InWant=true upload-pack",
+        ...args,
+        `file://${mirror}`,
+        ...shas,
+      ],
+      { env: GIT_ENV, timeoutMs: 20 * 60_000 },
+    );
+    if (r.code === 0) return "mirror";
+    o.log?.(
+      `prefetch: ${repo} — mirror fetch failed (${r.stderr.trim().slice(0, 160)}); trying the network`,
+    );
+  }
+  await git(dir, ["fetch", ...args, networkRemote(o, repo), ...shas]);
+  return "network";
 }
 
 /**
@@ -87,7 +181,8 @@ interface PrApi {
 
 async function prFromApi(c: BenchCase, o: PrefetchOptions): Promise<PrApi | "rate-limited" | null> {
   const f = o.fetchImpl ?? fetch;
-  const url = `https://api.github.com/repos/${c.repo}/pulls/${c.pr}`;
+  const fr = fetchRepoOf(c);
+  const url = `https://api.github.com/repos/${fr.repo}/pulls/${fr.pr}`;
   for (let attempt = 0; attempt < 2; attempt++) {
     let res: Response;
     try {
@@ -126,17 +221,90 @@ async function prFromApi(c: BenchCase, o: PrefetchOptions): Promise<PrApi | "rat
   return null;
 }
 
-async function defaultBranch(c: BenchCase): Promise<string> {
-  const r = await run(
-    "git",
-    ["ls-remote", "--symref", `https://github.com/${c.repo}.git`, "HEAD"],
-    {
-      env: GIT_ENV,
-      timeoutMs: 120_000,
-    },
-  );
+/** The PR text a set carries (no API call), or undefined when it carries none. */
+function setText(c: BenchCase): PrApi | undefined {
+  if (c.title === undefined && c.body === undefined) return undefined;
+  return { title: c.title ?? null, body: c.body ?? null, base_ref: null };
+}
+
+async function defaultBranch(c: BenchCase, o: PrefetchOptions): Promise<string> {
+  const r = await run("git", ["ls-remote", "--symref", networkRemote(o, fetchRepoOf(c).repo), "HEAD"], {
+    env: GIT_ENV,
+    timeoutMs: 120_000,
+  });
   const m = /^ref: refs\/heads\/(\S+)\s+HEAD/m.exec(r.stdout);
   return m?.[1] ?? "main";
+}
+
+/** Write one commit object from its exact text; its id must be `want`. */
+async function writeCommit(dir: string, text: string, want: string): Promise<void> {
+  const f = join(dir, `bench-commit-${want}.txt`);
+  writeFileSync(f, text);
+  try {
+    const got = (await git(dir, ["hash-object", "-t", "commit", "-w", f])).trim();
+    if (got !== want)
+      throw new Error(`synthetic commit ${got} != the set's ${want} (the set and prefetch disagree)`);
+  } finally {
+    rmSync(f, { force: true });
+  }
+}
+
+/**
+ * The leak-proof store (BenchCase.leakproof): fetch the real merge-base and
+ * head at depth 1 into a scratch repo, check their trees are the set's, write
+ * the two synthetic commits over those trees, and clone ONLY what the
+ * synthetic head reaches into the final store. The real commits — with their
+ * messages — stay behind in the scratch repo, which is deleted; the final
+ * store is then checked not to hold them.
+ */
+async function prefetchLeakproof(
+  c: BenchCase,
+  o: PrefetchOptions,
+  tmp: string,
+): Promise<{ mb: string; depth: number; via: string }> {
+  const lp = c.leakproof!;
+  const scratch = `${tmp}.scratch`;
+  rmSync(scratch, { recursive: true, force: true });
+  await must("git", ["init", "--quiet", "--bare", scratch], { env: GIT_ENV });
+  try {
+    const via = await fetchShas(
+      scratch,
+      o,
+      c.repo,
+      ["--quiet", "--no-tags", "--depth=1"],
+      [lp.source_merge_base, lp.source_head],
+    );
+    for (const [commit, tree] of [
+      [lp.source_merge_base, lp.base_tree],
+      [lp.source_head, lp.head_tree],
+    ] as const) {
+      const got = (await git(scratch, ["rev-parse", `${commit}^{tree}`])).trim();
+      if (got !== tree) throw new Error(`${c.instance_id}: tree of ${commit} is ${got}, the set says ${tree}`);
+    }
+    await writeCommit(scratch, leakproofCommitText(lp.base_tree, null), c.base_commit);
+    await writeCommit(scratch, leakproofCommitText(lp.head_tree, c.base_commit), c.head_commit);
+    await git(scratch, ["update-ref", "refs/heads/bench-head", c.head_commit]);
+    await git(scratch, ["update-ref", "refs/heads/bench-base", c.base_commit]);
+    // The scratch repo is shallow (depth 1); the synthetic commits are not.
+    // Forget the cut so the clone below walks only real reachability.
+    rmSync(join(scratch, "shallow"), { force: true });
+    await must("git", ["clone", "--quiet", "--bare", "--no-local", scratch, tmp], {
+      env: GIT_ENV,
+      timeoutMs: 20 * 60_000,
+    });
+    const commits = (await git(tmp, ["rev-list", "--all"])).trim().split("\n").filter(Boolean);
+    if (commits.length !== 2 || !commits.includes(c.head_commit) || !commits.includes(c.base_commit))
+      throw new Error(`${c.instance_id}: leak-proof store holds commits ${commits.join(",")}`);
+    for (const real of [lp.source_head, lp.source_merge_base]) {
+      const has = await run("git", ["-C", tmp, "cat-file", "-e", real], { env: GIT_ENV });
+      if (has.code === 0) throw new Error(`${c.instance_id}: leak-proof store still holds ${real}`);
+    }
+    await git(tmp, ["update-ref", "refs/bench/base", c.base_commit]);
+    await git(tmp, ["update-ref", "refs/bench/head", c.head_commit]);
+    return { mb: c.base_commit, depth: 1, via };
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
 }
 
 /** Prefetch one case. Idempotent: a store whose meta.json validates and whose
@@ -158,7 +326,7 @@ export async function prefetchCase(c: BenchCase, o: PrefetchOptions): Promise<Pr
       // A store fetched while the API was unavailable keeps working, but its
       // PR title/body are worth one more try — a degraded case plans no
       // pass-intent and reads no description, unlike production.
-      if (meta.title === null && meta.body === null) {
+      if (meta.title === null && meta.body === null && setText(c) === undefined) {
         const api = await prFromApi(c, o);
         if (api && api !== "rate-limited") {
           const healed: PrefetchMeta = {
@@ -186,50 +354,60 @@ export async function prefetchCase(c: BenchCase, o: PrefetchOptions): Promise<Pr
   mkdirSync(o.store, { recursive: true });
   const tmp = `${dir}.partial`;
   rmSync(tmp, { recursive: true, force: true });
-  await must("git", ["init", "--quiet", "--bare", tmp], { env: GIT_ENV });
-  const remote = `https://github.com/${c.repo}.git`;
-  let depth = o.depth ?? 50;
-  const step = o.deepenStep ?? 200;
-  const max = o.maxDepth ?? 5_000;
-  log(`prefetch: ${c.instance_id} — fetching base+head (depth ${depth})`);
-  await git(tmp, [
-    "fetch",
-    "--quiet",
-    "--no-tags",
-    `--depth=${depth}`,
-    remote,
-    c.base_commit,
-    c.head_commit,
-  ]);
-  let mb = await mergeBase(tmp, c);
-  while (!mb) {
-    if (depth >= max) {
-      rmSync(tmp, { recursive: true, force: true });
-      throw new Error(`${c.instance_id}: no merge-base within depth ${max}`);
+  let mb: string;
+  let depth: number;
+  let via: string;
+  try {
+    if (c.leakproof) {
+      log(`prefetch: ${c.instance_id} — leak-proof: merge-base and head trees only`);
+      ({ mb, depth, via } = await prefetchLeakproof(c, o, tmp));
+    } else {
+      await must("git", ["init", "--quiet", "--bare", tmp], { env: GIT_ENV });
+      const repo = fetchRepoOf(c).repo;
+      depth = o.depth ?? 50;
+      const step = o.deepenStep ?? 200;
+      const max = o.maxDepth ?? 5_000;
+      log(`prefetch: ${c.instance_id} — fetching base+head from ${repo} (depth ${depth})`);
+      via = await fetchShas(
+        tmp,
+        o,
+        repo,
+        ["--quiet", "--no-tags", `--depth=${depth}`],
+        [c.base_commit, c.head_commit],
+      );
+      let found = await mergeBase(tmp, c);
+      while (!found) {
+        if (depth >= max) throw new Error(`${c.instance_id}: no merge-base within depth ${max}`);
+        depth += step;
+        log(`prefetch: ${c.instance_id} — deepening to ${depth}`);
+        await fetchShas(
+          tmp,
+          o,
+          repo,
+          ["--quiet", "--no-tags", `--deepen=${step}`],
+          [c.base_commit, c.head_commit],
+        );
+        found = await mergeBase(tmp, c);
+      }
+      mb = found;
+      await git(tmp, ["update-ref", "refs/bench/base", c.base_commit]);
+      await git(tmp, ["update-ref", "refs/bench/head", c.head_commit]);
     }
-    depth += step;
-    log(`prefetch: ${c.instance_id} — deepening to ${depth}`);
-    await git(tmp, [
-      "fetch",
-      "--quiet",
-      "--no-tags",
-      `--deepen=${step}`,
-      remote,
-      c.base_commit,
-      c.head_commit,
-    ]);
-    mb = await mergeBase(tmp, c);
+    if (c.expect_merge_base && c.expect_merge_base !== mb)
+      throw new Error(`${c.instance_id}: merge-base ${mb} differs from the set's ${c.expect_merge_base}`);
+  } catch (err) {
+    rmSync(tmp, { recursive: true, force: true });
+    throw err;
   }
-  await git(tmp, ["update-ref", "refs/bench/base", c.base_commit]);
-  await git(tmp, ["update-ref", "refs/bench/head", c.head_commit]);
   const shortstat = await git(tmp, ["diff", "--shortstat", mb, c.head_commit]);
   const n = (re: RegExp): number => Number(re.exec(shortstat)?.[1] ?? 0);
 
-  const api = await prFromApi(c, o);
+  const carried = setText(c);
+  const api = carried ?? (await prFromApi(c, o));
   const fromApi = api && api !== "rate-limited" ? api : null;
   if (api === "rate-limited")
     log(`prefetch: ${c.instance_id} — API rate-limited, title/body unavailable`);
-  const baseRef = fromApi?.base_ref ?? (await defaultBranch(c));
+  const baseRef = fromApi?.base_ref ?? (await defaultBranch(c, o));
   const meta: PrefetchMeta = {
     instance_id: c.instance_id,
     repo: c.repo,
@@ -253,7 +431,7 @@ export async function prefetchCase(c: BenchCase, o: PrefetchOptions): Promise<Pr
   rmSync(dir, { recursive: true, force: true });
   renameSync(tmp, dir);
   log(
-    `prefetch: ${c.instance_id} ok — merge-base ${mb.slice(0, 10)}, ${meta.diff.files} files +${meta.diff.additions}/-${meta.diff.deletions}, depth ${depth}`,
+    `prefetch: ${c.instance_id} ok (${via}${carried ? ", PR text from the set" : ""}) — merge-base ${mb.slice(0, 10)}, ${meta.diff.files} files +${meta.diff.additions}/-${meta.diff.deletions}, depth ${depth}`,
   );
   return meta;
 }

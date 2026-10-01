@@ -47,11 +47,43 @@ export interface BenchCase {
   change_line_count: number;
   /** Reference comments in the pinned dataset (the recall denominator). */
   references: number;
+  /** External benchmarks (bench/aacr/EXTERNAL-BENCHMARKS.md): the public repo
+   * the two commits are FETCHED from when it is not `repo` itself — Martian's
+   * benchmark forks, which carry PRs whose upstream refs are gone. `repo`
+   * stays the reviewed project's name (the prompt and the case id use it). */
+  fetch_repo?: string;
+  /** The PR number in `fetch_repo` (Martian's forks: always 1). */
+  fetch_pr?: number;
+  /** The PR's title and description as the benchmark records them. When the
+   * set carries them, prefetch takes them from here and asks no API. */
+  title?: string | null;
+  body?: string | null;
+  /** The merge-base the set builder computed; prefetch refuses a store whose
+   * own merge-base differs (an integrity check, never a shortcut). */
+  expect_merge_base?: string;
+  /** SWE-PRBench's leak-proof replay: `base_commit`/`head_commit` are
+   * SYNTHETIC commits (`leakproofCommitText`) over the real trees of the PR's
+   * merge-base and head, so the store holds no commit message and no
+   * intermediate commit of the PR — nothing the human review left behind. */
+  leakproof?: LeakproofSource;
+}
+
+/** Where a leak-proof case's two trees come from (the real, upstream commits). */
+export interface LeakproofSource {
+  /** The PR's real head commit, fetched by sha with --depth=1. */
+  source_head: string;
+  /** The real merge-base of the PR's base and head, fetched the same way. */
+  source_merge_base: string;
+  /** Their tree ids: the synthetic commits must point at exactly these. */
+  base_tree: string;
+  head_tree: string;
 }
 
 export interface CaseSet {
   name: string;
   dataset: { source: string; commit: string; file: string; sha256: string };
+  /** Which registered dataset pin the set was built from (DATASET_PINS). */
+  pin?: string;
   rule: string;
   references: number;
   cases: BenchCase[];
@@ -64,8 +96,73 @@ export const AACR_V1 = {
   sha256: "d8683cb240249bc4e0aff6428802bdffa7b7573ace600552cab1cd0cb7e905c9",
 } as const;
 
+/** One dataset revision a case set may be built from. A set names its
+ * dataset by commit AND sha256, and both must match one entry here exactly —
+ * so a number is always denominated in a known, frozen revision. Adding a
+ * benchmark adds an entry; nothing here ever loosens another entry. */
+export interface DatasetPin {
+  id: string;
+  /** What the published numbers of this benchmark are denominated in. */
+  denomination: string;
+  commit: string;
+  sha256: string;
+}
+
+export const DATASET_PINS: readonly DatasetPin[] = [
+  {
+    id: "aacr-v1",
+    denomination: "AACR-Bench v1.0 (1,505 references)",
+    commit: AACR_V1.commit,
+    sha256: AACR_V1.sha256,
+  },
+  {
+    // withmartian/code-review-benchmark @ e616e84: sha256 over the manifest
+    // `<sha256>  <path>\n` (sorted) of offline/golden_comments/*.json and
+    // offline/results/benchmark_data.json (bench/aacr/ext/martian_set.py).
+    id: "martian-offline-e616e84",
+    denomination: "Martian offline code-review benchmark @ e616e84 (50 PRs, 173 golden comments)",
+    commit: "e616e849755441da38f18bf3adba2c9583b03803",
+    sha256: "0265909b9ebe206e9b8e28f548f0a3ffa145c9b28d317da522ef1034186269ee",
+  },
+  {
+    // huggingface.co/datasets/foundry-ai/swe-prbench @ b87f579: sha256 of
+    // dataset/prs.jsonl (bench/aacr/ext/sweprbench_set.py).
+    id: "swe-prbench-b87f579",
+    denomination: "SWE-PRBench @ b87f579, pipeline v0.4.1 (350 PRs; published on eval_100)",
+    commit: "b87f5797aef3ed2c3153bb1304ea4d801d36ba6e",
+    sha256: "a58e1f713533f6bc260a93f6e234b85acd16a77f55a756893694b96495eb43cd",
+  },
+];
+
+/** The registered pin a set's `dataset` names, or null. */
+export function datasetPin(ds: unknown): DatasetPin | null {
+  if (typeof ds !== "object" || ds === null) return null;
+  const d = ds as Record<string, unknown>;
+  return DATASET_PINS.find((p) => p.commit === d["commit"] && p.sha256 === d["sha256"]) ?? null;
+}
+
 const SHA_RE = /^[0-9a-f]{40}$/;
 const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
+/** The synthetic commit a leak-proof store holds (BenchCase.leakproof). Fixed
+ * identity and epoch, a message that names nothing about the PR: the commit
+ * id is a pure function of the tree (and, for the head, of the base commit),
+ * so the set builder (bench/aacr/ext/sweprbench_set.py) and prefetch compute
+ * the same ids independently and prefetch verifies them. */
+export function leakproofCommitText(tree: string, parent: string | null): string {
+  const who = "Benchmark replay <replay@bench.invalid> 0 +0000";
+  return [
+    `tree ${tree}`,
+    ...(parent ? [`parent ${parent}`] : []),
+    `author ${who}`,
+    `committer ${who}`,
+    "",
+    parent
+      ? "Pull request head (history and messages withheld by the benchmark)"
+      : "Pull request merge-base (history withheld by the benchmark)",
+    "",
+  ].join("\n");
+}
 
 function caseOf(raw: unknown, where: string): BenchCase {
   if (typeof raw !== "object" || raw === null) throw new Error(`${where}: not an object`);
@@ -98,8 +195,54 @@ function caseOf(raw: unknown, where: string): BenchCase {
   if (!REPO_RE.test(c.repo)) throw new Error(`${where}: bad repo ${c.repo}`);
   if (!SHA_RE.test(c.base_commit) || !SHA_RE.test(c.head_commit))
     throw new Error(`${where}: base/head must be 40-hex shas`);
-  if (c.instance_id !== `${c.repo.replace("/", "__")}@${c.head_commit.slice(0, 7)}`)
-    throw new Error(`${where}: instance_id ${c.instance_id} does not match repo@head`);
+  // A case fetched from a fork carries its PR number in the id: two of
+  // Martian's benchmark PRs (sentry-greptile #1 and #2) share one head commit
+  // and differ only in their base, so repo@head alone would collide.
+  const wantId =
+    r["fetch_repo"] !== undefined
+      ? `${c.repo.replace("/", "__")}-${c.pr}@${c.head_commit.slice(0, 7)}`
+      : `${c.repo.replace("/", "__")}@${c.head_commit.slice(0, 7)}`;
+  if (c.instance_id !== wantId)
+    throw new Error(`${where}: instance_id ${c.instance_id} does not match ${wantId} (repo@head)`);
+  // The external-benchmark fields, each validated as a shape for the same
+  // reason (a repo reaches a git URL, a sha a git argv).
+  if (r["fetch_repo"] !== undefined) {
+    const v = r["fetch_repo"];
+    if (typeof v !== "string" || !REPO_RE.test(v)) throw new Error(`${where}: bad fetch_repo`);
+    c.fetch_repo = v;
+  }
+  if (r["fetch_pr"] !== undefined) {
+    const v = r["fetch_pr"];
+    if (typeof v !== "number" || !Number.isInteger(v) || v < 1)
+      throw new Error(`${where}: fetch_pr must be a positive integer`);
+    c.fetch_pr = v;
+  }
+  for (const k of ["title", "body"] as const) {
+    if (r[k] === undefined) continue;
+    const v = r[k];
+    if (v !== null && typeof v !== "string") throw new Error(`${where}: ${k} must be a string or null`);
+    c[k] = v;
+  }
+  if (r["expect_merge_base"] !== undefined) {
+    const v = r["expect_merge_base"];
+    if (typeof v !== "string" || !SHA_RE.test(v))
+      throw new Error(`${where}: expect_merge_base must be a 40-hex sha`);
+    c.expect_merge_base = v;
+  }
+  if (r["leakproof"] !== undefined) {
+    const lp = r["leakproof"] as Record<string, unknown> | null;
+    const keys = ["source_head", "source_merge_base", "base_tree", "head_tree"] as const;
+    if (typeof lp !== "object" || lp === null || keys.some((k) => !SHA_RE.test(String(lp[k]))))
+      throw new Error(`${where}: leakproof needs 40-hex ${keys.join(", ")}`);
+    if (c.fetch_repo !== undefined)
+      throw new Error(`${where}: a leak-proof case fetches from its own repo`);
+    c.leakproof = {
+      source_head: String(lp["source_head"]),
+      source_merge_base: String(lp["source_merge_base"]),
+      base_tree: String(lp["base_tree"]),
+      head_tree: String(lp["head_tree"]),
+    };
+  }
   return c;
 }
 
@@ -109,9 +252,10 @@ export function parseCaseSet(raw: unknown): CaseSet {
   if (typeof raw !== "object" || raw === null) throw new Error("case set: not an object");
   const r = raw as Record<string, unknown>;
   const ds = r["dataset"] as Record<string, unknown> | undefined;
-  if (!ds || ds["commit"] !== AACR_V1.commit || ds["sha256"] !== AACR_V1.sha256) {
+  const pin = datasetPin(ds);
+  if (!ds || !pin) {
     throw new Error(
-      "case set: not built from AACR-Bench v1.0 — published numbers are denominated in v1.0 (1,505 references)",
+      "case set: not built from a registered dataset pin (DATASET_PINS) — AACR-Bench sets must be built from v1.0, the revision published numbers are denominated in (1,505 references)",
     );
   }
   const cases = Array.isArray(r["cases"]) ? r["cases"].map((c, i) => caseOf(c, `cases[${i}]`)) : [];
@@ -128,10 +272,11 @@ export function parseCaseSet(raw: unknown): CaseSet {
     name: typeof r["name"] === "string" ? r["name"] : "unnamed",
     dataset: {
       source: typeof ds["source"] === "string" ? ds["source"] : "",
-      commit: AACR_V1.commit,
+      commit: pin.commit,
       file: typeof ds["file"] === "string" ? ds["file"] : "",
-      sha256: AACR_V1.sha256,
+      sha256: pin.sha256,
     },
+    pin: pin.id,
     rule: typeof r["rule"] === "string" ? r["rule"] : "",
     references: cases.reduce((n, c) => n + c.references, 0),
     cases,

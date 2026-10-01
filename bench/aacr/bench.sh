@@ -372,8 +372,18 @@ case "$cmd" in
 
   prefetch)
     need_image
+    # Optional local git mirror (external benchmarks): bare repos the commits
+    # are fetched from first, READ-ONLY, in this prefetch container only —
+    # never in a review. QCR_BENCH_MIRRORS maps fetch repo → path under it
+    # (src/bench/prefetch.ts mirrorsFromEnv).
+    mir=()
+    if [[ -n "${QCR_BENCH_PREFETCH_MIRROR:-}" ]]; then
+      [[ -d "$QCR_BENCH_PREFETCH_MIRROR" ]] || die "QCR_BENCH_PREFETCH_MIRROR=$QCR_BENCH_PREFETCH_MIRROR is not a directory"
+      [[ -n "${QCR_BENCH_MIRRORS:-}" ]] || die "QCR_BENCH_PREFETCH_MIRROR needs QCR_BENCH_MIRRORS (the repo → path map)"
+      mir=(--mount "type=bind,src=$QCR_BENCH_PREFETCH_MIRROR,dst=/mirrors,readonly" -e "QCR_BENCH_MIRRORS=$QCR_BENCH_MIRRORS")
+    fi
     # Network: github.com only in practice (anonymous https + the public API).
-    docker run "${HARDEN[@]}" \
+    docker run "${HARDEN[@]}" ${mir[@]+"${mir[@]}"} \
       --mount "type=volume,src=$REPOS_VOLUME,dst=/repos" \
       "$IMAGE" prefetch "$SET" ${ONLY_ARGS[@]+"${ONLY_ARGS[@]}"} ${EXTRA[@]+"${EXTRA[@]}"}
     ;;

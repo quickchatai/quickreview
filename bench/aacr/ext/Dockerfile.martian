@@ -1,0 +1,27 @@
+# Martian's offline code-review benchmark, its OWN pipeline, unmodified:
+# withmartian/code-review-benchmark @ e616e84, `offline/`, installed from its
+# own uv.lock (`uv sync --frozen`). Runs steps 2 (extract), 2.5 (dedup),
+# 3 (judge) and analysis/score_profiles.py over a benchmark_data.json that
+# bench/aacr/ext/martian_ingest.py wrote in step 1's record shape.
+#
+# The image holds no credential. At run time its ONLY network is the internal
+# docker network shared with the judge endpoint (bench/aacr/ext/ext.sh).
+FROM python:3.13-slim
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+ARG MARTIAN_REPO=https://github.com/withmartian/code-review-benchmark.git
+ARG MARTIAN_COMMIT=e616e849755441da38f18bf3adba2c9583b03803
+ARG UV_VERSION=0.12.20
+RUN git clone --quiet "$MARTIAN_REPO" /opt/martian \
+    && git -C /opt/martian checkout --quiet "$MARTIAN_COMMIT" \
+    && test "$(git -C /opt/martian rev-parse HEAD)" = "$MARTIAN_COMMIT" \
+    && rm -rf /opt/martian/.git
+# The pinned data manifest (src/bench/aacr.ts DATASET_PINS "martian-offline-e616e84").
+RUN cd /opt/martian/offline \
+    && test "$(sha256sum golden_comments/cal_dot_com.json golden_comments/discourse.json golden_comments/grafana.json golden_comments/keycloak.json golden_comments/sentry.json results/benchmark_data.json | sed 's#  #  offline/#' | sha256sum | cut -d' ' -f1)" \
+         = 0265909b9ebe206e9b8e28f548f0a3ffa145c9b28d317da522ef1034186269ee
+RUN pip install --quiet --no-cache-dir "uv==${UV_VERSION}" \
+    && cd /opt/martian/offline && UV_PROJECT_ENVIRONMENT=/opt/martian-venv uv sync --frozen --no-dev --quiet \
+    && /opt/martian-venv/bin/python -c "import openai, aiohttp, tqdm; print('martian deps ok', openai.__version__)"
+ENV PATH=/opt/martian-venv/bin:$PATH PYTHONPATH=/opt/martian/offline PYTHONDONTWRITEBYTECODE=1 HOME=/tmp
+WORKDIR /work
