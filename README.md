@@ -112,33 +112,35 @@ reviewer memory engine.
 
 ## How well it finds bugs
 
-![Code review benchmark — AACR-Bench v1.0, 185 PRs](bench/aacr/charts/overview.jpg)
+![Real defects found, by severity — AACR-Bench v1.0, 185 PRs](bench/aacr/charts/defects-by-severity.jpg)
 
 On all 185 runnable PRs of [AACR-Bench](https://github.com/alibaba/aacr-bench)
-(10 languages), the default review finds **84% of 520 real defects verified in
-the code, including 86 of the 90 merge-blocking ones**, and 86% of what it says
-is true.
+(10 languages), with every other reviewer at the best configuration we found
+for it and every OpenAI-based reviewer on the same model (gpt-6.1-sol), the
+default review finds **79% of 520 real defects verified in the code, including
+83.5 of the 90 merge-blocking ones**, and 95% of what it says is true.
 
-The other six reviewers find between 48% and 66% of the defects:
+The other reviewers find between 37% and 70% of the defects:
 
-- quickreviewd's own `low` preset: 66%;
+- QuickReview's own `low` preset: 70%;
+- pi-review's 3-reviewer panel: 67%;
 - Claude Code on Opus 5.5: 62%;
-- open-code-review: 56%;
-- pi-review: 56%;
-- Codex CLI: 48%;
-- OpenCode: 48%.
+- open-code-review at high effort: 57%;
+- Codex CLI at high effort: 55%;
+- OpenCode on its native provider, with the PR text: 51%;
+- PR-Agent: 37%.
 
-A second judge from a different model family (Claude Opus 5.5) gives the same
-recall for every reviewer. The two judges agree on 98.7% of per-defect
-verdicts, so the scores are not an artifact of one model family's grading;
-the answer key itself rests on its verification. On the 369 defects that would be in the answer key
-without any reviewer's comment, the default finds 86%. The default costs more
-per PR ($1.71 at list prices, against $0.11–$0.83 for the others).
+The lead is in medium- and low-severity defects: on the high-severity ones
+Codex CLI (81) and pi-review's panel (80) are statistically level with the
+default. The configurations were chosen on a seeded 40-PR subset and the
+order holds on the 145 PRs not used for the choice. The default costs more
+per PR ($1.36 at list prices, against $0.07–$0.53 for the others).
 
 On the benchmark's own reference-comment metric every reviewer scores between
-4% and 12% recall; most of those references are not real problems.
+4% and 11% recall; most of those references are not real problems.
 
-Full results, charts and method: [`bench/aacr/FULL-BENCHMARK.md`](bench/aacr/FULL-BENCHMARK.md).
+Full results, how each configuration was chosen, the exact commands, charts
+and caveats: [`bench/aacr/FULL-BENCHMARK.md`](bench/aacr/FULL-BENCHMARK.md).
 
 ## How a review runs
 

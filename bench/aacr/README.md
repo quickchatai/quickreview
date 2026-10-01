@@ -14,62 +14,73 @@ Background and the fairness caveats: `docs/open-code-review-comparison.md`
 
 ## Results
 
-![Code review benchmark — overview](charts/overview.jpg)
+![Real defects found, by severity — final comparison](charts/defects-by-severity.jpg)
 
-The whole benchmark: 185 runnable PRs, 520 real defects and 1,418 AACR
-references, with seven reviewers. The reviewers are:
+The final comparison (2026-10-01): 185 runnable PRs, 520 real defects and
+1,418 AACR references, eight reviewers, each third-party tool at the best
+configuration found for it, all on gpt-6.1-sol except Claude Code (Opus 5.5):
 
-- quickreviewd `default` and `low`;
-- open-code-review;
-- Codex CLI;
-- OpenCode;
-- pi-review;
-- Claude Code.
+| Reviewer | Configuration | Defects found | Recall | High (90) | Comments correct | $ / PR | AACR F1 |
+|---|---|---|---|---|---|---|---|
+| **QuickReview default** | `default` preset | **409** | **79%** | **83.5** | **95%** | $1.36 | **12.5%** |
+| QuickReview low | `low` preset | 365.5 | 70% | 79.5 | 94% | $0.88 | 11.5% |
+| pi-review 0.18.0 | 3-reviewer panel, thinking high | 347.5 | 67% | 80 | 89% | $0.27 | 8.5% |
+| Claude Code 2.1.283 | `/code-review`, Opus 5.5, as published | 324.5 | 62% | 72.5 | 81% | $0.20 | 8.9% |
+| open-code-review 1.3.1 | effort high | 298.5 | 57% | 63.5 | 86% | $0.53 | 11.6% |
+| Codex CLI 0.159.2 | effort high | 287 | 55% | 81 | 93% | $0.14 | 7.8% |
+| OpenCode 1.18.33 | native provider + PR text | 263.5 | 51% | 76 | 93% | $0.17 | 6.9% |
+| PR-Agent 0.46.0 | shipped defaults | 194 | 37% | 55.5 | 76% | $0.07 | 9.4% |
 
-Every review was scored by two defect judges (gpt-6-sol high and Claude
-Opus 5.5). The two come from different model families and give the same
-verdict on 98.7% of reviewer-defect pairs, so the grading does not depend on
-which family judges; the answer key rests on its own verification. Numbers,
-method and caveats are in
-[`FULL-BENCHMARK.md`](FULL-BENCHMARK.md); how to read the two metrics is in
-[`METRICS.md`](METRICS.md). How quickreviewd does on other base models
-(gpt-6.1-sol, gpt-6-luna, Claude Opus 5.5) is in the Base model section of FULL-BENCHMARK.
-Charts, all in `charts/`:
+The configurations were chosen per tool, on gpt-6-sol, on a seeded 40-PR
+subset (`final/select40.txt`: highest defect recall, ties to comments
+correct) and then applied unchanged on gpt-6.1-sol; one run per reviewer, one
+defect judge (gpt-6-sol, high). Numbers, how each configuration was chosen,
+the exact command behind every row, and the caveats are in
+[`FULL-BENCHMARK.md`](FULL-BENCHMARK.md); the launchers are in `final/`;
+how to read the two metrics is in [`METRICS.md`](METRICS.md). The earlier
+seven-reviewer study with every tool as shipped on gpt-6-sol, graded by two
+judges from different model families (98.7% agreement), and the base-model
+runs (gpt-6.1-sol, gpt-6-luna, Claude Opus 5.5) are in FULL-BENCHMARK's
+Supporting material. Charts, all in `charts/` (the final comparison under
+the plain names; the gpt-6-sol study under `-gpt6sol`):
 
 | Chart | Shows |
 |---|---|
+| [`defects-by-severity.jpg`](charts/defects-by-severity.jpg) | the main figure: real defects found, split high / medium / low |
 | [`overview.jpg`](charts/overview.jpg) | defects found, high-severity caught, AACR recall — the one-image summary |
-| [`defects-by-severity.jpg`](charts/defects-by-severity.jpg) | real defects found, split high / medium / low |
 | [`high-severity.jpg`](charts/high-severity.jpg) | merge-blocking defects caught, of 90 |
 | [`cost-vs-coverage.jpg`](charts/cost-vs-coverage.jpg) | $ per PR against share of defects found |
 | [`two-scores.jpg`](charts/two-scores.jpg) | the same reviews on our judge vs AACR's metric |
-| [`reference-quality.jpg`](charts/reference-quality.jpg) | what AACR's reference comments are, hand-checked against the code |
 | [`tuned-vs-unseen.jpg`](charts/tuned-vs-unseen.jpg) | the 40 tuning PRs vs the 145 never-seen ones |
-| [`judge-agreement.jpg`](charts/judge-agreement.jpg) | share of defects found under each of the two judges (gpt-6-sol high, Claude Opus 5.5) |
 | [`independent-defects.jpg`](charts/independent-defects.jpg) | share found on all 520 defects vs on the 369 the code hunt or an AACR reference raised (in the key without any reviewer's comment) |
-| [`config-sensitivity.jpg`](charts/config-sensitivity.jpg) | per tool, recall and $/PR of the published configuration vs each variant run on 40 PRs (FULL-BENCHMARK, Best-shot configurations); drawn by `charts.py --sensitivity` |
+| [`reference-quality.jpg`](charts/reference-quality.jpg) | what AACR's reference comments are, hand-checked against the code |
+| [`judge-agreement.jpg`](charts/judge-agreement.jpg) | gpt-6-sol study only: share of defects found under each of the two judges (gpt-6-sol high, Claude Opus 5.5) |
+| [`config-sensitivity.jpg`](charts/config-sensitivity.jpg) | the selection step: per tool, recall and $/PR of the published configuration vs each variant run on the 40 PRs; drawn by `charts.py --sensitivity` |
+| `*-gpt6sol.jpg` | the same charts for the gpt-6-sol study (seven reviewers as shipped) |
 
-`numbers.json` holds the headline figures behind the charts; `config-sensitivity.json` the per-variant figures behind `config-sensitivity.jpg`.
+`numbers.json` holds the headline figures behind the charts (with each arm's
+recall on the tuned and unseen halves and on the independent subset),
+`numbers-gpt6sol.json` the gpt-6-sol study's; `config-sensitivity.json` the
+per-variant figures behind `config-sensitivity.jpg`.
 
 Regenerate after a run. Every number comes from the judge and harness files
 through `compare.py`'s scoring, and adding a reviewer is one more
 `NAME=runs`. The runs directory is `$QCR_BENCH_RUNS_DIR`, defaulting to
-`~/qcr-bench-runs/runs` when it exists.
-`--second-judge` adds the agreement chart:
+`~/qcr-bench-runs/runs` when it exists. `final/score.sh`
+prints every final table and redraws both chart sets:
 
 ```sh
-uv run bench/aacr/charts.py --cases all30+fresh10+rest145 --second-judge claude-opus-5-5 \
-  "quickreviewd default=b40-smoke10,b40-dev10,b40-holdout10,b40-fresh10,all-default-rest145" \
-  "quickreviewd low=all-low-smoke10,all-low-dev10,all-low-holdout10,all-low-fresh10,all-low-rest145" \
-  "open-code-review=b40ocr-smoke10,b40ocr-dev10,b40ocr-holdout10,b40ocr-fresh10,all-ocr-rest145" \
-  "Codex CLI=all-codex-smoke10,all-codex-dev10,all-codex-holdout10,all-codex-fresh10,all-codex-rest145,all-codex-c1-rest145,all-codex-c2-rest145,all-codex-c3-rest145,all-codex-c4-rest145" \
-  "OpenCode=all-opencode-smoke10,all-opencode-dev10,all-opencode-holdout10,all-opencode-fresh10,all-opencode-rest145,all-opencode-c1-rest145,all-opencode-c2-rest145,all-opencode-c3-rest145,all-opencode-c4-rest145" \
-  "pi-review=all-pireview-smoke10,all-pireview-dev10,all-pireview-holdout10,all-pireview-fresh10,all-pireview-c1-rest145,all-pireview-c2-rest145,all-pireview-c3-rest145,all-pireview-c4-rest145" \
-  "Claude Code (Opus 5.5)=all-claude-smoke10,all-claude-dev10,all-claude-holdout10,all-claude-fresh10,all-claude-c1-rest145,all-claude-c2-rest145,all-claude-c3-rest145,all-claude-c4-rest145"
+mapfile -t ARMS < bench/aacr/final/arms.txt
+uv run bench/aacr/compare.py --cases all30+fresh10+rest145 --exclude-refs bench/aacr/bot_references.json "${ARMS[@]}"
+uv run bench/aacr/charts.py --cases all30+fresh10+rest145 --note "best-shot configurations, one run each · all on gpt-6.1-sol except Claude Code (Opus 5.5)" "${ARMS[@]}"
+mapfile -t SOL < bench/aacr/final/arms-gpt6sol.txt
+uv run bench/aacr/charts.py --cases all30+fresh10+rest145 --suffix=-gpt6sol --note "…" "${SOL[@]}"
 ```
 
-The same `NAME=runs` arguments work for `compare.py`, which prints both
-tables. Add `--judge-model claude-opus-5-5` for the second judge.
+`--second-judge claude-opus-5-5` adds the judge-agreement chart (it needs
+arms the second judge graded: the gpt-6-sol study's). The same `NAME=runs`
+arguments work for `compare.py`; add `--judge-model claude-opus-5-5` for the
+second judge.
 
 ## Testing a review change (the defect benchmark loop)
 

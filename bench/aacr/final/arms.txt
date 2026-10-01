@@ -1,0 +1,8 @@
+QuickReview default=g61-smoke-smoke10,g61-dev10,g61-holdout10,g61-fresh10,g61-rest145
+QuickReview low=g61low-fair-rest145,g61low-145-dev10,g61low-145-fresh10,g61low-145-holdout10,g61low-145-rest145,g61low-145-smoke10
+pi-review panel (high)=g61-fair-pireview-panel-rest145,g61-145-pireview-panel-dev10,g61-145-pireview-panel-fresh10,g61-145-pireview-panel-holdout10,g61-145-pireview-panel-rest145,g61-145-pireview-panel-smoke10
+Claude Code (Opus 5.5)=all-claude-smoke10,all-claude-dev10,all-claude-holdout10,all-claude-fresh10,all-claude-c1-rest145,all-claude-c2-rest145,all-claude-c3-rest145,all-claude-c4-rest145
+open-code-review high=g61-fair-ocr-high-rest145,g61-145-ocr-high-dev10,g61-145-ocr-high-fresh10,g61-145-ocr-high-holdout10,g61-145-ocr-high-rest145,g61-145-ocr-high-smoke10
+Codex CLI high=g61-fair-codex-high-rest145,g61-145-codex-high-dev10,g61-145-codex-high-fresh10,g61-145-codex-high-holdout10,g61-145-codex-high-rest145,g61-145-codex-high-smoke10
+OpenCode native + PR text=g61-fair-opencode-native-pr-rest145,g61-145-opencode-native-pr-dev10,g61-145-opencode-native-pr-fresh10,g61-145-opencode-native-pr-holdout10,g61-145-opencode-native-pr-rest145,g61-145-opencode-native-pr-smoke10
+PR-Agent=fair-pragent-g61-rest145,g61-pragent-145-dev10,g61-pragent-145-fresh10,g61-pragent-145-holdout10,g61-pragent-145-rest145,g61-pragent-145-smoke10

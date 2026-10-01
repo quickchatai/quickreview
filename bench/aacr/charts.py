@@ -22,6 +22,12 @@ variant is its published configuration, and the variant the full comparison
 takes forward is picked by `pick_best` (highest recall, ties to comments
 correct). The command behind the published chart is in FULL-BENCHMARK.md. The "tuned vs unseen" chart splits the cases into the 40
 PRs the review was tuned on (all30+fresh10) and the rest (rest145).
+
+`--suffix -gpt6sol` writes every file as NAME-gpt6sol.jpg (and
+numbers-gpt6sol.json), so an earlier arm set's charts are kept beside the
+current ones; `--note` adds a second title line naming the arm set (model,
+configurations). numbers.json also records each arm's recall on the tuned and
+unseen halves and on the defects the code hunt or an AACR reference raised.
 """
 import argparse, collections, json, os, statistics, sys
 
@@ -91,8 +97,17 @@ def recall(s):
     return sum(s["found"].values()) / max(sum(s["total"].values()), 1)
 
 
+SUFFIX = ""  # --suffix: appended to every file name (e.g. "-gpt6sol"), so a second arm set never overwrites the first
+NOTE = ""  # --note: one line under the headline charts' titles (which arms, which model)
+
+
+def titled(title):
+    return f"{title}\n{NOTE}" if NOTE else title
+
+
 def save(fig, out, name):
-    path = os.path.join(out, name)
+    stem, ext = os.path.splitext(name)
+    path = os.path.join(out, stem + SUFFIX + ext)
     fig.savefig(path, dpi=180, bbox_inches="tight", pil_kwargs={"quality": 92})
     plt.close(fig)
     print("wrote", os.path.relpath(path))
@@ -121,7 +136,7 @@ def chart_severity(arms, out):
     ax.grid(axis="x", color=GRID)
     ax.set_axisbelow(True)
     ax.set_xlabel("real defects found (partial = ½) — dark: high · mid: medium · light: low")
-    ax.set_title(f"Real defects found, by severity — {n} defects verified in the code")
+    ax.set_title(titled(f"Real defects found, by severity — {n} defects verified in the code"))
     save(fig, out, "defects-by-severity.jpg")
 
 
@@ -138,7 +153,7 @@ def chart_high(arms, out):
     ax.set_xlim(0, n * 1.25)
     ax.set_xticks([])
     ax.spines["bottom"].set_visible(False)
-    ax.set_title("High-severity defects caught (merge-blocking)")
+    ax.set_title(titled("High-severity defects caught (merge-blocking)"))
     save(fig, out, "high-severity.jpg")
 
 
@@ -156,7 +171,7 @@ def chart_cost(arms, out):
     ax.xaxis.set_major_formatter(matplotlib.ticker.FormatStrFormatter("$%.2f"))
     ax.grid(color=GRID)
     ax.set_axisbelow(True)
-    ax.set_title("Cost against coverage")
+    ax.set_title(titled("Cost against coverage"))
     save(fig, out, "cost-vs-coverage.jpg")
 
 
@@ -176,7 +191,7 @@ def chart_two_scores(arms, out):
         ax.set_title(title, fontsize=12)
     axes[0].set_yticks(range(len(arms)), [a[0] for a in arms])
     axes[0].invert_yaxis()
-    fig.suptitle("Same reviews, two scores", x=0.01, y=1.0, ha="left", va="bottom", fontweight="bold", fontsize=14)
+    fig.suptitle(titled("Same reviews, two scores"), x=0.01, y=1.0, ha="left", va="bottom", fontweight="bold", fontsize=14)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     save(fig, out, "two-scores.jpg")
 
@@ -220,7 +235,7 @@ def chart_split(arms_split, out):
     ax.xaxis.set_major_formatter(matplotlib.ticker.PercentFormatter())
     ax.grid(axis="x", color=GRID)
     ax.set_axisbelow(True)
-    ax.set_title("Holds on unseen PRs — ○ 40 tuning PRs  ● 145 unseen PRs")
+    ax.set_title(titled("Holds on unseen PRs — ○ 40 tuning PRs  ● 145 unseen PRs"))
     save(fig, out, "tuned-vs-unseen.jpg")
 
 
@@ -249,7 +264,7 @@ def chart_overview(arms, out):
     for ax in axes[1:]:
         ax.invert_yaxis()
     fig.tight_layout(rect=(0, 0, 1, 0.93))
-    fig.suptitle(f"Code review benchmark — AACR-Bench v1.0, {len(CASES)} PRs, 10 languages", x=0.01, y=0.99,
+    fig.suptitle(titled(f"Code review benchmark — AACR-Bench v1.0, {len(CASES)} PRs, 10 languages"), x=0.01, y=0.99,
                  ha="left", va="top", fontweight="bold", fontsize=15)
     save(fig, out, "overview.jpg")
 
@@ -289,7 +304,7 @@ def chart_independent(names, colors, all_r, ind_r, n_all, n_ind, out):
     ax.xaxis.set_major_formatter(matplotlib.ticker.PercentFormatter())
     ax.grid(axis="x", color=GRID)
     ax.set_axisbelow(True)
-    ax.set_title(f"Share found — light: all {n_all} defects; dark: the {n_ind} that the code hunt or an AACR reference also found (in the key without any reviewer)",
+    ax.set_title(titled(f"Share found — light: all {n_all} defects; dark: the {n_ind} that the code hunt or an AACR reference also found (in the key without any reviewer)"),
                  fontsize=11)
     save(fig, out, "independent-defects.jpg")
 
@@ -390,7 +405,7 @@ CASES = {}
 
 
 def main():
-    global CASES
+    global CASES, SUFFIX, NOTE
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--cases", required=True, help="compare.py --cases syntax")
     ap.add_argument("--tuned", default="all30+fresh10", help="the tuning PRs, for the split chart")
@@ -403,8 +418,12 @@ def main():
                     help="draw only config-sensitivity.jpg (+ config-sensitivity.json): arms are TOOL|VARIANT=runs, "
                          "a tool's first variant is its published configuration")
     ap.add_argument("--reference", default="QuickReview", help="with --sensitivity: the tool drawn as reference lines")
+    ap.add_argument("--suffix", default="", help="appended to every output file name (charts and numbers.json), "
+                    "e.g. -gpt6sol, so a second arm set is kept beside the first")
+    ap.add_argument("--note", default="", help="a second title line on the headline charts (e.g. which model)")
     ap.add_argument("arms", nargs="+", help="NAME=run[,run...]")
     a = ap.parse_args()
+    SUFFIX, NOTE = a.suffix, a.note
     os.makedirs(a.out, exist_ok=True)
     CASES = compare.cases_for(a.cases)
     if a.sensitivity:
@@ -420,7 +439,7 @@ def main():
             data[tool] = [{"variant": v, "published": i == 0, "selected": v == best, "recall": round(recall(st), 4),
                            **{k: st[k] for k in ("found", "total", "correct", "usd", "median_min", "aacr_recall", "aacr_precision")}}
                           for i, (v, st) in enumerate(variants)]
-        path = os.path.join(a.out, "config-sensitivity.json")
+        path = os.path.join(a.out, f"config-sensitivity{SUFFIX}.json")
         json.dump({"cases": sorted(CASES), "judge": a.judge_model, "arms": [spec for spec in a.arms], "tools": data},
                   open(path, "w"), indent=1)
         print("wrote", os.path.relpath(path))
@@ -457,12 +476,17 @@ def main():
             p = x.get("provenance") or {}
             if p.get("hunt") or p.get("dataset_refs"):
                 indep.append((iid, x["id"]))
-    chart_independent(names, colors, [defect_recall(a.runs_dir, r, CASES, a.judge_model, alld) for r in run_lists],
-                      [defect_recall(a.runs_dir, r, CASES, a.judge_model, indep) for r in run_lists],
-                      len(alld), len(indep), a.out)
-    summary = {name: {"recall": round(recall(s), 4), **{k: s[k] for k in ("found", "total", "usd", "aacr_recall", "aacr_precision", "correct")}} for name, _, s in arms}
-    json.dump({"cases": len(CASES), "arms": summary}, open(os.path.join(a.out, "numbers.json"), "w"), indent=1)
-    print("wrote", os.path.relpath(os.path.join(a.out, "numbers.json")))
+    all_r = [defect_recall(a.runs_dir, r, CASES, a.judge_model, alld) for r in run_lists]
+    ind_r = [defect_recall(a.runs_dir, r, CASES, a.judge_model, indep) for r in run_lists]
+    chart_independent(names, colors, all_r, ind_r, len(alld), len(indep), a.out)
+    summary = {name: {"recall": round(recall(s), 4), **{k: s[k] for k in ("found", "total", "usd", "aacr_recall", "aacr_precision", "correct")},
+                      "recall_tuned": round(sp[2] / 100, 4), "recall_unseen": round(sp[3] / 100, 4),
+                      "recall_independent": round(ir / 100, 4)}
+               for (name, _, s), sp, ir in zip(arms, split, ind_r)}
+    path = os.path.join(a.out, f"numbers{SUFFIX}.json")
+    json.dump({"cases": len(CASES), "judge": a.judge_model, "independent_defects": len(indep),
+               "arms_spec": list(a.arms), "arms": summary}, open(path, "w"), indent=1)
+    print("wrote", os.path.relpath(path))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,7 @@
+quickreviewd default=b40-smoke10,b40-dev10,b40-holdout10,b40-fresh10,all-default-rest145
+quickreviewd low=all-low-smoke10,all-low-dev10,all-low-holdout10,all-low-fresh10,all-low-rest145
+open-code-review=b40ocr-smoke10,b40ocr-dev10,b40ocr-holdout10,b40ocr-fresh10,all-ocr-rest145
+Codex CLI=all-codex-smoke10,all-codex-dev10,all-codex-holdout10,all-codex-fresh10,all-codex-rest145,all-codex-c1-rest145,all-codex-c2-rest145,all-codex-c3-rest145,all-codex-c4-rest145
+OpenCode=all-opencode-smoke10,all-opencode-dev10,all-opencode-holdout10,all-opencode-fresh10,all-opencode-rest145,all-opencode-c1-rest145,all-opencode-c2-rest145,all-opencode-c3-rest145,all-opencode-c4-rest145
+pi-review=all-pireview-smoke10,all-pireview-dev10,all-pireview-holdout10,all-pireview-fresh10,all-pireview-c1-rest145,all-pireview-c2-rest145,all-pireview-c3-rest145,all-pireview-c4-rest145
+Claude Code (Opus 5.5)=all-claude-smoke10,all-claude-dev10,all-claude-holdout10,all-claude-fresh10,all-claude-c1-rest145,all-claude-c2-rest145,all-claude-c3-rest145,all-claude-c4-rest145
