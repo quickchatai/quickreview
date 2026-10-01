@@ -51,7 +51,10 @@ several sources.
 | AACR reference comments | 115 | — |
 
 - **Default dominates the pool.** 29 defects exist in the truth only because
-  default said them.
+  default said them (the first build of the key, 379 defects; on the current
+  key, 21 on the 145 new PRs and 28 across all 185 have QuickReview's own
+  earlier runs as their only reviewer source — dropping them leaves the
+  final comparison's order unchanged, see the benchmark paper).
 - **Default also wins on the 29.** Default itself is scored on those 29, and
   wins them almost by construction: an in-pool reviewer gets credit for
   everything it said that turned out to be true.

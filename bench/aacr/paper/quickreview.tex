@@ -1,19 +1,22 @@
 % =====================================================================
 %  PAPER B — the QuickReview technical report. Companion: benchmark.tex
-%  (the benchmark paper), which every evaluation number here comes from.
+%  (the benchmark paper), which builds the answer key and the judge that
+%  every evaluation number here is scored with.
 %
 %  DRAFT (2026-09-28; base model, stability and the current-build re-run
-%  added 2026-09-30; rewritten 2026-10-01 around the final comparison:
-%  every contender at the best configuration found for it, all
-%  OpenAI-based reviewers on gpt-6.1-sol). Single file: diagrams are
-%  TikZ, the bibliography is inline (no bibtex run needed).
+%  added 2026-09-30; rewritten 2026-10-01 around the final comparison;
+%  restructured 2026-10-01 as a stand-alone report: motivation, research
+%  questions, lens catalogue, validator dispositions, related work, cost
+%  decomposition, 185-PR panel comparison — see CHANGES-quickreview.md).
+%  Single file: diagrams are TikZ, the bibliography is inline.
 %  Every number is copied from bench/aacr/FULL-BENCHMARK.md,
 %  docs/METHODOLOGY.md, docs/THREATS-TO-VALIDITY.md, METRICS.md,
-%  RESULTS.md or charts/numbers*.json unless a footnote says otherwise.
+%  RESULTS.md, charts/numbers*.json or the computed tables named in
+%  CHANGES-quickreview.md, unless a footnote says otherwise.
 %  Gap markers:
 %    \NEEDDATA  -- a number we could compute from existing runs/files
 %    \NEEDEXP   -- an experiment we have not run
-%    \TODO      -- editorial work
+%    \TODO      -- editorial work only the authors can do
 % =====================================================================
 \documentclass[11pt,a4paper]{article}
 
@@ -30,12 +33,14 @@
 \usepackage{enumitem}
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta,positioning,fit,calc,backgrounds,shapes.geometric}
+
 \usepackage[hidelinks]{hyperref}
 
 \newcommand{\NEEDDATA}[1]{\textcolor{red}{\textbf{[NEED DATA: #1]}}}
 \newcommand{\NEEDEXP}[1]{\textcolor{orange}{\textbf{[NEED EXPERIMENT: #1]}}}
 \newcommand{\TODO}[1]{\textcolor{blue}{\textbf{[TODO: #1]}}}
 
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
 \newcommand{\qcr}{QuickReview}
 \newcommand{\code}[1]{\texttt{#1}}
 \newcommand{\chart}[1]{../charts/#1.jpg}
@@ -46,17 +51,22 @@
     inner sep=4pt, minimum height=2.2em, fill=white},
   agent/.style={box, fill=blue!6},
   data/.style={box, fill=gray!8, sharp corners},
-  human/.style={box, fill=orange!10},
   judge/.style={box, fill=green!8},
   flow/.style={-{Stealth[length=2mm]}, thick},
   note/.style={font=\footnotesize\itshape, align=center, text=black!70},
 }
 
 \setlist{itemsep=2pt,topsep=4pt}
+\renewcommand{\topfraction}{0.9}
+\renewcommand{\bottomfraction}{0.8}
+\renewcommand{\textfraction}{0.07}
+\renewcommand{\floatpagefraction}{0.75}
+\setcounter{topnumber}{3}
+\setcounter{totalnumber}{5}
 \setlength{\emergencystretch}{3em}
 
 \title{QuickReview: a multi-pass automated code reviewer,\\
-\large and how it performs on a verified defect benchmark}
+\large its design, its cost, and how it performs on a verified defect benchmark}
 \author{\TODO{authors and affiliation} \\ Quickchat AI}
 \date{Draft of 2026-10-01}
 
@@ -64,32 +74,37 @@
 \maketitle
 
 \begin{abstract}
-QuickReview is an automated pull-request reviewer built as a multi-pass
-system: for every PR one main session launches about eleven independent
-lens passes chosen from the change --- a baseline, a tests lens, a sweep
-over every changed file, code-quality lenses and content-triggered
-sub-lenses --- and a validator then re-derives every candidate finding
-from the code before one review is posted. This report describes the
-design and measures it on a verified defect benchmark for AACR-Bench
-built in a companion paper~\cite{qcrbench}. With every OpenAI-based
-reviewer on gpt-6.1-sol and each third-party tool at the best
-configuration found for it, QuickReview's default preset finds 409 of 520
-verified defects (79\%, 95\% interval 75--82\%) with 95\% of its comments
-correct; its low-effort preset finds 70\%, the strongest third-party
-configuration (pi-review's three-reviewer panel) 67\%, and Claude Code on
-Claude Opus 5.5 62\%. The lead is in medium- and low-severity defects; on
-the 90 high-severity defects QuickReview, pi-review's panel and Codex CLI
-are not separated. It is also the most expensive reviewer, at \$1.36 per
-PR against \$0.07--\$0.53, and we show where the cost goes: redundant
-independent lenses that re-derive the same defects, and a validator that
-checks every candidate. Holding the harness fixed and changing only the
-model moves its recall from 28\% (gpt-6-luna) to 84\% (gpt-6-sol) on 185
-PRs and to 95\% (Claude Opus 5.5) on 40. A full re-run reproduced the
-result within 1.5 defects. Because the benchmark was built by the same
-team, partly from QuickReview's own earlier output, we state where that
-could inflate these numbers.
+QuickReview is an automated pull-request reviewer built on a bet: that a
+review assembled from many narrow, independent reads of a change, each
+checked against the code before it is posted, finds more of the defects a
+careful reviewer would raise than one long read does. For each PR one
+session plans about ten lens passes from the change by explicit rules --- a
+baseline, a tests lens, a line-by-line sweep over every changed file, four
+code-quality lenses and narrow sub-lenses triggered by what the diff or the
+PR text says --- runs each as an isolated read-only agent, merges what they
+raise, and has a validator re-derive every surviving candidate from the
+code before one review is composed. We describe the design precisely and
+measure it on a verified defect benchmark over the 185 runnable PRs of
+AACR-Bench, built by the same authors in a companion paper. With every
+OpenAI-based reviewer on gpt-6.1-sol and each third-party tool at the best
+configuration found for it, QuickReview's default finds 409 of 520 verified
+defects (79\%, 95\% interval 75--82\%) with 95\% of its comments graded
+correct; the strongest third-party configuration, pi-review's
+three-reviewer panel, finds 67\%. The lead over the panel is almost entirely
+in low-severity defects; on the 90 high-severity defects the two are not
+separated, nor is Codex CLI. QuickReview is also the most expensive
+reviewer, at \$1.36 per PR against \$0.07--\$0.53; each defect it finds
+beyond the panel costs about \$3.27 at list prices. Most of the spend is in
+redundant lenses, whose value is very uneven: in a per-lens attribution on
+an earlier run, the per-file sweep alone found 29 defects no other lens
+raised, while two of the code-quality lenses cost a tenth of the budget for
+one such defect. With
+the design fixed, the base model moves recall from 28\% to 84\% on 185 PRs.
+The data are consistent with, but do not establish, the view that the design
+rather than the budget carries the result: no equal-budget alternative was
+run. Because the authors built the benchmark partly from this reviewer's own
+earlier output, we state throughout where that could inflate these numbers.
 \end{abstract}
-
 
 \tableofcontents
 \clearpage
@@ -98,208 +113,513 @@ could inflate these numbers.
 \section{Introduction}
 \label{sec:intro}
 
-QuickReview\footnote{Its code, configuration and earlier reports call it
-\code{quickreviewd}.} is the automated reviewer we run on our own
-repositories: a daemon receives pull-request events, and for every
-triggered PR a reviewing session writes one review, with inline comments,
-a verdict and a section of points for a human to double-check. We wanted
-to know whether it finds the problems a careful senior reviewer would
-raise before merge, how it compares with the review tools a team could
-adopt instead, and what its design buys for what it costs.
+A code reviewer, human or automated, is asked to find the problems a change
+introduces before it is merged. Automated reviewers built on large language
+models now ship from tool vendors, open-source projects and model
+providers~\cite{codex,claudecode,ocr,pragent,pireview,opencode}, and most of
+them share one shape: an agent reads the diff, explores the repository as
+it sees fit, and writes its findings in one pass. That shape has a
+characteristic way of failing. When we analysed the defects our own
+reviewer kept missing during development (48 real defects across 30 PRs
+that several runs failed to find;
+Appendix~\ref{app:tuning}), most were never raised by any part of the
+review at all, not raised and then discarded. Fifteen were attention
+failures: the code was in front of the model and it read past a misspelled
+name or an unchecked identifier. Eleven needed knowledge of what a
+third-party library actually does, which a reviewer that never installs
+anything cannot look up. Several needed a procedure applied exhaustively ---
+every consumer of a widened check, every pairing of old and new versions
+--- that a general read does not apply.
 
-Answering that needed a benchmark that counts real defects, which we
-built and describe in a companion paper~\cite{qcrbench}: a verified
-answer key of 520 defects over the 185 runnable PRs of
-AACR-Bench~\cite{aacrbench}, a defect-level judge checked across two model
-families, and a protocol that gives every competing tool the best
-configuration its own documentation ships or recommends. This report is
-about the reviewer. Section~\ref{sec:benchbrief} summarises the benchmark;
-Section~\ref{sec:design} describes QuickReview's design;
-Section~\ref{sec:qresults} gives its results against seven other
-reviewers; Section~\ref{sec:discussion} explains its cost and compares it
-with the closest competitor design; Section~\ref{sec:basemodel} changes
-only its base model; Section~\ref{sec:stabsec} measures how stable its
-result is; and Section~\ref{sec:limits} lists what these numbers do not
-show, starting with the fact that the benchmark's authors also built this
-reviewer.
+QuickReview\footnote{Its code, configuration and earlier reports call it
+\code{quickreviewd}.} is our answer to those failures. It runs every day on
+the authors' production repository: a daemon receives pull-request events and,
+for every PR a team asks it to review, one session writes one review with
+inline comments, a verdict, and a section of points for a human to
+double-check. Its design rests on three choices. A review is the union of
+many narrow, independent passes rather than one long read, so that a defect
+one pass misses can be raised by another. Every candidate is re-derived from
+the code by a separate validator before anything is posted, so that the
+volume of candidates does not become volume of noise. And the reviewer only
+reads code, CI results and library sources; it never executes anything.
+Those choices cost compute, and the question this report answers is what
+they buy for it.
+
+\paragraph{Research questions.}
+\begin{itemize}
+  \item[\textbf{RQ1}] How many verified defects does \qcr{} find, how
+  accurate is what it says, and how does it compare with the review tools a
+  team could adopt instead, each at its best configuration and on the same
+  model? (Section~\ref{sec:qresults})
+  \item[\textbf{RQ2}] What does it cost, where does the cost go, and what
+  does each part of the design contribute? (Section~\ref{sec:cost})
+  \item[\textbf{RQ3}] How does it compare with the third-party design
+  closest to it, pi-review's three-reviewer panel, and what can that
+  comparison say about design versus budget? (Section~\ref{sec:panel})
+  \item[\textbf{RQ4}] How much of the result is the model under the design?
+  (Section~\ref{sec:basemodel})
+  \item[\textbf{RQ5}] How stable is the result across runs?
+  (Section~\ref{sec:stability})
+\end{itemize}
+
+\paragraph{Contributions.} (1) A precise description of a multi-pass review
+design: its lens catalogue and the rules that plan each lens, its validator
+and the dispositions it can give a candidate, and its model tiers and
+presets (Section~\ref{sec:design}). (2) Its evaluation against seven other
+reviewer configurations on a verified defect benchmark, with intervals,
+severity, kind and size breakdowns and the benchmark's own metric. (3) A
+decomposition of its cost into lenses, validator and session, with per-lens
+attribution showing which redundancy pays and which does not. (4) A
+comparison with the closest competitor design on all 185 PRs, separating
+what the data show from what they only suggest. (5) A base-model study and
+two stability checks.
+
+\paragraph{Conflict of interest.} The authors built \qcr{}, and the same
+team, using agents directed by the same assistant that designed the
+reviewer's tuning levers, built the benchmark's answer key --- partly from
+candidate defects in \qcr{}'s own earlier reviews --- and wrote the judge's
+prompt. The companion paper~\cite{qcrbench} measures how far this could
+inflate the results; Section~\ref{sec:limits} repeats what was measured and
+what was not. We report every number we have, including those that do not
+favour \qcr{}.
 
 % =====================================================================
-\section{The benchmark in brief}
-\label{sec:benchbrief}
+\section{Related work}
+\label{sec:related}
 
-\begin{figure}[t]
-\centering
-\resizebox{\textwidth}{!}{%
-\begin{tikzpicture}
-  \node[data, text width=3.0cm] (prs) at (0,0) {185 runnable PRs\\ \footnotesize AACR-Bench v1.0\\ 10 languages};
-  \node[agent, text width=3.4cm] (rev) at (4.0,0) {8 reviewers, one run each\\ \footnotesize sandboxed; base and head commits only};
-  \node[data, text width=2.6cm] (out) at (7.8,0) {the reviews\\ \footnotesize comments + body};
-  \draw[flow] (prs) -- (rev);
-  \draw[flow] (rev) -- (out);
+\paragraph{Human code review.} Studies of modern code review find that it
+is valued for knowledge transfer and design discussion as much as for
+defects, and that most of what reviewers raise concerns maintainability
+rather than functional bugs~\cite{bacchelli2013,mantyla2009,sadowski2018}.
+\qcr{}'s code-quality lenses follow that finding: they look for what will
+cost the next reader, not only for what breaks. Its lens structure has an
+older ancestor in software inspection: perspective-based reading assigns
+each inspector one stakeholder's perspective and a procedure to follow, and
+reported higher team defect detection than with the reading technique it
+replaced~\cite{basili1996}. A \qcr{} lens is a
+perspective with a procedure, executed by a model.
 
-  \node[judge, text width=3.3cm] (dj) at (4.0,-2.8) {\textbf{defect judge}\\ \footnotesize reads the whole review; per defect: found, partial or missed; per comment: a grade};
-  \node[judge, text width=3.3cm] (aj) at (11.6,-2.8) {\textbf{reference matcher}\\ \footnotesize $\pm1$-line gate, then ``same concern?'' per pair};
-  \draw[flow] (out.south) -- ++(0,-0.6) -| (dj.north);
-  \draw[flow] (out.south) -- ++(0,-0.6) -| (aj.north);
+\paragraph{LLM code review in practice and research.} Industrial reports
+describe LLM reviewers deployed at scale: Google's AutoCommenter flags
+violations of coding best practices in review~\cite{autocommenter}, and a
+study of an LLM review tool in industry found that developers acted on many
+of its comments while noting noise and longer review times~\cite{cihan2025}.
+Research systems range from models pre-trained for review
+tasks~\cite{codereviewer} to multi-agent designs in which agents with
+different roles discuss a change~\cite{codeagent}. The tools compared here
+are agents that read the diff and the repository, with one exception that
+is itself multi-angle: pi-review's panel runs three specialists and keeps a
+finding two of them agree on~\cite{pireview}. Benchmarks for these systems,
+and why we built a verified defect benchmark rather than reuse reference
+comments, are discussed in the companion paper~\cite{qcrbench}.
 
-  \node[data, text width=3.0cm] (key) at (0,-2.8) {\textbf{answer key}\\ \footnotesize 520 verified defects (90 high, 145 medium, 285 low), 3{,}093 exclusions};
-  \node[data, text width=2.8cm] (refs) at (15.4,-2.8) {\textbf{reference list}\\ \footnotesize 1{,}418 comments, $\ge$80\% AI-written, no severity};
-  \draw[flow] (key) -- (dj);
-  \draw[flow] (refs) -- (aj);
+\paragraph{Redundancy, ensembles and verification.} Sampling a model several
+times and aggregating the answers improves accuracy on reasoning
+tasks~\cite{selfconsistency}, more sampled agents with majority voting keep
+helping as their number grows~\cite{moreagents}, and coverage --- the chance
+that at least one of many samples is right --- grows steadily with the
+number of samples~\cite{monkeys}. Coverage needs a way to pick what is
+right: trained verifiers~\cite{cobbe2021}, a model answering its own
+verification questions~\cite{cove}, or several models debating to a common
+answer~\cite{debate}. Self-correction without external feedback is
+unreliable~\cite{huang2024}; \qcr{}'s validator is meant to get its feedback
+from the code, re-deriving each claim by reading it. Two differences from
+this literature matter. \qcr{}'s passes are not samples of one prompt but
+different prompts, so they aim at different defects as well as at the same
+one; and their errors are not independent --- the classic result for
+independently written program versions is that faults coincide far more
+often than independence predicts~\cite{knight1986}, which bounds what
+redundancy can buy.
 
-  \node[box, fill=green!3, text width=3.3cm] (m1) at (4.0,-5.2) {recall by severity,\\ comments correct};
-  \node[box, fill=green!3, text width=3.3cm] (m2) at (11.6,-5.2) {reference recall,\\ precision, F1};
-  \draw[flow] (dj) -- (m1);
-  \draw[flow] (aj) -- (m2);
-  \node[note, below=1mm of m1] {defect benchmark (lead metric)};
-  \node[note, below=1mm of m2] {AACR-Bench's own metric};
-
-  \node[agent, text width=3.0cm] (gt) at (0,-6.0) {\footnotesize built from a code hunt, the references and every reviewer comment, each checked against the code, blind to who wrote it};
-  \draw[flow] (gt) -- (key);
-\end{tikzpicture}}
-\caption{How the benchmark works. Every review is scored twice: by our
-defect judge against a verified answer key (left; the lead metric) and by AACR-Bench's own reference-comment metric (the
-benchmark's published score). The companion paper~\cite{qcrbench} builds the key and the judge.}
-\label{fig:howitworks}
-\end{figure}
-
-
-Each of the 185 runnable PRs of AACR-Bench v1.0 carries a list of
-verified defects --- 520 in all, 90 high, 145 medium and 285 low severity
---- built by a code hunt, the dataset's reference comments and the
-benchmarked reviewers' comments, each candidate checked against the code
-by agents that could not see who raised it, with 3{,}093 rejected
-candidates kept with their reasons. A judge model reads each review whole
-and grades every defect found, partly found (counted as half) or missed,
-and every comment correct-valuable, correct-minor, partly correct or
-incorrect. Two judges from different model families agreed on 98.7\% of
-verdicts. Every reviewer runs in a locked-down container that sees only
-the PR's base and head commits. The full method, its rejected
-alternatives and its threats are in the companion paper~\cite{qcrbench};
-two of those threats bear on QuickReview directly and are repeated in
-Section~\ref{sec:limits}.
+\paragraph{Cost-aware evaluation.} Agent benchmarks that report accuracy
+alone reward spending; cost belongs beside accuracy, and comparisons should
+be read on the cost--accuracy frontier~\cite{kapoor2024}. Routing work to
+cheaper models where they suffice can cut cost at equal
+quality~\cite{frugalgpt}. We report cost per PR, per defect found and per
+additional defect, and we compare against alternatives that are cheaper,
+not only better.
 
 % =====================================================================
 \section{Design}
 \label{sec:design}
 
-Three choices shape QuickReview. \emph{Independent angles}: a review is
-the union of many narrow passes rather than one long read, each pass a
-leaf session that starts from the diff and the code and does not see the
-others, so a defect one pass misses is often re-derived by another.
-\emph{A check before posting}: a validator re-derives every candidate from
-the code and posts, merges, demotes or doubts it; since its veto
-is a mark rather than a deletion, so a cheaper validator cannot make a
-stronger lens's finding disappear. \emph{Read, never run}: the reviewer
-reads code and CI results and never executes code; anything that needs
-execution is CI's job. The production system adds what a benchmark
-cannot see --- reviewer memory, CI gating of approvals, rechecks after
-approval --- and those are off in every number here.
+This section describes the reviewer at the build every final number was
+measured on (\code{b2ce03a}); later commits change the reviewer's code, and
+a reader reproducing the results should use that build.
+
+\subsection{Principles}
+
+\begin{description}[style=unboxed,leftmargin=0pt,itemsep=3pt]
+\item[Independent angles.] A review is the union of narrow passes, each a
+leaf agent that starts from the PR's diff and worktree, holds read-only
+tools, and does not see the other passes. Passes never launch other agents;
+the PR's main session is the only scheduler.
+\item[A check before posting.] A separate validator re-derives every
+candidate from the code. Lenses are told that a plausible but wrong finding
+costs more than a missed nit, and the validator's job is to remove what does
+not survive contact with the code.
+\item[Read, never run.] Every pass carries an execution policy: it never runs
+project code, tests, builds or package managers. Anything that needs
+execution is CI's job, and in production the reviewer reads CI results. To
+read what a library does, the round is given the library's source (below),
+not an environment that runs it.
+\item[Narrow procedures over broad instructions.] Where a class of defect
+needs an exhaustive procedure --- every consumer of a widened check, every
+file through a round trip --- a dedicated sub-lens exists whose whole charter
+is to fill that table, so that a skipped row is visible rather than silent.
+\end{description}
 
 \subsection{One round}
+\label{sec:round}
 
-\qcr{} runs one main session per PR. The session receives a round order
-listing a pass plan: lenses chosen from the diff (for example baseline,
-simplicity, widened checks, tests, maintainability, duplication,
-abstraction, consistency, a per-file sweep) and a validator that runs
-last and kills or demotes candidate findings the code refutes. The
-session may add lenses but never drop a planned one. Passes are leaves
-(no nested fan-out). The \code{default} preset enables the
-benchmark-driven levers from the tuning phase (content-triggered
-sub-lenses, the per-file sweep, dependency sources unpacked at their
-locked versions, the validator's ``restate, don't kill'' and ``demote,
-don't kill'' rules) with the lean plan, and the code-quality lenses
-(capped below blocking; style only against a repository's written
-guide). Figure~\ref{fig:round} shows one round.
-Over the 185 PRs of the earlier gpt-6-sol run, default ran a mean of
-11.2 passes per PR
-(validator included; median 11, interquartile range 9--14, range 4--24)
-and low 11.0 (the same median, quartiles and range). The plans are the
-same size, 10.9 on average, because the presets change model tiers, not
-the plan. The session added passes beyond the plan on 36 PRs under
-default and 18 under low. Every PR ran baseline, tests, the per-file
-sweep and the validator. The four code-quality lenses ran on 77\% of PRs,
-simplicity on 65\%, intent on 45\%, and every other lens on 39\% or
-fewer.\footnote{Computed from \code{executed\_passes} and
-\code{planned\_lenses} in each case's \code{case-summary.json}, for the
-runs in \code{FULL-BENCHMARK.md}, 2026-09-29.}
-
-
-\begin{figure}[t]
+\begin{figure}[!tbp]
 \centering
 \resizebox{\textwidth}{!}{%
 \begin{tikzpicture}
-  \node[data, text width=2.8cm] (in) at (0,0) {\textbf{round order}\\ \footnotesize diff, PR title + body, pass plan, dependency sources};
-  \node[agent, text width=2.6cm] (main) at (3.9,0) {\textbf{main session}\\ \footnotesize one per PR; launches every planned pass};
-  \foreach \i/\y/\t in {1/3.0/baseline, 2/1.8/tests, 3/0.6/per-file sweep (one per file group), 4/-0.6/code-quality lenses, 5/-1.8/content-triggered sub-lenses, 6/-3.0/{risk passes (security, data, \ldots)}} {
-    \node[agent, text width=4.2cm, minimum height=1.6em, font=\footnotesize] (L\i) at (8.0,\y) {\t};
+  \node[data, text width=2.7cm] (in) at (0,0) {\textbf{round order}\\ \footnotesize diff, PR title + body, pass plan, addable lenses, dependency sources};
+  \node[agent, text width=2.5cm] (main) at (3.6,0) {\textbf{main session}\\ \footnotesize 1 sync, 2 dispatch: runs the plan; may raise a tier or add a lens, never drop one};
+  \foreach \i/\y/\t in {1/3.0/baseline, 2/2.0/tests, 3/1.0/{sweep, one pass per file group}, 4/0.0/{code-quality lenses (4)}, 5/-1.0/{judgment lenses (simplicity, placement, intent, \ldots)}, 6/-2.0/{content-triggered sub-lenses}, 7/-3.0/{risk passes (security, data, prod.) at high}} {
+    \node[agent, text width=4.4cm, minimum height=1.5em, font=\footnotesize] (L\i) at (7.6,\y) {\t};
     \draw[flow] (main.east) -- (L\i.west);
   }
-  \node[note, text width=4.6cm] at (8.0,3.9) {$\approx$11 independent leaf passes; none sees another};
-  \node[judge, text width=2.8cm] (val) at (12.0,0) {\textbf{validator}\\ \footnotesize re-derives each candidate from the code: post, merge, demote, or doubt};
-  \foreach \i in {1,...,6} { \draw[flow] (L\i.east) -- (val.west); }
-  \node[data, text width=2.4cm] (rev) at (15.4,0) {\textbf{one review}\\ \footnotesize verdict, body, inline comments};
+  \node[note, text width=4.6cm] at (7.6,3.8) {$\approx$10 isolated read-only leaves; none sees another};
+  \node[agent, text width=2.3cm] (merge) at (11.6,0) {\textbf{3 merge}\\ \footnotesize main session: same defect $\to$ merge; other defect, same lines $\to$ fold};
+  \foreach \i in {1,...,7} { \draw[flow] (L\i.east) -- (merge.west); }
+  \node[judge, text width=2.5cm] (val) at (14.6,0) {\textbf{4 validate}\\ \footnotesize re-derive each candidate; audit merges; post, demote, doubt or kill};
+  \node[agent, text width=2.4cm] (dec) at (14.6,-3.0) {\textbf{5--6 decide, compose}\\ \footnotesize verdict, body, inline comments};
+  \node[data, text width=2.4cm] (rev) at (11.6,-3.0) {\textbf{one review}\\ \footnotesize + findings record of every candidate};
   \draw[flow] (in) -- (main);
-  \draw[flow] (val) -- (rev);
-  \draw[flow, dashed] (val.south) -- ++(0,-3.1) -| node[note, pos=0.25, below] {main session consolidates} (main.south);
+  \draw[flow] (merge) -- (val);
+  \draw[flow] (val) -- (dec);
+  \draw[flow] (dec) -- (rev);
 \end{tikzpicture}}
-\caption{One \qcr{} round. The main session launches every planned
-pass as an isolated leaf (no nested fan-out) and may add passes, never drop
-one; the validator runs last at high reasoning. Of the default's cost on
-the earlier 185-PR run, the passes took 75.5\%, the validator 10.9\% and
-the main session 13.5\% (Section~\ref{sec:whycost}).}
+\caption{One \qcr{} round, as the round template orders it. Steps 1--3 and
+5--6 are the PR's main session; every pass and the validator are isolated
+agents. The validator runs last at high reasoning. On the gpt-6-sol default
+run, the passes took 75.5\% of the cost, the validator 10.9\% and the main
+session 13.5\% (Section~\ref{sec:cost}).}
 \label{fig:round}
 \end{figure}
 
+\qcr{} runs one main session per PR (Figure~\ref{fig:round}). The session
+receives a \emph{round order}: the PR's merge base and head, its title and
+description, a \emph{pass plan} computed by deterministic code from the
+changed files and the PR text, a list of \emph{addable} lenses, and the
+location of any unpacked dependency sources. It then follows the round
+template's steps.
 
-\subsection{Presets}
+\begin{enumerate}
+  \item \textbf{Sync and dispatch.} The session launches every planned pass
+  as a leaf agent, each with a task string naming its focus. It may
+  \emph{raise} a pass to a higher reasoning tier when the change's semantic
+  complexity warrants it, and \emph{add} an addable lens when it can name a
+  concrete reason; it may never drop a planned pass or lower a tier. Raises
+  and additions are recorded with their reasons.
+  \item \textbf{Merge.} The session collapses candidates that describe the
+  same defect into one (\emph{merge}, keeping every raising lens), and
+  carries a \emph{different} defect on the same changed lines as its own
+  paragraph inside the surviving comment (\emph{fold}). A P1 or P2
+  candidate is never folded.
+  \item \textbf{Validate.} The validator receives every candidate and the
+  merge decisions, and gives each a disposition (Section~\ref{sec:validator}).
+  \item \textbf{Decide and compose.} The session maps severities to posting
+  tags, decides the verdict and writes the review: an opening paragraph, a
+  section of points for a human to double-check, the verdict line, and at
+  most 50 inline comments, each anchored inside a changed-line run of the
+  diff (a finding with no valid anchor goes into the body).
+  \item \textbf{Record.} It writes a findings record of every candidate,
+  the lens that raised it, its evidence and its disposition.
+\end{enumerate}
+
+\paragraph{Severity and posting.} Every finding carries a severity on a
+fixed scale (P0: certain production breakage, data loss or security hole;
+P1: a bug or contract violation that must not merge; P2: a probable defect
+needing an answer; P3: worth raising, not blocking; nit), a confidence, a
+claim and its evidence. The posting map is P0/P1 $\to$ \code{[blocker]};
+P2 $\to$ \code{[blocker]} at confidence $\ge 0.8$, otherwise
+\code{[question]}; P3 $\to$ \code{[question]} or \code{[nit]}. A
+reachability axis adjusts this: a finding whose trigger is contrived never
+blocks, and a P2 whose trigger is merely plausible posts as a question. Any
+surviving blocker makes the verdict REQUEST\_CHANGES; otherwise the verdict
+is APPROVE. In \code{strict} nit mode (the default) the validator drops
+true-but-trivial candidates and a nit must name the change it asks for.
+
+\paragraph{Behaviour lives in addenda, not prompt rewrites.} Each lens is an
+agent file (a shared contract plus the lens's own instructions). Changes to
+a lens's behaviour are composed onto the built agent as named addenda from
+one registry (\code{PASS\_ADDENDA}), scoped to all passes, to the lenses, or
+to named passes. At the measured build the registry holds about forty
+addenda, among them the execution policy, read batching, the reachability
+rules, the severity caps of the judgment and quality lenses, the validator's
+closed vocabulary of kill reasons and its demote, restate and doubt rules
+below, and a rule that a lens which finds one problem on some lines must
+look again for a second one.
+
+\subsection{The lens catalogue}
+\label{sec:lenses}
+
+Table~\ref{tab:lenses} lists every lens at the measured build, what it looks
+for, and when the plan includes it. Selection is code, not a model
+decision: path patterns, content patterns in the added lines, sizes, and the
+length of the PR description. Three lenses are \emph{risk passes} that
+always run at high reasoning; the others run at medium in the
+\code{default} preset (Section~\ref{sec:presets}). The last column gives the
+share of the 185 PRs on which each lens ran in the gpt-6-sol default
+run.\footnote{\code{executed\_passes} and \code{planned\_lenses} in each
+case's \code{case-summary.json}, computed 2026-09-29 (\code{wp-data/passes.json}).
+The gpt-6.1-sol run has the same plan on 181 of the 185 PRs: the presets
+and the model change tiers, not the plan.}
+
+\begin{table}[p]
+\centering
+\scriptsize
+\renewcommand{\arraystretch}{0.92}
+\caption{The lens catalogue at build \code{b2ce03a}. ``Cap'': the highest
+severity the validator lets the lens post. Last column: share of the 185 PRs
+on which the lens ran (gpt-6-sol default run). The validator runs last on every PR. $^r$ risk pass, always at
+high reasoning. $^a$ uncapped when it shows an outlier that breaks on a
+verifiable path. $^b$ may block only when it names the failure under the bad
+answer.}
+\label{tab:lenses}
+\begin{tabularx}{\textwidth}{@{}l Y Y l r@{}}
+\toprule
+Lens & Looks for & Planned when & Cap & Ran \\
+\midrule
+\multicolumn{5}{@{}l}{\emph{Always or nearly always}} \\
+baseline & claimed invariants, correctness, tests, conventions, sibling sites, duplicate fixes & every PR & --- & 100\% \\
+tests & existing tests, mocks and fixtures the change breaks; PR tests that mock the failure point away & a code file changes & --- & 100\% \\
+sweep & local slips read line by line: typos, fall-through, a copied line not updated, placeholders, unchecked parsing & one pass per group of $\le$5 changed files and $\le$500 lines, up to 6 groups; lockfiles, generated, vendored and prose files skipped & --- & 100\% \\
+\midrule
+\multicolumn{5}{@{}l}{\emph{Code quality} (planned together)} \\
+maintainability & stale docs and comments, misleading names, dead code, weak types, hidden coupling; never style & non-test code adds $\ge$20 lines & P2 & 77\% \\
+duplication & the same knowledge written twice, or again where the repo has it & same & P2 & 77\% \\
+abstraction & functions, types and contracts at the wrong level; leaky or speculative abstractions & same & P2 & 77\% \\
+consistency & alike things treated differently; a sibling left out & same & P2$^a$ & 77\% \\
+style & breaks of the repository's own written style guide only & the repo writes a style guide & nit & 10\% \\
+\midrule
+\multicolumn{5}{@{}l}{\emph{Judgment lenses}} \\
+simplicity & a simpler shape; checks defending states that cannot occur & $\ge$150 changed code lines, deep nesting, or a file gaining $\ge$5 branches & P2 & 65\% \\
+intent & does the diff do what the title and body say & description has $\ge$60 words of author prose & question & 45\% \\
+placement & the right home and abstraction level for new code & a new code file of $\ge$30 lines, or $\ge$8 code files & P2 & 30\% \\
+backcompat & breakage in the deploy window: old clients, in-flight messages, persisted state & API/serializer/handler or task code, schema files, migrations, feature flags & --- & 19\% \\
+\midrule
+\multicolumn{5}{@{}l}{\emph{Content-triggered sub-lenses} (each narrows a broad lens)} \\
+widened & every consumer of a changed predicate, guard or accepted-value list & a predicate or literal guard changes; $\ge$2 new IDs or $\ge$3 new cases & --- & 39\% \\
+claims & each checkable claim in the PR text, verified everywhere it applies & the PR text claims to fix, support or prevent something & --- & 32\% \\
+bounds & loops another party controls, size checks after allocation, unvalidated remote data, leaked host facts & matching patterns in added code & --- & 14\% \\
+rollout & old peer vs new code, new peer vs old code, old persisted state & the PR text mentions compatibility or rollout, or versioned state changes & --- & 10\% \\
+deferred & who wakes queued work, who reads before it drains, what coalescing merges & $\ge$2 distinct deferral terms in added code & --- & 3\% \\
+roundtrip & sample files through read, decode, edit, encode, write & encoding handling and a write in added code & --- & 3\% \\
+\midrule
+\multicolumn{5}{@{}l}{\emph{Path-triggered domain lenses}} \\
+security$^r$ & injection, authorization, tenant isolation, secrets, cache safety & auth or permission paths, secret-shaped names, env files, added dependencies & --- & 14\% \\
+contracts & external payloads field by field, acceptance semantics & schema, serializer, integration or provider paths & --- & 11\% \\
+ui & frontend effects, mutations, async state & frontend file types & --- & 6\% \\
+delivery & at-least-once handlers, redelivery, drop paths & webhook, task, worker or consumer paths & --- & 4\% \\
+data-safety$^r$ & migration DDL, blast radius, backfills & migrations, SQL, backfills & --- & 3\% \\
+statelessness & in-process state under many replicas & module-level mutable state, cache or singleton files & --- & 2\% \\
+prod-risk$^r$ & behaviour changes to live endpoints, rollout, cascades & infrastructure, CI workflow, container files & --- & 1\% \\
+\midrule
+\multicolumn{5}{@{}l}{\emph{Addable only} (the session adds them with a stated reason)} \\
+concurrency & read-then-write races, walked step by step & never planned & --- & 5\% \\
+ask-human & questions whose answer lives outside the repository & never planned & question$^b$ & 0\% \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+On the gpt-6-sol default run a round executed a mean of 11.2 passes
+including the validator (median 11, interquartile range 9--14, range
+4--24); the plan averaged 10.9, and the session added passes on 36 of the
+185 PRs. The \code{low} preset ran 11.0 on average with the same plans and
+added passes on 18 PRs (same source).
+
+\paragraph{Dependency sources.} For the third-party packages a PR imports,
+the round downloads the packages' source archives at the versions the PR's
+lockfiles pin, from the npm and PyPI registries only, and unpacks them as
+plain text files; nothing is installed and no tool from an archive runs.
+The round order lists where they landed, so a pass can read and cite the
+library rather than its memory of it. A failure of any kind becomes a
+skipped entry; the round never waits on it.
+
+\subsection{The validator and its dispositions}
+\label{sec:validator}
+
+The validator receives every candidate the lenses raised and the merge
+step's decisions. For each candidate it re-derives the claim by reading the
+code, checks it against points already settled in the PR's discussion,
+verifies the anchor, audits severity and confidence, and merges residual
+duplicates. Each candidate ends in one disposition
+(Table~\ref{tab:dispositions}).
+
+\begin{table}[!tbp]
+\centering
+\small
+\caption{Validator dispositions at the measured build. ``Posted'' says
+whether the candidate reaches the review.}
+\label{tab:dispositions}
+\begin{tabularx}{\textwidth}{@{}l X l@{}}
+\toprule
+Disposition & When & Posted \\
+\midrule
+post & confirmed as stated, at its audited severity & yes \\
+demote & confirmed, but the consequence is smaller than claimed, or the lens's cap applies: lowered to P3, question or nit, never deleted for being small (\emph{demote, don't kill}) & yes \\
+restate & the mechanism is confirmed but the claimed consequence is wrong: restated with the true consequence at the severity that earns (\emph{restate, don't kill}) & yes \\
+merge & the same defect as another candidate, differently phrased & as one \\
+fold & a different defect on the same changed lines, carried inside the surviving comment & inside it \\
+doubt & the claim fails: \code{refuted} (counter-evidence read), \code{unverifiable} by reading, \code{bad-anchor}, or confidence below 0.5 & no (kept in the record) \\
+kill & a repeat of a settled point, out of scope, below the bar (a change that would not improve the code), or the wrong shape (a nit that asks for nothing, self-narration, style without a written guide) & no \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\emph{Doubt} replaced deletion for validity vetoes between the gpt-6-sol
+runs and the measured build: a doubted candidate stays in the findings
+record, marked as possibly invalid, so that a validator at a lower tier
+cannot make a stronger lens's finding vanish without trace. For what reaches
+the review a doubt and a kill are the same, and the mechanism figures in
+Section~\ref{sec:cost}, measured on the earlier build, count validity vetoes
+as kills.
+
+\subsection{Models, tiers and presets}
 \label{sec:presets}
 
-One configuration word sets the whole round. \code{default} enables every
-lever from the tuning phase (content-triggered sub-lenses, the per-file
-sweep, dependency sources unpacked at their locked versions, the
-validator's ``restate, don't kill'' and ``demote, don't kill'' rules)
-with the lean plan, lenses at medium reasoning and the validator and risk
-passes at high. \code{low} keeps the same plan with every model at low
-reasoning, for about two thirds of the cost. \code{max} puts every model
-at its ceiling and runs the full lever plan; it was measured only as an
-anecdote (Section~\ref{sec:basemodel}). An explicitly set key always
-overrides the preset.
+Every pass runs at one of three tiers. The two cheaper tiers are chosen by
+diff size (below 150 changed lines, or above), the third is high; in the
+\code{default} preset both cheaper tiers map to medium reasoning, so the
+tier label records diff size rather than a reasoning level. The sweep and
+intent start at the cheapest tier, the three risk passes and the validator
+run at high, and the main session runs at the model's default (medium).
+The validator's tier is fixed and is never raised to match a lens.
 
-\subsection{How it runs on the benchmark}
+One configuration word, the \emph{preset}, sets the reasoning level and the
+lever plan (Table~\ref{tab:presets}); an explicitly set key overrides it. The
+\code{default} and \code{low} presets share the \emph{lean} plan, which was
+tuned for equal recall at lower cost (Appendix~\ref{app:tuning}); \code{max}
+enlarges it.
 
-The benchmark runs the production round, not a benchmark build: the real
-round order, session system prompt, lens and validator agents and model
-configuration. The main difference is a \textsc{benchmark mode} section
-appended to the round order, which says there is no GitHub, no CI and no
-memory, and tells the session to write its would-be review to files
-instead of posting it. Memory is off, so a foreign repository never
-reads or writes the production reviewer's memory; a multi-line comment is
-scored at its single anchor line. A benchmark-tuned switch that posts
-every true nit (\code{[review] nits = "open"}) exists because AACR's
-metric rewards nits; it was measured and is off in every scored run.
+\begin{table}[!tbp]
+\centering
+\small
+\caption{The three presets (\code{REVIEW\_PRESETS} in \code{src/config.ts}).
+Every preset turns on the sub-lenses, the sweep, dependency sources, the tests
+lens, the code-quality lenses and the style lens.}
+\label{tab:presets}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lccc@{}}
+\toprule
+& \code{low} & \code{default} & \code{max} \\
+\midrule
+Reasoning & every role low & lenses medium; validator, risk passes high & every role at its ceiling \\
+Sweep groups (max / files / lines) & 6 / 5 / 500 & 6 / 5 / 500 & 8 / 3 / 400 \\
+Intent: words of author prose & 60 & 60 & 20 \\
+Placement: code files / new-file lines & 8 / 30 & 8 / 30 & 4 / 0 \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+\subsection{What the benchmark measures, and what it leaves out}
+\label{sec:benchmode}
+
+The benchmark runs the production round, not a benchmark build: the same
+round template rendered by the production renderer, the same session
+persona, the same plan computation, the same built lens and validator agents
+with every addendum, and the same model configuration (with the base model
+replaced through configuration overrides). It differs in what cannot run
+offline, and those differences are stated to the session in a
+\textsc{benchmark mode} section appended to the round order:
+
+\begin{itemize}
+  \item There is no GitHub, no CI and no memory. The CI gate on approvals is
+  off; the session decides on the merits. Reviewer memory is off so that a
+  foreign repository never reads or writes the production reviewer's memory.
+  \item The session posts nothing. It writes four files instead: the inline
+  comments exactly as it would post them, the review body, the findings
+  record, and an outcome file with the verdict. The defect judge reads the
+  comments and the body.
+  \item The repository profile is the generic one, not the profile of the
+  authors' production repository, whose framework-specific rules would be
+  noise on these projects.
+  \item The PR's title and description are given, as in production;
+  dependency sources are fetched; one container runs each PR with a
+  45-minute limit.
+  \item Production features outside a single first review are absent:
+  rechecks after approval, replies to authors, escalation, the migration
+  pre-check.
+\end{itemize}
+
+\noindent A switch that posts every true nit (\code{[review] nits = "open"})
+exists because AACR-Bench's own metric rewards nits; it is off in every
+scored run.
 
 % =====================================================================
-\section{Results on the benchmark}
+\section{Evaluation setup}
+\label{sec:setup}
+
+\paragraph{The benchmark.} Each of the 185 runnable PRs of AACR-Bench
+v1.0~\cite{aacrbench} (ten languages) carries a list of verified defects ---
+520 in all: 90 high, 145 medium and 285 low severity. The key was built from
+an expert code hunt, the dataset's reference comments and seven reviewers'
+comments, each candidate checked against the code by agents that could not
+see who raised it, with 3{,}093 rejected candidates kept with their
+reasons~\cite{qcrbench}. A judge model (gpt-6-sol at high reasoning) reads
+each review whole and grades every defect found, partly found (counted as
+half) or missed, and every comment correct-valuable, correct-minor, partly
+correct, incorrect or unverifiable; ``comments correct'' is the share graded
+correct-valuable or correct-minor. Weighted recall weights high, medium and
+low severity 3, 2 and 1. A second judge from another model family agreed on
+98.7\% of verdicts in the earlier study. Every reviewer runs in a locked-down
+container that sees only the PR's base and head commits. The benchmark's own
+reference-comment metric is reported too (Section~\ref{sec:aacr}).
+
+\paragraph{The contenders.} Eight configurations ran once each on all 185
+PRs: \qcr{}'s \code{default} and \code{low} presets and six third-party tools
+--- pi-review~\cite{pireview}, Claude Code~\cite{claudecode},
+open-code-review~\cite{ocr}, Codex CLI~\cite{codex}, OpenCode~\cite{opencode}
+and PR-Agent~\cite{pragent}. Each third-party tool ran in the best
+configuration found for it among the variants its own documentation ships
+or recommends, picked by a rule fixed in advance on 40 PRs not used to tune
+\qcr{}~\cite{qcrbench}. Every OpenAI-based reviewer ran on gpt-6.1-sol;
+Claude Code ran on Claude Opus 5.5 at its published medium
+\code{/code-review}. \qcr{} itself was not re-tuned for this comparison.
+
+\paragraph{Which run each number comes from.} The report draws on several
+runs, and mechanism figures come from a different run than outcome figures
+(Table~\ref{tab:sources}). Where a paragraph mixes them, it says which is
+which.
+
+\begin{table}[!tbp]
+\centering
+\small
+\caption{Runs behind this report. All on the same 185 PRs and the same key
+unless stated; all judged by the primary judge.}
+\label{tab:sources}
+\begin{tabularx}{\textwidth}{@{}l l X@{}}
+\toprule
+Run & Build, model & Used for \\
+\midrule
+Final comparison & \code{b2ce03a}, gpt-6.1-sol (pi 0.99.1) & every outcome number in Sections~\ref{sec:qresults}--\ref{sec:panel} \\
+gpt-6-sol default run & \code{2d2036f}/\code{1ad710b}, gpt-6-sol (pi 0.87.1) & mechanism: pass counts, lens shares, cost split, per-lens attribution, validator dispositions (Section~\ref{sec:cost}) \\
+Selection set & as above, both models; 40 of the 145 PRs & the panel's internals (Table~\ref{tab:panel40}) \\
+Base-model arms & \code{9106a64}, \code{b2ce03a}, \code{5cbd74a} & Section~\ref{sec:basemodel} \\
+Stability repeats & \code{9106a64}, gpt-6-sol, 8 PRs & Section~\ref{sec:stability} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+% =====================================================================
+\section{Results (RQ1)}
 \label{sec:qresults}
 
-Eight reviewers ran once each on all 185 PRs: QuickReview's
-\code{default} and \code{low} presets and six third-party tools ---
-pi-review~\cite{pireview}, Claude Code~\cite{claudecode},
-open-code-review~\cite{ocr}, Codex CLI~\cite{codex},
-OpenCode~\cite{opencode} and PR-Agent~\cite{pragent} --- each in
-the best configuration found for it among the variants its own
-documentation ships or recommends, chosen by a rule fixed in advance on
-40 PRs~\cite{qcrbench}. Every OpenAI-based reviewer ran on gpt-6.1-sol;
-Claude Code ran on Claude Opus 5.5.
+\subsection{Defects found}
 
-\begin{table}[t]
+\begin{table}[!tbp]
   \centering
   \caption{The final comparison: defect benchmark, 185 PRs, 520 defects,
   primary judge. A partly found defect counts $\tfrac12$. Weighted recall:
   high 3, medium 2, low 1. \$ are list prices, not bills (gpt-6.1-sol at
   \$2 / \$0.10 / \$10 per million uncached input / cached input / output
-  tokens; Claude Code its own reported cost).\protect\footnotemark}
+  tokens; Claude Code its own reported cost). Minutes are wall-clock under a
+  shared scheduler and are not comparable across arms.\protect\footnotemark}
   \label{tab:final}
   \resizebox{\textwidth}{!}{%
   \begin{tabular}{lrrrrrrrrr}
@@ -321,8 +641,7 @@ Claude Code ran on Claude Opus 5.5.
 listed in \code{bench/aacr/final/arms.txt}; reproduced independently from
 the judge files, 2026-10-01.}
 
-
-\begin{figure}[t]
+\begin{figure}[!tbp]
   \centering
   \includegraphics[width=\textwidth]{\chart{defects-by-severity}}
   \caption{The final comparison: real defects found, split by severity
@@ -331,22 +650,36 @@ the judge files, 2026-10-01.}
 \end{figure}
 
 The default finds 409 of the 520 defects (79\%) with 95\% of its comments
-correct (Table~\ref{tab:final}, Figure~\ref{fig:sev}). Its lead over every
-other reviewer on overall recall excludes zero in a paired bootstrap over
-PRs: $+8.4$ points over \code{low}, $+11.8$ [$+7.8$, $+15.7$] over
-pi-review's panel, $+16.2$ over Claude Code. It is a lead in medium and
-above all low severity: on the 90 high-severity defects the default finds
-83.5, Codex CLI 81, the panel 80 and \code{low} 79.5, and none of those
-gaps is established. On medium severity the default and the panel are
-level (121 and 119 of 145); on low severity the default finds 204.5 of
-285 against 148.5.
+graded correct (Table~\ref{tab:final}, Figure~\ref{fig:sev}). In a paired
+bootstrap over PRs its lead over every other reviewer on overall recall
+excludes zero: $+8.4$ points [$+5.6$, $+11.1$] over \code{low}, $+11.8$
+[$+7.8$, $+15.7$] over pi-review's panel, $+16.2$ [$+10.8$, $+21.3$] over
+Claude Code, and $+21.3$ to $+41.3$ over the rest (Table~\ref{tab:ci}).
+Counting a partly found defect as missed changes no order (78.1\% for the
+default, 66.0\% for the panel).
 
-\begin{table}[t]
+Where the lead lies depends on whom it is over. Over the panel it is almost
+entirely low severity: high 83.5 against 80 and medium 121 against 119, but
+low 204.5 against 148.5. Over Claude Code, open-code-review, Codex CLI and
+OpenCode it includes medium severity (16--22 more). On high and medium
+defects together the default finds 87.0\% and the panel 84.7\%, a lead of
+$+2.3$ points [$-2.7$, $+7.0$] that is not established~\cite{qcrbench}. On
+the 90 high-severity
+defects the default's lead over the panel ($+3.9$ points [$-1.9$, $+9.6$])
+and over Codex CLI ($+2.8$ [$-3.0$, $+8.7$]) is not established; over
+\code{low}, Claude Code, OpenCode, open-code-review and PR-Agent it is.
+\code{low} is ahead of the panel by $+3.5$ points [$-0.8$, $+7.7$]: not
+established. Of the three defects that a read-only reviewer can find only by
+knowing the repository's CI, the default found 2, \code{low} 1, every other
+reviewer none.
+
+\begin{table}[!tbp]
   \centering
   \small
   \caption{Recall, high-severity recall and weighted recall with 95\%
-  bootstrap intervals over PRs (seed 20261001), and cost per defect found
-  (total list cost over the 185 PRs divided by problems found).}
+  bootstrap intervals over PRs (10{,}000 resamples, seed 20261001; PR
+  sampling only, one run and one judge), and list cost per defect found
+  (total over the 185 PRs divided by defects found).}
   \label{tab:ci}
   \resizebox{\textwidth}{!}{%
   \begin{tabular}{lrrrrr}
@@ -365,115 +698,313 @@ level (121 and 119 of 145); on low severity the default finds 204.5 of
   \end{tabular}}
 \end{table}
 
-\paragraph{What it says.} The default posts the most comments (5.4 per
-PR) and has the fewest graded incorrect (2.5\%), but a third of them are
-true and minor, and only 56\% map to a verified defect, against 81--87\%
-for Claude Code, Codex CLI and OpenCode. It finds more, and says more.
+\subsection{What the comments are}
 
-\paragraph{Where it was tuned and where it was not.} QuickReview's levers
-were designed from its misses on the original 40 PRs; the other 145 were
-never looked at before its final build. It scores lower on the 40 (70\%)
-than on the 145 (81\%), and so does every other reviewer, so the 40 are
-harder for everyone; its margin over the mean of the other seven is 18.2
-points on the 40 and 22.5 on the 145, the opposite of what tuning on the
-40 would produce. On the 369 defects the key would hold without any
-reviewer's comment it finds 81\%, against 74\% for \code{low} and 69--70\%
-for the panel and Claude Code.
+\begin{table}[!tbp]
+  \centering
+  \small
+  \caption{Every comment the judge graded, final comparison. Shares of each
+  reviewer's comments. ``Mapped'': the judge tied the comment to a verified
+  defect.\protect\footnotemark}
+  \label{tab:grades}
+\resizebox{\textwidth}{!}{%
+  \begin{tabular}{lrrrrrrr}
+    \toprule
+    Reviewer & Comments & Per PR & Correct-valuable & Correct-minor & Partly & Incorrect & Mapped \\
+    \midrule
+    \qcr{} default & 999 & 5.40 & 60.9\% & 33.8\% & 2.6\% & 2.5\% & 55.6\% \\
+    \qcr{} low & 801 & 4.33 & 59.4\% & 34.1\% & 2.4\% & 4.0\% & 58.2\% \\
+    pi-review panel & 585 & 3.16 & 72.6\% & 16.8\% & 4.6\% & 6.0\% & 67.0\% \\
+    Claude Code & 407 & 2.20 & 75.9\% & 4.7\% & 6.9\% & 11.8\% & 80.8\% \\
+    open-code-review & 570 & 3.08 & 69.5\% & 16.7\% & 4.7\% & 9.1\% & 63.3\% \\
+    Codex CLI & 343 & 1.85 & 91.0\% & 1.7\% & 2.9\% & 4.4\% & 85.4\% \\
+    OpenCode & 354 & 1.91 & 88.7\% & 4.0\% & 3.4\% & 4.0\% & 87.3\% \\
+    PR-Agent & 404 & 2.18 & 71.8\% & 4.0\% & 6.7\% & 17.6\% & 76.5\% \\
+    \bottomrule
+  \end{tabular}}
+\end{table}
+\footnotetext{Recomputed from the archived judge files, 2026-10-01
+(scratchpad \code{paper-data/final-tables.md}, \S1); unverifiable grades
+($\le$0.7\%) omitted.}
 
-\paragraph{By kind.} The largest margin is on maintainability defects
-(81\% against 16--51\% for the third-party tools), which fits the
-code-quality lenses; those lenses were designed on the tuning PRs, so it
-is also where a design-to-key alignment would show first. Without the 72
+The default posts the most comments, 5.4 per PR, and has the smallest share
+graded incorrect (2.5\%) (Table~\ref{tab:grades}). Its high share of correct
+comments rests partly on volume of small true things: a third of its
+comments are correct but minor, and only 56\% map to a verified defect,
+against 81--87\% for Claude Code, Codex CLI and OpenCode. In absolute terms
+it posts about 608 correct-valuable comments to the panel's 425. Whether the
+extra minor comments are worth a reader's time is not something this
+benchmark measures (Section~\ref{sec:limits}).
+
+\subsection{Where the lead comes from}
+
+\paragraph{By kind of defect.} The largest margin is on maintainability
+defects (72 defects): the default finds 81\% against 16--51\% for the
+third-party tools, which fits the code-quality lenses. Those lenses were
+designed on the tuning PRs, so this is also where an alignment between the
+design and the key's notion of a defect would show first. Without the
 maintainability defects the default finds 78\% against 71\% for the panel.
+On incomplete fixes (57 defects) it finds 89\% against 73\%. On the largest
+class, functional bugs (229 defects), the margin is small: 77\% against
+73\% for the panel and 68--69\% for Claude Code and open-code-review.
+\footnote{Scratchpad \code{paper-data/final-tables.md}, \S3b and \S4.}
 
-\paragraph{Worked examples.} The companion paper~\cite{qcrbench} shows one
-defect of each severity with every reviewer's verdict and comments,
-including a medium-severity defect that five other reviewers found and
-QuickReview found only in part.
+\paragraph{By PR size.} The lead grows with the size of the change. On PRs
+of at most 50 changed lines the default finds 70\%, against 67\% for Claude
+Code and 62\% for the panel; on 51--200 lines 76\% against 69\%; on
+201--1{,}000 lines 82\% against 67\% for the panel and 60\% for Claude
+Code. A reviewer that reads every changed file in small groups should gain
+most where a single read has most to skim past; the per-file sweep is the
+candidate mechanism (Section~\ref{sec:cost}).
+
+\paragraph{Tuned and unseen PRs.} \qcr{}'s levers were designed from its
+misses on the original 40 PRs; the other 145 were never looked at before its
+final build. It scores lower on the 40 (70\%) than on the 145 (81\%), and so
+does every other reviewer, so the 40 are harder for everyone. Its margin over
+the mean of the other seven reviewers is 18.2 points on the 40 and 22.5 on
+the 145, the opposite of what tuning on the 40 would produce. On the 145
+PRs not used to choose the competitors' configurations it leads the panel
+77\% to 66\%.
+
+\paragraph{Without reviewer-sourced defects.} On the 369 defects the key
+would hold if no reviewer's comment had been a candidate (those raised by
+the code hunt or a dataset reference), the default finds 81\%, \code{low}
+74\%, Claude Code 70\% and the panel 69\%. On a key that drops only the 28
+defects (24 low) whose sole sources are \qcr{}'s own earlier runs, the
+default finds 79.4\% of 492, \code{low} 71.4\% and the panel 68.7\%; the
+lead over the panel is $+10.7$ points [$+6.5$, $+14.7$] and no order
+changes~\cite{qcrbench}.
+
+\subsection{AACR-Bench's own metric}
+\label{sec:aacr}
+
+On the benchmark's published metric --- how closely a review reproduces the
+dataset's 1{,}418 reference comments on these PRs, at least 80\% of them AI-written --- the default has the highest recall (10.7\%) and F1 (12.5\%);
+open-code-review is next on F1 (11.6\%), and PR-Agent (21.3\%) and
+open-code-review (20.2\%) have the highest precision against the default's
+15.2\%. With the 80 references that are rewrites of earlier review bots'
+comments removed, the default and open-code-review stay first and second
+on F1 (11.4\% and 10.8\%). The companion
+paper~\cite{qcrbench} explains why every number on that metric is low and
+why its order differs from the defect benchmark's.
 
 % =====================================================================
-\section{Why it costs more, and the closest competitor}
-\label{sec:discussion}
+\section{Cost: where it goes and what it buys (RQ2)}
+\label{sec:cost}
 
-\subsection{Why \qcr{} costs more}
-\label{sec:whycost}
+\qcr{}'s default spends \$1.36 per PR at list prices: 2.6 times
+open-code-review, 5 times the panel, 7--9 times Claude Code, OpenCode and
+Codex CLI, 21 times PR-Agent; it reads 1.88M input tokens per PR (75\% of
+them cached) and writes 27k, 5.1--24 times the output of the third-party
+tools (Figure~\ref{fig:costcov}). Unless stated, the mechanism figures in
+this section are from the gpt-6-sol default run (Table~\ref{tab:sources}),
+on which the default cost \$1.71 per PR and found 437.5 defects; the
+gpt-6.1-sol run's split is unmeasured.
 
-\qcr{} spends more per PR than any other tool because of how it is built,
-and on this benchmark that spending is what buys its recall.
+\begin{figure}[!tbp]
+  \centering
+  \includegraphics[width=0.85\textwidth]{\chart{cost-vs-coverage}}
+  \caption{Cost per PR against defects found, final comparison. \qcr{}'s two
+  presets sit alone at the top right; the six other tools lie between \$0.07
+  and \$0.53 per PR.}
+  \label{fig:costcov}
+\end{figure}
 
-\paragraph{Redundant coverage by independent lenses.} A round runs about 11
-passes (11.2 per PR on average under default, validator included;
-the benchmark paper~\cite{qcrbench}): lenses that each examine the same change from a
-different angle. Each lens is a separate subagent that starts from the diff
-and the code; the lenses do not see or talk to each other. The overlap is
-large and deliberate. Of the 440 defects credited to the default arm on the
-185 PRs, only 71 were raised by a single lens, and 127 by six or more (two
-lenses 57, three 72, four 60, five 53). A defect that one lens misses is
-usually re-derived independently by another.\footnote{Per-lens attribution
-over the default arm's findings records, re-derived by an independent
-verifier; tuning analysis of 2026-09-30.}
+\subsection{Where the money goes}
 
-\paragraph{An adversarial validator.} After the lenses, a separate validator
-pass at high reasoning re-checks every candidate against the code and
-posts, merges, demotes or kills it. On the 185-PR default run it handled
-2{,}959 candidates: 1{,}456 merged as duplicates of another finding (the
-redundancy above, collapsed), 1{,}034 posted, 164 demoted and posted, 207
-killed (a kill rate of 7.0\%), 64 withheld and 34 folded. Hand-checking the
-kills found about 6 of the 520 real defects wrongly killed, about 1.2 points
-of recall. The main session then consolidates what survives into one
-review. The cross-examination is independent re-derivation followed by a
-verifier, not a discussion between lenses. Of the default's cost, the
-lenses take 75.5\%, the validator 10.9\% and the main session 13.5\%.
+The lenses take 75.5\% of the cost, the validator 10.9\% and the main
+session 13.5\%. Within the lenses the spend follows how often a lens runs
+and how much it reads (Table~\ref{tab:lenscost}): the sweep alone is 13.6\%
+of the total, the baseline 9.4\%, the tests lens 7.1\%, and the four
+code-quality lenses together 22.1\%.
 
-\paragraph{What the compute buys.} In the final comparison \qcr{}'s
-default has both the highest recall (79\%) and the highest share of
-correct comments (95\%); the other tools reach 37--67\% with 76--93\% of
-their comments correct (Table~\ref{tab:final}). With the harness fixed,
-less compute finds less: the \code{low} preset finds 70\% at \$0.88 per PR
-against 79\% at \$1.36, and a small base model that writes about half as
-much per pass collapses to 28\% (Section~\ref{sec:basemodel}). The lenses
-are not interchangeable copies either: on the earlier 185-PR default run
-the per-file sweep alone was the only route to 29 credited defects (2
-high), and dropping it is estimated to cost about 5.6 points of recall.
+\paragraph{Redundancy is large and deliberate.} Of the 440 defects credited
+to the default on the gpt-6-sol run,\footnote{The attribution counts a
+partly found defect once; Table~\ref{tab:bm185} counts it as half.} only 71
+were raised by a single lens and 127 by six or more (two lenses 57, three
+72, four 60, five 53). The validator saw 2{,}959 candidates: 1{,}456 merged
+as duplicates of another finding --- the redundancy, collapsed --- 1{,}034
+posted, 164 demoted and posted, 207 killed (7.0\%), 64 withheld and 34
+folded.
 
-\paragraph{The counterpoint.} \qcr{}'s case is recall, not cost
-efficiency. In the final comparison every other tool is cheaper per PR,
-by 2.6 times (open-code-review, \$0.53) to 21 times (PR-Agent, \$0.07),
-and cheaper per defect found: \$0.06--\$0.14 for PR-Agent, Codex CLI,
-Claude Code, OpenCode and pi-review's panel against \$0.61 for the default
-(Table~\ref{tab:ci}). On high-severity defects alone the default's lead
-over the panel and Codex CLI is not established, and they find a
-high-severity defect for \$0.62 and \$0.33 against \$3.01. A team that
-wants the most important findings cheaply is better served by one of those
-tools at its best configuration; \qcr{} is the choice when a missed
-medium- or low-severity defect costs more than the review.
+\paragraph{Its value is uneven.} A lens's \emph{unique} finds --- defects
+for which every crediting comment names that lens alone --- are the best
+offline proxy for what dropping it would lose (Table~\ref{tab:lenscost}).
+Two lenses carry most of them: the sweep (29 unique finds, 2 of them high,
+for 13.6\% of the cost) and maintainability (15, mostly stale documentation,
+for 5.4\%). At the other end, abstraction and duplication together cost
+9.9\% of the budget for one unique find in 185 PRs; placement, bounds,
+contracts and style found nothing no other lens found. Shared credit is
+large for every lens --- consistency co-found 237 defects --- which is the
+redundancy above: a lens with no unique finds may still make a find more
+likely in a run where the lens that usually raises it misses.
+\footnote{Per-lens offline analysis of the gpt-6-sol default run's findings
+records, 2026-09-29 (scratchpad \code{tuning-writeup.md}, Q1--Q3). ``Unique''
+is fragile: the other lenses' overlap varies from run to run.} Dropping the
+sweep is estimated to cost about 5.6 points of recall.
 
-\subsection{Why pi-review's panel is the strongest competitor}
+\begin{table}[!tbp]
+\centering
+\small
+\caption{Per-lens cost and credit, gpt-6-sol default run, 185 PRs. Cost
+share: of the run's total. Co-credit: defects at least one of whose
+crediting comments names the lens. Unique: defects whose crediting comments
+all name that lens alone. Rows naming several lenses add the lenses'
+figures, so a defect two of them co-credit counts twice.}
+\label{tab:lenscost}
+\begin{tabular}{lrrrr}
+\toprule
+Lens & Cost share & Co-credit & High & Unique \\
+\midrule
+sweep & 13.6\% & 334 & 74 & 29 (2 high) \\
+validator & 10.9\% & --- & --- & --- \\
+baseline & 9.4\% & 285.5 & 72 & 5 \\
+tests & 7.1\% & 79 & 31 & 3.5 \\
+consistency & 6.8\% & 237 & 60 & 2 \\
+maintainability & 5.4\% & 125.5 & 26 & 15 \\
+abstraction & 5.0\% & 100 & 26 & 0 \\
+duplication & 4.9\% & 71 & 14 & 1 \\
+simplicity & 4.1\% & 59 & 15 & 3 \\
+widened & 3.3\% & 124.5 & 30 & 1 \\
+intent & 2.9\% & 66 & 14 & 2 \\
+claims & 2.6\% & 90 & 21 & 1 \\
+placement & 1.9\% & 29 & 6 & 0 \\
+security & 1.3\% & 28.5 & 7 & 1 \\
+backcompat & 1.3\% & 18 & 6 & 3 \\
+bounds, contracts & 2.0\% & 57 & 20 & 0 \\
+seven smaller sub-lenses & 2.8\% & 80.5 & --- & 4 \\
+data-safety, prod-risk, style & 1.1\% & 14 & 5 & 0 \\
+main session & 13.5\% & --- & --- & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{The validator removes little that is real.} Hand-reading every
+defect with a killed or demoted candidate at its site found about 6 of the
+520 real defects killed as the same claim --- about 1.2 points of recall,
+most of them by a validator that confirmed the mechanism and judged the
+consequence too small. The default's misses are recognition misses, not
+filtering: of its 82.5 missed credits, 56 had a comment posted within five
+lines that the judge credited to something else, 11 had a candidate
+elsewhere in the file, 7 had nothing raised in the file, and 6 had a
+candidate at the site that was dropped. Posting every kill would add 23\%
+more comments for at most 1.5 points.
+
+\subsection{What the compute buys}
+
+\paragraph{With the design fixed, less compute finds less.} The \code{low}
+preset --- the same plan, every role at low reasoning --- finds 70\% at
+\$0.88 per PR against 79\% at \$1.36; the difference is established. On the
+gpt-6-sol runs, where the gap was larger (84\% against 66\%), an attribution
+of the lost credit put about 40\% of it in lens generation (fewer
+candidates near the defect), about 20\% in validator filtering (a low
+validator killed 26 defects' only candidates against 5 at high), and about
+40\% in weaker comments that were near the defect but earned no credit. A
+smaller base model that writes about half as much per pass collapses to
+28\% (Section~\ref{sec:basemodel}): what the lenses do not raise, the
+validator and the session cannot recover.
+
+\paragraph{Marginal cost.} Average cost per defect favours cheap reviewers
+by construction; the figure that matters for choosing a configuration is the
+cost of the defects one buys by moving up. Over the 185 PRs, moving from
+\code{low} to the default costs about \$89 more for 43.5 more defects (about
+\$2.05 each, 4 of them high severity); moving from the panel to the default
+costs about \$201 more for 61.5 more defects (about \$3.27 each), 56 of them
+low severity.\footnote{Computed from the whole-benchmark list costs (\$251,
+\$162, \$50; scratchpad \code{paper-data/final-tables.md}, \S5) and
+Table~\ref{tab:final}.}
+
+\paragraph{The counterpoint.} \qcr{}'s case is recall, not cost efficiency.
+Every other tool is cheaper per defect found (\$0.06--\$0.33, against \$0.61
+for the default and \$0.44 for \code{low}; Table~\ref{tab:ci}). On
+high-severity defects alone the panel and Codex CLI are not separated from
+the default, and they find a high-severity defect for \$0.62 and \$0.33
+against \$3.01. A team that wants the most important findings cheaply is
+better served by one of those tools at its best configuration; \qcr{} is the
+choice when a missed medium- or low-severity defect costs more than about
+\$2--3 of review. All costs are list prices; the OpenAI-based arms ran
+through a subscription login, so they are not bills.
+
+% =====================================================================
+\section{The closest competitor: pi-review's panel (RQ3)}
 \label{sec:panel}
 
 Of every third-party configuration we ran, pi-review's three-reviewer panel
-comes closest to \qcr{}, and it is also the one whose design is closest to
-\qcr{}'s. In the final comparison it finds 347.5 of 520 defects (67\%)
-against the default's 409 (79\%) and \code{low}'s 365.5 (70\%), and the
-difference is almost entirely in low severity: high 80 against 83.5,
-medium 119 against 121, low 148.5 against 204.5 (Table~\ref{tab:final}).
-This subsection looks at why, using the 40 selection PRs, where we also
-read the panel's own clustering output, with both on gpt-6.1-sol
-(Table~\ref{tab:panel}). Those are 40-PR results from one run per
-configuration.
+comes closest to \qcr{}, and its design is also the closest. This section
+compares the two designs, the results on all 185 PRs, and what the
+comparison can and cannot say about design versus budget.
 
-\begin{table}[t]
+\subsection{Two designs}
+
+The panel is \code{pi-review -{}-mode code -{}-panel code-experts}, which is
+what pi-review's \code{/rv} command runs by default in the pi
+host~\cite{pireview,pi}. The \code{code-experts} preset defines three
+reviewers, for correctness, security and testing; each is an isolated,
+read-only pi process with its own role prompt, and all three review the same
+diff without seeing each other. Their findings are clustered --- by a
+deterministic match on path and summary, then, for ambiguous pairs on the
+same path, by a model adjudicator that may merge findings but not invent,
+drop or rewrite them --- and a cluster raised by at least two reviewers is
+\emph{confirmed}; a singleton stays visible as an \emph{advisory}.
+Table~\ref{tab:designs} sets the two designs side by side.
+
+\begin{table}[!htbp]
+\centering
+\small
+\caption{The two multi-angle designs as they ran in the final comparison.}
+\label{tab:designs}
+\begin{tabularx}{\textwidth}{@{}l X X@{}}
+\toprule
+& \qcr{} default & pi-review panel \\
+\midrule
+Angles & $\approx$10 lenses planned from the change, plus a sweep over every changed file & 3 fixed specialists \\
+Independence & isolated leaves; none sees another & isolated reviewers; none sees another \\
+Deciding step & a validator re-derives each candidate from the code & a vote: confirmed if $\ge$2 of 3 agree; singletons kept as advisories \\
+What a single angle's real find becomes & posted, demoted if in doubt & an advisory; shown, but by pi-review's rule non-blocking \\
+Inputs & diff, worktree, PR title and body, dependency sources & diff, worktree (read-only tools) \\
+Reasoning & lenses medium; validator and risk passes high & every reviewer high \\
+Tokens per PR & 1.88M input (474k uncached), 27.0k output & 0.35M input (89k uncached), 4.7k output \\
+\$ per PR & 1.36 & 0.27 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Results on all 185 PRs}
+
+The panel finds 347.5 of 520 defects (67\%) against the default's 409
+(79\%), 80 of the 90 high-severity defects against 83.5, at a fifth of the
+cost. Of the 61.5 defects between them, 56 are low severity, 2 medium and
+3.5 high. The default's lead is established ($+11.8$ [$+7.8$, $+15.7$]);
+\code{low}'s 3.5 points over the panel, at 3.2 times its cost, are not.
+
+\paragraph{What the vote does.} We score confirmed and advisory findings
+alike, because both are in the panel's output; this is the generous reading.
+Re-reading the same judgements with confirmed clusters only, the panel finds
+250 of 520 defects (48\%) and 69 of 90 high-severity ones; the singletons
+carry 97.5 of its 347.5 credited defects. The vote does not separate right
+comments from wrong ones: 90\% of confirmed comments are correct (264 of 292)
+against 88\% of advisories (259 of 293). The confirmed-only figures re-read
+the judgements rather than re-judge; a panel that posted only confirmed
+findings could be graded slightly differently.\footnote{FULL-BENCHMARK.md,
+``Why pi-review's panel is the strongest competitor''.} So the panel's
+recall comes from its independent angles, including the angles that only
+one reviewer took, and not from its agreement check.
+
+\paragraph{The model behind both.} On the 40-PR selection set, where we also
+read the panel's clustering output, both systems ran on gpt-6-sol and
+gpt-6.1-sol (Table~\ref{tab:panel40}). The panel's comment accuracy rose
+from 78\% to 91\% with the newer model; its recall moved by two defects.
+One pi-review reviewer at high had 71\% of its comments correct and 62\%
+recall on gpt-6-sol, the panel 78\% and 68\% --- at 2.7 times the cost.
+
+\begin{table}[!htbp]
   \centering
-  \caption{\qcr{} and pi-review's \code{code-experts} panel on the 40 selection PRs
-  of the benchmark paper~\cite{qcrbench} (115 defects: 17 high, 33 medium, 65 low),
-  primary judge, one run each. ``Confirmed only'' re-reads the same
-  judgements, counting only comments from clusters that two or more of the
-  three reviewers raised. A defect keeps its credit when at least one comment
-  the judge credited for it is confirmed. Tokens are the per-PR mean on
-  these 40, uncached and cached input, then output, summed over every call
-  (lenses, validator and main session for \qcr{}; the three reviewers for
-  the panel).}
-  \label{tab:panel}
+  \caption{\qcr{} and pi-review's panel on the 40 selection PRs (115
+  defects: 17 high, 33 medium, 65 low), primary judge, one run each.
+  ``Confirmed only'' re-reads the same judgements, counting only comments
+  from clusters that two or more reviewers raised. Tokens: per-PR mean,
+  uncached and cached input, then output, summed over every call.}
+  \label{tab:panel40}
   \resizebox{\textwidth}{!}{%
   \begin{tabular}{llrrrrrrrrr}
     \toprule
@@ -490,117 +1021,71 @@ configuration.
   \end{tabular}}
 \end{table}
 
-\paragraph{How the panel works.} The configuration is
-\code{pi-review -{}-mode code -{}-panel code-experts}, which is what
-pi-review's \code{/rv} command runs by default in the pi
-host~\cite{pireview}: its \code{pi\_review} tool starts that
-command when no reviewer count or preset is given. The \code{code-experts}
-preset defines three reviewers, for correctness, security and testing. Each
-is an isolated, read-only pi process with its own role prompt, and all three
-review the same diff without seeing each other. Their findings are then
-clustered: first by a deterministic match on path and summary, then, for
-ambiguous pairs on the same path, by a model adjudicator that may merge
-findings but cannot invent, drop or rewrite them (it was consulted on 33 of
-the 40 PRs here). A cluster raised by at least two of the three reviewers
-(consensus \code{quorum}, \code{minAgree} 2) is \emph{confirmed}. A
-singleton stays visible as an \emph{advisory}. One report lists both.
+\subsection{Why \qcr{} finds more: candidate explanations}
 
-\paragraph{What it shares with \qcr{}.} Both review a change from several
-independent angles and then decide over the pooled candidates. The
-reviewers do not see each other in either system. \qcr{} runs about 11
-passes (a baseline, the per-file sweep, tests, the code-quality lenses and
-content-triggered sub-lenses), and then an adversarial validator re-derives
-each candidate against the code and posts, merges, demotes or kills it,
-preferring to demote rather than kill (Section~\ref{sec:whycost}).
-pi-review runs three fixed specialists and takes a majority vote. The
-deciding step differs: \qcr{} checks each finding against the code, while
-pi-review counts how many reviewers raised it.
-
-\paragraph{Scoring the panel, and what the vote does.} We score confirmed
-and advisory findings alike, because both are in the panel's output (the
-single-reviewer arm likewise keeps every finding). This is the generous
-reading. Under it the vote removes nothing, so it cannot be what makes the
-panel's comments correct. Re-reading the same judgements with only
-confirmed clusters (Table~\ref{tab:panel}) shows the vote does not sort
-right comments from wrong ones on these data either. On gpt-6.1-sol, 90\%
-of confirmed comments are correct against 91\% of advisory ones; on
-gpt-6-sol the figures are 79\% and 77\%. What the advisories carry is
-recall. Of the 80 defects the panel is credited with on gpt-6.1-sol, 30
-were found only by a singleton, and the confirmed-only reading finds 50
-(43\%) and 11 of 17 high. On gpt-6-sol it loses 32 of 78 and finds 46
-(40\%). The confirmed-only rows re-read the judgements; they were not
-re-judged. The judge saw the advisories, so a panel that posted only
-confirmed findings could be graded slightly differently.
-
-The panel's comment accuracy, close to \qcr{}'s on gpt-6.1-sol (91\%
-against 94\%), therefore has other sources. The base model is one: the same
-panel on gpt-6-sol has 78\% of its comments correct. The role split may be
-another: on gpt-6-sol, one pi-review reviewer at high has 71\% correct
-against the panel's 78\% (the benchmark paper~\cite{qcrbench}), though the vote itself
-does not account for that difference.
-
-\paragraph{The claim, and how far the evidence goes.} The strongest
-competitor is the tool whose design is closest to \qcr{}'s: several
-specialists, then a check over what they found. We read this as support for
-the view that the approach drives recall and validity, not only the token
-budget. Three results support it. First, adding angles at fixed effort buys
-recall. On gpt-6-sol, going from one pi-review reviewer at high to the
-three-reviewer panel at high raises recall from 62\% to 68\% and comments
-correct from 71\% to 78\%. Second, spending more does not by itself buy
-recall. On gpt-6-sol, OpenCode through the bridge cost \$0.96 per PR and
-found 43\%, and open-code-review at high cost \$1.12 and found 68\%. The
-panel matched the latter at \$0.46. Third, on gpt-6.1-sol the panel and
-\qcr{} are level where a vote over three broad specialists should work
-best: 17 of 17 high-severity defects each, and 27 against 26 of 33
-medium. The support has a limit. For pi-review, the data show that the
-independent angles help; they do not show that the agreement check does.
-
-\paragraph{Why \qcr{} still finds more.} The gap is almost entirely in
-low-severity defects: 55 of 65 against the panel's 36. Four differences
-between the designs account for it.
+Four differences could account for the low-severity gap. None was ablated
+on the unseen PRs, so these are hypotheses with partial support, not
+findings.
 \begin{itemize}
-  \item \textbf{The per-file sweep.} On the 185-PR default run it was the
-  only route to 29 credited defects, 2 of them high, and dropping it is
-  estimated to cost about 5.6 points of recall. The panel has no pass that
-  walks every changed file. Each specialist decides where to look.
-  \item \textbf{Many more passes.} \qcr{} runs about 11 passes to the
-  panel's three. On these 40 PRs it reads about five times the input (2.36M
-  tokens per PR against 0.47M, of which 569k against 101k uncached) and
-  writes about 5.5 times the output (32.0k against 5.8k).
-  \item \textbf{More context.} \qcr{} reads the PR title and body, and the
-  sources of the dependencies the PR imports. These panel runs had neither.
-  For pi-review the PR text was a small lever: one reviewer at high gained
-  1.5 defects from it on gpt-6-sol.
-  \item \textbf{A validator that demotes.} When one \qcr{} lens raises a
-  real defect, the validator re-derives it and posts it, demoted if in
-  doubt. When one pi-review specialist sees it, the finding stays an
-  advisory. It is shown, but by pi-review's own rule it does not block.
+  \item \textbf{The per-file sweep.} The panel has no pass that walks every
+  changed file; each specialist decides where to look. On the gpt-6-sol run
+  the sweep was the only route to 29 credited defects, 22 of them low, and
+  dropping it is estimated to cost about 5.6 points. The lead growing with PR
+  size is consistent with this.
+  \item \textbf{More passes and more reading.} About ten lenses to three
+  reviewers, 5.3 times the input and 5.7 times the output.
+  \item \textbf{A validator that demotes.} A real find by one \qcr{} lens is
+  posted, demoted if in doubt; a real find by one pi-review specialist stays
+  an advisory. Under our scoring both count, so this explains a difference
+  in what reaches a developer's attention more than a difference in recall.
+  \item \textbf{More context.} \qcr{} reads the PR text and dependency
+  sources. For pi-review the PR text was a small lever: one reviewer at high
+  gained 1.5 defects from it on the 40 PRs, and the variant lost its
+  selection.
 \end{itemize}
 
-\paragraph{The counterpoint.} On all 185 PRs the panel finds 67\% at
-\$0.27 per PR and a median of 1.8 minutes, a fifth of \qcr{} default's
-\$1.36 and 9.5 minutes, and 80 of the 90 high-severity defects. Per defect
-found it costs \$0.14, against \$0.61 for the default and \$0.44 for
-\code{low}. \qcr{}'s \code{low} preset is 3.5 points ahead of the panel
-(70\% against 67\%, interval $-0.8$ to $+7.7$) at 3.3 times the cost: not
-established. The default's 11.8-point lead is established, and it is a
-lead in low-severity defects.
+\noindent The comparison is asymmetric in both directions: \qcr{} had more
+context and five times the budget; the panel's reviewers ran at high
+reasoning where \qcr{}'s lenses ran at medium.
+
+\subsection{Design or budget?}
+\label{sec:designbudget}
+
+The strongest competitor is the design closest to \qcr{}'s, several
+independent angles followed by a decision over what they raised. It is
+tempting to read that as evidence that the approach, and not only the
+budget, carries the result. The data support a narrower statement.
+
+\emph{What the data show.} Independent angles help pi-review: three
+reviewers find more than one, and the extra recall comes from findings only
+one reviewer raised. Within \qcr{}, budget and model matter a great deal:
+\code{low} loses 8.4 points, a small model 56 (against gpt-6-sol). Spending more does not by
+itself buy recall in every tool --- OpenCode through our bridge cost \$0.96
+per PR on gpt-6-sol and found 43\% on the 40, open-code-review at high cost
+\$1.12 and found 68\%, and the panel matched the latter at \$0.46 --- but
+those are differences between tools, not between budgets for one design.
+
+\emph{What they do not show.} Every comparison that adds angles also adds
+budget: the panel costs 2.7 times one reviewer, \qcr{} five times the panel.
+We ran no equal-budget alternative --- a panel with as many reviewers as
+\qcr{} has lenses, a single reviewer at maximum effort, Claude Code at its
+broader effort levels --- and no lens ablation on the unseen PRs. Whether
+\qcr{}'s design beats a different way of spending \$1.36 per PR is open.
+\NEEDEXP{an equal-budget arm, e.g.\ a 9--10-reviewer pi-review panel or a
+single high-effort reviewer at about \$1.36/PR, on the 145 unseen PRs}
 
 % =====================================================================
-\section{Base model}
+\section{Base model (RQ4)}
 \label{sec:basemodel}
 
-This section changes only the model behind every role of \qcr{} --- the
-main session, the lenses, the validator and the risk passes --- and holds
-everything else fixed: the harness, the \code{default} preset and the reasoning levels (lenses at
-medium, the validator and the risk passes at high, the main session at
-pi's default, medium). Every arm was judged by the primary judge
-(gpt-6-sol, high) against the same key. It answers a question the
-comparisons between tools cannot: how much of the result is the review
-design, and how much the model under it. The gpt-6.1-sol row is the same
-run as \qcr{}'s row in the final comparison.
+This section changes only the model behind every role of \qcr{} --- the main
+session, the lenses, the validator and the risk passes --- and holds the
+design, the \code{default} preset and the reasoning levels fixed. Every arm
+was judged by the primary judge against the same key
+(Tables~\ref{tab:bmarms}--\ref{tab:bmsplit}). The gpt-6.1-sol row is the
+final comparison's.
 
-\begin{table}[t]
+\begin{table}[!tbp]
   \centering
   \small
   \caption{Base-model arms. Each run's \code{run.json} records the
@@ -620,11 +1105,9 @@ run as \qcr{}'s row in the final comparison.
   \end{tabular}
 \end{table}
 
-\subsection{All 185 PRs}
-
-\begin{table}[t]
+\begin{table}[!tbp]
   \centering
-  \caption{\qcr{} default on four base-model runs, 185 PRs, 520 defects,
+  \caption{\qcr{} default on four base models, 185 PRs, 520 defects,
   primary judge. AACR columns: harness \code{all} variant, 3 rounds,
   $\pm1$ line gate; comment count in brackets. Every row is 185/185
   judged.\protect\footnotemark}
@@ -645,19 +1128,10 @@ run as \qcr{}'s row in the final comparison.
 runs, \code{g61-smoke-smoke10} and \code{g61-\{dev10,holdout10,fresh10,rest145\}},
 and \code{all-luna-*} with \code{compare.py}, 2026-09-29/30.}
 
-CI-gate defects found: 2 of 3 for both gpt-6-sol runs and for
-gpt-6.1-sol, none for gpt-6-luna.
-
-\subsection{The original 40 PRs, with Claude Opus 5.5}
-
-Opus ran on the original 40 only (smoke10, dev10, holdout10, fresh10);
-Table~\ref{tab:bm40} cuts the other arms to the same 40, and
-Table~\ref{tab:bmsplit} splits the 40 into the 30 PRs the levers were
-tuned on and fresh10.
-
-\begin{table}[t]
+\begin{table}[!tbp]
   \centering
-  \caption{The original 40 PRs (126 defects), primary judge.\protect\footnotemark}
+  \caption{The original 40 PRs (126 defects; \qcr{}'s tuning PRs), primary
+  judge.\protect\footnotemark}
   \label{tab:bm40}
   \resizebox{\textwidth}{!}{%
   \begin{tabular}{lrrrrrrrrrl}
@@ -676,7 +1150,7 @@ tuned on and fresh10.
 and the runs of Table~\ref{tab:bm185} cut to the same 40 PRs, with
 \code{compare.py}, 2026-09-29/30.}
 
-\begin{table}[t]
+\begin{table}[!tbp]
   \centering
   \small
   \caption{The same 40 PRs split into the 30 tuning PRs and fresh10.}
@@ -694,151 +1168,102 @@ and the runs of Table~\ref{tab:bm185} cut to the same 40 PRs, with
   \end{tabular}
 \end{table}
 
-\subsection{gpt-6.1-sol at the \code{max} preset: an anecdote}
-
-The \code{max} preset puts every role on \code{gpt-6.1-sol:max} and turns
-on the full lever plan. We ran it once on smoke10 only. It is an
-anecdote, not a measurement. Three of the ten PRs timed out at the
-45-minute review limit after one retry (\code{infiniflow\_\_ragflow@7051234},
-\code{cline\_\_cline@7d18fb9}, \code{ollama\_\_ollama@b6002f6}), and the
-AACR metric was not run on this arm. Table~\ref{tab:bmmax} gives all ten
-PRs, with a timed-out PR counted as an empty review and its spend up to
-the limit included, and the seven PRs it completed.
-
-\begin{table}[t]
-  \centering
-  \caption{smoke10: gpt-6.1-sol at \code{max} against the other arms, on
-  all 10 PRs (34 defects, 8 high) and on the 7 PRs \code{max}
-  completed (16 defects, 2 high).\protect\footnotemark}
-  \label{tab:bmmax}
-  \resizebox{\textwidth}{!}{%
-  \begin{tabular}{lrrrrrrrrr}
-    \toprule
-    & \multicolumn{4}{c}{All 10 PRs} & \multicolumn{5}{c}{7 completed PRs} \\
-    \cmidrule(lr){2-5}\cmidrule(lr){6-10}
-    Arm & Found & High & \$/PR & Median min & Found & High & Correct & \$/PR & Median min \\
-    \midrule
-    gpt-6.1-sol, \code{max} & 13 (38\%) & 2 & 3.97 & 33.8 & 13 (81\%) & 2 & 100\% & 3.08 & 27.0 \\
-    gpt-6.1-sol, default & 26 (76\%) & 7 & 1.15 & 7.5 & 10 (62\%) & 2 & 95\% & 0.84 & 7.0 \\
-    gpt-6-sol, current build & 24.5 (72\%) & 6.5 & 1.41 & 7.7 & 10 (62\%) & 2 & 77\% & 1.07 & 7.0 \\
-    gpt-6-sol, original run & 25 (74\%) & 7 & 1.41 & 7.7 & 11 (69\%) & 2 & 81\% & 1.09 & 6.0 \\
-    Claude Opus 5.5 & 31.5 (93\%) & 7 & 3.10 & 8.0 & 14.5 (91\%) & 2 & 92\% & 2.16 & 6.7 \\
-    \bottomrule
-  \end{tabular}}
-\end{table}
-\footnotetext{Computed from runs \code{g61max-smoke-smoke10} and the
-smoke10 runs of the other arms with \code{compare.py}, 2026-09-29/30.}
-
-\subsection{Reading}
-
 \paragraph{gpt-6.1-sol trades recall for accuracy and cost.} It finds 27
-fewer defects than the current gpt-6-sol build (409 against 436, 5 points
-of recall). 25 of the 27 are low severity: high is 83.5 against 85 and
-medium 121 against 121.5. In exchange 95\% of its comments are correct
-(against 88\%) and it costs 20\% less (\$1.36 against \$1.71). Its AACR F1
-is the same (12.5\% against 12.6\%): it posts fewer comments (999 against
-1{,}227) at higher precision. The gap is larger on the original 40 (70\%
-against 80\%) than on the new 145 (321 of 394, 81\%, against 335.5, 85\%).
-
-\paragraph{Small samples mislead.} On smoke10 alone gpt-6.1-sol looked
-level with gpt-6-sol (26 found against 24.5 and 25). Only the full 185
-PRs show the 5-point gap. A 10-PR smoke run is enough to find a broken
-arm, not to rank two working ones.
+fewer defects than the current gpt-6-sol build (409 against 436, 5 points),
+25 of them low severity; high is 83.5 against 85 and medium 121 against
+121.5. In exchange 95\% of its comments are correct (against 88\%) and it
+costs 20\% less (\$1.36 against \$1.71). Its AACR F1 is the same (12.5\%
+against 12.6\%): it posts fewer comments (999 against 1{,}227) at higher
+precision. The gap is larger on the original 40 (70\% against 80\%) than on
+the new 145 (81\% against 85\%). The final comparison therefore shows \qcr{}
+on the model that is not its best measured OpenAI configuration; on
+gpt-6-sol the default found 84\%. On smoke10 alone gpt-6.1-sol looked level
+with gpt-6-sol (26 found against 24.5 and 25): a 10-PR smoke run can find a
+broken arm, not rank two working ones.
 
 \paragraph{The pi version is a confound we bounded only for cost.}
-gpt-6.1-sol needs pi 0.99.1; every other arm ran on pi 0.87.1. One check
-of gpt-6-sol on pi 0.99.1 (\code{infiniflow\_\_ragflow@7051234}, run
-\code{pi099-smoke-sol}) cost the same as the original run on that PR
-(\$1.52 against \$1.52) and found 3 of 3 defects against 2 of 3. That is
-one PR: it rules out a large cost change from the pi version, not a small
+gpt-6.1-sol needs pi 0.99.1; every other arm ran on pi 0.87.1. One check of
+gpt-6-sol on pi 0.99.1 (\code{infiniflow\_\_ragflow@7051234}) cost the same
+as the original run on that PR (\$1.52) and found 3 of 3 defects against 2
+of 3: it rules out a large cost change from the pi version, not a small
 recall effect.
 
-\paragraph{gpt-6-luna collapses.} It finds 28\% of the defects and 39 of
-the 90 high-severity ones. The same passes run (11.1 subagent passes per
-PR on rest145, against 11.4 for gpt-6-sol), but each writes about half as
-much (median 963 output tokens per pass on rest145, against 2{,}194), and
-the reviews post a quarter as many comments (300 against 1{,}227). What
-the lenses do not raise, the rest of the harness cannot recover. Its
-\$0.04 per PR is pi's list price for luna.
+\paragraph{gpt-6-luna collapses.} It finds 28\% of the defects and 39 of the
+90 high-severity ones. The same passes run (11.1 subagent passes per PR on
+rest145, against 11.4 for gpt-6-sol), but each writes about half as much
+(median 963 output tokens per pass, against 2{,}194), and the reviews post a
+quarter as many comments (300 against 1{,}227). What the lenses do not
+raise, the rest of the design cannot recover. Its \$0.04 per PR is pi's list
+price for luna.
 
 \paragraph{Claude Opus 5.5 finds more, at twice the cost.} On the 40 it
-finds 119.5 of 126 against 102 for the original gpt-6-sol run. High
-severity is level (32 each); the gain is 4.5 medium and 13 low. It costs
-2.1 times as much (\$3.24 against \$1.53) in the same wall-clock time,
-and its AACR F1 is no higher (12.1\% against 12.7\%). Almost all of the
-gain is on the 30 tuning PRs (91.5 against 74.5); on fresh10 both are
-near the ceiling (28 and 27.5 of 29), so the 30 are where there was room
-to gain. This is 40 PRs and one run, not a 185-PR result, and the 40 are
-in-sample for \qcr{}'s design (the benchmark paper~\cite{qcrbench}).
+finds 119.5 of 126 against 102 for the original gpt-6-sol run; high
+severity is level (32 each), and the gain is 4.5 medium and 13 low. It costs
+2.1 times as much (\$3.24 against \$1.53) in the same wall-clock time, and
+its AACR F1 is no higher. Almost all of the gain is on the 30 tuning PRs
+(91.5 against 74.5); on fresh10 both are near the ceiling. This is 40
+in-sample PRs and one run, not a 185-PR result.
 
 \paragraph{The same model in two harnesses.} Claude Code runs on the same
-Claude Opus 5.5. It finds 62\% of the defects on all 185 PRs
-(the benchmark paper~\cite{qcrbench}), against 95\% for \qcr{} on Opus on the 40; those
-are different PR sets and are not a comparison. On the same 40 PRs Claude
-Code found 75 of 126 (60\%, the benchmark paper~\cite{qcrbench}) and on smoke10 22 of 34,
-against 119.5 and 31.5 for \qcr{} on Opus; on the 40, \qcr{} on Opus
-cost about 20 times as much per PR (\$3.24 against \$0.16). We read this as a harness contrast on a
-fixed model, with the same caveats as the main comparison (Threat~5): the
-two differ in budget, in inputs (\qcr{} reads the PR description) and in
-design at once, and the 40 are \qcr{}'s tuning PRs.
+Claude Opus 5.5. On the same 40 PRs it found 75 of 126 (60\%) against 119.5
+for \qcr{} on Opus, at about a twentieth of the cost (\$0.16 against \$3.24
+per PR). This is a contrast, not a measured harness effect: the two differ in
+budget, in inputs (\qcr{} reads the PR description), in effort (Claude Code
+ran its medium, most-confident-findings setting) and in design at once, and
+the 40 are \qcr{}'s tuning PRs.
 
-\paragraph{\code{max} buys recall and loses PRs.} On the seven smoke10 PRs
-it completed, gpt-6.1-sol at \code{max} found 13 of 16 against 10 at the
-default, at 3.7 times the cost (\$3.08 against \$0.84) and 3.9 times the
-median time (27.0 against 7.0 minutes). Three of the ten PRs did not
-finish in 45 minutes; counting those as empty reviews, it found 13 of 34.
+\paragraph{\code{max}: an anecdote.} The \code{max} preset (every role at
+gpt-6.1-sol's ceiling, the full lever plan) ran once, on smoke10 only. Three
+of the ten PRs timed out at the 45-minute limit after one retry. On the
+seven it completed it found 13 of 16 defects against 10 at the default, at
+3.7 times the cost (\$3.08 against \$0.84) and 3.9 times the median time
+(27.0 against 7.0 minutes); counting the timed-out PRs as empty reviews, it
+found 13 of 34 against the default's 26.\footnote{Run
+\code{g61max-smoke-smoke10} against the smoke10 runs of the other arms,
+\code{compare.py}, 2026-09-29/30.}
 
-\paragraph{What this says about the design.} The review harness does not
-make the model irrelevant: with the harness fixed, recall ranges from
-28\% to 84\% on the 185 PRs and up to 95\% on the 40, and a weaker model's
-misses start at the lenses. Nor does the model alone explain the lead of
-the main comparison: on the same model, the multi-pass harness finds far
-more than the single-pass tool, within the caveats above.
-
-Costs in this section are pi's list prices per call, not bills. The
-OpenAI arms ran through a ChatGPT subscription login; the Opus arm ran
-through the Anthropic API and is priced by pi at Anthropic's list price.
+\paragraph{Reading.} The design does not make the model irrelevant: with the
+design fixed, recall ranges from 28\% to 84\% on the 185 PRs, and a weaker
+model's misses start at the lenses. Costs in this section are pi's list
+prices per call, not bills; the Opus arm ran through the Anthropic API and is
+priced at Anthropic's list price.
 
 % =====================================================================
-\section{Stability}
-\label{sec:stabsec}
-
-\subsection{Reproduction and repeat runs}
+\section{Stability (RQ5)}
 \label{sec:stability}
 
-\paragraph{A full reproduction.} Between the original run and the
-2026-09-29 re-run of \qcr{} default, three reviewer changes landed:
-(the validator became optional and its veto a mark rather than a
-deletion), (three frozen passes made stack-neutral, their
-stack-specific rules moved to repository-profile addenda) and (the
-style guide also read from agent-directive files). On all 185 PRs the
-re-run on the current build found 436 defects against 437.5, 85
-high-severity against 86, and scored AACR F1 12.6\% against 12.6\%.
-Comments correct moved from 86\% to 88\%. On the unseen 145 the two runs
-find the same number of defects (335.5 each); the whole 1.5-defect
-difference is on the original 40 (100.5 against 102).\footnote{Computed
-from runs \code{v2-default-*} (build \code{9106a64}) against the original
-default runs with \code{compare.py}, primary judge, 2026-09-29/30; the
-per-half figures are the 40-PR row of Table~\ref{tab:bm40} and its
-difference from the 185-PR total.}
+\paragraph{A full reproduction.} The gpt-6-sol default was re-run on all 185
+PRs on 2026-09-29 on a later build (\code{9106a64}), after three reviewer
+changes: the validator's validity veto became a doubt rather than a
+deletion, three passes were made stack-neutral (their framework-specific
+rules moved to repository-profile addenda), and the style lens learned to
+read style guidance from agent-directive files. The re-run found 436 defects
+against 437.5, 85 high-severity against 86, and scored AACR F1 12.6\%
+against 12.6\%; comments correct moved from 86\% to 88\%. On the unseen 145
+the two runs find the same number (335.5); the whole 1.5-defect difference
+is on the original 40. This reproduces the gpt-6-sol result; the final
+gpt-6.1-sol run was not repeated.
 
-\paragraph{Run-to-run spread.} Default ran four more times
-(\code{stab-r1} \ldots\ \code{stab-r4}, build \code{9106a64}) on 8 PRs:
-\code{ppy\_\_osu@748ab3d}, \code{microsoft\_\_typescript-go@1a84d8d} and six
-from rest145. Two of the eight have no defect in the key
-(\code{typescript-go@1a84d8d} and \code{elastic\_\_elasticsearch@e355340}),
-so recall rests on the other six PRs and their 17 defects
-(Table~\ref{tab:stab-sol}).\footnote{Computed from runs
+\paragraph{Run-to-run spread.} The gpt-6-sol default ran four more times
+(\code{stab-r1} \ldots\ \code{stab-r4}, build \code{9106a64}) on 8 PRs. Two
+of the eight have no defect in the key, so recall rests on six PRs and 17
+defects (Table~\ref{tab:stab}).\footnote{Runs
 \code{stab-r\{1..4\}-\{dev10,fresh10,rest145\}}, the \code{v2-default-*}
-runs and the original default runs, cut to the same 8 PRs, with
-\code{compare.py}, primary judge, 2026-09-29/30.}
+runs and the original default runs, cut to the same 8 PRs, \code{compare.py},
+2026-09-29/30.} The six runs range from 11 to 14 found, recall 65--82\%;
+most of the spread is one PR (\code{wavetermdev\_\_waveterm@61b0fb4}, 2 to 4
+of its 5 defects), and the one high-severity defect was found every time. On
+17 defects a gap of 3 is within noise, and the sample is too small for a
+variance estimate. Earlier, on the 30 tuning PRs, two runs of one build
+differed by 2.5 of 97 defects (RESULTS.md, ``Noise''). No other reviewer
+was repeated.
 
-\begin{table}[t]
+\begin{table}[!tbp]
   \centering
   \small
-  \caption{Six runs of \qcr{} default on the same 8 PRs (17 defects on the
-  6 PRs that have any), primary judge.}
-  \label{tab:stab-sol}
+  \caption{Six runs of \qcr{} default (gpt-6-sol) on the same 8 PRs (17
+  defects on the 6 PRs that have any), primary judge.}
+  \label{tab:stab}
   \begin{tabular}{lrrrrrrr}
     \toprule
     Run & Found / 17 & Recall & High (1) & Med.\ (5) & Low (11) & Correct & \$/PR \\
@@ -853,82 +1278,112 @@ runs and the original default runs, cut to the same 8 PRs, with
   \end{tabular}
 \end{table}
 
-The six runs (five on the current build) range from 11 to 14 found of 17,
-recall 65--82\%. Most of the spread is one PR
-(\code{wavetermdev\_\_waveterm@61b0fb4}, 2 to 4 of its 5 defects). The one
-high-severity defect was found in every run. On 17 defects a gap of 3 is
-within noise, and this sample is too small to give a variance estimate;
-the 185-PR reproduction above is the stronger evidence that the headline
-is not one lucky run. Neither result covers the other reviewers:
-\qcr{} low and the five third-party tools each ran once, so their
-run-to-run spread is unmeasured (the benchmark paper~\cite{qcrbench}).
-
 % =====================================================================
 \section{What these numbers do not show}
 \label{sec:limits}
 
-\paragraph{The benchmark's authors built this reviewer.} The answer key
-was built partly from candidate defects in QuickReview's own earlier
-reviews (on gpt-6-sol it raised 88\% of the defects on the 145 new PRs),
-by agents orchestrated by the same assistant that designed its levers.
-Measured: on the defects the key would hold without any reviewer's
-comment its lead holds, and in the earlier study scoring each reviewer
-only on defects some other source raised moved no reviewer by more than
-0.8 points~\cite{qcrbench}. Not done: a human audit of the key, and a
-key built before any reviewer ran.
+\paragraph{The benchmark's authors built this reviewer.} The answer key was
+built partly from candidate defects in \qcr{}'s own earlier reviews (on gpt-6-sol it raised 88\% of the defects in the first build of the
+key for the 145 new PRs, 29 of them raised by no other source), by agents orchestrated by the
+same assistant that designed its levers, who also wrote the judge prompt.
+Measured: on the defects the key would hold without any reviewer's comment
+its lead holds, and in the earlier study scoring each reviewer only on
+defects some other source raised moved no reviewer by more than 0.8
+points~\cite{qcrbench}. Not done: a human audit of the key, and a key built
+before any reviewer ran.
+
+\paragraph{No human has verified the key for the 145 new PRs.} Claude
+agents built and critiqued it; severity grades, which drive the
+high-severity results, are likewise unchecked by a person.
 
 \paragraph{The final runs are outside the key's pool.} None of the final
 gpt-6.1-sol runs' comments were candidates for the key, so a real defect
-only they found is credited to nobody. The judge flags 61 such possible
-defects in QuickReview's default reviews and 4--49 in each of the other
-out-of-pool reviewers'; per comment, three third-party tools have more. These flags
-are unverified~\cite{qcrbench}.
+only they found is credited to nobody. The judge flags 61 possible such
+defects in \qcr{} default's reviews and 4--49 in each other out-of-pool
+reviewer's (47 for the panel, 49 for open-code-review); per 100 comments
+three third-party tools have more than \qcr{}'s 6.1. These flags are
+unverified, and they could move the gaps in either direction by a few
+points~\cite{qcrbench}.
 
-\paragraph{Tuning.} Every lever was designed from QuickReview's misses on
-the original 40 PRs; we report the other 145 apart, and see no in-sample
-advantage, but the per-component gain out of sample is unmeasured: no
-lens was ablated on the 145.
+\paragraph{One judge, sharing a model family.} The final reviews were graded
+by gpt-6-sol only; the second judge, from another family, agreed on 98.7\%
+of verdicts in the earlier study but did not grade these reviews. The judge
+shares a family with every reviewer here except Claude Code.
 
-\paragraph{Budget and inputs.} QuickReview spends 2.6 to 21 times the
-cost of each third-party tool and reads the PR title and body, which four
-of the other tools do not. We have not separated how much of the lead
-comes from the design and how much from the budget and the description.
-The comparison with pi-review's panel (Section~\ref{sec:panel}) is the
-closest we have to that separation.
+\paragraph{Tuning.} Every lever was designed from \qcr{}'s misses on the
+original 40 PRs. We report the other 145 apart and see no in-sample
+advantage, but no lens was ablated on the 145, so the per-component gain out
+of sample is unmeasured.
 
-\paragraph{One run.} Every reviewer ran once; for QuickReview a full
-re-run reproduced the result and repeat runs bound its own spread
-(Section~\ref{sec:stabsec}), but the other reviewers' spread is
-unmeasured.
+\paragraph{Budget and inputs.} \qcr{} spends 2.6 to 21 times the cost of
+each third-party tool and reads the PR title and body, which four of the
+other tools did not in the final runs. We have not separated how much of the
+lead comes from the design and how much from the budget and the description
+(Section~\ref{sec:designbudget}).
+
+\paragraph{One run, one model per reviewer.} Every reviewer ran once. For
+\qcr{} a full re-run reproduced the gpt-6-sol result and repeat runs bound its
+spread on 8 PRs; the final gpt-6.1-sol run and every other reviewer's spread
+are unmeasured. The competitors' configurations were chosen on gpt-6-sol and
+applied unchanged on gpt-6.1-sol.
+
+\paragraph{Not the production configuration.} The measured reviewer ran
+with the generic repository profile, no memory, no CI gate, and none of the
+production behaviour after a first review; the reviewer's code has changed
+since build \code{b2ce03a}.
+
+\paragraph{Nothing about people.} The judge grades whether a comment is
+true and whether a defect was found. We did not measure whether developers
+act on the comments, how long the extra minor comments take to read, or what
+a false alarm costs a team.
+
+\paragraph{Scope.} Public open-source PRs of at most about 1{,}000 changed
+lines in ten languages, reviewed once each. Very large changes, private
+codebases and multi-round review are outside what was measured.
 
 % =====================================================================
 \section{Conclusion}
 \label{sec:conclusion}
 
-On a benchmark that counts verified defects, with every competitor in its
-best documented configuration and on the same model, QuickReview's
-default found the most defects and had the most comments correct, at the
-highest cost. What it buys is coverage of medium- and low-severity
-defects: on merge-blocking defects pi-review's panel and Codex CLI are
-level with it at a fifth and a ninth of its cost per defect found. The
-closest competitor is also the closest design --- several independent
-reviewers and a decision over what they raised --- which we read as
-evidence that the approach, and not only the budget, carries the result.
-The model under the harness matters as much as the harness: the same
-design finds 28\% on a small model and 95\% on the strongest one we ran.
+\qcr{} reviews a change through about ten narrow, independent lenses chosen
+by explicit rules, and posts only what a validator can re-derive from the
+code. On a benchmark that counts verified defects, with every competitor at
+its best documented configuration and the OpenAI-based ones on the same
+model, its default found the most defects (79\%) and had the largest share of
+correct comments (95\%), at the highest cost. What the extra spend buys is
+coverage of low-severity defects over the closest competitor and of medium-
+and low-severity defects over the rest; on high-severity defects
+pi-review's panel and Codex CLI are level with it at a fifth and a ninth of its cost per high-severity defect found, and on functional bugs its margin over the panel
+is four points.
+
+The cost decomposition is the part of this report we would most want a
+designer of such systems to take away. Redundancy is what makes the design
+work --- most defects are raised by several lenses, and the validator mostly
+collapses duplicates rather than rejecting claims --- but its value is very
+uneven: a line-by-line sweep over every changed file earns its share many
+times over, while two of the code-quality lenses cost a tenth of the budget
+for almost nothing no other lens found. The misses that remain are
+recognition misses at the lenses, not filtering.
+
+The closest competitor is also the closest design, several independent
+reviewers and a decision over what they raised. That is consistent with the
+view that independent angles plus a check carry the result, but every
+comparison that adds angles here also adds budget, and the model under the
+design moves recall from 28\% to 84\%. Whether this design beats a
+different way of spending the same budget is the question this report
+leaves open.
 
 % =====================================================================
 \small
 \begin{thebibliography}{99}
 \bibitem{qcrbench}
 Quickchat AI.
-\newblock Measuring whether a code review finds the real defects: a verified defect benchmark on AACR-Bench.
+\newblock Measuring whether a code review finds the real defects: a verified
+defect benchmark on AACR-Bench, applied to eight reviewers at their best-shot
+configurations.
 \newblock Companion paper, 2026. \TODO{link}
 
-
-% ---------------------------------------------------------------------
-% AACR-Bench
-% ---------------------------------------------------------------------
+% --- AACR-Bench and the reviewers benchmarked -------------------------
 \bibitem{aacrbench}
 L.~Zhang, Y.~Yu, M.~Yu, X.~Guo, Z.~Zhuang, G.~Rong, D.~Shao, H.~Shen,
 H.~Kuang, Z.~Li, B.~Wang, G.~Zhang, B.~Xiang and X.~Xu.
@@ -956,6 +1411,12 @@ OpenCode contributors.
 Repository \texttt{anomalyco/opencode} (formerly \texttt{sst/opencode}).
 \newblock \url{https://github.com/anomalyco/opencode}
 
+\bibitem{pi}
+Earendil Works.
+\newblock pi coding agent (\texttt{@earendil-works/pi-coding-agent}),
+versions 0.87.1 and 0.99.1, MIT.
+\newblock \url{https://github.com/earendil-works/pi}
+
 \bibitem{pireview}
 Z.~Deng.
 \newblock pi-review (\texttt{@zephyrdeng/pi-review}), version 0.18.0, MIT.
@@ -977,6 +1438,141 @@ locally'') and ``Model configuration'' (effort levels), accessed
 \newblock \url{https://code.claude.com/docs/en/code-review},
 \url{https://code.claude.com/docs/en/model-config}
 
+% --- Code review: human practice and inspection ------------------------
+\bibitem{bacchelli2013}
+A.~Bacchelli and C.~Bird.
+\newblock Expectations, outcomes, and challenges of modern code review.
+\newblock In \emph{Proc.\ 35th International Conference on Software
+Engineering (ICSE)}, pages 712--721, 2013.
+\newblock doi:10.1109/ICSE.2013.6606617
+
+\bibitem{mantyla2009}
+M.~V.~M\"antyl\"a and C.~Lassenius.
+\newblock What types of defects are really discovered in code reviews?
+\newblock \emph{IEEE Transactions on Software Engineering},
+35(3):430--448, 2009.
+\newblock doi:10.1109/TSE.2008.71
+
+\bibitem{sadowski2018}
+C.~Sadowski, E.~S\"oderberg, L.~Church, M.~Sipko and A.~Bacchelli.
+\newblock Modern code review: a case study at Google.
+\newblock In \emph{Proc.\ 40th International Conference on Software
+Engineering: Software Engineering in Practice (ICSE-SEIP)}, pages
+181--190, 2018.
+\newblock doi:10.1145/3183519.3183525
+
+\bibitem{basili1996}
+V.~R.~Basili, S.~Green, O.~Laitenberger, F.~Lanubile, F.~Shull,
+S.~S{\o}rumg{\aa}rd and M.~V.~Zelkowitz.
+\newblock The empirical investigation of perspective-based reading.
+\newblock \emph{Empirical Software Engineering}, 1(2):133--164, 1996.
+\newblock doi:10.1007/BF00368702
+
+% --- LLM code review ----------------------------------------------------
+\bibitem{autocommenter}
+M.~Vijayvergiya, M.~Salawa, I.~Budiseli\'c, D.~Zheng, P.~Lamblin,
+M.~Ivankovi\'c, J.~Carin, M.~Lewko, J.~Andonov, G.~Petrovi\'c, D.~Tarlow,
+P.~Maniatis and R.~Just.
+\newblock AI-assisted assessment of coding practices in modern code review.
+\newblock In \emph{Proc.\ ACM International Conference on AI-Powered
+Software (AIware)}, pages 85--93, 2024.
+\newblock doi:10.1145/3664646.3665664. arXiv:2405.13565
+
+\bibitem{cihan2025}
+U.~Cihan, V.~Haratian, A.~\.I\c{c}\"oz, M.~K.~G\"ul, \"O.~Devran,
+E.~F.~Bayendur, B.~M.~U\c{c}ar and E.~T\"uz\"un.
+\newblock Automated code review in practice.
+\newblock In \emph{Proc.\ 47th IEEE/ACM International Conference on
+Software Engineering: Software Engineering in Practice (ICSE-SEIP)},
+pages 425--436, 2025.
+\newblock doi:10.1109/ICSE-SEIP66354.2025.00043. arXiv:2412.18531
+
+\bibitem{codereviewer}
+Z.~Li, S.~Lu, D.~Guo, N.~Duan, S.~Jannu, G.~Jenks, D.~Majumder, J.~Green,
+A.~Svyatkovskiy, S.~Fu and N.~Sundaresan.
+\newblock Automating code review activities by large-scale pre-training.
+\newblock In \emph{Proc.\ 30th ACM Joint European Software Engineering
+Conference and Symposium on the Foundations of Software Engineering
+(ESEC/FSE)}, pages 1035--1047, 2022.
+\newblock doi:10.1145/3540250.3549081. arXiv:2203.09095
+
+\bibitem{codeagent}
+X.~Tang, K.~Kim, Y.~Song, C.~Lothritz, B.~Li, S.~Ezzini, H.~Tian, J.~Klein
+and T.~F.~Bissyand\'e.
+\newblock CodeAgent: Autonomous communicative agents for code review.
+\newblock In \emph{Proc.\ 2024 Conference on Empirical Methods in Natural
+Language Processing (EMNLP)}, pages 11279--11313, 2024.
+\newblock doi:10.18653/v1/2024.emnlp-main.632. arXiv:2402.02172
+
+% --- Redundancy, ensembles, verification -------------------------------
+\bibitem{selfconsistency}
+X.~Wang, J.~Wei, D.~Schuurmans, Q.~Le, E.~Chi, S.~Narang, A.~Chowdhery and
+D.~Zhou.
+\newblock Self-consistency improves chain of thought reasoning in language
+models.
+\newblock In \emph{Proc.\ International Conference on Learning
+Representations (ICLR)}, 2023. arXiv:2203.11171
+
+\bibitem{moreagents}
+J.~Li, Q.~Zhang, Y.~Yu, Q.~Fu and D.~Ye.
+\newblock More agents is all you need.
+\newblock \emph{Transactions on Machine Learning Research}, 2024.
+arXiv:2402.05120
+
+\bibitem{monkeys}
+B.~Brown, J.~Juravsky, R.~Ehrlich, R.~Clark, Q.~V.~Le, C.~R\'e and
+A.~Mirhoseini.
+\newblock Large language monkeys: Scaling inference compute with repeated
+sampling.
+\newblock arXiv:2407.21787 [cs.LG], 2024.
+
+\bibitem{cobbe2021}
+K.~Cobbe, V.~Kosaraju, M.~Bavarian, M.~Chen, H.~Jun, L.~Kaiser,
+M.~Plappert, J.~Tworek, J.~Hilton, R.~Nakano, C.~Hesse and J.~Schulman.
+\newblock Training verifiers to solve math word problems.
+\newblock arXiv:2110.14168 [cs.LG], 2021.
+
+\bibitem{cove}
+S.~Dhuliawala, M.~Komeili, J.~Xu, R.~Raileanu, X.~Li, A.~Celikyilmaz and
+J.~Weston.
+\newblock Chain-of-verification reduces hallucination in large language
+models.
+\newblock arXiv:2309.11495 [cs.CL], 2023.
+
+\bibitem{debate}
+Y.~Du, S.~Li, A.~Torralba, J.~B.~Tenenbaum and I.~Mordatch.
+\newblock Improving factuality and reasoning in language models through
+multiagent debate.
+\newblock In \emph{Proc.\ 41st International Conference on Machine Learning
+(ICML)}, PMLR 235, pages 11733--11763, 2024. arXiv:2305.14325
+
+\bibitem{huang2024}
+J.~Huang, X.~Chen, S.~Mishra, H.~S.~Zheng, A.~W.~Yu, X.~Song and D.~Zhou.
+\newblock Large language models cannot self-correct reasoning yet.
+\newblock In \emph{Proc.\ International Conference on Learning
+Representations (ICLR)}, 2024. arXiv:2310.01798
+
+\bibitem{knight1986}
+J.~C.~Knight and N.~G.~Leveson.
+\newblock An experimental evaluation of the assumption of independence in
+multiversion programming.
+\newblock \emph{IEEE Transactions on Software Engineering},
+SE-12(1):96--109, 1986.
+\newblock doi:10.1109/TSE.1986.6312924
+
+% --- Cost-aware evaluation ---------------------------------------------
+\bibitem{kapoor2024}
+S.~Kapoor, B.~Stroebl, Z.~S.~Siegel, N.~Nadgir and A.~Narayanan.
+\newblock AI agents that matter.
+\newblock \emph{Transactions on Machine Learning Research (TMLR)}, 2025.
+arXiv:2407.01502
+
+\bibitem{frugalgpt}
+L.~Chen, M.~Zaharia and J.~Zou.
+\newblock FrugalGPT: How to use large language models while reducing cost
+and improving performance.
+\newblock arXiv:2305.05176 [cs.LG], 2023.
+
 \end{thebibliography}
 \normalsize
 
@@ -988,31 +1584,33 @@ locally'') and ``Model configuration'' (effort levels), accessed
 
 The chronological log (\code{RESULTS.md}) records the measurements that
 shaped the shipped default. We summarise the points relevant to judging
-overfitting; all are single runs on small sets and are superseded by the
-full benchmark.
+overfitting; all are single runs on small sets on gpt-6-sol and are
+superseded by the full benchmark.
 \begin{itemize}
   \item Prompt iterations 1--5 did not measurably change defect-finding
   (every version 49--54.5 of 97 defects on 30 PRs); they raised AACR F1.
+  Two runs of one build differed by 2.5 defects.
   \item Reasoning effort was the largest single lever measured before the
-  levers existed: every model at maximum effort found 24.5 of 34 defects
-  on smoke10 (one run) against 15.5--17.5 for eight normal-effort runs, at
-  about three times the cost and time. It was not shipped as default.
-  \item The levers (sub-lenses, sweep, dependency sources) raised found
-  defects from an expected 30.5 (mean of seven earlier normal-effort
-  runs) to 45.5 of 67 on the 16 in-sample PRs (one run), and from 20.5 to
-  25.0 of 29 on fresh10 (one run per arm) --- about half the in-sample
-  gain per PR.
+  levers existed: every model at maximum effort found 24.5 of 34 defects on
+  smoke10 (one run) against 15.5--17.5 for eight normal-effort runs, at about
+  three times the cost and time. It was not shipped as default.
+  \item The missed-defect analysis behind the levers traced 48 defects the
+  review kept missing on the 30 PRs: 42 were never raised by any pass, 15 were
+  attention failures, 11 needed library knowledge. The levers (sub-lenses,
+  sweep, dependency sources) raised found defects from an expected 30.5
+  (mean of seven earlier normal-effort runs) to 45.5 of 67 on the 16
+  in-sample PRs (one run), and from 20.5 to 25.0 of 29 on fresh10 (one run
+  per arm) --- about half the in-sample gain per PR.
   \item The lean plan kept recall at lower cost and became the
-  \code{default} preset; \code{low} costs about half and gives back most
-  of the levers' gain.
+  \code{default} preset; \code{low} costs about half and gives back most of
+  the levers' gain.
   \item The tests lens and the ``every problem on the lines'' rule raised
   fresh10 recall to 27 / 26.5 of 29 over two runs --- by then fresh10 was
   in-sample.
   \item The code-quality lenses added about 3 problems found on 9 PRs
-  (mostly low severity, within noise) and roughly doubled AACR
-  maintainability matches, at +29\% cost.
+  (mostly low severity, within noise) and raised AACR maintainability matches from 1 to 4 of 30, at +29\% cost; abstraction posted nothing on its
+  own there, the first sign of what Table~\ref{tab:lenscost} later showed.
 \end{itemize}
-
 
 \section{Chronology of result-affecting decisions}
 \label{app:chron}
@@ -1038,7 +1636,7 @@ full benchmark.
     09-27 & Validator demote-not-kill, \code{[review] nits}, pass-consistency & 3 fresh10 PRs \\
     09-27 23:34 & \textbf{rest145 created}; default/low/OCR runs start on \code{1ad710b} & --- (no reviewer change after this) \\
     09-28 & Four new arms, Claude prose parser, key extension (+15), re-judging, second judge & --- (no reviewer behaviour change) \\
-    09-28/29 & --0452 (optional validator with a doubting veto, stack-neutral frozen passes, style guide from directive files) & --- (setup-and-scan work) \\
+    09-28/29 & Optional validator with a doubting veto, stack-neutral frozen passes, style guide from directive files & --- (repository-setup work) \\
     09-29/30 & Current-build re-run of default (\code{9106a64}), stability repeats, base-model arms & --- (measurement only) \\
     09-30 & Fairness audit; 40-PR selection set fixed by rule; every documented variant run once on gpt-6-sol; picks by the pre-set rule & --- (competitor configurations; \qcr{} unchanged) \\
     09-30/10-01 & Every OpenAI-based contender on gpt-6.1-sol; picks re-run unchanged on all 185 PRs & --- (measurement only) \\
