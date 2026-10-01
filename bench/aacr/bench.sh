@@ -29,6 +29,9 @@
 #   QCR_BENCH_PR_TEXT=1      hand the PR title/body to the ocr/codex/opencode/pireview arm the way
 #                            that tool takes review context (src/bench/prtext.ts; default off)
 #   QCR_BENCH_PI_VERSION=V   `build`: install pi V in the image instead of the Dockerfile's pin
+#   QCR_BENCH_{OCR,OPENCODE,CODEX,PIREVIEW}_MODEL=ID   `review`: the model that third-party arm
+#                            runs, a Codex model id (default gpt-6-sol, the published runs); e.g.
+#                            gpt-6.1-sol — pi-review then needs an image on pi >= 0.99 (its catalog)
 #   bench/aacr/bench.sh results  --run ID [--set smoke10]    rebuild scored files from case dirs (no model calls)
 #   bench/aacr/bench.sh smoke    [--run ID] [--judge mock|codex]   build → prefetch → review → eval
 #   bench/aacr/bench.sh shell    --run ID                            a shell in the review sandbox
@@ -75,6 +78,9 @@
 #              (the same runtime + @openai/codex, pinned), `review` runs the AACR harness's own
 #              reviewers/codex.py (one case at a time; --timeout-min = its 30), `eval` scores
 #              the `all` variant. QCR_BENCH_CODEX_EFFORT=L sets the reasoning effort (medium).
+#              QCR_BENCH_CODEX_VERSION + QCR_BENCH_CODEX_SHA256 (the linux-x64 binary's) build another
+#              Codex CLI — gpt-6.1-sol needs >= 0.159 (0.158.0's requests for it are refused by the
+#              ChatGPT backend: "not supported when using Codex with a ChatGPT account")
 #   --arm claude (build, review, eval, report, judge): Claude Code as a BENCHMARKED
 #              REVIEWER — root CLAUDE.md rule 5's one ratified exception; `claude` exists
 #              only in image qcr-bench-claude and runs only in its review container.
@@ -152,7 +158,8 @@ case "$ARM" in
   ocr) IMAGE="${QCR_BENCH_OCR_IMAGE:-qcr-bench-ocr:latest}"; TARGET=ocr
        BASE_ARGS=(--build-arg RUNTIME_BASE=node:22-trixie); REVIEW_ENTRY=ocr-review ;;
   # Codex CLI arm: the harness's own reviewers/codex.py (Dockerfile target `codex`).
-  codex) IMAGE="${QCR_BENCH_CODEX_IMAGE:-qcr-bench-codex:latest}"; TARGET=codex; BASE_ARGS=(); REVIEW_ENTRY=codex-review ;;
+  codex) IMAGE="${QCR_BENCH_CODEX_IMAGE:-qcr-bench-codex:latest}"; TARGET=codex; BASE_ARGS=(); REVIEW_ENTRY=codex-review
+       [[ -n "${QCR_BENCH_CODEX_VERSION:-}" ]] && BASE_ARGS=(--build-arg "CODEX_VERSION=$QCR_BENCH_CODEX_VERSION" --build-arg "CODEX_SHA256_LINUX_X64=${QCR_BENCH_CODEX_SHA256:?set QCR_BENCH_CODEX_SHA256 with QCR_BENCH_CODEX_VERSION}") ;;
   # OpenCode: its own target on the same runtime (OPENCODE_VERSION build arg, Dockerfile).
   opencode) IMAGE="${QCR_BENCH_OPENCODE_IMAGE:-qcr-bench-opencode:latest}"; TARGET=opencode
        BASE_ARGS=(); REVIEW_ENTRY=opencode-review
@@ -417,6 +424,28 @@ case "$cmd" in
       [[ -n "${QCR_BENCH_CODEX_EFFORT:-}" ]] && oe+=(-e "QCR_CODEX_EFFORT=$QCR_BENCH_CODEX_EFFORT")
     fi
     [[ "$ARM" == opencode && -n "${QCR_BENCH_OPENCODE_EFFORT:-}" ]] && oe+=(-e "OPENCODE_BRIDGE_EFFORT=$QCR_BENCH_OPENCODE_EFFORT")
+    # The model a third-party arm runs: QCR_BENCH_<ARM>_MODEL, a Codex model id
+    # (e.g. gpt-6.1-sol). Unset = the arm's published default (gpt-6-sol); the
+    # run.json records what ran. pi-review needs a pi whose catalog has the id
+    # (gpt-6.1-sol: pi >= 0.99 — QCR_BENCH_PI_VERSION at build time).
+    mvar=""
+    case "$ARM" in
+      ocr) mvar=QCR_BENCH_OCR_MODEL ;;
+      opencode) mvar=QCR_BENCH_OPENCODE_MODEL ;;
+      codex) mvar=QCR_BENCH_CODEX_MODEL ;;
+      pireview) mvar=QCR_BENCH_PIREVIEW_MODEL ;;
+    esac
+    if [[ -n "$mvar" && -n "${!mvar:-}" ]]; then
+      m="${!mvar}"
+      [[ "$m" =~ ^gpt-[A-Za-z0-9.-]+$ ]] || die "$mvar must be a Codex model id (e.g. gpt-6.1-sol)"
+      case "$ARM" in
+        ocr) oe+=(-e "OCR_BRIDGE_MODEL=$m") ;;
+        # the bridge's model, and the native provider's (src/bench/opencode.ts)
+        opencode) oe+=(-e "OPENCODE_BRIDGE_MODEL=$m" -e "QCR_OPENCODE_MODEL=$m") ;;
+        codex) oe+=(-e "QCR_CODEX_MODEL=$m") ;;
+        pireview) oe+=(-e "QCR_PIREVIEW_MODEL=openai-codex/$m") ;;
+      esac
+    fi
     # OpenCode on its OWN ChatGPT provider instead of the bridge (src/bench/opencode.ts).
     if [[ "$ARM" == opencode && -n "${QCR_BENCH_OPENCODE_PROVIDER:-}" ]]; then
       [[ "$QCR_BENCH_OPENCODE_PROVIDER" == native || "$QCR_BENCH_OPENCODE_PROVIDER" == bridge ]] \

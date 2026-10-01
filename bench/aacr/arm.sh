@@ -52,7 +52,8 @@
 # The third-party arms' other knobs ride the environment (bench.sh header):
 # QCR_BENCH_OCR_EFFORT, QCR_BENCH_CODEX_EFFORT, QCR_BENCH_OPENCODE_EFFORT,
 # QCR_BENCH_OPENCODE_PROVIDER, QCR_BENCH_PIREVIEW_THINKING, QCR_BENCH_PIREVIEW_PANEL,
-# QCR_BENCH_PRAGENT_EFFORT, QCR_BENCH_PRAGENT_MODEL, QCR_BENCH_PRAGENT_NO_PR_TEXT
+# QCR_BENCH_PRAGENT_EFFORT, QCR_BENCH_PRAGENT_MODEL, QCR_BENCH_PRAGENT_NO_PR_TEXT,
+# QCR_BENCH_{OCR,CODEX,OPENCODE,PIREVIEW}_MODEL
 # — each one set is recorded in <run>.arm.json (`env`).
 #
 # Scheduling (the quickreviewd arm). Every case of every set and every repeat
@@ -232,7 +233,8 @@ arm_env_json() {
   python3 -c 'import json, os, sys; print(json.dumps({k: os.environ[k] for k in sys.argv[1:] if os.environ.get(k)}, sort_keys=True))' \
     QCR_BENCH_PR_TEXT QCR_BENCH_OCR_EFFORT QCR_BENCH_CODEX_EFFORT QCR_BENCH_OPENCODE_EFFORT \
     QCR_BENCH_OPENCODE_PROVIDER QCR_BENCH_PIREVIEW_THINKING QCR_BENCH_PIREVIEW_PANEL \
-    QCR_BENCH_PRAGENT_EFFORT QCR_BENCH_PRAGENT_MODEL QCR_BENCH_PRAGENT_NO_PR_TEXT
+    QCR_BENCH_PRAGENT_EFFORT QCR_BENCH_PRAGENT_MODEL QCR_BENCH_PRAGENT_NO_PR_TEXT \
+    QCR_BENCH_OCR_MODEL QCR_BENCH_CODEX_MODEL QCR_BENCH_OPENCODE_MODEL QCR_BENCH_PIREVIEW_MODEL
 }
 record_arm() { # run set ids
   printf '{"arm":"%s","image":"%s","image_id":"%s","config":"%s","cases":"%s","parallel":"%s","env":%s,"started":"%s"}\n' \

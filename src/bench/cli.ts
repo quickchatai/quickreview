@@ -742,7 +742,12 @@ async function main(): Promise<number> {
         );
       }
     } else {
-      health = { model: f.get("--model") ?? "gpt-6-sol", effort: variant, verbosity: null };
+      // QCR_OPENCODE_MODEL (bench.sh QCR_BENCH_OPENCODE_MODEL): the Codex model id.
+      health = {
+        model: f.get("--model") ?? (process.env.QCR_OPENCODE_MODEL || "gpt-6-sol"),
+        effort: variant,
+        verbosity: null,
+      };
     }
     const model = typeof health["model"] === "string" ? health["model"] : "";
     if (!model) throw new Error("opencode-review: the bridge reported no model");
@@ -836,7 +841,9 @@ async function main(): Promise<number> {
       pireviewBin,
       pireviewVersion: process.env.QCR_PIREVIEW_VERSION || "unknown",
       piVersion,
-      model: f.get("--model") ?? PIREVIEW_DEFAULTS.model,
+      // QCR_PIREVIEW_MODEL (bench.sh QCR_BENCH_PIREVIEW_MODEL): pi's model id,
+      // e.g. openai-codex/gpt-6.1-sol — which needs a pi whose catalog has it.
+      model: f.get("--model") ?? (process.env.QCR_PIREVIEW_MODEL || PIREVIEW_DEFAULTS.model),
       thinking:
         f.get("--thinking") ?? process.env.QCR_PIREVIEW_THINKING ?? PIREVIEW_DEFAULTS.thinking,
       // `--panel code-experts` = what /rv runs inside Pi (src/bench/pireview.ts header).
