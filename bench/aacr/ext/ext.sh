@@ -72,14 +72,17 @@ wait_health() { # container port
 
 # The judge: gpt-6.1-sol through ext_judge.py in the reviewer image, holding the
 # refresh-disabled login copy; egress for the model API, plus the internal
-# network under the alias `judge`. EXT_JUDGE=mock: the plumbing stub instead.
+# network under a per-run alias `judge-<tag>`. EXT_JUDGE=mock: the plumbing stub instead.
 start_judge() { # work tag
   local work="$1" name="qcr-ext-judge-$2"
+  # A per-run alias: two scorings at once must never share a judge name
+  # (docker DNS would round-robin between their judges).
+  JUDGE_HOST="judge-$2"
   ensure_networks
   mkdir -p "$work/judge"
   docker rm -f "$name" >/dev/null 2>&1 || true
   if [[ "${EXT_JUDGE:-}" == mock ]]; then
-    docker run -d --rm --name "$name" "${HARDEN[@]}" --network "$NET_INTERNAL" --network-alias judge \
+    docker run -d --rm --name "$name" "${HARDEN[@]}" --network "$NET_INTERNAL" --network-alias "$JUDGE_HOST" \
       --mount "type=bind,src=$HERE/mock_judge.py,dst=/opt/qcr-ext/mock_judge.py,readonly" \
       "$SIMG" python /opt/qcr-ext/mock_judge.py >/dev/null
     echo "MOCK judge — plumbing only; these numbers mean nothing" > "$work/judge/JUDGE.txt"
@@ -91,7 +94,7 @@ start_judge() { # work tag
       --entrypoint bash "$QIMG" -c "mkdir -p \"\$HOME\" && node /opt/quickreview/sandbox/dist/src/bench/cli.js auth --need-min 120 \
         && exec python3 /opt/quickreview/bench/ext_judge.py --host 0.0.0.0 --port 8765 --model $JUDGE_MODEL \
            --effort $JUDGE_EFFORT --max-inflight 64 --probe-temperature --log /judge-out/judge.jsonl" >/dev/null
-    docker network connect --alias judge "$NET_INTERNAL" "$name"
+    docker network connect --alias "$JUDGE_HOST" "$NET_INTERNAL" "$name"
     echo "$JUDGE_MODEL, reasoning effort $JUDGE_EFFORT, via bench/aacr/ext/ext_judge.py (ChatGPT login, refresh-disabled copy)" > "$work/judge/JUDGE.txt"
   fi
   wait_health "$name" 8765
@@ -185,7 +188,7 @@ PY
     # README: "Re-run to retry"), at most three times each.
     log "Martian pipeline (judge $JUDGE_MODEL @ $JUDGE_EFFORT) in $work"
     docker run --rm "${HARDEN[@]}" --memory 4g --cpus 4 --network "$NET_INTERNAL" \
-      -e MARTIAN_API_KEY=local -e MARTIAN_BASE_URL=http://judge:8765/v1 -e "MARTIAN_MODEL=$JUDGE_MODEL" \
+      -e MARTIAN_API_KEY=local -e "MARTIAN_BASE_URL=http://$JUDGE_HOST:8765/v1" -e "MARTIAN_MODEL=$JUDGE_MODEL" \
       -e "TOOLS=$tools" -e "MODEL=$JUDGE_MODEL" \
       --mount "type=bind,src=$work,dst=/work" \
       --mount "type=bind,src=$HERE/martian_report.py,dst=/opt/qcr-ext/martian_report.py,readonly" \
@@ -238,22 +241,23 @@ judge:
   gpt_6_1_sol:
     provider: openai
     model: $JUDGE_MODEL
-    base_url: http://judge:8765/v1
+    base_url: http://JUDGE_HOST_PLACEHOLDER:8765/v1
     api_key_env: JUDGE_API_KEY
     note: "gpt-6.1-sol @ $JUDGE_EFFORT through bench/aacr/ext/ext_judge.py (the published judge is GPT-5.2)"
 models:
   quickreview:
     provider: openai_compatible
     model: quickreview-default-gpt-6.1-sol
-    base_url: http://replay:8790/v1
+    base_url: http://REPLAY_HOST_PLACEHOLDER:8790/v1
     api_key_env: REPLAY_API_KEY
     note: "QuickReview default preset, reviewed beforehand (run $run), replayed by bench/aacr/ext/replay_server.py"
 YAML
     docker run --rm --network none --entrypoint cat "$SIMG" /opt/swepr-pip-freeze.txt > "$work/pip-freeze.txt"
     start_judge "$work" "s-$$"
     rname="qcr-ext-replay-s-$$"
+    sed -i "s/JUDGE_HOST_PLACEHOLDER/$JUDGE_HOST/; s/REPLAY_HOST_PLACEHOLDER/replay-s-$$/" "$work/model_endpoints.yaml"
     trap 'docker logs "$rname" > "$work/replay-container.log" 2>&1 || true; docker rm -f "$rname" >/dev/null 2>&1 || true; stop_judge "s-$$" "$work"' EXIT
-    docker run -d --rm --name "$rname" "${HARDEN[@]}" --memory 1g --network "$NET_INTERNAL" --network-alias replay \
+    docker run -d --rm --name "$rname" "${HARDEN[@]}" --memory 1g --network "$NET_INTERNAL" --network-alias "replay-s-$$" \
       --mount "type=bind,src=$work,dst=/work" "$SIMG" \
       python /opt/qcr-ext/replay_server.py --table /work/replay-table.json --log /work/replay.jsonl >/dev/null
     wait_health "$rname" 8790
