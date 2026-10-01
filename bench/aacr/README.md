@@ -665,7 +665,7 @@ One pi-review session, no subagents, 14–22 read/grep/find calls per PR.
 
 ## The PR-Agent arm (`--arm pragent`)
 
-[PR-Agent](https://github.com/qodo-ai/pr-agent) (Qodo, MIT; PyPI `pr-agent`
+[PR-Agent](https://github.com/the-pr-agent/pr-agent) (Qodo, MIT; PyPI `pr-agent`
 **0.46.0**, the wheel's sha256 pinned) as a benchmarked reviewer, on
 **gpt-6.1-sol** (the operator's choice, 2026-09-30). The harness has no PR-Agent runner, so
 `src/bench/pragent.ts` + `bench/aacr/pragent_driver.py` are one:
@@ -790,7 +790,7 @@ One pi-review session, no subagents, 14–22 read/grep/find calls per PR.
 
 ## The PR-Agent arm (`--arm pragent`)
 
-[PR-Agent](https://github.com/qodo-ai/pr-agent) (Qodo, MIT; PyPI `pr-agent`
+[PR-Agent](https://github.com/the-pr-agent/pr-agent) (Qodo, MIT; PyPI `pr-agent`
 **0.46.0**, the wheel's sha256 pinned) as a benchmarked reviewer, on
 **gpt-6.1-sol** (the operator's choice, 2026-09-30). The harness has no PR-Agent runner, so
 `src/bench/pragent.ts` + `bench/aacr/pragent_driver.py` are one:
