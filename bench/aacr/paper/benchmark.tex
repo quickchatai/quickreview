@@ -103,7 +103,7 @@ competitors. We report how the key's construction could
 favour it, what we measured about that, and what remains open. On a second benchmark, Martian's
 offline set of 50 PRs, an audit finds that 45\% of its 173 golden comments
 do not name a real defect; on the real ones \qcr{} has the highest recall of
-the four tools scored by one judge (80\%), and the lowest Martian F1, for
+the four tools scored by one judge (83\%), and the lowest Martian F1, for
 the same reason as on AACR-Bench's references. The key, the
 exclusions, the judge prompt and every scoring script are released.
 \end{abstract}
@@ -2691,6 +2691,26 @@ on the list against precision. This is the pattern of AACR-Bench's own metric
 (Section~\ref{sec:disagree}): a reference list that is short, partly not
 about defects, and silent about most of the real ones rewards posting little.
 
+\paragraph{All 50 PRs.} Combining the latest default on each half (round 3 on
+\code{tune20}, round 4 on \code{test30}) with the comparators judged in the
+same passes gives, on Core with our judge, \qcr{} 19.2 / 57.0 / 28.8 / 40.9
+(precision / recall / F1 / $F_2$; 90 matched, 378 unmatched candidates),
+cubic-v2 55.2 / 60.8 / 57.8 / 59.6, qodo-extended-v2 55.6 / 59.5 / 57.5 /
+58.7 and Claude Code 36.2 / 40.5 / 38.2 / 39.6. \qcr{} has never been judged
+by Opus 4.5. On the same 50 PRs Opus credits 8--12 more matches per tool than
+our judge (cubic-v2 96 $\to$ 104, qodo-extended-v2 94 $\to$ 102, Claude Code
+64 $\to$ 76); the same shift puts \qcr{} at roughly 21--22 precision and 62--65
+recall, $F_2 \approx$ 44.5--46.5, fourteenth or fifteenth of 23 on the
+published leaderboard (Figure~\ref{fig:martianlb}): recall near the top,
+precision near the bottom.
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=0.78\textwidth]{../charts/martian-leaderboard.pdf}
+  \caption{Martian's leaderboard metric ($F_2$, Core, 50 PRs, published Opus 4.5 judgements). The \qcr{} bar is an estimate, a range scaled from the three tools both judges scored; under our own judge it is 40.9.}
+  \label{fig:martianlb}
+\end{figure}
+
 \subsection{What the golden comments are}
 \label{sec:martianaudit}
 
@@ -2750,6 +2770,19 @@ third for cubic-v2 and Claude Code. On \code{tune20} the same audit gives
 \code{test30}, 40 of 52, against qodo-extended-v2's 43 and cubic-v2's 34. The published judgements tell the
 same story for the rest of the field: every tool earns 22--36\% of its credits
 on goldens the audit does not count as real.
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=1.0\textwidth]{../charts/martian-audit.pdf}
+  \caption{The 173 golden comments by the audit's verdict, against Martian's own severity and category labels. 24 of the 66 Critical or High goldens are not real PR defects and 6 are disputed.}
+  \label{fig:martianauditfig}
+\end{figure}
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=0.82\textwidth]{../charts/martian-real-vs-trivia.pdf}
+  \caption{Real-golden recall against the share of each tool's golden credits that fall on goldens the audit judged not real (50 PRs). Diamonds: judged by gpt-6.1-sol in our pass (\qcr{} = latest default); circles: Martian's published Opus 4.5 judgements.}
+  \label{fig:martianrvt}
+\end{figure}
 
 \subsection{The real defects the golden lists lack}
 \label{sec:martianext}
@@ -2903,7 +2936,20 @@ Code (25); the previous judging of those two gave 34 and 26. This is one run
 on each side, and the two-golden difference is within what we have seen
 between repeated runs, so we claim no improvement from it.
 
-\subsection{Why we do not tune for the Martian score}
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=0.82\textwidth]{../charts/martian-extended-key.pdf}
+  \caption{\code{tune20} against the extended key of 82 real defects: recall against strict precision (filled; a true-but-minor comment counts as noise) and lenient precision (open; it does not).}
+  \label{fig:martianextfig}
+\end{figure}
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=0.82\textwidth]{../charts/martian-composition.pdf}
+  \caption{What each tool's \code{tune20} comments are, classified blind against the code with the tool hidden: a real defect (a golden or an unlisted bug), true but minor, a duplicate of the tool's own comment, or wrong.}
+  \label{fig:martiancomp}
+\end{figure}
+
+\subsection{What posting less does to the Martian score}
 \label{sec:martianwhy}
 
 \paragraph{Cutting volume does not close the gap.} Before the audit we tried
@@ -2921,14 +2967,118 @@ $F_2$ down to 32.7. Even a perfect cut, raising precision to 60\% with no
 loss of recall, would reach $F_2 \approx 59$ on \code{tune20}, below
 cubic-v2's 69--70.
 
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=0.8\textwidth]{../charts/martian-policy.pdf}
+  \caption{Martian precision and recall on \code{tune20} for 52 posting policies applied to stored \qcr{} reviews, with $F_2$ iso-lines. The policies slide along the frontier; the best one by F1, frozen, fell from F1 45.9 on \code{tune20} to 25.0 on \code{test30} (arrow).}
+  \label{fig:martianpolicy}
+\end{figure}
+
 \paragraph{The rest of the gap is the list.} On \code{tune20} cubic-v2 is
 credited with 41 goldens and \qcr{} with 34. On the 38 valid goldens
 \qcr{} is ahead (33 against 31); cubic-v2's lead comes from 10 of the 21
 trivial, doubtful or wrong goldens, where \qcr{} has 1. These are one-line
 remarks (a vendor-prefixed CSS property that does not exist, an atomic
 increment in a sequential job, a claim that a call exits the process). Our
-reviewer's severity bar exists to drop such remarks, and reproducing them
-would mean training it toward this list.
+reviewer's severity bar drops such remarks by design.
+
+\subsection{Where \qcr{} is strong: its own severity}
+\label{sec:martianstrong}
+
+Splitting \qcr{}'s comments by its own severity shows where the benchmark
+cannot see it (Figure~\ref{fig:martianstrength}, Table~\ref{tab:martiantiers}).
+In the blind \code{tune20} classification, 84\% of its P0--P1 comments name a
+real defect, a golden or an unlisted bug; that falls to 41--44\% at P2 and P3
+and to 15\% for nits, which are mostly true but minor. Recounting the existing
+Martian judgements on all 50 PRs for subsets of what \qcr{} posted, P0--P1
+alone (2.4 comments per PR) scores 26.4 precision: the comments that are
+84\% real defects are three-quarters ``false positives'' to the list,
+because the list lacks most of the bugs they name. Cutting to them also
+drops Martian recall from 57.0 to 20.3 and $F_2$ from 40.9 to 21.2, since
+many listed goldens are the minor remarks \qcr{} posts at lower severity.
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=1.0\textwidth]{../charts/martian-strength.pdf}
+  \caption{\qcr{} by its own severity. Left: share of comments that are real defects (blind \code{tune20} classification) against Martian's precision for the same subset (50 PRs, existing judgements recounted). Right: what each tier is.}
+  \label{fig:martianstrength}
+\end{figure}
+
+\begin{table}[tbp]
+  \centering
+  \caption{\qcr{} by its own severity. Left block: blind \code{tune20}
+  classification of 170 candidates (GOLDEN matches include the few trivial or
+  wrong goldens, so counts are $\pm 1$ against Table~\ref{tab:martianext}).
+  Right block: Martian Core on all 50 PRs when only that subset is posted,
+  recounted from the existing judgements.}
+  \label{tab:martiantiers}
+  \small
+  \begin{tabular}{lrrrrr@{\quad}lrrrr}
+    \toprule
+    Tier & $n$ & real & minor & dup & wrong & Posted & per PR & P & R & $F_2$ \\
+    \midrule
+    P0--P1 & 38 & 32 (84\%) & 4 & 1 & 1 & P0--P1 only & 2.4 & 26.4 & 20.3 & 21.2 \\
+    P2 & 46 & 19 (41\%) & 22 & 4 & 1 & blockers only & 4.1 & 22.0 & 28.5 & 26.9 \\
+    P3 & 18 & 8 (44\%) & 10 & 0 & 0 & P0--P2 & 6.0 & 21.2 & 40.5 & 34.3 \\
+    nit & 68 & 10 (15\%) & 44 & 14 & 0 & everything & 9.4 & 19.2 & 57.0 & 40.9 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Did a tool find every listed blocking problem in a PR?}
+\label{sec:martianblocking}
+
+Martian's metric does not ask whether a tool caught the problems that would
+block a merge. We count the PRs in which a tool was credited with \emph{all}
+of the PR's Critical and High goldens (Figure~\ref{fig:martianblock}). On
+Martian's own labels (34 PRs have one) \qcr{} does so in 17 (50\%), behind
+cubic-v2 (21) and qodo-extended-v2 (19) in the same pass, and ahead of Claude
+Code (9). Many of those labels sit on goldens the audit found not real; on
+the 19 PRs whose Critical or High goldens include a real one, counting only
+the real ones, \qcr{} found all of them in 14 (74\%), tied with
+qodo-extended-v2 and ahead of cubic-v2 (12) and Claude Code (6). Martian's
+published Opus judgements, which credit more matches, give 13--15 of 19 for
+the best published tools. On real goldens of any severity \qcr{}, cubic-v2 and
+qodo-extended-v2 each found all of a PR's in 21 of 35 PRs.
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=1.0\textwidth]{../charts/martian-all-blocking.pdf}
+  \caption{PRs in which a tool was credited with every one of the PR's Critical and High goldens: all of them as Martian labels them (left, 34 PRs) and only those the audit judged real (right, 19 PRs). Starred bars: gpt-6.1-sol judge in our pass; the rest: Martian's published Opus 4.5 judgements.}
+  \label{fig:martianblock}
+\end{figure}
+
+\subsection{What the benchmark measures, and what it misses}
+\label{sec:martiancritique}
+
+Taken together, the results above point to eight properties of the
+benchmark that a reader of its leaderboard should weigh.
+\begin{enumerate}
+  \item \emph{The key is half noise.} 77 of 173 golden comments are not
+    real PR defects and 10 are disputed (Section~\ref{sec:martianaudit});
+    leading tools earn 26--36\% of their credit on them, \qcr{} 19\%.
+  \item \emph{A real bug off the list is a false positive.} On \code{tune20}
+    eight tools found 44 real PR-introduced bugs that the list lacks; every
+    one counts against the tool that found it.
+  \item \emph{Minor and wrong are scored alike.} Precision cannot tell a
+    noisy reviewer from a wrong one: 47\% of \qcr{}'s \code{tune20} comments
+    are true but minor and 2\% wrong; cubic-v2's are 29\% and 14\%.
+  \item \emph{Volume and phrasing move the score.} Extraction splits long
+    comments, counts each repeated site and re-extracts a review body that
+    restates its findings.
+  \item \emph{Severity is labelled, inflated and unused.} 24 of the 66
+    Critical or High goldens are not real, and missing a Critical golden
+    costs the same as missing a Low one.
+  \item \emph{The score depends on the judge.} Opus 4.5 credits 8--12 more
+    matches per tool than gpt-6.1-sol on the same comments, and one judge
+    moves by about three points between passes.
+  \item \emph{The sample is small.} 50 PRs from five projects; a posting
+    policy tuned on 20 of them fell from F1 45.9 to 25.0 on the other 30.
+  \item \emph{The leaderboard rewards matching the list's style}: a handful
+    of short, line-local remarks per PR, the trivial ones included. That is
+    a reasonable product shape, and a different objective from finding the
+    defects a PR introduces.
+\end{enumerate}
 
 \subsection{What we report}
 \label{sec:martianpos}
@@ -2946,9 +3096,12 @@ alone: Martian's score as computed, unmodified and in full
 lenient precision (Tables~\ref{tab:martianext} and~\ref{tab:martiansens}).
 On all three the reading is the one AACR-Bench gave: \qcr{} finds the most
 real defects, and its cost is volume, nearly all of it true but minor rather
-than wrong. Whether to post less is a product decision about that cost, to
-be made on its own evidence; it is not a way to win this benchmark, and we
-did not ship a configuration chosen on it.
+than wrong. \qcr{}'s default is to find as many real problems as possible
+and to post each with a severity; a team that wants fewer comments sets a
+posting budget in its profile. That budget is a product choice about
+reader attention, not a measure of review quality. Alongside the three
+numbers we report the two severity views of
+Sections~\ref{sec:martianstrong} and~\ref{sec:martianblocking}.
 
 \paragraph{Data.} The case sets, the converter, the scoring wrapper and
 every analysis note ship in \code{bench/aacr/ext/}:
@@ -2956,7 +3109,9 @@ every analysis note ship in \code{bench/aacr/ext/}:
 \code{martian-tuning/} (the posting-policy leaderboard, the frozen policy,
 the golden mining, the fair comparison, the full golden audit with its
 per-comment verdicts in \code{golden-audit-full.json}, and the position) and
-\code{RUNS.md} (every run and its Martian scoring). Review and judge run
+\code{RUNS.md} (every run and its Martian scoring); the consolidated
+critique is \code{MARTIAN-CRITIQUE.md}, and the figures of this section are
+drawn by \code{bench/aacr/martian\_figs.py} from \code{charts/martian-data.json}. Review and judge run
 directories are local, as for the main benchmark (Section~\ref{sec:repro}).
 
 % =====================================================================

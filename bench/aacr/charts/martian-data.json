@@ -1,0 +1,1539 @@
+{
+ "goldens": [
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "Low",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID/REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "Medium",
+   "cat": "data",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID",
+   "split": "tune20"
+  },
+  {
+   "sev": "Critical",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "disputed",
+   "verdict": "LATENT/PARTLY_VALID",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "data",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "TRIVIAL",
+   "split": "test30"
+  },
+  {
+   "sev": "Critical",
+   "cat": "security",
+   "bucket": "notreal",
+   "verdict": "LATENT",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "style",
+   "bucket": "notreal",
+   "verdict": "TRIVIAL",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "concurrency",
+   "bucket": "notreal",
+   "verdict": "INTENDED/TRIVIAL",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "PRE_EXISTING",
+   "split": "test30"
+  },
+  {
+   "sev": "Critical",
+   "cat": "security",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID/REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Critical",
+   "cat": "security",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "security",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "security",
+   "bucket": "notreal",
+   "verdict": "NOT_A_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "security",
+   "bucket": "notreal",
+   "verdict": "INTENDED",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "NOT_A_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Critical",
+   "cat": "security",
+   "bucket": "disputed",
+   "verdict": "NOT_A_DEFECT/PARTLY_VALID",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "Low",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "TRIVIAL",
+   "split": "tune20"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "LATENT",
+   "split": "tune20"
+  },
+  {
+   "sev": "Medium",
+   "cat": "api",
+   "bucket": "disputed",
+   "verdict": "PARTLY_VALID/TRIVIAL",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "style",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "speculative",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "concurrency",
+   "bucket": "notreal",
+   "verdict": "NOT_A_DEFECT/TRIVIAL",
+   "split": "tune20"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID",
+   "split": "tune20"
+  },
+  {
+   "sev": "Medium",
+   "cat": "api",
+   "bucket": "notreal",
+   "verdict": "TRIVIAL",
+   "split": "tune20"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "TRIVIAL",
+   "split": "tune20"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "NOT_A_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "Low",
+   "cat": "concurrency",
+   "bucket": "notreal",
+   "verdict": "TRIVIAL",
+   "split": "tune20"
+  },
+  {
+   "sev": "Low",
+   "cat": "perf",
+   "bucket": "notreal",
+   "verdict": "LATENT",
+   "split": "tune20"
+  },
+  {
+   "sev": "Medium",
+   "cat": "api",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "speculative",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID/REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "Low",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "NOT_A_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "Critical",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID/REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "PRE_EXISTING",
+   "split": "tune20"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "Low",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "TRIVIAL/NOT_A_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "data",
+   "bucket": "notreal",
+   "verdict": "NOT_A_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "api",
+   "bucket": "notreal",
+   "verdict": "NOT_A_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "PRE_EXISTING",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "bug",
+   "bucket": "disputed",
+   "verdict": "LATENT/PARTLY_VALID",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "INTENDED",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "disputed",
+   "verdict": "LATENT/PARTLY_VALID",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "disputed",
+   "verdict": "TRIVIAL/PARTLY_VALID",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "style",
+   "bucket": "notreal",
+   "verdict": "TRIVIAL",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "doc_defect",
+   "bucket": "notreal",
+   "verdict": "TRIVIAL",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID/REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "concurrency",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "perf",
+   "bucket": "notreal",
+   "verdict": "TRIVIAL",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "NOT_A_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "style",
+   "bucket": "notreal",
+   "verdict": "TRIVIAL",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "api",
+   "bucket": "notreal",
+   "verdict": "NOT_A_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "PRE_EXISTING",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID/REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "data",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "api",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "disputed",
+   "verdict": "PARTLY_VALID/LATENT",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "api",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "security",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "Critical",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID",
+   "split": "tune20"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "Low",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "TRIVIAL",
+   "split": "tune20"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "High",
+   "cat": "concurrency",
+   "bucket": "notreal",
+   "verdict": "TRIVIAL/LATENT",
+   "split": "tune20"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "LATENT",
+   "split": "tune20"
+  },
+  {
+   "sev": "Low",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "TRIVIAL",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "speculative",
+   "bucket": "notreal",
+   "verdict": "PRE_EXISTING",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID",
+   "split": "tune20"
+  },
+  {
+   "sev": "Low",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "High",
+   "cat": "api",
+   "bucket": "disputed",
+   "verdict": "TRIVIAL/PARTLY_VALID",
+   "split": "tune20"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "Medium",
+   "cat": "concurrency",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID/REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "data",
+   "bucket": "disputed",
+   "verdict": "NOT_A_DEFECT/PARTLY_VALID",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "data",
+   "bucket": "notreal",
+   "verdict": "TRIVIAL",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "speculative",
+   "bucket": "notreal",
+   "verdict": "LATENT",
+   "split": "test30"
+  },
+  {
+   "sev": "Critical",
+   "cat": "concurrency",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "security",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "concurrency",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "style",
+   "bucket": "notreal",
+   "verdict": "TRIVIAL",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "style",
+   "bucket": "notreal",
+   "verdict": "TRIVIAL",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "LATENT",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "api",
+   "bucket": "notreal",
+   "verdict": "LATENT",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "doc_defect",
+   "bucket": "notreal",
+   "verdict": "TRIVIAL",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "test_gap",
+   "bucket": "notreal",
+   "verdict": "TRIVIAL",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "PRE_EXISTING",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "perf",
+   "bucket": "notreal",
+   "verdict": "PRE_EXISTING/NOT_A_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID/REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "Low",
+   "cat": "test_gap",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "Medium",
+   "cat": "test_gap",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "Medium",
+   "cat": "concurrency",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "Low",
+   "cat": "style",
+   "bucket": "notreal",
+   "verdict": "TRIVIAL",
+   "split": "tune20"
+  },
+  {
+   "sev": "Low",
+   "cat": "doc_defect",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "High",
+   "cat": "security",
+   "bucket": "notreal",
+   "verdict": "INTENDED",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "doc_defect",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "data",
+   "bucket": "notreal",
+   "verdict": "LATENT",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "test_gap",
+   "bucket": "notreal",
+   "verdict": "TRIVIAL",
+   "split": "tune20"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "NOT_A_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "NOT_A_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "LATENT",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "concurrency",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "INTENDED",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "doc_defect",
+   "bucket": "notreal",
+   "verdict": "NOT_A_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "TRIVIAL",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "perf",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "Low",
+   "cat": "perf",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "api",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "concurrency",
+   "bucket": "notreal",
+   "verdict": "TRIVIAL",
+   "split": "tune20"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "PRE_EXISTING",
+   "split": "tune20"
+  },
+  {
+   "sev": "Critical",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "INTENDED",
+   "split": "tune20"
+  },
+  {
+   "sev": "High",
+   "cat": "api",
+   "bucket": "notreal",
+   "verdict": "INTENDED",
+   "split": "tune20"
+  },
+  {
+   "sev": "High",
+   "cat": "concurrency",
+   "bucket": "disputed",
+   "verdict": "PARTLY_VALID/PRE_EXISTING",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "concurrency",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID",
+   "split": "test30"
+  },
+  {
+   "sev": "Critical",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "NOT_A_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "INTENDED",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "perf",
+   "bucket": "notreal",
+   "verdict": "TRIVIAL",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "NOT_A_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "speculative",
+   "bucket": "notreal",
+   "verdict": "LATENT",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "INTENDED",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "NOT_A_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "LATENT",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "LATENT",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "style",
+   "bucket": "notreal",
+   "verdict": "TRIVIAL",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "PRE_EXISTING",
+   "split": "tune20"
+  },
+  {
+   "sev": "Low",
+   "cat": "doc_defect",
+   "bucket": "notreal",
+   "verdict": "NOT_A_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "High",
+   "cat": "api",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "tune20"
+  },
+  {
+   "sev": "Medium",
+   "cat": "doc_defect",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "doc_defect",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "security",
+   "bucket": "notreal",
+   "verdict": "NOT_A_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "style",
+   "bucket": "notreal",
+   "verdict": "TRIVIAL",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "style",
+   "bucket": "notreal",
+   "verdict": "TRIVIAL",
+   "split": "test30"
+  },
+  {
+   "sev": "Critical",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID",
+   "split": "test30"
+  },
+  {
+   "sev": "High",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID/REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "doc_defect",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Low",
+   "cat": "bug",
+   "bucket": "real",
+   "verdict": "REAL_DEFECT",
+   "split": "test30"
+  },
+  {
+   "sev": "Medium",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "PRE_EXISTING",
+   "split": "tune20"
+  },
+  {
+   "sev": "Low",
+   "cat": "bug",
+   "bucket": "notreal",
+   "verdict": "LATENT",
+   "split": "tune20"
+  },
+  {
+   "sev": "Critical",
+   "cat": "api",
+   "bucket": "notreal",
+   "verdict": "LATENT",
+   "split": "tune20"
+  },
+  {
+   "sev": "Medium",
+   "cat": "concurrency",
+   "bucket": "real",
+   "verdict": "PARTLY_VALID",
+   "split": "tune20"
+  }
+ ],
+ "real_same_judge": {
+  "QuickReview (latest)": {
+   "real": 71,
+   "notreal": 18,
+   "disputed": 5
+  },
+  "cubic-v2": {
+   "real": 60,
+   "notreal": 35,
+   "disputed": 4
+  },
+  "qodo-extended-v2": {
+   "real": 68,
+   "notreal": 25,
+   "disputed": 4
+  },
+  "claude-code": {
+   "real": 44,
+   "notreal": 24,
+   "disputed": 2
+  }
+ },
+ "real_published_opus": {
+  "coderabbit": {
+   "real": 59,
+   "notreal": 36,
+   "disputed": 8
+  },
+  "qodo-extended-v2": {
+   "real": 72,
+   "notreal": 30,
+   "disputed": 4
+  },
+  "greptile-v4-1": {
+   "real": 53,
+   "notreal": 30,
+   "disputed": 6
+  },
+  "gemini-v2": {
+   "real": 53,
+   "notreal": 34,
+   "disputed": 8
+  },
+  "gitlab": {
+   "real": 54,
+   "notreal": 32,
+   "disputed": 5
+  },
+  "copilot-v2": {
+   "real": 71,
+   "notreal": 38,
+   "disputed": 6
+  },
+  "augment": {
+   "real": 68,
+   "notreal": 32,
+   "disputed": 8
+  },
+  "bugbot": {
+   "real": 55,
+   "notreal": 17,
+   "disputed": 6
+  },
+  "claude-code": {
+   "real": 51,
+   "notreal": 29,
+   "disputed": 4
+  },
+  "cubic-v2": {
+   "real": 64,
+   "notreal": 37,
+   "disputed": 7
+  },
+  "devin": {
+   "real": 47,
+   "notreal": 16,
+   "disputed": 5
+  },
+  "sourcery": {
+   "real": 55,
+   "notreal": 34,
+   "disputed": 6
+  },
+  "macroscope": {
+   "real": 51,
+   "notreal": 24,
+   "disputed": 6
+  },
+  "qodo-v2": {
+   "real": 65,
+   "notreal": 29,
+   "disputed": 8
+  }
+ },
+ "allfound": {
+  "hi_same": {
+   "QuickReview (latest)": [
+    17,
+    34
+   ],
+   "cubic-v2": [
+    21,
+    34
+   ],
+   "qodo-extended-v2": [
+    19,
+    34
+   ],
+   "claude-code": [
+    9,
+    34
+   ]
+  },
+  "hi_opus": {
+   "coderabbit": [
+    17,
+    34
+   ],
+   "qodo-extended-v2": [
+    21,
+    34
+   ],
+   "greptile-v4-1": [
+    14,
+    34
+   ],
+   "gemini-v2": [
+    14,
+    34
+   ],
+   "gitlab": [
+    12,
+    34
+   ],
+   "copilot-v2": [
+    20,
+    34
+   ],
+   "augment": [
+    22,
+    34
+   ],
+   "bugbot": [
+    12,
+    34
+   ],
+   "claude-code": [
+    11,
+    34
+   ],
+   "cubic-v2": [
+    24,
+    34
+   ],
+   "devin": [
+    14,
+    34
+   ],
+   "sourcery": [
+    15,
+    34
+   ],
+   "macroscope": [
+    13,
+    34
+   ],
+   "qodo-v2": [
+    19,
+    34
+   ]
+  },
+  "real_same": {
+   "QuickReview (latest)": [
+    21,
+    35
+   ],
+   "cubic-v2": [
+    21,
+    35
+   ],
+   "qodo-extended-v2": [
+    21,
+    35
+   ],
+   "claude-code": [
+    10,
+    35
+   ]
+  },
+  "real_opus": {
+   "coderabbit": [
+    17,
+    35
+   ],
+   "qodo-extended-v2": [
+    25,
+    35
+   ],
+   "greptile-v4-1": [
+    15,
+    35
+   ],
+   "gemini-v2": [
+    14,
+    35
+   ],
+   "gitlab": [
+    15,
+    35
+   ],
+   "copilot-v2": [
+    23,
+    35
+   ],
+   "augment": [
+    21,
+    35
+   ],
+   "bugbot": [
+    17,
+    35
+   ],
+   "claude-code": [
+    13,
+    35
+   ],
+   "cubic-v2": [
+    23,
+    35
+   ],
+   "devin": [
+    14,
+    35
+   ],
+   "sourcery": [
+    12,
+    35
+   ],
+   "macroscope": [
+    11,
+    35
+   ],
+   "qodo-v2": [
+    20,
+    35
+   ]
+  },
+  "realhi_same": {
+   "QuickReview (latest)": [
+    14,
+    19
+   ],
+   "cubic-v2": [
+    12,
+    19
+   ],
+   "qodo-extended-v2": [
+    14,
+    19
+   ],
+   "claude-code": [
+    6,
+    19
+   ]
+  },
+  "realhi_opus": {
+   "coderabbit": [
+    13,
+    19
+   ],
+   "qodo-extended-v2": [
+    15,
+    19
+   ],
+   "greptile-v4-1": [
+    11,
+    19
+   ],
+   "gemini-v2": [
+    7,
+    19
+   ],
+   "gitlab": [
+    9,
+    19
+   ],
+   "copilot-v2": [
+    14,
+    19
+   ],
+   "augment": [
+    11,
+    19
+   ],
+   "bugbot": [
+    11,
+    19
+   ],
+   "claude-code": [
+    8,
+    19
+   ],
+   "cubic-v2": [
+    13,
+    19
+   ],
+   "devin": [
+    9,
+    19
+   ],
+   "sourcery": [
+    9,
+    19
+   ],
+   "macroscope": [
+    9,
+    19
+   ],
+   "qodo-v2": [
+    11,
+    19
+   ]
+  }
+ }
+}
