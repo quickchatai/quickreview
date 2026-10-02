@@ -534,8 +534,15 @@ const SYNC_PROBES: ReadonlyArray<readonly [RegExp, RegExp]> = [
   ],
   // Ruby: Mutex, threads, concurrent-ruby.
   [/\.rb$/i, /\bMutex\.new\b|\bThread\.new\b|\bConcurrent::\w+|\.synchronize\b/],
-  // Swift: dispatch queues, locks, actors.
-  [/\.swift$/i, /\bDispatchQueue\b|\bNSLock\b|\bos_unfair_lock\b|\bactor\s+[A-Z]\w*|\bOSAllocatedUnfairLock\b/],
+  // Swift: dispatch queues, locks, actors — and Swift concurrency's isolation
+  // annotations, whose ADDITION or REMOVAL changes which thread a closure may
+  // run on (round 5, REVIEW-MINING.md: dropped @Sendable/@MainActor on
+  // callbacks, an unsafe `nonisolated(unsafe)` and an unisolated `Task {}` went
+  // unplanned on three Swift PRs).
+  [
+    /\.swift$/i,
+    /\bDispatchQueue\b|\bNSLock\b|\bos_unfair_lock\b|\bactor\s+[A-Z]\w*|\bOSAllocatedUnfairLock\b|@Sendable\b|@MainActor\b|\bnonisolated\b|@preconcurrency\b|\bTask(?:\.detached)?\s*(?:\(\s*priority:[^)]*\))?\s*\{/,
+  ],
   // JS / TS: real shared memory and workers, explicit lock libraries, and the
   // one shared-state race the added lines can show — a member written after an
   // await, or bumped in place, on an object other callers share.

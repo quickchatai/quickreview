@@ -93,6 +93,10 @@ describe("pass-concurrency content trigger — synchronisation spellings, per la
     ["lib/cache.rb", "@mutex.synchronize do"],
     ["Sources/Cache.swift", 'let q = DispatchQueue(label: "cache")'],
     ["Sources/Cache.swift", "actor Counter {"],
+    ["Sources/Alert.swift", "func show(completion: @escaping @MainActor @Sendable () -> Void) {"],
+    ["Sources/Gen.swift", "nonisolated(unsafe) static var generator = Generator()"],
+    ["Sources/Flow.swift", "Task { await self.advance() }"],
+    ["Sources/Flow.swift", "Task.detached { work() }"],
     // JS / TS
     ["src/worker.ts", "const w = new Worker(new URL('./w.js', import.meta.url));"],
     ["src/worker.ts", "Atomics.add(view, 0, 1);"],
@@ -129,6 +133,8 @@ describe("pass-concurrency content trigger — synchronisation spellings, per la
     ["app/views.py", "def get(self, request): return Response(self.data)"],
     ["pkg/assets.go", "func Name() string { return n }"],
     ["src/main/java/A.java", "public int size() { return items.size(); }"],
+    ["Sources/Model.swift", "let task = TaskItem(title: name)"],
+    ["Sources/Model.swift", "func sendable() -> Bool { true }"],
   ];
   for (const [path, line] of SILENT)
     it(`stays silent on ${path}: ${line}`, () => {
