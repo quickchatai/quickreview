@@ -52,6 +52,6 @@
   "pi": {
     "//": "pi is NOT a build dependency — it runs only inside the VM container. Pins per assets/findings.md + ansible group_vars. VERIFY-ON-PIN: package name and exact version against the registry at provisioning time. Subagents are pi's own first-party extension, shipped inside this package (examples/extensions/subagent) — no extra extension pin exists any more.",
     "package": "@earendil-works/pi-coding-agent",
-    "version": "0.99.1"
+    "version": "1.0.0"
   }
 }

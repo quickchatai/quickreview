@@ -155,7 +155,7 @@ evidence_timeout_s = 60           # evidence copier: per-remote-read
 # VERIFY-ON-PIN: package + version mirrored in package.json "pi" block and the
 # ansible group_vars; the image never floats.
 package = "@earendil-works/pi-coding-agent"
-version = "0.99.1"
+version = "1.0.0"
 session_dir = "state/pi-sessions"
 subagent_max_concurrency = 6
 

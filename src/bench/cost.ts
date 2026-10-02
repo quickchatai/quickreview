@@ -12,7 +12,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 /** pi's price list for the openai-codex models the priced arms run on, $ per
- * million tokens (model catalog `cost` in pi 0.99.1 — VERIFY-ON-PIN). The
+ * million tokens (model catalog `cost` in pi 0.99.1, unchanged at 1.0.0 — VERIFY-ON-PIN). The
  * pricing is per MODEL: gpt-6.1-sol's cache reads cost half of gpt-6-sol's.
  * Requests above 272k input tokens are priced higher by pi; the bridge-driven
  * arms' calls stay well below that (PR-Agent clamps at 32k by default). */

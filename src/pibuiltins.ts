@@ -25,7 +25,7 @@
 //    server (127.0.0.1:8080 by default). Starts nothing, but it is a model
 //    route nobody configured; off so the provider set stays the one we pin.
 //
-// VERIFY-ON-PIN (0.99.1, read from the published tarball): the four names and
+// VERIFY-ON-PIN (0.99.1, re-read at 1.0.0 — dist/extensions/index.js unchanged): the four names and
 // the `-builtin:<name>` spelling. A later pi that adds a built-in is NOT
 // covered by this list — re-read dist/extensions/index.js on every bump.
 //
@@ -40,3 +40,13 @@ export const PI_DISABLED_BUILTINS = [
   "-builtin:tool-search",
   "-builtin:llama.cpp",
 ] as const;
+
+/**
+ * pi 1.0.0 made the interactive TUI fullscreen by default (CHANGELOG 1.0.0,
+ * "Changed the default TUI mode to fullscreen"). Every interactive pi we run
+ * sits in tmux — the VM's PR sessions and overseer, the companion — and the
+ * operator TUI mirrors those panes and scrolls them (PgUp), which needs the
+ * terminal's normal scrollback: pi 0.99's default. The three entrypoint merges
+ * set it; tests/pibuiltins.test.ts pins each one to this value.
+ */
+export const PI_TUI_MODE = "regular";

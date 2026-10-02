@@ -839,7 +839,7 @@ export interface ModelsConfig {
   pass_tiers: Record<string, PassTier>;
 }
 
-/** pi's thinking levels, ascending (pi 0.87.1, unchanged at 0.99.1 — VERIFY-ON-PIN). */
+/** pi's thinking levels, ascending (pi 0.87.1, unchanged at 0.99.1 and 1.0.0 — VERIFY-ON-PIN). */
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 

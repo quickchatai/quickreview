@@ -55,7 +55,7 @@
 #   --arm pireview (build, review, eval, report, shell, smoke): @zephyrdeng/pi-review (image
 #              qcr-bench-pireview; the npm tarball pinned by PIREVIEW_VERSION + sha512 in the
 #              Dockerfile; QCR_BENCH_PIREVIEW_VERSION + QCR_BENCH_PIREVIEW_SHA512 build another)
-#              on the image's pi (0.99.1): its CLI, single reviewer, mode code, over
+#              on the image's pi (1.0.0): its CLI, single reviewer, mode code, over
 #              `git diff base...head` attached as @file, gpt-6-sol through pi's openai-codex
 #              provider on the refresh-disabled login copy; one case at a time; `eval` scores
 #              `all`. QCR_BENCH_PIREVIEW_THINKING=L its --thinking (default medium);

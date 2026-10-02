@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { benchSettings } from "../src/bench/auth.js";
-import { PI_DISABLED_BUILTINS } from "../src/pibuiltins.js";
+import { PI_DISABLED_BUILTINS, PI_TUI_MODE } from "../src/pibuiltins.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const VM_GUARD = "/opt/quickreview/sandbox/extensions/bash-guard.ts";
@@ -51,8 +51,8 @@ function runMerge(file: string, home: string): Record<string, unknown> {
 }
 
 describe("pi built-ins are switched off wherever we provision pi settings", () => {
-  it("the list is the four built-ins pi 0.99.1 ships, in the documented `-builtin:<name>` spelling", () => {
-    // VERIFY-ON-PIN (0.99.1 dist/extensions/index.js builtInExtensions):
+  it("the list is the four built-ins pi 0.99.1 and 1.0.0 ship, in the documented `-builtin:<name>` spelling", () => {
+    // VERIFY-ON-PIN (0.99.1, re-read at 1.0.0: dist/extensions/index.js builtInExtensions):
     // a bump that adds a built-in must decide about it here.
     expect([...PI_DISABLED_BUILTINS].sort()).toEqual([
       "-builtin:codemode",
@@ -86,6 +86,8 @@ describe("pi built-ins are switched off wherever we provision pi settings", () =
       ).toEqual([]);
       expect(once["theme"]).toBe("mine");
       expect(once["defaultProjectTrust"]).toBe("always");
+      // pi 1.0 defaults to fullscreen; sessions under tmux keep regular scrollback.
+      expect(once["tuiMode"]).toBe(PI_TUI_MODE);
       // A second boot on the same volume changes nothing.
       const twice = runMerge(file, home);
       expect(twice["extensions"]).toEqual(ext);

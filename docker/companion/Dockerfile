@@ -39,7 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # `pi` block and deploy/ansible/group_vars, or every VERIFY-ON-PIN assumption
 # in this repo is void.
 ARG PI_PACKAGE=@earendil-works/pi-coding-agent
-ARG PI_VERSION=0.99.1
+ARG PI_VERSION=1.0.0
 RUN npm install -g ${PI_PACKAGE}@${PI_VERSION}
 
 # NO MEMORY EXTENSION IS INSTALLED HERE. The pi-memory extension and

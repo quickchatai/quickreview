@@ -11,7 +11,7 @@
 //     from the installed pi package
 //     (`<getExamplesPath()>/extensions/subagent/index.ts` — `examples/` ships
 //     in the published tarball, verified against 0.84.4 and re-verified at
-//     0.87.1 and 0.99.1 (examples/extensions/subagent byte-identical), package.json
+//     0.87.1, 0.99.1 and 1.0.0 (examples/extensions/subagent byte-identical), package.json
 //     `files`). There is no vendored copy, so there is nothing that can drift
 //     from the rule-7 pin: bumping pi bumps the extension with it.
 //
@@ -49,7 +49,7 @@
 // `--no-extensions` children had only the prompt-level exec policy.
 //
 // VERIFY-ON-PIN (0.84.4, read statically from the published tarball, and
-// the subagent example re-compared byte-identical at 0.87.1 and 0.99.1; live
+// the subagent example re-compared byte-identical at 0.87.1, 0.99.1 and 1.0.0; live
 // smoke listed in the report):
 //  - native child argv is `--mode json -p --no-session` + optional
 //    --model/--thinking/--tools/--append-system-prompt (examples/extensions/

@@ -157,7 +157,7 @@ export const REVIEW_COMMAND_TEMPLATE: string = "You are a code reviewer. Your jo
  * declared gpt-6.1-sol survives it; with `reasoning: true` OpenCode derives
  * the same `low|medium|high` variants (reasoningEffort + reasoningSummary
  * "auto" + reasoning.encrypted_content) it gives gpt-6-sol. The numbers are
- * pi 0.99.1's catalog for openai-codex/gpt-6.1-sol (272k context, 128k out).
+ * pi 0.99.1's catalog (unchanged at 1.0.0) for openai-codex/gpt-6.1-sol (272k context, 128k out).
  * A model OpenCode already knows (gpt-6-sol) gets no entry — its config is
  * unchanged.
  */

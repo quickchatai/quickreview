@@ -130,6 +130,10 @@ if (!Array.isArray(cfg.extensions)) cfg.extensions = [];
 // Never block on pi's interactive "Trust project folder?" modal (mirrors the
 // VM entrypoint; the owner, 2026-08-20 — pr-5334 stall).
 cfg.defaultProjectTrust = "always";
+// pi 1.0 made the interactive TUI fullscreen by default. Sessions run under
+// tmux and the operator TUI mirrors and scrolls their panes, so keep the
+// terminal's normal scrollback (pi 0.99's default) — src/pibuiltins.ts PI_TUI_MODE.
+cfg.tuiMode = "regular";
 // pi 0.99's built-in extensions (mcp, codemode, tool-search, llama.cpp) are
 // switched OFF, as on the VM: MCP launches server processes from any trusted
 // mcp.json — a path around companion-guard, which vetoes TOOL CALLS — and the

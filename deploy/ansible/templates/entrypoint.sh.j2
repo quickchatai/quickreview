@@ -284,6 +284,10 @@ if (stale.length) {
 // store for /opt/quickreview so even a settings regression cannot re-surface the
 // prompt. Third layer: sessions.ts passes --approve on every spawn.
 settings.defaultProjectTrust = "always";
+// pi 1.0 made the interactive TUI fullscreen by default. Sessions run under
+// tmux and the operator TUI mirrors and scrolls their panes, so keep the
+// terminal's normal scrollback (pi 0.99's default) — src/pibuiltins.ts PI_TUI_MODE.
+settings.tuiMode = "regular";
 // pi 0.99's built-in extensions (mcp, codemode, tool-search, llama.cpp) are
 // switched OFF: MCP launches server processes from any trusted mcp.json, the
 // other three change the tool/provider set, and no session uses any of them
