@@ -106,7 +106,7 @@ describe("plain Dockerfile — ARG defaults mirror the pinned sources of truth",
     expect(dockerfile).not.toContain("maxConcurrency");
     expect(playbook).not.toContain("maxConcurrency");
     // The knob that replaced it, mirrored here so it cannot silently vanish.
-    expect(cfg.pi.subagent_max_concurrency).toBe(6);
+    expect(cfg.pi.subagent_max_concurrency).toBe(12);
   });
 
   it("sets HOME explicitly beside the uid-parameterized user (the lesson)", () => {

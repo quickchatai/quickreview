@@ -12,7 +12,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { renderRenderNote, renderReviewFromRecord } from "../src/reviewrender.js";
+import { renderRenderNote, renderReviewFromRecord, renderedFooter } from "../src/reviewrender.js";
+import { reviewFooter } from "../src/posting.js";
 import { CHECK_THIS_RE } from "../src/severity.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -165,6 +166,13 @@ describe("renderReviewFromRecord — a thin record still renders, and says what 
   it("never throws on garbage", () => {
     expect(() => renderReviewFromRecord(null)).not.toThrow();
     expect(renderReviewFromRecord("x").problems).toContain("the record has no findings array");
+  });
+});
+
+describe("the footer", () => {
+  it("is posting.ts's reviewFooter, word for word", () => {
+    expect(renderedFooter("qc-bot")).toBe(reviewFooter("qc-bot"));
+    expect(renderedFooter()).toBe(reviewFooter());
   });
 });
 

@@ -75,6 +75,12 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
         "does, this entry is the debt being VISIBLE rather than silent, which is the whole point of [T8].",
     },
     {
+      file: "src/reviewrendercli.ts",
+      why:
+        "the `[review] render_outputs` renderer's command line. Driven by scripts/render-review.sh, which a " +
+        "round session runs and which execs it out of dist/ — a real driver this static scan cannot follow.",
+    },
+    {
       file: "src/memory/import.ts",
       why:
         "the one-time curated import. Driven by scripts/import-pi-memory.mjs, which loads it out of dist/ " +

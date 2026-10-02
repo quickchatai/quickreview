@@ -19,8 +19,18 @@
 // whatever the record claims (posting validates it as before), and every
 // problem the input has is returned rather than thrown, so a thin record still
 // renders the review the record describes.
-import { reviewFooter } from "./posting.js";
 import { ASK_HUMAN_TAG, CHECK_THIS_TAG, DEFERRED_TAG, postTag, type Severity } from "./severity.js";
+
+/** The standard footer, word for word posting.ts `reviewFooter` (pinned equal
+ * by tests/reviewrender.test.ts). Not imported: posting.ts is the recorded
+ * unwired module of tests/fences-reachability.test.ts, and an import for one
+ * string would make it read as live. */
+export function renderedFooter(botLogin?: string): string {
+  return (
+    `_Automated review by \`${botLogin?.trim() || "the review bot"}\` (quickreview sandbox). ` +
+    "Reply to any comment to discuss; ask for a human reviewer if you want this escalated._"
+  );
+}
 
 /** GitHub's per-review inline cap (posting.ts INLINE_COMMENT_CAP). */
 const INLINE_CAP = 50;
@@ -260,7 +270,7 @@ export function renderReviewFromRecord(
   );
   const details = str(rec.details);
   if (details) out.push("", details);
-  out.push("", reviewFooter(opts.botLogin));
+  out.push("", renderedFooter(opts.botLogin));
   return { body: out.join("\n") + "\n", comments, in_body: overflow.length, problems };
 }
 
