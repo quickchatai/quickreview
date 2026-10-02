@@ -63,20 +63,38 @@
 # --parallel machine-wide slots (flock on $QCR_BENCH_RUNS_DIR/.slots/, shared
 # with every other arm.sh on this machine — the model login and the RAM are
 # machine-wide, so two arms launched side by side split the slots instead of
-# doubling the load). `auto` = (MemAvailable - QCR_BENCH_RESERVE_MB) /
-# QCR_BENCH_REVIEW_MB, capped at QCR_BENCH_MAX_PARALLEL (the login's share,
-# default 10); a new review also waits while MemAvailable is short. A run's
-# judge (one slot) and eval (one machine-wide eval lock) start the moment its
-# last case finishes, while other runs are still reviewing. A case that failed
-# under rate limiting pauses new launches for QCR_BENCH_RATE_LIMIT_PAUSE
-# seconds (default 300) and is retried; `--resume` later re-runs only what is
-# still not ok.
+# doubling the load). A new review also waits while MemAvailable is short. A
+# run's judge (one slot) and eval (one machine-wide eval lock) start the
+# moment its last case finishes, while other runs are still reviewing.
 #
-#   QCR_BENCH_REVIEW_MB=1024     memory budget per concurrent review (auto + the admission check;
-#                                measured: ~250 MB anon + ~200 MB page cache typical, up to ~1 GB
-#                                with 6 lens children at once)
+# `auto` is ADAPTIVE (AIMD, bench/aacr/PERF.md): it starts at
+# min((MemAvailable - QCR_BENCH_RESERVE_MB) / QCR_BENCH_REVIEW_MB,
+# QCR_BENCH_START_PARALLEL) and keeps ONE machine-wide target in
+# $QCR_BENCH_RUNS_DIR/.slots/target, shared by every arm.sh (an arm that finds
+# another one holding slots adopts its target; one that finds none starts it
+# over). While cases are queued, every slot is busy, memory admits one more and
+# no rate limit was seen for QCR_BENCH_RAMP_SECS, the target rises by
+# QCR_BENCH_RAMP_STEP, up to QCR_BENCH_PARALLEL_CEILING. A case that failed
+# under rate limiting halves it (once per QCR_BENCH_HALVE_GAP burst), pauses
+# new launches for QCR_BENCH_RATE_LIMIT_PAUSE seconds and is retried. Every
+# change is logged (`concurrency N -> M, reason`, also in .slots/concurrency.log).
+# A case that hit the PLAN's usage limit (`quota=` on its result line: the
+# window is spent, minutes of pause do not cure it) stops new launches for
+# every arm on the machine, loudly; `--resume` re-runs what is not ok once the
+# window resets. `--parallel N` and an explicitly set QCR_BENCH_MAX_PARALLEL
+# are FIXED caps: no ramp, no halving (the pause and retry still apply).
+#
+#   QCR_BENCH_REVIEW_MB=768      memory budget per concurrent review (auto + the admission check;
+#                                measured 2026-10-02 from cgroup memory.peak of live review
+#                                containers: 577-788 MB peak incl. page cache, ~210 MB anon steady)
 #   QCR_BENCH_RESERVE_MB=3072    MemAvailable kept free for the rest of the machine
-#   QCR_BENCH_MAX_PARALLEL=10    auto never exceeds this (the one ChatGPT login)
+#   QCR_BENCH_START_PARALLEL=10  where adaptive auto starts (never above what memory admits)
+#   QCR_BENCH_PARALLEL_CEILING=24  adaptive auto never exceeds this
+#   QCR_BENCH_RAMP_SECS=300      quiet time (no rate limit, no change) before a step up
+#   QCR_BENCH_RAMP_STEP=2        slots added per step
+#   QCR_BENCH_HALVE_GAP=60       rate-limited cases closer than this halve the target once
+#   QCR_BENCH_ADAPTIVE=0         auto without the ramp (start value fixed)
+#   QCR_BENCH_MAX_PARALLEL=N     auto = min(memory, N), fixed (the pre-adaptive behaviour)
 #   QCR_BENCH_REVIEW_MEMORY=3g   the hard cap of one case container (QCR_BENCH_MEMORY for it)
 #   QCR_BENCH_REVIEW_CPUS=4      its cpu cap
 #   QCR_BENCH_EVAL_CPUS=8        the eval container's cpu cap (it runs shards × variants pi judges)
@@ -145,25 +163,45 @@ if [[ "$ARM" == claude ]]; then
     || { echo "image $QIMG cannot read a Claude Code run (no claudeshape.js) — rebuild it: bench.sh build" >&2; exit 2; }
 fi
 
-REVIEW_MB="${QCR_BENCH_REVIEW_MB:-1024}" RESERVE_MB="${QCR_BENCH_RESERVE_MB:-3072}"
-MAX_PAR="${QCR_BENCH_MAX_PARALLEL:-10}" PAUSE="${QCR_BENCH_RATE_LIMIT_PAUSE:-300}"
+REVIEW_MB="${QCR_BENCH_REVIEW_MB:-768}" RESERVE_MB="${QCR_BENCH_RESERVE_MB:-3072}"
+MAX_PAR="${QCR_BENCH_MAX_PARALLEL:-}" PAUSE="${QCR_BENCH_RATE_LIMIT_PAUSE:-300}"
+START_PAR="${QCR_BENCH_START_PARALLEL:-10}" CEIL="${QCR_BENCH_PARALLEL_CEILING:-24}"
+RAMP_SECS="${QCR_BENCH_RAMP_SECS:-300}" STEP="${QCR_BENCH_RAMP_STEP:-2}" HALVE_GAP="${QCR_BENCH_HALVE_GAP:-60}"
 POLL="${QCR_BENCH_POLL:-2}" GAP="${QCR_BENCH_LAUNCH_GAP:-3}"
 SLOTS="$QCR_BENCH_RUNS_DIR/.slots"
+for v in REVIEW_MB START_PAR CEIL STEP; do
+  [[ "${!v}" =~ ^[1-9][0-9]*$ ]] || { echo "arm.sh: $v must be a positive count" >&2; exit 2; }
+done
+[[ -z "$MAX_PAR" || "$MAX_PAR" =~ ^[1-9][0-9]*$ ]] || { echo "QCR_BENCH_MAX_PARALLEL must be a positive count" >&2; exit 2; }
+[[ "$RAMP_SECS" =~ ^[0-9]+$ && "$HALVE_GAP" =~ ^[0-9]+$ ]] || { echo "QCR_BENCH_RAMP_SECS and QCR_BENCH_HALVE_GAP take seconds" >&2; exit 2; }
 
 # MemAvailable in MB; QCR_BENCH_MEM_AVAILABLE_MB overrides (tests), "" = unknown (not Linux).
 mem_avail_mb() {
   if [[ -n "${QCR_BENCH_MEM_AVAILABLE_MB:-}" ]]; then echo "$QCR_BENCH_MEM_AVAILABLE_MB"; return; fi
   awk '/^MemAvailable:/ { print int($2 / 1024) }' /proc/meminfo 2>/dev/null
 }
+# ADAPT=1: the slot count is the machine-wide AIMD target (header), not a constant.
+ADAPT=0
 if [[ "$PAR" == auto ]]; then
   avail="$(mem_avail_mb)"
   if [[ -z "$avail" ]]; then PAR=4
   else
     PAR=$(( (avail - RESERVE_MB) / REVIEW_MB ))
-    (( PAR > MAX_PAR )) && PAR="$MAX_PAR"
+    if [[ -n "$MAX_PAR" ]]; then
+      (( PAR > MAX_PAR )) && PAR="$MAX_PAR"
+    else
+      (( PAR > START_PAR )) && PAR="$START_PAR"
+      [[ "${QCR_BENCH_ADAPTIVE:-1}" != 0 ]] && command -v flock >/dev/null 2>&1 && ADAPT=1
+    fi
     (( PAR < 1 )) && PAR=1
   fi
-  [[ "$ARM" == qcr ]] && echo "arm $PREFIX: $PAR review slot(s) — auto: MemAvailable ${avail:-unknown} MB, ${REVIEW_MB} MB per review, ${RESERVE_MB} MB reserve, login cap $MAX_PAR"
+  if [[ "$ARM" == qcr ]]; then
+    if [[ "$ADAPT" == 1 ]]; then
+      echo "arm $PREFIX: $PAR review slot(s) to start — adaptive auto: MemAvailable ${avail:-unknown} MB, ${REVIEW_MB} MB per review, ${RESERVE_MB} MB reserve, ramps to at most $CEIL while the login does not push back"
+    else
+      echo "arm $PREFIX: $PAR review slot(s) — auto: MemAvailable ${avail:-unknown} MB, ${REVIEW_MB} MB per review, ${RESERVE_MB} MB reserve${MAX_PAR:+, fixed cap $MAX_PAR}"
+    fi
+  fi
 fi
 
 LEVERS16_SMOKE=cline__cline@7d18fb9,linera-io__linera-protocol@3535ddb,lvgl__lvgl@4a57db3,ollama__ollama@b6002f6,dbeaver__dbeaver@bc3ac7b,mrdoob__three.js@96ab072
@@ -212,14 +250,56 @@ with_lock() { # lockfile cmd...
   mkdir -p "$(dirname "$f")"
   ( flock 9; "$@" ) 9>"$f"
 }
-# Run a command holding one of $PAR machine-wide review slots.
+# The machine-wide adaptive state (ADAPT=1), in $SLOTS: `target` (the slot
+# count; its mtime is the last change), `last-limit` (touched on every
+# rate-limited case), `usage-limit` (the plan's window is spent: no arm
+# launches a review after it), `concurrency.log` (every change).
+TARGET="$SLOTS/target" LASTLIM="$SLOTS/last-limit" QUOTA="$SLOTS/usage-limit"
+mtime() { stat -c %Y "$1" 2>/dev/null || echo 0; }
+# The slot count now: the shared target when adaptive, else the fixed $PAR.
+cur_par() {
+  local v
+  if [[ "$ADAPT" == 1 ]]; then
+    v="$(cat "$TARGET" 2>/dev/null)"
+    [[ "$v" =~ ^[1-9][0-9]*$ ]] && { echo "$v"; return; }
+  fi
+  echo "$PAR"
+}
+set_par() { # new reason — call under the target lock
+  local old new="$1"
+  old="$(cur_par)"
+  [[ "$new" == "$old" ]] && return 0
+  echo "$new" > "$TARGET.$$" && mv -f "$TARGET.$$" "$TARGET"
+  echo "$(date +%T) concurrency $old -> $new, $2" | tee -a "$SLOTS/concurrency.log"
+}
+# How many of the first N slots are held right now (by any arm on the machine).
+slots_busy() { # n
+  local s busy=0
+  for ((s = 0; s < $1; s++)); do ( flock -n 9 ) 9>"$SLOTS/slot.$s.lock" || busy=$(( busy + 1 )); done
+  echo "$busy"
+}
+halve_par() { # reason — under the target lock; one halving per burst of rate limits
+  local c now
+  now=$(date +%s); c="$(cur_par)"
+  if (( now - $(mtime "$LASTLIM") >= HALVE_GAP )); then set_par $(( c / 2 < 1 ? 1 : c / 2 )) "$1"; fi
+  touch "$LASTLIM"
+}
+ramp_par() { # now cur — under the target lock: re-checked, another arm may have moved it
+  local c
+  c="$(cur_par)"
+  [[ "$c" == "$2" ]] || return 0
+  (( $1 - $(mtime "$TARGET") >= RAMP_SECS && $1 - $(mtime "$LASTLIM") >= RAMP_SECS )) || return 0
+  set_par $(( c + STEP > CEIL ? CEIL : c + STEP )) "no rate limit for ${RAMP_SECS}s, every slot busy, cases waiting"
+}
+
+# Run a command holding one of the machine-wide review slots (cur_par of them).
 with_slot() { # cmd...
   if ! command -v flock >/dev/null 2>&1; then "$@"; return; fi
   mkdir -p "$SLOTS"
   local s rc got="$(mktemp)"
   rm -f "$got"
   while :; do
-    for ((s = 0; s < PAR; s++)); do
+    for ((s = 0; s < $(cur_par); s++)); do
       ( flock -n 9 || exit 0; : > "$got"; "$@" ) 9>"$SLOTS/slot.$s.lock"
       rc=$?
       [[ -e "$got" ]] && { rm -f "$got"; return "$rc"; }
@@ -363,12 +443,23 @@ for r in sorted(rows):
     print(r[3], r[4])
 ' "$HERE/sets")
 TOTAL=$(( ${#QUEUE[@]} ))
-echo "arm $PREFIX: $TOTAL case(s) in ${NJ} run(s), $PAR at once — $(ts)"
+if [[ "$ADAPT" == 1 ]]; then
+  mkdir -p "$SLOTS"
+  # Another arm holding slots owns the live target: adopt it. None: start over
+  # from this arm's own start value (a target left by a finished arm is stale).
+  if [[ -s "$TARGET" && "$(slots_busy "$CEIL")" -gt 0 ]]; then
+    echo "arm $PREFIX: adopting the machine-wide concurrency target $(cur_par) (another arm is reviewing)"
+  else
+    with_lock "$SLOTS/target.lock" set_par "$PAR" "arm $PREFIX starts" >/dev/null
+    touch "$TARGET"
+  fi
+fi
+echo "arm $PREFIX: $TOTAL case(s) in ${NJ} run(s), $(cur_par) at once$([[ "$ADAPT" == 1 ]] && echo " (adaptive, ceiling $CEIL)") — $(ts)"
 
 # 2. One case in its own container, holding a machine-wide slot. Its outcome
 #    comes from the `result:` line the case prints (never from the run dir).
 case_worker() { # seq job id attempt
-  local seq="$1" i="$2" id="$3" att="$4" out="$tmp/case.$1.log" line st=error retry=1 lim=0
+  local seq="$1" i="$2" id="$3" att="$4" out="$tmp/case.$1.log" line st=error retry=1 lim=0 quota=0
   with_slot env QCR_BENCH_MEMORY="${QCR_BENCH_REVIEW_MEMORY:-3g}" QCR_BENCH_CPUS="${QCR_BENCH_REVIEW_CPUS:-4}" \
     "$HERE/bench.sh" review --phase case --run "${JRUN[$i]}" --set "${JSET[$i]}" --only "$id" \
     ${CFG[@]+"${CFG[@]}"} > "$out" 2>&1
@@ -377,9 +468,10 @@ case_worker() { # seq job id attempt
     st="$(sed -E 's/.*result: [^ ]+ ([^ ]+) .*/\1/' <<< "$line")"
     retry="$(sed -E 's/.* retry=([0-9]+).*/\1/' <<< "$line")"
     lim="$(sed -E 's/.* limited=([0-9]+).*/\1/' <<< "$line")"
+    [[ "$line" =~ \ quota=([0-9]+) ]] && quota="${BASH_REMATCH[1]}"
   fi
   with_lock "$tmp/log.lock" sh -c 'cat "$1" >> "$2"' _ "$out" "$QCR_BENCH_RUNS_DIR/${JRUN[$i]}.review.log"
-  echo "$i $id $att $st $retry $lim" > "$tmp/done.$seq.tmp" && mv "$tmp/done.$seq.tmp" "$tmp/done.$seq"
+  echo "$i $id $att $st $retry $lim $quota" > "$tmp/done.$seq.tmp" && mv "$tmp/done.$seq.tmp" "$tmp/done.$seq"
 }
 
 # 3. A run whose last case finished: close it, judge it, score it — while the
@@ -408,12 +500,17 @@ finish_case() { # job
 while :; do
   for f in "$tmp"/done.*; do
     [[ -e "$f" && "$f" != *.tmp ]] || continue
-    read -r i id att st retry lim < "$f"; rm -f "$f"
+    read -r i id att st retry lim quota < "$f"; rm -f "$f"
     running=$(( running - 1 ))
     if [[ "$st" == ok ]]; then
       ok_n=$(( ok_n + 1 )); finish_case "$i"
     elif [[ "$st" == auth-stop ]]; then
       echo "$(ts) $id: the pi login is about to expire — no new reviews start (log in again, then re-run with --resume)"
+      stop=1; bad_n=$(( bad_n + 1 )); finish_case "$i"
+    elif [[ "${quota:-0}" -gt 0 ]]; then
+      # The plan's usage window is spent: every arm on the machine stops launching.
+      [[ "$ADAPT" == 1 || -d "$SLOTS" ]] && { mkdir -p "$SLOTS"; echo "$(date -u +%FT%TZ) $id" > "$QUOTA"; }
+      echo "$(ts) $id: USAGE LIMIT of the model login reached ($quota call(s) refused) — NO new review starts on this machine; re-run with --resume once the plan window resets"
       stop=1; bad_n=$(( bad_n + 1 )); finish_case "$i"
     elif [[ "$retry" == 1 && "$att" -le "$RETRIES" && "$stop" == 0 ]]; then
       QUEUE+=("$i $id $(( att + 1 ))")
@@ -421,11 +518,13 @@ while :; do
       if [[ "$lim" -gt 0 ]]; then
         pause_until=$(( $(date +%s) + PAUSE ))
         echo "$(ts) $id: RATE-LIMITED ($lim model error(s)) — no new review starts for ${PAUSE}s"
+        [[ "$ADAPT" == 1 ]] && with_lock "$SLOTS/target.lock" halve_par "rate-limited case $id"
       fi
       continue
     else
       bad_n=$(( bad_n + 1 )); finish_case "$i"
       echo "$(ts) $id: $st$([[ "$lim" -gt 0 ]] && echo " (RATE-LIMITED)") — not retried"
+      [[ "$lim" -gt 0 && "$ADAPT" == 1 ]] && with_lock "$SLOTS/target.lock" halve_par "rate-limited case $id"
     fi
     done_n=$(( done_n + 1 ))
     echo "$(ts) $done_n/$TOTAL done (ok $ok_n, not ok $bad_n) — $running running, $(( ${#QUEUE[@]} - qh )) queued"
@@ -435,7 +534,22 @@ while :; do
   fi
   (( qh >= ${#QUEUE[@]} && running == 0 )) && break
   now=$(date +%s)
-  if (( qh < ${#QUEUE[@]} && running < PAR && now >= pause_until && now - last >= GAP )); then
+  # Another arm hit the plan's usage limit after this one started: stop too.
+  if [[ "$stop" == 0 && -e "$QUOTA" ]] && (( $(mtime "$QUOTA") >= START )); then
+    echo "$(ts) USAGE LIMIT of the model login reached by another arm ($(cat "$QUOTA" 2>/dev/null)) — no new review starts; re-run with --resume once the plan window resets"
+    stop=1; continue
+  fi
+  cp="$(cur_par)"
+  # Step up when the pool is full, work is waiting and memory admits more
+  # (the cheap clock checks first; the slot probe and the lock only then).
+  if [[ "$ADAPT" == 1 ]] && (( qh < ${#QUEUE[@]} && cp < CEIL && now >= pause_until \
+      && now - $(mtime "$TARGET") >= RAMP_SECS && now - $(mtime "$LASTLIM") >= RAMP_SECS )); then
+    if (( $(slots_busy "$cp") >= cp )) && mem_ok "$now"; then
+      with_lock "$SLOTS/target.lock" ramp_par "$now" "$cp"
+      cp="$(cur_par)"
+    fi
+  fi
+  if (( qh < ${#QUEUE[@]} && running < cp && now >= pause_until && now - last >= GAP )); then
     if mem_ok "$now"; then
       read -r i id att <<< "${QUEUE[$qh]}"; qh=$(( qh + 1 ))
       seq=$(( seq + 1 )); running=$(( running + 1 )); last="$now"; LAUNCHED+=("$now"); waiting=0

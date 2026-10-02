@@ -1071,10 +1071,30 @@ old `arm.sh --cases full` ran the whole set in one container at
 - **Machine-wide slots.** `--parallel N|auto` (default auto) slots are lock
   files in `$QCR_BENCH_RUNS_DIR/.slots/`, shared by every `arm.sh` on the
   machine: two arms started side by side split the slots rather than
-  doubling the load on the one login. `auto` = (MemAvailable −
-  `QCR_BENCH_RESERVE_MB` 3072) / `QCR_BENCH_REVIEW_MB` 1024, capped at
-  `QCR_BENCH_MAX_PARALLEL` 10. A new review also waits while MemAvailable is
-  short, counting reviews started in the last 5 minutes as still growing.
+  doubling the load on the one login. A new review also waits while
+  MemAvailable is short, counting reviews started in the last 5 minutes as
+  still growing.
+- **Adaptive concurrency (AIMD, 2026-10-02).** `auto` starts at
+  min((MemAvailable − `QCR_BENCH_RESERVE_MB` 3072) / `QCR_BENCH_REVIEW_MB` 768,
+  `QCR_BENCH_START_PARALLEL` 10) and keeps ONE machine-wide target in
+  `.slots/target` (an arm that finds another holding slots adopts it; one that
+  finds none starts it over). While cases wait, every slot is busy, memory
+  admits one more and nothing was rate-limited for `QCR_BENCH_RAMP_SECS` (300),
+  the target rises by `QCR_BENCH_RAMP_STEP` (2) up to
+  `QCR_BENCH_PARALLEL_CEILING` (24). A rate-limited case halves it (once per
+  `QCR_BENCH_HALVE_GAP` 60 s burst). Every change prints
+  `concurrency N -> M, reason` and lands in `.slots/concurrency.log`.
+  `QCR_BENCH_ADAPTIVE=0` keeps auto at its start value; `--parallel N` and an
+  explicit `QCR_BENCH_MAX_PARALLEL=N` are fixed caps (the old behaviour).
+  `QCR_BENCH_REVIEW_MB` 768 is the measured peak: cgroup `memory.peak` of live
+  review containers was 577–788 MB including page cache, ~210 MB anonymous
+  steady (2026-10-02, bench/aacr/PERF.md).
+- **The plan's usage limit stops the machine.** "Codex error: The usage limit
+  has been reached" is the login's plan window spent (every refusal on record,
+  2026-09-29, each case failing within seconds), not a short 429: a case that
+  saw it prints `quota=N` on its result line, its arm stops launching, writes
+  `.slots/usage-limit`, and every other arm on the machine stops too. Nothing
+  is retried; `--resume` re-runs what is not ok once the window resets.
 - **Overlap.** A run is closed, defect-judged (one slot) and AACR-evaluated
   (one machine-wide eval lock) the moment its last case finishes, while the
   queue keeps reviewing other runs.
@@ -1101,10 +1121,11 @@ defect judge ~10 min, and the 3-round eval ~1.2 h (≈18 judge processes) —
 
 **Risks.** The ONE ChatGPT login is the real limit: earlier arms ran 8–10
 reviews at once (each fanning out to up to 6 lens children) with no
-rate-limit failure, so 10 is the default cap and not a measured ceiling. If
-`RATE-LIMITED` lines appear, lower `QCR_BENCH_MAX_PARALLEL` or `--parallel`
-and re-run with `--resume`. The eval adds ~18 low-effort judge calls at once
-while it runs.
+rate-limit failure, so 10 is where adaptive auto starts and not a measured
+ceiling — the ramp finds the ceiling and halves back on the first pushback.
+To pin it instead, set `QCR_BENCH_MAX_PARALLEL` or `--parallel` and re-run
+with `--resume`. The eval adds ~18 low-effort judge calls at once while it
+runs.
 
 **Keep the desktop indexer out of the runs dir.** KDE's `baloo_file_extractor`
 was seen at 8 GB RSS indexing the multi-megabyte `pi-events.jsonl` files
