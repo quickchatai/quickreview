@@ -12,6 +12,7 @@ import type { Config } from "./config.js";
 import { interpretReviewEvent, isFeedbackBody } from "./feedback.js";
 import { applyEvent as applyEventFor } from "./statemachine.js";
 import type { StateStore, StatusSnapshot } from "./state.js";
+import { blockedPrAuthor } from "./pr-conversation.js";
 
 // ---- signature -----------------------------------------------------------
 
@@ -56,6 +57,7 @@ export type Interpretation =
       via: "thread_reply";
       scope: "review_comment";
     }
+  | { kind: "author_pr_comment"; pr: number; comment_id: number; body: string; author: string; created_at: string | null }
   | {
       kind: "bot_comment";
       pr: number;
@@ -101,6 +103,8 @@ export interface InterpretDeps {
   /** Bot-comment registry lookup. Returning the PR number prevents a comment
    * id from ever waking a different PR session. */
   botCommentPr: (id: number) => number | undefined;
+  /** Known PR author, only while a substantive bot blocking review stands. */
+  blockedPrAuthor?: (pr: number) => string | undefined;
 }
 
 /** The configured bot (`[github] bot_login`, e.g. `some-app[bot]`) is
@@ -355,9 +359,15 @@ function interpretIssueComment(
       scope: "issue_comment",
     };
 
-  // Top-level PR conversation comments are deliberately never automatic.
-  // Automatic ping-pong is bounded to a reply in one of this PR's bot-owned
-  // inline review threads.
+  const author = deps.blockedPrAuthor?.(pr);
+  if (author && comment.user?.login?.toLowerCase() === author.toLowerCase() &&
+      typeof comment.body === "string" && comment.body.trim() &&
+      Number.isSafeInteger(comment.id) && comment.id > 0)
+    return { kind: "author_pr_comment", pr, comment_id: comment.id, body: comment.body, author,
+      created_at: typeof comment.created_at === "string" ? comment.created_at : null };
+
+  // Ordinary chatter remains silent. A blocked author's PR-level response is
+  // a separate conversation obligation, never an automatic review trigger.
   return { kind: "ignored", reason: "top-level PR comment is outside bot review threads", pr };
 }
 
@@ -521,6 +531,7 @@ export function handleDelivery(
     triggerLabel: deps.cfg.github.trigger_label,
     reviewTeam: deps.cfg.github.review_team,
     botCommentPr: (id) => deps.store.botCommentPr(id),
+    blockedPrAuthor: (pr) => blockedPrAuthor(deps.store, pr),
   });
   // the capture SIDE RECORD, taken beside the interpretation and
   // never instead of it. `interpretation` above is already decided and is not
@@ -641,6 +652,7 @@ export async function applyInterpretation(
     store: StateStore;
     onPrTouched?: (pr: number) => void | Promise<void>;
     onAuthorReply?: (i: Extract<Interpretation, { kind: "author_reply" }>) => void | Promise<void>;
+    onAuthorPrComment?: (i: Extract<Interpretation, { kind: "author_pr_comment" }>) => void | Promise<void>;
     onClosed?: (pr: number) => void | Promise<void>;
     /** Post-approval recheck triggers — none touches lifecycle. */
     onSynchronize?: (i: Extract<Interpretation, { kind: "synchronize" }>) => void | Promise<void>;
@@ -702,6 +714,9 @@ export async function applyInterpretation(
       await deps.onClosed?.(i.pr);
       return;
     }
+    case "author_pr_comment":
+      await deps.onAuthorPrComment?.(i);
+      return;
     case "author_reply":
       applyEventFor(store, i.pr, { type: "author_reply" }, {}, opts);
       // New evidence at the current head (guard 2): a reply is the one

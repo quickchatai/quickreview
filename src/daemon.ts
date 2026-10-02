@@ -52,6 +52,7 @@ import type { SessionHooks } from "./types.js";
 import { VerdictWatcher, type VerdictAdapter } from "./verdicts.js";
 import { applyInterpretation, createWebhookServer, type Interpretation } from "./webhook.js";
 import { wakeOrHold } from "./wakes.js";
+import { PrConversation, type ConversationAdapter } from "./pr-conversation.js";
 
 // Partial<RecheckAdapter>: the recheck's two extra reads (compare, files) are a
 // seam, not a requirement — a daemon wired without them simply never rechecks,
@@ -60,7 +61,8 @@ export type DaemonAdapter = DispatchAdapter &
   ReconcileAdapter &
   VerdictAdapter &
   Partial<RecheckAdapter> &
-  Partial<CiAdapter>;
+  Partial<CiAdapter> &
+  Partial<ConversationAdapter>;
 
 export interface DaemonDeps {
   cfg?: Config;
@@ -264,6 +266,11 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       verdicts.recoverInfrastructureFailure(pr, roundNo, stage, detail),
     ...(deps.now ? { now: deps.now } : {}),
   });
+  const prConversation = new PrConversation({
+    store, adapter: gh, verdictDir, botLogin: cfg.github.bot_login,
+    inject: (pr, message) => hooks.inject(pr, message),
+    ...(deps.now ? { now: deps.now } : {}),
+  });
   const pingpong = new PingPongLedger(store.db);
   const threadDecisions = new ThreadDecisionWatcher({
     adapter: gh as GitHubAdapter,
@@ -363,6 +370,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         onPrTouched: async () => {
           await pump();
         },
+        onAuthorPrComment: async (comment) => { await prConversation.accept(comment); },
         onAuthorReply: async (reply) => {
           // Webhook interpretation guarantees a same-PR bot-owned root. Claim
           // the author message before waking so duplicate deliveries cannot
@@ -529,6 +537,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         );
         threadDecisions.requestSweep();
       }
+      await prConversation.sweep();
       await pump();
     });
   };
@@ -543,7 +552,9 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         store,
         adapter: gh,
         hooks,
-        renderPrompt: deps.renderPrompt,
+        renderPrompt: (order, memory) =>
+          (deps.renderPrompt ? deps.renderPrompt(order, memory) : JSON.stringify(order, null, 2)) +
+          prConversation.context(order.pr),
         ...(deps.memory ? { memory: deps.memory } : {}),
         ...(deps.ecosystem ? { ecosystem: deps.ecosystem } : {}),
         ...(deps.heuristics ? { heuristics: deps.heuristics } : {}),
@@ -736,6 +747,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           void guard("verdict sweep", async () => {
             await verdicts.sweep();
             await threadDecisions.sweep();
+            await prConversation.sweep();
             await rechecks.sweep();
           }),
       );

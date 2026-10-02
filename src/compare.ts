@@ -84,6 +84,7 @@ export const ALLOWED_MUTATION_KINDS = [
   "delete_team_review_request",
   "create_review",
   "create_review_comment_reply",
+  "create_issue_comment",
   "create_issue",
   "create_pull",
   "push_branch",

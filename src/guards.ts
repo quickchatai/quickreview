@@ -68,6 +68,7 @@ import type { ReviewedHeadRow, StateStore } from "./state.js";
 export const POSTING_KINDS: ReadonlySet<string> = new Set([
   "create_review",
   "create_review_comment_reply",
+  "create_issue_comment",
 ]);
 
 /** The read-only slice of the adapter the guards need. Both calls are reads,

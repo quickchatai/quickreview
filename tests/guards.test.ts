@@ -460,6 +460,24 @@ describe("guard 3 — merged or closed state is re-checked immediately before po
     expect(executor).not.toHaveBeenCalled();
   });
 
+  it.each(["open", "merged", "closed", "unreadable"])("guards a PR conversation answer (%s) without requiring a new review", async state => {
+    const { gate, adapter, executor } = harness();
+    store.recordReviewedHead(5180, { head_sha: HEAD, verdict: "REQUEST_CHANGES" });
+    if (state === "merged") adapter.pr = { ...adapter.pr, merged: true, state: "closed" };
+    if (state === "closed") adapter.pr = { ...adapter.pr, state: "closed" };
+    if (state === "unreadable") adapter.failGetPr = true;
+    const result = await gate.execute({ kind: "create_issue_comment", method: "POST",
+      path: "/repos/o/r/issues/5180/comments", body: { body: "I reconsidered your objection" }, note: "answer author", pr: 5180 });
+    if (state === "open") {
+      expect(result.executed).toBe(true);
+      expect(executor).toHaveBeenCalledOnce();
+      expect(store.reviewedHead(5180)?.verdict).toBe("REQUEST_CHANGES");
+    } else {
+      expect(result.blocked).toBe(state === "merged" ? "pr-merged" : state === "closed" ? "pr-closed" : "pr-unreadable");
+      expect(executor).not.toHaveBeenCalled();
+    }
+  });
+
   it("guards the thread-reply route too, not just full reviews", async () => {
     const { gate, adapter, executor } = harness();
     adapter.pr = { ...adapter.pr, merged: true, state: "closed" };

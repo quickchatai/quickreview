@@ -22,6 +22,7 @@ in the loop. The model runs inside the per-PR session, which the daemon only
 | Verdict file consumption, anomalies, self-requeue | `src/verdicts.ts` |
 | Post-approval recheck + the trivial-delta classifier | `src/recheck.ts` |
 | Author-reply exchanges | `src/pingpong.ts` |
+| Blocked author's PR-level objections and answers | `src/pr-conversation.ts` |
 | Holding wakes while a round is in flight | `src/wakes.ts` |
 | Posting-time guards, "new evidence" test | `src/guards.ts` |
 | CI gate and withheld approvals | `src/cigate.ts` |
@@ -403,6 +404,36 @@ them verbatim. The session answers with a thread decision file
 (`pr-<n>-thread-<t>-comment-<c>.json`); `ThreadDecisionWatcher` treats that
 output as untrusted — ids must match a claimed author message, and the adapter
 independently verifies bot ownership before resolving anything.
+
+**PR-level author objections.** While a substantive bot REQUEST_CHANGES stands
+on a tracked open PR, an ordinary, nonempty top-level comment from that PR's
+verified author is also delivered to its main session. No @mention is needed.
+Other conversation stays silent; bots and `[feedback]` remain excluded. This is
+an answer obligation, not a review trigger (`PrConversation`,
+`src/pr-conversation.ts`). The session must check the objection against base
+and current code and explicitly concede, uphold with evidence, or explain what
+is missing. The daemon validates a claimed
+`pr-<n>-conversation-comment-<c>.json` answer and posts it as an ordinary gated
+`create_issue_comment`, with current-PR-state guards and dry-run unchanged.
+There is no invented inline thread to resolve. An answer never clears a
+standing verdict or automatically requests another review.
+
+SQLite preserves each obligation independently of the held-wake queue. Failed
+injections are held; missing answers may be redelivered after five minutes only
+when the PR session is idle and no copy is held. Three unsuccessful deliveries
+or posting attempts leave a retained failed obligation and an anomaly, not
+unbounded retry. Before posting, the daemon reads the conversation for the
+exact bot answer and its per-comment marker, so an interrupted successful POST
+is recovered rather than duplicated; an unreadable or truncated list cannot
+license a blind repost. A separate bounded capture-recovery step admits only
+untagged verified-author comments from the last 24 hours, posted after a
+proven blocking review. Completed round history retains that proof when a later
+review re-stamps the current head; pre-review chatter is excluded before the
+recovery batch limit. A late valid answer can satisfy a delivery-exhausted
+obligation without another injection; a posting-exhausted answer is not
+silently replayed. Capture itself still never routes or wakes anything.
+Recent accepted objections and answers are included as quoted evidence in a
+later explicitly requested round, including across session restart.
 
 **Held wakes.** A PR has exactly one main session that owns rounds *and* author
 exchanges, so two instructions in flight at once is a topology violation, not a

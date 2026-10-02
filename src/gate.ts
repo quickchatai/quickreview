@@ -28,6 +28,7 @@ export type MutationKind =
   | "request_reviewer"
   | "create_review"
   | "create_review_comment_reply"
+  | "create_issue_comment"
   // Resolve only a bot-owned inline thread after the adapter verifies both
   // the PR and root author. This never dismisses or changes a review verdict.
   | "resolve_own_review_thread"
@@ -60,6 +61,7 @@ export const MUTATION_KINDS: readonly MutationKind[] = [
   "request_reviewer",
   "create_review",
   "create_review_comment_reply",
+  "create_issue_comment",
   "resolve_own_review_thread",
   "create_issue",
   "create_pull",

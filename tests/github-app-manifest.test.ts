@@ -83,6 +83,7 @@ const KIND_WRITE_PERMISSION: Record<Exclude<MutationKind, AppSelfConfigKind>, st
   create_review: "pull_requests", // POST /pulls/{n}/reviews
   create_review_comment_reply: "pull_requests", // POST /pulls/{n}/comments/{id}/replies
   resolve_own_review_thread: "pull_requests", // GraphQL resolveReviewThread
+  create_issue_comment: "issues", // POST /issues/{n}/comments
   create_issue: "issues", // POST /issues
   create_pull: "pull_requests", // POST /pulls
   push_branch: "contents", // git push origin …:refs/heads/bot/improve-*

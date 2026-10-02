@@ -219,7 +219,7 @@ describe("(b) invariant scan", () => {
     expect(ALLOWED_MUTATION_KINDS).toContain("create_review");
     // an escalation review request is a legitimate intent again.
     expect(ALLOWED_MUTATION_KINDS).toContain("request_reviewer");
-    expect(ALLOWED_MUTATION_KINDS).toHaveLength(9);
+    expect(ALLOWED_MUTATION_KINDS).toHaveLength(10);
   });
 
   it("does NOT flag a request_reviewer record — it is an ordinary kind again", () => {

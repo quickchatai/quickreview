@@ -445,6 +445,40 @@ describe("interpretEvent — review comments", () => {
 });
 
 describe("interpretEvent — issue comments", () => {
+  it("routes a blocked PR author's unmentioned objection without triggering a round", () => {
+    const payload = issueCommentPayload({ body: "This predates the PR; please reconsider the blocker." });
+    expect(interpretEvent("issue_comment", "created", payload, {
+      ...deps(), blockedPrAuthor: () => "alice",
+    })).toMatchObject({ kind: "author_pr_comment", pr: 4242, comment_id: 910001, author: "alice" });
+  });
+
+  it.each([
+    { body: "[feedback] This review is noisy", user: { login: "alice", type: "User" }, expected: "feedback_comment" },
+    { body: "please reconsider", user: { login: "bob", type: "User" }, expected: "ignored" },
+    { body: "please reconsider", user: { login: "other[bot]", type: "Bot" }, expected: "ignored" },
+    { body: " ", user: { login: "alice", type: "User" }, expected: "ignored" },
+  ])("preserves exclusion/diversion ahead of blocked-author routing: $expected", ({ body, user, expected }) => {
+    expect(interpretEvent("issue_comment", "created", issueCommentPayload({ body, user }), {
+      ...deps(), blockedPrAuthor: () => "alice",
+    }).kind).toBe(expected);
+  });
+
+  it("routes a signed top-level objection against stored standing-review evidence", async () => {
+    const store = new StateStore(":memory:");
+    store.upsertPr({ number: 4242, state: "awaiting_author", head_sha: "abc", title: "T", author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+    store.recordReviewedHead(4242, { head_sha: "abc", verdict: "REQUEST_CHANGES" });
+    const response = delivery(store, issueCommentPayload({ body: "This predates the PR" }), "issue_comment", "author-pr-comment");
+    expect(response.interpretation?.kind).toBe("author_pr_comment");
+    const received = vi.fn();
+    const touched = vi.fn();
+    await applyInterpretation({ cfg, store, onAuthorPrComment: received, onPrTouched: touched }, response.interpretation!);
+    expect(received).toHaveBeenCalledOnce();
+    expect(touched).not.toHaveBeenCalled();
+    expect(store.getPr(4242)?.state).toBe("awaiting_author");
+    expect(store.prComments(4242)).toHaveLength(1);
+    store.close();
+  });
+
   it("ignores top-level comments on issues and PRs", () => {
     expect(
       interpretEvent("issue_comment", "created", issueCommentPayload({ isPr: false }), deps()).kind,

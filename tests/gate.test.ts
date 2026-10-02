@@ -114,6 +114,7 @@ describe("the closed mutation vocabulary", () => {
         "create_pull",
         "create_review",
         "create_review_comment_reply",
+        "create_issue_comment",
         "delete_team_review_request",
         "push_branch",
         "remove_label",

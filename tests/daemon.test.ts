@@ -85,6 +85,37 @@ describe("daemon wiring", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  it("recovers a blocked author's PR objection, answers it, and retains evidence in an explicitly requested round", { timeout: HEAVY_TIMEOUT_MS }, async () => {
+    const cfg = { ...loadConfig(join(process.cwd(), "tests/fixtures/config.toml")), dry_run: true };
+    const adapter = fakeAdapter([], join(root, "state", "dryrun"));
+    adapter.searchLabelTriggered = async () => [];
+    adapter.getRequestedReviewers = async () => ({ users: [], teams: [] });
+    adapter.createIssueComment = vi.fn(async () => ({ executed: false, dryRunFile: "answer.json" }));
+    adapter.listIssueComments = async () => [];
+    const inject = vi.fn(async () => {});
+    const dispatchRound = vi.fn(async (_order: unknown, _prompt: string) => {});
+    store.upsertPr({ number: PR, state: "awaiting_author", head_sha: "headsha1", title: "test PR", author: "someone", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+    store.recordReviewedHead(PR, { head_sha: "headsha1", verdict: "REQUEST_CHANGES" });
+    store.recordPrComment({ pr: PR, source: "issue_comment", comment_id: 900001, author: "someone", body: "This predates the PR; please reconsider", created_at: new Date(Date.now() + 1000).toISOString() });
+    const daemon = createDaemon({ cfg, root, store, adapter, listen: false, log: () => {},
+      now: () => new Date(Date.now() + 2000),
+      hooks: { inject, dispatchRound, async injectOverseer() {}, async archiveAndClose() {} },
+    });
+    await daemon.reconcile();
+    expect(inject).toHaveBeenCalledOnce();
+    expect(dispatchRound).not.toHaveBeenCalled();
+    writeFileSync(join(root, "verdict", `pr-${PR}-conversation-comment-900001.json`), JSON.stringify({ pr: PR, comment_id: 900001, reply: "I concede this pre-existing finding; please explicitly request a fresh review." }));
+    await daemon.reconcile();
+    expect(adapter.createIssueComment).toHaveBeenCalledOnce();
+    expect(store.getPr(PR)?.state).toBe("awaiting_author");
+    expect(dispatchRound).not.toHaveBeenCalled();
+    store.db.prepare("UPDATE pr_state SET state='queued', trigger_ts=? WHERE number=?").run(new Date().toISOString(), PR);
+    await daemon.pump();
+    expect(dispatchRound).toHaveBeenCalledOnce();
+    expect(dispatchRound.mock.calls[0]?.[1]).toContain("This predates the PR");
+    expect(dispatchRound.mock.calls[0]?.[1]).toContain("I concede this pre-existing finding");
+  });
+
   // Boot-order regression (live, #5290 2026-08-19): the first reconcile can
   // nudge a recheck at a dead session immediately; the respawn path needs the
   // title resolver wired by onStart, so onStart must run BEFORE the sweep.

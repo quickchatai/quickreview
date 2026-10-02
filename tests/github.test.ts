@@ -320,6 +320,7 @@ describe("mutations in dry-run", () => {
     await adapter.removeLabel(3, "AI review requested");
     await adapter.createReview(3, { commit_id: "sha", event: "REQUEST_CHANGES", body: "b" });
     await adapter.createReviewCommentReply(3, 555, "reply");
+    await adapter.createIssueComment(3, "answer the objection");
     await adapter.createIssue("t", "b", ["bot-filed"]);
     await adapter.createPull("head", "main", "t", "b");
     await adapter.deleteTeamReviewRequest(3);
@@ -335,6 +336,7 @@ describe("mutations in dry-run", () => {
         "create_pull",
         "create_review",
         "create_review_comment_reply",
+        "create_issue_comment",
         "delete_team_review_request",
         "remove_label",
       ].sort(),
@@ -343,6 +345,12 @@ describe("mutations in dry-run", () => {
       expect(typeof r.note).toBe("string");
       expect(["POST", "DELETE", "PATCH", "PUT", "git"]).toContain(r.method);
     }
+  });
+
+  it("posts PR-level author answers through the ordinary gate on the issues route", async () => {
+    const { adapter, calls } = build(() => ({ id: 999 }), false);
+    expect(await adapter.createIssueComment(77, "I concede this finding")).toMatchObject({ executed: true });
+    expect(calls).toEqual([{ url: "https://api.github.com/repos/example-org/example-app/issues/77/comments", method: "POST", body: { body: "I concede this finding" } }]);
   });
 
   // Live noise fix (2026-08-19, #5309/#5314): removing an already-absent

@@ -821,9 +821,12 @@ export class GitHubAdapter {
   /** Top-level PR conversation comments — read-only, the sweep's
    * third source (the issues API is where GitHub keeps them). */
   async listIssueComments(n: number): Promise<IssueCommentFull[]> {
-    const { rows: res } = await this.pagedArray<any>(
+    const { rows: res, truncated } = await this.pagedArray<any>(
       `/repos/${this.owner}/${this.repo}/issues/${n}/comments?per_page=100`,
     );
+    // A conversation retry must not read a partial list as proof that its
+    // earlier POST did not land. Capture callers already treat failure as unknown.
+    if (truncated) throw new Error(`issue comments on #${n} exceeded the pagination bound`);
     return res.map((c) => ({
       id: c.id,
       user: c.user?.login ?? "",
@@ -1057,6 +1060,15 @@ export class GitHubAdapter {
       note: `post ${payload.event} review on #${n}`,
       pr: n,
       reviewPurpose: options?.purpose,
+    });
+  }
+
+  /** A claimed PR-level author response; ordinary posting guards and dry-run apply. */
+  async createIssueComment(n: number, body: string): Promise<GateResult> {
+    return this.gate.execute({
+      kind: "create_issue_comment", method: "POST",
+      path: `/repos/${this.owner}/${this.repo}/issues/${n}/comments`,
+      body: { body }, note: `answer the author in PR #${n}'s conversation`, pr: n,
     });
   }
 
