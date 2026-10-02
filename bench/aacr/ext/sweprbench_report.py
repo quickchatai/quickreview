@@ -15,6 +15,7 @@ answer for — the run is then invalid) and the judge's token use.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -30,6 +31,14 @@ PUBLISHED = [
     ("Llama 3.3 70B", 0.088, 0.071, 0.065, 0.079, 0.223, 0.417),
 ]
 PRICE = {"in": 2.0, "cached": 0.10, "out": 10.0}  # gpt-6.1-sol list $/M (FULL-BENCHMARK.md)
+
+
+def set_label(work: Path) -> str:
+    """The case set a scoring dir belongs to, from its run name
+    (`ext-r5-sweprbench-eval100.sweprbench` -> `eval100`); the table used to
+    say "smoke" for every run."""
+    m = re.search(r"sweprbench-([\w-]+?)(?:\.sweprbench)?(?:-MOCK)?$", work.name)
+    return m.group(1) if m else "set unknown"
 
 
 def judge_cost(log: Path) -> dict:
@@ -94,7 +103,7 @@ def main() -> None:
           f"judge fallbacks {row['judge_parse_fallbacks']})\n")
     print("| Model | s_A | s_B | s_C | s̄ | DR_A | FPR_avg | PRs |\n|---|---|---|---|---|---|---|---|")
     print(f"| **QuickReview default (gpt-6.1-sol), judge gpt-6.1-sol** | {f(row['sA'])} | {f(row['sB'])} | {f(row['sC'])} "
-          f"| {f(row['s_bar'])} | {f(row['DR_A'])} | {f(row['FPR_avg'])} | {row['prs']} (smoke) |")
+          f"| {f(row['s_bar'])} | {f(row['DR_A'])} | {f(row['FPR_avg'])} | {row['prs']} ({set_label(work)}) |")
     for name, *v in PUBLISHED:
         print(f"| {name} — published, judge GPT-5.2 | " + " | ".join(f"{x:.3f}" for x in v) + " | 100 (eval_100) |")
     print(f"\njudge: {row['judge']}")

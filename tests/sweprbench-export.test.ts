@@ -67,3 +67,17 @@ describe("sweprbench_export.py", () => {
     ]);
   });
 });
+
+describe("sweprbench_report.py", () => {
+  it("labels the row with the run's case set, not always 'smoke'", () => {
+    const label = (name: string) =>
+      execFileSync("python3", [
+        "-c",
+        "import sys; sys.path.insert(0, 'bench/aacr/ext'); import sweprbench_report as r; from pathlib import Path; print(r.set_label(Path(sys.argv[1])))",
+        `/runs/${name}`,
+      ]).toString().trim();
+    expect(label("ext-r5-sweprbench-eval100.sweprbench")).toBe("eval100");
+    expect(label("ext-g61-sweprbench-smoke10.sweprbench")).toBe("smoke10");
+    expect(label("ext-x-sweprbench-smoke10.sweprbench-MOCK")).toBe("smoke10");
+  });
+});
