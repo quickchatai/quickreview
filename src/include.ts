@@ -702,6 +702,25 @@ export const CONSISTENCY_IDENTIFIERS_ADDENDUM =
   "2. **Against the sibling convention in the touched module.** Grep the module and its package for how the existing metrics, tags, log keys, events and errors are named and raised. A new name that departs from the scheme every sibling follows is the finding; so is a handler or endpoint that raises a generic error (`Error`, `Exception`, `RuntimeError`, a bare string) where its siblings raise the framework's or the module's typed error.\n\n" +
   "Report each mismatch with both sides — the majority's `path:line` and the outlier's — and what the mismatch DOES: which series splits, which consumer misses it, which status code or catch block changes. A mismatch a consumer already reads is a defect at full severity under the ordinary map; one nothing reads yet is `P3`.\n";
 
+// Owner-approved 2026-10-02 (GOLDEN-MINING.md §5.1): three validator
+// calibrations, each a place where the validator's own step 1/4 discarded or
+// downgraded a real defect for a reason that is not about the defect.
+export const VALIDATE_EXTERNAL_SEMANTICS_ADDENDUM =
+  "\n## A claim about an external tool or library is a question before it is a doubt (sandbox rule)\n" +
+  "Some candidates rest on what a third-party library, CLI tool, service or platform does — the arguments it accepts, its defaults, what it returns on an edge case, which errors it raises — and the repository does not vendor it, so the worktree alone cannot settle the claim. For such a candidate, in your step 1:\n\n" +
+  "1. **Consult the dependency sources first.** When your task string carries the round's *Third-party sources* block, open the named package at the PR's locked version and read the behaviour the claim depends on, citing `path:line` from it. Read the repository's own usage too — other call sites, wrappers, tests, docs — which often settles the semantics.\n" +
+  "2. If that settles it, judge it on what you read: `refuted` when the source contradicts the claim; it survives when the source confirms it.\n" +
+  "3. **If it is still unverifiable after that, do not doubt it away.** When the mechanism in THIS code is real and only the external behaviour cannot be read, the candidate is an open question, not a dead finding. Keep it: cap it at `P2` with `reachability: plausible` (so the ordinary posting map makes it a `[question]`) and the downgrade word `external-assumption`, and make its text name the assumption — \"if `<tool>` treats `<input>` as `<X>`, then `<consequence>`\" — so the author can answer it in one line.\n\n" +
+  "This changes nothing for a claim one read of the repository could settle (that is still yours to settle), nor for a claim whose in-repo mechanism is wrong.\n";
+
+export const VALIDATE_INTERFACE_CONTRACT_ADDENDUM =
+  "\n## A broken declared contract is a defect even if today's callers tolerate it (sandbox rule)\n" +
+  "When a candidate shows the change returning, passing, accepting or storing a value that the interface's DECLARED or DOCUMENTED contract forbids — `null` where the contract says never null, a type or range the signature, annotation, docstring, Javadoc, schema or interface comment rules out, an exception the contract says is not thrown, an ordering or uniqueness it promises — keep it at **at least `P2`**, whatever the present callers do. \"Current callers accept null\", \"no consumer crashes today\" and \"every caller checks anyway\" are not downgrade reasons: the contract is what the next caller, another implementation of the interface or another module codes against, and they are who break. Cite the contract text (`path:line`) in the finding. Refute it only when the contract does not say what the candidate claims, or when the forbidden value cannot reach the boundary.\n";
+
+export const VALIDATE_MASKED_DEFECT_ADDENDUM =
+  "\n## A new defect behind an old one keeps its own severity (sandbox rule)\n" +
+  "When the change introduces a defect on a path where a PRE-EXISTING defect currently hides it — the new bug cannot bite today only because an older bug on the same path stops execution first (a wrong guard before it, a branch an existing error never lets run) — do not downgrade the new defect for being masked. Masking is not mitigation: fixing the old bug, which anyone may do next, exposes the new one. Keep the new finding at the severity it would carry without the mask, and state both in it: the new defect, and the pre-existing one that currently hides it, by `path:line`.\n";
+
 // Owner ruling 2026-10-02 (amends for content): the lens is now also
 // PLANNED when the diff touches synchronisation or the PR text says it is about
 // a race or a lock (heuristics.ts SUBLENS_TRIGGERS). The trigger above was
@@ -1131,6 +1150,19 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
     mode: "pr",
     text: CONSISTENCY_IDENTIFIERS_ADDENDUM,
   },
+  {
+    id: "validate-external-semantics",
+    scope: [VALIDATE_PASS],
+    mode: "pr",
+    text: VALIDATE_EXTERNAL_SEMANTICS_ADDENDUM,
+  },
+  {
+    id: "validate-interface-contract",
+    scope: [VALIDATE_PASS],
+    mode: "pr",
+    text: VALIDATE_INTERFACE_CONTRACT_ADDENDUM,
+  },
+  { id: "validate-masked-defect", scope: [VALIDATE_PASS], mode: "pr", text: VALIDATE_MASKED_DEFECT_ADDENDUM },
   // the one corpus-derived rule that is generic review behaviour.
   // Its six house-rule siblings ride the live deployment's profile addenda pack since
   // (see the banner above); wire.ts composes a profile pack after

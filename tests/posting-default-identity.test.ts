@@ -119,4 +119,6 @@ const GOLDEN_ORDERS: Record<string, string> = {
 //   36379ba6… (a67993b, pre-[posting]) → a9474797… the `concurrency-planned`
 //   addendum (pass-concurrency planned by its content trigger)
 //   → 95c8be2a… `consistency-identifiers` (pass-consistency)
-const GOLDEN_AGENTS = "95c8be2aff0817fd10a6ffda05dfddb33f64067d39897231d7c96ea5decb2a77";
+//   → 5fe083e9… `validate-external-semantics`, `validate-interface-contract`,
+//     `validate-masked-defect` (pass-validate)
+const GOLDEN_AGENTS = "5fe083e9d1f6550fa7c0388bfd2e95848a234f1e50d32d96884f41ffaf277887";

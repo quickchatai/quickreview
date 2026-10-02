@@ -167,6 +167,10 @@ export const DOWNGRADE_WORDS: readonly string[] = [
   // Benchmark 2026-09-26: the mechanism is real, the claimed consequence was
   // wrong — posted with the true consequence instead of killed.
   "restated",
+  // 2026-10-02 (validate-external-semantics): a claim resting on an external
+  // tool's or library's behaviour that no read could settle — kept as a
+  // question naming the assumption, never doubted away.
+  "external-assumption",
 ];
 
 /** `settled:<thread-id>` is a kill word with a payload, so it is matched by

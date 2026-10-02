@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { addendaForPass, buildAgents, PASS_ADDENDA, VALIDATE_PASS } from "../src/include.js";
 import { ALL_PASSES } from "../src/passes.js";
+import { DOWNGRADE_WORDS, isKnownVocabularyWord } from "../src/findingsrecord.js";
 
 const root = resolve(process.cwd());
 
@@ -63,4 +64,53 @@ describe("consistency-identifiers (pass-consistency)", () => {
   });
 });
 
-void VALIDATE_PASS;
+describe("validator calibrations (pass-validate)", () => {
+  const IDS = [
+    "validate-external-semantics",
+    "validate-interface-contract",
+    "validate-masked-defect",
+  ];
+
+  it("each binds pass-validate alone, in PR builds only, after the doubt-not-kill rule", () => {
+    const order = addendaForPass(VALIDATE_PASS).map((a) => a.id);
+    for (const id of IDS) {
+      expect(boundTo(id), id).toEqual({ pr: [VALIDATE_PASS], scan: [] });
+      expect(order.indexOf(id), id).toBeGreaterThan(order.indexOf("validate-doubt-not-kill"));
+    }
+  });
+
+  it("external semantics: dependency sources first, then a question naming the assumption — never doubted away", () => {
+    const body =
+      built().get(`${VALIDATE_PASS}--sol-high`) ?? built().get(`${VALIDATE_PASS}--sol-med`)!;
+    expect(body).toContain(
+      "A claim about an external tool or library is a question before it is a doubt",
+    );
+    expect(body).toContain("Consult the dependency sources first");
+    expect(body).toContain("*Third-party sources* block");
+    expect(body).toContain("do not doubt it away");
+    expect(body).toContain("`external-assumption`");
+    expect(body).toContain("`reachability: plausible`");
+    expect(DOWNGRADE_WORDS).toContain("external-assumption");
+    expect(isKnownVocabularyWord("external-assumption")).toBe(true);
+  });
+
+  it("interface contract: at least P2 whatever today's callers tolerate", () => {
+    const text = PASS_ADDENDA.find((a) => a.id === "validate-interface-contract")!.text;
+    expect(text).toContain("**at least `P2`**");
+    expect(text).toContain("are not downgrade reasons");
+    expect(text).toContain("Cite the contract text");
+  });
+
+  it("masked defect: keeps its own severity and states both", () => {
+    const text = PASS_ADDENDA.find((a) => a.id === "validate-masked-defect")!.text;
+    expect(text).toContain("do not downgrade the new defect for being masked");
+    expect(text).toContain("state both");
+  });
+
+  it("name no benchmark, project or PR", () => {
+    for (const id of IDS)
+      expect(PASS_ADDENDA.find((a) => a.id === id)!.text, id).not.toMatch(
+        /martian|golden|gifsicle|sentry|keycloak|grafana|cal\.com|discourse/i,
+      );
+  });
+});
