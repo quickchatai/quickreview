@@ -25,11 +25,12 @@ const commitId = (text: string): string =>
   createHash("sha1").update(`commit ${Buffer.byteLength(text)}\0${text}`).digest("hex");
 
 describe("dataset pin registry", () => {
-  it("keeps AACR-Bench v1.0 and adds exactly the two external pins", () => {
+  it("keeps AACR-Bench v1.0 and adds exactly the three external pins", () => {
     expect(DATASET_PINS.map((p) => p.id)).toEqual([
       "aacr-v1",
       "martian-offline-e616e84",
       "swe-prbench-b87f579",
+      "qodo-pr-review-bench-a73957c",
     ]);
     expect(datasetPin({ commit: AACR_V1.commit, sha256: AACR_V1.sha256 })?.id).toBe("aacr-v1");
     expect(parseCaseSet(set("smoke10")).pin).toBe("aacr-v1");
@@ -123,5 +124,24 @@ describe("the committed external sets", () => {
       // The PR text rides the set: prefetch never asks the API for these.
       expect(typeof c.title).toBe("string");
     }
+  });
+
+  it("qodo-smoke10: one PR per repository, leak-proof, synthetic ids that recompute, no benchmark header in the PR text", () => {
+    const raw = set("qodo-smoke10");
+    const s = parseCaseSet(raw);
+    expect(s.pin).toBe("qodo-pr-review-bench-a73957c");
+    expect(s.cases).toHaveLength(10);
+    const repos = new Set(raw.cases.map((c: { repo: string }) => c.repo));
+    expect(repos.size).toBe(8);
+    for (const c of s.cases) {
+      const lp = c.leakproof!;
+      const b = commitId(leakproofCommitText(lp.base_tree, null));
+      expect(c.base_commit).toBe(b);
+      expect(c.head_commit).toBe(commitId(leakproofCommitText(lp.head_tree, b)));
+      expect(c.body ?? "").not.toMatch(/Code Review Bench|Original PR URL/);
+    }
+    const all = set("qodo-pr100");
+    expect(parseCaseSet(all).cases).toHaveLength(100);
+    expect(all.references).toBe(580);
   });
 });

@@ -133,6 +133,14 @@ export const DATASET_PINS: readonly DatasetPin[] = [
     commit: "b87f5797aef3ed2c3153bb1304ea4d801d36ba6e",
     sha256: "a58e1f713533f6bc260a93f6e234b85acd16a77f55a756893694b96495eb43cd",
   },
+  {
+    // huggingface.co/datasets/Qodo/PR-Review-Bench @ a73957c: sha256 of
+    // git_code_review_bench_100_w_open_prs.jsonl (bench/aacr/ext/qodo_set.py).
+    id: "qodo-pr-review-bench-a73957c",
+    denomination: "Qodo PR-Review-Bench @ a73957c (100 PRs, 580 injected issues; published scores unreproducible — no judge published)",
+    commit: "a73957c450a70693a743260e5637fffc44625f16",
+    sha256: "2f0448ed1f9a55bea14039961d8d9e610ee8885b37559b80f5821f3f70cfe64d",
+  },
 ];
 
 /** The registered pin a set's `dataset` names, or null. */

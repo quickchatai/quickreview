@@ -12,6 +12,8 @@
 #   ext.sh martian RUN SET            step 1 adapter + Martian's steps 2/2.5/3 + score_profiles,
 #                                     judge gpt-6.1-sol; also re-judges three published tools
 #   ext.sh sweprbench RUN SET         export + replay + SWE-PRBench's run_eval.py, judge gpt-6.1-sol
+#   ext.sh qodo RUN|none SET          Qodo PR-Review-Bench: QuickReview (RUN) and the nine published
+#                                     vendor runs, ONE judge (gpt-6.1-sol) for all — qodo_judge.py
 #
 #   QCR_BENCH_RUNS_DIR   where runs live (required; outside any worktree)
 #   EXT_CACHE            the local bare git caches (default $QCR_BENCH_RUNS_DIR/../ext-cache)
@@ -147,6 +149,8 @@ repos = {}
 for c in s["cases"]:
     if "martian" in c:
         repos[c["fetch_repo"]] = f"martian/{c['martian']['project']}.git"
+    elif c.get("pr_category") == "qodo-injected":
+        repos[c["repo"]] = f"qodo/git/{c['repo'].replace('/', '__')}.git"
     else:
         repos[c["repo"]] = f"sweprbench/{c['repo'].replace('/', '__')}.git"
 print(json.dumps({"root": "/mirrors", "repos": repos}))
@@ -160,6 +164,34 @@ PY
     set_name="${1:?usage: ext.sh review SET [arm.sh flags]}"; shift
     QCR_BENCH_IMAGE="$QIMG" systemd-inhibit --what=sleep:idle --why="qcr external bench review" \
       "$AACR/arm.sh" --prefix ext-g61 --config "$DEFAULT" --cases "$set_name" --no-judge "$@"
+    ;;
+
+  qodo)
+    run="${1:?usage: ext.sh qodo RUN|none SET}"; set_name="${2:?usage: ext.sh qodo RUN|none SET}"; shift 2
+    f="$AACR/sets/$set_name.json"; [[ -f "$f" ]] || die "no set $f"
+    data="$EXT_CACHE/qodo"
+    [[ -f "$data/tool-comments.json" ]] || die "no $data/tool-comments.json — run qodo_scrape.py --cache $data build first"
+    got="$(sha256sum "$data/git_code_review_bench_100_w_open_prs.jsonl" | cut -d' ' -f1)"
+    want="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["dataset"]["sha256"])' "$f")"
+    [[ "$got" == "$want" ]] || die "the Qodo dataset under $data does not match the set's pin"
+    runargs=()
+    if [[ "$run" == none ]]; then work="$QCR_BENCH_RUNS_DIR/ext-qodo-vendors-$set_name.qodo"
+    else
+      [[ -d "$QCR_BENCH_RUNS_DIR/$run/results/all" && ! -L "$QCR_BENCH_RUNS_DIR/$run" ]] || die "no finished run $run"
+      work="$QCR_BENCH_RUNS_DIR/$run.qodo"; runargs=(--run /run)
+    fi
+    [[ "${EXT_JUDGE:-}" == mock ]] && work="$work-MOCK"
+    mkdir -p "$work"   # resumable: qodo_judge.py caches every judgement in $work/judgements.jsonl
+    start_judge "$work" "q-$$"
+    trap 'stop_judge "q-$$" "$work"' EXIT
+    mounts=(--mount "type=bind,src=$HERE,dst=/ext,readonly" --mount "type=bind,src=$f,dst=/set.json,readonly"
+            --mount "type=bind,src=$data,dst=/data,readonly" --mount "type=bind,src=$work,dst=/work")
+    [[ "$run" != none ]] && mounts+=(--mount "type=bind,src=$QCR_BENCH_RUNS_DIR/$run,dst=/run,readonly")
+    log "Qodo PR-Review-Bench judge (gpt-6.1-sol @ $JUDGE_EFFORT, one judge for every tool) in $work"
+    docker run --rm "${HARDEN[@]}" --memory 2g --network "$NET_INTERNAL" "${mounts[@]}" --entrypoint python3 "$QIMG" \
+      /ext/qodo_judge.py --set /set.json --gt /data/git_code_review_bench_100_w_open_prs.jsonl \
+        --tools /data/tool-comments.json ${runargs[@]+"${runargs[@]}"} \
+        --endpoint "http://$JUDGE_HOST:8765/v1/chat/completions" --out /work "$@" | tee -a "$work/judge.log"
     ;;
 
   martian)

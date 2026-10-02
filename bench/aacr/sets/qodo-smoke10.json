@@ -1,0 +1,234 @@
+{
+ "name": "qodo-smoke10",
+ "dataset": {
+  "source": "https://huggingface.co/datasets/Qodo/PR-Review-Bench",
+  "commit": "a73957c450a70693a743260e5637fffc44625f16",
+  "file": "git_code_review_bench_100_w_open_prs.jsonl",
+  "sha256": "2f0448ed1f9a55bea14039961d8d9e610ee8885b37559b80f5821f3f70cfe64d"
+ },
+ "rule": "one PR per repository (lowest sha256 of the PR URL) plus the next two",
+ "references": 51,
+ "cases": [
+  {
+   "instance_id": "agentic-review-benchmarks__firefox-ios@2099727",
+   "repo": "agentic-review-benchmarks/firefox-ios",
+   "pr": 7,
+   "pr_url": "https://github.com/agentic-review-benchmarks/firefox-ios/pull/7",
+   "base_commit": "4f3478b7767dc4c173e7c8afa5ccc73a5455db99",
+   "head_commit": "20997278e13a3d50f549a2e0f49614debd289c61",
+   "language": "Swift",
+   "pr_category": "qodo-injected",
+   "change_line_count": 0,
+   "references": 8,
+   "title": "Refactor FXIOS-13122 [Swift 6] Remove @Sendable from closures marked as @MainActor",
+   "body": "## :scroll: Tickets\r\n[Jira ticket](https://mozilla-hub.atlassian.net/browse/FXIOS-13122)\r\n[Github issue](https://github.com/mozilla-mobile/firefox-ios/issues/28550)\r\n\r\n## :bulb: Description\r\n<!--- Describe your changes so the reviewer can understand the context and decisions made for your work -->\r\nA closure is marked as @MainActor is already @Sendable, in Swift 6 we don't need to mark the closure as @Sendable if it is already marked as @MainActor\r\n\r\n## :movie_camera: Demos\r\n<!-- Please upload screenshots or video demos of your work, if applicable -->\r\n<!-- You can either use a table (best for before/after screenshots) or the <details> disclosure -->\r\n\r\n| Before | After |\r\n| - | - |\r\n| <!--insert \"before\" image here--> | <!--insert \"after\" image here--> |\r\n| <!--insert \"before\" image here--> | <!--insert \"after\" image here--> |\r\n| <!--insert \"before\" image here--> | <!--insert \"after\" image here--> |\r\n\r\n<!-- If you're only using the Before/After table above, or the Demo disclosure below, you can delete the other, unused markup -->\r\n<details>\r\n<summary>Demo</summary>\r\n<!-- Shorthand image template: <img height=400 src=\"<URL>\" /> -->\r\n</details>\r\n\r\n## :pencil: Checklist\r\n- [ ] I filled in the ticket numbers and a description of my work\r\n- [ ] I updated the PR name to follow our [PR naming guidelines](https://github.com/mozilla-mobile/firefox-ios/wiki/Pull-Request-Naming-Guide)\r\n- [ ] I ensured unit tests pass and wrote tests for new code\r\n- [ ] If working on UI, I checked and implemented accessibility (Dynamic Text and VoiceOver)\r\n- [ ] If adding telemetry, I read the [data stewardship requirements](https://github.com/mozilla-mobile/firefox-ios/wiki/Adding-Glean-Telemetry-Events) and will request a data review\r\n- [ ] If adding or modifying strings, I read the [guidelines](https://github.com/mozilla-mobile/firefox-ios/wiki/How-to-add-and-modify-Strings) and will request a string review from l10n\r\n- [ ] If needed, I updated documentation and added comments to complex code",
+   "leakproof": {
+    "source_head": "5183c2719f603b478c75f587b27bd093f817b665",
+    "source_merge_base": "325933132c40c39a68a9f983ca67313d035f717a",
+    "base_tree": "9d409e09d5d8cf18e94a5be3275cade5e9c12a6a",
+    "head_tree": "bb530df4a4ac8cc8d3d5efd5e56c69002d02b661"
+   },
+   "task_id": "firefox-ios#7",
+   "source_base_commit": "325933132c40c39a68a9f983ca67313d035f717a"
+  },
+  {
+   "instance_id": "agentic-review-benchmarks__tauri@2f51240",
+   "repo": "agentic-review-benchmarks/tauri",
+   "pr": 3,
+   "pr_url": "https://github.com/agentic-review-benchmarks/tauri/pull/3",
+   "base_commit": "a7e325321ac1f9e0495a48fc86c82cb028cbadc6",
+   "head_commit": "2f51240fb8ff0da8b6560384d9a7ea4f758d216e",
+   "language": "Rust",
+   "pr_category": "qodo-injected",
+   "change_line_count": 0,
+   "references": 4,
+   "title": "chore(deps): update rust crate toml to 0.9",
+   "body": "This PR contains the following updates:\n\n| Package | Type | Update | Change |\n|---|---|---|---|\n| [toml](https://redirect.github.com/toml-rs/toml) | dependencies | minor | `0.8` -> `0.9` |\n\n---\n\n### Release Notes\n\n<details>\n<summary>toml-rs/toml (toml)</summary>\n\n### [`v0.9.4`](https://redirect.github.com/toml-rs/toml/compare/toml-v0.9.3...toml-v0.9.4)\n\n[Compare Source](https://redirect.github.com/toml-rs/toml/compare/toml-v0.9.3...toml-v0.9.4)\n\n### [`v0.9.3`](https://redirect.github.com/toml-rs/toml/compare/toml-v0.9.2...toml-v0.9.3)\n\n[Compare Source](https://redirect.github.com/toml-rs/toml/compare/toml-v0.9.2...toml-v0.9.3)\n\n### [`v0.9.2`](https://redirect.github.com/toml-rs/toml/compare/toml-v0.9.1...toml-v0.9.2)\n\n[Compare Source](https://redirect.github.com/toml-rs/toml/compare/toml-v0.9.1...toml-v0.9.2)\n\n### [`v0.9.1`](https://redirect.github.com/toml-rs/toml/compare/toml-v0.9.0...toml-v0.9.1)\n\n[Compare Source](https://redirect.github.com/toml-rs/toml/compare/toml-v0.9.0...toml-v0.9.1)\n\n### [`v0.9.0`](https://redirect.github.com/toml-rs/toml/compare/toml-v0.8.23...toml-v0.9.0)\n\n[Compare Source](https://redirect.github.com/toml-rs/toml/compare/toml-v0.8.23...toml-v0.9.0)\n\n### [`v0.8.23`](https://redirect.github.com/toml-rs/toml/compare/toml-v0.8.22...toml-v0.8.23)\n\n[Compare Source](https://redirect.github.com/toml-rs/toml/compare/toml-v0.8.22...toml-v0.8.23)\n\n### [`v0.8.22`](https://redirect.github.com/toml-rs/toml/compare/toml-v0.8.21...toml-v0.8.22)\n\n[Compare Source](https://redirect.github.com/toml-rs/toml/compare/toml-v0.8.21...toml-v0.8.22)\n\n### [`v0.8.21`](https://redirect.github.com/toml-rs/toml/compare/toml-v0.8.20...toml-v0.8.21)\n\n[Compare Source](https://redirect.github.com/toml-rs/toml/compare/toml-v0.8.20...toml-v0.8.21)\n\n### [`v0.8.20`](https://redirect.github.com/toml-rs/toml/compare/toml-v0.8.19...toml-v0.8.20)\n\n[Compare Source](https://redirect.github.com/toml-rs/toml/compare/toml-v0.8.19...toml-v0.8.20)\n\n</details>\n\n---\n\n### Configuration\n\n📅 **Schedule**: Branch creation - At any time (no schedule defined), Automerge - At any time (no schedule defined).\n\n🚦 **Automerge**: Disabled by config. Please merge this manually once you are satisfied.\n\n♻ **Rebasing**: Whenever PR is behind base branch, or you tick the rebase/retry checkbox.\n\n🔕 **Ignore**: Close this PR and you won't be reminded about this update again.\n\n---\n\n - [ ] <!-- rebase-check -->If you want to rebase/retry this PR, check this box\n\n---\n\nThis PR was generated by [Mend Renovate](https://mend.io/renovate/). View the [repository job log](https://developer.mend.io/github/tauri-apps/tauri).\n<!--renovate-debug:eyJjcmVhdGVkSW5WZXIiOiI0MS4yMy4yIiwidXBkYXRlZEluVmVyIjoiNDEuNDMuNSIsInRhcmdldEJyYW5jaCI6ImRldiIsImxhYmVscyI6WyJ0eXBlOiBjaG9yZSJdfQ==-->",
+   "leakproof": {
+    "source_head": "5e98b884c2635a6b6f6e1be358c739d2adad675d",
+    "source_merge_base": "4593412cc81111d8dd664e1b7d9a9eb5d3ab7c42",
+    "base_tree": "357d79401b0ef1be7c2e07d5189180e9f15a8371",
+    "head_tree": "95c87c29d9e91b6d252f91a1980c96cd3e7b9de7"
+   },
+   "task_id": "tauri#3",
+   "source_base_commit": "4593412cc81111d8dd664e1b7d9a9eb5d3ab7c42"
+  },
+  {
+   "instance_id": "agentic-review-benchmarks__prefect@79d003f",
+   "repo": "agentic-review-benchmarks/prefect",
+   "pr": 1,
+   "pr_url": "https://github.com/agentic-review-benchmarks/prefect/pull/1",
+   "base_commit": "2c01f186bf1857f5055677f3f9366e49fc9ce7a3",
+   "head_commit": "79d003fd77ace4bebbb20eec7e75e87269e47e2e",
+   "language": "Python",
+   "pr_category": "qodo-injected",
+   "change_line_count": 0,
+   "references": 4,
+   "title": "Add documentation for prefect sdk generate CLI",
+   "body": "## Summary\n\n- Add auto-generated CLI reference for `prefect sdk` command\n- Add comprehensive how-to guide for generating typed SDKs from deployments\n- Update navigation in docs.json for both new pages\n- Regenerate CLI docs to include new --output options\n\n🤖 Generated with [Claude Code](https://claude.ai/code)",
+   "leakproof": {
+    "source_head": "37e272dd3bc5e6a79acc597754871cde96e42474",
+    "source_merge_base": "0ee35533f8f48c58f1b9d52827548bcedae5c880",
+    "base_tree": "9dfa8611e76fe52175d57fbbd930ee7363e6bc4e",
+    "head_tree": "b22262aedac70a1607aeec4a1b779f8d92fd8816"
+   },
+   "task_id": "prefect#1",
+   "source_base_commit": "0ee35533f8f48c58f1b9d52827548bcedae5c880"
+  },
+  {
+   "instance_id": "agentic-review-benchmarks__redis@0b6bac2",
+   "repo": "agentic-review-benchmarks/redis",
+   "pr": 1,
+   "pr_url": "https://github.com/agentic-review-benchmarks/redis/pull/1",
+   "base_commit": "52e82d27249fe5d96018e7aad065e58511bf56d2",
+   "head_commit": "0b6bac2122db4e4d88f8e76bcc29dbb1630d011f",
+   "language": "C",
+   "pr_category": "qodo-injected",
+   "change_line_count": 0,
+   "references": 4,
+   "title": "Replace fragile dict stored-key API with getKeyId callback",
+   "body": "## Summary\r\n- Simplifies the dictionary API for handling stored keys by replacing the complex stored-key mechanism with a cleaner `getKeyId` callback approach.\r\n- As part of this effort, following #14595, hash field-value pairs were unified into a single Entry structure \r\nwith the sds field at the start. Since both stored keys (Entry*) and lookup keys \r\n(sds) can now be trivially compared as sds strings, first two commits starts with cleanups of dictUseStoredKeyApi() for hash data type.\r\n\r\n## dict API Changes\r\n- **Removed**: `storedHashFunction`, `storedKeyCompare` callbacks and `dictUseStoredKeyApi()` flag\r\n- **Added**: Single `dictType.keyFromStoredKey` callback that extracts the key identifier from stored objects\r\n- **Simplified**: All dict operations now automatically extract keyId when needed, eliminating manual flag toggling\r\n- **Clarified API**: Dict function declarations now marks where they expects stored-key and when lookup key.\r\n\r\nNo performance impact.",
+   "leakproof": {
+    "source_head": "df9a4c420c01ec275a65287320eefac850407dbd",
+    "source_merge_base": "2c2c3acc5e6b3ce873f3b22e294895ae3e159f53",
+    "base_tree": "75c79d18a3ddcabe7e1b427e941e12e2c0fa7685",
+    "head_tree": "70a4d9c571a2a9459648543cfee6d25f18630e6e"
+   },
+   "task_id": "redis#1",
+   "source_base_commit": "2c2c3acc5e6b3ce873f3b22e294895ae3e159f53"
+  },
+  {
+   "instance_id": "agentic-review-benchmarks__cal.com@bde5c80",
+   "repo": "agentic-review-benchmarks/cal.com",
+   "pr": 14,
+   "pr_url": "https://github.com/agentic-review-benchmarks/cal.com/pull/14",
+   "base_commit": "15ff2a28ed7f3289f0d5ce3c4b54d2e12d20619f",
+   "head_commit": "bde5c80d0e30f6ac1e2a49622cd12ce291db844f",
+   "language": "TypeScript",
+   "pr_category": "qodo-injected",
+   "change_line_count": 0,
+   "references": 8,
+   "title": "feat: add scope configuration for feature opt-in",
+   "body": "## What does this PR do?\n\nFollow-up to #25892 as discussed in [this review comment](https://github.com/calcom/cal.com/pull/25892#pullrequestreview-3656159556).\n\nAdds a `scope` field to `OptInFeatureConfig` that allows features to be scoped to specific levels (org, team, user). This enables features to be shown only at certain settings pages rather than all three.\n\nExample configuration:\n```typescript\nexport const OPT_IN_FEATURES: OptInFeatureConfig[] = [\n  {\n    slug: \"bookings-v3\",\n    titleI18nKey: \"bookings_v3_title\",\n    descriptionI18nKey: \"bookings_v3_description\",\n    policy: \"permissive\",\n    scope: [\"org\", \"team\", \"user\"], // Optional: defaults to all scopes if not specified\n  },\n];\n```\n\n### Changes\n- Add `OptInFeatureScope` type with values `\"org\"`, `\"team\"`, `\"user\"`\n- Add optional `scope` field to `OptInFeatureConfig` interface\n- Add `getOptInFeaturesForScope()` helper function to filter features by scope\n- Add `isFeatureAllowedForScope()` helper function to validate scope access\n- Update `FeatureOptInService` to filter features based on scope\n- Update tRPC router to pass scope parameter for org/team endpoints\n- **Scope validation on mutations**: `setUserFeatureState` and `setTeamFeatureState` now reject requests with `ErrorWithCode(ErrorCode.BadRequest)` if the feature is not allowed for the specified scope\n- **Scope-aware menu visibility**: Features menu items in settings sidebar now use scope-specific constants (`HAS_USER_OPT_IN_FEATURES`, `HAS_TEAM_OPT_IN_FEATURES`, `HAS_ORG_OPT_IN_FEATURES`) to only show when features exist for that scope\n\nFeatures without a `scope` field default to all scopes for backward compatibility.\n\n### Updates since last revision\n- Replaced raw `Error` with `ErrorWithCode` using `ErrorCode.BadRequest` for scope validation errors\n- Added comprehensive unit tests for scope validation in `setUserFeatureState` and `setTeamFeatureState`\n- Tests cover: enabled/disabled states, inherit state, error code and message validation\n- **Improved Features menu visibility**: Updated `SettingsLayoutAppDirClient.tsx` to use scope-specific constants instead of generic `HAS_OPT_IN_FEATURES`, so the Features menu item only appears when features are available for that specific scope (user/team/org)\n\n## Mandatory Tasks (DO NOT REMOVE)\n\n- [x] I have self-reviewed the code (A decent size PR without self-review might be rejected).\n- [x] I have updated the developer docs in /docs if this PR makes changes that would require a [documentation change](https://cal.com/docs). N/A - internal feature configuration change\n- [x] I confirm automated tests are in place that prove my fix is effective or that my feature works.\n\n## How should this be tested?\n\n1. Since `OPT_IN_FEATURES` is currently empty, the changes won't have visible effects until features are added\n2. To test manually:\n   - Add a feature to `OPT_IN_FEATURES` with `scope: [\"user\"]` only\n   - Verify it appears on `/settings/my-account/features` but not on team/org settings pages\n   - Verify attempting to set the feature state at team/org level throws an `ErrorWithCode` with `BadRequest` code\n   - Add a feature with `scope: [\"org\"]` only\n   - Verify it appears on `/settings/organizations/features` but not on user/team settings pages\n3. Run type checks: `yarn type-check:ci --force --filter=@calcom/features --filter=@calcom/trpc`\n4. Run unit tests: `TZ=UTC yarn test packages/features/feature-opt-in/services/FeatureOptInService.test.ts`\n\n## Human Review Checklist\n\n- [ ] Verify `ErrorWithCode` with `ErrorCode.BadRequest` is appropriate for scope validation failures\n- [ ] Verify scope filtering logic: features without `scope` should appear in all scopes (backward compatible)\n- [ ] Review test coverage for scope validation edge cases (16 tests total)\n- [ ] Verify the default scope value of `\"team\"` in `listFeaturesForTeam` is appropriate\n- [ ] Verify scope-specific constants (`HAS_USER_OPT_IN_FEATURES`, etc.) are used correctly in `SettingsLayoutAppDirClient.tsx`\n\n## Checklist\n\n- [x] My code follows the style guidelines of this project\n- [x] I have commented my code, particularly in hard-to-understand areas\n- [x] I have checked if my changes generate no new warnings\n\n---\n\nLink to Devin run: https://app.devin.ai/sessions/4d62343634ba4f44819cff9c8d0cb83a\nRequested by: @eunjae-lee",
+   "leakproof": {
+    "source_head": "02f075d61b93b64c5dd196264d322a7a3884b326",
+    "source_merge_base": "69edd0ef1b71bdb6642d6a502f1b0a2072362628",
+    "base_tree": "252acc0c859781cabbffad790424613824c4b19b",
+    "head_tree": "2ddbf29891d86f781a9bd2be7a0920f1cc33425f"
+   },
+   "task_id": "cal.com#14",
+   "source_base_commit": "69edd0ef1b71bdb6642d6a502f1b0a2072362628"
+  },
+  {
+   "instance_id": "agentic-review-benchmarks__aspnetcore@76ac245",
+   "repo": "agentic-review-benchmarks/aspnetcore",
+   "pr": 10,
+   "pr_url": "https://github.com/agentic-review-benchmarks/aspnetcore/pull/10",
+   "base_commit": "1cc2965e9f123fe4c5da55b698d50c0441f37599",
+   "head_commit": "76ac24522a51ffd8e8ba4323ea3663350e4c48f5",
+   "language": "C#",
+   "pr_category": "qodo-injected",
+   "change_line_count": 0,
+   "references": 5,
+   "title": "Doc updates",
+   "body": "Doc updates for APIs published under .NET monikers.\r\n\r\nContributes to https://github.com/dotnet/dotnet-api-docs/issues/11392.",
+   "leakproof": {
+    "source_head": "ebe838d458c2b7b30368c9ebac8f158cac516736",
+    "source_merge_base": "8ff4fb19f219ff0b840c24fda2e6726e6b708894",
+    "base_tree": "007d3646b551d734b709f8ef4b0408203bb38ba3",
+    "head_tree": "902e42717bb461498e7bf3523cdc3b6ad7b7fc8a"
+   },
+   "task_id": "aspnetcore#10",
+   "source_base_commit": "8ff4fb19f219ff0b840c24fda2e6726e6b708894"
+  },
+  {
+   "instance_id": "agentic-review-benchmarks__dify@5316b23",
+   "repo": "agentic-review-benchmarks/dify",
+   "pr": 12,
+   "pr_url": "https://github.com/agentic-review-benchmarks/dify/pull/12",
+   "base_commit": "bce7fcd14df56104f9734687804cb11cced0292b",
+   "head_commit": "5316b239892f9cc7db56703223b18bbe7d971bfe",
+   "language": "Python",
+   "pr_category": "qodo-injected",
+   "change_line_count": 0,
+   "references": 5,
+   "title": "fix(api): refactors the SQL LIKE pattern escaping logic to use a centralized  utility function, ensuring consistent and secure handling of special characters across all database queries.",
+   "body": "> [!IMPORTANT]\r\n>\r\n> 1. Make sure you have read our [contribution guidelines](https://github.com/langgenius/dify/blob/main/CONTRIBUTING.md)\r\n> 1. Ensure there is an associated issue and you have been assigned to it\r\n> 1. Use the correct syntax to link this PR: `Fixes #<issue number>`.\r\n\r\n## Summary\r\n\r\nFix #30449 \r\n\r\n## Screenshots\r\n\r\n| Before | After |\r\n|--------|-------|\r\n| ... | ... |\r\n\r\n## Checklist\r\n\r\n- [ ] This change requires a documentation update, included: [Dify Document](https://github.com/langgenius/dify-docs)\r\n- [x] I understand that this PR may be closed in case there was no previous discussion or issues. (This doesn't apply to typos!)\r\n- [x] I've added a test for each change that was introduced, and I tried as much as possible to make a single atomic change.\r\n- [x] I've updated the documentation accordingly.\r\n- [x] I ran `dev/reformat`(backend) and `cd web && npx lint-staged`(frontend) to appease the lint gods",
+   "leakproof": {
+    "source_head": "fe99d63a964df8696252d6d51e7de0b4c8521a43",
+    "source_merge_base": "f699718da6d49180c26477f553d89c6cef2224b9",
+    "base_tree": "d7b9c02d1818094263302c98186ada197ca9caa6",
+    "head_tree": "6834dd3610e28776ccefab90c9c10d977d58837f"
+   },
+   "task_id": "dify#12",
+   "source_base_commit": "f699718da6d49180c26477f553d89c6cef2224b9"
+  },
+  {
+   "instance_id": "agentic-review-benchmarks__Ghost@ea0e598",
+   "repo": "agentic-review-benchmarks/Ghost",
+   "pr": 3,
+   "pr_url": "https://github.com/agentic-review-benchmarks/Ghost/pull/3",
+   "base_commit": "70ae800a257cb90d67e354f3ac33c9116cfe89bb",
+   "head_commit": "ea0e598ae04a5426f93a7c9b8060849c599d6963",
+   "language": "JavaScript",
+   "pr_category": "qodo-injected",
+   "change_line_count": 0,
+   "references": 4,
+   "title": "Updated the scaling factors for domain warmup",
+   "body": "closes [GVA-605](https://linear.app/ghost/issue/GVA-605/adjust-the-warmup-numbers-to-reflect-joeys-suggestions)\r\n\r\nOur initial scaling factors were based on some preliminary research, and were designed to be as simple as possible. After further discussions, we've decided to avoid having such a fast ramp-up at the early stage, and limit the growth at the later stages to 75k+ per send. That should still prevent any large sites from going back into warm-up between sends, but is more likely to avoid damaging the reputation by scaling too aggressively.",
+   "leakproof": {
+    "source_head": "71f56480360617f8632fda9cc062723f5b0f03bd",
+    "source_merge_base": "91d969440b995ff050c46f37e795700f20105050",
+    "base_tree": "146c744dfcbfa6e8af4ef9c0fb108a11b3d446b9",
+    "head_tree": "90a5c002998a137a304f26ce9c5edca0197d8e13"
+   },
+   "task_id": "Ghost#3",
+   "source_base_commit": "91d969440b995ff050c46f37e795700f20105050"
+  },
+  {
+   "instance_id": "agentic-review-benchmarks__prefect@ff90288",
+   "repo": "agentic-review-benchmarks/prefect",
+   "pr": 7,
+   "pr_url": "https://github.com/agentic-review-benchmarks/prefect/pull/7",
+   "base_commit": "4002399fd967e62a923ec289f875a53748ebfd6a",
+   "head_commit": "ff90288d5b9eb8609732e659078e73c5579fb645",
+   "language": "Python",
+   "pr_category": "qodo-injected",
+   "change_line_count": 0,
+   "references": 5,
+   "title": "fix: resolve race condition in compound trigger evaluation",
+   "body": "## Summary\r\n\r\nFixes two race conditions in compound trigger evaluation:\r\n\r\n1. **Never-firing race** (transactional): Advisory locks serialize concurrent evaluations\r\n2. **Double-firing race** (autocommit): DELETE ... RETURNING makes clearing a claim operation\r\n\r\n<details>\r\n<summary>Race Condition 1: Never-firing (with transactions)</summary>\r\n\r\nWhen two child triggers fire concurrently in separate transactions, each only sees its own uncommitted insert due to READ COMMITTED isolation:\r\n\r\n```\r\nTransaction T1 (event A):              Transaction T2 (event B):\r\n  │                                      │\r\n  ▼                                      ▼\r\n  INSERT child_firing A                  INSERT child_firing B\r\n  (uncommitted)                          (uncommitted)\r\n  │                                      │\r\n  ▼                                      ▼\r\n  SELECT child_firings                   SELECT child_firings\r\n  → sees only A (own insert)             → sees only B (own insert)\r\n  │                                      │\r\n  ▼                                      ▼\r\n  ready_to_fire? NO (1 of 2)             ready_to_fire? NO (1 of 2)\r\n  │                                      │\r\n  ▼                                      ▼\r\n  COMMIT                                 COMMIT\r\n\r\nResult: Both firings are now in database, but parent never fired!\r\n```\r\n\r\n**Fix**: PostgreSQL advisory locks serialize concurrent evaluations.\r\n\r\n</details>\r\n\r\n<details>\r\n<summary>Race Condition 2: Double-firing (with autocommit)</summary>\r\n\r\nWhen both workers see all firings, both delete and both fire:\r\n\r\n```\r\nWorker A:                              Worker B:\r\n  SELECT child_firings → [A, B]          SELECT child_firings → [A, B]\r\n  ready_to_fire? YES                     ready_to_fire? YES\r\n  DELETE child_firings                   DELETE child_firings\r\n  (succeeds)                             (succeeds - rows already gone)\r\n  FIRE parent                            FIRE parent\r\n\r\nResult: Parent fires TWICE!\r\n```\r\n\r\n**Fix**: `DELETE ... RETURNING` makes clearing a claim. Only the worker that successfully deletes proceeds.\r\n\r\n</details>\r\n\r\n## Changes\r\n\r\n- `src/prefect/server/events/models/composite_trigger_child_firing.py`:\r\n  - Added `acquire_composite_trigger_lock()` for advisory locking\r\n  - Updated `clear_child_firings()` to use `DELETE ... RETURNING`\r\n- `src/prefect/server/events/triggers.py`:\r\n  - Acquire advisory lock before evaluation\r\n  - Check return value of `clear_child_firings()` before firing\r\n- `tests/events/server/triggers/test_composite_triggers.py`:\r\n  - Added regression tests for concurrent child firing scenarios\r\n\r\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
+   "leakproof": {
+    "source_head": "8c360ef80fc9a49274b60a7473f761ff484b6ca7",
+    "source_merge_base": "86468ecca046b412392bacb5f576d7bed77f7fe0",
+    "base_tree": "33e1b0a1b405c14c074e98f8938219c3f5902fb4",
+    "head_tree": "2d3283b6eb8207193a5e35f3d7255458addea70d"
+   },
+   "task_id": "prefect#7",
+   "source_base_commit": "86468ecca046b412392bacb5f576d7bed77f7fe0"
+  },
+  {
+   "instance_id": "agentic-review-benchmarks__firefox-ios@0073aa1",
+   "repo": "agentic-review-benchmarks/firefox-ios",
+   "pr": 9,
+   "pr_url": "https://github.com/agentic-review-benchmarks/firefox-ios/pull/9",
+   "base_commit": "34fca1e044795b422d0d6febef61581668514853",
+   "head_commit": "0073aa1327c038303a0aac002d690c81932961ba",
+   "language": "Swift",
+   "pr_category": "qodo-injected",
+   "change_line_count": 0,
+   "references": 4,
+   "title": "Remove FXIOS-14593 [BVC] Clean up qr code related code from BVC",
+   "body": "## :scroll: Tickets\r\n[Jira ticket](https://mozilla-hub.atlassian.net/browse/FXIOS-14593)\r\n[Github issue](https://github.com/mozilla-mobile/firefox-ios/issues/31576)\r\n\r\n## :bulb: Description\r\nRemoves QRCodeViewControllerDelegate from BVC and cleans up qr code telemetry and actions that were used in toolbar.\r\n\r\n## :pencil: Checklist\r\n- [x] I filled in the ticket numbers and a description of my work\r\n- [x] I updated the PR name to follow our [PR naming guidelines](https://github.com/mozilla-mobile/firefox-ios/wiki/Pull-Request-Naming-Guide)\r\n- [ ] I ensured unit tests pass and wrote tests for new code\r\n- [ ] If working on UI, I checked and implemented accessibility (Dynamic Text and VoiceOver)\r\n- [ ] If adding telemetry, I read the [data stewardship requirements](https://github.com/mozilla-mobile/firefox-ios/wiki/Adding-Glean-Telemetry-Events) and will request a data review\r\n- [ ] If adding or modifying strings, I read the [guidelines](https://github.com/mozilla-mobile/firefox-ios/wiki/How-to-add-and-modify-Strings) and will request a string review from l10n\r\n- [ ] If needed, I updated documentation and added comments to complex code",
+   "leakproof": {
+    "source_head": "de948b018e79cc42c868127f853fed6fb12006ec",
+    "source_merge_base": "db5723b28f6497d72d8499b7cf0415813d018cda",
+    "base_tree": "910c9309c2edfb20877e1bb95d835f522b40f773",
+    "head_tree": "eff31a8d8012f97ee989f83e745b52337605548b"
+   },
+   "task_id": "firefox-ios#9",
+   "source_base_commit": "db5723b28f6497d72d8499b7cf0415813d018cda"
+  }
+ ],
+ "backups": []
+}
