@@ -129,4 +129,5 @@ const GOLDEN_ORDERS: Record<string, string> = {
 //   → ac4f9d98… `removed-rule-other-consumers` (pass-ui, pass-sweep, pass-widened; round 4)
 //   → fd3982c0… `contract-values-renumbered` (pass-baseline, pass-backcompat, pass-contracts; round 4)
 //   → 0721d5cc… `validate-documented-semantics` (pass-validate; round 4)
-const GOLDEN_AGENTS = "0721d5ccde4571dd2b6617a0a06ae2a83dd77ad540c92dbba52c75f396ebf6e1";
+//   → e9949621… `persistence-bypasses-callbacks` names no framework (stack-neutral fence)
+const GOLDEN_AGENTS = "e9949621362777a1a95efdf34ef312cfb98afcac19b0f6402e22a891d61032ee";
