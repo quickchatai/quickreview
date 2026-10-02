@@ -97,6 +97,22 @@ describe("findStyleGuide reads the style rules a repo wrote for its agents", () 
     ]);
   });
 
+  it("written rules count whatever the heading: a `# Compliance Rules` AGENTS.md is a guide", () => {
+    // The shape of all eight Qodo PR-Review-Bench repos' AGENTS.md (2026-10-03):
+    // numbered `##` rules under one `# Compliance Rules` title.
+    const body = Array.from(
+      { length: 4 },
+      (_, i) => `## ${i + 1}. Rule ${i + 1} Must Hold\n\nWhat it requires.\n- example a\n- example b\n`,
+    ).join("\n");
+    put("AGENTS.md", `# Compliance Rules\n\n${body}`);
+    const [ref] = findStyleGuide(repo);
+    expect(ref).toMatch(/^AGENTS\.md:1-\d+$/);
+    // A "Rules" heading in an agent file with nothing substantial under it is still no guide.
+    rmSync(join(repo, "AGENTS.md"));
+    put("CLAUDE.md", "## Rules\nRun the tests.\n");
+    expect(findStyleGuide(repo)).toEqual([]);
+  });
+
   it("a thin section, or a directive file with no style section, is no guide", () => {
     put("AGENTS.md", `## Code style\nUse black.\n## Deploy\n${rules(40)}\n`);
     put(".github/instructions/code-style.instructions.md", "Use black.\n");

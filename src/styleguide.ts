@@ -49,8 +49,15 @@ const STYLE_HEADING_RE =
 const HEADING_RE = /^#{1,6}\s+\S/;
 /** A directive file's style heading: the guide headings above, or a bare
  * "Conventions" / "Style" / "Formatting" / "Naming" — agent files name the
- * section for the agent, not as a guide. */
-const DIRECTIVE_HEADING_RE = /\b(style|conventions|formatting|naming)\b/i;
+ * section for the agent, not as a guide — or a section of written RULES
+ * ("Rules", "Compliance"): what a team tells
+ * its agents the code must follow is its written guide whatever the heading
+ * says (2026-10-03, Qodo PR-Review-Bench: all eight repos' AGENTS.md hold
+ * their naming, header and formatting rules under "# Compliance Rules", so the
+ * style lens was planned on 9 of 100 PRs and found 3 of 271 rule issues).
+ * pass-style still applies only the style rules in it and still skips what a
+ * configured tool enforces; the section only decides that the lens runs. */
+const DIRECTIVE_HEADING_RE = /\b(style|conventions|formatting|naming|rules|compliance)\b/i;
 const ROOT_DIRECTIVE_RE = /^(agents|claude)\.md$/i;
 const DIRECTIVE_NAME_RE = /(style|conventions)[^/]*\.(md|markdown)$/i;
 
