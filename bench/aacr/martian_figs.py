@@ -84,6 +84,19 @@ def fig_audit():
 
 
 # 2 — real-golden recall vs share of credits earned on not-real goldens
+# hand-placed label offsets (points, ha): the right-hand cluster is fanned out with leader lines
+RVT_OFFSETS = {
+    "QuickReview *": (10, 4, "left"), "copilot-v2": (10, 4, "left"),
+    "qodo-extended-v2": (-8, 9, "right"), "qodo-extended-v2 *": (-9, -12, "right"),
+    "augment": (8, 2, "left"), "qodo-v2": (8, -2, "left"),
+    "cubic-v2": (34, 6, "left"), "cubic-v2 *": (34, 16, "left"), "coderabbit": (34, -2, "left"),
+    "sourcery": (34, 12, "left"), "gitlab": (34, 1, "left"), "gemini-v2": (34, -10, "left"),
+    "greptile-v4-1": (-10, 14, "right"), "claude-code": (34, -20, "left"),
+    "macroscope": (8, 0, "left"), "bugbot": (8, 0, "left"), "devin": (8, 0, "left"),
+    "claude-code *": (34, 0, "left"),
+}
+
+
 def fig_real_vs_trivia():
     fig, ax = plt.subplots(figsize=(8.6, 5.4))
     for src, marker, edge in (("real_published_opus", "o", OTHER), ("real_same_judge", "D", None)):
@@ -96,8 +109,14 @@ def fig_real_vs_trivia():
             name = t.replace("QuickReview (latest)", "QuickReview")
             if src == "real_same_judge":
                 name += " *"
-            ax.annotate(name, (x, y), xytext=(6, 3), textcoords="offset points", fontsize=8.5,
-                        color=QR if is_qr(t) else INK, fontweight="bold" if is_qr(t) else "normal")
+            dx, dy, ha = RVT_OFFSETS.get(name, (6, 3, "left"))
+            far = abs(dx) > 12 or abs(dy) > 9
+            ax.annotate(name, (x, y), xytext=(dx, dy), textcoords="offset points", fontsize=8.5, ha=ha,
+                        va="center", color=QR if is_qr(t) else INK,
+                        fontweight="bold" if is_qr(t) else "normal",
+                        arrowprops={"arrowstyle": "-", "color": MUTED, "lw": 0.6, "shrinkA": 0, "shrinkB": 4}
+                        if far else None)
+    ax.set_xlim(17, 44)
     ax.set_xlabel("share of the tool's golden credits that land on NOT-real goldens (%)")
     ax.set_ylabel("real goldens found, of 86 (%)")
     ax.grid(color=GRID)
@@ -117,15 +136,17 @@ FAIR = [  # tool, recall, P strict, P lenient, GOOD, MINOR, DUP, WRONG
 
 
 def fig_extended_key():
-    fig, ax = plt.subplots(figsize=(8.6, 5.4))
+    fig, ax = plt.subplots(figsize=(8.6, 6.6))
     for t, r, ps, pl, *_ in FAIR:
         c = QR if is_qr(t) else "#4A5567"
         ax.plot([ps, pl], [r, r], color=c, lw=1.2, alpha=0.5, zorder=2)
         ax.scatter(ps, r, s=140 if is_qr(t) else 60, color=c, zorder=3)
         ax.scatter(pl, r, s=60, facecolor="white", edgecolor=c, zorder=3, linewidth=1.5)
-        ax.annotate(t, (ps, r), xytext=(-6, 6), textcoords="offset points", ha="right", fontsize=8.5,
-                    color=c, fontweight="bold" if is_qr(t) else "normal")
-    ax.set_xlim(30, 100)
+        # name on the left of the strict point, vertically centred on its row: rows sit
+        # 2.5 recall points apart at the tightest, which the taller canvas keeps legible
+        ax.annotate(t, (ps, r), xytext=(-9, 0), textcoords="offset points", ha="right", va="center",
+                    fontsize=8.5, color=c, fontweight="bold" if is_qr(t) else "normal")
+    ax.set_xlim(20, 100)
     ax.set_ylim(20, 95)
     ax.set_xlabel("precision against real defects (%) — ● strict: true-but-minor counts as noise   ○ lenient: it does not")
     ax.set_ylabel("recall of the 82 real defects (%)")
@@ -179,9 +200,13 @@ def fig_policy():
     ax.scatter([x[1] for x in pts], [x[2] for x in pts], s=22, color=shade(QR), zorder=2,
                label=f"{len(pts)} posting policies on stored reviews (tune20)")
     named = [("as posted, tune20", 19.7, 58.6), ("round 3 default", 20.2, 60.3), ("snappy profile", 27.0, 34.5)]
+    offs = {"as posted, tune20": (-14, -18, "right"), "round 3 default": (14, 16, "left"),
+            "snappy profile": (8, -12, "left")}
     for t, x, y in named:
         ax.scatter(x, y, s=80, color=QR, zorder=4)
-        ax.annotate(t, (x, y), xytext=(6, -12), textcoords="offset points", fontsize=8.5, color=QR)
+        dx, dy, ha = offs[t]
+        ax.annotate(t, (x, y), xytext=(dx, dy), textcoords="offset points", fontsize=8.5, color=QR, ha=ha,
+                    va="center", arrowprops={"arrowstyle": "-", "color": QR, "lw": 0.7, "shrinkA": 0, "shrinkB": 4})
     ax.annotate("", xy=(36.5, 19.0), xytext=(49.0, 43.1),
                 arrowprops={"arrowstyle": "->", "color": WRONG, "lw": 1.6})
     ax.scatter([49.0], [43.1], s=80, color=WRONG, zorder=4)
@@ -299,7 +324,7 @@ def fig_strength():
     ax.set_xticks(list(x), [f"{c[0]}\n{c[3]}" for c in CUM], fontsize=8.5)
     ax.set_ylim(0, 100)
     ax.set_ylabel("share of QuickReview's comments (%)")
-    ax.legend(frameon=False, fontsize=8.5, loc="upper right")
+    ax.legend(frameon=False, fontsize=8.5, loc="upper center", bbox_to_anchor=(0.5, -0.17), ncol=1)
     ax.set_title("Our blockers are real; the list cannot see them", fontsize=11)
     ax.grid(axis="y", color=GRID)
     ax.set_axisbelow(True)
