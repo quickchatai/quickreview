@@ -145,4 +145,7 @@ const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
 //   → fd3982c0… `contract-values-renumbered` (pass-baseline, pass-backcompat, pass-contracts; round 4)
 //   → 0721d5cc… `validate-documented-semantics` (pass-validate; round 4)
 //   → e9949621… `persistence-bypasses-callbacks` names no framework (stack-neutral fence)
-const GOLDEN_AGENTS = "e9949621362777a1a95efdf34ef312cfb98afcac19b0f6402e22a891d61032ee";
+//   → 1b65b1fe… `quality-cap-validate`: a convention finding quoting a rule the
+//     repo wrote is judged as style, not killed for its lens (round 5, mined
+//     from the Qodo run: 13 written-rule violations killed "from a non-style lens")
+const GOLDEN_AGENTS = "1b65b1fed402d90e0801a856f2b2d098d0aa090e2b1278aca25b1c255beb8164";
