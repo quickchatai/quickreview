@@ -100,6 +100,11 @@ describe("[posting] — the default profile builds and renders byte-identically"
   it("rendered round orders", { timeout: HEAVY_TIMEOUT_MS }, () => {
     expect(renderedOrders(defaultCfg())).toEqual(GOLDEN_ORDERS);
   });
+  it("with render_outputs off, the orders are the pre-2026-10 bytes", { timeout: HEAVY_TIMEOUT_MS }, () => {
+    const cfg = defaultCfg();
+    cfg.review.render_outputs = false;
+    expect(renderedOrders(cfg)).toEqual(GOLDEN_ORDERS_UNRENDERED);
+  });
   it("built agents", { timeout: HEAVY_TIMEOUT_MS }, () => {
     expect(builtAgents(defaultCfg())).toBe(GOLDEN_AGENTS);
   });
@@ -108,7 +113,17 @@ describe("[posting] — the default profile builds and renders byte-identically"
   });
 });
 
+// Deliberate re-pin (2026-10-02, owner order "make the review itself faster"):
+// `[review] render_outputs` defaults on, so step 6 of every round carries the
+// `{{render_note}}` (write the findings record first, render the body and the
+// inline comments with scripts/render-review.sh). With the lever off the
+// orders are byte-identical to the pre-lever pins below.
 const GOLDEN_ORDERS: Record<string, string> = {
+  first: "89da0c4505c1b18b901f02e18f437c22ec65246be63a8731dbaa6ced9a8d9ca7",
+  "re-review": "54d8e08c7b18bbffb955fd09e9439ed034d2968caa47af39bdb106847b410ded",
+  staleness: "35c244ecc10dfc0d7038254a48ce0af058126743c5b7f5b9afa0297a34340efd",
+};
+const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
   first: "444ab8da6cd0304700de15a70c0de934259c0182010ebdcd413955d830556099",
   "re-review": "c1cde722e3f0b5afb9641421785e0185520d7432d85881e0ec2fcb0bb2d077b5",
   staleness: "1079ed8f0fe4d1ed00d04d5a6639649cf4c5c5e109607563217cd980d01c72a7",

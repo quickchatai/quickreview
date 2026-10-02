@@ -234,6 +234,10 @@ export interface RoundOrder {
    * the daemon wrote for this round — plan row index, agent, absolute path.
    * Absent ⇒ the session writes every task string itself, as before. */
   pass_task_files?: Array<{ row: number; agent: string; path: string }>;
+  /** `[review] render_outputs` (src/reviewrender.ts): the session writes the
+   * findings record with the posting fields and renders the review body and
+   * inline comments from it with `scripts/render-review.sh`. */
+  render_outputs?: boolean;
 }
 
 /**

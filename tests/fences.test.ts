@@ -468,6 +468,13 @@ describe("the sanctioned-script set is DERIVED from the prompts, not maintained 
         }
       }
     }
+    // Notes the daemon renders INTO a round prompt are prompts too: the
+    // render-review note (`[review] render_outputs`) names its script.
+    const { renderRenderNote } = await import("../src/reviewrender.js");
+    for (const m of renderRenderNote({ render_outputs: true, pr: 5, round_no: 1 }).matchAll(
+      /scripts\/([a-z0-9._-]+\.sh)/g,
+    ))
+      mandated.add(m[1]!);
     expect(
       mandated.size,
       "no prompt names a script — the derivation found nothing and would pass vacuously",

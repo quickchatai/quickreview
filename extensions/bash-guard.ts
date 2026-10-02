@@ -143,6 +143,10 @@ const SANCTIONED_SCRIPTS = new Set([
   "pr-threads.sh",
   "post-review.sh",
   "reply-thread.sh",
+  // `[review] render_outputs` (src/reviewrender.ts): reads the round's
+  // findings record, writes the two pinned scratch files under state/. Posts
+  // nothing; posting still goes through post-review.sh / approve-pr.sh.
+  "render-review.sh",
 ]);
 
 /** Agent-spawning programs. These already fell off ALLOWED, but the generic

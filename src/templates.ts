@@ -4,6 +4,7 @@
 // throws; a supplied value the template does not use is fine (templates are
 // edited independently of this renderer).
 import { renderPassTaskNote } from "./passtasks.js";
+import { renderRenderNote } from "./reviewrender.js";
 import { DJANGO_ECOSYSTEM, type Ecosystem } from "./ecosystem.js";
 import {
   ensurePinnedHead,
@@ -496,6 +497,8 @@ export function roundVars(
     posting_policy_note: renderPostingPolicyNote(order.posting_policy),
     // `[review] task_files`: "" unless the daemon wrote task files.
     pass_task_note: renderPassTaskNote(order),
+    // `[review] render_outputs`: "" unless the order renders its review.
+    render_note: renderRenderNote(order),
   };
 }
 

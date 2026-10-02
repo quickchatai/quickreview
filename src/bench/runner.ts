@@ -22,6 +22,7 @@
 //     profile>` measures production as deployed.
 
 import { renderPassTasks } from "../passtasks.js";
+import { renderReviewFromRecord } from "../reviewrender.js";
 import {
   createWriteStream,
   existsSync,
@@ -603,12 +604,16 @@ export function renderCasePrompts(args: {
         path: join(args.caseDir, "tasks", t.file),
       }))
     : [];
+  // The bench renders comments.json and review.md itself after the session
+  // (`[review] render_outputs`, benchAppendix), so the order never carries
+  // production's render-review.sh note: the replay has no scripts/.
+  const { render_outputs: _renderedByBench, ...unrendered } = built;
   const order = taskFiles.length
     ? {
-        ...built,
+        ...unrendered,
         pass_task_files: taskFiles.map((t) => ({ row: t.row, agent: t.agent, path: t.path })),
       }
-    : built;
+    : unrendered;
   const template = readFileSync(join(root, "prompts", roundTemplateFile("first")), "utf8");
   const rendered = renderRoundPrompt(
     template,
@@ -629,6 +634,7 @@ export function renderCasePrompts(args: {
       caseDir: args.caseDir,
       title: meta.title,
       body,
+      ...(cfg.review.render_outputs ? { renderOutputs: true } : {}),
     });
   const system = renderConversationSystemPrompt(
     readFileSync(join(root, "prompts", "conversation-system.md"), "utf8"),
@@ -972,7 +978,9 @@ export async function reviewCase(
             ...base,
             "--continue",
             "-p",
-            `You stopped before the BENCHMARK MODE files were complete. Finish the round now and write ${CASE_FILES.comments}, ${CASE_FILES.review}, ${CASE_FILES.findings} and, last, ${CASE_FILES.outcome} in ${caseDir}.`,
+            ctx.cfg.review.render_outputs
+              ? `You stopped before the BENCHMARK MODE files were complete. Finish the round now and write ${CASE_FILES.findings} (with the posting fields) and, last, ${CASE_FILES.outcome} in ${caseDir}.`
+              : `You stopped before the BENCHMARK MODE files were complete. Finish the round now and write ${CASE_FILES.comments}, ${CASE_FILES.review}, ${CASE_FILES.findings} and, last, ${CASE_FILES.outcome} in ${caseDir}.`,
           ],
           env,
           o.root,
@@ -1009,6 +1017,35 @@ export async function reviewCase(
       summary.warnings.push(`usage unreadable: ${String(err).slice(0, 200)}`);
     }
     const outcome = readJson(outcomePath) as Record<string, unknown> | undefined;
+    // `[review] render_outputs`: comments.json and review.md rendered from the
+    // findings record, as production's render-review.sh renders them. A
+    // session that wrote its own files anyway is overruled: the record is the
+    // source.
+    if (ctx.cfg.review.render_outputs) {
+      const record = readJson(join(caseDir, CASE_FILES.findings));
+      if (record !== undefined) {
+        const passes = Array.isArray(outcome?.["passes"])
+          ? (outcome["passes"] as Array<Record<string, unknown>>)
+              .map((p) => String(p["name"] ?? ""))
+              .filter((n) => n && n !== "pass-validate")
+          : [];
+        const rendered = renderReviewFromRecord(record, {
+          botLogin: ctx.cfg.github.bot_login,
+          verdict: typeof outcome?.["verdict"] === "string" ? (outcome["verdict"] as string) : null,
+          summary: typeof outcome?.["summary"] === "string" ? (outcome["summary"] as string) : null,
+          lensesApplied: passes.length ? passes.join(", ") : null,
+        });
+        writeFileSync(
+          join(caseDir, CASE_FILES.comments),
+          JSON.stringify(rendered.comments, null, 2) + "\n",
+        );
+        writeFileSync(join(caseDir, CASE_FILES.review), rendered.body);
+        if (rendered.problems.length)
+          summary.warnings.push(
+            ...rendered.problems.slice(0, 10).map((p) => `render: ${p}`.slice(0, 300)),
+          );
+      }
+    }
     // The profile's `[posting]` policy, applied to what the session wrote
     // exactly as production posting applies it: an over-posting session is
     // still cut, and what is cut is recorded `withheld` (originals kept beside).

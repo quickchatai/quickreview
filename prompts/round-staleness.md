@@ -388,7 +388,7 @@ REQUEST_CHANGES without a concrete blocker.
 <!-- /RATIFIED merge-call -->
 
 ## 6. Post
-
+{{render_note}}
 **Only deltas get posted.** Every posted item must assert a delta from the code
 at `{{head_sha}}`. "I checked X and it holds" is not a finding: material of that
 kind goes in a collapsible `<details>` section at the bottom of the body, or

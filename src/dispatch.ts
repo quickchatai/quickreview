@@ -931,6 +931,10 @@ export function buildRoundOrder(args: {
     ...(args.dependencyNote ? { dependency_note: args.dependencyNote } : {}),
     ...(args.cfg.review.nits === "open" ? { nit_policy: "open" as const } : {}),
     ...(isDefaultPosting(args.cfg.posting) ? {} : { posting_policy: args.cfg.posting }),
+    // `[review] render_outputs` (src/reviewrender.ts): the round renders its
+    // posted review from the findings record. Absent ⇒ the session writes
+    // both files itself and step 6 renders as before.
+    ...(args.cfg.review?.render_outputs ? { render_outputs: true } : {}),
     migration_gate: eco.migrationGate(args.files),
     migration_collisions: args.migrationCollisions ?? [],
     ...(args.migrationCollisionsUndelivered && (args.migrationCollisions ?? []).length > 0

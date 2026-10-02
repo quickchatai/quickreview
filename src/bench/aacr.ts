@@ -27,6 +27,7 @@
 // credential, so the override is backed by an environment in which posting is
 // impossible rather than merely forbidden.
 
+import { RENDER_RECORD_FIELDS } from "../reviewrender.js";
 import type { PrFileEntry } from "../github.js";
 
 // ---- the case set -------------------------------------------------------------
@@ -450,6 +451,10 @@ export interface AppendixArgs {
   caseDir: string;
   title: string | null;
   body: string | null;
+  /** `[review] render_outputs`: the session writes only the findings record
+   * (with the posting fields) and outcome.json; the bench renders
+   * comments.json and review.md from them (src/reviewrender.ts). */
+  renderOutputs?: boolean;
 }
 
 /** Output files the session writes, relative to its case dir. */
@@ -509,6 +514,17 @@ export function benchAppendix(a: AppendixArgs): string {
   L.push("");
   L.push("**The files — write them in this order, then stop:**");
   L.push("");
+  if (a.renderOutputs) {
+    L.push(
+      `1. \`${f(CASE_FILES.findings)}\` — the findings record, in the shape step 7 specifies (every candidate finding and its disposition), WITH the posting fields below. Do NOT write ${CASE_FILES.comments} or ${CASE_FILES.review}: the benchmark renders both from this record exactly as step 6 formats them — the review body from the top-level fields and the posted entries, and each inline comment from its entry (tag line from \`posted_as\`, your \`body\`, the severity trailer). Head-side (\`RIGHT\`) line numbers of the file at \`${a.headSha}\`.`,
+    );
+    L.push("");
+    L.push(RENDER_RECORD_FIELDS);
+    L.push("");
+    L.push(
+      `2. \`${f(CASE_FILES.outcome)}\` — LAST, because it is the signal that you are done: the step-7 verdict shape without \`approval_withheld\` — \`{"pr": ${a.pr}, "round_no": 1, "verdict": "APPROVE" | "REQUEST_CHANGES", "head_sha": "${a.headSha}", "summary": "...", "passes": [...], "finished_at": "<ISO-8601 UTC>"}\`.`,
+    );
+  } else {
   L.push(
     `1. \`${f(CASE_FILES.comments)}\` — the inline comments array, exactly as you would pass it to the posting script: \`[{"path": "<repo-relative path>", "line": <line>, "side": "RIGHT", "body": "<the full comment text as it would be posted>"}]\` — the four fields the posting script accepts. Head-side (\`RIGHT\`) line numbers of the file at \`${a.headSha}\`. \`[]\` when nothing survives.`,
   );
@@ -519,6 +535,7 @@ export function benchAppendix(a: AppendixArgs): string {
   L.push(
     `4. \`${f(CASE_FILES.outcome)}\` — LAST, because it is the signal that you are done: the step-7 verdict shape without \`approval_withheld\` — \`{"pr": ${a.pr}, "round_no": 1, "verdict": "APPROVE" | "REQUEST_CHANGES", "head_sha": "${a.headSha}", "summary": "...", "passes": [...], "finished_at": "<ISO-8601 UTC>"}\`.`,
   );
+  }
   L.push("");
   L.push(
     'If a discovery pass answers "Unknown agent", do exactly what step 2 says: never substitute another agent, name it in `summary`, and decide from the passes that did run. Only when `pass-validate` itself cannot be resolved do you write `outcome.json` with `"verdict": null` (saying what failed in `summary`) — never a stand-in review.',
