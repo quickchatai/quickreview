@@ -134,7 +134,14 @@ def main() -> None:
             m = re.search(r"github\.com/[^/]+/([^/]+)/pull/(\d+)", b["pr_url_to_review"])
             repo, n = m.group(1), int(m.group(2))
             p = src.get((repo, n))
-            row = bytitle.get((repo, (p or {}).get("title", "").strip()))
+            # the source fork PR title is "Code Review Bench PR #<upstream> - <upstream title>";
+            # the mapping README lists the upstream title alone
+            t = re.sub(r"^Code Review Bench PR #\d+\s*-\s*", "", (p or {}).get("title", "")).strip()
+            row = bytitle.get((repo, t))
+            if row is None:  # the README truncates long titles to 60 chars + "..."
+                hits = [r for (rp, rt), r in bytitle.items()
+                        if rp == repo and rt.endswith("...") and t.startswith(rt[:-3].rstrip())]
+                row = hits[0] if len(hits) == 1 else None
             if not row:
                 unmatched.append(b["pr_url_to_review"])
             tools = {}
