@@ -297,7 +297,10 @@ export const PASS_TIERS: readonly PassTier[] = PASS_TIER_ORDER;
 /** The single pass that consumes findings instead of producing them. */
 export const VALIDATE_PASS = "pass-validate";
 
-/** ADDABLE-ONLY: never planned, only added mid-round. */
+/** No path predicate: added mid-round by the session, or planned by
+ * its content trigger when the diff touches synchronisation or the PR text says
+ * race/lock/thread-safe (owner ruling 2026-10-02, heuristics.ts
+ * SUBLENS_TRIGGERS; the `concurrency-planned` addendum below). */
 export const CONCURRENCY_PASS = "pass-concurrency";
 
 /** ADDABLE-ONLY: the ask-your-human lens. Same reason as
@@ -683,6 +686,19 @@ const MEMORY_READ_ONLY_ADDENDUM =
 // is a trigger that was never really made.
 const CONCURRENCY_TRIGGER_ADDENDUM =
   "\n## You were added on demand — your task string must NAME THE SHAPE (sandbox rule)\nYou are not a planned lens. No path predicate selects you: you run only when the PR's session, having read the diff, suspects a specific concurrent-write defect and adds you through the round's add protocol. For this lens the protocol is STRICTER than for any other addable lens: the session must **name the read-then-write it suspects** — the call site that reads state, the code that changes it, and the write that puts it back — not merely state a worry that something might race.\n\nRead your task string for that named shape and start from it. If the shape is named, it is your anchor: prove it or kill it, and follow it only as far as its blast radius. If your task string names NO concrete read-then-write — only a general unease, a file name, or \"check for race conditions\" — say so in one line in your output and return `NONE`. Do not substitute a fishing expedition of your own: an unanchored concurrency sweep is precisely how this class produces confident nonsense. Reporting the missing anchor is the correct, useful result — the session can re-add you with the shape named.\n\nThis rule binds THIS lens only. It changes nothing about how any other addable lens is added, and nothing about the one-line reason the add protocol asks of the session everywhere else.\n";
+
+// Owner ruling 2026-10-02 (amends for content): the lens is now also
+// PLANNED when the diff touches synchronisation or the PR text says it is about
+// a race or a lock (heuristics.ts SUBLENS_TRIGGERS). The trigger above was
+// written for an added lens and tells it to answer NONE when its task names no
+// read-then-write — a planned row's reason names the synchronisation that fired
+// it instead, so this rule makes THAT the anchor. PR builds only; seeds
+// untouched (rule 6).
+export const CONCURRENCY_PLANNED_ADDENDUM =
+  "\n## When the plan PLANNED you, the synchronisation it names is your anchor (sandbox rule; supersedes the on-demand premise above for a planned row)\n" +
+  "You may also arrive as a PLANNED row: the daemon plans this lens when the diff itself touches synchronisation — a mutex or read-write lock, an atomic, a `synchronized` block or `volatile` field, a thread, goroutine or channel, a concurrent collection, a row lock, a member written after an `await` — or when the PR's title or body says the change is about a race, a lock, a deadlock or thread safety. Your task string then gives that reason instead of a named read-then-write. That reason is your anchor, and it is NOT the missing anchor the rule above answers with `NONE`.\n\n" +
+  "**Read every changed synchronised region the reason points at**, and the other changed regions of the diff that take the same lock or touch the same shared state, then look for the shapes yourself: a check made under a lock and acted on after it is released, or made under a read lock and acted on under the write lock without checking again; a lazily initialised value or cache filled twice; a counter, map or list read and written back outside the lock that guards it elsewhere; shared state read or written by a goroutine, thread, callback or async task without the lock its other users take; a lock released on the success path but not on an error or early return; two locks taken in opposite orders on two paths. **When the PR text claims a race fix, verify the claim**: does the change close the window it describes, at every site that has it, or does a second path still read and write the same state unguarded?\n\n" +
+  "Every finding keeps the four parts and the falsification above, exactly. `NONE` is correct only after that reading: say in one or two lines which regions you examined and why each holds.\n";
 
 // scan-loop (self-scan round 7): the trigger above is a PR-round rule — it
 // asks the PR's session to name the shape. A SCAN has no session: a stage-2
@@ -1082,6 +1098,8 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
   { id: "memory-read-only", scope: "all", text: MEMORY_READ_ONLY_ADDENDUM },
   // A PR-round rule (the session names the shape); a scan has no session.
   { id: "concurrency-trigger", scope: [CONCURRENCY_PASS], mode: "pr", text: CONCURRENCY_TRIGGER_ADDENDUM },
+  // Owner ruling 2026-10-02: a PLANNED row's reason is its anchor.
+  { id: "concurrency-planned", scope: [CONCURRENCY_PASS], mode: "pr", text: CONCURRENCY_PLANNED_ADDENDUM },
   // scan-loop round 7: in a scan the focus files are the anchor instead.
   { id: "concurrency-scan", scope: [CONCURRENCY_PASS], mode: "scan", text: CONCURRENCY_SCAN_ADDENDUM },
   { id: "ask-human-trigger", scope: [ASK_HUMAN_PASS], text: ASK_HUMAN_TRIGGER_ADDENDUM },

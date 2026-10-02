@@ -369,11 +369,14 @@ export function selectLenses(
     lenses.add(BACKCOMPAT_PASS);
 
   // NOT selected here, deliberately: `pass-concurrency` and
-  // `pass-ask-human`. Both are ADDABLE-ONLY — a read-modify-write
-  // race has no filename, and neither does a question whose answer was never
-  // written down. Each reaches a round through the add protocol only, once the
-  // session has read the diff and can name what it suspects. Adding a path
-  // predicate for either is a decision, not a tidy-up.
+  // `pass-ask-human`. Neither has a PATH predicate — a
+  // read-modify-write race has no filename, and neither does a question whose
+  // answer was never written down. pass-ask-human reaches a round through the
+  // add protocol only. pass-concurrency also does, unless the diff's CONTENT
+  // touches synchronisation or the PR text says it is about a race or a lock:
+  // then SUBLENS_TRIGGERS plans it (owner ruling 2026-10-02, amending
+  // for content). Adding a path predicate for either is a decision, not a
+  // tidy-up.
 
   // Intent: keyed on the BODY, not the file shape — the artifact it
   // judges against is the author's own description, so a body below the
@@ -479,6 +482,100 @@ const ROLLOUT_TEXT_RE =
 const ROLLOUT_CODE_RE =
   /\b(persistReducer|redux-persist|createMigrate|localStorage|sessionStorage|MAX_[A-Z_]*(ENTRIES|PAGE|ITEMS|SIZE|LEN)\w*|protocol_version|api_version|schema_version|version:\s*\d)\b/;
 
+// ---- the concurrency trigger (owner ruling 2026-10-02) ----------------------
+//
+// pass-concurrency was ADDABLE-ONLY: a read-modify-write race has no
+// FILENAME, so no path predicate may plan it. That ruling still stands for
+// paths. The owner's ruling of 2026-10-02 (after the Martian tune20 golden
+// mining: the lens was never added on any of 20 PRs, one of them titled "fix
+// data race", approved with zero findings) amends it for CONTENT: a diff that
+// touches synchronisation itself — a mutex, an atomic, a thread or goroutine,
+// a channel, a lock held across an await — or a PR whose text says it is about
+// a race, a lock or thread safety, plans the lens through this registry. The
+// add protocol is unchanged for every other PR, and a profile still cannot
+// give the lens a path predicate (profiles.ts PROFILE_EXTENDABLE_LENSES).
+//
+// The probes are per language, keyed on the file's extension, so a word that
+// is synchronisation in one language (`volatile`, `chan`, `<-`, `lock`) cannot
+// fire on another. They test CHANGED lines (added or removed — dropping a lock
+// is as much a concurrency change as adding one) of non-test code files.
+
+/** Per-language synchronisation spellings: [extension test, probe]. */
+const SYNC_PROBES: ReadonlyArray<readonly [RegExp, RegExp]> = [
+  // Go: sync/atomic, Lock/Unlock calls, goroutines, channels.
+  [
+    /\.go$/i,
+    /\bsync\.(?:Mutex|RWMutex|WaitGroup|Once|Map|Cond)\b|\bsync\/atomic\b|\batomic\.(?:Add|Load|Store|Swap|CompareAndSwap|Int32|Int64|Uint32|Uint64|Bool|Value|Pointer)\w*|\.(?:R?Lock|R?Unlock|TryR?Lock)\(\)|\bgo\s+(?:func\b|[\w.]+\()|\bchan\b|<-/,
+  ],
+  // Java / Kotlin / Scala: monitors, j.u.c locks and collections, atomics.
+  [
+    /\.(?:java|kt|kts|scala)$/i,
+    /\bsynchronized\b|@Synchronized\b|\bvolatile\b|@Volatile\b|\b(?:ReentrantLock|ReentrantReadWriteLock|ReadWriteLock|StampedLock|Semaphore|CountDownLatch|CyclicBarrier|ExecutorService|CompletableFuture|ThreadLocal)\b|\bConcurrent[A-Z]\w*|\bAtomic(?:Integer|Long|Boolean|Reference)\w*|\.(?:lock|unlock|tryLock)\(\)|\bnew\s+Thread\(|\bMutex\(\)/,
+  ],
+  // Rust: std/tokio sync, atomics, shared ownership across threads.
+  [
+    /\.rs$/i,
+    /\b(?:Mutex|RwLock|Condvar|Barrier)\s*(?:<|::new)|\bArc\s*<|\bAtomic(?:Bool|Usize|Isize|U\d+|I\d+|Ptr)\b|\b(?:std|tokio|parking_lot)::sync\b|\.(?:lock|try_lock)\(\)|\b(?:thread|tokio)::spawn\b|\bOrdering::(?:SeqCst|Acquire|Release|AcqRel|Relaxed)\b|\bmpsc\b|\bunsafe\s+impl\s+(?:Send|Sync)\b/,
+  ],
+  // C / C++: std::mutex and friends, std::atomic, pthreads, C11 atomics.
+  [
+    /\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx)$/i,
+    /\bstd::(?:mutex|shared_mutex|recursive_mutex|timed_mutex|atomic\w*|lock_guard|unique_lock|scoped_lock|shared_lock|thread|jthread|condition_variable\w*|memory_order\w*)\b|\bpthread_\w+|\batomic_\w+\s*\(|\b_Atomic\b|\bvolatile\b|\b__(?:sync|atomic)_\w+/,
+  ],
+  // C#: lock statements, Interlocked, concurrent collections.
+  [
+    /\.cs$/i,
+    /\block\s*\(|\bInterlocked\.\w+|\b(?:SemaphoreSlim|Monitor|Mutex|ReaderWriterLockSlim)\b|\bConcurrent(?:Dictionary|Queue|Bag|Stack)\b|\bvolatile\b/,
+  ],
+  // Python: threading, asyncio primitives, process pools, row locks.
+  [
+    /\.pyi?$/i,
+    /\bthreading\.\w+|\bfrom\s+threading\s+import\b|\basyncio\.(?:Lock|Semaphore|BoundedSemaphore|Event|Condition|Queue|gather|create_task|TaskGroup)\b|\bmultiprocessing\b|\bconcurrent\.futures\b|\b(?:ThreadPoolExecutor|ProcessPoolExecutor)\b|\bselect_for_update\(|\bwith\s+(?:self\.)?_*\w*lock\w*\s*:|\bR?Lock\(\)/i,
+  ],
+  // Ruby: Mutex, threads, concurrent-ruby.
+  [/\.rb$/i, /\bMutex\.new\b|\bThread\.new\b|\bConcurrent::\w+|\.synchronize\b/],
+  // Swift: dispatch queues, locks, actors.
+  [/\.swift$/i, /\bDispatchQueue\b|\bNSLock\b|\bos_unfair_lock\b|\bactor\s+[A-Z]\w*|\bOSAllocatedUnfairLock\b/],
+  // JS / TS: real shared memory and workers, explicit lock libraries, and the
+  // one shared-state race the added lines can show — a member written after an
+  // await, or bumped in place, on an object other callers share.
+  [
+    /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/i,
+    /\bAtomics\.\w+|\bSharedArrayBuffer\b|\bnew\s+Worker\(|\bworker_threads\b|\bnavigator\.locks\b|\b(?:Mutex|Semaphore)\b|\bthis\.[\w.]+\s*=\s*await\b/,
+  ],
+];
+
+/** JS/TS: an in-place read-modify-write of a shared member, counted only in a
+ * file whose changed lines also await — the shape where two callers interleave. */
+const JS_FILE_RE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/i;
+const JS_SHARED_RMW_RE = /\bthis\.[\w.]+(?:\s*(?:\+\+|--|[-+*]=)|\[[^\]\n]+\]\s*(?:\+\+|--|[-+*]=))/;
+const JS_AWAIT_RE = /\bawait\b/;
+
+/** The PR text says the change is about concurrency. `lock` counts unless it
+ * is a lockfile (`package-lock`, `lock file`). */
+const CONCURRENCY_TEXT_RE =
+  /\b(?:data[- ]races?|race[- ]conditions?|races?|racy|concurren(?:t|tly|cy)|thread[- ]?safe(?:ty)?|deadlocks?|mutex(?:es)?|(?<![-./])lock(?:s|ing|ed)?(?![- ]?files?\b))\b/i;
+
+/** The changed line a sync probe fired on, trimmed and capped, for the plan's
+ * reason — the lens gets the code, not one token of it. */
+function syncHit(filename: string, changed: string): string | null {
+  const shown = (line: string): string => {
+    const t = line.slice(1).trim().replace(/`/g, "'");
+    return t.length > 70 ? `${t.slice(0, 67)}…` : t;
+  };
+  const lines = changed.split("\n");
+  for (const [ext, probe] of SYNC_PROBES) {
+    if (!ext.test(filename)) continue;
+    const hit = lines.find((l) => probe.test(l.slice(1)));
+    if (hit !== undefined) return shown(hit);
+  }
+  if (JS_FILE_RE.test(filename) && JS_AWAIT_RE.test(changed)) {
+    const hit = lines.find((l) => JS_SHARED_RMW_RE.test(l.slice(1)));
+    if (hit !== undefined) return shown(hit);
+  }
+  return null;
+}
+
 /** The phrase a text trigger fired on: from the match to the end of its
  * line or sentence, capped — the pass gets the claim, not one word of it. */
 function phraseAt(text: string, at: number): string {
@@ -488,6 +585,21 @@ function phraseAt(text: string, at: number): string {
 }
 
 export const SUBLENS_TRIGGERS: readonly SubLensTrigger[] = [
+  // Owner ruling 2026-10-02 (amends for content, see above): first in
+  // the registry so the order matches ALL_PASSES.
+  {
+    lens: "pass-concurrency",
+    family: "pass-statelessness",
+    fires: (files, text) => {
+      for (const { file, changed } of changedCode(files)) {
+        const hit = syncHit(file.filename, changed);
+        if (hit !== null)
+          return `the diff touches synchronisation in ${file.filename} (\`${hit}\`)`;
+      }
+      const m = CONCURRENCY_TEXT_RE.exec(text);
+      return m ? `the PR text says "${phraseAt(text, m.index)}"` : null;
+    },
+  },
   {
     lens: "pass-widened",
     family: "pass-baseline",

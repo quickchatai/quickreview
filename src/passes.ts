@@ -19,11 +19,14 @@ export const ALL_PASSES: readonly string[] = [
   "pass-placement",
   "pass-simplicity",
   "pass-backcompat",
-  // ADDABLE-ONLY, deliberately. `selectLenses` never emits
+  // no PATH predicate, deliberately. `selectLenses` never emits
   // pass-concurrency — a read-modify-write race has no filename (the 29
   // corpus findings span eight unrelated modules), so no path predicate finds
-  // the set. It reaches a round only through the add protocol, when the
-  // session names the read-then-write it suspects.
+  // the set. It reaches a round through the add protocol, when the session
+  // names the read-then-write it suspects — or (owner ruling 2026-10-02) as a
+  // content-triggered sub-lens, when the diff touches synchronisation or the
+  // PR text says race/lock/thread-safe (heuristics.ts SUBLENS_TRIGGERS; it
+  // sits here, ahead of the other sub-lenses, in registry order).
   "pass-concurrency",
   // ADDABLE-ONLY for the same reason and one more. No path predicate
   // finds "code whose intent is written down nowhere", and the deciding fact —

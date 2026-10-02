@@ -113,4 +113,9 @@ const GOLDEN_ORDERS: Record<string, string> = {
   "re-review": "c1cde722e3f0b5afb9641421785e0185520d7432d85881e0ec2fcb0bb2d077b5",
   staleness: "1079ed8f0fe4d1ed00d04d5a6639649cf4c5c5e109607563217cd980d01c72a7",
 };
-const GOLDEN_AGENTS = "36379ba60f2e135a241f2be5d8962abe237e992f88d292e33c89458dfbb48895";
+// Deliberate re-pins — the default profile's built agents changed ON PURPOSE,
+// never through `[posting]` (owner-approved review changes, 2026-10-02, after
+// the Martian golden mining):
+//   36379ba6… (a67993b, pre-[posting]) → a9474797… the `concurrency-planned`
+//   addendum (pass-concurrency planned by its content trigger)
+const GOLDEN_AGENTS = "a94747978bee7f15d3502fa0794327dd679dcc4612cb5ca06d34a7f2f06a6bd0";
