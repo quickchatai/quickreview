@@ -502,6 +502,7 @@ describe("birth", () => {
         "QCR_SESSION_NAME",
         // the process-wide subagent fan-out cap for the glue.
         "QCR_SUBAGENT_MAX_CONCURRENCY",
+        "QCR_SUBAGENT_WIDE_FANOUT",
         "TERM",
       ]);
       expect(env.QCR_SUBAGENT_MAX_CONCURRENCY).toBe("6");

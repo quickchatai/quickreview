@@ -232,8 +232,11 @@ version = "1.0.0"
 session_dir = "state/pi-sessions"
 # Process-wide subagent fan-out cap: enforced by the first-party
 # glue over pi's native subagent extension (extensions/subagents.ts). The
-# deployed VM runs 6 (six lens passes per round); the code default is 4.
-subagent_max_concurrency = 6
+# code default is 4 (the companion's). 12 since 2026-10-02: with
+# [review] wide_lens_fanout a 13-19-lens round runs 12 wide, about 90 s a
+# review faster on the measured set (bench/aacr/PERF.md §1); each child is
+# ~100 MB, so the VM's 8 GiB holds it.
+subagent_max_concurrency = 12
 
 [memory]
 # Round seeding — how much memory rides each round prompt and how
@@ -519,6 +522,21 @@ preset = "default"
 # build defect, merges need a shared consequence).
 # skip_lenses = ["pass-abstraction", "pass-duplication"]
 # validate_consequence_rule = true
+# Review latency levers (bench/aacr/PERF.md §6, 2026-10-02) — each removes
+# serial time; none changes which lenses run. All on by default except
+# validator sharding:
+#   wide_lens_fanout — a batched lens launch runs as wide as
+#     [pi] subagent_max_concurrency, not native pi's in-call four;
+#   task_files — the daemon writes each lens's complete task to a file, and
+#     the session launches the lens with a short pointer to it;
+#   render_outputs — the review body and inline comments are rendered from
+#     the findings record instead of being written out a second time;
+#   validator_shards — split the candidates over this many pass-validate
+#     children (1 = one validator).
+# wide_lens_fanout = false
+# task_files = false
+# render_outputs = false
+# validator_shards = 2
 # repo profile — names a directory under profiles/ whose house-rule
 # addenda pack (profiles/<name>/addenda/*.md) composes onto the built pass
 # bodies after the built-in generic registry, and whose optional

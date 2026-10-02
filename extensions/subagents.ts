@@ -77,6 +77,19 @@ export const SCOPE_ENV = "QCR_SUBAGENT_SCOPE";
  * [pi] subagent_max_concurrency riding the session command line). */
 export const CONCURRENCY_ENV = "QCR_SUBAGENT_MAX_CONCURRENCY";
 
+/** Env var switching the WIDE fan-out on ("1"): a `tasks:[…]` call is split
+ * into native-sized chunks that run CONCURRENTLY, each under its own permits
+ * of the process-wide semaphore, so one batched launch runs as wide as the
+ * configured cap instead of native's in-call four (bench/aacr/PERF.md §1).
+ * Absent or anything but "1" ⇒ the native shape (the companion's default).
+ * The VM session and the bench set it from `[review] wide_lens_fanout`. */
+export const WIDE_FANOUT_ENV = "QCR_SUBAGENT_WIDE_FANOUT";
+
+/** Whether the wide fan-out is on for this process. */
+export function resolveWideFanout(env: Record<string, string | undefined> = process.env): boolean {
+  return (env[WIDE_FANOUT_ENV] ?? "").trim() === "1";
+}
+
 /** Default process-wide cap — the companion's desktop number; the old
  * extension's config.json default was the same 4. */
 export const DEFAULT_MAX_CONCURRENCY = 4;
@@ -242,6 +255,9 @@ export function wrapExecute(
 ): ToolExecute {
   return async function wrapped(this: unknown, id, params, signal, onUpdate, ctx) {
     const safe = sanitizeParams(params ?? {}, env);
+    if (resolveWideFanout(env) && Array.isArray(safe.tasks) && safe.tasks.length > 1) {
+      return await runWide.call(this, execute, semaphore, id, safe, signal, onUpdate, ctx);
+    }
     const weight = callWeight(safe, semaphore.permits);
     await semaphore.acquire(weight);
     try {
@@ -321,6 +337,83 @@ export function wrapExecute(
   };
 }
 
+/**
+ * The wide fan-out: one `tasks:[…]` call, split into contiguous chunks of at
+ * most native's in-call concurrency, every chunk launched at once. Each chunk
+ * holds exactly as many semaphore permits as it can have children in flight,
+ * so the process-wide cap still binds across every call of the process, and
+ * a chunk never exceeds native's own MAX_PARALLEL_TASKS. Results keep task
+ * order, and the combined result has the shape the sequential path returns.
+ */
+async function runWide(
+  this: unknown,
+  execute: ToolExecute,
+  semaphore: WeightedSemaphore,
+  id: Parameters<ToolExecute>[0],
+  safe: Record<string, unknown>,
+  signal: Parameters<ToolExecute>[2],
+  onUpdate: Parameters<ToolExecute>[3],
+  ctx: Parameters<ToolExecute>[4],
+): Promise<Awaited<ReturnType<ToolExecute>>> {
+  const tasks = safe.tasks as unknown[];
+  const size = Math.max(1, Math.min(NATIVE_IN_CALL_CONCURRENCY, semaphore.permits));
+  const chunks: unknown[][] = [];
+  for (let offset = 0; offset < tasks.length; offset += size)
+    chunks.push(tasks.slice(offset, offset + size));
+  const partial: unknown[][] = chunks.map(() => []);
+  const notify =
+    typeof onUpdate === "function"
+      ? (onUpdate as unknown as (update: ParallelNativeResult) => void)
+      : undefined;
+  const values = await Promise.all(
+    chunks.map(async (chunk, index) => {
+      await semaphore.acquire(chunk.length);
+      try {
+        signal?.throwIfAborted();
+        const chunkUpdate = notify
+          ? (update: unknown) => {
+              let value: ParallelNativeResult;
+              try {
+                value = parallelResult(update);
+              } catch {
+                return;
+              }
+              partial[index] = value.details.results;
+              notify({
+                ...value,
+                details: { ...value.details, mode: "parallel", results: partial.flat() },
+              });
+            }
+          : undefined;
+        const value = parallelResult(
+          await execute.call(this, id, { ...safe, tasks: chunk }, signal, chunkUpdate, ctx),
+        );
+        partial[index] = value.details.results;
+        return value;
+      } finally {
+        semaphore.release(chunk.length);
+      }
+    }),
+  );
+  const allResults = values.flatMap((v) => v.details.results);
+  const rendered = values
+    .map((v) =>
+      v.content
+        .filter((part) => part.type === "text" && typeof part.text === "string")
+        .map((part) => part.text)
+        .join("\n"),
+    )
+    .filter((text) => text);
+  const last = values[values.length - 1];
+  const anyError = values.some((v) => v.isError === true);
+  return {
+    ...last,
+    content: [{ type: "text" as const, text: renderedParallelContent(allResults, rendered) }],
+    details: { ...last?.details, mode: "parallel", results: allResults },
+    ...(anyError ? { isError: true } : {}),
+  } as Awaited<ReturnType<ToolExecute>>;
+}
+
 /** The native extension's path inside the installed pi package. */
 export function nativeExtensionPath(examplesPath: string): string {
   return join(examplesPath, "extensions", "subagent", "index.ts");
@@ -379,7 +472,7 @@ export default async function activate(pi: Pi): Promise<void> {
             });
             log(
               `subagents: native subagent tool registered (pi ${version}, scope=${scope}, ` +
-                `max_concurrency=${maxConcurrency})`,
+                `max_concurrency=${maxConcurrency}, fanout=${resolveWideFanout() ? "wide" : "native"})`,
             );
           } else {
             real(definition);

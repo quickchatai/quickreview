@@ -864,6 +864,7 @@ export async function reviewCase(
       PI_CODING_AGENT_DIR: o.agentDir,
       QCR_SUBAGENT_SCOPE: "project",
       QCR_SUBAGENT_MAX_CONCURRENCY: String(ctx.cfg.pi.subagent_max_concurrency),
+      QCR_SUBAGENT_WIDE_FANOUT: ctx.cfg.review?.wide_lens_fanout === false ? "0" : "1",
       QCR_SANDBOX_ROOT: o.root,
       QCR_SESSION_NAME: `bench-${safe}`,
       QCR_PR: String(c.pr),

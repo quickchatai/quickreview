@@ -436,6 +436,9 @@ export class PiSessionManager implements SessionHooks {
       // old pi-subagents config.json number — the glue's own default is the
       // companion's 4).
       QCR_SUBAGENT_MAX_CONCURRENCY: String(this.cfg.pi.subagent_max_concurrency),
+      // `[review] wide_lens_fanout`: a batched lens launch runs as wide as
+      // that cap instead of native pi's in-call four (bench/aacr/PERF.md §1).
+      QCR_SUBAGENT_WIDE_FANOUT: this.cfg.review?.wide_lens_fanout === false ? "0" : "1",
       // the daemon's own resolved config, so the posting scripts read
       // the file the daemon read. Set by the DAEMON — the bash guard still
       // refuses a session's own `QCR_CONFIG=` prefix.

@@ -20,11 +20,13 @@ import {
   NATIVE_IN_CALL_CONCURRENCY,
   NATIVE_MAX_PARALLEL_TASKS,
   SCOPE_ENV,
+  WIDE_FANOUT_ENV,
   WeightedSemaphore,
   callWeight,
   nativeExtensionPath,
   resolveMaxConcurrency,
   resolveScope,
+  resolveWideFanout,
   sanitizeParams,
   wrapExecute,
 } from "../extensions/subagents.js";
@@ -361,6 +363,67 @@ describe("wrapExecute", () => {
       {},
     );
     await expect(ok("id2", { agent: "a", task: "t" })).resolves.toEqual({ content: [] });
+  });
+});
+
+describe("wide fan-out (QCR_SUBAGENT_WIDE_FANOUT=1, bench/aacr/PERF.md §1)", () => {
+  const WIDE = { [WIDE_FANOUT_ENV]: "1" };
+  const asExecute = (fn: (...args: unknown[]) => Promise<unknown>) =>
+    fn as unknown as Parameters<typeof wrapExecute>[0];
+  function nativeStub(log: { inFlight: number; peak: number; sizes: number[] }) {
+    return asExecute(async (_id, params) => {
+      const tasks = (params as { tasks: Array<{ agent: string; task: string }> }).tasks;
+      log.sizes.push(tasks.length);
+      if (tasks.length > NATIVE_IN_CALL_CONCURRENCY) throw new Error("native in-call cap exceeded");
+      log.inFlight += tasks.length;
+      log.peak = Math.max(log.peak, log.inFlight);
+      await tick();
+      await tick();
+      log.inFlight -= tasks.length;
+      return {
+        content: [{ type: "text", text: `Parallel: ${tasks.length}/${tasks.length} succeeded\n\n${tasks.map((t) => t.task).join(",")}` }],
+        details: { mode: "parallel", results: tasks.map((task) => ({ ...task, exitCode: 0 })) },
+      };
+    });
+  }
+
+  it("is off unless the env says exactly 1", () => {
+    expect(resolveWideFanout({})).toBe(false);
+    expect(resolveWideFanout({ [WIDE_FANOUT_ENV]: "0" })).toBe(false);
+    expect(resolveWideFanout({ [WIDE_FANOUT_ENV]: "yes" })).toBe(false);
+    expect(resolveWideFanout(WIDE)).toBe(true);
+  });
+
+  it("runs one 12-task call 12 wide under a cap of 12, in chunks native accepts, results in task order", async () => {
+    const log = { inFlight: 0, peak: 0, sizes: [] as number[] };
+    const wrapped = wrapExecute(nativeStub(log), new WeightedSemaphore(12), WIDE);
+    const tasks = Array.from({ length: 12 }, (_, i) => ({ agent: `pass-${i}`, task: `task-${i}`, cwd: "/evil" }));
+    const result = (await wrapped("round", { tasks })) as unknown as {
+      content: Array<{ text: string }>;
+      details: { results: Array<{ task: string; cwd?: string }> };
+    };
+    expect(log.sizes).toEqual([4, 4, 4]);
+    expect(log.peak).toBe(12);
+    expect(result.details.results.map((r) => r.task)).toEqual(tasks.map((t) => t.task));
+    expect(result.details.results.every((r) => r.cwd === undefined)).toBe(true);
+    expect(result.content[0]?.text).toMatch(/^Parallel: 12\/12 succeeded/);
+  });
+
+  it("still never exceeds the process-wide cap, across one call or several", async () => {
+    const log = { inFlight: 0, peak: 0, sizes: [] as number[] };
+    const wrapped = wrapExecute(nativeStub(log), new WeightedSemaphore(6), WIDE);
+    const mk = (n: number, p: string) => Array.from({ length: n }, (_, i) => ({ agent: `${p}${i}`, task: `${p}${i}` }));
+    await Promise.all([wrapped("a", { tasks: mk(10, "a") }), wrapped("b", { tasks: mk(5, "b") })]);
+    expect(log.peak).toBeLessThanOrEqual(6);
+    expect(log.sizes.reduce((x, y) => x + y, 0)).toBe(15);
+  });
+
+  it("leaves single-mode calls and the native shape alone when off", async () => {
+    const log = { inFlight: 0, peak: 0, sizes: [] as number[] };
+    const wrapped = wrapExecute(nativeStub(log), new WeightedSemaphore(12), {});
+    const tasks = Array.from({ length: 4 }, (_, i) => ({ agent: `p${i}`, task: `t${i}` }));
+    await wrapped("round", { tasks });
+    expect(log.sizes).toEqual([4]);
   });
 });
 

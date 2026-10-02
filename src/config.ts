@@ -449,6 +449,24 @@ export interface ReviewConfig {
    * 2026-09-29): intent/contract appeals, dead code, CI-enabled lint rules and
    * merges judged by consequence. Off by default; opt-in for a benchmark arm. */
   validate_consequence_rule: boolean;
+  /** Review latency levers (bench/aacr/PERF.md §6, 2026-10-02). None changes
+   * which lenses run or what they are asked; each removes serial time.
+   *
+   * `wide_lens_fanout`: a batched `tasks:[…]` lens launch runs as wide as
+   * `[pi] subagent_max_concurrency`, not native pi's in-call four
+   * (extensions/subagents.ts, `QCR_SUBAGENT_WIDE_FANOUT`). */
+  wide_lens_fanout: boolean;
+  /** `task_files`: the daemon (or the bench) writes each plan row's complete
+   * lens task to a file (src/passtasks.ts), so the session launches a lens
+   * with a short pointer instead of generating its whole task string. */
+  task_files: boolean;
+  /** `render_outputs`: the posted review body and inline-comments JSON are
+   * rendered deterministically from the findings record (src/reviewrender.ts)
+   * instead of being written out by the session a second time. */
+  render_outputs: boolean;
+  /** `validator_shards`: how many `pass-validate` children split the
+   * candidates (by file); 1 = one validator, the pre-2026-10 shape. */
+  validator_shards: number;
 }
 
 export type NitPolicy = "strict" | "open";
@@ -543,6 +561,10 @@ export const REVIEW_DEFAULTS: ReviewConfig = {
   validate_demote: true,
   skip_lenses: [],
   validate_consequence_rule: false,
+  wide_lens_fanout: true,
+  task_files: true,
+  render_outputs: true,
+  validator_shards: 1,
 };
 
 /**
@@ -1883,6 +1905,12 @@ export function parseConfig(toml: string): Config {
     scan: parseScan(raw.scan),
   };
   validateLensKnobs(cfg);
+  const shards = cfg.review.validator_shards;
+  if (!Number.isInteger(shards) || shards < 1 || shards > 4) {
+    throw new Error(
+      `config.toml [review]: validator_shards must be an integer 1-4 (got ${JSON.stringify(shards)})`,
+    );
+  }
   if (cfg.review.nits !== "strict" && cfg.review.nits !== "open") {
     throw new Error(
       `config.toml [review]: nits must be "strict" or "open" (got ${JSON.stringify(cfg.review.nits)})`,
