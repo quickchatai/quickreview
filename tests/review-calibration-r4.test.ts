@@ -159,3 +159,31 @@ describe("removed-rule-other-consumers (pass-ui + pass-sweep + pass-widened)", (
     expect(text("removed-rule-other-consumers")).not.toMatch(NO_BENCHMARK_NAMES);
   });
 });
+
+describe("contract-values-renumbered (pass-baseline + pass-backcompat + pass-contracts)", () => {
+  it("binds baseline, backcompat and contracts, PR builds only", () => {
+    expect(boundTo("contract-values-renumbered")).toEqual({
+      pr: ["pass-backcompat", "pass-baseline", "pass-contracts"],
+      scan: [],
+    });
+  });
+
+  it("treats exit codes, wire enums and the like as contracts, and names reuse as the worst case", () => {
+    for (const lens of ["pass-baseline", "pass-backcompat", "pass-contracts"]) {
+      const body = bodyOf(lens);
+      for (const phrase of [
+        "A renumbered or reused contract value is a breaking change",
+        "process exit codes, HTTP status codes and API error codes",
+        "REUSES a value for a different meaning",
+        "Reuse is the worst case",
+        "unless the PR keeps the old value working or says",
+        "not a style or docs remark",
+      ])
+        expect(body, `${lens}: ${phrase}`).toContain(phrase);
+    }
+  });
+
+  it("names no benchmark, project or PR", () => {
+    expect(text("contract-values-renumbered")).not.toMatch(NO_BENCHMARK_NAMES);
+  });
+});

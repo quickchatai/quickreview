@@ -127,4 +127,5 @@ const GOLDEN_ORDERS: Record<string, string> = {
 //   → ae8b406f… `write-predicate-scope` (pass-baseline, pass-data-safety; round 4)
 //   → 853d0ed7… `persistence-bypasses-callbacks` (pass-baseline, pass-data-safety; round 4)
 //   → ac4f9d98… `removed-rule-other-consumers` (pass-ui, pass-sweep, pass-widened; round 4)
-const GOLDEN_AGENTS = "ac4f9d9896ad8449b18526db9d8e5045cc19efb9ab74f32222ecc06ace6b15cc";
+//   → fd3982c0… `contract-values-renumbered` (pass-baseline, pass-backcompat, pass-contracts; round 4)
+const GOLDEN_AGENTS = "fd3982c048ca6af855c5df1148e7bcceb5969051a4eff8c10b1f7290c3f03220";
