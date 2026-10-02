@@ -118,4 +118,5 @@ const GOLDEN_ORDERS: Record<string, string> = {
 // the Martian golden mining):
 //   36379ba6… (a67993b, pre-[posting]) → a9474797… the `concurrency-planned`
 //   addendum (pass-concurrency planned by its content trigger)
-const GOLDEN_AGENTS = "a94747978bee7f15d3502fa0794327dd679dcc4612cb5ca06d34a7f2f06a6bd0";
+//   → 95c8be2a… `consistency-identifiers` (pass-consistency)
+const GOLDEN_AGENTS = "95c8be2aff0817fd10a6ffda05dfddb33f64067d39897231d7c96ea5decb2a77";

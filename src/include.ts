@@ -687,6 +687,21 @@ const MEMORY_READ_ONLY_ADDENDUM =
 const CONCURRENCY_TRIGGER_ADDENDUM =
   "\n## You were added on demand — your task string must NAME THE SHAPE (sandbox rule)\nYou are not a planned lens. No path predicate selects you: you run only when the PR's session, having read the diff, suspects a specific concurrent-write defect and adds you through the round's add protocol. For this lens the protocol is STRICTER than for any other addable lens: the session must **name the read-then-write it suspects** — the call site that reads state, the code that changes it, and the write that puts it back — not merely state a worry that something might race.\n\nRead your task string for that named shape and start from it. If the shape is named, it is your anchor: prove it or kill it, and follow it only as far as its blast radius. If your task string names NO concrete read-then-write — only a general unease, a file name, or \"check for race conditions\" — say so in one line in your output and return `NONE`. Do not substitute a fishing expedition of your own: an unanchored concurrency sweep is precisely how this class produces confident nonsense. Reporting the missing anchor is the correct, useful result — the session can re-add you with the shape named.\n\nThis rule binds THIS lens only. It changes nothing about how any other addable lens is added, and nothing about the one-line reason the add protocol asks of the session everywhere else.\n";
 
+// Owner-approved 2026-10-02 (after the Martian tune20 golden mining,
+// bench/aacr/ext/martian-tuning/GOLDEN-MINING.md §5.2): identifiers matched by
+// exact spelling or type are behaviour, not style. pass-consistency's seed
+// excludes naming conventions as style, which also hid the case where two new
+// calls tag a metric one way and a third another, or a new handler raises a
+// generic error where its siblings raise the typed one the transport maps.
+// PR builds only; the seed is untouched (rule 6).
+export const CONSISTENCY_IDENTIFIERS_ADDENDUM =
+  "\n## New identifiers must agree with each other and with their siblings (sandbox rule)\n" +
+  "Metric names, metric tag or label keys, log and structured-log field keys, event and message names, and the error or exception types a unit raises are not style. Another piece of code, a dashboard, an alert, a query or a caller matches each of them by exact spelling or exact type, so a different spelling is a different key: the series splits, the alert never fires, the query misses half the events, the caller's `catch`/`except` for the typed error never matches, the transport maps the error to the wrong status. The \"style is excluded\" rule above does not cover these.\n\n" +
+  "So, as part of both directions above, list in your notes every such identifier the diff INTRODUCES — a new metric or event name, a new tag or log key (also on an existing metric or logger), a new error raised — and check each one twice:\n\n" +
+  "1. **Against the other new uses in this PR.** Find every place the diff emits or matches the same metric, event, log key or tag key and compare the spellings character by character: singular against plural, `snake_case` against `camelCase`, a prefix or unit suffix present in one call and absent in another, one spelling in two calls and another in a third.\n" +
+  "2. **Against the sibling convention in the touched module.** Grep the module and its package for how the existing metrics, tags, log keys, events and errors are named and raised. A new name that departs from the scheme every sibling follows is the finding; so is a handler or endpoint that raises a generic error (`Error`, `Exception`, `RuntimeError`, a bare string) where its siblings raise the framework's or the module's typed error.\n\n" +
+  "Report each mismatch with both sides — the majority's `path:line` and the outlier's — and what the mismatch DOES: which series splits, which consumer misses it, which status code or catch block changes. A mismatch a consumer already reads is a defect at full severity under the ordinary map; one nothing reads yet is `P3`.\n";
+
 // Owner ruling 2026-10-02 (amends for content): the lens is now also
 // PLANNED when the diff touches synchronisation or the PR text says it is about
 // a race or a lock (heuristics.ts SUBLENS_TRIGGERS). The trigger above was
@@ -1107,6 +1122,14 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
     id: "ask-human-named-defect-validate",
     scope: [VALIDATE_PASS],
     text: ASK_HUMAN_NAMED_DEFECT_VALIDATE_ADDENDUM,
+  },
+  // Owner-approved 2026-10-02 (Martian golden mining, GOLDEN-MINING.md §5):
+  // general review calibrations, PR builds only.
+  {
+    id: "consistency-identifiers",
+    scope: ["pass-consistency"],
+    mode: "pr",
+    text: CONSISTENCY_IDENTIFIERS_ADDENDUM,
   },
   // the one corpus-derived rule that is generic review behaviour.
   // Its six house-rule siblings ride the live deployment's profile addenda pack since
