@@ -90,8 +90,8 @@ if [[ "$cmd" == review ]]; then
     rm -f "${t}/running/$run.$only"
     o="ok 0 0"
     if [[ -s "${t}/outcomes/$only" ]]; then o="$(head -1 "${t}/outcomes/$only")"; sed -i '1d' "${t}/outcomes/$only"; fi
-    read -r st rt lm q <<< "$o"
-    echo "[00:00:00] result: $only $st retry=$rt limited=$lm\${q:+ quota=$q}"
+    read -r st rt lm q sk <<< "$o"
+    echo "[00:00:00] result: $only $st retry=$rt limited=$lm\${q:+ quota=$q}\${sk:+ skipped}"
     exit 0
   fi
   if [[ "$phase" == finish ]]; then echo "[00:00:00] review: 1/1 ok (ok 1) — results in /bench-out/results"; exit 0; fi
@@ -293,6 +293,19 @@ describe("arm.sh", () => {
     expect(conc.length).toBe(5); // full's 3 + fresh10's 2, one queue
     expect(Math.max(...conc)).toBe(2);
   });
+
+  it("a case --resume skipped does not hold memory admission (2026-10-02 resume stall)", async () => {
+    // Room for exactly one growing review: (4000 - 3072) / 768 = 1. Without the
+    // fix every skipped case counted as a review started in the last five
+    // minutes, so the second launch waited 300 s; the test's own timeout catches that.
+    for (const id of [A, B, C]) writeFileSync(join(t, "outcomes", id), "ok 0 0 0 skipped\n");
+    const r = await arm(["--prefix", "s", "--cases", "full", "--no-judge"], {
+      QCR_BENCH_MEM_AVAILABLE_MB: "4000",
+      QCR_BENCH_MAX_PARALLEL: "1",
+    });
+    expect(r.code).toBe(0);
+    expect(r.out).toMatch(/3\/3 done \(ok 3, not ok 0\)/);
+  }, 20000);
 
   it("auto sizes the slots from MemAvailable, capped by the login's share", async () => {
     const env = { QCR_BENCH_MEM_AVAILABLE_MB: "7000" }; // (7000 - 3072) / 768 = 5

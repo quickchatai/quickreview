@@ -459,7 +459,7 @@ echo "arm $PREFIX: $TOTAL case(s) in ${NJ} run(s), $(cur_par) at once$([[ "$ADAP
 # 2. One case in its own container, holding a machine-wide slot. Its outcome
 #    comes from the `result:` line the case prints (never from the run dir).
 case_worker() { # seq job id attempt
-  local seq="$1" i="$2" id="$3" att="$4" out="$tmp/case.$1.log" line st=error retry=1 lim=0 quota=0
+  local seq="$1" i="$2" id="$3" att="$4" out="$tmp/case.$1.log" line st=error retry=1 lim=0 quota=0 skipped=0
   with_slot env QCR_BENCH_MEMORY="${QCR_BENCH_REVIEW_MEMORY:-3g}" QCR_BENCH_CPUS="${QCR_BENCH_REVIEW_CPUS:-4}" \
     "$HERE/bench.sh" review --phase case --run "${JRUN[$i]}" --set "${JSET[$i]}" --only "$id" \
     ${CFG[@]+"${CFG[@]}"} > "$out" 2>&1
@@ -469,9 +469,10 @@ case_worker() { # seq job id attempt
     retry="$(sed -E 's/.* retry=([0-9]+).*/\1/' <<< "$line")"
     lim="$(sed -E 's/.* limited=([0-9]+).*/\1/' <<< "$line")"
     [[ "$line" =~ \ quota=([0-9]+) ]] && quota="${BASH_REMATCH[1]}"
+    [[ "$line" =~ \ skipped($|\ ) ]] && skipped=1
   fi
   with_lock "$tmp/log.lock" sh -c 'cat "$1" >> "$2"' _ "$out" "$QCR_BENCH_RUNS_DIR/${JRUN[$i]}.review.log"
-  echo "$i $id $att $st $retry $lim $quota" > "$tmp/done.$seq.tmp" && mv "$tmp/done.$seq.tmp" "$tmp/done.$seq"
+  echo "$i $id $att $st $retry $lim $quota $skipped" > "$tmp/done.$seq.tmp" && mv "$tmp/done.$seq.tmp" "$tmp/done.$seq"
 }
 
 # 3. A run whose last case finished: close it, judge it, score it — while the
@@ -486,7 +487,11 @@ post_run() { # job
 }
 
 running=0 seq=0 last=0 pause_until=0 stop=0 done_n=0 ok_n=0 bad_n=0 waiting=0
-LAUNCHED=() POSTS=()
+# Launch time per case seq. A case `--resume` skipped (already reviewed) is
+# dropped at once: it never grew, so it must not hold memory admission for
+# five minutes (2026-10-02: a resume of 77 done cases admitted one new review
+# a minute for 25 minutes with 14 GB free).
+declare -A LAUNCHED=(); POSTS=()
 mem_ok() { # room for one more review, counting the ones launched in the last 5 min as still growing
   local a now=$1 recent=0 t
   a="$(mem_avail_mb)"; [[ -n "$a" ]] || return 0
@@ -500,7 +505,8 @@ finish_case() { # job
 while :; do
   for f in "$tmp"/done.*; do
     [[ -e "$f" && "$f" != *.tmp ]] || continue
-    read -r i id att st retry lim quota < "$f"; rm -f "$f"
+    read -r i id att st retry lim quota skipped < "$f"; rm -f "$f"
+    [[ "${skipped:-0}" == 1 ]] && unset "LAUNCHED[${f##*.}]"
     running=$(( running - 1 ))
     if [[ "$st" == ok ]]; then
       ok_n=$(( ok_n + 1 )); finish_case "$i"
@@ -552,7 +558,7 @@ while :; do
   if (( qh < ${#QUEUE[@]} && running < cp && now >= pause_until && now - last >= GAP )); then
     if mem_ok "$now"; then
       read -r i id att <<< "${QUEUE[$qh]}"; qh=$(( qh + 1 ))
-      seq=$(( seq + 1 )); running=$(( running + 1 )); last="$now"; LAUNCHED+=("$now"); waiting=0
+      seq=$(( seq + 1 )); running=$(( running + 1 )); last="$now"; LAUNCHED[$seq]="$now"; waiting=0
       case_worker "$seq" "$i" "$id" "$att" &
       continue
     elif [[ "$waiting" == 0 ]]; then
