@@ -37,6 +37,13 @@ function boundTo(id: string): { pr: string[]; scan: string[] } {
   return { pr: of("pr"), scan: of("scan") };
 }
 
+/** The lens's built body at whichever tier the default build produces first. */
+function bodyOf(lens: string): string {
+  const key = [...built().keys()].sort().find((k) => k.startsWith(`${lens}--`));
+  expect(key, lens).toBeDefined();
+  return built().get(key!)!;
+}
+
 function text(id: string): string {
   return PASS_ADDENDA.find((a) => a.id === id)!.text;
 }
@@ -51,7 +58,7 @@ describe("concurrency-duplicate-init (pass-concurrency)", () => {
   });
 
   it("falsifies a duplicated initialisation on its own terms, and keeps cheap pure ones out", () => {
-    const body = built().get("pass-concurrency--sol-med")!;
+    const body = bodyOf("pass-concurrency");
     for (const phrase of [
       "A duplicated initialisation is damage of its own",
       "that is NOT what kills this candidate",
@@ -68,5 +75,31 @@ describe("concurrency-duplicate-init (pass-concurrency)", () => {
 
   it("names no benchmark, project or PR", () => {
     expect(text("concurrency-duplicate-init")).not.toMatch(NO_BENCHMARK_NAMES);
+  });
+});
+
+describe("write-predicate-scope (pass-baseline + pass-data-safety)", () => {
+  it("binds the two lenses that read destructive queries, PR builds only", () => {
+    expect(boundTo("write-predicate-scope")).toEqual({
+      pr: ["pass-baseline", "pass-data-safety"],
+      scan: [],
+    });
+  });
+
+  it("reads every OR branch and precedence group of a DELETE/UPDATE filter for the scoping conditions", () => {
+    for (const lens of ["pass-baseline", "pass-data-safety"]) {
+      const body = bodyOf(lens);
+      for (const phrase of [
+        "Every branch of a DELETE or UPDATE filter carries the scope",
+        "check that EVERY branch carries every one of them",
+        "`a AND b OR c` without parentheses scopes only the first branch",
+        "the condition it lacks (and the sibling branch that has it)",
+      ])
+        expect(body, `${lens}: ${phrase}`).toContain(phrase);
+    }
+  });
+
+  it("names no benchmark, project or PR", () => {
+    expect(text("write-predicate-scope")).not.toMatch(NO_BENCHMARK_NAMES);
   });
 });

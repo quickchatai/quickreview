@@ -750,6 +750,12 @@ export const CONCURRENCY_DUPLICATE_INIT_ADDENDUM =
   "- What does the initialisation DO? Pure, cheap, in-memory computation of an equal value: safe — return `NONE`. File or network I/O, a remote call, a heavy computation run on every cold start under concurrent load, a side effect (a write, a registration, a metric, a subscription, a goroutine or thread started), or values that can differ between the two runs (a timestamp, a random id, a configuration read twice): it is a finding.\n\n" +
   "Report a surviving one with the same four parts — the value, the two callers' interleaving to the duplicated initialisation, how often cold concurrent entry happens, and the fix (re-check under the exclusive lock, or a once-only primitive). Severity follows the duplicated work's consequence: `P2` for a side effect or diverging values, `P3` for repeated I/O or computation only. This applies equally when the PR claims to FIX a race: a fix that removes the data race but leaves the double initialisation has not closed the window it describes.\n";
 
+// Round 4 (ROUND4-GAPS.md): a row-deleting filter gained an OR branch without the scoping condition its sibling branch carried, and both lenses that read it missed it. Every branch of a destructive filter must carry the scope. PR builds only.
+export const WRITE_PREDICATE_SCOPE_ADDENDUM =
+  "\n## Every branch of a DELETE or UPDATE filter carries the scope (sandbox rule)\n" +
+  "For every query, ORM call or bulk operation the diff adds or changes that DELETES or UPDATES rows \u2014 `deleteMany`/`updateMany`, `filter(...).delete()`/`.update()`, `delete_all`/`update_all`, `DELETE ... WHERE`, `UPDATE ... WHERE`, a repository `deleteBy...` \u2014 write the filter out and read it branch by branch. When it is an OR (`OR: [...]`, `Q(...) | Q(...)`, `.or(...)`, `WHERE a OR b`), each branch selects rows on its own: list the conditions that scope the operation to the rows it means to touch \u2014 the tenant, owner or account, the type, method, channel or kind, the status, the parent id \u2014 and check that EVERY branch carries every one of them, either inside the branch or in an AND that wraps the whole OR. A branch that drops one (a new `retry`/`expired`/`stale` clause added beside a branch that filters by type) touches the other types' rows too. Check operator precedence the same way: `a AND b OR c` without parentheses scopes only the first branch.\n\n" +
+  "Report it at the operation's `path:line` with the branch that lacks the condition, the condition it lacks (and the sibling branch that has it), and which rows the operation now deletes or rewrites that it should not. Silent deletion or rewriting of rows outside the intended scope is a data-loss defect under the ordinary severity map.\n";
+
 // Owner ruling 2026-10-02 (amends for content): the lens is now also
 // PLANNED when the diff touches synchronisation or the PR text says it is about
 // a race or a lock (heuristics.ts SUBLENS_TRIGGERS). The trigger above was
@@ -1206,6 +1212,7 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
     mode: "pr",
     text: TESTS_CANNOT_OBSERVE_VALIDATE_ADDENDUM,
   },
+  { id: "write-predicate-scope", scope: ["pass-baseline", "pass-data-safety"], mode: "pr", text: WRITE_PREDICATE_SCOPE_ADDENDUM },
   // the one corpus-derived rule that is generic review behaviour.
   // Its six house-rule siblings ride the live deployment's profile addenda pack since
   // (see the banner above); wire.ts composes a profile pack after
