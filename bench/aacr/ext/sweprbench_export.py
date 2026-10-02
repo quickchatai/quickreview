@@ -13,8 +13,10 @@ QuickReview's review is what it would post: the inline comments and the
 findings it places in the review body (it posts those there when they have no
 valid inline anchor). Those are exactly the comments of the bench's scored
 result file (results/all/<id>.json, the harness's own conversion — the same
-file AACR-Bench scores), in posting order: inline first, then body findings;
-right-side anchors only (a left-side line number is an OLD-file line, which
+file AACR-Bench scores). Order: by the P-level QuickReview stamped, most
+severe first — P0, P1, P2, then P3 and unstamped together — keeping posting
+order (inline first, then body findings) within a level, so the harness's
+30-comment cap can only ever drop the least severe; right-side anchors only (a left-side line number is an OLD-file line, which
 SWE-PRBench would read as a new-file line). Each becomes one array item:
 
   body      the comment text, verbatim
@@ -78,7 +80,13 @@ def agent_array(run: Path, instance_id: str) -> tuple[list[dict], str]:
             continue
         items.append({"body": body, "file": c.get("path") or None,
                       "line": c.get("start_line"), "severity": severity(body)})
-    return items, status
+    return order_by_severity(items), status
+
+
+def order_by_severity(items: list[dict]) -> list[dict]:
+    """P0, P1, P2, then everything else (P3 / unstamped), stable within a level."""
+    rank = {"P0": 0, "P1": 1, "P2": 2}
+    return sorted(items, key=lambda i: rank.get(i["severity"] or "", 3))
 
 
 def main() -> None:
