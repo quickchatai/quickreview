@@ -12,7 +12,7 @@ extends = "default"
 [posting]
 max_comments = 4
 nits = "off"
-questions = "post"          # iteration 2: "blocking" withheld 25 P3 questions and recall fell
+questions = "blocking"
 repeat_sites = false
 body = "verdict"
 comment_style = "concise"
