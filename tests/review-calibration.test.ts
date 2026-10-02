@@ -114,3 +114,37 @@ describe("validator calibrations (pass-validate)", () => {
       );
   });
 });
+
+describe("tests that cannot observe what they claim (pass-tests + pass-validate)", () => {
+  it("the lens half binds pass-tests alone and the validator half pass-validate alone, PR builds only", () => {
+    expect(boundTo("tests-cannot-observe")).toEqual({ pr: ["pass-tests"], scan: [] });
+    expect(boundTo("tests-cannot-observe-validate")).toEqual({ pr: [VALIDATE_PASS], scan: [] });
+  });
+
+  it("names every shape and the P2 severity, with the scenario", () => {
+    const body = built().get("pass-tests--sol-med")!;
+    expect(body).toContain("A test that cannot observe what it claims to test is a `P2` defect");
+    for (const shape of [
+      "patched to a no-op",
+      "never joined or awaited",
+      "a mock or fake replaces the very path the PR changed",
+      "the setup omits the input the change uses",
+      "Report each such test at `P2` with the concrete scenario",
+    ])
+      expect(body, shape).toContain(shape);
+  });
+
+  it("the validator may not downgrade it as 'not a production defect', and verifies by reading only", () => {
+    const text = PASS_ADDENDA.find((a) => a.id === "tests-cannot-observe-validate")!.text;
+    expect(text).toContain("is a defect in the PR at `P2`");
+    expect(text).toContain("Do not downgrade it to `P3`, or kill it `below-bar`");
+    expect(text).toContain("never by running it");
+  });
+
+  it("names no benchmark, project or PR", () => {
+    for (const id of ["tests-cannot-observe", "tests-cannot-observe-validate"])
+      expect(PASS_ADDENDA.find((a) => a.id === id)!.text, id).not.toMatch(
+        /martian|golden|sentry|keycloak|grafana|cal\.com|discourse/i,
+      );
+  });
+});

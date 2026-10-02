@@ -121,4 +121,6 @@ const GOLDEN_ORDERS: Record<string, string> = {
 //   → 95c8be2a… `consistency-identifiers` (pass-consistency)
 //   → 5fe083e9… `validate-external-semantics`, `validate-interface-contract`,
 //     `validate-masked-defect` (pass-validate)
-const GOLDEN_AGENTS = "5fe083e9d1f6550fa7c0388bfd2e95848a234f1e50d32d96884f41ffaf277887";
+//   → fa18446f… `tests-cannot-observe` (pass-tests) and
+//     `tests-cannot-observe-validate` (pass-validate)
+const GOLDEN_AGENTS = "fa18446f4860b62ab5416036ccca64f8d9e65cec9cbf0e59967bb948e0653261";

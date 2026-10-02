@@ -721,6 +721,23 @@ export const VALIDATE_MASKED_DEFECT_ADDENDUM =
   "\n## A new defect behind an old one keeps its own severity (sandbox rule)\n" +
   "When the change introduces a defect on a path where a PRE-EXISTING defect currently hides it — the new bug cannot bite today only because an older bug on the same path stops execution first (a wrong guard before it, a branch an existing error never lets run) — do not downgrade the new defect for being masked. Masking is not mitigation: fixing the old bug, which anyone may do next, exposes the new one. Keep the new finding at the severity it would carry without the mask, and state both in it: the new defect, and the pre-existing one that currently hides it, by `path:line`.\n";
 
+// Owner-approved 2026-10-02 (GOLDEN-MINING.md §5.2.5): a test the PR adds or
+// changes that cannot observe what it claims to test is a defect in the PR,
+// not a test-only nit. The lens half names the shapes; the validator half stops
+// the "not a production defect" downgrade.
+export const TESTS_CANNOT_OBSERVE_ADDENDUM =
+  "\n## A test that cannot observe what it claims to test is a `P2` defect (sandbox rule)\n" +
+  "For every test the PR ADDS or CHANGES, name the behaviour it claims to test — its name, its docstring, the PR text — and check, by reading, that it would FAIL if that behaviour were broken. It cannot when:\n\n" +
+  "- the wait, sleep, retry delay, backoff or timeout the behaviour depends on is patched to a no-op or made instant;\n" +
+  "- the thread, task, goroutine or callback doing the work is never joined or awaited before the assertions run;\n" +
+  "- a mock or fake replaces the very path the PR changed, so the changed code never runs;\n" +
+  "- the setup omits the input the change uses — the filter, flag, header, field or argument the new code reads — so the new branch is never reached.\n\n" +
+  "Report each such test at `P2` with the concrete scenario: the behaviour claimed, what the test does instead, and a regression it would let through. It is a defect in the PR — its claim of coverage is false — not a test-only nit.\n";
+
+export const TESTS_CANNOT_OBSERVE_VALIDATE_ADDENDUM =
+  "\n## A test that cannot observe its behaviour is not \"not a production defect\" (sandbox rule)\n" +
+  "A candidate, from any lens, showing that a test the PR adds or changes cannot observe the behaviour it claims to test — waits or sleeps patched away, threads or tasks never joined or awaited, mocks that bypass the changed path, setup missing the input the change uses — is a defect in the PR at `P2`: the PR claims coverage it does not have, and the next regression on that path passes CI. Do not downgrade it to `P3`, or kill it `below-bar`, because it is a test and not production code. Verify it by reading the test and the code it exercises — never by running it — and refute it only when the test does observe the behaviour.\n";
+
 // Owner ruling 2026-10-02 (amends for content): the lens is now also
 // PLANNED when the diff touches synchronisation or the PR text says it is about
 // a race or a lock (heuristics.ts SUBLENS_TRIGGERS). The trigger above was
@@ -1163,6 +1180,13 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
     text: VALIDATE_INTERFACE_CONTRACT_ADDENDUM,
   },
   { id: "validate-masked-defect", scope: [VALIDATE_PASS], mode: "pr", text: VALIDATE_MASKED_DEFECT_ADDENDUM },
+  { id: "tests-cannot-observe", scope: ["pass-tests"], mode: "pr", text: TESTS_CANNOT_OBSERVE_ADDENDUM },
+  {
+    id: "tests-cannot-observe-validate",
+    scope: [VALIDATE_PASS],
+    mode: "pr",
+    text: TESTS_CANNOT_OBSERVE_VALIDATE_ADDENDUM,
+  },
   // the one corpus-derived rule that is generic review behaviour.
   // Its six house-rule siblings ride the live deployment's profile addenda pack since
   // (see the banner above); wire.ts composes a profile pack after
