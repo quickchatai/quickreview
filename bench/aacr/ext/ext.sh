@@ -167,7 +167,7 @@ PY
     f="$AACR/sets/$set_name.json"; [[ -f "$f" ]] || die "no set $f"
     tools="${EXT_MARTIAN_REJUDGE:-qodo-extended-v2,cubic-v2,claude-code}"
     rej=""; for t in ${tools//,/ }; do rej="$rej,rejudged-$t"; done
-    if [[ "$run" == none ]]; then work="$QCR_BENCH_RUNS_DIR/ext-calibration-$set_name.martian"; qr=(--no-quickreview)
+    if [[ "$run" == none ]]; then work="$QCR_BENCH_RUNS_DIR/ext-calibration-$set_name${EXT_CALIB_TAG:+-$EXT_CALIB_TAG}.martian"; qr=(--no-quickreview)
     else
       [[ -d "$QCR_BENCH_RUNS_DIR/$run/cases" && ! -L "$QCR_BENCH_RUNS_DIR/$run" ]] || die "no run $run"
       work="$QCR_BENCH_RUNS_DIR/$run.martian"; qr=()
