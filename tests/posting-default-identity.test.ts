@@ -125,4 +125,5 @@ const GOLDEN_ORDERS: Record<string, string> = {
 //     `tests-cannot-observe-validate` (pass-validate)
 //   → 59d5ef67… `concurrency-duplicate-init` (pass-concurrency; round 4)
 //   → ae8b406f… `write-predicate-scope` (pass-baseline, pass-data-safety; round 4)
-const GOLDEN_AGENTS = "ae8b406f82f6e2213ec507613bc56c8d89bb8dcbffeef99015d745a5af99ee2c";
+//   → 853d0ed7… `persistence-bypasses-callbacks` (pass-baseline, pass-data-safety; round 4)
+const GOLDEN_AGENTS = "853d0ed7ad50bc4f10fe39a438c46fa7a26ac984efeed79642ae3248120e98de";

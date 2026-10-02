@@ -103,3 +103,32 @@ describe("write-predicate-scope (pass-baseline + pass-data-safety)", () => {
     expect(text("write-predicate-scope")).not.toMatch(NO_BENCHMARK_NAMES);
   });
 });
+
+describe("persistence-bypasses-callbacks (pass-baseline + pass-data-safety)", () => {
+  it("binds baseline and data-safety, PR builds only", () => {
+    expect(boundTo("persistence-bypasses-callbacks")).toEqual({
+      pr: ["pass-baseline", "pass-data-safety"],
+      scan: [],
+    });
+  });
+
+  it("names the direct writes across stacks and asks what the lifecycle maintained", () => {
+    for (const lens of ["pass-baseline", "pass-data-safety"]) {
+      const body = bodyOf(lens);
+      for (const phrase of [
+        "A persistence call that skips callbacks skips what they maintain",
+        "`collection.delete` on a `has_many :through`",
+        "`QuerySet.update()`/`.delete()`",
+        "bulk JPQL `UPDATE`/`DELETE`",
+        "Prisma `updateMany`/`deleteMany`/`createMany`",
+        "a counter cache or denormalised count",
+        "Do not report a direct write whose model has no lifecycle effect for it.",
+      ])
+        expect(body, `${lens}: ${phrase}`).toContain(phrase);
+    }
+  });
+
+  it("names no benchmark, project or PR", () => {
+    expect(text("persistence-bypasses-callbacks")).not.toMatch(NO_BENCHMARK_NAMES);
+  });
+});
