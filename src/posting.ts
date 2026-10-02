@@ -21,7 +21,14 @@ import {
   type PostingPolicy,
   type WithholdWord,
 } from "./postingpolicy.js";
-import { partitionByAnchor, ANCHOR_REASON_TEXT, type AnchorRequest, type Side } from "./anchors.js";
+import {
+  checkAnchor,
+  partitionByAnchor,
+  runsByPath,
+  ANCHOR_REASON_TEXT,
+  type AnchorRequest,
+  type Side,
+} from "./anchors.js";
 import {
   ASK_HUMAN_TAG,
   DEFERRED_TAG,
@@ -274,13 +281,25 @@ export function assembleReview(full: ReviewInput): AssembledReview {
 
   // 0. the profile's posting policy: the budget, the tag rules and one site
   //    per finding, over the findings in the order the session ranked them.
-  //    A no-op (the same input) without a policy.
+  //    A no-op (the same input) without a policy. Within one severity the
+  //    budget prefers a finding on a changed line (`changedLine`).
+  const runs = full.policy && full.patches ? runsByPath(full.patches) : undefined;
   const selection = selectPosted(
     full.findings,
     (f) => ({
       cls: tags.get(f) as PolicyClass,
       severity: f.severity,
       key: siteKey(stripUngrammaticalTag(f.title).title),
+      ...(runs && f.line !== undefined
+        ? {
+            changedLine: checkAnchor(runs, {
+              path: f.path,
+              side: f.side ?? "RIGHT",
+              line: f.line,
+              ...(f.start_line !== undefined ? { start_line: f.start_line } : {}),
+            }).ok,
+          }
+        : {}),
     }),
     full.policy,
   );

@@ -47,7 +47,8 @@ export type BodyPolicy = "full" | "verdict";
 export type CommentStyle = "full" | "concise";
 
 export interface PostingPolicy {
-  /** Findings posted per round (inline + body together); 0 = no cap. */
+  /** Findings posted per round (inline + body together, one root cause
+   * counted once); 0 = no cap. */
   max_comments: number;
   nits: NitsPolicy;
   questions: QuestionsPolicy;
@@ -178,9 +179,19 @@ export function applyProfilePosting<C extends { posting?: PostingPolicy }>(
 function policyLines(p: PostingPolicy, who: "session" | "validator"): string[] {
   const L: string[] = [];
   if (p.max_comments > 0)
+  if (p.max_comments > 0) {
     L.push(
       `- **Budget: at most ${p.max_comments} posted finding${p.max_comments === 1 ? "" : "s"} this round** — inline comments and findings posted in the body counted together. Every surviving \`[blocker]\` posts whatever the budget (the blocker bar never moves; a budget is filled around the blockers, never out of them). Fill the rest by what a senior reviewer would insist on before merge: real bugs first — wrong behaviour, crashes, data loss, security, races — then the risks most likely to bite, then everything else.${who === "session" ? " `pass-validate` makes that selection in step 4 (its SELECTED/WITHHELD blocks); post what it selected." : ""}`,
     );
+    // Owner-approved 2026-10-02 (GOLDEN-MINING.md §5.4): the budget counts
+    // root causes, not sites, and ties go to the defect on a changed line.
+    L.push(
+      "- **One root cause, one comment — merge BEFORE you count.** Survivors that are the same defect at several sites — the same wrong assumption, the same missing guard, the same mistaken call repeated across functions or files — are ONE finding: post it once, at the site where the cause is clearest (the changed line that introduces it), and name the other sites in its text (\"also at `path:line`, `path:line`\"). It counts once against the budget. Distinct defects that merely sit near each other stay separate.",
+    );
+    L.push(
+      "- **Within one severity, the changed line first.** Between two survivors of the same tag and severity, rank a defect on a line this PR changed — a wrong operator, a wrong variable, a missing check in the new code — above a consequence it has in code the PR did not touch.",
+    );
+  }
   if (p.nits === "off")
     L.push("- **Nits: off.** No `[nit]` is posted. A surviving nit is recorded `withheld` (word `nits-off`).");
   if (p.questions === "off")
@@ -274,7 +285,13 @@ export interface PolicyView {
   /** The finding's identity across sites: its title, normalised. Two items
    * with one key are the same finding at two sites. */
   key: string;
+  /** Does the item sit on a line this PR changed? `undefined` when the diff
+   * is not known. Within one class and severity the budget prefers a changed
+   * line, then unknown, then unchanged code (owner-approved 2026-10-02). */
+  changedLine?: boolean;
 }
+
+const changedRank = (c: boolean | undefined): number => (c === true ? 0 : c === undefined ? 1 : 2);
 
 const CLASS_RANK: Record<PolicyClass, number> = { blocker: 0, question: 1, check: 2, nit: 3 };
 const SEVERITY_RANK: Record<string, number> = { P0: 0, P1: 1, P2: 2, P3: 3, NIT: 4 };
@@ -307,7 +324,9 @@ export interface Selection<T> {
  *   2. repeat sites — a second item with the same key is withheld;
  *   3. the budget — blockers always kept; the remaining slots go to the rest
  *      ranked by class (question, then marker items, then nits), then
- *      severity, then the order the session posted them in (its own ranking).
+ *      severity, then a changed line before an unknown one before unchanged
+ *      code (`changedLine`), then the order the session posted them in (its
+ *      own ranking).
  * A blocker is never withheld by any rule but a repeat site of itself.
  */
 export function selectPosted<T>(
@@ -347,6 +366,7 @@ export function selectPosted<T>(
       (a, b) =>
         CLASS_RANK[a.v.cls] - CLASS_RANK[b.v.cls] ||
         sevRank(a.v.severity) - sevRank(b.v.severity) ||
+        changedRank(a.v.changedLine) - changedRank(b.v.changedLine) ||
         a.i - b.i,
     );
   const room = Math.max(0, p.max_comments - blockers.length);

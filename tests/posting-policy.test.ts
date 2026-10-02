@@ -472,3 +472,103 @@ describe("benchmark export (src/bench/benchposting.ts) enforces the policy", () 
     expect(scored.length).toBe(4);
   });
 });
+
+// Owner-approved 2026-10-02 (GOLDEN-MINING.md §5.4): the budget counts root
+// causes, not sites, and within one severity prefers the changed line. Both
+// are policy-only — the default's identity is pinned elsewhere and unchanged.
+describe("the budget: one root cause, the changed line first", () => {
+  it("the note and the validator addendum ask for the root-cause merge and the changed-line tie-break", () => {
+    const note = renderPostingPolicyNote(SNAPPY);
+    const add = postingPolicyAddenda(SNAPPY)[0]!.text;
+    for (const text of [note, add]) {
+      expect(text).toContain("One root cause, one comment — merge BEFORE you count");
+      expect(text).toContain("name the other sites in its text");
+      expect(text).toContain("It counts once against the budget");
+      expect(text).toContain("Within one severity, the changed line first");
+    }
+    // still: blockers never withheld
+    expect(note).toContain("Every surviving `[blocker]` posts whatever the budget");
+  });
+
+  it("only a budget renders them — a policy without max_comments does not", () => {
+    const noBudget = renderPostingPolicyNote({ ...SNAPPY, max_comments: 0 });
+    expect(noBudget).not.toContain("One root cause, one comment");
+    expect(noBudget).not.toContain("the changed line first");
+    expect(renderPostingPolicyNote(undefined)).toBe("");
+  });
+
+  const v = (cls: PolicyView["cls"], severity: string, key: string, changedLine?: boolean) => ({
+    cls,
+    severity,
+    key,
+    ...(changedLine !== undefined ? { changedLine } : {}),
+  });
+
+  it("selectPosted: same class and severity ⇒ changed line, then unknown, then unchanged code", () => {
+    const items = [
+      v("question", "P2", "consequence-elsewhere", false),
+      v("question", "P2", "unknown"),
+      v("question", "P2", "wrong-operator", true),
+    ];
+    const one = selectPosted(items, (x) => x, { ...SNAPPY, max_comments: 1 });
+    expect(one.kept.map((x) => x.key)).toEqual(["wrong-operator"]);
+    const two = selectPosted(items, (x) => x, { ...SNAPPY, max_comments: 2 });
+    // kept in the session's order
+    expect(two.kept.map((x) => x.key)).toEqual(["unknown", "wrong-operator"]);
+  });
+
+  it("selectPosted: the changed line never beats a higher severity or a blocker", () => {
+    const items = [
+      v("question", "P2", "p2-changed", true),
+      v("question", "P1", "p1-unchanged", false),
+      v("blocker", "P2", "blocker-unchanged", false),
+    ];
+    const s = selectPosted(items, (x) => x, { ...SNAPPY, max_comments: 2 });
+    expect(s.kept.map((x) => x.key)).toEqual(["p1-unchanged", "blocker-unchanged"]);
+  });
+
+  it("production posting: a finding outside the diff loses the tie to one on a changed line", () => {
+    const findings: Finding[] = [
+      finding("Blocker one", "P1", 2),
+      finding("Blocker two", "P1", 3),
+      finding("Blocker three", "P1", 4),
+      finding("Unchanged consequence?", "P2", 50, { reachability: "plausible" }),
+      finding("Changed operator?", "P2", 8, { reachability: "plausible" }),
+    ];
+    const r = assembleReview({
+      pr: 1,
+      head_sha: "abc",
+      verdict: "REQUEST_CHANGES",
+      findings,
+      lenses: ["pass-baseline"],
+      patches: { "src/a.ts": PATCH },
+      summary: "A summary.",
+      policy: SNAPPY,
+    });
+    const words = r.withheld.map((w) => [w.finding.title, w.word]);
+    expect(words).toEqual([["Unchanged consequence?", "over-budget"]]);
+  });
+
+  it("benchmark export: with the PR's patches, the changed line wins the last slot", () => {
+    const comments = [
+      { path: "src/a.ts", line: 2, side: "RIGHT", body: `[blocker] B1\n\nx.${tail("P1")}` },
+      { path: "src/a.ts", line: 3, side: "RIGHT", body: `[blocker] B2\n\nx.${tail("P1")}` },
+      { path: "src/a.ts", line: 4, side: "RIGHT", body: `[blocker] B3\n\nx.${tail("P1")}` },
+      { path: "src/a.ts", line: 60, side: "RIGHT", body: `[question] Elsewhere?\n\nx.${tail("P2")}` },
+      { path: "src/a.ts", line: 9, side: "RIGHT", body: `[question] Operator?\n\nx.${tail("P2")}` },
+    ];
+    const run = (patches?: Record<string, string>) =>
+      policeBenchOutput({
+        comments,
+        reviewMd: "**Verdict: Changes requested** — 3 blockers, 2 questions.",
+        record: { findings: [] },
+        outcome: { verdict: "REQUEST_CHANGES", summary: "s" },
+        policy: SNAPPY,
+        ...(patches ? { patches } : {}),
+      }).report.withheld.map((w) => w.line);
+    // without the diff: the session's order decides (the first question stays)
+    expect(run()).toEqual([9]);
+    // with it: the question on a changed line takes the slot
+    expect(run({ "src/a.ts": PATCH })).toEqual([60]);
+  });
+});

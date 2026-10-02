@@ -976,7 +976,9 @@ export async function reviewCase(
     // exactly as production posting applies it: an over-posting session is
     // still cut, and what is cut is recorded `withheld` (originals kept beside).
     if (!isDefaultPosting(ctx.cfg.posting) && outcome !== undefined) {
-      const policed = enforceBenchPosting(caseDir, ctx.cfg.posting!);
+      const patches: Record<string, string> = {};
+      for (const f of files) if (f.patch !== undefined) patches[f.filename] = f.patch;
+      const policed = enforceBenchPosting(caseDir, ctx.cfg.posting!, patches);
       if (policed) {
         summary.posting = policed;
         log(

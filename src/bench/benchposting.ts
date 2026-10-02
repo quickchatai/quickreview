@@ -36,6 +36,7 @@ import {
   type WithholdWord,
 } from "../postingpolicy.js";
 import { CASE_FILES, parseSessionComments } from "./aacr.js";
+import { checkAnchor, runsByPath } from "../anchors.js";
 
 /** The session's own files, kept beside the policed ones. */
 export const POLICED_ORIGINALS = [
@@ -66,6 +67,8 @@ interface Item {
   cls: PolicyClass;
   severity: string | null;
   title: string;
+  /** The side its line counts on (inline rows may say LEFT; body items RIGHT). */
+  side: "LEFT" | "RIGHT";
   /** inline: the session's raw row, written back verbatim when kept. */
   row?: unknown;
   /** body: the record entry it came from. */
@@ -171,8 +174,12 @@ export function policeBenchOutput(args: {
   record: unknown;
   outcome: { verdict: string | null; summary: string };
   policy: PostingPolicy;
+  /** The PR's per-file patches, when known: within one severity the budget
+   * then prefers an item on a changed line, as production posting does. */
+  patches?: Record<string, string>;
 }): { comments: unknown[]; reviewMd: string; record: unknown; report: BenchPostingReport } {
   const { policy } = args;
+  const runs = args.patches ? runsByPath(args.patches) : undefined;
   const rawRows: unknown[] = Array.isArray(args.comments)
     ? args.comments
     : typeof args.comments === "object" &&
@@ -213,6 +220,7 @@ export function policeBenchOutput(args: {
       cls: classOf(parsed.tag),
       severity: sev ? (sev.toUpperCase() === "NIT" ? "nit" : sev.toUpperCase()) : null,
       title: firstLineTitle(parsed.body),
+      side: parsed.side === "LEFT" ? "LEFT" : "RIGHT",
       row,
     });
   }
@@ -232,13 +240,21 @@ export function policeBenchOutput(args: {
       cls: postedClass(str(e["posted_as"])),
       severity: str(e["severity"]) || null,
       title: str(e["title"]) || str(e["reason"]).split("\n", 1)[0] || `${path}:${line}`,
+      side: "RIGHT",
       entry: e,
     });
   }
 
   const sel = selectPosted(
     items,
-    (it) => ({ cls: it.cls, severity: it.severity, key: siteKey(it.title) }),
+    (it) => ({
+      cls: it.cls,
+      severity: it.severity,
+      key: siteKey(it.title),
+      ...(runs
+        ? { changedLine: checkAnchor(runs, { path: it.path, side: it.side, line: it.line }).ok }
+        : {}),
+    }),
     policy,
   );
   const kept = new Set(sel.kept);
@@ -335,7 +351,11 @@ function readJsonOr(path: string): unknown {
  * to `posting-policy.json`. Null when the session wrote no comments file
  * (nothing to police — the case scores as it stands).
  */
-export function enforceBenchPosting(caseDir: string, policy: PostingPolicy): BenchPostingReport | null {
+export function enforceBenchPosting(
+  caseDir: string,
+  policy: PostingPolicy,
+  patches?: Record<string, string>,
+): BenchPostingReport | null {
   const cPath = join(caseDir, CASE_FILES.comments);
   if (!existsSync(cPath)) return null;
   const rPath = join(caseDir, CASE_FILES.review);
@@ -353,6 +373,7 @@ export function enforceBenchPosting(caseDir: string, policy: PostingPolicy): Ben
       summary: typeof outcome?.["summary"] === "string" ? outcome["summary"] : "",
     },
     policy,
+    ...(patches ? { patches } : {}),
   });
   renameSync(cPath, join(caseDir, POLICED_ORIGINALS[0]));
   writeFileSync(cPath, JSON.stringify(out.comments, null, 2) + "\n");
