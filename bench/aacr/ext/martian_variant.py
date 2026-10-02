@@ -17,9 +17,14 @@ Policy flags (all optional; the default keeps everything):
   --max-per-pr 5                          keep the top N per PR (severity, then
                                           lenses, then confidence; ties by
                                           posting order)
-  --body keep|none                        keep the filtered body, or post none
+  --body keep|verdict|none                keep the filtered body, only its verdict
+                                          line, or post none
   --one-per-finding                       drop the extra inline comments posted
                                           at a finding's other sites
+  --style full|title|title+1              comment text as posted, title only, or
+                                          title plus first sentence
+  --rule EXPR                             extra keep condition (tag, sev, conf,
+                                          lenses, secondary)
 
 Writes $QCR_BENCH_RUNS_DIR/NAME/ (cases copied, comments.json and review.md
 rewritten) and NAME/VARIANT.json (the policy and per-case counts).
@@ -43,10 +48,18 @@ DEFAULT_SEV = {"blocker": 1, "question": 2, "check": 2, "nit": 3}
 def parse_meta(meta: str) -> dict:
     head, _, rest = meta.partition(",")
     m = re.match(r"\s*(P\d)/([\d.]+)", head)
-    lenses = [x.strip() for x in rest.split(";")[0].split(",") if x.strip()]
+    rest = rest.split(";")[0]
+    words = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+    m2 = re.search(r"and (\w+) corroborating", rest)
+    if m2:
+        n = 1 + words.get(m2.group(1), int(m2.group(1)) if m2.group(1).isdigit() else 1)
+    elif "corroborating" in rest:
+        n = 2
+    else:
+        n = len([x for x in re.split(r"[,/]", rest) if x.strip()])
     return {"sev": SEV.get(m.group(1), 3) if m else None,
             "conf": float(m.group(2)) if m else None,
-            "lenses": max(1, len(lenses))}
+            "lenses": max(1, n)}
 
 
 REF = re.compile(r"`([^`:]+):(\d+)`")
@@ -75,6 +88,17 @@ def lookup(idx: dict, others: list, path: str, line: int) -> tuple[dict, bool]:
     return {}, False
 
 
+def restyle(body: str, style: str) -> str:
+    if style == "full":
+        return body
+    paras = [p.strip() for p in body.split("\n\n") if p.strip()]
+    title = paras[0] if paras else body
+    if style == "title" or len(paras) < 2:
+        return title
+    first = re.split(r"(?<=[.!?])\s", paras[1], maxsplit=1)[0]
+    return f"{title}\n\n{first}"
+
+
 def tag_of(c: dict) -> str:
     m = TAG.match(c.get("body") or "")
     t = m.group(1) if m else "blocker"
@@ -90,8 +114,12 @@ def main() -> None:
     ap.add_argument("--min-lenses", type=int, default=1)
     ap.add_argument("--min-conf", type=float, default=0.0)
     ap.add_argument("--max-per-pr", type=int, default=0)
-    ap.add_argument("--body", choices=["keep", "none"], default="keep")
+    ap.add_argument("--body", choices=["keep", "verdict", "none"], default="keep")
     ap.add_argument("--one-per-finding", action="store_true")
+    ap.add_argument("--style", choices=["full", "title", "title+1"], default="full",
+                    help="comment text: as posted, its title line only, or title plus first sentence")
+    ap.add_argument("--rule", default="", help="extra keep condition, a Python expression over "
+                    "tag, sev (0-3), conf, lenses, secondary — e.g. \"conf>=0.99 and (sev<=1 or lenses>=2)\"")
     a = ap.parse_args()
     root = Path(os.environ["QCR_BENCH_RUNS_DIR"])
     dst = root / a.dst
@@ -117,19 +145,24 @@ def main() -> None:
                 conf = meta.get("conf") if meta.get("conf") is not None else 1.0
                 lenses = meta.get("lenses", 1)
                 ok = (t in tags and sev <= max_sev and lenses >= a.min_lenses and conf >= a.min_conf
-                      and not (a.one_per_finding and secondary))
+                      and not (a.one_per_finding and secondary)
+                      and (not a.rule or eval(a.rule.replace("_", " "), {}, {"tag": t, "sev": sev, "conf": conf,
+                                                          "lenses": lenses, "secondary": secondary})))
                 scored.append((ok, sev, -lenses, -conf, i, c))
             keep = [x for x in scored if x[0]]
             if a.max_per_pr:
                 keep = sorted(keep, key=lambda x: x[1:5])[: a.max_per_pr]
             kept_ids = {x[4] for x in keep}
-            new = [c for i, c in enumerate(comments) if i in kept_ids]
+            new = [dict(c, body=restyle(c.get("body") or "", a.style)) for i, c in enumerate(comments) if i in kept_ids]
             if cj.exists():
                 cj.write_text(json.dumps(new, indent=1))
             kept_keys = {(c.get("path"), c.get("line")) for c in new}
             if rm.exists():
                 if a.body == "none":
                     rm.write_text("")
+                elif a.body == "verdict":
+                    v = [ln for ln in body.splitlines() if ln.startswith("**Verdict:")]
+                    rm.write_text((v[0].split(" — ")[0] if v else "") + "\n")
                 else:
                     lines, sect = [], []
                     for ln in body.splitlines():
