@@ -738,6 +738,18 @@ export const TESTS_CANNOT_OBSERVE_VALIDATE_ADDENDUM =
   "\n## A test that cannot observe its behaviour is not \"not a production defect\" (sandbox rule)\n" +
   "A candidate, from any lens, showing that a test the PR adds or changes cannot observe the behaviour it claims to test — waits or sleeps patched away, threads or tasks never joined or awaited, mocks that bypass the changed path, setup missing the input the change uses — is a defect in the PR at `P2`: the PR claims coverage it does not have, and the next regression on that path passes CI. Do not downgrade it to `P3`, or kill it `below-bar`, because it is a test and not production code. Verify it by reading the test and the code it exercises — never by running it — and refute it only when the test does observe the behaviour.\n";
 
+// Round 4 (2026-10-02, bench/aacr/ext/martian-tuning/ROUND4-GAPS.md): the
+// lens was planned on a lazily filled cache, its task named the shape, and it
+// self-falsified to NONE because no update was lost — its checklist knows only
+// lost updates. A duplicated initialisation is its own damage. PR builds only;
+// the ratified four-part and self-falsification sections are unchanged.
+export const CONCURRENCY_DUPLICATE_INIT_ADDENDUM =
+  "\n## A duplicated initialisation is damage of its own, not a lost update (sandbox rule)\n" +
+  "The falsification questions above are written for lost updates. Another shape fails differently: a lazily initialised value, cache or singleton that is checked, found empty, and then filled — under a lock taken AFTER the check (a read lock, then the write lock, with no second check), or under no lock at all. Two callers both see \"empty\" and both run the initialisation. Nothing may be lost, because both store an equal value, and that is NOT what kills this candidate. Falsify it on its own terms instead:\n\n" +
+  "- Is the value checked again after the exclusive lock is taken (double-checked locking done right), or filled through a once-only primitive (`sync.Once`, a `lazy` holder, `computeIfAbsent`, `functools.cache` with a lock, an atomic compare-and-set)? Then it is safe.\n" +
+  "- What does the initialisation DO? Pure, cheap, in-memory computation of an equal value: safe — return `NONE`. File or network I/O, a remote call, a heavy computation run on every cold start under concurrent load, a side effect (a write, a registration, a metric, a subscription, a goroutine or thread started), or values that can differ between the two runs (a timestamp, a random id, a configuration read twice): it is a finding.\n\n" +
+  "Report a surviving one with the same four parts — the value, the two callers' interleaving to the duplicated initialisation, how often cold concurrent entry happens, and the fix (re-check under the exclusive lock, or a once-only primitive). Severity follows the duplicated work's consequence: `P2` for a side effect or diverging values, `P3` for repeated I/O or computation only. This applies equally when the PR claims to FIX a race: a fix that removes the data race but leaves the double initialisation has not closed the window it describes.\n";
+
 // Owner ruling 2026-10-02 (amends for content): the lens is now also
 // PLANNED when the diff touches synchronisation or the PR text says it is about
 // a race or a lock (heuristics.ts SUBLENS_TRIGGERS). The trigger above was
@@ -1151,6 +1163,13 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
   { id: "concurrency-trigger", scope: [CONCURRENCY_PASS], mode: "pr", text: CONCURRENCY_TRIGGER_ADDENDUM },
   // Owner ruling 2026-10-02: a PLANNED row's reason is its anchor.
   { id: "concurrency-planned", scope: [CONCURRENCY_PASS], mode: "pr", text: CONCURRENCY_PLANNED_ADDENDUM },
+  // Round 4: a duplicated lazy initialisation is falsified on its own terms.
+  {
+    id: "concurrency-duplicate-init",
+    scope: [CONCURRENCY_PASS],
+    mode: "pr",
+    text: CONCURRENCY_DUPLICATE_INIT_ADDENDUM,
+  },
   // scan-loop round 7: in a scan the focus files are the anchor instead.
   { id: "concurrency-scan", scope: [CONCURRENCY_PASS], mode: "scan", text: CONCURRENCY_SCAN_ADDENDUM },
   { id: "ask-human-trigger", scope: [ASK_HUMAN_PASS], text: ASK_HUMAN_TRIGGER_ADDENDUM },

@@ -123,4 +123,5 @@ const GOLDEN_ORDERS: Record<string, string> = {
 //     `validate-masked-defect` (pass-validate)
 //   → fa18446f… `tests-cannot-observe` (pass-tests) and
 //     `tests-cannot-observe-validate` (pass-validate)
-const GOLDEN_AGENTS = "fa18446f4860b62ab5416036ccca64f8d9e65cec9cbf0e59967bb948e0653261";
+//   → 59d5ef67… `concurrency-duplicate-init` (pass-concurrency; round 4)
+const GOLDEN_AGENTS = "59d5ef670abd732b9187a3c7c60440c741286d4901f37d243278b21c3a9ca0b3";
