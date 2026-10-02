@@ -230,6 +230,10 @@ export interface RoundOrder {
   /** SETTLED digest carried from the last verdict's ledger snapshot. */
   settled_digest: string;
   issued_at: string;
+  /** `[review] task_files` (src/passtasks.ts): the discovery rows' task files
+   * the daemon wrote for this round — plan row index, agent, absolute path.
+   * Absent ⇒ the session writes every task string itself, as before. */
+  pass_task_files?: Array<{ row: number; agent: string; path: string }>;
 }
 
 /**

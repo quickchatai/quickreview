@@ -58,6 +58,8 @@ import {
 } from "./recheck.js";
 import { roundPostingKey } from "./posting-receipt.js";
 import { findStyleGuide } from "./styleguide.js";
+import { writePassTasks } from "./passtasks.js";
+import { renderGateNotes } from "./templates.js";
 import { directiveVocabulary, isFirstPartyDirectivePath } from "./severity.js";
 import type { DispatchAnnouncer } from "./slack/announce.js";
 import { applyEvent, restoreStandingLifecycle, setPrGates } from "./statemachine.js";
@@ -1426,7 +1428,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       const styleGuide = lensEnabled(cfg.lenses, STYLE_PASS, cfg.review.style_lens)
         ? findStyleGuide(resolve(sandboxRoot(), worktreeFor(row.number)))
         : [];
-      const order = buildRoundOrder({
+      const built = buildRoundOrder({
         tree,
         ecosystem: eco,
         ...(styleGuide.length ? { styleGuide } : {}),
@@ -1449,6 +1451,29 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         ...(prBody !== undefined ? { prBody } : {}),
         ...(deps.heuristics !== undefined ? { heuristics: deps.heuristics } : {}),
       });
+      // `[review] task_files` (src/passtasks.ts): each discovery row's
+      // complete lens task, written beside the round's pass outputs so the
+      // session launches lenses with a pointer instead of generating every
+      // task string. Total: a write that fails leaves the order without task
+      // files, and the session writes the strings itself, as before.
+      let order = built;
+      if (cfg.review.task_files) {
+        try {
+          const dir = resolve(
+            sandboxRoot(),
+            "state",
+            `pr-${row.number}-round-${roundNo}-passes`,
+            "tasks",
+          );
+          const tasks = writePassTasks(dir, built, renderGateNotes(built, eco));
+          order = {
+            ...built,
+            pass_task_files: tasks.map((t) => ({ row: t.row, agent: t.agent, path: t.path })),
+          };
+        } catch (err) {
+          log(`dispatch: #${row.number} lens task files unavailable`, err);
+        }
+      }
 
       // The ONE memory call of this round, placed after the worktree
       // and the order so the context is seeded from the same sha the passes

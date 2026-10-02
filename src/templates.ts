@@ -3,6 +3,7 @@
 // Contract: a {{placeholder}} in the text with no supplied value is a bug and
 // throws; a supplied value the template does not use is fine (templates are
 // edited independently of this renderer).
+import { renderPassTaskNote } from "./passtasks.js";
 import { DJANGO_ECOSYSTEM, type Ecosystem } from "./ecosystem.js";
 import {
   ensurePinnedHead,
@@ -440,6 +441,15 @@ export function renderRoundRecoveryNote(order: RoundOrder): string {
  * `NONE_ECOSYSTEM` the migration_gate_note renders empty: no gate prose, no
  * collision note, no degraded note.
  */
+/** The GATE NOTES every lens task carries: the ecosystem's migration gate
+ * note and the intent block, as the round templates render them. */
+export function renderGateNotes(order: RoundOrder, ecosystem: Ecosystem = DJANGO_ECOSYSTEM): string {
+  return [ecosystem.gateNote(order), renderIntentNote(order)]
+    .map((n) => n.trim())
+    .filter((n) => n)
+    .join("\n\n");
+}
+
 export function roundVars(
   order: RoundOrder,
   memory: RoundMemory = MEMORY_LESS,
@@ -484,6 +494,8 @@ export function roundVars(
     // a default round order is byte-identical
     // (tests/posting-default-identity.test.ts).
     posting_policy_note: renderPostingPolicyNote(order.posting_policy),
+    // `[review] task_files`: "" unless the daemon wrote task files.
+    pass_task_note: renderPassTaskNote(order),
   };
 }
 

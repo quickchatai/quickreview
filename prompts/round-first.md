@@ -117,7 +117,7 @@ be reviewed as if they were.
 **Pass plan for this round** (chosen by the daemon from the diff shape):
 
 {{pass_plan}}
-{{dependency_note}}
+{{dependency_note}}{{pass_task_note}}
 {{nit_policy_note}}
 **Rows with a focus or a reason.** When the plan table has a *focus / why*
 column: a row listing files is ONE launch of that agent with exactly those

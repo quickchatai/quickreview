@@ -21,6 +21,7 @@
 //     rules would be noise on a Rust PR. `--profile <config.toml [review]
 //     profile>` measures production as deployed.
 
+import { renderPassTasks } from "../passtasks.js";
 import {
   createWriteStream,
   existsSync,
@@ -83,6 +84,7 @@ import type { PrStateRow } from "../state.js";
 import type { PassPlanEntry } from "../types.js";
 import {
   renderConversationSystemPrompt,
+  renderGateNotes,
   renderRoundPrompt,
   roundTemplateFile,
 } from "../templates.js";
@@ -539,7 +541,15 @@ export function renderCasePrompts(args: {
   issuedAt: string;
   /** The rendered third-party-sources block, "" when none (depsources.ts). */
   dependencyNote?: string;
-}): { system: string; order: string; plannedLenses: string[]; passPlan: PassPlanEntry[] } {
+}): {
+  system: string;
+  order: string;
+  plannedLenses: string[];
+  passPlan: PassPlanEntry[];
+  /** `[review] task_files`: the lens task files the order points at, for the
+   * caller to write before the session starts. */
+  taskFiles: Array<{ path: string; text: string }>;
+} {
   const { root, cfg, c, meta, tree } = args;
   const identity = { ...identityVars(cfg), repo: c.repo };
   const title = meta.title ?? `AACR-Bench ${c.repo}#${c.pr}`;
@@ -555,7 +565,7 @@ export function renderCasePrompts(args: {
     title,
     author: "",
   } as unknown as PrStateRow;
-  const order = buildRoundOrder({
+  const built = buildRoundOrder({
     cfg,
     row,
     files: args.files,
@@ -584,6 +594,21 @@ export function renderCasePrompts(args: {
       ? { styleGuide: findStyleGuide(tree) }
       : {}),
   });
+  // `[review] task_files`, as production writes them (dispatch.ts): one
+  // complete lens task per discovery row, in the case dir.
+  // Rendered here, written by the caller (renderCasePrompts stays pure).
+  const taskFiles = cfg.review.task_files
+    ? renderPassTasks(built, renderGateNotes(built, args.ecosystem)).map((t) => ({
+        ...t,
+        path: join(args.caseDir, "tasks", t.file),
+      }))
+    : [];
+  const order = taskFiles.length
+    ? {
+        ...built,
+        pass_task_files: taskFiles.map((t) => ({ row: t.row, agent: t.agent, path: t.path })),
+      }
+    : built;
   const template = readFileSync(join(root, "prompts", roundTemplateFile("first")), "utf8");
   const rendered = renderRoundPrompt(
     template,
@@ -615,6 +640,7 @@ export function renderCasePrompts(args: {
     order: orderText,
     plannedLenses: order.pass_plan.map((p) => p.agent),
     passPlan: order.pass_plan,
+    taskFiles: taskFiles.map((t) => ({ path: t.path, text: t.text })),
   };
 }
 
@@ -844,6 +870,10 @@ export async function reviewCase(
     });
     summary.planned_lenses = prompts.plannedLenses;
     writeFileSync(join(caseDir, "pass-plan.json"), JSON.stringify(prompts.passPlan, null, 2));
+    if (prompts.taskFiles.length) {
+      mkdirSync(join(caseDir, "tasks"), { recursive: true });
+      for (const t of prompts.taskFiles) writeFileSync(t.path, t.text);
+    }
     const sysPath = join(caseDir, "system-prompt.md");
     writeFileSync(sysPath, prompts.system);
     writeFileSync(join(caseDir, "round-order.md"), prompts.order);

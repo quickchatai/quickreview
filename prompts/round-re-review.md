@@ -136,7 +136,7 @@ running; it may then fill gaps and inspect the delta/whole diff as needed.
 **Pass plan for this round** (chosen by the daemon from the diff shape):
 
 {{pass_plan}}
-{{dependency_note}}
+{{dependency_note}}{{pass_task_note}}
 **Rows with a focus or a reason.** When the plan table has a *focus / why*
 column: a row listing files is ONE launch of that agent with exactly those
 files as its focus — name them in its task string as the files this pass
