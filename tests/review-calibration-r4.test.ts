@@ -132,3 +132,30 @@ describe("persistence-bypasses-callbacks (pass-baseline + pass-data-safety)", ()
     expect(text("persistence-bypasses-callbacks")).not.toMatch(NO_BENCHMARK_NAMES);
   });
 });
+
+describe("removed-rule-other-consumers (pass-ui + pass-sweep + pass-widened)", () => {
+  it("binds the three lenses that read removed rules against their consumers, PR builds only", () => {
+    expect(boundTo("removed-rule-other-consumers")).toEqual({
+      pr: ["pass-sweep", "pass-ui", "pass-widened"],
+      scan: [],
+    });
+  });
+
+  it("greps every consumer kind, including fallback and server-rendered templates", () => {
+    for (const lens of ["pass-ui", "pass-sweep", "pass-widened"]) {
+      const body = bodyOf(lens);
+      for (const phrase of [
+        "A removed or changed rule may have consumers the PR did not look at",
+        "server-rendered and fallback templates",
+        "email and print templates",
+        "the removed or changed rule's `path:line` and the consumer's `path:line`",
+        "do not dismiss it because the main app path is fine",
+      ])
+        expect(body, `${lens}: ${phrase}`).toContain(phrase);
+    }
+  });
+
+  it("names no benchmark, project or PR", () => {
+    expect(text("removed-rule-other-consumers")).not.toMatch(NO_BENCHMARK_NAMES);
+  });
+});
