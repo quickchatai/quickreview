@@ -407,7 +407,7 @@ source-to-sink injection: it follows the ordinary severity/reachability posting
 map and may block. Adjacent accessibility, validation, query-scope and prompt
 correctness defects remain reviewable under their actual kind.
 
-{{directive_note}}
+{{directive_note}}{{posting_policy_note}}
 
 {{escalation_note}}
 

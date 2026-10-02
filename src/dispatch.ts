@@ -65,6 +65,7 @@ import type { PrStateRow, ReviewedHeadRow, StateStore } from "./state.js";
 import { snapshotMark, standingReview } from "./standing-review.js";
 import { PASS_TIER_ORDER, roundPromptMarker } from "./types.js";
 import { ALL_PASSES } from "./passes.js";
+import { isDefaultPosting } from "./postingpolicy.js";
 import type {
   PassPlanEntry,
   PassTier,
@@ -927,6 +928,7 @@ export function buildRoundOrder(args: {
     ...(sweep_unswept.length > 0 ? { sweep_unswept } : {}),
     ...(args.dependencyNote ? { dependency_note: args.dependencyNote } : {}),
     ...(args.cfg.review.nits === "open" ? { nit_policy: "open" as const } : {}),
+    ...(isDefaultPosting(args.cfg.posting) ? {} : { posting_policy: args.cfg.posting }),
     migration_gate: eco.migrationGate(args.files),
     migration_collisions: args.migrationCollisions ?? [],
     ...(args.migrationCollisionsUndelivered && (args.migrationCollisions ?? []).length > 0

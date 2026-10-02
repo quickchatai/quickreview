@@ -69,7 +69,15 @@ import {
   loadProfileEcosystem,
   loadProfileHeuristics,
   loadProfileLensTuning,
+  loadProfilePosting,
 } from "../profiles.js";
+import {
+  applyProfilePosting,
+  isDefaultPosting,
+  postingPolicyAddenda,
+  type PostingPolicy,
+} from "../postingpolicy.js";
+import { enforceBenchPosting, POLICED_ORIGINALS, type BenchPostingReport } from "./benchposting.js";
 import { directiveVocabulary, isFirstPartyDirectivePath } from "../severity.js";
 import type { PrStateRow } from "../state.js";
 import type { PassPlanEntry } from "../types.js";
@@ -151,6 +159,9 @@ export interface CaseSummary {
    * stderr): how arm.sh tells the shared login pushing back from a review
    * that genuinely failed. Absent on summaries written before 2026-09-27. */
   model_errors?: ModelErrors;
+  /** What the profile's `[posting]` policy did to the session's output
+   * (src/bench/benchposting.ts). Absent at today's posting. */
+  posting?: BenchPostingReport;
 }
 
 /** Whether a finished case should be re-run: anything but `ok`, except a case
@@ -207,6 +218,9 @@ export interface RunFingerprint {
   /** Per-lens tier pins (`[models.pass_tiers]`) and the risk passes. */
   pass_tiers?: Record<string, string>;
   risk_passes?: string[];
+  /** The profile's `[posting]` policy. Absent at today's posting, so a run
+   * without one keeps its fingerprint. */
+  posting?: PostingPolicy;
 }
 
 type FingerprintLensTuning = Omit<LensTuning, "guide"> & {
@@ -266,6 +280,7 @@ export function runFingerprint(cfg: Config, profile: string, overrides = ""): Ru
       validate_consequence_rule: cfg.review.validate_consequence_rule ?? false,
     },
     ...(Object.keys(cfg.lenses ?? {}).length > 0 ? { lenses: fingerprintLenses(cfg.lenses!) } : {}),
+    ...(isDefaultPosting(cfg.posting) ? {} : { posting: { ...cfg.posting! } }),
   };
 }
 
@@ -456,6 +471,8 @@ export function buildBenchAgents(root: string, cfg: Config): number {
       ...configAddenda(cfg.review),
       ...loadProfileAddenda(root, cfg.review.profile),
       ...lensTuningAddenda(cfg.lenses),
+      // The profile's `[posting]` policy, compiled for the validator.
+      ...postingPolicyAddenda(cfg.posting),
     ],
   });
   return built.length;
@@ -767,7 +784,8 @@ export async function reviewCase(
   // wt volume — not in /tmp, a tmpfs charged to the container's memory cap.
   const tmpDir = join(o.root, "wt", `${safe}.tmp`);
   mkdirSync(caseDir, { recursive: true });
-  for (const f of Object.values(CASE_FILES)) rmSync(join(caseDir, f), { force: true });
+  for (const f of [...Object.values(CASE_FILES), ...POLICED_ORIGINALS])
+    rmSync(join(caseDir, f), { force: true });
   const started = Date.now();
   const summary: CaseSummary = {
     instance_id: c.instance_id,
@@ -954,6 +972,18 @@ export async function reviewCase(
       summary.warnings.push(`usage unreadable: ${String(err).slice(0, 200)}`);
     }
     const outcome = readJson(outcomePath) as Record<string, unknown> | undefined;
+    // The profile's `[posting]` policy, applied to what the session wrote
+    // exactly as production posting applies it: an over-posting session is
+    // still cut, and what is cut is recorded `withheld` (originals kept beside).
+    if (!isDefaultPosting(ctx.cfg.posting) && outcome !== undefined) {
+      const policed = enforceBenchPosting(caseDir, ctx.cfg.posting!);
+      if (policed) {
+        summary.posting = policed;
+        log(
+          `review: ${c.instance_id} — posting policy kept ${policed.kept} of ${policed.kept + policed.withheld.length} (${policed.withheld.map((w) => w.word).join(", ") || "nothing withheld"})`,
+        );
+      }
+    }
     const rawComments = readJson(join(caseDir, CASE_FILES.comments));
     const collected = collectComments(caseDir);
     comments = collected.comments;
@@ -1061,16 +1091,21 @@ export function contextFor(
   profile: string,
   overrides = "",
 ): { cfg: Config; ecosystem: Ecosystem } {
-  // the profile's lens tuning is overlaid LAST — after the `--config`
-  // levers and any preset re-parse — exactly as production overlays it after
-  // config.toml: the profile wins.
-  const cfg = applyProfileTuning(
-    applyConfigOverrides(
-      benchConfig(profile),
-      overrides,
-      readFileSync(locateConfig().path, "utf8"),
-    ),
-    loadProfileLensTuning(root, profile),
+  const levered = applyConfigOverrides(
+    benchConfig(profile),
+    overrides,
+    readFileSync(locateConfig().path, "utf8"),
   );
-  return { cfg, ecosystem: ecosystemFor(loadProfileEcosystem(root, profile)) };
+  // The profile the run reviews under: `--profile`, or `--config
+  // review.profile=<name>` (arm.sh's spelling) — every loader reads the same
+  // one, so a profile chosen either way is the whole profile.
+  const chosen = levered.review.profile;
+  // the profile's lens tuning (and its `[posting]` policy) is
+  // overlaid LAST — after the `--config` levers and any preset re-parse —
+  // exactly as production overlays it after config.toml: the profile wins.
+  const cfg = applyProfilePosting(
+    applyProfileTuning(levered, loadProfileLensTuning(root, chosen)),
+    loadProfilePosting(root, chosen),
+  );
+  return { cfg, ecosystem: ecosystemFor(loadProfileEcosystem(root, chosen)) };
 }

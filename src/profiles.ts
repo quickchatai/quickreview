@@ -54,7 +54,9 @@
 //   * per-lens tuning (`[lenses.<pass>]`) — per lens, per key, the
 //     nearest profile that sets it wins;
 //   * the scan table (`[scan]`) — per key, the nearest profile that
-//     sets it wins (a list, `exclude`, is replaced whole, never appended).
+//     sets it wins (a list, `exclude`, is replaced whole, never appended);
+//   * the posting policy (`[posting]`, SNAPPY-PLAN.md) — per key, the nearest
+//     profile that sets it wins.
 // The shipped `default` profile encodes the shipped behaviour (an empty pack,
 // no heuristics, `ecosystem = "none"`) and is the base a generated profile
 // extends: an empty child of it reviews exactly as no profile does.
@@ -74,6 +76,7 @@ import {
   strandedCheckoutProfile,
   type InstallEnv,
 } from "./install.js";
+import { parsePostingTable, POSTING_ADDENDUM_IDS, type PostingPolicy } from "./postingpolicy.js";
 import {
   LENS_TUNING_ID_PREFIXES,
   mergeLensTuning,
@@ -128,6 +131,8 @@ interface ProfileLayer {
   lenses?: unknown;
   /** The raw `[scan]` table, when this profile has one. */
   scan?: unknown;
+  /** The raw `[posting]` table, when this profile has one. */
+  posting?: unknown;
 }
 
 /** Read one profile's `profile.toml` — an absent file is an empty one. Owns
@@ -166,6 +171,7 @@ function readLayer(name: string, dir: string): ProfileLayer {
   if ("ecosystem" in doc) layer.ecosystem = doc["ecosystem"];
   if ("lenses" in doc) layer.lenses = doc["lenses"];
   if ("scan" in doc) layer.scan = doc["scan"];
+  if ("posting" in doc) layer.posting = doc["posting"];
   const addenda = doc["addenda"];
   if (addenda !== undefined) {
     if (typeof addenda !== "object" || addenda === null || Array.isArray(addenda)) {
@@ -244,7 +250,12 @@ const SCAN_PASS = "pass-scan";
 /** Ids a pack may not claim: every compiled-in entry, plus the dynamic
  * same-day feedback addendum wire.ts composes last (src/feedback.ts). */
 export function reservedAddendumIds(): Set<string> {
-  return new Set([...PASS_ADDENDA.map((a) => a.id), "feedback-day-validate"]);
+  return new Set([
+    ...PASS_ADDENDA.map((a) => a.id),
+    "feedback-day-validate",
+    // The addendum `[posting]` compiles into (src/postingpolicy.ts).
+    ...POSTING_ADDENDUM_IDS,
+  ]);
 }
 
 function parseScope(raw: string, file: string): PassAddendumScope {
@@ -498,6 +509,36 @@ export function loadProfileScan(
     if (layer.scan === undefined) continue;
     const where = `[review] profile "${layer.name}": ${layer.toml}`;
     merged = { ...merged, ...parseScanTable(where, layer.scan, SCAN_PROFILE_KEYS) };
+  }
+  return merged;
+}
+
+// ---- the posting policy -------------------------------------------------------
+
+/**
+ * The named profile's posting policy — `[posting]` in `profile.toml`, the
+ * whole `extends` chain merged (per key, the nearest profile that sets it
+ * wins). Returns only the keys the chain sets; `applyProfilePosting`
+ * (src/postingpolicy.ts) resolves them over today's defaults.
+ *
+ * `""`, a profile found nowhere and a chain with no `[posting]` all mean `{}`
+ * — today's behaviour. Anything malformed in any layer (an overridden base
+ * value too) throws with the file named: the loud-boot contract.
+ */
+export function loadProfilePosting(
+  root: string,
+  profile: string,
+  lookup: ProfileLookup = {},
+): Partial<PostingPolicy> {
+  if (profile === "") return {};
+  if (!locateProfile({ root, profile, ...lookup })) return {};
+  let merged: Partial<PostingPolicy> = {};
+  for (const layer of profileChain(root, profile, lookup)) {
+    if (layer.posting === undefined) continue;
+    merged = {
+      ...merged,
+      ...parsePostingTable(`[review] profile "${layer.name}": ${layer.toml}`, layer.posting),
+    };
   }
   return merged;
 }

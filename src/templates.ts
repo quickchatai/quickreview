@@ -13,6 +13,7 @@ import {
 } from "./memory/context.js";
 import { codePath, flatControls, promptTitle } from "./codespan.js";
 import { renderEscalationPromptNote } from "./escalation.js";
+import { renderPostingPolicyNote } from "./postingpolicy.js";
 import { NEUTRAL_IDENTITY_VARS } from "./include.js";
 import type { FileClass, RecheckOrder } from "./recheck.js";
 import type { PassPlanEntry, RoundOrder, RoundType } from "./types.js";
@@ -478,6 +479,11 @@ export function roundVars(
     // does when the operator enabled escalation AND session judgement. On a
     // default install this variable renders empty and the prompt is unchanged.
     escalation_note: renderEscalationPromptNote(order.escalation_targets),
+    // The profile's `[posting]` policy (src/postingpolicy.ts): "" unless the
+    // profile sets one, and the templates carry it on the escalation line, so
+    // a default round order is byte-identical
+    // (tests/posting-default-identity.test.ts).
+    posting_policy_note: renderPostingPolicyNote(order.posting_policy),
   };
 }
 

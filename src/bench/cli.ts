@@ -289,7 +289,7 @@ async function main(): Promise<number> {
     const phase = f.get("--phase") ?? "all";
     if (!["all", "init", "case", "finish"].includes(phase))
       throw new Error("--phase must be all | init | case | finish");
-    const profile = f.get("--profile") ?? "";
+    const profileFlag = f.get("--profile") ?? "";
     const cases = selectCases(set, only(f));
     const runFile = join(outDir, "run.json");
 
@@ -319,7 +319,9 @@ async function main(): Promise<number> {
     }
 
     const overrides = f.get("--config") ?? "";
-    const base = contextFor(root, profile, overrides);
+    const base = contextFor(root, profileFlag, overrides);
+    // `--config review.profile=<name>` chooses the profile as `--profile` does.
+    const profile = base.cfg.review.profile;
     const ctx = { ...base, fingerprint: runFingerprint(base.cfg, profile, overrides) };
     const authSrc = f.get("--auth-src") ?? DEFAULTS.authSrc;
     const agentDir = f.get("--agent-dir") ?? DEFAULTS.agentDir;

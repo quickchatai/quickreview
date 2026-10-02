@@ -43,7 +43,9 @@ import {
   loadProfileEcosystem,
   loadProfileHeuristics,
   loadProfileLensTuning,
+  loadProfilePosting,
 } from "./profiles.js";
+import { applyProfilePosting, postingPolicyAddenda } from "./postingpolicy.js";
 import { prepareDependencySources, renderDependencyNote } from "./depsources.js";
 import { fileImprovementPr, fileIssue, gitRunner } from "./improvements.js";
 import {
@@ -96,7 +98,11 @@ export function buildParts(root = sandboxRoot(), loaded = loadConfig()): Product
   // round row) reads the one resolved `cfg.lenses` — the profile wins over
   // config.toml, the preset and the defaults. A malformed `[lenses]` table
   // fails the boot loudly, like every other profile loader.
-  const cfg = applyProfileTuning(loaded, loadProfileLensTuning(root, loaded.review.profile));
+  // The profile's `[posting]` policy rides the same overlay (src/postingpolicy.ts).
+  const cfg = applyProfilePosting(
+    applyProfileTuning(loaded, loadProfileLensTuning(root, loaded.review.profile)),
+    loadProfilePosting(root, loaded.review.profile),
+  );
   const minter = new TokenMinter(cfg.github.secrets_dir);
   const gate: MutationGate = new MutationGate(
     cfg.dry_run,
@@ -778,6 +784,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
               ...profileAddenda,
               // the profile's `emphasis` / `max_severity`, compiled.
               ...lensTuningAddenda(cfg.lenses),
+              // The profile's `[posting]` policy, compiled for the validator.
+              ...postingPolicyAddenda(cfg.posting),
               ...(fb ? [fb] : []),
             ],
           });

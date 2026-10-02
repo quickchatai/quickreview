@@ -1,6 +1,7 @@
 // Shared cross-slice contracts. B2's dispatch emits RoundOrder; B3's session
 // manager consumes it; verdict files close the loop (spec §3–4).
 import type { MigrationCollision } from "./migrations.js";
+import type { PostingPolicy } from "./postingpolicy.js";
 
 export type RoundType = "first" | "re-review" | "staleness";
 
@@ -153,6 +154,9 @@ export interface RoundOrder {
   dependency_note?: string;
   /** `[review] nits = "open"`: the round lifts the nit limits. Absent ⇒ strict. */
   nit_policy?: "open";
+  /** The profile's `[posting]` policy (src/postingpolicy.ts). Absent ⇒
+   * today's posting: no note renders and nothing is enforced. */
+  posting_policy?: PostingPolicy;
   migration_gate: boolean;
   /**
    * Migration-number collisions with the base branch that the daemon detected

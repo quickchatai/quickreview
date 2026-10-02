@@ -582,9 +582,14 @@ const DOUBTED_SHOWN = 8;
  * and put here for the operator to judge. Newest round first. Nothing renders
  * when there are none, or when an older daemon did not report the field.
  */
-export function doubtedLines(doubted: WhyPayload["doubted"], width: number): string[] {
+export function doubtedLines(
+  doubted: WhyPayload["doubted"],
+  width: number,
+  title = "DOUBTED",
+  note = "may not be valid · kept, never posted",
+): string[] {
   if (!doubted || doubted.length === 0) return [];
-  const lines = [truncate(section("DOUBTED", "may not be valid · kept, never posted"), width)];
+  const lines = [truncate(section(title, note), width)];
   const newest = [...doubted].sort((a, b) => b.round_no - a.round_no);
   for (const f of newest.slice(0, DOUBTED_SHOWN)) {
     const at = f.path ? ` ${sanitizeText(f.path)}${f.line !== null ? `:${f.line}` : ""}` : "";
@@ -745,6 +750,10 @@ export function detailLines(
     );
   }
   lines.push(...doubtedLines(detail.doubted, width));
+  // The profile's `[posting]` policy: survivors kept off the PR, same grammar.
+  lines.push(
+    ...doubtedLines(detail.withheld, width, "WITHHELD", "over the posting policy · kept, never posted"),
+  );
   lines.push(
     truncate(`${section("THREADS", "bot review threads")} ${detail.threads.total} known`, width),
   );

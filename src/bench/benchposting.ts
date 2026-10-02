@@ -1,0 +1,370 @@
+// The profile's `[posting]` policy on the BENCHMARK route — the offline twin
+// of src/posting.ts `assembleReview`'s policy step (src/postingpolicy.ts).
+//
+// A benchmark session posts nothing: it writes `comments.json` (the inline
+// comments), `review.md` (the body) and `findings-record.json` into its case
+// dir (aacr.ts `benchAppendix`), and every scorer — AACR-Bench's own, the
+// defect judge, Martian's ingest (bench/aacr/ext/martian_ingest.py) — reads
+// those files. So the policy is applied to the files themselves, after the
+// session and before anything reads them, exactly once:
+//
+//   * the session's three files are kept beside, untouched
+//     (`POLICED_ORIGINALS`), so what the session wrote is never lost;
+//   * `comments.json` keeps only the inline comments the policy selects (in
+//     the session's order);
+//   * `review.md` is cut to the verdict line and one sentence
+//     (`body = "verdict"`), or keeps its shape with the withheld findings'
+//     bullets removed (`body = "full"`); either way its verdict line is
+//     recounted over what still posts;
+//   * `findings-record.json` marks every cut finding `withheld` with its word
+//     — the same disposition production records — and synthesises an entry
+//     for a cut comment the session never recorded, so nothing vanishes.
+//
+// Items are the inline comments plus the findings the record marks posted
+// that went to the BODY (aacr.ts `bodyPostedFindings`' rule: no inline
+// comment within three lines) — the body ones count against the budget too,
+// because they are scored as comments.
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  firstSentence,
+  selectPosted,
+  siteKey,
+  verdictLineFor,
+  type PolicyClass,
+  type PostingPolicy,
+  type WithholdWord,
+} from "../postingpolicy.js";
+import { CASE_FILES, parseSessionComments } from "./aacr.js";
+
+/** The session's own files, kept beside the policed ones. */
+export const POLICED_ORIGINALS = [
+  "comments.session.json",
+  "review.session.md",
+  "findings-record.session.json",
+  "posting-policy.json",
+] as const;
+
+export interface BenchPostingReport {
+  kept: number;
+  withheld: Array<{
+    path: string;
+    line: number;
+    source: "inline" | "body";
+    cls: PolicyClass;
+    severity: string | null;
+    word: WithholdWord;
+    title: string;
+  }>;
+  body: "full" | "verdict";
+}
+
+interface Item {
+  source: "inline" | "body";
+  path: string;
+  line: number;
+  cls: PolicyClass;
+  severity: string | null;
+  title: string;
+  /** inline: the session's raw row, written back verbatim when kept. */
+  row?: unknown;
+  /** body: the record entry it came from. */
+  entry?: Record<string, unknown>;
+}
+
+const SEV_TAIL = /_\s*(P[0-3]|nit)\s*·\s*confidence/i;
+const NEAR = 3;
+
+function classOf(tag: string): PolicyClass {
+  return tag === "blocker" || tag === "question" || tag === "nit" ? tag : "check";
+}
+
+function postedClass(postedAs: string): PolicyClass {
+  const t = postedAs.trim().replace(/^\[|\]$/g, "").toLowerCase();
+  return t === "blocker" || t === "question" || t === "nit" ? t : "check";
+}
+
+function firstLineTitle(body: string): string {
+  const first = (body.split("\n", 1)[0] ?? "").trim();
+  return first
+    .replace(/\[(blocker|question|nit|check this|ask your human|deferred)\]/gi, "")
+    .trim();
+}
+
+function str(v: unknown): string {
+  return typeof v === "string" ? v : "";
+}
+
+function lineOf(v: unknown): number | undefined {
+  const n = typeof v === "number" ? v : typeof v === "string" && /^\d+$/.test(v.trim()) ? Number(v) : NaN;
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+}
+
+function normPath(p: unknown): string {
+  return str(p).trim().replace(/^\.?\/+/, "");
+}
+
+/** Remove each bullet naming `` `path:line` `` (and its indented
+ * continuation) from a markdown body. */
+function dropBullets(md: string, refs: ReadonlySet<string>): string {
+  if (refs.size === 0) return md;
+  const lines = md.split("\n");
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i] as string;
+    const isBullet = /^\s*[-*] /.test(l);
+    if (isBullet && [...refs].some((r) => l.includes(r))) {
+      // skip its continuation: indented lines and blank lines followed by indent
+      while (i + 1 < lines.length) {
+        const nx = lines[i + 1] as string;
+        if (/^\s{2,}\S/.test(nx)) i++;
+        else if (/^\s*$/.test(nx) && /^\s{2,}\S/.test(lines[i + 2] ?? "")) i++;
+        else break;
+      }
+      continue;
+    }
+    out.push(l);
+  }
+  // A section heading left with nothing under it goes too.
+  const cleaned: string[] = [];
+  for (let i = 0; i < out.length; i++) {
+    const l = out[i] as string;
+    if (/^###\s/.test(l)) {
+      let j = i + 1;
+      while (j < out.length && /^\s*$/.test(out[j] as string)) j++;
+      if (j >= out.length || /^#{1,3}\s/.test(out[j] as string) || /^_Automated review/.test(out[j] as string)) continue;
+    }
+    cleaned.push(l);
+  }
+  return cleaned.join("\n").replace(/\n{3,}/g, "\n\n");
+}
+
+const VERDICT_RE = /\*\*Verdict:\s*([^*]+?)\*\*[^\n]*/;
+
+function verdictLabel(md: string, verdict: string | null): string {
+  if (verdict === "APPROVE") return "Approved";
+  if (verdict === "REQUEST_CHANGES") return "Changes requested";
+  const m = VERDICT_RE.exec(md);
+  return m ? (m[1] as string).trim() : "Reviewed";
+}
+
+/** The first sentence of the body's plain opening paragraph, else of the
+ * verdict `summary`. */
+function openingSentence(md: string, summary: string): string {
+  for (const para of md.split(/\n\s*\n/)) {
+    const p = para.trim();
+    if (!p) continue;
+    if (/^(#|[-*] |_|<|\*\*Verdict|```|\|)/.test(p)) continue;
+    const s = firstSentence(p);
+    if (s) return s;
+  }
+  return firstSentence(summary);
+}
+
+/**
+ * The pure core: the session's three outputs in, the policed three out, plus
+ * the report. `outcome` gives the decided verdict and its summary.
+ */
+export function policeBenchOutput(args: {
+  comments: unknown;
+  reviewMd: string;
+  record: unknown;
+  outcome: { verdict: string | null; summary: string };
+  policy: PostingPolicy;
+}): { comments: unknown[]; reviewMd: string; record: unknown; report: BenchPostingReport } {
+  const { policy } = args;
+  const rawRows: unknown[] = Array.isArray(args.comments)
+    ? args.comments
+    : typeof args.comments === "object" &&
+        args.comments !== null &&
+        Array.isArray((args.comments as { comments?: unknown }).comments)
+      ? (args.comments as { comments: unknown[] }).comments
+      : [];
+  const record =
+    typeof args.record === "object" && args.record !== null && !Array.isArray(args.record)
+      ? (structuredClone(args.record) as Record<string, unknown>)
+      : null;
+  const entries: Array<Record<string, unknown>> = Array.isArray(record?.["findings"])
+    ? (record!["findings"] as unknown[]).filter(
+        (e): e is Record<string, unknown> => typeof e === "object" && e !== null,
+      )
+    : [];
+  const posted = entries.filter((e) => e["disposition"] === "posted");
+  const near = (e: Record<string, unknown>, path: string, line: number) => {
+    const l = lineOf(e["line"]);
+    return normPath(e["path"]) === path && l !== undefined && Math.abs(l - line) <= NEAR;
+  };
+
+  const items: Item[] = [];
+  const passthrough: unknown[] = []; // rows the scorer drops anyway
+  for (const row of rawRows) {
+    const parsed = parseSessionComments([row]).comments[0];
+    if (!parsed) {
+      passthrough.push(row);
+      continue;
+    }
+    const sev =
+      SEV_TAIL.exec(parsed.body)?.[1] ||
+      str(posted.find((e) => near(e, parsed.path, parsed.line))?.["severity"]);
+    items.push({
+      source: "inline",
+      path: parsed.path,
+      line: parsed.line,
+      cls: classOf(parsed.tag),
+      severity: sev ? (sev.toUpperCase() === "NIT" ? "nit" : sev.toUpperCase()) : null,
+      title: firstLineTitle(parsed.body),
+      row,
+    });
+  }
+  const inlineItems = [...items];
+  for (const e of posted) {
+    const path = normPath(e["path"]);
+    const line = lineOf(e["line"]);
+    if (!path || line === undefined) continue;
+    if ([...inlineItems, ...items.filter((x) => x.source === "body")].some(
+      (c) => c.path === path && Math.abs(c.line - line) <= NEAR,
+    ))
+      continue;
+    items.push({
+      source: "body",
+      path,
+      line,
+      cls: postedClass(str(e["posted_as"])),
+      severity: str(e["severity"]) || null,
+      title: str(e["title"]) || str(e["reason"]).split("\n", 1)[0] || `${path}:${line}`,
+      entry: e,
+    });
+  }
+
+  const sel = selectPosted(
+    items,
+    (it) => ({ cls: it.cls, severity: it.severity, key: siteKey(it.title) }),
+    policy,
+  );
+  const kept = new Set(sel.kept);
+
+  // The record: every cut finding is `withheld`, with its word.
+  const claimed = new Set<Record<string, unknown>>();
+  for (const { item, word } of sel.withheld) {
+    const why = `Withheld by this repo's posting policy (${word}); kept here, never posted.`;
+    const entry =
+      item.entry ??
+      posted.find(
+        (e) =>
+          !claimed.has(e) &&
+          near(e, item.path, item.line) &&
+          postedClass(str(e["posted_as"])) === item.cls,
+      ) ??
+      posted.find((e) => !claimed.has(e) && near(e, item.path, item.line));
+    if (entry) {
+      claimed.add(entry);
+      entry["withheld_as"] = entry["posted_as"];
+      delete entry["posted_as"];
+      entry["disposition"] = "withheld";
+      entry["word"] = word;
+      entry["reason"] = `${why} ${str(entry["reason"])}`.trim();
+    } else if (record) {
+      entries.push({
+        id: `posting-${entries.length + 1}`,
+        path: item.path,
+        line: item.line,
+        lens: "unknown",
+        severity: item.severity,
+        disposition: "withheld",
+        word,
+        reason: `${why} The session posted it without a findings-record entry: ${item.title}`,
+      });
+    }
+  }
+  if (record) {
+    record["findings"] = entries;
+    record["comments_posted"] = items.filter((i) => i.source === "inline" && kept.has(i)).length;
+  }
+
+  // The body.
+  const counts = { blocker: 0, nit: 0, question: 0 };
+  for (const it of sel.kept) if (it.cls !== "check") counts[it.cls] += 1;
+  const label = verdictLabel(args.reviewMd, args.outcome.verdict);
+  let reviewMd: string;
+  if (policy.body === "verdict") {
+    const lines = [verdictLineFor(label, counts)];
+    const s = openingSentence(args.reviewMd, args.outcome.summary);
+    if (s) lines.push("", s);
+    const bodyKept = sel.kept.filter((i) => i.source === "body");
+    if (bodyKept.length)
+      lines.push("", ...bodyKept.map((i) => `- \`${i.path}:${i.line}\` — ${i.title}`));
+    reviewMd = `${lines.join("\n")}\n`;
+  } else {
+    const refs = new Set(sel.withheld.map(({ item }) => `\`${item.path}:${item.line}\``));
+    reviewMd = dropBullets(args.reviewMd, refs);
+    if (sel.withheld.length > 0)
+      reviewMd = reviewMd.replace(VERDICT_RE, verdictLineFor(label, counts));
+  }
+
+  return {
+    comments: [...items.filter((i) => i.source === "inline" && kept.has(i)).map((i) => i.row), ...passthrough],
+    reviewMd,
+    record: record ?? args.record,
+    report: {
+      kept: sel.kept.length,
+      withheld: sel.withheld.map(({ item, word }) => ({
+        path: item.path,
+        line: item.line,
+        source: item.source,
+        cls: item.cls,
+        severity: item.severity,
+        word,
+        title: item.title,
+      })),
+      body: policy.body,
+    },
+  };
+}
+
+function readJsonOr(path: string): unknown {
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Apply the policy to one case dir, in place: the session's files move to
+ * `POLICED_ORIGINALS`, the policed ones take their names, and the report goes
+ * to `posting-policy.json`. Null when the session wrote no comments file
+ * (nothing to police — the case scores as it stands).
+ */
+export function enforceBenchPosting(caseDir: string, policy: PostingPolicy): BenchPostingReport | null {
+  const cPath = join(caseDir, CASE_FILES.comments);
+  if (!existsSync(cPath)) return null;
+  const rPath = join(caseDir, CASE_FILES.review);
+  const fPath = join(caseDir, CASE_FILES.findings);
+  const comments = readJsonOr(cPath);
+  const reviewMd = existsSync(rPath) ? readFileSync(rPath, "utf8") : "";
+  const record = readJsonOr(fPath);
+  const outcome = readJsonOr(join(caseDir, CASE_FILES.outcome)) as Record<string, unknown> | undefined;
+  const out = policeBenchOutput({
+    comments,
+    reviewMd,
+    record,
+    outcome: {
+      verdict: typeof outcome?.["verdict"] === "string" ? outcome["verdict"] : null,
+      summary: typeof outcome?.["summary"] === "string" ? outcome["summary"] : "",
+    },
+    policy,
+  });
+  renameSync(cPath, join(caseDir, POLICED_ORIGINALS[0]));
+  writeFileSync(cPath, JSON.stringify(out.comments, null, 2) + "\n");
+  if (existsSync(rPath)) renameSync(rPath, join(caseDir, POLICED_ORIGINALS[1]));
+  writeFileSync(rPath, out.reviewMd);
+  if (existsSync(fPath) && record !== undefined) {
+    renameSync(fPath, join(caseDir, POLICED_ORIGINALS[2]));
+    writeFileSync(fPath, JSON.stringify(out.record, null, 2) + "\n");
+  }
+  writeFileSync(
+    join(caseDir, "posting-policy.json"),
+    JSON.stringify({ policy, ...out.report }, null, 2) + "\n",
+  );
+  return out.report;
+}

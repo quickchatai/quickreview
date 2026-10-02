@@ -24,6 +24,7 @@
 // a wedged PR (rule 9; the map has spent enough on wedges).
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { WITHHOLD_WORDS } from "./postingpolicy.js";
 import { isSanctionedTag } from "./severity.js";
 import type { StateStore } from "./state.js";
 import { wakeOrHold } from "./wakes.js";
@@ -43,7 +44,9 @@ import { wakeOrHold } from "./wakes.js";
  *   collapsed into another finding, or a different defect carried as a
  *   paragraph under one. Attrition here counts like a kill; it must never
  *   vanish silently.
- * - `withheld` — the session itself dropped it before the validator saw it.
+ * - `withheld` — the session itself dropped it before the validator saw it,
+ *   or the profile's `[posting]` policy kept a survivor off the PR (a word
+ *   from `WITHHOLD_WORDS`: `over-budget`, `nits-off`, …) — kept, never posted.
  * - `conceded` — REFUTED AND CONCEDED: previously posted, the author refuted
  *   it and the reviewer accepted the refutation. This is the state that lets a
  *   later round tell "escalating an open finding" (legitimate — the owner,
@@ -171,7 +174,11 @@ export const DOWNGRADE_WORDS: readonly string[] = [
 export function isKnownVocabularyWord(word: string): boolean {
   const w = word.trim().toLowerCase();
   if (w.startsWith("settled:")) return true;
-  return KILL_WORDS.includes(w) || DOWNGRADE_WORDS.includes(w);
+  return (
+    KILL_WORDS.includes(w) ||
+    DOWNGRADE_WORDS.includes(w) ||
+    (WITHHOLD_WORDS as readonly string[]).includes(w)
+  );
 }
 
 /** One candidate finding and why it ended where it did. */

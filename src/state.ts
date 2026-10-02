@@ -1946,6 +1946,17 @@ export class StateStore {
       .all(pr) as RoundFindingRow[];
   }
 
+  /** The survivors a profile's `[posting]` policy kept off the PR
+   * (disposition `withheld` with a posting-policy word), oldest round first:
+   * kept, never posted, read by the TUI beside the doubted ones. */
+  withheldFindings(pr: number): RoundFindingRow[] {
+    return this.db
+      .prepare(
+        "SELECT * FROM round_findings WHERE pr = ? AND disposition = 'withheld' AND word IN ('over-budget','nits-off','questions-off','question-not-blocking','repeat-site') ORDER BY round_no, id",
+      )
+      .all(pr) as RoundFindingRow[];
+  }
+
   /**
    * The refuted-and-conceded set for a PR: findings a previous round posted,
    * the author refuted, and the reviewer accepted the refutation on. This is

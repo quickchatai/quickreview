@@ -30,11 +30,13 @@ import type { HeuristicsExtension } from "../heuristics.js";
 import { PASS_ADDENDA, buildAgents, configAddenda, identityVars } from "../include.js";
 import { assertPathSegment, configHome, locateConfig, PROFILES_DIR, type InstallEnv } from "../install.js";
 import { applyProfileTuning, lensModelOverrides, lensTuningAddenda } from "../lenstuning.js";
+import { applyProfilePosting, postingPolicyAddenda } from "../postingpolicy.js";
 import {
   loadProfileAddenda,
   loadProfileEcosystem,
   loadProfileHeuristics,
   loadProfileLensTuning,
+  loadProfilePosting,
   type ProfileLookup,
 } from "../profiles.js";
 import { latestBaseline, readBaselines, type ProfileBaseline } from "./baselines.js";
@@ -251,7 +253,10 @@ function buildSide(deps: SidesDeps, name: SideName, src: SideSource, parsed: Con
   const lookup: ProfileLookup = { env: src.env };
   const base = structuredClone(parsed);
   base.review = { ...base.review, profile: src.profile };
-  const cfg = applyProfileTuning(base, loadProfileLensTuning(deps.root, src.profile, lookup));
+  const cfg = applyProfilePosting(
+    applyProfileTuning(base, loadProfileLensTuning(deps.root, src.profile, lookup)),
+    loadProfilePosting(deps.root, src.profile, lookup),
+  );
   const ecosystemName = loadProfileEcosystem(deps.root, src.profile, lookup);
   const heuristics = loadProfileHeuristics(deps.root, src.profile, lookup);
   const outDir = join(deps.stateRoot, REPLAY_AGENTS_DIR, name);
@@ -270,6 +275,7 @@ function buildSide(deps: SidesDeps, name: SideName, src: SideSource, parsed: Con
       ...configAddenda(cfg.review),
       ...loadProfileAddenda(deps.root, src.profile, lookup),
       ...lensTuningAddenda(cfg.lenses),
+      ...postingPolicyAddenda(cfg.posting),
     ],
   });
   return {

@@ -49,12 +49,14 @@ import {
   PROFILES_DIR,
   type InstallEnv,
 } from "../install.js";
+import type { PostingPolicy } from "../postingpolicy.js";
 import { LENS_TUNING_KEYS, lensTuningAddenda, type LensTuning } from "../lenstuning.js";
 import {
   loadProfileAddenda,
   loadProfileEcosystem,
   loadProfileHeuristics,
   loadProfileLensTuning,
+  loadProfilePosting,
   loadProfileScan,
   resolveProfileChain,
 } from "../profiles.js";
@@ -125,6 +127,8 @@ export interface ProfileSummary {
   /** Lenses the heuristics extension adds predicates to. */
   heuristics: string[];
   scan: Partial<ScanConfig>;
+  /** The `[posting]` keys the chain sets (src/postingpolicy.ts); {} = today's posting. */
+  posting: Partial<PostingPolicy>;
 }
 
 export type ProfileCheck = { ok: true; summary: ProfileSummary } | { ok: false; errors: string[] };
@@ -155,6 +159,7 @@ export function checkProfile(home: ProfileHome, name: string): ProfileCheck {
     const lenses = loadProfileLensTuning(home.root, name, lookup);
     const heuristics = loadProfileHeuristics(home.root, name, lookup);
     const scan = loadProfileScan(home.root, name, lookup);
+    const posting = loadProfilePosting(home.root, name, lookup);
     lensTuningAddenda(lenses); // compiles at build; a throw here is a boot failure too
     return {
       ok: true,
@@ -166,6 +171,7 @@ export function checkProfile(home: ProfileHome, name: string): ProfileCheck {
         lenses: Object.fromEntries(Object.entries(lenses).map(([lens, t]) => [lens, plainTuning(t)])),
         heuristics: [...new Set([...Object.keys(heuristics.paths), ...Object.keys(heuristics.addedLines)])].sort(),
         scan,
+        posting,
       },
     };
   } catch (err) {

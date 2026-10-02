@@ -1,0 +1,45 @@
+# snappy — a handful of comments per PR, bugs first (bench/aacr/ext/SNAPPY-PLAN.md).
+#
+# Everything the shipped review finds is still judged exactly as `default`
+# judges it — the blocker bar, the reachability gate, red CI, NIT SCOPE and
+# the validator's doubt-not-kill mark are untouched. What changes is what is
+# RUN and what is POSTED: the lenses that find non-bug issues are off, and the
+# validator selects at most four findings to post, the way a senior reviewer
+# picks what they would insist on before merge. Everything it does not select
+# is kept in the findings record as `withheld`, never posted, never deleted.
+extends = "default"
+
+[posting]
+max_comments = 4
+nits = "off"
+questions = "blocking"
+repeat_sites = false
+body = "verdict"
+comment_style = "concise"
+
+# Chosen on a priori grounds — these lenses find true but non-bug issues
+# (quality, style, UI polish, placement, intent drift), not by any
+# benchmark's golden list.
+[lenses.pass-maintainability]
+enabled = false
+
+[lenses.pass-duplication]
+enabled = false
+
+[lenses.pass-abstraction]
+enabled = false
+
+[lenses.pass-consistency]
+enabled = false
+
+[lenses.pass-style]
+enabled = false
+
+[lenses.pass-ui]
+enabled = false
+
+[lenses.pass-placement]
+enabled = false
+
+[lenses.pass-intent]
+enabled = false

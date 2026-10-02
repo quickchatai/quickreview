@@ -222,6 +222,10 @@ export interface WhyPayload {
   /** The findings the validator doubted — kept, never posted, shown
    * in the TUI detail pane. Absent from an older daemon (never read as none). */
   doubted?: DoubtedFinding[];
+  /** The survivors the profile's `[posting]` policy withheld: kept, never
+   * posted. Same shape; `word` is the posting-policy word. Absent from an
+   * older daemon. */
+  withheld?: DoubtedFinding[];
   ledger?: string;
   archive?: string[];
   /** GitHub conversation surface — present only when the enrichment fetch
@@ -316,6 +320,15 @@ export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPa
     // daemon doesn't mirror, so it is UNKNOWN (null) — never the total.
     threads: { open: null, total: threadTotal.c },
     doubted: store.doubtedFindings(n).map((f) => ({
+      round_no: f.round_no,
+      lens: f.lens,
+      path: f.path,
+      line: f.line,
+      severity: f.severity,
+      word: f.word,
+      reason: f.reason,
+    })),
+    withheld: store.withheldFindings(n).map((f) => ({
       round_no: f.round_no,
       lens: f.lens,
       path: f.path,
@@ -598,7 +611,12 @@ export async function cmdRegression(rest: string[], json: boolean): Promise<numb
   const { applyProfileTuning } = await import("./lenstuning.js");
   const { loadProfileLensTuning } = await import("./profiles.js");
   const loaded = loadConfig();
-  const cfg = applyProfileTuning(loaded, loadProfileLensTuning(root, loaded.review.profile));
+  const { loadProfilePosting } = await import("./profiles.js");
+  const { applyProfilePosting } = await import("./postingpolicy.js");
+  const cfg = applyProfilePosting(
+    applyProfileTuning(loaded, loadProfileLensTuning(root, loaded.review.profile)),
+    loadProfilePosting(root, loaded.review.profile),
+  );
   const args = parseRegressionArgs(rest, json);
   const gate = new MutationGate(true, join(stateDir(), "dryrun"), async () => {
     throw new Error("qcr regression performs no mutations");

@@ -12,6 +12,7 @@ import {
 } from "./install.js";
 import { globProblem } from "./glob.js";
 import type { LensTuningMap } from "./lenstuning.js";
+import type { PostingPolicy } from "./postingpolicy.js";
 import { ALL_PASSES } from "./passes.js";
 import { PASS_TIER_ORDER, type PassTier } from "./types.js";
 
@@ -1244,6 +1245,10 @@ export interface Config {
    * makes the profile win over config.toml, the preset and the defaults.
    * Absent or empty ⇒ untuned. */
   lenses?: LensTuningMap;
+  /** The selected profile's posting policy (`[posting]` in profile.toml,
+   * src/postingpolicy.ts), overlaid by `applyProfilePosting`. Absent ⇒ today's
+   * behaviour; an all-default policy is never attached. */
+  posting?: PostingPolicy;
   ops: OpsConfig;
   ingress: IngressConfig;
   github: GithubConfig;

@@ -12,6 +12,15 @@
 import type { GitHubAdapter } from "./github.js";
 import type { GateResult } from "./gate.js";
 import type { StateStore } from "./state.js";
+import {
+  firstSentence,
+  isDefaultPosting,
+  selectPosted,
+  siteKey,
+  type PolicyClass,
+  type PostingPolicy,
+  type WithholdWord,
+} from "./postingpolicy.js";
 import { partitionByAnchor, ANCHOR_REASON_TEXT, type AnchorRequest, type Side } from "./anchors.js";
 import {
   ASK_HUMAN_TAG,
@@ -97,6 +106,16 @@ export interface ReviewInput {
    * hardcoded personal login.
    */
   bot_login?: string;
+  /**
+   * The profile's `[posting]` policy (src/postingpolicy.ts). Absent or
+   * all-default => today's assembly, byte for byte. Otherwise the findings are
+   * cut to the policy BEFORE anchoring (blockers never) and what is cut is
+   * returned as `withheld` for the findings record, never dropped silently.
+   */
+  policy?: PostingPolicy;
+  /** The plain opening paragraph (the verdict `summary`): its first sentence
+   * is the one sentence a `body = "verdict"` review carries. */
+  summary?: string;
 }
 
 /** The first-party directive paths this review's surviving injection findings
@@ -159,6 +178,9 @@ export interface AssembledReview {
   /** Titles that arrived with a tag outside the closed grammar.
    * Stripped from the payload, kept here so the escape is countable. */
   ungrammatical: Array<{ finding: Finding; tag: string }>;
+  /** Findings the posting policy kept off the PR, each with its word,
+   * recorded `withheld` in the findings record. Empty without a policy. */
+  withheld: Array<{ finding: Finding; word: WithholdWord }>;
 }
 
 export function eventForVerdict(v: Verdict): ReviewPayload["event"] {
@@ -245,10 +267,25 @@ export function inlineBody(f: Finding, tag: PostTag): string {
 }
 
 /** Assemble the full review POST payload from a round's surviving findings. */
-export function assembleReview(input: ReviewInput): AssembledReview {
+export function assembleReview(full: ReviewInput): AssembledReview {
   const tags = new Map<Finding, PostTag>();
-  for (const f of input.findings)
+  for (const f of full.findings)
     tags.set(f, postTag(f.severity, f.confidence, f.reachability, { kind: f.kind, path: f.path }));
+
+  // 0. the profile's posting policy: the budget, the tag rules and one site
+  //    per finding, over the findings in the order the session ranked them.
+  //    A no-op (the same input) without a policy.
+  const selection = selectPosted(
+    full.findings,
+    (f) => ({
+      cls: tags.get(f) as PolicyClass,
+      severity: f.severity,
+      key: siteKey(stripUngrammaticalTag(f.title).title),
+    }),
+    full.policy,
+  );
+  const input: ReviewInput =
+    selection.withheld.length > 0 ? { ...full, findings: selection.kept } : full;
 
   // 1. anchorable candidates vs. findings with no anchor at all
   const overflow: AssembledReview["overflow"] = [];
@@ -300,6 +337,7 @@ export function assembleReview(input: ReviewInput): AssembledReview {
     overflow,
     tags,
     ungrammatical: ungrammaticalTags(input.findings),
+    withheld: selection.withheld.map(({ item, word }) => ({ finding: item, word })),
   };
 }
 
@@ -316,6 +354,27 @@ export function renderBody(
     ] += 1;
 
   const of = (tag: PostTag) => input.findings.filter((f) => tags.get(f) === tag);
+  // `[posting] body = "verdict"`: the verdict line and one sentence. A kept
+  // finding with no inline anchor is the one exception (one bullet line, so
+  // a posted finding is never invisible), and the security-attention
+  // comment stays, because that one is not optional.
+  if (input.policy && !isDefaultPosting(input.policy) && input.policy.body === "verdict") {
+    const short: string[] = [verdictLine(input.verdict, counts)];
+    const sentence = firstSentence(input.summary ?? "");
+    if (sentence) short.push("", sentence);
+    if (overflow.length)
+      short.push(
+        "",
+        ...overflow.map(
+          ({ finding }) => `- ${ref(finding)} — ${stripUngrammaticalTag(finding.title).title}`,
+        ),
+      );
+    const files = directiveEscalationFiles(input.findings);
+    if (files.length > 0)
+      short.push("", renderDirectiveEscalationComment(input.escalation_mention ?? "", files));
+    short.push("", reviewFooter(input.bot_login));
+    return short.join("\n");
+  }
   const out: string[] = [
     verdictLine(input.verdict, counts),
     "",
