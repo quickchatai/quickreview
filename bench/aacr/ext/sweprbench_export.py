@@ -16,8 +16,13 @@ result file (results/all/<id>.json, the harness's own conversion — the same
 file AACR-Bench scores). Order: by the P-level QuickReview stamped, most
 severe first — P0, P1, P2, then P3 and unstamped together — keeping posting
 order (inline first, then body findings) within a level, so the harness's
-30-comment cap can only ever drop the least severe; right-side anchors only (a left-side line number is an OLD-file line, which
-SWE-PRBench would read as a new-file line). Each becomes one array item:
+30-comment cap can only ever drop the least severe. A comment anchored on a
+DELETED line (side LEFT: its line number is an OLD-file line, which SWE-PRBench
+would read as a new-file line) goes out with its file and `line: null`, the
+schema's "no specific line", instead of being dropped: the scored result file
+excludes left-side comments, so they are read back from the case's
+comments.json (2026-10-03: effect#5952's only finding sat on a deleted line, so
+the PR scored as an empty review, a hard zero). Each becomes one array item:
 
   body      the comment text, verbatim
   file      its path
@@ -80,7 +85,21 @@ def agent_array(run: Path, instance_id: str) -> tuple[list[dict], str]:
             continue
         items.append({"body": body, "file": c.get("path") or None,
                       "line": c.get("start_line"), "severity": severity(body)})
+    items += left_side_comments(run, instance_id)
     return order_by_severity(items), status
+
+
+def left_side_comments(run: Path, instance_id: str) -> list[dict]:
+    """Comments posted on deleted lines, which the scored result file excludes."""
+    raw = read_nofollow(run / "cases" / instance_id / "comments.json")
+    if raw is None:
+        return []
+    out = []
+    for c in json.loads(raw):
+        body = str(c.get("body") or "").strip()
+        if c.get("side") == "LEFT" and body:
+            out.append({"body": body, "file": c.get("path") or None, "line": None, "severity": severity(body)})
+    return out
 
 
 def order_by_severity(items: list[dict]) -> list[dict]:
