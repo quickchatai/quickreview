@@ -567,8 +567,21 @@ describe("what the session wrote → what the scorer reads", () => {
       "not json",
     ];
     const e = modelErrorsFromEvents(lines);
-    expect(e).toMatchObject({ rate_limited: 1, overloaded: 1, other: 1 });
+    expect(e).toMatchObject({ rate_limited: 1, overloaded: 1, usage_limit: 0, other: 1 });
     expect(e.sample).toContain("429");
+  });
+
+  it("the plan's usage window running out is its own kind, not a short rate limit", () => {
+    // The exact text pi 0.99.1 recorded for openai-codex when the plan window ran out (2026-09-29).
+    const err = (ts: number, errorMessage: string) =>
+      JSON.stringify({ type: "message_end", message: { role: "assistant", stopReason: "error", errorMessage, timestamp: ts } });
+    const e = modelErrorsFromEvents([
+      err(1, "Codex error: The usage limit has been reached"),
+      err(2, "Codex error: The usage limit has been reached"),
+      err(3, '429 {"type":"error","error":{"type":"rate_limit_error","message":"rate limit of 50 requests per minute"}}'),
+    ]);
+    expect(e).toMatchObject({ usage_limit: 2, rate_limited: 1, overloaded: 0, other: 0 });
+    expect(e.sample).toContain("usage limit has been reached");
   });
 
   it("a case's result line says whether arm.sh should retry it and whether the login pushed back", () => {
@@ -580,6 +593,12 @@ describe("what the session wrote → what the scorer reads", () => {
     expect(
       resultLine(mk("no-verdict", { model_errors: { rate_limited: 2, overloaded: 1, other: 4 } })),
     ).toBe("result: o__a@1111111 no-verdict retry=1 limited=3");
+    // The plan's usage window: counted as pushback AND named, so arm.sh stops launching.
+    expect(
+      resultLine(
+        mk("no-output", { model_errors: { rate_limited: 0, overloaded: 0, usage_limit: 2, other: 0 } }),
+      ),
+    ).toBe("result: o__a@1111111 no-output retry=1 limited=2 quota=2");
     // Unfetchable (force-pushed away) never succeeds on a re-run.
     expect(
       retryable(mk("failed", { error: "x: not prefetched (run `bench.sh prefetch` first)" })),

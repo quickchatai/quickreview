@@ -94,6 +94,7 @@ import {
   modelErrorsFromEvents,
   OVERLOAD_RE,
   RATE_LIMIT_RE,
+  USAGE_LIMIT_RE,
   type ModelErrors,
   parseSessionComments,
   patchFromGitDiff,
@@ -171,12 +172,15 @@ export function retryable(s: Pick<CaseSummary, "status" | "error">): boolean {
 }
 
 /** The one machine-readable line a case ends with; arm.sh's scheduler reads
- * it (and nothing inside the run dir) to decide retries and rate-limit
- * pauses. `limited` counts rate-limit plus overload errors. */
+ * it (and nothing inside the run dir) to decide retries, rate-limit pauses
+ * and its adaptive concurrency. `limited` counts rate-limit, overload and
+ * usage-limit errors; `quota=N` (only when N > 0) says N of them were the
+ * plan's usage window running out, which stops new launches outright. */
 export function resultLine(s: CaseSummary, skipped = false): string {
   const e = s.model_errors;
-  const limited = e ? e.rate_limited + e.overloaded : 0;
-  return `result: ${s.instance_id} ${s.status} retry=${retryable(s) ? 1 : 0} limited=${limited}${skipped ? " skipped" : ""}`;
+  const quota = e?.usage_limit ?? 0;
+  const limited = e ? e.rate_limited + e.overloaded + quota : 0;
+  return `result: ${s.instance_id} ${s.status} retry=${retryable(s) ? 1 : 0} limited=${limited}${quota ? ` quota=${quota}` : ""}${skipped ? " skipped" : ""}`;
 }
 
 export interface RunFingerprint {
@@ -965,7 +969,9 @@ export async function reviewCase(
       // pi's own stderr reports what never reached a message (a refused
       // connection, a 429 before the first token).
       for (const w of summary.warnings) {
-        if (RATE_LIMIT_RE.test(w)) summary.model_errors.rate_limited++;
+        if (USAGE_LIMIT_RE.test(w))
+          summary.model_errors.usage_limit = (summary.model_errors.usage_limit ?? 0) + 1;
+        else if (RATE_LIMIT_RE.test(w)) summary.model_errors.rate_limited++;
         else if (OVERLOAD_RE.test(w)) summary.model_errors.overloaded++;
       }
     } catch (err) {
@@ -1021,8 +1027,8 @@ export async function reviewCase(
   writeResults(o.outDir, c, comments, summary);
   const me = summary.model_errors;
   const errs =
-    me && me.rate_limited + me.overloaded + me.other > 0
-      ? `; model errors: ${me.rate_limited} rate-limited, ${me.overloaded} overloaded, ${me.other} other${summary.status !== "ok" && me.rate_limited + me.overloaded > 0 ? " — RATE-LIMITED" : ""}`
+    me && me.rate_limited + me.overloaded + (me.usage_limit ?? 0) + me.other > 0
+      ? `; model errors: ${me.rate_limited} rate-limited, ${me.overloaded} overloaded, ${me.usage_limit ?? 0} usage-limit, ${me.other} other${summary.status !== "ok" && (me.usage_limit ?? 0) > 0 ? " — USAGE LIMIT REACHED" : summary.status !== "ok" && me.rate_limited + me.overloaded > 0 ? " — RATE-LIMITED" : ""}`
       : "";
   log(
     `review: ${c.instance_id} ${summary.status} — verdict ${summary.verdict ?? "none"}, ${comments.length} comment(s), ${summary.duration_seconds}s${errs}`,

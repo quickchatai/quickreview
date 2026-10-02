@@ -843,15 +843,24 @@ export function usageFromEvents(lines: Iterable<string>): Usage & { children: nu
 /** Model-call failures one review saw, by kind. `rate_limited` and
  * `overloaded` are the shared login pushing back (every bench container
  * draws on ONE ChatGPT login): a case that failed with either is retried by
- * arm.sh after a pause, never scored as the reviewer's own miss. */
+ * arm.sh after a pause, never scored as the reviewer's own miss.
+ * `usage_limit` is the login's PLAN window exhausted ("Codex error: The usage
+ * limit has been reached" — every refusal on record, 2026-09-29, each case
+ * failing within seconds): no pause of minutes cures it, so arm.sh stops launching
+ * instead of burning the retries (absent in summaries written before it). */
 export interface ModelErrors {
   rate_limited: number;
   overloaded: number;
+  usage_limit?: number;
   other: number;
   /** One message of the most telling kind, for the log. */
   sample?: string;
 }
 
+/** The plan's usage window is spent (checked before RATE_LIMIT_RE, which it
+ * would also match). */
+export const USAGE_LIMIT_RE =
+  /usage limit has been reached|usage[ _-]?limit[ _-]?reached|insufficient[ _-]?quota|exceeded your current quota/i;
 export const RATE_LIMIT_RE = /\b429\b|rate[ _-]?limit|too many requests|usage[ _-]?limit|quota/i;
 export const OVERLOAD_RE = /overloaded|\b50[23]\b|\b529\b|capacity/i;
 
@@ -864,7 +873,7 @@ export const OVERLOAD_RE = /overloaded|\b50[23]\b|\b529\b|capacity/i;
  */
 export function modelErrorsFromEvents(lines: Iterable<string>): ModelErrors {
   const seen = new Set<string>();
-  const out: ModelErrors = { rate_limited: 0, overloaded: 0, other: 0 };
+  const out: ModelErrors = { rate_limited: 0, overloaded: 0, usage_limit: 0, other: 0 };
   const visit = (x: unknown, depth: number): void => {
     if (depth > 12 || typeof x !== "object" || x === null) return;
     if (Array.isArray(x)) {
@@ -877,12 +886,15 @@ export function modelErrorsFromEvents(lines: Iterable<string>): ModelErrors {
       const key = `${String(r["timestamp"] ?? "")}|${msg}`;
       if (!seen.has(key)) {
         seen.add(key);
-        if (RATE_LIMIT_RE.test(msg)) {
-          out.rate_limited++;
+        if (USAGE_LIMIT_RE.test(msg)) {
+          out.usage_limit = (out.usage_limit ?? 0) + 1;
           out.sample = msg.slice(0, 200);
+        } else if (RATE_LIMIT_RE.test(msg)) {
+          out.rate_limited++;
+          if (!out.usage_limit) out.sample = msg.slice(0, 200);
         } else if (OVERLOAD_RE.test(msg)) {
           out.overloaded++;
-          if (!out.rate_limited) out.sample = msg.slice(0, 200);
+          if (!out.rate_limited && !out.usage_limit) out.sample = msg.slice(0, 200);
         } else {
           out.other++;
           out.sample ??= msg.slice(0, 200);
