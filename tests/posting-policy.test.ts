@@ -68,6 +68,11 @@ const SNAPPY: PostingPolicy = {
   comment_style: "concise",
 };
 
+/** The shipped profiles/snappy, as frozen by its tuning iterations
+ * (bench/aacr/EXTERNAL-BENCHMARKS.md). */
+const SHIPPED_SNAPPY: PostingPolicy = { ...SNAPPY, questions: "post" };
+const SHIPPED_SNAPPY_ADDENDA = ["snappy-race-as-question", "snappy-select-certain-defects"];
+
 describe("[posting] — parse and validation", () => {
   it("accepts every key and value", () => {
     expect(
@@ -148,7 +153,7 @@ describe("[posting] — inheritance through extends", () => {
 describe("the shipped snappy profile", () => {
   it("is a generic example the locator finds, and loads", () => {
     expect(EXAMPLE_PROFILES).toContain("snappy");
-    expect(resolvePostingPolicy(loadProfilePosting(sandbox, "snappy", lookup()))).toEqual(SNAPPY);
+    expect(resolvePostingPolicy(loadProfilePosting(sandbox, "snappy", lookup()))).toEqual(SHIPPED_SNAPPY);
     const lenses = loadProfileLensTuning(sandbox, "snappy", lookup());
     for (const l of [
       "pass-maintainability",
@@ -162,8 +167,8 @@ describe("the shipped snappy profile", () => {
     ])
       expect(lenses[l]?.enabled, l).toBe(false);
     const pack = loadProfileAddenda(sandbox, "snappy", lookup());
-    expect(pack.map((a) => a.id)).toEqual(["snappy-race-as-question"]);
-    expect(pack[0]?.scope).toEqual(["pass-validate"]);
+    expect(pack.map((a) => a.id)).toEqual(SHIPPED_SNAPPY_ADDENDA);
+    for (const a of pack) expect(a.scope).toEqual(["pass-validate"]);
   });
 
   it("its round order carries the POSTING POLICY note, and its validator the selection addendum", () => {
@@ -188,7 +193,7 @@ describe("the shipped snappy profile", () => {
       issuedAt: "2026-10-02T00:00:00Z",
       ecosystem: NONE_ECOSYSTEM,
     });
-    expect(order.posting_policy).toEqual(SNAPPY);
+    expect(order.posting_policy).toEqual(SHIPPED_SNAPPY);
     const lenses = order.pass_plan.map((p) => p.lens);
     for (const off of ["pass-maintainability", "pass-duplication", "pass-abstraction", "pass-consistency"])
       expect(lenses).not.toContain(off);
