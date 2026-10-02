@@ -187,3 +187,30 @@ describe("contract-values-renumbered (pass-baseline + pass-backcompat + pass-con
     expect(text("contract-values-renumbered")).not.toMatch(NO_BENCHMARK_NAMES);
   });
 });
+
+describe("validate-documented-semantics (pass-validate)", () => {
+  it("binds pass-validate alone, PR builds only, after the external-assumption rule it narrows", () => {
+    expect(boundTo("validate-documented-semantics")).toEqual({ pr: ["pass-validate"], scan: [] });
+    const order = addendaForPass("pass-validate").map((a) => a.id);
+    expect(order.indexOf("validate-documented-semantics")).toBeGreaterThan(
+      order.indexOf("validate-external-semantics"),
+    );
+  });
+
+  it("keeps reachability out of it and judges documented semantics from their documentation", () => {
+    const body = bodyOf("pass-validate");
+    for (const phrase of [
+      "A missing source never lowers reachability",
+      "Reachability is how often the path runs, never how sure you are.",
+      "never by moving the candidate to `plausible`",
+      "Documented core semantics are established knowledge",
+      "The `external-assumption` question stays for behaviour that is specific to one third-party tool",
+      "Neither rule lifts anything",
+    ])
+      expect(body, phrase).toContain(phrase);
+  });
+
+  it("names no benchmark, project or PR", () => {
+    expect(text("validate-documented-semantics")).not.toMatch(NO_BENCHMARK_NAMES);
+  });
+});
