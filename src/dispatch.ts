@@ -935,6 +935,11 @@ export function buildRoundOrder(args: {
     // posted review from the findings record. Absent ⇒ the session writes
     // both files itself and step 6 renders as before.
     ...(args.cfg.review?.render_outputs ? { render_outputs: true } : {}),
+    // `[review] validator_shards` (templates.ts renderValidatorShardNote):
+    // only above 1, and only when the plan has a validator to shard.
+    ...((args.cfg.review?.validator_shards ?? 1) > 1
+      ? { validator_shards: args.cfg.review!.validator_shards }
+      : {}),
     migration_gate: eco.migrationGate(args.files),
     migration_collisions: args.migrationCollisions ?? [],
     ...(args.migrationCollisionsUndelivered && (args.migrationCollisions ?? []).length > 0

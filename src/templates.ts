@@ -396,6 +396,38 @@ export function renderValidatorNote(order: Pick<RoundOrder, "pass_plan">): strin
   ].join("\n");
 }
 
+/**
+ * `[review] validator_shards` (bench/aacr/PERF.md §6 proposal 4): the
+ * validator is the round's one serial child, so above 1 its candidates are
+ * split into that many groups, validated in parallel, and merged. Rendered
+ * into `{{validator_shard_note}}` at the end of step 4; "" with one shard or
+ * no validator row, so the round order is otherwise unchanged. The duties a
+ * group cannot see from inside — a duplicate across groups, the posting
+ * budget — move to the merge, which the session does with every group's
+ * answer in hand.
+ */
+export function renderValidatorShardNote(
+  order: Pick<RoundOrder, "pass_plan" | "validator_shards">,
+): string {
+  const n = order.validator_shards ?? 1;
+  if (n <= 1 || !order.pass_plan.some((p) => p.lens === "pass-validate")) return "";
+  return [
+    "",
+    `**Validator in ${n} parallel groups.** Split the merged candidates into ${n}`,
+    "groups by FILE: every candidate of one file in the same group, every",
+    "candidate of one root cause in the same group even across files, the groups",
+    `as even as that allows. Launch the planned \`pass-validate\` variant ${n} times in`,
+    "ONE `subagent` call (`tasks:[…]`), each with its own group, the WHOLE SETTLED",
+    "list and the MERGED/FOLDED lines that concern its group. Then merge their",
+    "answers into one kill log: survivors, kills, doubts and downgrades are the",
+    "union. Two duties no group can do alone are yours at the merge: two survivors",
+    "from different groups that state the same defect keep the stronger one and",
+    "record the other `killed` / `duplicate`; and a posting budget, when this",
+    "round has one, is applied once, over every group's survivors together.",
+    "The verdict's `passes` gets ONE `pass-validate` entry with the summed counts.",
+  ].join("\n");
+}
+
 /**'s changed-behavior receipt. The daemon binds it to one successor
  * order; ordinary rounds render nothing. It does not change the plan or move
  * scheduling into the daemon — it tells the fresh parent how to execute the
@@ -499,6 +531,8 @@ export function roundVars(
     pass_task_note: renderPassTaskNote(order),
     // `[review] render_outputs`: "" unless the order renders its review.
     render_note: renderRenderNote(order),
+    // `[review] validator_shards`: "" with one validator.
+    validator_shard_note: renderValidatorShardNote(order),
   };
 }
 

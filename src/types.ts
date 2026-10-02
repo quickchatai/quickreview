@@ -238,6 +238,9 @@ export interface RoundOrder {
    * findings record with the posting fields and renders the review body and
    * inline comments from it with `scripts/render-review.sh`. */
   render_outputs?: boolean;
+  /** `[review] validator_shards` above 1: how many pass-validate children
+   * split this round's candidates (by file). Absent ⇒ one validator. */
+  validator_shards?: number;
 }
 
 /**
