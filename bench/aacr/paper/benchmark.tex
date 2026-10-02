@@ -2655,10 +2655,12 @@ golden audit, which reads all 173 and is kept out of every reviewer change.
   gpt-6.1-sol, Martian's pipeline unmodified. \qcr{} rows are our reviews;
   the three comparators are their published comments re-judged by the same
   judge in the same pass (a second re-judge of cubic-v2 on \code{tune20}
-  gave 62.7 / 72.4 / 67.2 / 70.2; one on \code{test30} gave 50.9 / 55.0 /
-  52.9). Published Opus 4.5 scores on \code{tune20}: cubic-v2 65.6 / 71.2 /
+  gave 62.7 / 72.4 / 67.2 / 70.2; the pass that scored round 4 on
+  \code{test30} gave cubic-v2 50.5 / 54.0 / 52.2 / 53.3, qodo-extended-v2
+  59.4 / 60.0 / 59.7 / 59.9 and Claude Code 37.0 / 37.0 / 37.0 / 37.0, so
+  about three points of judge noise). Published Opus 4.5 scores on \code{tune20}: cubic-v2 65.6 / 71.2 /
   68.3, qodo-extended-v2 62.1 / 61.0 / 61.5, Claude Code 42.0 / 49.2 / 45.3
-  (P / R / F1). Issues/PR: inline comments \qcr{} posted; for the comparators, the issues Martian's step 2 extracted. Frozen policy and snappy: Section~\ref{sec:martianwhy}.}
+  (P / R / F1). Issues/PR: inline comments \qcr{} posted (round 4: on \code{test30}); for the comparators, the issues Martian's step 2 extracted. Frozen policy and snappy: Section~\ref{sec:martianwhy}.}
   \label{tab:martianraw}
   \resizebox{\textwidth}{!}{%
   \begin{tabular}{lrrrrrrrrr}
@@ -2668,7 +2670,8 @@ golden audit, which reads all 173 and is kept out of every reviewer change.
     Reviewer & Issues/PR & P & R & F1 & $F_2$ & P & R & F1 & $F_2$ \\
     \midrule
     \qcr{} default, as posted & 9.0 & 19.7 & 58.6 & 29.4 & 42.0 & 18.2 & 54.0 & 27.2 & 38.8 \\
-    \qcr{} default, round 3 (five lens changes) & 9.2 & 20.2 & 60.3 & 30.3 & 43.2 & \multicolumn{4}{c}{pending (Table~\ref{tab:martianpending})} \\
+    \qcr{} default, round 3 (five lens changes) & 9.2 & 20.2 & 60.3 & 30.3 & 43.2 & \multicolumn{4}{c}{not run} \\
+    \qcr{} default, round 4 (six more changes) & 10.6 & \multicolumn{4}{c}{not run (targeted check only)} & 18.6 & 55.0 & 27.8 & 39.6 \\
     \qcr{} frozen posting policy & 2.0 & 49.0 & 43.1 & 45.9 & 44.2 & 36.5 & 19.0 & 25.0 & 21.0 \\
     \qcr{} \code{snappy} profile, iteration 1 & 3.3 & 27.0 & 34.5 & 30.3 & 32.7 & \multicolumn{4}{c}{not run} \\
     \midrule
@@ -2849,14 +2852,31 @@ on new identifiers (metric names, tag keys, log keys); unverifiable claims
 about an external tool kept as questions rather than dropped; a violated
 declared contract held at medium severity; and a test that cannot observe
 what it claims treated as a defect. On \code{tune20} the net effect was one
-more golden, within run-to-run noise. Its held-out result is pending.
+more golden, within run-to-run noise.
+
+Round 4 adds six more changes, each aimed at a class still missed after
+round 3 rather than at a particular golden: a lazily filled cache that is
+not re-checked after the exclusive lock is taken is judged as a duplicated
+initialisation; every branch of a \code{DELETE} or \code{UPDATE} filter must
+carry the operation's scoping conditions; a direct write that skips the model
+lifecycle is checked against what the lifecycle maintains; a removed style
+rule, selector or key is checked against every consumer, server-rendered
+templates included; a renumbered or reused exit code, status code or wire
+enum value is a contract break; and a source the validator cannot open lowers
+its confidence, never its reachability. They were checked only by re-reviewing
+the nine \code{tune20} PRs they target, with no judge (six of nine improved);
+the full \code{tune20} set was not re-run. Round 4 was then reviewed once on
+the 30 held-out PRs (Table~\ref{tab:martianpending}).
 
 \begin{table}[tbp]
   \centering
-  \caption{\TODO{Pending: \qcr{} default after the round-4 lens and validator
-  changes, reviewed once on the 30 held-out PRs, scored as in
-  Table~\ref{tab:martianraw} and against the audited real goldens as in
-  Table~\ref{tab:martianaudit}. Not yet run.}}
+  \caption{\qcr{} default after the round-4 lens and validator changes,
+  reviewed once on the 30 held-out PRs (image built from commit
+  \code{21d592b}), scored as in Table~\ref{tab:martianraw} and against the
+  audited real goldens as in Table~\ref{tab:martianaudit} (52 real on
+  \code{test30}). The comparator rows are their published comments re-judged
+  in the same pass. ``Not real'' is the share of a tool's golden credits that
+  went to goldens the audit judged not real. One run each.}
   \label{tab:martianpending}
   \small
   \begin{tabular}{lrrrrrr}
@@ -2864,10 +2884,24 @@ more golden, within run-to-run noise. Its held-out result is pending.
     Reviewer (\code{test30}) & P & R & F1 & $F_2$ & Real found & Not real \\
     \midrule
     \qcr{} default, as posted (round 1) & 18.2 & 54.0 & 27.2 & 38.8 & 40 / 52 & 22\% \\
-    \qcr{} default, round 4 & -- & -- & -- & -- & -- & -- \\
+    \qcr{} default, round 4 & 18.6 & 55.0 & 27.8 & 39.6 & 42 / 52 & 22\% \\
+    \midrule
+    qodo-extended-v2 (re-judged) & 59.4 & 60.0 & 59.7 & 59.9 & 43 / 52 & 25\% \\
+    cubic-v2 (re-judged) & 50.5 & 54.0 & 52.2 & 53.3 & 33 / 52 & 35\% \\
+    Claude Code (re-judged) & 37.0 & 37.0 & 37.0 & 37.0 & 25 / 52 & 37\% \\
     \bottomrule
   \end{tabular}
 \end{table}
+
+On Martian's own score round 4 is flat: precision 18.6 against 18.2, recall
+55.0 against 54.0, inside the roughly three points by which two judgings of
+the same comparator differ. Its volume is unchanged (10.6 inline comments
+per PR against 10.8; 299 extracted issues against 301), so precision remains
+the whole of the gap. On the audited real goldens it moved from 40 to 42 of
+52, one behind qodo-extended-v2 (43) and ahead of cubic-v2 (33) and Claude
+Code (25); the previous judging of those two gave 34 and 26. This is one run
+on each side, and the two-golden difference is within what we have seen
+between repeated runs, so we claim no improvement from it.
 
 \subsection{Why we do not tune for the Martian score}
 \label{sec:martianwhy}
