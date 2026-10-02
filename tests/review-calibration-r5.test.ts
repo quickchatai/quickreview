@@ -44,3 +44,23 @@ describe("a written rule raised by any lens is judged as style, not killed for i
     expect(addendaForPass("pass-validate").some((a) => a.id === "quality-cap-validate")).toBe(true);
   });
 });
+
+describe("reordered-statements (pass-baseline, pass-sweep)", () => {
+  it("binds the two line-reading lenses, PR builds only", () => {
+    const ids = (p: string, mode: "pr" | "scan") => addendaForPass(p, PASS_ADDENDA, "django", mode).map((a) => a.id);
+    for (const p of ["pass-baseline", "pass-sweep"]) {
+      expect(ids(p, "pr")).toContain("reordered-statements");
+      expect(ids(p, "scan")).not.toContain("reordered-statements");
+    }
+    expect(ids("pass-validate", "pr")).not.toContain("reordered-statements");
+  });
+
+  it("asks what the old order guaranteed and spares independent steps", () => {
+    const t = text("reordered-statements");
+    expect(t).toMatch(/write the OLD order and the NEW order side by side/);
+    expect(t).toMatch(/what the old order guaranteed/);
+    expect(t).toMatch(/Do not report a reorder whose steps are independent/);
+    expect(t).not.toMatch(NO_BENCHMARK_NAMES);
+    expect(bodyOf("pass-baseline")).toContain("A reorder changes what the old order guaranteed");
+  });
+});

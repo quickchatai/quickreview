@@ -148,4 +148,6 @@ const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
 //   → 1b65b1fe… `quality-cap-validate`: a convention finding quoting a rule the
 //     repo wrote is judged as style, not killed for its lens (round 5, mined
 //     from the Qodo run: 13 written-rule violations killed "from a non-style lens")
-const GOLDEN_AGENTS = "1b65b1fed402d90e0801a856f2b2d098d0aa090e2b1278aca25b1c255beb8164";
+//   → 65df59a1… `reordered-statements` (pass-baseline, pass-sweep; round 5,
+//     the largest never-raised functional class in the Qodo run)
+const GOLDEN_AGENTS = "65df59a151755e37dbd369fdc605281e1cd60c533b59237c773afa136943c463";
