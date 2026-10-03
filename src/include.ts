@@ -1208,6 +1208,13 @@ const VALIDATE_NEW_CODE_AND_BASE_ADDENDUM =
   "- **A `pre-existing` or `out-of-scope` kill cites the comparison.** Name the base line and show the head behaves the same there. When the PR deleted, moved, rewrapped or re-conditioned that code (a removed `try`, a guard made conditional, a call replaced), the behaviour change IS the delta — judge it.\n" +
   "- **Merge only what one fix removes.** Two candidates are `duplicate` only when fixing one fixes the other. Two consequences that need two fixes stay two findings, even on one line, and a merged body never carries a second fix as a clause.\n";
 
+// Gap dig B (2026-10-03): 12-32% of lens runs with visible reasoning talked
+// about "8,000 tokens left" and stopped at "the two main issues" — a budget no
+// prompt, pi setting or subagent call sets. One line, every lens: there is none.
+export const NO_BUDGET_ADDENDUM =
+  "\n## There is no budget for this pass (sandbox rule)\n" +
+  "No token, time or finding budget applies to this pass: no limit on how much you read, how long you reason or how many findings you report. Report every real issue you find. Do not stop early, narrow to \"the main issues\", or skip a candidate to save tokens.\n";
+
 const VALIDATE_CONVENTION_RULE_ADDENDUM =
   "\n## One rule for conventions: written rules and CI-enforced lint (sandbox rule)\n" +
   "Every convention or style candidate — from ANY lens — is judged here, once, by what backs it:\n\n" +
@@ -1381,6 +1388,7 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
   { id: "style-written-rule-checklist", scope: [STYLE_PASS_NAME], mode: "pr", text: STYLE_WRITTEN_RULE_CHECKLIST_ADDENDUM },
   { id: "validate-convention-rule", scope: [VALIDATE_PASS], mode: "pr", text: VALIDATE_CONVENTION_RULE_ADDENDUM },
   { id: "validate-new-code-and-base", scope: [VALIDATE_PASS], mode: "pr", text: VALIDATE_NEW_CODE_AND_BASE_ADDENDUM },
+  { id: "no-budget", scope: "lenses", mode: "pr", text: NO_BUDGET_ADDENDUM },
   // the one corpus-derived rule that is generic review behaviour.
   // Its six house-rule siblings ride the live deployment's profile addenda pack since
   // (see the banner above); wire.ts composes a profile pack after
