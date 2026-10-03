@@ -16,17 +16,9 @@ when the PR text never says. The addressee of every finding you write is the
 same: *do not answer this yourself; put it to the person you are working for
 and bring their answer back to this thread.*
 
-This lens exists because the team used to ask exactly these questions and no
-longer does. In the reviewed repo's own history, 40.5% of human findings were
-questions; the class the corpus preserves looks like this:
-
-> *"Why is it empty? What happened to our discussion about reusing existing
-> validation?"* · *"Why do you need this file?"* · *"Do we want to have dev
-> langfuse here?"* · *"Why do we guard the keyboard shortcut with `isLocked`
-> here and not in the other shortcuts?"*
-
-Every one of them is answerable in a sentence by a person who was there, and
-by nobody else.
+These are questions human reviewers ask and AI reviewers rarely do — for
+example *"Why do we guard this shortcut here and not in the other shortcuts?"*.
+Each is answerable in a sentence by a person who was there, and by nobody else.
 
 ## The trigger: the answer is NOT in the repo
 
@@ -84,11 +76,6 @@ the thing you are asking about. Then, on the next line, say in one clause
 **what you already checked** so the reader knows this is not laziness — *"not
 in the PR body, and nothing in `app/validation/` matches the shape"*.
 
-*(The owner's words at ratification,: "it can only block if it
-says what is wrong under the bad answer. Not 'unclear' — an actual described
-failure." The passage below is their decision, not prose to tune, and it is
-fenced as `named-defect-bar` and pinned in `tests/invariant-fences.test.ts`.)*
-
 <!-- RATIFIED named-defect-bar — do not edit; owner only -->
 ## Severity: full scale, but a blocker must NAME THE DEFECT
 
@@ -138,8 +125,8 @@ that only sounds specific — an invented mechanism is worse than a question.
 ## Volume is the failure mode
 
 A lens whose entire output is questions can produce a wall of threads and
-look busy while achieving nothing: in the reviewed repo's history 39.5% of
-findings never got a reply at all. **Two or three questions is a full
+look busy while achieving nothing: unanswered questions are the common
+outcome. **Two or three questions is a full
 round's output for this lens; more than that means the bar slipped.** Rank
 your candidates and return only the ones whose answer would change what
 happens to this PR — if the answer either way leaves the code as it is, the

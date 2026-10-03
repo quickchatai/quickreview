@@ -161,10 +161,11 @@ describe("[review] dedup_merge = false — byte-identical to before the duplicat
 // Re-pinned 2026-10-03: pass-behaviour-delta planned only where base behaviour is at risk (owner decision): the fixture removes only `pass` and adds a line, so its plan no longer carries the lens
 // Re-pinned 2026-10-03 (owner decision after the decisions validation, dv1 vs dv1hi): pass-baseline, pass-sweep and pass-behaviour-delta run at the sol-high tier by default (src/config.ts DEFAULT_PASS_TIERS), so their plan rows name sol-high and are not raisable
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): the doc header and the RATIFIED fence marker lines no longer reach the model (stripped at render and at agent build; kept in the source)
+// Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ticket ids, dated asides and deployed-repo statistics outside the ratified fences removed from the round templates, the addenda and pass-ask-human
 const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
-  first: "c00cd87a3c694d272fafb66f47e4f57b54906b739c060c778e18a1286a350d9c",
-  "re-review": "bd00d5a15628500d243463ef38ded68c64f246ba734d636c096abf8a6cdec4ec",
-  staleness: "926985d06c3f9da96abc5faebe0ff1c7f45e52534563f3da84a2b910f1e8189f",
+  first: "55374ff0676bca21095c3eec97373030d3caa6d6911b6cab218ae7262f17aa35",
+  "re-review": "0fb5b08537929ffe4f71c167bf8707d4ab590ca517ac95e7e440e1e15d2daa19",
+  staleness: "d9af9755bc0718cdfd042abdabf012a332c38d3fb4ffa4dba290e578b465297c",
 };
 // Re-pinned 2026-10-03 (round 7, docs/duplicate-merge.md, the owner's
 // decisions): `[review] dedup_merge` defaults on, so step 4 carries the
@@ -184,18 +185,20 @@ const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
 // Re-pinned 2026-10-03: pass-behaviour-delta planned only where base behaviour is at risk (owner decision): the fixture removes only `pass` and adds a line, so its plan no longer carries the lens
 // Re-pinned 2026-10-03 (owner decision after the decisions validation, dv1 vs dv1hi): pass-baseline, pass-sweep and pass-behaviour-delta run at the sol-high tier by default (src/config.ts DEFAULT_PASS_TIERS), so their plan rows name sol-high and are not raisable
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): the doc header and the RATIFIED fence marker lines no longer reach the model (stripped at render and at agent build; kept in the source)
+// Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ticket ids, dated asides and deployed-repo statistics outside the ratified fences removed from the round templates, the addenda and pass-ask-human
 const GOLDEN_ORDERS: Record<string, string> = {
-  first: "7b023ad6a8932ba701da04f912e9da2b0f3ebc1e732b9d7fa63f94418bd42ba5",
-  "re-review": "3be8430638a96abf988d9065c374dee4f55de3da724642f2be40c7d8a88e3ed6",
-  staleness: "839a1c1df73bbceefe64405bae1b8a28b6d041e3292cb15ce85c544f781fd8a7",
+  first: "4b23f4e4ded558fe2f7528cfd23227282149f36cd7c356522a276aaa43b525ae",
+  "re-review": "be9dbe17e16946cd96509240c653dba3219163890d27a33cd1f84bf4f92e2f4c",
+  staleness: "cb9c80cbbafb61f584405f84762a6f331df7b969223c2cc05617ff3a422b2e3e",
 };
 // Re-pinned 2026-10-03: pass-behaviour-delta planned only where base behaviour is at risk (owner decision): the fixture removes only `pass` and adds a line, so its plan no longer carries the lens
 // Re-pinned 2026-10-03 (owner decision after the decisions validation, dv1 vs dv1hi): pass-baseline, pass-sweep and pass-behaviour-delta run at the sol-high tier by default (src/config.ts DEFAULT_PASS_TIERS), so their plan rows name sol-high and are not raisable
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): the doc header and the RATIFIED fence marker lines no longer reach the model (stripped at render and at agent build; kept in the source)
+// Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ticket ids, dated asides and deployed-repo statistics outside the ratified fences removed from the round templates, the addenda and pass-ask-human
 const GOLDEN_ORDERS_NO_COVERAGE: Record<string, string> = {
-  first: "9128451e82502648d9a1a0aabf024ebafaebc1ef0b7cd173256538ebfa2cb636",
-  "re-review": "02e853579b1a18dd4c7cf70cca994fc13ffcb39cbbcd4c7c9131f10c8265ea4d",
-  staleness: "4f3fefd4f08bccdaf29e26b299813da417e47b6350557b48d9014ce5e47a769d",
+  first: "e88b4b2fc798cfe8384f00537f85b86b8242d908310bdd394d27bd8348b83939",
+  "re-review": "d74a4b3ae0451495ca4a16a1387de8a4349fe5cfe93d004325a080bbd6dcd7d2",
+  staleness: "43d03d923f0723c88629c950c48e463b7917fd0c713fb95ed98d52c23d665b58",
 };
 // Re-pinned 2026-10-03: pass-behaviour-delta is planned (one row per group of files the PR modifies or deletes code in; `[review] behaviour_delta`, freeze fixes 2) — the fixture PR modifies code, so its plan and the built agents gain the lens
 // Re-pinned 2026-10-03: pass-lint-conformance agent built (planned only when a CI job runs a linter covering a changed file; freeze fixes 2)
@@ -203,10 +206,11 @@ const GOLDEN_ORDERS_NO_COVERAGE: Record<string, string> = {
 // Re-pinned 2026-10-03: pass-behaviour-delta planned only where base behaviour is at risk (owner decision): the fixture removes only `pass` and adds a line, so its plan no longer carries the lens
 // Re-pinned 2026-10-03 (owner decision after the decisions validation, dv1 vs dv1hi): pass-baseline, pass-sweep and pass-behaviour-delta run at the sol-high tier by default (src/config.ts DEFAULT_PASS_TIERS), so their plan rows name sol-high and are not raisable
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): the doc header and the RATIFIED fence marker lines no longer reach the model (stripped at render and at agent build; kept in the source)
+// Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ticket ids, dated asides and deployed-repo statistics outside the ratified fences removed from the round templates, the addenda and pass-ask-human
 const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
-  first: "d688cba7b30f5d3e3bb51020662da3474958a90e3b04a906b62a31a43e8ab1b3",
-  "re-review": "185d6c6de64d65d045dd8414001890213edb049f707f84cdd6c892a3f9d186f2",
-  staleness: "f9eb3b4cd7158af8a1a60d580bd7f9841bdbacbf71e53531ab4b06f2be2b064d",
+  first: "fc5c9901fd3f62c41b7503b6e7f5b41a641852e162496e60a25b2dc3bd537b44",
+  "re-review": "2d656e21efb5d3abb3f40a6c8ca977b517fea0e419c4db90328c4682e719cf6b",
+  staleness: "5d3099f81a008300fb64b2778c1b63ca7014533b3c733b6a2ab52f363d02a764",
 };
 // Deliberate re-pins — the default profile's built agents changed ON PURPOSE,
 // never through `[posting]` (owner-approved review changes, 2026-10-02, after
@@ -253,7 +257,8 @@ const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
 // Re-pinned 2026-10-03: `repeated-copy` (pass-duplication, pass-baseline, pass-sweep) and `repeated-copy-validate`: three or more near-identical copies the PR adds are one P2 design finding, never withheld as design preference (owner decision)
 // Re-pinned 2026-10-03: `regression-test-ask` (pass-tests) and `regression-test-ask-validate`: a PR that claims a bug fix with no test exercising the fixed path gets one regression-test request (owner decision)
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): the doc header and the RATIFIED fence marker lines no longer reach the model (stripped at render and at agent build; kept in the source)
-const GOLDEN_AGENTS_NO_DEDUP = "24005709ad83a9ce4da30dbbf45162c83ffc68517cd77c6a999d136fc6659c54";
+// Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ticket ids, dated asides and deployed-repo statistics outside the ratified fences removed from the round templates, the addenda and pass-ask-human
+const GOLDEN_AGENTS_NO_DEDUP = "16795f63cad9d4551efba717cb00e4b116120f757bf74b37eb11034f6f505b0c";
 //   → (round 7, docs/duplicate-merge.md) `dedup-group-validate` (pass-validate,
 //     `[review] dedup_merge` on by default) and the default profile's posting
 //     addendum for `repeat_sites = false`. Off + no policy = the pin above.
@@ -268,4 +273,5 @@ const GOLDEN_AGENTS_NO_DEDUP = "24005709ad83a9ce4da30dbbf45162c83ffc68517cd77c6a
 // Re-pinned 2026-10-03: `repeated-copy` (pass-duplication, pass-baseline, pass-sweep) and `repeated-copy-validate`: three or more near-identical copies the PR adds are one P2 design finding, never withheld as design preference (owner decision)
 // Re-pinned 2026-10-03: `regression-test-ask` (pass-tests) and `regression-test-ask-validate`: a PR that claims a bug fix with no test exercising the fixed path gets one regression-test request (owner decision)
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): the doc header and the RATIFIED fence marker lines no longer reach the model (stripped at render and at agent build; kept in the source)
-const GOLDEN_AGENTS = "2d29422f47ec4ff5d0c8c5ad6940edfcc15ab26a1e0e30cd7ad22cb0d34362e0";
+// Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ticket ids, dated asides and deployed-repo statistics outside the ratified fences removed from the round templates, the addenda and pass-ask-human
+const GOLDEN_AGENTS = "67dfe8a002aee2f04134b500dfabb17515cd9328ea6362a0af43428042afbd44";

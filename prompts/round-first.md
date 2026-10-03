@@ -84,7 +84,7 @@ with `"outcome": "head_moved"` in place of a verdict —
 the review against the new head; your session stays alive and gets the fresh
 round. Never re-read the current head and post against it.
 
-Token hygiene (measured on live rounds, 2026-08-14):
+Token hygiene:
 - Tool output truncates at ~50 KB — a full-PR `git diff --unified=80` dump
   burns the budget and still arrives cut off. Diff per file with default
   context; open whole files with the `read` tool when you need more.
