@@ -259,7 +259,8 @@ const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): the doc header and the RATIFIED fence marker lines no longer reach the model (stripped at render and at agent build; kept in the source)
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ticket ids, dated asides and deployed-repo statistics outside the ratified fences removed from the round templates, the addenda and pass-ask-human
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): contradictions resolved by keeping the newer rule (style/convention judged only by validate-convention-rule; cross-file un-merge bullet removed; unverifiable/low confidence are doubts; lens briefs point CI-run lint at pass-lint-conformance; concurrency brief describes its content planning)
-const GOLDEN_AGENTS_NO_DEDUP = "761dd60a1f0899114590cfb0e7aedaf4830a959f5da559a58a6ea7261762c33e";
+// Re-pinned 2026-10-03 (prompt cleanup, owner-approved): addenda merged and compressed (one injection rule, one external-semantics rule, exhaust-the-site absorbs baseline-sibling-sites, compressed memory/nit-scope/self-narration/tag-grammar/nit-request/detail/merge/unreasoned-output rules, kill-word enumerations dropped)
+const GOLDEN_AGENTS_NO_DEDUP = "a52c7aa8331fb2af30977240c31ba161c2210b9ab12a82a5f98bbdc4cb0bf8fd";
 //   → (round 7, docs/duplicate-merge.md) `dedup-group-validate` (pass-validate,
 //     `[review] dedup_merge` on by default) and the default profile's posting
 //     addendum for `repeat_sites = false`. Off + no policy = the pin above.
@@ -276,4 +277,5 @@ const GOLDEN_AGENTS_NO_DEDUP = "761dd60a1f0899114590cfb0e7aedaf4830a959f5da559a5
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): the doc header and the RATIFIED fence marker lines no longer reach the model (stripped at render and at agent build; kept in the source)
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ticket ids, dated asides and deployed-repo statistics outside the ratified fences removed from the round templates, the addenda and pass-ask-human
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): contradictions resolved by keeping the newer rule (style/convention judged only by validate-convention-rule; cross-file un-merge bullet removed; unverifiable/low confidence are doubts; lens briefs point CI-run lint at pass-lint-conformance; concurrency brief describes its content planning)
-const GOLDEN_AGENTS = "f08ab5741dca130debf6d0ace855ad32d2235494108e2b335b3c81d86f179ae8";
+// Re-pinned 2026-10-03 (prompt cleanup, owner-approved): addenda merged and compressed (one injection rule, one external-semantics rule, exhaust-the-site absorbs baseline-sibling-sites, compressed memory/nit-scope/self-narration/tag-grammar/nit-request/detail/merge/unreasoned-output rules, kill-word enumerations dropped)
+const GOLDEN_AGENTS = "0c55aa1d266783dd89dd5959adbce00d744d3ab2026d52fddd0fe2b9ce90ec15";

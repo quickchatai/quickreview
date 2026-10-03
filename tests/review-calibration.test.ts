@@ -82,12 +82,10 @@ describe("validator calibrations (pass-validate)", () => {
   it("external semantics: dependency sources first, then a question naming the assumption — never doubted away", () => {
     const body =
       built().get(`${VALIDATE_PASS}--sol-high`) ?? built().get(`${VALIDATE_PASS}--sol-med`)!;
-    expect(body).toContain(
-      "A claim about an external tool or library is a question before it is a doubt",
-    );
-    expect(body).toContain("Consult the dependency sources first");
+    expect(body).toContain("## External and documented semantics (sandbox rule)");
+    expect(body).toContain("Read the dependency sources first");
     expect(body).toContain("*Third-party sources* block");
-    expect(body).toContain("do not doubt it away");
+    expect(body).toContain("is a question, never a doubt");
     expect(body).toContain("`external-assumption`");
     expect(body).toContain("`reachability: plausible`");
     expect(DOWNGRADE_WORDS).toContain("external-assumption");

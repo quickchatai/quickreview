@@ -188,29 +188,26 @@ describe("contract-values-renumbered (pass-baseline + pass-backcompat + pass-con
   });
 });
 
-describe("validate-documented-semantics (pass-validate)", () => {
-  it("binds pass-validate alone, PR builds only, after the external-assumption rule it narrows", () => {
-    expect(boundTo("validate-documented-semantics")).toEqual({ pr: ["pass-validate"], scan: [] });
-    const order = addendaForPass("pass-validate").map((a) => a.id);
-    expect(order.indexOf("validate-documented-semantics")).toBeGreaterThan(
-      order.indexOf("validate-external-semantics"),
-    );
+describe("documented semantics (merged into validate-external-semantics, pass-validate)", () => {
+  it("one rule, pass-validate alone, PR builds only", () => {
+    expect(boundTo("validate-external-semantics")).toEqual({ pr: ["pass-validate"], scan: [] });
+    expect(addendaForPass("pass-validate").map((a) => a.id)).not.toContain("validate-documented-semantics");
   });
 
   it("keeps reachability out of it and judges documented semantics from their documentation", () => {
     const body = bodyOf("pass-validate");
     for (const phrase of [
-      "A missing source never lowers reachability",
-      "Reachability is how often the path runs, never how sure you are.",
-      "never by moving the candidate to `plausible`",
-      "Documented core semantics are established knowledge",
-      "The `external-assumption` question stays for behaviour that is specific to one third-party tool",
-      "Neither rule lifts anything",
+      "A missing source lowers `confidence`, never `reachability`",
+      "reachability is how often the path runs",
+      "Documented core semantics and published standards are evidence, not assumptions",
+      "Behaviour specific to one third-party tool that its sources and documentation do not settle",
+      "None of this lifts a candidate whose in-repo mechanism is wrong",
     ])
       expect(body, phrase).toContain(phrase);
   });
 
   it("names no benchmark, project or PR", () => {
-    expect(text("validate-documented-semantics")).not.toMatch(NO_BENCHMARK_NAMES);
+    expect(text("validate-external-semantics")).not.toMatch(NO_BENCHMARK_NAMES);
   });
 });
+

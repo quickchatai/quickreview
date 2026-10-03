@@ -76,13 +76,14 @@ describe("new code is judged against itself; the base is a comparison, not an ex
     const t = text("validate-new-code-and-base");
     expect(t).toMatch(/never refutes a defect in code this PR adds or rewrites/);
     expect(t).toMatch(/cites the comparison/);
-    expect(t).toMatch(/Merge only what one fix removes/);
+    // The merge rule lives once, in the merge/group rules (no restatement here).
+    expect(t).not.toMatch(/Merge only what one fix removes/);
     expect(t).not.toMatch(NO_BENCHMARK_NAMES);
   });
   it("documented semantics now include published standards, and unverifiable is for the in-code mechanism only", () => {
-    const t = text("validate-documented-semantics");
-    expect(t).toMatch(/Published standards and specifications count the same way/);
-    expect(t).toMatch(/`unverifiable` is for a mechanism you could not establish IN THIS CODE/);
+    const t = text("validate-external-semantics");
+    expect(t).toMatch(/an RFC, a file-format or codec specification, a published grammar/);
+    expect(t).toMatch(/`unverifiable` is only for a mechanism you could not establish IN THIS CODE/);
   });
 });
 

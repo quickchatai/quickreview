@@ -420,7 +420,7 @@ describe("buildAgents — built passes cannot launch agents", () => {
         .map((t) => t.trim());
       expect(tools.filter((t) => t.startsWith("viking_"))).toEqual([...LEAF_MEMORY_TOOLS]);
       expect(tools).not.toContain("viking_write");
-      expect(text).toContain("You have no write tool and will not be given one.");
+      expect(text).toContain("**You have no write tool**");
     }
   });
 
@@ -814,5 +814,29 @@ describe("wakeOrHold / flushHeldWakes", () => {
       injected[0]!.message.indexOf("\nb\n"),
     );
     expect(store.heldWakes(7)).toHaveLength(0);
+  });
+});
+
+// Prompt cleanup (owner-approved 2026-10-03): a build whose leaves run
+// without memory (the bench) carries neither the two memory tools nor the
+// memory rule that describes them.
+describe("buildAgents — memory off", () => {
+  it("drops the memory tools and the memory rule; default builds keep both", () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-nomem-"));
+    try {
+      const src = join(dir, "agents");
+      mkdirSync(src, { recursive: true });
+      writeFileSync(join(src, "pass-baseline.md"), "---\nname: pass-baseline\ntools: read, grep\n---\n\nbody\n");
+      const off = buildAgents(src, join(dir, "off"), { riskPasses: [], validateTier: "terra-med", memory: false });
+      const on = buildAgents(src, join(dir, "on"), { riskPasses: [], validateTier: "terra-med" });
+      const offText = readFileSync(off[0]!.output, "utf8");
+      const onText = readFileSync(on[0]!.output, "utf8");
+      expect(offText).not.toContain("viking_");
+      expect(offText).not.toContain("## Memory: two read-only tools");
+      expect(onText).toContain("viking_search");
+      expect(onText).toContain("## Memory: two read-only tools");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

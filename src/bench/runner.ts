@@ -468,6 +468,8 @@ export function buildBenchAgents(root: string, cfg: Config): number {
   mkdirSync(out, { recursive: true });
   for (const f of readdirSync(out)) rmSync(join(out, f), { recursive: true, force: true });
   const built = buildAgents(join(root, "agents"), out, {
+    // The bench round runs without the memory extension (header: memory off).
+    memory: false,
     root,
     tiers: cfg.models.tiers,
     riskPasses: cfg.models.risk_passes,

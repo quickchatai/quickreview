@@ -17,11 +17,14 @@ describe("exhaust the site", () => {
   });
   it("names siblings, twins, every consequence and the other failures, one finding per fix", () => {
     const t = text("exhaust-the-site");
-    expect(t).toMatch(/Siblings of the same shape/);
-    expect(t).toMatch(/The twin/);
-    expect(t).toMatch(/Every consequence/);
-    expect(t).toMatch(/other calls in that loop/);
-    expect(t).toMatch(/needs its OWN fix as its own finding/);
+    expect(t).toMatch(/\*\*siblings\*\*/);
+    expect(t).toMatch(/\*\*twin\*\*/);
+    expect(t).toMatch(/\*\*every consequence\*\*/);
+    expect(t).toMatch(/\*\*other calls\*\* in the same loop/);
+    expect(t).toMatch(/needs its OWN fix is its own finding/);
+    // The baseline sibling-sites rule folded in (one finding, every site listed).
+    expect(t).toMatch(/callers of a shared helper/);
+    expect(t).toMatch(/one finding with every site listed/);
     expect(t).not.toMatch(NO_BENCHMARK_NAMES);
   });
 });

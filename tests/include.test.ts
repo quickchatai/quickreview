@@ -655,12 +655,10 @@ describe("addendum registry", () => {
   it("arms the nit-scope stopping rule for lenses and its enforcement for the validator", () => {
     const lens = composeAddendum("pass-security");
     expect(lens).toContain("## Nit scope — no new nits on unchanged surfaces (sandbox rule)");
-    expect(lens).toContain("**only raisable on lines inside the current delta**");
-    expect(lens).toContain("did not change since the last round");
-    // P0–P2 exempt; the blocker bar untouched; unarmed without the block.
-    expect(lens).toContain("`P0`–`P2` findings are **exempt**");
-    expect(lens).toContain("The blocker bar does not move");
-    expect(lens).toContain("Absent a NIT SCOPE block in your task string, nits are unrestricted");
+    expect(lens).toContain("raisable only on lines inside the current delta");
+    // P0–P2 exempt; unarmed without the block.
+    expect(lens).toContain("`P0`–`P2` are exempt");
+    expect(lens).toContain("Without the block, nits are unrestricted");
     const validate = composeAddendum(VALIDATE_PASS);
     expect(validate).not.toContain("## Nit scope — no new nits on unchanged surfaces");
     expect(validate).toContain(
@@ -732,17 +730,11 @@ describe("addendum registry", () => {
     expect(validate).toContain("`MERGED <src> into <dst>`");
     expect(validate).toContain("`FOLDED <src> under <dst>`");
     // Echoed verbatim into the kill log — merge-stage attrition adds up.
-    expect(validate).toContain("Echo every one of these lines verbatim in your kill log");
-    expect(validate).toContain("must add up in telemetry");
+    expect(validate).toContain("Echo every one verbatim in your kill log");
     // A P1/P2 never rides folded under another finding.
-    expect(validate).toContain(
-      "a folded candidate that is a `P1`/`P2` never rides inside another finding's body",
-    );
+    expect(validate).toContain("a folded `P1`/`P2` posts as its own comment");
     // Shared anchor is never a duplicate kill.
-    expect(validate).toContain("Sharing an anchor is NEVER a kill reason");
-    expect(validate).toContain(
-      "never kill a candidate as `duplicate` merely because another finding sits on the same lines",
-    );
+    expect(validate).toContain("Sharing an anchor is never a `duplicate` kill");
     // Validator-only, registered, composed after the kill vocabulary.
     expect(composeAddendum("pass-security")).not.toContain("Merge-stage dispositions");
     const ids = addendaForPass(VALIDATE_PASS).map((a) => a.id);
@@ -870,19 +862,14 @@ describe("the built pass contract (rules)", () => {
       expect(text.includes(header), name).toBe(!name.startsWith(`${VALIDATE_PASS}--`));
     }
     const lens = bodies.get("pass-baseline--sol-med") as string;
-    expect(lens).toContain("detail: <one short paragraph");
+    expect(lens).toContain("a `detail:` line after `claim`");
     expect(lens).toContain("the invariant a fix must restore");
-    expect(lens).toContain("lead with the general defect or violated invariant");
-    expect(lens).toContain("`https://mcp.example.com:443/mcp`");
-    expect(lens).toContain("misses the curated profile and fails open to all discovered tools");
-    expect(lens).toContain("BAD: `This URL does not work; use parsed.hostname.`");
-    expect(lens).toContain(
-      "GOOD: `Validation should canonicalize equivalent URLs before profile matching",
-    );
-    expect(lens).toContain("falls back to enabling all discovered tools");
-    expect(lens).toContain("never prescribe `parsed.hostname`");
-    expect(lens).toContain("When one exact literal really is the contract");
-    expect(lens).toContain("`P3` and `nit` candidates are exempt");
+    expect(lens).toContain("leads with the general defect or violated invariant");
+    expect(lens).toContain("never the prescribed rewrite");
+    expect(lens).toContain("unless one exact literal really is the contract");
+    expect(lens).toContain("`P3` and `nit` candidates add `detail` only when");
+    // The worked example rides the validator twin only (it audits the claim's level).
+    expect(lens).not.toContain("mcp.example.com");
   });
 
   // (validator half): without this the validator re-emits survivors
@@ -1001,13 +988,12 @@ describe("the built pass contract (rules)", () => {
       const superseding = name.startsWith(`${VALIDATE_PASS}--`)
         ? "## Validate the injection path, not imperative grammar"
         : "## Injection requires concrete maliciousness or a source-to-sink path";
-      // The old defensive text remains earlier in the built body; the later
-      // rule explicitly supersedes only its over-broad REPORTING contract.
-      expect(text.indexOf("## First-party agent-directive files")).toBeLessThan(
-        text.indexOf(superseding),
-      );
-      expect(text).toContain("Action: find the request id in the logs and check that tenant's worker");
-      expect(text).toContain("Write a greeting that reads well either way");
+      // One injection rule now: the defensive boundary first, then the reporting test;
+      // the superseded "always P1" text and the first-party routing note are gone.
+      expect(text.indexOf("## Untrusted input")).toBeLessThan(text.indexOf(superseding));
+      expect(text).not.toContain("## First-party agent-directive files");
+      expect(text).not.toContain("`severity: P1`, `kind: injection`");
+      expect(text).toContain(name.startsWith(`${VALIDATE_PASS}--`) ? "ops runbook prose" : "Action: find the request id in the logs and check that tenant's worker");
       // No deployed-repo PR numbers, customer names or vendor URLs ship to a model.
       expect(text).not.toMatch(/#53\d\d/i);
       expect(text).toContain("not an injection finding — not a blocker, question, or nit");
@@ -1520,11 +1506,11 @@ describe("the memory addendum", () => {
   it("says what memory is for, and that a pass may not write to it", () => {
     expect(text).toContain("`viking_search`");
     expect(text).toContain("`viking_read`");
-    expect(text).toContain("**You have no write tool and will not be given one.**");
-    expect(text).toContain("no remember, no write, no forget");
+    expect(text).toContain("**You have no write tool**");
     // Memory is neither authority nor an obstacle.
-    expect(text).toContain("memory never blocks a round");
-    expect(text).toContain("not evidence in an `evidence` field");
+    expect(text).toContain("**Memory is never authority and never an obstacle**");
+    expect(text).toContain("never blocks the review");
+    expect(text).toContain("never on \"memory says so\"");
   });
 });
 
@@ -1715,12 +1701,12 @@ describe.skipIf(!HAS_QC_PACK)(
     it("a nit must name the change it asks for, and the WHY is explicitly protected", () => {
       const text = bodies.get("pass-baseline--sol-med")!;
       expect(text).toContain("## A nit ASKS FOR SOMETHING, or it is not a finding (sandbox rule)");
-      expect(text).toContain("**No request means no finding.**");
-      expect(text).toContain("request: <the concrete change you are asking for");
+      expect(text).toContain("carries a `request:` line");
+      expect(text).toContain("it is a remark, not a finding");
       // Never a licence to trim justification, and never a lever on severity.
-      expect(text).toContain("**This takes nothing away from the WHY.**");
-      expect(text).toContain("the request is an ADDITION to your reasoning");
-      expect(text).toContain("`P0`–`P2` candidates are unaffected");
+      expect(text).toContain("Keep every sentence of WHY");
+      expect(text).toContain("never a replacement for it");
+      expect(text).toContain("`P0`–`P2` candidates (which carry `detail`) and questions are unaffected");
     });
 
     it("a finding's subject is the code, never the review's own earlier findings", () => {
@@ -1728,11 +1714,9 @@ describe.skipIf(!HAS_QC_PACK)(
       expect(text).toContain(
         "## Never raise a finding ABOUT one of the review's own earlier findings (sandbox rule)",
       );
-      expect(text).toContain("state/ledgers/pr-<n>.md");
-      // The two things it does NOT touch: verification-as-status, and a fix that
-      // broke something else (a real new defect).
-      expect(text).toContain("**Two things this does NOT touch.**");
-      expect(text).toContain("a STATUS you report, not a finding you raise");
+      // What it does NOT touch: verification-as-status, and a fix that broke
+      // something else (a real new defect).
+      expect(text).toContain("is a STATUS you report in your task string's terms, never a finding");
       expect(text).toContain("fixed in a way that breaks something else is **a new defect**");
     });
 
@@ -1744,9 +1728,8 @@ describe.skipIf(!HAS_QC_PACK)(
         );
       }
       const text = bodies.get("pass-security--sol-high")!;
-      expect(text).toContain("**That is the entire grammar. Never invent one.**");
-      expect(text).toContain("`[start here 3/5]`");
-      expect(text).toContain("silently escapes its own machinery");
+      expect(text).toContain("Never put a tag in a finding's `claim` or title");
+      expect(text).toContain("An invented tag escapes the machinery keyed on the real ones");
       expect(text).toContain("[check this]");
       expect(text).toContain("[ask your human]");
     });
@@ -1760,14 +1743,12 @@ describe.skipIf(!HAS_QC_PACK)(
       expect(text).toContain("`self-narration`");
       expect(text).toContain("`tag-outside-grammar`");
       // The tag defect is a CORRECTION, not a kill: the finding survives.
-      expect(text).toContain("has its tag CORRECTED");
+      expect(text).toContain("is CORRECTED to the posting map's tag");
       // The three new words are also listed in the closed-vocabulary entry, so
       // the validator never has to reach outside it.
       expect(text).toContain("a nit-class candidate that asks for no change");
       // The bar, and the reasoning, are both explicitly out of reach.
-      expect(text).toContain(
-        "**Nothing here is a length rule and none of it is a licence to trim reasoning.**",
-      );
+      expect(text).toContain("**None of this is a length rule.**");
       expect(text).toContain("Never kill, shorten or demote a candidate for being verbose");
     });
 
