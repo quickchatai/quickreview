@@ -1,0 +1,29 @@
+{
+  "name": "final-aacr",
+  "note": "Final broad run, part 1 (owner: AACR first, review, then Martian + Qodo): full AACR 185 on the freeze candidate, shipped defaults only (single arm). Held-out sets included as confirmation only.",
+  "image": "qcr-bench:final1",
+  "prefix": "final1",
+  "config": "models.default=openai-codex/gpt-6.1-sol,models.conversation=openai-codex/gpt-6.1-sol,models.overseer=openai-codex/gpt-6.1-sol,models.tiers.terra-med=openai-codex/gpt-6.1-sol:medium,models.tiers.sol-med=openai-codex/gpt-6.1-sol:medium,models.tiers.sol-high=openai-codex/gpt-6.1-sol:high",
+  "sets": [
+    {
+      "set": "smoke10",
+      "scorer": "aacr"
+    },
+    {
+      "set": "dev10",
+      "scorer": "aacr"
+    },
+    {
+      "set": "holdout10",
+      "scorer": "aacr"
+    },
+    {
+      "set": "fresh10",
+      "scorer": "aacr"
+    },
+    {
+      "set": "rest145",
+      "scorer": "aacr"
+    }
+  ]
+}

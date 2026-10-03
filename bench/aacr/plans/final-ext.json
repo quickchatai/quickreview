@@ -1,0 +1,17 @@
+{
+  "name": "final-ext",
+  "note": "Final broad run, part 2: Martian 50 + Qodo 100 on the same image (start with QCR_RERUN_SKIP_BUILD=1 after part 1). Shipped defaults only.",
+  "image": "qcr-bench:final1",
+  "prefix": "final1",
+  "config": "models.default=openai-codex/gpt-6.1-sol,models.conversation=openai-codex/gpt-6.1-sol,models.overseer=openai-codex/gpt-6.1-sol,models.tiers.terra-med=openai-codex/gpt-6.1-sol:medium,models.tiers.sol-med=openai-codex/gpt-6.1-sol:medium,models.tiers.sol-high=openai-codex/gpt-6.1-sol:high",
+  "sets": [
+    {
+      "set": "martian50",
+      "scorer": "martian"
+    },
+    {
+      "set": "qodo-pr100",
+      "scorer": "qodo"
+    }
+  ]
+}
