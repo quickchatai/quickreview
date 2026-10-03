@@ -1042,6 +1042,21 @@ matched it to, and where ours came from (killed/merged/candidate, lens,
 severity) — and every reference matched in fewer. `extract/<case>.json` holds
 every raw candidate, every record link and every extra comment.
 
+## One rerun from a plan (`rerun-all.sh`)
+
+`bench/aacr/rerun-all.sh PLAN` prints a plan (`bench/aacr/plans/*.json`, format in
+`rerun_plan.py`) with its estimated cost and time, each PR priced from its latest stored
+review, and runs nothing. `--go` builds the plan's image from master HEAD in a clean
+temporary worktree and refuses unless the image's `QCR_BENCH_COMMIT` label is HEAD. It then
+reviews every set in ONE `arm.sh` (shared adaptive slots, run names `<prefix>-<set>`) and
+scores each set with its own scorer: `aacr` → `bench.sh judge`; `martian` / `qodo` /
+`swepr` → `ext/ext.sh`. Last it writes `dup_stats` and `lens_yield` to
+`$QCR_BENCH_RUNS_DIR/rerun-<name>/` and appends a row per set to `ext/RUNS.md`. A set with
+`repeat_of` reviews a subset of another set a second time in the same run (the run-to-run
+variance floor). A derived AACR set takes its defect key from its parent through
+`defects_from` (`derive_defects.py`), and `bench.sh judge` defaults to the run's own recorded
+image. `plans/freeze-validation.json` is the pre-freeze validation run.
+
 ## Running the whole benchmark (throughput)
 
 ```sh

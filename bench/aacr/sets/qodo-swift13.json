@@ -1,0 +1,300 @@
+{
+  "name": "qodo-swift13",
+  "dataset": {
+    "source": "https://huggingface.co/datasets/Qodo/PR-Review-Bench",
+    "commit": "a73957c450a70693a743260e5637fffc44625f16",
+    "file": "git_code_review_bench_100_w_open_prs.jsonl",
+    "sha256": "2f0448ed1f9a55bea14039961d8d9e610ee8885b37559b80f5821f3f70cfe64d"
+  },
+  "rule": "freeze validation (2026-10-03): every Qodo pr100 firefox-ios (Swift) PR \u2014 the Swift isolation trigger, XCTest shapes and the reordered-statements rule had no case in any scored run",
+  "references": 85,
+  "backups": [],
+  "cases": [
+    {
+      "instance_id": "agentic-review-benchmarks__firefox-ios@fcc9df3",
+      "repo": "agentic-review-benchmarks/firefox-ios",
+      "pr": 1,
+      "pr_url": "https://github.com/agentic-review-benchmarks/firefox-ios/pull/1",
+      "base_commit": "8ea362b2dbdd7ab67d36c0a220f6bb6ed5dc7797",
+      "head_commit": "fcc9df3680eb096993e35c05e51a575f7a8237b1",
+      "language": "Swift",
+      "pr_category": "qodo-injected",
+      "change_line_count": 0,
+      "references": 12,
+      "title": "EXP-5874 Add strings for Rollouts toggle and update Studies strings",
+      "body": "Add Strings for v148, as a base for the split of studies toggle in https://github.com/mozilla-mobile/firefox-ios/pull/30988\r\n\r\n## :scroll: Tickets\r\n[Jira ticket](https://mozilla-hub.atlassian.net/browse/EXP-5874)\r\n[Bugzilla issue](https://bugzilla.mozilla.org/show_bug.cgi?id=2002871)\r\n\r\n## :bulb: Description\r\nSee https://github.com/mozilla-mobile/firefox-ios/pull/30988 for full changes.\r\n\r\n\r\n## :pencil: Checklist\r\n- [ ] I filled in the ticket numbers and a description of my work\r\n- [ ] I updated the PR name to follow our [PR naming guidelines](https://github.com/mozilla-mobile/firefox-ios/wiki/Pull-Request-Naming-Guide)\r\n- [ ] I ensured unit tests pass and wrote tests for new code\r\n- [ ] If working on UI, I checked and implemented accessibility (Dynamic Text and VoiceOver)\r\n- [ ] If adding telemetry, I read the [data stewardship requirements](https://github.com/mozilla-mobile/firefox-ios/wiki/Adding-Glean-Telemetry-Events) and will request a data review\r\n- [ ] If adding or modifying strings, I read the [guidelines](https://github.com/mozilla-mobile/firefox-ios/wiki/How-to-add-and-modify-Strings) and will request a string review from l10n\r\n- [ ] If needed, I updated documentation and added comments to complex code",
+      "leakproof": {
+        "source_head": "a606e5baff0fcec15bd7ed1ed58dbc478977c19c",
+        "source_merge_base": "74e028f7cca54a77677e18805cfbe9717c835a5f",
+        "base_tree": "8c7f04babc5503cee5cda31c06ba4eabbb3ccba1",
+        "head_tree": "82afb3b40c09b35720619feef5b374f02e8c8235"
+      },
+      "task_id": "firefox-ios#1",
+      "source_base_commit": "74e028f7cca54a77677e18805cfbe9717c835a5f"
+    },
+    {
+      "instance_id": "agentic-review-benchmarks__firefox-ios@fa58438",
+      "repo": "agentic-review-benchmarks/firefox-ios",
+      "pr": 2,
+      "pr_url": "https://github.com/agentic-review-benchmarks/firefox-ios/pull/2",
+      "base_commit": "0bd439949323b63e24b148d27e5e192558e1899a",
+      "head_commit": "fa584380ab7bba54d61f8c7b13bbdd59adbbca30",
+      "language": "Swift",
+      "pr_category": "qodo-injected",
+      "change_line_count": 0,
+      "references": 6,
+      "title": "Refactor FXIOS-12796 [Swift 6 Migration] Fix main actor isolation warnings that are Swift 6 errors in the XCUITests suite - Batch 2",
+      "body": "## :scroll: Tickets\r\n[Jira ticket](https://mozilla-hub.atlassian.net/browse/FXIOS-12796)\r\n[Github issue](https://github.com/mozilla-mobile/firefox-ios/issues/27871)\r\n\r\n## :bulb: Description\r\n\r\n- Fix setUp/tearDown warnings in the XCUITests suite by using the `async throws` version of the methods\r\n- Fix main actor isolation warnings for some local state with `@MainActor`\r\n\r\nSee the Swift 6 Migration channel (#tmp-swift-6-migration) for details on how to migrate the setUp and tearDown methods.\r\n\r\nBatch 1: https://github.com/mozilla-mobile/firefox-ios/pull/31025\r\n\r\ncc @Cramsden @lmarceau @dataports \r\n\r\n## :pencil: Checklist\r\n- [x] I filled in the ticket numbers and a description of my work\r\n- [x] I updated the PR name to follow our [PR naming guidelines](https://github.com/mozilla-mobile/firefox-ios/wiki/Pull-Request-Naming-Guide)\r\n- [x] I ensured unit tests pass and wrote tests for new code\r\n- [ ] If working on UI, I checked and implemented accessibility (Dynamic Text and VoiceOver)\r\n- [ ] If adding telemetry, I read the [data stewardship requirements](https://github.com/mozilla-mobile/firefox-ios/wiki/Adding-Glean-Telemetry-Events) and will request a data review\r\n- [ ] If adding or modifying strings, I read the [guidelines](https://github.com/mozilla-mobile/firefox-ios/wiki/How-to-add-and-modify-Strings) and will request a string review from l10n\r\n- [ ] If needed, I updated documentation and added comments to complex code",
+      "leakproof": {
+        "source_head": "81d28b8f574a31c737a00e2e8f0ec1375161a4a1",
+        "source_merge_base": "4257f9a964ac49198494f3ea27f2df017a1d54dd",
+        "base_tree": "996dcede08f20b33d17b2fdb18ae6bb9a68b0de2",
+        "head_tree": "3d29d226f743b8f5347a09bbce426f136108361c"
+      },
+      "task_id": "firefox-ios#2",
+      "source_base_commit": "4257f9a964ac49198494f3ea27f2df017a1d54dd"
+    },
+    {
+      "instance_id": "agentic-review-benchmarks__firefox-ios@4d57289",
+      "repo": "agentic-review-benchmarks/firefox-ios",
+      "pr": 3,
+      "pr_url": "https://github.com/agentic-review-benchmarks/firefox-ios/pull/3",
+      "base_commit": "a4044642f4db5994332e854f380fbfe66c58453e",
+      "head_commit": "4d57289ee6a89839cd4ba06966e8baa5feafbbf6",
+      "language": "Swift",
+      "pr_category": "qodo-injected",
+      "change_line_count": 0,
+      "references": 9,
+      "title": "Refactor FXIOS-14485 FXIOS-14472 [Swift 6 Migration] Turn on Swift 6 at the Project Level, as well as Client and ClientTest targets",
+      "body": "## :scroll: Tickets\r\nFXIOS-14485\r\nFXIOS-14472\r\n\r\n## :bulb: Description\r\n- Turn on Swift 6 at the Project Level.\r\n- Also Turn on Swift 6 at the Client and ClientTest target levels.\r\n- Make BVC webView methods consistent in their completion handler annotations: `@escaping @MainActor @Sendable` (matching WKWebView APIs)\r\n- Fix lingering strict concurrency errors at the project level.\r\n\r\nNo warnings as far as I can tell... let's see what Bitrise says.\r\n\r\n## :pencil: Checklist\r\n- [x] I filled in the ticket numbers and a description of my work\r\n- [x] I updated the PR name to follow our [PR naming guidelines](https://github.com/mozilla-mobile/firefox-ios/wiki/Pull-Request-Naming-Guide)\r\n- [x] I ensured unit tests pass and wrote tests for new code\r\n- [ ] If working on UI, I checked and implemented accessibility (Dynamic Text and VoiceOver)\r\n- [ ] If adding telemetry, I read the [data stewardship requirements](https://github.com/mozilla-mobile/firefox-ios/wiki/Adding-Glean-Telemetry-Events) and will request a data review\r\n- [ ] If adding or modifying strings, I read the [guidelines](https://github.com/mozilla-mobile/firefox-ios/wiki/How-to-add-and-modify-Strings) and will request a string review from l10n\r\n- [ ] If needed, I updated documentation and added comments to complex code",
+      "leakproof": {
+        "source_head": "54d158bad7d156aa23a3a07ad8791faa9cf66990",
+        "source_merge_base": "38423271437ae7387c087f105f70383b555684de",
+        "base_tree": "cb4fa6c8fe8971159f3ea62d7ac82689121f9265",
+        "head_tree": "0171a60d2a761287955cc2f297239f828760e6ec"
+      },
+      "task_id": "firefox-ios#3",
+      "source_base_commit": "38423271437ae7387c087f105f70383b555684de"
+    },
+    {
+      "instance_id": "agentic-review-benchmarks__firefox-ios@3821703",
+      "repo": "agentic-review-benchmarks/firefox-ios",
+      "pr": 4,
+      "pr_url": "https://github.com/agentic-review-benchmarks/firefox-ios/pull/4",
+      "base_commit": "ddedaeb163ba9af24baf7b7c97b7aff616136166",
+      "head_commit": "3821703a18d3714e2fcc7cca1b7850340317b9b9",
+      "language": "Swift",
+      "pr_category": "qodo-injected",
+      "change_line_count": 0,
+      "references": 6,
+      "title": "[MTE-5149] - delete auto tests",
+      "body": "## :scroll: Tickets\r\nhttps://mozilla-hub.atlassian.net/browse/MTE-5149\r\n\r\n## :bulb: Description\r\nDeleted tests marked as to be removed\r\nCreated a new test case for testCheckSystemThemeChanges to be aligned with the steps\r\nOnly the old test case will be deleted",
+      "leakproof": {
+        "source_head": "ec4c83cbbd5795fad903ad268083937dbaaddf63",
+        "source_merge_base": "f1aa78dde039664ed80829f41cf09047df25beef",
+        "base_tree": "4efbdc4179144935af388a865b380df989477c29",
+        "head_tree": "6f25335b45bd3cae1fa7e78a77b2b938b5bcf740"
+      },
+      "task_id": "firefox-ios#4",
+      "source_base_commit": "f1aa78dde039664ed80829f41cf09047df25beef"
+    },
+    {
+      "instance_id": "agentic-review-benchmarks__firefox-ios@a023149",
+      "repo": "agentic-review-benchmarks/firefox-ios",
+      "pr": 5,
+      "pr_url": "https://github.com/agentic-review-benchmarks/firefox-ios/pull/5",
+      "base_commit": "ec7e04511bbd005b16766006aa15eb32f931e250",
+      "head_commit": "a02314942bb578b0ba57a4575fa3ba00b9115da5",
+      "language": "Swift",
+      "pr_category": "qodo-injected",
+      "change_line_count": 0,
+      "references": 4,
+      "title": "Remove FXIOS-14327 [Clean up] Inactive tabs removal part 2 (final)",
+      "body": "## :scroll: Tickets\r\n[Jira ticket](https://mozilla-hub.atlassian.net/browse/FXIOS-14327)\r\n[Github issue](https://github.com/mozilla-mobile/firefox-ios/issues/31046)\r\n\r\n## :bulb: Description\r\nFinal work to remove inactive tab functionality. This finishes the removal of this feature by cleaning up middleware classes/states and removing UI cells and elements.\r\n\r\n## :pencil: Checklist\r\n- [X] I filled in the ticket numbers and a description of my work\r\n- [X] I updated the PR name to follow our [PR naming guidelines](https://github.com/mozilla-mobile/firefox-ios/wiki/Pull-Request-Naming-Guide)\r\n- [X] I ensured unit tests pass and wrote tests for new code\r\n- [ ] If working on UI, I checked and implemented accessibility (Dynamic Text and VoiceOver)\r\n- [ ] If adding telemetry, I read the [data stewardship requirements](https://github.com/mozilla-mobile/firefox-ios/wiki/Adding-Glean-Telemetry-Events) and will request a data review\r\n- [ ] If adding or modifying strings, I read the [guidelines](https://github.com/mozilla-mobile/firefox-ios/wiki/How-to-add-and-modify-Strings) and will request a string review from l10n\r\n- [ ] If needed, I updated documentation and added comments to complex code",
+      "leakproof": {
+        "source_head": "c34f351b04f00b187124de6a4e68e0af5b4bdf47",
+        "source_merge_base": "1f91e4c42528ae8eeb3199e42006a3d3abefb2b0",
+        "base_tree": "5e476d3ca4b604998b1a4bae6732605212ea7b3d",
+        "head_tree": "56bbfd7ae351900598d2214ced5924e0f4c4d0cc"
+      },
+      "task_id": "firefox-ios#5",
+      "source_base_commit": "1f91e4c42528ae8eeb3199e42006a3d3abefb2b0"
+    },
+    {
+      "instance_id": "agentic-review-benchmarks__firefox-ios@2454e45",
+      "repo": "agentic-review-benchmarks/firefox-ios",
+      "pr": 6,
+      "pr_url": "https://github.com/agentic-review-benchmarks/firefox-ios/pull/6",
+      "base_commit": "35f3ab16f0be2242618fd2f28e741fee467014e2",
+      "head_commit": "2454e454fe42a6192644f7a495e6bfb5501a6449",
+      "language": "Swift",
+      "pr_category": "qodo-injected",
+      "change_line_count": 0,
+      "references": 6,
+      "title": "Refactor FXIOS-14344 [Swift 6 migration] Fixing warnings in unit tests",
+      "body": "## :scroll: Tickets\r\n[Jira ticket](https://mozilla-hub.atlassian.net/browse/FXIOS-14344)\r\n[Github issue](https://github.com/mozilla-mobile/firefox-ios/issues/31077)\r\n\r\n## :bulb: Description\r\nFix warnings in:\r\n- StoriesFeedDiffableDataSourceTests\r\n- SyncContentSettingsViewControllerTests\r\n- FxAWebViewModelTests\r\n- NotificationManagerTests\r\n- RatingPromptManagerTests\r\n- EditBookmarkViewModelTests\r\n- EditBookmarkDataSourceTests\r\n- MainMenuConfigurationUtilityTests\r\n- MainMenu tests\r\n- MicroSurvey tests\r\n- IntroView tests\r\n- HistoryPanel tests\r\n\r\n## :pencil: Checklist\r\n- [X] I filled in the ticket numbers and a description of my work\r\n- [X] I updated the PR name to follow our [PR naming guidelines](https://github.com/mozilla-mobile/firefox-ios/wiki/Pull-Request-Naming-Guide)\r\n- [X] I ensured unit tests pass and wrote tests for new code\r\n- [ ] If working on UI, I checked and implemented accessibility (Dynamic Text and VoiceOver)\r\n- [ ] If adding telemetry, I read the [data stewardship requirements](https://github.com/mozilla-mobile/firefox-ios/wiki/Adding-Glean-Telemetry-Events) and will request a data review\r\n- [ ] If adding or modifying strings, I read the [guidelines](https://github.com/mozilla-mobile/firefox-ios/wiki/How-to-add-and-modify-Strings) and will request a string review from l10n\r\n- [ ] If needed, I updated documentation and added comments to complex code",
+      "leakproof": {
+        "source_head": "f579cf9cc314c4c9293d48be0a27bd803ce312f6",
+        "source_merge_base": "a654234aadf8494a048afcd9b3d10916465da547",
+        "base_tree": "905944ac548ab5f8789fc0645153ddc518914db3",
+        "head_tree": "1ab4e24b2e19f0e3e841994a82342cbea194134c"
+      },
+      "task_id": "firefox-ios#6",
+      "source_base_commit": "a654234aadf8494a048afcd9b3d10916465da547"
+    },
+    {
+      "instance_id": "agentic-review-benchmarks__firefox-ios@2099727",
+      "repo": "agentic-review-benchmarks/firefox-ios",
+      "pr": 7,
+      "pr_url": "https://github.com/agentic-review-benchmarks/firefox-ios/pull/7",
+      "base_commit": "4f3478b7767dc4c173e7c8afa5ccc73a5455db99",
+      "head_commit": "20997278e13a3d50f549a2e0f49614debd289c61",
+      "language": "Swift",
+      "pr_category": "qodo-injected",
+      "change_line_count": 0,
+      "references": 8,
+      "title": "Refactor FXIOS-13122 [Swift 6] Remove @Sendable from closures marked as @MainActor",
+      "body": "## :scroll: Tickets\r\n[Jira ticket](https://mozilla-hub.atlassian.net/browse/FXIOS-13122)\r\n[Github issue](https://github.com/mozilla-mobile/firefox-ios/issues/28550)\r\n\r\n## :bulb: Description\r\n<!--- Describe your changes so the reviewer can understand the context and decisions made for your work -->\r\nA closure is marked as @MainActor is already @Sendable, in Swift 6 we don't need to mark the closure as @Sendable if it is already marked as @MainActor\r\n\r\n## :movie_camera: Demos\r\n<!-- Please upload screenshots or video demos of your work, if applicable -->\r\n<!-- You can either use a table (best for before/after screenshots) or the <details> disclosure -->\r\n\r\n| Before | After |\r\n| - | - |\r\n| <!--insert \"before\" image here--> | <!--insert \"after\" image here--> |\r\n| <!--insert \"before\" image here--> | <!--insert \"after\" image here--> |\r\n| <!--insert \"before\" image here--> | <!--insert \"after\" image here--> |\r\n\r\n<!-- If you're only using the Before/After table above, or the Demo disclosure below, you can delete the other, unused markup -->\r\n<details>\r\n<summary>Demo</summary>\r\n<!-- Shorthand image template: <img height=400 src=\"<URL>\" /> -->\r\n</details>\r\n\r\n## :pencil: Checklist\r\n- [ ] I filled in the ticket numbers and a description of my work\r\n- [ ] I updated the PR name to follow our [PR naming guidelines](https://github.com/mozilla-mobile/firefox-ios/wiki/Pull-Request-Naming-Guide)\r\n- [ ] I ensured unit tests pass and wrote tests for new code\r\n- [ ] If working on UI, I checked and implemented accessibility (Dynamic Text and VoiceOver)\r\n- [ ] If adding telemetry, I read the [data stewardship requirements](https://github.com/mozilla-mobile/firefox-ios/wiki/Adding-Glean-Telemetry-Events) and will request a data review\r\n- [ ] If adding or modifying strings, I read the [guidelines](https://github.com/mozilla-mobile/firefox-ios/wiki/How-to-add-and-modify-Strings) and will request a string review from l10n\r\n- [ ] If needed, I updated documentation and added comments to complex code",
+      "leakproof": {
+        "source_head": "5183c2719f603b478c75f587b27bd093f817b665",
+        "source_merge_base": "325933132c40c39a68a9f983ca67313d035f717a",
+        "base_tree": "9d409e09d5d8cf18e94a5be3275cade5e9c12a6a",
+        "head_tree": "bb530df4a4ac8cc8d3d5efd5e56c69002d02b661"
+      },
+      "task_id": "firefox-ios#7",
+      "source_base_commit": "325933132c40c39a68a9f983ca67313d035f717a"
+    },
+    {
+      "instance_id": "agentic-review-benchmarks__firefox-ios@dfa7c56",
+      "repo": "agentic-review-benchmarks/firefox-ios",
+      "pr": 8,
+      "pr_url": "https://github.com/agentic-review-benchmarks/firefox-ios/pull/8",
+      "base_commit": "dbfbec92c4671da651acdb34134cd5cd55352b4a",
+      "head_commit": "dfa7c56e01af5cef39b6e5850a3246bfd9fea48d",
+      "language": "Swift",
+      "pr_category": "qodo-injected",
+      "change_line_count": 0,
+      "references": 4,
+      "title": "Refactor FXIOS-14344 [Swift 6 migration] Fixing DependencyHelperMock unit tests warning",
+      "body": "## :scroll: Tickets\r\n[Jira ticket](https://mozilla-hub.atlassian.net/browse/FXIOS-14344)\r\n[Github issue](https://github.com/mozilla-mobile/firefox-ios/issues/31077)\r\n\r\n## :bulb: Description\r\nFix warning as we discussed in `DependencyHelperMock`. I'll close this [task](https://mozilla-hub.atlassian.net/browse/FXIOS-13151) when this is merged\r\n\r\n## :pencil: Checklist\r\n- [X] I filled in the ticket numbers and a description of my work\r\n- [X] I updated the PR name to follow our [PR naming guidelines](https://github.com/mozilla-mobile/firefox-ios/wiki/Pull-Request-Naming-Guide)\r\n- [X] I ensured unit tests pass and wrote tests for new code\r\n- [ ] If working on UI, I checked and implemented accessibility (Dynamic Text and VoiceOver)\r\n- [ ] If adding telemetry, I read the [data stewardship requirements](https://github.com/mozilla-mobile/firefox-ios/wiki/Adding-Glean-Telemetry-Events) and will request a data review\r\n- [ ] If adding or modifying strings, I read the [guidelines](https://github.com/mozilla-mobile/firefox-ios/wiki/How-to-add-and-modify-Strings) and will request a string review from l10n\r\n- [ ] If needed, I updated documentation and added comments to complex code",
+      "leakproof": {
+        "source_head": "410be41423dcdcb11de011133cb93e617376ba25",
+        "source_merge_base": "b76284f7d67500ce0a100fe99781bd2076241f7e",
+        "base_tree": "99097dd3d3e634797f65f906100e0dccecebba3b",
+        "head_tree": "8c778ae0f66b6d43b59a93949d95139516d25380"
+      },
+      "task_id": "firefox-ios#8",
+      "source_base_commit": "b76284f7d67500ce0a100fe99781bd2076241f7e"
+    },
+    {
+      "instance_id": "agentic-review-benchmarks__firefox-ios@0073aa1",
+      "repo": "agentic-review-benchmarks/firefox-ios",
+      "pr": 9,
+      "pr_url": "https://github.com/agentic-review-benchmarks/firefox-ios/pull/9",
+      "base_commit": "34fca1e044795b422d0d6febef61581668514853",
+      "head_commit": "0073aa1327c038303a0aac002d690c81932961ba",
+      "language": "Swift",
+      "pr_category": "qodo-injected",
+      "change_line_count": 0,
+      "references": 4,
+      "title": "Remove FXIOS-14593 [BVC] Clean up qr code related code from BVC",
+      "body": "## :scroll: Tickets\r\n[Jira ticket](https://mozilla-hub.atlassian.net/browse/FXIOS-14593)\r\n[Github issue](https://github.com/mozilla-mobile/firefox-ios/issues/31576)\r\n\r\n## :bulb: Description\r\nRemoves QRCodeViewControllerDelegate from BVC and cleans up qr code telemetry and actions that were used in toolbar.\r\n\r\n## :pencil: Checklist\r\n- [x] I filled in the ticket numbers and a description of my work\r\n- [x] I updated the PR name to follow our [PR naming guidelines](https://github.com/mozilla-mobile/firefox-ios/wiki/Pull-Request-Naming-Guide)\r\n- [ ] I ensured unit tests pass and wrote tests for new code\r\n- [ ] If working on UI, I checked and implemented accessibility (Dynamic Text and VoiceOver)\r\n- [ ] If adding telemetry, I read the [data stewardship requirements](https://github.com/mozilla-mobile/firefox-ios/wiki/Adding-Glean-Telemetry-Events) and will request a data review\r\n- [ ] If adding or modifying strings, I read the [guidelines](https://github.com/mozilla-mobile/firefox-ios/wiki/How-to-add-and-modify-Strings) and will request a string review from l10n\r\n- [ ] If needed, I updated documentation and added comments to complex code",
+      "leakproof": {
+        "source_head": "de948b018e79cc42c868127f853fed6fb12006ec",
+        "source_merge_base": "db5723b28f6497d72d8499b7cf0415813d018cda",
+        "base_tree": "910c9309c2edfb20877e1bb95d835f522b40f773",
+        "head_tree": "eff31a8d8012f97ee989f83e745b52337605548b"
+      },
+      "task_id": "firefox-ios#9",
+      "source_base_commit": "db5723b28f6497d72d8499b7cf0415813d018cda"
+    },
+    {
+      "instance_id": "agentic-review-benchmarks__firefox-ios@eb2a21c",
+      "repo": "agentic-review-benchmarks/firefox-ios",
+      "pr": 10,
+      "pr_url": "https://github.com/agentic-review-benchmarks/firefox-ios/pull/10",
+      "base_commit": "cc14712d0bcf79c81c4dc8abf0c1de775cf6d14f",
+      "head_commit": "eb2a21c0c6e43b1fc4550af485715085f9d36241",
+      "language": "Swift",
+      "pr_category": "qodo-injected",
+      "change_line_count": 0,
+      "references": 6,
+      "title": "Refactor FXIOS-14466 FXIOS-14463 [Swift 6 Migration] Migrate ShareTo and BrowserKit Package to Swift 6",
+      "body": "## :scroll: Tickets\r\nFXIOS-14466 \r\nFXIOS-14463\r\n\r\n## :bulb: Description\r\n- Migrate ShareTo to Swift 6.\r\n- Migrate entire BrowserKit package to Swift 6.2.\r\n- Cleanup BrowserKit Package file now that experimental/upcoming features are enabled in Swift 6.2 by default.\r\n\r\nNo warnings as far as I can tell... let's see what Bitrise says.\r\n\r\n## :pencil: Checklist\r\n- [x] I filled in the ticket numbers and a description of my work\r\n- [x] I updated the PR name to follow our [PR naming guidelines](https://github.com/mozilla-mobile/firefox-ios/wiki/Pull-Request-Naming-Guide)\r\n- [x] I ensured unit tests pass and wrote tests for new code\r\n- [ ] If working on UI, I checked and implemented accessibility (Dynamic Text and VoiceOver)\r\n- [ ] If adding telemetry, I read the [data stewardship requirements](https://github.com/mozilla-mobile/firefox-ios/wiki/Adding-Glean-Telemetry-Events) and will request a data review\r\n- [ ] If adding or modifying strings, I read the [guidelines](https://github.com/mozilla-mobile/firefox-ios/wiki/How-to-add-and-modify-Strings) and will request a string review from l10n\r\n- [ ] If needed, I updated documentation and added comments to complex code",
+      "leakproof": {
+        "source_head": "5a63a2c1d1f2bd0954b49700f42ae74caa8d9e31",
+        "source_merge_base": "5930c1e71345c4a33d5a0bc196761eaf3871e414",
+        "base_tree": "b55c2ef3feae88056bea6a3624211732a68e05fd",
+        "head_tree": "1f8babc36dc6be8af361791aea8f9d90375b3c6f"
+      },
+      "task_id": "firefox-ios#10",
+      "source_base_commit": "5930c1e71345c4a33d5a0bc196761eaf3871e414"
+    },
+    {
+      "instance_id": "agentic-review-benchmarks__firefox-ios@553e68f",
+      "repo": "agentic-review-benchmarks/firefox-ios",
+      "pr": 11,
+      "pr_url": "https://github.com/agentic-review-benchmarks/firefox-ios/pull/11",
+      "base_commit": "3f4daf650e82fc4b27b74fd877a309dcb9ba501c",
+      "head_commit": "553e68f29755090ccc34ad96792c566c028c5f65",
+      "language": "Swift",
+      "pr_category": "qodo-injected",
+      "change_line_count": 0,
+      "references": 5,
+      "title": "Refactor NO_TICKET Various improvements",
+      "body": "## :scroll: Tickets\r\n~[Jira ticket](https://mozilla-hub.atlassian.net/browse/FXIOS-TODO)~\r\n~[Github issue](https://github.com/mozilla-mobile/firefox-ios/issues/TODO)~\r\n\r\n## :bulb: Description\r\nVarious improvements:\r\n- fixed spelling\r\n- updated comments and variable names\r\n- removed unused code\r\n- added a11y ids to BVC\r\n\r\n## :pencil: Checklist\r\n- [x] I filled in the ticket numbers and a description of my work\r\n- [x] I updated the PR name to follow our [PR naming guidelines](https://github.com/mozilla-mobile/firefox-ios/wiki/Pull-Request-Naming-Guide)\r\n- [ ] I ensured unit tests pass and wrote tests for new code\r\n- [ ] If working on UI, I checked and implemented accessibility (Dynamic Text and VoiceOver)\r\n- [ ] If adding telemetry, I read the [data stewardship requirements](https://github.com/mozilla-mobile/firefox-ios/wiki/Adding-Glean-Telemetry-Events) and will request a data review\r\n- [ ] If adding or modifying strings, I read the [guidelines](https://github.com/mozilla-mobile/firefox-ios/wiki/How-to-add-and-modify-Strings) and will request a string review from l10n\r\n- [ ] If needed, I updated documentation and added comments to complex code",
+      "leakproof": {
+        "source_head": "89f8cbc4f9f8c530d546f65287b8fb07a681a5e7",
+        "source_merge_base": "254313b9d338e68ed7a2f2d1f9403bd636044f6a",
+        "base_tree": "6c0e12177c16791c9dda1cb7cc2d532a80adc15c",
+        "head_tree": "eb6f3f5a94d865d42073dc4efbb3a77345a38715"
+      },
+      "task_id": "firefox-ios#11",
+      "source_base_commit": "254313b9d338e68ed7a2f2d1f9403bd636044f6a"
+    },
+    {
+      "instance_id": "agentic-review-benchmarks__firefox-ios@8185948",
+      "repo": "agentic-review-benchmarks/firefox-ios",
+      "pr": 12,
+      "pr_url": "https://github.com/agentic-review-benchmarks/firefox-ios/pull/12",
+      "base_commit": "d9bc82d5a57ff2c26aef402ad4db1e8b59876714",
+      "head_commit": "818594829e5f6ee15b81052e454b3608631b0a88",
+      "language": "Swift",
+      "pr_category": "qodo-injected",
+      "change_line_count": 0,
+      "references": 11,
+      "title": "Bugfix FXIOS-14456 #31308 \u2043 Fix test failing on XCode 26.2 to enable using this version on Bitrise",
+      "body": "## :scroll: Tickets\r\n[Jira ticket](https://mozilla-hub.atlassian.net/browse/FXIOS-14456)\r\n[Github issue](https://github.com/mozilla-mobile/firefox-ios/issues/31308)\r\n\r\n## :bulb: Description\r\n- WebKit tightened internal checks for WKFrameInfo and WKSecurityOrigin, making it unsafe or impossible to construct mocks for these types. Our previous mocks began crashing because they no longer satisfied WebKit\u2019s required internal state. \r\n- Add `WebKitTestHelpers` class that captures real frame/origin objects from a lightweight navigation in a real WKWebView, ensuring compatibility with the new SDK and stabilizing the media-capture permission tests.\r\n\r\n\r\n## :pencil: Checklist\r\n- [x] I filled in the ticket numbers and a description of my work\r\n- [x] I updated the PR name to follow our [PR naming guidelines](https://github.com/mozilla-mobile/firefox-ios/wiki/Pull-Request-Naming-Guide)\r\n- [x] I ensured unit tests pass and wrote tests for new code\r\n- [x] If working on UI, I checked and implemented accessibility (Dynamic Text and VoiceOver)\r\n- [x] If adding telemetry, I read the [data stewardship requirements](https://github.com/mozilla-mobile/firefox-ios/wiki/Adding-Glean-Telemetry-Events) and will request a data review\r\n- [ ] If adding or modifying strings, I read the [guidelines](https://github.com/mozilla-mobile/firefox-ios/wiki/How-to-add-and-modify-Strings) and will request a string review from l10n\r\n- [ ] If needed, I updated documentation and added comments to complex code",
+      "leakproof": {
+        "source_head": "6714f44d3bff073f18c19d47716f0679e0c8e279",
+        "source_merge_base": "498b08ff5aae3191fb1ba60fff24382bff73b51e",
+        "base_tree": "d0631ef8419734437433a4da152de66104f1d75f",
+        "head_tree": "269264280f566059ee9ff9e39f89aa8b9c147334"
+      },
+      "task_id": "firefox-ios#12",
+      "source_base_commit": "498b08ff5aae3191fb1ba60fff24382bff73b51e"
+    },
+    {
+      "instance_id": "agentic-review-benchmarks__firefox-ios@1c3d469",
+      "repo": "agentic-review-benchmarks/firefox-ios",
+      "pr": 13,
+      "pr_url": "https://github.com/agentic-review-benchmarks/firefox-ios/pull/13",
+      "base_commit": "dd59c977a222e31b9d7169ed3e0f867ce1638945",
+      "head_commit": "1c3d4692d3b83dcf392ed166c64d8384ac53df19",
+      "language": "Swift",
+      "pr_category": "qodo-injected",
+      "change_line_count": 0,
+      "references": 4,
+      "title": "[MTE-5047] - auto tests improvements",
+      "body": "## :scroll: Tickets\r\nhttps://mozilla-hub.atlassian.net/browse/MTE-5047\r\n\r\n## :bulb: Description\r\nDeleted testWhatsNewPage,\r\nFix for testSelectBottomPlacement making sure the test if skipped on iPad\r\nAttempt to fix ShareLongPressTests flaky tests",
+      "leakproof": {
+        "source_head": "2c0230e32544913c5b1587a4615bbaee6563cbaf",
+        "source_merge_base": "68a9007b387d592f9459d71dd6ddd063cf9c930a",
+        "base_tree": "dcd253bdf75b19fdfcdbac794e81266f0a6f2373",
+        "head_tree": "b25d0de89bda13db351d57d5c456b4f85c0e428f"
+      },
+      "task_id": "firefox-ios#13",
+      "source_base_commit": "68a9007b387d592f9459d71dd6ddd063cf9c930a"
+    }
+  ]
+}

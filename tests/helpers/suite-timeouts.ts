@@ -53,6 +53,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/bench-pireview.test.ts",
   "tests/bench-pragent.test.ts",
   "tests/bench-published-argv.test.ts",
+  "tests/bench-rerun-all.test.ts",
   "tests/bench-runpi-flush.test.ts",
   "tests/bench-whatif.test.ts",
   "tests/collect-secrets.test.ts",

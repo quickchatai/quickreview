@@ -1,0 +1,14 @@
+{
+  "name": "freeze-validation",
+  "note": "The pre-freeze validation run (2026-10-03, owner-approved scope, about $100). Targets what no scored run has exercised yet: written-rule handling (qodo-rules30), Swift and XCTest (qodo-swift13), a Martian regression guard on the TUNING split (martian-tune20; test30 stays held out), and AACR dev10 with five of its PRs reviewed twice (dev10-rep5) for the run-to-run variance floor. No held-out set.",
+  "image": "qcr-bench:fv1",
+  "prefix": "fv1",
+  "config": "models.default=openai-codex/gpt-6.1-sol,models.conversation=openai-codex/gpt-6.1-sol,models.overseer=openai-codex/gpt-6.1-sol,models.tiers.terra-med=openai-codex/gpt-6.1-sol:medium,models.tiers.sol-med=openai-codex/gpt-6.1-sol:medium,models.tiers.sol-high=openai-codex/gpt-6.1-sol:high",
+  "sets": [
+    { "set": "qodo-rules30", "scorer": "qodo" },
+    { "set": "qodo-swift13", "scorer": "qodo" },
+    { "set": "martian-tune20", "scorer": "martian" },
+    { "set": "dev10", "scorer": "aacr" },
+    { "set": "dev10-rep5", "scorer": "aacr", "repeat_of": "dev10" }
+  ]
+}
