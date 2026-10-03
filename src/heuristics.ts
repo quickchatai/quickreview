@@ -776,6 +776,15 @@ export function isSweepSkipped(path: string): boolean {
  * are sized to hold a typical small PR in one or two passes. */
 export const SWEEP_MAX_FILES_PER_GROUP = 5;
 export const SWEEP_MAX_LINES_PER_GROUP = 500;
+/** A WIDE change — more eligible files than `maxFiles × maxGroups`, so the
+ * file cap would leave files unswept — is packed by its changed-line budget
+ * instead, at most this many files per group (2026-10-03, freeze analysis:
+ * cost tracks passes, r≈0.85–0.9, and Ghost@53b39a0 — 136 sweepable files,
+ * 668 changed lines — ran all 6 sweep passes and still left 106 files
+ * unswept). Measured on the 435 stored PRs: only the 18 wide ones change
+ * (108 → 45 sweep rows, 618 → 5 unswept files); every other plan is
+ * identical. 0 turns the rule off. */
+export const SWEEP_WIDE_FILES_PER_GROUP = 40;
 
 /**
  * Cut the PR's changed files into sweep groups: diff order, greedy, at most
@@ -788,10 +797,14 @@ export function sweepGroups(
   maxGroups: number,
   maxFiles: number = SWEEP_MAX_FILES_PER_GROUP,
   maxLines: number = SWEEP_MAX_LINES_PER_GROUP,
+  wideFiles: number = SWEEP_WIDE_FILES_PER_GROUP,
 ): { groups: string[][]; unswept: string[] } {
   const eligible = files.filter(
     (f) => f.status !== "removed" && f.additions > 0 && !SWEEP_SKIP_RE.test(f.filename),
   );
+  // A wide, shallow change: pack by changed lines, not by file count, so the
+  // budget of passes covers every file instead of running out of groups.
+  if (wideFiles > maxFiles && eligible.length > maxFiles * maxGroups) maxFiles = wideFiles;
   const groups: string[][] = [];
   let cur: string[] = [];
   let lines = 0;

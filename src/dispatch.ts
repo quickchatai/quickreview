@@ -831,6 +831,7 @@ export function buildPassPlan(
       cfg.review.sweep_max_groups,
       cfg.review.sweep_group_files,
       cfg.review.sweep_group_lines,
+      cfg.review.sweep_wide_files,
     );
     sweep_unswept = unswept;
     const rows = groups.map((focus): PassPlanEntry => ({

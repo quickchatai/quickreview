@@ -404,6 +404,10 @@ export interface ReviewConfig {
   /** Files and changed lines per sweep group (heuristics.ts sweepGroups). */
   sweep_group_files: number;
   sweep_group_lines: number;
+  /** Files per sweep group on a WIDE change — more files than
+   * `sweep_group_files × sweep_max_groups` — packed by `sweep_group_lines`
+   * instead (heuristics.ts SWEEP_WIDE_FILES_PER_GROUP). 0 = off. */
+  sweep_wide_files: number;
   /** Selection cost knobs (heuristics.ts SelectionTuning): pass-intent's
    * substance bar in words, and when pass-placement runs — this many code
    * files, or a new code file with this many added lines. */
@@ -504,6 +508,7 @@ type PresetLevers = Pick<
   | "sweep_max_groups"
   | "sweep_group_files"
   | "sweep_group_lines"
+  | "sweep_wide_files"
   | "intent_min_words"
   | "placement_min_code_files"
   | "placement_min_new_file_lines"
@@ -521,6 +526,7 @@ const LEAN_LEVERS: PresetLevers = {
   sweep_max_groups: 6,
   sweep_group_files: 5,
   sweep_group_lines: 500,
+  sweep_wide_files: 40,
   intent_min_words: 60,
   placement_min_code_files: 8,
   placement_min_new_file_lines: 30,

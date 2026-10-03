@@ -205,6 +205,7 @@ export interface RunFingerprint {
     sweep_max_groups: number;
     sweep_group_files?: number;
     sweep_group_lines?: number;
+    sweep_wide_files?: number;
     intent_min_words?: number;
     placement_min_code_files?: number;
     placement_min_new_file_lines?: number;
@@ -273,6 +274,7 @@ export function runFingerprint(cfg: Config, profile: string, overrides = ""): Ru
       sweep_max_groups: cfg.review.sweep_max_groups,
       sweep_group_files: cfg.review.sweep_group_files,
       sweep_group_lines: cfg.review.sweep_group_lines,
+      sweep_wide_files: cfg.review.sweep_wide_files,
       intent_min_words: cfg.review.intent_min_words,
       placement_min_code_files: cfg.review.placement_min_code_files,
       placement_min_new_file_lines: cfg.review.placement_min_new_file_lines,

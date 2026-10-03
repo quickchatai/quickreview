@@ -22,6 +22,7 @@ import {
   selectSubLenses,
   SUBLENS_PASSES,
   SWEEP_MAX_FILES_PER_GROUP,
+  SWEEP_WIDE_FILES_PER_GROUP,
   SWEEP_PASS,
   sweepGroups,
   type PrFile,
@@ -379,6 +380,28 @@ describe("sweepGroups", () => {
       ["f2.ts", "f3.ts"],
     ]);
     expect(unswept).toEqual(["f4.ts", "f5.ts", "f6.ts", "f7.ts", "f8.ts", "f9.ts"]);
+  });
+
+  it("a WIDE change (more files than files x groups) is packed by its line budget, every file swept", () => {
+    // Ghost@53b39a0-shaped: 120 small files. The file cap would run out of
+    // groups after 30 files and leave 90 unswept.
+    const wide = Array.from({ length: 120 }, (_, i) => f(`w${i}.ts`, 4));
+    const old = sweepGroups(wide, 6, 5, 500, 0);
+    expect(old.groups).toHaveLength(6);
+    expect(old.unswept).toHaveLength(90);
+    const packed = sweepGroups(wide, 6, 5, 500);
+    expect(packed.unswept).toEqual([]);
+    expect(packed.groups.map((g) => g.length)).toEqual([40, 40, 40]);
+    expect(packed.groups.every((g) => g.length <= SWEEP_WIDE_FILES_PER_GROUP)).toBe(true);
+  });
+
+  it("the wide rule leaves a change that fits the file cap exactly as before", () => {
+    const thirty = Array.from({ length: 30 }, (_, i) => f(`n${i}.ts`, 4));
+    expect(sweepGroups(thirty, 6, 5, 500)).toEqual(sweepGroups(thirty, 6, 5, 500, 0));
+    // and the line budget still binds inside a wide change
+    const heavy = Array.from({ length: 40 }, (_, i) => f(`h${i}.ts`, 100));
+    const g = sweepGroups(heavy, 6, 5, 500).groups;
+    expect(g.every((x) => x.length * 100 <= 500)).toBe(true);
   });
 });
 
