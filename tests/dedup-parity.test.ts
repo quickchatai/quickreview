@@ -18,8 +18,8 @@ const RECORD = {
   lenses_applied: "baseline, sweep, tests",
   comments_posted: 4,
   findings: [
-    { id: "F1", lens: "pass-sweep", disposition: "posted", posted_as: "nit", severity: "P3", path: "src/retry.ts", line: 40, title: "`backoff` resets on every `retry`", body: "Nit body." },
-    { id: "F2", lens: "pass-baseline", disposition: "posted", posted_as: "blocker", severity: "P1", confidence: 1, path: "src/retry.ts", line: 42, title: "`retry` loops forever when `maxAttempts` is 0", body: "Blocker body." },
+    { id: "F1", lens: "pass-sweep", disposition: "posted", posted_as: "nit", severity: "P3", path: "src/retry.ts", line: 40, group: "G1", title: "`backoff` resets on every `retry`", body: "Nit body." },
+    { id: "F2", lens: "pass-baseline", disposition: "posted", posted_as: "blocker", severity: "P1", confidence: 1, path: "src/retry.ts", line: 42, group: "G2", title: "`retry` loops forever when `maxAttempts` is 0", body: "Blocker body." },
     { id: "F3", lens: "pass-tests", disposition: "posted", posted_as: "question", severity: "P2", path: "tests/retry.test.ts", line: 10, title: "Does the test cover `maxAttempts` of 0?", body: "Question body." },
     { id: "F4", lens: "pass-baseline", disposition: "posted", posted_as: "nit", severity: "P3", path: "src/other.ts", line: 3, title: "typo in a log message", body: "Typo." },
     { id: "F5", lens: "pass-sweep", disposition: "killed", path: "src/retry.ts", line: 41, title: "`retry` dup", reason: "duplicate" },

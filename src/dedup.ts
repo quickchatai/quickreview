@@ -16,8 +16,11 @@
 //   * `postCheckRecord` — the leftovers after the validator. Run by
 //     `renderPostedReview` (src/reviewrender.ts), which both the live render
 //     route (scripts/render-review.sh) and the bench runner call: two POSTED
-//     findings in the same file whose anchors overlap (±POST_CHECK_LINES) and
-//     that share a named identifier are one root cause posted twice. The
+//     findings in the same file whose anchors overlap (±POST_CHECK_LINES),
+//     that share a named identifier and that the validator judged in
+//     DIFFERENT groups are one root cause posted twice. Findings it judged in
+//     one group, or that carry no group, are never merged here: the
+//     validator's split stands. The
 //     higher severity leads; the follower is recorded `merged` (word
 //     `post-check`, `merged_into` the lead) and its site is listed in the
 //     lead's body. Nothing is deleted: the record keeps every entry.
@@ -238,6 +241,14 @@ function rank(e: Record<string, unknown>): number {
   return (TAG_RANK[tagOf(e)] ?? 3) * 10 + (SEV_RANK[s(e.severity)] ?? 5);
 }
 
+/** Both findings carry a validator group and the groups differ: the
+ * validator never compared them, so a post-check merge cannot overrule it. */
+export function distinctGroups(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+  const ga = s(a.group);
+  const gb = s(b.group);
+  return !!ga && !!gb && ga !== gb;
+}
+
 export interface PostCheckMerge {
   follower: string;
   lead: string;
@@ -284,6 +295,12 @@ export function postCheckRecord(record: unknown): { record: unknown; merges: Pos
       if (s(A.path) !== s(B.path)) continue;
       if (Math.abs(lineOf(A.line)! - lineOf(B.line)!) > POST_CHECK_LINES) continue;
       if (![...ids[a]!].some((x) => ids[b]!.has(x))) continue;
+      // Never undo the validator (2026-10-03 regression, fv1): two posted
+      // findings it judged in ONE group were kept distinct on purpose, and two
+      // with no group recorded cannot be told apart from that — so the
+      // post-check merges only survivors of DIFFERENT recorded groups, the
+      // leftovers the validator never compared.
+      if (!distinctGroups(A, B)) continue;
       // The higher severity leads; equal → the earlier entry.
       const [lead, fol, folIdx] = rank(B) < rank(A) ? [B, A, a] : [A, B, b];
       gone.add(folIdx);

@@ -67,9 +67,9 @@ describe("postCheckRecord — one root cause posted twice becomes one comment", 
   const rec = () => ({
     comments_posted: 3,
     findings: [
-      { id: "F1", disposition: "posted", posted_as: "nit", severity: "P3", path: "a.ts", line: 10, title: "`retry` misses", body: "nit body" },
-      { id: "F2", disposition: "posted", posted_as: "blocker", severity: "P1", path: "a.ts", line: 12, title: "`retry` loops forever", body: "blocker body" },
-      { id: "F3", disposition: "posted", posted_as: "nit", severity: "P3", path: "a.ts", line: 11, title: "unrelated `other`", body: "b" },
+      { id: "F1", disposition: "posted", posted_as: "nit", severity: "P3", path: "a.ts", line: 10, group: "G1", title: "`retry` misses", body: "nit body" },
+      { id: "F2", disposition: "posted", posted_as: "blocker", severity: "P1", path: "a.ts", line: 12, group: "G2", title: "`retry` loops forever", body: "blocker body" },
+      { id: "F3", disposition: "posted", posted_as: "nit", severity: "P3", path: "a.ts", line: 11, group: "G3", title: "unrelated `other`", body: "b" },
       { id: "F4", disposition: "killed", path: "a.ts", line: 10, title: "`retry`" },
     ],
   });
@@ -87,17 +87,37 @@ describe("postCheckRecord — one root cause posted twice becomes one comment", 
     expect(input.findings[0]!.disposition).toBe("posted"); // input not mutated
   });
   it("is a no-op (same object) when nothing merges", () => {
-    const r = { findings: [{ id: "X", disposition: "posted", path: "a.ts", line: 1, title: "`a`" }] };
+    const r = { findings: [{ id: "X", disposition: "posted", path: "a.ts", line: 1, group: "G1", title: "`a`" }] };
     expect(postCheckRecord(r).record).toBe(r);
     expect(postCheckRecord(null).merges).toEqual([]);
   });
   it("leaves a follower row the session already linked", () => {
     const r = {
       findings: [
-        { id: "L", disposition: "posted", posted_as: "blocker", path: "a.ts", line: 1, title: "`x` bad" },
-        { id: "S", disposition: "posted", posted_as: "blocker", path: "a.ts", line: 2, title: "`x` bad", same_as: "L" },
+        { id: "L", disposition: "posted", posted_as: "blocker", path: "a.ts", line: 1, group: "G1", title: "`x` bad" },
+        { id: "S", disposition: "posted", posted_as: "blocker", path: "a.ts", line: 2, group: "G2", title: "`x` bad", same_as: "L" },
       ],
     };
     expect(postCheckRecord(r).merges).toEqual([]);
+  });
+  // 2026-10-03 regression (fv1): with bare identifiers recognised, the
+  // post-check fused defects the validator had judged in ONE group and kept
+  // apart (17 merges over the round-1 runs, two medium defects hidden).
+  const pair = (ga?: string, gb?: string) => ({
+    findings: [
+      { id: "A", disposition: "posted", posted_as: "blocker", severity: "P1", path: "a.ts", line: 10, ...(ga ? { group: ga } : {}), title: "`rowCache` keyed by index", body: "a" },
+      { id: "B", disposition: "posted", posted_as: "question", severity: "P2", path: "a.ts", line: 11, ...(gb ? { group: gb } : {}), title: "`rowCache` never cleared", body: "b" },
+    ],
+  });
+  it("never merges two survivors the validator judged in one group", () => {
+    expect(postCheckRecord(pair("G4", "G4")).merges).toEqual([]);
+  });
+  it("never merges when either finding carries no group (cannot tell, so no merge)", () => {
+    expect(postCheckRecord(pair()).merges).toEqual([]);
+    expect(postCheckRecord(pair("G4")).merges).toEqual([]);
+    expect(postCheckRecord(pair(undefined, "G5")).merges).toEqual([]);
+  });
+  it("merges leftovers of different groups, the cases the validator never compared", () => {
+    expect(postCheckRecord(pair("G4", "G5")).merges).toEqual([{ follower: "B", lead: "A", path: "a.ts", line: 11 }]);
   });
 });
