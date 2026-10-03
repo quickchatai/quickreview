@@ -25,13 +25,16 @@ const commitId = (text: string): string =>
   createHash("sha1").update(`commit ${Buffer.byteLength(text)}\0${text}`).digest("hex");
 
 describe("dataset pin registry", () => {
-  it("keeps AACR-Bench v1.0 and adds exactly the three external pins", () => {
+  it("keeps AACR-Bench v1.0 and adds exactly the three external pins and the self-review pin", () => {
     expect(DATASET_PINS.map((p) => p.id)).toEqual([
       "aacr-v1",
       "martian-offline-e616e84",
       "swe-prbench-b87f579",
+      "self-review-local",
       "qodo-pr-review-bench-a73957c",
     ]);
+    // The self-review pin denominates nothing: no references, never scored.
+    expect(DATASET_PINS.find((p) => p.id === "self-review-local")!.denomination).toMatch(/never scored/);
     expect(datasetPin({ commit: AACR_V1.commit, sha256: AACR_V1.sha256 })?.id).toBe("aacr-v1");
     expect(parseCaseSet(set("smoke10")).pin).toBe("aacr-v1");
   });

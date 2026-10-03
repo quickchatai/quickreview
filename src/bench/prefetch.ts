@@ -223,8 +223,8 @@ async function prFromApi(c: BenchCase, o: PrefetchOptions): Promise<PrApi | "rat
 
 /** The PR text a set carries (no API call), or undefined when it carries none. */
 function setText(c: BenchCase): PrApi | undefined {
-  if (c.title === undefined && c.body === undefined) return undefined;
-  return { title: c.title ?? null, body: c.body ?? null, base_ref: null };
+  if (c.title === undefined && c.body === undefined && c.base_ref === undefined) return undefined;
+  return { title: c.title ?? null, body: c.body ?? null, base_ref: c.base_ref ?? null };
 }
 
 async function defaultBranch(c: BenchCase, o: PrefetchOptions): Promise<string> {
@@ -416,7 +416,7 @@ export async function prefetchCase(c: BenchCase, o: PrefetchOptions): Promise<Pr
     head_commit: c.head_commit,
     merge_base: mb,
     base_ref: /^[A-Za-z0-9._/-]+$/.test(baseRef) ? baseRef : "main",
-    base_ref_source: fromApi?.base_ref ? "github-api" : "default-branch",
+    base_ref_source: c.base_ref !== undefined ? "set" : fromApi?.base_ref ? "github-api" : "default-branch",
     title: fromApi?.title ?? null,
     body: fromApi?.body ?? null,
     depth,

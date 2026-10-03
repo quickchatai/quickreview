@@ -14,13 +14,13 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 vi.stubEnv("GIT_ALLOW_PROTOCOL", "file");
 
-const { leakproofCommitText } = await import("../src/bench/aacr.js");
+const { leakproofCommitText, parseCaseSet } = await import("../src/bench/aacr.js");
 type BenchCase = import("../src/bench/aacr.js").BenchCase;
 const { prefetchCase, storeDir, mirrorsFromEnv, fetchRepoOf } = await import(
   "../src/bench/prefetch.js"
@@ -159,6 +159,42 @@ describe("leak-proof prefetch (SWE-PRBench)", () => {
     await expect(
       prefetchCase(forged, { store: join(tmp, "store-forged"), remoteFor: () => `file://${upstream}` }),
     ).rejects.toThrow(/synthetic commit/);
+  });
+});
+
+describe("local case: a leak-proof store from a mirror, no network at all", () => {
+  // A self-review of this repository's own commits (bench/aacr/sets/
+  // self-review-*.json): the only source is a local mirror, the set carries
+  // the base branch's name, and nothing may reach a network remote — not the
+  // fetch, not the API, not the default-branch ls-remote.
+  it("fetches from the mirror and takes base_ref from the set", async () => {
+    const c: BenchCase = { ...leakproofCase(), repo: "local/lib", base_ref: "master" };
+    c.instance_id = `local__lib@${c.head_commit.slice(0, 7)}`;
+    const store = join(tmp, "store-local");
+    const meta = await prefetchCase(c, {
+      store,
+      remoteFor: () => NOT_THERE,
+      mirrors: new Map([["local/lib", upstream]]),
+      fetchImpl: (() => {
+        throw new Error("a local case must not call the API");
+      }) as unknown as typeof fetch,
+    });
+    expect(meta.base_ref).toBe("master");
+    expect(meta.base_ref_source).toBe("set");
+    expect(git(storeDir(store, c), "rev-list", "--all").split("\n").sort()).toEqual(
+      [c.base_commit, c.head_commit].sort(),
+    );
+  });
+
+  it("the shipped self-review set parses under its own pin", () => {
+    const set = parseCaseSet(
+      JSON.parse(readFileSync(join(import.meta.dirname, "..", "bench/aacr/sets/self-review-pc1.json"), "utf8")),
+    );
+    expect(set.pin).toBe("self-review-local");
+    expect(set.references).toBe(0);
+    expect(set.cases[0]!.base_ref).toBe("master");
+    expect(set.cases[0]!.leakproof).toBeDefined();
+    expect(() => parseCaseSet({ ...set, cases: [{ ...set.cases[0], base_ref: "a b" }] })).toThrow(/bad base_ref/);
   });
 });
 

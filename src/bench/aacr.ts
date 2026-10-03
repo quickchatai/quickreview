@@ -67,6 +67,11 @@ export interface BenchCase {
    * merge-base and head, so the store holds no commit message and no
    * intermediate commit of the PR — nothing the human review left behind. */
   leakproof?: LeakproofSource;
+  /** The base branch's name, when the set knows it. Carried, it is used as
+   * is and nothing asks the network for the default branch — a LOCAL case
+   * (a mirror of a repository with no public remote, e.g. a self-review of
+   * this repo's own commits) has no remote to ask. */
+  base_ref?: string;
 }
 
 /** Where a leak-proof case's two trees come from (the real, upstream commits). */
@@ -132,6 +137,16 @@ export const DATASET_PINS: readonly DatasetPin[] = [
     denomination: "SWE-PRBench @ b87f579, pipeline v0.4.1 (350 PRs; published on eval_100)",
     commit: "b87f5797aef3ed2c3153bb1304ea4d801d36ba6e",
     sha256: "a58e1f713533f6bc260a93f6e234b85acd16a77f55a756893694b96495eb43cd",
+  },
+  {
+    // A self-review over this repository's own commits (bench/aacr/sets/
+    // self-review-*.json): no dataset and no references, so nothing is ever
+    // scored. The pin is the empty file at the null commit, so no published
+    // number can be denominated in it.
+    id: "self-review-local",
+    denomination: "no references — a self-review of this repository's own commits, never scored",
+    commit: "0000000000000000000000000000000000000000",
+    sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   },
   {
     // huggingface.co/datasets/Qodo/PR-Review-Bench @ a73957c: sha256 of
@@ -238,6 +253,12 @@ function caseOf(raw: unknown, where: string): BenchCase {
       throw new Error(`${where}: expect_merge_base must be a 40-hex sha`);
     c.expect_merge_base = v;
   }
+  if (r["base_ref"] !== undefined) {
+    const v = r["base_ref"];
+    if (typeof v !== "string" || !/^[A-Za-z0-9._/-]+$/.test(v))
+      throw new Error(`${where}: bad base_ref`);
+    c.base_ref = v;
+  }
   if (r["leakproof"] !== undefined) {
     const lp = r["leakproof"] as Record<string, unknown> | null;
     const keys = ["source_head", "source_merge_base", "base_tree", "head_tree"] as const;
@@ -325,7 +346,7 @@ export interface PrefetchMeta {
   /** Branch the PR targeted (GitHub API `base.ref`), else the repo's default
    * branch — only ever used to NAME `origin/<base_ref>` in the tree. */
   base_ref: string;
-  base_ref_source: "github-api" | "default-branch";
+  base_ref_source: "github-api" | "default-branch" | "set";
   /** PR title/body from the public API; null when it could not be read (rate
    * limit, deleted PR). Production reviews always have them; a run records
    * how many cases lacked them. */
