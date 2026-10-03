@@ -57,12 +57,14 @@ const PINNED: Record<string, PinnedFence[]> = {
     {
       slug: "ci-gate",
       ft: "",
-      sha256: "78d80cde2230988f430d241d93ed26042f88ab42651b256e033875da42dc601d",
+      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
+      sha256: "104d79df41ab434adba45578463e225631d1543309b015818274a5093b80a74b",
     },
     {
       slug: "verdicts",
       ft: "",
-      sha256: "4fbbe3c1dcc086b4bc9320d157078b04d43a9cbfea196ff812ae5a0002808886",
+      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
+      sha256: "5c0678e3dadc9de828794542797bfa0e2e03996252871d4874370e891caa7d35",
     },
     {
       slug: "posting-map",
@@ -77,12 +79,14 @@ const PINNED: Record<string, PinnedFence[]> = {
     {
       slug: "injection-bright-line",
       ft: "",
-      sha256: "f4eb23e218fa504c143eba9c43e1bbca25b96fa0494a291e2ceaf0a2d186639e",
+      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
+      sha256: "9f96c237378849a92fecb86e830d06f5b922acefd0f397ab7399a1bc96883b67",
     },
     {
       slug: "merge-call",
       ft: "",
-      sha256: "6e1aca282eaf630271b56b04a6b6674ff4faaf7c25dbb2473bfceae50b150dc7",
+      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
+      sha256: "84f6d74be948d4415181a0b745d3be4ffdbe81c607a6befe8579d415d64611d0",
     },
   ],
   "prompts/round-re-review.md": [
@@ -94,12 +98,14 @@ const PINNED: Record<string, PinnedFence[]> = {
     {
       slug: "ci-gate",
       ft: "",
-      sha256: "78d80cde2230988f430d241d93ed26042f88ab42651b256e033875da42dc601d",
+      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
+      sha256: "104d79df41ab434adba45578463e225631d1543309b015818274a5093b80a74b",
     },
     {
       slug: "verdicts",
       ft: "",
-      sha256: "14d301a1d0f7410dc82448dff4e5f4937b921d036b10df708156d0f14d7906d2",
+      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
+      sha256: "2ade641b3e3754a4834721e42dd8d43196ff321cdb8a647198b258dac6407e36",
     },
     {
       slug: "posting-map",
@@ -124,12 +130,14 @@ const PINNED: Record<string, PinnedFence[]> = {
     {
       slug: "injection-bright-line",
       ft: "",
-      sha256: "f4eb23e218fa504c143eba9c43e1bbca25b96fa0494a291e2ceaf0a2d186639e",
+      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
+      sha256: "9f96c237378849a92fecb86e830d06f5b922acefd0f397ab7399a1bc96883b67",
     },
     {
       slug: "merge-call",
       ft: "",
-      sha256: "88078147c56a4b7950f17536696f9e236af9eb70bc4cf76c4b7c4450d101542e",
+      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
+      sha256: "5916f6d0d863579e83467924d6920be53aff3ebe9a9ce7d3bcb12ac806192303",
     },
   ],
   "prompts/round-staleness.md": [
@@ -141,12 +149,14 @@ const PINNED: Record<string, PinnedFence[]> = {
     {
       slug: "ci-gate",
       ft: "",
-      sha256: "5929c47d5c1e2588d285d5f73f87735f2fb8aaa3ec28f9675a4bf9fbcf9afe8c",
+      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
+      sha256: "2a22664b85e435f0f3a8b6954d315be455397053dc4aaded72454097595f947d",
     },
     {
       slug: "verdicts",
       ft: "",
-      sha256: "2927960e81a870b62a9a3edaabee99153961f85d6e1fcbdf15157140c5c5fa27",
+      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
+      sha256: "9151774037ac9b64b078f20c74c73fd62dbf384682a4717d0dd556426e0a5dae",
     },
     {
       slug: "posting-map",
@@ -161,12 +171,14 @@ const PINNED: Record<string, PinnedFence[]> = {
     {
       slug: "injection-bright-line",
       ft: "",
-      sha256: "f4eb23e218fa504c143eba9c43e1bbca25b96fa0494a291e2ceaf0a2d186639e",
+      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
+      sha256: "9f96c237378849a92fecb86e830d06f5b922acefd0f397ab7399a1bc96883b67",
     },
     {
       slug: "merge-call",
       ft: "",
-      sha256: "f1011bad8ff7755fd45b9b12a15b4650a6b5d25df1f5b4d6a054b646dbd39fa5",
+      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
+      sha256: "1eff370952c6fbc4ecc43beb893967578a73852e828947546a5f285a3bc9f904",
     },
   ],
   "prompts/round-recheck.md": [
@@ -215,7 +227,8 @@ const PINNED: Record<string, PinnedFence[]> = {
     {
       slug: "decide-step",
       ft: "",
-      sha256: "2ad213719d3238076c63da08ec131dfc70b64ee02c671cbfd6a917bdd3a0ab47",
+      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
+      sha256: "fcfdceba94b75096c5e59491d8abacbe4fa1f481e3f8d683c415a5fea4fd1b34",
     },
     {
       slug: "no-human-handoff",
@@ -237,7 +250,8 @@ const PINNED: Record<string, PinnedFence[]> = {
     {
       slug: "action-space",
       ft: "",
-      sha256: "d14993b3b8014d98118af331325e77d27e4f554f962438367961dff2e2d2744d",
+      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the action-space command schemas corrected to what the daemon accepts (flag-owner {message}, file-improvement-pr {branch, title, body, slug})
+      sha256: "6e8ea028dec90920b7b9d9ccec544c835de35195b3426d0b213533e4ccee7192",
     },
     {
       slug: "action-space-never",
@@ -266,7 +280,8 @@ const PINNED: Record<string, PinnedFence[]> = {
     {
       slug: "intent-artifact",
       ft: "",
-      sha256: "95973aaf17e36d33961432b8440ecd8780760ebd756b7060bf6d2fcfd095f85e",
+      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
+      sha256: "8d1559e24bf9eb36176b515d5caa58e78f8984fad45f3ee79a56373d128ce8a6",
     },
     {
       slug: "thin-bodies-none",
@@ -283,7 +298,8 @@ const PINNED: Record<string, PinnedFence[]> = {
     {
       slug: "repo-anchor",
       ft: "",
-      sha256: "d8e7a1dcfb6de7ba81893950dcb072a9a416031d16efcb94c8cd31aa76732ec4",
+      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
+      sha256: "ad35fc4537f743de86f178271bd25d4a3e3b4f0fd1cc5da2bcdae69ad204b3a9",
     },
     {
       slug: "p2-cap",
@@ -295,7 +311,8 @@ const PINNED: Record<string, PinnedFence[]> = {
     {
       slug: "beyond-the-diff",
       ft: "",
-      sha256: "9b6c390e29d4c6b9ce639c2ba046e725939353398c9b788830c9296eff0be65e",
+      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
+      sha256: "fde21c9fc81ecbb31a885df0c2b59bc50ebab09cabf0a88978f30afad14a99da",
     },
     {
       slug: "never-counter-finding",
@@ -312,7 +329,8 @@ const PINNED: Record<string, PinnedFence[]> = {
     {
       slug: "lens-boundaries",
       ft: "",
-      sha256: "eb0637f3aa52ae27802b03f2bb4f29b2f2dbf85c07cd0728a9bc2b55fb2cdb5b",
+      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
+      sha256: "b2c91de07ce4d73ccae6a239c61b73f175843976e13831c9d07be92ba0a22113",
     },
     {
       slug: "full-severity",

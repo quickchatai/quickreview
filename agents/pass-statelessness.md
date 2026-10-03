@@ -20,8 +20,8 @@ globals/dicts/sets, attributes mutated on a long-lived singleton,
 `@lru_cache`/`functools.cache` keyed by tenant or request data, in-memory
 rate-limit/dedup/idempotency counters, background-task progress in a process
 variable, mutable default arguments. Required placement: **cache-like
-ephemeral data → Redis** (existing cache layer, with TTL); **durable or
+ephemeral data → the shared cache the codebase already uses** (with TTL); **durable or
 correctness-critical state → the database**. Acceptable in-process values:
 true constants, per-request locals, and memoization of immutable
 process-agnostic computation. An in-memory cache where the codebase already
-caches in Redis is also a reuse P1.
+has a shared cache is also a reuse P1.

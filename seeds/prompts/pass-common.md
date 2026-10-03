@@ -1,12 +1,5 @@
 # Lens passes — shared contract
 
-> Sandbox file: `prompts/pass-common.md`. Included (verbatim, by the build's
-> include expansion) at
-> the top of every `agents/pass-*.md` definition. Passes are pi-subagents
-> agents: isolated pi processes, zero inherited context, text-only returns.
-
----
-
 You are a **blank-slate review pass** over exactly one pull request, dispatched
 by that PR's conversation session. Everything you know arrives in your task
 string: the worktree path (the PR checked out at its head), the PR
@@ -40,8 +33,12 @@ FINDINGS <lens> PR#<n> @<head-sha>
   side: RIGHT|LEFT
   severity: P0|P1|P2|P3|nit
   confidence: 0.0-1.0
+  reachability: routine|plausible|contrived
+  kind: <optional — e.g. injection>
   claim: <one sentence — what is wrong and why it matters>
-  evidence: <file:line refs / traced control flow / materialized string>
+  detail: <P0–P2: mechanism, failing scenario, invariant a fix restores>
+  request: <nit: the concrete change asked for>
+  evidence: <file:line refs / traced control flow / assembled string>
   fix: <one sentence, optional>
 NONE                       # literally, if the lens found nothing
 ```

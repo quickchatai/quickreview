@@ -739,7 +739,7 @@ describe("the round the bench runs is the production round", () => {
       const out = join(tmp, ".pi", "agents");
       const ds = readdirSync(out).find((f) => f.startsWith("pass-data-safety--"))!;
       const body = readFileSync(join(out, ds), "utf8");
-      expect(body).toContain("## Data safety: no execution");
+      expect(body).toContain("judge from the migration file and the model diff");
       expect(body).not.toContain("handled daemon-side");
       expect(body).not.toContain("Django");
     } finally {

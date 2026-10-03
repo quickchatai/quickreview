@@ -389,7 +389,7 @@ const DELTA_MUST_EXIST_ADDENDUM =
   '\n## A finding asserts a delta (sandbox rule)\nA posted finding must assert a **delta from the current code**. If the recommendation is already implemented, there is nothing to say — it does not become a finding, an inline comment, a numbered item, or a bullet. Never return a verification inventory ("checked X, it holds; checked Y, also fine"): nobody reads it, and every line of it costs the reader attention that belongs to the real findings. This kills the *enumerated inventory*, not the one-sentence framing judgment that opens a good review.\n';
 
 const REACHABILITY_ADDENDUM =
-  "\n## Reachability — the third axis on every finding (sandbox rule)\nEvery finding you return carries `reachability` alongside `severity` and `confidence`, on its own line in the findings block:\n\n```\n  reachability: routine | plausible | contrived\n```\n\nDoes this state arise in normal operation (`routine`), does it need an unusual but realistic coincidence (`plausible`), or does it need several independent things to align (`contrived`)? It answers **how often the triggering state actually arises** — not how bad it would be (that is `severity`) and not whether your claim is true (that is `confidence`). A P0 you are certain of can still be `contrived`; say so. Emit the field on every finding; a finding that omits it is read as `routine`.\n\nThe session's Decide step reads it: `contrived` never blocks at any severity (it posts as a question); `plausible` P0/P1 blocks, `plausible` P2 becomes a question; `routine` behaves exactly as it always has. This axis exists so that *unreachable* findings stop blocking — it is not licence to soften a reachable one, and the blocker bar itself has not moved.\n";
+  "\n## Reachability — the third axis on every finding (sandbox rule)\nEvery finding you return carries `reachability` alongside `severity` and `confidence`. Does this state arise in normal operation (`routine`), does it need an unusual but realistic coincidence (`plausible`), or does it need several independent things to align (`contrived`)? It answers **how often the triggering state actually arises** — not how bad it would be (that is `severity`) and not whether your claim is true (that is `confidence`). A P0 you are certain of can still be `contrived`; say so. Emit the field on every finding; a finding that omits it is read as `routine`.\n\nThe session's Decide step reads it: `contrived` never blocks at any severity (it posts as a question); `plausible` P0/P1 blocks, `plausible` P2 becomes a question; `routine` behaves exactly as it always has. This axis exists so that *unreachable* findings stop blocking — it is not licence to soften a reachable one, and the blocker bar itself has not moved.\n";
 
 const REACHABILITY_VALIDATE_ADDENDUM =
   "\n## Reachability — audit it, never kill on it (sandbox rule)\nEvery candidate finding carries a third axis beside severity and confidence:\n\n```\n  reachability: routine | plausible | contrived\n```\n\n— how often the triggering state actually arises: normal operation (`routine`), an unusual but realistic coincidence (`plausible`), or several independent things aligning (`contrived`). Audit it exactly as you audit severity, in the same step 4, and correct it with a one-word reason (`overreachable`, `understated-reach`); a candidate that arrives without the field is audited as `routine`. Reachability is **never a kill reason on its own** — a `contrived` finding survives and posts as a question; only your existing kill rules end a finding (an unverifiable or low-confidence candidate is a doubt: kept, not posted).\n\nGuard the bar in both directions: do not let a `routine` P0/P1 be talked down to `contrived` because the remedy is inconvenient, and do not let a genuinely `contrived` edge case keep a blocker tag.\n";
@@ -399,9 +399,6 @@ const REMEDY_SIZE_ADDENDUM =
 
 const IN_FLIGHT_PR_ADDENDUM =
   '\n## In-flight PRs are not authority (sandbox rule)\nA finding may never be **predicated on the state of an unmerged PR**. The PR\'s base branch at the recorded base sha is the only authority for conflicts, ordering and prior art — check "does this conflict", "is this already fixed", "is the migration numbered correctly" against the base, never against another open PR. If a concern exists only because another open PR exists, it is at most a `nit` and it never blocks. The sole exception is a sibling PR that **materially changes how this PR should be approached** — say so explicitly and cite it by number.\n';
-
-const BASELINE_NO_DUPLICATE_FIX_SCAN_ADDENDUM =
-  "\n## Baseline: the duplicate-fix scan is suppressed (sandbox rule)\nThe **Duplicate-fix check** described in your lens above — searching open PRs touching the same file (`gh pr list --state open --search …`) and flagging both numbers — is **withdrawn**. Do not run the search and do not report its result: it is coordination chatter that restates what the PR list already shows, and it is predicated on an unmerged PR.\n\nYour **Sibling / template PR** comparison is untouched and still expected. The two look alike and are not: a sibling comparison is a statement about *this PR's own correctness* — if the same template applied elsewhere carries a check this one lacks, one of them is wrong regardless of merge order — so keep the finding anchored in this PR's code and cite the sibling as evidence.\n";
 
 // the retro over the predecessor system's whole corpus found exactly
 // ONE substantive miss — a PR added an HTTP retry while master already had a
@@ -441,19 +438,6 @@ const CONCRETE_INJECTION_EVIDENCE_VALIDATE_ADDENDUM =
 const MIGRATION_NUMBERING_ADDENDUM =
   "\n## Migration numbering against the base branch is handled daemon-side (sandbox rule)\nYour lens above classes a migration numbered out of order with the base branch as P1. **That classification is withdrawn — unless the round prompt says the migration pre-check did not run (see below).** The daemon runs a deterministic pre-check every round — it reads the base branch's migrations at the round's pinned base sha, detects a number this PR claims that the base already occupies, and posts the exact remedy (target number + the `dependencies` tuple) to the PR as a COMMENT before you were ever launched. The collision is therefore already reported and already remedied by the time you read the diff.\n\nSo: **never return a base-branch migration-number collision as a finding** — not P1, not P2, not a nit, not a question, at no confidence. It is mechanics: deterministic, one remedy, no design content, and raised as a blocker it consumed the merge gate and cost the author a full re-review round for a rename. If the round order's GATE NOTES list collisions, that is the daemon telling you they are settled, not evidence for you to re-report.\n\n**The withdrawal holds only when the daemon's check ran.** If the round prompt's GATE NOTES say the **migration pre-check did not run** this round, then nothing was checked and no remedy was posted — the class is yours again for exactly that round: check this PR's migration numbers against the base branch at the pinned base sha yourself, and report a collision as a normal finding at your lens's severity, remedy included (the free target number and the exact `dependencies` entry). Absent that note, the withdrawal stands.\n\nNothing else about migrations moves: the DDL itself, `ALGORITHM`, lock duration, backfill safety, rolling-deploy ordering, a `dependencies` list that is wrong for reasons OTHER than this collision, and a migration whose data change is unsafe are all judged exactly as before, at their existing severities.\n";
 
-// the two seed rules that demand evidence the execution policy
-// forbids gathering — rendered DDL and a replica row count. Neither is
-// obtainable (no app dependencies in the container, no database reachable at
-// all), so the pass could only drop the finding or assert it unproven; the
-// second is the likelier failure and it manufactures exactly the over-blocking
-// the team complained about. The replacement asks for what a READER can
-// establish and routes the rest to the author as a question. made it
-// stack-neutral with the seed it supersedes: the Django spelling of the
-// evidence (`sqlmigrate`, the one `default` database) rides the deployment's
-// own profile pack.
-const DATA_SAFETY_NO_EXEC_ADDENDUM =
-  '\n## Data safety: no execution — read the migration, ask for the rest (sandbox rule, supersedes the lens above)\nYour lens above tells you to judge migrations "by the real DDL the migration produces" as though you could render it, and to require "evidence of the current production count" from a replica query. **Both instructions are withdrawn, and where they conflict with this section this section wins.** Neither is obtainable: the execution policy forbids running project code, the sandbox carries none of the app\'s dependencies, rendering a migration\'s DDL needs the migration tool and usually a live database connection, and **there is no read replica** — the sandbox reaches no database at all. A rule whose evidence cannot be gathered is not satisfied by asserting the hazard anyway.\n\n**Migration DDL** — judge from the migration file and the model diff: the operation types, `NOT NULL` adds, `DROP COLUMN`, added defaults, data-step and raw-SQL bodies, index adds on large tables, and rolling-deploy ordering (old pods still run the old schema mid-rollout). Where the real DDL — whether the database rebuilds, scans or locks — is the deciding factor and cannot be read off the operation, **ask for it**: a `[question]` requesting the rendered DDL in the PR body. Never a blocker asserting a hazard that was never rendered.\n\n**Blast radius** — a missing production row count is a `[question]` ("state the current count of rows matching this predicate"), **never a P1**; the backfill-vs-validator rule\'s count of nonconforming source rows is the same `[question]`, not a P2. What stays P1 is what the diff alone establishes: **no per-run cap, no deterministic ordering, no kill switch, or a backfill over an unbounded predicate**. Still review the first tick over the accumulated backlog, not the steady state.\n\n**The migration gate** is judged on that same readable evidence — report `gate: self-verdict-ok` only where the operation is readably safe on a small table, backfill-free and rolling-deploy ordering-safe; otherwise report the gate exactly as the lens says and let a human settle it, with the `[question]` that would settle it attached. Migration numbering and ordering against the base branch are untouched by this section: pure file reading.\n';
-
 // Feedback #5312 (the owner, 2026-08-27): the proof-or-block gate turned a
 // large-table fail-closed technique into a universal demand for handwritten
 // DDL. Django operations remain the migration source; rendered SQL helps the
@@ -463,15 +447,6 @@ const DATA_SAFETY_NO_EXEC_ADDENDUM =
 // A Django rule, so it composes only into a Django build.
 const DJANGO_MIGRATION_ORM_ADDENDUM =
   "\n## Django migrations: ORM first, concrete hazards only (sandbox rule; supersedes the migration gate above)\nOrdinary Django ORM migration operations are the source of truth and are acceptable by default. You **must not demand `RunSQL` or `SeparateDatabaseAndState` merely to expose DDL, spell an `ALGORITHM`, or make review easier**. Those tools remain appropriate when the migration itself genuinely needs database-specific behavior; their presence is never the default remedy.\n\n**Generated SQL is review evidence, not executable migration source.** Read it when the PR supplies it and compare it with the ORM operations. Absence of generated SQL is not itself a finding. Ask one `[question]` for generated SQL only when its exact shape materially decides a specific safety concern that the migration and model diff cannot settle.\n\n**Block only a concrete hazard established by the diff or supplied generated SQL**: destructive or mutating DDL, a demonstrated table rebuild or locking path, unsafe `NOT NULL`/default/index behavior, an unbounded or operationally unsafe backfill, or old/new-pod incompatibility. Never turn uncertainty about the database's chosen algorithm into a blocker, and never require a fail-closed `ALGORITHM=INSTANT` clause without evidence tying fallback behavior to a concrete operational hazard in this migration. Migration numbering remains under the daemon-side COMMENT-only rule above.\n";
-
-// the same defect in pass-baseline. "A test that passes with the fix
-// reverted proves nothing" is mutation testing — execution. The finding class
-// must survive the no-exec contract rather than be dropped by it (test vacuity
-// is ~12% of all blockers and one of two classes nothing else catches), so the
-// rule is reframed as a static read plus CI, with the corpus's two examples
-// carried along as proof the class is reachable by reading.
-const BASELINE_TEST_VACUITY_STATIC_ADDENDUM =
-  '\n## Baseline: test vacuity is a STATIC read (sandbox rule, supersedes the lens above)\nYour lens above says to verify that the headline regression test "actually exercises the guarded branch — a test that passes with the fix reverted proves nothing". Reverting a fix and re-running the suite is mutation testing: it is execution, and the execution policy forbids it. **That instruction is withdrawn; where it conflicts with this section, this section wins.** The finding class is NOT withdrawn — a vacuous headline test stays a real finding at the severity the lens already gives it.\n\nInstead: **read the assertion and the code it exercises, and establish whether the assertion could ever fail** — what value does it actually compare, and is that value still produced when the bug is present? Use the CI result for whether the suite passes (`gh pr checks`, read-only); never run the suite, never revert anything, never re-trigger a job. Say in `evidence` exactly which value the assertion compares and why it survives the bug.\n\nTwo worked examples, both settled by reading alone:\n\n- The test asserted that the rendered DOM contained `title.unknown`, but the translation helper returns **the key itself** when the key is missing — so the assertion holds for any broken key and proves nothing about the translation.\n- The test\'s mock replaced the translator with one returning **plain text**, while the real translator returns HTML — so the contract that ships was never the one under test.\n\n**One more reading-only clarification**: where the lens tells you to "materialize a sample of the final string" for assembled text, assemble it **by reading** — join the literals and format calls by hand and inspect the seams. Do not execute the code to produce it.\n';
 
 // the "nit treadmill" — each re-review minted 2–3 fresh nits on code
 // already reviewed, the author fixed one, the push re-armed the trigger (one
@@ -533,8 +508,7 @@ const VALIDATE_KILL_VOCABULARY_ADDENDUM =
 // carrying one of them onto `doubted` whatever the session wrote.
 const VALIDATE_DOUBT_NOT_KILL_ADDENDUM =
   "\n## A validity veto is a DOUBT, not a kill (sandbox rule)\n" +
-  'When you veto a candidate because its CLAIM does not hold up — `refuted`, `unverifiable` or `bad-anchor`, and a confidence below 0.5 after your audit (write it `unverifiable`) — you are not deleting it. It is kept in the findings record as `doubted`: marked "may not be valid", never posted on the PR, shown to the operator to judge. List those under their own block, not under KILLED, each with its word and the reason in your own words (for `refuted`, the counterevidence you read):\n\n' +
-  "```\nDOUBTED\n- <lens> <path:line> — <word>: <reason>\n```\n\n" +
+  "A candidate whose CLAIM does not hold up — `refuted` and `bad-anchor` as well as `unverifiable` — goes under DOUBTED, shown to the operator to judge; for `refuted`, give the counterevidence you read. " +
   "Every other kill stays under KILLED. Being kept does not make a doubt gentler to give: a claim that fails is doubted, however strong the lens that raised it.\n";
 
 // The code-quality lenses (2026-09-27): maintainability, duplication and
@@ -918,12 +892,10 @@ const ASK_HUMAN_NAMED_DEFECT_VALIDATE_ADDENDUM =
 // `tests/profiles.test.ts` proves the moved pack composes byte-identically to
 // the constants it replaced.
 //
-// NOT moved: `data-safety-no-exec` and `django-migration-orm`
-// (above). settled both without a move: `data-safety-no-exec` was
-// rewritten stack-neutral alongside the seed it supersedes (its Django
-// spelling — `sqlmigrate`, the one `default` database — now rides the
-// deployment profile's `stack-data-safety` addendum), and
-// `django-migration-orm` stays compiled in, gated to a `django` build by its
+// NOT moved: `django-migration-orm` (above). settled it
+// without a move (the old `data-safety-no-exec` addendum was folded into the
+// pass-data-safety seed by the 2026-10-03 reseed): `django-migration-orm` stays
+// compiled in, gated to a `django` build by its
 // registry entry's `ecosystem` field so its positional "supersedes the
 // migration gate above" reference keeps its meaning.
 //
@@ -1232,11 +1204,6 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
   { id: "remedy-size", scope: "all", text: REMEDY_SIZE_ADDENDUM },
   { id: "in-flight-prs", scope: "all", text: IN_FLIGHT_PR_ADDENDUM },
   {
-    id: "baseline-no-duplicate-fix-scan",
-    scope: ["pass-baseline"],
-    text: BASELINE_NO_DUPLICATE_FIX_SCAN_ADDENDUM,
-  },
-  {
     id: "baseline-shared-machinery",
     scope: ["pass-baseline"],
     text: BASELINE_SHARED_MACHINERY_ADDENDUM,
@@ -1250,17 +1217,11 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
     text: MIGRATION_NUMBERING_ADDENDUM,
     ecosystem: "django",
   },
-  { id: "data-safety-no-exec", scope: ["pass-data-safety"], text: DATA_SAFETY_NO_EXEC_ADDENDUM },
   {
     id: "django-migration-orm",
     scope: ["pass-data-safety"],
     text: DJANGO_MIGRATION_ORM_ADDENDUM,
     ecosystem: "django",
-  },
-  {
-    id: "baseline-test-vacuity-static",
-    scope: ["pass-baseline"],
-    text: BASELINE_TEST_VACUITY_STATIC_ADDENDUM,
   },
   { id: "nit-scope", scope: "lenses", text: NIT_SCOPE_ADDENDUM },
   { id: "nit-scope-validate", scope: [VALIDATE_PASS], text: NIT_SCOPE_VALIDATE_ADDENDUM },

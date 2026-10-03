@@ -162,10 +162,11 @@ describe("[review] dedup_merge = false — byte-identical to before the duplicat
 // Re-pinned 2026-10-03 (owner decision after the decisions validation, dv1 vs dv1hi): pass-baseline, pass-sweep and pass-behaviour-delta run at the sol-high tier by default (src/config.ts DEFAULT_PASS_TIERS), so their plan rows name sol-high and are not raisable
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): the doc header and the RATIFIED fence marker lines no longer reach the model (stripped at render and at agent build; kept in the source)
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ticket ids, dated asides and deployed-repo statistics outside the ratified fences removed from the round templates, the addenda and pass-ask-human
+// Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ratified reseeds — validator doubts unverifiable/low-confidence candidates; baseline drops the duplicate-fix scan and reads test vacuity; data-safety folds in its no-exec rule; pass-common schema completed; seed doc headers, dated owner asides and stack names removed
 const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
-  first: "55374ff0676bca21095c3eec97373030d3caa6d6911b6cab218ae7262f17aa35",
-  "re-review": "0fb5b08537929ffe4f71c167bf8707d4ab590ca517ac95e7e440e1e15d2daa19",
-  staleness: "d9af9755bc0718cdfd042abdabf012a332c38d3fb4ffa4dba290e578b465297c",
+  first: "95dce8cabc99262407ba081e617145004cd4574d903985bbfb121e6f4e14564d",
+  "re-review": "5d4ef847d26d495dd985b587f1fa1803ca06b9f30d8937813bb3df65d7763a64",
+  staleness: "fdf30473b133b3b5eabf4bcb518c1d2412364153be9e39555eeccd8c0e34611e",
 };
 // Re-pinned 2026-10-03 (round 7, docs/duplicate-merge.md, the owner's
 // decisions): `[review] dedup_merge` defaults on, so step 4 carries the
@@ -186,19 +187,21 @@ const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
 // Re-pinned 2026-10-03 (owner decision after the decisions validation, dv1 vs dv1hi): pass-baseline, pass-sweep and pass-behaviour-delta run at the sol-high tier by default (src/config.ts DEFAULT_PASS_TIERS), so their plan rows name sol-high and are not raisable
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): the doc header and the RATIFIED fence marker lines no longer reach the model (stripped at render and at agent build; kept in the source)
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ticket ids, dated asides and deployed-repo statistics outside the ratified fences removed from the round templates, the addenda and pass-ask-human
+// Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ratified reseeds — validator doubts unverifiable/low-confidence candidates; baseline drops the duplicate-fix scan and reads test vacuity; data-safety folds in its no-exec rule; pass-common schema completed; seed doc headers, dated owner asides and stack names removed
 const GOLDEN_ORDERS: Record<string, string> = {
-  first: "4b23f4e4ded558fe2f7528cfd23227282149f36cd7c356522a276aaa43b525ae",
-  "re-review": "be9dbe17e16946cd96509240c653dba3219163890d27a33cd1f84bf4f92e2f4c",
-  staleness: "cb9c80cbbafb61f584405f84762a6f331df7b969223c2cc05617ff3a422b2e3e",
+  first: "3373761faaa368eca74c80cae9df522afedc11e1aff7af1fa9acd997c8f3f00f",
+  "re-review": "ae7a7dcb0dc30cba67dfa4b1a0d7ad442ecac6dfa031fcbfcf39be74a14939a8",
+  staleness: "67ba126d2ab85279d85bf0af0d827ebd17568ae720e0c60b314c8e653f83f1e7",
 };
 // Re-pinned 2026-10-03: pass-behaviour-delta planned only where base behaviour is at risk (owner decision): the fixture removes only `pass` and adds a line, so its plan no longer carries the lens
 // Re-pinned 2026-10-03 (owner decision after the decisions validation, dv1 vs dv1hi): pass-baseline, pass-sweep and pass-behaviour-delta run at the sol-high tier by default (src/config.ts DEFAULT_PASS_TIERS), so their plan rows name sol-high and are not raisable
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): the doc header and the RATIFIED fence marker lines no longer reach the model (stripped at render and at agent build; kept in the source)
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ticket ids, dated asides and deployed-repo statistics outside the ratified fences removed from the round templates, the addenda and pass-ask-human
+// Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ratified reseeds — validator doubts unverifiable/low-confidence candidates; baseline drops the duplicate-fix scan and reads test vacuity; data-safety folds in its no-exec rule; pass-common schema completed; seed doc headers, dated owner asides and stack names removed
 const GOLDEN_ORDERS_NO_COVERAGE: Record<string, string> = {
-  first: "e88b4b2fc798cfe8384f00537f85b86b8242d908310bdd394d27bd8348b83939",
-  "re-review": "d74a4b3ae0451495ca4a16a1387de8a4349fe5cfe93d004325a080bbd6dcd7d2",
-  staleness: "43d03d923f0723c88629c950c48e463b7917fd0c713fb95ed98d52c23d665b58",
+  first: "d1d537a03c9f5a1732930d7b508525161af8b09d0fdd5f3eb6a69c26d767fbfd",
+  "re-review": "d5b12ca5cfdfd492c956c556d40edf85f16d2d11a3e091c8ba926b1e8975ce96",
+  staleness: "647a54f1b535acd024af7d29aec0706521a1fc26916321dce69c2179d0fe8afb",
 };
 // Re-pinned 2026-10-03: pass-behaviour-delta is planned (one row per group of files the PR modifies or deletes code in; `[review] behaviour_delta`, freeze fixes 2) — the fixture PR modifies code, so its plan and the built agents gain the lens
 // Re-pinned 2026-10-03: pass-lint-conformance agent built (planned only when a CI job runs a linter covering a changed file; freeze fixes 2)
@@ -207,10 +210,11 @@ const GOLDEN_ORDERS_NO_COVERAGE: Record<string, string> = {
 // Re-pinned 2026-10-03 (owner decision after the decisions validation, dv1 vs dv1hi): pass-baseline, pass-sweep and pass-behaviour-delta run at the sol-high tier by default (src/config.ts DEFAULT_PASS_TIERS), so their plan rows name sol-high and are not raisable
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): the doc header and the RATIFIED fence marker lines no longer reach the model (stripped at render and at agent build; kept in the source)
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ticket ids, dated asides and deployed-repo statistics outside the ratified fences removed from the round templates, the addenda and pass-ask-human
+// Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ratified reseeds — validator doubts unverifiable/low-confidence candidates; baseline drops the duplicate-fix scan and reads test vacuity; data-safety folds in its no-exec rule; pass-common schema completed; seed doc headers, dated owner asides and stack names removed
 const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
-  first: "fc5c9901fd3f62c41b7503b6e7f5b41a641852e162496e60a25b2dc3bd537b44",
-  "re-review": "2d656e21efb5d3abb3f40a6c8ca977b517fea0e419c4db90328c4682e719cf6b",
-  staleness: "5d3099f81a008300fb64b2778c1b63ca7014533b3c733b6a2ab52f363d02a764",
+  first: "a2a5b944d2a75a889073e0a6c3cbd88db950615f905ffe1c71c9c3696245bd48",
+  "re-review": "8148881dae079810fdfc1a2d6646204aec4249154216bf97d8a4bf52fe2a43b6",
+  staleness: "0274a50d870643c7b04bc05a66c9b2cbdf4f439319a03cded4d26bdbfd11eebb",
 };
 // Deliberate re-pins — the default profile's built agents changed ON PURPOSE,
 // never through `[posting]` (owner-approved review changes, 2026-10-02, after
@@ -261,7 +265,8 @@ const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): contradictions resolved by keeping the newer rule (style/convention judged only by validate-convention-rule; cross-file un-merge bullet removed; unverifiable/low confidence are doubts; lens briefs point CI-run lint at pass-lint-conformance; concurrency brief describes its content planning)
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): addenda merged and compressed (one injection rule, one external-semantics rule, exhaust-the-site absorbs baseline-sibling-sites, compressed memory/nit-scope/self-narration/tag-grammar/nit-request/detail/merge/unreasoned-output rules, kill-word enumerations dropped)
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): lens scope boundaries: one owner map shared by the five quality lenses (prompts/pass-quality-common.md); placement/simplicity/sweep/rollout/widened/behaviour-delta name the neighbouring owner
-const GOLDEN_AGENTS_NO_DEDUP = "528efb6280678675dd3782ca9223ee8029e4e93204edabee7e928cc499eee413";
+// Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ratified reseeds — validator doubts unverifiable/low-confidence candidates; baseline drops the duplicate-fix scan and reads test vacuity; data-safety folds in its no-exec rule; pass-common schema completed; seed doc headers, dated owner asides and stack names removed
+const GOLDEN_AGENTS_NO_DEDUP = "4ed0f3b5f6182939f5c7c850e69d7fec26165ca3a933c9c650eca30bba261ce9";
 //   → (round 7, docs/duplicate-merge.md) `dedup-group-validate` (pass-validate,
 //     `[review] dedup_merge` on by default) and the default profile's posting
 //     addendum for `repeat_sites = false`. Off + no policy = the pin above.
@@ -280,4 +285,5 @@ const GOLDEN_AGENTS_NO_DEDUP = "528efb6280678675dd3782ca9223ee8029e4e93204edabee
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): contradictions resolved by keeping the newer rule (style/convention judged only by validate-convention-rule; cross-file un-merge bullet removed; unverifiable/low confidence are doubts; lens briefs point CI-run lint at pass-lint-conformance; concurrency brief describes its content planning)
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): addenda merged and compressed (one injection rule, one external-semantics rule, exhaust-the-site absorbs baseline-sibling-sites, compressed memory/nit-scope/self-narration/tag-grammar/nit-request/detail/merge/unreasoned-output rules, kill-word enumerations dropped)
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): lens scope boundaries: one owner map shared by the five quality lenses (prompts/pass-quality-common.md); placement/simplicity/sweep/rollout/widened/behaviour-delta name the neighbouring owner
-const GOLDEN_AGENTS = "e7516bce35dc624418938ecf8fbb2368c4d985a4729366208c8047258d97144a";
+// Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ratified reseeds — validator doubts unverifiable/low-confidence candidates; baseline drops the duplicate-fix scan and reads test vacuity; data-safety folds in its no-exec rule; pass-common schema completed; seed doc headers, dated owner asides and stack names removed
+const GOLDEN_AGENTS = "4b89c2f902b7c7683117295401db8e99e2eb98d5971fbb98544973492c2a91c8";

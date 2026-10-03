@@ -132,14 +132,14 @@ describe("the reseeded seeds are stack-neutral", () => {
     const baseline = bodies.get("pass-baseline")!;
     expect(baseline).toContain("Missing tests for a real feature is **P1**");
     expect(baseline).toContain("in the shape the repo's existing");
-    expect(baseline).toContain("the pinned copy must be updated in the");
+    expect(baseline).toContain("the pinned copy must\nbe updated in the same PR");
     expect(baseline).toContain("Judge against the conventions the repo writes down");
     const ui = bodies.get("pass-ui")!;
     expect(ui).toContain("translated in **every** locale the repo ships");
     expect(ui).toContain("HTTP through the repo's shared client");
     const ds = bodies.get("pass-data-safety")!;
     expect(ds).toContain("P1 ONLY when out of order with the base");
-    expect(ds).toContain("judge by the real DDL the migration produces");
+    expect(ds).toContain("judge from the migration file and the model diff");
   });
 });
 
@@ -149,8 +149,8 @@ describe("ecosystem none: no pre-check claim, no Django rule", () => {
     expect(ds).not.toContain("handled daemon-side");
     expect(ds).not.toMatch(/pre-check/i);
     expect(ds).not.toContain("## Django migrations: ORM first");
-    // The no-exec supersession is generic and stays.
-    expect(ds).toContain("## Data safety: no execution");
+    // The no-exec reading (folded into the seed, 2026-10-03) is generic and stays.
+    expect(ds).toContain("judge from the migration file and the model diff");
     // With no pre-check, nothing withdraws the lens's own ordering P1.
     expect(ds).not.toContain("That classification is withdrawn");
   });
@@ -212,9 +212,8 @@ describe("ecosystem django keeps today's bytes", () => {
       at("## Migration numbering against the base branch is handled daemon-side"),
     ).toBeGreaterThan(0);
     expect(at("## Migration numbering against the base branch")).toBeLessThan(
-      at("## Data safety: no execution"),
+      at("## Django migrations: ORM first"),
     );
-    expect(at("## Data safety: no execution")).toBeLessThan(at("## Django migrations: ORM first"));
   });
 
   it("the round order's missing-migration rule is django's", () => {

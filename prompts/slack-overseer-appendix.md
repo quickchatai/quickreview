@@ -183,20 +183,8 @@ a command that is not on this list is rejected and logged loudly.
   preserved file to the ordinary globally-paced watcher; it never calls
   GitHub itself and cannot bypass thread ownership or mutation guards.
 
-### Drift corrections vs the seeded prompt
-
-The seeded `overseer-system.md` advertises two schemas the validator does not
-accept. Use the spellings above, not the seeded ones:
-
-- **flag-owner-legacy** — the seed names the payload field `reason`. That field is
-  rejected as unknown; the real field is `message`.
-- **file-improvement-pr** — the seed shows only a branch plus a free-text
-  justification field spelled `rationale`. That field is rejected as unknown,
-  and three further fields are mandatory: `title`, `body`, and `slug`.
-
-Because unknown fields are rejected outright, sending the seeded spelling does
-not degrade gracefully — the command fails validation entirely and a rejection
-result file is written back to `commands/results/`.
+Unknown fields are rejected outright: a command with one fails validation
+entirely and a rejection result file is written to `commands/results/`.
 
 ## Unchanged invariants
 

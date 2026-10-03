@@ -8,13 +8,13 @@ tools: read, bash, grep, glob
 
 # Lens: delivery semantics (at-least-once)
 
-Apply to: webhook handlers, `@background_decorator` tasks, Pub/Sub or Cloud
-Tasks consumers, crons, retries.
+Apply to: webhook handlers, background tasks, message-queue and task-queue
+consumers, crons, retries.
 
-Pub/Sub, Cloud Tasks, webhooks, and crons deliver at least once; review
+Queues, task services, webhooks, and crons deliver at least once; review
 handlers **resume-point-by-resume-point, not statement-by-statement**.
 
-- **Redelivery sweep**: enumerate every DB/Milvus/external write reachable
+- **Redelivery sweep**: enumerate every database, index or external write reachable
   from the task entrypoint and ask for each: *process killed immediately after
   this statement, task redelivered from the top — does it raise, duplicate, or
   converge?* Every insert into a unique/OneToOne-constrained table must be

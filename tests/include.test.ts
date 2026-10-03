@@ -787,7 +787,9 @@ describe("the built pass contract (rules)", () => {
   it("every finding-producing pass is told to emit the reachability field", () => {
     for (const [name, text] of bodies) {
       if (name.startsWith(`${VALIDATE_PASS}--`)) continue;
-      expect(text).toContain("reachability: routine | plausible | contrived");
+      // The field rides the shared schema (pass-common, 2026-10-03 reseed);
+      // the addendum carries its meaning.
+      expect(text).toContain("reachability: routine|plausible|contrived");
       expect(text).toContain("`contrived` never blocks at any severity");
       expect(text).toContain("`plausible` P0/P1 blocks, `plausible` P2 becomes a question");
       expect(text).toContain("a finding that omits it is read as `routine`");
@@ -899,21 +901,14 @@ describe("the built pass contract (rules)", () => {
     }
   });
 
-  it("suppresses pass-baseline's duplicate-fix scan and only pass-baseline's", () => {
-    for (const [name, text] of bodies) {
-      const isBaseline = name.startsWith("pass-baseline--");
-      expect(
-        text.includes("## Baseline: the duplicate-fix scan is suppressed (sandbox rule)"),
-      ).toBe(isBaseline);
+  it("pass-baseline no longer carries the duplicate-fix scan (2026-10-03 reseed R2)", () => {
+    for (const text of bodies.values()) {
+      expect(text).not.toContain("Duplicate-fix check");
+      expect(text).not.toContain("gh pr list");
     }
     const baseline = bodies.get("pass-baseline--sol-med") as string;
-    expect(baseline).toContain("is **withdrawn**");
-    expect(baseline).toContain("Do not run the search");
-    // The sibling/template comparison survives — in the seed and in the addendum.
+    // The sibling/template comparison survives in the seed.
     expect(baseline).toContain("**Sibling / template PRs**");
-    expect(baseline).toContain(
-      "**Sibling / template PR** comparison is untouched and still expected",
-    );
   });
 
   // the corpus retro's single miss (a retry added over a shared
@@ -1006,56 +1001,32 @@ describe("the built pass contract (rules)", () => {
     }
   });
 
-  // the two seed rules that demanded evidence the execution policy
-  // forbids gathering (`sqlmigrate` output, a replica row count). The seeds are
-  // frozen (rule 6), so the withdrawal + replacement rides the addendum — and
-  // it must be plain enough that the pass follows it where the two conflict.
-  it("supersedes pass-data-safety's sqlmigrate run and replica-count P1", () => {
-    for (const [name, text] of bodies) {
-      const isDataSafety = name.startsWith("pass-data-safety--");
-      expect(
-        text.includes("## Data safety: no execution — read the migration, ask for the rest"),
-      ).toBe(isDataSafety);
-    }
+  //'s no-exec rewrite of pass-data-safety, folded into the seed by the
+  // 2026-10-03 reseed: read the migration, ask the author for the rest.
+  it("pass-data-safety reads the migration and asks the author for the rest", () => {
     const ds = bodies.get("pass-data-safety--sol-high") ?? bodies.get("pass-data-safety--sol-med");
     expect(ds).toBeDefined();
     const text = ds as string;
-    // The supersession is stated, not implied.
-    expect(text).toContain(
-      "**Both instructions are withdrawn, and where they conflict with this section this section wins.**",
-    );
-    expect(text).toContain("there is no read replica");
-    // Real DDL undeterminable → a question asking for the rendered DDL (the
-    // stack's spelling of it — `sqlmigrate` for Django — rides the profile).
-    expect(text).toContain("cannot be read off the operation, **ask for it**");
-    expect(text).toContain("a `[question]` requesting the rendered DDL in the PR body");
-    expect(text).toContain("Never a blocker asserting a hazard that was never rendered.");
-    // Missing row count → a question, never a P1; the readable P1s survive.
-    expect(text).toContain("a missing production row count is a `[question]`");
-    expect(text).toContain("**never a P1**");
-    expect(text).toContain("count of nonconforming source rows is the same `[question]`, not a P2");
-    expect(text).toContain(
-      "**no per-run cap, no deterministic ordering, no kill switch, or a backfill over an unbounded predicate**",
-    );
+    expect(text).not.toContain("## Data safety: no execution");
+    expect(text).not.toContain("replica");
+    expect(text).not.toContain("gate: escalate");
+    expect(text).toContain("judge from the migration file and the model diff");
+    expect(text).toContain("ask the author for the rendered DDL in a\n  `[question]`");
+    expect(text).toContain("never a blocker asserting a hazard nobody rendered");
+    // Missing row count → a question; the readable P1s survive.
+    expect(text).toContain("ask for it in a `[question]`");
+    expect(text).toContain("a per-run cap with\n  deterministic ordering and a kill switch, and a predicate that is bounded");
     expect(text).toContain("first tick over the accumulated backlog");
-    // Migration numbering / dependencies ordering is explicitly unchanged.
-    expect(text).toContain(
-      "Migration numbering and ordering against the base branch are untouched by this section",
-    );
+    expect(text).toContain("report `gate: self-verdict-ok`");
+    expect(text).toContain("`gate: unproven`");
     expect(text).toContain("## Migration numbering against the base branch is handled daemon-side");
-    // Ordinary ORM operations remain the source of truth. Generated SQL is
-    // evidence, never a reason to force executable handwritten SQL into the
-    // migration merely to make the review easier.
+    // Ordinary ORM operations remain the source of truth (django build).
     expect(text).toContain("## Django migrations: ORM first, concrete hazards only");
     expect(text).toContain("must not demand `RunSQL` or `SeparateDatabaseAndState`");
     expect(text).toContain("Generated SQL is review evidence, not executable migration source");
     expect(text).toContain("Absence of generated SQL is not itself a finding");
     expect(text).toContain(
       "Block only a concrete hazard established by the diff or supplied generated SQL",
-    );
-    // The addendum lands AFTER the seed rule it supersedes.
-    expect(text.indexOf("judge by the real DDL")).toBeLessThan(
-      text.indexOf("## Data safety: no execution"),
     );
   });
 
@@ -1068,57 +1039,26 @@ describe("the built pass contract (rules)", () => {
   });
 
   // The class must survive the no-exec contract, not be dropped by it: test
-  // vacuity is ~12% of all blockers and one of two classes nothing else in the
-  // pipeline catches. Both corpus examples were reachable by reading.
-  it("reframes pass-baseline's test-vacuity rule as a static read plus CI", () => {
-    for (const [name, text] of bodies) {
-      const isBaseline = name.startsWith("pass-baseline--");
-      expect(text.includes("## Baseline: test vacuity is a STATIC read")).toBe(isBaseline);
-    }
+  // vacuity is read, never run (folded into the seed 2026-10-03, R2).
+  it("pass-baseline judges test vacuity by reading, never by running", () => {
+    for (const text of bodies.values())
+      expect(text).not.toContain("## Baseline: test vacuity is a STATIC read");
     const baseline = bodies.get("pass-baseline--sol-med") as string;
-    expect(baseline).toContain("Reverting a fix and re-running the suite is mutation testing");
-    expect(baseline).toContain(
-      "**That instruction is withdrawn; where it conflicts with this section, this section wins.**",
-    );
-    expect(baseline).toContain("The finding class is NOT withdrawn");
-    expect(baseline).toContain(
-      "**read the assertion and the code it exercises, and establish whether the assertion could ever fail**",
-    );
-    expect(baseline).toContain("is that value still produced when the bug is present?");
-    expect(baseline).toContain(
-      "Use the CI result for whether the suite passes (`gh pr checks`, read-only); never run the suite",
-    );
-    // Corpus example 1 — the translation helper that returns the key itself.
-    expect(baseline).toContain("contained `title.unknown`");
-    expect(baseline).toContain("returns **the key itself** when the key is missing");
-    expect(baseline).toContain("holds for any broken key");
-    // Corpus example 2 — the mock translator returning plain text, not HTML.
-    expect(baseline).toContain("mock replaced the translator with one returning **plain text**");
-    expect(baseline).toContain("the real translator returns HTML");
-    // Sweep catch: "materialize a sample of the final string" is a hand-join.
-    expect(baseline).toContain("assemble it **by reading**");
-    expect(baseline).toContain("Do not execute the code to produce it.");
-    // It lands after the seed rule it supersedes.
-    expect(baseline.indexOf("reverted proves nothing")).toBeLessThan(
-      baseline.indexOf("## Baseline: test vacuity is a STATIC read"),
-    );
+    expect(baseline).not.toContain("reverted proves nothing");
+    expect(baseline).toContain("**exercises the guarded branch**, by\nreading");
+    expect(baseline).toContain("is that value still\nproduced when the bug is present?");
+    expect(baseline).toContain("whether the suite passes comes from CI");
+    expect(baseline).toContain("hold for any broken key");
+    expect(baseline).toContain("**assemble a sample of the final string by reading**");
   });
 
   it("no built pass instructs an execution outside the allowlist", () => {
     // The exec-demanding phrasings that survive in a seed must each be
     // withdrawn by a later addendum section in the SAME built body.
-    const withdrawals: Record<string, string> = {
-      "judge by the real DDL": "## Data safety: no execution",
-      "replica query": "## Data safety: no execution",
-      "must show a replica count": "## Data safety: no execution",
-      "reverted proves nothing": "## Baseline: test vacuity is a STATIC read",
-      "sample of the final string": "## Baseline: test vacuity is a STATIC read",
-    };
+    // The exec-demanding seed phrasings were reseeded away (2026-10-03).
     for (const text of everyBody()) {
-      for (const [phrase, section] of Object.entries(withdrawals)) {
-        if (!text.includes(phrase)) continue;
-        expect(text.indexOf(section)).toBeGreaterThan(text.indexOf(phrase));
-      }
+      for (const phrase of ["judge by the real DDL", "replica query", "reverted proves nothing", "materialize a sample"])
+        expect(text).not.toContain(phrase);
       // The policy itself is unchanged and still names the allowlist — pinned
       // on the rendered constant, never on a prefix of the list.
       expect(text).toContain(`Allowed commands: ${ALLOWED_COMMANDS_CLAUSE}.`);
@@ -1137,8 +1077,11 @@ describe("the built pass contract (rules)", () => {
       expect(seed).not.toContain("(sandbox rule)");
       expect(seed).not.toContain("reachability: routine");
     }
+    // The shared schema names the field (2026-10-03 reseed); its RULES stay in
+    // the addendum.
     const common = readFileSync(join(sandbox, "prompts", "pass-common.md"), "utf8");
-    expect(common).not.toContain("reachability");
+    expect(common).toContain("reachability: routine|plausible|contrived");
+    expect(common).not.toContain("`contrived` never blocks");
     expect(common).not.toContain("(sandbox rule)");
   });
 });
@@ -1174,7 +1117,7 @@ describe("pass-intent", () => {
     // The shared blank-slate contract and the lens addenda reach it.
     expect(text).toContain("You are a **blank-slate review pass**");
     expect(text).toContain("## Execution policy (sandbox rule, enforced)");
-    expect(text).toContain("reachability: routine | plausible | contrived");
+    expect(text).toContain("reachability: routine|plausible|contrived");
   });
 
   it("is a leaf: no agent-spawning tools in any built variant", () => {

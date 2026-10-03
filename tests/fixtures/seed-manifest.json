@@ -3,18 +3,18 @@
   "source": "seeds/ (in-repo canonical copies; lineage: the seeding)",
   "algorithm": "sha256",
   "files": {
-    "agents/pass-baseline.md": "c1daafa5816b81980a867e633662efb688065dbe23be836a9f01902eef620d11",
-    "agents/pass-contracts.md": "cb233cc888bd62514c32d51b6979ebcfef325d655331a42df586bba3b3780507",
-    "agents/pass-data-safety.md": "124d27f9c31e7a5df3c92215a90902f04866d66e3d06d4ea92993ff162d9285a",
-    "agents/pass-delivery.md": "f99cad1dfebc6367185d5ba61d448242faf309989e72a6bb3f43d3c7e8fb2279",
+    "agents/pass-baseline.md": "192ceadfed2096ce5f003b862c9942d7382110586d46adb04909784e180b7376",
+    "agents/pass-contracts.md": "f1cc07a83d5e694469c6a118ddaa3597e69fa783fc146073d200562f8bfe70a9",
+    "agents/pass-data-safety.md": "a6975823ca134fc7563fe0d68bade4da9d235bcaefa2ddd4168e87f43957e59e",
+    "agents/pass-delivery.md": "7ed59d92860a7e8d502a144b3e2784905695ff98675325ab540c7761029bab9c",
     "agents/pass-prod-risk.md": "268daaa232d4a52fad1256c0a4407c6c19da39fd4e8797c603b24daed5033d9d",
     "agents/pass-security.md": "b37dfb0f72297f868be4e741687241592a47ef8c197641df797810414ba6458b",
-    "agents/pass-statelessness.md": "895e3a0ce22e1483ad7282e5d99a2851fb238d7677ec84f67f1ce2f2eb99024f",
+    "agents/pass-statelessness.md": "089aca3cb3c818da6f3231eb3938d1ec7315b5a5158fa2ce6843b527b5e87451",
     "agents/pass-ui.md": "7fe99149cc1f174f3b035911f86d93dad96ba493401495443a205e889a09eea6",
-    "agents/pass-validate.md": "1c46900f6330b4074017aff48e130c37b8f97d619907b2a959354a4f3124c125",
-    "prompts/conversation-system.md": "b95db6d487ad0f4727c0e8c5e32ea0003664abb2cafe66db65d6de84e2100af7",
-    "prompts/eod-sweep.md": "04ecb2daa8830014f0195740124d671f9b68f30b93652bfe854da26a147813d0",
-    "prompts/overseer-system.md": "fe9bdd62e487bfbb1330bc9a7c00e80812e49c1de95a98fec63186d6c880a67e",
-    "prompts/pass-common.md": "09390904ed018aca1035b67b8f5ffbe34054b95d6e99388e4690951c67f0c927"
+    "agents/pass-validate.md": "cf28b7b2dd26b63265a4330c538ce3993dd03bda778810c2c199937195e4bb67",
+    "prompts/conversation-system.md": "5235612a7779401f44ae18e2b81f876e91ded964271b9c2b15e7dd64c3e105aa",
+    "prompts/eod-sweep.md": "9943299e7d63181a73fe796739ceb0aa9dce53c33026eaf99be0da9fe7b7ee92",
+    "prompts/overseer-system.md": "5109082dbe6391d214df76e3eaa294e643e99bd60048b62a192e7699a77b67dc",
+    "prompts/pass-common.md": "e50454d81630cd2c7a3fbc168962876652c03f5010a724d4a0836a52c80b42c0"
   }
 }

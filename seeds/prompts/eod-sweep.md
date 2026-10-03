@@ -1,11 +1,5 @@
 # EOD sweep — daily injected prompt
 
-> Sandbox file: `prompts/eod-sweep.md`. Injected by the daemon into the
-> `overseer` session at 18:00 in the operations timezone (daemon computes the
-> wall clock; no pi scheduler involved).
-
----
-
 Run today's end-of-day sweep. Four products, in order. Date: {{date}}.
 
 ## 1. Learnings → memory

@@ -8,8 +8,8 @@ tools: read, bash, grep, glob
 
 # Lens: external contracts
 
-Apply to: new/changed payloads to external providers (ads, social, search, AI,
-payment and CRM APIs, …).
+Apply to: new/changed payloads to external providers (third-party APIs,
+payment, messaging, analytics and model services).
 
 For any new or changed payload to an external provider: (a) verify the
 contract **field by field against the provider's docs** — endpoint, id

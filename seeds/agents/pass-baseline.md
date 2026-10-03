@@ -1,6 +1,6 @@
 ---
 name: pass-baseline
-description: Always-on review pass — claimed invariants, correctness, tests, conventions, sibling PRs, duplicate fixes.
+description: Always-on review pass — claimed invariants, correctness, tests, conventions, sibling PRs.
 tools: read, bash, grep, glob
 ---
 
@@ -27,18 +27,22 @@ papers over it.
 awaits, no blocking calls on async paths)? Database access free of N+1
 queries (a query per row where one query or a join would do)? When the diff
 assembles text from fragments (LLM prompts, templates, user-facing messages),
-**materialize a sample of the final string** and inspect the seams —
+**assemble a sample of the final string by reading** (join the literals
+and format calls by hand) and inspect the seams —
 whitespace, newlines, separators. No literal placeholder token may be
 reachable in an outbound message without a guaranteed fallback (remember a
 truthiness check is false on an empty string).
 
 **Tests** — New features must have tests, in the shape the repo's existing
 tests already use. Missing tests for a real feature is **P1**. Verify the
-headline regression test actually **exercises the guarded branch** — a test
-that passes with the fix reverted proves nothing. If the PR edits a prompt,
-fallback template, or other string that a test pins verbatim (an expected-value
-constant, a golden file, a snapshot), the pinned copy must be updated in the
-same PR.
+headline regression test actually **exercises the guarded branch**, by
+reading: what value does the assertion compare, and is that value still
+produced when the bug is present? (A helper that returns the key itself for a
+missing translation makes `contains(key)` hold for any broken key.) Say which
+value and why in `evidence`; whether the suite passes comes from CI. If the PR
+edits a prompt, fallback template, or other string that a test pins verbatim
+(an expected-value constant, a golden file, a snapshot), the pinned copy must
+be updated in the same PR.
 
 **Conventions** (from the repo's own agent-directive files — AGENTS.md,
 CLAUDE.md and kin — and its contributing guide) — flag violations as **nit**
@@ -51,11 +55,6 @@ read the sibling PR's diff and compare. Any divergence in the security or
 correctness contract is suspicious: either the sibling has a bug this PR fixes
 (call it out so the sibling gets patched too), or this PR is regressing a
 check the sibling intentionally got right.
-
-**Duplicate-fix check** — if the PR fixes a specific line/function, search
-open PRs touching the same file (`gh pr list --state open --search
-'<filename>'`, token-prefixed, read-only); if another open PR ships the same
-fix, flag both numbers (P3) so a human closes one.
 
 **Re-review duty** — when the task string lists prior findings to verify,
 check each **mechanically at the current head** first and report its true
