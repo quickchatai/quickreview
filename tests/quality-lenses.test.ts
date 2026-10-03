@@ -32,13 +32,19 @@ const lenses = (cfg: Config, files: PrFileEntry[], guide: string[] = []) =>
   buildPassPlan(cfg, files, undefined, undefined, undefined, guide).pass_plan.map((p) => p.lens);
 
 describe("the quality lenses", () => {
-  it("are planned once non-test code adds enough lines, and never on docs or tests alone", () => {
+  it("are planned once non-test code adds enough lines (or a test-only change adds that much test code), never on docs", () => {
     const big = lenses(baseCfg, [file("src/a.ts", QUALITY_MIN_ADDED_LINES)]);
     for (const l of QUALITY_PASSES) expect(big).toContain(l);
     const small = lenses(baseCfg, [file("src/a.ts", QUALITY_MIN_ADDED_LINES - 1)]);
     for (const l of QUALITY_PASSES) expect(small).not.toContain(l);
+    // Freeze fixes 2: a test-only change is code a reader maintains too.
     const testsOnly = lenses(baseCfg, [file("tests/a.test.ts", 200)]);
-    for (const l of QUALITY_PASSES) expect(testsOnly).not.toContain(l);
+    for (const l of QUALITY_PASSES) expect(testsOnly).toContain(l);
+    const smallTests = lenses(baseCfg, [file("tests/a.test.ts", QUALITY_MIN_ADDED_LINES - 1)]);
+    for (const l of QUALITY_PASSES) expect(smallTests).not.toContain(l);
+    // A production change with a big test file next to it is judged on its production lines.
+    const mixed = lenses(baseCfg, [file("src/a.ts", 2), file("tests/a.test.ts", 200)]);
+    for (const l of QUALITY_PASSES) expect(mixed).not.toContain(l);
     const docs = lenses(baseCfg, [file("README.md", 200)]);
     for (const l of QUALITY_PASSES) expect(docs).not.toContain(l);
   });

@@ -196,3 +196,58 @@ describe("sweep: prose focus files and paths left behind by a move", () => {
     expect(t).not.toMatch(NO_BENCHMARK_NAMES);
   });
 });
+
+import { selectSubLenses, PUBLIC_SIGNATURE_RE, WIRE_FORMAT_RE } from "../src/heuristics.js";
+
+describe("planning: every planned lens says why (owner decision 2026-10-03)", () => {
+  it("each plan row but the validator carries a reason", () => {
+    const files = [
+      { ...f("app/serializers/user.py", 200, 10), patch: "@@ -1,2 +1,2 @@\n-def old(x):\n+def new(x, y):\n" },
+      f("web/a.tsx", 30, 2),
+      f("tests/test_user.py", 30, 0),
+    ];
+    const { pass_plan } = buildPassPlan(cfg(), files);
+    for (const r of pass_plan.filter((p) => p.lens !== "pass-validate"))
+      expect(typeof r.why === "string" && r.why.length > 0, r.lens).toBe(true);
+    expect(pass_plan.find((r) => r.lens === "pass-baseline")!.why).toMatch(/every round/);
+    expect(pass_plan.find((r) => r.lens === "pass-ui")!.why).toMatch(/web\/a\.tsx/);
+  });
+});
+
+describe("planning: backcompat by content, claims on a stated behaviour", () => {
+  it("a changed public signature or wire serialization plans backcompat outside the API paths", () => {
+    expect(PUBLIC_SIGNATURE_RE.test("export function render(opts) {")).toBe(true);
+    expect(PUBLIC_SIGNATURE_RE.test("pub fn encode(&self) -> Vec<u8> {")).toBe(true);
+    expect(PUBLIC_SIGNATURE_RE.test("func NewClient(cfg Config) *Client {")).toBe(true);
+    expect(PUBLIC_SIGNATURE_RE.test("def public_helper(a):")).toBe(true);
+    expect(PUBLIC_SIGNATURE_RE.test("    def _private(self):")).toBe(false);
+    expect(PUBLIC_SIGNATURE_RE.test("func helper(x int) {")).toBe(false);
+    expect(WIRE_FORMAT_RE.test("    out.writeString(name); // writeTo(StreamOutput out)")).toBe(true);
+    const lib = { ...f("lib/core/encoder.ts", 5, 5), patch: "@@ -1,1 +1,1 @@\n-export function encode(a: A): string {\n+export function encode(a: A, b?: B): string {\n" };
+    const plan = buildPassPlan(cfg(), [lib]).pass_plan;
+    const bc = plan.find((r) => r.lens === "pass-backcompat");
+    expect(bc).toBeDefined();
+    expect(bc!.why).toMatch(/a public signature changes in lib\/core\/encoder\.ts/);
+    const internal = { ...f("lib/core/encoder.ts", 5, 5), patch: "@@ -1,1 +1,1 @@\n-  const x = 1;\n+  const x = 2;\n" };
+    expect(buildPassPlan(cfg(), [internal]).pass_plan.some((r) => r.lens === "pass-backcompat")).toBe(false);
+  });
+
+  it("pass-claims fires on a stated behaviour in a one-line body", () => {
+    const hit = selectSubLenses([], { title: "Truncate status output", body: "Outputs the last lines that fit." });
+    expect(hit.find((s) => s.lens === "pass-claims")?.why).toMatch(/Outputs the last lines that fit/);
+    expect(selectSubLenses([], { title: "Refactor", body: "Moves code around." }).some((s) => s.lens === "pass-claims")).toBe(false);
+  });
+});
+
+import { LENS_PLANNING } from "../src/lensplanning.js";
+import { ALL_PASSES } from "../src/passes.js";
+
+describe("every lens documents when it runs and its priority (owner decision 2026-10-03)", () => {
+  it("LENS_PLANNING covers exactly ALL_PASSES", () => {
+    expect(Object.keys(LENS_PLANNING).sort()).toEqual([...ALL_PASSES].sort());
+    for (const [l, p] of Object.entries(LENS_PLANNING)) expect(p.when.length, l).toBeGreaterThan(5);
+  });
+  it("no lens was removed: abstraction, placement and backcompat are still in the vocabulary", () => {
+    for (const l of ["pass-abstraction", "pass-placement", "pass-backcompat"]) expect(ALL_PASSES).toContain(l);
+  });
+});

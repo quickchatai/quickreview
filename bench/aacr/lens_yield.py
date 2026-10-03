@@ -246,6 +246,7 @@ def main() -> None:
     ap.add_argument("--runs-dir", default=os.environ.get("QCR_BENCH_RUNS_DIR", ""))
     ap.add_argument("--run", action="append", required=True, help="KIND:RUN, KIND in aacr|martian|qodo|swepr")
     ap.add_argument("--json")
+    ap.add_argument("--cases-json", help="also write, per lens, the case dirs where it produced a unique REAL finding")
     ap.add_argument("--filter-set", action="append", default=[],
                     help="only cases of bench/aacr/sets/<NAME>.json (repeatable): compare runs on the same PRs")
     a = ap.parse_args()
@@ -254,6 +255,7 @@ def main() -> None:
     stats = collections.defaultdict(lambda: collections.Counter())
     cost = collections.defaultdict(float)
     per_kind = collections.defaultdict(lambda: collections.defaultdict(collections.Counter))
+    unique_real_cases = collections.defaultdict(set)
     allowed = None
     if a.filter_set:
         allowed = set()
@@ -296,6 +298,7 @@ def main() -> None:
                     if real:
                         stats[l]["unique_real"] += 1
                         per_kind[kind][l]["unique_real"] += 1
+                        unique_real_cases[l].add(str(case))
     rows = []
     for l in sorted(set(stats) | set(cost)):
         s = stats[l]
@@ -310,6 +313,8 @@ def main() -> None:
     print("|---|---|---|---|---|---|---|---|")
     for r in rows:
         print(f"| {r['lens']} | {r['raised']} | {r['posted']} | {r['real']} | {r['unique']} | {r['unique_real']} | {r['cost_usd']} | {r['usd_per_unique_real'] if r['usd_per_unique_real'] is not None else '—'} |")
+    if a.cases_json:
+        json.dump({l: sorted(v) for l, v in unique_real_cases.items()}, open(a.cases_json, "w"), indent=1)
     if a.json:
         json.dump({"runs": a.run, "rows": rows,
                    "per_kind": {k: {l: dict(c) for l, c in v.items()} for k, v in per_kind.items()}},

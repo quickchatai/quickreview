@@ -445,7 +445,7 @@ describe("buildPassPlan with the levers", () => {
     expect(widened?.why).toMatch(/predicate/);
     expect(pass_plan.find((p) => p.lens === "pass-claims")?.why).toMatch(/C4244/);
     const sweeps = pass_plan.filter((p) => p.lens === SWEEP_PASS);
-    expect(sweeps).toEqual([
+    expect(sweeps).toMatchObject([
       {
         lens: SWEEP_PASS,
         agent: "pass-sweep--terra-med",

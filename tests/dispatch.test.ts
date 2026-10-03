@@ -450,7 +450,7 @@ describe("buildPassPlan", () => {
     ]);
     for (const lens of ["pass-security", "pass-prod-risk", "pass-data-safety"]) {
       const entry = pass_plan.find((p) => p.lens === lens)!;
-      expect(entry).toEqual({
+      expect(entry).toMatchObject({
         lens,
         agent: `${lens}--sol-high`,
         tier: "sol-high",
@@ -529,7 +529,7 @@ describe("buildPassPlan", () => {
   it("gives non-risk lenses the heuristic tier with an ascending raise ladder", () => {
     // Small quiet diff → terra-med, raisable through sol-med to sol-high.
     const small = buildPassPlan(planCfg, [file("README.md", 3, 1)]);
-    expect(small.pass_plan[0]).toEqual({
+    expect(small.pass_plan[0]).toMatchObject({
       lens: "pass-baseline",
       agent: "pass-baseline--terra-med",
       tier: "terra-med",
@@ -537,7 +537,7 @@ describe("buildPassPlan", () => {
     });
     // Diff at/over small_diff_lines → sol-med, only sol-high above it.
     const big = buildPassPlan(planCfg, [file("app/service.py", 200, 0)]);
-    expect(big.pass_plan[0]).toEqual({
+    expect(big.pass_plan[0]).toMatchObject({
       lens: "pass-baseline",
       agent: "pass-baseline--sol-med",
       tier: "sol-med",
@@ -669,7 +669,7 @@ describe("buildPassPlan", () => {
       // 200 changed lines ⇒ defaultTier sol-med; intent stays terra-med.
       const { pass_plan } = buildPassPlan(planCfg, [file("app/service.py", 200, 0)], { body });
       const intent = pass_plan.find((p) => p.lens === "pass-intent")!;
-      expect(intent).toEqual({
+      expect(intent).toMatchObject({
         lens: "pass-intent",
         agent: "pass-intent--terra-med",
         tier: "terra-med",
@@ -701,13 +701,13 @@ describe("buildPassPlan", () => {
       // 200 changed serializer lines ⇒ default sol-med; selects contracts,
       // backcompat (wire surface) and simplicity (size).
       const { pass_plan } = buildPassPlan(planCfg, [file("app/serializers/user.py", 200, 0)]);
-      expect(pass_plan.find((p) => p.lens === "pass-backcompat")).toEqual({
+      expect(pass_plan.find((p) => p.lens === "pass-backcompat")).toMatchObject({
         lens: "pass-backcompat",
         agent: "pass-backcompat--sol-med",
         tier: "sol-med",
         raisable_to: ["pass-backcompat--sol-high"],
       });
-      expect(pass_plan.find((p) => p.lens === "pass-simplicity")).toEqual({
+      expect(pass_plan.find((p) => p.lens === "pass-simplicity")).toMatchObject({
         lens: "pass-simplicity",
         agent: "pass-simplicity--sol-med",
         tier: "sol-med",
@@ -719,7 +719,7 @@ describe("buildPassPlan", () => {
       // 40 lines: over the default preset's 30-line new-file floor (2026-09-27).
       const added = { ...file("src/tools/new_helper.py", 40, 0), status: "added" };
       const { pass_plan } = buildPassPlan(planCfg, [added]);
-      expect(pass_plan.find((p) => p.lens === "pass-placement")).toEqual({
+      expect(pass_plan.find((p) => p.lens === "pass-placement")).toMatchObject({
         lens: "pass-placement",
         agent: "pass-placement--terra-med",
         tier: "terra-med",
@@ -892,7 +892,7 @@ describe("dispatchOnce", () => {
     expect(order!.migration_gate).toBe(false);
     expect(order!.lenses).toEqual(["pass-baseline", "pass-validate"]);
     // Small quiet diff: baseline starts terra-med and can be raised up the ladder.
-    expect(order!.pass_plan[0]).toEqual({
+    expect(order!.pass_plan[0]).toMatchObject({
       lens: "pass-baseline",
       agent: "pass-baseline--terra-med",
       tier: "terra-med",

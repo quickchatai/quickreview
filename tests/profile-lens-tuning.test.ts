@@ -132,7 +132,7 @@ describe("min_tier floors the plan", () => {
       raisable_to: ["pass-baseline--sol-med", "pass-baseline--sol-high"],
     });
     profile("floor", '[lenses.pass-baseline]\nmin_tier = "sol-med"\n');
-    expect(row(tuned("floor"), SMALL, "pass-baseline")).toEqual({
+    expect(row(tuned("floor"), SMALL, "pass-baseline")).toMatchObject({
       lens: "pass-baseline",
       agent: "pass-baseline--sol-med",
       tier: "sol-med",

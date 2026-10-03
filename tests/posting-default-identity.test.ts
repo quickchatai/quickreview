@@ -148,10 +148,11 @@ describe("[review] dedup_merge = false — byte-identical to before the duplicat
 // findings anchored on the test or caller that exposed the defect).
 // Re-pinned 2026-10-03: pass-behaviour-delta is planned (one row per group of files the PR modifies or deletes code in; `[review] behaviour_delta`, freeze fixes 2) — the fixture PR modifies code, so its plan and the built agents gain the lens
 // Re-pinned 2026-10-03: pass-lint-conformance agent built (planned only when a CI job runs a linter covering a changed file; freeze fixes 2)
+// Re-pinned 2026-10-03: every planned lens carries its reason (the owner's 2026-10-03 planning decision); backcompat also planned on changed public signatures and wire serialization; pass-claims also on a stated behaviour; quality lenses on test-only changes (freeze fixes 2)
 const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
-  first: "e1b79d3be13f0f2a6616df246778a282ef197ad065e0c6f7cfce1f348bc9fa05",
-  "re-review": "0828166b16d9cba8cbc8392913525c084b7531091e442c022422fbc1d5bd79a4",
-  staleness: "3c30accaafa1bce4b21cabe700cc26b798663d9478212d322e6a3b0e0ce20e4b",
+  first: "06afc2e9b106c8f099abb815eaefe94243d6bfa00cf4aef9cde86d0f413bdbd9",
+  "re-review": "08cd2506bcbf7635209e3e3df7233b5e9598f8b2398d09fbdcacbe57d96d6bc6",
+  staleness: "d7602fedfbdbdc130d0ed8e66a5986e9d750440d2b4c40510d3a9c27cde5f5ac",
 };
 // Re-pinned 2026-10-03 (round 7, docs/duplicate-merge.md, the owner's
 // decisions): `[review] dedup_merge` defaults on, so step 4 carries the
@@ -161,17 +162,19 @@ const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
 // posting-policy note. Off + no policy = GOLDEN_ORDERS_NO_DEDUP above.
 // Re-pinned 2026-10-03: pass-behaviour-delta is planned (one row per group of files the PR modifies or deletes code in; `[review] behaviour_delta`, freeze fixes 2) — the fixture PR modifies code, so its plan and the built agents gain the lens
 // Re-pinned 2026-10-03: pass-lint-conformance agent built (planned only when a CI job runs a linter covering a changed file; freeze fixes 2)
+// Re-pinned 2026-10-03: every planned lens carries its reason (the owner's 2026-10-03 planning decision); backcompat also planned on changed public signatures and wire serialization; pass-claims also on a stated behaviour; quality lenses on test-only changes (freeze fixes 2)
 const GOLDEN_ORDERS: Record<string, string> = {
-  first: "4e0f3c8fd33e69f6314d6bbd2be145a4a0d4bfee85edb4eaa125b5e270e246f7",
-  "re-review": "0ad1130c40b5f299b7eab98d074e242c9bd907fc8cd7e9bac0c8a61c5745dfc1",
-  staleness: "36f50dda4ab37ef766feda2faf1bd784af8e5b9d95054b71dd7b7c232889ffee",
+  first: "d28de838e1dcf9c2987aca5d057e2bf2e2283a7e3f40cfe688f23fa38609d3cc",
+  "re-review": "76f7ff03aa79ef48d5298b0885ebe729e33585d4f8417537e6a90d93fa9f1378",
+  staleness: "9942ce69e943a78ea6381c26ffa4cf9936ec7a92e8270bc5f60cc2e55480fb1c",
 };
 // Re-pinned 2026-10-03: pass-behaviour-delta is planned (one row per group of files the PR modifies or deletes code in; `[review] behaviour_delta`, freeze fixes 2) — the fixture PR modifies code, so its plan and the built agents gain the lens
 // Re-pinned 2026-10-03: pass-lint-conformance agent built (planned only when a CI job runs a linter covering a changed file; freeze fixes 2)
+// Re-pinned 2026-10-03: every planned lens carries its reason (the owner's 2026-10-03 planning decision); backcompat also planned on changed public signatures and wire serialization; pass-claims also on a stated behaviour; quality lenses on test-only changes (freeze fixes 2)
 const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
-  first: "93d12697e52d6b866cb8ce0130e823685cbc613cd8781d1f4cc26ccbd3168bad",
-  "re-review": "74f110f58c285cba6402af68ca7849016ca35dd044c93f4433ea605e93961c9c",
-  staleness: "b84f5f7f7cc0931a5cb42c98b94d9d2f798b691a2d90ae72cf315586a43830f4",
+  first: "ad65661eccb245f9b2aae343d54cd4a39acc52e59793e46e3239606978bbf22c",
+  "re-review": "bf1747aa38eee9d358896efe19059cab0610dac58b33c735d4f419c557b4938c",
+  staleness: "dd07c08fcdd796114f65dbde22296e377ff68b1b0ed6f7b20a91f567d1ef4f32",
 };
 // Deliberate re-pins — the default profile's built agents changed ON PURPOSE,
 // never through `[posting]` (owner-approved review changes, 2026-10-02, after

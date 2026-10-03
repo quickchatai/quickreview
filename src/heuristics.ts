@@ -136,6 +136,17 @@ export const PLACEMENT_PASS = "pass-placement";
 export const SIMPLICITY_PASS = "pass-simplicity";
 export const BACKCOMPAT_PASS = "pass-backcompat";
 
+/** A public or exported declaration on a removed or changed line (freeze
+ * fixes 2): TS/JS `export`, Go exported funcs/types, Rust `pub`, Java/Kotlin/
+ * C#/Swift `public`, Python names in `__all__` or a top-level `def`/`class`
+ * without a leading underscore. */
+export const PUBLIC_SIGNATURE_RE =
+  /^(?:\s*(?:export\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|interface|type|enum)\b|func\s+(?:\([^)]*\)\s*)?[A-Z]\w*\s*\(|type\s+[A-Z]\w*\s|pub(?:\([^)]*\))?\s+(?:async\s+)?(?:fn|struct|enum|trait|type|const|mod)\b|public\s+(?:static\s+)?(?:final\s+)?(?:abstract\s+)?[\w<>\[\],\s]+\s+\w+\s*\(|public\s+(?:class|interface|enum|record)\b|__all__\s*=)|(?:def|class)\s+[A-Za-z]\w*)/;
+/** A wire-serialization site on a changed line: field names and order that
+ * a peer or a stored payload agrees with. */
+export const WIRE_FORMAT_RE =
+  /(\bwriteTo\s*\(|\breadFrom\s*\(|@JsonProperty|@SerializedName|@JsonKey|\bserde\s*\(|#\[serde\(|\bStreamOutput\b|\bStreamInput\b|\bjson:"|\bprotobuf\b|\bMarshal\w*\(|\bUnmarshal\w*\()/;
+
 /** CODE files — the unit placement/simplicity judge. A new README, lockfile
  * or asset is "prod" by the test filter but has no placement or complexity
  * to judge: dispatching on it is the pure-spend case the intent bar above
@@ -224,12 +235,31 @@ export function selectLenses(
   intent?: { body?: string | null },
   ext: HeuristicsExtension = EMPTY_HEURISTICS,
   tuning: SelectionTuning = {},
+  /** Filled with WHY each lens was planned (freeze fixes 2, the owner's
+   * 2026-10-03 planning decision: the plan explains every lens it chose). */
+  reasons?: Map<string, string>,
 ): string[] {
   const lenses = new Set<string>(["pass-baseline"]);
+  reasons?.set("pass-baseline", "every round: the PR against its own claims");
   const names = files.map((f) => f.filename);
-  const any = (re: RegExp) => names.some((n) => re.test(n));
+  // The signal that fired last — the conditions below are OR-chains, so when
+  // one is true this names the arm that made it true.
+  let lastHit = "";
+  const any = (re: RegExp) => {
+    const n = names.find((x) => re.test(x));
+    if (n !== undefined) lastHit = `the diff touches ${n}`;
+    return n !== undefined;
+  };
   /** Added-line content signal — only fires when a patch is present. */
-  const added = (re: RegExp) => files.some((f) => f.patch !== undefined && re.test(f.patch));
+  const added = (re: RegExp) => {
+    const f = files.find((x) => x.patch !== undefined && re.test(x.patch));
+    if (f !== undefined) lastHit = `an added line in ${f.filename} matches its signal`;
+    return f !== undefined;
+  };
+  const pick = (lens: string, why?: string) => {
+    lenses.add(lens);
+    reasons?.set(lens, why ?? lastHit);
+  };
   /** Profile-extension signal for one lens: extra path regexes ∪ extra
    * added-line probes. */
   const extHit = (lens: string): boolean =>
@@ -242,7 +272,7 @@ export function selectLenses(
     any(/(^|\/)frontend\//) ||
     extHit("pass-ui")
   )
-    lenses.add("pass-ui");
+    pick("pass-ui");
 
   // External contracts: provider payload surfaces — schema/serializer dirs,
   // wire-format files, integration/provider client dirs.
@@ -251,7 +281,7 @@ export function selectLenses(
     any(/\.(proto|graphql)$/) ||
     extHit("pass-contracts")
   )
-    lenses.add("pass-contracts");
+    pick("pass-contracts");
 
   // Data safety: migrations DDL, raw SQL, backfills (bulk per-row work) — not
   // every models/ touch. Framework-specific command dirs (Django's
@@ -262,7 +292,7 @@ export function selectLenses(
     any(/(^|\/)backfills?\//) ||
     extHit("pass-data-safety")
   )
-    lenses.add("pass-data-safety");
+    pick("pass-data-safety");
 
   // Security & tenancy: auth/permission surfaces, secret/crypto-shaped names,
   // env files, dependency manifests. Framework settings-file globs
@@ -275,10 +305,14 @@ export function selectLenses(
     any(/(^|\/)(auth|authn|authz|security|permissions|middleware|throttling)\//) ||
     any(/(secret|token|passw|crypt|oauth|jwt|csrf|cors)/i) ||
     any(/(^|\/)\.env(\.[^/]+)?$/) ||
-    files.some((f) => DEPS_MANIFEST_RE.test(f.filename) && f.additions > 0) ||
+    files.some((f) => {
+      const hit = DEPS_MANIFEST_RE.test(f.filename) && f.additions > 0;
+      if (hit) lastHit = `the diff adds lines to the dependency manifest ${f.filename}`;
+      return hit;
+    }) ||
     extHit("pass-security")
   )
-    lenses.add("pass-security");
+    pick("pass-security");
 
   // Statelessness: in-process state signals in the added lines (module-level
   // mutable collections, lru_cache/threading), or cache/singleton/registry
@@ -297,7 +331,7 @@ export function selectLenses(
     any(/(^|\/)[^/]*(cache|singleton|registry)[^/]*\.[a-z]+$/i) ||
     extHit("pass-statelessness")
   )
-    lenses.add("pass-statelessness");
+    pick("pass-statelessness");
 
   // Production risk: infra-shaped paths — IaC, CI workflows, container files.
   if (
@@ -307,7 +341,7 @@ export function selectLenses(
     any(/(^|\/)(Dockerfile[^/]*|docker-compose[^/]*\.ya?ml)$/) ||
     extHit("pass-prod-risk")
   )
-    lenses.add("pass-prod-risk");
+    pick("pass-prod-risk");
 
   // Delivery semantics: at-least-once handler surfaces — webhooks, background
   // tasks/workers/crons, queue consumers (not email/notification content
@@ -318,7 +352,7 @@ export function selectLenses(
     any(/(pubsub|pub_sub|cloud_tasks|celery)/i) ||
     extHit("pass-delivery")
   )
-    lenses.add("pass-delivery");
+    pick("pass-delivery");
 
   // Placement: new (or moved — the purest placement change) CODE
   // needs a home judgment, and a cross-cutting code diff is where
@@ -333,7 +367,12 @@ export function selectLenses(
     ) ||
     code.length >= (tuning.placementMinCodeFiles ?? PLACEMENT_MIN_PROD_FILES)
   )
-    lenses.add(PLACEMENT_PASS);
+    pick(
+      PLACEMENT_PASS,
+      code.length >= (tuning.placementMinCodeFiles ?? PLACEMENT_MIN_PROD_FILES)
+        ? `the diff touches ${code.length} code files`
+        : "the diff adds or moves a code file that needs a home",
+    );
 
   // Simplicity: complexity signals — a large code diff, deep
   // nesting in added lines, or a file gaining a pile of branches.
@@ -345,7 +384,12 @@ export function selectLenses(
       (f) => (f.patch?.match(SIMPLICITY_BRANCH_RE)?.length ?? 0) >= SIMPLICITY_MIN_ADDED_BRANCHES,
     )
   )
-    lenses.add(SIMPLICITY_PASS);
+    pick(
+      SIMPLICITY_PASS,
+      codeLines >= SIMPLICITY_MIN_PROD_LINES
+        ? `the code diff is ${codeLines} lines`
+        : "added code nests deeply or piles up branches",
+    );
 
   // Backcompat: deploy-window skew surfaces — wire formats, API
   // modules, queue/task payloads, migrations, feature flags. The dir arm
@@ -355,7 +399,31 @@ export function selectLenses(
   // the profile; the flag probe here keeps the language-agnostic
   // spellings (feature flag itself, plus the cross-language LaunchDarkly /
   // Unleash services).
-  const codeIn = (re: RegExp) => code.some((f) => re.test(f.filename));
+  const codeIn = (re: RegExp) => {
+    const f = code.find((x) => re.test(x.filename));
+    if (f !== undefined) lastHit = `the diff touches ${f.filename}`;
+    return f !== undefined;
+  };
+  // Freeze fixes 2 (content, not paths): a changed or removed PUBLIC
+  // signature or a wire-serialization change breaks callers and peers that
+  // were built against the old one, wherever the file lives — a library's
+  // exported API, a mixed-version cluster's wire format (the analysis found
+  // one missed because selection was by path).
+  const publicSurface = (): boolean => {
+    for (const f of code) {
+      if (f.patch === undefined) continue;
+      const removed = f.patch.split("\n").find((l) => l.startsWith("-") && !l.startsWith("---") && PUBLIC_SIGNATURE_RE.test(l.slice(1)));
+      if (removed !== undefined) {
+        lastHit = `a public signature changes in ${f.filename}`;
+        return true;
+      }
+      if (/^[+-](?![+-]).*/m.test(f.patch) && f.patch.split("\n").some((l) => /^[+-](?![+-])/.test(l) && WIRE_FORMAT_RE.test(l))) {
+        lastHit = `wire serialization changes in ${f.filename}`;
+        return true;
+      }
+    }
+    return false;
+  };
   if (
     codeIn(
       /(^|\/)(serializers?|schemas?|apis?|views?|endpoints?|routes?|controllers?|handlers?)\//,
@@ -364,9 +432,10 @@ export function selectLenses(
     any(/(^|\/)migrations\//) ||
     codeIn(/(^|\/)(tasks|jobs|workers?|consumers?|queues?)\//) ||
     added(/^\+.*(feature.?flag|launch.?darkly|unleash)/im) ||
+    publicSurface() ||
     extHit(BACKCOMPAT_PASS)
   )
-    lenses.add(BACKCOMPAT_PASS);
+    pick(BACKCOMPAT_PASS);
 
   // NOT selected here, deliberately: `pass-concurrency` and
   // `pass-ask-human`. Neither has a PATH predicate — a
@@ -381,7 +450,8 @@ export function selectLenses(
   // Intent: keyed on the BODY, not the file shape — the artifact it
   // judges against is the author's own description, so a body below the
   // substance bar means the pass's only honest output would be NONE. Skip it.
-  if (meetsIntentBar(intent?.body, tuning.intentMinWords)) lenses.add(INTENT_PASS);
+  if (meetsIntentBar(intent?.body, tuning.intentMinWords))
+    pick(INTENT_PASS, "the PR body is long enough to state intent the diff can be checked against");
 
   return [...lenses];
 }
@@ -476,6 +546,13 @@ const LEAK_RE =
 
 const CLAIM_RE =
   /\b(silenc\w*|suppress\w*|warnings?|C\d{4}|-W[a-z-]+|clippy|eslint|lint|support(s|ed)?\s+(for\s+)?\S+|compatib\w*|prevent\w*|no longer|firmware|only\s+(for|when|if|on|with)|require[sd]?\s+(version|firmware|v?\d))\b/i;
+
+/** A stated behaviour (freeze fixes 2): "outputs the last lines that fit",
+ * "keeps only the newest", "returns all …" — a one-line PR body below the
+ * intent bar can still make a claim the code contradicts, and the claim check
+ * is cheap. */
+const BEHAVIOUR_CLAIM_RE =
+  /\b(outputs?|returns?|renders?|displays?|shows?|keeps?|preserves?|ensures?|guarantees?|prints?|emits?)\s+(the|only|all|every|a|an|last|first|newest|latest|oldest)\b/i;
 
 const ROLLOUT_TEXT_RE =
   /\b(hotfix|backport|sdk|protocol|wire format|older (clients?|versions?|sdks?|nodes?)|backward|compat\w*|roll-?out|mixed.?version|persist\w*|migrat\w*|validators?|client and server|server and client)\b/i;
@@ -672,7 +749,7 @@ export const SUBLENS_TRIGGERS: readonly SubLensTrigger[] = [
     lens: "pass-claims",
     family: "pass-intent",
     fires: (_files, text) => {
-      const m = CLAIM_RE.exec(text);
+      const m = CLAIM_RE.exec(text) ?? BEHAVIOUR_CLAIM_RE.exec(text);
       return m ? `the PR text claims "${phraseAt(text, m.index)}"` : null;
     },
   },
@@ -807,13 +884,27 @@ export const STYLE_PASS = "pass-style";
  * only when a CI job runs a linter whose rules cover a changed file. */
 export const LINT_CONFORMANCE_PASS = "pass-lint-conformance";
 
-/** The quality lenses a change warrants: all three once its non-test code
- * adds `minAdded` lines, none below. */
+/** The quality lenses a change warrants: all of them once its non-test code
+ * adds `minAdded` lines — or, on a TEST-ONLY change (freeze fixes 2: a test
+ * file is code a reader maintains too), once its test code adds that many —
+ * none below. */
 export function selectQualityLenses(files: PrFileEntry[], minAdded: number): string[] {
-  const added = files
-    .filter((f) => !isTestFile(f.filename) && CODE_FILE_RE.test(f.filename))
-    .reduce((n, f) => n + f.additions, 0);
+  const code = files.filter((f) => CODE_FILE_RE.test(f.filename));
+  const prod = code.filter((f) => !isTestFile(f.filename)).reduce((n, f) => n + f.additions, 0);
+  const testOnly = code.length > 0 && code.every((f) => isTestFile(f.filename));
+  const tests = code.filter((f) => isTestFile(f.filename)).reduce((n, f) => n + f.additions, 0);
+  const added = testOnly ? tests : prod;
   return added >= minAdded && added > 0 ? [...QUALITY_PASSES] : [];
+}
+
+/** Why the quality lenses were planned, for the plan. */
+export function qualityReason(files: PrFileEntry[], minAdded: number): string {
+  const code = files.filter((f) => CODE_FILE_RE.test(f.filename));
+  const testOnly = code.length > 0 && code.every((f) => isTestFile(f.filename));
+  const n = code.filter((f) => isTestFile(f.filename) === testOnly).reduce((m, f) => m + f.additions, 0);
+  return testOnly
+    ? `a test-only change adds ${n} lines of test code (at least ${minAdded})`
+    : `the change adds ${n} lines of non-test code (at least ${minAdded})`;
 }
 
 /** Files the sweep never reads: lockfiles, generated or minified output,

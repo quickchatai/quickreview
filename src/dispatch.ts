@@ -34,6 +34,7 @@ import {
   STYLE_PASS,
   LINT_CONFORMANCE_PASS,
   selectQualityLenses,
+  qualityReason,
 } from "./heuristics.js";
 import type { HeuristicsExtension } from "./heuristics.js";
 import { flooredTier, lensEnabled } from "./lenstuning.js";
@@ -62,6 +63,7 @@ import {
 import { roundPostingKey } from "./posting-receipt.js";
 import { findStyleGuide } from "./styleguide.js";
 import { findCiLinters, lintersForFiles, type CiLinter } from "./lintconfig.js";
+import { LENS_PLANNING } from "./lensplanning.js";
 import { writePassTasks } from "./passtasks.js";
 import { renderGateNotes } from "./templates.js";
 import { directiveVocabulary, isFirstPartyDirectivePath } from "./severity.js";
@@ -741,17 +743,26 @@ export function buildPassPlan(
   // the profile's switch for one lens — explicit `enabled` wins,
   // otherwise the `[review]` lever that gates it (true for an ungated lens).
   const on = (lens: string, lever = true): boolean => lensEnabled(cfg.lenses, lens, lever);
-  const selected0 = selectLenses(files, intent, heuristics, {
-    intentMinWords: cfg.review.intent_min_words,
-    placementMinCodeFiles: cfg.review.placement_min_code_files,
-    placementMinNewFileLines: cfg.review.placement_min_new_file_lines,
-  });
+  // The owner's 2026-10-03 planning decision: the plan explains WHY each
+  // lens was chosen — the path-shaped lenses included, not only sub-lenses.
+  const reasons0 = new Map<string, string>();
+  const selected0 = selectLenses(
+    files,
+    intent,
+    heuristics,
+    {
+      intentMinWords: cfg.review.intent_min_words,
+      placementMinCodeFiles: cfg.review.placement_min_code_files,
+      placementMinNewFileLines: cfg.review.placement_min_new_file_lines,
+    },
+    reasons0,
+  );
   // Sub-lenses ride after the path-selected lenses, each with the reason its
   // trigger fired (benchmark 2026-09-26; `[review] sublenses`).
   const sub = selectSubLenses(files, intent).filter(
     (s) => on(s.lens, cfg.review.sublenses) && !selected0.includes(s.lens),
   );
-  const whyOf = new Map(sub.map((s) => [s.lens, s.why]));
+  const whyOf = new Map<string, string>([...reasons0, ...sub.map((s) => [s.lens, s.why] as [string, string])]);
   // existing tests are consumers of every code change, and the PR's
   // own tests are claims about the code — one lens reads both.
   const tests =
@@ -763,6 +774,9 @@ export function buildPassPlan(
   const quality = selectQualityLenses(files, cfg.review.quality_min_added_lines).filter(
     (l) => on(l, cfg.review.quality_lenses) && !selected0.includes(l),
   );
+  if (tests.length)
+    whyOf.set(TESTS_PASS, "the PR changes code: existing tests are its consumers, and its own tests are claims");
+  for (const l of quality) whyOf.set(l, qualityReason(files, cfg.review.quality_min_added_lines));
   // a guide the repo writes wins; the profile's drafted guide is
   // the standard only when the repo writes none.
   const profileGuide = cfg.lenses?.[STYLE_PASS]?.guide;
@@ -834,7 +848,9 @@ export function buildPassPlan(
   const pass_plan = lenses.map((lens): PassPlanEntry => {
     const pinned = lens === VALIDATE_PASS || risk.has(lens) || pins[lens] !== undefined;
     const tier: PassTier = lens === VALIDATE_PASS ? validate : tierOf(lens);
-    const why = whyOf.get(lens);
+    // Every planned lens says why (owner decision 2026-10-03): the signal
+    // that fired, else the lens's documented planning rule.
+    const why = whyOf.get(lens) ?? (lens !== VALIDATE_PASS ? LENS_PLANNING[lens]?.when : undefined);
     return {
       lens,
       agent: `${lens}--${tier}`,
@@ -863,6 +879,7 @@ export function buildPassPlan(
       agent: `${SWEEP_PASS}--${sweepTier}`,
       tier: sweepTier,
       raisable_to: pins[SWEEP_PASS] !== undefined ? [] : raisableFrom(SWEEP_PASS, sweepTier),
+      why: `every changed line of ${focus.length === 1 ? focus[0] : `${focus.length} changed files`}, read one by one`,
       focus,
     }));
     const at = pass_plan.at(-1)?.lens === VALIDATE_PASS ? pass_plan.length - 1 : pass_plan.length;
