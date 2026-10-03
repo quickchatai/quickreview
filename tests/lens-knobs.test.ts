@@ -7,8 +7,15 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { applyConfigOverrides, runFingerprint } from "../src/bench/runner.js";
-import { parseConfig, REVIEW_DEFAULTS, validateLensKnobs, type Config } from "../src/config.js";
+import {
+  DEFAULT_PASS_TIERS,
+  parseConfig,
+  REVIEW_DEFAULTS,
+  validateLensKnobs,
+  type Config,
+} from "../src/config.js";
 import { buildPassPlan } from "../src/dispatch.js";
+import { lensModelOverrides } from "../src/lenstuning.js";
 import type { PrFileEntry } from "../src/github.js";
 import {
   buildAgents,
@@ -52,11 +59,17 @@ const tomlWith = (section: string, lines: string): string =>
 // ---- defaults are the shipped review ---------------------------------------
 
 describe("defaults reproduce today's review", () => {
-  it("every config parses to no skips, no pins, no consequence rule", () => {
+  it("every config parses to no skips, the shipped pins, no consequence rule", () => {
+    // The shipped pins (owner decision 2026-10-03, src/config.ts DEFAULT_PASS_TIERS):
+    // baseline, sweep and behaviour-delta at sol-high; nothing else pinned.
     for (const cfg of [baseCfg, example]) {
       expect(cfg.review.skip_lenses).toEqual([]);
       expect(cfg.review.validate_consequence_rule).toBe(false);
-      expect(cfg.models.pass_tiers).toEqual({});
+      expect(cfg.models.pass_tiers).toEqual({
+        "pass-baseline": "sol-high",
+        "pass-sweep": "sol-high",
+        "pass-behaviour-delta": "sol-high",
+      });
     }
     expect(REVIEW_DEFAULTS.skip_lenses).toEqual([]);
     expect(REVIEW_DEFAULTS.validate_consequence_rule).toBe(false);
@@ -69,7 +82,9 @@ describe("defaults reproduce today's review", () => {
     };
     delete legacy.review.skip_lenses;
     delete legacy.review.validate_consequence_rule;
-    delete legacy.models.pass_tiers;
+    // pass_tiers is not one of the legacy-absent keys any more: its default
+    // carries the shipped pins (DEFAULT_PASS_TIERS), so a config without the
+    // table still pins — exercised in the test below.
     for (const files of [SMALL, LARGE])
       expect(buildPassPlan(baseCfg, files)).toEqual(
         buildPassPlan(legacy as unknown as Config, files),
@@ -79,7 +94,39 @@ describe("defaults reproduce today's review", () => {
   it("the default config addenda and the default model map are unchanged", () => {
     // + the duplicate merge's validator rule, on by default since round 7 (docs/duplicate-merge.md)
     expect(configAddenda(baseCfg.review).map((a) => a.id)).toEqual(["validate-demote-not-kill", "dedup-group-validate"]);
-    expect(passTierModels(baseCfg.models.pass_tiers, baseCfg.models.tiers)).toEqual({});
+    // the shipped pins' variants carry the sol-high spec; no other lens is touched
+    const pinned = passTierModels(baseCfg.models.pass_tiers, baseCfg.models.tiers);
+    const expected: Record<string, string> = {};
+    for (const lens of Object.keys(DEFAULT_PASS_TIERS))
+      for (const t of ["terra-med", "sol-med", "sol-high"] as const)
+        expected[`${lens}--${t}`] = baseCfg.models.tiers["sol-high"];
+    expect(pinned).toEqual(expected);
+  });
+
+  it("a profile lowers a shipped pin's thinking with [lenses.<pass>] effort; other lenses untouched", () => {
+    const cfg = structuredClone(baseCfg);
+    cfg.lenses = { "pass-baseline": { effort: "medium" } };
+    const models = passTierModels(
+      cfg.models.pass_tiers,
+      cfg.models.tiers,
+      lensModelOverrides(cfg.models, cfg.lenses),
+    );
+    // the pinned tier's spec with the profile's thinking level, on every variant
+    for (const t of ["terra-med", "sol-med", "sol-high"] as const)
+      expect(models[`pass-baseline--${t}`]?.endsWith(":medium")).toBe(true);
+    // the other shipped pins keep sol-high's spec
+    expect(models["pass-sweep--terra-med"]).toBe(cfg.models.tiers["sol-high"]);
+    expect(models["pass-behaviour-delta--terra-med"]).toBe(cfg.models.tiers["sol-high"]);
+    // an unpinned lens gets no variant override at all
+    expect(models["pass-tests--sol-med"]).toBeUndefined();
+  });
+
+  it("a config with no [models.pass_tiers] table still gets the shipped pins; an entry replaces one", () => {
+    expect(parseConfig(fixture).models.pass_tiers).toEqual({ ...DEFAULT_PASS_TIERS });
+    const lowered = parseConfig(fixture + `\n[models.pass_tiers]\n"pass-baseline" = "sol-med"\n`);
+    expect(lowered.models.pass_tiers).toEqual({ ...DEFAULT_PASS_TIERS, "pass-baseline": "sol-med" });
+    const row = buildPassPlan(lowered, LARGE).pass_plan.find((p) => p.lens === "pass-baseline")!;
+    expect(row.tier).toBe("sol-med");
   });
 });
 
@@ -221,7 +268,7 @@ describe("[models.pass_tiers]", () => {
     const ok = parseConfig(
       fixture + `\n[models.pass_tiers]\n"pass-sweep" = "sol-high"\n"pass-baseline" = "sol-high"\n`,
     );
-    expect(ok.models.pass_tiers).toEqual({ "pass-sweep": "sol-high", "pass-baseline": "sol-high" });
+    expect(ok.models.pass_tiers).toEqual({ ...DEFAULT_PASS_TIERS, "pass-sweep": "sol-high", "pass-baseline": "sol-high" });
     const bad = (body: string) => () => parseConfig(fixture + `\n[models.pass_tiers]\n${body}\n`);
     expect(bad(`"pass-swep" = "sol-high"`)).toThrow(/unknown pass "pass-swep"/);
     expect(bad(`"pass-sweep" = "sol-max"`)).toThrow(/unknown tier/);
@@ -232,7 +279,7 @@ describe("[models.pass_tiers]", () => {
   it("an explicit preset/effort still sets the pinned tier's spec (pins name tiers, not specs)", () => {
     const text = fixture + `\n[models.pass_tiers]\n"pass-sweep" = "sol-high"\n`;
     const low = applyConfigOverrides(parseConfig(text), "review.preset=low", text);
-    expect(low.models.pass_tiers).toEqual({ "pass-sweep": "sol-high" });
+    expect(low.models.pass_tiers).toEqual({ ...DEFAULT_PASS_TIERS, "pass-sweep": "sol-high" });
     expect(passTierModels(low.models.pass_tiers, low.models.tiers)["pass-sweep--terra-med"]).toBe(
       low.models.tiers["sol-high"],
     );
@@ -360,10 +407,11 @@ describe("bench --config: arrays, open maps, typos", () => {
       "models.pass_tiers.pass-sweep=sol-high,models.pass_tiers.pass-baseline=sol-high",
     );
     expect(cfg.models.pass_tiers).toEqual({
+      ...DEFAULT_PASS_TIERS,
       "pass-sweep": "sol-high",
       "pass-baseline": "sol-high",
     });
-    expect(baseCfg.models.pass_tiers).toEqual({});
+    expect(baseCfg.models.pass_tiers).toEqual({ ...DEFAULT_PASS_TIERS });
     expect(() => applyConfigOverrides(baseCfg, "models.pass_tiers.pass-sweep=sol-max")).toThrow(
       /unknown tier/,
     );
@@ -383,7 +431,7 @@ describe("bench --config: arrays, open maps, typos", () => {
   it("the fingerprint records every new knob", () => {
     const def = runFingerprint(baseCfg, "p");
     expect(def.levers).toMatchObject({ skip_lenses: [], validate_consequence_rule: false });
-    expect(def.pass_tiers).toEqual({});
+    expect(def.pass_tiers).toEqual({ ...DEFAULT_PASS_TIERS });
     expect(def.risk_passes).toEqual(baseCfg.models.risk_passes);
     const arm = runFingerprint(
       applyConfigOverrides(
@@ -396,7 +444,7 @@ describe("bench --config: arrays, open maps, typos", () => {
       skip_lenses: ["pass-abstraction"],
       validate_consequence_rule: true,
     });
-    expect(arm.pass_tiers).toEqual({ "pass-sweep": "sol-high" });
+    expect(arm.pass_tiers).toEqual({ ...DEFAULT_PASS_TIERS, "pass-sweep": "sol-high" });
   });
 });
 

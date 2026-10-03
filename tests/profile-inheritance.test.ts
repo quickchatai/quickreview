@@ -103,7 +103,8 @@ function baselineBody(name: string): string {
 
 function plan(name: string, files: PrFileEntry[]) {
   const r = resolved(name);
-  return buildPassPlan(cfg, files, undefined, r.ecosystem, r.heuristics);
+  // Unpinned (the shipped DEFAULT_PASS_TIERS would mask the ecosystem's tier gate).
+  return buildPassPlan({ ...cfg, models: { ...cfg.models, pass_tiers: {} } }, files, undefined, r.ecosystem, r.heuristics);
 }
 
 const file = (filename: string, extra: Partial<PrFileEntry> = {}): PrFileEntry => ({

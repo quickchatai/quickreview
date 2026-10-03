@@ -35,6 +35,10 @@ const sandbox = join(import.meta.dirname, "..");
 const fixture: Config = parseConfig(
   readFileSync(resolve(sandbox, "tests/fixtures/config.toml"), "utf8"),
 );
+// The shipped pins (DEFAULT_PASS_TIERS: baseline, sweep and behaviour-delta at
+// sol-high, owner decision 2026-10-03) are cleared here: these tests exercise the
+// UNPINNED tier heuristics; the pins themselves are pinned in lens-knobs.test.ts.
+fixture.models.pass_tiers = {};
 
 let dir: string;
 let env: InstallEnv;

@@ -899,7 +899,9 @@ export interface ModelsConfig {
   /** Per-lens tier pins (`[models.pass_tiers]`, 2026-09-29): pass name → tier.
    * A pinned lens runs at that tier on every PR whatever the diff size — the
    * plan names that tier, the lens is not raisable, and every built variant
-   * of it carries that tier's spec. Empty (the default) changes nothing. Not
+   * of it carries that tier's spec. The default is `DEFAULT_PASS_TIERS`
+   * (baseline, sweep, behaviour-delta at sol-high); a config entry replaces
+   * a lens's default pin. Not
    * for pass-validate (its knob is `validate_tier`) nor for a risk pass
    * (always sol-high). A profile `min_tier` still floors a pin, and the
    * validator never follows a pinned lens's tier. */
@@ -953,6 +955,22 @@ function parseEffortMax(raw: unknown): ThinkingLevel {
   throw new Error(`config.toml [models] effort_max must be a pi thinking level (got "${v}")`);
 }
 
+/**
+ * The shipped per-lens tier pins (owner decision 2026-10-03, after the
+ * decisions validation: the same 30 PRs at default vs high effort gave +6
+ * AACR defects, +3 medium on the miss set, no high-severity loss, for +18%
+ * cost per PR). The three lenses that read the whole diff line by line run at
+ * the `sol-high` tier — gpt-6.1-sol at high effort — on every PR; every other
+ * lens keeps its planned tier. A config's own `[models.pass_tiers]` entry for
+ * one of them replaces its pin (e.g. `"pass-baseline" = "sol-med"`), and a
+ * profile lowers its thinking with `[lenses.<pass>] effort = "medium"`.
+ */
+export const DEFAULT_PASS_TIERS: Readonly<Record<string, PassTier>> = Object.freeze({
+  "pass-baseline": "sol-high",
+  "pass-sweep": "sol-high",
+  "pass-behaviour-delta": "sol-high",
+});
+
 /** Defaults for the tiered [models] knobs — older configs keep parsing. */
 export const MODELS_TIER_DEFAULTS: Pick<
   ModelsConfig,
@@ -965,7 +983,7 @@ export const MODELS_TIER_DEFAULTS: Pick<
   | "effort_max"
   | "pass_tiers"
 > = {
-  pass_tiers: {},
+  pass_tiers: { ...DEFAULT_PASS_TIERS },
   effort: "",
   effort_max: "max",
   tiers: {
@@ -2172,7 +2190,7 @@ function parseModels(raw: Record<string, any>, presetEffort: ReviewEffort = ""):
     validate_tier: (raw.validate_tier ?? MODELS_TIER_DEFAULTS.validate_tier) as PassTier,
     small_diff_lines: Number(raw.small_diff_lines ?? MODELS_TIER_DEFAULTS.small_diff_lines),
     pricing: (raw.pricing ?? {}) as Record<string, ModelPricing>,
-    pass_tiers: { ...((raw.pass_tiers ?? {}) as Record<string, PassTier>) },
+    pass_tiers: { ...DEFAULT_PASS_TIERS, ...((raw.pass_tiers ?? {}) as Record<string, PassTier>) },
   });
 }
 

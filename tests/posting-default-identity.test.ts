@@ -159,10 +159,11 @@ describe("[review] dedup_merge = false — byte-identical to before the duplicat
 // Re-pinned 2026-10-03: pass-lint-conformance agent built (planned only when a CI job runs a linter covering a changed file; freeze fixes 2)
 // Re-pinned 2026-10-03: every planned lens carries its reason (the owner's 2026-10-03 planning decision); backcompat also planned on changed public signatures and wire serialization; pass-claims also on a stated behaviour; quality lenses on test-only changes (freeze fixes 2)
 // Re-pinned 2026-10-03: pass-behaviour-delta planned only where base behaviour is at risk (owner decision): the fixture removes only `pass` and adds a line, so its plan no longer carries the lens
+// Re-pinned 2026-10-03 (owner decision after the decisions validation, dv1 vs dv1hi): pass-baseline, pass-sweep and pass-behaviour-delta run at the sol-high tier by default (src/config.ts DEFAULT_PASS_TIERS), so their plan rows name sol-high and are not raisable
 const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
-  first: "e85a6bd6aea57afdd8979778bd784664702b99ebe1ab1817af8c2b9ae630a965",
-  "re-review": "cbee3b06e368bf1ed13008e7b9b603596d6b2848ec7a5b43e119b9311bbe8f7f",
-  staleness: "c78f3001aa0227d8241310a65fe355d510c310ad1d89c344c96a8b41bd059687",
+  first: "b7730fa2ec772d40b6341ec7a82cc09074186aa62071c3b760ce033d1bb21c5f",
+  "re-review": "586d0d90a8b4c0190fecfdcf5814beaed63c2a7e0d311dce30560dfd9716ed46",
+  staleness: "68d477d97330155a15a43011a96b4555ecc2e8a0d9dfae9b872ac9aaeac0fdfb",
 };
 // Re-pinned 2026-10-03 (round 7, docs/duplicate-merge.md, the owner's
 // decisions): `[review] dedup_merge` defaults on, so step 4 carries the
@@ -180,25 +181,28 @@ const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
 // them, each saying why). Off = GOLDEN_ORDERS_NO_COVERAGE below, the previous
 // pin unchanged.
 // Re-pinned 2026-10-03: pass-behaviour-delta planned only where base behaviour is at risk (owner decision): the fixture removes only `pass` and adds a line, so its plan no longer carries the lens
+// Re-pinned 2026-10-03 (owner decision after the decisions validation, dv1 vs dv1hi): pass-baseline, pass-sweep and pass-behaviour-delta run at the sol-high tier by default (src/config.ts DEFAULT_PASS_TIERS), so their plan rows name sol-high and are not raisable
 const GOLDEN_ORDERS: Record<string, string> = {
-  first: "66a96f5b6803a4dd932047ee5d925bc37985aa7a17e7f229c148373d9dd40196",
-  "re-review": "59df02e91a27712366e5615b5404b4fc91902dac92d8762d6bfb9593bc1cbe90",
-  staleness: "2dac597082e3499b03b4ade4c902c28e297bcef8e0f1e3e4baffb9dc2cd04e4b",
+  first: "fd5e87180402889e6c8bb70eed9ff097c9385c82ff4e49ddd18b710358300c92",
+  "re-review": "2844e3cae0624fb7c8a96b9993a1865adf5eecc27611eadba2cb4122cee55277",
+  staleness: "9676345b80b7dbb84078c602281e883ff41e6ed3f63a4cc00eee39cdf5b33edd",
 };
 // Re-pinned 2026-10-03: pass-behaviour-delta planned only where base behaviour is at risk (owner decision): the fixture removes only `pass` and adds a line, so its plan no longer carries the lens
+// Re-pinned 2026-10-03 (owner decision after the decisions validation, dv1 vs dv1hi): pass-baseline, pass-sweep and pass-behaviour-delta run at the sol-high tier by default (src/config.ts DEFAULT_PASS_TIERS), so their plan rows name sol-high and are not raisable
 const GOLDEN_ORDERS_NO_COVERAGE: Record<string, string> = {
-  first: "d86b6e43c0cd205430ef32dc77a024b8f53946df3c31bb851881f542ef1d9098",
-  "re-review": "ae720926944e7f45552617654f1b4c89f253a8740dc404d9c1332b469aaa54ec",
-  staleness: "fed92fd19711669fa90ec3eb360041f8fdab0d1590f3651358d2fc2c03e87bb5",
+  first: "3039e166d2ced7247076c6e0cf0da8e82ac345c0eef5c5f7b244f01e8fc919f2",
+  "re-review": "fd19bae1b40d5f3e4ef598e9d22bd906b67d85ba59305bfb99902e9d97d87b51",
+  staleness: "b88ccb747bc4cad4d0214fa2463af7a313409e224f381ba640eaf989637230f7",
 };
 // Re-pinned 2026-10-03: pass-behaviour-delta is planned (one row per group of files the PR modifies or deletes code in; `[review] behaviour_delta`, freeze fixes 2) — the fixture PR modifies code, so its plan and the built agents gain the lens
 // Re-pinned 2026-10-03: pass-lint-conformance agent built (planned only when a CI job runs a linter covering a changed file; freeze fixes 2)
 // Re-pinned 2026-10-03: every planned lens carries its reason (the owner's 2026-10-03 planning decision); backcompat also planned on changed public signatures and wire serialization; pass-claims also on a stated behaviour; quality lenses on test-only changes (freeze fixes 2)
 // Re-pinned 2026-10-03: pass-behaviour-delta planned only where base behaviour is at risk (owner decision): the fixture removes only `pass` and adds a line, so its plan no longer carries the lens
+// Re-pinned 2026-10-03 (owner decision after the decisions validation, dv1 vs dv1hi): pass-baseline, pass-sweep and pass-behaviour-delta run at the sol-high tier by default (src/config.ts DEFAULT_PASS_TIERS), so their plan rows name sol-high and are not raisable
 const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
-  first: "0fd96d713d97c5d96b440728dfeb8223eb2b3b888a7b2188bab97c7925138be0",
-  "re-review": "3624d725965f845fe005292c1b28f6bb81b7fc3ce5645ee7d82d82d76f576036",
-  staleness: "e7c772cee4f784c4511998b8adb7b42924edced330913ec49c6f86ed23970462",
+  first: "50e995dccbfc50e70a2919cf1668716303e8b32d837368bf957b981c54994614",
+  "re-review": "afd163b6f96437950c2d219e0fec4154c510af14a42a7f32a7adce5045487be2",
+  staleness: "33afd97cb22fdccef60b6f121673c0c597085f61d2a6d1796d90d6d0f4a7ca70",
 };
 // Deliberate re-pins — the default profile's built agents changed ON PURPOSE,
 // never through `[posting]` (owner-approved review changes, 2026-10-02, after

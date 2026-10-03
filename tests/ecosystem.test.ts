@@ -289,8 +289,11 @@ describe("the tier-forcing gate through the plan", () => {
   ];
 
   it("django forces sol-med on a small migrations diff; none leaves terra-med", () => {
-    const django = buildPassPlan(cfg, migrationDiff, undefined, DJANGO_ECOSYSTEM);
-    const none = buildPassPlan(cfg, migrationDiff, undefined, NONE_ECOSYSTEM);
+    // The gate is a tier heuristic: run it UNPINNED (the shipped DEFAULT_PASS_TIERS
+    // pin baseline at sol-high, which would mask it).
+    const cfg0: Config = { ...cfg, models: { ...cfg.models, pass_tiers: {} } };
+    const django = buildPassPlan(cfg0, migrationDiff, undefined, DJANGO_ECOSYSTEM);
+    const none = buildPassPlan(cfg0, migrationDiff, undefined, NONE_ECOSYSTEM);
     expect(django.pass_plan.find((p) => p.lens === "pass-baseline")?.tier).toBe("sol-med");
     expect(none.pass_plan.find((p) => p.lens === "pass-baseline")?.tier).toBe("terra-med");
   });

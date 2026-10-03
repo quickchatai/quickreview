@@ -417,6 +417,9 @@ describe("buildPassPlan", () => {
       risk_passes: ["pass-security", "pass-prod-risk", "pass-data-safety"],
       validate_tier: "terra-med",
       small_diff_lines: 150,
+      // The shipped pins (DEFAULT_PASS_TIERS) are cleared: this block exercises
+      // the UNPINNED tier heuristics; the pins are pinned in lens-knobs.test.ts.
+      pass_tiers: {},
     },
   };
 
@@ -891,12 +894,13 @@ describe("dispatchOnce", () => {
     const [order] = await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
     expect(order!.migration_gate).toBe(false);
     expect(order!.lenses).toEqual(["pass-baseline", "pass-validate"]);
-    // Small quiet diff: baseline starts terra-med and can be raised up the ladder.
+    // Shipped default (owner decision 2026-10-03, DEFAULT_PASS_TIERS): baseline is
+    // pinned at sol-high on every PR, so it is not raisable.
     expect(order!.pass_plan[0]).toMatchObject({
       lens: "pass-baseline",
-      agent: "pass-baseline--terra-med",
-      tier: "terra-med",
-      raisable_to: ["pass-baseline--sol-med", "pass-baseline--sol-high"],
+      agent: "pass-baseline--sol-high",
+      tier: "sol-high",
+      raisable_to: [],
     });
   });
 

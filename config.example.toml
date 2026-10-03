@@ -167,8 +167,13 @@ risk_passes = ["pass-security", "pass-prod-risk", "pass-data-safety"]
 validate_tier = "sol-high"
 # Diffs under this many changed lines (additions+deletions) start at terra-med.
 small_diff_lines = 150
-# [models.pass_tiers] — per-lens tier pins (2026-09-29; empty = today's
-# behaviour): pass name → tier name (a key of [models.tiers]). A pinned lens
+# [models.pass_tiers] — per-lens tier pins (2026-09-29): pass name → tier
+# name (a key of [models.tiers]). SHIPPED DEFAULT (owner decision 2026-10-03,
+# src/config.ts DEFAULT_PASS_TIERS): pass-baseline, pass-sweep and
+# pass-behaviour-delta at "sol-high" (gpt-6.1-sol at high effort) — measured
+# +6 defects on 18 AACR PRs for +18% cost per PR. An entry here replaces that
+# lens's default pin (e.g. "pass-baseline" = "sol-med"); a repo profile lowers
+# one lens's thinking with [lenses.<pass>] effort = "medium". A pinned lens
 # runs at that tier on every PR whatever the diff size — the plan names it, it
 # is not raisable, and every built variant of it carries that tier's spec. The
 # validator never follows a pinned lens (it runs at validate_tier).

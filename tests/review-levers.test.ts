@@ -34,6 +34,10 @@ import type { PrStateRow } from "../src/state.js";
 
 const fixture = readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8");
 const baseCfg: Config = parseConfig(fixture);
+// The shipped pins (DEFAULT_PASS_TIERS: baseline, sweep and behaviour-delta at
+// sol-high, owner decision 2026-10-03) are cleared here: these tests exercise the
+// UNPINNED tier heuristics; the pins themselves are pinned in lens-knobs.test.ts.
+baseCfg.models.pass_tiers = {};
 
 function withLevers(over: Partial<Config["review"]>): Config {
   const cfg = structuredClone(baseCfg);
