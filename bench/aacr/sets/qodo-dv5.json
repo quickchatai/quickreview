@@ -1,0 +1,124 @@
+{
+ "name": "qodo-dv5",
+ "dataset": {
+  "source": "https://huggingface.co/datasets/Qodo/PR-Review-Bench",
+  "commit": "a73957c450a70693a743260e5637fffc44625f16",
+  "file": "git_code_review_bench_100_w_open_prs.jsonl",
+  "sha256": "2f0448ed1f9a55bea14039961d8d9e610ee8885b37559b80f5821f3f70cfe64d"
+ },
+ "rule": "Decisions validation (2026-10-03): five Qodo PRs from round 1's miss-targeted and rule-heavy sets (fv1-qodo-miss6 / fv1-qodo-rules30) with the most functional issues still uncredited at N=5; ties broken toward a repo not yet picked.",
+ "references": "40",
+ "backups": [],
+ "cases": [
+  {
+   "instance_id": "agentic-review-benchmarks__tauri@a3ec70b",
+   "repo": "agentic-review-benchmarks/tauri",
+   "pr": 5,
+   "pr_url": "https://github.com/agentic-review-benchmarks/tauri/pull/5",
+   "base_commit": "35bbfd1b1d71bc57865f26796f065e02c8fb9552",
+   "head_commit": "a3ec70bfba794c35b5ef02e12f61df7d93ed8929",
+   "language": "Rust",
+   "pr_category": "qodo-injected",
+   "change_line_count": 0,
+   "references": 7,
+   "title": "Less statics",
+   "body": "Work on refactoring the globals in tauri-cli. I think this is beneficial as-is, ~~but it is not quite finished~~.\r\n\r\n~~This still is missing a full transition towards lazy initialized `tauri_dir` and `frontend_dir` while guaranteeing not to break anything, as discussed in this [comment](https://github.com/tauri-apps/tauri/pull/14632#issuecomment-3627361907).~~\r\nCompleted.\r\n\r\nRead commit-by-commit.",
+   "leakproof": {
+    "source_head": "26a6cebd57ddb4621fb4fd3cbae556dd12d672be",
+    "source_merge_base": "50901ebda46033346b1b11bf6e453dad2d51479e",
+    "base_tree": "6297f77a2c558c5c158dc60a9d4db17b5509b597",
+    "head_tree": "8a749e1d8bd5438eac74b6fe2ac4c0a0dec85009"
+   },
+   "task_id": "tauri#5",
+   "source_base_commit": "50901ebda46033346b1b11bf6e453dad2d51479e"
+  },
+  {
+   "instance_id": "agentic-review-benchmarks__aspnetcore@0c4e428",
+   "repo": "agentic-review-benchmarks/aspnetcore",
+   "pr": 4,
+   "pr_url": "https://github.com/agentic-review-benchmarks/aspnetcore/pull/4",
+   "base_commit": "3020e981e1021341517b0e4898bad2c2d91320e2",
+   "head_commit": "0c4e4284ce8359e9d4ceb13a266ef6e94c6be14c",
+   "language": "C#",
+   "pr_category": "qodo-injected",
+   "change_line_count": 0,
+   "references": 15,
+   "title": "Blazor supports `DisplayName` for models",
+   "body": "# Summary\r\n\r\nThis PR adds the `DisplayName<TValue>` component to enable displaying property display names from `[Display]` and `[DisplayName]` attributes in Blazor applications, addressing the feature gap identified in issue #49147.\r\n\r\n## Background\r\n\r\nBlazor currently lacks a built-in mechanism to display property names from metadata attributes like MVC's `@Html.DisplayNameFor()` helper. This forces developers to either:\r\n- Hardcode label text (violating DRY principles and making localization difficult)\r\n- Build custom reflection-based solutions\r\n- Duplicate display name information across models and views\r\n\r\nThe new `DisplayName<TValue>` component provides an attribute-based solution that follows the same familiar pattern as other Blazor form components like `ValidationMessage<TValue>`.\r\n\r\nFixes #49147\r\n\r\n## Changes\r\n\r\n### Public API\r\n```c#\r\nnamespace Microsoft.AspNetCore.Components.Forms;\r\n\r\npublic class DisplayName<TValue> : ComponentBase\r\n{\r\n    [Parameter]\r\n    [EditorRequired]\r\n    public Expression<Func<TValue>>? For { get; set; }\r\n}\r\n```\r\n\r\n## Implementation Details\r\n\r\nThe component extracts the property name from the expression and reads display metadata:\r\n1. First checks for `DisplayAttribute.Name` (System.ComponentModel.DataAnnotations)\r\n2. Falls back to `DisplayNameAttribute.DisplayName` (System.ComponentModel)\r\n3. Uses the property name itself if no attributes are present\r\n\r\n### Tests\r\n\r\n**Unit tests** in `src/Components/Web/test/Forms/DisplayNameTest.cs`:\r\n- \u2705 Throws when `For` parameter is missing\r\n- \u2705 Reads `DisplayAttribute.Name` correctly\r\n- \u2705 Reads `DisplayNameAttribute.DisplayName` correctly\r\n- \u2705 `DisplayAttribute` takes precedence over `DisplayNameAttribute`\r\n- \u2705 Falls back to property name when no attributes present\r\n- \u2705 Works with different property types (string, decimal, DateTime, int)\r\n\r\n**E2E test** in `src/Components/test/E2ETest/Tests/FormsTest.cs`:\r\n- \u2705 `DisplayNamelReadsAttributesCorrectly()` - Verifies the component renders correctly in a browser with all attribute scenarios\r\n\r\n## API usage\r\n\r\n**Basic form usage:**\r\n```razor\r\n<EditForm Model=\"@product\">\r\n    <div class=\"mb-3\">\r\n        <label class=\"form-label\">\r\n            <DisplayName For=\"@(() => product.Name)\" />\r\n        </label>\r\n        <InputText @bind-Value=\"product.Name\" class=\"form-control\" />\r\n        <ValidationMessage For=\"@(() => product.Name)\" />\r\n    </div>\r\n</EditForm>\r\n```\r\n\r\nrenders e.g. as:\r\n```\r\n<label class=\"form-label\">Product Name</label>\r\n```\r\n\r\n**Table headers:**\r\n```razor\r\n<table class=\"table\">\r\n    <thead>\r\n        <tr>\r\n            <th><DisplayName For=\"@(() => product.Name)\" /></th>\r\n            <th><DisplayName For=\"@(() => product.Price)\" /></th>\r\n            <th><DisplayName For=\"@(() => product.ReleaseDate)\" /></th>\r\n        </tr>\r\n    </thead>\r\n</table>\r\n```\r\n\r\nrenders e.g. as:\r\n```\r\n<table class=\"table\">\r\n    <thead>\r\n        <tr>\r\n            <th>Product Name</th>\r\n            <th>Product Price</th>\r\n            <th>Release Date</th>\r\n        </tr>\r\n    </thead>\r\n</table>\r\n```\r\n\r\n**Model example:**\r\n```csharp\r\npublic class Product\r\n{\r\n    [Display(Name = \"Product Name\")]\r\n    public string Name { get; set; }\r\n    \r\n    [DisplayName(\"Unit Price\")]\r\n    public decimal Price { get; set; }\r\n    \r\n    [Display(Name = \"Release Date\")]\r\n    public DateTime ReleaseDate { get; set; }\r\n}\r\n```",
+   "leakproof": {
+    "source_head": "6d720c560e5d68f9d9cafa4f89255f111716d776",
+    "source_merge_base": "a4cc9344595fc3cb37c9fd78ee174ed8062c9ff6",
+    "base_tree": "1a5bc492a0b2e639ef31e5c4d6507cf3493ff7f7",
+    "head_tree": "21ff5d496cf0f79bb0a769ac5813c235b8b4fbf6"
+   },
+   "task_id": "aspnetcore#4",
+   "source_base_commit": "a4cc9344595fc3cb37c9fd78ee174ed8062c9ff6"
+  },
+  {
+   "instance_id": "agentic-review-benchmarks__prefect@79d003f",
+   "repo": "agentic-review-benchmarks/prefect",
+   "pr": 1,
+   "pr_url": "https://github.com/agentic-review-benchmarks/prefect/pull/1",
+   "base_commit": "2c01f186bf1857f5055677f3f9366e49fc9ce7a3",
+   "head_commit": "79d003fd77ace4bebbb20eec7e75e87269e47e2e",
+   "language": "Python",
+   "pr_category": "qodo-injected",
+   "change_line_count": 0,
+   "references": 4,
+   "title": "Add documentation for prefect sdk generate CLI",
+   "body": "## Summary\n\n- Add auto-generated CLI reference for `prefect sdk` command\n- Add comprehensive how-to guide for generating typed SDKs from deployments\n- Update navigation in docs.json for both new pages\n- Regenerate CLI docs to include new --output options\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.ai/code)",
+   "leakproof": {
+    "source_head": "37e272dd3bc5e6a79acc597754871cde96e42474",
+    "source_merge_base": "0ee35533f8f48c58f1b9d52827548bcedae5c880",
+    "base_tree": "9dfa8611e76fe52175d57fbbd930ee7363e6bc4e",
+    "head_tree": "b22262aedac70a1607aeec4a1b779f8d92fd8816"
+   },
+   "task_id": "prefect#1",
+   "source_base_commit": "0ee35533f8f48c58f1b9d52827548bcedae5c880"
+  },
+  {
+   "instance_id": "agentic-review-benchmarks__tauri@e39865f",
+   "repo": "agentic-review-benchmarks/tauri",
+   "pr": 10,
+   "pr_url": "https://github.com/agentic-review-benchmarks/tauri/pull/10",
+   "base_commit": "64feface3141da879531d930a2050da6e280fcb4",
+   "head_commit": "e39865f60be8665883c0479240c42d8148f8df68",
+   "language": "Rust",
+   "pr_category": "qodo-injected",
+   "change_line_count": 0,
+   "references": 7,
+   "title": "fix: a few regressions from previous PRs",
+   "body": "<!--\nBefore submitting a PR, please read https://github.com/tauri-apps/tauri/blob/dev/.github/CONTRIBUTING.md#pull-request-guidelines\n\n1. Give the PR a descriptive title.\n\n  Examples of good title:\n    - fix(windows): fix race condition in event loop\n    - docs: update example for `App::show`\n    - feat: add `Window::set_fullscreen`\n\n  Examples of bad title:\n    - fix #7123\n    - update docs\n    - fix bugs\n\n2. If there is a related issue, reference it in the PR text, e.g. closes #123.\n3. If this change requires a new version, then add a change file in `.changes` directory with the appropriate bump, see https://github.com/tauri-apps/tauri/blob/dev/.changes/README.md\n4. Ensure that all your commits are signed https://docs.github.com/en/authentication/managing-commit-signature-verification/signing-commits\n5. Ensure `cargo test` and `cargo clippy` passes.\n6. Propose your changes as a draft PR if your work is still in progress.\n-->\n\n- Remove a redundant clone: https://github.com/tauri-apps/tauri/pull/13661#discussion_r2280733678\n- Bring back `tauri_runtime::Cookie` re-export: https://github.com/tauri-apps/tauri/pull/13661#discussion_r2280735323\n- Run API example's `on_new_window` only on desktop",
+   "leakproof": {
+    "source_head": "eca39593e85c5c2e8ddd4ba50afc262e7940e313",
+    "source_merge_base": "41fe83d5324bff78ee13b027d50beea337d3aa71",
+    "base_tree": "af03851a03ba95e18004a92cbeece838718133a5",
+    "head_tree": "f2254975296716f8236f6fa1928369b02cdc8387"
+   },
+   "task_id": "tauri#10",
+   "source_base_commit": "41fe83d5324bff78ee13b027d50beea337d3aa71"
+  },
+  {
+   "instance_id": "agentic-review-benchmarks__dify@7c34cb3",
+   "repo": "agentic-review-benchmarks/dify",
+   "pr": 3,
+   "pr_url": "https://github.com/agentic-review-benchmarks/dify/pull/3",
+   "base_commit": "6e0453baa6d62f9e498f21dc3829baf867032383",
+   "head_commit": "7c34cb3d874659d94f32cbf14d830fb6c105bd96",
+   "language": "Python",
+   "pr_category": "qodo-injected",
+   "change_line_count": 0,
+   "references": 7,
+   "title": "refactor(workflow): add Jinja2 renderer abstraction for template transform",
+   "body": "> [!IMPORTANT]\r\n>\r\n> 1. Make sure you have read our [contribution guidelines](https://github.com/langgenius/dify/blob/main/CONTRIBUTING.md)\r\n> 1. Ensure there is an associated issue and you have been assigned to it\r\n> 1. Use the correct syntax to link this PR: `Fixes #<issue number>`.\r\n\r\n## Summary\r\n\r\n- Part of #30506\r\n- Introduce a Jinja2 template renderer abstraction for TemplateTransform with a CodeExecutor-backed adapter.\r\n- Inject the renderer via TemplateTransformNode and DifyNodeFactory while keeping default behavior intact.\r\n- Update TemplateTransform unit tests to mock the renderer output.\r\n- Tests: `make lint`, `make type-check`.\r\n\r\n## Screenshots\r\n\r\n| Before | After |\r\n|--------|-------|\r\n| N/A | N/A |\r\n\r\n## Checklist\r\n\r\n- [ ] This change requires a documentation update, included: [Dify Document](https://github.com/langgenius/dify-docs)\r\n- [x] I understand that this PR may be closed in case there was no previous discussion or issues. (This doesn't apply to typos!)\r\n- [ ] I've added a test for each change that was introduced, and I tried as much as possible to make a single atomic change.\r\n- [ ] I've updated the documentation accordingly.\r\n- [ ] I ran `dev/reformat`(backend) and `cd web && npx lint-staged`(frontend) to appease the lint gods",
+   "leakproof": {
+    "source_head": "24297d2668d91516cbd6d506ff7d55409cd85e6b",
+    "source_merge_base": "917af6d2115ca60eb07cf1cec77fad6572fee766",
+    "base_tree": "74cb6aaacbe69baf2fe215a7339e8d636f51c547",
+    "head_tree": "d89e447c923dd38703e4437828361763cff2b8f7"
+   },
+   "task_id": "dify#3",
+   "source_base_commit": "917af6d2115ca60eb07cf1cec77fad6572fee766"
+  }
+ ]
+}

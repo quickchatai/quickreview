@@ -167,3 +167,42 @@ describe("the loosened-test hint", () => {
     expect(loosenedReason(hits)).toMatch(/and 3 more/);
   });
 });
+
+import { applyConfigOverrides } from "../src/bench/runner.js";
+
+describe("the decisions-validation plans", () => {
+  const plan = (n: string) => JSON.parse(readFile(resolvePath(`bench/aacr/plans/${n}.json`), "utf8"));
+  it("arm B differs from arm A only by the three lenses pinned to the high tier, on the same image and PRs", () => {
+    const a = plan("decisions-validation");
+    const b = plan("decisions-validation-hi");
+    expect(b.image).toBe(a.image);
+    expect(b.sets).toEqual(a.sets);
+    expect(b.prefix).not.toBe(a.prefix);
+    expect(b.config.startsWith(a.config + ",")).toBe(true);
+    expect(b.config.slice(a.config.length + 1).split(",").sort()).toEqual([
+      "models.pass_tiers.pass-baseline=sol-high",
+      "models.pass_tiers.pass-behaviour-delta=sol-high",
+      "models.pass_tiers.pass-sweep=sol-high",
+    ]);
+  });
+  it("arm B's --config is accepted and pins exactly those lenses at the high-effort tier", () => {
+    const b = plan("decisions-validation-hi");
+    const base = parseConfig(readFile(resolvePath("tests/fixtures/config.toml"), "utf8"));
+    const c = applyConfigOverrides(base, b.config);
+    expect(c.models.pass_tiers).toEqual({
+      "pass-baseline": "sol-high",
+      "pass-sweep": "sol-high",
+      "pass-behaviour-delta": "sol-high",
+    });
+    expect(c.models.tiers["sol-high"]).toMatch(/:high$/);
+    const { pass_plan } = buildPassPlan(c, [
+      { filename: "src/a.py", status: "modified", additions: 3, deletions: 2, changes: 5, patch: "@@ -1 +1 @@\n-    return 1\n+    return 2\n" },
+    ] as unknown as PrFileEntry[]);
+    for (const r of pass_plan.filter((r) => ["pass-baseline", "pass-sweep", "pass-behaviour-delta"].includes(r.lens)))
+      expect(r.tier, r.lens).toBe("sol-high");
+  });
+  it("uses no held-out set", () => {
+    for (const n of ["decisions-validation", "decisions-validation-hi"])
+      for (const s of plan(n).sets) expect(s.set).not.toMatch(/test30|holdout|fresh10/);
+  });
+});

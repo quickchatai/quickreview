@@ -1,0 +1,29 @@
+{
+  "name": "decisions-validation",
+  "note": "The owner's 2026-10-03 grilling decisions, arm A (defaults): no-budget line, behaviour-delta planned only where base behaviour is at risk, the loosened-test hint, the repeated-copy finding and the regression-test request, plus the earlier post-check fix and per-file coverage check (on). 30 PRs: AACR dev10 (10) and rest145-miss8 (8), SWE-PRBench miss2 (2), martian-dv5 (5, tuning split) and qodo-dv5 (5). Compared with the stored fv1 runs on the same PRs. Arm B (decisions-validation-hi.json) reviews the same PRs on the SAME image with pass-baseline, pass-sweep and pass-behaviour-delta at reasoning effort HIGH; start it with QCR_RERUN_SKIP_BUILD=1 once this plan has built the image. No held-out set.",
+  "image": "qcr-bench:dv1",
+  "prefix": "dv1",
+  "config": "models.default=openai-codex/gpt-6.1-sol,models.conversation=openai-codex/gpt-6.1-sol,models.overseer=openai-codex/gpt-6.1-sol,models.tiers.terra-med=openai-codex/gpt-6.1-sol:medium,models.tiers.sol-med=openai-codex/gpt-6.1-sol:medium,models.tiers.sol-high=openai-codex/gpt-6.1-sol:high",
+  "sets": [
+    {
+      "set": "dev10",
+      "scorer": "aacr"
+    },
+    {
+      "set": "rest145-miss8",
+      "scorer": "aacr"
+    },
+    {
+      "set": "sweprbench-miss2",
+      "scorer": "swepr"
+    },
+    {
+      "set": "martian-dv5",
+      "scorer": "martian"
+    },
+    {
+      "set": "qodo-dv5",
+      "scorer": "qodo"
+    }
+  ]
+}
