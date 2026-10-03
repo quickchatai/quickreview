@@ -414,6 +414,11 @@ export interface ReviewConfig {
    * `behaviour_delta_max_groups` rows (heuristics.ts behaviourDeltaGroups). */
   behaviour_delta: boolean;
   behaviour_delta_max_groups: number;
+  /** The loosened-test hint (src/loosenedtests.ts, owner decision
+   * 2026-10-03): weakened assertions in the PR's test files are found
+   * deterministically and named in pass-tests' plan reason; their presence
+   * also plans pass-tests. Off ⇒ the reason and the plan are as before. */
+  loosened_test_hint: boolean;
   /** Selection cost knobs (heuristics.ts SelectionTuning): pass-intent's
    * substance bar in words, and when pass-placement runs — this many code
    * files, or a new code file with this many added lines. */
@@ -527,6 +532,7 @@ type PresetLevers = Pick<
   | "sweep_wide_files"
   | "behaviour_delta"
   | "behaviour_delta_max_groups"
+  | "loosened_test_hint"
   | "intent_min_words"
   | "placement_min_code_files"
   | "placement_min_new_file_lines"
@@ -548,6 +554,7 @@ const LEAN_LEVERS: PresetLevers = {
   sweep_wide_files: 40,
   behaviour_delta: true,
   behaviour_delta_max_groups: 3,
+  loosened_test_hint: true,
   intent_min_words: 60,
   placement_min_code_files: 8,
   placement_min_new_file_lines: 30,
@@ -1947,6 +1954,11 @@ export function parseConfig(toml: string): Config {
   if (!Number.isInteger(shards) || shards < 1 || shards > 4) {
     throw new Error(
       `config.toml [review]: validator_shards must be an integer 1-4 (got ${JSON.stringify(shards)})`,
+    );
+  }
+  if (typeof cfg.review.loosened_test_hint !== "boolean") {
+    throw new Error(
+      `config.toml [review]: loosened_test_hint must be true or false (got ${JSON.stringify(cfg.review.loosened_test_hint)})`,
     );
   }
   if (typeof cfg.review.coverage_check !== "boolean") {

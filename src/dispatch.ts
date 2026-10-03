@@ -74,6 +74,7 @@ import type { PrStateRow, ReviewedHeadRow, StateStore } from "./state.js";
 import { snapshotMark, standingReview } from "./standing-review.js";
 import { PASS_TIER_ORDER, roundPromptMarker } from "./types.js";
 import { ALL_PASSES } from "./passes.js";
+import { detectLoosenedAssertions, loosenedReason } from "./loosenedtests.js";
 import { isDefaultPosting } from "./postingpolicy.js";
 import type {
   PassPlanEntry,
@@ -766,8 +767,11 @@ export function buildPassPlan(
   const whyOf = new Map<string, string>([...reasons0, ...sub.map((s) => [s.lens, s.why] as [string, string])]);
   // existing tests are consumers of every code change, and the PR's
   // own tests are claims about the code — one lens reads both.
+  // The loosened-test hint (owner decision 2026-10-03): weakened assertions
+  // found deterministically in the PR's test files are handed to the lens.
+  const loosened = cfg.review.loosened_test_hint ? detectLoosenedAssertions(files) : [];
   const tests =
-    on(TESTS_PASS, cfg.review.tests_lens) && files.some((f) => CODE_FILE_RE.test(f.filename))
+    on(TESTS_PASS, cfg.review.tests_lens) && (files.some((f) => CODE_FILE_RE.test(f.filename)) || loosened.length > 0)
       ? [TESTS_PASS]
       : [];
   // The code-quality lenses: maintainability, duplication, abstraction — never
@@ -776,7 +780,11 @@ export function buildPassPlan(
     (l) => on(l, cfg.review.quality_lenses) && !selected0.includes(l),
   );
   if (tests.length)
-    whyOf.set(TESTS_PASS, "the PR changes code: existing tests are its consumers, and its own tests are claims");
+    whyOf.set(
+      TESTS_PASS,
+      "the PR changes code: existing tests are its consumers, and its own tests are claims" +
+        (loosened.length ? `; and ${loosenedReason(loosened)}` : ""),
+    );
   for (const l of quality) whyOf.set(l, qualityReason(files, cfg.review.quality_min_added_lines));
   // a guide the repo writes wins; the profile's drafted guide is
   // the standard only when the repo writes none.

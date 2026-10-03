@@ -550,6 +550,11 @@ preset = "default"
 # non-test source file no lens raised a finding on gets a targeted pass-sweep
 # row (at most two, packed by line budget), each saying why it ran.
 # coverage_check = false
+# Loosened-test hint (2026-10-03): weakened assertions in the PR's test files
+# (exact → bound or contains, a tolerance widened, a count lowered, a timeout
+# lengthened, an assert removed or commented out, a skip added) are found by
+# code and named in pass-tests' plan reason; their presence also plans it.
+# loosened_test_hint = false
 # repo profile — names a directory under profiles/ whose house-rule
 # addenda pack (profiles/<name>/addenda/*.md) composes onto the built pass
 # bodies after the built-in generic registry, and whose optional

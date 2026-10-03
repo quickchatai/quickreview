@@ -102,3 +102,68 @@ describe("behaviour-delta is planned only where base behaviour is at risk", () =
     expect(behaviourDeltaGroups(files, 3, 500)).toEqual({ groups: [["src/a.py"]], unread: [] });
   });
 });
+
+import { readFileSync as readFile } from "node:fs";
+import { resolve as resolvePath } from "node:path";
+import { parseConfig, type Config } from "../src/config.js";
+import { buildPassPlan } from "../src/dispatch.js";
+import { detectLoosenedAssertions, loosenedReason } from "../src/loosenedtests.js";
+import type { PrFileEntry } from "../src/github.js";
+
+const t = (filename: string, patch: string): PrFile => ({ filename, additions: 1, deletions: 1, status: "modified", patch });
+
+describe("the loosened-test hint", () => {
+  it("finds an exact check turned into a bound — with or without an assert keyword", () => {
+    const hits = detectLoosenedAssertions([
+      t("tests/test_pool.py", "@@ -70,3 +70,3 @@\n         \"SlotsAcquired\",\n-        lambda x: x == 100,\n+        lambda x: x >= 1 and x <= 100,\n"),
+    ]);
+    expect(hits).toEqual([{ file: "tests/test_pool.py", line: 71, kind: "exact-to-bound" }]);
+  });
+  it("finds a lower bound lowered and an upper bound raised", () => {
+    expect(detectLoosenedAssertions([t("tests/q.sql", "@@ -11 +11 @@\n-select length(ids) >= 16 from log;\n+select length(ids) >= 1 from log;\n")]))
+      .toEqual([{ file: "tests/q.sql", line: 11, kind: "bound-relaxed" }]);
+    expect(detectLoosenedAssertions([t("src/a.test.ts", "@@ -5 +5 @@\n-  expect(ms).toBeLessThan(50);\n+  expect(ms).toBeLessThan(500);\n")]).map((h) => h.kind))
+      .toEqual(["bound-relaxed"]);
+  });
+  it("finds a tolerance widened, a timeout lengthened and a count lowered", () => {
+    const kinds = detectLoosenedAssertions([
+      t("tests/test_m.py", "@@ -1,3 +1,3 @@\n-    assert abs(a - b) < tol(1e-6)\n+    assert abs(a - b) < tol(1e-3)\n-    wait_for(done, timeout=5)\n+    wait_for(done, timeout=60)\n-    assert len(rows) == 10\n+    assert len(rows) == 3\n"),
+    ]).map((h) => h.kind);
+    expect(kinds).toEqual(["tolerance-widened", "timeout-lengthened", "count-lowered"]);
+  });
+  it("finds an exact check turned into contains, an assert removed or commented out, and a skip added", () => {
+    const kinds = detectLoosenedAssertions([
+      t("tests/test_x.py", "@@ -1,2 +1,2 @@\n-    assert msg == \"exact\"\n+    assert \"exa\" in msg\n"),
+      t("tests/test_y.py", "@@ -1,2 +1,1 @@\n     run()\n-    assert state.ok\n"),
+      t("tests/test_z.py", "@@ -1 +1 @@\n-    assert state.ok\n+    # assert state.ok\n"),
+      t("tests/test_w.py", "@@ -1 +1,2 @@\n+@pytest.mark.skip(reason=\"flaky\")\n def test_w():\n"),
+    ]).map((h) => h.kind);
+    expect(kinds).toEqual(["exact-to-contains", "assert-removed", "assert-commented", "skip-added"]);
+  });
+  it("ignores production files, tightened checks and unchanged text", () => {
+    expect(detectLoosenedAssertions([t("src/pool.py", "@@ -1 +1 @@\n-    assert x == 1\n+    assert x >= 1\n")])).toEqual([]);
+    expect(detectLoosenedAssertions([t("tests/test_a.py", "@@ -1 +1 @@\n-    assert n >= 1\n+    assert n >= 5\n")])).toEqual([]);
+    expect(detectLoosenedAssertions([t("tests/test_a.py", "@@ -1 +1 @@\n-    assert n == 1\n+    assert n == 1  # same\n")])).toEqual([]);
+  });
+
+  const cfg = (): Config => parseConfig(readFile(resolvePath("tests/fixtures/config.toml"), "utf8"));
+  const weakened = [
+    { filename: "tests/test_pool.py", status: "modified", additions: 1, deletions: 1, changes: 2, patch: "@@ -70 +70 @@\n-        lambda x: x == 100,\n+        lambda x: x >= 1,\n" },
+  ] as unknown as PrFileEntry[];
+  it("hands the hits to pass-tests' plan reason, and their presence plans it", () => {
+    const { pass_plan } = buildPassPlan(cfg(), weakened);
+    const row = pass_plan.find((r) => r.lens === "pass-tests");
+    expect(row?.why).toMatch(/weaken existing test assertions — tests\/test_pool\.py:70 \(an exact check became a bound\)/);
+    expect(row?.why).toMatch(/report THAT change at the production line/);
+  });
+  it("the knob turns the hint off: the reason is the old one", () => {
+    const c = cfg();
+    c.review.loosened_test_hint = false;
+    const row = buildPassPlan(c, weakened).pass_plan.find((r) => r.lens === "pass-tests");
+    expect(row?.why ?? "").not.toMatch(/weaken/);
+  });
+  it("names at most twelve sites in the reason", () => {
+    const hits = Array.from({ length: 15 }, (_, i) => ({ file: "tests/t.py", line: i + 1, kind: "assert-removed" as const }));
+    expect(loosenedReason(hits)).toMatch(/and 3 more/);
+  });
+});
