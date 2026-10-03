@@ -49,6 +49,10 @@ export const ALL_PASSES: readonly string[] = [
   "pass-bounds",
   "pass-claims",
   "pass-rollout",
+  // Freeze fixes 2 (2026-10-03): base versus head on every modifying change —
+  // planned as one row per group of modifying files when `[review]
+  // behaviour_delta` is on; addable otherwise.
+  "pass-behaviour-delta",
   // The per-file sweep: planned as one row per file group when `[review]
   // sweep` is on; otherwise addable, so a session can sweep a file it
   // suspects.

@@ -146,10 +146,11 @@ describe("[review] dedup_merge = false — byte-identical to before the duplicat
 // templates says "Anchor at the cause" — the line a fix would edit, the
 // symptom site named in the body (round 6, mined from the Qodo run: about nine
 // findings anchored on the test or caller that exposed the defect).
+// Re-pinned 2026-10-03: pass-behaviour-delta is planned (one row per group of files the PR modifies or deletes code in; `[review] behaviour_delta`, freeze fixes 2) — the fixture PR modifies code, so its plan and the built agents gain the lens
 const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
-  first: "e4d416f0b1b8bc90a8c99bc7b5d40b999dd3cf6cf6ccf31ea14d68f406d189bd",
-  "re-review": "e496362d1e1a496c994e96c73aec8864c0d188e8de12c4d0471ffc3bf0989e28",
-  staleness: "1f715115beed263bb8b18cae908a97f07162aa9a8fb20f4458b5fad85831c7bf",
+  first: "eaf960543b7d4f46cf84964026084d6c0be75edaeabd02ffffdff01f5e93f855",
+  "re-review": "4822b67e18bddc7ae10e4a6e435f45b793915c685a160beefe0bd15dc9171b0c",
+  staleness: "7738a4c63dcca49ed1b8e519156ef745396dd9f4fb6504d36e0da7bfc77e423f",
 };
 // Re-pinned 2026-10-03 (round 7, docs/duplicate-merge.md, the owner's
 // decisions): `[review] dedup_merge` defaults on, so step 4 carries the
@@ -157,15 +158,17 @@ const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
 // validator; one comment per root cause), and the default profile sets
 // `[posting] repeat_sites = false`, so the escalation line carries the
 // posting-policy note. Off + no policy = GOLDEN_ORDERS_NO_DEDUP above.
+// Re-pinned 2026-10-03: pass-behaviour-delta is planned (one row per group of files the PR modifies or deletes code in; `[review] behaviour_delta`, freeze fixes 2) — the fixture PR modifies code, so its plan and the built agents gain the lens
 const GOLDEN_ORDERS: Record<string, string> = {
-  first: "8ad90a3c0393921cd32153e5920eb74c4d6cc0ca97d541c9553f7191ea651ecb",
-  "re-review": "c5b0a829850e76d0c29050d60ccbdf12dad77575bdaeec786a41b58624251c80",
-  staleness: "5b01f161f2e4d80f0376479672d6724300656bc732d16a9952cf3eb08f2c2f76",
+  first: "688dcbfee78c5697787b1412bab9e83e84b7a7839aca71c2c659dff28c94f1a6",
+  "re-review": "3583869977706b0e289df933cbad7632a8eac1fa29003b41bc28f7fc63a71bf5",
+  staleness: "b55835e7cb9cc673606bc6eb5fd125fa4d888e43c2bdfc9f517e43c936ace626",
 };
+// Re-pinned 2026-10-03: pass-behaviour-delta is planned (one row per group of files the PR modifies or deletes code in; `[review] behaviour_delta`, freeze fixes 2) — the fixture PR modifies code, so its plan and the built agents gain the lens
 const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
-  first: "3dddb72bc299b5893d679a6215880cb0b442b2403b2d91052e22fc1a4e0299ab",
-  "re-review": "456c7615f48a28d595499ec1b739aa29381eebc5c4f635d3caed3a07a21efd1b",
-  staleness: "a4f26831fb2c34864d3b367e9a24bd31390918902ec5f9c9b7721b0cbb4c4f94",
+  first: "671ad0917c06d9516d8f0b82298e9c07c4557f7543e61fa9483b45dad7543fcc",
+  "re-review": "6346e6f45e9735d6d7549e26655095812a18edf8813802a97256fdb2baa35746",
+  staleness: "ddf4691cdde91427a03d6085fcbfbf2186ea231b018db72a82c4683dfdd9718f",
 };
 // Deliberate re-pins — the default profile's built agents changed ON PURPOSE,
 // never through `[posting]` (owner-approved review changes, 2026-10-02, after
@@ -203,9 +206,11 @@ const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
 //     extended to published standards (freeze fixes 2, the cross-benchmark
 //     miss analysis: AACR lint kills, Qodo "base had the same gap")
 //   → f36c394a… `exhaust-the-site` (pass-baseline, pass-sweep, pass-widened, pass-behaviour-delta): siblings, twins, every consequence (freeze fixes 2)
-const GOLDEN_AGENTS_NO_DEDUP = "f36c394a1af37b6d0eb17d38adbc8abc00975899dce8140e029ec758ba97da75";
+// Re-pinned 2026-10-03: pass-behaviour-delta is planned (one row per group of files the PR modifies or deletes code in; `[review] behaviour_delta`, freeze fixes 2) — the fixture PR modifies code, so its plan and the built agents gain the lens
+const GOLDEN_AGENTS_NO_DEDUP = "86a69730cf433401547a47c74eec4317ae6461a37998eb4205d4b1b28b274280";
 //   → (round 7, docs/duplicate-merge.md) `dedup-group-validate` (pass-validate,
 //     `[review] dedup_merge` on by default) and the default profile's posting
 //     addendum for `repeat_sites = false`. Off + no policy = the pin above.
 //   → fe4177b8… `exhaust-the-site` (pass-baseline, pass-sweep, pass-widened, pass-behaviour-delta): siblings, twins, every consequence (freeze fixes 2)
-const GOLDEN_AGENTS = "fe4177b87da7b3b0a77a673897e1fa9682f0b71ae84cec32a82c2e16ac9537eb";
+// Re-pinned 2026-10-03: pass-behaviour-delta is planned (one row per group of files the PR modifies or deletes code in; `[review] behaviour_delta`, freeze fixes 2) — the fixture PR modifies code, so its plan and the built agents gain the lens
+const GOLDEN_AGENTS = "99b9b5ca53c70a28f8faac4c9f0c748f2a14ca638a66a549212b50263f538fac";

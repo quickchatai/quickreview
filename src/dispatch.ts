@@ -27,6 +27,8 @@ import {
   selectSubLenses,
   SWEEP_PASS,
   sweepGroups,
+  BEHAVIOUR_DELTA_PASS,
+  behaviourDeltaGroups,
   CODE_FILE_RE,
   TESTS_PASS,
   STYLE_PASS,
@@ -839,6 +841,27 @@ export function buildPassPlan(
       agent: `${SWEEP_PASS}--${sweepTier}`,
       tier: sweepTier,
       raisable_to: pins[SWEEP_PASS] !== undefined ? [] : raisableFrom(SWEEP_PASS, sweepTier),
+      focus,
+    }));
+    const at = pass_plan.at(-1)?.lens === VALIDATE_PASS ? pass_plan.length - 1 : pass_plan.length;
+    pass_plan.splice(at, 0, ...rows);
+  }
+  // The behaviour-delta lens (freeze fixes 2): one row per group of files the
+  // PR modifies or deletes code in, at the round's tier — comparing base and
+  // head is reasoning, not attention — inserted before the validator.
+  if (on(BEHAVIOUR_DELTA_PASS, cfg.review.behaviour_delta) && !skip.has(BEHAVIOUR_DELTA_PASS)) {
+    const { groups } = behaviourDeltaGroups(
+      files,
+      cfg.review.behaviour_delta_max_groups,
+      cfg.review.sweep_group_lines,
+    );
+    const tier = tierOf(BEHAVIOUR_DELTA_PASS);
+    const rows = groups.map((focus): PassPlanEntry => ({
+      lens: BEHAVIOUR_DELTA_PASS,
+      agent: `${BEHAVIOUR_DELTA_PASS}--${tier}`,
+      tier,
+      raisable_to: pins[BEHAVIOUR_DELTA_PASS] !== undefined ? [] : raisableFrom(BEHAVIOUR_DELTA_PASS, tier),
+      why: `the diff modifies or deletes existing code in ${focus.length === 1 ? focus[0] : `${focus.length} files`}`,
       focus,
     }));
     const at = pass_plan.at(-1)?.lens === VALIDATE_PASS ? pass_plan.length - 1 : pass_plan.length;

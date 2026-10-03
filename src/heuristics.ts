@@ -718,6 +718,60 @@ export function selectSubLenses(
 
 export const SWEEP_PASS = "pass-sweep";
 
+/** The behaviour-delta lens (agents/pass-behaviour-delta.md, freeze fixes 2,
+ * 2026-10-03): base versus head on every modified, rewrapped, replaced or
+ * deleted line of non-test code. The pre-freeze miss analysis found the second
+ * largest never-raised class here — a safeguard made conditional, a value
+ * changed in a new `else`, deleted handling, nil turned into an empty map —
+ * and no lens read base and head side by side (the sweep reads added lines
+ * only and skips removed files). */
+export const BEHAVIOUR_DELTA_PASS = "pass-behaviour-delta";
+
+/**
+ * Cut the PR's MODIFYING changes into behaviour-delta groups: non-test code
+ * files that delete or replace lines (a file the PR removes included; pure
+ * additions are not this lens's), diff order, packed by changed lines (at most
+ * `maxLines` per group unless one file alone exceeds it), at most `maxGroups`
+ * groups. Files past the last group come back in `unread` — a silent cap reads
+ * as covered.
+ */
+export function behaviourDeltaGroups(
+  files: PrFile[],
+  maxGroups: number,
+  maxLines: number,
+): { groups: string[][]; unread: string[] } {
+  const eligible = files.filter(
+    (f) =>
+      f.deletions > 0 &&
+      CODE_FILE_RE.test(f.filename) &&
+      !isTestFile(f.filename) &&
+      !SWEEP_SKIP_RE.test(f.filename),
+  );
+  const groups: string[][] = [];
+  const unread: string[] = [];
+  let cur: string[] = [];
+  let lines = 0;
+  for (const f of eligible) {
+    const size = f.additions + f.deletions;
+    if (cur.length > 0 && lines + size > maxLines) {
+      groups.push(cur);
+      cur = [];
+      lines = 0;
+    }
+    if (groups.length >= maxGroups) {
+      unread.push(f.filename);
+      continue;
+    }
+    cur.push(f.filename);
+    lines += size;
+  }
+  if (cur.length > 0) {
+    if (groups.length < maxGroups) groups.push(cur);
+    else unread.push(...cur);
+  }
+  return { groups, unread };
+}
+
 /**: the tests lens (agents/pass-tests.md). */
 export const TESTS_PASS = "pass-tests";
 

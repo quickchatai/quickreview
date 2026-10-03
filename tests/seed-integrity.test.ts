@@ -88,6 +88,8 @@ const NON_SEEDED = [
   "agents/pass-bounds.md",
   "agents/pass-claims.md",
   "agents/pass-rollout.md",
+  // Freeze fixes 2: the behaviour-delta lens — post-seed, ours.
+  "agents/pass-behaviour-delta.md",
   // the tests lens — post-seed, ours.
   "agents/pass-tests.md",
   "agents/pass-maintainability.md",
