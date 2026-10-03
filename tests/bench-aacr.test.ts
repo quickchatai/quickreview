@@ -44,6 +44,8 @@ import {
   selectCases,
   tagOf,
   toOcrResult,
+  reanchorLeftComments,
+  reanchorLeftLine,
   modelErrorsFromEvents,
   usageFromEvents,
   type BenchComment,
@@ -1267,5 +1269,58 @@ describe("consistency in the benchmark", () => {
     expect(arm).toContain('p="$PREFIX-r$k"');
     expect(py).toContain("found in every run");
     expect(py).toContain("benchmark_limitation");
+  });
+});
+
+// A comment the session anchored on a DELETED line used to be dropped from
+// every head-side scorer's input (results/all excluded it). It is moved to the
+// head side of its own hunk instead; a deleted file gets a file-level anchor.
+describe("reanchorLeftLine / reanchorLeftComments", () => {
+  const patch = [
+    "@@ -10,6 +10,5 @@ fn",
+    " a",
+    " b",
+    "-if (!guard) return;",
+    "-  check();",
+    "+check();",
+    " c",
+    "@@ -40,3 +39,2 @@",
+    " x",
+    "-gone();",
+    " y",
+  ].join("\n");
+
+  it("lands on the nearest added line of the same hunk", () => {
+    expect(reanchorLeftLine(patch, 12)).toEqual({ line: 12, how: "hunk" });
+    expect(reanchorLeftLine(patch, 13)).toEqual({ line: 12, how: "hunk" });
+  });
+
+  it("uses the head-side position when the hunk adds nothing", () => {
+    expect(reanchorLeftLine(patch, 41)).toEqual({ line: 40, how: "hunk" });
+  });
+
+  it("gives a deleted file a file-level anchor, and refuses a line the patch lacks", () => {
+    expect(reanchorLeftLine("--- a/f\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-a\n-b", 2)).toEqual({ line: 1, how: "file" });
+    expect(reanchorLeftLine(patch, 99)).toBeNull();
+  });
+
+  it("moves LEFT comments, keeps the body, and leaves an unknown path LEFT", () => {
+    const comments = [
+      { path: "f.ts", line: 12, side: "LEFT" as const, body: "[blocker] guard removed", tag: "blocker" as const },
+      { path: "g.ts", line: 3, side: "LEFT" as const, body: "[nit] x", tag: "nit" as const },
+      { path: "f.ts", line: 12, side: "RIGHT" as const, body: "[nit] y", tag: "nit" as const },
+    ];
+    const r = reanchorLeftComments(comments, { "f.ts": patch });
+    expect(r.reanchored).toBe(1);
+    expect(r.comments[0]).toMatchObject({ side: "RIGHT", line: 12, body: "[blocker] guard removed", reanchored_from: { side: "LEFT", line: 12, how: "hunk" } });
+    expect(r.comments[1]!.side).toBe("LEFT");
+    expect(r.comments[2]).toBe(comments[2]);
+    // toOcrResult then scores the moved one and still excludes what stayed LEFT.
+    const res = toOcrResult(r.comments, {
+      instance_id: "i", status: "ok", variant: "all", duration_seconds: 1,
+      usage: { input: 0, output: 0, cacheRead: 0 }, verdict: "REQUEST_CHANGES", unparseable: 0,
+    }) as { review: { comments: unknown[] }; qcr: { excluded: { left_side: number } } };
+    expect(res.review.comments).toHaveLength(2);
+    expect(res.qcr.excluded.left_side).toBe(1);
   });
 });

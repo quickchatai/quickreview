@@ -100,6 +100,7 @@ import {
   USAGE_LIMIT_RE,
   type ModelErrors,
   parseSessionComments,
+  reanchorLeftComments,
   patchFromGitDiff,
   safeId,
   toOcrResult,
@@ -148,6 +149,8 @@ export interface CaseSummary {
     total: number;
     by_tag: Record<string, number>;
     left_side: number;
+    /** LEFT-side comments moved to the head side of their hunk. */
+    reanchored?: number;
     unparseable: number;
     /** Posted in the review body (no valid inline anchor) — scored too. */
     body: number;
@@ -1115,7 +1118,14 @@ export async function reviewCase(
     }
     const rawComments = readJson(join(caseDir, CASE_FILES.comments));
     const collected = collectComments(caseDir);
-    comments = collected.comments;
+    // A comment the session anchored on a DELETED line is moved to the head
+    // side of its hunk: every scorer the bench feeds reads head-side lines
+    // only, and the comment was otherwise dropped whole (reanchorLeftComments).
+    const headPatches: Record<string, string> = {};
+    for (const f of files) if (f.patch !== undefined) headPatches[f.filename] = f.patch;
+    const moved = reanchorLeftComments(collected.comments, headPatches);
+    comments = moved.comments;
+    summary.comments.reanchored = moved.reanchored;
     summary.comments.unparseable = collected.dropped;
     summary.comments.body = collected.body;
     summary.verdict = typeof outcome?.["verdict"] === "string" ? outcome["verdict"] : null;

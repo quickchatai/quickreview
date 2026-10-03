@@ -582,6 +582,96 @@ export interface BenchComment {
   /** `body`: a finding production posts in the REVIEW BODY because it has no
    * valid inline anchor ("unanchorable → body", round-first.md step 6). */
   source?: "inline" | "body";
+  /** Set when the session anchored this comment on a deleted line and the
+   * bench moved it to the head side of the same hunk (reanchorLeftComments). */
+  reanchored_from?: { side: "LEFT"; line: number; how: "hunk" | "file" };
+}
+
+/**
+ * Where a comment on a DELETED line (side LEFT, an old-file line number) lands
+ * on the head side of its own hunk, so a scorer that reads only head-side
+ * lines still sees it. Every scorer the bench feeds (AACR's evaluate.py, the
+ * Qodo judge, SWE-PRBench's export) is head-side only, and a LEFT comment was
+ * dropped whole — a posted finding the benchmark never saw.
+ *
+ * The anchor is the nearest added (`+`) line of the same hunk to the deletion's
+ * position; a hunk with no added line uses the head-side line where the
+ * deletion sat (an unchanged context line that exists at head); a file the PR
+ * deletes outright has no head side at all, so the comment goes to line 1
+ * (`how: "file"`, a file-level anchor). `null` when the patch has no such old
+ * line (a stale or truncated patch) — the caller keeps the comment out, as
+ * before, rather than guess.
+ */
+export function reanchorLeftLine(
+  patch: string,
+  oldLine: number,
+): { line: number; how: "hunk" | "file" } | null {
+  if (/^\+\+\+ \/dev\/null$/m.test(patch) || /^@@ -\d+(?:,\d+)? \+0,0 @@/m.test(patch))
+    return { line: 1, how: "file" };
+  let oldN = 0;
+  let newN = 0;
+  let inHunk = false;
+  let hunkAdds: number[] = [];
+  let at: number | null = null;
+  const pick = (): { line: number; how: "hunk" } | null => {
+    if (at === null) return null;
+    if (hunkAdds.length === 0) return { line: Math.max(1, at), how: "hunk" };
+    const pos = at;
+    const best = hunkAdds.reduce((a, b) => (Math.abs(b - pos) < Math.abs(a - pos) ? b : a));
+    return { line: best, how: "hunk" };
+  };
+  for (const raw of patch.split("\n")) {
+    if (raw.startsWith("@@")) {
+      const done = pick();
+      if (done) return done;
+      const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(raw);
+      if (!m) {
+        inHunk = false;
+        continue;
+      }
+      oldN = Number(m[1]);
+      newN = Number(m[2]);
+      inHunk = true;
+      hunkAdds = [];
+      continue;
+    }
+    if (!inHunk || raw.startsWith("\\")) continue;
+    const marker = raw.length === 0 ? " " : raw[0];
+    if (marker === "+") {
+      hunkAdds.push(newN);
+      newN += 1;
+    } else if (marker === "-") {
+      if (oldN === oldLine) at = newN;
+      oldN += 1;
+    } else if (marker === " ") {
+      oldN += 1;
+      newN += 1;
+    }
+  }
+  return pick();
+}
+
+/**
+ * The comments as a head-side scorer should see them: every LEFT comment
+ * re-anchored by {@link reanchorLeftLine} (its body untouched), the rest as
+ * they are. A LEFT comment whose path has no patch, or whose line the patch
+ * does not carry, stays LEFT (and is excluded downstream, counted).
+ */
+export function reanchorLeftComments(
+  comments: readonly BenchComment[],
+  patches: Readonly<Record<string, string>>,
+): { comments: BenchComment[]; reanchored: number } {
+  let reanchored = 0;
+  const out = comments.map((c) => {
+    if (c.side !== "LEFT") return c;
+    const patch = patches[c.path];
+    const to = patch === undefined ? null : reanchorLeftLine(patch, c.line);
+    if (!to) return c;
+    reanchored++;
+    const { start_line: _drop, ...rest } = c;
+    return { ...rest, side: "RIGHT" as const, line: to.line, reanchored_from: { side: "LEFT" as const, line: c.line, how: to.how } };
+  });
+  return { comments: out, reanchored };
 }
 
 const TAG_RE = /\[(blocker|question|nit)\]/i;

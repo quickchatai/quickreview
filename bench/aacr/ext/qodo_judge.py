@@ -86,6 +86,17 @@ def ours(run: Path, instance_id: str) -> list[dict]:
             s = c.get("start_line")
             e = c.get("end_line") or s
             out.append({"path": c["path"], "start": s, "end": e, "body": body})
+    # A run made before the bench re-anchored deleted-line comments excluded
+    # them from results/all; read them back from the case (old-file line, so
+    # only the file is trusted: start/end None — they can match on the
+    # semantic and same-file rules, never on a line distance).
+    seen = {o["body"] for o in out}
+    cj = run / "cases" / instance_id / "comments.json"
+    if cj.exists():
+        for c in json.loads(cj.read_text() or "[]"):
+            body = str(c.get("body") or "").strip()
+            if c.get("side") == "LEFT" and body and c.get("path") and body not in seen:
+                out.append({"path": c["path"], "start": None, "end": None, "body": body})
     return out
 
 

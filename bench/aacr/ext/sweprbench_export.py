@@ -85,7 +85,11 @@ def agent_array(run: Path, instance_id: str) -> tuple[list[dict], str]:
             continue
         items.append({"body": body, "file": c.get("path") or None,
                       "line": c.get("start_line"), "severity": severity(body)})
-    items += left_side_comments(run, instance_id)
+    # A run made after the bench re-anchors deleted-line comments already
+    # carries them (head side of their hunk); an older run excluded them, so
+    # they are read back here. Never both: skip a body already exported.
+    seen = {i["body"] for i in items}
+    items += [i for i in left_side_comments(run, instance_id) if i["body"] not in seen]
     return order_by_severity(items), status
 
 
