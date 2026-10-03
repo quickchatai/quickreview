@@ -5,7 +5,6 @@
 > `{{n}} {{title}} {{worktree}} {{head_sha}} {{lenses}} {{pass_plan}}
 > {{addable_lenses}} {{base_ref}} {{base_sha}} {{merge_base}} {{migration_gate_note}}
 > {{settled_digest}} {{round_type}} {{round_no}} {{nit_scope_note}} {{nit_policy_note}}
-{{nit_policy_note}}
 > `intent_note`, `missing_migration_note`, `dependency_note` and `recovery_note`, plus the two memory sections `pinned_head` and
 > `context_block` (written without braces here so this doc line
 > does not render a second copy of the memory seed), and the identity
@@ -117,6 +116,7 @@ invalidate the approval?**
 
 {{pass_plan}}
 {{dependency_note}}{{pass_task_note}}
+{{nit_policy_note}}
 **Rows with a focus or a reason.** When the plan table has a *focus / why*
 column: a row listing files is ONE launch of that agent with exactly those
 files as its focus — name them in its task string as the files this pass
