@@ -227,6 +227,11 @@ const ALLOWLIST: AllowlistEntry[] = [
       "documents the legacy [slack] legacy_owner_slack_id alias an old config may still carry",
   },
   {
+    path: "tests/prompt-provenance.test.ts",
+    tokens: ["owner_legacy"],
+    reason: "the provenance scan's own needle: asserts the owner's name never reaches a model-facing prompt",
+  },
+  {
     path: "tests/fixtures/config.toml",
     tokens: ["owner_legacy"],
     reason: "fixture exercises the legacy legacy_owner_slack_id alias fold",
