@@ -63,3 +63,42 @@ describe("regression-test request on a bug fix", () => {
     for (const x of [t, v]) expect(x).not.toMatch(NO_BENCHMARK_NAMES);
   });
 });
+
+import { behaviourDeltaGroups, behaviourDeltaRisk, type PrFile } from "../src/heuristics.js";
+
+const file = (patch: string | undefined, extra: Partial<PrFile> = {}): PrFile =>
+  ({ filename: "src/a.py", additions: 3, deletions: 3, status: "modified", patch, ...extra }) as PrFile;
+
+describe("behaviour-delta is planned only where base behaviour is at risk", () => {
+  it("a removed or replaced guard, predicate, call, return or value is at risk", () => {
+    expect(behaviourDeltaRisk(file("@@ -1,2 +1,2 @@\n-    if x is None:\n+    if x:\n"))).toBe(true);
+    expect(behaviourDeltaRisk(file("@@ -1 +1 @@\n-    return cache.get(k)\n+    return k\n"))).toBe(true);
+    expect(behaviourDeltaRisk(file("@@ -1 +1 @@\n-    timeout = 30\n+    timeout = 300\n"))).toBe(true);
+    expect(behaviourDeltaRisk(file("@@ -1 +1 @@\n-    a && b\n+    a\n"))).toBe(true);
+  });
+  it("existing code wrapped in a NEW branch is at risk (a rewrapped guard, a value changed in a new else)", () => {
+    expect(behaviourDeltaRisk(file("@@ -1,2 +1,4 @@\n-    run()\n+    if enabled:\n+        run()\n+    else:\n+        skip()\n"))).toBe(true);
+  });
+  it("a statement moved to another position at the same indent is a reorder, and at risk", () => {
+    expect(behaviourDeltaRisk(file("@@ -1,3 +1,3 @@\n-        state.mark_done(x)\n         propagate(x)\n+        state.mark_done(x)\n"))).toBe(true);
+  });
+  it("comments, imports, log lines, blank lines and re-indented copies are not", () => {
+    expect(behaviourDeltaRisk(file("@@ -1,2 +1,2 @@\n-# old note\n+# new note\n"))).toBe(false);
+    expect(behaviourDeltaRisk(file("@@ -1 +1 @@\n-import os\n+import sys\n"))).toBe(false);
+    expect(behaviourDeltaRisk(file("@@ -1 +1 @@\n-    logger.info(\"start %s\", x)\n+    logger.info(\"starting %s\", x)\n"))).toBe(false);
+    expect(behaviourDeltaRisk(file("@@ -1,2 +3,2 @@\n-    if ok:\n-        go()\n+        if ok:\n+            go()\n"))).toBe(false); // re-indented, same text
+    expect(behaviourDeltaRisk(file("@@ -1,2 +1,3 @@\n     keep()\n+    added()\n"))).toBe(false); // pure addition
+  });
+  it("no patch, or a deleted file, is never read as no risk", () => {
+    expect(behaviourDeltaRisk(file(undefined))).toBe(true);
+    expect(behaviourDeltaRisk(file("", {}))).toBe(true);
+    expect(behaviourDeltaRisk(file("@@ -1 +0,0 @@\n-x = 1\n", { status: "removed" }))).toBe(true);
+  });
+  it("the groups keep only at-risk files", () => {
+    const files: PrFile[] = [
+      { filename: "src/a.py", additions: 1, deletions: 1, status: "modified", patch: "@@ -1 +1 @@\n-    return 1\n+    return 2\n" },
+      { filename: "src/b.py", additions: 1, deletions: 1, status: "modified", patch: "@@ -1 +1 @@\n-# x\n+# y\n" },
+    ];
+    expect(behaviourDeltaGroups(files, 3, 500)).toEqual({ groups: [["src/a.py"]], unread: [] });
+  });
+});

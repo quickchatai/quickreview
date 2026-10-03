@@ -60,7 +60,7 @@ describe("pass-behaviour-delta", () => {
     const rows = pass_plan.filter((r) => r.lens === BEHAVIOUR_DELTA_PASS);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.focus).toEqual(["src/a.py"]);
-    expect(rows[0]!.why).toMatch(/modifies or deletes existing code/);
+    expect(rows[0]!.why).toMatch(/base behaviour is at risk/);
     expect(pass_plan.at(-1)!.lens).toBe("pass-validate");
     const off = structuredClone(c);
     off.review = { ...off.review, behaviour_delta: false };

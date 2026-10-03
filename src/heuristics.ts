@@ -804,13 +804,66 @@ export const SWEEP_PASS = "pass-sweep";
  * only and skips removed files). */
 export const BEHAVIOUR_DELTA_PASS = "pass-behaviour-delta";
 
+// The owner's 2026-10-03 decision (gap plan): plan behaviour-delta only where
+// base behaviour is AT RISK, not on every modified line. Round 1 planned it on
+// 83 of 94 PRs; it raised 217 findings and posted 3 on its own. A file is at
+// risk when its patch removes or replaces a line that carries behaviour — a
+// guard or condition, a predicate or comparison, a call, a return / raise /
+// default / error path, an assignment — rather than a comment, an import, a
+// log line or a re-indented copy of itself (a statement re-added at the same
+// indent elsewhere is a reorder, and counts); or when it wraps existing code in a NEW
+// branch (a guard rewrapped, a value changed in a new `else`). A deleted file,
+// and a file whose patch is not available, stay at risk: no signal is never
+// read as no risk.
+const DELTA_RISK_RE =
+  /\b(if|elif|else|unless|guard|while|for|foreach|switch|case|match|when|try|catch|except|finally|rescue|ensure|defer|raise|throw|throws|return|yield|await|assert|require|default|break|continue|goto|null|nil|None|undefined)\b|&&|\|\||\?\?|[!=]==?|[<>]=|\w\s*[<>]\s*\w|[^=!<>:+\-*/%&|^]=[^=>]|\w\s*\(/;
+const DELTA_NEW_BRANCH_RE = /^\s*(\}\s*)?(if|elif|else|unless|guard|switch|case|match|try|catch|except|rescue|when)\b/;
+const DELTA_INERT_RE =
+  /^\s*(\/\/|#(?!include|define|if|else|endif)|\*|\/\*|--|"""|\'\'\'|<!--)|^\s*(import|from\s+\S+\s+import|#include|use\s|using\s|package\s|export\s+\{[^}]*\}\s+from)\b|^\s*[)\]};,]*\s*$/;
+const DELTA_LOG_ONLY_RE =
+  /^\s*(console\.(log|debug|info|warn|error)|(self\.|this\.)?(log|logger|logging|LOG|Log)\.(trace|debug|info|warn|warning|error|fatal|Debugf|Infof|Warnf|Errorf)|print(ln|f)?|fmt\.Print(ln|f)?|System\.out\.print(ln)?|puts|echo)\s*\(/;
+const norm = (l: string): string => l.replace(/\s+/g, " ").trim();
+
+/** Does this file's change put base behaviour at risk? (see DELTA_RISK_RE). */
+export function behaviourDeltaRisk(f: PrFile): boolean {
+  if (f.status === "removed" || f.status === "deleted") return true;
+  if (f.patch === undefined || f.patch === "") return true;
+  const removed: string[] = [];
+  const added: string[] = [];
+  for (const line of f.patch.split("\n")) {
+    if (line.startsWith("---") || line.startsWith("+++")) continue;
+    if (line.startsWith("-")) removed.push(line.slice(1));
+    else if (line.startsWith("+")) added.push(line.slice(1));
+  }
+  if (removed.length === 0) return false;
+  const addedExact = new Set(added);
+  const addedNorm = new Set(added.map(norm));
+  for (const r of removed) {
+    const n = norm(r);
+    if (n === "") continue;
+    // The same statement re-indented (a rewrap) is judged by the new-branch
+    // check below; the same statement at the same indent re-added elsewhere is
+    // a REORDER, which changes behaviour, so it falls through to the risk test.
+    if (addedNorm.has(n) && !addedExact.has(r)) continue;
+    if (DELTA_INERT_RE.test(r) || DELTA_LOG_ONLY_RE.test(r)) continue;
+    if (DELTA_RISK_RE.test(r)) return true;
+  }
+  // existing code wrapped in a NEW branch: a guard rewrapped, a value changed in a new else
+  return added.some((a) => DELTA_NEW_BRANCH_RE.test(a) && !addedSetHasRemoved(a, removed));
+}
+
+function addedSetHasRemoved(a: string, removed: string[]): boolean {
+  const n = norm(a);
+  return removed.some((r) => norm(r) === n);
+}
+
 /**
  * Cut the PR's MODIFYING changes into behaviour-delta groups: non-test code
- * files that delete or replace lines (a file the PR removes included; pure
- * additions are not this lens's), diff order, packed by changed lines (at most
- * `maxLines` per group unless one file alone exceeds it), at most `maxGroups`
- * groups. Files past the last group come back in `unread` — a silent cap reads
- * as covered.
+ * files that delete or replace lines AND put base behaviour at risk
+ * (`behaviourDeltaRisk`; a file the PR removes included; pure additions are not
+ * this lens's), diff order, packed by changed lines (at most `maxLines` per
+ * group unless one file alone exceeds it), at most `maxGroups` groups. Files
+ * past the last group come back in `unread` — a silent cap reads as covered.
  */
 export function behaviourDeltaGroups(
   files: PrFile[],
@@ -822,7 +875,8 @@ export function behaviourDeltaGroups(
       f.deletions > 0 &&
       CODE_FILE_RE.test(f.filename) &&
       !isTestFile(f.filename) &&
-      !SWEEP_SKIP_RE.test(f.filename),
+      !SWEEP_SKIP_RE.test(f.filename) &&
+      behaviourDeltaRisk(f),
   );
   const groups: string[][] = [];
   const unread: string[] = [];

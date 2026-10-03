@@ -158,10 +158,11 @@ describe("[review] dedup_merge = false — byte-identical to before the duplicat
 // Re-pinned 2026-10-03: pass-behaviour-delta is planned (one row per group of files the PR modifies or deletes code in; `[review] behaviour_delta`, freeze fixes 2) — the fixture PR modifies code, so its plan and the built agents gain the lens
 // Re-pinned 2026-10-03: pass-lint-conformance agent built (planned only when a CI job runs a linter covering a changed file; freeze fixes 2)
 // Re-pinned 2026-10-03: every planned lens carries its reason (the owner's 2026-10-03 planning decision); backcompat also planned on changed public signatures and wire serialization; pass-claims also on a stated behaviour; quality lenses on test-only changes (freeze fixes 2)
+// Re-pinned 2026-10-03: pass-behaviour-delta planned only where base behaviour is at risk (owner decision): the fixture removes only `pass` and adds a line, so its plan no longer carries the lens
 const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
-  first: "06afc2e9b106c8f099abb815eaefe94243d6bfa00cf4aef9cde86d0f413bdbd9",
-  "re-review": "08cd2506bcbf7635209e3e3df7233b5e9598f8b2398d09fbdcacbe57d96d6bc6",
-  staleness: "d7602fedfbdbdc130d0ed8e66a5986e9d750440d2b4c40510d3a9c27cde5f5ac",
+  first: "e85a6bd6aea57afdd8979778bd784664702b99ebe1ab1817af8c2b9ae630a965",
+  "re-review": "cbee3b06e368bf1ed13008e7b9b603596d6b2848ec7a5b43e119b9311bbe8f7f",
+  staleness: "c78f3001aa0227d8241310a65fe355d510c310ad1d89c344c96a8b41bd059687",
 };
 // Re-pinned 2026-10-03 (round 7, docs/duplicate-merge.md, the owner's
 // decisions): `[review] dedup_merge` defaults on, so step 4 carries the
@@ -178,23 +179,26 @@ const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
 // source files no lens raised a finding on; at most two pass-sweep rows cover
 // them, each saying why). Off = GOLDEN_ORDERS_NO_COVERAGE below, the previous
 // pin unchanged.
+// Re-pinned 2026-10-03: pass-behaviour-delta planned only where base behaviour is at risk (owner decision): the fixture removes only `pass` and adds a line, so its plan no longer carries the lens
 const GOLDEN_ORDERS: Record<string, string> = {
-  first: "9f399b64585b469b3cb99741830d14c7e29d5d96e55bfcf035df0b0e47e9cdee",
-  "re-review": "074275fc6fdfd6e0093e41cc4b70b5ca6f4c4d392d00f3b32d7387aab5b59efd",
-  staleness: "135fb130072ee43511070825a1230cea8d378114575ea25c00c177432a51216d",
+  first: "66a96f5b6803a4dd932047ee5d925bc37985aa7a17e7f229c148373d9dd40196",
+  "re-review": "59df02e91a27712366e5615b5404b4fc91902dac92d8762d6bfb9593bc1cbe90",
+  staleness: "2dac597082e3499b03b4ade4c902c28e297bcef8e0f1e3e4baffb9dc2cd04e4b",
 };
+// Re-pinned 2026-10-03: pass-behaviour-delta planned only where base behaviour is at risk (owner decision): the fixture removes only `pass` and adds a line, so its plan no longer carries the lens
 const GOLDEN_ORDERS_NO_COVERAGE: Record<string, string> = {
-  first: "d28de838e1dcf9c2987aca5d057e2bf2e2283a7e3f40cfe688f23fa38609d3cc",
-  "re-review": "76f7ff03aa79ef48d5298b0885ebe729e33585d4f8417537e6a90d93fa9f1378",
-  staleness: "9942ce69e943a78ea6381c26ffa4cf9936ec7a92e8270bc5f60cc2e55480fb1c",
+  first: "d86b6e43c0cd205430ef32dc77a024b8f53946df3c31bb851881f542ef1d9098",
+  "re-review": "ae720926944e7f45552617654f1b4c89f253a8740dc404d9c1332b469aaa54ec",
+  staleness: "fed92fd19711669fa90ec3eb360041f8fdab0d1590f3651358d2fc2c03e87bb5",
 };
 // Re-pinned 2026-10-03: pass-behaviour-delta is planned (one row per group of files the PR modifies or deletes code in; `[review] behaviour_delta`, freeze fixes 2) — the fixture PR modifies code, so its plan and the built agents gain the lens
 // Re-pinned 2026-10-03: pass-lint-conformance agent built (planned only when a CI job runs a linter covering a changed file; freeze fixes 2)
 // Re-pinned 2026-10-03: every planned lens carries its reason (the owner's 2026-10-03 planning decision); backcompat also planned on changed public signatures and wire serialization; pass-claims also on a stated behaviour; quality lenses on test-only changes (freeze fixes 2)
+// Re-pinned 2026-10-03: pass-behaviour-delta planned only where base behaviour is at risk (owner decision): the fixture removes only `pass` and adds a line, so its plan no longer carries the lens
 const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
-  first: "ad65661eccb245f9b2aae343d54cd4a39acc52e59793e46e3239606978bbf22c",
-  "re-review": "bf1747aa38eee9d358896efe19059cab0610dac58b33c735d4f419c557b4938c",
-  staleness: "dd07c08fcdd796114f65dbde22296e377ff68b1b0ed6f7b20a91f567d1ef4f32",
+  first: "0fd96d713d97c5d96b440728dfeb8223eb2b3b888a7b2188bab97c7925138be0",
+  "re-review": "3624d725965f845fe005292c1b28f6bb81b7fc3ce5645ee7d82d82d76f576036",
+  staleness: "e7c772cee4f784c4511998b8adb7b42924edced330913ec49c6f86ed23970462",
 };
 // Deliberate re-pins — the default profile's built agents changed ON PURPOSE,
 // never through `[posting]` (owner-approved review changes, 2026-10-02, after

@@ -901,7 +901,7 @@ export function buildPassPlan(
       agent: `${BEHAVIOUR_DELTA_PASS}--${tier}`,
       tier,
       raisable_to: pins[BEHAVIOUR_DELTA_PASS] !== undefined ? [] : raisableFrom(BEHAVIOUR_DELTA_PASS, tier),
-      why: `the diff modifies or deletes existing code in ${focus.length === 1 ? focus[0] : `${focus.length} files`}`,
+      why: `base behaviour is at risk in ${focus.length === 1 ? focus[0] : `${focus.length} files`}: removed or replaced guards, conditions, calls, returns or values, or existing code wrapped in a new branch`,
       focus,
     }));
     const at = pass_plan.at(-1)?.lens === VALIDATE_PASS ? pass_plan.length - 1 : pass_plan.length;

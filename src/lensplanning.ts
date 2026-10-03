@@ -51,7 +51,7 @@ export const LENS_PLANNING: Readonly<Record<string, LensPlanning>> = {
   "pass-bounds": { priority: "signal", when: "added code loops over another party's data, reads with a size limit, casts fetched data, or reads host/environment facts" },
   "pass-claims": { priority: "signal", when: "the PR text makes a checkable claim — a named warning, version, prevention, or a stated behaviour" },
   "pass-rollout": { priority: "signal", when: "the PR text mentions rollout, compatibility or versions, or added code changes persisted or versioned state" },
-  "pass-behaviour-delta": { priority: "signal", when: "the diff modifies, rewraps, replaces or deletes existing non-test code (one row per group of such files)" },
+  "pass-behaviour-delta": { priority: "signal", when: "the diff puts base behaviour at risk in non-test code: a removed or replaced guard, condition, predicate, call, return, raise, default or value, existing code wrapped in a new branch, or a deleted file (comments, imports, log lines and moved text do not count; one row per group of such files)" },
   "pass-sweep": { priority: "core", when: "every round with changed code, one row per group of changed files, source first" },
   "pass-tests": { priority: "signal", when: "the PR changes code (its existing tests are consumers; its own tests are claims)" },
   "pass-maintainability": { priority: "breadth", when: "the change adds quality_min_added_lines of non-test code, or a test-only change adds that much test code" },
