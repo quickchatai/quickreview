@@ -179,6 +179,16 @@ case "$ARM" in
        [[ -n "${QCR_BENCH_PRAGENT_VERSION:-}" ]] && BASE_ARGS+=(--build-arg "PRAGENT_VERSION=$QCR_BENCH_PRAGENT_VERSION" --build-arg "PRAGENT_SHA256=${QCR_BENCH_PRAGENT_SHA256:?set QCR_BENCH_PRAGENT_SHA256 with QCR_BENCH_PRAGENT_VERSION}") ;;
   *) die "--arm must be qcr | ocr | codex | opencode | pireview | pragent | claude" ;;
 esac
+# Scoring a stored run (judge / eval / judge-report) with no image named: use
+# the image the run itself was reviewed on (arm.sh records it in
+# <run>.arm.json), not :latest — a run scored on another build's judge code
+# is a different measurement (2026-10-03: `judge` failed "no image
+# qcr-bench:latest" on r7-dedup5-aacr, reviewed on qcr-bench:r7).
+if [[ "$ARM" == qcr && -z "${QCR_BENCH_IMAGE:-}" && -n "$RUN" && "$cmd" =~ ^(judge|eval|judge-report)$ ]]; then
+  recorded="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("image") or "")' \
+    "$RUNS_DIR/$RUN.arm.json" 2>/dev/null || true)"
+  [[ -n "$recorded" ]] && IMAGE="$recorded"
+fi
 # The Claude Code arm's own credential file (never the host's interactive login).
 CLAUDE_ENV="${QCR_BENCH_CLAUDE_ENV:-$HERE/claude.env}"
 # First character alphanumeric: `.`, `..` and dotfile ids would mount the wrong dir.

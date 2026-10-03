@@ -48,6 +48,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/bench-fairness.test.ts",
   "tests/bench-g61.test.ts",
   "tests/bench-harvest-upstream.test.ts",
+  "tests/bench-image-default.test.ts",
   "tests/bench-opencode.test.ts",
   "tests/bench-pireview.test.ts",
   "tests/bench-pragent.test.ts",
