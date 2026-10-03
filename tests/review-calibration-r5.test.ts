@@ -35,11 +35,12 @@ const text = (id: string) => PASS_ADDENDA.find((a) => a.id === id)!.text;
 describe("a written rule raised by any lens is judged as style, not killed for its lens", () => {
   it("the validator keeps a rule-quoting convention finding as a nit and still kills unwritten taste", () => {
     const t = text("quality-cap-validate");
-    expect(t).toMatch(/killed `style-not-in-guide`.*when the repo writes no rule for it/);
-    expect(t).toMatch(/QUOTES a rule the repo wrote/);
-    expect(t).toMatch(/never kill it for the lens it came from/);
-    expect(t).toMatch(/formatter or linter enforces is still out of scope/);
-    expect(bodyOf("pass-validate")).toContain("QUOTES a rule the repo wrote");
+    expect(t).toMatch(/killed `style-not-in-guide`.*when neither a rule the repo wrote nor a lint or format tool its CI runs covers it/);
+    expect(t).toMatch(/One rule for conventions/);
+    const c = text("validate-convention-rule");
+    expect(c).toMatch(/from ANY lens/);
+    expect(c).toMatch(/never kill it for the lens it came from/);
+    expect(bodyOf("pass-validate")).toContain("One rule for conventions");
     expect(t).not.toMatch(NO_BENCHMARK_NAMES);
     expect(addendaForPass("pass-validate").some((a) => a.id === "quality-cap-validate")).toBe(true);
   });

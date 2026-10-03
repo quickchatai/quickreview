@@ -285,7 +285,7 @@ describe("[review] validate_consequence_rule", () => {
     expect(rule.text).toMatch(/\[question\]/);
     expect(rule.text).toMatch(/demoted to `nit`/);
     expect(rule.text).toMatch(/lint rule the repo's CI enables/);
-    expect(rule.text).toMatch(/share a consequence/);
+    expect(rule.text).toMatch(/one fix removes both/);
     // not a registry member: never in a default build
     expect(PASS_ADDENDA.map((a) => a.id)).not.toContain("validate-consequence-rule");
   });

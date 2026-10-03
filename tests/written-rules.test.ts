@@ -30,7 +30,7 @@ describe("pass-style walks every written rule", () => {
     expect(t).toMatch(/ONE `\[nit\]` that quotes the rule .* lists every site/);
     expect(t).toMatch(/Never one comment per site/);
     expect(t).toMatch(/conflicts with the file's own convention/);
-    expect(t).toMatch(/A rule that config enforces belongs to CI/);
+    expect(t).toMatch(/belongs to the lint-conformance check/);
     expect(t).not.toMatch(NO_BENCHMARK_NAMES);
   });
   it("is in the built pass-style body", () => {
@@ -46,19 +46,43 @@ describe("pass-style walks every written rule", () => {
   });
 });
 
-describe("the validator never kills a written-rule finding for its shape", () => {
+describe("one validator rule for conventions: written rules kept as nits, CI-enforced lint a build defect", () => {
   it("binds pass-validate, PR builds only", () => {
-    expect(ids("pass-validate")).toContain("validate-written-rule-kept");
-    expect(ids("pass-validate", "scan")).not.toContain("validate-written-rule-kept");
+    expect(ids("pass-validate")).toContain("validate-convention-rule");
+    expect(ids("pass-validate", "scan")).not.toContain("validate-convention-rule");
+    expect(ids("pass-validate")).not.toContain("validate-written-rule-kept");
   });
-  it("demotes to a nit, never kills below-bar or for its lens or its siblings, still leaves CI's rules", () => {
-    const t = text("validate-written-rule-kept");
+  it("demotes a written rule to a nit, keeps CI-run lint at P2, kills only unbacked taste", () => {
+    const t = text("validate-convention-rule");
     expect(t).toMatch(/from ANY lens/);
     expect(t).toMatch(/Never kill it `below-bar`/);
     expect(t).toMatch(/never excuse it because sibling or older code breaks the same rule/);
     expect(t).toMatch(/never fold it as a paragraph under an unrelated finding/);
-    expect(t).toMatch(/configured formatter or linter enforces the rule \(`out-of-scope`/);
+    expect(t).toMatch(/AND a CI job of this repo runs/);
+    expect(t).toMatch(/build defect, not style — keep it at `P2`/);
+    expect(t).toMatch(/never \\"CI owns it\\"|never "CI owns it"/);
+    expect(t).toMatch(/Neither\*\*: taste — kill it `style-not-in-guide`/);
     expect(t).not.toMatch(NO_BENCHMARK_NAMES);
+  });
+  it("no validator text tells it to leave CI-run lint out of scope any more", () => {
+    for (const a of addendaForPass("pass-validate", PASS_ADDENDA, "django", "pr"))
+      expect(a.text, a.id).not.toMatch(/CI owns it\)|formatter or linter enforces is still out of scope/);
+  });
+});
+
+describe("new code is judged against itself; the base is a comparison, not an excuse", () => {
+  it("binds pass-validate (PR builds) and names the three habits", () => {
+    expect(ids("pass-validate")).toContain("validate-new-code-and-base");
+    const t = text("validate-new-code-and-base");
+    expect(t).toMatch(/never refutes a defect in code this PR adds or rewrites/);
+    expect(t).toMatch(/cites the comparison/);
+    expect(t).toMatch(/Merge only what one fix removes/);
+    expect(t).not.toMatch(NO_BENCHMARK_NAMES);
+  });
+  it("documented semantics now include published standards, and unverifiable is for the in-code mechanism only", () => {
+    const t = text("validate-documented-semantics");
+    expect(t).toMatch(/Published standards and specifications count the same way/);
+    expect(t).toMatch(/`unverifiable` is for a mechanism you could not establish IN THIS CODE/);
   });
 });
 

@@ -197,8 +197,13 @@ const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
 //     `validate-written-rule-kept` (pass-validate): every written rule walked,
 //     one grouped nit per rule; a written-rule finding is demoted, never killed
 //     for its shape (round 7, the Qodo near-miss audit)
-const GOLDEN_AGENTS_NO_DEDUP = "e08d36d835d0bd5d8449b074edfba0d8a812aba822c295060a2e6cd124dcc1fc";
+//   → 6852cb2b… `validate-convention-rule` replaces `validate-written-rule-kept`
+//     (one rule: written rule → nit; CI-run lint → P2 build defect; neither →
+//     style-not-in-guide), `validate-new-code-and-base`, documented semantics
+//     extended to published standards (freeze fixes 2, the cross-benchmark
+//     miss analysis: AACR lint kills, Qodo "base had the same gap")
+const GOLDEN_AGENTS_NO_DEDUP = "6852cb2be460901a9c431689a040bbae5492e0d3164c7f1ae553fa3bbf5ff9d4";
 //   → (round 7, docs/duplicate-merge.md) `dedup-group-validate` (pass-validate,
 //     `[review] dedup_merge` on by default) and the default profile's posting
 //     addendum for `repeat_sites = false`. Off + no policy = the pin above.
-const GOLDEN_AGENTS = "af0c65a88f6cb1348f311b6e07d306ea5d5f4af84bbfde05fc99bf2ce1c44e1c";
+const GOLDEN_AGENTS = "2c4f5344d2360e736e7ccd9d43241a44904df9fd5dfe2bee1afe8193386489d3";
