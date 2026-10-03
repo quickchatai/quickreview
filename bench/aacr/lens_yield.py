@@ -4,14 +4,27 @@
 Analysis only: reads run dirs, their scoring, and the benchmarks' keys; runs no
 review and no judge.
 
+Counting is per ROOT CAUSE (a merge group), never per comment trailer — the
+trailer credits every corroborating lens, so the old per-comment count let
+"posted" exceed "raised" and gave one lens two different unique counts
+(FREEZE-ANALYSIS B, 2026-10-03). A group is one lead finding of the findings
+record (any disposition but merged/folded) plus every merged/folded entry
+pointing at it — `merged_into` (new records), "MERGED x into F1" in the reason
+(older ones), else the lead on the same path within 3 lines. Its RAISERS are
+the union of the lenses of all its members.
+
 For every lens:
-  raised      root causes the lens raised (the findings record's lead entries —
-              every disposition but merged/folded — whose lens list names it)
-  posted      posted comments whose trailer lists the lens
-  unique      posted comments the lens raised ALONE (trailer lists only it)
-  unique_real unique comments that are REAL by the benchmark's own key
+  raised      groups the lens is a raiser of (posted or not)
+  posted      posted groups the lens is a raiser of
+  unique      posted groups the lens raised ALONE
+  unique_real unique groups that are REAL by the benchmark's own key
+  real        posted groups that are REAL, the lens among the raisers
   cost_usd    the lens's subagent cost (pi-events tool results, usage.cost)
   usd_per_unique_real
+
+A posted group is matched to the benchmark's comment by path and line (within
+3 lines), else by the comment's trailer lenses among the case's posted groups;
+an unmatched comment counts as its own group with its trailer lenses.
 
 REAL, per benchmark (a posted comment, matched by the benchmark's judge):
   aacr     judge/<label>/<case>.r1.json: the comment carries a key `defect`
@@ -57,16 +70,72 @@ def read_json(p):
         return None
 
 
-def case_raised(case: Path) -> list[list[str]]:
+INTO = re.compile(r"\binto\s+([A-Za-z0-9_.:-]+)")
+
+
+def _line(v) -> int | None:
+    try:
+        return int(str(v).split("-")[0])
+    except (TypeError, ValueError):
+        return None
+
+
+def case_groups(case: Path) -> list[dict]:
+    """The case's root causes: [{lead, raisers, posted, path, line}]."""
     rec = read_json(case / "findings-record.json") or {}
-    roots = []
-    for e in rec.get("findings") or []:
-        if not isinstance(e, dict) or e.get("disposition") in ("merged", "folded"):
+    entries = [e for e in rec.get("findings") or [] if isinstance(e, dict)]
+    leads = [e for e in entries if e.get("disposition") not in ("merged", "folded")]
+    by_id = {str(e.get("id")): e for e in leads}
+    groups = {id(e): {"lead": e, "raisers": set(lens_list(e.get("lens"))),
+                      "posted": e.get("disposition") == "posted",
+                      "path": e.get("path"), "line": _line(e.get("line"))} for e in leads}
+    all_by_id = {str(e.get("id")): e for e in entries}
+    for e in entries:
+        if e.get("disposition") not in ("merged", "folded"):
             continue
-        ls = lens_list(e.get("lens"))
-        if ls:
-            roots.append(ls)
-    return roots
+        target, seen = None, set()
+        ref = e.get("merged_into") or (INTO.search(str(e.get("reason") or "")) or [None, None])[1]
+        while ref and ref not in seen:
+            seen.add(ref)
+            ref = str(ref).rstrip(".:,;")
+            if ref in by_id:
+                target = by_id[ref]
+                break
+            nxt = all_by_id.get(ref)
+            ref = (nxt or {}).get("merged_into") or (INTO.search(str((nxt or {}).get("reason") or "")) or [None, None])[1]
+        if target is None:
+            ln = _line(e.get("line"))
+            near = [g for g in leads if g.get("path") == e.get("path") and ln is not None
+                    and _line(g.get("line")) is not None and abs(_line(g.get("line")) - ln) <= 3]
+            target = near[0] if near else None
+        if target is None:
+            groups[id(e)] = {"lead": e, "raisers": set(lens_list(e.get("lens"))), "posted": False,
+                             "path": e.get("path"), "line": _line(e.get("line"))}
+        else:
+            groups[id(target)]["raisers"] |= set(lens_list(e.get("lens")))
+    return [g for g in groups.values() if g["raisers"]]
+
+
+def match_comments(groups: list[dict], comments) -> list[tuple[set, bool]]:
+    """(raisers, real) per posted root cause: comments matched onto posted
+    groups by path+line (3), else trailer lenses; leftovers stand alone."""
+    posted = [g for g in groups if g["posted"]]
+    real = {id(g): False for g in posted}
+    out = []
+    for path, line, ls, r in comments:
+        hit = None
+        if path is not None and line is not None:
+            near = [g for g in posted if g["path"] == path and g["line"] is not None and abs(g["line"] - line) <= 3]
+            hit = min(near, key=lambda g: abs(g["line"] - line)) if near else None
+        if hit is None and ls:
+            cand = [g for g in posted if (path is None or g["path"] == path) and set(ls) <= g["raisers"]]
+            hit = cand[0] if cand else None
+        if hit is None:
+            out.append((set(ls), bool(r)))
+        else:
+            real[id(hit)] = real[id(hit)] or bool(r)
+    out.extend((g["raisers"], real[id(g)]) for g in posted)
+    return out
 
 
 def case_cost(case: Path) -> dict[str, float]:
@@ -104,7 +173,7 @@ def aacr_comments(runs: Path, run: str):
         comments = ((d.get("review") or {}).get("comments")) or []
         j = read_json(jdir / f"{iid}.r1.json") if jdir else None
         real_ids = {c.get("id") for c in (j or {}).get("comments", []) if c.get("defect")}
-        out = [(lenses_of_text(c.get("content", "")), f"C{i + 1}" in real_ids) for i, c in enumerate(comments)]
+        out = [(c.get("path"), _line(c.get("start_line")), lenses_of_text(c.get("content", "")), f"C{i + 1}" in real_ids) for i, c in enumerate(comments)]
         yield runs / run / "cases" / iid, out
 
 
@@ -115,7 +184,7 @@ def qodo_comments(runs: Path, run: str, set_file: Path):
         if j.get("tool") != "quickreview" or j.get("pass", 1) != 1:
             continue
         matched = {m["comment"] for m in j.get("matches") or []}
-        out = [(lenses_of_text(c.get("body", "")), i in matched) for i, c in enumerate(j.get("comments") or [])]
+        out = [(c.get("path"), _line(c.get("start")), lenses_of_text(c.get("body", "")), i in matched) for i, c in enumerate(j.get("comments") or [])]
         yield runs / run / "cases" / by_pr[j["pr"]], out
 
 
@@ -129,7 +198,7 @@ def swepr_comments(runs: Path, run: str, set_file: Path):
         # judge's raw CONFIRMED labels are only its first pass).
         ev = read_json(a.replace("agent_outputs", "eval_results").replace("_agent.json", "_eval.json")) or {}
         conf = {p.get("agent_comment_id") for p in ev.get("matched_pairs") or []}
-        out = [(lenses_of_text(c.get("body", "")), c.get("comment_id") in conf) for c in ao.get("comments") or []]
+        out = [(c.get("file_reference"), _line(c.get("line_reference")), lenses_of_text(c.get("body", "")), c.get("comment_id") in conf) for c in ao.get("comments") or []]
         yield runs / run / "cases" / by_task[t], out
 
 
@@ -150,7 +219,7 @@ def martian_comments(runs: Path, run: str, audit: Path):
     cases = {}
     for cd in glob.glob(str(runs / run / "cases" / "*")):
         cs = read_json(Path(cd) / "comments.json") or []
-        cases[cd] = [(toks(c.get("body", "")), lenses_of_text(c.get("body", ""))) for c in cs]
+        cases[cd] = [(toks(c.get("body", "")), lenses_of_text(c.get("body", "")), c.get("path"), _line(c.get("line"))) for c in cs]
     for pr, v in cand.items():
         qc = v.get("quickreview") or []
         e = (ev.get(pr) or {}).get("quickreview") or {}
@@ -169,7 +238,7 @@ def martian_comments(runs: Path, run: str, audit: Path):
             best = max(range(len(items)), key=lambda i: len(ct & items[i][0]) / max(1, len(ct | items[i][0])), default=None)
             if best is not None:
                 real_idx.add(best)
-        yield Path(cd), [(items[i][1], i in real_idx) for i in range(len(items))]
+        yield Path(cd), [(items[i][2], items[i][3], items[i][1], i in real_idx) for i in range(len(items))]
 
 
 def main() -> None:
@@ -205,27 +274,28 @@ def main() -> None:
         for case, comments in it:
             if allowed is not None and case.name not in allowed:
                 continue
-            for ls in case_raised(case):
-                for l in ls:
+            groups = case_groups(case)
+            for g in groups:
+                for l in g["raisers"]:
                     stats[l]["raised"] += 1
                     per_kind[kind][l]["raised"] += 1
             for l, c in case_cost(case).items():
                 cost[l] += c
                 per_kind[kind][l]["cost_milli"] += int(c * 1000)
-            for ls, real in comments:
+            for ls, real in match_comments(groups, comments):
                 for l in ls:
                     stats[l]["posted"] += 1
                     per_kind[kind][l]["posted"] += 1
-                if len(ls) == 1:
-                    stats[ls[0]]["unique"] += 1
-                    per_kind[kind][ls[0]]["unique"] += 1
                     if real:
-                        stats[ls[0]]["unique_real"] += 1
-                        per_kind[kind][ls[0]]["unique_real"] += 1
-                if real:
-                    for l in ls:
                         stats[l]["real"] += 1
                         per_kind[kind][l]["real"] += 1
+                if len(ls) == 1:
+                    (l,) = tuple(ls)
+                    stats[l]["unique"] += 1
+                    per_kind[kind][l]["unique"] += 1
+                    if real:
+                        stats[l]["unique_real"] += 1
+                        per_kind[kind][l]["unique_real"] += 1
     rows = []
     for l in sorted(set(stats) | set(cost)):
         s = stats[l]
