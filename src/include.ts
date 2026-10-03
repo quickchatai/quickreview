@@ -585,12 +585,25 @@ const NITS_OPEN_VALIDATE_ADDENDUM =
   '\n## Nits are open this round (config `[review] nits = "open"`)\n' +
   "Do not kill a confirmed nit for being minor: `below-bar` is not used this round, and a true nit that asks for no change is rewritten to name the change it implies rather than killed `nit-no-request`. Every other rule stands — a nit must be TRUE (kill `refuted`/`unverifiable` as ever), style still needs the repo's written guide (`style-not-in-guide`), and repeats still merge.\n";
 
+// The owner's duplicate-merge decisions (2026-10-03, docs/duplicate-merge.md):
+// deterministic code forms candidate groups before the validator; the
+// validator decides "same root cause" with the code in view and keeps one
+// finding per root cause — max severity, the best body, every site, every
+// lens. A group is a hint: sharing a file or a word never merges by itself.
+const DEDUP_GROUP_VALIDATE_ADDENDUM =
+  "\n## Candidate groups: one finding per root cause (sandbox rule)\n" +
+  "Your task string may carry CANDIDATE GROUPS from the `cluster_findings` tool: candidates that share a file region, a named identifier or a fix target. Judge each group as ONE unit, with the code in view: do its members describe ONE root cause — one fix removes them all; the same consequence reached from several sites, or stated by several lenses?\n\n" +
+  "- **One root cause → ONE surviving finding**: the group's highest severity; the best-evidenced body (the one that names the mechanism and the consequence); every site listed in it (`Also at path:line`); and every lens that raised it in its lens tag — how many lenses found it independently is corroboration, so say the count. Anchor it at the cause line. Record each other member `merged` into it (`group`, `merged_into`).\n" +
+  "- **Different defects → SPLIT**: judge each member on its own, exactly as without groups. A group is a hint, never a verdict: never merge two findings because they share a file, a line range or a word — only because one fix removes both. A P1/P2 is never merged under a lesser finding of a different defect.\n" +
+  "- Two candidates in no common group may still be one root cause; merge them the same way when the code shows it.\n";
+
 /** Addenda that exist only when the config asks for them — composed after the
  * registry by both agent builds (src/wire.ts, src/bench/runner.ts). */
 export function configAddenda(review: {
   nits?: string;
   validate_demote?: boolean;
   validate_consequence_rule?: boolean;
+  dedup_merge?: boolean;
 }): PassAddendum[] {
   const out: PassAddendum[] = [];
   // On unless switched off — the switch exists so a benchmark can measure the
@@ -613,6 +626,10 @@ export function configAddenda(review: {
       { id: "nits-open", scope: "lenses", text: NITS_OPEN_LENS_ADDENDUM },
       { id: "nits-open-validate", scope: [VALIDATE_PASS], text: NITS_OPEN_VALIDATE_ADDENDUM },
     );
+  // `[review] dedup_merge` (docs/duplicate-merge.md): the validator judges
+  // the round's candidate groups as units. PR builds only.
+  if (review.dedup_merge === true)
+    out.push({ id: "dedup-group-validate", scope: [VALIDATE_PASS], mode: "pr", text: DEDUP_GROUP_VALIDATE_ADDENDUM });
   return out;
 }
 

@@ -138,10 +138,11 @@ describe("[posting] — inheritance through extends", () => {
     expect(() => loadProfilePosting(sandbox, "child", lookup())).toThrow(/profile "base".*nits/);
   });
 
-  it("no profile, an unknown profile and a chain without [posting] are today's posting", () => {
+  it("no profile and an unknown profile are today's posting; the default profile sets one comment per root cause", () => {
     expect(loadProfilePosting(sandbox, "", lookup())).toEqual({});
     expect(loadProfilePosting(sandbox, "nope", lookup())).toEqual({});
-    expect(loadProfilePosting(sandbox, "default", lookup())).toEqual({});
+    // docs/duplicate-merge.md, decision 2 (round 7)
+    expect(loadProfilePosting(sandbox, "default", lookup())).toEqual({ repeat_sites: false });
   });
 });
 

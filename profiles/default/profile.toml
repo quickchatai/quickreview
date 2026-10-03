@@ -1,9 +1,17 @@
 # The default profile — the shipped behaviour, and the base every
-# generated profile extends. It adds nothing: an empty addenda pack, no
-# heuristics.toml, and no framework-specific machinery. A profile that says
-# only `extends = "default"` reviews exactly as `[review] profile = ""` does.
+# generated profile extends. An empty addenda pack, no heuristics.toml, and no
+# framework-specific machinery. Its one setting is the owner's 2026-10-03
+# duplicate-merge decision (docs/duplicate-merge.md): one comment per root
+# cause, so a profile that extends it posts no follower rows; an install with
+# `[review] profile = ""` keeps the code default (`repeat_sites = true`).
 #
 # Settings here are inherited by every child and a child's own value wins
 # (docs/profiles.md, "Inheritance"). Keep this file to what the code ships:
 # a house rule belongs in the child, never in the shared base.
 ecosystem = "none"
+
+# One comment per root cause (docs/duplicate-merge.md, decision 2): a finding
+# found at several sites posts ONCE, at its cause line, the other sites named
+# in its body. Extra sites are recorded `withheld` (word `repeat-site`).
+[posting]
+repeat_sites = false

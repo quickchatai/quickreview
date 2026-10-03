@@ -238,7 +238,7 @@ finding.
 Its **DOUBTED** block — candidates it could not stand behind (`refuted`,
 `unverifiable`, `bad-anchor`) — is never posted either: record each one as
 `doubted` in the findings record (step 7); a doubt is kept, never dropped.
-{{validator_note}}{{validator_shard_note}}
+{{validator_note}}{{validator_shard_note}}{{dedup_note}}
 
 ## 5. Decide
 

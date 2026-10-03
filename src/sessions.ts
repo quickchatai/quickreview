@@ -318,6 +318,11 @@ export class PiSessionManager implements SessionHooks {
       // purpose: children load only the global settings extensions, so the
       // subagent tool never exists inside a leaf and a pass cannot fan out.
       join(this.root, "extensions", "subagents.ts"),
+      // docs/duplicate-merge.md: the `cluster_findings` tool a round calls
+      // before pass-validate (`[review] dedup_merge`). The bench session
+      // loads the same file (src/bench/runner.ts), so both routes group
+      // candidates with one code path. Pure: it reads and writes nothing.
+      join(this.root, "extensions", "finding-clusters.ts"),
       // The vendored + patched OpenViking extension: the memory
       // tools a session reaches. LAST on purpose — it is the only extension
       // here we did not write, and pi registers handlers in load order, so

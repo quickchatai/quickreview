@@ -22,7 +22,7 @@
 //     profile>` measures production as deployed.
 
 import { renderPassTasks } from "../passtasks.js";
-import { renderReviewFromRecord } from "../reviewrender.js";
+import { postedRenderOptions, renderPostedReview, type PostedRenderConfig } from "../reviewrender.js";
 import {
   createWriteStream,
   existsSync,
@@ -746,6 +746,33 @@ export function runPi(
 }
 
 /**
+ * The bench's render step (`[review] render_outputs`): the SAME two calls the
+ * live route's scripts/render-review.sh makes (src/reviewrendercli.ts
+ * renderRound) — `postedRenderOptions(cfg)` then `renderPostedReview` — with
+ * the case's outcome as the fallback verdict, summary and lenses line. Pinned
+ * equal to the live route by tests/dedup-parity.test.ts.
+ */
+export function renderBenchOutputs(
+  record: unknown,
+  outcome: Record<string, unknown> | undefined,
+  cfg: PostedRenderConfig,
+): ReturnType<typeof renderPostedReview> {
+  const passes = Array.isArray(outcome?.["passes"])
+    ? (outcome["passes"] as Array<Record<string, unknown>>)
+        .map((p) => String(p["name"] ?? ""))
+        .filter((n) => n && n !== "pass-validate")
+    : [];
+  return renderPostedReview(
+    record,
+    postedRenderOptions(cfg, {
+      verdict: typeof outcome?.["verdict"] === "string" ? (outcome["verdict"] as string) : null,
+      summary: typeof outcome?.["summary"] === "string" ? (outcome["summary"] as string) : null,
+      lensesApplied: passes.length ? passes.join(", ") : null,
+    }),
+  );
+}
+
+/**
  * The defect judge's pi argv (src/bench/defectjudge.ts): no session, no
  * skills/templates/context files, no project-local files, no extension but the
  * no-exec bash guard, and only the \`read\` and \`bash\` tools. The judge reads
@@ -934,6 +961,10 @@ export async function reviewCase(
       join(o.root, "extensions", "ledger-pin.ts"),
       "--extension",
       join(o.root, "extensions", "subagents.ts"),
+      // The live PR session's `cluster_findings` tool (src/sessions.ts
+      // extensionPaths): the same grouping code on both routes.
+      "--extension",
+      join(o.root, "extensions", "finding-clusters.ts"),
       "--name",
       `bench-${safe}`,
       "--mode",
@@ -1024,25 +1055,18 @@ export async function reviewCase(
     if (ctx.cfg.review.render_outputs) {
       const record = readJson(join(caseDir, CASE_FILES.findings));
       if (record !== undefined) {
-        const passes = Array.isArray(outcome?.["passes"])
-          ? (outcome["passes"] as Array<Record<string, unknown>>)
-              .map((p) => String(p["name"] ?? ""))
-              .filter((n) => n && n !== "pass-validate")
-          : [];
-        const rendered = renderReviewFromRecord(record, {
-          botLogin: ctx.cfg.github.bot_login,
-          verdict: typeof outcome?.["verdict"] === "string" ? (outcome["verdict"] as string) : null,
-          summary: typeof outcome?.["summary"] === "string" ? (outcome["summary"] as string) : null,
-          lensesApplied: passes.length ? passes.join(", ") : null,
-        });
+        const out = renderBenchOutputs(record, outcome, ctx.cfg);
         writeFileSync(
           join(caseDir, CASE_FILES.comments),
-          JSON.stringify(rendered.comments, null, 2) + "\n",
+          JSON.stringify(out.rendered.comments, null, 2) + "\n",
         );
-        writeFileSync(join(caseDir, CASE_FILES.review), rendered.body);
-        if (rendered.problems.length)
+        writeFileSync(join(caseDir, CASE_FILES.review), out.rendered.body);
+        // The duplicate-merge post-check's dispositions, kept in the record.
+        if (out.merges.length)
+          writeFileSync(join(caseDir, CASE_FILES.findings), JSON.stringify(out.record, null, 2) + "\n");
+        if (out.rendered.problems.length)
           summary.warnings.push(
-            ...rendered.problems.slice(0, 10).map((p) => `render: ${p}`.slice(0, 300)),
+            ...out.rendered.problems.slice(0, 10).map((p) => `render: ${p}`.slice(0, 300)),
           );
       }
     }

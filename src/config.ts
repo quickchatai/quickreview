@@ -467,6 +467,13 @@ export interface ReviewConfig {
   /** `validator_shards`: how many `pass-validate` children split the
    * candidates (by file); 1 = one validator, the pre-2026-10 shape. */
   validator_shards: number;
+  /** `dedup_merge` (docs/duplicate-merge.md): candidates are grouped
+   * deterministically before the validator (the `cluster_findings` tool,
+   * src/dedup.ts), the validator judges each group as one root cause or
+   * splits it, and a post-check at render time merges two posted findings
+   * that are one root cause posted twice. Off ⇒ every round order, built
+   * agent and rendered review is byte-identical to before. */
+  dedup_merge: boolean;
 }
 
 export type NitPolicy = "strict" | "open";
@@ -565,6 +572,7 @@ export const REVIEW_DEFAULTS: ReviewConfig = {
   task_files: true,
   render_outputs: true,
   validator_shards: 1,
+  dedup_merge: true,
 };
 
 /**
@@ -1909,6 +1917,11 @@ export function parseConfig(toml: string): Config {
   if (!Number.isInteger(shards) || shards < 1 || shards > 4) {
     throw new Error(
       `config.toml [review]: validator_shards must be an integer 1-4 (got ${JSON.stringify(shards)})`,
+    );
+  }
+  if (typeof cfg.review.dedup_merge !== "boolean") {
+    throw new Error(
+      `config.toml [review]: dedup_merge must be true or false (got ${JSON.stringify(cfg.review.dedup_merge)})`,
     );
   }
   if (cfg.review.nits !== "strict" && cfg.review.nits !== "open") {

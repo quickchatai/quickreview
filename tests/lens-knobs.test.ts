@@ -77,7 +77,8 @@ describe("defaults reproduce today's review", () => {
   });
 
   it("the default config addenda and the default model map are unchanged", () => {
-    expect(configAddenda(baseCfg.review).map((a) => a.id)).toEqual(["validate-demote-not-kill"]);
+    // + the duplicate merge's validator rule, on by default since round 7 (docs/duplicate-merge.md)
+    expect(configAddenda(baseCfg.review).map((a) => a.id)).toEqual(["validate-demote-not-kill", "dedup-group-validate"]);
     expect(passTierModels(baseCfg.models.pass_tiers, baseCfg.models.tiers)).toEqual({});
   });
 });

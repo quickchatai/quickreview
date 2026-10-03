@@ -103,13 +103,37 @@ describe("[posting] — the default profile builds and renders byte-identically"
   it("with render_outputs off, the orders are the pre-2026-10 bytes", { timeout: HEAVY_TIMEOUT_MS }, () => {
     const cfg = defaultCfg();
     cfg.review.render_outputs = false;
+    // the pre-2026-10 bytes predate the duplicate merge too (round 7)
+    cfg.review.dedup_merge = false;
+    delete cfg.posting;
     expect(renderedOrders(cfg)).toEqual(GOLDEN_ORDERS_UNRENDERED);
   });
   it("built agents", { timeout: HEAVY_TIMEOUT_MS }, () => {
     expect(builtAgents(defaultCfg())).toBe(GOLDEN_AGENTS);
   });
-  it("the default profile attaches no policy at all", () => {
-    expect(defaultCfg().posting).toBeUndefined();
+  it("the default profile's only policy is one comment per root cause (repeat_sites = false)", () => {
+    const p = defaultCfg().posting;
+    expect(p).toBeDefined();
+    expect(p!.repeat_sites).toBe(false);
+    expect({ ...p, repeat_sites: true }).toEqual({ ...p, repeat_sites: true, max_comments: 0, nits: "post", questions: "post", body: "full", comment_style: "full" });
+  });
+});
+
+// docs/duplicate-merge.md: with `[review] dedup_merge = false` and no profile
+// posting policy, the orders and the agents are byte-identical to the pins
+// from before the duplicate merge (2026-10-03, round 7).
+describe("[review] dedup_merge = false — byte-identical to before the duplicate merge", () => {
+  const noDedup = () => {
+    const cfg = defaultCfg();
+    cfg.review.dedup_merge = false;
+    delete cfg.posting;
+    return cfg;
+  };
+  it("rendered round orders", { timeout: HEAVY_TIMEOUT_MS }, () => {
+    expect(renderedOrders(noDedup())).toEqual(GOLDEN_ORDERS_NO_DEDUP);
+  });
+  it("built agents", { timeout: HEAVY_TIMEOUT_MS }, () => {
+    expect(builtAgents(noDedup())).toBe(GOLDEN_AGENTS_NO_DEDUP);
   });
 });
 
@@ -122,10 +146,21 @@ describe("[posting] — the default profile builds and renders byte-identically"
 // templates says "Anchor at the cause" — the line a fix would edit, the
 // symptom site named in the body (round 6, mined from the Qodo run: about nine
 // findings anchored on the test or caller that exposed the defect).
-const GOLDEN_ORDERS: Record<string, string> = {
+const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
   first: "e4d416f0b1b8bc90a8c99bc7b5d40b999dd3cf6cf6ccf31ea14d68f406d189bd",
   "re-review": "e496362d1e1a496c994e96c73aec8864c0d188e8de12c4d0471ffc3bf0989e28",
   staleness: "1f715115beed263bb8b18cae908a97f07162aa9a8fb20f4458b5fad85831c7bf",
+};
+// Re-pinned 2026-10-03 (round 7, docs/duplicate-merge.md, the owner's
+// decisions): `[review] dedup_merge` defaults on, so step 4 carries the
+// `{{dedup_note}}` (group candidates with `cluster_findings` before the
+// validator; one comment per root cause), and the default profile sets
+// `[posting] repeat_sites = false`, so the escalation line carries the
+// posting-policy note. Off + no policy = GOLDEN_ORDERS_NO_DEDUP above.
+const GOLDEN_ORDERS: Record<string, string> = {
+  first: "8ad90a3c0393921cd32153e5920eb74c4d6cc0ca97d541c9553f7191ea651ecb",
+  "re-review": "c5b0a829850e76d0c29050d60ccbdf12dad77575bdaeec786a41b58624251c80",
+  staleness: "5b01f161f2e4d80f0376479672d6724300656bc732d16a9952cf3eb08f2c2f76",
 };
 const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
   first: "3dddb72bc299b5893d679a6215880cb0b442b2403b2d91052e22fc1a4e0299ab",
@@ -162,4 +197,8 @@ const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
 //     `validate-written-rule-kept` (pass-validate): every written rule walked,
 //     one grouped nit per rule; a written-rule finding is demoted, never killed
 //     for its shape (round 7, the Qodo near-miss audit)
-const GOLDEN_AGENTS = "e08d36d835d0bd5d8449b074edfba0d8a812aba822c295060a2e6cd124dcc1fc";
+const GOLDEN_AGENTS_NO_DEDUP = "e08d36d835d0bd5d8449b074edfba0d8a812aba822c295060a2e6cd124dcc1fc";
+//   → (round 7, docs/duplicate-merge.md) `dedup-group-validate` (pass-validate,
+//     `[review] dedup_merge` on by default) and the default profile's posting
+//     addendum for `repeat_sites = false`. Off + no policy = the pin above.
+const GOLDEN_AGENTS = "af0c65a88f6cb1348f311b6e07d306ea5d5f4af84bbfde05fc99bf2ce1c44e1c";

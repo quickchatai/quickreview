@@ -428,6 +428,36 @@ export function renderValidatorShardNote(
   ].join("\n");
 }
 
+/**
+ * `[review] dedup_merge` (docs/duplicate-merge.md): the round groups its
+ * candidates with the `cluster_findings` tool (extensions/finding-clusters.ts
+ * → src/dedup.ts) before the validator, and posts one comment per root cause.
+ * Rendered into `{{dedup_note}}` at the end of step 4; "" when the order does
+ * not carry the flag, so a round order without it is byte-identical.
+ */
+export function renderDedupNote(order: Pick<RoundOrder, "dedup_merge">): string {
+  if (!order.dedup_merge) return "";
+  return [
+    "",
+    "**Group before you validate — one comment per root cause.** After step 3's",
+    "merge-stage log and BEFORE dispatching `pass-validate`, call the",
+    "`cluster_findings` tool ONCE with every surviving candidate from every lens:",
+    "`{ id, path, line, title, body, lens, severity, fix_target }` (`fix_target`:",
+    "the `path:line` or symbol a fix would change, when the lens names one). It",
+    "returns candidate GROUPS — the same file within 10 lines, a shared named",
+    "identifier, or the same fix target. Put its output verbatim in the",
+    "validate task string under the heading `CANDIDATE GROUPS`; the validator",
+    "judges each group as one unit and returns one finding per root cause.",
+    "This supersedes step 3's one-row-per-site rule: a root cause found at",
+    "several sites posts ONE comment, anchored at the cause line, with every",
+    "other site listed in its body (`Also at path:line`) and every lens that",
+    "raised it in its lens tag — no follower rows. In the findings record each",
+    "merged-away candidate is `merged`, with `group` (the group id) and",
+    "`merged_into` (the surviving finding's id), so nothing is lost. If the",
+    "tool is unavailable, say so in the summary and validate without groups.",
+  ].join("\n");
+}
+
 /**'s changed-behavior receipt. The daemon binds it to one successor
  * order; ordinary rounds render nothing. It does not change the plan or move
  * scheduling into the daemon — it tells the fresh parent how to execute the
@@ -533,6 +563,8 @@ export function roundVars(
     render_note: renderRenderNote(order),
     // `[review] validator_shards`: "" with one validator.
     validator_shard_note: renderValidatorShardNote(order),
+    // `[review] dedup_merge`: "" unless the order groups its candidates.
+    dedup_note: renderDedupNote(order),
   };
 }
 

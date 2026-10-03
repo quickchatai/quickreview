@@ -20,6 +20,7 @@
 // problem the input has is returned rather than thrown, so a thin record still
 // renders the review the record describes.
 import { ASK_HUMAN_TAG, CHECK_THIS_TAG, DEFERRED_TAG, postTag, type Severity } from "./severity.js";
+import { postCheckRecord, type PostCheckMerge } from "./dedup.js";
 
 /** The standard footer, word for word posting.ts `reviewFooter` (pinned equal
  * by tests/reviewrender.test.ts). Not imported: posting.ts is the recorded
@@ -272,6 +273,54 @@ export function renderReviewFromRecord(
   if (details) out.push("", details);
   out.push("", renderedFooter(opts.botLogin));
   return { body: out.join("\n") + "\n", comments, in_body: overflow.length, problems };
+}
+
+/** What a render route needs from the install's config — the ONE place both
+ * routes (scripts/render-review.sh → src/reviewrendercli.ts, and the bench
+ * runner) turn a config into render options, so they cannot drift. */
+export interface PostedRenderConfig {
+  review: { dedup_merge?: boolean };
+  github?: { bot_login?: string };
+}
+
+export interface PostedRenderOptions {
+  botLogin?: string;
+  verdict?: string | null;
+  summary?: string | null;
+  lensesApplied?: string | null;
+  /** `[review] dedup_merge`: run the post-check (src/dedup.ts) first. */
+  dedupMerge?: boolean;
+}
+
+export function postedRenderOptions(
+  cfg: PostedRenderConfig,
+  fallbacks: Pick<PostedRenderOptions, "verdict" | "summary" | "lensesApplied"> = {},
+): PostedRenderOptions {
+  return {
+    ...(cfg.github?.bot_login ? { botLogin: cfg.github.bot_login } : {}),
+    ...fallbacks,
+    dedupMerge: cfg.review.dedup_merge === true,
+  };
+}
+
+/**
+ * The render step both routes run (decision 12, docs/duplicate-merge.md:
+ * the bench matches a live round): the post-check over the record when
+ * `dedupMerge` is on, then `renderReviewFromRecord`. Returns the record to
+ * write back (the same object when the post-check merged nothing, or when it
+ * is off) beside what to post.
+ */
+export function renderPostedReview(
+  record: unknown,
+  opts: PostedRenderOptions = {},
+): { rendered: RenderedReview; record: unknown; merges: PostCheckMerge[] } {
+  const { dedupMerge, ...renderOpts } = opts;
+  const checked = dedupMerge ? postCheckRecord(record) : { record, merges: [] as PostCheckMerge[] };
+  const rendered = renderReviewFromRecord(checked.record, renderOpts);
+  let out = checked.record;
+  if (checked.merges.length && typeof out === "object" && out !== null)
+    out = { ...(out as Record<string, unknown>), comments_posted: rendered.comments.length };
+  return { rendered, record: out, merges: checked.merges };
 }
 
 /** The posting fields a rendered round's findings record carries, as the

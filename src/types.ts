@@ -241,6 +241,10 @@ export interface RoundOrder {
   /** `[review] validator_shards` above 1: how many pass-validate children
    * split this round's candidates (by file). Absent ⇒ one validator. */
   validator_shards?: number;
+  /** `[review] dedup_merge` (docs/duplicate-merge.md): the round groups its
+   * candidates with the `cluster_findings` tool before the validator. Absent
+   * ⇒ the order renders exactly as before. */
+  dedup_merge?: boolean;
 }
 
 /**
