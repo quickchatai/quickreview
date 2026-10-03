@@ -14,6 +14,7 @@
 // signature, as extensions/pi-api.d.ts records them.
 import type { Pi, PiToolDefinition, PiToolResult } from "@earendil-works/pi-coding-agent";
 import { clusterFindings, renderGroups, type ClusterCandidate } from "../src/dedup.js";
+import { coverageGaps, coverageReason, type CoverageFile } from "../src/coverage.js";
 
 function text(t: string, details?: Record<string, unknown>): PiToolResult {
   return { content: [{ type: "text", text: t }], ...(details ? { details } : {}) };
@@ -97,12 +98,70 @@ export const CLUSTER_TOOL: PiToolDefinition = {
   },
 };
 
+/** Read `eligible` (the order's coverage files) and `addressed` (paths). */
+export function readCoverageArgs(params: Record<string, unknown>): {
+  eligible: CoverageFile[];
+  addressed: string[];
+  problems: string[];
+} {
+  const problems: string[] = [];
+  const parse = (raw: unknown, name: string): unknown =>
+    typeof raw === "string" ? (() => { try { return JSON.parse(raw); } catch { problems.push(`${name} is not valid JSON`); return null; } })() : raw;
+  const el = parse(params.eligible, "eligible");
+  const ad = parse(params.addressed, "addressed");
+  const eligible: CoverageFile[] = Array.isArray(el)
+    ? el.flatMap((x) =>
+        typeof x === "object" && x !== null && typeof (x as Record<string, unknown>).path === "string"
+          ? [{ path: (x as { path: string }).path, lines: Number((x as { lines?: unknown }).lines) || 0 }]
+          : [],
+      )
+    : (problems.push("eligible must be an array"), []);
+  const addressed: string[] = Array.isArray(ad)
+    ? ad.filter((x): x is string => typeof x === "string")
+    : (problems.push("addressed must be an array"), []);
+  return { eligible, addressed, problems };
+}
+
+export const COVERAGE_TOOL: PiToolDefinition = {
+  name: "coverage_gaps",
+  label: "Coverage gaps",
+  description:
+    "After the planned lenses return: the coverage-eligible changed source files no lens raised a finding on, packed into at most two pass-sweep rows, each with the reason line to put at the top of its task string.",
+  parameters: {
+    type: "object",
+    properties: {
+      eligible: {
+        type: "array",
+        description: "The round order's coverage-eligible files, verbatim.",
+        items: { type: "object", properties: { path: { type: "string" }, lines: { type: "number" } }, required: ["path"] },
+      },
+      addressed: {
+        type: "array",
+        description: "Every file path any lens raised a finding on (any disposition).",
+        items: { type: "string" },
+      },
+    },
+    required: ["eligible", "addressed"],
+  },
+  execute(_id, params) {
+    const { eligible, addressed, problems } = readCoverageArgs(params);
+    const gaps = coverageGaps(eligible, addressed);
+    const warn = problems.length ? `\nProblems: ${problems.join("; ")}` : "";
+    const rows = gaps.groups.map((g, i) => `ROW ${i + 1}: focus ${JSON.stringify(g)}\n  reason: ${coverageReason(g)}`);
+    const body = gaps.groups.length
+      ? `${gaps.uncovered.length} of ${eligible.length} eligible file(s) unaddressed → ${gaps.groups.length} pass-sweep row(s).\n${rows.join("\n")}${gaps.unchecked.length ? `\nUNCHECKED (past the row cap): ${gaps.unchecked.join(", ")}` : ""}`
+      : `All ${eligible.length} eligible file(s) addressed — no coverage row.`;
+    return text(`${body}${warn}`, { groups: gaps.groups, uncovered: gaps.uncovered, unchecked: gaps.unchecked });
+  },
+};
+
 const activate = (pi: Pi): void => {
   if (typeof pi.registerTool !== "function") {
     console.error("finding-clusters: pi.registerTool unavailable — cluster_findings not registered.");
     return;
   }
   pi.registerTool(CLUSTER_TOOL);
+  pi.registerTool(COVERAGE_TOOL);
 };
 
 export default activate;

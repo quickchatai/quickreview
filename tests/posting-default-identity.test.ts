@@ -105,11 +105,18 @@ describe("[posting] — the default profile builds and renders byte-identically"
     cfg.review.render_outputs = false;
     // the pre-2026-10 bytes predate the duplicate merge too (round 7)
     cfg.review.dedup_merge = false;
+    // … and the per-file coverage check (gap plan item 4)
+    cfg.review.coverage_check = false;
     delete cfg.posting;
     expect(renderedOrders(cfg)).toEqual(GOLDEN_ORDERS_UNRENDERED);
   });
   it("built agents", { timeout: HEAVY_TIMEOUT_MS }, () => {
     expect(builtAgents(defaultCfg())).toBe(GOLDEN_AGENTS);
+  });
+  it("with coverage_check off, the orders are the bytes from before the coverage check", { timeout: HEAVY_TIMEOUT_MS }, () => {
+    const cfg = defaultCfg();
+    cfg.review.coverage_check = false;
+    expect(renderedOrders(cfg)).toEqual(GOLDEN_ORDERS_NO_COVERAGE);
   });
   it("the default profile's only policy is one comment per root cause (repeat_sites = false)", () => {
     const p = defaultCfg().posting;
@@ -126,6 +133,8 @@ describe("[review] dedup_merge = false — byte-identical to before the duplicat
   const noDedup = () => {
     const cfg = defaultCfg();
     cfg.review.dedup_merge = false;
+    // these pins predate the per-file coverage check too (gap plan item 4)
+    cfg.review.coverage_check = false;
     delete cfg.posting;
     return cfg;
   };
@@ -163,7 +172,18 @@ const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
 // Re-pinned 2026-10-03: pass-behaviour-delta is planned (one row per group of files the PR modifies or deletes code in; `[review] behaviour_delta`, freeze fixes 2) — the fixture PR modifies code, so its plan and the built agents gain the lens
 // Re-pinned 2026-10-03: pass-lint-conformance agent built (planned only when a CI job runs a linter covering a changed file; freeze fixes 2)
 // Re-pinned 2026-10-03: every planned lens carries its reason (the owner's 2026-10-03 planning decision); backcompat also planned on changed public signatures and wire serialization; pass-claims also on a stated behaviour; quality lenses on test-only changes (freeze fixes 2)
+// Re-pinned 2026-10-03 (gap plan item 4): `[review] coverage_check` defaults
+// on and the fixture PR changes source files, so the end of step 2 carries the
+// `{{coverage_note}}` (after the lenses, `coverage_gaps` lists the changed
+// source files no lens raised a finding on; at most two pass-sweep rows cover
+// them, each saying why). Off = GOLDEN_ORDERS_NO_COVERAGE below, the previous
+// pin unchanged.
 const GOLDEN_ORDERS: Record<string, string> = {
+  first: "9f399b64585b469b3cb99741830d14c7e29d5d96e55bfcf035df0b0e47e9cdee",
+  "re-review": "074275fc6fdfd6e0093e41cc4b70b5ca6f4c4d392d00f3b32d7387aab5b59efd",
+  staleness: "135fb130072ee43511070825a1230cea8d378114575ea25c00c177432a51216d",
+};
+const GOLDEN_ORDERS_NO_COVERAGE: Record<string, string> = {
   first: "d28de838e1dcf9c2987aca5d057e2bf2e2283a7e3f40cfe688f23fa38609d3cc",
   "re-review": "76f7ff03aa79ef48d5298b0885ebe729e33585d4f8417537e6a90d93fa9f1378",
   staleness: "9942ce69e943a78ea6381c26ffa4cf9936ec7a92e8270bc5f60cc2e55480fb1c",

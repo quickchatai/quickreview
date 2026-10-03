@@ -18,6 +18,7 @@ import { githubCloneDir, sandboxRoot } from "./config.js";
 import { fingerprintRoundIntegrity } from "./execboundary.js";
 import type { GateResult } from "./gate.js";
 import type { PrFileEntry } from "./github.js";
+import { coverageEligible } from "./coverage.js";
 import { DJANGO_ECOSYSTEM, type Ecosystem } from "./ecosystem.js";
 import { promptTargetsFor } from "./escalation.js";
 import {
@@ -1006,6 +1007,13 @@ export function buildRoundOrder(args: {
     ...(args.cfg.review?.dedup_merge && pass_plan.some((p) => p.lens === "pass-validate")
       ? { dedup_merge: true }
       : {}),
+    // `[review] coverage_check` (src/coverage.ts): only when the plan has a
+    // sweep to launch for the uncovered files and there is a file to hold it to.
+    ...(() => {
+      if (!args.cfg.review?.coverage_check || !pass_plan.some((p) => p.lens === "pass-sweep")) return {};
+      const coverage_files = coverageEligible(args.files);
+      return coverage_files.length > 0 ? { coverage_files } : {};
+    })(),
     // `[review] validator_shards` (templates.ts renderValidatorShardNote):
     // only above 1, and only when the plan has a validator to shard.
     ...((args.cfg.review?.validator_shards ?? 1) > 1

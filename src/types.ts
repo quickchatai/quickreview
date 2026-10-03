@@ -245,6 +245,11 @@ export interface RoundOrder {
    * candidates with the `cluster_findings` tool before the validator. Absent
    * ⇒ the order renders exactly as before. */
   dedup_merge?: boolean;
+  /** `[review] coverage_check` (src/coverage.ts): the changed non-test
+   * source files the round holds itself to — after the lenses, the ones no
+   * lens raised a finding on get a targeted pass-sweep row. Absent ⇒ the
+   * order renders exactly as before. */
+  coverage_files?: Array<{ path: string; lines: number }>;
 }
 
 /**

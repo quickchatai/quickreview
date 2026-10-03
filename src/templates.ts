@@ -458,6 +458,37 @@ export function renderDedupNote(order: Pick<RoundOrder, "dedup_merge">): string 
   ].join("\n");
 }
 
+/**
+ * `[review] coverage_check` (src/coverage.ts): after the planned lenses
+ * return, the changed non-test source files no lens raised a finding on get a
+ * targeted pass-sweep row. Rendered into `{{coverage_note}}` at the end of
+ * step 2; "" when the order carries no `coverage_files`, so an order without
+ * them is byte-identical.
+ */
+export function renderCoverageNote(order: Pick<RoundOrder, "coverage_files">): string {
+  const files = order.coverage_files;
+  if (!files || files.length === 0) return "";
+  return [
+    "",
+    "**Coverage check — no changed source file goes unread.** When every",
+    "planned lens has returned and BEFORE step 3, call the `coverage_gaps` tool",
+    "ONCE with `eligible` = the JSON list below, verbatim, and `addressed` = every",
+    "file path any lens raised a finding on (any disposition; a lens that only",
+    "answered NONE addresses nothing). For each group it returns, launch",
+    "`pass-sweep` once, at the sweep's planned tier, with `focus` = that group's",
+    "files and the reason line it gives (`coverage: no lens addressed …`) at the",
+    "top of the task string. At most two such rows; its candidates join step 3",
+    "like any lens's. Log one line per row, exactly `COVERAGE <files>`, and list",
+    "the `unchecked` files it returns in the summary. If it returns no group,",
+    "go on. If the tool is unavailable, say so in the summary and go on.",
+    "",
+    "Coverage-eligible files:",
+    "```json",
+    JSON.stringify(files),
+    "```",
+  ].join("\n");
+}
+
 /**'s changed-behavior receipt. The daemon binds it to one successor
  * order; ordinary rounds render nothing. It does not change the plan or move
  * scheduling into the daemon — it tells the fresh parent how to execute the
@@ -565,6 +596,8 @@ export function roundVars(
     validator_shard_note: renderValidatorShardNote(order),
     // `[review] dedup_merge`: "" unless the order groups its candidates.
     dedup_note: renderDedupNote(order),
+    // `[review] coverage_check`: "" unless the order carries coverage files.
+    coverage_note: renderCoverageNote(order),
   };
 }
 

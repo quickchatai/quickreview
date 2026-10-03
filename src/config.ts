@@ -489,6 +489,11 @@ export interface ReviewConfig {
    * that are one root cause posted twice. Off ⇒ every round order, built
    * agent and rendered review is byte-identical to before. */
   dedup_merge: boolean;
+  /** `coverage_check` (src/coverage.ts, 2026-10-03): after the lenses
+   * return, every changed non-test source file no lens raised a finding on
+   * gets a targeted pass-sweep row (at most two, packed by line budget), each
+   * saying why. Off ⇒ the round order renders exactly as before. */
+  coverage_check: boolean;
 }
 
 export type NitPolicy = "strict" | "open";
@@ -597,6 +602,7 @@ export const REVIEW_DEFAULTS: ReviewConfig = {
   render_outputs: true,
   validator_shards: 1,
   dedup_merge: true,
+  coverage_check: true,
 };
 
 /**
@@ -1941,6 +1947,11 @@ export function parseConfig(toml: string): Config {
   if (!Number.isInteger(shards) || shards < 1 || shards > 4) {
     throw new Error(
       `config.toml [review]: validator_shards must be an integer 1-4 (got ${JSON.stringify(shards)})`,
+    );
+  }
+  if (typeof cfg.review.coverage_check !== "boolean") {
+    throw new Error(
+      `config.toml [review]: coverage_check must be true or false (got ${JSON.stringify(cfg.review.coverage_check)})`,
     );
   }
   if (typeof cfg.review.dedup_merge !== "boolean") {

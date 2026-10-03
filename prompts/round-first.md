@@ -202,7 +202,7 @@ tests, builds, or package managers — no test runners, no app entrypoints, no
 
 **GATE NOTES**
 {{migration_gate_note}}
-{{intent_note}}
+{{intent_note}}{{coverage_note}}
 
 ## 3. Merge
 
