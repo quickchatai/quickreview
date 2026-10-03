@@ -1,0 +1,2455 @@
+{
+ "set": "dedup5-aacr",
+ "version": "2",
+ "method": "Subset of rest145 (version 2) for the five dedup5-aacr PRs; defects unchanged. The rest of the benchmark (sets/rest145: every runnable v1.0 PR not in smoke10/dev10/holdout10/fresh10), 2026-09-28. Per PR: an expert hunt from the code (diff, base and head files, the whole repo at head) that also checked every AACR v1.0 reference comment as a lead; then an independent verifier re-checked every candidate against the code \u2014 the hunt's defects, every reference, and every comment posted by all three benchmarked reviewers (default, low, open-code-review 1.3.1; anonymised and shuffled, the reviewer key never shown) \u2014 merged duplicates, graded high/medium/low on consequence and recorded every rejection with its reason; then an adversarial critic per group of ~15 PRs spot-checked high-severity defects, exclusions, merges and grades against the code and fixed the truth in place. Claude agents throughout (a model family independent of the reviewer's). Extension (2026-09-28): every comment of four more benchmarked reviewers \u2014 Codex CLI 0.158.0, OpenCode 1.18.33, pi-review 0.18.0 and Claude Code 2.1.283 (Opus 5.5) \u2014 anonymised and shuffled, checked against the code by an independent verifier (matched to an existing defect, added as a new verified defect, or excluded with a restated reason); an adversarial critic per ~17 PRs checked every addition. Existing defects unchanged.",
+ "cases": {
+  "google-gemini__gemini-cli@0fa1bd7": {
+   "instance_id": "google-gemini__gemini-cli@0fa1bd7",
+   "pr_summary": "Fix for #8077 (saving settings rewrote the whole settings.json, dropping comments and writing env-var references out as resolved plaintext). Adds comment-json and utils/commentJson.ts: updateSettingsFilePreservingFormat parses the existing file, deep-merges the in-memory settings into it (applyUpdates), restores recorded $VAR references (restoreEnvVarReferences) and stringifies with 2-space indent; trackEnvVarMappings records settings paths whose original value was exactly a $VAR/${VAR}. loadSettings records mappings per scope around resolveEnvVarsInObject and LoadedSettings.setValue passes them to saveSettings, which (after the existing migrateSettingsToV1 conversion) writes through the new helper.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "Merge-only save never deletes keys: removed MCP servers (and replaced fields) persist on disk",
+     "statement": "applyUpdates (commentJson.ts:52-80) starts from the parsed file and only adds/overwrites keys present in the in-memory settings, recursing into nested objects; keys deleted in memory are never removed from the file. `gemini mcp remove` does `delete mcpServers[name]; settings.setValue(scope, 'mcpServers', mcpServers)` (commands/mcp/remove.ts:30-32), so the server stays in settings.json and reappears on restart while the CLI reports it removed; re-adding a server with a different transport merges into the old object, leaving stale command/args beside httpUrl. Before the PR the whole object was written with JSON.stringify, so deletions took effect.",
+     "sites": [
+      {
+       "path": "packages/cli/src/utils/commentJson.ts",
+       "from_line": 52,
+       "to_line": 80,
+       "role": "cause"
+      },
+      {
+       "path": "packages/cli/src/config/settings.ts",
+       "from_line": 738,
+       "to_line": 742,
+       "role": "other-site"
+      },
+      {
+       "path": "packages/cli/src/commands/mcp/remove.ts",
+       "from_line": 30,
+       "to_line": 32,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "high",
+     "evidence": "commentJson.ts:56 `const result = current;` then :58-77 loop over `Object.entries(updates)` assigning `result[key] = ...`; nothing deletes keys absent from updates. remove.ts: `delete mcpServers[name]; settings.setValue(settingsScope, 'mcpServers', mcpServers);`. Base saveSettings wrote `JSON.stringify(settingsToSave, null, 2)`.",
+     "notes": "Must say the new save merges and never removes keys that were deleted in memory (mcp remove / replaced nested objects). R11 (arrays replaced wholesale) and R9 (mutating the parsed object) do not count.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C1",
+       "C15",
+       "C20",
+       "C28",
+       "C29",
+       "N2",
+       "N7",
+       "N11",
+       "N17"
+      ]
+     }
+    },
+    {
+     "id": "D2",
+     "title": "Env references embedded in a larger string (\"Bearer $TOKEN\") are not tracked and are written back resolved",
+     "statement": "resolveEnvVarsInString (utils/envVarResolver.ts:20-28) substitutes $VAR/${VAR} anywhere inside a string, but trackEnvVarMappings records a mapping only when the whole original string matches the anchored /^\\$(?:(\\w+)|{([^}]+)})$/ (commentJson.ts:152). A value like an MCP header \"Authorization\": \"Bearer $API_TOKEN\" or \"${BASE_URL}/api\" is resolved at load, not tracked, and the next save of that scope (any setValue, e.g. /settings theme toggle) writes the resolved secret into settings.json - the leak #8077 is about, left open for the common header/URL case.",
+     "sites": [
+      {
+       "path": "packages/cli/src/utils/commentJson.ts",
+       "from_line": 151,
+       "to_line": 161,
+       "role": "cause"
+      },
+      {
+       "path": "packages/cli/src/config/settings.ts",
+       "from_line": 671,
+       "to_line": 683,
+       "role": "other-site"
+      },
+      {
+       "path": "packages/cli/src/utils/commentJson.ts",
+       "from_line": 42,
+       "to_line": 49,
+       "role": "symptom"
+      }
+     ],
+     "kind": "incomplete-fix",
+     "severity": "medium",
+     "evidence": "commentJson.ts:152 `const envVarPattern = /^\\$(?:(\\w+)|{([^}]+)})$/;` vs envVarResolver.ts `const envVarRegex = /\\$(?:(\\w+)|{([^}]+)})/g;` used with value.replace, doc example `resolveEnvVarsInString(\"Token: $API_KEY\")`. saveSettings passes the resolved settingsFile.settings as updates.",
+     "notes": "Must say partial/embedded references are resolved but not tracked/restored, so they are saved in plaintext. R13 (support default-value/nested syntax) does not count. Graded medium, not high: before the PR every value (whole or embedded reference) was written back resolved, so the embedded case is a gap in the fix, not a regression, the same class and grade as D3 and D4.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C2",
+       "C8",
+       "C10",
+       "C16",
+       "C18",
+       "N1",
+       "N14",
+       "N17"
+      ]
+     }
+    },
+    {
+     "id": "D3",
+     "title": "Env references inside arrays (e.g. MCP args) are tracked but never restored, so they are saved resolved",
+     "statement": "trackEnvVarMappings recurses into arrays (for...in yields index keys, commentJson.ts:146,162-168) and resolveEnvVarsInObject resolves array items, but restoreEnvVarsRecursive only descends into non-array objects (commentJson.ts:117-123) and applyUpdates replaces arrays wholesale with the resolved in-memory array (:76). \"args\": [\"--api-key\", \"$API_KEY\"] is therefore written back with the secret in plaintext on the next save of that scope.",
+     "sites": [
+      {
+       "path": "packages/cli/src/utils/commentJson.ts",
+       "from_line": 115,
+       "to_line": 123,
+       "role": "cause"
+      },
+      {
+       "path": "packages/cli/src/utils/commentJson.ts",
+       "from_line": 162,
+       "to_line": 168,
+       "role": "other-site"
+      }
+     ],
+     "kind": "incomplete-fix",
+     "severity": "medium",
+     "evidence": "commentJson.ts:117-121 `} else if (typeof value === 'object' && value !== null && !Array.isArray(value)) { restoreEnvVarsRecursive(...) }`; :162 `else if (typeof value === 'object' && value !== null)` includes arrays when tracking; envVarResolver.ts maps arrays item by item.",
+     "notes": "Must say env references inside arrays are not restored (leak). C16 also mentions arrays but is filed under D2 (its lead point). R11 on array merge granularity does not count.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C14",
+       "C22",
+       "C26",
+       "N6",
+       "N17"
+      ]
+     }
+    },
+    {
+     "id": "D4",
+     "title": "Env mappings are recorded on V2 paths but the saved object is converted to V1, so references for migrated keys leak",
+     "statement": "loadAndMigrate migrates V1 files to V2 in memory (settings.ts:576-600) before the mappings are captured on the V2 object (:663-683). With MIGRATE_V2_OVERWRITE = false (:60), saveSettings always runs migrateSettingsToV1 (:731-735) before calling the updater, so every key in MIGRATION_MAP is written under its V1 name while the mapping paths are V2 (e.g. ['tools','discoveryCommand'] vs top-level toolDiscoveryCommand, ['model','name'] vs model). restoreEnvVarsRecursive never matches them, and saving any setting writes the resolved env value in plaintext. Only mcpServers (same path in both shapes) is protected.",
+     "sites": [
+      {
+       "path": "packages/cli/src/config/settings.ts",
+       "from_line": 731,
+       "to_line": 742,
+       "role": "cause"
+      },
+      {
+       "path": "packages/cli/src/config/settings.ts",
+       "from_line": 663,
+       "to_line": 683,
+       "role": "other-site"
+      },
+      {
+       "path": "packages/cli/src/utils/commentJson.ts",
+       "from_line": 110,
+       "to_line": 116,
+       "role": "symptom"
+      }
+     ],
+     "kind": "incomplete-fix",
+     "severity": "medium",
+     "evidence": "settings.ts:60 `const MIGRATE_V2_OVERWRITE = false;`; :731-735 `if (!MIGRATE_V2_OVERWRITE) { settingsToSave = migrateSettingsToV1(...) }`; MIGRATION_MAP :117 `toolDiscoveryCommand: 'tools.discoveryCommand'`; mappings built from the migrated objects at :663-683; commentJson.ts:112-115 looks up `fullPath.join('.')` of the V1 structure.",
+     "notes": "Must say the mapping paths (V2) do not match the V1-converted structure written by saveSettings, so env references for non-mcpServers keys are lost/leaked.",
+     "provenance": {
+      "hunt": false,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C9",
+       "C13",
+       "C30",
+       "N5",
+       "N9",
+       "N15",
+       "N17"
+      ]
+     }
+    },
+    {
+     "id": "D5",
+     "title": "Saving into a V2-format file adds V1 keys beside the old nested values, and the old value wins on reload",
+     "statement": "saveSettings converts to V1 (settings.ts:731-735) and the updater now MERGES into the parsed file instead of replacing it. For a hand-written V2 file with {\"ui\": {\"theme\": \"A\"}}, changing the theme writes a top-level \"theme\": \"B\" but leaves ui.theme = \"A\". On reload needsMigration sees the V1 key, migrateSettingsToV2 sets ui.theme = B and then carries over the unrecognized original `ui` object (settings.ts:251-254), overwriting it with {theme: \"A\"}; the edit is lost. Before the PR the whole file was rewritten in V1 so no duplicate existed.",
+     "sites": [
+      {
+       "path": "packages/cli/src/config/settings.ts",
+       "from_line": 731,
+       "to_line": 742,
+       "role": "cause"
+      },
+      {
+       "path": "packages/cli/src/config/settings.ts",
+       "from_line": 251,
+       "to_line": 254,
+       "role": "symptom"
+      },
+      {
+       "path": "packages/cli/src/utils/commentJson.ts",
+       "from_line": 42,
+       "to_line": 42,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "migrateSettingsToV2: `for (const [oldKey, newPath] of Object.entries(MIGRATION_MAP)) { if (flatKeys.has(oldKey)) { setNestedProperty(v2Settings, newPath, ...); flatKeys.delete(oldKey); } }` then `for (const remainingKey of flatKeys) { v2Settings[remainingKey] = flatSettings[remainingKey]; }` - `ui` remains in flatKeys and replaces the freshly set ui object. applyUpdates merges `theme` without touching `ui`.",
+     "notes": "Must say V1-converted save merged into a V2 file leaves the old nested value, which overrides the edit on next load (or duplicates V1/V2 keys with the stale one winning). Plain 'keys are not deleted' (D1) is a different defect.",
+     "provenance": {
+      "hunt": false,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C11",
+       "N12",
+       "N13",
+       "N17"
+      ]
+     }
+    },
+    {
+     "id": "D6",
+     "title": "A deliberately changed value at an env-backed path is silently reverted to the $VAR reference on save",
+     "statement": "restoreEnvVarsRecursive (commentJson.ts:114-116) restores the recorded reference whenever the path matches and the current value is any string, never comparing with mapping.resolvedValue (recorded at :159, read nowhere), and the mappings captured at load are reused by every setValue (settings.ts:421-422). If a user replaces an env-backed value (e.g. `gemini mcp add` re-adding a server with `-e API_KEY=newkey` where the file had \"$API_KEY\"), the file keeps \"$VAR\" and the new value is lost on restart.",
+     "sites": [
+      {
+       "path": "packages/cli/src/utils/commentJson.ts",
+       "from_line": 114,
+       "to_line": 116,
+       "role": "cause"
+      },
+      {
+       "path": "packages/cli/src/config/settings.ts",
+       "from_line": 421,
+       "to_line": 422,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "commentJson.ts:115 `if (envVarReference && typeof value === 'string') { (obj as Record<string, unknown>)[key] = envVarReference; }`; EnvVarMapping.resolvedValue set at :159 and unused.",
+     "notes": "Must say restoration ignores whether the value was changed (resolvedValue unused / stale mappings). R3 (non-string resolved values) does not count.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C6",
+       "C17",
+       "C31",
+       "C32",
+       "N3",
+       "N8",
+       "N10",
+       "N17"
+      ]
+     }
+    },
+    {
+     "id": "D7",
+     "title": "Comments inside arrays are still dropped on every save",
+     "statement": "applyUpdates replaces every array in the parsed file with the plain in-memory array (commentJson.ts:63-76, arrays take the `result[key] = value` branch). comment-json stores comments on array items as symbol properties of the parsed CommentArray, so any comment inside an array (e.g. a commented-out arg or excluded tool) is removed whenever any setting in that scope is saved - the comment preservation the PR claims is incomplete for arrays.",
+     "sites": [
+      {
+       "path": "packages/cli/src/utils/commentJson.ts",
+       "from_line": 63,
+       "to_line": 77,
+       "role": "cause"
+      }
+     ],
+     "kind": "incomplete-fix",
+     "severity": "low",
+     "evidence": "commentJson.ts:66 `!Array.isArray(value)` excludes arrays from the merge branch; :76 `result[key] = value;` assigns the plain resolved array from settingsFile.settings (built via JSON.parse(stripJsonComments(...)) and resolveEnvVarsInObject, so it carries no comment metadata).",
+     "notes": "Must say comments attached to array elements are lost because arrays are replaced wholesale. R11 (arrays replaced instead of element-wise merge, no mention of comments) does not count.",
+     "provenance": {
+      "hunt": false,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C4"
+      ]
+     }
+    }
+   ],
+   "excluded": [
+    {
+     "source": "R1",
+     "reason": "Claim: the constructor parameter `migratedInMemorScopes` is misspelled. The identifier pre-exists this PR (only context lines here); a naming nit, not a defect."
+    },
+    {
+     "source": "R2",
+     "reason": "Claim: define a named type alias instead of `ReturnType<typeof trackEnvVarMappings>` in the Map. Readability preference with no functional consequence."
+    },
+    {
+     "source": "R3",
+     "reason": "Claim: restoration only happens for string values, so env vars resolving to numbers/booleans/objects would be saved resolved. resolveEnvVarsInString always returns a string and tracking requires both values to be strings, so a resolved env value is never a non-string; the premise is unreachable."
+    },
+    {
+     "source": "R4",
+     "reason": "Claim: updateSettingsFilePreservingFormat should validate that filePath is a string and updates an object. It is a typed internal helper with a single caller passing a path and the settings object; a runtime-validation request, not a defect."
+    },
+    {
+     "source": "R5",
+     "reason": "Claim: add type checking before casting the parsed file to Record<string, unknown>. loadSettings already rejects non-object settings files, so on reachable paths the parsed content is an object; speculative."
+    },
+    {
+     "source": "R6",
+     "reason": "Claim: on parse failure the function logs and returns instead of throwing. A file that fails comment-json parsing would already have failed loadSettings; only an external edit between load and save reaches it, and saveSettings itself only logs errors as before."
+    },
+    {
+     "source": "R7",
+     "reason": "Claim: stringify(..., null, 2) forces 2-space indentation, changing tab/4-space files. The previous code also wrote JSON.stringify(settingsToSave, null, 2), so formatting is not made worse; cosmetic."
+    },
+    {
+     "source": "R8",
+     "reason": "Claim: writeFileSync lacks handling for EACCES/ENOENT. The only caller saveSettings wraps the call in try/catch and logs, exactly as before."
+    },
+    {
+     "source": "R9",
+     "reason": "Claim: applyUpdates mutates the object passed in rather than a deep copy. The mutated object is the freshly parsed file content local to updateSettingsFilePreservingFormat; no side effect escapes."
+    },
+    {
+     "source": "R10",
+     "reason": "Claim: Object.entries in applyUpdates introduces prototype-pollution risk. applyUpdates explicitly skips __proto__/constructor/prototype and Object.entries yields only own enumerable keys; no pollution path exists."
+    },
+    {
+     "source": "R11",
+     "reason": "Claim: applyUpdates replaces arrays wholesale instead of updating individual elements. Replacing a settings array with the saved array is the correct save semantics; element-wise merge would be wrong. It names neither the env-var leak (D3) nor the comment loss (D7)."
+    },
+    {
+     "source": "R12",
+     "reason": "Claim: joining mapping paths with '.' is ambiguous when a key contains a dot. Tracking and restoring use the same join, so a mis-restore needs both a dotted key and a nested path spelling the identical string with an env reference; contrived."
+    },
+    {
+     "source": "R13",
+     "reason": "Claim: the env pattern should support default values or nested references. The resolver itself supports only $VAR/${VAR}, so there is nothing more to track; it does not state the real gap (embedded references, D2)."
+    },
+    {
+     "source": "C3",
+     "reason": "Claim: forcing 2-space indentation reformats tab/4-space files on an unrelated edit. The base code already rewrote the file with JSON.stringify(..., null, 2), so this is not a regression; cosmetic."
+    },
+    {
+     "source": "C24",
+     "reason": "Claim: an unrelated setting edit reserializes and reformats the whole file (fixed indent, LF). Same as base behaviour (full JSON.stringify rewrite); formatting preference, not a defect introduced here."
+    },
+    {
+     "source": "C25",
+     "reason": "Claim: the single-setting save writes a fully reserialized snapshot, reformatting unchanged content. Same root as C24; base also rewrote the entire file; cosmetic."
+    },
+    {
+     "source": "C5",
+     "reason": "Claim: if the settings file disappears between load and save, the new-file branch writes resolved updates without restoring references. Mappings exist only for files that existed at load, so this needs the file deleted mid-session; contrived, and base behaviour wrote resolved values too."
+    },
+    {
+     "source": "C7",
+     "reason": "Claim: the !existsSync branch bypasses envVarMappings, so recreating a deleted file writes the resolved token. Same contrived deleted-between-load-and-save scenario as C5."
+    },
+    {
+     "source": "C21",
+     "reason": "Claim: the new-file branch writes settingsToSave with JSON.stringify before applying mappings, persisting resolved secrets if the file was removed or config was in-memory migrated. Migrated-in-memory scopes still have their file on disk (existing-file branch); only a mid-session deletion reaches this; contrived."
+    },
+    {
+     "source": "C12",
+     "reason": "Claim: the parse-error log should include filePath. Diagnostic-message improvement; the parse-failure path is only reachable if the file is corrupted after a successful load."
+    },
+    {
+     "source": "C23",
+     "reason": "Claim: returning on parse failure reports success to setValue although nothing was written. Only reachable if the file became unparseable after loadSettings parsed it; contrived, and saveSettings only ever logged failures."
+    },
+    {
+     "source": "C19",
+     "reason": "Claim: the prototype-pollution test builds `__proto__` via an object literal, so it sets the prototype rather than an own key and never exercises the guard. A test-quality observation; the guard itself is correct and no runtime defect results."
+    },
+    {
+     "source": "C27",
+     "reason": "Claim: same as C19 - the malicious update's object-literal `__proto__` is not an own key so the test would pass without the guard. Test-coverage request, not a defect in shipped behaviour."
+    },
+    {
+     "source": "N4",
+     "reason": "Claims flattening mapping paths with join('.') lets an MCP server literally named 'foo.bar' collide with a nested foo->bar path so one env reference is restored under the other's name. Same as R12: tracking and restoring use the same join, so a mis-restore needs a dotted key AND a nested path spelling the identical string, both env-backed; contrived."
+    },
+    {
+     "source": "N16",
+     "reason": "Claims the helper's create-file branch (commentJson.ts:24-26) writes updates without applying the env mappings, persisting resolved secrets in a newly created file. Same as C5/C7: mappings exist only for files that existed at load, so a mapped value reaches the create branch only if the file is deleted mid-session; contrived, and a file absent at load has no $VAR references to restore."
+    }
+   ]
+  },
+  "lvgl__lvgl@e526b2a": {
+   "instance_id": "lvgl__lvgl@e526b2a",
+   "pr_summary": "Assorted XML fixes and additions: lv_switch XML parser/schema, a tabview tab_button element (new lv_tabview_get_tab_button), grid column/row dsc_array props for inline object styles and named styles, span text binding (lv_spangroup_bind_span_text plus new lv_span_set_text_fmt / lv_spangroup_set_span_text_fmt), scale section min/max bindings; consolidates duplicate free-user-data callbacks into lv_event_free_user_data_cb, makes grid_update return early when calc() fails, fixes scale rotation parsing, and edits several schema XMLs and docs.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "Grid dsc_array parsers under-allocate by one int: heap overflow on every value",
+     "statement": "Both new grid descriptor parsers count spaces (n tokens -> n-1 spaces) and allocate (item_cnt + 1) ints, then write all n tokens plus LV_GRID_TEMPLATE_LAST, i.e. n+1 ints into n slots. Every well-formed value, even a single track like \"100\", writes one int past the malloc block (src/others/xml/parsers/lv_xml_obj_parser.c:903/920, src/others/xml/lv_xml_style.c:293/309), corrupting the heap.",
+     "sites": [
+      {
+       "path": "src/others/xml/parsers/lv_xml_obj_parser.c",
+       "from_line": 896,
+       "to_line": 920,
+       "role": "cause"
+      },
+      {
+       "path": "src/others/xml/lv_xml_style.c",
+       "from_line": 286,
+       "to_line": 309,
+       "role": "cause"
+      }
+     ],
+     "kind": "bug",
+     "severity": "high",
+     "evidence": "for(i = 0; value[i] != '\\0'; i++) if(value[i] == ' ') item_cnt++;  int32_t * dsc_array = lv_malloc((item_cnt + 1) * sizeof(int32_t)); ... while(sub_value) { dsc_array[item_cnt] = ...; item_cnt++; } dsc_array[item_cnt] = LV_GRID_TEMPLATE_LAST; (obj_parser.c:903-920, style.c:293-309). lv_xml_split_str returns every token.",
+     "notes": "Must say the allocation is one element short (counts separators, not tokens, so no room for the terminator) and overflows. Either site counts. Generic 'validate bounds'/'sub_value[1] out of bounds' remarks (R14) do not count.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [
+       "R10",
+       "R13"
+      ],
+      "reviewer_comments": [
+       "C3",
+       "C16",
+       "C21",
+       "C35",
+       "C43",
+       "C45",
+       "N8",
+       "N11",
+       "N12",
+       "N17"
+      ]
+     },
+     "bot_derived_reference": {
+      "bots": [
+       "cubic"
+      ],
+      "dataset_refs": [
+       "R10",
+       "R13"
+      ],
+      "references": [
+       "src/others/xml/lv_xml_style.c:293-293:1dcd1d2a8153",
+       "src/others/xml/parsers/lv_xml_obj_parser.c:903-903:fcca13d6cb0c"
+      ],
+      "hunt": true,
+      "note": "Not scored. The cited AACR reference is a reworded review-bot comment from the original PR; the defect itself was checked against the code."
+     }
+    },
+    {
+     "id": "D2",
+     "title": "Span *_text_fmt setters never free the previous owned text: leak per call / per bound-subject update",
+     "statement": "lv_span_set_text_fmt and lv_spangroup_set_span_text_fmt free the old text only when `span->txt == NULL && span->static_flag` (lv_span.c:216, 274), which never frees a real allocation; the owned previous string is then overwritten. The new span_text_observer_cb calls lv_spangroup_set_span_text_fmt on every subject notification, so every update leaks one string.",
+     "sites": [
+      {
+       "path": "src/widgets/span/lv_span.c",
+       "from_line": 216,
+       "to_line": 221,
+       "role": "cause"
+      },
+      {
+       "path": "src/widgets/span/lv_span.c",
+       "from_line": 274,
+       "to_line": 279,
+       "role": "cause"
+      },
+      {
+       "path": "src/others/observer/lv_observer.c",
+       "from_line": 1190,
+       "to_line": 1215,
+       "role": "symptom"
+      }
+     ],
+     "kind": "resource",
+     "severity": "medium",
+     "evidence": "if(span->txt == NULL && span->static_flag) { lv_free(span->txt); } span->static_flag = 0; span->txt = text;  Compare lv_spangroup_delete_span (lv_span.c:150): if(cur_span->txt && cur_span->static_flag == 0) lv_free(cur_span->txt).",
+     "notes": "Must identify the wrong/inverted free condition leaking the previous text. A comment only about va_end is D3. C41 (share the two copies) is a refactor suggestion, excluded.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [
+       "R25"
+      ],
+      "reviewer_comments": [
+       "C4",
+       "C19",
+       "C57",
+       "N2",
+       "N3",
+       "N7",
+       "N22",
+       "N19"
+      ]
+     }
+    },
+    {
+     "id": "D3",
+     "title": "Span *_text_fmt return on allocation failure without va_end",
+     "statement": "In lv_span_set_text_fmt and lv_spangroup_set_span_text_fmt, `if(text == NULL) return;` precedes va_end(args) (lv_span.c:212, 270), so the va_start'ed list is not ended on the OOM path: undefined behaviour per the C standard.",
+     "sites": [
+      {
+       "path": "src/widgets/span/lv_span.c",
+       "from_line": 209,
+       "to_line": 214,
+       "role": "cause"
+      },
+      {
+       "path": "src/widgets/span/lv_span.c",
+       "from_line": 267,
+       "to_line": 272,
+       "role": "cause"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "va_start(args, fmt); char * text = lv_text_set_text_vfmt(fmt, args); LV_ASSERT_MALLOC(text); if(text == NULL) return; va_end(args);",
+     "notes": "Must mention va_end skipped on the early return. R25 also raises this point but is filed under D2 (its more severe half).",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [
+       "R24"
+      ],
+      "reviewer_comments": [
+       "C5",
+       "C18",
+       "C54",
+       "N19"
+      ]
+     },
+     "bot_derived_reference": {
+      "bots": [
+       "cubic"
+      ],
+      "dataset_refs": [
+       "R24"
+      ],
+      "references": [
+       "src/widgets/span/lv_span.c:212-214:e28b302c8c81"
+      ],
+      "hunt": true,
+      "note": "Not scored. The cited AACR reference is a reworded review-bot comment from the original PR; the defect itself was checked against the code."
+     }
+    },
+    {
+     "id": "D4",
+     "title": "Textarea schema renamed to placeholder_text but the parser only accepts placeholder",
+     "statement": "xmls/lv_textarea.xml:9 now advertises `placeholder_text` (was `placeholder`), while lv_xml_textarea_apply only handles `placeholder` (src/others/xml/parsers/lv_xml_textarea_parser.c:59). XML written against the schema silently leaves the placeholder unset.",
+     "sites": [
+      {
+       "path": "xmls/lv_textarea.xml",
+       "from_line": 9,
+       "to_line": 9,
+       "role": "cause"
+      },
+      {
+       "path": "src/others/xml/parsers/lv_xml_textarea_parser.c",
+       "from_line": 59,
+       "to_line": 59,
+       "role": "other-site"
+      }
+     ],
+     "kind": "contract",
+     "severity": "medium",
+     "evidence": "xmls/lv_textarea.xml:9 <prop name=\"placeholder_text\" .../> (base: name=\"placeholder\"); textarea_parser.c:59 else if(lv_streq(\"placeholder\", name)) lv_textarea_set_placeholder_text(item, value);",
+     "notes": "Must say schema and parser now disagree on the attribute name (either fix direction counts).",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [
+       "R33"
+      ],
+      "reviewer_comments": [
+       "C24",
+       "C27"
+      ]
+     }
+    },
+    {
+     "id": "D5",
+     "title": "Grid dsc_array parsers cast away const and destructively split the caller's attribute string",
+     "statement": "Both new parsers do `char * value_buf = (char *)value;` and call lv_xml_split_str, which writes '\\0' over each separator. The attribute value is `const char *` owned by the caller: lv_xml_create() with string-literal attrs writes into read-only memory (crash), and any reused attribute value is truncated to its first token (lv_xml_obj_parser.c:905, lv_xml_style.c:295).",
+     "sites": [
+      {
+       "path": "src/others/xml/parsers/lv_xml_obj_parser.c",
+       "from_line": 905,
+       "to_line": 907,
+       "role": "cause"
+      },
+      {
+       "path": "src/others/xml/lv_xml_style.c",
+       "from_line": 295,
+       "to_line": 297,
+       "role": "cause"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "char * value_buf = (char *)value; ... const char * sub_value = lv_xml_split_str(&value_buf, ' ');  lv_xml_split_str writes *src_next = '\\0'.",
+     "notes": "Must point at mutating the const input (read-only literal crash / corrupting the attribute).",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [
+       "R11"
+      ],
+      "reviewer_comments": [
+       "C9",
+       "C13",
+       "C20",
+       "C38",
+       "C53",
+       "C56",
+       "N1",
+       "N6",
+       "N24",
+       "N19"
+      ]
+     },
+     "bot_derived_reference": {
+      "bots": [
+       "cubic"
+      ],
+      "dataset_refs": [
+       "R11"
+      ],
+      "references": [
+       "src/others/xml/lv_xml_style.c:295-295:7af1724605fc"
+      ],
+      "hunt": true,
+      "note": "Not scored. The cited AACR reference is a reworded review-bot comment from the original PR; the defect itself was checked against the code."
+     }
+    },
+    {
+     "id": "D6",
+     "title": "grid_update early return leaks row arrays when calc_cols fails",
+     "statement": "calc() allocates c->y/c->h in calc_rows then returns LV_RESULT_INVALID if calc_cols finds no column descriptor (lv_grid.c:237-244). The new `if(res != LV_RESULT_OK) return;` (lv_grid.c:193-194) skips calc_free, leaking both arrays on every layout pass of a grid with rows but no column template.",
+     "sites": [
+      {
+       "path": "src/layouts/grid/lv_grid.c",
+       "from_line": 193,
+       "to_line": 194,
+       "role": "cause"
+      },
+      {
+       "path": "src/layouts/grid/lv_grid.c",
+       "from_line": 237,
+       "to_line": 244,
+       "role": "other-site"
+      }
+     ],
+     "kind": "incomplete-fix",
+     "severity": "low",
+     "evidence": "calc_rows: c->y = lv_malloc(...); c->h = lv_malloc(...); calc: if(calc_cols(cont, calc_out) == LV_RESULT_INVALID) return LV_RESULT_INVALID; grid_update: lv_result_t res = calc(cont, &c); if(res != LV_RESULT_OK) return;",
+     "notes": "Must say the early return skips calc_free and leaks partially allocated calc arrays. The empty-grid stale-size regression of the same line is D12.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [
+       "R5"
+      ],
+      "reviewer_comments": [
+       "C7",
+       "C29",
+       "C44",
+       "N19"
+      ]
+     }
+    },
+    {
+     "id": "D7",
+     "title": "Tabview tab_button XML element crashes when the index attribute is omitted",
+     "statement": "lv_xml_tabview_tab_button_create passes lv_xml_get_value_of(attrs, \"index\") straight into lv_xml_atoi (lv_xml_tabview_parser.c:99-100); lv_xml_get_value_of returns NULL for a missing attribute and lv_xml_atoi dereferences it, so <lv_tabview-tab_button/> without index is a NULL dereference.",
+     "sites": [
+      {
+       "path": "src/others/xml/parsers/lv_xml_tabview_parser.c",
+       "from_line": 99,
+       "to_line": 100,
+       "role": "cause"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "const char * index_str = lv_xml_get_value_of(attrs, \"index\"); int32_t index_int = lv_xml_atoi(index_str);",
+     "notes": "Must mention a missing/NULL index attribute leading to a crash.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [
+       "R20"
+      ],
+      "reviewer_comments": [
+       "C6",
+       "C10",
+       "C12",
+       "N4"
+      ]
+     },
+     "bot_derived_reference": {
+      "bots": [
+       "cubic"
+      ],
+      "dataset_refs": [
+       "R20"
+      ],
+      "references": [
+       "src/others/xml/parsers/lv_xml_tabview_parser.c:100-100:b7badbdb1330"
+      ],
+      "hunt": true,
+      "note": "Not scored. The cited AACR reference is a reworded review-bot comment from the original PR; the defect itself was checked against the code."
+     }
+    },
+    {
+     "id": "D8",
+     "title": "Span text binding keeps a raw span pointer; deleting the span leaves a dangling observer (UAF)",
+     "statement": "lv_spangroup_bind_span_text stores the span in the observer user_data but ties the observer only to the spangroup object (lv_observer.c:831-836). lv_spangroup_delete_span frees the span (lv_span.c:155) while the group lives; the next subject notification calls lv_spangroup_set_span_text[_fmt] on freed memory.",
+     "sites": [
+      {
+       "path": "src/others/observer/lv_observer.c",
+       "from_line": 829,
+       "to_line": 838,
+       "role": "cause"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "user_data->element = span; lv_observer_t * observer = lv_subject_add_observer_obj(subject, span_text_observer_cb, obj, user_data); nothing unsubscribes in lv_spangroup_delete_span.",
+     "notes": "Must mention span deletion while bound -> dangling pointer / use-after-free.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [
+       "R17"
+      ],
+      "reviewer_comments": [
+       "C23",
+       "C28",
+       "C46"
+      ]
+     },
+     "bot_derived_reference": {
+      "bots": [
+       "cubic"
+      ],
+      "dataset_refs": [
+       "R17"
+      ],
+      "references": [
+       "src/others/xml/parsers/lv_xml_spangroup_parser.c:101-101:7e0a918c5f48"
+      ],
+      "hunt": true,
+      "note": "Not scored. The cited AACR reference is a reworded review-bot comment from the original PR; the defect itself was checked against the code."
+     }
+    },
+    {
+     "id": "D9",
+     "title": "New label doc notes wrongly say the fmt setters ignore LV_USE_ARABIC_PERSIAN_CHARS",
+     "statement": "The PR adds `@note It ignores LV_USE_ARABIC_PERSIAN_CHARS` to lv_label_set_text_fmt/vfmt (lv_label.h:100, 117), but both go through lv_text_set_text_vfmt, which runs lv_text_ap_proc when the option is enabled (lv_text.c:493-510). The new docs are false.",
+     "sites": [
+      {
+       "path": "src/widgets/label/lv_label.h",
+       "from_line": 100,
+       "to_line": 100,
+       "role": "cause"
+      },
+      {
+       "path": "src/widgets/label/lv_label.h",
+       "from_line": 117,
+       "to_line": 117,
+       "role": "cause"
+      }
+     ],
+     "kind": "maintainability",
+     "severity": "low",
+     "evidence": "lv_text.c:493 #if LV_USE_ARABIC_PERSIAN_CHARS ... lv_text_ap_proc(raw_txt, text);",
+     "notes": "The note on lv_label_set_text_static (line 126) is correct; only the fmt/vfmt notes count.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [
+       "R23"
+      ],
+      "reviewer_comments": []
+     },
+     "bot_derived_reference": {
+      "bots": [
+       "cubic"
+      ],
+      "dataset_refs": [
+       "R23"
+      ],
+      "references": [
+       "src/widgets/label/lv_label.h:100-100:deea0d65f93d"
+      ],
+      "hunt": true,
+      "note": "Not scored. The cited AACR reference is a reworded review-bot comment from the original PR; the defect itself was checked against the code."
+     }
+    },
+    {
+     "id": "D10",
+     "title": "lv_spangroup_bind_span_text declared under LV_USE_LABEL but defined under LV_USE_SPAN",
+     "statement": "lv_observer.h:548-564 wraps the declaration in #if LV_USE_LABEL while lv_observer.c defines it under #if LV_USE_SPAN. With LV_USE_SPAN=1 and LV_USE_LABEL=0, lv_xml_spangroup_parser.c:102 calls an undeclared function (build error under strict C / -Werror); with LV_USE_LABEL=1, LV_USE_SPAN=0 the API is declared but not defined (link error if called).",
+     "sites": [
+      {
+       "path": "src/others/observer/lv_observer.h",
+       "from_line": 548,
+       "to_line": 564,
+       "role": "cause"
+      }
+     ],
+     "kind": "build",
+     "severity": "low",
+     "evidence": "lv_observer.h:548 #if LV_USE_LABEL ... lv_observer_t * lv_spangroup_bind_span_text(...); lv_observer.c:795 #if LV_USE_SPAN.",
+     "notes": "Must name the wrong preprocessor guard. A comment only saying the doc text says Label (R6/C26) is D14, not this.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C14",
+       "C17",
+       "C60",
+       "N5",
+       "N15",
+       "N19"
+      ]
+     }
+    },
+    {
+     "id": "D11",
+     "title": "Named-style grid branch matches the prefixed names, so the schema's grid_*_dsc_array style props are ignored",
+     "statement": "lv_xml_style_register matches unprefixed property names (SET_STYLE_IF uses #prop, lv_xml_style.c:45) and globals.xml:315-316 declares `grid_column_dsc_array`/`grid_row_dsc_array` for styles, but the new branch (lv_xml_style.c:284-285) only accepts `style_grid_column_dsc_array`/`style_grid_row_dsc_array`. A <style> using the advertised names falls to the 'style property is not supported' warning and the grid template is never set.",
+     "sites": [
+      {
+       "path": "src/others/xml/lv_xml_style.c",
+       "from_line": 284,
+       "to_line": 285,
+       "role": "cause"
+      },
+      {
+       "path": "xmls/globals.xml",
+       "from_line": 315,
+       "to_line": 316,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "lv_xml_style.c:45 #define SET_STYLE_IF(prop, value) if(lv_streq(name, #prop)) ...; :284 else if(lv_streq(name, \"style_grid_column_dsc_array\") || lv_streq(name, \"style_grid_row_dsc_array\")); globals.xml adds <prop name=\"grid_column_dsc_array\" .../>. Compare the obj parser whose macro prefixes \"style_\" (lv_xml_obj_parser.c:64).",
+     "notes": "Must say the named-style parser checks the style_-prefixed name while styles (and the schema) use unprefixed names, so the feature does not work in named styles.",
+     "provenance": {
+      "hunt": false,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C8",
+       "C59",
+       "N14",
+       "N23"
+      ]
+     }
+    },
+    {
+     "id": "D12",
+     "title": "grid_update early return also skips the size refresh and LAYOUT_CHANGED for an empty grid",
+     "statement": "calc() returns LV_RESULT_INVALID (after zeroing the result) when the container has no children (lv_grid.c:233-236). Previously grid_update carried on, refreshed a content-sized container (lv_obj_refr_size) and sent LV_EVENT_LAYOUT_CHANGED; the new `if(res != LV_RESULT_OK) return;` (lv_grid.c:194) skips both, so a LV_SIZE_CONTENT grid whose last child is deleted/cleaned keeps its stale size and layout listeners are not notified.",
+     "sites": [
+      {
+       "path": "src/layouts/grid/lv_grid.c",
+       "from_line": 192,
+       "to_line": 194,
+       "role": "cause"
+      },
+      {
+       "path": "src/layouts/grid/lv_grid.c",
+       "from_line": 213,
+       "to_line": 219,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "calc: if(lv_obj_get_child(cont, 0) == NULL) { lv_memzero(calc_out, ...); return LV_RESULT_INVALID; } (same at base); grid_update tail: if(w_set == LV_SIZE_CONTENT || h_set == LV_SIZE_CONTENT) lv_obj_refr_size(cont); lv_obj_send_event(cont, LV_EVENT_LAYOUT_CHANGED, NULL); now unreachable when res != OK.",
+     "notes": "Must say the early return also bypasses the empty-grid size refresh / LAYOUT_CHANGED. A comment only about leaking calc arrays is D6.",
+     "provenance": {
+      "hunt": false,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C25",
+       "N19"
+      ]
+     }
+    },
+    {
+     "id": "D13",
+     "title": "Named-style grid descriptor arrays are never freed",
+     "statement": "The named-style branch lv_mallocs dsc_array and stores only the pointer in the style (lv_xml_style.c:311-316). Scope teardown calls lv_style_reset (lv_xml_component.c:294), which frees the style's property storage, not the pointed-to array, and nothing else owns it, so every registered grid style leaks its arrays (unlike the object path, which frees on LV_EVENT_DELETE).",
+     "sites": [
+      {
+       "path": "src/others/xml/lv_xml_style.c",
+       "from_line": 311,
+       "to_line": 316,
+       "role": "cause"
+      }
+     ],
+     "kind": "resource",
+     "severity": "low",
+     "evidence": "lv_style_set_grid_column_dsc_array(style, dsc_array); no free anywhere; lv_xml_component.c:294 lv_style_reset(&style->style); obj parser path adds lv_obj_add_event_cb(obj, lv_event_free_user_data_cb, LV_EVENT_DELETE, dsc_array).",
+     "notes": "Must say the array is never released (on style reset/replacement/teardown). Freeing it immediately after setting (R12's suggested fix) would be a use-after-free, but R12 does identify the leak at this site.",
+     "provenance": {
+      "hunt": false,
+      "dataset_refs": [
+       "R12"
+      ],
+      "reviewer_comments": [
+       "C2",
+       "C36",
+       "C52",
+       "N13",
+       "N21"
+      ]
+     }
+    },
+    {
+     "id": "D14",
+     "title": "lv_spangroup_bind_span_text doc copied from the label binding is wrong",
+     "statement": "The new declaration's doc (lv_observer.h:550-559) says it binds a Subject 'to a Label' and that `fmt == NULL` can only be used with string/pointer subjects, but the function binds a spangroup's span and, like the implementation shows (lv_observer.c:802-812), defaults to \"%d\"/\"%0.1f\" for int/float subjects when fmt is NULL.",
+     "sites": [
+      {
+       "path": "src/others/observer/lv_observer.h",
+       "from_line": 550,
+       "to_line": 559,
+       "role": "cause"
+      }
+     ],
+     "kind": "maintainability",
+     "severity": "low",
+     "evidence": "lv_observer.h: \"Bind an integer, string, or pointer Subject to a Label.\" / \"@note fmt == NULL can be used only with string and pointer Subjects.\"; lv_observer.c: if(fmt == NULL) { if(subject->type == LV_SUBJECT_TYPE_INT) fmt = \"%d\"; ... }",
+     "notes": "Either the 'Label' mistake or the wrong NULL-fmt note counts. A comment about the #if guard is D10.",
+     "provenance": {
+      "hunt": false,
+      "dataset_refs": [
+       "R6"
+      ],
+      "reviewer_comments": [
+       "C26",
+       "C58"
+      ]
+     },
+     "bot_derived_reference": {
+      "bots": [
+       "cubic"
+      ],
+      "dataset_refs": [
+       "R6"
+      ],
+      "references": [
+       "src/others/observer/lv_observer.h:551-551:1c267c7ee314"
+      ],
+      "hunt": false,
+      "note": "Not scored. The cited AACR reference is a reworded review-bot comment from the original PR; the defect itself was checked against the code."
+     }
+    }
+   ],
+   "excluded": [
+    {
+     "source": "R1",
+     "reason": "Claims the Span bullet in observer.rst has inconsistent trailing punctuation. Doc punctuation style, not a defect."
+    },
+    {
+     "source": "R2",
+     "reason": "Claims \"Scale Section's\" is a grammar error in observer.rst. Doc grammar, not a defect."
+    },
+    {
+     "source": "R3",
+     "reason": "Claims \"one way binding\" should be hyphenated. Doc grammar, not a defect."
+    },
+    {
+     "source": "R4",
+     "reason": "Claims \"support\" should be \"supports\" in observer.rst. Doc grammar, not a defect."
+    },
+    {
+     "source": "R7",
+     "reason": "Claims \"an Scale\" in the new scale-binding doc is a grammar error. Trivial wording, not a defect."
+    },
+    {
+     "source": "R8",
+     "reason": "Claims lv_xml.h is included twice in lv_xml.c. Those include lines are not touched by this PR and the header has include guards; harmless and pre-existing."
+    },
+    {
+     "source": "R9",
+     "reason": "Claims including lv_xml_widget.h from lv_xml.h creates a circular dependency. Both headers have include guards, nothing fails to compile; a coupling preference, not a defect."
+    },
+    {
+     "source": "R14",
+     "reason": "Claims the grid parser reads sub_value[0]/[1] out of bounds and does not validate token bounds. sub_value[1] is read only if sub_value[0]=='f' (short-circuit, and the token is NUL-terminated), so there is no OOB there; it does not identify the real under-allocation (D1)."
+    },
+    {
+     "source": "R15",
+     "reason": "Claims the strdup'd fmt leaks if lv_obj_add_event_cb fails in the spangroup parser. Only an OOM scenario that no LVGL call site handles; contrived."
+    },
+    {
+     "source": "R16",
+     "reason": "Claims the spangroup parser's new free_fmt_event_cb duplicates lv_event_free_user_data_cb. Behaviour is identical; a duplication/style nit, not a defect."
+    },
+    {
+     "source": "C1",
+     "reason": "Claims the spangroup parser should reuse lv_event_free_user_data_cb instead of a local free_fmt_event_cb. Identical behaviour; duplication nit, not a defect."
+    },
+    {
+     "source": "C42",
+     "reason": "Claims the private format-free callback in the spangroup parser should be replaced by lv_event_free_user_data_cb. Identical behaviour; duplication nit, not a defect."
+    },
+    {
+     "source": "R18",
+     "reason": "Claims the switch parser's attrs loop can read past an odd-length attrs array. The XML parser always supplies NULL-terminated name/value pairs and every parser uses the same loop; not reachable."
+    },
+    {
+     "source": "R19",
+     "reason": "Claims btn_cnt as int32_t vs uint32_t tab count could misbehave with large counts. Tab counts cannot approach int32 range; not a defect."
+    },
+    {
+     "source": "R21",
+     "reason": "Claims LV_ABS(index_int) >= btn_cnt mishandles negative indices. The only valid index it rejects is -btn_cnt, which is the first tab, exactly the fallback 0; no behaviour difference."
+    },
+    {
+     "source": "C33",
+     "reason": "Claims the tab_button range check rejects -btn_cnt, which denotes the first button. It is replaced by index 0, which is the same first button; no observable difference."
+    },
+    {
+     "source": "C49",
+     "reason": "Claims the >= check changes the meaning of the valid index -btn_cnt. The fallback 0 addresses the same first button; no observable difference."
+    },
+    {
+     "source": "C40",
+     "reason": "Claims LV_ABS(INT32_MIN) on an index of -2147483648 is signed-overflow UB. Requires a deliberately absurd XML index; contrived."
+    },
+    {
+     "source": "R22",
+     "reason": "Claims the tab_button create function returning void* is inconsistent. void* is the required create-callback signature; not a defect."
+    },
+    {
+     "source": "R26",
+     "reason": "Claims lv_span_set_text_fmt lacks LV_FORMAT_ATTRIBUTE. A missing compile-time diagnostic, not a runtime or build defect."
+    },
+    {
+     "source": "R27",
+     "reason": "Claims lv_spangroup_set_span_text_fmt lacks LV_FORMAT_ATTRIBUTE(3, 4). A missing compile-time diagnostic, not a defect."
+    },
+    {
+     "source": "C30",
+     "reason": "Claims both span fmt setters should carry LV_FORMAT_ATTRIBUTE like the label setter. Nice-to-have diagnostic, not a defect."
+    },
+    {
+     "source": "C39",
+     "reason": "Claims lv_spangroup_set_span_text_fmt should add LV_FORMAT_ATTRIBUTE(3, 4). Nice-to-have diagnostic; the observer passes int/float/pointer matching its default formats."
+    },
+    {
+     "source": "C51",
+     "reason": "Claims lv_span_set_text_fmt should add LV_FORMAT_ATTRIBUTE(2, 3). Nice-to-have diagnostic, not a defect."
+    },
+    {
+     "source": "R28",
+     "reason": "Claims lv_tabview_get_tab_button should reject negative indices. Negative indices are documented as counting from the back and lv_obj_get_child_by_type supports them."
+    },
+    {
+     "source": "R29",
+     "reason": "Claims the tab-button index should be uint32_t since negatives make no sense. The signed index is deliberate (negative counts from the back); style/API preference."
+    },
+    {
+     "source": "R30",
+     "reason": "Claims globals.xml has two consecutive blank lines. Formatting only."
+    },
+    {
+     "source": "R31",
+     "reason": "Asks for an orientation example in lv_switch.xml. Documentation request."
+    },
+    {
+     "source": "R32",
+     "reason": "Asks for help text on switch enum values. Documentation request."
+    },
+    {
+     "source": "C11",
+     "reason": "Claims the new switch parser must be guarded by LV_USE_SWITCH or XML builds with switches disabled fail. Every existing widget parser (e.g. lv_xml_arc_parser.c uses lv_arc_mode_t under only #if LV_USE_XML) follows the same convention; not a new problem of this PR."
+    },
+    {
+     "source": "C32",
+     "reason": "Claims registering lv_switch in lv_xml_init breaks LV_USE_XML=1/LV_USE_SWITCH=0 builds. Same convention as every other widget parser/registration (arc, chart, ...); pre-existing design, not introduced here."
+    },
+    {
+     "source": "C15",
+     "reason": "Claims the span binding should document that a non-NULL fmt must outlive the binding. Same retained-pointer contract as the existing lv_label_bind_text, and the XML path strdup's fmt; a documentation request."
+    },
+    {
+     "source": "C22",
+     "reason": "Claims lv_spangroup_bind_span_text dereferences a NULL observer when the subject is invalid or allocation fails. An invalid subject type is rejected earlier by the type checks, leaving only OOM; contrived."
+    },
+    {
+     "source": "C47",
+     "reason": "Claims a NULL return from lv_subject_add_observer_obj is dereferenced on allocation failure. OOM-only path; contrived."
+    },
+    {
+     "source": "C55",
+     "reason": "Claims the binding dereferences a failed observer registration (uninitialised subject or OOM). Uninitialised (INVALID) subjects are rejected by the preceding type checks; only OOM remains, contrived."
+    },
+    {
+     "source": "C31",
+     "reason": "Claims dsc_array is not checked for allocation failure before writing. OOM-only path; contrived."
+    },
+    {
+     "source": "C34",
+     "reason": "Claims a bare \"fr\" token makes sub_value + 3 read past its terminator. Only for malformed grid values, yielding a small over-read into the (split) attribute buffer; contrived malformed input, not a meaningful defect."
+    },
+    {
+     "source": "C37",
+     "reason": "Claims an empty grid value installs a template with zero tracks that the grid engine indexes at track_num - 1. Only reachable with an empty/whitespace attribute, and the grid engine's handling of empty templates is pre-existing; contrived malformed input."
+    },
+    {
+     "source": "C48",
+     "reason": "Claims the new descriptor format turns `content` into 0 instead of LV_GRID_CONTENT. The new parser simply does not support a content keyword; a feature limitation / request rather than a defect of shipped behaviour."
+    },
+    {
+     "source": "C41",
+     "reason": "Asks to share the formatted text replacement logic between the two span fmt setters. A refactoring suggestion; the ownership bug itself is D2."
+    },
+    {
+     "source": "C50",
+     "reason": "Asks both grid-style paths to share one descriptor parser. A refactoring suggestion; the allocation defect it alludes to is D1."
+    },
+    {
+     "source": "N19",
+     "reason": "Claims the tab_button range check LV_ABS(index) >= btn_cnt rejects -btn_cnt, logging a false out-of-range warning and falling back to index 0. The fallback 0 addresses the same first button, so there is no behavioural difference beyond a warning for an unusual spelling (same as excluded C33/R21)."
+    },
+    {
+     "source": "N9",
+     "reason": "Claims lv_font_manager source removal no longer checks live font references and frees source data still in use. src/others/font_manager/lv_font_manager.c is not touched by this PR (no hunk in pr.diff; git diff mb..head is empty for it); not a change of this PR."
+    },
+    {
+     "source": "N10",
+     "reason": "Claims lv_scale.c leaves label_size uninitialised when a custom scale label is NULL. src/widgets/scale/lv_scale.c is not modified by this PR (only the XML scale parser is); not a change of this PR."
+    },
+    {
+     "source": "N16",
+     "reason": "Claims the RGB565_SWAPPED blend branch calls the unswapped RGB565 acceleration hook and renders wrong colours. src/draw/sw/blend/lv_draw_sw_blend_to_rgb565.c is not touched by this PR; not a change of this PR."
+    },
+    {
+     "source": "N18",
+     "reason": "Claims evdev treats only tracking ID 0 as pressed so later multitouch contacts stop registering. src/drivers/evdev/lv_evdev.c is not touched by this PR; not a change of this PR."
+    },
+    {
+     "source": "N20",
+     "reason": "Claims lv_spangroup_bind_span_text dereferences a NULL observer (and leaks user_data) if lv_subject_add_observer_obj fails. Invalid/uninitialised subject types are rejected by the preceding type checks, leaving only an OOM path; contrived (as excluded C22/C47/C55)."
+    }
+   ]
+  },
+  "gofr-dev__gofr@2c0c099": {
+   "instance_id": "gofr-dev__gofr@2c0c099",
+   "pr_summary": "Adds testutil.NewServerConfigs, which picks free ports for HTTP, metrics and gRPC, sets HTTP_PORT/METRICS_PORT/GRPC_PORT via t.Setenv and returns them with host strings, and replaces the GetFreePort+Setenv boilerplate with it across pkg/gofr and example tests. It also bumps the root and ftp/s3 go.mod to go 1.22.7 / toolchain go1.23.4, deletes the sftp datasource submodule's go.mod/go.sum (sources stay), and swaps the httptest server in TestContext_WriteMessageToSocket for a real app.Run().",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "sftp datasource go.mod/go.sum deleted while its sources stay: the package falls into the root module, which does not require github.com/pkg/sftp",
+     "statement": "The PR deletes pkg/gofr/datasource/file/sftp/go.mod and go.sum but leaves fs.go, file.go, fs_test.go etc. Without its own go.mod the directory becomes a package of root module gofr.dev; fs.go imports github.com/pkg/sftp and golang.org/x/crypto/ssh, and the root go.mod does not require github.com/pkg/sftp, so `go test gofr.dev/pkg/...` (PKG Unit Testing job) fails with 'no required module provides package github.com/pkg/sftp', and the package drops out of the per-submodule test/lint loops (`find pkg -name go.mod`).",
+     "sites": [
+      {
+       "path": "pkg/gofr/datasource/file/sftp/go.mod",
+       "from_line": 1,
+       "to_line": 25,
+       "role": "cause"
+      },
+      {
+       "path": "pkg/gofr/datasource/file/sftp/fs.go",
+       "from_line": 8,
+       "to_line": 10,
+       "role": "symptom"
+      },
+      {
+       "path": "go.mod",
+       "from_line": 1,
+       "to_line": 10,
+       "role": "other-site"
+      }
+     ],
+     "kind": "build",
+     "severity": "high",
+     "evidence": "`git ls-tree <head> pkg/gofr/datasource/file/sftp/` lists file.go, fs.go, fs_test.go, interface.go, logger.go, logger_test.go, mock_interface.go, no go.mod. fs.go:8 `\"github.com/pkg/sftp\"`. `git grep pkg/sftp <head> -- go.mod` finds nothing. Deleted go.mod required `github.com/pkg/sftp v1.13.6`. go.yml: `go test gofr.dev/pkg/... -v -short`.",
+     "notes": "Deleted file: lines are base-side of sftp/go.mod. Must say removing the sftp go.mod/go.sum while its code remains breaks dependency resolution/build (or drops the package from module-based CI). Remarks only about go/toolchain version bumps do not count.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C14",
+       "N2",
+       "N11",
+       "N12"
+      ]
+     }
+    },
+    {
+     "id": "D2",
+     "title": "examples/using-cron-jobs/main_test.go imports gofr.dev/pkg/gofr/testutil twice: compile error",
+     "statement": "The edit adds \"gofr.dev/pkg/gofr/testutil\" at line 4 while keeping the existing import at line 9. Importing the same package name twice in one file is a compile error ('testutil redeclared in this block'), so the example's test package fails to build and `go test gofr.dev/examples/...` fails.",
+     "sites": [
+      {
+       "path": "examples/using-cron-jobs/main_test.go",
+       "from_line": 3,
+       "to_line": 10,
+       "role": "cause"
+      }
+     ],
+     "kind": "build",
+     "severity": "high",
+     "evidence": "head main_test.go:4 `\"gofr.dev/pkg/gofr/testutil\"` and :9 `\"gofr.dev/pkg/gofr/testutil\"`.",
+     "notes": "Must point at the duplicate testutil import / compile failure. An import-ordering-only remark does not count.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C13",
+       "C16",
+       "N2",
+       "N4",
+       "N8",
+       "N9"
+      ]
+     }
+    },
+    {
+     "id": "D3",
+     "title": "external_db_test.go drops the strconv import but TestApp_AddScyllaDB still calls strconv.Itoa: pkg/gofr test package does not compile",
+     "statement": "The PR removes `\"strconv\"` from pkg/gofr/external_db_test.go's imports while converting the other tests to NewServerConfigs, but TestApp_AddScyllaDB (unchanged) still does `t.Setenv(\"METRICS_PORT\", strconv.Itoa(port))` at line 188. Go imports are per file, so this is 'undefined: strconv' and the whole gofr package test build fails, breaking `go test gofr.dev/pkg/...`.",
+     "sites": [
+      {
+       "path": "pkg/gofr/external_db_test.go",
+       "from_line": 3,
+       "to_line": 12,
+       "role": "cause"
+      },
+      {
+       "path": "pkg/gofr/external_db_test.go",
+       "from_line": 186,
+       "to_line": 188,
+       "role": "symptom"
+      }
+     ],
+     "kind": "build",
+     "severity": "high",
+     "evidence": "diff removes `-\t\"strconv\"` from external_db_test.go imports; head external_db_test.go:187-188 `port := testutil.GetFreePort(t)` / `t.Setenv(\"METRICS_PORT\", strconv.Itoa(port))`; `git grep -n strconv <head> -- pkg/gofr/external_db_test.go` shows only line 188.",
+     "notes": "Must say strconv is still used (Scylla test) after its import was removed, so the test file/package fails to compile.",
+     "provenance": {
+      "hunt": false,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C21"
+      ]
+     }
+    },
+    {
+     "id": "D4",
+     "title": "http-server example: _Errors and _Health tests request fresh random ports where no server listens",
+     "statement": "Previously all three integration tests hit http://localhost:9000, served by the main() started in TestIntegration_SimpleAPIServer. Now each test calls testutil.NewServerConfigs(t), which allocates new ports, but only the first test starts main(). TestIntegration_SimpleAPIServer_Errors (main_test.go:70, request :99) and _Health (:126, request :138) target ports nothing listens on: c.Do errors with nil resp, so Errors panics at io.ReadAll(resp.Body) (:109) and Health fails require.NoError.",
+     "sites": [
+      {
+       "path": "examples/http-server/main_test.go",
+       "from_line": 69,
+       "to_line": 70,
+       "role": "cause"
+      },
+      {
+       "path": "examples/http-server/main_test.go",
+       "from_line": 99,
+       "to_line": 109,
+       "role": "symptom"
+      },
+      {
+       "path": "examples/http-server/main_test.go",
+       "from_line": 125,
+       "to_line": 126,
+       "role": "cause"
+      },
+      {
+       "path": "examples/http-server/main_test.go",
+       "from_line": 138,
+       "to_line": 144,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "high",
+     "evidence": "head main_test.go:25-27 `configs := testutil.NewServerConfigs(t); go main()`; :70 and :126 `configs := testutil.NewServerConfigs(t)` with no go main(); :99 `http.NewRequest(http.MethodGet, configs.HTTPHost+tc.path, nil)`; :109 `b, err := io.ReadAll(resp.Body)`. port.go:43-45 picks fresh ports on every call. Base used `host := \"http://localhost:9000\"` in all three.",
+     "notes": "Must say the Errors/Health tests use new ports from NewServerConfigs on which no server runs. Generic port-allocation race remarks do not count.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C1",
+       "C8",
+       "C9",
+       "C15",
+       "N1",
+       "N2",
+       "N5",
+       "N10"
+      ]
+     }
+    },
+    {
+     "id": "D5",
+     "title": "http-server example: /trace case fails because main.go still points anotherService at localhost:9000 while the server now runs on a random port",
+     "statement": "TestIntegration_SimpleAPIServer now starts main() on the random HTTP_PORT from NewServerConfigs (main_test.go:25) instead of 9000 from configs/.env. main.go:22 registers `anotherService` at the hard-coded http://localhost:9000, which TraceHandler calls (main.go ~79) for /redis. Nothing listens on 9000, so /trace returns an error (500) and the test's expectations for the \"trace handler\" case (empty data, 200) fail.",
+     "sites": [
+      {
+       "path": "examples/http-server/main_test.go",
+       "from_line": 25,
+       "to_line": 38,
+       "role": "cause"
+      },
+      {
+       "path": "examples/http-server/main.go",
+       "from_line": 22,
+       "to_line": 22,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "high",
+     "evidence": "main.go:22 `a.AddHTTPService(\"anotherService\", \"http://localhost:9000\")`; TraceHandler `resp, err := c.GetHTTPService(\"anotherService\").Get(c, \"redis\", nil); if err != nil { return nil, err }`; main_test.go:38 `{\"trace handler\", \"/trace\", \"\"}`; configs/.env `HTTP_PORT=9000` (godotenv.Load does not override the t.Setenv value).",
+     "notes": "Must connect the dynamic HTTP port to the hard-coded :9000 downstream used by the trace handler. Comments only about the Errors/Health tests belong to D4.",
+     "provenance": {
+      "hunt": false,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C2",
+       "C3",
+       "N13"
+      ]
+     }
+    },
+    {
+     "id": "D6",
+     "title": "TestContext_WriteMessageToSocket dials right after `go app.Run()` with no wait: racy/flaky",
+     "statement": "The PR replaces the synchronously listening httptest.NewServer with `go app.Run()` and dials ws://localhost:<HTTPPort>/ws on the next lines. app.Run starts the listener asynchronously, so the Dial can race ahead and get connection refused, failing require.NoError. Other tests using go app.Run() sleep 100ms first (websocket_test.go:38-39).",
+     "sites": [
+      {
+       "path": "pkg/gofr/context_test.go",
+       "from_line": 96,
+       "to_line": 102,
+       "role": "cause"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "head context_test.go:96 `go app.Run()`, :98 `wsURL := fmt.Sprintf(\"ws://localhost:%d/ws\", configs.HTTPPort)`, :101-102 `ws, resp, err := websocket.DefaultDialer.Dial(wsURL, nil); require.NoError(t, err)`. Base dialled `server.URL` of `httptest.NewServer(app.httpServer.router)`.",
+     "notes": "Must identify the missing wait/readiness between go app.Run() and the Dial (or that removing httptest made it racy).",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C5",
+       "C20",
+       "N2",
+       "N3",
+       "N6",
+       "N7"
+      ]
+     }
+    },
+    {
+     "id": "D7",
+     "title": "Edited test files violate enabled golangci-lint rules (gci grouping, thelper, whitespace)",
+     "statement": "The root-module lint job runs golangci-lint with gci (standard/default/localmodule), thelper and whitespace enabled and no _test.go exclusion for them. The PR puts \"gofr.dev/pkg/gofr/testutil\" in the standard-library group in pkg/gofr/websocket_test.go:6 and context_test.go:7 (and into the third-party group in examples/grpc/grpc-server/main_test.go and using-cron-jobs), removes t.Helper() from setupTestEnvironment (gofr_test.go:862), and leaves blocks starting with a blank line (gofr_test.go:61-62, 202-203). The Code Quality lint step fails.",
+     "sites": [
+      {
+       "path": "pkg/gofr/websocket_test.go",
+       "from_line": 6,
+       "to_line": 6,
+       "role": "cause"
+      },
+      {
+       "path": "pkg/gofr/context_test.go",
+       "from_line": 7,
+       "to_line": 7,
+       "role": "cause"
+      },
+      {
+       "path": "pkg/gofr/gofr_test.go",
+       "from_line": 862,
+       "to_line": 863,
+       "role": "cause"
+      },
+      {
+       "path": "pkg/gofr/gofr_test.go",
+       "from_line": 61,
+       "to_line": 62,
+       "role": "other-site"
+      },
+      {
+       "path": "pkg/gofr/gofr_test.go",
+       "from_line": 202,
+       "to_line": 203,
+       "role": "other-site"
+      }
+     ],
+     "kind": "build",
+     "severity": "medium",
+     "evidence": ".golangci.yml gci sections standard/default/localmodule; enable list includes gci, thelper, whitespace, wsl; exclude-rules for _test.go only gomnd/dupl/goconst. go.yml 'Lint Root Module' golangci-lint-action v1.62 on `.`. head websocket_test.go:5-7 `\"fmt\"` / `\"gofr.dev/pkg/gofr/testutil\"` / `\"net/http/httptest\"`.",
+     "notes": "Counts if a comment flags the misplaced gofr.dev testutil import grouping, the removed t.Helper(), or the leading blank lines as lint failures.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [],
+      "reviewer_comments": []
+     }
+    },
+    {
+     "id": "D8",
+     "title": "Test_AddDuplicateHTTPService lost its METRICS_PORT isolation: New() now checks default port 2121 and Fatalf's the test binary if it is taken",
+     "statement": "The PR deletes the METRICS_PORT setup inside Test_AddDuplicateHTTPService (gofr_test.go:202-205) without replacing it with NewServerConfigs. New() (gofr.go:77-84) then falls back to defaultMetricPort 2121 and calls Logger.Fatalf if that port is unavailable, which exits the whole test process whenever 2121 is occupied (another gofr app or a leaked server).",
+     "sites": [
+      {
+       "path": "pkg/gofr/gofr_test.go",
+       "from_line": 199,
+       "to_line": 208,
+       "role": "cause"
+      },
+      {
+       "path": "pkg/gofr/gofr.go",
+       "from_line": 77,
+       "to_line": 84,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "diff removes `metricsPort := testutil.GetFreePort(t)` / `t.Setenv(\"METRICS_PORT\", ...)` in Test_AddDuplicateHTTPService with nothing added; gofr.go:82-83 `if !isPortAvailable(port) { app.container.Logger.Fatalf(\"metrics port %d is blocked or unreachable\", port) }`.",
+     "notes": "Must say this test no longer sets an isolated metrics port so New() uses the default and can fail/abort.",
+     "provenance": {
+      "hunt": false,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C4",
+       "C18"
+      ]
+     }
+    },
+    {
+     "id": "D9",
+     "title": "Unrelated go.mod bump to go 1.22.7 / toolchain go1.23.4 in root, ftp and s3",
+     "statement": "A test-helper PR changes root go.mod from `go 1.22`/`toolchain go1.22.10` to `go 1.22.7`/`toolchain go1.23.4` (ftp/s3 likewise). The go line raises the minimum Go for consumers (1.22.0-1.22.6 with GOTOOLCHAIN=local can no longer build), and the toolchain line makes GOTOOLCHAIN=auto switch CI's Go 1.22 lanes to 1.23.4, so they no longer test 1.22.",
+     "sites": [
+      {
+       "path": "go.mod",
+       "from_line": 3,
+       "to_line": 5,
+       "role": "cause"
+      },
+      {
+       "path": "pkg/gofr/datasource/file/ftp/go.mod",
+       "from_line": 3,
+       "to_line": 5,
+       "role": "other-site"
+      },
+      {
+       "path": "pkg/gofr/datasource/file/s3/go.mod",
+       "from_line": 3,
+       "to_line": 5,
+       "role": "other-site"
+      }
+     ],
+     "kind": "compat",
+     "severity": "low",
+     "evidence": "go.mod diff `-go 1.22` `-toolchain go1.22.10` `+go 1.22.7` `+toolchain go1.23.4`; ftp `-go 1.22.3`, s3 `-go 1.22.4` to the same.",
+     "notes": "Counts if a comment questions the go/toolchain directive bump as unintended or inconsistent with supported versions/CI.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [
+       "R1",
+       "R2",
+       "R3",
+       "R4"
+      ],
+      "reviewer_comments": [
+       "C7",
+       "C12"
+      ]
+     }
+    },
+    {
+     "id": "D10",
+     "title": "Doc comment of exported NewServerConfigs names a nonexistent ServerConfigsProvider",
+     "statement": "testutil/port.go:37 begins `// ServerConfigsProvider sets up server configurations...` but the function is NewServerConfigs (line 40), so godoc does not associate the comment correctly and golint-style checks flag it.",
+     "sites": [
+      {
+       "path": "pkg/gofr/testutil/port.go",
+       "from_line": 37,
+       "to_line": 40,
+       "role": "cause"
+      }
+     ],
+     "kind": "maintainability",
+     "severity": "low",
+     "evidence": "port.go:37 `// ServerConfigsProvider sets up server configurations for testing and returns a ServiceConfigs struct.`; :40 `func NewServerConfigs(t *testing.T) *ServiceConfigs {`.",
+     "notes": "Must point out the comment/function name mismatch. The Server vs Service naming nit alone does not count.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [
+       "R5",
+       "R6"
+      ],
+      "reviewer_comments": [
+       "C6",
+       "C10"
+      ]
+     }
+    }
+   ],
+   "excluded": [
+    {
+     "source": "R7",
+     "reason": "Claims calling GetFreePort three times independently is a TOCTOU race that can make tests flaky. The close-then-reuse pattern is inherent in the pre-existing GetFreePort, which tests already called two or three times per test before this PR; nothing new or worse."
+    },
+    {
+     "source": "C11",
+     "reason": "Claims the three sequential GetFreePort calls can return the same port so two services collide. Same pre-existing pattern as R7 (base tests allocated 2-3 ports the same way); the kernel does not normally hand back a just-released ephemeral port immediately; not introduced by the PR."
+    },
+    {
+     "source": "R8",
+     "reason": "Claims mixing scheme-prefixed HTTP/Metrics hosts with a bare host:port GRPCHost invites misuse. Deliberate: grpc.Dial takes a target without scheme and the grpc example uses it that way; naming/design preference."
+    },
+    {
+     "source": "C17",
+     "reason": "Claims the package-level `port` in examples/using-http-service is now never assigned while handler tests still build URLs with it. Those handler tests only attach the URL to a request passed to Handler, which never dials it (it calls the mocked services), so the zero value has no effect; stale-variable cleanup only."
+    },
+    {
+     "source": "C19",
+     "reason": "Asks for NewServerConfigs to let callers pick only the ports they need since metrics-only tests now also set HTTP/GRPC ports. Design preference; setting extra free ports in t.Setenv has no concrete harmful effect."
+    },
+    {
+     "source": "N2",
+     "reason": "Claim (item 5): in examples/using-http-service/main_test.go the package-level `port` is no longer assigned while handler tests at lines 76/101 still build URLs with it, pointing at localhost:0. Same as the already-rejected C17: those tests only attach the URL to a request handed to Handler, which calls the mocked services and never dials it, so the zero value has no effect."
+    }
+   ]
+  },
+  "comfyanonymous__ComfyUI@4dcd698": {
+   "instance_id": "comfyanonymous__ComfyUI@4dcd698",
+   "pr_summary": "Adds LoRA training to ComfyUI: comfy_extras/nodes_train.py with Train LoRA, Save LoRA Weights, Load LoRA Model, Load Image Dataset from Folder and Plot Loss Graph nodes built on the weight-adapter scheme (LoraDiff trainable module, LoRAAdapter.create_train/to_train, WeightAdapterTrainBase), gradient checkpointing via forward patching and in Cosmos blocks, out-of-place residual adds in attention.py, and folder_paths.get_input_subfolders with tests.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "lora_dtype default 'bf32' is not an offered option, so Train LoRA fails with default values",
+     "statement": "nodes_train.py:344-347 declares lora_dtype choices ['bf16','fp32'] but default 'bf32'. execution.py:736 combo validation rejects a value not in the list ('Value not in list'), and even if it passed, node_helpers.string_to_torch_dtype('bf32') returns None (node_helpers.py:46-52), so the adapter .to(lora_dtype) calls get None.",
+     "sites": [
+      {
+       "path": "comfy_extras/nodes_train.py",
+       "from_line": 344,
+       "to_line": 347,
+       "role": "cause"
+      },
+      {
+       "path": "comfy_extras/nodes_train.py",
+       "from_line": 389,
+       "to_line": 389,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "nodes_train.py:345-346 `[\"bf16\", \"fp32\"], {\"default\": \"bf32\", ...}`; node_helpers.string_to_torch_dtype maps only fp32/fp16/bf16.",
+     "notes": "Must say the default 'bf32' is invalid / not among the choices / not a recognised dtype.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [
+       "R14"
+      ],
+      "reviewer_comments": [
+       "C10",
+       "C22",
+       "C42",
+       "N3"
+      ]
+     }
+    },
+    {
+     "id": "D2",
+     "title": "Only one random batch is ever trained on; the rest of the dataset is ignored",
+     "statement": "train() samples `indices = torch.randperm(num_images)[:batch_size]` and VAE-encodes that batch once (nodes_train.py:381-386) before the loop; every step at :503-514 reuses the same `encoded` tensor. With more images than batch_size (default 1) all other images are never seen.",
+     "sites": [
+      {
+       "path": "comfy_extras/nodes_train.py",
+       "from_line": 381,
+       "to_line": 386,
+       "role": "cause"
+      },
+      {
+       "path": "comfy_extras/nodes_train.py",
+       "from_line": 503,
+       "to_line": 514,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "nodes_train.py:382-386 before the loop; :513 `{\"samples\": encoded.clone()}` each step.",
+     "notes": "Must say the batch is selected/encoded once outside the loop so remaining images are never used.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C31",
+       "C49"
+      ]
+     }
+    },
+    {
+     "id": "D3",
+     "title": "Selecting an existing LoRA whose filename lacks the '<n>_steps_' pattern crashes with ValueError",
+     "statement": "existing_steps = int(existing_lora.split('_steps_')[0].split('_')[-1]) (nodes_train.py:403) is applied to any file from the full loras list (:349). Ordinary LoRA names, and this node's own output saved without steps ('{prefix}_{date}_lora.safetensors', :599), raise ValueError and abort training.",
+     "sites": [
+      {
+       "path": "comfy_extras/nodes_train.py",
+       "from_line": 400,
+       "to_line": 403,
+       "role": "cause"
+      },
+      {
+       "path": "comfy_extras/nodes_train.py",
+       "from_line": 598,
+       "to_line": 599,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "nodes_train.py:403; options from folder_paths.get_filename_list('loras') at :349.",
+     "notes": "Must name the filename-based int parse of the step count failing for non-matching names.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [
+       "R15"
+      ],
+      "reviewer_comments": [
+       "C23",
+       "C33",
+       "C46",
+       "N3",
+       "N5",
+       "N8",
+       "N17"
+      ]
+     }
+    },
+    {
+     "id": "D4",
+     "title": "SaveLoRA writes to a CWD-relative 'models/loras/' path instead of the configured loras directory",
+     "statement": "SaveLoRA.save builds f'models/loras/{prefix}_...safetensors' (nodes_train.py:599/601) relative to the process working directory, ignoring folder_paths (models_dir derives from base_path/--base-directory, folder_paths.py:18-30). Started from another directory or with --base-directory / extra model paths, the save raises FileNotFoundError or lands where the loras list (and Train LoRA's existing_lora) never sees it.",
+     "sites": [
+      {
+       "path": "comfy_extras/nodes_train.py",
+       "from_line": 596,
+       "to_line": 602,
+       "role": "cause"
+      }
+     ],
+     "kind": "bug",
+     "severity": "medium",
+     "evidence": "nodes_train.py:599-602 literal 'models/loras/'; folder_paths.py base_path from args.base_directory or dirname(__file__).",
+     "notes": "Must say the output path is hardcoded/relative to CWD rather than via folder_paths. Path-traversal via prefix is a separate defect (D5).",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C28",
+       "C43",
+       "N3",
+       "N9",
+       "N10"
+      ]
+     }
+    },
+    {
+     "id": "D5",
+     "title": "User-supplied filename prefixes are written without path containment (SaveLoRA and Plot Loss Graph)",
+     "statement": "SaveLoRA interpolates the workflow STRING `prefix` into the output path (nodes_train.py:599/601) and LossGraphNode joins `filename_prefix` onto the temp dir (:680-681) with no containment check; a prefix like '../../x' writes files outside the intended directory. The repo's existing save path (folder_paths.get_save_image_path, folder_paths.py:387-391) refuses paths outside the output folder, so these nodes bypass the established guard for API-submitted workflows.",
+     "sites": [
+      {
+       "path": "comfy_extras/nodes_train.py",
+       "from_line": 599,
+       "to_line": 602,
+       "role": "cause"
+      },
+      {
+       "path": "comfy_extras/nodes_train.py",
+       "from_line": 679,
+       "to_line": 683,
+       "role": "cause"
+      }
+     ],
+     "kind": "security",
+     "severity": "medium",
+     "evidence": "nodes_train.py:599 `f\"models/loras/{prefix}_...\"`; :681 `os.path.join(self.output_dir, f\"{filename_prefix}_{date}.png\")`; folder_paths.py:387 commonpath check used by other save nodes.",
+     "notes": "Must say the prefix / filename_prefix can contain traversal components and escape the destination directory. Either site counts. Not: the hardcoded relative path (D4). Not: the folder input of Load Image Dataset (combo-validated).",
+     "provenance": {
+      "hunt": false,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C3",
+       "C16",
+       "C20",
+       "C35",
+       "N3",
+       "N16"
+      ]
+     }
+    },
+    {
+     "id": "D6",
+     "title": "Resuming from an existing LoRA drops its trained 1-D weight diffs and bias diffs",
+     "statement": "When existing_lora is set only >=2-D weights are restored through the adapter loader; 1-D weight diffs ('{n}.diff') and bias diffs ('{n}.diff_b') are always recreated as zeros (nodes_train.py:443-460), so the previously trained values are discarded and the re-saved LoRA loses them.",
+     "sites": [
+      {
+       "path": "comfy_extras/nodes_train.py",
+       "from_line": 442,
+       "to_line": 460,
+       "role": "cause"
+      }
+     ],
+     "kind": "data",
+     "severity": "low",
+     "evidence": "nodes_train.py:444-446 and :454-456 torch.zeros regardless of existing_weights; the trainer itself saves '{n}.diff'/'{n}.diff_b' (:451/:458), which comfy/lora.py:72-82 reads at inference.",
+     "notes": "Must say existing diff/diff_b (bias or 1-D) values are not loaded on resume.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C14",
+       "C47",
+       "N3"
+      ]
+     }
+    },
+    {
+     "id": "D7",
+     "title": "Resuming misreads the existing LoRA's alpha, changing its effective scale",
+     "statement": "Alpha is looked up as f'{key}.alpha' with key='{n}.weight' (nodes_train.py:411,414), but LoRA files and this trainer's own output store '{n}.alpha' (named_parameters 'alpha' at :437-438; comfy/lora.py:41). So a stored non-1.0 alpha is replaced by 1.0; and a LoRA with no alpha (inference scale 1.0, lora.py:169-172) resumes with scale alpha/rank = 1/rank. Either way the resumed adapter no longer reproduces the checkpoint's weights.",
+     "sites": [
+      {
+       "path": "comfy_extras/nodes_train.py",
+       "from_line": 411,
+       "to_line": 414,
+       "role": "cause"
+      },
+      {
+       "path": "comfy/weight_adapter/lora.py",
+       "from_line": 50,
+       "to_line": 50,
+       "role": "symptom"
+      }
+     ],
+     "kind": "data",
+     "severity": "low",
+     "evidence": "nodes_train.py:414 `existing_weights.get(f\"{key}.alpha\", 1.0)`; comfy/lora.py:41 `alpha_name = \"{}.alpha\".format(x)`; weight_adapter/lora.py:169-172 alpha None -> 1.0.",
+     "notes": "Either the wrong key ('.weight.alpha') or the missing-alpha \u2192 1/rank scale mismatch counts.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C37",
+       "C52",
+       "C39",
+       "N3",
+       "N12"
+      ]
+     }
+    },
+    {
+     "id": "D8",
+     "title": "Resuming a DoRA / reshape-weight LoRA ignores dora_scale and reshape",
+     "statement": "LoraDiff unpacks dora_scale and reshape (lora.py:18) but __call__ (lora.py:42-52) applies only w + scale*diff, unlike calculate_weight which applies weight_decompose and pad_tensor_to_shape (lora.py:163-190); in addition the trainer looks dora_scale up under '{n}.weight.dora_scale' (nodes_train.py:415-417) rather than '{n}.dora_scale'. A DoRA LoRA resumed for training therefore loses its magnitude decomposition and changes effective weights.",
+     "sites": [
+      {
+       "path": "comfy/weight_adapter/lora.py",
+       "from_line": 42,
+       "to_line": 52,
+       "role": "cause"
+      },
+      {
+       "path": "comfy_extras/nodes_train.py",
+       "from_line": 415,
+       "to_line": 417,
+       "role": "other-site"
+      }
+     ],
+     "kind": "data",
+     "severity": "low",
+     "evidence": "lora.py:18 `mat1, mat2, alpha, mid, dora_scale, reshape = weights` and neither used in __call__.",
+     "notes": "Must say DoRA scale (or reshape) is ignored/lost in the training conversion.",
+     "provenance": {
+      "hunt": false,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C17",
+       "C25",
+       "N3"
+      ]
+     }
+    },
+    {
+     "id": "D9",
+     "title": "Resume looks up existing LoRA keys only by raw module name, silently starting fresh for alias-keyed files",
+     "statement": "The trainer calls adapter_cls.load(n, existing_weights, ...) with the raw module name n (nodes_train.py:418-421), while inference maps accepted aliases such as 'lora_unet_...' to model keys (comfy/lora.py:180-204). A LoRA in those formats matches nothing, so every module takes the fresh-init branch (:432-436) with no warning, yet existing_steps is still added to the returned step count.",
+     "sites": [
+      {
+       "path": "comfy_extras/nodes_train.py",
+       "from_line": 418,
+       "to_line": 436,
+       "role": "cause"
+      }
+     ],
+     "kind": "incomplete-fix",
+     "severity": "low",
+     "evidence": "nodes_train.py:419 `adapter_cls.load(n, existing_weights, alpha, dora_scale)`; comfy/lora.py:183/193 key_map['lora_unet_...'].",
+     "notes": "Must say alias/kohya-style keys are not resolved so the existing LoRA is silently not loaded.",
+     "provenance": {
+      "hunt": false,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C26",
+       "N11"
+      ]
+     }
+    },
+    {
+     "id": "D10",
+     "title": "Resuming from a conv (LoCon/tucker) LoRA crashes in LoraDiff construction",
+     "statement": "LoraDiff.__init__ (lora.py:21-36) picks the conv class with index mid.ndim-2 (Conv3d for a 4-D mid), constructs Conv layers without kernel_size, and calls layer(mid, rank) passing a tensor as in_channels, so any LoRA with lora_mid raises TypeError; a conv LoRA without mid has 4-D up/down tensors that cannot copy_ into the 2-D Linear weights (:30-33). The trainer calls to_train() on these (nodes_train.py:431).",
+     "sites": [
+      {
+       "path": "comfy/weight_adapter/lora.py",
+       "from_line": 21,
+       "to_line": 36,
+       "role": "cause"
+      },
+      {
+       "path": "comfy_extras/nodes_train.py",
+       "from_line": 430,
+       "to_line": 431,
+       "role": "symptom"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "lora.py:35 `self.lora_mid = layer(mid, rank, bias=False)`; :22-27 `(Conv1d, Conv2d, Conv3d)[mid.ndim - 2]`; :30-31 no kernel_size.",
+     "notes": "Any of: tensor passed as channel count, wrong Conv class for mid dims, missing kernel_size, 4-D up/down into Linear. Not R8 (tucker reshape).",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C6",
+       "C11",
+       "C21",
+       "C32",
+       "C38",
+       "C41",
+       "C48",
+       "N3",
+       "N7",
+       "N18",
+       "N20",
+       "N22"
+      ]
+     }
+    },
+    {
+     "id": "D11",
+     "title": "Resuming from a non-LoRA adapter file (LoHa/LoKr/OFT/BOFT/GLoRA) raises NotImplementedError",
+     "statement": "The resume loop tries every registered adapter class (nodes_train.py:418-423) and unconditionally calls existing_adapter.to_train() (:431), but only LoRAAdapter implements to_train; WeightAdapterBase.to_train raises NotImplementedError (base.py:18-19).",
+     "sites": [
+      {
+       "path": "comfy_extras/nodes_train.py",
+       "from_line": 418,
+       "to_line": 431,
+       "role": "cause"
+      },
+      {
+       "path": "comfy/weight_adapter/base.py",
+       "from_line": 18,
+       "to_line": 19,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "base.py:18-19; lora.py:77-78 is the only to_train.",
+     "notes": "Must say non-LoRA adapter types reach to_train and fail. R6 (create_train on subclasses) is a near-miss and does not count.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C7",
+       "C12",
+       "N4"
+      ]
+     }
+    },
+    {
+     "id": "D12",
+     "title": "TrainSampler swallows the loss RuntimeError and then crashes with UnboundLocalError",
+     "statement": "In TrainSampler.sample (nodes_train.py:46-51) a RuntimeError from loss_fn is caught, conditionally logged and not re-raised; loss.backward() then raises UnboundLocalError, masking the real error. The matched 'does not require grad' message comes from backward(), not the loss call.",
+     "sites": [
+      {
+       "path": "comfy_extras/nodes_train.py",
+       "from_line": 46,
+       "to_line": 51,
+       "role": "cause"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "nodes_train.py:46-51.",
+     "notes": "Must say the exception is swallowed and 'loss' is then undefined.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [
+       "R11"
+      ],
+      "reviewer_comments": [
+       "C29",
+       "N3"
+      ]
+     }
+    },
+    {
+     "id": "D13",
+     "title": "Plot Loss Graph divides by zero when all losses are equal (e.g. steps=1)",
+     "statement": "LossGraphNode.plot_loss scales by (max_loss - min_loss) (nodes_train.py:637-638); steps min is 1 (:293), so a one-step run or constant loss raises ZeroDivisionError.",
+     "sites": [
+      {
+       "path": "comfy_extras/nodes_train.py",
+       "from_line": 637,
+       "to_line": 638,
+       "role": "cause"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "nodes_train.py:637-638; steps min 1 at :293.",
+     "notes": "Division by zero when min == max. The unused draw_loss_graph has the same bug but only the registered node counts.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [
+       "R17"
+      ],
+      "reviewer_comments": [
+       "C30",
+       "C50",
+       "C51",
+       "N1",
+       "N3",
+       "N14",
+       "N19"
+      ]
+     }
+    },
+    {
+     "id": "D14",
+     "title": "Resize method 'Pad' stretches the image instead of padding",
+     "statement": "load_and_process_images treats 'Pad' identically to 'Stretch' (nodes_train.py:107-112: both img.resize((w,h))), distorting aspect ratio despite the option name.",
+     "sites": [
+      {
+       "path": "comfy_extras/nodes_train.py",
+       "from_line": 111,
+       "to_line": 112,
+       "role": "cause"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "nodes_train.py:108 and :112 identical resize calls.",
+     "notes": "Must say Pad resizes/stretches rather than pads.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [
+       "R13"
+      ],
+      "reviewer_comments": []
+     }
+    },
+    {
+     "id": "D15",
+     "title": "The seed input does not make training reproducible: the seeded generator is never used",
+     "statement": "train() creates and seeds `generator` (nodes_train.py:394-395) but never passes it anywhere: batch selection (torch.randperm :382), sigma sampling (torch.rand :506) and LoRA init (kaiming_uniform_ in lora.py:71) all use the global RNG, contrary to the seed tooltip (:337).",
+     "sites": [
+      {
+       "path": "comfy_extras/nodes_train.py",
+       "from_line": 394,
+       "to_line": 395,
+       "role": "cause"
+      },
+      {
+       "path": "comfy/weight_adapter/lora.py",
+       "from_line": 66,
+       "to_line": 72,
+       "role": "other-site"
+      }
+     ],
+     "kind": "bug",
+     "severity": "low",
+     "evidence": "generator referenced only at :394-395.",
+     "notes": "Must say the seed/generator is unused for init/batch/sigma.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C5",
+       "C18",
+       "N2",
+       "N15"
+      ]
+     }
+    },
+    {
+     "id": "D16",
+     "title": "Training patches (checkpoint forwards) leak onto the shared model if setup fails before the try/finally",
+     "statement": "patch() replaces forward on modules of mp.model.diffusion_model (nodes_train.py:482-483); model.clone() shares the underlying model. The try/finally that unpatches starts only at :502, so an exception in load_models_gpu (:484) or guider setup (:494-496) leaves checkpoint-wrapped forwards installed for later workflows using that model.",
+     "sites": [
+      {
+       "path": "comfy_extras/nodes_train.py",
+       "from_line": 481,
+       "to_line": 502,
+       "role": "cause"
+      }
+     ],
+     "kind": "resource",
+     "severity": "low",
+     "evidence": "nodes_train.py:482-484 before `try:` at :502; unpatch only in the finally at :515-517.",
+     "notes": "Must say the patching happens before the try/finally so failures leave the model patched.",
+     "provenance": {
+      "hunt": false,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C1",
+       "C15"
+      ]
+     }
+    },
+    {
+     "id": "D17",
+     "title": "Cosmos blocks take the checkpoint path during ordinary inference because the model is never in eval mode",
+     "statement": "GeneralDITTransformerBlock.forward checkpoints each block when self.training (blocks.py:799-800), but nn.Module defaults to training=True and ComfyUI never calls eval() on Cosmos diffusion models (model_base.py only at :650/:679 for other models), so every inference step runs torch.utils.checkpoint machinery (RNG-state stash, hooks) for nothing.",
+     "sites": [
+      {
+       "path": "comfy/ldm/cosmos/blocks.py",
+       "from_line": 799,
+       "to_line": 800,
+       "role": "cause"
+      }
+     ],
+     "kind": "performance",
+     "severity": "low",
+     "evidence": "model_base.py:650/679 are the only diffusion_model.eval() calls.",
+     "notes": "Must say self.training is True at inference so checkpointing runs there. R2 (no inference path at all) is wrong and does not count.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C34",
+       "N3"
+      ]
+     }
+    }
+   ],
+   "excluded": [
+    {
+     "source": "R1",
+     "reason": "Claims the checkpointed call passes positional args where block.forward may need keyword-only rope/adaln args. The positional order x, emb_B_D, crossattn_emb, crossattn_mask, rope_emb_L_1_1_D, adaln_lora_B_3D matches DITBuildingBlock.forward (blocks.py:670-678) and none are keyword-only, so the call is correct."
+    },
+    {
+     "source": "R2",
+     "reason": "Claims checkpointing omits the forward pass for evaluation, breaking inference. Wrong: the else branch (blocks.py:801-809) runs the block normally when not training."
+    },
+    {
+     "source": "R3",
+     "reason": "Suggests keeping `+=` in attention.py for in-place performance. The out-of-place add is deliberate so autograd works during training; a micro-performance preference, not a defect."
+    },
+    {
+     "source": "R4",
+     "reason": "Says residual adds in BasicTransformerBlock are inconsistent (x += x_skip vs x = n + x). The PR also changed x_skip to `x = x_skip + x` (attention.py:801); style only."
+    },
+    {
+     "source": "R5",
+     "reason": "Suggests typing dora_scale as Optional in WeightAdapterBase.load. Type-hint preference with no runtime consequence."
+    },
+    {
+     "source": "R6",
+     "reason": "Says subclasses lack create_train so calling it raises NotImplementedError. create_train is only ever called on adapters[0] (LoRAAdapter, nodes_train.py:428-436); other algorithms are declared future work. (The to_train failure for non-LoRA resumes is D11, a different call.)"
+    },
+    {
+     "source": "R7",
+     "reason": "Says overriding __call__ on WeightAdapterTrainBase (an nn.Module) bypasses hooks; prefer forward. Design preference; ops.cast_bias_weight calls the wrappers directly and nothing relies on module hooks."
+    },
+    {
+     "source": "R8",
+     "reason": "Says tucker_weight_from_conv's reshape(size0,size1) fails for 4-D conv up/down. Tucker up/down are 1x1 (out,rank,1,1), so the reshape is valid; the only path to it already crashes earlier in LoraDiff construction (D10)."
+    },
+    {
+     "source": "R9",
+     "reason": "Notes shape-convention inconsistency between tucker_weight and tucker_weight_from_conv. Documentation/readability remark; no incorrect result shown."
+    },
+    {
+     "source": "R10",
+     "reason": "Says hardcoded tuple unpacking of weights in LoraDiff hurts maintainability. Style; it mirrors LoRAAdapter.weights layout."
+    },
+    {
+     "source": "R12",
+     "reason": "Says commented-out debug memory lines should be removed. Style only."
+    },
+    {
+     "source": "R16",
+     "reason": "Says sigma = torch.tensor([sigma]) is a CPU tensor causing device mismatch on GPU. CFGGuider.outer_sample moves sigmas to the model device (samplers.py:977)."
+    },
+    {
+     "source": "R18",
+     "reason": "Says get_input_subfolders ignores unused dirs, only catches FileNotFoundError and may follow symlink loops. os.walk ignores listing errors by default (onerror=None) and followlinks defaults to False; unused variable is style."
+    },
+    {
+     "source": "C2",
+     "reason": "Says blocks.py must import torch.utils.checkpoint explicitly or training-mode Cosmos forwards raise AttributeError. nodes_train.py (loaded at startup via nodes.py init_builtin_extra_nodes) and other comfy modules (sub_quadratic_attention.py:15) already import torch.utils.checkpoint, so the attribute is always present."
+    },
+    {
+     "source": "C4",
+     "reason": "Says LoraDiff layers are built in CPU float32 so copy_ casts fp64/GPU init data. The trainer immediately does .to(lora_dtype) and move_to handles device; fp64 LoRA init is contrived, no concrete consequence."
+    },
+    {
+     "source": "C8",
+     "reason": "Says Load Image Dataset from Folder concatenates `folder` without containment so ../ reads outside input. `folder` is a combo input; execution.py:736 rejects any value not in get_input_subfolders(), so traversal values never reach load_images."
+    },
+    {
+     "source": "C9",
+     "reason": "Says weight.shape[1:].numel() fails because a shape tuple has no numel(). torch.Size does implement numel(), so create_train works."
+    },
+    {
+     "source": "C13",
+     "reason": "Says torch.tensor(alpha) raises when alpha is None. The trainer always passes float(existing_weights.get(..., 1.0)) (nodes_train.py:414), never None, so this is unreachable from this PR's callers."
+    },
+    {
+     "source": "C19",
+     "reason": "Says INPUT_IS_LIST makes resize_method a list in LoadImageSetNode so resizing never happens. LoadImageSetNode is not registered in NODE_CLASS_MAPPINGS (nodes_train.py:697-703), so the path is unreachable."
+    },
+    {
+     "source": "C24",
+     "reason": "Says the folder-path tests leave the global input directory pointing at a deleted temp dir. Test hygiene; the only other test reading it (tests-unit/comfy_test/folder_path_test.py:51) compares against get_input_directory() dynamically, so no test is shown to break."
+    },
+    {
+     "source": "C27",
+     "reason": "Says BiasDiff.bias is not a registered parameter so move_to cannot move the diff to GPU. Assigning an nn.Parameter to a Module attribute registers it, and .to() updates the shared Parameter in place, so the wrapper's parameter does follow the device."
+    },
+    {
+     "source": "C36",
+     "reason": "Says LoadImageSetNode.load_images takes input_files but receives images=. LoadImageSetNode is not registered in NODE_CLASS_MAPPINGS, so it is never executed; dead code."
+    },
+    {
+     "source": "C40",
+     "reason": "Says the tests change the process-wide input directory without restoring it. Same as C24: test hygiene with no demonstrated failing test."
+    },
+    {
+     "source": "C44",
+     "reason": "Says overriding __call__ on an nn.Module adapter bypasses forward hooks. Design preference (same as R7); nothing in the call path uses module hooks."
+    },
+    {
+     "source": "C45",
+     "reason": "Says draw_loss_graph is unused dead code duplicating the node's plotting. Dead-code cleanup; no behavioural consequence."
+    },
+    {
+     "source": "N6",
+     "reason": "Claims trained bias diffs saved as '{n}.diff_b' may not be found by comfy.lora.load_lora, so bias changes could be dropped when the LoRA is loaded. Not a defect: for every module with a weight, model_lora_keys_unet maps the generic key 'diffusion_model.foo' (comfy/lora.py:184) and load_lora looks up '{x}.diff_b' (lora.py:78-81), which is exactly the saved key; the bias-only case (weight None, bias present) is contrived and the comment itself only asks for verification."
+    },
+    {
+     "source": "N13",
+     "reason": "Claims `key` is assigned only inside the len(shape)>=2 branch, so the 1-D weight branch raises UnboundLocalError or attaches the diff to the previous module. Wrong: key = '{}.weight'.format(n) is assigned before the shape check (nodes_train.py:410-412), so the 1-D branch uses the current module's key; wrapping a separate BiasDiff instance around the same Parameter is harmless."
+    },
+    {
+     "source": "N21",
+     "reason": "Claims saved keys 'diffusion_model.foo.lora_up.weight' are not the loader's naming, so LoraModelLoader/normal LoRA loading find no trained weights. Wrong: model_lora_keys_unet registers the generic key k[:-len('.weight')] including the 'diffusion_model.' prefix (comfy/lora.py:180-184), so load_lora finds '<diffusion_model.foo>.lora_up.weight'."
+    }
+   ]
+  },
+  "ClickHouse__ClickHouse@5fb6ee3": {
+   "instance_id": "ClickHouse__ClickHouse@5fb6ee3",
+   "pr_summary": "Documentation-only change (part 7 of moving array-function docs into source): adds FunctionDocumentation objects (description, syntax, arguments, returned value, examples, version, category) to the registrations of arrayMin/Max/Sum/Avg/Product, arrayAll, arrayExists, arrayFirst/FirstOrNull/Last/LastOrNull, arrayFirstIndex/LastIndex and arraySplit/ReverseSplit, removes the now-documented names from the two 02415 'must be documented / must have version' reference files, and fixes a 'mininum' typo in array-functions.md.",
+   "defects": [
+    {
+     "id": "D1",
+     "title": "arrayLastIndex documentation is built but never passed to registerFunction",
+     "statement": "arrayFirstLastIndex.cpp builds documentation_last (lines 148-164) but the registration at line 166 is still `factory.registerFunction<FunctionArrayLastIndex>();` with no argument, so the new description, syntax, examples and version for arrayLastIndex are dead code; system.functions and the generated reference still carry no documentation for it (the 02415 reference files still list arrayLastIndex as undocumented/unversioned, consistent with this).",
+     "sites": [
+      {
+       "path": "src/Functions/array/arrayFirstLastIndex.cpp",
+       "from_line": 164,
+       "to_line": 166,
+       "role": "cause"
+      }
+     ],
+     "kind": "incomplete-fix",
+     "severity": "medium",
+     "evidence": "arrayFirstLastIndex.cpp:164 `FunctionDocumentation documentation_last = {description_last, ...};` followed by :166 `factory.registerFunction<FunctionArrayLastIndex>();`, whereas :146 passes `documentation_first`. The 02415 references keep `arrayLastIndex` while removing its siblings.",
+     "notes": "Must say documentation_last is unused / arrayLastIndex is registered without its documentation.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [
+       "R8"
+      ],
+      "reviewer_comments": [
+       "C5",
+       "C13",
+       "C19",
+       "N1",
+       "N4",
+       "N5",
+       "N10"
+      ]
+     }
+    },
+    {
+     "id": "D2",
+     "title": "arrayMax's returned-value text says it returns the minimum of the lambda results",
+     "statement": "returned_value_max reads 'Returns the maximum element in the source array, or the minimum element of the lambda results if provided.' (arrayAggregation.cpp:482). arrayMax returns the maximum in both forms; the published doc states the opposite for the lambda overload.",
+     "sites": [
+      {
+       "path": "src/Functions/array/arrayAggregation.cpp",
+       "from_line": 482,
+       "to_line": 482,
+       "role": "cause"
+      }
+     ],
+     "kind": "maintainability",
+     "severity": "low",
+     "evidence": "arrayAggregation.cpp:482 `returned_value_max = \"Returns the maximum element in the source array, or the minimum element of the lambda results if provided.\"`; description_max (:471-475) and the example (:485, result 12) say maximum.",
+     "notes": "Must flag 'minimum' in arrayMax's returned value.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [
+       "R2"
+      ],
+      "reviewer_comments": [
+       "C15",
+       "C16",
+       "C17",
+       "N5",
+       "N12"
+      ]
+     }
+    },
+    {
+     "id": "D3",
+     "title": "arraySum's documented syntax names arrayMax",
+     "statement": "syntax_sum is \"arrayMax([func(x[, y1, ..., yN])], source[, cond1, ... , condN])\" (arrayAggregation.cpp:498) and is registered for FunctionArraySum, so the arraySum reference shows the wrong function name (copy-paste).",
+     "sites": [
+      {
+       "path": "src/Functions/array/arrayAggregation.cpp",
+       "from_line": 498,
+       "to_line": 498,
+       "role": "cause"
+      }
+     ],
+     "kind": "maintainability",
+     "severity": "low",
+     "evidence": "arrayAggregation.cpp:498 `FunctionDocumentation::Syntax syntax_sum = \"arrayMax([func(x[, y1, ..., yN])], ...`.",
+     "notes": "Must point at the arraySum syntax string naming arrayMax.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C8",
+       "C11",
+       "C21",
+       "N5",
+       "N6",
+       "N7",
+       "N9"
+      ]
+     }
+    },
+    {
+     "id": "D4",
+     "title": "arrayLast's 'No match' example calls arrayFirst",
+     "statement": "examples_last's second example (arrayFirstLast.cpp:262-266) is `SELECT arrayFirst(x, y -> x=y, [0, 1, 2], [3, 3, 3]) ...`, so the arrayLast documentation demonstrates a different function (copy-paste); the output happens to be identical, hiding the mistake.",
+     "sites": [
+      {
+       "path": "src/Functions/array/arrayFirstLast.cpp",
+       "from_line": 262,
+       "to_line": 266,
+       "role": "cause"
+      }
+     ],
+     "kind": "maintainability",
+     "severity": "low",
+     "evidence": "arrayFirstLast.cpp:264 `\"SELECT arrayFirst(x, y -> x=y, [0, 1, 2], [3, 3, 3]) AS res, toTypeName(res)\"` inside `examples_last`.",
+     "notes": "Must flag the arrayFirst call in arrayLast's example.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [
+       "R4"
+      ],
+      "reviewer_comments": [
+       "C7",
+       "C23",
+       "C25",
+       "N5"
+      ]
+     }
+    },
+    {
+     "id": "D5",
+     "title": "arrayReverseSplit documents its lambda as Optional though the function requires it",
+     "statement": "arguments_split marks func as 'Optional. A lambda function ...' (arraySplit.cpp:136), but ArraySplitImpl::needExpression() returns true (arraySplit.cpp:19), so FunctionArrayMapped requires at least 2 arguments (FunctionArrayMapped.h:167) and a lambda-less arrayReverseSplit call errors; the doc is wrong and inconsistent with arraySplit's entry.",
+     "sites": [
+      {
+       "path": "src/Functions/array/arraySplit.cpp",
+       "from_line": 136,
+       "to_line": 136,
+       "role": "cause"
+      }
+     ],
+     "kind": "maintainability",
+     "severity": "low",
+     "evidence": "arraySplit.cpp:19 `static bool needExpression() { return true; }`; :136 `{\"func(x[, y1, ..., yN])\", \"Optional. A lambda function ...\"}`.",
+     "notes": "Must say the lambda is wrongly marked optional for arrayReverseSplit.",
+     "provenance": {
+      "hunt": true,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C22",
+       "C29"
+      ]
+     }
+    },
+    {
+     "id": "D6",
+     "title": "arrayAll and arrayExists document the lambda as mandatory though both accept a bare array",
+     "statement": "The new syntax strings `arrayAll(func(x[, y1, ..., yN]), source[, ...])` (arrayAll.cpp:69) and `arrayExists(func(...), source[, ...])` (arrayExists.cpp:70) and their argument lists present func as required, but ArrayAllImpl/ArrayExistsImpl::needExpression() return false (arrayAll.h:16, arrayExists.h:17), so FunctionArrayMapped accepts a single array (FunctionArrayMapped.h:167). The Markdown docs these replace documented `arrayAll([func,] arr1, ...)` / `arrayExists([func,] arr1, ...)`, so the in-source docs regress by hiding the supported array-only form.",
+     "sites": [
+      {
+       "path": "src/Functions/array/arrayAll.cpp",
+       "from_line": 69,
+       "to_line": 71,
+       "role": "cause"
+      },
+      {
+       "path": "src/Functions/array/arrayExists.cpp",
+       "from_line": 70,
+       "to_line": 72,
+       "role": "cause"
+      }
+     ],
+     "kind": "maintainability",
+     "severity": "low",
+     "evidence": "arrayAll.h:16 and arrayExists.h:17 `static bool needExpression() { return false; }`; FunctionArrayMapped.h:167 `size_t min_args = (Impl::needExpression() ? 2 : 1) + num_fixed_params;`; array-functions.md:2477/2483 headings `arrayExists(\\[func,\\] arr1, ...)`, `arrayAll(\\[func,\\] arr1, ...)`.",
+     "notes": "Must say the lambda should be shown as optional for arrayAll and/or arrayExists. Not the arrayReverseSplit case (D5), which is the opposite error.",
+     "provenance": {
+      "hunt": false,
+      "dataset_refs": [],
+      "reviewer_comments": [
+       "C4",
+       "C26",
+       "N11"
+      ]
+     }
+    }
+   ],
+   "excluded": [
+    {
+     "source": "R1",
+     "reason": "Claims the arrayMin/arrayMax lambda examples `arrayMin(x, y -> x/y, ...)` use an argument order/syntax that may not parse. The two-parameter lambda form `x, y -> expr` inside function arguments is valid ClickHouse syntax (the parser collects preceding identifiers as lambda parameters; used in tests/queries/0_stateless/01144_multiple_joins_rewriter_v2_and_lambdas.sql:2 `arrayMap(x, y -> floor((y - x) / x, 3), l, r)` and covered by 02476_fix_lambda_parsing), so the examples run and their stated results are correct."
+    },
+    {
+     "source": "R3",
+     "reason": "Says arrayFirst's syntax uses \u03bb(...) while arrayFirstOrNull uses func(...). Notation inconsistency only; neither states a wrong fact."
+    },
+    {
+     "source": "R5",
+     "reason": "Says '0' is quoted inconsistently (backticks vs single quotes) in arrayFirstIndex docs. Formatting nit."
+    },
+    {
+     "source": "R6",
+     "reason": "Claims `x, y -> x=y` in the arrayFirstIndex examples is invalid lambda syntax needing parentheses. The two-parameter lambda form `x, y -> expr` inside function arguments is valid ClickHouse syntax (the parser collects preceding identifiers as lambda parameters; used in tests/queries/0_stateless/01144_multiple_joins_rewriter_v2_and_lambdas.sql:2 `arrayMap(x, y -> floor((y - x) / x, 3), l, r)` and covered by 02476_fix_lambda_parsing), so the examples run and their stated results are correct."
+    },
+    {
+     "source": "R7",
+     "reason": "Says semicolons inside the example SQL are inconsistent with other docs. Formatting nit."
+    },
+    {
+     "source": "R9",
+     "reason": "Suggests rewording arraySplit's description ('returns true', 'to the left of'). Wording preference; the text is accurate."
+    },
+    {
+     "source": "R10",
+     "reason": "Says a space is missing before the [Lambda function] link in arraySplit's argument text. Formatting nit."
+    },
+    {
+     "source": "R11",
+     "reason": "Asks to rename arrayReverseSplit's *_split documentation variables. Naming preference."
+    },
+    {
+     "source": "C1",
+     "reason": "Claims the aggregate lambda examples `x, y -> ...` are invalid and must be `(x, y) -> ...`. The two-parameter lambda form `x, y -> expr` inside function arguments is valid ClickHouse syntax (the parser collects preceding identifiers as lambda parameters; used in tests/queries/0_stateless/01144_multiple_joins_rewriter_v2_and_lambdas.sql:2 `arrayMap(x, y -> floor((y - x) / x, 3), l, r)` and covered by 02476_fix_lambda_parsing), so the examples run and their stated results are correct."
+    },
+    {
+     "source": "C2",
+     "reason": "Claims the arrayAll examples leave x outside the lambda and cannot run. The two-parameter lambda form `x, y -> expr` inside function arguments is valid ClickHouse syntax (the parser collects preceding identifiers as lambda parameters; used in tests/queries/0_stateless/01144_multiple_joins_rewriter_v2_and_lambdas.sql:2 `arrayMap(x, y -> floor((y - x) / x, 3), l, r)` and covered by 02476_fix_lambda_parsing), so the examples run and their stated results are correct."
+    },
+    {
+     "source": "C3",
+     "reason": "Claims the arrayFirst/Last examples need `(x, y) -> x = y` or they fail. The two-parameter lambda form `x, y -> expr` inside function arguments is valid ClickHouse syntax (the parser collects preceding identifiers as lambda parameters; used in tests/queries/0_stateless/01144_multiple_joins_rewriter_v2_and_lambdas.sql:2 `arrayMap(x, y -> floor((y - x) / x, 3), l, r)` and covered by 02476_fix_lambda_parsing), so the examples run and their stated results are correct."
+    },
+    {
+     "source": "C6",
+     "reason": "Says `arrayLast(\u03bb=func(...), ...)` suggests a named argument and should use func(...) notation. Notation inconsistency in a syntax placeholder, no wrong fact about arguments; style."
+    },
+    {
+     "source": "C9",
+     "reason": "Claims the arrayFirstIndex/LastIndex examples use invalid `x, y ->` lambda syntax. The two-parameter lambda form `x, y -> expr` inside function arguments is valid ClickHouse syntax (the parser collects preceding identifiers as lambda parameters; used in tests/queries/0_stateless/01144_multiple_joins_rewriter_v2_and_lambdas.sql:2 `arrayMap(x, y -> floor((y - x) / x, 3), l, r)` and covered by 02476_fix_lambda_parsing), so the examples run and their stated results are correct."
+    },
+    {
+     "source": "C10",
+     "reason": "Suggests sharing the duplicated argument/version/category fields across the five aggregate docs. Refactoring preference, no defect."
+    },
+    {
+     "source": "C12",
+     "reason": "Claims the arrayExists example `x, y -> x=y` cannot run. The two-parameter lambda form `x, y -> expr` inside function arguments is valid ClickHouse syntax (the parser collects preceding identifiers as lambda parameters; used in tests/queries/0_stateless/01144_multiple_joins_rewriter_v2_and_lambdas.sql:2 `arrayMap(x, y -> floor((y - x) / x, 3), l, r)` and covered by 02476_fix_lambda_parsing), so the examples run and their stated results are correct."
+    },
+    {
+     "source": "C14",
+     "reason": "Claims the aggregate lambda examples need parenthesised parameters. The two-parameter lambda form `x, y -> expr` inside function arguments is valid ClickHouse syntax (the parser collects preceding identifiers as lambda parameters; used in tests/queries/0_stateless/01144_multiple_joins_rewriter_v2_and_lambdas.sql:2 `arrayMap(x, y -> floor((y - x) / x, 3), l, r)` and covered by 02476_fix_lambda_parsing), so the examples run and their stated results are correct."
+    },
+    {
+     "source": "C18",
+     "reason": "Claims both arrayAll examples fail because `x, y ->` is not a two-parameter lambda. The two-parameter lambda form `x, y -> expr` inside function arguments is valid ClickHouse syntax (the parser collects preceding identifiers as lambda parameters; used in tests/queries/0_stateless/01144_multiple_joins_rewriter_v2_and_lambdas.sql:2 `arrayMap(x, y -> floor((y - x) / x, 3), l, r)` and covered by 02476_fix_lambda_parsing), so the examples run and their stated results are correct."
+    },
+    {
+     "source": "C20",
+     "reason": "Claims the arrayExists example fails because x is a separate argument. The two-parameter lambda form `x, y -> expr` inside function arguments is valid ClickHouse syntax (the parser collects preceding identifiers as lambda parameters; used in tests/queries/0_stateless/01144_multiple_joins_rewriter_v2_and_lambdas.sql:2 `arrayMap(x, y -> floor((y - x) / x, 3), l, r)` and covered by 02476_fix_lambda_parsing), so the examples run and their stated results are correct."
+    },
+    {
+     "source": "C24",
+     "reason": "Claims every new two-argument lambda example is non-executable because `x, y -> ...` needs parentheses. The two-parameter lambda form `x, y -> expr` inside function arguments is valid ClickHouse syntax (the parser collects preceding identifiers as lambda parameters; used in tests/queries/0_stateless/01144_multiple_joins_rewriter_v2_and_lambdas.sql:2 `arrayMap(x, y -> floor((y - x) / x, 3), l, r)` and covered by 02476_fix_lambda_parsing), so the examples run and their stated results are correct."
+    },
+    {
+     "source": "C27",
+     "reason": "Claims the first/last examples leave x outside the lambda. The two-parameter lambda form `x, y -> expr` inside function arguments is valid ClickHouse syntax (the parser collects preceding identifiers as lambda parameters; used in tests/queries/0_stateless/01144_multiple_joins_rewriter_v2_and_lambdas.sql:2 `arrayMap(x, y -> floor((y - x) / x, 3), l, r)` and covered by 02476_fix_lambda_parsing), so the examples run and their stated results are correct."
+    },
+    {
+     "source": "C28",
+     "reason": "Claims the index examples leave x unbound by the lambda. The two-parameter lambda form `x, y -> expr` inside function arguments is valid ClickHouse syntax (the parser collects preceding identifiers as lambda parameters; used in tests/queries/0_stateless/01144_multiple_joins_rewriter_v2_and_lambdas.sql:2 `arrayMap(x, y -> floor((y - x) / x, 3), l, r)` and covered by 02476_fix_lambda_parsing), so the examples run and their stated results are correct."
+    },
+    {
+     "source": "N2",
+     "reason": "Claims the new two-parameter lambda examples (`arrayAll(x, y -> ..., arr1, arr2)` and the same in arrayExists/First/Last/Index/aggregations) split x off as a separate argument and fail unless written `(x, y) -> ...`. The two-parameter lambda form `x, y -> expr` inside function arguments is valid ClickHouse syntax (the parser collects preceding identifiers as lambda parameters; used in tests/queries/0_stateless/01144_multiple_joins_rewriter_v2_and_lambdas.sql:2 `arrayMap(x, y -> floor((y - x) / x, 3), l, r)` and covered by 02476_fix_lambda_parsing), so the examples run and their stated results are correct."
+    },
+    {
+     "source": "N3",
+     "reason": "Claims the multi-argument lambda examples such as `arrayMin(x, y -> x/y, ...)` are invalid and must be parenthesised. The two-parameter lambda form `x, y -> expr` inside function arguments is valid ClickHouse syntax (the parser collects preceding identifiers as lambda parameters; see 01144_multiple_joins_rewriter_v2_and_lambdas.sql:2 `arrayMap(x, y -> ...)` and 02476_fix_lambda_parsing), so the examples run as documented."
+    },
+    {
+     "source": "N13",
+     "reason": "Claims `x, y -> ...` in the new examples is parsed as a separate x argument plus a one-parameter lambda, leaving x unknown. The two-parameter lambda form `x, y -> expr` inside function arguments is valid ClickHouse syntax (the parser collects preceding identifiers as lambda parameters; see 01144_multiple_joins_rewriter_v2_and_lambdas.sql:2 and 02476_fix_lambda_parsing), so the examples run as documented."
+    },
+    {
+     "source": "N5",
+     "reason": "(Secondary claim of the prose review; its other claims match D1-D4.) Says the arrayLast syntax string `arrayLast(\u03bb=func(...), ...)` is malformed. This is placeholder-notation inconsistency in a syntax template (same as excluded C6), not a wrong statement about arguments or behaviour; style."
+    },
+    {
+     "source": "N8",
+     "reason": "Says the arrayLast syntax `\u03bb=func(...)` implies an assignment and users cannot form a valid call from it. The syntax field is a placeholder template, not a copy-paste query; `\u03bb=` is a notation inconsistency with siblings (same as excluded C6) with no wrong fact about the arguments; style."
+    }
+   ]
+  }
+ }
+}
