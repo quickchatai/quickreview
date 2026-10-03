@@ -821,6 +821,9 @@ export function selectQualityLenses(files: PrFileEntry[], minAdded: number): str
 const SWEEP_SKIP_RE =
   /((^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock|go\.sum|poetry\.lock|uv\.lock|composer\.lock|Gemfile\.lock)$|\.(min\.js|map|snap|lock|svg|png|jpe?g|gif|ico|pdf|woff2?|ttf|md|rst|txt)$|(^|\/)(vendor|third_party|node_modules|dist|build|generated)\/)/i;
 
+/** Prose the sweep reads when the PR also changes code (freeze fixes 2). */
+const SWEEP_DOC_RE = /\.(md|mdx|rst|adoc)$/i;
+
 /** Is `path` a file the sweep never reads? Exported for the setup engine's
  * case sizing: a unit is sized by what a pass would actually read. */
 export function isSweepSkipped(path: string): boolean {
@@ -856,9 +859,26 @@ export function sweepGroups(
   maxLines: number = SWEEP_MAX_LINES_PER_GROUP,
   wideFiles: number = SWEEP_WIDE_FILES_PER_GROUP,
 ): { groups: string[][]; unswept: string[] } {
-  const eligible = files.filter(
-    (f) => f.status !== "removed" && f.additions > 0 && !SWEEP_SKIP_RE.test(f.filename),
+  // Freeze fixes 2: changed prose (docs, READMEs) is swept too when the PR
+  // also changes code — its commands, API names and examples can go stale with
+  // the code — and every group is filled source-first: code, then tests and
+  // fixtures, then prose, so a group cap starves the least likely place for a
+  // defect, never a source file. A prose file counts half its lines.
+  const changesCode = files.some(
+    (f) => f.status !== "removed" && CODE_FILE_RE.test(f.filename) && !isTestFile(f.filename),
   );
+  const isDoc = (name: string): boolean => SWEEP_DOC_RE.test(name);
+  const rank = (name: string): number => (isDoc(name) ? 2 : isTestFile(name) ? 1 : 0);
+  const eligible = files
+    .filter(
+      (f) =>
+        f.status !== "removed" &&
+        f.additions > 0 &&
+        (!SWEEP_SKIP_RE.test(f.filename) || (changesCode && isDoc(f.filename))),
+    )
+    .map((f, i) => ({ f, i }))
+    .sort((a, b) => rank(a.f.filename) - rank(b.f.filename) || a.i - b.i)
+    .map((x) => x.f);
   // A wide, shallow change: pack by changed lines, not by file count, so the
   // budget of passes covers every file instead of running out of groups.
   if (wideFiles > maxFiles && eligible.length > maxFiles * maxGroups) maxFiles = wideFiles;
@@ -867,7 +887,7 @@ export function sweepGroups(
   let lines = 0;
   const unswept: string[] = [];
   for (const f of eligible) {
-    const size = f.additions + f.deletions;
+    const size = isDoc(f.filename) ? Math.ceil((f.additions + f.deletions) / 2) : f.additions + f.deletions;
     if (cur.length > 0 && (cur.length >= maxFiles || lines + size > maxLines)) {
       groups.push(cur);
       cur = [];

@@ -184,3 +184,15 @@ describe("pass-tests: a loosened test is evidence of a behaviour change", () => 
     expect(t).not.toMatch(NO_BENCHMARK_NAMES);
   });
 });
+
+describe("sweep: prose focus files and paths left behind by a move", () => {
+  it("binds pass-sweep (PR builds): prose against the changed code, nit unless a command or example breaks; grep old paths", () => {
+    expect(ids("pass-sweep")).toContain("sweep-docs-and-moves");
+    const t = text("sweep-docs-and-moves");
+    expect(t).toMatch(/A prose focus file/);
+    expect(t).toMatch(/Grammar and wording are not findings/);
+    expect(t).toMatch(/grep the repository for the OLD path/);
+    expect(t).toMatch(/CODEOWNERS/);
+    expect(t).not.toMatch(NO_BENCHMARK_NAMES);
+  });
+});

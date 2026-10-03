@@ -840,6 +840,15 @@ export const SWEEP_MECHANICAL_CHECKLIST_ADDENDUM =
   "- **Combined or repeated input**: a parser, matcher or flag set that handles each token alone — what happens with two of them together, the same one twice, or an empty one between separators.\n" +
   "- **An unreachable fallback**: `a || b`, `a ?? b`, a `catch` default or an `else` branch whose left side can never be falsy or failing (a template string is always truthy), so the fallback the author wrote never runs.\n";
 
+// Freeze fixes 2: the sweep now reads changed prose when the PR changes code
+// (heuristics.ts sweepGroups), and a move or rename leaves old paths behind
+// in configs, CODEOWNERS and docs. AACR 6, Qodo 2, SWE-PRBench 2 — low
+// severity, so capped at a nit unless a command or example breaks.
+export const SWEEP_DOCS_AND_MOVES_ADDENDUM =
+  "\n## Prose focus files, and paths left behind by a move (sandbox rule)\n" +
+  "**A prose focus file** (`.md`, `.rst`, `.mdx`, `.adoc`) is swept against the code this PR changes, not for writing quality: a command, flag, option, environment variable, function or file name it shows that no longer exists or now behaves differently; an example that would no longer run or compile; a documented default or limit the code changed. A broken command or example is reported at the severity its consequence earns; anything else in prose is a `[nit]`. Grammar and wording are not findings.\n\n" +
+  "**A file, directory or module the PR moves or renames**: grep the repository for the OLD path, module name or prefix — CODEOWNERS, CI and build config, Dockerfiles, docs, test paths, import maps, scripts. Each reference the PR did not update is a finding at the reference's `path:line`, at the severity of what it breaks (a CI path that no longer matches, an import that fails, ownership that no longer applies).\n";
+
 // Round 4 (ROUND4-GAPS.md): a stylesheet change removed a rule the component the PR targeted no longer needed, while a server-rendered fallback template of the same selector still did. The lenses read the targeted component only. PR builds only.
 export const REMOVED_RULE_OTHER_CONSUMERS_ADDENDUM =
   "\n## A removed or changed rule may have consumers the PR did not look at (sandbox rule)\n" +
@@ -1367,6 +1376,7 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
   { id: "validate-anchor-at-cause", scope: [VALIDATE_PASS], mode: "pr", text: VALIDATE_ANCHOR_AT_CAUSE_ADDENDUM },
   { id: "line-local-slips", scope: ["pass-baseline", "pass-sweep"], mode: "pr", text: LINE_LOCAL_SLIPS_ADDENDUM },
   { id: "sweep-mechanical-checklist", scope: ["pass-sweep"], mode: "pr", text: SWEEP_MECHANICAL_CHECKLIST_ADDENDUM },
+  { id: "sweep-docs-and-moves", scope: ["pass-sweep"], mode: "pr", text: SWEEP_DOCS_AND_MOVES_ADDENDUM },
   { id: "exhaust-the-site", scope: ["pass-baseline", "pass-sweep", "pass-widened", "pass-behaviour-delta"], mode: "pr", text: EXHAUST_THE_SITE_ADDENDUM },
   { id: "style-written-rule-checklist", scope: [STYLE_PASS_NAME], mode: "pr", text: STYLE_WRITTEN_RULE_CHECKLIST_ADDENDUM },
   { id: "validate-convention-rule", scope: [VALIDATE_PASS], mode: "pr", text: VALIDATE_CONVENTION_RULE_ADDENDUM },

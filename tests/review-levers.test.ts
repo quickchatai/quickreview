@@ -343,7 +343,7 @@ describe("sweepGroups", () => {
     status,
   });
 
-  it("groups diff-order files under both caps and skips lockfiles, prose and deletions", () => {
+  it("groups files under both caps, source first, and skips lockfiles and deletions (prose rides last)", () => {
     const { groups, unswept } = sweepGroups(
       [
         f("a.ts", 10),
@@ -358,9 +358,22 @@ describe("sweepGroups", () => {
       ],
       6,
     );
-    expect(groups).toEqual([["a.ts", "b.ts", "c.ts", "d.ts"], ["big.ts"], ["e.ts"]]);
+    // Freeze fixes 2: changed prose is swept when the PR changes code, after
+    // every source file, at half weight.
+    expect(groups).toEqual([["a.ts", "b.ts", "c.ts", "d.ts"], ["big.ts"], ["e.ts", "README.md"]]);
     expect(groups.every((g) => g.length <= SWEEP_MAX_FILES_PER_GROUP)).toBe(true);
     expect(unswept).toEqual([]);
+  });
+
+  it("fills groups source first, tests and fixtures next, prose last; a prose-only PR sweeps no prose", () => {
+    const { groups } = sweepGroups(
+      [f("docs/guide.md", 10), f("tests/test_a.py", 10), f("src/a.py", 10), f("src/b.py", 10)],
+      6,
+      2,
+      500,
+    );
+    expect(groups).toEqual([["src/a.py", "src/b.py"], ["tests/test_a.py", "docs/guide.md"]]);
+    expect(sweepGroups([f("README.md", 20), f("docs/x.rst", 5)], 6).groups).toEqual([]);
   });
 
   it("group caps are parameters: the first batch's 3 files / 400 lines", () => {

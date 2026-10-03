@@ -213,7 +213,8 @@ const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
 // Re-pinned 2026-10-03: pass-lint-conformance agent built (planned only when a CI job runs a linter covering a changed file; freeze fixes 2)
 // Re-pinned 2026-10-03: `sweep-mechanical-checklist` (pass-sweep; freeze fixes 2)
 // Re-pinned 2026-10-03: `tests-loosened-is-behaviour` (pass-tests; freeze fixes 2)
-const GOLDEN_AGENTS_NO_DEDUP = "7f7aaf974db3d90a2b237b0f0f466ecfd78a9786d5d155cbe86cc417e1610a11";
+// Re-pinned 2026-10-03: `sweep-docs-and-moves` (pass-sweep; freeze fixes 2)
+const GOLDEN_AGENTS_NO_DEDUP = "7f7755278edcf5cb0d6e8277adbfa3df5ebc89c29af7a5288d58b914edcc00f5";
 //   → (round 7, docs/duplicate-merge.md) `dedup-group-validate` (pass-validate,
 //     `[review] dedup_merge` on by default) and the default profile's posting
 //     addendum for `repeat_sites = false`. Off + no policy = the pin above.
@@ -222,4 +223,5 @@ const GOLDEN_AGENTS_NO_DEDUP = "7f7aaf974db3d90a2b237b0f0f466ecfd78a9786d5d155cb
 // Re-pinned 2026-10-03: pass-lint-conformance agent built (planned only when a CI job runs a linter covering a changed file; freeze fixes 2)
 // Re-pinned 2026-10-03: `sweep-mechanical-checklist` (pass-sweep; freeze fixes 2)
 // Re-pinned 2026-10-03: `tests-loosened-is-behaviour` (pass-tests; freeze fixes 2)
-const GOLDEN_AGENTS = "e55b0164b0efe3cde43e85d01d37fc30dd11102c392043cf63ff8a72bde921dc";
+// Re-pinned 2026-10-03: `sweep-docs-and-moves` (pass-sweep; freeze fixes 2)
+const GOLDEN_AGENTS = "d66684ec9d13a1977e3c023444c9259e9c90dfa0b3eb25baf767b983b1e1bace";
