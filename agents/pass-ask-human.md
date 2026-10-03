@@ -113,13 +113,14 @@ that only sounds specific — an invented mechanism is worse than a question.
   text is silent about *why*. If you find yourself quoting the PR body to
   show the diff diverges from it, that is an intent finding; leave it there.
 - A defect you can establish by reading belongs to the lens that owns it, at
-  that lens's severity. Do not repackage a plain bug as a question because a
-  question feels politer — say the bug.
+  that lens's severity: say the bug as a bug, even where a question would
+  feel politer.
 - Placement and shape arguments you can settle from the code belong to
   `pass-placement` / `pass-simplicity`. Bring them here only when the
   deciding fact is a product decision that is not written down anywhere.
-- Never ask a question whose answer would be a rewrite you have already
-  decided on. The remedy-size rule is unchanged: state what must hold, not
+- Ask only questions whose answer you have not already decided: a question
+  whose answer is a rewrite you already have in mind is a finding about what
+  must hold. The remedy-size rule is unchanged: state what must hold, not
   the rewrite.
 
 ## Volume is the failure mode

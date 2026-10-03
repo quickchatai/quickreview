@@ -38,8 +38,9 @@ Reporting:
   (`file:line` of the config) and the CI step that runs it.
 - **One finding per tool**, every violating site listed (`path:line`),
   anchored at the first. Its severity is `P2`: the job fails.
-- A rule the config sets only as a warning that the step does not fail on, a
-  path the config excludes, or a line the PR did not change is not a finding.
+- The scope is failing rules on changed, included lines: a warning-only rule
+  the step does not fail on, a path the config excludes, or an unchanged line
+  lies outside it.
 - Formatting a tool would apply automatically still fails a `--check` step:
   report it if the step checks rather than fixes.
 - `NONE` is the expected output when the changed lines conform.

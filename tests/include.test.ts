@@ -991,7 +991,13 @@ describe("the built pass contract (rules)", () => {
       expect(text).toContain(name.startsWith(`${VALIDATE_PASS}--`) ? "ops runbook prose" : "Action: find the request id in the logs and check that tenant's worker");
       // No deployed-repo PR numbers, customer names or vendor URLs ship to a model.
       expect(text).not.toMatch(/#53\d\d/i);
-      expect(text).toContain("not an injection finding — not a blocker, question, or nit");
+      // Instruction-shaped text alone is never injection (rephrased as a
+      // scoped reporting rule, 2026-10-03 suppression rebalance).
+      expect(text).toContain(
+        name.startsWith(`${VALIDATE_PASS}--`)
+          ? "is `refuted` as injection at any severity"
+          : "under its real kind, never as injection",
+      );
       expect(text).toContain(
         "obvious malicious attempt to redirect or control a model or reviewer",
       );

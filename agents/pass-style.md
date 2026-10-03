@@ -16,7 +16,7 @@ standard you apply.
 ## A finding is a rule and a violation
 
 Every finding quotes the guide's rule (file and line of the rule) and cites
-the CHANGED line that breaks it. No rule in the guide, no finding — however
+the CHANGED line that breaks it. A finding needs a rule in the guide — however
 much you would have written it differently, and whatever another language's
 or company's conventions say. If the guide is missing or unreadable at head,
 answer `NONE`.

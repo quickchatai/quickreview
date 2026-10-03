@@ -53,5 +53,5 @@ What a slip looks like:
 
 Severity follows the consequence, never the size of the slip: a one-character
 typo that breaks a feature is a blocker; a harmless one is a nit. `NONE` is
-the right answer for files with no slips. Formatting and naming taste are not
-slips — do not pad the output with them.
+the right answer for files with no slips. Formatting and naming taste belong to
+`pass-style` and `pass-lint-conformance`; report slips here.

@@ -122,7 +122,7 @@ describe("persistence-bypasses-callbacks (pass-baseline + pass-data-safety)", ()
         "bulk JPQL `UPDATE`/`DELETE`",
         "Prisma `updateMany`/`deleteMany`/`createMany`",
         "a counter cache or denormalised count",
-        "Do not report a direct write whose model has no lifecycle effect for it.",
+        "Report only writes whose model has a lifecycle effect for them.",
       ])
         expect(body, `${lens}: ${phrase}`).toContain(phrase);
     }

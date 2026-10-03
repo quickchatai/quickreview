@@ -61,7 +61,7 @@ describe("reordered-statements (pass-baseline, pass-sweep)", () => {
     const t = text("reordered-statements");
     expect(t).toMatch(/write the OLD order and the NEW order side by side/);
     expect(t).toMatch(/what the old order guaranteed/);
-    expect(t).toMatch(/Do not report a reorder whose steps are independent/);
+    expect(t).toMatch(/Report only reorders whose steps share state or an ordering contract/);
     expect(t).not.toMatch(NO_BENCHMARK_NAMES);
     expect(bodyOf("pass-baseline")).toContain("A reorder changes what the old order guaranteed");
   });
@@ -122,7 +122,7 @@ describe("line-local-slips (pass-baseline, pass-sweep)", () => {
       expect(t).toMatch(re);
     expect(t).toMatch(/concrete wrong outcome/);
     expect(t).toMatch(/at the severity that outcome earns/);
-    expect(t).toMatch(/Do not report a token that is deliberate/);
+    expect(t).toMatch(/Report only a token that departs from its siblings and tests/);
     expect(t).not.toMatch(NO_BENCHMARK_NAMES);
     expect(bodyOf("pass-sweep")).toContain("One-token slips on changed lines");
   });

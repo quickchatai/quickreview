@@ -28,7 +28,7 @@ describe("pass-style walks every written rule", () => {
     expect(t).toMatch(/ONE BY ONE/);
     expect(t).toMatch(/test files included, unless the guide exempts tests/);
     expect(t).toMatch(/ONE `\[nit\]` that quotes the rule .* lists every site/);
-    expect(t).toMatch(/Never one comment per site/);
+    expect(t).toMatch(/anchored at the first/);
     expect(t).toMatch(/conflicts with the file's own convention/);
     expect(t).toMatch(/belongs to the lint-conformance check/);
     expect(t).not.toMatch(NO_BENCHMARK_NAMES);
