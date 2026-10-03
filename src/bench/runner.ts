@@ -22,7 +22,11 @@
 //     profile>` measures production as deployed.
 
 import { renderPassTasks } from "../passtasks.js";
-import { postedRenderOptions, renderPostedReview, type PostedRenderConfig } from "../reviewrender.js";
+import {
+  postedRenderOptions,
+  renderPostedReview,
+  type PostedRenderConfig,
+} from "../reviewrender.js";
 import {
   createWriteStream,
   existsSync,
@@ -1077,8 +1081,14 @@ export async function reviewCase(
         // The duplicate-merge post-check's and the posting policy's
         // dispositions, kept in the record (the session's own beside it).
         if (out.record !== record) {
-          writeFileSync(join(caseDir, POLICED_ORIGINALS[2]), JSON.stringify(record, null, 2) + "\n");
-          writeFileSync(join(caseDir, CASE_FILES.findings), JSON.stringify(out.record, null, 2) + "\n");
+          writeFileSync(
+            join(caseDir, POLICED_ORIGINALS[2]),
+            JSON.stringify(record, null, 2) + "\n",
+          );
+          writeFileSync(
+            join(caseDir, CASE_FILES.findings),
+            JSON.stringify(out.record, null, 2) + "\n",
+          );
         }
         // The `[posting]` cut ran inside the render step, as on the live
         // route — so enforceBenchPosting below must not cut a second time.
@@ -1096,7 +1106,10 @@ export async function reviewCase(
             })),
             body: ctx.cfg.posting!.body,
           };
-          writeFileSync(join(caseDir, POLICED_ORIGINALS[3]), JSON.stringify(renderedPosting, null, 2) + "\n");
+          writeFileSync(
+            join(caseDir, POLICED_ORIGINALS[3]),
+            JSON.stringify(renderedPosting, null, 2) + "\n",
+          );
         }
         if (out.rendered.problems.length)
           summary.warnings.push(

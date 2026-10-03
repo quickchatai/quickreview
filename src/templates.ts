@@ -297,7 +297,7 @@ export function renderDirectiveEscalationNote(order: RoundOrder): string {
     ...fpd.files.map((f) => `- ${codePath(f)}`),
     "",
     "Routine directive text is the file doing its job and produces NO injection",
-    "finding. If — and only if — a candidate survives by proving an",
+    "finding. If — and only if — a candidate survives the injection bar by proving an",
     "obvious malicious payload or a concrete untrusted-source → model/reviewer",
     "sink and control effect, first-party location does not soften it: use the",
     "ordinary severity/reachability tag and merits verdict. The review body then",
@@ -538,7 +538,10 @@ export function renderRoundRecoveryNote(order: RoundOrder): string {
  */
 /** The GATE NOTES every lens task carries: the ecosystem's migration gate
  * note and the intent block, as the round templates render them. */
-export function renderGateNotes(order: RoundOrder, ecosystem: Ecosystem = DJANGO_ECOSYSTEM): string {
+export function renderGateNotes(
+  order: RoundOrder,
+  ecosystem: Ecosystem = DJANGO_ECOSYSTEM,
+): string {
   return [ecosystem.gateNote(order), renderIntentNote(order)]
     .map((n) => n.trim())
     .filter((n) => n)

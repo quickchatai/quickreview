@@ -219,7 +219,7 @@ A verdict that changes something becomes a commit only after a ratifying turn:
   Prefixed `[companion]` where the companion is the author, and trailered:
 
   ```
-  Feedback-PR: 1234
+  Feedback-PR: <n>
   Adjudication: FT-NNNN
   Ratified-in-session: <the session id, and their approving words>
   ```

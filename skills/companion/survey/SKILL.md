@@ -54,7 +54,7 @@ informative ones.
    answering it.
 4. **Rounds that produced no verdict** — overdue, malformed, orphaned,
    cancelled. Silent failures; nothing consumed these before.
-5. **Blocked round after round** — PR 1234 is the shape: ten rounds, all
+5. **Blocked round after round** — the shape: ten rounds, all
    REQUEST_CHANGES, nine of them `staleness` re-runs.
 6. **Repeat approvals** — approved, then approved again. Already diagnosed:
    the recheck forbids re-approval, so this family should shrink to

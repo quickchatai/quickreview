@@ -18,18 +18,8 @@ import { buildInjectBody, SLACK_INJECT_MARKER } from "../src/slack/router.js";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const appendix = readFileSync(join(repoRoot, "prompts/slack-overseer-appendix.md"), "utf8");
 
-/**
- * the safety valve was renamed `flag-owner-legacy` → `flag-owner`. The
- * appendix is frozen prose until the reseed and still documents the
- * legacy spelling; `validateCommand` folds that spelling to the current name,
- * so this test compares through the same fold the code applies. When
- * lands and the appendix says `flag-owner`, this map goes empty — the code's
- * own alias (tests/legacy-acceptance.test.ts) stays either way.
- */
-const LEGACY_DOC_NAMES: Record<string, string> = {};
-/** The spelling the appendix uses for a whitelisted command. */
-const docNameFor = (command: string): string =>
-  Object.entries(LEGACY_DOC_NAMES).find(([, canonical]) => canonical === command)?.[0] ?? command;
+// The appendix documents the current command names only; the code's alias
+// for the retired flag-owner-legacy spelling is pinned in tests/legacy-acceptance.test.ts.
 
 /**
  * Field names to probe. A superset of everything any command takes, plus the
@@ -104,14 +94,12 @@ describe("slack overseer appendix — corrected command schemas", () => {
   it("documents every whitelisted command, and nothing that isn't whitelisted", () => {
     // Documented names are folded exactly as validateCommand folds them, so a
     // legacy spelling in the frozen appendix still counts as its command.
-    expect([...documented.keys()].map((k) => LEGACY_DOC_NAMES[k] ?? k).sort()).toEqual(
-      [...COMMAND_WHITELIST].sort(),
-    );
+    expect([...documented.keys()].sort()).toEqual([...COMMAND_WHITELIST].sort());
   });
 
   it.each([...COMMAND_WHITELIST])("%s: appendix field list matches validateCommand", (command) => {
     const actual = acceptedFields(command);
-    const docName = docNameFor(command);
+    const docName = command;
     expect(
       documented.get(docName),
       `prompts/slack-overseer-appendix.md documents '${docName}' as ` +
@@ -122,7 +110,7 @@ describe("slack overseer appendix — corrected command schemas", () => {
 
   it("names each command and each of its required fields in prose form too", () => {
     for (const command of COMMAND_WHITELIST) {
-      const docName = docNameFor(command);
+      const docName = command;
       expect(appendix, `appendix never mentions '${docName}'`).toContain(docName);
       for (const field of acceptedFields(command)) {
         expect(appendix, `appendix never mentions field '${field}' (of ${command})`).toContain(

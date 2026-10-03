@@ -13,12 +13,21 @@ import { NONE_ECOSYSTEM } from "../src/ecosystem.js";
 import type { PrFileEntry } from "../src/github.js";
 import { PASS_ADDENDA, buildAgents, configAddenda } from "../src/include.js";
 import type { PrStateRow } from "../src/state.js";
-import { renderRecheckPrompt, renderRoundPrompt, ROUND_TEMPLATE_FILES } from "../src/templates.js";
+import {
+  RECHECK_TEMPLATE_FILE,
+  renderConversationSystemPrompt,
+  renderOverseerSystemPrompt,
+  renderRecheckPrompt,
+  renderRoundPrompt,
+  ROUND_TEMPLATE_FILES,
+} from "../src/templates.js";
 import type { RoundType } from "../src/types.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const sandbox = join(import.meta.dirname, "..");
-const cfg: Config = parseConfig(readFileSync(resolve(sandbox, "tests/fixtures/config.toml"), "utf8"));
+const cfg: Config = parseConfig(
+  readFileSync(resolve(sandbox, "tests/fixtures/config.toml"), "utf8"),
+);
 
 const LEAKS: Array<[string, RegExp]> = [
   ["a PR number", /#(?!1234\b)\d{4,}/], // `#1234` is the placeholder spelling
@@ -35,11 +44,27 @@ function leaks(text: string): string[] {
 }
 
 const FILES = [
-  { filename: "src/api/orders.py", status: "modified", additions: 120, deletions: 10, changes: 130, patch: "@@ -1,3 +1,4 @@\n+import os\n def f():\n-    pass\n+    return os.environ['X']\n" },
-  { filename: "tests/test_orders.py", status: "added", additions: 30, deletions: 0, changes: 30, patch: "@@ -0,0 +1 @@\n+def test_x(): pass\n" },
+  {
+    filename: "src/api/orders.py",
+    status: "modified",
+    additions: 120,
+    deletions: 10,
+    changes: 130,
+    patch: "@@ -1,3 +1,4 @@\n+import os\n def f():\n-    pass\n+    return os.environ['X']\n",
+  },
+  {
+    filename: "tests/test_orders.py",
+    status: "added",
+    additions: 30,
+    deletions: 0,
+    changes: 30,
+    patch: "@@ -0,0 +1 @@\n+def test_x(): pass\n",
+  },
 ] as unknown as PrFileEntry[];
 
 describe("no provenance reaches a model", () => {
+  // Mutation: put a "" back into a lens heading outside its fence, or
+  // stop stripping the RATIFIED marker lines in buildAgents → this fails.
   it("built lens bodies", { timeout: HEAVY_TIMEOUT_MS }, () => {
     const dir = mkdtempSync(join(tmpdir(), "qcr-provenance-"));
     try {
@@ -56,38 +81,98 @@ describe("no provenance reaches a model", () => {
     }
   });
 
-  it("rendered round orders and the recheck template", { timeout: HEAVY_TIMEOUT_MS }, () => {
-    for (const [rt, file] of Object.entries(ROUND_TEMPLATE_FILES)) {
-      const order = buildRoundOrder({
-        cfg,
-        row: { number: 7, title: "Orders: read X", head_sha: "abc" } as unknown as PrStateRow,
-        files: FILES,
-        roundId: 1,
-        roundNo: rt === "first" ? 1 : 3,
-        reviewNo: rt === "first" ? 1 : 3,
-        roundType: rt as RoundType,
+  // Mutation: put "survives" back in renderDirectiveEscalationNote, or
+  // a dated aside back into a round template outside its fence → this fails.
+  it(
+    "rendered round orders, with and without first-party directives",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      for (const directives of [undefined, { files: ["CLAUDE.md"], mention: "maintainer" }])
+        for (const [rt, file] of Object.entries(ROUND_TEMPLATE_FILES)) {
+          const order = buildRoundOrder({
+            cfg,
+            row: { number: 7, title: "Orders: read X", head_sha: "abc" } as unknown as PrStateRow,
+            files: FILES,
+            roundId: 1,
+            roundNo: rt === "first" ? 1 : 3,
+            reviewNo: rt === "first" ? 1 : 3,
+            roundType: rt as RoundType,
+            worktree: "/wt",
+            settledDigest: "",
+            issuedAt: "ISSUED",
+            ecosystem: NONE_ECOSYSTEM,
+            prBody: "Reads X from the environment so orders can be routed by region.",
+            ...(directives ? { firstPartyDirectives: directives } : {}),
+          });
+          const text = renderRoundPrompt(
+            readFileSync(join(sandbox, "prompts", file), "utf8"),
+            order,
+            undefined,
+            undefined,
+            NONE_ECOSYSTEM,
+          );
+          if (directives) expect(text, rt).toContain("FIRST-PARTY DIRECTIVES");
+          expect(leaks(text), `${rt}${directives ? " + directives" : ""}`).toEqual([]);
+        }
+    },
+  );
+
+  // Mutation: drop stripModelDocs from renderRecheckPrompt (the header lists
+  // {{evidence}}, rendered twice) or from either system-prompt renderer → this
+  // fails on the RATIFIED marker lines or the doc header.
+  it("the recheck order and the session system prompts, as production renders them", () => {
+    const recheck = renderRecheckPrompt(
+      readFileSync(join(sandbox, "prompts", RECHECK_TEMPLATE_FILE), "utf8"),
+      {
+        pr: 7,
+        title: "Orders",
+        trigger: "push",
+        standing_verdict: "APPROVE",
+        last_reviewed_sha: "aaaaaaa",
+        head_sha: "bbbbbbb",
         worktree: "/wt",
-        settledDigest: "",
-        issuedAt: "ISSUED",
-        ecosystem: NONE_ECOSYSTEM,
-        prBody: "Reads X from the environment so orders can be routed by region.",
-      });
-      const text = renderRoundPrompt(readFileSync(join(sandbox, "prompts", file), "utf8"), order, undefined, undefined, NONE_ECOSYSTEM);
-      expect(leaks(text), rt).toEqual([]);
+        evidence: "EVIDENCE-ONCE",
+        files: [{ filename: "src/a.ts", class: "significant", reason: "content" }],
+        resolved_files: [],
+        decision_file: "pr-7-recheck-bbbbbbb.json",
+        issued_at: "ISSUED",
+      },
+    );
+    expect(recheck.split("EVIDENCE-ONCE").length - 1).toBe(1);
+    const conversation = renderConversationSystemPrompt(
+      readFileSync(join(sandbox, "prompts", "conversation-system.md"), "utf8"),
+      { pr: 7, title: "Orders", worktree: "/wt" },
+    );
+    const overseer = renderOverseerSystemPrompt(
+      readFileSync(join(sandbox, "prompts", "overseer-system.md"), "utf8"),
+    );
+    for (const [name, text] of [
+      ["recheck", recheck],
+      ["conversation-system", conversation],
+      ["overseer-system", overseer],
+    ] as const) {
+      expect(text, name).not.toContain("RATIFIED");
+      expect(text, name).not.toContain("Sandbox file:");
+      expect(leaks(text), name).toEqual([]);
     }
-    expect(typeof renderRecheckPrompt).toBe("function");
-    const recheck = readFileSync(join(sandbox, "prompts", "round-recheck.md"), "utf8")
-      .replace(/<!--[^\n]*-->/g, "")
-      .replace(/^> [^\n]*$/gm, "");
-    expect(leaks(recheck), "round-recheck.md").toEqual([]);
   });
 
-  it("companion and overseer prompts", () => {
-    for (const f of ["companion.md", "slack-overseer-appendix.md", "overseer-system.md", "conversation-system.md", "eod-sweep.md"]) {
-      const text = readFileSync(join(sandbox, "prompts", f), "utf8")
-        .replace(/^[ \t]*<!--[ \t]*\/?RATIFIED[^\n]*$/gm, "")
-        .replace(/\n> Sandbox file:[^\n]*\n(?:>[^\n]*\n)*/, "\n");
-      expect(leaks(text), f).toEqual([]);
+  // These reach pi byte for byte (the companion's --system-prompt, the
+  // overseer's appended Slack file, the companion's registered skills), so
+  // they are scanned raw. Mutation: put "Feedback-PR: 5270" back in a skill.
+  it("files a model reads raw: companion prompt, Slack appendix, companion skills", () => {
+    const raw = ["prompts/companion.md", "prompts/slack-overseer-appendix.md"];
+    const skills = join(sandbox, "skills", "companion");
+    for (const d of readdirSync(skills)) raw.push(join("skills", "companion", d, "SKILL.md"));
+    expect(raw.length).toBeGreaterThanOrEqual(8);
+    // The replay skill's contamination cutoff is an operational value the
+    // instrument checks (src/regression.ts), not a dated aside.
+    const OPERATIONAL = new Map([["skills/companion/replay/SKILL.md", "`2026-03-01`"]]);
+    for (const f of raw) {
+      const text = readFileSync(join(sandbox, f), "utf8");
+      const allowed = OPERATIONAL.get(f);
+      if (allowed) expect(text, f).toContain(allowed);
+      expect(leaks(allowed ? text.replaceAll(allowed, "") : text), f).toEqual([]);
     }
   });
 });

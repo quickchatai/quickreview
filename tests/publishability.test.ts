@@ -229,7 +229,8 @@ const ALLOWLIST: AllowlistEntry[] = [
   {
     path: "tests/prompt-provenance.test.ts",
     tokens: ["owner_legacy"],
-    reason: "the provenance scan's own needle: asserts the owner's name never reaches a model-facing prompt",
+    reason:
+      "the provenance scan's own needle: asserts the owner's name never reaches a model-facing prompt",
   },
   {
     path: "tests/fixtures/config.toml",
@@ -322,12 +323,6 @@ const ALLOWLIST: AllowlistEntry[] = [
     reason:
       "pins the shipped reviewed_repo_dir default and that a container still carrying the retired /example-app mount drifts",
   },
-  {
-    path: "skills/companion/land/SKILL.md",
-    tokens: ["quickchat"],
-    reason:
-      "companion doctrine references the reviewed repo's mount/name — frozen alongside the companion seed",
-  },
 
   // -- Live-deployment defaults the private installation still boots from
   //    (its config.toml deliberately leaves these unset). Lifting them into
@@ -404,7 +399,8 @@ const ALLOWLIST: AllowlistEntry[] = [
   {
     path: "tests/dispatch.test.ts",
     tokens: ["quickchat"],
-    reason: "a lens-selection case names a quickchat-shaped settings path (project/settings_prod.py)",
+    reason:
+      "a lens-selection case names a quickchat-shaped settings path (project/settings_prod.py)",
   },
   {
     path: "docs/profiles.md",
@@ -696,9 +692,9 @@ describe("publishability lint", () => {
     if (isPendingReseed("prompts/planted.md"))
       expect(seedPlant).toEqual([]); // pending_reseed (dead)
     else expect(seedPlant).not.toEqual([]);
-    expect(
-      scanFiles([{ path: "tests/legacy-acceptance.test.ts", text: "flag-owner-legacy" }]),
-    ).toEqual([]); // allowlisted carrier
+    expect(scanFiles([{ path: "tests/legacy-acceptance.test.ts", text: "flag-owner-legacy" }])).toEqual(
+      [],
+    ); // allowlisted carrier
     expect(scanFiles([{ path: "LICENSE", text: "Copyright Quickchat AI" }])).toEqual([]); // allowlisted token
     expect(scanFiles([{ path: "LICENSE", text: "my-vm" }])).not.toEqual([]); // …but only the GRANTED token
   });

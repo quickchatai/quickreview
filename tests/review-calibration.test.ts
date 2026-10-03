@@ -50,10 +50,10 @@ describe("consistency-identifiers (pass-consistency)", () => {
       "does not cover these",
     ])
       expect(body, phrase).toContain(phrase);
-    // composed after the seed's own "Not this lens" style exclusion it qualifies
-    expect(body.indexOf("New identifiers must agree")).toBeGreaterThan(
-      body.indexOf("Style is excluded"),
-    );
+    // composed after the shared quality-lens owner map it qualifies
+    const map = body.indexOf("## Who owns which quality concern");
+    expect(map).toBeGreaterThanOrEqual(0);
+    expect(body.indexOf("New identifiers must agree")).toBeGreaterThan(map);
   });
 
   it("names no benchmark, project or PR", () => {
@@ -87,7 +87,10 @@ describe("validator calibrations (pass-validate)", () => {
     expect(body).toContain("*Third-party sources* block");
     expect(body).toContain("is a question, never a doubt");
     expect(body).toContain("`external-assumption`");
-    expect(body).toContain("`reachability: plausible`");
+    // Self-review fix (2026-10-03): the question is a P3 demotion; a missing
+    // source never moves reachability (step 4 of the same rule).
+    expect(body).toContain("demote it to `P3` with the downgrade word `external-assumption`");
+    expect(body).toContain("its reachability stays how often the path runs");
     expect(DOWNGRADE_WORDS).toContain("external-assumption");
     expect(isKnownVocabularyWord("external-assumption")).toBe(true);
   });

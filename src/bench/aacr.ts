@@ -152,7 +152,8 @@ export const DATASET_PINS: readonly DatasetPin[] = [
     // huggingface.co/datasets/Qodo/PR-Review-Bench @ a73957c: sha256 of
     // git_code_review_bench_100_w_open_prs.jsonl (bench/aacr/ext/qodo_set.py).
     id: "qodo-pr-review-bench-a73957c",
-    denomination: "Qodo PR-Review-Bench @ a73957c (100 PRs, 580 injected issues; published scores unreproducible — no judge published)",
+    denomination:
+      "Qodo PR-Review-Bench @ a73957c (100 PRs, 580 injected issues; published scores unreproducible — no judge published)",
     commit: "a73957c450a70693a743260e5637fffc44625f16",
     sha256: "2f0448ed1f9a55bea14039961d8d9e610ee8885b37559b80f5821f3f70cfe64d",
   },
@@ -244,7 +245,8 @@ function caseOf(raw: unknown, where: string): BenchCase {
   for (const k of ["title", "body"] as const) {
     if (r[k] === undefined) continue;
     const v = r[k];
-    if (v !== null && typeof v !== "string") throw new Error(`${where}: ${k} must be a string or null`);
+    if (v !== null && typeof v !== "string")
+      throw new Error(`${where}: ${k} must be a string or null`);
     c[k] = v;
   }
   if (r["expect_merge_base"] !== undefined) {
@@ -554,16 +556,16 @@ export function benchAppendix(a: AppendixArgs): string {
       `2. \`${f(CASE_FILES.outcome)}\` — LAST, because it is the signal that you are done: the step-7 verdict shape without \`approval_withheld\` — \`{"pr": ${a.pr}, "round_no": 1, "verdict": "APPROVE" | "REQUEST_CHANGES", "head_sha": "${a.headSha}", "summary": "...", "passes": [...], "finished_at": "<ISO-8601 UTC>"}\`.`,
     );
   } else {
-  L.push(
-    `1. \`${f(CASE_FILES.comments)}\` — the inline comments array, exactly as you would pass it to the posting script: \`[{"path": "<repo-relative path>", "line": <line>, "side": "RIGHT", "body": "<the full comment text as it would be posted>"}]\` — the four fields the posting script accepts. Head-side (\`RIGHT\`) line numbers of the file at \`${a.headSha}\`. \`[]\` when nothing survives.`,
-  );
-  L.push(`2. \`${f(CASE_FILES.review)}\` — the review body, exactly as step 6 formats it.`);
-  L.push(
-    `3. \`${f(CASE_FILES.findings)}\` — the findings record, in the shape step 7 specifies (every candidate finding and its disposition).`,
-  );
-  L.push(
-    `4. \`${f(CASE_FILES.outcome)}\` — LAST, because it is the signal that you are done: the step-7 verdict shape without \`approval_withheld\` — \`{"pr": ${a.pr}, "round_no": 1, "verdict": "APPROVE" | "REQUEST_CHANGES", "head_sha": "${a.headSha}", "summary": "...", "passes": [...], "finished_at": "<ISO-8601 UTC>"}\`.`,
-  );
+    L.push(
+      `1. \`${f(CASE_FILES.comments)}\` — the inline comments array, exactly as you would pass it to the posting script: \`[{"path": "<repo-relative path>", "line": <line>, "side": "RIGHT", "body": "<the full comment text as it would be posted>"}]\` — the four fields the posting script accepts. Head-side (\`RIGHT\`) line numbers of the file at \`${a.headSha}\`. \`[]\` when nothing survives.`,
+    );
+    L.push(`2. \`${f(CASE_FILES.review)}\` — the review body, exactly as step 6 formats it.`);
+    L.push(
+      `3. \`${f(CASE_FILES.findings)}\` — the findings record, in the shape step 7 specifies (every candidate finding and its disposition).`,
+    );
+    L.push(
+      `4. \`${f(CASE_FILES.outcome)}\` — LAST, because it is the signal that you are done: the step-7 verdict shape without \`approval_withheld\` — \`{"pr": ${a.pr}, "round_no": 1, "verdict": "APPROVE" | "REQUEST_CHANGES", "head_sha": "${a.headSha}", "summary": "...", "passes": [...], "finished_at": "<ISO-8601 UTC>"}\`.`,
+    );
   }
   L.push("");
   L.push(
@@ -690,7 +692,12 @@ export function reanchorLeftComments(
     if (!to) return c;
     reanchored++;
     const { start_line: _drop, ...rest } = c;
-    return { ...rest, side: "RIGHT" as const, line: to.line, reanchored_from: { side: "LEFT" as const, line: c.line, how: to.how } };
+    return {
+      ...rest,
+      side: "RIGHT" as const,
+      line: to.line,
+      reanchored_from: { side: "LEFT" as const, line: c.line, how: to.how },
+    };
   });
   return { comments: out, reanchored };
 }

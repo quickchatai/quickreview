@@ -22,9 +22,8 @@ vi.stubEnv("GIT_ALLOW_PROTOCOL", "file");
 
 const { leakproofCommitText, parseCaseSet } = await import("../src/bench/aacr.js");
 type BenchCase = import("../src/bench/aacr.js").BenchCase;
-const { prefetchCase, storeDir, mirrorsFromEnv, fetchRepoOf } = await import(
-  "../src/bench/prefetch.js"
-);
+const { prefetchCase, storeDir, mirrorsFromEnv, fetchRepoOf } =
+  await import("../src/bench/prefetch.js");
 
 const tmp = mkdtempSync(join(tmpdir(), "bench-ext-prefetch-"));
 afterAll(() => {
@@ -157,7 +156,10 @@ describe("leak-proof prefetch (SWE-PRBench)", () => {
     const c = leakproofCase();
     const forged = { ...c, base_commit: "f".repeat(40) };
     await expect(
-      prefetchCase(forged, { store: join(tmp, "store-forged"), remoteFor: () => `file://${upstream}` }),
+      prefetchCase(forged, {
+        store: join(tmp, "store-forged"),
+        remoteFor: () => `file://${upstream}`,
+      }),
     ).rejects.toThrow(/synthetic commit/);
   });
 });
@@ -188,13 +190,20 @@ describe("local case: a leak-proof store from a mirror, no network at all", () =
 
   it("the shipped self-review set parses under its own pin", () => {
     const set = parseCaseSet(
-      JSON.parse(readFileSync(join(import.meta.dirname, "..", "bench/aacr/sets/self-review-pc1.json"), "utf8")),
+      JSON.parse(
+        readFileSync(
+          join(import.meta.dirname, "..", "bench/aacr/sets/self-review-pc1.json"),
+          "utf8",
+        ),
+      ),
     );
     expect(set.pin).toBe("self-review-local");
     expect(set.references).toBe(0);
     expect(set.cases[0]!.base_ref).toBe("master");
     expect(set.cases[0]!.leakproof).toBeDefined();
-    expect(() => parseCaseSet({ ...set, cases: [{ ...set.cases[0], base_ref: "a b" }] })).toThrow(/bad base_ref/);
+    expect(() => parseCaseSet({ ...set, cases: [{ ...set.cases[0], base_ref: "a b" }] })).toThrow(
+      /bad base_ref/,
+    );
   });
 });
 

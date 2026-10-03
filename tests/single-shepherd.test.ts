@@ -275,74 +275,78 @@ describe("S4: every PR-session wake goes through wakes.ts", () => {
    * *invisible* to the suite, and an invisible exception is indistinguishable
    * from an oversight. Now it is written down, with what makes it legal.
    */
-  it("only the sanctioned writers construct a session's inject drop-box path", { timeout: HEAVY_TIMEOUT_MS }, () => {
-    /**
-     * An EXHAUSTIVE registry, checked by SET EQUALITY in both directions.
-     *
-     * A subset check would let the list rot: an entry whose module stopped
-     * touching the drop-box would sit here forever, and a reader could no
-     * longer tell which entries are load-bearing. Equality means adding a
-     * writer fails here AND removing one does, so every line is live.
-     */
-    const INJECT_PATH_WRITERS: ReadonlyArray<{ file: string; why: string }> = [
-      {
-        file: "src/sessions.ts",
-        why: "the daemon's own drop-box implementation — this IS the mailbox wakes.ts nudges through, and the bridge that drains it",
-      },
-      {
-        file: "src/tui/msg.ts",
-        why:
-          "RATIFIED operator exception: the quick-message box (`m`) addresses a session the operator is NOT focused on. " +
-          "Human-initiated, never automatic, carries no verdict, and reaches the same bridge the daemon uses. It " +
-          "deliberately does not go through wakeOrHold — an operator asking a question mid-round is the operator's call. " +
-          "This is the writer the `.inject(pr, …)` grep above structurally CANNOT see (MC-10), which is why this fence exists.",
-      },
-      {
-        file: "src/tui/companion.ts",
-        why: "the COMPANION session's dir (/workspace/inject/<companion session>) — a different container on the operator's PC, never a pr-<n> session (rule 8)",
-      },
-      {
-        file: "src/cliops.ts",
-        why:
-          "`qcr checklist`'s offline ping-pong plumbing probe. Operator-run, one-shot, and scoped to the fixture PR " +
-          "999902 — but it does write into the REAL inject/ tree, so it is a writer and is recorded as one.",
-      },
-    ];
-    for (const w of INJECT_PATH_WRITERS) {
+  it(
+    "only the sanctioned writers construct a session's inject drop-box path",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      /**
+       * An EXHAUSTIVE registry, checked by SET EQUALITY in both directions.
+       *
+       * A subset check would let the list rot: an entry whose module stopped
+       * touching the drop-box would sit here forever, and a reader could no
+       * longer tell which entries are load-bearing. Equality means adding a
+       * writer fails here AND removing one does, so every line is live.
+       */
+      const INJECT_PATH_WRITERS: ReadonlyArray<{ file: string; why: string }> = [
+        {
+          file: "src/sessions.ts",
+          why: "the daemon's own drop-box implementation — this IS the mailbox wakes.ts nudges through, and the bridge that drains it",
+        },
+        {
+          file: "src/tui/msg.ts",
+          why:
+            "RATIFIED operator exception: the quick-message box (`m`) addresses a session the operator is NOT focused on. " +
+            "Human-initiated, never automatic, carries no verdict, and reaches the same bridge the daemon uses. It " +
+            "deliberately does not go through wakeOrHold — an operator asking a question mid-round is the operator's call. " +
+            "This is the writer the `.inject(pr, …)` grep above structurally CANNOT see (MC-10), which is why this fence exists.",
+        },
+        {
+          file: "src/tui/companion.ts",
+          why: "the COMPANION session's dir (/workspace/inject/<companion session>) — a different container on the operator's PC, never a pr-<n> session (rule 8)",
+        },
+        {
+          file: "src/cliops.ts",
+          why:
+            "`qcr checklist`'s offline ping-pong plumbing probe. Operator-run, one-shot, and scoped to the fixture PR " +
+            "999902 — but it does write into the REAL inject/ tree, so it is a writer and is recorded as one.",
+        },
+      ];
+      for (const w of INJECT_PATH_WRITERS) {
+        expect(
+          existsSync(join(src, "..", w.file)),
+          `${w.file} is allowlisted but does not exist`,
+        ).toBe(true);
+        expect(w.why.length, `${w.file} needs a reason a stranger can check`).toBeGreaterThan(40);
+      }
+
+      // Comments are stripped first: several modules DESCRIBE the drop-box
+      // without writing to it, and a fence that fires on prose gets muted.
+      // BOTH spellings are detected — the path-segment form `…/inject/<x>` that
+      // msg.ts and companion.ts use, and the `join(root, "inject", …)` form
+      // sessions.ts uses. The first version of this fence caught only the first
+      // spelling and passed a deliberately-planted rogue writer: a detector
+      // tuned to today's call sites is the same false all-clear as grepping for
+      // a name instead of a reader.
+      const writers = srcFiles(src)
+        .filter((f) => {
+          const code = readFileSync(f, "utf8")
+            .replace(/\/\*[\s\S]*?\*\//g, "")
+            .split("\n")
+            .filter((l) => !/^\s*(\/\/|\*)/.test(l))
+            .map((l) => l.replace(/\/\/.*$/, ""))
+            .join("\n");
+          return /inject\/|["']inject["']/.test(code);
+        })
+        .map((f) => f.slice(f.indexOf("/src/") + 1))
+        .sort();
+
       expect(
-        existsSync(join(src, "..", w.file)),
-        `${w.file} is allowlisted but does not exist`,
-      ).toBe(true);
-      expect(w.why.length, `${w.file} needs a reason a stranger can check`).toBeGreaterThan(40);
-    }
-
-    // Comments are stripped first: several modules DESCRIBE the drop-box
-    // without writing to it, and a fence that fires on prose gets muted.
-    // BOTH spellings are detected — the path-segment form `…/inject/<x>` that
-    // msg.ts and companion.ts use, and the `join(root, "inject", …)` form
-    // sessions.ts uses. The first version of this fence caught only the first
-    // spelling and passed a deliberately-planted rogue writer: a detector
-    // tuned to today's call sites is the same false all-clear as grepping for
-    // a name instead of a reader.
-    const writers = srcFiles(src)
-      .filter((f) => {
-        const code = readFileSync(f, "utf8")
-          .replace(/\/\*[\s\S]*?\*\//g, "")
-          .split("\n")
-          .filter((l) => !/^\s*(\/\/|\*)/.test(l))
-          .map((l) => l.replace(/\/\/.*$/, ""))
-          .join("\n");
-        return /inject\/|["']inject["']/.test(code);
-      })
-      .map((f) => f.slice(f.indexOf("/src/") + 1))
-      .sort();
-
-    expect(
-      writers,
-      "the set of modules that build a session inject path changed — route the new one through wakeOrHold, " +
-        "or add it to INJECT_PATH_WRITERS with what makes it legal; if one dropped off, delete its entry",
-    ).toEqual(INJECT_PATH_WRITERS.map((w) => w.file).sort());
-  });
+        writers,
+        "the set of modules that build a session inject path changed — route the new one through wakeOrHold, " +
+          "or add it to INJECT_PATH_WRITERS with what makes it legal; if one dropped off, delete its entry",
+      ).toEqual(INJECT_PATH_WRITERS.map((w) => w.file).sort());
+    },
+  );
 });
 
 // ---- S3: passes are leaves ------------------------------------------------
@@ -572,20 +576,24 @@ describe("wakeOrHold / flushHeldWakes", () => {
 
   // Selfscan fce511c3: with no round and no command, a NEW wake injected
   // straight past older held wakes still waiting for the stranded sweep.
-  it("a new wake never overtakes an existing held backlog", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const id = store.startRound(7, "first", ["pass-baseline"], 75);
-    await wakeOrHold(deps(), 7, "older reply", "author_reply");
-    store.finishRound(id, "APPROVE", null, null);
-    // The round is over, the backlog not yet flushed; a newer reply arrives.
-    await wakeOrHold(deps(), 7, "newer reply", "author_reply");
+  it(
+    "a new wake never overtakes an existing held backlog",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const id = store.startRound(7, "first", ["pass-baseline"], 75);
+      await wakeOrHold(deps(), 7, "older reply", "author_reply");
+      store.finishRound(id, "APPROVE", null, null);
+      // The round is over, the backlog not yet flushed; a newer reply arrives.
+      await wakeOrHold(deps(), 7, "newer reply", "author_reply");
 
-    // Both go out oldest-first as one burst — never the newer one alone.
-    expect(injected).toHaveLength(1);
-    const burst = injected[0]!.message;
-    expect(burst.indexOf("older reply")).toBeGreaterThan(-1);
-    expect(burst.indexOf("older reply")).toBeLessThan(burst.indexOf("newer reply"));
-    expect(store.heldWakes(7)).toHaveLength(0);
-  });
+      // Both go out oldest-first as one burst — never the newer one alone.
+      expect(injected).toHaveLength(1);
+      const burst = injected[0]!.message;
+      expect(burst.indexOf("older reply")).toBeGreaterThan(-1);
+      expect(burst.indexOf("older reply")).toBeLessThan(burst.indexOf("newer reply"));
+      expect(store.heldWakes(7)).toHaveLength(0);
+    },
+  );
 
   it("a new wake behind a backlog it cannot yet deliver stays held after it", async () => {
     const id = store.startRound(7, "first", ["pass-baseline"], 75);
@@ -826,8 +834,15 @@ describe("buildAgents — memory off", () => {
     try {
       const src = join(dir, "agents");
       mkdirSync(src, { recursive: true });
-      writeFileSync(join(src, "pass-baseline.md"), "---\nname: pass-baseline\ntools: read, grep\n---\n\nbody\n");
-      const off = buildAgents(src, join(dir, "off"), { riskPasses: [], validateTier: "terra-med", memory: false });
+      writeFileSync(
+        join(src, "pass-baseline.md"),
+        "---\nname: pass-baseline\ntools: read, grep\n---\n\nbody\n",
+      );
+      const off = buildAgents(src, join(dir, "off"), {
+        riskPasses: [],
+        validateTier: "terra-med",
+        memory: false,
+      });
       const on = buildAgents(src, join(dir, "on"), { riskPasses: [], validateTier: "terra-med" });
       const offText = readFileSync(off[0]!.output, "utf8");
       const onText = readFileSync(on[0]!.output, "utf8");

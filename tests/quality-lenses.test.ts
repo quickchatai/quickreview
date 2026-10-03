@@ -171,7 +171,10 @@ describe("[review] nits — strict by default, open on request", () => {
     expect(parseConfig(withNits("open")).review.nits).toBe("open");
     expect(() => parseConfig(withNits("some"))).toThrow(/nits must be "strict" or "open"/);
     // strict adds nothing anywhere (the duplicate merge's rule is its own knob)
-    expect(configAddenda(baseCfg.review).map((a) => a.id)).toEqual(["validate-demote-not-kill", "dedup-group-validate"]);
+    expect(configAddenda(baseCfg.review).map((a) => a.id)).toEqual([
+      "validate-demote-not-kill",
+      "dedup-group-validate",
+    ]);
     expect(renderNitPolicyNote(undefined)).toBe("");
     const open = configAddenda({ nits: "open" });
     expect(open.map((a) => a.id)).toEqual([
@@ -205,8 +208,13 @@ describe("[review] nits — strict by default, open on request", () => {
 describe("the validator demotes a true observation instead of killing it", () => {
   it("is on by default, and quality-lens findings are judged on the cost they name", async () => {
     const { configAddenda } = await import("../src/include.js");
-    expect(configAddenda(baseCfg.review).map((a) => a.id)).toEqual(["validate-demote-not-kill", "dedup-group-validate"]);
-    expect(configAddenda({ ...baseCfg.review, validate_demote: false, dedup_merge: false })).toEqual([]);
+    expect(configAddenda(baseCfg.review).map((a) => a.id)).toEqual([
+      "validate-demote-not-kill",
+      "dedup-group-validate",
+    ]);
+    expect(
+      configAddenda({ ...baseCfg.review, validate_demote: false, dedup_merge: false }),
+    ).toEqual([]);
     const cap = addendaForPass(VALIDATE_PASS).find((a) => a.id === "quality-cap-validate")!;
     expect(cap.text).toContain("are NOT kill reasons for them");
     expect(cap.text).toContain("`pass-consistency` is capped at `P2` UNLESS it shows a failure");

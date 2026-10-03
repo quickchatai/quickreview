@@ -38,9 +38,30 @@ function defaultCfg(): Config {
 }
 
 const FILES: PrFileEntry[] = [
-  { filename: "src/api/orders.py", status: "modified", additions: 120, deletions: 10, changes: 130, patch: "@@ -1,3 +1,4 @@\n+import os\n def f():\n-    pass\n+    return os.environ['X']\n" },
-  { filename: "src/web/App.tsx", status: "modified", additions: 40, deletions: 2, changes: 42, patch: "@@ -1 +1,2 @@\n+export const a = 1;\n" },
-  { filename: "tests/test_orders.py", status: "added", additions: 30, deletions: 0, changes: 30, patch: "@@ -0,0 +1 @@\n+def test_x(): pass\n" },
+  {
+    filename: "src/api/orders.py",
+    status: "modified",
+    additions: 120,
+    deletions: 10,
+    changes: 130,
+    patch: "@@ -1,3 +1,4 @@\n+import os\n def f():\n-    pass\n+    return os.environ['X']\n",
+  },
+  {
+    filename: "src/web/App.tsx",
+    status: "modified",
+    additions: 40,
+    deletions: 2,
+    changes: 42,
+    patch: "@@ -1 +1,2 @@\n+export const a = 1;\n",
+  },
+  {
+    filename: "tests/test_orders.py",
+    status: "added",
+    additions: 30,
+    deletions: 0,
+    changes: 30,
+    patch: "@@ -0,0 +1 @@\n+def test_x(): pass\n",
+  },
 ] as unknown as PrFileEntry[];
 
 function sha(s: string): string {
@@ -62,10 +83,17 @@ function renderedOrders(cfg: Config): Record<string, string> {
       settledDigest: "",
       issuedAt: "2026-10-02T00:00:00Z",
       ecosystem: NONE_ECOSYSTEM,
-      prBody: "This PR reads X from the environment so that orders can be routed by region. It also adds a test and a small UI constant for the routing banner.",
+      prBody:
+        "This PR reads X from the environment so that orders can be routed by region. It also adds a test and a small UI constant for the routing banner.",
     });
     out[rt] = sha(
-      renderRoundPrompt(readFileSync(join(sandbox, "prompts", file), "utf8"), order, undefined, undefined, NONE_ECOSYSTEM),
+      renderRoundPrompt(
+        readFileSync(join(sandbox, "prompts", file), "utf8"),
+        order,
+        undefined,
+        undefined,
+        NONE_ECOSYSTEM,
+      ),
     );
   }
   return out;
@@ -89,7 +117,11 @@ function builtAgents(cfg: Config): string {
       ],
     });
     const h = createHash("sha256");
-    for (const f of readdirSync(dir).sort()) h.update(f).update("\0").update(readFileSync(join(dir, f))).update("\0");
+    for (const f of readdirSync(dir).sort())
+      h.update(f)
+        .update("\0")
+        .update(readFileSync(join(dir, f)))
+        .update("\0");
     return h.digest("hex");
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -100,29 +132,45 @@ describe("[posting] — the default profile builds and renders byte-identically"
   it("rendered round orders", { timeout: HEAVY_TIMEOUT_MS }, () => {
     expect(renderedOrders(defaultCfg())).toEqual(GOLDEN_ORDERS);
   });
-  it("with render_outputs off, the orders are the pre-2026-10 bytes", { timeout: HEAVY_TIMEOUT_MS }, () => {
-    const cfg = defaultCfg();
-    cfg.review.render_outputs = false;
-    // the pre-2026-10 bytes predate the duplicate merge too (round 7)
-    cfg.review.dedup_merge = false;
-    // … and the per-file coverage check (gap plan item 4)
-    cfg.review.coverage_check = false;
-    delete cfg.posting;
-    expect(renderedOrders(cfg)).toEqual(GOLDEN_ORDERS_UNRENDERED);
-  });
+  it(
+    "with render_outputs off, the orders are the pre-2026-10 bytes",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      const cfg = defaultCfg();
+      cfg.review.render_outputs = false;
+      // the pre-2026-10 bytes predate the duplicate merge too (round 7)
+      cfg.review.dedup_merge = false;
+      // … and the per-file coverage check (gap plan item 4)
+      cfg.review.coverage_check = false;
+      delete cfg.posting;
+      expect(renderedOrders(cfg)).toEqual(GOLDEN_ORDERS_UNRENDERED);
+    },
+  );
   it("built agents", { timeout: HEAVY_TIMEOUT_MS }, () => {
     expect(builtAgents(defaultCfg())).toBe(GOLDEN_AGENTS);
   });
-  it("with coverage_check off, the orders are the bytes from before the coverage check", { timeout: HEAVY_TIMEOUT_MS }, () => {
-    const cfg = defaultCfg();
-    cfg.review.coverage_check = false;
-    expect(renderedOrders(cfg)).toEqual(GOLDEN_ORDERS_NO_COVERAGE);
-  });
+  it(
+    "with coverage_check off, the orders are the bytes from before the coverage check",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      const cfg = defaultCfg();
+      cfg.review.coverage_check = false;
+      expect(renderedOrders(cfg)).toEqual(GOLDEN_ORDERS_NO_COVERAGE);
+    },
+  );
   it("the default profile's only policy is one comment per root cause (repeat_sites = false)", () => {
     const p = defaultCfg().posting;
     expect(p).toBeDefined();
     expect(p!.repeat_sites).toBe(false);
-    expect({ ...p, repeat_sites: true }).toEqual({ ...p, repeat_sites: true, max_comments: 0, nits: "post", questions: "post", body: "full", comment_style: "full" });
+    expect({ ...p, repeat_sites: true }).toEqual({
+      ...p,
+      repeat_sites: true,
+      max_comments: 0,
+      nits: "post",
+      questions: "post",
+      body: "full",
+      comment_style: "full",
+    });
   });
 });
 
@@ -271,7 +319,8 @@ const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): lens scope boundaries: one owner map shared by the five quality lenses (prompts/pass-quality-common.md); placement/simplicity/sweep/rollout/widened/behaviour-delta name the neighbouring owner
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ratified reseeds — validator doubts unverifiable/low-confidence candidates; baseline drops the duplicate-fix scan and reads test vacuity; data-safety folds in its no-exec rule; pass-common schema completed; seed doc headers, dated owner asides and stack names removed
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): suppression rebalance — exclusions rephrased as scoped reporting rules (report X / X belongs to lens Z) where the meaning allows
-const GOLDEN_AGENTS_NO_DEDUP = "f1349d55a922eed9202b75381da4b8970270aca52a8eeec9c2d5628243863bc4";
+// Re-pinned 2026-10-03 (prompt cleanup, owner-approved): self-review fixes — external-semantics question as a P3 demotion (reachability untouched) and the slip rule restored to its deliberate-token exclusion
+const GOLDEN_AGENTS_NO_DEDUP = "e1a495f212d46f32de9b2f50c494d99872baff617ba3996e97d110d9f7b7092b";
 //   → (round 7, docs/duplicate-merge.md) `dedup-group-validate` (pass-validate,
 //     `[review] dedup_merge` on by default) and the default profile's posting
 //     addendum for `repeat_sites = false`. Off + no policy = the pin above.
@@ -292,4 +341,5 @@ const GOLDEN_AGENTS_NO_DEDUP = "f1349d55a922eed9202b75381da4b8970270aca52a8eeec9
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): lens scope boundaries: one owner map shared by the five quality lenses (prompts/pass-quality-common.md); placement/simplicity/sweep/rollout/widened/behaviour-delta name the neighbouring owner
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ratified reseeds — validator doubts unverifiable/low-confidence candidates; baseline drops the duplicate-fix scan and reads test vacuity; data-safety folds in its no-exec rule; pass-common schema completed; seed doc headers, dated owner asides and stack names removed
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): suppression rebalance — exclusions rephrased as scoped reporting rules (report X / X belongs to lens Z) where the meaning allows
-const GOLDEN_AGENTS = "34406e8de5a888134119961e18667faa4b33ecf38e7d875e783cdbbb767face4";
+// Re-pinned 2026-10-03 (prompt cleanup, owner-approved): self-review fixes — external-semantics question as a P3 demotion (reachability untouched) and the slip rule restored to its deliberate-token exclusion
+const GOLDEN_AGENTS = "389f35248388735de9fb6038c42765fe3c779f7fef9a71446685891bbc8dffaf";

@@ -11,7 +11,8 @@
 const FENCE_MARKER_LINE = /^[ \t]*<!--[ \t]*\/?RATIFIED\b[^\n]*?-->[ \t]*(?:\r?\n|$)/gm;
 // The header blockquote, the blank lines after it, and an optional `---` rule
 // (with its trailing blank lines) that separated it from the body.
-const DOC_HEADER = /(^|\n)> Sandbox file:[^\n]*\n(?:>[^\n]*\n)*(?:[ \t]*\n)*(?:---[ \t]*\n(?:[ \t]*\n)*)?/;
+const DOC_HEADER =
+  /(^|\n)> Sandbox file:[^\n]*\n(?:>[^\n]*\n)*(?:[ \t]*\n)*(?:---[ \t]*\n(?:[ \t]*\n)*)?/;
 
 /** The prompt text a model should read: no doc header, no fence markers. */
 export function stripModelDocs(text: string): string {

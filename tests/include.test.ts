@@ -1,12 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import {
-  mkdtempSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -595,7 +588,9 @@ describe("addendum registry", () => {
     const ids = addendaForPass("pass-baseline").map((a) => a.id);
     expect(ids).toEqual(
       // a `mode: "scan"` entry composes only in the scan build.
-      PASS_ADDENDA.filter((a) => addendumApplies(a.scope, "pass-baseline") && addendumInMode(a, "pr")).map((a) => a.id),
+      PASS_ADDENDA.filter(
+        (a) => addendumApplies(a.scope, "pass-baseline") && addendumInMode(a, "pr"),
+      ).map((a) => a.id),
     );
     expect(composeAddendum("pass-baseline")).toBe(
       addendaForPass("pass-baseline")
@@ -988,7 +983,11 @@ describe("the built pass contract (rules)", () => {
       expect(text.indexOf("## Untrusted input")).toBeLessThan(text.indexOf(superseding));
       expect(text).not.toContain("## First-party agent-directive files");
       expect(text).not.toContain("`severity: P1`, `kind: injection`");
-      expect(text).toContain(name.startsWith(`${VALIDATE_PASS}--`) ? "ops runbook prose" : "Action: find the request id in the logs and check that tenant's worker");
+      expect(text).toContain(
+        name.startsWith(`${VALIDATE_PASS}--`)
+          ? "ops runbook prose"
+          : "Action: find the request id in the logs and check that tenant's worker",
+      );
       // No deployed-repo PR numbers, customer names or vendor URLs ship to a model.
       expect(text).not.toMatch(/#53\d\d/i);
       // Instruction-shaped text alone is never injection (rephrased as a
@@ -1021,7 +1020,9 @@ describe("the built pass contract (rules)", () => {
     expect(text).toContain("never a blocker asserting a hazard nobody rendered");
     // Missing row count → a question; the readable P1s survive.
     expect(text).toContain("ask for it in a `[question]`");
-    expect(text).toContain("a per-run cap with\n  deterministic ordering and a kill switch, and a predicate that is bounded");
+    expect(text).toContain(
+      "a per-run cap with\n  deterministic ordering and a kill switch, and a predicate that is bounded",
+    );
     expect(text).toContain("first tick over the accumulated backlog");
     expect(text).toContain("report `gate: self-verdict-ok`");
     expect(text).toContain("`gate: unproven`");
@@ -1063,7 +1064,12 @@ describe("the built pass contract (rules)", () => {
     // withdrawn by a later addendum section in the SAME built body.
     // The exec-demanding seed phrasings were reseeded away (2026-10-03).
     for (const text of everyBody()) {
-      for (const phrase of ["judge by the real DDL", "replica query", "reverted proves nothing", "materialize a sample"])
+      for (const phrase of [
+        "judge by the real DDL",
+        "replica query",
+        "reverted proves nothing",
+        "materialize a sample",
+      ])
         expect(text).not.toContain(phrase);
       // The policy itself is unchanged and still names the allowlist — pinned
       // on the rendered constant, never on a prefix of the list.
@@ -1459,7 +1465,7 @@ describe("the memory addendum", () => {
     // Memory is neither authority nor an obstacle.
     expect(text).toContain("**Memory is never authority and never an obstacle**");
     expect(text).toContain("never blocks the review");
-    expect(text).toContain("never on \"memory says so\"");
+    expect(text).toContain('never on "memory says so"');
   });
 });
 
@@ -1655,7 +1661,9 @@ describe.skipIf(!HAS_QC_PACK)(
       // Never a licence to trim justification, and never a lever on severity.
       expect(text).toContain("Keep every sentence of WHY");
       expect(text).toContain("never a replacement for it");
-      expect(text).toContain("`P0`–`P2` candidates (which carry `detail`) and questions are unaffected");
+      expect(text).toContain(
+        "`P0`–`P2` candidates (which carry `detail`) and questions are unaffected",
+      );
     });
 
     it("a finding's subject is the code, never the review's own earlier findings", () => {

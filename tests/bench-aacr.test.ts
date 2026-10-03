@@ -576,11 +576,17 @@ describe("what the session wrote → what the scorer reads", () => {
   it("the plan's usage window running out is its own kind, not a short rate limit", () => {
     // The exact text pi 0.99.1 recorded for openai-codex when the plan window ran out (2026-09-29).
     const err = (ts: number, errorMessage: string) =>
-      JSON.stringify({ type: "message_end", message: { role: "assistant", stopReason: "error", errorMessage, timestamp: ts } });
+      JSON.stringify({
+        type: "message_end",
+        message: { role: "assistant", stopReason: "error", errorMessage, timestamp: ts },
+      });
     const e = modelErrorsFromEvents([
       err(1, "Codex error: The usage limit has been reached"),
       err(2, "Codex error: The usage limit has been reached"),
-      err(3, '429 {"type":"error","error":{"type":"rate_limit_error","message":"rate limit of 50 requests per minute"}}'),
+      err(
+        3,
+        '429 {"type":"error","error":{"type":"rate_limit_error","message":"rate limit of 50 requests per minute"}}',
+      ),
     ]);
     expect(e).toMatchObject({ usage_limit: 2, rate_limited: 1, overloaded: 0, other: 0 });
     expect(e.sample).toContain("usage limit has been reached");
@@ -598,7 +604,9 @@ describe("what the session wrote → what the scorer reads", () => {
     // The plan's usage window: counted as pushback AND named, so arm.sh stops launching.
     expect(
       resultLine(
-        mk("no-output", { model_errors: { rate_limited: 0, overloaded: 0, usage_limit: 2, other: 0 } }),
+        mk("no-output", {
+          model_errors: { rate_limited: 0, overloaded: 0, usage_limit: 2, other: 0 },
+        }),
       ),
     ).toBe("result: o__a@1111111 no-output retry=1 limited=2 quota=2");
     // Unfetchable (force-pushed away) never succeeds on a re-run.
@@ -1303,25 +1311,44 @@ describe("reanchorLeftLine / reanchorLeftComments", () => {
   });
 
   it("gives a deleted file a file-level anchor, and refuses a line the patch lacks", () => {
-    expect(reanchorLeftLine("--- a/f\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-a\n-b", 2)).toEqual({ line: 1, how: "file" });
+    expect(reanchorLeftLine("--- a/f\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-a\n-b", 2)).toEqual({
+      line: 1,
+      how: "file",
+    });
     expect(reanchorLeftLine(patch, 99)).toBeNull();
   });
 
   it("moves LEFT comments, keeps the body, and leaves an unknown path LEFT", () => {
     const comments = [
-      { path: "f.ts", line: 12, side: "LEFT" as const, body: "[blocker] guard removed", tag: "blocker" as const },
+      {
+        path: "f.ts",
+        line: 12,
+        side: "LEFT" as const,
+        body: "[blocker] guard removed",
+        tag: "blocker" as const,
+      },
       { path: "g.ts", line: 3, side: "LEFT" as const, body: "[nit] x", tag: "nit" as const },
       { path: "f.ts", line: 12, side: "RIGHT" as const, body: "[nit] y", tag: "nit" as const },
     ];
     const r = reanchorLeftComments(comments, { "f.ts": patch });
     expect(r.reanchored).toBe(1);
-    expect(r.comments[0]).toMatchObject({ side: "RIGHT", line: 12, body: "[blocker] guard removed", reanchored_from: { side: "LEFT", line: 12, how: "hunk" } });
+    expect(r.comments[0]).toMatchObject({
+      side: "RIGHT",
+      line: 12,
+      body: "[blocker] guard removed",
+      reanchored_from: { side: "LEFT", line: 12, how: "hunk" },
+    });
     expect(r.comments[1]!.side).toBe("LEFT");
     expect(r.comments[2]).toBe(comments[2]);
     // toOcrResult then scores the moved one and still excludes what stayed LEFT.
     const res = toOcrResult(r.comments, {
-      instance_id: "i", status: "ok", variant: "all", duration_seconds: 1,
-      usage: { input: 0, output: 0, cacheRead: 0 }, verdict: "REQUEST_CHANGES", unparseable: 0,
+      instance_id: "i",
+      status: "ok",
+      variant: "all",
+      duration_seconds: 1,
+      usage: { input: 0, output: 0, cacheRead: 0 },
+      verdict: "REQUEST_CHANGES",
+      unparseable: 0,
     }) as { review: { comments: unknown[] }; qcr: { excluded: { left_side: number } } };
     expect(res.review.comments).toHaveLength(2);
     expect(res.qcr.excluded.left_side).toBe(1);

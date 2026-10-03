@@ -191,7 +191,9 @@ describe("contract-values-renumbered (pass-baseline + pass-backcompat + pass-con
 describe("documented semantics (merged into validate-external-semantics, pass-validate)", () => {
   it("one rule, pass-validate alone, PR builds only", () => {
     expect(boundTo("validate-external-semantics")).toEqual({ pr: ["pass-validate"], scan: [] });
-    expect(addendaForPass("pass-validate").map((a) => a.id)).not.toContain("validate-documented-semantics");
+    expect(addendaForPass("pass-validate").map((a) => a.id)).not.toContain(
+      "validate-documented-semantics",
+    );
   });
 
   it("keeps reachability out of it and judges documented semantics from their documentation", () => {
@@ -210,4 +212,3 @@ describe("documented semantics (merged into validate-external-semantics, pass-va
     expect(text("validate-external-semantics")).not.toMatch(NO_BENCHMARK_NAMES);
   });
 });
-

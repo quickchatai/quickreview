@@ -74,9 +74,7 @@ export function storeDir(store: string, c: BenchCase): string {
  * about there: `fetch_repo`/`fetch_pr` (a fork's PR, #1 by default) or the
  * case's own repo and PR. */
 export function fetchRepoOf(c: BenchCase): { repo: string; pr: number } {
-  return c.fetch_repo
-    ? { repo: c.fetch_repo, pr: c.fetch_pr ?? 1 }
-    : { repo: c.repo, pr: c.pr };
+  return c.fetch_repo ? { repo: c.fetch_repo, pr: c.fetch_pr ?? 1 } : { repo: c.repo, pr: c.pr };
 }
 
 /** QCR_BENCH_MIRRORS = `{"root": "/mirrors", "repos": {"owner/name": "rel/path.git"}}`.
@@ -228,10 +226,14 @@ function setText(c: BenchCase): PrApi | undefined {
 }
 
 async function defaultBranch(c: BenchCase, o: PrefetchOptions): Promise<string> {
-  const r = await run("git", ["ls-remote", "--symref", networkRemote(o, fetchRepoOf(c).repo), "HEAD"], {
-    env: GIT_ENV,
-    timeoutMs: 120_000,
-  });
+  const r = await run(
+    "git",
+    ["ls-remote", "--symref", networkRemote(o, fetchRepoOf(c).repo), "HEAD"],
+    {
+      env: GIT_ENV,
+      timeoutMs: 120_000,
+    },
+  );
   const m = /^ref: refs\/heads\/(\S+)\s+HEAD/m.exec(r.stdout);
   return m?.[1] ?? "main";
 }
@@ -243,7 +245,9 @@ async function writeCommit(dir: string, text: string, want: string): Promise<voi
   try {
     const got = (await git(dir, ["hash-object", "-t", "commit", "-w", f])).trim();
     if (got !== want)
-      throw new Error(`synthetic commit ${got} != the set's ${want} (the set and prefetch disagree)`);
+      throw new Error(
+        `synthetic commit ${got} != the set's ${want} (the set and prefetch disagree)`,
+      );
   } finally {
     rmSync(f, { force: true });
   }
@@ -279,7 +283,8 @@ async function prefetchLeakproof(
       [lp.source_head, lp.head_tree],
     ] as const) {
       const got = (await git(scratch, ["rev-parse", `${commit}^{tree}`])).trim();
-      if (got !== tree) throw new Error(`${c.instance_id}: tree of ${commit} is ${got}, the set says ${tree}`);
+      if (got !== tree)
+        throw new Error(`${c.instance_id}: tree of ${commit} is ${got}, the set says ${tree}`);
     }
     await writeCommit(scratch, leakproofCommitText(lp.base_tree, null), c.base_commit);
     await writeCommit(scratch, leakproofCommitText(lp.head_tree, c.base_commit), c.head_commit);
@@ -293,7 +298,11 @@ async function prefetchLeakproof(
       timeoutMs: 20 * 60_000,
     });
     const commits = (await git(tmp, ["rev-list", "--all"])).trim().split("\n").filter(Boolean);
-    if (commits.length !== 2 || !commits.includes(c.head_commit) || !commits.includes(c.base_commit))
+    if (
+      commits.length !== 2 ||
+      !commits.includes(c.head_commit) ||
+      !commits.includes(c.base_commit)
+    )
       throw new Error(`${c.instance_id}: leak-proof store holds commits ${commits.join(",")}`);
     for (const real of [lp.source_head, lp.source_merge_base]) {
       const has = await run("git", ["-C", tmp, "cat-file", "-e", real], { env: GIT_ENV });
@@ -394,7 +403,9 @@ export async function prefetchCase(c: BenchCase, o: PrefetchOptions): Promise<Pr
       await git(tmp, ["update-ref", "refs/bench/head", c.head_commit]);
     }
     if (c.expect_merge_base && c.expect_merge_base !== mb)
-      throw new Error(`${c.instance_id}: merge-base ${mb} differs from the set's ${c.expect_merge_base}`);
+      throw new Error(
+        `${c.instance_id}: merge-base ${mb} differs from the set's ${c.expect_merge_base}`,
+      );
   } catch (err) {
     rmSync(tmp, { recursive: true, force: true });
     throw err;
@@ -416,7 +427,8 @@ export async function prefetchCase(c: BenchCase, o: PrefetchOptions): Promise<Pr
     head_commit: c.head_commit,
     merge_base: mb,
     base_ref: /^[A-Za-z0-9._/-]+$/.test(baseRef) ? baseRef : "main",
-    base_ref_source: c.base_ref !== undefined ? "set" : fromApi?.base_ref ? "github-api" : "default-branch",
+    base_ref_source:
+      c.base_ref !== undefined ? "set" : fromApi?.base_ref ? "github-api" : "default-branch",
     title: fromApi?.title ?? null,
     body: fromApi?.body ?? null,
     depth,

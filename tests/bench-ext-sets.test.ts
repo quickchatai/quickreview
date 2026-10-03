@@ -22,7 +22,9 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const set = (name: string) =>
   JSON.parse(readFileSync(join(ROOT, "bench", "aacr", "sets", `${name}.json`), "utf8"));
 const commitId = (text: string): string =>
-  createHash("sha1").update(`commit ${Buffer.byteLength(text)}\0${text}`).digest("hex");
+  createHash("sha1")
+    .update(`commit ${Buffer.byteLength(text)}\0${text}`)
+    .digest("hex");
 
 describe("dataset pin registry", () => {
   it("keeps AACR-Bench v1.0 and adds exactly the three external pins and the self-review pin", () => {
@@ -34,7 +36,9 @@ describe("dataset pin registry", () => {
       "qodo-pr-review-bench-a73957c",
     ]);
     // The self-review pin denominates nothing: no references, never scored.
-    expect(DATASET_PINS.find((p) => p.id === "self-review-local")!.denomination).toMatch(/never scored/);
+    expect(DATASET_PINS.find((p) => p.id === "self-review-local")!.denomination).toMatch(
+      /never scored/,
+    );
     expect(datasetPin({ commit: AACR_V1.commit, sha256: AACR_V1.sha256 })?.id).toBe("aacr-v1");
     expect(parseCaseSet(set("smoke10")).pin).toBe("aacr-v1");
   });
@@ -74,9 +78,9 @@ describe("external case fields", () => {
     const s = set("sweprbench-smoke10");
     const c0 = s.cases[0];
     const bad = (patch: Record<string, unknown>) => ({ ...s, cases: [{ ...c0, ...patch }] });
-    expect(() =>
-      parseCaseSet(bad({ leakproof: { ...c0.leakproof, head_tree: "nope" } })),
-    ).toThrow(/leakproof/);
+    expect(() => parseCaseSet(bad({ leakproof: { ...c0.leakproof, head_tree: "nope" } }))).toThrow(
+      /leakproof/,
+    );
     // A fork id is required once fetch_repo is present, and the combination is refused anyway.
     const forked = {
       ...c0,
@@ -97,7 +101,8 @@ describe("the committed external sets", () => {
     expect(smoke.cases).toHaveLength(10);
     const raw = set("martian-smoke10").cases as Array<{ martian: { project: string } }>;
     const perProject = new Map<string, number>();
-    for (const c of raw) perProject.set(c.martian.project, (perProject.get(c.martian.project) ?? 0) + 1);
+    for (const c of raw)
+      perProject.set(c.martian.project, (perProject.get(c.martian.project) ?? 0) + 1);
     expect([...perProject.values()]).toEqual([2, 2, 2, 2, 2]);
     for (const c of smoke.cases) {
       expect(c.fetch_repo).toMatch(/^code-review-benchmark\//);
@@ -115,8 +120,16 @@ describe("the committed external sets", () => {
     expect(s.pin).toBe("swe-prbench-b87f579");
     expect(raw.cases.map((c: { task_id: string }) => c.task_id).sort()).toEqual(
       [
-        "coreos-assembler__4386", "stylelint__8953", "vitest__9152", "nessie__11676", "mycli__1517",
-        "falcon__2572", "pip__13482", "pipecat__3328", "espnet__6356", "litgpt__2188",
+        "coreos-assembler__4386",
+        "stylelint__8953",
+        "vitest__9152",
+        "nessie__11676",
+        "mycli__1517",
+        "falcon__2572",
+        "pip__13482",
+        "pipecat__3328",
+        "espnet__6356",
+        "litgpt__2188",
       ].sort(),
     );
     for (const c of s.cases) {

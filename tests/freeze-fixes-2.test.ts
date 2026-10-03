@@ -6,7 +6,8 @@ import { addendaForPass, PASS_ADDENDA } from "../src/include.js";
 const NO_BENCHMARK_NAMES =
   /qodo|martian|swe-?prbench|aacr|ghost|aspnetcore|firefox|tauri|prefect|dify|redis|pipecat|spyder|cal\.com|keycloak|sentry|grafana|discourse|freecad|clickhouse|dbeaver|ollama|lvgl|electron|immich|ragflow|filament/i;
 const text = (id: string) => PASS_ADDENDA.find((a) => a.id === id)!.text;
-const ids = (p: string, mode: "pr" | "scan" = "pr") => addendaForPass(p, PASS_ADDENDA, "django", mode).map((a) => a.id);
+const ids = (p: string, mode: "pr" | "scan" = "pr") =>
+  addendaForPass(p, PASS_ADDENDA, "django", mode).map((a) => a.id);
 
 describe("exhaust the site", () => {
   it("binds baseline, sweep, widened and behaviour-delta, PR builds only", () => {
@@ -38,7 +39,13 @@ import type { PrFileEntry } from "../src/github.js";
 
 const cfg = (): Config => parseConfig(readFileSync(resolve("tests/fixtures/config.toml"), "utf8"));
 const f = (filename: string, additions: number, deletions: number, status = "modified") =>
-  ({ filename, additions, deletions, changes: additions + deletions, status }) as unknown as PrFileEntry;
+  ({
+    filename,
+    additions,
+    deletions,
+    changes: additions + deletions,
+    status,
+  }) as unknown as PrFileEntry;
 
 describe("pass-behaviour-delta", () => {
   it("groups only non-test code that modifies or deletes lines, packed by changed lines", () => {
@@ -53,7 +60,10 @@ describe("pass-behaviour-delta", () => {
     const { groups, unread } = behaviourDeltaGroups(files, 3, 500);
     expect(groups).toEqual([["src/a.py", "src/gone.go"], ["src/big.ts"]]);
     expect(unread).toEqual([]);
-    expect(behaviourDeltaGroups(files, 1, 500)).toEqual({ groups: [["src/a.py", "src/gone.go"]], unread: ["src/big.ts"] });
+    expect(behaviourDeltaGroups(files, 1, 500)).toEqual({
+      groups: [["src/a.py", "src/gone.go"]],
+      unread: ["src/big.ts"],
+    });
   });
 
   it("is planned before the validator with focus files and a reason, and the knob turns it off", () => {
@@ -67,9 +77,15 @@ describe("pass-behaviour-delta", () => {
     expect(pass_plan.at(-1)!.lens).toBe("pass-validate");
     const off = structuredClone(c);
     off.review = { ...off.review, behaviour_delta: false };
-    expect(buildPassPlan(off, files).pass_plan.some((r) => r.lens === BEHAVIOUR_DELTA_PASS)).toBe(false);
+    expect(buildPassPlan(off, files).pass_plan.some((r) => r.lens === BEHAVIOUR_DELTA_PASS)).toBe(
+      false,
+    );
     // A pure addition plans no behaviour-delta row.
-    expect(buildPassPlan(c, [f("src/new.py", 50, 0, "added")]).pass_plan.some((r) => r.lens === BEHAVIOUR_DELTA_PASS)).toBe(false);
+    expect(
+      buildPassPlan(c, [f("src/new.py", 50, 0, "added")]).pass_plan.some(
+        (r) => r.lens === BEHAVIOUR_DELTA_PASS,
+      ),
+    ).toBe(false);
   });
 
   it("its brief enumerates every modifying hunk, covers removed guards, defaults to a question, names no benchmark", () => {
@@ -100,7 +116,8 @@ describe("pass-lint-conformance: planned only on linters a CI job runs", () => {
 
   it("finds a tool a workflow runs directly, with its config", () => {
     const d = repo({
-      ".github/workflows/ci.yml": "jobs:\n  lint:\n    steps:\n      - run: npx eslint . --max-warnings 0\n      - run: cargo fmt --check\n",
+      ".github/workflows/ci.yml":
+        "jobs:\n  lint:\n    steps:\n      - run: npx eslint . --max-warnings 0\n      - run: cargo fmt --check\n",
       "eslint.config.js": "export default [];\n",
       "rustfmt.toml": "max_width = 100\n",
     });
@@ -133,7 +150,10 @@ describe("pass-lint-conformance: planned only on linters a CI job runs", () => {
   });
 
   it("no CI definition, no linter — however much lint config the repo carries", () => {
-    const d = repo({ "eslint.config.js": "export default [];\n", ".clang-format": "BasedOnStyle: LLVM\n" });
+    const d = repo({
+      "eslint.config.js": "export default [];\n",
+      ".clang-format": "BasedOnStyle: LLVM\n",
+    });
     try {
       expect(findCiLinters(d)).toEqual([]);
     } finally {
@@ -143,15 +163,52 @@ describe("pass-lint-conformance: planned only on linters a CI job runs", () => {
 
   it("is planned with the tool and its CI file named, only when a changed file is covered", () => {
     const c = cfg();
-    const linters = [{ tool: "clang-format", configs: [".clang-format"], ci: [".github/workflows/lint.yml"], covers: /\.(cc|h)$/ }];
-    const plan = buildPassPlan(c, [f("shell/a.cc", 5, 3)], undefined, undefined, undefined, [], linters).pass_plan;
+    const linters = [
+      {
+        tool: "clang-format",
+        configs: [".clang-format"],
+        ci: [".github/workflows/lint.yml"],
+        covers: /\.(cc|h)$/,
+      },
+    ];
+    const plan = buildPassPlan(
+      c,
+      [f("shell/a.cc", 5, 3)],
+      undefined,
+      undefined,
+      undefined,
+      [],
+      linters,
+    ).pass_plan;
     const row = plan.find((r) => r.lens === LINT_CONFORMANCE_PASS);
     expect(row).toBeDefined();
-    expect(row!.why).toMatch(/CI runs clang-format \(\.github\/workflows\/lint\.yml; config \.clang-format\)/);
-    expect(buildPassPlan(c, [f("src/a.py", 5, 3)], undefined, undefined, undefined, [], linters).pass_plan.some((r) => r.lens === LINT_CONFORMANCE_PASS)).toBe(false);
+    expect(row!.why).toMatch(
+      /CI runs clang-format \(\.github\/workflows\/lint\.yml; config \.clang-format\)/,
+    );
+    expect(
+      buildPassPlan(
+        c,
+        [f("src/a.py", 5, 3)],
+        undefined,
+        undefined,
+        undefined,
+        [],
+        linters,
+      ).pass_plan.some((r) => r.lens === LINT_CONFORMANCE_PASS),
+    ).toBe(false);
     const off = structuredClone(c);
     off.review = { ...off.review, lint_conformance: false };
-    expect(buildPassPlan(off, [f("shell/a.cc", 5, 3)], undefined, undefined, undefined, [], linters).pass_plan.some((r) => r.lens === LINT_CONFORMANCE_PASS)).toBe(false);
+    expect(
+      buildPassPlan(
+        off,
+        [f("shell/a.cc", 5, 3)],
+        undefined,
+        undefined,
+        undefined,
+        [],
+        linters,
+      ).pass_plan.some((r) => r.lens === LINT_CONFORMANCE_PASS),
+    ).toBe(false);
   });
 
   it("its brief reports only CI-failing violations on changed lines, one P2 per tool, never runs a tool", () => {
@@ -170,7 +227,15 @@ describe("sweep mechanical checklist", () => {
     expect(ids("pass-baseline")).not.toContain("sweep-mechanical-checklist");
     expect(ids("pass-sweep", "scan")).not.toContain("sweep-mechanical-checklist");
     const t = text("sweep-mechanical-checklist");
-    for (const k of [/can be null, empty or throw/, /Placeholders vs arguments/, /A default outside its choices/, /names the wrong thing/, /Two similar APIs/, /Combined or repeated input/, /An unreachable fallback/])
+    for (const k of [
+      /can be null, empty or throw/,
+      /Placeholders vs arguments/,
+      /A default outside its choices/,
+      /names the wrong thing/,
+      /Two similar APIs/,
+      /Combined or repeated input/,
+      /An unreachable fallback/,
+    ])
       expect(t).toMatch(k);
     expect(t).not.toMatch(NO_BENCHMARK_NAMES);
   });
@@ -182,7 +247,9 @@ describe("pass-tests: a loosened test is evidence of a behaviour change", () => 
     expect(ids("pass-tests", "scan")).not.toContain("tests-loosened-is-behaviour");
     const t = text("tests-loosened-is-behaviour");
     expect(t).toMatch(/RELAXES an existing test/);
-    expect(t).toMatch(/Report THAT behaviour change as the finding, anchored at the production line/);
+    expect(t).toMatch(
+      /Report THAT behaviour change as the finding, anchored at the production line/,
+    );
     expect(t).toMatch(/It is not a coverage note/);
     expect(t).not.toMatch(NO_BENCHMARK_NAMES);
   });
@@ -205,7 +272,10 @@ import { selectSubLenses, PUBLIC_SIGNATURE_RE, WIRE_FORMAT_RE } from "../src/heu
 describe("planning: every planned lens says why (owner decision 2026-10-03)", () => {
   it("each plan row but the validator carries a reason", () => {
     const files = [
-      { ...f("app/serializers/user.py", 200, 10), patch: "@@ -1,2 +1,2 @@\n-def old(x):\n+def new(x, y):\n" },
+      {
+        ...f("app/serializers/user.py", 200, 10),
+        patch: "@@ -1,2 +1,2 @@\n-def old(x):\n+def new(x, y):\n",
+      },
       f("web/a.tsx", 30, 2),
       f("tests/test_user.py", 30, 0),
     ];
@@ -225,20 +295,40 @@ describe("planning: backcompat by content, claims on a stated behaviour", () => 
     expect(PUBLIC_SIGNATURE_RE.test("def public_helper(a):")).toBe(true);
     expect(PUBLIC_SIGNATURE_RE.test("    def _private(self):")).toBe(false);
     expect(PUBLIC_SIGNATURE_RE.test("func helper(x int) {")).toBe(false);
-    expect(WIRE_FORMAT_RE.test("    out.writeString(name); // writeTo(StreamOutput out)")).toBe(true);
-    const lib = { ...f("lib/core/encoder.ts", 5, 5), patch: "@@ -1,1 +1,1 @@\n-export function encode(a: A): string {\n+export function encode(a: A, b?: B): string {\n" };
+    expect(WIRE_FORMAT_RE.test("    out.writeString(name); // writeTo(StreamOutput out)")).toBe(
+      true,
+    );
+    const lib = {
+      ...f("lib/core/encoder.ts", 5, 5),
+      patch:
+        "@@ -1,1 +1,1 @@\n-export function encode(a: A): string {\n+export function encode(a: A, b?: B): string {\n",
+    };
     const plan = buildPassPlan(cfg(), [lib]).pass_plan;
     const bc = plan.find((r) => r.lens === "pass-backcompat");
     expect(bc).toBeDefined();
     expect(bc!.why).toMatch(/a public signature changes in lib\/core\/encoder\.ts/);
-    const internal = { ...f("lib/core/encoder.ts", 5, 5), patch: "@@ -1,1 +1,1 @@\n-  const x = 1;\n+  const x = 2;\n" };
-    expect(buildPassPlan(cfg(), [internal]).pass_plan.some((r) => r.lens === "pass-backcompat")).toBe(false);
+    const internal = {
+      ...f("lib/core/encoder.ts", 5, 5),
+      patch: "@@ -1,1 +1,1 @@\n-  const x = 1;\n+  const x = 2;\n",
+    };
+    expect(
+      buildPassPlan(cfg(), [internal]).pass_plan.some((r) => r.lens === "pass-backcompat"),
+    ).toBe(false);
   });
 
   it("pass-claims fires on a stated behaviour in a one-line body", () => {
-    const hit = selectSubLenses([], { title: "Truncate status output", body: "Outputs the last lines that fit." });
-    expect(hit.find((s) => s.lens === "pass-claims")?.why).toMatch(/Outputs the last lines that fit/);
-    expect(selectSubLenses([], { title: "Refactor", body: "Moves code around." }).some((s) => s.lens === "pass-claims")).toBe(false);
+    const hit = selectSubLenses([], {
+      title: "Truncate status output",
+      body: "Outputs the last lines that fit.",
+    });
+    expect(hit.find((s) => s.lens === "pass-claims")?.why).toMatch(
+      /Outputs the last lines that fit/,
+    );
+    expect(
+      selectSubLenses([], { title: "Refactor", body: "Moves code around." }).some(
+        (s) => s.lens === "pass-claims",
+      ),
+    ).toBe(false);
   });
 });
 
@@ -251,7 +341,8 @@ describe("every lens documents when it runs and its priority (owner decision 202
     for (const [l, p] of Object.entries(LENS_PLANNING)) expect(p.when.length, l).toBeGreaterThan(5);
   });
   it("no lens was removed: abstraction, placement and backcompat are still in the vocabulary", () => {
-    for (const l of ["pass-abstraction", "pass-placement", "pass-backcompat"]) expect(ALL_PASSES).toContain(l);
+    for (const l of ["pass-abstraction", "pass-placement", "pass-backcompat"])
+      expect(ALL_PASSES).toContain(l);
   });
 });
 
@@ -259,22 +350,46 @@ import { clusterFindings, identifiersOf } from "../src/dedup.js";
 
 describe("dedup hygiene: identifiers without backticks", () => {
   it("reads camelCase, PascalCase, snake_case, SCREAMING_CASE, calls and dotted names from plain prose", () => {
-    const ids = identifiersOf("The refresh skips modelLibraries and ExternalManager; RECREATE_UPGRADE_EXIT_CODE changed, get_model returns None, and client.retry() is gone.");
-    for (const x of ["modelLibraries", "ExternalManager", "RECREATE_UPGRADE_EXIT_CODE", "get_model", "client", "retry"]) expect(ids.has(x), x).toBe(true);
+    const ids = identifiersOf(
+      "The refresh skips modelLibraries and ExternalManager; RECREATE_UPGRADE_EXIT_CODE changed, get_model returns None, and client.retry() is gone.",
+    );
+    for (const x of [
+      "modelLibraries",
+      "ExternalManager",
+      "RECREATE_UPGRADE_EXIT_CODE",
+      "get_model",
+      "client",
+      "retry",
+    ])
+      expect(ids.has(x), x).toBe(true);
     for (const x of ["The", "refresh", "JavaScript", "None"]) expect(ids.has(x), x).toBe(false);
     expect(identifiersOf("Written in JavaScript on GitHub, see the docs.").size).toBe(0);
   });
   it("two candidates naming the same bare identifier now join a group", () => {
     const r = clusterFindings([
-      { id: "a", path: "x.ts", line: 10, title: "loadModel can return null", body: "loadModel returns null for an unknown id" },
-      { id: "b", path: "y.ts", line: 200, title: "Caller dereferences loadModel result", body: "the loop calls loadModel and reads .name" },
+      {
+        id: "a",
+        path: "x.ts",
+        line: 10,
+        title: "loadModel can return null",
+        body: "loadModel returns null for an unknown id",
+      },
+      {
+        id: "b",
+        path: "y.ts",
+        line: 200,
+        title: "Caller dereferences loadModel result",
+        body: "the loop calls loadModel and reads .name",
+      },
     ]);
     expect(r.groups).toHaveLength(1);
     expect(r.groups[0]!.signals).toContain("shared-identifier");
   });
   it("the validator keeps each merged member's anchor and never folds a second fix in", async () => {
     const { configAddenda } = await import("../src/include.js");
-    const t = configAddenda({ dedup_merge: true }).find((a) => a.id === "dedup-group-validate")!.text;
+    const t = configAddenda({ dedup_merge: true }).find(
+      (a) => a.id === "dedup-group-validate",
+    )!.text;
     expect(t).toMatch(/keeping that member's own `path` and `line`/);
     expect(t).toMatch(/never carries a second fix as a clause/);
   });

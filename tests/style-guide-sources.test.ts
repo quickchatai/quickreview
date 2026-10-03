@@ -102,7 +102,8 @@ describe("findStyleGuide reads the style rules a repo wrote for its agents", () 
     // numbered `##` rules under one `# Compliance Rules` title.
     const body = Array.from(
       { length: 4 },
-      (_, i) => `## ${i + 1}. Rule ${i + 1} Must Hold\n\nWhat it requires.\n- example a\n- example b\n`,
+      (_, i) =>
+        `## ${i + 1}. Rule ${i + 1} Must Hold\n\nWhat it requires.\n- example a\n- example b\n`,
     ).join("\n");
     put("AGENTS.md", `# Compliance Rules\n\n${body}`);
     const [ref] = findStyleGuide(repo);

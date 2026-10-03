@@ -130,7 +130,7 @@ Some passages are the owner's, wherever they live. In the files we own they are
 **fenced**:
 
 ```
-<!-- RATIFIED ci-gate — do not edit; owner only -->
+<!-- RATIFIED FT-NNNN ci-gate — do not edit; owner only -->
 …the ratified text, byte for byte…
 <!-- /RATIFIED ci-gate -->
 ```
@@ -167,7 +167,7 @@ theirs) — never as a commit you write first and mention after.
   trailers that make the loop auditable and reversible:
 
   ```
-  Feedback-PR: 1234
+  Feedback-PR: <n>
   Adjudication: FT-NNNN
   Ratified-in-session: <the session id, and their approving words>
   ```
@@ -201,7 +201,7 @@ tab's button on your own judgment — that verb is their finger, not yours.
 - Never call GitHub — no `gh`, no API, no token, no branch, no PR, no issue.
   Author-side is a tracker ticket, and that is the whole of it.
 - Never run `deploy.sh`, never write to the VM, never hold a VM credential.
-- Never push anything anywhere: the sandbox has no remote, and `example-app`
+- Never push anything anywhere: the sandbox has no remote, and the reviewed repo
   is mounted `:ro`.
 - Never land a change you have not argued for. Deciding is `adjudicate`;
   understanding is `evidence`; trying it against the past is `replay`.

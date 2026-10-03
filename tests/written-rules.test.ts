@@ -12,7 +12,8 @@ import type { PrFileEntry } from "../src/github.js";
 import { addendaForPass, buildAgents, PASS_ADDENDA } from "../src/include.js";
 
 const root = resolve(process.cwd());
-const NO_BENCHMARK_NAMES = /qodo|swe-?prbench|ghost|aspnetcore|firefox|tauri|prefect|dify|redis|pipecat|spyder/i;
+const NO_BENCHMARK_NAMES =
+  /qodo|swe-?prbench|ghost|aspnetcore|firefox|tauri|prefect|dify|redis|pipecat|spyder/i;
 const text = (id: string) => PASS_ADDENDA.find((a) => a.id === id)!.text;
 const ids = (p: string, mode: "pr" | "scan" = "pr") =>
   addendaForPass(p, PASS_ADDENDA, "django", mode).map((a) => a.id);
@@ -47,9 +48,11 @@ describe("pass-style walks every written rule", () => {
 });
 
 describe("one validator rule for conventions: written rules kept as nits, CI-enforced lint a build defect", () => {
-  it("binds pass-validate, PR builds only", () => {
+  it("binds pass-validate, in PR and scan builds", () => {
+    // Scan too since 2026-10-03: quality-cap-validate (both modes) defers every
+    // convention candidate to this rule, and stage 2 can plan pass-style.
     expect(ids("pass-validate")).toContain("validate-convention-rule");
-    expect(ids("pass-validate", "scan")).not.toContain("validate-convention-rule");
+    expect(ids("pass-validate", "scan")).toContain("validate-convention-rule");
     expect(ids("pass-validate")).not.toContain("validate-written-rule-kept");
   });
   it("demotes a written rule to a nit, keeps CI-run lint at P2, kills only unbacked taste", () => {
@@ -66,7 +69,9 @@ describe("one validator rule for conventions: written rules kept as nits, CI-enf
   });
   it("no validator text tells it to leave CI-run lint out of scope any more", () => {
     for (const a of addendaForPass("pass-validate", PASS_ADDENDA, "django", "pr"))
-      expect(a.text, a.id).not.toMatch(/CI owns it\)|formatter or linter enforces is still out of scope/);
+      expect(a.text, a.id).not.toMatch(
+        /CI owns it\)|formatter or linter enforces is still out of scope/,
+      );
   });
 });
 
@@ -83,19 +88,31 @@ describe("new code is judged against itself; the base is a comparison, not an ex
   it("documented semantics now include published standards, and unverifiable is for the in-code mechanism only", () => {
     const t = text("validate-external-semantics");
     expect(t).toMatch(/an RFC, a file-format or codec specification, a published grammar/);
-    expect(t).toMatch(/`unverifiable` is only for a mechanism you could not establish IN THIS CODE/);
+    expect(t).toMatch(
+      /`unverifiable` is only for a mechanism you could not establish IN THIS CODE/,
+    );
   });
 });
 
 describe("pass-style is planned on a test-only diff when the repo writes rules", () => {
-  const cfg: Config = parseConfig(readFileSync(resolve(root, "tests/fixtures/config.toml"), "utf8"));
+  const cfg: Config = parseConfig(
+    readFileSync(resolve(root, "tests/fixtures/config.toml"), "utf8"),
+  );
   const testOnly = [
-    { filename: "src/Foo.Tests/DisplayNameTest.cs", status: "modified", additions: 40, deletions: 2, changes: 42 },
+    {
+      filename: "src/Foo.Tests/DisplayNameTest.cs",
+      status: "modified",
+      additions: 40,
+      deletions: 2,
+      changes: 42,
+    },
   ] as unknown as PrFileEntry[];
   it("plans it with the written guide named as the reason", () => {
     const c = structuredClone(cfg);
     c.review = { ...c.review, style_lens: true };
-    const { pass_plan } = buildPassPlan(c, testOnly, undefined, undefined, undefined, ["AGENTS.md"]);
+    const { pass_plan } = buildPassPlan(c, testOnly, undefined, undefined, undefined, [
+      "AGENTS.md",
+    ]);
     const row = pass_plan.find((r) => r.lens === "pass-style");
     expect(row).toBeDefined();
     expect(JSON.stringify(row)).toContain("AGENTS.md");

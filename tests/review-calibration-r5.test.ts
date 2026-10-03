@@ -9,7 +9,8 @@ import { join, resolve } from "node:path";
 import { addendaForPass, buildAgents, PASS_ADDENDA } from "../src/include.js";
 
 const root = resolve(process.cwd());
-const NO_BENCHMARK_NAMES = /qodo|swe-?prbench|ghost|aspnetcore|firefox|tauri|prefect|dify|redis|pipecat|spyder/i;
+const NO_BENCHMARK_NAMES =
+  /qodo|swe-?prbench|ghost|aspnetcore|firefox|tauri|prefect|dify|redis|pipecat|spyder/i;
 
 let cache: Map<string, string> | undefined;
 function built(): Map<string, string> {
@@ -49,7 +50,8 @@ describe("a written rule raised by any lens is judged as style, not killed for i
 
 describe("reordered-statements (pass-baseline, pass-sweep)", () => {
   it("binds the two line-reading lenses, PR builds only", () => {
-    const ids = (p: string, mode: "pr" | "scan") => addendaForPass(p, PASS_ADDENDA, "django", mode).map((a) => a.id);
+    const ids = (p: string, mode: "pr" | "scan") =>
+      addendaForPass(p, PASS_ADDENDA, "django", mode).map((a) => a.id);
     for (const p of ["pass-baseline", "pass-sweep"]) {
       expect(ids(p, "pr")).toContain("reordered-statements");
       expect(ids(p, "scan")).not.toContain("reordered-statements");
@@ -69,7 +71,8 @@ describe("reordered-statements (pass-baseline, pass-sweep)", () => {
 
 // Round 6 (REVIEW-MINING.md §7), mined from the Qodo run with no new run.
 describe("anchor-at-cause (every lens + the validator's re-anchor)", () => {
-  const ids = (p: string, mode: "pr" | "scan") => addendaForPass(p, PASS_ADDENDA, "django", mode).map((a) => a.id);
+  const ids = (p: string, mode: "pr" | "scan") =>
+    addendaForPass(p, PASS_ADDENDA, "django", mode).map((a) => a.id);
 
   it("binds every lens and the validator, PR builds only", () => {
     for (const p of ["pass-baseline", "pass-sweep", "pass-tests", "pass-security"]) {
@@ -108,7 +111,8 @@ describe("anchor-at-cause (every lens + the validator's re-anchor)", () => {
 
 describe("line-local-slips (pass-baseline, pass-sweep)", () => {
   it("binds the two line-reading lenses, PR builds only", () => {
-    const ids = (p: string, mode: "pr" | "scan") => addendaForPass(p, PASS_ADDENDA, "django", mode).map((a) => a.id);
+    const ids = (p: string, mode: "pr" | "scan") =>
+      addendaForPass(p, PASS_ADDENDA, "django", mode).map((a) => a.id);
     for (const p of ["pass-baseline", "pass-sweep"]) {
       expect(ids(p, "pr")).toContain("line-local-slips");
       expect(ids(p, "scan")).not.toContain("line-local-slips");
@@ -118,11 +122,18 @@ describe("line-local-slips (pass-baseline, pass-sweep)", () => {
 
   it("checks operators, assignments, loop targets and near-namesakes, at the severity the outcome earns", () => {
     const t = text("line-local-slips");
-    for (const re of [/comparison operator and bound/, /assignment vs compound assignment/, /loop or comprehension target/, /near-namesake in scope/])
+    for (const re of [
+      /comparison operator and bound/,
+      /assignment vs compound assignment/,
+      /loop or comprehension target/,
+      /near-namesake in scope/,
+    ])
       expect(t).toMatch(re);
     expect(t).toMatch(/concrete wrong outcome/);
     expect(t).toMatch(/at the severity that outcome earns/);
-    expect(t).toMatch(/Report only a token that departs from its siblings and tests/);
+    expect(t).toMatch(
+      /A token that is deliberate and consistent with its siblings and tests is not a slip/,
+    );
     expect(t).not.toMatch(NO_BENCHMARK_NAMES);
     expect(bodyOf("pass-sweep")).toContain("One-token slips on changed lines");
   });

@@ -841,16 +841,20 @@ describe("companion status when docker cannot be asked (selfscan)", () => {
 });
 
 describe("qcr tui args", () => {
-  it("defaults to companion on + reload on with no target", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const { parseTuiArgs } = await import("../src/tui/index.js");
-    expect(parseTuiArgs([])).toEqual({
-      target: undefined,
-      companion: true,
-      reload: true,
-      resumeState: undefined,
-      help: false,
-    });
-  });
+  it(
+    "defaults to companion on + reload on with no target",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const { parseTuiArgs } = await import("../src/tui/index.js");
+      expect(parseTuiArgs([])).toEqual({
+        target: undefined,
+        companion: true,
+        reload: true,
+        resumeState: undefined,
+        help: false,
+      });
+    },
+  );
 
   it("separates flags from the deep-link target", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     const { parseTuiArgs } = await import("../src/tui/index.js");
@@ -1270,9 +1274,7 @@ describe("the install's homes and the read-only GitHub token", () => {
     expect(configHome(inContainer)).toBe(CONTAINER.configHome);
     expect(stateHome(inContainer)).toBe(CONTAINER.stateHome);
     expect(profileSearchDirs({ root: "/workspace", env: inContainer })[0]).toBe(CONTAINER.profiles);
-    expect(locateConfig({ env: inContainer }).path).toBe(
-      CONTAINER.configFile,
-    );
+    expect(locateConfig({ env: inContainer }).path).toBe(CONTAINER.configFile);
   });
 
   it("creates the homes and the token dir before a cold run, never secrets/", async () => {
@@ -1280,7 +1282,13 @@ describe("the install's homes and the read-only GitHub token", () => {
     expect(await lc.ensureUp()).toBe("created");
     const made = dirs.flat();
     expect(made).toEqual(
-      expect.arrayContaining([HOMES.profiles, HOMES.portrait, HOMES.configMirror, HOMES.state, HOMES.github]),
+      expect.arrayContaining([
+        HOMES.profiles,
+        HOMES.portrait,
+        HOMES.configMirror,
+        HOMES.state,
+        HOMES.github,
+      ]),
     );
     expect(made.some((d) => d.includes("secrets"))).toBe(false);
   });
@@ -1353,7 +1361,6 @@ describe("the install's homes and the read-only GitHub token", () => {
       expect.arrayContaining([`missing ${CONTAINER.configLive}`, "stale /qcr-config/config.toml"]),
     );
   });
-
 });
 
 describe("the config mirror (review)", () => {
