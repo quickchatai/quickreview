@@ -25,3 +25,23 @@ describe("no budget", () => {
     expect(t).not.toMatch(NO_BENCHMARK_NAMES);
   });
 });
+
+describe("repeated copies the PR adds", () => {
+  it("binds duplication, baseline and sweep, with a validator half", () => {
+    for (const p of ["pass-duplication", "pass-baseline", "pass-sweep"]) expect(ids(p), p).toContain("repeated-copy");
+    expect(ids("pass-validate")).toContain("repeated-copy-validate");
+    expect(ids("pass-security")).not.toContain("repeated-copy");
+  });
+  it("is one P2 finding naming every site; a question when no abstraction is obvious; never taste", () => {
+    const t = text("repeated-copy");
+    expect(t).toMatch(/three or more near-identical copies/);
+    expect(t).toMatch(/names every site/);
+    expect(t).toMatch(/Cap it at `P2`/);
+    expect(t).toMatch(/\[question\]/);
+    expect(t).toMatch(/base already had are not/);
+    const v = text("repeated-copy-validate");
+    expect(v).toMatch(/design preference/);
+    expect(v).toMatch(/do not demand a regression/);
+    for (const x of [t, v]) expect(x).not.toMatch(NO_BENCHMARK_NAMES);
+  });
+});

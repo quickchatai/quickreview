@@ -1215,6 +1215,17 @@ export const NO_BUDGET_ADDENDUM =
   "\n## There is no budget for this pass (sandbox rule)\n" +
   "No token, time or finding budget applies to this pass: no limit on how much you read, how long you reason or how many findings you report. Report every real issue you find. Do not stop early, narrow to \"the main issues\", or skip a candidate to save tokens.\n";
 
+// Pre-freeze decisions (2026-10-03): a PR that ADDS several near-identical
+// copies was withheld as "design preference" or for lacking a regression. The
+// repetition is the change; report it once, every site named.
+export const REPEATED_COPY_ADDENDUM =
+  "\n## Copies the PR adds are one design finding (sandbox rule)\n" +
+  "When the PR itself ADDS three or more near-identical copies — overrides, handlers, cases, blocks, config entries that differ only in a name or a value — report it as ONE finding that names every site (`path:line` each) and the shared shape a single helper, base method, table or loop would hold. Cap it at `P2`. When no shared abstraction is obviously available (the copies differ in ways a helper would have to special-case), post it as a `[question]` asking whether one is wanted. Copies the base already had are not this PR's finding.\n";
+
+export const REPEATED_COPY_VALIDATE_ADDENDUM =
+  "\n## A repeated-copy finding is not taste (sandbox rule)\n" +
+  "A finding that names three or more near-identical copies the PR ADDS is judged on that evidence: verify the copies exist in changed lines and are near-identical. Do not withhold or kill it as \"design preference\", and do not demand a regression — the repetition is the change. Cap it at `P2`; keep it a `[question]` when no shared abstraction is obvious.\n";
+
 const VALIDATE_CONVENTION_RULE_ADDENDUM =
   "\n## One rule for conventions: written rules and CI-enforced lint (sandbox rule)\n" +
   "Every convention or style candidate — from ANY lens — is judged here, once, by what backs it:\n\n" +
@@ -1389,6 +1400,8 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
   { id: "validate-convention-rule", scope: [VALIDATE_PASS], mode: "pr", text: VALIDATE_CONVENTION_RULE_ADDENDUM },
   { id: "validate-new-code-and-base", scope: [VALIDATE_PASS], mode: "pr", text: VALIDATE_NEW_CODE_AND_BASE_ADDENDUM },
   { id: "no-budget", scope: "lenses", mode: "pr", text: NO_BUDGET_ADDENDUM },
+  { id: "repeated-copy", scope: ["pass-duplication", "pass-baseline", "pass-sweep"], mode: "pr", text: REPEATED_COPY_ADDENDUM },
+  { id: "repeated-copy-validate", scope: [VALIDATE_PASS], mode: "pr", text: REPEATED_COPY_VALIDATE_ADDENDUM },
   // the one corpus-derived rule that is generic review behaviour.
   // Its six house-rule siblings ride the live deployment's profile addenda pack since
   // (see the banner above); wire.ts composes a profile pack after

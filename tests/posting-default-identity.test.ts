@@ -238,7 +238,8 @@ const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
 // Re-pinned 2026-10-03: `tests-loosened-is-behaviour` (pass-tests; freeze fixes 2)
 // Re-pinned 2026-10-03: `sweep-docs-and-moves` (pass-sweep; freeze fixes 2)
 // Re-pinned 2026-10-03: `no-budget` (every lens): no token, time or finding budget applies; report every real issue (gap plan, the phantom 8k budget)
-const GOLDEN_AGENTS_NO_DEDUP = "0a7ff659ecfb5ce550e1d8d4d6c4a66ee68a5e28f5d18f001380183973312ed4";
+// Re-pinned 2026-10-03: `repeated-copy` (pass-duplication, pass-baseline, pass-sweep) and `repeated-copy-validate`: three or more near-identical copies the PR adds are one P2 design finding, never withheld as design preference (owner decision)
+const GOLDEN_AGENTS_NO_DEDUP = "674d77d5b64660189552412bff983f37a5f4560f5448712941a71c098ecfde8e";
 //   → (round 7, docs/duplicate-merge.md) `dedup-group-validate` (pass-validate,
 //     `[review] dedup_merge` on by default) and the default profile's posting
 //     addendum for `repeat_sites = false`. Off + no policy = the pin above.
@@ -250,4 +251,5 @@ const GOLDEN_AGENTS_NO_DEDUP = "0a7ff659ecfb5ce550e1d8d4d6c4a66ee68a5e28f5d18f00
 // Re-pinned 2026-10-03: `sweep-docs-and-moves` (pass-sweep; freeze fixes 2)
 // Re-pinned 2026-10-03: dedup-group-validate keeps each merged member's anchor and forbids a second fix folded into a merged body (freeze fixes 2)
 // Re-pinned 2026-10-03: `no-budget` (every lens): no token, time or finding budget applies; report every real issue (gap plan, the phantom 8k budget)
-const GOLDEN_AGENTS = "7c102423ec98b1013e010d378c95767737982d2921593fb698ee8bc662f678fe";
+// Re-pinned 2026-10-03: `repeated-copy` (pass-duplication, pass-baseline, pass-sweep) and `repeated-copy-validate`: three or more near-identical copies the PR adds are one P2 design finding, never withheld as design preference (owner decision)
+const GOLDEN_AGENTS = "35fc146835df2f44fbf240f6235c51cc2dc9508f4ef092390f9d184e1c05b66e";
