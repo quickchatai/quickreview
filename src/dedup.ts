@@ -71,9 +71,34 @@ const STOP = new Set([
 ]);
 const FILE_LIKE = /[\\/]|\.(py|pyi|ts|tsx|js|jsx|mjs|cjs|go|rb|java|kt|rs|c|cc|cpp|h|hpp|cs|php|swift|scala|json|ya?ml|toml|md|css|scss|html|sql|sh)$/i;
 
-/** The named identifiers a finding's title and body put in code spans. */
+/** Mixed-case product words that look like identifiers but name nothing in
+ * the code. */
+const PROSE_CAMEL = new Set([
+  "javascript", "typescript", "github", "gitlab", "postgresql", "mysql", "mongodb", "macos", "ios",
+  "iphone", "ipad", "openapi", "graphql", "nodejs", "devops", "youtube", "linkedin", "wordpress",
+]);
+/** An identifier written WITHOUT backticks (freeze fixes 2: the dedup5 audit
+ * found 0 of 463 candidates used backticks, so the shared-identifier signal
+ * never fired): camelCase or PascalCase with an inner capital, snake_case,
+ * SCREAMING_CASE, or a name called as `name(` / reached as `a.b`. */
+const BARE_IDENT_RE =
+  /\b(?:[a-z][a-z0-9]*[A-Z][A-Za-z0-9]*|[A-Z][a-z0-9]+[A-Z][A-Za-z0-9]*|[a-z][a-z0-9]*_[a-z0-9_]+|[A-Z][A-Z0-9]*_[A-Z0-9_]+|[A-Za-z_$][A-Za-z0-9_$]*(?=\()|[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)+)\b/g;
+
+/** The named identifiers a finding's title and body name — in code spans,
+ * and bare in the prose. */
 export function identifiersOf(text: string): Set<string> {
   const out = new Set<string>();
+  const prose = text.replace(/`[^`\n]{1,200}`/g, " ");
+  for (const t of prose.matchAll(BARE_IDENT_RE)) {
+    const tok = t[0]!;
+    if (FILE_LIKE.test(tok)) continue;
+    for (const part of [tok, ...tok.split(/\.|::/)]) {
+      if (part.length < 3 || STOP.has(part.toLowerCase()) || PROSE_CAMEL.has(part.toLowerCase())) continue;
+      // A plain English word reached only through `word(` or `a.b` (e.g. "i.e") is not an identifier.
+      if (/^[a-z]+$/.test(part) && part.length < 4) continue;
+      out.add(part);
+    }
+  }
   for (const m of text.matchAll(/`([^`\n]{1,200})`/g)) {
     const span = m[1]!;
     if (FILE_LIKE.test(span.trim()) && !/\s/.test(span.trim())) continue;

@@ -251,3 +251,28 @@ describe("every lens documents when it runs and its priority (owner decision 202
     for (const l of ["pass-abstraction", "pass-placement", "pass-backcompat"]) expect(ALL_PASSES).toContain(l);
   });
 });
+
+import { clusterFindings, identifiersOf } from "../src/dedup.js";
+
+describe("dedup hygiene: identifiers without backticks", () => {
+  it("reads camelCase, PascalCase, snake_case, SCREAMING_CASE, calls and dotted names from plain prose", () => {
+    const ids = identifiersOf("The refresh skips modelLibraries and ExternalManager; RECREATE_UPGRADE_EXIT_CODE changed, get_model returns None, and client.retry() is gone.");
+    for (const x of ["modelLibraries", "ExternalManager", "RECREATE_UPGRADE_EXIT_CODE", "get_model", "client", "retry"]) expect(ids.has(x), x).toBe(true);
+    for (const x of ["The", "refresh", "JavaScript", "None"]) expect(ids.has(x), x).toBe(false);
+    expect(identifiersOf("Written in JavaScript on GitHub, see the docs.").size).toBe(0);
+  });
+  it("two candidates naming the same bare identifier now join a group", () => {
+    const r = clusterFindings([
+      { id: "a", path: "x.ts", line: 10, title: "loadModel can return null", body: "loadModel returns null for an unknown id" },
+      { id: "b", path: "y.ts", line: 200, title: "Caller dereferences loadModel result", body: "the loop calls loadModel and reads .name" },
+    ]);
+    expect(r.groups).toHaveLength(1);
+    expect(r.groups[0]!.signals).toContain("shared-identifier");
+  });
+  it("the validator keeps each merged member's anchor and never folds a second fix in", async () => {
+    const { configAddenda } = await import("../src/include.js");
+    const t = configAddenda({ dedup_merge: true }).find((a) => a.id === "dedup-group-validate")!.text;
+    expect(t).toMatch(/keeping that member's own `path` and `line`/);
+    expect(t).toMatch(/never carries a second fix as a clause/);
+  });
+});

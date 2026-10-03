@@ -227,4 +227,5 @@ const GOLDEN_AGENTS_NO_DEDUP = "7f7755278edcf5cb0d6e8277adbfa3df5ebc89c29af7a528
 // Re-pinned 2026-10-03: `sweep-mechanical-checklist` (pass-sweep; freeze fixes 2)
 // Re-pinned 2026-10-03: `tests-loosened-is-behaviour` (pass-tests; freeze fixes 2)
 // Re-pinned 2026-10-03: `sweep-docs-and-moves` (pass-sweep; freeze fixes 2)
-const GOLDEN_AGENTS = "d66684ec9d13a1977e3c023444c9259e9c90dfa0b3eb25baf767b983b1e1bace";
+// Re-pinned 2026-10-03: dedup-group-validate keeps each merged member's anchor and forbids a second fix folded into a merged body (freeze fixes 2)
+const GOLDEN_AGENTS = "bd3651b91a67c4595c2339cf45e4f4326ad1e86616420d4039031b8e8d344519";
