@@ -107,8 +107,8 @@ human annotation.**
 | Dimension | open-code-review | quickreviewd |
 |---|---|---|
 | Shape | Stateless CLI; one run is one review | 24/7 daemon; one sticky pi conversation per PR for its whole life |
-| Scope | Any repo, any of about 50 languages, any model provider | One repo (`example-app`), one model family (codex) |
-| Trigger | Developer, CI job, or IDE | Label or `example-org/review` team request; webhook plus reconcile poll |
+| Scope | Any repo, any of about 50 languages, any model provider | One reviewed repo (set at install), one model family (codex) |
+| Trigger | Developer, CI job, or IDE | Label or the configured review-team request; webhook plus reconcile poll |
 | Verdict | None; comments only | APPROVE / REQUEST_CHANGES / COMMENT, with a CI hard gate and posting-time guards |
 | Unit of work | A **file group** (LLM clustering) as an isolated sub-agent | A **lens** (concern: data-safety, backcompat, intent…) as a blank-slate leaf over the whole PR |
 | Specialisation axis | **By file type**: a glob-matched language checklist | **By concern**: heuristic lens selection, a `PASS_ADDENDA` registry |
@@ -289,7 +289,7 @@ The adapter work, on top of the replay fix:
 - the real per-file status and patch, instead of `status: "modified"`.
 
 One bias cannot be removed without a reseed: the frozen `pass-baseline` seed
-carries the reviewed repo's pytest and Django Ninja conventions.
+carries the deployed repo profile's pytest and Django Ninja conventions.
 
 **Cheaper first experiment:** the HF release pairs 1,505 correct comments
 with 640 incorrect ones and is framed as a test for reflection models that
