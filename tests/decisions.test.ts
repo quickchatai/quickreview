@@ -45,3 +45,21 @@ describe("repeated copies the PR adds", () => {
     for (const x of [t, v]) expect(x).not.toMatch(NO_BENCHMARK_NAMES);
   });
 });
+
+describe("regression-test request on a bug fix", () => {
+  it("binds pass-tests, with a validator half, PR builds only", () => {
+    expect(ids("pass-tests")).toContain("regression-test-ask");
+    expect(ids("pass-validate")).toContain("regression-test-ask-validate");
+    expect(ids("pass-baseline")).not.toContain("regression-test-ask");
+    expect(ids("pass-tests", "scan")).not.toContain("regression-test-ask");
+  });
+  it("asks once, as a question or nit naming the fixed path; never on refactors or features", () => {
+    const t = text("regression-test-ask");
+    expect(t).toMatch(/says it FIXES a bug/);
+    expect(t).toMatch(/naming the function or branch/);
+    expect(t).toMatch(/Not on refactors, features/);
+    const v = text("regression-test-ask-validate");
+    expect(v).toMatch(/Kill it only when such a test exists/);
+    for (const x of [t, v]) expect(x).not.toMatch(NO_BENCHMARK_NAMES);
+  });
+});

@@ -239,7 +239,8 @@ const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
 // Re-pinned 2026-10-03: `sweep-docs-and-moves` (pass-sweep; freeze fixes 2)
 // Re-pinned 2026-10-03: `no-budget` (every lens): no token, time or finding budget applies; report every real issue (gap plan, the phantom 8k budget)
 // Re-pinned 2026-10-03: `repeated-copy` (pass-duplication, pass-baseline, pass-sweep) and `repeated-copy-validate`: three or more near-identical copies the PR adds are one P2 design finding, never withheld as design preference (owner decision)
-const GOLDEN_AGENTS_NO_DEDUP = "674d77d5b64660189552412bff983f37a5f4560f5448712941a71c098ecfde8e";
+// Re-pinned 2026-10-03: `regression-test-ask` (pass-tests) and `regression-test-ask-validate`: a PR that claims a bug fix with no test exercising the fixed path gets one regression-test request (owner decision)
+const GOLDEN_AGENTS_NO_DEDUP = "5b4289fb6dba53fba084375ce5646b6e9d7eb803fbcf8c0a584cddd46af5852f";
 //   → (round 7, docs/duplicate-merge.md) `dedup-group-validate` (pass-validate,
 //     `[review] dedup_merge` on by default) and the default profile's posting
 //     addendum for `repeat_sites = false`. Off + no policy = the pin above.
@@ -252,4 +253,5 @@ const GOLDEN_AGENTS_NO_DEDUP = "674d77d5b64660189552412bff983f37a5f4560f54487129
 // Re-pinned 2026-10-03: dedup-group-validate keeps each merged member's anchor and forbids a second fix folded into a merged body (freeze fixes 2)
 // Re-pinned 2026-10-03: `no-budget` (every lens): no token, time or finding budget applies; report every real issue (gap plan, the phantom 8k budget)
 // Re-pinned 2026-10-03: `repeated-copy` (pass-duplication, pass-baseline, pass-sweep) and `repeated-copy-validate`: three or more near-identical copies the PR adds are one P2 design finding, never withheld as design preference (owner decision)
-const GOLDEN_AGENTS = "35fc146835df2f44fbf240f6235c51cc2dc9508f4ef092390f9d184e1c05b66e";
+// Re-pinned 2026-10-03: `regression-test-ask` (pass-tests) and `regression-test-ask-validate`: a PR that claims a bug fix with no test exercising the fixed path gets one regression-test request (owner decision)
+const GOLDEN_AGENTS = "5e65f91a448953a6c88948ca4258054c4e75327dc75628949d4f3d6e1a91bf1e";
