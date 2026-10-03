@@ -120,7 +120,9 @@
       ansible.builtin.apt:
         name: cloudflared
         state: present
-        update_cache: true
+        # Same rule as the base packages: no cache refresh for a package the
+        # host already has.
+        update_cache: "{{ 'cloudflared' not in ansible_facts.packages }}"
       when: cloudflared_enabled | bool
 
     - name: Register cloudflared as a systemd service (remote-managed tunnel)

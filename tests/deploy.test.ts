@@ -1390,5 +1390,9 @@ describe("deploy — the 2026-10-03 stale-image outage", () => {
     expect(block).toContain("update_cache: true");
     expect(block).toContain("when: base_packages | difference(ansible_facts.packages.keys() | list) | length > 0");
     expect(text.indexOf("ansible.builtin.package_facts")).toBeLessThan(at);
+    // …and so does every other apt install: an unconditional refresh is the
+    // whole failure, wherever it sits.
+    const unconditional = [...text.matchAll(/update_cache:\s*(.+)$/gm)].map((m) => m[1]!.trim());
+    expect(unconditional).toEqual(["true", `"{{ 'cloudflared' not in ansible_facts.packages }}"`]);
   });
 });
