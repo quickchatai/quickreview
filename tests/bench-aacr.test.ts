@@ -691,10 +691,13 @@ describe("the round the bench runs is the production round", () => {
     });
     const roundFirst = readFileSync(join(ROOT, "prompts", "round-first.md"), "utf8");
     // Ratified fences travel byte-for-byte.
+    // The fence CONTENTS travel; the marker lines are maintainer-only.
+    const open = roundFirst.indexOf("<!-- RATIFIED posting-map");
     const fence = roundFirst.slice(
-      roundFirst.indexOf("<!-- RATIFIED posting-map"),
+      roundFirst.indexOf("\n", open) + 1,
       roundFirst.indexOf("<!-- /RATIFIED posting-map -->"),
     );
+    expect(order).not.toContain("<!-- RATIFIED");
     expect(order).toContain(fence);
     expect(order.indexOf("## 6. Post")).toBeLessThan(order.indexOf("## BENCHMARK MODE"));
     expect(order).not.toMatch(/\{\{[a-z_]+\}\}/);

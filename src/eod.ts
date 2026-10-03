@@ -20,6 +20,7 @@
 //     time. Nothing is skipped.
 //   * Ambiguous wall times (inside a repeated fall-back hour — again not 18:00
 //     in Warsaw): fire at the FIRST (earlier, still-DST) occurrence, once only.
+import { stripModelDocs } from "./promptdoc.js";
 import { readFileSync } from "node:fs";
 import { NEUTRAL_IDENTITY_VARS } from "./include.js";
 import { render, type TemplateVars } from "./templates.js";
@@ -191,7 +192,7 @@ export function renderEodPrompt(
   dayContext?: string,
   identity: Readonly<TemplateVars> = NEUTRAL_IDENTITY_VARS,
 ): string {
-  const rendered = render(template, { ...identity, date });
+  const rendered = render(stripModelDocs(template), { ...identity, date });
   if (!dayContext?.trim()) return rendered;
   return (
     `${rendered.replace(/\n*$/, "\n")}\n` +

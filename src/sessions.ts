@@ -11,6 +11,7 @@
 //
 // pi is not installed in this repo; every assumption about its CLI surface is
 // tagged VERIFY-ON-PIN and confined to buildPiCommand().
+import { stripModelDocs } from "./promptdoc.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
   copyFileSync,
@@ -684,7 +685,7 @@ export class PiSessionManager implements SessionHooks {
     const path = join(this.root, "prompts", "slack-overseer-appendix.md");
     if (!existsSync(path))
       throw new Error(`slack.enabled = true but the overseer Slack appendix is missing: ${path}`);
-    return `\n\n${readFileSync(path, "utf8").trimEnd()}\n`;
+    return `\n\n${stripModelDocs(readFileSync(path, "utf8")).trimEnd()}\n`;
   }
 
   async ensureOverseerSession(): Promise<string> {

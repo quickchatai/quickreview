@@ -70,7 +70,7 @@ describe("concurrency-duplicate-init (pass-concurrency)", () => {
     ])
       expect(body, phrase).toContain(phrase);
     // the ratified sections it qualifies are still there, untouched
-    expect(body).toContain("RATIFIED self-falsification");
+    expect(body).toContain("## Falsify your own finding before you emit it");
   });
 
   it("names no benchmark, project or PR", () => {

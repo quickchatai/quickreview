@@ -3,6 +3,7 @@
 // Contract: a {{placeholder}} in the text with no supplied value is a bug and
 // throws; a supplied value the template does not use is fine (templates are
 // edited independently of this renderer).
+import { stripModelDocs } from "./promptdoc.js";
 import { renderPassTaskNote } from "./passtasks.js";
 import { renderRenderNote } from "./reviewrender.js";
 import { DJANGO_ECOSYSTEM, type Ecosystem } from "./ecosystem.js";
@@ -129,7 +130,7 @@ export function renderRecheckPrompt(
   order: RecheckOrder,
   identity: Readonly<TemplateVars> = NEUTRAL_IDENTITY_VARS,
 ): string {
-  return render(templateText, recheckVars(order, identity));
+  return render(stripModelDocs(templateText), recheckVars(order, identity));
 }
 
 // The migration-gate prose (GATE_ON/GATE_OFF and the two GATE NOTES
@@ -623,7 +624,7 @@ export function renderRoundPrompt(
   identity: Readonly<TemplateVars> = NEUTRAL_IDENTITY_VARS,
 ): string {
   return ensurePinnedHead(
-    render(templateText, roundVars(order, memory, ownerName, ecosystem, identity)),
+    render(stripModelDocs(templateText), roundVars(order, memory, ownerName, ecosystem, identity)),
     memory,
     ownerName,
   );
@@ -642,7 +643,7 @@ export function renderConversationSystemPrompt(
   vars: ConversationPromptVars,
   identity: Readonly<TemplateVars> = NEUTRAL_IDENTITY_VARS,
 ): string {
-  return render(templateText, {
+  return render(stripModelDocs(templateText), {
     ...identity,
     n: String(vars.pr),
     title: promptTitle(vars.title),
@@ -655,5 +656,5 @@ export function renderConversationSystemPrompt(
  * silently shipping "{{...}}" to the model. The identity variables
  * are always in scope. */
 export function renderOverseerSystemPrompt(templateText: string, vars: TemplateVars = {}): string {
-  return render(templateText, { ...NEUTRAL_IDENTITY_VARS, ...vars });
+  return render(stripModelDocs(templateText), { ...NEUTRAL_IDENTITY_VARS, ...vars });
 }

@@ -24,6 +24,7 @@
 // suffix); `thinking:` is still rewritten for human accuracy. The
 // addendum registry (`PASS_ADDENDA`, lens-keyed) is composed onto every BUILT
 // body in registry order — seeds untouched.
+import { stripModelDocs } from "./promptdoc.js";
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, resolve, join } from "node:path";
 import { ALLOWED_PROGRAMS } from "../extensions/bash-guard.js";
@@ -1638,7 +1639,10 @@ export function buildAgents(
     // quote untrusted text (the same-day feedback addendum quotes PR comments),
     // so a `{{…}}` inside one must stay data, never a build failure.
     const body =
-      expandVariables(expandIncludes(doc.body, { root, readFile: opts.readFile }), vars) +
+      expandVariables(
+        stripModelDocs(expandIncludes(doc.body, { root, readFile: opts.readFile })),
+        vars,
+      ) +
       composeAddendum(pass, addenda, ecosystem, mode);
     const only = opts.onlyTiers?.[pass];
     const passTiers = tiersForPass(pass, riskPasses, validateTier).filter((t) => only === undefined || only.includes(t));

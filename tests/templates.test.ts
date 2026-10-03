@@ -495,7 +495,9 @@ describe("shipped round templates", () => {
       expect(out).toContain("one-line reason");
       // The paragraph keeps its old place and spacing: one blank line either side.
       expect(out).toContain("the lens is not added.\n\n**Add on a missing migration.**");
-      expect(out).toContain("needs to run.\n\n<!-- RATIFIED no-exec");
+      // Fence markers stay in the source and never reach the model.
+      expect(out).toContain("needs to run.\n\n**No-exec policy (absolute).**");
+      expect(out).not.toContain("<!-- RATIFIED");
     });
 
     it(`${roundTemplateFile(rt)} carries no Django migration rule for ecosystem none`, () => {
@@ -509,7 +511,7 @@ describe("shipped round templates", () => {
       expect(out).not.toContain("Add on a missing migration");
       expect(out).not.toContain("Django");
       // No stray blank line where the rule was.
-      expect(out).toContain("the lens is not added.\n\n<!-- RATIFIED no-exec");
+      expect(out).toContain("the lens is not added.\n\n**No-exec policy (absolute).**");
     });
 
     // the halves of the shared pass contract that live in the round

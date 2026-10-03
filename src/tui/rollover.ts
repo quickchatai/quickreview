@@ -20,6 +20,7 @@
 // writing the file BEFORE spawning pi is race-free. The alternative — a pi CLI
 // initial-message flag — is undocumented for 0.84.1; if one turns up it is a
 // drop-in replacement for writeDayOpen().
+import { stripModelDocs } from "../promptdoc.js";
 import {
   existsSync,
   mkdirSync,
@@ -424,7 +425,7 @@ const PLACEHOLDERS: Array<keyof DayOpenSources> = [
 /** Fill prompts/companion-day-open.md. An empty source renders as `—`, per the
  * template's own header — a missing carry item is stated, never silent. */
 export function renderDayOpen(template: string, sources: DayOpenSources): string {
-  let out = template;
+  let out = stripModelDocs(template);
   for (const key of PLACEHOLDERS) {
     const value = (sources[key] ?? "").trim();
     out = out.replaceAll(`{{${key}}}`, value === "" ? "—" : value);
@@ -489,7 +490,7 @@ const FIRST_RUN_PLACEHOLDERS: Array<keyof FirstRunSources> = ["date", "owner", "
 /** Fill prompts/companion-first-run.md — same `—`-for-empty discipline as the
  * day-open (the owner label is pre-defaulted, so only the snapshot can be empty). */
 export function renderFirstRun(template: string, sources: FirstRunSources): string {
-  let out = template;
+  let out = stripModelDocs(template);
   for (const key of FIRST_RUN_PLACEHOLDERS) {
     const value = (sources[key] ?? "").trim();
     out = out.replaceAll(`{{${key}}}`, value === "" ? "—" : value);
