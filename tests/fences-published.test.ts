@@ -284,10 +284,6 @@ describe("MANIFESTO.md is pinned by something", () => {
         host: "files.pythonhosted.org",
         why: "the same leg: the PyPI archive itself (a pure-Python wheel or an sdist), verified against that sha256.",
       },
-      {
-        host: "support.example.com",
-        why: "the same: the #5386 injection-adjudication example, quoted in an addendum. Prose in a string.",
-      },
     ];
 
     const seen = new Map<string, string>();

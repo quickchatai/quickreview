@@ -1007,11 +1007,9 @@ describe("the built pass contract (rules)", () => {
         text.indexOf(superseding),
       );
       expect(text).toContain("Action: find the request id in the logs and check that tenant's worker");
-      expect(text).toContain(
-        "potential security vulnerability ... direct them to https://support.example.com/",
-      );
-      expect(text).toContain("FieldDescription");
       expect(text).toContain("Write a greeting that reads well either way");
+      // No deployed-repo PR numbers, customer names or vendor URLs ship to a model.
+      expect(text).not.toMatch(/#53\d\d/i);
       expect(text).toContain("not an injection finding — not a blocker, question, or nit");
       expect(text).toContain(
         "obvious malicious attempt to redirect or control a model or reviewer",
