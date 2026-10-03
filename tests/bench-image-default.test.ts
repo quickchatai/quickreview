@@ -110,7 +110,7 @@ describe("ext.sh: the judge runs on the ext overlay, not the review image", () =
   it("start_judge and the Qodo scorer use JIMG, which QCR_EXT_IMAGE does not move", () => {
     const ext = readFileSync(join(B, "ext", "ext.sh"), "utf8");
     expect(ext).toContain('JIMG="${QCR_EXT_JUDGE_IMAGE:-qcr-bench:pi099-ext}"');
-    expect(ext).toMatch(/--entrypoint bash "\$JIMG" -c "[^"]*cli\.js auth/);
+    expect(ext).toContain('--entrypoint bash "$JIMG" -c "mkdir -p');
     expect(ext).toMatch(/--entrypoint python3 "\$JIMG" \\\n\s+\/ext\/qodo_judge\.py/);
     expect(ext).not.toMatch(/"\$QIMG"[^\n]*\n[^\n]*ext_judge\.py/);
   });
