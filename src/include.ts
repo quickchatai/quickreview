@@ -801,6 +801,21 @@ export const LINE_LOCAL_SLIPS_ADDENDUM =
   "On every CHANGED line, check the small tokens against what the surrounding code and its names intend: each comparison operator and bound (`<` vs `<=`, `>` vs `>=`, an off-by-one in a range, slice or index), each assignment vs compound assignment (`=` vs `+=`/`|=`, a reset that accumulates or an accumulation that resets), each loop or comprehension target (iterating `a` while the body and the names mean `b`), and each identifier that has a near-namesake in scope (`user` vs `users`, `old` vs `new`, `src` vs `dst`, an inner variable shadowing the outer one, a field read from the wrong object). Compare with the line's siblings, the old version of the line, the function's name and docstring, and the tests.\n\n" +
   "Report a slip only with its concrete wrong outcome \u2014 the input or state, what the code does, and what was intended \u2014 at the slip's `path:line`, at the severity that outcome earns (a slip is not a nit because it is one token). Do not report a token that is deliberate and consistent with its siblings and tests; say what made it deliberate instead.\n";
 
+// Freeze fixes 2 (the cross-benchmark miss analysis, 2026-10-03): the most
+// common never-raised miss was a lens that confirmed a mechanism at one site
+// and stopped — one broken override of three, the leak but not the skipped
+// refresh, the remove twin but not the add, the first throwing call in a loop
+// but not the next. The lens that confirmed it holds the context; a separate
+// lens would have to rediscover it. PR builds only.
+export const EXHAUST_THE_SITE_ADDENDUM =
+  "\n## Exhaust the site before you move on (sandbox rule)\n" +
+  "When you CONFIRM a defect's mechanism, do not stop at the first place it shows. Before moving to the next part of the diff, go back over the same site and its siblings:\n\n" +
+  "- **Siblings of the same shape**: the other overrides, fields, keys, branches, timers, enum arms, registry entries or parallel methods the PR touches in the same way. Check each for the same mechanism.\n" +
+  "- **The twin**: the `add` beside the `remove`, the setter beside the getter, the error path beside the success path, the cleanup beside the setup, the other side of a serialize/deserialize or encode/decode pair.\n" +
+  "- **Every consequence**: an early return, a reorder, a bypass or a swallowed error usually breaks more than one thing on the skipped path (a refresh not fired, an event not sent, a counter not updated, a resource not freed). List each.\n" +
+  "- **The other failures in the same loop or call chain**: when one call inside a loop can throw or return nothing, check the other calls in that loop too.\n\n" +
+  "Report each site or consequence that needs its OWN fix as its own finding (with its `path:line`); report sites that one fix covers together, every site listed. Saying it once in passing inside another finding is not reporting it.\n";
+
 // Round 4 (ROUND4-GAPS.md): a stylesheet change removed a rule the component the PR targeted no longer needed, while a server-rendered fallback template of the same selector still did. The lenses read the targeted component only. PR builds only.
 export const REMOVED_RULE_OTHER_CONSUMERS_ADDENDUM =
   "\n## A removed or changed rule may have consumers the PR did not look at (sandbox rule)\n" +
@@ -1326,6 +1341,7 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
   { id: "anchor-at-cause", scope: "lenses", mode: "pr", text: ANCHOR_AT_CAUSE_ADDENDUM },
   { id: "validate-anchor-at-cause", scope: [VALIDATE_PASS], mode: "pr", text: VALIDATE_ANCHOR_AT_CAUSE_ADDENDUM },
   { id: "line-local-slips", scope: ["pass-baseline", "pass-sweep"], mode: "pr", text: LINE_LOCAL_SLIPS_ADDENDUM },
+  { id: "exhaust-the-site", scope: ["pass-baseline", "pass-sweep", "pass-widened", "pass-behaviour-delta"], mode: "pr", text: EXHAUST_THE_SITE_ADDENDUM },
   { id: "style-written-rule-checklist", scope: [STYLE_PASS_NAME], mode: "pr", text: STYLE_WRITTEN_RULE_CHECKLIST_ADDENDUM },
   { id: "validate-convention-rule", scope: [VALIDATE_PASS], mode: "pr", text: VALIDATE_CONVENTION_RULE_ADDENDUM },
   { id: "validate-new-code-and-base", scope: [VALIDATE_PASS], mode: "pr", text: VALIDATE_NEW_CODE_AND_BASE_ADDENDUM },

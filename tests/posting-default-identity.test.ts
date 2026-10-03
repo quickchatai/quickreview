@@ -202,8 +202,10 @@ const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
 //     style-not-in-guide), `validate-new-code-and-base`, documented semantics
 //     extended to published standards (freeze fixes 2, the cross-benchmark
 //     miss analysis: AACR lint kills, Qodo "base had the same gap")
-const GOLDEN_AGENTS_NO_DEDUP = "6852cb2be460901a9c431689a040bbae5492e0d3164c7f1ae553fa3bbf5ff9d4";
+//   → f36c394a… `exhaust-the-site` (pass-baseline, pass-sweep, pass-widened, pass-behaviour-delta): siblings, twins, every consequence (freeze fixes 2)
+const GOLDEN_AGENTS_NO_DEDUP = "f36c394a1af37b6d0eb17d38adbc8abc00975899dce8140e029ec758ba97da75";
 //   → (round 7, docs/duplicate-merge.md) `dedup-group-validate` (pass-validate,
 //     `[review] dedup_merge` on by default) and the default profile's posting
 //     addendum for `repeat_sites = false`. Off + no policy = the pin above.
-const GOLDEN_AGENTS = "2c4f5344d2360e736e7ccd9d43241a44904df9fd5dfe2bee1afe8193386489d3";
+//   → fe4177b8… `exhaust-the-site` (pass-baseline, pass-sweep, pass-widened, pass-behaviour-delta): siblings, twins, every consequence (freeze fixes 2)
+const GOLDEN_AGENTS = "fe4177b87da7b3b0a77a673897e1fa9682f0b71ae84cec32a82c2e16ac9537eb";
