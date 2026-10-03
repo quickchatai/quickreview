@@ -118,15 +118,19 @@ describe("[posting] — the default profile builds and renders byte-identically"
 // `{{render_note}}` (write the findings record first, render the body and the
 // inline comments with scripts/render-review.sh). With the lever off the
 // orders are byte-identical to the pre-lever pins below.
+// Re-pinned 2026-10-03 (both maps): the step-6 anchor rule of the three round
+// templates says "Anchor at the cause" — the line a fix would edit, the
+// symptom site named in the body (round 6, mined from the Qodo run: about nine
+// findings anchored on the test or caller that exposed the defect).
 const GOLDEN_ORDERS: Record<string, string> = {
-  first: "89da0c4505c1b18b901f02e18f437c22ec65246be63a8731dbaa6ced9a8d9ca7",
-  "re-review": "54d8e08c7b18bbffb955fd09e9439ed034d2968caa47af39bdb106847b410ded",
-  staleness: "35c244ecc10dfc0d7038254a48ce0af058126743c5b7f5b9afa0297a34340efd",
+  first: "e4d416f0b1b8bc90a8c99bc7b5d40b999dd3cf6cf6ccf31ea14d68f406d189bd",
+  "re-review": "e496362d1e1a496c994e96c73aec8864c0d188e8de12c4d0471ffc3bf0989e28",
+  staleness: "1f715115beed263bb8b18cae908a97f07162aa9a8fb20f4458b5fad85831c7bf",
 };
 const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
-  first: "444ab8da6cd0304700de15a70c0de934259c0182010ebdcd413955d830556099",
-  "re-review": "c1cde722e3f0b5afb9641421785e0185520d7432d85881e0ec2fcb0bb2d077b5",
-  staleness: "1079ed8f0fe4d1ed00d04d5a6639649cf4c5c5e109607563217cd980d01c72a7",
+  first: "3dddb72bc299b5893d679a6215880cb0b442b2403b2d91052e22fc1a4e0299ab",
+  "re-review": "456c7615f48a28d595499ec1b739aa29381eebc5c4f635d3caed3a07a21efd1b",
+  staleness: "a4f26831fb2c34864d3b367e9a24bd31390918902ec5f9c9b7721b0cbb4c4f94",
 };
 // Deliberate re-pins — the default profile's built agents changed ON PURPOSE,
 // never through `[posting]` (owner-approved review changes, 2026-10-02, after
@@ -150,4 +154,6 @@ const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
 //     from the Qodo run: 13 written-rule violations killed "from a non-style lens")
 //   → 65df59a1… `reordered-statements` (pass-baseline, pass-sweep; round 5,
 //     the largest never-raised functional class in the Qodo run)
-const GOLDEN_AGENTS = "65df59a151755e37dbd369fdc605281e1cd60c533b59237c773afa136943c463";
+//   → 8b5461c4… `anchor-at-cause` (every lens) and `validate-anchor-at-cause`
+//     (pass-validate): anchor at the line a fix would edit (round 6, Qodo run)
+const GOLDEN_AGENTS = "8b5461c47a37b52dffbd5170e3df7a1f8ecc1a71c6f909db415af0d2a123117d";

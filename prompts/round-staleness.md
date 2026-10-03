@@ -556,8 +556,11 @@ double-check` section (concrete, minutes-verifiable bullets), standard footer.
 REQUEST_CHANGES/COMMENT posts **only** through `scripts/post-review.sh`; a
 re-APPROVE goes through `scripts/approve-pr.sh`.
 
-**Anchor where the defect shows.** Put each row on the changed line where a
-reader sees the problem: the line that must change, or the line that breaks. A
+**Anchor at the cause.** Put each row on the changed line that must change —
+the line a fix would edit — not on a test, caller or config that only exposes
+the problem; name that symptom site in the body instead. When the cause is in
+code this diff does not change, anchor the nearest changed line that makes it
+reachable and say so. A
 defect caused by DELETED lines is not unanchorable: anchor it on the RIGHT-side
 line of the same hunk where the breakage appears — any line GitHub shows in
 that hunk, context lines included, is a valid anchor — or on the deleted run

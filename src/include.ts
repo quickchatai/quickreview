@@ -768,6 +768,16 @@ export const REORDERED_STATEMENTS_ADDENDUM =
   "When the diff MOVES, swaps or regroups statements without changing them \u2014 initialisation or startup steps (one moved into a parallel `Promise.all`/`gather`/task group, or after something that uses it), registration or plugin/layer order, teardown and cleanup (a resource released before its last user, test state reset before or after the parent's teardown), a close/finish/dispose/navigate before a callback, resolve, send or await that needs the object still open, a periodic job run before the state it reads is refreshed, a value set after the loop that should have used it, a size applied before a position or the like where the API's later call wins \u2014 write the OLD order and the NEW order side by side and state what the old order guaranteed: which step needed which other step's result or state first. Then check the new order still provides it. Read the callee or framework contract when the guarantee lives there (what `super.tearDown()` releases, what the event loop runs first, what a later setter overrides).\n\n" +
   "Report a broken guarantee at the moved statement's `path:line`, citing the step it now runs before or after, the state that is missing or stale at that point, and what the user or caller sees. Do not report a reorder whose steps are independent (no shared state, no ordering contract); say why they are independent instead of reporting it.\n";
 
+// Round 6 (REVIEW-MINING.md §7): of 220 findings the Qodo run's judge matched on meaning, 23 missed the issue's location — about nine sat on the SYMPTOM site (the test that exposes a wrong cap instead of the service that computes it, the caller that drops a field instead of the repository query that omits it, a lint config instead of the import it forbids) and five sat in the right file but well away from the faulty line. A comment belongs where the fix goes. Lenses and the validator; PR builds only.
+export const ANCHOR_AT_CAUSE_ADDENDUM =
+  "\n## Anchor a finding at its cause, not at its symptom (sandbox rule)\n" +
+  "Give each finding the `path:line` of the CHANGED line that causes the defect \u2014 the line a fix would edit: the wrong constant, the comparison, the query that omits a field, the import that breaks a boundary. Where the defect only SHOWS elsewhere \u2014 a test that exposes it, a caller that receives the bad value, a config or lint rule that forbids it, a later line that crashes \u2014 name that site in the body as the symptom (`path:line`), never as the anchor. Within the causing file, anchor the exact line, not the enclosing function's header or the hunk's first line.\n\n" +
+  "Two exceptions keep the current behaviour. When the cause is in code this PR does not change, anchor the nearest changed line that makes it reachable and say in the body that the cause lies outside the diff (cite it). When the defect IS in the test \u2014 a test that cannot fail, a wrong expectation \u2014 the test line is the cause and is the anchor.\n";
+
+export const VALIDATE_ANCHOR_AT_CAUSE_ADDENDUM =
+  "\n## Re-anchor to the cause (sandbox rule)\n" +
+  "When you fix an anchor (your step 3), move it to the CHANGED line that causes the defect \u2014 the line a fix would edit \u2014 not to where it shows. A candidate anchored on a test, a caller or a config that merely exposes a defect in changed production code is re-anchored on that production line, with the symptom site kept in the body; this is a correction, never a `bad-anchor` kill. Leave the anchor alone when the cause is outside the diff (the nearest changed line that makes it reachable stays) or when the defect is in the test itself.\n";
+
 // Round 4 (ROUND4-GAPS.md): a stylesheet change removed a rule the component the PR targeted no longer needed, while a server-rendered fallback template of the same selector still did. The lenses read the targeted component only. PR builds only.
 export const REMOVED_RULE_OTHER_CONSUMERS_ADDENDUM =
   "\n## A removed or changed rule may have consumers the PR did not look at (sandbox rule)\n" +
@@ -1250,6 +1260,8 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
   { id: "contract-values-renumbered", scope: ["pass-baseline", "pass-backcompat", "pass-contracts"], mode: "pr", text: CONTRACT_VALUES_RENUMBERED_ADDENDUM },
   { id: "validate-documented-semantics", scope: [VALIDATE_PASS], mode: "pr", text: VALIDATE_DOCUMENTED_SEMANTICS_ADDENDUM },
   { id: "reordered-statements", scope: ["pass-baseline", "pass-sweep"], mode: "pr", text: REORDERED_STATEMENTS_ADDENDUM },
+  { id: "anchor-at-cause", scope: "lenses", mode: "pr", text: ANCHOR_AT_CAUSE_ADDENDUM },
+  { id: "validate-anchor-at-cause", scope: [VALIDATE_PASS], mode: "pr", text: VALIDATE_ANCHOR_AT_CAUSE_ADDENDUM },
   // the one corpus-derived rule that is generic review behaviour.
   // Its six house-rule siblings ride the live deployment's profile addenda pack since
   // (see the banner above); wire.ts composes a profile pack after

@@ -64,3 +64,42 @@ describe("reordered-statements (pass-baseline, pass-sweep)", () => {
     expect(bodyOf("pass-baseline")).toContain("A reorder changes what the old order guaranteed");
   });
 });
+
+// Round 6 (REVIEW-MINING.md §7), mined from the Qodo run with no new run.
+describe("anchor-at-cause (every lens + the validator's re-anchor)", () => {
+  const ids = (p: string, mode: "pr" | "scan") => addendaForPass(p, PASS_ADDENDA, "django", mode).map((a) => a.id);
+
+  it("binds every lens and the validator, PR builds only", () => {
+    for (const p of ["pass-baseline", "pass-sweep", "pass-tests", "pass-security"]) {
+      expect(ids(p, "pr")).toContain("anchor-at-cause");
+      expect(ids(p, "scan")).not.toContain("anchor-at-cause");
+    }
+    expect(ids("pass-validate", "pr")).toContain("validate-anchor-at-cause");
+    expect(ids("pass-validate", "pr")).not.toContain("anchor-at-cause");
+  });
+
+  it("anchors at the line a fix would edit, the symptom in the body, with both exceptions", () => {
+    const t = text("anchor-at-cause");
+    expect(t).toMatch(/CHANGED line that causes the defect/);
+    expect(t).toMatch(/name that site in the body as the symptom/);
+    expect(t).toMatch(/cause is in code this PR does not change, anchor the nearest changed line/);
+    expect(t).toMatch(/defect IS in the test .* the test line is the cause/);
+    expect(t).not.toMatch(NO_BENCHMARK_NAMES);
+    expect(bodyOf("pass-baseline")).toContain("Anchor a finding at its cause, not at its symptom");
+  });
+
+  it("the validator re-anchors to the cause as a correction, never a bad-anchor kill", () => {
+    const t = text("validate-anchor-at-cause");
+    expect(t).toMatch(/re-anchored on that production line/);
+    expect(t).toMatch(/never a `bad-anchor` kill/);
+    expect(bodyOf("pass-validate")).toContain("Re-anchor to the cause");
+  });
+
+  it("every round template says anchor at the cause, and none still says where it shows", () => {
+    for (const f of ["round-first.md", "round-re-review.md", "round-staleness.md"]) {
+      const s = readFileSync(join(root, "prompts", f), "utf8");
+      expect(s, f).toContain("**Anchor at the cause.**");
+      expect(s, f).not.toContain("Anchor where the defect shows");
+    }
+  });
+});
