@@ -156,4 +156,6 @@ const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
 //     the largest never-raised functional class in the Qodo run)
 //   → 8b5461c4… `anchor-at-cause` (every lens) and `validate-anchor-at-cause`
 //     (pass-validate): anchor at the line a fix would edit (round 6, Qodo run)
-const GOLDEN_AGENTS = "8b5461c47a37b52dffbd5170e3df7a1f8ecc1a71c6f909db415af0d2a123117d";
+//   → 3c0cce3e… `line-local-slips` (pass-baseline, pass-sweep): one-token
+//     operator/variable slips on changed lines (round 6, Qodo + Martian goldens)
+const GOLDEN_AGENTS = "3c0cce3e49f92b500b4073c82783915f69871234d36b373d865e88142a1b84e9";

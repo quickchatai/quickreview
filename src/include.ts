@@ -778,6 +778,12 @@ export const VALIDATE_ANCHOR_AT_CAUSE_ADDENDUM =
   "\n## Re-anchor to the cause (sandbox rule)\n" +
   "When you fix an anchor (your step 3), move it to the CHANGED line that causes the defect \u2014 the line a fix would edit \u2014 not to where it shows. A candidate anchored on a test, a caller or a config that merely exposes a defect in changed production code is re-anchored on that production line, with the symptom site kept in the body; this is a correction, never a `bad-anchor` kill. Leave the anchor alone when the cause is outside the diff (the nearest changed line that makes it reachable stays) or when the defect is in the test itself.\n";
 
+// Round 6 (REVIEW-MINING.md §7): line-local slips — `+=` where `=` was meant, `>=` for `>`, a loop over the wrong collection, a variable that shadows its namesake — were about eight never-raised functional issues across repos in the Qodo run, and about half of Martian's valid goldens are the same shape. The lenses read for the PR's larger defects and pass over a one-token slip. pass-baseline and pass-sweep; PR builds only.
+export const LINE_LOCAL_SLIPS_ADDENDUM =
+  "\n## One-token slips on changed lines (sandbox rule)\n" +
+  "On every CHANGED line, check the small tokens against what the surrounding code and its names intend: each comparison operator and bound (`<` vs `<=`, `>` vs `>=`, an off-by-one in a range, slice or index), each assignment vs compound assignment (`=` vs `+=`/`|=`, a reset that accumulates or an accumulation that resets), each loop or comprehension target (iterating `a` while the body and the names mean `b`), and each identifier that has a near-namesake in scope (`user` vs `users`, `old` vs `new`, `src` vs `dst`, an inner variable shadowing the outer one, a field read from the wrong object). Compare with the line's siblings, the old version of the line, the function's name and docstring, and the tests.\n\n" +
+  "Report a slip only with its concrete wrong outcome \u2014 the input or state, what the code does, and what was intended \u2014 at the slip's `path:line`, at the severity that outcome earns (a slip is not a nit because it is one token). Do not report a token that is deliberate and consistent with its siblings and tests; say what made it deliberate instead.\n";
+
 // Round 4 (ROUND4-GAPS.md): a stylesheet change removed a rule the component the PR targeted no longer needed, while a server-rendered fallback template of the same selector still did. The lenses read the targeted component only. PR builds only.
 export const REMOVED_RULE_OTHER_CONSUMERS_ADDENDUM =
   "\n## A removed or changed rule may have consumers the PR did not look at (sandbox rule)\n" +
@@ -1262,6 +1268,7 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
   { id: "reordered-statements", scope: ["pass-baseline", "pass-sweep"], mode: "pr", text: REORDERED_STATEMENTS_ADDENDUM },
   { id: "anchor-at-cause", scope: "lenses", mode: "pr", text: ANCHOR_AT_CAUSE_ADDENDUM },
   { id: "validate-anchor-at-cause", scope: [VALIDATE_PASS], mode: "pr", text: VALIDATE_ANCHOR_AT_CAUSE_ADDENDUM },
+  { id: "line-local-slips", scope: ["pass-baseline", "pass-sweep"], mode: "pr", text: LINE_LOCAL_SLIPS_ADDENDUM },
   // the one corpus-derived rule that is generic review behaviour.
   // Its six house-rule siblings ride the live deployment's profile addenda pack since
   // (see the banner above); wire.ts composes a profile pack after

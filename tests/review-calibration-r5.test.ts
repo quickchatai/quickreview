@@ -103,3 +103,25 @@ describe("anchor-at-cause (every lens + the validator's re-anchor)", () => {
     }
   });
 });
+
+describe("line-local-slips (pass-baseline, pass-sweep)", () => {
+  it("binds the two line-reading lenses, PR builds only", () => {
+    const ids = (p: string, mode: "pr" | "scan") => addendaForPass(p, PASS_ADDENDA, "django", mode).map((a) => a.id);
+    for (const p of ["pass-baseline", "pass-sweep"]) {
+      expect(ids(p, "pr")).toContain("line-local-slips");
+      expect(ids(p, "scan")).not.toContain("line-local-slips");
+    }
+    expect(ids("pass-validate", "pr")).not.toContain("line-local-slips");
+  });
+
+  it("checks operators, assignments, loop targets and near-namesakes, at the severity the outcome earns", () => {
+    const t = text("line-local-slips");
+    for (const re of [/comparison operator and bound/, /assignment vs compound assignment/, /loop or comprehension target/, /near-namesake in scope/])
+      expect(t).toMatch(re);
+    expect(t).toMatch(/concrete wrong outcome/);
+    expect(t).toMatch(/at the severity that outcome earns/);
+    expect(t).toMatch(/Do not report a token that is deliberate/);
+    expect(t).not.toMatch(NO_BENCHMARK_NAMES);
+    expect(bodyOf("pass-sweep")).toContain("One-token slips on changed lines");
+  });
+});
