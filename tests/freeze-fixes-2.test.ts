@@ -172,3 +172,15 @@ describe("sweep mechanical checklist", () => {
     expect(t).not.toMatch(NO_BENCHMARK_NAMES);
   });
 });
+
+describe("pass-tests: a loosened test is evidence of a behaviour change", () => {
+  it("binds pass-tests (PR builds) and reports the production behaviour, not coverage", () => {
+    expect(ids("pass-tests")).toContain("tests-loosened-is-behaviour");
+    expect(ids("pass-tests", "scan")).not.toContain("tests-loosened-is-behaviour");
+    const t = text("tests-loosened-is-behaviour");
+    expect(t).toMatch(/RELAXES an existing test/);
+    expect(t).toMatch(/Report THAT behaviour change as the finding, anchored at the production line/);
+    expect(t).toMatch(/It is not a coverage note/);
+    expect(t).not.toMatch(NO_BENCHMARK_NAMES);
+  });
+});

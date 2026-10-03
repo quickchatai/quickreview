@@ -742,6 +742,16 @@ export const VALIDATE_MASKED_DEFECT_ADDENDUM =
 // changes that cannot observe what it claims to test is a defect in the PR,
 // not a test-only nit. The lens half names the shapes; the validator half stops
 // the "not a production defect" downgrade.
+// Freeze fixes 2 (the cross-benchmark miss analysis): a PR that loosened an
+// existing assertion or test harness (a bound widened, an expected count
+// relaxed, a harness made tolerant) was filed as a coverage gap — but a test
+// loosened to pass is the PR telling you the behaviour changed. AACR 3 (2
+// medium). pass-tests; PR builds only.
+export const TESTS_LOOSENED_IS_BEHAVIOUR_ADDENDUM =
+  "\n## A loosened test is evidence of a behaviour change (sandbox rule)\n" +
+  "When the PR RELAXES an existing test — widens a bound or tolerance, lowers an expected count, replaces an exact value with a range or `any`, drops an assertion, adds a retry, a longer timeout or a skip, makes a harness tolerate an error — ask why the old expectation no longer holds. Read the production change the test now accommodates and name the behaviour that changed (work spread differently, a slot or limit accounted differently, an error now swallowed). Report THAT behaviour change as the finding, anchored at the production line, with the loosened assertion as the evidence. It is not a coverage note, and it is not resolved by the test passing.\n\n" +
+  "A relaxation the PR explains as intended (the old bound was wrong, the new behaviour is the point) is not a finding.\n";
+
 export const TESTS_CANNOT_OBSERVE_ADDENDUM =
   "\n## A test that cannot observe what it claims to test is a `P2` defect (sandbox rule)\n" +
   "For every test the PR ADDS or CHANGES, name the behaviour it claims to test — its name, its docstring, the PR text — and check, by reading, that it would FAIL if that behaviour were broken. It cannot when:\n\n" +
@@ -1340,6 +1350,7 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
   },
   { id: "validate-masked-defect", scope: [VALIDATE_PASS], mode: "pr", text: VALIDATE_MASKED_DEFECT_ADDENDUM },
   { id: "tests-cannot-observe", scope: ["pass-tests"], mode: "pr", text: TESTS_CANNOT_OBSERVE_ADDENDUM },
+  { id: "tests-loosened-is-behaviour", scope: ["pass-tests"], mode: "pr", text: TESTS_LOOSENED_IS_BEHAVIOUR_ADDENDUM },
   {
     id: "tests-cannot-observe-validate",
     scope: [VALIDATE_PASS],
