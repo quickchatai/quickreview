@@ -38,8 +38,8 @@ What a slip looks like:
 - placeholder text that ships: `TODO`, `FIXME`, stub help or error text, a raw
   translation key shown to users where a translated string was meant;
 - a new binding, import or parameter nothing uses — a build break when the
-  repo's lint or compiler settings reject unused code (read the CI or lint
-  config before calling it one);
+  compiler rejects unused code (a CI-run lint rule is
+  `pass-lint-conformance`'s);
 - parsing without cleaning: `split(',')` without trimming or dropping empties,
   a number parse with no invalid-input path, a cast of fetched JSON to a type
   with no runtime check;

@@ -57,9 +57,8 @@ finding that names no concrete cost is taste — drop it.
 
 - **Style is excluded.** Formatting, whitespace, line length, quote style,
   import order, brace placement, naming CONVENTIONS (camelCase vs
-  snake_case), comment grammar — every repo has its own style, a formatter
-  or linter in CI enforces most of it, and the `pass-style` lens handles it
-  only where the repo writes its style guide down. Never raise one here.
+  snake_case), comment grammar: a written-guide rule is `pass-style`'s, a
+  rule a CI-run linter or formatter enforces is `pass-lint-conformance`'s.
 - **Not correctness.** A real bug you notice belongs to its owning lens —
   raise it as ONE `P3` question naming the concern.
 - **Not the other structure lenses.** Where the code should live is

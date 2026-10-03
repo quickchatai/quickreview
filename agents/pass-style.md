@@ -23,11 +23,10 @@ answer `NONE`.
 
 ## Out of scope even with a guide
 
-- **What a tool already enforces.** When the repo configures a formatter or
-  linter for the rule (prettier, black, ruff, eslint, gofmt, clang-format,
-  rustfmt, checkstyle…), CI owns it — the review reads CI, it never
-  re-runs it. Raise a tool-enforceable rule only when the guide says it is
-  NOT tool-enforced.
+- **What a CI-run tool enforces.** A rule that a formatter or linter a CI job
+  runs enforces (prettier, black, ruff, eslint, gofmt, clang-format, rustfmt,
+  checkstyle…) belongs to `pass-lint-conformance` as a build defect, not to
+  this lens as a nit.
 - **Lines the change did not write.** Only changed lines; never a
   pre-existing violation next to them.
 - **Anything that is not style.** Correctness, maintainability, duplication,

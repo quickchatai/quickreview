@@ -258,7 +258,8 @@ const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
 // Re-pinned 2026-10-03: `regression-test-ask` (pass-tests) and `regression-test-ask-validate`: a PR that claims a bug fix with no test exercising the fixed path gets one regression-test request (owner decision)
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): the doc header and the RATIFIED fence marker lines no longer reach the model (stripped at render and at agent build; kept in the source)
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ticket ids, dated asides and deployed-repo statistics outside the ratified fences removed from the round templates, the addenda and pass-ask-human
-const GOLDEN_AGENTS_NO_DEDUP = "16795f63cad9d4551efba717cb00e4b116120f757bf74b37eb11034f6f505b0c";
+// Re-pinned 2026-10-03 (prompt cleanup, owner-approved): contradictions resolved by keeping the newer rule (style/convention judged only by validate-convention-rule; cross-file un-merge bullet removed; unverifiable/low confidence are doubts; lens briefs point CI-run lint at pass-lint-conformance; concurrency brief describes its content planning)
+const GOLDEN_AGENTS_NO_DEDUP = "761dd60a1f0899114590cfb0e7aedaf4830a959f5da559a58a6ea7261762c33e";
 //   → (round 7, docs/duplicate-merge.md) `dedup-group-validate` (pass-validate,
 //     `[review] dedup_merge` on by default) and the default profile's posting
 //     addendum for `repeat_sites = false`. Off + no policy = the pin above.
@@ -274,4 +275,5 @@ const GOLDEN_AGENTS_NO_DEDUP = "16795f63cad9d4551efba717cb00e4b116120f757bf74b37
 // Re-pinned 2026-10-03: `regression-test-ask` (pass-tests) and `regression-test-ask-validate`: a PR that claims a bug fix with no test exercising the fixed path gets one regression-test request (owner decision)
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): the doc header and the RATIFIED fence marker lines no longer reach the model (stripped at render and at agent build; kept in the source)
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ticket ids, dated asides and deployed-repo statistics outside the ratified fences removed from the round templates, the addenda and pass-ask-human
-const GOLDEN_AGENTS = "67dfe8a002aee2f04134b500dfabb17515cd9328ea6362a0af43428042afbd44";
+// Re-pinned 2026-10-03 (prompt cleanup, owner-approved): contradictions resolved by keeping the newer rule (style/convention judged only by validate-convention-rule; cross-file un-merge bullet removed; unverifiable/low confidence are doubts; lens briefs point CI-run lint at pass-lint-conformance; concurrency brief describes its content planning)
+const GOLDEN_AGENTS = "f08ab5741dca130debf6d0ace855ad32d2235494108e2b335b3c81d86f179ae8";

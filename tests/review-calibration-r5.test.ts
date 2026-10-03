@@ -35,8 +35,9 @@ const text = (id: string) => PASS_ADDENDA.find((a) => a.id === id)!.text;
 describe("a written rule raised by any lens is judged as style, not killed for its lens", () => {
   it("the validator keeps a rule-quoting convention finding as a nit and still kills unwritten taste", () => {
     const t = text("quality-cap-validate");
-    expect(t).toMatch(/killed `style-not-in-guide`.*when neither a rule the repo wrote nor a lint or format tool its CI runs covers it/);
-    expect(t).toMatch(/One rule for conventions/);
+    // quality-cap no longer restates the style kill: it defers, once, to the convention rule.
+    expect(t).toMatch(/judged only under \*One rule for conventions\*/);
+    expect(t).not.toMatch(/`pass-style` findings are `nit`, always/);
     const c = text("validate-convention-rule");
     expect(c).toMatch(/from ANY lens/);
     expect(c).toMatch(/never kill it for the lens it came from/);

@@ -43,7 +43,8 @@ different case, a comment explains the departure) is not a finding.
 ## Not this lens
 
 - **Style is excluded** — formatting, naming conventions, import order and the
-  like belong to the repo's written guide and `pass-style` alone. "The
+  like are `pass-style`'s (written guide) or `pass-lint-conformance`'s
+  (CI-run linter or formatter). "The
   siblings use camelCase" is never a consistency finding; "the siblings all
   check permission X and this one does not" is.
 - The same knowledge written twice is `pass-duplication`; where code lives is

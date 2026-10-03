@@ -51,7 +51,8 @@ var, the clock, the working directory) and observable behaviour:
 
 Severity follows the consequence: a test the change breaks is a broken CI run
 and usually blocks; a test that proves nothing next to a real behaviour change
-is a real gap. Missing tests for new behaviour are the baseline lens's call, not
-yours — this lens is about the tests that exist. `NONE` when every test that
+is a real gap. Missing tests for new behaviour are the baseline lens's call, and
+a bug-fix PR with no regression test gets one request from the regression-test
+rule — not yours to repeat; this lens is about the tests that exist. `NONE` when every test that
 touches the change still holds and the PR's tests exercise the code they claim
 to.

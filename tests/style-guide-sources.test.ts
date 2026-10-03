@@ -326,11 +326,13 @@ describe("style findings are nits unless the profile raises the ceiling", () => 
     const validator = (cfg: Config) =>
       agents(cfg).get(`pass-validate--${cfg.models.validate_tier}`)!;
     const plain = validator(tuned(""));
-    expect(plain).toContain("**`pass-style` findings are `nit`, always**");
+    // The built-in cap now lives in the one convention rule (case 1: keep as a nit).
+    const NIT_CAP = "keep it as a `[nit]` (demote higher with `style-over-cap`)";
+    expect(plain).toContain(NIT_CAP);
     expect(plain).not.toContain("Severity ceiling for `pass-style`");
     profile("loud", `${GUIDED}max_severity = "P2"\n`, { "style-guide.md": GUIDE });
     const raised = validator(tuned("loud"));
-    const cap = raised.indexOf("**`pass-style` findings are `nit`, always**");
+    const cap = raised.indexOf(NIT_CAP);
     const ceiling = raised.indexOf("Severity ceiling for `pass-style`: `P2`");
     expect(cap).toBeGreaterThan(-1);
     // Composed after the built-in cap, and it REPLACES it.

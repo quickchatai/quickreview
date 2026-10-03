@@ -88,9 +88,13 @@ describe("the style lens", () => {
   });
 
   it("style from any other lens is killed; the style lens itself is nit-only", () => {
+    // One owner for conventions: the convention rule (case 1 → nit, demoted with
+    // style-over-cap; case 3 → killed style-not-in-guide). quality-cap defers to it.
     const cap = addendaForPass(VALIDATE_PASS).find((a) => a.id === "quality-cap-validate")!;
-    expect(cap.text).toContain("`style-not-in-guide`");
-    expect(cap.text).toContain("`style-over-cap`");
+    expect(cap.text).toContain("One rule for conventions");
+    const conv = addendaForPass(VALIDATE_PASS).find((a) => a.id === "validate-convention-rule")!;
+    expect(conv.text).toContain("`style-not-in-guide`");
+    expect(conv.text).toContain("`style-over-cap`");
     expect(KILL_WORDS).toContain("style-not-in-guide");
     expect(DOWNGRADE_WORDS).toContain("style-over-cap");
     // The maintainability lens never raises style.
