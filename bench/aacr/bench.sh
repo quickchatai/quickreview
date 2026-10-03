@@ -513,8 +513,23 @@ case "$cmd" in
     # re-scores saved verdicts with no model call and no network.
     need_image
     d="$(run_dir)"
-    [[ -f "$HERE/defects/$SET.json" ]] || die "no ground truth for $SET (bench/aacr/defects/$SET.json)"
-    jm=(--mount "type=bind,src=$HERE/defects,dst=/opt/quickreview/bench/defects,readonly")
+    # A derived set (sets/<set>.json "defects_from": "<parent>") with no key of
+    # its own is judged on its parent's key cut to its cases, defects unchanged
+    # (bench/aacr/derive_defects.py) — written to a scratch copy of defects/,
+    # never into the checkout. A committed defects/<set>.json always wins.
+    DEFECTS_DIR="$HERE/defects"
+    if [[ ! -f "$DEFECTS_DIR/$SET.json" && -f "$HERE/sets/$SET.json" ]]; then
+      parent="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("defects_from") or "")' "$HERE/sets/$SET.json")"
+      if [[ -n "$parent" ]]; then
+        [[ -f "$HERE/defects/$parent.json" ]] || die "$SET: defects_from $parent, but bench/aacr/defects/$parent.json is missing"
+        DEFECTS_DIR="$(mktemp -d)"; cp "$HERE"/defects/*.json "$DEFECTS_DIR/"
+        python3 "$HERE/derive_defects.py" "$HERE/defects/$parent.json" "$HERE/sets/$SET.json" > "$DEFECTS_DIR/$SET.json" \
+          || die "$SET: could not derive its key from $parent"
+        echo "bench: $SET judged on $parent's key cut to its cases" >&2
+      fi
+    fi
+    [[ -f "$DEFECTS_DIR/$SET.json" ]] || die "no ground truth for $SET (bench/aacr/defects/$SET.json)"
+    jm=(--mount "type=bind,src=$DEFECTS_DIR,dst=/opt/quickreview/bench/defects,readonly")
     jn=(--network none)
     if [[ "$cmd" == judge ]]; then
       auth_mounts; jm+=("${AUTH[@]}" --mount "type=volume,src=$REPOS_VOLUME,dst=/repos,readonly"); jn=()

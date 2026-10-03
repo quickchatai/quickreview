@@ -7,6 +7,7 @@
     "sha256": "d8683cb240249bc4e0aff6428802bdffa7b7573ace600552cab1cd0cb7e905c9"
   },
   "rule": "docs/duplicate-merge.md measurement: the 5 PRs of rest145 where the stored run (g61-rest145) had the most duplicate findings (posted near-duplicates and follower rows first, then merge-stage merged/folded entries); never a held-out set",
+  "defects_from": "rest145",
   "references": 83,
   "backups": [],
   "cases": [

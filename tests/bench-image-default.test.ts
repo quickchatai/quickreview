@@ -52,3 +52,56 @@ describe("bench.sh: scoring defaults to the run's recorded image", () => {
     expect(lastRun(t.log)).toContain("qcr-bench:latest eval fresh10 mock");
   });
 });
+
+describe("bench.sh judge: a derived set's key is cut from its parent's", () => {
+  const derivedTree = () => {
+    const t = tree();
+    cpSync(join(B, "derive_defects.py"), join(t.here, "derive_defects.py"));
+    mkdirSync(join(t.here, "defects"));
+    mkdirSync(join(t.here, "sets"));
+    writeFileSync(
+      join(t.here, "defects", "parent.json"),
+      JSON.stringify({
+        set: "parent",
+        version: "2",
+        method: "m",
+        cases: { "o__a@1": { defects: [{ id: "D1" }] }, "o__b@2": { defects: [{ id: "D2" }] } },
+      }),
+    );
+    writeFileSync(
+      join(t.here, "sets", "kid.json"),
+      JSON.stringify({ name: "kid", defects_from: "parent", cases: [{ instance_id: "o__b@2" }] }),
+    );
+    return t;
+  };
+
+  it("judges on the parent's key cut to the set's cases, from a scratch dir — never written into defects/", () => {
+    const t = derivedTree();
+    const r = run(t, {}, "judge-report", "--run", "r3", "--set", "kid");
+    expect(r.stderr).toContain("kid judged on parent's key cut to its cases");
+    const line = lastRun(t.log);
+    const src = /type=bind,src=([^,]+),dst=\/opt\/quickreview\/bench\/defects/.exec(line)?.[1];
+    expect(src).toBeDefined();
+    expect(src).not.toBe(join(t.here, "defects"));
+    const key = JSON.parse(readFileSync(join(src!, "kid.json"), "utf8"));
+    expect(Object.keys(key.cases)).toEqual(["o__b@2"]);
+    expect(key.cases["o__b@2"]).toEqual({ defects: [{ id: "D2" }] });
+    expect(key.set).toBe("kid");
+    expect(() => readFileSync(join(t.here, "defects", "kid.json"))).toThrow();
+  });
+
+  it("a committed defects/<set>.json wins over defects_from", () => {
+    const t = derivedTree();
+    writeFileSync(join(t.here, "defects", "kid.json"), "{}");
+    run(t, {}, "judge-report", "--run", "r3", "--set", "kid");
+    expect(lastRun(t.log)).toContain(`type=bind,src=${join(t.here, "defects")},dst=/opt/quickreview/bench/defects`);
+  });
+
+  it("a set with no key and no defects_from still refuses", () => {
+    const t = derivedTree();
+    writeFileSync(join(t.here, "sets", "lone.json"), JSON.stringify({ name: "lone", cases: [] }));
+    const r = run(t, {}, "judge-report", "--run", "r3", "--set", "lone");
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("no ground truth for lone");
+  });
+});
