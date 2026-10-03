@@ -816,8 +816,11 @@ describe("the sandbox cannot post", () => {
   it("the defect judge reads its ground truth and the repos READ-ONLY, and re-scoring needs no network", () => {
     const sh = readFileSync(join(ROOT, "bench", "aacr", "bench.sh"), "utf8");
     const block = sh.slice(sh.indexOf("  judge|judge-report)"), sh.indexOf("  eval)\n"));
+    // The key dir is defects/ itself, or a scratch copy of it with a derived
+    // set's cut key added (defects_from) — read-only either way.
+    expect(block).toContain('DEFECTS_DIR="$HERE/defects"');
     expect(block).toContain(
-      '"type=bind,src=$HERE/defects,dst=/opt/quickreview/bench/defects,readonly"',
+      '"type=bind,src=$DEFECTS_DIR,dst=/opt/quickreview/bench/defects,readonly"',
     );
     expect(block).toContain('"type=volume,src=$REPOS_VOLUME,dst=/repos,readonly"');
     // The login and the repos only for `judge`; `judge-report` is --network none.
