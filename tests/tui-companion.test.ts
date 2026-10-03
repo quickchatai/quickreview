@@ -454,7 +454,7 @@ describe("the reviewed repo, read-only", () => {
   it("alert family 3 does not lean on the retired awaiting_human state", () => {
     const prompt = readFileSync(resolve(root, "prompts/companion.md"), "utf8");
     expect(prompt).not.toMatch(/sitting in `awaiting_human`/);
-    expect(prompt).toContain("`awaiting_human` itself is retired,");
+    expect(prompt).not.toContain("awaiting_human");
     // The live concept: repeated non-decision / the legacy tracked landing.
     expect(prompt).toContain("stuck on repeated non-decision");
   });

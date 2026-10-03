@@ -5,9 +5,8 @@ description: Get an already-decided change into the repo on the right surface �
 
 # Landing a change
 
-This file **is** the doctrine. The routes were decided with the owner on
-, the authority they run under on; those tickets are
-provenance, not the live rule. If the doctrine changes, it changes here.
+This file **is** the doctrine: the routes and the authority they run under
+were decided with the owner. If the doctrine changes, it changes here.
 
 ## The gate before any route: the ratifying turn
 
@@ -16,15 +15,15 @@ authority to commit rests on it**, because the boundary that used to stop you is
 now prose plus this turn and nothing else.
 
 - **Commit only after the owner approves THAT change, in this session, in words.**
-  Not inferred from him reading your verdict. Not from "he asked me to look at
+  Not inferred from them reading your verdict. Not from "they asked me to look at
   the feedback". Not from a standing instruction to improve the reviewer. Not
-  from his silence.
+  from their silence.
 - **The approval is per batch.** One "yes, all three" covers the three changes
   just discussed and nothing else. A fourth change you noticed while committing
   the third is not covered — ask.
 - **It is void at session end.** After a compaction, a day rollover, or a
   restart, a previous yes is history, not permission. Ask again. If you cannot
-  point at his approving words *in the conversation you are currently in*, you
+  point at their approving words *in the conversation you are currently in*, you
   do not have one.
 - **Ambiguous is not approved.** "Sounds right" about an argument is not
   approval of a diff. If you are constructing an argument for why it counts, it
@@ -49,7 +48,7 @@ is **retired**: the curator flags candidates in the digest and
 authors nothing, and never ask the overseer to draft one. The proposal
 *surface* lives on, and **you are its producer now**: when a review-side
 change needs the owner's ratification rather than a ratifying turn, you author
-a proposal directory and his accept click in the TUI ratifies it.
+a proposal directory and their accept click in the TUI ratifies it.
 
 #### Authoring a rubric proposal (the TUI-accept route)
 
@@ -74,7 +73,7 @@ a proposal directory and his accept click in the TUI ratifies it.
   IS the ratification (accept = apply + auto-ratify + local commit; the
   divergence fixture and seed manifest are re-pinned by that path, not by
   you). Reject removes the dir and records a `#rejected-proposal` memory
-  entry — never re-propose one of those. Until he clicks, the directory is
+  entry — never re-propose one of those. Until they click, the directory is
   inert prose; writing it needs no ratifying turn, precisely because it
   changes nothing.
 
@@ -100,7 +99,7 @@ Two things travel with a review-side commit:
 Severity mapping, dispatch, webhook routing, the TUI, yourself. **One rule for
 all of it**: after a ratifying turn, you edit it and commit it. There is
 deliberately **no carve-out** — not for the mutation gate, not for the posting
-guards, not for "anything structural". rejected both carve-outs
+guards, not for "anything structural". The owner rejected both carve-outs
 explicitly, and the recorded consequence is that the safety story for a gate
 edit is the ratifying turn plus a one-key revert, with no second structural
 barrier. Weigh that when you ask.
@@ -149,7 +148,7 @@ that requires changing a ratified invariant lands as an argument in the column
 and, where the invariant lives in a prompt or lens, as a rubric proposal
 directory (route 1 above — PROPOSAL.md making the case, and a patch the TUI
 will accept only for the *unfenced* text around it; the fence itself stays
-his) — never as a commit you write first and mention after.
+theirs) — never as a commit you write first and mention after.
 
 ## The commit
 
@@ -170,12 +169,12 @@ his) — never as a commit you write first and mention after.
   ```
   Feedback-PR: 1234
   Adjudication: FT-NNNN
-  Ratified-in-session: <the session id, and his approving words>
+  Ratified-in-session: <the session id, and their approving words>
   ```
 
   `Feedback-PR:` and `Adjudication:` are omitted when the change did not come
   from an episode. `Ratified-in-session:` is never omitted.
-- **Tell him what you changed, in one line**, naming the surface.
+- **Tell them what you changed, in one line**, naming the surface.
 
 ## Did it actually reach the reviewer?
 
@@ -188,7 +187,7 @@ The answer is already on the owner's screen: the deploy tab shows the VM's
 `deploy.sh --dry-run`'s plan verbatim. So the honest report is: *"committed; it
 shows as pending on the deploy tab; it reaches the reviewer when you deploy."*
 Never say a change is live because you committed it, and never press the deploy
-tab's button on your own judgment — that verb is his finger, not yours.
+tab's button on your own judgment — that verb is their finger, not yours.
 
 ## Never
 

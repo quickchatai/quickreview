@@ -5,9 +5,8 @@ description: Re-run a past episode offline against the committed regression case
 
 # Replaying a past episode
 
-This file **is** the doctrine. The case set was decided with the owner on
- and built on; those tickets are provenance, not
-the live rule. The instrument itself is `src/regression.ts`, and where this file
+This file **is** the doctrine; the case set was decided with the owner. The
+instrument itself is `src/regression.ts`, and where this file
 and that module disagree, **the module wins** — its assertions run, this prose
 does not.
 
@@ -16,7 +15,7 @@ does not.
 **A replay must never become a posting path.**
 
 There is an obvious way to "re-run a review": put the trigger label on the PR
-and let the live daemon dispatch a round. That is how the comparison
+and let the live daemon dispatch a round. That is how the old cutover comparison
 harness worked, and **it is forbidden here** — a live round posts a real review
 to a real author on a real PR. The same applies to every disguised version of
 it:
@@ -102,7 +101,7 @@ Three properties decide how you read a run:
   unreached both before and after is not evidence about the change.
 - **`vacuous` cases** — the replay produced nothing at all for a case that has
   findings. **Suspect the harness before the reviewer.** A vacuous PASS from an
-  extractor that matched nothing was the harness's failure mode; when
+  extractor that matched nothing was the old comparison harness's failure mode; when
   half the cases are vacuous, `runRegression` says `ask-owner` and it means
   it.
 - **Reviewer skew above 40%** means the run is partly measuring one person's

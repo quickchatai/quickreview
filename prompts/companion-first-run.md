@@ -63,7 +63,7 @@ config proposal target, see below).
 you are about to store and propose. Tell the operator the calibration can
 be revisited any time — they just ask you to redo or continue the
 interview in conversation — and that the proposals you filed are waiting
-in the TUI's `[2] Memory & learning` tab for their accept or reject.
+in the TUI's `[7] feedback` tab for their accept or reject.
 
 ## Where each confirmed answer goes
 

@@ -5,10 +5,8 @@ description: Sweep the standing candidate list for reviews that departed from th
 
 # Surveying for candidates
 
-This file **is** the doctrine. It was decided with the owner on
-(what counts as a candidate) and (why this is its own skill); those
-tickets are provenance, not the live rule. If the doctrine changes, it changes
-here. The instrument is `src/tui/candidates.ts`, and where this file and that
+This file **is** the doctrine, decided with the owner. If the doctrine
+changes, it changes here. The instrument is `src/tui/candidates.ts`, and where this file and that
 module disagree, **the module wins** — its code runs, this prose does not.
 
 ## What this is, and what it is not
@@ -31,7 +29,7 @@ departure, and departures are the *space* the survey works in, not a filter that
 narrows it — measured on the live corpus, exactly 2 of 29 PRs took the perfect
 path.
 
-**One carve-out, and it is the owner's, stated in his own terms: a block the
+**One carve-out, and it is the owner's, stated in their own terms: a block the
 author accepted and fixed is the review WORKING.** Block → fix → approve is not
 a candidate and must never be offered as one. It becomes one only if the block
 turned out to be wrong, or was withdrawn. `REPEAT_BLOCK_ROUNDS = 3` in the

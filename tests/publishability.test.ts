@@ -238,12 +238,6 @@ const ALLOWLIST: AllowlistEntry[] = [
       "THE pinning file for the owner_legacy→owner tier fold and flag-owner-legacy→flag-owner command fold",
   },
   {
-    path: "prompts/slack-overseer-appendix.md",
-    tokens: ["owner_legacy"],
-    reason:
-      "frozen appendix deliberately keeps the legacy tier and flag-command spellings (structural, folded on input, test-pinned; containers running older prompts) — superseding it is a future reseed, not",
-  },
-  {
     path: "tests/slack-config.test.ts",
     tokens: ["owner_legacy"],
     reason: "exercises the legacy legacy_owner_slack_id alias (set, conflicting, folded)",
@@ -252,12 +246,6 @@ const ALLOWLIST: AllowlistEntry[] = [
     path: "tests/slack-appendix-schemas.test.ts",
     tokens: ["owner_legacy"],
     reason: "pins the flag-owner-legacy legacy command alias against the frozen appendix seed",
-  },
-  {
-    path: "tests/slack-appendix.test.ts",
-    tokens: ["owner_legacy"],
-    reason:
-      "asserts the FROZEN slack appendix seed's legacy wording — catches up with the reseed",
   },
   {
     path: "tests/slack-router.test.ts",
@@ -704,7 +692,7 @@ describe("publishability lint", () => {
       expect(seedPlant).toEqual([]); // pending_reseed (dead)
     else expect(seedPlant).not.toEqual([]);
     expect(
-      scanFiles([{ path: "prompts/slack-overseer-appendix.md", text: "flag-owner-legacy" }]),
+      scanFiles([{ path: "tests/legacy-acceptance.test.ts", text: "flag-owner-legacy" }]),
     ).toEqual([]); // allowlisted carrier
     expect(scanFiles([{ path: "LICENSE", text: "Copyright Quickchat AI" }])).toEqual([]); // allowlisted token
     expect(scanFiles([{ path: "LICENSE", text: "my-vm" }])).not.toEqual([]); // …but only the GRANTED token

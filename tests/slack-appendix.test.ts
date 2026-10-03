@@ -155,12 +155,12 @@ describe("appendix content contract", () => {
     expect(appendix).toMatch(/ONLY way/i);
   });
 
-  it("states that flag-owner-legacy is tier-free", () => {
-    expect(appendix).toMatch(/`flag-owner-legacy` is TIER-FREE/);
+  it("states that flag-owner is tier-free", () => {
+    expect(appendix).toMatch(/`flag-owner` is TIER-FREE/);
   });
 
   it("names all three tiers", () => {
-    for (const tier of ["anyone", "author", "owner_legacy"]) {
+    for (const tier of ["anyone", "author", "owner"]) {
       expect(appendix).toContain(`\`${tier}\``);
     }
   });

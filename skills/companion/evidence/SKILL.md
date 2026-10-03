@@ -5,9 +5,8 @@ description: Reconstruct what actually happened on a past review round — the p
 
 # Reconstructing a review episode
 
-This file **is** the doctrine. It was decided with the owner on (the
-skill set) and (how evidence reaches you); those tickets are
-provenance, not the live rule. If the doctrine changes, it changes here.
+This file **is** the doctrine, decided with the owner. If the doctrine
+changes, it changes here.
 
 ## What this is, and what it is not
 

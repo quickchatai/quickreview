@@ -5,9 +5,8 @@ description: Judge one piece of "the review was wrong" feedback — does the com
 
 # Adjudicating feedback about the review
 
-This file **is** the doctrine. It was decided with the owner on
-(issue tracker, effort `review-feedback-loop`); that ticket is provenance, not
-the live rule. If the doctrine changes, it changes here.
+This file **is** the doctrine, decided with the owner. If the doctrine
+changes, it changes here.
 
 ## The stance
 
@@ -57,7 +56,7 @@ the answer is a quick no:
 
 a. **Was the finding RIGHT but the DELIVERY wrong?** The most common real
    pattern in the evidence. The migration-renumber class was a *correct*
-   finding delivered as a blocker — ~15% of all blockers — and changed
+   finding delivered as a blocker — ~15% of all blockers — and the fix changed
    how it is delivered, never whether it runs.
 b. **Did we MISS something worse?** A PR that drew a complaint is a PR someone
    read hard. This is the false-negative direction nothing else measures, and
@@ -114,7 +113,7 @@ nothing is at risk. Ceremony falls where the blast radius is.
 ## Step 6 — Ambiguity resolves to the owner, never by rule.
 
 When the three sources disagree and the code does not settle it, **present the
-conflict and let him decide, in the column**. Do not force a verdict on
+conflict and let them decide, in the column**. Do not force a verdict on
 ambiguous evidence, and do not break ties by rule — least of all by
 code-always-wins, which is deaf to complaints about delivery, tone and volume,
 and that is most of what the humans actually said.
@@ -133,7 +132,7 @@ When totality was attempted but a missing source or genuine ambiguity prevents
 an adjudication, write exactly one reviewer-memory `note` for the exact episode:
 
 ```
-#feedback-review #feedback pr=1234 episode=<stable-episode> status=needs-attention reviewed=2026-08-25
+#feedback-review #feedback pr=<n> episode=<stable-episode> status=needs-attention reviewed=<date>
 Reason: <what was examined, exactly what is missing or conflicted, and what the owner must decide or supply>
 ```
 
@@ -150,7 +149,7 @@ Fixed fields wrapped around free-form attribution and reasoning, in the
 existing `#tag` + `k=v` header shape (`src/memory/eventtags.ts`):
 
 ```
-#adjudication #feedback pr=1234 episode=f2-flush-on-close attribution=review-defect changed=yes adjudicated=2026-08-25
+#adjudication #feedback pr=<n> episode=f2-flush-on-close attribution=review-defect changed=yes adjudicated=<date>
 Complaint: <the human's own words, or the closest fair paraphrase, one line>
 Attribution: <the class — invent one if none fits, and say why in a clause>
 Falsifier: <the one observation that would flip this verdict>
@@ -194,7 +193,7 @@ ONLY after the exact improvement reached its target surface and was verified
 there. Then write one additional reviewer-memory `note` for each exact episode:
 
 ```
-#feedback-action #feedback pr=1234 episode=<stable-episode> action=landed acted=2026-08-25
+#feedback-action #feedback pr=<n> episode=<stable-episode> action=landed acted=<date>
 Result: <commit/ticket outcome and the verification that proves it is live>
 ```
 
@@ -207,10 +206,10 @@ change is live.
 
 ## Step 8 — Landing follows the ratifying turn
 
-A verdict that changes something becomes a commit only under:
+A verdict that changes something becomes a commit only after a ratifying turn:
 
 - **Commit only after the owner approves THAT change, in this session, in
-  words.** Not inferred from him reading the verdict, not from "he asked me to
+  words.** Not inferred from them reading the verdict, not from "they asked me to
   adjudicate", not from a general instruction to fix the review.
 - **The approval is per batch and dies with the session.** One "yes, all
   three" covers the set just discussed and nothing else. It is **void at
@@ -222,7 +221,7 @@ A verdict that changes something becomes a commit only under:
   ```
   Feedback-PR: 1234
   Adjudication: FT-NNNN
-  Ratified-in-session: <the session id, and his approving words>
+  Ratified-in-session: <the session id, and their approving words>
   ```
 
 - **Ratified invariants: propose only, never edit.** The CI gate,

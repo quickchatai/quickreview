@@ -1,10 +1,9 @@
 // drift correction, kept honest in both directions.
 //
-// The seeded overseer prompt advertises command schemas that `validateCommand`
-// rejects (`flag-owner-legacy {reason}`, `file-improvement-pr {branch, rationale}`).
-// The seed is unmodifiable (hard rule 6), so the correction lives in the
-// non-seeded `prompts/slack-overseer-appendix.md`. This test pins the appendix
-// to the CODE: field lists are derived by probing the real `validateCommand`
+// The seeded overseer prompt used to advertise command schemas that
+// `validateCommand` rejects; the 2026-10-03 reseed (owner ratified) corrected
+// them, and the appendix's drift-corrections section went with it. This test
+// pins the appendix to the CODE: field lists are derived by probing the real `validateCommand`
 // (never by reading the appendix or the seed), then compared set-for-set.
 //
 // It fails if either side drifts: a new/renamed field in src/commands.ts that
@@ -27,7 +26,7 @@ const appendix = readFileSync(join(repoRoot, "prompts/slack-overseer-appendix.md
  * lands and the appendix says `flag-owner`, this map goes empty — the code's
  * own alias (tests/legacy-acceptance.test.ts) stays either way.
  */
-const LEGACY_DOC_NAMES: Record<string, string> = { "flag-owner-legacy": "flag-owner" };
+const LEGACY_DOC_NAMES: Record<string, string> = {};
 /** The spelling the appendix uses for a whitelisted command. */
 const docNameFor = (command: string): string =>
   Object.entries(LEGACY_DOC_NAMES).find(([, canonical]) => canonical === command)?.[0] ?? command;
@@ -53,6 +52,7 @@ const CANDIDATE_FIELDS = [
   "text",
   "on",
   "comment_id",
+  "for_min",
   "incident_id",
   "command_id",
   "head_sha",
@@ -142,9 +142,13 @@ describe("slack overseer appendix — corrected command schemas", () => {
       ok: false,
       reason: "unknown field(s): reason",
     });
-    expect(documented.get("flag-owner-legacy")).toEqual(["message"]);
-    // The stale schema must not be advertised anywhere in the appendix.
-    expect(/flag-owner-legacy\s*\{[^}]*\breason\b/.test(appendix)).toBe(false);
+    // The appendix teaches only the current name (the code still accepts the
+    // legacy one); the seed's schema was corrected by the 2026-10-03 reseed.
+    expect(documented.get("flag-owner")).toEqual(["message"]);
+    expect(appendix).not.toContain("flag-owner-legacy");
+    const seed = readFileSync(join(repoRoot, "prompts/overseer-system.md"), "utf8");
+    expect(seed).toContain("`flag-owner {message}`");
+    expect(seed).toContain("`file-improvement-pr {branch, title, body, slug}`");
   });
 
   it("file-improvement-pr takes branch/title/body/slug, not the seeded 'rationale'", () => {
@@ -299,7 +303,8 @@ describe("slack overseer appendix — the origin header", () => {
     expect(tierRow).toBeDefined();
     expect(tierRow).toContain("anyone");
     expect(tierRow).toContain("author");
-    expect(tierRow).toContain("owner_legacy"); // legacy spelling of `owner`, frozen until
+    expect(tierRow).toContain("owner");
+    expect(tierRow).not.toContain("owner_legacy");
     expect(tierRow).not.toContain("ignored");
     expect(tierRow).not.toContain("system");
   });
