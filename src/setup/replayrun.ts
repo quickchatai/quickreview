@@ -35,6 +35,7 @@ import type { PrFileEntry } from "../github.js";
 import { buildPassPlan } from "../dispatch.js";
 import { VALIDATE_PASS } from "../include.js";
 import { findStyleGuide } from "../styleguide.js";
+import { findCiLinters } from "../lintconfig.js";
 import type { PassTier } from "../types.js";
 import type { CaseOutcome, CaseRunner, Refusal, StateFs } from "./engine.js";
 import {
@@ -354,7 +355,7 @@ export class ReplayRunner {
       const validators: Partial<Record<SideName, { agent: string; tier: PassTier; text: string }>> = {};
       for (const side of SIDES) {
         const s = sides[side];
-        const { pass_plan } = buildPassPlan(s.cfg, tree.files as PrFileEntry[], { title: pr.title, body: pr.body }, s.ecosystem, s.heuristics, guides);
+        const { pass_plan } = buildPassPlan(s.cfg, tree.files as PrFileEntry[], { title: pr.title, body: pr.body }, s.ecosystem, s.heuristics, guides, findCiLinters(tree.root));
         for (const row of pass_plan) {
           const text = s.agentText(row.agent);
           if (text === null) {

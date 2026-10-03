@@ -438,6 +438,11 @@ export interface ReviewConfig {
   /** The style lens (`agents/pass-style.md`) — planned only when the repo has
    * a written style guide (src/styleguide.ts), and judging only against it. */
   style_lens: boolean;
+  /** The lint-conformance sub-lens (`agents/pass-lint-conformance.md`) —
+   * planned only when a CI job of the repo runs a linter or formatter whose
+   * rules cover a changed file (src/lintconfig.ts), reporting only changed
+   * lines that would fail that job. */
+  lint_conformance: boolean;
   /** How many nits a review may post. `strict` (the default, production's
    * behaviour): the validator drops true-but-trivial candidates (`below-bar`),
    * a nit must name the change it asks for, and review volume comes
@@ -525,6 +530,7 @@ type PresetLevers = Pick<
   | "quality_lenses"
   | "quality_min_added_lines"
   | "style_lens"
+  | "lint_conformance"
 >;
 
 /** The lean lever plan — `default` and `low` share it. */
@@ -545,6 +551,7 @@ const LEAN_LEVERS: PresetLevers = {
   quality_lenses: true,
   quality_min_added_lines: 20,
   style_lens: true,
+  lint_conformance: true,
 };
 
 export const REVIEW_PRESETS: Readonly<

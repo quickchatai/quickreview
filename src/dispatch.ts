@@ -32,6 +32,7 @@ import {
   CODE_FILE_RE,
   TESTS_PASS,
   STYLE_PASS,
+  LINT_CONFORMANCE_PASS,
   selectQualityLenses,
 } from "./heuristics.js";
 import type { HeuristicsExtension } from "./heuristics.js";
@@ -60,6 +61,7 @@ import {
 } from "./recheck.js";
 import { roundPostingKey } from "./posting-receipt.js";
 import { findStyleGuide } from "./styleguide.js";
+import { findCiLinters, lintersForFiles, type CiLinter } from "./lintconfig.js";
 import { writePassTasks } from "./passtasks.js";
 import { renderGateNotes } from "./templates.js";
 import { directiveVocabulary, isFirstPartyDirectivePath } from "./severity.js";
@@ -727,6 +729,9 @@ export function buildPassPlan(
   /** The repo's written style guide references (src/styleguide.ts); empty or
    * absent ⇒ the style lens only on the profile's guide, if any. */
   styleGuide: readonly string[] = [],
+  /** The linters and formatters a CI job of the repo runs (src/lintconfig.ts);
+   * empty or absent ⇒ no lint-conformance row. */
+  ciLinters: readonly CiLinter[] = [],
 ): { pass_plan: PassPlanEntry[]; addable_lenses: string[]; sweep_unswept: string[] } {
   const defaultTier = passTier(files, {
     migrationGate: ecosystem.migrationGate(files),
@@ -774,6 +779,23 @@ export function buildPassPlan(
         ? `the repo's written style guide: ${styleGuide.join(", ")}`
         : `this repo's profile style guide (\`${profileGuide!.file}\`, in your instructions) — the repo writes none of its own`,
     );
+  // Freeze fixes 2: lint conformance only where a CI job runs a linter whose
+  // rules cover a changed file — the plan names the tools and their CI files.
+  const coveredLinters = lintersForFiles(
+    ciLinters,
+    files.filter((f) => f.status !== "removed").map((f) => f.filename),
+  );
+  const lint =
+    on(LINT_CONFORMANCE_PASS, cfg.review.lint_conformance) && coveredLinters.length > 0
+      ? [LINT_CONFORMANCE_PASS]
+      : [];
+  if (lint.length)
+    whyOf.set(
+      LINT_CONFORMANCE_PASS,
+      `CI runs ${coveredLinters
+        .map((l) => `${l.tool} (${l.ci.join(", ")}${l.configs.length ? `; config ${l.configs.join(", ")}` : ""})`)
+        .join("; ")} on the changed files`,
+    );
   // `[review] skip_lenses` (cost tuning): a listed lens is neither planned
   // nor addable. pass-validate is refused at config parse, and is re-appended
   // unconditionally here besides.
@@ -781,7 +803,7 @@ export function buildPassPlan(
   // `enabled = false` is the last word on every lens, whatever selected it —
   // a profile-level subtraction, separate from the ADD-only heuristics.
   const lenses = [
-    ...[...selected0, ...sub.map((s) => s.lens), ...tests, ...quality, ...style].filter(
+    ...[...selected0, ...sub.map((s) => s.lens), ...tests, ...quality, ...style, ...lint].filter(
       (l) => !skip.has(l),
     ),
     VALIDATE_PASS,
@@ -917,6 +939,8 @@ export function buildRoundOrder(args: {
   dependencyNote?: string;
   /** The repo's written style guide references (src/styleguide.ts). */
   styleGuide?: readonly string[];
+  /** The linters a CI job of the repo runs (src/lintconfig.ts). */
+  ciLinters?: readonly CiLinter[];
 }): RoundOrder {
   const eco = args.ecosystem ?? DJANGO_ECOSYSTEM;
   const { pass_plan, addable_lenses, sweep_unswept } = buildPassPlan(
@@ -926,6 +950,7 @@ export function buildRoundOrder(args: {
     eco,
     args.heuristics,
     args.styleGuide ?? [],
+    args.ciLinters ?? [],
   );
   const headSha = args.tree?.head_sha || args.row.head_sha;
   // an addable lens the profile floors above the add rule's own
@@ -1466,10 +1491,16 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       const styleGuide = lensEnabled(cfg.lenses, STYLE_PASS, cfg.review.style_lens)
         ? findStyleGuide(resolve(sandboxRoot(), worktreeFor(row.number)))
         : [];
+      // The linters a CI job of the repo runs: lint conformance runs only on
+      // them (`[review] lint_conformance`). Total — an unreadable tree is none.
+      const ciLinters = lensEnabled(cfg.lenses, LINT_CONFORMANCE_PASS, cfg.review.lint_conformance)
+        ? findCiLinters(resolve(sandboxRoot(), worktreeFor(row.number)))
+        : [];
       const built = buildRoundOrder({
         tree,
         ecosystem: eco,
         ...(styleGuide.length ? { styleGuide } : {}),
+        ...(ciLinters.length ? { ciLinters } : {}),
         ...(dependencyNote ? { dependencyNote } : {}),
         ...(recovery ? { recovery } : {}),
         migrationCollisions,
@@ -1521,7 +1552,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // The order's plan can outgrow the one startRound recorded — the repo's
       // style guide is read off the prepared tree and adds pass-style — and the
       // verdict audit reads the round row, so the row takes the order's plan.
-      if (styleGuide.length > 0)
+      if (styleGuide.length > 0 || ciLinters.length > 0)
         store.setRoundPlan(roundId, order.lenses, {
           validate_tier: order.pass_plan.find((p) => p.lens === VALIDATE_PASS)?.tier ?? null,
           pass_plan: order.pass_plan,

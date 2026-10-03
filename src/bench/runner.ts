@@ -48,6 +48,7 @@ import {
 import { buildRoundOrder } from "../dispatch.js";
 import { locateConfig } from "../install.js";
 import { findStyleGuide } from "../styleguide.js";
+import { findCiLinters } from "../lintconfig.js";
 import { ecosystemFor, type Ecosystem } from "../ecosystem.js";
 import type { PrFileEntry } from "../github.js";
 import { prepareDependencySources, renderDependencyNote } from "../depsources.js";
@@ -598,6 +599,10 @@ export function renderCasePrompts(args: {
     // The repo's written style guide, as production finds it (dispatch.ts).
     ...(lensEnabled(cfg.lenses, "pass-style", cfg.review.style_lens)
       ? { styleGuide: findStyleGuide(tree) }
+      : {}),
+    // The linters a CI job of the repo runs, as production finds them.
+    ...(lensEnabled(cfg.lenses, "pass-lint-conformance", cfg.review.lint_conformance)
+      ? { ciLinters: findCiLinters(tree) }
       : {}),
   });
   // `[review] task_files`, as production writes them (dispatch.ts): one

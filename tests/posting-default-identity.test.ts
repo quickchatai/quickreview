@@ -147,10 +147,11 @@ describe("[review] dedup_merge = false — byte-identical to before the duplicat
 // symptom site named in the body (round 6, mined from the Qodo run: about nine
 // findings anchored on the test or caller that exposed the defect).
 // Re-pinned 2026-10-03: pass-behaviour-delta is planned (one row per group of files the PR modifies or deletes code in; `[review] behaviour_delta`, freeze fixes 2) — the fixture PR modifies code, so its plan and the built agents gain the lens
+// Re-pinned 2026-10-03: pass-lint-conformance agent built (planned only when a CI job runs a linter covering a changed file; freeze fixes 2)
 const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
-  first: "eaf960543b7d4f46cf84964026084d6c0be75edaeabd02ffffdff01f5e93f855",
-  "re-review": "4822b67e18bddc7ae10e4a6e435f45b793915c685a160beefe0bd15dc9171b0c",
-  staleness: "7738a4c63dcca49ed1b8e519156ef745396dd9f4fb6504d36e0da7bfc77e423f",
+  first: "e1b79d3be13f0f2a6616df246778a282ef197ad065e0c6f7cfce1f348bc9fa05",
+  "re-review": "0828166b16d9cba8cbc8392913525c084b7531091e442c022422fbc1d5bd79a4",
+  staleness: "3c30accaafa1bce4b21cabe700cc26b798663d9478212d322e6a3b0e0ce20e4b",
 };
 // Re-pinned 2026-10-03 (round 7, docs/duplicate-merge.md, the owner's
 // decisions): `[review] dedup_merge` defaults on, so step 4 carries the
@@ -159,16 +160,18 @@ const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
 // `[posting] repeat_sites = false`, so the escalation line carries the
 // posting-policy note. Off + no policy = GOLDEN_ORDERS_NO_DEDUP above.
 // Re-pinned 2026-10-03: pass-behaviour-delta is planned (one row per group of files the PR modifies or deletes code in; `[review] behaviour_delta`, freeze fixes 2) — the fixture PR modifies code, so its plan and the built agents gain the lens
+// Re-pinned 2026-10-03: pass-lint-conformance agent built (planned only when a CI job runs a linter covering a changed file; freeze fixes 2)
 const GOLDEN_ORDERS: Record<string, string> = {
-  first: "688dcbfee78c5697787b1412bab9e83e84b7a7839aca71c2c659dff28c94f1a6",
-  "re-review": "3583869977706b0e289df933cbad7632a8eac1fa29003b41bc28f7fc63a71bf5",
-  staleness: "b55835e7cb9cc673606bc6eb5fd125fa4d888e43c2bdfc9f517e43c936ace626",
+  first: "4e0f3c8fd33e69f6314d6bbd2be145a4a0d4bfee85edb4eaa125b5e270e246f7",
+  "re-review": "0ad1130c40b5f299b7eab98d074e242c9bd907fc8cd7e9bac0c8a61c5745dfc1",
+  staleness: "36f50dda4ab37ef766feda2faf1bd784af8e5b9d95054b71dd7b7c232889ffee",
 };
 // Re-pinned 2026-10-03: pass-behaviour-delta is planned (one row per group of files the PR modifies or deletes code in; `[review] behaviour_delta`, freeze fixes 2) — the fixture PR modifies code, so its plan and the built agents gain the lens
+// Re-pinned 2026-10-03: pass-lint-conformance agent built (planned only when a CI job runs a linter covering a changed file; freeze fixes 2)
 const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
-  first: "671ad0917c06d9516d8f0b82298e9c07c4557f7543e61fa9483b45dad7543fcc",
-  "re-review": "6346e6f45e9735d6d7549e26655095812a18edf8813802a97256fdb2baa35746",
-  staleness: "ddf4691cdde91427a03d6085fcbfbf2186ea231b018db72a82c4683dfdd9718f",
+  first: "93d12697e52d6b866cb8ce0130e823685cbc613cd8781d1f4cc26ccbd3168bad",
+  "re-review": "74f110f58c285cba6402af68ca7849016ca35dd044c93f4433ea605e93961c9c",
+  staleness: "b84f5f7f7cc0931a5cb42c98b94d9d2f798b691a2d90ae72cf315586a43830f4",
 };
 // Deliberate re-pins — the default profile's built agents changed ON PURPOSE,
 // never through `[posting]` (owner-approved review changes, 2026-10-02, after
@@ -207,10 +210,12 @@ const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
 //     miss analysis: AACR lint kills, Qodo "base had the same gap")
 //   → f36c394a… `exhaust-the-site` (pass-baseline, pass-sweep, pass-widened, pass-behaviour-delta): siblings, twins, every consequence (freeze fixes 2)
 // Re-pinned 2026-10-03: pass-behaviour-delta is planned (one row per group of files the PR modifies or deletes code in; `[review] behaviour_delta`, freeze fixes 2) — the fixture PR modifies code, so its plan and the built agents gain the lens
-const GOLDEN_AGENTS_NO_DEDUP = "86a69730cf433401547a47c74eec4317ae6461a37998eb4205d4b1b28b274280";
+// Re-pinned 2026-10-03: pass-lint-conformance agent built (planned only when a CI job runs a linter covering a changed file; freeze fixes 2)
+const GOLDEN_AGENTS_NO_DEDUP = "22c4f16594fe548659d94d5da4f3c3a889adc80f35c1b82271748093cea8fc53";
 //   → (round 7, docs/duplicate-merge.md) `dedup-group-validate` (pass-validate,
 //     `[review] dedup_merge` on by default) and the default profile's posting
 //     addendum for `repeat_sites = false`. Off + no policy = the pin above.
 //   → fe4177b8… `exhaust-the-site` (pass-baseline, pass-sweep, pass-widened, pass-behaviour-delta): siblings, twins, every consequence (freeze fixes 2)
 // Re-pinned 2026-10-03: pass-behaviour-delta is planned (one row per group of files the PR modifies or deletes code in; `[review] behaviour_delta`, freeze fixes 2) — the fixture PR modifies code, so its plan and the built agents gain the lens
-const GOLDEN_AGENTS = "99b9b5ca53c70a28f8faac4c9f0c748f2a14ca638a66a549212b50263f538fac";
+// Re-pinned 2026-10-03: pass-lint-conformance agent built (planned only when a CI job runs a linter covering a changed file; freeze fixes 2)
+const GOLDEN_AGENTS = "0af8e27215731d2dc55733cc6df72332907ac6fe5e11172baf07cd3dcc475164";

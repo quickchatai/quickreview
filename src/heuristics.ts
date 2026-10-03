@@ -803,6 +803,9 @@ export const QUALITY_MIN_ADDED_LINES = 20;
 /** The style lens (agents/pass-style.md): planned only when the repo has a
  * written style guide (src/styleguide.ts). */
 export const STYLE_PASS = "pass-style";
+/** The lint-conformance sub-lens (agents/pass-lint-conformance.md): planned
+ * only when a CI job runs a linter whose rules cover a changed file. */
+export const LINT_CONFORMANCE_PASS = "pass-lint-conformance";
 
 /** The quality lenses a change warrants: all three once its non-test code
  * adds `minAdded` lines, none below. */

@@ -78,3 +78,85 @@ describe("pass-behaviour-delta", () => {
     expect(body).not.toMatch(NO_BENCHMARK_NAMES);
   });
 });
+
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { findCiLinters, lintersForFiles } from "../src/lintconfig.js";
+import { LINT_CONFORMANCE_PASS } from "../src/heuristics.js";
+
+describe("pass-lint-conformance: planned only on linters a CI job runs", () => {
+  const repo = (files: Record<string, string>) => {
+    const d = mkdtempSync(join(tmpdir(), "qcr-lint-"));
+    for (const [p, t] of Object.entries(files)) {
+      mkdirSync(join(d, p, ".."), { recursive: true });
+      writeFileSync(join(d, p), t);
+    }
+    return d;
+  };
+
+  it("finds a tool a workflow runs directly, with its config", () => {
+    const d = repo({
+      ".github/workflows/ci.yml": "jobs:\n  lint:\n    steps:\n      - run: npx eslint . --max-warnings 0\n      - run: cargo fmt --check\n",
+      "eslint.config.js": "export default [];\n",
+      "rustfmt.toml": "max_width = 100\n",
+    });
+    try {
+      const l = findCiLinters(d);
+      expect(l.map((x) => x.tool).sort()).toEqual(["eslint", "rustfmt"]);
+      expect(l.find((x) => x.tool === "eslint")!.configs).toEqual(["eslint.config.js"]);
+      expect(l.find((x) => x.tool === "eslint")!.ci).toEqual([".github/workflows/ci.yml"]);
+      expect(lintersForFiles(l, ["src/a.ts"]).map((x) => x.tool)).toEqual(["eslint"]);
+      expect(lintersForFiles(l, ["README.md"])).toEqual([]);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  it("follows a CI step through the package script that wraps the tool; a shared file needs the tool's section", () => {
+    const d = repo({
+      ".github/workflows/ci.yml": "steps:\n  - run: pnpm run lint\n",
+      "package.json": '{"scripts":{"lint":"biome check ."}}',
+      "biome.json": "{}",
+      "pyproject.toml": "[project]\nname='x'\n",
+    });
+    try {
+      const l = findCiLinters(d);
+      expect(l.map((x) => x.tool)).toEqual(["biome"]);
+      expect(l[0]!.ci).toEqual(["package.json"]);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  it("no CI definition, no linter — however much lint config the repo carries", () => {
+    const d = repo({ "eslint.config.js": "export default [];\n", ".clang-format": "BasedOnStyle: LLVM\n" });
+    try {
+      expect(findCiLinters(d)).toEqual([]);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  it("is planned with the tool and its CI file named, only when a changed file is covered", () => {
+    const c = cfg();
+    const linters = [{ tool: "clang-format", configs: [".clang-format"], ci: [".github/workflows/lint.yml"], covers: /\.(cc|h)$/ }];
+    const plan = buildPassPlan(c, [f("shell/a.cc", 5, 3)], undefined, undefined, undefined, [], linters).pass_plan;
+    const row = plan.find((r) => r.lens === LINT_CONFORMANCE_PASS);
+    expect(row).toBeDefined();
+    expect(row!.why).toMatch(/CI runs clang-format \(\.github\/workflows\/lint\.yml; config \.clang-format\)/);
+    expect(buildPassPlan(c, [f("src/a.py", 5, 3)], undefined, undefined, undefined, [], linters).pass_plan.some((r) => r.lens === LINT_CONFORMANCE_PASS)).toBe(false);
+    const off = structuredClone(c);
+    off.review = { ...off.review, lint_conformance: false };
+    expect(buildPassPlan(off, [f("shell/a.cc", 5, 3)], undefined, undefined, undefined, [], linters).pass_plan.some((r) => r.lens === LINT_CONFORMANCE_PASS)).toBe(false);
+  });
+
+  it("its brief reports only CI-failing violations on changed lines, one P2 per tool, never runs a tool", () => {
+    const body = readFileSync(resolve("agents/pass-lint-conformance.md"), "utf8");
+    expect(body).toMatch(/you never run a tool/);
+    expect(body).toMatch(/One finding per tool/);
+    expect(body).toMatch(/Its severity is `P2`/);
+    expect(body).toMatch(/continue-on-error/);
+    expect(body).not.toMatch(NO_BENCHMARK_NAMES);
+  });
+});

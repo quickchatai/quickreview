@@ -71,5 +71,9 @@ export const ALL_PASSES: readonly string[] = [
   // otherwise, but it judges only against a guide, so without one it answers
   // NONE.
   "pass-style",
+  // Freeze fixes 2 (2026-10-03): lint and format conformance — planned only
+  // when a CI job runs a linter whose rules cover a changed file
+  // (src/lintconfig.ts); addable otherwise.
+  "pass-lint-conformance",
   "pass-validate",
 ];
