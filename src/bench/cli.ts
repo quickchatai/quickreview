@@ -126,7 +126,8 @@ const DEFAULTS = {
   authSrc: "/pi-agent-src",
   /** The sandbox's own agent dir (tmpfs): a refresh-disabled token copy. */
   agentDir: "/tmp/pi-agent",
-  timeoutMin: 45,
+  /** 75 min: with sol-high on baseline/sweep/behaviour-delta (the shipped default) a large PR exceeded 45 (mpv, 2026-10-03). */
+  timeoutMin: 75,
 };
 
 function flags(argv: string[]): {

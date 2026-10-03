@@ -6,7 +6,7 @@
 #   bench/aacr/bench.sh build
 #   bench/aacr/bench.sh prefetch [--set smoke10] [--only id,id] [--wait-rate-limit]
 #   bench/aacr/bench.sh review   --run ID [--set smoke10] [--only id,id] [--profile NAME]
-#                                [--timeout-min 45] [--concurrency 1] [--resume]
+#                                [--timeout-min 75] [--concurrency 1] [--resume]
 #                                [--config models.effort=high,review.sweep=false] [--phase all|init|case|finish]
 #              --phase: arm.sh's split of one run into one container per case (init/finish
 #              run --network none with no login; see src/bench/cli.ts)
