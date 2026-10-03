@@ -79,5 +79,20 @@ describe("sweprbench_report.py", () => {
     expect(label("ext-r5-sweprbench-eval100.sweprbench")).toBe("eval100");
     expect(label("ext-g61-sweprbench-smoke10.sweprbench")).toBe("smoke10");
     expect(label("ext-x-sweprbench-smoke10.sweprbench-MOCK")).toBe("smoke10");
+    expect(label("r7-dedup5-swepr.sweprbench")).toBe("set unknown");
+  });
+
+  it("a derived set's label comes from the set ext.sh scored it on", () => {
+    const label = (name: string, set: string) =>
+      execFileSync("python3", [
+        "-c",
+        "import sys; sys.path.insert(0, 'bench/aacr/ext'); import sweprbench_report as r; from pathlib import Path; print(r.set_label(Path(sys.argv[1]), sys.argv[2]))",
+        `/runs/${name}`,
+        set,
+      ]).toString().trim();
+    expect(label("r7-dedup5-swepr.sweprbench", "dedup5-swepr")).toBe("dedup5-swepr");
+    expect(label("ext-r5-sweprbench-eval100.sweprbench", "sweprbench-eval100")).toBe("eval100");
+    const ext = readFileSync("bench/aacr/ext/ext.sh", "utf8");
+    expect(ext).toContain('sweprbench_report.py" "$work" "$set_name"');
   });
 });

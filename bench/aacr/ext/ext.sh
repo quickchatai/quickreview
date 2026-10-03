@@ -36,6 +36,11 @@ ROOTDIR="$(cd "$QCR_BENCH_RUNS_DIR/.." && pwd)"
 EXT_CACHE="${EXT_CACHE:-$ROOTDIR/ext-cache}"
 EXT_DATA="${EXT_DATA:-$ROOTDIR/ext-data}"
 QIMG="${QCR_EXT_IMAGE:-qcr-bench:pi099-ext}"
+# The judge (ext_judge.py) and the Qodo scorer (qodo_judge.py) run on the ext
+# OVERLAY image, whatever QCR_EXT_IMAGE names for the REVIEW: a review image
+# built from master carries neither script (2026-10-03, the r6 Qodo judge
+# failed to start on qcr-bench:r6). QCR_EXT_JUDGE_IMAGE overrides.
+JIMG="${QCR_EXT_JUDGE_IMAGE:-qcr-bench:pi099-ext}"
 BASE_IMG="${QCR_EXT_BASE:-qcr-bench:pi099}"
 MIMG="qcr-ext-martian:e616e84"
 SIMG="qcr-ext-sweprbench:379f0bf"
@@ -93,7 +98,7 @@ start_judge() { # work tag
       --mount "type=volume,src=$AUTH_VOLUME,dst=/pi-agent-src,volume-subpath=agent,readonly" \
       --mount "type=tmpfs,dst=/pi-agent-src/sessions" \
       --mount "type=bind,src=$work/judge,dst=/judge-out" \
-      --entrypoint bash "$QIMG" -c "mkdir -p \"\$HOME\" && node /opt/quickreview/sandbox/dist/src/bench/cli.js auth --need-min 120 \
+      --entrypoint bash "$JIMG" -c "mkdir -p \"\$HOME\" && node /opt/quickreview/sandbox/dist/src/bench/cli.js auth --need-min 120 \
         && exec python3 /opt/quickreview/bench/ext_judge.py --host 0.0.0.0 --port 8765 --model $JUDGE_MODEL \
            --effort $JUDGE_EFFORT --max-inflight 64 --probe-temperature --log /judge-out/judge.jsonl" >/dev/null
     docker network connect --alias "$JUDGE_HOST" "$NET_INTERNAL" "$name"
@@ -188,7 +193,7 @@ PY
             --mount "type=bind,src=$data,dst=/data,readonly" --mount "type=bind,src=$work,dst=/work")
     [[ "$run" != none ]] && mounts+=(--mount "type=bind,src=$QCR_BENCH_RUNS_DIR/$run,dst=/run,readonly")
     log "Qodo PR-Review-Bench judge (gpt-6.1-sol @ $JUDGE_EFFORT, one judge for every tool) in $work"
-    docker run --rm "${HARDEN[@]}" --memory 2g --network "$NET_INTERNAL" "${mounts[@]}" --entrypoint python3 "$QIMG" \
+    docker run --rm "${HARDEN[@]}" --memory 2g --network "$NET_INTERNAL" "${mounts[@]}" --entrypoint python3 "$JIMG" \
       /ext/qodo_judge.py --set /set.json --gt /data/git_code_review_bench_100_w_open_prs.jsonl \
         --tools /data/tool-comments.json ${runargs[@]+"${runargs[@]}"} \
         --endpoint "http://$JUDGE_HOST:8765/v1/chat/completions" --out /work "$@" | tee -a "$work/judge.log"
@@ -314,7 +319,7 @@ print(\"embedding model loaded:\", SEMANTIC_EMBEDDING_MODEL, v.shape)"
           --model quickreview --task-ids $IDS --configs A B C --concurrency 4
       ' > "$work/run_eval.log" 2>&1 || { tail -30 "$work/run_eval.log"; die "run_eval failed (see $work/run_eval.log)"; }
     grep -m1 'embedding model loaded' "$work/run_eval.log"
-    python3 "$HERE/sweprbench_report.py" "$work" | tee "$work/table8.md"
+    python3 "$HERE/sweprbench_report.py" "$work" "$set_name" | tee "$work/table8.md"
     ;;
 
   *) sed -n '2,30p' "$0"; exit 2 ;;

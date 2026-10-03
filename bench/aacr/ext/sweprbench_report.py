@@ -33,10 +33,14 @@ PUBLISHED = [
 PRICE = {"in": 2.0, "cached": 0.10, "out": 10.0}  # gpt-6.1-sol list $/M (FULL-BENCHMARK.md)
 
 
-def set_label(work: Path) -> str:
-    """The case set a scoring dir belongs to, from its run name
+def set_label(work: Path, set_name: str | None = None) -> str:
+    """The case set a scoring dir belongs to: the set ext.sh scored it on when
+    it says so (a derived set such as `dedup5-swepr` names no benchmark set in
+    its run name), else from the run name
     (`ext-r5-sweprbench-eval100.sweprbench` -> `eval100`); the table used to
     say "smoke" for every run."""
+    if set_name:
+        return set_name.removeprefix("sweprbench-")
     m = re.search(r"sweprbench-([\w-]+?)(?:\.sweprbench)?(?:-MOCK)?$", work.name)
     return m.group(1) if m else "set unknown"
 
@@ -67,6 +71,7 @@ def judge_cost(log: Path) -> dict:
 
 def main() -> None:
     work = Path(sys.argv[1])
+    set_name = sys.argv[2] if len(sys.argv) > 2 else None
     reports = sorted(work.glob("runs/*/eval_report.json"))
     if len(reports) != 1:
         sys.exit(f"expected one eval_report.json under {work}/runs, found {len(reports)}")
@@ -103,7 +108,7 @@ def main() -> None:
           f"judge fallbacks {row['judge_parse_fallbacks']})\n")
     print("| Model | s_A | s_B | s_C | s̄ | DR_A | FPR_avg | PRs |\n|---|---|---|---|---|---|---|---|")
     print(f"| **QuickReview default (gpt-6.1-sol), judge gpt-6.1-sol** | {f(row['sA'])} | {f(row['sB'])} | {f(row['sC'])} "
-          f"| {f(row['s_bar'])} | {f(row['DR_A'])} | {f(row['FPR_avg'])} | {row['prs']} ({set_label(work)}) |")
+          f"| {f(row['s_bar'])} | {f(row['DR_A'])} | {f(row['FPR_avg'])} | {row['prs']} ({set_label(work, set_name)}) |")
     for name, *v in PUBLISHED:
         print(f"| {name} — published, judge GPT-5.2 | " + " | ".join(f"{x:.3f}" for x in v) + " | 100 (eval_100) |")
     print(f"\njudge: {row['judge']}")
