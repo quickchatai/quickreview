@@ -37,7 +37,8 @@ ROOT = HERE.parent.parent
 sys.path.insert(0, str(HERE))
 import lens_yield as ly  # noqa: E402
 
-CACHE = Path("/home/user/qcr-bench-runs")
+# The bench data root beside the runs dir (its parent): ext-cache/, *-code/.
+CACHE = Path(".")
 DELTA = "pass-behaviour-delta"
 
 
@@ -86,7 +87,7 @@ def patches_for(kind: str, case: dict) -> dict[str, str] | None:
     return None
 
 
-SETS = {"aacr": ["dev10", "rest145", "sel40" ], "martian": ["martian-tune20"], "qodo": ["qodo-pr100"], "swepr": ["sweprbench-eval100"]}
+SETS = {"aacr": ["dev10", "rest145"], "martian": ["martian-tune20"], "qodo": ["qodo-pr100"], "swepr": ["sweprbench-eval100"]}
 
 NODE = r"""
 const { behaviourDeltaGroups } = await import(process.argv[1]);
@@ -106,6 +107,8 @@ def main() -> None:
     ap.add_argument("runs", nargs="+")
     a = ap.parse_args()
     runs = Path(a.runs_dir)
+    global CACHE
+    CACHE = runs.resolve().parent
     case_index: dict[str, tuple[str, dict]] = {}
     for kind, names in SETS.items():
         for n in names:
