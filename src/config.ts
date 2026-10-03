@@ -924,9 +924,9 @@ export const MODELS_TIER_DEFAULTS: Pick<
   effort: "",
   effort_max: "max",
   tiers: {
-    "terra-med": "openai-codex/gpt-6-sol:medium",
-    "sol-med": "openai-codex/gpt-6-sol:medium",
-    "sol-high": "openai-codex/gpt-6-sol:high",
+    "terra-med": "openai-codex/gpt-6.1-sol:medium",
+    "sol-med": "openai-codex/gpt-6.1-sol:medium",
+    "sol-high": "openai-codex/gpt-6.1-sol:high",
   },
   risk_passes: ["pass-security", "pass-prod-risk", "pass-data-safety"],
   validate_tier: "sol-high",

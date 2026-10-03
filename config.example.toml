@@ -154,9 +154,9 @@ improvement_pr_deny_prefixes = ["migrations/", "infra/", "ansible/", ".github/wo
 # default for every role; tiered pass models below (replaces [models.passes])
 # Provider prefix is `openai-codex/` — the ChatGPT-OAuth route's provider key
 # in pi's auth.json (direct `openai/` needs an API key we don't ship).
-default = "openai-codex/gpt-6-sol"
-conversation = "openai-codex/gpt-6-sol"
-overseer = "openai-codex/gpt-6-sol"
+default = "openai-codex/gpt-6.1-sol"
+conversation = "openai-codex/gpt-6.1-sol"
+overseer = "openai-codex/gpt-6.1-sol"
 # Passes always run at sol-high — single variant, not raisable (already top).
 risk_passes = ["pass-security", "pass-prod-risk", "pass-data-safety"]
 # pass-validate's FLOOR tier — raised per round to the highest-tier lens that
@@ -183,9 +183,9 @@ small_diff_lines = 150
 # PassTier → model spec; the whole spec (incl. the `:thinking` suffix) rides
 # the built agent's `model:` field — pi's --model accepts the suffix, and the
 # native subagent extension reads only that field.
-"terra-med" = "openai-codex/gpt-6-sol:medium"
-"sol-med" = "openai-codex/gpt-6-sol:medium"
-"sol-high" = "openai-codex/gpt-6-sol:high"
+"terra-med" = "openai-codex/gpt-6.1-sol:medium"
+"sol-med" = "openai-codex/gpt-6.1-sol:medium"
+"sol-high" = "openai-codex/gpt-6.1-sol:high"
 
 [models.pricing]
 # Spend rates keyed by bare model id, USD per million tokens. Consumed by

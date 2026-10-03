@@ -237,7 +237,7 @@ describe("buildAgents", () => {
     // every built pass gets — the seed itself is untouched.
     expect(
       alpha.startsWith(
-        "---\nname: pass-alpha--terra-med\ndescription: a\ntools: read, bash, viking_search, viking_read\nmodel: openai-codex/gpt-6-sol:medium\n",
+        "---\nname: pass-alpha--terra-med\ndescription: a\ntools: read, bash, viking_search, viking_read\nmodel: openai-codex/gpt-6.1-sol:medium\n",
       ),
     ).toBe(true);
     expect(alpha).toContain("thinking: medium\n");
@@ -246,7 +246,7 @@ describe("buildAgents", () => {
     // the model field carries the WHOLE spec — the native subagent
     // extension reads only `model:`, and pi's --model accepts the :thinking
     // suffix. The separate thinking field stays as human documentation.
-    expect(high).toContain("model: openai-codex/gpt-6-sol:high\n");
+    expect(high).toContain("model: openai-codex/gpt-6.1-sol:high\n");
     expect(high).toContain("thinking: high\n");
   });
 
@@ -329,7 +329,7 @@ describe("buildAgents", () => {
     ]);
     expect(built.filter((b) => b.pass === "pass-beta")).toHaveLength(3);
     const validate = readFileSync(join(out, "pass-validate--terra-med.md"), "utf8");
-    expect(validate).toContain("model: openai-codex/gpt-6-sol:medium\n");
+    expect(validate).toContain("model: openai-codex/gpt-6.1-sol:medium\n");
     expect(validate).toContain("thinking: medium\n");
   });
 
@@ -381,7 +381,7 @@ describe("buildAgents", () => {
     // The floor variant takes the tier's spec, split the usual way…
     const floor = readFileSync(join(out, "pass-validate--sol-med.md"), "utf8");
     expect(floor).toContain("name: pass-validate--sol-med\n");
-    expect(floor).toContain("model: openai-codex/gpt-6-sol:medium\n");
+    expect(floor).toContain("model: openai-codex/gpt-6.1-sol:medium\n");
     expect(floor).toContain("thinking: medium\n");
     // …and the per-variant override wins over it, exactly as for a lens.
     const high = built.find((b) => b.name === "pass-validate--sol-high")!;
@@ -534,7 +534,7 @@ describe("the real seeded content", () => {
         const text = readFileSync(b.output, "utf8");
         // No lens file names a model: the built variant carries exactly the
         // configured tier's spec (2026-09-26 reseed dropped the stale headers).
-        expect(text).toMatch(/\nmodel: openai-codex\/gpt-6-sol:(medium|high)\n/);
+        expect(text).toMatch(/\nmodel: openai-codex\/gpt-6\.1-sol:(medium|high)\n/);
         expect(text).not.toContain("{{include:");
         // identity variables resolve at build time — leaves must see
         // plain text, and no unexpanded {{…}} of any kind may reach a session.
