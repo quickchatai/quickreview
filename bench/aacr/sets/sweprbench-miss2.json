@@ -1,0 +1,58 @@
+{
+ "name": "sweprbench-miss2",
+ "dataset": {
+  "source": "https://huggingface.co/datasets/foundry-ai/swe-prbench",
+  "commit": "b87f5797aef3ed2c3153bb1304ea4d801d36ba6e",
+  "file": "dataset/prs.jsonl",
+  "sha256": "a58e1f713533f6bc260a93f6e234b85acd16a77f55a756893694b96495eb43cd"
+ },
+ "rule": "freeze validation (2026-10-03): the 2 SWE-PRBench eval100 PRs whose human comment SWEPR-MISSED.md found a clear miss (pipecat#3041 validator-withheld duplication, metaflow#2653 no regression-test ask); never a held-out set",
+ "references": 355,
+ "backups": [],
+ "cases": [
+  {
+   "instance_id": "Netflix__metaflow@d50158f",
+   "repo": "Netflix/metaflow",
+   "pr": 2653,
+   "pr_url": "https://github.com/Netflix/metaflow/pull/2653",
+   "base_commit": "b9c9ba6f37595643bbd48c2346558fa4747b11ad",
+   "head_commit": "d50158f7c98a0630d7ab701c168d8b288aa5f06f",
+   "language": "Python",
+   "pr_category": "Type3_Latent_Candidate",
+   "change_line_count": 35,
+   "references": 3,
+   "title": "Fix json decode error",
+   "body": "## Problem\r\n\r\nIntermittent `JSONDecodeError` when multiple environments are resolved concurrently during deployment:\r\n\r\n```\r\njson.decoder.JSONDecodeError: Expecting value: line 1 column 86673 (char 86672)\r\n```\r\n\r\n### Root Cause\r\n\r\nRace condition in FIFO-based IPC between deployer subprocess and parent process:\r\n\r\n1. **Writer side**: Subprocess writes JSON to FIFO, but Python's buffered I/O may not flush immediately\r\n2. **Reader side**: Parent process reads from FIFO in non-blocking mode\r\n3. **Race**: When subprocess exits quickly after `close()`, reader detects process exit and breaks on empty read\r\n4. **Problem**: OS kernel may still have buffered data in pipe that hasn't been delivered yet\r\n5. **Result**: Truncated JSON at arbitrary positions (~86KB in the error case)\r\n\r\n## Solution\r\n\r\nChanged `read_from_fifo_when_ready()` to use a hybrid approach:\r\n\r\n1. **Start in non-blocking mode** (existing behavior)\r\n  - Use `select.poll()` to wait for data\r\n  - Can detect subprocess failures early\r\n  - Can timeout if subprocess hangs\r\n\r\n2. **Switch to blocking mode** once first data arrives\r\n  - Use `fcntl()` to remove `O_NONBLOCK` flag\r\n  - Continue with blocking `read()` calls\r\n  - **POSIX guarantee**: Blocking `read()` returns EOF (0 bytes) ONLY after writer closes AND all kernel pipe buffers are drained",
+   "leakproof": {
+    "source_head": "d946e027d1cccae80fc79e1f600b7503c5d78586",
+    "source_merge_base": "4076854c9f57df3031a3bd8b6a2a66d9eabe06a6",
+    "base_tree": "082c643ed5042bb16c22bfc15d8f5851c0d2dbf2",
+    "head_tree": "01e600648fd63e09d48bd1d1887fa86f32f8fc87"
+   },
+   "task_id": "metaflow__2653",
+   "source_base_commit": "4076854c9f57df3031a3bd8b6a2a66d9eabe06a6"
+  },
+  {
+   "instance_id": "pipecat-ai__pipecat@9c91ec8",
+   "repo": "pipecat-ai/pipecat",
+   "pr": 3041,
+   "pr_url": "https://github.com/pipecat-ai/pipecat/pull/3041",
+   "base_commit": "2d3a956b2f878d6ff6b79087120eb78cda4ab952",
+   "head_commit": "9c91ec8171e40e4732700494d493667684fbe241",
+   "language": "Python",
+   "pr_category": "Type1_Direct",
+   "change_line_count": 537,
+   "references": 1,
+   "title": "Apply `includes_inter_frame_spaces = True` in all LLM and TTS service\u2026",
+   "body": "\u2026s that need it.\r\n\r\nNote that for `LLMTextFrame`s, the right behavior is pretty much always `includes_inter_frame_spaces = True`. I decided *not* to go ahead and make that the default for `LLMTextFrame`s, though, simply to not introduce a subtle behavior change for creative/unexpected use-cases that were relying on text in hand-crafted `LLMTextFrame`s being handled a certain way. Ditto for `TTSTextFrame`s.\r\n\r\nAlso, fix an issue in `NeuphonicTTSService` where it wasn't pushing `TTSTextFrame`s.\r\n\r\nAlso, fix the broken `SarvamHttpTTSService` example.\r\n\r\nAlso, add a couple of missing examples.\r\n\r\n## Services validated by hand\r\n\r\n* LLM services\r\n  - [x] Anthropic\r\n  - [x] AWS\r\n  - [x] Azure (relies on OpenAI service under the hood for LLMTextFrame creation)\r\n  - [x] Azure Realtime (ah right, still can\u2019t test because we still don\u2019t have model access)\r\n  - [x] Cerebras (relies on OpenAI service under the hood for LLMTextFrame creation)\r\n  - [x] Deepseek (relies on OpenAI service under the hood for LLMTextFrame creation)\r\n  - [x] Fireworks (relies on OpenAI service under the hood for LLMTextFrame creation)\r\n  - [x] Google\r\n  - [x] Google Vertex (relies on Google service under the hood for LLMTextFrame creation)\r\n  - [x] Google OpenAI (deprecated, so won\u2019t do)\r\n  - [x] Gemini Live LLM text\r\n  - [x] Grok (relies on OpenAI service under the hood for LLMTextFrame creation)\r\n  - [x] Groq (relies on OpenAI service under the hood for LLMTextFrame creation)\r\n  - [x] Mistral (relies on OpenAI service under the hood for LLMTextFrame creation)\r\n  - [x] NIM (relies on OpenAI service under the hood for LLMTextFrame creation)\r\n  - [x] OLLama (relies on OpenAI service under the hood for LLMTextFrame creation)\r\n  - [x] OpenAI\r\n    - [x] Didn\u2019t test w/`gpt-4o-audio-preview` model, as it\u2019s pretty challenging to validate (it requires some machinery for feeding audio, rather than text, into the LLM). Based on discussion in https://github.com/pipecat-ai/pipecat/pull/1784, though, not sure this rises to \u201cofficially supported\u201d (for most users, OpenAI Realtime may supplant this model).\r\n  - [x] OpenAI Realtime LLM text\r\n  - [x] Openpipe (relies on OpenAI service under the hood for LLMTextFrame creation)\r\n  - [x] Openrouter (relies on OpenAI service under the hood for LLMTextFrame creation)\r\n  - [x] Perplexity (relies on OpenAI service under the hood for LLMTextFrame creation)\r\n  - [x] Qwen (relies on OpenAI service under the hood for LLMTextFrame creation)\r\n  - [x] Sambanova\r\n    - [x] See previous note about `gpt-4o-audio-preview`\r\n  - [x] Together (relies on OpenAI service under the hood for LLMTextFrame creation)\r\n* TTS services\r\n  - [x] AsyncAI\r\n  - [x] AsyncAIHTTP\r\n  - [x] AWS\r\n  - [x] AWS Nova Sonic (note: only outputs TTS text, not LLM text, since no text-only mode)\r\n  - [x] Azure\r\n  - [x] Azure HTTP\r\n  - [x] Cartesia\r\n  - [x] Deepgram\r\n  - [x] DeepgramHTTP\r\n  - [x] Elevenlabs\r\n  - [x] Fish\r\n  - [x] Google\r\n  - \u274c Google HTTP (looks like this one isn\u2019t working properly; it\u2019s only sending one giant text frame, no matter how long repsonse is, with missing punctuation)\r\n  - [x] Gemini\r\n  - [x] Gemini Live TTS text\r\n  - [x] Groq\r\n  - [x] Hume\r\n  - [x] Inworld\r\n  - [x] LMNT\r\n  - [x] Minimax\r\n  - [x] Neuphonic\r\n  - [x] Neuphonic HTTP\r\n  - \u274c OpenAI (looks like this one isn\u2019t working properly; it\u2019s only sending one giant text frame, no matter how long response is, with missing punctuation)\r\n  - [x] OpenAI Realtime TTS text\r\n  - [x] Piper\r\n  - [x] PlayHT (no need to update, as it\u2019s deprecated)\r\n  - [x] PlayHT HTTP (no need to update, as it\u2019s deprecated)\r\n  - [x] Rime\r\n  - [x] Rime HTTP\r\n  - [x] Riva\r\n  - [x] Sarvam\r\n  - [x] Sarvam HTTP\r\n  - [x] Speechmatics\r\n  - [ ] XTTS (could not test; no NVIDIA driver found on system)\r\n* Vision services\r\n  - [x] Moondream",
+   "leakproof": {
+    "source_head": "5222ff99deda0752dbf7db0f807ae49157275ef4",
+    "source_merge_base": "203a62770743e3cd915eebcbdb77d9a94a9d1ee4",
+    "base_tree": "d879814f2c120a983eac7237ee8d7b9943634198",
+    "head_tree": "9b7435837e78f9bfeda8e45d6fac1247cbd7c44f"
+   },
+   "task_id": "pipecat__3041",
+   "source_base_commit": "203a62770743e3cd915eebcbdb77d9a94a9d1ee4"
+  }
+ ]
+}

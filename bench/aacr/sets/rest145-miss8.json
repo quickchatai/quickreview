@@ -1,0 +1,111 @@
+{
+ "name": "rest145-miss8",
+ "dataset": {
+  "source": "https://github.com/alibaba/aacr-bench",
+  "commit": "ab8af8d5c74e2a4d1945d247ea4bbc49f93eb33f",
+  "file": "dataset/positive_samples.json",
+  "sha256": "d8683cb240249bc4e0aff6428802bdffa7b7573ace600552cab1cd0cb7e905c9"
+ },
+ "rule": "freeze validation (2026-10-03): the 8 rest145 PRs carrying the most medium/high missed defects in g61-rest145 (high=3, medium=2 per miss) \u2014 the misses the freeze fixes target; never a held-out set",
+ "references": 63,
+ "defects_from": "rest145",
+ "cases": [
+  {
+   "instance_id": "browser-use__browser-use@72f1585",
+   "repo": "browser-use/browser-use",
+   "pr": 3172,
+   "pr_url": "https://github.com/browser-use/browser-use/pull/3172",
+   "base_commit": "e85a547378b236c9788802d28e816f10940a7e53",
+   "head_commit": "72f1585f9add5b72e829eaee3b5bff684e0b08d3",
+   "language": "Python",
+   "pr_category": "Performance Optimizations",
+   "change_line_count": 324,
+   "references": 2
+  },
+  {
+   "instance_id": "electron__electron@100ad24",
+   "repo": "electron/electron",
+   "pr": 46660,
+   "pr_url": "https://github.com/electron/electron/pull/46660",
+   "base_commit": "7083419361385dfcd762656f0227581aedc4f514",
+   "head_commit": "100ad244b742d221ad129e96bef934e8128403a9",
+   "language": "C++",
+   "pr_category": "Bug Fix",
+   "change_line_count": 6,
+   "references": 2
+  },
+  {
+   "instance_id": "infiniflow__ragflow@f189316",
+   "repo": "infiniflow/ragflow",
+   "pr": 7151,
+   "pr_url": "https://github.com/infiniflow/ragflow/pull/7151",
+   "base_commit": "8362ab405c35d260dd2328dc207aefcf30778f66",
+   "head_commit": "f189316eae1c199a5891f7a8bc47d53bb1b5c818",
+   "language": "Python",
+   "pr_category": "Bug Fix",
+   "change_line_count": 207,
+   "references": 10
+  },
+  {
+   "instance_id": "kestra-io__kestra@3c2a276",
+   "repo": "kestra-io/kestra",
+   "pr": 7381,
+   "pr_url": "https://github.com/kestra-io/kestra/pull/7381",
+   "base_commit": "a716094a9d3c3522fb40ea988b3dab2763d7519c",
+   "head_commit": "3c2a2765fcd06d7fe127e362ddc9a706d4073047",
+   "language": "Java",
+   "pr_category": "Bug Fix",
+   "change_line_count": 200,
+   "references": 12
+  },
+  {
+   "instance_id": "ClickHouse__ClickHouse@d67628c",
+   "repo": "ClickHouse/ClickHouse",
+   "pr": 72920,
+   "pr_url": "https://github.com/ClickHouse/ClickHouse/pull/72920",
+   "base_commit": "8a04621f436a36b35346ff474fb980469b61647d",
+   "head_commit": "d67628cd7e7aeeba2a60bea273c5cfc08714120c",
+   "language": "C++",
+   "pr_category": "Performance Optimizations",
+   "change_line_count": 71,
+   "references": 5
+  },
+  {
+   "instance_id": "ollama__ollama@0b52f18",
+   "repo": "ollama/ollama",
+   "pr": 10135,
+   "pr_url": "https://github.com/ollama/ollama/pull/10135",
+   "base_commit": "c2f5d6662ba696b94455eaaa298a797d56fdca5c",
+   "head_commit": "0b52f186fb4af8fa7d4f6a71967f922eb6b69cdc",
+   "language": "Go",
+   "pr_category": "Performance Optimizations",
+   "change_line_count": 132,
+   "references": 3
+  },
+  {
+   "instance_id": "mpv-player__mpv@ff45a81",
+   "repo": "mpv-player/mpv",
+   "pr": 16090,
+   "pr_url": "https://github.com/mpv-player/mpv/pull/16090",
+   "base_commit": "5ba7ee513751dd005379a06fb627303e6fe1b3dd",
+   "head_commit": "ff45a8103e3c5ec3e786b950b4852c2750de936f",
+   "language": "C",
+   "pr_category": "Bug Fix",
+   "change_line_count": 185,
+   "references": 12
+  },
+  {
+   "instance_id": "keycloak__keycloak@04ad5d5",
+   "repo": "keycloak/keycloak",
+   "pr": 40283,
+   "pr_url": "https://github.com/keycloak/keycloak/pull/40283",
+   "base_commit": "ad511cbc538f1d9727d17cc423420abc50367af4",
+   "head_commit": "04ad5d530007517b60e2bf8706542556078d17f7",
+   "language": "Java",
+   "pr_category": "Test Suite / CI Enhancements",
+   "change_line_count": 596,
+   "references": 17
+  }
+ ],
+ "backups": []
+}

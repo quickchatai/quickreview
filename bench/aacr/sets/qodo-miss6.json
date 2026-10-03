@@ -1,0 +1,146 @@
+{
+ "name": "qodo-miss6",
+ "dataset": {
+  "source": "https://huggingface.co/datasets/Qodo/PR-Review-Bench",
+  "commit": "a73957c450a70693a743260e5637fffc44625f16",
+  "file": "git_code_review_bench_100_w_open_prs.jsonl",
+  "sha256": "2f0448ed1f9a55bea14039961d8d9e610ee8885b37559b80f5821f3f70cfe64d"
+ },
+ "rule": "freeze validation (2026-10-03): the 6 Qodo pr100 PRs (outside qodo-rules30 and qodo-swift13) behind the most of the 59 functional issues a vendor caught and QuickReview missed; never a held-out set",
+ "references": 580,
+ "backups": [],
+ "cases": [
+  {
+   "instance_id": "agentic-review-benchmarks__Ghost@1987365",
+   "repo": "agentic-review-benchmarks/Ghost",
+   "pr": 1,
+   "pr_url": "https://github.com/agentic-review-benchmarks/Ghost/pull/1",
+   "base_commit": "47c713139b6e8ba45c6f282991929ad73b17d511",
+   "head_commit": "19873656af953712cb3c5f5f4d881824c0357097",
+   "language": "JavaScript",
+   "pr_category": "qodo-injected",
+   "change_line_count": 0,
+   "references": 4,
+   "title": "Removed xmlrpc/pingomatic ping service",
+   "body": "Pingomatic is a legacy blog ping service that notified external services when posts were published. It is no longer relevant for modern SEO or content distribution.\r\n\r\nThe service was disabled by default and added unnecessary complexity to the codebase.\r\n\r\nGot some code for us? Awesome \ud83c\udf8a!\r\n\r\nPlease take a minute to explain the change you're making:\r\n- Why are you making it?\r\n- What does it do?\r\n- Why is this something Ghost users or developers need?\r\n\r\nPlease check your PR against these items:\r\n\r\n- [x] I've read and followed the [Contributor Guide](https://github.com/TryGhost/Ghost/blob/main/.github/CONTRIBUTING.md)\r\n- [x] I've explained my change\r\n- [x] I've written an automated test to prove my change works\r\n\r\nWe appreciate your contribution! \ud83d\ude4f\r\n\n<!-- CURSOR_SUMMARY -->\n---\n\n> [!NOTE]\n> Removes the obsolete XML-RPC ping service (Pingomatic) from core and config.\n> \n> - Deletes `server/services/xmlrpc.js` and its unit tests\n> - Drops `xmlrpc.listen()` and the `xmlrpc` require from `boot.js`\n> - Removes `privacy.useRpcPing` from `config.development.json`\n> \n> No other services or boot order affected.\n> \n> <sup>Written by [Cursor Bugbot](https://cursor.com/dashboard?tab=bugbot) for commit 6214dd7fd9def1e68e3f6845a6219055afb92eba. This will update automatically on new commits. Configure [here](https://cursor.com/dashboard?tab=bugbot).</sup>\n<!-- /CURSOR_SUMMARY -->",
+   "leakproof": {
+    "source_head": "d3184872c4837be0457b6311bc9113538d871db1",
+    "source_merge_base": "18c03d2522d44f458b717120ceb3caa3521ee751",
+    "base_tree": "28811be89727f04c35cc42d352a6f9eeaf96312f",
+    "head_tree": "c58b55f1770fde869471bc670940b5a84d3a9b4b"
+   },
+   "task_id": "Ghost#1",
+   "source_base_commit": "18c03d2522d44f458b717120ceb3caa3521ee751"
+  },
+  {
+   "instance_id": "agentic-review-benchmarks__Ghost@8596d64",
+   "repo": "agentic-review-benchmarks/Ghost",
+   "pr": 13,
+   "pr_url": "https://github.com/agentic-review-benchmarks/Ghost/pull/13",
+   "base_commit": "9ecbe4ef8a0df76fd6253c75389ae26a6d1084c8",
+   "head_commit": "8596d6405376fb409d8b82631bae79fe0a119a09",
+   "language": "JavaScript",
+   "pr_category": "qodo-injected",
+   "change_line_count": 0,
+   "references": 4,
+   "title": "Added materialized view and duplicated v2 Tinybird endpoints",
+   "body": "ref https://linear.app/ghost/issue/NY-865/analytics-sources-not-populating-for-tangle-due-to-408-timeouts\r\n\r\n## Problem\r\n\r\nTinybird endpoints are timing out in production for the sites with the most data. the `mv_session_data` pipe, which almost all our endpoints depend on, calculates complex aggregations at query time, which we believe to be the biggest contributor to poor performance when querying against large data sets.\r\n\r\n## Fix\r\n\r\nThe solution to fix this is to convert `mv_session_data` from a pipe to a materialized view, such that Tinybird will calculate these aggregations as ingest time instead of at query time. As this is a rather large change to the implementation, we've opted to create a duplicate v2 pipeline rather than updating the existing pipeline in place. This way we can validate the v2 pipeline in production against real production data, without actually changing any of the user-facing behavior, before cutting over to using the v2 pipeline.\r\n\r\n---\r\n\r\n## Changes made\r\n\r\n- Creates a new datasource for the materialized view for `mv_session_data`\r\n- Creates mv_session_data_v2 pipe to feed the materialized view\r\n- Creates filtered_sessions_v2, which is backed by the new materialized view\r\n- Creates v2 of all endpoints, which are backed by the filtered_sessions_v2 and the new materialized view\r\n- Duplicates all test files for endpoints, without making any changes to the test cases or expected results, to ensure that v1 and v2 of our endpoints maintain the same behavior\r\n- Adds ability to switch Ghost to use v2 endpoints for the sake of validating against live production data\r\n\r\nCreating a duplicate pipeline makes it easier to validate this in production, but it does make reviewing these changes more difficult, since the git diff doesn't clearly show what has changed in each endpoint. I've added a comment to each file that shows the diff of the v2 endpoint against the original unversioned endpoint to make reviewing this PR easier, but you'll have to run those commands locally with this branch checked out to see the changes.\r\n\r\n## Testing Ghost against v2 endpoints\r\n\r\nThis [commit](https://github.com/TryGhost/Ghost/pull/25719/commits/87d6b679713cee0632590bd511023be04219f94d) adds the ability to point Ghost to the v2 version of the endpoints. To use this, set `tinybird:stats:version` to `v2` in your `config.local.json`, then re-run `yarn dev:analytics`.",
+   "leakproof": {
+    "source_head": "6f89a027f78fe2a888aeaf01ff2d8f08d29dfafa",
+    "source_merge_base": "c669914ec69a98e15bbbd0c99c5be342bf329e02",
+    "base_tree": "7f67dc3da842329f5544139e0225adcb41ac8b38",
+    "head_tree": "d40b42115d3176ac87141df28be7f1be91309697"
+   },
+   "task_id": "Ghost#13",
+   "source_base_commit": "c669914ec69a98e15bbbd0c99c5be342bf329e02"
+  },
+  {
+   "instance_id": "agentic-review-benchmarks__dify@db22f15",
+   "repo": "agentic-review-benchmarks/dify",
+   "pr": 7,
+   "pr_url": "https://github.com/agentic-review-benchmarks/dify/pull/7",
+   "base_commit": "4cdfcd3c7d53015499782c543c3ae0462a14950c",
+   "head_commit": "db22f15c778c07d07ab830d060cd5e772eb74658",
+   "language": "Python",
+   "pr_category": "qodo-injected",
+   "change_line_count": 0,
+   "references": 4,
+   "title": "test: unify i18next mocks into centralized helpers",
+   "body": "Consolidate scattered i18next mock implementations across test files into a single source of truth. This reduces duplication and ensures consistent mock behavior.\r\n\r\n- Create test/i18n-mock.ts with reusable factory functions\r\n- Update vitest.setup.ts to use the centralized helpers\r\n- Remove redundant mock definitions from 8 test files\r\n- Update testing.md documentation\r\n\r\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\r\n\r\n> [!IMPORTANT]\r\n>\r\n> 1. Make sure you have read our [contribution guidelines](https://github.com/langgenius/dify/blob/main/CONTRIBUTING.md)\r\n> 1. Ensure there is an associated issue and you have been assigned to it\r\n> 1. Use the correct syntax to link this PR: `Fixes #<issue number>`.\r\n\r\n## Summary\r\n\r\n<!-- Please include a summary of the change and which issue is fixed. Please also include relevant motivation and context. List any dependencies that are required for this change. -->\r\n\r\nfixes #30304\r\n\r\n## Screenshots\r\n\r\n| Before | After |\r\n|--------|-------|\r\n| ... | ... |\r\n\r\n## Checklist\r\n\r\n- [ ] This change requires a documentation update, included: [Dify Document](https://github.com/langgenius/dify-docs)\r\n- [x] I understand that this PR may be closed in case there was no previous discussion or issues. (This doesn't apply to typos!)\r\n- [x] I've added a test for each change that was introduced, and I tried as much as possible to make a single atomic change.\r\n- [x] I've updated the documentation accordingly.\r\n- [x] I ran `dev/reformat`(backend) and `cd web && npx lint-staged`(frontend) to appease the lint gods",
+   "leakproof": {
+    "source_head": "3c622b17acf4457bb694a586d9c82ab738706d09",
+    "source_merge_base": "00585fa5821ce9578087740a6de15dac5c4ab001",
+    "base_tree": "77e0acadf41e99f8a983eeb168848c51be7c7c91",
+    "head_tree": "05f6c6f2f8391292495ca9fa63f98a93db0cf506"
+   },
+   "task_id": "dify#7",
+   "source_base_commit": "00585fa5821ce9578087740a6de15dac5c4ab001"
+  },
+  {
+   "instance_id": "agentic-review-benchmarks__prefect@79d003f",
+   "repo": "agentic-review-benchmarks/prefect",
+   "pr": 1,
+   "pr_url": "https://github.com/agentic-review-benchmarks/prefect/pull/1",
+   "base_commit": "2c01f186bf1857f5055677f3f9366e49fc9ce7a3",
+   "head_commit": "79d003fd77ace4bebbb20eec7e75e87269e47e2e",
+   "language": "Python",
+   "pr_category": "qodo-injected",
+   "change_line_count": 0,
+   "references": 4,
+   "title": "Add documentation for prefect sdk generate CLI",
+   "body": "## Summary\n\n- Add auto-generated CLI reference for `prefect sdk` command\n- Add comprehensive how-to guide for generating typed SDKs from deployments\n- Update navigation in docs.json for both new pages\n- Regenerate CLI docs to include new --output options\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.ai/code)",
+   "leakproof": {
+    "source_head": "37e272dd3bc5e6a79acc597754871cde96e42474",
+    "source_merge_base": "0ee35533f8f48c58f1b9d52827548bcedae5c880",
+    "base_tree": "9dfa8611e76fe52175d57fbbd930ee7363e6bc4e",
+    "head_tree": "b22262aedac70a1607aeec4a1b779f8d92fd8816"
+   },
+   "task_id": "prefect#1",
+   "source_base_commit": "0ee35533f8f48c58f1b9d52827548bcedae5c880"
+  },
+  {
+   "instance_id": "agentic-review-benchmarks__prefect@4ad58b8",
+   "repo": "agentic-review-benchmarks/prefect",
+   "pr": 9,
+   "pr_url": "https://github.com/agentic-review-benchmarks/prefect/pull/9",
+   "base_commit": "d43fded5baec974cc3ce46c5a4f3583880ee4346",
+   "head_commit": "4ad58b8feece48e2f99646605f00683f41eafc20",
+   "language": "Python",
+   "pr_category": "qodo-injected",
+   "change_line_count": 0,
+   "references": 5,
+   "title": "Add FlowIconText component for UI v2 migration",
+   "body": "Adds a new `FlowIconText` component that displays a flow's icon and name as a clickable link, fetching flow data by ID. This component is intended for use cases where you want to show just the icon + name without the \"Flow\" label prefix (unlike the existing `FlowLink` component).\n\nThe implementation follows the established Suspense pattern used in similar link components like `FlowLink` and `DeploymentLink`.\n\n**Files added:**\n- `flow-icon-text.tsx` - Main component with Suspense wrapper and Skeleton fallback\n- `flow-icon-text.stories.tsx` - Storybook stories with RouterProvider decorator for proper rendering\n- `flow-icon-text.test.tsx` - Unit tests using MSW for API mocking\n- `index.ts` - Export file\n\n**Storybook preview:**\n\n![FlowIconText Storybook](https://app.devin.ai/api/presigned_proxy?token=REDACTED)\n\n### Checklist\n\n- [x] This pull request references any related issue by including \"closes `<link to issue>`\"\n  - closes OSS-7467\n- [x] If this pull request adds new functionality, it includes unit tests that cover the changes\n- [ ] If this pull request removes docs files, it includes redirect settings in `mint.json`.\n- [ ] If this pull request adds functions or classes, it includes helpful docstrings.\n\n---\n\n**Link to Devin run:** https://app.devin.ai/sessions/e2ff116e69b643d9a58e05343a5fc69a\n**Requested by:** alex.s@prefect.io (@desertaxle)",
+   "leakproof": {
+    "source_head": "d7af125d6f9757dff85349d7dc04bfc0ee7cd506",
+    "source_merge_base": "579c17b0bb82e1e4c82115fe1218a28b517471f2",
+    "base_tree": "8ed4c5c5782359a7989b497422529a2c3fabed83",
+    "head_tree": "4042705d0d16fef5d1f2dfcb8b38f0f53093092e"
+   },
+   "task_id": "prefect#9",
+   "source_base_commit": "579c17b0bb82e1e4c82115fe1218a28b517471f2"
+  },
+  {
+   "instance_id": "agentic-review-benchmarks__tauri@a626dc1",
+   "repo": "agentic-review-benchmarks/tauri",
+   "pr": 13,
+   "pr_url": "https://github.com/agentic-review-benchmarks/tauri/pull/13",
+   "base_commit": "60c798066a9436bf125053edde1c0bcb87dceebc",
+   "head_commit": "a626dc1e730060f71ea1e2f17ba0c08d8e4cfbea",
+   "language": "Rust",
+   "pr_category": "qodo-injected",
+   "change_line_count": 0,
+   "references": 8,
+   "title": "Apply Version Updates From Current Changes",
+   "body": "# Version Updates\n\nMerging this PR will release new versions of the following packages based on your change files.\n\n\n\n\n# tauri-macos-sign\n\n## [2.3.0]\n### Enhancements\n\n- f59bf9d53 (#14337 by @FabianLars) **Potentially breaking change:** Export custom Error enum instead of using anyhow. The changes happened in https://github.com/tauri-apps/tauri/pull/14126.\n\n\n\n# tauri-bundler\n\n## [2.7.1]\n### Dependencies\n\n- Upgraded to `tauri-macos-sign@2.3.0`\n\n\n\n# tauri-runtime\n\n## [2.9.1]\n### Bug Fixes\n\n- 4b6b8690a (#14347 by @FabianLars) Fixed an issue that caused docs.rs builds to fail. No user facing changes.\n\n\n\n# tauri-runtime-wry\n\n## [2.9.1]\n### Bug Fixes\n\n- 4b6b8690a (#14347 by @FabianLars) Fixed an issue that caused docs.rs builds to fail. No user facing changes.\n### Dependencies\n\n- Upgraded to `tauri-runtime@2.9.1`\n\n\n\n# tauri-plugin\n\n## [2.5.1]\n### Bug Fixes\n\n- 4b6b8690a (#14347 by @FabianLars) Fixed an issue that caused docs.rs builds to fail. No user facing changes.\n\n\n\n# tauri-build\n\n## [2.5.1]\n### Bug Fixes\n\n- 4b6b8690a (#14347 by @FabianLars) Fixed an issue that caused docs.rs builds to fail. No user facing changes.\n\n\n\n# tauri\n\n## [2.9.1]\n### Bug Fixes\n\n- 4b6b8690a (#14347 by @FabianLars) Fixed an issue that caused docs.rs builds to fail. No user facing changes.\n### Dependencies\n\n- Upgraded to `tauri-build@2.5.1`\n- Upgraded to `tauri-runtime@2.9.1`\n- Upgraded to `tauri-runtime-wry@2.9.1`\n\n\n\n# @tauri-apps/cli\n\n## [2.9.1]\n### Dependencies\n\n- Upgraded to `tauri-cli@2.9.1`\n\n\n\n# tauri-cli\n\n## [2.9.1]\n### Dependencies\n\n- Upgraded to `tauri-macos-sign@2.3.0`\n- Upgraded to `tauri-bundler@2.7.1`",
+   "leakproof": {
+    "source_head": "42eb246ac80da0c2db0d730dac0e939a66aa5100",
+    "source_merge_base": "918ffe7e2da214afcff41c7781e6b7f4081c5556",
+    "base_tree": "55bf718a504c5c7d3c93a92a0923f9ae6d6a67ec",
+    "head_tree": "d8bfd8703fe39053a751752550a91248b069a73c"
+   },
+   "task_id": "tauri#13",
+   "source_base_commit": "918ffe7e2da214afcff41c7781e6b7f4081c5556"
+  }
+ ]
+}
