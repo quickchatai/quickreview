@@ -19,7 +19,7 @@ lowering anyone's bar.
 
 Same behaviour, less mechanism: nesting that flattens, duplicated branches
 that fold, a flag parameter that splits into two call sites, state that a
-pure value replaces, an abstraction introduced for one caller. Judge against
+pure value replaces (speculative generality is `pass-abstraction`'s). Judge against
 the job the code does, and show the simpler shape concretely enough that the
 author can see it — name what disappears.
 

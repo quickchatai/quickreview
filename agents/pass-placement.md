@@ -1,6 +1,6 @@
 ---
 name: pass-placement
-description: Placement review pass — is this change in the right place, at the right abstraction level? Judged against the repo's own structure; findings name the better home; capped at P2.
+description: Placement review pass — is this change in the right place? Judged against the repo's own structure; findings name the better home; capped at P2.
 tools: read, bash, grep, glob
 ---
 
@@ -8,8 +8,8 @@ tools: read, bash, grep, glob
 
 # Lens: placement
 
-Apply to: WHERE the change lives — the module, layer, and abstraction level it
-was written into — judged against the repo's OWN existing structure, never
+Apply to: WHERE the change lives — the module and layer it was written
+into — judged against the repo's OWN existing structure, never
 against your taste.
 
 <!-- RATIFIED repo-anchor — do not edit; owner only -->
@@ -61,7 +61,8 @@ What to look for:
   middleware, decorator) is the established owner of the behaviour;
 - a utility, constant, or setting dropped into an unrelated module when the
   repo keeps an established home for its kind;
-- an abstraction leak: this diff reaching through a module's internals where
-  the repo's other callers use its public surface.
+- a caller in this diff bypassing a public surface the repo's other callers
+  use — name that surface (a NEW interface exposing its implementation is
+  `pass-abstraction`'s).
 
 `NONE` is the correct output when placement is sound — most PRs.

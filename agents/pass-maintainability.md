@@ -53,18 +53,7 @@ finding that names no concrete cost is taste — drop it.
 - **Diagnosability.** A new error path whose message or log would not let an
   operator tell what failed (swallowed cause, generic "failed", lost id).
 
-## Not this lens
-
-- **Style is excluded.** Formatting, whitespace, line length, quote style,
-  import order, brace placement, naming CONVENTIONS (camelCase vs
-  snake_case), comment grammar: a written-guide rule is `pass-style`'s, a
-  rule a CI-run linter or formatter enforces is `pass-lint-conformance`'s.
-- **Not correctness.** A real bug you notice belongs to its owning lens —
-  raise it as ONE `P3` question naming the concern.
-- **Not the other structure lenses.** Where the code should live is
-  `pass-placement`; less mechanism is `pass-simplicity`; the same knowledge
-  written twice is `pass-duplication`; interfaces and boundaries at the wrong
-  level are `pass-abstraction`.
+{{include:prompts/pass-quality-common.md}}
 
 ## Severity is capped at P2
 

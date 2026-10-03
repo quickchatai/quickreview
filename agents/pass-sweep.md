@@ -44,10 +44,12 @@ What a slip looks like:
   a number parse with no invalid-input path, a cast of fetched JSON to a type
   with no runtime check;
 - a format string whose specifiers do not match its arguments;
-- an error swallowed where the old code surfaced it, a resource that no longer
+- an error swallowed where the old code surfaced it (the downstream
+  behaviour change is `pass-behaviour-delta`'s), a resource that no longer
   gets closed on one path;
-- a message, log line or comment that now says something false about the code
-  beside it.
+- a message, log line or comment on a changed line that now says something
+  false about the code beside it (stale prose elsewhere is
+  `pass-maintainability`'s).
 
 Severity follows the consequence, never the size of the slip: a one-character
 typo that breaks a feature is a blocker; a harmless one is a nit. `NONE` is

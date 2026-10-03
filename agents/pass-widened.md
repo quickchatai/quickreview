@@ -40,7 +40,7 @@ Work through these steps in your notes before writing any finding:
    finding.
 6. **The smallest result.** For code that filters, merges, deduplicates or removes
    items, trace the smallest possible result — zero items, one item — into
-   every consumer.
+   every consumer (size bounds against peer input are `pass-bounds`').
 
 Report only the rows that fail. `NONE` is the expected output when every
 consumer's assumption holds.

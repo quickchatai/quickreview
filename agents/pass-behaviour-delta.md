@@ -29,7 +29,8 @@ How to work:
      added around it, a conjunct dropped from it, a `DISTINCT`, a lock, a
      validation or a retry made conditional;
    - a removed or weakened guard: a deleted type, null, bounds or permission
-     check; an `isinstance`/`instanceof` that is gone; a narrowed condition;
+     check; an `isinstance`/`instanceof` that is gone; a narrowed condition (a
+     WIDENED predicate's consumers are `pass-widened`'s);
    - a line rewrapped into a new branch whose value or argument also changed
      (the old fallback replaced in the `else`);
    - a replaced call whose semantics differ in a way the PR does not mention

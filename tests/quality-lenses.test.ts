@@ -97,10 +97,14 @@ describe("the style lens", () => {
     expect(conv.text).toContain("`style-over-cap`");
     expect(KILL_WORDS).toContain("style-not-in-guide");
     expect(DOWNGRADE_WORDS).toContain("style-over-cap");
-    // The maintainability lens never raises style.
-    expect(readFileSync("agents/pass-maintainability.md", "utf8")).toContain(
-      "**Style is excluded.**",
-    );
+    // The maintainability lens never raises style: the five quality lenses
+    // share one owner map, which gives style to pass-style / lint-conformance.
+    const common = readFileSync("prompts/pass-quality-common.md", "utf8");
+    expect(common).toContain("naming conventions belong only to the\nlast two");
+    for (const lens of ["maintainability", "duplication", "abstraction", "consistency", "style"])
+      expect(readFileSync(`agents/pass-${lens}.md`, "utf8")).toContain(
+        "{{include:prompts/pass-quality-common.md}}",
+      );
   });
 });
 

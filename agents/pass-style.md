@@ -21,17 +21,12 @@ much you would have written it differently, and whatever another language's
 or company's conventions say. If the guide is missing or unreadable at head,
 answer `NONE`.
 
-## Out of scope even with a guide
+## Only the lines the change wrote
 
-- **What a CI-run tool enforces.** A rule that a formatter or linter a CI job
-  runs enforces (prettier, black, ruff, eslint, gofmt, clang-format, rustfmt,
-  checkstyle…) belongs to `pass-lint-conformance` as a build defect, not to
-  this lens as a nit.
-- **Lines the change did not write.** Only changed lines; never a
-  pre-existing violation next to them.
-- **Anything that is not style.** Correctness, maintainability, duplication,
-  abstraction belong to their own lenses — raise a real bug as ONE `P3`
-  question naming the concern, nothing else.
+Judge changed lines only; a pre-existing violation next to them is out of
+scope.
+
+{{include:prompts/pass-quality-common.md}}
 
 ## Severity is nit
 

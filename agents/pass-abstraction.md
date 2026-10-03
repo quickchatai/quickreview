@@ -52,10 +52,7 @@ the function to split out, the type to introduce, the parameter to drop — and
 what it buys the callers you cited. A remedy larger than the PR is a design
 objection, not a merge blocker: say so.
 
-## Not this lens
-
-Style of any kind; correctness (raise a real bug as ONE `P3` question naming
-the concern); duplication of knowledge (`pass-duplication`).
+{{include:prompts/pass-quality-common.md}}
 
 ## Severity is capped at P2
 

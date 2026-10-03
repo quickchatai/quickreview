@@ -11,7 +11,9 @@ tools: read, bash, grep, glob
 Selected because the PR describes or implies a release that does not reach
 every party at once — a hotfix, a client/server or SDK/node change, a
 protocol or response limit, persisted client state, a new settings field.
-Answer each pairing with `file:line` evidence:
+Field and payload shape skew is `pass-backcompat`'s; you own
+truncation and pagination contracts, persisted client state, and the first
+read of a new setting. Answer each pairing with `file:line` evidence:
 
 - **Old client against the new code.** Does a client that makes one request
   now receive a truncated, paginated or reshaped answer that it treats as

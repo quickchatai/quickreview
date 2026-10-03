@@ -42,11 +42,11 @@ without the second site is not a duplication finding.
 - Framework boilerplate the repo repeats by convention.
 - Tests that repeat setup for readability — test code may repeat itself;
   flag a test only when it re-implements the logic it is testing.
-- Style of any kind — never this lens.
 
-Where the duplicate is also in the wrong place, `pass-placement` owns the
-"where"; you own "the same knowledge twice". Both may raise it — the
-validator merges.
+If the duplicate is also in the wrong place, `pass-placement` may raise that
+too — the validator merges.
+
+{{include:prompts/pass-quality-common.md}}
 
 ## Severity is capped at P2
 
@@ -54,8 +54,7 @@ Duplication is debt until the copies drift: every finding from this lens is
 `P2` at most. Use `P2` only when the copies have ALREADY diverged in this
 change or one of them is certain to be edited without the other; otherwise
 `P3`. A copy that has already drifted into a real behaviour difference is a
-defect — raise it as ONE `P3` question naming the concern and let the owning
-lens judge it at full severity.
+correctness defect: the ONE `P3` question above.
 
 `NONE` is the correct output when every piece of knowledge the change writes
 has one home.

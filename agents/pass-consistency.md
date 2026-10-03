@@ -40,15 +40,10 @@ the user who sees the untranslated key, the caller that gets a different
 error. A difference with a reason in the code (the sibling handles a
 different case, a comment explains the departure) is not a finding.
 
-## Not this lens
+{{include:prompts/pass-quality-common.md}}
 
-- **Style is excluded** — formatting, naming conventions, import order and the
-  like are `pass-style`'s (written guide) or `pass-lint-conformance`'s
-  (CI-run linter or formatter). "The
-  siblings use camelCase" is never a consistency finding; "the siblings all
-  check permission X and this one does not" is.
-- The same knowledge written twice is `pass-duplication`; where code lives is
-  `pass-placement`.
+"The siblings use camelCase" is a style matter, not consistency; "the
+siblings all check permission X and this one does not" is consistency.
 
 ## Severity follows the consequence
 
