@@ -816,6 +816,20 @@ export const EXHAUST_THE_SITE_ADDENDUM =
   "- **The other failures in the same loop or call chain**: when one call inside a loop can throw or return nothing, check the other calls in that loop too.\n\n" +
   "Report each site or consequence that needs its OWN fix as its own finding (with its `path:line`); report sites that one fix covers together, every site listed. Saying it once in passing inside another finding is not reporting it.\n";
 
+// Freeze fixes 2 (the cross-benchmark miss analysis): mechanical checks a
+// line-by-line reader can settle on the spot, each seen missed on changed
+// lines (AACR 8, Qodo 5, Martian 1). pass-sweep; PR builds only.
+export const SWEEP_MECHANICAL_CHECKLIST_ADDENDUM =
+  "\n## Mechanical checks on every changed line (sandbox rule)\n" +
+  "Besides the slips in your list, settle these on the spot for each changed line they apply to:\n\n" +
+  "- **A result that can be null, empty or throw**: follow a new or changed call that can return nothing (a lookup, a `find`, a nullable getter) or throw into EVERY caller and loop that uses it. A caller that dereferences it, or a loop that aborts on the first failure, is a finding.\n" +
+  "- **Placeholders vs arguments**: a format string, log template, translation string or SQL with N placeholders and M arguments; a named placeholder renamed on one side only.\n" +
+  "- **A default outside its choices**: a default value that is not among the options, enum members or validation set the same code defines.\n" +
+  "- **A comment or doc that names the wrong thing**: a docstring, parameter doc or comment naming an identifier, unit or behaviour the code beside it does not have.\n" +
+  "- **Two similar APIs**: where the code calls one of two similarly named functions or fields (`libraries` / `modelLibraries`, `get` / `getOrDefault`, `size` / `length`), read both and say why this one is right.\n" +
+  "- **Combined or repeated input**: a parser, matcher or flag set that handles each token alone — what happens with two of them together, the same one twice, or an empty one between separators.\n" +
+  "- **An unreachable fallback**: `a || b`, `a ?? b`, a `catch` default or an `else` branch whose left side can never be falsy or failing (a template string is always truthy), so the fallback the author wrote never runs.\n";
+
 // Round 4 (ROUND4-GAPS.md): a stylesheet change removed a rule the component the PR targeted no longer needed, while a server-rendered fallback template of the same selector still did. The lenses read the targeted component only. PR builds only.
 export const REMOVED_RULE_OTHER_CONSUMERS_ADDENDUM =
   "\n## A removed or changed rule may have consumers the PR did not look at (sandbox rule)\n" +
@@ -1341,6 +1355,7 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
   { id: "anchor-at-cause", scope: "lenses", mode: "pr", text: ANCHOR_AT_CAUSE_ADDENDUM },
   { id: "validate-anchor-at-cause", scope: [VALIDATE_PASS], mode: "pr", text: VALIDATE_ANCHOR_AT_CAUSE_ADDENDUM },
   { id: "line-local-slips", scope: ["pass-baseline", "pass-sweep"], mode: "pr", text: LINE_LOCAL_SLIPS_ADDENDUM },
+  { id: "sweep-mechanical-checklist", scope: ["pass-sweep"], mode: "pr", text: SWEEP_MECHANICAL_CHECKLIST_ADDENDUM },
   { id: "exhaust-the-site", scope: ["pass-baseline", "pass-sweep", "pass-widened", "pass-behaviour-delta"], mode: "pr", text: EXHAUST_THE_SITE_ADDENDUM },
   { id: "style-written-rule-checklist", scope: [STYLE_PASS_NAME], mode: "pr", text: STYLE_WRITTEN_RULE_CHECKLIST_ADDENDUM },
   { id: "validate-convention-rule", scope: [VALIDATE_PASS], mode: "pr", text: VALIDATE_CONVENTION_RULE_ADDENDUM },

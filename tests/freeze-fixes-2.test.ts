@@ -160,3 +160,15 @@ describe("pass-lint-conformance: planned only on linters a CI job runs", () => {
     expect(body).not.toMatch(NO_BENCHMARK_NAMES);
   });
 });
+
+describe("sweep mechanical checklist", () => {
+  it("binds pass-sweep only (PR builds) and names the seven checks", () => {
+    expect(ids("pass-sweep")).toContain("sweep-mechanical-checklist");
+    expect(ids("pass-baseline")).not.toContain("sweep-mechanical-checklist");
+    expect(ids("pass-sweep", "scan")).not.toContain("sweep-mechanical-checklist");
+    const t = text("sweep-mechanical-checklist");
+    for (const k of [/can be null, empty or throw/, /Placeholders vs arguments/, /A default outside its choices/, /names the wrong thing/, /Two similar APIs/, /Combined or repeated input/, /An unreachable fallback/])
+      expect(t).toMatch(k);
+    expect(t).not.toMatch(NO_BENCHMARK_NAMES);
+  });
+});
