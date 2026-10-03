@@ -63,12 +63,24 @@
 - name: Host setup — packages, Docker, cloudflared tunnel (optional)
   hosts: quickreview
   become: true
+  vars:
+    base_packages: [python3-docker, git, curl, ca-certificates, gnupg, rsync]
   tasks:
+    # Refresh the apt cache only when a package is actually missing. The VM
+    # is shared and carries third-party repos we do not own; on 2026-10-03 one
+    # of them made python-apt's cache update fail on every attempt (empty
+    # error, while the host's own apt runs still stamped success), and an
+    # unconditional update_cache failed every rebuild with all six packages
+    # already installed — the image was never rebuilt.
+    - name: Installed packages
+      ansible.builtin.package_facts:
+
     - name: Base packages
       ansible.builtin.apt:
-        name: [python3-docker, git, curl, ca-certificates, gnupg, rsync]
+        name: "{{ base_packages }}"
         state: present
         update_cache: true
+      when: base_packages | difference(ansible_facts.packages.keys() | list) | length > 0
 
     # The VM already runs Docker CE (containerd.io conflicts with
     # docker.io's containerd) — only install a Docker at all when none exists.
@@ -212,6 +224,39 @@
     # files, byte-identical to the artifact set (enforced by
     # tests/seed-integrity.test.ts — root CLAUDE.md rule 6).
 
+    # Stale-image guard (2026-10-03). The entrypoint and Dockerfile are BAKED
+    # into the image, so a sync — which never rebuilds it — boots new code on
+    # the old entrypoint. That day a sync shipped the secrets locator
+    # onto a 2026-09-03 image whose entrypoint still linked only the old
+    # secrets path, and the daemon crash-looped on a missing webhook_secret.
+    # Every build stamps the image with a fingerprint of its rendered build
+    # context; a sync whose context differs (or an image with no stamp — an
+    # unknown is never read as a match) stops HERE, before the rsync and the
+    # restart, so the old container keeps running the old code. A missing
+    # image (first install) is left to the build below.
+    - name: Build context fingerprint
+      ansible.builtin.set_fact:
+        build_context_sha: "{{ (lookup('ansible.builtin.template', 'Dockerfile.j2') ~ lookup('ansible.builtin.template', 'entrypoint.sh.j2')) | hash('sha256') }}"
+
+    - name: The image the container runs
+      community.docker.docker_image_info:
+        name: "{{ image_name }}:{{ image_tag }}"
+      register: image_on_vm
+
+    - name: "Fail: the image predates this build context — it needs a rebuild, not a sync"
+      ansible.builtin.fail:
+        msg: >-
+          The image {{ image_name }}:{{ image_tag }} was built from a different
+          Dockerfile/entrypoint than this checkout renders (image stamp
+          {{ (image_on_vm.images[0].Config.Labels | default({}, true)).get('qcr.build-context') | default('none', true) }},
+          checkout {{ build_context_sha }}). A sync would boot this code on the
+          old entrypoint. Nothing was changed on the VM: run
+          `./scripts/deploy.sh rebuild` instead.
+      when:
+        - not (rebuild_image | default(false) | bool)
+        - image_on_vm.images | length > 0
+        - (image_on_vm.images[0].Config.Labels | default({}, true)).get('qcr.build-context') != build_context_sha
+
     - name: Sync the local sandbox working copy (daemon, extensions) when present
       ansible.posix.synchronize:
         src: "{{ sandbox_src }}/"
@@ -307,6 +352,9 @@
         force_source: "{{ rebuild_image | default(false) | bool }}"
         build:
           path: "{{ sandbox_root }}/build"
+          # Read back by the stale-image guard before every sync.
+          labels:
+            qcr.build-context: "{{ build_context_sha }}"
 
     - name: Run the sandbox container
       community.docker.docker_container:

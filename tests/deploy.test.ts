@@ -1276,3 +1276,119 @@ describe("deploy.sh — base clone name", () => {
     expect(gitignore).toContain("info/exclude");
   });
 });
+
+// 2026-10-03: a sync shipped code whose entrypoint half was baked into an old
+// image, the daemon crash-looped, and the post-deploy check still said ok —
+// it read the OLD daemon's status.json. Three guards came out of it.
+describe("deploy — the 2026-10-03 stale-image outage", () => {
+  const checker = join(root, "scripts", "heartbeat-fresh.mjs");
+  const STARTED = "2026-10-03T09:55:40.000000000Z";
+  const NOW = "2026-10-03T09:57:00Z";
+  const status = (writtenAt: string) => JSON.stringify({ written_at: writtenAt, prs: [] });
+
+  function judge(input: string): { code: number; out: string } {
+    try {
+      const out = execFileSync("node", [checker], { input, encoding: "utf8" });
+      return { code: 0, out };
+    } catch (err) {
+      const e = err as { status?: number; stdout?: string };
+      return { code: e.status ?? -1, out: String(e.stdout ?? "") };
+    }
+  }
+
+  it("heartbeat-fresh: a heartbeat written after the container started, recently, is fresh", () => {
+    const r = judge(`${STARTED}\n${NOW}\n${status("2026-10-03T09:56:50.000Z")}`);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("fresh");
+  });
+
+  it("heartbeat-fresh: the OLD daemon's last write — after the deploy began, before this boot — is stale", () => {
+    // The incident: deploy started 09:55:05, the old daemon wrote 09:55:31,
+    // the container was recreated after that and never wrote again.
+    const r = judge(`${STARTED}\n${NOW}\n${status("2026-10-03T09:55:31.228Z")}`);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("predates the container start");
+  });
+
+  it("heartbeat-fresh: a heartbeat from this boot that stopped being written is stale", () => {
+    const r = judge(`${STARTED}\n2026-10-03T10:10:00Z\n${status("2026-10-03T09:56:00.000Z")}`);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("stopped writing");
+  });
+
+  it("heartbeat-fresh: a missing or garbled reading is unreadable, never fresh", () => {
+    expect(judge(`${STARTED}\n${NOW}\n`).code).toBe(2);
+    expect(judge(`${STARTED}\n${NOW}\nnot json`).code).toBe(2);
+    expect(judge(`\n${NOW}\n${status("2026-10-03T09:56:50.000Z")}`).code).toBe(2);
+  });
+
+  /** verify for real against a stub ssh on PATH — nothing leaves the machine. */
+  function verifyWith(probe: string): { code: number; stdout: string; stderr: string } {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
+    const bin = join(env.dir, "bin");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "ssh"), "#!/bin/sh\necho stub-ok\n", { mode: 0o755 });
+    return run(env, ["verify"], {
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+      QC_HEARTBEAT_PROBE_CMD: probe,
+      QC_HEARTBEAT_WAIT_S: "0",
+    });
+  }
+
+  it("verify FAILS when the only heartbeat predates the running container", () => {
+    const r = verifyWith(`printf '%s\\n%s\\n%s' '${STARTED}' '${NOW}' '${status("2026-10-03T09:55:31.228Z")}'`);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("CHECK FAILED: no fresh heartbeat");
+  });
+
+  it("verify FAILS when the heartbeat cannot be read at all", () => {
+    expect(verifyWith("exit 255").code).toBe(1);
+  });
+
+  it("verify passes on a heartbeat from this boot", () => {
+    const r = verifyWith(`printf '%s\\n%s\\n%s' '${STARTED}' '${NOW}' '${status("2026-10-03T09:56:50.000Z")}'`);
+    expect(r.code).toBe(0);
+  });
+
+  const playbook = () => readFileSync(join(root, "deploy", "ansible", "playbook.yml"), "utf8");
+
+  it("a sync starts at the stale-image guard, which precedes the rsync", () => {
+    const text = playbook();
+    const start = /SYNC_START_TASK="([^"]+)"/.exec(readFileSync(deploySh, "utf8"))![1]!;
+    expect(start).toBe("Build context fingerprint");
+    const guard = text.indexOf(`- name: ${start}`);
+    const fail = text.indexOf('- name: "Fail: the image predates this build context');
+    const rsync = text.indexOf("- name: Sync the local sandbox working copy");
+    expect(guard).toBeGreaterThan(0);
+    expect(fail).toBeGreaterThan(guard);
+    expect(rsync).toBeGreaterThan(fail);
+  });
+
+  it("the guard refuses only outside a rebuild, on an existing image, on a stamp mismatch (a missing stamp included)", () => {
+    const text = playbook();
+    const at = text.indexOf('- name: "Fail: the image predates this build context');
+    const block = text.slice(at, text.indexOf("- name:", at + 1));
+    expect(block).toContain("not (rebuild_image | default(false) | bool)");
+    expect(block).toContain("image_on_vm.images | length > 0");
+    expect(block).toContain(".get('qcr.build-context') != build_context_sha");
+  });
+
+  it("the image build stamps the same fingerprint the guard compares", () => {
+    const text = playbook();
+    const at = text.indexOf("- name: Build the sandbox image");
+    const block = text.slice(at, text.indexOf("- name:", at + 1));
+    expect(block).toContain('qcr.build-context: "{{ build_context_sha }}"');
+    // …and the fingerprint covers both baked-in files.
+    expect(text).toContain("lookup('ansible.builtin.template', 'Dockerfile.j2')");
+    expect(text).toContain("lookup('ansible.builtin.template', 'entrypoint.sh.j2')");
+  });
+
+  it("host setup refreshes the apt cache only when a base package is missing", () => {
+    const text = playbook();
+    const at = text.indexOf("- name: Base packages");
+    const block = text.slice(at, text.indexOf("- name:", at + 1));
+    expect(block).toContain("update_cache: true");
+    expect(block).toContain("when: base_packages | difference(ansible_facts.packages.keys() | list) | length > 0");
+    expect(text.indexOf("ansible.builtin.package_facts")).toBeLessThan(at);
+  });
+});

@@ -90,10 +90,11 @@ CONTAINER="quickreview-sandbox"
 OV_UPSTREAM="$SANDBOX_DIR/extensions/vendor/openviking-pi/upstream.json"
 
 # The playbook (an asset — never edited from here) carries no tags, so "sync"
-# is expressed as a start-at-task: everything from the working-copy rsync
-# onwards (rsync → config home → build context → image → container recreate),
-# skipping host packages, cloudflared install and the secrets/seed copies.
-SYNC_START_TASK="Sync the local sandbox working copy (daemon, extensions) when present"
+# is expressed as a start-at-task: everything from the stale-image guard
+# onwards (guard → rsync → config home → build context → image → container
+# recreate), skipping host packages, cloudflared install and the secrets/seed
+# copies. The guard comes first so a sync that needs a rebuild changes nothing.
+SYNC_START_TASK="Build context fingerprint"
 
 MODE=""
 DRY_RUN=0
@@ -676,6 +677,38 @@ for cmd in "${VERIFY_CMDS[@]}"; do
     echo "$SELF: CHECK FAILED: $cmd" >&2
   fi
 done
+
+# The heartbeat must come from THIS boot (scripts/heartbeat-fresh.mjs says
+# why: on 2026-10-03 the cat above showed the old daemon's file and the deploy
+# reported ok over a crash loop). Polled, because a cold boot spends ~40s on
+# OpenViking before the daemon starts, and a sync's restart re-runs the
+# entrypoint's dist rebuild. QC_HEARTBEAT_PROBE_CMD stands in for the ssh
+# read (tests); QC_HEARTBEAT_WAIT_S bounds the wait.
+heartbeat_probe() {
+  if [[ -n "${QC_HEARTBEAT_PROBE_CMD:-}" ]]; then
+    bash -c "$QC_HEARTBEAT_PROBE_CMD"
+  else
+    ssh -o BatchMode=yes "$VM_HOST" \
+      "sudo docker inspect -f '{{.State.StartedAt}}' $CONTAINER; date -u +%Y-%m-%dT%H:%M:%SZ; sudo cat /opt/quickreview/state/status.json"
+  fi
+}
+check_heartbeat_fresh() {
+  local wait_s="${QC_HEARTBEAT_WAIT_S:-240}" waited=0 verdict=""
+  echo "--- heartbeat written by this boot (waits up to ${wait_s}s)"
+  while :; do
+    verdict="$(heartbeat_probe 2>/dev/null | node "$(dirname "${BASH_SOURCE[0]}")/heartbeat-fresh.mjs")" && {
+      echo "$verdict"
+      return 0
+    }
+    (( waited >= wait_s )) && break
+    sleep 10
+    waited=$((waited + 10))
+  done
+  echo "$verdict"
+  echo "$SELF: CHECK FAILED: no fresh heartbeat after ${waited}s — the daemon is not running on this boot; read 'sudo docker logs --tail 100 $CONTAINER'" >&2
+  return 1
+}
+check_heartbeat_fresh || FAILED=1
 
 if [[ $FAILED -ne 0 ]]; then
   cat >&2 <<'EOF'
