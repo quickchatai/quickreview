@@ -531,8 +531,11 @@ preset = "default"
 #     the session launches the lens with a short pointer to it;
 #   render_outputs — the review body and inline comments are rendered from
 #     the findings record instead of being written out a second time;
-#   validator_shards — split the candidates over this many pass-validate
-#     children (1 = one validator).
+#   validator_shards — EXPERIMENTAL, off (1), unvalidated: split the
+#     candidates over this many pass-validate children. Measured once on a
+#     19-lens PR (PERF.md §7): the validator got SLOWER (101 -> 225 s) and the
+#     merged record dropped every doubted and downgraded mark, so it never
+#     earned the default; kept as a knob, not a recommended setting.
 # wide_lens_fanout = false
 # task_files = false
 # render_outputs = false
