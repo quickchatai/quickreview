@@ -68,3 +68,55 @@ describe("live render route ≡ bench render route", () => {
     expect(live.record).toEqual(RECORD); // the record is not rewritten when nothing changed
   });
 });
+
+// The profile's `[posting]` cut moved into the same render step
+// (applyPostingPolicyToRecord), so the live shell route enforces it too.
+describe("the [posting] cut on both render routes", () => {
+  const policy = {
+    max_comments: 2,
+    nits: "off" as const,
+    questions: "post" as const,
+    repeat_sites: false,
+    body: "full" as const,
+    comment_style: "full" as const,
+  };
+  it("cuts the same items on both routes and records them withheld", () => {
+    const { live, bench } = bothRoutes({ review: { dedup_merge: false }, github: { bot_login: "qc-bot" }, posting: policy });
+    expect(live.comments).toEqual(bench.comments);
+    expect(live.body).toBe(bench.body);
+    expect(live.record).toEqual(JSON.parse(JSON.stringify(bench.record)));
+    // nits off → F1 and F4 withheld; the blocker and the question post
+    const f = live.record.findings as Array<Record<string, unknown>>;
+    expect(f.filter((e) => e.disposition === "withheld").map((e) => [e.id, e.word])).toEqual([
+      ["F1", "nits-off"],
+      ["F4", "nits-off"],
+    ]);
+    expect(live.comments).toHaveLength(2);
+    expect(live.body).toContain("**Verdict: Changes requested** — 1 blocker, 1 question.");
+  });
+  it("body = verdict renders the verdict line and one sentence on both routes", () => {
+    const { live, bench } = bothRoutes({ review: { dedup_merge: true }, posting: { ...policy, body: "verdict" } });
+    expect(live.body).toBe(bench.body);
+    expect(live.body).toBe("**Verdict: Changes requested** — 1 blocker, 1 question.\n\nThe retry change can loop forever.\n");
+  });
+  it("a follower row (same_as) is withheld as a repeat site when repeat_sites = false", () => {
+    const rec = {
+      ...RECORD,
+      findings: [
+        { id: "L", disposition: "posted", posted_as: "blocker", severity: "P1", path: "a.ts", line: 1, title: "`x` is wrong", body: "b" },
+        { id: "S", disposition: "posted", posted_as: "blocker", severity: "P1", path: "b.ts", line: 9, title: "same root cause", body: "f", same_as: "L" },
+      ],
+    };
+    const out = renderBenchOutputs(rec, undefined, { review: {}, posting: { ...policy, nits: "post", max_comments: 0 } });
+    expect(out.withheld.map((w) => [w.id, w.word])).toEqual([["S", "repeat-site"]]);
+    expect(out.rendered.comments).toHaveLength(1);
+  });
+  it("a default policy cuts nothing and leaves the record untouched", () => {
+    const out = renderBenchOutputs(structuredClone(RECORD), undefined, {
+      review: { dedup_merge: false },
+      posting: { ...policy, max_comments: 0, nits: "post", repeat_sites: true },
+    });
+    expect(out.withheld).toEqual([]);
+    expect(out.record).toEqual(RECORD);
+  });
+});

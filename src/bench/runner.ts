@@ -1052,6 +1052,7 @@ export async function reviewCase(
     // findings record, as production's render-review.sh renders them. A
     // session that wrote its own files anyway is overruled: the record is the
     // source.
+    let renderedPosting: BenchPostingReport | undefined;
     if (ctx.cfg.review.render_outputs) {
       const record = readJson(join(caseDir, CASE_FILES.findings));
       if (record !== undefined) {
@@ -1061,9 +1062,30 @@ export async function reviewCase(
           JSON.stringify(out.rendered.comments, null, 2) + "\n",
         );
         writeFileSync(join(caseDir, CASE_FILES.review), out.rendered.body);
-        // The duplicate-merge post-check's dispositions, kept in the record.
-        if (out.merges.length)
+        // The duplicate-merge post-check's and the posting policy's
+        // dispositions, kept in the record (the session's own beside it).
+        if (out.record !== record) {
+          writeFileSync(join(caseDir, POLICED_ORIGINALS[2]), JSON.stringify(record, null, 2) + "\n");
           writeFileSync(join(caseDir, CASE_FILES.findings), JSON.stringify(out.record, null, 2) + "\n");
+        }
+        // The `[posting]` cut ran inside the render step, as on the live
+        // route — so enforceBenchPosting below must not cut a second time.
+        if (!isDefaultPosting(ctx.cfg.posting)) {
+          renderedPosting = {
+            kept: out.rendered.comments.length + out.rendered.in_body,
+            withheld: out.withheld.map((w) => ({
+              path: w.path ?? "",
+              line: w.line ?? 0,
+              source: w.inline ? ("inline" as const) : ("body" as const),
+              cls: w.cls,
+              severity: w.severity,
+              word: w.word,
+              title: w.title,
+            })),
+            body: ctx.cfg.posting!.body,
+          };
+          writeFileSync(join(caseDir, POLICED_ORIGINALS[3]), JSON.stringify(renderedPosting, null, 2) + "\n");
+        }
         if (out.rendered.problems.length)
           summary.warnings.push(
             ...out.rendered.problems.slice(0, 10).map((p) => `render: ${p}`.slice(0, 300)),
@@ -1073,7 +1095,12 @@ export async function reviewCase(
     // The profile's `[posting]` policy, applied to what the session wrote
     // exactly as production posting applies it: an over-posting session is
     // still cut, and what is cut is recorded `withheld` (originals kept beside).
-    if (!isDefaultPosting(ctx.cfg.posting) && outcome !== undefined) {
+    if (renderedPosting) {
+      summary.posting = renderedPosting;
+      log(
+        `review: ${c.instance_id} — posting policy kept ${renderedPosting.kept} of ${renderedPosting.kept + renderedPosting.withheld.length} (${renderedPosting.withheld.map((w) => w.word).join(", ") || "nothing withheld"})`,
+      );
+    } else if (!isDefaultPosting(ctx.cfg.posting) && outcome !== undefined) {
       const patches: Record<string, string> = {};
       for (const f of files) if (f.patch !== undefined) patches[f.filename] = f.patch;
       const policed = enforceBenchPosting(caseDir, ctx.cfg.posting!, patches);

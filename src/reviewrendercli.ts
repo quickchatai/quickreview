@@ -12,9 +12,12 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig, REVIEW_DEFAULTS } from "./config.js";
+import { applyProfilePosting } from "./postingpolicy.js";
+import { loadProfilePosting } from "./profiles.js";
 import {
   postedRenderOptions,
   renderPostedReview,
+  type PolicyWithheld,
   type PostedRenderConfig,
   type RenderedReview,
 } from "./reviewrender.js";
@@ -27,7 +30,7 @@ export function renderRound(
   pr: number,
   round: number,
   cfg: PostedRenderConfig,
-): { rendered: RenderedReview; merges: PostCheckMerge[]; body: string; comments: string } | { error: string } {
+): { rendered: RenderedReview; merges: PostCheckMerge[]; withheld: PolicyWithheld[]; body: string; comments: string } | { error: string } {
   const recordPath = join(root, "state", "findings", `pr-${pr}-round-${round}.json`);
   let record: unknown;
   try {
@@ -40,20 +43,29 @@ export function renderRound(
   const comments = join(root, "state", `pr-${pr}-round-${round}-comments.json`);
   writeFileSync(body, out.rendered.body);
   writeFileSync(comments, JSON.stringify(out.rendered.comments, null, 2) + "\n");
-  if (out.merges.length) writeFileSync(recordPath, JSON.stringify(out.record, null, 2) + "\n");
-  return { rendered: out.rendered, merges: out.merges, body, comments };
+  if (out.record !== record) writeFileSync(recordPath, JSON.stringify(out.record, null, 2) + "\n");
+  return { rendered: out.rendered, merges: out.merges, withheld: out.withheld, body, comments };
 }
 
 /** The install's render config: the live config when it loads, else the
  * shipped defaults (a render must never fail for want of a config). */
-function renderConfig(botLogin: string | undefined): PostedRenderConfig {
+function renderConfig(root: string, botLogin: string | undefined): PostedRenderConfig {
   let review: PostedRenderConfig["review"] = { dedup_merge: REVIEW_DEFAULTS.dedup_merge };
+  let posting: PostedRenderConfig["posting"];
   try {
-    review = { dedup_merge: loadConfig().review.dedup_merge };
+    const loaded = loadConfig();
+    review = { dedup_merge: loaded.review.dedup_merge };
+    // The profile's `[posting]` policy, overlaid exactly as the daemon does
+    // (wire.ts buildParts) — so this route enforces the cut the bench does.
+    posting = applyProfilePosting(loaded, loadProfilePosting(root, loaded.review.profile)).posting;
   } catch {
-    // no readable config: the defaults stand
+    // no readable config or profile: the defaults stand (no cut)
   }
-  return { review, ...(botLogin ? { github: { bot_login: botLogin } } : {}) };
+  return {
+    review,
+    ...(posting ? { posting } : {}),
+    ...(botLogin ? { github: { bot_login: botLogin } } : {}),
+  };
 }
 
 function main(argv: string[]): number {
@@ -62,7 +74,7 @@ function main(argv: string[]): number {
     console.error("usage: render-review <sandbox-root> <pr> <round> [bot-login]");
     return 2;
   }
-  const res = renderRound(root, Number(prRaw), Number(roundRaw), renderConfig(botLogin));
+  const res = renderRound(root, Number(prRaw), Number(roundRaw), renderConfig(root, botLogin));
   if ("error" in res) {
     console.error(`render-review: ${res.error}`);
     return 1;
@@ -70,6 +82,8 @@ function main(argv: string[]): number {
   console.log(
     `render-review: ${res.rendered.comments.length} inline comment(s), ${res.rendered.in_body} in the body → ${res.body} + ${res.comments}`,
   );
+  for (const w of res.withheld)
+    console.log(`render-review: posting policy withheld ${w.id} (${w.word})`);
   for (const m of res.merges)
     console.log(`render-review: post-check merged ${m.follower} into ${m.lead} (${m.path}:${m.line})`);
   for (const p of res.rendered.problems) console.log(`render-review: record problem — ${p}`);

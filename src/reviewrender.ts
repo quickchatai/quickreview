@@ -21,6 +21,15 @@
 // renders the review the record describes.
 import { ASK_HUMAN_TAG, CHECK_THIS_TAG, DEFERRED_TAG, postTag, type Severity } from "./severity.js";
 import { postCheckRecord, type PostCheckMerge } from "./dedup.js";
+import {
+  firstSentence as policyFirstSentence,
+  isDefaultPosting,
+  selectPosted,
+  siteKey,
+  type PolicyClass,
+  type PostingPolicy,
+  type WithholdWord,
+} from "./postingpolicy.js";
 
 /** The standard footer, word for word posting.ts `reviewFooter` (pinned equal
  * by tests/reviewrender.test.ts). Not imported: posting.ts is the recorded
@@ -184,6 +193,9 @@ export function renderReviewFromRecord(
     verdict?: string | null;
     summary?: string | null;
     lensesApplied?: string | null;
+    /** The profile's `[posting] body`: `verdict` renders the verdict line,
+     * one sentence and a bullet per finding with no inline anchor. */
+    bodyMode?: "full" | "verdict";
   } = {},
 ): RenderedReview {
   const problems: string[] = [];
@@ -244,6 +256,13 @@ export function renderReviewFromRecord(
   const lensesLine = str(rec.lenses_applied);
   if (!lensesLine) problems.push("no lenses_applied — the posted lenses stand in");
 
+  if (opts.bodyMode === "verdict") {
+    const lines = [`**Verdict: ${verdictLabel(verdict)}** — ${counts.length ? counts.join(", ") : "no findings"}.`];
+    const one = summary ? policyFirstSentence(summary) : "";
+    if (one) lines.push("", one);
+    if (overflow.length) lines.push("", ...overflow.map(({ p }) => `- ${ref(p)} — ${p.title}`));
+    return { body: lines.join("\n") + "\n", comments, in_body: overflow.length, problems };
+  }
   const out: string[] = [];
   if (summary) out.push(summary, "");
   out.push(
@@ -281,6 +300,9 @@ export function renderReviewFromRecord(
 export interface PostedRenderConfig {
   review: { dedup_merge?: boolean };
   github?: { bot_login?: string };
+  /** The profile's `[posting]` policy, overlaid on the config the same way
+   * on both routes (wire.ts / the bench: `applyProfilePosting`). */
+  posting?: PostingPolicy;
 }
 
 export interface PostedRenderOptions {
@@ -290,6 +312,8 @@ export interface PostedRenderOptions {
   lensesApplied?: string | null;
   /** `[review] dedup_merge`: run the post-check (src/dedup.ts) first. */
   dedupMerge?: boolean;
+  /** The profile's `[posting]` policy; absent or all-default ⇒ no cut. */
+  policy?: PostingPolicy;
 }
 
 export function postedRenderOptions(
@@ -300,7 +324,88 @@ export function postedRenderOptions(
     ...(cfg.github?.bot_login ? { botLogin: cfg.github.bot_login } : {}),
     ...fallbacks,
     dedupMerge: cfg.review.dedup_merge === true,
+    ...(isDefaultPosting(cfg.posting) ? {} : { policy: cfg.posting! }),
   };
+}
+
+function postedClassOf(postedAs: unknown): PolicyClass {
+  const t = (typeof postedAs === "string" ? postedAs : "").trim().replace(/^\[|\]$/g, "").toLowerCase();
+  return t === "blocker" || t === "question" || t === "nit" ? t : "check";
+}
+
+export interface PolicyWithheld {
+  id: string;
+  word: WithholdWord;
+  path: string | null;
+  line: number | null;
+  cls: PolicyClass;
+  severity: string | null;
+  title: string;
+  /** Would it have posted inline (it carried an anchor and no `inline: false`)? */
+  inline: boolean;
+}
+
+/**
+ * The profile's `[posting]` cut over a findings record (src/postingpolicy.ts
+ * `selectPosted`), applied by BOTH render routes — so the live shell route
+ * enforces it too, not only the bench (src/bench/benchposting.ts, which the
+ * bench still uses when it does not render). Items are the record's posted
+ * entries in record order; a follower row (`same_as`) carries its lead's key,
+ * so `repeat_sites = false` withholds it. No changed-line ranking: neither
+ * route's render step holds the diff, so the two rank identically. Every cut
+ * entry becomes `withheld` with its word — nothing is deleted.
+ */
+export function applyPostingPolicyToRecord(
+  record: unknown,
+  policy: PostingPolicy | undefined,
+): { record: unknown; withheld: PolicyWithheld[] } {
+  if (isDefaultPosting(policy) || typeof record !== "object" || record === null) return { record, withheld: [] };
+  const rec = record as Record<string, unknown>;
+  if (!Array.isArray(rec.findings)) return { record, withheld: [] };
+  const entries = (rec.findings as unknown[]).map((e) =>
+    typeof e === "object" && e !== null ? { ...(e as Record<string, unknown>) } : e,
+  );
+  const posted = entries.filter(
+    (e): e is Record<string, unknown> =>
+      typeof e === "object" && e !== null && (e as Record<string, unknown>).disposition === "posted",
+  );
+  const byId = new Map(posted.map((e) => [String(e.id ?? ""), e]));
+  const titleOf = (e: Record<string, unknown>) =>
+    typeof e.title === "string" && e.title.trim() ? e.title : typeof e.reason === "string" ? policyFirstSentence(e.reason) : "";
+  const sel = selectPosted(
+    posted,
+    (e) => {
+      const lead = typeof e.same_as === "string" ? byId.get(e.same_as) : undefined;
+      return {
+        cls: postedClassOf(e.posted_as),
+        severity: typeof e.severity === "string" && e.severity.trim() ? e.severity.trim() : null,
+        key: siteKey(titleOf(lead ?? e)),
+      };
+    },
+    policy,
+  );
+  if (!sel.withheld.length) return { record, withheld: [] };
+  const withheld: PolicyWithheld[] = [];
+  for (const { item, word } of sel.withheld) {
+    item.withheld_as = item.posted_as;
+    delete item.posted_as;
+    item.disposition = "withheld";
+    item.word = word;
+    item.reason = `Withheld by this repo's posting policy (${word}); kept here, never posted. ${typeof item.reason === "string" ? item.reason : ""}`.trim();
+    const line = typeof item.line === "number" ? item.line : null;
+    const path = typeof item.path === "string" && item.path.trim() ? item.path : null;
+    withheld.push({
+      id: String(item.id ?? ""),
+      word,
+      path,
+      line,
+      cls: postedClassOf(item.withheld_as),
+      severity: typeof item.severity === "string" && item.severity.trim() ? item.severity.trim() : null,
+      title: titleOf(item),
+      inline: path !== null && line !== null && item.inline !== false,
+    });
+  }
+  return { record: { ...rec, findings: entries }, withheld };
 }
 
 /**
@@ -313,14 +418,18 @@ export function postedRenderOptions(
 export function renderPostedReview(
   record: unknown,
   opts: PostedRenderOptions = {},
-): { rendered: RenderedReview; record: unknown; merges: PostCheckMerge[] } {
-  const { dedupMerge, ...renderOpts } = opts;
+): { rendered: RenderedReview; record: unknown; merges: PostCheckMerge[]; withheld: PolicyWithheld[] } {
+  const { dedupMerge, policy, ...renderOpts } = opts;
   const checked = dedupMerge ? postCheckRecord(record) : { record, merges: [] as PostCheckMerge[] };
-  const rendered = renderReviewFromRecord(checked.record, renderOpts);
-  let out = checked.record;
-  if (checked.merges.length && typeof out === "object" && out !== null)
+  const cut = applyPostingPolicyToRecord(checked.record, policy);
+  const rendered = renderReviewFromRecord(cut.record, {
+    ...renderOpts,
+    ...(policy?.body === "verdict" ? { bodyMode: "verdict" as const } : {}),
+  });
+  let out = cut.record;
+  if ((checked.merges.length || cut.withheld.length) && typeof out === "object" && out !== null)
     out = { ...(out as Record<string, unknown>), comments_posted: rendered.comments.length };
-  return { rendered, record: out, merges: checked.merges };
+  return { rendered, record: out, merges: checked.merges, withheld: cut.withheld };
 }
 
 /** The posting fields a rendered round's findings record carries, as the
