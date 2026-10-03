@@ -158,4 +158,8 @@ const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
 //     (pass-validate): anchor at the line a fix would edit (round 6, Qodo run)
 //   → 3c0cce3e… `line-local-slips` (pass-baseline, pass-sweep): one-token
 //     operator/variable slips on changed lines (round 6, Qodo + Martian goldens)
-const GOLDEN_AGENTS = "3c0cce3e49f92b500b4073c82783915f69871234d36b373d865e88142a1b84e9";
+//   → e08d36d8… `style-written-rule-checklist` (pass-style) and
+//     `validate-written-rule-kept` (pass-validate): every written rule walked,
+//     one grouped nit per rule; a written-rule finding is demoted, never killed
+//     for its shape (round 7, the Qodo near-miss audit)
+const GOLDEN_AGENTS = "e08d36d835d0bd5d8449b074edfba0d8a812aba822c295060a2e6cd124dcc1fc";

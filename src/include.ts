@@ -1111,6 +1111,30 @@ export const SCAN_SKEPTIC_ADDENDUM =
  * bodies. Execution policy stays first (it is the oldest and the most
  * operational); the content rules follow in the order states them.
  */
+// 2026-10-03 Qodo PR-Review-Bench near-miss audit (nearmiss-audit.json beside
+// ext-r6-qodo-pr100.qodo; bench/aacr/ext/REVIEW-MINING.md): with a written
+// guide in hand, pass-style still sampled the most salient convention — one
+// rule (Async suffix, AGENTS.md rule 8) broken by seven new test methods went
+// unreported, and a guide that conflicted with the file's own convention was
+// collapsed into one "reconcile the guides" nit naming no outlier. The lens
+// now walks the guide rule by rule. Its cap (nit) and its proof (rule quoted,
+// changed line cited) are unchanged; tool-enforced rules stay CI's.
+const STYLE_PASS_NAME = "pass-style";
+const STYLE_WRITTEN_RULE_CHECKLIST_ADDENDUM =
+  "\n## Walk every written rule — a checklist, not a sample (sandbox rule)\n" +
+  "When the repo writes rules (a style guide, a style or conventions section, or a numbered Rules / Compliance section of AGENTS.md, CLAUDE.md or kin), go through them ONE BY ONE and check each against every declaration, call site, comment and file this PR adds or rewrites — test files included, unless the guide exempts tests. Do not stop at the most salient rule.\n\n" +
+  "- **One rule, one finding.** Every changed site that breaks the same rule goes into ONE `[nit]` that quotes the rule (file and line) and lists every site (`path:line`), anchored at the first. Never one comment per site.\n" +
+  "- **A rule that conflicts with the file's own convention** (the guide says one thing, the file and its siblings consistently do another): post one `[nit]` naming the conflict and the changed lines that follow each side — do not stay silent, and do not collapse it into a general \"reconcile the guides\" remark that names no site.\n" +
+  "- **Out of scope: a rule a configured tool already enforces.** Before reporting, check the repo's formatter and linter config (`.editorconfig`, eslint / biome / prettier, ruff / flake8 / black, clippy / rustfmt, swiftlint, ktlint, gofmt). A rule that config enforces belongs to CI; leave it.\n" +
+  "- A rule the PR's changed lines do not touch is not this PR's finding, however often the rest of the file breaks it.\n";
+// Same audit: the validator still killed written-rule findings — "below-bar,
+// style from a non-style lens" (aspnetcore#4 F3), "sibling code breaks the
+// same rule", or folded them under an unrelated finding. A rule the team wrote
+// down is a request to check it; the validator demotes, never discards.
+const VALIDATE_WRITTEN_RULE_KEPT_ADDENDUM =
+  "\n## A finding that cites a written rule is never killed for its shape (sandbox rule)\n" +
+  "A candidate — from ANY lens — that quotes a rule the repo wrote (file and line of the rule) and cites a changed line breaking it is judged as a `pass-style` finding: verify the rule says it and the line breaks it, then keep it as a `[nit]` (demote higher with `style-over-cap`), merged into `pass-style`'s finding for the same rule when there is one. Never kill it `below-bar`, never kill it for the lens it came from, never excuse it because sibling or older code breaks the same rule, and never fold it as a paragraph under an unrelated finding. Kill it only when the rule does not say that (`refuted`), the line is not changed by this PR (`out-of-scope`), or a configured formatter or linter enforces the rule (`out-of-scope`: CI owns it).\n";
+
 export const PASS_ADDENDA: readonly PassAddendum[] = [
   { id: "execution-policy", scope: "all", text: EXECUTION_POLICY_ADDENDUM },
   { id: "read-batching", scope: "all", text: READ_BATCHING_ADDENDUM },
@@ -1269,6 +1293,8 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
   { id: "anchor-at-cause", scope: "lenses", mode: "pr", text: ANCHOR_AT_CAUSE_ADDENDUM },
   { id: "validate-anchor-at-cause", scope: [VALIDATE_PASS], mode: "pr", text: VALIDATE_ANCHOR_AT_CAUSE_ADDENDUM },
   { id: "line-local-slips", scope: ["pass-baseline", "pass-sweep"], mode: "pr", text: LINE_LOCAL_SLIPS_ADDENDUM },
+  { id: "style-written-rule-checklist", scope: [STYLE_PASS_NAME], mode: "pr", text: STYLE_WRITTEN_RULE_CHECKLIST_ADDENDUM },
+  { id: "validate-written-rule-kept", scope: [VALIDATE_PASS], mode: "pr", text: VALIDATE_WRITTEN_RULE_KEPT_ADDENDUM },
   // the one corpus-derived rule that is generic review behaviour.
   // Its six house-rule siblings ride the live deployment's profile addenda pack since
   // (see the banner above); wire.ts composes a profile pack after
