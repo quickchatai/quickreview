@@ -1,0 +1,124 @@
+{
+  "name": "dedup5-qodo",
+  "dataset": {
+    "source": "https://huggingface.co/datasets/Qodo/PR-Review-Bench",
+    "commit": "a73957c450a70693a743260e5637fffc44625f16",
+    "file": "git_code_review_bench_100_w_open_prs.jsonl",
+    "sha256": "2f0448ed1f9a55bea14039961d8d9e610ee8885b37559b80f5821f3f70cfe64d"
+  },
+  "rule": "docs/duplicate-merge.md measurement: the 5 PRs of qodo-pr100 where the stored run (ext-r6-qodo-pr100) had the most duplicate findings (posted near-duplicates and follower rows first, then merge-stage merged/folded entries); never a held-out set",
+  "references": 37,
+  "backups": [],
+  "cases": [
+    {
+      "instance_id": "agentic-review-benchmarks__prefect@2d9ad82",
+      "repo": "agentic-review-benchmarks/prefect",
+      "pr": 10,
+      "pr_url": "https://github.com/agentic-review-benchmarks/prefect/pull/10",
+      "base_commit": "2749ad004645073cf466b606d2045679987a2d76",
+      "head_commit": "2d9ad82729d7be8a4df09e78c34231ce271d4dab",
+      "language": "Python",
+      "pr_category": "qodo-injected",
+      "change_line_count": 0,
+      "references": 8,
+      "title": "feat(ui-v2): Add trigger form templates",
+      "body": "Implements Phase 4 of the trigger form templates for the automations wizard, replacing placeholder \"coming soon\" messages with functional form components for the remaining 4 trigger types.\n\n## Changes\n\nThis PR adds 4 new trigger field components that follow the same pattern as the existing `FlowRunStateTriggerFields`:\n\n- **DeploymentStatusTriggerFields**: Select dropdown with Ready/Not Ready status options\n- **WorkPoolStatusTriggerFields**: Select dropdown with Ready/Not Ready/Paused status options  \n- **WorkQueueStatusTriggerFields**: Select dropdown with Ready/Not Ready/Paused status options\n- **CustomTriggerFields**: Textarea for entering expected events (one per line)\n\nAll components include:\n- PostureSelect for Reactive/Proactive toggle\n- Threshold input field\n- Conditional \"Within (seconds)\" field shown only when posture is Proactive\n\n## Screenshot\n\n![Deployment Status Trigger Fields](https://app.devin.ai/api/presigned_proxy?token=REDACTED)\n\n## Review Focus\n\n- Verify the hardcoded status event names (e.g., `prefect.deployment.ready`) match backend expectations\n- Custom trigger textarea converts newline-separated text to/from string array - verify this behavior is correct\n- Status triggers store selected value as single-element array per requirements\n\ncloses OSS-7417\n\n### Checklist\n\n- [x] This pull request references any related issue by including \"closes `<link to issue>`\"\n- [x] If this pull request adds new functionality, it includes unit tests that cover the changes\n- [ ] If this pull request removes docs files, it includes redirect settings in `mint.json`.\n- [ ] If this pull request adds functions or classes, it includes helpful docstrings.\n\n---\n**Link to Devin run**: https://app.devin.ai/sessions/5c547ac1154646648315fefae73b003f\n**Requested by**: alex.s@prefect.io (@desertaxle)",
+      "leakproof": {
+        "source_head": "0bc01a435076c95c4c001445b9c179f3816470b2",
+        "source_merge_base": "61b7f8fc29757e6d38f1949fbae90dfc2e90ccf3",
+        "base_tree": "ecb60fe76f5db53f55cae69643302cd6f480c4f7",
+        "head_tree": "d428035fa80dd87a95af4ffbbf7e1c5127f9ac3c"
+      },
+      "task_id": "prefect#10",
+      "source_base_commit": "61b7f8fc29757e6d38f1949fbae90dfc2e90ccf3"
+    },
+    {
+      "instance_id": "agentic-review-benchmarks__cal.com@685ebe2",
+      "repo": "agentic-review-benchmarks/cal.com",
+      "pr": 9,
+      "pr_url": "https://github.com/agentic-review-benchmarks/cal.com/pull/9",
+      "base_commit": "6f4a04ba93db6950cc2015b0252265398e4715f9",
+      "head_commit": "685ebe2eedf58ffc1aa4c9047f3d65e02e2afae4",
+      "language": "TypeScript",
+      "pr_category": "qodo-injected",
+      "change_line_count": 0,
+      "references": 8,
+      "title": "refactor: move WebWrapper files from packages/platform to apps/web/modules",
+      "body": "## What does this PR do?\n\nMoves WebWrapper files from `packages/platform/atoms` to `apps/web/modules`.\n\n### Why?\n\nAs part of moving components/hooks from `packages/features` to `apps/web`, the WebWrapper components in `packages/platform/atoms` were importing those moved files via `@calcom/web`. Moving the WebWrapper files to `apps/web` allows them to import from sibling locations instead of cross-package, unblocking the larger refactoring effort.\n\n### Files moved:\n- `EventTypeWebWrapper` and tab wrappers \u2192 `apps/web/modules/event-types/components/`\n- `BookerWebWrapper` \u2192 `apps/web/modules/bookings/components/`\n- `ConferencingAppsViewWebWrapper` \u2192 `apps/web/modules/apps/components/`\n- `SelectedCalendarsSettingsWebWrapper` \u2192 `apps/web/modules/calendars/components/`\n- `AddMembersWithSwitchWebWrapper` \u2192 `apps/web/modules/event-types/components/`\n- `DestinationCalendarSettingsWebWrapper` \u2192 `apps/web/components/apps/`\n\n### Additional changes:\n- Moved `sortHosts` utility to `@calcom/lib/bookings/hostGroupUtils.ts` for shared access\n- Added hook exports to `@calcom/atoms` package.json (`useEventTypeForm`, `useHandleRouteChange`, `useTabsNavigations`)\n- Removed WebWrapper exports from `@calcom/atoms` package.json\n\n### Updates since last revision:\n- Fixed deep relative imports in `EventTypeWebWrapper.tsx` to use `@calcom/atoms` package alias instead of traversing outside `apps/web` (addresses Cubic AI review feedback)\n\n## Mandatory Tasks (DO NOT REMOVE)\n\n- [x] I have self-reviewed the code (A decent size PR without self-review might be rejected).\n- [x] I have updated the developer docs in /docs if this PR makes changes that would require a [documentation change](https://cal.com/docs). N/A\n- [x] I confirm automated tests are in place that prove my fix is effective or that my feature works.\n\n## How should this be tested?\n\nRun `yarn type-check:ci --force` and verify event types, booking pages, and settings pages load correctly.\n\n## Human Review Checklist\n\n- [ ] Verify `sortHosts` function move to `@calcom/lib/bookings/hostGroupUtils.ts` doesn't break existing functionality\n- [ ] Confirm no external consumers depend on the deleted `@calcom/atoms/booker` export\n- [ ] Check that `@calcom/atoms` hook exports resolve correctly\n\n---\n\nLink to Devin run: https://app.devin.ai/sessions/ffdc374f531f46a399a052a715abe50b\nRequested by: @hbjORbj",
+      "leakproof": {
+        "source_head": "5ee1dfafbf46c92b742bdb369710deb756daacd1",
+        "source_merge_base": "8a76803524eda6680c7dfc31982f3180bd7cb266",
+        "base_tree": "52849469589bc9cd0d20c3c6c2283a24be8e8354",
+        "head_tree": "9c723b09e37c47f4665b3102d22d6432c5d47c3d"
+      },
+      "task_id": "cal.com#9",
+      "source_base_commit": "8a76803524eda6680c7dfc31982f3180bd7cb266"
+    },
+    {
+      "instance_id": "agentic-review-benchmarks__Ghost@37346bd",
+      "repo": "agentic-review-benchmarks/Ghost",
+      "pr": 12,
+      "pr_url": "https://github.com/agentic-review-benchmarks/Ghost/pull/12",
+      "base_commit": "71aefc62b3ba8605e0e742d4a56f956d11f2afae",
+      "head_commit": "37346bda2d3a52e8f937f32cbea1ef244e3275fa",
+      "language": "JavaScript",
+      "pr_category": "qodo-injected",
+      "change_line_count": 0,
+      "references": 5,
+      "title": "Removed unused tinybird filters",
+      "body": "ref 1633eabd50a487129abfdb35c8b97b5233b741a8\r\nref a6adad113ac92ad431f5c349fcf470c8efbb6f93\r\n\r\nCleaned up unused filters. This is an addendum to the original commit and reversion commit (above).",
+      "leakproof": {
+        "source_head": "6fdbd46582bcf0885572a8c2025bd99ad633e2d0",
+        "source_merge_base": "ea99744877907cfbea6bd18f3f4ea550c82a8e15",
+        "base_tree": "8e21cb5b2ec99414418be6509f04133e5dc9ba53",
+        "head_tree": "d04a24b175f51e97e803182cc094ec67fede3890"
+      },
+      "task_id": "Ghost#12",
+      "source_base_commit": "ea99744877907cfbea6bd18f3f4ea550c82a8e15"
+    },
+    {
+      "instance_id": "agentic-review-benchmarks__cal.com@40dd717",
+      "repo": "agentic-review-benchmarks/cal.com",
+      "pr": 3,
+      "pr_url": "https://github.com/agentic-review-benchmarks/cal.com/pull/3",
+      "base_commit": "1d39e93609a8875a42d3675e3dbf64bb601965a0",
+      "head_commit": "40dd7179d3895216105709610ebf072fbdea2098",
+      "language": "TypeScript",
+      "pr_category": "qodo-injected",
+      "change_line_count": 0,
+      "references": 12,
+      "title": "chore: [Booking Cancellation Refactor - 2] Inject repositories and use them instead of Prisma in cancellation flow",
+      "body": "## What does this PR do?\n\nThis PR refactors the booking cancellation flow (`handleCancelBooking.ts`) to use the repository pattern with dependency injection instead of direct Prisma client usage. This is part of a broader architectural improvement to make the codebase more modular and testable.\n\n### Key Changes:\n- **Replaces direct Prisma calls** with repository method calls in the cancellation flow\n- **Adds new repository modules** for booking attendees, booking references, and profiles\n- **Implements dependency injection** for the BookingCancelService\n- **Maintains backward compatibility** with fallback to direct Prisma usage during transition\n\n### Repositories Added/Modified:\n- `PrismaBookingAttendeeRepository` - handles attendee deletion operations\n- `BookingReferenceRepository` - handles booking reference cleanup  \n- `ProfileRepository` - handles profile lookups\n- `BookingRepository` - extended with cancellation-specific methods\n\n## Updates since last revision\n\n- **Fixed duplicate `onBookingCancelled` call** - Removed an accidental duplicate call to `bookingEventHandlerService.onBookingCancelled()` that was introduced during merge conflict resolution. The audit event is now correctly triggered only once per booking cancellation.\n\n## How should this be tested?\n\n**Environment Setup:**\n- Standard Cal.com development environment\n- PostgreSQL database with test data\n\n**Test Scenarios:**\n1. **Regular booking cancellation** - Cancel a standard one-time booking\n2. **Recurring event cancellation** - Cancel future instances of recurring bookings\n3. **Seated event cancellation** - Cancel bookings with multiple attendees per slot\n4. **Team booking cancellation** - Cancel bookings involving team members\n5. **Integration cleanup** - Verify calendar events and references are properly deleted\n\n**Expected Behavior:**\n- All cancellation flows should work identically to before the refactor\n- Database state should be identical after cancellation operations\n- External calendar events should be properly removed\n- Workflow reminders should be cleaned up\n- Booking references should be deleted\n\n## Critical Review Areas\n\n\u26a0\ufe0f **High-risk areas requiring careful review:**\n\n1. **Repository method implementations** - Verify that each new repository method exactly replicates the original Prisma behavior, including:\n   - Return types and data structure\n   - Error handling and exception cases\n   - Query filters and conditions\n\n2. **Transaction behavior** - Ensure the repository abstraction doesn't break any implicit transaction boundaries from the original code\n\n3. **Conditional logic simplification** - The PR changes from `uid ? { uid } : { id }` to always using `bookingToDelete.uid` - verify this is safe for all booking types\n\n4. **Dependency injection setup** - Review the module bindings and ensure all dependencies are correctly wired\n\n5. **Fallback path consistency** - The code maintains dual paths (repository vs direct Prisma) - ensure they remain in sync\n\n## Mandatory Tasks (DO NOT REMOVE)\n\n- [ ] I have self-reviewed the code (A decent size PR without self-review might be rejected).\n- [ ] I have updated the developer docs in /docs if this PR makes changes that would require a [documentation change](https://cal.com/docs). If N/A, write **N/A** here and check the checkbox.\n- [ ] I confirm automated tests are in place that prove my fix is effective or that my feature works.\n\n---\n\n**Link to Devin run:** https://app.devin.ai/sessions/469183c6bfa54d5d8f4b69873c2e8b6a  \n**Requested by:** @hariombalhara",
+      "leakproof": {
+        "source_head": "e5d60b2b4740b5dca45bdcec2acb6a6f7b57b89e",
+        "source_merge_base": "e8a64631c3867c80379503cf94bd5cd110c98ff1",
+        "base_tree": "06dbccf21290aada9ec650073fc0175d00cec4e7",
+        "head_tree": "9616239d382a0a3e52b0a9edd83bb5bb3c4469b5"
+      },
+      "task_id": "cal.com#3",
+      "source_base_commit": "e8a64631c3867c80379503cf94bd5cd110c98ff1"
+    },
+    {
+      "instance_id": "agentic-review-benchmarks__Ghost@8596d64",
+      "repo": "agentic-review-benchmarks/Ghost",
+      "pr": 13,
+      "pr_url": "https://github.com/agentic-review-benchmarks/Ghost/pull/13",
+      "base_commit": "9ecbe4ef8a0df76fd6253c75389ae26a6d1084c8",
+      "head_commit": "8596d6405376fb409d8b82631bae79fe0a119a09",
+      "language": "JavaScript",
+      "pr_category": "qodo-injected",
+      "change_line_count": 0,
+      "references": 4,
+      "title": "Added materialized view and duplicated v2 Tinybird endpoints",
+      "body": "ref https://linear.app/ghost/issue/NY-865/analytics-sources-not-populating-for-tangle-due-to-408-timeouts\r\n\r\n## Problem\r\n\r\nTinybird endpoints are timing out in production for the sites with the most data. the `mv_session_data` pipe, which almost all our endpoints depend on, calculates complex aggregations at query time, which we believe to be the biggest contributor to poor performance when querying against large data sets.\r\n\r\n## Fix\r\n\r\nThe solution to fix this is to convert `mv_session_data` from a pipe to a materialized view, such that Tinybird will calculate these aggregations as ingest time instead of at query time. As this is a rather large change to the implementation, we've opted to create a duplicate v2 pipeline rather than updating the existing pipeline in place. This way we can validate the v2 pipeline in production against real production data, without actually changing any of the user-facing behavior, before cutting over to using the v2 pipeline.\r\n\r\n---\r\n\r\n## Changes made\r\n\r\n- Creates a new datasource for the materialized view for `mv_session_data`\r\n- Creates mv_session_data_v2 pipe to feed the materialized view\r\n- Creates filtered_sessions_v2, which is backed by the new materialized view\r\n- Creates v2 of all endpoints, which are backed by the filtered_sessions_v2 and the new materialized view\r\n- Duplicates all test files for endpoints, without making any changes to the test cases or expected results, to ensure that v1 and v2 of our endpoints maintain the same behavior\r\n- Adds ability to switch Ghost to use v2 endpoints for the sake of validating against live production data\r\n\r\nCreating a duplicate pipeline makes it easier to validate this in production, but it does make reviewing these changes more difficult, since the git diff doesn't clearly show what has changed in each endpoint. I've added a comment to each file that shows the diff of the v2 endpoint against the original unversioned endpoint to make reviewing this PR easier, but you'll have to run those commands locally with this branch checked out to see the changes.\r\n\r\n## Testing Ghost against v2 endpoints\r\n\r\nThis [commit](https://github.com/TryGhost/Ghost/pull/25719/commits/87d6b679713cee0632590bd511023be04219f94d) adds the ability to point Ghost to the v2 version of the endpoints. To use this, set `tinybird:stats:version` to `v2` in your `config.local.json`, then re-run `yarn dev:analytics`.",
+      "leakproof": {
+        "source_head": "6f89a027f78fe2a888aeaf01ff2d8f08d29dfafa",
+        "source_merge_base": "c669914ec69a98e15bbbd0c99c5be342bf329e02",
+        "base_tree": "7f67dc3da842329f5544139e0225adcb41ac8b38",
+        "head_tree": "d40b42115d3176ac87141df28be7f1be91309697"
+      },
+      "task_id": "Ghost#13",
+      "source_base_commit": "c669914ec69a98e15bbbd0c99c5be342bf329e02"
+    }
+  ]
+}

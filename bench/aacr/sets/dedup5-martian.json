@@ -1,0 +1,129 @@
+{
+  "name": "dedup5-martian",
+  "dataset": {
+    "source": "https://github.com/withmartian/code-review-benchmark",
+    "commit": "e616e849755441da38f18bf3adba2c9583b03803",
+    "file": "offline/golden_comments/*.json + offline/results/benchmark_data.json (manifest sha256)",
+    "sha256": "0265909b9ebe206e9b8e28f548f0a3ffa145c9b28d317da522ef1034186269ee"
+  },
+  "rule": "docs/duplicate-merge.md measurement: the 5 PRs of martian-tune20 where the stored run (ext-default3-martian-tune20) had the most duplicate findings (posted near-duplicates and follower rows first, then merge-stage merged/folded entries); never a held-out set",
+  "references": 16,
+  "backups": [],
+  "cases": [
+    {
+      "instance_id": "calcom__cal.com-8330@ee38fd2",
+      "repo": "calcom/cal.com",
+      "pr": 8330,
+      "pr_url": "https://github.com/calcom/cal.com/pull/8330",
+      "base_commit": "93cb21f55a2a40d9116c014741f5679fbeff5fd9",
+      "head_commit": "ee38fd295fd294b9fc787eba482bde24bbfea69b",
+      "language": "TypeScript",
+      "pr_category": "",
+      "change_line_count": 121,
+      "references": 2,
+      "fetch_repo": "code-review-benchmark/cal_dot_com__cal.com__augment__PR8330__20260122",
+      "fetch_pr": 1,
+      "title": "Date override fixes",
+      "body": "## What does this PR do?\r\n\r\nThis PR fixes that date overrides of fixed hosts are taken into account for round-robin events. This prevents round-robin events being booked where the fixed hosts are unavailable. \r\n\r\nThis PR also fixes that date overrides didn't adjust to different timezones. If the organizer has a date override from 10-11 UTC it always showed the slots from 10-11 open no matter what timezone the attendee has.\r\n\r\nFixes #8207\r\nFixes #8329\r\n\r\nFixes: #8273\r\n\r\n**Environment**: Staging(main branch) / Production\r\n\r\n## Type of change\r\n\r\n- Bug fix (non-breaking change which fixes an issue)\r\n\r\n## How should this be tested?\r\n\r\n**Date overrides for fixed hosts (round-robin):** \r\n- Create a round-robin event with one fixed host and host round-robin host\r\n- Create a date override for fixed host (round-robin host should also be available at that time)\r\n- Check available slots of event on the day of the date override, it should only show the slots where fixed host is available\r\n- Test that with different time zones on booking page and on the availabilities of fixed and round-robin host\r\n\r\n**Date override timezones issue:** \r\n- Create a date override \r\n- Go to the booking page of a personal event \r\n- Change the timezone to a different one that the availability with the date override is \r\n- See the available slots of the day with the date override change accordingly \r\n- Also test with different timezones here \r\n\r\n",
+      "expect_merge_base": "93cb21f55a2a40d9116c014741f5679fbeff5fd9",
+      "martian": {
+        "project": "cal_dot_com",
+        "golden_url": "https://github.com/calcom/cal.com/pull/8330",
+        "fork": "cal_dot_com__cal.com__augment__PR8330__20260122",
+        "base_ref": "main"
+      }
+    },
+    {
+      "instance_id": "getsentry__sentry-95633@9966ec5",
+      "repo": "getsentry/sentry",
+      "pr": 95633,
+      "pr_url": "https://github.com/getsentry/sentry/pull/95633",
+      "base_commit": "fd358e8a388939959369f08f616e29552cdaf96e",
+      "head_commit": "9966ec5a13e331659c3ea00981f9b11b0faf821f",
+      "language": "Python",
+      "pr_category": "",
+      "change_line_count": 1282,
+      "references": 2,
+      "fetch_repo": "code-review-benchmark/sentry__sentry__augment__PR95633__20260122",
+      "fetch_pr": 1,
+      "title": "feat(uptime): Add ability to use queues to manage parallelism",
+      "body": "One potential problem we have with batch processing is that any one slow item will clog up the whole batch. This pr implements a queueing method instead, where we keep N queues that each have their own workers. There's still a chance of individual items backlogging a queue, but we can try increased concurrency here to reduce the chances of that happening\r\n\r\n<!-- Describe your PR here. -->",
+      "expect_merge_base": "fd358e8a388939959369f08f616e29552cdaf96e",
+      "martian": {
+        "project": "sentry",
+        "golden_url": "https://github.com/getsentry/sentry/pull/95633",
+        "fork": "sentry__sentry__augment__PR95633__20260122",
+        "base_ref": "master"
+      }
+    },
+    {
+      "instance_id": "ai-code-review-evaluation__sentry-greptile-2@8ab8814",
+      "repo": "ai-code-review-evaluation/sentry-greptile",
+      "pr": 2,
+      "pr_url": "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/2",
+      "base_commit": "28e3db2520d4ea28c57b08da57b83917ba7b2e15",
+      "head_commit": "8ab88145113dd23a930e23b9cbbcf8b30e4c0b17",
+      "language": "Python",
+      "pr_category": "",
+      "change_line_count": 212,
+      "references": 4,
+      "fetch_repo": "code-review-benchmark/sentry__sentry-greptile__augment__PR2__20260122",
+      "fetch_pr": 1,
+      "title": "Optimize spans buffer insertion with eviction during insert",
+      "body": "Test 2",
+      "expect_merge_base": "28e3db2520d4ea28c57b08da57b83917ba7b2e15",
+      "martian": {
+        "project": "sentry",
+        "golden_url": "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/2",
+        "fork": "sentry__sentry-greptile__augment__PR2__20260122",
+        "base_ref": "performance-optimization-baseline"
+      }
+    },
+    {
+      "instance_id": "keycloak__keycloak-37038@7355f05",
+      "repo": "keycloak/keycloak",
+      "pr": 37038,
+      "pr_url": "https://github.com/keycloak/keycloak/pull/37038",
+      "base_commit": "7ea067aae9be56cb2622bce6563864817c3dfeaf",
+      "head_commit": "7355f05e6aafe2a7acc6434fb40c686665416606",
+      "language": "Java",
+      "pr_category": "",
+      "change_line_count": 957,
+      "references": 2,
+      "fetch_repo": "code-review-benchmark/keycloak__keycloak__augment__PR37038__20260122",
+      "fetch_pr": 1,
+      "title": "Add Groups resource type and scopes to authorization schema and evalu\u2026",
+      "body": "\u2026ation implementation\r\n\r\nCloses #35562\r\n\r\n<!---\r\nPlease read https://github.com/keycloak/keycloak/blob/main/CONTRIBUTING.md and follow these guidelines when contributing to Keycloak\r\n-->\r\n",
+      "expect_merge_base": "7ea067aae9be56cb2622bce6563864817c3dfeaf",
+      "martian": {
+        "project": "keycloak",
+        "golden_url": "https://github.com/keycloak/keycloak/pull/37038",
+        "fork": "keycloak__keycloak__augment__PR37038__20260122",
+        "base_ref": "main"
+      }
+    },
+    {
+      "instance_id": "calcom__cal.com-14740@92f44dc",
+      "repo": "calcom/cal.com",
+      "pr": 14740,
+      "pr_url": "https://github.com/calcom/cal.com/pull/14740",
+      "base_commit": "b004587262e8221083bafbe9a0c515e7becaa7b3",
+      "head_commit": "92f44dcea7ff19e9123a30c63c167a2938df5a55",
+      "language": "TypeScript",
+      "pr_category": "",
+      "change_line_count": 555,
+      "references": 6,
+      "fetch_repo": "code-review-benchmark/cal_dot_com__cal.com__augment__PR14740__20260122",
+      "fetch_pr": 1,
+      "title": "feat: ability to add guests via app.cal.com/bookings",
+      "body": "## What does this PR do?\r\n\r\n<!-- Please include a summary of the change and which issue is fixed. Please also include relevant motivation and context. List any dependencies that are required for this change. -->\r\n\r\nFixes #14691\r\nFixes #15663\r\n\r\n\r\nhttps://github.com/calcom/cal.com/assets/81948346/6bbb6a99-80e4-4d04-ab9f-2045fc0a91a1\r\n\r\n",
+      "expect_merge_base": "b004587262e8221083bafbe9a0c515e7becaa7b3",
+      "martian": {
+        "project": "cal_dot_com",
+        "golden_url": "https://github.com/calcom/cal.com/pull/14740",
+        "fork": "cal_dot_com__cal.com__augment__PR14740__20260122",
+        "base_ref": "main"
+      }
+    }
+  ]
+}

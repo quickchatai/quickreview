@@ -20,7 +20,7 @@ REAL, per benchmark (a posted comment, matched by the benchmark's judge):
   qodo     <run>.qodo/judgements.jsonl (pass 1): the comment credits an issue
   swepr    <run>.sweprbench eval_results (config A): the comment is in a matched pair
 
-  lens_yield.py --runs-dir DIR --run KIND:RUN [--run KIND:RUN ...] [--json OUT]
+  lens_yield.py --runs-dir DIR --run KIND:RUN [--run KIND:RUN ...] [--filter-set NAME ...] [--json OUT]
 """
 from __future__ import annotations
 
@@ -177,12 +177,19 @@ def main() -> None:
     ap.add_argument("--runs-dir", default=os.environ.get("QCR_BENCH_RUNS_DIR", ""))
     ap.add_argument("--run", action="append", required=True, help="KIND:RUN, KIND in aacr|martian|qodo|swepr")
     ap.add_argument("--json")
+    ap.add_argument("--filter-set", action="append", default=[],
+                    help="only cases of bench/aacr/sets/<NAME>.json (repeatable): compare runs on the same PRs")
     a = ap.parse_args()
     runs = Path(a.runs_dir)
     here = Path(__file__).resolve().parent
     stats = collections.defaultdict(lambda: collections.Counter())
     cost = collections.defaultdict(float)
     per_kind = collections.defaultdict(lambda: collections.defaultdict(collections.Counter))
+    allowed = None
+    if a.filter_set:
+        allowed = set()
+        for name in a.filter_set:
+            allowed |= {c["instance_id"] for c in json.load(open(here / "sets" / f"{name}.json"))["cases"]}
     for spec in a.run:
         kind, run = spec.split(":", 1)
         if kind == "aacr":
@@ -196,6 +203,8 @@ def main() -> None:
         else:
             raise SystemExit(f"unknown kind {kind}")
         for case, comments in it:
+            if allowed is not None and case.name not in allowed:
+                continue
             for ls in case_raised(case):
                 for l in ls:
                     stats[l]["raised"] += 1

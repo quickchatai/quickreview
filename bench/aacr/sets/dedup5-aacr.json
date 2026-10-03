@@ -1,0 +1,74 @@
+{
+  "name": "dedup5-aacr",
+  "dataset": {
+    "source": "https://github.com/alibaba/aacr-bench",
+    "commit": "ab8af8d5c74e2a4d1945d247ea4bbc49f93eb33f",
+    "file": "dataset/positive_samples.json",
+    "sha256": "d8683cb240249bc4e0aff6428802bdffa7b7573ace600552cab1cd0cb7e905c9"
+  },
+  "rule": "docs/duplicate-merge.md measurement: the 5 PRs of rest145 where the stored run (g61-rest145) had the most duplicate findings (posted near-duplicates and follower rows first, then merge-stage merged/folded entries); never a held-out set",
+  "references": 83,
+  "backups": [],
+  "cases": [
+    {
+      "instance_id": "google-gemini__gemini-cli@0fa1bd7",
+      "repo": "google-gemini/gemini-cli",
+      "pr": 8154,
+      "pr_url": "https://github.com/google-gemini/gemini-cli/pull/8154",
+      "base_commit": "5a05fb0dd002481343aaab7736a871904bb07c6f",
+      "head_commit": "0fa1bd7ac417366f321ed2554caeaef550321959",
+      "language": "TypeScript",
+      "pr_category": "Security Patches / Vulnerability Fixes",
+      "change_line_count": 405,
+      "references": 13
+    },
+    {
+      "instance_id": "lvgl__lvgl@e526b2a",
+      "repo": "lvgl/lvgl",
+      "pr": 8689,
+      "pr_url": "https://github.com/lvgl/lvgl/pull/8689",
+      "base_commit": "244b3b996e0b331468cf5967c937029535af569c",
+      "head_commit": "e526b2a1faa4672eeb3610b466ecc25b1abb220b",
+      "language": "C",
+      "pr_category": "Code Style, Linting, Formatting Fixes",
+      "change_line_count": 804,
+      "references": 33
+    },
+    {
+      "instance_id": "gofr-dev__gofr@2c0c099",
+      "repo": "gofr-dev/gofr",
+      "pr": 1395,
+      "pr_url": "https://github.com/gofr-dev/gofr/pull/1395",
+      "base_commit": "c2ab1eb3308afa4f29842f0a982751bf65c059d0",
+      "head_commit": "2c0c0997cad66a1ee1e47f95db6a830394157c00",
+      "language": "Go",
+      "pr_category": "Test Suite / CI Enhancements",
+      "change_line_count": 348,
+      "references": 8
+    },
+    {
+      "instance_id": "comfyanonymous__ComfyUI@4dcd698",
+      "repo": "comfyanonymous/ComfyUI",
+      "pr": 8446,
+      "pr_url": "https://github.com/comfyanonymous/ComfyUI/pull/8446",
+      "base_commit": "c7b25784b141a298d8ee5f0d830a29da6e8a3d54",
+      "head_commit": "4dcd698e489da69294ee01de0350a9a02e3e4b41",
+      "language": "Python",
+      "pr_category": "New Feature Additions",
+      "change_line_count": 971,
+      "references": 18
+    },
+    {
+      "instance_id": "ClickHouse__ClickHouse@5fb6ee3",
+      "repo": "ClickHouse/ClickHouse",
+      "pr": 80345,
+      "pr_url": "https://github.com/ClickHouse/ClickHouse/pull/80345",
+      "base_commit": "e29021aed71bfebb76c0305f554375061adb8bf9",
+      "head_commit": "5fb6ee38d2d7d2fc6e1a67005b12d3b9aaac418f",
+      "language": "C++",
+      "pr_category": "Documentation Update",
+      "change_line_count": 373,
+      "references": 11
+    }
+  ]
+}

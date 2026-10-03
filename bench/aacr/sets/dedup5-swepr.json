@@ -1,0 +1,124 @@
+{
+  "name": "dedup5-swepr",
+  "dataset": {
+    "source": "https://huggingface.co/datasets/foundry-ai/swe-prbench",
+    "commit": "b87f5797aef3ed2c3153bb1304ea4d801d36ba6e",
+    "file": "dataset/prs.jsonl",
+    "sha256": "a58e1f713533f6bc260a93f6e234b85acd16a77f55a756893694b96495eb43cd"
+  },
+  "rule": "docs/duplicate-merge.md measurement: the 5 PRs of sweprbench-eval100 where the stored run (ext-r5-sweprbench-eval100) had the most duplicate findings (posted near-duplicates and follower rows first, then merge-stage merged/folded entries); never a held-out set",
+  "references": 14,
+  "backups": [],
+  "cases": [
+    {
+      "instance_id": "pipecat-ai__pipecat@b248b84",
+      "repo": "pipecat-ai/pipecat",
+      "pr": 3598,
+      "pr_url": "https://github.com/pipecat-ai/pipecat/pull/3598",
+      "base_commit": "266958fe3fb64b84860dbe09a2a59b3cc0eaae9b",
+      "head_commit": "b248b841cd0f4646c389d8bcb9d842bf5c28535a",
+      "language": "Python",
+      "pr_category": "Type1_Direct",
+      "change_line_count": 728,
+      "references": 3,
+      "title": "ASR and TTS v3 update",
+      "body": "This PR adds support for Sarvam AI's v3 models in both Speech-to-Text (STT) and Text-to-Speech (TTS) services, while maintaining backward compatibility with existing models.\r\n\r\nKey additions:\r\n- STT: Adds `saaras:v3` model with new `mode` parameter, retains `saaras:v2.5` (STT-Translate) support\r\n- TTS: Adds `bulbul:v3-beta` model with new `temperature` parameter and 25 new speaker voices\r\n\r\nSupported Models:\r\n| Model | Language | Prompt | Mode | Endpoint |\r\n|-------|----------|--------|------|----------|\r\n| `saarika:v2.5` | Required (default: \"unknown\") | \u274c | \u274c | `speech_to_text_streaming` |\r\n| `saaras:v2.5` | Auto-detect | \u2705 | \u274c | `speech_to_text_translate_streaming` |\r\n| `saaras:v3` | Required (default: \"en-IN\") | \u2705 | \u2705 | `speech_to_text_streaming` |\r\n\r\nNew Features:\r\n- `saaras:v3` model support with new `mode` parameter\r\n  - Modes: `transcribe`, `translate`, `verbatim`, `translit`, `codemix`\r\n  - Default mode: `transcribe`\r\n- Retained `saaras:v2.5` (STT-Translate) with auto language detection\r\n- Model-specific validation for parameters (prompt, mode, language)\r\n- Dynamic endpoint selection based on model type\r\n\r\nAPI Changes:\r\n- New `mode` parameter in `InputParams` and `__init__`\r\n- `set_language()` raises `ValueError` for `saaras:v2.5` (auto-detects)\r\n- `set_prompt()` now supports both `saaras:v2.5` and `saaras:v3`\r\n\r\nSupported Models:\r\n| Model | Pitch | Loudness | Pace | Temperature | Default Sample Rate | Default Speaker |\r\n|-------|-------|----------|------|-------------|---------------------|-----------------|\r\n| `bulbul:v2` | \u2705 (-0.75 to 0.75) | \u2705 (0.3-3.0) | \u2705 (0.3-3.0) | \u274c | 22050 Hz | anushka |\r\n| `bulbul:v3-beta` | \u274c | \u274c | \u2705 (0.5-2.0) | \u2705 (0.01-1.0) | 24000 Hz | aditya |\r\n\r\nNew Features:\r\n- `bulbul:v3-beta` model support with temperature control\r\n- New enums for type safety:\r\n  - `SarvamTTSModel`: Model variants\r\n  - `SarvamTTSSpeakerV2`: 7 speakers for v2\r\n  - `SarvamTTSSpeakerV3`: 25 speakers for v3-beta\r\n- `get_speakers_for_model()` helper function\r\n- Automatic parameter clamping for pace when outside v3 range\r\n- Model-specific defaults for sample rate, speaker, and preprocessing\r\n\r\nSpeakers:\r\n- bulbul:v2 (7): anushka, abhilash, manisha, vidya, arya, karun, hitesh\r\n- bulbul:v3-beta (25): aditya, ritu, priya, neha, rahul, pooja, rohan, simran, kavya, amit, dev, ishita, shreya, ratan, varun, manan, sumit, roopa, kabir, aayan, shubh, ashutosh, advait, amelia, sophia\r\n\r\nAPI Changes:\r\n- New `temperature` parameter in `InputParams` (0.01-1.0, default 0.6)\r\n- Warnings logged when using incompatible parameters (e.g., pitch with v3)\r\n- Both `SarvamHttpTTSService` and `SarvamTTSService` (WebSocket) updated",
+      "leakproof": {
+        "source_head": "e6b06414b3f745ce46b41b3462cdc14ab293bc80",
+        "source_merge_base": "7456a0a55f209978825e1b14bf59341e2b859e3b",
+        "base_tree": "dd29e4da636f04e8da33fdac57f3f3bc10293f8e",
+        "head_tree": "7f74d88e8980dbea68237d33dfe291f0eeb32671"
+      },
+      "task_id": "pipecat__3598",
+      "source_base_commit": "7be2b8cc345ab5685c5b44ffe9ce9eb8dd044658"
+    },
+    {
+      "instance_id": "stylelint__stylelint@836eb54",
+      "repo": "stylelint/stylelint",
+      "pr": 9074,
+      "pr_url": "https://github.com/stylelint/stylelint/pull/9074",
+      "base_commit": "fc01bf80c918afcb8b07799f9ab78e70ed0a5992",
+      "head_commit": "836eb54ba2d45cb37c570e038cf805b2b434cbcd",
+      "language": "JavaScript",
+      "pr_category": "Type1_Direct",
+      "change_line_count": 207,
+      "references": 1,
+      "title": "Refactor to consolidate `walk*` filter regexes",
+      "body": "<!-- Each pull request must be associated with an open issue unless it's a documentation fix. If a corresponding issue does not exist, please create one so we can discuss the change first. -->\r\n\r\n<!-- Please answer the following. We close pull requests that don't. -->\r\n\r\n> Which issue, if any, is this issue related to?\r\n\r\nNone, as it's a refactor.\r\n\r\n> Is there anything in the PR that needs further explanation?\r\n\r\nRefactors the rules to consistently use regexes to filter `walk*` calls, and consolidates those regexes in one place.\r\n\r\nIn most rules, it simply removes duplication; in a few others, it moves the condition up to the filter.\r\n\r\nI went with `maybeHas` for the new regex group name, as it feels like it makes the intent clear because they're cheap checks that don't take into account strings and comments. Maybe there's a better name?\r\n\r\n(The PR doesn't touch any regexes defined at the top-level, such as `const HAS_TIME = /\\d(?:m?)s/i;`, as that's a more involved refactor. Started with the lower-hanging fruit and making sure we filter where we can.)",
+      "leakproof": {
+        "source_head": "859595e8768f9d0631c13a2b629061ade3f77eed",
+        "source_merge_base": "fcd18a5c6d24d7bca38c8457fde03ec51acb73ae",
+        "base_tree": "500b25b43f0be821245ea1719147943d91589d04",
+        "head_tree": "832e8a95e0dc81b8cc5cf2bd977b05393625ca73"
+      },
+      "task_id": "stylelint__9074",
+      "source_base_commit": "fcd18a5c6d24d7bca38c8457fde03ec51acb73ae"
+    },
+    {
+      "instance_id": "espnet__espnet@860e723",
+      "repo": "espnet/espnet",
+      "pr": 6278,
+      "pr_url": "https://github.com/espnet/espnet/pull/6278",
+      "base_commit": "a12508bfbb2773ca5e058da53c80a883843ff2d1",
+      "head_commit": "860e7231d01568a9d4981f599799a9aeee8d565b",
+      "language": "Python",
+      "pr_category": "Type2_Contextual",
+      "change_line_count": 506,
+      "references": 4,
+      "title": "[SpeechLM] Deepspeed trainer",
+      "body": "This PR adds the two files that support DeepSpeed trainer logics:\r\n(1) train.py: the overall training launcher script, which initializes distributed training, logging, model, data loader, etc.\r\n(2) deepspeed_trainer.py: the deepspeed trainer wrapper with given model and data loader objects.\r\n\r\nPrior PRs: #6257 , #6258 , #6260 \r\n\r\nRequest review: @Masao-Someki @wanchichen @siddhu001 \r\n\r\n",
+      "leakproof": {
+        "source_head": "5bbc8c7f82a627a3516435b15b3877e9b901b359",
+        "source_merge_base": "0a9cf53a9d754f52c2ad8ec6bbc439b0276565ff",
+        "base_tree": "2b08b0818755697f1a111fc3b2fbeef903da0bf2",
+        "head_tree": "a6b99da8cdb4bbd4d93ff91c14bcf8a1d975e829"
+      },
+      "task_id": "espnet__6278",
+      "source_base_commit": "0a9cf53a9d754f52c2ad8ec6bbc439b0276565ff"
+    },
+    {
+      "instance_id": "livekit__agents@2c1af3e",
+      "repo": "livekit/agents",
+      "pr": 4155,
+      "pr_url": "https://github.com/livekit/agents/pull/4155",
+      "base_commit": "41478bf180642e180e1a8820a62a895f045fa229",
+      "head_commit": "2c1af3eb3b46574b16ac648618cbb2e0bb58cabf",
+      "language": "Python",
+      "pr_category": "Type2_Contextual",
+      "change_line_count": 664,
+      "references": 3,
+      "title": "AGT-2302: add aligned_transcript to STT",
+      "body": "- Add aligned_transcript capability to STT\r\n- Improve start_time and end_time tracking for all vendors (useful for spans/traces and multimodal eot). Now they are all relative to the audio input start time or session time if it is not available.\r\n\r\nTested and confirmed most of the ones using `SpeechData`, but skipped a few:\r\n- Baseten\r\n- Ones that don't support the feature at all\r\n",
+      "leakproof": {
+        "source_head": "f83fcc6575f93a297fec575c1953874e6400798e",
+        "source_merge_base": "8ff360a6661dd837f7ab446d7968083821741148",
+        "base_tree": "6b2a460fc22102212727e454c560f66120f0a867",
+        "head_tree": "a67014ff2cc906e9303b517bc6a31143e60183d0"
+      },
+      "task_id": "agents__4155",
+      "source_base_commit": "8ff360a6661dd837f7ab446d7968083821741148"
+    },
+    {
+      "instance_id": "espnet__espnet@a6fcab0",
+      "repo": "espnet/espnet",
+      "pr": 6352,
+      "pr_url": "https://github.com/espnet/espnet/pull/6352",
+      "base_commit": "dcf4849a728a0d2bf8bdd9e07d7684a4354d51a0",
+      "head_commit": "a6fcab0a624c124db53f20ce33c1828c2223dccb",
+      "language": "Python",
+      "pr_category": "Type1_Direct",
+      "change_line_count": 387,
+      "references": 3,
+      "title": "[SpeechLM] Update SpeechLM bin files",
+      "body": "This PR updates the binary files in SpeechLM folders.\r\n\r\n(1) inference.py: the entry point of SpeechLM inference;\r\n(2) prepare_dataset_json.py: the file that is used to generate the dataset JSON files, which can be directlyused in training.\r\n(3) prepare_length_stats.py: the script to find the length statistics of all training examples.\r\n(4) train.py: the entry point of SpeechLM training.",
+      "leakproof": {
+        "source_head": "d3ea7642f4a7a3a430204584ab4f15632c108267",
+        "source_merge_base": "f70c4f63368a599fbee26c343ebb791bac5c2e35",
+        "base_tree": "20c6857b72de2487a83867fd2b739c7a553d2cfd",
+        "head_tree": "4a395e43e9137b5fcbe8333bda12c946e2ddef5e"
+      },
+      "task_id": "espnet__6352",
+      "source_base_commit": "f70c4f63368a599fbee26c343ebb791bac5c2e35"
+    }
+  ]
+}
