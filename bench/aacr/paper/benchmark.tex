@@ -2818,7 +2818,9 @@ cubic-v2's and qodo-extended-v2's; its F1 is the lowest of the four. Its
 changes were designed partly from misses on \code{tune20}, so \code{test30}
 is the held-out half: there it scores 15.3 / 62.0 / 24.6 / 38.6, against
 cubic-v2 50.0 / 54.0 / 51.9 / 53.1 and qodo-extended-v2 59.8 / 61.0 / 60.4 /
-60.8 in the same pass. \qcr{} has never been judged by Opus 4.5. On the same
+60.8 in the same pass, and against 54.0 and 55.0 recall for the default as
+posted and round 4 (Table~\ref{tab:martianraw}): recall up by seven to eight
+points, $F_2$ unchanged within judge noise. \qcr{} has never been judged by Opus 4.5. On the same
 50 PRs Opus credits 7--12 more matches per tool than our judge across our
 passes (in this one cubic-v2 95 $\to$ 104, qodo-extended-v2 95 $\to$ 102,
 Claude Code 65 $\to$ 76); the same shift puts the frozen build at roughly
@@ -3356,7 +3358,11 @@ true but minor, 9 restated a listed issue or duplicated a credited comment,
 and none was wrong. Finally, the frozen build's changes were designed partly
 from that earlier build's misses on these 100 PRs (59 issues a vendor found
 and it did not), so its row is in-sample, not held out; and every tool ran
-once.
+once. On the 31 PRs that no part of that work touched (neither the mined
+misses nor any validation set), its recall rose from 52.5\% to 60.3\% over
+the 2026-10-02 build ($+7.8$ points, 95\% CI $+2.1$ to $+14.1$, paired
+bootstrap over PRs) and its F1 from 49.7 to 53.0, against qodo-exhaustive's
+51.3 on the same PRs.
 
 % =====================================================================
 \section{Threats to validity}
