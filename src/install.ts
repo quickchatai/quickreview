@@ -338,7 +338,7 @@ export const PORTRAIT_DIR = "portrait";
  * registered here (a test holds the checkout to it, and the shell mirror's
  * `QCR_EXAMPLE_PROFILES` to this list).
  */
-export const EXAMPLE_PROFILES: readonly string[] = ["default", "example-django", "minimal", "snappy"];
+export const EXAMPLE_PROFILES: readonly string[] = ["default", "example-django", "minimal", "snappy", "fast"];
 
 /** Which of `profileSearchDirs` a profile was found in. */
 export type ProfileSource = "home" | "override" | "checkout";

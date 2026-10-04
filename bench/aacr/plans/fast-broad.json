@@ -1,0 +1,33 @@
+{
+  "name": "fast-broad",
+  "note": "The fast option on the rest of the final-broad sets (owner-approved 2026-10-04): AACR dev10+holdout10+fresh10+rest145 (+ smoke10 from fast-smoke = all 185), Martian 50, Qodo 100. Same image and config as fast-smoke.",
+  "image": "qcr-bench:fast1",
+  "prefix": "fast1",
+  "config": "models.default=openai-codex/gpt-6.1-sol,models.conversation=openai-codex/gpt-6.1-sol,models.overseer=openai-codex/gpt-6.1-sol,models.tiers.terra-med=openai-codex/gpt-6.1-sol:medium,models.tiers.sol-med=openai-codex/gpt-6.1-sol:medium,models.tiers.sol-high=openai-codex/gpt-6.1-sol:high,review.profile=fast,review.preset=low,models.effort=low",
+  "sets": [
+    {
+      "set": "dev10",
+      "scorer": "aacr"
+    },
+    {
+      "set": "holdout10",
+      "scorer": "aacr"
+    },
+    {
+      "set": "fresh10",
+      "scorer": "aacr"
+    },
+    {
+      "set": "rest145",
+      "scorer": "aacr"
+    },
+    {
+      "set": "martian50",
+      "scorer": "martian"
+    },
+    {
+      "set": "qodo-pr100",
+      "scorer": "qodo"
+    }
+  ]
+}
